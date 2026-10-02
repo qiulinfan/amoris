@@ -29,7 +29,7 @@ from pocket_env import IosEnv, PocketEnv  # noqa: E402
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 POCKET = os.path.join(ROOT, ".pocket", "pocket")
-DOCS = ["docs/mcp.md", "docs/sdk.md", "docs/generated/sdk.md", "docs/design/world-model.md", "docs/generated/components.md", "docs/design/input.md", "docs/design/scenarios.md", "docs/design/assets.md", "docs/design/pocket-ui.md", "docs/design/rendering.md", "docs/design/cameras.md", "docs/design/animation.md", "docs/design/physics.md", "docs/design/physics2d.md", "docs/design/paths.md", "docs/design/combat.md", "docs/design/sprites.md", "docs/design/tilemaps.md", "docs/design/navigation.md", "docs/design/audio.md", "docs/design/particles.md", "docs/design/terrain.md", "docs/design/water.md", "docs/design/wind.md", "docs/design/timelines.md", "docs/design/dialogue.md", "docs/design/localization.md", "docs/design/networking.md"]
+DOCS = ["docs/mcp.md", "docs/sdk.md", "docs/generated/sdk.md", "docs/design/world-model.md", "docs/generated/components.md", "docs/design/input.md", "docs/design/scenarios.md", "docs/design/assets.md", "docs/design/pocket-ui.md", "docs/design/rendering.md", "docs/design/cameras.md", "docs/design/animation.md", "docs/design/physics.md", "docs/design/physics2d.md", "docs/design/paths.md", "docs/design/combat.md", "docs/design/sprites.md", "docs/design/tilemaps.md", "docs/design/navigation.md", "docs/design/behavior.md", "docs/design/audio.md", "docs/design/particles.md", "docs/design/terrain.md", "docs/design/water.md", "docs/design/wind.md", "docs/design/timelines.md", "docs/design/dialogue.md", "docs/design/localization.md", "docs/design/networking.md"]
 # Where a run's copies live: outside the repository, so an agent finds the game and the docs there
 # and nothing of the harness (whose checks are the answers) beside them. Made by run().
 EVAL_DIR = None
@@ -2076,6 +2076,90 @@ def breakout_check(env, answer):
     return True, "32 bricks, a paddle at 10 a second held in, a brick broken from below (score 10), walls and the paddle bounce, a miss costs a life, the last brick clears the level, three misses end it"
 
 
+
+WATCHMAN_TS = """import { nav, onStart, world } from "pocket";
+onStart(() => {
+    nav.bake({ min: { x: -10, y: -1, z: -10 }, max: { x: 10, y: 2, z: 10 }, cell: 0.5 });
+    world.spawn("Beat", { components: { Transform: {}, Path: { points: [{ x: -6, y: 0, z: 6 }, { x: 6, y: 0, z: 6 }], smooth: false } } });
+    world.spawn("Watchman", { components: {
+        Transform: { position: { x: -6, y: 0, z: 6 } },
+        MeshRenderer: { mesh: "capsule", color: { r: 0.8, g: 0.3, b: 0.2, a: 1 } },
+        NavAgent: { speed: 2 },
+        Behavior: {
+            target: "Player",
+            sight: 6,
+            states: [
+                { name: "patrol", move: "patrol", path: "Beat", speed: 2 },
+                { name: "chase", move: "follow", speed: 4 },
+                { name: "search", move: "follow", speed: 4 },
+            ],
+            transitions: [
+                { from: "patrol", to: "chase", when: "sees" },
+                { from: "chase", to: "search", when: "not sees" },
+                { from: "search", to: "chase", when: "sees" },
+                { from: "search", to: "patrol", when: "time > 2" },
+            ],
+        },
+    } });
+});
+"""
+
+
+def watchman_solve(env, project_dir):
+    write_game(project_dir, "watchman", WATCHMAN_TS)
+    with open(os.path.join(project_dir, "scene.json"), "w") as f:
+        f.write(json.dumps({"format": "pocket-scene", "entities": [
+            {"name": "Ground", "components": {"Transform": {"position": {"x": 0, "y": -0.5, "z": 0}, "scale": {"x": 40, "y": 1, "z": 40}}, "MeshRenderer": {"mesh": "cube"}, "RigidBody": {"kind": "static"}, "Collider": {"shape": "box"}}},
+            {"name": "Player", "components": {"Transform": {"position": {"x": 0, "y": 0.5, "z": -6}}, "MeshRenderer": {"mesh": "sphere"}}},
+            {"name": "Camera", "components": {"Transform": {"position": {"x": 0, "y": 14, "z": 14}, "rotation": {"x": -0.38, "y": 0, "z": 0, "w": 0.92}}, "Camera": {}}},
+        ]}))
+    return None
+
+
+def watchman_check(env, answer):
+    def get(name, comp):
+        try:
+            return env.command("world.get", {"entity": name, "component": comp})
+        except Exception:   # noqa: BLE001 (a missing entity: said below)
+            return None
+    for name, comp in (("Watchman", "Behavior"), ("Watchman", "NavAgent"), ("Beat", "Path"), ("Player", "Transform")):
+        if get(name, comp) is None:
+            return False, f"no {name} with a {comp}"
+    def state():
+        b = get("Watchman", "Behavior")
+        s = next((x for x in b["states"] if x["name"] == b["state"]), None)
+        return b, s
+    def put_player(x, z):
+        env.command("world.set", {"entity": "Player", "component": "Transform", "value": {"position": {"x": x, "y": 0.5, "z": z}}})
+    put_player(8, -8)
+    env.command("step", {"ticks": 30})
+    b, s = state()
+    if not s or s["move"] != 5:
+        return False, f"with the Player far away the Watchman is in state {b['state']!r}, not walking its beat (a patrol state): {b.get('error')}"
+    a = get("Watchman", "NavAgent")
+    ends = [(-6, 6), (6, 6)]
+    if not any(abs(a["goal"]["x"] - x) < 1 and abs(a["goal"]["z"] - z) < 1 for x, z in ends) or not near(a["speed"], 2, 0.05):
+        return False, f"on its beat the Watchman heads for {a['goal']} at {a['speed']}, not an end of the beat at 2"
+    w = entity_pos(env, "Watchman")
+    put_player(w["x"] + 3, w["z"] - 1.5)
+    env.command("step", {"ticks": 10})
+    b, s = state()
+    a = get("Watchman", "NavAgent")
+    if not s or s["move"] != 1 or not near(a["speed"], 4, 0.05):
+        return False, f"with the Player 3.4 away in the open the Watchman is in {b['state']!r} at speed {a['speed']}, not running after it at 4"
+    put_player(w["x"] + 7.5, w["z"] - 7.5)   # out of sight: 10 away
+    env.command("step", {"ticks": 30})
+    b, s = state()
+    if s and s["move"] == 5:
+        return False, "half a second after losing the Player the Watchman was back on its beat already"
+    put_player(9, -9)
+    env.command("step", {"ticks": 150})
+    b, s = state()
+    if not s or s["move"] != 5:
+        return False, f"three seconds after losing the Player the Watchman is in {b['state']!r}, not back on its beat"
+    return True, f"walks its beat at 2, chases at 4 what it sees, back on the beat after the Player is out of sight 2 s ({len(b['states'])} states)"
+
+
 def grey_flashback_solve(env):
     code = "fn effect(uv: vec2f) -> vec4f { let c = sample_frame(uv); let g = dot(c.rgb, vec3f(0.299, 0.587, 0.114)); return vec4f(g, g, g, c.a); }"
     env.command("render.post", {"effects": [{"code": code, "name": "grey"}]})
@@ -2916,6 +3000,8 @@ TASKS = [
      "task": "Make a small game in this blank project with a title screen and a pause menu, replacing its example. In the XY plane: an entity named Box at (0, 0) that move_x (A/D and the arrow keys) moves along x at 4 units a second, only while playing. The game opens on a title screen with a Pocket UI button named start; clicking it starts play (emit game.started). The action pause (Escape) while playing pauses: the Box and the clock stop and a menu shows buttons named resume and restart (emit game.paused). resume plays on (game.resumed); restart puts the Box back at (0, 0) and the clock at 0 and plays again (game.restarted). Expose screen (\"title\", \"playing\" or \"paused\") and time, the seconds played. The game must read the Box's position from its Transform every tick. Answer null."},
     {"name": "breakout", "project": "blank", "ticks": 0, "script": True, "game": True, "solve": breakout_solve, "check": breakout_check,
      "task": "Make a breakout game in this blank project, replacing its example. In the XY plane (x across, y up): a Paddle 2 wide at (0, -6) that move_x (A/D and the arrow keys) moves at 10 units a second, kept between x -7 and 7; a Ball 0.3 across starting at (0, -5), moving up and right at 6 units a second, its motion its Velocity component; walls at x -8 and 8 and a ceiling at y 7 it bounces off; it bounces up off the paddle. Bricks 1.8 by 0.6 named Brick_0 to Brick_31, in 4 rows of 8, centers at x -7, -5, ..., 7 and y 3, 4, 5, 6: a hit removes the brick, bounces the ball, adds 10 to the score and emits brick.broken with {score}. Below y -8 the ball costs a life (3 at the start; emit life.lost with {lives}) and starts again above the paddle; at none, emit game.over and nothing moves after. With no bricks left emit level.clear and stop the ball. Expose score, lives and bricks (how many Brick_ entities the world still has). The game must read the Ball's and the Paddle's Transforms and the Ball's Velocity every tick. Answer null."},
+    {"name": "watchman", "project": "blank", "ticks": 0, "script": True, "solve": watchman_solve, "check": watchman_check,
+     "task": "In this blank project, replacing its example, add a guard with the engine's Behavior component. Bake a navigation grid over the ground at the start (x and z from -10 to 10). An entity named Watchman starting at (-6, 0, 6) walks back and forth between (-6, 0, 6) and (6, 0, 6), a Path named Beat, at 2 units a second; when it sees the Player within 6 units it runs after it at 4 units a second; when it has not seen the Player for 2 seconds it goes back to walking its beat. Keep an entity named Player that the game does not move by itself (it may stand still): it is moved with world.set. Answer null."},
     {"name": "key_door", "project": "blank", "ticks": 0, "script": True, "game": True, "solve": key_door_solve, "check": key_door_check,
      "task": "Make a small game in this blank project, replacing its example. In the XY plane (x across, y up): an entity named Player at (0, 0) that the actions move_x and move_y (bound to A/D and S/W, and to the arrow keys) move at 5 units a second; a Key at (4, 0); a Door at (8, 0) that the player cannot pass going right until it has the key; an Exit at (12, 0). Coming within 0.7 units of the key takes it: emit key.taken, remove the Key and open the way through the door. Coming within 0.7 units of the exit emits level.complete with {seconds}. Expose has_key. The game must read where the player is from its Transform every tick, so that moving it with world.set moves it in the game. Answer null."},
     {"name": "grey_flashback", "project": "crates", "ticks": 30, "solve": grey_flashback_solve, "check": grey_flashback_check,
@@ -2970,8 +3056,11 @@ def eval_dir():
         with open(src) as f:
             text = f.read()
         title = next((l.lstrip("# ").strip() for l in text.splitlines() if l.startswith("#")), d)
-        first = next((l.strip() for l in text.splitlines()[1:] if l.strip() and not l.startswith(("#", "|", "-", "`", "<"))), "")
-        first = re.split(r"(?<=[.:])\s", first, maxsplit=1)[0][:200]
+        # The first paragraph of prose (its lines joined: the docs are wrapped), to its first stop;
+        # not a heading, a table, a list, code or markup.
+        paras = [p for p in re.split(r"\n\s*\n", text) if p.strip()]
+        prose = next((p for p in paras[1:] if not p.lstrip().startswith(("#", "|", "-", "```", "<")) and not re.match(r"\s*\d+[.)]\s", p)), "")
+        first = re.split(r"(?<=[.:])\s", " ".join(l.strip() for l in prose.splitlines()), maxsplit=1)[0][:200]
         lines.append(f"- `{d}` ({len(text) // 1024 + 1} KB): {title}. {first}")
     with open(os.path.join(EVAL_DIR, "docs", "INDEX.md"), "w") as f:
         f.write("\n".join(lines) + "\n")

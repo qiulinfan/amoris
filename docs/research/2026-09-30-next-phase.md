@@ -314,6 +314,20 @@ Roadmap: next phase of aipocket (read-only research, checked against the code)
   - `gpu_probe` on showcase and hills at 1920x1080 shows a lower `pocket.scene` time, and
     `render.compare` against the old captures is within tolerance.
   - `renderer_tests [taa] [ssr] [cutout] [oit]` and the water tests pass, and a web pack loads.
+- **Deferred (2026-10-01), on what was found when starting it:**
+  - The estimate does not hold on this machine. At 1920x1080 on the Apple M5 the whole scene pass
+    takes about 1.34 ms in the showcase and 2.0 in the hills (`gpu_probe`, after the opaque
+    pipelines lost `discard`), and Apple's hidden-surface removal already skips the shading of
+    hidden opaque fragments, which is what an equal-depth test would save. The gain is for GPUs that
+    draw in order (desktop Linux and Windows, some browsers' devices), none of which this machine
+    can measure.
+  - The plan misses three things. The scene pass would draw against the Depth32Float prepass where
+    its pipelines are Depth24Plus, so every scene pipeline, the OIT ones and the water's need a
+    variant for it. A frame with glass needs the prepass without the glass for the solid meshes (or
+    what stands behind the glass fails the equal test and the glass shows nothing through it), so a
+    depth copy between the solid and the glass draws of the id pass. And the passes after the glass
+    need the prepass with it, so translucent meshes and sprites behind a pane stay hidden.
+  - Worth doing when an in-order GPU can be measured: the work is the plan above with those three.
 
 ### 12. Gameplay components declared by the project
 - **Serves:** reach in every genre (enemy kinds, loot, teams and tuning values coming from Blender

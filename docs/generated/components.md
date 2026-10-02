@@ -845,6 +845,26 @@ A moving thing paths go around (docs/design/navigation.md, Obstacles): every tic
 | `radius` | f32 | 0.5 | Radius of the blocked disc around the entity, in the grid's plane. |
 | `enabled` | bool | true | false lifts the obstacle without removing the component. |
 
+## Behavior
+
+A state machine for what a non-player character does (docs/design/behavior.md): states say how it moves (stay, follow, flee, wander, go home, patrol a path, through its NavAgent) and what entering them plays and says; transitions go between them on conditions over what it perceives (the distance to its target, whether it sees it, its health, a hit, time in the state, an event). Every change is a behavior.changed event, and the state is on the entity, so world.query shows what every guard is doing.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `state` | string | "" | The state it is in (written by the engine); set it to switch at the next tick. Empty starts in the first. |
+| `previous` | string | "" | The state it was in before (written by the engine). |
+| `time` | f32 | 0.0 | Seconds in the state (written by the engine). |
+| `states` | list:BehaviorState | [] | The states; the first is where it starts. |
+| `transitions` | list:BehaviorTransition | [] | The ways between states, tried in order every tick. |
+| `target` | entity | 0 | What it attends to: whom follow follows and flee flees, what distance and sees measure (a name in a scene file or world.set). |
+| `home` | vec3 | [0.0, 0.0, 0.0] | Where wander roams around and home goes back to; zero is where it stands at its first tick. |
+| `sight` | f32 | 15.0 | How far it sees: sees is 0 for a target farther than this. |
+| `fov` | f32 | 360.0 | The angle it sees across, in degrees, about where it faces (its -Z); 360 all round. |
+| `eye` | f32 | 1.0 | The height of its eyes, and the target's middle, above their origins, for the line of sight. |
+| `waypoint` | i32 | 0 | In a patrol, the index of the point it heads for (written by the engine). |
+| `enabled` | bool | true | false stops it: the state holds and nothing moves the agent. |
+| `error` | string | "" | What is wrong with it, if anything: a state that does not exist, a condition that does not read, no NavAgent to move (written by the engine). |
+
 ## NavAgent
 
 A thing that walks the navigation grid on its own (docs/design/navigation.md, Agents): every tick, after the scripts and the physics, the engine plans a path to its goal around the obstacles, heads for the next corner, picks the velocity that keeps it clear of the other agents and the obstacles, and moves the entity (Velocity.linear when it has a Velocity, else Transform.position). Scripts set mode, goal or target, speed and radius and read state; nav.arrived and nav.stuck are emitted on the transitions.
@@ -1028,4 +1048,29 @@ A point in a 2D shape's own space (docs/design/physics2d.md).
 |---|---|---|---|
 | `x` | f32 | 0.0 | Across. |
 | `y` | f32 | 0.0 | Up. |
+
+## BehaviorState
+
+One state of a Behavior (docs/design/behavior.md): how the entity moves while in it, and what entering it plays and says.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `name` | string | "" | What transitions and Behavior.state call it. |
+| `move` | i32: 0 `stay`, 1 `follow`, 2 `flee`, 3 `wander`, 4 `home`, 5 `patrol` | 0 | How its NavAgent moves: 0 stay (stand still), 1 follow the target, 2 flee from it (to radius away, again as it comes near), 3 wander within radius of home, 4 home (walk back to it), 5 patrol a Path's points in turn. |
+| `speed` | f32 | 0.0 | Its NavAgent's speed in this state; 0 leaves the agent's own. |
+| `radius` | f32 | 5.0 | How far wander roams from home and flee runs from the target. |
+| `path` | string | "" | For patrol: the entity with the Path whose points it walks, by name or path. |
+| `clip` | string | "" | The Animator clip it plays from entering the state (empty: the clip is left as it is). |
+| `event` | string | "" | An event emitted on entering the state, with {state} and the entity as its subject (empty: none beyond behavior.changed). |
+
+## BehaviorTransition
+
+A way from one state of a Behavior to another, taken (the first of those that hold, in list order) when its condition holds.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `from` | string | "*" | The state it leaves; * any state but the one it goes to. |
+| `to` | string | "" | The state it goes to. |
+| `when` | string | "" | A condition, as an AnimationGraph's: comparisons (distance < 2), and, or, not, parentheses; a bare name is true when not 0. It reads distance (to the target), sees, time (in the state), health, health_max, hit, arrived, stuck, random, has_target and heard. Empty is always true. |
+| `on` | string | "" | An event type: the transition also needs one of that type since the last tick (from anything), and heard is 1 when there was. |
 

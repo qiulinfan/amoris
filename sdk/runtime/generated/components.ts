@@ -172,6 +172,36 @@ export interface Point2D {
     y: number;
 }
 
+/** One state of a Behavior (docs/design/behavior.md): how the entity moves while in it, and what entering it plays and says. */
+export interface BehaviorState {
+    /** What transitions and Behavior.state call it. */
+    name: string;
+    /** How its NavAgent moves: 0 stay (stand still), 1 follow the target, 2 flee from it (to radius away, again as it comes near), 3 wander within radius of home, 4 home (walk back to it), 5 patrol a Path's points in turn. */
+    move: number;
+    /** Its NavAgent's speed in this state; 0 leaves the agent's own. */
+    speed: number;
+    /** How far wander roams from home and flee runs from the target. */
+    radius: number;
+    /** For patrol: the entity with the Path whose points it walks, by name or path. */
+    path: string;
+    /** The Animator clip it plays from entering the state (empty: the clip is left as it is). */
+    clip: string;
+    /** An event emitted on entering the state, with {state} and the entity as its subject (empty: none beyond behavior.changed). */
+    event: string;
+}
+
+/** A way from one state of a Behavior to another, taken (the first of those that hold, in list order) when its condition holds. */
+export interface BehaviorTransition {
+    /** The state it leaves; * any state but the one it goes to. */
+    from: string;
+    /** The state it goes to. */
+    to: string;
+    /** A condition, as an AnimationGraph's: comparisons (distance < 2), and, or, not, parentheses; a bare name is true when not 0. It reads distance (to the target), sees, time (in the state), health, health_max, hit, arrived, stuck, random, has_target and heard. Empty is always true. */
+    when: string;
+    /** An event type: the transition also needs one of that type since the last tick (from anything), and heard is 1 when there was. */
+    on: string;
+}
+
 /** Position, rotation and scale relative to the parent entity (or the world when there is no parent). */
 export interface Transform {
     /** Local position in meters. */
@@ -1368,6 +1398,36 @@ export interface NavObstacle {
     enabled: boolean;
 }
 
+/** A state machine for what a non-player character does (docs/design/behavior.md): states say how it moves (stay, follow, flee, wander, go home, patrol a path, through its NavAgent) and what entering them plays and says; transitions go between them on conditions over what it perceives (the distance to its target, whether it sees it, its health, a hit, time in the state, an event). Every change is a behavior.changed event, and the state is on the entity, so world.query shows what every guard is doing. */
+export interface Behavior {
+    /** The state it is in (written by the engine); set it to switch at the next tick. Empty starts in the first. */
+    state: string;
+    /** The state it was in before (written by the engine). */
+    previous: string;
+    /** Seconds in the state (written by the engine). */
+    time: number;
+    /** The states; the first is where it starts. */
+    states: BehaviorState[];
+    /** The ways between states, tried in order every tick. */
+    transitions: BehaviorTransition[];
+    /** What it attends to: whom follow follows and flee flees, what distance and sees measure (a name in a scene file or world.set). */
+    target: number;
+    /** Where wander roams around and home goes back to; zero is where it stands at its first tick. */
+    home: Vec3;
+    /** How far it sees: sees is 0 for a target farther than this. */
+    sight: number;
+    /** The angle it sees across, in degrees, about where it faces (its -Z); 360 all round. */
+    fov: number;
+    /** The height of its eyes, and the target's middle, above their origins, for the line of sight. */
+    eye: number;
+    /** In a patrol, the index of the point it heads for (written by the engine). */
+    waypoint: number;
+    /** false stops it: the state holds and nothing moves the agent. */
+    enabled: boolean;
+    /** What is wrong with it, if anything: a state that does not exist, a condition that does not read, no NavAgent to move (written by the engine). */
+    error: string;
+}
+
 /** A thing that walks the navigation grid on its own (docs/design/navigation.md, Agents): every tick, after the scripts and the physics, the engine plans a path to its goal around the obstacles, heads for the next corner, picks the velocity that keeps it clear of the other agents and the obstacles, and moves the entity (Velocity.linear when it has a Velocity, else Transform.position). Scripts set mode, goal or target, speed and radius and read state; nav.arrived and nav.stuck are emitted on the transitions. */
 export interface NavAgent {
     /** 0 idle (the engine leaves the entity alone), 1 walk to goal, 2 follow target, 3 keep a slot beside target: the point `offset` from the leader in the leader's heading, matched in speed so a group walks as one (docs/design/navigation.md, Formations). */
@@ -1462,6 +1522,7 @@ export interface Components {
     AudioSource: AudioSource;
     AudioListener: AudioListener;
     NavObstacle: NavObstacle;
+    Behavior: Behavior;
     NavAgent: NavAgent;
     Morph: Morph;
 }
@@ -1517,6 +1578,7 @@ export interface ComponentEnums {
     AudioSource: {};
     AudioListener: {};
     NavObstacle: {};
+    Behavior: {};
     NavAgent: { mode: "idle" | "walk" | "follow" | "formation"; state: "idle" | "moving" | "arrived" | "stuck" };
     Morph: {};
 }
@@ -1525,9 +1587,9 @@ export interface ComponentEnums {
 export type ComponentName = keyof Components;
 
 /** The engine's components. */
-export type EngineComponentName = "Transform" | "WorldTransform" | "Velocity" | "Health" | "Hitbox" | "Model" | "Lifetime" | "Camera" | "CameraRig" | "Light" | "ReflectionProbe" | "IrradianceVolume" | "Decal" | "Fog" | "Sky" | "MeshRenderer" | "Sprite" | "SpriteAnimation" | "TileMap" | "AnimationGraph" | "Timeline" | "Animator" | "Attach" | "Ragdoll" | "IK" | "LookAt" | "ParticleEmitter" | "Bounds" | "RigidBody" | "Joint" | "Body2D" | "Character" | "Terrain" | "Cloth" | "Wind" | "Water" | "Scatter" | "Vehicle" | "Area2D" | "Path" | "PathFollower" | "RigidBody2D" | "Collider2D" | "Joint2D" | "TopDown2D" | "Collider" | "AudioSource" | "AudioListener" | "NavObstacle" | "NavAgent" | "Morph";
+export type EngineComponentName = "Transform" | "WorldTransform" | "Velocity" | "Health" | "Hitbox" | "Model" | "Lifetime" | "Camera" | "CameraRig" | "Light" | "ReflectionProbe" | "IrradianceVolume" | "Decal" | "Fog" | "Sky" | "MeshRenderer" | "Sprite" | "SpriteAnimation" | "TileMap" | "AnimationGraph" | "Timeline" | "Animator" | "Attach" | "Ragdoll" | "IK" | "LookAt" | "ParticleEmitter" | "Bounds" | "RigidBody" | "Joint" | "Body2D" | "Character" | "Terrain" | "Cloth" | "Wind" | "Water" | "Scatter" | "Vehicle" | "Area2D" | "Path" | "PathFollower" | "RigidBody2D" | "Collider2D" | "Joint2D" | "TopDown2D" | "Collider" | "AudioSource" | "AudioListener" | "NavObstacle" | "Behavior" | "NavAgent" | "Morph";
 
-export const componentNames: readonly EngineComponentName[] = ["Transform", "WorldTransform", "Velocity", "Health", "Hitbox", "Model", "Lifetime", "Camera", "CameraRig", "Light", "ReflectionProbe", "IrradianceVolume", "Decal", "Fog", "Sky", "MeshRenderer", "Sprite", "SpriteAnimation", "TileMap", "AnimationGraph", "Timeline", "Animator", "Attach", "Ragdoll", "IK", "LookAt", "ParticleEmitter", "Bounds", "RigidBody", "Joint", "Body2D", "Character", "Terrain", "Cloth", "Wind", "Water", "Scatter", "Vehicle", "Area2D", "Path", "PathFollower", "RigidBody2D", "Collider2D", "Joint2D", "TopDown2D", "Collider", "AudioSource", "AudioListener", "NavObstacle", "NavAgent", "Morph"];
+export const componentNames: readonly EngineComponentName[] = ["Transform", "WorldTransform", "Velocity", "Health", "Hitbox", "Model", "Lifetime", "Camera", "CameraRig", "Light", "ReflectionProbe", "IrradianceVolume", "Decal", "Fog", "Sky", "MeshRenderer", "Sprite", "SpriteAnimation", "TileMap", "AnimationGraph", "Timeline", "Animator", "Attach", "Ragdoll", "IK", "LookAt", "ParticleEmitter", "Bounds", "RigidBody", "Joint", "Body2D", "Character", "Terrain", "Cloth", "Wind", "Water", "Scatter", "Vehicle", "Area2D", "Path", "PathFollower", "RigidBody2D", "Collider2D", "Joint2D", "TopDown2D", "Collider", "AudioSource", "AudioListener", "NavObstacle", "Behavior", "NavAgent", "Morph"];
 
 /** Engine components whose fields are all numbers, each field with its kind (n number, b flag, v2, v3, v4, q quaternion, c color), in the order the engine reads them out. */
 export const numericLayouts: { readonly [name: string]: ReadonlyArray<readonly [string, "n" | "b" | "v2" | "v3" | "v4" | "q" | "c"]> } = {
@@ -1602,6 +1664,7 @@ export const componentDefaults: { readonly [K in EngineComponentName]: Component
     AudioSource: { clip: "", volume: 1, pitch: 1, lowpass: 1, reverb: 1, bus: "main", loop: false, autoplay: false, spatial: false, near: 1, range: 20, occlusion: 0, doppler: 1, occluded: false, playing: false, voice: 0 },
     AudioListener: { enabled: true },
     NavObstacle: { radius: 0.5, enabled: true },
+    Behavior: { state: "", previous: "", time: 0, states: [], transitions: [], target: 0, home: { x: 0, y: 0, z: 0 }, sight: 15, fov: 360, eye: 1, waypoint: 0, enabled: true, error: "" },
     NavAgent: { mode: 0, goal: { x: 0, y: 0, z: 0 }, target: 0, offset: { x: 0, y: 0, z: 0 }, speed: 3, radius: 0.35, arrive: 0.3, replan: 10, avoidance: 1, queue: 0, priority: 0, state: 0, velocity: { x: 0, y: 0, z: 0 }, corner: { x: 0, y: 0, z: 0 }, distance: 0, neighbours: 0, queued: false },
     Morph: { weights: [] },
 };
@@ -1621,6 +1684,8 @@ export interface Records {
     TerrainLayer: TerrainLayer;
     PathPoint: PathPoint;
     Point2D: Point2D;
+    BehaviorState: BehaviorState;
+    BehaviorTransition: BehaviorTransition;
 }
 
 export const recordDefaults: { readonly [K in keyof Records]: Records[K] } = {
@@ -1637,6 +1702,8 @@ export const recordDefaults: { readonly [K in keyof Records]: Records[K] } = {
     TerrainLayer: { name: "", texture: "", color: { r: 1, g: 1, b: 1, a: 1 }, tile: 4, slope: { x: 0, y: 90 }, height: { x: 0, y: 1 }, cover: 1 },
     PathPoint: { x: 0, y: 0, z: 0 },
     Point2D: { x: 0, y: 0 },
+    BehaviorState: { name: "", move: 0, speed: 0, radius: 5, path: "", clip: "", event: "" },
+    BehaviorTransition: { from: "*", to: "", when: "", on: "" },
 };
 
 /** Components that are computed by the engine and never written to scene files. */

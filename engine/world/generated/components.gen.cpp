@@ -484,6 +484,71 @@ std::size_t numeric_span(Point2D& v, std::string_view path, float** out) {
     return 0;
 }
 
+void to_json(Json& j, const BehaviorState& v) {
+    j = Json::object();
+    j["name"] = v.name;
+    j["move"] = v.move;
+    j["speed"] = v.speed;
+    j["radius"] = v.radius;
+    j["path"] = v.path;
+    j["clip"] = v.clip;
+    j["event"] = v.event;
+}
+
+void from_json(const Json& j, BehaviorState& v) {
+    scalar_from_json(j, "name", v.name);
+    enum_from_json(j, "move", v.move, {"stay", "follow", "flee", "wander", "home", "patrol"});
+    scalar_from_json(j, "speed", v.speed);
+    scalar_from_json(j, "radius", v.radius);
+    scalar_from_json(j, "path", v.path);
+    scalar_from_json(j, "clip", v.clip);
+    scalar_from_json(j, "event", v.event);
+}
+
+void hash_record(StateHasherRef& h, const BehaviorState& v) {
+    h.str(v.name);
+    h.i64(static_cast<std::int64_t>(v.move));
+    h.f32(v.speed);
+    h.f32(v.radius);
+    h.str(v.path);
+    h.str(v.clip);
+    h.str(v.event);
+}
+
+std::size_t numeric_span(BehaviorState& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "speed") { *out = &v.speed; return 1; }
+    if (path == "radius") { *out = &v.radius; return 1; }
+    return 0;
+}
+
+void to_json(Json& j, const BehaviorTransition& v) {
+    j = Json::object();
+    j["from"] = v.from;
+    j["to"] = v.to;
+    j["when"] = v.when;
+    j["on"] = v.on;
+}
+
+void from_json(const Json& j, BehaviorTransition& v) {
+    scalar_from_json(j, "from", v.from);
+    scalar_from_json(j, "to", v.to);
+    scalar_from_json(j, "when", v.when);
+    scalar_from_json(j, "on", v.on);
+}
+
+void hash_record(StateHasherRef& h, const BehaviorTransition& v) {
+    h.str(v.from);
+    h.str(v.to);
+    h.str(v.when);
+    h.str(v.on);
+}
+
+std::size_t numeric_span(BehaviorTransition& v, std::string_view path, float** out) {
+    (void)v;
+    return 0;
+}
+
 void to_json(Json& j, const Transform& v) {
     j = Json::object();
     vec_to_json(j["position"], v.position);
@@ -3539,6 +3604,90 @@ std::size_t numeric_span(NavObstacle& v, std::string_view path, float** out) {
     return 0;
 }
 
+void to_json(Json& j, const Behavior& v) {
+    j = Json::object();
+    j["state"] = v.state;
+    j["previous"] = v.previous;
+    j["time"] = v.time;
+    j["states"] = Json::array();
+    for (const auto& x : v.states) { Json e; to_json(e, x); j["states"].push_back(std::move(e)); }
+    j["transitions"] = Json::array();
+    for (const auto& x : v.transitions) { Json e; to_json(e, x); j["transitions"].push_back(std::move(e)); }
+    j["target"] = v.target;
+    vec_to_json(j["home"], v.home);
+    j["sight"] = v.sight;
+    j["fov"] = v.fov;
+    j["eye"] = v.eye;
+    j["waypoint"] = v.waypoint;
+    j["enabled"] = v.enabled;
+    j["error"] = v.error;
+}
+
+void from_json(const Json& j, Behavior& v) {
+    scalar_from_json(j, "state", v.state);
+    scalar_from_json(j, "previous", v.previous);
+    scalar_from_json(j, "time", v.time);
+    if (j.is_object() && j.contains("states") && j["states"].is_array()) {
+        v.states.clear();
+        for (const Json& e : j["states"]) { BehaviorState x; from_json(e, x); v.states.push_back(std::move(x)); }
+    }
+    if (j.is_object() && j.contains("transitions") && j["transitions"].is_array()) {
+        v.transitions.clear();
+        for (const Json& e : j["transitions"]) { BehaviorTransition x; from_json(e, x); v.transitions.push_back(std::move(x)); }
+    }
+    scalar_from_json(j, "target", v.target);
+    if (j.is_object() && j.contains("home")) vec_from_json(j["home"], v.home);
+    scalar_from_json(j, "sight", v.sight);
+    scalar_from_json(j, "fov", v.fov);
+    scalar_from_json(j, "eye", v.eye);
+    scalar_from_json(j, "waypoint", v.waypoint);
+    scalar_from_json(j, "enabled", v.enabled);
+    scalar_from_json(j, "error", v.error);
+}
+
+void hash_component(StateHasherRef& h, const Behavior& v) {
+    h.str(v.state);
+    h.str(v.previous);
+    h.f32(v.time);
+    h.i64(static_cast<std::int64_t>(v.states.size()));
+    for (const auto& x : v.states) hash_record(h, x);
+    h.i64(static_cast<std::int64_t>(v.transitions.size()));
+    for (const auto& x : v.transitions) hash_record(h, x);
+    h.entity(v.target);
+    h.f32(v.home.x);
+    h.f32(v.home.y);
+    h.f32(v.home.z);
+    h.f32(v.sight);
+    h.f32(v.fov);
+    h.f32(v.eye);
+    h.i64(static_cast<std::int64_t>(v.waypoint));
+    h.u8(v.enabled ? 1 : 0);
+    h.str(v.error);
+}
+
+std::size_t numeric_span(Behavior& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "time") { *out = &v.time; return 1; }
+    if (path.starts_with("states.")) {
+        std::string_view rest = path.substr(7);
+        std::size_t index = 0;
+        if (list_index(rest, index) && index < v.states.size()) return numeric_span(v.states[index], rest, out);
+    }
+    if (path.starts_with("transitions.")) {
+        std::string_view rest = path.substr(12);
+        std::size_t index = 0;
+        if (list_index(rest, index) && index < v.transitions.size()) return numeric_span(v.transitions[index], rest, out);
+    }
+    if (path == "home") { *out = &v.home.x; return 3; }
+    if (path == "home.x") { *out = &v.home.x; return 1; }
+    if (path == "home.y") { *out = &v.home.y; return 1; }
+    if (path == "home.z") { *out = &v.home.z; return 1; }
+    if (path == "sight") { *out = &v.sight; return 1; }
+    if (path == "fov") { *out = &v.fov; return 1; }
+    if (path == "eye") { *out = &v.eye; return 1; }
+    return 0;
+}
+
 void to_json(Json& j, const NavAgent& v) {
     j = Json::object();
     j["mode"] = v.mode;
@@ -4166,6 +4315,9 @@ bool write_numbers(NavObstacle& v, const double* in, std::size_t n) {
     return true;
 }
 
+std::size_t read_numbers(const Behavior&, double*) { return kNotNumeric; }
+bool write_numbers(Behavior&, const double*, std::size_t) { return false; }
+
 std::size_t read_numbers(const NavAgent&, double*) { return kNotNumeric; }
 bool write_numbers(NavAgent&, const double*, std::size_t) { return false; }
 
@@ -4256,6 +4408,22 @@ constexpr std::array<FieldInfo, 3> kPathPointFields = {{
 constexpr std::array<FieldInfo, 2> kPoint2DFields = {{
     FieldInfo{"x", "f32", "Across.", {}},
     FieldInfo{"y", "f32", "Up.", {}},
+}};
+constexpr std::string_view kBehaviorState_moveNames[] = {"stay", "follow", "flee", "wander", "home", "patrol"};
+constexpr std::array<FieldInfo, 7> kBehaviorStateFields = {{
+    FieldInfo{"name", "string", "What transitions and Behavior.state call it.", {}},
+    FieldInfo{"move", "i32", "How its NavAgent moves: 0 stay (stand still), 1 follow the target, 2 flee from it (to radius away, again as it comes near), 3 wander within radius of home, 4 home (walk back to it), 5 patrol a Path's points in turn.", kBehaviorState_moveNames},
+    FieldInfo{"speed", "f32", "Its NavAgent's speed in this state; 0 leaves the agent's own.", {}},
+    FieldInfo{"radius", "f32", "How far wander roams from home and flee runs from the target.", {}},
+    FieldInfo{"path", "string", "For patrol: the entity with the Path whose points it walks, by name or path.", {}},
+    FieldInfo{"clip", "string", "The Animator clip it plays from entering the state (empty: the clip is left as it is).", {}},
+    FieldInfo{"event", "string", "An event emitted on entering the state, with {state} and the entity as its subject (empty: none beyond behavior.changed).", {}},
+}};
+constexpr std::array<FieldInfo, 4> kBehaviorTransitionFields = {{
+    FieldInfo{"from", "string", "The state it leaves; * any state but the one it goes to.", {}},
+    FieldInfo{"to", "string", "The state it goes to.", {}},
+    FieldInfo{"when", "string", "A condition, as an AnimationGraph's: comparisons (distance < 2), and, or, not, parentheses; a bare name is true when not 0. It reads distance (to the target), sees, time (in the state), health, health_max, hit, arrived, stuck, random, has_target and heard. Empty is always true.", {}},
+    FieldInfo{"on", "string", "An event type: the transition also needs one of that type since the last tick (from anything), and heard is 1 when there was.", {}},
 }};
 constexpr std::array<FieldInfo, 3> kTransformFields = {{
     FieldInfo{"position", "vec3", "Local position in meters.", {}},
@@ -4868,6 +5036,21 @@ constexpr std::array<FieldInfo, 2> kNavObstacleFields = {{
     FieldInfo{"radius", "f32", "Radius of the blocked disc around the entity, in the grid's plane.", {}},
     FieldInfo{"enabled", "bool", "false lifts the obstacle without removing the component.", {}},
 }};
+constexpr std::array<FieldInfo, 13> kBehaviorFields = {{
+    FieldInfo{"state", "string", "The state it is in (written by the engine); set it to switch at the next tick. Empty starts in the first.", {}},
+    FieldInfo{"previous", "string", "The state it was in before (written by the engine).", {}},
+    FieldInfo{"time", "f32", "Seconds in the state (written by the engine).", {}},
+    FieldInfo{"states", "list:BehaviorState", "The states; the first is where it starts.", {}},
+    FieldInfo{"transitions", "list:BehaviorTransition", "The ways between states, tried in order every tick.", {}},
+    FieldInfo{"target", "entity", "What it attends to: whom follow follows and flee flees, what distance and sees measure (a name in a scene file or world.set).", {}},
+    FieldInfo{"home", "vec3", "Where wander roams around and home goes back to; zero is where it stands at its first tick.", {}},
+    FieldInfo{"sight", "f32", "How far it sees: sees is 0 for a target farther than this.", {}},
+    FieldInfo{"fov", "f32", "The angle it sees across, in degrees, about where it faces (its -Z); 360 all round.", {}},
+    FieldInfo{"eye", "f32", "The height of its eyes, and the target's middle, above their origins, for the line of sight.", {}},
+    FieldInfo{"waypoint", "i32", "In a patrol, the index of the point it heads for (written by the engine).", {}},
+    FieldInfo{"enabled", "bool", "false stops it: the state holds and nothing moves the agent.", {}},
+    FieldInfo{"error", "string", "What is wrong with it, if anything: a state that does not exist, a condition that does not read, no NavAgent to move (written by the engine).", {}},
+}};
 constexpr std::string_view kNavAgent_modeNames[] = {"idle", "walk", "follow", "formation"};
 constexpr std::string_view kNavAgent_stateNames[] = {"idle", "moving", "arrived", "stuck"};
 constexpr std::array<FieldInfo, 17> kNavAgentFields = {{
@@ -4893,7 +5076,7 @@ constexpr std::array<FieldInfo, 1> kMorphFields = {{
     FieldInfo{"weights", "list:MorphWeight", "The targets and their weights.", {}},
 }};
 
-constexpr std::array<RecordInfo, 13> kRecords = {{
+constexpr std::array<RecordInfo, 15> kRecords = {{
     RecordInfo{"MeshLod", kMeshLodFields},
     RecordInfo{"MorphWeight", kMorphWeightFields},
     RecordInfo{"IKLimit", kIKLimitFields},
@@ -4907,9 +5090,11 @@ constexpr std::array<RecordInfo, 13> kRecords = {{
     RecordInfo{"TerrainLayer", kTerrainLayerFields},
     RecordInfo{"PathPoint", kPathPointFields},
     RecordInfo{"Point2D", kPoint2DFields},
+    RecordInfo{"BehaviorState", kBehaviorStateFields},
+    RecordInfo{"BehaviorTransition", kBehaviorTransitionFields},
 }};
 
-constexpr std::array<ComponentInfo, 51> kComponents = {{
+constexpr std::array<ComponentInfo, 52> kComponents = {{
     ComponentInfo{"Transform", "Position, rotation and scale relative to the parent entity (or the world when there is no parent).", true, kTransformFields},
     ComponentInfo{"WorldTransform", "World-space transform computed from the Transform hierarchy every tick. Read only.", false, kWorldTransformFields},
     ComponentInfo{"Velocity", "Linear and angular velocity. The built-in motion system integrates Transform from it every tick.", true, kVelocityFields},
@@ -4959,6 +5144,7 @@ constexpr std::array<ComponentInfo, 51> kComponents = {{
     ComponentInfo{"AudioSource", "A sound attached to an entity: the engine starts it when autoplay is set (once, when the component appears or the scene loads) and keeps `playing` and `voice` current. Scripts use audio.play for one-shots.", true, kAudioSourceFields},
     ComponentInfo{"AudioListener", "Where spatial sounds are heard from: the entity's world position and facing stand in for the camera's while it is enabled (the first enabled one by entity id when there are several). Put it on the player of a third-person game so sounds are placed around the player, not the camera.", true, kAudioListenerFields},
     ComponentInfo{"NavObstacle", "A moving thing paths go around (docs/design/navigation.md, Obstacles): every tick, before the agents move, the engine blocks the navigation cells within radius (plus the grid's agent radius) of the entity's position, so nav.path, nav.reachable, nav.nearest and the agents route around it without a new bake. Carts, crates, doors.", true, kNavObstacleFields},
+    ComponentInfo{"Behavior", "A state machine for what a non-player character does (docs/design/behavior.md): states say how it moves (stay, follow, flee, wander, go home, patrol a path, through its NavAgent) and what entering them plays and says; transitions go between them on conditions over what it perceives (the distance to its target, whether it sees it, its health, a hit, time in the state, an event). Every change is a behavior.changed event, and the state is on the entity, so world.query shows what every guard is doing.", true, kBehaviorFields},
     ComponentInfo{"NavAgent", "A thing that walks the navigation grid on its own (docs/design/navigation.md, Agents): every tick, after the scripts and the physics, the engine plans a path to its goal around the obstacles, heads for the next corner, picks the velocity that keeps it clear of the other agents and the obstacles, and moves the entity (Velocity.linear when it has a Velocity, else Transform.position). Scripts set mode, goal or target, speed and radius and read state; nav.arrived and nav.stuck are emitted on the transitions.", true, kNavAgentFields},
     ComponentInfo{"Morph", "Morph target weights set by script, over the ones the clip plays (docs/design/animation.md, Morph targets): every entry replaces the weight of its target for the entity's mesh asset; targets not listed keep the clip's or the file's default. animation.morph edits the list by name.", true, kMorphFields},
 }};

@@ -4,6 +4,7 @@
 
 #include "command_help.hpp"
 #include "journal.hpp"
+#include "behavior.hpp"
 #include "ragdoll.hpp"
 #include "web_fs.hpp"
 #include <pocket/world/water.hpp>
@@ -83,7 +84,7 @@ std::string base64(const std::string& bytes) {
 }
 
 // The tick's systems as perf names them, in Session::System's order.
-constexpr const char* kSystemNames[] = {"timelines", "paths", "bodies", "characters", "water", "contacts", "tiles_2d", "bodies_2d", "hits", "navigation", "cameras", "world", "particles", "animation", "ragdolls", "attachments", "cloth", "audio", "interface", "recorder"};
+constexpr const char* kSystemNames[] = {"timelines", "paths", "bodies", "characters", "water", "contacts", "tiles_2d", "bodies_2d", "hits", "behaviors", "navigation", "cameras", "world", "particles", "animation", "ragdolls", "attachments", "cloth", "audio", "interface", "recorder"};
 
 Json error_json(const Error& e) {
     Json j;
@@ -1086,6 +1087,9 @@ void Session::run_tick() {
     mark(System::Bodies2D);
     update_hits(before_physics);   // the touches the 3D and 2D steps just reported
     mark(System::Hits);
+    if (!behaviors_) behaviors_ = std::make_unique<Behaviors>();
+    behaviors_->step(*world_, physics_.get(), static_cast<float>(clock_.tick_seconds), options_.seed);   // after the hits, before the agents move
+    mark(System::Behaviors);
     nav_.step(*world_, static_cast<float>(clock_.tick_seconds));  // obstacles, then the agents (docs/design/navigation.md)
     mark(System::Navigation);
     update_camera_rigs(static_cast<float>(clock_.tick_seconds));   // after everything that moves what they follow

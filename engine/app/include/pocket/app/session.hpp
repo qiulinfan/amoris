@@ -200,6 +200,7 @@ class Session {
     std::unique_ptr<renderer::Animation> animation_;
     std::unique_ptr<physics::Physics> physics_;
     std::unique_ptr<class Ragdolls> ragdolls_;   // characters gone limp (docs/design/animation.md, Ragdolls)
+    std::unique_ptr<class Behaviors> behaviors_;   // the Behavior state machines (docs/design/behavior.md)
     physics::ClothRunner cloth_;                 // sheets of cloth (docs/design/physics.md, Cloth)
     std::unique_ptr<physics::Physics2D> physics2d_;
     std::unique_ptr<physics::Rigid2D> rigid2d_;   // RigidBody2D, Collider2D, Joint2D on Box2D (docs/design/physics2d.md)
@@ -333,7 +334,7 @@ class Session {
     };
     PhaseStats perf_frame_, perf_poll_, perf_tick_, perf_script_, perf_physics_, perf_world_, perf_state_, perf_render_;
     // Each of the tick's systems on its own (perf's systems), in the order the tick runs them.
-    enum class System { Timelines, Paths, Bodies, Characters, Water, Contacts, Tiles2D, Bodies2D, Hits, Navigation, Cameras, World, Particles, Animation, Ragdolls, Attachments, Cloth, Audio, Interface, Recorder, Count };
+    enum class System { Timelines, Paths, Bodies, Characters, Water, Contacts, Tiles2D, Bodies2D, Hits, Behaviors, Navigation, Cameras, World, Particles, Animation, Ragdolls, Attachments, Cloth, Audio, Interface, Recorder, Count };
     PhaseStats perf_systems_[static_cast<int>(System::Count)];
     Stopwatch pace_timer_;
     Json capture_info_;

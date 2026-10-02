@@ -1,5 +1,7 @@
 #include <pocket/renderer/animation.hpp>
 
+#include <pocket/core/condition.hpp>
+
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -169,149 +171,13 @@ Locals blend_locals(const assets::Mesh& mesh, const assets::AnimationClip* a, fl
 
 // ---- State machines (docs/design/animation.md, State machines) ----------------------------
 
-// A transition's condition over the graph's parameters: comparisons, and/or/not (or && || !),
-// parentheses, numbers, true and false; a bare name is its value (true when not 0). Read once by
-// recursive descent into a little program over the parameters' indices, run every tick it is
-// asked; `reads` are the parameters it reads, `error` what it could not read (what depends only
-// on the text and the parameters' names, so it is found when the program is made).
-struct ConditionProgram {
-    enum class Op : std::uint8_t { Const, Param, Not, Neg, Le, Ge, Eq, Ne, Lt, Gt, And, Or };
-    struct Step {
-        Op op = Op::Const;
-        double value = 0;          // Const
-        std::size_t param = 0;     // Param
-    };
-    std::vector<Step> steps;
-    std::vector<std::size_t> reads;
-    std::string error;
-
-    double run(const std::vector<world::AnimationParam>& params) const {
-        double stack[64];
-        std::size_t top = 0;
-        for (const Step& s : steps) {
-            switch (s.op) {
-                case Op::Const: stack[top++] = s.value; break;
-                case Op::Param: stack[top++] = s.param < params.size() ? params[s.param].value : 0.0; break;
-                case Op::Not: stack[top - 1] = stack[top - 1] == 0 ? 1 : 0; break;
-                case Op::Neg: stack[top - 1] = -stack[top - 1]; break;
-                default: {
-                    const double r = stack[--top], l = stack[top - 1];
-                    double v = 0;
-                    switch (s.op) {
-                        case Op::Le: v = l <= r; break;
-                        case Op::Ge: v = l >= r; break;
-                        case Op::Eq: v = l == r; break;
-                        case Op::Ne: v = l != r; break;
-                        case Op::Lt: v = l < r; break;
-                        case Op::Gt: v = l > r; break;
-                        case Op::And: v = (l != 0 && r != 0) ? 1 : 0; break;
-                        default: v = (l != 0 || r != 0) ? 1 : 0; break;
-                    }
-                    stack[top - 1] = v;
-                }
-            }
-        }
-        return top > 0 ? stack[top - 1] : 0.0;
-    }
-};
-
-class ConditionReader {
-   public:
-    ConditionReader(std::string_view text, const std::vector<world::AnimationParam>& params) : s_(text), params_(params) {}
-    ConditionProgram read() {
-        or_expr();
-        skip();
-        if (out_.error.empty() && i_ < s_.size()) out_.error = std::format("unexpected '{}'", s_.substr(i_, 12));
-        // A program deeper than the evaluator's stack is not one a graph needs.
-        if (out_.error.empty() && depth_max_ > 60) out_.error = "too deeply nested";
-        return std::move(out_);
-    }
-
-   private:
-    using Op = ConditionProgram::Op;
-    void emit(Op op, double value = 0, std::size_t param = 0) {
-        out_.steps.push_back({op, value, param});
-        if (op == Op::Const || op == Op::Param) depth_max_ = std::max(depth_max_, ++depth_);
-        else if (op != Op::Not && op != Op::Neg) --depth_;
-    }
-    void fail(std::string why) { if (out_.error.empty()) out_.error = std::move(why); }
-    void skip() { while (i_ < s_.size() && std::isspace(static_cast<unsigned char>(s_[i_]))) ++i_; }
-    bool take(std::string_view tok) {
-        skip();
-        if (s_.substr(i_, tok.size()) != tok) return false;
-        // A word ends at a word's end: "or" is not the start of "order".
-        if (std::isalpha(static_cast<unsigned char>(tok.back())) && i_ + tok.size() < s_.size() && (std::isalnum(static_cast<unsigned char>(s_[i_ + tok.size()])) || s_[i_ + tok.size()] == '_')) return false;
-        i_ += tok.size();
-        return true;
-    }
-    void or_expr() {
-        and_expr();
-        while (take("||") || take("or")) { and_expr(); emit(Op::Or); }
-    }
-    void and_expr() {
-        not_expr();
-        while (take("&&") || take("and")) { not_expr(); emit(Op::And); }
-    }
-    void not_expr() {
-        skip();
-        if (i_ + 1 < s_.size() && s_[i_] == '!' && s_[i_ + 1] != '=') { ++i_; not_expr(); emit(Op::Not); return; }
-        if (take("not")) { not_expr(); emit(Op::Not); return; }
-        compare();
-    }
-    void compare() {
-        unary();
-        static constexpr std::pair<std::string_view, Op> kOps[] = {{"<=", Op::Le}, {">=", Op::Ge}, {"==", Op::Eq}, {"!=", Op::Ne}, {"<", Op::Lt}, {">", Op::Gt}};
-        for (const auto& [tok, op] : kOps) {
-            if (!take(tok)) continue;
-            unary();
-            emit(op);
-            return;
-        }
-    }
-    void unary() {
-        if (take("-")) { unary(); emit(Op::Neg); return; }
-        primary();
-    }
-    void primary() {
-        skip();
-        if (take("(")) {
-            or_expr();
-            if (!take(")")) fail("a '(' without its ')'");
-            return;
-        }
-        if (i_ < s_.size() && (std::isdigit(static_cast<unsigned char>(s_[i_])) || s_[i_] == '.')) {
-            const std::string rest(s_.substr(i_));
-            char* end = nullptr;
-            const double v = std::strtod(rest.c_str(), &end);
-            i_ += static_cast<std::size_t>(end - rest.c_str());
-            emit(Op::Const, v);
-            return;
-        }
-        const std::size_t start = i_;
-        while (i_ < s_.size() && (std::isalnum(static_cast<unsigned char>(s_[i_])) || s_[i_] == '_' || s_[i_] == '.')) ++i_;
-        const std::string_view name = s_.substr(start, i_ - start);
-        if (name.empty()) {
-            fail(i_ < s_.size() ? std::format("unexpected '{}'", s_.substr(i_, 12)) : std::string("it ends too soon"));
-            emit(Op::Const, 0);
-            return;
-        }
-        if (name == "true") { emit(Op::Const, 1); return; }
-        if (name == "false") { emit(Op::Const, 0); return; }
-        for (std::size_t k = 0; k < params_.size(); ++k) {
-            if (params_[k].name != name) continue;
-            out_.reads.push_back(k);
-            emit(Op::Param, 0, k);
-            return;
-        }
-        fail(std::format("no parameter '{}'", name));
-        emit(Op::Const, 0);
-    }
-    std::string_view s_;
-    const std::vector<world::AnimationParam>& params_;
-    std::size_t i_ = 0;
-    int depth_ = 0, depth_max_ = 0;
-    ConditionProgram out_;
-};
+// A transition's condition over the graph's parameters (pocket/core/condition.hpp), read once.
+ConditionProgram read_graph_condition(std::string_view text, const std::vector<world::AnimationParam>& params) {
+    std::vector<std::string_view> names;
+    names.reserve(params.size());
+    for (const auto& p : params) names.push_back(p.name);
+    return read_condition(text, names);
+}
 
 // A blend space's clips and where each plays alone: "idle 0, walk 2, run 6" along one parameter,
 // "idle 0 0, forward 0 1, left -1 0" on two (`dims` values after each clip's name).
@@ -478,7 +344,7 @@ CompiledGraph compile_graph(const world::AnimationGraph& g, const assets::Mesh& 
     for (const world::AnimationTransition& t : g.transitions) {
         c.to.push_back(state_of(t.to));
         c.from.push_back(t.from == "*" ? -1 : state_of(t.from));
-        c.conditions.push_back(t.when.empty() ? ConditionProgram{} : ConditionReader(t.when, g.params).read());
+        c.conditions.push_back(t.when.empty() ? ConditionProgram{} : read_graph_condition(t.when, g.params));
         bool ok = true;
         if (c.to.back() < 0) { note(std::format("a transition goes to '{}', which is not a state", t.to)); ok = false; }
         else if (t.from != "*" && c.from.back() < 0) { note(std::format("a transition leaves '{}', which is not a state", t.from)); ok = false; }
@@ -574,7 +440,7 @@ void step_graphs(world::World& world, assets::AssetStore& assets, float dt, std:
             if (t.from == "*" ? to == cur : t.from != now.name) continue;
             if (played < t.after) continue;
             const ConditionProgram& cond = c.conditions[k];
-            const double holds = t.when.empty() ? 1.0 : cond.run(g.params);
+            const double holds = t.when.empty() ? 1.0 : cond.run([&](std::size_t i) { return i < g.params.size() ? static_cast<double>(g.params[i].value) : 0.0; });
             if (holds == 0) continue;
             for (std::size_t r : cond.reads) {
                 world::AnimationParam& p = g.params[r];

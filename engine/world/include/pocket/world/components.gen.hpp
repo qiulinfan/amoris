@@ -209,6 +209,37 @@ void from_json(const Json& j, Point2D& v);
 std::size_t numeric_span(Point2D& v, std::string_view path, float** out);
 void hash_record(struct StateHasherRef& h, const Point2D& v);
 
+/// One state of a Behavior (docs/design/behavior.md): how the entity moves while in it, and what entering it plays and says.
+struct BehaviorState {
+    std::string name = "";
+    std::int32_t move = 0;
+    float speed = 0.0f;
+    float radius = 5.0f;
+    std::string path = "";
+    std::string clip = "";
+    std::string event = "";
+    constexpr bool operator==(const BehaviorState&) const = default;
+};
+void to_json(Json& j, const BehaviorState& v);
+void from_json(const Json& j, BehaviorState& v);
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
+std::size_t numeric_span(BehaviorState& v, std::string_view path, float** out);
+void hash_record(struct StateHasherRef& h, const BehaviorState& v);
+
+/// A way from one state of a Behavior to another, taken (the first of those that hold, in list order) when its condition holds.
+struct BehaviorTransition {
+    std::string from = "*";
+    std::string to = "";
+    std::string when = "";
+    std::string on = "";
+    constexpr bool operator==(const BehaviorTransition&) const = default;
+};
+void to_json(Json& j, const BehaviorTransition& v);
+void from_json(const Json& j, BehaviorTransition& v);
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
+std::size_t numeric_span(BehaviorTransition& v, std::string_view path, float** out);
+void hash_record(struct StateHasherRef& h, const BehaviorTransition& v);
+
 /// Position, rotation and scale relative to the parent entity (or the world when there is no parent).
 struct Transform {
     Vec3 position{0.0f, 0.0f, 0.0f};
@@ -1150,6 +1181,28 @@ void from_json(const Json& j, NavObstacle& v);
 // Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
 std::size_t numeric_span(NavObstacle& v, std::string_view path, float** out);
 
+/// A state machine for what a non-player character does (docs/design/behavior.md): states say how it moves (stay, follow, flee, wander, go home, patrol a path, through its NavAgent) and what entering them plays and says; transitions go between them on conditions over what it perceives (the distance to its target, whether it sees it, its health, a hit, time in the state, an event). Every change is a behavior.changed event, and the state is on the entity, so world.query shows what every guard is doing.
+struct Behavior {
+    std::string state = "";
+    std::string previous = "";
+    float time = 0.0f;
+    std::vector<BehaviorState> states = {};
+    std::vector<BehaviorTransition> transitions = {};
+    std::uint64_t target = 0;
+    Vec3 home{0.0f, 0.0f, 0.0f};
+    float sight = 15.0f;
+    float fov = 360.0f;
+    float eye = 1.0f;
+    std::int32_t waypoint = 0;
+    bool enabled = true;
+    std::string error = "";
+    constexpr bool operator==(const Behavior&) const = default;
+};
+void to_json(Json& j, const Behavior& v);
+void from_json(const Json& j, Behavior& v);
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
+std::size_t numeric_span(Behavior& v, std::string_view path, float** out);
+
 /// A thing that walks the navigation grid on its own (docs/design/navigation.md, Agents): every tick, after the scripts and the physics, the engine plans a path to its goal around the obstacles, heads for the next corner, picks the velocity that keeps it clear of the other agents and the obstacles, and moves the entity (Velocity.linear when it has a Velocity, else Transform.position). Scripts set mode, goal or target, speed and radius and read state; nav.arrived and nav.stuck are emitted on the transitions.
 struct NavAgent {
     std::int32_t mode = 0;
@@ -1260,6 +1313,7 @@ void hash_component(struct StateHasherRef& h, const Collider& v);
 void hash_component(struct StateHasherRef& h, const AudioSource& v);
 void hash_component(struct StateHasherRef& h, const AudioListener& v);
 void hash_component(struct StateHasherRef& h, const NavObstacle& v);
+void hash_component(struct StateHasherRef& h, const Behavior& v);
 void hash_component(struct StateHasherRef& h, const NavAgent& v);
 void hash_component(struct StateHasherRef& h, const Morph& v);
 
@@ -1365,6 +1419,8 @@ std::size_t read_numbers(const AudioListener& v, double* out);
 bool write_numbers(AudioListener& v, const double* in, std::size_t n);
 std::size_t read_numbers(const NavObstacle& v, double* out);
 bool write_numbers(NavObstacle& v, const double* in, std::size_t n);
+std::size_t read_numbers(const Behavior& v, double* out);
+bool write_numbers(Behavior& v, const double* in, std::size_t n);
 std::size_t read_numbers(const NavAgent& v, double* out);
 bool write_numbers(NavAgent& v, const double* in, std::size_t n);
 std::size_t read_numbers(const Morph& v, double* out);

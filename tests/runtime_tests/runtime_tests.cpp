@@ -323,6 +323,144 @@ TEST_CASE("script.profile breaks the script time down by handler, at the line it
     for (const Json& h : p["handlers"]) REQUIRE(h["calls"].get<int>() <= 5);
 }
 
+TEST_CASE("a Behavior wanders, chases what comes near, flees when hurt and says each change", "[runtime][behavior]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "playground";
+    o.bundle = root() / "build" / "ts" / "playground.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.width = 64;
+    o.height = 64;
+    o.paused = true;
+    o.frames = 100000;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 1}}).has_value());   // the script bakes the grid
+    auto at = [&](double x, double z) { return Json{{"position", Json{{"x", x}, {"y", 0}, {"z", z}}}}; };
+    REQUIRE(s.command("world.spawn", Json{{"name", "Mark"}, {"components", Json{{"Transform", at(7, 7)}}}}).has_value());
+    const Json behavior{
+        {"target", "Mark"},
+        {"states", Json::array({Json{{"name", "wander"}, {"move", "wander"}, {"radius", 2}},
+                                Json{{"name", "chase"}, {"move", "follow"}, {"event", "guard.alerted"}},
+                                Json{{"name", "flee"}, {"move", "flee"}, {"radius", 6}}})},
+        {"transitions", Json::array({Json{{"to", "flee"}, {"when", "health < 30"}},
+                                     Json{{"from", "wander"}, {"to", "chase"}, {"when", "distance < 5"}},
+                                     Json{{"from", "chase"}, {"to", "wander"}, {"when", "distance > 9"}}})}};
+    REQUIRE(s.command("world.spawn", Json{{"name", "Guard"}, {"components", Json{{"Transform", at(-6, -6)}, {"NavAgent", Json{{"speed", 3}}}, {"Health", Json{{"current", 100}}}, {"Behavior", behavior}}}}).has_value());
+    auto get = [&](const char* comp) { return s.command("world.get", Json{{"entity", "Guard"}, {"component", comp}}).value(); };
+    const std::uint64_t seq0 = s.command("events.last_seq", Json::object()).value()["seq"].get<std::uint64_t>();
+    REQUIRE(s.command("step", Json{{"ticks", 10}}).has_value());
+    // It starts in the first state, wandering within 2 of where it stood.
+    Json b = get("Behavior");
+    INFO(b.dump());
+    REQUIRE(b["state"] == "wander");
+    REQUIRE(b["error"] == "");
+    REQUIRE(b["home"]["x"].get<double>() == Catch::Approx(-6).margin(0.01));
+    Json a = get("NavAgent");
+    REQUIRE(a["mode"] == 1);
+    REQUIRE(std::hypot(a["goal"]["x"].get<double>() + 6, a["goal"]["z"].get<double>() + 6) <= 2.01);
+    // Its target comes within 5: it chases, said by behavior.changed and the state's own event.
+    REQUIRE(s.command("world.set", Json{{"entity", "Mark"}, {"component", "Transform"}, {"value", at(-3, -6)}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 2}}).has_value());
+    b = get("Behavior");
+    REQUIRE(b["state"] == "chase");
+    REQUIRE(b["previous"] == "wander");
+    a = get("NavAgent");
+    REQUIRE(a["mode"] == 2);
+    Json changed = s.command("events.since", Json{{"seq", seq0}, {"type", "behavior.changed"}}).value()["events"];
+    REQUIRE(changed.size() == 2);   // into wander at the start, then into chase
+    REQUIRE(changed[1]["data"]["to"] == "chase");
+    REQUIRE(s.command("events.since", Json{{"seq", seq0}, {"type", "guard.alerted"}}).value()["events"].size() == 1);
+    // Hurt below 30 it flees from any state, to 6 away from the target.
+    REQUIRE(s.command("world.set", Json{{"entity", "Guard"}, {"component", "Health"}, {"value", Json{{"current", 20}}}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 1}}).has_value());
+    REQUIRE(get("Behavior")["state"] == "flee");
+    a = get("NavAgent");
+    REQUIRE(a["mode"] == 1);
+    const Json mark = s.command("world.get", Json{{"entity", "Mark"}, {"component", "Transform"}}).value()["position"];
+    REQUIRE(std::hypot(a["goal"]["x"].get<double>() - mark["x"].get<double>(), a["goal"]["z"].get<double>() - mark["z"].get<double>()) > 5.0);
+    // Healed and set back by hand, it is in the state written, entered as a transition enters.
+    REQUIRE(s.command("world.set", Json{{"entity", "Guard"}, {"component", "Health"}, {"value", Json{{"current", 100}}}}).has_value());
+    REQUIRE(s.command("world.set", Json{{"entity", "Mark"}, {"component", "Transform"}, {"value", at(8, 8)}}).has_value());
+    REQUIRE(s.command("world.set", Json{{"entity", "Guard"}, {"component", "Behavior"}, {"value", Json{{"state", "wander"}}}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 1}}).has_value());
+    b = get("Behavior");
+    REQUIRE(b["state"] == "wander");
+    REQUIRE(b["previous"] == "flee");
+    // A transition to a state that is not there is said, not followed.
+    REQUIRE(s.command("world.set", Json{{"entity", "Guard"}, {"component", "Behavior"}, {"value", Json{{"transitions", Json::array({Json{{"to", "sleep"}, {"when", "time > 0"}}})}}}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 2}}).has_value());
+    b = get("Behavior");
+    REQUIRE(b["state"] == "wander");
+    REQUIRE(b["error"].get<std::string>().find("sleep") != std::string::npos);
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("a Behavior sees what is in its sight, its field of view, and not behind a pillar", "[runtime][behavior][sight]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "playground";
+    o.bundle = root() / "build" / "ts" / "playground.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.width = 64;
+    o.height = 64;
+    o.paused = true;
+    o.frames = 100000;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 1}}).has_value());
+    auto at = [&](double x, double z) { return Json{{"position", Json{{"x", x}, {"y", 0}, {"z", z}}}}; };
+    REQUIRE(s.command("world.spawn", Json{{"name", "Mark"}, {"components", Json{{"Transform", at(-0.5, -2.5)}}}}).has_value());
+    // Standing watch west of the north-west pillar (x -2.5, z -2.5, 1.5 tall), the mark east of it.
+    const Json behavior{{"target", "Mark"}, {"sight", 10},
+                        {"states", Json::array({Json{{"name", "watch"}}, Json{{"name", "alarm"}}})},
+                        {"transitions", Json::array({Json{{"from", "watch"}, {"to", "alarm"}, {"when", "sees"}}, Json{{"from", "alarm"}, {"to", "watch"}, {"when", "not sees"}}})}};
+    REQUIRE(s.command("world.spawn", Json{{"name", "Guard"}, {"components", Json{{"Transform", at(-4.5, -2.5)}, {"Behavior", behavior}}}}).has_value());
+    auto state = [&] { return s.command("world.get", Json{{"entity", "Guard"}, {"component", "Behavior"}}).value()["state"].get<std::string>(); };
+    auto mark = [&](double x, double z) { REQUIRE(s.command("world.set", Json{{"entity", "Mark"}, {"component", "Transform"}, {"value", at(x, z)}}).has_value()); REQUIRE(s.command("step", Json{{"ticks", 2}}).has_value()); };
+    REQUIRE(s.command("step", Json{{"ticks", 2}}).has_value());
+    REQUIRE(state() == "watch");        // the pillar is in the way
+    mark(-4.5, 1.5);
+    REQUIRE(state() == "alarm");        // in the open, 4 away
+    mark(-4.5, 8.0);
+    REQUIRE(state() == "watch");        // 10.5 away: past its sight
+    // A field of view of 90 degrees about -Z: the mark north of it is seen, south of it not.
+    REQUIRE(s.command("world.set", Json{{"entity", "Guard"}, {"component", "Behavior"}, {"value", Json{{"fov", 90}}}}).has_value());
+    mark(-4.5, 1.5);
+    REQUIRE(state() == "watch");
+    mark(-4.5, -6.5);
+    REQUIRE(state() == "alarm");
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("a Behavior patrols a Path's points in turn", "[runtime][behavior][patrol]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "playground";
+    o.bundle = root() / "build" / "ts" / "playground.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.width = 64;
+    o.height = 64;
+    o.paused = true;
+    o.frames = 100000;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 1}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Route"}, {"components", Json{{"Transform", Json::object()}, {"Path", Json{{"points", Json::array({Json{{"x", -7}, {"y", 0}, {"z", -7}}, Json{{"x", -7}, {"y", 0}, {"z", -4}}})}}}}}}).has_value());
+    const Json behavior{{"states", Json::array({Json{{"name", "rounds"}, {"move", "patrol"}, {"path", "Route"}, {"speed", 4}}})}};
+    REQUIRE(s.command("world.spawn", Json{{"name", "Guard"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", -6}, {"y", 0}, {"z", -6}}}}}, {"NavAgent", Json::object()}, {"Behavior", behavior}}}}).has_value());
+    auto goal_z = [&] { return s.command("world.get", Json{{"entity", "Guard"}, {"component", "NavAgent"}}).value()["goal"]["z"].get<double>(); };
+    REQUIRE(s.command("step", Json{{"ticks", 2}}).has_value());
+    REQUIRE(goal_z() == Catch::Approx(-7).margin(0.01));
+    REQUIRE(s.command("step", Json{{"ticks", 120}}).has_value());   // there, and on to the next
+    REQUIRE(goal_z() == Catch::Approx(-4).margin(0.01));
+    REQUIRE(s.command("world.get", Json{{"entity", "Guard"}, {"component", "Behavior"}}).value()["waypoint"] == 1);
+    REQUIRE(s.finish().has_value());
+}
+
 TEST_CASE("prefab files instantiate, save and reload through the session", "[runtime][prefab]") {
     app::Options o;
     o.project_dir = root() / "samples" / "playground";

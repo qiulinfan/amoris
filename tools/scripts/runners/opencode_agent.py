@@ -73,6 +73,8 @@ def main():
     if a.via == "mcp":
         server = {"type": "local", "command": [pocket, "--root", ROOT, "mcp"], "enabled": True,
                   "environment": {"POCKET_RPC_URL": payload["rpc_url"], "POCKET_ROOT": ROOT}}
+        if os.environ.get("POCKET_RUNTIME"):   # the runtime under test, for runtime_start (docs/agent-eval.md)
+            server["environment"]["POCKET_RUNTIME"] = os.environ["POCKET_RUNTIME"]
         with open(os.path.join(cwd, "opencode.json"), "w") as f:
             json.dump({"$schema": "https://opencode.ai/config.json", "mcp": {"pocket": server}}, f, indent=2)
     agent = shutil.which(a.agent) or a.agent

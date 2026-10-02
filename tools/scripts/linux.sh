@@ -7,6 +7,7 @@
 #   tools/scripts/linux.sh build      # the same without the tests
 #   tools/scripts/linux.sh shell      # a shell in the container, the copy at /work/aipocket
 #   tools/scripts/linux.sh exec "<shell command>"   # run it in the copy, after building
+#   tools/scripts/linux.sh raw "<shell command>"    # run it in the copy as it is, nothing built (a test binary of the last build)
 
 #   tools/scripts/linux.sh <command>  # any pocket command, e.g. "run hello -- --headless --frames 60 --json"
 #   POCKET_LINUX_ARCH=amd64 tools/scripts/linux.sh ...   # the same on x86_64 (its own image and volume)
@@ -30,6 +31,7 @@ case "$step" in
     shell) cmd="bash" ;;
     build) cmd="./.pocket/pocket build $*" ;;
     exec) cmd="./.pocket/pocket build >/dev/null && $1" ;;
+    raw) cmd="$1" ;;
     test) cmd="./.pocket/pocket build $* && ./.pocket/pocket test $*" ;;
     *) cmd="./.pocket/pocket $step $*" ;;
 esac
