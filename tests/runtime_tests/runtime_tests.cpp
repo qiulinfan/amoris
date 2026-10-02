@@ -766,6 +766,31 @@ TEST_CASE("the built-in humanoid walks, runs and stands by its speed; a one-shot
     REQUIRE(a["finished"] == true);
 }
 
+TEST_CASE("a crouching character's humanoid crouches still and creeps as it moves, and stands again", "[runtime][animation][locomotion][crouch]") {
+    auto o = hello_options(-1);
+    o.paused = true;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Floor"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", -40.5}, {"z", 0}}}}}, {"RigidBody", Json{{"kind", "static"}}}, {"Collider", Json{{"shape", "box"}, {"size", Json{{"x", 20}, {"y", 0.5}, {"z", 20}}}}}}}}).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Sneak"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", -39.1}, {"z", 0}}}}}, {"Character", Json::object()}, {"RigidBody", Json{{"kind", "kinematic"}}},
+        {"Collider", Json{{"shape", "capsule"}, {"size", Json{{"x", 0.3}, {"y", 0.6}, {"z", 0.3}}}}}}}}).has_value());
+    // The body as a child, given the way a scene file nests it.
+    const Json spawned = s.command("world.spawn", Json{{"name", "Holder"}, {"components", Json{{"Transform", Json::object()}}}, {"children", Json::array({Json{{"name", "Inner"}, {"components", Json{{"Transform", Json::object()}}}}})}}).value();
+    REQUIRE(spawned["children"][0]["path"] == "/Holder/Inner");
+    REQUIRE(s.command("world.spawn", Json{{"name", "Body"}, {"parent", "Sneak"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", -0.9}, {"z", 0}}}}}, {"MeshRenderer", Json{{"mesh", "humanoid"}}}, {"Animator", Json{{"locomotion", true}}}}}}).has_value());
+    auto clip = [&] { return s.command("world.get", Json{{"entity", "Sneak/Body"}, {"component", "Animator"}, {"field", "clip"}}).value().get<std::string>(); };
+    auto set = [&](Json v, int ticks) {
+        REQUIRE(s.command("world.set", Json{{"entity", "Sneak"}, {"component", "Character"}, {"value", std::move(v)}}).has_value());
+        REQUIRE(s.command("step", Json{{"ticks", ticks}}).has_value());
+    };
+    set(Json{{"crouch", true}}, 20);
+    REQUIRE(clip() == "crouch");
+    set(Json{{"velocity", Json{{"x", 0}, {"y", 0}, {"z", 1.0}}}}, 40);
+    REQUIRE(clip() == "crouch_walk");
+    set(Json{{"crouch", false}}, 40);
+    REQUIRE(clip() == "walk");
+}
+
 TEST_CASE("footsteps: a walker's gait plants a foot twice a stride, each an event and a sound from where it stands", "[runtime][animation][footsteps]") {
     auto o = hello_options(-1);
     o.paused = true;

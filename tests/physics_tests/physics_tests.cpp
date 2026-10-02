@@ -1399,6 +1399,96 @@ TEST_CASE("a swimmer pushing into a low ledge climbs out onto it; a wall too hig
     }
 }
 
+TEST_CASE("a crouching character passes under a low beam a standing one cannot, and stands only once out from under it", "[physics][character][crouch]") {
+    for (const bool crouch : {false, true}) {
+        World w;
+        physics::Physics p;
+        solid(w, "Floor", {0, -0.5f, 0}, {20, 0.5f, 20});
+        // A beam from x 2 to 4, its underside 1.3 over the floor: under a standing 1.8, over a crouched 1.1.
+        solid(w, "Beam", {3, 1.55f, 0}, {1, 0.25f, 5});
+        const EntityId hero = character(w, "Hero", {0, 0.9f, 0});
+        walk(p, w, hero, {}, 20);
+        if (crouch) {
+            Character c = *w.try_get<Character>(hero);
+            c.crouch = true;
+            w.ecs().entity(hero).set<Character>(c);
+        }
+        walk(p, w, hero, {2, 0, 0}, 90);   // 3 units on, under the beam's middle
+        const Vec3 at = w.try_get<Transform>(hero)->position;
+        INFO("crouch " << crouch << ": at " << at.x << ", " << at.y);
+        REQUIRE(at.y == Catch::Approx(0.9).margin(0.02));   // the entity at the standing centre either way: feet on the floor
+        if (!crouch) {
+            REQUIRE(at.x < 1.75f);   // stopped at the beam
+            continue;
+        }
+        REQUIRE(at.x > 2.6f);
+        REQUIRE(w.try_get<Character>(hero)->crouching);
+        // Asked to stand under the beam: it stays down, then stands once out from under it.
+        Character c = *w.try_get<Character>(hero);
+        c.crouch = false;
+        w.ecs().entity(hero).set<Character>(c);
+        walk(p, w, hero, {}, 10);
+        REQUIRE(w.try_get<Character>(hero)->crouching);
+        walk(p, w, hero, {2, 0, 0}, 90);
+        REQUIRE(w.try_get<Transform>(hero)->position.x > 4.5f);
+        REQUIRE_FALSE(w.try_get<Character>(hero)->crouching);
+        REQUIRE(w.try_get<Transform>(hero)->position.y == Catch::Approx(0.9).margin(0.02));
+    }
+}
+
+TEST_CASE("a character is shoved by what runs into it: a heavy body far, a light one hardly, another character along by their masses", "[physics][character][shove]") {
+    auto person = [](World& w, const char* name, float x) {
+        return w.spawn(name, 0, Json{{"Transform", {{"position", {{"x", x}, {"y", 0.9}, {"z", 0}}}}}, {"Character", Json::object()},
+                                     {"RigidBody", {{"kind", 2}}}, {"Collider", {{"shape", 2}, {"size", {{"x", 0.3}, {"y", 0.6}, {"z", 0.3}}}}}}).value();
+    };
+    for (const float mass : {300.0f, 1.0f}) {
+        World w;
+        physics::Physics p;
+        solid(w, "Floor", {0, -0.5f, 0}, {30, 0.5f, 30});
+        const EntityId hero = person(w, "Hero", 0);
+        w.spawn("Rock", 0, Json{{"Transform", {{"position", {{"x", -2.5}, {"y", 0.9}, {"z", 0}}}}}, {"RigidBody", {{"kind", 0}, {"mass", mass}}},
+                                {"Collider", {{"shape", 1}, {"size", {{"x", 0.5}, {"y", 0.5}, {"z", 0.5}}}}}, {"Velocity", {{"linear", {{"x", 8}, {"y", 0}, {"z", 0}}}}}}).value();
+        walk(p, w, hero, {}, 90);
+        const float moved = w.try_get<Transform>(hero)->position.x;
+        INFO("mass " << mass << ": the hero moved to " << moved);
+        if (mass > 100) REQUIRE(moved > 0.8f);
+        else REQUIRE(moved < 0.3f);
+    }
+    // One character walking into another of the same mass pushes it along.
+    World w;
+    physics::Physics p;
+    solid(w, "Floor", {0, -0.5f, 0}, {30, 0.5f, 30});
+    const EntityId a = person(w, "A", 0);
+    const EntityId b = person(w, "B", 1.0f);
+    walk(p, w, a, {2, 0, 0}, 90);
+    INFO("a at " << w.try_get<Transform>(a)->position.x << ", b at " << w.try_get<Transform>(b)->position.x);
+    REQUIRE(w.try_get<Transform>(b)->position.x > 1.6f);
+    REQUIRE(w.try_get<Transform>(a)->position.x > 1.0f);
+}
+
+TEST_CASE("a character with mantle that jumps at a ledge within reach climbs onto it; without, it falls back", "[physics][character][mantle]") {
+    for (const float mantle : {0.0f, 1.6f}) {
+        World w;
+        physics::Physics p;
+        solid(w, "Floor", {0, -0.5f, 0}, {20, 0.5f, 20});
+        solid(w, "Ledge", {6, 0.6f, 0}, {3, 0.6f, 5});   // its top 1.2 over the floor, from x 3 on
+        const EntityId hero = character(w, "Hero", {1.5f, 0.9f, 0}, Json{{"mantle", mantle}});
+        walk(p, w, hero, {}, 20);
+        walk(p, w, hero, {3, 6, 0}, 1);   // a jump toward it
+        walk(p, w, hero, {3, 0, 0}, 80);
+        const Vec3 at = w.try_get<Transform>(hero)->position;
+        INFO("mantle " << mantle << ": at " << at.x << ", " << at.y);
+        if (mantle > 0) {
+            REQUIRE(at.y == Catch::Approx(1.2 + 0.9).margin(0.05));
+            REQUIRE(at.x > 3.0f);
+            REQUIRE(w.events().histogram()["character.climbed"] == 1);
+        } else {
+            REQUIRE(at.y == Catch::Approx(0.9).margin(0.05));
+            REQUIRE(at.x < 3.0f);
+        }
+    }
+}
+
 TEST_CASE("scattered copies that collide stop characters, bodies, rays and sweeps; without collide they are only drawn", "[physics][scatter]") {
     World w;
     physics::Physics p;

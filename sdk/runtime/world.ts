@@ -146,9 +146,17 @@ export function command<T = unknown>(name: string, params?: unknown): T {
     return __pocket.command(name, params) as T;
 }
 
+/** A child spawned with its parent, as a scene file nests it. */
+export interface SpawnChild {
+    name: string;
+    components?: ComponentPatch;
+    children?: SpawnChild[];
+}
 export interface SpawnOptions {
     parent?: EntityRef;
     components?: ComponentPatch;
+    /** Children spawned under it, as a scene file nests them. */
+    children?: SpawnChild[];
     /** Sequence number of the event that caused this spawn, for the causal log. */
     cause?: number;
 }

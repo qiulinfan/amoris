@@ -583,6 +583,11 @@ A 3D character: an upright capsule centred on the entity that walks, climbs step
 | `step` | f32 | 0.3 | The tallest edge a grounded character walks up without a jump (stairs, kerbs), and how far it follows the ground down (the far side of a slope, going down stairs) without leaving it. |
 | `max_slope` | f32 | 45.0 | The steepest floor, in degrees, the character stands and walks on; steeper ground is a wall it slides down. |
 | `push` | f32 | 1.0 | How much of its speed into a dynamic body the character gives it (0 leaves bodies alone, 1 pushes them along at its own speed). |
+| `mantle` | f32 | 0.0 | In the air and pushing into a wall, it climbs onto it when the wall's top is within this many units over its feet (a jump at a ledge); 0 never (docs/design/physics.md, Characters). |
+| `mass` | f32 | 70.0 | How hard it is to shove: a dynamic body or another character moving into it pushes it by the share of their masses (docs/design/physics.md, Characters). |
+| `crouch` | bool | false | Crouch: the capsule shrinks to crouch_height, its foot staying put; set false it stands up again when the room above lets it (docs/design/physics.md, Characters). |
+| `crouch_height` | f32 | 1.1 | The capsule's whole height crouched, in units. |
+| `crouching` | bool | false | Crouched: asked to, or kept down by something over it (written by the engine). |
 | `dive` | f32 | 0.0 | Swimming, -1..1: down under the surface (negative) or back up (positive) at three times swim_speed a second at full; 0 floats back up to swim with the head out (docs/design/water.md, Swimming). |
 | `swim_speed` | f32 | 0.6 | In water deeper than its chest it swims (docs/design/water.md): the share of velocity.x and z it keeps there; the water's own motion carries it too. |
 | `mask` | u32 | 4294967295 | Bits of the collision layers (Collider.layer) the character is stopped by; all by default. |

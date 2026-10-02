@@ -2681,6 +2681,11 @@ void to_json(Json& j, const Character& v) {
     j["step"] = v.step;
     j["max_slope"] = v.max_slope;
     j["push"] = v.push;
+    j["mantle"] = v.mantle;
+    j["mass"] = v.mass;
+    j["crouch"] = v.crouch;
+    j["crouch_height"] = v.crouch_height;
+    j["crouching"] = v.crouching;
     j["dive"] = v.dive;
     j["swim_speed"] = v.swim_speed;
     j["mask"] = v.mask;
@@ -2704,6 +2709,11 @@ void from_json(const Json& j, Character& v) {
     scalar_from_json(j, "step", v.step);
     scalar_from_json(j, "max_slope", v.max_slope);
     scalar_from_json(j, "push", v.push);
+    scalar_from_json(j, "mantle", v.mantle);
+    scalar_from_json(j, "mass", v.mass);
+    scalar_from_json(j, "crouch", v.crouch);
+    scalar_from_json(j, "crouch_height", v.crouch_height);
+    scalar_from_json(j, "crouching", v.crouching);
     scalar_from_json(j, "dive", v.dive);
     scalar_from_json(j, "swim_speed", v.swim_speed);
     scalar_from_json(j, "mask", v.mask);
@@ -2729,6 +2739,11 @@ void hash_component(StateHasherRef& h, const Character& v) {
     h.f32(v.step);
     h.f32(v.max_slope);
     h.f32(v.push);
+    h.f32(v.mantle);
+    h.f32(v.mass);
+    h.u8(v.crouch ? 1 : 0);
+    h.f32(v.crouch_height);
+    h.u8(v.crouching ? 1 : 0);
     h.f32(v.dive);
     h.f32(v.swim_speed);
     h.i64(static_cast<std::int64_t>(v.mask));
@@ -2760,6 +2775,9 @@ std::size_t numeric_span(Character& v, std::string_view path, float** out) {
     if (path == "step") { *out = &v.step; return 1; }
     if (path == "max_slope") { *out = &v.max_slope; return 1; }
     if (path == "push") { *out = &v.push; return 1; }
+    if (path == "mantle") { *out = &v.mantle; return 1; }
+    if (path == "mass") { *out = &v.mass; return 1; }
+    if (path == "crouch_height") { *out = &v.crouch_height; return 1; }
     if (path == "dive") { *out = &v.dive; return 1; }
     if (path == "swim_speed") { *out = &v.swim_speed; return 1; }
     if (path == "ground_normal") { *out = &v.ground_normal.x; return 3; }
@@ -5349,7 +5367,7 @@ constexpr std::array<FieldInfo, 18> kBody2DFields = {{
     FieldInfo{"restitution", "f32", "Bounciness 0..1: the speed kept, reversed, when the body hits a floor, a ceiling, a wall, a platform or another body (a ball at 0.7 bounces to half its height; between two bodies the larger restitution counts, and momentum is kept); 0 stops dead. A landing slower than half a unit per second lands instead of bouncing, and body2d.bounced reports each bounce (docs/design/tilemaps.md, Friction and restitution).", {}},
     FieldInfo{"friction", "f32", "Ground friction in units per second squared: how fast a grounded body's sideways speed (relative to what carries it) falls toward zero once nothing drives it, so a shoved crate slides to a stop; 0 slides forever. Applied after the move, so a script that writes velocity.x every tick is not slowed.", {}},
 }};
-constexpr std::array<FieldInfo, 20> kCharacterFields = {{
+constexpr std::array<FieldInfo, 25> kCharacterFields = {{
     FieldInfo{"velocity", "vec3", "Units per second, relative to the platform it stands on; the engine adds gravity to y, zeroes y on landing and under a ceiling, and takes out the part that runs into a wall.", {}},
     FieldInfo{"gravity", "f32", "Units per second squared along Y (negative is down).", {}},
     FieldInfo{"max_fall", "f32", "Fastest downward speed.", {}},
@@ -5358,6 +5376,11 @@ constexpr std::array<FieldInfo, 20> kCharacterFields = {{
     FieldInfo{"step", "f32", "The tallest edge a grounded character walks up without a jump (stairs, kerbs), and how far it follows the ground down (the far side of a slope, going down stairs) without leaving it.", {}},
     FieldInfo{"max_slope", "f32", "The steepest floor, in degrees, the character stands and walks on; steeper ground is a wall it slides down.", {}},
     FieldInfo{"push", "f32", "How much of its speed into a dynamic body the character gives it (0 leaves bodies alone, 1 pushes them along at its own speed).", {}},
+    FieldInfo{"mantle", "f32", "In the air and pushing into a wall, it climbs onto it when the wall's top is within this many units over its feet (a jump at a ledge); 0 never (docs/design/physics.md, Characters).", {}},
+    FieldInfo{"mass", "f32", "How hard it is to shove: a dynamic body or another character moving into it pushes it by the share of their masses (docs/design/physics.md, Characters).", {}},
+    FieldInfo{"crouch", "bool", "Crouch: the capsule shrinks to crouch_height, its foot staying put; set false it stands up again when the room above lets it (docs/design/physics.md, Characters).", {}},
+    FieldInfo{"crouch_height", "f32", "The capsule's whole height crouched, in units.", {}},
+    FieldInfo{"crouching", "bool", "Crouched: asked to, or kept down by something over it (written by the engine).", {}},
     FieldInfo{"dive", "f32", "Swimming, -1..1: down under the surface (negative) or back up (positive) at three times swim_speed a second at full; 0 floats back up to swim with the head out (docs/design/water.md, Swimming).", {}},
     FieldInfo{"swim_speed", "f32", "In water deeper than its chest it swims (docs/design/water.md): the share of velocity.x and z it keeps there; the water's own motion carries it too.", {}},
     FieldInfo{"mask", "u32", "Bits of the collision layers (Collider.layer) the character is stopped by; all by default.", {}},

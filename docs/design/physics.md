@@ -232,7 +232,24 @@ each high place, walked by WASD or a pad, C to crouch; the capsule is drawn by a
 feeds from the velocity (`docs/design/animation.md`, Clips from other files); its scenarios walk a
 bot through it (`pocket scenario walker`: the stairs and the ramp climbed without a second landing,
 the rock a wall, the lift ridden to the tower's coin, a crate pushed along, a jump, the body
-running, crouching and jumping with it). `physics_tests` (`[character]`) pin the rest: landing at
+running, crouching and jumping with it). `Character.crouch` makes the capsule `crouch_height` tall
+(1.1) with its foot where the standing one's is; the entity stays at the standing centre, so a body
+mesh hung under it keeps its feet on the ground; set false it stands up again only when the room
+above lets it, and `crouching` says whether it is down (asked to, or kept down under a beam).
+`physics_tests` (`[crouch]`): a beam 1.3 over the floor stops a standing character and lets a
+crouched one under, which stays down under it when told to stand and stands once out. What runs into
+a character shoves it by the share of their masses (`Character.mass`, 70): a dynamic body moving
+into its capsule gives it that share of its speed along the touch and keeps only the speed they then
+share toward it (the overlap it made is given way to by the same share), and a character walking
+into another shoves it along the same way; the shove carries it across, through its moves as its own
+velocity does, and dies away (within a fifth of a second on the ground). `physics_tests`
+(`[shove]`): a ball of 300 rolling in at 8 shoves a character a unit and more, one of 1 hardly at
+all, and one character walking into another of its mass pushes it along. With `Character.mantle`
+above 0, a character in the air (not falling faster than 4) pushing into a wall climbs onto it when
+the wall's top is within `mantle` over its feet: its capsule raised clear, moved over the top and
+set down on it, emitting `character.climbed` (as a swimmer climbing out does,
+`docs/design/water.md`); `physics_tests` (`[mantle]`): a jump at a ledge 1.2 high ends on it with
+`mantle` 1.6 and back on the floor without. `physics_tests` (`[character]`) pin the rest: landing at
 half its height above the floor with no creep while standing, stopping a radius from a wall and
 sliding along it at full speed, a 0.25 kerb climbed and a 0.6 ledge not, a 30 degree ramp walked up
 at pace and a 60 degree one refused, stairs walked down without leaving the ground, falling off a
@@ -411,13 +428,12 @@ down the tree.
 Cloth that pushes back (a sheet is moved by the bodies but moves none of them), cloth against mesh
 colliders and tile maps, a sheet folding through itself (its particles keep out of colliders, not
 out of each other), Sweeps of two mesh colliders against each other (meshes do not collide with each
-other), characters pushed by bodies or by each other (a character stops at another's collider but
-neither gives way), a character's capsule leaning or crouching (it is always upright and its height
-fixed while it moves), a vehicle's gears, differential, anti-roll bars and tyre model beyond a
-friction circle, wheels that are bodies of their own, an exact cast against a turning body (a sphere
-flying at a spinning bar is swept by samples, `exact: false`), and a callback deciding per pair
-(groups, exceptions and joints cover the cases). 2D platformer physics against tile maps is its own
-system (`docs/design/tilemaps.md`). `samples/physics` (an arena with a ramp, a trigger goal, a
-pendulum chain, a lantern on a rope that snaps when kicked, a capsule log, a hatch on a limited
-hinge, a motor-driven paddle, a marble rolling down a mesh-collider bowl, a lift on a motorised
-slider, a bob on a spring) and `tests/physics_tests` are the reference for what works.
+other), a character's capsule leaning (it is always upright), a vehicle's gears, differential,
+anti-roll bars and tyre model beyond a friction circle, wheels that are bodies of their own, an
+exact cast against a turning body (a sphere flying at a spinning bar is swept by samples,
+`exact: false`), and a callback deciding per pair (groups, exceptions and joints cover the cases).
+2D platformer physics against tile maps is its own system (`docs/design/tilemaps.md`).
+`samples/physics` (an arena with a ramp, a trigger goal, a pendulum chain, a lantern on a rope that
+snaps when kicked, a capsule log, a hatch on a limited hinge, a motor-driven paddle, a marble
+rolling down a mesh-collider bowl, a lift on a motorised slider, a bob on a spring) and
+`tests/physics_tests` are the reference for what works.

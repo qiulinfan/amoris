@@ -1036,6 +1036,16 @@ export interface Character {
     max_slope: number;
     /** How much of its speed into a dynamic body the character gives it (0 leaves bodies alone, 1 pushes them along at its own speed). */
     push: number;
+    /** In the air and pushing into a wall, it climbs onto it when the wall's top is within this many units over its feet (a jump at a ledge); 0 never (docs/design/physics.md, Characters). */
+    mantle: number;
+    /** How hard it is to shove: a dynamic body or another character moving into it pushes it by the share of their masses (docs/design/physics.md, Characters). */
+    mass: number;
+    /** Crouch: the capsule shrinks to crouch_height, its foot staying put; set false it stands up again when the room above lets it (docs/design/physics.md, Characters). */
+    crouch: boolean;
+    /** The capsule's whole height crouched, in units. */
+    crouch_height: number;
+    /** Crouched: asked to, or kept down by something over it (written by the engine). */
+    crouching: boolean;
     /** Swimming, -1..1: down under the surface (negative) or back up (positive) at three times swim_speed a second at full; 0 floats back up to swim with the head out (docs/design/water.md, Swimming). */
     dive: number;
     /** In water deeper than its chest it swims (docs/design/water.md): the share of velocity.x and z it keeps there; the water's own motion carries it too. */
@@ -1851,7 +1861,7 @@ export const componentDefaults: { readonly [K in EngineComponentName]: Component
     RigidBody: { kind: 0, mass: 1, restitution: 0.2, friction: 0.5, linear_damping: 0.01, angular_damping: 0.05, gravity_scale: 1, sleeping: false, lock_rotation: false, ccd: false },
     Joint: { kind: 0, target: "", anchor: { x: 0, y: 0, z: 0 }, target_anchor: { x: 0, y: 0, z: 0 }, distance: -1, rope: false, stiffness: 0, damping: 0, break_force: 0, force: 0, axis: { x: 0, y: 0, z: 1 }, target_axis: { x: 0, y: 0, z: 0 }, reference: { x: 0, y: 0, z: 0 }, limit: false, lower: -1.5708, upper: 1.5708, motor_speed: 0, motor_torque: 0, motor_force: 0, angle: 0, translation: 0, speed: 0, collide_connected: true },
     Body2D: { velocity: { x: 0, y: 0 }, gravity: -24, max_fall: 30, size: { x: 0.4, y: 0.5 }, offset: { x: 0, y: 0 }, map: "", grounded: false, on_wall: 0, on_ceiling: false, kinematic: false, one_way: false, step: 0.5, riding: 0, on_slope: 0, mass: 1, collide_bodies: true, restitution: 0, friction: 0 },
-    Character: { velocity: { x: 0, y: 0, z: 0 }, gravity: -20, max_fall: 50, radius: 0.3, height: 1.8, step: 0.3, max_slope: 45, push: 1, dive: 0, swim_speed: 0.6, mask: 4294967295, grounded: false, ground_normal: { x: 0, y: 1, z: 0 }, ground: 0, on_wall: false, wall_normal: { x: 0, y: 0, z: 0 }, on_ceiling: false, stepped: false, swimming: false, submerged: 0 },
+    Character: { velocity: { x: 0, y: 0, z: 0 }, gravity: -20, max_fall: 50, radius: 0.3, height: 1.8, step: 0.3, max_slope: 45, push: 1, mantle: 0, mass: 70, crouch: false, crouch_height: 1.1, crouching: false, dive: 0, swim_speed: 0.6, mask: 4294967295, grounded: false, ground_normal: { x: 0, y: 1, z: 0 }, ground: 0, on_wall: false, wall_normal: { x: 0, y: 0, z: 0 }, on_ceiling: false, stepped: false, swimming: false, submerged: 0 },
     Terrain: { size: { x: 64, y: 64 }, height: 8, resolution: 129, heightmap: "", seed: 1, scale: 24, octaves: 4, island: 0, grass: { r: 0.3, g: 0.45, b: 0.22, a: 1 }, rock: { r: 0.45, g: 0.42, b: 0.38, a: 1 }, snow: { r: 0.92, g: 0.93, b: 0.95, a: 1 }, rock_slope: 35, snow_line: 0.85, texture_tile: 4, bump: 0.5, height_blend: 0.5, paintmap: "", layers: [], layermap: "" },
     Cloth: { size: { x: 1.5, y: 1 }, segments: { x: 12, y: 8 }, pin: 0, stiffness: 0.9, damping: 0.02, weight: 0.4, wind: 1, collide: true, thickness: 0.02, enabled: true },
     Wind: { direction: 0, speed: 3, gusts: 0.3, gust_length: 20, enabled: true },

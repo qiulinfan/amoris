@@ -1026,7 +1026,7 @@ void step_locomotion(world::World& world, assets::AssetStore& assets, float dt, 
         // Another clip than its own three: die stays; a one-shot plays out; a looping one (a wave,
         // a dance) is kept while the entity stands, and given up once it has walked a third of a
         // second (not on the ticks it takes to stop, when a wave is often begun).
-        const bool own = a.clip.empty() || a.clip == "idle" || a.clip == "walk" || a.clip == "run";
+        const bool own = a.clip.empty() || a.clip == "idle" || a.clip == "walk" || a.clip == "run" || a.clip == "crouch" || a.clip == "crouch_walk";
         if (!own) {
             if (a.clip == "die") return;
             if (!a.loop && !a.finished) return;
@@ -1040,6 +1040,13 @@ void step_locomotion(world::World& world, assets::AssetStore& assets, float dt, 
         if (want == "run" && !has_run) want = "walk";
         if (want == "walk" && !has_walk) want = "idle";
         if (want == "idle" && !has_idle) want.clear();
+        // Crouched (its Character's, on it or the entity it hangs under): crouching still or creeping.
+        const world::Character* ch = e.try_get<world::Character>();
+        if (!ch) if (const world::EntityId up = world.parent(e.id())) ch = world.try_get<world::Character>(up);
+        if (ch && ch->crouching && mesh.clip("crouch") != nullptr) {
+            const bool creeping = a.clip == "crouch_walk" ? s > still : s > still * 1.3f;
+            want = creeping && mesh.clip("crouch_walk") != nullptr ? "crouch_walk" : "crouch";
+        }
         if (want != a.clip) {
             if (!a.clip.empty() && !want.empty()) {
                 a.from_clip = a.clip;
@@ -1053,7 +1060,7 @@ void step_locomotion(world::World& world, assets::AssetStore& assets, float dt, 
             a.playing = true;
             a.finished = false;
         }
-        a.speed = want == "walk" ? std::clamp(s / walk, 0.5f, 2.0f) : want == "run" ? std::clamp(s / run, 0.6f, 1.8f) : 1.0f;
+        a.speed = want == "walk" ? std::clamp(s / walk, 0.5f, 2.0f) : want == "run" ? std::clamp(s / run, 0.6f, 1.8f) : want == "crouch_walk" ? std::clamp(s / (walk * 0.6f), 0.5f, 2.0f) : 1.0f;
     });
     for (auto it = gaits.begin(); it != gaits.end();) it = it->second.stamp == stamp ? std::next(it) : gaits.erase(it);
 }

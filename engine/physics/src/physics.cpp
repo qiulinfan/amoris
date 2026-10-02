@@ -900,6 +900,7 @@ struct Physics::Impl {
     std::vector<std::pair<EntityId, float>> sleep_timers;   // by id, ascending: persists across steps (bodies are regathered)
     std::map<EntityId, int> limit_states;               // hinge limit state per joint, for joint.limit events
     std::map<EntityId, std::set<EntityId>> character_triggers;  // the triggers each character overlapped after its last move
+    std::map<EntityId, Vec3> shoves;   // each character's shove from what ran into it, dying away
     std::map<std::pair<EntityId, EntityId>, std::uint64_t> pair_cause;  // begin event seq per pair
     StepStats stats;
     assets::AssetStore* assets = nullptr;
@@ -2892,14 +2893,22 @@ void Physics::move_characters(world::World& w, double dt_d) {
     std::map<std::pair<EntityId, EntityId>, Json> entries;   // where and how fast each character met a water it was not in
     std::sort(movers.begin(), movers.end(), [](const auto& x, const auto& y) { return x.first < y.first; });
     std::map<EntityId, Vec3> pushes;   // speed given to dynamic bodies, applied after every character moved
+    std::map<EntityId, std::pair<Vec3, float>> brakes;   // dynamic bodies run into a character: a direction and the most speed they keep along it
+    for (auto it = im.shoves.begin(); it != im.shoves.end();) it = std::any_of(movers.begin(), movers.end(), [&](const auto& m) { return m.first == it->first; }) ? std::next(it) : im.shoves.erase(it);
     im.stats.characters = static_cast<std::uint32_t>(movers.size());
     for (auto& [id, c] : movers) {
         flecs::entity e = w.entity(id);
         world::Transform tr = e.get<world::Transform>();
         const float r = std::max(c.radius, 0.01f);
-        const float half_h = std::max(c.height * 0.5f, r);
-        const float seg = half_h - r;                                  // half the straight part
-        const float lift = std::clamp(c.step, 0.0f, 2.0f * seg);       // how far the walking capsule's foot is raised
+        // Crouched (docs/design/physics.md, Characters), the capsule is crouch_height tall, its foot
+        // where the standing one's is: the entity stays at the standing centre, so what hangs under it
+        // (a body mesh) keeps its feet on the ground.
+        const float crouch_h = std::clamp(c.crouch_height, 2.0f * r, std::max(c.height, 2.0f * r));
+        if (c.crouch) c.crouching = true;
+        float body_h = c.crouching ? crouch_h : c.height;
+        float half_h = std::max(body_h * 0.5f, r);
+        float seg = half_h - r;                                        // half the straight part
+        float lift = std::clamp(c.step, 0.0f, 2.0f * seg);             // how far the walking capsule's foot is raised
         const float cos_max = repro::cos(std::clamp(c.max_slope, 0.0f, 89.0f) * 3.14159265f / 180.0f);
         // Itself, layers it does not collide with, and the pairs kept apart on purpose (physics.ignore) stop nothing.
         auto usable = [&](const Body& b) { return b.id != id && (b.layer & c.mask) && (im.ignored.empty() || !im.ignored.contains(ordered(id, b.id))); };
@@ -2966,7 +2975,19 @@ void Physics::move_characters(world::World& w, double dt_d) {
         };
         const bool was_grounded = c.grounded;
         const EntityId stood_on = c.ground;
-        Vec3 pos = tr.position;
+        Vec3 pos = tr.position - Vec3{0, (c.height - body_h) * 0.5f, 0};   // the capsule's centre
+        if (c.crouching && !c.crouch) {
+            // Standing up, if the room above lets it.
+            const float grow = c.height - crouch_h;
+            if (grow <= 0 || sweep(capsule(pos, 0), Vec3{0, grow, 0}).index < 0) {
+                c.crouching = false;
+                pos.y += std::max(grow, 0.0f) * 0.5f;
+                body_h = c.height;
+                half_h = std::max(body_h * 0.5f, r);
+                seg = half_h - r;
+                lift = std::clamp(c.step, 0.0f, 2.0f * seg);
+            }
+        }
         Vec3 v = c.velocity;
         c.on_wall = false;
         c.on_ceiling = false;
@@ -3011,10 +3032,48 @@ void Physics::move_characters(world::World& w, double dt_d) {
                         continue;
                     }
                 }
+                if (b.kind == 0 && b.inv_mass > 0) {
+                    // A dynamic body: the character gives way by its share of their masses, and the body
+                    // keeps only their common speed toward it (the rest of its push is the shove, 2b).
+                    const float m = 1.0f / b.inv_mass, share = m / (m + std::max(c.mass, 0.01f));
+                    pos += normalize(n) * (std::max(depth, 0.0f) * share + kSkin * 0.5f);
+                    const Vec3 across{n.x, 0, n.z};
+                    auto it = std::lower_bound(im.bodies.begin(), im.bodies.end(), b.id, [](const Body& x, EntityId q) { return x.id < q; });
+                    if (length(across) > 1e-4f && it != im.bodies.end() && it->id == b.id) {
+                        const Vec3 nn = normalize(across);
+                        const float toward = dot(it->velocity, nn);
+                        if (toward > 0) brakes[b.id] = {nn, toward * share};
+                    }
+                    moved = true;
+                    continue;
+                }
                 pos += normalize(n) * (std::max(depth, 0.0f) + kSkin * 0.5f);
                 moved = true;
             }
             if (!moved) break;
+        }
+        // 2b. Shoved (docs/design/physics.md, Characters): a dynamic body moving into its capsule gives
+        //     it its speed along the touch by the share of their masses (Character.mass), and a
+        //     character walking into it (the wall it meets, below) its own; the shove carries it
+        //     across and dies away, fast on the ground.
+        Vec3& shove = im.shoves[id];
+        {
+            Body me = capsule(pos, 0);
+            const float my_mass = std::max(c.mass, 0.01f);
+            for (const Body& b : solids) {
+                if (b.kind != 0 || !usable(b)) continue;
+                if (b.aabb_max.x < me.aabb_min.x - 0.1f || b.aabb_min.x > me.aabb_max.x + 0.1f || b.aabb_max.z < me.aabb_min.z - 0.1f || b.aabb_min.z > me.aabb_max.z + 0.1f ||
+                    b.aabb_max.y < me.aabb_min.y || b.aabb_min.y > me.aabb_max.y) continue;
+                auto it = std::lower_bound(im.bodies.begin(), im.bodies.end(), b.id, [](const Body& x, EntityId q) { return x.id < q; });
+                if (it == im.bodies.end() || it->id != b.id || it->inv_mass <= 0) continue;
+                Vec3 n{pos.x - it->position.x, 0, pos.z - it->position.z};
+                if (length(n) < 1e-4f) continue;
+                n = normalize(n);
+                // Its share of the body's speed along the touch, not more however long the body presses.
+                const float m = 1.0f / it->inv_mass;
+                const float give = dot(it->velocity, n) * m / (m + my_mass), have = dot(shove, n);
+                if (give > have) shove += n * (give - have);
+            }
         }
         const Vec3 wish{v.x, 0, v.z};   // where it means to go across, before walls take their share
         // 3. Gravity, except for a character standing on the ground (a jump sets y above 0) or
@@ -3059,13 +3118,22 @@ void Physics::move_characters(world::World& w, double dt_d) {
         } else {
             v.y = std::max(v.y + c.gravity * dt, -std::fabs(c.max_fall));
         }
-        const Vec3 horizontal_velocity = swimming ? Vec3{v.x, 0, v.z} * std::clamp(c.swim_speed, 0.0f, 10.0f) + stream : Vec3{v.x, 0, v.z};
+        const Vec3 horizontal_velocity = (swimming ? Vec3{v.x, 0, v.z} * std::clamp(c.swim_speed, 0.0f, 10.0f) + stream : Vec3{v.x, 0, v.z}) + Vec3{shove.x, 0, shove.z};
         auto wall_hit = [&](const Hit& h) {
             c.on_wall = true;
             c.wall_normal = h.n;
             const Body& b = solids[static_cast<std::size_t>(h.index)];
             const Vec3 nh = normalize(Vec3{h.n.x, 0, h.n.z});
             if (length(nh) < 1e-4f) return;
+            if (b.kind == 2 && c.push > 0) {
+                // Another character: shoved along by the share of their masses.
+                if (const auto* other = w.try_get<world::Character>(b.id)) {
+                    const float into = -dot(horizontal_velocity, nh) * c.push * std::max(c.mass, 0.01f) / (std::max(c.mass, 0.01f) + std::max(other->mass, 0.01f));
+                    Vec3& theirs = im.shoves[b.id];
+                    const float have = -dot(theirs, nh);
+                    if (into > have) theirs = theirs - nh * (into - have);
+                }
+            }
             if (b.inv_mass > 0 && c.push > 0) {
                 // A dynamic body is given the character's speed into it, scaled by push.
                 const float into = -dot(horizontal_velocity, nh);
@@ -3184,14 +3252,16 @@ void Physics::move_characters(world::World& w, double dt_d) {
                 if (settle(Vec3{pos.x, fy + kSkin, pos.z}, 3 * kSkin)) landing_speed = fall_speed;
             }
         }
-        // 6. Out onto a ledge: a swimmer pushing into a wall whose top is no higher than a quarter of
-        //    its height over the water climbs onto it: the capsule raised clear, moved over the top
-        //    and set down on it, the water left behind (character.climbed).
-        if (swimming && c.on_wall && !grounded) {
+        // 6. Up onto a ledge: a swimmer pushing into a wall whose top is no higher than a quarter of
+        //    its height over the water, or a character in the air (Character.mantle) pushing into one
+        //    whose top is within `mantle` over its feet, climbs onto it: the capsule raised clear,
+        //    moved over the top and set down on it (character.climbed).
+        const bool mantling = !swimming && c.mantle > 0 && v.y > -4.0f;
+        if ((swimming || mantling) && c.on_wall && !grounded) {
             const Vec3 wn{c.wall_normal.x, 0, c.wall_normal.z};
             if (length(wn) > 1e-4f && length(wish) > 0.1f && dot(normalize(wish), normalize(wn)) < -0.5f) {
                 const Vec3 into = normalize(wn) * -1.0f;
-                const float rise = surface + 0.25f * c.height - (pos.y - half_h);
+                const float rise = swimming ? surface + 0.25f * c.height - (pos.y - half_h) : std::min(c.mantle, 3.0f * c.height);
                 if (rise > 0 && rise < c.height && sweep(capsule(pos, 0), Vec3{0, rise, 0}).index < 0) {
                     const Vec3 high = pos + Vec3{0, rise, 0};
                     const Vec3 ahead = into * (2.0f * r + 0.1f);
@@ -3201,7 +3271,7 @@ void Physics::move_characters(world::World& w, double dt_d) {
                         if (settle(Vec3{pos.x, pos.y - half_h + r + kSkin, pos.z}, rise + std::max(c.step, 0.0f) + kSkin)) {
                             c.swimming = false;
                             v.y = 0;
-                            w.events().emit(w.tick_index(), "character.climbed", id, Json{{"path", w.path(id)}, {"out_of", pool}});
+                            w.events().emit(w.tick_index(), "character.climbed", id, Json{{"path", w.path(id)}, {"out_of", swimming ? pool : 0}});
                         } else {
                             pos = keep;
                         }
@@ -3209,6 +3279,9 @@ void Physics::move_characters(world::World& w, double dt_d) {
                 }
             }
         }
+        // The shove dies away: within a fifth of a second on the ground, slowly in the air or water.
+        shove = shove * repro::exp(-(grounded ? 10.0f : 0.8f) * dt);
+        if (dot(shove, shove) < 1e-6f) shove = Vec3{};
         if (grounded && v.y < 0) v.y = 0;
         if (grounded && !was_grounded) {
             im.stats.landings++;
@@ -3220,7 +3293,7 @@ void Physics::move_characters(world::World& w, double dt_d) {
         c.grounded = grounded;
         c.ground = ground;
         c.ground_normal = ground_normal;
-        tr.position = pos;
+        tr.position = pos + Vec3{0, (c.height - body_h) * 0.5f, 0};
         e.set<world::Transform>(tr);
         e.set<world::Character>(c);
         // The triggers it is in now, against those it was in: trigger.enter and trigger.exit, as a
@@ -3255,6 +3328,16 @@ void Physics::move_characters(world::World& w, double dt_d) {
     for (auto it = im.character_triggers.begin(); it != im.character_triggers.end();) {
         if (w.ecs().is_alive(it->first) && w.entity(it->first).has<world::Character>()) ++it;
         else it = im.character_triggers.erase(it);
+    }
+    for (const auto& [body, brake] : brakes) {
+        flecs::entity e = w.entity(body);
+        if (!e.is_alive() || !e.has<world::Velocity>()) continue;
+        world::Velocity v = e.get<world::Velocity>();
+        const float along = dot(v.linear, brake.first);
+        if (along > brake.second) {
+            v.linear -= brake.first * (along - brake.second);
+            e.set<world::Velocity>(v);
+        }
     }
     for (const auto& [body, give] : pushes) {
         flecs::entity e = w.entity(body);

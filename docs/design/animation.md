@@ -327,10 +327,13 @@ missing run falls back to the walk. Another clip over them is left alone for a w
 looping one (a wave, a dance) is kept while the entity stands and given up once it has moved a third
 of a second without a stop (so a wave begun on the tick a walker stops is kept, and a villager that
 waved from a `Behavior` state and walks off walks; two benchmark agents' villagers showed both), and
-`die` stays. An entity with an enabled `AnimationGraph` is the graph's. `runtime_tests`
-(`[locomotion]`): a humanoid at rest idles, at 1.4 a second walks at its own pace, at 4.5 runs at
-1.12 of it, waves once and then idles, keeps a looping wave standing and walks once moved, and once
-dead stays dead while it slides.
+`die` stays. A crouching `Character` (on the entity or the one it hangs under) plays `crouch`
+standing and `crouch_walk` moving, at its pace over six tenths of `walk_speed`, when the mesh has
+them (the built-in humanoid does). An entity with an enabled `AnimationGraph` is the graph's.
+`runtime_tests` (`[locomotion]`): a humanoid at rest idles, at 1.4 a second walks at its own pace,
+at 4.5 runs at 1.12 of it, waves once and then idles, keeps a looping wave standing and walks once
+moved, and once dead stays dead while it slides; (`[crouch]`) a crouching character's humanoid
+crouches still, creeps moving and walks again stood up.
 
 ### Footsteps
 

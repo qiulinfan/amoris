@@ -882,6 +882,11 @@ struct Character {
     float step = 0.3f;
     float max_slope = 45.0f;
     float push = 1.0f;
+    float mantle = 0.0f;
+    float mass = 70.0f;
+    bool crouch = false;
+    float crouch_height = 1.1f;
+    bool crouching = false;
     float dive = 0.0f;
     float swim_speed = 0.6f;
     std::uint32_t mask = 4294967295;

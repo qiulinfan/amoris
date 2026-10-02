@@ -7368,6 +7368,18 @@ Result<Json> Session::world_command(std::string_view op, const Json& p, std::str
         j["id"] = id;
         j["path"] = w.path(id);
         if (!renamed.empty()) j["renamed"] = renamed;
+        // Children as a scene file nests them ({name, components, children}), each spawned under it.
+        if (p.contains("children") && p["children"].is_array()) {
+            Json made = Json::array();
+            for (const Json& child : p["children"]) {
+                if (!child.is_object()) continue;
+                Json args = child;
+                args["parent"] = id;
+                POCKET_TRY(kid, command("world.spawn", args, "world.spawn"));
+                made.push_back(kid);
+            }
+            j["children"] = made;
+        }
         return j;
     }
     if (op == "destroy") {

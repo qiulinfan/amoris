@@ -113,24 +113,25 @@ source to find out why. The 48 failed calls of a later run of fifty-five tasks s
 still reached for, and the commands now take it: `world.query {fields}` names a component's field
 (`"Transform.position"`, `"Transform.position.y"`; nine calls had tried it) or a bare field one of
 the `with` components has, and a bare field nothing can resolve is answered with the components that
-have it; `world.set` takes a component the way `world.spawn` does (`{entity, Transform: {...}}`), a
-component's fields beside its name (`{entity, component: "Transform", position: {...}}`), or several
-at once (`components: {...}`, all checked before any is set, answered as `{ok, values}`);
-`world.get` without a component answers every component the entity has; an id written as a string
-(`"492"`) is that entity when nothing is named so; in `world.spawn` and `world.set` a field named by
-the only field that starts so (three letters or more: `pos`, `rot`) or by a short form (`scl`,
-`col`, `colour`) is that field, and the answer's `renamed` says what was read as what
-(`{"Transform.pos": "position"}`; a run of fifty-seven tasks had two calls refused for `pos`), while
-a start two fields share is refused with the nearest; `tilemap.get` reads a cell when given one and
-the map's rows otherwise, and `tilemap.text {entity}` reads the rows (`tilemap.rows`), the names an
-agent reached for first; `world.remove` without a component points to `world.destroy`; a script
-function asked for as a command (`dialogue.check`) is answered with how to call it through
-`script.eval`; `log.tail` takes `lines` for `n`, `world.set` `values` or `fields` for `value`, and
-`world.query` `has` or `components` (a name or a list) for `with`; an MCP tool's name sent as a
-method (`runtime_commands`) is answered with the command it stands for; `input.release` lets go of
-what `input.hold` holds; and a script error for a name the SDK has but the script did not import
-(`ReferenceError: Can't find variable: onStart`) says where it comes from
-(`import { onStart } from "pocket"`).
+have it; `world.spawn` takes `children` nested as a scene file nests them
+(`[{name, components, children}]`, each spawned under it); `world.set` takes a component the way
+`world.spawn` does (`{entity, Transform: {...}}`), a component's fields beside its name
+(`{entity, component: "Transform", position: {...}}`), or several at once (`components: {...}`, all
+checked before any is set, answered as `{ok, values}`); `world.get` without a component answers
+every component the entity has; an id written as a string (`"492"`) is that entity when nothing is
+named so; in `world.spawn` and `world.set` a field named by the only field that starts so (three
+letters or more: `pos`, `rot`) or by a short form (`scl`, `col`, `colour`) is that field, and the
+answer's `renamed` says what was read as what (`{"Transform.pos": "position"}`; a run of fifty-seven
+tasks had two calls refused for `pos`), while a start two fields share is refused with the nearest;
+`tilemap.get` reads a cell when given one and the map's rows otherwise, and `tilemap.text {entity}`
+reads the rows (`tilemap.rows`), the names an agent reached for first; `world.remove` without a
+component points to `world.destroy`; a script function asked for as a command (`dialogue.check`) is
+answered with how to call it through `script.eval`; `log.tail` takes `lines` for `n`, `world.set`
+`values` or `fields` for `value`, and `world.query` `has` or `components` (a name or a list) for
+`with`; an MCP tool's name sent as a method (`runtime_commands`) is answered with the command it
+stands for; `input.release` lets go of what `input.hold` holds; and a script error for a name the
+SDK has but the script did not import (`ReferenceError: Can't find variable: onStart`) says where it
+comes from (`import { onStart } from "pocket"`).
 
 A field typed as an entity (`Joint2D.body`; `world.schema` shows the type) takes the entity's name
 or path in `world.spawn` and `world.set` as well as its id (`Joint2D: {body: "Plank0"}`), turned
