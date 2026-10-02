@@ -977,17 +977,50 @@ fn morph_normal(object: Object, vid: u32, n: vec3f) -> vec3f {
 // A terrain's ground from its textured layers (docs/design/terrain.md, Layers): each layer's image
 // tiled at its own scale, mixed by the layers' shares where the fragment is (the splat map's texels
 // sit on the grid's samples). Explicit gradients: it runs only for terrains.
+// The ground's bumps where the layers were last sampled (terrain_ground): the slope of their
+// blended brightness across their uv, a texel and a half each way.
+var<private> terrain_slope: vec2f;
 fn terrain_ground(object: Object, uv: vec2f, duv1: vec2f, duv2: vec2f) -> vec4f {
     let w = textureSampleLevel(splat_tex, base_samp, uv * object.terrain.yz + vec2f(0.5), 0.0);
-    var c = vec3f(0.0);
     let n = u32(object.terrain.x);
+    // Each layer's image where it has a share, and its height there: its brightness.
+    var texel: array<vec3f, 4>;
+    var slope: array<vec2f, 4>;
+    var lift = vec4f(-1.0);
+    var top = -1.0;
     for (var i = 0u; i < n; i = i + 1u) {
-        let k = object.layer_tile[i];
+        texel[i] = vec3f(0.0);
+        slope[i] = vec2f(0.0);
         if (w[i] > 0.002) {
-            c = c + w[i] * textureSampleGrad(layer_tex, base_samp, uv * k, i32(i), duv1 * k, duv2 * k).rgb;
+            let k = object.layer_tile[i];
+            texel[i] = textureSampleGrad(layer_tex, base_samp, uv * k, i32(i), duv1 * k, duv2 * k).rgb;
+            if (object.pbr.z > 0.0) {
+                let luma = vec3f(0.3, 0.59, 0.11);
+                let e = 1.5 / 512.0;
+                let l0 = dot(texel[i], luma);
+                let lx = dot(textureSampleGrad(layer_tex, base_samp, uv * k + vec2f(e, 0.0), i32(i), duv1 * k, duv2 * k).rgb, luma);
+                let ly = dot(textureSampleGrad(layer_tex, base_samp, uv * k + vec2f(0.0, e), i32(i), duv1 * k, duv2 * k).rgb, luma);
+                slope[i] = vec2f(lx - l0, ly - l0);
+            }
+            // Blended by height (docs/design/terrain.md, Layers): a layer's share raised by its image's
+            // brightness, so across a border the higher grains of one show over the other.
+            lift[i] = w[i] + object.terrain.w * dot(texel[i], vec3f(0.3, 0.59, 0.11));
+            top = max(top, lift[i]);
         }
     }
-    return vec4f(c, 1.0);
+    let band = mix(1.0, 0.12, object.terrain.w);   // the smaller, the sharper the border
+    var c = vec3f(0.0);
+    var g = vec2f(0.0);
+    var total = 0.0;
+    for (var i = 0u; i < n; i = i + 1u) {
+        if (w[i] <= 0.002) { continue; }
+        let b = select(w[i], max(lift[i] - (top - band), 0.0) * w[i], object.terrain.w > 0.0);
+        c = c + b * texel[i];
+        g = g + b * slope[i];
+        total = total + b;
+    }
+    terrain_slope = g / max(total, 1e-4);
+    return vec4f(c / max(total, 1e-4), 1.0);
 }
 // The terrain's base colour: its layers under the MeshRenderer's colour, and the painted colour laid
 // over them by its coverage (the vertex colour's alpha).
@@ -1411,6 +1444,10 @@ fn shade(in: VsOut, cut: bool) -> vec4f {
         let bent = vec3f(nm.xy * object.pbr.z, nm.z);
         n = select(mapped_normal(in, n, dp1, dp2, duv1, duv2, bent), perturb_normal(n, dp1, dp2, duv1, duv2, bent), world_mapped);
     }
+    // A terrain's layers bumped by their images' brightness (Terrain.bump, here pbr.z).
+    if (object.terrain.x > 0.5 && object.pbr.z > 0.0) {
+        n = perturb_normal(n, dp1, dp2, duv1, duv2, normalize(vec3f(-terrain_slope * object.pbr.z * 6.0, 1.0)));
+    }
     // Brushed metal's direction: the uv's u across the surface, turned by its rotation.
     var aniso_t = vec3f(0.0);
     if (object.aniso.x > 0.0) {
@@ -1648,6 +1685,10 @@ fn id_surface(in: VsOut, cut: bool) -> IdOut {
     if (object.pbr.w > 0.5) {
         let bent = vec3f(nm.xy * object.pbr.z, nm.z);
         n = select(mapped_normal(in, n, dp1, dp2, duv1, duv2, bent), perturb_normal(n, dp1, dp2, duv1, duv2, bent), world_mapped);
+    }
+    // A terrain's layers bumped by their images' brightness (Terrain.bump, here pbr.z).
+    if (object.terrain.x > 0.5 && object.pbr.z > 0.0) {
+        n = perturb_normal(n, dp1, dp2, duv1, duv2, normalize(vec3f(-terrain_slope * object.pbr.z * 6.0, 1.0)));
     }
     let paint = paint_decals(in.world_pos, n, dp1, dp2, Painted(base.rgb, clamp(object.pbr.y * mr.g, 0.04, 1.0), clamp(object.pbr.x * mr.b, 0.0, 1.0), vec3f(0.0), n));
     n = paint.normal;
@@ -11780,6 +11821,9 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
                 ou.terrain[0] = static_cast<float>(std::min<std::size_t>(tl.layers.size(), 4));
                 ou.terrain[1] = tl.texture_tile / std::max(tl.size.x, 1e-3f) * texels;
                 ou.terrain[2] = tl.texture_tile / std::max(tl.size.y, 1e-3f) * texels;
+                ou.terrain[3] = tl.height_blend;
+                ou.pbr[2] = tl.bump;   // no normal map on a terrain: its bumps' depth instead
+                ou.pbr[3] = 0;
                 for (std::size_t k = 0; k < std::min<std::size_t>(tl.layers.size(), 4); ++k) ou.layer_tile[k] = tl.texture_tile / std::max(tl.layers[k].tile, 1e-3f);
                 group = im.terrain_group(mesh_key, tl);
                 material_key = "terrain|" + mesh_key;

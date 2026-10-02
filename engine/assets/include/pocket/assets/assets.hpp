@@ -41,6 +41,8 @@ struct TerrainLayers {
     int n = 0;                           // samples along a side
     Vec2 size{64, 64};                   // the ground's extent along x and z
     float texture_tile = 4;              // units per repeat of the mesh's own uv
+    float height_blend = 0.5f;           // how far the images' own heights shape the layers' borders (0 a smooth fade)
+    float bump = 0.5f;                   // how deep the images' brightness bumps the ground's light (0 flat)
     std::vector<std::uint8_t> weights;   // n * n * 4: each layer's share at a sample (0..255, together 255), in the heights' order
 };
 
@@ -505,6 +507,7 @@ Terrain terrain_from_noise(std::uint32_t seed, float scale, int octaves, int n, 
 struct TerrainLook {
     Vec3 grass{0.30f, 0.45f, 0.22f}, rock{0.45f, 0.42f, 0.38f}, snow{0.92f, 0.93f, 0.95f};
     float snow_line = 0.85f, rock_slope = 35.0f, texture_tile = 4.0f;
+    float height_blend = 0.5f, bump = 0.5f;
     struct Layer {
         std::string texture;
         Vec3 color{1, 1, 1};              // linear

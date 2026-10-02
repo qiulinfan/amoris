@@ -79,7 +79,7 @@ entities = [
     {"name": "Sun", "components": {"Transform": {"rotation": {"x": -0.36, "y": 0.34, "z": 0.14, "w": 0.86}}, "Light": {"kind": 0, "intensity": 1.2, "color": {"r": 1, "g": 0.96, "b": 0.9, "a": 1}}}},
     {"name": "Breeze", "components": {"Wind": {"direction": 0, "speed": 6, "gusts": 0.3, "gust_length": 40}}},   # toward +x
     {"name": "Sea", "components": {"Transform": {}, "Water": {
-        "ocean": True, "depth": 25, "wave_height": 0.35, "wave_length": 9, "wave_direction": 10, "choppiness": 0.5,
+        "ocean": True, "depth": 25, "wave_height": 0.35, "wave_length": 9, "wave_direction": 10, "choppiness": 0.5, "wind": 0.6,
         "color": {"r": 0.03, "g": 0.2, "b": 0.3, "a": 1}, "clarity": 3, "foam": 0.45, "caustics": 1}}},
 ] + [island(*i) for i in ISLANDS] + [
     {"name": "Crates", "components": {"Transform": {}}, "children": crates()},

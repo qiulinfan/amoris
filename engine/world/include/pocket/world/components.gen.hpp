@@ -882,6 +882,7 @@ struct Character {
     float step = 0.3f;
     float max_slope = 45.0f;
     float push = 1.0f;
+    float dive = 0.0f;
     float swim_speed = 0.6f;
     std::uint32_t mask = 4294967295;
     bool grounded = false;
@@ -916,6 +917,8 @@ struct Terrain {
     float rock_slope = 35.0f;
     float snow_line = 0.85f;
     float texture_tile = 4.0f;
+    float bump = 0.5f;
+    float height_blend = 0.5f;
     std::string paintmap = "";
     std::vector<TerrainLayer> layers = {};
     std::string layermap = "";
@@ -988,6 +991,7 @@ struct Water {
     float wave_length = 8.0f;
     float wave_direction = 0.0f;
     float choppiness = 0.5f;
+    float wind = 0.0f;
     float ripples = 1.0f;
     float foam = 0.5f;
     float caustics = 1.0f;

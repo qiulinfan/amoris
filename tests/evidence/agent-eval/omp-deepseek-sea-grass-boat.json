@@ -1,0 +1,137 @@
+{
+  "runner": "python3 tools/scripts/runners/pi_agent.py --agent omp --via mcp",
+  "passed": 3,
+  "total": 3,
+  "seconds": 157.8,
+  "tasks": [
+    {
+      "name": "sea_around",
+      "project": "hills",
+      "ok": true,
+      "seconds": 72.0,
+      "detail": "a sea every way at 3.2 (answered 3.2), clouds over 0.5 of the sky, volumetric",
+      "answer": 3.2,
+      "error": null,
+      "metrics": {
+        "agent": "omp",
+        "via": "mcp",
+        "model": null,
+        "seconds": 71.6,
+        "turns": 10,
+        "tool_calls": 16,
+        "tools": {
+          "mcp__pocket_world_describe": 3,
+          "mcp__pocket_docs_search": 1,
+          "mcp__pocket_world_tree": 1,
+          "mcp__pocket_world_query": 2,
+          "mcp__pocket_runtime_help": 2,
+          "mcp__pocket_world_schema": 1,
+          "mcp__pocket_runtime_command": 5,
+          "mcp__pocket_capture": 1
+        },
+        "tool_errors": 4,
+        "tokens": {
+          "input": 25944,
+          "output": 2647,
+          "cache_read": 200576,
+          "total": 229167
+        },
+        "cost_usd": 0.006082
+      },
+      "trace": {
+        "turns": 0,
+        "tokens": 0,
+        "calls": 0,
+        "read_kb": 0.0,
+        "failed_calls": 0
+      }
+    },
+    {
+      "name": "meadow",
+      "project": "hills",
+      "ok": true,
+      "seconds": 55.4,
+      "detail": "grass on the grass layer from 3.5 up, out to 30.0, 57600 cells round the camera",
+      "answer": null,
+      "error": null,
+      "metrics": {
+        "agent": "omp",
+        "via": "mcp",
+        "model": null,
+        "seconds": 55.0,
+        "turns": 23,
+        "tool_calls": 25,
+        "tools": {
+          "mcp__pocket_docs_search": 1,
+          "mcp__pocket_world_tree": 1,
+          "mcp__pocket_runtime_help": 1,
+          "mcp__pocket_world_schema": 1,
+          "mcp__pocket_runtime_command": 8,
+          "mcp__pocket_step": 5,
+          "mcp__pocket_capture": 7,
+          "mcp__pocket_world_describe": 1
+        },
+        "tool_errors": 2,
+        "tokens": {
+          "input": 28886,
+          "output": 6575,
+          "cache_read": 644224,
+          "total": 679685
+        },
+        "cost_usd": 0.010211
+      },
+      "trace": {
+        "turns": 0,
+        "tokens": 0,
+        "calls": 0,
+        "read_kb": 0.0,
+        "failed_calls": 0
+      }
+    },
+    {
+      "name": "sailboat",
+      "project": "blank",
+      "ok": true,
+      "seconds": 30.3,
+      "detail": "the Sloop sails before the wind: 9.4 units along +x in five seconds, afloat",
+      "answer": null,
+      "error": null,
+      "metrics": {
+        "agent": "omp",
+        "via": "mcp",
+        "model": null,
+        "seconds": 29.8,
+        "turns": 7,
+        "tool_calls": 15,
+        "tools": {
+          "mcp__pocket_docs_search": 2,
+          "mcp__pocket_world_tree": 2,
+          "mcp__pocket_runtime_help": 4,
+          "mcp__pocket_world_schema": 1,
+          "mcp__pocket_runtime_command": 5,
+          "mcp__pocket_capture": 1
+        },
+        "tool_errors": 1,
+        "tokens": {
+          "input": 27853,
+          "output": 5422,
+          "cache_read": 148608,
+          "total": 181883
+        },
+        "cost_usd": 0.007877
+      },
+      "trace": {
+        "turns": 0,
+        "tokens": 0,
+        "calls": 0,
+        "read_kb": 0.0,
+        "failed_calls": 0
+      }
+    }
+  ],
+  "totals": {
+    "cost_usd": 0.0242,
+    "tokens": 1090735,
+    "tool_calls": 56
+  }
+}

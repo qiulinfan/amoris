@@ -583,6 +583,7 @@ A 3D character: an upright capsule centred on the entity that walks, climbs step
 | `step` | f32 | 0.3 | The tallest edge a grounded character walks up without a jump (stairs, kerbs), and how far it follows the ground down (the far side of a slope, going down stairs) without leaving it. |
 | `max_slope` | f32 | 45.0 | The steepest floor, in degrees, the character stands and walks on; steeper ground is a wall it slides down. |
 | `push` | f32 | 1.0 | How much of its speed into a dynamic body the character gives it (0 leaves bodies alone, 1 pushes them along at its own speed). |
+| `dive` | f32 | 0.0 | Swimming, -1..1: down under the surface (negative) or back up (positive) at three times swim_speed a second at full; 0 floats back up to swim with the head out (docs/design/water.md, Swimming). |
 | `swim_speed` | f32 | 0.6 | In water deeper than its chest it swims (docs/design/water.md): the share of velocity.x and z it keeps there; the water's own motion carries it too. |
 | `mask` | u32 | 4294967295 | Bits of the collision layers (Collider.layer) the character is stopped by; all by default. |
 | `grounded` | bool | false | Standing on a floor no steeper than max_slope (written by the engine). |
@@ -615,6 +616,8 @@ Ground shaped by a height field (docs/design/terrain.md): a grid of heights acro
 | `rock_slope` | f32 | 35.0 | Degrees from level above which ground is rock. |
 | `snow_line` | f32 | 0.85 | The fraction of `height` above which ground is snow; 1 or more for none. |
 | `texture_tile` | f32 | 4.0 | Units per repeat of the MeshRenderer's texture over the ground. |
+| `bump` | f32 | 0.5 | With textured layers, 0..2: how deep the images' brightness bumps the ground's light (grains and stones catch the sun); 0 flat. |
+| `height_blend` | f32 | 0.5 | With textured layers, 0..1: how far the images' own heights (their brightness) shape the borders between layers, so sand lies in the cracks between stones and the stones stand out of it; 0 a smooth fade (docs/design/terrain.md, Layers). |
 | `paintmap` | string | "" | A project-relative RGBA PNG painted over the ground's colours (terrain.paint writes one with terrain.save {paint: true}): the colour in sRGB, alpha how much it covers, its top row at -z like the heightmap. Empty for none. |
 | `layers` | list:TerrainLayer | [] | Up to four textured layers of ground, stacked in order: the first lies everywhere, each next over those before it by its rules and its paint (terrain.paint {layer}). With any, the ground is drawn from them, times the painted colour, in place of grass, rock and snow and the MeshRenderer's texture. |
 | `layermap` | string | "" | A project-relative RGBA PNG of the layers' paint, a channel for each of the four in order (how much of the ground there it covers), its top row at -z like the heightmap; terrain.save {layers: true} writes one. Empty for none. |
@@ -679,6 +682,7 @@ A body of water (docs/design/water.md): a surface size.x by size.y (x by z) cent
 | `wave_length` | f32 | 8.0 | The length of the largest waves, crest to crest, in units; smaller ones cross them, and each runs at the speed of real water waves of its length. |
 | `wave_direction` | f32 | 0.0 | Where the waves run, in degrees about +y from +x (90 runs toward -z). |
 | `choppiness` | f32 | 0.5 | How sharp the crests are, 0 (rolling) to 1 (peaked). |
+| `wind` | f32 | 0.0 | 0..1: how far the Wind makes the waves (docs/design/water.md, Wind and waves): at 1 they run with it, 0.012 times its speed squared high and 0.6 times it long (a breeze of 6: 0.43 high and 22 long; a gale of 15: 2.7 and 135), choppier the harder it blows; between, mixed with the waves set; 0 keeps the waves as set. |
 | `ripples` | f32 | 1.0 | The strength of the small ripples on the waves, 0 for none. |
 | `foam` | f32 | 0.5 | How far out from the shore foam reaches, in units of depth; 0 for none. |
 | `caustics` | f32 | 1.0 | How strongly the waves gather the sunlight into bright moving lines on what lies below (sharp in the shallows, washed out deeper); 0 for none. |

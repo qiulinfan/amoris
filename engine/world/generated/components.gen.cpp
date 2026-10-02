@@ -2681,6 +2681,7 @@ void to_json(Json& j, const Character& v) {
     j["step"] = v.step;
     j["max_slope"] = v.max_slope;
     j["push"] = v.push;
+    j["dive"] = v.dive;
     j["swim_speed"] = v.swim_speed;
     j["mask"] = v.mask;
     j["grounded"] = v.grounded;
@@ -2703,6 +2704,7 @@ void from_json(const Json& j, Character& v) {
     scalar_from_json(j, "step", v.step);
     scalar_from_json(j, "max_slope", v.max_slope);
     scalar_from_json(j, "push", v.push);
+    scalar_from_json(j, "dive", v.dive);
     scalar_from_json(j, "swim_speed", v.swim_speed);
     scalar_from_json(j, "mask", v.mask);
     scalar_from_json(j, "grounded", v.grounded);
@@ -2727,6 +2729,7 @@ void hash_component(StateHasherRef& h, const Character& v) {
     h.f32(v.step);
     h.f32(v.max_slope);
     h.f32(v.push);
+    h.f32(v.dive);
     h.f32(v.swim_speed);
     h.i64(static_cast<std::int64_t>(v.mask));
     h.u8(v.grounded ? 1 : 0);
@@ -2757,6 +2760,7 @@ std::size_t numeric_span(Character& v, std::string_view path, float** out) {
     if (path == "step") { *out = &v.step; return 1; }
     if (path == "max_slope") { *out = &v.max_slope; return 1; }
     if (path == "push") { *out = &v.push; return 1; }
+    if (path == "dive") { *out = &v.dive; return 1; }
     if (path == "swim_speed") { *out = &v.swim_speed; return 1; }
     if (path == "ground_normal") { *out = &v.ground_normal.x; return 3; }
     if (path == "ground_normal.x") { *out = &v.ground_normal.x; return 1; }
@@ -2786,6 +2790,8 @@ void to_json(Json& j, const Terrain& v) {
     j["rock_slope"] = v.rock_slope;
     j["snow_line"] = v.snow_line;
     j["texture_tile"] = v.texture_tile;
+    j["bump"] = v.bump;
+    j["height_blend"] = v.height_blend;
     j["paintmap"] = v.paintmap;
     j["layers"] = Json::array();
     for (const auto& x : v.layers) { Json e; to_json(e, x); j["layers"].push_back(std::move(e)); }
@@ -2807,6 +2813,8 @@ void from_json(const Json& j, Terrain& v) {
     scalar_from_json(j, "rock_slope", v.rock_slope);
     scalar_from_json(j, "snow_line", v.snow_line);
     scalar_from_json(j, "texture_tile", v.texture_tile);
+    scalar_from_json(j, "bump", v.bump);
+    scalar_from_json(j, "height_blend", v.height_blend);
     scalar_from_json(j, "paintmap", v.paintmap);
     if (j.is_object() && j.contains("layers") && j["layers"].is_array()) {
         v.layers.clear();
@@ -2840,6 +2848,8 @@ void hash_component(StateHasherRef& h, const Terrain& v) {
     h.f32(v.rock_slope);
     h.f32(v.snow_line);
     h.f32(v.texture_tile);
+    h.f32(v.bump);
+    h.f32(v.height_blend);
     h.str(v.paintmap);
     h.i64(static_cast<std::int64_t>(v.layers.size()));
     for (const auto& x : v.layers) hash_record(h, x);
@@ -2872,6 +2882,8 @@ std::size_t numeric_span(Terrain& v, std::string_view path, float** out) {
     if (path == "rock_slope") { *out = &v.rock_slope; return 1; }
     if (path == "snow_line") { *out = &v.snow_line; return 1; }
     if (path == "texture_tile") { *out = &v.texture_tile; return 1; }
+    if (path == "bump") { *out = &v.bump; return 1; }
+    if (path == "height_blend") { *out = &v.height_blend; return 1; }
     if (path.starts_with("layers.")) {
         std::string_view rest = path.substr(7);
         std::size_t index = 0;
@@ -3035,6 +3047,7 @@ void to_json(Json& j, const Water& v) {
     j["wave_length"] = v.wave_length;
     j["wave_direction"] = v.wave_direction;
     j["choppiness"] = v.choppiness;
+    j["wind"] = v.wind;
     j["ripples"] = v.ripples;
     j["foam"] = v.foam;
     j["caustics"] = v.caustics;
@@ -3059,6 +3072,7 @@ void from_json(const Json& j, Water& v) {
     scalar_from_json(j, "wave_length", v.wave_length);
     scalar_from_json(j, "wave_direction", v.wave_direction);
     scalar_from_json(j, "choppiness", v.choppiness);
+    scalar_from_json(j, "wind", v.wind);
     scalar_from_json(j, "ripples", v.ripples);
     scalar_from_json(j, "foam", v.foam);
     scalar_from_json(j, "caustics", v.caustics);
@@ -3087,6 +3101,7 @@ void hash_component(StateHasherRef& h, const Water& v) {
     h.f32(v.wave_length);
     h.f32(v.wave_direction);
     h.f32(v.choppiness);
+    h.f32(v.wind);
     h.f32(v.ripples);
     h.f32(v.foam);
     h.f32(v.caustics);
@@ -3119,6 +3134,7 @@ std::size_t numeric_span(Water& v, std::string_view path, float** out) {
     if (path == "wave_length") { *out = &v.wave_length; return 1; }
     if (path == "wave_direction") { *out = &v.wave_direction; return 1; }
     if (path == "choppiness") { *out = &v.choppiness; return 1; }
+    if (path == "wind") { *out = &v.wind; return 1; }
     if (path == "ripples") { *out = &v.ripples; return 1; }
     if (path == "foam") { *out = &v.foam; return 1; }
     if (path == "caustics") { *out = &v.caustics; return 1; }
@@ -5333,7 +5349,7 @@ constexpr std::array<FieldInfo, 18> kBody2DFields = {{
     FieldInfo{"restitution", "f32", "Bounciness 0..1: the speed kept, reversed, when the body hits a floor, a ceiling, a wall, a platform or another body (a ball at 0.7 bounces to half its height; between two bodies the larger restitution counts, and momentum is kept); 0 stops dead. A landing slower than half a unit per second lands instead of bouncing, and body2d.bounced reports each bounce (docs/design/tilemaps.md, Friction and restitution).", {}},
     FieldInfo{"friction", "f32", "Ground friction in units per second squared: how fast a grounded body's sideways speed (relative to what carries it) falls toward zero once nothing drives it, so a shoved crate slides to a stop; 0 slides forever. Applied after the move, so a script that writes velocity.x every tick is not slowed.", {}},
 }};
-constexpr std::array<FieldInfo, 19> kCharacterFields = {{
+constexpr std::array<FieldInfo, 20> kCharacterFields = {{
     FieldInfo{"velocity", "vec3", "Units per second, relative to the platform it stands on; the engine adds gravity to y, zeroes y on landing and under a ceiling, and takes out the part that runs into a wall.", {}},
     FieldInfo{"gravity", "f32", "Units per second squared along Y (negative is down).", {}},
     FieldInfo{"max_fall", "f32", "Fastest downward speed.", {}},
@@ -5342,6 +5358,7 @@ constexpr std::array<FieldInfo, 19> kCharacterFields = {{
     FieldInfo{"step", "f32", "The tallest edge a grounded character walks up without a jump (stairs, kerbs), and how far it follows the ground down (the far side of a slope, going down stairs) without leaving it.", {}},
     FieldInfo{"max_slope", "f32", "The steepest floor, in degrees, the character stands and walks on; steeper ground is a wall it slides down.", {}},
     FieldInfo{"push", "f32", "How much of its speed into a dynamic body the character gives it (0 leaves bodies alone, 1 pushes them along at its own speed).", {}},
+    FieldInfo{"dive", "f32", "Swimming, -1..1: down under the surface (negative) or back up (positive) at three times swim_speed a second at full; 0 floats back up to swim with the head out (docs/design/water.md, Swimming).", {}},
     FieldInfo{"swim_speed", "f32", "In water deeper than its chest it swims (docs/design/water.md): the share of velocity.x and z it keeps there; the water's own motion carries it too.", {}},
     FieldInfo{"mask", "u32", "Bits of the collision layers (Collider.layer) the character is stopped by; all by default.", {}},
     FieldInfo{"grounded", "bool", "Standing on a floor no steeper than max_slope (written by the engine).", {}},
@@ -5354,7 +5371,7 @@ constexpr std::array<FieldInfo, 19> kCharacterFields = {{
     FieldInfo{"swimming", "bool", "Swimming: in water deeper than its chest, held with its head out (written by the engine).", {}},
     FieldInfo{"submerged", "f32", "How much of its height is under a water surface, 0 (dry) to 1 (all under) (written by the engine).", {}},
 }};
-constexpr std::array<FieldInfo, 17> kTerrainFields = {{
+constexpr std::array<FieldInfo, 19> kTerrainFields = {{
     FieldInfo{"size", "vec2", "The extent along x and z, centred on the entity.", {}},
     FieldInfo{"height", "f32", "The height range: a heightmap's white, or the noise's highest point, is this high above the entity.", {}},
     FieldInfo{"resolution", "i32", "Samples along each side (2 to 1025): the grid has resolution - 1 cells across.", {}},
@@ -5369,6 +5386,8 @@ constexpr std::array<FieldInfo, 17> kTerrainFields = {{
     FieldInfo{"rock_slope", "f32", "Degrees from level above which ground is rock.", {}},
     FieldInfo{"snow_line", "f32", "The fraction of `height` above which ground is snow; 1 or more for none.", {}},
     FieldInfo{"texture_tile", "f32", "Units per repeat of the MeshRenderer's texture over the ground.", {}},
+    FieldInfo{"bump", "f32", "With textured layers, 0..2: how deep the images' brightness bumps the ground's light (grains and stones catch the sun); 0 flat.", {}},
+    FieldInfo{"height_blend", "f32", "With textured layers, 0..1: how far the images' own heights (their brightness) shape the borders between layers, so sand lies in the cracks between stones and the stones stand out of it; 0 a smooth fade (docs/design/terrain.md, Layers).", {}},
     FieldInfo{"paintmap", "string", "A project-relative RGBA PNG painted over the ground's colours (terrain.paint writes one with terrain.save {paint: true}): the colour in sRGB, alpha how much it covers, its top row at -z like the heightmap. Empty for none.", {}},
     FieldInfo{"layers", "list:TerrainLayer", "Up to four textured layers of ground, stacked in order: the first lies everywhere, each next over those before it by its rules and its paint (terrain.paint {layer}). With any, the ground is drawn from them, times the painted colour, in place of grass, rock and snow and the MeshRenderer's texture.", {}},
     FieldInfo{"layermap", "string", "A project-relative RGBA PNG of the layers' paint, a channel for each of the four in order (how much of the ground there it covers), its top row at -z like the heightmap; terrain.save {layers: true} writes one. Empty for none.", {}},
@@ -5405,7 +5424,7 @@ constexpr std::array<FieldInfo, 10> kWeatherFields = {{
     FieldInfo{"sound", "bool", "Plays the sound beds under the scene as hard as it rains and snows (sfx:rain for the rain, sfx:wind for the snow), looping and fading with them; false leaves the sound to the game.", {}},
     FieldInfo{"enabled", "bool", "False: no weather (the next enabled Weather by id, if any).", {}},
 }};
-constexpr std::array<FieldInfo, 21> kWaterFields = {{
+constexpr std::array<FieldInfo, 22> kWaterFields = {{
     FieldInfo{"size", "vec2", "The surface's extent along x and z, centred on the entity.", {}},
     FieldInfo{"depth", "f32", "How far below the surface the water reaches: bodies deeper than this are not buoyed.", {}},
     FieldInfo{"color", "color", "The colour deep water turns (the light it scatters back).", {}},
@@ -5414,6 +5433,7 @@ constexpr std::array<FieldInfo, 21> kWaterFields = {{
     FieldInfo{"wave_length", "f32", "The length of the largest waves, crest to crest, in units; smaller ones cross them, and each runs at the speed of real water waves of its length.", {}},
     FieldInfo{"wave_direction", "f32", "Where the waves run, in degrees about +y from +x (90 runs toward -z).", {}},
     FieldInfo{"choppiness", "f32", "How sharp the crests are, 0 (rolling) to 1 (peaked).", {}},
+    FieldInfo{"wind", "f32", "0..1: how far the Wind makes the waves (docs/design/water.md, Wind and waves): at 1 they run with it, 0.012 times its speed squared high and 0.6 times it long (a breeze of 6: 0.43 high and 22 long; a gale of 15: 2.7 and 135), choppier the harder it blows; between, mixed with the waves set; 0 keeps the waves as set.", {}},
     FieldInfo{"ripples", "f32", "The strength of the small ripples on the waves, 0 for none.", {}},
     FieldInfo{"foam", "f32", "How far out from the shore foam reaches, in units of depth; 0 for none.", {}},
     FieldInfo{"caustics", "f32", "How strongly the waves gather the sunlight into bright moving lines on what lies below (sharp in the shallows, washed out deeper); 0 for none.", {}},

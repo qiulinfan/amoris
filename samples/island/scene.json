@@ -58,6 +58,7 @@
      "wave_length": 9,
      "wave_direction": 10,
      "choppiness": 0.5,
+     "wind": 0.6,
      "color": {
       "r": 0.03,
       "g": 0.2,

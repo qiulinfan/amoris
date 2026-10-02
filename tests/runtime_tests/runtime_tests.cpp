@@ -1132,6 +1132,41 @@ TEST_CASE("an ocean is water everywhere at its entity's height: answered far off
     REQUIRE(at["y"].get<double>() == Catch::Approx(-40).margin(0.4));
 }
 
+TEST_CASE("the Wind makes the waves of a Water with wind: higher and longer the harder it blows, running with it", "[runtime][water][wind]") {
+    auto o = hello_options(-1);
+    o.paused = true;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Sea"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", -40}, {"z", 0}}}}}, {"Water", Json{{"ocean", true}, {"depth", 20}, {"wave_height", 0.2}, {"wave_length", 6}, {"wave_direction", 0}, {"wind", 1}}}}}}).has_value());
+    auto waves = [&] { return s.command("water.height", Json{{"x", 100}, {"z", 0}}).value()["waves"]; };
+    // No Wind: the waves as set.
+    REQUIRE(s.command("step", Json{{"ticks", 1}}).has_value());
+    REQUIRE(waves()["height"].get<double>() == Catch::Approx(0.2).margin(1e-4));
+    // A gale of 15 toward -z (direction 90): 0.012 x 225 high, 0.6 x 225 long, running its way.
+    REQUIRE(s.command("world.spawn", Json{{"name", "Gale"}, {"components", Json{{"Wind", Json{{"direction", 90}, {"speed", 15}, {"gusts", 0}}}}}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 1}}).has_value());
+    const Json w = waves();
+    INFO(w.dump());
+    REQUIRE(w["height"].get<double>() == Catch::Approx(2.7).margin(0.01));
+    REQUIRE(w["length"].get<double>() == Catch::Approx(135).margin(0.1));
+    REQUIRE(w["direction"].get<double>() == Catch::Approx(90).margin(0.5));
+    REQUIRE(w["choppiness"].get<double>() > 0.85);
+    // Half way (wind 0.5): halfway between.
+    REQUIRE(s.command("world.set", Json{{"entity", "Sea"}, {"component", "Water"}, {"value", Json{{"wind", 0.5}}}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 1}}).has_value());
+    REQUIRE(waves()["height"].get<double>() == Catch::Approx(1.45).margin(0.01));
+    // And the surface itself rises and falls that much: over a stretch of it, a range near the height.
+    REQUIRE(s.command("world.set", Json{{"entity", "Sea"}, {"component", "Water"}, {"value", Json{{"wind", 1}}}}).has_value());
+    double lo = 1e9, hi = -1e9;
+    for (int i = 0; i < 40; ++i) {
+        const double h = s.command("water.height", Json{{"x", 0}, {"z", i * 3.5}}).value()["height"].get<double>();
+        lo = std::min(lo, h);
+        hi = std::max(hi, h);
+    }
+    INFO("range " << hi - lo);
+    REQUIRE(hi - lo > 1.5);
+}
+
 TEST_CASE("a Boat afloat: the throttle drives it ahead, the rudder turns it, the sail takes the wind but not heading into it", "[runtime][water][boat]") {
     auto o = hello_options(-1);
     o.paused = true;

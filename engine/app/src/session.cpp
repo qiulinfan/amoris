@@ -1408,7 +1408,7 @@ void Session::update_terrains() {
         seen.insert(id);
         TerrainState& st = terrains_[id];
         const std::string shape = std::format("{}|{}|{:.6g}|{}|{}|{:.6g}x{:.6g}|{:.6g}|{:.4g}", tc.heightmap, tc.seed, tc.scale, tc.octaves, tc.resolution, tc.size.x, tc.size.y, tc.height, tc.island);
-        std::string look = std::format("{:.4g},{:.4g},{:.4g}|{:.4g},{:.4g},{:.4g}|{:.4g},{:.4g},{:.4g}|{:.4g}|{:.4g}|{:.4g}", tc.grass.r, tc.grass.g, tc.grass.b, tc.rock.r, tc.rock.g, tc.rock.b, tc.snow.r, tc.snow.g, tc.snow.b, tc.rock_slope, tc.snow_line, tc.texture_tile);
+        std::string look = std::format("{:.4g},{:.4g},{:.4g}|{:.4g},{:.4g},{:.4g}|{:.4g},{:.4g},{:.4g}|{:.4g}|{:.4g}|{:.4g}|{:.3g}|{:.3g}", tc.grass.r, tc.grass.g, tc.grass.b, tc.rock.r, tc.rock.g, tc.rock.b, tc.snow.r, tc.snow.g, tc.snow.b, tc.rock_slope, tc.snow_line, tc.texture_tile, tc.height_blend, tc.bump);
         for (const world::TerrainLayer& ly : tc.layers)
             look += std::format("|{}:{:.4g},{:.4g},{:.4g}:{:.4g}:{:.4g}..{:.4g}:{:.4g}..{:.4g}:{:.4g}", ly.texture, ly.color.r, ly.color.g, ly.color.b, ly.tile, ly.slope.x, ly.slope.y, ly.height.x, ly.height.y, ly.cover);
         bool remesh = false;
@@ -1635,6 +1635,8 @@ void Session::remesh_terrain(world::EntityId id, TerrainState& st, const world::
     look.rock_slope = tc.rock_slope;
     look.snow_line = tc.snow_line;
     look.texture_tile = tc.texture_tile;
+    look.height_blend = tc.height_blend;
+    look.bump = tc.bump;
     for (const world::TerrainLayer& ly : tc.layers) {
         if (look.layers.size() == 4) break;
         look.layers.push_back({ly.texture, lin(ly.color), ly.tile, ly.slope, ly.height, ly.cover});
@@ -2375,6 +2377,8 @@ Result<Json> Session::water_command(std::string_view op, const Json& p) {
         const auto pl = body->place(x, z);
         j["river"] = Json{{"along", pl.along}, {"off", pl.off}, {"length", body->course->length}, {"downstream", vec(pl.dir)}};
     }
+    // The waves as they run here (the Wind's, when Water.wind makes them).
+    j["waves"] = Json{{"height", body->water.wave_height}, {"length", body->water.wave_length}, {"direction", body->water.wave_direction}, {"choppiness", body->water.choppiness}};
     return j;
 }
 

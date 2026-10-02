@@ -1340,6 +1340,65 @@ TEST_CASE("a character walks down a beach into deep water, swims with its head o
     REQUIRE(entry["speed"].get<float>() == Catch::Approx(4.0).margin(0.5));
 }
 
+TEST_CASE("a swimmer dives under with dive below 0, and let go floats back up to swim with its head out", "[physics][character][water][dive]") {
+    World w;
+    physics::Physics p;
+    solid(w, "Bottom", {0, -6.5f, 0}, {20, 0.5f, 20});
+    lake(w, Json{{"size", {{"x", 60}, {"y", 60}}}, {"depth", 8}});
+    const EntityId hero = character(w, "Hero", {0, -0.36f, 0});
+    walk(p, w, hero, {}, 120);
+    REQUIRE(w.try_get<Character>(hero)->swimming);
+    REQUIRE(w.try_get<Transform>(hero)->position.y == Catch::Approx(-0.36).margin(0.05));
+    auto set_dive = [&](float d) {
+        Character c = *w.try_get<Character>(hero);
+        c.dive = d;
+        w.ecs().entity(hero).set<Character>(c);
+    };
+    // Down for a second: three times swim_speed (1.8 a second) at full, its head well under.
+    set_dive(-1);
+    walk(p, w, hero, {}, 60);
+    const float deep = w.try_get<Transform>(hero)->position.y;
+    INFO("dived to " << deep);
+    REQUIRE(deep < -1.6f);
+    REQUIRE(w.try_get<Character>(hero)->submerged == Catch::Approx(1.0f));
+    REQUIRE(w.try_get<Character>(hero)->swimming);
+    // Let go: it floats back up and settles to swim at the surface again.
+    set_dive(0);
+    walk(p, w, hero, {}, 360);
+    INFO("back at " << w.try_get<Transform>(hero)->position.y);
+    REQUIRE(w.try_get<Transform>(hero)->position.y == Catch::Approx(-0.36).margin(0.05));
+    REQUIRE(w.try_get<Character>(hero)->swimming);
+}
+
+TEST_CASE("a swimmer pushing into a low ledge climbs out onto it; a wall too high keeps it in the water", "[physics][character][water][ledge]") {
+    for (const float top : {0.3f, 1.4f}) {
+        World w;
+        physics::Physics p;
+        solid(w, "Bottom", {0, -4.5f, 0}, {20, 0.5f, 20});
+        // A quay from x 3 on, its top `top` over the water at 0.
+        solid(w, "Quay", {8, (top - 4.0f) * 0.5f, 0}, {5, (top + 4.0f) * 0.5f, 20});
+        lake(w, Json{{"size", {{"x", 60}, {"y", 60}}}, {"depth", 4}});
+        const EntityId hero = character(w, "Hero", {-2, -0.36f, 0});
+        walk(p, w, hero, {}, 60);
+        REQUIRE(w.try_get<Character>(hero)->swimming);
+        walk(p, w, hero, {4, 0, 0}, 180);
+        const Character* c = w.try_get<Character>(hero);
+        const Vec3 at = w.try_get<Transform>(hero)->position;
+        INFO("top " << top << ": at " << at.x << ", " << at.y << " swimming " << c->swimming << " grounded " << c->grounded);
+        if (top < 1.0f) {
+            REQUIRE(c->grounded);
+            REQUIRE_FALSE(c->swimming);
+            REQUIRE(at.x > 3.0f);
+            REQUIRE(at.y == Catch::Approx(top + 0.9f).margin(0.05));
+            REQUIRE(w.events().histogram()["character.climbed"] == 1);
+        } else {
+            REQUIRE(c->swimming);
+            REQUIRE(at.x < 3.0f);
+            REQUIRE_FALSE(w.events().histogram().contains("character.climbed"));
+        }
+    }
+}
+
 TEST_CASE("scattered copies that collide stop characters, bodies, rays and sweeps; without collide they are only drawn", "[physics][scatter]") {
     World w;
     physics::Physics p;

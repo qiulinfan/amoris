@@ -439,6 +439,8 @@ Mesh terrain_mesh(const Terrain& t, const TerrainLook& look, const std::string& 
         tl->n = n;
         tl->size = {t.size_x, t.size_z};
         tl->texture_tile = tile;
+        tl->height_blend = std::clamp(look.height_blend, 0.0f, 1.0f);
+        tl->bump = std::clamp(look.bump, 0.0f, 2.0f);
         const auto shares = terrain_layer_weights(t, look);
         tl->weights.resize(shares.size() * 4);
         for (std::size_t k = 0; k < shares.size(); ++k)

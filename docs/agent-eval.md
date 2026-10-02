@@ -515,7 +515,10 @@ changes made while the run went on, `world.schema` answers a name it does not ha
   village kept its square and took the evening rain in 314 seconds and 30 calls. `wolves` failed on
   the check, not the game: its agent's script was right, and the check counted every `sheep.caught`
   in the log, the agent's own tries before the check among them; it now counts those the check's own
-  run makes. Run again, `wolves` passed in 144 seconds (`opencode-glm-wolves2.json`).
+  run makes. Run again, `wolves` passed in 144 seconds (`opencode-glm-wolves2.json`). The three new
+  ones went to oh-my-pi (`omp`) with DeepSeek over MCP the same night: 3 of 3 at the first try in
+  158 seconds, 56 tool calls, 2.4 cents (`omp-deepseek-sea-grass-boat.json`): the sailboat in 30
+  seconds and 15 calls.
 - **Two games more.** `pause_menu` and `breakout` went to opencode with GLM 5.3 Flash the day they
   were added: 2 of 2 at the first try (`opencode-glm-games2.json`). The menu took 274 seconds and 33
   calls; the agent read the interface documentation, went looking for an example and read the UI

@@ -3016,6 +3016,7 @@ void Physics::move_characters(world::World& w, double dt_d) {
             }
             if (!moved) break;
         }
+        const Vec3 wish{v.x, 0, v.z};   // where it means to go across, before walls take their share
         // 3. Gravity, except for a character standing on the ground (a jump sets y above 0) or
         //    swimming: in water whose surface is more than a fifth of its height above its centre
         //    (a tenth once swimming) it is held with its head out by a damped spring toward that
@@ -3042,7 +3043,17 @@ void Physics::move_characters(world::World& w, double dt_d) {
         const bool walking = was_grounded && v.y <= 0 && !swimming;
         if (swimming) {
             constexpr float kFloatSpring = 30.0f, kFloatDamping = 9.0f;   // per second squared, per second
-            v.y += (kFloatSpring * (surface - 0.2f * c.height - pos.y) - kFloatDamping * v.y) * dt;
+            const float dive = std::clamp(c.dive, -1.0f, 1.0f);
+            if (dive != 0) {
+                // Diving (down) or rising (up), three times swim_speed a second at full.
+                const float want = dive * 3.0f * std::clamp(c.swim_speed, 0.0f, 10.0f);
+                v.y += (want - v.y) * std::min(1.0f, 4.0f * dt);
+            } else if (chest > 0.45f * c.height) {
+                // Let go under water: it floats back up, a unit a second, toward its swimming depth.
+                v.y += (1.0f - v.y) * std::min(1.0f, 3.0f * dt);
+            } else {
+                v.y += (kFloatSpring * (surface - 0.2f * c.height - pos.y) - kFloatDamping * v.y) * dt;
+            }
         } else if (walking) {
             v.y = 0;
         } else {
@@ -3171,6 +3182,31 @@ void Physics::move_characters(world::World& w, double dt_d) {
             if (!grounded && v.y <= 0) {
                 const float fy = pos.y - half_h + r;
                 if (settle(Vec3{pos.x, fy + kSkin, pos.z}, 3 * kSkin)) landing_speed = fall_speed;
+            }
+        }
+        // 6. Out onto a ledge: a swimmer pushing into a wall whose top is no higher than a quarter of
+        //    its height over the water climbs onto it: the capsule raised clear, moved over the top
+        //    and set down on it, the water left behind (character.climbed).
+        if (swimming && c.on_wall && !grounded) {
+            const Vec3 wn{c.wall_normal.x, 0, c.wall_normal.z};
+            if (length(wn) > 1e-4f && length(wish) > 0.1f && dot(normalize(wish), normalize(wn)) < -0.5f) {
+                const Vec3 into = normalize(wn) * -1.0f;
+                const float rise = surface + 0.25f * c.height - (pos.y - half_h);
+                if (rise > 0 && rise < c.height && sweep(capsule(pos, 0), Vec3{0, rise, 0}).index < 0) {
+                    const Vec3 high = pos + Vec3{0, rise, 0};
+                    const Vec3 ahead = into * (2.0f * r + 0.1f);
+                    if (sweep(capsule(high, 0), ahead).index < 0) {
+                        const Vec3 keep = pos;
+                        pos = high + ahead;
+                        if (settle(Vec3{pos.x, pos.y - half_h + r + kSkin, pos.z}, rise + std::max(c.step, 0.0f) + kSkin)) {
+                            c.swimming = false;
+                            v.y = 0;
+                            w.events().emit(w.tick_index(), "character.climbed", id, Json{{"path", w.path(id)}, {"out_of", pool}});
+                        } else {
+                            pos = keep;
+                        }
+                    }
+                }
             }
         }
         if (grounded && v.y < 0) v.y = 0;

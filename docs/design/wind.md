@@ -66,4 +66,5 @@ the other way when the wind is turned about.
 
 Wind that hills and walls shelter from, pushing characters and bodies by their area rather than
 their damping, rotating the air's force into a body's spin (a flag's flutter, a leaf's tumble), and
-moving the water's waves with it.
+waves of its own on water that does not ask for them (`Water.wind` makes a body's waves from it,
+`docs/design/water.md`, Wind and waves).

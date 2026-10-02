@@ -116,6 +116,19 @@ made an ocean, the hills an island, by day with a crate afloat and at sunset. `s
 a `Boat` (`docs/design/physics.md`, Boats) on one, round three terrains made islands
 (`docs/design/terrain.md`).
 
+## Wind and waves
+
+`Water.wind` (0..1) lets the `Wind` (`docs/design/wind.md`) make the waves: at 1 they run the way it
+blows, 0.012 times its speed squared high (crest over trough) and 0.6 times it long (a breeze of 6:
+0.43 high and 22 long; a gale of 15: 2.7 and 135; about half the height of a sea the wind has blown
+over for days, so a small boat stays sailable), choppier the harder it blows (up to 0.9 at 13.5 and
+over); between 0 and 1 they are mixed with the waves set. The wind's mean speed makes them, not its
+gusts, so the sea is steady. The waves the world has are these (`world::WaterBody`), so the renderer
+draws them, floating things ride them and `water.height` answers them, with the waves as they run
+under `waves` (height, length, direction, choppiness). `runtime_tests` (`[water][wind]`): without a
+Wind the waves as set, a gale of 15 toward -z makes them 2.7 high and 135 long running toward -z,
+half way at 0.5, and the surface's range over a stretch is near that height.
+
 ## Floating
 
 In the physics step (after the forces, before the contacts), each dynamic body is cut into cells: 27
@@ -143,13 +156,19 @@ fifth of its height under the surface, head and shoulders out, rising and fallin
 moves across at `swim_speed` (0.6) of the velocity its script sets, plus the water's own motion
 there (the current, and the waves' circling); a script setting `velocity.y` pushes it up or down
 against the spring. Walking into the water it wades until the water is over its chest, then swims;
-swimming toward a shore that rises gently it finds its feet and walks out (a steep bank holds it in
-the water, as a wall would). `Character.swimming` says whether it swims and `submerged` how much of
-its height is under the surface (0 to 1); it emits `water.entered` and `water.left` with
-`character: true`. A body entering a water emits `water.entered` (`{path, water, point, speed}`:
-where it met the surface, and how fast it was going) and one leaving it `water.left`
-(`{path, water}`), for splashes and sounds; `physics.stats.floating` counts the bodies buoyed this
-step.
+swimming toward a shore that rises gently it finds its feet and walks out. `Character.dive` (-1..1,
+set by a script) takes it down under the surface or back up at three times `swim_speed` a second at
+full; let go under water it floats back up, a unit a second, and settles to swim at the surface
+again. Pushing into a wall whose top is no higher than a quarter of its height over the water, it
+climbs out onto it (its capsule raised clear, moved over the top and set down on it, emitting
+`character.climbed` with the water it left); a higher wall keeps it in the water. `physics_tests`
+(`[dive]`, `[ledge]`): a second's dive takes it under, let go it settles at the surface again; a
+quay 0.3 over the water is climbed, one 1.4 over is not. `Character.swimming` says whether it swims
+and `submerged` how much of its height is under the surface (0 to 1); it emits `water.entered` and
+`water.left` with `character: true`. A body entering a water emits `water.entered`
+(`{path, water, point, speed}`: where it met the surface, and how fast it was going) and one leaving
+it `water.left` (`{path, water}`), for splashes and sounds; `physics.stats.floating` counts the
+bodies buoyed this step.
 
 ## Splashes
 
@@ -224,10 +243,9 @@ the surface at its x at about 10.5 units a second and a character walking in at 
 
 ## Not yet
 
-Diving and climbing out onto a ledge (a swimmer stays at the surface unless its script pushes it,
-and walks out only up a slope), waves of its own from what floats or falls in (rings and wakes bend
-the surface's light but do not raise it or move what floats on it), caustics from the waves' own
-shape (the net is procedural, not traced from the surface), water of other shapes than a rectangle
-or a river's ribbon (round ponds; the rectangle reaches under the shore instead) and turned with its
-entity, and translucent meshes in front of the water (they are drawn before it without writing
-depth, so the surface covers them).
+Climbing out over anything higher than a low ledge, waves of its own from what floats or falls in
+(rings and wakes bend the surface's light but do not raise it or move what floats on it), caustics
+from the waves' own shape (the net is procedural, not traced from the surface), water of other
+shapes than a rectangle or a river's ribbon (round ponds; the rectangle reaches under the shore
+instead) and turned with its entity, and translucent meshes in front of the water (they are drawn
+before it without writing depth, so the surface covers them).

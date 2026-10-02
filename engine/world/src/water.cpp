@@ -1,5 +1,6 @@
 #include <pocket/world/water.hpp>
 
+#include <pocket/world/wind.hpp>
 #include <pocket/world/world.hpp>
 
 #include <algorithm>
@@ -156,11 +157,23 @@ void WaterBody::bounds(Vec3& lo, Vec3& hi) const {
 
 std::vector<WaterBody> water_bodies(const World& w) {
     std::vector<WaterBody> out;
+    const WindField wind = wind_field(w);
     w.ecs().each([&](flecs::entity e, const Water& wa, const WorldTransform& t) {
         if (!wa.enabled) return;
         WaterBody b;
         b.id = e.id();
         b.water = wa;
+        // Waves the Wind makes (docs/design/water.md, Wind and waves): its mean speed, not its gusts,
+        // so the sea is steady; mixed with the waves set by `wind`.
+        if (wa.wind > 0 && wind.on && wind.speed > 0) {
+            const float t = std::min(wa.wind, 1.0f), u2 = wind.speed * wind.speed;
+            const float heading = repro::atan2(-wind.dir_z, wind.dir_x) * 180.0f / std::numbers::pi_v<float>;
+            float turn = std::fmod(heading - wa.wave_direction + 540.0f, 360.0f) - 180.0f;   // the short way round
+            b.water.wave_height = wa.wave_height + (0.012f * u2 - wa.wave_height) * t;
+            b.water.wave_length = wa.wave_length + (std::max(0.6f * u2, 2.0f) - wa.wave_length) * t;
+            b.water.wave_direction = wa.wave_direction + turn * t;
+            b.water.choppiness = wa.choppiness + (std::max(wa.choppiness, std::min(wind.speed / 15.0f, 0.9f)) - wa.choppiness) * t;
+        }
         b.center = t.position;
         if (!wa.course.empty() && !wa.ocean) {
             const EntityId pid = w.find(wa.course);

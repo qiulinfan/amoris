@@ -1036,6 +1036,8 @@ export interface Character {
     max_slope: number;
     /** How much of its speed into a dynamic body the character gives it (0 leaves bodies alone, 1 pushes them along at its own speed). */
     push: number;
+    /** Swimming, -1..1: down under the surface (negative) or back up (positive) at three times swim_speed a second at full; 0 floats back up to swim with the head out (docs/design/water.md, Swimming). */
+    dive: number;
     /** In water deeper than its chest it swims (docs/design/water.md): the share of velocity.x and z it keeps there; the water's own motion carries it too. */
     swim_speed: number;
     /** Bits of the collision layers (Collider.layer) the character is stopped by; all by default. */
@@ -1090,6 +1092,10 @@ export interface Terrain {
     snow_line: number;
     /** Units per repeat of the MeshRenderer's texture over the ground. */
     texture_tile: number;
+    /** With textured layers, 0..2: how deep the images' brightness bumps the ground's light (grains and stones catch the sun); 0 flat. */
+    bump: number;
+    /** With textured layers, 0..1: how far the images' own heights (their brightness) shape the borders between layers, so sand lies in the cracks between stones and the stones stand out of it; 0 a smooth fade (docs/design/terrain.md, Layers). */
+    height_blend: number;
     /** A project-relative RGBA PNG painted over the ground's colours (terrain.paint writes one with terrain.save {paint: true}): the colour in sRGB, alpha how much it covers, its top row at -z like the heightmap. Empty for none. */
     paintmap: string;
     /** Up to four textured layers of ground, stacked in order: the first lies everywhere, each next over those before it by its rules and its paint (terrain.paint {layer}). With any, the ground is drawn from them, times the painted colour, in place of grass, rock and snow and the MeshRenderer's texture. */
@@ -1178,6 +1184,8 @@ export interface Water {
     wave_direction: number;
     /** How sharp the crests are, 0 (rolling) to 1 (peaked). */
     choppiness: number;
+    /** 0..1: how far the Wind makes the waves (docs/design/water.md, Wind and waves): at 1 they run with it, 0.012 times its speed squared high and 0.6 times it long (a breeze of 6: 0.43 high and 22 long; a gale of 15: 2.7 and 135), choppier the harder it blows; between, mixed with the waves set; 0 keeps the waves as set. */
+    wind: number;
     /** The strength of the small ripples on the waves, 0 for none. */
     ripples: number;
     /** How far out from the shore foam reaches, in units of depth; 0 for none. */
@@ -1843,12 +1851,12 @@ export const componentDefaults: { readonly [K in EngineComponentName]: Component
     RigidBody: { kind: 0, mass: 1, restitution: 0.2, friction: 0.5, linear_damping: 0.01, angular_damping: 0.05, gravity_scale: 1, sleeping: false, lock_rotation: false, ccd: false },
     Joint: { kind: 0, target: "", anchor: { x: 0, y: 0, z: 0 }, target_anchor: { x: 0, y: 0, z: 0 }, distance: -1, rope: false, stiffness: 0, damping: 0, break_force: 0, force: 0, axis: { x: 0, y: 0, z: 1 }, target_axis: { x: 0, y: 0, z: 0 }, reference: { x: 0, y: 0, z: 0 }, limit: false, lower: -1.5708, upper: 1.5708, motor_speed: 0, motor_torque: 0, motor_force: 0, angle: 0, translation: 0, speed: 0, collide_connected: true },
     Body2D: { velocity: { x: 0, y: 0 }, gravity: -24, max_fall: 30, size: { x: 0.4, y: 0.5 }, offset: { x: 0, y: 0 }, map: "", grounded: false, on_wall: 0, on_ceiling: false, kinematic: false, one_way: false, step: 0.5, riding: 0, on_slope: 0, mass: 1, collide_bodies: true, restitution: 0, friction: 0 },
-    Character: { velocity: { x: 0, y: 0, z: 0 }, gravity: -20, max_fall: 50, radius: 0.3, height: 1.8, step: 0.3, max_slope: 45, push: 1, swim_speed: 0.6, mask: 4294967295, grounded: false, ground_normal: { x: 0, y: 1, z: 0 }, ground: 0, on_wall: false, wall_normal: { x: 0, y: 0, z: 0 }, on_ceiling: false, stepped: false, swimming: false, submerged: 0 },
-    Terrain: { size: { x: 64, y: 64 }, height: 8, resolution: 129, heightmap: "", seed: 1, scale: 24, octaves: 4, island: 0, grass: { r: 0.3, g: 0.45, b: 0.22, a: 1 }, rock: { r: 0.45, g: 0.42, b: 0.38, a: 1 }, snow: { r: 0.92, g: 0.93, b: 0.95, a: 1 }, rock_slope: 35, snow_line: 0.85, texture_tile: 4, paintmap: "", layers: [], layermap: "" },
+    Character: { velocity: { x: 0, y: 0, z: 0 }, gravity: -20, max_fall: 50, radius: 0.3, height: 1.8, step: 0.3, max_slope: 45, push: 1, dive: 0, swim_speed: 0.6, mask: 4294967295, grounded: false, ground_normal: { x: 0, y: 1, z: 0 }, ground: 0, on_wall: false, wall_normal: { x: 0, y: 0, z: 0 }, on_ceiling: false, stepped: false, swimming: false, submerged: 0 },
+    Terrain: { size: { x: 64, y: 64 }, height: 8, resolution: 129, heightmap: "", seed: 1, scale: 24, octaves: 4, island: 0, grass: { r: 0.3, g: 0.45, b: 0.22, a: 1 }, rock: { r: 0.45, g: 0.42, b: 0.38, a: 1 }, snow: { r: 0.92, g: 0.93, b: 0.95, a: 1 }, rock_slope: 35, snow_line: 0.85, texture_tile: 4, bump: 0.5, height_blend: 0.5, paintmap: "", layers: [], layermap: "" },
     Cloth: { size: { x: 1.5, y: 1 }, segments: { x: 12, y: 8 }, pin: 0, stiffness: 0.9, damping: 0.02, weight: 0.4, wind: 1, collide: true, thickness: 0.02, enabled: true },
     Wind: { direction: 0, speed: 3, gusts: 0.3, gust_length: 20, enabled: true },
     Weather: { rain: 0, snow: 0, wet: 0, cover: 0, overcast: -1, density: 1, storm: 0, flash: 0, sound: true, enabled: true },
-    Water: { size: { x: 40, y: 40 }, depth: 4, color: { r: 0.03, g: 0.2, b: 0.24, a: 1 }, clarity: 4, wave_height: 0.3, wave_length: 8, wave_direction: 0, choppiness: 0.5, ripples: 1, foam: 0.5, caustics: 1, flow: { x: 0, y: 0 }, course: "", width: 4, sound: true, ocean: false, density: 2, drag: 1, splash: "", splash_count: 24, enabled: true },
+    Water: { size: { x: 40, y: 40 }, depth: 4, color: { r: 0.03, g: 0.2, b: 0.24, a: 1 }, clarity: 4, wave_height: 0.3, wave_length: 8, wave_direction: 0, choppiness: 0.5, wind: 0, ripples: 1, foam: 0.5, caustics: 1, flow: { x: 0, y: 0 }, course: "", width: 4, sound: true, ocean: false, density: 2, drag: 1, splash: "", splash_count: 24, enabled: true },
     Scatter: { count: 500, area: { x: 32, y: 32 }, seed: 1, on: "", scale: { x: 0.8, y: 1.2 }, yaw: 360, align: 0, sink: 0, spacing: 0, max_slope: 35, min_height: -1000, max_height: 1000, max_paint: 1, collide: 0, collide_height: 2, sway: 0, sway_speed: 0.5, fade: 0, shade: 0.15, placed: 0 },
     Vehicle: { wheels: [], throttle: 0, steer: 0, brake: 0, power: 10, top_speed: 25, braking: 18, max_steer: 30, grip: 1.4, suspension_hz: 2.2, damping: 0.45, roll_resistance: 0.3, speed: 0, grounded: 0 },
     Grass: { density: 16, height: 0.5, width: 0.06, color: { r: 0.24, g: 0.42, b: 0.14, a: 1 }, tip: { r: 0.55, g: 0.68, b: 0.3, a: 1 }, reach: 40, thin: 12, sway: 0.6, layer: "", max_slope: 35, min_height: -1000, max_height: 1000, max_paint: 0.3, seed: 1, enabled: true },

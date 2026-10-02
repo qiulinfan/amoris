@@ -87,8 +87,16 @@ any the ground is drawn from them in place of grass, rock and snow and the MeshR
 - **Drawn.** The engine works out each layer's share at every sample when it meshes the terrain and
   hands it to the renderer as a small texture beside the mesh; the renderer keeps the layers' images
   in one array (each resampled to 512 square, still tiling, with its mip chain), and the scene pass
-  mixes the four images, each at its own scale, by the shares where a pixel is. It is part of the
-  same material as any mesh: lit, shadowed, reflected and picked alike.
+  mixes the four images, each at its own scale, by the shares where a pixel is, blended by their
+  heights: each image's brightness raises its layer's share (by `Terrain.height_blend`, 0.5), and
+  across a border only what stands within a band of the highest shows, the band the narrower the
+  higher `height_blend`, so sand lies in the cracks between stones and the stones stand out of it
+  rather than the two fading into each other (0, a smooth fade). The same brightness bumps the
+  light: its slope across a texel and a half of each image, blended as the images are, bends the
+  ground's normal by `Terrain.bump` (0.5; 0 flat, up to 2), so grains and cracks catch a low sun.
+  `tests/evidence/rendering/height-blend.png` (`tools/scripts/dev/height_blend_evidence.py`): the
+  hills' shore at 0, 0.5 and 1. It is part of the same material as any mesh: lit, shadowed,
+  reflected and picked alike.
 - **Asked.** `terrain.height` answers each layer's share at a point
   (`layers: [{layer, name, share}]`), which is how a script knows the player stands on sand or a
   check that a road was painted; `terrain.info` names the layers.
@@ -283,6 +291,5 @@ paint kept through a new seed and a sculpt.
 Detail beyond the grid (holes, caves and overhangs are meshes placed on it), streaming for terrains
 larger than one mesh (a 1025 by 1025 grid is the limit; its squares share one vertex buffer, so the
 levels save drawing, not memory), blending between levels (a square changes level in one frame),
-normal maps and roughness per layer (a layer brings its colour only) and more than four layers,
-blending by the images' own heights (a layer's edge is a smooth fade, not sand in the cracks between
-stones), colliders for copies other than upright capsules (a fallen log, a fence).
+normal maps and roughness per layer (a layer brings its colour, and bumps from its brightness) and
+more than four layers, colliders for copies other than upright capsules (a fallen log, a fence).
