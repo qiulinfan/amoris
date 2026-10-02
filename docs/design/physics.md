@@ -362,8 +362,8 @@ on; the three sheets cost 0.8 ms a tick in release.
 The SDK's `physics` object wraps them (`raycast`, `sweep`, `overlap`, `contacts`, `joints`, `stats`,
 `setGravity`, `setVelocity`). Kinematic bodies (`kind = 2`) move by their `Velocity` and push
 dynamic bodies without being pushed back; scripts move platforms and doors that way. A kinematic
-body under a parent goes where its parent takes it instead (its `Velocity` does not move it): a
-collider on a character's head, a sword's blade on an arm.
+body under a parent goes where its parent takes it, and its `Velocity` moves it within the parent: a
+collider on a character's head, a sword's blade on an arm, a lift in a level's node tree.
 
 ### What a query costs
 

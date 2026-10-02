@@ -1,10 +1,12 @@
 #include <pocket/nav/nav.hpp>
 
 #include <algorithm>
+#include <array>
 #include <set>
 #include <cmath>
 #include <limits>
 #include <queue>
+#include <unordered_map>
 
 namespace pocket::nav {
 
@@ -256,6 +258,7 @@ std::size_t Grid::blocked_count() const {
 void Nav::set_grid(Grid grid) {
     mesh_ = NavMesh{};
     grid_ = std::move(grid);
+    ++grid_rev_;
     runs_.clear();
     build_mesh();
     reapply_obstacles();
@@ -264,6 +267,7 @@ void Nav::set_grid(Grid grid) {
 void Nav::clear() {
     mesh_ = NavMesh{};
     grid_ = Grid{};
+    ++grid_rev_;
     runs_.clear();
 }
 
@@ -340,6 +344,7 @@ Status Nav::bake_colliders(const world::World& w, const physics::Physics& ph, co
     g.baked_tick = tick;
     g.agent_radius = p.agent_radius;
     grid_ = std::move(g);
+    ++grid_rev_;
     build_mesh();
     runs_.clear();
     reapply_obstacles();
@@ -426,6 +431,7 @@ Status Nav::bake_tilemap(const world::World& w, assets::AssetStore& assets, Enti
     g.source = "tilemap:" + tmc->map + ":" + p.mode;
     g.baked_tick = tick;
     grid_ = std::move(g);
+    ++grid_rev_;
     build_mesh();
     runs_.clear();
     reapply_obstacles();
@@ -488,6 +494,17 @@ Result<Path> Nav::grid_path(Vec3 from, Vec3 to, bool smooth) const {
     std::size_t start = 0, goal = 0;
     POCKET_TRY_VOID(locate(from, "start", start));
     POCKET_TRY_VOID(locate(to, "goal", goal));
+    // A goal in another region than the start (on top of a wall, inside a closed room) is not
+    // searched for over every cell the start reaches: the walk goes to the start region's cell
+    // nearest it, found once for every walker after that goal.
+    bool cut_off = false;
+    if (g.links.empty()) {
+        const std::vector<int>& reg = regions();
+        if (reg[start] >= 0 && reg[goal] != reg[start]) {
+            goal = nearest_in_region(reg[start], goal);
+            cut_off = true;
+        }
+    }
     const std::size_t n = g.walkable.size();
     struct Node { float f, gcost; std::size_t cell; std::uint32_t order; };
     struct Less { bool operator()(const Node& a, const Node& b) const { if (a.f != b.f) return a.f > b.f; if (a.gcost != b.gcost) return a.gcost < b.gcost; return a.order > b.order; } };
@@ -521,7 +538,7 @@ Result<Path> Nav::grid_path(Vec3 from, Vec3 to, bool smooth) const {
         });
     }
     const std::size_t end = reached ? goal : best;
-    out.partial = !reached;
+    out.partial = !reached || cut_off;
     std::vector<std::size_t> cells;
     for (int c = static_cast<int>(end); c >= 0; c = came[static_cast<std::size_t>(c)]) {
         cells.push_back(static_cast<std::size_t>(c));
@@ -547,6 +564,46 @@ Result<Path> Nav::grid_path(Vec3 from, Vec3 to, bool smooth) const {
     for (std::size_t c : kept) out.points.push_back(g.center_at(c));
     for (std::size_t i = 1; i < out.points.size(); ++i) out.length += length(out.points[i] - out.points[i - 1]);
     return out;
+}
+
+const std::vector<int>& Nav::regions() const {
+    if (regions_rev_ == grid_rev_ && regions_.size() == grid_.walkable.size()) return regions_;
+    const Grid& g = grid_;
+    regions_.assign(g.walkable.size(), -1);
+    nearest_in_region_.clear();
+    int next = 0;
+    std::vector<std::size_t> todo;
+    for (std::size_t i = 0; i < g.walkable.size(); ++i) {
+        if (regions_[i] >= 0 || !g.walkable_cell(i)) continue;
+        regions_[i] = next;
+        todo.assign(1, i);
+        while (!todo.empty()) {
+            const std::size_t c = todo.back();
+            todo.pop_back();
+            for_neighbours(g, c, [&](std::size_t to, float) {
+                if (regions_[to] >= 0) return;
+                regions_[to] = next;
+                todo.push_back(to);
+            });
+        }
+        ++next;
+    }
+    regions_rev_ = grid_rev_;
+    return regions_;
+}
+
+std::size_t Nav::nearest_in_region(int region, std::size_t goal) const {
+    const auto key = std::make_pair(region, goal);
+    if (const auto it = nearest_in_region_.find(key); it != nearest_in_region_.end()) return it->second;
+    std::size_t best = goal;
+    float best_h = std::numeric_limits<float>::infinity();
+    for (std::size_t i = 0; i < regions_.size(); ++i) {
+        if (regions_[i] != region) continue;
+        const float h = heuristic(grid_, i, goal);
+        if (h < best_h) { best_h = h; best = i; }
+    }
+    nearest_in_region_[key] = best;
+    return best;
 }
 
 bool Nav::reachable(Vec3 from, Vec3 to) const {
@@ -654,6 +711,7 @@ void Nav::set_obstacles(std::vector<Obstacle> obstacles) {
 
 void Nav::reapply_obstacles() {
     Grid& g = grid_;
+    ++grid_rev_;
     g.blocked.clear();
     if (!baked() || obstacles_.empty()) return;
     g.blocked.assign(g.walkable.size(), 0);
@@ -853,13 +911,19 @@ void Nav::step(world::World& w, float dt) {
         if (baked()) {
             AgentRun& run = runs_[it.id];
             const std::uint64_t every = static_cast<std::uint64_t>(std::max(a.replan, 0));
-            bool replan = !run.planned || tick >= run.planned_tick + every || len2(sub(p2(plane, run.goal), gq)) > cell * 0.5f || (plane == 0 && std::fabs(run.goal.y - goal->y) > grid_.max_step);
+            // A goal that moved is planned for again once it has moved half a cell or a tenth of the
+            // way to it, whichever is more: a crowd far behind a running target need not plan every
+            // tick it moves; near it, they do.
+            const float drift = std::max(cell * 0.5f, 0.1f * dgoal);
+            bool replan = !run.planned || tick >= run.planned_tick + every || len2(sub(p2(plane, run.goal), gq)) > drift || (plane == 0 && std::fabs(run.goal.y - goal->y) > grid_.max_step);
             if (!replan && run.next < run.path.size() && !on_ground(grid_, run.path[run.next])) replan = true;  // the corner got blocked
             if (replan) {
                 auto r = path(it.pos, *goal, true);
                 crowd_.replans++;
+                // The first plan's turn is spread by the entity, so agents made together do not all
+                // plan again on the same tick.
+                run.planned_tick = run.planned || every == 0 ? tick : tick - std::min<std::uint64_t>(tick, it.id % every);
                 run.planned = true;
-                run.planned_tick = tick;
                 run.goal = *goal;
                 if (r) {
                     run.path = r->points;
@@ -909,6 +973,33 @@ void Nav::step(world::World& w, float dt) {
         if (len > 1e-6f && speed > 0) pl.desired = mul(d, speed / len);
         pl.chosen = pl.desired;
     }
+    // The agents in square buckets as wide as the farthest any of them looks, so each finds its
+    // neighbours in the nine buckets about it rather than among all (and in the same order).
+    // Buckets at least two of the widest agents across (so overlaps are in the nine about one) and
+    // a third of the farthest look (so the neighbours within it are a few rings out).
+    float span = 1e-3f, widest = 0;
+    for (const Item& it : items) {
+        span = std::max(span, it.agent.radius + std::max(it.agent.speed, 1e-3f) * kHorizon + cell);
+        widest = std::max(widest, it.agent.radius);
+    }
+    const float side = std::max({2.0f * widest, (span + widest) / 3.0f, 1e-3f});
+    std::map<std::pair<std::int64_t, std::int64_t>, std::vector<std::size_t>> buckets;
+    auto bucket_of = [&](const P2& q) { return std::pair<std::int64_t, std::int64_t>{static_cast<std::int64_t>(std::floor(q.u / side)), static_cast<std::int64_t>(std::floor(q.v / side))}; };
+    for (std::size_t j = 0; j < items.size(); ++j) {
+        if (items[j].agent.mode == 0) continue;
+        buckets[bucket_of(p2(plane, items[j].pos))].push_back(j);
+    }
+    // The agents in the ring of buckets r away (the square's edge; r = 0 its own bucket).
+    std::vector<std::size_t> around;
+    auto ring = [&](const P2& q, std::int64_t r) {
+        around.clear();
+        const auto [bx, by] = bucket_of(q);
+        for (std::int64_t dy = -r; dy <= r; ++dy)
+            for (std::int64_t dx = -r; dx <= r; ++dx) {
+                if (std::max(dx < 0 ? -dx : dx, dy < 0 ? -dy : dy) != r) continue;
+                if (const auto f = buckets.find({bx + dx, by + dy}); f != buckets.end()) around.insert(around.end(), f->second.begin(), f->second.end());
+            }
+    };
     // 2. The velocity each moving agent takes: the desired one, or the candidate that best keeps
     // clear of the others and the obstacles over the next second while staying on walkable ground.
     for (std::size_t i = 0; i < items.size(); ++i) {
@@ -921,28 +1012,46 @@ void Nav::step(world::World& w, float dt) {
             P2 rel, vel;
             float radius, dist;
             bool agent;
+            std::size_t order;   // the agent's index, or past them the obstacle's
         };
         std::vector<Near> near;
         const float reach = a.radius + top * kHorizon + cell;
-        for (std::size_t j = 0; j < items.size(); ++j) {
-            if (j == i || items[j].agent.mode == 0) continue;
-            if (items[j].agent.priority < a.priority) continue;   // it gets out of this one's way
-            if (items[j].agent.mode == 3 && items[j].agent.target == items[i].id) continue;   // its own followers keep their slots; a leader that fled them would stall
-            const P2 rel = sub(p2(plane, items[j].pos), p);
-            const float dist = len2(rel);
-            if (dist > reach + items[j].agent.radius) continue;
-            near.push_back({rel, items[j].vel_prev, a.radius + items[j].agent.radius, dist, true});
-        }
-        for (const Obstacle& o : obstacles_) {
+        for (std::size_t k = 0; k < obstacles_.size(); ++k) {
+            const Obstacle& o = obstacles_[k];
             const P2 rel = sub(p2(plane, o.position), p);
             const P2 ov = p2(plane, o.velocity);
             const float dist = len2(rel);
             if (dist > reach + o.radius + len2(ov) * kHorizon) continue;   // a fast one arrives from further away
-            near.push_back({rel, ov, a.radius + o.radius, dist, false});
+            near.push_back({rel, ov, a.radius + o.radius, dist, false, items.size() + k});
+        }
+        // Ring by ring out to the farthest it looks, stopping once the nearest few are known: an
+        // agent past ring r is at least r buckets away.
+        std::vector<float> dists;
+        for (std::int64_t r = 0;; ++r) {
+            ring(p, r);
+            for (const std::size_t j : around) {
+                if (j == i || items[j].agent.mode == 0) continue;
+                if (items[j].agent.priority < a.priority) continue;   // it gets out of this one's way
+                if (items[j].agent.mode == 3 && items[j].agent.target == items[i].id) continue;   // its own followers keep their slots; a leader that fled them would stall
+                const P2 rel = sub(p2(plane, items[j].pos), p);
+                const float dist = len2(rel);
+                if (dist > reach + items[j].agent.radius) continue;
+                near.push_back({rel, items[j].vel_prev, a.radius + items[j].agent.radius, dist, true, j});
+            }
+            const float beyond = static_cast<float>(r) * side;
+            if (beyond > reach + widest) break;
+            if (near.size() >= static_cast<std::size_t>(kMaxNeighbours)) {
+                dists.clear();
+                for (const Near& n : near) dists.push_back(n.dist);
+                std::nth_element(dists.begin(), dists.begin() + (kMaxNeighbours - 1), dists.end());
+                if (dists[static_cast<std::size_t>(kMaxNeighbours - 1)] < beyond) break;
+            }
         }
         if (near.empty()) continue;
-        std::sort(near.begin(), near.end(), [](const Near& x, const Near& y) { return x.dist < y.dist; });
-        if (near.size() > kMaxNeighbours) near.resize(kMaxNeighbours);
+        // Nearest first; equally near, the earlier agent (then the obstacles): the same on every machine.
+        const std::size_t keep = std::min(near.size(), static_cast<std::size_t>(kMaxNeighbours));
+        std::partial_sort(near.begin(), near.begin() + static_cast<std::ptrdiff_t>(keep), near.end(), [](const Near& x, const Near& y) { return x.dist != y.dist ? x.dist < y.dist : x.order < y.order; });
+        near.resize(keep);
         pl.neighbours = static_cast<int>(near.size());
         // Candidates: the desired velocity, for a queuing agent the same direction slowed, then turns
         // in steps of 22.5 degrees either way at full and half speed, then standing still. Ties go
@@ -971,10 +1080,19 @@ void Nav::step(world::World& w, float dt) {
             for (float f : {0.75f, 0.5f, 0.25f}) candidates.push_back(mul(pl.desired, f));
         }
         if (dlen > 1e-6f) {
+            // The turns' cosines and sines, the same every tick (repro's: the same on every machine).
+            static const auto turns = [] {
+                std::array<std::array<float, 2>, 17> t{};
+                for (int k = -8; k <= 8; ++k) {
+                    const float ang = static_cast<float>(k) * (kPi / 8.0f);
+                    t[static_cast<std::size_t>(k + 8)] = {repro::cos(ang), repro::sin(ang)};
+                }
+                return t;
+            }();
             for (int k = 1; k <= 8; ++k) {
                 for (int side : {1, -1}) {
-                    const float ang = static_cast<float>(side * k) * (kPi / 8.0f);
-                    const float c = repro::cos(ang), s = repro::sin(ang);
+                    const auto& cs = turns[static_cast<std::size_t>(side * k + 8)];
+                    const float c = cs[0], s = cs[1];
                     const P2 dir{(pl.desired.u * c - pl.desired.v * s) / dlen, (pl.desired.u * s + pl.desired.v * c) / dlen};
                     candidates.push_back(mul(dir, dlen));
                     candidates.push_back(mul(dir, dlen * 0.5f));
@@ -1028,8 +1146,15 @@ void Nav::step(world::World& w, float dt) {
     std::vector<P2> push(items.size());
     for (std::size_t i = 0; i < items.size(); ++i) {
         if (items[i].agent.mode == 0) continue;
-        for (std::size_t j = i + 1; j < items.size(); ++j) {
-            if (items[j].agent.mode == 0) continue;
+        // Overlaps are within two of the widest agents: in this bucket's ring and the next.
+        std::vector<std::size_t> close;
+        for (std::int64_t r = 0; r <= 1; ++r) {
+            ring(p2(plane, items[i].pos), r);
+            close.insert(close.end(), around.begin(), around.end());
+        }
+        std::sort(close.begin(), close.end());
+        for (const std::size_t j : close) {
+            if (j <= i || items[j].agent.mode == 0) continue;
             const P2 rel = sub(p2(plane, items[j].pos), p2(plane, items[i].pos));
             const float dist = len2(rel), radius = items[i].agent.radius + items[j].agent.radius;
             if (radius <= 0 || dist >= radius) continue;

@@ -5271,7 +5271,7 @@ constexpr std::array<FieldInfo, 19> kNavAgentFields = {{
     FieldInfo{"speed", "f32", "Top speed, units per second.", {}},
     FieldInfo{"radius", "f32", "The agent's radius for keeping clear of other agents and obstacles.", {}},
     FieldInfo{"arrive", "f32", "Distance from the goal at which the agent stops (state 2).", {}},
-    FieldInfo{"replan", "i32", "Ticks between path replans; a goal that moved by half a cell or a corner that got blocked replans at once.", {}},
+    FieldInfo{"replan", "i32", "Ticks between path replans; a goal that moved by half a cell or a tenth of the way to it (whichever is more), or a corner that got blocked, replans at once.", {}},
     FieldInfo{"avoidance", "f32", "Weight of the local avoidance against the desired velocity; 0 walks the path regardless of the others.", {}},
     FieldInfo{"queue", "f32", "How much the agent prefers slowing down behind an agent ahead that goes its way (or stands) over passing it: 0 passes when it can, 1 keeps to a line; agents with the same goal then form a queue instead of a ring. Crossing and oncoming agents are still avoided by turning.", {}},
     FieldInfo{"face", "bool", "Turn the entity about the vertical to face where it walks (its -Z forward, as a Behavior's field of view and a camera read it), at turn_speed; its pitch and roll are set to none. Ground grids only.", {}},

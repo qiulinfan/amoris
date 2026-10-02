@@ -1512,7 +1512,7 @@ export interface NavAgent {
     radius: number;
     /** Distance from the goal at which the agent stops (state 2). */
     arrive: number;
-    /** Ticks between path replans; a goal that moved by half a cell or a corner that got blocked replans at once. */
+    /** Ticks between path replans; a goal that moved by half a cell or a tenth of the way to it (whichever is more), or a corner that got blocked, replans at once. */
     replan: number;
     /** Weight of the local avoidance against the desired velocity; 0 walks the path regardless of the others. */
     avoidance: number;

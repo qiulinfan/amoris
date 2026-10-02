@@ -916,7 +916,7 @@ A thing that walks the navigation grid on its own (docs/design/navigation.md, Ag
 | `speed` | f32 | 3.0 | Top speed, units per second. |
 | `radius` | f32 | 0.35 | The agent's radius for keeping clear of other agents and obstacles. |
 | `arrive` | f32 | 0.3 | Distance from the goal at which the agent stops (state 2). |
-| `replan` | i32 | 10 | Ticks between path replans; a goal that moved by half a cell or a corner that got blocked replans at once. |
+| `replan` | i32 | 10 | Ticks between path replans; a goal that moved by half a cell or a tenth of the way to it (whichever is more), or a corner that got blocked, replans at once. |
 | `avoidance` | f32 | 1.0 | Weight of the local avoidance against the desired velocity; 0 walks the path regardless of the others. |
 | `queue` | f32 | 0.0 | How much the agent prefers slowing down behind an agent ahead that goes its way (or stands) over passing it: 0 passes when it can, 1 keeps to a line; agents with the same goal then form a queue instead of a ring. Crossing and oncoming agents are still avoided by turning. |
 | `face` | bool | false | Turn the entity about the vertical to face where it walks (its -Z forward, as a Behavior's field of view and a camera read it), at turn_speed; its pitch and roll are set to none. Ground grids only. |

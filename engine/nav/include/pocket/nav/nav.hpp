@@ -180,6 +180,15 @@ class Nav {
     void build_mesh();
     [[nodiscard]] Result<Path> grid_path(Vec3 from, Vec3 to, bool smooth) const;
     [[nodiscard]] std::optional<Path> mesh_path(Vec3 from, Vec3 to) const;
+    // The walkable cells in connected regions (a grid without links: every step can be walked
+    // back), remade when the grid or its obstacles change; and per region and goal cell, the
+    // region's cell nearest the goal: where a walk to a goal it cannot reach ends.
+    [[nodiscard]] const std::vector<int>& regions() const;
+    [[nodiscard]] std::size_t nearest_in_region(int region, std::size_t goal) const;
+    mutable std::vector<int> regions_;
+    mutable std::uint64_t regions_rev_ = ~0ull;
+    mutable std::map<std::pair<int, std::size_t>, std::size_t> nearest_in_region_;
+    std::uint64_t grid_rev_ = 0;
     Grid grid_;
     NavMesh mesh_;
     std::vector<Obstacle> obstacles_;

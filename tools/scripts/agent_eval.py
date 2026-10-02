@@ -726,6 +726,119 @@ def walker_sprint_solve(env, project_dir):
     edit_main(project_dir, transform)
 
 
+def fps_shotgun_solve(env, project_dir):
+    # Six pellets a shot, each a hitscan turned a little off the view; a magazine of six.
+    def transform(t):
+        mag = "const MAG = 12;"
+        one = "    const shot = combat.hitscan(from, dir, { damage: DAMAGE, knockback: 3, team: 1, shooter: player, range: 120 });"
+        if mag not in t or one not in t:
+            raise RuntimeError("the fps script changed shape")
+        t = t.replace(mag, "const MAG = 6;", 1)
+        pellets = """    let shot = null as ReturnType<typeof combat.hitscan>;
+    for (let k = 0; k < 6; k++) {
+        const a = random() * Math.PI * 2, r = Math.sqrt(random()) * 0.05;
+        const off = forward(v.yaw + Math.cos(a) * r, v.pitch + Math.sin(a) * r);
+        const hit = combat.hitscan(from, off, { damage: 8, knockback: 1, team: 1, shooter: player, range: 120 });
+        if (hit && !shot) shot = hit;
+    }"""
+        t = t.replace(one, pellets, 1)
+        return t.replace('import { Label, audio, combat,', 'import { Label, audio, combat, random,', 1)
+    edit_main(project_dir, transform)
+
+
+def fps_shotgun_check(env, answer):
+    def held(name, at):
+        env.command("world.set", {"entity": name, "component": "Behavior", "value": {"enabled": False}})
+        env.command("world.set", {"entity": name, "component": "NavAgent", "value": {"mode": 0}})
+        env.command("world.set", {"entity": name, "component": "Transform", "value": {"position": at}})
+    def aim(at):
+        eye = env.command("world.get", {"entity": "Player/Eye", "component": "WorldTransform"})["position"]
+        dx, dy, dz = at["x"] - eye["x"], at["y"] - eye["y"], at["z"] - eye["z"]
+        yaw, pitch = math.atan2(-dx, -dz), math.atan2(dy, math.hypot(dx, dz))
+        env.command("world.set", {"entity": "Player", "component": "Transform", "value": {"rotation": {"x": 0, "y": math.sin(yaw / 2), "z": 0, "w": math.cos(yaw / 2)}}})
+        env.command("world.set", {"entity": "Player/Eye", "component": "Transform", "value": {"rotation": {"x": math.sin(pitch / 2), "y": 0, "z": 0, "w": math.cos(pitch / 2)}}})
+    env.command("step", {"ticks": 3})
+    p = entity_pos(env, "Player")
+    target = {"x": p["x"], "y": 0, "z": p["z"] - 5}
+    held("Raider0", target)
+    env.command("step", {"ticks": 2})
+    aim({"x": target["x"], "y": 1.15, "z": target["z"]})
+    seq = env.command("events.last_seq", {})["seq"]
+    env.command("input.press", {"action": "fire"})
+    env.command("step", {"ticks": 2})
+    hits = [e for e in env.command("events.since", {"seq": seq, "type": "hit", "limit": 50})["events"] if e.get("data", {}).get("to") == "/Raider0"]
+    if len(hits) < 4:
+        return False, f"one shot at a raider five ahead hit it {len(hits)} times, not with most of six pellets"
+    if any(abs(float(h["data"].get("damage", 0)) - 8) > 1e-3 for h in hits):
+        return False, f"pellets did {[h['data'].get('damage') for h in hits]} damage, not 8 each"
+    points = {(round(h["data"]["point"]["x"], 3), round(h["data"]["point"]["y"], 3)) for h in hits if "point" in h.get("data", {})}
+    if len(points) < 3:
+        return False, "the pellets all hit the same place: no spread"
+    # Every point within the spread: within 3 degrees of the aim at 5 units is under 0.27 off it.
+    for h in hits:
+        q = h["data"].get("point", {})
+        if math.hypot(q.get("x", 0) - target["x"], q.get("y", 0) - 1.15) > 0.6:
+            return False, f"a pellet landed at {q}, far outside a 3 degree spread"
+    st = env.command("state", {})["state"]
+    if state_key(st, "ammo") != 5:
+        return False, f"after one shot the magazine has {state_key(st, 'ammo')}, not 5 of 6"
+    # Six shots empty it.
+    env.command("world.set", {"entity": "Raider0", "component": "Health", "value": {"current": 70, "dead": False}})
+    env.command("step", {"ticks": 12})   # past the gap between shots
+    for _ in range(5):
+        env.command("input.press", {"action": "fire"})
+        env.command("step", {"ticks": 12})
+    st = env.command("state", {})["state"]
+    if state_key(st, "ammo") not in (0, 6) and not state_key(st, "reloading"):
+        return False, f"after six shots the state says ammo {state_key(st, 'ammo')}, reloading {state_key(st, 'reloading')}"
+    return True, f"one shot is {len(hits)} pellet hits of 8 spread over {len(points)} points; six shots to a magazine"
+
+
+def guards_footsteps_solve(env, project_dir):
+    # Walking feet are heard too, closer: a noise that carries 4 every half second.
+    def transform(t):
+        a = """        events.emit("noise", { radius: 10 }, { subject: player });
+        footfall = 1 / 3;
+    }"""
+        if a not in t:
+            raise RuntimeError("the guards script changed shape")
+        return t.replace(a, a + """ else if (!running && Math.hypot(vx, vz) > 0.1 && footfall === 0) {
+        events.emit("noise", { radius: 4 }, { subject: player });
+        footfall = 0.5;
+    }""", 1)
+    edit_main(project_dir, transform)
+
+
+def guards_footsteps_check(env, answer):
+    def state(name):
+        return env.command("world.get", {"entity": name, "component": "Behavior"})["state"]
+    env.command("step", {"ticks": 5})
+    # Standing still: no noise.
+    seq = env.command("events.last_seq", {})["seq"]
+    env.command("step", {"ticks": 60})
+    if env.command("events.since", {"seq": seq, "type": "noise"})["events"]:
+        return False, "the player standing still makes noise"
+    # Walking (no sprint) far from everyone: noises that carry about 4.
+    env.command("input.hold", {"action": "move_x", "ticks": 60, "value": 1})
+    env.command("step", {"ticks": 60})
+    walked = env.command("events.since", {"seq": seq, "type": "noise"})["events"]
+    if len(walked) < 1:
+        return False, "walking makes no noise"
+    radii = {float(e.get("data", {}).get("radius", 0)) for e in walked}
+    if not all(3 <= r <= 5 for r in radii):
+        return False, f"walking noises carry {sorted(radii)}, not about 4"
+    if not all(state(g) == "patrol" for g in ("Guard1", "Guard2", "Guard3")):
+        return False, "a guard left its round while the player walked far away"
+    # A guard three away hears the walk; one eight away does not.
+    near = env.command("world.get", {"entity": "Guard2", "component": "Transform"})["position"]
+    env.command("world.set", {"entity": "Player", "component": "Transform", "value": {"position": {"x": near["x"], "y": 0.9, "z": near["z"] + 3}}})
+    env.command("input.hold", {"action": "move_x", "ticks": 40, "value": 1})
+    env.command("step", {"ticks": 40})
+    if state("Guard2") == "patrol":
+        return False, "a guard three units from the walking player did not hear it"
+    return True, f"walking makes noises that carry {sorted(radii)} and a guard three away comes; standing makes none"
+
+
 def knockout_solve(env, project_dir):
     # Health on the player at start; when it runs out, the hero goes limp as R makes it.
     def transform(t):
@@ -2625,6 +2738,107 @@ def fireworks_check(env, answer):
     return True, "a rocket with a trail rises 6 in half a second, bursts at 12 into 100 or more glowing sparks, three in all"
 
 
+GLADE_TOML = GAME_TOML + 'stoke = ["F"]\n'
+GLADE_TS = """import { audio, input, onStart, onTick, particles, world } from "pocket";
+const at = (x: number, z: number) => ({ position: { x, y: 0, z } });
+onStart(() => {
+    world.spawn("Camera", { components: { Transform: { position: { x: 0, y: 4, z: 12 }, rotation: { x: -0.15, y: 0, z: 0, w: 0.989 } }, Camera: {} } });
+    world.spawn("Sun", { components: { Transform: { rotation: { x: -0.3, y: 0.3, z: 0.1, w: 0.9 } }, Light: { kind: "directional", intensity: 0.6 } } });
+    world.spawn("Ground", { components: { Transform: { position: { x: 0, y: -0.5, z: 0 }, scale: { x: 40, y: 1, z: 40 } }, MeshRenderer: { mesh: "cube", texture: "pattern:grass", texture_tile: 3 }, RigidBody: { kind: "static" }, Collider: { size: { x: 20, y: 0.5, z: 20 } } } });
+    [[-6, -4], [5, -5], [-3, -9], [7, 2]].forEach(([x, z], i) => world.spawn(`Tree_${i}`, { components: { Transform: at(x, z), MeshRenderer: { mesh: i % 2 ? "pine?seed=" + i : "tree?seed=" + i } } }));
+    [[2, 2], [-2.5, 1.5], [3, -2]].forEach(([x, z], i) => world.spawn(`Rock_${i}`, { components: { Transform: at(x, z), MeshRenderer: { mesh: "rock?seed=" + i } } }));
+    const fire = world.spawn("Campfire", { components: { Transform: at(0, 0), Light: { kind: "point", color: { r: 1, g: 0.6, b: 0.3, a: 1 }, intensity: 5, range: 6 } } });
+    particles.preset(fire, "fire");
+    particles.preset(world.spawn("Smoke", { components: { Transform: { position: { x: 0, y: 1, z: 0 } } } }), "smoke");
+    world.spawn("Sparks", { components: { Transform: { position: { x: 0, y: 0.3, z: 0 } } } });
+    particles.preset("Sparks", "sparks");
+});
+onTick(() => {
+    if (input.pressed("stoke")) {
+        audio.play("sfx:hit");
+        particles.burst("Sparks", 25);
+    }
+});
+"""
+
+
+def glade_solve(env, project_dir):
+    write_game(project_dir, "glade", GLADE_TS)
+    with open(os.path.join(project_dir, "project.toml"), "w") as f:
+        f.write(GLADE_TOML.format(name=os.path.basename(project_dir)))
+    return None
+
+
+def glade_check(env, answer):
+    if "stoke" not in env.command("input.actions", {}):
+        return False, "no stoke action"
+    # No files of its own: no image, model or sound under the project.
+    listed = env.command("assets.list", {})
+    files = [a.get("path", "") for a in (listed.get("assets", []) if isinstance(listed, dict) else listed)]
+    own = [p for p in files if os.path.splitext(p)[1].lower() in (".png", ".jpg", ".jpeg", ".svg", ".glb", ".gltf", ".obj", ".wav", ".ogg", ".mp3", ".flac", ".sfx")]
+    if own:
+        return False, f"the glade brought files of its own: {own[:5]}"
+    env.command("step", {"ticks": 90})
+    found = env.command("world.query", {"with": ["MeshRenderer"], "fields": ["MeshRenderer.mesh", "MeshRenderer.texture", "Transform.scale"], "limit": 500})
+    ents = found.get("entities", [])
+    ground = [e for e in ents if str(e.get("MeshRenderer", {}).get("texture", "")).startswith("pattern:grass") and min(e.get("Transform", {}).get("scale", {}).get("x", 0), e.get("Transform", {}).get("scale", {}).get("z", 0)) >= 20]
+    if not ground:
+        textures = sorted({str(e.get("MeshRenderer", {}).get("texture", "")) for e in ents})
+        return False, f"no ground 20 or more across textured with grass (textures: {textures[:8]})"
+    meshes = [str(e.get("MeshRenderer", {}).get("mesh", "")).split("?")[0] for e in ents]
+    trees = sum(1 for m in meshes if m in ("tree", "pine"))
+    rocks = sum(1 for m in meshes if m == "rock")
+    if trees < 4 or rocks < 3:
+        return False, f"{trees} trees and {rocks} rocks, not at least four and three"
+    # The campfire: at the origin, a warm point light, glowing particles that rise.
+    p = entity_pos(env, "Campfire")
+    if p is None or abs(p["x"]) > 0.5 or abs(p["z"]) > 0.5:
+        return False, f"no Campfire at the origin ({p})"
+    camp = env.command("world.find", {"path": "Campfire"})
+    def near(comp, within):
+        hits = env.command("world.query", {"with": [comp, "Transform"], "limit": 200}).get("entities", [])
+        out = []
+        for h in hits:
+            q = env.command("world.get", {"entity": h["id"], "component": "WorldTransform"})["position"]
+            if abs(q["x"] - p["x"]) <= within and abs(q["z"] - p["z"]) <= within:
+                out.append(h["id"])
+        return out
+    lights = [i for i in near("Light", 1.0) if env.command("world.get", {"entity": i, "component": "Light"}).get("kind") == 1]
+    if not lights:
+        return False, "no point light at the campfire"
+    stats = env.command("particles.stats", {})
+    rising_glow, smoke = False, False
+    for pool in stats.get("pools", []):
+        em = env.command("world.get", {"entity": pool["entity"], "component": "ParticleEmitter"})
+        q = env.command("world.get", {"entity": pool["entity"], "component": "WorldTransform"})["position"]
+        if abs(q["x"] - p["x"]) > 1.0 or abs(q["z"] - p["z"]) > 1.0 or pool.get("alive", 0) < 5:
+            continue
+        lst = env.command("particles.list", {"entity": pool["entity"], "limit": 0})
+        up = lst.get("bounds", {}).get("max", {}).get("y", -1e9) > q["y"] + 0.3
+        if em.get("additive") and up:
+            rising_glow = True
+        elif up and not em.get("additive"):
+            smoke = True
+    if not rising_glow:
+        return False, "no glowing (additive) particles rising from the campfire"
+    if not smoke:
+        return False, "no smoke (particles that are not additive) rising over the campfire"
+    # Stoking: a sound and a burst of sparks.
+    seq = env.command("events.last_seq", {})["seq"]
+    spawned0 = env.command("particles.stats", {}).get("spawned", 0)
+    env.command("input.press", {"action": "stoke"})
+    env.command("step", {"ticks": 3})
+    played = env.command("events.since", {"seq": seq, "type": "audio.started"})["events"]
+    if not played:
+        return False, "stoking played no sound"
+    if env.command("particles.stats", {}).get("spawned", 0) - spawned0 < 10:
+        return False, "stoking burst no sparks"
+    lint = env.command("world.lint", {})
+    if lint.get("errors", 0):
+        return False, f"world.lint finds errors: {[x.get('problem') for x in lint.get('problems', []) if x.get('severity') == 'error'][:3]}"
+    return True, f"a grass ground, {trees} trees and {rocks} rocks without files, a campfire with a point light, glowing flames and smoke, a sound and sparks on stoke"
+
+
 def watchman_check(env, answer):
     def get(name, comp):
         try:
@@ -3471,6 +3685,10 @@ TASKS = [
      "task": "Make the car named Car faster: set its Vehicle's top_speed to 35 and power to 14, then drive it with the throttle action held for 300 ticks (5 seconds of game time) and answer with the car's speed at the end as the number \"answer\" (the game's script sets the car's throttle from the throttle action every tick)."},
     {"name": "knockout", "project": "walker", "ticks": 0, "script": True, "solve": knockout_solve, "check": knockout_check,
      "task": "In the walker game, give the Player entity a Health of 30 (current and max) when the game starts, and when the player's health is used up make the hero (the entity Player/Hero, the player's body) go limp as a ragdoll: it falls where it stands and lies there, and from then on the move actions no longer move the player. Answer null."},
+    {"name": "fps_shotgun", "project": "fps", "ticks": 0, "script": True, "solve": fps_shotgun_solve, "check": fps_shotgun_check,
+     "task": "Turn the fps game's gun into a shotgun: each shot fires 6 pellets, each going off within 3 degrees of where the view looks (randomly) and doing 8 damage to what it hits, instead of one bullet of 25; the magazine holds 6 shots instead of 12. Keep everything else as it is. Answer null."},
+    {"name": "guards_footsteps", "project": "guards", "ticks": 0, "script": True, "solve": guards_footsteps_solve, "check": guards_footsteps_check,
+     "task": "In the guards game the guards hear the player only while it runs. Make them hear it walking too, but from nearer: while the player walks (moving, not running) its footsteps are a noise that carries 4 units, every half second; standing still makes none. Running stays as it is. Answer null."},
     {"name": "walker_sprint", "project": "walker", "ticks": 0, "script": True, "solve": walker_sprint_solve, "check": walker_sprint_check,
      "task": "Give the walker a sprint: add an input action named sprint bound to the left Shift key (LShift) in project.toml, and edit scripts/main.ts so that while sprint is held the player walks at 9 units per second instead of 5 (and at 5 otherwise)."},
     {"name": "raft", "project": "hills", "ticks": 2, "solve": raft_solve, "check": raft_check,
@@ -3517,6 +3735,8 @@ TASKS = [
      "task": "Make a village square in this blank project, replacing its example: a ground at y 0 and five villagers, entities named Villager_1 to Villager_5, each the engine's built-in humanoid with a shirt of its own colour, standing within 4 units of (0, 0, 0) at the start. They wander at walking pace (about 1.3 units a second), never more than 6 units from the centre, walking when they move and standing idle when they stop. A Player entity (drawn however you like, its feet at y 0) moves with move_x and move_z at 4 units a second. When the Player comes within 3 units of a villager, that villager stops, turns to face the Player and waves; once the Player is more than 4 units away it wanders again. The game reads the Player's place from its Transform every tick (the check moves it with world.set). Answer null."},
     {"name": "fireworks", "project": "blank", "ticks": 0, "script": True, "game": True, "solve": fireworks_solve, "check": fireworks_check,
      "task": "Make a fireworks show in this blank project, replacing its example, under a dark night sky. Each press of a launch action (Space) sends up a rocket: an entity named Rocket_1, Rocket_2 ... (counting launches) starting at (0, 0, 0) and rising straight up at 12 units a second with a glowing trail behind it (the engine's Trail). One second after its launch it bursts where it is: the rocket is destroyed, an event firework.burst with {n, x, y, z} is emitted (n its number), and at least 100 sparks fly out from there in every direction, falling and fading over about two seconds and glowing (additive). Several rockets may be up at once. Expose launched and bursts (how many so far). The game reads each rocket's place from its Transform. Answer null."},
+    {"name": "glade", "project": "blank", "ticks": 0, "script": True, "game": True, "solve": glade_solve, "check": glade_check,
+     "task": "Make a forest glade in this blank project, replacing its example, without adding any image, model or sound file to the project: a ground about 40 by 40 units textured with grass, at least four trees and three rocks around it, and in the middle a campfire: an entity named Campfire at (0, 0, 0) with flames (glowing particles that rise), a warm point light, and smoke rising above it. Pressing a stoke action (F) plays a sound and bursts sparks from the fire. A camera looks at the glade. Answer null."},
     {"name": "watchman", "project": "blank", "ticks": 0, "script": True, "solve": watchman_solve, "check": watchman_check,
      "task": "In this blank project, replacing its example, add a guard with the engine's Behavior component. Bake a navigation grid over the ground at the start (x and z from -10 to 10). An entity named Watchman starting at (-6, 0, 6) walks back and forth between (-6, 0, 6) and (6, 0, 6), a Path named Beat, at 2 units a second; when it sees the Player within 6 units it runs after it at 4 units a second; when it has not seen the Player for 2 seconds it goes back to walking its beat. Keep an entity named Player that the game does not move by itself (it may stand still): it is moved with world.set. Answer null."},
     {"name": "key_door", "project": "blank", "ticks": 0, "script": True, "game": True, "solve": key_door_solve, "check": key_door_check,

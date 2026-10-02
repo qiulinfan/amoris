@@ -35,6 +35,8 @@ checks the world through the same commands. A task passes or fails; nothing is s
 | `hill_raise` | hills | raise the terrain at a point to a height without touching the ground 12 units away, and answer with the height | `terrain.height` (there, and around at 12 units, against the setup) |
 | `flowers` | hills | strew red flowers over the terrain, only on ground no steeper than 20 degrees | `world.find`, `world.get`, `scatter.copies`, `terrain.height` (each flower's ground and its slope) |
 | `car_speed` | drive | tune a car's top speed and power, drive it for five seconds through its action, and answer with its speed | `world.get` on the Vehicle (the settings, the speed) |
+| `fps_shotgun` | fps (a copy) | make the gun a shotgun: six pellets a shot within 3 degrees of the view, 8 damage each, a magazine of six | `combat.hitscan` events (a held raider five ahead: most of six pellets, 8 each, spread), `state` (`ammo` after one shot and after six) |
+| `guards_footsteps` | guards (a copy) | the guards hear the player walking too, from nearer: a noise that carries 4 every half second while it walks, none standing | `events.since` (`noise` while walking, not standing, about 4), a guard three from the walking player leaving its round |
 | `walker_sprint` | walker (a copy) | add an input action in `project.toml` and use it in the script: a sprint on LShift, 9 units a second instead of 5 | `input.describe`, `input.hold`, `state` (a second of walking with and without it) |
 | `raft` | hills | spawn a dynamic box collider 2 by 0.2 by 1 and drop it into the lake so it floats (the mass is the runner's to choose), run 180 ticks, answer with the surface's height under it | `world.get` on its RigidBody and Collider, 120 more ticks, then `water.height` under it: within 0.3 of the surface, still over the lake |
 | `calm_lake` | hills | make the lake still and clearer (8 units) and raise it half a unit, answer with its surface's height | `world.get` on the Water and its Transform, `water.height` |
@@ -98,7 +100,7 @@ afterwards.
 
 ### Whole games
 
-Nine tasks start from a blank project (`pocket new` without a sample, outside the repository) and a
+Ten tasks start from a blank project (`pocket new` without a sample, outside the repository) and a
 brief of a few sentences, and ask for a small game: `dodge` (a player moved by two actions at 6
 units a second, a rock a second falling at 4, a hit ending the game with `game.over`, `alive` and
 `time_alive` exposed), `key_door` (a door the player cannot pass going right until it takes a key,
@@ -114,21 +116,24 @@ action, `level.solved` with the move count) and `villagers` (five of the engine'
 in five looks wandering a square, walking when they move, one that stops, faces the player and waves
 when it comes near; the brief names neither the humanoid's clips nor what would walk them, so the
 agent finds them) and `fireworks` (rockets with trails that rise and burst into at least a hundred
-glowing sparks, several up at once). The brief is a contract: the names of the entities, the actions
-and their keys, the events with their data, the exposed values, and that the game reads positions
-from the Transforms every tick, so the check can move things with `world.set`. The check is hidden
-in the harness and plays the game: it holds `move_x` for a second and measures the move, counts the
-rocks and times one's fall, puts a rock on the player and waits for `game.over`, then holds the
-actions again and expects nothing to move; for the door it starts the player between the key and the
-door and walks it into the door, puts it on the key, and walks it to the exit; the menu it clicks
-through by the buttons' names (`ui.click {id: "start"}`), holding `move_x` on each screen and
-reading `time`; the breakout it plays by setting the ball's place and velocity: up into a brick,
-into a wall, onto the paddle, past it, into the last brick left, and, after `project.reload`, past
-the paddle three times; the platformer it reads back as solid rows (`tilemap.rows`), walks, follows
-through a jump with `step {watch}`, drops into the pit and walks onto the flag; the puzzle it plays
-by presses only (the game may keep its own grid), into a wall, into two boxes, a move and its undo,
-a push into a wall, and the four moves that solve it. None of it is in the brief beyond the
-contract.
+glowing sparks, several up at once) and `glade` (a ground textured with grass, four trees, three
+rocks and a campfire with a warm light, glowing flames and smoke, a sound and sparks on a key, all
+without a single image, model or sound file in the project: the brief names none of the engine's
+patterns, props, presets or `sfx:` clips, so the agent finds them). The brief is a contract: the
+names of the entities, the actions and their keys, the events with their data, the exposed values,
+and that the game reads positions from the Transforms every tick, so the check can move things with
+`world.set`. The check is hidden in the harness and plays the game: it holds `move_x` for a second
+and measures the move, counts the rocks and times one's fall, puts a rock on the player and waits
+for `game.over`, then holds the actions again and expects nothing to move; for the door it starts
+the player between the key and the door and walks it into the door, puts it on the key, and walks it
+to the exit; the menu it clicks through by the buttons' names (`ui.click {id: "start"}`), holding
+`move_x` on each screen and reading `time`; the breakout it plays by setting the ball's place and
+velocity: up into a brick, into a wall, onto the paddle, past it, into the last brick left, and,
+after `project.reload`, past the paddle three times; the platformer it reads back as solid rows
+(`tilemap.rows`), walks, follows through a jump with `step {watch}`, drops into the pit and walks
+onto the flag; the puzzle it plays by presses only (the game may keep its own grid), into a wall,
+into two boxes, a move and its undo, a push into a wall, and the four moves that solve it. None of
+it is in the brief beyond the contract.
 
 ### Diagnose and fix
 

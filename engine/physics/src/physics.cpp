@@ -18,19 +18,15 @@
 
 namespace pocket::physics {
 
-// Where a body is in the world: a dynamic one (or a root) at its own Transform, which the physics
-// writes; a static or kinematic one under a parent placed through its ancestors, so a collider
-// parented to a moving thing (a head on a walking robot, a blade on an arm) goes where it goes.
-world::Transform placed(flecs::entity e, const world::RigidBody& rb, const world::Transform& t) {
-    if (rb.kind == 0 || !e.parent().is_valid()) return t;
-    // The ancestors' Transforms from the root down, composed as World::tick does for
-    // WorldTransform (a parent without one is passed through), read now rather than from the last
-    // tick so a moved parent or a new instance is where it is this step.
+// The ancestors' Transforms from the root down, composed as World::tick does for WorldTransform (a
+// parent without one is passed through), read now rather than from the last tick so a moved parent
+// or a new instance is where it is this step; none for a root.
+std::optional<world::Transform> parent_frame(flecs::entity e) {
     std::vector<const world::Transform*> chain;
     for (flecs::entity p = e.parent(); p.is_valid(); p = p.parent()) {
         if (const auto* pt = p.try_get<world::Transform>()) chain.push_back(pt);
     }
-    if (chain.empty()) return t;
+    if (chain.empty()) return std::nullopt;
     world::Transform at = *chain.back();
     for (std::size_t i = chain.size() - 1; i-- > 0;) {
         const world::Transform& local = *chain[i];
@@ -39,6 +35,18 @@ world::Transform placed(flecs::entity e, const world::RigidBody& rb, const world
         at.rotation = normalize(at.rotation * local.rotation);
         at.scale = {at.scale.x * local.scale.x, at.scale.y * local.scale.y, at.scale.z * local.scale.z};
     }
+    return at;
+}
+
+// Where a body is in the world: a dynamic one (or a root) at its own Transform, which the physics
+// writes; a static or kinematic one under a parent placed through its ancestors, so a collider
+// parented to a moving thing (a head on a walking robot, a blade on an arm) goes where it goes, and
+// a kinematic child's own Velocity moves it within its parent (write_back puts it back there).
+world::Transform placed(flecs::entity e, const world::RigidBody& rb, const world::Transform& t) {
+    if (rb.kind == 0 || !e.parent().is_valid()) return t;
+    const auto frame = parent_frame(e);
+    if (!frame) return t;
+    const world::Transform& at = *frame;
     world::Transform out = t;
     const Vec3 scaled{t.position.x * at.scale.x, t.position.y * at.scale.y, t.position.z * at.scale.z};
     out.position = at.position + at.rotation.rotate(scaled);
@@ -67,6 +75,7 @@ struct Body {
     bool trigger = false;
     bool lock_rotation = false;
     bool sleeping = false;
+    std::optional<world::Transform> frame;   // a kinematic child's parent frame when gathered (write_back's way home)
     bool ccd = false;      // sweep along the motion before integrating (fast small bodies)
     bool swept = false;    // this step's motion was already applied by the sweep
     int group = 0;         // same negative group: never collide; same positive: always; 0: the layers decide
@@ -1072,6 +1081,7 @@ struct Physics::Impl {
                 seen.insert(b.id);
             }
             b.trigger = col.is_trigger;
+            if (rb.kind == 2 && e.parent().is_valid()) b.frame = parent_frame(e);
             b.layer = col.layer;
             b.mask = col.mask;
             b.group = col.group;
@@ -1109,12 +1119,23 @@ struct Physics::Impl {
         static_assert(sizeof(world::Transform) == 10 * sizeof(float) && sizeof(world::Velocity) == 6 * sizeof(float));
         for (Body& b : bodies) {
             flecs::entity e = w.entity(b.id);
-            if (b.kind == 1 || (b.kind == 2 && e.parent().is_valid())) continue;   // a kinematic child goes with its parent
+            if (b.kind == 1) continue;
             const world::Transform& now = e.get<world::Transform>();
             world::Transform t = now;
             const world::Collider& col = e.get<world::Collider>();
             t.position = b.position - b.rotation.rotate(col.offset);
             t.rotation = b.rotation;
+            if (b.kind == 2 && b.frame) {
+                // A kinematic child moved in the world by its Velocity: back into its parent's frame
+                // as it was placed by (the parent may have moved since: next step places it anew).
+                if (const auto& frame = b.frame) {
+                    const Quat inv{-frame->rotation.x, -frame->rotation.y, -frame->rotation.z, frame->rotation.w};
+                    const Vec3 local = inv.rotate(t.position - frame->position);
+                    auto div = [](float v, float s) { return std::fabs(s) > 1e-12f ? v / s : v; };
+                    t.position = Vec3{div(local.x, frame->scale.x), div(local.y, frame->scale.y), div(local.z, frame->scale.z)};
+                    t.rotation = normalize(inv * t.rotation);
+                }
+            }
             if (std::memcmp(&t, &now, sizeof t) != 0) e.set<world::Transform>(t);
             world::Velocity v;
             v.linear = b.velocity;

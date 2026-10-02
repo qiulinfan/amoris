@@ -126,9 +126,10 @@ local avoidance. `nav.info` counts `moving_obstacles`.
 
 An entity with a `NavAgent` walks on its own. Scripts set where it goes (`mode` 1 with a `goal`
 point, 2 with a `target` entity; 0 leaves the entity alone), its `speed`, `radius`, `arrive`
-distance and how often it replans (`replan` ticks; a goal that moved by half a cell or a corner that
-got blocked replans at once), and the engine does the rest every tick, after the scripts and the
-physics:
+distance and how often it replans (`replan` ticks, an agent's first turn spread by its entity so a
+crowd made at once does not replan on one tick; a goal that moved by half a cell or a tenth of the
+way to it, whichever is more, or a corner that got blocked replans at once), and the engine does the
+rest every tick, after the scripts and the physics:
 
 1. it plans a path to the goal over the grid, around the obstacles, and heads for the next corner,
    then for the goal itself, slowing to stop `arrive` away; it turns for the corner after next only
@@ -167,6 +168,16 @@ order of the entities, and the whole crowd is in the state hash. `nav.info` coun
 `moving`, `arrived`, `stuck`, `replans`, `avoiding` (agents whose velocity deviated this tick)
 `queuing` (agents that slowed behind another) and `detours` (followers pathing to a slot out of
 sight). `nav.agents` reports each agent's `offset` too.
+
+What a crowd costs: an agent's neighbours come from square buckets of the grid's plane, ring by ring
+out from its own until the nearest eight are known or its look runs out, and a goal no walk reaches
+(a player on a wall, a target behind a closed door) is not searched for over every cell: the
+walkable cells are kept in connected regions, remade when the grid or its obstacles change, and the
+walk goes to the start's region's cell nearest the goal, found once for every agent after that goal.
+`tools/scripts/dev/crowd_chase_perf.py` puts a crowd in the fps sample's yard following the player
+round a circle: three hundred chasers took 3.2 ms a tick in navigation with ticks of 171 ms when the
+player stood on a wall (eighty replans a tick, each searching all 4,600 cells), and take 1.3 ms with
+none over 14 (38 replans a tick); a thousand take 4.6 ms (release, the evidence machine).
 
 ## Formations
 
