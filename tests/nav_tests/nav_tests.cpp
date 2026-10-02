@@ -538,8 +538,9 @@ TEST_CASE("the navmesh covers open ground with one rectangle, routes through a g
     REQUIRE(straight->expanded == 1);
     REQUIRE(straight->points.size() == 2);
     REQUIRE(straight->length == Catch::Approx(std::hypot(29.0f, 29.0f)).margin(1e-3));
-    // A wall down the middle with one gap: a few rectangles, a path through the gap that is no
-    // longer than the cell path's, the cell path still there on request.
+    // A wall down the middle with one gap: a few rectangles, a path through the gap about as long
+    // as the cell path's (which grazes the wall's corners; the mesh path keeps off them), the cell
+    // path still there on request.
     nav::Grid g = open_grid(30, 30);
     for (int y = 0; y < 30; ++y) if (y != 14) g.walkable[g.index(15, y)] = 0;
     nav.set_grid(g);
@@ -555,7 +556,7 @@ TEST_CASE("the navmesh covers open ground with one rectangle, routes through a g
     REQUIRE(cells->mesh == false);
     REQUIRE(through->partial == false);
     REQUIRE(through->polys >= 2);
-    REQUIRE(through->length <= cells->length + 0.01f);
+    REQUIRE(through->length <= cells->length + 0.5f);
     REQUIRE(through->length >= std::hypot(25.0f, 25.0f) - 1e-3f);
     bool passes_gap = false;
     for (const Vec3& pt : through->points) if (std::fabs(pt.x - 15.5f) < 1.01f && std::fabs(pt.z - 14.5f) < 1.01f) passes_gap = true;
@@ -674,4 +675,68 @@ TEST_CASE("hexagonal, staggered and isometric maps bake to grids whose cells sit
             REQUIRE(n.bake_tilemap(w, store, map, pf, 2).error().code == "bad_tilemap");
         }
     }
+}
+
+TEST_CASE("a bridge over a road bakes two floors: paths under it stay under, paths onto it climb the stairs", "[nav][layers]") {
+    World w;
+    physics::Physics p;
+    static_box(w, "Ground", {0, -0.5f, 0}, {12, 0.5f, 12});
+    static_box(w, "Deck", {0, 1.95f, 0}, {3, 0.15f, 1});   // x -3..3, z -1..1, top at 2.1, 1.8 of room under it
+    for (int k = 1; k <= 6; ++k) {                           // stairs down the east end, 0.3 a step
+        const float top = 2.1f - 0.3f * static_cast<float>(k);
+        static_box(w, "Step", {3.25f + 0.5f * static_cast<float>(k - 1), top * 0.5f, 0}, {0.25f, top * 0.5f, 1});
+    }
+    nav::BakeParams bp;
+    bp.min = {-8, -1, -8};
+    bp.max = {8, 4, 8};
+    bp.cell = 0.5f;
+    nav::Nav n;
+    REQUIRE(n.bake_colliders(w, p, bp, 1).has_value());
+    const nav::Grid& g = n.grid();
+    REQUIRE(g.layers == 2);
+    REQUIRE(n.describe()["layers"] == 2);
+    // The column under the deck holds both floors; the height picks one.
+    auto low = g.cell_at({0.25f, 0, 0.25f}), high = g.cell_at({0.25f, 2.1f, 0.25f});
+    REQUIRE(low.has_value());
+    REQUIRE(high.has_value());
+    REQUIRE(g.ground[*low] == Catch::Approx(0.0f).margin(0.01f));
+    REQUIRE(g.ground[*high] == Catch::Approx(2.1f).margin(0.01f));
+    for (bool mesh : {false, true}) {
+        INFO("mesh " << mesh);
+        // Along the road under the bridge: straight through, on the ground.
+        auto under = n.path({0.25f, 0, -6}, {0.25f, 0, 6}, true, mesh).value();
+        REQUIRE_FALSE(under.partial);
+        REQUIRE(under.length == Catch::Approx(12.0f).margin(0.3f));
+        for (const Vec3& pt : under.points) REQUIRE(pt.y == Catch::Approx(0.0f).margin(0.01f));
+        // From the road to the deck: round to the stairs and up them, a step at a time.
+        auto up = n.path({-6, 0, 0.25f}, {0.25f, 2.1f, 0.25f}, false, mesh).value();
+        REQUIRE_FALSE(up.partial);
+        REQUIRE(up.points.back().y == Catch::Approx(2.1f).margin(0.01f));
+        float east = -1e9f;
+        for (const Vec3& pt : up.points) east = std::max(east, pt.x);
+        REQUIRE(east > 4.5f);
+        if (!mesh) {
+            for (std::size_t i = 1; i < up.points.size(); ++i) REQUIRE(std::fabs(up.points[i].y - up.points[i - 1].y) <= g.max_step + 1e-3f);
+        }
+    }
+    REQUIRE(n.reachable({-6, 0, 0.25f}, {0.25f, 2.1f, 0.25f}));
+    // nearest() keeps to the floor the point is on.
+    REQUIRE(n.nearest({0.25f, 2.2f, 0.25f}, 1.0f)->y == Catch::Approx(2.1f).margin(0.01f));
+    REQUIRE(n.nearest({0.25f, 0.1f, 0.25f}, 1.0f)->y == Catch::Approx(0.0f).margin(0.01f));
+    // An agent moved by the nav walks from the road up the stairs onto the deck, rising with them.
+    const EntityId a = w.spawn("Walker", 0, Json{{"Transform", {{"position", {{"x", -6}, {"y", 0}, {"z", 0.25f}}}}}, {"NavAgent", {{"mode", 1}, {"goal", {{"x", 0.25f}, {"y", 2.1f}, {"z", 0.25f}}}, {"speed", 3.0}, {"radius", 0.3}}}}).value();
+    for (int t = 0; t < 900 && w.try_get<NavAgent>(a)->state != 2; ++t) {
+        w.set_tick_index(t);
+        n.step(w, 1.0f / 60.0f);
+    }
+    const Vec3 at = w.try_get<Transform>(a)->position;
+    INFO(at.x << "," << at.y << "," << at.z);
+    REQUIRE(w.try_get<NavAgent>(a)->state == 2);
+    REQUIRE(at.y == Catch::Approx(2.1f).margin(0.05f));
+    // The top floor alone: the road under the deck is gone, so the way along it goes round.
+    bp.layers = 1;
+    REQUIRE(n.bake_colliders(w, p, bp, 2).has_value());
+    REQUIRE(n.grid().layers == 1);
+    REQUIRE(n.grid().ground[*n.grid().cell_at({0.25f, 0, 0.25f})] == Catch::Approx(2.1f).margin(0.01f));
+    REQUIRE(n.path({0.25f, 0, -6}, {0.25f, 0, 6}).value().length > 14.0f);
 }

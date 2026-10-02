@@ -17,7 +17,9 @@ import argparse
 import json
 import os
 import random
+import socket
 import subprocess
+import time
 import sys
 import threading
 import urllib.request
@@ -47,6 +49,17 @@ def find_root(start=None):
         if parent == d:
             raise FileNotFoundError("no pocket.toml above " + os.path.dirname(os.path.abspath(__file__)) + "; set POCKET_ROOT")
         d = parent
+
+
+class _App:
+    """Stands for the runtime's process when the runtime is an app in the iOS Simulator."""
+
+    def __init__(self, pid):
+        self.pid = pid
+        self.stderr = None
+
+    def poll(self):
+        return None
 
 
 class PocketEnv:
@@ -164,11 +177,69 @@ class PocketEnv:
                 pass
             self.process.stderr.close()
 
+
     def __enter__(self):
         return self
 
     def __exit__(self, *exc):
         self.close()
+
+
+
+class IosEnv(PocketEnv):
+    """The same environment with the project running as an app in the iOS Simulator
+    (docs/build-system.md, iOS): packed, installed and launched by `pocket run <project> --ios`,
+    paused, its control server on a free port of the Mac, which a simulator shares. Its log is the
+    simulator's, not kept here; close() quits the app.
+
+        with IosEnv("hello", device="iPhone 18 Pro") as env: ...
+    """
+
+    def __init__(self, project, *, root=None, device=None, seed=1, max_ticks=0, log_level="warn", extra_args=()):
+        self.root = root or find_root()
+        project_dir = project if os.path.isabs(project) else os.path.join(self.root, project)
+        if not os.path.isdir(project_dir) and os.path.isdir(os.path.join(self.root, "samples", project)):
+            project_dir = os.path.join(self.root, "samples", project)
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", 0))
+            port = s.getsockname()[1]
+        cmd = [os.path.join(self.root, ".pocket", "pocket"), "run", project_dir, "--ios", "--json"]
+        if device:
+            cmd += ["--device", device]
+        cmd += ["--", "--serve", str(port), "--paused", "--seed", str(seed), "--log-level", log_level, *extra_args]
+        out = subprocess.run(cmd, capture_output=True, text=True, env={**os.environ, "POCKET_ROOT": self.root})
+        try:
+            report = json.loads(out.stdout)
+        except json.JSONDecodeError:
+            raise RuntimeError(f"pocket run --ios answered no report: {(out.stderr or out.stdout)[-400:]}") from None
+        if not report.get("ok"):
+            raise RuntimeError(f"pocket run --ios failed: {report.get('summary')}")
+        data = report.get("data") or {}
+        self.udid, self.bundle_id = data.get("udid"), data.get("bundle_id")
+        self.process = _App(data.get("pid"))
+        self.url = f"http://127.0.0.1:{port}"
+        self.log = deque(maxlen=200)
+        self._next_id = 0
+        self.seed = seed
+        self.max_ticks = max_ticks
+        self.last = None
+        deadline = time.time() + 60
+        while True:
+            try:
+                self.command("window.info")
+                break
+            except Exception:  # noqa: BLE001 - not listening yet
+                if time.time() > deadline:
+                    raise RuntimeError(f"the app's control server did not answer on port {port}") from None
+                time.sleep(0.5)
+
+    def close(self):
+        try:
+            self.command("quit")
+        except Exception:  # noqa: BLE001 - it may be gone already
+            pass
+        xcode = os.environ.get("POCKET_XCODE", "/Applications/Xcode.app/Contents/Developer")
+        subprocess.run(["xcrun", "simctl", "terminate", self.udid or "booted", self.bundle_id or ""], capture_output=True, env={**os.environ, "DEVELOPER_DIR": xcode})
 
 
 class PocketEnvPool:

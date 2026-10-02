@@ -120,6 +120,8 @@ The bundler strips types without reading them, so a misspelt field or a wrong ca
 
 The game runs as one bundle (`build/ts/<name>.js`), but what it says names the files that were written. `pocket ts` writes `<bundle>.lines.json` beside the bundle, the file and line each of its lines came from (oxc's source map of each module, its lines kept through the rewriting of imports and exports), and the runtime rewrites every `<bundle>:<line>:<column>` it reports with it: a script error's message and stack, `console.*` and `log` output, a `script.eval` error. A file of the project is named from the project directory (`advance@scripts/main.ts:9`), one of the SDK or a package by its full path. A bundle without the file (made by hand or by an older tool) shows its own lines.
 
+A command given `entity: undefined` (a `world.find` or a query that found nothing, an index past the end of a list) throws at the call with that said, instead of crossing to the engine as a missing `entity`. A parameter whose JSON type a command cannot use (a list where it reads `{x, y}`, a string where it reads a number) is answered as `bad_args`, naming the command, rather than ending the runtime.
+
 `perf` says how long the scripts took a tick; `script.profile` says where:
 
 ```json

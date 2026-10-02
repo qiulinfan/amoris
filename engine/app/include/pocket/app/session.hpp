@@ -71,6 +71,9 @@ class Session {
     Status finish();                      // dispatch "stop", capture, close journal
 
    private:
+    // command() without the guard that turns a value of the wrong JSON type, met deep in a
+    // handler, into a bad_args answer instead of ending the process.
+    Result<Json> run_command(std::string_view name, const Json& params, std::string_view source);
     Json dispatch(const char* kind, Json arg, std::string_view context = "");
     Status load_bundle(const std::filesystem::path& path, const std::string& name);
     Status load_scene_file();             // the project's scene from disk (no-op without one)

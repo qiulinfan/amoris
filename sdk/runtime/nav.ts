@@ -34,6 +34,8 @@ export interface NavInfo {
     links?: number;
     diagonal?: boolean;
     max_step?: number;
+    /** Floors in the busiest column (1 on tile grids and single-surface levels). */
+    layers?: number;
     source?: string;
     baked_tick?: number;
     /** The navmesh over the grid: rectangles of cells and the edges they share (none on platformer grids). */
@@ -104,9 +106,10 @@ function entityId(ref: EntityRef): number {
 export const nav = {
     /**
      * Bake a grid over the XZ rectangle from the static colliders: a cell is walkable where a ray
-     * down finds static ground flatter than max_slope with room for the agent.
+     * down finds static ground flatter than max_slope with room for the agent. Every floor of a
+     * column counts, up to `layers` (4; 1 for the top surface only): a bridge and the road under it.
      */
-    bake(options: { min: Vec3; max: Vec3; cell?: number; agent_radius?: number; agent_height?: number; max_step?: number; max_slope?: number; diagonal?: boolean }): NavInfo {
+    bake(options: { min: Vec3; max: Vec3; cell?: number; agent_radius?: number; agent_height?: number; max_step?: number; max_slope?: number; diagonal?: boolean; layers?: number }): NavInfo {
         return command("nav.bake", options);
     },
     /** Bake from a TileMap entity: "topdown" walks every empty cell, "platformer" links standing cells by jumps and drops. */

@@ -133,6 +133,11 @@ export type ComponentInput<K extends ComponentName> = { [F in keyof Components[K
 export type ComponentPatch = { [K in ComponentName]?: DeepPartial<ComponentInput<K>> };
 
 export function command<T = unknown>(name: string, params?: unknown): T {
+    // An entity given as undefined would cross as nothing (JSON leaves it out) and be answered
+    // "missing 'entity'"; from a script it is nearly always a lookup that found nothing.
+    if (params !== null && typeof params === "object" && "entity" in params && (params as { entity?: unknown }).entity === undefined) {
+        throw new Error(`${name}: the entity is undefined: a world.find or a query that found nothing, an index past the end of a list, or a variable not set yet`);
+    }
     return __pocket.command(name, params) as T;
 }
 

@@ -214,6 +214,10 @@ TEST_CASE("script.eval has the SDK's exports as names and answers an error with 
     const Json bad = s.command("script.eval", Json{{"source", "nothingHere.x"}}).value();
     INFO(bad.dump());
     REQUIRE(bad["error"].get<std::string>().find("Can't find variable: nothingHere") != std::string::npos);
+    // An entity that a lookup did not find is said as such, not as a missing parameter.
+    const Json lost = s.command("script.eval", Json{{"source", "world.get(world.find('NoSuchThing'), 'Transform')"}}).value();
+    INFO(lost.dump());
+    REQUIRE(lost["error"].get<std::string>().find("the entity is undefined") != std::string::npos);
     // A var stays for the next call, as in a console.
     REQUIRE(s.command("script.eval", Json{{"source", "var kept = 41; kept + 1"}}).value() == 42);
     REQUIRE(s.command("script.eval", Json{{"source", "kept"}}).value() == 41);
@@ -4809,6 +4813,37 @@ TEST_CASE("a Tiled polyline becomes a Path a follower runs along", "[runtime][pa
     REQUIRE(s.finish().has_value());
 }
 
+TEST_CASE("a game without on-screen controls gets them from its input map at the first touch", "[runtime][input][touchcontrols][autotouch]") {
+    app::Options o;
+    o.project_dir = root() / "samples" / "walker";
+    o.bundle = root() / "build" / "ts" / "walker.js";
+    o.project_config = o.bundle.string() + ".project.json";
+    o.headless = true;
+    o.paused = true;
+    o.frames = 100000;
+    o.width = 960;
+    o.height = 540;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 1}}).has_value());
+    auto value = [&](const std::string& name) { return s.command("input.actions", Json::object()).value()[name]["value"].get<double>(); };
+    // The stick sits 110 points from the left and the bottom; a finger put down on it and moved
+    // 50 points right and 50 up walks right and forward (move_z's negative side is W, up).
+    REQUIRE(s.command("input.touch", Json{{"x", 110}, {"y", 430}, {"phase", "down"}}).has_value());
+    REQUIRE(s.command("input.touch", Json{{"x", 160}, {"y", 380}, {"phase", "move"}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 2}}).has_value());
+    INFO(s.command("input.actions", Json::object()).value().dump());
+    REQUIRE(value("move_x") > 0.5);
+    REQUIRE(value("move_z") < -0.5);
+    REQUIRE_FALSE(s.command("ui.query", Json{{"name", "touch-controls"}}).value().empty());
+    REQUIRE(s.command("input.touch", Json{{"x", 160}, {"y", 380}, {"phase", "up"}}).has_value());
+    // A button for each other action, by name (crouch first, 80 points from the right and 90 from the bottom).
+    REQUIRE(s.command("input.touch", Json{{"x", 880}, {"y", 450}, {"phase", "down"}, {"finger", 1}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 1}}).has_value());
+    REQUIRE(value("crouch") == 1.0);
+}
+
 TEST_CASE("an action's value set directly, and an on-screen stick and button that set it from fingers", "[runtime][input][touchcontrols]") {
     app::Options o;
     o.project_dir = root() / "samples" / "crates";
@@ -5036,6 +5071,12 @@ TEST_CASE("sight and a field of view over a tile map stop at walls and at the la
     REQUIRE_FALSE(has(7, 1));
     REQUIRE(fov["walls"].get<int>() == 5);
     REQUIRE(fov["count"] == fov["cells"].size());
+    // A point as [x, y] is the same point; a value of the wrong type is a bad_args answer, not a crash.
+    REQUIRE(s.command("tilemap.fov", Json{{"entity", "Room"}, {"from", Json::array({eye["x"], eye["y"]})}, {"radius", 8}}).value()["count"] == fov["count"]);
+    auto wrong = s.command("tilemap.fov", Json{{"entity", "Room"}, {"from", Json::array({"a", "b"})}, {"radius", 8}});
+    REQUIRE_FALSE(wrong.has_value());
+    REQUIRE(wrong.error().code == "bad_args");
+    REQUIRE(s.command("tilemap.fov", Json{{"entity", "Room"}, {"from", eye}, {"radius", 8}}).has_value());
     REQUIRE(s.finish().has_value());
 }
 

@@ -203,14 +203,21 @@ impl<'a> McpServer<'a> {
         }
         let project = args.get("project").and_then(|p| p.as_str()).ok_or_else(|| anyhow!("project is required"))?;
         let dir = crate::commands::find_project(self.ws, project).ok_or_else(|| anyhow!("unknown project '{project}'"))?;
-        // The optimized runtime unless asked otherwise (docs/decisions/0006-agent-runs-release.md).
-        let config = args.get("config").and_then(|c| c.as_str()).unwrap_or("release");
-        let outcome = crate::commands::build_targets(self.ws, config, &["pocket_runtime".to_string()], false)?;
-        if !outcome.ok {
-            bail!("runtime build failed:\n{}", outcome.output);
-        }
+        // The optimized runtime unless asked otherwise (docs/decisions/0006-agent-runs-release.md),
+        // built first; POCKET_RUNTIME names a runtime to use as it is instead (a benchmark's copy,
+        // which engine work going on in the same checkout must not rebuild under the agent).
+        let exe = match std::env::var_os("POCKET_RUNTIME").filter(|p| !p.is_empty()) {
+            Some(p) => std::path::PathBuf::from(p),
+            None => {
+                let config = args.get("config").and_then(|c| c.as_str()).unwrap_or("release");
+                let outcome = crate::commands::build_targets(self.ws, config, &["pocket_runtime".to_string()], false)?;
+                if !outcome.ok {
+                    bail!("runtime build failed:\n{}", outcome.output);
+                }
+                crate::commands::exe_path(self.ws, config, "pocket_runtime")?
+            }
+        };
         let bundle = crate::commands::bundle_project(self.ws, &dir, None)?;
-        let exe = crate::commands::exe_path(self.ws, config, "pocket_runtime")?;
         let mut cmd = crate::commands::runtime_command(self.ws, &exe);
         cmd.arg("--project").arg(&dir).arg("--bundle").arg(&bundle.out).args(["--serve", "0", "--paused", "--json", "--log-level", "warn"]);
         if args.get("editor").and_then(|e| e.as_bool()).unwrap_or(false) {

@@ -14,7 +14,10 @@ Vendored sources are compiled as ordinary modules by `pocket`; fetched dependenc
 | Yoga | 3.2.1 | MIT | vendored sources |
 | Box2D | 3.1.1 | MIT | vendored sources (`third_party/box2d`, the `src` and `include` directories of github.com/erincatto/box2d at tag v3.1.1); 2D rigid bodies, shapes and joints for the physics module (`docs/design/physics2d.md`) |
 | nanosvg | master 239e102 (2026-07-09) | zlib | vendored headers (`third_party/stb/include/nanosvg.h`, `nanosvgrast.h`, from github.com/memononen/nanosvg, compiled in `stb_impl.c`); parses and rasterizes SVG images for the assets module |
-| meshoptimizer | 1.3 | MIT | vendored sources (`third_party/meshoptimizer/src`, from github.com/zeux/meshoptimizer); simplifies meshes for levels of detail in the assets module |
+| meshoptimizer | 1.3 | MIT | vendored sources (`third_party/meshoptimizer/src`, from github.com/zeux/meshoptimizer); simplifies meshes for levels of detail and decodes `EXT_meshopt_compression` in the assets module |
+| Basis Universal | 2.50 | Apache-2.0 (zstd: BSD) | vendored transcoder (`third_party/basisu/transcoder`, with zstd's single-file decoder `zstd/zstddeclib.c`, from github.com/BinomialLLC/basis_universal at tag v2_50), compiled as C++20 behind `pocket/pocket_ktx2.h`; reads KTX2 textures |
+| libwebp | 1.6.0 | BSD-3-Clause | fetched source, its decoder library built with CMake by `pocket setup`; reads WebP images |
+| Draco | 1.5.7 | Apache-2.0 | fetched source, built with CMake by `pocket setup` with only the glTF bitstream; decodes `KHR_draco_mesh_compression` |
 | SDL3 | 3.4.16 | Zlib | fetched source, built with CMake by `pocket setup` |
 | wgpu-native | 29.0.1.1 | MIT or Apache-2.0 | fetched prebuilt archive |
 | FreeType | 2.14.3 | FTL or GPLv2 | fetched source, built with CMake by `pocket setup` (no zlib/png/harfbuzz/brotli) |

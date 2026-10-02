@@ -5,6 +5,7 @@
 #include <pocket/core/tangents.hpp>
 
 #include <meshoptimizer.h>
+#include <pocket_ktx2.h>
 #include <stb_image.h>
 #include <webp/decode.h>
 #pragma clang diagnostic push
@@ -1379,11 +1380,15 @@ Result<Mesh> parse_gltf(const std::string& bytes, const std::filesystem::path& b
         int ti = info["index"].get<int>();
         const Json& textures = g.doc.value("textures", Json::array());
         if (ti < 0 || ti >= static_cast<int>(textures.size())) return "";
-        // EXT_texture_webp names its WebP image beside (or instead of) the plain source.
+        // EXT_texture_webp and KHR_texture_basisu name their image (WebP, KTX2) beside or instead of
+        // the plain source.
         const Json& tex = textures[static_cast<std::size_t>(ti)];
-        const Json* webp = tex.contains("extensions") && tex["extensions"].contains("EXT_texture_webp") ? &tex["extensions"]["EXT_texture_webp"] : nullptr;
-        if (!(webp && webp->contains("source")) && !tex.contains("source")) return "";
-        int si = webp && webp->contains("source") ? (*webp)["source"].get<int>() : tex["source"].get<int>();
+        const Json* alt = nullptr;
+        for (const char* ext : {"KHR_texture_basisu", "EXT_texture_webp"}) {
+            if (!alt && tex.contains("extensions") && tex["extensions"].contains(ext) && tex["extensions"][ext].contains("source")) alt = &tex["extensions"][ext];
+        }
+        if (!alt && !tex.contains("source")) return "";
+        int si = alt ? (*alt)["source"].get<int>() : tex["source"].get<int>();
         const Json& images = g.doc.value("images", Json::array());
         if (si < 0 || si >= static_cast<int>(images.size())) return "";
         const Json& img = images[static_cast<std::size_t>(si)];
@@ -1937,6 +1942,14 @@ Result<Image> decode_svg(const std::string& bytes, const std::string& display_pa
 
 Result<Image> decode_image(const std::string& bytes, const std::string& display_path) {
     int w = 0, h = 0, channels = 0;
+    if (pocket_ktx2::is_ktx2(bytes.data(), bytes.size())) {
+        // KTX2 with Basis Universal data (ETC1S or UASTC), the first level transcoded to RGBA.
+        Image img;
+        img.path = display_path;
+        std::string why;
+        if (!pocket_ktx2::decode_rgba(bytes.data(), bytes.size(), img.width, img.height, img.rgba, why)) return fail("bad_image", "{}: {}", display_path, why);
+        return img;
+    }
     if (bytes.size() >= 12 && bytes.compare(0, 4, "RIFF") == 0 && bytes.compare(8, 4, "WEBP") == 0) {
         // WebP (lossy or lossless, with or without alpha), through libwebp's decoder.
         std::uint8_t* rgba = WebPDecodeRGBA(reinterpret_cast<const std::uint8_t*>(bytes.data()), bytes.size(), &w, &h);
@@ -2322,7 +2335,7 @@ Json AssetStore::list() const {
             std::string ext = p.extension().string();
             std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
             const bool model = !model_importer(ext).empty();
-            std::string kind = model ? "mesh" : ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga" || ext == ".hdr" || ext == ".svg" || ext == ".webp" ? "image" : ext == ".tmj" ? "tilemap" : ext == ".wav" || ext == ".ogg" || ext == ".mp3" || ext == ".sfx" || ext == ".song" ? "audio" : ext == ".mtl" ? "material" : "other";
+            std::string kind = model ? "mesh" : ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga" || ext == ".hdr" || ext == ".svg" || ext == ".webp" || ext == ".ktx2" ? "image" : ext == ".tmj" ? "tilemap" : ext == ".wav" || ext == ".ogg" || ext == ".mp3" || ext == ".sfx" || ext == ".song" ? "audio" : ext == ".mtl" ? "material" : "other";
 
             Json f;
             f["path"] = std::filesystem::relative(p, project_dir_).generic_string();

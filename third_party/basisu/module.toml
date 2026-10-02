@@ -1,0 +1,8 @@
+name = "basisu"
+kind = "static_library"
+description = "Basis Universal 2.50 (Binomial): the transcoder for KTX2 and .basis textures (ETC1S, UASTC, XUASTC), with zstd's single-file decoder for supercompressed KTX2. Apache-2.0 (zstd: BSD). The textures are decoded to RGBA, so the GPU formats it could also write are compiled out."
+sources = ["transcoder/basisu_transcoder.cpp", "zstd/zstddeclib.c", "pocket/pocket_ktx2.cpp"]
+public_include = ["pocket"]
+defines = ["BASISD_SUPPORT_DXT1=0", "BASISD_SUPPORT_DXT5A=0", "BASISD_SUPPORT_BC7_MODE5=0", "BASISD_SUPPORT_PVRTC1=0", "BASISD_SUPPORT_ETC2_EAC_A8=0", "BASISD_SUPPORT_ATC=0", "BASISD_SUPPORT_ETC2_EAC_RG11=0", "BASISD_SUPPORT_FXT1=0", "BASISD_SUPPORT_PVRTC2=0", "BASISD_SUPPORT_ASTC=0"]
+cxx_flags = ["-std=c++20"]   # C++26 refuses arithmetic between two enumerations, which it does
+third_party = true

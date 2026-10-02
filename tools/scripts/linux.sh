@@ -17,7 +17,13 @@ arch=${POCKET_LINUX_ARCH:-}
 image=pocket-linux${arch:+-$arch}
 volume=$image
 platform=${arch:+--platform linux/$arch}
-docker build -q $platform -t "$image" "$root/tools/docker/linux" >/dev/null
+if [ -n "$arch" ]; then
+    # Another architecture's image needs BuildKit (`brew install docker-buildx`): the legacy
+    # builder takes the local base image whatever the platform asked.
+    docker buildx build -q $platform --load -t "$image" "$root/tools/docker/linux" >/dev/null
+else
+    docker build -q -t "$image" "$root/tools/docker/linux" >/dev/null
+fi
 step=${1:-test}
 [ $# -gt 0 ] && shift
 case "$step" in

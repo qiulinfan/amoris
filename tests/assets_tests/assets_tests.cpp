@@ -1205,6 +1205,7 @@ TEST_CASE("voxel models: text layers and MagicaVoxel files meshed greedily, colo
     // green side by side hide the face between them (5 quads each), the floating one shows 6.
     REQUIRE((*x)->aabb_max.y == Catch::Approx(0.3f));
     REQUIRE((*x)->indices.size() == static_cast<std::size_t>(6 * (5 + 5 + 6)));
+    std::filesystem::remove_all(dir);
 }
 
 TEST_CASE("glTF compressed with EXT_meshopt_compression reads as the plain file would", "[assets][meshopt]") {
@@ -1258,6 +1259,7 @@ TEST_CASE("glTF compressed with EXT_meshopt_compression reads as the plain file 
     REQUIRE((*m)->aabb_max.y == Catch::Approx(1.0f));
     REQUIRE((*m)->vertices[0].normal.z == Catch::Approx(1.0f));
     REQUIRE((*m)->indices[5] == 3);
+    std::filesystem::remove_all(dir);
 }
 
 TEST_CASE("models gltf-transform compressed (meshopt, quantized) read as their originals", "[assets][meshopt]") {
@@ -1340,4 +1342,48 @@ TEST_CASE("models compressed with Draco (KHR_draco_mesh_compression) read as the
         // Every triangle's corners face the way the file's normals say: the decoded normals are unit.
         for (const assets::MeshVertex& v : (*b)->vertices) REQUIRE(length(v.normal) == Catch::Approx(1.0f).margin(1e-2));
     }
+}
+
+TEST_CASE("KTX2 textures (Basis Universal, ETC1S and UASTC), alone and through KHR_texture_basisu", "[assets][ktx2]") {
+    // samples/assets/assets/ktx2/: a 32 by 16 gradient as PNG and as KTX2 encoded by the basisu tool
+    // (2.50) in both of Basis's modes; each read back close to the PNG (ETC1S is the lossier).
+    assets::AssetStore store(project());
+    auto png = store.image("assets/ktx2/gradient.png");
+    REQUIRE(png.has_value());
+    for (auto [name, tolerance] : {std::pair{"gradient-etc1s", 12.0}, {"gradient-uastc", 2.0}}) {
+        INFO(name);
+        auto k = store.image(std::string("assets/ktx2/") + name + ".ktx2");
+        INFO((k ? std::string() : k.error().to_string()));
+        REQUIRE(k.has_value());
+        REQUIRE((*k)->width == 32);
+        REQUIRE((*k)->height == 16);
+        double diff = 0;
+        for (std::size_t i = 0; i < (*png)->rgba.size(); ++i) diff += std::abs(static_cast<int>((*png)->rgba[i]) - static_cast<int>((*k)->rgba[i]));
+        diff /= static_cast<double>((*png)->rgba.size());
+        INFO(name << " differs from the PNG by " << diff << " a channel on average");
+        REQUIRE(diff < tolerance);
+    }
+    // A glTF quad whose base colour names the KTX2 file through KHR_texture_basisu only.
+    const Json doc{
+        {"asset", {{"version", "2.0"}}},
+        {"extensionsUsed", {"KHR_texture_basisu"}},
+        {"extensionsRequired", {"KHR_texture_basisu"}},
+        {"buffers", {Json{{"byteLength", 48}, {"uri", "data:application/octet-stream;base64,AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAgD8AAAAAAAAAAAAAgD8AAAAA"}}}},
+        {"bufferViews", {Json{{"buffer", 0}, {"byteLength", 48}}}},
+        {"accessors", {Json{{"bufferView", 0}, {"componentType", 5126}, {"count", 4}, {"type", "VEC3"}, {"min", {0, 0, 0}}, {"max", {1, 1, 0}}}}},
+        {"images", {Json{{"uri", "../ktx2/gradient-uastc.ktx2"}, {"mimeType", "image/ktx2"}}}},
+        {"textures", {Json{{"extensions", {{"KHR_texture_basisu", {{"source", 0}}}}}}}},
+        {"materials", {Json{{"pbrMetallicRoughness", {{"baseColorTexture", {{"index", 0}}}}}}}},
+        {"meshes", {Json{{"primitives", {Json{{"attributes", {{"POSITION", 0}}}, {"material", 0}}}}}}},
+        {"nodes", {Json{{"mesh", 0}}}},
+        {"scenes", {Json{{"nodes", {0}}}}},
+        {"scene", 0}};
+    const std::filesystem::path dir = project() / "assets" / "ktx2-test";
+    std::filesystem::create_directories(dir);
+    std::ofstream(dir / "quad.gltf") << doc.dump();
+    auto m = store.mesh("assets/ktx2-test/quad.gltf");
+    REQUIRE(m.has_value());
+    REQUIRE((*m)->materials[0].texture == "assets/ktx2/gradient-uastc.ktx2");
+    REQUIRE(store.image((*m)->materials[0].texture).has_value());
+    std::filesystem::remove_all(dir);
 }

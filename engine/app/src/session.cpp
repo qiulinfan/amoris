@@ -82,6 +82,9 @@ std::string base64(const std::string& bytes) {
     return out;
 }
 
+// The tick's systems as perf names them, in Session::System's order.
+constexpr const char* kSystemNames[] = {"timelines", "paths", "bodies", "characters", "water", "contacts", "tiles_2d", "bodies_2d", "hits", "navigation", "cameras", "world", "particles", "animation", "ragdolls", "attachments", "cloth", "audio", "interface", "recorder"};
+
 Json error_json(const Error& e) {
     Json j;
     j["code"] = e.code;
@@ -1143,7 +1146,6 @@ Json Session::perf() const {
     j["world"] = perf_world_.json();
     j["state"] = perf_state_.json();
     // The tick's systems, the costliest first (what physics and world above are made of).
-    static constexpr const char* kSystemNames[] = {"timelines", "paths", "bodies", "characters", "water", "contacts", "tiles_2d", "bodies_2d", "hits", "navigation", "cameras", "world", "particles", "animation", "ragdolls", "attachments", "cloth", "audio", "interface", "recorder"};
     static_assert(std::size(kSystemNames) == static_cast<std::size_t>(System::Count));
     std::vector<std::pair<double, int>> order;
     for (int i = 0; i < static_cast<int>(System::Count); ++i) {
@@ -2795,6 +2797,7 @@ Result<Json> Session::nav_command(std::string_view op, const Json& p) {
             bp.max_step = opt<float>(p, "max_step", bp.max_step);
             bp.max_slope_degrees = opt<float>(p, "max_slope", bp.max_slope_degrees);
             bp.diagonal = opt<bool>(p, "diagonal", true);
+            bp.layers = opt<int>(p, "layers", bp.layers);
             POCKET_TRY_VOID(nav_.bake_colliders(w, *physics_, bp, static_cast<std::uint64_t>(clock_.tick)));
         }
         nav_paths_.clear();
@@ -3285,8 +3288,9 @@ Result<Json> Session::tilemap_command(std::string_view op, const Json& p) {
         };
         // In cell units, y down the map.
         auto to_grid = [&](const Json& v, double& gx, double& gy) {
-            gx = (v.value("x", 0.0) - origin.x) / ts;
-            gy = (origin.y - v.value("y", 0.0)) / ts;
+            const bool pair = v.is_array() && v.size() >= 2;   // [x, y] as well as {x, y}
+            gx = ((pair ? v[0].get<double>() : v.value("x", 0.0)) - origin.x) / ts;
+            gy = (origin.y - (pair ? v[1].get<double>() : v.value("y", 0.0))) / ts;
         };
         // The cells a segment crosses, in order (Amanatides and Woo); the first opaque one past the
         // start stops it. Answers whether it got through, and where it stopped.
@@ -5698,6 +5702,26 @@ Result<Json> Session::project_command(std::string_view op, const Json& p) {
         }
         line(wrong);
         if (!script_diagnostics_.empty()) line(std::format("type errors: {} (script.diagnostics lists them)", script_diagnostics_.size()));
+        // A slow tick said where it shows, with where to look (a sixtieth of a second is the budget).
+        if (perf_tick_.samples >= 10) {
+            const double avg = perf_tick_.total_ms / static_cast<double>(perf_tick_.samples);
+            if (avg > 4.0) {
+                const double script = perf_script_.samples ? perf_script_.total_ms / static_cast<double>(perf_script_.samples) : 0.0;
+                const double state = perf_state_.samples ? perf_state_.total_ms / static_cast<double>(perf_state_.samples) : 0.0;
+                int top = 0;
+                double top_ms = 0;
+                for (int i = 0; i < static_cast<int>(System::Count); ++i) {
+                    const PhaseStats& s = perf_systems_[i];
+                    const double ms = s.samples ? s.total_ms / static_cast<double>(s.samples) : 0.0;
+                    if (ms > top_ms) { top_ms = ms; top = i; }
+                }
+                std::vector<std::string> parts;   // what is a tenth of it or more
+                if (script >= avg * 0.1) parts.push_back(std::format("{:.1f} the scripts' handlers", script));
+                if (state >= avg * 0.1) parts.push_back(std::format("{:.1f} reading their exposed values", state));
+                if (top_ms >= avg * 0.1) parts.push_back(std::format("{:.1f} {}", top_ms, kSystemNames[top]));
+                line(std::format("slow: a tick takes {:.1f} ms on average{}{}; perf breaks it down by system, script.profile the scripts' part by handler and command", avg, parts.empty() ? "" : ": ", join(parts, 3)));
+            }
+        }
         line("next: world.tree {depth}, world.query {with}, world.describe {entity}, transcript, help {command}, commands {family | search, text: true}; edit scripts then project.apply");
         return Json{{"text", t}};
     }
@@ -6885,27 +6909,24 @@ void Session::build_debug_draw() {
         const float r = g.cell * 0.2f;
         const rhi::Color cell_color{0.3f, 0.9f, 0.9f, 0.6f};
         const rhi::Color blocked_color{1.0f, 0.45f, 0.15f, 0.9f};  // under an obstacle right now
-        for (int y = 0; y < g.height; ++y) {
-            for (int x = 0; x < g.width; ++x) {
-                const std::size_t i = g.index(x, y);
-                if (g.walkable[i] == 0) continue;
-                const rhi::Color& col = (!g.blocked.empty() && g.blocked[i] != 0) ? blocked_color : cell_color;
-                Vec3 c = g.center_of(x, y);
-                if (g.plane == 0) {
-                    c.y += 0.02f;
-                    debug_draw_.line(c - Vec3{r, 0, 0}, c + Vec3{r, 0, 0}, col);
-                    debug_draw_.line(c - Vec3{0, 0, r}, c + Vec3{0, 0, r}, col);
-                } else {
-                    debug_draw_.line(c - Vec3{r, 0, 0}, c + Vec3{r, 0, 0}, col);
-                    debug_draw_.line(c - Vec3{0, r, 0}, c + Vec3{0, r, 0}, col);
-                }
+        for (std::size_t i = 0; i < g.walkable.size(); ++i) {   // every floor's cells
+            if (g.walkable[i] == 0) continue;
+            const rhi::Color& col = (!g.blocked.empty() && g.blocked[i] != 0) ? blocked_color : cell_color;
+            Vec3 c = g.center_at(i);
+            if (g.plane == 0) {
+                c.y += 0.02f;
+                debug_draw_.line(c - Vec3{r, 0, 0}, c + Vec3{r, 0, 0}, col);
+                debug_draw_.line(c - Vec3{0, 0, r}, c + Vec3{0, 0, r}, col);
+            } else {
+                debug_draw_.line(c - Vec3{r, 0, 0}, c + Vec3{r, 0, 0}, col);
+                debug_draw_.line(c - Vec3{0, r, 0}, c + Vec3{0, r, 0}, col);
             }
         }
         // The navmesh's rectangles as outlines.
         const rhi::Color poly_color{0.85f, 0.45f, 0.95f, 0.9f};
         const nav::NavMesh& mesh = nav_.mesh();
         for (const nav::NavMesh::Poly& p : mesh.polys) {
-            Vec3 c00 = g.center_of(p.x0, p.y0), c11 = g.center_of(p.x1, p.y1), c10 = g.center_of(p.x1, p.y0), c01 = g.center_of(p.x0, p.y1);
+            Vec3 c00 = g.center_at(g.index(p.x0, p.y0, p.layer)), c11 = g.center_at(g.index(p.x1, p.y1, p.layer)), c10 = g.center_at(g.index(p.x1, p.y0, p.layer)), c01 = g.center_at(g.index(p.x0, p.y1, p.layer));
             const float h = g.cell * 0.5f;
             Vec3 a, b, c, d;
             if (g.plane == 0) {
@@ -7074,6 +7095,18 @@ Result<Json> Session::recorder_command(std::string_view op, const Json& p) {
 }
 
 Result<Json> Session::command(std::string_view name, const Json& params, std::string_view source) {
+#if defined(__cpp_exceptions)
+    try {
+        return run_command(name, params, source);
+    } catch (const Json::exception& e) {
+        return fail("bad_args", "{}: a parameter has the wrong type ({}); help {{command: \"{}\"}} shows how to call it", name, e.what(), name);
+    }
+#else
+    return run_command(name, params, source);   // web builds have no exceptions: a wrong type aborts there
+#endif
+}
+
+Result<Json> Session::run_command(std::string_view name, const Json& params, std::string_view source) {
     if (!started_) return fail("not_started", "session not started");
     const Json& given = params.is_object() ? params : Json::object();
     // A parameter an agent got wrong is said at once: a key a command does not take is refused with

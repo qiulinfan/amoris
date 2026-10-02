@@ -20,9 +20,7 @@ bool step_ok(const Grid& g, std::size_t a, std::size_t b) {
 }
 
 float link_cost(const Grid& g, std::size_t a, std::size_t b) {
-    const int ax = static_cast<int>(a % static_cast<std::size_t>(g.width)), ay = static_cast<int>(a / static_cast<std::size_t>(g.width));
-    const int bx = static_cast<int>(b % static_cast<std::size_t>(g.width)), by = static_cast<int>(b / static_cast<std::size_t>(g.width));
-    return repro::hypot(static_cast<float>(bx - ax), static_cast<float>(by - ay)) + 1.0f;  // a jump costs a little more than walking
+    return repro::hypot(static_cast<float>(g.x_of(b) - g.x_of(a)), static_cast<float>(g.y_of(b) - g.y_of(a))) + 1.0f;  // a jump costs a little more than walking
 }
 
 // Orthogonal neighbours, diagonals between two free orthogonal cells (no corner cutting), the
@@ -38,8 +36,8 @@ float center_distance(const Grid& g, int ax, int ay, int bx, int by) {
 }
 
 template <typename F>
-void for_neighbours(const Grid& g, int x, int y, F&& f) {
-    const std::size_t from = g.index(x, y);
+void for_neighbours(const Grid& g, std::size_t from, F&& f) {
+    const int x = g.x_of(from), y = g.y_of(from);
     if (g.layout >= 2) {
         // Staggered diamonds and hexagons: the two cells across an edge in each of the rows (or
         // columns) beside this one, picked by the stagger; hexagons add the two along the row (or
@@ -85,56 +83,53 @@ void for_neighbours(const Grid& g, int x, int y, F&& f) {
         if (!g.links.empty()) for (int to : g.links[from]) f(static_cast<std::size_t>(to), link_cost(g, from, static_cast<std::size_t>(to)));
         return;
     }
+    // Squares: the eight around, on whichever floor of each column is a step away (on a stack of
+    // floors, the one the walker can step onto), diagonals only past two such orthogonal cells.
     static constexpr int dx[8] = {1, -1, 0, 0, 1, 1, -1, -1};
     static constexpr int dy[8] = {0, 0, 1, -1, 1, -1, 1, -1};
     for (int i = 0; i < (g.diagonal ? 8 : 4); ++i) {
         const int nx = x + dx[i], ny = y + dy[i];
-        if (!g.walkable_at(nx, ny)) continue;
-        const std::size_t to = g.index(nx, ny);
-        if (!step_ok(g, from, to)) continue;
-        if (i >= 4) {
-            if (!g.walkable_at(x + dx[i], y) || !g.walkable_at(x, y + dy[i])) continue;
-            if (!step_ok(g, from, g.index(x + dx[i], y)) || !step_ok(g, from, g.index(x, y + dy[i]))) continue;
-        }
-        f(to, g.layout == 1 ? center_distance(g, x, y, nx, ny) : (i >= 4 ? kSqrt2 : 1.0f));
+        const std::optional<std::size_t> to = g.step_to(from, nx, ny);
+        if (!to) continue;
+        if (i >= 4 && (!g.step_to(from, x + dx[i], y) || !g.step_to(from, x, y + dy[i]))) continue;
+        f(*to, g.layout == 1 ? center_distance(g, x, y, nx, ny) : (i >= 4 ? kSqrt2 : 1.0f));
     }
     if (!g.links.empty()) for (int to : g.links[from]) f(static_cast<std::size_t>(to), link_cost(g, from, static_cast<std::size_t>(to)));
 }
 
 float heuristic(const Grid& g, std::size_t a, std::size_t b) {
-    const int ax = static_cast<int>(a % static_cast<std::size_t>(g.width)), ay = static_cast<int>(a / static_cast<std::size_t>(g.width));
-    const int bx = static_cast<int>(b % static_cast<std::size_t>(g.width)), by = static_cast<int>(b / static_cast<std::size_t>(g.width));
+    const int ax = g.x_of(a), ay = g.y_of(a), bx = g.x_of(b), by = g.y_of(b);
     if (g.layout != 0) return center_distance(g, ax, ay, bx, by);   // the straight line, never more than the steps
     const float dx = static_cast<float>(std::abs(bx - ax)), dy = static_cast<float>(std::abs(by - ay));
     if (g.diagonal) return std::max(dx, dy) + (kSqrt2 - 1.0f) * std::min(dx, dy);
     return dx + dy;
 }
 
-// Whether a straight segment between two cell centers stays on walkable ground: sampled every
-// quarter cell, each sample's cell walkable and within a step of the previous one.
-bool line_of_sight(const Grid& g, int ax, int ay, int bx, int by) {
-    const Vec3 a = g.center_of(ax, ay), b = g.center_of(bx, by);
+// Whether a straight segment between two cells' centers stays on walkable ground: sampled every
+// quarter cell, each sample on the floor of its column a step from the previous sample's (so a line
+// on an upper floor stays on it, and one up a ramp climbs it), ending on the second cell.
+bool line_of_sight(const Grid& g, std::size_t from, std::size_t to) {
+    const Vec3 a = g.center_at(from), b = g.center_at(to);
     const float dx = b.x - a.x, dy = g.plane == 0 ? b.z - a.z : b.y - a.y;
     const float dist = repro::hypot(dx, dy);
     const int samples = std::max(1, static_cast<int>(std::ceil(dist / (g.cell * 0.25f))));
-    std::size_t prev = g.index(ax, ay);
+    std::size_t prev = from;
     for (int i = 1; i <= samples; ++i) {
         const float t = static_cast<float>(i) / static_cast<float>(samples);
         Vec3 p = a;
         p.x += dx * t;
         if (g.plane == 0) p.z += dy * t; else p.y += dy * t;
         int cx, cy;
-        if (!g.cell_of(p, cx, cy) || !g.walkable_at(cx, cy)) return false;
-        const std::size_t cur = g.index(cx, cy);
-        if (cur != prev) {
-            if (!step_ok(g, prev, cur)) return false;
-            // A diagonal crossing between two cells must have a free orthogonal neighbour on each side.
-            const int px = static_cast<int>(prev % static_cast<std::size_t>(g.width)), py = static_cast<int>(prev / static_cast<std::size_t>(g.width));
-            if (g.layout == 0 && px != cx && py != cy && !g.walkable_at(px, cy) && !g.walkable_at(cx, py)) return false;
-            prev = cur;
-        }
+        if (!g.cell_of(p, cx, cy)) return false;
+        if (cx == g.x_of(prev) && cy == g.y_of(prev)) continue;
+        const std::optional<std::size_t> cur = g.step_to(prev, cx, cy);
+        if (!cur) return false;
+        // A diagonal crossing between two cells must have a free orthogonal neighbour on each side.
+        const int px = g.x_of(prev), py = g.y_of(prev);
+        if (g.layout == 0 && px != cx && py != cy && !g.step_to(prev, px, cy) && !g.step_to(prev, cx, py)) return false;
+        prev = *cur;
     }
-    return true;
+    return prev == to;
 }
 
 }  // namespace
@@ -184,6 +179,49 @@ Vec3 Grid::center_of(int x, int y) const {
     const float cx = origin.x + (static_cast<float>(x) + 0.5f) * cell;
     if (plane == 0) return {cx, ground.empty() ? origin.y : ground[index(x, y)], origin.z + (static_cast<float>(y) + 0.5f) * cell};
     return {cx, origin.y - (static_cast<float>(y) + 0.5f) * cell, depth};
+}
+
+Vec3 Grid::center_at(std::size_t i) const {
+    Vec3 c = center_of(x_of(i), y_of(i));
+    if (plane == 0 && i < ground.size()) c.y = ground[i];
+    return c;
+}
+
+std::optional<std::size_t> Grid::step_to(std::size_t from, int x, int y) const {
+    if (!inside(x, y)) return std::nullopt;
+    if (layers == 1) {
+        const std::size_t to = index(x, y);
+        if (!walkable_cell(to) || !step_ok(*this, from, to)) return std::nullopt;
+        return to;
+    }
+    // Floors are far more than a step apart, so at most one is within a step; the nearest wins.
+    std::optional<std::size_t> best;
+    float best_d = max_step + 1e-4f;
+    for (int l = 0; l < layers; ++l) {
+        const std::size_t to = index(x, y, l);
+        if (!walkable_cell(to)) continue;
+        const float d = std::fabs(ground[to] - ground[from]);
+        if (d <= best_d) { best_d = d; best = to; }
+    }
+    return best;
+}
+
+std::optional<std::size_t> Grid::cell_at(Vec3 p) const {
+    int x, y;
+    if (!cell_of(p, x, y)) return std::nullopt;
+    if (layers == 1) return walkable_at(x, y) ? std::optional<std::size_t>(index(x, y)) : std::nullopt;
+    // The floor it stands on: the highest at or below a step over its feet; else the lowest above.
+    std::optional<std::size_t> below, above;
+    for (int l = 0; l < layers; ++l) {
+        const std::size_t i = index(x, y, l);
+        if (!walkable_cell(i)) continue;
+        if (ground[i] <= p.y + max_step + 1e-4f) {
+            if (!below || ground[i] > ground[*below]) below = i;
+        } else if (!above || ground[i] < ground[*above]) {
+            above = i;
+        }
+    }
+    return below ? below : above;
 }
 
 bool Grid::cell_of(Vec3 p, int& x, int& y) const {
@@ -242,28 +280,62 @@ Status Nav::bake_colliders(const world::World& w, const physics::Physics& ph, co
     if (static_cast<std::size_t>(g.width) * static_cast<std::size_t>(g.height) > 1000000) return fail("too_big", "the grid would have more than a million cells; use a larger cell or a smaller area");
     g.origin = {p.min.x, p.min.y, p.min.z};
     const std::size_t n = static_cast<std::size_t>(g.width) * static_cast<std::size_t>(g.height);
-    g.walkable.assign(n, 0);
-    g.ground.assign(n, 0.0f);
+    const int max_layers = std::clamp(p.layers, 1, 16);
+    g.layers = max_layers;
+    g.walkable.assign(n * static_cast<std::size_t>(max_layers), 0);
+    g.ground.assign(n * static_cast<std::size_t>(max_layers), 0.0f);
     const float cos_slope = repro::cos(radians(p.max_slope_degrees));
     const physics::Physics::Filter static_only = [](EntityId, const world::RigidBody& rb, const world::Collider& col) { return rb.kind == 1 && !col.is_trigger; };
-    const float top = p.max.y + 1.0f, span = (p.max.y - p.min.y) + 2.0f;
+    const float top = p.max.y + 1.0f, bottom = p.min.y - 1.0f;
+    int used = 1;
+    std::vector<EntityId> passed;   // this column's convex shapes already gone through
+    const physics::Physics::Filter below = [&](EntityId id, const world::RigidBody& rb, const world::Collider& col) {
+        return rb.kind == 1 && !col.is_trigger && std::find(passed.begin(), passed.end(), id) == passed.end();
+    };
     for (int y = 0; y < g.height; ++y) {
         for (int x = 0; x < g.width; ++x) {
-            const Vec3 c{g.origin.x + (static_cast<float>(x) + 0.5f) * p.cell, top, g.origin.z + (static_cast<float>(y) + 0.5f) * p.cell};
-            auto hit = ph.raycast(w, c, Vec3{0, -1, 0}, span, static_only);
-            if (!hit || hit->normal.y < cos_slope || hit->point.y < p.min.y || hit->point.y > p.max.y) continue;
-            const Vec3 feet{c.x, hit->point.y + p.agent_radius + 0.05f, c.z};
-            const Vec3 head{c.x, hit->point.y + std::max(p.agent_height - p.agent_radius, p.agent_radius + 0.05f), c.z};
-            bool blocked = false;
-            for (const Vec3& probe : {feet, head}) {
-                for (EntityId id : ph.overlap_sphere(w, probe, p.agent_radius, static_only)) if (id != hit->entity) blocked = true;
+            // Down the column: every surface met, the top floor first. A convex shape (box, sphere,
+            // capsule) has one top, so the next ray leaves it out; inside a mesh, the next starts
+            // just under the surface, and the underside it meets has no headroom above it.
+            passed.clear();
+            float from = top;
+            int layer = 0;
+            for (int tries = 0; tries < 4 * max_layers && layer < max_layers && from > bottom; ++tries) {
+                const Vec3 c{g.origin.x + (static_cast<float>(x) + 0.5f) * p.cell, from, g.origin.z + (static_cast<float>(y) + 0.5f) * p.cell};
+                auto hit = ph.raycast(w, c, Vec3{0, -1, 0}, from - bottom, below);
+                if (!hit) break;
+                const world::Collider* col = w.try_get<world::Collider>(hit->entity);
+                const bool convex = col && col->shape <= 2;
+                if (convex) passed.push_back(hit->entity);
+                from = convex ? from : hit->point.y - 0.02f;
+                if (max_layers == 1) tries = 4 * max_layers;   // one layer: the first surface only, walkable or not, as before layers
+                if (hit->normal.y < cos_slope || hit->point.y < p.min.y || hit->point.y > p.max.y) continue;
+                // The feet probe clears a step's height: a riser the agent can climb (the next stair)
+                // beside the cell does not take the cell away.
+                const Vec3 feet{c.x, hit->point.y + std::max(p.max_step, 0.05f) + p.agent_radius, c.z};
+                const Vec3 head{c.x, std::max(hit->point.y + p.agent_height - p.agent_radius, feet.y), c.z};
+                bool blocked = false;
+                for (const Vec3& probe : {feet, head}) {
+                    for (EntityId id : ph.overlap_sphere(w, probe, p.agent_radius, static_only)) if (id != hit->entity) blocked = true;
+                }
+                // Below the top floor, open air above it as well (not the underside of what is over it).
+                if (!blocked && layer > 0) {
+                    const Vec3 up_from{c.x, hit->point.y + 0.02f, c.z};
+                    if (ph.raycast(w, up_from, Vec3{0, 1, 0}, std::max(p.agent_height - 0.02f, 0.05f), static_only)) blocked = true;
+                }
+                if (blocked) continue;
+                const std::size_t i = g.index(x, y, layer);
+                g.walkable[i] = 1;
+                g.ground[i] = hit->point.y;
+                ++layer;
+                used = std::max(used, layer);
             }
-            if (blocked) continue;
-            const std::size_t i = g.index(x, y);
-            g.walkable[i] = 1;
-            g.ground[i] = hit->point.y;
         }
     }
+    // As many layers as some column has floors.
+    g.layers = used;
+    g.walkable.resize(n * static_cast<std::size_t>(used));
+    g.ground.resize(n * static_cast<std::size_t>(used));
     g.source = "colliders";
     g.baked_tick = tick;
     g.agent_radius = p.agent_radius;
@@ -376,14 +448,16 @@ std::optional<Vec3> Nav::nearest(Vec3 p, float max_radius) const {
     std::optional<Vec3> out;
     for (int y = cy - r; y <= cy + r; ++y) {
         for (int x = cx - r; x <= cx + r; ++x) {
-            if (!g.walkable_at(x, y)) continue;
-            const Vec3 c = g.center_of(x, y);
-            // Distance in the plane plus, on ground grids, the height difference: a point beside a
-            // pillar's foot is nearer to the ground cell next to it than to the pillar's top.
-            const float dx = c.x - p.x, dy = g.plane == 0 ? c.z - p.z : c.y - p.y;
-            const float dh = g.plane == 0 ? c.y - p.y : 0.0f;
-            const float d2 = dx * dx + dy * dy + dh * dh;
-            if (d2 <= best + 1e-6f && (!out || d2 < best)) { best = d2; out = c; }
+            for (int l = 0; l < g.layers; ++l) {
+                if (!g.walkable_at(x, y, l)) continue;
+                const Vec3 c = g.center_at(g.index(x, y, l));
+                // Distance in the plane plus, on ground grids, the height difference: a point beside
+                // a pillar's foot is nearer to the ground cell next to it than to the pillar's top.
+                const float dx = c.x - p.x, dy = g.plane == 0 ? c.z - p.z : c.y - p.y;
+                const float dh = g.plane == 0 ? c.y - p.y : 0.0f;
+                const float d2 = dx * dx + dy * dy + dh * dh;
+                if (d2 <= best + 1e-6f && (!out || d2 < best)) { best = d2; out = c; }
+            }
         }
     }
     return out;
@@ -393,26 +467,28 @@ Result<Path> Nav::grid_path(Vec3 from, Vec3 to, bool smooth) const {
     if (!baked()) return fail("not_baked", "no navigation grid yet: bake one with nav.bake");
     const Grid& g = grid_;
     Path out;
-    auto locate = [&](Vec3 p, const char* what, int& x, int& y) -> Status {
-        if (!g.cell_of(p, x, y)) {
-            auto near = nearest(p, g.cell * 2.0f);
-            if (!near) return fail("outside", "the {} is outside the navigation grid", what);
-            out.snapped = true;
-            (void)g.cell_of(*near, x, y);
-            return {};
+    // The cell a point stands on (its floor, on a stack of floors), else the nearest within two cells.
+    auto locate = [&](Vec3 p, const char* what, std::size_t& cell) -> Status {
+        int x, y;
+        const bool inside = g.cell_of(p, x, y);
+        if (inside) {
+            if (auto c = g.cell_at(p); c && (g.plane != 0 || std::fabs(g.ground[*c] - p.y) <= g.max_step + 2.5f || g.layers == 1)) {
+                cell = *c;
+                return {};
+            }
         }
-        if (g.walkable_at(x, y)) return {};
         auto near = nearest(p, g.cell * 2.0f);
-        if (!near) return fail("blocked", "the {} is not on walkable ground and nothing walkable is within two cells", what);
+        if (!near) return inside ? fail("blocked", "the {} is not on walkable ground and nothing walkable is within two cells", what) : fail("outside", "the {} is outside the navigation grid", what);
         out.snapped = true;
-        (void)g.cell_of(*near, x, y);
+        auto c = g.cell_at(*near);
+        if (!c) return fail("blocked", "the {} is not on walkable ground", what);
+        cell = *c;
         return {};
     };
-    int sx, sy, gx, gy;
-    POCKET_TRY_VOID(locate(from, "start", sx, sy));
-    POCKET_TRY_VOID(locate(to, "goal", gx, gy));
+    std::size_t start = 0, goal = 0;
+    POCKET_TRY_VOID(locate(from, "start", start));
+    POCKET_TRY_VOID(locate(to, "goal", goal));
     const std::size_t n = g.walkable.size();
-    const std::size_t start = g.index(sx, sy), goal = g.index(gx, gy);
     struct Node { float f, gcost; std::size_t cell; std::uint32_t order; };
     struct Less { bool operator()(const Node& a, const Node& b) const { if (a.f != b.f) return a.f > b.f; if (a.gcost != b.gcost) return a.gcost < b.gcost; return a.order > b.order; } };
     std::priority_queue<Node, std::vector<Node>, Less> open;
@@ -434,8 +510,7 @@ Result<Path> Nav::grid_path(Vec3 from, Vec3 to, bool smooth) const {
         if (cur.cell == goal) { reached = true; break; }
         const float h = heuristic(g, cur.cell, goal);
         if (h < best_h) { best_h = h; best = cur.cell; }
-        const int cx = static_cast<int>(cur.cell % static_cast<std::size_t>(g.width)), cy = static_cast<int>(cur.cell / static_cast<std::size_t>(g.width));
-        for_neighbours(g, cx, cy, [&](std::size_t to_cell, float step) {
+        for_neighbours(g, cur.cell, [&](std::size_t to_cell, float step) {
             if (closed[to_cell]) return;
             const float c = cost[cur.cell] + step;
             if (c < cost[to_cell]) {
@@ -454,17 +529,13 @@ Result<Path> Nav::grid_path(Vec3 from, Vec3 to, bool smooth) const {
     }
     std::reverse(cells.begin(), cells.end());
     out.cells = static_cast<int>(cells.size());
-    auto xy = [&](std::size_t c, int& x, int& y) { x = static_cast<int>(c % static_cast<std::size_t>(g.width)); y = static_cast<int>(c / static_cast<std::size_t>(g.width)); };
     std::vector<std::size_t> kept;
     if (smooth && g.links.empty() && cells.size() > 2) {
         // String pulling: keep a corner only when the next cell is out of sight of the last kept one.
         kept.push_back(cells[0]);
         std::size_t anchor = 0;
         for (std::size_t i = 2; i < cells.size(); ++i) {
-            int ax, ay, bx, by;
-            xy(cells[anchor], ax, ay);
-            xy(cells[i], bx, by);
-            if (!line_of_sight(g, ax, ay, bx, by)) {
+            if (!line_of_sight(g, cells[anchor], cells[i])) {
                 kept.push_back(cells[i - 1]);
                 anchor = i - 1;
             }
@@ -473,20 +544,14 @@ Result<Path> Nav::grid_path(Vec3 from, Vec3 to, bool smooth) const {
     } else {
         kept = cells;
     }
-    for (std::size_t c : kept) {
-        int x, y;
-        xy(c, x, y);
-        out.points.push_back(g.center_of(x, y));
-    }
+    for (std::size_t c : kept) out.points.push_back(g.center_at(c));
     for (std::size_t i = 1; i < out.points.size(); ++i) out.length += length(out.points[i] - out.points[i - 1]);
     return out;
 }
 
 bool Nav::reachable(Vec3 from, Vec3 to) const {
     if (!baked()) return false;
-    int sx, sy, gx, gy;
-    if (!grid_.cell_of(from, sx, sy) || !grid_.cell_of(to, gx, gy)) return false;
-    if (!grid_.walkable_at(sx, sy) || !grid_.walkable_at(gx, gy)) return false;
+    if (!grid_.cell_at(from) || !grid_.cell_at(to)) return false;
     auto p = path(from, to, false);
     return p.has_value() && !p->partial && !p->snapped;
 }
@@ -512,6 +577,7 @@ Json Nav::describe() const {
     j["layout"] = g.layout == 0 ? "square" : g.layout == 1 ? "isometric" : g.layout == 2 ? "staggered" : "hexagonal";
     j["width"] = g.width;
     j["height"] = g.height;
+    j["layers"] = g.layers;
     j["cell"] = g.cell;
     j["origin"] = Json{{"x", g.origin.x}, {"y", g.origin.y}, {"z", g.origin.z}};
     j["cells"] = g.walkable.size();
@@ -566,8 +632,7 @@ std::optional<float> time_to_collision(P2 rel, P2 rel_vel, float radius) {
 }
 
 bool on_ground(const Grid& g, Vec3 p) {
-    int x, y;
-    return g.cell_of(p, x, y) && g.walkable_at(x, y);
+    return g.cell_at(p).has_value();
 }
 
 Json json_of_vec(Vec3 v) { return Json{{"x", v.x}, {"y", v.y}, {"z", v.z}}; }
@@ -606,10 +671,15 @@ void Nav::reapply_obstacles() {
             y0 = static_cast<int>(std::floor((g.origin.y - (c.v + r)) / g.cell));
             y1 = static_cast<int>(std::floor((g.origin.y - (c.v - r)) / g.cell));
         }
+        // On a stack of floors, the floor it stands on (within a body's height of its position).
         for (int y = std::max(y0, 0); y <= std::min(y1, g.height - 1); ++y) {
             for (int x = std::max(x0, 0); x <= std::min(x1, g.width - 1); ++x) {
                 const P2 d = sub(p2(g.plane, g.center_of(x, y)), c);
-                if (dot2(d, d) <= r * r) g.blocked[g.index(x, y)] = 1;
+                if (dot2(d, d) > r * r) continue;
+                for (int l = 0; l < g.layers; ++l) {
+                    const std::size_t i = g.index(x, y, l);
+                    if (g.layers == 1 || (g.ground[i] <= o.position.y + g.max_step + 0.01f && g.ground[i] >= o.position.y - 2.5f)) g.blocked[i] = 1;
+                }
             }
         }
     }
@@ -746,8 +816,8 @@ void Nav::step(world::World& w, float dt) {
             // sight, behind a wall or a pillar, is walked to along a path like a goal, below.
             bool in_sight = true;
             if (baked()) {
-                int ax, ay, bx, by;
-                in_sight = grid_.cell_of(it.pos, ax, ay) && grid_.cell_of(*goal, bx, by) && grid_.walkable_at(bx, by) && line_of_sight(grid_, ax, ay, bx, by);
+                const auto ac = grid_.cell_at(it.pos), bc = grid_.cell_at(*goal);
+                in_sight = ac && bc && line_of_sight(grid_, *ac, *bc);
             }
             if (in_sight) {
                 const Lead& L = leads_[a.target];
@@ -766,7 +836,14 @@ void Nav::step(world::World& w, float dt) {
             }
             crowd_.detours++;
         }
-        if (dgoal <= a.arrive) {
+        // On a stack of floors the goal right over (or under) the agent is not reached until the
+        // agent stands on its floor.
+        bool same_floor = true;
+        if (plane == 0 && grid_.layers > 1) {
+            const auto ac = grid_.cell_at(it.pos), bc = grid_.cell_at(*goal);
+            same_floor = !ac || !bc || std::fabs(grid_.ground[*ac] - grid_.ground[*bc]) <= grid_.max_step + 1e-4f;
+        }
+        if (dgoal <= a.arrive && same_floor) {
             pl.state = 2;
             runs_.erase(it.id);
             continue;
@@ -776,7 +853,7 @@ void Nav::step(world::World& w, float dt) {
         if (baked()) {
             AgentRun& run = runs_[it.id];
             const std::uint64_t every = static_cast<std::uint64_t>(std::max(a.replan, 0));
-            bool replan = !run.planned || tick >= run.planned_tick + every || len2(sub(p2(plane, run.goal), gq)) > cell * 0.5f;
+            bool replan = !run.planned || tick >= run.planned_tick + every || len2(sub(p2(plane, run.goal), gq)) > cell * 0.5f || (plane == 0 && std::fabs(run.goal.y - goal->y) > grid_.max_step);
             if (!replan && run.next < run.path.size() && !on_ground(grid_, run.path[run.next])) replan = true;  // the corner got blocked
             if (replan) {
                 auto r = path(it.pos, *goal, true);
@@ -787,14 +864,25 @@ void Nav::step(world::World& w, float dt) {
                 if (r) {
                     run.path = r->points;
                     run.partial = r->partial;
-                    run.next = run.path.size() > 1 ? 1 : 0;
+                    run.next = run.path.size() > 1 && !r->snapped ? 1 : 0;   // off walkable ground: back onto it first
                 } else {
                     run.path.clear();  // off the grid: straight at the goal
                     run.partial = false;
                 }
             }
             if (run.path.size() >= 2) {
-                while (run.next + 1 < run.path.size() && len2(sub(p2(plane, run.path[run.next]), p)) < cell * 0.6f) run.next++;
+                // On to the next corner near this one, once the way to the one after is in sight
+                // (or the corner is reached): cutting in early would leave walkable ground.
+                const auto here = grid_.cell_at(it.pos);
+                auto sees = [&](const Vec3& q) {
+                    const auto c = grid_.cell_at(q);
+                    return here && c && line_of_sight(grid_, *here, *c);
+                };
+                while (run.next + 1 < run.path.size()) {
+                    const float dc = len2(sub(p2(plane, run.path[run.next]), p));
+                    if (dc >= cell * 0.6f || (dc >= cell * 0.1f && !sees(run.path[run.next + 1]))) break;
+                    run.next++;
+                }
                 const bool last = run.next + 1 >= run.path.size();
                 if (last && !run.partial) {
                     corner = gq;  // the goal itself, not its cell's center
@@ -817,7 +905,7 @@ void Nav::step(world::World& w, float dt) {
         if (pl.state != 1) continue;
         const P2 d = sub(corner, p);
         const float len = len2(d);
-        const float speed = std::min(std::max(a.speed, 0.0f), std::max(dgoal - a.arrive * 0.5f, 0.0f) / dt);
+        const float speed = same_floor ? std::min(std::max(a.speed, 0.0f), std::max(dgoal - a.arrive * 0.5f, 0.0f) / dt) : std::max(a.speed, 0.0f);
         if (len > 1e-6f && speed > 0) pl.desired = mul(d, speed / len);
         pl.chosen = pl.desired;
     }
@@ -994,7 +1082,31 @@ void Nav::step(world::World& w, float dt) {
             w.set_typed<world::Velocity>(it.id, nv);
         } else if (pl.state == 1 || pushed) {
             world::Transform t = *w.try_get<world::Transform>(it.id);
-            t.position = t.position + v3(plane, mul(vel, dt), 0.0f);
+            const Vec3 next = t.position + v3(plane, mul(vel, dt), 0.0f);
+            // On ground, the agent climbs and descends with the floor it walks onto, keeping its
+            // height over it (a ramp, stairs, or onto the deck above the road it came from).
+            if (plane == 0 && !grid_.ground.empty()) {
+                int nx, ny;
+                if (auto from = grid_.cell_at(t.position); from && grid_.cell_of(next, nx, ny)) {
+                    // A step from its floor, else (a corner cut onto a taller step) the floor
+                    // nearest in height.
+                    std::optional<std::size_t> to = grid_.step_to(*from, nx, ny);
+                    const bool stepped = to.has_value();
+                    float best = std::numeric_limits<float>::infinity();
+                    for (int l = 0; !stepped && l < grid_.layers; ++l) {
+                        const std::size_t c = grid_.index(nx, ny, l);
+                        const float d = std::fabs(grid_.ground[c] - grid_.ground[*from]);
+                        if (grid_.walkable_cell(c) && d < best) {
+                            best = d;
+                            to = c;
+                        }
+                    }
+                    if (to) t.position.y += grid_.ground[*to] - grid_.ground[*from];
+                }
+            }
+            t.position.x = next.x;
+            t.position.z = next.z;
+            if (plane != 0) t.position.y = next.y;
             w.set_typed<world::Transform>(it.id, t);
         }
         w.set_typed<world::NavAgent>(it.id, a);
@@ -1050,17 +1162,29 @@ float row_edge(const Grid& g, int r) { return g.plane == 0 ? g.origin.z + static
 P2 poly_center(const Grid& g, const NavMesh::Poly& p) {
     return {col_edge(g, p.x0) + (static_cast<float>(p.x1 - p.x0 + 1) * 0.5f) * g.cell, g.plane == 0 ? row_edge(g, p.y0) + (static_cast<float>(p.y1 - p.y0 + 1) * 0.5f) * g.cell : row_edge(g, p.y0) - (static_cast<float>(p.y1 - p.y0 + 1) * 0.5f) * g.cell};
 }
-// The cell under a plane point, clamped into the grid.
-std::size_t cell_under(const Grid& g, P2 q) {
+// The cell under a plane point, clamped into the grid: on a stack of floors, the walkable one
+// nearest the height `near_y` (the way's height where it comes from), else layer 0.
+std::size_t cell_under(const Grid& g, P2 q, float near_y = 0) {
     int x = static_cast<int>(std::floor((q.u - g.origin.x) / g.cell));
     int y = g.plane == 0 ? static_cast<int>(std::floor((q.v - g.origin.z) / g.cell)) : static_cast<int>(std::floor((g.origin.y - q.v) / g.cell));
     x = std::clamp(x, 0, g.width - 1);
     y = std::clamp(y, 0, g.height - 1);
-    return g.index(x, y);
+    std::size_t best = g.index(x, y);
+    if (g.layers > 1) {
+        float best_d = std::numeric_limits<float>::infinity();
+        for (int l = 0; l < g.layers; ++l) {
+            const std::size_t i = g.index(x, y, l);
+            if (g.walkable[i] == 0) continue;
+            const float d = std::fabs(g.ground[i] - near_y);
+            if (d < best_d) { best_d = d; best = i; }
+        }
+    }
+    return best;
 }
-// A plane point lifted into the world: the ground under it on ground grids, the map's depth otherwise.
-Vec3 lift(const Grid& g, P2 q) {
-    if (g.plane == 0) return {q.u, g.ground.empty() ? g.origin.y : g.ground[cell_under(g, q)], q.v};
+// A plane point lifted into the world: the ground under it on ground grids (the floor nearest
+// near_y on a stack of floors), the map's depth otherwise.
+Vec3 lift(const Grid& g, P2 q, float near_y = 0) {
+    if (g.plane == 0) return {q.u, g.ground.empty() ? g.origin.y : g.ground[cell_under(g, q, near_y)], q.v};
     return {q.u, q.v, g.depth};
 }
 
@@ -1127,27 +1251,29 @@ void Nav::build_mesh() {
     NavMesh m;
     if (g.width <= 0 || g.height <= 0 || !g.links.empty() || g.layout != 0) { mesh_ = std::move(m); return; }   // rectangles cover square lattices only
     m.cell_poly.assign(g.walkable.size(), -1);
-    auto ok = [&](int x, int y) { return g.inside(x, y) && g.walkable[g.index(x, y)] != 0; };
+    for (int l = 0; l < g.layers; ++l) {
+    auto ok = [&](int x, int y) { return g.inside(x, y) && g.walkable[g.index(x, y, l)] != 0; };
     for (int y = 0; y < g.height; ++y) {
         for (int x = 0; x < g.width; ++x) {
-            if (!ok(x, y) || m.cell_poly[g.index(x, y)] >= 0) continue;
+            if (!ok(x, y) || m.cell_poly[g.index(x, y, l)] >= 0) continue;
             int x1 = x;
-            while (x1 + 1 < g.width && ok(x1 + 1, y) && m.cell_poly[g.index(x1 + 1, y)] < 0 && step_ok(g, g.index(x1, y), g.index(x1 + 1, y))) ++x1;
+            while (x1 + 1 < g.width && ok(x1 + 1, y) && m.cell_poly[g.index(x1 + 1, y, l)] < 0 && step_ok(g, g.index(x1, y, l), g.index(x1 + 1, y, l))) ++x1;
             int y1 = y;
             while (y1 + 1 < g.height) {
                 bool fits = true;
                 for (int xx = x; xx <= x1 && fits; ++xx) {
-                    const std::size_t below = g.index(xx, y1 + 1);
-                    if (!ok(xx, y1 + 1) || m.cell_poly[below] >= 0 || !step_ok(g, g.index(xx, y1), below)) fits = false;
-                    else if (xx > x && !step_ok(g, g.index(xx - 1, y1 + 1), below)) fits = false;
+                    const std::size_t below = g.index(xx, y1 + 1, l);
+                    if (!ok(xx, y1 + 1) || m.cell_poly[below] >= 0 || !step_ok(g, g.index(xx, y1, l), below)) fits = false;
+                    else if (xx > x && !step_ok(g, g.index(xx - 1, y1 + 1, l), below)) fits = false;
                 }
                 if (!fits) break;
                 ++y1;
             }
             const int id = static_cast<int>(m.polys.size());
-            m.polys.push_back({x, y, x1, y1});
-            for (int yy = y; yy <= y1; ++yy) for (int xx = x; xx <= x1; ++xx) m.cell_poly[g.index(xx, yy)] = id;
+            m.polys.push_back({x, y, x1, y1, l});
+            for (int yy = y; yy <= y1; ++yy) for (int xx = x; xx <= x1; ++xx) m.cell_poly[g.index(xx, yy, l)] = id;
         }
+    }
     }
     m.portals.assign(m.polys.size(), {});
     for (int id = 0; id < static_cast<int>(m.polys.size()); ++id) {
@@ -1182,7 +1308,8 @@ void Nav::build_mesh() {
                 mine(t, cx, cy);
                 const int nx = cx + dx, ny = cy + dy;
                 int other = -1;
-                if (ok(nx, ny) && step_ok(g, g.index(cx, cy), g.index(nx, ny))) other = m.cell_poly[g.index(nx, ny)];
+                // Across the side, the floor a step away, whichever layer it is on.
+                if (const auto across = g.step_to(g.index(cx, cy, P.layer), nx, ny)) other = m.cell_poly[*across];
                 if (other != run_poly) { flush(t - 1); if (other >= 0) { run_start = t; run_poly = other; } }
             }
             flush(n - 1);
@@ -1203,8 +1330,9 @@ Json Nav::mesh_json() const {
         const NavMesh::Poly& p = mesh_.polys[i];
         Json neighbours = Json::array();
         for (const NavMesh::Portal& pt : mesh_.portals[i]) neighbours.push_back(pt.to);
-        const Vec3 lo = lift(g, {col_edge(g, p.x0), g.plane == 0 ? row_edge(g, p.y0) : row_edge(g, p.y1 + 1)});
-        const Vec3 hi = lift(g, {col_edge(g, p.x1 + 1), g.plane == 0 ? row_edge(g, p.y1 + 1) : row_edge(g, p.y0)});
+        const float h = g.plane == 0 && !g.ground.empty() ? g.ground[g.index(p.x0, p.y0, p.layer)] : 0.0f;
+        const Vec3 lo = lift(g, {col_edge(g, p.x0), g.plane == 0 ? row_edge(g, p.y0) : row_edge(g, p.y1 + 1)}, h);
+        const Vec3 hi = lift(g, {col_edge(g, p.x1 + 1), g.plane == 0 ? row_edge(g, p.y1 + 1) : row_edge(g, p.y0)}, h);
         j["polygons"].push_back(Json{{"id", i}, {"cells", (p.x1 - p.x0 + 1) * (p.y1 - p.y0 + 1)}, {"min", {{"x", lo.x}, {"y", lo.y}, {"z", lo.z}}}, {"max", {{"x", hi.x}, {"y", hi.y}, {"z", hi.z}}}, {"neighbours", neighbours}});
     }
     j["count"] = mesh_.polys.size();
@@ -1219,18 +1347,18 @@ std::optional<Path> Nav::mesh_path(Vec3 from, Vec3 to) const {
     Path out;
     out.mesh = true;
     auto locate = [&](Vec3 p, P2& q, std::size_t& cell) -> bool {
-        int x, y;
-        if (g.cell_of(p, x, y) && g.walkable_at(x, y)) {
+        if (auto c = g.cell_at(p)) {
             q = p2(g.plane, p);
-            cell = g.index(x, y);
+            cell = *c;
             return true;
         }
         auto near = nearest(p, g.cell * 2.0f);
         if (!near) return false;
+        auto c = g.cell_at(*near);
+        if (!c) return false;
         out.snapped = true;
-        (void)g.cell_of(*near, x, y);
         q = p2(g.plane, *near);
-        cell = g.index(x, y);
+        cell = *c;
         return true;
     };
     P2 start, goal;
@@ -1284,28 +1412,70 @@ std::optional<Path> Nav::mesh_path(Vec3 from, Vec3 to) const {
         p = prev;
     }
     std::reverse(steps.begin(), steps.end());
+    // The cell at a plane point on a layer, if inside the grid.
+    auto cell_in = [&](P2 q, int layer) -> std::optional<std::size_t> {
+        const int x = static_cast<int>(std::floor((q.u - g.origin.x) / g.cell));
+        const int y = g.plane == 0 ? static_cast<int>(std::floor((q.v - g.origin.z) / g.cell)) : static_cast<int>(std::floor((g.origin.y - q.v) / g.cell));
+        if (!g.inside(x, y)) return std::nullopt;
+        return g.index(x, y, layer);
+    };
+    // A portal's end is hard when the ground does not go on past it on both sides (a wall's
+    // corner, a riser too tall to climb, the edge of a drop): a way round it keeps off the corner.
+    auto hard_end = [&](P2 end, P2 along, int pa, int pb) {
+        const float hc = g.cell * 0.5f;
+        const P2 across{-along.v, along.u};
+        for (float side : {1.0f, -1.0f}) {
+            // The end cell on this side of the portal, in whichever polygon it belongs to.
+            const P2 inner = add(end, add(mul(along, -hc), mul(across, side * hc)));
+            std::optional<std::size_t> in;
+            for (int poly : {pa, pb}) {
+                const auto c = cell_in(inner, m.polys[static_cast<std::size_t>(poly)].layer);
+                if (c && m.cell_poly[*c] == poly) in = c;
+            }
+            const auto past = cell_in(add(end, add(mul(along, hc), mul(across, side * hc))), 0);
+            if (!in || !past || !g.step_to(*in, g.x_of(*past), g.y_of(*past))) return true;
+        }
+        return false;
+    };
     std::vector<std::pair<P2, P2>> lr;
     for (const auto& [from_poly, k] : steps) {
         const NavMesh::Portal& pt = m.portals[static_cast<std::size_t>(from_poly)][static_cast<std::size_t>(k)];
-        const P2 a{pt.au, pt.av}, b{pt.bu, pt.bv};
+        P2 a{pt.au, pt.av}, b{pt.bu, pt.bv};
+        // A hard end drawn in by half a cell (less on a short portal).
+        const float span = len2(sub(b, a));
+        if (span > 1e-6f) {
+            const P2 dir = mul(sub(b, a), 1.0f / span);
+            const float in = std::min(g.cell * 0.5f, span * 0.45f);
+            const bool hard_a = hard_end(a, mul(dir, -1.0f), from_poly, pt.to), hard_b = hard_end(b, dir, from_poly, pt.to);
+            if (hard_a) a = add(a, mul(dir, in));
+            if (hard_b) b = sub(b, mul(dir, in));
+        }
         const P2 ca = poly_center(g, m.polys[static_cast<std::size_t>(from_poly)]), cb = poly_center(g, m.polys[static_cast<std::size_t>(pt.to)]);
         if (triarea2(ca, cb, a) >= 0.0f) lr.emplace_back(b, a);   // a lies to the right of the way: right is a
         else lr.emplace_back(a, b);
     }
     std::vector<P2> corners = funnel(start, goal, lr);
-    // An obstacle across the way: sampled every quarter cell, the cell path decides instead.
-    if (!g.blocked.empty()) {
-        for (std::size_t i = 1; i < corners.size(); ++i) {
-            const P2 a = corners[i - 1], b = corners[i];
+    // The corners in the world. Each leg is walked every quarter cell on the floor nearest the
+    // last (the way up a ramp climbs it; a way under a bridge stays under), and an obstacle across
+    // a leg leaves the way to the cell path.
+    const bool ground = g.plane == 0 && !g.ground.empty();
+    float h = ground ? g.ground[start_cell] : 0.0f;
+    out.points.push_back(ground ? Vec3{corners.front().u, h, corners.front().v} : lift(g, corners.front(), h));
+    for (std::size_t i = 1; i < corners.size(); ++i) {
+        const P2 a = corners[i - 1], b = corners[i];
+        if (ground || !g.blocked.empty()) {
             const float d = len2(sub(b, a));
             const int samples = std::max(1, static_cast<int>(std::ceil(d / (g.cell * 0.25f))));
-            for (int s = 0; s <= samples; ++s) {
+            for (int s = i == 1 ? 0 : 1; s <= samples; ++s) {
                 const P2 q = add(a, mul(sub(b, a), static_cast<float>(s) / static_cast<float>(samples)));
-                if (g.blocked[cell_under(g, q)] != 0) return std::nullopt;
+                const std::size_t c = cell_under(g, q, h);
+                if (ground && g.walkable[c] != 0) h = g.ground[c];
+                if (!g.blocked.empty() && g.blocked[c] != 0) return std::nullopt;
             }
         }
+        if (i + 1 == corners.size() && ground) h = g.ground[goal_cell];
+        out.points.push_back(ground ? Vec3{b.u, h, b.v} : lift(g, b, h));
     }
-    for (const P2& q : corners) out.points.push_back(lift(g, q));
     for (std::size_t i = 1; i < out.points.size(); ++i) out.length += length(out.points[i] - out.points[i - 1]);
     out.polys = static_cast<int>(steps.size()) + 1;
     return out;

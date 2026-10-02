@@ -25,7 +25,7 @@ import tempfile
 import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "sdk", "python"))
-from pocket_env import PocketEnv  # noqa: E402
+from pocket_env import IosEnv, PocketEnv  # noqa: E402
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 POCKET = os.path.join(ROOT, ".pocket", "pocket")
@@ -2412,10 +2412,11 @@ def house_solve(env, project_dir):
 
 
 def house_check(env, answer):
-    found = [r for r in env.command("world.query", {"with": ["MeshRenderer", "Transform"], "fields": ["MeshRenderer", "Transform"]})["entities"] if r["MeshRenderer"].get("mesh") == "assets/house.voxels"]
+    # Where it stands in the world: an instantiated model's parts are children at the origin of a root.
+    found = [r for r in env.command("world.query", {"with": ["MeshRenderer", "WorldTransform"], "fields": ["MeshRenderer", "WorldTransform"]})["entities"] if r["MeshRenderer"].get("mesh") == "assets/house.voxels"]
     if not found:
         return False, "no entity draws assets/house.voxels"
-    p = found[0]["Transform"]["position"]
+    p = found[0]["WorldTransform"]["position"]
     if not (near(p["x"], 10, 0.01) and near(p["y"], 0, 0.01) and near(p["z"], 0, 0.01)):
         return False, f"the house is at {p}, not (10, 0, 0)"
     d = env.command("assets.describe", {"path": "assets/house.voxels"})
@@ -2603,7 +2604,7 @@ TASKS = [
     {"name": "dodge", "project": "blank", "ticks": 0, "script": True, "game": True, "solve": dodge_solve, "check": dodge_check,
      "task": "Make a small game in this blank project, replacing its example. A dodge game in the XY plane (x across, y up), seen from the front: the player is an entity named Player that the actions move_x and move_y (bound to A/D and S/W, and to the arrow keys) move at 6 units a second. Every second a rock appears: an entity named Rock_1, Rock_2, ... at a random x between -8 and 8 and y = 6, falling at 4 units a second; rocks below y = -7 are removed. A rock within 0.6 units of the player ends the game: emit an event game.over with {time}, after which nothing moves the player and the clock stops. Expose alive (true until the game is over) and time_alive (seconds alive). The game must read where the player and the rocks are from their Transforms every tick, so that moving one with world.set moves it in the game. Answer null."},
     {"name": "snake", "project": "blank", "ticks": 0, "script": True, "game": True, "solve": snake_solve, "check": snake_check,
-     "task": "Make a snake game in this blank project, replacing its example. On a grid of cells one unit wide, x from 0 to 19 and y from 0 to 14: the snake is a row of entities named Segment_0 (the head), Segment_1, and so on, starting as three at (5, 7), (4, 7) and (3, 7), heading +x, moving one cell every 0.15 seconds. The actions move_x and move_y (A/D, S/W and the arrow keys) turn it, never straight back. An entity named Food sits on a cell: when the head moves onto it the snake grows by one segment, the game emits food.eaten with {length}, and the Food moves to a random free cell. Leaving the grid or running into itself ends the game: emit game.over with {length}, after which nothing moves. Expose length and alive. The game must read where the Food is from its Transform every tick, so that moving it with world.set moves it in the game. Answer null."},
+     "task": "Make a snake game in this blank project, replacing its example. In the XY plane (x across, y up), on a grid of cells one unit wide, x from 0 to 19 and y from 0 to 14: the snake is a row of entities named Segment_0 (the head), Segment_1, and so on, starting as three at (5, 7), (4, 7) and (3, 7), heading +x, moving one cell every 0.15 seconds. The actions move_x and move_y (A/D, S/W and the arrow keys) turn it, never straight back. An entity named Food sits on a cell: when the head moves onto it the snake grows by one segment, the game emits food.eaten with {length}, and the Food moves to a random free cell. Leaving the grid or running into itself ends the game: emit game.over with {length}, after which nothing moves. Expose length and alive. The game must read where the Food is from its Transform every tick, so that moving it with world.set moves it in the game. Answer null."},
     {"name": "key_door", "project": "blank", "ticks": 0, "script": True, "game": True, "solve": key_door_solve, "check": key_door_check,
      "task": "Make a small game in this blank project, replacing its example. In the XY plane (x across, y up): an entity named Player at (0, 0) that the actions move_x and move_y (bound to A/D and S/W, and to the arrow keys) move at 5 units a second; a Key at (4, 0); a Door at (8, 0) that the player cannot pass going right until it has the key; an Exit at (12, 0). Coming within 0.7 units of the key takes it: emit key.taken, remove the Key and open the way through the door. Coming within 0.7 units of the exit emits level.complete with {seconds}. Expose has_key. The game must read where the player is from its Transform every tick, so that moving it with world.set moves it in the game. Answer null."},
     {"name": "grey_flashback", "project": "crates", "ticks": 30, "solve": grey_flashback_solve, "check": grey_flashback_check,
@@ -2709,7 +2710,10 @@ def run_external(cmd, env, task, timeout, project_dir):
     payload = {"name": task["name"], "task": task["task"], "project": task["project"], "project_dir": project_dir, "rpc_url": env.url, "docs": doc_paths(),
                "notes": "POST {\"id\": 1, \"method\": \"<command>\", \"params\": {...}} to rpc_url + \"/rpc\"; the runtime is paused; `commands` lists every method."
                         + (f" This task edits files: change {task.get('edits', task.get('entry', 'scripts/main.ts'))} under project_dir; after an edit the command project.apply (pocket_apply in pi, project_apply over MCP) bundles and type-checks it, reloads the project (a fresh world from the scene, the script started again) and steps it, so you can see what it does; the harness bundles and reloads it once more when you are done." if task.get("script") else "")}
-    proc = subprocess.run(cmd, input=json.dumps(payload), capture_output=True, text=True, shell=True, timeout=timeout, env={**os.environ, "POCKET_RPC_URL": env.url})
+    # The agent's own tools start runtimes from the copy under test too, not a build of the checkout.
+    runtime = os.environ.get("POCKET_EVAL_RUNTIME")
+    extra = {"POCKET_RUNTIME": os.path.abspath(runtime)} if runtime else {}
+    proc = subprocess.run(cmd, input=json.dumps(payload), capture_output=True, text=True, shell=True, timeout=timeout, env={**os.environ, "POCKET_RPC_URL": env.url, **extra})
     answer = None
     metrics = {}
     for line in reversed(proc.stdout.strip().splitlines()):
@@ -2751,6 +2755,15 @@ def trace_summary(name):
 
 def run(runner="reference", tasks=None, timeout=300, log=print, project_root=None, rows_to=None):
     chosen = [t for t in TASKS if not tasks or t["name"] in tasks]
+    # POCKET_EVAL_TARGET=ios-sim: the game runs as an app in the iOS Simulator (pocket run --ios),
+    # the agent and the checks talking to it from the Mac. The app carries its own copy of the game,
+    # so the tasks that edit the project's files are left out.
+    ios = os.environ.get("POCKET_EVAL_TARGET") == "ios-sim"
+    if ios:
+        skipped = [t["name"] for t in chosen if t.get("script") or "setup" in t]
+        chosen = [t for t in chosen if not (t.get("script") or "setup" in t)]
+        if skipped:
+            log(f"on the iOS Simulator: {len(skipped)} tasks that edit files left out ({', '.join(skipped[:6])}{', ...' if len(skipped) > 6 else ''})")
     results = []
     started = time.time()
     for t in chosen:
@@ -2771,7 +2784,10 @@ def run(runner="reference", tasks=None, timeout=300, log=print, project_root=Non
                 t["setup"](project_dir)
                 bundle(project_dir)
             # POCKET_EVAL_RUNTIME: a copy of the runtime to test (so a long run is not changed by a rebuild).
-            env = PocketEnv(project_dir, root=project_root, runtime=os.environ.get("POCKET_EVAL_RUNTIME") or None)
+            if ios:
+                env = IosEnv(project_dir, root=project_root, device=os.environ.get("POCKET_EVAL_DEVICE") or None)
+            else:
+                env = PocketEnv(project_dir, root=project_root, runtime=os.environ.get("POCKET_EVAL_RUNTIME") or None)
             if t["ticks"]:
                 env.command("step", {"ticks": t["ticks"]})
             if "before" in t:

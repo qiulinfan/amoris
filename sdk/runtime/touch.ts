@@ -3,7 +3,7 @@
 // They read the fingers' own events (any number at once), feed the action map through input.axis,
 // and draw themselves with the interface; a game reads the same actions it reads from the keyboard
 // and a pad, and an agent can drive them with input.axis or input.touch.
-import { own } from "./registry";
+import { contextName, own } from "./registry";
 import { command } from "./world";
 import { h, mount } from "./ui";
 import type { InputEvent } from "./pocket";
@@ -142,7 +142,47 @@ function ensure(): void {
     drawn = mount(draw);
 }
 
+// Controls of its own for a game that made none (docs/design/input.md, On-screen controls): at the
+// first touch, a stick for the actions bound to left and right and to up and down, and a button for
+// each other action, from the input map. touch.auto(false) keeps a game's screen its own.
+let auto = true;
+let autoDone = false;
+type Binding = { positive?: string[]; negative?: string[]; axis?: string[] };
+const ACROSS = ["Left", "Right", "A", "D", "pad:dpad_left", "pad:dpad_right", "pad:leftx"];
+const UPDOWN = ["Up", "Down", "W", "S", "pad:dpad_up", "pad:dpad_down", "pad:lefty"];
+
+function autoControls(): void {
+    const actions = command<Record<string, Binding>>("input.describe", {});
+    const all = (b: Binding) => [...(b.positive ?? []), ...(b.negative ?? []), ...(b.axis ?? [])];
+    const axes = Object.keys(actions).filter((n) => (actions[n].negative?.length ?? 0) > 0 || (actions[n].axis?.length ?? 0) > 0);
+    const x = axes.find((n) => all(actions[n]).some((k) => ACROSS.includes(k)));
+    const y = axes.find((n) => n !== x && all(actions[n]).some((k) => UPDOWN.includes(k)));
+    if (x || y) {
+        // The stick's y runs down the screen: an action whose positive side is "up" turns it over.
+        const up = y !== undefined && (actions[y].positive ?? []).some((k) => k === "Up" || k === "W" || k === "pad:dpad_up");
+        touch.stick({ x, y, invertY: up, left: 110, bottom: 110 });
+    }
+    // The rest, held while a finger is on them; not those only a mouse presses (a touch is a click).
+    const rest = Object.keys(actions).filter((n) => n !== x && n !== y && !axes.includes(n) && all(actions[n]).some((k) => !k.startsWith("mouse:")));
+    const spots = [{ right: 80, bottom: 90 }, { right: 170, bottom: 70 }, { right: 90, bottom: 180 }, { right: 180, bottom: 160 }, { right: 260, bottom: 60 }, { right: 270, bottom: 150 }];
+    rest.slice(0, spots.length).forEach((action, i) => touch.button({ action, label: action.length <= 6 ? action : action.slice(0, 5), radius: 34, ...spots[i] }));
+}
+
+if (contextName !== "editor" && contextName !== "scenario") {
+    own.input.push((events: InputEvent[]) => {
+        if (autoDone || !auto) return;
+        if (!events.some((e) => e.type === "touch_down")) return;
+        autoDone = true;
+        if (sticks.length > 0 || buttons.length > 0) return;   // the game has its own
+        autoControls();
+    });
+}
+
 export const touch = {
+    /** Whether a game without controls of its own gets them at the first touch, from its input map (on by default). */
+    auto(on = true): void {
+        auto = on;
+    },
     /** A stick: drag from near it to tilt; sets `x` and `y` actions from -1 to 1 (input.axis). */
     stick(options: StickOptions): void {
         ensure();

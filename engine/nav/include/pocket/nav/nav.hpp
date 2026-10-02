@@ -25,6 +25,9 @@ struct BakeParams {
     float max_step = 0.4f;          // height difference two neighbouring cells may have
     float max_slope_degrees = 45.0f;
     bool diagonal = true;
+    // Floors stacked in a column (a bridge over a road, a building's storeys): each column is cast
+    // again below every floor found, up to this many (1: the top floor only, as before).
+    int layers = 4;
 };
 
 struct TileBakeParams {
@@ -51,19 +54,36 @@ struct Grid {
     int layout = 0;
     float tile_w = 0, tile_h = 0, hex_side = 0;
     bool stagger_y = true, stagger_odd = true;
-    std::vector<std::uint8_t> walkable;      // row-major: the level
-    std::vector<std::uint8_t> blocked;       // row-major: the moment (cells under obstacles); empty when none
+    // XZ grids from colliders: floors per column, stacked (layer 0 the top floor of each column,
+    // 1 the next one down, ...); every other grid has one. A cell is (layer, row, column), its index
+    // layer * width * height + row * width + column.
+    int layers = 1;
+    std::vector<std::uint8_t> walkable;      // per cell: the level
+    std::vector<std::uint8_t> blocked;       // per cell: the moment (cells under obstacles); empty when none
     std::vector<float> ground;               // XZ grids: ground height per cell
     std::vector<std::vector<int>> links;     // platformer: extra directed moves per cell (jumps, drops), as cell indices
     std::string source;
     std::uint64_t baked_tick = 0;
     [[nodiscard]] bool inside(int x, int y) const { return x >= 0 && y >= 0 && x < width && y < height; }
-    [[nodiscard]] std::size_t index(int x, int y) const { return static_cast<std::size_t>(y) * static_cast<std::size_t>(width) + static_cast<std::size_t>(x); }
+    [[nodiscard]] std::size_t column_count() const { return static_cast<std::size_t>(width) * static_cast<std::size_t>(height); }
+    [[nodiscard]] std::size_t cell_count() const { return column_count() * static_cast<std::size_t>(layers); }
+    [[nodiscard]] std::size_t index(int x, int y, int layer = 0) const { return static_cast<std::size_t>(layer) * column_count() + static_cast<std::size_t>(y) * static_cast<std::size_t>(width) + static_cast<std::size_t>(x); }
+    [[nodiscard]] int x_of(std::size_t i) const { return static_cast<int>(i % static_cast<std::size_t>(width)); }
+    [[nodiscard]] int y_of(std::size_t i) const { return static_cast<int>((i % column_count()) / static_cast<std::size_t>(width)); }
+    [[nodiscard]] int layer_of(std::size_t i) const { return static_cast<int>(i / column_count()); }
     // Walkable in the level and not under an obstacle right now.
-    [[nodiscard]] bool walkable_at(int x, int y) const { return inside(x, y) && walkable[index(x, y)] != 0 && (blocked.empty() || blocked[index(x, y)] == 0); }
+    [[nodiscard]] bool walkable_cell(std::size_t i) const { return i < walkable.size() && walkable[i] != 0 && (blocked.empty() || blocked[i] == 0); }
+    [[nodiscard]] bool walkable_at(int x, int y, int layer = 0) const { return inside(x, y) && layer >= 0 && layer < layers && walkable_cell(index(x, y, layer)); }
+    // The walkable cell of column (x, y) a step from cell `from` (its ground within max_step): where a
+    // walker on `from` goes stepping that way, on whichever floor; none when there is no such floor.
+    [[nodiscard]] std::optional<std::size_t> step_to(std::size_t from, int x, int y) const;
+    // The walkable cell of the column under p whose floor p stands on: the highest at or below a step
+    // over p's height, else the lowest above it; none outside the grid or off every floor.
+    [[nodiscard]] std::optional<std::size_t> cell_at(Vec3 p) const;
     [[nodiscard]] std::size_t blocked_count() const;
     [[nodiscard]] Vec3 center_of(int x, int y) const;
-    [[nodiscard]] bool cell_of(Vec3 p, int& x, int& y) const;  // false when the point is outside the grid
+    [[nodiscard]] Vec3 center_at(std::size_t i) const;   // a cell's center on its own floor
+    [[nodiscard]] bool cell_of(Vec3 p, int& x, int& y) const;  // the column; false when the point is outside the grid
     [[nodiscard]] std::size_t walkable_count() const;
     [[nodiscard]] std::size_t link_count() const;
 };
@@ -85,7 +105,7 @@ struct CrowdStats {
 // The walkable cells covered by rectangles that share edges (docs/design/navigation.md, Navmesh):
 // long paths are searched over the rectangles and pulled through the shared edges.
 struct NavMesh {
-    struct Poly { int x0 = 0, y0 = 0, x1 = 0, y1 = 0; };      // cell ranges, inclusive
+    struct Poly { int x0 = 0, y0 = 0, x1 = 0, y1 = 0, layer = 0; };   // cell ranges, inclusive, on one layer of the grid
     struct Portal { int to = -1; float au = 0, av = 0, bu = 0, bv = 0; };  // the shared edge in the grid's plane
     std::vector<Poly> polys;
     std::vector<std::vector<Portal>> portals;                 // per polygon
