@@ -2513,6 +2513,118 @@ def villagers_check(env, answer):
     return True, f"five humanoids in five looks wander within 6 ({len(walking)} walking), one stops, faces the Player and waves, then wanders again"
 
 
+FIREWORKS_TOML = GAME_TOML + 'launch = ["Space"]\n'
+FIREWORKS_TS = """import { events, expose, input, onStart, onTick, particles, world } from "pocket";
+const RISE = 12;
+let launched = 0;
+let bursts = 0;
+let sparks = 0;
+const rockets: Array<{ id: number; n: number; age: number }> = [];
+onStart(() => {
+    world.spawn("Camera", { components: { Transform: { position: { x: 0, y: 10, z: 30 } }, Camera: { fov_degrees: 55 } } });
+    sparks = world.spawn("Sparks", { components: { Transform: {}, ParticleEmitter: {
+        emitting: false, max: 4000, lifetime: [1.5, 2.5], speed: [5, 9], spread: 180, gravity: { x: 0, y: -6, z: 0 }, drag: 0.4,
+        size: [0.25, 0.05], color: { r: 1, g: 0.8, b: 0.3, a: 1 }, color_end: { r: 1, g: 0.2, b: 0.6, a: 0 }, additive: true } } });
+});
+onTick((t) => {
+    if (input.pressed("launch")) {
+        launched++;
+        const id = world.spawn(`Rocket_${launched}`, { components: {
+            Transform: { position: { x: 0, y: 0, z: 0 }, scale: { x: 0.2, y: 0.4, z: 0.2 } },
+            MeshRenderer: { mesh: "capsule", emissive: { r: 1, g: 0.7, b: 0.3, a: 1 } },
+            Trail: { time: 0.6, width: 0.3, color: { r: 1, g: 0.75, b: 0.3, a: 1 }, color_end: { r: 1, g: 0.3, b: 0.1, a: 0 }, additive: true } } });
+        rockets.push({ id, n: launched, age: 0 });
+    }
+    for (let i = rockets.length - 1; i >= 0; i--) {
+        const r = rockets[i];
+        r.age += t.dt;
+        const p = world.get(r.id, "Transform")!.position;
+        if (r.age >= 1) {
+            bursts++;
+            particles.burst(sparks, 150, { at: p });
+            events.emit("firework.burst", { n: r.n, x: p.x, y: p.y, z: p.z });
+            world.destroy(r.id);
+            rockets.splice(i, 1);
+        } else {
+            world.set(r.id, "Transform", { position: { x: p.x, y: p.y + RISE * t.dt, z: p.z } });
+        }
+    }
+});
+expose("launched", () => launched);
+expose("bursts", () => bursts);
+"""
+
+
+def fireworks_solve(env, project_dir):
+    write_game(project_dir, "fireworks", FIREWORKS_TS)
+    with open(os.path.join(project_dir, "project.toml"), "w") as f:
+        f.write(FIREWORKS_TOML.format(name=os.path.basename(project_dir)))
+    with open(os.path.join(project_dir, "scene.json"), "w") as f:
+        f.write('{"format": "pocket-scene", "entities": [{"name": "Night", "components": {"Sky": {"mode": "off"}}}]}\n')
+    return None
+
+
+def fireworks_check(env, answer):
+    if "launch" not in env.command("input.actions", {}):
+        return False, "no launch action"
+    state = lambda: env.command("state", {})["state"]  # noqa: E731
+    stats = lambda: env.command("particles.stats", {})  # noqa: E731
+    env.command("step", {"ticks": 5})
+    seq = env.command("events.last_seq", {})["seq"]
+    spawned0 = stats().get("spawned", 0)
+    env.command("input.press", {"action": "launch"})
+    env.command("step", {"ticks": 30})
+    try:
+        trail = env.command("world.get", {"entity": "Rocket_1", "component": "Trail"})
+    except Exception as e:   # noqa: BLE001 (missing: said)
+        return False, f"no Rocket_1 half a second after a launch: {e}"
+    if not trail:
+        return False, "Rocket_1 has no Trail"
+    p = entity_pos(env, "Rocket_1")
+    if not (4.5 < p["y"] < 7.5) or abs(p["x"]) > 0.3 or abs(p["z"]) > 0.3:
+        return False, f"half a second after its launch Rocket_1 is at {p}, not about 6 up from the origin"
+    env.command("step", {"ticks": 36})
+    burst = env.command("events.since", {"seq": seq, "type": "firework.burst"})["events"]
+    if not burst:
+        return False, "no firework.burst a second after the launch"
+    data = burst[0].get("data", {})
+    if data.get("n") != 1 or not (10.5 < float(data.get("y", 0)) < 13.5):
+        return False, f"the burst says {data}, not rocket 1 at about 12 up"
+    try:
+        gone = env.command("world.find", {"path": "Rocket_1"})
+    except Exception:   # noqa: BLE001
+        gone = None
+    if isinstance(gone, int):
+        return False, "Rocket_1 is still there after it burst"
+    s = stats()
+    if s.get("spawned", 0) - spawned0 < 100:
+        return False, f"the burst made {s.get('spawned', 0) - spawned0} particles, not at least 100"
+    pools = s.get("pools", [])
+    additive = False
+    for pool in pools:
+        try:
+            em = env.command("world.get", {"entity": pool["entity"], "component": "ParticleEmitter"})
+        except Exception:   # noqa: BLE001
+            em = None
+        if em and em.get("additive"):
+            additive = True
+    if not additive:
+        return False, "no emitter of the sparks glows (additive)"
+    # Two rockets up at once.
+    env.command("input.press", {"action": "launch"})
+    env.command("step", {"ticks": 6})
+    env.command("input.press", {"action": "launch"})
+    env.command("step", {"ticks": 6})
+    for n in (2, 3):
+        if entity_pos(env, f"Rocket_{n}") is None:
+            return False, f"no Rocket_{n} after two more launches"
+    env.command("step", {"ticks": 70})
+    st = state()
+    if st.get("launched") != 3 or st.get("bursts") != 3:
+        return False, f"after three launches the state says {st}, not launched 3 and bursts 3"
+    return True, "a rocket with a trail rises 6 in half a second, bursts at 12 into 100 or more glowing sparks, three in all"
+
+
 def watchman_check(env, answer):
     def get(name, comp):
         try:
@@ -3403,6 +3515,8 @@ TASKS = [
      "task": "Make a Sokoban puzzle in this blank project, replacing its example. In the XY plane, one unit a cell: the cell in column c and row r (rows counting down) is centered at (c, -r). The level is these rows ('#' a wall, '.' floor, '@' the Player, '$' a box, 'x' a goal): " + json.dumps(SOKOBAN_ROWS) + ". The Player and the boxes are entities named Player, Box_0, Box_1 (boxes in reading order) at their cells' centers. Each press of move_x or move_y (A/D/W/S and the arrows) moves the Player one cell, unless a wall is there; a box in the way is pushed one cell when the cell past it is free (not a wall, not a box), else nothing moves. A move adds one to moves and emits player.moved with {moves}. When every box is on a goal, emit level.solved with {moves} once. An undo action (Z) takes back the last move (and its count). Expose moves and solved. Answer null."},
     {"name": "villagers", "project": "blank", "ticks": 0, "script": True, "game": True, "solve": villagers_solve, "check": villagers_check,
      "task": "Make a village square in this blank project, replacing its example: a ground at y 0 and five villagers, entities named Villager_1 to Villager_5, each the engine's built-in humanoid with a shirt of its own colour, standing within 4 units of (0, 0, 0) at the start. They wander at walking pace (about 1.3 units a second), never more than 6 units from the centre, walking when they move and standing idle when they stop. A Player entity (drawn however you like, its feet at y 0) moves with move_x and move_z at 4 units a second. When the Player comes within 3 units of a villager, that villager stops, turns to face the Player and waves; once the Player is more than 4 units away it wanders again. The game reads the Player's place from its Transform every tick (the check moves it with world.set). Answer null."},
+    {"name": "fireworks", "project": "blank", "ticks": 0, "script": True, "game": True, "solve": fireworks_solve, "check": fireworks_check,
+     "task": "Make a fireworks show in this blank project, replacing its example, under a dark night sky. Each press of a launch action (Space) sends up a rocket: an entity named Rocket_1, Rocket_2 ... (counting launches) starting at (0, 0, 0) and rising straight up at 12 units a second with a glowing trail behind it (the engine's Trail). One second after its launch it bursts where it is: the rocket is destroyed, an event firework.burst with {n, x, y, z} is emitted (n its number), and at least 100 sparks fly out from there in every direction, falling and fading over about two seconds and glowing (additive). Several rockets may be up at once. Expose launched and bursts (how many so far). The game reads each rocket's place from its Transform. Answer null."},
     {"name": "watchman", "project": "blank", "ticks": 0, "script": True, "solve": watchman_solve, "check": watchman_check,
      "task": "In this blank project, replacing its example, add a guard with the engine's Behavior component. Bake a navigation grid over the ground at the start (x and z from -10 to 10). An entity named Watchman starting at (-6, 0, 6) walks back and forth between (-6, 0, 6) and (6, 0, 6), a Path named Beat, at 2 units a second; when it sees the Player within 6 units it runs after it at 4 units a second; when it has not seen the Player for 2 seconds it goes back to walking its beat. Keep an entity named Player that the game does not move by itself (it may stand still): it is moved with world.set. Answer null."},
     {"name": "key_door", "project": "blank", "ticks": 0, "script": True, "game": True, "solve": key_door_solve, "check": key_door_check,

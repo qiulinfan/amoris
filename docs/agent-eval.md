@@ -98,7 +98,7 @@ afterwards.
 
 ### Whole games
 
-Eight tasks start from a blank project (`pocket new` without a sample, outside the repository) and a
+Nine tasks start from a blank project (`pocket new` without a sample, outside the repository) and a
 brief of a few sentences, and ask for a small game: `dodge` (a player moved by two actions at 6
 units a second, a rock a second falling at 4, a hit ending the game with `game.over`, `alive` and
 `time_alive` exposed), `key_door` (a door the player cannot pass going right until it takes a key,
@@ -113,17 +113,18 @@ tiles) and `sokoban` (six rows, two boxes, pushes stopped by walls and by a seco
 action, `level.solved` with the move count) and `villagers` (five of the engine's built-in humanoids
 in five looks wandering a square, walking when they move, one that stops, faces the player and waves
 when it comes near; the brief names neither the humanoid's clips nor what would walk them, so the
-agent finds them). The brief is a contract: the names of the entities, the actions and their keys,
-the events with their data, the exposed values, and that the game reads positions from the
-Transforms every tick, so the check can move things with `world.set`. The check is hidden in the
-harness and plays the game: it holds `move_x` for a second and measures the move, counts the rocks
-and times one's fall, puts a rock on the player and waits for `game.over`, then holds the actions
-again and expects nothing to move; for the door it starts the player between the key and the door
-and walks it into the door, puts it on the key, and walks it to the exit; the menu it clicks through
-by the buttons' names (`ui.click {id: "start"}`), holding `move_x` on each screen and reading
-`time`; the breakout it plays by setting the ball's place and velocity: up into a brick, into a
-wall, onto the paddle, past it, into the last brick left, and, after `project.reload`, past the
-paddle three times; the platformer it reads back as solid rows (`tilemap.rows`), walks, follows
+agent finds them) and `fireworks` (rockets with trails that rise and burst into at least a hundred
+glowing sparks, several up at once). The brief is a contract: the names of the entities, the actions
+and their keys, the events with their data, the exposed values, and that the game reads positions
+from the Transforms every tick, so the check can move things with `world.set`. The check is hidden
+in the harness and plays the game: it holds `move_x` for a second and measures the move, counts the
+rocks and times one's fall, puts a rock on the player and waits for `game.over`, then holds the
+actions again and expects nothing to move; for the door it starts the player between the key and the
+door and walks it into the door, puts it on the key, and walks it to the exit; the menu it clicks
+through by the buttons' names (`ui.click {id: "start"}`), holding `move_x` on each screen and
+reading `time`; the breakout it plays by setting the ball's place and velocity: up into a brick,
+into a wall, onto the paddle, past it, into the last brick left, and, after `project.reload`, past
+the paddle three times; the platformer it reads back as solid rows (`tilemap.rows`), walks, follows
 through a jump with `step {watch}`, drops into the pit and walks onto the flag; the puzzle it plays
 by presses only (the game may keep its own grid), into a wall, into two boxes, a move and its undo,
 a push into a wall, and the four moves that solve it. None of it is in the brief beyond the
@@ -421,7 +422,14 @@ claim of `docs/agent-first.md` measured instead of asserted. What the runs showe
   read) wrote what the reference does, a `Behavior` that wanders and greets with `face`, and set the
   villagers' `home` to the centre of the square with a radius of 6; the engine took a home of zero
   to mean "not given" and let each wander round where it began, up to 7 units out. The origin is now
-  a home like any other.
+  a home like any other. A fourth (`-4.json`) kept the Player's place in its script and wrote it
+  back every tick, so the check's `world.set` never moved it: the brief had not said, as the other
+  games' briefs do, that the game reads the Player's place from its Transform, and now does. The
+  fifth (`-5.json`) passed in 337 seconds and 24 calls, 0.84 million tokens against the first's 1.2
+  and the second's 1.4. `fireworks` passed at its first run the day it was added, in 529 seconds and
+  40 calls (`opencode-glm-fireworks.json`): the agent found `Trail` in the particles document and
+  the components' list, burst sparks from an emitter of their own at each rocket, and looked at its
+  own captures three times to tune the glow.
 - **Two games more.** `pause_menu` and `breakout` went to opencode with GLM 5.3 Flash the day they
   were added: 2 of 2 at the first try (`opencode-glm-games2.json`). The menu took 274 seconds and 33
   calls; the agent read the interface documentation, went looking for an example and read the UI

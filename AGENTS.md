@@ -96,6 +96,7 @@ A running runtime is the engine's interface: every feature is a command on its c
 - `gpu_probe.py <sample> [--size WxH] [--frames N] [--rpc method '<json>']`: the release runtime's GPU time per frame, in all and per pass (`render.stats.gpu`), beside `perf`; for measuring a renderer change before and after. Close any browser page drawing a pack first (and do not measure while an agent benchmark runs): another workload on the GPU doubles every number.
 - `suite.sh [name]`: the whole `pocket test --json` in the background into `build/test-reports/<name>.json`, with `<name>.done` when it ends; `test_summary.py <report>` prints the verdict and each failure. Run the module or tag a change touches directly (`./build/debug/bin/<module> "[tag]"`) while working, and the whole suite before a commit that changes shared code.
 - `edits.py`: `patch(path, [(old, new), ...])`, exact replacements that fail unless each old text occurs once.
+- `prose.py`: `replace(path, old, new)` and `append_after(path, old, new)` for wrapped documentation, matching the old text whatever its line breaks (then `wrap_docs.py`).
 
 Image work (cropping or stitching captures for evidence) uses Pillow in the ignored `.venv` at the root: `python3 -m venv .venv && .venv/bin/pip install pillow`.
 
