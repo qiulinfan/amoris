@@ -1331,6 +1331,7 @@ void to_json(Json& j, const MeshRenderer& v) {
     j["anisotropy_rotation"] = v.anisotropy_rotation;
     j["material"] = v.material;
     vec_to_json(j["material_params"], v.material_params);
+    j["texture_tile"] = v.texture_tile;
     j["unlit"] = v.unlit;
     j["visible"] = v.visible;
     j["cast_shadows"] = v.cast_shadows;
@@ -1361,6 +1362,7 @@ void from_json(const Json& j, MeshRenderer& v) {
     scalar_from_json(j, "anisotropy_rotation", v.anisotropy_rotation);
     scalar_from_json(j, "material", v.material);
     if (j.is_object() && j.contains("material_params")) vec_from_json(j["material_params"], v.material_params);
+    scalar_from_json(j, "texture_tile", v.texture_tile);
     scalar_from_json(j, "unlit", v.unlit);
     scalar_from_json(j, "visible", v.visible);
     scalar_from_json(j, "cast_shadows", v.cast_shadows);
@@ -1405,6 +1407,7 @@ void hash_component(StateHasherRef& h, const MeshRenderer& v) {
     h.f32(v.material_params.y);
     h.f32(v.material_params.z);
     h.f32(v.material_params.w);
+    h.f32(v.texture_tile);
     h.u8(v.unlit ? 1 : 0);
     h.u8(v.visible ? 1 : 0);
     h.u8(v.cast_shadows ? 1 : 0);
@@ -1447,6 +1450,7 @@ std::size_t numeric_span(MeshRenderer& v, std::string_view path, float** out) {
     if (path == "material_params.y") { *out = &v.material_params.y; return 1; }
     if (path == "material_params.z") { *out = &v.material_params.z; return 1; }
     if (path == "material_params.w") { *out = &v.material_params.w; return 1; }
+    if (path == "texture_tile") { *out = &v.texture_tile; return 1; }
     if (path.starts_with("lods.")) {
         std::string_view rest = path.substr(5);
         std::size_t index = 0;
@@ -4734,7 +4738,7 @@ constexpr std::array<FieldInfo, 15> kSkyFields = {{
     FieldInfo{"cloud_scale", "f32", "Mode 3: the size of the clouds' features, in units.", {}},
     FieldInfo{"enabled", "bool", "false turns the sky off without removing it.", {}},
 }};
-constexpr std::array<FieldInfo, 26> kMeshRendererFields = {{
+constexpr std::array<FieldInfo, 27> kMeshRendererFields = {{
     FieldInfo{"mesh", "string", "cube, sphere, plane, cylinder, quad (unit square in XY facing +Z), capsule (radius 0.5 and 2 tall: a Character's shape at scale 2r, h/2, 2r), or a project-relative glTF path such as assets/crate.glb (all of its nodes, with their own materials).", {}},
     FieldInfo{"node", "string", "Draw one node of the glTF file only (its name, or its index as text; assets.describe lists them as parts), in the entity's own space: world.instantiate {mesh} makes one entity per node with this set, so a file's parts move apart. Empty draws the whole file. Skinned files stay whole.", {}},
     FieldInfo{"color", "color", "Base color as a color picker shows it (sRGB, decoded to linear light); multiplies the asset's material color, which glTF stores linear. Alpha under 1 draws the mesh translucent.", {}},
@@ -4756,6 +4760,7 @@ constexpr std::array<FieldInfo, 26> kMeshRendererFields = {{
     FieldInfo{"anisotropy_rotation", "f32", "Degrees the stretch is turned from the texture's u direction, with this MeshRenderer's `anisotropy` (the asset's own rotation goes with the asset's anisotropy).", {}},
     FieldInfo{"material", "string", "A material the project wrote: a WGSL file defining fn material(lit: vec4f, s: Surface) -> vec4f, the final colour from the engine's lit one and the surface (docs/design/rendering.md, Materials a project writes): toon steps, a rim, a hologram's lines. Opaque, unskinned meshes; empty: the engine's shading.", {}},
     FieldInfo{"material_params", "vec4", "Four numbers for its material, per entity.", {}},
+    FieldInfo{"texture_tile", "f32", "World units per repeat of its texture and normal map laid on from the world's axes (each face from the axis it faces most), so a box scaled to a wall or a floor keeps bricks their size; 0 uses the mesh's own uvs.", {}},
     FieldInfo{"unlit", "bool", "Drawn in its colour and texture as they are, no light or shadow on it (a stylised or shadeless look); an asset material with KHR_materials_unlit is unlit too.", {}},
     FieldInfo{"visible", "bool", "Whether the mesh is drawn.", {}},
     FieldInfo{"cast_shadows", "bool", "Whether the mesh casts shadows (the sun's and the lights'); false for a lamp's bulb around its own light, or glass.", {}},

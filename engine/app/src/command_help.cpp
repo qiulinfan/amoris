@@ -133,6 +133,7 @@ constexpr CommandHelp kHelp[] = {
     {"physics.layers", "", "The collision layers by name and bit."},
     {"physics.ignore", "a, b, ignore?", "Let two entities pass through each other (or not)."},
     {"physics.ignored", "mask?", "The pairs set to ignore each other."},
+    {"combat.hitscan", "from, direction, range?, damage?, knockback?, team?, shooter?, cause?", "A shot that arrives at once: the nearest solid collider or character capsule along the ray within range (100), the shooter's own left out; the Health on it, or on its nearest ancestor with one, takes damage (10) by the hitbox rules (team, invulnerability, a `hit` event with the point, `health.depleted`) and is pushed knockback units a second along the shot. Answers {hit, entity, path, point, normal, distance, target, landed, health}; {hit: false} when nothing is in range."},
     {"physics2d.raycast", "from, to | direction, distance?, mask?", "The nearest 2D rigid body shape (or TileMap cell) a segment meets: entity, path, point, normal, distance; {hit: false} when none."},
     {"physics2d.overlap", "center, half? | radius, angle?, mask?", "The 2D rigid bodies whose shapes a box (half extents, turned by angle) or a circle at center touches."},
     {"physics2d.impulse", "entity, impulse, point?, angular?", "Push a 2D rigid body now: an impulse (mass times velocity) at a world point (its center of mass by default) and an angular one; it wakes."},

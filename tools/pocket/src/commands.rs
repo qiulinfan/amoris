@@ -466,6 +466,7 @@ The engine's samples are small games that work, their logic in `scripts/`: read 
 ## Things to draw and hear without files
 
 - Meshes: `cube`, `sphere`, `plane`, `cylinder`, `quad`, `capsule` (`MeshRenderer.mesh`), and `humanoid`: a person with twelve clips of its own (`idle`, `walk`, `run`, `jump`, `crouch`, `wave`, `punch`, `die`, ...; `Animator.clip` plays one, and `Animator.locomotion = true` walks, runs and stands it by how fast it moves), its colours from the name (`"humanoid?shirt=red&hair=none"`; `{docs}/design/animation.md`, A character without a file).
+- Textures: `"pattern:bricks"`, `tiles`, `planks`, `grid`, `checker`, `stripes`, `concrete`, `rock`, `sand`, `dirt`, `grass`, `metal`, `noise` as a `MeshRenderer.texture` (settings after `?`: `"pattern:bricks?color=#8b4a2b&rows=6"`), the same with `&map=normal` as its `normal_map`; `MeshRenderer.texture_tile` (units per repeat) lays them on from the world's axes, so a cube scaled into a wall keeps its bricks brick-sized (`{docs}/design/assets.md`, Patterns).
 - Shapes from numbers (`mesh.create`), voxel models written as text (`.voxels`), SVG images for sprites and textures, tile maps drawn from rows of characters (`tilemap.fromText`).
 - Sounds from a recipe (`.sfx`) and music from a score (`.song`): `{docs}/design/audio.md`.
 
@@ -501,7 +502,7 @@ pub fn new_project(ws: &Workspace, name: &str, dir: &Path) -> Result<Report> {
     std::fs::write(project.join("scene.json"), r#"{
   "format": "pocket-scene",
   "entities": [
-    { "name": "Ground", "components": { "Transform": { "position": { "x": 0, "y": -0.5, "z": 0 }, "scale": { "x": 400, "y": 1, "z": 400 } }, "MeshRenderer": { "mesh": "cube", "color": { "r": 0.35, "g": 0.42, "b": 0.3, "a": 1 }, "roughness": 0.9 }, "RigidBody": { "kind": "static" }, "Collider": { "shape": "box" } } },
+    { "name": "Ground", "components": { "Transform": { "position": { "x": 0, "y": -0.5, "z": 0 }, "scale": { "x": 400, "y": 1, "z": 400 } }, "MeshRenderer": { "mesh": "cube", "color": { "r": 1, "g": 1, "b": 1, "a": 1 }, "roughness": 0.9, "texture": "pattern:grid?count=1&sub=4&color=#5e7152&line=#3f4b38", "texture_tile": 4 }, "RigidBody": { "kind": "static" }, "Collider": { "shape": "box", "size": { "x": 200, "y": 0.5, "z": 200 } } } },
     { "name": "Player", "components": { "Transform": { "position": { "x": 0, "y": 0.5, "z": 0 } }, "MeshRenderer": { "mesh": "sphere", "color": { "r": 0.2, "g": 0.6, "b": 0.9, "a": 1 } }, "Health": { "current": 100, "max": 100 } } },
     { "name": "Sun", "components": { "Transform": { "rotation": { "x": -0.4, "y": 0.2, "z": 0.1, "w": 0.89 } }, "Light": { "kind": 0, "intensity": 1.2 } } },
     { "name": "Sky", "components": { "Sky": { "mode": "atmosphere", "haze": 1.5 } } },
@@ -512,7 +513,7 @@ pub fn new_project(ws: &Workspace, name: &str, dir: &Path) -> Result<Report> {
     std::fs::write(project.join("prefabs").join("crate.json"), r#"{
   "format": "pocket-scene",
   "entities": [
-    { "name": "Crate", "components": { "Transform": { "position": { "x": 0, "y": 3, "z": 0 } }, "MeshRenderer": { "mesh": "cube", "color": { "r": 0.8, "g": 0.55, "b": 0.25, "a": 1 } }, "RigidBody": { "kind": "dynamic", "mass": 1 }, "Collider": { "shape": "box" } } }
+    { "name": "Crate", "components": { "Transform": { "position": { "x": 0, "y": 3, "z": 0 } }, "MeshRenderer": { "mesh": "cube", "color": { "r": 1, "g": 1, "b": 1, "a": 1 }, "texture": "pattern:planks?count=4&color=#b07a40", "normal_map": "pattern:planks?count=4&map=normal", "texture_tile": 1 }, "RigidBody": { "kind": "dynamic", "mass": 1 }, "Collider": { "shape": "box" } } }
   ]
 }
 "#)?;

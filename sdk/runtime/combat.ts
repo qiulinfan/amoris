@@ -3,7 +3,7 @@
 // world, the transcript and an agent see what a script did.
 import { timer } from "./timer";
 import type { Color, Vec3 } from "./generated/components";
-import { world, type Entity, type EntityRef } from "./world";
+import { command, world, type Entity, type EntityRef } from "./world";
 
 export interface ShotOptions {
     /** Units a second along the direction (12). */
@@ -26,7 +26,47 @@ export interface ShotOptions {
     cause?: number;
 }
 
+export interface HitscanOptions {
+    /** How far it reaches (100). */
+    range?: number;
+    /** Hit points the Health it reaches loses (10; negative heals). */
+    damage?: number;
+    /** Units a second it pushes what it hurts along the shot (0). */
+    knockback?: number;
+    /** It spares a Health of this team (0: spares none). */
+    team?: number;
+    /** Who fires: its colliders and its children's are not in the way, and the hit names it. */
+    shooter?: EntityRef;
+    /** The event that made it, for the causal log. */
+    cause?: number;
+}
+
+/** What a hitscan shot reached: the collider or character it met, and the Health it hurt. */
+export interface HitscanHit {
+    entity: Entity;
+    path: string;
+    point: Vec3;
+    normal: Vec3;
+    distance: number;
+    /** The entity whose Health it reached (the one hit, or its nearest ancestor with one). */
+    target?: Entity;
+    target_path?: string;
+    /** Whether the damage landed (not the same team, not guarded, not already dead). */
+    landed: boolean;
+    /** The target's hit points after it. */
+    health?: number;
+}
+
 export const combat = {
+    /**
+     * A shot that arrives at once (a rifle, a laser): the nearest solid collider or character along
+     * the ray, and the Health on it (or on its nearest ancestor with one) hurt by the hitbox rules.
+     * Answers what it met, or null when nothing is within range.
+     */
+    hitscan(from: Vec3, direction: Vec3, options: HitscanOptions = {}): HitscanHit | null {
+        const r = command<{ hit: boolean } & HitscanHit>("combat.hitscan", { from, direction, ...options });
+        return r.hit ? r : null;
+    },
     /** Fire a bullet from `from` along `direction`: it flies at `speed`, hurts the first Health it touches and is gone, or goes after `seconds`. */
     shoot(from: Vec3, direction: Vec3, options: ShotOptions = {}): Entity {
         const len = Math.hypot(direction.x, direction.y, direction.z) || 1;

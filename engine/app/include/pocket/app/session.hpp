@@ -285,6 +285,11 @@ class Session {
     void update_attachments();
     Result<std::vector<std::string>> load_sprite_sheet(const std::string& rel, const std::string& prefix);   // Aseprite JSON: a clip per tag   // Attach: entities held at a joint of an animated model
     bool apply_hit(world::EntityId box, world::EntityId target, std::uint64_t cause, std::vector<world::EntityId>& spent);
+    // Damage to a Health from `by` (a hitbox, a shooter or 0): teams, invulnerability, the `hit`
+    // event (with `extra` in its data) and `health.depleted`, and a push added to its velocity.
+    // Answers the hit event's seq, 0 when it did not land.
+    std::uint64_t land_damage(world::EntityId by, world::EntityId target, float damage, std::int32_t team, Vec3 push, std::uint64_t cause, const Json& extra);
+    Result<Json> hitscan_command(const Json& p);
     bool cursor_locked_ = false, cursor_visible_ = true;   // what the game asked for (input.cursor, [input] cursor)
     void set_cursor(bool locked, bool visible);
     void seed_math_random();   // Math.random's own stream from the run seed

@@ -42,6 +42,44 @@ world, the transcript and an agent see every bullet. `world.lint` names a hitbox
 anything (no trigger collider with a body, no `Area2D`), one on a solid collider, and one that hits
 for nothing.
 
+## Hitscan
+
+A rifle's shot or a laser arrives at once:
+`combat.hitscan {from, direction, range, damage, knockback, team, shooter}`
+(`combat.hitscan(from, direction, options)` in a script) finds the nearest solid collider (triggers
+aside) or character capsule along the ray within `range` (100), leaving out the `shooter`'s own
+colliders and its children's, and hurts the `Health` on what it met, or on the nearest ancestor with
+one (a head collider under a robot hurts the robot), by the same rules as a hitbox: teams, the
+guard, `hit` (with the `point` and `hitscan: true`, `by` the shooter) and `health.depleted`, and
+`knockback` units a second along the shot (along the ground for what walks). It answers the entity
+met, the point, the normal and the distance, the `target` whose Health it reached and whether the
+damage `landed`, or null when nothing is in range, so the same call places the spark and the decal.
+
+```ts
+const eye = world.get(camera, "WorldTransform")!;
+const shot = combat.hitscan(eye.position, forward, { damage: 25, knockback: 3, shooter: player });
+if (shot) particles.burst("Sparks", 12, { at: shot.point });
+```
+
+`runtime_tests` (`[combat][hitscan]`): a shot from inside the shooter's own sphere reaches a crate
+4.5 ahead (normal toward the shooter, the hit's point and `by` in the event), one to the side meets
+a character's capsule 0.4 before its axis and pushes it back, the same team is spared, a shot over
+the character's head reaches nothing, and a shot at a robot's head collider takes the robot's Health
+to zero.
+
+`samples/fps` is a first-person game built on it: the mouse (or the right stick) turns the player
+and tilts its eye, each shot a hitscan from the eye that drops a target, hurts a raider (three shots
+fell one), shoves a crate or leaves a decal on a wall, with a tracer, sparks and a muzzle flash; a
+shot is a noise the raiders hear (`docs/design/behavior.md`, Noises), and their fists are a trigger
+`Hitbox` carried by each raider. The view is the player's yaw and the eye's pitch as they stand, so
+an agent or a scenario aims by setting the two rotations. `pocket scenario fps` checks that a target
+falls and stands again, that a shot draws the raiders, that three shots fell one, that twelve shots
+empty the magazine and a reload fills it, and that a raider within reach hurts the player.
+`tests/evidence/rendering/fps.png` is the sample at 1920 by 1080 with a shot's tracer, its walls,
+floor, cover and crates dressed in patterns (`docs/design/assets.md`, Patterns; 4.6 ms a frame, 3.4
+of them on the GPU, in release on the evidence machine); `tools/scripts/dev/fps_scene.py` writes its
+scene.
+
 An agent asks the same way: `step {ticks: 600, until: {event: "health.depleted"}}` runs until
 something dies, `events.why {seq}` says what killed it.
 

@@ -1142,6 +1142,50 @@ TEST_CASE("levels of detail: a mesh simplified to a share of its triangles, part
     REQUIRE(assets::simplify(m, 1.0f).indices == m.indices);
 }
 
+TEST_CASE("patterns are images the engine draws: wrapping, in their colours, with normal maps", "[assets][pattern]") {
+    assets::AssetStore store(project());
+    auto at = [](const assets::Image* i, std::uint32_t x, std::uint32_t y) {
+        const std::size_t k = (static_cast<std::size_t>(y) * i->width + x) * 4;
+        return std::array<int, 4>{i->rgba[k], i->rgba[k + 1], i->rgba[k + 2], i->rgba[k + 3]};
+    };
+    // A checker of four squares: the first colour top-left, the second beside it.
+    auto checker = store.image("pattern:checker?a=#ff0000&b=#0000ff&count=2&size=64");
+    REQUIRE(checker.has_value());
+    REQUIRE((*checker)->width == 64);
+    REQUIRE(at(*checker, 8, 8) == std::array<int, 4>{255, 0, 0, 255});
+    REQUIRE(at(*checker, 40, 8) == std::array<int, 4>{0, 0, 255, 255});
+    // Every pattern draws, the same twice; the noisy ones wrap: the left column is like the right.
+    for (const char* name : {"stripes", "grid", "bricks", "tiles", "planks", "noise", "concrete", "sand", "dirt", "rock", "grass", "metal"}) {
+        INFO(name);
+        const std::string spec = std::string("pattern:") + name + "?size=128";
+        auto a = assets::pattern_image(spec), b = assets::pattern_image(spec);
+        REQUIRE(a.has_value());
+        REQUIRE(a->rgba == b->rgba);
+        if (std::string_view(name) == "stripes" || std::string_view(name) == "grid" || std::string_view(name) == "bricks" || std::string_view(name) == "tiles" || std::string_view(name) == "planks") continue;   // edges on the seam, by design
+        int far = 0;
+        for (std::uint32_t y = 0; y < 128; ++y) {
+            const auto l = at(&*a, 0, y), r = at(&*a, 127, y);
+            for (int k = 0; k < 3; ++k) far = std::max(far, std::abs(l[static_cast<std::size_t>(k)] - r[static_cast<std::size_t>(k)]));
+        }
+        REQUIRE(far < 90);   // neighbours across the seam, not two unrelated places
+    }
+    // Bricks in their colour; the mortar between rows; a normal map that leans at the brick's edges.
+    auto bricks = assets::pattern_image("pattern:bricks?color=#a0522d&mortar=#ffffff&rows=4&columns=2&vary=0&size=128");
+    REQUIRE(bricks.has_value());
+    const auto brick = at(&*bricks, 32, 16);
+    REQUIRE(brick[0] > brick[2] + 40);
+    const auto mortar = at(&*bricks, 32, 0);
+    REQUIRE(mortar[2] > 180);
+    auto normals = assets::pattern_image("pattern:bricks?rows=4&columns=2&size=128&map=normal&bump=12");
+    REQUIRE(normals.has_value());
+    REQUIRE(at(&*normals, 32, 16)[2] > 240);                       // flat on a brick's face
+    REQUIRE(std::abs(at(&*normals, 32, 2)[1] - 128) > 20);          // tilted at its top edge
+    // What is wrong is said.
+    REQUIRE_FALSE(assets::pattern_image("pattern:marble").has_value());
+    REQUIRE(assets::pattern_image("pattern:bricks?color=zzz").error().message.find("not a colour") != std::string::npos);
+    REQUIRE_FALSE(assets::pattern_image("pattern:tiles?map=rough").has_value());
+}
+
 TEST_CASE("an SVG is read as an image drawn at twice its size, or at the size asked", "[assets][svg]") {
     assets::AssetStore store(project());
     auto img = store.image("assets/star.svg");

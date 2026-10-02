@@ -1902,6 +1902,57 @@ TEST_CASE("a ragdoll makes a character's bones into bodies that fall, and gives 
     REQUIRE(s.finish().has_value());
 }
 
+TEST_CASE("a hitscan shot hurts the first collider or character along it, the shooter's own left out", "[runtime][combat][hitscan]") {
+    auto o = hello_options(-1);
+    o.paused = true;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    auto at = [](double x, double y, double z) { return Json{{"position", Json{{"x", x}, {"y", y}, {"z", z}}}}; };
+    auto spawn = [&](const char* name, Json components, const char* parent = nullptr) {
+        Json p{{"name", name}, {"components", components}};
+        if (parent) p["parent"] = parent;
+        REQUIRE(s.command("world.spawn", p).has_value());
+    };
+    // The shooter stands in a collider of its own; a crate 5 ahead, a brute (a character) to the
+    // right, and a robot whose head is a child collider with the Health on the robot.
+    spawn("Gunner", Json{{"Transform", at(0, 1, 0)}, {"RigidBody", Json{{"kind", "static"}}}, {"Collider", Json{{"shape", "sphere"}, {"size", Json{{"x", 0.5}, {"y", 0.5}, {"z", 0.5}}}}}});
+    spawn("Crate", Json{{"Transform", at(0, 1, -5)}, {"RigidBody", Json{{"kind", "static"}}}, {"Collider", Json{{"size", Json{{"x", 0.5}, {"y", 0.5}, {"z", 0.5}}}}}, {"Health", Json{{"current", 30}, {"max", 30}}}});
+    spawn("Brute", Json{{"Transform", at(3, 0.9, -5)}, {"Character", Json{{"radius", 0.4}, {"height", 1.8}}}, {"Health", Json{{"current", 50}, {"max", 50}, {"team", 2}}}});
+    spawn("Robot", Json{{"Transform", at(-3, 0, -5)}, {"Health", Json{{"current", 40}, {"max", 40}}}});
+    spawn("Head", Json{{"Transform", at(0, 1.6, 0)}, {"RigidBody", Json{{"kind", "kinematic"}}}, {"Collider", Json{{"shape", "sphere"}, {"size", Json{{"x", 0.3}, {"y", 0.3}, {"z", 0.3}}}}}}, "Robot");
+    REQUIRE(s.command("step", Json{{"ticks", 2}}).has_value());
+    const Json fwd{{"x", 0}, {"y", 0}, {"z", -1}};
+    // Straight ahead through its own sphere: the crate, 4.5 away, down to 20.
+    Json shot = s.command("combat.hitscan", Json{{"from", Json{{"x", 0}, {"y", 1}, {"z", 0}}}, {"direction", fwd}, {"shooter", "Gunner"}}).value();
+    INFO(shot.dump());
+    REQUIRE(shot["hit"] == true);
+    REQUIRE(shot["path"] == "/Crate");
+    REQUIRE(shot["distance"].get<double>() == Catch::Approx(4.5).margin(0.01));
+    REQUIRE(shot["landed"] == true);
+    REQUIRE(shot["health"].get<double>() == Catch::Approx(20));
+    REQUIRE(shot["normal"]["z"].get<double>() == Catch::Approx(1).margin(0.01));
+    const Json ev = s.command("events.since", Json{{"seq", 0}, {"type", "hit"}}).value()["events"].back();
+    REQUIRE(ev["data"]["by"] == "/Gunner");
+    REQUIRE(ev["data"]["point"]["z"].get<double>() == Catch::Approx(-4.5).margin(0.01));
+    // The brute's capsule, its front 0.4 before its axis; then the same team spared.
+    shot = s.command("combat.hitscan", Json{{"from", Json{{"x", 3}, {"y", 1}, {"z", 0}}}, {"direction", fwd}, {"damage", 15}, {"knockback", 4}}).value();
+    REQUIRE(shot["path"] == "/Brute");
+    REQUIRE(shot["distance"].get<double>() == Catch::Approx(4.6).margin(0.01));
+    REQUIRE(shot["health"].get<double>() == Catch::Approx(35));
+    REQUIRE(s.command("world.get", Json{{"entity", "Brute"}, {"component", "Character"}}).value()["velocity"]["z"].get<double>() < -3.9);
+    shot = s.command("combat.hitscan", Json{{"from", Json{{"x", 3}, {"y", 1}, {"z", 0}}}, {"direction", fwd}, {"team", 2}}).value();
+    REQUIRE(shot["landed"] == false);
+    REQUIRE(shot["health"].get<double>() == Catch::Approx(35));
+    // Over the brute's head (2 up, its top at 1.8): nothing within range.
+    REQUIRE(s.command("combat.hitscan", Json{{"from", Json{{"x", 3}, {"y", 2}, {"z", 0}}}, {"direction", fwd}, {"range", 20}}).value()["hit"] == false);
+    // The robot's head: the robot is hurt.
+    shot = s.command("combat.hitscan", Json{{"from", Json{{"x", -3}, {"y", 1.6}, {"z", 0}}}, {"direction", fwd}, {"damage", 40}}).value();
+    REQUIRE(shot["path"] == "/Robot/Head");
+    REQUIRE(shot["target_path"] == "/Robot");
+    REQUIRE(shot["health"].get<double>() == 0);
+    REQUIRE(s.command("events.since", Json{{"seq", 0}, {"type", "health.depleted"}}).value()["events"].size() == 1);
+}
+
 TEST_CASE("a hitbox on a 3D trigger hurts a character that walks into it", "[runtime][combat]") {
     app::Options o;
     o.project_dir = root() / "samples" / "walker";

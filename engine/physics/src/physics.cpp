@@ -18,8 +18,11 @@
 
 namespace pocket::physics {
 
+// Where a body is in the world: a dynamic one (or a root) at its own Transform, which the physics
+// writes; a static or kinematic one under a parent placed through its ancestors, so a collider
+// parented to a moving thing (a head on a walking robot, a blade on an arm) goes where it goes.
 world::Transform placed(flecs::entity e, const world::RigidBody& rb, const world::Transform& t) {
-    if (rb.kind != 1 || !e.parent().is_valid()) return t;
+    if (rb.kind == 0 || !e.parent().is_valid()) return t;
     // The ancestors' Transforms from the root down, composed as World::tick does for
     // WorldTransform (a parent without one is passed through), read now rather than from the last
     // tick so a moved parent or a new instance is where it is this step.
@@ -1106,7 +1109,7 @@ struct Physics::Impl {
         static_assert(sizeof(world::Transform) == 10 * sizeof(float) && sizeof(world::Velocity) == 6 * sizeof(float));
         for (Body& b : bodies) {
             flecs::entity e = w.entity(b.id);
-            if (b.kind == 1) continue;
+            if (b.kind == 1 || (b.kind == 2 && e.parent().is_valid())) continue;   // a kinematic child goes with its parent
             const world::Transform& now = e.get<world::Transform>();
             world::Transform t = now;
             const world::Collider& col = e.get<world::Collider>();

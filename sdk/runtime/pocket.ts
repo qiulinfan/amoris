@@ -36,7 +36,7 @@ export type { DebugColor, DebugOptions } from "./debug";
 export type { RecorderStatus, RecordedEntity, RecordedDiff, Comparison } from "./recorder";
 export { physics, physics2d, onContacts } from "./physics";
 export { combat } from "./combat";
-export type { ShotOptions } from "./combat";
+export type { HitscanHit, HitscanOptions, ShotOptions } from "./combat";
 export { sprites } from "./sprites";
 export { particles } from "./particles";
 export { animation } from "./animation";

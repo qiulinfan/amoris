@@ -1003,6 +1003,19 @@ fn perturb_normal(n: vec3f, dp1: vec3f, dp2: vec3f, duv1: vec2f, duv2: vec2f, ma
 // A normal map's normal: through the vertex's tangent frame when it has one (smooth across
 // triangles, glTF's convention: the bitangent is cross(n, t) * w, toward the texture's up), else
 // through the frame from the uv's screen derivatives (constant over each triangle).
+// The uv a surface is textured at: its mesh's, or with MeshRenderer.texture_tile (flag 8) the
+// world's place on the face of the axis it faces most, uv_rect.x repeats to a unit, the image's top
+// up a wall.
+fn surface_uv(object: Object, in: VsOut) -> vec2f {
+    if ((object.id.y & 8u) == 0u) { return in.uv; }
+    let a = abs(in.normal);
+    let p = in.world_pos;
+    var uv = vec2f(p.x, p.z);
+    if (a.x > a.y && a.x >= a.z) { uv = vec2f(-p.z * sign(in.normal.x), -p.y); }
+    else if (a.z > a.y && a.z > a.x) { uv = vec2f(p.x * sign(in.normal.z), -p.y); }
+    return uv * object.uv_rect.x;
+}
+
 fn mapped_normal(in: VsOut, n: vec3f, dp1: vec3f, dp2: vec3f, duv1: vec2f, duv2: vec2f, map: vec3f) -> vec3f {
     let t = in.tangent.xyz - n * dot(n, in.tangent.xyz);
     if (dot(t, t) > 0.01) {
@@ -1219,19 +1232,24 @@ fn shade(in: VsOut, cut: bool) -> vec4f {
     // Derivatives and samples first: both must stay in uniform control flow.
     let dp1 = dpdx(in.world_pos);
     let dp2 = dpdy(in.world_pos);
-    let duv1 = dpdx(in.uv);
-    let duv2 = dpdy(in.uv);
-    var base = textureSample(base_tex, base_samp, in.uv) * in.color;
-    let mr = textureSample(mr_tex, base_samp, in.uv);
-    let nm = textureSample(normal_tex, base_samp, in.uv).xyz * 2.0 - 1.0;
-    let em = textureSample(emissive_tex, base_samp, in.uv).rgb;
+    let uv = surface_uv(object, in);
+    let world_mapped = (object.id.y & 8u) != 0u;
+    let duv1 = dpdx(uv);
+    let duv2 = dpdy(uv);
+    var base = textureSample(base_tex, base_samp, uv) * in.color;
+    let mr = textureSample(mr_tex, base_samp, uv);
+    let nm = textureSample(normal_tex, base_samp, uv).xyz * 2.0 - 1.0;
+    let em = textureSample(emissive_tex, base_samp, uv).rgb;
     if (object.terrain.x > 0.5) { base = terrain_base(object, in, duv1, duv2); }
     // A cut-out: texels under the cutoff are not drawn (nor picked, the id goes with the color).
     if (cut && object.emissive.w > 0.0 && base.a < object.emissive.w) { discard; }
     // Unlit (MeshRenderer.unlit, KHR_materials_unlit): the colour as it is.
     if ((object.id.y & 4u) != 0u) { return vec4f(base.rgb + object.emissive.rgb * em, base.a); }
     var n = normalize(in.normal);
-    if (object.pbr.w > 0.5) { n = mapped_normal(in, n, dp1, dp2, duv1, duv2, vec3f(nm.xy * object.pbr.z, nm.z)); }
+    if (object.pbr.w > 0.5) {
+        let bent = vec3f(nm.xy * object.pbr.z, nm.z);
+        n = select(mapped_normal(in, n, dp1, dp2, duv1, duv2, bent), perturb_normal(n, dp1, dp2, duv1, duv2, bent), world_mapped);
+    }
     // Brushed metal's direction: the uv's u across the surface, turned by its rotation.
     var aniso_t = vec3f(0.0);
     if (object.aniso.x > 0.0) {
@@ -1452,15 +1470,20 @@ fn id_surface(in: VsOut, cut: bool) -> IdOut {
     let object = objects[in.instance];
     let dp1 = dpdx(in.world_pos);
     let dp2 = dpdy(in.world_pos);
-    let duv1 = dpdx(in.uv);
-    let duv2 = dpdy(in.uv);
-    var base = textureSample(base_tex, base_samp, in.uv) * in.color;
-    let mr = textureSample(mr_tex, base_samp, in.uv);
-    let nm = textureSample(normal_tex, base_samp, in.uv).xyz * 2.0 - 1.0;
+    let uv = surface_uv(object, in);
+    let world_mapped = (object.id.y & 8u) != 0u;
+    let duv1 = dpdx(uv);
+    let duv2 = dpdy(uv);
+    var base = textureSample(base_tex, base_samp, uv) * in.color;
+    let mr = textureSample(mr_tex, base_samp, uv);
+    let nm = textureSample(normal_tex, base_samp, uv).xyz * 2.0 - 1.0;
     if (object.terrain.x > 0.5) { base = terrain_base(object, in, duv1, duv2); }
     if (cut && object.emissive.w > 0.0 && base.a < object.emissive.w) { discard; }
     var n = normalize(in.normal);
-    if (object.pbr.w > 0.5) { n = mapped_normal(in, n, dp1, dp2, duv1, duv2, vec3f(nm.xy * object.pbr.z, nm.z)); }
+    if (object.pbr.w > 0.5) {
+        let bent = vec3f(nm.xy * object.pbr.z, nm.z);
+        n = select(mapped_normal(in, n, dp1, dp2, duv1, duv2, bent), perturb_normal(n, dp1, dp2, duv1, duv2, bent), world_mapped);
+    }
     let paint = paint_decals(in.world_pos, n, dp1, dp2, Painted(base.rgb, clamp(object.pbr.y * mr.g, 0.04, 1.0), clamp(object.pbr.x * mr.b, 0.0, 1.0), vec3f(0.0), n));
     n = paint.normal;
     var out: IdOut;
@@ -10043,6 +10066,11 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
             const float turn = mr.anisotropy >= 0 ? radians(mr.anisotropy_rotation) : (mat ? mat->anisotropy_rotation : 0.0f);
             ou.aniso[0] = aniso; ou.aniso[1] = std::cos(turn); ou.aniso[2] = std::sin(turn);
             if (mr.unlit || (mat && mat->unlit)) ou.id[1] |= 4u;
+            // Textured from the world's axes (MeshRenderer.texture_tile): repeats a unit in uv_rect.x.
+            if (mr.texture_tile > 0.0f) {
+                ou.id[1] |= 8u;
+                ou.uv_rect[0] = 1.0f / mr.texture_tile;
+            }
             const bool glass = transmission > 0.001f;
             const bool blend = !glass && (color.w < 0.999f || (mat && mat->blend));
             Impl::SpriteMaterial* user = nullptr;

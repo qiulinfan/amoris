@@ -291,6 +291,38 @@ so a generated level saves and loads whole. A made mesh holds at most a million 
 rests on it), its bounds known without a frame, carried by a saved scene into a session that never
 made it.
 
+## Patterns
+
+A level blocked out of cubes looks like grey cubes until someone draws textures. A texture or a
+normal map named `pattern:<name>?<settings>` is drawn by the engine instead of read from a file:
+`checker`, `stripes`, `grid` (a prototyping grid), `bricks`, `tiles`, `planks`, `noise`, `concrete`,
+`sand`, `dirt`, `rock`, `grass` and `metal`. Each wraps at its edges and is the same on every
+machine; its settings say how it looks: `color` (and `mortar` for bricks, `grout` for tiles, `line`
+for the grid, `a` and `b` for checker, stripes and noise) as `#rrggbb`, `#rgb` or a name (red, tan,
+stone, wood, brick, concrete, steel, ...), `rows` and `columns` (bricks), `count` (tiles, planks,
+checker, stripes, the grid), `scale` (the noisy ones' features across the image), `gap`, `vary` (how
+much bricks, tiles and planks differ from each other, 0.12), `seed` and `size` (512 pixels across).
+`map=normal` draws its normal map from the same heights (bricks stand out of their mortar, planks
+part at their seams), `bump` (3) saying how steep, and `map=height` the heights themselves.
+
+```json
+"MeshRenderer": { "mesh": "cube", "texture": "pattern:bricks?color=#8b4a2b&rows=6",
+                  "normal_map": "pattern:bricks?rows=6&map=normal", "texture_tile": 2.5 }
+```
+
+A cube's uvs cover each face once, so a cube scaled into a wall stretches its bricks across it.
+`MeshRenderer.texture_tile` (in world units per repeat; 0 by default, the mesh's own uvs) lays the
+texture and the normal map on from the world's axes instead: each face takes the plane of the axis
+it faces most, a wall's image upright, so a floor, a wall and a crate of any size keep their bricks,
+tiles and planks the same size and line up where they meet. On a curved mesh the axis changes where
+the surface turns past 45 degrees, which shows as a seam. A misspelt pattern or setting is said by
+`world.lint` and in the log, and the surface draws white. `assets_tests` (`[pattern]`): a red and
+blue checker in its colours, every pattern the same twice and the noisy ones alike across the wrap,
+bricks in their colour with mortar between rows and a normal map tilted at their edges, and unknown
+names, colours and maps refused. `tests/evidence/rendering/patterns.png`
+(`tools/scripts/patterns_evidence.py`) is each pattern on a cube with its normal map, on a floor of
+tiles four units a repeat.
+
 ## Commands
 
 | Command | Purpose |

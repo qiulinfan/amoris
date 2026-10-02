@@ -246,6 +246,7 @@ Draws a mesh: a built-in primitive or a glTF file from the project's assets, tin
 | `anisotropy_rotation` | f32 | 0.0 | Degrees the stretch is turned from the texture's u direction, with this MeshRenderer's `anisotropy` (the asset's own rotation goes with the asset's anisotropy). |
 | `material` | string | "" | A material the project wrote: a WGSL file defining fn material(lit: vec4f, s: Surface) -> vec4f, the final colour from the engine's lit one and the surface (docs/design/rendering.md, Materials a project writes): toon steps, a rim, a hologram's lines. Opaque, unskinned meshes; empty: the engine's shading. |
 | `material_params` | vec4 | [0.0, 0.0, 0.0, 0.0] | Four numbers for its material, per entity. |
+| `texture_tile` | f32 | 0.0 | World units per repeat of its texture and normal map laid on from the world's axes (each face from the axis it faces most), so a box scaled to a wall or a floor keeps bricks their size; 0 uses the mesh's own uvs. |
 | `unlit` | bool | false | Drawn in its colour and texture as they are, no light or shadow on it (a stylised or shadeless look); an asset material with KHR_materials_unlit is unlit too. |
 | `visible` | bool | true | Whether the mesh is drawn. |
 | `cast_shadows` | bool | true | Whether the mesh casts shadows (the sun's and the lights'); false for a lamp's bulb around its own light, or glass. |

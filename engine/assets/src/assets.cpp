@@ -2213,7 +2213,9 @@ Result<const Image*> AssetStore::image(const std::string& path) {
     if (auto it = images_.find(path); it != images_.end()) return it->second.get();
     if (auto f = failures_.find("image:" + path); f != failures_.end()) return fail("bad_asset", "{}", f->second);
     Result<Image> decoded = fail("bad_asset", "unresolved");
-    if (std::size_t hash = path.find("#image"); hash != std::string::npos) {
+    if (path.starts_with("pattern:")) {
+        decoded = pattern_image(path);
+    } else if (std::size_t hash = path.find("#image"); hash != std::string::npos) {
         // An image embedded in a glTF buffer view.
         std::string gltf_path = path.substr(0, hash);
         int index = std::atoi(path.c_str() + hash + 6);

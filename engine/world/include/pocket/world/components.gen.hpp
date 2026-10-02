@@ -511,6 +511,7 @@ struct MeshRenderer {
     float anisotropy_rotation = 0.0f;
     std::string material = "";
     Vec4 material_params{0.0f, 0.0f, 0.0f, 0.0f};
+    float texture_tile = 0.0f;
     bool unlit = false;
     bool visible = true;
     bool cast_shadows = true;

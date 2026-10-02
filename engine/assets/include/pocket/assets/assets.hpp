@@ -413,6 +413,9 @@ void fill_tangents(Mesh& mesh);
 // normals turned over, its triangles wound the other way): the renderer draws front faces only.
 void add_back_faces(Mesh& mesh);
 Result<Image> decode_image(const std::string& bytes, const std::string& display_path);
+// An image the engine draws (docs/design/assets.md, Patterns): "pattern:bricks?color=#a0522d&rows=8",
+// wrapping at its edges; `map=normal` makes its normal map and `map=height` its heights.
+Result<Image> pattern_image(const std::string& spec);
 // Wavefront OBJ with its MTL libraries (read through `read`, project-relative paths): one node per
 // object, one submesh per object and material, normals smoothed where the file has none.
 Result<Mesh> parse_obj(const std::string& text, const std::string& display_path, const std::function<Result<std::string>(const std::string&)>& read);

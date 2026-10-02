@@ -4973,40 +4973,149 @@ bool Session::advance_rumble() {
 // One hit of a hitbox on a Health: teams, invulnerability, damage, knockback, events. Answers whether it landed.
 bool Session::apply_hit(world::EntityId box, world::EntityId target, std::uint64_t cause, std::vector<world::EntityId>& spent) {
     const auto* hb_now = world_->try_get<world::Hitbox>(box);
-    const auto* hp_now = world_->try_get<world::Health>(target);
-    if (!hb_now || !hp_now || !hb_now->enabled || box == target) return false;
+    if (!hb_now || !world_->try_get<world::Health>(target) || !hb_now->enabled || box == target) return false;
     world::Hitbox hb = *hb_now;
-    world::Health hp = *hp_now;
-    if (hb.team != 0 && hb.team == hp.team) return false;   // a team does not hurt its own
-    if (hp.current > 0.0f) hp.dead = false;                   // a script that set the hit points back revived it
-    if (hp.guard > 0.0f || (hp.current <= 0.0f && hb.damage > 0.0f)) return false;
-    hp.current = hb.damage >= 0.0f ? std::max(0.0f, hp.current - hb.damage) : std::min(hp.max, hp.current - hb.damage);
-    hp.guard = std::max(hp.invulnerable, 0.0f);
-    const std::uint64_t seq = world_->events().emit(clock_.tick, "hit", target, Json{{"by", world_->path(box)}, {"to", world_->path(target)}, {"damage", hb.damage}, {"health", hp.current}}, cause, "engine");
-    if (hp.current <= 0.0f && !hp.dead) {
-        hp.dead = true;
-        world_->events().emit(clock_.tick, "health.depleted", target, Json{{"by", world_->path(box)}, {"path", world_->path(target)}}, seq, "engine");
-    } else if (hp.current > 0.0f) {
-        hp.dead = false;
-    }
-    world_->set_typed<world::Health>(target, hp);
-    hb.hits++;
-    world_->set_typed<world::Hitbox>(box, hb);
+    Vec3 away{0, 0, 0};
     if (hb.knockback != 0.0f) {
         // Away from the hitbox, along the ground for bodies that walk.
         const auto* tb = world_->try_get<world::WorldTransform>(box);
         const auto* tt = world_->try_get<world::WorldTransform>(target);
-        Vec3 away = tb && tt ? tt->position - tb->position : Vec3{0, 0, 0};
+        away = tb && tt ? tt->position - tb->position : Vec3{0, 0, 0};
         if (world_->try_get<world::Body2D>(target)) away.z = 0;
         else away.y = 0;
         const float len = length(away);
         away = len > 1e-5f ? away * (hb.knockback / len) : Vec3{0, 0, 0};
-        if (const auto* v = world_->try_get<world::Velocity>(target)) { world::Velocity nv = *v; nv.linear = nv.linear + away; world_->set_typed<world::Velocity>(target, nv); }
-        if (const auto* c = world_->try_get<world::Character>(target)) { world::Character nc = *c; nc.velocity = nc.velocity + away; world_->set_typed<world::Character>(target, nc); }
-        if (const auto* b = world_->try_get<world::Body2D>(target)) { world::Body2D nb = *b; nb.velocity = {nb.velocity.x + away.x, nb.velocity.y + away.y}; world_->set_typed<world::Body2D>(target, nb); }
     }
+    if (land_damage(box, target, hb.damage, hb.team, away, cause, Json::object()) == 0) return false;
+    hb.hits++;
+    world_->set_typed<world::Hitbox>(box, hb);
     if (hb.destroy) spent.push_back(box);
     return true;
+}
+
+std::uint64_t Session::land_damage(world::EntityId by, world::EntityId target, float damage, std::int32_t team, Vec3 push, std::uint64_t cause, const Json& extra) {
+    const auto* hp_now = world_->try_get<world::Health>(target);
+    if (!hp_now) return 0;
+    world::Health hp = *hp_now;
+    if (team != 0 && team == hp.team) return 0;     // a team does not hurt its own
+    if (hp.current > 0.0f) hp.dead = false;         // a script that set the hit points back revived it
+    if (hp.guard > 0.0f || (hp.current <= 0.0f && damage > 0.0f)) return 0;
+    hp.current = damage >= 0.0f ? std::max(0.0f, hp.current - damage) : std::min(hp.max, hp.current - damage);
+    hp.guard = std::max(hp.invulnerable, 0.0f);
+    const std::string by_path = by && world_->alive(by) ? world_->path(by) : std::string();
+    Json data{{"by", by_path}, {"to", world_->path(target)}, {"damage", damage}, {"health", hp.current}};
+    for (const auto& [k, v] : extra.items()) data[k] = v;
+    const std::uint64_t seq = world_->events().emit(clock_.tick, "hit", target, data, cause, "engine");
+    if (hp.current <= 0.0f && !hp.dead) {
+        hp.dead = true;
+        world_->events().emit(clock_.tick, "health.depleted", target, Json{{"by", by_path}, {"path", world_->path(target)}}, seq, "engine");
+    } else if (hp.current > 0.0f) {
+        hp.dead = false;
+    }
+    world_->set_typed<world::Health>(target, hp);
+    if (push.x != 0.0f || push.y != 0.0f || push.z != 0.0f) {
+        if (const auto* v = world_->try_get<world::Velocity>(target)) { world::Velocity nv = *v; nv.linear = nv.linear + push; world_->set_typed<world::Velocity>(target, nv); }
+        if (const auto* c = world_->try_get<world::Character>(target)) { world::Character nc = *c; nc.velocity = nc.velocity + push; world_->set_typed<world::Character>(target, nc); }
+        if (const auto* b = world_->try_get<world::Body2D>(target)) { world::Body2D nb = *b; nb.velocity = {nb.velocity.x + push.x, nb.velocity.y + push.y}; world_->set_typed<world::Body2D>(target, nb); }
+    }
+    return seq;
+}
+
+// A shot that arrives at once (docs/design/combat.md, Hitscan): the nearest solid collider or
+// character capsule along the ray, the Health on it or on the nearest ancestor with one hurt.
+Result<Json> Session::hitscan_command(const Json& p) {
+    if (!world_) return fail("no_world", "no world");
+    const Vec3 from = vec3_of(p.value("from", Json(nullptr)), {0, 0, 0});
+    Vec3 dir = vec3_of(p.value("direction", Json(nullptr)), {0, 0, -1});
+    const float dlen = length(dir);
+    if (dlen <= 1e-6f) return fail("bad_args", "direction must not be zero");
+    dir = dir * (1.0f / dlen);
+    const float range = std::max(static_cast<float>(opt<double>(p, "range", 100.0)), 0.0f);
+    const float damage = static_cast<float>(opt<double>(p, "damage", 10.0));
+    const float knockback = static_cast<float>(opt<double>(p, "knockback", 0.0));
+    const auto team = static_cast<std::int32_t>(opt<double>(p, "team", 0.0));
+    const auto cause = static_cast<std::uint64_t>(opt<double>(p, "cause", 0.0));
+    world::EntityId shooter = 0;
+    if (p.contains("shooter") && !p["shooter"].is_null()) {
+        shooter = resolve_entity(p["shooter"]);
+        if (!world_->alive(shooter)) return fail("no_such_entity", "no shooter {}", p["shooter"].dump());
+    }
+    // The shooter and what hangs under it are not in the way.
+    auto mine = [&](world::EntityId e) {
+        for (world::EntityId at = e; at != 0 && shooter != 0; at = world_->parent(at)) if (at == shooter) return true;
+        return false;
+    };
+    world::EntityId hit = 0;
+    Vec3 point{}, normal{};
+    float best = range;
+    if (physics_) {
+        auto ray = physics_->raycast(*world_, from, dir, range, [&](world::EntityId e, const world::RigidBody&, const world::Collider& col) { return !col.is_trigger && !mine(e); });
+        if (ray) {
+            hit = ray->entity;
+            point = ray->point;
+            normal = ray->normal;
+            best = ray->distance;
+        }
+    }
+    // Characters' capsules: the round body between two half spheres, upright about the entity.
+    world_->ecs().each([&](flecs::entity e, const world::Character& c, const world::WorldTransform& t) {
+        if (mine(e.id())) return;
+        const float r = std::max(c.radius, 0.01f);
+        const float half = std::max(c.height * 0.5f - r, 0.0f);
+        const Vec3 pa = t.position - Vec3{0, half, 0}, pb = t.position + Vec3{0, half, 0};
+        const Vec3 ba = pb - pa, oa = from - pa;
+        const float baba = dot(ba, ba), bard = dot(ba, dir), baoa = dot(ba, oa), rdoa = dot(dir, oa), oaoa = dot(oa, oa);
+        float tt = -1;
+        Vec3 n{};
+        const float a = baba - bard * bard;
+        if (a > 1e-8f) {
+            const float b = baba * rdoa - baoa * bard, cc = baba * oaoa - baoa * baoa - r * r * baba, h = b * b - a * cc;
+            if (h >= 0) {
+                const float tb = (-b - std::sqrt(h)) / a, y = baoa + tb * bard;
+                if (tb >= 0 && y > 0 && y < baba) {
+                    tt = tb;
+                    const Vec3 q = from + dir * tb;
+                    n = (q - (pa + ba * (y / baba))) * (1.0f / r);
+                }
+            }
+        }
+        if (tt < 0) {
+            for (const Vec3 centre : {pa, pb}) {
+                const Vec3 oc = from - centre;
+                const float b = dot(dir, oc), h = b * b - (dot(oc, oc) - r * r);
+                if (h < 0) continue;
+                const float ts = -b - std::sqrt(h);
+                if (ts >= 0 && (tt < 0 || ts < tt)) {
+                    tt = ts;
+                    n = (from + dir * ts - centre) * (1.0f / r);
+                }
+            }
+        }
+        if (tt >= 0 && tt < best) {
+            best = tt;
+            hit = e.id();
+            point = from + dir * tt;
+            normal = n;
+        }
+    });
+    if (hit == 0) return Json{{"hit", false}};
+    Json out{{"hit", true}, {"entity", hit}, {"path", world_->path(hit)}, {"point", json_of(point)}, {"normal", json_of(normal)}, {"distance", best}};
+    world::EntityId target = hit;
+    while (target != 0 && !world_->try_get<world::Health>(target)) target = world_->parent(target);
+    out["landed"] = false;
+    if (target != 0) {
+        // Pushed along the shot: along the ground for what walks, as a hitbox pushes.
+        Vec3 push = dir * knockback;
+        if (world_->try_get<world::Character>(target) || world_->try_get<world::NavAgent>(target)) push.y = 0;
+        if (world_->try_get<world::Body2D>(target)) push.z = 0;
+        const std::uint64_t seq = land_damage(shooter, target, damage, team, push, cause, Json{{"point", json_of(point)}, {"hitscan", true}});
+        out["target"] = target;
+        out["target_path"] = world_->path(target);
+        out["landed"] = seq != 0;
+        if (seq) out["seq"] = seq;
+        out["health"] = world_->try_get<world::Health>(target)->current;
+    }
+    return out;
 }
 
 void Session::update_hits(std::uint64_t since_seq) {
@@ -6318,7 +6427,7 @@ Result<Json> Session::world_lint(const Json& p) {
     };
     // A project file named by a field: whether it is there.
     auto file_missing = [&](const std::string& rel) {
-        if (rel.empty()) return false;
+        if (rel.empty() || rel.starts_with("pattern:")) return false;   // drawn by the engine; a bad one is said below
         auto full = inside_dir(options_.project_dir, rel);
         std::error_code ec;
         return !full || !std::filesystem::exists(*full, ec);
@@ -6368,6 +6477,10 @@ Result<Json> Session::world_lint(const Json& p) {
         }
         if (file_missing(mr.texture)) add("error", e.id(), "MeshRenderer", std::format("the texture {} is not in the project", mr.texture), "point MeshRenderer.texture at an image in the project, or clear it");
         if (file_missing(mr.normal_map)) add("error", e.id(), "MeshRenderer", std::format("the normal map {} is not in the project", mr.normal_map), "point MeshRenderer.normal_map at an image in the project, or clear it");
+        for (const std::string* image : {&mr.texture, &mr.normal_map}) {
+            if (!image->starts_with("pattern:") || !assets_) continue;
+            if (auto img = assets_->image(*image); !img) add("error", e.id(), "MeshRenderer", img.error().message, "a pattern is pattern:<name>?<settings>: checker, stripes, grid, bricks, tiles, planks, noise, concrete, sand, dirt, rock, grass or metal (docs/design/assets.md, Patterns)");
+        }
     });
     ecs.each([&](flecs::entity e, const world::Sprite& s) {
         if (file_missing(s.texture)) add("error", e.id(), "Sprite", std::format("the sprite's texture {} is not in the project", s.texture), "point Sprite.texture at an image in the project");
@@ -7746,6 +7859,7 @@ Result<Json> Session::run_command(std::string_view name, const Json& params, std
     if (name.starts_with("render.")) return render_command(name.substr(7), p);
     if (name.starts_with("physics.")) return physics_command(name.substr(8), p);
     if (name.starts_with("physics2d.")) return physics2d_command(name.substr(10), p);
+    if (name == "combat.hitscan") return hitscan_command(p);
     if (name.starts_with("nav.")) return nav_command(name.substr(4), p);
     if (name.starts_with("env.")) return env_command(name.substr(4), p);
     if (name.starts_with("sprite.")) return sprite_command(name.substr(7), p);
@@ -8278,7 +8392,7 @@ Result<Json> Session::run_command(std::string_view name, const Json& params, std
         return names;
     }
     if (name == "commands") {
-        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.diagnostics", "script.eval", "script.profile", "project.info", "project.brief", "project.reload", "project.apply", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "render.bloom", "render.grade", "render.ambient", "render.tonemap", "render.ao", "render.taa", "render.dof", "render.motion_blur", "render.ssr", "render.ssgi", "render.scale", "render.colorblind", "render.post", "render.probes", "render.oit", "assets.list", "assets.describe", "assets.reload", "assets.stats", "assets.import", "assets.preview", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.release", "input.axis", "input.touch", "input.pad", "input.rumble", "input.state", "input.cursor", "path.info", "path.sample", "path.nearest", "window.info", "window.set", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.analyze", "audio.stats", "audio.master", "audio.reverb", "audio.bus", "audio.buses", "transcript", "physics.stats", "physics.cloth", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "physics2d.raycast", "physics2d.overlap", "physics2d.impulse", "physics2d.stats", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.sheet", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.library", "animation.play", "animation.stop", "animation.pose", "animation.layer", "animation.param", "animation.trigger", "mesh.create", "mesh.list", "mesh.remove", "tilemap.create", "tilemap.text", "tilemap.info", "tilemap.rows", "tilemap.tile", "tilemap.solid", "tilemap.sight", "tilemap.fov", "tilemap.objects", "tilemap.spawn", "tilemap.paths", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "terrain.info", "terrain.height", "terrain.sculpt", "terrain.paint", "terrain.paints", "terrain.save", "terrain.reset", "terrain.heights", "scatter.copies", "water.height", "wind.at", "timeline.play", "timeline.stop", "timeline.seek", "timeline.info", "locale.get", "locale.set", "locale.table", "locale.check", "net.info", "render.stats", "render.views", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.lint", "world.schema", "world.save", "world.load", "world.mark", "world.diff", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "time.scale", "quit", "help", "capture", "capture.gif", "log.tail", "report", "commands"});
+        return Json::array({"ui.apply", "ui.snapshot", "ui.query", "ui.describe", "ui.hit", "ui.focus", "ui.click", "ui.drag", "ui.type", "ui.key", "ui.wheel", "ui.stats", "script.start", "script.reload", "script.contexts", "script.diagnostics", "script.eval", "script.profile", "project.info", "project.brief", "project.reload", "project.apply", "project.save_scene", "project.write", "project.read", "render.viewport", "render.shadows", "render.msaa", "render.bloom", "render.grade", "render.ambient", "render.tonemap", "render.ao", "render.taa", "render.dof", "render.motion_blur", "render.ssr", "render.ssgi", "render.scale", "render.colorblind", "render.post", "render.probes", "render.oit", "assets.list", "assets.describe", "assets.reload", "assets.stats", "assets.import", "assets.preview", "input.map", "input.actions", "input.describe", "input.hold", "input.press", "input.release", "input.axis", "input.touch", "input.pad", "input.rumble", "input.state", "input.cursor", "path.info", "path.sample", "path.nearest", "window.info", "window.set", "save.write", "save.read", "save.list", "save.delete", "save.dir", "audio.play", "audio.stop", "audio.set", "audio.list", "audio.clips", "audio.analyze", "audio.stats", "audio.master", "audio.reverb", "audio.bus", "audio.buses", "transcript", "physics.stats", "physics.cloth", "physics.raycast", "physics.sweep", "physics.overlap", "physics.contacts", "physics.gravity", "physics.joints", "physics.layers", "physics.ignore", "physics.ignored", "physics2d.raycast", "physics2d.overlap", "physics2d.impulse", "physics2d.stats", "combat.hitscan", "nav.bake", "nav.path", "nav.reachable", "nav.nearest", "nav.info", "nav.mesh", "nav.agents", "nav.clear", "env.describe", "env.reset", "env.step", "env.observe", "sprite.clip", "sprite.clips", "sprite.sheet", "sprite.play", "sprite.stop", "particles.stats", "particles.burst", "particles.clear", "particles.list", "animation.clips", "animation.library", "animation.play", "animation.stop", "animation.pose", "animation.layer", "animation.param", "animation.trigger", "mesh.create", "mesh.list", "mesh.remove", "tilemap.create", "tilemap.text", "tilemap.info", "tilemap.rows", "tilemap.tile", "tilemap.solid", "tilemap.sight", "tilemap.fov", "tilemap.objects", "tilemap.spawn", "tilemap.paths", "tilemap.cell", "tilemap.set", "tilemap.fill", "tilemap.save", "tilemap.add_layer", "tilemap.remove_layer", "tilemap.layer", "tilemap.add_tileset", "tilemap.remove_tileset", "tilemap.copy", "terrain.info", "terrain.height", "terrain.sculpt", "terrain.paint", "terrain.paints", "terrain.save", "terrain.reset", "terrain.heights", "scatter.copies", "water.height", "wind.at", "timeline.play", "timeline.stop", "timeline.seek", "timeline.info", "locale.get", "locale.set", "locale.table", "locale.check", "net.info", "render.stats", "render.views", "render.pick", "render.project", "render.unproject", "render.compare", "render.ids", "render.visible", "render.debug", "debug.line", "debug.box", "debug.sphere", "debug.clear", "debug.stats", "world.spawn", "world.destroy", "world.get", "world.set", "world.remove", "world.has", "world.describe", "world.find", "world.children", "world.roots", "world.components", "world.reparent", "world.rename", "world.tree", "world.query", "world.summary", "world.lint", "world.schema", "world.save", "world.load", "world.mark", "world.diff", "world.instantiate", "world.save_prefab", "world.pack", "world.unpack", "world.update_transforms", "world.clear", "events.emit", "events.since", "events.recent", "events.histogram", "events.last_seq", "events.why", "recorder.start", "recorder.stop", "recorder.clear", "recorder.status", "recorder.at", "recorder.diff", "recorder.track", "recorder.first", "state", "perf", "step", "pause", "resume", "time.scale", "quit", "help", "capture", "capture.gif", "log.tail", "report", "commands"});
     }
     const std::vector<std::string> near = command_suggestions(name);
     return fail("unknown_command", "unknown command '{}'{}", name, near.empty() ? std::string("; `commands` lists them") : "; did you mean " + Json(near).dump() + "? (`help {command}` shows how to call one)");

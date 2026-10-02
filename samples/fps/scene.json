@@ -1,0 +1,1767 @@
+{
+ "format": "pocket-scene",
+ "entities": [
+  {
+   "name": "Level",
+   "components": {
+    "Transform": {}
+   },
+   "children": [
+    {
+     "name": "Ground",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 0,
+        "y": -0.5,
+        "z": 0
+       },
+       "scale": {
+        "x": 36,
+        "y": 1.0,
+        "z": 36
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "cube",
+       "color": {
+        "r": 1,
+        "g": 1,
+        "b": 1,
+        "a": 1
+       },
+       "roughness": 0.9,
+       "texture": "pattern:tiles?count=2&color=#b9b2a4&grout=#6f6a62",
+       "normal_map": "pattern:tiles?count=2&color=#b9b2a4&grout=#6f6a62&map=normal",
+       "texture_tile": 3.0
+      },
+      "RigidBody": {
+       "kind": "static"
+      },
+      "Collider": {
+       "shape": "box",
+       "size": {
+        "x": 18,
+        "y": 0.5,
+        "z": 18
+       }
+      }
+     }
+    },
+    {
+     "name": "WallNorth",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 0,
+        "y": 2,
+        "z": -18.5
+       },
+       "scale": {
+        "x": 38,
+        "y": 5.0,
+        "z": 1.0
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "cube",
+       "color": {
+        "r": 1,
+        "g": 1,
+        "b": 1,
+        "a": 1
+       },
+       "roughness": 0.8,
+       "texture": "pattern:bricks?color=#9c5a3c",
+       "normal_map": "pattern:bricks?color=#9c5a3c&map=normal",
+       "texture_tile": 2.5
+      },
+      "RigidBody": {
+       "kind": "static"
+      },
+      "Collider": {
+       "shape": "box",
+       "size": {
+        "x": 19,
+        "y": 2.5,
+        "z": 0.5
+       }
+      }
+     }
+    },
+    {
+     "name": "WallSouth",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 0,
+        "y": 2,
+        "z": 18.5
+       },
+       "scale": {
+        "x": 38,
+        "y": 5.0,
+        "z": 1.0
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "cube",
+       "color": {
+        "r": 1,
+        "g": 1,
+        "b": 1,
+        "a": 1
+       },
+       "roughness": 0.8,
+       "texture": "pattern:bricks?color=#9c5a3c",
+       "normal_map": "pattern:bricks?color=#9c5a3c&map=normal",
+       "texture_tile": 2.5
+      },
+      "RigidBody": {
+       "kind": "static"
+      },
+      "Collider": {
+       "shape": "box",
+       "size": {
+        "x": 19,
+        "y": 2.5,
+        "z": 0.5
+       }
+      }
+     }
+    },
+    {
+     "name": "WallWest",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": -18.5,
+        "y": 2,
+        "z": 0
+       },
+       "scale": {
+        "x": 1.0,
+        "y": 5.0,
+        "z": 36
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "cube",
+       "color": {
+        "r": 1,
+        "g": 1,
+        "b": 1,
+        "a": 1
+       },
+       "roughness": 0.8,
+       "texture": "pattern:bricks?color=#9c5a3c",
+       "normal_map": "pattern:bricks?color=#9c5a3c&map=normal",
+       "texture_tile": 2.5
+      },
+      "RigidBody": {
+       "kind": "static"
+      },
+      "Collider": {
+       "shape": "box",
+       "size": {
+        "x": 0.5,
+        "y": 2.5,
+        "z": 18
+       }
+      }
+     }
+    },
+    {
+     "name": "WallEast",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 18.5,
+        "y": 2,
+        "z": 0
+       },
+       "scale": {
+        "x": 1.0,
+        "y": 5.0,
+        "z": 36
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "cube",
+       "color": {
+        "r": 1,
+        "g": 1,
+        "b": 1,
+        "a": 1
+       },
+       "roughness": 0.8,
+       "texture": "pattern:bricks?color=#9c5a3c",
+       "normal_map": "pattern:bricks?color=#9c5a3c&map=normal",
+       "texture_tile": 2.5
+      },
+      "RigidBody": {
+       "kind": "static"
+      },
+      "Collider": {
+       "shape": "box",
+       "size": {
+        "x": 0.5,
+        "y": 2.5,
+        "z": 18
+       }
+      }
+     }
+    },
+    {
+     "name": "Cover0",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": -8,
+        "y": 0.6,
+        "z": 4
+       },
+       "scale": {
+        "x": 6,
+        "y": 1.2,
+        "z": 0.6
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "cube",
+       "color": {
+        "r": 1,
+        "g": 1,
+        "b": 1,
+        "a": 1
+       },
+       "roughness": 0.8,
+       "texture": "pattern:concrete",
+       "normal_map": "pattern:concrete?map=normal",
+       "texture_tile": 2.0
+      },
+      "RigidBody": {
+       "kind": "static"
+      },
+      "Collider": {
+       "shape": "box",
+       "size": {
+        "x": 3,
+        "y": 0.6,
+        "z": 0.3
+       }
+      }
+     }
+    },
+    {
+     "name": "Cover1",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 7,
+        "y": 0.6,
+        "z": 2
+       },
+       "scale": {
+        "x": 5.0,
+        "y": 1.2,
+        "z": 0.6
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "cube",
+       "color": {
+        "r": 1,
+        "g": 1,
+        "b": 1,
+        "a": 1
+       },
+       "roughness": 0.8,
+       "texture": "pattern:concrete",
+       "normal_map": "pattern:concrete?map=normal",
+       "texture_tile": 2.0
+      },
+      "RigidBody": {
+       "kind": "static"
+      },
+      "Collider": {
+       "shape": "box",
+       "size": {
+        "x": 2.5,
+        "y": 0.6,
+        "z": 0.3
+       }
+      }
+     }
+    },
+    {
+     "name": "Cover2",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": -3,
+        "y": 0.6,
+        "z": -5
+       },
+       "scale": {
+        "x": 4,
+        "y": 1.2,
+        "z": 0.6
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "cube",
+       "color": {
+        "r": 1,
+        "g": 1,
+        "b": 1,
+        "a": 1
+       },
+       "roughness": 0.8,
+       "texture": "pattern:concrete",
+       "normal_map": "pattern:concrete?map=normal",
+       "texture_tile": 2.0
+      },
+      "RigidBody": {
+       "kind": "static"
+      },
+      "Collider": {
+       "shape": "box",
+       "size": {
+        "x": 2,
+        "y": 0.6,
+        "z": 0.3
+       }
+      }
+     }
+    },
+    {
+     "name": "Cover3",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 9,
+        "y": 0.6,
+        "z": -8
+       },
+       "scale": {
+        "x": 6,
+        "y": 1.2,
+        "z": 0.6
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "cube",
+       "color": {
+        "r": 1,
+        "g": 1,
+        "b": 1,
+        "a": 1
+       },
+       "roughness": 0.8,
+       "texture": "pattern:concrete",
+       "normal_map": "pattern:concrete?map=normal",
+       "texture_tile": 2.0
+      },
+      "RigidBody": {
+       "kind": "static"
+      },
+      "Collider": {
+       "shape": "box",
+       "size": {
+        "x": 3,
+        "y": 0.6,
+        "z": 0.3
+       }
+      }
+     }
+    },
+    {
+     "name": "Cover4",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": -11,
+        "y": 0.6,
+        "z": -10
+       },
+       "scale": {
+        "x": 5.0,
+        "y": 1.2,
+        "z": 0.6
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "cube",
+       "color": {
+        "r": 1,
+        "g": 1,
+        "b": 1,
+        "a": 1
+       },
+       "roughness": 0.8,
+       "texture": "pattern:concrete",
+       "normal_map": "pattern:concrete?map=normal",
+       "texture_tile": 2.0
+      },
+      "RigidBody": {
+       "kind": "static"
+      },
+      "Collider": {
+       "shape": "box",
+       "size": {
+        "x": 2.5,
+        "y": 0.6,
+        "z": 0.3
+       }
+      }
+     }
+    },
+    {
+     "name": "Pillar0",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": -5,
+        "y": 2,
+        "z": 9
+       },
+       "scale": {
+        "x": 1.0,
+        "y": 4,
+        "z": 1.0
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "cube",
+       "color": {
+        "r": 1,
+        "g": 1,
+        "b": 1,
+        "a": 1
+       },
+       "roughness": 0.6,
+       "texture": "pattern:concrete?color=#8f8d88",
+       "normal_map": "pattern:concrete?color=#8f8d88&map=normal",
+       "texture_tile": 1.5
+      },
+      "RigidBody": {
+       "kind": "static"
+      },
+      "Collider": {
+       "shape": "box",
+       "size": {
+        "x": 0.5,
+        "y": 2,
+        "z": 0.5
+       }
+      }
+     }
+    },
+    {
+     "name": "Pillar1",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 5,
+        "y": 2,
+        "z": 9
+       },
+       "scale": {
+        "x": 1.0,
+        "y": 4,
+        "z": 1.0
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "cube",
+       "color": {
+        "r": 1,
+        "g": 1,
+        "b": 1,
+        "a": 1
+       },
+       "roughness": 0.6,
+       "texture": "pattern:concrete?color=#8f8d88",
+       "normal_map": "pattern:concrete?color=#8f8d88&map=normal",
+       "texture_tile": 1.5
+      },
+      "RigidBody": {
+       "kind": "static"
+      },
+      "Collider": {
+       "shape": "box",
+       "size": {
+        "x": 0.5,
+        "y": 2,
+        "z": 0.5
+       }
+      }
+     }
+    },
+    {
+     "name": "Pillar2",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 0,
+        "y": 2,
+        "z": -1
+       },
+       "scale": {
+        "x": 1.0,
+        "y": 4,
+        "z": 1.0
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "cube",
+       "color": {
+        "r": 1,
+        "g": 1,
+        "b": 1,
+        "a": 1
+       },
+       "roughness": 0.6,
+       "texture": "pattern:concrete?color=#8f8d88",
+       "normal_map": "pattern:concrete?color=#8f8d88&map=normal",
+       "texture_tile": 1.5
+      },
+      "RigidBody": {
+       "kind": "static"
+      },
+      "Collider": {
+       "shape": "box",
+       "size": {
+        "x": 0.5,
+        "y": 2,
+        "z": 0.5
+       }
+      }
+     }
+    },
+    {
+     "name": "Pillar3",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": -13,
+        "y": 2,
+        "z": 0
+       },
+       "scale": {
+        "x": 1.0,
+        "y": 4,
+        "z": 1.0
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "cube",
+       "color": {
+        "r": 1,
+        "g": 1,
+        "b": 1,
+        "a": 1
+       },
+       "roughness": 0.6,
+       "texture": "pattern:concrete?color=#8f8d88",
+       "normal_map": "pattern:concrete?color=#8f8d88&map=normal",
+       "texture_tile": 1.5
+      },
+      "RigidBody": {
+       "kind": "static"
+      },
+      "Collider": {
+       "shape": "box",
+       "size": {
+        "x": 0.5,
+        "y": 2,
+        "z": 0.5
+       }
+      }
+     }
+    },
+    {
+     "name": "Pillar4",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 13,
+        "y": 2,
+        "z": -2
+       },
+       "scale": {
+        "x": 1.0,
+        "y": 4,
+        "z": 1.0
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "cube",
+       "color": {
+        "r": 1,
+        "g": 1,
+        "b": 1,
+        "a": 1
+       },
+       "roughness": 0.6,
+       "texture": "pattern:concrete?color=#8f8d88",
+       "normal_map": "pattern:concrete?color=#8f8d88&map=normal",
+       "texture_tile": 1.5
+      },
+      "RigidBody": {
+       "kind": "static"
+      },
+      "Collider": {
+       "shape": "box",
+       "size": {
+        "x": 0.5,
+        "y": 2,
+        "z": 0.5
+       }
+      }
+     }
+    },
+    {
+     "name": "Deck",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 12,
+        "y": 0.75,
+        "z": 10
+       },
+       "scale": {
+        "x": 8,
+        "y": 1.5,
+        "z": 8
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "cube",
+       "color": {
+        "r": 1,
+        "g": 1,
+        "b": 1,
+        "a": 1
+       },
+       "roughness": 0.8,
+       "texture": "pattern:metal?color=#8e9398",
+       "normal_map": "pattern:metal?color=#8e9398&map=normal",
+       "texture_tile": 1.5
+      },
+      "RigidBody": {
+       "kind": "static"
+      },
+      "Collider": {
+       "shape": "box",
+       "size": {
+        "x": 4,
+        "y": 0.75,
+        "z": 4
+       }
+      }
+     }
+    },
+    {
+     "name": "Ramp",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 6.4,
+        "y": 0.75,
+        "z": 10
+       },
+       "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0.1951,
+        "w": 0.9808
+       },
+       "scale": {
+        "x": 4,
+        "y": 0.2,
+        "z": 3
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "cube",
+       "color": {
+        "r": 1,
+        "g": 1,
+        "b": 1,
+        "a": 1
+       },
+       "roughness": 0.85,
+       "texture": "pattern:metal?color=#8e9398",
+       "normal_map": "pattern:metal?map=normal",
+       "texture_tile": 1.5
+      },
+      "RigidBody": {
+       "kind": "static"
+      },
+      "Collider": {
+       "shape": "box",
+       "size": {
+        "x": 2,
+        "y": 0.1,
+        "z": 1.5
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "Crates",
+   "components": {
+    "Transform": {}
+   },
+   "children": [
+    {
+     "name": "Crate0",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": -7,
+        "y": 0.4,
+        "z": 6
+       },
+       "scale": {
+        "x": 0.8,
+        "y": 0.8,
+        "z": 0.8
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "cube",
+       "color": {
+        "r": 1,
+        "g": 1,
+        "b": 1,
+        "a": 1
+       },
+       "roughness": 0.7,
+       "texture": "pattern:planks?count=4&color=#a8763f",
+       "normal_map": "pattern:planks?count=4&color=#a8763f&map=normal",
+       "texture_tile": 0.8
+      },
+      "RigidBody": {
+       "kind": "dynamic",
+       "mass": 4
+      },
+      "Collider": {
+       "shape": "box",
+       "size": {
+        "x": 0.4,
+        "y": 0.4,
+        "z": 0.4
+       }
+      }
+     }
+    },
+    {
+     "name": "Crate1",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": -6.1,
+        "y": 0.4,
+        "z": 6.2
+       },
+       "scale": {
+        "x": 0.8,
+        "y": 0.8,
+        "z": 0.8
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "cube",
+       "color": {
+        "r": 1,
+        "g": 1,
+        "b": 1,
+        "a": 1
+       },
+       "roughness": 0.7,
+       "texture": "pattern:planks?count=4&color=#a8763f",
+       "normal_map": "pattern:planks?count=4&color=#a8763f&map=normal",
+       "texture_tile": 0.8
+      },
+      "RigidBody": {
+       "kind": "dynamic",
+       "mass": 4
+      },
+      "Collider": {
+       "shape": "box",
+       "size": {
+        "x": 0.4,
+        "y": 0.4,
+        "z": 0.4
+       }
+      }
+     }
+    },
+    {
+     "name": "Crate2",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": -6.6,
+        "y": 1.2,
+        "z": 6.1
+       },
+       "scale": {
+        "x": 0.8,
+        "y": 0.8,
+        "z": 0.8
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "cube",
+       "color": {
+        "r": 1,
+        "g": 1,
+        "b": 1,
+        "a": 1
+       },
+       "roughness": 0.7,
+       "texture": "pattern:planks?count=4&color=#a8763f",
+       "normal_map": "pattern:planks?count=4&color=#a8763f&map=normal",
+       "texture_tile": 0.8
+      },
+      "RigidBody": {
+       "kind": "dynamic",
+       "mass": 4
+      },
+      "Collider": {
+       "shape": "box",
+       "size": {
+        "x": 0.4,
+        "y": 0.4,
+        "z": 0.4
+       }
+      }
+     }
+    },
+    {
+     "name": "Crate3",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 3,
+        "y": 0.4,
+        "z": -3
+       },
+       "scale": {
+        "x": 0.8,
+        "y": 0.8,
+        "z": 0.8
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "cube",
+       "color": {
+        "r": 1,
+        "g": 1,
+        "b": 1,
+        "a": 1
+       },
+       "roughness": 0.7,
+       "texture": "pattern:planks?count=4&color=#a8763f",
+       "normal_map": "pattern:planks?count=4&color=#a8763f&map=normal",
+       "texture_tile": 0.8
+      },
+      "RigidBody": {
+       "kind": "dynamic",
+       "mass": 4
+      },
+      "Collider": {
+       "shape": "box",
+       "size": {
+        "x": 0.4,
+        "y": 0.4,
+        "z": 0.4
+       }
+      }
+     }
+    },
+    {
+     "name": "Crate4",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 10,
+        "y": 0.4,
+        "z": 5
+       },
+       "scale": {
+        "x": 0.8,
+        "y": 0.8,
+        "z": 0.8
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "cube",
+       "color": {
+        "r": 1,
+        "g": 1,
+        "b": 1,
+        "a": 1
+       },
+       "roughness": 0.7,
+       "texture": "pattern:planks?count=4&color=#a8763f",
+       "normal_map": "pattern:planks?count=4&color=#a8763f&map=normal",
+       "texture_tile": 0.8
+      },
+      "RigidBody": {
+       "kind": "dynamic",
+       "mass": 4
+      },
+      "Collider": {
+       "shape": "box",
+       "size": {
+        "x": 0.4,
+        "y": 0.4,
+        "z": 0.4
+       }
+      }
+     }
+    },
+    {
+     "name": "Crate5",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": -12,
+        "y": 0.4,
+        "z": -6
+       },
+       "scale": {
+        "x": 0.8,
+        "y": 0.8,
+        "z": 0.8
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "cube",
+       "color": {
+        "r": 1,
+        "g": 1,
+        "b": 1,
+        "a": 1
+       },
+       "roughness": 0.7,
+       "texture": "pattern:planks?count=4&color=#a8763f",
+       "normal_map": "pattern:planks?count=4&color=#a8763f&map=normal",
+       "texture_tile": 0.8
+      },
+      "RigidBody": {
+       "kind": "dynamic",
+       "mass": 4
+      },
+      "Collider": {
+       "shape": "box",
+       "size": {
+        "x": 0.4,
+        "y": 0.4,
+        "z": 0.4
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "Range",
+   "components": {
+    "Transform": {}
+   },
+   "children": [
+    {
+     "name": "Target0",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": -9,
+        "y": 1.5,
+        "z": -16.8
+       },
+       "rotation": {
+        "x": 0.7071,
+        "y": 0,
+        "z": 0,
+        "w": 0.7071
+       },
+       "scale": {
+        "x": 1.0,
+        "y": 0.08,
+        "z": 1.0
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "cylinder",
+       "color": {
+        "r": 0.85,
+        "g": 0.12,
+        "b": 0.1,
+        "a": 1
+       },
+       "roughness": 0.5
+      },
+      "RigidBody": {
+       "kind": "static"
+      },
+      "Collider": {
+       "shape": "box",
+       "size": {
+        "x": 0.5,
+        "y": 0.04,
+        "z": 0.5
+       }
+      },
+      "Health": {
+       "current": 1,
+       "max": 1,
+       "team": 2
+      }
+     },
+     "children": [
+      {
+       "name": "Bull",
+       "components": {
+        "Transform": {
+         "position": {
+          "x": 0,
+          "y": 0.6,
+          "z": 0
+         },
+         "scale": {
+          "x": 0.4,
+          "y": 0.4,
+          "z": 0.4
+         }
+        },
+        "MeshRenderer": {
+         "mesh": "cylinder",
+         "color": {
+          "r": 0.95,
+          "g": 0.92,
+          "b": 0.85,
+          "a": 1
+         },
+         "roughness": 0.5
+        }
+       }
+      }
+     ]
+    },
+    {
+     "name": "Target1",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": -3,
+        "y": 1.5,
+        "z": -16.8
+       },
+       "rotation": {
+        "x": 0.7071,
+        "y": 0,
+        "z": 0,
+        "w": 0.7071
+       },
+       "scale": {
+        "x": 1.0,
+        "y": 0.08,
+        "z": 1.0
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "cylinder",
+       "color": {
+        "r": 0.85,
+        "g": 0.12,
+        "b": 0.1,
+        "a": 1
+       },
+       "roughness": 0.5
+      },
+      "RigidBody": {
+       "kind": "static"
+      },
+      "Collider": {
+       "shape": "box",
+       "size": {
+        "x": 0.5,
+        "y": 0.04,
+        "z": 0.5
+       }
+      },
+      "Health": {
+       "current": 1,
+       "max": 1,
+       "team": 2
+      }
+     },
+     "children": [
+      {
+       "name": "Bull",
+       "components": {
+        "Transform": {
+         "position": {
+          "x": 0,
+          "y": 0.6,
+          "z": 0
+         },
+         "scale": {
+          "x": 0.4,
+          "y": 0.4,
+          "z": 0.4
+         }
+        },
+        "MeshRenderer": {
+         "mesh": "cylinder",
+         "color": {
+          "r": 0.95,
+          "g": 0.92,
+          "b": 0.85,
+          "a": 1
+         },
+         "roughness": 0.5
+        }
+       }
+      }
+     ]
+    },
+    {
+     "name": "Target2",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 3,
+        "y": 1.5,
+        "z": -16.8
+       },
+       "rotation": {
+        "x": 0.7071,
+        "y": 0,
+        "z": 0,
+        "w": 0.7071
+       },
+       "scale": {
+        "x": 1.0,
+        "y": 0.08,
+        "z": 1.0
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "cylinder",
+       "color": {
+        "r": 0.85,
+        "g": 0.12,
+        "b": 0.1,
+        "a": 1
+       },
+       "roughness": 0.5
+      },
+      "RigidBody": {
+       "kind": "static"
+      },
+      "Collider": {
+       "shape": "box",
+       "size": {
+        "x": 0.5,
+        "y": 0.04,
+        "z": 0.5
+       }
+      },
+      "Health": {
+       "current": 1,
+       "max": 1,
+       "team": 2
+      }
+     },
+     "children": [
+      {
+       "name": "Bull",
+       "components": {
+        "Transform": {
+         "position": {
+          "x": 0,
+          "y": 0.6,
+          "z": 0
+         },
+         "scale": {
+          "x": 0.4,
+          "y": 0.4,
+          "z": 0.4
+         }
+        },
+        "MeshRenderer": {
+         "mesh": "cylinder",
+         "color": {
+          "r": 0.95,
+          "g": 0.92,
+          "b": 0.85,
+          "a": 1
+         },
+         "roughness": 0.5
+        }
+       }
+      }
+     ]
+    },
+    {
+     "name": "Target3",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 9,
+        "y": 1.5,
+        "z": -16.8
+       },
+       "rotation": {
+        "x": 0.7071,
+        "y": 0,
+        "z": 0,
+        "w": 0.7071
+       },
+       "scale": {
+        "x": 1.0,
+        "y": 0.08,
+        "z": 1.0
+       }
+      },
+      "MeshRenderer": {
+       "mesh": "cylinder",
+       "color": {
+        "r": 0.85,
+        "g": 0.12,
+        "b": 0.1,
+        "a": 1
+       },
+       "roughness": 0.5
+      },
+      "RigidBody": {
+       "kind": "static"
+      },
+      "Collider": {
+       "shape": "box",
+       "size": {
+        "x": 0.5,
+        "y": 0.04,
+        "z": 0.5
+       }
+      },
+      "Health": {
+       "current": 1,
+       "max": 1,
+       "team": 2
+      }
+     },
+     "children": [
+      {
+       "name": "Bull",
+       "components": {
+        "Transform": {
+         "position": {
+          "x": 0,
+          "y": 0.6,
+          "z": 0
+         },
+         "scale": {
+          "x": 0.4,
+          "y": 0.4,
+          "z": 0.4
+         }
+        },
+        "MeshRenderer": {
+         "mesh": "cylinder",
+         "color": {
+          "r": 0.95,
+          "g": 0.92,
+          "b": 0.85,
+          "a": 1
+         },
+         "roughness": 0.5
+        }
+       }
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "Spawns",
+   "components": {
+    "Transform": {}
+   },
+   "children": [
+    {
+     "name": "Spawn0",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": -14,
+        "y": 0,
+        "z": -14
+       }
+      }
+     }
+    },
+    {
+     "name": "Spawn1",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 14,
+        "y": 0,
+        "z": -14
+       }
+      }
+     }
+    },
+    {
+     "name": "Spawn2",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": -14,
+        "y": 0,
+        "z": 2
+       }
+      }
+     }
+    },
+    {
+     "name": "Spawn3",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 15,
+        "y": 0,
+        "z": -5
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "Player",
+   "components": {
+    "Transform": {
+     "position": {
+      "x": 0,
+      "y": 0.9,
+      "z": 14
+     }
+    },
+    "Character": {
+     "radius": 0.35,
+     "height": 1.8
+    },
+    "RigidBody": {
+     "kind": "kinematic"
+    },
+    "Collider": {
+     "shape": "capsule",
+     "size": {
+      "x": 0.35,
+      "y": 0.55,
+      "z": 0.35
+     }
+    },
+    "Health": {
+     "current": 100,
+     "max": 100,
+     "team": 1,
+     "invulnerable": 0.4
+    }
+   },
+   "children": [
+    {
+     "name": "Eye",
+     "components": {
+      "Transform": {
+       "position": {
+        "x": 0,
+        "y": 0.7,
+        "z": 0
+       }
+      },
+      "Camera": {
+       "fov_degrees": 74,
+       "near": 0.03,
+       "far": 300
+      }
+     },
+     "children": [
+      {
+       "name": "Gun",
+       "components": {
+        "Transform": {
+         "position": {
+          "x": 0.17,
+          "y": -0.16,
+          "z": -0.32
+         }
+        }
+       },
+       "children": [
+        {
+         "name": "Body",
+         "components": {
+          "Transform": {
+           "scale": {
+            "x": 0.042,
+            "y": 0.06,
+            "z": 0.24
+           }
+          },
+          "MeshRenderer": {
+           "mesh": "cube",
+           "color": {
+            "r": 0.42,
+            "g": 0.43,
+            "b": 0.46,
+            "a": 1
+           },
+           "metallic": 0.3,
+           "roughness": 0.45,
+           "cast_shadows": false
+          }
+         }
+        },
+        {
+         "name": "Stock",
+         "components": {
+          "Transform": {
+           "position": {
+            "x": 0,
+            "y": -0.012,
+            "z": 0.16
+           },
+           "scale": {
+            "x": 0.036,
+            "y": 0.05,
+            "z": 0.1
+           }
+          },
+          "MeshRenderer": {
+           "mesh": "cube",
+           "color": {
+            "r": 0.36,
+            "g": 0.24,
+            "b": 0.14,
+            "a": 1
+           },
+           "roughness": 0.7,
+           "cast_shadows": false
+          }
+         }
+        },
+        {
+         "name": "Barrel",
+         "components": {
+          "Transform": {
+           "position": {
+            "x": 0,
+            "y": 0.012,
+            "z": -0.19
+           },
+           "rotation": {
+            "x": 0.7071,
+            "y": 0,
+            "z": 0,
+            "w": 0.7071
+           },
+           "scale": {
+            "x": 0.022,
+            "y": 0.14,
+            "z": 0.022
+           }
+          },
+          "MeshRenderer": {
+           "mesh": "cylinder",
+           "color": {
+            "r": 0.18,
+            "g": 0.18,
+            "b": 0.2,
+            "a": 1
+           },
+           "metallic": 0.9,
+           "roughness": 0.25,
+           "cast_shadows": false
+          }
+         }
+        },
+        {
+         "name": "Grip",
+         "components": {
+          "Transform": {
+           "position": {
+            "x": 0,
+            "y": -0.055,
+            "z": 0.05
+           },
+           "rotation": {
+            "x": 0.2588,
+            "y": 0,
+            "z": 0,
+            "w": 0.9659
+           },
+           "scale": {
+            "x": 0.032,
+            "y": 0.08,
+            "z": 0.04
+           }
+          },
+          "MeshRenderer": {
+           "mesh": "cube",
+           "color": {
+            "r": 0.36,
+            "g": 0.24,
+            "b": 0.14,
+            "a": 1
+           },
+           "roughness": 0.7,
+           "cast_shadows": false
+          }
+         }
+        },
+        {
+         "name": "Magazine",
+         "components": {
+          "Transform": {
+           "position": {
+            "x": 0,
+            "y": -0.06,
+            "z": -0.05
+           },
+           "scale": {
+            "x": 0.026,
+            "y": 0.07,
+            "z": 0.035
+           }
+          },
+          "MeshRenderer": {
+           "mesh": "cube",
+           "color": {
+            "r": 0.15,
+            "g": 0.15,
+            "b": 0.16,
+            "a": 1
+           },
+           "metallic": 0.5,
+           "roughness": 0.5,
+           "cast_shadows": false
+          }
+         }
+        },
+        {
+         "name": "Sight",
+         "components": {
+          "Transform": {
+           "position": {
+            "x": 0,
+            "y": 0.036,
+            "z": -0.06
+           },
+           "scale": {
+            "x": 0.005,
+            "y": 0.008,
+            "z": 0.005
+           }
+          },
+          "MeshRenderer": {
+           "mesh": "cube",
+           "color": {
+            "r": 0.1,
+            "g": 0.1,
+            "b": 0.1,
+            "a": 1
+           },
+           "emissive": {
+            "r": 0.3,
+            "g": 1.5,
+            "b": 0.5,
+            "a": 1
+           },
+           "cast_shadows": false
+          }
+         }
+        },
+        {
+         "name": "Muzzle",
+         "components": {
+          "Transform": {
+           "position": {
+            "x": 0,
+            "y": 0.012,
+            "z": -0.27
+           }
+          },
+          "Light": {
+           "kind": "point",
+           "color": {
+            "r": 1,
+            "g": 0.75,
+            "b": 0.4,
+            "a": 1
+           },
+           "intensity": 0,
+           "range": 6
+          }
+         }
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "Sparks",
+   "components": {
+    "Transform": {},
+    "ParticleEmitter": {
+     "emitting": false,
+     "rate": 0,
+     "max": 400,
+     "lifetime": {
+      "x": 0.12,
+      "y": 0.35
+     },
+     "speed": {
+      "x": 2,
+      "y": 6
+     },
+     "spread": 70,
+     "gravity": {
+      "x": 0,
+      "y": -9,
+      "z": 0
+     },
+     "size": {
+      "x": 0.05,
+      "y": 0.01
+     },
+     "color": {
+      "r": 1,
+      "g": 0.75,
+      "b": 0.35,
+      "a": 1
+     },
+     "color_end": {
+      "r": 1,
+      "g": 0.3,
+      "b": 0.1,
+      "a": 0
+     },
+     "additive": true,
+     "stretch": 0.04
+    }
+   }
+  },
+  {
+   "name": "Dust",
+   "components": {
+    "Transform": {},
+    "ParticleEmitter": {
+     "emitting": false,
+     "rate": 0,
+     "max": 300,
+     "lifetime": {
+      "x": 0.4,
+      "y": 0.9
+     },
+     "speed": {
+      "x": 0.5,
+      "y": 1.5
+     },
+     "spread": 50,
+     "gravity": {
+      "x": 0,
+      "y": -1,
+      "z": 0
+     },
+     "drag": 2,
+     "size": {
+      "x": 0.12,
+      "y": 0.35
+     },
+     "color": {
+      "r": 0.55,
+      "g": 0.52,
+      "b": 0.48,
+      "a": 0.6
+     },
+     "color_end": {
+      "r": 0.55,
+      "g": 0.52,
+      "b": 0.48,
+      "a": 0
+     }
+    }
+   }
+  },
+  {
+   "name": "Tracer",
+   "components": {
+    "Transform": {},
+    "MeshRenderer": {
+     "mesh": "cube",
+     "color": {
+      "r": 1,
+      "g": 0.85,
+      "b": 0.5,
+      "a": 1
+     },
+     "emissive": {
+      "r": 6,
+      "g": 4,
+      "b": 1.5,
+      "a": 1
+     },
+     "unlit": true,
+     "visible": false,
+     "cast_shadows": false
+    }
+   }
+  },
+  {
+   "name": "Sun",
+   "components": {
+    "Transform": {
+     "rotation": {
+      "x": -0.42,
+      "y": 0.32,
+      "z": 0.16,
+      "w": 0.83
+     }
+    },
+    "Light": {
+     "kind": 0,
+     "intensity": 1.15,
+     "color": {
+      "r": 1,
+      "g": 0.95,
+      "b": 0.86,
+      "a": 1
+     }
+    }
+   }
+  },
+  {
+   "name": "Sky",
+   "components": {
+    "Sky": {
+     "mode": "atmosphere",
+     "haze": 1.2
+    }
+   }
+  }
+ ]
+}

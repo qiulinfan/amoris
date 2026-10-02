@@ -58,6 +58,8 @@ export DEVELOPER_DIR=/Library/Developer/CommandLineTools   # when Xcode itself i
 ./.pocket/pocket scenario walker                                      # a 3D character (Character: stairs, slopes, a lift, crates) walked by a bot (docs/design/physics.md, Characters)
 ./.pocket/pocket run hills -- --headless --frames 60 --json            # noise hills (Terrain), a character on them, a lake (Water) things float on; terrain.height / water.height (docs/design/terrain.md, docs/design/water.md)
 ./.pocket/pocket scenario drive                                       # a car on raycast wheels (Vehicle) through four gates on a terrain (docs/design/physics.md, Vehicles)
+./.pocket/pocket scenario fps                                         # first person: mouse look, hitscan shots, targets, raiders that hear and chase (docs/design/combat.md, Hitscan)
+./.pocket/pocket scenario guards                                      # stealth: guards that patrol, see, hear a running player and search (docs/design/behavior.md)
 ./.pocket/pocket run arena -- --net-host 7777   # and, elsewhere, -- --net-join HOST:7777: a lockstep two-player game (docs/design/networking.md)
 # agents drive a game: input.hold {action, ticks} then step {ticks} then transcript (docs/design/input.md)
 # time travel: run with --history 600, then recorder.at {tick} / recorder.diff {from, to} / recorder.track {entity, component, field}; events.why {seq} explains an event
