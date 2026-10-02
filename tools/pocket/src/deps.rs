@@ -50,10 +50,15 @@ pub fn applies(dep: &Dependency, target: &str) -> bool {
     matches!(dep.kind.as_str(), "cmake" | "file")
 }
 
-fn stamp_key(dep: &Dependency, target: &str) -> String {
+fn stamp_key(ws: &Workspace, dep: &Dependency, target: &str) -> String {
     let mut h = Sha256::new();
     h.update(dep.sha256.as_bytes());
     h.update(dep.url.as_bytes());
+    // A dependency the tool finishes itself (Windows' JavaScriptCore DLL) is stale when the sources
+    // of that step change.
+    for f in crate::windows::setup_step_inputs(ws, dep) {
+        h.update(std::fs::read(&f).unwrap_or_default());
+    }
     for a in &dep.cmake_args {
         h.update(a.as_bytes());
     }
@@ -74,7 +79,7 @@ pub fn is_ready_for(ws: &Workspace, dep: &Dependency, target: &str) -> bool {
         return true;
     }
     let stamp = prefix_for(ws, dep, target).join(".pocket-stamp");
-    std::fs::read_to_string(stamp).map(|s| s.trim() == stamp_key(dep, target)).unwrap_or(false)
+    std::fs::read_to_string(stamp).map(|s| s.trim() == stamp_key(ws, dep, target)).unwrap_or(false)
 }
 
 pub fn status(ws: &Workspace) -> Vec<DepStatus> {
@@ -177,6 +182,11 @@ fn extract(archive: &Path, dest: &Path, strip_components: u32) -> Result<()> {
         let inner = entry.path()?.to_path_buf();
         let Some(rel) = strip(&inner, strip_components) else { continue };
         let out = dest.join(rel);
+        // Windows makes symbolic links only with a privilege or developer mode; the links in these
+        // archives are tools' and tests' aliases, not sources the build reads.
+        if cfg!(windows) && entry.header().entry_type().is_symlink() {
+            continue;
+        }
         if let Some(parent) = out.parent() {
             toolchain::ensure_dir(parent)?;
         }
@@ -207,9 +217,12 @@ pub fn setup_one(ws: &Workspace, dep: &Dependency, force: bool, log: &mut Vec<St
         std::fs::remove_dir_all(&pfx)?;
     }
     match dep.kind.as_str() {
-        "prebuilt" => {
+        "prebuilt" | "source" => {
             log.push(format!("extract {} -> {}", file_name, pfx.display()));
             extract(&cache, &pfx, dep.strip_components)?;
+            if target == "native" && cfg!(windows) {
+                crate::windows::setup_step(ws, dep, &pfx, log)?;
+            }
         }
         "file" => {
             // A single file (a font, a data blob) installed as <prefix>/<file name>.
@@ -235,10 +248,25 @@ pub fn setup_one(ws: &Workspace, dep: &Dependency, force: bool, log: &mut Vec<St
             }
             log.push(format!("cmake configure {} ({target})", dep.name));
             let mut cfg = toolchain::command(&cmake);
-            cfg.arg("-S").arg(&src).arg("-B").arg(&bld).arg("-G").arg("Ninja").arg("-DCMAKE_BUILD_TYPE=Release").arg(format!("-DCMAKE_INSTALL_PREFIX={}", pfx.display()));
+            cfg.arg("-S").arg(&src).arg("-B").arg(&bld).arg("-G").arg("Ninja").arg("-DCMAKE_BUILD_TYPE=Release").arg(format!("-DCMAKE_INSTALL_PREFIX={}", pfx.display().to_string().replace('\\', "/")));
             if let Some(sdk) = &sdk {
                 cfg.arg(format!("-DCMAKE_TOOLCHAIN_FILE={}", sdk.cmake_toolchain.display()));
                 toolchain::em_env(&mut cfg, sdk);
+            }
+            if target == "native" && cfg!(windows) {
+                // CMake finds no compiler outside a Visual Studio prompt (and Strawberry Perl's MinGW
+                // gcc on this PATH would be wrong): clang for the MSVC ABI, LLVM's resource compiler
+                // (SDL enables RC on Windows), and the dynamic release C runtime the engine and
+                // wgpu-native use, in Release so no debug iterators mismatch.
+                let tc = toolchain::detect()?;
+                let rc = Path::new(&tc.cxx).with_file_name("llvm-rc.exe");
+                let fwd = |p: &str| p.replace('\\', "/");
+                cfg.arg(format!("-DCMAKE_C_COMPILER={}", fwd(&tc.cc))).arg(format!("-DCMAKE_CXX_COMPILER={}", fwd(&tc.cxx)));
+                cfg.arg(format!("-DCMAKE_RC_COMPILER={}", fwd(&rc.to_string_lossy())));
+                if let Some(ninja) = &tc.ninja {
+                    cfg.arg(format!("-DCMAKE_MAKE_PROGRAM={}", fwd(ninja)));
+                }
+                cfg.arg("-DCMAKE_POLICY_DEFAULT_CMP0091=NEW").arg("-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL");
             }
             let ios = if target == "ios-sim" { Some(toolchain::detect_for("ios-sim")?) } else { None };
             if let Some(tc) = &ios {
@@ -278,7 +306,7 @@ pub fn setup_one(ws: &Workspace, dep: &Dependency, force: bool, log: &mut Vec<St
             bail!("dependency {}: expected library {} missing after setup", dep.name, lib);
         }
     }
-    std::fs::write(pfx.join(".pocket-stamp"), stamp_key(dep, target))?;
+    std::fs::write(pfx.join(".pocket-stamp"), stamp_key(ws, dep, target))?;
     Ok(DepStatus { name: dep.name.clone(), version: dep.version.clone(), kind: dep.kind.clone(), state: "installed".into(), prefix: pfx.to_string_lossy().into_owned() })
 }
 

@@ -38,6 +38,8 @@ fn copy_tree(from: &Path, to: &Path, skip: &[&str]) -> Result<u64> {
 }
 
 fn set_executable(path: &Path) -> Result<()> {
+    #[cfg(not(unix))]
+    let _ = path;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -456,7 +458,8 @@ pub fn font_text(dirs: &[&Path], extra: &str) -> String {
 pub fn subset_font(font: &Path, text: &str, out: &Path) -> Result<()> {
     let chars = PathBuf::from(format!("{}.chars.txt", out.display()));
     std::fs::write(&chars, text)?;
-    let output = toolchain::command("python3")
+    let python = toolchain::python().context("Python 3 not found (font subsetting runs fontTools)")?;
+    let output = toolchain::command(&python)
         .arg("-m").arg("fontTools.subset").arg(font)
         .arg(format!("--text-file={}", chars.display()))
         .arg(format!("--output-file={}", out.display()))
@@ -611,7 +614,7 @@ pub fn pack_web(ws: &Workspace, config: &str, target: &str, out: Option<&Path>, 
     let packager = sdk.emscripten.join("tools").join("file_packager.py");
     let data = dist.join(format!("{name}.data"));
     let data_js = dist.join(format!("{name}.data.js"));
-    let mut cmd = toolchain::command("python3");
+    let mut cmd = toolchain::command(&toolchain::python().context("Python 3 not found (the web pack runs Emscripten's file_packager)")?);
     toolchain::em_env(&mut cmd, &sdk);
     cmd.arg(&packager).arg(&data).arg("--preload").arg(format!("{}@/game", staging.display())).arg(format!("--js-output={}", data_js.display())).arg("--no-node");
     let out = cmd.output().context("running Emscripten's file_packager.py")?;

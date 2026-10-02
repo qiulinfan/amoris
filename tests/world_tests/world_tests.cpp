@@ -118,9 +118,9 @@ TEST_CASE("sprite clips advance frames, loop, finish and write uv", "[world][spr
 
 TEST_CASE("tree text shows a run of alike siblings as two and a line, and lists of records by their names", "[world][tree]") {
     World w;
-    for (int i = 0; i < 7; ++i) w.spawn("Rock" + std::to_string(i), 0, Json{{"Transform", {{"position", {{"x", i}, {"y", 0}, {"z", 0}}}}}});
-    w.spawn("Rock7", 0, Json{{"Transform", Json::object()}, {"Health", Json::object()}});   // not alike: other components
-    w.spawn("Guard", 0, Json{{"Behavior", {{"states", Json::array({Json{{"name", "patrol"}}, Json{{"name", "chase"}}})}}}});
+    for (int i = 0; i < 7; ++i) (void)w.spawn("Rock" + std::to_string(i), 0, Json{{"Transform", {{"position", {{"x", i}, {"y", 0}, {"z", 0}}}}}});
+    (void)w.spawn("Rock7", 0, Json{{"Transform", Json::object()}, {"Health", Json::object()}});   // not alike: other components
+    (void)w.spawn("Guard", 0, Json{{"Behavior", {{"states", Json::array({Json{{"name", "patrol"}}, Json{{"name", "chase"}}})}}}});
     w.tick(1.0 / 60.0);
     const std::string t = w.tree(TreeOptions{});
     INFO(t);
@@ -136,9 +136,9 @@ TEST_CASE("tree text, queries and hashing are deterministic", "[world]") {
     auto build = [](World& w) {
         auto level = w.spawn("Level", 0, Json{{"Transform", Json::object()}}).value();
         for (int i = 0; i < 3; ++i) {
-            w.spawn("Enemy", level, Json{{"Transform", {{"position", {{"x", i}, {"y", 0}, {"z", 0}}}}}, {"Health", {{"current", 10 * (i + 1)}}}});
+            (void)w.spawn("Enemy", level, Json{{"Transform", {{"position", {{"x", i}, {"y", 0}, {"z", 0}}}}}, {"Health", {{"current", 10 * (i + 1)}}}});
         }
-        w.spawn("Camera", 0, Json{{"Camera", Json::object()}});
+        (void)w.spawn("Camera", 0, Json{{"Camera", Json::object()}});
         w.tick(1.0 / 60.0);
     };
     World a, b;
@@ -178,8 +178,8 @@ TEST_CASE("tree text, queries and hashing are deterministic", "[world]") {
 TEST_CASE("scene save and load round trip", "[world]") {
     World w;
     auto level = w.spawn("Level", 0, Json{{"Transform", {{"position", {{"x", 0}, {"y", 1}, {"z", 0}}}}}}).value();
-    w.spawn("Light", level, Json{{"Light", {{"intensity", 2.5}}}});
-    w.spawn("Cam", 0, Json{{"Camera", {{"fov_degrees", 45}}}});
+    (void)w.spawn("Light", level, Json{{"Light", {{"intensity", 2.5}}}});
+    (void)w.spawn("Cam", 0, Json{{"Camera", {{"fov_degrees", 45}}}});
     w.tick(0.1);
     Json scene = w.save();
     REQUIRE(scene["format"] == "pocket-scene");

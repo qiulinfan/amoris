@@ -75,7 +75,9 @@ pub struct Dependency {
     pub name: String,
     #[serde(default)]
     pub version: String,
-    /// "prebuilt" (archive with headers and libs), "cmake" (source archive built with CMake), "system" (frameworks/libs already present).
+    /// "prebuilt" (archive with headers and libs), "cmake" (source archive built with CMake),
+    /// "source" (an archive only unpacked, compiled by another dependency's setup step), "file" (a
+    /// single file), "system" (frameworks/libs already present), "skip" (not used here).
     pub kind: String,
     #[serde(default)]
     pub url: String,
@@ -109,10 +111,15 @@ pub struct Dependency {
     /// "system" dependency on Linux.
     #[serde(default)]
     pub pkg_config: Vec<String>,
-    /// What changes on another host or target: keyed "linux-aarch64", "linux-x86_64" or "linux"
-    /// (the more specific first) for the host, "ios-sim" then "ios" for the iOS Simulator target,
-    /// each field given replacing the one above. The fields above describe macOS. A kind of "skip"
-    /// leaves the dependency out there (a host tool on a device target).
+    /// Files under the prefix an executable needs beside it at run time (a DLL on Windows):
+    /// `pocket build` copies them next to the executables, `pocket pack` into the game.
+    #[serde(default)]
+    pub runtime_files: Vec<String>,
+    /// What changes on another host or target: keyed "<os>-<arch>" then "<os>" for the host
+    /// ("linux-aarch64", "linux-x86_64", "linux", "windows-x86_64", "windows"), "ios-sim" then
+    /// "ios" for the iOS Simulator target, each field given replacing the one above. The fields
+    /// above describe macOS. A kind of "skip" leaves the dependency out there (a host tool on a
+    /// device target). A prebuilt archive must be pinned for every other host it is used on.
     #[serde(default)]
     pub platforms: IndexMap<String, DependencyOverride>,
 }
@@ -122,6 +129,7 @@ fn one() -> u32 { 1 }
 #[serde(deny_unknown_fields)]
 pub struct DependencyOverride {
     pub kind: Option<String>,
+    pub version: Option<String>,
     pub url: Option<String>,
     pub sha256: Option<String>,
     pub strip_components: Option<u32>,
@@ -133,6 +141,7 @@ pub struct DependencyOverride {
     pub link_flags: Option<Vec<String>>,
     pub defines: Option<Vec<String>>,
     pub pkg_config: Option<Vec<String>>,
+    pub runtime_files: Option<Vec<String>>,
 }
 
 impl Dependency {
@@ -152,8 +161,13 @@ impl Dependency {
                 break;
             }
         }
+        if chosen.is_none() && !apple && self.kind == "prebuilt" {
+            // The fields above are macOS's: its binaries would install here and fail at link time.
+            bail!("dependency {}: no prebuilt archive pinned for {} (add [dependencies.platforms.{}] to pocket.toml)", self.name, keys.join(" or "), keys[0]);
+        }
         if let Some(o) = chosen {
             if let Some(v) = o.kind { self.kind = v; }
+            if let Some(v) = o.version { self.version = v; }
             if let Some(v) = o.url { self.url = v; }
             if let Some(v) = o.sha256 { self.sha256 = v; }
             if let Some(v) = o.strip_components { self.strip_components = v; }
@@ -165,6 +179,7 @@ impl Dependency {
             if let Some(v) = o.link_flags { self.link_flags = v; }
             if let Some(v) = o.defines { self.defines = v; }
             if let Some(v) = o.pkg_config { self.pkg_config = v; }
+            if let Some(v) = o.runtime_files { self.runtime_files = v; }
         }
         if !apple {
             // Frameworks are Apple's.

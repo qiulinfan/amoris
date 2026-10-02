@@ -21,6 +21,7 @@ mod pack;
 mod ios;
 mod ts;
 mod watch;
+mod windows;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -219,6 +220,19 @@ enum Command {
 }
 
 fn main() {
+    #[cfg(windows)]
+    {
+        // No dialog for a crash or a missing DLL in this process or any it starts (children
+        // inherit the mode): a test binary or runtime that fails must fail, not wait for a click.
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn SetErrorMode(mode: u32) -> u32;
+        }
+        const SEM_FAILCRITICALERRORS: u32 = 0x1;
+        const SEM_NOGPFAULTERRORBOX: u32 = 0x2;
+        const SEM_NOOPENFILEERRORBOX: u32 = 0x8000;
+        unsafe { SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX) };
+    }
     let cli = Cli::parse();
     if let Command::Rpc { method, params, url } = &cli.command {
         std::process::exit(mcp::rpc_cli(method, params.as_deref(), url.as_deref()));

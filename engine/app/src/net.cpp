@@ -33,13 +33,17 @@
 #include <emscripten/websocket.h>
 #endif
 
-#ifndef __EMSCRIPTEN__
+#if defined(_WIN32)
+#include <winsock2.h>
+#include <ws2tcpip.h>
+
+#include <system_error>
+#elif !defined(__EMSCRIPTEN__)
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
-#include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -50,8 +54,47 @@ namespace pocket::app {
 
 namespace {
 
+// The BSD socket calls both hosts share, behind the few names Winsock spells differently: a socket
+// is a handle there, closed with closesocket, made non-blocking with ioctlsocket, its errors read
+// from WSAGetLastError, and the library started once.
+#if defined(_WIN32)
+using Socket = SOCKET;
+constexpr Socket kNoSocket = INVALID_SOCKET;
+void close_socket(Socket s) { ::closesocket(s); }
+bool would_block() {
+    const int e = WSAGetLastError();
+    return e == WSAEWOULDBLOCK || e == WSAEINTR;
+}
+std::string socket_error() { return std::system_category().message(WSAGetLastError()); }
+void set_nonblocking(Socket s) {
+    u_long on = 1;
+    ioctlsocket(s, FIONBIO, &on);
+}
+bool start_sockets() {
+    static const bool ok = [] {
+        WSADATA data;
+        return WSAStartup(MAKEWORD(2, 2), &data) == 0;
+    }();
+    return ok;
+}
+// SO_REUSEADDR on Windows lets another socket take a port in use; this keeps it ours.
+constexpr int kReuse = SO_EXCLUSIVEADDRUSE;
+#elif !defined(__EMSCRIPTEN__)
+using Socket = int;
+constexpr Socket kNoSocket = -1;
+void close_socket(Socket s) { ::close(s); }
+bool would_block() { return errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR; }
+std::string socket_error() { return std::strerror(errno); }
+void set_nonblocking(Socket s) { fcntl(s, F_SETFL, fcntl(s, F_GETFL, 0) | O_NONBLOCK); }
+bool start_sockets() { return true; }
+constexpr int kReuse = SO_REUSEADDR;
+#else
+using Socket = int;
+constexpr Socket kNoSocket = -1;
+#endif
+
 struct Link {
-    int fd = -1;
+    Socket fd = kNoSocket;
     std::string in, out;
     int player = -1;
     bool alive = true;
@@ -100,10 +143,10 @@ constexpr int kSendFlags = MSG_NOSIGNAL;
 constexpr int kSendFlags = 0;
 #endif
 
-void quiet_socket(int fd) {
-    fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK);
+void quiet_socket(Socket fd) {
+    set_nonblocking(fd);
     int one = 1;
-    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
+    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&one), sizeof one);
 #ifdef SO_NOSIGPIPE
     setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one);
 #endif
@@ -116,7 +159,7 @@ struct Net::Impl {
     bool host = false, started = false, dedicated = false;   // dedicated: a host that does not play
     int player = 0, players = 2, delay = 3, port = 0;
     std::uint64_t seed = 1;
-    int listen_fd = -1;
+    Socket listen_fd = kNoSocket;
     int next_player = 1;
     std::vector<Link> links;                                      // host: one per joined player; a player: the host
     std::map<std::int64_t, std::map<int, Json>> inputs;           // tick -> player -> events
@@ -189,11 +232,11 @@ struct Net::Impl {
         if (!l.alive) return;
         l.alive = false;
 #ifndef __EMSCRIPTEN__
-        if (l.fd >= 0) ::close(l.fd);
+        if (l.fd != kNoSocket) close_socket(l.fd);
 #else
         if (l.web > 0) { emscripten_websocket_close(l.web, 1000, "gone"); emscripten_websocket_delete(l.web); l.web = 0; }
 #endif
-        l.fd = -1;
+        l.fd = kNoSocket;
         if (host && l.player >= (dedicated ? 0 : 1)) {
             // Everyone goes on without them from the tick after the last input they sent.
             auto it = last_from.find(l.player);
@@ -327,14 +370,14 @@ struct Net::Impl {
     void receive(Link& l) {
 #ifndef __EMSCRIPTEN__
         char buf[65536];
-        while (l.alive && l.fd >= 0) {
-            const ssize_t n = ::recv(l.fd, buf, sizeof buf, 0);
+        while (l.alive && l.fd != kNoSocket) {
+            const auto n = ::recv(l.fd, buf, static_cast<int>(sizeof buf), 0);
             if (n > 0) {
                 l.in.append(buf, static_cast<std::size_t>(n));
                 bytes_in += static_cast<std::uint64_t>(n);
                 continue;
             }
-            if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) break;
+            if (n < 0 && would_block()) break;
             drop(l);
             break;
         }
@@ -383,13 +426,13 @@ struct Net::Impl {
         }
 #else
         while (l.alive && !l.out.empty()) {
-            const ssize_t n = ::send(l.fd, l.out.data(), l.out.size(), kSendFlags);
+            const auto n = ::send(l.fd, l.out.data(), static_cast<int>(std::min<std::size_t>(l.out.size(), 1 << 30)), kSendFlags);
             if (n > 0) {
                 l.out.erase(0, static_cast<std::size_t>(n));
                 bytes_out += static_cast<std::uint64_t>(n);
                 continue;
             }
-            if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) break;
+            if (n < 0 && would_block()) break;
             drop(l);
         }
 #endif
@@ -400,10 +443,10 @@ struct Net::Impl {
     // that are neither).
     void accept_players() {
 #ifndef __EMSCRIPTEN__
-        if (listen_fd < 0) return;
+        if (listen_fd == kNoSocket) return;
         for (;;) {
-            const int fd = ::accept(listen_fd, nullptr, nullptr);
-            if (fd < 0) break;
+            const Socket fd = ::accept(listen_fd, nullptr, nullptr);
+            if (fd == kNoSocket) break;
             quiet_socket(fd);
             Link l;
             l.fd = fd;
@@ -448,7 +491,7 @@ struct Net::Impl {
 #ifndef __EMSCRIPTEN__
         Link l = std::move(from);
         from.alive = false;
-        from.fd = -1;
+        from.fd = kNoSocket;
         {
             if (started) {
                 // A running game takes a newcomer only into the place of a player who left.
@@ -461,7 +504,7 @@ struct Net::Impl {
                 if (slot < 0) {
                     send(l, Json{{"t", "full"}});
                     flush_link(l);
-                    ::close(l.fd);
+                    close_socket(l.fd);
                     return;
                 }
                 l.player = slot;
@@ -485,7 +528,7 @@ struct Net::Impl {
             if (next_player >= players) {
                 send(l, Json{{"t", "full"}});
                 flush_link(l);
-                ::close(l.fd);
+                close_socket(l.fd);
                 return;
             }
             l.player = next_player++;
@@ -511,10 +554,10 @@ Net::~Net() {
 #ifndef __EMSCRIPTEN__
     for (Link& l : impl_->links) {
         impl_->flush_link(l);
-        if (l.fd >= 0) ::close(l.fd);
+        if (l.fd != kNoSocket) close_socket(l.fd);
     }
-    for (Link& l : impl_->pending) if (l.fd >= 0) ::close(l.fd);
-    if (impl_->listen_fd >= 0) ::close(impl_->listen_fd);
+    for (Link& l : impl_->pending) if (l.fd != kNoSocket) close_socket(l.fd);
+    if (impl_->listen_fd != kNoSocket) close_socket(impl_->listen_fd);
 #else
     for (Link& l : impl_->links) {
         impl_->flush_link(l);
@@ -537,17 +580,18 @@ Result<std::unique_ptr<Net>> Net::host(int port, int players, int delay, std::ui
     im.players = std::clamp(players, 1, 16);
     im.delay = std::clamp(delay, 1, 60);
     im.seed = seed;
+    if (!start_sockets()) return fail("net_error", "cannot start the socket library: {}", socket_error());
     im.listen_fd = ::socket(AF_INET, SOCK_STREAM, 0);
-    if (im.listen_fd < 0) return fail("net_error", "socket: {}", std::strerror(errno));
+    if (im.listen_fd == kNoSocket) return fail("net_error", "socket: {}", socket_error());
     int one = 1;
-    setsockopt(im.listen_fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
+    setsockopt(im.listen_fd, SOL_SOCKET, kReuse, reinterpret_cast<const char*>(&one), sizeof one);
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = htonl(INADDR_ANY);
     addr.sin_port = htons(static_cast<std::uint16_t>(port));
-    if (::bind(im.listen_fd, reinterpret_cast<sockaddr*>(&addr), sizeof addr) != 0) return fail("net_error", "cannot listen on port {}: {}", port, std::strerror(errno));
-    if (::listen(im.listen_fd, 8) != 0) return fail("net_error", "listen: {}", std::strerror(errno));
-    fcntl(im.listen_fd, F_SETFL, fcntl(im.listen_fd, F_GETFL, 0) | O_NONBLOCK);
+    if (::bind(im.listen_fd, reinterpret_cast<sockaddr*>(&addr), sizeof addr) != 0) return fail("net_error", "cannot listen on port {}: {}", port, socket_error());
+    if (::listen(im.listen_fd, 8) != 0) return fail("net_error", "listen: {}", socket_error());
+    set_nonblocking(im.listen_fd);
     socklen_t len = sizeof addr;
     getsockname(im.listen_fd, reinterpret_cast<sockaddr*>(&addr), &len);
     im.port = ntohs(addr.sin_port);
@@ -613,18 +657,19 @@ Result<std::unique_ptr<Net>> Net::join(const std::string& address, double timeou
         if (std::chrono::steady_clock::now() > until) return fail("net_error", "the host at {} did not welcome us in {} s", url, timeout);
     }
 #else
+    if (!start_sockets()) return fail("net_error", "cannot start the socket library: {}", socket_error());
     addrinfo hints{};
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
     addrinfo* found = nullptr;
     if (getaddrinfo(hostname.c_str(), service.c_str(), &hints, &found) != 0 || !found) return fail("net_error", "cannot resolve {}", address);
-    int fd = -1;
+    Socket fd = kNoSocket;
     // The host may still be starting: try again until the timeout.
-    while (fd < 0) {
+    while (fd == kNoSocket) {
         fd = ::socket(found->ai_family, found->ai_socktype, found->ai_protocol);
-        if (fd >= 0 && ::connect(fd, found->ai_addr, found->ai_addrlen) == 0) break;
-        if (fd >= 0) ::close(fd);
-        fd = -1;
+        if (fd != kNoSocket && ::connect(fd, found->ai_addr, static_cast<socklen_t>(found->ai_addrlen)) == 0) break;
+        if (fd != kNoSocket) close_socket(fd);
+        fd = kNoSocket;
         if (std::chrono::steady_clock::now() > until) {
             freeaddrinfo(found);
             return fail("net_error", "no host answered at {}", address);

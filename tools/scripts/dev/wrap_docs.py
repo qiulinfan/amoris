@@ -100,7 +100,7 @@ def main():
         if new != src:
             changed.append(f)
             if not check:
-                open(f, "w", encoding="utf-8").write(new)
+                open(f, "w", encoding="utf-8", newline="\n").write(new)   # LF on Windows too
     print(("would change" if check else "wrapped"), len(changed), "of", len(files))
     for f in changed:
         print(" ", f)

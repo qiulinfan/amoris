@@ -22,7 +22,7 @@ fn tsc(ws: &Workspace) -> Result<PathBuf> {
             eprintln!("{line}");
         }
     }
-    let exe = deps::prefix(ws, dep).join("lib").join("tsc");
+    let exe = deps::prefix(ws, dep).join("lib").join(format!("tsc{}", std::env::consts::EXE_SUFFIX));
     if !exe.exists() {
         bail!("the typescript dependency has no compiler at {} (run `pocket setup --force`)", exe.display());
     }

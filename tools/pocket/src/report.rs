@@ -57,19 +57,53 @@ impl Report {
     }
 }
 
-/// Parse clang-style diagnostics (`file:line:col: error: message`) out of compiler output.
+/// Parse clang-style diagnostics (`file:line:col: error: message`) out of compiler output, and
+/// the linkers' and Ninja's own errors (`lld-link: error: ...`), which name no source line.
 pub fn parse_compiler_diagnostics(text: &str) -> Vec<Diagnostic> {
     let mut out = vec![];
     for line in text.lines() {
-        let mut parts = line.splitn(4, ':');
+        for tool in ["lld-link: error:", "ld.lld: error:", "ld: error:", "ninja: error:", "clang++: error:", "clang: error:"] {
+            if let Some(msg) = line.strip_prefix(tool) {
+                out.push(Diagnostic { severity: "error".into(), message: format!("{} {}", tool.trim_end_matches(" error:"), msg.trim()), file: None, line: None, column: None });
+            }
+        }
+        // A Windows path starts with a drive letter and its colon (`C:\x.cpp:10:5: error: ...`).
+        let b = line.as_bytes();
+        let drive = b.len() > 2 && b[0].is_ascii_alphabetic() && b[1] == b':' && (b[2] == b'\\' || b[2] == b'/');
+        let (prefix, body) = if drive { line.split_at(2) } else { ("", line) };
+        let mut parts = body.splitn(4, ':');
         let (Some(file), Some(l), Some(c), Some(rest)) = (parts.next(), parts.next(), parts.next(), parts.next()) else { continue };
+        let file = format!("{prefix}{file}");
         let (Ok(l), Ok(c)) = (l.trim().parse::<u32>(), c.trim().parse::<u32>()) else { continue };
         let rest = rest.trim();
         let (sev, msg) = match rest.split_once(':') {
             Some((s, m)) if ["error", "warning", "note", "fatal error"].contains(&s.trim()) => (s.trim().to_string(), m.trim().to_string()),
             _ => continue,
         };
-        out.push(Diagnostic { severity: sev, message: msg, file: Some(file.to_string()), line: Some(l), column: Some(c) });
+        out.push(Diagnostic { severity: sev, message: msg, file: Some(file), line: Some(l), column: Some(c) });
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_compiler_diagnostics;
+
+    #[test]
+    fn diagnostics_keep_a_drive_letter() {
+        let d = parse_compiler_diagnostics("C:\\src\\a.cpp:10:5: error: no member named 'x'\n/usr/b.cpp:3:1: warning: unused\n");
+        assert_eq!(d.len(), 2);
+        assert_eq!(d[0].file.as_deref(), Some("C:\\src\\a.cpp"));
+        assert_eq!((d[0].line, d[0].column), (Some(10), Some(5)));
+        assert_eq!(d[0].message, "no member named 'x'");
+        assert_eq!(d[1].file.as_deref(), Some("/usr/b.cpp"));
+    }
+
+    #[test]
+    fn linker_errors_are_diagnostics() {
+        let d = parse_compiler_diagnostics("lld-link: error: undefined symbol: foo\n");
+        assert_eq!(d.len(), 1);
+        assert_eq!(d[0].message, "lld-link: undefined symbol: foo");
+        assert!(d[0].file.is_none());
+    }
 }

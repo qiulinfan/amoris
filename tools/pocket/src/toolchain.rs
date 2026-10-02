@@ -90,15 +90,68 @@ pub fn em_env(cmd: &mut Command, sdk: &Emsdk) {
     }
 }
 
+/// A program on PATH. On Windows a name without an extension is tried with each of PATHEXT's
+/// (`.exe`, `.cmd`, ...), and the Store's app-execution aliases under `WindowsApps` are passed
+/// over: `python3.exe` there opens the Store instead of running Python.
 pub fn which(name: &str) -> Option<String> {
     let path = std::env::var_os("PATH")?;
+    let files: Vec<String> = if cfg!(windows) && Path::new(name).extension().is_none() {
+        let exts = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into());
+        exts.split(';').filter(|e| !e.is_empty()).map(|e| format!("{name}{}", e.to_ascii_lowercase())).collect()
+    } else {
+        vec![name.to_string()]
+    };
     for dir in std::env::split_paths(&path) {
-        let candidate = dir.join(name);
-        if candidate.is_file() {
-            return Some(candidate.to_string_lossy().into_owned());
+        if cfg!(windows) && dir.to_string_lossy().to_ascii_lowercase().contains("\\microsoft\\windowsapps") {
+            continue;
+        }
+        for file in &files {
+            let candidate = dir.join(file);
+            if candidate.is_file() {
+                return Some(candidate.to_string_lossy().into_owned());
+            }
         }
     }
     None
+}
+
+/// Python 3 for the scripts the tool runs: POCKET_PYTHON, else `python3`, else (Windows, where
+/// the python.org installer makes no python3.exe) `python`.
+pub fn python() -> Option<String> {
+    if let Ok(p) = std::env::var("POCKET_PYTHON") {
+        return Some(p);
+    }
+    which("python3").or_else(|| if cfg!(windows) { which("python") } else { None })
+}
+
+/// LLVM on Windows when clang++ is not on PATH: POCKET_LLVM, the newest `llvm-*` (or `llvm`)
+/// under ~/.pocket-tools (where the release archive is unpacked without an installer), or the
+/// official installer's directory.
+fn windows_llvm_bin() -> Option<PathBuf> {
+    let mut roots: Vec<PathBuf> = vec![];
+    if let Ok(v) = std::env::var("POCKET_LLVM") {
+        roots.push(PathBuf::from(v));
+    }
+    if let Some(home) = std::env::var_os("USERPROFILE") {
+        let tools = PathBuf::from(home).join(".pocket-tools");
+        let mut found: Vec<PathBuf> = std::fs::read_dir(&tools)
+            .into_iter()
+            .flatten()
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n == "llvm" || n.starts_with("llvm-")))
+            .collect();
+        // Newest version first: llvm-23.1.2 before llvm-22.1.8.
+        found.sort_by_key(|p| std::cmp::Reverse(version_key(p)));
+        roots.extend(found);
+    }
+    roots.push(PathBuf::from(r"C:\Program Files\LLVM"));
+    roots.into_iter().map(|r| r.join("bin")).find(|b| b.join("clang++.exe").is_file())
+}
+
+fn version_key(p: &Path) -> Vec<u64> {
+    let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    name.trim_start_matches("llvm").trim_start_matches('-').split('.').map(|s| s.parse().unwrap_or(0)).collect()
 }
 
 /// Apple's shim tools (`clang`, `nm`, `lipo`) refuse to run while the Xcode license is
@@ -172,6 +225,9 @@ pub fn detect_for(target: &str) -> Result<Toolchain> {
 }
 
 pub fn detect() -> Result<Toolchain> {
+    if cfg!(windows) {
+        return detect_windows();
+    }
     let cxx = std::env::var("POCKET_CXX").ok().or_else(|| which("clang++")).context("clang++ not found on PATH (set POCKET_CXX)")?;
     let cc = std::env::var("POCKET_CC").ok().or_else(|| which("clang")).unwrap_or_else(|| cxx.replace("clang++", "clang"));
     let ar = std::env::var("POCKET_AR").ok().or_else(|| which("ar")).unwrap_or_else(|| "ar".into());
@@ -193,6 +249,52 @@ pub fn detect() -> Result<Toolchain> {
         triple: None,
         sysroot: None,
     })
+}
+
+/// Windows: LLVM's clang++ driving the MSVC ABI (the Visual Studio C++ library and Windows SDK,
+/// which clang finds itself), lld to link and llvm-lib to archive. The GNU-style driver keeps
+/// one set of flags across hosts; clang-cl would need its own.
+fn detect_windows() -> Result<Toolchain> {
+    let llvm = windows_llvm_bin();
+    let beside = |name: &str| llvm.as_ref().map(|b| b.join(name).to_string_lossy().into_owned());
+    let cxx = std::env::var("POCKET_CXX").ok().or_else(|| which("clang++")).or_else(|| beside("clang++.exe")).context(
+        "clang++ not found: unpack an LLVM release (clang+llvm-<version>-x86_64-pc-windows-msvc) under ~/.pocket-tools/llvm-<version>, put its bin on PATH, or set POCKET_CXX or POCKET_LLVM",
+    )?;
+    let sibling = |name: &str| Path::new(&cxx).parent().map(|d| d.join(name)).filter(|p| p.is_file()).map(|p| p.to_string_lossy().into_owned());
+    let cc = std::env::var("POCKET_CC").ok().or_else(|| sibling("clang.exe")).unwrap_or_else(|| cxx.replace("clang++", "clang"));
+    let ar = std::env::var("POCKET_AR").ok().or_else(|| sibling("llvm-lib.exe")).or_else(|| which("llvm-lib")).context("llvm-lib not found beside clang++")?;
+    let out = command(&cxx).arg("--version").output().context("running clang++ --version")?;
+    if !out.status.success() {
+        bail!("{} --version failed: {}", cxx, String::from_utf8_lossy(&out.stderr));
+    }
+    let cxx_version = String::from_utf8_lossy(&out.stdout).lines().next().unwrap_or("").to_string();
+    let machine = command(&cxx).arg("-dumpmachine").output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
+    if !machine.ends_with("windows-msvc") {
+        bail!("{cxx} targets {machine}; the engine builds for the MSVC ABI (x86_64-pc-windows-msvc): use an LLVM release for Windows, not a MinGW clang");
+    }
+    Ok(Toolchain {
+        cxx,
+        cc,
+        ar,
+        ninja: which("ninja"),
+        cmake: which("cmake"),
+        developer_dir: None,
+        cxx_version,
+        host_os: "windows".into(),
+        target: "native".into(),
+        triple: None,
+        sysroot: None,
+    })
+}
+
+/// File names on the host: an executable's (`.exe` on Windows) and a static library's
+/// (`name.lib` on Windows, `libname.a` elsewhere).
+pub fn exe_name(name: &str, host_os: &str) -> String {
+    if host_os == "windows" { format!("{name}.exe") } else { name.to_string() }
+}
+
+pub fn static_lib_name(name: &str, host_os: &str) -> String {
+    if host_os == "windows" { format!("{name}.lib") } else { format!("lib{name}.a") }
 }
 
 pub fn ensure_dir(p: &Path) -> Result<()> {

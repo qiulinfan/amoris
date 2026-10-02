@@ -103,8 +103,8 @@ TEST_CASE("a grid baked from colliders walks around a wall, keeps off it, and fi
     static_box(w, "Ground", {0, -0.5f, 0}, {20, 0.5f, 20});
     static_box(w, "Wall", {0, 1, 0}, {0.25f, 1, 3});     // across the middle, z -3..3
     static_box(w, "Ledge", {5, 0.5f, 5}, {1, 0.5f, 1});   // top at 1.0: above max_step
-    w.spawn("Goal", 0, Json{{"Transform", {{"position", {{"x", -5}, {"y", 0.5}, {"z", -5}}}}}, {"RigidBody", {{"kind", 1}}}, {"Collider", {{"shape", 0}, {"size", {{"x", 1}, {"y", 1}, {"z", 1}}}, {"is_trigger", true}}}}).value();
-    w.spawn("Crate", 0, Json{{"Transform", {{"position", {{"x", 5}, {"y", 0.5}, {"z", -5}}}}}, {"RigidBody", {{"kind", 0}}}, {"Collider", {{"shape", 0}, {"size", {{"x", 0.5}, {"y", 0.5}, {"z", 0.5}}}}}}).value();
+    (void)w.spawn("Goal", 0, Json{{"Transform", {{"position", {{"x", -5}, {"y", 0.5}, {"z", -5}}}}}, {"RigidBody", {{"kind", 1}}}, {"Collider", {{"shape", 0}, {"size", {{"x", 1}, {"y", 1}, {"z", 1}}}, {"is_trigger", true}}}}).value();
+    (void)w.spawn("Crate", 0, Json{{"Transform", {{"position", {{"x", 5}, {"y", 0.5}, {"z", -5}}}}}, {"RigidBody", {{"kind", 0}}}, {"Collider", {{"shape", 0}, {"size", {{"x", 0.5}, {"y", 0.5}, {"z", 0.5}}}}}}).value();
     nav::Nav n;
     nav::BakeParams bp;
     bp.min = {-8, -1, -8};

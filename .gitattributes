@@ -1,0 +1,4 @@
+# The repository is LF everywhere, on every machine: generated files are compared byte for byte
+# (`pocket gen --check`), shaders live in raw strings, shell scripts run under bash, and the edit
+# helpers match exact text. Without this a Windows checkout with core.autocrlf gets CRLF files.
+* text=auto eol=lf

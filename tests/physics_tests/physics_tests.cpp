@@ -320,7 +320,7 @@ TEST_CASE("a rope pulls only when taut", "[physics][joint]") {
 TEST_CASE("a ball joint pins two bodies at their anchors", "[physics][joint]") {
     World w;
     physics::Physics p;
-    w.spawn("Post", 0, Json{{"Transform", {{"position", {{"x", 0}, {"y", 4}, {"z", 0}}}}}, {"RigidBody", {{"kind", 1}}}, {"Collider", {{"shape", 0}, {"size", {{"x", 0.25}, {"y", 0.25}, {"z", 0.25}}}}}}).value();
+    (void)w.spawn("Post", 0, Json{{"Transform", {{"position", {{"x", 0}, {"y", 4}, {"z", 0}}}}}, {"RigidBody", {{"kind", 1}}}, {"Collider", {{"shape", 0}, {"size", {{"x", 0.25}, {"y", 0.25}, {"z", 0.25}}}}}}).value();
     EntityId arm = w.spawn("Arm", 0, Json{{"Transform", {{"position", {{"x", 1.5}, {"y", 4}, {"z", 0}}}}}, {"RigidBody", {{"kind", 0}}}, {"Collider", {{"shape", 0}, {"size", {{"x", 1.0}, {"y", 0.1}, {"z", 0.1}}}}}}).value();
     REQUIRE(w.set(arm, "Joint", Json{{"kind", 1}, {"target", "/Post"}, {"anchor", {{"x", -1}, {"y", 0}, {"z", 0}}}, {"target_anchor", {{"x", 0.5}, {"y", 0}, {"z", 0}}}}).has_value());
     const Vec3 pin{0.5f, 4, 0};
@@ -534,7 +534,7 @@ TEST_CASE("mesh colliders: a marble rolls to the bottom of a bowl, rays and over
     REQUIRE(t->position.y < 1.2f);
     REQUIRE(std::hypot(t->position.x, t->position.z) < 1.5f);
     // A missing mesh file collides with nothing and is not counted.
-    w.spawn("Ghost", 0, Json{{"Transform", {{"position", {{"x", 5}, {"y", 0}, {"z", 5}}}}}, {"RigidBody", {{"kind", 1}}}, {"Collider", {{"shape", 3}, {"mesh", "assets/nope.glb"}}}});
+    (void)w.spawn("Ghost", 0, Json{{"Transform", {{"position", {{"x", 5}, {"y", 0}, {"z", 5}}}}}, {"RigidBody", {{"kind", 1}}}, {"Collider", {{"shape", 3}, {"mesh", "assets/nope.glb"}}}});
     run(p, w, 1);
     REQUIRE(p.stats().meshes == 1);
 }
@@ -631,9 +631,9 @@ TEST_CASE("collision layers decide which pairs collide, trigger and answer queri
     auto over = p.overlap_sphere(w, {0, 0.5f, 0}, 0.2f, physics::Physics::Filter{[](EntityId, const RigidBody&, const Collider& c) { return (c.layer & 2u) != 0; }});
     REQUIRE(over.size() == 2);
     // A trigger on layer 4 with mask 2 only notices layer-2 bodies.
-    w.spawn("Gate", 0, Json{{"Transform", {{"position", {{"x", 5}, {"y", 0.5}, {"z", 0}}}}}, {"RigidBody", {{"kind", 1}}}, {"Collider", {{"shape", 0}, {"size", {{"x", 1}, {"y", 1}, {"z", 1}}}, {"is_trigger", true}, {"layer", 4}, {"mask", 2}}}});
+    (void)w.spawn("Gate", 0, Json{{"Transform", {{"position", {{"x", 5}, {"y", 0.5}, {"z", 0}}}}}, {"RigidBody", {{"kind", 1}}}, {"Collider", {{"shape", 0}, {"size", {{"x", 1}, {"y", 1}, {"z", 1}}}, {"is_trigger", true}, {"layer", 4}, {"mask", 2}}}});
     body(w, "Visitor1", 1, {5, 0.5f, 0}, 0.3f);                                     // layer 1: ignored by the gate
-    w.spawn("Visitor2", 0, Json{{"Transform", {{"position", {{"x", 5}, {"y", 0.5}, {"z", 0.5}}}}}, {"RigidBody", {{"kind", 0}}}, {"Collider", {{"shape", 1}, {"size", {{"x", 0.3}, {"y", 0.3}, {"z", 0.3}}}, {"layer", 2}}}});
+    (void)w.spawn("Visitor2", 0, Json{{"Transform", {{"position", {{"x", 5}, {"y", 0.5}, {"z", 0.5}}}}}, {"RigidBody", {{"kind", 0}}}, {"Collider", {{"shape", 1}, {"size", {{"x", 0.3}, {"y", 0.3}, {"z", 0.3}}}, {"layer", 2}}}});
     run(p, w, 5);
     auto enters = w.events().since(0, 1000, "trigger.enter");
     REQUIRE(enters.size() == 1);
@@ -645,7 +645,7 @@ TEST_CASE("continuous collision holds a fast small sphere at a thin wall that a 
     physics::Physics p;
     ground(w);
     // A pane 4 cm thick and 5 cm pellets fired at 80 m/s from 3 m away: 1.33 m per step.
-    w.spawn("Pane", 0, Json{{"Transform", {{"position", {{"x", 5}, {"y", 1}, {"z", 0}}}}}, {"RigidBody", {{"kind", 1}}}, {"Collider", {{"shape", 0}, {"size", {{"x", 0.02}, {"y", 1}, {"z", 2}}}}}});
+    (void)w.spawn("Pane", 0, Json{{"Transform", {{"position", {{"x", 5}, {"y", 1}, {"z", 0}}}}}, {"RigidBody", {{"kind", 1}}}, {"Collider", {{"shape", 0}, {"size", {{"x", 0.02}, {"y", 1}, {"z", 2}}}}}});
     auto pellet = [&](const char* name, float z, bool ccd, double restitution) {
         return w.spawn(name, 0, Json{{"Transform", {{"position", {{"x", 2}, {"y", 1}, {"z", z}}}}}, {"RigidBody", {{"kind", 0}, {"ccd", ccd}, {"gravity_scale", 0.0}, {"restitution", restitution}}}, {"Collider", {{"shape", 1}, {"size", {{"x", 0.05}, {"y", 0.05}, {"z", 0.05}}}}}, {"Velocity", {{"linear", {{"x", 80}, {"y", 0}, {"z", 0}}}}}}).value();
     };
@@ -720,7 +720,7 @@ TEST_CASE("continuous collision sweeps a spinning plank's tip into a pane its ce
     // The pane: 4 cm thick at x 5. Two planks two meters long lie along z with their centers at
     // x 4.2, not moving, spinning at 40 radians a second so a tip swings 0.67 m a tick: within one
     // tick it crosses the pane's x, which the plank's translation (none) would never notice.
-    w.spawn("Pane", 0, Json{{"Transform", {{"position", {{"x", 5}, {"y", 1}, {"z", 0}}}}}, {"RigidBody", {{"kind", 1}}}, {"Collider", {{"shape", 0}, {"size", {{"x", 0.02}, {"y", 1}, {"z", 4}}}}}});
+    (void)w.spawn("Pane", 0, Json{{"Transform", {{"position", {{"x", 5}, {"y", 1}, {"z", 0}}}}}, {"RigidBody", {{"kind", 1}}}, {"Collider", {{"shape", 0}, {"size", {{"x", 0.02}, {"y", 1}, {"z", 4}}}}}});
     auto plank = [&](const char* name, float z, bool ccd) {
         return w.spawn(name, 0, Json{{"Transform", {{"position", {{"x", 4.2}, {"y", 1}, {"z", z}}}, {"rotation", {{"x", 0}, {"y", 0.7071068}, {"z", 0}, {"w", 0.7071068}}}}}, {"RigidBody", {{"kind", 0}, {"ccd", ccd}, {"gravity_scale", 0.0}, {"restitution", 0.0}}}, {"Collider", {{"shape", 0}, {"size", {{"x", 1.0}, {"y", 0.05}, {"z", 0.05}}}}}, {"Velocity", {{"angular", {{"x", 0}, {"y", -40.0}, {"z", 0}}}}}}).value();
     };
@@ -761,7 +761,7 @@ TEST_CASE("continuous collision casts exact shapes, sweeps boxes and capsules by
     physics::Physics p;
     ground(w);
     // The pane: 4 cm thick at x 5, from y 0 to 2 and z -2 to 2.
-    w.spawn("Pane", 0, Json{{"Transform", {{"position", {{"x", 5}, {"y", 1}, {"z", 0}}}}}, {"RigidBody", {{"kind", 1}}}, {"Collider", {{"shape", 0}, {"size", {{"x", 0.02}, {"y", 1}, {"z", 2}}}}}});
+    (void)w.spawn("Pane", 0, Json{{"Transform", {{"position", {{"x", 5}, {"y", 1}, {"z", 0}}}}}, {"RigidBody", {{"kind", 1}}}, {"Collider", {{"shape", 0}, {"size", {{"x", 0.02}, {"y", 1}, {"z", 2}}}}}});
     auto fire = [&](const char* name, Vec3 pos, Json collider, Vec3 vel) {
         return w.spawn(name, 0, Json{{"Transform", {{"position", {{"x", pos.x}, {"y", pos.y}, {"z", pos.z}}}}}, {"RigidBody", {{"kind", 0}, {"ccd", true}, {"gravity_scale", 0.0}, {"restitution", 0.0}}}, {"Collider", collider}, {"Velocity", {{"linear", {{"x", vel.x}, {"y", vel.y}, {"z", vel.z}}}}}}).value();
     };
@@ -1106,7 +1106,7 @@ TEST_CASE("a character walking through a trigger enters and leaves it", "[physic
     World w;
     physics::Physics p;
     ground(w);
-    w.spawn("Zone", 0, Json{{"Transform", {{"position", {{"x", 2}, {"y", 1}, {"z", 0}}}}}, {"RigidBody", {{"kind", 1}}}, {"Collider", {{"shape", 0}, {"is_trigger", true}, {"size", {{"x", 0.5}, {"y", 1}, {"z", 1}}}}}}).value();
+    (void)w.spawn("Zone", 0, Json{{"Transform", {{"position", {{"x", 2}, {"y", 1}, {"z", 0}}}}}, {"RigidBody", {{"kind", 1}}}, {"Collider", {{"shape", 0}, {"is_trigger", true}, {"size", {{"x", 0.5}, {"y", 1}, {"z", 1}}}}}}).value();
     const EntityId hero = character(w, "Hero", {0, 0.9f, 0});
     walk(p, w, hero, {3, 0, 0}, 40);   // two units along: in the middle of the zone
     auto hist = w.events().histogram();
@@ -1154,7 +1154,7 @@ float yaw_of(const World& w, EntityId who) {
 TEST_CASE("a vehicle settles on its springs, drives to its top speed, turns and brakes", "[physics][vehicle]") {
     World w;
     physics::Physics p;
-    w.spawn("Ground", 0, Json{{"Transform", {{"position", {{"x", 0}, {"y", -0.5}, {"z", 0}}}}}, {"RigidBody", {{"kind", 1}}}, {"Collider", {{"shape", 0}, {"size", {{"x", 400}, {"y", 0.5}, {"z", 400}}}}}}).value();
+    (void)w.spawn("Ground", 0, Json{{"Transform", {{"position", {{"x", 0}, {"y", -0.5}, {"z", 0}}}}}, {"RigidBody", {{"kind", 1}}}, {"Collider", {{"shape", 0}, {"size", {{"x", 400}, {"y", 0.5}, {"z", 400}}}}}}).value();
     const EntityId c = car(w, {0, 1.2f, 0});
     drive(p, w, c, 0, 0, 0, 180);
     const Vehicle* v = w.try_get<Vehicle>(c);
@@ -1208,7 +1208,7 @@ EntityId lake(World& w, Json water) {
 TEST_CASE("what is lighter than water floats at its level and what is heavier sinks", "[physics][water]") {
     World w;
     physics::Physics p;
-    w.spawn("Bottom", 0, Json{{"Transform", {{"position", {{"x", 0}, {"y", -4.5}, {"z", 0}}}}}, {"RigidBody", {{"kind", 1}}}, {"Collider", {{"shape", 0}, {"size", {{"x", 20}, {"y", 0.5}, {"z", 20}}}}}}).value();
+    (void)w.spawn("Bottom", 0, Json{{"Transform", {{"position", {{"x", 0}, {"y", -4.5}, {"z", 0}}}}}, {"RigidBody", {{"kind", 1}}}, {"Collider", {{"shape", 0}, {"size", {{"x", 20}, {"y", 0.5}, {"z", 20}}}}}}).value();
     const EntityId water = lake(w, Json::object());
     // A unit cube of mass 1 in water of density 2 displaces its weight half under: centred on the surface.
     const EntityId cork = body(w, "Cork", 0, {-3, 2, 0}, 0.5f, Json{{"mass", 1.0}});
@@ -1446,7 +1446,7 @@ TEST_CASE("a character is shoved by what runs into it: a heavy body far, a light
         physics::Physics p;
         solid(w, "Floor", {0, -0.5f, 0}, {30, 0.5f, 30});
         const EntityId hero = person(w, "Hero", 0);
-        w.spawn("Rock", 0, Json{{"Transform", {{"position", {{"x", -2.5}, {"y", 0.9}, {"z", 0}}}}}, {"RigidBody", {{"kind", 0}, {"mass", mass}}},
+        (void)w.spawn("Rock", 0, Json{{"Transform", {{"position", {{"x", -2.5}, {"y", 0.9}, {"z", 0}}}}}, {"RigidBody", {{"kind", 0}, {"mass", mass}}},
                                 {"Collider", {{"shape", 1}, {"size", {{"x", 0.5}, {"y", 0.5}, {"z", 0.5}}}}}, {"Velocity", {{"linear", {{"x", 8}, {"y", 0}, {"z", 0}}}}}}).value();
         walk(p, w, hero, {}, 90);
         const float moved = w.try_get<Transform>(hero)->position.x;

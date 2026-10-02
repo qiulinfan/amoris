@@ -16,15 +16,24 @@ def _find(text, old):
     return found[0]
 
 
+# UTF-8 with LF on every host (Windows' default would be its code page and CRLF).
+def _read(path):
+    return open(path, encoding="utf-8").read()
+
+
+def _write(path, text):
+    open(path, "w", encoding="utf-8", newline="\n").write(text)
+
+
 def replace(path, old, new):
-    text = open(path).read()
+    text = _read(path)
     m = _find(text, old)
-    open(path, "w").write(text[:m.start()] + new + text[m.end():])
+    _write(path, text[:m.start()] + new + text[m.end():])
     print("ok", path)
 
 
 def append_after(path, old, new):
-    text = open(path).read()
+    text = _read(path)
     m = _find(text, old)
-    open(path, "w").write(text[:m.end()] + new + text[m.end():])
+    _write(path, text[:m.end()] + new + text[m.end():])
     print("ok", path)

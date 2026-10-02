@@ -39,7 +39,7 @@ pub fn doctor(ws: &Workspace) -> Result<Report> {
     };
     // Web readiness (docs/web.md): the Emscripten SDK and fontTools for font subsetting.
     let emsdk = toolchain::emsdk().ok().map(|s| s.root.to_string_lossy().into_owned());
-    let fonttools = toolchain::command("python3").args(["-c", "import fontTools; print(fontTools.version)"]).output().ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+    let fonttools = toolchain::python().and_then(|py| toolchain::command(&py).args(["-c", "import fontTools; print(fontTools.version)"]).output().ok()).filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
     rep.data = json!({ "toolchain": tc, "dependencies": statuses, "modules": ws.modules.keys().collect::<Vec<_>>(), "web": { "emsdk": emsdk, "fonttools": fonttools } });
     Ok(rep)
 }
@@ -88,6 +88,9 @@ pub fn build_targets(ws: &Workspace, config: &str, targets: &[String], generate_
         }
     }
     let gen = ninja::generate(ws, &graph, &tc, config)?;
+    if target == "native" {
+        sync_runtime_files(ws, config, &tc, &gen.build_dir.join("bin"))?;
+    }
     let ninja_bin = tc.ninja.clone().context("ninja not found on PATH")?;
     // compile_commands.json for clangd and every IDE.
     let compdb = toolchain::command(&ninja_bin).arg("-C").arg(&gen.build_dir).args(["-t", "compdb", "cxx", "objcxx", "cc"]).output()?;
@@ -109,6 +112,41 @@ pub fn build_targets(ws: &Workspace, config: &str, targets: &[String], generate_
     let out = cmd.output().context("running ninja")?;
     let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
     Ok(BuildOutcome { ok: out.status.success(), output: text, build_dir: gen.build_dir })
+}
+
+/// What the executables need beside them at run time: the dependencies' `runtime_files` (Windows'
+/// pocket_jsc.dll) and, in a configuration built with AddressSanitizer on Windows, its runtime DLL.
+/// Copied when missing or different, so every launcher (tests, scripts, packs) finds them.
+fn sync_runtime_files(ws: &Workspace, config: &str, tc: &toolchain::Toolchain, bin: &Path) -> Result<()> {
+    let mut files: Vec<PathBuf> = vec![];
+    for d in &ws.file.dependencies {
+        if deps::applies(d, "native") {
+            let pfx = deps::prefix(ws, d);
+            files.extend(d.runtime_files.iter().map(|f| pfx.join(f)));
+        }
+    }
+    let cfg = ws.config(config)?;
+    if tc.host_os == "windows" && cfg.cxx_flags.iter().any(|f| f.starts_with("-fsanitize=") && f.contains("address")) {
+        let out = toolchain::command(&tc.cxx).arg("-print-runtime-dir").output()?;
+        let dir = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
+        files.push(dir.join("clang_rt.asan_dynamic-x86_64.dll"));
+    }
+    if files.is_empty() {
+        return Ok(());
+    }
+    toolchain::ensure_dir(bin)?;
+    for f in files {
+        let Some(name) = f.file_name() else { continue };
+        let dst = bin.join(name);
+        let same = |a: &Path, b: &Path| match (std::fs::metadata(a), std::fs::metadata(b)) {
+            (Ok(x), Ok(y)) => x.len() == y.len() && x.modified().ok() <= y.modified().ok(),
+            _ => false,
+        };
+        if !same(&f, &dst) {
+            std::fs::copy(&f, &dst).with_context(|| format!("copying {} to {}", f.display(), dst.display()))?;
+        }
+    }
+    Ok(())
 }
 
 pub fn build(ws: &Workspace, config: &str, targets: &[String], generate_only: bool) -> Result<Report> {
@@ -138,7 +176,8 @@ pub fn tail(s: &str, n: usize) -> String {
 pub fn exe_path(ws: &Workspace, config: &str, module: &str) -> Result<PathBuf> {
     let m = ws.modules.get(module).ok_or_else(|| anyhow!("unknown module {module}"))?;
     let out = m.file.output.clone().unwrap_or_else(|| module.to_string());
-    Ok(ws.build_dir(config).join("bin").join(out))
+    let native = ws.target_of(config).map(|t| t == "native").unwrap_or(true);
+    Ok(ws.build_dir(config).join("bin").join(if native { toolchain::exe_name(&out, std::env::consts::OS) } else { out }))
 }
 
 /// Locate a sample or project directory by name.
@@ -1060,7 +1099,7 @@ pub fn test(ws: &Workspace, config: &str, filter: Option<&str>) -> Result<Report
     // python3 is on PATH: they drive the built runtime over its JSON-RPC server.
     let mut python_result = json!(null);
     if filter.map(|f| "python".contains(f)).unwrap_or(true) {
-        if let Some(python) = toolchain::which("python3") {
+        if let Some(python) = toolchain::python() {
             let started = Instant::now();
             let out = toolchain::command(&python).arg(ws.root.join("sdk").join("python").join("test_pocket_env.py")).current_dir(&ws.root).env("POCKET_ROOT", &ws.root).env("POCKET_CONFIG", config).output()?;
             let ok = out.status.success();

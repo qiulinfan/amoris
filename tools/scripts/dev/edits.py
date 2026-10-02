@@ -10,13 +10,14 @@ in the wrong place.
 
 
 def patch(path, pairs):
-    with open(path) as f:
+    # UTF-8 with LF on every host (Windows' default would be its code page and CRLF).
+    with open(path, encoding="utf-8") as f:
         text = f.read()
     for old, new in pairs:
         n = text.count(old)
         if n != 1:
             raise AssertionError(f"{path}: expected one match, found {n}: {old[:80]!r}")
         text = text.replace(old, new)
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
         f.write(text)
     print("ok", path)

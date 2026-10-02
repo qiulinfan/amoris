@@ -25,6 +25,11 @@ pub fn generate(ws: &Workspace, graph: &Graph, tc: &Toolchain, config: &str) -> 
     let cfg = ws.config(config)?;
     let target = ws.target_of(config)?;
     let wasm = target == "wasm";
+    // Native Windows: clang++ for the MSVC ABI, the dynamic C runtime (wgpu-native's Rust code
+    // expects it), lld, llvm-lib, `.lib` and `.exe` names, and response files (no shell runs
+    // Ninja's commands there, and a command line stops at 32 KiB).
+    let windows = tc.host_os == "windows" && target == "native";
+    let os = if windows { "windows" } else { "" };
     let build_dir = ws.build_dir(config);
     toolchain::ensure_dir(&build_dir)?;
     let mut n = String::new();
@@ -44,6 +49,16 @@ pub fn generate(ws: &Workspace, graph: &Graph, tc: &Toolchain, config: &str) -> 
         }
     }
     common.push("-fdiagnostics-absolute-paths".into());
+    if windows {
+        common.push("-fms-runtime-lib=dll".into());
+        // <windows.h> without min/max macros or the rarely used half; the C library's POSIX
+        // names, functions without deprecation notes and M_PI; the standard library's conforming
+        // over-aligned temporary buffers (std::stable_sort of 16-byte aligned draws). Engine code
+        // calls the W (UTF-16) Win32 functions by name.
+        for d in ["NOMINMAX", "WIN32_LEAN_AND_MEAN", "_CRT_SECURE_NO_WARNINGS", "_CRT_NONSTDC_NO_DEPRECATE", "_USE_MATH_DEFINES", "_ENABLE_EXTENDED_ALIGNED_STORAGE"] {
+            common.push(format!("-D{d}"));
+        }
+    }
     for d in ws.file.toolchain.defines.iter().chain(cfg.defines.iter()) {
         common.push(format!("-D{d}"));
     }
@@ -57,11 +72,25 @@ pub fn generate(ws: &Workspace, graph: &Graph, tc: &Toolchain, config: &str) -> 
     writeln!(n, "rule cxx\n  command = $cxx -MD -MF $out.d $cxxflags $warn $flags -c $in -o $out\n  depfile = $out.d\n  deps = gcc\n  description = CXX $out")?;
     writeln!(n, "rule objcxx\n  command = $cxx -x objective-c++ -fobjc-arc -MD -MF $out.d $cxxflags $warn $flags -c $in -o $out\n  depfile = $out.d\n  deps = gcc\n  description = OBJCXX $out")?;
     writeln!(n, "rule cc\n  command = $cc -MD -MF $out.d $cflags $warn $flags -c $in -o $out\n  depfile = $out.d\n  deps = gcc\n  description = CC $out")?;
-    writeln!(n, "rule ar\n  command = rm -f $out && $ar rcs $out $in\n  description = AR $out")?;
+    if windows {
+        // llvm-lib writes the archive afresh, so a removed source leaves no stale object.
+        writeln!(n, "rule ar\n  command = $ar /nologo /out:$out @$out.rsp\n  rspfile = $out.rsp\n  rspfile_content = $in\n  description = AR $out")?;
+    } else {
+        writeln!(n, "rule ar\n  command = rm -f $out && $ar rcs $out $in\n  description = AR $out")?;
+    }
     // On Linux the static libraries go in a group (GNU-style linkers read archives once, in order)
-    // and lld links; Apple's linker resolves archives in any order.
+    // and lld links; Apple's linker resolves archives in any order, and so does lld-link.
     let linux = tc.host_os == "linux" && !wasm;
-    if linux {
+    if windows {
+        // The response file is read with Windows quoting (backslashes are path separators). The
+        // driver asks for the static C runtime (libcmt) whatever the objects say: refuse it, so
+        // only the dynamic one they were compiled for is linked; `-D_DLL` is how it learns that
+        // runtime for AddressSanitizer's thunk. An 8 MB main-thread stack as macOS gives
+        // (Windows' default is 1 MB; JavaScriptCore sizes its limit from it), and debug
+        // information into a PDB beside the executable. DbgHelp is flecs's (for backtraces; its
+        // own request for it is made only under MSVC's compiler).
+        writeln!(n, "rule link\n  command = $cxx -fuse-ld=lld -g -D_DLL -Wno-unused-command-line-argument $ldflags -o $out --rsp-quoting=windows @$out.rsp $libs -ldbghelp -Wl,/NODEFAULTLIB:libcmt -Wl,/STACK:8388608\n  rspfile = $out.rsp\n  rspfile_content = $in\n  description = LINK $out")?;
+    } else if linux {
         writeln!(n, "rule link\n  command = $cxx -fuse-ld=lld $ldflags -o $out -Wl,--start-group $in -Wl,--end-group $libs -ldl -lpthread -lm\n  description = LINK $out")?;
     } else {
         writeln!(n, "rule link\n  command = $cxx $ldflags -o $out $in $libs\n  description = LINK $out")?;
@@ -99,7 +128,7 @@ pub fn generate(ws: &Workspace, graph: &Graph, tc: &Toolchain, config: &str) -> 
         let objs_str: Vec<String> = objs.iter().map(|o| pesc(o)).collect();
         match m.kind.as_str() {
             "static_library" => {
-                let lib = build_dir.join("lib").join(format!("lib{name}.a"));
+                let lib = build_dir.join("lib").join(toolchain::static_lib_name(name, os));
                 if objs.is_empty() {
                     writeln!(n, "build {name}: phony")?;
                 } else {
@@ -109,13 +138,13 @@ pub fn generate(ws: &Workspace, graph: &Graph, tc: &Toolchain, config: &str) -> 
             }
             _ => {
                 // Emscripten emits <name>.js plus <name>.wasm beside it.
-                let exe = if wasm { build_dir.join("bin").join(format!("{}.js", m.output)) } else { build_dir.join("bin").join(&m.output) };
+                let exe = if wasm { build_dir.join("bin").join(format!("{}.js", m.output)) } else { build_dir.join("bin").join(toolchain::exe_name(&m.output, os)) };
                 let mut inputs = objs_str.clone();
                 let mut libs: Vec<String> = vec![];
                 for lm in &m.link_modules {
                     let Some(dep) = graph.modules.get(lm) else { continue };
                     if !dep.sources.is_empty() {
-                        inputs.push(pesc(&build_dir.join("lib").join(format!("lib{lm}.a"))));
+                        inputs.push(pesc(&build_dir.join("lib").join(toolchain::static_lib_name(lm, os))));
                     }
                 }
                 let mut frameworks: Vec<String> = if wasm { vec![] } else { m.frameworks.clone() };

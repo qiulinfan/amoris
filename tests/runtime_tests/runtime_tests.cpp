@@ -11,6 +11,12 @@
 #pragma clang diagnostic ignored "-Weverything"
 #include <httplib.h>
 #pragma clang diagnostic pop
+#ifdef _WIN32
+// <windows.h>, which httplib brings in on Windows, makes these words macros.
+#undef near
+#undef far
+#undef small
+#endif
 
 #include <chrono>
 #include <cmath>
@@ -7388,7 +7394,7 @@ TEST_CASE("a Scatter strews copies over the ground within its limits, the same e
         first = copies;
         // Raising the ground under a copy lifts it; lowering the scatter's bounds re-places it.
         const Json c0 = copies[0];
-        s.command("terrain.sculpt", Json{{"x", c0["x"]}, {"z", c0["z"]}, {"radius", 2}, {"amount", 0.5}}).value();
+        (void)s.command("terrain.sculpt", Json{{"x", c0["x"]}, {"z", c0["z"]}, {"radius", 2}, {"amount", 0.5}}).value();
         Json after = s.command("scatter.copies", Json{{"entity", "Bushes"}, {"limit", 20000}}).value()["copies"];
         bool lifted = false;
         for (const Json& c : after) if (std::hypot(c["x"].get<double>() - c0["x"].get<double>(), c["z"].get<double>() - c0["z"].get<double>()) < 1e-4 && c["y"].get<double>() > c0["y"].get<double>() + 0.3) lifted = true;
@@ -7622,14 +7628,14 @@ TEST_CASE("paint on a terrain: laid on and erased by a brush, drawn, answered by
     REQUIRE(info["painted"].get<double>() > 0);
     REQUIRE(info["painted"].get<double>() < 0.05);
     // Blue laid half over the red mixes them; erasing at full strength takes the paint away.
-    s.command("terrain.paint", Json{{"x", px}, {"z", pz}, {"color", Json{{"r", 0}, {"g", 0}, {"b", 1}}}, {"radius", 3}, {"amount", 0.5}}).value();
+    (void)s.command("terrain.paint", Json{{"x", px}, {"z", pz}, {"color", Json{{"r", 0}, {"g", 0}, {"b", 1}}}, {"radius", 3}, {"amount", 0.5}}).value();
     centre = ground(px, pz)["paint"];
     REQUIRE(centre["r"].get<double>() == Catch::Approx(0.5).margin(0.03));
     REQUIRE(centre["b"].get<double>() == Catch::Approx(0.5).margin(0.03));
     REQUIRE(centre["a"].get<double>() == Catch::Approx(1).margin(0.03));
     REQUIRE(s.command("terrain.paint", Json{{"x", px}, {"z", pz}, {"mode", "erase"}, {"radius", 3}, {"amount", 1}}).value()["paint"]["a"].get<double>() < 0.03);
     REQUIRE_FALSE(s.command("terrain.paint", Json{{"x", px}, {"z", pz}}).has_value());   // painting needs a colour
-    s.command("terrain.paint", Json{{"x", px}, {"z", pz}, {"color", Json{{"r", 0.2}, {"g", 0.8}, {"b", 0.3}}}, {"radius", 3}, {"amount", 1}}).value();
+    (void)s.command("terrain.paint", Json{{"x", px}, {"z", pz}, {"color", Json{{"r", 0.2}, {"g", 0.8}, {"b", 0.3}}}, {"radius", 3}, {"amount", 1}}).value();
     // The grid read and set back whole (the editor's undo) is the same paint.
     const Json grid = s.command("terrain.paints", Json::object()).value();
     REQUIRE(grid["paint"].size() == 129u * 129u * 4u);
@@ -7694,11 +7700,11 @@ void play_peer(app::Options o, int until, const char* action, int sign, std::pro
         const std::int64_t tick = s.command("state", Json::object()).value()["tick"].get<std::int64_t>();
         if (tick >= until || std::chrono::steady_clock::now() > deadline) break;
         if (!held && tick >= hold_at) {
-            s.command("input.hold", Json{{"action", action}, {"ticks", 60}, {"sign", sign}}).value();
+            (void)s.command("input.hold", Json{{"action", action}, {"ticks", 60}, {"sign", sign}}).value();
             held = true;
         }
         if (perturb_at >= 0 && !perturbed && tick >= perturb_at) {
-            s.command("world.set", Json{{"entity", "Ball"}, {"component", "Transform"}, {"value", Json{{"position", Json{{"x", 3}}}}}}).value();
+            (void)s.command("world.set", Json{{"entity", "Ball"}, {"component", "Transform"}, {"value", Json{{"position", Json{{"x", 3}}}}}}).value();
             perturbed = true;
         }
         if (auto r = s.frame(); !r) { out.error = r.error().to_string(); break; }
