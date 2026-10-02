@@ -358,16 +358,24 @@ and how to add a task.
 
 ## Current state (2026-10-02)
 
-- **In flight on the reference machine**: the full 72-task benchmark on opencode with GLM 5.3 Flash
-  (`build/agent-traces/full72`), started at `b0616f2` with a frozen runtime; 53 of 53 passed at the
-  last look. When it ends: save `report.json` as
-  `tests/evidence/agent-eval/opencode-glm-full72.json`, compare with `opencode-glm-full67.json`, add
-  a Results entry (it shared the machine with builds and the OBJ stress runs), then regenerate
-  `tests/evidence/agent-eval/reference.json` and `null.json` for the 72 tasks. Commits after
-  `b0616f2` (crouch, nested spawn children, shove, mantle and later) are not measured by it.
+- **Last benchmark**: the full 72-task run on opencode with GLM 5.3 Flash, 71 of 72 on the runtime
+  frozen at `b0616f2` (`tests/evidence/agent-eval/opencode-glm-full72.json`; `slow_swarm` failed at
+  the time limit and passed when run again; docs/agent-eval.md, Results). `reference.json` and
+  `null.json` cover the 72 tasks. Commits after `b0616f2` (crouch, nested spawn children, shove,
+  mantle and later) are not measured by it.
+- **Known failure at the pause** (suite of 2026-10-02 14:53, 23 of 24 modules): `scenarios:arena`.
+  Red runs the ball at Blue, who stands in its way, and no goal comes within 5 s; Blue is pushed
+  from z -6 to -9.9. Cause, from 0db76ac5 (character shoves): a dynamic body that runs into a
+  character now has its speed toward it braked, so the ball stops against Blue instead of glancing
+  off; and the skin distance a character gives way by each tick (`kSkin * 0.5` in `move_characters`,
+  step 2) is not scaled by the mass share, so a light ball pressed on by Red walks Blue along
+  whatever Blue's mass (shown with `Character.mass` at 1e9). Not fixed: development is paused.
 - **Next work**, in order: the OBJ import fixes and the cheap visible-quality fixes of
   `docs/research/2026-10-02-rendering-and-import-assessment.md` (Plan); the editor's look (the owner
   asked for it to be made nicer, 2026-10-02); Grass on `samples/hills` (deferred because benchmark
   tasks copy that sample: add it only between runs).
-- **Waiting on the owner**: accepting the Android SDK licence (Android is blocked until then); a
-  decision on Windows (see the Windows estimate when it lands in `docs/research/`).
+- **Waiting on the owner**: their own Google OAuth client for the large-file store (AGENTS.md, Test
+  data; nothing is stored there until it exists); accepting the Android SDK licence (Android is
+  blocked until then); a decision on Windows: `docs/research/2026-10-02-windows-port-estimate.md`
+  (WSL2 for development within days; a native port in about three to eight weeks of agent work, with
+  a Windows machine, Microsoft's build tools licence and three decisions only the owner can make).

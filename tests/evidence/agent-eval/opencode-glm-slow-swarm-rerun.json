@@ -1,0 +1,59 @@
+{
+  "runner": "python3 tools/scripts/runners/opencode_agent.py --via mcp",
+  "passed": 1,
+  "total": 1,
+  "seconds": 661.7,
+  "tasks": [
+    {
+      "name": "slow_swarm",
+      "project": "blank",
+      "ok": true,
+      "seconds": 661.7,
+      "detail": "same swarm, 5.49 -> 0.10 ms of script a tick",
+      "answer": null,
+      "error": "runner exited 247: opencode exited -9",
+      "metrics": {
+        "agent": "opencode",
+        "via": "mcp",
+        "model": "zai-coding-plan/glm-5.3-flash",
+        "seconds": 660.0,
+        "turns": 20,
+        "tool_calls": 23,
+        "tools": {
+          "pocket_runtime_command": 8,
+          "read": 2,
+          "grep": 5,
+          "pocket_docs_search": 1,
+          "bash": 3,
+          "write": 1,
+          "pocket_pocket_check": 2,
+          "edit": 1
+        },
+        "tool_errors": 1,
+        "tokens": {
+          "input": 57056,
+          "output": 3282,
+          "reasoning": 17263,
+          "cache_read": 806528,
+          "total": 884129
+        },
+        "cost_usd": 0.0
+      },
+      "trace": {
+        "turns": 20,
+        "tokens": 866866,
+        "calls": 23,
+        "read_kb": 18.5,
+        "failed_calls": 1,
+        "calls_before_edit": 15,
+        "calls_after_edit": 7,
+        "stuck": false
+      }
+    }
+  ],
+  "totals": {
+    "cost_usd": 0.0,
+    "tokens": 884129,
+    "tool_calls": 23
+  }
+}

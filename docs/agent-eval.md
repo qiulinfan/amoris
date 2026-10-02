@@ -593,6 +593,28 @@ changes made while the run went on, `world.schema` answers a name it does not ha
   ones went to oh-my-pi (`omp`) with DeepSeek over MCP the same night: 3 of 3 at the first try in
   158 seconds, 56 tool calls, 2.4 cents (`omp-deepseek-sea-grass-boat.json`): the sailboat in 30
   seconds and 15 calls.
+- **Seventy-two on opencode.** The sixty-seven and the five added since (`sea_around`, `meadow`,
+  `sailboat`, `village_weather`, `wolves`) went to opencode with GLM 5.3 Flash over MCP on
+  2026-10-02, on the runtime frozen at `b0616f2`: 71 of 72 at the first try in 215 minutes, 32.4
+  million tokens, 1031 tool calls (`opencode-glm-full72.json`). Of the sixty-seven both runs had, 66
+  passed against 63, in 201 minutes against 191, with 956 calls against 993 and 30.6 million tokens
+  against 30.8. `reed_field`, whose full67 failure led to `Scatter.collide` in world units, passed
+  in 93 seconds and 8 calls; `snake`, `platformer` and `sokoban`, stopped at 660 seconds in full67,
+  passed, though `snake` and `platformer` again ran to the limit with their games already right (as
+  did `merchant_talk` and `fireworks`). `slow_swarm` failed at the limit, and not on the engine: the
+  agent had a script 30 to 40 times faster (0.122 ms a tick) in place about ten minutes in, then put
+  the original back to take its baseline again from a fresh start, to show the two the same tick by
+  tick, and was stopped with the original in place, so the check measured 5.46 ms against 5.77. Run
+  again alone it passed, 5.49 ms down to 0.10, again stopped at the limit with the work done
+  (`opencode-glm-slow-swarm-rerun.json`): this model checks until the clock runs out. The run shared
+  the machine with another session's builds and OBJ load measurements, a Rust toolchain install and
+  read-only review agents, so its times are not the engine's alone. `docs_search` was called 64
+  times (53 in full67). Of the 19 failed calls, seven were opencode's own read and edit tools; the
+  engine refused the rest, among them `runtime_commands {family}` twice, `recorder.track` twice,
+  `world.query {name}` and `pocket_step {watch}` with a field path. Two agents read the repository's
+  samples by absolute path (`samples/swarm`, `samples/assets/tree.voxels`): not the harness, so not
+  counted as peeking, but outside their copies. The reference runner passes all 72 tasks in 23
+  seconds and the null runner none (`reference.json`, `null.json`).
 - **Two games more.** `pause_menu` and `breakout` went to opencode with GLM 5.3 Flash the day they
   were added: 2 of 2 at the first try (`opencode-glm-games2.json`). The menu took 274 seconds and 33
   calls; the agent read the interface documentation, went looking for an example and read the UI

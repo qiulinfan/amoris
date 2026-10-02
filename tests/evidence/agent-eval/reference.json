@@ -1,14 +1,14 @@
 {
   "runner": "reference",
-  "passed": 57,
-  "total": 57,
-  "seconds": 18.2,
+  "passed": 72,
+  "total": 72,
+  "seconds": 23.4,
   "tasks": [
     {
       "name": "spawn_named",
       "project": "hello",
       "ok": true,
-      "seconds": 0.4,
+      "seconds": 0.1,
       "detail": "a red cube at (2, 1, -3)",
       "answer": null,
       "error": null
@@ -26,7 +26,7 @@
       "name": "tile_edit",
       "project": "sprites",
       "ok": true,
-      "seconds": 0.2,
+      "seconds": 0.1,
       "detail": "cell (3, 2) on ground holds gid 1",
       "answer": null,
       "error": null
@@ -35,7 +35,7 @@
       "name": "clear_enemies",
       "project": "playground",
       "ok": true,
-      "seconds": 0.3,
+      "seconds": 0.2,
       "detail": "0 enemies remain",
       "answer": null,
       "error": null
@@ -125,7 +125,7 @@
       "name": "coin_respawn",
       "project": "sprites",
       "ok": true,
-      "seconds": 0.3,
+      "seconds": 0.2,
       "detail": "6 coins, 5 once taken, 5 after 1.7 s, 6 after 3.2 s",
       "answer": null,
       "error": null
@@ -179,7 +179,7 @@
       "name": "hill_raise",
       "project": "hills",
       "ok": true,
-      "seconds": 0.9,
+      "seconds": 0.2,
       "detail": "the ground at (20.0, -20.0) raised to 10.28, nothing moved 12 units away",
       "answer": 10.282926559448242,
       "error": null
@@ -197,7 +197,7 @@
       "name": "flowers",
       "project": "hills",
       "ok": true,
-      "seconds": 0.2,
+      "seconds": 0.3,
       "detail": "164 red flowers on the hills, none on ground steeper than 19.9 degrees",
       "answer": null,
       "error": null
@@ -217,6 +217,33 @@
       "ok": true,
       "seconds": 0.3,
       "detail": "health used up, the hero limp on 11 bodies with its head at 0.19, the player still (0.00)",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "fps_shotgun",
+      "project": "fps",
+      "ok": true,
+      "seconds": 0.4,
+      "detail": "one shot is 6 pellet hits of 8 spread over 6 points; six shots to a magazine",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "farm_rain",
+      "project": "farm",
+      "ok": true,
+      "seconds": 2.2,
+      "detail": "no rain on a timer nor with two dry plots; rain within two seconds of the third, stopping once all three were watered",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "guards_footsteps",
+      "project": "guards",
+      "ok": true,
+      "seconds": 0.4,
+      "detail": "walking makes noises that carry [4.0] and a guard three away comes; standing makes none",
       "answer": null,
       "error": null
     },
@@ -242,7 +269,7 @@
       "name": "sand_road",
       "project": "hills",
       "ok": true,
-      "seconds": 0.2,
+      "seconds": 0.3,
       "detail": "a sand road from x -30 to 30 along z 0, the ground beside it as it was",
       "answer": 1.0,
       "error": null
@@ -263,6 +290,42 @@
       "seconds": 0.2,
       "detail": "a cloudy sunset from the west, the sun light 0.55, 0.28, 0.05, a wind of 12 toward +x",
       "answer": 0.547944188117981,
+      "error": null
+    },
+    {
+      "name": "sea_around",
+      "project": "hills",
+      "ok": true,
+      "seconds": 0.2,
+      "detail": "a sea every way at 3.2 (answered 3.200000047683716), clouds over 0.5 of the sky, volumetric",
+      "answer": 3.200000047683716,
+      "error": null
+    },
+    {
+      "name": "meadow",
+      "project": "hills",
+      "ok": true,
+      "seconds": 0.2,
+      "detail": "grass on the grass layer from 3.5 up, out to 30.0, 57600 cells round the camera",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "sailboat",
+      "project": "blank",
+      "ok": true,
+      "seconds": 0.2,
+      "detail": "the Sloop sails before the wind: 7.7 units along +x in five seconds, afloat",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "snowy_evening",
+      "project": "hills",
+      "ok": true,
+      "seconds": 0.3,
+      "detail": "snow at 0.7 on ground wholly white, the day running from 17:30 (answered 17.90), 4900 flakes drawn",
+      "answer": 17.900543212890625,
       "error": null
     },
     {
@@ -296,7 +359,7 @@
       "name": "blender_level",
       "project": "assets",
       "ok": true,
-      "seconds": 1.5,
+      "seconds": 2.1,
       "detail": "a level from Blender: a static floor it collides with at 1.5, a pillar with 50 health",
       "answer": 1.494999885559082,
       "error": null
@@ -305,7 +368,7 @@
       "name": "calm_lake",
       "project": "hills",
       "ok": true,
-      "seconds": 0.2,
+      "seconds": 0.3,
       "detail": "a still, clear lake at 3.70",
       "answer": 3.700000047683716,
       "error": null
@@ -350,7 +413,7 @@
       "name": "plank_bridge",
       "project": "crates",
       "ok": true,
-      "seconds": 0.4,
+      "seconds": 0.2,
       "detail": "five planks hang between the points, lowest at 3.841",
       "answer": 3.8410396575927734,
       "error": null
@@ -392,6 +455,78 @@
       "error": null
     },
     {
+      "name": "platformer",
+      "project": "blank",
+      "ok": true,
+      "seconds": 0.2,
+      "detail": "the level's solid cells, standing at the start, walking at 6, a jump of 2.43, a death in the pit, the flag",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "sokoban",
+      "project": "blank",
+      "ok": true,
+      "seconds": 0.2,
+      "detail": "walls and two boxes in a row stop a move, a move and its undo, a push, a box against a wall, solved in 4 moves",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "villagers",
+      "project": "blank",
+      "ok": true,
+      "seconds": 0.3,
+      "detail": "five humanoids in five looks wander within 6 (5 walking), one stops, faces the Player and waves, then wanders again",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "village_weather",
+      "project": "blank",
+      "ok": true,
+      "seconds": 0.2,
+      "detail": "the square kept, rain at 0.8, 20:00, four lamps that light after dark by the houses",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "wolves",
+      "project": "blank",
+      "ok": true,
+      "seconds": 0.3,
+      "detail": "each wolf ran at its nearest sheep and turned to one put behind it; 4 caught, 0 left",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "fireworks",
+      "project": "blank",
+      "ok": true,
+      "seconds": 0.2,
+      "detail": "a rocket with a trail rises 6 in half a second, bursts at 12 into 100 or more glowing sparks, three in all",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "glade",
+      "project": "blank",
+      "ok": true,
+      "seconds": 0.2,
+      "detail": "a grass ground, 4 trees and 3 rocks without files, a campfire with a point light, glowing flames and smoke, a sound and sparks on stoke",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "watchman",
+      "project": "blank",
+      "ok": true,
+      "seconds": 0.2,
+      "detail": "walks its beat at 2, chases at 4 what it sees, back on the beat after the Player is out of sight 2 s (3 states)",
+      "answer": null,
+      "error": null
+    },
+    {
       "name": "key_door",
       "project": "blank",
       "ok": true,
@@ -404,7 +539,7 @@
       "name": "grey_flashback",
       "project": "crates",
       "ok": true,
-      "seconds": 0.3,
+      "seconds": 0.4,
       "detail": "1 effect(s); the crates and the car are grey",
       "answer": null,
       "error": null
@@ -462,7 +597,7 @@
       "project": "blank",
       "ok": true,
       "seconds": 1.7,
-      "detail": "same swarm, 5.67 -> 0.37 ms of script a tick",
+      "detail": "same swarm, 5.55 -> 0.36 ms of script a tick",
       "answer": null,
       "error": null
     },
@@ -507,7 +642,7 @@
       "project": "blank",
       "ok": true,
       "seconds": 1.1,
-      "detail": "the same 24 flags flying, a tick 7.01 -> 0.79 ms",
+      "detail": "the same 24 flags flying, a tick 6.32 -> 0.72 ms",
       "answer": null,
       "error": null
     },

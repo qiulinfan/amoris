@@ -1,14 +1,14 @@
 {
   "runner": "null",
   "passed": 0,
-  "total": 29,
-  "seconds": 50.2,
+  "total": 72,
+  "seconds": 21.0,
   "tasks": [
     {
       "name": "spawn_named",
       "project": "hello",
       "ok": false,
-      "seconds": 0.5,
+      "seconds": 0.1,
       "detail": "no entity named Beacon",
       "answer": null,
       "error": null
@@ -17,7 +17,7 @@
       "name": "recolor",
       "project": "hello",
       "ok": false,
-      "seconds": 0.4,
+      "seconds": 0.1,
       "detail": "Ball's color is {'r': 0.8999999761581421, 'g': 0.5, 'b': 0.20000000298023224, 'a': 1.0}",
       "answer": null,
       "error": null
@@ -26,7 +26,7 @@
       "name": "tile_edit",
       "project": "sprites",
       "ok": false,
-      "seconds": 0.5,
+      "seconds": 0.1,
       "detail": "cell (3, 2) on ground holds gid 0",
       "answer": null,
       "error": null
@@ -35,7 +35,7 @@
       "name": "clear_enemies",
       "project": "playground",
       "ok": false,
-      "seconds": 6.1,
+      "seconds": 0.2,
       "detail": "1 enemies remain",
       "answer": null,
       "error": null
@@ -44,7 +44,7 @@
       "name": "play_clip",
       "project": "assets",
       "ok": false,
-      "seconds": 0.5,
+      "seconds": 0.1,
       "detail": "Arm plays 'wave' loop True playing True",
       "answer": null,
       "error": null
@@ -53,8 +53,8 @@
       "name": "path_length",
       "project": "playground",
       "ok": false,
-      "seconds": 0.7,
-      "detail": "no number answered (truth 22.882)",
+      "seconds": 0.2,
+      "detail": "no number answered (truth 22.942)",
       "answer": null,
       "error": null
     },
@@ -62,7 +62,7 @@
       "name": "count_overlap",
       "project": "physics",
       "ok": false,
-      "seconds": 2.2,
+      "seconds": 0.2,
       "detail": "no number answered (truth 5)",
       "answer": null,
       "error": null
@@ -71,7 +71,7 @@
       "name": "event_cause",
       "project": "playground",
       "ok": false,
-      "seconds": 8.8,
+      "seconds": 0.3,
       "detail": "answered None, the root cause is 'entity.spawned'",
       "answer": null,
       "error": null
@@ -80,7 +80,7 @@
       "name": "night_lamp",
       "project": "hello",
       "ok": false,
-      "seconds": 0.5,
+      "seconds": 0.1,
       "detail": "the Sun's intensity is 1.2000000476837158",
       "answer": null,
       "error": null
@@ -89,7 +89,7 @@
       "name": "expose_count",
       "project": "hello",
       "ok": false,
-      "seconds": 0.6,
+      "seconds": 0.2,
       "detail": "no state key 'answer' after the reload",
       "answer": null,
       "error": null
@@ -98,7 +98,7 @@
       "name": "ball_lower",
       "project": "hello",
       "ok": false,
-      "seconds": 0.5,
+      "seconds": 0.2,
       "detail": "the ball starts its fall at y 2.9918",
       "answer": null,
       "error": null
@@ -107,7 +107,7 @@
       "name": "spawn_stars",
       "project": "hello",
       "ok": false,
-      "seconds": 0.5,
+      "seconds": 0.2,
       "detail": "no entity named Star0",
       "answer": null,
       "error": null
@@ -116,7 +116,7 @@
       "name": "double_jump",
       "project": "sprites",
       "ok": false,
-      "seconds": 1.5,
+      "seconds": 0.3,
       "detail": "rose 2.21 with jump pressed again in the air (a single jump rises 2.3)",
       "answer": null,
       "error": null
@@ -125,7 +125,7 @@
       "name": "coin_respawn",
       "project": "sprites",
       "ok": false,
-      "seconds": 2.2,
+      "seconds": 0.2,
       "detail": "6 coins, 5 once taken, 5 after 1.7 s, 5 after 3.2 s",
       "answer": null,
       "error": null
@@ -134,8 +134,35 @@
       "name": "jump_sound",
       "project": "sprites",
       "ok": false,
-      "seconds": 0.7,
+      "seconds": 0.2,
       "detail": "no sound file under assets/",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "coin_chime",
+      "project": "sprites",
+      "ok": false,
+      "seconds": 0.2,
+      "detail": "no sound recipe (.sfx) under assets/",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "theme_song",
+      "project": "sprites",
+      "ok": false,
+      "seconds": 0.2,
+      "detail": "no score (.song) under assets/",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "merchant_talk",
+      "project": "talk",
+      "ok": false,
+      "seconds": 0.2,
+      "detail": "no entity Merchant at x -2, y 2 (None)",
       "answer": null,
       "error": null
     },
@@ -143,8 +170,8 @@
       "name": "lamp_prefab",
       "project": "hello",
       "ok": false,
-      "seconds": 0.7,
-      "detail": "prefabs/lamp.json unreadable: file_not_found: cannot open /Users/qiulinfan/Desktop/aipocket/build/agent-eval/bench-lamp_prefab-50372/prefabs/lamp.json",
+      "seconds": 0.2,
+      "detail": "prefabs/lamp.json unreadable: file_not_found: cannot open /private/var/folders/nl/h1vtq2cx2rv5jvtw9ypr9p6h0000gn/T/pocket-eval-a6jx2mhb/game-32950-18/prefabs/lamp.json",
       "answer": null,
       "error": null
     },
@@ -152,8 +179,17 @@
       "name": "hill_raise",
       "project": "hills",
       "ok": false,
-      "seconds": 2.4,
+      "seconds": 0.3,
       "detail": "the ground at (20.0, -20.0) stands 3.40 high",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "yard_flag",
+      "project": "walker",
+      "ok": false,
+      "seconds": 0.2,
+      "detail": "no entity Pole at x -6, z 4 (None)",
       "answer": null,
       "error": null
     },
@@ -161,7 +197,7 @@
       "name": "flowers",
       "project": "hills",
       "ok": false,
-      "seconds": 2.2,
+      "seconds": 0.3,
       "detail": "no entity named Flowers",
       "answer": null,
       "error": null
@@ -170,8 +206,44 @@
       "name": "car_speed",
       "project": "drive",
       "ok": false,
-      "seconds": 4.1,
+      "seconds": 0.2,
       "detail": "top_speed 25.0, power 10.0",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "knockout",
+      "project": "walker",
+      "ok": false,
+      "seconds": 0.2,
+      "detail": "the Player's Health is None, not 30 of 30",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "fps_shotgun",
+      "project": "fps",
+      "ok": false,
+      "seconds": 0.4,
+      "detail": "one shot at a raider five ahead hit it 1 times, not with most of six pellets",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "farm_rain",
+      "project": "farm",
+      "ok": false,
+      "seconds": 1.4,
+      "detail": "it rains (1.00) with nothing sown, at tick 4802",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "guards_footsteps",
+      "project": "guards",
+      "ok": false,
+      "seconds": 0.4,
+      "detail": "walking makes no noise",
       "answer": null,
       "error": null
     },
@@ -179,8 +251,8 @@
       "name": "walker_sprint",
       "project": "walker",
       "ok": false,
-      "seconds": 0.6,
-      "detail": "no sprint action on LShift: ['jump', 'move_x', 'move_z']",
+      "seconds": 0.2,
+      "detail": "no sprint action on LShift: ['crouch', 'jump', 'limp', 'move_x', 'move_z']",
       "answer": null,
       "error": null
     },
@@ -188,7 +260,7 @@
       "name": "raft",
       "project": "hills",
       "ok": false,
-      "seconds": 2.1,
+      "seconds": 0.3,
       "detail": "no entity named Raft",
       "answer": null,
       "error": null
@@ -197,7 +269,7 @@
       "name": "sand_road",
       "project": "hills",
       "ok": false,
-      "seconds": 2.2,
+      "seconds": 0.2,
       "detail": "the ground at x -28, z -1 is covered 0.00",
       "answer": null,
       "error": null
@@ -206,7 +278,7 @@
       "name": "reed_field",
       "project": "hills",
       "ok": false,
-      "seconds": 2.0,
+      "seconds": 0.2,
       "detail": "no entity named Reeds",
       "answer": null,
       "error": null
@@ -215,8 +287,44 @@
       "name": "stormy_dusk",
       "project": "hills",
       "ok": false,
-      "seconds": 2.1,
+      "seconds": 0.3,
       "detail": "clouds 0.4000000059604645",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "sea_around",
+      "project": "hills",
+      "ok": false,
+      "seconds": 0.3,
+      "detail": "no water 400 units east of the origin",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "meadow",
+      "project": "hills",
+      "ok": false,
+      "seconds": 0.2,
+      "detail": "no Grass on the terrain Hills",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "sailboat",
+      "project": "blank",
+      "ok": false,
+      "seconds": 0.2,
+      "detail": "",
+      "answer": null,
+      "error": "PocketError: no_such_entity: no entity for \"Sloop\""
+    },
+    {
+      "name": "snowy_evening",
+      "project": "hills",
+      "ok": false,
+      "seconds": 0.3,
+      "detail": "no Weather in the world",
       "answer": null,
       "error": null
     },
@@ -224,7 +332,7 @@
       "name": "dirt_patch",
       "project": "hills",
       "ok": false,
-      "seconds": 2.1,
+      "seconds": 0.2,
       "detail": "sand lies at heights {'x': 0.0, 'y': 0.3100000023841858}",
       "answer": null,
       "error": null
@@ -233,7 +341,7 @@
       "name": "glass_window",
       "project": "hello",
       "ok": false,
-      "seconds": 0.5,
+      "seconds": 0.1,
       "detail": "no entity named Window",
       "answer": null,
       "error": null
@@ -242,7 +350,7 @@
       "name": "persian_locale",
       "project": "ui",
       "ok": false,
-      "seconds": 0.6,
+      "seconds": 0.2,
       "detail": "no Persian file: ['ar', 'zh']",
       "answer": null,
       "error": null
@@ -251,7 +359,7 @@
       "name": "blender_level",
       "project": "assets",
       "ok": false,
-      "seconds": 0.6,
+      "seconds": 0.2,
       "detail": "assets/level.blend has custom properties on []",
       "answer": null,
       "error": null
@@ -260,8 +368,287 @@
       "name": "calm_lake",
       "project": "hills",
       "ok": false,
-      "seconds": 1.9,
+      "seconds": 0.3,
       "detail": "the lake's waves are 0.2199999988079071 high",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "spike_trap",
+      "project": "sprites",
+      "ok": false,
+      "seconds": 0.2,
+      "detail": "no entity named Spikes",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "brute_enemies",
+      "project": "playground",
+      "ok": false,
+      "seconds": 0.2,
+      "detail": "not brutes doing 25: ['/Level/Enemy_4', '/Level/Enemy_2', '/Level/Enemy_3', '/Level/Enemy']",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "roof_mesh",
+      "project": "hello",
+      "ok": false,
+      "seconds": 0.1,
+      "detail": "no mesh named roof (made: [])",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "walled_room",
+      "project": "sprites",
+      "ok": false,
+      "seconds": 0.1,
+      "detail": "no entity named Room",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "plank_bridge",
+      "project": "crates",
+      "ok": false,
+      "seconds": 0.1,
+      "detail": "no entity named Plank0",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "dodge",
+      "project": "blank",
+      "ok": false,
+      "seconds": 0.2,
+      "detail": "no move_y action (actions: ['drop', 'move_x', 'move_z'])",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "snake",
+      "project": "blank",
+      "ok": false,
+      "seconds": 0.2,
+      "detail": "no Segment_0, Segment_1 and Segment_2 with Transforms ([None, None, None])",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "pause_menu",
+      "project": "blank",
+      "ok": false,
+      "seconds": 0.2,
+      "detail": "no pause action (actions: ['drop', 'move_x', 'move_z'])",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "breakout",
+      "project": "blank",
+      "ok": false,
+      "seconds": 0.2,
+      "detail": "no Paddle and Ball with Transforms",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "platformer",
+      "project": "blank",
+      "ok": false,
+      "seconds": 0.2,
+      "detail": "no jump action (actions: ['drop', 'move_x', 'move_z'])",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "sokoban",
+      "project": "blank",
+      "ok": false,
+      "seconds": 0.2,
+      "detail": "no move_y action (actions: ['drop', 'move_x', 'move_z'])",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "villagers",
+      "project": "blank",
+      "ok": false,
+      "seconds": 0.2,
+      "detail": "Villager_1 is not drawn by the built-in humanoid (None)",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "village_weather",
+      "project": "blank",
+      "ok": false,
+      "seconds": 0.2,
+      "detail": "the first request's houses are not all there within 10 of the centre: [None, None, None]",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "wolves",
+      "project": "blank",
+      "ok": false,
+      "seconds": 0.2,
+      "detail": "Sheep1 is at None, not (7, 0, 5)",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "fireworks",
+      "project": "blank",
+      "ok": false,
+      "seconds": 0.2,
+      "detail": "no launch action",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "glade",
+      "project": "blank",
+      "ok": false,
+      "seconds": 0.2,
+      "detail": "no stoke action",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "watchman",
+      "project": "blank",
+      "ok": false,
+      "seconds": 0.2,
+      "detail": "no Watchman with a Behavior",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "key_door",
+      "project": "blank",
+      "ok": false,
+      "seconds": 0.2,
+      "detail": "no entity named Key",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "grey_flashback",
+      "project": "crates",
+      "ok": false,
+      "seconds": 0.2,
+      "detail": "Crate_0_0 is drawn [139, 93, 51], not grey",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "svg_coin",
+      "project": "hello",
+      "ok": false,
+      "seconds": 0.2,
+      "detail": "",
+      "answer": null,
+      "error": "PocketError: no_such_entity: no entity for \"CoinBadge\""
+    },
+    {
+      "name": "orange_ball",
+      "project": "hello",
+      "ok": false,
+      "seconds": 0.2,
+      "detail": "the Ball has no material",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "night_level",
+      "project": "sprites",
+      "ok": false,
+      "seconds": 0.1,
+      "detail": "the map lit False, the player's sprite lit False",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "guard_view",
+      "project": "dungeon",
+      "ok": false,
+      "seconds": 0.2,
+      "detail": "answered None, not an object with cells and sees",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "vault_level",
+      "project": "dungeon",
+      "ok": false,
+      "seconds": 0.2,
+      "detail": "no entity Vault at x 40, y 0 (None)",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "slow_swarm",
+      "project": "blank",
+      "ok": false,
+      "seconds": 2.9,
+      "detail": "the scripts take 5.559 ms a tick, not under a quarter of the 5.482 ms they took",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "leaky_cannon",
+      "project": "blank",
+      "ok": false,
+      "seconds": 0.4,
+      "detail": "300 pellets after 30 seconds, 14 of them in the air: the landed ones still pile up",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "sinking_crate",
+      "project": "blank",
+      "ok": false,
+      "seconds": 0.2,
+      "detail": "BlueCrate is at {'x': 3.0, 'y': -40.444759368896484, 'z': 0.0} three seconds in, not resting on the floor where it fell (x 3, y 0.5)",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "voxel_house",
+      "project": "hello",
+      "ok": false,
+      "seconds": 0.2,
+      "detail": "no entity draws assets/house.voxels",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "frozen_coins",
+      "project": "blank",
+      "ok": false,
+      "seconds": 0.2,
+      "detail": "the game stopped with a script error: [{'code': 'script_error', 'message': 'Error: world.set: the entity is undefined: a world.find or a query that found nothing, an index past the end of a list, or a variable not set yet', 'detail': '/Users/qiulinfan/Desktop/aipocket/sdk/runtime/world.ts:144\\ncommand@/Users/qiulinfan/Desktop/aipocket/sdk/runtime/world.ts:144\\nset@/Users/qiulinfan/Desktop/aipocket/sdk/runtime/world.ts:247\\nglow@scripts/main.ts:20\\n@scripts/main.ts:33\\ntimed@/Users/qiulinfan/Desktop/aipocket/sdk/runtime/registry.ts:121\\n@/Users/qiulinfan/Desktop/aipocket/sdk/runtime/pocket.ts:364'}]",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "festival_flags",
+      "project": "blank",
+      "ok": false,
+      "seconds": 1.7,
+      "detail": "a tick takes 6.33 ms, not under a quarter of the 6.29 ms it took",
+      "answer": null,
+      "error": null
+    },
+    {
+      "name": "wait_for_coin",
+      "project": "sprites",
+      "ok": false,
+      "seconds": 0.1,
+      "detail": "no coin was collected",
       "answer": null,
       "error": null
     }

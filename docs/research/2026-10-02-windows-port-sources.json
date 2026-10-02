@@ -1,0 +1,864 @@
+{
+ "_about": "Raw reports behind docs/research/2026-10-02-windows-port-estimate.md: five audits (build tool, engine C++, script host, dependencies and scripts, WSL2), the combined phased plan, and a skeptical review of it. Read-only audits at 60b757ee..edbfe1b1; nothing was built on Windows.",
+ "audits": [
+  {
+   "area": "Rust build tool tools/pocket (toolchain discovery, Ninja generation, dependency fetch/CMake foreign builds, process spawning, watch, pack, run/test/editor/mcp, bootstrap) on a native Windows host",
+   "current_platform_design": "The tool is 6,437 lines of Rust in 17 files (wc -l tools/pocket/src/*.rs). There is no Platform abstraction and no cfg(windows) anywhere. Platform handling uses three kinds of string seam.\n\n(1) Target strings \"native\" | \"wasm\" | \"ios-sim\" (toolchain.rs:18-19, manifest.rs:316-319). \"native\" means whatever the host is, so host and target are conflated for desktop.\n\n(2) Host checks on std::env::consts::OS inline in the generator: `tc.host_os == \"macos\"` for -mmacosx-version-min (ninja.rs:41-45), `host_os == \"linux\"` for gnu17 (ninja.rs:54) and for an lld link rule with --start-group plus -ldl -lpthread -lm (ninja.rs:63-68).\n\n(3) A generic per-host override table on [[dependencies]]: keys \"{os}-{arch}\" then \"{os}\" (manifest.rs:141-143), with Apple frameworks dropped off macOS (manifest.rs:169-173) and pkg-config for Linux system deps (manifest.rs:174-186). Target overrides \"ios-sim\"/\"ios\" go through Workspace::for_target (manifest.rs:296-306).\n\nThe dependency seam is the cleanest part. On Windows, std::env::consts gives \"windows-x86_64\" and \"windows\" keys, so [dependencies.platforms.windows] tables work with zero tool changes.\n\nPOSIX assumptions are spread thinly but in many places:\n- The ar rule is `rm -f $out && $ar rcs` (ninja.rs:60). Ninja on Windows passes the command string straight to CreateProcess, with no shell.\n- Archives are named lib{name}.a (ninja.rs:102,118). Executables have no .exe (ninja.rs:112, commands.rs:138-142, pack.rs:102).\n- which() does dir.join(name).is_file() with no .exe/PATHEXT (toolchain.rs:93-102). On Windows it finds no clang++, ninja, cmake, cargo or python3, and ar falls back to the literal \"ar\" (toolchain.rs:177).\n- \"python3\" is hard-coded (commands.rs:42,1063; pack.rs:459,614).\n- The pack launcher is a #!/bin/sh script (pack.rs:108-110).\n- The diagnostics parser splits on ':' (report.rs:61-75), so a C:\\ drive letter breaks it.\n- std::fs::canonicalize is used at 16 call sites (check.rs, commands.rs, watch.rs, ts.rs). On Windows it returns \\\\?\\ verbatim paths that leak into tsconfig globs, runtime arguments and project.json.\n\nUnix-only APIs are already cfg-gated (deps.rs:155-159, pack.rs:41-47 and 65-68). The Cargo.lock already has winapi-util, windows-sys and windows-link, and every crate is pure Rust or supports Windows. By inspection the tool should compile for x86_64-pc-windows-msvc as is; I did not build it, because the audit was read-only.\n\nAlready portable:\n- MCP over stdio, and the runtime control client over a raw TcpStream (mcp.rs:568-582)\n- The file watcher, which polls mtimes (watch.rs:19-85, 172-203)\n- Archive extraction in-process with tar, flate2, lzma-rs and zip (deps.rs:138-186)\n- curl for downloads (deps.rs:113), which ships with Windows 10 1803+\n\nOverall the seams are moderately clean. The Linux port needed only 92 changed lines in the tool (commit 49fd3360: manifest.rs +79, ninja.rs +13). The iOS Simulator target needed 381 (commit 4e71010b). Windows is a host port, not just a new target, so it touches paths, process spawning and file naming as well as flags. It is still a bounded change, roughly 1.5 to 3 times the iOS one.",
+   "work_items": [
+    {
+     "item": "Windows toolchain discovery and doctor checks",
+     "where": "tools/pocket/src/toolchain.rs:93-102 (which), 174-196 (detect), 177 (ar fallback); commands.rs:29-45 (doctor)",
+     "why": "Today `pocket build` fails at once on Windows: which(\"clang++\") never matches clang++.exe, and ar falls back to the literal \"ar\". Changes: make which() try .exe and PATHEXT. Find clang++ on PATH, else in %ProgramFiles%\\LLVM\\bin, else in VS's bundled LLVM via vswhere. Use llvm-lib (or llvm-ar) as the archiver. Require `clang++ -dumpmachine` to end in windows-msvc, so an MSYS2/mingw clang cannot mix ABIs with the MSVC wgpu library. Record `clang++ -print-runtime-dir` for the ASan DLL. In doctor, check vswhere (%ProgramFiles(x86)%\\Microsoft Visual Studio\\Installer\\vswhere.exe) and the Windows SDK registry key (reg query HKLM\\SOFTWARE\\Microsoft\\Windows Kits\\Installed Roots /v KitsRoot10) so errors are clear. Clang and lld-link find MSVC and the SDK by themselves, so the tool only needs to verify and report, not pass -libpath flags.",
+     "loc_low": 90,
+     "loc_high": 170,
+     "days_low": 0.3,
+     "days_high": 0.8,
+     "risk": "medium: Windows installs vary (LLVM from llvm.org, LLVM bundled with VS, VS Build Tools only, no VS at all); auto-detection exists in clang and in lld-link (LLVM 15+) but has to be exercised on a real machine"
+    },
+    {
+     "item": "Windows branch of the Ninja generator",
+     "where": "tools/pocket/src/ninja.rs:54-68 (rules), 102/118 (lib names), 112 (exe name), 73-75 and 130-132 (unquoted -I and lib paths); commands.rs:138-142 (exe_path)",
+     "why": "The ar rule `rm -f $out && $ar rcs` (ninja.rs:60) cannot run, because Ninja hands the string to CreateProcess with no shell. Replace it with `llvm-lib /nologo /out:$out $in`, which always writes a fresh archive. The link rule becomes `$cxx -fuse-ld=lld $ldflags -o $out $in $libs -Wl,-nodefaultlib:libcmt`; lld-link resolves archives in any order, so no --start-group is needed. Add the .exe suffix: the probe shows `-o pocket_runtime` becomes `-out:pocket_runtime` with no .exe, so Ninja's target name and pack's copy (pack.rs:101-103) must name the .exe. Name libraries .lib. Add Windows compile defines and flags, hard-coded the way the Linux branch is: -fms-runtime-lib=dll, NOMINMAX, WIN32_LEAN_AND_MEAN, _CRT_SECURE_NO_WARNINGS (the CRT deprecation warnings would otherwise fail -Werror). Quote -I and lib paths; checkout paths with spaces are common on Windows. Response files are not needed: the longest ar/link line in build/release/build.ninja is 2,713 characters (measured 2026-10-02), against CreateProcess's 32,767.",
+     "loc_low": 35,
+     "loc_high": 70,
+     "days_low": 0.3,
+     "days_high": 0.8,
+     "risk": "medium: the current flags compile for x86_64-pc-windows-msvc (probe in the notes). But the C runtime choice only shows its effect at a real link: with -fms-runtime-lib=dll the objects carry /DEFAULTLIB:msvcrt while the driver still adds -defaultlib:libcmt, and the Rust-built wgpu_native.lib uses the dynamic CRT by default."
+    },
+    {
+     "item": "Path normalisation: dunce::canonicalize and one canonical workspace root",
+     "where": "canonicalize sites: check.rs:37,41,54,120; commands.rs:149,411,417,418,591,597; watch.rs:97-99; ts.rs:288,293,479; also main.rs:259-281, ts.rs:570-579 (module_id), docs.rs:64; Cargo.toml (add dunce)",
+     "why": "On Windows, std::fs::canonicalize returns \\\\?\\ paths, and the Rust docs say only backslash-delimited paths can be joined to them. Today those paths would reach:\n- tsconfig include globs `{dir}/**/*.ts` and paths (check.rs:61-64, 80-81)\n- the runtime's --project argument (commands.rs:149)\n- project.json `dir` (commands.rs:597)\n- the bundle's lines.json source (ts.rs:560)\n\nmodule_id strips a non-canonical sdk_dir (commands.rs:590) from canonical paths, so SDK modules lose their pocket/ ids. watch.rs:99 builds a '/' prefix from display(), which prints backslashes. Windows paths also compare case-sensitively in strip_prefix. The fix: canonicalize ws.root once with dunce in workspace_root, use dunce at every site, and normalise '\\\\' to '/' where paths become ids or messages.",
+     "loc_low": 25,
+     "loc_high": 50,
+     "days_low": 0.15,
+     "days_high": 0.4,
+     "risk": "low: mechanical, and covered by the existing ts.rs and commands.rs unit tests"
+    },
+    {
+     "item": "Compiler diagnostics parser that handles drive letters",
+     "where": "tools/pocket/src/report.rs:61-75",
+     "why": "Builds use -fdiagnostics-absolute-paths (ninja.rs:46), so clang prints C:\\...\\file.cpp:10:5: error: .... Splitting on ':' (splitn(4, ':')) yields file \"C\", so `pocket build --json` reports no diagnostics. Agents rely on these. Strip a leading drive prefix before splitting, and add a unit test.",
+     "loc_low": 15,
+     "loc_high": 35,
+     "days_low": 0.05,
+     "days_high": 0.15,
+     "risk": "low"
+    },
+    {
+     "item": "CMake foreign builds configured for clang targeting MSVC",
+     "where": "tools/pocket/src/deps.rs:229-272",
+     "why": "With -G Ninja on Windows, CMake searches for cl.exe unless told otherwise. Outside a VS developer prompt it fails; inside one it builds the deps with cl. For native builds on Windows, pass -DCMAKE_C_COMPILER/-DCMAKE_CXX_COMPILER (tc.cc/tc.cxx) and an explicit -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL. That is CMake's release default, and it must match the engine's -fms-runtime-lib=dll; otherwise MSVC STL's RuntimeLibrary detect_mismatch fails the link. Also pass llvm-rc/llvm-ar if CMake asks. Deps are always built Release (deps.rs:238), so _ITERATOR_DEBUG_LEVEL stays consistent with the engine's non-debug CRT.",
+     "loc_low": 10,
+     "loc_high": 30,
+     "days_low": 0.2,
+     "days_high": 0.8,
+     "risk": "medium: SDL3, libwebp, draco, freetype and harfbuzz each still have to configure and build with clang targeting MSVC; draco and harfbuzz are the most likely to need extra cmake_args"
+    },
+    {
+     "item": "Windows tables in pocket.toml",
+     "where": "pocket.toml:73-213 (all dependencies), especially :85 (sdl3 link_flags -lpthread -lm), :92-103 (wgpu), :165-185 (typescript), :203-213 (javascriptcore)",
+     "why": "No Windows host table exists. Needed:\n- sdl3: libs = [\"lib/SDL3-static.lib\"]. SDL names its static library SDL3-static when the suffix is .lib (SDL CMakeLists.txt:3744, release-3.4.16). Link flags: kernel32 user32 gdi32 winmm imm32 ole32 oleaut32 version uuid advapi32 setupapi shell32 (CMakeLists.txt:2390). The base -lpthread -lm must be overridden, since pthread.lib and m.lib do not exist on MSVC.\n- wgpu: url wgpu-windows-x86_64-msvc-release.zip (v29.0.1.1 release, 2026-06-23), libs lib/wgpu_native.lib (static, so no wgpu_native.dll to ship), link flags d3dcompiler ws2_32 userenv bcrypt ntdll opengl32 (wgpu-native v29.0.1.1 examples/framework/CMakeLists.txt).\n- libwebp, draco, freetype, harfbuzz: .lib names, confirmed on the first build.\n- typescript: @typescript/typescript-win32-x64 7.0.2 (published 2026-07-08); sha256 to compute on first fetch, because npm publishes sha512 only.\n- javascriptcore: kind = \"skip\" on Windows, and a V8 entry from the script-engine work (ADR 0005).\n- Also update the doc comment at manifest.rs:112-115.",
+     "loc_low": 40,
+     "loc_high": 80,
+     "days_low": 0.2,
+     "days_high": 0.5,
+     "risk": "low to medium: data only, but the V8 entry depends on the script-backend work, which is outside this area"
+    },
+    {
+     "item": "TypeScript checker binary name",
+     "where": "tools/pocket/src/check.rs:25",
+     "why": "The checker is found at prefix/lib/tsc. The Windows package ships lib/tsc.exe (unpkg listing of @typescript/typescript-win32-x64@7.0.2, checked 2026-10-02), so `pocket check` and the `types` part of `pocket test` would report it missing.",
+     "loc_low": 2,
+     "loc_high": 5,
+     "days_low": 0.02,
+     "days_high": 0.05,
+     "risk": "low"
+    },
+    {
+     "item": "Python discovery helper",
+     "where": "tools/pocket/src/commands.rs:42 (doctor fontTools), 1063-1065 (python tests in pocket test); pack.rs:459 (font subsetting), 611-614 (Emscripten file_packager)",
+     "why": "The python.org install manager provides python, py and pymanager. Its docs describe the python3 command only as a catch for accidental POSIX usage that is \"not meant to be widely used\". Look for python3, then python, then `py -3`, in one helper.",
+     "loc_low": 15,
+     "loc_high": 30,
+     "days_low": 0.05,
+     "days_high": 0.2,
+     "risk": "low"
+    },
+    {
+     "item": "Runtime launch environment (ASan DLL) for run, test, editor, scenario, bench, watch and mcp",
+     "where": "commands.rs:174, 568-575 (runtime_command), 742, 925, 964; watch.rs:144-151; mcp.rs:251-277",
+     "why": "debug is the default config for run, test and editor (main.rs:59,68,122,204), and it builds with -fsanitize=address,undefined (pocket.toml:20-24). On the MSVC target the probe shows clang links clang_rt.asan_dynamic plus the static runtime thunk. The resulting exe therefore needs the clang_rt.asan_dynamic DLL from `clang++ -print-runtime-dir` on PATH, or copied beside it; otherwise every debug test fails to start. Add the directory to PATH in one helper that every spawn site uses. LeakSanitizer does not exist on Windows; the Linux port had already turned leak checking off.",
+     "loc_low": 15,
+     "loc_high": 30,
+     "days_low": 0.1,
+     "days_high": 0.3,
+     "risk": "medium: UBSan coverage alongside ASan on Windows has not been verified at run time; the fallback is a Windows-only debug config with ASan alone"
+    },
+    {
+     "item": "Native pack for Windows",
+     "where": "tools/pocket/src/pack.rs:82-123 (pack), 40-49 (set_executable), 108-111 (launcher, README)",
+     "why": "Changes:\n- Copy bin/pocket_runtime.exe.\n- Write <name>.cmd as the launcher: \"%~dp0bin\\pocket_runtime.exe\" --project \"%~dp0project\" --bundle \"%~dp0project.js\" --project-config \"%~dp0project.json\" %*. The current one is a #!/bin/sh script.\n- Ship the dynamic CRT DLLs app-local (vcruntime140.dll, vcruntime140_1.dll, msvcp140.dll, from the VS redist folder found through vswhere), or document that the VC++ Redistributable is required. The UCRT is part of Windows 10+.\n- Ship the ASan DLL when packing a debug config; the macOS CI does `pack assets --config debug` (.github/workflows/ci.yml).\n- Fix the README text.\n- Optionally use the GUI subsystem for shipped games; keep the console for development, because run, test and mcp read the runtime's stdout JSON.\n\nwgpu and V8 are static, so there are no other DLLs.",
+     "loc_low": 60,
+     "loc_high": 120,
+     "days_low": 0.3,
+     "days_high": 0.8,
+     "risk": "medium: finding the redist directory, and the redistribution terms, need the owner's decision"
+    },
+    {
+     "item": "Line endings: .gitattributes (or normalise in gen)",
+     "where": "repository root (no .gitattributes exists); tools/pocket/src/gen.rs:658-669 (write_if_changed), 693-697 (--check); commands.rs:82 (gen runs on every build)",
+     "why": "Git for Windows commonly checks out with core.autocrlf=true, which turns files into CRLF. gen.rs compares CRLF files with LF content, so every `pocket build` would rewrite the 7 generated files. That gives them new mtimes and recompiles engine/world each time, and `pocket gen --check` always fails. .editorconfig asks for lf but does not control Git. Fix with `* text=auto eol=lf` in .gitattributes, or CRLF-insensitive comparison in gen.rs.",
+     "loc_low": 2,
+     "loc_high": 8,
+     "days_low": 0.02,
+     "days_high": 0.1,
+     "risk": "low"
+    },
+    {
+     "item": "Windows bootstrap and the tool path in agent configs",
+     "where": "scripts/bootstrap.sh:1-15 (POSIX sh, macOS only); .mcp.json (\"command\": \"./.pocket/pocket\"); .codex/config.toml (untracked); commands.rs:412 (project guide path .pocket/pocket)",
+     "why": "Add scripts/bootstrap.ps1. It should:\n- check prerequisites: rustup, LLVM 21+, VS Build Tools with the Windows SDK, cmake, ninja, python\n- run cargo build --release\n- copy pocket.exe into .pocket\\. A running pocket.exe (for example an MCP server) is locked on Windows, so rename the old file first, then copy.\n- run pocket setup and pocket doctor\n\nThe project guide written for new projects and the MCP configs should name .pocket\\pocket.exe, or be verified to resolve the extensionless path.",
+     "loc_low": 35,
+     "loc_high": 70,
+     "days_low": 0.15,
+     "days_high": 0.4,
+     "risk": "low"
+    },
+    {
+     "item": "Unit tests for the Windows-specific logic",
+     "where": "tools/pocket/src/{report,toolchain,ninja,ts}.rs #[cfg(test)]",
+     "why": "Cover drive-letter diagnostics, which() with PATHEXT, \\\\?\\ path normalisation, and a build.ninja snapshot for a forced Windows host. These can run on macOS, so most regressions are caught without a Windows machine.",
+     "loc_low": 40,
+     "loc_high": 90,
+     "days_low": 0.15,
+     "days_high": 0.4,
+     "risk": "low"
+    },
+    {
+     "item": "First end-to-end run on a Windows machine, and fixing what it finds",
+     "where": "whole tool; pocket setup/doctor/build/test/run hello/editor/pack/mcp",
+     "why": "I could only probe flags by cross-targeting from macOS: a trivial source, no MSVC STL or Windows SDK headers, no link. The real link (CRT mix, ASan DLL), the CMake dep builds, tsc.exe and pack all have to be run once on Windows.",
+     "loc_low": 50,
+     "loc_high": 150,
+     "days_low": 0.5,
+     "days_high": 1.5,
+     "risk": "high: this is first contact, and turnaround is slower if the only Windows machine is remote or a VM"
+    },
+    {
+     "item": "Documentation: Windows sections and the driver decision",
+     "where": "docs/build-system.md:139-140, 279; docs/decisions/0001-tech-stack.md:24, 37",
+     "why": "The docs plan clang-cl. I recommend the GNU-style clang++ driver targeting x86_64-pc-windows-msvc instead: it produces the same MSVC-ABI objects and keeps the whole flag set and the gcc depfiles. clang-cl would need a second flag dialect (/I /D /Fo, deps = msvc), and its -MD means \"dynamic CRT\", not \"write a depfile\". This deserves an ADR note, plus a Windows prerequisites section.",
+     "loc_low": 40,
+     "loc_high": 100,
+     "days_low": 0.1,
+     "days_high": 0.4,
+     "risk": "low"
+    },
+    {
+     "item": "(Optional) Web builds from a Windows host",
+     "where": "tools/pocket/src/toolchain.rs:64 (HOME), 69, 129, 139-140 (em++, emcc, emar)",
+     "why": "The emsdk lookup uses HOME, which is usually unset on Windows (USERPROFILE is). It also launches the extensionless em++/emcc/emar files, which are POSIX launchers; on Windows the .bat wrappers must be used.",
+     "loc_low": 8,
+     "loc_high": 20,
+     "days_low": 0.05,
+     "days_high": 0.2,
+     "risk": "low"
+    },
+    {
+     "item": "(Optional) Pinned LLVM fetch in pocket setup, as docs/build-system.md:139 plans",
+     "where": "tools/pocket/src/deps.rs:164-170 (xz decoded fully into memory), toolchain.rs",
+     "why": "LLVM 23.1.2 (2026-09-22) publishes clang+llvm-23.1.2-x86_64-pc-windows-msvc.tar.xz. But extract() decodes a whole .tar.xz into a Vec before untarring, so a multi-GB toolchain archive needs streaming decompression first. Not needed if developers install LLVM themselves.",
+     "loc_low": 60,
+     "loc_high": 120,
+     "days_low": 0.4,
+     "days_high": 1,
+     "risk": "medium"
+    },
+    {
+     "item": "(Optional) Windows CI job",
+     "where": ".github/workflows/ci.yml (macos-15 only today)",
+     "why": "ADR 0001:37 plans windows-2025 with clang-cl. Per the owner's current practice CI is disabled and tests run locally, so this is optional.",
+     "loc_low": 40,
+     "loc_high": 80,
+     "days_low": 0.3,
+     "days_high": 1,
+     "risk": "medium: dependency cache, ASan DLL and runner image drift"
+    }
+   ],
+   "blockers_or_permissions": [
+    "A Windows machine the owner provides: an x64 PC, or Windows 11 on Arm in a VM on the Mac. The ARM route builds aarch64-pc-windows-msvc. wgpu-native v29.0.1.1 ships wgpu-windows-aarch64-msvc-release.zip, npm has @typescript/typescript-win32-arm64 7.0.2, and LLVM 23.1.2 ships aarch64-pc-windows-msvc tarballs. From macOS I can only cross-probe compiler flags, not link or run.",
+    "Visual Studio Build Tools (MSVC libraries and Windows SDK) are under Microsoft's license terms, which the owner must accept. Using Build Tools requires a valid Visual Studio license; Community is free only within its eligibility terms. Since 2022-08-18 the terms also allow compiling OSI-licensed C++ dependencies without one (https://devblogs.microsoft.com/cppblog/updates-to-visual-studio-build-tools-license-for-c-and-cpp-open-source-projects/). Rust's x86_64-pc-windows-msvc host toolchain (rust-toolchain.toml channel 1.98.1) needs the same Build Tools.",
+    "Installing LLVM 21+ (llvm.org MSI or tarball; 23.1.2 is current, 2026-09-22), CMake, Ninja (v1.13.2 has ninja-win.zip and ninja-winarm64.zip) and Python on Windows. Machine-wide installers may need administrator rights, which only the owner can grant.",
+    "Long paths: the dependency builds under .pocket\\build\\<dep>-<ver>\\... can approach MAX_PATH (260). Enabling LongPathsEnabled is a system setting only the owner can change. The alternative is a short ASCII checkout path such as C:\\dev\\aipocket, which also avoids spaces and non-ASCII characters in paths that Ninja and CMake pass along.",
+    "Distributing the VC++ runtime DLLs app-local inside packs, or requiring the VC++ Redistributable, is an owner decision under Microsoft's redistribution terms. Code signing for packed games (SmartScreen) needs a paid certificate; it is optional.",
+    "Outside this area, but needed before `pocket run` can execute scripts on Windows: a V8 prebuilt monolith (ADR 0005:34). JavaScriptCore has no Windows system framework. The tool's only part is a pocket.toml dependency entry; the build recipe and ABI choices (V8's bundled libc++ versus the MSVC STL) belong to the script-backend work."
+   ],
+   "notes": "BOTTOM LINE FOR THE BUILD TOOL\nThe Rust tool's Windows port is small and mechanical, not an architectural change: about 470 to 1,040 changed lines across the required items (about 300 to 650 of them Rust, the rest TOML, PowerShell, docs and tests), and about 2.5 to 7.5 focused agent-days, most likely 3 to 4. The single largest uncertainty is the first real Windows link: C runtime choice, ASan DLL, and CMake builds of five dependencies with clang targeting MSVC. Nothing in the tool's design needs to change; everything slots into its existing seams:\n- per-host [dependencies.platforms.windows] tables\n- an inline host branch in ninja.rs like the Linux one\n- one exe/lib suffix rule\n- a which() fix\n- dunce for paths\nThe engine's own Windows platform layer and the V8 backend are separate items, and V8 dominates their cost.\n\nWHAT THE ESTIMATE RESTS ON\n- Measured precedent in git. The Linux port changed 92 lines of the tool (49fd3360: manifest.rs +79, ninja.rs +13). The iOS Simulator target changed 381 tool lines (4e71010b: pack 137, ios 72, toolchain 52, manifest 47, main 30, deps 26, ninja 11, commands 4, graph 2). Both were committed on 2026-10-01, about two hours apart, which shows agent velocity on this codebase.\n- Windows is a host port, so it additionally touches paths (16 canonicalize sites), process spawning (python3 at 4 sites, which()), file naming (.exe, .lib) and the shell-free Ninja command semantics. Hence the 1.5 to 3 times iOS scale.\n- The day figures assume an agent works directly on a Windows machine. A remote or VM-only machine pushes toward the high bound.\n\nPROBES I RAN (scratchpad only; Apple clang 21.0.0, --target=x86_64-pc-windows-msvc, trivial source, no repo files touched)\n- The current flag set compiles to a COFF object and writes a Makefile depfile, so `deps = gcc` keeps working: -std=c++26 -fvisibility=hidden -ffp-contract=off -fdiagnostics-absolute-paths -Wall -Wextra -Werror -O0 -g -fno-omit-frame-pointer -MD -MF.\n- -fsanitize=address,undefined compiles, and the link (-###) uses lld-link with clang_rt.asan_dynamic.lib plus -wholearchive clang_rt.asan_static_runtime_thunk.lib. A debug exe therefore needs the ASan DLL at run time.\n- -luser32 becomes user32.lib, so pocket.toml link_flags can stay in -l form.\n- `-o pocket_runtime` is passed as -out:pocket_runtime, so the generator must add .exe itself.\n- -fms-runtime-lib=dll puts /DEFAULTLIB:msvcrt.lib into objects and defines _MT and _DLL, but the driver's link line still adds -defaultlib:libcmt. Hence the -Wl,-nodefaultlib:libcmt in the link-rule item.\n- Not probed: MSVC STL and Windows SDK headers under C++26 with -Werror (engine area), and any real link.\n\nOTHER CHECKS\n- No symlinks in any cached dependency archive (tar -tv on .pocket/cache: SDL3, draco, libwebp, basisu, freetype, harfbuzz, typescript all 0), so Windows Developer Mode is not needed for extraction.\n- The runtime control server binds 127.0.0.1 only (engine/app/src/server.cpp:169,171), so `pocket run --watch` and MCP sessions should not trigger a Windows Firewall prompt.\n- The longest ar/link line in build/release/build.ninja is 2,713 characters, so response files are not needed.\n\nCROSS-AREA ITEMS FOUND IN PASSING (not counted above)\n- The runtime's --exit-with-parent uses getppid (engine/app/src/runtime.cpp:229), which has no Windows equivalent. Implement it in the engine by waiting on the parent's process handle, or have the tool put the child in a kill-on-close Job Object (mcp.rs:251-277, which would add the windows-sys crate).\n- The agent benchmark runners use os.killpg (tools/scripts/runners/opencode_agent.py:93,97; pi_agent.py:112,116), which does not exist on Windows. They also hard-code .pocket/pocket (agent_eval.py:31, opencode_agent.py:46, pi_agent.py:49). agent_eval.py:4203 runs with shell=True.\n- docs/build-system.md:11 says libc++ everywhere. On Windows the practical library is the MSVC STL. LLVM's Windows releases do not ship libc++ for MSVC.\n\nWORKING TREE STATE (read-only; nothing edited, built or committed)\nThe aipocket working tree has untracked rust-toolchain.toml (channel 1.98.1), .codex/ and docs/development.md, and modified .gitignore and tools/scripts/agent_eval.py, apparently from concurrent work. I left build/agent-traces and build/eval-runtime untouched.\n\nSOURCES (all accessed 2026-10-02)\n- Ninja manual: on Windows the command string goes directly to CreateProcess, with `cmd /c` for shell features; rspfile; deps = gcc/msvc. https://ninja-build.org/manual.html\n- Rust std::process::Command docs: Windows resolves the program itself and appends .exe; warning about .bat arguments. https://doc.rust-lang.org/std/process/struct.Command.html\n- Rust std::fs::canonicalize docs: \\\\?\\ extended-length paths on Windows. https://doc.rust-lang.org/std/fs/fn.canonicalize.html\n- Rust reference, linkage: targets link the C runtime dynamically by default, and x86_64-pc-windows-msvc is not among the static exceptions. https://doc.rust-lang.org/reference/linkage.html\n- LLVM 15 lld release notes: lld-link autodetects the MSVC toolchain and adds /winsysroot. https://releases.llvm.org/15.0.0/tools/lld/docs/ReleaseNotes.html\n- Clang's MSVC detection order (VCToolsInstallDir, PATH, Setup Configuration API, registry). https://llvm.googlesource.com/clang/+/refs/heads/release_60/lib/Driver/ToolChains/MSVC.cpp\n- CMake CMAKE_MSVC_RUNTIME_LIBRARY: default MultiThreaded$<$<CONFIG:Debug>:Debug>DLL. https://cmake.org/cmake/help/latest/variable/CMAKE_MSVC_RUNTIME_LIBRARY.html\n- Python on Windows (install manager commands; python3 not recommended). https://docs.python.org/3/using/windows.html\n- wgpu-native v29.0.1.1 release assets (published 2026-06-23, via the GitHub API) and examples/framework/CMakeLists.txt (Windows libraries). https://github.com/gfx-rs/wgpu-native/releases/tag/v29.0.1.1\n- SDL release-3.4.16 CMakeLists.txt lines 2390 and 3744. https://github.com/libsdl-org/SDL/blob/release-3.4.16/CMakeLists.txt\n- npm @typescript/typescript-win32-x64 7.0.2 (published 2026-07-08) and the unpkg listing of lib/tsc.exe. https://registry.npmjs.org/@typescript/typescript-win32-x64 and https://unpkg.com/@typescript/typescript-win32-x64@7.0.2/lib/\n- LLVM releases via the GitHub API (23.1.2, 2026-09-22, Windows x64 and arm64 tarballs and MSI). https://github.com/llvm/llvm-project/releases\n- Ninja v1.13.2 Windows zips. https://github.com/ninja-build/ninja/releases\n- vswhere location and usage. https://github.com/microsoft/vswhere\n- curl.exe and tar.exe built into Windows 10 since 1803. https://learn.microsoft.com/en-us/virtualization/community/team-blog/2017/20171219-tar-and-curl-come-to-windows\n- Git core.autocrlf guidance for Windows. https://git-scm.com/book/en/v2/Customizing-Git-Git-Configuration\n- VS Build Tools license update, 2022-08-18. https://devblogs.microsoft.com/cppblog/updates-to-visual-studio-build-tools-license-for-c-and-cpp-open-source-projects/"
+  },
+  {
+   "area": "Engine C++ on Windows: the platform layer audited for clang targeting the MSVC ABI with the MSVC STL (engine/**/src, engine/**/include and tests/**, third_party excluded)",
+   "current_platform_design": "The platform layer is thin, and most of it is clean. Two libraries carry nearly all of the OS work. SDL3 handles windows, input, IME, clipboard, gamepads and audio, and only pocket_platform and pocket_audio use it (engine/platform/module.toml, engine/audio/module.toml). wgpu-native handles the GPU: the engine asks for one optional feature, TimestampQuery (engine/rhi/src/device.cpp:393), and the renderer also runs in browsers.\n\nScripts reach the engine only through the 14-method ScriptHost interface (engine/script/include/pocket/script/script_host.hpp:32-60). core/fs reads and writes in binary mode (engine/core/src/fs.cpp:9,17,36). Threading is plain std::thread, mutex and condition_variable, with no pthread (engine/core/src/parallel.cpp:27-140). There is no file watching in the engine; `pocket watch` lives in the Rust tool. Paths that agents see are already relative and use generic_string(), at 19 sites (for example engine/assets/src/assets.cpp:2136, 2355, 2405, 2425 and engine/app/src/session.cpp:6495, 6646). The importers strip `\\r` (engine/assets/src/import.cpp:73, 147, 317).\n\nSize: across engine and tests there are 84,446 lines of C++ (third_party excluded) and 62 platform conditionals in 15 files. About 1,600 lines sit inside platform branches. Of those, about 435 are web-only (web_host.cpp 205, web_fs.cpp 42, server_web.cpp 16, plus branches in runtime, net, device and platform), about 341 are the JavaScriptCore host, and only about 160-180 lines call POSIX, Apple or Linux OS APIs. That last group is:\n- BSD sockets: 32 lines in engine/app/src/net.cpp.\n- Two copies of posix_spawn plus waitpid: engine/app/src/session.cpp:7002-7019 and engine/assets/src/import.cpp:584-597.\n- getppid and SIGHUP: engine/app/src/runtime.cpp:227-237.\n- Native window handles: engine/platform/src/platform.cpp:180-266.\n- WebGPU surfaces: engine/rhi/src/device.cpp:318-347.\n- Blender install paths: engine/assets/src/import.cpp:485-498.\n\nThe existing `_WIN32` checks are 7 lines, and every one switches a feature off rather than implementing it (session.cpp:31, 6990; import.cpp:21, 576; runtime.cpp:16, 227, 232).\n\nWhere the seams are not clean:\n- There is no OS-services layer. posix_spawn is duplicated in two modules.\n- Sockets are written inline in the lockstep protocol code, held in `int` (net.cpp:54, 119) and checked against errno.\n- `#ifndef __EMSCRIPTEN__` is used to mean \"POSIX\" (net.cpp:36, server.cpp:1, jsc_host.cpp:1). On Windows those branches therefore pick POSIX code.\n\nWhat breaks today on Windows:\n- **Will not compile:** net.cpp includes <arpa/inet.h>, <poll.h>, <sys/socket.h> and <unistd.h> (net.cpp:36-47). jsc_host.cpp needs JavaScriptCore headers (jsc_host.cpp:7).\n- **Compiles but fails or is disabled:**\n  - Windowed runs: the Linux branch is the fallback, so they fail with window_handles_missing (platform.cpp:259-265). Headless runs work.\n  - `project.apply`, the agent's main edit loop: returns \"unsupported\" (session.cpp:6990-6992).\n  - Blender import: returns \"unsupported\" (import.cpp:576-577).\n  - `--exit-with-parent` does nothing (runtime.cpp:231-237), although `pocket mcp` starts every runtime with it (tools/pocket/src/mcp.rs:252-253).\n\nC++ library use is conservative. The code uses <expected> (core/result.hpp:8), 134 std::format calls, 9 std::print/println calls (core/src/log.cpp, app/src/runtime.cpp), <numbers>, <span>, 3 std::bit_cast and one integer std::from_chars (session.cpp:4131). It uses no ranges or views, flat_map, inplace_vector, stacktrace, <execution>, mdspan, char8_t, long double or __builtin_. It has one __attribute__ (core/src/log.cpp:147), and its #pragma clang diagnostic lines only wrap third-party headers. The MSVC STL provides everything used: microsoft/STL yvals_core.h on main defines __cpp_lib_format at line 1715, __cpp_lib_expected at 1771 and __cpp_lib_print at 1787.\n\nThe engine already builds against two standard libraries. libc++ is used on macOS and the web. libstdc++ 15 is used on Linux, and that port changed only about 78 engine lines in 8 files, one of them a missing #include (commit 49fd3360, 2026-10-01).",
+   "work_items": [
+    {
+     "item": "Windows build settings for engine code: use the clang++ driver with --target=x86_64-pc-windows-msvc rather than clang-cl, and add WIN32_LEAN_AND_MEAN, NOMINMAX and _CRT_SECURE_NO_WARNINGS",
+     "where": "pocket.toml:10-23 (the [toolchain] and [configs.debug] blocks) plus a windows-x86_64 entry for the wgpu dependency (wgpu-windows-x86_64-msvc-release.zip exists for v29.0.1.1, published 2026-06-23, per the GitHub releases API on 2026-10-02); link ws2_32 for net.cpp",
+     "why": "1) Under clang-cl, `-Wall` becomes /Wall, which means -Weverything (clang/include/clang/Options/Options.td:9347-9349 and 9534-9535, main branch, fetched 2026-10-02). 2) -ffp-contract, -fvisibility and -std= are not clang-cl options (Options.td:3161, 4937, 6882), so the lockstep determinism flag in pocket.toml:15-16 would be lost. 3) cl.exe itself cannot be used: renderer.cpp:529 holds a 133 KB raw string (WGSL), and MSVC's limit is 16,380 characters per literal (learn.microsoft.com/en-us/cpp/error-messages/compiler-errors-1/compiler-error-c2026, fetched 2026-10-02). 4) The UCRT marks getenv (18 sites, 9 of them in tests) and strerror (5 sites: net.cpp:541, 548, 549; session.cpp:7014; import.cpp:595) as deprecated, which is a hard error under -Werror without _CRT_SECURE_NO_WARNINGS.",
+     "loc_low": 20,
+     "loc_high": 40,
+     "days_low": 0.25,
+     "days_high": 0.5,
+     "risk": "medium: the build tool must pass GNU-style flags to a target that uses the MSVC ABI, and the debug config's -fsanitize=address,undefined has to be re-checked on Windows."
+    },
+    {
+     "item": "Run every engine executable with UTF-8 as its process code page: an application manifest with activeCodePage set to UTF-8, embedded in pocket_runtime and the 9 test executables",
+     "where": "a new manifest/.rc under engine/runtime, the link step in tools/pocket (ninja.rs), and optionally SetConsoleOutputCP(CP_UTF8) in engine/app/src/runtime.cpp main()",
+     "why": "Under the MSVC STL, all 271 path .string()/.generic_string() calls, argv, getenv, FT_New_Face (ui/src/font.cpp:209, 505), stbi_write_png (session.cpp:60) and the SDL_GetPrefPath-to-path conversion (platform.cpp:79-80) go through the ANSI code page. The MSVC STL throws ERROR_NO_UNICODE_TRANSLATION when a character cannot be mapped (microsoft/STL stl/src/filesystem.cpp:264-284). On a zh-CN machine (code page 936), Chinese paths come back as GBK bytes, and nlohmann's dump() then throws type_error 316 (third_party/json/include/nlohmann/json.hpp:19234; strict is the default at 21316, and the engine's 102 dump() calls never change it). The manifest fixes all of these at once, instead of rewriting 271 sites around u8string (learn.microsoft.com/en-us/windows/apps/design/globalizing/use-utf8-code-page, page dated 2025-07-17).",
+     "loc_low": 25,
+     "loc_high": 60,
+     "days_low": 0.5,
+     "days_high": 1,
+     "risk": "low: needs Windows 10 1903 or later. Part of the work is in the build tool."
+    },
+    {
+     "item": "Window surface through an HWND",
+     "where": "engine/platform/include/pocket/platform/platform.hpp:82-88 (add hwnd and hinstance); engine/platform/src/platform.cpp:255-266 (an `#elif defined(_WIN32)` branch reading SDL_PROP_WINDOW_WIN32_HWND_POINTER and SDL_PROP_WINDOW_WIN32_INSTANCE_POINTER, SDL_video.h:1650-1652 in SDL 3.4.16); engine/rhi/include/pocket/rhi/device.hpp:17-21; engine/rhi/src/device.cpp:318-347 (WGPUSurfaceSourceWindowsHWND, webgpu.h:3260); engine/app/src/session.cpp:636-641",
+     "why": "On Windows, the Linux X11/Wayland branch is the fallback today, so every windowed run, including the editor, fails at platform.cpp:265. Headless runs are not affected.",
+     "loc_low": 25,
+     "loc_high": 40,
+     "days_low": 0.25,
+     "days_high": 0.5,
+     "risk": "low: SDL and wgpu both expose the handles, so this is the same pattern as the Linux port (49fd3360)."
+    },
+    {
+     "item": "Choose the GPU backend on Windows: prefer Vulkan, fall back to DX12 with DXC, and add an environment override",
+     "where": "engine/rhi/src/device.cpp:303 (wgpuCreateInstance(nullptr) currently enables every backend): chain WGPUInstanceExtras (wgpu.h:1124-1160) to it; adjust runtime_tests.cpp:133-137",
+     "why": "Vulkan keeps Windows on the same backend as Linux. The 133 KB WGSL module at renderer.cpp:529 would otherwise go through FXC, which wgpu.h:922-927 calls 'old, slow, and unmaintained'. DXC needs dxcompiler.dll to ship with the engine (wgpu.h:929-939).",
+     "loc_low": 20,
+     "loc_high": 45,
+     "days_low": 0.25,
+     "days_high": 1,
+     "risk": "medium: drivers and backends differ, so pixels may differ, and the renderer tests' tolerances need checking on real Windows GPUs."
+    },
+    {
+     "item": "Port lockstep networking to Winsock behind a small socket layer",
+     "where": "engine/app/src/net.cpp:36-47 (POSIX includes; <poll.h> is unused), 54 and 119 (sockets held in int and compared with < 0), 96-111 (fcntl O_NONBLOCK, TCP_NODELAY), 192, 464, 488 and 514-517 (::close), 331 and 386 (recv/send with ssize_t and errno EAGAIN), 540-553 (socket, bind, listen, getsockname), 620-634 (getaddrinfo, connect)",
+     "why": "This is a hard compile blocker today. The new layer needs: a socket_t type with INVALID_SOCKET, closesocket, ioctlsocket(FIONBIO), WSAGetLastError and WSAEWOULDBLOCK, one WSAStartup call, error text from system_category, and const char* optval for setsockopt. It should also set SO_EXCLUSIVEADDRUSE instead of SO_REUSEADDR (net.cpp:543): on Windows, SO_REUSEADDR lets a second socket hijack the port (learn.microsoft.com/en-us/windows/win32/winsock/using-so-reuseaddr-and-so-exclusiveaddruse, page dated 2018-05-31, updated 2025-03-11). On Windows, connecting to a closed localhost port only fails after SYN retries of a few seconds (daniel.haxx.se/blog/2024/08/14/slow-tcp-connect-on-windows/, 2024-08-14), so the join retry loop at net.cpp:623-633 gets slower. Tests that exercise this: runtime_tests.cpp:7731-7840 and 8482-8491 (TCP and WebSocket over 127.0.0.1).",
+     "loc_low": 90,
+     "loc_high": 150,
+     "days_low": 0.5,
+     "days_high": 1.5,
+     "risk": "medium: non-blocking semantics and error codes differ, and the first --net-host on 0.0.0.0 (net.cpp:546) triggers a firewall prompt."
+    },
+    {
+     "item": "Add a portable process-run API (pocket_core) with POSIX and Windows implementations; use it for project.apply and Blender import, and make find_blender work on Windows",
+     "where": "a new engine/core os/process files; move session.cpp:7002-7019 and import.cpp:584-597 into it; session.cpp:6990-6992 and 6996 (the tool path needs .exe); import.cpp:576-577; import.cpp:477-500 (find_blender); import.cpp:506-545 and 582 (the script passed with --python-expr)",
+     "why": "The `_WIN32` checks return 'unsupported', so MCP's project_apply (tools/pocket/src/mcp.rs:94, 413), which is how agents apply their edits, does not work on Windows. The Windows side needs CreateProcessW, argv converted from UTF-8 to UTF-16 and quoted by CommandLineToArgvW rules, an inheritable log-file handle for stdout and stderr, WaitForSingleObject and GetExitCodeProcess. find_blender splits PATH on ':' (which breaks on 'C:\\'), ignores PATHEXT and knows no Program Files paths. The 1.8 KB multi-line Python script should be written to a temporary .py file and passed with --python, to avoid Windows command-line quoting. This also removes the duplicated posix_spawn code and keeps windows.h inside one translation unit.",
+     "loc_low": 150,
+     "loc_high": 230,
+     "days_low": 0.75,
+     "days_high": 1.5,
+     "risk": "medium: argument quoting, handle inheritance, and how Blender's console behaves on Windows."
+    },
+    {
+     "item": "Runtime lifecycle on Windows: make --exit-with-parent work and let a tool stop the runtime gracefully",
+     "where": "engine/app/src/runtime.cpp:218-237 (getppid is used only off Windows; on Windows orphaned() always returns false), plus the new os layer",
+     "why": "`pocket mcp` passes --exit-with-parent to every runtime it starts (mcp.rs:252-253). Without it, agent sessions and benchmarks leave runtimes running. The fix finds the parent PID with a Toolhelp snapshot, opens it with OpenProcess(SYNCHRONIZE) and polls WaitForSingleObject(handle, 0). SIGTERM (runtime.cpp:226) is never raised on Windows, so SetConsoleCtrlHandler must set g_stop for CTRL_BREAK and CTRL_CLOSE. A Job Object with KILL_ON_JOB_CLOSE in the Rust tool is a complementary option.",
+     "loc_low": 30,
+     "loc_high": 60,
+     "days_low": 0.25,
+     "days_high": 0.75,
+     "risk": "low"
+    },
+    {
+     "item": "Precise sleeps for frame pacing and network waits",
+     "where": "engine/app/src/session.cpp:3002, 6706, 6720, 6770; net.cpp:632, 654, 670; add a sleep in pocket_platform built on SDL_DelayPrecise (SDL_timer.h:299, SDL 3.4.16), or call timeBeginPeriod(1)",
+     "why": "In the MSVC STL, sleep_for ends in Sleep(ms) (microsoft/STL stl/inc/thread:222-223 and stl/src/sharedmutex.cpp:41-43, main branch, fetched 2026-10-02). With the default Windows timer that is too coarse for 60 Hz pacing of paused or hidden windows, and it slows the lockstep waits.",
+     "loc_low": 10,
+     "loc_high": 25,
+     "days_low": 0.1,
+     "days_high": 0.5,
+     "risk": "low"
+    },
+    {
+     "item": "Fix the file-time epoch in save.list",
+     "where": "engine/app/src/session.cpp:5653-5654",
+     "why": "The code reports last_write_time().time_since_epoch() as the 'modified' seconds. The MSVC STL's file_clock counts from 1601 (epoch adjustment 0x19DB1DED53E8000, microsoft/STL stl/inc/chrono:2864), while libc++ counts from 1970. On Windows the value would be off by 11,644,473,600 s. Convert through file_clock::to_sys or clock_cast.",
+     "loc_low": 3,
+     "loc_high": 8,
+     "days_low": 0.1,
+     "days_high": 0.1,
+     "risk": "low"
+    },
+    {
+     "item": "Keep windows.h macros out of the engine and tests",
+     "where": "tests/runtime_tests/runtime_tests.cpp:10-13 (the httplib include) and its locals at 412, 1031, 1523, 1893, 3343, 3423, 6141 and 6654; engine headers that use near and far as identifiers: core/include/pocket/core/math.hpp:113, 124; renderer/include/pocket/renderer/renderer.hpp:279; app/include/pocket/app/session.hpp:203, 244",
+     "why": "httplib.h includes winsock2.h and windows.h without WIN32_LEAN_AND_MEAN (third_party/httplib/include/httplib.h:296-302). Windows then defines `near` and `far` as empty macros, and rpcndr.h defines `small`, which breaks those locals in runtime_tests.cpp. The engine headers stay safe only while they are included before windows.h. New Windows code should include windows.h last, in the os and socket translation units only, and #undef near and far after the httplib include.",
+     "loc_low": 5,
+     "loc_high": 25,
+     "days_low": 0.1,
+     "days_high": 0.25,
+     "risk": "low"
+    },
+    {
+     "item": "Fix what a first build against the MSVC STL turns up",
+     "where": "repository-wide; heuristic include scan written for this audit (scratchpad, not committed)",
+     "why": "This is the third standard library the engine meets. The libstdc++ port needed one missing include (49fd3360, engine/ui/src/syntax.cpp). Two risks remain. First, implicit std::filesystem::path to std::string conversions compile only where path::string_type is std::string (POSIX); a heuristic scan found none, but only a Windows compile proves it. Second, missing transitive includes, which nlohmann/json.hpp mostly covers because nearly every file includes it. Every C++ feature used exists in the MSVC STL.",
+     "loc_low": 0,
+     "loc_high": 40,
+     "days_low": 0.25,
+     "days_high": 1,
+     "risk": "low"
+    },
+    {
+     "item": "Adapt the C++ tests to Windows and triage the first full run of the 405 test cases",
+     "where": "tests/runtime_tests/runtime_tests.cpp:133-138 (expects backend metal or vulkan and engine 'JavaScriptCore'); 6763-6764, 6857-6858 and 6927-6928 (std::system with single-quoted POSIX shell commands; use the process API instead); about 45 text-mode ofstream writes in tests that produce CRLF; pixel tolerances in renderer_tests",
+     "why": "These tests encode macOS and Linux assumptions. The golden state hash test (runtime_tests.cpp:172-191, tests/evidence/hello-golden.json) is the first check of cross-library and x86-64 determinism.",
+     "loc_low": 20,
+     "loc_high": 100,
+     "days_low": 1,
+     "days_high": 2.5,
+     "risk": "medium: most of the time is the first run and triage on a new OS, GPU driver and standard library."
+    },
+    {
+     "item": "Verify lockstep determinism between macOS (arm64, libc++) and Windows (x86-64, MSVC STL)",
+     "where": "samples/arena hosted on macOS with a Windows peer (or the reverse); engine/physics, world and nav sorts; docs/design/networking.md:120-150",
+     "why": "The design already avoids libm differences (core/include/pocket/core/repro.hpp) and fused multiply-adds (pocket.toml:15-16). The MSVC STL brings a third implementation of std::sort (54 unstable sorts in the engine) and of unordered containers (22 declarations). Spot checks found sorts keyed by unique ids (physics.cpp:1906, nav.cpp:700) and unordered iteration that does not depend on order (world/src/recorder.cpp:39). 22 std:: transcendental calls remain in simulation modules (cloth.cpp, rigid2d.cpp, world/src/paths.cpp), which is the same risk today's Linux and web peers already carry.",
+     "loc_low": 0,
+     "loc_high": 40,
+     "days_low": 0.25,
+     "days_high": 1,
+     "risk": "medium: needs both machines, and any tie found means a fix in the simulation."
+    },
+    {
+     "item": "Keep line endings LF in Windows checkouts",
+     "where": "a new .gitattributes (none exists)",
+     "why": "With core.autocrlf=true, a Windows checkout rewrites sources, samples, scenes and golden files with CRLF. That changes text the tests and agents compare. Add `* text=auto eol=lf` plus binary patterns.",
+     "loc_low": 2,
+     "loc_high": 6,
+     "days_low": 0.05,
+     "days_high": 0.05,
+     "risk": "low"
+    },
+    {
+     "item": "Script backend for Windows (cross-reference to the script-engine audit; kept out of the C++ totals below)",
+     "where": "engine/script/src/jsc_host.cpp:1 and 7 (built for every non-web target, includes <JavaScriptCore/JavaScript.h>); engine/script/module.toml; ScriptHost interface at script_host.hpp:32-60",
+     "why": "Windows has no system JavaScriptCore, so nothing scripted runs until a backend exists. Two routes: (a) a V8 host, as ADR 0005 decision 3 plans (docs/decisions/0005-script-engine-backend.md:34), about 500-800 new lines plus a V8 artifact built for Windows; (b) the JavaScriptCore C API from Bun's WebKit Windows builds (oven-sh/WebKit releases list bun-webkit-windows-amd64.tar.gz, 385 MB, published 2026-10-02 per the GitHub API), which would keep jsc_host.cpp (343 lines) almost unchanged.",
+     "loc_low": 20,
+     "loc_high": 800,
+     "days_low": 1,
+     "days_high": 8,
+     "risk": "high: getting the artifact, its ABI and the link step to work dominates; the C++ itself is straightforward."
+    }
+   ],
+   "blockers_or_permissions": [
+    "A Windows 10 1903+ or Windows 11 x64 machine (or a VM) with a GPU and a Vulkan driver, for building, the editor and pixel tests. This Mac cannot compile against the MSVC STL or the UCRT, so every MSVC STL claim in this audit comes from reading source, not from a build.",
+    "Accepting the licence for the Visual Studio Build Tools / Windows SDK (MSVC STL, UCRT, link.exe). xwin would also accept the Windows SDK terms; docs/development.md:35-37 says to ask the owner first.",
+    "A Clang new enough for the installed STL: MSVC STL main requires Clang 22 (microsoft/STL stl/inc/yvals_core.h:922-923, fetched 2026-10-02). The Clang that ships with Visual Studio, or a matching LLVM release, works.",
+    "The owner's script-engine decision for Windows (docs/development.md:369; ADR 0005): build or obtain a V8 artifact, or use Bun's WebKit JavaScriptCore build (about 385 MB download).",
+    "A Windows Defender Firewall prompt the first time `--net-host` binds 0.0.0.0 (net.cpp:546); a user on the machine must answer it, and it may need admin rights. The control server binds 127.0.0.1 only (server.cpp:169-171).",
+    "Optional: Blender for Windows (the import tests skip without it, runtime_tests.cpp:6697-6698), and dxcompiler.dll if DX12 is used instead of Vulkan."
+   ],
+   "notes": "To your question (backends 迁移的代码复杂吗？): no, the engine's own platform code is small and well bounded. Developing natively on Windows still needs real work, mostly OS services (sockets, process launching, process lifecycle), UTF-8 paths and a script backend.\n\n**Totals for engine C++ alone** (excluding the script backend, the Rust build tool and dependency fetching):\n- About 400-870 new or changed lines.\n- About 5-12 focused agent-days.\n- The script backend adds 20-80 lines and about 1-3 days with Bun's JavaScriptCore build, or 500-800 lines and about 4-8 days with V8 (plus hours to build the V8 artifact).\n\n**Suggested order:**\n1. Headless build and tests: build settings, UTF-8 manifest, Winsock (or a temporary stub), compile fallout, .gitattributes, script backend.\n2. Window and editor: HWND surface, backend choice, precise sleep.\n3. Agent benchmark: process API for project.apply, --exit-with-parent, plus the Rust MCP and build-tool work covered in other audits.\n4. Cross-play: lockstep determinism check between macOS and Windows.\n\n**What the numbers rest on:**\n- **Calibration:** the Linux port changed about 78 engine lines in 8 files and was done in about a day (git 49fd3360, 2026-10-01). Linux was POSIX with JavaScriptCore available; Windows is not POSIX and has no JavaScriptCore.\n- **Counts behind the line estimates:** the exact sites cited per item: 32 BSD socket lines, 2 spawn blocks, 271 path .string() calls, 18 getenv and 5 strerror calls, 8 near/far/small collisions.\n- **Typical sizes:** about 60-90 lines for a Winsock shim, about 90-120 for a CreateProcessW runner with quoting, and about 25-40 for an HWND surface.\n- **Days** assume an agent working on a Windows box where Visual Studio Build Tools and Clang already work and the build tool already emits Windows builds. The high bounds are mostly first-run test triage and determinism checks.\n\n**Recommendations:**\n- Compile with `clang++ --target=x86_64-pc-windows-msvc`, not clang-cl. docs/build-system.md:139 and :279 plan clang-cl; the reasons to revisit that are in the first work item.\n- Add an `engine/core` OS layer (process run, parent watch, precise sleep, sockets) so windows.h stays in one or two translation units.\n- Prefer the Vulkan backend, matching Linux.\n- Ship the UTF-8 manifest before anything else. On a Chinese-locale Windows, any project or user path with Chinese characters otherwise crashes JSON output.\n\n**Lower-risk items checked and found fine:** std::thread-based parallel_for; binary file I/O; agent-visible paths already use generic_string; CRLF handled in the OBJ, MTL and PLY importers; no ABI-sensitive layouts (alignas(16) uniforms with static_asserts, renderer.cpp:173 and 272); no `long` or LLP64 problems; no std random distributions in the simulation; loopback-only control server through cpp-httplib, which supports Windows and links ws2_32 itself (httplib.h:280).\n\n**Not covered here:** packaged games (/SUBSYSTEM:WINDOWS with SDL_main, which today is included only for iOS, main.cpp:7-11), DPI behaviour on scaled displays, and the Rust tool, CMake foreign builds and Python scripts.\n\n**External sources (dates are page or release dates, or fetch dates where noted):**\n- clang Options.td: github.com/llvm/llvm-project/blob/main/clang/include/clang/Options/Options.td (fetched 2026-10-02)\n- MSVC C2026: learn.microsoft.com/en-us/cpp/error-messages/compiler-errors-1/compiler-error-c2026 (2020-09-25, updated 2025-07-28)\n- UTF-8 code page: learn.microsoft.com/en-us/windows/apps/design/globalizing/use-utf8-code-page (2025-07-17)\n- microsoft/STL: yvals_core.h, stl/inc/chrono, stl/inc/thread, stl/src/sharedmutex.cpp, stl/src/filesystem.cpp (main branch, fetched 2026-10-02)\n- MSVC conformance table: learn.microsoft.com/en-us/cpp/overview/visual-cpp-language-conformance (2026-09-01)\n- Winsock SO_EXCLUSIVEADDRUSE: learn.microsoft.com/en-us/windows/win32/winsock/using-so-reuseaddr-and-so-exclusiveaddruse (2018-05-31, updated 2025-03-11)\n- Slow TCP connect on Windows: daniel.haxx.se/blog/2024/08/14/slow-tcp-connect-on-windows/ (2024-08-14)\n- wgpu-native v29.0.1.1 releases: github.com/gfx-rs/wgpu-native/releases (published 2026-06-23)\n- oven-sh/WebKit releases: github.com/oven-sh/WebKit/releases (2026-10-02)\n\nNothing in the repository was edited, built or committed. The only files written were two throwaway analysis scripts in the session scratchpad (inc.py, win-audit-guards.py); build/agent-traces and build/eval-runtime were not touched."
+  },
+  {
+   "area": "Script host (engine/script: ScriptHost interface, JavaScriptCore backend, web host) on native Windows",
+   "current_platform_design": "The seam is clean and narrow. engine/script/include/pocket/script/script_host.hpp:32-60 is a 14-method virtual interface (evaluate, bind, bind_numbers, share_f32/f64/u32/u8, call, has_function, drain_microtasks, collect_garbage, describe), and Config (:19-24) holds two fields: `inspectable` and `console_text`. Its only consumer is engine/app/src/session.cpp: it creates the host at :648-652 and makes 29 `host_->` calls, 9 of them drain_microtasks. No other module includes an engine header (ADR 0005:26-29, AGENTS.md:81). The backend is chosen at compile time, not from pocket.toml: jsc_host.cpp:1 is `#ifndef __EMSCRIPTEN__` and web_host.cpp:5 is `#ifdef __EMSCRIPTEN__`, and each defines ScriptHost::create (jsc_host.cpp:338-340, web_host.cpp:206-208). The runtime switch ADR 0005:34-36 promises for V8 does not exist.\n\nThe JSC backend (engine/script/src/jsc_host.cpp) is 343 lines, 300 of them code. It calls 41 distinct functions, all from the public JSC C API headers (JSBase, JSContextRef, JSObjectRef, JSValueRef, JSStringRef, JSTypedArray):\n- Typed-array sharing: JSObjectMakeTypedArrayWithBytesNoCopy with a null deallocator (:321-329), so no memory is freed across the boundary.\n- Protection from the collector: JSValueProtect on the __pocket object (:215) and on every call argument held in a heap vector (:276-288).\n- Exceptions with stacks: the backend reads `stack`, `line` and `sourceURL` from the thrown object (:46-64).\n- Modules: none. The bundle goes through JSEvaluateScript (:237-244), and ADR 0005:48-50 notes the C API has no module loader.\n- Microtasks: JSC drains them when the outermost API call releases the JSLock, and the backend forces that by evaluating `void 0` (:300-305).\n- Inspector: only JSGlobalContextSetInspectable (:212), which serves Safari on macOS.\n- Natives: JSClass callAsFunction trampolines with private data, for JSON natives, number natives and console (:112-203).\n\nThe web host (web_host.cpp, 211 lines) marshals everything as JSON through EM_JS.\n\nThe dependency is pocket.toml:203-213: `kind = \"system\"`, the JavaScriptCore framework on Apple, and pkg-config `javascriptcoregtk-4.1` on Linux. That makes the Linux port the model for Windows: the same C API, with only manifest changes (docs/build-system.md:217-220). The tool can already take a Windows prebuilt. Per-host override tables can replace kind, url, sha256, strip_components, libs, link_flags and defines (tools/pocket/src/manifest.rs:121-136, 140-166). Prebuilt .tar.gz archives are fetched, checked against sha256 and extracted (tools/pocket/src/deps.rs:137-180, 210-213). What is missing is Windows host detection and toolchain support (another area), a `version` override, and a shared-library module kind (only static_library, executable and test exist, manifest.rs:280).\n\nEngine-specific behaviour elsewhere is small:\n- sdk/runtime/registry.ts:76-85 parses stack frames in both JSC and V8 formats.\n- tests/runtime_tests/runtime_tests.cpp:138 asserts engine == \"JavaScriptCore\".\n- tests/ts/repro.test.ts is pinned on JSC and V8.\n- docs/agent-eval.md:643 depends on JSC keeping the message out of `stack`.\n\nNo V8 code exists anywhere. docs/status.md:295-296 still says \"V8 stays the plan for Windows\". An earlier plan, docs/research/2026-09-30-reports.json:317, already proposed Bun's prebuilt JSC with jsc_host.cpp unchanged.",
+   "work_items": [
+    {
+     "item": "Spike on this Mac before any Windows machine: link Bun's prebuilt JSC (bun-webkit-macos-arm64, 210 MB, release lane plus mimalloc 3.2.8) in place of the system framework and run runtime_tests, the TypeScript tests, the editor and a few benchmark tasks",
+     "where": "throwaway branch: a [dependencies.platforms.macos-aarch64] table for javascriptcore in pocket.toml; a mimalloc cmake dependency",
+     "why": "Bun ships these libraries but only ever drives them through its own global object and hooks. The C API path we use (JSGlobalContextCreateInGroup, JSClass trampolines, protect, typed arrays, the lock-release microtask drain) is not what Bun's CI tests: it runs the jsc shell, and on Windows not even that (lanes.mjs:36-39). The same artifact family on macOS surfaces C-API-path problems in hours, without Windows hardware.",
+     "loc_low": 20,
+     "loc_high": 40,
+     "days_low": 0.5,
+     "days_high": 1,
+     "risk": "medium: this is where problems from USE_BUN_JSC_ADDITIONS would show. Source reading found none: RunLoopBun.cpp falls back to the generic run loop when Bun's hooks are absent, JSLock::willReleaseLock still drains microtasks, and V8-style stacks only appear through Bun's onComputeErrorInfoJSValue hook. It is still unverified at run time."
+    },
+    {
+     "item": "Declare JavaScriptCore for Windows: windows-x86_64 and windows-aarch64 tables taking the javascriptcore dependency to kind=prebuilt. Each gives Bun's release-lane URL and sha256, strip_components=1 (the archive's top directory is bun-webkit/), include_dirs=[include], libs=[JavaScriptCore.lib, WTF.lib, bmalloc.lib, sicuin.lib, sicuuc.lib, sicudt.lib], link_flags=[winmm, bcrypt, ntdll, dbghelp, ws2_32, advapi32, ...] and defines=[STATICALLY_LINKED_WITH_JavaScriptCore=1] as Bun uses (scripts/build/flags.ts:773). Also add mimalloc v3.2.8 as a cmake dependency skipped off Windows, and a `version` field in DependencyOverride so the prefix is not 'javascriptcore-system'.",
+     "where": "pocket.toml:203-213; tools/pocket/src/manifest.rs:121-166; tools/pocket/src/deps.rs:27-36",
+     "why": "The release lanes are built with USE_EXTERNAL_MIMALLOC, so the consumer must link mimalloc itself (lanes.mjs:64-67 and 238-239; shell/CMakeLists.txt:93-98). Without JS_NO_EXPORT or STATICALLY_LINKED_WITH_JavaScriptCore, JSBase.h:84-88 makes every C API function __declspec(dllimport). Pin the WebKit commit a released Bun uses (bun scripts/build/deps/webkit.ts:6 = fb1167eb…, released 2026-09-30), not a PR preview build, and mirror the archive.",
+     "loc_low": 35,
+     "loc_high": 60,
+     "days_low": 0.25,
+     "days_high": 0.75,
+     "risk": "low to medium: the WebKit tree vendors mimalloc 3.2.8 (upstream tag v3.2.8 exists). If WebKit patched it, upstream 3.2.8 could miss a symbol, which would fail loudly at link time."
+    },
+    {
+     "item": "Make jsc_host.cpp compile under clang-cl with the MSVC STL and -Werror: explicit <cmath>/<algorithm> includes (std::abs at :95 and std::min at :140 now arrive only transitively), the export define if it is not passed from pocket.toml, and engine_version() reporting the pinned WebKit commit instead of 'system' (:235)",
+     "where": "engine/script/src/jsc_host.cpp",
+     "why": "All 41 functions and enums the file uses are in Bun's packaged headers. The Dockerfile copies Headers/JavaScriptCore, which holds JavaScript.h, JSBase.h, JSContextRef.h, JSObjectRef.h, JSStringRef.h, JSTypedArray.h and JSValueRef.h. JSGlobalContextSetInspectable is at JSContextRef.h:172 and JSObjectMakeTypedArrayWithBytesNoCopy at JSTypedArray.h:63. The logic stays as it is.",
+     "loc_low": 5,
+     "loc_high": 20,
+     "days_low": 0.25,
+     "days_high": 0.5,
+     "risk": "low"
+    },
+    {
+     "item": "Build the Windows engine to match the prebuilt's runtime library: static CRT (/MT, -fms-runtime-lib=static) in every configuration including debug (no /MTd; _ITERATOR_DEBUG_LEVEL=0), CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded for the CMake dependencies, and the MSVC STL rather than libc++. Check wgpu-native's Windows library.",
+     "where": "tools/pocket/src/toolchain.rs and ninja.rs flags for the Windows target, cmake_args in the Windows tables of pocket.toml (shared with the toolchain area; only the script-host delta is counted here)",
+     "why": "Bun builds JSC with CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded and the MSVC STL (Dockerfile.windows, cmake invocation). Mixing /MT and /MD, or different iterator-debug levels, fails the link with RuntimeLibrary mismatches. docs/build-system.md:11 assumes libc++ everywhere, which does not hold on Windows. wgpu-native is a Rust static library and by default uses the dynamic CRT (inference, not checked), so it may have to be linked as its DLL. The DLL wrapper in the LGPL item below removes this constraint.",
+     "loc_low": 10,
+     "loc_high": 40,
+     "days_low": 0.5,
+     "days_high": 1.5,
+     "risk": "medium: the errors are loud and early, but they cross into other areas (toolchain, renderer dependency)."
+    },
+    {
+     "item": "Get the script host to parity on Windows: pocket test (runtime_tests already asserts engine == JavaScriptCore at tests/runtime_tests/runtime_tests.cpp:138), the TypeScript tests pinned on JSC (tests/ts/repro.test.ts), the editor (same context, docs/design/pocket-ui.md:164), and a subset of the agent benchmark. Fix version-skew differences between Apple's system JSC and Bun's newer fork.",
+     "where": "tests/, sdk/, tests/evidence",
+     "why": "Proves the backend on Windows x64 (and arm64 if hardware exists). Stack format and error text stay JSC's, so benchmark traces and pinned outputs remain comparable with macOS.",
+     "loc_low": 0,
+     "loc_high": 60,
+     "days_low": 0.5,
+     "days_high": 1.5,
+     "risk": "medium: Bun's CI builds the Windows lanes but does not test them (lanes.mjs:36-39). Production use through Bun 1.4.2 on x64 and aarch64 lowers this risk."
+    },
+    {
+     "item": "LGPL compliance before shipping Windows packs: wrap the static JSC into pocket_jsc.dll (lld-link /DLL with a .def exporting the C API), have the engine import it, have pocket pack copy it next to the .exe, and add the LGPL notice with relink instructions",
+     "where": "new module kind 'shared_library' or a post-setup link step (tools/pocket/src/manifest.rs:280, ninja.rs, pack.rs); third_party/README.md:28; docs/packaging.md:25-31",
+     "why": "JSC core files are LGPL-2 or later (for example Source/JavaScriptCore/runtime/JSObject.cpp). Bun's licensing page says static linking requires shipping the application in relinkable object form. macOS (system framework) and Linux (shared libjavascriptcoregtk) never had this issue. A DLL also isolates JSC's /MT CRT, which is safe because only C types cross the API and nothing is freed across it (deallocator nullptr at jsc_host.cpp:323), and it links JSC once instead of into all four executables that depend on pocket_app (runtime, runtime_tests, audio_tests, renderer_tests). Needed for distribution, not for development.",
+     "loc_low": 150,
+     "loc_high": 300,
+     "days_low": 1,
+     "days_high": 2,
+     "risk": "medium: exporting C symbols out of static archives through a .def is standard, but needs a new kind of build rule in pocket."
+    },
+    {
+     "item": "Optional: provide Bun's ICU decompression hook (bun_icu_maybe_decompress) with a zstd dependency",
+     "where": "engine/script/src (a new file of about 100 lines modeled on oven-sh/bun src/jsc/bindings/bun_icu_decompress.cpp, 126 lines, rewritten with std:: instead of WTF); pocket.toml zstd dependency",
+     "why": "Bun's sicudt.lib stores the non-English display-name items (curr/, lang/, region/, unit/, zone/) as zstd frames behind a weak hook (Dockerfile.windows:231-242). Without the hook those items do not load, which affects Intl display names and localized currency or region names. Everything else works. ADR 0001:74 already plans ICU off for games, so this can wait until something needs it.",
+     "loc_low": 80,
+     "loc_high": 150,
+     "days_low": 0.5,
+     "days_high": 1,
+     "risk": "low"
+    },
+    {
+     "item": "Record the decision: amend ADR 0005 (or add ADR 0006) to JavaScriptCore on every native platform, with Windows (and possibly Android and Linux packs) from Bun's oven-sh/WebKit prebuilts and V8 deferred; add the Windows sections to docs/build-system.md and docs/packaging.md; update docs/status.md:295-296 and the third_party/README.md row",
+     "where": "docs/decisions/0005-script-engine-backend.md:34-36; docs/decisions/0001-tech-stack.md:26 and 95; docs/build-system.md:139-140; docs/status.md:295-296; third_party/README.md:28",
+     "why": "The accepted ADRs say V8 for Windows. ADR 0001 rejected JSC as 'non-uniform across platforms', which Bun's fork answers: one JSC across macOS, Linux, Windows, FreeBSD and Android. The decision belongs to the owner.",
+     "loc_low": 60,
+     "loc_high": 120,
+     "days_low": 0.25,
+     "days_high": 0.5,
+     "risk": "low"
+    }
+   ],
+   "blockers_or_permissions": [
+    "A Windows machine or CI runner, whether a GitHub windows-2025 runner, an x64 PC, or Windows 11 ARM in a VM on this Mac (Parallels is paid; UTM is free). The Windows .exe cannot run on macOS, so run-time checks of the backend wait for it. The macOS spike needs no Windows hardware.",
+    "The owner must accept Microsoft's terms for the MSVC CRT and Windows SDK: Visual Studio Build Tools or Community, or xwin's --accept-license for a cross build. The prebuilt is /MT, so the link needs libcmt.lib and libcpmt.lib from those packages. The Community and Build Tools terms are free for individuals and small teams; larger organizations need a paid Visual Studio licence.",
+    "A licensing decision only the owner can make: shipping JavaScriptCore (LGPL-2 or later) inside Windows game packs. As a DLL with a notice and relink instructions this is compliant. Linked statically, games would have to ship relinkable objects.",
+    "Owner sign-off on overriding the accepted ADRs (0001:26 and 95, 0005:34-36), which name V8 for Windows.",
+    "Depending on a third party's release assets (oven-sh/WebKit autobuild releases; about 385 MB per architecture, a few GB extracted). Mirror the pinned archives by sha256 under the owner's GitHub account. Published releases are not pruned automatically today; only drafts and toolchain images are (ci.yml:168-207 and 504-547)."
+   ],
+   "notes": "VERDICT. The script host is the cheapest part of a Windows port. The migration code is not complex: one 343-line JSC backend behind a 14-method interface, and Linux was ported with manifest changes only. Recommended: JavaScriptCore on Windows from Bun's prebuilt static builds (oven-sh/WebKit).\n- To develop natively on Windows (build, run, test, editor, benchmark): the spike plus items 2-5 plus docs, about 130-340 new or changed lines (roughly 70-220 of them code) and 2.25-5.75 focused agent-days.\n- To ship Windows packs, add the LGPL DLL wrapper: +150-300 lines, +1-2 days.\n- Optional ICU hook: +80-150 lines, +0.5-1 day.\n- Inspector: no attach target on Windows (none on Linux either). WebKit's remote inspector is compiled in (ENABLE_REMOTE_INSPECTOR=ON), but it speaks WebKit's protocol, not Chrome's (CDP), and there is no Safari on Windows. Leave it as a gap.\n\nBASIS FOR THE NUMBERS. Bun's headers carry every one of the 41 C API functions the backend calls, so the backend's logic does not change. Linux took 4 manifest lines for the same C API (pocket.toml:210-213). The day counts are agent-days at this repository's pace and do not include the toolchain work (clang-cl, Windows SDK discovery, platform surfaces, wgpu archives) that other areas own. The ranges widen if the spike finds C-API-path breakage in Bun's fork; a fallback is to build oven-sh/WebKit ourselves (see below).\n\nOPTIONS (sources read on 2026-10-02):\n\n(a) JavaScriptCore\n- Bun's oven-sh/WebKit.\n  - Release autobuild-4fde158736b8393fc31be471cc2bbca1d826d42b (2026-10-01), https://github.com/oven-sh/WebKit/releases: bun-webkit-windows-amd64.tar.gz 385,206,749 B and bun-webkit-windows-arm64.tar.gz 366,255,197 B. Debug lanes are 464 MB (x64) and 462 MB (arm64), x64 asan 659 MB, x64 lto 664 MB. There is no arm64 lto lane.\n  - Build settings (https://github.com/oven-sh/WebKit/blob/main/Dockerfile.windows): PORT=JSCOnly, ENABLE_STATIC_JSC=ON, JIT, DFG and FTL on, clang-cl cross-compiled from Linux with xwin, /MT, MSVC STL, ICU 78.3 static, public and private headers packaged.\n  - Production use: Bun 1.4.2 (2026-09-05) ships bun-windows-x64.zip (39.8 MB) and bun-windows-aarch64.zip (36.3 MB), so JIT JSC runs in production on both Windows architectures.\n  - Licence: LGPL-2 or later for JSC (https://bun.com/docs/project/licensing; the JSObject.cpp header), BSD for WTF and bmalloc, Unicode licence for ICU, MIT for mimalloc.\n  - Build from source: each Windows lane took about 10-12 minutes on Bun's large Linux CI builder (run 35177656569, 2026-09-17, via `node .github/scripts/lanes.mjs build <label>` in Docker). On this Mac it would run as an amd64 container under emulation, likely hours (inference).\n  - Linked size: the stripped x86_64 Linux JSC is 31.6 MB installed (libjavascriptcoregtk-4.1-0, Ubuntu noble, packages.ubuntu.com), plus about 11 MB of repacked ICU data. Expect roughly 35-45 MB added to a Windows runtime or DLL (inference, not measured).\n  - Gotchas: use the non-LTO lane, since the LTO bitcode trips weak-hook duplicate symbols under lld-link (Dockerfile.windows comments). Link mimalloc yourself. Stay on /MT.\n  - Side benefit: Bun also publishes Linux glibc and musl lanes, Android arm64 and x64 lanes, and FreeBSD lanes. Linux packs could stop requiring WebKitGTK on the player's machine (docs/packaging.md:29-31), and Android would get the same backend.\n- WebKit's own Windows port. JIT and FTL have been on by default since 2024-10-02 (https://bugs.webkit.org/show_bug.cgi?id=278878, 284574@main). It is x64 only, and binaries exist only as buildbot zip archives, not versioned releases (https://docs.webkit.org/Ports/WindowsPort.html). Building it ourselves needs Visual Studio with clang-cl, CMake, Perl, Python, Ruby, gperf and Ninja. Usable as a fallback, not as a pinned dependency.\n- Other JSC prebuilts: Apple's old Windows JavaScriptCore.dll (iTunes era) is obsolete and not redistributable. React Native's jsc-android is Android only.\n\n(b) V8, the ADR's plan\n- rusty_v8 v152.2.0 (V8 15.2, 2026-08-20), https://github.com/denoland/rusty_v8/releases: rusty_v8_release_x86_64-pc-windows-msvc.lib.gz 39,957,087 B and aarch64 38,876,586 B; MIT plus V8's BSD-3.\n  - The sandbox is off unless the cargo feature is set, and pointer compression is off (build.rs:413-436 at v152.2.0).\n  - The default feature use_custom_libcxx (Cargo.toml) means it is built against Chromium's bundled libc++ (std::__Cr), as ADR 0005:16-17 found on macOS. It also uses the dynamic CRT unless crt-static is set (build.rs:1716-1730).\n  - The only ABI-safe way in is rusty_v8's own extern \"C\" v8__* shims (src/binding.cc, 184 KB). Those are unofficial and change with every release.\n- NuGet v8-v143-x64 from pmed/v8-nuget. MSVC-STL ABI (build.py: use_custom_libcxx=False). Newest listed version 13.0.245.25, published 2025-02-08 (13.3.415.2 is unlisted); x86 and x64 only; component DLLs (v8.redist nupkg 49 MB). The repository was last pushed 2025-02-09. The sandbox is not pinned in the recipe. Stale and unmaintained.\n- Node. https://nodejs.org/dist/latest-v24.x/win-x64/ (2026-09-08) has node.exe (94 MB) and node.lib (3.0 MB, the import library addons use against node.exe), and no libnode. Not embeddable.\n- Microsoft v8-jsi (React Native). JSI and Node-API DLL; the nuget.org package stops at 0.64.4. Built for React Native, not a general V8 distribution.\n- Building our own monolith (ADR 0001:26 and 71-76): depot_tools, Visual Studio 2022, Windows SDK; is_clang, use_custom_libcxx=false, v8_enable_sandbox=false. The sandbox must be off because with it on, ArrayBuffers cannot point at external memory (https://www.electronjs.org/blog/v8-memory-cage, 2022-06-30), which breaks share_f32/f64/u32/u8. Cold builds take hours (inference); rusty_v8's sccache-backed Windows job took about 30 minutes on 2026-10-02.\n- Cost of the V8 route (inference from the 300-line JSC backend; V8 needs explicit HandleScope, Context::Scope and TryCatch at every entry, plus platform and isolate setup):\n  - v8_host.cpp: 450-700 lines, 2-4 days.\n  - Our own GN recipe, artifact pipeline and CI cache for x64 and arm64: 100-300 lines, 3-6 days.\n  - SDK and test behaviour fixes: 30-100 lines, 1-2 days. In V8 `stack` starts with an \"Error\" line, so registry.ts:81-84 `frames[depth]` probably points one frame low; inference, not tested. The JSC-specific message handling (agent-eval.md:643) also changes.\n  - Optional Chrome DevTools inspector over v8-inspector: 400-800 lines, 3-5 days.\n  - Total without the inspector: about 600-1,100 lines and 6-12 days, plus two native backends maintained forever. iOS must keep the system JSC regardless, because Apple does not let third-party apps JIT.\n\n(c) Anything else\n- SpiderMonkey prebuilt by servo/mozjs, mozjs-sys-v153.3.0-3 (2026-09-29): libmozjs-x86_64-pc-windows-msvc.tar.gz 90.6 MB, aarch64 85.6 MB. MPL-2.0 (friendly to static linking), JIT, and NewArrayBufferWithUserOwnedContents gives zero-copy buffers. But the C++ JSAPI churns every ESR, the archives are packaged for the Rust crate (use from C++ unverified), and it would be a third backend of 500-700 lines.\n- ChakraCore: last release v1.11.24, 2020-12-09.\n- Hermes and QuickJS-NG: no JIT, so ruled out by ADR 0001:94-95.\n\nWHY JSC. Our backend stays the same code on every native platform, while the alternatives add 600+ lines and a second engine. Error and stack formats stay identical across macOS, Linux and Windows, which keeps the agent benchmark and pinned tests comparable. JSC is already mandatory on iOS. The prebuilts are current (daily), cover x64 and arm64, and run in production through Bun. The costs: the LGPL DLL step for shipping, the /MT and mimalloc constraints, no Windows inspector, and dependence on Bun's fork.\n\nEverything here was read only. Nothing was built or downloaded, and the repository was not touched (HEAD 60b757ee when I started; other sessions committed while I worked, so line numbers in docs/agent-eval.md may shift). Scratch copies of the fetched upstream sources are in /private/tmp/claude-501/-Users-qiulinfan-Desktop-pocketEngine/b7d0fc97-779a-4afb-8145-c566b7e1bb53/scratchpad."
+  },
+  {
+   "area": "Dependencies and non-C++ tooling for native Windows development (build, run, test, editor, agent benchmark) in aipocket",
+   "current_platform_design": "Dependencies (pocket.toml:73-214) describe macOS in their base fields. They are specialised by `[dependencies.platforms.<key>]` overrides. The host key is `<os>-<arch>`, then `<os>`, taken from std::env::consts (manifest.rs:112-117, 139-142, 268), and the target key is ios-sim, then ios (manifest.rs:295-305). An override can replace kind/url/sha256/cmake_args/libs/link_flags/defines (manifest.rs:121-136, 150-168). Frameworks are dropped off Apple (manifest.rs:169-173), and pkg-config feeds Linux system packages (manifest.rs:174-186). Because of this, `windows-x86_64`, `windows-aarch64` and `windows` keys work today with no schema change. None exist yet.\n\nKinds are handled in deps.rs:209-275:\n- prebuilt: download with curl (deps.rs:113), check sha256, extract zip/tgz/txz in Rust.\n- file: copied as is.\n- cmake: `cmake -G Ninja -DCMAKE_BUILD_TYPE=Release` (deps.rs:237-272). Only wasm (emsdk) and iOS (deps.rs:239-249) have their own branch, so there is no Windows compiler, MSVC environment or CRT handling.\n- system: nothing installed.\n\nVendored libraries under third_party are compiled by our Ninja as ordinary modules. Only two carry flags: basisu `-std=c++20` (basisu/module.toml:7) and box2d `-std=gnu17` (box2d/module.toml:8).\n\nThe data seams are clean. The rough edges are host-agnostic configs and GNU-style command lines:\n- The debug config hard-codes `-fsanitize=address,undefined` for every host (pocket.toml:20-24).\n- The Ninja rules use GNU-driver syntax: `-MD -MF` (ninja.rs:57-59), `rm -f && ar rcs` (ninja.rs:60) and `lib*.a` names (ninja.rs:102).\n- toolchain::which has no .exe/PATHEXT (toolchain.rs:93-101).\n- check.rs:25 expects `lib/tsc`.\n\nPython tooling is mostly portable because 26 scripts go through tools/scripts/dev/runtime.py. The Unix-only spots are concentrated in:\n- the two benchmark runners (killpg/SIGKILL);\n- objstress/measure.py;\n- the three .sh scripts;\n- the engine's posix_spawn shell-outs, which already have `_WIN32` stubs that return \"unsupported\" (import.cpp:575-577, session.cpp ~6990).\n\nThe script engine is the only dependency with no Windows path today (JavaScriptCore system framework, pocket.toml:203-214; ADR 0005:34 says V8 for Windows).",
+   "work_items": [
+    {
+     "item": "Windows overrides in pocket.toml for sdl3, wgpu, libwebp, draco, freetype, harfbuzz, typescript, and `kind = \"skip\"` for javascriptcore",
+     "where": "pocket.toml:73-214 (new [dependencies.platforms.windows*] tables)",
+     "why": "Library file names and system libraries differ on MSVC-ABI Windows.\n- sdl3: libs = lib/SDL3-static.lib. link: kernel32 user32 gdi32 winmm imm32 ole32 oleaut32 version uuid advapi32 setupapi shell32 dinput8. Source: SDL CMakeLists.txt:2390, 2452, 3740-3746 @release-3.4.16.\n- wgpu windows-x86_64: url wgpu-windows-x86_64-msvc-release.zip, sha256 7e67d7445c42aeb85e30f88930fd8d7d83ee769e3390aeb1ada75ebf3cf78132.\n- wgpu windows-aarch64: url wgpu-windows-aarch64-msvc-release.zip, sha256 4a876421a8c1e5fe72f849b3722214280fe485cb1c56f77f8b0c82414be5b29f. Both: release v29.0.1.1, published 2026-06-23. libs = lib/wgpu_native.lib. link: d3dcompiler ws2_32 userenv bcrypt ntdll opengl32 propsys runtimeobject, per upstream examples/triangle/CMakeLists.txt @v29.0.1.1.\n- libwebp: lib/libwebpdecoder.lib (MSVC 'lib' prefix, CMakeLists.txt:164-170 @v1.6.0).\n- draco: lib/draco.lib.\n- freetype: lib/freetype.lib.\n- harfbuzz: lib/harfbuzz.lib.\n- typescript: @typescript/typescript-win32-x64 and -win32-arm64 7.0.2 tarballs from registry.npmjs.org. Their sha256 must be computed (npm publishes only sha512 integrity).\n- The fonts (kind file) need nothing.",
+     "loc_low": 45,
+     "loc_high": 80,
+     "days_low": 0.5,
+     "days_high": 1,
+     "risk": "low-medium: the URLs and digests are verified (GitHub's asset digests match the existing macOS/Linux sha256 in pocket.toml:97,112,116). The exact native-static-libs of the Rust staticlib and the CMake output names can only be confirmed at the first Windows link."
+    },
+    {
+     "item": "CMake foreign builds on Windows: MSVC environment, compiler and CRT",
+     "where": "tools/pocket/src/deps.rs:229-272 (new Windows branch beside the iOS one at 243-249)",
+     "why": "`cmake -G Ninja` on Windows needs the MSVC/Windows SDK environment (INCLUDE/LIB from vcvars, found via vswhere, or an explicit /winsysroot). It also needs -DCMAKE_C_COMPILER/CXX_COMPILER=clang-cl (or cl) and -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL. The Rust staticlib wgpu_native.lib pulls in the dynamic release CRT (msvcrt), so every C/C++ object must be /MD and never /MDd. Draco is C++ with STL, so an _ITERATOR_DEBUG_LEVEL mismatch would fail the link.",
+     "loc_low": 30,
+     "loc_high": 80,
+     "days_low": 0.5,
+     "days_high": 1.5,
+     "risk": "medium: environment capture from vcvars is fiddly. Partly overlaps any build-tool/toolchain audit."
+    },
+    {
+     "item": "Programs pocket shells out to: .exe discovery, tsc.exe, python launcher, UTF-8 for spawned Python",
+     "where": "tools/pocket/src/toolchain.rs:93-101 (which), check.rs:25 (lib/tsc -> lib/tsc.exe), pack.rs:459, pack.rs:614, commands.rs:42, commands.rs:1063 (\"python3\")",
+     "why": "which() joins PATH dirs with the bare name, so ninja/cmake/cargo/python3 are never found on Windows. `pocket doctor` would fail first (commands.rs:34, 91). The win32 TypeScript package ships lib/tsc.exe (unpkg listing of @typescript/typescript-win32-x64@7.0.2). python3 exists only with some Windows Python installs. Python <=3.14 defaults to the ANSI code page: 28 text writes and 47 text reads in tools/scripts and sdk/python pass no encoding. Set PYTHONUTF8=1 for the Python that pocket starts; PEP 686 makes this the default from 3.15, final 2026-10-01. curl (deps.rs:113) needs no change because Windows 10 1803+ ships curl.exe.",
+     "loc_low": 20,
+     "loc_high": 45,
+     "days_low": 0.25,
+     "days_high": 0.5,
+     "risk": "low; which() overlaps the toolchain audit"
+    },
+    {
+     "item": "Script-engine dependency for Windows: build and host a V8 monolith (x64 + arm64) against the MSVC STL",
+     "where": "new tools/scripts/build_v8_windows.(ps1|py) + new pocket.toml dependency \"v8\" (base kind skip, windows overrides prebuilt) + engine/script/module.toml private_deps + guard in jsc_host.cpp:1",
+     "why": "JavaScriptCore is an Apple framework/WebKitGTK system lib (pocket.toml:203-214). On Windows its frameworks are dropped (manifest.rs:169-173) and jsc_host.cpp (guarded only by __EMSCRIPTEN__) would not compile. ADR 0005:34 names V8 for Windows.\n- rusty_v8 v152.2.0 (2026-08-20) has Windows x64/arm64 .lib files, but they are built with use_custom_libcxx on by default (rusty_v8 Cargo.toml default features; build.rs:411-413). That is the same std::__Cr problem as ADR 0005:16-17.\n- So we need our own GN build with use_custom_libcxx=false, v8_monolithic=true and clang-cl. Node.js 24 builds with ClangCL (nodejs.org/en/blog/release/v24.0.0, 2025-05-06).\n- Link: dbghelp winmm ws2_32 advapi32 (v8 BUILD.gn:7783-7789, main, fetched 2026-10-02).\n- The artifacts must be hosted (release asset + sha256).",
+     "loc_low": 80,
+     "loc_high": 200,
+     "days_low": 3,
+     "days_high": 7,
+     "risk": "high: multi-hour V8 builds per attempt and per architecture. V8 against the MSVC STL is less travelled than Chromium's libc++, and depot_tools on Windows needs the Windows SDK debugging tools. See notes for the alternatives (not additive)."
+    },
+    {
+     "item": "V8 ScriptHost backend mirroring jsc_host.cpp",
+     "where": "new engine/script/src/v8_host.cpp beside jsc_host.cpp (343 lines) implementing script_host.hpp (62 lines)",
+     "why": "Same contract (evaluate bundle, __pocket natives, zero-copy typed arrays over engine memory, JSON dispatch, microtask drain) on V8: ArrayBuffer::NewBackingStore with an empty deleter, isolate/context setup, exception text. The SDK tests are the parity check (ADR 0005 Consequences). Estimated here for completeness; it is engine code and may overlap a script-backend audit.",
+     "loc_low": 450,
+     "loc_high": 700,
+     "days_low": 2,
+     "days_high": 5,
+     "risk": "medium-high: number formatting, error text and microtask timing differences surface as SDK test failures"
+    },
+    {
+     "item": "DXC shader compiler as a dependency, wired into the RHI and pack",
+     "where": "pocket.toml (new prebuilt 'dxc'), engine/rhi instance creation (WGPUInstanceExtras dx12ShaderCompiler/dxcPath), tools/pocket/src/pack.rs (copy dxcompiler.dll)",
+     "why": "wgpu 29's DX12 default is Auto: static DXC (not in wgpu-native's default features), then dxcompiler.dll on PATH, then FXC (wgpu-types backend.rs:754-778 @v29.0.1; wgpu-native conv.rs:376-384). FXC is old, slow and limited to SM5.1. The engine's large WGSL shaders (SSGI, clouds, ocean) would compile slowly or fail on it. DXC v1.9.2609 (2026-09-29): dxc_2026_09_29.zip, sha256 ad31b1fc8443175d204f77a611fdb3ef2ec42759bdc2f1167368de24a4a7e7f1. Alternative with zero lines: prefer the Vulkan backend on Windows, or accept FXC.",
+     "loc_low": 40,
+     "loc_high": 80,
+     "days_low": 0.5,
+     "days_high": 1,
+     "risk": "medium: the DLL must travel with the exe in packs"
+    },
+    {
+     "item": "Windows build flags, debug and sanitizer config per host",
+     "where": "pocket.toml:10-30 (toolchain/configs), tools/pocket/src/manifest.rs (per-host config override), commands.rs test/run (ASan DLL dir on PATH)",
+     "why": "Configs are host-agnostic, and debug forces -fsanitize=address,undefined (pocket.toml:20-24). Windows needs:\n- defines _WIN32_WINNT=0x0A00 (httplib.h:13-17 refuses older), NOMINMAX, WIN32_LEAN_AND_MEAN, _CRT_SECURE_NO_WARNINGS, _CRT_NONSTDC_NO_DEPRECATE. UCRT deprecation warnings would otherwise trip -Werror (pocket.toml:12).\n- -fms-runtime-lib=dll (or /MD).\n- dbghelp.lib for flecs: under clang, ECS_TARGET_MSVC is undefined, so its #pragma comment(lib) is skipped (flecs.h:652-655, flecs.c:18741-18746).\n- x64 ASan: clang_rt.asan_dynamic DLL on PATH for test runs. LLVM's ASan docs list Windows 8.1+ as 'functional but not as well supported' (clang.llvm.org/docs/AddressSanitizer.html, fetched 2026-10-02).\n- UBSan: listed for Windows, but -fsanitize=vptr is unavailable on the MSVC ABI. Use -fsanitize-trap=undefined if the combined runtime does not link.\n- arm64: no ASan. Microsoft docs say support is limited to x86/x64 (learn.microsoft.com/cpp/sanitizers/asan, fetched 2026-10-02).",
+     "loc_low": 50,
+     "loc_high": 110,
+     "days_low": 0.75,
+     "days_high": 2,
+     "risk": "medium: ASan+UBSan under the MSVC ABI with a Rust staticlib and SDL in one process is the least-proven combination"
+    },
+    {
+     "item": "Application manifest for pocket_runtime and test binaries (UTF-8 code page, long paths)",
+     "where": "new engine/runtime/pocket_runtime.manifest + link flags (/MANIFEST:EMBED /MANIFESTINPUT) via the Windows config",
+     "why": "main(argc, argv) (runtime main.cpp:13), std::getenv, fopen in stb, and std::filesystem::path::string() all use the ANSI code page. Paths under C:\\Users\\<Chinese name> would break. <activeCodePage>UTF-8</activeCodePage> makes CP_ACP UTF-8 on Windows 1903+ (learn.microsoft.com/windows/apps/design/globalizing/use-utf8-code-page, fetched 2026-10-02). longPathAware covers deep .pocket/build paths.",
+     "loc_low": 20,
+     "loc_high": 40,
+     "days_low": 0.25,
+     "days_high": 0.5,
+     "risk": "low-medium: lld-link manifest embedding to verify"
+    },
+    {
+     "item": "Engine and test shell-outs: CreateProcessW in place of posix_spawn and POSIX std::system",
+     "where": "engine/assets/src/import.cpp:575-600 (Blender), engine/app/src/session.cpp ~6990-7020 (pocket tool, '.pocket/pocket' path needs .exe), tests/runtime_tests/runtime_tests.cpp:6763, 6857, 6927 (single-quoted commands with '> f 2>&1')",
+     "why": "Both engine call sites return 'unsupported' on _WIN32 today, so Blender import and in-runtime bundling are off on Windows. The tests' cmd.exe quoting differs, so they fail whenever find_blender succeeds. A small spawn-and-wait helper with stdout/stderr to a file covers all five call sites. May overlap a platform-layer audit.",
+     "loc_low": 80,
+     "loc_high": 160,
+     "days_low": 1,
+     "days_high": 2,
+     "risk": "medium: also find_blender needs Windows install paths (Program Files\\Blender Foundation)"
+    },
+    {
+     "item": "Agent benchmark runners on Windows",
+     "where": "tools/scripts/runners/opencode_agent.py:46, 53-54, 61, 75, 81-98; tools/scripts/runners/pi_agent.py:49, 53-61, 79-82, 105-117",
+     "why": "Process-group kill: start_new_session + os.killpg(signal.SIGKILL) does not exist on Windows. signal.SIGKILL raises AttributeError. Replace it with a Job Object (JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE via ctypes) in a shared helper, so a runtime the agent left running still dies.\n- The pocket path and the MCP 'command' need .exe; Bun-based agents spawn it directly.\n- Paths shown in prompts must use forward slashes: the agents' shell on Windows is Git Bash (pi docs/windows.md, fetched 2026-10-02), where unquoted C:\\... loses its backslashes.\n- The multi-line prompt is passed as argv. Through an npm .cmd shim (pi, or an npm-installed opencode), cmd.exe cuts it at the first newline. Use the native exes or pass it on stdin/a file.\n- All three agents run natively: opencode v1.18.34 (2026-09-30) ships opencode-windows-x64/arm64.zip but recommends WSL (opencode.ai/docs/windows-wsl, fetched 2026-10-02). oh-my-pi v18.4.12 (2026-10-02) ships omp-windows-x64/arm64.exe. pi needs Node >= 22.19 and Git Bash.",
+     "loc_low": 60,
+     "loc_high": 120,
+     "days_low": 0.5,
+     "days_high": 1.5,
+     "risk": "medium: Bun/Node child-process trees and Job Objects need a live check with each agent"
+    },
+    {
+     "item": "Harness and SDK helpers: exe suffix, Blender path, runner command",
+     "where": "tools/scripts/agent_eval.py:31, 1270, 4052 (task text names /Applications/Blender.app), 4201 (shell=True runner string); tools/scripts/dev/runtime.py:29-30; sdk/python/pocket_env.py:84-85",
+     "why": "pocket_env checks os.path.exists on a path without .exe, so it raises FileNotFoundError on Windows. runtime.py builds the same path; 26 evidence scripts import it. The Blender task hard-codes the macOS path in code and in the prompt. Runner strings and docs say python3 (fine with the Python install manager; `py -3`/sys.executable is safer).",
+     "loc_low": 15,
+     "loc_high": 40,
+     "days_low": 0.25,
+     "days_high": 0.5,
+     "risk": "low"
+    },
+    {
+     "item": "Windows bootstrap and background suite helpers",
+     "where": "scripts/bootstrap.sh (16 lines, sh + macOS DEVELOPER_DIR + cp pocket), tools/scripts/dev/suite.sh (nohup sh -c, touch); AGENTS.md and docs references",
+     "why": "Both are POSIX sh. Windows needs:\n- bootstrap.ps1: check VS Build Tools/LLVM/CMake/Ninja/Rust, cargo build, copy pocket.exe, setup, doctor.\n- A Python suite runner that works on both platforms (detached Popen with CREATE_NEW_PROCESS_GROUP|DETACHED_PROCESS).\ntools/scripts/linux.sh is not needed for Windows-native work. Under Git Bash with Docker Desktop it would need MSYS_NO_PATHCONV for its -v mounts (optional).",
+     "loc_low": 60,
+     "loc_high": 120,
+     "days_low": 0.5,
+     "days_high": 1,
+     "risk": "low"
+    },
+    {
+     "item": ".gitattributes for line endings and binaries",
+     "where": "new /.gitattributes (none exists)",
+     "why": "Git for Windows defaults to core.autocrlf=true. That puts CRLF into .sh files (bash then fails on \\r), into golden/evidence text and into generated sources. Bun's WebKit CI turns autocrlf off for the same reason (oven-sh/WebKit .github/workflows/ci.yml:338-344, fetched 2026-10-02). Use `* text=auto eol=lf` plus binary markers for png/glb/otf/ttf/wasm.",
+     "loc_low": 8,
+     "loc_high": 15,
+     "days_low": 0.1,
+     "days_high": 0.1,
+     "risk": "low"
+    },
+    {
+     "item": "pocket pack for Windows",
+     "where": "tools/pocket/src/pack.rs:109-111 (writes a #!/bin/sh launcher), pack.rs:41-66 (unix modes, already cfg-guarded)",
+     "why": "A packed game needs a .cmd launcher or the runtime renamed <name>.exe with a sidecar config. dxcompiler.dll (and wgpu_native.dll if the DLL variant is chosen) must be copied beside it. May overlap a build-tool audit.",
+     "loc_low": 30,
+     "loc_high": 70,
+     "days_low": 0.5,
+     "days_high": 1,
+     "risk": "low-medium"
+    },
+    {
+     "item": "Dev-only scripts (optional)",
+     "where": "tools/scripts/dev/objstress/measure.py:64-71 (/usr/bin/time + #!/bin/sh wrapper + chmod), :76 (ps), :91 (pgrep), :210 (/usr/bin/sample); objstress/generate.py:77 (cc ... -lm); tools/scripts/wasm_core_tests.py:19-27 (em++ -> em++.bat); tools/scripts/web_offline.py:24 (Chrome path)",
+     "why": "These are macOS/Linux process tools. On Windows, peak memory via psutil or GetProcessMemoryInfo, profiling via WPR/ETW or skipped, clang without -lm, emsdk's .bat entry points, and a Windows Chrome default. ios_evidence.py and IosEnv stay macOS-only by nature.",
+     "loc_low": 30,
+     "loc_high": 90,
+     "days_low": 0.5,
+     "days_high": 1,
+     "risk": "low"
+    },
+    {
+     "item": "First Windows bring-up and triage (x64, then arm64): setup, build, the full test suite, runtime, editor and a benchmark smoke run",
+     "where": "whole tree",
+     "why": "Covers the unknowns only a real machine shows:\n- warnings under -Werror from UCRT/MSVC STL interplay;\n- LLP64 `long`;\n- canonicalize() returning \\\\?\\ paths (check.rs:121);\n- tsconfig path handling in tsgo;\n- llvm-ar archive and lld-link behaviour;\n- WARP or Vulkan for headless GPU-less runs.",
+     "loc_low": 50,
+     "loc_high": 250,
+     "days_low": 1.5,
+     "days_high": 4,
+     "risk": "medium-high: the dominant uncertainty in this estimate"
+    }
+   ],
+   "blockers_or_permissions": [
+    "A Windows x64 machine with a D3D12- or Vulkan-capable GPU. The work cannot be verified from this Mac: no cross-SDK exists here, and the agent cannot run Windows binaries. An arm64 (Snapdragon X) machine is needed only to verify windows-aarch64.",
+    "Microsoft license acceptance for the MSVC STL, UCRT and Windows SDK, through Visual Studio 2022/2026 Build Tools or `xwin --accept-license` (Bun's Dockerfile.windows:106-112 does the latter). Only the owner can accept it. Commercial use beyond Community terms needs a Visual Studio license.",
+    "Administrator rights to enable Win32 long paths (LongPathsEnabled registry key) and, optionally, Defender exclusions for .pocket/ and build/. Without them, deep CMake object paths under .pocket/build can exceed MAX_PATH.",
+    "Owner decision on the Windows script engine (ADR 0005 update): (a) build V8 ourselves; (b) Bun's prebuilt JavaScriptCore, which links LGPL code statically into shipped games and forces a /MT CRT; (c) QuickJS-ng as an interim engine with no JIT. Also decide where the self-built V8 artifacts are hosted (release assets in the owner's GitHub repo).",
+    "Owner decision on the compiler driver: docs/build-system.md:139 and :279 say clang-cl, but every flag in pocket.toml:11-24 and ninja.rs:57-67 is GNU-style. Under clang-cl, -MD means 'DLL CRT' rather than 'write a depfile', and -Wall means -Weverything, which -Werror turns into a broken build. Recommended: `clang++ --target=x86_64-pc-windows-msvc -fuse-ld=lld` for our Ninja graph, and clang-cl only as CMake's compiler for foreign builds.",
+    "Benchmark accounts and keys on the Windows machine: the Z.ai coding plan for opencode (opencode_agent.py:38 default model) and the providers configured for omp/pi. Git for Windows is required for the agents' bash tool.",
+    "Blender for Windows, only if the Blender import tests and benchmark task should run there (otherwise they skip or stay unsupported)."
+   ],
+   "notes": "Short answer for the owner: the dependency side of a Windows port is not complex. Every native library we fetch or vendor has an upstream Windows (MSVC-ABI, x64 and arm64) path. Most of that work is data in pocket.toml plus a Windows branch in deps.rs. The one genuinely hard dependency is the JavaScript engine. The tooling is mostly portable Python, with Unix-only process handling concentrated in the two benchmark runners and a few dev scripts.\n\nTotals over the 16 items:\n- About 1,070 to 2,200 new or changed lines, and about 12.6 to 29.6 focused agent-days.\n- Without the V8 pair (items 4-5): about 540 to 1,300 lines and 7.6 to 17.6 days.\n- Item 15 is optional: subtract 30-90 lines and 0.5-1 day.\n\nWhat the numbers rest on:\n- the sizes of existing equivalents (jsc_host.cpp 343 lines; script_host.hpp 62; runners 180 and 202; deps.rs 299, whose iOS cmake branch is 7 lines; the ios-sim and linux overrides in pocket.toml are 4-5 lines each);\n- the upstream link lists cited per item;\n- one Windows x64 machine with VS Build Tools and LLVM 23.1.2 (released 2026-09-22 with x86_64 and aarch64 windows-msvc tarballs);\n- no CI (CI is disabled and tests run locally);\n- an AI agent working as in this repo, where wall time for builds, especially V8, dominates.\n\nPer-dependency audit (sources fetched 2026-10-02):\n- sdl3 3.4.16 (pocket.toml:73-90), CMake source build: Windows supported. Output lib/SDL3-static.lib because MSVC-style .lib naming avoids a clash with the import library (SDL CMakeLists.txt:3740-3746 @release-3.4.16). System libraries as in item 1 (CMakeLists.txt:2390; dinput8 at :2452). cmake_args unchanged. The runtime's plain main() (engine/runtime/src/main.cpp:13) is fine as a console-subsystem program.\n- wgpu 29.0.1.1 (pocket.toml:92-116), prebuilt:\n  - Release v29.0.1.1 has windows-x86_64-msvc, windows-aarch64-msvc, windows-x86_64-gnu (MinGW, unusable with an MSVC STL build) and windows-i686-msvc. There is no aarch64-gnu.\n  - Each MSVC zip has include/webgpu/{webgpu.h,wgpu.h}, the same layout as today, and lib/wgpu_native.lib (static), wgpu_native.dll, wgpu_native.dll.lib and .pdb (wgpu-native Makefile package target @v29.0.1.1).\n  - The DX12 backend loads d3d12/dxgi at runtime, which is why upstream does not link them.\n- libwebp 1.6.0, CMake: lib/libwebpdecoder.lib under MSVC or clang-cl. With a GNU-style clang driver in CMake it would be webpdecoder.lib, which is one reason to build foreign deps with clang-cl. No extra libraries (threads off).\n- draco 1.5.7, CMake: lib/draco.lib (CMakeLists.txt:1023-1054 @1.5.7).\n- freetype 2.14.3, CMake: lib/freetype.lib (Release).\n- harfbuzz 12.3.0, CMake: lib/harfbuzz.lib. Uniscribe, GDI and DirectWrite are OFF by default (CMakeLists.txt:42-45), so no usp10/gdi32/dwrite. Its debug postfix 'd' (CMakeLists.txt:486-487) does not matter for Release.\n- typescript 7.0.2, npm prebuilt: the win32-x64 and win32-arm64 packages exist, with lib/tsc.exe at 24.5 MB in x64.\n- noto-sans-arabic and noto-sans-cjk (kind file): no change.\n- javascriptcore: no Windows path; see items 4-5 and the alternatives below.\n- New: DXC (item 6).\n- Vendored:\n  - flecs 4.1.6: Windows OS API OK; needs dbghelp under clang.\n  - cpp-httplib 0.56.0: ws2_32 auto-linked through #pragma, since _MSC_VER is defined under clang for the MSVC target; requires Windows 10.\n  - nlohmann/json, stb + dr_libs + nanosvg, Catch2, Yoga, meshoptimizer, basisu with zstd: MSVC-supported, no extra system libraries.\n  - Box2D 3.1.1: has MSVC/clang branches (atomic.h:10-74, timer.c:8).\n  - The two module flags (-std=gnu17, -std=c++20) work as written with the clang++ GNU driver. clang-cl would ignore them with a warning (third_party suppresses -Werror), and the files would silently build under the wrong language standard.\n\nStandard library: the engine uses std::format (143 uses), println (8), expected (3), print, bit_cast and from_chars. The MSVC STL has all of them. docs/build-system.md:11 says 'libc++ everywhere', but the Linux image builds with libstdc++ (tools/docker/linux/Dockerfile, libstdc++-15-dev). The code already builds against two standard libraries, so the MSVC STL would be a third, not a rewrite.\n\nScript-engine alternatives to items 4-5 (choose one; not additive):\n- (b) Bun's JavaScriptCore prebuilt (oven-sh/WebKit autobuild releases, e.g. autobuild-preview-pr-763 of 2026-10-02): bun-webkit-windows-amd64.tar.gz is 385,229,922 bytes and the arm64 tarball 366,299,639 bytes. It is the JSCOnly port built with clang-cl, the /MT static CRT and static ICU with a 32 MB data table (Dockerfile.windows:1-21).\n  - It could keep jsc_host.cpp: about 20-40 lines of TOML, plus switching every CMake dep to /MT and wgpu to its DLL variant, so the Rust msvcrt stays behind a DLL boundary. About 2-4 days.\n  - Risks: LGPL static-linking obligations, non-semver autobuild tags, and C API headers in the package not yet verified.\n- (c) QuickJS-ng v0.17.0 (2026-09-18): CI covers windows-msvc x64/x86/ARM64 and windows-clang (.github/workflows/ci.yml:176-225). Cost: a CMake dependency of 10-15 TOML lines plus a 400-550-line backend, about 2.5-4 days. No JIT.\n- (d) NuGet v8-v143-x64: latest listed 13.0.245.25 (2025-02-08). MSVC STL DLLs, x64 only, 20 months old. It would remove item 4's own build (3-7 days) for x64 bring-up only.\n\nOverlaps to de-duplicate with other audits:\n- Ninja rules (ninja.rs:57-67, rm -f and ar), lib*.a naming and toolchain detection belong to the build-tool audit. I only flagged them, apart from which() in item 3.\n- Win32 surface creation (platform.cpp:261-264 has only Wayland and X11 handles), HOME lookup (platform.cpp:84), sockets (net.cpp:43-44) and signals (runtime.cpp:225-228) belong to the C++ platform layer.\n- Items 5, 9 and 14 may also be counted by the script-backend, platform-layer and build-tool audits.\n\nRead-only constraints were respected: nothing in the repository was edited, built or committed; build/agent-traces and build/eval-runtime were not touched. Scratch downloads (SDL, libwebp and V8 build files, Bun's CI file) went to the session scratchpad only."
+  },
+  {
+   "area": "Windows development via WSL2, reusing the existing Linux support instead of a native Windows port",
+   "current_platform_design": "The platform seams are narrow and clean. Inside WSL2 the build tool cannot tell it is not on ordinary Linux.\n\nBuild tool (tools/pocket):\n- Host differences live in data. Each dependency has `[dependencies.platforms.<os>-<arch>]` or `<os>` tables (pocket.toml:110-116 for the wgpu-native Linux aarch64 and x86_64 zips, :175-181 for the TypeScript Linux tarballs, :210-213 for JavaScriptCore via `pkg_config = [\"javascriptcoregtk-4.1\"]`).\n- These tables are resolved with `std::env::consts::OS/ARCH` (tools/pocket/src/manifest.rs:268). pkg-config is run at manifest.rs:174-180.\n- Toolchain detection is clang on PATH, with POCKET_CXX/CC/AR overrides (toolchain.rs:174-197).\n- The Linux-specific Ninja rules are `gnu17` and `lld` with `--start-group` (ninja.rs:53-68).\n- WSL2 reports `linux`/`x86_64`, so all of this applies unchanged. Nothing in the tool checks for WSL.\n\nEngine:\n- **Window seam.** All window code is in engine/platform/src/platform.cpp:240-266. Emscripten, Apple and \"else\" branches each take SDL3's X11 or Wayland handles; it fails with `window_handles_missing` only when neither exists (:265).\n- **GPU-surface seam.** Metal layer, Wayland surface or Xlib window, in engine/rhi/src/device.cpp:318-348.\n- **Scripts.** They run on the JavaScriptCore C API with no Apple-only code (engine/script/src/jsc_host.cpp:1-7). On Linux this is WebKitGTK's JSC.\n- **Audio.** SDL3, which degrades to silence when there is no device (engine/audio/src/audio.cpp:645-665).\n- **Existing Windows guards.** `_WIN32` guards already stub out posix_spawn and getppid uses (engine/app/src/session.cpp:6990-6992, engine/assets/src/import.cpp:576-577, engine/app/src/runtime.cpp:16,227-236). They have never been compiled.\n- **Control server.** It binds 127.0.0.1 (engine/app/src/server.cpp:169-171).\n- **Architecture-specific code.** There is none in engine/ (no `__x86_64__`, `__aarch64__` or NEON/SSE intrinsics outside third_party). FMA contraction is off on every target (pocket.toml:13-16).\n\nSize of the Linux port, for calibration:\n- Commit 49fd3360 (2026-10-01 15:18) was 224 insertions in 13 files. About 60 of those lines are engine code (platform 23, device 20, headers 17). The rest is the manifest/pkg-config (79), Ninja (13), Dockerfile (15) and linux.sh (31).\n- Commit b2bcd85c (17:07 the same day) added 74 lines for teardown and docs.\n\nHow Linux runs today:\n- Only headless, in an Ubuntu 26.04 container (tools/docker/linux/Dockerfile:4-14: clang 21, libstdc++ 15, libjavascriptcoregtk-4.1-dev, mesa-vulkan-drivers, and the X11/Wayland/ALSA/Pulse dev packages). tools/scripts/linux.sh:38-48 rsyncs the tree into a volume and builds the tool there.\n- Rendering is Mesa's CPU Vulkan, lavapipe (docs/build-system.md:205-208).\n- aarch64 release run: 23 of 24 test modules passed (build-system.md:225-227).\n- x86_64 has only run under QEMU: about 9 hours, with runtime_tests failing and an inconclusive rerun (docs/development.md:166, an uncommitted file in the working tree).\n- No windowed Linux run has ever happened.\n- A host recipe without the container is written down but \"Not yet run outside a container\" (docs/development.md:61-63, uncommitted).",
+   "work_items": [
+    {
+     "item": "WSL host recipe: `wsl --install Ubuntu-26.04`, the Dockerfile's apt line natively, rustup, `scripts/bootstrap.sh`, clone into the Linux filesystem (not /mnt/c), a .wslconfig memory/swap note for debug+ASan, WSLg checks (GPU, audio, ports); optionally a small setup script",
+     "where": "docs/development.md:61-63 (Linux host section, uncommitted); tools/docker/linux/Dockerfile:6-14 as the package list; scripts/bootstrap.sh:1-15 (comment says macOS but nothing in it is macOS-only); optional tools/scripts/wsl_setup.sh",
+     "why": "No container is needed: WSL is Ubuntu 26.04 already, and the container would also cut the program off from WSLg and the GPU. Ubuntu 24.04 lacks clang-21 and libstdc++-15-dev in its archive (packages.ubuntu.com, 2026-10-02), so 26.04 is the matching distro. WSL's default VM memory is 50% of host RAM (learn.microsoft.com wsl-config, updated 2026-09-16), but debug sanitizers over lavapipe need more than 20 GB (tools/scripts/linux.sh:6; build-system.md:226-227).",
+     "loc_low": 30,
+     "loc_high": 120,
+     "days_low": 0.25,
+     "days_high": 0.75,
+     "risk": "low: documentation plus packages already proven in the container"
+    },
+    {
+     "item": "First run on real x86_64 hardware: tool, setup, debug and release builds, `pocket test` (release, then debug if memory allows); fix what fails",
+     "where": "tests/runtime_tests (the module that failed under QEMU), plus whatever else the run surfaces",
+     "why": "x86_64 has only been run under QEMU (about 9 h; runtime_tests failed, rerun inconclusive: docs/development.md:166). build-system.md:203-204 still says the x86_64 archives are 'not yet run'. Every WSL2 user is on x86_64 (or arm64 Windows, which would take the aarch64 tables).",
+     "loc_low": 0,
+     "loc_high": 250,
+     "days_low": 0.5,
+     "days_high": 2.5,
+     "risk": "medium: the only evidence is emulated. Odds of a real bug are moderate: no arch-specific engine code was found and FMA is off (pocket.toml:13-16), so a timing or emulation artifact is the likelier cause"
+    },
+    {
+     "item": "Deterministic GPU backend choice: pass WGPUInstanceExtras with backends from a POCKET_GPU_BACKEND variable (vulkan, gl, auto) and flags Default|WithEnv, so WGPU_ALLOW_UNDERLYING_NONCOMPLIANT_ADAPTER can admit dzn; report the adapter in `pocket doctor` and the run report; make the backend assertion follow the selection",
+     "where": "engine/rhi/src/device.cpp:303 (`wgpuCreateInstance(nullptr)`), :352-353 (adapter options), :428 (adapter log); tests/runtime_tests/runtime_tests.cpp:133-137 (asserts \"vulkan\" off Apple); tools/pocket/src/commands.rs (doctor)",
+     "why": "wgpu-native 29.0.1.1 compiles GL in by default (Cargo default features include gles: raw.githubusercontent.com/gfx-rs/wgpu-native/v29.0.1.1/Cargo.toml, read 2026-10-02). A null descriptor gives all backends with release flags and no env reading (wgpu-native src/lib.rs; docs.rs wgpu-types 29.0.1 instance.rs). wgpu ranks a Mesa-d3d12 GL adapter (renderer 'D3D12 (...)': Other, or Integrated for Intel) above lavapipe (Cpu) (docs.rs wgpu-core 29.0.1 instance.rs; wgpu-hal 29.0.1 gles/adapter.rs). So on WSL with a working d3d12 GL driver the engine would likely land on wgpu's secondary GL backend and fail runtime_tests.cpp:136. Separately, Vulkan drivers reporting conformance major 0 (dzn) are hidden unless the flag is set (pinned header .pocket/deps/wgpu-29.0.1.1/include/webgpu/wgpu.h:850-861; WithEnv at :916). Zero-code stopgap, inferred but unmeasured: GALLIUM_DRIVER=llvmpipe or LIBGL_ALWAYS_SOFTWARE=1 turns GL into a Cpu adapter, so Vulkan lavapipe wins as it does in the container.",
+     "loc_low": 20,
+     "loc_high": 60,
+     "days_low": 0.25,
+     "days_high": 0.75,
+     "risk": "low: a small, contained change that native Windows (DX12 vs Vulkan) will also want"
+    },
+    {
+     "item": "OPTIONAL: hardware-accelerated rendering in WSL, either through wgpu's GL backend on Mesa's d3d12 Gallium driver, or through a self-built Mesa with dzn plus the non-compliant flag. Run renderer_tests, runtime_tests and samples on it, then fix or document the gaps",
+     "where": "engine/rhi/src/device.cpp:390-410 (default limits, only TimestampQuery requested); engine/renderer (feature gaps on wgpu GL); optional tools/scripts/dev script to build Mesa with -Dvulkan-drivers=microsoft-experimental",
+     "why": "Without this, WSL renders on the CPU. dzn is not packaged by Ubuntu: no libvulkan_dzn.so or dzn_icd in 26.04 'resolute', while lavapipe is (packages.ubuntu.com, 2026-10-02); users on 24.04 hit the same (community.khronos.org topic 112045, 2025-08-19). SDL's maintainers say Dozen 'hasn't been tested for conformance and it probably won't be' (SDL commit e803c, 2026-01-31). WSLg's own README promises only OpenGL through d3d12 (github.com/microsoft/wslg, read 2026-10-02).",
+     "loc_low": 0,
+     "loc_high": 400,
+     "days_low": 1,
+     "days_high": 4,
+     "risk": "high: wgpu's GL backend is second tier, and GL-over-D3D12 adds its own translation bugs. The likely result is 'works for simple scenes' or 'stay on lavapipe'; neither gives representative GPU timings"
+    },
+    {
+     "item": "First windowed Linux run: `pocket run` and `pocket editor` through WSLg. Covers the SDL3 window (X11 via XWayland, or Wayland), lavapipe presenting to it, input, audio through WSLg's PulseAudio, and HiDPI. Document the cursor-lock limitation",
+     "where": "engine/platform/src/platform.cpp:240-266 (window handles), :471 (SDL_SetWindowRelativeMouseMode for cursor lock); engine/rhi/src/device.cpp:327-348 (Wayland and Xlib surfaces); editor/ (TypeScript on Pocket UI, docs/editor.md:3-8)",
+     "why": "The container only ever ran headless (commit 49fd3360 title; build-system.md:201-223). SDL3 picks Wayland only when the compositor has fifo-v1 and commit-timing-v1, and otherwise uses X11/XWayland (gamingonlinux.com, 2024-03). The engine handles both. WSLg's mouse lock and hide is an open bug (microsoft/wslg#376, opened 2021-07-21, still open on 2026-10-02), so mouse-look games and the cursor lock will misbehave.",
+     "loc_low": 0,
+     "loc_high": 80,
+     "days_low": 0.25,
+     "days_high": 1,
+     "risk": "medium: never exercised on Linux, though the code path is short and uses SDL's documented properties. Editor frame rate on lavapipe is unmeasured"
+    },
+    {
+     "item": "Agent benchmark in WSL: install opencode and oh-my-pi for Linux, place API keys, Linux Blender via POCKET_BLENDER, raise --timeout if lavapipe slows capture tasks; run the reference runner, then a full run",
+     "where": "tools/scripts/agent_eval.py:31 (POCKET path), :1270-1272 (POCKET_BLENDER fallback, an uncommitted change), :4054 (Blender task text uses that path); tools/scripts/runners/opencode_agent.py:81-89 and pi_agent.py:82-108 (POSIX process groups, fine on Linux); sdk/python/pocket_env.py:84-91 (headless runtime with --serve 0)",
+     "why": "Every task drives a headless runtime over JSON-RPC (agent_eval.py:5-6). opencode recommends WSL on Windows (opencode.ai/docs, read 2026-10-02). oh-my-pi installs on Linux with curl, brew or bun (innfactory.ai omp page, read 2026-10-02). The agents run inside WSL, or on Windows calling `wsl.exe ... pocket mcp`; localhost forwarding reaches the 127.0.0.1 control server (server.cpp:169-171; wsl-config localhostForwarding=true by default).",
+     "loc_low": 0,
+     "loc_high": 40,
+     "days_low": 0.5,
+     "days_high": 1,
+     "risk": "low-medium: harness code is portable. Unknowns are lavapipe's speed when many runtimes run in parallel, and the network setup of the model providers"
+    },
+    {
+     "item": "Web build from WSL: emsdk 6.0.9 for Linux, `pocket setup --target wasm`, `pocket pack --web`, served by web_evidence.py and opened in the Windows browser; web_offline.py pointed at a Linux Chrome",
+     "where": "tools/pocket/src/toolchain.rs:58-73 (emsdk discovery, Linux-friendly); pocket.toml:34-61 (wasm configs); tools/scripts/web_offline.py:24 (POCKET_CHROME, defaults to a macOS path); tools/scripts/web_evidence.py",
+     "why": "Emscripten documents WSL as an alternative to native Windows (emscripten.org downloads page, read 2026-10-02, docs at 6.0.11-git). This gives the only Windows-player deliverable available without a port: the browser build.",
+     "loc_low": 0,
+     "loc_high": 30,
+     "days_low": 0.25,
+     "days_high": 0.75,
+     "risk": "low: Linux is emsdk's first-class host, but this tool's wasm path has only run on macOS"
+    },
+    {
+     "item": "OPTIONAL, NOT IN THE WSL TOTAL: native-Windows `pocket` for the web target only, for a Windows user who will not use WSL",
+     "where": "tools/pocket/src/toolchain.rs:65-66 (requires a file named `em++`; Windows has em++.bat), :94-104 (which() ignores PATHEXT/.exe); tools/pocket/src/ninja.rs:60 (`rm -f $out && $ar ...` needs a POSIX shell, which Ninja on Windows does not have); tools/pocket/src/commands.rs:42 (`python3`); deps.rs:113 (curl, which ships with Windows 10+). Unix-only code is already cfg-gated (deps.rs:155, pack.rs:41,65-67)",
+     "why": "Gives browser games built natively on Windows, but no agent loop: the web build has no control server (docs/web.md:136). No tests either, since `pocket test` runs native binaries.",
+     "loc_low": 60,
+     "loc_high": 200,
+     "days_low": 1,
+     "days_high": 2.5,
+     "risk": "medium: Windows quoting and .bat invocation through Ninja, with no Windows CI to catch regressions"
+    }
+   ],
+   "blockers_or_permissions": [
+    "A Windows 10 (fully updated) or Windows 11 machine of the owner's. Enabling WSL and running `wsl --install Ubuntu-26.04` needs admin/UAC. Ubuntu 24.04+ images use WSL's tar format, which needs WSL 2.4.10 or later (ubuntu.com/wsl install doc, read 2026-10-02).",
+    "A current Windows GPU driver; GPU paravirtualization comes from the Windows driver. NVIDIA says to install no Linux display driver inside WSL (CUDA on WSL guide v13.3, 2026-05-21).",
+    "The sudo password inside WSL for apt (the owner creates the Linux user on first launch). Per the user's standing rule, ask for anything needing sudo.",
+    "Raising memory and swap in %UserProfile%\\.wslconfig if debug+ASan tests are wanted (more than 20 GB). This is a VM setting change, so it is the owner's decision; otherwise test with --config release.",
+    "The benchmark's model accounts and keys (DeepSeek for oh-my-pi, the Z.ai GLM coding plan for opencode) copied into the WSL environment. Paid accounts, owner-only.",
+    "Optional: usbipd-win (MSI, admin) to pass a gamepad into WSL. USB devices are not natively available in WSL (learn.microsoft.com connect-usb, updated 2026-06-02). The WSL kernel's HID gamepad support is unverified.",
+    "Optional: Linux Blender (blender_level task and .blend import) and a Linux Chrome .deb (web_offline.py). Free, but large downloads.",
+    "No licence acceptance is needed on this path. A native port would need the Windows SDK or VS Build Tools terms (or xwin), which docs/development.md:18 reserves for the owner.",
+    "Docker is not needed. Running linux.sh unchanged inside WSL would need a Docker engine, and Docker Desktop has commercial licence terms. Its container would also be headless only, with no WSLg socket or /dev/dxg."
+   ],
+   "notes": "VERDICT\nWSL2 with Ubuntu 26.04 runs the existing Linux build with close to zero porting.\n\nThe core path is items 1, 2, 3, 5, 6 and 7. That is about 50-580 new or changed lines and 2-6.75 focused agent-days, almost all of it verification. Hardware-accelerated rendering (item 4) is extra: 0-400 lines and 1-4 days, with a real chance it ends in \"stay on CPU rendering\".\n\nWhat the numbers rest on:\n- The Linux port itself was 224+74 lines, landed in about two hours of commits on 2026-10-01 (49fd3360 at 15:18, b2bcd85c at 17:07). About 60 of those lines are engine code.\n- WSL is that same target: the tool resolves `linux-x86_64` from std::env::consts (manifest.rs:268).\n- Most of the range is unknown test failures on first real x86_64 hardware, plus the GPU-backend question.\n- Wall-clock time for test suites and benchmark runs is not counted.\n\nWHAT A WINDOWS USER GETS\n- **Build and tests.** Builds of the tool, engine, debug and release, and `pocket test`. The release suite was 23/24 green on aarch64 in the container; x86_64 is still unproven (development.md:166).\n- **Headless use.** Headless runs, captures, scenarios, the JSON-RPC control server and `pocket mcp`. A Windows-side agent can reach them through localhost forwarding or `wsl.exe`.\n- **TypeScript tooling.** `pocket ts`, `pocket check` and `--watch`. The watcher polls mtimes (watch.rs:18-40), so it even works on /mnt/c, but keep the clone in ext4 for speed (learn.microsoft.com/windows/wsl/filesystems, updated 2026-06-02).\n- **The agent benchmark.** It works with opencode and oh-my-pi on Linux.\n- **The web build.** Emscripten runs in WSL and the result opens in a Windows browser.\n- **Editor and windowed runs.** These work through WSLg: Weston and XWayland, audio through WSLg's PulseAudio server (github.com/microsoft/wslg README, read 2026-10-02). SDL3 is built against libpulse (Dockerfile:11), and audio falls back to silence if the device is missing (audio.cpp:645-665).\n\nCaveats on the editor:\n- Rendering is on the CPU (lavapipe, which Khronos lists as Vulkan 1.3 conformant: phoronix.com/news/Lavapipe-Vulkan-1.3-Official). Frame rate on heavy samples is unmeasured.\n- Cursor lock and mouse-look are broken in WSLg (microsoft/wslg#376, opened 2021-07-21, still open).\n- Windowed Linux has never been run, so the first run may find small issues.\n\nWHAT IT CANNOT DO\n1. **A native .exe for players.** `pocket pack` in WSL produces a Linux pack with a sh launcher (pack.rs:109). It needs libjavascriptcoregtk and a Vulkan driver on the target (docs/packaging.md:28-31). Windows players get only the web build.\n2. **D3D12 timings or representative GPU performance.** WSL offers either the CPU (lavapipe), or OpenGL translated to D3D12 by Mesa's d3d12 driver, through wgpu's second-tier GL backend.\n   - wgpu's DX12 backend is never exercised (WGPUInstanceBackend_DX12 in the pinned wgpu.h:801).\n   - dzn, Vulkan over D3D12, is absent from Ubuntu 26.04's packages (packages.ubuntu.com, 2026-10-02) and hidden by wgpu as non-conformant (wgpu.h:850-861).\n   - Vendor paths in WSL are CUDA, DirectX and DirectML only. NVIDIA's WSL guide does not mention Vulkan, and says OpenGL-CUDA interop is unsupported (docs.nvidia.com CUDA on WSL guide v13.3, 2026-05-21).\n   - So gpu_probe.py numbers from WSL say nothing about Windows players.\n3. **Catching Windows-specific bugs.** Code not exercised:\n   - the `_WIN32` branches (session.cpp:6990-6992, import.cpp:576-577, runtime.cpp:16,227-236)\n   - BSD sockets in net.cpp:549\n   - posix_spawn\n   - HWND surfaces (missing in device.cpp:318-348 and platform.cpp:240-266)\n   - WASAPI audio, XInput/GameInput gamepads, drive letters and backslashes, case-insensitive paths, CRLF\n   - clang-cl/MSVC ABI\n   - the script engine: Windows has no system JavaScriptCore, and ADR 0005:34 plans V8 there.\n   ADR 0001's windows-2025 CI (0001-tech-stack.md:37) stays unbuilt.\n4. **iOS work.** That stays on the Mac.\n\nGPU FINDING (the one real engineering point)\n- device.cpp:303 creates the instance with defaults: all backends, including GL (wgpu-native v29.0.1.1 Cargo.toml default features, read 2026-10-02), and no environment overrides (wgpu-native src/lib.rs `new_without_display_handle`; docs.rs wgpu-types 29.0.1).\n- wgpu-core sorts adapters Discrete < Integrated < Other < Virtual < Cpu (docs.rs wgpu-core 29.0.1). wgpu-hal labels a GL renderer 'D3D12 (NVIDIA ...)' as Other and 'D3D12 (Intel ...)' as Integrated (docs.rs wgpu-hal 29.0.1 gles/adapter.rs).\n- So on a WSL box where Mesa's d3d12 GL works, the engine probably picks GL over lavapipe. That path is untested and would break the backend assertion at runtime_tests.cpp:136.\n- This is inferred from source, not measured. The adapter log line at device.cpp:428 settles it on the first run.\n- Item 3 makes the choice explicit. GALLIUM_DRIVER=llvmpipe is the zero-code way to reproduce the container's behaviour.\n- Other WSL GPU background:\n  - MESA_D3D12_DEFAULT_ADAPTER_NAME selects the GPU; the default is the integrated one (github.com/microsoft/wslg/wiki/GPU-selection-in-WSLg).\n  - On 24.04, users report GL stuck on llvmpipe until they install kisak Mesa and set GALLIUM_DRIVER=d3d12 (forums.developer.nvidia.com topic 347383, 2025-10-11/18).\n  - dzn reached about 99.86% of the Vulkan 1.2 CTS but was never certified (phoronix.com/news/Microsoft-Dzn-Vulkan-1.2). SDL ranked it above lavapipe for WSL on 2026-01-31 while saying it probably will never be conformance-tested (discourse.libsdl.org SDL commit e803c).\n\nDISTRO CHOICE\n- Use Ubuntu-26.04. It is installable on WSL (ubuntu.com/wsl/docs/stable/howto/install-ubuntu-wsl2, read 2026-10-02) and matches Dockerfile:4.\n- Ubuntu 24.04 has neither clang-21 nor libstdc++-15-dev in its archive; questing and resolute do (packages.ubuntu.com, 2026-10-02). It would need apt.llvm.org plus a toolchain PPA.\n- The engine only uses <expected> and <print> from newer libraries, which libstdc++ 14 has, so 24.04 would probably work, but it is untested.\n- ADR 0001 names ubuntu-24.04 for CI (0001-tech-stack.md:37), which no longer matches the 26.04 container.\n\nCAVEATS\n- docs/development.md, rust-toolchain.toml and agent_eval.py:1270-1272 are uncommitted working-tree changes from a concurrent session (git status on 2026-10-02). Their line numbers may move.\n- Nothing was built, run or edited. build/agent-traces and build/eval-runtime were not touched.\n- Every behavioural claim about WSL is from documentation or source, not measured on a Windows machine. The first real WSL session should record:\n  - the adapter and backend line (device.cpp:428)\n  - the release suite result\n  - editor FPS on a heavy sample."
+  }
+ ],
+ "plan": {
+  "complexity_verdict": "Mostly clean, with a few tangled spots. Porting means wide but shallow work, not a redesign. I re-checked the cited sites at HEAD edbfe1b1; the audits started at 60b757ee, and the line numbers still match unless noted.\n\nCLEAN\n- **OS work goes through two libraries.** SDL3 handles windows, input and audio, and only pocket_platform and pocket_audio link it (engine/platform/module.toml, engine/audio/module.toml). wgpu-native handles the GPU (engine/rhi/module.toml).\n- **Scripts sit behind one small interface.** ScriptHost has 14 methods (engine/script/include/pocket/script/script_host.hpp:32-60). The session creates it once (engine/app/src/session.cpp:651), and the only native backend is 343 lines (engine/script/src/jsc_host.cpp).\n- **Dependencies already accept a Windows host.** The build tool picks per-host tables by std::env::consts (tools/pocket/src/manifest.rs:268), so `windows-x86_64` and `windows` tables work with no schema change. The Linux JSC table at pocket.toml:211-213 is the model.\n- **The OS-specific code is small.** Engine and tests hold 84,446 lines of C++, with 62 platform conditionals in 14 files. Only about 160-180 lines call POSIX, Apple or Linux APIs.\n- **Past ports were small.** Linux took 224 inserted lines in 13 files, 78 of them in engine/ (git 49fd3360). The iOS Simulator took 629 lines in 22 files, 381 of them in the tool (4e71010b). Both landed on 2026-10-01.\n\nTANGLED\n- **There is no OS-services layer.** posix_spawn is copied twice (session.cpp:7007-7013, engine/assets/src/import.cpp:587-594). BSD sockets are written inline in the lockstep code (engine/app/src/net.cpp:36-47, 543-546).\n- **`#ifndef __EMSCRIPTEN__` is used to mean \"POSIX\".** See net.cpp:36 and jsc_host.cpp:1. The window code's `#else` assumes X11 or Wayland (engine/platform/src/platform.cpp:247, 259-265). A Windows build therefore lands in POSIX code paths.\n- **The existing Windows guards only switch features off.** All 7 `_WIN32` lines do this, and none has ever been compiled (runtime.cpp:16, 227, 232; session.cpp:31, 6990; import.cpp:21, 576).\n- **The build tool assumes a Unix host.** It has no cfg(windows). Host checks are inline strings (tools/pocket/src/ninja.rs:41-45, 54, 63-68). The archive rule needs a shell (`rm -f $out && $ar rcs`, ninja.rs:60), and Ninja on Windows has none. which() ignores .exe (toolchain.rs:93-101). python3 is hard-coded at 4 sites (commands.rs:42, 1063; pack.rs:459, 614). canonicalize is called at 16 sites. The diagnostics parser splits on ':' (report.rs:64), which breaks on C:\\.\n- **Configs ignore the host.** Debug forces -fsanitize=address,undefined on every host (pocket.toml:20-24), and the \"native\" target treats host and target as the same thing.\n\nBottom line: the backend migration code itself is not complex. The Windows cost comes from many small POSIX assumptions, a script engine Windows does not ship, and a first build on a machine nobody has used yet.",
+  "native_windows": {
+   "total_loc_low": 1230,
+   "total_loc_high": 2970,
+   "total_days_low": 12.5,
+   "total_days_high": 33,
+   "phases": [
+    {
+     "name": "0. Decide and de-risk on the Mac (no Windows hardware needed)",
+     "contents": "- **Bun JavaScriptCore spike** (20-40 lines, 0.5-1 d). On a throwaway branch, link oven-sh/WebKit's bun-webkit-macos-arm64 release lane plus mimalloc 3.2.8 instead of the system framework (pocket.toml:203-209). Then run pocket test, tests/ts, the editor and a few benchmark tasks. jsc_host.cpp uses only the public JSC C API (jsc_host.cpp:7), but Bun's CI never exercises that path on Windows (audit 3: oven-sh/WebKit lanes.mjs:36-39, read 2026-10-02).\n- **ADR amendment and Windows docs** (80-180 lines, 0.3-0.8 d). Four decisions:\n  - Compiler: `clang++ --target=x86_64-pc-windows-msvc` with lld, not the clang-cl that docs/build-system.md:139-140 and :282 plan. Under clang-cl, -Wall means -Weverything and -MD means \"DLL CRT\", while our flags in pocket.toml:10-24 and ninja.rs:57-60 are GNU-style. Audits 1, 2 and 4 agree.\n  - Script engine: JSC from Bun, or V8 as ADR 0005:34 says.\n  - C runtime: dynamic (/MD), with JSC behind a DLL.\n  - GPU: Vulkan first.\n- **.gitattributes** with `* text=auto eol=lf` plus binary patterns (5-15 lines, 0.05 d). None exists. Under core.autocrlf, gen.rs would rewrite its 7 generated files on every build and `pocket gen --check` would always fail. Audits 1, 2 and 4 all raised this; it is counted once.",
+     "loc": "105-235",
+     "days": "0.85-1.9",
+     "done_when": "macOS `pocket test` and tests/ts pass against Bun's JSC. If they do not, the spike's list of C-API breakages switches the plan to V8 before any Windows work. The owner has accepted the decisions."
+    },
+    {
+     "name": "1. pocket and the engine libraries build on Windows",
+     "contents": "- **Toolchain discovery and doctor** (90-170 lines). Teach which() .exe and PATHEXT (toolchain.rs:93-101). Find clang++ on PATH, in %ProgramFiles%\\LLVM, or in VS's LLVM via vswhere. Use llvm-lib instead of the literal \"ar\" fallback (toolchain.rs:176). Require `-dumpmachine` to end in windows-msvc. Have doctor check vswhere and the SDK registry key (commands.rs:29-45).\n- **Ninja Windows branch, flags and per-host config** (70-150 lines). Merges audit 1 (35-70), audit 2 (20-40) and audit 4 (50-110).\n  - Archive with llvm-lib instead of the shell rule at ninja.rs:60.\n  - Link with `-fuse-ld=lld -Wl,-nodefaultlib:libcmt` and no --start-group (ninja.rs:63-68).\n  - Name outputs .exe and .lib (ninja.rs:102, 112, 118; commands.rs:138-142), and quote paths.\n  - Defines: NOMINMAX, WIN32_LEAN_AND_MEAN, _CRT_SECURE_NO_WARNINGS, _CRT_NONSTDC_NO_DEPRECATE, _WIN32_WINNT=0x0A00. Also -fms-runtime-lib=dll and dbghelp for flecs.\n  - A per-host config override so arm64 drops ASan (pocket.toml:20-24).\n- **Path handling** (25-50 lines). Use dunce at the 16 canonicalize sites, keep one canonical workspace root, and turn '\\\\' into '/' wherever a path becomes an id.\n- **Diagnostics parser** (15-35 lines). Handle drive letters (report.rs:64).\n- **CMake dependency builds** (20-80 lines; deps.rs:229-272). Pass explicit compilers, CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL and llvm-rc. The audits disagree here: audit 1 says clang and lld-link find MSVC by themselves, while audit 4 says the vcvars environment must be captured. The range covers both.\n- **Windows tables in pocket.toml** (45-80 lines, data only).\n  - sdl3: SDL3-static.lib plus the Win32 system libraries, overriding -lpthread and -lm.\n  - wgpu: the v29.0.1.1 windows-x86_64-msvc and aarch64-msvc zips (digests in audit 4).\n  - libwebp, draco, freetype, harfbuzz: .lib names.\n  - typescript: the win32 packages.\n- **Programs the tool runs** (20-45 lines). Look for lib/tsc.exe (check.rs:25). Add one Python lookup helper for the 4 python3 sites. Set PYTHONUTF8=1 for the Python it starts.\n- **ASan runtime DLL** (15-30 lines). Put its directory on PATH in one helper that every spawn site uses (run, test, editor, watch, mcp).\n- **Application manifest** (25-60 lines). Embed activeCodePage=UTF-8 and longPathAware in the runtime and test executables. Without it, a Chinese path on a code-page-936 machine makes nlohmann dump() throw (audit 2).\n- **MSVC STL fallout** (0-40 lines). It is the third standard library after libc++ and libstdc++.\n- **Explicit GPU backend choice** (20-60 lines). wgpuCreateInstance(nullptr) at device.cpp:303 enables every backend. Add WGPUInstanceExtras with a POCKET_GPU_BACKEND override, put Vulkan first, and report the adapter. Audits 2, 4 and 5 each proposed this; it is counted once, and WSL needs the same change.\n- **scripts/bootstrap.ps1** (35-70 lines). Copy pocket.exe by renaming the old file first, because Windows locks a running exe. Name .pocket\\pocket.exe in .mcp.json and in the project guide (commands.rs:412).\n- **Unit tests that run on macOS** (40-90 lines). Cover drive letters, PATHEXT, \\\\?\\ paths, and a build.ninja snapshot for a forced Windows host.\n- **First-contact fixes** (50-150 lines). The first real link will show the CRT mix, the ASan DLL and the five CMake dependencies built by clang for MSVC.",
+     "loc": "470-1,110",
+     "days": "3.7-11.2",
+     "done_when": "On Windows, pocket doctor is green. pocket setup fetches and builds every dependency except the script engine. Every library below pocket_app compiles. The six test modules that do not link pocket_app pass: core, world, physics, nav, assets and ui (per their module.toml private_deps). pocket check type-checks the SDK."
+    },
+    {
+     "name": "2. Scripts and the headless runtime (samples/hello)",
+     "contents": "Scripts come before the window, not after as the suggested order had it. The session always creates a ScriptHost (session.cpp:651), and runtime_tests asserts that the engine is JavaScriptCore (tests/runtime_tests/runtime_tests.cpp:138). net.cpp, which is part of pocket_app, also does not compile today.\n\n- **Winsock socket layer** (90-150 lines). Replace the POSIX includes (net.cpp:36-47). Add socket_t, INVALID_SOCKET, closesocket, ioctlsocket and WSAGetLastError. Use SO_EXCLUSIVEADDRUSE instead of SO_REUSEADDR (net.cpp:543). Call WSAStartup once and link ws2_32.\n- **JSC Windows tables** (35-60 lines). Point the javascriptcore entry at Bun's pinned release lane (pocket.toml:203-213), add mimalloc 3.2.8 as a CMake dependency, and add a `version` field to DependencyOverride (manifest.rs:121-166).\n- **jsc_host.cpp include and version fixes** (5-20 lines). Add explicit includes for the MSVC STL, and have engine_version() report the pinned WebKit commit.\n- **pocket_jsc.dll** (120-300 lines). Link it with lld-link /DLL and a .def that exports the C API, generate the import library, and copy the DLL next to the executables. This settles the audits' C runtime conflict: Bun's JSC is built with the static CRT (/MT, audit 3), while wgpu's Rust staticlib and CMake's defaults use the dynamic CRT (/MD, audits 1 and 4). It also links the roughly 35-45 MB JSC once instead of into 4 executables (an inferred size), and it is the relinkable form the LGPL requires for shipping. Cheaper fallback for bring-up: build the engine with /MT and link wgpu as its DLL.\n- **Runtime lifecycle** (30-80 lines). --exit-with-parent does nothing on Windows (runtime.cpp:227-236), yet `pocket mcp` passes it to every runtime it starts (mcp.rs:252-253). Wait on the parent's process handle, use SetConsoleCtrlHandler to set g_stop, and optionally put children in a kill-on-close Job Object.\n- **windows.h macros** (5-25 lines). httplib pulls windows.h into runtime_tests, where its near, far and small macros break local names. Keep windows.h inside the new OS translation units.\n- **save.list time** (3-8 lines). session.cpp:5653-5654 uses time_since_epoch, and the MSVC file_clock counts from 1601.\n- **Script parity** (0-60 lines). Fix version differences between Apple's JSC and Bun's fork, including tests/ts/repro.test.ts.",
+     "loc": "290-700",
+     "days": "3-7.4",
+     "done_when": "`pocket run samples/hello` headless writes a report with script.engine JavaScriptCore. runtime_tests, audio_tests and renderer_tests pass in release. `pocket mcp` starts a runtime that exits when the tool does."
+    },
+    {
+     "name": "3. Window, input and rendering (Vulkan first, DX12 optional)",
+     "contents": "- **HWND surface** (25-40 lines). Add a `_WIN32` branch that reads SDL_PROP_WINDOW_WIN32_HWND_POINTER and the instance pointer (platform.cpp:259-265, which today fails with window_handles_missing). Create a WGPUSurfaceSourceWindowsHWND in device.cpp:318-347, with new fields in platform.hpp and device.hpp.\n- **Precise sleeps** (10-25 lines). The MSVC STL's sleep_for ends in Sleep(ms). Use SDL_DelayPrecise for frame pacing and network waits in session.cpp and net.cpp.\n- **Windowed bring-up** (0-80 lines). This is my own estimate; no audit sized it, and windowed Linux has never been run either. It covers DPI scaling, IME for Chinese input, present modes, editor frame rate, pixel tolerances on a real GPU, and the firewall prompt the first time --net-host binds INADDR_ANY (net.cpp:546).\n- **Not counted:** DX12 with DXC as a second backend (+40-80 lines, 0.5-1 d, audit 4). FXC would otherwise compile the 133 KB WGSL module at renderer.cpp:529.",
+     "loc": "35-145",
+     "days": "0.85-2.5",
+     "done_when": "`pocket run` (windowed) and `pocket editor` work on the machine's GPU through Vulkan, with keyboard, mouse, gamepad and IME working. renderer_tests pass on the hardware adapter."
+    },
+    {
+     "name": "4. Agent edit loop, full test suite and pack",
+     "contents": "- **Portable process API in pocket_core** (150-250 lines). It uses CreateProcessW with UTF-16 argv and Windows quoting rules, an inheritable log handle, and wait plus exit code.\n  - It replaces both posix_spawn copies and the 'unsupported' stubs (session.cpp:6990-6992, import.cpp:576-577). project_apply, which is how MCP agents apply their edits, therefore works.\n  - find_blender learns Windows install paths and ';' PATH splitting. The Blender script goes through a temporary .py file.\n  - The POSIX std::system calls in runtime_tests (6763, 6857, 6927) move to the same API.\n  - Audit 2 estimated 150-230 lines and audit 4 estimated 80-160. I used 150-250 to include the test call sites.\n- **First full run of the 405 test cases** (20-100 lines), in debug (ASan and UBSan under the MSVC ABI) and release. It covers the backend assertions (runtime_tests.cpp:133-137), about 45 text-mode test writes that produce CRLF, and the golden hash (tests/evidence/hello-golden.json) on x86-64 with the MSVC STL.\n- **`pocket pack` for Windows** (60-130 lines). Merges audits 1 and 4.\n  - Ship pocket_runtime.exe with a .cmd launcher instead of the #!/bin/sh one (pack.rs:108-110).\n  - Ship the VC++ runtime DLLs next to the exe, or document that the Redistributable is required.\n  - Include pocket_jsc.dll with the LGPL notice, and the ASan DLL in debug packs.\n- **Cross-machine lockstep check** (0-40 lines). Host on macOS arm64 with a Windows x64 peer. The risky spots are 54 unstable std::sort calls, 22 unordered containers and 22 std:: transcendental calls in simulation code (audit 2 counts).\n- **suite.sh replacement** (25-50 lines). Replace tools/scripts/dev/suite.sh (nohup sh -c) with a Python runner that works on both hosts.",
+     "loc": "255-570",
+     "days": "2.9-7",
+     "done_when": "`pocket test` passes in debug and release, or has only triaged and documented skips. MCP project_apply works. `pocket pack` produces a folder that runs on a clean Windows install. A macOS-Windows arena session stays in sync."
+    },
+    {
+     "name": "5. Agent benchmark on Windows",
+     "contents": "- **Benchmark runners** (60-120 lines).\n  - Replace start_new_session plus os.killpg(SIGKILL) (opencode_agent.py:89-97, pi_agent.py:108-116) with a shared helper that kills the process tree through a Job Object.\n  - Use .exe paths.\n  - Use forward slashes in paths shown to agents, whose shell is Git Bash.\n  - Pass multi-line prompts through stdin or a file, because cmd.exe shims cut argv at the first newline.\n- **Harness and SDK** (15-40 lines). Add .exe to the POCKET path (tools/scripts/agent_eval.py:31), tools/scripts/dev/runtime.py and sdk/python/pocket_env.py. Fix the Blender task's path and the shell=True runner string.\n- **Smoke run** (0-50 lines; my estimate). Install the Windows builds of opencode and oh-my-pi plus Git for Windows, run a smoke test, and fix what it finds. Wall-clock time for full benchmark runs is not counted.",
+     "loc": "75-210",
+     "days": "1.25-3",
+     "done_when": "agent_eval's reference runner and one opencode (GLM) run finish on Windows. Their traces are comparable with macOS, and no runtime outlives its task."
+    }
+   ],
+   "biggest_risks": [
+    "Nothing has been built on Windows yet. Audit 1 checked by reading that the tool compiles; audit 2's MSVC STL claims come from STL source. The C runtime mix (wgpu's Rust staticlib on /MD, Bun's JSC on /MT), ASan with UBSan under the MSVC ABI, and five CMake dependencies built by clang for MSVC only show up at the first real link. This drives the high bounds of phases 1 and 2.",
+    "The script engine. Bun's JSC runs in production inside Bun on Windows x64 and arm64, but its CI never tests the C-API path we use. Each architecture is a 385 MB autobuild from a third party under LGPL-2+. If the macOS spike fails, V8 replaces the JSC items: about 560-1,100 lines and 5-12 days instead of 180-480 lines and 2.5-5.75 days, so roughly +380-620 lines and +2.5-6 days net, plus multi-hour V8 builds per attempt and per architecture.",
+    "x86-64 has never run on real hardware. Under QEMU, runtime_tests failed and the rerun was inconclusive (docs/development.md:316). The MSVC STL brings a third std::sort and a third set of unordered containers, so the golden state hash and lockstep determinism with macOS may diverge.",
+    "The GPU path. Vulkan needs a vendor driver; VMs and some Windows-on-Arm machines may only offer DX12 or WARP, which pulls in DXC or the slow FXC for the 133 KB WGSL module at renderer.cpp:529. Pixel tolerances may need retuning on new drivers.",
+    "Unicode paths. On a zh-CN Windows (code page 936), the 271 path .string() calls and nlohmann's strict dump() fail on Chinese paths unless the UTF-8 activeCodePage manifest ships first. That manifest needs Windows 10 1903 or later.",
+    "Iteration speed and drift. Days assume an agent working directly on the Windows machine; a remote or VM-only box pushes toward the high bound. CI is disabled, so macOS-side changes will keep breaking Windows unless it gets periodic local runs.",
+    "The benchmark on Windows. Job Objects with Bun and Node agent process trees, Git Bash path quoting and .cmd shims need a live check with each agent."
+   ]
+  },
+  "wsl2_path": "**Cost (audit 5).** Running the existing Linux build in WSL2 with Ubuntu 26.04 takes about 50-580 new or changed lines and 2-6.75 agent-days. Almost all of it is verification:\n- a WSL host recipe (30-120 lines)\n- the first run on real x86_64 hardware, plus fixes (0-250)\n- explicit GPU backend selection (20-60)\n- the first windowed Linux run through WSLg (0-80)\n- the benchmark inside WSL (0-40)\n- a web build from WSL (0-30)\n\nHardware-accelerated rendering is optional: 0-400 lines and 1-4 days, with a real chance the answer is \"stay on CPU rendering\". The tool resolves linux-x86_64 from std::env::consts (manifest.rs:268) and has no WSL checks.\n\n**Setup facts:**\n- Ubuntu 26.04 matches the container (tools/docker/linux/Dockerfile:4). Ubuntu 24.04's archive lacks clang-21 and libstdc++-15.\n- Clone into the Linux filesystem, not /mnt/c.\n- Debug with ASan needs more than 20 GB of VM memory, so raise .wslconfig or test with --config release.\n- No Microsoft licence acceptance and no Docker are needed.\n\n**What it gives:**\n- tool, engine, debug and release builds, and `pocket test`\n- headless runs, captures, the control server and `pocket mcp`\n- the TypeScript tooling and watch mode\n- the agent benchmark (opencode itself recommends WSL on Windows)\n- the web build, opened in a Windows browser\n- the editor and windowed runs through WSLg, on CPU rendering (lavapipe)\n\n**What it does not give:**\n- a Windows .exe for players: `pocket pack` makes a Linux pack with an sh launcher (pack.rs:108-110), so Windows players get only the web build\n- representative GPU or D3D12 performance: rendering is CPU lavapipe, or GL over D3D12 through wgpu's second-tier backend, and Ubuntu does not package dzn\n- a working cursor lock or mouse-look in WSLg (microsoft/wslg#376, open since 2021-07-21)\n- any coverage of Windows-specific code: Winsock, CreateProcess, HWND, MSVC ABI and STL, drive letters, CRLF, and the script engine\n\n**What carries over to a native port.** The backend-selection change and the first real x86-64 run, about 20-310 lines and 0.75-3.25 days, are needed natively anyway.\n\n**One finding to settle on the first run.** device.cpp:303 enables every wgpu backend, so on WSL with a working Mesa d3d12 driver the engine may choose GL over lavapipe. That would break runtime_tests.cpp:136. This is inferred from wgpu source, not measured. GALLIUM_DRIVER=llvmpipe is the zero-code workaround.",
+  "owner_actions": [
+   "Provide a Windows machine: an x64 PC running Windows 10 1903+ or 11 with a GPU that has a current Vulkan/D3D12 driver. A Windows 11 on Arm VM on the Mac can build and run headless, but likely has no hardware GPU (inference). An Arm PC is needed only to verify windows-aarch64. From the Mac I can only cross-check compiler flags, not link or run.",
+   "Accept Microsoft's licence for Visual Studio Build Tools or Community (MSVC STL, CRT, Windows SDK). The Rust msvc host toolchain needs it too. Community is free only within its eligibility terms; commercial use beyond them needs a paid Visual Studio licence. The xwin alternative also requires accepting the SDK terms (docs/development.md asks the owner first).",
+   "Install with administrator rights: LLVM (23.1.2 is current; the STL in use must accept the Clang version), CMake, Ninja, Python, Git for Windows and rustup. Then enable LongPathsEnabled, or check out to a short ASCII path such as C:\\dev\\aipocket.",
+   "Approve the decisions that override accepted docs: (a) clang++ targeting MSVC instead of clang-cl (docs/build-system.md:139-140, 282); (b) Bun's JavaScriptCore instead of V8 for Windows (ADR 0005:34, ADR 0001); (c) the dynamic CRT with JSC in a DLL.",
+   "Accept the LGPL obligations for shipping JSC: a DLL plus a notice and relink instructions. Mirror the pinned Bun WebKit archives, about 385 MB each, under your GitHub account. Decide whether packs ship the VC++ runtime DLLs next to the exe or require the VC++ Redistributable.",
+   "Answer the Windows Defender Firewall prompt the first time `--net-host` binds 0.0.0.0 (net.cpp:546). The control server binds only 127.0.0.1 (server.cpp:169-171) and does not prompt.",
+   "Put the benchmark's paid model accounts and keys on the Windows machine (the Z.ai GLM plan for opencode, providers for omp/pi). These are owner-only.",
+   "Optional: Blender for Windows (import tests and the Blender benchmark task), a paid code-signing certificate for packed games (SmartScreen), and DXC if DX12 is wanted.",
+   "For the WSL2 path instead: enable WSL and run `wsl --install Ubuntu-26.04` (admin/UAC, WSL 2.4.10+), create the Linux user and give the sudo password for apt, and decide whether to raise VM memory above 20 GB in %UserProfile%\\.wslconfig for debug+ASan."
+  ],
+  "recommendation": "Is the backend migration code complex? No. The OS code sits behind SDL3, wgpu and a 14-method ScriptHost. Only about 160-180 of 84,446 C++ lines call POSIX, Apple or Linux APIs, and the build tool's dependency tables already accept Windows keys.\n\nHow much a native Windows port adds: about 1,230-2,970 new or changed lines and 12.5-33 focused agent-days, across six phases that each end in something runnable.\n- My judgement of the likely outcome is about 1,700-2,000 lines and 16-20 days. The high bound assumes every first-contact fix hits its upper end.\n- The numbers rest on two measured precedents: the Linux port (224 lines in 49fd3360) and the iOS target (629 lines in 4e71010b), both landed in a day.\n- They also rest on per-site counts and on the sizes of comparable code (jsc_host.cpp is 343 lines).\n- They exclude wall-clock build, download and benchmark time.\n\nSuggested order:\n1. **Run the Bun JavaScriptCore spike on the Mac first** (0.5-1 day, no Windows needed). It decides whether the script engine costs about 3-6 days (JSC) or an extra 2.5-6 days plus multi-hour builds (V8).\n2. **If the goal is simply to develop on a Windows PC, use WSL2 with Ubuntu 26.04.** It covers build, tests, MCP, the editor on CPU rendering and the benchmark, for about 2-7 agent-days, mostly verification, with no Microsoft licence. Its backend-selection change and first real x86-64 run carry over to a native port.\n3. **Go native only when you need one of these:**\n   - a Windows .exe for players\n   - real Windows GPU performance\n   - coverage of Windows-only bugs\n\n   Then follow phases 1-5:\n   - Compile with clang++ targeting MSVC, not clang-cl.\n   - Put sockets, process launching, parent watching and precise sleep in one small pocket_core OS layer, so windows.h stays out of the rest of the engine.\n   - Use Vulkan first.\n   - Use the dynamic CRT, with JSC in its own DLL. That settles the CRT conflict between the audits and is the form the LGPL needs anyway.\n   - Ship the UTF-8 manifest early, because Chinese-locale paths crash JSON output without it.\n   - Budget periodic Windows runs, since CI is disabled.\n\nWhere the audits disagreed, I chose as follows:\n- **C runtime:** audits 1 and 4 assumed the dynamic CRT, audit 3 the static one. Resolved by the JSC DLL.\n- **CMake environment:** audit 1 says clang finds MSVC by itself, audit 4 says vcvars must be captured. The estimate range covers both.\n- **Script engine:** audit 4 priced V8 into its totals; audit 3 recommends JSC. My totals use JSC, with V8 as the fallback.\n- **Process API:** audit 2 estimated 150-230 lines, audit 4 80-160. I used 150-250 to include the test call sites.\n\nEvery Windows behaviour claim in the audits comes from reading source or documentation, not from a build."
+ },
+ "review": {
+  "verdict": "Somewhat too optimistic. The code map is accurate: I re-checked about 40 of the cited sites at HEAD edbfe1b1 and they hold, with two small slips listed under wrong_claims. The OS surface in the engine is genuinely small. In engine/ and tests/ the POSIX headers are included only in session.cpp:31-37, runtime.cpp:16-18, net.cpp:36-47 and import.cpp:21-27. Engine file I/O is binary-mode through core/fs.cpp:9-38, and IDs mostly use generic_string. The external artifacts the estimate relies on exist:\n- wgpu-native v29.0.1.1 has windows-x86_64-msvc and aarch64-msvc zips (https://github.com/gfx-rs/wgpu-native/releases/tag/v29.0.1.1, published 2026-06-23, checked 2026-10-02).\n- Bun's WebKit autobuild-4fde1587 has bun-webkit-windows-amd64.tar.gz at 385,206,749 bytes and windows-arm64 at 366,255,197 bytes (https://github.com/oven-sh/WebKit/releases/tag/autobuild-4fde158736b8393fc31be471cc2bbca1d826d42b, 2026-10-01).\n- @typescript/typescript-win32-x64 and -arm64 7.0.2 are on npm (published 2026-07-08).\n- LLVM 23.1.2 is the latest release (2026-09-22) and ships x86_64- and aarch64-pc-windows-msvc tarballs.\n- The V8 fallback really is expensive. kuoruan/libv8's last release is v13.1.201.22 (2025-01-08), which is stale. rusty_v8 v152.2.0 (2026-08-20) uses Chromium's libc++ (ADR 0005:13-14).\n\nWhere it is optimistic:\n1. **The Mac spike cannot de-risk the Windows script engine.**\n   - The macOS lane links the system ICU (oven-sh/bun scripts/build/deps/webkit.ts:131).\n   - The Windows lane is built by clang-cl with the static CRT (Dockerfile.windows:388). It bundles ICU whose data is zstd-compressed and read through a hook the embedder must define (Dockerfile.windows:229-243; jsc.cpp:211-267).\n   - The fork's CI tests no Windows lane at all (lanes.mjs:36-39). Its build compiles only jsc and testFFI, not the C-API test program testapi (Dockerfile.windows:440).\n   - Read at oven-sh/WebKit main on 2026-10-02.\n2. **Missing items.** The estimate omits the web (wasm) build from a Windows host and the ICU hook. It also pins upstream mimalloc 3.2.8, while Bun links its fork, oven-sh/mimalloc eab09015.\n3. **Debug sanitizers and the first full test run are sized as if they will go smoothly.**\n   - Debug forces ASan+UBSan (pocket.toml:20-24) on top of /MD CMake dependencies and a /MT JSC.\n   - The Linux debug runtime_tests needed more than 20 GB (docs/build-system.md:229-230).\n   - Linux's first real run needed a 74-line renderer teardown fix (b2bcd85c).\n   - x86_64 runtime_tests failed under QEMU and the failure was never diagnosed (docs/development.md, iOS and Linux section).\n4. **The precedents are POSIX siblings.**\n   - Linux was 224 lines (49fd3360) plus the 74-line follow-up, and it ran headless only.\n   - iOS was 629 lines (4e71010b).\n   - Both reused posix_spawn, BSD sockets, signals and a JSC that came with the system, so they say little about a port to a new ABI, CRT and script engine.\n\nThe estimate also overstates one risk. STL-driven drift in the golden hash already did not happen across libc++ and libstdc++: in the Linux arm64 release run, the only failure was the Metal assertion (docs/build-system.md:228-229). Native-to-wasm lockstep has already been checked with repro math and -ffp-contract=off (docs/design/networking.md:116-141).\n\nAdjusted range:\n- I add 2.5-8 agent-days and about 190-610 lines, giving roughly 1,420-3,580 lines and 15-41 days.\n- The likely case is 20-25 days.\n- As in the original, wall-clock time for builds, the suite and downloads is excluded, and on an unprepared Windows box it will dominate calendar time.\n- If the JSC path fails on Windows itself, not just on the Mac, add the estimate's V8 fallback of 2.5-6 days.",
+  "missed_items": [
+   "Web/wasm build from a Windows host is in no native phase. Emscripten is detected by checking for an `em++` file under HOME or EMSDK (tools/pocket/src/toolchain.rs:57-73). On Windows, emsdk installs em++.bat, emcc.bat and emar.bat, and HOME is usually unset (USERPROFILE). The archive rule's `rm -f` shell command is shared with emar (ninja.rs:60). .bat wrappers go through cmd.exe and its 8191-character command-line limit. tools/scripts/web_offline.py:24 hard-codes the macOS Chrome path. wasm_core_tests.py needs node. About +30-80 lines and +0.5-1.5 days.",
+   "ICU decompress hook for Bun's Windows JSC. The Windows lane bundles a static ICU whose data items are zstd frames. They are read through a weak `bun_icu_maybe_decompress` hook that the embedder must define (oven-sh/WebKit Dockerfile.windows:229-243; Source/JavaScriptCore/jsc.cpp:211-267, main, read 2026-10-02). Without it, the compressed items (locale and collation data) silently fail, which breaks Intl, localeCompare and toLocaleString in agent-written game scripts. The macOS lane uses the system ICU (oven-sh/bun scripts/build/deps/webkit.ts:131), so the Mac spike cannot catch this. The zstd decoder is already vendored (third_party/basisu/zstd/zstddeclib.c). About +40-80 lines and +0.25-0.5 days.",
+   "A first-day Windows-side JSC C-API smoke link is needed before investing in pocket_jsc.dll: about 30-60 lines covering JSGlobalContextCreateInGroup, JSObjectMakeTypedArrayWithBytesNoCopy, the microtask drain and JSGlobalContextSetInspectable against the 385 MB tarball. The fork's CI tests no Windows lane (lanes.mjs:36-39). Its Windows build compiles only the jsc and testFFI targets, not JSC's C-API test program testapi (Dockerfile.windows:440).",
+   "Debug sanitizer bring-up under the MSVC ABI is under-budgeted at 15-30 lines.\n- pocket.toml:20-24 forces -fsanitize=address,undefined on top of non-ASan Release CMake dependencies (MSVC STL container-annotation consistency) and a /MT JSC.\n- LLVM ships no Windows arm64 ASan runtime (oven-sh/WebKit lanes.mjs:156).\n- Linux runtime_tests under sanitizers needed more than 20 GB (docs/build-system.md:229-230), so the phase 4 'passes in debug' target may be infeasible on a 16-32 GB PC.\n- Decide early whether Windows debug drops ASan.\n- About +10-60 lines and +0.5-2 days.",
+   "The first full test run is under-budgeted at 20-100 lines. Linux's first real run needed a 74-line teardown fix (b2bcd85c: renderer.cpp, device.cpp, renderer_tests). x86_64 runtime_tests failed under QEMU, undiagnosed (docs/development.md, iOS and Linux section). Windows adds the MSVC STL, a new JSC build, x86-64 and a real GPU at once. About +40-150 lines and +0.5-2 days.",
+   "The windowed renderer has never run on Vulkan with a real driver. Linux ran only headless on lavapipe, and windowed Linux has never run. That leaves the 133 KB WGSL module (renderer.cpp:529 onward) through naga to SPIR-V on NVIDIA/AMD drivers, first-launch pipeline compile time, and swapchain resize and occlusion with presented_frames pacing (session.cpp:6764-6774). About +0.25-1 day on phase 3.",
+   "Windows file locking. A running pocket_runtime.exe, or a loaded pocket_jsc.dll or ASan DLL, cannot be overwritten or deleted. The MCP server keeps runtimes alive (mcp.rs:252-253), and the editor and watch keep one open (watch.rs:144-151). So relinks, and `remove_dir_all` of dependency prefixes and build dirs (deps.rs:206-207, 232-234), fail while any runtime runs. The tool needs to detect this and stop runtimes or report it clearly. About +10-40 lines.",
+   "Packed Windows game entry point. pocket_runtime is a console-subsystem executable with a plain main (engine/runtime/src/main.cpp:13); SDL_main.h is included only for iOS (main.cpp:7-11). A player who double-clicks it gets a console window, and the .cmd launcher the estimate proposes opens one too. The fix is /SUBSYSTEM:WINDOWS through SDL_main or /ENTRY:mainCRTStartup, plus an llvm-rc icon and version resource. About +15-40 lines.",
+   "mimalloc pin. Bun links its fork oven-sh/mimalloc at commit eab09015 (2026-09-16), per oven-sh/bun scripts/build/deps/mimalloc.ts:15. That commit is 208 commits ahead of and 85 behind upstream dev3. Upstream 3.2.8 is not what the WebKit release lanes (USE_EXTERNAL_MIMALLOC=ON, lanes.mjs:238-239) were built and tested against.",
+   "Script debugging. `--inspectable` (runtime.cpp:37, jsc_host.cpp:212) relies on Safari's Web Inspector, which does not exist on Windows. Bun's JSC compiles the remote inspector in (ENABLE_REMOTE_INSPECTOR=ON, Dockerfile.windows:420), but there is no frontend bridge. Windows developers lose script debugging unless a WebSocket bridge is written, which is out of scope or about +150-400 lines.",
+   "Benchmark Python text encoding and paths. tools/scripts/agent_eval.py has 50 open() calls, none with encoding=. These decode with the ANSI code page (936 on zh-CN) unless PYTHONUTF8=1 or Python 3.15+ (PEP 686) is used, and that applies when the owner runs it directly, not only when the tool starts it. agent_eval.py:4178 replaces os.path.join(ROOT, 'docs'), which is backslashed on Windows, so the prompt rewrite silently becomes a no-op. About +10-30 lines.",
+   "Owner action not listed: a Windows Defender exclusion for the checkout (.pocket/, build/). Real-time scanning of the 385 MB JSC extraction, thousands of objects and ASan executables is a major iteration-speed cost on a fresh box, and adding the exclusion needs admin rights."
+  ],
+  "wrong_claims": [
+   {
+    "claim": "Use llvm-lib instead of the literal \"ar\" fallback (toolchain.rs:176).",
+    "correction": "The literal \"ar\" fallback is at toolchain.rs:177. Line 176 is the cc fallback, `cxx.replace(\"clang++\", \"clang\")`, which happens to work for clang++.exe.",
+    "evidence": "tools/pocket/src/toolchain.rs:175-177 at edbfe1b1."
+   },
+   {
+    "claim": "SDL3 handles windows, input and audio, and only pocket_platform and pocket_audio link it.",
+    "correction": "pocket_runtime also declares sdl3 as a private dependency. It is there for SDL_main on iOS, and it is the natural hook for a Windows GUI-subsystem entry point for packed games.",
+    "evidence": "engine/runtime/module.toml:5 `private_deps = [\"pocket_app\", \"sdl3\"]`; engine/runtime/src/main.cpp:7-11."
+   },
+   {
+    "claim": "Bun's CI never exercises that path [the C API] on Windows (audit 3: lanes.mjs:36-39).",
+    "correction": "This understates it. The fork's CI tests no Windows or macOS lane at all; only Linux lanes run the JSC suites. The Windows build compiles only the `jsc` and `testFFI` targets, not JSC's C-API test program testapi. The only Windows coverage is Bun's own product testing of bun.exe, which does not use the JSC C API.",
+    "evidence": "oven-sh/WebKit .github/scripts/lanes.mjs:36-39 ('The macOS and Windows lanes are not tested'); Dockerfile.windows:440 `--target jsc --target testFFI` (main, read 2026-10-02)."
+   },
+   {
+    "claim": "Phase 0 done-when: macOS `pocket test` and tests/ts pass against Bun's JSC; if they do not, switch to V8 before any Windows work.",
+    "correction": "The macOS lane differs from the Windows lane in exactly the risky parts:\n- The Mac lane uses the system ICU; Windows bundles a zstd-compressed static ICU that needs an embedder hook.\n- Different compiler driver (clang-cl on Windows).\n- Different C runtime (static /MT on Windows) and STL.\n\nThe spike proves only that the fork's C API is compatible. It does not prove the Windows artifact works. A Windows-side C-API smoke link is still needed before committing to JSC.",
+    "evidence": "oven-sh/bun scripts/build/deps/webkit.ts:131 ('macOS uses system ICU'); oven-sh/WebKit Dockerfile.windows:229-243, 388; jsc.cpp:211-267 (read 2026-10-02)."
+   },
+   {
+    "claim": "Add mimalloc 3.2.8 as a CMake dependency for Bun's JSC (USE_EXTERNAL_MIMALLOC).",
+    "correction": "Bun builds and ships the release lanes against its fork, oven-sh/mimalloc at commit eab09015a585 (2026-09-16). It is 208 commits ahead of and 85 behind upstream dev3. Pin that commit, not upstream 3.2.8.",
+    "evidence": "oven-sh/bun scripts/build/deps/mimalloc.ts:15,23; gh compare microsoft:mimalloc:dev3...eab09015 (read 2026-10-02); oven-sh/WebKit lanes.mjs:64-67, 238-239."
+   },
+   {
+    "claim": "The MSVC STL brings a third std::sort and a third set of unordered containers, so the golden state hash and lockstep determinism with macOS may diverge (biggest_risks 3).",
+    "correction": "This is partly overstated. The golden hash test (runtime_tests.cpp:172-191) already held under a second STL: in the Linux arm64 libstdc++ release run, the only failure was the Metal-backend assertion. Native-to-wasm lockstep has already been checked using repro math and -ffp-contract=off. What is genuinely untested is x86-64 itself, where runtime_tests failed under QEMU for an undiagnosed reason.",
+    "evidence": "docs/build-system.md:228-229; commit b2bcd85c message; docs/design/networking.md:116-141; pocket.toml:13-16; docs/development.md (iOS and Linux section, 'runtime_tests failed, a rerun was inconclusive')."
+   },
+   {
+    "claim": "Past ports were small: Linux took 224 lines and iOS 629, both landed on 2026-10-01; the numbers rest on these precedents.",
+    "correction": "They are weak precedents for Windows:\n- Linux was headless only, in a container.\n- Linux needed a 74-line follow-up teardown fix (b2bcd85c) found by its first real test run.\n- Both reused posix_spawn, BSD sockets, signals and a JSC that came with the system (Apple's framework, or WebKitGTK from apt), on the same Mac with fast build loops.\n\nWindows replaces all four and adds a new compiler ABI, CRT and code-page model.",
+    "evidence": "git show --stat 49fd3360, 4e71010b and b2bcd85c; docs/build-system.md:204-232; pocket.toml:203-213."
+   }
+  ],
+  "adjusted_days_low": 15,
+  "adjusted_days_high": 41
+ }
+}

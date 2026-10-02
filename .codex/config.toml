@@ -1,0 +1,3 @@
+[mcp_servers.pocket]
+command = "./.pocket/pocket"
+args = ["mcp"]
