@@ -1,6 +1,6 @@
 # Working in Pocket3D
 
-This file is read by AI coding agents (Claude Code through `CLAUDE.md`, Codex and others directly) and by humans. It states how work is done here. Project-wide decisions live in `docs/decisions/`; this file only points at them and lists the rules that apply to every change.
+This file is read by AI coding agents (Claude Code through `CLAUDE.md`, Codex and others directly) and by humans. It states how work is done here. Project-wide decisions live in `docs/decisions/`; this file only points at them and lists the rules that apply to every change. `docs/development.md` covers the rest of the work on any machine: setting one up, the test and evidence loop, the gotchas, the agent benchmark's operation and where the work stands; read it at the start of a session.
 
 ## What this project is
 
@@ -26,10 +26,11 @@ Lua is not used. CMake is not used for our own code (it may be invoked by `pocke
 5. Third-party code enters only through `third_party/` with a pinned version and license note, or as a prebuilt artifact fetched by `pocket` from a pinned manifest.
 6. Reference sources are read-only. PocketEngine and aipocket may be ported from (they are ours). Unreal Engine source (Epic EULA) and Unity's C# reference source (Unity Reference-Only License) are for studying design only: never copy code, identifiers or comments from them. See `docs/ue5-lessons.md` and `docs/unity-lessons.md`.
 7. User-facing explanations match the language the human uses (currently Chinese). Code, identifiers, commit messages and repository documentation are English.
-8. Commit only when asked. AI-authored commits end with the agent's co-author trailer.
+8. The owner has asked (2026-10-01) for every bit of progress to be committed and pushed to `master` as it lands (`docs/development.md`, Starting a session). AI-authored commits end with the agent's co-author trailer. Verification is local: GitHub Actions is off by the owner's decision (2026-10-01); do not re-enable it.
 9. Code that changes the world during a tick (physics, water, characters, rigs, timelines, navigation, particles, the SDK's tweens) takes sin, cos, atan2, exp, pow and the like from `pocket::repro` (C++) or `repro` (SDK), not `<cmath>` or `Math`: a native and a web peer of a lockstep game must compute the same bits (`docs/design/networking.md`, Determinism). Drawing may use either.
 10. Shaders are WGSL compiled by naga natively and by Tint in browsers, and Tint is stricter (it wants parentheses where `*` meets `^` or `&&` meets `||`, uniform control flow around `textureSample`): after changing a shader, pack a sample with `--web` and load it (`docs/web.md`) before calling it done; a module Tint rejects draws nothing.
 11. Docs under `docs/` are prose wrapped at 100 columns (tables, code and generated files aside): agents read them by searching, and a match returns its line, so a paragraph on one line came back whole for every word in it. After writing a doc, run `python3 tools/scripts/dev/wrap_docs.py <files>` (it changes only where lines break).
+12. A file over 20 MiB (typically an art asset such as a high-poly Blender model) is not committed: by the owner's decision (2026-10-02) it lives on the owner's Google Drive, pinned by hash in `tests/data.json`, so every machine shares it (Test data, below). Everything smaller stays in git, and data a committed script regenerates exactly need not be stored at all.
 
 ## Daily commands
 
@@ -97,15 +98,28 @@ A running runtime is the engine's interface: every feature is a command on its c
 
 ## Development helpers
 
-`tools/scripts/dev/` holds the scripts a working session reuses (standard library only):
+`tools/scripts/dev/` holds the scripts a working session reuses (standard library, but for the evidence scripts, which need Pillow):
 
 - `runtime.py`: `Runtime(sample, port, size, release=False)` starts a headless runtime serving a sample (bundle it first with `pocket ts`) and `rpc(method, params)` calls it; as a script, `runtime.py <sample> <method> '<json>' ...` runs calls in order and prints the answers. Run anything that talks to a runtime outside the sandbox (loopback connections are blocked inside it).
 - `gpu_probe.py <sample> [--size WxH] [--frames N] [--rpc method '<json>']`: the release runtime's GPU time per frame, in all and per pass (`render.stats.gpu`), beside `perf`; for measuring a renderer change before and after. Close any browser page drawing a pack first (and do not measure while an agent benchmark runs): another workload on the GPU doubles every number.
-- `suite.sh [name]`: the whole `pocket test --json` in the background into `build/test-reports/<name>.json`, with `<name>.done` when it ends; `test_summary.py <report>` prints the verdict and each failure. Run the module or tag a change touches directly (`./build/debug/bin/<module> "[tag]"`) while working, and the whole suite before a commit that changes shared code.
+- `suite.sh [name]`: the whole `pocket test --json` in the background into `build/test-reports/<name>.json`, with `<name>.done` when it ends; `test_summary.py <report>` prints the verdict and each failure. Run the module or tag a change touches directly (`POCKET_ROOT=$PWD ./build/debug/bin/<module> "[tag]"`, with the samples it opens bundled) while working, and the whole suite before a commit that changes shared code; `docs/development.md` (Tests) says what the suite runs and what it leaves out.
 - `edits.py`: `patch(path, [(old, new), ...])`, exact replacements that fail unless each old text occurs once.
 - `prose.py`: `replace(path, old, new)` and `append_after(path, old, new)` for wrapped documentation, matching the old text whatever its line breaks (then `wrap_docs.py`).
 
-Image work (cropping or stitching captures for evidence) uses Pillow in the ignored `.venv` at the root: `python3 -m venv .venv && .venv/bin/pip install pillow`.
+- `objstress/`: OBJ files as industrial software exports them (scans, machined parts, assemblies, n-gons) and a measurement of how the engine loads and draws them (`docs/research/2026-10-02-rendering-and-import-assessment.md`).
+- `<name>_evidence.py` and `<name>_scene.py`: the pictures in `tests/evidence/` and the generated scenes of six samples (`docs/development.md`, Pictures).
+
+The scripts run under plain `python3` with Pillow, fontTools and websocket-client installed (`docs/development.md`, Setting up a machine).
+
+## Test data
+
+Test assets and data stay in git unless a single file is over 20 MiB: such files, typically high-poly Blender models and other art, live on the owner's Google Drive. `tools/scripts/data.py` (standard library, plus rclone for the transfers) keeps the two apart:
+
+- `tests/data.json` pins each large file by its repository path, SHA-256 and size. The file itself is stored once on Drive as `pocket-data/blobs/<sha256><ext>`: content-addressed, so a new version is a new blob and nothing is overwritten or deleted. The block the script keeps at the end of `.gitignore` stops git from taking the file back.
+- A machine is set up once: install rclone (`brew install rclone`, `winget install Rclone.Rclone`, or rclone.org/install on Linux), then `rclone config create pocketdata drive scope=drive.file client_id=<id> client_secret=<secret>`, which opens a browser for the owner to sign in (rclone.org/remote_setup on a machine without one). The id and secret are the owner's own OAuth client (rclone.org/drive/#making-your-own-client-id: a Google Cloud project with the Drive API on, a Desktop client, its consent screen published In production, since a Testing app's sign-in lapses after a week), the same on every machine: under `drive.file` rclone reaches only the files its own client created, and rclone's shared client is being retired. Keep the id and secret out of every repository.
+- Then `python3 tools/scripts/data.py fetch` puts every pinned file in place, each checked against its hash; blobs are cached in `.pocket/data/blobs/`.
+- `python3 tools/scripts/data.py status` before committing: exit 2 means git would take a file over the limit (`add` it) or still holds a pinned one; exit 1 that a pinned file is missing or changed here; 0 that all is in order. `add <paths>` uploads files over the limit (a directory: those in it), pins them, takes them out of git and stages `tests/data.json` and `.gitignore`; commit them with the rest of the change. A pinned file edited here shows as changed: `add` it again to pin the new version (before switching to another commit: an ignored file is not protected by git).
+- Moving, renaming or deleting a pinned file: `drop` the old path (it unpins and stops ignoring it; the blob stays) and `add` the new one. `verify` checks that Drive holds every pinned blob with its hash. `POCKET_DATA_REMOTE` points the store elsewhere (default `pocketdata:pocket-data`): another rclone remote, or a plain directory.
 
 ## Repository layout
 

@@ -1267,7 +1267,9 @@ def persian_locale_check(env, answer):
     return True, f"Persian complete, named in every language; the score reads {score}"
 
 
-BLENDER = "/Applications/Blender.app/Contents/MacOS/Blender"
+# Blender for the blender_level task and its reference solution: POCKET_BLENDER, as the engine reads it
+# (engine/assets/src/import.cpp), else where macOS installs it.
+BLENDER = os.environ.get("POCKET_BLENDER") or "/Applications/Blender.app/Contents/MacOS/Blender"
 
 
 def blender_level_solve(env, project_dir):
@@ -4049,7 +4051,7 @@ TASKS = [
     {"name": "persian_locale", "project": "ui", "ticks": 0, "script": True, "entry": "scripts/main.tsx", "edits": "the files in locales/", "solve": persian_locale_solve, "check": persian_locale_check,
      "task": "The interface speaks English, Chinese and Arabic (locales/en.json, zh.json, ar.json). Add Persian: write locales/fa.json with every text the English file has, translated into Persian (keep the placeholders and plural forms working), and give the language choice its name by adding language.fa (\"فارسی\") to every language file. Answer with anything; the check switches to Persian and reads the interface."},
     {"name": "blender_level", "project": "assets", "ticks": 0, "script": True, "edits": "assets/level.blend (made by Blender)", "solve": blender_level_solve, "check": blender_level_check,
-     "task": "Make a small level in Blender, which is installed at /Applications/Blender.app/Contents/MacOS/Blender (run it headless with a Python script, -b --factory-startup --python). Save it as assets/level.blend in the project with: a plane named Floor, 10 across, lying flat 1 unit above the ground (Blender z 1), that the engine will make a static body colliding with its own triangles; and a box named Pillar, 1 by 1 by 3 standing on it at Blender x 3, y 0, that becomes a static body with a box collider 0.5 by 1.5 by 0.5 in half extents and has 50 health (the Health component, max and current 50). Give them those engine components through Blender custom properties so that world.instantiate of the file brings them. Then instantiate it at x 60 and drop a dynamic sphere of radius 0.5 (mass 1) from 8 up onto the floor at x 58, z 1; answer with the height it comes to rest at after 180 ticks as the number \"answer\"."},
+     "task": "Make a small level in Blender, which is installed at " + BLENDER + " (run it headless with a Python script, -b --factory-startup --python). Save it as assets/level.blend in the project with: a plane named Floor, 10 across, lying flat 1 unit above the ground (Blender z 1), that the engine will make a static body colliding with its own triangles; and a box named Pillar, 1 by 1 by 3 standing on it at Blender x 3, y 0, that becomes a static body with a box collider 0.5 by 1.5 by 0.5 in half extents and has 50 health (the Health component, max and current 50). Give them those engine components through Blender custom properties so that world.instantiate of the file brings them. Then instantiate it at x 60 and drop a dynamic sphere of radius 0.5 (mass 1) from 8 up onto the floor at x 58, z 1; answer with the height it comes to rest at after 180 ticks as the number \"answer\"."},
     {"name": "calm_lake", "project": "hills", "ticks": 2, "solve": calm_lake_solve, "check": calm_lake_check,
      "task": "Calm the lake: make the water of the entity named Lake perfectly still (no waves) and clearer, so that one sees 8 units into it, and raise its surface by half a unit (it stands at 3.2), leaving it centred where it is. Answer with the water's surface height at x 0, z 0 as the number \"answer\"."},
     {"name": "spike_trap", "project": "sprites", "ticks": 30, "solve": spike_trap_solve, "check": spike_trap_check,

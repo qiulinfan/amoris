@@ -77,6 +77,7 @@ checks the world through the same commands. A task passes or fails; nothing is s
 | `frozen_coins` | blank (a broken game) | a game that freezes on the last coin: find why and fix it, the rest as it was | the four coins taken by walking right with no script error, `coin.taken` for each and `level.complete` once, the next coin glowing every time |
 | `festival_flags` | blank (a slow level) | a festival whose ticks take too long: make them four times faster through the scene, the flags the same and still flying | the flags' places, sizes, pins, weights and colours against the slow level's, their weave no coarser than 8 by 5, each reaching 1.2 past its pole, and `perf`'s tick against the slow level's |
 | `sinking_crate` | blank (a broken level) | a crate falls through the floor: find why, fix the scene, and answer the field that was wrong | the crate resting where it fell, the others as they were, the ghost still drifting through the floor, the floor untouched, the answer |
+| `village_weather` | blank | a village square, then (a second agent, a follow-up) an evening in the rain: rain 0.8, 20:00, four lamps lit only after dark by the houses | the houses and well still there, the first `Weather`'s rain, the Sky's hour, each lamp's point light with `after_dark` |
 
 Sixteen tasks change the world through commands (`night_lamp` then answers from what the renderer
 reports about the frame it drew; `hill_raise` reshapes a terrain within a bound and answers with the
@@ -95,13 +96,13 @@ name in every locale file, read back by switching the interface to it) and a lev
 by driving Blender headless (`assets/level.blend`, whose objects' custom properties become
 components when the check instantiates it again). The question tasks take their truth from the same
 commands at check time, so a runner that reads the world correctly passes them and one that guesses
-does not. The script tasks run on a copy of the sample (`pocket new --from`, under
-`build/agent-eval/`): the runner gets `project_dir` and edits the project there (its entry script,
-`scripts/main.ts` or `scripts/main.tsx` for the sprites sample, or the files the task names), and
-when it returns the harness bundles the copy again with the tool, reloads the project
-(`project.reload`: `project.toml`'s settings read again, a fresh world from the scene, the edited
-script started over it) and steps two ticks before the check. The copy and its bundle are removed
-afterwards.
+does not. The script tasks run on a copy of the sample (`pocket new --from`, in a directory of its
+own under the system's temporary directory, Out of the repository below): the runner gets
+`project_dir` and edits the project there (its entry script, `scripts/main.ts` or `scripts/main.tsx`
+for the sprites sample, or the files the task names), and when it returns the harness bundles the
+copy again with the tool, reloads the project (`project.reload`: `project.toml`'s settings read
+again, a fresh world from the scene, the edited script started over it) and steps two ticks before
+the check. The copy and its bundle are removed afterwards.
 
 ### Whole games
 
@@ -177,7 +178,7 @@ sheets on several threads).
 ## Runners
 
 ```bash
-python3 tools/scripts/agent_eval.py --runner reference        # the solutions in the harness itself: 39/39
+python3 tools/scripts/agent_eval.py --runner reference        # the solutions in the harness itself: every task passes
 python3 tools/scripts/agent_eval.py --runner null             # does nothing: the floor
 python3 tools/scripts/agent_eval.py --runner "claude -p" --tasks spawn_named,recolor --json
 ```
@@ -232,7 +233,7 @@ keeps what it did:
 
 ```bash
 POCKET_EVAL_RUNTIME=build/eval-runtime/pocket_runtime python3 tools/scripts/agent_eval.py --timeout 900 --json --rows build/eval-rows.jsonl \
-    --runner "python3 tools/scripts/runners/pi_agent.py --agent pi --via extension --model deepseek/deepseek-flash --env-file ~/.omp/agent/.env"
+    --runner "python3 tools/scripts/runners/pi_agent.py --agent omp --via extension --model deepseek/deepseek-flash --env-file ~/.omp/agent/.env"
 ```
 
 `tools/scripts/runners/opencode_agent.py` does the same with opencode
@@ -268,6 +269,79 @@ tokens, calls, KB read, failed calls, and the calls before and after the first e
 `stuck` when the agent made at least fifteen calls after its first edit and more than twice as many
 as before it: the shape of a fix that did not take for a reason the agent had to dig for, as
 `frozen_coins` had before a reload dropped the old handlers.
+
+### Setting up the agents on a machine
+
+- **opencode** (the default for gameplay and benchmark runs): `npm install -g opencode-ai` (1.18.2
+  on the reference machine), then `opencode auth login` and the Z.ai coding plan (provider
+  `zai-coding-plan`; `opencode models | grep glm` should list `zai-coding-plan/glm-5.3-flash`). The
+  login lives in `~/.local/share/opencode/auth.json`; never print it. The runner writes a
+  project-level `opencode.json` and leaves `~/.config/opencode` alone.
+- **oh-my-pi** (`omp`, the second opinion; 18.4.3, a single binary in `~/.local/bin`, which must be
+  on `PATH`: `pi_agent.py` finds the agent with `shutil.which`). Its default model is set in
+  `~/.omp/agent/config.yml` (`deepseek/deepseek-v4-flash`) and its DeepSeek key is a
+  `DEEPSEEK_API_KEY=` line in `~/.omp/agent/.env`, passed with `--env-file` and never printed. pi
+  itself is no longer installed on the reference machine; `--agent omp` stands in for it.
+- **Running oh-my-pi by hand** (outside `pi_agent.py`): give the extension by absolute path
+  (`-e /abs/path/to/integrations/pi/pocket.ts`) and start it in an empty directory. On 2026-10-01 a
+  relative `-e` failed to load without a word, and the auto-approved agent explored the home
+  directory and sent what it read to its provider. The runner already does both.
+- **What the agents bring with them**: opencode and oh-my-pi load the owner's global instructions
+  (`~/.config/opencode/AGENTS.md` and `~/.omp/agent/AGENTS.md`, links to the owner's guidance) and
+  opencode its global skills, with the runner's configuration merged over them. A machine with other
+  global settings measures a different agent: note them before comparing runs across machines.
+
+### Running and recording a full run
+
+```bash
+./.pocket/pocket build --config release
+for s in samples/*/; do ./.pocket/pocket ts "$s" >/dev/null || echo "failed $s"; done
+python3 tools/scripts/agent_eval.py --runner reference --tasks <new tasks>   # must pass; --runner null must fail
+mkdir -p build/eval-runtime && rm -f build/eval-runtime/pocket_runtime && cp build/release/bin/pocket_runtime build/eval-runtime/
+mkdir -p build/agent-traces/<run>
+POCKET_ROOT=$PWD POCKET_AGENT_TRACES=build/agent-traces/<run> POCKET_EVAL_RUNTIME=build/eval-runtime/pocket_runtime \
+    python3 tools/scripts/agent_eval.py --timeout 900 --json --rows build/agent-traces/<run>/rows.jsonl \
+    --runner "python3 tools/scripts/runners/opencode_agent.py --via mcp" \
+    > build/agent-traces/<run>/report.json 2> build/agent-traces/<run>/stderr.log
+```
+
+Run it outside an agent sandbox (it talks to runtimes over loopback). The whole set took about three
+hours (67 tasks in 191 minutes); `wc -l build/agent-traces/<run>/rows.jsonl` says how far it is, and
+a run outlives the session that started it, so poll rather than wait for a notice. Then record it:
+`cp build/agent-traces/<run>/report.json tests/evidence/agent-eval/opencode-glm-<run>.json`,
+`python3 tools/scripts/compare_runs.py tests/evidence/agent-eval/<the previous full run>.json build/agent-traces/<run>/report.json`,
+`python3 tools/scripts/trace_report.py build/agent-traces/<run>` (it reads opencode's event streams;
+oh-my-pi's are kept but not summarized), a Results entry below, and a rerun of the failures. With
+the task set changed, regenerate the built-in runners' reports:
+`python3 tools/scripts/agent_eval.py --runner reference --json > tests/evidence/agent-eval/reference.json`
+and the same with `--runner null` into `null.json`.
+
+While a run is going:
+
+- the per-task limit that bites is the runner's `--max-time` (600 s, and the runner waits 60 s
+  more), not the harness's `--timeout` (always pass 900: its default of 300 kills the runner first);
+- do not run engine builds or suites on the same machine: in the run of sixty-seven, `snake`,
+  `platformer` and `sokoban` ran out of time while builds shared it;
+- do not replace `build/eval-runtime/pocket_runtime` (every task starts a fresh runtime from it; a
+  second, concurrent run gets its own copy), reinstall `.pocket/pocket` (the harness and every
+  agent's MCP server run it) or change `pocket.toml`;
+- do not change `samples/` (each task copies its sample) or `sdk/` (bundled per task); engine
+  sources are safe only because of `POCKET_EVAL_RUNTIME`; the documentation set is copied once when
+  the run starts;
+- take no GPU measurements.
+
+### Adding a task
+
+Add an entry to `TASKS` in `tools/scripts/agent_eval.py` with `name`, `project` (a sample, or
+blank), `ticks`, the `task` text and the functions `solve` (the reference solution) and `check`;
+optional keys are `before` (setup run through commands), `setup` (files written into a blank
+project, as the diagnose tasks write a broken game), `followups` (later requests on the same
+project), `script`, `entry` and `edits` (for tasks that edit files). Check it both ways
+(`--runner reference --tasks
+<name>` passes, `--runner null --tasks <name>` fails), add its row to the table above, and run one
+model on it. A brief for a whole game states the whole contract, the conventions a check relies on
+included (that the game reads positions from Transforms every tick, for one): the `villagers` and
+`sokoban` failures came from briefs that left them out.
 
 ## Results
 
@@ -695,19 +769,19 @@ changes made while the run went on, `world.schema` answers a name it does not ha
 
 ## Limits
 
-Thirty-nine tasks (`grey_flashback` and `orange_ball` are shaders an agent writes; `dodge` and
-`key_door` whole games from a brief; `roof_mesh`, `walled_room` and `plank_bridge` came with meshes
-and maps made by code and the 2D rigid bodies; `spike_trap`, `brute_enemies` and `wait_for_coin`
-with hitboxes, a project's own components and `step {until}`; the first three runs above were on the
-first fifteen, the fourth on sixteen; `walker_sprint` came with the 3D characters, `hill_raise`,
-`flowers` and `car_speed` with the terrain, scattering and vehicles, `raft` and `calm_lake` with
-water, `sand_road` and `reed_field` with terrain painting and colliding, swaying copies,
-`stormy_dusk` with the wind and the atmosphere, `dirt_patch` and `glass_window` with terrain layers,
-glass and clear coats, `persian_locale` with right-to-left text and fallback fonts, `blender_level`
-with components from Blender): nineteen edits or reads through commands, three one-line script
-edits, two mechanics, four files made beside the script (a sound, a prefab, a language, and a
-Blender level made by driving Blender) and one edit across `project.toml` and the script; none is
-timed, and none needs art drawn, a level laid out or a scene composed by eye. A model scored here is
-scored on reading the docs and making the right call or the right edit, which is the first thing an
-agent must do and far from the last.
-| `village_weather` | blank | a village square, then (a second agent, a follow-up) an evening in the rain: rain 0.8, 20:00, four lamps lit only after dark by the houses | the houses and well still there, the first `Weather`'s rain, the Sky's hour, each lamp's point light with `after_dark` |
+The first thirty-nine tasks (the set has seventy-two since 2026-10-02, the later ones in the table
+above; `grey_flashback` and `orange_ball` are shaders an agent writes; `dodge` and `key_door` whole
+games from a brief; `roof_mesh`, `walled_room` and `plank_bridge` came with meshes and maps made by
+code and the 2D rigid bodies; `spike_trap`, `brute_enemies` and `wait_for_coin` with hitboxes, a
+project's own components and `step {until}`; the first three runs above were on the first fifteen,
+the fourth on sixteen; `walker_sprint` came with the 3D characters, `hill_raise`, `flowers` and
+`car_speed` with the terrain, scattering and vehicles, `raft` and `calm_lake` with water,
+`sand_road` and `reed_field` with terrain painting and colliding, swaying copies, `stormy_dusk` with
+the wind and the atmosphere, `dirt_patch` and `glass_window` with terrain layers, glass and clear
+coats, `persian_locale` with right-to-left text and fallback fonts, `blender_level` with components
+from Blender): nineteen edits or reads through commands, three one-line script edits, two mechanics,
+four files made beside the script (a sound, a prefab, a language, and a Blender level made by
+driving Blender) and one edit across `project.toml` and the script; none is timed, and none needs
+art drawn, a level laid out or a scene composed by eye. A model scored here is scored on reading the
+docs and making the right call or the right edit, which is the first thing an agent must do and far
+from the last.

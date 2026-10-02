@@ -15,3 +15,6 @@ projects/
 
 # Models converted through Blender (docs/design/assets.md, Importing models); rebuilt from the sources.
 .imported/
+
+# Written by every `pocket build` with this machine's absolute paths (tools/pocket/src/commands.rs).
+/compile_commands.json

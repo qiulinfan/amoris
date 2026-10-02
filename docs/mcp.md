@@ -35,7 +35,9 @@ pi, oh-my-pi and other agents:
 - **pi** has no MCP by design; `integrations/pi/pocket.ts` is a pi extension with the same reach: a
   `pocket` tool (a command and its params) and `pocket_look` (the frame as an image, with what is
   visible; `around: true` or an entity's name for the six-sided sheet of `render.views`). Load it
-  with `pi -e integrations/pi/pocket.ts` or copy it into `~/.pi/agent/extensions/`; it drives
+  with `pi -e /absolute/path/to/integrations/pi/pocket.ts`, started in an empty directory (a
+  relative path that fails to load does so silently, and the agent then runs without the tools:
+  `docs/agent-eval.md`, Setting up the agents), or copy it into `~/.pi/agent/extensions/`; it drives
   `$POCKET_RPC_URL`, or the url `/pocket-attach <url>` sets.
 - **Any agent with a shell**: `pocket rpc <method> '<params>'` sends one command to
   `$POCKET_RPC_URL` (or `--url`) and prints the result: JSON, or the text of a text result such as

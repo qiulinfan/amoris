@@ -1095,6 +1095,32 @@ fn effect(uv: vec2f) -> vec4f {
 colour turned grey to its luminance, turned over by a parameter, two effects in order, a broken one
 answered with the compiler's words while the other runs, and none giving the frame back as it was.
 
+## Bindings and limits
+
+The WGSL lives in raw strings in `engine/renderer/src/renderer.cpp` (`R"WGSL(...)WGSL"`), and a new
+binding has to fit what is already there; `grep -o '@group([0-9]) @binding([0-9]*) var[^;]*'` over
+that file lists every one. As of 2026-10-02:
+
+- The lit scene pipelines' group 0 holds the frame uniforms and shadow maps (0 to 7), the AO and ids
+  (6 to 8), the clustered lights (`local_lights` 8, `cluster_data` 9 as storage buffers), the local
+  shadow faces and atlas (10, 11), the reflection probes (`probe_env` 12, `probe_sh` 13, a storage
+  buffer), the decals (14 to 16), the glass's copy of the scene (17) and the 2D occupancy map (18).
+  Group 1 is the objects (`objects` 0, `joints` 1, `morphs` 2, storage buffers) and, per pipeline,
+  the pass's own inputs, numbered so they never collide inside one pipeline: volumetric fog 8 to 11,
+  SSR 10 to 14, water 16 to 20 (the river courses at 20), SSGI 20 to 25, clouds 30 to 36, grass 40
+  to 42. Group 2 is the material (base, metal-roughness, normal and emissive maps, the cascade
+  uniform for shadow pipelines, a terrain's splat map 6 and its layer array 7); group 3 the cut-out
+  texture and the GPU particles (2 to 4).
+- A fragment stage may read at most four storage buffers: the iOS Simulator's Metal allows no more
+  (`docs/build-system.md`, iOS), and the lit pass already reads four (lights, clusters, probe SH,
+  objects). Small fixed arrays go in uniform buffers (`decals`, `shadow_faces`, `water`,
+  `water_course`).
+- WebGPU allows sixteen sampled textures a stage, which is why the clouds and grass bind their
+  inputs in group 1 of their own pipelines rather than in the scene's group 0.
+- `bloom` pins a 32-byte `minBindingSize`, so the grade pass has a layout of its own.
+- Every shader change is checked in a browser before it is done (`AGENTS.md` rule 10): Tint is
+  stricter than naga, and a module it rejects draws nothing.
+
 ## Not yet
 
 Heights on decals (a decal's normal map bends the light, but nothing it covers is displaced or

@@ -1,0 +1,1238 @@
+{
+ "_about": "Raw reports behind docs/research/2026-10-02-rendering-and-import-assessment.md: four survey agents (inventory of our renderer, three.js r186, the frontier, the OBJ stress test) and a fact-check of each of the first three (status per claim with corrections and sources). Paths under /private/tmp were a session's scratch directory; the OBJ kit now lives in tools/scripts/dev/objstress and writes to build/objstress.",
+ "inventory": {
+  "report": {
+   "architecture": "Forward renderer, not deferred. It uses clustered (Forward+) lighting, with a G-buffer-like prepass that runs only when features need it. It sits on a very thin WebGPU layer. Code: engine/renderer/src/renderer.cpp is 13,835 lines; the whole renderer module is 17,908 lines (animation.cpp 1,462, particles.cpp 330, primitives.cpp 178, debug_draw.cpp 64). The \"RHI\" is engine/rhi/src/device.cpp (692 lines) plus include/pocket/rhi/device.hpp (112 lines). It only handles the device, frames, presenting and captures. renderer.cpp calls the webgpu.h C API directly (for example wgpuRenderPassEncoderDrawIndexed at renderer.cpp:12625), so there is no draw abstraction. The offscreen target is RGBA8Unorm with Depth24Plus (device.hpp:73-74). It is blitted to the surface. The HDR scene target is RGBA16Float (renderer.cpp:61). Depth is standard, not reversed: CompareFunction_Less/LessEqual only. There are 33 begin_pass/begin_compute sites and about 75 WGSL entry points embedded as raw strings. Every pass gets GPU timestamps (kTimedPasses=96, renderer.cpp:4753; rendering.md:175-185).\n\nFrame order at HEAD a171c85a (Renderer::render_scene, renderer.cpp:11162-13410):\n(0) CPU: gather lights and assign them to a 16x9x24 froxel grid. The CPU does this, max 1024 lights (renderer.cpp:30-33; rendering.md:985-999). Write one 464-byte object row per MeshRenderer submesh or sprite into a storage buffer, max 65,536 rows a frame (renderer.cpp:170-171, 11977-11979). Cull each draw on the CPU (bounding sphere vs the 6 frustum planes) and pick its LOD by screen size (renderer.cpp:12084-12118). Stable-sort by blend, cutout, skinned, material, texture and mesh (renderer.cpp:12120-12130).\n(1) Sky environment compute (fill, GGX prefilter, SH9), only when the sky changes (rendering.md:336-345).\n(2) Sun CSM: 4 cascades of 2048 (renderer.cpp:238, 268). Cascades are kept or amortized; about 2 of 4 are redrawn per frame (renderer.cpp:12632-12711; rendering.md:197-209). Each cascade has its own caster cull.\n(3) Weather shelter map, drawn from above (renderer.cpp:12713-12766).\n(4) Reflection-probe capture, at most 1 a frame: 6 views of 128 px, a panorama, prefilter and SH (renderer.cpp:12768-12971).\n(5) Irradiance-volume probe captures, 2 a frame (renderer.cpp:12973-13027).\n(6) Local-light shadow atlas: 4096 split into 64 faces of 512 (renderer.cpp:13029-13062).\n(7) GPU particle simulation compute (renderer.cpp:13129-13156).\n(8) \"ids\" prepass, when split: 4 MRT (R32Uint id, RG16F velocity, RGBA16F octahedral normal/roughness/metallic, RGBA8 albedo) with its own depth, then half-res AO plus contact shadows (renderer.cpp:13158-13191).\n(9) Volumetric clouds at quarter resolution (renderer.cpp:13193).\n(10) Scene pass. It clears its own depth and does not reuse the prepass depth (renderer.cpp:12568-12571, 13215-13235). Order inside: sky triangle, grass, opaque, cutout, skinned and user-WGSL runs; glass (copies the scene, then its own pass); sorted translucents or weighted-blended OIT; water (from copies of scene and prepass); sprites, particles, weather drops, debug lines (13237-13369).\n(11) SSGI, (12) SSR, (13) TAA resolve, (14) DOF / motion blur, (15) volumetric fog at half resolution, (16) bloom (renderer.cpp:13370-13400).\n(17) Final pass: exposure (auto-exposure meter compute), height fog, tonemap (none/ACES/AgX/PBR Neutral), grade and LUT, toon outlines and highlights from ids, colour-vision filter. Then user WGSL post effects. Then the spatial upscale to the window, then the UI (rendering.md:53-66, 103-127, 1068-1096).\n\nThe prepass runs when MSAA, AO, fog, SSR, SSGI, TAA, DOF, water or glass is on.\n\nSubmission: CPU-built instanced draws. Each run of equal mesh, submesh and material is one DrawIndexed with instance_index selecting the row (renderer.cpp:12583-12630; rendering.md:21-25). Indices are always Uint32 (renderer.cpp:12619, 13077, 13086). Vertices are 40 B (status.md:128). There is no DrawIndirect, multi-draw, GPU culling, Hi-Z or occlusion query, no meshlets or virtualized geometry, and no bindless (grep found none). LOD is discrete meshoptimizer simplification per draw. Terrain uses chunked LOD with skirts.\n\nHow many times geometry is drawn: a mesh is rasterized about 4 times a frame in steady state. That is the prepass, the scene pass (4x MSAA when on), and about 2 cascade redraws. Light faces, probe views (6 per capture) and the shelter map add more when they run.",
+   "features": [
+    {
+     "area": "Lighting model",
+     "what": "Metallic-roughness PBR, lit in linear HDR",
+     "technique": "Lambert diffuse + GGX with Schlick Fresnel and Schlick-GGX Smith k=(r+1)^2/8 (the UE4 Karis 2013 form; not height-correlated except for anisotropy). The split-sum environment term uses Karis's analytic fit (no LUT). No multi-scatter energy compensation. Diffuse sky light is SH9. Punctual lights use a windowed quadratic falloff.",
+     "evidence": "renderer.cpp:918-926 (env_brdf), 1319-1336 (brdf); rendering.md:38-49, 347-353"
+    },
+    {
+     "area": "Many lights",
+     "what": "Unlimited point and spot lights, 1024 nearest kept in view",
+     "technique": "Clustered forward: 16x9x24 log-depth froxels, assigned on the CPU (sphere vs cluster AABB), max 262,144 entries",
+     "evidence": "renderer.cpp:30-33; rendering.md:985-1031; tests/evidence/rendering/README.md (lights.png: 75 lamps + 3 spots, max 25 lights per cluster)"
+    },
+    {
+     "area": "Sun shadows",
+     "what": "Cascaded shadow maps, optional PCSS and contact shadows",
+     "technique": "4 x 2048 cascades with log splits, texel snapping, a 10% blend band, normal offset, 3x3 PCF. PCSS: 16-tap blocker search, then 16-tap disc filter. Screen-space contact shadows: 12 steps in the AO pass. Cascades are kept across frames: redrawn only when casters, the sun or the slice change; moving casters are refreshed every 1, 2 or 4 frames by cascade.",
+     "evidence": "renderer.cpp:238, 268, 12632-12711; rendering.md:26-37, 187-209, 494-529"
+    },
+    {
+     "area": "Local light shadows",
+     "what": "Spot (1 face) and point (6 faces) shadows",
+     "technique": "4096 depth atlas of 64 x 512 faces, nearest lights first, casters culled to the light's reach, 3x3 PCF",
+     "evidence": "renderer.cpp:53-54, 13029-13062; rendering.md:1001-1015"
+    },
+    {
+     "area": "GI: screen space",
+     "what": "One-bounce SSGI",
+     "technique": "Half-res, 2 cosine rays x 12 steps marched through the prepass depth. Temporal accumulation (10% a frame) where the depth agrees. Depth-aware full-res add, albedo-modulated.",
+     "evidence": "renderer.cpp:2254 (fs_gi), 2328 (fs_gi_add); rendering.md:729-760"
+    },
+    {
+     "area": "GI: probes",
+     "what": "Reflection probes and irradiance volumes. Both dynamic but amortized; nothing is baked offline.",
+     "technique": "Reflection probe: rasterized 6x128 px cube, then a 256x128 panorama with 5 GGX-prefiltered levels and SH9 diffuse, box-projected. At most 8 probes and 1 capture a frame; 3 sequential captures give 3 bounces; `realtime` probes take turns. Irradiance volume: a grid of up to 16^3 probes (1024 total, 4 volumes), each SH9 plus a 16x16 octahedral depth-moments map with a Chebyshev visibility weight (DDGI-style, but rasterized, not ray-traced). 2 probes a frame, 3 bounces.",
+     "evidence": "renderer.cpp:248-258, 12768-13027; rendering.md:761-853; probes.png, irradiance.png, irradiance-walls.png"
+    },
+    {
+     "area": "Reflections",
+     "what": "SSR, falling back to probes, then the sky",
+     "technique": "Mirror ray marched in screen space with 1/w depth, jittered starts and bisection. With TAA, half the steps a frame on a golden-ratio offset. Blended through the split-sum BRDF.",
+     "evidence": "renderer.cpp:2152 (fs_ssr); rendering.md:701-727"
+    },
+    {
+     "area": "AO",
+     "what": "Half-res hemisphere SSAO",
+     "technique": "Normal-oriented hemisphere samples from the prepass depth, 5x5 bilateral blur. Applied to ambient and environment light only.",
+     "evidence": "renderer.cpp:3778-3872; rendering.md:466-479"
+    },
+    {
+     "area": "Anti-aliasing / resolution",
+     "what": "MSAA 4x, TAA, spatial render scale",
+     "technique": "MSAA with a separate single-sample id pass. TAA: Halton(2,3) jitter over 8 frames, per-object previous matrices give velocity, YCoCg neighbourhood clip, luma weighting, feedback 0.9; off by default. Render scale is bilinear plus a clamped 4-neighbour sharpen (spatial only), with dynamic resolution driven by GPU timestamps. No FXAA/SMAA, no temporal upscaler, no FSR/DLSS/MetalFX.",
+     "evidence": "renderer.cpp:500-513 (kUpscaleWgsl), 3914 (fs_taa), 13522; rendering.md:38-46, 103-127, 901-925"
+    },
+    {
+     "area": "Materials (glTF)",
+     "what": "Base, metallic-roughness, normal and emissive maps; sheen, specular, anisotropy, clearcoat, transmission, IOR, volume, unlit, emissive_strength, texture_transform. Also project WGSL surface functions.",
+     "technique": "Extensions are factors only: transmission, clearcoat, sheen, specular and anisotropy textures are not read. Sheen uses Charlie with Neubelt visibility (sun and lights only). Anisotropic GGX. Glass is screen-space refraction from a scene copy with thickness and attenuation, plus a roughness blur. No iridescence, no dispersion, no materials variants. The glTF occlusionTexture is ignored: no 'occlusion' anywhere in assets.cpp. KTX2/Basis is decoded to RGBA8, so there are no GPU-compressed formats.",
+     "evidence": "engine/assets/src/assets.cpp (KHR_* list, 1421-1425, 1983-1988); rendering.md:570-633, 1033-1066, 1098-1106, 1130-1155; assets.md:382 (Not yet)"
+    },
+    {
+     "area": "Transparency",
+     "what": "Sorted alpha blending, or weighted-blended OIT",
+     "technique": "Far-to-near sort per entity. McGuire/Bavoil WBOIT with accumulation and revealage targets, MSAA-aware",
+     "evidence": "rendering.md:543-568; renderer.cpp:7932-8046, 13264-13310"
+    },
+    {
+     "area": "Post",
+     "what": "Bloom, DOF, motion blur, auto exposure, 4 tonemappers, grade, LUT, toon outlines, highlights, colour-blind filter, user WGSL post chain",
+     "technique": "Half-res threshold with 9-tap gaussian. Thin-lens CoC with a 24-tap golden-angle gather. Velocity-based motion blur (5x5 max tile). Log-luminance meter compute. ACES fit / AgX / Khronos PBR Neutral. Machado 2009 daltonization.",
+     "evidence": "rendering.md:53-66, 85-101, 129-173, 211-250, 927-952, 1068-1096"
+    },
+    {
+     "area": "Sky / atmosphere / clouds / weather",
+     "what": "Procedural, HDRI or physical atmosphere; full day-night cycle with moon and stars; aerial perspective; ray-marched volumetric clouds; rain, snow, wetness, puddles, snow cover, lightning",
+     "technique": "Single-scattering Nishita (Rayleigh + Mie) baked into a 512x256 panorama; multiple scattering is faked by halving the view path. It is not Hillaire's LUT method. Clouds: quarter-res raymarch, 48 steps plus 5 toward the sun, a 64^3 Perlin-Worley noise volume, 3 octaves of multiple-scattering approximation, temporal reprojection. Weather: stateless vertex-shader drops, plus a shelter depth map for occlusion.",
+     "evidence": "rendering.md:252-345, 362-463; renderer.cpp:2559 (fs_clouds), 3587 (make_noise); atmosphere.png, clouds.png, weather.png"
+    },
+    {
+     "area": "Volumetric fog",
+     "what": "Lit height fog with light shafts from the sun and local lights",
+     "technique": "Half-res per-pixel ray march, 16 steps with interleaved-gradient-noise offsets and temporal blend, HG phase, cascade and atlas shadow lookups, depth-aware upsample. Not froxel-based.",
+     "evidence": "rendering.md:954-983; renderer.cpp:2439-2444; sun-shafts.png, volumetric.png"
+    },
+    {
+     "area": "Water",
+     "what": "Lakes, rivers and an infinite ocean, shared with physics, buoyancy and swimming",
+     "technique": "4 Gerstner waves (no FFT) on a CPU-defined grid or camera-centred rings, plus 2 layers of procedural ripple noise for normals. Screen-space refraction and absorption, sky/probe/SSR reflections, GGX sun glint, procedural (not traced) caustics, foam from depth and crests, Snell's window underwater, splash rings and wakes as normal perturbations.",
+     "evidence": "water.md:15-74, 96-130, 185-202, 244-251; renderer.cpp:2913-3106"
+    },
+    {
+     "area": "Terrain / grass / scatter",
+     "what": "Heightfield terrain up to 1025^2 with chunked LOD; 4 splat layers with height blend; GPU grass; scattered props with sway and LOD",
+     "technique": "Squares of 32-64 cells with error-measured LODs (under 2 px) and skirts; no geomorphing. Grass: blades generated in the vertex shader from world-locked cells (no instance buffer), thinned with distance, wind and trampling.",
+     "evidence": "terrain.md:158-208, 289-295; rendering.md:1156-1162; grass.png, terrain-lod.png"
+    },
+    {
+     "area": "Particles",
+     "what": "CPU particles (deterministic, on the sim tick) and GPU particles (compute ring of up to hundreds of thousands)",
+     "technique": "CPU particles are instanced quads, each an object row. The GPU path simulates in compute (gravity, drag, curl turbulence, depth-buffer collision) and draws from the ring with no upload.",
+     "evidence": "particles.md:112-153; renderer.cpp:401 (simulate), 13129-13156"
+    },
+    {
+     "area": "Ray tracing",
+     "what": "None",
+     "technique": "No acceleration structures, ray queries, SDF or voxel tracing; every 'ray' is a screen-space or depth-buffer march",
+     "evidence": "grep for ray_query/BLAS/TLAS/acceleration in engine/renderer and engine/rhi: 0 hits"
+    },
+    {
+     "area": "HDR output",
+     "what": "None; SDR sRGB only",
+     "technique": "8-bit RGBA8Unorm frame, sRGB-encoded in the final pass",
+     "evidence": "engine/rhi/include/pocket/rhi/device.hpp:73; rendering.md:1105 (Not yet)"
+    },
+    {
+     "area": "Model import (user's OBJ question)",
+     "what": "High-poly OBJ+MTL, STL and PLY are read natively. FBX, DAE, USD, ABC and .blend go through headless Blender to glTF. STEP, IGES and JT (industrial CAD formats) are not supported.",
+     "technique": "Line-by-line istringstream parser with a std::map vertex dedup; Uint32 indices, so no 65k vertex limit. Missing normals are smoothed across all faces with no crease angle. One draw per (o-object, material) submesh. No automatic LOD or unit conversion on import.",
+     "evidence": "docs/design/assets.md:162-209; engine/assets/src/import.cpp:37-49, 112-215; renderer.cpp:11977-11979; status.md:132"
+    }
+   ],
+   "performance": [
+    "All numbers below are self-reported in the repo, measured on an Apple M5 MacBook (wgpu-native/Metal) via render.stats.gpu timestamps. None are on a discrete GPU or at 4K. There are no web performance numbers for 3D scenes. I did not re-run anything: the benchmark is running and the binary must not be touched.",
+    "samples/showcase at 1920x1080 (TAA, SSR, AO, volumetric fog, bloom, CSM, probe): GPU frame 5.8 ms; 3.6 ms at 0.75 render scale; 1.9 ms at 0.5 (rendering.md:123-125).",
+    "samples/hills at 1920x1080, about 1.1M triangles drawn: GPU 4.7 / 3.0 / 2.4 ms at scale 1 / 0.75 / 0.5 (rendering.md:124-125). Triangle count 1.15M after LOD, down from 1.46M (rendering.md:649-650). 971 draws frustum-culled; the cascades draw 2,242 casters instead of 4x1,341 (rendering.md:194-195).",
+    "Scene pass 1.34 ms and id pass 0.23 ms in the showcase at 1080p; hills 2.0 and 0.48 ms (rendering.md:671-673, tools/scripts/dev/gpu_probe.py).",
+    "SSR at 1080p in the showcase: about 1.0 ms with TAA step-splitting, vs 1.55 ms at 48 steps (rendering.md:718-719). SSGI at 1080p: about 1.1 ms (0.65 gather + 0.47 add) (rendering.md:752-753). Volumetric fog at 1080p: 1.9 ms at 16 steps vs 4.3 ms at 40, 'measured beside another workload' (rendering.md:962-964).",
+    "Volumetric clouds: 0.3-1.3 ms at 1280x720, 'with other GPU work running' (rendering.md:457-458).",
+    "Soft shadows (PCSS) plus contact shadows: about 0.2 ms on the showcase at 960x540 (rendering.md:526-528).",
+    "Terrain LOD, a 1025x1025 grid at 1280x720: 1.01M triangles and 2.1 ms GPU, vs 2.10M triangles and 4.9 ms as a single mesh (terrain.md:202-206).",
+    "Crowd of 256 skinned humanoids at 1280x720 with shadows: 0.92 ms CPU and 0.66 ms GPU in 41 draws (animation.md:302-306).",
+    "GPU particles, a ring of 200,000 at 1280x720: 0.74 ms CPU and 1.3 ms GPU. A CPU fountain of 20,000 took 8.7 ms CPU (particles.md:144-146).",
+    "FPS sample at 1920x1080: 4.6 ms a frame, 3.4 ms of it GPU (combat.md:79-80).",
+    "Instancing: 3,000 cubes went from 3,000 draws to 1, render cost 0.90 to 0.35 ms (status.md:21, docs/evidence/swarm.md).",
+    "Kept cascades: about 2 of 4 redrawn a frame in running samples (hills 2.0, village 2.2, farm 2.05, island 2.1) (rendering.md:206-207)."
+   ],
+   "gaps": [
+    {
+     "gap": "No GPU-driven rendering: no indirect or multi-draw, no GPU frustum or occlusion culling (no Hi-Z, no occlusion queries), no bindless",
+     "why_it_matters": "The CPU rebuilds and uploads every 464-byte object row each frame and issues one DrawIndexed per run, with a hard cap of 65,536 rows. Dense scenes (forests, cities, CAD assemblies with thousands of parts) become CPU- and draw-bound, and hidden geometry is still shaded. Unity 6 (GPU Resident Drawer plus GPU occlusion culling) and UE5 (Nanite) moved past this. So did three.js r186, which has webgpu_occlusion, webgpu_struct_drawindirect and BatchedMesh examples.",
+     "evidence": "renderer.cpp:170-171, 12084-12118, 12583-12630; grep of DrawIndirect/occlusion: 0 hits. three.js r186 examples list via GitHub API (2026-10-02). Unity 6 features: https://unity.com/blog/engine-platform/unity-6-preview-release (2024)."
+    },
+    {
+     "gap": "No virtualized geometry, meshlets or continuous LOD",
+     "why_it_matters": "LOD is discrete meshoptimizer decimation with popping (no cross-fade or geomorph) and has to be opted into per entity. High-poly imports draw at full density until someone sets MeshRenderer.lods. This is the single biggest gap to UE5 Nanite, which since 5.7 also covers foliage.",
+     "evidence": "rendering.md:634-653; terrain.md:289-293. UE 5.7 Nanite Foliage: https://www2.unrealengine.com/news/unreal-engine-5-7-is-now-available (Nov 2025)"
+    },
+    {
+     "gap": "Redundant rasterization: the prepass depth is not reused by the scene pass",
+     "why_it_matters": "The ids prepass writes its own Depth32F, then the scene pass clears a separate depth and re-rasterizes everything with LESS. Overdraw in the lit pass is not removed by a depth-equal pass. Apple's tile-based hidden-surface removal hides some of this; discrete desktop GPUs and the web will pay for it.",
+     "evidence": "renderer.cpp:12568-12571 (ds cleared), 13166-13167 (ids uses prepass_view), 13215-13235"
+    },
+    {
+     "gap": "No ray tracing and no world-space dynamic GI at scale",
+     "why_it_matters": "GI is one-bounce SSGI (it misses off-screen and occluded light) plus rasterized probes amortized at 1-2 captures a frame, capped at 8 reflection probes and 1024 grid probes. That is nowhere near Lumen (software or hardware RT GI and reflections) or HDRP's RTGI, RT reflections, or APV with sky occlusion and scenario blending. Local light shadows are also missing from probe captures.",
+     "evidence": "renderer.cpp:248-258; rendering.md:748-753, 761-853, 1103-1104. UE 5.7: https://gamefromscratch.com/unreal-engine-5-7-released/ (Nov 2025); Unity APV: https://unity.com/blog/engine-platform/unity-6-preview-release"
+    },
+    {
+     "gap": "No temporal upscaler; TAA is off by default; no specular anti-aliasing",
+     "why_it_matters": "Render scale is bilinear plus sharpen only, versus UE TSR, Unity STP, and three.js r186's own TAAUNode and FSR1Node. The island sample ships MSAA without TAA, hills ships no AA at all, and no Toksvig/Kaplanyan-style roughness filtering exists. The result is visible specular shimmer and black dashes on the ocean (island.png, ocean.png).",
+     "evidence": "renderer.cpp:500-513; rendering.md:917-919; samples/island/project.toml [render]; grep toksvig/kaplanyan/fwidth-roughness: 0 hits; three.js examples/jsm/tsl/display/TAAUNode.js@r186"
+    },
+    {
+     "gap": "Material coverage below three.js and glTF PBR Next",
+     "why_it_matters": "Transmission, clearcoat, sheen, specular and anisotropy textures are ignored (factors only). No iridescence, dispersion or materials variants. The glTF occlusionTexture (baked AO) is ignored. Sheen is not lit by the sky, and there is no multi-scatter compensation. There is no SSS, hair or eye shading and no layered material (UE Substrate became production-ready in 5.7). three.js MeshPhysicalMaterial has all of these plus maps for each.",
+     "evidence": "assets.md:382-387; rendering.md:578-581, 1102-1103; grep 'occlusion' in engine/assets/src/assets.cpp: 0 hits; https://threejs.org/docs/pages/MeshPhysicalMaterial.html (fetched 2026-10-02)"
+    },
+    {
+     "gap": "No GPU texture compression and no streaming",
+     "why_it_matters": "KTX2/Basis is transcoded to RGBA8 on load, and terrain layers are resampled to 512. VRAM and bandwidth grow linearly with content, and there is no virtual texturing or texture streaming for large worlds.",
+     "evidence": "engine/assets/src/assets.cpp:1983-1988; assets.md:385-386; rendering.md:1157-1159"
+    },
+    {
+     "gap": "Shadows are fixed-resolution; no area lights",
+     "why_it_matters": "4x2048 cascades and 512 px local faces (64 max), compared with UE Virtual Shadow Maps and MegaLights (stochastic many-light shadows, beta in 5.7). There are no rect or area lights (no LTC). Glass casts a whole shadow.",
+     "evidence": "renderer.cpp:53-54, 238, 268; rendering.md:1101-1102; grep LTC/area: 0 hits"
+    },
+    {
+     "gap": "Atmosphere and water are simplified models",
+     "why_it_matters": "The atmosphere is single-scattering Nishita baked into a panorama, not a Hillaire-style multi-scattering LUT with froxel aerial perspective. Environment reflections do not show volumetric clouds. Water is 4 Gerstner waves plus noise (no FFT spectrum), with procedural caustics and only rectangle or ribbon shapes. UE and HDRP ship FFT water and LUT atmospheres.",
+     "evidence": "rendering.md:269-277, 333-334; water.md:15-24, 244-251"
+    },
+    {
+     "gap": "No HDR display output",
+     "why_it_matters": "The 8-bit sRGB swapchain wastes the HDR pipeline on HDR-capable Mac and phone displays.",
+     "evidence": "device.hpp:73; rendering.md:1105"
+    },
+    {
+     "gap": "Terrain scale limits",
+     "why_it_matters": "A 1025^2 grid at most, no streaming, no LOD blending, 4 layers, no per-layer normal or roughness maps. Large open worlds need multiple hand-placed terrains.",
+     "evidence": "terrain.md:289-295"
+    },
+    {
+     "gap": "Industrial high-poly OBJ path is functional but unoptimized (partly unverified)",
+     "why_it_matters": "Import works with Uint32 indices. However, the parser tokenizes every line through istringstream into std::vector<std::string> and dedups vertices with std::map, which will likely be slow on multi-million-triangle OBJs; this is not benchmarked, so it is unverified. Missing normals are smoothed with no crease angle, which rounds off CAD hard edges. STEP, IGES and JT are not supported. Every (object, material) group becomes its own draw and object row, which interacts badly with the 65,536-row cap. There is no automatic LOD, meshlets or unit (mm) handling.",
+     "evidence": "engine/assets/src/import.cpp:37-49, 142-215; renderer.cpp:171, 11977-11979; assets.md:170-176"
+    },
+    {
+     "gap": "Performance evidence is narrow",
+     "why_it_matters": "Every number comes from one Apple M5 under wgpu-native/Metal, at 720p or 1080p, sometimes 'beside another workload'. There are no discrete-GPU, 4K, browser-WebGPU or side-by-side engine comparisons, so the 'how fast compared to X' claims cannot be made yet.",
+     "evidence": "rendering.md:123-127, 457-458, 962-964; terrain.md:202-206"
+    }
+   ],
+   "honest_quality_verdict": "I viewed 14 evidence PNGs: showcase, pbr, materials, island (plus a 2x crop), ocean, clouds, glass, irradiance, ssr, probes, grass, atmosphere, village-day (plus a crop of the dusk panel) and fps.\n\n**Feature list.** It is a broad, coherent forward+ list, roughly where AAA forward renderers were around 2016-2019: clustered lights, CSM with PCSS, SSAO, SSR, TAA, probe GI, volumetric fog. On top of that it has ray-marched clouds, DDGI-style probe visibility, and an integrated sky, weather, water and terrain stack. Lighting is physically consistent: HDR with AgX, and sky light that agrees with the sun across a full day.\n\n**Where the images are good.**\n- The volumetric clouds are the strongest element. The fair-weather and rain decks in clouds.png and ocean.png are respectable even at a casual glance next to Unity HDRP.\n- grass.png and the noon panel of clouds.png read as a pleasant stylized indie scene.\n- glass.png shows correct inverted refraction through the thick ball and a nice clear-coat highlight.\n\n**Where they are weak.** Mostly this is content: primitive boxes, lollipop trees, low-poly props, and procedural or checker textures instead of authored PBR texture sets. But several artifacts are technical:\n- Ocean (island.png, ocean.png): severe specular aliasing. There are black horizontal dashes and pixel noise toward the horizon, and the near water looks like a noisy normal map rather than a sea surface. There is no specular AA, and the island sample runs without TAA.\n- probes.png: reflections are blocky and low-res (128 px faces), with a smeared, misregistered box-projected crate reflection and a noisy ceiling blob.\n- ssr.png: the orb's reflection is blurry and dim, and the procedural sky shows a flat grey \"ground\" band with a hard edge at the horizon (also in materials.png).\n- village-day.png: the dusk frames have large hard-edged dark wedges and grain on the grass (cause not verified), plus a dark band at the world's edge.\n- showcase.png: fog washes the whole frame to near-monochrome beige over untextured geometry. The light shafts on the floor are nice, but the frame does not sell the feature list.\n- irradiance.png: the colour bleed is correct but faint, and the room looks flat.\n- pbr.png and materials.png look like test scenes, not showcases.\n\n**Against UE5 (5.7: Lumen, Nanite, VSM, TSR, Substrate, MegaLights).** Not in the same class. It is a generation or more behind in GI quality, geometric density, shadow resolution and upscaling, and the images read like a UE4-era or Unity built-in-pipeline stylized demo, not a modern photoreal frame.\n\n**Against three.js r186 (2026-09-24).** On paper the technique lists are now close: three.js ships SSGI, SSR, GTAO, TRAA, TAAU, FSR1, clustered lights, probe grids, CSM and OIT as TSL add-ons. three.js is ahead on material extensions (iridescence, dispersion, all the maps, AO maps), compressed textures, temporal upscaling and GPU-driven primitives. aipocket is ahead on integration: everything is a component field, it is deterministic and inspectable by an agent, and it has built-in atmosphere, day-night, weather, ocean, terrain and grass systems coupled to physics, which three.js leaves to the user.\n\n**Overall judgement (mine, not measured).** The best artist-made three.js showcase sites look better than these evidence images. That gap comes mostly from authored assets, baked lighting and AA or specular filtering, not from missing passes.\n\n**Highest-leverage fixes for visible quality:**\n1. TAA on by default plus specular AA for water and normal maps.\n2. A temporal upscaler.\n3. Higher-resolution or SSR-blended probes.\n4. A real asset and texture pass on the showcase scenes.\n5. GPU-driven culling and indirect draws before attempting high-poly CAD scenes."
+  },
+  "check": {
+   "checked": [
+    {
+     "claim": "Architecture: forward renderer with clustered (Forward+) lighting and a G-buffer-like prepass that runs only when features need it",
+     "status": "confirmed",
+     "source": "renderer.cpp:11231 (prepass = msaa>1 || ao_pass || fog_on || taa || dof || motion_blur || ssr || ssgi || water || glass), 13158-13191 (pocket.ids pass, 4 MRT), renderer.cpp:30-33 + rendering.md:987-999 (clusters assigned on the CPU)",
+     "correction": "The prepass trigger list leaves out motion blur and contact shadows (ao_pass = ao.enabled || shadows.contact, renderer.cpp:11230-11231)."
+    },
+    {
+     "claim": "renderer.cpp is 13,835 lines; the whole renderer module is 17,908 lines",
+     "status": "wrong",
+     "source": "wc -l at HEAD a171c85a",
+     "correction": "renderer.cpp is 13,835 lines. The whole module is 16,569 lines with headers and module.toml, or 15,869 lines of .cpp only (animation 1,462, particles 330, primitives 178, debug_draw 64). The per-file counts are right; the total is not."
+    },
+    {
+     "claim": "The RHI is device.cpp (692) plus device.hpp (112), handles only device/frames/present/capture; offscreen target RGBA8Unorm + Depth24Plus (device.hpp:73-74)",
+     "status": "confirmed",
+     "source": "engine/rhi/include/pocket/rhi/device.hpp:73-74, device.cpp:106,125",
+     "correction": "It also exposes create_shader, create_buffer, write_buffer, submit_so_far and error scopes (device.hpp:92-103). It is still not a draw abstraction."
+    },
+    {
+     "claim": "renderer.cpp calls webgpu.h directly, e.g. wgpuRenderPassEncoderDrawIndexed at renderer.cpp:12625; indices always Uint32",
+     "status": "confirmed",
+     "source": "renderer.cpp:12626 (DrawIndexed, off by one), 12619/13077/13086/13096 are the only WGPUIndexFormat uses, all Uint32"
+    },
+    {
+     "claim": "HDR scene target is RGBA16Float (renderer.cpp:61); depth is standard, not reversed (Less/LessEqual only)",
+     "status": "confirmed",
+     "source": "renderer.cpp:61; grep CompareFunction_: 9 Less, 6 LessEqual, 19 Always, no Greater; prepass depth is Depth32Float (renderer.cpp:226)"
+    },
+    {
+     "claim": "33 begin_pass/begin_compute sites, ~75 WGSL entry points, every pass timestamped (kTimedPasses=96 at renderer.cpp:4753)",
+     "status": "confirmed",
+     "source": "32 call sites plus 2 definitions; 75 @vertex/@fragment/@compute; renderer.cpp:4753, 10321-10334",
+     "correction": "Timestamps exist only when the device grants timestamp-query, and only for the first 96 passes: begin_pass returns no timestamp writes past that (renderer.cpp:10334)."
+    },
+    {
+     "claim": "CPU light clustering 16x9x24, max 1024 lights, 262,144 entries",
+     "status": "confirmed",
+     "source": "renderer.cpp:30-33; rendering.md:987-999"
+    },
+    {
+     "claim": "One 464-byte object row per submesh/sprite, max 65,536 rows a frame; rows rebuilt and uploaded every frame",
+     "status": "overstated",
+     "source": "renderer.cpp:170-171, 11750, 11790, 12066, 12151, 12526",
+     "correction": "The numbers are right, but the cap is worse than the report says. It counts every draw in the world, not only the ones in view: frustum-culled draws keep their rows for the shadow passes (draws.resize keeps out-of-view entries; count = draws.size() at 12066; everything up to total is uploaded at 12526). Past the cap, the gather lambdas return silently, with no counter."
+    },
+    {
+     "claim": "CPU frustum culling per draw (bounding sphere vs 6 planes) and LOD picked by screen size; stable sort by blend/cutout/skinned/material/texture/mesh",
+     "status": "overstated",
+     "source": "renderer.cpp:12075-12118 (planes, LOD, cull_screen), 12120-12130 (sort, which also keys on in_view and translucent depth), 11735-11736 + 11876-11879 (bounds)",
+     "correction": "Culling granularity is the entity's world::Bounds, not the submesh's: every submesh of an entity shares one sphere. Skinned draws and entities without Bounds keep radius -1 and are never culled. A single OBJ entity with thousands of parts therefore gets no per-part culling."
+    },
+    {
+     "claim": "Sun CSM 4x2048, cascades kept/amortized (~2 of 4 redrawn per frame), per-cascade caster cull",
+     "status": "confirmed",
+     "source": "renderer.cpp:238 (kCascades), 268 (kShadowMapSize), 12632-12711; rendering.md:188-209",
+     "correction": "rendering.md step 4 (line 31) still says 'Every mesh casts into every cascade'. That doc text is stale; the code and the 'Where the time goes' section are current."
+    },
+    {
+     "claim": "Local-light shadow atlas 4096 split into 64 faces of 512",
+     "status": "confirmed",
+     "source": "renderer.cpp:50-54, 13040 (pocket.shadow.local); rendering.md:1001-1015"
+    },
+    {
+     "claim": "Probes: max 8 reflection probes, 128 px faces, 1 capture/frame, 3 bounces; irradiance grids up to 1024 probes / 4 volumes / 2 per frame, SH9 + 16x16 octahedral depth moments with Chebyshev weight",
+     "status": "confirmed",
+     "source": "renderer.cpp:248-258; rendering.md:779-781, 806-838"
+    },
+    {
+     "claim": "Scene pass clears its own depth and does not reuse the prepass depth (redundant rasterization)",
+     "status": "confirmed",
+     "source": "renderer.cpp:12568-12572 (ds = ms_depth_view or frame.depth, LoadOp_Clear), 13166-13167 (ids pass uses prepass_view, Depth32Float), 13216-13219",
+     "correction": "The gap is real, but the fix is not a one-liner. With MSAA the prepass is single-sample and the scene pass is 4x. Without MSAA the formats differ (Depth32Float prepass vs the RHI's Depth24Plus frame depth)."
+    },
+    {
+     "claim": "No DrawIndirect, multi-draw, GPU culling, Hi-Z, occlusion queries, meshlets or bindless",
+     "status": "confirmed",
+     "source": "grep DrawIndirect|MultiDraw|Indirect|occlusion|HiZ|bindless|meshlet in engine/renderer, engine/rhi: only ambient-occlusion hits (renderer.cpp:191, 3778...); gather_occluders (4527) is 2D-shadow occluders, not occlusion culling"
+    },
+    {
+     "claim": "BRDF: Lambert + GGX + Schlick + Smith k=(r+1)^2/8; Karis analytic split-sum fit (no LUT); no multi-scatter compensation",
+     "status": "confirmed",
+     "source": "renderer.cpp:918-926 (env_brdf), 1319-1336 (brdf); grep multiscatter/energy comp/kulla: 0 hits"
+    },
+    {
+     "claim": "glTF extensions are factors only; occlusionTexture ignored; KTX2/Basis decoded to RGBA8 (no GPU compressed formats)",
+     "status": "confirmed",
+     "source": "engine/assets/src/assets.cpp:1483-1515 (factors only), 1983-1988 (KTX2 to RGBA); grep -i occlusion engine/assets/src: 0 hits; assets.md:382-387"
+    },
+    {
+     "claim": "TAA: Halton(2,3) over 8 frames, YCoCg clip, feedback 0.9, off by default; render scale is bilinear + clamped sharpen; no FXAA/SMAA/FSR/temporal upscaler",
+     "status": "confirmed",
+     "source": "renderer.hpp:95-98 (enabled=false), renderer.cpp:501-513 (kUpscaleWgsl), 3914 (fs_taa); rendering.md:901-919, 103-127; grep fxaa|smaa|fsr|dlss|metalfx: 0 hits"
+    },
+    {
+     "claim": "No specular anti-aliasing (no Toksvig/Kaplanyan roughness filtering)",
+     "status": "overstated",
+     "source": "renderer.cpp:3007-3009 (the ocean's normals flatten toward the horizon 'where a pixel spans many'), 3033 (ripples fade with distance); water.md:107",
+     "correction": "There is no general roughness filtering, but the water shader does fade its normals with distance, which is a crude specular LOD. It does not fix the island artifacts."
+    },
+    {
+     "claim": "island ships MSAA without TAA; hills ships no AA",
+     "status": "confirmed",
+     "source": "samples/island/project.toml [render] msaa=4, ao, shadow_softness (no taa); samples/hills/project.toml [render] ao=true only; no taa/msaa in either sample's scripts"
+    },
+    {
+     "claim": "Island/ocean black dashes and noise are specular aliasing, to be fixed by TAA + specular AA",
+     "status": "unverified",
+     "source": "Viewed tests/evidence/rendering/island.png plus a 3x crop of the dusk horizon: the black horizontal dashes are real. renderer.cpp:3066-3068: r = reflect(-v, n) is not clamped above the horizon before sampling env_tex",
+     "correction": "The artifact is real, but the cause is not established. Dark dashes, rather than bright sparkles, fit perturbed grazing normals reflecting the sky panorama's below-horizon ground, with Fresnel near 1. TAA or specular AA alone may not remove them."
+    },
+    {
+     "claim": "OBJ import: istringstream tokenizer, std::map vertex dedup, Uint32 indices, missing normals smoothed with no crease angle, one submesh per (o-object, material)",
+     "status": "confirmed",
+     "source": "engine/assets/src/import.cpp:37-42 (split_ws), 104-232 (parse_obj), 196-205 (area-weighted smoothing), 177-183 (group by node,material); assets.md:170-176"
+    },
+    {
+     "claim": "The OBJ parser 'will likely be slow' on multi-million-triangle files",
+     "status": "overstated",
+     "source": "Own replica of the same split_ws + std::map logic (scratchpad/render-assessment/review-objbench/bench.cpp, clang -O2, M5 with the background benchmark running): 187 MB, 2M-triangle grid OBJ in 2.2 s (read 0.44, tokenize 1.43, dedup 0.35)",
+     "correction": "In release it is seconds per load, not minutes; debug builds will be much slower. More relevant costs: import.cpp:144 copies the whole text into an istringstream (about 2x file size in RAM); the OBJ is re-parsed on every load with no cache (assets.cpp:2107-2112, unlike the Blender path's .imported cache); tangent generation and GPU upload were not measured."
+    },
+    {
+     "claim": "STEP, IGES and JT are not supported; FBX/DAE/USD/ABC/.blend go through headless Blender",
+     "status": "confirmed",
+     "source": "engine/assets/src/import.cpp:472 (.blend .fbx .dae .usd .usda .usdc .usdz .abc .3ds .x3d .wrl); grep step/iges/jt/occt: no importer",
+     "correction": "The Blender list also includes .3ds, .x3d and .wrl (VRML), and .vox/.voxels are read natively (assets.cpp:2119-2124)."
+    },
+    {
+     "claim": "hills: about 1.1M triangles drawn",
+     "status": "overstated",
+     "source": "renderer.cpp:12114 (stats.triangles summed before the in_view test); rendering.md:647-650",
+     "correction": "render.stats.triangles counts after LOD and cull_screen but before frustum culling, so 1.15M is what was submitted for the frame, not what was rasterized in view."
+    },
+    {
+     "claim": "Self-reported perf numbers (showcase 5.8/3.6/1.9 ms, hills 4.7/3.0/2.4, scene 1.34 / id 0.23 ms, SSR 1.0 vs 1.55, SSGI 1.1, fog 1.9 vs 4.3, clouds 0.3-1.3, terrain 2.1 vs 4.9, crowd 0.92/0.66, GPU particles 0.74/1.3, FPS 4.6/3.4, instancing 0.90 to 0.35)",
+     "status": "confirmed",
+     "source": "rendering.md:123-125, 671-673, 718-719, 752-753, 962-964, 457-458; terrain.md:202-206; animation.md:302-306; particles.md:144-146; combat.md:79-80; status.md:21"
+    },
+    {
+     "claim": "Atmosphere is single-scattering Nishita with the view path halved; env reflections don't show volumetric clouds; volumetric fog is a per-pixel march, not froxels; water is 4 Gerstner waves, no FFT; terrain max 1025^2 with no streaming or geomorph",
+     "status": "confirmed",
+     "source": "rendering.md:269-277, 333-334, 956-966; water.md:15-24, 244-251 (grep fft/tessendorf in renderer.cpp: 0); terrain.md:290-295"
+    },
+    {
+     "claim": "No area lights (no LTC), no ray tracing, no HDR display output",
+     "status": "confirmed",
+     "source": "grep LTC|area light|ray_query|BLAS|TLAS in engine/renderer + engine/rhi: 0 hits; rendering.md:1105; device.hpp:73"
+    },
+    {
+     "claim": "three.js r186 (2026-09-24) ships SSGI, SSR, GTAO, TRAA, TAAU, FSR1, clustered lights, probe grids, CSM, OIT, plus webgpu_occlusion, webgpu_struct_drawindirect and BatchedMesh examples; MeshPhysicalMaterial has maps for every extension",
+     "status": "confirmed",
+     "source": "GitHub API, mrdoob/three.js at tag r186 (release published 2026-09-24T14:35Z; fetched 2026-10-02): examples/jsm/tsl/display/{SSGINode,SSRNode,GTAONode,TRAANode,TAAUNode,FSR1Node,OITPassNode}.js, examples/jsm/lighting/{ClusteredLighting,LightProbeGrid}.js, examples/webgpu_occlusion.html, webgpu_struct_drawindirect.html, webgpu_mesh_batch.html; MeshPhysicalMaterial r186 has anisotropyMap, clearcoatMap, iridescenceMap, sheenColorMap, specularColorMap, thicknessMap, transmissionMap, dispersion"
+    },
+    {
+     "claim": "UE 5.7 (Nov 2025): Nanite covers foliage, Substrate production-ready, MegaLights beta",
+     "status": "overstated",
+     "source": "Web search 2026-10-02 of unrealengine.com/news/unreal-engine-5-7-is-now-available and alternativeto.net/news/2025/11 (the direct fetch of the Epic page returned 403)",
+     "correction": "Substrate production-ready and MegaLights beta are confirmed. Nanite Foliage (Nanite Voxels) is Experimental in 5.7, not a shipped production feature."
+    },
+    {
+     "claim": "Unity 6 has GPU Resident Drawer plus GPU occlusion culling and APV with sky occlusion and scenario blending",
+     "status": "unverified",
+     "source": "The cited unity.com blog was not fetched in this review"
+    },
+    {
+     "claim": "Quality verdict: ocean aliasing, blocky/misregistered probe reflections, fog washing out showcase.png",
+     "status": "confirmed",
+     "source": "Viewed island.png (+crop), probes.png, showcase.png, ssr.png",
+     "correction": "The descriptions are fair: island has black dashes and marbled noise; probes.png has a low-res mirror with the blue crate's reflection smeared left of the crate and a jagged dark ceiling blob; showcase.png is near-monochrome beige fog over untextured boxes; ssr.png has a dim, blurry orb reflection and a hard grey ground band. Caveat: showcase.png, probes.png and ssr.png date from 2026-09-29 (commits 712db9f1, de787637, 9e75d9c6), and 84 renderer.cpp commits plus showcase sample changes (temporal fog, visitors, fireflies) have landed since. The showcase judgement is of a stale frame, and its backlit low-sun fog is the intended shot (README line 11)."
+    }
+   ],
+   "missing": [
+    "Decals are missing from the feature list entirely: up to 64 nearest box-projected decals with normal maps, roughness and glow, applied in the lit and id passes (renderer.cpp:41-48 GpuDecal, 751, 11701 gather_decals; rendering.md:855-900). The lit shader walks the whole list per pixel instead of clustering it, which is a cost the report also misses.",
+    "Also missing: 2D lights with occluder-map shadows for orthographic games (renderer.cpp:1404-1407 shadow_2d, 1595, 4527 gather_occluders), and render-to-texture / secondary views such as split screen, minimaps and in-world screens, where TAA and the fog history are switched off (renderer.cpp:11163-11195, 11031 view_texture).",
+    "Culling details that matter for the user's CAD question: all submeshes of an entity share one Bounds sphere; skinned and unbounded draws are never frustum-culled (renderer.cpp:11735-11736, 11876-11879); and the 65,536-row cap counts off-screen draws too, then silently drops the rest (11750, 11790, 12066).",
+    "TAA motion vectors ignore skinning: a skinned mesh's joints are followed only as far as its entity moves (rendering.md:916-917). Animated characters will ghost or smear under TAA, which matters for the report's recommendation to turn TAA on by default.",
+    "Probe and volume selection: the lit pass takes the first probe by entity id whose box holds the point, with no blending between overlapping probes, only a half-unit fade (rendering.md:780-783); irradiance volumes likewise take 'the first by id where boxes overlap' (engine/world/meta/components.toml:149).",
+    "Depth precision: the frame depth is non-reversed Depth24Plus, the island camera has far=1500 (samples/island/scene.json) with a default near of 0.1 (components.toml:83), and the ocean's horizon ring is drawn just inside the far plane (water.md:105-107). This is a plausible contributor to far-water and horizon artifacts that the report never considers.",
+    "three.js r186 also ships world-space voxel GI (examples/jsm/lighting/vxgi/VXGINode.js, webgpu_vxgi.html, webgpu_vxgi_sponza.html), RectAreaLight (webgpu_lights_rectarealight.html), SMAA and FXAA nodes, and Gaussian-splat loaders (SPZ, KSPLAT, GaussianSplatPLYLoader). The 'technique lists are now close' comparison therefore understates three.js on GI and area lights, which are exactly aipocket's gaps.",
+    "For the industrial-import question: three.js r186 has 3DMLoader (Rhino), 3MFLoader, AMFLoader, VRMLLoader and VTKLoader, but no STEP or IGES either. A STEP path in either engine needs OpenCascade or occt-import-js, or an offline conversion (unverified beyond the loader list at tag r186).",
+    "Import pipeline gaps for high-poly OBJ: no vertex-cache, overdraw or fetch optimization (the only meshoptimizer calls are simplifyWithAttributes and decode*); `s` smoothing groups are ignored; after the first `o`, `g` groups do not create nodes (import.cpp:173-174); n-gons are fanned, so concave faces triangulate wrongly (import.cpp:183); and OBJ is re-parsed on every load with no cache (assets.cpp:2107-2112).",
+    "Unverified platform context: core browser WebGPU has DrawIndexedIndirect and compute but, as far as I know, no bindless or multi-draw-indirect, so GPU-driven rendering on the web build would need one indirect draw per batch. The report recommends GPU-driven culling without noting this constraint.",
+    "Translucent meshes in front of water are hidden by the water surface (water.md:251-252). This is a visible correctness gap not listed among the renderer gaps."
+   ]
+  }
+ },
+ "threejs": {
+  "report": {
+   "subject": "three.js (mrdoob/three.js): rendering capabilities as of 2026-10-02, for comparison with aipocket",
+   "version_and_date": "Latest release is r186. npm three@0.186.0 was published 2026-09-08. A re-release tagged \"r186 (bis)\" (commit 9b4a2ac29c, 2026-09-24T14:33Z) became the GitHub release r186 (published 2026-09-24T14:35Z) and npm three@0.186.1, which is the current npm `latest`. The default branch `dev` is at REVISION '187dev' (last commit 1ea31f3048, 2026-10-02T15:51Z). Earlier releases: r185 2026-07-01, r184 2026-04-16, r183 2026-02-20, r182 2025-12-10. Sources: GitHub API repos/mrdoob/three.js/releases and commits/r186 (queried 2026-10-02); https://registry.npmjs.org/three (queried 2026-10-02); https://github.com/mrdoob/three.js/releases/tag/r186. Raw release notes, manual pages and the source files cited below are saved in /private/tmp/claude-501/-Users-qiulinfan-Desktop-pocketEngine/b7d0fc97-779a-4afb-8145-c566b7e1bb53/scratchpad/render-assessment/threejs/.",
+   "capabilities": [
+    {
+     "area": "Renderer status: WebGPURenderer vs WebGLRenderer",
+     "what": "There are two renderers. `import 'three'` still resolves to build/three.module.js with WebGLRenderer. WebGPURenderer needs the separate entry point `three/webgpu`, and TSL comes from `three/tsl` (package.json exports at r186). WebGPURenderer runs a WebGPU backend and falls back to a WebGL 2 backend automatically; `forceWebGL` forces the fallback. The official manual still says: \"The renderer itself is still in an experimental state although its maturity level has been greatly improved in the last years.\" It also says that, depending on the scene, you may hit missing features or get better performance with WebGLRenderer. WebGLRenderer is \"still maintained\" but there are \"no plans to add larger new features\" to it. So WebGPURenderer is not the default and is not officially declared production-ready. Third-party blogs disagree: utsubo.com (2026) calls it \"recommended since r171 (September 2025)\" and production-ready. That is wrong on the facts, because the GitHub API dates r171 to 2024-11-29 (it introduced the three/webgpu code split). Treat those blogs as unreliable.",
+     "source": "https://github.com/mrdoob/three.js/blob/dev/manual/pages/webgpurenderer.html (last changed 2026-07-12, commit 13a717c0e6); https://github.com/mrdoob/three.js/blob/r186/package.json; https://github.com/mrdoob/three.js/releases/tag/r171; https://www.utsubo.com/blog/threejs-2026-what-changed (secondary, unreliable)",
+     "built_in_or_addon": "core"
+    },
+    {
+     "area": "TSL / node materials",
+     "what": "TSL (Three Shading Language) is a JavaScript node DSL that compiles to WGSL (WebGPU backend) or GLSL (WebGL2 fallback). It has node versions of every material: MeshStandard/Physical/Lambert/Phong/Toon/Matcap/Basic NodeMaterial, plus MeshSSSNodeMaterial, VolumeNodeMaterial, ShadowNodeMaterial, Line2NodeMaterial and Points/Sprite. ShaderMaterial, RawShaderMaterial and onBeforeCompile are not supported under WebGPURenderer, so custom materials have to be ported to TSL. r186 added TSL GPU unit tests, a 'Tour of TSL' doc, atomic workgroup arrays, subgroup fixes, and an Inspector addon with a TSL graph editor and timeline. Earlier releases also ship a GLSL-to-TSL transpiler addon.",
+     "source": "https://github.com/mrdoob/three.js/tree/r186/src/materials/nodes ; manual webgpurenderer.html (Migration section); https://github.com/mrdoob/three.js/releases/tag/r186 (Nodes / Inspector / Transpiler sections)",
+     "built_in_or_addon": "core (WebGPURenderer path)"
+    },
+    {
+     "area": "PBR materials",
+     "what": "MeshStandardMaterial uses metal/rough GGX. MeshPhysicalMaterial adds clearcoat (with roughness and normal maps), sheen (color and roughness), transmission with thickness/attenuationColor/attenuationDistance (volume), iridescence (IOR and thickness range), anisotropy (with rotation and map), dispersion, specularIntensity/specularColor, ior, and retroreflectivity (new in r186, PR #33949, with environment-lighting support). r186 also fixed multiscatter energy compensation, iridescence IBL multiscatter, and diffuse/sheen energy conservation. Transmission is screen-space, not ray-traced: WebGLRenderer renders opaque objects into a mip-mapped transmission render target and samples it (renderTransmissionPass, WebGLRenderer.js L2002-2017). Tone mappers: Linear, Reinhard, Cineon, ACESFilmic, AgX, Neutral and Custom. The renderer default is NoToneMapping.",
+     "source": "https://github.com/mrdoob/three.js/blob/r186/src/materials/MeshPhysicalMaterial.js (getters L373-530); https://github.com/mrdoob/three.js/blob/r186/src/renderers/WebGLRenderer.js#L2002 ; https://github.com/mrdoob/three.js/blob/r186/src/constants.js#L423-L483",
+     "built_in_or_addon": "core"
+    },
+    {
+     "area": "Shadows",
+     "what": "Shadow map types (constants.js r186 L57-84): BasicShadowMap, PCFShadowMap, PCFSoftShadowMap (deprecated in r186: use PCFShadowMap, which uses textureGatherCompare on WebGPU since r185) and VSMShadowMap. Directional, spot and point lights cast shadows, and WebGPU has shadow-map arrays. Cascaded shadows are not part of core DirectionalLight. They come from addons: (1) CSM for WebGLRenderer; (2) CSMShadowNode for WebGPURenderer, with 3 cascades by default and practical/uniform/logarithmic/custom splits; (3) the new SunLight addon (r186), which has built-in CSM fixed at 2 cascades ('Reduce cascade count to 2'), 1024² per cascade, and cascade fade blending. SunLight works on WebGL, and on WebGPU it must be registered with renderer.library.addLight. Other addons: TileShadowNode (tiled shadow maps, no VSM) and SSSNode (screen-space contact shadows). PCSS exists only as an example (webgl_shadowmap_pcss), and ProgressiveLightMap is an addon.",
+     "source": "https://github.com/mrdoob/three.js/blob/r186/src/constants.js#L57 ; https://github.com/mrdoob/three.js/blob/r186/examples/jsm/lights/SunLightShadow.js#L44 ; https://github.com/mrdoob/three.js/blob/r186/examples/jsm/csm/CSMShadowNode.js ; https://github.com/mrdoob/three.js/blob/r186/examples/jsm/tsl/shadows/TileShadowNode.js ; r186 release notes (SunLight entries #34221, #34259, #34326)",
+     "built_in_or_addon": "core (basic/PCF/VSM); addons (CSM, SunLight, tiled, PCSS example)"
+    },
+    {
+     "area": "Post-processing",
+     "what": "There are two separate stacks. WebGLRenderer uses EffectComposer and passes in examples/jsm/postprocessing: UnrealBloomPass, SSAOPass, SAOPass, GTAOPass, SSRPass, BokehPass, TAARenderPass, SMAAPass, FXAAPass, OutlinePass, LUTPass and others. WebGPURenderer uses RenderPipeline (renamed from PostProcessing in r183), which has built-in MRT and automatic pass merging. Its effects are TSL nodes in examples/jsm/tsl/display: GTAONode, SSAONode (new in r186), SSGINode (added 2025-09-08, based on SSRT3/SSILVB), SSRNode (single-ray mode or stochastic GGX mode with an SSR denoiser), TRAANode, TAAUNode (r184 temporal upsampling), FSR1Node, SMAA, FXAA, SSAA, BloomNode (selective bloom via an emissive MRT), DepthOfFieldNode (bokeh), MotionBlur (from a velocity MRT), GodraysNode, LensflareNode, OITPassNode (weighted-blended OIT, r186), Lut3D, Outline, Denoise and RecurrentDenoise, SSSNode, plus a set of blurs. EffectComposer does not work with WebGPURenderer. The manual says SSGI, SSS and the better DoF exist only for WebGPURenderer. All of these are addons, not core.",
+     "source": "https://github.com/mrdoob/three.js/tree/r186/examples/jsm/tsl/display ; https://github.com/mrdoob/three.js/tree/r186/examples/jsm/postprocessing ; https://github.com/mrdoob/three.js/blob/dev/manual/pages/webgpu-postprocessing.html ; https://github.com/mrdoob/three.js/releases/tag/r183 (#32789 rename)",
+     "built_in_or_addon": "addon (examples/jsm)"
+    },
+    {
+     "area": "Lighting pipeline / many lights",
+     "what": "Core rendering is forward. ClusteredLighting (Forward+ clustered shading, added to the WebGPURenderer addons 2026-04-22 in r185) is an opt-in replacement via renderer.lighting. DynamicLighting is an addon that batches analytic lights into uniform arrays so light-count changes don't trigger recompiles. Core lights: Ambient, Hemisphere, Directional, Point, Spot, RectArea (LTC), LightProbe. WebGPU-only core lights: IESSpotLight and ProjectorLight. Deferred shading appears only as an example ('Simple deferred rendering using custom pipeline', webgpu_deferred, r186), not as a renderer mode. Volumetric lighting uses VolumeNodeMaterial (webgpu_volume_lighting*), and height fog and custom fog are available as TSL examples.",
+     "source": "https://github.com/mrdoob/three.js/blob/r186/examples/jsm/lighting/ClusteredLighting.js ; https://github.com/mrdoob/three.js/blob/r186/examples/jsm/lighting/DynamicLighting.js ; https://github.com/mrdoob/three.js/blob/r186/examples/webgpu_deferred.html ; https://github.com/mrdoob/three.js/tree/r186/src/lights",
+     "built_in_or_addon": "core forward; clustered/dynamic lighting are addons; deferred is example-only"
+    },
+    {
+     "area": "Global illumination",
+     "what": "Core has no real-time GI. Core does provide image-based lighting through PMREM (r186 replaced the separable blur with a spiral blur), single LightProbe spherical harmonics, and material lightMap/aoMap for externally baked lightmaps. Addons add: (1) LightProbeGrid (2026-04-16, r184), position-dependent diffuse GI from a baked SH irradiance volume, with incremental baking in r186 and separate WebGL and WebGPU versions; (2) VXGINode (2026-08-31, r186), voxel cone tracing for diffuse GI and AO. VXGINode's header says it is only for WebGPURenderer with a WebGPU backend, that objects should stay static because re-voxelization is too expensive per frame, that only direct lights are injected, and that resolution should not exceed 256; (3) SSGINode (screen-space); (4) ProgressiveLightMap/ProgressiveLightMapGPU, which accumulates lightmaps in the browser. Specular GI is limited to SSR plus IBL, and there is no hardware ray tracing.",
+     "source": "https://github.com/mrdoob/three.js/blob/r186/examples/jsm/lighting/vxgi/VXGINode.js ; https://github.com/mrdoob/three.js/blob/r186/examples/jsm/lighting/LightProbeGrid.js ; https://github.com/mrdoob/three.js/blob/r186/examples/jsm/tsl/display/SSGINode.js ; r186 release notes (#34402, #34486)",
+     "built_in_or_addon": "addon (core only has IBL, a single SH probe, and baked lightmaps)"
+    },
+    {
+     "area": "Sky / atmosphere / clouds / water",
+     "what": "Sky (WebGL) and SkyMesh (WebGPU) implement the Preetham analytic daylight model. A procedural cloud layer was added in r183 and made 'more realistic' in r186. It is a 2D fbm layer projected from direction.xz/direction.y (SkyMesh.js ~L330-376), not volumetric. Volumetric clouds exist only as raymarched 3D-texture examples (webgl/webgpu_volume_cloud). The 3D-tiles example gets physical atmosphere and volumetric clouds from third-party packages (@takram/three-atmosphere 0.19.1 with Bruneton precomputation, and @takram/three-clouds 0.7.6), not from three.js. Water options: Water/WaterMesh (flat planar-reflection water with normal maps), Water2/Water2Mesh (flow-map water), webgpu_compute_water (compute heightfield), and webgpu_ocean (WaterMesh + SkyMesh). I found no FFT/spectral ocean addon in the r186 file list (unverified beyond the listing).",
+     "source": "https://github.com/mrdoob/three.js/blob/r186/examples/jsm/objects/SkyMesh.js ; https://github.com/mrdoob/three.js/blob/r186/examples/jsm/objects/WaterMesh.js ; https://github.com/mrdoob/three.js/blob/r186/examples/webgl_loader_3dtiles.html (import map L59-68) ; examples/files.json at r186",
+     "built_in_or_addon": "addon / examples; physical atmosphere and volumetric clouds are third-party"
+    },
+    {
+     "area": "Instancing, batching, LOD, culling",
+     "what": "Core InstancedMesh, and core BatchedMesh (multi-draw: many geometries and instances under one material, with per-instance frustum culling and sorting; r186 added batchIndirectIndex in TSL). Core LOD is basic discrete distance switching with manually supplied levels. The library has no automatic LOD generation. SimplifyModifier is a CPU addon, and the progressive-LOD example uses the external @needle-tools/gltf-progressive. webgpu_compute_rasterizer (renamed from 'nanite-style' in r185) demonstrates meshlet visibility buffers with software rasterization of small triangles, but it is an example, not an engine feature. WebGPURenderer supports occlusion queries (r186 fixes #33959 and #33972), and culling is per-object on the CPU.",
+     "source": "https://github.com/mrdoob/three.js/blob/r186/src/objects/BatchedMesh.js ; https://github.com/mrdoob/three.js/blob/r186/src/objects/LOD.js ; https://github.com/mrdoob/three.js/blob/r186/examples/webgpu_compute_rasterizer.html ; https://github.com/mrdoob/three.js/blob/r186/examples/webgl_loader_gltf_progressive_lod.html",
+     "built_in_or_addon": "core (InstancedMesh/BatchedMesh/LOD); auto-LOD is external"
+    },
+    {
+     "area": "Compute shaders",
+     "what": "WebGPURenderer runs TSL compute (Fn().compute(), renderer.compute, plus compileComputeAsync in r186) with storage buffers and textures, atomics, subgroups and workgroup arrays. The GPGPU addons include BitonicSort and CountingSort, and r186 ships about 18 webgpu_compute_* examples (particles, cloth, water, sorting, rasterizer). On the WebGL2 fallback, compute is emulated with transform feedback. WebGLBackend.compute (L918-982) warns that the count must be a single number and that indirect counts are not supported.",
+     "source": "https://github.com/mrdoob/three.js/blob/r186/src/renderers/webgl-fallback/WebGLBackend.js#L918 ; examples/files.json at r186; r186 release notes (#32551)",
+     "built_in_or_addon": "core (WebGPURenderer)"
+    },
+    {
+     "area": "Ray / path tracing",
+     "what": "Core has neither. three-gpu-pathtracer (gkjohnson, MIT, separate project) released v0.0.25 on 2026-09-28. That release added WebGPUPathTracer ('three-gpu-pathtracer/webgpu', WebGPU compute), deprecated WebGLPathTracer, and requires three r185 or later. v0.0.26 followed on 2026-09-29. According to its README it needs WebGPU, supports only Standard/Physical materials, and uses MIS for lights. It is built on three-mesh-bvh (v0.9.15, 2026-09-09). Path tracing is progressive offline-quality rendering, not real-time game RT. The three.js editor has a path-trace viewport mode that uses WebGLPathTracer (editor/js/Viewport.Pathtracer.js at r186).",
+     "source": "https://github.com/gkjohnson/three-gpu-pathtracer/releases/tag/v0.0.25 ; https://github.com/gkjohnson/three-gpu-pathtracer ; https://github.com/gkjohnson/three-mesh-bvh/releases ; https://github.com/mrdoob/three.js/blob/r186/editor/js/Viewport.Pathtracer.js",
+     "built_in_or_addon": "external project"
+    },
+    {
+     "area": "Loaders / import",
+     "what": "GLTFLoader supports KHR_draco_mesh_compression (DRACOLoader, WASM in workers), EXT_meshopt_compression and KHR_meshopt_compression (r183), KHR_texture_basisu (KTX2Loader with a Basis transcoder in workers), KHR_mesh_quantization, EXT_mesh_gpu_instancing, KHR_materials_* (clearcoat, dispersion, ior, sheen, specular, transmission, iridescence, anisotropy, unlit, volume, emissive_strength), EXT_materials_bump, EXT_texture_webp and EXT_texture_avif (GLTFLoader.js L629-652). Other loaders: OBJLoader with MTLLoader; FBXLoader (r186: multiple clips per timeline); USDLoader (USD/USDA/USDC/USDZ, with USDZLoader deprecated since r179); Rhino3dmLoader (rhino3dm.js 8.32.1 WASM in workers, where Brep faces use face.getMesh(MeshType.Any), the render meshes cached in the file, L1616-1644); 3MF, AMF, Collada, STL, PLY, VTK, PCD, XYZ, LDraw, VRML, 3DS, VOX, MaterialX; Gaussian splats (GaussianSplatPLYLoader, SPZ v4, KSPLAT, SPLAT and a glTF extension, all new in r186). IFC is shown through an example that calls web-ifc directly. three.js has no STEP/IGES/JT loader. occt-import-js (kovacsv, LGPL-2.1, Emscripten build of OpenCascade, last release v0.0.23 on 2024-12-03) turns STEP/IGES/BREP into triangulated JSON 'compatible with three.js' and powers Online 3D Viewer (MIT, last pushed 2026-06-24). Massive or streamed meshes rely on the external 3d-tiles-renderer.",
+     "source": "https://github.com/mrdoob/three.js/tree/r186/examples/jsm/loaders ; https://github.com/mrdoob/three.js/blob/r186/examples/jsm/loaders/GLTFLoader.js#L629 ; https://github.com/mrdoob/three.js/blob/r186/examples/jsm/loaders/3DMLoader.js#L1616 ; https://github.com/kovacsv/occt-import-js (GitHub API 2026-10-02) ; https://github.com/kovacsv/Online3DViewer",
+     "built_in_or_addon": "addon (examples/jsm/loaders); CAD/STEP is external"
+    },
+    {
+     "area": "High-poly OBJ handling",
+     "what": "OBJLoader at r186: (1) It loads the whole file as one JS string through FileLoader (L491), then parses it synchronously on the calling thread with text.split('\\n') (L555). There is no worker or streaming path. (2) It pushes values into plain JS number arrays and only at the end copies them into Float32BufferAttribute (L789). (3) It emits non-indexed geometry: addVertex copies all three positions of every triangle (L235-241), so vertex count is 3 × triangle count. (4) When the file has no `vn` it generates flat per-face normals (addFaceNormal L274-293, called at L361), so smooth shading needs BufferGeometryUtils.mergeVertices plus computeVertexNormals afterwards. (5) It fan-triangulates n-gons from the first vertex (L638-653). My inference: that is wrong for concave polygons. V8 caps strings at 2^29−24 characters, so by inference (not tested) Chromium cannot hold an ASCII OBJ larger than about 512 MB as one string. Maintainer Mugen87 on the forum (2019-04): OBJLoader is not optimized for these file sizes, and binary glTF plus Draco is faster and more memory-friendly. The manual recommends glTF and lists OBJ2GLTF. The practical three.js route for CAD high-poly meshes is an offline conversion to glTF (obj2gltf or gltf-transform with weld, simplify and meshopt/Draco) and then GLTFLoader.",
+     "source": "https://github.com/mrdoob/three.js/blob/r186/examples/jsm/loaders/OBJLoader.js (lines cited) ; https://discourse.threejs.org/t/how-to-load-obj-scene-500-mb-optimally-without-browser-crash/7029 ; https://github.com/mrdoob/three.js/blob/dev/manual/pages/loading-3d-models.html ; https://github.com/minoki/javascript-limits and https://chromium.googlesource.com/v8/v8/+/refs/tags/8.1.307.5%5E (V8 string limit)",
+     "built_in_or_addon": "addon"
+    },
+    {
+     "area": "Library scope (not an engine)",
+     "what": "The README describes three.js as an \"easy-to-use, lightweight, cross-browser, general-purpose 3D library\". Core includes the scene graph, cameras, the animation system (AnimationMixer, skinning, morphs), WebAudio wrappers (Audio, PositionalAudio), raycasting and WebXR (WebXR on WebGPU arrived in r185). Core has no physics engine. The physics addons are thin wrappers around Ammo.js, Jolt and Rapier (manual 'Physics' page). Core also has no ECS or game framework, no navmesh, no terrain system (terrain exists only in examples), no asset pipeline or build/cook step, and no prefab system. The editor (threejs.org/editor) is a basic web scene editor. It can import about 25 formats (editor/js/Loader.js at r186), attach scripts, switch between WebGL and WebGPU renderers, and run a path-trace viewport.",
+     "source": "https://github.com/mrdoob/three.js/blob/r186/README.md ; https://github.com/mrdoob/three.js/blob/dev/manual/pages/physics.html ; https://github.com/mrdoob/three.js/tree/r186/examples/jsm/physics ; https://github.com/mrdoob/three.js/blob/r186/editor/js/Loader.js",
+     "built_in_or_addon": "n/a"
+    },
+    {
+     "area": "WebGPU browser reach (context)",
+     "what": "caniuse (fetched 2026-10-02) lists WebGPU on by default in Chrome/Edge 113+, Opera 99+, Chrome Android and Samsung Internet. It shows Safari 26 (macOS and iOS) as partial and Firefox as 'disabled by default'. It puts global availability at about 87.35%. Unverified: whether caniuse's Firefox classification ignores Firefox's Windows-only shipping.",
+     "source": "https://caniuse.com/webgpu (fetched 2026-10-02)",
+     "built_in_or_addon": "n/a"
+    }
+   ],
+   "notable_limits": [
+    "WebGPURenderer is still officially 'experimental' (manual, last changed 2026-07-12). The default `three` import is still WebGLRenderer. Blog claims that it is 'production-ready since r171 (September 2025)' contradict the GitHub API, which dates r171 to 2024-11-29.",
+    "Almost every advanced feature is an addon or example, not core: CSM, SunLight, SSAO/GTAO, SSR, SSGI, VXGI, TRAA/TAAU, bloom, DoF, motion blur, OIT, clustered lighting, Sky, Water, LightProbeGrid. Quality varies, and the API changes every release (see the Migration Guide).",
+    "The new features are concentrated in the WebGPU/TSL path. WebGLRenderer gets 'no larger new features'. VXGINode requires the WebGPU backend specifically, and ShaderMaterial, onBeforeCompile and EffectComposer don't work under WebGPURenderer.",
+    "No real-time dynamic GI that is both robust and off-screen-aware. SSGI is screen-space, VXGI assumes static geometry and is diffuse-only, and LightProbeGrid and lightmaps are baked. There is no hardware ray tracing (WebGPU has no RT API), and path tracing is external and progressive.",
+    "Cascaded shadows come only from addons, and the SunLight addon is fixed at 2 cascades. PCSS exists only as an example.",
+    "No virtualized geometry, no automatic LOD generation and no GPU-driven culling in core. LOD is manual discrete switching. The meshlet/software-raster compute demo is an example only.",
+    "On the WebGL2 fallback, compute is emulated through transform feedback, with no indirect dispatch and a single-number count.",
+    "OBJLoader is unsuited to industrial high-poly meshes: it is synchronous on the calling thread, string-based, produces non-indexed output (3× vertices), falls back to flat normals when `vn` is missing, and fan-triangulates n-gons. Under the V8 string cap (2^29−24 chars), ASCII files above about 512 MB can't be loaded as one string (inferred, not tested). The recommended path is offline conversion to glTF with Draco or meshopt.",
+    "three.js has no STEP/IGES/JT/Parasolid import. The external occt-import-js is LGPL-2.1 and has had no release since 2024-12-03. Rhino3dmLoader meshes Breps from the render meshes cached in the .3dm file. Inference, unverified at runtime: files saved without render meshes give empty Breps.",
+    "It is a rendering library, not an engine: no built-in physics (only wrappers for Ammo, Jolt and Rapier), no ECS, navmesh, asset cooking or prefabs, and a basic editor.",
+    "Not verified by running anything: none of the examples were run and no performance was measured. Feature descriptions come from r186 source headers, release notes and the manual. A WebFetch summary of r185 claimed a '3.0x TSL compilation speed increase'; that wording is absent from the raw notes and was discarded."
+   ],
+   "summary": "The latest three.js release is r186. It first shipped as npm three@0.186.0 on 2026-09-08, then was re-tagged as \"r186 (bis)\" and published as the GitHub release and npm 0.186.1 on 2026-09-24. The dev branch is now 187dev.\n\n**Renderer status:** three.js has two renderers. WebGLRenderer is still the default import and is in maintenance mode. WebGPURenderer (`three/webgpu`) falls back to WebGL2 automatically and uses TSL node materials, which compile to WGSL or GLSL. The official manual (last changed July 2026) still calls WebGPURenderer \"experimental\", so it is neither the default nor officially production-ready. Nearly all new rendering work lands on the WebGPU/TSL side.\n\n**Built in vs addon:** Core has a full glTF-grade PBR model in MeshPhysicalMaterial: clearcoat, sheen, transmission and volume, iridescence, anisotropy, dispersion, specular, and retroreflectivity (new in r186). It also has basic, PCF and VSM shadow maps, InstancedMesh, BatchedMesh, discrete LOD, PMREM image-based lighting, and LightProbe and lightMap support. Everything beyond that is an addon or example rather than core, including:\n- **Cascaded shadows:** the CSM addon, CSMShadowNode, and the new SunLight with 2 cascades.\n- **Post-processing:** a node-based RenderPipeline (renamed from PostProcessing in r183) with GTAO, SSAO, SSR (including a stochastic mode with a denoiser), SSGI, TRAA, TAAU, FSR1, bloom, DoF, motion blur, godrays and weighted-blended OIT. WebGLRenderer keeps the older EffectComposer.\n- **Lighting:** Forward+ ClusteredLighting.\n- **GI:** LightProbeGrid (baked SH irradiance volume) and VXGINode (voxel cone tracing; WebGPU only, static geometry, diffuse only).\n- **Sky and water:** a Preetham sky with a 2D cloud layer, and planar or flow-map water. Physical atmosphere and volumetric clouds come from the third-party @takram packages.\n\nCompute is first-class on WebGPU and emulated through transform feedback on WebGL2. Path tracing lives in the separate three-gpu-pathtracer project, which got a WebGPU path tracer in v0.0.25 (2026-09-28).\n\n**Loaders:** GLTFLoader supports Draco, meshopt (EXT and KHR) and KTX2. There are also FBX, USD/USDZ, 3DM (Rhino via rhino3dm WASM), 3MF, STL, PLY, Gaussian splats and more. There is no STEP or IGES loader; occt-import-js (LGPL, last release Dec 2024) fills that gap externally.\n\n**High-poly OBJ:** OBJLoader handles it poorly. It parses the whole file as one string on the calling thread, outputs non-indexed geometry with 3 vertices per triangle, uses flat normals when `vn` is missing, and fan-triangulates n-gons. The maintainer recommends converting to binary glTF with Draco or meshopt instead.\n\n**Scope:** three.js describes itself as a general-purpose 3D library, not an engine. Physics exists only as wrappers around Ammo, Jolt and Rapier, and there is no ECS, asset pipeline or prefab system. The editor is a basic web scene editor that imports about 25 formats, switches between the two renderers and has a path-trace viewport."
+  },
+  "check": {
+   "checked": [
+    {
+     "claim": "npm three@0.186.0 was published 2026-09-08, and three@0.186.1 (2026-09-24) is the current npm `latest`.",
+     "status": "confirmed",
+     "source": "https://registry.npmjs.org/three (queried 2026-10-02): dist-tags.latest=0.186.1; time 0.186.0=2026-09-08T19:25:22Z, 0.186.1=2026-09-24T14:42:21Z. The dev commit 148ef33ecb 'r186' is dated 2026-09-08T19:11:50Z. Saved copy: scratchpad/render-assessment/factcheck/npm_three.json"
+    },
+    {
+     "claim": "The GitHub release r186 points at commit 9b4a2ac29c 'r186 (bis)' (2026-09-24T14:33Z) and was published 2026-09-24T14:35Z.",
+     "status": "confirmed",
+     "source": "gh api repos/mrdoob/three.js/commits/r186 and releases/tags/r186 (queried 2026-10-02). package.json at r186 has version 0.186.1."
+    },
+    {
+     "claim": "The dev branch is at REVISION '187dev', and its last commit is 1ea31f3048 (2026-10-02T15:51Z).",
+     "status": "confirmed",
+     "source": "gh api repos/mrdoob/three.js/commits?sha=dev (2026-10-02): 1ea31f3048 'LightProbeGridWebGL: Extend from Light. (#34744)' 2026-10-02T15:51:45Z. src/constants.js@dev line 1: REVISION = '187dev'."
+    },
+    {
+     "claim": "Earlier release dates: r185 2026-07-01, r184 2026-04-16, r183 2026-02-20, r182 2025-12-10.",
+     "status": "confirmed",
+     "correction": "These are the GitHub release publish dates. For r186 the report uses the npm date instead, so the dates are not measured the same way. On npm, r185 first shipped as 0.185.0 on 2026-06-25 (0.185.1 on 2026-07-01), and r183 first shipped as 0.183.0 on 2026-02-18.",
+     "source": "gh api repos/mrdoob/three.js/releases (2026-10-02); https://registry.npmjs.org/three time field"
+    },
+    {
+     "claim": "`import 'three'` resolves to build/three.module.js, and WebGPURenderer and TSL come from the separate entry points `three/webgpu` and `three/tsl`.",
+     "status": "confirmed",
+     "source": "https://github.com/mrdoob/three.js/blob/r186/package.json exports: '.' -> ./build/three.module.js, './webgpu' -> ./build/three.webgpu.js, './tsl' -> ./build/three.tsl.js"
+    },
+    {
+     "claim": "The official manual still calls WebGPURenderer experimental and says WebGLRenderer gets 'no plans to add larger new features'.",
+     "status": "confirmed",
+     "correction": "The wording is real, but it is older than 'last changed 2026-07-12' suggests. The page was written on 2025-11-14 (#32260), and the later commits only moved it and added heading anchors (13a717c0e6). The same page also calls WebGLRenderer 'the recommended choice for pure WebGL 2 applications' and says the team is investigating limited node-material support for WebGLRenderer. The report leaves both points out.",
+     "source": "https://github.com/mrdoob/three.js/blob/dev/manual/pages/webgpurenderer.html (fetched 2026-10-02; identical to the saved copy); commit history of manual/en/webgpurenderer.html at r183"
+    },
+    {
+     "claim": "utsubo.com calls WebGPURenderer 'recommended since r171 (September 2025)', which is wrong because r171 is dated 2024-11-29.",
+     "status": "wrong",
+     "correction": "r171 is dated 2024-11-29, and it did introduce the code split (#29404, #29644). The attribution to utsubo is wrong, though. Its current pages date r171 correctly: 'r171 (November 29, 2024)' appears in threejs-2026-what-changed (updated 2026-09-24) and in webgpu-threejs-migration-guide. In those articles, 'September 2025' refers to Safari 26 shipping WebGPU, not to r171. The 100-tips article (updated 2026-09-11) does say 'WebGPU is production-ready since r171'. That conflicts with the manual, which still says 'experimental', but it is not a dating error.",
+     "source": "https://www.utsubo.com/blog/threejs-2026-what-changed ; https://www.utsubo.com/blog/webgpu-threejs-migration-guide ; https://www.utsubo.com/blog/threejs-best-practices-100-tips (all fetched 2026-10-02); gh api releases/tags/r171 (published 2024-11-29T11:21Z)"
+    },
+    {
+     "claim": "ShaderMaterial, RawShaderMaterial, onBeforeCompile and EffectComposer do not work under WebGPURenderer.",
+     "status": "confirmed",
+     "source": "manual/pages/webgpurenderer.html, Migration section (dev, fetched 2026-10-02)"
+    },
+    {
+     "claim": "r186 added an Inspector addon with a TSL graph editor and timeline.",
+     "status": "wrong",
+     "correction": "The Inspector was introduced on 2025-09-14 (#31869, r181 cycle). The Timeline (#33078) and the TSL Graph addons (#33165) arrived in r184. r186 only extended them, adding split screen, a color-grading extension, a virtually scrolled timeline, CSP support and fixes to TSLGraphEditor. The other r186 items in this claim check out: TSL GPU unit tests (#34431), atomic workgroup arrays (#34428), and the 'Tour of TSL' (#34085), which was renamed 'TSL Guide' (#34457) within the same release. The GLSL-to-TSL transpiler dates from 2023-10-21 (#26982).",
+     "source": "https://github.com/mrdoob/three.js/releases/tag/r186 (Inspector section); r184 release notes lines 205/209; gh api commits?path=examples/jsm/inspector/Inspector.js (first commit 2025-09-14)"
+    },
+    {
+     "claim": "Retroreflectivity on MeshPhysicalMaterial is new in r186 (PR #33949) and has environment-lighting support.",
+     "status": "confirmed",
+     "source": "gh api pulls/33949: merged 2026-07-07, milestone r186; #33995 adds environment lighting for retroreflective materials; MeshPhysicalMaterial.js@r186 L359 and L476-490"
+    },
+    {
+     "claim": "PCFSoftShadowMap is deprecated in r186, and PCFShadowMap has used textureGatherCompare on WebGPU since r185.",
+     "status": "wrong",
+     "correction": "In r186, PCFSoftShadowMap is effectively removed, not just deprecated. The constant still carries @deprecated (constants.js L71-78), but #33987 removed the remaining code, and WebGPURenderer warns 'PCFSoftShadowMap has been removed. Using PCFShadowMap instead.' (Renderer.js L902-904, L1658-1660). The r185 textureGatherCompare change (#33534) was in PCFSoftShadowFilter, not PCF. At r186, the WebGPU PCFShadowFilter takes 5 hardware-compare samples on a Vogel disk rotated by interleaved gradient noise, with no textureGather (src/nodes/lighting/ShadowFilterNode.js@r186 L48-80).",
+     "source": "https://github.com/mrdoob/three.js/blob/r186/src/nodes/lighting/ShadowFilterNode.js ; r186 release notes (Renderer section); r185 release notes line 189"
+    },
+    {
+     "claim": "The SunLight addon (r186) has built-in CSM fixed at 2 cascades, 1024² per cascade and cascade fade, and on WebGPU it must be registered via renderer.library.addLight.",
+     "status": "confirmed",
+     "correction": "One detail is missing: the cascades share a single shadow atlas, with inset viewports so filtering does not read across tiles (SunLightShadow.js L157-169).",
+     "source": "https://github.com/mrdoob/three.js/blob/r186/examples/jsm/lights/SunLightShadow.js L44 (_cascadeCount = 2), L48 (_cascadeFade = 0.1), L59/L82 (1024x1024); SunLight.js header; #34221 merged 2026-08-14, r186"
+    },
+    {
+     "claim": "CSMShadowNode defaults to 3 cascades with practical/uniform/logarithmic/custom splits, and TileShadowNode does not support VSM.",
+     "status": "confirmed",
+     "source": "https://github.com/mrdoob/three.js/blob/r186/examples/jsm/csm/CSMShadowNode.js L73, L86-89; examples/jsm/tsl/shadows/TileShadowNode.js L44"
+    },
+    {
+     "claim": "RenderPipeline was renamed from PostProcessing in r183 (#32789).",
+     "status": "confirmed",
+     "source": "gh api pulls/32789: 'WebGPURenderer: Rename PostProcessing to RenderPipeline', merged 2026-01-20, milestone r183. A PostProcessing.js shim remains in src/renderers/common@r186."
+    },
+    {
+     "claim": "Dates of the post-processing nodes: SSAONode new in r186, OITPassNode r186, SSGINode added 2025-09-08 (SSRT3/SSILVB), TAAUNode r184, SSRNode with a stochastic GGX mode, SSSNode as screen-space contact shadows.",
+     "status": "confirmed",
+     "source": "#33921 merged 2026-07-01 (r186); OITPassNode first commit 2026-08-15 (#34253); SSGINode first commit 2025-09-08 (#31839), header cites SSRT3; TAAUNode first commit 2026-04-11 (#33368); SSRNode.js@r186 L17 'stochastic'; SSSNode.js header 'Screen-Space Shadows (also known as Contact Shadows)', single directional light only"
+    },
+    {
+     "claim": "ClusteredLighting (Forward+) was added 2026-04-22 in r185 as an opt-in through renderer.lighting.",
+     "status": "confirmed",
+     "correction": "The report omits that it clusters point lights only (constructor maxLights=1024 point lights, 32px tiles, 24 z-slices, 64 lights per cluster). Spot and directional lights are not clustered.",
+     "source": "gh api pulls/33406 merged 2026-04-22T20:08Z, milestone r185; https://github.com/mrdoob/three.js/blob/r186/examples/jsm/lighting/ClusteredLighting.js header"
+    },
+    {
+     "claim": "VXGINode (r186, 2026-08-31) runs only on WebGPURenderer with a WebGPU backend, expects static objects, injects only direct lights, and its resolution should not exceed 256.",
+     "status": "confirmed",
+     "source": "https://github.com/mrdoob/three.js/blob/r186/examples/jsm/lighting/vxgi/VXGINode.js header and constructor docs; #34402 merged 2026-08-31, r186"
+    },
+    {
+     "claim": "LightProbeGrid arrived on 2026-04-16 in r184, has separate WebGL and WebGPU versions, and got incremental baking in r186.",
+     "status": "confirmed",
+     "source": "First commit of LightProbeGrid.js 2026-04-16 (#33125); examples/jsm/lighting@r186 contains both LightProbeGrid.js and LightProbeGridWebGL.js (rename #33911); #34486 merged 2026-09-07, r186"
+    },
+    {
+     "claim": "The Sky/SkyMesh clouds are a 2D fbm layer projected from direction.xz/direction.y (procedural clouds in r183, 'more realistic' in r186), and physical atmosphere and volumetric clouds come only from the third-party @takram packages.",
+     "status": "confirmed",
+     "source": "SkyMesh.js@r186 L325-348 (cloudUV = direction.xz.div(direction.y.mul(elevation))); r183 notes #32682; r186 notes #33942; webgl_loader_3dtiles.html@r186 import map: @takram/three-atmosphere@0.19.1, @takram/three-clouds@0.7.6, plus pmndrs postprocessing@6.39.1 and 3d-tiles-renderer@0.4.27"
+    },
+    {
+     "claim": "No FFT/spectral ocean addon exists at r186.",
+     "status": "confirmed",
+     "source": "examples/jsm/misc@r186 listing has no Ocean.js; webgl_shaders_ocean.html@r186 imports only Water and Sky; files.json at r186"
+    },
+    {
+     "claim": "On the WebGL2 fallback, compute is emulated with transform feedback, the count must be a single number, and indirect counts are not supported.",
+     "status": "confirmed",
+     "source": "https://github.com/mrdoob/three.js/blob/r186/src/renderers/webgl-fallback/WebGLBackend.js ~L918-982 (beginTransformFeedback; warnOnce for array and IndirectStorageBufferAttribute counts)"
+    },
+    {
+     "claim": "three-gpu-pathtracer v0.0.25 (2026-09-28) added WebGPUPathTracer, requires r185 or later and deprecates WebGLPathTracer; v0.0.26 followed on 2026-09-29; it supports only Standard/Physical materials; the three.js editor uses WebGLPathTracer.",
+     "status": "confirmed",
+     "source": "gh api repos/gkjohnson/three-gpu-pathtracer/releases (v0.0.25 2026-09-28T12:26Z, v0.0.26 2026-09-29T04:22Z); README L113-116; three-mesh-bvh v0.9.15 2026-09-09; editor/js/Viewport.Pathtracer.js@r186 L1 imports WebGLPathTracer"
+    },
+    {
+     "claim": "GLTFLoader supports Draco, EXT and KHR meshopt, basisu, quantization, GPU instancing, the KHR_materials_* set, bump, WebP and AVIF (L629-652).",
+     "status": "confirmed",
+     "correction": "KHR_materials_variants and KHR_animation_pointer are supported only through third-party plugins, as the GLTFLoader header notes (L109, L111).",
+     "source": "https://github.com/mrdoob/three.js/blob/r186/examples/jsm/loaders/GLTFLoader.js L629-652; KHR_meshopt_compression added in r183 (#32163)"
+    },
+    {
+     "claim": "The Gaussian splat loaders (GaussianSplatPLYLoader, SPZ v4, KSPLAT, SPLAT, glTF extension) are new in r186, and USDZLoader has been deprecated since r179.",
+     "status": "confirmed",
+     "source": "SPZ/KSPLAT/SPLAT loaders first committed 2026-08-08 (#33950); GaussianSplatPLYLoader rename #34292; USDZLoader.js@r186 L3 '@deprecated, r179' and a console.warn"
+    },
+    {
+     "claim": "Rhino3dmLoader uses rhino3dm.js 8.32.1 and meshes Breps via face.getMesh(MeshType.Any), i.e. the cached render meshes.",
+     "status": "confirmed",
+     "correction": "The code path is confirmed. The report's inference that files saved without render meshes produce empty Breps follows from the code (a mesh is only built if faces.count > 0) but has not been tested at runtime.",
+     "source": "https://github.com/mrdoob/three.js/blob/r186/examples/jsm/loaders/3DMLoader.js L44, L1616-1644"
+    },
+    {
+     "claim": "occt-import-js is LGPL-2.1 with its last release v0.0.23 on 2024-12-03, and Online3DViewer is MIT, last pushed 2026-06-24.",
+     "status": "confirmed",
+     "source": "gh api repos/kovacsv/occt-import-js (license LGPL-2.1; release 0.0.23 2024-12-03T07:04Z); repos/kovacsv/Online3DViewer (MIT, pushed 2026-06-24T14:54Z), queried 2026-10-02"
+    },
+    {
+     "claim": "OBJLoader works on one whole-file string split on the calling thread, uses JS arrays and then a Float32BufferAttribute, emits non-indexed geometry, falls back to flat face normals when `vn` is missing, and fan-triangulates n-gons.",
+     "status": "confirmed",
+     "source": "https://github.com/mrdoob/three.js/blob/r186/examples/jsm/loaders/OBJLoader.js L235-241 (addVertex), L274-293 (addFaceNormal), L361, L487-495 (FileLoader), L555 (split), L638-653 (fan), L789 (Float32BufferAttribute)"
+    },
+    {
+     "claim": "V8 caps strings at 2^29−24 characters, so Chromium cannot hold an ASCII OBJ above about 512 MB as one string.",
+     "status": "confirmed",
+     "correction": "The cap is V8-specific. SpiderMonkey's is about 2^30−2 and JavaScriptCore's is 2^31−1, so Firefox and Safari can hold larger strings. Even below the cap, the JS-array and non-indexed copies are more likely to exhaust memory first (inference, not tested).",
+     "source": "https://chromium.googlesource.com/v8/v8/+/refs/heads/main/include/v8-primitive.h L129-130 (fetched 2026-10-02); https://github.com/minoki/javascript-limits"
+    },
+    {
+     "claim": "Maintainer Mugen87 (forum, 2019-04) said OBJLoader is not optimized for these file sizes and that binary glTF plus Draco is faster and more memory-friendly.",
+     "status": "overstated",
+     "correction": "Mugen87's 2019-04-11 reply says binary glTF is 'faster and more memory friendly' than ASCII and suggests Draco compression. He does not say OBJLoader is unoptimized, and he links to a guide for those who stick with OBJ. The manual's glTF recommendation and its OBJ2GLTF listing are confirmed.",
+     "source": "https://discourse.threejs.org/t/7029.json (post by Mugen87, 2019-04-11T18:25Z); manual/pages/loading-3d-models.html L80"
+    },
+    {
+     "claim": "three.js is self-described as a general-purpose 3D library; physics ships only as Ammo/Jolt/Rapier wrappers; WebXR on WebGPU arrived in r185; the editor imports about 25 formats and switches between WebGL and WebGPU.",
+     "status": "confirmed",
+     "source": "README.md@r186; examples/jsm/physics@r186 (AmmoPhysics, JoltPhysics, RapierPhysics); #33583 merged 2026-05-15, milestone r185; editor/js/Loader.js (about 27 model extensions); editor/js/Sidebar.Project.Renderer.js@r186 L2, L136-138"
+    },
+    {
+     "claim": "caniuse (2026-10-02) puts WebGPU at about 87.35% global, shows Safari 26 on macOS and iOS as partial, and Firefox as 'disabled by default'.",
+     "status": "wrong",
+     "correction": "The 87.35% figure is right (85.72% full + 1.63% partial on the live page). iOS Safari 26.0+ is listed as full support ('y'); only macOS Safari 26 is partial, and note #7 says it is enabled by default only on macOS 26 Tahoe. For Firefox 141+, the caniuse data is 'a d' with notes #6 and #8: on by default on Windows, and from 145 on macOS 26 on Apple Silicon. That answers the report's open question: caniuse does record the Windows rollout, it just still flags the cell 'd'. The gpuweb wiki (edited 2026-10-02) lists Firefox 141 on Windows, 145 on macOS 26 Apple Silicon and 147 on all macOS, with Linux and Android still Nightly; Safari 26 is enabled by default on macOS, iOS and visionOS.",
+     "source": "https://caniuse.com/webgpu (fetched 2026-10-02); https://github.com/Fyrd/caniuse/blob/main/features-json/webgpu.json (commit 2026-09-30); https://github.com/gpuweb/gpuweb/wiki/Implementation-Status (edited 2026-10-02)"
+    },
+    {
+     "claim": "webgpu_compute_rasterizer was renamed from 'nanite-style' in r185, and r186 ships about 18 compute examples.",
+     "status": "confirmed",
+     "source": "r185 release notes lines 401 and 417; files.json@r186 lists 17 webgpu_compute_* plus webgpu_tsl_compute_attractors_particles"
+    },
+    {
+     "claim": "Transmission is screen-space: opaque objects are rendered into a mip-mapped render target and sampled (renderTransmissionPass), and the renderer default tone mapping is NoToneMapping, with Linear/Reinhard/Cineon/ACES/AgX/Neutral/Custom available.",
+     "status": "confirmed",
+     "source": "WebGLRenderer.js@r186 ~L2002-2020; constants.js@r186 L423-483; WebGLRenderer.js L277 and Renderer.js L192 (toneMapping = NoToneMapping)"
+    }
+   ],
+   "missing": [
+    "The manual also calls WebGLRenderer 'the recommended choice for pure WebGL 2 applications', and says the team is investigating limited node-material support for it. The report's 'maintenance mode' framing drops this. The 'experimental' wording for WebGPURenderer dates from the page's creation on 2025-11-14 (#32260).",
+    "Depth precision for large or CAD-scale scenes: both renderers support a reversed depth buffer and a logarithmic depth buffer (examples webgl/webgpu_reversed_depth_buffer and webgl/webgpu_camera_logarithmicdepthbuffer at r186). The editor creates WebGPURenderer with reversedDepthBuffer: true. This matters directly for high-poly industrial models.",
+    "Other WebGPU-path features that matter for comparing renderers: HDR display output (example webgpu_hdr, 'HDR Draw'), render bundles (BundleGroup, webgpu_performance_renderbundle, improved in r186 #34305), and timestamp-query GPU profiling through the Inspector.",
+    "ClusteredLighting clusters point lights only (default 1024). Spot and directional lights still go through the ordinary forward path.",
+    "High-poly tooling the report leaves out: three-mesh-bvh (raycasting and BVH on dense meshes; v0.9.15, 2026-09-09); the webgl_batch_lod_bvh example, which builds automatic LODs for BatchedMesh with external @three.ez/batched-mesh-extensions, @three.ez/simplify-geometry and meshoptimizer 1.1.1; gltfpack/meshoptimizer for offline conversion; and 3d-tiles-renderer 0.4.27 for streaming.",
+    "A worker-based OBJ loader exists outside three.js: OBJLoader2Parallel (kaisalmen/WWOBJLoader, MIT). Its last release is v6.2.1 (2024-04-20) and the repo was last pushed 2024-06-16, so it is effectively stale.",
+    "More OBJLoader limits relevant to industrial exports: OBJ free-form geometry (cstype/curv/surf/parm, i.e. NURBS) is not parsed and only triggers an 'Unexpected line' warning (OBJLoader.js ~L760). The 's' smoothing groups only toggle material flat shading; normals stay per-face, so the result still looks faceted. 'usemap' is unsupported.",
+    "Peak-memory reasoning for large OBJs: the whole-file string, the JS number arrays (with 3x vertex duplication from non-indexed output) and the final Float32Arrays all coexist. This inference (not tested) suggests memory is a tighter limit than the 512 MB string cap.",
+    "API churn and development cadence: 54 of about 381 r186 release-note entries are co-authored with @claude (32/25/36 in r183/r184/r185). APIs also changed within single releases: SunLight's cascade count was cut to 2, PCFSoftShadowMap was removed, LightProbeGrid was renamed to LightProbeGridWebGL, Tour of TSL was renamed to TSL Guide, and PLYGaussianSplatLoader was renamed to GaussianSplatPLYLoader. Anyone treating addons as stable features should know this.",
+    "No performance numbers at all: no frame times, draw-call limits or triangle-throughput figures for WebGPURenderer versus WebGLRenderer. That leaves nothing quantitative to compare with aipocket's renderer.",
+    "WebGPU reach gaps for the web target: per the gpuweb wiki, edited 2026-10-02, Firefox has not shipped WebGPU on Linux or Android, and Safari 26 on macOS has it on by default only on macOS 26 Tahoe. On those browsers, WebGPURenderer runs on its WebGL2 fallback, where VXGI and indirect compute are unavailable."
+   ]
+  }
+ },
+ "frontier": {
+  "report": {
+   "subject": "Frontier of real-time rendering as of 2026-10-02 (UE5, Unity 6, AAA games, Gaussian splats, browser WebGPU, wgpu on Metal), compared with aipocket's renderer and ranked by what a small wgpu engine could add next",
+   "version_and_date": "Researched 2026-10-02. Versions: Unreal Engine 5.8 (2026-06-17, the last UE5 release; UE6 early access is targeted for late 2027). Unity 6.6 (2026-09-01); 6.7 LTS and Unity 7 are roadmap only. wgpu 30.0.1 (2026-08-22). wgpu-native 29.0.1.1 (2026-06-23), which is the build aipocket pins (pocket.toml:96, third_party/README.md:23). three.js r186 (2026-09-24). PlayCanvas 2.23.0 (2026-10-01). Bevy 0.19 (2026-06-19). Chrome WebGPU features through Chrome 152. DLSS 4.5 (CES 2026). FSR Redstone (2025-12-10) and FSR 4.1 on RDNA 3 (FSR SDK 2.3, June 2026). XeSS 3 (CES 2026). Metal 4 with the WWDC26 sessions. Raw evidence is saved in /private/tmp/claude-501/-Users-qiulinfan-Desktop-pocketEngine/b7d0fc97-779a-4afb-8145-c566b7e1bb53/scratchpad/render-assessment/ (wgpu-CHANGELOG.md, wgpu-native-v29.0.1.1-wgpu.h, wgpu-native-trunk-wgpu.h, metal-adapter-v29.0.1.rs, metal-adapter-v30.rs, wgpu-v30.0.1-features.rs).",
+   "capabilities": [
+    {
+     "area": "UE5 release line",
+     "what": "UE 5.6 shipped 2025-06-03, 5.7 on 2025-11-12 and 5.8 on 2026-06-17. Epic says 5.8 is the last UE5 feature release. UE6 is announced as UE5 + UEFN + Verse, with early access targeted for late 2027 and the full release 12-18 months after that.",
+     "source": "https://en.wikipedia.org/wiki/Unreal_Engine_5 (5.8 = June 17, 2026); https://gamefromscratch.com/unreal-engine-5-7-released/ (5.7 = 2025-11-12); https://digitalproduction.com/2025/06/03/unreal-engine-5-6-60-fps-smarter-metahumans-and-fewer-cpu-tantrums/; https://labs.invenglobal.com/articles/22900/ (2026-06-17)",
+     "built_in_or_addon": "engine"
+    },
+    {
+     "area": "UE Lumen (GI and reflections)",
+     "what": "5.6: hardware ray tracing (HWRT) work aimed at 60 Hz. 5.7: Epic is consolidating on HWRT and has deprecated the software-ray-tracing detail traces. 5.8 adds Lumen Lite. The release notes describe it as 'a new medium-quality setting for Global Illumination using Irradiance Fields with Probe Occlusion supported by Lumen'. It is about 2x faster than Lumen High (which targets 60fps on PS5) and is the default on handhelds. That is a DDGI-class probe method, the same family as aipocket's IrradianceVolume. Secondary sources call Lumen Lite Beta; the primary page only says 'new'.",
+     "source": "https://dev.epicgames.com/documentation/unreal-engine/unreal-engine-5-8-release-notes (quoted 2026-10-02); https://tomlooman.com/unreal-engine-5-7-performance-highlights/ (2025-11-12); https://tomlooman.com/unreal-engine-5-8-performance-highlights/ (2026-08-27); https://www.cgchannel.com/2025/06/unreal-engine-5-6-five-key-features-for-cg-artists/",
+     "built_in_or_addon": "built-in (Lumen Lite: new in 5.8, status unverified)"
+    },
+    {
+     "area": "UE MegaLights",
+     "what": "Stochastic direct lighting that importance-samples lights. It traces a fixed number of rays per pixel: a short screen-space ray first, then hardware or software ray tracing, then a denoiser. Status: Beta in 5.6 and 5.7 (5.7 added directional, Niagara and translucency lights), Production Ready in 5.8 ('Megalights is now entering Production Ready status'). It targets current-gen consoles and RT-capable PCs; mobile, Switch and last-gen are not supported. Epic recommends hardware RT.",
+     "source": "https://dev.epicgames.com/documentation/en-us/unreal-engine/megalights-in-unreal-engine (5.8 docs); UE 5.8 release notes (above); https://gamefromscratch.com/unreal-engine-5-7-released/",
+     "built_in_or_addon": "built-in (production in 5.8)"
+    },
+    {
+     "area": "UE Nanite",
+     "what": "5.7 added Nanite Foliage, Nanite Voxels and Nanite Assemblies: dense foliage built from branch building blocks, voxelized at distance, with no hand-made LODs. Foliage wind moved from world-position offset to skinned Nanite through a Dynamic Wind plugin. Nanite Foliage is Experimental in 5.7, and secondary sources say it is still Experimental in 5.8. In 5.8, tessellation in Virtual Shadow Maps (VSM) can be toggled by CVar and handhelds get faster raster and culling. The official status of Nanite tessellation/displacement is unverified; forum threads report 5.8 regressions.",
+     "source": "https://www.notebookcheck.net/Unreal-Engine-5-7-brings-Nanite-Foliage-MegaLights-and-major-visual-upgrades-in-tow.1162191.0.html; https://tomlooman.com/unreal-engine-5-7-performance-highlights/; https://tomlooman.com/unreal-engine-5-8-performance-highlights/; https://forums.unrealengine.com/t/nanite-displacement-bugged-in-exact-same-landscape-in-ue-5-8-but-not-in-ue-5-7/2739815",
+     "built_in_or_addon": "built-in (foliage and voxels experimental)"
+    },
+    {
+     "area": "UE Virtual Shadow Maps",
+     "what": "5.7 turns on receiver masks for directional lights by default (a large win with dynamic geometry for about 10 MB). 5.8 adds invalidation throttling, temporal reprojection and an experimental 'Prefiltered Distant' mode for far casters.",
+     "source": "https://tomlooman.com/unreal-engine-5-7-performance-highlights/; https://tomlooman.com/unreal-engine-5-8-performance-highlights/",
+     "built_in_or_addon": "built-in"
+    },
+    {
+     "area": "UE Substrate, TSR, path tracer, heterogeneous volumes, water and sky",
+     "what": "Substrate became fully production-ready in 5.7, and 5.8 can import X-Rite AxF measured materials into it. Temporal Super Resolution (TSR): 5.8 adds thin-geometry optimizations and fixes for camera cuts. The path tracer stays the offline-quality reference; the 5.8 notes point artists to it for filmic depth of field. Heterogeneous Volumes (OpenVDB sparse volume textures and Niagara Fluids, real-time and in the path tracer) is still Experimental in the 5.8 docs. The 5.8 notes mention neither Water nor Sky Atmosphere, so I found nothing new there (unverified).",
+     "source": "https://gamefromscratch.com/unreal-engine-5-7-released/; UE 5.8 release notes; https://dev.epicgames.com/documentation/en-us/unreal-engine/heterogeneous-volumes-in-unreal-engine (5.8); https://tomlooman.com/unreal-engine-5-8-performance-highlights/",
+     "built_in_or_addon": "built-in"
+    },
+    {
+     "area": "Unity 6 rendering (URP/HDRP)",
+     "what": "Adaptive Probe Volumes (APV) place probes automatically, light per pixel, stream, and support lighting scenarios such as time of day. The GPU Resident Drawer uses BatchRendererGroup to do GPU instancing; it needs compute shaders and the Forward+ or Deferred+ path. Spatial-Temporal Post-Processing (STP) is a temporal upscaler that needs Shader Model 5.0 and does not run on GLES. All three arrived in Unity 6.0 and are documented under 6.6.",
+     "source": "https://docs.unity3d.com/Manual/urp/stp/stp-upscaler.html (labelled 6.6); https://docs.unity3d.com/Manual/urp/gpu-resident-drawer.html (6.6); https://docs.unity3d.com/Manual/urp/probevolumes-concept.html; https://unity.com/blog/engine-platform/unity-6-preview-release",
+     "built_in_or_addon": "built-in"
+    },
+    {
+     "area": "Unity 6.3 to 6.7 and Unity 7",
+     "what": "6.3 LTS (Dec 2025): a unified render graph and hybrid 2D/3D. 6.5 (2026-06-15): the Built-in pipeline (BIRP) is deprecated, HDRP moves to maintenance mode, and URP gets on-tile HDR on Metal and Vulkan. 6.6 (2026-09-01): WebGPU is production-ready for web builds (compute, GPU skinning, indirect draws, VFX Graph), DXC with Shader Model 6 on DX12, and a compute light baker on a unified ray-tracing API. Roadmap: 6.7 LTS brings URP 'Surface Cache GI', SSR, GTAO and unified DLSS4/FSR/PSSR upscalers; Unity 7 beta Dec 2026, release Q1 2027.",
+     "source": "https://www.cgchannel.com/2025/12/unity-6-3-lts-is-out-see-5-key-features-for-cg-artists/; https://respawn.outlookindia.com/gaming/gaming-news/unity-6-5-update-unity-rendering-pipeline-all-you-need-to-know (secondary); https://discussions.unity.com/t/unity-6-6-is-now-available/1735357 (2026-09-01); https://www.invenglobal.com/articles/24003/ (2026-07-21, roadmap)",
+     "built_in_or_addon": "built-in (6.7 and 7 are roadmap)"
+    },
+    {
+     "area": "AAA path tracing and ReSTIR shipping",
+     "what": "Shipped path tracing: DOOM: The Dark Ages added path tracing with Ray Reconstruction on 2025-06-18. Resident Evil Requiem (2026-02-27) and PRAGMATA (2026-04-24) ship path tracing in RE Engine. 007 First Light (2026-05-27) has path tracing at launch. Capcom's GDC 2026 talk: streaming RIS light selection, a light-grid cull, alias-method sampling of emissive triangles, ReSTIR GI, asynchronous BVH builds and DLSS Ray Reconstruction (DLSS-RR) as the denoiser, at 8-20 ms at 1440p on RTX 40-class cards.",
+     "source": "https://slayersclub.bethesda.net/en-AU/article/doom-the-dark-ages-june-2025-pc-update (2025-06-18); https://www.nvidia.com/en-au/geforce/news/dlss-4-rtx-path-tracing-game-announcements-ces-2026 (2026-01-05); https://www.docswell.com/s/CAPCOM_RandD/5DM2NL-gdc2026-implementing-real-time-path-tracing-in-re-engine; https://www.tweaktown.com/news/110394/ (007 date, secondary)",
+     "built_in_or_addon": "shipped games (NVIDIA-centric PC modes)"
+    },
+    {
+     "area": "Upscaling and frame generation",
+     "what": "DLSS 4.5 (CES 2026-01-05): a second-generation transformer super-resolution model on all RTX cards, plus dynamic 6x multi-frame generation on RTX 50 (spring 2026). AMD FSR Redstone (2025-12-10, RX 9000 only): ML super resolution (FSR 4), ML frame generation, Ray Regeneration denoising and a neural radiance cache. FSR 4.1 reached RDNA 3 in FSR SDK 2.3 (June 2026); RDNA 2 is promised for early 2027. XeSS 3 (CES 2026): up to 4x multi-frame generation on all Arc GPUs. Apple Metal 4 (WWDC25) has MetalFX upscaling, frame interpolation and a denoised upscaler.",
+     "source": "https://www.nvidia.com/en-au/geforce/news/dlss-4-rtx-path-tracing-game-announcements-ces-2026; https://www.club386.com/amd-fsr-redstone-officially-launches-in-time-for-christmas-but-only-some-radeon-gpus-will-benefit/ (2025-11-19); https://gpuopen.com/learn/amd-fsr-sdk-2-3-blog/; https://www.profesionalreview.com/2026/01/27/intel-xess-3-lanzado-multi-frame-generation/; https://developer.apple.com/videos/play/wwdc2025/211/",
+     "built_in_or_addon": "vendor SDKs"
+    },
+    {
+     "area": "Neural rendering and next-generation ray-tracing APIs",
+     "what": "Cooperative vectors arrived in DirectX Shader Model 6.9 (Agility SDK 1.619) for neural texture compression (NTC) and neural radiance caching (NRC). At GDC 2026 Microsoft announced DXR 2.0, due with SM 6.10: clustered geometry, partitioned TLAS and indirect acceleration-structure ops; it has not shipped. NVIDIA showed NTC cutting a demo's VRAM from 6.5 GB to 970 MB; NTC 0.10 beta is in RTX Kit 2026.3 (secondary sources). I found no shipped game using NTC or neural shaders. Metal 4 at WWDC26 (session 359) covers a MetalFX denoiser/upscaler, an ML command encoder and TensorOps networks inside shaders, on M5 and A19 Pro, whose GPU cores each carry a neural accelerator.",
+     "source": "https://devblogs.microsoft.com/directx/shader-model-6-9-and-the-future-of-cooperative-vector/ (2025-09-11); https://www.pcgameshardware.de/Raytracing-Hardware-255905/Specials/DirectX-Update-mit-DXR-2-0-1522640/ (2026-03-18); https://letsdatascience.com/news/nvidia-demonstrates-neural-texture-compression-cutting-vram-a24f3caa (secondary); https://developer.apple.com/videos/play/wwdc2026/359/; https://www.businesswire.com/news/home/20251014240640/en/",
+     "built_in_or_addon": "API/SDK, mostly pre-production"
+    },
+    {
+     "area": "RTX Mega Geometry",
+     "what": "Cluster acceleration structures (CLAS) and partitioned TLAS, exposed through VK_NV_cluster_acceleration_structure and VK_NV_partitioned_acceleration_structure. Alan Wake 2 was the first game to ship it (2025-01-30). GDC 2026 showed Mega Geometry foliage, including a Witcher 4 forest (secondary source).",
+     "source": "https://developer.nvidia.com/blog/nvidia-rtx-mega-geometry-now-available-with-new-vulkan-samples (2025-02-06); https://www.alanwake.com/story/dlss-4-multi-frame-generation-out-now/ (2025-01-30); https://fil.whatpsu.com/articles/2591-NVIDIA-Unveils-RTX-Mega-Geometry-Integration-for-Witcher-and-Path-Tracing-Support-in-007-First-Light (secondary)",
+     "built_in_or_addon": "NVIDIA-only extension"
+    },
+    {
+     "area": "Gaussian splatting in engines",
+     "what": "KHR_gaussian_splatting reached release-candidate status on 2026-02-03; the Khronos README now reads 'Complete, Ratified by the Khronos Group'. The exact ratification date is unverified; the README was last touched 2026-09-03. three.js r186 (2026-09-24) merged a native WebGPU/TSL splat renderer: a compute counting sort, SH0 colour only, no LOD. Spark 2.0 for three.js runs on WebGL2 with LoD (v2.3.1, 2026-10-01). PlayCanvas imports KHR splats from 2.21 (latest 2.23.0, 2026-10-01); Babylon.js and CesiumJS support them too. Unreal has third-party plugins only (Luma, Volinga, YaGS and others), with no native Epic support found. I found no shipped game that uses splats as its main rendering.",
+     "source": "https://github.com/KhronosGroup/glTF/tree/main/extensions/2.0/Khronos/KHR_gaussian_splatting; https://www.khronos.org/news/press/gltf-gaussian-splatting-press-release; https://radiancefields.com/three.js-merges-a-native-gaussian-splat-renderer-for-webgpu-in-r186 (2026-08-10); https://sparkjs.dev/docs/overview/; https://radiancefields.com/playcanvas-engine-v2.21.0-adds-gltf-and-spz-gaussian-splat-loading; https://radiancefields.com/3d-gaussian-splatting-engine-support",
+     "built_in_or_addon": "web engines built-in; UE and Unity via plugins"
+    },
+    {
+     "area": "Browser WebGPU (what the web build can use)",
+     "what": "Availability: Chrome/Edge 113+, Android 121+, Safari 26 (macOS/iOS 26), Firefox 141 on Windows and Firefox 147 on Apple-silicon macOS (2026-01-13). Shipped in Chrome: subgroups (134, 2025-02), primitive index (142), subgroup_id (144), compatibility mode on GLES 3.1, transient attachments and texture_and_sampler_let (146, 2026-03), linear_indexing (147/148), immediates, i.e. push constants (149/150, 2026-06-17), subgroup size control (151), swizzle assignment (152). Not shipped: bindless (gpuweb draft created 2025-10-13, still being revised 2026-09-18) and 64-bit atomics (draft, 2025-09-15). gpuweb/proposals has no ray-tracing or mesh-shader proposal (listed 2026-10-02). W3C Candidate Recommendation Drafts run through 2026-06-23. Subgroup support in Safari and Firefox is unverified.",
+     "source": "https://developer.chrome.com/docs/web-platform/webgpu/news; https://developer.chrome.com/blog/new-in-webgpu-134; https://developer.chrome.com/blog/new-in-webgpu-149-150 (2026-06-17); https://github.com/gpuweb/gpuweb/tree/main/proposals (bindless.md, atomic-64-min-max.md); https://www.firefox.com/firefox/147.0/releasenotes/; https://www.w3.org/TR/2026/CRD-webgpu-20260623/",
+     "built_in_or_addon": "web platform"
+    },
+    {
+     "area": "wgpu (Rust) on Metal",
+     "what": "wgpu 30.0.1 (2026-08-22). Ray tracing: Metal acceleration structures landed in v29.0.0 (#8071). The Metal adapter advertises EXPERIMENTAL_RAY_QUERY when the device supports ray tracing (wgpu-hal/src/metal/adapter.rs:1326 at v30.0.1, :1155 at v29.0.1); the feature's doc comment still says 'Vulkan' only. v30 moved Metal to intersection_query, which handles AABBs and non-opaque geometry (#9304). Ray-tracing pipelines come out as SPIR-V only. Mesh shaders: Metal through passthrough in v28, and full support including WGSL in v30 (#8739). Also on Metal: subgroups, texture binding arrays up to about 500k (v25), storage-texture arrays (v28), buffer binding arrays (v30, #9081), int64 atomic min/max, MSL cooperative-matrix multiply-add (v30), and Surface::display_hdr_info for HDR (v30). Multi-draw-indirect-count is DX12/Vulkan only.",
+     "source": "https://github.com/gfx-rs/wgpu/blob/trunk/CHANGELOG.md (v28.0.0 2025-12-17, v29.0.0 2026-03-18, v30.0.0 2026-07-01); https://github.com/gfx-rs/wgpu/blob/v30.0.1/wgpu-hal/src/metal/adapter.rs; release dates via gh api repos/gfx-rs/wgpu/releases",
+     "built_in_or_addon": "library (experimental features)"
+    },
+    {
+     "area": "wgpu-native 29.0.1.1 (what aipocket can call today)",
+     "what": "ffi/wgpu.h has WGPUNativeFeature_RayQuery but no BLAS or TLAS creation API, at v29.0.1.1 and on trunk as of 2026-09-20. Without one you cannot build acceleration structures from C/C++. MeshShader and PassthroughShaders are commented out with 'requires wgpu.h api change'. Exposed: Subgroup, TextureBindingArray, BufferBindingArray, ShaderInt64AtomicMinMax (Metal MSL 2.4+), TextureInt64Atomic (MSL 3.1+), Immediates and ShaderBarycentrics. MultiDrawIndirectCount is DX12/Vulkan only. I found no accessor for native Metal handles, so MetalFX would need a shim. aipocket's RHI asks only for TimestampQuery (engine/rhi/src/device.cpp:392-397).",
+     "source": "https://github.com/gfx-rs/wgpu-native/blob/v29.0.1.1/ffi/wgpu.h (lines ~120-730); https://github.com/gfx-rs/wgpu-native/releases (v29.0.1.1 2026-06-23); /Users/qiulinfan/Desktop/aipocket/pocket.toml:96; /Users/qiulinfan/Desktop/aipocket/engine/rhi/src/device.cpp:392-397",
+     "built_in_or_addon": "library"
+    },
+    {
+     "area": "Proof of what works on wgpu: Bevy",
+     "what": "Bevy Solari (0.17, 2025-09-30) does real-time ReSTIR DI/GI plus a world-space irradiance cache, all through inline ray queries (wgpu had no RT pipelines then), with DLSS-RR as the denoiser. On an RTX 3080 at 1600x900 upscaled to 3200x1800 it ran 8.2-14.6 ms. The author's post says it 'currently requires an NVIDIA GPU'; Metal support is unverified. Bevy 0.19 (2026-06-19) added contact shadows, GPU light clustering, Linearly Transformed Cosines (LTC) area lights, physically based SSR and parallax-corrected cubemaps. Bevy's virtual geometry (meshlets) has had BVH culling since 0.17.",
+     "source": "https://jms55.github.io/posts/2025-09-20-solari-bevy-0-17/; https://bevy.org/news/bevy-0-17/; https://bevy.org/news/bevy-0-19/",
+     "built_in_or_addon": "open-source engine on wgpu"
+    },
+    {
+     "area": "aipocket baseline (for the gap)",
+     "what": "Forward renderer on WebGPU. Clustered point and spot lights with a shadow atlas (rendering.md:985-1032). Four 2048 sun cascades, kept between frames (rendering.md:26-36, 197-206). Percentage-closer soft shadows (PCSS) and contact shadows (494-529). SSR (701-728). SSGI with one screen-space bounce, about 1.1 ms (729-760). Reflection probes (761-801). DDGI-style irradiance volumes captured by raster at 2 probes a frame; they settle after 3 passes and stay static until refreshed, with at most 1024 probes and 4 volumes (802-854). TAA with no upscaling (901-926); render scale is a bilinear-plus-sharpen stretch (103-128). meshoptimizer LODs (634-654). Atmosphere, day cycle, weather and clouds (252-464). Volumetric light, depth of field, motion blur, AgX, bloom. Not yet: HDR display output and others (1098-1105). The showcase runs 5.8 ms at 1080p on the M5, 1.9 ms at half scale (rendering.md:120-122). No energy-compensation, specular-occlusion or GTAO term shows up by name in engine/renderer/src/renderer.cpp (name grep only).",
+     "source": "/Users/qiulinfan/Desktop/aipocket/docs/design/rendering.md (line ranges as given); /Users/qiulinfan/Desktop/aipocket/docs/status.md:89,143",
+     "built_in_or_addon": "our engine"
+    }
+   ],
+   "notable_limits": [
+    "Nothing in aipocket was run, built or measured. Its numbers come from docs/design/rendering.md, which were measured earlier.",
+    "Several fetch and search summaries were wrong, so I checked those by hand. The GitHub release page summarizer printed 2023-2024 dates for wgpu, which gh api corrected. One Bevy summary invented a 'Metal hardware limitation' claim that the page does not contain. A search summary said KHR_gaussian_splatting was unratified, but the Khronos README says 'Complete, Ratified'. Claims marked secondary come from press and blog summaries, not primary pages.",
+    "Unverified: Lumen Lite's exact status (Beta according to secondary sources); Nanite Foliage still Experimental in 5.8 (secondary); the official status of Nanite tessellation/displacement; UE 5.8 water and sky changes (none on the release notes page); the Unity 6.5 details (secondary); Unity 6.7 and 7 (roadmap only); the DLSS 4.5 2026-01-13 date; NTC figures and RTX Kit 2026.3; the Witcher 4 Mega Geometry demo; DXR 2.0 timing; the exact KHR_gaussian_splatting ratification date; the W3C 'CR 2026-03-03' date; subgroup support in Safari and Firefox; Bevy Solari on Metal; whether MetalFX could be reached through wgpu-hal interop.",
+    "Several primary pages blocked fetching with 403s (unrealengine.com news, guru3d, techspot, tweaktown, windowsreport), so some UE and NVIDIA claims rest on Tom Looman, gamefromscratch, Wikipedia or vendor pages.",
+    "The wgpu RAY_QUERY doc comment is stale ('Vulkan' only). I relied on the Metal adapter code and the changelog instead. Hardware ray tracing on Apple Silicon through wgpu is experimental, and I have not tested it.",
+    "three.js's own post-processing (SSGI, GTAO, TRAA nodes) was not surveyed here, so any three.js comparison beyond splats and r186 BRDF fixes is unverified.",
+    "No visual side-by-side was made; 'visible gap' judgements are reasoned from feature lists, not images."
+   ],
+   "summary": "Where the frontier is on 2026-10-02:\n- **UE 5.8** (2026-06-17), the last UE5 release:\n  - Lumen leans on hardware ray tracing. 5.7 deprecated the software detail traces.\n  - New Lumen Lite: probe GI ('Irradiance Fields with Probe Occlusion'), about 2x cheaper than Lumen High.\n  - MegaLights (stochastic, ray-traced direct lighting) is production-ready.\n  - Nanite Foliage/Voxels/Assemblies (experimental), VSM with receiver masks and invalidation throttling.\n  - Substrate is production-ready, TSR keeps being refined, Heterogeneous Volumes is still experimental.\n- **Unity 6**: APV, the GPU Resident Drawer and the STP upscaler. HDRP is now in maintenance mode, and URP gets 'Surface Cache GI', SSR and GTAO in 6.7 LTS (roadmap). Unity 6.6 made WebGPU production-ready for web builds.\n- **AAA games** ship full path tracing with ReSTIR plus a neural denoiser on NVIDIA PC: DOOM: The Dark Ages, Resident Evil Requiem, PRAGMATA, 007 First Light. Capcom's GDC 2026 talk gives 8-20 ms at 1440p on RTX 40-class cards.\n- **Upscalers** are now ML upscaling plus multi-frame generation: DLSS 4.5 up to 6x, FSR Redstone / FSR 4.1, XeSS 3, and MetalFX on Apple.\n- **Neural shading** (cooperative vectors, NTC, NRC, Metal TensorOps) and DXR 2.0 / Mega Geometry clustered BVHs are mostly demos or SDKs. I found no shipped game using NTC or neural shaders.\n- **Gaussian splats** are mainstream on the web: KHR_gaussian_splatting is ratified, three.js r186 has a native WebGPU renderer, and Spark and PlayCanvas support them. Unreal and Unity rely on plugins.\n\nWhat a small wgpu engine can reach:\n- **Browser WebGPU** has compute, subgroups (Chrome), immediates, primitive index and compatibility mode. Bindless and 64-bit atomics are still drafts. There is no ray tracing or mesh-shader proposal. So Nanite-style software raster and any ray tracing are off the table on the web.\n- **wgpu 30 on Metal** has experimental ray queries, mesh shaders (full support, WGSL included), subgroups, binding arrays and int64 atomic min/max.\n- **wgpu-native 29.0.1.1**, which aipocket pins, offers no BLAS/TLAS API, so hardware ray tracing cannot be built from C++ (same on trunk 2026-09-20). Mesh shaders are not exposed either.\n\nHonest comparison: aipocket has a broad, modern 'forward+ with screen-space effects' stack (clustered lights with shadows, PCSS, SSR, SSGI, probes, DDGI-style visibility volumes, TAA, atmosphere, clouds, water, AgX). Its visible gaps to UE5-class output are:\n- No dynamic multi-bounce GI; volumes are static once captured.\n- No temporal upscaling.\n- No virtualized or dense geometry.\n- No ray-traced shadows or reflections.\n- No HDR output.\n\nRanked next steps by visual payoff per effort; all except 7 also run in the browser:\n1. **Temporal upscaling inside the existing TAA** (TSR/STP/FSR2-style). Jitter, motion vectors and YCoCg history clipping already exist (rendering.md:901-926), and the dynamic render scale (103-128) currently just stretches. The showcase drops from 5.8 to 1.9 ms at half scale, so this buys either crisper Retina output or about 2x headroom for the items below. About 1-2 weeks.\n2. **Dynamic, camera-centred probe GI** (Lumen-Lite/DDGI): keep re-capturing IrradianceVolume probes time-sliced (already 2 a frame, rendering.md:832-836) in cascades that follow the camera, with temporal blending, so GI follows the day cycle, weather and moving lights. Epic shipping exactly this class as Lumen Lite supports the approach. About 2-4 weeks.\n3. **Cheap BRDF fixes**: multi-scatter GGX energy compensation, specular occlusion from AO and probe visibility, and GTAO-style AO with bent normals. None was found by name in renderer.cpp. Days of work; rough metals and crevices look right.\n4. **HDR/EDR output to the M5's XDR display** (listed under 'Not yet', rendering.md:1104-1105). It needs a wgpu-native newer than 29.x or a patch; wgpu 30 has display_hdr_info. About 1 week once the API is there; very visible on Apple screens.\n5. **A Gaussian splat primitive** (KHR_gaussian_splatting import, compute sort, instanced quads; SH0 first, then SH3 and LOD). It fits agent-first worlds built from captures or AI generators. About 2-3 weeks.\n6. **GPU-driven culling plus meshlet cluster LOD** (Nanite-lite on hardware raster): compute frustum and Hi-Z culling into indirect draws, clusters from meshoptimizer. It pays off for dense scenes and foliage (hills at 1.1M triangles). About 4-8 weeks. On the web it stays hardware-raster only, since there is no 64-bit atomics, bindless or multi-draw-indirect.\n7. **Native-only hardware ray tracing**: RT shadows and reflections, then ReSTIR GI like Bevy Solari or RE Engine. Metal can do it through wgpu 29+, but it needs a wgpu-native C API extension or fork for acceleration structures, plus a denoiser (MetalFX would need native interop). It would never run in browsers. Months of work; defer.\n\nNot realistic now: neural texture compression or neural shading, multi-frame generation, Mega-Geometry-class cluster BVHs."
+  },
+  "check": {
+   "checked": [
+    {
+     "claim": "UE 5.8 shipped 2026-06-17 and is the last UE5 feature release. UE6 (UE5 + UEFN + Verse) early access is targeted for late 2027, with full release 12-18 months later.",
+     "status": "confirmed",
+     "source": "https://www.moguravr.com/?p=315947 (2026-06-18, 'UE5シリーズ最後のメジャーリリース'); https://tech-insider.org/unreal-engine-6-state-of-unreal-2026/ (2026-06-26: 'Early Access release in Q4 2027, with a full commercial launch roughly 12 to 18 months after that'). unrealengine.com/news returned 403 (checked 2026-10-02), so this rests on secondary sources."
+    },
+    {
+     "claim": "Lumen Lite's status: 'Secondary sources call Lumen Lite Beta; the primary page only says new.'",
+     "status": "wrong",
+     "correction": "The primary page labels it Beta. The UE 5.8 release notes heading reads 'Lumen Lite (Beta)' (anchor #lumenlite(beta)). Its status is verified as Beta.",
+     "source": "https://dev.epicgames.com/documentation/unreal-engine/unreal-engine-5-8-release-notes?application_version=5.8 (raw HTML fetched 2026-10-02)"
+    },
+    {
+     "claim": "Lumen Lite is about 2x faster than Lumen High (which targets 60 fps on PS5) and is the default on handhelds.",
+     "status": "confirmed",
+     "source": "UE 5.8 release notes (same URL): 'It's twice as fast as Lumen high quality - which targets 60fps on PlayStation 5 ... the new default for current-generation handheld consoles ... supported on PC as well.'"
+    },
+    {
+     "claim": "Lumen Lite is 'a DDGI-class probe method, the same family as aipocket's IrradianceVolume', and Epic shipping it supports the plan of camera-following, raster-recaptured probes.",
+     "status": "overstated",
+     "correction": "Lumen Lite's Irradiance Field Gather 'reuses Lumen's World Space Radiance Cache'. Its probes are lit by Lumen's tracing, placed automatically, and probes inside geometry are 'detected during tracing'. aipocket's volumes are captured as six raster views per probe at 2 probes a frame and stay static after 3 passes (rendering.md:829-840). The two share the interpolation and occlusion model, not the radiance source. Raster recapture alone does not reproduce what Lumen Lite does.",
+     "source": "UE 5.8 release notes, Lumen Medium Quality / Irradiance Field Gather paragraphs; /Users/qiulinfan/Desktop/aipocket/docs/design/rendering.md:802-854"
+    },
+    {
+     "claim": "MegaLights: Beta in 5.6/5.7, Production Ready in 5.8. Not supported on mobile, Switch or last-gen. HWRT recommended. Short screen-space ray first, then a denoiser.",
+     "status": "confirmed",
+     "source": "UE 5.8 release notes ('Megalights is now entering Production Ready status with Unreal Engine 5.8'); 5.7 release notes heading 'MegaLights (Beta)'; https://dev.epicgames.com/documentation/en-us/unreal-engine/megalights-in-unreal-engine (5.8 docs, fetched 2026-10-02)"
+    },
+    {
+     "claim": "Substrate became production-ready in 5.7, and 5.7 deprecated Lumen's software-ray-tracing detail traces.",
+     "status": "confirmed",
+     "source": "https://dev.epicgames.com/documentation/unreal-engine/unreal-engine-5-7-release-notes?application_version=5.7: Substrate is 'production-ready and enabled by default as of UE 5.7'; 'r.Lumen.TraceMeshSDFs 0 - SWRT detail traces (mesh SDF tracing) is now a deprecated path'"
+    },
+    {
+     "claim": "The UE 5.8 notes mention neither Water nor Sky Atmosphere.",
+     "status": "wrong",
+     "correction": "Both appear, as minor items. Mobile renderer: 'Mobile support for SSAO, SSR, deferred decals, contact shadows, and higher-quality water rendering', plus water-body fixes and ChaosCloth water-body interaction. A scene-capture fix preserves sky atmosphere. There is no headline water or sky feature.",
+     "source": "UE 5.8 release notes (raw HTML, grep of paragraph text, 2026-10-02)"
+    },
+    {
+     "claim": "Unity 6.6 shipped 2026-09-01 with WebGPU production-ready for web (compute, GPU skinning, indirect, VFX Graph), DXC/SM6 on DX12, and a compute light baker on the Unified Ray Tracing API.",
+     "status": "confirmed",
+     "source": "https://discussions.unity.com/t/unity-6-6-is-now-available/1735357 (2026-09-01)"
+    },
+    {
+     "claim": "Unity 6.5 starts deprecating the Built-in pipeline and puts HDRP in maintenance mode (report marked these details secondary/unverified).",
+     "status": "confirmed",
+     "source": "Unity's own page https://unity.com/topics/render-pipelines-strategy-for-2026: 'Starting the official Built-In Render Pipeline deprecation process in 6.5', BIRP available through 6.7 LTS; 'No new features are planned for HDRP'"
+    },
+    {
+     "claim": "Unity 6.7 LTS roadmap: URP Surface Cache GI, SSR, GTAO and unified DLSS4/FSR/PSSR upscalers. Unity 7 beta Dec 2026, release Q1 2027.",
+     "status": "confirmed",
+     "source": "https://www.invenglobal.com/articles/24003/ (roadmap, secondary; also lists Sentis-based Neural Texture Compression); the Unity page above lists SSR and real-time GI for URP. These are roadmap items, not shipped."
+    },
+    {
+     "claim": "Cooperative vectors arrived in DirectX Shader Model 6.9 (Agility SDK 1.619).",
+     "status": "wrong",
+     "correction": "Cooperative Vector did not ship in retail SM 6.9. Agility SDK 1.619 (2026-02-26) shipped SM 6.9 with Long Vector, 16-bit float specials, and SER/OMM out of preview. Cooperative Vector stayed experimental and was deprecated 'in favor of a future design unifying matrix-matrix and vector-matrix operations, coming in Shader Model 6.10'. That successor is LinAlg Matrix, in preview in AgilitySDK 1.720/1.721 (1.721 preview 2026-05-28).",
+     "source": "https://devblogs.microsoft.com/directx/shader-model-6-9-retail-and-more/ (2026-02-26); https://devblogs.microsoft.com/directx/shader-model-6-9-and-the-future-of-cooperative-vector/ (2025-09-11); https://devblogs.microsoft.com/directx/announcing-agilitysdk-721-preview-and-more-shader-model-6-10-features (2026-05-28)"
+    },
+    {
+     "claim": "DXR 2.0 was announced at GDC 2026 for SM 6.10 (clusters, partitioned TLAS) and has not shipped.",
+     "status": "confirmed",
+     "source": "GDC 2026 coverage targeted a DXR 2.0 preview for late summer 2026 (https://www.igorslab.de/en/microsoft-is-making-directx-ready-for-the-ml-era-shader-stuttering-is-set-to-disappear-dxr-2-0-is-already-in-the-pipeline/). The DirectX blog 2026 archive (https://devblogs.microsoft.com/directx/2026/, posts through 2026-09-30) has SM 6.10/AgilitySDK 720-721 previews but no DXR 2.0 release post. The preview appears to have slipped."
+    },
+    {
+     "claim": "DOOM: The Dark Ages added path tracing with DLSS Ray Reconstruction on 2025-06-18.",
+     "status": "confirmed",
+     "source": "https://slayersclub.bethesda.net/en-AU/article/doom-the-dark-ages-june-2025-pc-update"
+    },
+    {
+     "claim": "007 First Light (2026-05-27) has path tracing at launch.",
+     "status": "wrong",
+     "correction": "Path tracing was announced for launch (IOI, 2026-03-11) but arrived in a PC update on 2026-09-15, together with DLSS 4.5 Ray Reconstruction. It is limited to RTX 50-series cards (minimum RTX 5070). NVIDIA's CES 2026 article listed 007 only with DLSS 4 Multi Frame Generation.",
+     "source": "https://beebom.com/007-first-light-adds-path-tracing-for-pc-players/ (2026-09-15); https://ioi.dk/007firstlightgame/news/2026/007-first-light-nvidia-path-tracing-reveal (2026-03-11); https://www.nvidia.com/en-au/geforce/news/dlss-4-rtx-path-tracing-game-announcements-ces-2026/ (2026-01-05)"
+    },
+    {
+     "claim": "Capcom GDC 2026: RE Engine path tracing costs 8-20 ms at 1440p on RTX 40-class cards.",
+     "status": "overstated",
+     "correction": "The slides (2026-03-12, measured December 2025 on RE Requiem) give 11.70 ms on an RTX 4070 Ti and 19.00 ms on an RTX 4060 Ti at 2560x1440. The 8.78 ms figure is the 4070 Ti at 1080p and 20.09 ms is the 4070 Ti at 4K. The RTX 3060 needs 38.38 ms at 1440p. The listed techniques (streaming RIS, light grid, Walker alias method, ReSTIR GI, async BVH, DLSS-RR) are correct.",
+     "source": "https://www.docswell.com/s/CAPCOM_RandD/5DM2NL-gdc2026-implementing-real-time-path-tracing-in-re-engine"
+    },
+    {
+     "claim": "DLSS 4.5 (CES 2026-01-05): second-generation transformer super-resolution model for all RTX cards, and 6x Dynamic Multi Frame Generation on RTX 50 in spring 2026.",
+     "status": "confirmed",
+     "source": "https://www.nvidia.com/en-au/geforce/news/dlss-4-rtx-path-tracing-game-announcements-ces-2026/ (2026-01-05; 'All GeForce RTX owners can use the NVIDIA app...')"
+    },
+    {
+     "claim": "FSR Redstone launched 2025-12-10 on RX 9000 only. FSR 4.1 reached RDNA 3 in FSR SDK 2.3 (June 2026). RDNA 2 is promised for early 2027.",
+     "status": "confirmed",
+     "source": "https://www.techradar.com/computing/gpu/amds-fsr-redstone-for-supercharged-gaming-debuts-on-december-10-but-its-rx-9000-only-leaving-older-radeon-gpus-in-the-cold; https://gpuopen.com/learn/amd-fsr-sdk-2-3-blog/ (2026-06-24, FSR Upscaling 4.1.1 for RDNA 3/4; the page offers RDNA 2 only analytical fallbacks); RDNA 2 early 2027 is secondary: https://www.gamingonlinux.com/2026/05/amd-announce-fsr-upscaling-4-1-officially-coming-to-rdna-3-and-rdna-2/"
+    },
+    {
+     "claim": "XeSS 3 (CES 2026): up to 4x multi-frame generation on all Arc GPUs.",
+     "status": "confirmed",
+     "source": "Revealed in Oct 2025 (Panther Lake event) and rolled out in the Intel driver dated 2026-01-26. It covers Arc A/B discrete GPUs and Xe2/Xe3 iGPUs; Xe1 iGPUs come later. https://tomshardware.com/pc-components/gpu-drivers/intel-enables-xess-3-multi-frame-generation-in-latest-drivers-expanding-frame-generation-across-arc-gpus-and-core-ultra-igpus-mfg-can-be-enabled-across-any-title-with-xess-2-support"
+    },
+    {
+     "claim": "KHR_gaussian_splatting became a release candidate on 2026-02-03 and is now 'Complete, Ratified'. The ratification date is unverified.",
+     "status": "confirmed",
+     "source": "https://www.khronos.org/news/press/gltf-gaussian-splatting-press-release (2026-02-03, release candidate). The README status changed from 'Release Candidate' to 'Complete, Ratified by the Khronos Group' in commit 'Update extensions registry (#2642)' on 2026-09-03 (gh api KhronosGroup/glTF commits), which bounds the ratification date."
+    },
+    {
+     "claim": "three.js r186 (2026-09-24) merged a native WebGPU/TSL splat renderer with SH0 colour only and no LOD.",
+     "status": "wrong",
+     "correction": "r186 also ships 'View-dependent Gaussian Splatting via Spherical Harmonics' (#34215, merged 2026-08-12), so SH beyond degree 0 is supported. The renderer runs on WebGPURenderer and its WebGL2 fallback (#33950: 'works in the WebGPURenderer as well as its WebGL fallback mode'). r186 also adds per-mesh frustum culling and raycasting for splats. 'No LOD' is correct: #33950 lists LOD and streaming as future work. The 'compute counting sort' detail is unverified.",
+     "source": "gh api repos/mrdoob/three.js/releases/tags/r186 (published 2026-09-24); https://github.com/mrdoob/three.js/pull/33950; https://github.com/mrdoob/three.js/pull/34215"
+    },
+    {
+     "claim": "PlayCanvas imports KHR splats from 2.21; the latest is 2.23.0 (2026-10-01). Spark v2.3.1 is dated 2026-10-01.",
+     "status": "confirmed",
+     "source": "gh api: playcanvas/engine v2.21.0 (2026-07-21, 'Add support for KHR_gaussian_splatting glTF extension #9015'), v2.23.0 2026-10-01; sparkjsdev/spark v2.3.1 2026-10-01"
+    },
+    {
+     "claim": "Firefox 147 enabled WebGPU on Apple-silicon macOS on 2026-01-13.",
+     "status": "confirmed",
+     "source": "https://www.firefox.com/firefox/147.0/releasenotes/"
+    },
+    {
+     "claim": "Chrome WebGPU features 'through Chrome 152', including swizzle assignment in 152. Immediates shipped in 149/150 (2026-06-17).",
+     "status": "wrong",
+     "correction": "Immediates in 149-150 is correct. But swizzle_assignment ships in Chrome 153-154 (post 2026-09-15), alongside the WGSL buffer_view extension. 151-152 brought subgroup size control. The report missed the 153-154 release.",
+     "source": "https://developer.chrome.com/blog/new-in-webgpu-149-150 (2026-06-17); https://developer.chrome.com/blog/new-in-webgpu-153-154 (2026-09-15); https://developer.chrome.com/docs/web-platform/webgpu/news"
+    },
+    {
+     "claim": "gpuweb/proposals has no ray-tracing or mesh-shader proposal. Bindless and 64-bit atomics are still drafts.",
+     "status": "confirmed",
+     "source": "gh api repos/gpuweb/gpuweb/contents/proposals (2026-10-02): no RT or mesh proposal. bindless.md commits run 2025-10-16 to 2026-09-18 and atomic-64-min-max.md from 2025-10-06; the report's 'created' dates differ by days, probably PR-open dates. The listing also has subgroup-matrix.md, texel-buffers.md and buffer-view.md."
+    },
+    {
+     "claim": "wgpu facts: 30.0.1 (2026-08-22). Metal acceleration structures in v29 (#8071). EXPERIMENTAL_RAY_QUERY set at metal/adapter.rs:1326 (v30) / :1155 (v29). intersection_query (#9304). Full mesh shaders on Metal in v30 (#8739). Buffer binding arrays (#9081). display_hdr_info and MSL cooperative-matrix multiply-add in v30. Multi-draw-indirect-count is DX12/Vulkan only.",
+     "status": "confirmed",
+     "source": "scratchpad wgpu-CHANGELOG.md lines 295, 483-484, 521, 455, 462, 939, 1047-1050; metal-adapter-v30.rs:1326; metal-adapter-v29.0.1.rs:1155; wgpu-v30.0.1-features.rs:870-887; gh api gfx-rs/wgpu releases (v30.0.1 2026-08-22T02:57Z)"
+    },
+    {
+     "claim": "wgpu-native 29.0.1.1 (aipocket's pin) has a RayQuery feature but no BLAS/TLAS creation API, and the mesh-shader features are commented out ('requires wgpu.h api change'). Trunk is the same as of 2026-09-20.",
+     "status": "confirmed",
+     "source": "https://raw.githubusercontent.com/gfx-rs/wgpu-native/v29.0.1.1/ffi/wgpu.h (RayQuery 0x0003001C at ~432, still documented 'Vulkan' only; MeshShader commented at ~640); trunk wgpu.h (latest commit 2026-09-20); no wgpu-native release on wgpu 30 exists (latest v29.0.1.1, 2026-06-23); /Users/qiulinfan/Desktop/aipocket/pocket.toml:93-96"
+    },
+    {
+     "claim": "'I found no accessor for native Metal handles, so MetalFX would need a shim.'",
+     "status": "wrong",
+     "correction": "wgpu-native added 'metal: expose native device/queue/texture interop handles (#557)' on 2026-03-19. v29.0.1.1 declares wgpuDeviceGetNativeMetalDevice, wgpuQueueGetNativeMetalCommandQueue and wgpuTextureGetNativeMetalTexture. They are in aipocket's installed header (/Users/qiulinfan/Desktop/aipocket/.pocket/deps/wgpu-29.0.1.1/include/webgpu/wgpu.h:1505-1523), and nm shows them exported from lib/libwgpu_native.a. MetalFX (temporal upscaler, denoised scaler) can be driven on the same MTLCommandQueue without forking wgpu-native, though submission ordering still needs care. Untested.",
+     "source": "gh api repos/gfx-rs/wgpu-native/commits?path=ffi/wgpu.h; local header and nm output (2026-10-02)"
+    },
+    {
+     "claim": "HDR/EDR output 'needs a wgpu-native newer than 29.x or a patch'.",
+     "status": "overstated",
+     "correction": "wgpu-hal 29.0.1, which wgpu-native 29.0.1.1 builds on (its Cargo.toml pins wgpu-hal 29.0.1), already sets CAMetalLayer.wantsExtendedDynamicRangeContent when the surface format is Rgba16Float (wgpu-hal/src/metal/surface.rs:91-95). Rgba16Float is in the Metal surface formats (adapter.rs ~387). wgpu's v30 changelog describes the old default as 'extended linear scRGB for Rgba16Float'. So basic EDR on the M5 display is probably reachable today by configuring an Rgba16Float surface and skipping the sRGB encode. v30 adds explicit colour spaces (PQ/HLG/P3) and display_hdr_info. Untested.",
+     "source": "https://github.com/gfx-rs/wgpu/blob/v29.0.1/wgpu-hal/src/metal/surface.rs; scratchpad wgpu-CHANGELOG.md:385-414"
+    },
+    {
+     "claim": "Nanite-style software raster is 'off the table on the web' and GPU-driven meshlet LOD 'stays hardware-raster only' there.",
+     "status": "overstated",
+     "correction": "Scthe/nanite-webgpu (pushed 2026-05-09) runs a meshlet LOD hierarchy plus a software rasterizer in browser WebGPU. It packs u16 depth and octahedral normals into 32-bit atomics, at a real precision cost. The author notes two-pass compareExchange and other workarounds. It is impractical and lossy, but possible.",
+     "source": "https://github.com/Scthe/nanite-webgpu README"
+    },
+    {
+     "claim": "Bevy Solari (0.17, 2025-09-30): inline ray queries, ReSTIR DI/GI plus a world cache, DLSS-RR denoiser; 8.2-14.6 ms on an RTX 3080 at 1600x900 upscaled to 3200x1800; 'currently requires an NVIDIA GPU'.",
+     "status": "confirmed",
+     "source": "https://jms55.github.io/posts/2025-09-20-solari-bevy-0-17/ (also names Apple's MTL4FXTemporalDenoisedScaler as a hoped-for denoiser); https://bevy.org/news/bevy-0-17/ (posted 2025-09-30; Virtual Geometry BVH culling)"
+    },
+    {
+     "claim": "Bevy 0.19 (2026-06-19) added contact shadows, GPU light clustering, LTC rect area lights, physically based SSR and parallax-corrected cubemaps.",
+     "status": "confirmed",
+     "source": "https://bevy.org/news/bevy-0-19/ (GitHub tag v0.19.0 2026-06-18T01:25Z)"
+    },
+    {
+     "claim": "Alan Wake 2 was the first game to ship RTX Mega Geometry (2025-01-30).",
+     "status": "confirmed",
+     "source": "https://www.alanwake.com/story/dlss-4-multi-frame-generation-out-now/ (2025-01-30)"
+    },
+    {
+     "claim": "Metal 4 (WWDC25) has MetalFX upscaling, frame interpolation and a denoised upscaler. WWDC26 session 359 covers the MetalFX denoiser/upscaler, the ML command encoder and TensorOps, with neural accelerators in M5/A19 Pro GPUs.",
+     "status": "confirmed",
+     "source": "https://developer.apple.com/videos/play/wwdc2025/211/; https://developer.apple.com/videos/play/wwdc2026/359/ ('Build real-time neural rendering pipelines with Metal')"
+    },
+    {
+     "claim": "Unity GPU Resident Drawer uses BatchRendererGroup and needs compute plus Forward+/Deferred+. STP needs SM 5.0 and does not run on GLES (6.6 docs).",
+     "status": "confirmed",
+     "source": "https://docs.unity3d.com/Manual/urp/gpu-resident-drawer.html; https://docs.unity3d.com/Manual/urp/stp/stp-upscaler.html (both 6000.6)"
+    },
+    {
+     "claim": "NTC 0.10 beta is out (RTX Kit 2026.3), and NVIDIA showed 6.5 GB cut to 970 MB.",
+     "status": "unverified",
+     "correction": "NVIDIA-RTX/RTXNTC v0.10.0-beta was published 2026-08-04 (gh api). The 6.5 GB to 970 MB demo appears only in secondary press. The 'RTX Kit 2026.3' label was not found.",
+     "source": "gh api repos/NVIDIA-RTX/RTXNTC/releases; https://letsdatascience.com/news/nvidia-demonstrates-neural-texture-compression-cutting-vram-a24f3caa (secondary)"
+    },
+    {
+     "claim": "No shipped game uses NTC or neural shaders. Nanite Foliage is still Experimental in 5.8.",
+     "status": "unverified",
+     "source": "Neither a positive nor a negative primary source was found. The 5.8 notes mention Nanite foliage only through the experimental Procedural Vegetation Editor plugin."
+    },
+    {
+     "claim": "aipocket baseline: four 2048 kept cascades, PCSS/contact shadows, SSR, SSGI about 1.1 ms, IrradianceVolume (2 probes a frame, 3 passes, 1024 probes, 4 volumes), TAA without upscaling, bilinear-plus-sharpen render scale, showcase 5.8/1.9 ms, clustered lights with a 4096 shadow atlas, HDR output under 'Not yet', and only TimestampQuery requested.",
+     "status": "confirmed",
+     "source": "/Users/qiulinfan/Desktop/aipocket/docs/design/rendering.md:26-36, 103-128 (5.8/3.6/1.9 ms at :120-122), 494-529, 729-760 (1.1 ms at ~:751), 802-854, 901-926, 985-1032, 1098-1105; engine/rhi/src/device.cpp:392-397; docs/status.md:89,143"
+    },
+    {
+     "claim": "No energy-compensation, specular-occlusion or GTAO term shows up by name in renderer.cpp.",
+     "status": "confirmed",
+     "source": "grep of /Users/qiulinfan/Desktop/aipocket/engine/renderer/src/renderer.cpp: env specular uses 'Karis's analytic fit of the split-sum environment BRDF' (renderer.cpp:918-919) with no multi-scatter term; 'bent' hits are normal-map code only. The renderer does already have half-res hemisphere SSAO (rendering.md:471-480), which the report does not mention."
+    }
+   ],
+   "missing": [
+    "The user asked two questions the report does not answer. (1) How does aipocket compare with three.js? The report admits it never surveyed three.js (SSGI/GTAO/TRAA nodes, WebGPURenderer, r186 PBR). (2) Can aipocket import high-poly OBJ from industrial software? It never touches import. Facts found: aipocket reads OBJ+MTL directly (docs/design/assets.md:170-176, engine/assets/src/import.cpp:104 parse_obj), plus STL and PLY. FBX/DAE/USD/ABC/.blend go through headless Blender to glTF (assets.md:184-195). No CAD B-rep format (STEP/IGES/JT/Parasolid) was found by grep. OBJ vertex dedup uses a std::map keyed by index triples (import.cpp:207), and nothing in the report measures multi-million-triangle import time or memory.",
+    "An Apple-native path the report misses. The pinned wgpu-native already exposes MTLDevice, MTLCommandQueue and MTLTexture (wgpu.h:1505-1523). MetalFX (ML temporal upscaler, denoised scaler, frame interpolation) is therefore a near-term native option on the M5, alongside a portable TAAU for the web. That changes ranking items 1 and 7.",
+    "The most relevant Apple-silicon frontier data point is missing. Cyberpunk 2077 shipped on Mac on 2025-07-17 with path tracing and MetalFX upscaling; MetalFX frame interpolation and denoising were promised later (https://www.notebookcheck.net/Cyberpunk-2077-to-be-released-on-Thursday-for-macOS-with-FSR-frame-generation-and-path-tracing.1058826.0.html, secondary). It shows what the M-series GPU can do with Metal ray tracing, which matters for an M5-targeted engine.",
+    "Dynamic GI recommendation (item 2): it needs a radiance source. Lumen Lite feeds its probes from Lumen's traced World Space Radiance Cache. Re-capturing aipocket's probes by six raster views each scales poorly for camera-following cascades. Options worth weighing are SDF or voxel compute tracing, or hardware ray queries on native.",
+    "The baseline omits that aipocket already has half-res hemisphere SSAO (rendering.md:465-480). Item 3 (GTAO with bent normals) upgrades an existing pass; it does not add a new one.",
+    "Web platform items left out: Chrome 153-154 WGSL buffer_view and swizzle_assignment; the gpuweb subgroup-matrix proposal (cooperative-matrix-style ML on the web), texel-buffers and sized-binding-arrays proposals; WebGPU on Linux (Chrome 144) and Linux NVIDIA (147-148); Safari 26 subgroup status (still unverified).",
+    "DirectX: Shader Model 6.10 LinAlg Matrix is the actual successor to cooperative vectors and is in preview (AgilitySDK 1.720/1.721). SER and OMM left preview with SM 6.9 retail (2026-02-26). The report has neither.",
+    "Path tracing context: 007 First Light's path tracing (2026-09-15 update) is RTX 50-only. The Capcom figures are December 2025 measurements, and an RTX 3060 needs 38 ms at 1440p. Shipped 'full path tracing' is a high-end NVIDIA PC tier, not the mainstream.",
+    "Unity 6.7 roadmap also lists Sentis-based Neural Texture Compression (about 40% VRAM reduction claimed; invenglobal, secondary). That bears on the report's 'neural shading is demo-only' framing.",
+    "Feasibility of Nanite-style rendering in the browser: a WebGPU Nanite reimplementation with a software rasterizer exists (Scthe/nanite-webgpu), and its 32-bit-atomic compromises should inform item 6 on the web."
+   ]
+  }
+ },
+ "obj": {
+  "method": "Done on 2026-10-02 on the Apple M5 / 32 GB machine, using the already-built release runtime build/release/bin/pocket_runtime, which I did not rebuild. A background agent_eval run and another agent were active at the same time, so load averages were 5 to 13 on 10 cores and all timings are noisy. Scratch root is /private/tmp/claude-501/-Users-qiulinfan-Desktop-pocketEngine/b7d0fc97-779a-4afb-8145-c566b7e1bb53/scratchpad/render-assessment (called <R> below).\n\nProject setup: I copied samples/hello to <R>/objstress and replaced scripts/main.ts with a sun-only scene. Bundling with `./.pocket/pocket ts <dir>` names the output after project.toml's name, so the first attempt overwrote build/ts/hello.js. I restored it straight away by re-bundling samples/hello, then bundled the scratch project with `--out build/ts/objstress.js`, the name Runtime expects. Nothing in the aipocket working tree changed: git status shows only a pre-existing untracked .codex/.\n\nGenerators in <R>/gen:\n- scan.c: a lumpy displaced sphere written as v + vn with f a//a; 1M, 5M and 12M triangles.\n- machined.py: mm units, Z-up, no vn, welded vertices. A 63x63 drilled plate (64-segment holes) with a square tower and a 48-tooth gear, offset 250,000 mm in x/y; 1.53M triangles. The same script made a 40x40 copy at the origin and one 4,500,000 mm (4.5 km) away.\n- assembly.py: 4800 bolt/pin parts with v/vn, flat caps, 5 usemtl materials and an mtllib; about 1.98M triangles. One file uses o per part, the other g per part.\n- ngons.py: a quad floor, L prisms, stars, a comb and a C written as single f n-gons, all with negative v/vt/vn indices.\n- cube_soff.obj: a welded cube with `s off`.\n\nDriver: measure.py subclasses tools/scripts/dev/runtime.py's Runtime (rpc timeout raised to 900 s) and runs each case in a fresh runtime at 1280x720, headless and paused. The runtime is wrapped in `/usr/bin/time -l` for exact max RSS and peak memory footprint, and `ps -o rss` is also sampled every 100 ms. Sequence per case:\n1. step, then spawn a Camera (priority 100, look_at), then render 2 frames.\n2. Time `world.spawn {Model, Transform, MeshRenderer:{mesh}}` plus the following `step {ticks:1, render:\"each\"}`. That interval is the reported load time.\n3. Render 30 more frames, then read render.stats, capture, and assets.describe.\n4. Turn the model 0.5 degrees per frame for 10 frames so the shadow cascades redraw, then read render.stats and perf again (gpu passes and the CPU render phase).\n5. Take extra capture variants: case 3 upright (pitch -90, scale 0.001) and close-ups.\n\nThe big cases ran 3 times; I report the median and range. Extra checks:\n- split.py times assets.import separately from the spawn.\n- freeze.py sends a `state` RPC during a load.\n- profile_load.py runs /usr/bin/sample on the runtime during the 5M load.\n- fastobj_bench.c is a plain single-threaded mmap reader with corner dedupe, used as a lower bound.\n- Blender 4.5.12 LTS ran headless `bpy.ops.wm.obj_import` once per file as a reference (gen/blender_import.py). It also rendered Workbench pictures of ngons, the machined part and the cube from the same cameras (gen/blender_render.py).\n\nI looked at every capture with Read. A summary sheet is at <R>/captures/obj_import_findings_sheet.png. Per-case JSON is in <R>/logs, and /usr/bin/time and sample outputs are next to it.",
+  "cases": [
+   {
+    "name": "1. scan_1m (smooth scan surface with vn)",
+    "file_mb": 73.7,
+    "load_seconds": 0.96,
+    "peak_rss_mb": 490,
+    "triangles": 1000000,
+    "vertices": 500002,
+    "frame_gpu_ms": 1.6,
+    "frame_cpu_ms": 1.5,
+    "image": "/private/tmp/claude-501/-Users-qiulinfan-Desktop-pocketEngine/b7d0fc97-779a-4afb-8145-c566b7e1bb53/scratchpad/render-assessment/captures/scan_1m.png",
+    "looks_right": "yes",
+    "notes": "Load: 0.93, 0.96 and 1.05 s (median 0.96). Peak memory footprint 717 MB; RSS after load 438 MB. Renders as 1 draw. GPU when static: scene pass 1.6 ms. With the model turning and shadows redrawn: 2.4 to 3.5 ms (shadow 1.0 to 2.4 ms). The file's vn are used and shading is smooth; the ridge at the left is real geometry, checked in captures/scan_1m_zoom.png. Vertex and triangle counts match Blender exactly. Blender's import alone takes 0.54 s; the plain C reader takes 0.11 s."
+   },
+   {
+    "name": "2a. scan_5m (with vn)",
+    "file_mb": 391.7,
+    "load_seconds": 5.24,
+    "peak_rss_mb": 1825,
+    "triangles": 4999696,
+    "vertices": 2499850,
+    "frame_gpu_ms": 4.3,
+    "frame_cpu_ms": 6.1,
+    "image": "/private/tmp/claude-501/-Users-qiulinfan-Desktop-pocketEngine/b7d0fc97-779a-4afb-8145-c566b7e1bb53/scratchpad/render-assessment/captures/scan_5m.png",
+    "looks_right": "yes",
+    "notes": "Load: 5.06, 5.24 and 6.08 s. Peak footprint 2.08 to 2.11 GB; RSS after load stays about 1.6 GB because the CPU copy is kept. GPU static scene pass 3.9 to 4.6 ms; turning 7.5 to 10.4 ms (shadow 4.2 to 6.7 ms). The CPU render phase averages 5.4 to 6.9 ms, which is mostly waiting on the GPU.\n\nThe runtime does not respond during the load: a `state` RPC sent 0.5 s in was answered 4.6 s later. Profile of the main thread: 870 of 1168 samples at import.cpp:225 (the std::map vertex dedupe at lines 207-227), 131 at import.cpp:148 (splitting lines with istringstream), 12 in fill_tangents. The upload plus first frame after parsing costs only about 0.07 s.\n\nWith the existing opt-in `lods:[{screen:4, ratio:0.1}]`, the same view draws 499,950 triangles at 2.5 ms GPU while turning and looks the same (captures/scan_5m_lod.png). The cost is about 1.3 s more load for the simplification. Blender's import takes 3.17 s; the C reader 0.29 s."
+   },
+   {
+    "name": "2b. scan_12m (with vn)",
+    "file_mb": 958.8,
+    "load_seconds": 17.1,
+    "peak_rss_mb": 4225,
+    "triangles": 11999296,
+    "vertices": 5999650,
+    "frame_gpu_ms": 9.1,
+    "frame_cpu_ms": 11.6,
+    "image": "/private/tmp/claude-501/-Users-qiulinfan-Desktop-pocketEngine/b7d0fc97-779a-4afb-8145-c566b7e1bb53/scratchpad/render-assessment/captures/scan_12m.png",
+    "looks_right": "yes",
+    "notes": "Load: 13.5, 17.1 and 26.6 s; the 26.6 s run was under the heaviest machine load. All three finished well inside 10 minutes. Max RSS 3.9 to 4.2 GB; peak footprint 5.3 GB; RSS after load 2.0 to 3.0 GB.\n\nGPU static scene pass 8.0 to 12.2 ms. Turning with shadows redrawn: 15.3 to 18.4 ms (shadow 8.7 to 10.6 ms), which is over the 60 fps budget. It is still one 12M-triangle draw: there is no LOD by default and no culling inside the mesh. The picture is the same as at 1M because the triangles are below pixel size.\n\nThe whole runtime is frozen for the load. Blender's import takes 8.09 s (10.0 s process wall, 5.8 GB footprint); the C reader 1.31 s."
+   },
+   {
+    "name": "3. machined_2m (no vn, welded, Z-up, mm, offset 250,000 mm)",
+    "file_mb": 64.5,
+    "load_seconds": 1.1,
+    "peak_rss_mb": 572,
+    "triangles": 1532938,
+    "vertices": 758534,
+    "frame_gpu_ms": 1.9,
+    "frame_cpu_ms": 0.9,
+    "image": "/private/tmp/claude-501/-Users-qiulinfan-Desktop-pocketEngine/b7d0fc97-779a-4afb-8145-c566b7e1bb53/scratchpad/render-assessment/captures/machined_closeup.png",
+    "looks_right": "no",
+    "notes": "Load: 1.07, 1.10 and 1.19 s; peak footprint about 0.8 GB. assets.describe gives the aabb in raw file units (250000..250630, 0..200).\n\nAs placed with scale 0.001 and the offset subtracted (captures/machined.png), the plate stands up as a wall and the tower points at the camera: the Z-up model is lying on its side. Adding rotation {pitch:-90} with the matching position fixes it (machined_upright.png), so the workaround works, but the agent has to know to apply it.\n\nShading is wrong because the file has no vn, so normals are smoothed per position across 90-degree edges:\n- the square tower renders as a rounded pillar;\n- every drilled hole reads as a raised stud with a gradient ring;\n- the plate's sides get vertical stripes;\n- gear flanks and the gear cap are smeared.\nCompare with Blender's flat import in captures/compare_machined_near.png.\n\nAt a 250 m offset there was no visible jitter or z-fighting once the part was moved back to the origin; float32 has about 0.016 mm steps at that distance. Blender's import takes 0.38 s; the C reader 0.09 s."
+   },
+   {
+    "name": "3b. machined_far (same part type, 4,500,000 mm = 4.5 km offset, 620k tris) vs machined_near (at origin)",
+    "file_mb": 26.3,
+    "load_seconds": 0.48,
+    "peak_rss_mb": 330,
+    "triangles": 620298,
+    "vertices": 306952,
+    "image": "/private/tmp/claude-501/-Users-qiulinfan-Desktop-pocketEngine/b7d0fc97-779a-4afb-8145-c566b7e1bb53/scratchpad/render-assessment/captures/compare_offset.png",
+    "looks_right": "no",
+    "notes": "Both files are the same part, viewed upright from the same close-up camera. At the origin (machined_near.png) the smoothing artifacts above are present but the geometry is intact. At 4.5 km (machined_far.png) the 6 mm holes become stair-stepped polygons with starburst normals. The cause is that coordinates are parsed and stored as float32 (about 0.5 mm steps at 4.5e6), so the precision is lost at parse time and the Transform cannot recover it. This is the typical case for plant, BIM or GIS coordinates."
+   },
+   {
+    "name": "4a. assembly_o (4800 parts, o per part, 5 usemtl, vn)",
+    "file_mb": 133.8,
+    "load_seconds": 1.98,
+    "peak_rss_mb": 994,
+    "triangles": 1984072,
+    "vertices": 1334364,
+    "frame_gpu_ms": 5.9,
+    "frame_cpu_ms": 6.2,
+    "image": "/private/tmp/claude-501/-Users-qiulinfan-Desktop-pocketEngine/b7d0fc97-779a-4afb-8145-c566b7e1bb53/scratchpad/render-assessment/captures/assembly_o_closeup.png",
+    "looks_right": "yes",
+    "notes": "Load: 1.92, 1.98 and 2.05 s; peak footprint about 1.25 GB. The file becomes 4800 nodes and 4800 submeshes, which draw as 4800 draw calls and 4800 instances; shadow redraws add 14,400 draws. GPU 5.9 ms static and 7.9 ms turning; CPU render phase 6.2 ms.\n\nThere is no culling per part. With the camera inside the assembly looking at one corner (assembly_o_inside), the renderer still draws 4800 parts and 1,984,072 triangles with out_of_view 0.\n\nMaterials from the MTL file (Kd, and Ns as roughness) and the flat-cap/smooth-side normals render correctly. The scene has no sky or ambient, so shadows are black. Blender's import takes 1.26 s and makes 4800 objects; the C reader 0.14 s."
+   },
+   {
+    "name": "4b. assembly_g (same geometry, g per part, no o)",
+    "file_mb": 133.8,
+    "load_seconds": 1.85,
+    "peak_rss_mb": 985,
+    "triangles": 1984072,
+    "vertices": 1334364,
+    "frame_gpu_ms": 2.4,
+    "frame_cpu_ms": 3.4,
+    "image": "/private/tmp/claude-501/-Users-qiulinfan-Desktop-pocketEngine/b7d0fc97-779a-4afb-8145-c566b7e1bb53/scratchpad/render-assessment/captures/assembly_g.png",
+    "looks_right": "yes (pixels), but the part structure is lost",
+    "notes": "Load: 1.72, 1.85 and 2.37 s. A g line only creates a node when there is none yet (import.cpp:171-172), so all 4800 parts collapse into 1 node and 5 submeshes, one per material; assets.describe lists 1 part. That cuts drawing to 5 draws (15 shadow draws), GPU 2.4 ms static and 5.8 ms turning, CPU 3.4 ms. The cost is that individual parts can no longer be instantiated, picked or moved.\n\nMany exporters write g for parts (3ds Max, SketchUp and others; unverified per exporter). Blender's import takes 1.09 s and makes 1 object."
+   },
+   {
+    "name": "5. ngons (quads, concave n-gons, negative v/vt/vn indices)",
+    "file_mb": 0.014,
+    "load_seconds": 0.003,
+    "peak_rss_mb": 115,
+    "triangles": 320,
+    "vertices": 399,
+    "frame_gpu_ms": 0.45,
+    "frame_cpu_ms": 0.4,
+    "image": "/private/tmp/claude-501/-Users-qiulinfan-Desktop-pocketEngine/b7d0fc97-779a-4afb-8145-c566b7e1bb53/scratchpad/render-assessment/captures/compare_ngons.png",
+    "looks_right": "no",
+    "notes": "Negative indices for v, vt and vn are read correctly: the floor and all prisms are in the right places with the right normals. Quads are correct.\n\nConcave n-gons are fanned from their first corner (import.cpp:194), so the result depends on where the exporter starts the polygon. 4 of the 8 test polygons come out wrong:\n- the L that starts at its tip has its notch filled in;\n- the star that starts at an outer tip is malformed;\n- the comb's gaps are filled;\n- the 18-corner C becomes a solid disc.\nThe L starting at a corner, the L starting at the reflex corner and the star starting at an inner vertex come out right only by luck. Blender renders all 8 correctly (blender_ngons.png)."
+   },
+   {
+    "name": "extra: cube_soff (welded cube with `s off`)",
+    "file_mb": 0.0004,
+    "load_seconds": 0.002,
+    "triangles": 12,
+    "vertices": 8,
+    "image": "/private/tmp/claude-501/-Users-qiulinfan-Desktop-pocketEngine/b7d0fc97-779a-4afb-8145-c566b7e1bb53/scratchpad/render-assessment/captures/compare_cube_soff.png",
+    "looks_right": "no",
+    "notes": "The `s` smoothing-group lines are ignored; the parser has no branch for them in import.cpp:151-195. The cube is smoothed into a shaded blob, while Blender imports it flat."
+   }
+  ],
+  "reference_timings": [
+   "Blender 4.5.12 LTS, headless bpy.ops.wm.obj_import, measured here on 2026-10-02, one run each. Columns: import call / process wall / max RSS / peak footprint.",
+   "scan_1m: 0.54 s / 1.07 s / 662 MB / 571 MB",
+   "scan_5m: 3.17 s / 4.20 s / 2141 MB / 2524 MB",
+   "scan_12m: 8.09 s / 10.04 s / 4949 MB / 5800 MB",
+   "machined_2m: 0.38 s / 0.96 s / 724 MB / 633 MB",
+   "assembly_o: 1.26 s / 1.97 s / 928 MB / 649 MB (4800 objects)",
+   "assembly_g: 1.09 s / 1.74 s / 1203 MB / 1112 MB (1 object)",
+   "ngons: 0.002 s, all 8 concave polygons correct",
+   "Blender's vertex and triangle counts match aipocket's exactly for every file.",
+   "aipocket, spawn to first frame, median of 3 (range): scan_1m 0.96 s (0.93-1.05); scan_5m 5.24 s (5.06-6.08); scan_12m 17.1 s (13.5-26.6); machined_2m 1.10 s; assembly_o 1.98 s; assembly_g 1.85 s. That is about 1.6-1.8x Blender's import call at 1M-5M and 1.7-3.3x at 12M.",
+   "Lower bound: a plain single-threaded C reader in this scratch dir (gen/fastobj_bench.c: mmap, hand-rolled number parsing, fan triangulation, open-addressing (v,vt,vn) dedupe, 64-byte vertices; no materials, groups or GPU). scan_1m 0.11 s, scan_5m 0.29 s, scan_12m 1.31 s, machined 0.09 s, assembly 0.14 s, with the same unique vertex counts as aipocket. That is 9-19x faster than aipocket's whole load.",
+   "Note: `assets.import` on the same files took 1.8 s (1M), 10.2 s (5M) and 20.5 s (12M), longer than the spawn path. I did not investigate why."
+  ],
+  "issues": [
+   {
+    "issue": "Concave polygons are triangulated wrong. Faces with more than three corners are always fanned from the first corner, so a concave n-gon comes out right or wrong depending only on which corner the exporter wrote first.",
+    "severity": "high",
+    "evidence": "import.cpp:194, documented as intended in docs/design/assets.md:174-175 ('faces with more than three corners are fanned'). In case 5, 4 of 8 concave faces render wrong (L from tip, star from outer tip, comb, C sign); Blender renders all 8 correctly. See captures/compare_ngons.png.",
+    "fix": "Fan only when the polygon is convex; checking that is cheap. Otherwise project the polygon onto the plane of its Newell normal and ear-clip it. That is about 80 lines, or use mapbox earcut.hpp, header-only (URL not checked in this run). Add the case-5 file to assets_tests [obj]."
+   },
+   {
+    "issue": "Files without vn are smoothed per position with no crease angle, and `s off` / smoothing groups are ignored. CAD and STL-converted parts with welded vertices therefore render as blobs: boxes look rounded, holes look like studs, sharp edges are smeared.",
+    "severity": "high",
+    "evidence": "The area-weighted smoothing is at import.cpp:198-206 and is used at line 220. The key dispatch at import.cpp:151-195 has no `s` branch. Shown in captures/compare_machined_near.png (Blender flat on the right), machined_closeup.png (the square tower looks like a cylinder) and compare_cube_soff.png. Faceted parts with vn render correctly (assembly caps).",
+    "fix": "Without vn, compute crease-angle normals: accumulate per face, then give a vertex a separate copy for each fan of faces whose normals are within a threshold, about 30-45 degrees (Blender's default auto-smooth is 30). Treat `s off` / `s 0` as flat and `s N` groups as smoothing groups. Expose the angle as an import option and report it in assets.describe."
+   },
+   {
+    "issue": "Coordinates are parsed and stored as float32, so models far from the origin, such as plant, BIM or GIS coordinates, lose precision at load time. A Transform cannot recover it.",
+    "severity": "high for CAD/BIM; none below a few hundred metres",
+    "evidence": "to_float uses strtof (import.cpp:46-50) for v (import.cpp:152), and MeshVertex.position is a float Vec3 (engine/assets/include/pocket/assets/assets.hpp:24). At a 250 m offset there were no visible artifacts. At 4.5 km the 6 mm holes become stair-stepped with noisy normals (captures/compare_offset.png).",
+    "fix": "Parse v as double. Compute the bounds in double and subtract a double origin (the bounds centre, or a user pivot) before converting to float. Keep that origin as the node's rest translation, or a new Mesh.origin reported by assets.describe, so that world.instantiate and agents can place the part back. Optionally add an import option to keep or drop the offset."
+   },
+   {
+    "issue": "Loading is slow and blocks the main thread. Tokenizing every line with istringstream and deduplicating corners with std::map dominate the time, and the whole runtime (simulation, rendering, RPC) freezes until the parse finishes.",
+    "severity": "high for 5M+ triangles, medium below that",
+    "evidence": "Load times: 0.96 s for 1M, 5.2 s for 5M and 13.5-26.6 s for 12M, against 0.11 / 0.29 / 1.31 s for a plain C reader and 0.54 / 3.17 / 8.09 s for Blender. In the sample profile of the 5M load, 870 of 1168 main-thread samples are at import.cpp:225 (the std::map<std::array<int,3>> at 207-227) and 131 at :148 (split_ws/istringstream, lines 38-44). The text is copied 2-3 times: fs::read_text goes through ostringstream (engine/core/src/fs.cpp:8-14), then parse_obj builds an istringstream (import.cpp:142).\n\nThe load is triggered synchronously from world bounds derivation (engine/world/src/world.cpp:1446-1449, through session.cpp:821) into AssetStore::mesh (assets.cpp:2076-2158). A `state` RPC sent during a 5 s load waited 4.6 s.",
+    "fix": "Rewrite the reader as a single pass over a mmap or string_view: no per-line strings, std::from_chars or fast_float for numbers, and a hash map or flat array for dedupe. When every corner has v==n and no vt, use the position index directly. Group by (node, material) with vectors, not std::map. Then move the import to a worker thread. The world gets placeholder bounds and the renderer draws nothing (or a bounding box) until the mesh is ready, and the RPC answers with a 'loading' state. Parsing chunks in parallel, like Blender's importer, is optional later."
+   },
+   {
+    "issue": "There are no unit or up-axis import options for OBJ. Z-up millimetre models arrive lying on their side and 1000x too big. The Blender-converted formats are turned Y-up, so the engine behaves inconsistently between formats.",
+    "severity": "medium",
+    "evidence": "parse_obj applies no axis or unit conversion. The Blender path exports with export_yup=True (import.cpp:536), as the doc says ('Blender's Z-up scenes arrive Y-up', docs/design/assets.md:197). Case 3 renders as a wall (captures/machined.png) until it is given Transform {pitch:-90, scale 0.001, matching position}, after which it is correct (machined_upright.png).",
+    "fix": "Add per-asset import settings, for example an [assets.import.\"assets/x.obj\"] table in project.toml or assets.import {up:\"z\", unit:\"mm\", recenter:true}. Bake them into the mesh, and have assets.describe report the size in metres and suggest an up axis when the bounds look Z-up."
+   },
+   {
+    "issue": "Large assemblies draw one draw call per part, there is no culling per part, and parts written with g only are silently merged.",
+    "severity": "medium",
+    "evidence": "Every (o, material) pair becomes its own submesh (import.cpp:116, 188-194, 207-232), and the renderer pushes one draw per submesh (renderer.cpp:11977-12000). Culling uses the whole entity's Bounds, not each part's (renderer.cpp:11877-11880). Measured: 4800 draws, plus 14,400 shadow draws on redraw, about 6 ms CPU. With the camera inside the assembly it still draws 4800 parts and 1.98M triangles with out_of_view 0. With g only, import.cpp:171-172 collapses everything to 1 node / 5 submeshes, so parts cannot be picked or instantiated.",
+    "fix": "(a) Store bounds per submesh and cull each draw against them. (b) Batch static parts that share a material into one draw, with a part id per vertex or a meshlet-to-part table, so picking and world.instantiate still work. (c) When a file has no `o` lines, treat `g` as parts."
+   },
+   {
+    "issue": "Huge meshes get no automatic LOD and no cluster or meshlet culling, so a 12M-triangle model is one draw that costs the full GPU time whatever is on screen.",
+    "severity": "medium",
+    "evidence": "Without MeshRenderer.lods there are no LOD levels (renderer.cpp:11763-11764; docs/design/rendering.md:636-652). scan_12m costs 15-18 ms GPU when the shadow cascades redraw (shadow 8.7-10.6 ms). With the existing opt-in lods ratio 0.1, scan_5m drops to 0.5M triangles and 2.5 ms (from 7.5-10.4 ms) with no visible difference, at about 1.3 s extra simplify time.",
+    "fix": "Short term: when an imported mesh is over about 1M triangles, add simplified levels automatically, or have assets.describe or world.lint suggest `lods`. Long term: build meshlets at import with the meshoptimizer already vendored (third_party/meshoptimizer 1.3: meshopt_buildMeshlets at meshoptimizer.h:731, meshopt_computeMeshletBounds at :822) and cull clusters by frustum and normal cone, using indirect draws or a compute pass."
+   },
+   {
+    "issue": "Parsed OBJ meshes are not cached, so every runtime start, reload or pack re-parses the text file.",
+    "severity": "medium-low",
+    "evidence": "Every load goes back to parse_obj (assets.cpp:2107-2112). The Blender formats are already cached as .imported/<path>.glb, keyed by size and content hash (import.cpp:555-574, docs/design/assets.md:186-193).",
+    "fix": "Write the parsed mesh to .imported/<path>.glb (or an engine binary) under the same stamp scheme, and read that when the stamp matches. A packed game then ships the binary and never parses the OBJ. A 12M mesh as binary is about 0.5 GB and loads in well under a second."
+   },
+   {
+    "issue": "Peak memory is about 5.5x the file size, and the full CPU copy of the mesh stays resident after upload.",
+    "severity": "low (about the same as Blender)",
+    "evidence": "Peak footprint was 2.1 GB for 392 MB of text and 5.3 GB for 959 MB; Blender used 2.5 GB and 5.8 GB. RSS after load stays at 1.6 GB (5M) and 2.0-3.0 GB (12M). CPU vertices are 64 B (assets.hpp:23-29) and GPU vertices 40 B (engine/renderer/include/pocket/renderer/primitives.hpp:12-18). During the parse, corners take 36 B per triangle per group, plus the std::map nodes.",
+    "fix": "This mostly comes for free with the streaming parser and the binary cache. In addition, release the CPU copy of render-only meshes after upload, keeping the positions and indices if mesh colliders or LOD need them, and quantize GPU normals and tangents to save memory."
+   }
+  ],
+  "verdict": "Only partly. Every file loaded, the counts match Blender exactly, negative indices and quads are handled correctly, and smooth scans with vn look right up to 12M triangles. 1-5M triangles render at interactive speed. But typical industrial and CAD exports are not handled well:\n- Faceted parts without vn, or with `s off`, are smoothed into blobs.\n- Concave n-gons are fanned into wrong shapes.\n- Z-up millimetre files arrive lying on their side with no import option.\n- Plant or GIS-scale coordinates lose precision at parse because they are read as float32.\n- A 5M / 12M-triangle OBJ freezes the whole runtime for about 5 s / 14-27 s. That is roughly 2-3x Blender's import time and 10-20x a plain C reader, mostly because of std::map and istringstream.\n- Assemblies draw one draw call per part with no culling per part.\nThe highest-value fixes are crease-angle normals with `s` handling, ear-clipping for n-gons, a fast parser on a worker thread with a binary cache, a double-precision recenter, up-axis/unit options, and meshlet or per-part culling. The other fixes are listed in issues. All scratch files, about 1.7 GB of generated OBJs (safe to delete), captures and logs are under <R>; the summary picture is captures/obj_import_findings_sheet.png. All runtime processes were quit."
+ }
+}

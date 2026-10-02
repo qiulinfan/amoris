@@ -191,12 +191,15 @@ scanner or file watcher in v0. Content hashes decide staleness; timestamps are a
 
 ### 4.8 Bootstrapping a fresh machine
 
-1. Install rustup (developers only, once) or download a released `pocket` binary.
-2. `cargo install --path tools/pocket`, or use the binary.
-3. `pocket setup` fetches toolchain pieces and prebuilt dependencies.
-4. `pocket build && pocket test`.
+1. Install rustup (`rust-toolchain.toml` pins the compiler), CMake and Ninja (the foreign dependency
+   builds need them).
+2. `./scripts/bootstrap.sh`: builds `tools/pocket`, installs it as `.pocket/pocket`, runs
+   `pocket setup` (toolchain pieces and dependencies) and `pocket doctor`.
+3. `pocket build && pocket test`.
 
-Developers never need CMake, Node, Python or .NET to build and run the engine.
+Python 3 runs the tool scripts, the evidence and `pocket pack --web` (font subsetting); Node runs
+`tools/scripts/wasm_core_tests.py`. `docs/development.md` (Setting up a machine) has the whole list
+per target and the versions known to work.
 
 ### 4.9 Linux
 

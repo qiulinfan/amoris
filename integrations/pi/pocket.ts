@@ -1,6 +1,6 @@
 // Pocket for pi (and pi-compatible agents such as oh-my-pi): tools that drive a running Pocket
 // runtime through its control server, for agents without MCP. Load it with
-//   pi -e integrations/pi/pocket.ts
+//   pi -e /absolute/path/to/integrations/pi/pocket.ts      (absolute: a relative path that fails to load fails silently)
 // or copy it into ~/.pi/agent/extensions/. The runtime is $POCKET_RPC_URL, or the url given to
 // /pocket-attach; start one with `pocket run <project> -- --serve 4711 --paused` or `pocket editor <project> -- --serve 4711`.
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";

@@ -135,7 +135,7 @@ The runtime logs (JSONL on stderr natively) arrive in the console; the `state`, 
 | Scripts | JavaScriptCore host (`jsc_host.cpp`) | `web_host.cpp`: bindings are `__pocket.<name>` functions calling the exported `pocket_native`, shared typed arrays are views over the wasm heap, the bundle is evaluated with an indirect `eval` (a `//# sourceURL` keeps stack traces readable) |
 | Control server | cpp-httplib on `--serve` | none: the page is the control surface (`server_web.cpp` refuses `--serve`) |
 | Sleeping/pacing | `std::this_thread::sleep_for` between paused frames | none: the browser paces |
-| Exceptions | on | `-fno-exceptions` (the engine never catches; JSON errors abort as they would natively) |
+| Exceptions | on | `-fno-exceptions`: a `try`/`catch` in the engine sits inside `#if defined(__cpp_exceptions)` (natively `Session::command` turns a JSON type error into `bad_args`; on the web it aborts) |
 | Files | the project directory | the preloaded virtual file system (read-only in effect) |
 | Saves | the OS user data directory | `/saves/<project>` on an IDBFS mount (IndexedDB): loaded before the session starts, written back after every `save.write` and `save.delete`, so slots survive reloads; `--save-dir` is ignored |
 | Networking | TCP or WebSocket to the host, either role (`--net-host`, `--net-join`) | a WebSocket to a native host through Emscripten's WebSocket API, joining only: the page's `?join=ws://HOST:PORT` passes `--net-join` (`docs/design/networking.md`, Browsers) |
@@ -211,5 +211,6 @@ take 35% and 18% longer, so the smaller size was not worth the slower simulation
 - Audio starts after the first user gesture, as browsers require; SDL handles the resume.
 - A hidden tab gets no animation frames, so the runtime pauses with it (the simulation clock stops;
   nothing is lost).
-- The CI job `web` (Ubuntu, Emscripten from a cached emsdk) packs `hello` for the web to keep the
-  port compiling; running it in a headless browser is not automated.
+- Nothing builds the web configurations automatically (`pocket test` does not, and GitHub Actions is
+  off): after a change to engine C++ or a shader, build `--config wasm` and pack and load a sample
+  (`docs/development.md`, Web); `tools/scripts/web_offline.py` drives a pack in headless Chrome.

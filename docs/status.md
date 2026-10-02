@@ -1,4 +1,4 @@
-# Status (2026-09-18)
+# Status (2026-10-02)
 
 What exists on the `master` branch, how to verify it, and what is next. Everything listed builds and
 passes `pocket test` on macOS (Apple silicon) in the sanitized debug configuration.
@@ -45,7 +45,7 @@ passes `pocket test` on macOS (Apple silicon) in the sanitized debug configurati
 | Hot reload: `pocket run <project> --watch` and `pocket editor <project> --watch` rebundle on source changes and call `project.reload` over the control server (which reads `project.toml`'s live settings again: input map, audio, render, physics, sprite clips); a bundle error keeps the previous scripts | `tools/pocket/src/watch.rs`, `project.reload` in `engine/app` | manual session in `tests/evidence/editor/watch.txt`, `runtime_tests` (`[reload][settings]`) |
 | Editor: `pocket editor <project>`; a TSX program in its own script context with toolbar (play/pause/step/stop, save, spawn, delete), hierarchy, scene pane (pick, orbit, zoom), schema-driven inspector, console/events/transcript; operable headless by agents | `editor/`, `docs/editor.md` | `runtime_tests` (`[editor]`), `tests/evidence/editor/` |
 | Audio: WAV clips via SDL, tick-driven voices (deterministic positions, loop/finish events), software mixer into an SDL3 stream, `AudioSource` component with autoplay, `audio.*` commands and SDK | `engine/audio`, `docs/design/audio.md` | `audio_tests` |
-| Packaging: `pocket pack <project> [--zip]` builds a self-contained folder (runtime, bundle, config, scene, assets, font, launcher) that runs and serves agents without the repository | `tools/pocket/src/pack.rs`, `docs/packaging.md` | CI packs `assets` and runs it headless |
+| Packaging: `pocket pack <project> [--zip]` builds a self-contained folder (runtime, bundle, config, scene, assets, font, launcher) that runs and serves agents without the repository | `tools/pocket/src/pack.rs`, `docs/packaging.md` | `pocket pack assets --zip`, then the packed runtime headless |
 | Samples: hello (bouncing ball), playground (scene, enemies, causal hits), physics (ramp, arena, trigger goal, pendulum chain, snapping rope, capsule log), ui (HUD, buttons, pause menu in TSX), assets (glTF crate and pyramid, checker texture, a plate with normal, metallic-roughness and emissive maps, a gold orb, a missing asset), audio (looping hum, beeps, landing clicks), crates (2D rigid bodies: a pyramid of crates a wrecking ball on a rope knocks down, a seesaw on a limited hinge, a car on sprung, motored wheels; a rich-text HUD) | `samples/` | headless runs in evidence; `pocket scenario crates` |
 | 2D slopes, steps and platforms: `slope` tiles are floors rising across the cell (`on_slope`), a grounded body climbs and descends `step` without a hop, kinematic `Body2D` platforms (solid or `one_way`) block, carry (`riding`) and move by their velocity; the sprites level gets a hill and a lift | `engine/physics/src/tiles.cpp`, `docs/design/tilemaps.md` | `runtime_tests` (`[platforms]`), `tests/ts/tilemap.test.ts`, sprites scenarios 8 and 9 |
 | Navigation obstacles and agents: `NavObstacle` blocks the cells under a moving thing every tick without a rebake; `NavAgent` walks an entity to a goal or after a target along replanned paths, avoiding the other agents and the obstacles (sampled velocities, one second ahead), with `nav.arrived`/`nav.stuck` events and `nav.agents`; the playground's enemies are agents and its cart an obstacle | `engine/nav`, `docs/design/navigation.md` | `nav_tests` (`[obstacles]`, `[agents]`), `runtime_tests` (`[nav]`), playground scenarios |
@@ -296,12 +296,21 @@ practice.
   (WebKitGTK's, which keeps the same C API, since 2026-10-01); V8 stays the plan for Windows.
 - Ninja as a subprocess instead of embedded n2.
 - Physics is a new implementation, not a port of the aipocket reference branch.
-- CI runs on GitHub (macOS job green through the HarfBuzz commit); from the shadow-map commit on,
-  GitHub declines to start jobs on this account until its spending limit is raised, so later runs
-  are unverified there. The `web` job (Ubuntu + Emscripten) was added while that block was in place
-  and has not run yet.
+- Verification is local: CI ran on GitHub (the macOS job green through the HarfBuzz commit) until
+  the account's spending limit stopped its jobs, and the owner turned GitHub Actions off on
+  2026-10-01; `.github/workflows/ci.yml` stays as the list of what a full verification covers
+  (`docs/development.md`).
 
 ## Next
+
+Known problems and the next rendering and import work are in
+`docs/research/2026-10-02-rendering-and-import-assessment.md`: where the renderer stands against
+three.js r186 and Unreal Engine 5.8, what its images get wrong (the ocean's dark dashes toward the
+horizon, no specular anti-aliasing, blocky probes, the sky's below-horizon band), and how high-poly
+OBJ files from industrial software import (faceted parts without normals smoothed into blobs,
+concave polygons fanned wrongly, no unit or up-axis options, float32 coordinates far from the
+origin, a parse that freezes the runtime for seconds, one draw per assembly part), with the ranked
+plan and `tools/scripts/dev/objstress/` to measure each fix.
 
 The working plan is `docs/research/2026-10-01-next-phase.md`: for agents, a step that watches values
 and answers only the keys asked for, the SDK's API as a generated index, a world diff since a mark,
