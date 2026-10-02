@@ -1216,9 +1216,9 @@ export interface Scatter {
     max_height: number;
     /** No copy where the terrain `on` names is painted over more than this (terrain.paint's coverage, 0..1, in a colour or with its textured layers): 0.3 keeps a painted path clear of bushes; 1 places them on paint too. */
     max_paint: number;
-    /** Above 0, every copy is a static collider: an upright capsule of this radius standing on the copy's foot, `collide_height` tall; trees that stop the player and the bodies, rays and navigation see. The radius is in the entity's own units, so the entity's Transform scale x multiplies it, and so does each copy's size: on an entity scaled 0.1 across, `collide` 1 is 0.1 in the world. 0: the copies are only drawn. */
+    /** Above 0, every copy is a static collider: an upright capsule of this radius standing on the copy's foot, `collide_height` tall; trees that stop the player and the bodies, rays and navigation see. The radius is in world units, as a Collider's size is, times each copy's own size (not the entity's Transform scale): `collide` 0.1 is 0.1 in the world on reeds scaled 0.1 across. 0: the copies are only drawn. */
     collide: number;
-    /** The height of each copy's capsule when `collide` is above 0 (times the copy's size; at least its width). */
+    /** The height of each copy's capsule when `collide` is above 0, in world units (times the copy's own size, not the entity's scale; at least its width). */
     collide_height: number;
     /** How far the top of a copy leans in the wind, in world units at the entity's size (times each copy's size); the lean grows with the height above the copy's foot, and gusts run across the field. Drawn only (shadows too); 0 keeps them still. */
     sway: number;

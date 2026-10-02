@@ -8281,10 +8281,21 @@ Result<Json> Session::run_command(std::string_view name, const Json& params, std
         const auto* copies = world_->derived_instances(id);
         const std::size_t limit = static_cast<std::size_t>(std::clamp(opt<int>(p, "limit", 100), 0, 20000));
         Json arr = Json::array();
+        // With collide on, each copy's capsule as the physics has it (world units: collide and
+        // collide_height times the copy's own size), so what the scene asked for can be checked.
+        const world::Scatter& sc = *world_->ecs().entity(id).try_get<world::Scatter>();
+        const auto* own = world_->try_get<world::WorldTransform>(id);
+        const float own_x = own ? std::max(std::fabs(own->scale.x), 1e-6f) : 1.0f, own_y = own ? std::max(std::fabs(own->scale.y), 1e-6f) : 1.0f;
         if (copies) {
             for (std::size_t k = 0; k < copies->size() && k < limit; ++k) {
                 const Mat4& m = (*copies)[k].model;
-                arr.push_back(Json{{"x", m.at(3, 0)}, {"y", m.at(3, 1)}, {"z", m.at(3, 2)}, {"size", length(Vec3{m.at(1, 0), m.at(1, 1), m.at(1, 2)})}, {"shade", (*copies)[k].shade}});
+                Json c{{"x", m.at(3, 0)}, {"y", m.at(3, 1)}, {"z", m.at(3, 2)}, {"size", length(Vec3{m.at(1, 0), m.at(1, 1), m.at(1, 2)})}, {"shade", (*copies)[k].shade}};
+                if (sc.collide > 0) {
+                    const float r = std::max(sc.collide * length(Vec3{m.at(0, 0), m.at(0, 1), m.at(0, 2)}) / own_x, 0.01f);
+                    c["radius"] = r;
+                    c["height"] = std::max(sc.collide_height * length(Vec3{m.at(1, 0), m.at(1, 1), m.at(1, 2)}) / own_y, 2 * r);
+                }
+                arr.push_back(std::move(c));
             }
         }
         return Json{{"entity", id}, {"placed", copies ? copies->size() : 0}, {"copies", std::move(arr)}};

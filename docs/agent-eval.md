@@ -102,8 +102,8 @@ afterwards.
 
 ### Whole games
 
-Ten tasks start from a blank project (`pocket new` without a sample, outside the repository) and a
-brief of a few sentences, and ask for a small game: `dodge` (a player moved by two actions at 6
+Eleven tasks start from a blank project (`pocket new` without a sample, outside the repository) and
+a brief of a few sentences, and ask for a small game: `dodge` (a player moved by two actions at 6
 units a second, a rock a second falling at 4, a hit ending the game with `game.over`, `alive` and
 `time_alive` exposed), `key_door` (a door the player cannot pass going right until it takes a key,
 `key.taken` and `level.complete`, `has_key` exposed), `snake` (a grid, growing on food, never
@@ -121,21 +121,23 @@ agent finds them) and `fireworks` (rockets with trails that rise and burst into 
 glowing sparks, several up at once) and `glade` (a ground textured with grass, four trees, three
 rocks and a campfire with a warm light, glowing flames and smoke, a sound and sparks on a key, all
 without a single image, model or sound file in the project: the brief names none of the engine's
-patterns, props, presets or `sfx:` clips, so the agent finds them). The brief is a contract: the
-names of the entities, the actions and their keys, the events with their data, the exposed values,
-and that the game reads positions from the Transforms every tick, so the check can move things with
-`world.set`. The check is hidden in the harness and plays the game: it holds `move_x` for a second
-and measures the move, counts the rocks and times one's fall, puts a rock on the player and waits
-for `game.over`, then holds the actions again and expects nothing to move; for the door it starts
-the player between the key and the door and walks it into the door, puts it on the key, and walks it
-to the exit; the menu it clicks through by the buttons' names (`ui.click {id: "start"}`), holding
-`move_x` on each screen and reading `time`; the breakout it plays by setting the ball's place and
-velocity: up into a brick, into a wall, onto the paddle, past it, into the last brick left, and,
-after `project.reload`, past the paddle three times; the platformer it reads back as solid rows
-(`tilemap.rows`), walks, follows through a jump with `step {watch}`, drops into the pit and walks
-onto the flag; the puzzle it plays by presses only (the game may keep its own grid), into a wall,
-into two boxes, a move and its undo, a push into a wall, and the four moves that solve it. None of
-it is in the brief beyond the contract.
+patterns, props, presets or `sfx:` clips, so the agent finds them) and `wolves` (two wolves that
+each run at whichever of four sheep is nearest at the time and catch one within a unit, a
+`sheep.caught` event naming the wolf; the check moves a sheep behind a wolf to see it turn). The
+brief is a contract: the names of the entities, the actions and their keys, the events with their
+data, the exposed values, and that the game reads positions from the Transforms every tick, so the
+check can move things with `world.set`. The check is hidden in the harness and plays the game: it
+holds `move_x` for a second and measures the move, counts the rocks and times one's fall, puts a
+rock on the player and waits for `game.over`, then holds the actions again and expects nothing to
+move; for the door it starts the player between the key and the door and walks it into the door,
+puts it on the key, and walks it to the exit; the menu it clicks through by the buttons' names
+(`ui.click {id: "start"}`), holding `move_x` on each screen and reading `time`; the breakout it
+plays by setting the ball's place and velocity: up into a brick, into a wall, onto the paddle, past
+it, into the last brick left, and, after `project.reload`, past the paddle three times; the
+platformer it reads back as solid rows (`tilemap.rows`), walks, follows through a jump with
+`step {watch}`, drops into the pit and walks onto the flag; the puzzle it plays by presses only (the
+game may keep its own grid), into a wall, into two boxes, a move and its undo, a push into a wall,
+and the four moves that solve it. None of it is in the brief beyond the contract.
 
 ### Diagnose and fix
 

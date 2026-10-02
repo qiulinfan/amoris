@@ -116,6 +116,22 @@ TEST_CASE("sprite clips advance frames, loop, finish and write uv", "[world][spr
     REQUIRE(World::SpriteClip::from_json(Json{{"columns", 2}, {"frames", {0, 5}}}).has_value() == false);
 }
 
+TEST_CASE("tree text shows a run of alike siblings as two and a line, and lists of records by their names", "[world][tree]") {
+    World w;
+    for (int i = 0; i < 7; ++i) w.spawn("Rock" + std::to_string(i), 0, Json{{"Transform", {{"position", {{"x", i}, {"y", 0}, {"z", 0}}}}}});
+    w.spawn("Rock7", 0, Json{{"Transform", Json::object()}, {"Health", Json::object()}});   // not alike: other components
+    w.spawn("Guard", 0, Json{{"Behavior", {{"states", Json::array({Json{{"name", "patrol"}}, Json{{"name", "chase"}}})}}}});
+    w.tick(1.0 / 60.0);
+    const std::string t = w.tree(TreeOptions{});
+    INFO(t);
+    REQUIRE(t.find("- Rock0 #") != std::string::npos);
+    REQUIRE(t.find("- Rock1 #") != std::string::npos);
+    REQUIRE(t.find("- Rock2 .. Rock6 (+5 more like Rock0)") != std::string::npos);
+    REQUIRE(t.find("- Rock3 #") == std::string::npos);
+    REQUIRE(t.find("- Rock7 #") != std::string::npos);
+    REQUIRE(t.find("states=[2: patrol, chase]") != std::string::npos);
+}
+
 TEST_CASE("tree text, queries and hashing are deterministic", "[world]") {
     auto build = [](World& w) {
         auto level = w.spawn("Level", 0, Json{{"Transform", Json::object()}}).value();

@@ -35,8 +35,13 @@ components start from the metadata defaults. Vectors accept `{x,y,z}` objects or
 - `world.tree({ root, depth, max_entities, values, components })` returns text, one line per entity:
   name, id, and for each component only the fields that differ from the defaults (Transform always
   shows position). Depth limits collapse subtrees into `(N children)`; the entity budget collapses
-  siblings into `(+N more)`. This is the "hierarchy tree as first-class perception" from the design
-  document.
+  siblings into `(+N more)`. Five or more siblings in a row that are alike (the same components and
+  as many children, names differing only in a trailing number) show the first two and a line for the
+  rest, `- Tree2 .. Tree44 (+43 more like Tree0)`, which `world.query {name: "Tree*"}` reads in
+  full; a list field shows its records by their names (`layers=[4: grass, sand, rock, dirt]`) or by
+  their count, and a list of numbers or words its first eight. The hills' tree, 12,282 characters
+  before, is 3,204 with them. This is the "hierarchy tree as first-class perception" from the design
+  document. `world_tests` (`[tree]`).
 - `world.describe(e)` returns everything about one entity as JSON.
 - `world.query({ with, without, name, under, where, fields, limit })` returns rows with the
   requested component values. `where` keeps the entities whose fields meet conditions, all of them:

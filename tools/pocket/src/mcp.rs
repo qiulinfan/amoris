@@ -182,6 +182,32 @@ impl<'a> McpServer<'a> {
         Self::text_result(serde_json::to_value(&rep).unwrap_or(json!({})), !ok)
     }
 
+    /// A scenario or bench report for an agent's context: the summary says each scenario's passes,
+    /// ticks, reports and failures, so a passing run keeps only its seed and ticks, and a failing one
+    /// its step, error and exposed state (without the runner's own `__scenario` keys). A full run's
+    /// JSON was twenty thousand tokens; `pocket scenario --json` still gives all of it.
+    fn compact_runs(mut rep: Report) -> Report {
+        if let Some(results) = rep.data.get_mut("results").and_then(|r| r.as_array_mut()) {
+            for r in results {
+                let Some(runs) = r.get_mut("runs").and_then(|v| v.as_array_mut()) else { continue };
+                for run in runs.iter_mut() {
+                    let ok = run.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+                    let Some(o) = run.as_object_mut() else { continue };
+                    if ok {
+                        o.retain(|k, _| k == "seed" || k == "ticks" || k == "ok");
+                    } else {
+                        o.remove("bots");
+                        o.remove("elapsed_ms");
+                        if let Some(state) = o.get_mut("state").and_then(|s| s.as_object_mut()) {
+                            state.retain(|k, _| !k.starts_with("__"));
+                        }
+                    }
+                }
+            }
+        }
+        rep
+    }
+
     fn rpc(&mut self, method: &str, params: Value) -> Result<Value> {
         if self.session.is_none() {
             // A runtime someone else started and named in the environment (a benchmark, an editor).
@@ -365,12 +391,12 @@ impl<'a> McpServer<'a> {
             "pocket_scenario" => {
                 let project = s("project").ok_or_else(|| anyhow!("project is required"))?;
                 let rep = crate::commands::scenario(self.ws, s("config").as_deref().unwrap_or("release"), &project, s("file").as_deref(), args.get("seeds").and_then(|v| v.as_u64()).unwrap_or(5), args.get("frames").and_then(|v| v.as_i64()).unwrap_or(1800), s("only").as_deref())?;
-                Ok(Self::report_result(rep))
+                Ok(Self::report_result(Self::compact_runs(rep)))
             }
             "pocket_bench" => {
                 let project = s("project").ok_or_else(|| anyhow!("project is required"))?;
                 let rep = crate::commands::bench(self.ws, s("config").as_deref().unwrap_or("release"), &project, s("file").as_deref(), args.get("frames").and_then(|v| v.as_i64()).unwrap_or(1800), s("only").as_deref())?;
-                Ok(Self::report_result(rep))
+                Ok(Self::report_result(Self::compact_runs(rep)))
             }
             "pocket_run_headless" => {
                 let project = s("project").ok_or_else(|| anyhow!("project is required"))?;

@@ -126,18 +126,20 @@ the field so neighbours lean together; the clock is the simulation's, so a pause
 a replay sways the same. With `fade` above 0 copies farther from the camera than that are not drawn,
 shrinking into their place over the last fifth of the distance, so a dense field costs only what is
 near. They do not collide unless `collide` is above 0: then each copy is also a static collider, an
-upright capsule of radius `collide` (in the entity's own units: times the entity's scale x and the
-copy's size, so on reeds scaled 0.1 across `collide` 1 is 0.1 in the world) standing on the copy's
-foot, `collide_height` tall (times its size, and at least as tall as it is wide), which bodies
-bounce off, characters walk into and slide round, rays, sweeps and overlaps meet (answering the
-Scatter's entity) and `nav.bake` takes out of the walkable ground under them (paths go round),
-without a thousand entities (`physics.stats.scattered` counts them). Placement never stands copies
-on another Scatter's copies. `scatter.copies {entity, limit}` lists where they stand (point, `size`:
-the copy's scale along y, the entity's times the copy's own, and shade), and `render.stats` counts
-them as `scattered`. A MeshRenderer's levels of detail (`lods`, `docs/design/rendering.md`, Levels
-of detail) apply to every copy on its own: the far ones draw a simpler mesh than the near ones; the
-hills' bushes, stones and boulders keep a third of their triangles below a twentieth of the view and
-a tenth below a fiftieth.
+upright capsule of radius `collide` (in world units, as a `Collider`'s size is, times the copy's own
+size but not the entity's scale: on reeds scaled 0.1 across, `collide` 0.1 is 0.1 in the world; it
+was the entity's units once, until a benchmark agent read it as world units, as everything else is)
+standing on the copy's foot, `collide_height` tall (likewise, and at least as tall as it is wide),
+which bodies bounce off, characters walk into and slide round, rays, sweeps and overlaps meet
+(answering the Scatter's entity) and `nav.bake` takes out of the walkable ground under them (paths
+go round), without a thousand entities (`physics.stats.scattered` counts them). Placement never
+stands copies on another Scatter's copies. `scatter.copies {entity, limit}` lists where they stand
+(point, `size`: the copy's scale along y, the entity's times the copy's own, and shade, and with
+`collide` on each capsule's `radius` and `height` as the physics has them), and `render.stats`
+counts them as `scattered`. A MeshRenderer's levels of detail (`lods`, `docs/design/rendering.md`,
+Levels of detail) apply to every copy on its own: the far ones draw a simpler mesh than the near
+ones; the hills' bushes, stones and boulders keep a third of their triangles below a twentieth of
+the view and a tenth below a fiftieth.
 
 ## Levels of detail
 

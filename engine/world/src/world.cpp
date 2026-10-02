@@ -118,6 +118,25 @@ std::string fmt_value(const Json& v) {
         }
         return s + ")";
     }
+    if (v.is_array()) {
+        // A list in a line: records by their names when they have them ([4: grass, sand, rock, dirt]),
+        // else by their count; numbers and words as they are, the first eight.
+        if (v.empty()) return "[]";
+        if (v.front().is_object()) {
+            std::string names;
+            std::size_t named = 0;
+            for (const Json& x : v) {
+                if (!x.contains("name") || !x["name"].is_string() || x["name"].get<std::string>().empty()) continue;
+                if (named < 6) names += (named ? ", " : "") + x["name"].get<std::string>();
+                ++named;
+            }
+            if (named == v.size()) return "[" + std::to_string(v.size()) + ": " + names + (named > 6 ? ", ..." : "") + "]";
+            return "[" + std::to_string(v.size()) + (v.size() == 1 ? " item]" : " items]");
+        }
+        std::string s = "[";
+        for (std::size_t i = 0; i < v.size() && i < 8; ++i) s += (i ? "," : "") + fmt_value(v[i]);
+        return s + (v.size() > 8 ? ",... " + std::to_string(v.size()) + "]" : "]");
+    }
     return v.dump();
 }
 
@@ -913,6 +932,7 @@ std::string World::tree(const TreeOptions& options) const {
     std::vector<EntityId> starts = options.root ? std::vector<EntityId>{options.root} : roots();
     out << "world: " << total << " entities, " << roots().size() << " roots, tick " << impl_->tick << "\n";
     int shown = 0;
+    std::function<void(const std::vector<EntityId>&, int)> emit_all;
     std::function<void(EntityId, int)> emit = [&](EntityId id, int depth) {
         flecs::entity e = impl_->ecs.entity(id);
         if (!live(e)) return;
@@ -937,23 +957,44 @@ std::string World::tree(const TreeOptions& options) const {
         if (!kids.empty() && !descend) out << " (" << kids.size() << " children)";
         out << "\n";
         if (!descend) return;
-        std::size_t i = 0;
-        for (; i < kids.size(); ++i) {
+        emit_all(kids, depth + 1);
+    };
+    // Siblings alike (the same components and a name that differs only in its trailing number:
+    // Tree0, Tree1, ...) are shown two and a line for the rest, five or more in a row; world.query
+    // {name: "Tree*"} reads them all.
+    auto stem = [&](EntityId id) {
+        std::string n = name(id);
+        while (!n.empty() && n.back() >= '0' && n.back() <= '9') n.pop_back();
+        return n;
+    };
+    auto alike = [&](EntityId a, EntityId b) {
+        if (stem(a).empty() || stem(a) != stem(b) || name(a) == stem(a)) return false;
+        flecs::entity ea = impl_->ecs.entity(a), eb = impl_->ecs.entity(b);
+        for (const auto& op : impl_->ops) if (op.has(ea) != op.has(eb)) return false;
+        return children(a).size() == children(b).size();
+    };
+    emit_all = [&](const std::vector<EntityId>& list, int depth) {
+        for (std::size_t i = 0; i < list.size(); ++i) {
             if (shown >= options.max_entities) {
-                for (int d = 0; d < depth + 1; ++d) out << "  ";
-                out << "  (+" << (kids.size() - i) << " more)\n";
+                for (int d = 0; d < depth; ++d) out << "  ";
+                out << "(+" << (list.size() - i) << (depth == 0 ? " more roots)\n" : " more)\n");
                 return;
             }
-            emit(kids[i], depth + 1);
+            std::size_t run = 1;
+            while (i + run < list.size() && alike(list[i], list[i + run])) ++run;
+            if (run >= 5) {
+                emit(list[i], depth);
+                emit(list[i + 1], depth);
+                for (int d = 0; d < depth; ++d) out << "  ";
+                out << "- " << name(list[i + 2]) << " .. " << name(list[i + run - 1]) << " (+" << (run - 2) << " more like " << name(list[i]) << ")\n";
+                ++shown;
+                i += run - 1;
+                continue;
+            }
+            emit(list[i], depth);
         }
     };
-    for (std::size_t i = 0; i < starts.size(); ++i) {
-        if (shown >= options.max_entities) {
-            out << "(+" << (starts.size() - i) << " more roots)\n";
-            break;
-        }
-        emit(starts[i], 0);
-    }
+    emit_all(starts, 0);
     return out.str();
 }
 

@@ -859,9 +859,13 @@ void each_scattered(const world::World& w, F&& fn) {
         if (sc.collide <= 0) return;
         const auto* copies = w.derived_instances(e.id());
         if (!copies) return;
+        // In world units, as a Collider's size is, times each copy's own size: the copy's matrix
+        // carries the entity's scale as well, which is taken out again.
+        const auto* own = e.try_get<world::WorldTransform>();
+        const float own_x = own ? std::max(std::fabs(own->scale.x), 1e-6f) : 1.0f, own_y = own ? std::max(std::fabs(own->scale.y), 1e-6f) : 1.0f;
         for (std::size_t k = 0; k < copies->size(); ++k) {
             const Mat4& m = (*copies)[k].model;
-            const float across = length(Vec3{m.m[0], m.m[1], m.m[2]}), up = length(Vec3{m.m[4], m.m[5], m.m[6]});
+            const float across = length(Vec3{m.m[0], m.m[1], m.m[2]}) / own_x, up = length(Vec3{m.m[4], m.m[5], m.m[6]}) / own_y;
             const float r = std::max(sc.collide * across, 0.01f);
             const float h = std::max(sc.collide_height * up, 2 * r);
             Body b;

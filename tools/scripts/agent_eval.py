@@ -1379,7 +1379,7 @@ def reed_field_solve(env):
     env.command("world.spawn", {"name": "Reeds", "components": {
         "Transform": {"position": {"x": 0, "y": 20, "z": 10}, "scale": {"x": 0.1, "y": 1.5, "z": 0.1}},
         "MeshRenderer": {"mesh": "cube", "color": {"r": 0.8, "g": 0.75, "b": 0.4, "a": 1}},
-        "Scatter": {"count": 400, "area": {"x": 20, "y": 20}, "on": "Hills", "scale": {"x": 1, "y": 1}, "sway": 0.3, "collide": 1.0}}})
+        "Scatter": {"count": 400, "area": {"x": 20, "y": 20}, "on": "Hills", "scale": {"x": 1, "y": 1}, "sway": 0.3, "collide": 0.1}}})
     env.command("step", {"ticks": 1})
     return env.command("scatter.copies", {"entity": "Reeds"})["placed"]
 
@@ -1399,7 +1399,7 @@ def reed_field_check(env, answer):
         if abs(c["x"]) > 10.01 or abs(c["z"] - 10) > 10.01:
             return False, f"a reed stands at ({c['x']:.1f}, {c['z']:.1f}), outside the 20 by 20 area around x 0, z 10"
     # Each a collider (a ray down onto a reed meets the Reeds above the ground), 0.1 in radius: the
-    # Scatter's collide times the entity's scale times the copy's size.
+    # Scatter's collide (world units) times the copy's own size.
     c = cp["copies"][0]
     hit = env.command("physics.raycast", {"origin": {"x": c["x"], "y": c["y"] + 30, "z": c["z"]}, "direction": {"x": 0, "y": -1, "z": 0}})
     if not hit or hit.get("entity") != rid or hit["point"]["y"] < c["y"] + 0.5:
@@ -1407,9 +1407,9 @@ def reed_field_check(env, answer):
     scale = (env.command("world.get", {"entity": rid, "component": "Transform"}) or {}).get("scale", {})
     for c in cp["copies"]:
         size = c["size"] / max(abs(scale.get("y", 1)), 1e-6)   # scatter.copies' size is the copy's height scale
-        r = sc.get("collide", 0) * scale.get("x", 1) * size
+        r = sc.get("collide", 0) * size
         if abs(r - 0.1) > 0.005:
-            return False, f"a reed's collider is {r:.3f} in radius (collide {sc.get('collide')}, scale x {scale.get('x')}, size {size:.2f})"
+            return False, f"a reed's collider is {r:.3f} in radius (collide {sc.get('collide')}, the copy's size {size:.2f})"
     if answer != cp["placed"]:
         return False, f"answered {answer!r}, {cp['placed']} reeds stand"
     return True, f"{cp['placed']} reeds that sway 0.3 and stop what runs into them"
@@ -2647,6 +2647,99 @@ def villagers_solve(env, project_dir):
     return None
 
 
+WOLVES_TS = """// Wolves and sheep: each wolf chases the nearest sheep (Behavior.targets); one within a unit is caught.
+import { events, onTick, world } from "pocket";
+
+onTick(() => {
+    for (const wolf of ["Wolf1", "Wolf2"]) {
+        const w = world.find(wolf);
+        if (!w) continue;
+        const at = world.get(w, "Transform")!.position;
+        for (const row of world.query({ name: "Sheep*", with: ["Transform"] })) {
+            const p = row.Transform!.position;
+            if (Math.hypot(p.x - at.x, p.z - at.z) < 1) {
+                events.emit("sheep.caught", { sheep: row.path }, { subject: w });
+                world.destroy(row.id);
+            }
+        }
+    }
+});
+"""
+WOLF_SHEEP = [(7, 0, 5), (-6, 0, 8), (5, 0, -7), (-8, 0, -6)]
+
+
+def wolves_solve(env, project_dir):
+    write_game(project_dir, "wolves", WOLVES_TS)
+    sheep = [{"name": f"Sheep{i + 1}", "components": {"Transform": {"position": {"x": x, "y": y, "z": z}}, "MeshRenderer": {"mesh": "sphere", "color": "#f0f0e8"}}} for i, (x, y, z) in enumerate(WOLF_SHEEP)]
+    wolf = lambda name, x: {"name": name, "components": {"Transform": {"position": {"x": x, "y": 0, "z": 0}}, "MeshRenderer": {"mesh": "capsule", "color": "#555560"},  # noqa: E731
+                                                       "NavAgent": {"speed": 3}, "Behavior": {"targets": "Sheep*", "states": [{"name": "hunt", "move": "follow", "speed": 3}]}}}
+    with open(os.path.join(project_dir, "scene.json"), "w") as f:
+        f.write(json.dumps({"format": "pocket-scene", "entities": [
+            {"name": "Ground", "components": {"Transform": {"position": {"x": 0, "y": -0.5, "z": 0}, "scale": {"x": 40, "y": 1, "z": 40}}, "MeshRenderer": {"mesh": "cube"}, "RigidBody": {"kind": "static"}, "Collider": {"shape": "box"}}},
+            *sheep, wolf("Wolf1", -1), wolf("Wolf2", 1),
+            {"name": "Camera", "components": {"Transform": {"position": {"x": 0, "y": 18, "z": 16}, "rotation": {"x": -0.38, "y": 0, "z": 0, "w": 0.92}}, "Camera": {}}},
+            {"name": "Sun", "components": {"Transform": {"rotation": {"x": -0.4, "y": 0.2, "z": 0.1, "w": 0.89}}, "Light": {"kind": 0}}}]}, indent=1))
+    return None
+
+
+def wolves_check(env, answer):
+    import math
+
+    def pos(name):
+        try:
+            return entity_pos(env, name)
+        except Exception:   # noqa: BLE001 (gone)
+            return None
+    sheep = [f"Sheep{i + 1}" for i in range(4)]
+    for n, (x, _, z) in zip(sheep, WOLF_SHEEP):
+        p = pos(n)
+        if not p or math.hypot(p["x"] - x, p["z"] - z) > 0.3:
+            return False, f"{n} is at {p}, not ({x}, 0, {z})"
+    for n, x in (("Wolf1", -1), ("Wolf2", 1)):
+        p = pos(n)
+        if not p or math.hypot(p["x"] - x, p["z"]) > 0.3:
+            return False, f"{n} is at {p}, not ({x}, 0, 0)"
+    def nearest(wolf):
+        w = pos(wolf)
+        alive = [(n, pos(n)) for n in sheep]
+        alive = [(n, p) for n, p in alive if p]
+        return min(alive, key=lambda np: math.hypot(np[1]["x"] - w["x"], np[1]["z"] - w["z"]))[0] if alive else None
+    # Half a second in: each wolf has closed on its nearest sheep at about 3 a second.
+    targets = {wolf: nearest(wolf) for wolf in ("Wolf1", "Wolf2")}
+    before = {wolf: pos(wolf) for wolf in targets}
+    env.command("step", {"ticks": 30})
+    for wolf, sheep_name in targets.items():
+        a, b, sp = before[wolf], pos(wolf), pos(sheep_name)
+        d0 = math.hypot(sp["x"] - a["x"], sp["z"] - a["z"])
+        d1 = math.hypot(sp["x"] - b["x"], sp["z"] - b["z"])
+        if d0 - d1 < 0.9:
+            return False, f"{wolf} closed only {d0 - d1:.2f} on its nearest sheep {sheep_name} in half a second"
+    # A sheep put a little behind Wolf2: it turns to that one.
+    w2 = pos("Wolf2")
+    far = [n for n in sheep if pos(n) and n != targets["Wolf2"] and n != targets["Wolf1"]]
+    if not far:
+        return False, "no sheep left to move"
+    moved = far[0]
+    env.command("world.set", {"entity": moved, "component": "Transform", "value": {"position": {"x": w2["x"], "y": 0, "z": w2["z"] + 3}}})
+    env.command("step", {"ticks": 30})
+    w2b, sp = pos("Wolf2"), pos(moved)
+    if sp is None:
+        return False, f"{moved} vanished before Wolf2 could reach it"
+    if math.hypot(sp["x"] - w2b["x"], sp["z"] - w2b["z"]) > 3 - 0.9:
+        return False, f"{moved}, put 3 behind Wolf2, is still {math.hypot(sp['x'] - w2b['x'], sp['z'] - w2b['z']):.2f} from it half a second later"
+    # Ten seconds on: the sheep are caught, each a sheep.caught event naming a wolf, the sheep gone.
+    seq = env.command("events.last_seq", {})["seq"]
+    env.command("step", {"ticks": 600})
+    caught = env.command("events.since", {"seq": 0, "type": "sheep.caught"})["events"]
+    wolves = {env.command("world.find", {"path": n}) for n in ("Wolf1", "Wolf2")}
+    if len(caught) < 3 or any(e.get("subject") not in wolves for e in caught):
+        return False, f"{len(caught)} sheep.caught events, subjects {[e.get('subject') for e in caught]} (the wolves are {sorted(wolves)})"
+    left = [n for n in sheep if pos(n)]
+    if len(left) > 1:
+        return False, f"sheep still standing ten seconds on: {left}"
+    return True, f"each wolf ran at its nearest sheep and turned to one put behind it; {len(caught)} caught, {len(left)} left"
+
+
 def villagers_check(env, answer):
     import math
 
@@ -3825,6 +3918,8 @@ TASKS = [
      "task": "Make a Sokoban puzzle in this blank project, replacing its example. In the XY plane, one unit a cell: the cell in column c and row r (rows counting down) is centered at (c, -r). The level is these rows ('#' a wall, '.' floor, '@' the Player, '$' a box, 'x' a goal): " + json.dumps(SOKOBAN_ROWS) + ". The Player and the boxes are entities named Player, Box_0, Box_1 (boxes in reading order) at their cells' centers. Each press of move_x or move_y (A/D/W/S and the arrows) moves the Player one cell, unless a wall is there; a box in the way is pushed one cell when the cell past it is free (not a wall, not a box), else nothing moves. A move adds one to moves and emits player.moved with {moves}. When every box is on a goal, emit level.solved with {moves} once. An undo action (Z) takes back the last move (and its count). Expose moves and solved. Answer null."},
     {"name": "villagers", "project": "blank", "ticks": 0, "script": True, "game": True, "solve": villagers_solve, "check": villagers_check,
      "task": "Make a village square in this blank project, replacing its example: a ground at y 0 and five villagers, entities named Villager_1 to Villager_5, each the engine's built-in humanoid with a shirt of its own colour, standing within 4 units of (0, 0, 0) at the start. They wander at walking pace (about 1.3 units a second), never more than 6 units from the centre, walking when they move and standing idle when they stop. A Player entity (drawn however you like, its feet at y 0) moves with move_x and move_z at 4 units a second. When the Player comes within 3 units of a villager, that villager stops, turns to face the Player and waves; once the Player is more than 4 units away it wanders again. The game reads the Player's place from its Transform every tick (the check moves it with world.set). Answer null."},
+    {"name": "wolves", "project": "blank", "ticks": 0, "script": True, "game": True, "solve": wolves_solve, "check": wolves_check,
+     "task": "Make a chase in this blank project, replacing its example: a ground at y 0, four sheep named Sheep1 to Sheep4 standing still at (7, 0, 5), (-6, 0, 8), (5, 0, -7) and (-8, 0, -6), and two wolves named Wolf1 at (-1, 0, 0) and Wolf2 at (1, 0, 0) that each run at 3 units a second toward whichever sheep is nearest to it at the time (so a wolf turns to another sheep that comes nearer). A sheep that a wolf comes within a unit of is caught: it is destroyed, and a sheep.caught event is emitted with that wolf as its subject. Answer null."},
     {"name": "fireworks", "project": "blank", "ticks": 0, "script": True, "game": True, "solve": fireworks_solve, "check": fireworks_check,
      "task": "Make a fireworks show in this blank project, replacing its example, under a dark night sky. Each press of a launch action (Space) sends up a rocket: an entity named Rocket_1, Rocket_2 ... (counting launches) starting at (0, 0, 0) and rising straight up at 12 units a second with a glowing trail behind it (the engine's Trail). One second after its launch it bursts where it is: the rocket is destroyed, an event firework.burst with {n, x, y, z} is emitted (n its number), and at least 100 sparks fly out from there in every direction, falling and fading over about two seconds and glowing (additive). Several rockets may be up at once. Expose launched and bursts (how many so far). The game reads each rocket's place from its Transform. Answer null."},
     {"name": "glade", "project": "blank", "ticks": 0, "script": True, "game": True, "solve": glade_solve, "check": glade_check,

@@ -939,6 +939,35 @@ TEST_CASE("a Behavior's targets picks the nearest entity by name or component, a
     REQUIRE(target() == healthy);
 }
 
+TEST_CASE("a Scatter's colliders are in world units, whatever the entity's scale, and scatter.copies says them", "[runtime][scatter][units]") {
+    auto o = hello_options(-1);
+    o.paused = true;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    auto v3 = [](double x, double y, double z) { return Json{{"x", x}, {"y", y}, {"z", z}}; };
+    Json field = Json::object();
+    field["Transform"] = Json{{"position", v3(100, -0.5, 0)}};
+    field["RigidBody"] = Json{{"kind", "static"}};
+    field["Collider"] = Json{{"shape", "box"}, {"size", v3(5, 0.5, 5)}};
+    REQUIRE(s.command("world.spawn", Json{{"name", "Field"}, {"components", field}}).has_value());
+    Json reeds = Json::object();
+    reeds["Transform"] = Json{{"position", v3(100, 5, 0)}, {"scale", v3(0.1, 1.5, 0.1)}};
+    reeds["MeshRenderer"] = Json{{"mesh", "cube"}};
+    reeds["Scatter"] = Json{{"count", 20}, {"area", Json{{"x", 6}, {"y", 6}}}, {"scale", Json{{"x", 1}, {"y", 1}}}, {"collide", 0.1}, {"collide_height", 1.5}};   // every copy its entity's size
+    REQUIRE(s.command("world.spawn", Json{{"name", "Reeds"}, {"components", reeds}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 1}}).has_value());
+    const Json cp = s.command("scatter.copies", Json{{"entity", "Reeds"}}).value();
+    INFO(cp.dump());
+    REQUIRE(cp["placed"].get<int>() >= 10);
+    for (const Json& c : cp["copies"]) {
+        REQUIRE(c["radius"].get<double>() == Catch::Approx(0.1).margin(1e-4));   // 0.1 in the world, on an entity 0.1 across
+        REQUIRE(c["height"].get<double>() == Catch::Approx(1.5).margin(1e-4));
+    }
+    const Json& c = cp["copies"][0];
+    const Json hit = s.command("physics.raycast", Json{{"origin", Json{{"x", c["x"].get<double>() + 0.08}, {"y", 10}, {"z", c["z"]}}}, {"direction", Json{{"x", 0}, {"y", -1}, {"z", 0}}}}).value();
+    REQUIRE(hit["path"] == "/Reeds");   // within its 0.1 radius
+}
+
 TEST_CASE("a wall between a noise and a Behavior halves how far it carries", "[runtime][behavior][noise][walls]") {
     auto o = hello_options(-1);
     o.paused = true;
