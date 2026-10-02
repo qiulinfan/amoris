@@ -2740,6 +2740,72 @@ def wolves_check(env, answer):
     return True, f"each wolf ran at its nearest sheep and turned to one put behind it; {len(caught)} caught, {len(left)} left"
 
 
+def village_weather_solve(env, project_dir):
+    write_game(project_dir, "village_weather", "// A village square (the scene is the game).\nexport {};\n")
+    houses = [{"name": f"House{i + 1}", "components": {"Transform": {"position": {"x": x, "y": 0, "z": z}}, "MeshRenderer": {"mesh": "house"}}} for i, (x, z) in enumerate([(-7, -5), (7, -5), (0, 8)])]
+    with open(os.path.join(project_dir, "scene.json"), "w") as f:
+        f.write(json.dumps({"format": "pocket-scene", "entities": [
+            {"name": "Ground", "components": {"Transform": {"position": {"x": 0, "y": -0.5, "z": 0}, "scale": {"x": 40, "y": 1, "z": 40}}, "MeshRenderer": {"mesh": "cube", "texture": "pattern:cobble", "texture_tile": 3}, "RigidBody": {"kind": "static"}, "Collider": {"shape": "box"}}},
+            *houses,
+            {"name": "Well", "components": {"Transform": {}, "MeshRenderer": {"mesh": "well"}}},
+            {"name": "Sky", "components": {"Sky": {"mode": "atmosphere"}}},
+            {"name": "Sun", "components": {"Transform": {"rotation": {"x": -0.4, "y": 0.2, "z": 0.1, "w": 0.89}}, "Light": {"kind": 0}}},
+            {"name": "Camera", "components": {"Transform": {"position": {"x": 0, "y": 14, "z": 20}, "rotation": {"x": -0.3, "y": 0, "z": 0, "w": 0.95}}, "Camera": {}}}]}, indent=1))
+    return None
+
+
+def village_weather_followup(env, project_dir):
+    path = os.path.join(project_dir, "scene.json")
+    scene = json.load(open(path))
+    for e in scene["entities"]:
+        if e["name"] == "Sky":
+            e["components"]["Sky"]["time_of_day"] = 20.0
+    scene["entities"].append({"name": "Weather", "components": {"Weather": {"rain": 0.8}}})
+    for i, (x, z) in enumerate([(-5, -3), (5, -3), (-2, 6), (2, 6)]):
+        scene["entities"].append({"name": f"Lamp{i + 1}", "components": {"Transform": {"position": {"x": x, "y": 0, "z": z}}, "MeshRenderer": {"mesh": "lamp"}},
+                                  "children": [{"name": "Glow", "components": {"Transform": {"position": {"x": 0, "y": 2.8, "z": 0}}, "Light": {"kind": "point", "color": "#ffb060", "intensity": 3, "range": 8, "after_dark": True}}}]})
+    json.dump(scene, open(path, "w"), indent=1)
+    return None
+
+
+def village_weather_check(env, answer):
+    import math
+    def pos(name):
+        try:
+            return entity_pos(env, name)
+        except Exception:   # noqa: BLE001 (missing)
+            return None
+    houses = [pos(f"House{i}") for i in (1, 2, 3)]
+    if any(h is None for h in houses) or any(math.hypot(h["x"], h["z"]) > 10.5 for h in houses):
+        return False, f"the first request's houses are not all there within 10 of the centre: {houses}"
+    if pos("Well") is None:
+        return False, "the first request's Well is gone"
+    weathers = sorted((e for e in env.command("world.query", {"with": ["Weather"], "fields": ["Weather"]})["entities"] if e["Weather"].get("enabled", True)), key=lambda e: e["id"])
+    if not weathers or abs(weathers[0]["Weather"].get("rain", 0) - 0.8) > 0.05:
+        return False, f"the weather is {weathers[0]['Weather'] if weathers else None}, not rain at 0.8"
+    skies = sorted((e for e in env.command("world.query", {"with": ["Sky"], "fields": ["Sky"]})["entities"] if e["Sky"].get("enabled", True)), key=lambda e: e["id"])
+    t = skies[0]["Sky"].get("time_of_day", -1) if skies else -1
+    if not (19.9 <= t <= 20.6):
+        return False, f"the sky's time of day is {t}, not 20:00"
+    lamps = []
+    for i in range(1, 5):
+        p = pos(f"Lamp{i}")
+        if p is None:
+            return False, f"no Lamp{i}"
+        lid = env.command("world.find", {"path": f"Lamp{i}"})
+        lights = [r for r in env.command("world.query", {"with": ["Light"], "fields": ["Light"], "under": lid})["entities"]]
+        own = env.command("world.get", {"entity": lid, "component": "Light"})
+        if own:
+            lights.append({"Light": own})
+        if not any(l["Light"].get("kind") == 1 and l["Light"].get("after_dark") for l in lights):
+            return False, f"Lamp{i} has no point light that is on only after dark ({[l['Light'] for l in lights]})"
+        near = min(math.hypot(p["x"] - h["x"], p["z"] - h["z"]) for h in houses)
+        if near > 8:
+            return False, f"Lamp{i} stands {near:.1f} from the nearest house"
+        lamps.append(p)
+    return True, "the square kept, rain at 0.8, 20:00, four lamps that light after dark by the houses"
+
+
 def villagers_check(env, answer):
     import math
 
@@ -3918,6 +3984,9 @@ TASKS = [
      "task": "Make a Sokoban puzzle in this blank project, replacing its example. In the XY plane, one unit a cell: the cell in column c and row r (rows counting down) is centered at (c, -r). The level is these rows ('#' a wall, '.' floor, '@' the Player, '$' a box, 'x' a goal): " + json.dumps(SOKOBAN_ROWS) + ". The Player and the boxes are entities named Player, Box_0, Box_1 (boxes in reading order) at their cells' centers. Each press of move_x or move_y (A/D/W/S and the arrows) moves the Player one cell, unless a wall is there; a box in the way is pushed one cell when the cell past it is free (not a wall, not a box), else nothing moves. A move adds one to moves and emits player.moved with {moves}. When every box is on a goal, emit level.solved with {moves} once. An undo action (Z) takes back the last move (and its count). Expose moves and solved. Answer null."},
     {"name": "villagers", "project": "blank", "ticks": 0, "script": True, "game": True, "solve": villagers_solve, "check": villagers_check,
      "task": "Make a village square in this blank project, replacing its example: a ground at y 0 and five villagers, entities named Villager_1 to Villager_5, each the engine's built-in humanoid with a shirt of its own colour, standing within 4 units of (0, 0, 0) at the start. They wander at walking pace (about 1.3 units a second), never more than 6 units from the centre, walking when they move and standing idle when they stop. A Player entity (drawn however you like, its feet at y 0) moves with move_x and move_z at 4 units a second. When the Player comes within 3 units of a villager, that villager stops, turns to face the Player and waves; once the Player is more than 4 units away it wanders again. The game reads the Player's place from its Transform every tick (the check moves it with world.set). Answer null."},
+    {"name": "village_weather", "project": "blank", "ticks": 0, "script": True, "game": True, "solve": village_weather_solve, "check": village_weather_check,
+     "task": "Make a village square in this blank project, replacing its example: a ground at y 0, three houses named House1, House2 and House3 standing within 10 units of (0, 0, 0), a well named Well at the centre, the sky computed by the atmosphere, and a camera that sees the square. Answer null.",
+     "followups": [{"task": "This village square was made earlier; the players now ask for an evening in the rain. Keep what is there and make it rain at 0.8 of the heaviest, set the time of day to 20:00, and put four lamps named Lamp1 to Lamp4 near the houses (within 8 units of one), each with a warm point light that is lit only after dark. Answer null.", "solve": village_weather_followup}]},
     {"name": "wolves", "project": "blank", "ticks": 0, "script": True, "game": True, "solve": wolves_solve, "check": wolves_check,
      "task": "Make a chase in this blank project, replacing its example: a ground at y 0, four sheep named Sheep1 to Sheep4 standing still at (7, 0, 5), (-6, 0, 8), (5, 0, -7) and (-8, 0, -6), and two wolves named Wolf1 at (-1, 0, 0) and Wolf2 at (1, 0, 0) that each run at 3 units a second toward whichever sheep is nearest to it at the time (so a wolf turns to another sheep that comes nearer). A sheep that a wolf comes within a unit of is caught: it is destroyed, and a sheep.caught event is emitted with that wolf as its subject. Answer null."},
     {"name": "fireworks", "project": "blank", "ticks": 0, "script": True, "game": True, "solve": fireworks_solve, "check": fireworks_check,
@@ -4054,6 +4123,21 @@ def run_external(cmd, env, task, timeout, project_dir):
     return answer, proc.returncode, proc.stderr[-2000:], metrics
 
 
+def merge_metrics(a, b):
+    """Two runs' metrics as one: numbers added, nested counts (tokens, tools) added key by key."""
+    out = dict(a)
+    for k, v in b.items():
+        if isinstance(v, bool) or k not in out:
+            out[k] = v
+        elif isinstance(v, (int, float)) and isinstance(out[k], (int, float)):
+            out[k] = out[k] + v
+        elif isinstance(v, dict) and isinstance(out[k], dict):
+            out[k] = merge_metrics(out[k], v)
+        elif isinstance(v, list) and isinstance(out[k], list):
+            out[k] = out[k] + v
+    return out
+
+
 def trace_summary(name):
     """What the task's trace says (POCKET_AGENT_TRACES, tools/scripts/trace_report.py): turns,
     tokens, calls, what was read, and the calls before and after the first edit; `stuck` when the
@@ -4127,6 +4211,21 @@ def run(runner="reference", tasks=None, timeout=300, log=print, project_root=Non
                 answer, code, err, metrics = run_external(runner, env, t, timeout, project_dir)
                 if code != 0:
                     error = f"runner exited {code}: {err.strip()[-300:]}"
+            # Follow-ups (docs/agent-eval.md, Follow-ups): later requests on the same project, each
+            # to an agent of its own that finds the project as the one before left it.
+            for k, fu in enumerate(t.get("followups", []), start=2):
+                if t.get("script"):
+                    bundle(project_dir)
+                    env.command("project.reload", {})
+                    env.command("step", {"ticks": 2})
+                if runner == "reference":
+                    answer = fu["solve"](env, project_dir) if t.get("script") else fu["solve"](env)
+                elif runner != "null":
+                    sub = {**t, "name": f"{t['name']}-{k}", "task": fu["task"]}
+                    answer, code, err, more = run_external(runner, env, sub, timeout, project_dir)
+                    metrics = merge_metrics(metrics, more)
+                    if code != 0 and not error:
+                        error = f"follow-up {k}: runner exited {code}: {err.strip()[-300:]}"
             if t.get("script"):
                 # The edit takes effect through the tool's bundler and a project reload: a fresh
                 # world from the scene and the edited script started over it.

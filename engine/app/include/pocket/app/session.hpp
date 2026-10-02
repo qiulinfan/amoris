@@ -137,6 +137,10 @@ class Session {
     void update_camera_rigs(float dt);
     void update_day(float dt);
     void update_weather(float dt);
+    float storm_wait_ = -1;     // seconds to the next lightning (Weather.storm); below 0, not yet drawn
+    float flash_age_ = 99;      // seconds since the last one
+    float thunder_in_ = -1;     // seconds to its thunder; below 0, none coming
+    float thunder_volume_ = 0;
     void update_footprints(float dt);
     std::vector<renderer::Renderer::Footprint> footprints_;   // pressed into lying snow, oldest first (docs/design/rendering.md, Weather)
     std::uint64_t footprints_seen_ = 0;

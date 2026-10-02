@@ -382,15 +382,25 @@ the engine's sound beds loop under the scene as hard as it rains and snows, `sfx
 tenths for the rain and `sfx:wind` at up to a third for the snow (`docs/design/audio.md`), started
 when it begins, following it and stopped when it ends; off, the sound is the game's.
 
+`storm` (0 to 1) brings lightning: a flash every four to fourteen seconds over the storm (the first
+within two to eight), drawn from the run's seed and the tick so a replay storms alike, each two
+pulses over a third of a second written into `flash` (a `weather.lightning` event says when, and
+when its thunder comes); the flash whitens the sky, brightest overhead, and lights what the sky
+sees, most what faces up and nothing under cover, cool white-blue; its thunder (`sfx:thunder`, a
+crack and a long rumbling roll) follows one to three seconds later, as loud as the storm, when
+`sound` is on. `tests/evidence/rendering/storm.png` is the village at night in a storm, between
+flashes and in one.
+
 `render.stats.weather_drops` counts what is drawn and `render.stats.shelter_draws` what the shelter
 map last drew. `runtime_tests` (`[weather]`): seven and a half seconds of a downpour wet things
 halfway, nine dry seconds take a tenth off, ten seconds of snow lay a quarter, ten after melt a
 twenty-fourth and rain takes the rest; half a downpour plays the rain's bed at 0.3, snow the wind's,
-and `sound` off neither. `renderer_tests` (`[weather]`): a wet floor is darker, snow lying whitens
-the floor and a block's top but not its side, the drops drawn are as many as the rain, the snow and
-the density say, the floor under a roof stays bare and dry, and the sun's light falls with the
-overcast. `tests/evidence/rendering/weather.png` is the village in a downpour and under snow lying a
-quarter, half and wholly.
+and `sound` off neither; a full storm flashes within eight seconds, its thunder plays one to three
+seconds after, and a calm brings none. `renderer_tests` (`[weather]`): a wet floor is darker, snow
+lying whitens the floor and a block's top but not its side, the drops drawn are as many as the rain,
+the snow and the density say, the floor under a roof stays bare and dry, and the sun's light falls
+with the overcast. `tests/evidence/rendering/weather.png` is the village in a downpour and under
+snow lying a quarter, half and wholly.
 
 ## Ambient occlusion and fog
 

@@ -262,6 +262,36 @@ TEST_CASE("commands take what agents were seen to send: field paths, components 
     auto beyond = s.command("world.set", Json{{"entity", "Ball"}, {"component", "MeshRenderer"}, {"value", Json{{"lods.2.ratio", 0.2}}}});
     REQUIRE_FALSE(beyond.has_value());
     REQUIRE(beyond.error().message.find("the list has 2") != std::string::npos);
+    // Turning: yaw/pitch/roll in degrees, angles where a quaternion would be, and look_at.
+    auto forward = [&](const char* who) {
+        const Json q = s.command("world.get", Json{{"entity", who}, {"component", "Transform"}}).value()["rotation"];
+        return Quat{q["x"].get<float>(), q["y"].get<float>(), q["z"].get<float>(), q["w"].get<float>()}.rotate({0, 0, -1});
+    };
+    Json turned = s.command("world.set", Json{{"entity", "Ball"}, {"component", "Transform"}, {"value", Json{{"rotation", Json{{"yaw", 90}}}}}}).value();
+    REQUIRE(turned["renamed"].contains("Transform.rotation"));
+    REQUIRE(forward("Ball").x == Catch::Approx(-1).margin(1e-4));   // yaw 90: facing -x
+    REQUIRE(s.command("world.set", Json{{"entity", "Ball"}, {"component", "Transform"}, {"value", Json{{"rotation", Json{{"x", 0}, {"y", 180}, {"z", 0}}}}}}).has_value());
+    REQUIRE(forward("Ball").z == Catch::Approx(1).margin(1e-4));    // degrees where a quaternion would be: facing +z
+    REQUIRE(s.command("world.set", Json{{"entity", "Ball"}, {"component", "Transform"}, {"value", Json{{"position", Json{{"x", 0}, {"y", 0}, {"z", 0}}}, {"look_at", Json{{"x", 3}, {"y", 0}, {"z", 0}}}}}}).has_value());
+    REQUIRE(forward("Ball").x == Catch::Approx(1).margin(1e-4));    // looking at a point on +x
+    REQUIRE(s.command("world.spawn", Json{{"name", "Eye"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 0}, {"y", 0}, {"z", 5}}}, {"look_at", "Ball"}}}}}}).has_value());
+    REQUIRE(forward("Eye").z == Catch::Approx(-1).margin(1e-3));    // at the Ball, from +z
+    REQUIRE(s.command("script.eval", Json{{"source", "world.turn('Eye', { yaw: 90 }); world.lookAt('Ball', { x: 0, y: 0, z: -9 })"}}).has_value());
+    REQUIRE(forward("Eye").x == Catch::Approx(-1).margin(1e-4));    // the SDK's turn
+    REQUIRE(forward("Ball").z == Catch::Approx(-1).margin(1e-3));   // and lookAt
+    REQUIRE(s.command("world.set", Json{{"entity", "Ball"}, {"component", "Transform"}, {"value", Json{{"position", Json{{"x", 3.5}, {"y", 4}, {"z", 0}}}, {"rotation", Json{{"x", 0}, {"y", 0}, {"z", 0}, {"w", 1}}}}}}).has_value());
+    // world.get a field or several components; world.schema with names that are no component; a place given whole.
+    REQUIRE(s.command("world.get", Json{{"entity", "Ball"}, {"component", "Transform"}, {"field", "position.y"}}).value().get<double>() == Catch::Approx(4));
+    const Json two = s.command("world.get", Json{{"entity", "Ball"}, {"components", Json::array({"Transform", "MeshRenderer"})}}).value();
+    REQUIRE((two.contains("Transform") && two.contains("MeshRenderer")));
+    const Json sch = s.command("world.schema", Json{{"components", Json::array({"Weather", "Snow", "BoxCollider"})}}).value();
+    INFO(sch["unknown"].dump());
+    REQUIRE(sch["components"].size() == 1);
+    REQUIRE(sch["unknown"]["Snow"]["did_you_mean"].dump().find("Weather.snow") != std::string::npos);
+    REQUIRE(sch["unknown"]["BoxCollider"]["did_you_mean"].dump().find("Collider") != std::string::npos);
+    REQUIRE(s.command("world.schema", Json{{"component", "TerrainLayer"}}).error().message.find("Terrain.layers") != std::string::npos);
+    REQUIRE(s.command("wind.at", Json{{"position", Json::array({1, 2, 3})}}).has_value());
+    REQUIRE(s.command("world.query", Json{{"with", Json::array({"TerrainLayer"})}}).error().message.find("record in Terrain.layers") != std::string::npos);
     // where: the entities whose fields meet conditions, as text or as an object; an enum by its name.
     auto count = [&](Json where) { return s.command("world.query", Json{{"with", Json::array({"Transform"})}, {"where", where}}).value()["count"].get<int>(); };
     const int placed = s.command("world.query", Json{{"with", Json::array({"Transform"})}}).value()["count"].get<int>();
@@ -537,6 +567,22 @@ TEST_CASE("the weather wets what it rains on and lays snow, and both go once it 
     set(Json{{"sound", false}});
     REQUIRE(s.command("step", Json{{"ticks", 2}}).has_value());
     REQUIRE(beds().count("sfx:wind") == 0);
+    // A storm: lightning within its first eight seconds (a flash at its tick), thunder a second to
+    // three after; none without one.
+    set(Json{{"snow", 0.0}, {"sound", true}, {"storm", 1.0}});
+    const Json lit = s.command("step", Json{{"ticks", 600}, {"until", Json{{"event", "weather.lightning"}}}}).value();
+    INFO(lit.dump());
+    REQUIRE(lit["until"]["met"] == true);
+    REQUIRE(field("flash") > 0.9);
+    const double thunder_in = lit["until"]["event"]["data"]["thunder_in"].get<double>();
+    REQUIRE((thunder_in >= 1.0 && thunder_in <= 3.0));
+    const int before = s.command("audio.stats", Json::object()).value()["plays"].get<int>();
+    REQUIRE(s.command("step", Json{{"ticks", 190}}).has_value());
+    REQUIRE(field("flash") == 0);
+    REQUIRE(s.command("audio.stats", Json::object()).value()["plays"].get<int>() > before);   // the thunder
+    set(Json{{"storm", 0.0}});
+    const Json calm = s.command("step", Json{{"ticks", 900}, {"until", Json{{"event", "weather.lightning"}}}}).value();
+    REQUIRE(calm["until"]["met"] == false);
 }
 
 TEST_CASE("the toon look outlines each entity where the id under the pixels changes", "[runtime][render][toon]") {

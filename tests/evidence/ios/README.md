@@ -15,4 +15,10 @@ photographed with `xcrun simctl io <device> screenshot` (here scaled to 1100 pix
 - `walker.png`: `input.hold {action: move_z, sign: -1}` walked the skinned hero from z 5 to z 0 in a
   second, after which it stood idle.
 
+- `farm.png` (2026-10-02, scaled to 874 across): the farm sample at 18:36 set from the Mac
+  (`world.set` on its Sky), eight plots at stages set on their `Plot` components, the Weather's
+  ground wet: lamps lit after dark, puddles, the plants at their stages. Made by calling the
+  script's `run` and `screenshot` for `farm`; the rain itself was off, as the farm's own weather turn
+  sets it each tick.
+
 `ios.json` has the windows, the states before and after, and the hello run's GPU description.

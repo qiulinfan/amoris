@@ -964,6 +964,8 @@ struct Weather {
     float cover = 0.0f;
     float overcast = -1.0f;
     float density = 1.0f;
+    float storm = 0.0f;
+    float flash = 0.0f;
     bool sound = true;
     bool enabled = true;
     constexpr bool operator==(const Weather&) const = default;

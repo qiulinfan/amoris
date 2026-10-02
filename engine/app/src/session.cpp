@@ -1978,9 +1978,46 @@ void Session::update_weather(float dt) {
     wet = wet < rain ? std::min(rain, wet + dt / 15.0f) : std::max(rain, wet - dt / 90.0f);
     if (snow > 0) cover = std::min(1.0f, cover + dt * snow / 40.0f);
     else cover = std::max(0.0f, cover - dt * (1.0f / 240.0f + rain / 30.0f));
-    if (wet != w.wet || cover != w.cover) {
+    // Lightning: a flash every few seconds in a full storm (four to fourteen, drawn from the run's
+    // seed and the tick, so a replay storms alike), each two pulses over a third of a second, and its
+    // thunder one to three seconds after, as loud as the storm.
+    const float storm = std::clamp(w.storm, 0.0f, 1.0f);
+    float flash = 0;
+    if (storm > 0) {
+        auto draw = [&](std::uint64_t salt) {
+            std::uint64_t h = (options_.seed + 0x9e3779b97f4a7c15ull) ^ (static_cast<std::uint64_t>(clock_.tick) * 0xbf58476d1ce4e5b9ull) ^ salt;
+            h = (h ^ (h >> 31)) * 0x94d049bb133111ebull;
+            return static_cast<float>((h ^ (h >> 29)) >> 40) / static_cast<float>(1ull << 24);
+        };
+        if (storm_wait_ < 0) storm_wait_ = (2.0f + 6.0f * draw(1)) / storm;
+        storm_wait_ -= dt;
+        if (storm_wait_ <= 0) {
+            flash_age_ = 0;
+            storm_wait_ = (4.0f + 10.0f * draw(2)) / storm;
+            thunder_in_ = 1.0f + 2.0f * draw(3);
+            thunder_volume_ = 0.5f + 0.4f * storm;
+            world_->events().emit(clock_.tick, "weather.lightning", id, Json{{"storm", storm}, {"thunder_in", thunder_in_}}, 0, "engine");
+        }
+        flash_age_ += dt;
+        const float a = flash_age_;
+        flash = a < 0.06f ? 1.0f : a < 0.12f ? 0.25f : a < 0.18f ? 0.85f : a < 0.36f ? 0.85f * (1.0f - (a - 0.18f) / 0.18f) : 0.0f;
+    } else {
+        storm_wait_ = -1;
+        flash_age_ = 99;
+    }
+    if (thunder_in_ >= 0) {
+        thunder_in_ -= dt;
+        if (thunder_in_ < 0 && audio_ && w.sound) {
+            audio::PlayOptions o;
+            o.volume = thunder_volume_;
+            o.tag = "thunder";
+            (void)audio_->play("sfx:thunder?seed=" + std::to_string(clock_.tick % 7), o);
+        }
+    }
+    if (wet != w.wet || cover != w.cover || flash != w.flash) {
         w.wet = wet;
         w.cover = cover;
+        w.flash = flash;
         world_->set_typed<world::Weather>(id, w);
     }
 }
@@ -7182,6 +7219,52 @@ Result<Json> Session::world_command(std::string_view op, const Json& p, std::str
         }
         return {};
     };
+    // Turning a Transform the ways agents reach for (docs/design/world-model.md, Turning): rotation as
+    // {yaw, pitch, roll} in degrees, or as {x, y, z} without a w when a part is more than 1 (angles,
+    // not a quaternion: x pitch, y yaw, z roll), and look_at, a point or an entity its -Z (its
+    // forward) turns to, keeping +Y up. Each is said in `renamed`.
+    auto turning = [&](world::EntityId id, const std::string& comp, Json& value) -> Status {
+        if (comp != "Transform" || !value.is_object()) return {};
+        constexpr float kDeg = std::numbers::pi_v<float> / 180.0f;
+        auto num = [](const Json& o, const char* k) { return o.contains(k) && o[k].is_number() ? o[k].get<float>() : 0.0f; };
+        auto quat_json = [](Quat q) { return Json{{"x", q.x}, {"y", q.y}, {"z", q.z}, {"w", q.w}}; };
+        if (value.contains("rotation") && value["rotation"].is_object()) {
+            const Json& r = value["rotation"];
+            if (r.contains("yaw") || r.contains("pitch") || r.contains("roll")) {
+                value["rotation"] = quat_json(Quat::from_euler(Vec3{num(r, "pitch") * kDeg, num(r, "yaw") * kDeg, num(r, "roll") * kDeg}));
+                renamed["Transform.rotation"] = "yaw, pitch and roll in degrees, as a quaternion";
+            } else if (!r.contains("w") && (std::fabs(num(r, "x")) > 1.0001f || std::fabs(num(r, "y")) > 1.0001f || std::fabs(num(r, "z")) > 1.0001f)) {
+                value["rotation"] = quat_json(Quat::from_euler(Vec3{num(r, "x") * kDeg, num(r, "y") * kDeg, num(r, "z") * kDeg}));
+                renamed["Transform.rotation"] = "x, y, z read as degrees (pitch, yaw, roll), as a quaternion";
+            }
+        }
+        if (value.contains("look_at")) {
+            const Json& t = value["look_at"];
+            Vec3 to;
+            if (t.is_object()) {
+                to = Vec3{num(t, "x"), num(t, "y"), num(t, "z")};
+            } else {
+                const world::EntityId target = resolve_entity(t);
+                w.update_transforms();   // where it is now, after any set this tick
+                const auto* tw = w.alive(target) ? w.try_get<world::WorldTransform>(target) : nullptr;
+                if (!tw) return fail("no_such_entity", "Transform.look_at: no entity for {}", t.dump());
+                to = tw->position;
+            }
+            Vec3 from{0, 0, 0};
+            if (value.contains("position") && value["position"].is_object()) from = Vec3{num(value["position"], "x"), num(value["position"], "y"), num(value["position"], "z")};
+            else if (id && w.alive(id)) {
+                w.update_transforms();
+                if (const auto* own = w.try_get<world::WorldTransform>(id)) from = own->position;
+            }
+            const Vec3 d = to - from;
+            const float flat = std::hypot(d.x, d.z);
+            if (flat < 1e-6f && std::fabs(d.y) < 1e-6f) return fail("bad_args", "Transform.look_at: the point is where the entity stands");
+            value["rotation"] = quat_json(Quat::from_euler(Vec3{std::atan2(d.y, flat), std::atan2(-d.x, -d.z), 0.0f}));
+            value.erase("look_at");
+            renamed["Transform.look_at"] = "rotation";
+        }
+        return {};
+    };
     auto name_entities = [&](const std::string& comp, Json& value) -> Status {
         expand(comp, value);
         if (!value.is_object()) return {};
@@ -7206,7 +7289,10 @@ Result<Json> Session::world_command(std::string_view op, const Json& p, std::str
             if (!w.alive(parent)) return fail("no_such_entity", "no parent for {}", p["parent"].dump());
         }
         Json comps = p.value("components", Json::object());
-        if (comps.is_object()) for (auto& [cname, cvalue] : comps.items()) POCKET_TRY_VOID(name_entities(cname, cvalue));
+        if (comps.is_object()) for (auto& [cname, cvalue] : comps.items()) {
+            POCKET_TRY_VOID(name_entities(cname, cvalue));
+            POCKET_TRY_VOID(turning(0, cname, cvalue));
+        }
         POCKET_TRY_VOID(w.check_components(comps));
         POCKET_TRY(id, w.spawn(opt<std::string>(p, "name", ""), parent, comps, cause));
         Json j;
@@ -7223,6 +7309,34 @@ Result<Json> Session::world_command(std::string_view op, const Json& p, std::str
     if (op == "get") {
         POCKET_TRY(id, need_entity("entity"));
         std::string comp = opt<std::string>(p, "component", "");
+        if (comp.empty() && p.contains("components") && p["components"].is_array()) {
+            // Several: each by name, as world.get without a component answers all of them.
+            Json some = Json::object();
+            for (const std::string& n : string_list(p, "components")) {
+                if (!w.known_component(n)) return fail("unknown_component", "unknown component '{}'", n);
+                if (!w.has(id, n)) { some[n] = nullptr; continue; }
+                POCKET_TRY(v, w.get(id, n));
+                some[n] = v;
+            }
+            return some;
+        }
+        if (!comp.empty() && p.contains("field") && p["field"].is_string()) {
+            // One field, or a path into it ("position.y", "layers.1.height").
+            if (!w.known_component(comp)) return fail("unknown_component", "unknown component '{}'", comp);
+            if (!w.has(id, comp)) return nullptr;
+            POCKET_TRY(v, w.get(id, comp));
+            const std::string path = p["field"].get<std::string>();
+            const Json* at = &v;
+            for (std::size_t from = 0; from <= path.size();) {
+                const std::size_t dot = std::min(path.find('.', from), path.size());
+                const std::string seg = path.substr(from, dot - from);
+                if (at->is_object() && at->contains(seg)) at = &(*at)[seg];
+                else if (at->is_array() && !seg.empty() && std::all_of(seg.begin(), seg.end(), [](char c) { return c >= '0' && c <= '9'; }) && std::stoul(seg) < at->size()) at = &(*at)[std::stoul(seg)];
+                else return fail("bad_args", "{} has no field '{}' ({})", comp, seg, path);
+                from = dot + 1;
+            }
+            return *at;
+        }
         if (comp.empty()) {
             // Without a component: every component the entity has, by name.
             Json all = Json::object();
@@ -7249,6 +7363,7 @@ Result<Json> Session::world_command(std::string_view op, const Json& p, std::str
             if (!cvalue.is_object()) return fail("bad_args", "components.{}: the fields to change as an object", cname);
             POCKET_TRY_VOID(paths(id, cname, cvalue));
             POCKET_TRY_VOID(name_entities(cname, cvalue));
+            POCKET_TRY_VOID(turning(id, cname, cvalue));
             POCKET_TRY_VOID(w.check_patch(cname, cvalue));
         }
         Json values = Json::object();
@@ -7270,6 +7385,7 @@ Result<Json> Session::world_command(std::string_view op, const Json& p, std::str
         Json value = p["value"];
         POCKET_TRY_VOID(paths(id, comp, value));
         POCKET_TRY_VOID(name_entities(comp, value));
+        POCKET_TRY_VOID(turning(id, comp, value));
         POCKET_TRY_VOID(w.check_patch(comp, value));
         POCKET_TRY_VOID(w.set(id, comp, value, cause));
         if (opt<bool>(p, "quiet", false)) return source == "script" ? Json() : Json{{"ok", true}};   // a caller that does not read it back (the SDK: nothing to turn into a value)
@@ -7405,12 +7521,37 @@ Result<Json> Session::world_command(std::string_view op, const Json& p, std::str
             }
             if (take) picked.push_back(c);
         }
+        // Names that are no component: answered beside the ones that are, each with what it might
+        // have meant (a component whose name holds it or is held in it, BoxCollider -> Collider; a
+        // field of that name, Snow -> Weather.snow; a record type and where it lives,
+        // TerrainLayer -> Terrain.layers), rather than failing the whole call.
+        Json unknown = Json::object();
         for (const std::string& n : names) {
             bool found = false;
             for (const Json& c : picked) found = found || c["name"] == n;
-            if (!found) return fail("bad_args", "no component named '{}' (world.schema without a name lists them)", n);
+            if (found) continue;
+            std::string low = n;
+            for (char& ch : low) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+            Json maybe = Json::array();
+            for (const Json& c : all["components"]) {
+                const std::string cn = c["name"].get<std::string>();
+                std::string cl = cn;
+                for (char& ch : cl) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+                if (cl.size() >= 3 && (low.find(cl) != std::string::npos || cl.find(low) != std::string::npos)) maybe.push_back(cn);
+                for (const Json& f : c.value("fields", Json::array())) {
+                    const std::string fn = f.value("name", "");
+                    const std::string ft = f.value("type", "");
+                    if (fn == low || (ft.starts_with("list:") && ft.substr(5) == n)) maybe.push_back(cn + "." + fn);
+                }
+            }
+            unknown[n] = maybe.empty() ? Json("no component, field or record of that name") : Json{{"did_you_mean", maybe}};
         }
-        return Json{{"components", picked}};
+        if (picked.empty() && !unknown.empty()) {
+            return fail("bad_args", "no component named {} ({}; world.schema without a name lists them)", Json(std::vector<std::string>(names.begin(), names.end())).dump(), unknown.dump());
+        }
+        Json out{{"components", picked}};
+        if (!unknown.empty()) out["unknown"] = unknown;
+        return out;
     }
     if (op == "update_transforms") {
         w.update_transforms();
@@ -8042,9 +8183,29 @@ Result<Json> Session::run_command(std::string_view name, const Json& params, std
     {
         const std::vector<std::string>& keys = command_param_names(*h);
         auto takes = [&](const std::string& k) { return std::find(keys.begin(), keys.end(), k) != keys.end(); };
-        if (given.contains("id") && !given.contains("seq") && takes("seq") && !takes("id")) {
+        // A place given whole (position, at or point; {x, y, z} or [x, y, z]) to a command that takes
+        // its parts (wind.at, water.height, terrain.height: x, z).
+        if (takes("x") && !given.contains("x")) {
+            for (const char* alias : {"position", "at", "point"}) {
+                if (takes(alias) || !given.contains(alias)) continue;
+                const Json& v = given[alias];
+                Json parts = Json::object();
+                const char* axes[3] = {"x", "y", "z"};
+                for (int k = 0; k < 3; ++k) {
+                    if (v.is_array() && v.size() > static_cast<std::size_t>(k) && v[k].is_number()) parts[axes[k]] = v[k];
+                    else if (v.is_object() && v.contains(axes[k])) parts[axes[k]] = v[axes[k]];
+                }
+                if (parts.empty()) continue;
+                if (chosen != &adjusted) adjusted = given;
+                for (const auto& [k, x] : parts.items()) if (takes(k)) adjusted[k] = x;
+                adjusted.erase(alias);
+                chosen = &adjusted;
+                break;
+            }
+        }
+        if (chosen->contains("id") && !chosen->contains("seq") && takes("seq") && !takes("id")) {
             // An event's id is its seq (events.why {id: 33}).
-            adjusted = given;
+            if (chosen != &adjusted) adjusted = given;
             adjusted["seq"] = adjusted["id"];
             adjusted.erase("id");
             chosen = &adjusted;

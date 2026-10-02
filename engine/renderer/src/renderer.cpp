@@ -220,6 +220,7 @@ struct alignas(16) FrameUniforms {
     float print_info[4];         // how many
     float rings[32][4];          // rings on water: x, z, seconds since, strength
     float ring_info[4];          // how many
+    float flash[4];              // lightning's light now (the Weather's flash)
 };
 constexpr WGPUTextureFormat kPrepassDepth = WGPUTextureFormat_Depth32Float;
 // The sun's cascades: an orthographic depth is linear, and 16 bits over a cascade's reach are
@@ -575,6 +576,7 @@ struct Frame {
     print_info: vec4f,
     rings: array<vec4f, 32>,
     ring_info: vec4f,
+    flash: vec4f,
 };
 @group(0) @binding(1) var shadow_map: texture_depth_2d_array;
 // 2D shadows: the casting map's solid cells, one texel a cell (r 1 where solid).
@@ -1491,6 +1493,10 @@ fn shade(in: VsOut, cut: bool) -> vec4f {
         let contact = textureSampleLevel(ao_tex, ao_samp, in.clip.xy * frame.ao.yz, 0.0).g;
         shadow = min(shadow, mix(1.0 - frame.shadow.z, 1.0, contact));
     }
+    // Lightning lights what the sky sees, most what faces up (docs/design/rendering.md, Weather).
+    if (frame.flash.x > 0.0) {
+        color += mix(albedo, f0, metallic) * vec3f(0.8, 0.9, 1.25) * frame.flash.x * (0.35 + 0.65 * max(n.y, 0.0)) * open_sky(in.world_pos + gn * 0.2);
+    }
     // A lit sprite or tile map takes the sun only when the scene has one: the key light a scene
     // without lights gets so its meshes show is not for a dungeon lit by its torches.
     let own_sun = select(1.0, 0.0, (object.id.y & 1u) != 0u && frame.sky.w < 0.5);
@@ -1762,6 +1768,8 @@ fn sky_color(ndc: vec2f) -> vec3f {
         c = c + frame.sun_color.rgb * frame.sky.z * smoothstep(edge, edge + (1.0 - edge) * 0.2, mu);
     }
     if (frame.night.x > 0.0) { c = c + stars(d) * frame.night.x; }
+    // Lightning: the clouded sky lit white-blue for the flash, brightest overhead.
+    if (frame.flash.x > 0.0) { c = c + vec3f(0.6, 0.66, 0.9) * frame.flash.x * (0.5 + 0.5 * max(d.y, 0.0)); }
     return clouded(d, c);
 }
 @fragment fn fs_sky(in: SkyOut) -> FsOut {
@@ -10255,6 +10263,7 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
             const auto rain_n = static_cast<std::uint32_t>(rain * 9000.0f * density);
             const auto snow_n = static_cast<std::uint32_t>(snow * 7000.0f * density);
             fu.weather[0] = std::clamp(wx.wet, 0.0f, 1.0f);
+            fu.flash[0] = std::clamp(wx.flash, 0.0f, 1.0f);
             fu.weather[1] = std::clamp(wx.cover, 0.0f, 1.0f);
             fu.weather[2] = static_cast<float>(rain_n);
             fu.weather[3] = static_cast<float>(snow_n);

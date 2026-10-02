@@ -256,6 +256,14 @@ export const world = {
     reparent(entity: EntityRef, parent: EntityRef | null, options: { keepWorld?: boolean } = {}): void {
         command("world.reparent", { entity, parent, keep_world: options.keepWorld ?? false });
     },
+    /** Turn an entity by angles in degrees: yaw about +y (90 faces -x), pitch up, roll; what is not given is 0 (docs/design/world-model.md, Turning). */
+    turn(entity: EntityRef, angles: { yaw?: number; pitch?: number; roll?: number }): void {
+        command("world.set", { entity, component: "Transform", value: { rotation: { yaw: angles.yaw ?? 0, pitch: angles.pitch ?? 0, roll: angles.roll ?? 0 } }, quiet: true });
+    },
+    /** Turn an entity so its forward (-z) points at a point or at another entity, keeping +y up. */
+    lookAt(entity: EntityRef, target: EntityRef | Vec3): void {
+        command("world.set", { entity, component: "Transform", value: { look_at: target }, quiet: true });
+    },
     rename(entity: EntityRef, name: string): void {
         command("world.rename", { entity, name });
     },

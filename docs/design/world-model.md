@@ -30,6 +30,19 @@ deterministic: tree text, hashing, scene files and queries all walk the same ord
 Component values are set by merging: `world.set(e, "Health", { max: 250 })` keeps `current`. New
 components start from the metadata defaults. Vectors accept `{x,y,z}` objects or `[x,y,z]` arrays.
 
+## Turning
+
+A `Transform.rotation` is a quaternion, which agents and people get wrong. `world.set` and
+`world.spawn` also take it as angles: `{yaw, pitch, roll}` in degrees (yaw about +y, so yaw 90 turns
+the forward, -z, to -x; pitch up; roll about the forward), or `{x, y, z}` without a `w` when a part
+is more than 1 (read as degrees: x pitch, y yaw, z roll, which is what such a value meant); and
+`look_at`, beside `position` in the patch, a point (`{x, y, z}`) or an entity whose forward turns to
+it, keeping +y up, from where the patch puts the entity (or where it stands). The answer's `renamed`
+says how each was read, and `world.get` gives the quaternion. In a script,
+`world.turn(e, {yaw: 90})` and `world.lookAt(e, "Player")` do the same. `runtime_tests`
+(`[friction]`): yaw 90 faces -x, `{y: 180}` faces +z, a look at a point on +x faces +x, and a camera
+spawned on +z looking at the ball faces -z.
+
 ## Views for agents
 
 - `world.tree({ root, depth, max_entities, values, components })` returns text, one line per entity:

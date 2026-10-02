@@ -1001,14 +1001,22 @@ std::string World::tree(const TreeOptions& options) const {
 Json World::query(const QueryOptions& options) const {
     Json results = Json::array();
     std::vector<const ComponentOps*> with, without, fields;
+    // An unknown name: a record type (a list field's entries) says which component holds it.
+    auto unknown = [&](const std::string& n) {
+        std::string held;
+        for (const auto& info : impl_->infos)
+            for (const auto& f : info.fields)
+                if (f.type == "list:" + n) held += (held.empty() ? "" : ", ") + std::string(info.name) + "." + std::string(f.name);
+        return Json{{"error", held.empty() ? "unknown component " + n : "unknown component " + n + ": it is a record in " + held + ", read with world.get (field: \"" + held.substr(held.find('.') + 1, held.find(',') == std::string::npos ? std::string::npos : held.find(',') - held.find('.') - 1) + "\")"}};
+    };
     for (const auto& n : options.with) {
         const ComponentOps* op = impl_->find(n);
-        if (!op) return Json{{"error", "unknown component " + n}};
+        if (!op) return unknown(n);
         with.push_back(op);
     }
     for (const auto& n : options.without) {
         const ComponentOps* op = impl_->find(n);
-        if (!op) return Json{{"error", "unknown component " + n}};
+        if (!op) return unknown(n);
         without.push_back(op);
     }
     // A field is a component (all of it), a component's field ("Transform.position", deeper with

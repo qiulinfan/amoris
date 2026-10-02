@@ -139,6 +139,18 @@ platformer it reads back as solid rows (`tilemap.rows`), walks, follows through 
 game may keep its own grid), into a wall, into two boxes, a move and its undo, a push into a wall,
 and the four moves that solve it. None of it is in the brief beyond the contract.
 
+### Follow-ups
+
+A game is rarely asked for once. A task can carry `followups`: later requests on the same project,
+each given to an agent of its own once the one before has finished, so the second agent finds the
+project as the first left it, reads what is there and changes it, as a person coming back the next
+day would ask a fresh session to. The check runs once, after the last, and holds both: what the
+first request made must still stand. `village_weather` asks first for a village square (three
+houses, a well, an atmosphere) and then for an evening in the rain with four lamps that light after
+dark, the engine's `Weather`, `Sky.time_of_day` and `Light.after_dark` named by neither request. The
+runner is called once a request (its trace is `<task>-2.jsonl` for the second), and the row's
+metrics are the sums.
+
 ### Diagnose and fix
 
 Five tasks hand the runner something broken and a report of what a player sees, not of the cause:
@@ -666,3 +678,4 @@ Blender level made by driving Blender) and one edit across `project.toml` and th
 timed, and none needs art drawn, a level laid out or a scene composed by eye. A model scored here is
 scored on reading the docs and making the right call or the right edit, which is the first thing an
 agent must do and far from the last.
+| `village_weather` | blank | a village square, then (a second agent, a follow-up) an evening in the rain: rain 0.8, 20:00, four lamps lit only after dark by the houses | the houses and well still there, the first `Weather`'s rain, the Sky's hour, each lamp's point light with `after_dark` |

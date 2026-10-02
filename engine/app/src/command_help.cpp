@@ -23,7 +23,7 @@ constexpr CommandHelp kHelp[] = {
     {"transcript", "since_tick?, until_tick?, max_lines?, tolerance?, debounce?", "The run compressed into segments: what each exposed value did and which events happened, for reading instead of stepping tick by tick."},
     {"world.spawn", "name?, parent?, components?, cause?", "Create an entity with components ({Transform: {...}, MeshRenderer: {...}}); answers its id and path."},
     {"world.destroy", "entity, cause?", "Remove an entity and its children."},
-    {"world.get", "entity, component?", "One component's values of an entity, or every component it has (by name) when none is named."},
+    {"world.get", "entity, component?, field?, components?", "One component's values of an entity, or every component it has (by name) when none is named; field picks one field or a path into it (\"position.y\", \"layers.1.height\"); components lists several."},
     {"world.set", "entity, component, value, components?, cause?, quiet?", "Change a component (or several: components: {Transform: {...}, MeshRenderer: {...}}, answered as {ok, values}): value holds the fields to change ({color: {r, g, b, a}}; a named code by its name, {kind: \"point\"}; a key may be a path into a field, {\"position.y\": 2} or {\"lods.1.ratio\": 0.2}, a number picking a list's element, and the rest stays as it was); the component is added when missing. Answers {ok, value}, the component as it now is (quiet: true answers {ok} alone, for callers that do not read it); a field it does not have or a value of the wrong type is refused and nothing is applied."},
     {"world.remove", "entity, component, cause?", "Take a component off an entity."},
     {"world.has", "entity, component", "Whether an entity has a component."},

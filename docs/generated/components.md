@@ -657,6 +657,8 @@ Rain and snow (docs/design/rendering.md, Weather), one for the whole world: the 
 | `cover` | f32 | 0.0 | How much snow lies now, 0 to 1: it builds while it snows (full after 40 seconds at `snow` 1) and melts over four minutes once it stops, faster in rain; set it for a world that starts white. |
 | `overcast` | f32 | -1.0 | How much the sky is clouded over, 0 to 1: the sun's direct light falls by up to four fifths, and an atmosphere's clouds cover at least this much. Negative follows the weather (seven tenths of the rain or snow, whichever is more). |
 | `density` | f32 | 1.0 | Scales how many drops and flakes are drawn (0.5 halves them on a weak GPU; the wet and the snow lying are unchanged). |
+| `storm` | f32 | 0.0 | How stormy, 0 to 1: lightning lights the sky and the ground under it now and then (every few seconds at 1, rarely near 0), and thunder follows a second to three later (with sound on). |
+| `flash` | f32 | 0.0 | The lightning's light now, 0 to 1 (written by the engine; each flash a weather.lightning event). |
 | `sound` | bool | true | Plays the sound beds under the scene as hard as it rains and snows (sfx:rain for the rain, sfx:wind for the snow), looping and fading with them; false leaves the sound to the game. |
 | `enabled` | bool | true | False: no weather (the next enabled Weather by id, if any). |
 

@@ -2968,6 +2968,8 @@ void to_json(Json& j, const Weather& v) {
     j["cover"] = v.cover;
     j["overcast"] = v.overcast;
     j["density"] = v.density;
+    j["storm"] = v.storm;
+    j["flash"] = v.flash;
     j["sound"] = v.sound;
     j["enabled"] = v.enabled;
 }
@@ -2979,6 +2981,8 @@ void from_json(const Json& j, Weather& v) {
     scalar_from_json(j, "cover", v.cover);
     scalar_from_json(j, "overcast", v.overcast);
     scalar_from_json(j, "density", v.density);
+    scalar_from_json(j, "storm", v.storm);
+    scalar_from_json(j, "flash", v.flash);
     scalar_from_json(j, "sound", v.sound);
     scalar_from_json(j, "enabled", v.enabled);
 }
@@ -2990,6 +2994,8 @@ void hash_component(StateHasherRef& h, const Weather& v) {
     h.f32(v.cover);
     h.f32(v.overcast);
     h.f32(v.density);
+    h.f32(v.storm);
+    h.f32(v.flash);
     h.u8(v.sound ? 1 : 0);
     h.u8(v.enabled ? 1 : 0);
 }
@@ -3002,6 +3008,8 @@ std::size_t numeric_span(Weather& v, std::string_view path, float** out) {
     if (path == "cover") { *out = &v.cover; return 1; }
     if (path == "overcast") { *out = &v.overcast; return 1; }
     if (path == "density") { *out = &v.density; return 1; }
+    if (path == "storm") { *out = &v.storm; return 1; }
+    if (path == "flash") { *out = &v.flash; return 1; }
     return 0;
 }
 
@@ -4482,20 +4490,24 @@ std::size_t read_numbers(const Weather& v, double* out) {
     out[3] = static_cast<double>(v.cover);
     out[4] = static_cast<double>(v.overcast);
     out[5] = static_cast<double>(v.density);
-    out[6] = static_cast<double>(v.sound);
-    out[7] = static_cast<double>(v.enabled);
-    return 8;
+    out[6] = static_cast<double>(v.storm);
+    out[7] = static_cast<double>(v.flash);
+    out[8] = static_cast<double>(v.sound);
+    out[9] = static_cast<double>(v.enabled);
+    return 10;
 }
 bool write_numbers(Weather& v, const double* in, std::size_t n) {
-    if (n != 8) return false;
+    if (n != 10) return false;
     v.rain = static_cast<float>(in[0]);
     v.snow = static_cast<float>(in[1]);
     v.wet = static_cast<float>(in[2]);
     v.cover = static_cast<float>(in[3]);
     v.overcast = static_cast<float>(in[4]);
     v.density = static_cast<float>(in[5]);
-    v.sound = in[6] != 0;
-    v.enabled = in[7] != 0;
+    v.storm = static_cast<float>(in[6]);
+    v.flash = static_cast<float>(in[7]);
+    v.sound = in[8] != 0;
+    v.enabled = in[9] != 0;
     return true;
 }
 
@@ -5182,13 +5194,15 @@ constexpr std::array<FieldInfo, 5> kWindFields = {{
     FieldInfo{"gust_length", "f32", "Units from one gust to the next along the wind.", {}},
     FieldInfo{"enabled", "bool", "False: no wind (the next enabled Wind by id, if any).", {}},
 }};
-constexpr std::array<FieldInfo, 8> kWeatherFields = {{
+constexpr std::array<FieldInfo, 10> kWeatherFields = {{
     FieldInfo{"rain", "f32", "How hard it rains, 0 to 1 (1: a downpour of some nine thousand drops about the camera).", {}},
     FieldInfo{"snow", "f32", "How hard it snows, 0 to 1.", {}},
     FieldInfo{"wet", "f32", "How wet things are now, 0 to 1: it rises toward `rain` (fully wet after 15 seconds of a downpour) and dries over 90 seconds once the rain eases; set it for a world that starts wet.", {}},
     FieldInfo{"cover", "f32", "How much snow lies now, 0 to 1: it builds while it snows (full after 40 seconds at `snow` 1) and melts over four minutes once it stops, faster in rain; set it for a world that starts white.", {}},
     FieldInfo{"overcast", "f32", "How much the sky is clouded over, 0 to 1: the sun's direct light falls by up to four fifths, and an atmosphere's clouds cover at least this much. Negative follows the weather (seven tenths of the rain or snow, whichever is more).", {}},
     FieldInfo{"density", "f32", "Scales how many drops and flakes are drawn (0.5 halves them on a weak GPU; the wet and the snow lying are unchanged).", {}},
+    FieldInfo{"storm", "f32", "How stormy, 0 to 1: lightning lights the sky and the ground under it now and then (every few seconds at 1, rarely near 0), and thunder follows a second to three later (with sound on).", {}},
+    FieldInfo{"flash", "f32", "The lightning's light now, 0 to 1 (written by the engine; each flash a weather.lightning event).", {}},
     FieldInfo{"sound", "bool", "Plays the sound beds under the scene as hard as it rains and snows (sfx:rain for the rain, sfx:wind for the snow), looping and fading with them; false leaves the sound to the game.", {}},
     FieldInfo{"enabled", "bool", "False: no weather (the next enabled Weather by id, if any).", {}},
 }};

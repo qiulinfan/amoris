@@ -742,6 +742,8 @@ fields = [
     { name = "cover", type = "f32", default = 0.0, doc = "How much snow lies now, 0 to 1: it builds while it snows (full after 40 seconds at `snow` 1) and melts over four minutes once it stops, faster in rain; set it for a world that starts white." },
     { name = "overcast", type = "f32", default = -1.0, doc = "How much the sky is clouded over, 0 to 1: the sun's direct light falls by up to four fifths, and an atmosphere's clouds cover at least this much. Negative follows the weather (seven tenths of the rain or snow, whichever is more)." },
     { name = "density", type = "f32", default = 1.0, doc = "Scales how many drops and flakes are drawn (0.5 halves them on a weak GPU; the wet and the snow lying are unchanged)." },
+    { name = "storm", type = "f32", default = 0.0, doc = "How stormy, 0 to 1: lightning lights the sky and the ground under it now and then (every few seconds at 1, rarely near 0), and thunder follows a second to three later (with sound on)." },
+    { name = "flash", type = "f32", default = 0.0, doc = "The lightning's light now, 0 to 1 (written by the engine; each flash a weather.lightning event)." },
     { name = "sound", type = "bool", default = true, doc = "Plays the sound beds under the scene as hard as it rains and snows (sfx:rain for the rain, sfx:wind for the snow), looping and fading with them; false leaves the sound to the game." },
     { name = "enabled", type = "bool", default = true, doc = "False: no weather (the next enabled Weather by id, if any)." },
 ]

@@ -1144,6 +1144,10 @@ export interface Weather {
     overcast: number;
     /** Scales how many drops and flakes are drawn (0.5 halves them on a weak GPU; the wet and the snow lying are unchanged). */
     density: number;
+    /** How stormy, 0 to 1: lightning lights the sky and the ground under it now and then (every few seconds at 1, rarely near 0), and thunder follows a second to three later (with sound on). */
+    storm: number;
+    /** The lightning's light now, 0 to 1 (written by the engine; each flash a weather.lightning event). */
+    flash: number;
     /** Plays the sound beds under the scene as hard as it rains and snows (sfx:rain for the rain, sfx:wind for the snow), looping and fading with them; false leaves the sound to the game. */
     sound: boolean;
     /** False: no weather (the next enabled Weather by id, if any). */
@@ -1721,7 +1725,7 @@ export const numericLayouts: { readonly [name: string]: ReadonlyArray<readonly [
     RigidBody: [["kind", "n"], ["mass", "n"], ["restitution", "n"], ["friction", "n"], ["linear_damping", "n"], ["angular_damping", "n"], ["gravity_scale", "n"], ["sleeping", "b"], ["lock_rotation", "b"], ["ccd", "b"]],
     Cloth: [["size", "v2"], ["segments", "v2"], ["pin", "n"], ["stiffness", "n"], ["damping", "n"], ["weight", "n"], ["wind", "n"], ["collide", "b"], ["thickness", "n"], ["enabled", "b"]],
     Wind: [["direction", "n"], ["speed", "n"], ["gusts", "n"], ["gust_length", "n"], ["enabled", "b"]],
-    Weather: [["rain", "n"], ["snow", "n"], ["wet", "n"], ["cover", "n"], ["overcast", "n"], ["density", "n"], ["sound", "b"], ["enabled", "b"]],
+    Weather: [["rain", "n"], ["snow", "n"], ["wet", "n"], ["cover", "n"], ["overcast", "n"], ["density", "n"], ["storm", "n"], ["flash", "n"], ["sound", "b"], ["enabled", "b"]],
     Area2D: [["size", "v2"], ["offset", "v2"], ["enabled", "b"], ["inside", "n"]],
     RigidBody2D: [["kind", "n"], ["velocity", "v2"], ["angular_velocity", "n"], ["gravity_scale", "n"], ["linear_damping", "n"], ["angular_damping", "n"], ["fixed_rotation", "b"], ["bullet", "b"], ["awake", "b"], ["enabled", "b"]],
     AudioListener: [["enabled", "b"]],
@@ -1766,7 +1770,7 @@ export const componentDefaults: { readonly [K in EngineComponentName]: Component
     Terrain: { size: { x: 64, y: 64 }, height: 8, resolution: 129, heightmap: "", seed: 1, scale: 24, octaves: 4, grass: { r: 0.3, g: 0.45, b: 0.22, a: 1 }, rock: { r: 0.45, g: 0.42, b: 0.38, a: 1 }, snow: { r: 0.92, g: 0.93, b: 0.95, a: 1 }, rock_slope: 35, snow_line: 0.85, texture_tile: 4, paintmap: "", layers: [], layermap: "" },
     Cloth: { size: { x: 1.5, y: 1 }, segments: { x: 12, y: 8 }, pin: 0, stiffness: 0.9, damping: 0.02, weight: 0.4, wind: 1, collide: true, thickness: 0.02, enabled: true },
     Wind: { direction: 0, speed: 3, gusts: 0.3, gust_length: 20, enabled: true },
-    Weather: { rain: 0, snow: 0, wet: 0, cover: 0, overcast: -1, density: 1, sound: true, enabled: true },
+    Weather: { rain: 0, snow: 0, wet: 0, cover: 0, overcast: -1, density: 1, storm: 0, flash: 0, sound: true, enabled: true },
     Water: { size: { x: 40, y: 40 }, depth: 4, color: { r: 0.03, g: 0.2, b: 0.24, a: 1 }, clarity: 4, wave_height: 0.3, wave_length: 8, wave_direction: 0, choppiness: 0.5, ripples: 1, foam: 0.5, caustics: 1, flow: { x: 0, y: 0 }, density: 2, drag: 1, splash: "", splash_count: 24, enabled: true },
     Scatter: { count: 500, area: { x: 32, y: 32 }, seed: 1, on: "", scale: { x: 0.8, y: 1.2 }, yaw: 360, align: 0, sink: 0, spacing: 0, max_slope: 35, min_height: -1000, max_height: 1000, max_paint: 1, collide: 0, collide_height: 2, sway: 0, sway_speed: 0.5, fade: 0, shade: 0.15, placed: 0 },
     Vehicle: { wheels: [], throttle: 0, steer: 0, brake: 0, power: 10, top_speed: 25, braking: 18, max_steer: 30, grip: 1.4, suspension_hz: 2.2, damping: 0.45, roll_resistance: 0.3, speed: 0, grounded: 0 },

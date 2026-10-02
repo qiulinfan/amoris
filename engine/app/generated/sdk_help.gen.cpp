@@ -410,6 +410,8 @@ constexpr SdkHelp kSdkHelps[] = {
     {R"sdk(world.children)sdk", R"sdk(world.children(entity: EntityRef): Entity[])sdk", R"sdk()sdk", R"sdk(sdk/runtime/world.ts)sdk"},
     {R"sdk(world.roots)sdk", R"sdk(world.roots(): Entity[])sdk", R"sdk()sdk", R"sdk(sdk/runtime/world.ts)sdk"},
     {R"sdk(world.reparent)sdk", R"sdk(world.reparent(entity: EntityRef, parent: EntityRef | null, options: { keepWorld?: boolean } = {}): void)sdk", R"sdk(Move an entity under another (null: to the root); `keepWorld` leaves it where it stands in the world, its local transform taking up the difference.)sdk", R"sdk(sdk/runtime/world.ts)sdk"},
+    {R"sdk(world.turn)sdk", R"sdk(world.turn(entity: EntityRef, angles: { yaw?: number; pitch?: number; roll?: number }): void)sdk", R"sdk(Turn an entity by angles in degrees: yaw about +y (90 faces -x), pitch up, roll; what is not given is 0 (docs/design/world-model.md, Turning).)sdk", R"sdk(sdk/runtime/world.ts)sdk"},
+    {R"sdk(world.lookAt)sdk", R"sdk(world.lookAt(entity: EntityRef, target: EntityRef | Vec3): void)sdk", R"sdk(Turn an entity so its forward (-z) points at a point or at another entity, keeping +y up.)sdk", R"sdk(sdk/runtime/world.ts)sdk"},
     {R"sdk(world.rename)sdk", R"sdk(world.rename(entity: EntityRef, name: string): void)sdk", R"sdk()sdk", R"sdk(sdk/runtime/world.ts)sdk"},
     {R"sdk(world.tree)sdk", R"sdk(world.tree(options: TreeOptions = {}): string)sdk", R"sdk(The AI-native tree: one line per entity with the fields that differ from defaults.)sdk", R"sdk(sdk/runtime/world.ts)sdk"},
     {R"sdk(world.query)sdk", R"sdk(world.query(options: QueryOptions): QueryRow[])sdk", R"sdk()sdk", R"sdk(sdk/runtime/world.ts)sdk"},
