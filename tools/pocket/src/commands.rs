@@ -440,7 +440,7 @@ fn write_project_guide(ws: &Workspace, project: &Path, name: &str) -> Result<()>
     let guide = format!(
         r#"# {title}
 
-A game made with Pocket, an engine meant to be driven by agents as much as by people. This file tells a coding agent how to work on it. The engine's documentation is under `{docs}`: `mcp.md` for the commands, `sdk.md` for scripts, `design/` for each part (input, physics, sprites, combat, ...). Some of it is long (`design/rendering.md` is {rendering_kb} KB): search it for what you need before reading a whole file. The engine's sources are not needed to make a game.
+A game made with Pocket, an engine meant to be driven by agents as much as by people. This file tells a coding agent how to work on it. The engine's documentation is under `{docs}`: `mcp.md` for the commands, `sdk.md` for scripts, `design/` for each part (input, physics, sprites, combat, ...). Some of it is long (`design/rendering.md` is {rendering_kb} KB): `{tool} docs <topic>` (the MCP tool `docs_search`) answers the few sections that match a topic ("save slots", "tilemap sight", "Animator.locomotion"), so search before reading a whole file. The engine's sources are not needed to make a game.
 
 ## The loop
 

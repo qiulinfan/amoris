@@ -241,6 +241,25 @@ void Behaviors::step(world::World& w, const physics::Physics* physics, float dt,
         } else if (cur->move != 0 && error.empty()) {
             error = "state '" + cur->name + "' moves, and the entity has no NavAgent to move it";
         }
+        // Facing the target: the yaw turned toward it about the vertical, its -Z forward, no faster
+        // than the agent's turn_speed. Moving states that walk leave turning to NavAgent.face.
+        if (cur->face && has_target) {
+            if (const auto* tr = w.try_get<world::Transform>(id)) {
+                const Vec3 d = to - at;
+                if (d.x * d.x + d.z * d.z > 1e-6f) {
+                    world::Transform t = *tr;
+                    const Vec3 f = t.rotation.rotate({0, 0, -1});
+                    const float now = repro::atan2(-f.x, -f.z), want = repro::atan2(-d.x, -d.z);
+                    float turn = want - now;
+                    while (turn > kPi) turn -= 2 * kPi;
+                    while (turn < -kPi) turn += 2 * kPi;
+                    const float most = (agent ? std::max(agent->turn_speed, 0.0f) : 540.0f) * kPi / 180.0f * dt;
+                    const float yaw = now + std::clamp(turn, -most, most);
+                    t.rotation = Quat{0, repro::sin(yaw * 0.5f), 0, repro::cos(yaw * 0.5f)};
+                    w.set_typed<world::Transform>(id, t);
+                }
+            }
+        }
         b.time += dt;
         if (sees == 0) b.unseen += dt;
         b.error = error;

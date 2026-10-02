@@ -3786,6 +3786,14 @@ struct Renderer::Impl {
         bool has_anim = false;
     };
     std::map<std::string, TileLayerMesh> tile_meshes;
+    // Trails (docs/design/particles.md, Trails): each one's ribbon, made again every frame into
+    // buffers kept while it lives (grown when it outgrows them).
+    struct TrailMesh {
+        GpuMesh gpu;
+        std::uint32_t vertex_room = 0, index_room = 0;
+        bool seen = false;
+    };
+    std::map<world::EntityId, TrailMesh> trail_meshes;
     std::uint32_t tile_rebuilds = 0;  // layer meshes rebuilt after edits, over the renderer's life
     std::uint32_t tile_frames = 0;    // animated cells rebuilt for a frame change, over the renderer's life
     std::set<std::string> failed;  // asset paths reported once
@@ -10480,6 +10488,79 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
             }
         }
     }
+    // Trails: a ribbon through each one's points, two vertices a point, across the view (or across
+    // XY), its width and colour going from the newest point's to the oldest's.
+    if (particles) {
+        for (auto& [tid, tm] : im.trail_meshes) tm.seen = false;
+        for (const auto& [id, ts] : particles->trails()) {
+            const auto* tr = world.try_get<world::Trail>(id);
+            if (!tr || ts.points.size() < 2 || count + sprites.size() >= kMaxObjects) continue;
+            const std::size_t n = ts.points.size();
+            const float life = std::max(tr->time, 1e-4f);
+            std::vector<float> along(n, 0.0f);   // distance from the newest point
+            for (std::size_t k = n - 1; k-- > 0;) along[k] = along[k + 1] + length(ts.points[k + 1].position - ts.points[k].position);
+            const float total = std::max(along[0], 1e-4f);
+            auto pack = [](float r, float g, float b, float a) {
+                auto enc = [](float v) { return static_cast<std::uint32_t>(std::lround(std::clamp(v, 0.0f, 1.0f) * 255.0f)); };
+                return enc(r) | (enc(g) << 8) | (enc(b) << 16) | (enc(a) << 24);
+            };
+            std::vector<Vertex> verts;
+            std::vector<std::uint32_t> idx;
+            verts.reserve(n * 2);
+            idx.reserve((n - 1) * 6);
+            for (std::size_t k = 0; k < n; ++k) {
+                const Vec3 p = ts.points[k].position;
+                const Vec3 a = ts.points[k == 0 ? 0 : k - 1].position, b = ts.points[k + 1 < n ? k + 1 : n - 1].position;
+                Vec3 dir = b - a;
+                if (length(dir) < 1e-6f) dir = Vec3{1, 0, 0};
+                const Vec3 facing = tr->billboard ? p - im.camera.position : Vec3{0, 0, 1};
+                Vec3 side = cross(dir, facing);
+                side = length(side) > 1e-6f ? normalize(side) : Vec3{0, 1, 0};
+                const float age = std::clamp(ts.points[k].age / life, 0.0f, 1.0f);
+                const float w = (tr->width + (tr->width_end - tr->width) * age) * 0.5f;
+                const std::uint32_t c = pack(tr->color.r + (tr->color_end.r - tr->color.r) * age, tr->color.g + (tr->color_end.g - tr->color.g) * age,
+                                             tr->color.b + (tr->color_end.b - tr->color.b) * age, tr->color.a + (tr->color_end.a - tr->color.a) * age);
+                const float u = along[k] / total;
+                const Vec3 nrm = normalize(Vec3{0, 0, 0} - (tr->billboard ? facing : Vec3{0, 0, -1}));
+                verts.push_back({p + side * w, nrm, {u, 0.0f}, c});
+                verts.push_back({p - side * w, nrm, {u, 1.0f}, c});
+                if (k + 1 < n) {
+                    const auto v = static_cast<std::uint32_t>(k * 2);
+                    idx.insert(idx.end(), {v, v + 2, v + 1, v + 1, v + 2, v + 3});
+                }
+            }
+            Impl::TrailMesh& tm = im.trail_meshes[id];
+            tm.seen = true;
+            if (verts.size() > tm.vertex_room || idx.size() > tm.index_room) {
+                if (tm.gpu.vertices) wgpuBufferRelease(tm.gpu.vertices);
+                if (tm.gpu.indices) wgpuBufferRelease(tm.gpu.indices);
+                tm.vertex_room = static_cast<std::uint32_t>(std::max<std::size_t>(verts.size() * 2, 64));
+                tm.index_room = static_cast<std::uint32_t>(std::max<std::size_t>(idx.size() * 2, 96));
+                tm.gpu.vertices = im.device->create_buffer("pocket.trail", WGPUBufferUsage_Vertex | WGPUBufferUsage_CopyDst, static_cast<std::uint64_t>(tm.vertex_room) * sizeof(Vertex));
+                tm.gpu.indices = im.device->create_buffer("pocket.trail", WGPUBufferUsage_Index | WGPUBufferUsage_CopyDst, static_cast<std::uint64_t>(tm.index_room) * sizeof(std::uint32_t));
+            }
+            im.device->write_buffer(tm.gpu.vertices, 0, verts.data(), verts.size() * sizeof(Vertex));
+            im.device->write_buffer(tm.gpu.indices, 0, idx.data(), idx.size() * sizeof(std::uint32_t));
+            tm.gpu.index_count = static_cast<std::uint32_t>(idx.size());
+            ObjectUniforms ou{};
+            to_array(Mat4::identity(), ou.model);
+            to_array(Mat4::identity(), ou.normal);
+            ou.color[0] = ou.color[1] = ou.color[2] = ou.color[3] = 1.0f;
+            ou.id[0] = static_cast<std::uint32_t>(id & 0xFFFFFFFFu);
+            ou.id[1] = 1;
+            ou.uv_rect[0] = 0; ou.uv_rect[1] = 0; ou.uv_rect[2] = 1; ou.uv_rect[3] = 1;
+            const Vec3 d = ts.points.back().position - im.camera.position;
+            SpriteDraw sd{tr->texture, im.texture_for(tr->texture, false), tr->layer,
+                          d.x * im.camera.forward.x + d.y * im.camera.forward.y + d.z * im.camera.forward.z, ou, &tm.gpu, 0, tm.gpu.index_count, 0, tr->additive};
+            sprites.push_back(std::move(sd));
+        }
+        for (auto it = im.trail_meshes.begin(); it != im.trail_meshes.end();) {
+            if (it->second.seen) { ++it; continue; }
+            if (it->second.gpu.vertices) wgpuBufferRelease(it->second.gpu.vertices);
+            if (it->second.gpu.indices) wgpuBufferRelease(it->second.gpu.indices);
+            it = im.trail_meshes.erase(it);
+        }
+    }
     std::stable_sort(sprites.begin(), sprites.end(), [](const SpriteDraw& a, const SpriteDraw& b) {
         if (a.layer != b.layer) return a.layer < b.layer;
         if (a.depth != b.depth) return a.depth > b.depth;
@@ -10949,8 +11030,8 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
         while (i < sprites.size()) {
             const SpriteDraw& s = sprites[i];
             if (s.mesh) {
-                // A tile layer: its own buffers, one draw, then back to the quad for sprites.
-                use(s.lit && lit ? lit : pipe);
+                // A tile layer or a trail: its own buffers, one draw, then back to the quad for sprites.
+                use(s.additive ? add : s.lit && lit ? lit : pipe);
                 wgpuRenderPassEncoderSetVertexBuffer(pass, 0, s.mesh->vertices, 0, WGPU_WHOLE_SIZE);
                 wgpuRenderPassEncoderSetIndexBuffer(pass, s.mesh->indices, WGPUIndexFormat_Uint32, 0, WGPU_WHOLE_SIZE);
                 bound = s.mesh;

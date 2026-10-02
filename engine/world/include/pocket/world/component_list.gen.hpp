@@ -29,6 +29,7 @@
     X(IK) \
     X(LookAt) \
     X(ParticleEmitter) \
+    X(Trail) \
     X(Bounds) \
     X(RigidBody) \
     X(Joint) \

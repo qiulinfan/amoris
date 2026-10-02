@@ -32,6 +32,16 @@ struct ParticleContact {
     Vec3 normal;
 };
 
+// A Trail's points, newest last: where the entity's offset was and how long ago.
+struct TrailPoint {
+    Vec3 position;
+    float age = 0;
+};
+struct TrailState {
+    std::vector<TrailPoint> points;
+    bool seen = false;
+};
+
 struct EmitterPool {
     std::vector<Particle> alive;
     Random rng;
@@ -68,6 +78,8 @@ class Particles {
     // emitter is known by its path in `world`, not its id, as World::hash knows entities.
     [[nodiscard]] std::uint64_t hash(const world::World& world) const;
     [[nodiscard]] const std::map<world::EntityId, EmitterPool>& pools() const { return pools_; }
+    // The trails (docs/design/particles.md, Trails), stepped with the particles; visual only.
+    [[nodiscard]] const std::map<world::EntityId, TrailState>& trails() const { return trails_; }
     // Where colliding particles ask what they hit: a ray from `from` to `to` in world space,
     // nullopt for nothing. The runtime plugs the physics in; without a collider, `collide` does nothing.
     void set_collider(std::function<std::optional<ParticleContact>(Vec3 from, Vec3 to)> collider) { collider_ = std::move(collider); }
@@ -77,6 +89,8 @@ class Particles {
     EmitterPool& pool_for(world::EntityId id, const world::ParticleEmitter& e);
     static void spawn(EmitterPool& pool, const world::ParticleEmitter& e, const world::WorldTransform& t, int count);
     std::map<world::EntityId, EmitterPool> pools_;
+    std::map<world::EntityId, TrailState> trails_;
+    void step_trails(const world::World& world, float dt);
 };
 
 }  // namespace pocket::renderer

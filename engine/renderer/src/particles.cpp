@@ -84,7 +84,30 @@ void Particles::spawn(EmitterPool& pool, const world::ParticleEmitter& e, const 
     }
 }
 
+// Trails: every point ages; the old go; the newest follows the entity's offset, and a new one is
+// laid once it has moved min_distance from the one before.
+void Particles::step_trails(const world::World& world, float dt) {
+    for (auto& [id, t] : trails_) t.seen = false;
+    world.ecs().each([&](flecs::entity e, const world::Trail& tr, const world::WorldTransform& wt) {
+        TrailState& t = trails_[e.id()];
+        t.seen = true;
+        for (TrailPoint& p : t.points) p.age += dt;
+        const float life = std::max(tr.time, 0.0f);
+        std::erase_if(t.points, [&](const TrailPoint& p) { return p.age > life; });
+        if (!tr.emitting) return;
+        const Vec3 at = wt.position + wt.rotation.rotate(Vec3{tr.offset.x * wt.scale.x, tr.offset.y * wt.scale.y, tr.offset.z * wt.scale.z});
+        if (t.points.size() < 2 || length(t.points[t.points.size() - 2].position - at) >= std::max(tr.min_distance, 1e-4f)) {
+            t.points.push_back({at, 0.0f});
+        } else {
+            t.points.back() = {at, 0.0f};   // the newest follows until it is far enough to stay
+        }
+        if (t.points.size() > 4096) t.points.erase(t.points.begin(), t.points.begin() + static_cast<std::ptrdiff_t>(t.points.size() - 4096));
+    });
+    for (auto it = trails_.begin(); it != trails_.end();) it = it->second.seen ? std::next(it) : trails_.erase(it);
+}
+
 void Particles::step(const world::World& world, float dt) {
+    step_trails(world, dt);
     for (auto& [id, pool] : pools_) pool.seen = false;
     // With a Wind (docs/design/wind.md), drag pulls a particle toward the air's velocity where it is.
     const world::WindField wind = world::wind_field(world);
@@ -236,7 +259,10 @@ Status Particles::burst(const world::World& world, world::EntityId emitter, int 
     return {};
 }
 
-void Particles::clear() { pools_.clear(); }
+void Particles::clear() {
+    pools_.clear();
+    trails_.clear();
+}
 
 std::size_t Particles::alive() const {
     std::size_t n = 0;
@@ -259,6 +285,9 @@ Json Particles::stats() const {
     j["spawned"] = spawned;
     j["died"] = died;
     j["pools"] = per;
+    std::size_t points = 0;
+    for (const auto& [id, t] : trails_) points += t.points.size();
+    j["trails"] = Json{{"count", trails_.size()}, {"points", points}};
     return j;
 }
 

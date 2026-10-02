@@ -188,6 +188,8 @@ export interface BehaviorState {
     clip: string;
     /** An event emitted on entering the state, with {state} and the entity as its subject (empty: none beyond behavior.changed). */
     event: string;
+    /** Turn to face the target while in the state, its -Z toward it about the vertical, at its NavAgent's turn_speed (540 degrees a second without one): a guard confronting, a shopkeeper greeting, a turret. */
+    face: boolean;
 }
 
 /** A way from one state of a Behavior to another, taken (the first of those that hold, in list order) when its condition holds. */
@@ -828,6 +830,34 @@ export interface ParticleEmitter {
     turbulence_scale: number;
     /** Simulated and drawn on the GPU (docs/design/particles.md, On the GPU): hundreds of thousands at once, `max` the ring they live in (past it the oldest go first). Visual only: not in the state hash nor particles.list; `collide` meets what the camera drew (its depth prepass), and `child` does nothing. */
     gpu: boolean;
+}
+
+/** A ribbon left behind by the entity as it moves (docs/design/particles.md, Trails): a blade's swing, a comet's tail, a car's tyre marks. Every tick a point is added where the entity (its offset) has got to once it is min_distance from the last, and points older than time go; the ribbon is drawn through them facing the camera (or flat in XY), its width and colour going from the newest point's to the oldest's. Visual only: not in the state hash. */
+export interface Trail {
+    /** Seconds a point of the trail lasts: how long the ribbon is behind a moving entity. */
+    time: number;
+    /** Width at the newest point, in world units. */
+    width: number;
+    /** Width at the oldest point. */
+    width_end: number;
+    /** Colour at the newest point. */
+    color: Color;
+    /** Colour at the oldest point; alpha 0 fades the tail out. */
+    color_end: Color;
+    /** The point on the entity, in its own space, that leaves the trail (a sword's tip). */
+    offset: Vec3;
+    /** How far the point must move before a new one is laid; the newest always follows the entity. */
+    min_distance: number;
+    /** false lays no more points: what is there fades away. */
+    emitting: boolean;
+    /** Turned to face the camera along its length; false keeps it flat in the XY plane for 2D. */
+    billboard: boolean;
+    /** Adds its light to what is behind (a glowing streak) instead of covering it. */
+    additive: boolean;
+    /** Project-relative image stretched along the trail (u along it from the newest point, v across); empty for plain colour. */
+    texture: string;
+    /** Draw order among sprites and particles. */
+    layer: number;
 }
 
 /** Axis-aligned bounding box in world space, computed by the engine from the mesh and WorldTransform. Read only. */
@@ -1520,6 +1550,7 @@ export interface Components {
     IK: IK;
     LookAt: LookAt;
     ParticleEmitter: ParticleEmitter;
+    Trail: Trail;
     Bounds: Bounds;
     RigidBody: RigidBody;
     Joint: Joint;
@@ -1576,6 +1607,7 @@ export interface ComponentEnums {
     IK: {};
     LookAt: {};
     ParticleEmitter: {};
+    Trail: {};
     Bounds: {};
     RigidBody: { kind: "dynamic" | "static" | "kinematic" };
     Joint: { kind: "distance" | "ball" | "hinge" | "slider" };
@@ -1607,9 +1639,9 @@ export interface ComponentEnums {
 export type ComponentName = keyof Components;
 
 /** The engine's components. */
-export type EngineComponentName = "Transform" | "WorldTransform" | "Velocity" | "Health" | "Hitbox" | "Model" | "Lifetime" | "Camera" | "CameraRig" | "Light" | "ReflectionProbe" | "IrradianceVolume" | "Decal" | "Fog" | "Sky" | "MeshRenderer" | "Sprite" | "SpriteAnimation" | "TileMap" | "AnimationGraph" | "Timeline" | "Animator" | "Attach" | "Ragdoll" | "IK" | "LookAt" | "ParticleEmitter" | "Bounds" | "RigidBody" | "Joint" | "Body2D" | "Character" | "Terrain" | "Cloth" | "Wind" | "Water" | "Scatter" | "Vehicle" | "Area2D" | "Path" | "PathFollower" | "RigidBody2D" | "Collider2D" | "Joint2D" | "TopDown2D" | "Collider" | "AudioSource" | "AudioListener" | "NavObstacle" | "Behavior" | "NavAgent" | "Morph";
+export type EngineComponentName = "Transform" | "WorldTransform" | "Velocity" | "Health" | "Hitbox" | "Model" | "Lifetime" | "Camera" | "CameraRig" | "Light" | "ReflectionProbe" | "IrradianceVolume" | "Decal" | "Fog" | "Sky" | "MeshRenderer" | "Sprite" | "SpriteAnimation" | "TileMap" | "AnimationGraph" | "Timeline" | "Animator" | "Attach" | "Ragdoll" | "IK" | "LookAt" | "ParticleEmitter" | "Trail" | "Bounds" | "RigidBody" | "Joint" | "Body2D" | "Character" | "Terrain" | "Cloth" | "Wind" | "Water" | "Scatter" | "Vehicle" | "Area2D" | "Path" | "PathFollower" | "RigidBody2D" | "Collider2D" | "Joint2D" | "TopDown2D" | "Collider" | "AudioSource" | "AudioListener" | "NavObstacle" | "Behavior" | "NavAgent" | "Morph";
 
-export const componentNames: readonly EngineComponentName[] = ["Transform", "WorldTransform", "Velocity", "Health", "Hitbox", "Model", "Lifetime", "Camera", "CameraRig", "Light", "ReflectionProbe", "IrradianceVolume", "Decal", "Fog", "Sky", "MeshRenderer", "Sprite", "SpriteAnimation", "TileMap", "AnimationGraph", "Timeline", "Animator", "Attach", "Ragdoll", "IK", "LookAt", "ParticleEmitter", "Bounds", "RigidBody", "Joint", "Body2D", "Character", "Terrain", "Cloth", "Wind", "Water", "Scatter", "Vehicle", "Area2D", "Path", "PathFollower", "RigidBody2D", "Collider2D", "Joint2D", "TopDown2D", "Collider", "AudioSource", "AudioListener", "NavObstacle", "Behavior", "NavAgent", "Morph"];
+export const componentNames: readonly EngineComponentName[] = ["Transform", "WorldTransform", "Velocity", "Health", "Hitbox", "Model", "Lifetime", "Camera", "CameraRig", "Light", "ReflectionProbe", "IrradianceVolume", "Decal", "Fog", "Sky", "MeshRenderer", "Sprite", "SpriteAnimation", "TileMap", "AnimationGraph", "Timeline", "Animator", "Attach", "Ragdoll", "IK", "LookAt", "ParticleEmitter", "Trail", "Bounds", "RigidBody", "Joint", "Body2D", "Character", "Terrain", "Cloth", "Wind", "Water", "Scatter", "Vehicle", "Area2D", "Path", "PathFollower", "RigidBody2D", "Collider2D", "Joint2D", "TopDown2D", "Collider", "AudioSource", "AudioListener", "NavObstacle", "Behavior", "NavAgent", "Morph"];
 
 /** Engine components whose fields are all numbers, each field with its kind (n number, b flag, v2, v3, v4, q quaternion, c color), in the order the engine reads them out. */
 export const numericLayouts: { readonly [name: string]: ReadonlyArray<readonly [string, "n" | "b" | "v2" | "v3" | "v4" | "q" | "c"]> } = {
@@ -1662,6 +1694,7 @@ export const componentDefaults: { readonly [K in EngineComponentName]: Component
     IK: { end: "", bones: 2, tip: { x: 0, y: 0, z: 0 }, target: { x: 0, y: 0, z: 0 }, target_entity: "", pole_entity: "", max_bend: 180, limits: [], weight: 1, iterations: 8, tolerance: 0.001, error: 0, reached: false, bend: 0 },
     LookAt: { node: "", forward: { x: 0, y: 1, z: 0 }, target: { x: 0, y: 0, z: 0 }, target_entity: "", weight: 1, max_angle: 90, speed: 0, angle: 0, aim: { x: 0, y: 0, z: 0 } },
     ParticleEmitter: { texture: "", emitting: true, rate: 20, max: 256, lifetime: { x: 1, y: 2 }, speed: { x: 1, y: 2 }, direction: { x: 0, y: 1, z: 0 }, spread: 30, gravity: { x: 0, y: -3, z: 0 }, drag: 0, size: { x: 0.2, y: 0.05 }, color: { r: 1, g: 1, b: 1, a: 1 }, color_end: { r: 1, g: 1, b: 1, a: 0 }, layer: 10, billboard: true, world_space: true, seed: 0, floor: -1000000, bounce: 0.3, floor_friction: 0.5, stretch: 0, child: 0, child_count: 8, collide: false, additive: false, turbulence: 0, turbulence_scale: 2, gpu: false },
+    Trail: { time: 0.5, width: 0.2, width_end: 0, color: { r: 1, g: 1, b: 1, a: 1 }, color_end: { r: 1, g: 1, b: 1, a: 0 }, offset: { x: 0, y: 0, z: 0 }, min_distance: 0.05, emitting: true, billboard: true, additive: false, texture: "", layer: 10 },
     Bounds: { min: { x: 0, y: 0, z: 0 }, max: { x: 0, y: 0, z: 0 } },
     RigidBody: { kind: 0, mass: 1, restitution: 0.2, friction: 0.5, linear_damping: 0.01, angular_damping: 0.05, gravity_scale: 1, sleeping: false, lock_rotation: false, ccd: false },
     Joint: { kind: 0, target: "", anchor: { x: 0, y: 0, z: 0 }, target_anchor: { x: 0, y: 0, z: 0 }, distance: -1, rope: false, stiffness: 0, damping: 0, break_force: 0, force: 0, axis: { x: 0, y: 0, z: 1 }, target_axis: { x: 0, y: 0, z: 0 }, reference: { x: 0, y: 0, z: 0 }, limit: false, lower: -1.5708, upper: 1.5708, motor_speed: 0, motor_torque: 0, motor_force: 0, angle: 0, translation: 0, speed: 0, collide_connected: true },
@@ -1722,7 +1755,7 @@ export const recordDefaults: { readonly [K in keyof Records]: Records[K] } = {
     TerrainLayer: { name: "", texture: "", color: { r: 1, g: 1, b: 1, a: 1 }, tile: 4, slope: { x: 0, y: 90 }, height: { x: 0, y: 1 }, cover: 1 },
     PathPoint: { x: 0, y: 0, z: 0 },
     Point2D: { x: 0, y: 0 },
-    BehaviorState: { name: "", move: 0, speed: 0, radius: 5, path: "", clip: "", event: "" },
+    BehaviorState: { name: "", move: 0, speed: 0, radius: 5, path: "", clip: "", event: "", face: false },
     BehaviorTransition: { from: "*", to: "", when: "", on: "" },
 };
 

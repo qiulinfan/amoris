@@ -63,7 +63,8 @@ def main():
         f"A runtime of the project '{payload['project']}' is running, paused, with its control server at {payload['rpc_url']}.\n\n"
         f"Task: {payload['task']}\n\n"
         f"{payload.get('notes', '')}\n{where}\n{how}\n"
-        f"The engine's documentation, to read as you need: {', '.join(docs)}.\n"
+        f"The engine's documentation, to read as you need: {', '.join(docs)}. `{pocket} docs <topic>` "
+        f"(the MCP tool docs_search) answers the few sections on a topic, which is cheaper than reading a whole file.\n"
         "Do only what the task asks. Step the simulation only if the task needs it.\n"
         'When you are done, end your final message with one line of JSON: {"answer": <the answer the task asks for, or null>}.'
     )

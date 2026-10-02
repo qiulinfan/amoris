@@ -50,6 +50,10 @@ fn tools_list() -> Value {
         tool("pocket_check", "Type-check TypeScript against the SDK's types (TypeScript 7): a project's scripts, or the whole workspace without one. Returns each type error with its file, line and column. Run it after editing a script, before running the game.", obj_schema(json!({
             "project": { "type": "string", "description": "project directory or sample name (samples/<name>); the workspace when left out" }
         }), &[])),
+        tool("docs_search", "Search the engine's documentation by topic and get the few sections that match (each under its file and heading, about 2,500 characters at most), instead of reading whole files: \"render scale\", \"tilemap sight\", \"Animator.locomotion\", \"save slots\".", obj_schema(json!({
+            "query": { "type": "string", "description": "what to look for" },
+            "limit": { "type": "integer", "default": 3, "description": "how many sections (1 to 10)" }
+        }), &["query"])),
         tool("pocket_gen", "Regenerate code from component metadata (engine/*/meta/*.toml): C++, TypeScript, docs.", obj_schema(json!({ "check": { "type": "boolean", "default": false } }), &[])),
         tool("pocket_scenario", "Run a project's gameplay scenarios (scenarios/*.ts: play through actions, wait for outcomes, check state) at several seeds and return pass counts, ticks to pass and each failure's reason.", obj_schema(json!({
             "project": { "type": "string", "description": "Project name under samples/ or a directory with project.toml" },
@@ -351,6 +355,11 @@ impl<'a> McpServer<'a> {
             "pocket_check" => {
                 let project = s("project").map(|p| { let direct = std::path::PathBuf::from(&p); if direct.exists() { direct } else { self.ws.root.join("samples").join(&p) } });
                 Ok(Self::report_result(crate::check::check(self.ws, project.as_deref())?))
+            }
+            "docs_search" => {
+                let query = s("query").ok_or_else(|| anyhow!("query is required"))?;
+                let rep = crate::docs::search(self.ws, &query, args.get("limit").and_then(|v| v.as_u64()).unwrap_or(3) as usize)?;
+                Ok(Self::text_result(Value::String(crate::docs::as_text(&rep).trim().to_string().chars().take(24000).collect::<String>()).to_owned(), !rep.ok))
             }
             "pocket_gen" => Ok(Self::report_result(crate::commands::gen(self.ws, args.get("check").and_then(|c| c.as_bool()).unwrap_or(false))?)),
             "pocket_scenario" => {

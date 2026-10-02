@@ -493,6 +493,7 @@ void to_json(Json& j, const BehaviorState& v) {
     j["path"] = v.path;
     j["clip"] = v.clip;
     j["event"] = v.event;
+    j["face"] = v.face;
 }
 
 void from_json(const Json& j, BehaviorState& v) {
@@ -503,6 +504,7 @@ void from_json(const Json& j, BehaviorState& v) {
     scalar_from_json(j, "path", v.path);
     scalar_from_json(j, "clip", v.clip);
     scalar_from_json(j, "event", v.event);
+    scalar_from_json(j, "face", v.face);
 }
 
 void hash_record(StateHasherRef& h, const BehaviorState& v) {
@@ -513,6 +515,7 @@ void hash_record(StateHasherRef& h, const BehaviorState& v) {
     h.str(v.path);
     h.str(v.clip);
     h.str(v.event);
+    h.u8(v.face ? 1 : 0);
 }
 
 std::size_t numeric_span(BehaviorState& v, std::string_view path, float** out) {
@@ -2212,6 +2215,83 @@ std::size_t numeric_span(ParticleEmitter& v, std::string_view path, float** out)
     if (path == "stretch") { *out = &v.stretch; return 1; }
     if (path == "turbulence") { *out = &v.turbulence; return 1; }
     if (path == "turbulence_scale") { *out = &v.turbulence_scale; return 1; }
+    return 0;
+}
+
+void to_json(Json& j, const Trail& v) {
+    j = Json::object();
+    j["time"] = v.time;
+    j["width"] = v.width;
+    j["width_end"] = v.width_end;
+    vec_to_json(j["color"], v.color);
+    vec_to_json(j["color_end"], v.color_end);
+    vec_to_json(j["offset"], v.offset);
+    j["min_distance"] = v.min_distance;
+    j["emitting"] = v.emitting;
+    j["billboard"] = v.billboard;
+    j["additive"] = v.additive;
+    j["texture"] = v.texture;
+    j["layer"] = v.layer;
+}
+
+void from_json(const Json& j, Trail& v) {
+    scalar_from_json(j, "time", v.time);
+    scalar_from_json(j, "width", v.width);
+    scalar_from_json(j, "width_end", v.width_end);
+    if (j.is_object() && j.contains("color")) vec_from_json(j["color"], v.color);
+    if (j.is_object() && j.contains("color_end")) vec_from_json(j["color_end"], v.color_end);
+    if (j.is_object() && j.contains("offset")) vec_from_json(j["offset"], v.offset);
+    scalar_from_json(j, "min_distance", v.min_distance);
+    scalar_from_json(j, "emitting", v.emitting);
+    scalar_from_json(j, "billboard", v.billboard);
+    scalar_from_json(j, "additive", v.additive);
+    scalar_from_json(j, "texture", v.texture);
+    scalar_from_json(j, "layer", v.layer);
+}
+
+void hash_component(StateHasherRef& h, const Trail& v) {
+    h.f32(v.time);
+    h.f32(v.width);
+    h.f32(v.width_end);
+    h.f32(v.color.r);
+    h.f32(v.color.g);
+    h.f32(v.color.b);
+    h.f32(v.color.a);
+    h.f32(v.color_end.r);
+    h.f32(v.color_end.g);
+    h.f32(v.color_end.b);
+    h.f32(v.color_end.a);
+    h.f32(v.offset.x);
+    h.f32(v.offset.y);
+    h.f32(v.offset.z);
+    h.f32(v.min_distance);
+    h.u8(v.emitting ? 1 : 0);
+    h.u8(v.billboard ? 1 : 0);
+    h.u8(v.additive ? 1 : 0);
+    h.str(v.texture);
+    h.i64(static_cast<std::int64_t>(v.layer));
+}
+
+std::size_t numeric_span(Trail& v, std::string_view path, float** out) {
+    (void)v;
+    if (path == "time") { *out = &v.time; return 1; }
+    if (path == "width") { *out = &v.width; return 1; }
+    if (path == "width_end") { *out = &v.width_end; return 1; }
+    if (path == "color") { *out = &v.color.r; return 4; }
+    if (path == "color.r") { *out = &v.color.r; return 1; }
+    if (path == "color.g") { *out = &v.color.g; return 1; }
+    if (path == "color.b") { *out = &v.color.b; return 1; }
+    if (path == "color.a") { *out = &v.color.a; return 1; }
+    if (path == "color_end") { *out = &v.color_end.r; return 4; }
+    if (path == "color_end.r") { *out = &v.color_end.r; return 1; }
+    if (path == "color_end.g") { *out = &v.color_end.g; return 1; }
+    if (path == "color_end.b") { *out = &v.color_end.b; return 1; }
+    if (path == "color_end.a") { *out = &v.color_end.a; return 1; }
+    if (path == "offset") { *out = &v.offset.x; return 3; }
+    if (path == "offset.x") { *out = &v.offset.x; return 1; }
+    if (path == "offset.y") { *out = &v.offset.y; return 1; }
+    if (path == "offset.z") { *out = &v.offset.z; return 1; }
+    if (path == "min_distance") { *out = &v.min_distance; return 1; }
     return 0;
 }
 
@@ -4145,6 +4225,9 @@ bool write_numbers(LookAt&, const double*, std::size_t) { return false; }
 std::size_t read_numbers(const ParticleEmitter&, double*) { return kNotNumeric; }
 bool write_numbers(ParticleEmitter&, const double*, std::size_t) { return false; }
 
+std::size_t read_numbers(const Trail&, double*) { return kNotNumeric; }
+bool write_numbers(Trail&, const double*, std::size_t) { return false; }
+
 std::size_t read_numbers(const Bounds& v, double* out) {
     out[0] = static_cast<double>(v.min.x);
     out[1] = static_cast<double>(v.min.y);
@@ -4452,7 +4535,7 @@ constexpr std::array<FieldInfo, 2> kPoint2DFields = {{
     FieldInfo{"y", "f32", "Up.", {}},
 }};
 constexpr std::string_view kBehaviorState_moveNames[] = {"stay", "follow", "flee", "wander", "home", "patrol", "seek"};
-constexpr std::array<FieldInfo, 7> kBehaviorStateFields = {{
+constexpr std::array<FieldInfo, 8> kBehaviorStateFields = {{
     FieldInfo{"name", "string", "What transitions and Behavior.state call it.", {}},
     FieldInfo{"move", "i32", "How its NavAgent moves: 0 stay (stand still), 1 follow the target, 2 flee from it (to radius away, again as it comes near), 3 wander within radius of home, 4 home (walk back to it), 5 patrol a Path's points in turn, 6 seek: go to where it last saw the target (seen_at).", kBehaviorState_moveNames},
     FieldInfo{"speed", "f32", "Its NavAgent's speed in this state; 0 leaves the agent's own.", {}},
@@ -4460,6 +4543,7 @@ constexpr std::array<FieldInfo, 7> kBehaviorStateFields = {{
     FieldInfo{"path", "string", "For patrol: the entity with the Path whose points it walks, by name or path.", {}},
     FieldInfo{"clip", "string", "The Animator clip it plays from entering the state (empty: the clip is left as it is).", {}},
     FieldInfo{"event", "string", "An event emitted on entering the state, with {state} and the entity as its subject (empty: none beyond behavior.changed).", {}},
+    FieldInfo{"face", "bool", "Turn to face the target while in the state, its -Z toward it about the vertical, at its NavAgent's turn_speed (540 degrees a second without one): a guard confronting, a shopkeeper greeting, a turret.", {}},
 }};
 constexpr std::array<FieldInfo, 4> kBehaviorTransitionFields = {{
     FieldInfo{"from", "string", "The state it leaves; * any state but the one it goes to.", {}},
@@ -4784,6 +4868,20 @@ constexpr std::array<FieldInfo, 28> kParticleEmitterFields = {{
     FieldInfo{"turbulence", "f32", "Swirling air: a curl-noise field pushes each particle by up to this many units per second squared (smoke, embers, magic); 0 for none.", {}},
     FieldInfo{"turbulence_scale", "f32", "The size of the turbulence's swirls in units.", {}},
     FieldInfo{"gpu", "bool", "Simulated and drawn on the GPU (docs/design/particles.md, On the GPU): hundreds of thousands at once, `max` the ring they live in (past it the oldest go first). Visual only: not in the state hash nor particles.list; `collide` meets what the camera drew (its depth prepass), and `child` does nothing.", {}},
+}};
+constexpr std::array<FieldInfo, 12> kTrailFields = {{
+    FieldInfo{"time", "f32", "Seconds a point of the trail lasts: how long the ribbon is behind a moving entity.", {}},
+    FieldInfo{"width", "f32", "Width at the newest point, in world units.", {}},
+    FieldInfo{"width_end", "f32", "Width at the oldest point.", {}},
+    FieldInfo{"color", "color", "Colour at the newest point.", {}},
+    FieldInfo{"color_end", "color", "Colour at the oldest point; alpha 0 fades the tail out.", {}},
+    FieldInfo{"offset", "vec3", "The point on the entity, in its own space, that leaves the trail (a sword's tip).", {}},
+    FieldInfo{"min_distance", "f32", "How far the point must move before a new one is laid; the newest always follows the entity.", {}},
+    FieldInfo{"emitting", "bool", "false lays no more points: what is there fades away.", {}},
+    FieldInfo{"billboard", "bool", "Turned to face the camera along its length; false keeps it flat in the XY plane for 2D.", {}},
+    FieldInfo{"additive", "bool", "Adds its light to what is behind (a glowing streak) instead of covering it.", {}},
+    FieldInfo{"texture", "string", "Project-relative image stretched along the trail (u along it from the newest point, v across); empty for plain colour.", {}},
+    FieldInfo{"layer", "i32", "Draw order among sprites and particles.", {}},
 }};
 constexpr std::array<FieldInfo, 2> kBoundsFields = {{
     FieldInfo{"min", "vec3", "Minimum corner.", {}},
@@ -5146,7 +5244,7 @@ constexpr std::array<RecordInfo, 15> kRecords = {{
     RecordInfo{"BehaviorTransition", kBehaviorTransitionFields},
 }};
 
-constexpr std::array<ComponentInfo, 52> kComponents = {{
+constexpr std::array<ComponentInfo, 53> kComponents = {{
     ComponentInfo{"Transform", "Position, rotation and scale relative to the parent entity (or the world when there is no parent).", true, kTransformFields},
     ComponentInfo{"WorldTransform", "World-space transform computed from the Transform hierarchy every tick. Read only.", false, kWorldTransformFields},
     ComponentInfo{"Velocity", "Linear and angular velocity. The built-in motion system integrates Transform from it every tick.", true, kVelocityFields},
@@ -5174,6 +5272,7 @@ constexpr std::array<ComponentInfo, 52> kComponents = {{
     ComponentInfo{"IK", "Inverse kinematics on a chain of the entity's skinned mesh: after the clips and layers pose the skeleton, the `bones` joints that end at node `end` bend so that the effector (`tip` in the end node's space) reaches `target` (world space) or the position of `target_entity`, solved by FABRIK with an optional pole (docs/design/animation.md, Inverse kinematics). Works without an Animator too (over the rest pose). Writes error and reached each tick; animation.pose reports the effector.", true, kIKFields},
     ComponentInfo{"LookAt", "Aims one node of the entity's skinned mesh at a point after the clips, layers and IK pose it: the node turns so that its `forward` axis points at `target` (world space) or at `target_entity`, at most `max_angle` degrees away from the posed direction, scaled by `weight` (docs/design/animation.md, Look-at). Writes angle each tick.", true, kLookAtFields},
     ComponentInfo{"ParticleEmitter", "Spawns particles at the entity: small unlit quads (camera-facing billboards, or XY sprites) with a life, a velocity from a cone, gravity, drag, and size and color fading from start to end, landing on a floor, stretched along their motion, and bursting a child emitter where they die (docs/design/particles.md). Simulated by the engine on the fixed tick with a random stream seeded from the entity, so runs are deterministic. particles.burst emits a batch at once; particles.list reads the live ones.", true, kParticleEmitterFields},
+    ComponentInfo{"Trail", "A ribbon left behind by the entity as it moves (docs/design/particles.md, Trails): a blade's swing, a comet's tail, a car's tyre marks. Every tick a point is added where the entity (its offset) has got to once it is min_distance from the last, and points older than time go; the ribbon is drawn through them facing the camera (or flat in XY), its width and colour going from the newest point's to the oldest's. Visual only: not in the state hash.", true, kTrailFields},
     ComponentInfo{"Bounds", "Axis-aligned bounding box in world space, computed by the engine from the mesh and WorldTransform. Read only.", false, kBoundsFields},
     ComponentInfo{"RigidBody", "Physics body. Dynamic bodies fall and collide; static bodies never move; kinematic bodies move by their Velocity and push dynamic ones. A dynamic or kinematic body's Transform is its place in the world (the solver writes it back), so those should be roots; a static body under a parent (a node of an instantiated level) stands where its parents put it.", true, kRigidBodyFields},
     ComponentInfo{"Joint", "Connects this body to another body, to any entity as a fixed point, or to a point in the world: a distance joint keeps two anchors a rod's length apart (or a rope's, pulling only; with stiffness it is a spring), a ball joint pins them together while both rotate freely, a hinge pins them and allows rotation about one axis only, a slider lets the body move along one axis only, each with optional limits and a motor (docs/design/physics.md, Joints). Solved with the contacts every tick; when the force carried exceeds break_force the joint breaks (joint.broken event, component removed).", true, kJointFields},

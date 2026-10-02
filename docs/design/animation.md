@@ -296,7 +296,8 @@ part or colour it does not know is refused by name. Each distinct query is a mod
 once. The engine writes it as a glTF binary and reads it with the reader every file goes through, so
 it is drawn, posed, cross-faded, layered, given `AnimationGraph`s and attachments, and takes clips
 from Mixamo files by `animation.library`, exactly as a model from a file is; `animation.clips` and
-`assets.describe` name its clips and joints. `samples/walker`'s hero is the same figure made by
+`assets.describe` name its clips and joints. A `Ragdoll` makes it eleven bodies, one a joint, so it
+falls where it is struck. `samples/walker`'s hero is the same figure made by
 `tools/scripts/make_sample_assets.py`, with its clips in files of their own.
 `tools/scripts/humanoid_evidence.py` (`tests/evidence/rendering/humanoids.png`) shows six looks
 idling, walking, running, waving, punching and lying where they fell. `assets_tests`

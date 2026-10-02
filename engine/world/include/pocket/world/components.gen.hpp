@@ -218,6 +218,7 @@ struct BehaviorState {
     std::string path = "";
     std::string clip = "";
     std::string event = "";
+    bool face = false;
     constexpr bool operator==(const BehaviorState&) const = default;
 };
 void to_json(Json& j, const BehaviorState& v);
@@ -742,6 +743,27 @@ void to_json(Json& j, const ParticleEmitter& v);
 void from_json(const Json& j, ParticleEmitter& v);
 // Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
 std::size_t numeric_span(ParticleEmitter& v, std::string_view path, float** out);
+
+/// A ribbon left behind by the entity as it moves (docs/design/particles.md, Trails): a blade's swing, a comet's tail, a car's tyre marks. Every tick a point is added where the entity (its offset) has got to once it is min_distance from the last, and points older than time go; the ribbon is drawn through them facing the camera (or flat in XY), its width and colour going from the newest point's to the oldest's. Visual only: not in the state hash.
+struct Trail {
+    float time = 0.5f;
+    float width = 0.2f;
+    float width_end = 0.0f;
+    Color4 color{1.0f, 1.0f, 1.0f, 1.0f};
+    Color4 color_end{1.0f, 1.0f, 1.0f, 0.0f};
+    Vec3 offset{0.0f, 0.0f, 0.0f};
+    float min_distance = 0.05f;
+    bool emitting = true;
+    bool billboard = true;
+    bool additive = false;
+    std::string texture = "";
+    std::int32_t layer = 10;
+    constexpr bool operator==(const Trail&) const = default;
+};
+void to_json(Json& j, const Trail& v);
+void from_json(const Json& j, Trail& v);
+// Floats behind a numeric field path ("position", "position.x", "color", "layers.0.weight"); 0 when the path is not numeric.
+std::size_t numeric_span(Trail& v, std::string_view path, float** out);
 
 /// Axis-aligned bounding box in world space, computed by the engine from the mesh and WorldTransform. Read only.
 struct Bounds {
@@ -1301,6 +1323,7 @@ void hash_component(struct StateHasherRef& h, const Ragdoll& v);
 void hash_component(struct StateHasherRef& h, const IK& v);
 void hash_component(struct StateHasherRef& h, const LookAt& v);
 void hash_component(struct StateHasherRef& h, const ParticleEmitter& v);
+void hash_component(struct StateHasherRef& h, const Trail& v);
 void hash_component(struct StateHasherRef& h, const Bounds& v);
 void hash_component(struct StateHasherRef& h, const RigidBody& v);
 void hash_component(struct StateHasherRef& h, const Joint& v);
@@ -1385,6 +1408,8 @@ std::size_t read_numbers(const LookAt& v, double* out);
 bool write_numbers(LookAt& v, const double* in, std::size_t n);
 std::size_t read_numbers(const ParticleEmitter& v, double* out);
 bool write_numbers(ParticleEmitter& v, const double* in, std::size_t n);
+std::size_t read_numbers(const Trail& v, double* out);
+bool write_numbers(Trail& v, const double* in, std::size_t n);
 std::size_t read_numbers(const Bounds& v, double* out);
 bool write_numbers(Bounds& v, const double* in, std::size_t n);
 std::size_t read_numbers(const RigidBody& v, double* out);

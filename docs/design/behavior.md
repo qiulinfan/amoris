@@ -33,7 +33,11 @@ the run's seed, and to another on arriving; `home` walks back to `home`; `patrol
 of the `Path` named by `path` (`docs/design/paths.md`) in turn, looping, `waypoint` saying which it
 heads for; `seek` walks to `seen_at`, where it last saw the target. `speed`, when not 0, is the
 agent's speed in the state. A state that moves an entity without a `NavAgent` says so in `error` and
-moves nothing.
+moves nothing. `face: true` turns the entity toward the target while in the state, its -Z forward
+about the vertical, at its `NavAgent`'s `turn_speed` (540 degrees a second without one): a guard
+that stops to confront, a shopkeeper who greets, a turret. `runtime_tests` (`[behavior][face]`): a
+keeper facing -Z turns partway in a tenth of a second toward a mark on its +X and faces it within
+two thirds of a second.
 
 Entering a state (the first at the start, one a transition goes to, or one written into `state` from
 outside) emits `behavior.changed` with `{from, to}` and the entity as its subject, emits the state's

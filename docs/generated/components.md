@@ -451,6 +451,25 @@ Spawns particles at the entity: small unlit quads (camera-facing billboards, or 
 | `turbulence_scale` | f32 | 2.0 | The size of the turbulence's swirls in units. |
 | `gpu` | bool | false | Simulated and drawn on the GPU (docs/design/particles.md, On the GPU): hundreds of thousands at once, `max` the ring they live in (past it the oldest go first). Visual only: not in the state hash nor particles.list; `collide` meets what the camera drew (its depth prepass), and `child` does nothing. |
 
+## Trail
+
+A ribbon left behind by the entity as it moves (docs/design/particles.md, Trails): a blade's swing, a comet's tail, a car's tyre marks. Every tick a point is added where the entity (its offset) has got to once it is min_distance from the last, and points older than time go; the ribbon is drawn through them facing the camera (or flat in XY), its width and colour going from the newest point's to the oldest's. Visual only: not in the state hash.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `time` | f32 | 0.5 | Seconds a point of the trail lasts: how long the ribbon is behind a moving entity. |
+| `width` | f32 | 0.2 | Width at the newest point, in world units. |
+| `width_end` | f32 | 0.0 | Width at the oldest point. |
+| `color` | color | [1.0, 1.0, 1.0, 1.0] | Colour at the newest point. |
+| `color_end` | color | [1.0, 1.0, 1.0, 0.0] | Colour at the oldest point; alpha 0 fades the tail out. |
+| `offset` | vec3 | [0.0, 0.0, 0.0] | The point on the entity, in its own space, that leaves the trail (a sword's tip). |
+| `min_distance` | f32 | 0.05 | How far the point must move before a new one is laid; the newest always follows the entity. |
+| `emitting` | bool | true | false lays no more points: what is there fades away. |
+| `billboard` | bool | true | Turned to face the camera along its length; false keeps it flat in the XY plane for 2D. |
+| `additive` | bool | false | Adds its light to what is behind (a glowing streak) instead of covering it. |
+| `texture` | string | "" | Project-relative image stretched along the trail (u along it from the newest point, v across); empty for plain colour. |
+| `layer` | i32 | 10 | Draw order among sprites and particles. |
+
 ## Bounds
 
 Axis-aligned bounding box in world space, computed by the engine from the mesh and WorldTransform. Read only. Derived: computed by the engine, not stored in scenes.
@@ -1072,6 +1091,7 @@ One state of a Behavior (docs/design/behavior.md): how the entity moves while in
 | `path` | string | "" | For patrol: the entity with the Path whose points it walks, by name or path. |
 | `clip` | string | "" | The Animator clip it plays from entering the state (empty: the clip is left as it is). |
 | `event` | string | "" | An event emitted on entering the state, with {state} and the entity as its subject (empty: none beyond behavior.changed). |
+| `face` | bool | false | Turn to face the target while in the state, its -Z toward it about the vertical, at its NavAgent's turn_speed (540 degrees a second without one): a guard confronting, a shopkeeper greeting, a turret. |
 
 ## BehaviorTransition
 

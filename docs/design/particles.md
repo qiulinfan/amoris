@@ -61,6 +61,26 @@ particles.burst(sparks, 30);
 `tests/evidence/rendering/particles.png` is the playground after 150 headless frames: the fountain's
 spray at the left, drawn by the runtime's own capture.
 
+## Trails
+
+A `Trail` leaves a ribbon behind its entity as it moves: a blade's swing, a comet's tail, a car's
+tyre marks, a magic bolt's streak. Every tick each of its points ages, the ones older than `time`
+go, and the newest follows the entity's `offset` (a point in the entity's own space, a sword's tip);
+once that is `min_distance` from the point before it stays and a new newest is laid, so a fast mover
+lays a point a tick and a still one none. The ribbon runs through the points, two vertices a point,
+across the camera's view at each (or across XY when `billboard` is off, for 2D), its width going
+from `width` at the newest point to `width_end` at the oldest and its colour from `color` to
+`color_end` by their age, `texture` stretched along it, `additive` adding its light. It is drawn
+with the sprites and particles in `layer` order, its buffers kept and filled again each frame.
+`emitting: false` lays no more and lets what is there fade; removing the component or the entity
+takes the ribbon with it. Trails are a picture, kept out of the state hash; `particles.stats.trails`
+counts them and their points. `tools/scripts/trails_evidence.py`
+(`tests/evidence/rendering/trails.png`): a comet circling with an additive trail tapering from
+orange to a clear magenta, and a ribbon of even width behind a point bouncing across the floor.
+`runtime_tests` (`[particles][trail]`): a point a tick for the half second each lasts while the
+entity moves a tenth of a unit a tick, two or fewer once it stands still, none after it stops
+emitting, none left once the entity goes.
+
 ## On the GPU
 
 `gpu = true` moves an emitter's particles to the GPU, for the effects that need a great many: sparks
@@ -108,7 +128,7 @@ Particles on the CPU are for thousands (hundreds of thousands go on the GPU, as 
 with `collide` they meet the physics bodies through a ray each per tick and the solid tiles of
 orthogonal maps by the cell they would end in (hundreds are cheap, thousands cost a millisecond or
 more), not one-way platforms, slopes or the tiles of isometric and hexagonal maps, and never each
-other; a trail is a stretched quad, not a ribbon of the particle's path. Soft edges come from the
-texture: an empty `texture` draws hard-edged quads. The GPU's particles meet only what the camera
-saw last frame (nothing without a depth prepass), do not sort among themselves, and cast and take no
-light.
+other; a particle's trail is a stretched quad, not a ribbon of its path (an entity's is a `Trail`).
+Soft edges come from the texture: an empty `texture` draws hard-edged quads. The GPU's particles
+meet only what the camera saw last frame (nothing without a depth prepass), do not sort among
+themselves, and cast and take no light.

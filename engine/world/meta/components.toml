@@ -534,6 +534,24 @@ fields = [
 ]
 
 [[component]]
+name = "Trail"
+doc = "A ribbon left behind by the entity as it moves (docs/design/particles.md, Trails): a blade's swing, a comet's tail, a car's tyre marks. Every tick a point is added where the entity (its offset) has got to once it is min_distance from the last, and points older than time go; the ribbon is drawn through them facing the camera (or flat in XY), its width and colour going from the newest point's to the oldest's. Visual only: not in the state hash."
+fields = [
+    { name = "time", type = "f32", default = 0.5, doc = "Seconds a point of the trail lasts: how long the ribbon is behind a moving entity." },
+    { name = "width", type = "f32", default = 0.2, doc = "Width at the newest point, in world units." },
+    { name = "width_end", type = "f32", default = 0.0, doc = "Width at the oldest point." },
+    { name = "color", type = "color", default = [1.0, 1.0, 1.0, 1.0], doc = "Colour at the newest point." },
+    { name = "color_end", type = "color", default = [1.0, 1.0, 1.0, 0.0], doc = "Colour at the oldest point; alpha 0 fades the tail out." },
+    { name = "offset", type = "vec3", default = [0.0, 0.0, 0.0], doc = "The point on the entity, in its own space, that leaves the trail (a sword's tip)." },
+    { name = "min_distance", type = "f32", default = 0.05, doc = "How far the point must move before a new one is laid; the newest always follows the entity." },
+    { name = "emitting", type = "bool", default = true, doc = "false lays no more points: what is there fades away." },
+    { name = "billboard", type = "bool", default = true, doc = "Turned to face the camera along its length; false keeps it flat in the XY plane for 2D." },
+    { name = "additive", type = "bool", default = false, doc = "Adds its light to what is behind (a glowing streak) instead of covering it." },
+    { name = "texture", type = "string", default = "", doc = "Project-relative image stretched along the trail (u along it from the newest point, v across); empty for plain colour." },
+    { name = "layer", type = "i32", default = 10, doc = "Draw order among sprites and particles." },
+]
+
+[[component]]
 name = "Bounds"
 doc = "Axis-aligned bounding box in world space, computed by the engine from the mesh and WorldTransform. Read only."
 serialized = false
@@ -953,6 +971,7 @@ fields = [
     { name = "path", type = "string", default = "", doc = "For patrol: the entity with the Path whose points it walks, by name or path." },
     { name = "clip", type = "string", default = "", doc = "The Animator clip it plays from entering the state (empty: the clip is left as it is)." },
     { name = "event", type = "string", default = "", doc = "An event emitted on entering the state, with {state} and the entity as its subject (empty: none beyond behavior.changed)." },
+    { name = "face", type = "bool", default = false, doc = "Turn to face the target while in the state, its -Z toward it about the vertical, at its NavAgent's turn_speed (540 degrees a second without one): a guard confronting, a shopkeeper greeting, a turret." },
 ]
 
 [[record]]

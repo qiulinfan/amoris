@@ -533,6 +533,28 @@ TEST_CASE("a Behavior sees what is in its sight, its field of view, and not behi
     REQUIRE(s.finish().has_value());
 }
 
+TEST_CASE("a Behavior state that faces its target turns the entity's -Z toward it, at its turn speed", "[runtime][behavior][face]") {
+    auto o = hello_options(-1);
+    o.paused = true;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Mark"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 5}, {"y", 0}, {"z", 0}}}}}}}}).has_value());
+    const Json behavior{{"target", "Mark"}, {"states", Json::array({Json{{"name", "greet"}, {"face", true}}})}};
+    REQUIRE(s.command("world.spawn", Json{{"name", "Keeper"}, {"components", Json{{"Transform", Json::object()}, {"Behavior", behavior}}}}).has_value());
+    auto forward = [&] {
+        const Json r = s.command("world.get", Json{{"entity", "Keeper"}, {"component", "Transform"}}).value()["rotation"];
+        const double x = r["x"], y = r["y"], z = r["z"], w = r["w"];
+        return std::pair<double, double>{-(2 * (x * z + w * y)), -(1 - 2 * (x * x + y * y))};   // -Z turned, in XZ
+    };
+    REQUIRE(s.command("step", Json{{"ticks", 6}}).has_value());
+    auto f = forward();
+    REQUIRE(f.first < 0.99);   // a tenth of a second at 540 degrees a second: partway round
+    REQUIRE(s.command("step", Json{{"ticks", 30}}).has_value());
+    f = forward();
+    REQUIRE(f.first == Catch::Approx(1.0).margin(0.01));   // facing +X, where the mark is
+    REQUIRE(std::fabs(f.second) < 0.05);
+}
+
 TEST_CASE("a Behavior patrols a Path's points in turn", "[runtime][behavior][patrol]") {
     app::Options o;
     o.project_dir = root() / "samples" / "playground";
@@ -1077,6 +1099,32 @@ TEST_CASE("particles on the GPU are drawn from their ring, owed by the ticks; tu
     };
     REQUIRE(spread(0.0f) < 0.05);
     REQUIRE(spread(8.0f) > 0.1);
+}
+
+TEST_CASE("a Trail lays points as its entity moves, ages them out, and fades when it stops emitting", "[runtime][particles][trail]") {
+    auto o = hello_options(-1);
+    o.paused = true;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Comet"}, {"components", Json{{"Transform", Json::object()}, {"Trail", Json{{"time", 0.5}, {"min_distance", 0.05}}}}}}).has_value());
+    auto points = [&] { return s.command("particles.stats", Json::object()).value()["trails"]["points"].get<int>(); };
+    for (int i = 0; i < 60; ++i) {
+        REQUIRE(s.command("world.set", Json{{"entity", "Comet"}, {"component", "Transform"}, {"value", Json{{"position", Json{{"x", 0.1 * i}}}}}}).has_value());
+        REQUIRE(s.command("step", Json{{"ticks", 1}}).has_value());
+    }
+    // A point a tick for the half second each lasts.
+    REQUIRE(points() >= 28);
+    REQUIRE(points() <= 32);
+    // Standing still: the newest follows, nothing is laid, the rest age out.
+    REQUIRE(s.command("step", Json{{"ticks", 40}}).has_value());
+    REQUIRE(points() <= 2);
+    REQUIRE(s.command("step", Json{{"ticks", 3}, {"render", "each"}}).has_value());
+    REQUIRE(s.command("world.set", Json{{"entity", "Comet"}, {"component", "Trail"}, {"value", Json{{"emitting", false}}}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 40}}).has_value());
+    REQUIRE(points() == 0);
+    REQUIRE(s.command("world.destroy", Json{{"entity", "Comet"}}).has_value());
+    REQUIRE(s.command("step", Json{{"ticks", 1}}).has_value());
+    REQUIRE(s.command("particles.stats", Json::object()).value()["trails"]["count"] == 0);
 }
 
 TEST_CASE("joints hold a pendulum chain and a rope snaps under load", "[runtime][joints]") {
