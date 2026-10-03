@@ -81,7 +81,7 @@ class PocketEnv:
         bundle = bundle or os.path.join(self.root, "build", "ts", name + ".js")
         if not os.path.exists(bundle):
             raise FileNotFoundError(f"{bundle} does not exist: bundle the project first (pocket ts {project})")
-        runtime = runtime or os.path.join(self.root, "build", config, "bin", "pocket_runtime")
+        runtime = runtime or os.path.join(self.root, "build", config, "bin", "pocket_runtime" + (".exe" if os.name == "nt" else ""))
         if not os.path.exists(runtime):
             raise FileNotFoundError(f"{runtime} does not exist: build the runtime first (pocket build)")
         args = [runtime, "--project", project_dir, "--bundle", bundle, "--project-config", bundle + ".project.json",

@@ -27,7 +27,7 @@ class Runtime:
         config = "release" if release else "debug"
         project = sample if os.path.isabs(sample) else os.path.join(ROOT, "samples", sample)
         name = os.path.basename(project.rstrip("/"))
-        args = [exe or os.path.join(ROOT, "build", config, "bin", "pocket_runtime"), "--project", project,
+        args = [exe or os.path.join(ROOT, "build", config, "bin", "pocket_runtime" + (".exe" if os.name == "nt" else "")), "--project", project,
                 "--bundle", os.path.join(ROOT, "build", "ts", name + ".js"), "--headless", "--serve", str(port),
                 "--paused", "--json", "--size", size, "--frames", "1000000", "--log-level", "warn", *extra]
         if editor:

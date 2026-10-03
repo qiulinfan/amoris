@@ -1,7 +1,9 @@
 # Status (2026-10-02)
 
 What exists on the `master` branch, how to verify it, and what is next. Everything listed builds and
-passes `pocket test` on macOS (Apple silicon) in the sanitized debug configuration.
+passed `pocket test` on macOS (Apple silicon) in the sanitized debug configuration; from 2026-10-02
+the engine is developed on Windows 11 with Direct3D 12 (ADR 0008), where it builds and its test
+modules and scenarios pass (`tests/evidence/windows/README.md`).
 
 ## Built
 

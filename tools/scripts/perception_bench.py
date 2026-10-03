@@ -36,7 +36,7 @@ def tokens_text(s):
 
 
 def measure(sample, ticks, width, height):
-    exe = os.path.join(ROOT, "build", "debug", "bin", "pocket_runtime")
+    exe = os.path.join(ROOT, "build", "debug", "bin", "pocket_runtime" + (".exe" if os.name == "nt" else ""))
     bundle = os.path.join(ROOT, "build", "ts", f"{sample}.js")
     proc = subprocess.Popen([exe, "--project", os.path.join(ROOT, "samples", sample), "--bundle", bundle, "--headless", "--serve", "0", "--paused", "--json", "--size", f"{width}x{height}", "--log-level", "warn"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
     url = None

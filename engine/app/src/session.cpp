@@ -5657,7 +5657,10 @@ Result<Json> Session::save_command(std::string_view op, const Json& p) {
                 j["slot"] = f.stem().string();
                 j["bytes"] = std::filesystem::file_size(f, ec);
                 auto t = std::filesystem::last_write_time(f, ec);
-                j["modified"] = std::chrono::duration_cast<std::chrono::seconds>(t.time_since_epoch()).count();
+                // Seconds since 1970: the file clock's own epoch is the library's (1601 on Windows,
+                // whose C++ library has no file_clock::to_sys), so the time is placed against now.
+                const auto sys = std::chrono::system_clock::now() + std::chrono::duration_cast<std::chrono::system_clock::duration>(t - std::filesystem::file_time_type::clock::now());
+                j["modified"] = std::chrono::duration_cast<std::chrono::seconds>(sys.time_since_epoch()).count();
                 if (auto text = fs::read_text(f)) {
                     Json save = Json::parse(*text, nullptr, false);
                     if (save.is_object()) {

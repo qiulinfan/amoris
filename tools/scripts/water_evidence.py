@@ -37,7 +37,7 @@ def look(pos, at):
 
 def main():
     runtime = subprocess.Popen([
-        os.path.join(ROOT, "build", "debug", "bin", "pocket_runtime"), "--project", os.path.join(ROOT, "samples", "hills"),
+        os.path.join(ROOT, "build", "debug", "bin", "pocket_runtime" + (".exe" if os.name == "nt" else "")), "--project", os.path.join(ROOT, "samples", "hills"),
         "--bundle", os.path.join(ROOT, "build", "ts", "hills.js"), "--headless", "--serve", str(PORT), "--paused", "--json",
         "--size", "1280x720", "--frames", "100000", "--log-level", "warn"],
         cwd=ROOT, env=dict(os.environ, POCKET_ROOT=ROOT), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

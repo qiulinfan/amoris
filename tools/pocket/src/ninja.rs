@@ -90,11 +90,15 @@ pub fn generate(ws: &Workspace, graph: &Graph, tc: &Toolchain, config: &str) -> 
         // The response file is read with Windows quoting (backslashes are path separators). The
         // driver asks for the static C runtime (libcmt) whatever the objects say: refuse it, so
         // only the dynamic one they were compiled for is linked; `-D_DLL` is how it learns that
-        // runtime for AddressSanitizer's thunk. An 8 MB main-thread stack as macOS gives
-        // (Windows' default is 1 MB; JavaScriptCore sizes its limit from it), and debug
-        // information into a PDB beside the executable. DbgHelp is flecs's (for backtraces; its
-        // own request for it is made only under MSVC's compiler).
-        writeln!(n, "rule link\n  command = $cxx -fuse-ld=lld -g -D_DLL -Wno-unused-command-line-argument $ldflags -o $out --rsp-quoting=windows @$out.rsp $libs -ldbghelp -Wl,/NODEFAULTLIB:libcmt -Wl,/STACK:8388608\n  rspfile = $out.rsp\n  rspfile_content = $in\n  description = LINK $out")?;
+        // runtime for AddressSanitizer's thunk. A 5 MB main-thread stack (Windows' default is
+        // 1 MB): JavaScriptCore lets scripts use at most 5 MB of it (maxPerThreadStackUsage), as on
+        // macOS, and no more, because on Windows it commits the stack down to its limit whenever
+        // that limit moves: with a stack larger than 5 MB the limit is reckoned from each entry
+        // into the VM, which moves with every call from a script into the engine, and every such
+        // call then touched 5 MB of pages (52 us a call against 0.08). Debug information goes
+        // into a PDB beside the executable. DbgHelp is flecs's (for backtraces; its own request
+        // for it is made only under MSVC's compiler).
+        writeln!(n, "rule link\n  command = $cxx -fuse-ld=lld -g -D_DLL -Wno-unused-command-line-argument $ldflags -o $out --rsp-quoting=windows @$out.rsp $libs -ldbghelp -Wl,/NODEFAULTLIB:libcmt -Wl,/STACK:5242880\n  rspfile = $out.rsp\n  rspfile_content = $in\n  description = LINK $out")?;
     } else if linux {
         writeln!(n, "rule link\n  command = $cxx -fuse-ld=lld $ldflags -o $out -Wl,--start-group $in -Wl,--end-group $libs -ldl -lpthread -lm\n  description = LINK $out")?;
     } else {

@@ -17,12 +17,12 @@ mouse.
 
 | Pane | Backed by |
 |---|---|
-| Toolbar: Play / Pause / Step / Stop, Undo / Redo, Save, Spawn, Clone, Delete; the tick, the entity count and the state hash sit at the right of the bottom tab row | `script.start`, `pause`/`resume`/`step`, `script.reload`, `world.load`, `project.save_scene`, `world.spawn`/`instantiate`/`destroy`, `state`, `world.summary` |
+| Toolbar: Play / Pause, Step and Stop as one group, Undo / Redo, Spawn, Clone, Delete, and Save at the right beside the scene's file; the status bar under the docks says whether the project is being edited, plays or is paused (tinted green while it plays, amber while paused), the last notice, the tick, the entity count and the state hash | `script.start`, `pause`/`resume`/`step`, `script.reload`, `world.load`, `project.save_scene`, `world.spawn`/`instantiate`/`destroy`, `state`, `world.summary` |
 | Hierarchy: every entity by path; click selects, shift-click (or cmd/ctrl-click) extends the selection; a row dragged onto another becomes its child, dropped on the panel's background it becomes a root, staying where it stands in the world (`world.reparent` with `keep_world`; one undoable edit) | `world.query`, `world.describe` |
-| Scene pane: the renderer confined to the pane; click selects by the id buffer (shift extends); drag orbits the camera; wheel zooms; a gizmo on the selection (X, Y, Z handles move along a world axis, the center handle moves in the camera plane, R, RX and RZ turn around world Y, X and Z, S scales uniformly and SX, SY, SZ one axis; every selected entity moves together, a child under a turned or scaled parent by exactly the handle's world move or turn; with Local on, kept with the layout, the handles sit on the entity's own axes and moves and turns follow them); a view bar over the pane's top-left corner holds Overlays (colliders, joints and lights as lines, through `render.debug`), Snap, its step and World/Local; with Snap on (kept in the project's `.pocket/editor.json` with the step) a drag lands on the grid: positions to the snap step on the dragged axes (the step button beside Snap cycles 0.1, 0.25, 0.5, 1, 2 units), turns to 15 degrees, scales to quarters | `render.viewport`, `render.pick`, `render.project`, `world.set` on Transforms |
+| Scene pane: the renderer confined to the pane; click selects by the id buffer (shift extends); drag orbits the camera; wheel zooms; a gizmo on the selection (X, Y, Z handles move along a world axis, the center handle moves in the camera plane, R, RX and RZ turn around world Y, X and Z, S scales uniformly and SX, SY, SZ one axis; every selected entity moves together, a child under a turned or scaled parent by exactly the handle's world move or turn; with Local on, kept with the layout, the handles sit on the entity's own axes and moves and turns follow them); a view bar over the pane's top-right corner (out of the way of a HUD at the top left) holds Overlays (colliders, joints and lights as lines, through `render.debug`), Snap, its step and World/Local (a toggle that is on is tinted in the accent, and Overlays and Snap read `✓ Overlays`, `✓ Snap`); with Snap on (kept in the project's `.pocket/editor.json` with the step) a drag lands on the grid: positions to the snap step on the dragged axes (the step button beside Snap cycles 0.1, 0.25, 0.5, 1, 2 units), turns to 15 degrees, scales to quarters | `render.viewport`, `render.pick`, `render.project`, `world.set` on Transforms |
 | Tile brush: with a `TileMap` entity selected, the inspector's Tiles section lists the map's layers and tiles (and erase); picking one turns the brush on, a click or drag in the scene pane paints the cells under the mouse, every stroke is one undo step, Stop painting returns the click to selecting, Save map writes the `.tmj` back (`docs/design/tilemaps.md`, Editing) | `tilemap.info`, `render.unproject`, `tilemap.cell`, `tilemap.set`, `tilemap.save` |
 | Docks: the panes (Hierarchy, Inspector, Console, Events, Transcript, Assets, Input, Audio, Script, Timeline) live in three docks, left, right and bottom, each showing one behind tabs (the hierarchy's tab counts its entities, the inspector's names the selection); a tab dragged onto another dock, or near that edge of the scene pane, moves its pane there, and a dock left empty closes and gives the scene its room. Splitters between the docks; the docks, what each shows, the widths and the bottom height persist in the project's `.pocket/editor.json` (a layout saved before the docks opens as it was) | `project.read`, `project.write` |
-| Inspector: name, path, every component the entity has with one input per field (a MeshRenderer's texture with a pattern stepped through by name: the engine's bricks, tiles, planks, cobble and the rest put on as its texture, normal map and world-laid tile in one undoable edit, `docs/design/assets.md`, Patterns) (vector fields as x/y/z; a code with value names, such as `Light.kind`, `RigidBody.kind` or a project's own, stepped through by name), remove, add component | `world.schema` (the fields), `world.describe`, `world.set`, `world.remove`, `world.rename` |
+| Inspector: name, path, every component the entity has as a section (its header names it and holds Remove, or says `derived`) with a row per field, the field's name in a label column and its input filling the rest (a MeshRenderer's texture with a pattern stepped through by name: the engine's bricks, tiles, planks, cobble and the rest put on as its texture, normal map and world-laid tile in one undoable edit, `docs/design/assets.md`, Patterns) (vector fields as x/y/z and colours as r/g/b/a, one input a part, each led by its letter in the axis colour; a flag as a check box; a code with value names, such as `Light.kind`, `RigidBody.kind` or a project's own, stepped through by name), remove, add component | `world.schema` (the fields), `world.describe`, `world.set`, `world.remove`, `world.rename` |
 | Console / Events / Transcript tabs | `log.tail`, `events.recent`, `transcript` |
 | Script tab: the project's scripts (`scripts/`, `scenarios/`) in a list; one opens in a text area coloured as TypeScript (the area's `syntax` is the file's path, `docs/design/pocket-ui.md`), Save or Cmd/Ctrl+Return writes it back to the project, and with `--watch` the tool rebuilds the bundle and reloads the project and type-checks it: the errors are listed under the text area (the open file's in red, with line and column) and logged in the Console | `assets.list` (kind `script`), `project.read`, `project.write`, `script.diagnostics` |
 | Input tab: every action of the input map with its positive, negative and axis bindings as text (comma-separated key names: `Space`, `Left`, `pad:a`, `pad1:a` for one pad, `pad:leftx`, `mouse:x`); a field committed rebinds at once (one undoable edit, the live state kept), Press beside a field takes the next key or pad button pressed as that part's binding (its keyboard keys are replaced, pad and mouse bindings stay; Escape cancels), Add makes an action from a name and its first keys (an action without keys is refused), Remove takes one out, Save bindings writes `input.json` beside `project.toml`, which the runtime takes over the TOML's map from then on (`docs/design/input.md`, Map) | `input.describe`, `input.map`, `project.write` |
@@ -36,6 +36,32 @@ mouse.
 Keyboard (when no text input has focus): Space plays or pauses, Delete removes the selection, Escape
 clears it, Cmd/Ctrl+Z undoes, Cmd/Ctrl+Shift+Z or Ctrl+Y redoes, Cmd/Ctrl+D duplicates, Cmd/Ctrl+A
 selects everything, Cmd/Ctrl+S saves the scene.
+
+## Look
+
+A dark theme defined once at the top of `editor/main.tsx` (the Look section): a palette (`C`), a
+spacing scale (`S`, 2 to 12 points), three font sizes (11, 12 and 13 points) and the row heights,
+and the few pieces every pane is built from: the editor's own `Button` (raised, primary in the
+accent, ghost until hovered, a toggle that is on tinted in the accent, disabled in faint type) and
+`TextInput` (sunken, outlined in the accent while it has the focus), `Section` (a header bar and its
+rows), `Prop` (a label column and the fields), `Empty` (what an empty pane says). The SDK's own
+widgets (`Choice`, `Slider`, `Checkbox`) take the palette through `theme`, which the editor sets in
+its own bundle only: the project's interface keeps the SDK's colours.
+
+Surfaces get lighter from the window behind the panes (the toolbar, the status bar, the splitters
+between the docks) to a pane, a section header, a button and a hovered one; inputs sit darker than
+their pane. The tab in front of a dock takes its pane's colour under a thin accent line, so it joins
+its pane; the others are dim text on the darker strip. The hierarchy indents a child under its
+parent with a guide line per level, marks a parent with a square and a leaf with a ring, and shows
+the primary selection stronger than the rest of it. Buttons, rows, tabs, splitters and gizmo handles
+show the pointer over them (`hover` events into one `hovered` signal). Glyphs come from the UI font,
+Noto Sans CJK SC, which has `▶` and `✓` but no pause, stop or cross symbols, so those icons are
+drawn from boxes.
+
+Names agents and tests use did not change with the look (`play`, `entity:Ramp`, `tab:script`,
+`Transform.position.x`, ...), and editor tests click hierarchy rows at 1024 by 640 points: the
+toolbar is 36 points high, a tab strip 24 and a row 22, which leaves the fifteenth row of the
+physics sample (`Ramp`) inside the pane.
 
 ## Undo
 

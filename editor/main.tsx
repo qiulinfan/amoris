@@ -3,8 +3,8 @@
 // (hierarchy, inspector, console, transcript) is also reachable by `ui_snapshot`, and every
 // button is reachable by `ui_click`. Every edit is undoable (editor/history.ts) and the scene
 // pane has a translate gizmo (editor/gizmo.ts) that agents drag with `ui.drag`.
-import { Button, Checkbox, Choice, Label, Panel, Row, Slider, TextInput, command, mount, onFrame, onInput, physics, render, setProjectRoot, signal, terrain, theme, tilemap, ui, world } from "pocket";
-import type { Bus, ComponentName, Described, Dim, Scene, Transform, UiEvent, VNode, WorldEvent } from "pocket";
+import { Checkbox, Choice, Label, Row, Slider, command, h, mount, onFrame, onInput, physics, render, setProjectRoot, signal, terrain, theme, tilemap, ui, world } from "pocket";
+import type { Bus, ComponentName, Described, Dim, Edge, Scene, Transform, UiEvent, VNode, WorldEvent } from "pocket";
 import { applyOrbit, orbitFromCamera } from "./orbit";
 import type { Orbit } from "./orbit";
 import * as history from "./history";
@@ -38,7 +38,7 @@ interface ActionBindings { positive?: string[]; negative?: string[]; axis?: stri
 interface GizmoView { center: { x: number; y: number }; x: { x: number; y: number }; y: { x: number; y: number }; z: { x: number; y: number } }
 
 const LAYOUT_PATH = ".pocket/editor.json";
-const DEFAULT_LAYOUT: Layout = { hierarchy: 240, inspector: 320, bottom: 200, docks: { left: ["hierarchy"], right: ["inspector"], bottom: [...TABS] }, active: { left: "hierarchy", right: "inspector", bottom: "console" } };
+const DEFAULT_LAYOUT: Layout = { hierarchy: 240, inspector: 340, bottom: 200, docks: { left: ["hierarchy"], right: ["inspector"], bottom: [...TABS] }, active: { left: "hierarchy", right: "inspector", bottom: "console" } };
 
 const info = command<{ name: string; scene: string | null; contexts: string[]; window: { width: number; height: number } }>("project.info");
 const schema = command<{ components: SchemaComponent[] }>("world.schema").components;
@@ -96,6 +96,156 @@ let frame = 0;
 let dragState: { ids: number[]; before: Map<number, Transform>; parents: Map<number, ParentFrame | undefined>; layout: GizmoLayout; axis: Axis; turned: number; scaled: number; moved: Vec3 } | null = null;
 let stroke: { entity: number; layer: string; pos: { x: number; y: number }; cells: Map<string, { tile_x: number; tile_y: number; was: number; gid: number }> } | null = null;
 let sculptStroke: { entity: number; paint: boolean; layers: boolean; before: number[]; pos: { x: number; y: number }; target?: number; touches: number } | null = null;
+
+// ------------------------------------------------------------------------------------ look
+// One palette, one spacing scale and the few pieces every pane is built from (docs/editor.md,
+// Look). Surfaces get lighter from the window behind the panes to a pane, a section header, a
+// button and a hovered one; inputs sit darker than the pane they are in; one accent marks the
+// selection, the focus and the primary action.
+const C = {
+    window: "#121317",       // behind the panes: the toolbar, the status bar, the splitters
+    strip: "#17181d",        // tab strips
+    pane: "#1e2026",         // a pane's body (an active tab takes it, so it joins its pane)
+    section: "#272a31",      // a section's header in the inspector
+    raised: "#2d3039",       // a button
+    hover: "#393d48",        // a button under the pointer
+    rowHover: "#ffffff0d",   // a row or tab under the pointer
+    field: "#141519",        // inputs, sunken into the pane
+    fieldLine: "#30333c",
+    line: "#2b2d35",         // separators, tree guides
+    text: "#e3e5ea",
+    dim: "#a1a7b3",
+    faint: "#6c727e",
+    accent: "#4f8cff",
+    accentHover: "#6a9eff",
+    accentSoft: "#4f8cff33", // a toggle that is on
+    accentText: "#a9c7ff",
+    selected: "#294370",     // the primary selection's row
+    selectedSoft: "#22324f", // the rest of the selection
+    danger: "#e5484d",
+    ok: "#3dbf6d",
+    warn: "#e8b04a",
+};
+// Axis letters and colour channels in the axis colours.
+const AXIS_COLORS: Record<string, string> = { x: "#e5534b", y: "#5cbf5c", z: "#4f8cff", r: "#e5534b", g: "#5cbf5c", b: "#4f8cff" };
+const S = { xs: 2, sm: 4, md: 6, lg: 8, xl: 12 };   // the spacing scale, in points
+const SIZE = { small: 11, body: 12, title: 13 };    // font sizes
+const ROW = 22;          // a hierarchy, list or field row
+const STRIP = 24;        // a tab strip (editor tests click the 15th hierarchy row at 1024x640: keep the strip and rows this low)
+const GAP = 4;           // between panes: the splitters
+const LABEL_W = 88;      // the inspector's label column
+
+// The SDK's own widgets (Choice, Slider, Checkbox) take the palette too; the project's interface,
+// a bundle of its own, keeps the SDK's theme.
+Object.assign(theme, { panel: C.pane, panelAlt: C.raised, border: C.fieldLine, text: C.text, muted: C.dim, accent: C.accent, danger: C.danger, ok: C.ok, fontSize: SIZE.body });
+
+const hovered = signal("");        // the element under the pointer that shows it (a button, a row, a tab, a splitter)
+const focusedInput = signal("");   // the input with the keyboard's focus, outlined in the accent
+
+/** Hover handler: the element shows it while the pointer is over it. */
+function hoverOn(key: string): (e: UiEvent) => void {
+    return (e) => {
+        if (e.entered) hovered.set(key);
+        else if (hovered() === key) hovered.set("");
+    };
+}
+
+/** The editor's button: raised by default, `primary` in the accent, `ghost` flat until hovered
+ * (`quiet` dims its text until then), `on` for a toggle that is on; its name is its label unless
+ * given, as the SDK's is. */
+function Button(props: { label: string; onClick?: (e: UiEvent) => void; primary?: boolean; ghost?: boolean; quiet?: boolean; on?: boolean; disabled?: boolean; name?: string; small?: boolean; icon?: VNode | null }): VNode {
+    const name = props.name ?? props.label;
+    const hot = !props.disabled && hovered() === name;
+    const bg = props.disabled ? (props.ghost ? null : "#ffffff08")
+        : props.primary ? (hot ? C.accentHover : C.accent)
+        : props.on ? (hot ? "#4f8cff4d" : C.accentSoft)
+        : props.ghost ? (hot ? C.raised : null)
+        : hot ? C.hover : C.raised;
+    const fg = props.disabled ? C.faint : props.primary ? "#ffffff" : props.on ? C.accentText : props.quiet && !hot ? C.dim : C.text;
+    return (
+        <box name={name} direction="row" align="center" justify="center" gap={S.sm + 1} height={props.small ? 20 : 26} padding={[0, props.small ? S.md + 1 : S.lg + 2]} radius={4} background={bg}
+            disabled={props.disabled} onClick={props.disabled ? undefined : props.onClick} onHover={hoverOn(name)}>
+            {props.icon ?? null}
+            <Label text={props.label} size={props.small ? SIZE.small : SIZE.body} color={fg} />
+        </box>
+    );
+}
+
+/** The editor's text input: sunken, outlined in the accent while it has the focus. `grow` shares a
+ * row's room equally with its siblings (vector fields). */
+function TextInput(props: { value: string; onChange?: (value: string) => void; onInput?: (value: string) => void; placeholder?: string; width?: Dim; height?: Dim; flex?: number; grow?: boolean; name?: string; disabled?: boolean; multiline?: boolean; wrap?: boolean; syntax?: string; size?: number; padding?: Edge }): VNode {
+    const focused = props.name !== undefined && focusedInput() === props.name;
+    return h("input", {
+        name: props.name,
+        value: props.value,
+        placeholder: props.placeholder,
+        width: props.width,
+        height: props.height,
+        flex: props.flex,
+        ...(props.grow ? { flexGrow: 1, flexShrink: 1, flexBasis: 0, minWidth: 0 } : {}),
+        multiline: props.multiline,
+        textWrap: props.wrap,
+        syntax: props.syntax,
+        disabled: props.disabled,
+        color: props.disabled ? C.faint : C.text,
+        fontSize: props.size ?? SIZE.body,
+        background: C.field,
+        borderColor: focused ? C.accent : C.fieldLine,
+        border: 1,
+        radius: 4,
+        padding: props.padding ?? [S.xs, S.md],
+        onChange: props.onChange ? (e: UiEvent) => props.onChange?.(e.value ?? "") : undefined,
+        onInput: props.onInput ? (e: UiEvent) => props.onInput?.(e.value ?? "") : undefined,
+        onFocus: props.name !== undefined ? () => focusedInput.set(props.name!) : undefined,
+        onBlur: props.name !== undefined ? () => { if (focusedInput() === props.name) focusedInput.set(""); } : undefined,
+    });
+}
+
+/** A thin vertical rule between groups of a bar. */
+function Sep(props: { height?: number }): VNode {
+    return <box width={1} height={props.height ?? 18} background={C.line} margin={[0, S.sm]} />;
+}
+
+/** A section's header bar: its title, then whatever goes at its right (a button, a value). */
+function SectionHeader(props: { title: string; children?: unknown }): VNode {
+    return (
+        <box direction="row" align="center" gap={S.md} height={24} padding={{ left: S.lg, right: S.xs }} radius={4} background={C.section}>
+            <Label text={props.title} size={SIZE.body} weight="bold" />
+            <box flex={1} />
+            {props.children}
+        </box>
+    );
+}
+
+/** An inspector section: a header and its rows indented under it. */
+function Section(props: { title: string; name?: string; right?: unknown; children?: unknown }): VNode {
+    return (
+        <box gap={S.sm} name={props.name}>
+            <SectionHeader title={props.title}>{props.right}</SectionHeader>
+            <box gap={3} padding={{ left: S.sm, right: S.xs }}>{props.children}</box>
+        </box>
+    );
+}
+
+/** A labelled row: the label in a column of its own, the fields filling the rest. */
+function Prop(props: { label: string; children?: unknown }): VNode {
+    return (
+        <box direction="row" align="center" gap={S.md} minHeight={ROW}>
+            <box width={LABEL_W} overflow="hidden"><Label text={props.label} muted /></box>
+            <box direction="row" align="center" gap={S.sm} flexGrow={1} flexShrink={1} flexBasis={0}>{props.children}</box>
+        </box>
+    );
+}
+
+/** What an empty pane says: what is missing and how to get it. */
+function Empty(props: { title: string; hint?: string }): VNode {
+    return (
+        <box flexGrow={1} align="center" justify="center" gap={S.sm} padding={[S.xl * 2, S.xl]}>
+            <Label text={props.title} muted size={SIZE.title} />
+            {props.hint ? <Label text={props.hint} size={SIZE.body} color={C.faint} wrap align="center" /> : null}
+        </box>
+    );
+}
 
 /** JSON copy (structuredClone is not in the script host). */
 function clone<T>(v: T): T {
@@ -544,24 +694,19 @@ function TileBrush(props: { id: number }) {
     const tiles: number[] = [];
     for (const t of mapInfo.tilesets) for (let i = 0; i < Math.min(t.tile_count, 32); ++i) tiles.push(t.first_gid + i);
     return (
-        <box gap={4} padding={[4, 0]} name="tiles">
-            <Row>
-                <Label text="Tiles" size={13} />
-                <box flex={1} />
-                <Button label={b ? "Stop painting" : "Paint"} small primary={b !== null} name="paint" onClick={() => brush.set(b ? null : { layer, gid })} />
+        <Section title="Tiles" name="tiles" right={<Button label={b ? "Stop painting" : "Paint"} small primary={b !== null} name="paint" onClick={() => brush.set(b ? null : { layer, gid })} />}>
+            <Row wrap gap={S.sm}>
+                {mapInfo.layers.map((l) => <Button key={l.name} label={`${l.name} (${l.tiles})`} small on={l.name === layer} name={`layer:${l.name}`} onClick={() => brush.set({ layer: l.name, gid })} />)}
             </Row>
-            <Row wrap gap={4}>
-                {mapInfo.layers.map((l) => <Button key={l.name} label={`${l.name} (${l.tiles})`} small primary={l.name === layer} name={`layer:${l.name}`} onClick={() => brush.set({ layer: l.name, gid })} />)}
+            <Row wrap gap={S.sm}>
+                <Button label="erase" small on={gid === 0} name="tile:0" onClick={() => brush.set({ layer, gid: 0 })} />
+                {tiles.map((g) => <Button key={g} label={String(g)} small on={g === gid} name={`tile:${g}`} onClick={() => brush.set({ layer, gid: g })} />)}
             </Row>
-            <Row wrap gap={4}>
-                <Button label="erase" small primary={gid === 0} name="tile:0" onClick={() => brush.set({ layer, gid: 0 })} />
-                {tiles.map((g) => <Button key={g} label={String(g)} small primary={g === gid} name={`tile:${g}`} onClick={() => brush.set({ layer, gid: g })} />)}
-            </Row>
-            <Row gap={4}>
-                <Label text={b ? `Click or drag in the scene: gid ${gid} on ${layer}. Revision ${mapInfo.revision}.` : `Revision ${mapInfo.revision}. Pick a layer and a tile to paint under the mouse.`} muted size={11} wrap flex={1} />
+            <Row gap={S.sm}>
+                <Label text={b ? `Click or drag in the scene: gid ${gid} on ${layer}. Revision ${mapInfo.revision}.` : `Revision ${mapInfo.revision}. Pick a layer and a tile to paint under the mouse.`} color={C.faint} size={SIZE.small} wrap flex={1} />
                 <Button label="Save map" small name="save-map" onClick={() => saveMap(props.id)} />
             </Row>
-        </box>
+        </Section>
     );
 }
 
@@ -627,17 +772,14 @@ function SkyClock(props: { id: number }) {
     const clock = t < 0 ? "not set" : `${String(Math.floor(minutes / 60) % 24).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
     const times: Array<[string, number]> = [["dawn", 6.2], ["noon", 12], ["dusk", 18.4], ["night", 23]];
     return (
-        <box gap={4} padding={[4, 0]} name="sky-clock">
-            <Row>
-                <Label text="Time of day" size={13} />
-                <box flex={1} />
-                <Label text={clock} muted name="sky-clock:time" />
-            </Row>
-            <Slider value={t < 0 ? 12 : t} min={0} max={24} step={0.25} width={180} name="sky-clock:hour" onInput={(v) => setHour(v)} />
-            <Row gap={4}>
+        <Section title="Time of day" name="sky-clock" right={<box padding={{ right: S.md }}><Label text={clock} color={C.accentText} name="sky-clock:time" /></box>}>
+            <Prop label="hour">
+                <Slider value={t < 0 ? 12 : t} min={0} max={24} step={0.25} width="100%" name="sky-clock:hour" onInput={(v) => setHour(v)} />
+            </Prop>
+            <Prop label="">
                 {times.map(([label, h]) => <Button key={label} label={label} small name={`sky-clock:${label}`} onClick={() => setHour(h)} />)}
-            </Row>
-        </box>
+            </Prop>
+        </Section>
     );
 }
 
@@ -653,16 +795,14 @@ function WeatherSliders(props: { id: number }) {
         refreshSelected();
     };
     return (
-        <box gap={4} padding={[4, 0]} name="weather-sliders">
-            <Label text="Weather" size={13} />
+        <Section title="Weather" name="weather-sliders">
             {fields.map(([f, label]) => (
-                <Row key={f} gap={6}>
-                    <box width={80}><Label text={label} muted /></box>
-                    <Slider value={wx[f]} min={0} max={1} step={0.05} width={140} name={`weather:${f}`} onInput={(v) => setField(f, v)} />
-                    <Label text={wx[f].toFixed(2)} muted size={11} name={`weather:${f}:value`} />
-                </Row>
+                <Prop key={f} label={label}>
+                    <box flexGrow={1} flexShrink={1} flexBasis={0}><Slider value={wx[f]} min={0} max={1} step={0.05} width="100%" name={`weather:${f}`} onInput={(v) => setField(f, v)} /></box>
+                    <box width={30}><Label text={wx[f].toFixed(2)} muted size={SIZE.small} align="right" name={`weather:${f}:value`} /></box>
+                </Prop>
             ))}
-        </box>
+        </Section>
     );
 }
 
@@ -682,42 +822,35 @@ function TerrainBrush(props: { id: number }) {
     };
     const name = world.describe(props.id).name.toLowerCase().replace(/[^a-z0-9]+/g, "-") || "terrain";
     return (
-        <box gap={4} padding={[4, 0]} name="terrain-brush">
-            <Row>
-                <Label text="Sculpt" size={13} />
-                <box flex={1} />
-                <Button label={b ? "Stop sculpting" : "Sculpt"} small primary={b !== null} name="sculpt" onClick={() => sculpt.set(b ? null : set)} />
-            </Row>
-            <Row wrap gap={4}>
-                {(["raise", "lower", "flatten", "smooth", "paint", "erase"] as const).map((m) => <Button key={m} label={m} small primary={set.mode === m} name={`sculpt:${m}`} onClick={() => pick({ mode: m })} />)}
+        <Section title="Sculpt" name="terrain-brush" right={<Button label={b ? "Stop sculpting" : "Sculpt"} small primary={b !== null} name="sculpt" onClick={() => sculpt.set(b ? null : set)} />}>
+            <Row wrap gap={S.sm}>
+                {(["raise", "lower", "flatten", "smooth", "paint", "erase"] as const).map((m) => <Button key={m} label={m} small on={set.mode === m} name={`sculpt:${m}`} onClick={() => pick({ mode: m })} />)}
             </Row>
             {(set.mode === "paint" || set.mode === "erase") && (info.layers ?? []).length > 0 ? (
-                <Row wrap gap={4} align="center">
-                    <Label text="layer" muted size={12} />
-                    <Button label="colour" small primary={set.layer === null} name="paint-layer:colour" onClick={() => pick({ layer: null })} />
-                    {(info.layers ?? []).map((l, i) => <Button key={`${i}`} label={l || `layer ${i}`} small primary={set.layer === i} name={`paint-layer:${l || i}`} onClick={() => pick({ layer: i })} />)}
+                <Row wrap gap={S.sm} align="center">
+                    <Label text="layer" muted />
+                    <Button label="colour" small on={set.layer === null} name="paint-layer:colour" onClick={() => pick({ layer: null })} />
+                    {(info.layers ?? []).map((l, i) => <Button key={`${i}`} label={l || `layer ${i}`} small on={set.layer === i} name={`paint-layer:${l || i}`} onClick={() => pick({ layer: i })} />)}
                 </Row>
             ) : null}
             {set.mode === "paint" && (set.layer === null || (info.layers ?? []).length === 0) ? (
-                <Row wrap gap={4} align="center">
-                    <box width={18} height={18} radius={3} border={1} borderColor={theme.border} background={[set.color.r, set.color.g, set.color.b]} name="paint:swatch" />
-                    {PAINTS.map(([label, c]) => <Button key={label} label={label} small primary={set.color.r === c.r && set.color.g === c.g && set.color.b === c.b} name={`paint:${label}`} onClick={() => pick({ color: c })} />)}
+                <Row wrap gap={S.sm} align="center">
+                    <box width={18} height={18} radius={4} border={1} borderColor={C.fieldLine} background={[set.color.r, set.color.g, set.color.b]} name="paint:swatch" />
+                    {PAINTS.map(([label, c]) => <Button key={label} label={label} small on={set.color.r === c.r && set.color.g === c.g && set.color.b === c.b} name={`paint:${label}`} onClick={() => pick({ color: c })} />)}
                 </Row>
             ) : null}
-            <Row gap={6}>
-                <box width={56}><Label text="radius" muted size={12} /></box>
-                <Slider value={set.radius} min={0.5} max={16} step={0.5} width={140} name="sculpt:radius" onInput={(v) => pick({ radius: v })} />
-                <Label text={`${set.radius}`} muted size={12} />
+            <Prop label="radius">
+                <box flexGrow={1} flexShrink={1} flexBasis={0}><Slider value={set.radius} min={0.5} max={16} step={0.5} width="100%" name="sculpt:radius" onInput={(v) => pick({ radius: v })} /></box>
+                <box width={30}><Label text={`${set.radius}`} muted size={SIZE.small} align="right" /></box>
+            </Prop>
+            <Prop label="strength">
+                <box flexGrow={1} flexShrink={1} flexBasis={0}><Slider value={set.strength} min={0.05} max={2} step={0.05} width="100%" name="sculpt:strength" onInput={(v) => pick({ strength: v })} /></box>
+                <box width={30}><Label text={`${set.strength}`} muted size={SIZE.small} align="right" /></box>
+            </Prop>
+            <Row gap={S.sm}>
+                <Label text={`${info.source === "noise" ? "Noise" : info.source}${info.edited ? ", sculpted" : ""}; ${info.resolution} by ${info.resolution}, ${info.lowest.toFixed(1)} to ${info.highest.toFixed(1)} high${info.painted > 0 ? `, ${Math.round(info.painted * 100)}% painted` : ""}. ${b ? "Click or drag on the ground." : ""}`} color={C.faint} size={SIZE.small} wrap flex={1} />
             </Row>
-            <Row gap={6}>
-                <box width={56}><Label text="strength" muted size={12} /></box>
-                <Slider value={set.strength} min={0.05} max={2} step={0.05} width={140} name="sculpt:strength" onInput={(v) => pick({ strength: v })} />
-                <Label text={`${set.strength}`} muted size={12} />
-            </Row>
-            <Row gap={4}>
-                <Label text={`${info.source === "noise" ? "Noise" : info.source}${info.edited ? ", sculpted" : ""}; ${info.resolution} by ${info.resolution}, ${info.lowest.toFixed(1)} to ${info.highest.toFixed(1)} high${info.painted > 0 ? `, ${Math.round(info.painted * 100)}% painted` : ""}. ${b ? "Click or drag on the ground." : ""}`} muted size={11} wrap flex={1} />
-            </Row>
-            <Row gap={4}>
+            <Row gap={S.sm}>
                 <Button label="Save heightmap" small name="terrain:save" onClick={() => {
                     try {
                         const r = terrain.save(`assets/${name}-heights.png`, { entity: props.id });
@@ -770,7 +903,7 @@ function TerrainBrush(props: { id: number }) {
                     }} />
                 </Row>
             ) : null}
-        </box>
+        </Section>
     );
 }
 
@@ -1306,89 +1439,136 @@ function cycleSnapStep(): void {
     notice.set(`Snap step ${snapStep()} units`);
 }
 
-function Toolbar() {
-    const s = status();
-    historyVersion();
+// The transport's icons, drawn from boxes where the UI font has no glyph (pause, stop, step's bar).
+function PlayIcon(props: { color: string }): VNode {
+    return <Label text="▶" size={9} color={props.color} />;
+}
+function PauseIcon(props: { color: string }): VNode {
     return (
-        <Row padding={[6, 10]} gap={8} name="toolbar" height={40}>
-            <Label text="Pocket" size={15} />
-            <Label text={info.name} muted />
-            <box width={12} />
-            {paused() ? <Button label="Play" primary name="play" onClick={play} /> : <Button label="Pause" name="pause" onClick={pause} />}
-            <Button label="Step" name="step" onClick={step} disabled={!paused()} />
-            <Button label="Stop" danger name="stop" onClick={stop} disabled={!playing()} />
-            <box width={12} />
-            <Button label="Undo" name="undo" onClick={doUndo} disabled={!history.canUndo()} />
-            <Button label="Redo" name="redo" onClick={doRedo} disabled={!history.canRedo()} />
-            <box width={12} />
-            <Button label="Save" name="save" onClick={saveScene} disabled={!info.scene} />
-            <Button label="Spawn" name="spawn" onClick={spawnEntity} />
-            <Button label="Clone" name="duplicate" onClick={duplicateSelected} disabled={selection().length === 0} />
-            <Button label="Delete" name="delete" onClick={deleteSelected} disabled={selection().length === 0} />
+        <box direction="row" gap={3}>
+            <box width={3} height={10} radius={1} background={props.color} />
+            <box width={3} height={10} radius={1} background={props.color} />
+        </box>
+    );
+}
+function StepIcon(props: { color: string }): VNode {
+    return (
+        <box direction="row" align="center" gap={1}>
+            <Label text="▶" size={8} color={props.color} />
+            <box width={2} height={9} radius={1} background={props.color} />
+        </box>
+    );
+}
+function StopIcon(props: { color: string }): VNode {
+    return <box width={9} height={9} radius={2} background={props.color} />;
+}
+
+function Toolbar() {
+    historyVersion();
+    const none = selection().length === 0;
+    return (
+        <Row padding={[0, S.lg]} gap={S.sm} name="toolbar" height={36} background={C.window}>
+            <box width={14} height={14} radius={4} background={C.accent} margin={{ right: 2 }} />
+            <Label text="Pocket" size={SIZE.title} weight="bold" />
+            <Label text={info.name} color={C.faint} size={SIZE.body} />
+            <Sep />
+            <box direction="row" align="center" gap={S.xs} padding={S.xs} radius={6} background={C.pane} name="transport">
+                {paused()
+                    ? <Button label="Play" primary name="play" onClick={play} icon={<PlayIcon color="#ffffff" />} />
+                    : <Button label="Pause" on name="pause" onClick={pause} icon={<PauseIcon color={C.accentText} />} />}
+                <Button label="Step" ghost name="step" onClick={step} disabled={!paused()} icon={<StepIcon color={paused() ? C.text : C.faint} />} />
+                <Button label="Stop" ghost name="stop" onClick={stop} disabled={!playing()} icon={<StopIcon color={playing() ? C.danger : C.faint} />} />
+            </box>
+            <Sep />
+            <Button label="Undo" ghost name="undo" onClick={doUndo} disabled={!history.canUndo()} />
+            <Button label="Redo" ghost name="redo" onClick={doRedo} disabled={!history.canRedo()} />
+            <Sep />
+            <Button label="Spawn" ghost name="spawn" onClick={spawnEntity} />
+            <Button label="Clone" ghost name="duplicate" onClick={duplicateSelected} disabled={none} />
+            <Button label="Delete" ghost name="delete" onClick={deleteSelected} disabled={none} />
             <box flex={1} />
+            {info.scene ? <Label text={info.scene} color={C.faint} size={SIZE.small} /> : null}
+            <Button label="Save" name="save" onClick={saveScene} disabled={!info.scene} />
         </Row>
     );
 }
 
+/** The hierarchy: a row per entity by path, children indented under their parent with a guide per
+ * level; the primary selection stronger than the rest of it. */
 function Hierarchy(props: { width: Dim; grow?: boolean }) {
     const list = rows();
     const sel = selection();
+    const primary = selected();
+    const hov = hovered();
     return (
-        <Panel width={props.width} flex={props.grow ? 1 : undefined} scroll name="hierarchy" padding={2} gap={0}>
-            {list.length === 0 ? <Label text="No entities. Press Play or Spawn." muted wrap /> : null}
-            {list.map((r) => (
-                <box key={r.id} onClick={(e) => select(r.id, e.mods?.includes("shift") || e.mods?.includes("meta") || e.mods?.includes("ctrl") ? "toggle" : "replace")} onDrag={() => undefined} onDragEnd={(e) => dropRow(r.id, e)} padding={[3, 6]} radius={3} background={sel.includes(r.id) ? theme.accent : null} name={`entity:${r.name}`}>
-                    <Label text={`${"  ".repeat(r.depth)}${r.name}`} color={sel.includes(r.id) ? theme.accentText : theme.text} />
-                </box>
-            ))}
-        </Panel>
+        <box width={props.width} flex={props.grow ? 1 : undefined} direction="column" background={C.pane} overflow="hidden" name="hierarchy">
+            <box flexGrow={1} flexShrink={1} padding={S.sm} overflow="scroll">
+                {list.length === 0 ? <Empty title="No entities" hint="Press Play to run the project's scripts, or Spawn one." /> : null}
+                {list.map((r, i) => {
+                    const on = sel.includes(r.id);
+                    const parent = list[i + 1]?.path.startsWith(`${r.path}/`) ?? false;
+                    const guides: VNode[] = [];
+                    for (let d = 0; d < r.depth; d++) guides.push(<box key={`g${d}`} position="absolute" left={S.lg + 3 + d * 14} top={0} width={1} height={ROW} background={C.line} />);
+                    return (
+                        <box key={r.id} name={`entity:${r.name}`} direction="row" align="center" gap={S.md} height={ROW} padding={{ left: S.lg + r.depth * 14, right: S.md }} radius={4}
+                            background={on ? (r.id === primary ? C.selected : C.selectedSoft) : hov === `row:${r.id}` ? C.rowHover : null}
+                            onClick={(e) => select(r.id, e.mods?.includes("shift") || e.mods?.includes("meta") || e.mods?.includes("ctrl") ? "toggle" : "replace")} onDrag={() => undefined} onDragEnd={(e) => dropRow(r.id, e)} onHover={hoverOn(`row:${r.id}`)}>
+                            {guides}
+                            <box width={7} height={7} radius={parent ? 2 : 4} background={on ? C.accentText : parent ? C.dim : null} borderColor={parent || on ? null : C.faint} border={parent || on ? 0 : 1} />
+                            <Label text={r.name} color={on ? "#ffffff" : C.text} />
+                        </box>
+                    );
+                })}
+            </box>
+        </box>
     );
 }
 
+/** A field's row in the inspector: its name in the label column, its input (or inputs) filling the rest. */
 function fieldInputs(entity: number, comp: ComponentName, field: SchemaField, value: unknown) {
     if (Array.isArray(value)) {
         // A list field (records): edited as JSON, the whole array at once.
         return (
-            <Row gap={4} key={field.name}>
-                <Label text={`${field.name} (${value.length})`} muted />
-                <box flex={1} />
-                <TextInput value={JSON.stringify(value)} width={180} name={`${comp}.${field.name}`} onChange={(v) => setField(entity, comp, field.name, null, v, "json")} />
-            </Row>
+            <Prop key={field.name} label={`${field.name} (${value.length})`}>
+                <TextInput value={JSON.stringify(value)} grow name={`${comp}.${field.name}`} onChange={(v) => setField(entity, comp, field.name, null, v, "json")} />
+            </Prop>
         );
     }
     if (value !== null && typeof value === "object") {
+        // A vector or a colour: one input a part, sharing the row, each led by its letter in the axis colour.
         const obj = value as Record<string, unknown>;
         return (
-            <Row gap={4} key={field.name}>
-                <Label text={field.name} muted />
-                <box flex={1} />
+            <Prop key={field.name} label={field.name}>
                 {Object.keys(obj).map((k) => (
-                    <Row gap={2} key={k}>
-                        <Label text={k} muted size={11} />
-                        <TextInput value={formatNumber(obj[k])} width={58} name={`${comp}.${field.name}.${k}`} onChange={(v) => setField(entity, comp, field.name, k, v, "float")} />
-                    </Row>
+                    <box key={k} direction="row" align="center" gap={S.xs} flexGrow={1} flexShrink={1} flexBasis={0}>
+                        <Label text={k.toUpperCase()} size={10} weight="bold" color={AXIS_COLORS[k] ?? C.faint} />
+                        <TextInput value={formatNumber(obj[k])} grow padding={[S.xs, S.sm]} name={`${comp}.${field.name}.${k}`} onChange={(v) => setField(entity, comp, field.name, k, v, "float")} />
+                    </box>
                 ))}
-            </Row>
+            </Prop>
         );
     }
     if (typeof value === "boolean") {
+        const name = `${comp}.${field.name}`;
+        const hot = hovered() === name;
         return (
-            <Row gap={4} key={field.name}>
-                <Label text={field.name} muted />
-                <box flex={1} />
-                <Button label={value ? "true" : "false"} small name={`${comp}.${field.name}`} onClick={() => setField(entity, comp, field.name, null, value ? "false" : "true", "bool")} />
-            </Row>
+            <Prop key={field.name} label={field.name}>
+                <box name={name} direction="row" align="center" gap={S.md} height={ROW} onClick={() => setField(entity, comp, field.name, null, value ? "false" : "true", "bool")} onHover={hoverOn(name)}>
+                    <box width={14} height={14} radius={3} justify="center" align="center" background={value ? C.accent : C.field} borderColor={value ? C.accent : hot ? C.dim : C.fieldLine} border={1}>
+                        {value ? <Label text="✓" size={10} color="#ffffff" /> : null}
+                    </box>
+                    <Label text={value ? "true" : "false"} size={SIZE.small} color={hot ? C.text : C.dim} />
+                </box>
+            </Prop>
         );
     }
     const names = field.names;
     if (names && names.length > 0 && typeof value === "number") {
         // A code with value names (Light.kind, RigidBody.kind, a project's own): stepped through by name.
         return (
-            <Row gap={4} key={field.name}>
-                <Label text={field.name} muted />
-                <box flex={1} />
-                <Choice value={names[value] ?? String(value)} options={names} width={140} name={`${comp}.${field.name}`} onChange={(v) => setField(entity, comp, field.name, null, String(names.indexOf(v)), "float")} />
-            </Row>
+            <Prop key={field.name} label={field.name}>
+                <Choice value={names[value] ?? String(value)} options={names} width="100%" name={`${comp}.${field.name}`} onChange={(v) => setField(entity, comp, field.name, null, String(names.indexOf(v)), "float")} />
+            </Prop>
         );
     }
     if (comp === "MeshRenderer" && field.name === "texture") {
@@ -1397,26 +1577,20 @@ function fieldInputs(entity: number, comp: ComponentName, field: SchemaField, va
         const now = String(value ?? "");
         const shown = now.startsWith("pattern:") ? now.slice(8).split("?")[0] : now === "" ? "none" : "file";
         return (
-            <box key={field.name} direction="column" gap={2}>
-                <Row gap={4}>
-                    <Label text={field.name} muted />
-                    <box flex={1} />
-                    <TextInput value={now} width={120} name={`${comp}.${field.name}`} onChange={(v) => setField(entity, comp, field.name, null, v, "string")} />
-                </Row>
-                <Row gap={4}>
-                    <Label text="pattern" muted size={11} />
-                    <box flex={1} />
-                    <Choice value={shown} options={["none", ...PATTERNS, ...(shown === "file" ? ["file"] : [])]} width={140} name={`${comp}.pattern`} onChange={(v) => setPattern(entity, v)} />
-                </Row>
+            <box key={field.name} direction="column" gap={3}>
+                <Prop label={field.name}>
+                    <TextInput value={now} grow name={`${comp}.${field.name}`} onChange={(v) => setField(entity, comp, field.name, null, v, "string")} />
+                </Prop>
+                <Prop label="pattern">
+                    <Choice value={shown} options={["none", ...PATTERNS, ...(shown === "file" ? ["file"] : [])]} width="100%" name={`${comp}.pattern`} onChange={(v) => setPattern(entity, v)} />
+                </Prop>
             </box>
         );
     }
     return (
-        <Row gap={4} key={field.name}>
-            <Label text={field.name} muted />
-            <box flex={1} />
-            <TextInput value={typeof value === "number" ? formatNumber(value) : String(value ?? "")} width={120} name={`${comp}.${field.name}`} onChange={(v) => setField(entity, comp, field.name, null, v, typeof value === "number" ? "float" : "string")} />
-        </Row>
+        <Prop key={field.name} label={field.name}>
+            <TextInput value={typeof value === "number" ? formatNumber(value) : String(value ?? "")} grow name={`${comp}.${field.name}`} onChange={(v) => setField(entity, comp, field.name, null, v, typeof value === "number" ? "float" : "string")} />
+        </Prop>
     );
 }
 
@@ -1439,51 +1613,50 @@ function formatNumber(v: unknown): string {
     return Number.isInteger(v) ? String(v) : v.toFixed(3).replace(/\.?0+$/, "");
 }
 
+/** The inspector: the entity's name and path, the brushes its components bring, then a section per
+ * component with a row per field, and Add component at the foot. */
 function Inspector(props: { width: Dim; grow?: boolean }) {
     const d = described();
-    const extra = selection().length - 1;
     if (!d) {
         return (
-            <Panel width={props.width} flex={props.grow ? 1 : undefined} name="inspector">
-                <Label text="Select an entity in the hierarchy or click it in the scene. Shift-click adds to the selection." muted wrap />
-            </Panel>
+            <box width={props.width} flex={props.grow ? 1 : undefined} direction="column" background={C.pane} name="inspector">
+                <Empty title="Nothing selected" hint="Select an entity in the hierarchy or click it in the scene. Shift-click adds to the selection." />
+            </box>
         );
     }
     const present = Object.keys(d.components);
     const missing = schema.filter((c) => c.serialized && !present.includes(c.name));
     return (
-        <Panel width={props.width} flex={props.grow ? 1 : undefined} scroll name="inspector" gap={8}>
-            <Row gap={4}>
-                <Label text="name" muted />
-                <TextInput value={d.name} flex={1} name="entity-name" onChange={(v) => { if (v.length > 0) renameEntity(d.id, v); }} />
-            </Row>
-            <Label text={`${d.path}  #${d.id}`} muted size={11} />
-            {present.includes("TileMap") ? <TileBrush id={d.id} /> : null}
-            {present.includes("Terrain") ? <TerrainBrush id={d.id} /> : null}
-            {present.includes("Sky") ? <SkyClock id={d.id} /> : null}
-            {present.includes("Weather") ? <WeatherSliders id={d.id} /> : null}
-            {schema.filter((c) => present.includes(c.name)).map((c) => (
-                <box key={c.name} gap={4} padding={[4, 0]} borderColor={theme.border} border={0}>
-                    <Row>
-                        <Label text={c.name} size={13} />
-                        <box flex={1} />
-                        {c.serialized ? <Button label="remove" small name={`remove:${c.name}`} onClick={() => removeComponent(d.id, c.name as ComponentName)} /> : <Label text="derived" muted size={11} />}
-                    </Row>
-                    {c.fields.map((f) => fieldInputs(d.id, c.name as ComponentName, f, (d.components as Record<string, Record<string, unknown>>)[c.name]?.[f.name]))}
-                </box>
-            ))}
-            {addingComponent() ? (
-                <box gap={2}>
-                    <Label text="Add component" muted />
-                    <Row wrap gap={4}>
-                        {missing.map((c) => <Button key={c.name} label={c.name} small name={`add:${c.name}`} onClick={() => { addComponent(d.id, c.name as ComponentName); addingComponent.set(false); }} />)}
-                        <Button label="cancel" small onClick={() => addingComponent.set(false)} />
+        <box width={props.width} flex={props.grow ? 1 : undefined} direction="column" background={C.pane} overflow="hidden" name="inspector">
+            <box flexGrow={1} flexShrink={1} padding={[S.lg, S.lg]} gap={S.lg + 2} overflow="scroll">
+                <box gap={S.sm}>
+                    <TextInput value={d.name} name="entity-name" size={SIZE.title} padding={[3, S.lg]} onChange={(v) => { if (v.length > 0) renameEntity(d.id, v); }} />
+                    <Row gap={S.md} padding={[0, S.xs]}>
+                        <Label text={d.path} size={SIZE.small} color={C.faint} flex={1} />
+                        <Label text={`#${d.id}`} size={SIZE.small} color={C.faint} />
                     </Row>
                 </box>
-            ) : (
-                <Button label="Add component" small name="add-component" onClick={() => addingComponent.set(true)} disabled={missing.length === 0} />
-            )}
-        </Panel>
+                {present.includes("TileMap") ? <TileBrush id={d.id} /> : null}
+                {present.includes("Terrain") ? <TerrainBrush id={d.id} /> : null}
+                {present.includes("Sky") ? <SkyClock id={d.id} /> : null}
+                {present.includes("Weather") ? <WeatherSliders id={d.id} /> : null}
+                {schema.filter((c) => present.includes(c.name)).map((c) => (
+                    <Section key={c.name} title={c.name}
+                        right={c.serialized ? <Button label="Remove" ghost quiet small name={`remove:${c.name}`} onClick={() => removeComponent(d.id, c.name as ComponentName)} /> : <box padding={{ right: S.md }}><Label text="derived" size={SIZE.small} color={C.faint} /></box>}>
+                        {c.fields.map((f) => fieldInputs(d.id, c.name as ComponentName, f, (d.components as Record<string, Record<string, unknown>>)[c.name]?.[f.name]))}
+                    </Section>
+                ))}
+                {addingComponent() ? (
+                    <Section title="Add component" right={<Button label="cancel" ghost quiet small onClick={() => addingComponent.set(false)} />}>
+                        <Row wrap gap={S.sm}>
+                            {missing.map((c) => <Button key={c.name} label={c.name} small name={`add:${c.name}`} onClick={() => { addComponent(d.id, c.name as ComponentName); addingComponent.set(false); }} />)}
+                        </Row>
+                    </Section>
+                ) : (
+                    <Button label="+ Add component" name="add-component" onClick={() => addingComponent.set(true)} disabled={missing.length === 0} />
+                )}
+            </box>
+        </box>
     );
 }
 
@@ -1564,7 +1737,7 @@ function TimelineBody(): VNode[] {
     if (!tl) {
         const owners = world.query({ with: ["Timeline"] });
         return [
-            <Label key="hint" text={owners.length > 0 ? "Select an entity with a Timeline:" : "No entity has a Timeline yet: add one in the inspector and name its file."} muted size={12} />,
+            <Label key="hint" text={owners.length > 0 ? "Select an entity with a Timeline:" : "No entity has a Timeline yet: add one in the inspector and name its file."} muted size={SIZE.body} />,
             <Row key="owners" gap={4} wrap>
                 {owners.map((r) => <Button key={r.id} label={r.path} small name={`tl:owner:${r.path}`} onClick={() => select(r.id)} />)}
             </Row>,
@@ -1575,7 +1748,7 @@ function TimelineBody(): VNode[] {
     if (!doc) {
         return [
             <Row key="none" gap={6}>
-                <Label text={path ? `${path} is not in the project yet.` : "This Timeline names no file."} muted size={12} />
+                <Label text={path ? `${path} is not in the project yet.` : "This Timeline names no file."} muted size={SIZE.body} />
                 {path ? <Button label="Create it" small name="tl:create" onClick={() => writeTimeline(path, null, { duration: 4, tracks: [], events: [] }, `create ${path}`)} /> : null}
             </Row>,
         ];
@@ -1589,20 +1762,20 @@ function TimelineBody(): VNode[] {
     const draft = timelineNew();
     const out: Array<VNode | null> = [
         <Row key="head" gap={8} name="tl:head">
-            <Label text={`${path}, ${duration.toFixed(2)} s`} size={12} />
+            <Label text={`${path}, ${duration.toFixed(2)} s`} size={SIZE.body} />
             <Button label={tl.playing ? "Stop" : "Play"} small primary={tl.playing} name="tl:play" onClick={() => { command(tl.playing ? "timeline.stop" : "timeline.play", tl.playing ? { entity: id } : { entity: id, path, time: tl.time }); timelineVersion.update((n) => n + 1); }} />
             <Slider value={tl.time} min={0} max={duration} step={duration / 400} width={TIMELINE_WIDTH - 60} name="tl:time" onInput={seek} />
-            <Label text={`${tl.time.toFixed(2)} s`} muted size={12} name="tl:now" />
+            <Label text={`${tl.time.toFixed(2)} s`} muted size={SIZE.body} name="tl:now" />
         </Row>,
         ...tracks.map((tr, i) => (
             <Row key={`track${i}`} gap={8} name={`tl:track:${i}`}>
-                <box width={190}><Label text={`${tr.entity && tr.entity !== "." ? tr.entity : "(this)"} ${tr.component}.${tr.field}`} size={12} /></box>
-                <box width={TIMELINE_WIDTH + 8} height={16} background={theme.panelAlt} radius={3}>
+                <box width={190}><Label text={`${tr.entity && tr.entity !== "." ? tr.entity : "(this)"} ${tr.component}.${tr.field}`} size={SIZE.body} /></box>
+                <box width={TIMELINE_WIDTH + 8} height={16} background={C.field} borderColor={C.fieldLine} border={1} radius={4}>
                     {tr.keys.map((k, n) => (
-                        <box key={n} name={`tl:key:${i}:${n}`} position="absolute" left={x(keyTime(k))} top={2} width={8} height={12} radius={2}
-                            background={picked && picked.track === i && picked.key === n ? "#f0c060" : theme.accent} onClick={() => timelineKey.set({ path, track: i, key: n })} />
+                        <box key={n} name={`tl:key:${i}:${n}`} position="absolute" left={x(keyTime(k))} top={1} width={8} height={12} radius={2}
+                            background={picked && picked.track === i && picked.key === n ? C.warn : C.accent} onClick={() => timelineKey.set({ path, track: i, key: n })} />
                     ))}
-                    <box position="absolute" left={x(tl.time) + 3} top={0} width={2} height={16} background="#ff5050" />
+                    <box position="absolute" left={x(tl.time) + 3} top={-1} width={2} height={16} background={C.danger} />
                 </box>
                 <Button label="Key" small name={`tl:track:${i}:key`} onClick={() => keyAtPlayhead(id, path, doc, i, tl.time)} />
                 <Button label="Remove" small name={`tl:track:${i}:remove`} onClick={() => {
@@ -1615,7 +1788,7 @@ function TimelineBody(): VNode[] {
         )),
         picked && tracks[picked.track]?.keys[picked.key] !== undefined ? (
             <Row key="picked" gap={8} name="tl:picked">
-                <Label text={`key at ${keyTime(tracks[picked.track].keys[picked.key]).toFixed(2)} s: ${JSON.stringify(Array.isArray(tracks[picked.track].keys[picked.key]) ? (tracks[picked.track].keys[picked.key] as unknown[]).slice(1) : tracks[picked.track].keys[picked.key])}`} size={12} />
+                <Label text={`key at ${keyTime(tracks[picked.track].keys[picked.key]).toFixed(2)} s: ${JSON.stringify(Array.isArray(tracks[picked.track].keys[picked.key]) ? (tracks[picked.track].keys[picked.key] as unknown[]).slice(1) : tracks[picked.track].keys[picked.key])}`} size={SIZE.body} />
                 <Button label="Go to it" small name="tl:key:goto" onClick={() => seek(keyTime(tracks[picked.track].keys[picked.key]))} />
                 <Button label="Delete key" small name="tl:key:delete" onClick={() => {
                     const after = clone(doc);
@@ -1639,7 +1812,7 @@ function TimelineBody(): VNode[] {
                 after.tracks = [...(after.tracks ?? []), { ...(d.entity ? { entity: d.entity } : {}), component: d.component, field: d.field, keys: [[Math.round(tl.time * 1000) / 1000, value]] }];
                 writeTimeline(path, doc, after, `add a ${d.component}.${d.field} track`);
             }} />
-            <Label text="A new track starts with the field's value now at the playhead; Key adds the value now to a track." muted size={11} wrap flex={1} />
+            <Label text="A new track starts with the field's value now at the playhead; Key adds the value now to a track." muted size={SIZE.small} wrap flex={1} />
         </Row>,
     ];
     return out.filter((n): n is VNode => n !== null);
@@ -1650,9 +1823,30 @@ function TabBody(t: Tab): VNode[] {
     if (t === "timeline") {
         body = TimelineBody();
     } else if (t === "console") {
-        body = logs().map((l) => <Label key={l.seq} text={`${l.tick !== undefined ? `[${l.tick}] ` : ""}${l.level} ${l.cat}: ${l.msg}`} size={12} color={l.level === "error" ? theme.danger : l.level === "warn" ? "#f0c060" : theme.text} />);
+        // A line a row: the tick, the level in its colour, the category, the message.
+        const ticked = logs().some((l) => l.tick !== undefined);   // a tick column once a line has one
+        body = logs().length === 0 ? [<Empty key="empty" title="No log lines yet" />] : logs().map((l) => {
+            const tone = l.level === "error" ? C.danger : l.level === "warn" ? C.warn : null;
+            return (
+                <Row key={l.seq} gap={S.lg} height={18}>
+                    {ticked ? <box width={40}><Label text={l.tick !== undefined ? String(l.tick) : ""} size={SIZE.body} color={C.faint} align="right" /></box> : null}
+                    <box width={34}><Label text={l.level} size={SIZE.body} color={tone ?? C.faint} /></box>
+                    <Label text={`${l.cat}:`} size={SIZE.body} color={C.dim} />
+                    <Label text={l.msg} size={SIZE.body} color={tone ?? C.text} />
+                </Row>
+            );
+        });
     } else if (t === "events") {
-        body = recentEvents().map((e) => <Label key={e.seq} text={`#${e.seq} t${e.tick} ${e.type}${e.subject ? ` @${e.subject}` : ""}${e.cause ? ` <- #${e.cause}` : ""} ${e.data ? JSON.stringify(e.data) : ""}`} size={12} />);
+        body = recentEvents().length === 0 ? [<Empty key="empty" title="No events yet" hint="Events appear as the project raises them while it plays." />] : recentEvents().map((e) => (
+            <Row key={e.seq} gap={S.lg} height={18}>
+                <box width={48}><Label text={`#${e.seq}`} size={SIZE.body} color={C.faint} align="right" /></box>
+                <box width={48}><Label text={`t${e.tick}`} size={SIZE.body} color={C.faint} /></box>
+                <Label text={e.type} size={SIZE.body} color={C.accentText} />
+                {e.subject ? <Label text={`@${e.subject}`} size={SIZE.body} color={C.text} /> : null}
+                {e.cause ? <Label text={`<- #${e.cause}`} size={SIZE.body} color={C.faint} /> : null}
+                {e.data ? <Label text={JSON.stringify(e.data)} size={SIZE.body} color={C.dim} /> : null}
+            </Row>
+        ));
     } else if (t === "input") {
         const map = actions();
         const names = Object.keys(map).sort();
@@ -1665,14 +1859,14 @@ function TabBody(t: Tab): VNode[] {
         );
         body = [
             <Row key="head" gap={8}>
-                <box width={110}><Label text="action" muted size={12} /></box>
-                <box width={150}><Label text="positive" muted size={12} /></box>
-                <box width={150}><Label text="negative" muted size={12} /></box>
-                <box width={150}><Label text="axis" muted size={12} /></box>
+                <box width={110}><Label text="action" size={SIZE.small} color={C.faint} /></box>
+                <box width={150}><Label text="positive" size={SIZE.small} color={C.faint} /></box>
+                <box width={150}><Label text="negative" size={SIZE.small} color={C.faint} /></box>
+                <box width={150}><Label text="axis" size={SIZE.small} color={C.faint} /></box>
             </Row>,
             ...names.map((name) => (
                 <Row key={name} gap={8} name={`action:${name}`}>
-                    <box width={110}><Label text={name} size={12} /></box>
+                    <box width={110}><Label text={name} size={SIZE.body} /></box>
                     {field(name, "positive")}
                     {field(name, "negative")}
                     {field(name, "axis")}
@@ -1684,7 +1878,7 @@ function TabBody(t: Tab): VNode[] {
                 <TextInput value={newKeys()} placeholder="its keys" width={150} name="action:new:keys" onInput={(v) => newKeys.set(v)} onChange={(v) => { newKeys.set(v); addAction(newAction(), v); }} />
                 <Button label="Add" small name="action:add" onClick={() => addAction(newAction(), newKeys())} />
                 <Button label="Save bindings" small name="save_bindings" onClick={saveBindings} />
-                <Label text="Keys are SDL names (Space, Left, A), pad:a, pad:leftx, mouse:x; commas between them. Saved to input.json in the project." muted size={12} wrap flex={1} />
+                <Label text="Keys are SDL names (Space, Left, A), pad:a, pad:leftx, mouse:x; commas between them. Saved to input.json in the project." muted size={SIZE.body} wrap flex={1} />
             </Row>,
         ];
     } else if (t === "audio") {
@@ -1692,33 +1886,33 @@ function TabBody(t: Tab): VNode[] {
         const m = master();
         body = [
             <Row key="master" gap={8} name="bus:master">
-                <box width={90}><Label text="master" size={12} /></box>
+                <box width={90}><Label text="master" size={SIZE.body} /></box>
                 <Slider value={m.master_volume} max={2} step={0.05} width={150} name="master:volume" onInput={(v) => { command("audio.master", { volume: v }); refreshMixer(); }} />
-                <box width={40}><Label text={pct(m.master_volume)} muted size={12} /></box>
+                <box width={40}><Label text={pct(m.master_volume)} muted size={SIZE.body} /></box>
                 <Checkbox checked={m.muted} label="mute" name="master:muted" onChange={(c) => { command("audio.master", { muted: c }); refreshMixer(); }} />
-                <Label text="The master is the player's (not saved); buses are the project's." muted size={12} />
+                <Label text="The master is the player's (not saved); buses are the project's." muted size={SIZE.body} />
             </Row>,
             ...buses().map((b) => (
                 <Row key={b.name} gap={8} name={`bus:${b.name}`}>
-                    <box width={90}><Label text={b.name} size={12} /></box>
+                    <box width={90}><Label text={b.name} size={SIZE.body} /></box>
                     <Slider value={b.volume} max={2} step={0.05} width={150} name={`bus:${b.name}:volume`} onInput={(v) => setBus(b.name, { volume: v })} />
-                    <box width={40}><Label text={pct(b.volume)} muted size={12} /></box>
+                    <box width={40}><Label text={pct(b.volume)} muted size={SIZE.body} /></box>
                     <Checkbox checked={b.muted} label="mute" name={`bus:${b.name}:muted`} onChange={(c) => setBus(b.name, { muted: c })} />
-                    <Label text="low-pass" muted size={12} />
+                    <Label text="low-pass" muted size={SIZE.body} />
                     <Slider value={b.lowpass} step={0.05} width={80} name={`bus:${b.name}:lowpass`} onInput={(v) => setBus(b.name, { lowpass: v })} />
-                    <Label text="high-pass" muted size={12} />
+                    <Label text="high-pass" muted size={SIZE.body} />
                     <Slider value={b.highpass} step={0.05} width={80} name={`bus:${b.name}:highpass`} onInput={(v) => setBus(b.name, { highpass: v })} />
-                    <Label text={b.echo > 0 ? `echo ${b.echo.toFixed(2)} s` : "echo"} muted size={12} />
+                    <Label text={b.echo > 0 ? `echo ${b.echo.toFixed(2)} s` : "echo"} muted size={SIZE.body} />
                     <Slider value={b.echo} max={1} step={0.05} width={80} name={`bus:${b.name}:echo`} onInput={(v) => setBus(b.name, { echo: v })} />
-                    <Label text="room" muted size={12} />
+                    <Label text="room" muted size={SIZE.body} />
                     <Slider value={b.reverb} max={2} step={0.1} width={60} name={`bus:${b.name}:reverb`} onInput={(v) => setBus(b.name, { reverb: v })} />
-                    <Label text={`${b.voices} voice${b.voices === 1 ? "" : "s"}${b.duck_by ? ` · ducks under ${b.duck_by} to ${pct(b.duck_amount)} in ${b.duck_seconds} s${b.ducked ? `, now ${pct(b.duck)}` : ""}` : ""}`} muted size={12} />
+                    <Label text={`${b.voices} voice${b.voices === 1 ? "" : "s"}${b.duck_by ? ` · ducks under ${b.duck_by} to ${pct(b.duck_amount)} in ${b.duck_seconds} s${b.ducked ? `, now ${pct(b.duck)}` : ""}` : ""}`} muted size={SIZE.body} />
                 </Row>
             )),
             <Row key="save" gap={8}>
                 <Button label="Refresh" small name="mixer:refresh" onClick={refreshMixer} />
                 <Button label="Save mixer" small name="mixer:save" onClick={saveMixer} />
-                <Label text="Changes are heard at once. A bus appears when a voice plays on it or project.toml [audio.buses] names it; Save writes audio.json beside project.toml." muted size={12} wrap flex={1} />
+                <Label text="Changes are heard at once. A bus appears when a voice plays on it or project.toml [audio.buses] names it; Save writes audio.json beside project.toml." muted size={SIZE.body} wrap flex={1} />
             </Row>,
         ];
     } else if (t === "assets") {
@@ -1726,21 +1920,25 @@ function TabBody(t: Tab): VNode[] {
         const picked = assetPick();
         body = [
             <Row key="hint" gap={8} align="center">
-                <Label text={picked ? `${picked}: ${assetInfo()}` : `${list.length === 0 ? "No files under assets/; the built-in meshes are below. " : ""}Click one to describe it; drag it onto the scene, or pick it and Place, to put it there.`} muted size={12} name="asset-info" wrap flex={1} />
+                <Label text={picked ? `${picked}: ${assetInfo()}` : `${list.length === 0 ? "No files under assets/; the built-in meshes are below. " : ""}Click one to describe it; drag it onto the scene, or pick it and Place, to put it there.`} muted size={SIZE.body} name="asset-info" wrap flex={1} />
                 {picked ? <Button label="Place" small name="asset:place" onClick={placePicked} /> : null}
                 {picked && list.find((r) => r.path === picked)?.importer ? <Button label="Reimport" small name="asset:reimport" onClick={reimportPicked} /> : null}
             </Row>,
-            ...[...list, ...builtinRows].map((r) => (
-                <box key={r.path} name={`asset:${r.path}`} direction="row" align="center" padding={[2, 6]} gap={8} radius={3} background={picked === r.path ? theme.accent : null} onClick={() => pickAsset(r)} onDrag={() => undefined} onDragEnd={(e) => placeAsset(r, e)}>
-                    {r.kind === "image" ? <box width={16} height={16} image={r.path} name={`thumb:${r.path}`} /> : null}
-                    {r.kind === "mesh" && thumbFor(r.path) ? <box width={16} height={16} image={thumbFor(r.path)} name={`thumb:${r.path}`} /> : null}
-                    <Label text={r.path} size={12} color={picked === r.path ? theme.accentText : theme.text} />
-                    <Label text={r.kind} size={12} color={picked === r.path ? theme.accentText : theme.muted} />
-                    {r.importer && r.importer !== "gltf" ? <Label text={r.importer === "blender" ? "via Blender" : r.importer.toUpperCase()} size={12} color={picked === r.path ? theme.accentText : theme.muted} name={`importer:${r.path}`} /> : null}
-                    <Label text={r.builtin ? "built in" : r.bytes >= 1048576 ? `${(r.bytes / 1048576).toFixed(1)} MB` : r.bytes >= 1024 ? `${(r.bytes / 1024).toFixed(1)} KB` : `${r.bytes} B`} size={12} color={picked === r.path ? theme.accentText : theme.muted} />
-                    {r.loaded ? <Label text="loaded" size={12} color={picked === r.path ? theme.accentText : theme.ok} /> : null}
-                </box>
-            )),
+            ...[...list, ...builtinRows].map((r) => {
+                const on = picked === r.path;
+                return (
+                    <box key={r.path} name={`asset:${r.path}`} direction="row" align="center" height={ROW} padding={[0, S.md]} gap={S.lg} radius={4} background={on ? C.selected : hovered() === `asset:${r.path}` ? C.rowHover : null}
+                        onClick={() => pickAsset(r)} onDrag={() => undefined} onDragEnd={(e) => placeAsset(r, e)} onHover={hoverOn(`asset:${r.path}`)}>
+                        {r.kind === "image" ? <box width={16} height={16} image={r.path} name={`thumb:${r.path}`} /> : null}
+                        {r.kind === "mesh" && thumbFor(r.path) ? <box width={16} height={16} image={thumbFor(r.path)} name={`thumb:${r.path}`} /> : null}
+                        <Label text={r.path} size={SIZE.body} color={on ? "#ffffff" : C.text} />
+                        <Label text={r.kind} size={SIZE.body} color={on ? C.accentText : C.dim} />
+                        {r.importer && r.importer !== "gltf" ? <Label text={r.importer === "blender" ? "via Blender" : r.importer.toUpperCase()} size={SIZE.body} color={on ? C.accentText : C.dim} name={`importer:${r.path}`} /> : null}
+                        <Label text={r.builtin ? "built in" : r.bytes >= 1048576 ? `${(r.bytes / 1048576).toFixed(1)} MB` : r.bytes >= 1024 ? `${(r.bytes / 1024).toFixed(1)} KB` : `${r.bytes} B`} size={SIZE.body} color={on ? C.accentText : C.faint} />
+                        {r.loaded ? <Label text="loaded" size={SIZE.body} color={C.ok} /> : null}
+                    </box>
+                );
+            }),
         ];
     } else if (t === "script") {
         const list = assetRows().filter((r) => r.kind === "script");
@@ -1748,55 +1946,63 @@ function TabBody(t: Tab): VNode[] {
         body = [
             <box key="script" direction="row" gap={8} flex={1}>
                 <box direction="column" width={220} gap={1} overflow="scroll">
-                    {list.length === 0 ? <Label text="No scripts under scripts/ or scenarios/." muted size={12} wrap /> : list.map((r) => (
-                        <box key={r.path} name={`script:${r.path}`} padding={[2, 6]} radius={3} background={path === r.path ? theme.accent : null} onClick={() => openScript(r.path)}>
-                            <Label text={r.path} size={12} color={path === r.path ? theme.accentText : theme.text} />
+                    {list.length === 0 ? <Label text="No scripts under scripts/ or scenarios/." muted size={SIZE.body} wrap /> : list.map((r) => (
+                        <box key={r.path} name={`script:${r.path}`} direction="row" align="center" height={ROW} padding={[0, S.md]} radius={4} background={path === r.path ? C.selected : hovered() === `script:${r.path}` ? C.rowHover : null}
+                            onClick={() => openScript(r.path)} onHover={hoverOn(`script:${r.path}`)}>
+                            <Label text={r.path} size={SIZE.body} color={path === r.path ? "#ffffff" : C.text} />
                         </box>
                     ))}
                 </box>
                 <box direction="column" flex={1} gap={4}>
                     <Row gap={8} align="center">
-                        <Label text={path ? (scriptDirty() ? `${path} (modified)` : path) : "Open a script from the list."} size={12} name="script-path" />
+                        <Label text={path ? (scriptDirty() ? `${path} (modified)` : path) : "Open a script from the list."} size={SIZE.body} name="script-path" />
                         <Button label="Save" small primary={scriptDirty()} name="script:save" onClick={saveScript} />
-                        <Label text="Cmd/Ctrl+Return saves. pocket editor --watch rebuilds and reloads the project after a save." muted size={12} wrap flex={1} />
+                        <Label text="Cmd/Ctrl+Return saves. pocket editor --watch rebuilds and reloads the project after a save." muted size={SIZE.body} wrap flex={1} />
                     </Row>
-                    <TextInput multiline flex={1} name="script:text" value={scriptText()} syntax={path || undefined} disabled={!path} onInput={(v) => { scriptText.set(v); scriptDirty.set(true); }} onChange={(v) => { scriptText.set(v); saveScript(); }} />
+                    <TextInput multiline flex={1} name="script:text" value={scriptText()} syntax={path || undefined} disabled={!path} padding={[S.sm, S.lg]} onInput={(v) => { scriptText.set(v); scriptDirty.set(true); }} onChange={(v) => { scriptText.set(v); saveScript(); }} />
                     {typeErrors().length > 0 ? (
                         <box direction="column" gap={1} name="script:errors">
                             {typeErrors().slice(0, 6).map((d, i) => (
-                                <Label key={i} text={`${d.file ?? ""}${d.line !== undefined ? `:${d.line}:${d.column ?? 0}` : ""}  ${d.message.split("\n")[0]}`} size={12} color={d.file === path ? theme.danger : theme.muted} />
+                                <Label key={i} text={`${d.file ?? ""}${d.line !== undefined ? `:${d.line}:${d.column ?? 0}` : ""}  ${d.message.split("\n")[0]}`} size={SIZE.body} color={d.file === path ? C.danger : C.dim} />
                             ))}
-                            {typeErrors().length > 6 ? <Label text={`and ${typeErrors().length - 6} more (the Console lists them all)`} muted size={12} /> : null}
+                            {typeErrors().length > 6 ? <Label text={`and ${typeErrors().length - 6} more (the Console lists them all)`} muted size={SIZE.body} /> : null}
                         </box>
                     ) : null}
                 </box>
             </box>,
         ];
     } else {
-        body = transcriptText().split("\n").map((line, i) => <Label key={i} text={line} size={12} />);
+        const text = transcriptText();
+        body = text.trim() === "" ? [<Empty key="empty" title="Nothing happened yet" hint="The transcript tells what the game did, tick by tick, once it plays." />] : text.split("\n").map((line, i) => <Label key={i} text={line} size={SIZE.body} />);
     }
     return body as VNode[];
 }
 
-/** A pane's tab label: the hierarchy counts its entities, the inspector names what it shows. */
-function paneLabel(p: Pane): string {
-    if (p === "hierarchy") return `Hierarchy (${rows().length})`;
+/** A pane's tab label and what it adds in fainter type: the hierarchy counts its entities, the
+ * inspector names what it shows. */
+function paneLabel(p: Pane): [string, string] {
+    if (p === "hierarchy") return ["Hierarchy", String(rows().length)];
     if (p === "inspector") {
         const d = described();
         const extra = selection().length - 1;
-        return d ? `Inspector: ${d.name}${extra > 0 ? ` (+${extra} more)` : ""}` : "Inspector";
+        return ["Inspector", d ? `${d.name}${extra > 0 ? ` (+${extra} more)` : ""}` : ""];
     }
-    return PANE_LABELS[p];
+    return [PANE_LABELS[p], ""];
 }
 
-/** A dock's tab: click shows its pane, a drag onto another dock (or near an edge of the scene) moves it there. */
+/** A dock's tab: click shows its pane, a drag onto another dock (or near an edge of the scene) moves
+ * it there. The tab in front takes its pane's colour under an accent line, so it joins the pane. */
 function DockTab(props: { pane: Pane; active: boolean }) {
     const p = props.pane;
+    const [title, detail] = paneLabel(p);
+    const hot = hovered() === `tab:${p}`;
     return (
-        <box name={`tab:${p}`} padding={[2, 8]} radius={4} background={props.active ? theme.accent : theme.panel} borderColor={theme.border} border={1}
-            onClick={() => showPane(p)} onDrag={() => undefined}
+        <box name={`tab:${p}`} direction="row" align="center" gap={S.md} height={STRIP} padding={[0, S.lg + 2]} background={props.active ? C.pane : hot ? C.rowHover : null}
+            onClick={() => showPane(p)} onDrag={() => undefined} onHover={hoverOn(`tab:${p}`)}
             onDragEnd={(e) => { const to = e.x !== undefined && e.y !== undefined ? dockAt(e.x, e.y) : null; if (to) movePane(p, to); }}>
-            <Label text={paneLabel(p)} size={12} color={props.active ? "#ffffff" : theme.text} />
+            {props.active ? <box position="absolute" left={0} top={0} right={0} height={2} background={C.accent} /> : null}
+            <Label text={title} size={SIZE.body} color={props.active || hot ? C.text : C.dim} />
+            {detail ? <Label text={detail} size={SIZE.small} color={props.active ? C.dim : C.faint} /> : null}
         </box>
     );
 }
@@ -1806,8 +2012,8 @@ function PaneView(p: Pane, width: Dim, grow = false): VNode {
     if (p === "hierarchy") return <Hierarchy width={width} grow={grow} />;
     if (p === "inspector") return <Inspector width={width} grow={grow} />;
     return (
-        <box width={width} flex={grow ? 1 : undefined} direction="column" background={theme.panel} borderColor={theme.border} border={1} name={`pane:${p}`}>
-            <box flex={1} overflow="scroll" padding={[4, 8]} gap={1} name={`${p}-body`}>
+        <box width={width} flex={grow ? 1 : undefined} direction="column" background={C.pane} name={`pane:${p}`}>
+            <box flex={1} overflow="scroll" padding={[S.md, S.lg + 2]} gap={2} name={`${p}-body`}>
                 {TabBody(p)}
             </box>
         </box>
@@ -1823,7 +2029,7 @@ function SideDock(props: { dock: "left" | "right" }) {
     const width = props.dock === "left" ? l.hierarchy : l.inspector;
     return (
         <box width={width} direction="column" name={`dock:${props.dock}`}>
-            <Row padding={[1, 4]} gap={3} wrap background={theme.panelAlt}>
+            <Row gap={0} wrap background={C.strip}>
                 {panes.map((p) => <DockTab key={p} pane={p} active={p === active} />)}
             </Row>
             {PaneView(active, "100%", true)}
@@ -1831,25 +2037,18 @@ function SideDock(props: { dock: "left" | "right" }) {
     );
 }
 
-/** The bottom dock: its tabs and the status on one strip, the pane in front below (just the strip when it holds none). */
+/** The bottom dock: its tabs on a strip, the pane in front below (just the strip when it holds none). */
 function Bottom() {
     const l = layout();
-    const st = status();
     const panes = l.docks.bottom;
     const active = l.active.bottom;
     return (
-        <box height={panes.length > 0 ? l.bottom : undefined} direction="column" background={theme.panel} borderColor={theme.border} border={1} name="bottom">
-            <Row padding={[3, 6]} gap={4} background={theme.panelAlt}>
+        <box height={panes.length > 0 ? l.bottom : undefined} direction="column" background={C.pane} name="bottom">
+            <Row gap={0} wrap background={C.strip}>
                 {panes.map((p) => <DockTab key={p} pane={p} active={p === active} />)}
-                <box flex={1} />
-                <Label text={notice()} muted size={12} name="notice" />
-                <box width={12} />
-                <Label text={`tick ${st.tick}`} muted size={12} name="tick" />
-                <Label text={`${st.entities} entities`} muted size={12} name="entities" />
-                <Label text={st.hash} muted size={12} name="hash" />
             </Row>
             {active === "" ? null : active === "hierarchy" || active === "inspector" ? PaneView(active, "100%", true) : (
-                <box flex={1} overflow="scroll" padding={[4, 8]} gap={1} name="bottom-body">
+                <box flex={1} overflow="scroll" padding={[S.md, S.lg + 2]} gap={2} name="bottom-body">
                     {TabBody(active)}
                 </box>
             )}
@@ -1857,19 +2056,43 @@ function Bottom() {
     );
 }
 
+/** The status bar under the docks: whether the project is being edited, plays or is paused (the bar
+ * takes a tint while it plays), the last notice, then the tick, the entity count and the state hash. */
+function StatusBar() {
+    const st = status();
+    const mode = !playing() ? "Edit mode" : paused() ? "Paused" : "Playing";
+    const tint = !playing() ? C.window : paused() ? "#2b2414" : "#132a1c";
+    const dot = !playing() ? C.faint : paused() ? C.warn : C.ok;
+    return (
+        <Row height={22} gap={S.lg} padding={[0, S.lg + 2]} background={tint} name="statusbar">
+            <box width={7} height={7} radius={4} background={dot} />
+            <Label text={mode} size={SIZE.small} color={C.text} name="mode" />
+            <box flexGrow={1} flexShrink={1} flexBasis={0} overflow="hidden">
+                <Label text={notice()} size={SIZE.small} color={C.dim} name="notice" />
+            </box>
+            <Label text={`tick ${st.tick}`} size={SIZE.small} color={C.dim} name="tick" />
+            <Label text={`${st.entities} entities`} size={SIZE.small} color={C.dim} name="entities" />
+            <Label text={st.hash} size={SIZE.small} color={C.faint} name="hash" />
+        </Row>
+    );
+}
+
 /** The gizmo: absolute children of the main row, painted over the scene pane. Move handles at
  * the axis tips and the center; turns about Y, X and Z below to the left (R, RX, RZ); scales,
  * uniform and per axis, below to the right (S, SX, SY, SZ). */
-/** The view bar over the scene pane's top-left corner: what the pane shows and how drags land. */
+/** The view bar over the scene pane's top-right corner (a project's HUD tends to take the top
+ * left): what the pane shows and how drags land. */
 function ViewBar() {
     status();   // placed from the pane's rectangle, which settles over the first frames
     if (viewportRect.w === 0 || mainRect.w === 0) return null;
     return (
-        <box position="absolute" left={viewportRect.x - mainRect.x + 8} top={8} direction="row" gap={4} padding={[3, 4]} radius={4} background={theme.panelAlt} name="viewbar">
-            <Button label={overlays() ? "Overlays: on" : "Overlays"} small name="overlays" onClick={toggleOverlays} />
-            <Button label={snap() ? "Snap: on" : "Snap"} small name="snap" onClick={toggleSnap} />
-            <Button label={`${snapStep()}`} small name="snap_step" onClick={cycleSnapStep} />
-            <Button label={localAxes() ? "Local" : "World"} small name="axes" onClick={toggleLocal} />
+        <box position="absolute" right={mainRect.x + mainRect.w - (viewportRect.x + viewportRect.w) + S.lg} top={S.lg} direction="row" align="center" gap={S.xs} padding={3} radius={6} background="#121317e0" borderColor={C.line} border={1} name="viewbar">
+            <Button label={overlays() ? "✓ Overlays" : "Overlays"} small ghost on={overlays()} name="overlays" onClick={toggleOverlays} />
+            <Sep height={14} />
+            <Button label={snap() ? "✓ Snap" : "Snap"} small ghost on={snap()} name="snap" onClick={toggleSnap} />
+            <Button label={`${snapStep()}`} small ghost name="snap_step" onClick={cycleSnapStep} />
+            <Sep height={14} />
+            <Button label={localAxes() ? "Local" : "World"} small ghost on={localAxes()} name="axes" onClick={toggleLocal} />
         </box>
     );
 }
@@ -1878,9 +2101,9 @@ function GizmoHandles() {
     const g = gizmo();
     if (!g) return null;
     const handle = (axis: Axis, p: { x: number; y: number }, color: string, label: string) => (
-        <box key={axis} name={`gizmo:${axis}`} position="absolute" left={p.x - 9} top={p.y - 9} width={18} height={18} radius={axis === "plane" ? 3 : 9} background={color} borderColor="#000000" border={1} justify="center" align="center"
-            onMouseDown={() => gizmoDown(axis)} onDrag={gizmoDrag} onDragEnd={gizmoEnd}>
-            <Label text={label} size={label.length > 1 ? 8 : 10} color="#101010" />
+        <box key={axis} name={`gizmo:${axis}`} position="absolute" left={p.x - 9} top={p.y - 9} width={18} height={18} radius={axis === "plane" ? 4 : 9} background={color} borderColor={hovered() === `gizmo:${axis}` ? "#ffffff" : "#0b0c0f"} border={hovered() === `gizmo:${axis}` ? 2 : 1} justify="center" align="center"
+            onMouseDown={() => gizmoDown(axis)} onDrag={gizmoDrag} onDragEnd={gizmoEnd} onHover={hoverOn(`gizmo:${axis}`)}>
+            <Label text={label} size={label.length > 1 ? 8 : 10} weight="bold" color="#101114" />
         </box>
     );
     // The turn and scale handles sit at fixed offsets from the center; one is pushed further out
@@ -1896,10 +2119,10 @@ function GizmoHandles() {
         return p;
     };
     return [
-        handle("plane", g.center, "#f0f0f0", "+"),
-        handle("x", g.x, "#e05050", "X"),
-        handle("y", g.y, "#50c050", "Y"),
-        handle("z", g.z, "#5080f0", "Z"),
+        handle("plane", g.center, "#eef0f4", "+"),
+        handle("x", g.x, AXIS_COLORS.x, "X"),
+        handle("y", g.y, AXIS_COLORS.y, "Y"),
+        handle("z", g.z, AXIS_COLORS.z, "Z"),
         handle("rotate", clear(-30, 30), "#f0a030", "R"),
         handle("rotate_x", clear(-54, 30), "#f0a030", "RX"),
         handle("rotate_z", clear(-30, 54), "#f0a030", "RZ"),
@@ -1910,16 +2133,16 @@ function GizmoHandles() {
     ];
 }
 
+/** A gap between docks in the window's colour that takes the accent under the pointer; dragged, it resizes them. */
 function Splitter(props: { name: string; vertical?: boolean; onDrag: (e: UiEvent) => void }) {
-    return <box name={props.name} width={props.vertical ? undefined : 6} height={props.vertical ? 6 : undefined} background={theme.border} onDrag={props.onDrag} onDragEnd={saveLayout} />;
+    const hot = hovered() === props.name;
+    return <box name={props.name} width={props.vertical ? undefined : GAP} height={props.vertical ? GAP : undefined} background={hot ? C.accent : C.window} onDrag={props.onDrag} onDragEnd={saveLayout} onHover={hoverOn(props.name)} />;
 }
 
 function Editor() {
     return (
         <box width="100%" height="100%" direction="column" name="editor">
-            <box background={theme.panelAlt} borderColor={theme.border} border={1}>
-                <Toolbar />
-            </box>
+            <Toolbar />
             <Row flex={1} gap={0} align="stretch" name="main">
                 <SideDock dock="left" />
                 {layout().docks.left.length > 0 ? <Splitter name="split:hierarchy" onDrag={(e) => layout.update((l) => ({ ...l, hierarchy: clamp(l.hierarchy + (e.dx ?? 0), 120, 600) }))} /> : null}
@@ -1931,6 +2154,7 @@ function Editor() {
             </Row>
             {layout().docks.bottom.length > 0 ? <Splitter name="split:bottom" vertical onDrag={(e) => layout.update((l) => ({ ...l, bottom: clamp(l.bottom - (e.dy ?? 0), 60, 600) }))} /> : null}
             <Bottom />
+            <StatusBar />
         </box>
     );
 }

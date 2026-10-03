@@ -109,3 +109,24 @@ showed, in the release and the debug (assertion-enabled) builds of Bun's librari
   Chrome 152 pane on WebGPU: after `step {ticks: 120}` its state is hello's golden state (hue 0.1,
   ball.y 0.3913, two bounces), the ball and its shadow are drawn, and the console has no WGSL or GPU
   error.
+
+## 2026-10-02: a call from a script into the engine cost 52 us; now 0.17
+
+- `python tools/scripts/agent_eval.py --runner reference --json` (release, Direct3D 12): 70 of 72,
+  with `blender_level` failing for want of Blender and `slow_swarm` because the fixed swarm still
+  took 40 ms of script a tick (63.7 before the fix; 5.49 and 0.10 on the M5).
+- `tools/scripts/dev/script_costs.py` (script.eval in the swarm sample): a plain loop 0.07 us an
+  iteration, but `performance.now()` 53 us a call, `world.get` 113 and `world.set` 139: every call
+  from a script into the engine cost about 50 us. The swarm's 3000 `world.get` + `world.set` took
+  675 ms a tick (2.64 on the M5).
+- A small program against the same `pocket_jsc.dll` called a native function in 0.08 us, and 52 us
+  once linked with the runtime's `/STACK:8388608`; with a 4 or 5 MB stack 0.08, with 6 MB
+  52. JavaScriptCore (`VM::updateStackLimits`, `runtime/JSLock.cpp` `didAcquireLock`) recomputes
+its soft stack limit at every entry into the VM, which a native call's return makes, and on Windows
+commits every page down to a limit that moved (`preCommitStackMemory`). Its limit is the entry point
+less `maxPerThreadStackUsage` (5 MB) unless the stack ends sooner: on a stack of more than 5 MB the
+limit moves with every entry and 5 MB of pages are touched each time.
+- Executables are now linked with a 5 MB stack (`tools/pocket/src/ninja.rs`): `performance.now()`
+  0.17 us, `world.get` 2.4 us (both with the SDK's own JavaScript around the native), the swarm's
+  JSON path 2.82 ms and its typed-array path 0.78 ms a tick, the script phase 1.87 ms (1.53 on the
+  M5); `slow_swarm` passes (18.24 to 0.73 ms of script a tick, three agents building beside it).

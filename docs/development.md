@@ -14,7 +14,9 @@ machine. Everything here was true on 2026-10-02 at commit `60b757ee` on the refe
 2. Bring the tool up to date if `tools/pocket/` changed since it was installed (Installing the tool,
    below), and bundle what you will run (`./.pocket/pocket ts samples/<name>`).
 3. Check nothing long is running before starting builds or suites:
-   `ps -ax -o pid,etime,command | grep -E 'pocket test|_tests|agent_eval|pocket_runtime' | grep -v grep`.
+   `ps -ax -o pid,etime,command | grep -E 'pocket test|_tests|agent_eval|pocket_runtime' | grep -v grep`
+   (on Windows: `tasklist | grep -i -E 'pocket|_tests'`; a running executable cannot be relinked
+   there, so a leftover runtime fails the next build's link).
 
 The owner's standing directives for this repository (given in conversation, dated):
 
@@ -173,14 +175,16 @@ it included):
 
 ```bash
 cargo build --release --manifest-path tools/pocket/Cargo.toml && rm -f .pocket/pocket && cp tools/pocket/target/release/pocket .pocket/pocket
+cargo build --release --manifest-path tools/pocket/Cargo.toml && rm -f .pocket/pocket.exe && cp tools/pocket/target/release/pocket.exe .pocket/pocket.exe   # Windows
 ```
 
-Remove before copying: macOS kills a signed binary overwritten in place. Compiled into the tool and
-so stale until this: the web page shell (`web_shell.html`, `include_str!`), the MCP tool
-descriptions, the guide a new project gets (`commands.rs`), code generation (`gen.rs`, `sdkdoc.rs`:
-an old tool run by `pocket build` writes the generated files back the old way) and the `pocket.toml`
-schema (an old tool rejects a new field). Never reinstall while an agent benchmark runs: the harness
-and every agent's MCP server run `.pocket/pocket`.
+Remove before copying: macOS kills a signed binary overwritten in place, and on Windows a running
+`pocket.exe` (an MCP server, a watch) cannot be removed at all: stop it, or move it aside first.
+Compiled into the tool and so stale until this: the web page shell (`web_shell.html`,
+`include_str!`), the MCP tool descriptions, the guide a new project gets (`commands.rs`), code
+generation (`gen.rs`, `sdkdoc.rs`: an old tool run by `pocket build` writes the generated files back
+the old way) and the `pocket.toml` schema (an old tool rejects a new field). Never reinstall while
+an agent benchmark runs: the harness and every agent's MCP server run `.pocket/pocket`.
 
 ### Bundles and the release runtime
 
@@ -401,7 +405,21 @@ and how to add a task.
 | `POCKET_GPU_REPORT` | `engine/rhi/src/device.cpp` | print GPU objects a subsystem forgot to release |
 | `POCKET_TOOL` | `session.cpp` | the `pocket` binary `project.apply` bundles with (set by `pocket run`) |
 
-## Current state (2026-10-02)
+## Current state (2026-10-02, evening, Windows)
+
+- **The move to Windows** (ADR 0008, Proposed): development continues on the owner's Windows 11
+  laptop (RTX 5060 Laptop, Direct3D 12), from `f32da248` on. Everything below the tool builds there
+  with LLVM 23's clang for the MSVC ABI; the release and sanitized debug configurations, the web
+  build and Windows packs work; core, world, physics, nav, assets, audio, ui, renderer and runtime
+  tests pass (the runtime ones after the fixes in `6b4b0ae8`), and so do all 18 samples' scenarios;
+  hello's state hash is the macOS golden. Evidence: `tests/evidence/windows/README.md`. Not yet run
+  on Windows: the agent benchmark (the coding agents and their keys are not installed here), the
+  whole `pocket test` in debug (more memory than this machine's 15 GB may be needed: test in release
+  first), the iOS and Linux checks (they need a Mac and Docker).
+- **Direct3D 12 startup**: about 2.6 s to the first frame against 0.8 s on Vulkan, because wgpu
+  compiles each pipeline's HLSL through DXC in the process on every run; making the renderer's
+  pipelines on first use is under way. Every test that starts a session pays it, so runtime_tests
+  takes about 19 minutes here.
 
 - **Last benchmark**: the full 72-task run on opencode with GLM 5.3 Flash, 71 of 72 on the runtime
   frozen at `b0616f2` (`tests/evidence/agent-eval/opencode-glm-full72.json`; `slow_swarm` failed at
@@ -425,6 +443,9 @@ and how to add a task.
   tasks copy that sample: add it only between runs).
 - **Waiting on the owner**: their own Google OAuth client for the large-file store (AGENTS.md, Test
   data; nothing is stored there until it exists); accepting the Android SDK licence (Android is
-  blocked until then); a decision on Windows: `docs/research/2026-10-02-windows-port-estimate.md`
-  (WSL2 for development within days; a native port in about three to eight weeks of agent work, with
-  a Windows machine, Microsoft's build tools licence and three decisions only the owner can make).
+  blocked until then); accepting ADR 0008's technical choices (clang++ for the MSVC ABI rather than
+  clang-cl, Bun's JavaScriptCore in `pocket_jsc.dll` rather than V8, the dynamic C runtime); how
+  Windows packs carry the shader compiler and the Visual C++ runtime (the Windows SDK's
+  `dxcompiler.dll` is copied beside development builds; a pack for players needs a redistributable
+  DXC, from Microsoft's DirectXShaderCompiler releases, or FXC's 20-second start, and either the
+  Visual C++ runtime DLLs beside the game or the redistributable installed).

@@ -17,6 +17,7 @@
 #include <fcntl.h>
 #include <io.h>
 #include <windows.h>   // after the engine's headers: its macros must not reach them
+#include <timeapi.h>
 #include <tlhelp32.h>
 #elif !defined(__EMSCRIPTEN__)
 #include <unistd.h>
@@ -327,6 +328,9 @@ int main(int argc, char** argv) {
     // The JSON channel is bytes: no CR before each LF as Windows' text mode would write.
     _setmode(_fileno(stdout), _O_BINARY);
     _setmode(_fileno(stderr), _O_BINARY);
+    // Sleeps to the millisecond (a paused or hidden window paces itself at the tick rate by
+    // sleeping), not to the 15.6 ms the system timer ticks at by default.
+    timeBeginPeriod(1);
 #endif
     std::vector<std::string> args(argv + 1, argv + argc);
 #ifdef POCKET_IOS
