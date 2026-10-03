@@ -265,6 +265,13 @@ struct IdImage {
     std::vector<std::uint32_t> ids;  // entity id (low 32 bits) per pixel, 0 = background
 };
 
+// The motion target TAA and motion blur read: how far each pixel's surface moved since the frame
+// drawn before, in pixels (x right, y down), two floats per pixel, row after row.
+struct MotionImage {
+    std::uint32_t width = 0, height = 0;
+    std::vector<float> motion;
+};
+
 // Sub-rectangle of the frame (pixels) that receives the scene; w == 0 means the whole frame.
 struct Viewport {
     std::int32_t x = 0, y = 0;
@@ -315,6 +322,8 @@ class Renderer {
     Status render(rhi::Frame& frame, const world::World& world, rhi::Color clear, const Particles* particles = nullptr, const Animation* animation = nullptr, const DebugDraw* debug = nullptr, const RenderView* view = nullptr);
     // Read back the id buffer of the last rendered frame.
     Result<IdImage> read_ids();
+    // Read back the motion target of the last rendered frame (made once TAA or motion blur is on).
+    Result<MotionImage> read_motion();
     // Entity under a pixel (0 when background). Reads back the whole id buffer.
     Result<world::EntityId> pick(std::uint32_t x, std::uint32_t y);
     [[nodiscard]] const RenderStats& stats() const;
@@ -339,7 +348,7 @@ class Renderer {
     // Look from `view` instead of the scene's camera until it is cleared (nullopt).
     void set_view(std::optional<ViewOverride> view);
     // The next frame follows a gap (frames simulated and not drawn): what builds up over frames
-    // (TAA's history, motion blur's last view) starts over.
+    // (TAA's history, motion blur's last view, every draw's place and pose last frame) starts over.
     void cut();
     [[nodiscard]] int msaa() const;
     void set_shadows(ShadowSettings s);

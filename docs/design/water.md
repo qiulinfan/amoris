@@ -45,9 +45,26 @@ are copied, and the surface shades from them:
   sun at its elevation, shadowed. Shallows show their bed; deep water is its colour.
 - **Reflections**: the sky's panorama (or a probe's, box-projected) along the mirror direction,
   weighed by Fresnel (a dielectric's 0.04 at normal incidence, nearly all at a glance). The water
-  writes its normal and a roughness of 0.04 to the surface target, so screen-space reflections, when
-  on, trace the same direction and put the shore and what floats in place of the sky.
+  writes its normal and its roughness (0.04, widened as below) to the surface target, so
+  screen-space reflections, when on, trace the same direction and put the shore and what floats in
+  place of the sky. The mirror direction is kept above the horizon: where the waves and ripples lean
+  a facet away from an eye looking along the water, it points down, into the next wave, and the sea
+  seen that way shows the sky at its horizon, not the ground the panorama holds below it. Without
+  that, the sea toward the horizon was strewn with black dashes and specks
+  (`tests/evidence/rendering/horizon.png`, left): those facets, seen at a glance with Fresnel near
+  one, mirrored the panorama's ground, which under an atmosphere was lit at about a fiftieth of the
+  horizon's air. Found on the island's morning view by changing one thing at a time: marking the
+  pixels whose mirror direction pointed below the horizon (8.4% of the band under it, 5.1% nearer)
+  marked the dashes; the reflection alone showed them and the refraction, the glint and back faces
+  (none were drawn) did not; the near plane moved from 0.1 to 1 (ten times the depth precision)
+  changed no pixel, so the depth buffer had no part; bending the normal toward the eye left some,
+  since a normal facing the eye can still turn the mirror direction down. Kept above the horizon,
+  the band's dark pixels went from 665 to 229 (a flat mirror's: 262).
 - **The sun** glints off it (GGX at roughness 0.12, through the cascades).
+- **Far waves** turn faster than the pixels: the reflection and the glint widen by how much the
+  waves' normal turns from one pixel to the next, so the waves toward the horizon break into far
+  fewer dark dashes and lone bright pixels (geometric specular anti-aliasing,
+  `docs/design/rendering.md`, Specular quality; rings and rain drops are left out of it).
 - **Caustics**: what lies below the surface (and within the body's `depth`) gets its sunlight
   gathered into a moving net of bright lines, as a wavy surface focuses it: two warped nets of thin
   lines drifting apart on the world's clock, found where the sun's way down through the water
@@ -111,10 +128,12 @@ nearer the ear; `Water.sound` false leaves the sound to the game. `runtime_tests
 (`[water][ocean]`): the level is answered at the origin and five thousand units off, and a crate
 dropped in eight hundred off floats at it; `renderer_tests` (`[water][ocean]`): under the horizon
 the view shows the sea out to the far distance where a lake of ten units leaves the sky's ground
-bare. `tests/evidence/rendering/ocean.png` (`tools/scripts/dev/ocean_evidence.py`): the hills' lake
-made an ocean, the hills an island, by day with a crate afloat and at sunset. `samples/island` sails
-a `Boat` (`docs/design/physics.md`, Boats) on one, round three terrains made islands
-(`docs/design/terrain.md`).
+bare, and (`[water][ocean][horizon]`) the sea seen at a glance under an atmosphere has fewer than
+ten pixels darker than 0.35 of their row's median in the thirty rows under the horizon (77 when the
+mirror direction could point down). `tests/evidence/rendering/ocean.png`
+(`tools/scripts/dev/ocean_evidence.py`): the hills' lake made an ocean, the hills an island, by day
+with a crate afloat and at sunset. `samples/island` sails a `Boat` (`docs/design/physics.md`, Boats)
+on one, round three terrains made islands (`docs/design/terrain.md`).
 
 ## Wind and waves
 
@@ -247,5 +266,6 @@ Climbing out over anything higher than a low ledge, waves of its own from what f
 (rings and wakes bend the surface's light but do not raise it or move what floats on it), caustics
 from the waves' own shape (the net is procedural, not traced from the surface), water of other
 shapes than a rectangle or a river's ribbon (round ponds; the rectangle reaches under the shore
-instead) and turned with its entity, and translucent meshes in front of the water (they are drawn
-before it without writing depth, so the surface covers them).
+instead) and turned with its entity, translucent meshes in front of the water (they are drawn before
+it without writing depth, so the surface covers them), and the rings' and rain drops' normals
+filtered for what a pixel covers (the waves' are: Far waves, above).

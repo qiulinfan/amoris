@@ -6,6 +6,7 @@
 
 #include <catch_amalgamated.hpp>
 
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <array>
@@ -1414,6 +1415,117 @@ TEST_CASE("TAA smooths edges over a few frames, keeps flat areas and leaves no g
     REQUIRE(s.finish().has_value());
 }
 
+TEST_CASE("skinned and morphed meshes write their motion from last frame's joints and weights", "[renderer][taa][motion]") {
+    app::Session s(assets_options());
+    REQUIRE(s.start().has_value());
+    // Arms far from the sample's scene, posed by seeking clips that do not play: one waves (its tip
+    // joint turns, its foot stays), one bulges (a morph target moves its middle ring outward).
+    auto spawn = [&](const char* name, double x, const char* clip, double time) {
+        Json e;
+        e["name"] = name;
+        e["components"]["Transform"] = Json{{"position", Json{{"x", x}, {"y", 50}, {"z", 0}}}};
+        e["components"]["MeshRenderer"] = Json{{"mesh", "assets/arm.glb"}};
+        e["components"]["Animator"] = Json{{"clip", clip}, {"playing", false}, {"time", time}};
+        Json r = s.command("world.spawn", e).value();
+        return static_cast<std::uint32_t>(r["id"].get<std::uint64_t>() & 0xFFFFFFFFu);
+    };
+    const std::uint32_t swinger = spawn("Swinger", 200, "wave", 0.0);
+    std::uint32_t bulger = spawn("Bulger", 201.5, "pulse", 0.25);
+    REQUIRE(s.command("world.set", Json{{"entity", "Camera"}, {"component", "Transform"}, {"value", Json{{"position", Json{{"x", 200.75}, {"y", 51}, {"z", 4.5}}}, {"rotation", Json{{"x", 0}, {"y", 0}, {"z", 0}, {"w", 1}}}}}}).has_value());
+    REQUIRE(s.command("render.taa", Json{{"enabled", true}}).value()["enabled"] == true);
+    auto seek = [&](const char* name, double time) {
+        REQUIRE(s.command("world.set", Json{{"entity", name}, {"component", "Animator"}, {"value", Json{{"time", time}}}}).has_value());
+    };
+    // The motion target and the ids of one frame; the largest motion over an entity's pixels, and
+    // the motion at a world point.
+    renderer::MotionImage motion;
+    renderer::IdImage ids;
+    auto draw = [&]() {
+        REQUIRE(s.frame().has_value());
+        auto m = s.renderer().read_motion();
+        REQUIRE(m.has_value());
+        motion = std::move(*m);
+        auto i = s.renderer().read_ids();
+        REQUIRE(i.has_value());
+        ids = std::move(*i);
+        REQUIRE(ids.width == motion.width);
+    };
+    auto largest = [&](std::uint32_t id) {
+        float most = 0;
+        int pixels = 0;
+        for (std::size_t k = 0; k < ids.ids.size(); ++k) {
+            if (ids.ids[k] != id) continue;
+            ++pixels;
+            most = std::max(most, std::hypot(motion.motion[k * 2], motion.motion[k * 2 + 1]));
+        }
+        REQUIRE(pixels > 100);
+        return most;
+    };
+    auto pixel_of = [&](Json point) {
+        Json r = s.command("render.project", Json{{"point", point}}).value();
+        return std::array<double, 2>{r["x"].get<double>(), r["y"].get<double>()};
+    };
+    auto motion_at = [&](Json point, std::uint32_t id) {
+        const auto [x, y] = pixel_of(point);
+        const auto k = static_cast<std::size_t>(std::floor(y)) * motion.width + static_cast<std::size_t>(std::floor(x));
+        REQUIRE(ids.ids[k] == id);
+        return std::array<float, 2>{motion.motion[k * 2], motion.motion[k * 2 + 1]};
+    };
+    // The tip joint's axis 0.8 up its bone, on the arm's front face.
+    auto tip_point = [&]() {
+        Json pose = s.command("animation.pose", Json{{"entity", "Swinger"}}).value();
+        for (const Json& j : pose["joints"]) {
+            if (j["name"] != "tip") continue;
+            const Json& p = j["position"];
+            const Json& a = j["axis_y"];
+            return Json{{"x", p["x"].get<double>() + 0.8 * a["x"].get<double>()}, {"y", p["y"].get<double>() + 0.8 * a["y"].get<double>()}, {"z", 0.15}};
+        }
+        FAIL("no tip joint");
+        return Json();
+    };
+    const Json foot{{"x", 200}, {"y", 50.25}, {"z", 0.15}};
+    draw();
+    draw();
+    // Standing still: nothing moves.
+    INFO("still: swinger " << largest(swinger) << " px, bulger " << largest(bulger) << " px");
+    REQUIRE(largest(swinger) < 0.01f);
+    REQUIRE(largest(bulger) < 0.01f);
+    // The wave's tip turns from -45 to 0 degrees, the bulge from a half to all of it.
+    const Json tip_before = tip_point();
+    const auto from = pixel_of(tip_before);
+    seek("Swinger", 0.25);
+    seek("Bulger", 0.5);
+    draw();
+    const Json tip_now = tip_point();
+    const auto to = pixel_of(tip_now);
+    const auto tip = motion_at(tip_now, swinger), still = motion_at(foot, swinger);
+    const float expect_x = static_cast<float>(to[0] - from[0]), expect_y = static_cast<float>(to[1] - from[1]);
+    INFO("tip moved " << expect_x << ", " << expect_y << " px; its motion " << tip[0] << ", " << tip[1] << "; at the foot " << still[0] << ", " << still[1] << "; the bulge's largest " << largest(bulger));
+    REQUIRE(std::hypot(expect_x, expect_y) > 10.0f);
+    REQUIRE(std::abs(tip[0] - expect_x) < 0.15f * std::abs(expect_x) + 1.0f);
+    REQUIRE(std::abs(tip[1] - expect_y) < 0.15f * std::abs(expect_y) + 1.0f);
+    REQUIRE(std::hypot(still[0], still[1]) < 0.01f);   // the foot follows the root joint, which stays
+    REQUIRE(largest(bulger) > 1.5f);                   // the ring pushed out by the morph target
+    const auto bulger_foot = motion_at(Json{{"x", 201.5}, {"y", 50.25}, {"z", 0.15}}, bulger);
+    REQUIRE(std::hypot(bulger_foot[0], bulger_foot[1]) < 0.01f);
+    // Held where they are, they stop moving at once.
+    draw();
+    REQUIRE(largest(swinger) < 0.01f);
+    REQUIRE(largest(bulger) < 0.01f);
+    // A new arm in the bulger's place (it may take its id again), already bulged and turned, has
+    // no last frame: it moves nowhere on its first; the swinger, drawn after it in a new order,
+    // still moves by its own joints.
+    REQUIRE(s.command("world.destroy", Json{{"entity", "Bulger"}}).has_value());
+    bulger = spawn("Newcomer", 201.5, "pulse", 0.5);
+    REQUIRE(s.command("world.set", Json{{"entity", "Newcomer"}, {"component", "Transform"}, {"value", Json{{"rotation", Json{{"x", 0}, {"y", 0.38268343}, {"z", 0}, {"w", 0.92387953}}}}}}).has_value());
+    seek("Swinger", 0.0);
+    draw();
+    INFO("newcomer " << largest(bulger) << " px, swinger back " << largest(swinger) << " px");
+    REQUIRE(largest(bulger) < 0.01f);
+    REQUIRE(largest(swinger) > 10.0f);
+    REQUIRE(s.finish().has_value());
+}
+
 TEST_CASE("depth of field blurs what is out of focus; motion blur smears what moves", "[renderer][dof][motion_blur]") {
     app::Options o = playground_options();
     o.width = 256;
@@ -1701,12 +1813,14 @@ TEST_CASE("screen-space reflections show what stands on a mirror floor where its
     REQUIRE(plain[0] < 80);                        // the floor reflects only the dim ambient there
     REQUIRE(traced[0] > plain[0] + 80);            // with the box in it
     REQUIRE(traced[0] > traced[1] + 60);           // red
-    // A rough floor keeps the sky's reflection.
+    // A rough floor keeps the sky's reflection: the box's red is gone from it. (Not darker than the
+    // traced red: the rough white metal under the sun reads about 210 in each channel since multiple
+    // scattering gave it back the light single-scattering GGX lost, 157 before.)
     REQUIRE(s.command("world.set", Json{{"entity", "Floor"}, {"component", "MeshRenderer"}, {"value", Json{{"roughness", 0.9}}}}).has_value());
     REQUIRE(s.frame().has_value());
     const auto rough = pixel();
     INFO("rough " << rough[0] << "," << rough[1] << "," << rough[2]);
-    REQUIRE(rough[0] < traced[0] - 60);
+    REQUIRE(rough[0] < rough[1] + 20);
     REQUIRE(s.finish().has_value());
 }
 
@@ -2706,6 +2820,96 @@ TEST_CASE("an ocean runs to the horizon: below it the view shows water, not the 
     const Json lake = below();
     INFO("lake " << lake.dump());
     REQUIRE(std::abs(lake[0][2].get<int>() - bare[0][2].get<int>()) < 6);
+    REQUIRE(s.finish().has_value());
+}
+
+namespace {
+// The luminance of a captured pixel ([r, g, b, a]).
+double luma(const Json& p) { return 0.2126 * p[0].get<double>() + 0.7152 * p[1].get<double>() + 0.0722 * p[2].get<double>(); }
+}  // namespace
+
+TEST_CASE("the sea seen at a glance mirrors the sky at its horizon, not the ground under it: no dark dashes toward the horizon", "[renderer][water][ocean][horizon]") {
+    app::Options o = playground_options();
+    o.width = 160;
+    o.height = 120;
+    o.frames = 1000;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("world.clear", Json::object()).has_value());
+    // An atmosphere with the sun 35 degrees up behind the camera, whose ground under the horizon is
+    // far darker than the air along it; waves and ripples that lean facets away from the eye.
+    REQUIRE(s.command("world.spawn", Json{{"name", "Sky"}, {"components", Json{{"Sky", Json{{"mode", 3}}}}}}).has_value());
+    const Json sun_turn{{"yaw", 160}, {"pitch", -35}};
+    REQUIRE(s.command("world.spawn", Json{{"name", "Sun"}, {"components", Json{{"Transform", Json{{"rotation", sun_turn}}}, {"Light", Json{{"kind", 0}, {"intensity", 1}}}}}}).has_value());
+    const Json waves{{"ocean", true}, {"wave_height", 0.35}, {"wave_length", 9}};
+    REQUIRE(s.command("world.spawn", Json{{"name", "Sea"}, {"components", Json{{"Transform", Json::object()}, {"Water", waves}}}}).has_value());
+    const Json eye{{"position", Json{{"x", 0}, {"y", 2.2}, {"z", 0}}}};
+    REQUIRE(s.command("world.spawn", Json{{"name", "Camera"}, {"components", Json{{"Transform", eye}, {"Camera", Json{{"fov_degrees", 50}, {"far", 1500}}}}}}).has_value());
+    for (int i = 0; i < 3; ++i) REQUIRE(s.frame().has_value());
+    // Thirty rows from just under the horizon: pixels under 0.35 of their row's median are dashes
+    // (77 of 4800 when the mirror direction could point below the horizon; none since).
+    const int horizon = static_cast<int>(s.command("render.project", Json{{"point", Json{{"x", 0}, {"y", 0}, {"z", -1400}}}}).value()["y"].get<double>());
+    Json points = Json::array();
+    for (int y = horizon + 2; y < horizon + 32; ++y)
+        for (int x = 0; x < 160; ++x) points.push_back(Json{{"x", x}, {"y", y}});
+    const Json px = s.command("capture", Json{{"pixels", points}}).value()["pixels"];
+    int dashes = 0;
+    for (int row = 0; row < 30; ++row) {
+        std::vector<double> l;
+        for (int x = 0; x < 160; ++x) l.push_back(luma(px[static_cast<std::size_t>(row * 160 + x)]));
+        std::vector<double> sorted = l;
+        std::sort(sorted.begin(), sorted.end());
+        for (double v : l) dashes += v < 0.35 * sorted[80] ? 1 : 0;
+    }
+    INFO("horizon at row " << horizon << ", " << dashes << " dark pixels");
+    REQUIRE(horizon > 50);
+    REQUIRE(horizon < 70);
+    REQUIRE(dashes < 10);
+    REQUIRE(s.finish().has_value());
+}
+
+TEST_CASE("the sky's ground meets its horizon without a line, procedural and atmosphere, and an atmosphere's ground is lit as the scene's", "[renderer][sky][horizon]") {
+    app::Options o = playground_options();
+    o.width = 160;
+    o.height = 120;
+    o.frames = 1000;
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    REQUIRE(s.command("world.clear", Json::object()).has_value());
+    REQUIRE(s.command("world.spawn", Json{{"name", "Sky"}, {"components", Json{{"Sky", Json{{"mode", 1}}}}}}).has_value());
+    const Json sun_turn{{"yaw", 160}, {"pitch", -35}};
+    REQUIRE(s.command("world.spawn", Json{{"name", "Sun"}, {"components", Json{{"Transform", Json{{"rotation", sun_turn}}}, {"Light", Json{{"kind", 0}, {"intensity", 1}}}}}}).has_value());
+    const Json eye{{"position", Json{{"x", 0}, {"y", 2}, {"z", 0}}}};
+    REQUIRE(s.command("world.spawn", Json{{"name", "Camera"}, {"components", Json{{"Transform", eye}, {"Camera", Json{{"fov_degrees", 50}, {"far", 1500}}}}}}).has_value());
+    // A column of pixels from above the horizon (row 60) to the bottom, nothing but sky in view.
+    Json points = Json::array();
+    for (int y = 50; y < 120; ++y) points.push_back(Json{{"x", 80}, {"y", y}});
+    auto column = [&]() {
+        for (int i = 0; i < 2; ++i) REQUIRE(s.frame().has_value());
+        const Json px = s.command("capture", Json{{"pixels", points}}).value()["pixels"];
+        std::vector<int> sums;
+        for (const Json& p : px) sums.push_back(p[0].get<int>() + p[1].get<int>() + p[2].get<int>());
+        return sums;
+    };
+    auto largest_step = [](const std::vector<int>& c) {
+        int most = 0;
+        for (std::size_t i = 1; i < c.size(); ++i) most = std::max(most, std::abs(c[i] - c[i - 1]));
+        return most;
+    };
+    // The procedural ground began at an even mix with the horizon (a step of 99 between two rows);
+    // now it comes through the horizon's air (33 at most).
+    const std::vector<int> procedural = column();
+    INFO("procedural " << Json(procedural).dump());
+    REQUIRE(largest_step(procedural) < 50);
+    REQUIRE(procedural.back() < procedural[5] - 150);   // the ground below is darker than the horizon
+    // The atmosphere's ground had a fixed share of the sun's light (95 against the horizon's 765,
+    // a step of 133); now it is lit as the scene's ground and comes through the air the same way.
+    REQUIRE(s.command("world.set", Json{{"entity", "Sky"}, {"component", "Sky"}, {"value", Json{{"mode", 3}}}}).has_value());
+    const std::vector<int> atmosphere = column();
+    INFO("atmosphere " << Json(atmosphere).dump());
+    REQUIRE(largest_step(atmosphere) < 50);
+    REQUIRE(atmosphere[45] * 3 > atmosphere[5]);        // twenty-five rows down, more than a third of the horizon
+    REQUIRE(atmosphere.back() < atmosphere[5]);
     REQUIRE(s.finish().has_value());
 }
 

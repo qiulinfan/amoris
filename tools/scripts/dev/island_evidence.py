@@ -2,6 +2,8 @@
 wooded island in the morning, and running home past an islet in the evening light.
 
     python3 tools/scripts/dev/island_evidence.py     (release build; samples/island bundled; Pillow)
+
+`capture(view, path, exe)` takes one of VIEWS with a given runtime (horizon_evidence.py uses it).
 """
 import os
 import sys
@@ -19,10 +21,10 @@ VIEWS = [
     ("evening", 17.7, (120, -60, -120), 3, (-6, 2.0, -9)),
 ]
 
-shots = []
-for i, (label, hour, (x, z, yaw), seconds, cam) in enumerate(VIEWS):
-    path = os.path.join(ROOT, "build", f"island-{label}.png")
-    with Runtime("island", port=4975 + i, size=f"{W}x{H}", release=True) as r:
+
+def capture(view, path, exe=None, port=4975):
+    label, hour, (x, z, yaw), seconds, cam = view
+    with Runtime("island", port=port, size=f"{W}x{H}", release=True, exe=exe) as r:
         r.rpc("world.set", {"entity": "Sky", "component": "Sky", "value": {"time_of_day": hour, "day_length": 0}})
         r.rpc("world.set", {"entity": "Boat", "component": "Transform", "value": {"position": {"x": x, "y": 0.4, "z": z}, "rotation": {"yaw": yaw}}})
         r.rpc("world.set", {"entity": "Boat", "component": "Boat", "value": {"sail": 1}})
@@ -34,10 +36,16 @@ for i, (label, hour, (x, z, yaw), seconds, cam) in enumerate(VIEWS):
                                                           "Camera": {"fov_degrees": 50, "far": 1500, "priority": 100}}})
         r.rpc("step", {"ticks": 2, "render": "each"})
         r.rpc("capture", {"path": path})
-    shots.append(Image.open(path).convert("RGB"))
 
-sheet = Image.new("RGB", (W * 2, H))
-for i, shot in enumerate(shots):
-    sheet.paste(shot, (i * W, 0))
-sheet.save(OUT)
-print(OUT)
+
+if __name__ == "__main__":
+    shots = []
+    for i, view in enumerate(VIEWS):
+        path = os.path.join(ROOT, "build", f"island-{view[0]}.png")
+        capture(view, path, port=4975 + i)
+        shots.append(Image.open(path).convert("RGB"))
+    sheet = Image.new("RGB", (W * 2, H))
+    for i, shot in enumerate(shots):
+        sheet.paste(shot, (i * W, 0))
+    sheet.save(OUT)
+    print(OUT)

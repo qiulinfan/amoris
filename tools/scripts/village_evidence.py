@@ -4,6 +4,8 @@ of cobbles round a well, houses, a market stall's table and chairs, crates, a ch
 bench, a sign, trees and a fence, every one without a file, in the hello sample.
 
     python3 tools/scripts/village_evidence.py   # writes tests/evidence/rendering/village.png
+
+`capture(path, size, exe)` makes the picture with a given runtime (dev/horizon_evidence.py uses it).
 """
 import math
 import os
@@ -28,20 +30,26 @@ THINGS = [
     ("fence", -6, 5, 0), ("fence?seed=1", -4, 5, 0), ("fence?seed=2", -2, 5, 0),
 ]
 
-with Runtime("hello", port=4823, size="1600x900", release=True) as r:
-    r.rpc("step", {"ticks": 2})
-    for e in r.rpc("world.query", {"with": ["MeshRenderer"]})["entities"]:
-        r.rpc("world.set", {"entity": e["id"], "component": "MeshRenderer", "value": {"visible": False}})
-    r.rpc("world.set", {"entity": "Camera", "component": "Transform", "value": {"position": {"x": 0, "y": 6.5, "z": 13}, "rotation": {"x": -0.2, "y": 0, "z": 0, "w": 0.98}}})
-    r.rpc("world.set", {"entity": "Camera", "component": "Camera", "value": {"fov_degrees": 60}})
-    r.rpc("world.spawn", {"name": "Sky", "components": {"Sky": {"mode": "atmosphere", "haze": 1.3}}})
-    r.rpc("world.spawn", {"name": "Sun", "components": {"Transform": {"rotation": {"x": -0.35, "y": 0.35, "z": 0.14, "w": 0.86}}, "Light": {"kind": 0, "intensity": 1.0}}})
-    r.rpc("world.spawn", {"name": "Grass", "components": {"Transform": {"position": {"x": 0, "y": -0.52, "z": 0}, "scale": {"x": 60, "y": 1, "z": 60}}, "MeshRenderer": {"mesh": "cube", "texture": "pattern:grass", "normal_map": "pattern:grass?map=normal", "texture_tile": 3, "color": WHITE}}})
-    r.rpc("world.spawn", {"name": "Square", "components": {"Transform": {"position": {"x": 0, "y": -0.5, "z": 0}, "scale": {"x": 16, "y": 1, "z": 9}}, "MeshRenderer": {"mesh": "cube", "texture": "pattern:cobble", "normal_map": "pattern:cobble?map=normal", "texture_tile": 3, "color": WHITE}}})
-    r.rpc("world.spawn", {"name": "Roofs", "components": {"Transform": {"position": {"x": 0, "y": 0.6, "z": -12}, "rotation": {"x": 0.38, "y": 0, "z": 0, "w": 0.92}, "scale": {"x": 6, "y": 0.2, "z": 3}}, "MeshRenderer": {"mesh": "cube", "texture": "pattern:shingles", "normal_map": "pattern:shingles?map=normal", "texture_tile": 2, "color": WHITE}}})
-    for i, (mesh, x, z, deg) in enumerate(THINGS):
-        r.rpc("world.spawn", {"name": f"Thing{i}", "components": {"Transform": {"position": {"x": x, "y": 0, "z": z}, "rotation": yaw(deg)}, "MeshRenderer": {"mesh": mesh}}})
-    r.rpc("step", {"ticks": 2, "render": "each"})
+
+def capture(path, size="1600x900", exe=None):
+    with Runtime("hello", port=4823, size=size, release=True, exe=exe) as r:
+        r.rpc("step", {"ticks": 2})
+        for e in r.rpc("world.query", {"with": ["MeshRenderer"]})["entities"]:
+            r.rpc("world.set", {"entity": e["id"], "component": "MeshRenderer", "value": {"visible": False}})
+        r.rpc("world.set", {"entity": "Camera", "component": "Transform", "value": {"position": {"x": 0, "y": 6.5, "z": 13}, "rotation": {"x": -0.2, "y": 0, "z": 0, "w": 0.98}}})
+        r.rpc("world.set", {"entity": "Camera", "component": "Camera", "value": {"fov_degrees": 60}})
+        r.rpc("world.spawn", {"name": "Sky", "components": {"Sky": {"mode": "atmosphere", "haze": 1.3}}})
+        r.rpc("world.spawn", {"name": "Sun", "components": {"Transform": {"rotation": {"x": -0.35, "y": 0.35, "z": 0.14, "w": 0.86}}, "Light": {"kind": 0, "intensity": 1.0}}})
+        r.rpc("world.spawn", {"name": "Grass", "components": {"Transform": {"position": {"x": 0, "y": -0.52, "z": 0}, "scale": {"x": 60, "y": 1, "z": 60}}, "MeshRenderer": {"mesh": "cube", "texture": "pattern:grass", "normal_map": "pattern:grass?map=normal", "texture_tile": 3, "color": WHITE}}})
+        r.rpc("world.spawn", {"name": "Square", "components": {"Transform": {"position": {"x": 0, "y": -0.5, "z": 0}, "scale": {"x": 16, "y": 1, "z": 9}}, "MeshRenderer": {"mesh": "cube", "texture": "pattern:cobble", "normal_map": "pattern:cobble?map=normal", "texture_tile": 3, "color": WHITE}}})
+        r.rpc("world.spawn", {"name": "Roofs", "components": {"Transform": {"position": {"x": 0, "y": 0.6, "z": -12}, "rotation": {"x": 0.38, "y": 0, "z": 0, "w": 0.92}, "scale": {"x": 6, "y": 0.2, "z": 3}}, "MeshRenderer": {"mesh": "cube", "texture": "pattern:shingles", "normal_map": "pattern:shingles?map=normal", "texture_tile": 2, "color": WHITE}}})
+        for i, (mesh, x, z, deg) in enumerate(THINGS):
+            r.rpc("world.spawn", {"name": f"Thing{i}", "components": {"Transform": {"position": {"x": x, "y": 0, "z": z}, "rotation": yaw(deg)}, "MeshRenderer": {"mesh": mesh}}})
+        r.rpc("step", {"ticks": 2, "render": "each"})
+        r.rpc("capture", {"path": path})
+        return r.rpc("world.lint", {})["errors"]
+
+
+if __name__ == "__main__":
     out = os.path.join(ROOT, "tests", "evidence", "rendering", "village.png")
-    r.rpc("capture", {"path": out})
-    print(out, r.rpc("world.lint", {})["errors"])
+    print(out, capture(out))

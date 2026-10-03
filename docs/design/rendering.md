@@ -44,12 +44,14 @@ round the pool and fireflies drifting as GPU particles) turns nearly everything 
    and resolved into the HDR target, and the ids come from a pass of their own at one sample per
    pixel, since an integer target cannot be multisampled; `render.stats` reports `msaa` and the
    `id_draws` of that pass. Meshes are lit with a metallic-roughness model (Lambert diffuse, GGX
-   specular with Schlick's Fresnel and Smith's masking, ambient reflected by dielectrics and metals
-   in their own colors, point and spot lights with a windowed quadratic falloff) and shadowed by a
-   3x3 comparison filter with a slope-scaled bias. Sprites follow, unlit and alpha blended (in
-   linear light), sorted by layer then far to near, without depth writes. Bodies of `Water` are
-   drawn after the solid and translucent meshes, from copies of the scene and of the prepass depth:
-   refraction, absorption with depth, reflections, a sun glint and foam (`docs/design/water.md`).
+   specular with Schlick's Fresnel and Smith's masking, given back what single scattering loses and
+   widened where the normal turns within a pixel (Specular quality, below), ambient reflected by
+   dielectrics and metals in their own colors, point and spot lights with a windowed quadratic
+   falloff) and shadowed by a 3x3 comparison filter with a slope-scaled bias. Sprites follow, unlit
+   and alpha blended (in linear light), sorted by layer then far to near, without depth writes.
+   Bodies of `Water` are drawn after the solid and translucent meshes, from copies of the scene and
+   of the prepass depth: refraction, absorption with depth, reflections, a sun glint and foam
+   (`docs/design/water.md`).
 6. Bloom, when it is on (`render.bloom {enabled: true}` or `[render] bloom = true`): what is
    brighter than the threshold (in linear light, so a threshold of 1 picks out only what is over
    white) goes into a half-size HDR texture, is blurred across and down by a nine-tap gaussian, and
@@ -275,9 +277,13 @@ A `Sky` component (on any entity; the first enabled one counts) puts a sky aroun
 lights the scene with it:
 
 - **Procedural** (`mode: 1`, the default): a gradient from `zenith` straight up to `horizon` and a
-  `ground` below, colors authored in sRGB, times `intensity`; where the first directional `Light`
-  points from, a glow and a disc `sun_size` degrees across in the sun light's color, bright enough
-  (40 times the light) for bloom to catch. Turning the sun turns the sky's glow with it.
+  `ground` below, colors authored in sRGB, times `intensity`; the ground is seen through the air
+  along the horizon, as a look toward a flat ground crosses the more of it the nearer it runs to the
+  horizon (its share `exp(-0.03 / depth)`, the depth the sine of how far below the horizon the look
+  points: none of it at the horizon, half two and a half degrees down, nine tenths at fifteen), so
+  the ground meets the horizon without a line; where the first directional `Light` points from, a
+  glow and a disc `sun_size` degrees across in the sun light's color, bright enough (40 times the
+  light) for bloom to catch. Turning the sun turns the sky's glow with it.
 - **Image** (`mode: 2`, `image: "assets/sky.hdr"`): an equirectangular panorama, 2:1 with the
   horizon across the middle. A Radiance `.hdr` keeps real light levels (a sun of thousands times
   white lights the scene like one); a `.png` or `.jpg` is decoded from sRGB. `rotation` turns it
@@ -295,8 +301,17 @@ sunset, and a sky that darkens once the sun is below the horizon, with the after
 the night below; moving the sun (a script, a timeline) is all a day needs. The view's own path
 through the air counts half its thickness, standing in for the light scattered more than once, which
 keeps a noon horizon white rather than orange. The panorama is rebuilt from it when the sun turns
-(the environment light follows), and below the horizon the `ground` colour lit by the sun fades up
-into it.
+(the environment light follows), and below the horizon is the `ground` colour lit as the scene's own
+ground is (`atmosphere_ground_light`: the sun's and the moon's light through the air times the sine
+of their height, and the sky's light from above, the air's mean over the upper half of the sky
+weighed by the cosine), seen through the horizon's air as the procedural ground is. Until 2026-10-02
+that ground had a fixed share of the sun's light (about a fiftieth of the horizon's air with the sun
+at 35 degrees, a twelfth now) and met the air over five degrees, which drew a dark band wherever a
+world's ground stops short of the horizon (the village of `tests/evidence/rendering/horizon.png`,
+left); the procedural ground began at an even mix of the horizon's colour and its own, a hard line
+under the horizon (`ssr.png` and `materials.png` until then). Reflections sample the same panorama,
+so a mirror or a glossy floor shows the same ground; the sea keeps its mirror direction above the
+horizon (`docs/design/water.md`, Drawing it).
 
 The air colours the sun light too: the directional light reaches the ground through it, so its
 colour is multiplied by the air's transmittance toward the sun over that straight up (a light high
@@ -377,7 +392,11 @@ are 0, so turning them down makes the shadows go black. Orthographic 2D scenes l
 front of the camera white-hot, no rebuild on a frame where nothing changed, a mirror ball with sky
 in its top and ground in its bottom, a rough white ball lit bluish from above by the sky alone and
 black with the sky's light at 0, and a generated `.hdr` panorama (red above at twice white, green
-below at half) behind the scene and in the mirror.
+below at half) behind the scene and in the mirror. (`[sky][horizon]`): a column of pixels down
+through the horizon changes by less than 50 (the three channels summed) from one row to the next
+under the procedural sky and under the atmosphere, where the old lines stepped 99 and 133, and the
+atmosphere's ground twenty-five rows under the horizon keeps more than a third of the horizon's
+brightness (it had an eighth).
 
 ### Weather
 
@@ -494,9 +513,9 @@ that depth.
   the hemisphere around the normal, `radius` world units out, turned per pixel; a sample the depth
   buffer has something in front of occludes, fading with how far that something is. A 5x5 blur that
   keeps to one surface smooths the result, and the lit pass multiplies the light from all around
-  (the sky's diffuse and reflections, or the flat ambient) by it, never the lights', so a crate sits
-  on the floor and a crevice goes dark while the sun still lights both. `render.stats.ao` says it
-  ran.
+  (the sky's diffuse, or the flat ambient) by it, and the reflections of the sky and the probes by
+  the specular occlusion it gives (Specular quality, below), never the lights', so a crate sits on
+  the floor and a crevice goes dark while the sun still lights both. `render.stats.ao` says it ran.
 - **Fog** (a `Fog` component: `color`, `density`, `height`, `falloff`, `start`, `max_opacity`):
   exponential height fog applied in the final pass, in HDR before the exposure: the density at a
   height is `density * exp(-falloff * (y - height))`, integrated along the ray from the camera to
@@ -617,8 +636,8 @@ seen from above shows a round highlight (its reach over half its peak within a t
 one stretched along `u` at an anisotropy of 1 (more than 1.8 times as far one way as the other), and
 the same turned a quarter when the rotation is 90. `runtime_tests` (`[blenderlevel]`) reads a
 Blender velvet's sheen and a brushed metal's anisotropy and specular from the `.blend`.
-`tests/evidence/rendering/materials.png` shows a plain, a matte (specular 0), a velvet, a
-brushed-metal and an unlit ball under a sky and a low sun.
+`tests/evidence/rendering/materials.png` (`tools/scripts/dev/materials_evidence.py`) shows a plain,
+a matte (specular 0), a velvet, a brushed-metal and an unlit ball under a sky and a low sun.
 
 ## Glass
 
@@ -742,9 +761,9 @@ reflected objects. `render.stats.ssr` says it ran.
 
 `renderer_tests` (`[ssr]`): on a mirror-polished metal floor the pixel where a red glowing box's
 front appears mirrored goes from the dim ambient (46, 48, 56) to red (245, 21, 22) with reflections
-on, and back toward the ambient once the floor is made rough. `tests/evidence/rendering/ssr.png` is
-four boxes and a glowing orb on a glossy dielectric floor under the procedural sky, without and
-with.
+on, and back toward the ambient once the floor is made rough. `tests/evidence/rendering/ssr.png`
+(`tools/scripts/dev/ssr_evidence.py`) is four boxes and a glowing orb on a glossy dielectric floor
+under the procedural sky, without and with.
 
 ## Screen-space global illumination
 
@@ -924,25 +943,132 @@ that is out of view. `tests/evidence/decals` holds the showcase's pavilion and a
 every frame against the frames before it. The projection is shifted by a different point inside the
 pixel each frame, eight Halton (2, 3) points in turn, so over eight frames each pixel is sampled
 across its area. The id pass (TAA turns the depth prepass on) also writes each pixel's motion since
-the last frame into a two-channel half-float target: every object record carries its model matrix of
-the frame before (found by its entity and the order of its parts; new objects and sprites move only
-with the camera), and the vertex stage places the point now and then with the unjittered
-view-projections of both frames. The resolve pass, after the scene pass, takes this frame's color
-and looks up the history where the pixel was, following the motion of the nearest surface in its 3x3
-neighbourhood (or, where nothing was drawn, the camera's own motion); it clips that history to the
-range of the neighbourhood's colors in YCoCg, so what moved away or was uncovered does not linger as
-a ghost, and blends it with the new color (`feedback` 0.9 keeps nine tenths), colors weighed down by
-their luminance meanwhile so a single bright pixel does not flicker through the average. The result
-becomes the HDR target the fog, bloom and the final pass read, and the next frame's history. A
-skinned mesh's joints are followed only as far as its entity moves. `render.stats.taa` says it ran;
-it is off by default, so a single frame (and every test that captures one) is what the frame alone
-draws.
+the last frame into a two-channel half-float target (Motion vectors, below). The resolve pass, after
+the scene pass, takes this frame's color and looks up the history where the pixel was, following the
+motion of the nearest surface in its 3x3 neighbourhood (or, where nothing was drawn, the camera's
+own motion), through a Catmull-Rom filter (five bilinear taps), so a history resampled a fraction of
+a pixel away every frame while the view moves keeps its detail where a bilinear fetch softened it a
+little more each frame (the hills walked across: 1.27 levels in eight bits from the supersampled
+frame with the bilinear fetch, 1.00 with this; TAA in the samples, below); it clips that history to
+the range of the neighbourhood's colors in YCoCg, so what moved away or was uncovered does not
+linger as a ghost, and blends it with the new color (`feedback` 0.9 keeps nine tenths), colors
+weighed down by their luminance meanwhile so a single bright pixel does not flicker through the
+average. The result becomes the HDR target the fog, bloom and the final pass read, and the next
+frame's history. A frame with no history to blend with (the first with TAA on, the first after a
+cut, an agent's capture after a step whose earlier ticks were not drawn) is drawn without the shift
+and with all of the screen-space reflections' steps, so alone it is the frame TAA off draws:
+captured after `step {ticks: 30}` and again after 45 more, the hills, walker, showcase and island
+differ from their frames with TAA off by at most one level, at about one pixel in a hundred (the
+resolve's weighing in and out), where with the shift the hills and the walker differed by up to 200
+and 131 levels, at 7690 and 1249 pixels by more than two. `render.stats.taa` says it ran; it is off
+by default.
 
 `renderer_tests` (`[taa]`): a glowing card turned 20 degrees over a dark floor has no pixel between
-the two at one sample and 98 after sixteen frames with TAA, the floor and the card's middle keep
+the two at one sample and 92 after sixteen frames with TAA, the floor and the card's middle keep
 their exact values, and a block that slid across the floor for twelve frames leaves the floor behind
 it as it was while it stays white itself. `tests/evidence/rendering/taa.png` is the posts of
 `light-shadows.png` three times enlarged without (left) and with TAA (right).
+
+### Motion vectors
+
+The motion target holds, for every pixel the id pass draws, how far its surface moved since the
+frame drawn before, in viewport units: the vertex stage places each point with the unjittered
+view-projections of both frames, now with this frame's model, skin and morph weights and then with
+last frame's. TAA and motion blur read it; `Renderer::read_motion` hands it to C++ tests in pixels.
+
+- **Models**: every object record carries its model of the frame before, found by a key that stays
+  with the draw from frame to frame: its entity's whole id (an entity spawned after another was
+  destroyed takes its index again, with a new generation, and is someone new), its place among the
+  draws its entity makes in the order they are made (not the sorted order, which a part leaving the
+  view or taking another level of detail changes), and for a scattered copy which copy it is.
+  Sprites move only with the camera.
+- **Skins**: a posed entity's skins write this frame's joint matrices into the joint buffer as
+  before, and where the pose changed since the last frame drawn, that frame's matrices after them,
+  in a second half of the buffer as long as the first (so they always fit); the record's `id.z`
+  names this frame's first matrix and `id.w` last frame's (the same when the pose did not change, so
+  a still pose costs nothing).
+- **Morph targets**: last frame's weights ride beside this frame's (`prev_morph_weights`; the object
+  row is 496 bytes), and a mesh whose weights are all zero now but were not is still morphed for its
+  motion.
+- **What has no last frame moves nowhere of its own**: an entity new this frame, a pose of another
+  mesh, everything when TAA or motion blur has just been turned on, and everything after a cut (an
+  undrawn step: `Renderer::cut` forgets the models and poses with the history). A secondary view (a
+  camera into a texture, a second view of a split screen) reads the first view's last frame and
+  leaves it as it was.
+- **Not in it**: water (drawn after the id pass, it takes the motion of what lies under it, or the
+  sky's), grass's sway (each blade is placed last frame where it is now) and moving shadows on still
+  ground. TAA's clipping keeps them from ghosting far, but they lag (TAA in the samples, below).
+
+`renderer_tests` (`[motion]`): in the assets sample, an arm whose tip joint turns from -45 to 0
+degrees between two frames writes -20.4, -7.5 pixels of motion where its tip is (the point moved
+-20.3, -8.4), none at its foot, which its root joint holds; an arm bulged by a morph target writes
+up to 3.2 pixels round its middle ring and none at its foot; held where they are, both write none
+the next frame; and a new arm in the bulged one's place, which takes its index and is already bulged
+and turned, writes none on its first frame while the first arm, swung back, writes its own. With the
+joints and weights not followed, the tip wrote none (the test fails at -20.3 against 0).
+`tests/evidence/rendering/taa-skinned.png` (`tools/scripts/taa_skinned_evidence.py`): a built-in
+humanoid running in place before a dark wall, drawn every tick, at ticks 36, 40 and 44, without TAA,
+with TAA following only its entity (the runtime before this), with TAA following its joints, and the
+reference (the frame at four times the size averaged down). Following the joints the limbs no longer
+trail (2.0 to 2.3 levels from the reference over the character's crop before, 1.4 to 1.6 after: 1.4
+to 1.7 from the joints alone, the rest the Catmull-Rom fetch); the frame without TAA is closer still
+(0.8 to 1.0), what TAA's softening of fast limbs costs. Held still, TAA is 0.34 to 0.37 from the
+reference against 0.97 without it. The cost, with 256 walking humanoids at 1280x720 under TAA (the
+crowd of `crowd_evidence.py`), in the quieter of runs of the runtime before and after taken in turn
+on a GPU other work was using: the id pass 0.087 against 0.094 ms, the scene pass 0.222 against
+0.226, the resolve 0.076 against 0.092 (the Catmull-Rom fetch); the CPU's render phase 2.6 to 3.0 ms
+in both, within the runs' spread.
+
+### TAA in the samples
+
+The assessment's plan (`docs/research/2026-10-02-rendering-and-import-assessment.md`, Plan item 2)
+was TAA on by default in the samples once skinned meshes write their motion. Measured on 2026-10-02
+by `tools/scripts/taa_samples_evidence.py` (`tests/evidence/rendering/taa-samples.png`): the hills,
+island, walker and drive samples drawn every tick at 640x360, the camera still to tick 60 and then
+following the player, the boat or the car as an action held from tick 61 moves it, each frame
+against the same tick drawn at four times the size without anti-aliasing and averaged down. `off` is
+the mean absolute difference in levels, `jaggies` the pixels more than 16 levels off in a channel,
+`flicker` how far the frame's change from the tick before is from the reference's (a mean, in
+levels):
+
+| Sample | Settings | Still: off, jaggies, flicker | Moving (tick 120): off, jaggies, flicker |
+|---|---|---|---|
+| hills | its own (no anti-aliasing) | 0.83, 2333, 0.20 | 0.73, 1782, 1.18 |
+| hills | TAA | 1.09, 2224, 0.68 | 1.00, 2034, 1.44 |
+| island | its own (MSAA 4x) | 9.65, 46310, 2.31 | 9.53, 45432, 2.67 |
+| island | TAA and MSAA 4x | 10.38, 48134, 1.98 | 10.21, 45628, 2.03 |
+| island | TAA instead of MSAA | 10.33, 47810, 1.99 | 10.17, 45295, 2.02 |
+| walker | its own (no anti-aliasing) | 0.22, 761, 0.01 | 0.26, 852, 0.31 |
+| walker | TAA | 0.15, 42, 0.04 | 0.40, 489, 0.32 |
+| drive | its own (no anti-aliasing) | 0.19, 890, 0.24 | 0.21, 986, 0.25 |
+| drive | TAA | 0.28, 899, 0.37 | 0.29, 778, 0.31 |
+
+TAA is a clear win only on the walker held still. So the samples keep their settings (the showcase
+alone has TAA), and what stands in the way is:
+
+- **Softening in motion**: following a moving camera TAA is further from the reference than no
+  anti-aliasing at all (walker 0.40 against 0.26, hills 1.00 against 0.73, drive 0.29 against 0.21),
+  though it leaves fewer stair-stepped edges (walker 489 against 852), and this with the Catmull-Rom
+  fetch.
+- **Water**: the lake's foam and the sea's waves are not in the motion target, so they lag: held
+  still, the hills under TAA have 610 pixels more than 64 levels off against 294 without it, 167 of
+  them along the near shore's foam, where the frame alone has none. On the island TAA takes the
+  sea's pixel noise away (flicker 2.0 against 2.3 to 2.7) but leaves it no nearer the reference; the
+  island's numbers are mostly the sea's shading, which changes with the resolution.
+- **Shimmer on textured ground**: with the camera all but still (the hills' rig settling a
+  ten-thousandth of a unit a tick) TAA flickers more than the frame alone (0.68 against 0.20), most
+  likely the shifted samples of the terrain's layers coming through where the neighbourhood's range
+  is narrow (not established).
+- **Moving shadows** (the walker's, the car's) lag on the still ground they fall on.
+- **Brightness**: TAA leaves the hills about 0.4 levels brighter than the reference on average,
+  where the frame alone is 0.2 darker; with ambient occlusion off the same, so not its noise (cause
+  not found).
+
+What does not stand in the way: a capture after a step whose earlier ticks were not drawn is the
+frame TAA off draws (above), so agents' captures, the tests' pixel probes after `step`, and the
+agent benchmark's pixel checks see what they saw; the walker's eight scenarios pass 40 of 40 runs
+with TAA on in the same ticks as without, and the runtime tests that open it (`[overlap]`, `[cape]`,
+`[ragdoll]`, `[combat]`, `[autotouch]`) pass.
 
 ## Depth of field and motion blur
 
@@ -1125,12 +1251,12 @@ that file lists every one. As of 2026-10-02:
   (6 to 8), the clustered lights (`local_lights` 8, `cluster_data` 9 as storage buffers), the local
   shadow faces and atlas (10, 11), the reflection probes (`probe_env` 12, `probe_sh` 13, a storage
   buffer), the decals (14 to 16), the glass's copy of the scene (17) and the 2D occupancy map (18).
-  Group 1 is the objects (`objects` 0, `joints` 1, `morphs` 2, storage buffers) and, per pipeline,
-  the pass's own inputs, numbered so they never collide inside one pipeline: volumetric fog 8 to 11,
-  SSR 10 to 14, water 16 to 20 (the river courses at 20), SSGI 20 to 25, clouds 30 to 36, grass 40
-  to 42. Group 2 is the material (base, metal-roughness, normal and emissive maps, the cascade
-  uniform for shadow pipelines, a terrain's splat map 6 and its layer array 7); group 3 the cut-out
-  texture and the GPU particles (2 to 4).
+  Group 1 is the objects (`objects` 0, `joints` 1, this frame's and last frame's, `morphs` 2,
+  storage buffers) and, per pipeline, the pass's own inputs, numbered so they never collide inside
+  one pipeline: volumetric fog 8 to 11, SSR 10 to 14, water 16 to 20 (the river courses at 20), SSGI
+  20 to 25, clouds 30 to 36, grass 40 to 42. Group 2 is the material (base, metal-roughness, normal
+  and emissive maps, the cascade uniform for shadow pipelines, a terrain's splat map 6 and its layer
+  array 7); group 3 the cut-out texture and the GPU particles (2 to 4).
 - A fragment stage may read at most four storage buffers: the iOS Simulator's Metal allows no more
   (`docs/build-system.md`, iOS), and the lit pass already reads four (lights, clusters, probe SH,
   objects). Small fixed arrays go in uniform buffers (`decals`, `shadow_faces`, `water`,
@@ -1206,3 +1332,65 @@ in linear light, with mips. The scene pass (and the id pass that feeds reflectio
 images, each at its own scale, by the shares at the pixel, with explicit gradients so the branch
 costs other meshes nothing; the painted colour rides in the vertex colour's alpha and is laid over
 them. Other materials bind 1 by 1 stand-ins.
+
+## Specular quality
+
+Three corrections to the specular of the lit pass, made where it shades (`shade` and the id pass's
+`id_surface` in `engine/renderer/src/renderer.cpp`), so every path that draws through it has them:
+opaque, cut-out, translucent and order-independent meshes, glass, skinned meshes, the materials a
+project writes, and the captures of reflection probes and irradiance volumes. The water has the
+first.
+
+- **Specular anti-aliasing.** A highlight narrower than the turn of the normal from one pixel to the
+  next falls between pixels: a far normal-mapped floor, the rim of a polished ball and the waves
+  toward the horizon sparkled, and flickered as anything moved. The lit pass widens the GGX
+  distribution by the shading normal's variance across the pixel (Kaplanyan et al. 2016, in
+  Tokuyoshi and Kaplanyan's form of 2019): the normal's change to the next pixel each way (fine
+  derivatives, after the normal map, the decals and the weather), under a pixel filter of variance
+  1/(2 pi), adds twice that variance to alpha squared, at most 0.18 (`filtered_roughness`). A normal
+  map adds what its mip level averaged away (Toksvig 2005, `map_spread`): the more its texels'
+  normals differed, the shorter their average, and alpha squared gains 2 (1 - |n|) / |n| with the
+  square of the map's strength. A length within a percent of one counts as one, since an 8-bit map
+  holds its normals only that closely (`samples/assets/assets/normal_up.png` reads 0.992 at its full
+  size); a map whose bumps differ by less than that is left to the first term. Only the distribution
+  widens: the sun's and the lights' GGX term, the level of the sky's or a probe's prefiltered
+  reflection and the specular occlusion's cone. The masking, the split sum's scale and bias and the
+  multiple scattering below keep the surface's own roughness, so the light reflected in all stays
+  what the pixel's normals reflect between them: with the widened roughness in those too, the far
+  sea reflected less of the sky and went dark against a sixteen-sample reference. The id pass writes
+  the widened roughness to the surface target, so screen-space reflections blur and fade with it
+  (they weigh by the split sum at that roughness, a little less than the lit pass at grazing
+  angles). The water widens its reflection and glint by its waves' normal (taken before the rings
+  and the rain's drops are added), its Fresnel kept at calm water's 0.04 (`docs/design/water.md`).
+  The variance comes from one neighbour each way, so it is noisy where bumps are just finer than the
+  pixels: a grazing floor bumped finer than its pixels, toward a sun off its mirror direction, keeps
+  scattered bright pixels at the sides of its glitter path (TAA, where it is on, blends them over
+  frames; not measured here).
+- **Multiple scattering.** GGX counts the light that leaves after one bounce off the microfacets;
+  what bounces between them before it leaves is lost, more the rougher the surface, so rough
+  surfaces and metals above all came out too dark (a white metal at roughness 1 kept about half the
+  light). The specular of the sky, the probes, the sun and the lights is scaled by 1 + f0 (1 / E - 1)
+  (Turquin 2019, Fdez-Aguera 2019; `multi_scatter`), E being what the split sum gives a surface that
+  reflects everything (its A + B, from Karis's analytic fit the lit pass already used). Under a sky
+  a white metal now reflects the sky whole at any roughness; a dielectric gains at most 5 percent,
+  at roughness 1. Karis's fit falls faster with roughness than the integral it fits (E 0.84 at
+  roughness 0.3 seen head on, where GGX integrates to 0.99), so against the sun and the lights the
+  compensation brightens semi-polished metals, about roughness 0.3 to 0.5, by up to a fifth more
+  than an exact E would; a table of the split sum would remove that.
+- **Specular occlusion.** Ambient occlusion multiplied the light from all around, reflections
+  included, by one share. The reflections of the sky and the probes now take Lagarde and de
+  Rousiers's specular occlusion (2014) instead, `(n.v + ao)^(2^(-16 alpha - 1)) - 1 + ao` held to
+  0..1 (`spec_occlusion`, alpha the widened GGX alpha): the same as `ao` on a rough surface, and on
+  a glossy one less than it at grazing angles, where the reflected ray runs along what occludes, and
+  more seen head on. The diffuse light keeps `ao`, a clear coat takes its own, the lights take none.
+
+`tests/evidence/rendering/specular-metals.png` (`tools/scripts/dev/specular_evidence.py`) is gold
+and silver balls by roughness under a sky before and after: the rough ones brighter and fuller in
+colour. `specular-aa.png` is a bumped glossy floor running toward a low sun and the island sample's
+sea, before, after and a reference of the old shading at sixteen samples a pixel: the floor's
+glitter path loses its lone sparkles near the camera (pixels more than 40 grey levels off their
+neighbours' median: 11.1 percent before, 8.9 after, 8.8 in the reference) and widens far off; the
+sea toward the horizon loses its dark dashes (1.2 percent of specks to 0.09, the reference's own)
+and comes nearer the reference (6.0 levels off to 5.4; 10.1 with the masking and the split sum at
+the widened roughness too). `renderer_tests` (`[ssr]`): a rough white metal floor under the sun
+reads about 210 where it read 157.

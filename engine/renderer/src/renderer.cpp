@@ -15,6 +15,7 @@
 #include <cstring>
 #include <format>
 #include <functional>
+#include <limits>
 #include <map>
 #include <numbers>
 #include <optional>
@@ -150,6 +151,26 @@ Vec3 atmosphere_air(Vec3 d, Vec3 s, float haze, Vec3 sun) {
     return out;
 }
 
+// The light a level ground gets under the atmosphere from a sun (or the moon) toward `toward` of
+// colour `light`, as the scene's own ground is lit: the light through the air at its height
+// (atmosphere_tint) times the sine of that height, and the sky's light from above, the air's mean
+// over the upper half of the sky weighed by the cosine (24 directions, three rings of eight on a
+// cosine-weighted disc), which is what the sky's harmonics give a surface facing up. kSkyWgsl's
+// `atmosphere` lights the ground below its horizon with it.
+Vec3 atmosphere_ground_light(Vec3 toward, Vec3 light, float haze) {
+    const Vec3 s = normalize(toward);
+    const Vec3 tint = atmosphere_tint(s, haze);
+    Vec3 out = Vec3{light.x * tint.x, light.y * tint.y, light.z * tint.z} * std::max(s.y, 0.0f);
+    for (int ring = 0; ring < 3; ++ring) {
+        const float r = std::sqrt((static_cast<float>(ring) + 0.5f) / 3.0f);
+        for (int k = 0; k < 8; ++k) {
+            const float a = (static_cast<float>(k) + 0.5f * static_cast<float>(ring)) * std::numbers::pi_v<float> / 4;
+            out += atmosphere_air(Vec3{r * std::cos(a), std::sqrt(1 - r * r), r * std::sin(a)}, s, haze, light) * (1.0f / 24.0f);
+        }
+    }
+    return out;
+}
+
 // A float as IEEE half bits (for uploading light levels into half-float textures), clamped to the largest half.
 std::uint16_t to_half(float f) {
     if (!(f == f)) return 0;
@@ -168,7 +189,7 @@ std::uint16_t to_half(float f) {
 }
 // Per-object data lives in one storage buffer indexed by instance_index, so a run of entities
 // with the same mesh and material is one instanced draw.
-constexpr std::uint32_t kObjectStride = 464;  // sizeof(ObjectUniforms)
+constexpr std::uint32_t kObjectStride = 496;  // sizeof(ObjectUniforms)
 constexpr std::uint32_t kMaxObjects = 65536;
 
 struct alignas(16) FrameUniforms {
@@ -274,12 +295,14 @@ struct alignas(16) ObjectUniforms {
     float model[16];
     float normal[16];
     float color[4];
-    std::uint32_t id[4];      // x: entity id, y: flags (1 = unlit sprite or tile, 2 = casts no shadow, 4 = an unlit mesh)
+    std::uint32_t id[4];      // x: entity id, y: flags (1 = unlit sprite or tile, 2 = casts no shadow, 4 = an unlit mesh),
+                              // z: its first joint matrix, w: its first joint matrix of last frame (z when the pose has not changed)
     float uv_rect[4];         // u0, v0, u1, v1 (sprites cut a sheet; meshes use 0,0,1,1)
     float pbr[4];             // metallic, roughness, normal scale, 1 when a normal map is bound
     float emissive[4];        // linear RGB added after lighting; w: alpha cutoff (texels under it are cut out; 0 for none)
     std::uint32_t morph[4];   // x: first vec4 of the asset's morph deltas, y: vertices per target, z: targets weighed (0: none)
     float morph_weights[8];   // one per target, up to eight
+    float prev_morph_weights[8];   // the weights last frame (TAA's motion vectors); these weights when new or TAA is off
     float prev_model[16];     // the model last frame (TAA's motion vectors); the model itself when new or TAA is off
     float sway[4];            // a swaying copy: how far its top leans (world units), sways a second, its mesh's local foot, 1 / its height; 0 reach for none
     float terrain[4];         // a terrain drawn from textured layers: x the layers (0 for none), yz the splat map's texels per unit of uv
@@ -916,14 +939,48 @@ fn sh_irradiance(n: vec3f) -> vec3f {
         + sh[8].rgb * (0.546274 * (n.x * n.x - n.y * n.y));
     return max(c, vec3f(0.0));
 }
-// Karis's analytic fit of the split-sum environment BRDF.
-fn env_brdf(f0: vec3f, roughness: f32, ndv: f32) -> vec3f {
+// Karis's analytic fit of the split-sum environment BRDF: the scale and bias (A, B) of f0 in f0 * A + B.
+fn env_dfg(roughness: f32, ndv: f32) -> vec2f {
     let c0 = vec4f(-1.0, -0.0275, -0.572, 0.022);
     let c1 = vec4f(1.0, 0.0425, 1.04, -0.04);
     let r = roughness * c0 + c1;
     let a004 = min(r.x * r.x, exp2(-9.28 * ndv)) * r.x + r.y;
-    let ab = vec2f(-1.04, 1.04) * a004 + r.zw;
+    return vec2f(-1.04, 1.04) * a004 + r.zw;
+}
+fn env_brdf(f0: vec3f, roughness: f32, ndv: f32) -> vec3f {
+    let ab = env_dfg(roughness, ndv);
     return f0 * ab.x + ab.y;
+}
+// Specular quality (docs/design/rendering.md, Specular quality). Multiple scattering (Turquin 2019,
+// Fdez-Aguera 2019): GGX counts light that leaves after one bounce off the microfacets and loses what
+// bounces again, more the rougher the surface, so rough metals came out dark. A + B is what a surface
+// reflecting everything keeps in one bounce (E); the specular is scaled by 1 + f0 (1 / E - 1).
+fn multi_scatter(f0: vec3f, roughness: f32, ndv: f32) -> vec3f {
+    let ab = env_dfg(roughness, ndv);
+    return vec3f(1.0) + f0 * (1.0 / max(ab.x + ab.y, 0.1) - 1.0);
+}
+// Geometric specular anti-aliasing (Kaplanyan et al. 2016, in Tokuyoshi and Kaplanyan's form of
+// 2019): where the shading normal turns from one pixel to the next, a highlight narrower than the
+// turn falls between the pixels and sparkles as things move. The normal's change to the next pixel
+// each way (dn1, dn2, fine derivatives), under a pixel filter of variance 1 / (2 pi), widens the GGX
+// lobe instead: alpha squared gains twice that variance, at most 0.18. `spread` adds what a normal
+// map's mip level averaged away (map_spread). Takes and gives the perceptual roughness (alpha's
+// square root). Only the distribution is widened (the lights' GGX term, the level of the sky's and
+// a probe's prefiltered reflection, and the specular occlusion's cone): the masking, the split
+// sum's scale and bias and multi_scatter keep the surface's own roughness, so the light reflected
+// in all stays what the pixel's normals would reflect between them (with the filtered roughness in
+// those too, the far sea reflected less of the sky and went dark against a 16-sample reference).
+fn filtered_roughness(roughness: f32, dn1: vec3f, dn2: vec3f, spread: f32) -> f32 {
+    let a = roughness * roughness;
+    let kernel = min(2.0 * 0.15915494 * (dot(dn1, dn1) + dot(dn2, dn2)), 0.18);
+    return sqrt(sqrt(min(a * a + kernel + spread, 1.0)));
+}
+// Specular occlusion (Lagarde and de Rousiers 2014): the ambient occlusion `ao` is the share of the
+// light from all around that reaches a point, and a reflection looks one way; this turns it into the
+// share of the reflection, smaller toward grazing angles and on glossy surfaces, `ao` itself on rough ones.
+fn spec_occlusion(ndv: f32, ao: f32, roughness: f32) -> f32 {
+    let a = roughness * roughness;
+    return clamp(pow(ndv + ao, exp2(-16.0 * a - 1.0)) - 1.0 + ao, 0.0, 1.0);
 }
 struct Object {
     model: mat4x4f,
@@ -935,6 +992,7 @@ struct Object {
     emissive: vec4f,
     morph: vec4u,
     morph_weights: array<vec4f, 2>,
+    prev_morph_weights: array<vec4f, 2>,
     prev_model: mat4x4f,
     sway: vec4f,
     terrain: vec4f,
@@ -956,6 +1014,15 @@ fn morph_position(object: Object, vid: u32, p: vec3f) -> vec3f {
     var out = p;
     for (var t = 0u; t < object.morph.z; t = t + 1u) {
         let w = object.morph_weights[t / 4u][t % 4u];
+        if (w != 0.0) { out = out + w * morphs[object.morph.x + (t * object.morph.y + vid) * 2u].xyz; }
+    }
+    return out;
+}
+// The same point under last frame's weights (the id pass's motion).
+fn morph_position_before(object: Object, vid: u32, p: vec3f) -> vec3f {
+    var out = p;
+    for (var t = 0u; t < object.morph.z; t = t + 1u) {
+        let w = object.prev_morph_weights[t / 4u][t % 4u];
         if (w != 0.0) { out = out + w * morphs[object.morph.x + (t * object.morph.y + vid) * 2u].xyz; }
     }
     return out;
@@ -1085,7 +1152,8 @@ fn sway(object: Object, local: vec3f, t: f32) -> vec3f {
     let world = object.model * local + vec4f(sway(object, local.xyz, frame.clock.x), 0.0);
     out.clip = frame.view_proj * world;
     out.cur = frame.cur_view_proj * world;
-    out.prev = frame.prev_view_proj * (object.prev_model * local + vec4f(sway(object, local.xyz, frame.clock.y), 0.0));
+    let before = vec4f(morph_position_before(object, vid, position), 1.0);
+    out.prev = frame.prev_view_proj * (object.prev_model * before + vec4f(sway(object, before.xyz, frame.clock.y), 0.0));
     out.world_pos = world.xyz;
     out.normal = normalize((object.normal * vec4f(morph_normal(object, vid, normal), 0.0)).xyz);
     out.tangent = world_tangent(object.model, tangent);
@@ -1131,7 +1199,8 @@ struct ShadowCut {
     if (a < object.emissive.w) { discard; }
 }
 
-// Skinned meshes: the joint matrices of this instance start at object.id.z in the joints array.
+// Skinned meshes: the joint matrices of this instance start at object.id.z in the joints array,
+// and last frame's at object.id.w (the same when the pose has not changed or is new).
 fn skin_matrix(base: u32, j: vec4u, w: vec4f) -> mat4x4f {
     return joints[base + j.x] * w.x + joints[base + j.y] * w.y + joints[base + j.z] * w.z + joints[base + j.w] * w.w;
 }
@@ -1145,7 +1214,10 @@ fn skin_matrix(base: u32, j: vec4u, w: vec4f) -> mat4x4f {
     let world = model * local;
     out.clip = frame.view_proj * world;
     out.cur = frame.cur_view_proj * world;
-    out.prev = frame.prev_view_proj * (object.prev_model * skin * local);   // this frame's pose: the joints' own motion is not followed
+    // Where the point was: last frame's joints (and weights) under last frame's model.
+    var skin_before = skin;
+    if (object.id.w != object.id.z) { skin_before = skin_matrix(object.id.w, j, w); }
+    out.prev = frame.prev_view_proj * (object.prev_model * skin_before * vec4f(morph_position_before(object, vid, position), 1.0));
     out.world_pos = world.xyz;
     out.normal = normalize((model * vec4f(morph_normal(object, vid, normal), 0.0)).xyz);
     out.tangent = world_tangent(model, tangent);
@@ -1204,6 +1276,29 @@ fn mapped_normal(in: VsOut, n: vec3f, dp1: vec3f, dp2: vec3f, duv1: vec2f, duv2:
     }
     return perturb_normal(n, dp1, dp2, duv1, duv2, map);
 }
+// Normal-map filtering (Toksvig 2005): a mip level averages its texels' normals, the more they
+// differed the shorter the average, and that spread, which the level no longer shows as bumps, is
+// roughness: alpha squared gains 2 (1 - |n|) / |n|, with the square of the map's strength. A length
+// within a percent of one counts as one, as an 8-bit map holds its normals only that closely (a map
+// of one tilted normal reads 0.992 at its full size). `nm` is the map's sample, decoded.
+fn map_spread(object: Object, nm: vec3f) -> f32 {
+    let len = min(length(nm) / 0.99, 1.0);
+    return select(0.0, 2.0 * (1.0 - len) / max(len, 0.05) * object.pbr.z * object.pbr.z, object.pbr.w > 0.5);
+}
+// The surface the lit pass shades and the id pass writes: the normal bent by the normal map (or by a
+// terrain's layers), then the decals and the weather painted over it.
+fn painted_surface(object: Object, in: VsOut, base: vec3f, mr: vec4f, nm: vec3f, dp1: vec3f, dp2: vec3f, duv1: vec2f, duv2: vec2f) -> Painted {
+    var n = normalize(in.normal);
+    if (object.pbr.w > 0.5) {
+        let bent = vec3f(nm.xy * object.pbr.z, nm.z);
+        n = select(mapped_normal(in, n, dp1, dp2, duv1, duv2, bent), perturb_normal(n, dp1, dp2, duv1, duv2, bent), (object.id.y & 8u) != 0u);
+    }
+    // A terrain's layers bumped by their images' brightness (Terrain.bump, here pbr.z).
+    if (object.terrain.x > 0.5 && object.pbr.z > 0.0) {
+        n = perturb_normal(n, dp1, dp2, duv1, duv2, normalize(vec3f(-terrain_slope * object.pbr.z * 6.0, 1.0)));
+    }
+    return paint_decals(in.world_pos, n, dp1, dp2, Painted(base, clamp(object.pbr.y * mr.g, 0.04, 1.0), clamp(object.pbr.x * mr.b, 0.0, 1.0), vec3f(0.0), n));
+}
 
 // GGX / Schlick / Smith specular plus Lambert diffuse for one light direction; the diffuse term
 // is not divided by pi (and the specular scaled to match) so brightness stays comparable to a plain
@@ -1244,13 +1339,15 @@ fn toon_band(x: f32) -> f32 {
     let y = x * bands;
     return (floor(y) + smoothstep(0.5 - frame.toon.z, 0.5 + frame.toon.z, fract(y))) / bands;
 }
-fn surface_light(object: Object, gn: vec3f, n: vec3f, v: vec3f, l: vec3f, albedo: vec3f, metallic: f32, roughness: f32, at: vec3f) -> vec3f {
+// `lobe` is the roughness widened for the pixel (filtered_roughness), for the distribution; `ms`
+// scales the specular for multiple scattering (multi_scatter).
+fn surface_light(object: Object, gn: vec3f, n: vec3f, v: vec3f, l: vec3f, albedo: vec3f, metallic: f32, roughness: f32, lobe: f32, at: vec3f, ms: vec3f) -> vec3f {
     let h = normalize(l + v);
     let ndl = toon_band(max(dot(n, l), 0.0));
     let ndv = max(dot(n, v), 1e-4);
     let ndh = max(dot(n, h), 0.0);
     let vdh = max(dot(v, h), 0.0);
-    let a = roughness * roughness;
+    let a = lobe * lobe;
     let f0 = mix(min(vec3f(0.04) * spec_tint(object), vec3f(1.0)) * spec_level(object), albedo, metallic);
     let f90 = mix(spec_level(object), 1.0, metallic);
     let f = f0 + (vec3f(f90) - f0) * pow(1.0 - vdh, 5.0);
@@ -1275,7 +1372,7 @@ fn surface_light(object: Object, gn: vec3f, n: vec3f, v: vec3f, l: vec3f, albedo
         spec = d * g * f / max(4.0 * ndv, 1e-4);
     }
     let diffuse = albedo * (1.0 - metallic) * (vec3f(1.0) - f);
-    var base = diffuse * ndl + spec;
+    var base = diffuse * ndl + spec * ms;
     let sheen_max = max(object.sheen.r, max(object.sheen.g, object.sheen.b));
     if (sheen_max > 0.0) {
         let sa = max(object.sheen.w, 0.07);
@@ -1317,13 +1414,14 @@ fn transmitted(object: Object, p: vec3f, n: vec3f, v: vec3f, albedo: vec3f, roug
     return behind * albedo * exp(-object.volume.xyz * depth) * ((1.0 - fres) * object.optics.x);
 }
 
-fn brdf(n: vec3f, v: vec3f, l: vec3f, albedo: vec3f, metallic: f32, roughness: f32) -> vec3f {
+// `lobe` widens the distribution as surface_light's does.
+fn brdf(n: vec3f, v: vec3f, l: vec3f, albedo: vec3f, metallic: f32, roughness: f32, lobe: f32) -> vec3f {
     let h = normalize(l + v);
     let ndl = max(dot(n, l), 0.0);
     let ndv = max(dot(n, v), 1e-4);
     let ndh = max(dot(n, h), 0.0);
     let vdh = max(dot(v, h), 0.0);
-    let a = roughness * roughness;
+    let a = lobe * lobe;
     let a2 = a * a;
     let denom = ndh * ndh * (a2 - 1.0) + 1.0;
     let d = a2 / max(denom * denom, 1e-6);            // GGX, times pi
@@ -1428,7 +1526,6 @@ fn shade(in: VsOut, cut: bool) -> vec4f {
     let dp1 = dpdx(in.world_pos);
     let dp2 = dpdy(in.world_pos);
     let uv = surface_uv(object, in);
-    let world_mapped = (object.id.y & 8u) != 0u;
     let duv1 = dpdx(uv);
     let duv2 = dpdy(uv);
     var base = textureSample(base_tex, base_samp, uv) * in.color;
@@ -1436,19 +1533,15 @@ fn shade(in: VsOut, cut: bool) -> vec4f {
     let nm = textureSample(normal_tex, base_samp, uv).xyz * 2.0 - 1.0;
     let em = textureSample(emissive_tex, base_samp, uv).rgb;
     if (object.terrain.x > 0.5) { base = terrain_base(object, in, duv1, duv2); }
+    let paint = painted_surface(object, in, base.rgb, mr, nm, dp1, dp2, duv1, duv2);
+    // How the shading normal turns across the pixel, for the specular anti-aliasing.
+    let dn1 = dpdxFine(paint.normal);
+    let dn2 = dpdyFine(paint.normal);
     // A cut-out: texels under the cutoff are not drawn (nor picked, the id goes with the color).
     if (cut && object.emissive.w > 0.0 && base.a < object.emissive.w) { discard; }
     // Unlit (MeshRenderer.unlit, KHR_materials_unlit): the colour as it is.
     if ((object.id.y & 4u) != 0u) { return vec4f(base.rgb + object.emissive.rgb * em, base.a); }
-    var n = normalize(in.normal);
-    if (object.pbr.w > 0.5) {
-        let bent = vec3f(nm.xy * object.pbr.z, nm.z);
-        n = select(mapped_normal(in, n, dp1, dp2, duv1, duv2, bent), perturb_normal(n, dp1, dp2, duv1, duv2, bent), world_mapped);
-    }
-    // A terrain's layers bumped by their images' brightness (Terrain.bump, here pbr.z).
-    if (object.terrain.x > 0.5 && object.pbr.z > 0.0) {
-        n = perturb_normal(n, dp1, dp2, duv1, duv2, normalize(vec3f(-terrain_slope * object.pbr.z * 6.0, 1.0)));
-    }
+    let n = paint.normal;
     // Brushed metal's direction: the uv's u across the surface, turned by its rotation.
     var aniso_t = vec3f(0.0);
     if (object.aniso.x > 0.0) {
@@ -1459,10 +1552,10 @@ fn shade(in: VsOut, cut: bool) -> vec4f {
         aniso_t = normalize(t * object.aniso.y + cross(n, t) * object.aniso.z);
     }
     let v = normalize(frame.camera_pos.xyz - in.world_pos);
-    let paint = paint_decals(in.world_pos, n, dp1, dp2, Painted(base.rgb, clamp(object.pbr.y * mr.g, 0.04, 1.0), clamp(object.pbr.x * mr.b, 0.0, 1.0), vec3f(0.0), n));
-    n = paint.normal;
     let metallic = paint.metallic;
     let roughness = paint.roughness;
+    // The specular's distribution, widened where the normal turns within the pixel.
+    let lobe = filtered_roughness(roughness, dn1, dn2, map_spread(object, nm));
     // Glass passes light instead of scattering it: its diffuse part gives way to what it transmits.
     let albedo = paint.albedo * (1.0 - clamp(object.optics.x, 0.0, 1.0));
     let gn = normalize(in.normal);
@@ -1476,40 +1569,46 @@ fn shade(in: VsOut, cut: bool) -> vec4f {
         let bend = pow(1.0 - object.aniso.x * (1.0 - sqrt(roughness)), 4.0);
         rn = normalize(mix(cross(cross(grain, v), grain), n, bend));
     }
-    var color = frame.ambient.rgb * mix(albedo, f0, metallic);
+    let ndv = max(dot(n, v), 1e-4);
+    // What the specular loses to single scattering, given back (multi_scatter), for every light.
+    let ms = multi_scatter(f0, roughness, ndv);
+    // The light from all around in two parts, diffuse (amb_d) and specular (amb_s): the flat ambient
+    // by default, as metals reflect it in their own colour.
+    var amb_d = frame.ambient.rgb * albedo * (1.0 - metallic);
+    var amb_s = frame.ambient.rgb * f0 * metallic;
     // Inside a reflection probe's box, what the probe saw takes the place of the sky's light: its
     // reflection, and its diffuse light from all around (a room lit by its lamps and walls, not the sky).
-    let probe = probe_specular(in.world_pos, n, v, roughness);
+    let probe = probe_specular(in.world_pos, n, v, lobe);
     let probe_d = probe_diffuse(in.world_pos, n);
     // Inside an irradiance volume its probes give the diffuse light, over the sky's and a probe's.
     let grid_d = grid_diffuse(in.world_pos, n);
     if (frame.env.x > 0.5) {
         // The sky's light instead of the flat ambient: diffuse from its harmonics, specular from the
         // prefiltered level matching the roughness, in the mirror direction.
-        let ndv = max(dot(n, v), 1e-4);
-        let spec = textureSampleLevel(env_tex, env_samp, env_uv(reflect(-v, rn)), roughness * frame.env.w).rgb * frame.env.z;
+        let spec = textureSampleLevel(env_tex, env_samp, env_uv(reflect(-v, rn)), lobe * frame.env.w).rgb * frame.env.z;
         let diffuse = mix(mix(sh_irradiance(n) * frame.env.y, probe_d.rgb, probe_d.w), grid_d.rgb, grid_d.w);
-        color = albedo * (1.0 - metallic) * diffuse + mix(spec, probe.rgb, probe.w) * env_brdf(f0, roughness, ndv) * spec_strength;
+        amb_d = albedo * (1.0 - metallic) * diffuse;
+        amb_s = mix(spec, probe.rgb, probe.w) * env_brdf(f0, roughness, ndv) * ms * spec_strength;
     } else {
         if (probe.w > 0.0) {
-            let ndv = max(dot(n, v), 1e-4);
-            color = mix(color, probe_d.rgb * albedo * (1.0 - metallic) + probe.rgb * env_brdf(f0, roughness, ndv) * spec_strength, probe.w);
+            amb_d = mix(amb_d, probe_d.rgb * albedo * (1.0 - metallic), probe.w);
+            amb_s = mix(amb_s, probe.rgb * env_brdf(f0, roughness, ndv) * ms * spec_strength, probe.w);
         }
-        if (grid_d.w > 0.0) {
-            // The diffuse part so far (the flat ambient's, or the probe's over it) given way to the volume's.
-            let had = mix(frame.ambient.rgb, probe_d.rgb, max(probe.w, 0.0)) * albedo * (1.0 - metallic);
-            color = color + (grid_d.rgb * albedo * (1.0 - metallic) - had) * grid_d.w;
-        }
+        // The diffuse part so far (the flat ambient's, or the probe's over it) given way to the volume's.
+        amb_d = mix(amb_d, grid_d.rgb * albedo * (1.0 - metallic), grid_d.w);
     }
+    // Ambient occlusion darkens only this light from all around, not the lights': the diffuse part by
+    // it, the specular part by the specular occlusion it gives.
+    var ao = 1.0;
+    if (frame.ao.x > 0.5) { ao = textureSampleLevel(ao_tex, ao_samp, in.clip.xy * frame.ao.yz, 0.0).r; }
+    var color = amb_d * ao + amb_s * spec_occlusion(ndv, ao, lobe);
     // A clear coat reflects the sky over the rest, by its own Fresnel on the geometric normal.
     if (object.optics.z > 0.0 && frame.env.x > 0.5) {
-        let fc = (0.04 + 0.96 * pow(1.0 - max(dot(gn, v), 0.0), 5.0)) * object.optics.z;
-        let cspec = textureSampleLevel(env_tex, env_samp, env_uv(reflect(-v, gn)), clamp(object.optics.w, 0.03, 1.0) * frame.env.w).rgb * frame.env.z;
-        color = color * (1.0 - fc) + cspec * fc;
-    }
-    // Ambient occlusion darkens only this light from all around, not the lights'.
-    if (frame.ao.x > 0.5) {
-        color = color * textureSampleLevel(ao_tex, ao_samp, in.clip.xy * frame.ao.yz, 0.0).r;
+        let gdv = max(dot(gn, v), 1e-4);
+        let coat_rough = clamp(object.optics.w, 0.03, 1.0);
+        let fc = (0.04 + 0.96 * pow(1.0 - gdv, 5.0)) * object.optics.z;
+        let cspec = textureSampleLevel(env_tex, env_samp, env_uv(reflect(-v, gn)), coat_rough * frame.env.w).rgb * frame.env.z;
+        color = color * (1.0 - fc) + cspec * fc * spec_occlusion(gdv, ao, coat_rough);
     }
     // Directional light.
     let l = normalize(-frame.sun_dir.xyz);
@@ -1555,7 +1654,7 @@ fn shade(in: VsOut, cut: bool) -> vec4f {
     // A lit sprite or tile map takes the sun only when the scene has one: the key light a scene
     // without lights gets so its meshes show is not for a dungeon lit by its torches.
     let own_sun = select(1.0, 0.0, (object.id.y & 1u) != 0u && frame.sky.w < 0.5);
-    color += frame.sun_color.rgb * surface_light(object, gn, n, v, l, albedo, metallic, roughness, aniso_t) * shadow * cloud_shade(in.world_pos, l) * caustics_at(in.world_pos, l) * own_sun;
+    color += frame.sun_color.rgb * surface_light(object, gn, n, v, l, albedo, metallic, roughness, lobe, aniso_t, ms) * shadow * cloud_shade(in.world_pos, l) * caustics_at(in.world_pos, l) * own_sun;
     // Point and spot lights: the ones the pixel's cluster lists.
     if (frame.clusters.w > 0u) {
         let at = (in.clip.xy - frame.viewport.xy) / frame.viewport.zw;
@@ -1594,7 +1693,7 @@ fn shade(in: VsOut, cut: bool) -> vec4f {
             }
             var blocked = 1.0;
             if (frame.occluders.w > 0.5 && (object.id.y & 1u) != 0u && att * cone > 0.0) { blocked = shadow_2d(in.world_pos, li.pos_range.xyz); }
-            color += li.color_kind.rgb * surface_light(object, gn, n, v, pl, albedo, metallic, roughness, aniso_t) * (att * att * cone * lit * blocked);
+            color += li.color_kind.rgb * surface_light(object, gn, n, v, pl, albedo, metallic, roughness, lobe, aniso_t, ms) * (att * att * cone * lit * blocked);
         }
     }
     if (object.optics.x > 0.0) { color += transmitted(object, in.world_pos, n, v, paint.albedo, roughness); }
@@ -1674,29 +1773,20 @@ fn id_surface(in: VsOut, cut: bool) -> IdOut {
     let dp1 = dpdx(in.world_pos);
     let dp2 = dpdy(in.world_pos);
     let uv = surface_uv(object, in);
-    let world_mapped = (object.id.y & 8u) != 0u;
     let duv1 = dpdx(uv);
     let duv2 = dpdy(uv);
     var base = textureSample(base_tex, base_samp, uv) * in.color;
     let mr = textureSample(mr_tex, base_samp, uv);
     let nm = textureSample(normal_tex, base_samp, uv).xyz * 2.0 - 1.0;
     if (object.terrain.x > 0.5) { base = terrain_base(object, in, duv1, duv2); }
+    let paint = painted_surface(object, in, base.rgb, mr, nm, dp1, dp2, duv1, duv2);
+    // The lit pass's widened distribution (filtered_roughness), for the reflections.
+    let roughness = filtered_roughness(paint.roughness, dpdxFine(paint.normal), dpdyFine(paint.normal), map_spread(object, nm));
     if (cut && object.emissive.w > 0.0 && base.a < object.emissive.w) { discard; }
-    var n = normalize(in.normal);
-    if (object.pbr.w > 0.5) {
-        let bent = vec3f(nm.xy * object.pbr.z, nm.z);
-        n = select(mapped_normal(in, n, dp1, dp2, duv1, duv2, bent), perturb_normal(n, dp1, dp2, duv1, duv2, bent), world_mapped);
-    }
-    // A terrain's layers bumped by their images' brightness (Terrain.bump, here pbr.z).
-    if (object.terrain.x > 0.5 && object.pbr.z > 0.0) {
-        n = perturb_normal(n, dp1, dp2, duv1, duv2, normalize(vec3f(-terrain_slope * object.pbr.z * 6.0, 1.0)));
-    }
-    let paint = paint_decals(in.world_pos, n, dp1, dp2, Painted(base.rgb, clamp(object.pbr.y * mr.g, 0.04, 1.0), clamp(object.pbr.x * mr.b, 0.0, 1.0), vec3f(0.0), n));
-    n = paint.normal;
     var out: IdOut;
     out.id = in.id;
     out.velocity = motion(in);
-    out.surface = vec4f(oct_encode(n), paint.roughness, paint.metallic);
+    out.surface = vec4f(oct_encode(paint.normal), roughness, paint.metallic);
     out.albedo = vec4f(paint.albedo, 1.0);
     return out;
 }
@@ -2216,7 +2306,7 @@ fn ssr_px(c: vec4f) -> vec2f {
     // In place of what the sky's reflection gave the pixel, through the same BRDF.
     let albedo = textureLoad(ssr_albedo, px, 0).rgb;
     let f0 = mix(vec3f(0.04), albedo, s.w);
-    let brdf = env_brdf(f0, roughness, max(dot(n, v), 1e-4));
+    let brdf = env_brdf(f0, roughness, max(dot(n, v), 1e-4)) * multi_scatter(f0, roughness, max(dot(n, v), 1e-4));
     var env = frame.ambient.rgb;
     if (frame.env.x > 0.5) { env = textureSampleLevel(env_tex, env_samp, env_uv(r), roughness * frame.env.w).rgb * frame.env.z; }
     let probe = probe_specular(p, n, v, roughness);
@@ -3009,6 +3099,10 @@ struct WaterFsOut {
         let reach = b.extent.x * (pow(b.extent.y, b.extent.z - 1.0) - 1.0) / (b.extent.y - 1.0);
         n = normalize(mix(n, vec3f(0.0, 1.0, 0.0), smoothstep(reach * 0.03, reach * 0.18, dist)));
     }
+    // How the waves' normal turns across the pixel, for the specular anti-aliasing (filtered_roughness):
+    // taken here, in uniform control flow, before the rings' loop and the side the surface is seen from.
+    let dn1 = dpdxFine(n);
+    let dn2 = dpdyFine(n);
     // Rings (docs/design/water.md, Rings): spreading at a unit and a fifth a second from where
     // something fell in or moves through, a short train of waves fading as it goes; and while it
     // rains, the drops' rings as on a puddle, near the camera.
@@ -3062,16 +3156,21 @@ struct WaterFsOut {
     }
     let under = water_absorb(b, behind, through, scatter);
     // Reflected: the sky (or a probe) along the mirror direction; screen-space reflections, where
-    // on, trace the same direction from the surface target and take its place.
-    let rough = 0.04;
-    let r = reflect(-v, n);
+    // on, trace the same direction from the surface target and take its place. Calm water is a
+    // mirror; where the waves turn faster than the pixels its reflection widens by their spread.
+    // The mirror direction is kept above the horizon: where the waves and ripples lean a facet away
+    // from a grazing eye it points down, into the next wave, and the sea seen that way shows the sky
+    // at its horizon, never the ground under the sky's horizon (docs/design/water.md, Drawing it).
+    let rough = filtered_roughness(0.04, dn1, dn2, 0.0);
+    let m = reflect(-v, n);
+    let r = normalize(vec3f(m.x, max(m.y, 1e-3), m.z));
     var refl = frame.ambient.rgb;
     if (frame.env.x > 0.5) { refl = cloud_mirror(in.world_pos, r, textureSampleLevel(env_tex, env_samp, env_uv(r), rough * frame.env.w).rgb * frame.env.z); }
     let probe = probe_specular(in.world_pos, n, v, rough);
     refl = mix(refl, probe.rgb, probe.w);
-    let fresnel = env_brdf(vec3f(0.04), rough, ndv);
+    let fresnel = env_brdf(vec3f(0.04), 0.04, ndv);
     let l = normalize(-frame.sun_dir.xyz);
-    let glint = frame.sun_color.rgb * brdf(n, v, l, vec3f(0.0), 0.0, 0.12) * water_sun(in.world_pos, max(dot(n, l), 0.0));
+    let glint = frame.sun_color.rgb * brdf(n, v, l, vec3f(0.0), 0.0, 0.12, filtered_roughness(0.12, dn1, dn2, 0.0)) * water_sun(in.world_pos, max(dot(n, l), 0.0));
     var color = under * (vec3f(1.0) - fresnel) + refl * fresnel + glint;
     // Foam: in the shallows (within `foam` of the ground below) and on the sharpest crests,
     // broken up by drifting noise.
@@ -3384,7 +3483,7 @@ fn encode(c: vec3f) -> vec3f {
 // the level above, the lobe widened by what that level already has), `irradiance` projects a small
 // level onto nine spherical harmonics for the diffuse light.
 constexpr const char* kSkyWgsl = R"WGSL(
-struct SkyParams { zenith: vec4f, horizon: vec4f, ground: vec4f, sun: vec4f, sun_color: vec4f, misc: vec4f, size: vec4f, atmo: vec4f, moon: vec4f, moon_color: vec4f };
+struct SkyParams { zenith: vec4f, horizon: vec4f, ground: vec4f, sun: vec4f, sun_color: vec4f, misc: vec4f, size: vec4f, atmo: vec4f, moon: vec4f, moon_color: vec4f, ground_light: vec4f };
 @group(0) @binding(0) var<uniform> sp: SkyParams;
 @group(0) @binding(1) var src: texture_2d<f32>;
 @group(0) @binding(2) var samp: sampler;
@@ -3398,20 +3497,23 @@ fn dir_of(uv: vec2f) -> vec3f {
 fn uv_of(d: vec3f) -> vec2f {
     return vec2f(atan2(d.x, -d.z) / (2.0 * PI) + 0.5, acos(clamp(d.y, -1.0, 1.0)) / PI);
 }
+// How much of the ground a look `y` below the horizon (d.y, negative) sees through the haze: a look
+// crosses the more air to the ground the nearer it runs to the horizon (as 1 / -y over a flat
+// ground), so the ground fades into the horizon's air instead of meeting it along a line: none of
+// it at the horizon, half at two and a half degrees down, nine tenths at fifteen.
+fn ground_share(y: f32) -> f32 {
+    if (y >= 0.0) { return 0.0; }
+    return exp(-0.03 / -y);
+}
 fn procedural(d: vec3f) -> vec3f {
-    let up = d.y;
-    var c: vec3f;
-    if (up >= 0.0) {
-        c = mix(sp.horizon.rgb, sp.zenith.rgb, pow(up, 0.5));
-    } else {
-        c = mix(mix(sp.horizon.rgb, sp.ground.rgb, 0.5), sp.ground.rgb, pow(min(-up * 4.0, 1.0), 0.5));
-    }
-    if (sp.sun.w > 0.5 && up > -0.05) {
+    var c = mix(sp.horizon.rgb, sp.zenith.rgb, pow(max(d.y, 0.0), 0.5));
+    if (sp.sun.w > 0.5) {
         // The glow around the sun (the disc itself is drawn by the sky pass, and lights through the sun light).
         let mu = max(dot(d, sp.sun.xyz), 0.0);
         c = c + sp.sun_color.rgb * (0.08 * pow(mu, 48.0) + 0.02 * pow(mu, 4.0));
     }
-    return c;
+    // Below the horizon the ground, through the air along it (the glow with it).
+    return mix(c, sp.ground.rgb, ground_share(d.y));
 }
 // The atmosphere (docs/design/rendering.md, Atmosphere): the sun's light scattered once on its way
 // through a planet's air toward the eye, by the air itself (Rayleigh: blue, all around) and by haze
@@ -3485,13 +3587,11 @@ fn lit_air(d: vec3f) -> vec3f {
 }
 fn atmosphere(d: vec3f) -> vec3f {
     if (sp.sun.w < 0.5) { return vec3f(0.0); }
-    let s = sp.sun.xyz;
-    if (d.y >= 0.0) { return lit_air(normalize(vec3f(d.x, max(d.y, 0.02), d.z))); }
-    // Below the horizon: the ground, lit by the sun (or the moon) and the sky, fading from the horizon's air.
-    let horizon = lit_air(normalize(vec3f(d.x, 0.02, d.z)));
-    var lit = sp.ground.rgb * sp.sun_color.rgb * (0.05 + 0.25 * max(s.y, 0.0));
-    if (sp.moon.w > 0.5) { lit = lit + sp.ground.rgb * sp.moon_color.rgb * (0.05 + 0.25 * max(sp.moon.y, 0.0)); }
-    return mix(horizon, lit, smoothstep(0.0, 0.08, -d.y));
+    let c = lit_air(normalize(vec3f(d.x, max(d.y, 0.02), d.z)));
+    if (d.y >= 0.0) { return c; }
+    // Below the horizon: the ground lit as the scene's ground is (ground_light: the sun's and the
+    // moon's light through the air, and the sky's from above), seen through the horizon's air.
+    return mix(c, sp.ground.rgb * sp.ground_light.rgb, ground_share(d.y));
 }
 @compute @workgroup_size(8, 8) fn fill(@builtin(global_invocation_id) id: vec3u) {
     if (f32(id.x) >= sp.size.x || f32(id.y) >= sp.size.y) { return; }
@@ -3912,6 +4012,30 @@ fn weigh(c: vec3f) -> vec3f { return c / (1.0 + luma(c)); }
 fn unweigh(c: vec3f) -> vec3f { return c / max(1.0 - luma(c), 1e-4); }
 fn ycocg(c: vec3f) -> vec3f { return vec3f(0.25 * c.r + 0.5 * c.g + 0.25 * c.b, 0.5 * c.r - 0.5 * c.b, -0.25 * c.r + 0.5 * c.g - 0.25 * c.b); }
 fn rgb(c: vec3f) -> vec3f { return vec3f(c.x + c.y - c.z, c.x + c.z, c.x - c.y - c.z); }
+// The history at a point between texels through a Catmull-Rom filter (five bilinear taps, the
+// corners left out), so a history resampled every frame as the view moves keeps its detail where
+// a bilinear fetch would soften it a little more each frame.
+fn history_at(p: vec2f, dims: vec2f) -> vec3f {
+    let center = floor(p - 0.5) + 0.5;
+    let f = p - center;
+    let f2 = f * f;
+    let f3 = f2 * f;
+    let w0 = -0.5 * f3 + f2 - 0.5 * f;
+    let w1 = 1.5 * f3 - 2.5 * f2 + 1.0;
+    let w2 = -1.5 * f3 + 2.0 * f2 + 0.5 * f;
+    let w3 = 0.5 * f3 - 0.5 * f2;
+    let w12 = w1 + w2;
+    let t0 = (center - 1.0) / dims;
+    let t12 = (center + w2 / w12) / dims;
+    let t3 = (center + 2.0) / dims;
+    var c = textureSampleLevel(history, samp, vec2f(t12.x, t0.y), 0.0).rgb * (w12.x * w0.y);
+    c = c + textureSampleLevel(history, samp, vec2f(t0.x, t12.y), 0.0).rgb * (w0.x * w12.y);
+    c = c + textureSampleLevel(history, samp, t12, 0.0).rgb * (w12.x * w12.y);
+    c = c + textureSampleLevel(history, samp, vec2f(t3.x, t12.y), 0.0).rgb * (w3.x * w12.y);
+    c = c + textureSampleLevel(history, samp, vec2f(t12.x, t3.y), 0.0).rgb * (w12.x * w3.y);
+    let total = w12.x * w0.y + w0.x * w12.y + w12.x * w12.y + w3.x * w12.y + w12.x * w3.y;
+    return max(c / total, vec3f(0.0));
+}
 @fragment fn fs_taa(@builtin(position) pos: vec4f) -> @location(0) vec4f {
     let dims = vec2i(textureDimensions(current));
     let p = vec2i(pos.xy);
@@ -3943,7 +4067,7 @@ fn rgb(c: vec3f) -> vec3f { return vec3f(c.x + c.y - c.z, c.x + c.z, c.x - c.y -
     if (back.x < taa.viewport.x || back.y < taa.viewport.y || back.x >= taa.viewport.x + taa.viewport.z || back.y >= taa.viewport.y + taa.viewport.w) {
         return vec4f(unweigh(cur), 1.0);   // it came in from outside the view
     }
-    let hist = ycocg(weigh(textureSampleLevel(history, samp, back / vec2f(dims), 0.0).rgb));
+    let hist = ycocg(weigh(history_at(back, vec2f(dims))));
     let blended = mix(clamp(hist, lo, hi), ycocg(cur), 1.0 - taa.params.x);
     return vec4f(unweigh(rgb(blended)), 1.0);
 }
@@ -4119,11 +4243,35 @@ struct GpuMesh {
     std::uint32_t index_count = 0;
     Vec3 aabb_min, aabb_max;
 };
-constexpr std::uint32_t kMaxJoints = 16384;  // joint matrices per frame across every skinned instance
+constexpr std::uint32_t kMaxJoints = 16384;  // joint matrices per frame across every skinned instance (and as many again of last frame's)
 constexpr std::uint32_t kMaxMorphVec4 = 524288;  // morph deltas (position + normal vec4 per target and vertex) across every asset: 8 MB
 constexpr std::uint32_t kMaxMorphTargets = 8;    // targets weighed per instance
 
 void to_array(const Mat4& m, float* out) { std::memcpy(out, m.m, sizeof(float) * 16); }
+
+// What a draw is from frame to frame, for TAA's and motion blur's motion: its entity (the whole id,
+// so a recycled one is someone new), its place among the draws its entity makes, in the order they
+// are made (not the order they are sorted into, which a part leaving the view or taking a level
+// changes), and for a scattered copy which one (from 1; 0 the entity's own draw).
+struct MotionKey {
+    std::uint64_t entity = 0;
+    std::uint32_t part = 0;
+    std::uint32_t copy = 0;
+    bool operator==(const MotionKey&) const = default;
+};
+struct MotionKeyHash {
+    std::size_t operator()(const MotionKey& k) const noexcept {
+        std::uint64_t h = k.entity * 0x9E3779B97F4A7C15ull;
+        h ^= (static_cast<std::uint64_t>(k.part) << 32 | k.copy) + 0x7F4A7C159E3779B9ull + (h << 6) + (h >> 2);
+        return static_cast<std::size_t>(h);
+    }
+};
+// An entity's pose as last drawn: its skins' joint matrices and its morph weights.
+struct DrawnPose {
+    std::string mesh;
+    std::vector<std::vector<Mat4>> joints;
+    std::vector<float> weights;
+};
 
 Mat4 transpose(const Mat4& m) {
     Mat4 r;
@@ -4279,9 +4427,10 @@ struct Renderer::Impl {
     LazyRenderPipeline shadow_skinned_pipeline;
     LazyRenderPipeline shadow_cut_pipeline;     // cut-outs: the texture's holes let the light through
     WGPUPipelineLayout shadow_cut_layout = nullptr;
-    WGPUBuffer joint_buffer = nullptr;
+    WGPUBuffer joint_buffer = nullptr;   // this frame's joint matrices from 0, last frame's of the poses that changed from kMaxJoints
     std::vector<float> joint_staging;  // 16 floats per matrix
     std::uint32_t joint_count = 0;
+    std::uint32_t prev_joint_count = 0;  // last frame's matrices after kMaxJoints
     WGPUBuffer morph_buffer = nullptr;  // every morphed asset's deltas, appended as assets load
     std::uint32_t morph_used = 0;       // vec4s of it in use
     bool morph_full_warned = false;
@@ -4616,7 +4765,10 @@ struct Renderer::Impl {
     bool motion_prev_set = false;              // whether taa_prev_vp is last frame's (motion blur without TAA)
     std::uint64_t taa_frame = 0;
     Mat4 taa_prev_vp = Mat4::identity();
-    std::unordered_map<std::uint64_t, std::array<float, 16>> prev_models;
+    // Last frame's model of every draw and pose of every posed entity (TAA's and motion blur's
+    // motion), written by the first view only: a secondary view reads them.
+    std::unordered_map<MotionKey, std::array<float, 16>, MotionKeyHash> prev_models;
+    std::unordered_map<std::uint64_t, DrawnPose> prev_poses;
     WGPUShaderModule taa_shader = nullptr;
     WGPUBindGroupLayout taa_bgl = nullptr;
     WGPUPipelineLayout taa_layout = nullptr;
@@ -6461,6 +6613,7 @@ fn time() -> f32 { return fx.time.x; }
         float atmo[4];         // mode 3: haze; the Weather's overcast
         float moon[4];         // mode 3 by night: toward the moon, w: up
         float moon_color[4];
+        float ground_light[4]; // mode 3: the light on the ground below the horizon (atmosphere_ground_light)
     };
     static constexpr std::uint32_t kSkySlot = 256;
 
@@ -6730,6 +6883,11 @@ fn time() -> f32 { return fx.time.x; }
         if (moon) {
             p.moon[0] = toward_moon.x; p.moon[1] = toward_moon.y; p.moon[2] = toward_moon.z; p.moon[3] = 1;
             p.moon_color[0] = moon_linear.x; p.moon_color[1] = moon_linear.y; p.moon_color[2] = moon_linear.z; p.moon_color[3] = 1;
+        }
+        if (sky.mode == 3 && have_sun) {
+            Vec3 g = atmosphere_ground_light(toward_sun, sun_linear, sky.haze);
+            if (moon) g += atmosphere_ground_light(toward_moon, moon_linear, sky.haze);
+            p.ground_light[0] = g.x; p.ground_light[1] = g.y; p.ground_light[2] = g.z; p.ground_light[3] = 1;
         }
         std::vector<std::uint8_t> slots(static_cast<std::size_t>(kSkySlot) * kEnvLevels, 0);
         float prev_alpha = 0;
@@ -7816,8 +7974,9 @@ fn time() -> f32 { return fx.time.x; }
             ssr_bg_surface = surface_view;
         }
         // With TAA blending the frames, each frame marches half the steps from an offset that moves
-        // by the golden ratio, and the frames together sample between each other's steps.
-        const bool spread = taa.enabled;
+        // by the golden ratio, and the frames together sample between each other's steps (a frame
+        // with no history to blend with marches them all).
+        const bool spread = taa.enabled && taa_valid;
         const int steps = spread ? std::max(8, ssr.steps / 2) : ssr.steps;
         const float offset = spread ? std::fmod(static_cast<float>(ssr_frame++ % 64) * 0.618034f, 1.0f) : 0.0f;
         const float u[8] = {ssr.max_distance, ssr.max_roughness, static_cast<float>(steps), ssr.thickness, ssr.intensity, offset, 0, 0};
@@ -8884,7 +9043,7 @@ fn time() -> f32 { return fx.time.x; }
         if (!t) return fail("gpu_texture_failed", "cannot create the depth prepass {}x{}", w, h);
         prepass_tex = t;
         prepass_view = v;
-        auto [vt, vv] = make_target("pocket.velocity", w, h, kVelocityFormat, WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding);
+        auto [vt, vv] = make_target("pocket.velocity", w, h, kVelocityFormat, WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopySrc);
         if (!vt) return fail("gpu_texture_failed", "cannot create the motion target {}x{}", w, h);
         velocity_tex = vt;
         velocity_view = vv;
@@ -9841,8 +10000,8 @@ fn time() -> f32 { return fx.time.x; }
             rpd.vertex.buffers = &vbl;
             atlas_pipeline.describe(device->device(), rpd);
         }
-        joint_buffer = device->create_buffer("pocket.joints", WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst, static_cast<std::uint64_t>(kMaxJoints) * sizeof(float) * 16);
-        joint_staging.resize(static_cast<std::size_t>(kMaxJoints) * 16);
+        joint_buffer = device->create_buffer("pocket.joints", WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst, 2ull * kMaxJoints * sizeof(float) * 16);
+        joint_staging.resize(2ull * kMaxJoints * 16);
         morph_buffer = device->create_buffer("pocket.morphs", WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst, static_cast<std::uint64_t>(kMaxMorphVec4) * sizeof(float) * 4);
 
         frame_buffer = device->create_buffer("pocket.frame", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, sizeof(FrameUniforms));
@@ -10019,7 +10178,7 @@ fn time() -> f32 { return fx.time.x; }
         obe[0].size = static_cast<std::uint64_t>(kObjectStride) * kMaxObjects;
         obe[1].binding = 1;
         obe[1].buffer = joint_buffer;
-        obe[1].size = static_cast<std::uint64_t>(kMaxJoints) * sizeof(float) * 16;
+        obe[1].size = 2ull * kMaxJoints * sizeof(float) * 16;
         obe[2].binding = 2;
         obe[2].buffer = morph_buffer;
         obe[2].size = static_cast<std::uint64_t>(kMaxMorphVec4) * sizeof(float) * 4;
@@ -11361,7 +11520,9 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
         fu.water_info[1] = static_cast<float>(world.seconds());
     }
     // TAA: the projection shifted by a Halton (2, 3) point inside the pixel, a different one each of
-    // eight frames; the unjittered matrices say where things are now and were last frame.
+    // eight frames; the unjittered matrices say where things are now and were last frame. A frame
+    // with no history to blend with (the first, after a cut, an agent's capture after an undrawn
+    // step) is not shifted: alone, it is the frame TAA off would draw.
     const Mat4 cur_vp = im.camera.proj * im.camera.view;
     Mat4 raster_vp = cur_vp;
     if (!im.taa.enabled) im.taa_valid = false;
@@ -11380,7 +11541,7 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
         fu.wind_gust[0] = wf.gusts;
         fu.wind_gust[1] = 2 * std::numbers::pi_v<float> / wf.gust_length;
     }
-    if (im.taa.enabled) {
+    if (im.taa.enabled && im.taa_valid) {
         auto halton = [](std::uint64_t i, std::uint64_t b) {
             float f = 1, r = 0;
             for (; i > 0; i /= b) { f /= static_cast<float>(b); r += f * static_cast<float>(i % b); }
@@ -11391,8 +11552,8 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
         const float jy = (halton(n, 3) - 0.5f) * 2.0f / static_cast<float>(std::max(1u, im.applied.h));
         raster_vp = Mat4::translation({jx, jy, 0}) * im.camera.proj * im.camera.view;
         ++im.taa_frame;
-        fu.taa[0] = 1.0f;
     }
+    if (im.taa.enabled) fu.taa[0] = 1.0f;
     to_array(raster_vp, fu.view_proj);
     to_array(cur_vp, fu.cur_view_proj);
     const Mat4 prev_vp = (im.taa_valid || (motion_known && im.motion_prev_set)) ? im.taa_prev_vp : cur_vp;
@@ -11805,6 +11966,7 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
         Vec3 center{0, 0, 0}; // the entity's bounding sphere in the world (radius < 0: unknown, always drawn)
         float radius = -1;
         Impl::SpriteMaterial* user = nullptr;   // a material the project wrote (MeshRenderer.material)
+        MotionKey key;        // which draw it is from frame to frame (its model last frame)
     };
     std::vector<Draw> draws;
     std::uint32_t count = 0;
@@ -11816,9 +11978,15 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
     std::uint32_t moving_parts = 0;
     im.animation = animation;
     im.joint_count = 0;
+    im.prev_joint_count = 0;
+    // TAA and motion blur follow each draw from last frame: its model, its skin's joints and its
+    // morph weights then. The first view keeps this frame's for the next; a secondary view only reads.
+    const bool motion_wanted = im.taa.enabled || im.motion_blur.enabled;
+    std::unordered_map<std::uint64_t, DrawnPose> poses_now;
     world.ecs().each([&](flecs::entity e, const world::MeshRenderer& mr, const world::WorldTransform& t) {
         if (!mr.visible || count >= kMaxObjects) return;
         ++entities;
+        std::uint32_t parts = 0;   // the entity's draws so far (their motion keys)
         // A mesh the engine made for the entity (a terrain's) stands in for MeshRenderer.mesh.
         const std::string* derived = world.derived_mesh(e.id());
         const std::string& mesh_path = derived ? *derived : mr.mesh;
@@ -11857,6 +12025,7 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
         };
         // Material inputs: the asset's material, overridden per entity by the MeshRenderer.
         auto push = [&](const GpuMesh* gpu, std::uint32_t first, std::uint32_t n, const std::string& tex, Vec4 color, const std::string& mesh_key, const assets::Material* mat, bool skinned = false) {
+            const std::uint32_t part = parts++;
             if (count >= kMaxObjects) return;
             if (!im.drawing_target.empty() && tex.starts_with("view:") && tex.substr(5) == im.drawing_target) return;   // a screen is not drawn into its own picture
             ou.color[0] = color.x; ou.color[1] = color.y; ou.color[2] = color.z; ou.color[3] = color.w;
@@ -11941,6 +12110,7 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
             const float depth = to_cam.x * im.camera.forward.x + to_cam.y * im.camera.forward.y + to_cam.z * im.camera.forward.z;
             draws.push_back({material_key, mesh_key, gpu, first, n, group, ou, skinned, blend, depth, ou.emissive[3] > 0.0f, glass});
             draws.back().user = draws.back().cutout ? nullptr : user;
+            draws.back().key = {e.id(), part, 0};
             if (glass) ++glass_instances;
             draws.back().lods = pending_lods;
             draws.back().cull = mr.cull_screen;
@@ -11954,6 +12124,7 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
         ou.uv_rect[0] = 0; ou.uv_rect[1] = 0; ou.uv_rect[2] = 1; ou.uv_rect[3] = 1;
         ou.morph[0] = ou.morph[1] = ou.morph[2] = ou.morph[3] = 0;
         for (float& mw : ou.morph_weights) mw = 0;
+        for (float& mw : ou.prev_morph_weights) mw = 0;
         int kind = Impl::primitive_index(mesh_path);
         if (kind >= 0) {
             const GpuMesh& gm = im.meshes[static_cast<std::size_t>(kind)];
@@ -12017,28 +12188,47 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
             pending_lods = nullptr;
             return;
         }
-        // A posed skin: its joint matrices go into the joint buffer once per entity and skin.
+        // A posed skin: its joint matrices go into the joint buffer once per entity and skin, and
+        // where the pose moved since the last frame drawn, that frame's matrices after kMaxJoints
+        // (new poses, and poses of another mesh, move nowhere).
         const Pose* pose = animation ? animation->pose(e.id()) : nullptr;
+        const DrawnPose* was = nullptr;
+        if (pose && motion_wanted) {
+            if (auto it = im.prev_poses.find(e.id()); it != im.prev_poses.end() && it->second.mesh == pose->mesh) was = &it->second;
+            if (!im.secondary) poses_now.emplace(e.id(), DrawnPose{pose->mesh, pose->joints, pose->weights});
+        }
         std::vector<std::uint32_t> joint_base(pose ? pose->joints.size() : 0, kMaxJoints);
+        std::vector<std::uint32_t> joint_before(joint_base.size(), 0);
         if (pose && am->gpu.skin) {
             for (std::size_t s = 0; s < pose->joints.size(); ++s) {
                 const auto& jm = pose->joints[s];
                 if (im.joint_count + jm.size() > kMaxJoints) break;
-                joint_base[s] = im.joint_count;
-                for (const Mat4& m : jm) {
-                    std::memcpy(im.joint_staging.data() + static_cast<std::size_t>(im.joint_count) * 16, m.m, sizeof(float) * 16);
-                    ++im.joint_count;
+                joint_base[s] = joint_before[s] = im.joint_count;
+                std::memcpy(im.joint_staging.data() + static_cast<std::size_t>(im.joint_count) * 16, jm.data(), jm.size() * sizeof(Mat4));
+                im.joint_count += static_cast<std::uint32_t>(jm.size());
+                if (was && s < was->joints.size() && was->joints[s].size() == jm.size() && std::memcmp(was->joints[s].data(), jm.data(), jm.size() * sizeof(Mat4)) != 0) {
+                    joint_before[s] = kMaxJoints + im.prev_joint_count;   // no more than this frame's, so they fit
+                    std::memcpy(im.joint_staging.data() + static_cast<std::size_t>(joint_before[s]) * 16, was->joints[s].data(), jm.size() * sizeof(Mat4));
+                    im.prev_joint_count += static_cast<std::uint32_t>(jm.size());
                 }
             }
         }
-        // Morph targets: the asset's deltas and this entity's weights (from its pose), when any is set.
-        bool morphed = false;
+        // Morph targets: the asset's deltas and this entity's weights (from its pose), when any is
+        // set now or was last frame (its motion), last frame's beside them.
+        bool morphed = false, weighed = false;
         if (pose && am->morph_targets > 0) {
             for (std::uint32_t t = 0; t < am->morph_targets && t < pose->weights.size(); ++t) {
-                ou.morph_weights[t] = pose->weights[t];
+                ou.morph_weights[t] = ou.prev_morph_weights[t] = pose->weights[t];
                 if (pose->weights[t] != 0) morphed = true;
             }
-            if (morphed) {
+            weighed = morphed;
+            if (was && was->weights.size() == pose->weights.size()) {
+                for (std::uint32_t t = 0; t < am->morph_targets && t < was->weights.size(); ++t) {
+                    ou.prev_morph_weights[t] = was->weights[t];
+                    if (was->weights[t] != 0) weighed = true;
+                }
+            }
+            if (weighed) {
                 ou.morph[0] = am->morph_base;
                 ou.morph[1] = am->morph_vertices;
                 ou.morph[2] = am->morph_targets;
@@ -12051,6 +12241,7 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
             Vec4 color{decode(mr.color.r) * mat.base_color.x, decode(mr.color.g) * mat.base_color.y, decode(mr.color.b) * mat.base_color.z, mr.color.a * mat.base_color.w};
             const bool skinned = sm.skin >= 0 && static_cast<std::size_t>(sm.skin) < joint_base.size() && joint_base[static_cast<std::size_t>(sm.skin)] < kMaxJoints;
             ou.id[2] = skinned ? joint_base[static_cast<std::size_t>(sm.skin)] : 0;
+            ou.id[3] = skinned ? joint_before[static_cast<std::size_t>(sm.skin)] : 0;
             if (skinned) ++skinned_instances;
             if (morphed) ++morphed_instances;
             // A moving part: placed by its node's matrix from the pose (its rest without one). A node
@@ -12072,8 +12263,9 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
                 to_array(transpose(model.inverse_affine()), ou.normal);
             }
         }
-        ou.id[2] = 0;
+        ou.id[2] = ou.id[3] = 0;
     });
+    if (!im.secondary) im.prev_poses = std::move(poses_now);
     // Scattered copies (World::derived_instances, a Scatter's): every draw of such an entity is
     // made once per copy at the copy's matrix, its colour shaded, culled on its own bounds; the
     // entity's own draw goes. A copy draws the mesh's geometry as the file bakes it; its Scatter's
@@ -12102,9 +12294,12 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
                 const float local_radius = d.radius >= 0 ? d.radius / base_scale : 0.5f;
                 const world::Scatter* sc = it->second.second;
                 const float fade = sc ? sc->fade : 0.0f;
-                for (const world::World::Instance& inst : *it->second.first) {
+                const std::vector<world::World::Instance>& instances = *it->second.first;
+                for (std::size_t ci = 0; ci < instances.size(); ++ci) {
+                    const world::World::Instance& inst = instances[ci];
                     if (kept.size() + made.size() >= kMaxObjects) break;
                     Draw c = d;
+                    c.key.copy = static_cast<std::uint32_t>(ci + 1);
                     Mat4 model = inst.model;
                     const Vec3 at{inst.model.at(3, 0), inst.model.at(3, 1), inst.model.at(3, 2)};
                     if (fade > 0) {
@@ -12201,22 +12396,24 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
         return a.first < b.first;
     });
     if (im.joint_count > 0) im.device->write_buffer(im.joint_buffer, 0, im.joint_staging.data(), static_cast<std::uint64_t>(im.joint_count) * sizeof(float) * 16);
-    // Each object's model last frame, for TAA's motion: found by its entity and the order of its
-    // parts; an object new this frame, or any object while TAA is off, moves nowhere.
+    if (im.prev_joint_count > 0) {
+        const std::size_t at = static_cast<std::size_t>(kMaxJoints) * 16;
+        im.device->write_buffer(im.joint_buffer, at * sizeof(float), im.joint_staging.data() + at, static_cast<std::uint64_t>(im.prev_joint_count) * sizeof(float) * 16);
+    }
+    // Each object's model last frame, for TAA's motion: found by its motion key; an object new this
+    // frame, or any object while neither TAA nor motion blur is on, moves nowhere.
     {
-        std::unordered_map<std::uint64_t, std::array<float, 16>> now;
-        std::unordered_map<std::uint32_t, std::uint32_t> parts;
+        std::unordered_map<MotionKey, std::array<float, 16>, MotionKeyHash> now;
         for (auto& d : draws) {
             ObjectUniforms& o = d.object;
             std::memcpy(o.prev_model, o.model, sizeof o.model);
-            if (!im.taa.enabled && !im.motion_blur.enabled) continue;
-            const std::uint64_t key = (static_cast<std::uint64_t>(o.id[0]) << 16) | parts[o.id[0]]++;
-            if (auto it = im.prev_models.find(key); it != im.prev_models.end()) std::memcpy(o.prev_model, it->second.data(), sizeof o.prev_model);
+            if (!motion_wanted) continue;
+            if (auto it = im.prev_models.find(d.key); it != im.prev_models.end()) std::memcpy(o.prev_model, it->second.data(), sizeof o.prev_model);
             std::array<float, 16> m{};
             std::memcpy(m.data(), o.model, sizeof o.model);
-            now.emplace(key, m);
+            now.emplace(d.key, m);
         }
-        im.prev_models = std::move(now);
+        if (!im.secondary) im.prev_models = std::move(now);
     }
     for (std::size_t i = 0; i < draws.size(); ++i) std::memcpy(im.object_staging.data() + i * kObjectStride, &draws[i].object, sizeof(ObjectUniforms));
     // Sprites: unlit quads after every mesh, by layer then far to near, in runs per texture.
@@ -13495,29 +13692,29 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
     return {};
 }
 
-Result<IdImage> Renderer::read_ids() {
-    Impl& im = *impl_;
-    if (!im.id_texture) return fail("no_frame", "nothing rendered yet");
-    const std::uint32_t bpr_unpadded = im.id_width * 4;
+namespace {
+// A texture of four bytes a texel read back whole, row after row.
+Result<std::vector<std::uint32_t>> read_texels(rhi::Device& device, WGPUTexture texture, std::uint32_t width, std::uint32_t height) {
+    const std::uint32_t bpr_unpadded = width * 4;
     const std::uint32_t bpr = (bpr_unpadded + 255) / 256 * 256;
     WGPUBufferDescriptor bd{};
-    bd.label = rhi::str("pocket.ids.readback");
+    bd.label = rhi::str("pocket.readback");
     bd.usage = WGPUBufferUsage_MapRead | WGPUBufferUsage_CopyDst;
-    bd.size = static_cast<std::uint64_t>(bpr) * im.id_height;
-    WGPUBuffer readback = wgpuDeviceCreateBuffer(im.device->device(), &bd);
-    if (!readback) return fail("gpu_buffer_failed", "cannot create id readback buffer");
-    WGPUCommandEncoder enc = wgpuDeviceCreateCommandEncoder(im.device->device(), nullptr);
+    bd.size = static_cast<std::uint64_t>(bpr) * height;
+    WGPUBuffer readback = wgpuDeviceCreateBuffer(device.device(), &bd);
+    if (!readback) return fail("gpu_buffer_failed", "cannot create a readback buffer");
+    WGPUCommandEncoder enc = wgpuDeviceCreateCommandEncoder(device.device(), nullptr);
     WGPUTexelCopyTextureInfo src{};
-    src.texture = im.id_texture;
+    src.texture = texture;
     src.aspect = WGPUTextureAspect_All;
     WGPUTexelCopyBufferInfo dst{};
     dst.layout.bytesPerRow = bpr;
-    dst.layout.rowsPerImage = im.id_height;
+    dst.layout.rowsPerImage = height;
     dst.buffer = readback;
-    WGPUExtent3D ext{im.id_width, im.id_height, 1};
+    WGPUExtent3D ext{width, height, 1};
     wgpuCommandEncoderCopyTextureToBuffer(enc, &src, &dst, &ext);
     WGPUCommandBuffer cb = wgpuCommandEncoderFinish(enc, nullptr);
-    wgpuQueueSubmit(im.device->queue(), 1, &cb);
+    wgpuQueueSubmit(device.queue(), 1, &cb);
     wgpuCommandBufferRelease(cb);
     wgpuCommandEncoderRelease(enc);
     struct MapResult { bool done = false; WGPUMapAsyncStatus status{}; std::string msg; } mr;
@@ -13532,23 +13729,58 @@ Result<IdImage> Renderer::read_ids() {
     mci.userdata1 = &mr;
     wgpuBufferMapAsync(readback, WGPUMapMode_Read, 0, bd.size, mci);
     for (int i = 0; i < 10000 && !mr.done; ++i) {
-        im.device->poll(true);
-        wgpuInstanceProcessEvents(im.device->instance());
+        device.poll(true);
+        wgpuInstanceProcessEvents(device.instance());
     }
     if (!mr.done || mr.status != WGPUMapAsyncStatus_Success) {
         wgpuBufferRelease(readback);
-        return fail("gpu_map_failed", "id readback map failed: {}", mr.msg);
+        return fail("gpu_map_failed", "readback map failed: {}", mr.msg);
     }
     const auto* px = static_cast<const std::uint8_t*>(wgpuBufferGetConstMappedRange(readback, 0, bd.size));
-    IdImage img;
-    img.width = im.id_width;
-    img.height = im.id_height;
-    img.ids.resize(static_cast<std::size_t>(im.id_width) * im.id_height);
-    for (std::uint32_t y = 0; y < im.id_height; ++y) {
-        std::memcpy(img.ids.data() + static_cast<std::size_t>(y) * im.id_width, px + static_cast<std::size_t>(y) * bpr, bpr_unpadded);
+    std::vector<std::uint32_t> out(static_cast<std::size_t>(width) * height);
+    for (std::uint32_t y = 0; y < height; ++y) {
+        std::memcpy(out.data() + static_cast<std::size_t>(y) * width, px + static_cast<std::size_t>(y) * bpr, bpr_unpadded);
     }
     wgpuBufferUnmap(readback);
     wgpuBufferRelease(readback);
+    return out;
+}
+
+float from_half(std::uint16_t h) {
+    const std::uint32_t sign = static_cast<std::uint32_t>(h & 0x8000u) << 16;
+    const int exp = (h >> 10) & 0x1F;
+    const std::uint32_t mant = h & 0x3FFu;
+    float f;
+    if (exp == 0) f = std::ldexp(static_cast<float>(mant), -24);
+    else if (exp == 31) f = mant ? std::numeric_limits<float>::quiet_NaN() : std::numeric_limits<float>::infinity();
+    else f = std::ldexp(static_cast<float>(mant | 0x400u), exp - 25);
+    return sign ? -f : f;
+}
+}  // namespace
+
+Result<IdImage> Renderer::read_ids() {
+    Impl& im = *impl_;
+    if (!im.id_texture) return fail("no_frame", "nothing rendered yet");
+    POCKET_TRY(texels, read_texels(*im.device, im.id_texture, im.id_width, im.id_height));
+    IdImage img;
+    img.width = im.id_width;
+    img.height = im.id_height;
+    img.ids = std::move(texels);
+    return img;
+}
+
+Result<MotionImage> Renderer::read_motion() {
+    Impl& im = *impl_;
+    if (!im.velocity_tex) return fail("no_motion", "no motion target: it is drawn with TAA or motion blur on");
+    POCKET_TRY(texels, read_texels(*im.device, im.velocity_tex, im.prepass_w, im.prepass_h));
+    MotionImage img;
+    img.width = im.prepass_w;
+    img.height = im.prepass_h;
+    img.motion.resize(texels.size() * 2);
+    for (std::size_t i = 0; i < texels.size(); ++i) {
+        img.motion[i * 2] = from_half(static_cast<std::uint16_t>(texels[i] & 0xFFFFu)) * static_cast<float>(img.width);
+        img.motion[i * 2 + 1] = from_half(static_cast<std::uint16_t>(texels[i] >> 16)) * static_cast<float>(img.height);
+    }
     return img;
 }
 
@@ -13604,6 +13836,8 @@ void Renderer::cut() {
     impl_->taa_valid = false;
     impl_->motion_prev_set = false;
     impl_->volume_valid = false;
+    impl_->prev_models.clear();   // nothing moved since a frame not drawn: no motion, no smear
+    impl_->prev_poses.clear();
 }
 
 void Renderer::set_msaa(int samples) { impl_->msaa = samples > 1 ? 4 : 1; }  // WebGPU multisamples at 1 or 4

@@ -316,8 +316,9 @@ alone).
 
 | Evidence | Made by |
 |---|---|
-| `tests/evidence/rendering/` clouds, grass, height-blend, island, ocean, river | `tools/scripts/dev/<name>_evidence.py` |
-| `tests/evidence/rendering/` cloth, crowd, gpu-particles (and -collide), humanoids, irradiance, irradiance-walls (`probe_visibility_evidence.py`), patterns, presets, props, ssgi, terrain-lod, toon, trails, village | `tools/scripts/<name>_evidence.py` |
+| `tests/evidence/rendering/` clouds, grass, height-blend, horizon, island, materials, ocean, river, ssr | `tools/scripts/dev/<name>_evidence.py` (horizon: `--before` an older runtime) |
+| `tests/evidence/rendering/specular-metals.png`, `specular-aa.png` | `tools/scripts/dev/specular_evidence.py --before <a runtime built before the change>` |
+| `tests/evidence/rendering/` cloth, crowd, gpu-particles (and -collide), humanoids, irradiance, irradiance-walls (`probe_visibility_evidence.py`), patterns, presets, props, ssgi, taa-samples, taa-skinned (`--before` an older runtime), terrain-lod, toon, trails, village | `tools/scripts/<name>_evidence.py` (dashes as underscores) |
 | `tests/evidence/characters/ragdoll.png`, `tests/evidence/assets/voxels.png`, `tests/evidence/water/` | `ragdoll_evidence.py`, `voxel_evidence.py`, `water_evidence.py` in `tools/scripts/` |
 | `tests/evidence/assets/obj-import-findings.png` | `tools/scripts/dev/objstress/` (`docs/research/2026-10-02-rendering-and-import-assessment.md`) |
 | `tests/evidence/ios/` | `tools/scripts/ios_evidence.py` (`run()` and `screenshot()` for single samples) |
@@ -384,7 +385,12 @@ and how to add a task.
 - Windows: a directory junction (`mklink /J`, how a git worktree can share the main checkout's
   `.pocket`) is followed by `git worktree remove`, which deleted the shared dependencies once
   (`pocket setup` rebuilt them in four minutes). Remove the junction itself first
-  (`cmd //c rmdir <worktree>\.pocket`), then the worktree.
+  (`cmd //c rmdir <worktree>\.pocket`), then the worktree. Agents working in worktrees now copy the
+  dependencies instead
+  (`mkdir -p .pocket && cp -r <main>/.pocket/deps .pocket/ && cp <main>/.pocket/pocket.exe .pocket/`,
+  about 1 GB; their stamps hold no paths), so no link is left for a removal to follow, and build
+  with `pocket build --config release --generate-only && ninja -C build/release -j 5` when several
+  build at once on this 15 GB machine.
 
 ## Environment variables
 
@@ -421,10 +427,19 @@ and how to add a task.
   on Windows: the agent benchmark (the coding agents and their keys are not installed here), the
   whole `pocket test` in debug (more memory than this machine's 15 GB may be needed: test in release
   first), the iOS and Linux checks (they need a Mac and Docker).
-- **Direct3D 12 startup**: about 2.6 s to the first frame against 0.8 s on Vulkan, because wgpu
-  compiles each pipeline's HLSL through DXC in the process on every run; making the renderer's
-  pipelines on first use is under way. Every test that starts a session pays it, so runtime_tests
-  takes about 19 minutes here.
+- **Direct3D 12 startup**: wgpu compiles each pipeline's HLSL through DXC in the process on every
+  run, so the renderer now makes each pipeline the first time a frame draws with it (`add42838`;
+  docs/design/rendering.md, Pipelines made on first use): the first frame of hello came down from
+  2.05 to 1.15 s, showcase from 3.13 to 2.42 s, village 2.90 to 1.61 s, fps 3.13 to 2.05 s (0.8 s on
+  Vulkan). What is left is the pipelines a scene draws with (the lit mesh pipeline about 0.4 s,
+  probe capture 0.5 s); a feature first turned on mid-run pays for its pipeline then. With the 5 MB
+  stack (`47b3081c`) and this, runtime_tests runs in 259 s (about 19 minutes before).
+- **The whole suite on Windows** (`pocket test --config release`, 2026-10-02): every module, the 20
+  scenario sets, the 12 TypeScript tests, types and python pass, after Blender 5.1's FBX importer
+  was worked round (`b69d6620`); the tool's cargo tests are skipped when cargo is not on the suite's
+  `PATH` (Git Bash here lacks `~/.cargo/bin`: run them with `~/.cargo/bin/cargo test` in
+  `tools/pocket`). The debug (AddressSanitizer) suite has not been run whole; its renderer_tests
+  pass.
 
 - **Last benchmark**: the full 72-task run on opencode with GLM 5.3 Flash, 71 of 72 on the runtime
   frozen at `b0616f2` (`tests/evidence/agent-eval/opencode-glm-full72.json`; `slow_swarm` failed at
@@ -442,10 +457,39 @@ and how to add a task.
   which the shove commit meant to end, so the scenario now has Blue stand aside for the goal and a
   second one checks that Blue, in the ball's way, stays put (`tools/scripts/dev/arena_probe.py`
   prints the three places tick by tick).
-- **Next work**, in order: the OBJ import fixes and the cheap visible-quality fixes of
-  `docs/research/2026-10-02-rendering-and-import-assessment.md` (Plan); the editor's look (the owner
-  asked for it to be made nicer, 2026-10-02); Grass on `samples/hills` (deferred because benchmark
-  tasks copy that sample: add it only between runs).
+- **OBJ import** (the assessment's Plan item 1, `2b94b7a6` and a review's fixes after it): crease
+  normals, ear clipping, a reader ten times faster with a cache in `.imported/` (which packs now
+  carry), double precision, unit and up-axis settings; a 5M-triangle scan spawns in 2.2 s (34.5
+  before) and is read from the cache in 0.8 s. Not done: reading on a worker thread (a mesh's
+  collider and bounds must land on a known tick).
+- **Visible quality** (the assessment's Plan item 2, 2026-10-02 evening): the ocean's horizon dashes
+  and the sky's below-horizon band are fixed (`1c39bbfd`), skinned and morphed meshes write motion
+  vectors for TAA and motion blur (`1b048f43`; TAA left off by default in the samples, with the
+  blockers in docs/design/rendering.md, TAA in the samples), and specular anti-aliasing,
+  multiple-scattering GGX and specular occlusion are in (`38a2f0fc`). Each was reviewed by a second
+  agent; the paused session left these findings open, to do next:
+  - `38a2f0fc`: the far normal-mapped floor sparkles a little more than before (specks 0.64 to
+    0.67%, flicker 4.0 to 5.9 levels; the lobe width varies pixel to pixel: take the derivative
+    kernel from the smooth geometric normal, or coarse derivatives); Toksvig rarely acts (a 1% dead
+    zone for 8-bit maps, and not gated on minification: store the factor at upload from
+    float-averaged mips, scale by `saturate(lod)`); the lights' multiple-scattering term uses
+    Karis's fit for E, so a white metal under a light reflects up to 1.18 of what it receives at
+    roughness 0.2 to 0.5 (fit E to the engine's own direct BRDF; keep A + B for image-based light);
+    unlit pixels now pay for normal maps, decals and weathering; `render.ssr` max_roughness now
+    compares the filtered roughness (say so in its help); the anisotropic branch widens masking too.
+  - `1b048f43`: tests for a texture camera's main view keeping object motion and for a part leaving
+    the view or switching LOD; a `static_assert` on `Mat4`'s size beside the joint copies;
+    `read_motion`'s comment; the TAA evidence scripts' `render: True` (wants `"each"`); split-screen
+    views after the first get no motion of their own (the doc says otherwise).
+  - Not yet verified after merging `38a2f0fc` onto the other two (the owner deferred it): the web
+    build loaded in a browser (the specular agent compiled all 16 WGSL modules under Chromium's Tint
+    on its branch, and the merge only added the water's horizon clamp) and runtime_tests
+    (renderer_tests pass: 53 cases, 5048 assertions).
+- **Next work**, in order: the open findings above; the rest of the assessment's Plan item 2
+  (reversed-Z with a 32-bit float depth, GTAO-style AO with bent normals, probe blending and larger
+  probe faces); the editor's look is restyled (`78926036`, docs/editor.md, Look) and waits on the
+  owner's taste; Grass on `samples/hills` (deferred because benchmark tasks copy that sample, and
+  the `meadow` task asks an agent to add it: add it only between runs, with that task changed).
 - **Waiting on the owner**: their own Google OAuth client for the large-file store (AGENTS.md, Test
   data; nothing is stored there until it exists); accepting the Android SDK licence (Android is
   blocked until then); accepting ADR 0008's technical choices (clang++ for the MSVC ABI rather than

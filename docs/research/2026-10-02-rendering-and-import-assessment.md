@@ -44,9 +44,10 @@ ahead on ecosystem, and we are ahead on integration and on being a whole engine.
   with MSAA, about two cascades); the scene pass clears and redraws its own depth instead of reusing
   the prepass's.
 - **Lighting model**: metallic-roughness GGX with Schlick-GGX Smith and an analytic split-sum fit;
-  no multi-scatter energy compensation, no specular occlusion. Glass, clear coat, sheen, specular
-  and anisotropy from their factors only (their textures are ignored); no iridescence or dispersion;
-  the glTF `occlusionTexture` is ignored.
+  no multi-scatter energy compensation, no specular occlusion (both added 2026-10-02:
+  `docs/design/rendering.md`, Specular quality). Glass, clear coat, sheen, specular and anisotropy
+  from their factors only (their textures are ignored); no iridescence or dispersion; the glTF
+  `occlusionTexture` is ignored.
 - **Measured** (all on the M5 at 720p or 1080p, from the docs): the showcase at 1080p 5.8 ms GPU
   (1.9 ms at half scale); the hills at 1080p 4.7 ms with 1.15M triangles submitted; the island at
   1080p 9.5 ms (scene 3.5 with MSAA 4x, water 2.9, ids 1.5, clouds 0.9); 256 skinned humanoids 0.66
@@ -67,16 +68,29 @@ irradiance, ssr, probes, grass, atmosphere, village-day, fps.
     ocean.png). The cause is not established: perturbed grazing normals reflecting the sky
     panorama's below-horizon ground with Fresnel near one is likely; the non-reversed Depth24Plus
     depth with the horizon ring just inside the far plane (island camera far 1500, near 0.1) may
-    contribute. TAA or specular anti-aliasing alone may not remove it;
+    contribute. TAA or specular anti-aliasing alone may not remove it. **Done** (2026-10-02): the
+    mirror direction was the cause and the depth had no part (a near plane ten times further out
+    changed no pixel): facets the waves and ripples lean away from a grazing eye mirrored the
+    panorama's ground below its horizon, under an atmosphere about a fiftieth of the air there, with
+    Fresnel near one. The water keeps its mirror direction above the horizon now
+    (`docs/design/water.md`, Drawing it; `tests/evidence/rendering/horizon.png`), and specular
+    anti-aliasing took the island's far sea from 1.2 to 0.09 percent of dark specks, as few as a
+    sixteen-sample reference has (`tests/evidence/rendering/specular-aa.png`);
   - no specular anti-aliasing (no roughness filtering of normal maps; the water only fades its
     normals with distance), and the island sample runs MSAA without TAA, the hills no anti-aliasing
-    at all;
+    at all. **Done** for the specular (2026-10-02): geometric specular anti-aliasing in the lit pass
+    and the water, Toksvig filtering of normal maps;
   - reflection probes at 128 px faces are blocky and misregistered (probes.png); the lit pass takes
     the first probe or volume by entity id with only a half-unit fade, no blending between overlaps;
   - the procedural sky's below-horizon band is a flat grey with a hard edge (ssr.png,
-    materials.png), and the village shows a dark band at the world's edge;
+    materials.png), and the village shows a dark band at the world's edge. **Done** (2026-10-02):
+    under both skies the ground below the horizon is seen through the horizon's air (half of it two
+    and a half degrees down), and an atmosphere's is lit as the scene's ground is
+    (`docs/design/rendering.md`, Sky and environment light);
   - TAA's motion vectors ignore skinning, so animated characters would ghost if TAA were on by
-    default;
+    default. **Done** (2026-10-02): skinned and morphed meshes write their motion from last frame's
+    joints and weights (`docs/design/rendering.md`, Motion vectors; `renderer_tests` `[motion]`,
+    `tests/evidence/rendering/taa-skinned.png`);
   - translucent meshes in front of water are hidden by the water surface (water.md).
 
 ## Gaps, with where they are
@@ -293,10 +307,13 @@ Rerun them after each import fix and compare with the table above (and on a quie
    per submesh, `g` as parts and automatic levels are done (2026-10-02; items 1 to 5 and 8 above).
    Each lands with an `assets_tests` case built from the stress files (`ngons.obj`, `cube_soff.obj`
    and a small machined part are small enough to embed).
-2. **Visible quality, cheap**: find and fix the ocean's dark dashes; specular anti-aliasing for
-   normal maps and water; skinned motion vectors, then TAA on by default in the samples; reversed-Z
-   with a 32-bit float depth; the sky's below-horizon band; multi-scatter GGX, specular occlusion
-   and GTAO-style AO with bent normals; probe blending and larger probe faces.
+2. **Visible quality, cheap**: find and fix the ocean's dark dashes (done); specular anti-aliasing
+   for normal maps and water; skinned motion vectors (done), then TAA on by default in the samples
+   (measured and left off: it softens moving views, water and moving shadows lag, the hills' ground
+   shimmers; `docs/design/rendering.md`, TAA in the samples); reversed-Z with a 32-bit float depth;
+   the sky's below-horizon band (done); multi-scatter GGX, specular occlusion and GTAO-style AO with
+   bent normals; probe blending and larger probe faces. Specular anti-aliasing, multi-scatter GGX
+   and specular occlusion are done (2026-10-02, `docs/design/rendering.md`, Specular quality).
 3. **Temporal upscaling** inside the existing TAA (jitter, motion vectors and history clipping are
    there), with MetalFX as the native option on Apple; **HDR output** on Apple displays through an
    `Rgba16Float` surface.
