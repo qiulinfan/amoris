@@ -20,6 +20,7 @@ build/objstress/bin with the system's cc. The project is bundled to build/ts/obj
 then tools/scripts/dev/objstress/measure.py (release runtime built).
 """
 import os
+import shutil
 import subprocess
 import sys
 
@@ -59,9 +60,9 @@ f 4 1 5 8
 """
 
 
-def run(args, **kw):
+def run(args, check=True, **kw):
     print("+", " ".join(args), flush=True)
-    subprocess.run(args, check=True, **kw)
+    return subprocess.run(args, check=check, **kw).returncode
 
 
 def main():
@@ -73,8 +74,11 @@ def main():
         f.write('name = "objstress"\nentry = "scripts/main.ts"\n\n[window]\ntitle = "Pocket: OBJ stress"\nwidth = 1280\nheight = 720\n')
     with open(os.path.join(PROJECT, "scripts", "main.ts"), "w", encoding="utf-8", newline="\n") as f:
         f.write(MAIN_TS)
-    for name in ("scan", "fastobj_bench"):
-        run(["cc", "-O2", "-o", os.path.join(BIN, name), os.path.join(HERE, name + ".c"), "-lm"])
+    cc = os.environ.get("CC") or shutil.which("cc") or shutil.which("gcc") or shutil.which("clang") or "cc"   # Windows: Strawberry's gcc or LLVM's clang
+    run([cc, "-O2", "-o", os.path.join(BIN, "scan"), os.path.join(HERE, "scan.c"), "-lm"])
+    # The reference reader maps the file (POSIX mmap): left out where that does not compile (Windows).
+    if run([cc, "-O2", "-o", os.path.join(BIN, "fastobj_bench"), os.path.join(HERE, "fastobj_bench.c"), "-lm"], check=False):
+        print("fastobj_bench left out: it needs POSIX mmap", flush=True)
 
     def make(name, args):
         path = os.path.join(ASSETS, name + ".obj")

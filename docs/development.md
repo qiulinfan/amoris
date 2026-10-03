@@ -91,6 +91,10 @@ python -m pip install pillow fonttools websocket-client
 - Executables embed a manifest that makes UTF-8 their code page and allows long paths
   (`tools/pocket/src/windows.manifest`).
 - `POCKET_GPU_BACKEND=vulkan` runs wgpu's Vulkan backend instead of Direct3D 12, to compare.
+- The `pocket` MCP server (`.mcp.json`, `.codex/config.toml`) starts only once `.pocket/pocket.exe`
+  exists: an agent session opened before `bootstrap.sh` reports it as failed (Claude Code's log says
+  "The system cannot find the path specified", cmd's words for the missing `.pocket`); reconnect it
+  or open a new session after bootstrapping.
 
 ### macOS (Apple silicon)
 
@@ -249,9 +253,10 @@ Tests lean on the samples:
 - adding entities, layers or scenarios to a sample shifts counts asserted in `renderer_tests`,
   `runtime_tests` and the editor tests (meshes, skinned and morphed counts, the physics scene's
   entity count, the sprites sample's scenario count, tile bodies, layers);
-- editor tests click hierarchy rows that must stay visible at 1024x640 (`Ramp` is the thirteenth
-  row; nothing above the rows may be taller than about 24 px); scroll the inspector (`ui.wheel` dy
-  -6) before clicking lower fields;
+- editor tests click hierarchy rows that must stay visible at 1024x640 (`Ramp` is the fifteenth row,
+  children listed under their parents; after the 2026-10-02 restyle it sits at y 372 to 394 in a
+  pane reaching 414; nothing above the rows may be taller than about 24 px); scroll the inspector
+  (`ui.wheel` dy -6) before clicking lower fields;
 - the hello and assets samples' scripts break after `world.clear` and clearing the sprites world
   stalls its script, so tests place their entities far away (x + 200, y = 50) instead;
 - in a paused session `frame()` still ticks: use `time.scale 0` and `world.update_transforms` for

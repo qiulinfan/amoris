@@ -4,6 +4,7 @@
 #include <pocket/app/websocket.hpp>
 #include <pocket/assets/assets.hpp>
 #include <pocket/core/core.hpp>
+#include <pocket/core/process.hpp>
 
 #include <catch_amalgamated.hpp>
 
@@ -6780,8 +6781,8 @@ marker.name = 'Marker'
 marker['pocket.Lamp'] = '{}'
 bpy.ops.wm.save_as_mainfile(filepath=argv[0])
 )PY";
-    const std::string cmd = "'" + blender + "' -b --factory-startup --python '" + (out / "make-level.py").string() + "' -- '" + (dir / "level.blend").string() + "' > '" + (out / "make-level.log").string() + "' 2>&1";
-    REQUIRE(std::system(cmd.c_str()) == 0);
+    // Blender run directly, not through a shell (cmd.exe takes no single quotes).
+    REQUIRE(process::run({blender, "-b", "--factory-startup", "--python", (out / "make-level.py").string(), "--", (dir / "level.blend").string()}, out / "make-level.log").value_or(-1) == 0);
     app::Options o;
     o.project_dir = root() / "samples" / "assets";
     o.bundle = root() / "build" / "ts" / "assets.js";
@@ -6874,8 +6875,7 @@ crate.name = 'Crate'
 crate['pocket.Health'] = '{"max": 20, "current": 20}'
 bpy.ops.wm.save_as_mainfile(filepath=argv[0])
 )PY";
-    const std::string change = "'" + blender + "' -b --factory-startup --python '" + (out / "change-level.py").string() + "' -- '" + (dir / "level.blend").string() + "' > '" + (out / "change-level.log").string() + "' 2>&1";
-    REQUIRE(std::system(change.c_str()) == 0);
+    REQUIRE(process::run({blender, "-b", "--factory-startup", "--python", (out / "change-level.py").string(), "--", (dir / "level.blend").string()}, out / "change-level.log").value_or(-1) == 0);
     const std::uint64_t seq = s.command("events.last_seq", Json::object()).value()["seq"].get<std::uint64_t>();
     const Json reloaded = s.command("assets.reload", Json::object()).value();
     INFO(reloaded.dump());
@@ -6944,8 +6944,7 @@ bpy.context.active_object.data.spot_size = 0.6981317   # forty degrees across
 bpy.ops.wm.save_as_mainfile(filepath=argv[0])
 bpy.ops.export_scene.fbx(filepath=argv[1])
 )PY";
-    const std::string cmd = "'" + blender + "' -b --factory-startup --python '" + (out / "make-scene.py").string() + "' -- '" + (dir / "scene.blend").string() + "' '" + (dir / "scene.fbx").string() + "' > '" + (out / "make-scene.log").string() + "' 2>&1";
-    REQUIRE(std::system(cmd.c_str()) == 0);
+    REQUIRE(process::run({blender, "-b", "--factory-startup", "--python", (out / "make-scene.py").string(), "--", (dir / "scene.blend").string(), (dir / "scene.fbx").string()}, out / "make-scene.log").value_or(-1) == 0);
     REQUIRE(std::filesystem::is_regular_file(dir / "scene.blend"));
     std::ofstream(dir / "post.obj", std::ios::binary) << "o Post\nv 0 0 0\nv 0.2 0 0\nv 0.2 2 0\nv 0 2 0\nf 1 2 3 4\n";
     app::Options o;

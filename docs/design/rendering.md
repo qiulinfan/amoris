@@ -208,6 +208,26 @@ on this Mac: about two of the four (hills 2.0, village 2.2, farm 2.05, island 2.
 (`[shadows]`, `[culling]`): the first frame draws all four, the next of a still scene none, and a
 paused swaying field stays the same frame after frame.
 
+## Pipelines made on first use
+
+The renderer describes its sixty-odd pipelines when it starts (the scene pass's lit, cut-out,
+skinned, translucent, sprite, particle, weather, line, sky and grass variants and the id pass's for
+the sample count and target layout in use; the shadow, probe, water, transparency, sky and
+post-processing passes) and makes each the first time a frame draws with it (`LazyRenderPipeline`
+and `LazyComputePipeline` in `engine/renderer/src/renderer.cpp`), so a scene pays for the features
+it uses. Direct3D 12 is where this counts: wgpu compiles each pipeline's shaders in the process on
+every run (naga's HLSL through DXC; nothing is kept between runs), from a few milliseconds for a
+screen pass to several hundred for a lit fragment stage, one after another; a stage compiled once is
+reused within the run, so the skinned and translucent variants of a lit pipeline cost a few
+milliseconds after it. On the Windows machine of `tests/evidence/windows/README.md` (release,
+`--frames 1`) hello's first frame makes 3 of the 57 pipelines it made before and the run takes 1.1 s
+instead of 2.1; the village makes 13 of 78 (2.9 to 1.6 s), the showcase, which turns on nearly
+everything, 27 of 78 (3.1 to 2.4 s). Changing the sample count or turning on a pass that needs the
+depth prepass describes the scene's pipelines again, and a frame that first turns a feature on pays
+for its pipelines then (on Direct3D 12 a stall of up to a few hundred milliseconds; on Vulkan
+NVIDIA's driver keeps compiled shaders between runs). A pipeline that cannot be made is reported
+once in the log (`renderer: pipeline ... could not be made`) and what it would draw is left out.
+
 ## Light and color
 
 The scene is lit in linear light in a half-float target and turned into the 8-bit frame by one final

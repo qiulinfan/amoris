@@ -9,8 +9,9 @@ in cases.json). Each case runs in a fresh release runtime at 1280x720, headless 
 4. the model turned half a degree a frame for ten frames, so the shadow cascades are drawn again,
    then render.stats and perf once more; then each variant (world.set calls, five frames, a capture).
 
-Memory: the runtime's resident size is sampled every 100 ms (ps), and on macOS the runtime runs under
-`/usr/bin/time -l` for its maximum resident size and peak memory footprint. Results go to
+Memory: the runtime's resident size is sampled every 100 ms (ps; on Windows its working set through
+psapi, with the peak working set at the end), and on macOS the runtime runs under `/usr/bin/time -l`
+for its maximum resident size and peak memory footprint. Results go to
 build/objstress/runs/logs/<case>.json, pictures to build/objstress/runs/captures/. Do not measure while an
 agent benchmark or a build runs: the timings in the 2026-10-02 assessment were taken beside one and
 are noisy.
@@ -27,6 +28,7 @@ lower bound for parsing), and Blender's importer,
     <Blender> -b --factory-startup --python tools/scripts/dev/objstress/blender_render.py -- <file.obj> <out.png> '<json: cam_pos, cam_at, up, scale, location>'
 (<Blender> is /Applications/Blender.app/Contents/MacOS/Blender on macOS).
 """
+import ctypes
 import json
 import os
 import platform
@@ -72,7 +74,28 @@ def timed_exe(time_out):
     return wrapper
 
 
+class _MemoryCounters(ctypes.Structure):
+    _fields_ = [("cb", ctypes.c_ulong), ("PageFaultCount", ctypes.c_ulong)] + [(n, ctypes.c_size_t) for n in (
+        "PeakWorkingSetSize", "WorkingSetSize", "QuotaPeakPagedPoolUsage", "QuotaPagedPoolUsage",
+        "QuotaPeakNonPagedPoolUsage", "QuotaNonPagedPoolUsage", "PagefileUsage", "PeakPagefileUsage")]
+
+
+def win_memory_mb(pid):
+    """Windows: a process's working set and peak working set in MB (psapi; 0 when it is gone)."""
+    k32 = ctypes.windll.kernel32
+    h = k32.OpenProcess(0x1000 | 0x0010, False, pid)   # PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ
+    if not h:
+        return 0.0, 0.0
+    c = _MemoryCounters()
+    c.cb = ctypes.sizeof(c)
+    ok = k32.K32GetProcessMemoryInfo(h, ctypes.byref(c), c.cb)
+    k32.CloseHandle(h)
+    return (c.WorkingSetSize / 2**20, c.PeakWorkingSetSize / 2**20) if ok else (0.0, 0.0)
+
+
 def rss_mb(pid):
+    if os.name == "nt":
+        return win_memory_mb(pid)[0]
     out = subprocess.run(["ps", "-o", "rss=", "-p", str(pid)], capture_output=True, text=True, encoding="utf-8", errors="replace").stdout.strip()
     return int(out) / 1024 if out else 0.0
 
@@ -87,9 +110,13 @@ def measure(name, spec):
     res["file_mb"] = round(os.path.getsize(os.path.join(PROJECT, spec["mesh"])) / 1e6, 1)
     time_out = os.path.join(LOGS, name + ".time.txt")
     t_start = time.time()
-    r = start(port, timed_exe(time_out))
-    children = subprocess.run(["pgrep", "-P", str(r.proc.pid)], capture_output=True, text=True, encoding="utf-8", errors="replace").stdout.split()
-    pid = int(children[0]) if children else r.proc.pid
+    if os.name == "nt":   # no /usr/bin/time: the runtime itself, its peak working set read at the end
+        r = start(port)
+        pid = r.proc.pid
+    else:
+        r = start(port, timed_exe(time_out))
+        children = subprocess.run(["pgrep", "-P", str(r.proc.pid)], capture_output=True, text=True, encoding="utf-8", errors="replace").stdout.split()
+        pid = int(children[0]) if children else r.proc.pid
     peak = {"mb": 0.0, "series": []}
     stop = threading.Event()
 
@@ -137,6 +164,8 @@ def measure(name, spec):
             r.rpc("capture", {"path": path})
             res.setdefault("variant_captures", []).append(path)
         res["end_rss_mb"] = round(rss_mb(pid))
+        if os.name == "nt":
+            res["peak_footprint_mb"] = round(win_memory_mb(pid)[1])
     finally:
         stop.set()
         r.close()

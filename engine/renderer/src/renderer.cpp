@@ -3,7 +3,6 @@
 #include <pocket/world/wind.hpp>
 
 #include <pocket/core/log.hpp>
-#include <pocket/core/parallel.hpp>
 #include <pocket/renderer/primitives.hpp>
 
 #ifndef __EMSCRIPTEN__
@@ -18,6 +17,7 @@
 #include <functional>
 #include <map>
 #include <numbers>
+#include <optional>
 #include <set>
 #include <unordered_map>
 
@@ -4132,6 +4132,136 @@ Mat4 transpose(const Mat4& m) {
     return r;
 }
 
+std::string view_string(WGPUStringView s) {
+    if (!s.data) return {};
+    return s.length == WGPU_STRLEN ? std::string(s.data) : std::string(s.data, s.length);
+}
+
+// A pipeline made the first time a frame draws with it (docs/design/rendering.md, Pipelines made on
+// first use): `describe` keeps its descriptor and everything that points at, `get` makes it then.
+// Direct3D 12 compiles each pipeline's shaders in the process on every run (naga's HLSL through
+// DXC), tens to hundreds of milliseconds apiece, and a scene draws with a few of the renderer's
+// sixty. One that cannot be made is reported once and what it would draw is left out. The
+// renderer's descriptors name every label and entry point and chain no extensions or constants.
+class LazyRenderPipeline {
+public:
+    LazyRenderPipeline() = default;
+    LazyRenderPipeline(const LazyRenderPipeline&) = delete;
+    LazyRenderPipeline& operator=(const LazyRenderPipeline&) = delete;
+    ~LazyRenderPipeline() { release(); }
+
+    void describe(WGPUDevice device, const WGPURenderPipelineDescriptor& d) {
+        release();
+        device_ = device;
+        desc_ = d;
+        label_ = view_string(d.label);
+        vertex_entry_ = view_string(d.vertex.entryPoint);
+        buffers_.assign(d.vertex.buffers, d.vertex.buffers + d.vertex.bufferCount);
+        attributes_.clear();
+        for (const WGPUVertexBufferLayout& b : buffers_) attributes_.insert(attributes_.end(), b.attributes, b.attributes + b.attributeCount);
+        if (d.depthStencil) depth_ = *d.depthStencil;
+        targets_.clear();
+        blends_.clear();
+        if (d.fragment) {
+            fragment_ = *d.fragment;
+            fragment_entry_ = view_string(d.fragment->entryPoint);
+            targets_.assign(d.fragment->targets, d.fragment->targets + d.fragment->targetCount);
+            for (const WGPUColorTargetState& t : targets_) blends_.push_back(t.blend ? std::optional<WGPUBlendState>(*t.blend) : std::nullopt);
+        }
+    }
+
+    WGPURenderPipeline get() {
+        if (handle_ || !device_ || failed_) return handle_;
+        WGPURenderPipelineDescriptor d = desc_;
+        d.label = {label_.data(), label_.size()};
+        d.vertex.entryPoint = {vertex_entry_.data(), vertex_entry_.size()};
+        std::vector<WGPUVertexBufferLayout> buffers = buffers_;
+        std::size_t first = 0;
+        for (WGPUVertexBufferLayout& b : buffers) {
+            b.attributes = attributes_.data() + first;
+            first += b.attributeCount;
+        }
+        d.vertex.buffers = buffers.data();
+        if (d.depthStencil) d.depthStencil = &depth_;
+        WGPUFragmentState fragment = fragment_;
+        std::vector<WGPUColorTargetState> targets = targets_;
+        for (std::size_t i = 0; i < targets.size(); ++i) targets[i].blend = blends_[i] ? &*blends_[i] : nullptr;
+        fragment.entryPoint = {fragment_entry_.data(), fragment_entry_.size()};
+        fragment.targets = targets.data();
+        if (d.fragment) d.fragment = &fragment;
+        handle_ = wgpuDeviceCreateRenderPipeline(device_, &d);
+        if (!handle_) {
+            failed_ = true;
+            log::error("renderer", "pipeline {} could not be made: what it draws is left out", label_);
+        }
+        return handle_;
+    }
+
+    void release() {
+        if (handle_) wgpuRenderPipelineRelease(handle_);
+        handle_ = nullptr;
+        device_ = nullptr;
+        failed_ = false;
+    }
+
+private:
+    WGPURenderPipeline handle_ = nullptr;
+    WGPUDevice device_ = nullptr;   // set while there is a description to make it from
+    bool failed_ = false;
+    WGPURenderPipelineDescriptor desc_{};
+    std::string label_, vertex_entry_, fragment_entry_;
+    std::vector<WGPUVertexBufferLayout> buffers_;
+    std::vector<WGPUVertexAttribute> attributes_;   // every buffer's, one after another
+    WGPUDepthStencilState depth_{};
+    WGPUFragmentState fragment_{};
+    std::vector<WGPUColorTargetState> targets_;
+    std::vector<std::optional<WGPUBlendState>> blends_;   // each target's
+};
+
+// The same for a compute pipeline.
+class LazyComputePipeline {
+public:
+    LazyComputePipeline() = default;
+    LazyComputePipeline(const LazyComputePipeline&) = delete;
+    LazyComputePipeline& operator=(const LazyComputePipeline&) = delete;
+    ~LazyComputePipeline() { release(); }
+
+    void describe(WGPUDevice device, const WGPUComputePipelineDescriptor& d) {
+        release();
+        device_ = device;
+        desc_ = d;
+        label_ = view_string(d.label);
+        entry_ = view_string(d.compute.entryPoint);
+    }
+
+    WGPUComputePipeline get() {
+        if (handle_ || !device_ || failed_) return handle_;
+        WGPUComputePipelineDescriptor d = desc_;
+        d.label = {label_.data(), label_.size()};
+        d.compute.entryPoint = {entry_.data(), entry_.size()};
+        handle_ = wgpuDeviceCreateComputePipeline(device_, &d);
+        if (!handle_) {
+            failed_ = true;
+            log::error("renderer", "pipeline {} could not be made: what it computes is left out", label_);
+        }
+        return handle_;
+    }
+
+    void release() {
+        if (handle_) wgpuComputePipelineRelease(handle_);
+        handle_ = nullptr;
+        device_ = nullptr;
+        failed_ = false;
+    }
+
+private:
+    WGPUComputePipeline handle_ = nullptr;
+    WGPUDevice device_ = nullptr;
+    bool failed_ = false;
+    WGPUComputePipelineDescriptor desc_{};
+    std::string label_, entry_;
+};
+
 }  // namespace
 
 struct Renderer::Impl {
@@ -4140,14 +4270,14 @@ struct Renderer::Impl {
     WGPUBindGroupLayout frame_bgl = nullptr;
     WGPUBindGroupLayout object_bgl = nullptr;
     WGPUPipelineLayout layout = nullptr;
-    WGPURenderPipeline pipeline = nullptr;
-    WGPURenderPipeline skinned_pipeline = nullptr;
-    WGPURenderPipeline cut_pipeline = nullptr;             // cut-outs (MeshRenderer.cutoff): the only lit pipelines with a discard
-    WGPURenderPipeline cut_skinned_pipeline = nullptr;
-    WGPURenderPipeline blend_pipeline = nullptr;           // the lit shading alpha blended, no depth writes
-    WGPURenderPipeline blend_skinned_pipeline = nullptr;
-    WGPURenderPipeline shadow_skinned_pipeline = nullptr;
-    WGPURenderPipeline shadow_cut_pipeline = nullptr;     // cut-outs: the texture's holes let the light through
+    LazyRenderPipeline pipeline;
+    LazyRenderPipeline skinned_pipeline;
+    LazyRenderPipeline cut_pipeline;             // cut-outs (MeshRenderer.cutoff): the only lit pipelines with a discard
+    LazyRenderPipeline cut_skinned_pipeline;
+    LazyRenderPipeline blend_pipeline;           // the lit shading alpha blended, no depth writes
+    LazyRenderPipeline blend_skinned_pipeline;
+    LazyRenderPipeline shadow_skinned_pipeline;
+    LazyRenderPipeline shadow_cut_pipeline;     // cut-outs: the texture's holes let the light through
     WGPUPipelineLayout shadow_cut_layout = nullptr;
     WGPUBuffer joint_buffer = nullptr;
     std::vector<float> joint_staging;  // 16 floats per matrix
@@ -4156,13 +4286,13 @@ struct Renderer::Impl {
     std::uint32_t morph_used = 0;       // vec4s of it in use
     bool morph_full_warned = false;
     const Animation* animation = nullptr;  // poses for the frame being drawn
-    WGPURenderPipeline sprite_pipeline = nullptr;
-    WGPURenderPipeline sprite_add_pipeline = nullptr;   // additive sprites and particles
+    LazyRenderPipeline sprite_pipeline;
+    LazyRenderPipeline sprite_add_pipeline;   // additive sprites and particles
     // GPU particles (docs/design/particles.md, On the GPU): each emitter's ring, the compute pass
     // that moves it, and the pipelines that draw it through the sprites' fragment.
-    WGPURenderPipeline particle_pipeline = nullptr;
-    WGPURenderPipeline particle_add_pipeline = nullptr;
-    WGPURenderPipeline weather_pipeline = nullptr;   // rain and snow about the camera (docs/design/rendering.md, Weather)
+    LazyRenderPipeline particle_pipeline;
+    LazyRenderPipeline particle_add_pipeline;
+    LazyRenderPipeline weather_pipeline;   // rain and snow about the camera (docs/design/rendering.md, Weather)
     float env_overcast = 0;                          // the Weather's overcast, greying the sky's panorama
     float after_dark_lit = 1;                        // 0 by day .. 1 once the sun is down: Light and MeshRenderer after_dark
     std::vector<Renderer::Footprint> footprints;     // pressed into the snow (set_footprints)
@@ -4173,7 +4303,7 @@ struct Renderer::Impl {
     WGPUShaderModule particle_sim_shader = nullptr;
     WGPUBindGroupLayout particle_sim_bgl = nullptr;
     WGPUPipelineLayout particle_sim_layout = nullptr;
-    WGPUComputePipeline particle_sim_pipeline = nullptr;
+    LazyComputePipeline particle_sim_pipeline;
     struct GpuEmitterParams {
         float origin[4], prev[4], axis[4], gravity[4], ranges[4], ground[4], look[4], color0[4], color1[4], place[4];
         std::uint32_t counts[4], extra[4];
@@ -4204,15 +4334,15 @@ struct Renderer::Impl {
     Mat4 particle_vp, particle_inv;   // the last frame's view, which drew the prepass the compute pass reads
     Vec3 particle_eye{0, 0, 0};
     bool particle_view = false;
-    WGPURenderPipeline sprite_lit_pipeline = nullptr;   // lit sprites and tile maps: the meshes' shading, alpha blended
+    LazyRenderPipeline sprite_lit_pipeline;   // lit sprites and tile maps: the meshes' shading, alpha blended
     AmbientSettings ambient;
-    WGPURenderPipeline line_pipeline = nullptr;
+    LazyRenderPipeline line_pipeline;
     WGPUPipelineLayout line_layout = nullptr;
     WGPUShaderModule line_shader = nullptr;
     WGPUBuffer line_buffer = nullptr;
     std::size_t line_capacity = 0;  // vertices
-    WGPURenderPipeline shadow_pipeline = nullptr;
-    WGPURenderPipeline atlas_pipeline = nullptr, atlas_skinned_pipeline = nullptr, atlas_cut_pipeline = nullptr;   // the same for the lights' atlas
+    LazyRenderPipeline shadow_pipeline;
+    LazyRenderPipeline atlas_pipeline, atlas_skinned_pipeline, atlas_cut_pipeline;   // the same for the lights' atlas
     WGPUPipelineLayout shadow_layout = nullptr;
     WGPUBindGroupLayout scene_bgl = nullptr;   // frame uniforms + shadow map + comparison sampler
     WGPUBindGroup scene_bg = nullptr;
@@ -4238,9 +4368,9 @@ struct Renderer::Impl {
     WGPUShaderModule bloom_shader = nullptr;
     WGPUBindGroupLayout bloom_bgl = nullptr;
     WGPUPipelineLayout bloom_layout = nullptr;
-    WGPURenderPipeline bloom_bright_pipeline = nullptr;
-    WGPURenderPipeline bloom_blur_pipeline = nullptr;
-    WGPURenderPipeline bloom_add_pipeline = nullptr;
+    LazyRenderPipeline bloom_bright_pipeline;
+    LazyRenderPipeline bloom_blur_pipeline;
+    LazyRenderPipeline bloom_add_pipeline;
     WGPUSampler bloom_sampler = nullptr;
     WGPUBuffer bloom_uniforms = nullptr;          // four slots (bright, blur across, blur down, add), 256 bytes apart
     WGPUTexture bloom_tex[2]{};
@@ -4262,7 +4392,7 @@ struct Renderer::Impl {
     WGPUShaderModule post_shader = nullptr;
     WGPUBindGroupLayout post_bgl = nullptr;       // uniform, the HDR target, the meter's state
     WGPUPipelineLayout post_layout = nullptr;
-    WGPURenderPipeline post_pipeline = nullptr;
+    LazyRenderPipeline post_pipeline;
     WGPUBuffer post_uniforms = nullptr;
     WGPUBindGroup post_bg = nullptr;
     // Post effects a project wrote, run after the tonemap through two targets in turn.
@@ -4297,7 +4427,7 @@ struct Renderer::Impl {
     WGPUShaderModule meter_shader = nullptr;
     WGPUBindGroupLayout meter_bgl = nullptr;
     WGPUPipelineLayout meter_layout = nullptr;
-    WGPUComputePipeline meter_pipeline = nullptr;
+    LazyComputePipeline meter_pipeline;
     WGPUBuffer meter_uniforms = nullptr;
     WGPUBuffer meter_state = nullptr;             // 4 floats: exposure EV, average EV, initialized
     WGPUBindGroup meter_bg = nullptr;
@@ -4335,7 +4465,7 @@ struct Renderer::Impl {
     std::uint32_t volume_w = 0, volume_h = 0;
     WGPUBindGroupLayout volume_bgl = nullptr;
     WGPUPipelineLayout volume_layout = nullptr;
-    WGPURenderPipeline volume_pipeline = nullptr;
+    LazyRenderPipeline volume_pipeline;
     WGPUBuffer volume_uniforms = nullptr;
     WGPUTextureView volume_depth = nullptr;       // the depth view volume_bgs read
     // Grass (docs/design/terrain.md, Grass): each terrain's ground as a texture (height, the layer's
@@ -4357,7 +4487,7 @@ struct Renderer::Impl {
     std::vector<GrassDraw> grass_draws;
     WGPUBindGroupLayout grass_bgl = nullptr;
     WGPUPipelineLayout grass_layout = nullptr;
-    WGPURenderPipeline grass_pipeline = nullptr, grass_id_pipeline = nullptr;
+    LazyRenderPipeline grass_pipeline, grass_id_pipeline;
     WGPUSampler grass_samp = nullptr;
     // Volumetric clouds (docs/design/rendering.md, Clouds): quarter-size targets in turn (this
     // frame's, last frame's), a stand-in for the sky when they are not marched, the pass (the mesh
@@ -4375,8 +4505,8 @@ struct Renderer::Impl {
     std::uint32_t cloud_w = 0, cloud_h = 0;
     WGPUBindGroupLayout cloud_bgl = nullptr, cloud_sky_bgl = nullptr, cloud_noise_bgl = nullptr;
     WGPUPipelineLayout cloud_layout = nullptr, cloud_noise_layout = nullptr;
-    WGPURenderPipeline cloud_pipeline = nullptr;
-    WGPUComputePipeline cloud_noise_pipeline = nullptr;
+    LazyRenderPipeline cloud_pipeline;
+    LazyComputePipeline cloud_noise_pipeline;
     WGPUShaderModule cloud_noise_shader = nullptr;
     WGPUBuffer cloud_uniforms = nullptr;
     WGPUSampler cloud_repeat_samp = nullptr, cloud_clamp_samp = nullptr;
@@ -4392,7 +4522,7 @@ struct Renderer::Impl {
     std::uint32_t gi_w = 0, gi_h = 0;
     WGPUBindGroupLayout gi_bgl = nullptr;
     WGPUPipelineLayout gi_layout = nullptr;
-    WGPURenderPipeline gi_pipeline = nullptr, gi_add_pipeline = nullptr;
+    LazyRenderPipeline gi_pipeline, gi_add_pipeline;
     WGPUBuffer gi_uniforms = nullptr;
     WGPUBindGroup gi_bgs[2]{}, gi_add_bgs[2]{};
     WGPUTextureView gi_bg_views[4]{};             // depth, surface, scene and albedo the groups were made with
@@ -4406,7 +4536,7 @@ struct Renderer::Impl {
     SsrSettings ssr;
     WGPUBindGroupLayout ssr_bgl = nullptr;
     WGPUPipelineLayout ssr_layout = nullptr;
-    WGPURenderPipeline ssr_pipeline = nullptr;
+    LazyRenderPipeline ssr_pipeline;
     WGPUBuffer ssr_uniforms = nullptr;
     std::uint64_t ssr_frame = 0;
     WGPUBindGroup ssr_bg = nullptr;
@@ -4438,8 +4568,8 @@ struct Renderer::Impl {
     int water_under = -1;
     WGPUBindGroupLayout water_bgl = nullptr;
     WGPUPipelineLayout water_layout = nullptr;
-    WGPURenderPipeline water_pipeline[2]{}, water_under_pipeline[2]{};   // against the frame's depth, against the prepass
-    WGPURenderPipeline water_depth_pipeline = nullptr;
+    LazyRenderPipeline water_pipeline[2], water_under_pipeline[2];   // against the frame's depth, against the prepass
+    LazyRenderPipeline water_depth_pipeline;
     WGPUBuffer water_uniforms = nullptr;
     WGPUSampler water_sampler = nullptr;
     WGPUTexture water_scene_tex = nullptr, water_depth_tex = nullptr;
@@ -4452,7 +4582,7 @@ struct Renderer::Impl {
     // jitter's frame count, last frame's unjittered view-projection and each object's model then.
     TaaSettings taa;
     bool oit = false;
-    WGPURenderPipeline oit_pipeline = nullptr, oit_skinned_pipeline = nullptr, oit_composite_pipeline = nullptr;
+    LazyRenderPipeline oit_pipeline, oit_skinned_pipeline, oit_composite_pipeline;
     WGPUShaderModule oit_shader = nullptr;
     WGPUBindGroupLayout oit_bgl = nullptr;
     WGPUPipelineLayout oit_layout = nullptr;
@@ -4460,7 +4590,7 @@ struct Renderer::Impl {
     WGPUTextureView oit_accum_view = nullptr, oit_reveal_view = nullptr;
     std::uint32_t oit_w = 0, oit_h = 0;
     // With MSAA: the same pipelines at 4 samples, and multisampled targets resolved into the two above.
-    WGPURenderPipeline oit_ms_pipeline = nullptr, oit_ms_skinned_pipeline = nullptr, oit_ms_composite_pipeline = nullptr;
+    LazyRenderPipeline oit_ms_pipeline, oit_ms_skinned_pipeline, oit_ms_composite_pipeline;
     WGPUTexture oit_ms_accum_tex = nullptr, oit_ms_reveal_tex = nullptr;
     WGPUTextureView oit_ms_accum_view = nullptr, oit_ms_reveal_view = nullptr;
     int oit_samples = 1;
@@ -4470,7 +4600,7 @@ struct Renderer::Impl {
     WGPUShaderModule fx_shader = nullptr;
     WGPUBindGroupLayout fx_bgl = nullptr;
     WGPUPipelineLayout fx_layout = nullptr;
-    WGPURenderPipeline dof_pipeline = nullptr, blur_pipeline = nullptr;
+    LazyRenderPipeline dof_pipeline, blur_pipeline;
     WGPUBuffer fx_uniforms = nullptr;
     WGPUTexture fx_tex = nullptr;
     WGPUTextureView fx_view = nullptr;
@@ -4490,7 +4620,7 @@ struct Renderer::Impl {
     WGPUShaderModule taa_shader = nullptr;
     WGPUBindGroupLayout taa_bgl = nullptr;
     WGPUPipelineLayout taa_layout = nullptr;
-    WGPURenderPipeline taa_pipeline = nullptr;
+    LazyRenderPipeline taa_pipeline;
     WGPUBuffer taa_uniforms = nullptr;
     WGPUBindGroup taa_bg[2] = {nullptr, nullptr};
     WGPUTextureView taa_bg_current = nullptr, taa_bg_velocity = nullptr, taa_bg_depth = nullptr;   // what taa_bg was made over
@@ -4502,8 +4632,8 @@ struct Renderer::Impl {
     WGPUShaderModule ao_shader = nullptr;
     WGPUBindGroupLayout ao_bgl = nullptr;
     WGPUPipelineLayout ao_layout = nullptr;
-    WGPURenderPipeline ao_pipeline = nullptr;
-    WGPURenderPipeline ao_blur_pipeline = nullptr;
+    LazyRenderPipeline ao_pipeline;
+    LazyRenderPipeline ao_blur_pipeline;
     WGPUBuffer ao_uniforms = nullptr;
     WGPUTexture ao_tex[2]{};
     WGPUTextureView ao_view[2]{};
@@ -4614,7 +4744,7 @@ struct Renderer::Impl {
     WGPUShaderModule probe_fill_shader = nullptr;
     WGPUBindGroupLayout probe_fill_bgl = nullptr;
     WGPUPipelineLayout probe_fill_layout = nullptr;
-    WGPUComputePipeline probe_fill_pipeline = nullptr;
+    LazyComputePipeline probe_fill_pipeline;
     WGPUBuffer probe_fill_params = nullptr, probe_prefilter_params = nullptr;
     WGPUBuffer probe_frame_buf[6]{};
     // Irradiance volumes: each a grid of probes whose harmonics follow the reflection probes' in
@@ -4644,23 +4774,23 @@ struct Renderer::Impl {
     WGPUShaderModule grid_shader = nullptr;
     WGPUBindGroupLayout grid_bgl = nullptr;
     WGPUPipelineLayout grid_layout = nullptr;
-    WGPUComputePipeline grid_pipeline = nullptr;
+    LazyComputePipeline grid_pipeline;
     std::vector<WGPUBindGroup> grid_groups;
-    WGPURenderPipeline probe_pipeline = nullptr, probe_skinned_pipeline = nullptr, probe_sky_pipeline = nullptr;
+    LazyRenderPipeline probe_pipeline, probe_skinned_pipeline, probe_sky_pipeline;
     std::vector<WGPUBindGroup> probe_groups;   // the last capture's groups, released at the next
     // The sky: its pipelines, the environment map (level views for the compute passes, one view of
     // every level for sampling), the harmonics buffer, the panorama's source texture.
     WGPUPipelineLayout sky_layout = nullptr;      // the scene group and the clouds' (cloud_sky_bgl)
-    WGPURenderPipeline sky_pipeline = nullptr;    // follows the sample count like the scene pipelines
+    LazyRenderPipeline sky_pipeline;    // follows the sample count like the scene pipelines
     WGPUShaderModule sky_shader = nullptr;
     WGPUShaderModule irr_shader = nullptr;
     WGPUBindGroupLayout env_bgl = nullptr;
     WGPUBindGroupLayout irr_bgl = nullptr;
     WGPUPipelineLayout env_layout = nullptr;
     WGPUPipelineLayout irr_layout = nullptr;
-    WGPUComputePipeline fill_pipeline = nullptr;
-    WGPUComputePipeline prefilter_pipeline = nullptr;
-    WGPUComputePipeline irradiance_pipeline = nullptr;
+    LazyComputePipeline fill_pipeline;
+    LazyComputePipeline prefilter_pipeline;
+    LazyComputePipeline irradiance_pipeline;
     WGPUTexture env_tex = nullptr;
     WGPUTextureView env_view = nullptr;
     WGPUTextureView env_level[kEnvLevels]{};
@@ -4713,11 +4843,11 @@ struct Renderer::Impl {
     WGPUTextureView ms_depth_view = nullptr;
     std::uint32_t ms_width = 0, ms_height = 0;
     int ms_samples = 1;
-    WGPURenderPipeline id_pipeline = nullptr;
-    WGPURenderPipeline id_skinned_pipeline = nullptr;
-    WGPURenderPipeline id_cut_pipeline = nullptr;
-    WGPURenderPipeline id_cut_skinned_pipeline = nullptr;
-    WGPURenderPipeline id_sprite_pipeline = nullptr;
+    LazyRenderPipeline id_pipeline;
+    LazyRenderPipeline id_skinned_pipeline;
+    LazyRenderPipeline id_cut_pipeline;
+    LazyRenderPipeline id_cut_skinned_pipeline;
+    LazyRenderPipeline id_sprite_pipeline;
     WGPUVertexAttribute mesh_attrs[5]{};
     WGPUVertexAttribute skin_attrs[2]{};
     WGPUVertexBufferLayout vbl{};
@@ -5038,20 +5168,17 @@ struct Renderer::Impl {
         release_hdr_target();
         release_sky();
         release_ao_targets();
-        for (WGPURenderPipeline* p : {&ao_pipeline, &ao_blur_pipeline}) if (*p) wgpuRenderPipelineRelease(*p);
         if (ao_layout) wgpuPipelineLayoutRelease(ao_layout);
         if (ao_bgl) wgpuBindGroupLayoutRelease(ao_bgl);
         if (ao_shader) wgpuShaderModuleRelease(ao_shader);
         if (ao_uniforms) wgpuBufferRelease(ao_uniforms);
         if (gi_uniforms) wgpuBufferRelease(gi_uniforms);
-        for (WGPURenderPipeline gp : {gi_pipeline, gi_add_pipeline}) if (gp) wgpuRenderPipelineRelease(gp);
         if (gi_layout) wgpuPipelineLayoutRelease(gi_layout);
         if (gi_bgl) wgpuBindGroupLayoutRelease(gi_bgl);
         for (WGPUBindGroup g : {gi_bgs[0], gi_bgs[1], gi_add_bgs[0], gi_add_bgs[1]}) if (g) wgpuBindGroupRelease(g);
         for (WGPUTextureView v : gi_view) if (v) wgpuTextureViewRelease(v);
         for (WGPUTexture t : gi_tex) if (t) wgpuTextureRelease(t);
         if (volume_uniforms) wgpuBufferRelease(volume_uniforms);
-        if (volume_pipeline) wgpuRenderPipelineRelease(volume_pipeline);
         if (volume_layout) wgpuPipelineLayoutRelease(volume_layout);
         if (volume_bgl) wgpuBindGroupLayoutRelease(volume_bgl);
         for (WGPUTextureView v : {volume_view[0], volume_view[1], volume_none_view}) if (v) wgpuTextureViewRelease(v);
@@ -5063,8 +5190,6 @@ struct Renderer::Impl {
         if (grass_bgl) wgpuBindGroupLayoutRelease(grass_bgl);
         if (grass_samp) wgpuSamplerRelease(grass_samp);
         if (cloud_uniforms) wgpuBufferRelease(cloud_uniforms);
-        if (cloud_pipeline) wgpuRenderPipelineRelease(cloud_pipeline);
-        if (cloud_noise_pipeline) wgpuComputePipelineRelease(cloud_noise_pipeline);
         if (cloud_noise_shader) wgpuShaderModuleRelease(cloud_noise_shader);
         for (WGPUPipelineLayout l : {cloud_layout, cloud_noise_layout}) if (l) wgpuPipelineLayoutRelease(l);
         for (WGPUBindGroupLayout l : {cloud_bgl, cloud_sky_bgl, cloud_noise_bgl}) if (l) wgpuBindGroupLayoutRelease(l);
@@ -5090,11 +5215,9 @@ struct Renderer::Impl {
         for (WGPUTexture tt : {surface_tex, albedo_tex}) if (tt) wgpuTextureRelease(tt);
         if (ssr_bg) wgpuBindGroupRelease(ssr_bg);
         if (ssr_uniforms) wgpuBufferRelease(ssr_uniforms);
-        if (ssr_pipeline) wgpuRenderPipelineRelease(ssr_pipeline);
         if (ssr_layout) wgpuPipelineLayoutRelease(ssr_layout);
         if (ssr_bgl) wgpuBindGroupLayoutRelease(ssr_bgl);
         release_water_targets();
-        for (WGPURenderPipeline p : {water_pipeline[0], water_pipeline[1], water_under_pipeline[0], water_under_pipeline[1], water_depth_pipeline}) if (p) wgpuRenderPipelineRelease(p);
         if (water_uniforms) wgpuBufferRelease(water_uniforms);
         if (water_course_buf) wgpuBufferRelease(water_course_buf);
         if (decal_buffer) wgpuBufferRelease(decal_buffer);
@@ -5110,7 +5233,6 @@ struct Renderer::Impl {
             if (taa_tex[k]) wgpuTextureRelease(taa_tex[k]);
         }
         if (taa_uniforms) wgpuBufferRelease(taa_uniforms);
-        if (taa_pipeline) wgpuRenderPipelineRelease(taa_pipeline);
         if (taa_layout) wgpuPipelineLayoutRelease(taa_layout);
         if (taa_bgl) wgpuBindGroupLayoutRelease(taa_bgl);
         if (taa_shader) wgpuShaderModuleRelease(taa_shader);
@@ -5118,8 +5240,6 @@ struct Renderer::Impl {
         if (fx_view) wgpuTextureViewRelease(fx_view);
         if (fx_tex) wgpuTextureRelease(fx_tex);
         if (fx_uniforms) wgpuBufferRelease(fx_uniforms);
-        if (dof_pipeline) wgpuRenderPipelineRelease(dof_pipeline);
-        if (blur_pipeline) wgpuRenderPipelineRelease(blur_pipeline);
         if (fx_layout) wgpuPipelineLayoutRelease(fx_layout);
         if (fx_bgl) wgpuBindGroupLayoutRelease(fx_bgl);
         if (fx_shader) wgpuShaderModuleRelease(fx_shader);
@@ -5135,27 +5255,20 @@ struct Renderer::Impl {
         if (user_fx_layout) wgpuPipelineLayoutRelease(user_fx_layout);
         if (user_fx_bgl) wgpuBindGroupLayoutRelease(user_fx_bgl);
         if (post_uniforms) wgpuBufferRelease(post_uniforms);
-        if (post_pipeline) wgpuRenderPipelineRelease(post_pipeline);
         if (post_layout) wgpuPipelineLayoutRelease(post_layout);
         if (post_bgl) wgpuBindGroupLayoutRelease(post_bgl);
         if (post_shader) wgpuShaderModuleRelease(post_shader);
         if (meter_uniforms) wgpuBufferRelease(meter_uniforms);
         if (meter_state) wgpuBufferRelease(meter_state);
-        if (meter_pipeline) wgpuComputePipelineRelease(meter_pipeline);
         if (meter_layout) wgpuPipelineLayoutRelease(meter_layout);
         if (meter_bgl) wgpuBindGroupLayoutRelease(meter_bgl);
         if (meter_shader) wgpuShaderModuleRelease(meter_shader);
         release_bloom_targets();
         if (bloom_uniforms) wgpuBufferRelease(bloom_uniforms);
         if (bloom_sampler) wgpuSamplerRelease(bloom_sampler);
-        for (WGPURenderPipeline* p : {&bloom_bright_pipeline, &bloom_blur_pipeline, &bloom_add_pipeline}) if (*p) wgpuRenderPipelineRelease(*p);
         if (bloom_layout) wgpuPipelineLayoutRelease(bloom_layout);
         if (bloom_bgl) wgpuBindGroupLayoutRelease(bloom_bgl);
         if (bloom_shader) wgpuShaderModuleRelease(bloom_shader);
-        if (id_pipeline) wgpuRenderPipelineRelease(id_pipeline);
-        if (id_skinned_pipeline) wgpuRenderPipelineRelease(id_skinned_pipeline);
-        if (id_sprite_pipeline) wgpuRenderPipelineRelease(id_sprite_pipeline);
-        for (WGPURenderPipeline p : {cut_pipeline, cut_skinned_pipeline, id_cut_pipeline, id_cut_skinned_pipeline}) if (p) wgpuRenderPipelineRelease(p);
         for (WGPUTextureView v : {glass_view, glass_stub_view}) if (v) wgpuTextureViewRelease(v);
         for (WGPUTexture t : {glass_tex, glass_stub}) if (t) wgpuTextureRelease(t);
         if (object_bg) wgpuBindGroupRelease(object_bg);
@@ -5171,7 +5284,6 @@ struct Renderer::Impl {
         if (atlas_texture) wgpuTextureRelease(atlas_texture);
         if (atlas_stub_view) wgpuTextureViewRelease(atlas_stub_view);
         if (atlas_stub) wgpuTextureRelease(atlas_stub);
-        if (shadow_pipeline) wgpuRenderPipelineRelease(shadow_pipeline);
         if (shadow_layout) wgpuPipelineLayoutRelease(shadow_layout);
         if (scene_bg) wgpuBindGroupRelease(scene_bg);
         if (scene_bgl) wgpuBindGroupLayoutRelease(scene_bgl);
@@ -5182,32 +5294,15 @@ struct Renderer::Impl {
         if (cascade_bgl) wgpuBindGroupLayoutRelease(cascade_bgl);
         if (shadow_texture) wgpuTextureRelease(shadow_texture);
         if (shadow_sampler) wgpuSamplerRelease(shadow_sampler);
-        if (sprite_pipeline) wgpuRenderPipelineRelease(sprite_pipeline);
-        if (sprite_add_pipeline) wgpuRenderPipelineRelease(sprite_add_pipeline);
-        if (sprite_lit_pipeline) wgpuRenderPipelineRelease(sprite_lit_pipeline);
         for (auto& [id, ge] : gpu_emitters) ge.release();
-        if (particle_pipeline) wgpuRenderPipelineRelease(particle_pipeline);
-        if (particle_add_pipeline) wgpuRenderPipelineRelease(particle_add_pipeline);
-        if (weather_pipeline) wgpuRenderPipelineRelease(weather_pipeline);
         if (particle_layout) wgpuPipelineLayoutRelease(particle_layout);
         if (particle_draw_bgl) wgpuBindGroupLayoutRelease(particle_draw_bgl);
-        if (particle_sim_pipeline) wgpuComputePipelineRelease(particle_sim_pipeline);
         if (particle_sim_layout) wgpuPipelineLayoutRelease(particle_sim_layout);
         if (particle_sim_bgl) wgpuBindGroupLayoutRelease(particle_sim_bgl);
         if (particle_sim_shader) wgpuShaderModuleRelease(particle_sim_shader);
-        if (line_pipeline) wgpuRenderPipelineRelease(line_pipeline);
         if (line_layout) wgpuPipelineLayoutRelease(line_layout);
         if (line_shader) wgpuShaderModuleRelease(line_shader);
         if (line_buffer) wgpuBufferRelease(line_buffer);
-        if (pipeline) wgpuRenderPipelineRelease(pipeline);
-        for (WGPURenderPipeline gp : {grass_pipeline, grass_id_pipeline}) if (gp) wgpuRenderPipelineRelease(gp);
-        if (skinned_pipeline) wgpuRenderPipelineRelease(skinned_pipeline);
-        if (blend_pipeline) wgpuRenderPipelineRelease(blend_pipeline);
-        if (blend_skinned_pipeline) wgpuRenderPipelineRelease(blend_skinned_pipeline);
-        if (shadow_skinned_pipeline) wgpuRenderPipelineRelease(shadow_skinned_pipeline);
-        if (shadow_cut_pipeline) wgpuRenderPipelineRelease(shadow_cut_pipeline);
-        for (WGPURenderPipeline pl : {atlas_pipeline, atlas_skinned_pipeline, atlas_cut_pipeline}) if (pl) wgpuRenderPipelineRelease(pl);
-        for (WGPURenderPipeline p : {oit_pipeline, oit_skinned_pipeline, oit_composite_pipeline, oit_ms_pipeline, oit_ms_skinned_pipeline, oit_ms_composite_pipeline}) if (p) wgpuRenderPipelineRelease(p);
         if (oit_bg) wgpuBindGroupRelease(oit_bg);
         for (WGPUTextureView v : {oit_accum_view, oit_reveal_view, oit_ms_accum_view, oit_ms_reveal_view}) if (v) wgpuTextureViewRelease(v);
         for (WGPUTexture t : {oit_accum_tex, oit_reveal_tex, oit_ms_accum_tex, oit_ms_reveal_tex}) if (t) wgpuTextureRelease(t);
@@ -5215,8 +5310,6 @@ struct Renderer::Impl {
         if (oit_bgl) wgpuBindGroupLayoutRelease(oit_bgl);
         if (oit_shader) wgpuShaderModuleRelease(oit_shader);
         for (WGPUBindGroup g : probe_groups) wgpuBindGroupRelease(g);
-        for (WGPURenderPipeline p : {probe_pipeline, probe_skinned_pipeline, probe_sky_pipeline}) if (p) wgpuRenderPipelineRelease(p);
-        if (probe_fill_pipeline) wgpuComputePipelineRelease(probe_fill_pipeline);
         if (probe_fill_layout) wgpuPipelineLayoutRelease(probe_fill_layout);
         if (probe_fill_bgl) wgpuBindGroupLayoutRelease(probe_fill_bgl);
         if (probe_fill_shader) wgpuShaderModuleRelease(probe_fill_shader);
@@ -5226,7 +5319,6 @@ struct Renderer::Impl {
         for (WGPUBuffer b : grid_params) if (b) wgpuBufferRelease(b);
         if (grid_cluster_buffer) wgpuBufferRelease(grid_cluster_buffer);
         for (WGPUBindGroup g : grid_groups) wgpuBindGroupRelease(g);
-        if (grid_pipeline) wgpuComputePipelineRelease(grid_pipeline);
         if (grid_layout) wgpuPipelineLayoutRelease(grid_layout);
         if (grid_bgl) wgpuBindGroupLayoutRelease(grid_bgl);
         if (grid_shader) wgpuShaderModuleRelease(grid_shader);
@@ -5337,7 +5429,7 @@ struct Renderer::Impl {
         pld.bindGroupLayoutCount = 1;
         pld.bindGroupLayouts = &bloom_bgl;
         bloom_layout = wgpuDeviceCreatePipelineLayout(device->device(), &pld);
-        auto make = [&](const char* label, const char* entry, bool additive) -> Result<WGPURenderPipeline> {
+        auto make = [&](LazyRenderPipeline& into, const char* label, const char* entry, bool additive) {
             WGPUBlendState blend{};
             blend.color.operation = WGPUBlendOperation_Add;
             blend.color.srcFactor = WGPUBlendFactor_One;
@@ -5365,16 +5457,11 @@ struct Renderer::Impl {
             rpd.multisample.count = 1;
             rpd.multisample.mask = 0xFFFFFFFFu;
             rpd.fragment = &fs;
-            WGPURenderPipeline p = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
-            if (!p) return fail("gpu_pipeline_failed", "{} pipeline creation failed", label);
-            return p;
+            into.describe(device->device(), rpd);
         };
-        POCKET_TRY(bright, make("pocket.bloom.bright", "fs_bright", false));
-        bloom_bright_pipeline = bright;
-        POCKET_TRY(blur, make("pocket.bloom.blur", "fs_blur", false));
-        bloom_blur_pipeline = blur;
-        POCKET_TRY(add, make("pocket.bloom.add", "fs_add", true));
-        bloom_add_pipeline = add;
+        make(bloom_bright_pipeline, "pocket.bloom.bright", "fs_bright", false);
+        make(bloom_blur_pipeline, "pocket.bloom.blur", "fs_blur", false);
+        make(bloom_add_pipeline, "pocket.bloom.add", "fs_add", true);
         WGPUSamplerDescriptor sd{};
         sd.label = rhi::str("pocket.bloom");
         sd.addressModeU = WGPUAddressMode_ClampToEdge;
@@ -5442,6 +5529,8 @@ struct Renderer::Impl {
     // The bloom passes over a finished frame: bright parts into A, blurred across into B and down
     // into A, A added onto the frame.
     Status draw_bloom(rhi::Frame& frame) {
+        const WGPURenderPipeline bright = bloom_bright_pipeline.get(), blur = bloom_blur_pipeline.get(), add = bloom_add_pipeline.get();
+        if (!bright || !blur || !add) return {};
         POCKET_TRY_VOID(ensure_bloom_targets(frame.width, frame.height, hdr_view));
         BloomUniforms u[4]{};
         const float fw = 1.0f / static_cast<float>(std::max(1u, frame.width)), fh = 1.0f / static_cast<float>(std::max(1u, frame.height));
@@ -5471,10 +5560,10 @@ struct Renderer::Impl {
             wgpuRenderPassEncoderRelease(enc);
             stats.draw_calls++;
         };
-        pass("pocket.bloom.bright", bloom_view[0], false, bloom_bright_pipeline, bloom_bg[0]);
-        pass("pocket.bloom.across", bloom_view[1], false, bloom_blur_pipeline, bloom_bg[1]);
-        pass("pocket.bloom.down", bloom_view[0], false, bloom_blur_pipeline, bloom_bg[2]);
-        pass("pocket.bloom.add", hdr_view, true, bloom_add_pipeline, bloom_bg[3]);
+        pass("pocket.bloom.bright", bloom_view[0], false, bright, bloom_bg[0]);
+        pass("pocket.bloom.across", bloom_view[1], false, blur, bloom_bg[1]);
+        pass("pocket.bloom.down", bloom_view[0], false, blur, bloom_bg[2]);
+        pass("pocket.bloom.add", hdr_view, true, add, bloom_bg[3]);
         stats.bloom = true;
         return {};
     }
@@ -5618,8 +5707,7 @@ struct Renderer::Impl {
         rpd.multisample.count = 1;
         rpd.multisample.mask = 0xFFFFFFFFu;
         rpd.fragment = &fs;
-        post_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
-        if (!post_pipeline) return fail("gpu_pipeline_failed", "pocket.post pipeline creation failed");
+        post_pipeline.describe(device->device(), rpd);
         post_uniforms = device->create_buffer("pocket.post", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, sizeof(PostUniforms));
 
         POCKET_TRY(mm, device->create_shader("pocket.meter", kExposureWgsl));
@@ -5652,8 +5740,7 @@ struct Renderer::Impl {
         cpd.layout = meter_layout;
         cpd.compute.module = meter_shader;
         cpd.compute.entryPoint = rhi::str("measure");
-        meter_pipeline = wgpuDeviceCreateComputePipeline(device->device(), &cpd);
-        if (!meter_pipeline) return fail("gpu_pipeline_failed", "pocket.meter pipeline creation failed");
+        meter_pipeline.describe(device->device(), cpd);
         meter_uniforms = device->create_buffer("pocket.meter", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, sizeof(MeterUniforms));
         const float zero[4] = {0, 0, 0, 0};
         meter_state = device->create_buffer("pocket.meter.state", WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst | WGPUBufferUsage_CopySrc, sizeof zero, zero);
@@ -6213,7 +6300,7 @@ fn time() -> f32 { return fx.time.x; }
             post_ids = id_view;
         }
         const bool metered = tonemap.auto_exposure;
-        if (metered && !secondary) {
+        if (WGPUComputePipeline meter = metered && !secondary ? meter_pipeline.get() : nullptr) {
             MeterUniforms mu{};
             mu.viewport[0] = static_cast<float>(applied.x);
             mu.viewport[1] = static_cast<float>(applied.y);
@@ -6232,7 +6319,7 @@ fn time() -> f32 { return fx.time.x; }
             WGPUComputePassDescriptor cpd{};
             cpd.label = rhi::str("pocket.meter");
             WGPUComputePassEncoder cp = begin_compute(frame.encoder, cpd);
-            wgpuComputePassEncoderSetPipeline(cp, meter_pipeline);
+            wgpuComputePassEncoderSetPipeline(cp, meter);
             wgpuComputePassEncoderSetBindGroup(cp, 0, meter_bg, 0, nullptr);
             wgpuComputePassEncoderDispatchWorkgroups(cp, 1, 1, 1);
             wgpuComputePassEncoderEnd(cp);
@@ -6351,9 +6438,11 @@ fn time() -> f32 { return fx.time.x; }
         if (applied.w != frame.width || applied.h != frame.height) {
             wgpuRenderPassEncoderSetScissorRect(enc, static_cast<std::uint32_t>(applied.x), static_cast<std::uint32_t>(applied.y), applied.w, applied.h);
         }
-        wgpuRenderPassEncoderSetPipeline(enc, post_pipeline);
-        wgpuRenderPassEncoderSetBindGroup(enc, 0, post_bg, 0, nullptr);
-        wgpuRenderPassEncoderDraw(enc, 3, 1, 0, 0);
+        if (WGPURenderPipeline post = post_pipeline.get()) {
+            wgpuRenderPassEncoderSetPipeline(enc, post);
+            wgpuRenderPassEncoderSetBindGroup(enc, 0, post_bg, 0, nullptr);
+            wgpuRenderPassEncoderDraw(enc, 3, 1, 0, 0);
+        }
         wgpuRenderPassEncoderEnd(enc);
         wgpuRenderPassEncoderRelease(enc);
         if (effects) draw_user_effects(frame, user_fx_view[0]);
@@ -6376,8 +6465,7 @@ fn time() -> f32 { return fx.time.x; }
     static constexpr std::uint32_t kSkySlot = 256;
 
     void release_sky() {
-        if (sky_pipeline) wgpuRenderPipelineRelease(sky_pipeline);
-        sky_pipeline = nullptr;
+        sky_pipeline.release();
         for (WGPUBindGroup& g : prefilter_bg) { if (g) wgpuBindGroupRelease(g); g = nullptr; }
         if (fill_bg) wgpuBindGroupRelease(fill_bg);
         if (irr_bg) wgpuBindGroupRelease(irr_bg);
@@ -6391,7 +6479,7 @@ fn time() -> f32 { return fx.time.x; }
         if (env_sampler) wgpuSamplerRelease(env_sampler);
         if (env_params) wgpuBufferRelease(env_params);
         if (sh_buffer) wgpuBufferRelease(sh_buffer);
-        for (WGPUComputePipeline* p : {&fill_pipeline, &prefilter_pipeline, &irradiance_pipeline}) { if (*p) wgpuComputePipelineRelease(*p); *p = nullptr; }
+        for (LazyComputePipeline* p : {&fill_pipeline, &prefilter_pipeline, &irradiance_pipeline}) p->release();
         for (WGPUPipelineLayout* l : {&env_layout, &irr_layout, &sky_layout}) { if (*l) wgpuPipelineLayoutRelease(*l); *l = nullptr; }
         for (WGPUBindGroupLayout* l : {&env_bgl, &irr_bgl}) { if (*l) wgpuBindGroupLayoutRelease(*l); *l = nullptr; }
         if (sky_shader) wgpuShaderModuleRelease(sky_shader);
@@ -6505,18 +6593,17 @@ fn time() -> f32 { return fx.time.x; }
         };
         env_layout = pipeline_layout("pocket.sky", env_bgl);
         irr_layout = pipeline_layout("pocket.irradiance", irr_bgl);
-        auto compute = [&](const char* label, WGPUPipelineLayout layout, WGPUShaderModule module, const char* entry) {
+        auto compute = [&](LazyComputePipeline& into, const char* label, WGPUPipelineLayout layout, WGPUShaderModule module, const char* entry) {
             WGPUComputePipelineDescriptor cpd{};
             cpd.label = rhi::str(label);
             cpd.layout = layout;
             cpd.compute.module = module;
             cpd.compute.entryPoint = rhi::str(entry);
-            return wgpuDeviceCreateComputePipeline(device->device(), &cpd);
+            into.describe(device->device(), cpd);
         };
-        fill_pipeline = compute("pocket.sky.fill", env_layout, sky_shader, "fill");
-        prefilter_pipeline = compute("pocket.sky.prefilter", env_layout, sky_shader, "prefilter");
-        irradiance_pipeline = compute("pocket.sky.irradiance", irr_layout, irr_shader, "irradiance");
-        if (!fill_pipeline || !prefilter_pipeline || !irradiance_pipeline) return fail("gpu_pipeline_failed", "sky pipelines could not be created");
+        compute(fill_pipeline, "pocket.sky.fill", env_layout, sky_shader, "fill");
+        compute(prefilter_pipeline, "pocket.sky.prefilter", env_layout, sky_shader, "prefilter");
+        compute(irradiance_pipeline, "pocket.sky.irradiance", irr_layout, irr_shader, "irradiance");
 
         WGPUTextureDescriptor td{};
         td.label = rhi::str("pocket.environment");
@@ -6626,6 +6713,8 @@ fn time() -> f32 { return fx.time.x; }
         const Vec3 ks = way(toward_sun), km = way(toward_moon);
         std::snprintf(key, sizeof key, "%d|%s|%g,%g,%g|%g,%g,%g|%g,%g,%g|%g|%g|%d|%g,%g,%g|%.3g,%.3g,%.3g|%g|%g,%g,%g|%.3g,%.3g,%.3g|%.2f", sky.mode, image ? sky.image.c_str() : "", sky.zenith.r, sky.zenith.g, sky.zenith.b, sky.horizon.r, sky.horizon.g, sky.horizon.b, sky.ground.r, sky.ground.g, sky.ground.b, sky.intensity, sky.rotation, have_sun && !image ? 1 : 0, ks.x, ks.y, ks.z, sun_linear.x, sun_linear.y, sun_linear.z, sky.mode == 3 ? sky.haze : 0.0f, km.x, km.y, km.z, moon_linear.x, moon_linear.y, moon_linear.z, env_overcast);
         if (env_key == key) return true;
+        const WGPUComputePipeline fill = fill_pipeline.get(), prefilter = prefilter_pipeline.get(), irradiance = irradiance_pipeline.get();
+        if (!fill || !prefilter || !irradiance) return false;
         SkyParams p{};
         auto color = [](float* out, const world::Color4& c) { out[0] = decode(c.r); out[1] = decode(c.g); out[2] = decode(c.b); out[3] = 1; };
         color(p.zenith, sky.zenith);
@@ -6659,16 +6748,16 @@ fn time() -> f32 { return fx.time.x; }
         WGPUComputePassDescriptor cpd{};
         cpd.label = rhi::str("pocket.sky");
         WGPUComputePassEncoder cp = begin_compute(frame.encoder, cpd);
-        wgpuComputePassEncoderSetPipeline(cp, fill_pipeline);
+        wgpuComputePassEncoderSetPipeline(cp, fill);
         wgpuComputePassEncoderSetBindGroup(cp, 0, fill_bg, 0, nullptr);
         wgpuComputePassEncoderDispatchWorkgroups(cp, (kEnvWidth + 7) / 8, (kEnvHeight + 7) / 8, 1);
-        wgpuComputePassEncoderSetPipeline(cp, prefilter_pipeline);
+        wgpuComputePassEncoderSetPipeline(cp, prefilter);
         for (std::uint32_t l = 1; l < kEnvLevels; ++l) {
             const std::uint32_t w = std::max(1u, kEnvWidth >> l), h = std::max(1u, kEnvHeight >> l);
             wgpuComputePassEncoderSetBindGroup(cp, 0, prefilter_bg[l], 0, nullptr);
             wgpuComputePassEncoderDispatchWorkgroups(cp, (w + 7) / 8, (h + 7) / 8, 1);
         }
-        wgpuComputePassEncoderSetPipeline(cp, irradiance_pipeline);
+        wgpuComputePassEncoderSetPipeline(cp, irradiance);
         wgpuComputePassEncoderSetBindGroup(cp, 0, irr_bg, 0, nullptr);
         wgpuComputePassEncoderDispatchWorkgroups(cp, 1, 1, 1);
         wgpuComputePassEncoderEnd(cp);
@@ -6747,7 +6836,7 @@ fn time() -> f32 { return fx.time.x; }
         pld.bindGroupLayoutCount = 1;
         pld.bindGroupLayouts = &ao_bgl;
         ao_layout = wgpuDeviceCreatePipelineLayout(device->device(), &pld);
-        auto make = [&](const char* label, const char* entry, WGPUTextureFormat format) -> WGPURenderPipeline {
+        auto make = [&](LazyRenderPipeline& into, const char* label, const char* entry, WGPUTextureFormat format) {
             WGPUColorTargetState ct{};
             ct.format = format;
             ct.writeMask = WGPUColorWriteMask_All;
@@ -6767,11 +6856,10 @@ fn time() -> f32 { return fx.time.x; }
             rpd.multisample.count = 1;
             rpd.multisample.mask = 0xFFFFFFFFu;
             rpd.fragment = &fs;
-            return wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
+            into.describe(device->device(), rpd);
         };
-        ao_pipeline = make("pocket.ao", "fs_ao", kAoRawFormat);
-        ao_blur_pipeline = make("pocket.ao.blur", "fs_ao_blur", WGPUTextureFormat_RG8Unorm);
-        if (!ao_pipeline || !ao_blur_pipeline) return fail("gpu_pipeline_failed", "ambient occlusion pipelines could not be created");
+        make(ao_pipeline, "pocket.ao", "fs_ao", kAoRawFormat);
+        make(ao_blur_pipeline, "pocket.ao.blur", "fs_ao_blur", WGPUTextureFormat_RG8Unorm);
         ao_uniforms = device->create_buffer("pocket.ao", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, sizeof(AoUniforms));
         auto [wt, wv] = make_target("pocket.ao.white", 1, 1, WGPUTextureFormat_RG8Unorm, WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst);
         ao_white_tex = wt;
@@ -6899,12 +6987,12 @@ fn time() -> f32 { return fx.time.x; }
         rpd.multisample.count = 1;
         rpd.multisample.mask = 0xFFFFFFFFu;
         rpd.fragment = &fs;
-        probe_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
+        probe_pipeline.describe(device->device(), rpd);
         rpd.label = rhi::str("pocket.probe.skinned");
         rpd.vertex.entryPoint = rhi::str("vs_skinned");
         rpd.vertex.bufferCount = 2;
         rpd.vertex.buffers = vbls;
-        probe_skinned_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
+        probe_skinned_pipeline.describe(device->device(), rpd);
         WGPUFragmentState kfs = fs;
         kfs.entryPoint = rhi::str("fs_sky_probe");
         WGPUDepthStencilState kds = ds;
@@ -6922,8 +7010,7 @@ fn time() -> f32 { return fx.time.x; }
         k.multisample.count = 1;
         k.multisample.mask = 0xFFFFFFFFu;
         k.fragment = &kfs;
-        probe_sky_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &k);
-        if (!probe_pipeline || !probe_skinned_pipeline || !probe_sky_pipeline) return fail("gpu_pipeline_failed", "reflection probe pipelines could not be created");
+        probe_sky_pipeline.describe(device->device(), k);
         POCKET_TRY(module, device->create_shader("pocket.probe.fill", kProbeFillWgsl));
         probe_fill_shader = module;
         WGPUBindGroupLayoutEntry be[4]{};
@@ -6958,8 +7045,7 @@ fn time() -> f32 { return fx.time.x; }
         cpd.layout = probe_fill_layout;
         cpd.compute.module = probe_fill_shader;
         cpd.compute.entryPoint = rhi::str("probe_fill");
-        probe_fill_pipeline = wgpuDeviceCreateComputePipeline(device->device(), &cpd);
-        if (!probe_fill_pipeline) return fail("gpu_pipeline_failed", "the reflection probe fill could not be created");
+        probe_fill_pipeline.describe(device->device(), cpd);
         probe_fill_params = device->create_buffer("pocket.probe.fill", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, sizeof(float) * (16 * 6 + 8));
         probe_prefilter_params = device->create_buffer("pocket.probe.prefilter", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, static_cast<std::uint64_t>(kSkySlot) * kProbeLevels);
         for (auto& b : probe_frame_buf) b = device->create_buffer("pocket.probe.frame", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, sizeof(FrameUniforms));
@@ -7001,8 +7087,7 @@ fn time() -> f32 { return fx.time.x; }
         gcp.layout = grid_layout;
         gcp.compute.module = grid_shader;
         gcp.compute.entryPoint = rhi::str("grid_sh");
-        grid_pipeline = wgpuDeviceCreateComputePipeline(device->device(), &gcp);
-        if (!grid_pipeline) return fail("gpu_pipeline_failed", "the irradiance volumes' harmonics pass could not be created");
+        grid_pipeline.describe(device->device(), gcp);
         for (auto& bufs : grid_frame_buf) for (auto& b : bufs) b = device->create_buffer("pocket.grid.frame", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, sizeof(FrameUniforms));
         for (auto& b : grid_params) b = device->create_buffer("pocket.grid.fill", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, sizeof(float) * (16 * 6 + 8));
         return {};
@@ -7193,8 +7278,7 @@ fn time() -> f32 { return fx.time.x; }
         rpd.multisample.count = 1;
         rpd.multisample.mask = 0xFFFFFFFFu;
         rpd.fragment = &fs;
-        ssr_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
-        if (!ssr_pipeline) return fail("gpu_pipeline_failed", "the screen-space reflection pipeline could not be created");
+        ssr_pipeline.describe(device->device(), rpd);
         ssr_uniforms = device->create_buffer("pocket.ssr", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, sizeof(float) * 8);
         return {};
     }
@@ -7454,8 +7538,7 @@ fn time() -> f32 { return fx.time.x; }
             rpd.label = rhi::str("pocket.water");
             rpd.vertex.entryPoint = rhi::str("vs_water");
             fs.entryPoint = rhi::str("fs_water");
-            water_pipeline[v] = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
-            if (!water_pipeline[v]) return fail("gpu_pipeline_failed", "the water pipeline could not be created");
+            water_pipeline[v].describe(device->device(), rpd);
             // Under a surface: every pixel through the water, the ids and surfaces left as they are.
             targets[1].writeMask = WGPUColorWriteMask_None;
             targets[2].writeMask = WGPUColorWriteMask_None;
@@ -7464,8 +7547,7 @@ fn time() -> f32 { return fx.time.x; }
             rpd.label = rhi::str("pocket.water.under");
             rpd.vertex.entryPoint = rhi::str("vs_water_under");
             fs.entryPoint = rhi::str("fs_water_under");
-            water_under_pipeline[v] = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
-            if (!water_under_pipeline[v]) return fail("gpu_pipeline_failed", "the underwater pipeline could not be created");
+            water_under_pipeline[v].describe(device->device(), rpd);
         }
         ds.format = kPrepassDepth;
         ds.depthWriteEnabled = WGPUOptionalBool_True;
@@ -7473,8 +7555,7 @@ fn time() -> f32 { return fx.time.x; }
         rpd.label = rhi::str("pocket.water.depth");
         rpd.vertex.entryPoint = rhi::str("vs_water");
         rpd.fragment = nullptr;
-        water_depth_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
-        if (!water_depth_pipeline) return fail("gpu_pipeline_failed", "the water depth pipeline could not be created");
+        water_depth_pipeline.describe(device->device(), rpd);
         water_uniforms = device->create_buffer("pocket.water", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, sizeof(WaterGpu) * kMaxWater);
         water_course_buf = device->create_buffer("pocket.water.course", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, sizeof(water_course_data));
         WGPUSamplerDescriptor sd{};
@@ -7622,6 +7703,9 @@ fn time() -> f32 { return fx.time.x; }
     // under one, then every surface; tested against `depth` (the frame's, then the surfaces are also
     // added to the prepass, or the prepass itself).
     Status draw_water(rhi::Frame& frame, WGPUTextureView depth, bool on_prepass, const std::function<void(WGPURenderPassEncoder)>& set_viewport) {
+        const int v = on_prepass ? 1 : 0;
+        const WGPURenderPipeline surfaces = water_pipeline[v].get();
+        if (!surfaces) return {};
         POCKET_TRY_VOID(ensure_water_targets(frame.width, frame.height));
         WGPUTexelCopyTextureInfo src{}, dst{};
         src.aspect = WGPUTextureAspect_All;
@@ -7663,7 +7747,6 @@ fn time() -> f32 { return fx.time.x; }
         rp.colorAttachmentCount = 3;
         rp.colorAttachments = ca;
         rp.depthStencilAttachment = &ds;
-        const int v = on_prepass ? 1 : 0;
         auto draw_surfaces = [&](WGPURenderPassEncoder enc) {
             wgpuRenderPassEncoderSetBindGroup(enc, 0, scene_bg, 0, nullptr);
             wgpuRenderPassEncoderSetBindGroup(enc, 1, water_bg, 0, nullptr);
@@ -7675,18 +7758,18 @@ fn time() -> f32 { return fx.time.x; }
         };
         WGPURenderPassEncoder enc = begin_pass(frame.encoder, rp);
         set_viewport(enc);
-        if (water_under >= 0) {
-            wgpuRenderPassEncoderSetPipeline(enc, water_under_pipeline[v]);
+        if (WGPURenderPipeline under = water_under >= 0 ? water_under_pipeline[v].get() : nullptr) {
+            wgpuRenderPassEncoderSetPipeline(enc, under);
             wgpuRenderPassEncoderSetBindGroup(enc, 0, scene_bg, 0, nullptr);
             wgpuRenderPassEncoderSetBindGroup(enc, 1, water_bg, 0, nullptr);
             wgpuRenderPassEncoderDraw(enc, 3, 1, 0, static_cast<std::uint32_t>(water_under));
             stats.draw_calls++;
         }
-        wgpuRenderPassEncoderSetPipeline(enc, water_pipeline[v]);
+        wgpuRenderPassEncoderSetPipeline(enc, surfaces);
         draw_surfaces(enc);
         wgpuRenderPassEncoderEnd(enc);
         wgpuRenderPassEncoderRelease(enc);
-        if (!on_prepass) {
+        if (WGPURenderPipeline surface_depth = on_prepass ? nullptr : water_depth_pipeline.get()) {
             // The surfaces in the prepass too, for what reads it after (fog, reflections, TAA, depth of field).
             WGPURenderPassDepthStencilAttachment pds = ds;
             pds.view = prepass_view;
@@ -7695,7 +7778,7 @@ fn time() -> f32 { return fx.time.x; }
             prp.depthStencilAttachment = &pds;
             WGPURenderPassEncoder penc = begin_pass(frame.encoder, prp);
             set_viewport(penc);
-            wgpuRenderPassEncoderSetPipeline(penc, water_depth_pipeline);
+            wgpuRenderPassEncoderSetPipeline(penc, surface_depth);
             draw_surfaces(penc);
             wgpuRenderPassEncoderEnd(penc);
             wgpuRenderPassEncoderRelease(penc);
@@ -7705,6 +7788,8 @@ fn time() -> f32 { return fx.time.x; }
 
     // Trace the reflections into the scratch target and copy it back over the HDR target.
     Status draw_ssr(rhi::Frame& frame) {
+        const WGPURenderPipeline trace = ssr_pipeline.get();
+        if (!trace) return {};
         POCKET_TRY_VOID(ensure_fx_target(frame.width, frame.height));
         if (!ssr_bg || ssr_bg_scene != hdr_view || ssr_bg_depth != prepass_view || ssr_bg_surface != surface_view) {
             if (ssr_bg) wgpuBindGroupRelease(ssr_bg);
@@ -7748,7 +7833,7 @@ fn time() -> f32 { return fx.time.x; }
         rp.colorAttachmentCount = 1;
         rp.colorAttachments = &ca;
         WGPURenderPassEncoder enc = begin_pass(frame.encoder, rp);
-        wgpuRenderPassEncoderSetPipeline(enc, ssr_pipeline);
+        wgpuRenderPassEncoderSetPipeline(enc, trace);
         wgpuRenderPassEncoderSetBindGroup(enc, 0, scene_bg, 0, nullptr);
         wgpuRenderPassEncoderSetBindGroup(enc, 1, ssr_bg, 0, nullptr);
         wgpuRenderPassEncoderDraw(enc, 3, 1, 0, 0);
@@ -7795,7 +7880,7 @@ fn time() -> f32 { return fx.time.x; }
         pld.bindGroupLayoutCount = 1;
         pld.bindGroupLayouts = &fx_bgl;
         fx_layout = wgpuDeviceCreatePipelineLayout(device->device(), &pld);
-        auto make = [&](const char* label, const char* entry) {
+        auto make = [&](LazyRenderPipeline& into, const char* label, const char* entry) {
             WGPUColorTargetState ct{};
             ct.format = kHdrFormat;
             ct.writeMask = WGPUColorWriteMask_All;
@@ -7815,11 +7900,10 @@ fn time() -> f32 { return fx.time.x; }
             rpd.multisample.count = 1;
             rpd.multisample.mask = 0xFFFFFFFFu;
             rpd.fragment = &fs;
-            return wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
+            into.describe(device->device(), rpd);
         };
-        dof_pipeline = make("pocket.dof", "fs_dof");
-        blur_pipeline = make("pocket.motion_blur", "fs_motion_blur");
-        if (!dof_pipeline || !blur_pipeline) return fail("gpu_pipeline_failed", "the depth of field or motion blur pipeline could not be created");
+        make(dof_pipeline, "pocket.dof", "fs_dof");
+        make(blur_pipeline, "pocket.motion_blur", "fs_motion_blur");
         fx_uniforms = device->create_buffer("pocket.fx", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, sizeof(FxUniforms));
         return {};
     }
@@ -7852,7 +7936,9 @@ fn time() -> f32 { return fx.time.x; }
     }
 
     // One effect over the HDR target: drawn into the scratch target from it, then copied back.
-    Status apply_fx(rhi::Frame& frame, WGPURenderPipeline pipeline, const char* label, const FxUniforms& u) {
+    Status apply_fx(rhi::Frame& frame, LazyRenderPipeline& effect, const char* label, const FxUniforms& u) {
+        const WGPURenderPipeline pipeline = effect.get();
+        if (!pipeline) return {};
         POCKET_TRY_VOID(ensure_fx_target(frame.width, frame.height));
         if (!fx_bg || fx_bg_scene != hdr_view || fx_bg_depth != prepass_view || fx_bg_velocity != velocity_view) {
             if (fx_bg) wgpuBindGroupRelease(fx_bg);
@@ -7943,19 +8029,19 @@ fn time() -> f32 { return fx.time.x; }
         rpd.multisample.count = 1;
         rpd.multisample.mask = 0xFFFFFFFFu;
         rpd.fragment = &fs;
-        oit_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
+        oit_pipeline.describe(device->device(), rpd);
         rpd.label = rhi::str("pocket.oit.skinned");
         rpd.vertex.entryPoint = rhi::str("vs_skinned");
         rpd.vertex.bufferCount = 2;
         rpd.vertex.buffers = vbls;
-        oit_skinned_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
+        oit_skinned_pipeline.describe(device->device(), rpd);
         rpd.multisample.count = 4;   // WebGPU multisamples at 1 or 4 only
-        oit_ms_skinned_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
+        oit_ms_skinned_pipeline.describe(device->device(), rpd);
         rpd.label = rhi::str("pocket.oit.msaa");
         rpd.vertex.entryPoint = rhi::str("vs");
         rpd.vertex.bufferCount = 1;
         rpd.vertex.buffers = &vbl;
-        oit_ms_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
+        oit_ms_pipeline.describe(device->device(), rpd);
         POCKET_TRY(module, device->create_shader("pocket.oit", kOitCompositeWgsl));
         oit_shader = module;
         WGPUBindGroupLayoutEntry be[2]{};
@@ -7998,11 +8084,10 @@ fn time() -> f32 { return fx.time.x; }
         c.multisample.count = 1;
         c.multisample.mask = 0xFFFFFFFFu;
         c.fragment = &cfs;
-        oit_composite_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &c);
+        oit_composite_pipeline.describe(device->device(), c);
         c.label = rhi::str("pocket.oit.composite.msaa");
         c.multisample.count = 4;
-        oit_ms_composite_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &c);
-        if (!oit_pipeline || !oit_skinned_pipeline || !oit_composite_pipeline || !oit_ms_pipeline || !oit_ms_skinned_pipeline || !oit_ms_composite_pipeline) return fail("gpu_pipeline_failed", "order-independent transparency pipelines could not be created");
+        oit_ms_composite_pipeline.describe(device->device(), c);
         return {};
     }
 
@@ -8103,8 +8188,7 @@ fn time() -> f32 { return fx.time.x; }
         rpd.multisample.count = 1;
         rpd.multisample.mask = 0xFFFFFFFFu;
         rpd.fragment = &fs;
-        taa_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
-        if (!taa_pipeline) return fail("gpu_pipeline_failed", "the TAA pipeline could not be created");
+        taa_pipeline.describe(device->device(), rpd);
         taa_uniforms = device->create_buffer("pocket.taa", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, sizeof(TaaUniforms));
         return {};
     }
@@ -8112,6 +8196,8 @@ fn time() -> f32 { return fx.time.x; }
     // Resolve this frame against its history into the next resolved texture, and put the result in
     // the HDR target for what follows (volumetric fog, bloom, the final pass).
     Status resolve_taa(rhi::Frame& frame, const Mat4& reproject) {
+        const WGPURenderPipeline resolve = taa_pipeline.get();
+        if (!resolve) return {};
         const std::uint32_t w = frame.width, h = frame.height;
         if (!taa_tex[0] || taa_w != w || taa_h != h) {
             for (int k = 0; k < 2; ++k) {
@@ -8178,7 +8264,7 @@ fn time() -> f32 { return fx.time.x; }
         rp.colorAttachmentCount = 1;
         rp.colorAttachments = &ca;
         WGPURenderPassEncoder enc = begin_pass(frame.encoder, rp);
-        wgpuRenderPassEncoderSetPipeline(enc, taa_pipeline);
+        wgpuRenderPassEncoderSetPipeline(enc, resolve);
         wgpuRenderPassEncoderSetBindGroup(enc, 0, taa_bg[k], 0, nullptr);
         wgpuRenderPassEncoderDraw(enc, 3, 1, 0, 0);
         wgpuRenderPassEncoderEnd(enc);
@@ -8263,8 +8349,7 @@ fn time() -> f32 { return fx.time.x; }
         rpd.multisample.count = 1;
         rpd.multisample.mask = 0xFFFFFFFFu;
         rpd.fragment = &fs;
-        cloud_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
-        if (!cloud_pipeline) return fail("gpu_pipeline_failed", "the clouds' pipeline could not be created");
+        cloud_pipeline.describe(device->device(), rpd);
         cloud_uniforms = device->create_buffer("pocket.clouds", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, sizeof(CloudUniforms));
         WGPUSamplerDescriptor sd{};
         sd.label = rhi::str("pocket.clouds.repeat");
@@ -8316,8 +8401,7 @@ fn time() -> f32 { return fx.time.x; }
         cpd.layout = cloud_noise_layout;
         cpd.compute.module = cloud_noise_shader;
         cpd.compute.entryPoint = rhi::str("make_noise");
-        cloud_noise_pipeline = wgpuDeviceCreateComputePipeline(device->device(), &cpd);
-        if (!cloud_noise_pipeline) return fail("gpu_pipeline_failed", "the clouds' noise pipeline could not be created");
+        cloud_noise_pipeline.describe(device->device(), cpd);
         return {};
     }
     WGPUBindGroup make_cloud_sky_group(WGPUTextureView view) {
@@ -8336,7 +8420,11 @@ fn time() -> f32 { return fx.time.x; }
 
     // March the clouds into the quarter-size target, before the scene pass draws the sky over them.
     Status draw_clouds(rhi::Frame& frame) {
+        const WGPURenderPipeline march = cloud_pipeline.get();
+        if (!march) return {};
         if (!cloud_noise_made) {
+            const WGPUComputePipeline noise = cloud_noise_pipeline.get();
+            if (!noise) return {};
             WGPUTextureDescriptor td{};
             td.label = rhi::str("pocket.clouds.noise");
             td.usage = WGPUTextureUsage_TextureBinding | WGPUTextureUsage_StorageBinding;
@@ -8366,7 +8454,7 @@ fn time() -> f32 { return fx.time.x; }
             WGPUComputePassDescriptor cpd{};
             cpd.label = rhi::str("pocket.clouds.noise");
             WGPUComputePassEncoder cp = begin_compute(frame.encoder, cpd);
-            wgpuComputePassEncoderSetPipeline(cp, cloud_noise_pipeline);
+            wgpuComputePassEncoderSetPipeline(cp, noise);
             wgpuComputePassEncoderSetBindGroup(cp, 0, cloud_noise_bg, 0, nullptr);
             wgpuComputePassEncoderDispatchWorkgroups(cp, 16, 16, 16);
             wgpuComputePassEncoderEnd(cp);
@@ -8436,7 +8524,7 @@ fn time() -> f32 { return fx.time.x; }
         rp.colorAttachmentCount = 1;
         rp.colorAttachments = &ca;
         WGPURenderPassEncoder enc = begin_pass(frame.encoder, rp);
-        wgpuRenderPassEncoderSetPipeline(enc, cloud_pipeline);
+        wgpuRenderPassEncoderSetPipeline(enc, march);
         wgpuRenderPassEncoderSetBindGroup(enc, 0, scene_bg, 0, nullptr);
         wgpuRenderPassEncoderSetBindGroup(enc, 1, cloud_bgs[k], 0, nullptr);
         wgpuRenderPassEncoderDraw(enc, 3, 1, 0, 0);
@@ -8497,8 +8585,7 @@ fn time() -> f32 { return fx.time.x; }
         rpd.multisample.count = 1;
         rpd.multisample.mask = 0xFFFFFFFFu;
         rpd.fragment = &fs;
-        volume_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
-        if (!volume_pipeline) return fail("gpu_pipeline_failed", "the volumetric fog pipeline could not be created");
+        volume_pipeline.describe(device->device(), rpd);
         volume_uniforms = device->create_buffer("pocket.volume", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, sizeof(VolumeUniforms));
         WGPUSamplerDescriptor sd{};
         sd.label = rhi::str("pocket.volume.history");
@@ -8571,8 +8658,7 @@ fn time() -> f32 { return fx.time.x; }
         rpd.multisample.count = 1;
         rpd.multisample.mask = 0xFFFFFFFFu;
         rpd.fragment = &fs;
-        gi_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
-        if (!gi_pipeline) return fail("gpu_pipeline_failed", "the global illumination pipeline could not be created");
+        gi_pipeline.describe(device->device(), rpd);
         // Added to the frame: color plus color, its alpha kept.
         WGPUBlendState add{};
         add.color.operation = WGPUBlendOperation_Add;
@@ -8584,8 +8670,7 @@ fn time() -> f32 { return fx.time.x; }
         ct.blend = &add;
         fs.entryPoint = rhi::str("fs_gi_add");
         rpd.label = rhi::str("pocket.gi.add");
-        gi_add_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
-        if (!gi_add_pipeline) return fail("gpu_pipeline_failed", "the global illumination pipeline could not be created");
+        gi_add_pipeline.describe(device->device(), rpd);
         gi_uniforms = device->create_buffer("pocket.gi", WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, sizeof(float) * 8);
         return {};
     }
@@ -8593,6 +8678,11 @@ fn time() -> f32 { return fx.time.x; }
     // Gather the light bounced off what is on screen at half size, then add it to the frame (after
     // the scene pass, before the reflections; the prepass's depth, surface and albedo must be there).
     Status draw_gi(rhi::Frame& frame) {
+        const WGPURenderPipeline gather = gi_pipeline.get(), add = gi_add_pipeline.get();
+        if (!gather || !add) {
+            gi_valid = false;
+            return {};
+        }
         const std::uint32_t gw = std::max(1u, (frame.width + 1) / 2), gh = std::max(1u, (frame.height + 1) / 2);
         bool regroup = !gi_bgs[0] || gi_bg_views[0] != prepass_view || gi_bg_views[1] != surface_view || gi_bg_views[2] != hdr_view || gi_bg_views[3] != albedo_view;
         if (!gi_tex[0] || gi_w != gw || gi_h != gh) {
@@ -8658,7 +8748,7 @@ fn time() -> f32 { return fx.time.x; }
         rp.colorAttachmentCount = 1;
         rp.colorAttachments = &ca;
         WGPURenderPassEncoder enc = begin_pass(frame.encoder, rp);
-        wgpuRenderPassEncoderSetPipeline(enc, gi_pipeline);
+        wgpuRenderPassEncoderSetPipeline(enc, gather);
         wgpuRenderPassEncoderSetBindGroup(enc, 0, scene_bg, 0, nullptr);
         wgpuRenderPassEncoderSetBindGroup(enc, 1, gi_bgs[k], 0, nullptr);
         wgpuRenderPassEncoderDraw(enc, 3, 1, 0, 0);
@@ -8674,7 +8764,7 @@ fn time() -> f32 { return fx.time.x; }
         arp.colorAttachmentCount = 1;
         arp.colorAttachments = &aca;
         enc = begin_pass(frame.encoder, arp);
-        wgpuRenderPassEncoderSetPipeline(enc, gi_add_pipeline);
+        wgpuRenderPassEncoderSetPipeline(enc, add);
         wgpuRenderPassEncoderSetBindGroup(enc, 0, scene_bg, 0, nullptr);
         wgpuRenderPassEncoderSetBindGroup(enc, 1, gi_add_bgs[k], 0, nullptr);
         wgpuRenderPassEncoderDraw(enc, 3, 1, 0, 0);
@@ -8689,6 +8779,12 @@ fn time() -> f32 { return fx.time.x; }
 
     // March the fog into the half-size target (the prepass depth must be there).
     Status draw_volume(rhi::Frame& frame, const world::Fog& fog) {
+        const WGPURenderPipeline march = volume_pipeline.get();
+        if (!march) {
+            stats.volumetric = false;
+            volume_valid = false;
+            return {};
+        }
         const std::uint32_t vw = std::max(1u, (frame.width + 1) / 2), vh = std::max(1u, (frame.height + 1) / 2);
         if (!volume_tex[0] || volume_w != vw || volume_h != vh) {
             for (int k = 0; k < 2; ++k) {
@@ -8762,7 +8858,7 @@ fn time() -> f32 { return fx.time.x; }
         rp.colorAttachmentCount = 1;
         rp.colorAttachments = &ca;
         WGPURenderPassEncoder enc = begin_pass(frame.encoder, rp);
-        wgpuRenderPassEncoderSetPipeline(enc, volume_pipeline);
+        wgpuRenderPassEncoderSetPipeline(enc, march);
         wgpuRenderPassEncoderSetBindGroup(enc, 0, scene_bg, 0, nullptr);
         wgpuRenderPassEncoderSetBindGroup(enc, 1, volume_bgs[k], 0, nullptr);
         wgpuRenderPassEncoderDraw(enc, 3, 1, 0, 0);
@@ -8899,6 +8995,7 @@ fn time() -> f32 { return fx.time.x; }
         u.contact[0] = shadows.contact_length;
         u.contact[1] = ao.enabled ? 1.0f : 0.0f;
         device->write_buffer(ao_uniforms, 0, &u, sizeof u);
+        const WGPURenderPipeline pipes[2] = {ao_pipeline.get(), ao_blur_pipeline.get()};
         for (int i = 0; i < 2; ++i) {
             WGPURenderPassColorAttachment ca{};
             ca.view = ao_view[i];
@@ -8911,9 +9008,11 @@ fn time() -> f32 { return fx.time.x; }
             rp.colorAttachmentCount = 1;
             rp.colorAttachments = &ca;
             WGPURenderPassEncoder enc = begin_pass(frame.encoder, rp);
-            wgpuRenderPassEncoderSetPipeline(enc, i == 0 ? ao_pipeline : ao_blur_pipeline);
-            wgpuRenderPassEncoderSetBindGroup(enc, 0, ao_bg[i], 0, nullptr);
-            wgpuRenderPassEncoderDraw(enc, 3, 1, 0, 0);
+            if (pipes[i]) {
+                wgpuRenderPassEncoderSetPipeline(enc, pipes[i]);
+                wgpuRenderPassEncoderSetBindGroup(enc, 0, ao_bg[i], 0, nullptr);
+                wgpuRenderPassEncoderDraw(enc, 3, 1, 0, 0);
+            }
             wgpuRenderPassEncoderEnd(enc);
             wgpuRenderPassEncoderRelease(enc);
         }
@@ -8921,22 +9020,14 @@ fn time() -> f32 { return fx.time.x; }
     }
 
     void release_scene_pipelines() {
-        if (sky_pipeline) wgpuRenderPipelineRelease(sky_pipeline);
-        sky_pipeline = nullptr;
-        for (WGPURenderPipeline* p : {&grass_pipeline, &grass_id_pipeline}) {
-            if (*p) wgpuRenderPipelineRelease(*p);
-            *p = nullptr;
-        }
-        for (WGPURenderPipeline* p : {&pipeline, &skinned_pipeline, &cut_pipeline, &cut_skinned_pipeline, &blend_pipeline, &blend_skinned_pipeline, &sprite_pipeline, &sprite_add_pipeline, &particle_pipeline, &particle_add_pipeline, &weather_pipeline, &sprite_lit_pipeline, &line_pipeline, &id_pipeline, &id_skinned_pipeline, &id_cut_pipeline, &id_cut_skinned_pipeline, &id_sprite_pipeline}) {
-            if (*p) wgpuRenderPipelineRelease(*p);
-            *p = nullptr;
-        }
+        for (LazyRenderPipeline* p : {&sky_pipeline, &grass_pipeline, &grass_id_pipeline, &pipeline, &skinned_pipeline, &cut_pipeline, &cut_skinned_pipeline, &blend_pipeline, &blend_skinned_pipeline, &sprite_pipeline, &sprite_add_pipeline, &particle_pipeline, &particle_add_pipeline, &weather_pipeline, &sprite_lit_pipeline, &line_pipeline, &id_pipeline, &id_skinned_pipeline, &id_cut_pipeline, &id_cut_skinned_pipeline, &id_sprite_pipeline}) p->release();
     }
 
     // The scene pipelines for a sample count: with one sample, color and id share a pass (two
     // targets); with more, the color pipelines are multisampled with one target and separate
-    // single-sample pipelines write the ids.
-    Status create_scene_pipelines(int samples, bool prepass = false) {
+    // single-sample pipelines write the ids. Described here, each made when a frame first draws
+    // with it (LazyRenderPipeline).
+    void create_scene_pipelines(int samples, bool prepass = false) {
         release_scene_pipelines();
         const bool split = samples > 1 || prepass;
         WGPUColorTargetState targets[2]{};
@@ -8971,24 +9062,20 @@ fn time() -> f32 { return fx.time.x; }
         rpd.multisample.count = static_cast<std::uint32_t>(samples);
         rpd.multisample.mask = 0xFFFFFFFFu;
         rpd.fragment = &fs;
-        pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
-        if (!pipeline) return fail("gpu_pipeline_failed", "mesh pipeline creation failed");
+        pipeline.describe(device->device(), rpd);
         // Cut-outs: the same shading with its discard, drawn after the solid meshes.
         fs.entryPoint = rhi::str(split ? "fs_color_cut" : "fs_cut");
         rpd.label = rhi::str("pocket.mesh.cut");
-        cut_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
-        if (!cut_pipeline) return fail("gpu_pipeline_failed", "cut-out pipeline creation failed");
+        cut_pipeline.describe(device->device(), rpd);
         // Skinned meshes: the same lit fragment, a vertex stage that blends joint matrices.
         rpd.label = rhi::str("pocket.mesh.skinned.cut");
         rpd.vertex.entryPoint = rhi::str("vs_skinned");
         rpd.vertex.bufferCount = 2;
         rpd.vertex.buffers = vbls;
-        cut_skinned_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
-        if (!cut_skinned_pipeline) return fail("gpu_pipeline_failed", "skinned cut-out pipeline creation failed");
+        cut_skinned_pipeline.describe(device->device(), rpd);
         fs.entryPoint = rhi::str(split ? "fs_color" : "fs");
         rpd.label = rhi::str("pocket.mesh.skinned");
-        skinned_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
-        if (!skinned_pipeline) return fail("gpu_pipeline_failed", "skinned pipeline creation failed");
+        skinned_pipeline.describe(device->device(), rpd);
         fs.entryPoint = rhi::str(split ? "fs_color_cut" : "fs_cut");   // a translucent mesh may be cut out too
         // Translucent meshes: the same lit shading blended over what is behind, depth tested but
         // not written (so they never hide each other), drawn after the opaque ones far to near.
@@ -8999,14 +9086,12 @@ fn time() -> f32 { return fx.time.x; }
         ds.depthWriteEnabled = WGPUOptionalBool_False;
         ds.depthCompare = WGPUCompareFunction_LessEqual;
         rpd.label = rhi::str("pocket.mesh.blend.skinned");
-        blend_skinned_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
-        if (!blend_skinned_pipeline) return fail("gpu_pipeline_failed", "translucent skinned pipeline creation failed");
+        blend_skinned_pipeline.describe(device->device(), rpd);
         rpd.label = rhi::str("pocket.mesh.blend");
         rpd.vertex.entryPoint = rhi::str("vs");
         rpd.vertex.bufferCount = 1;
         rpd.vertex.buffers = &vbl;
-        blend_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
-        if (!blend_pipeline) return fail("gpu_pipeline_failed", "translucent pipeline creation failed");
+        blend_pipeline.describe(device->device(), rpd);
         targets[0].blend = nullptr;
         ds.depthWriteEnabled = WGPUOptionalBool_True;
         ds.depthCompare = WGPUCompareFunction_Less;
@@ -9024,16 +9109,14 @@ fn time() -> f32 { return fx.time.x; }
         ds.depthCompare = WGPUCompareFunction_LessEqual;
         rpd.label = rhi::str("pocket.sprite");
         rpd.primitive.cullMode = WGPUCullMode_None;
-        sprite_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
-        if (!sprite_pipeline) return fail("gpu_pipeline_failed", "sprite pipeline creation failed");
+        sprite_pipeline.describe(device->device(), rpd);
         // Additive: the color times its alpha added to what is there; the alpha left as it was.
         WGPUBlendState add{};
         add.color = {WGPUBlendOperation_Add, WGPUBlendFactor_SrcAlpha, WGPUBlendFactor_One};
         add.alpha = {WGPUBlendOperation_Add, WGPUBlendFactor_Zero, WGPUBlendFactor_One};
         targets[0].blend = &add;
         rpd.label = rhi::str("pocket.sprite.add");
-        sprite_add_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
-        if (!sprite_add_pipeline) return fail("gpu_pipeline_failed", "additive sprite pipeline creation failed");
+        sprite_add_pipeline.describe(device->device(), rpd);
         // GPU particles: the sprites' states, their quads made from the ring (no vertex buffer).
         {
             WGPURenderPipelineDescriptor prpd = rpd;
@@ -9045,11 +9128,10 @@ fn time() -> f32 { return fx.time.x; }
             prpd.vertex.bufferCount = 0;
             prpd.vertex.buffers = nullptr;
             prpd.label = rhi::str("pocket.particles.add");
-            particle_add_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &prpd);
+            particle_add_pipeline.describe(device->device(), prpd);
             targets[0].blend = &blend;
             prpd.label = rhi::str("pocket.particles");
-            particle_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &prpd);
-            if (!particle_pipeline || !particle_add_pipeline) return fail("gpu_pipeline_failed", "GPU particle pipeline creation failed");
+            particle_pipeline.describe(device->device(), prpd);
         }
         // Rain and snow: the sprites' blending and depth test, quads made from each drop's number
         // (no vertex buffer), the ids behind them left as they were.
@@ -9066,16 +9148,14 @@ fn time() -> f32 { return fx.time.x; }
             wrpd.vertex.bufferCount = 0;
             wrpd.vertex.buffers = nullptr;
             wrpd.label = rhi::str("pocket.weather");
-            weather_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &wrpd);
-            if (!weather_pipeline) return fail("gpu_pipeline_failed", "weather pipeline creation failed");
+            weather_pipeline.describe(device->device(), wrpd);
         }
         targets[0].blend = &blend;
         // Lit sprites and tile maps: the meshes' shading (the lights, the sun, the ambient and a
         // normal map) over the sprite's state, alpha blended.
         fs.entryPoint = rhi::str(split ? "fs_color" : "fs");
         rpd.label = rhi::str("pocket.sprite.lit");
-        sprite_lit_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
-        if (!sprite_lit_pipeline) return fail("gpu_pipeline_failed", "lit sprite pipeline creation failed");
+        sprite_lit_pipeline.describe(device->device(), rpd);
         // Debug lines: their own tiny shader over the frame uniform, alpha blended, depth tested
         // without writing, and no id writes (a line over an entity leaves its id in place).
         {
@@ -9112,8 +9192,7 @@ fn time() -> f32 { return fx.time.x; }
             lrpd.multisample.count = static_cast<std::uint32_t>(samples);
             lrpd.multisample.mask = 0xFFFFFFFFu;
             lrpd.fragment = &lfs;
-            line_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &lrpd);
-            if (!line_pipeline) return fail("gpu_pipeline_failed", "line pipeline creation failed");
+            line_pipeline.describe(device->device(), lrpd);
         }
         if (split) {
             // The id pass: one R32Uint target, one sample, its own depth test, the same vertex paths.
@@ -9144,22 +9223,18 @@ fn time() -> f32 { return fx.time.x; }
             irpd.vertex.entryPoint = rhi::str("vs");
             irpd.vertex.bufferCount = 1;
             irpd.vertex.buffers = &vbl;
-            id_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &irpd);
-            if (!id_pipeline) return fail("gpu_pipeline_failed", "id pipeline creation failed");
+            id_pipeline.describe(device->device(), irpd);
             ifs.entryPoint = rhi::str("fs_id_cut");
             irpd.label = rhi::str("pocket.ids.cut");
-            id_cut_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &irpd);
-            if (!id_cut_pipeline) return fail("gpu_pipeline_failed", "cut-out id pipeline creation failed");
+            id_cut_pipeline.describe(device->device(), irpd);
             irpd.label = rhi::str("pocket.ids.skinned.cut");
             irpd.vertex.entryPoint = rhi::str("vs_skinned");
             irpd.vertex.bufferCount = 2;
             irpd.vertex.buffers = vbls;
-            id_cut_skinned_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &irpd);
-            if (!id_cut_skinned_pipeline) return fail("gpu_pipeline_failed", "skinned cut-out id pipeline creation failed");
+            id_cut_skinned_pipeline.describe(device->device(), irpd);
             ifs.entryPoint = rhi::str("fs_id");
             irpd.label = rhi::str("pocket.ids.skinned");
-            id_skinned_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &irpd);
-            if (!id_skinned_pipeline) return fail("gpu_pipeline_failed", "skinned id pipeline creation failed");
+            id_skinned_pipeline.describe(device->device(), irpd);
             irpd.label = rhi::str("pocket.ids.sprite");
             ifs.entryPoint = rhi::str("fs_unlit_id");
             ids.depthWriteEnabled = WGPUOptionalBool_False;
@@ -9168,8 +9243,7 @@ fn time() -> f32 { return fx.time.x; }
             irpd.vertex.entryPoint = rhi::str("vs");
             irpd.vertex.bufferCount = 1;
             irpd.vertex.buffers = &vbl;
-            id_sprite_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &irpd);
-            if (!id_sprite_pipeline) return fail("gpu_pipeline_failed", "sprite id pipeline creation failed");
+            id_sprite_pipeline.describe(device->device(), irpd);
         }
         {
             // The sky: first in the scene pass, never tested against or written into depth.
@@ -9198,8 +9272,7 @@ fn time() -> f32 { return fx.time.x; }
             k.multisample.count = static_cast<std::uint32_t>(samples);
             k.multisample.mask = 0xFFFFFFFFu;
             k.fragment = &kfs;
-            sky_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &k);
-            if (!sky_pipeline) return fail("gpu_pipeline_failed", "sky pipeline creation failed");
+            sky_pipeline.describe(device->device(), k);
         }
         {
             // Grass: blades as triangle strips of seven points, both sides, written into depth; in the
@@ -9234,8 +9307,7 @@ fn time() -> f32 { return fx.time.x; }
             g.multisample.count = static_cast<std::uint32_t>(samples);
             g.multisample.mask = 0xFFFFFFFFu;
             g.fragment = &gfs;
-            grass_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &g);
-            if (!grass_pipeline) return fail("gpu_pipeline_failed", "grass pipeline creation failed");
+            grass_pipeline.describe(device->device(), g);
             if (split) {
                 WGPUColorTargetState it[4]{};
                 it[0].format = WGPUTextureFormat_R32Uint;
@@ -9254,13 +9326,11 @@ fn time() -> f32 { return fx.time.x; }
                 g.depthStencil = &ids;
                 g.multisample.count = 1;
                 g.fragment = &ifs;
-                grass_id_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &g);
-                if (!grass_id_pipeline) return fail("gpu_pipeline_failed", "grass id pipeline creation failed");
+                grass_id_pipeline.describe(device->device(), g);
             }
         }
         msaa_applied = samples;
         split_applied = split;
-        return {};
     }
 
     // Grass's group: its uniforms, the ground texture and a clamped linear sampler.
@@ -9400,8 +9470,10 @@ fn time() -> f32 { return fx.time.x; }
             grass_draws.push_back({gg.bg, cells * cells});
         });
     }
-    void draw_grass(WGPURenderPassEncoder pass, WGPURenderPipeline pipe) {
-        if (grass_draws.empty() || !pipe) return;
+    void draw_grass(WGPURenderPassEncoder pass, LazyRenderPipeline& blades) {
+        if (grass_draws.empty()) return;
+        const WGPURenderPipeline pipe = blades.get();
+        if (!pipe) return;
         wgpuRenderPassEncoderSetPipeline(pass, pipe);
         wgpuRenderPassEncoderSetBindGroup(pass, 0, scene_bg, 0, nullptr);
         for (const GrassDraw& d : grass_draws) {
@@ -9634,8 +9706,7 @@ fn time() -> f32 { return fx.time.x; }
             cpd.layout = particle_sim_layout;
             cpd.compute.module = particle_sim_shader;
             cpd.compute.entryPoint = rhi::str("simulate");
-            particle_sim_pipeline = wgpuDeviceCreateComputePipeline(device->device(), &cpd);
-            if (!particle_sim_pipeline) return fail("gpu_pipeline_failed", "the GPU particles' simulation could not be created");
+            particle_sim_pipeline.describe(device->device(), cpd);
         }
         POCKET_TRY_VOID(create_clouds());
         create_grass_layout();
@@ -9732,14 +9803,12 @@ fn time() -> f32 { return fx.time.x; }
         rpd.multisample.count = 1;
         rpd.multisample.mask = 0xFFFFFFFFu;
         rpd.fragment = nullptr;
-        shadow_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
-        if (!shadow_pipeline) return fail("gpu_pipeline_failed", "shadow pipeline creation failed");
+        shadow_pipeline.describe(device->device(), rpd);
         rpd.label = rhi::str("pocket.shadow.skinned");
         rpd.vertex.entryPoint = rhi::str("vs_shadow_skinned");
         rpd.vertex.bufferCount = 2;
         rpd.vertex.buffers = vbls;
-        shadow_skinned_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
-        if (!shadow_skinned_pipeline) return fail("gpu_pipeline_failed", "skinned shadow pipeline creation failed");
+        shadow_skinned_pipeline.describe(device->device(), rpd);
         {
             // Cut-outs: the shadow layout with the material after it, and a fragment that drops holes.
             WGPUBindGroupLayout cbgls[4] = {frame_bgl, object_bgl, cascade_bgl, material_bgl};
@@ -9759,20 +9828,18 @@ fn time() -> f32 { return fx.time.x; }
             crpd.vertex.bufferCount = 1;
             crpd.vertex.buffers = &vbl;
             crpd.fragment = &cfs;
-            shadow_cut_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &crpd);
-            if (!shadow_cut_pipeline) return fail("gpu_pipeline_failed", "cut-out shadow pipeline creation failed");
+            shadow_cut_pipeline.describe(device->device(), crpd);
             // The same three for the lights' atlas, at its 32-bit depth.
             sds.format = WGPUTextureFormat_Depth32Float;
             crpd.label = rhi::str("pocket.atlas.cut");
-            atlas_cut_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &crpd);
+            atlas_cut_pipeline.describe(device->device(), crpd);
             rpd.label = rhi::str("pocket.atlas.skinned");
-            atlas_skinned_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
+            atlas_skinned_pipeline.describe(device->device(), rpd);
             rpd.label = rhi::str("pocket.atlas");
             rpd.vertex.entryPoint = rhi::str("vs_shadow");
             rpd.vertex.bufferCount = 1;
             rpd.vertex.buffers = &vbl;
-            atlas_pipeline = wgpuDeviceCreateRenderPipeline(device->device(), &rpd);
-            if (!atlas_pipeline || !atlas_skinned_pipeline || !atlas_cut_pipeline) return fail("gpu_pipeline_failed", "the shadow atlas pipelines could not be created");
+            atlas_pipeline.describe(device->device(), rpd);
         }
         joint_buffer = device->create_buffer("pocket.joints", WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst, static_cast<std::uint64_t>(kMaxJoints) * sizeof(float) * 16);
         joint_staging.resize(static_cast<std::size_t>(kMaxJoints) * 16);
@@ -9843,30 +9910,20 @@ fn time() -> f32 { return fx.time.x; }
         ssd.compare = WGPUCompareFunction_LessEqual;
         ssd.maxAnisotropy = 1;
         shadow_sampler = wgpuDeviceCreateSampler(device->device(), &ssd);
-        // The scene's and the passes' pipelines are made at once: each of these touches only its
-        // own members and reads layouts made above, and making pipelines is where the time goes on
-        // Direct3D 12 (naga's HLSL compiled by DXC in the process, every run: about 2.8 s one
-        // after another on the reference Windows machine, tens to hundreds of milliseconds each).
-        // A failure is reported as the first in this order would have been.
-        const std::function<Status()> setups[] = {
-            [&] { return create_scene_pipelines(msaa); },
-            [&] { return create_sky(); },
-            [&] { return create_ao(); },
-            [&] { return create_volume(); },
-            [&] { return create_gi(); },
-            [&] { return create_taa(); },
-            [&] { return create_fx(); },
-            [&] { return create_oit(); },
-            [&] { return create_ssr(); },
-            [&] { return create_water(); },
-            [&]() -> Status {
-                POCKET_TRY_VOID(create_probe_textures());
-                return create_probe_passes();
-            },
-        };
-        std::vector<Status> setup_status(std::size(setups));
-        pocket::parallel_for(std::size(setups), [&](std::size_t i) { setup_status[i] = setups[i](); });
-        for (Status& s : setup_status) POCKET_TRY_VOID(std::move(s));
+        // The passes' layouts, targets and buffers; their pipelines are only described, each made
+        // when a frame first draws with it (LazyRenderPipeline).
+        create_scene_pipelines(msaa);
+        POCKET_TRY_VOID(create_sky());
+        POCKET_TRY_VOID(create_ao());
+        POCKET_TRY_VOID(create_volume());
+        POCKET_TRY_VOID(create_gi());
+        POCKET_TRY_VOID(create_taa());
+        POCKET_TRY_VOID(create_fx());
+        POCKET_TRY_VOID(create_oit());
+        POCKET_TRY_VOID(create_ssr());
+        POCKET_TRY_VOID(create_water());
+        POCKET_TRY_VOID(create_probe_textures());
+        POCKET_TRY_VOID(create_probe_passes());
         WGPUBindGroupEntry* sbe = scene_entries;
         sbe[12].binding = 12;
         sbe[12].textureView = probe_env_view;
@@ -11245,7 +11302,7 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
     const bool ao_pass = im.ao.enabled || im.shadows.contact;   // the half-size pass also holds contact shadows
     const bool prepass = im.msaa > 1 || ao_pass || fog_on || im.taa.enabled || im.dof.enabled || im.motion_blur.enabled || im.ssr.enabled || im.ssgi.enabled || !im.water_bodies.empty() || glass_hint;
     if (glass_hint) POCKET_TRY_VOID(im.ensure_glass_target(frame.width, frame.height));
-    if (im.msaa != im.msaa_applied || prepass != im.split_applied) POCKET_TRY_VOID(im.create_scene_pipelines(im.msaa, prepass));
+    if (im.msaa != im.msaa_applied || prepass != im.split_applied) im.create_scene_pipelines(im.msaa, prepass);
     if (prepass) POCKET_TRY_VOID(im.ensure_prepass(frame.width, frame.height));
     if (ao_pass) POCKET_TRY_VOID(im.ensure_ao_targets(frame.width, frame.height));
     im.gather_occluders(world);
@@ -12593,12 +12650,13 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
     // (a solid mesh keeps the GPU's early depth test). The shadow passes have no material group:
     // their unskinned cut-outs bind theirs at group 3, so the texture's holes let the light through.
     // `keep` (a light's shadow faces): draws it turns down are skipped, splitting their runs.
-    auto draw_runs = [&](WGPURenderPassEncoder pass, bool with_materials, std::uint32_t& counter, WGPURenderPipeline plain, WGPURenderPipeline skinned, WGPURenderPipeline blend_plain = nullptr, WGPURenderPipeline blend_skinned = nullptr, WGPURenderPipeline cut = nullptr, const std::function<bool(std::size_t)>* keep = nullptr, std::uint32_t* instances = nullptr, WGPURenderPipeline cut_skinned = nullptr, bool user_materials = false) {
+    // Each pipeline is made when a run first draws with it; a run whose pipeline cannot be made is
+    // left out.
+    auto draw_runs = [&](WGPURenderPassEncoder pass, bool with_materials, std::uint32_t& counter, LazyRenderPipeline* plain, LazyRenderPipeline* skinned, LazyRenderPipeline* blend_plain = nullptr, LazyRenderPipeline* blend_skinned = nullptr, LazyRenderPipeline* cut = nullptr, const std::function<bool(std::size_t)>* keep = nullptr, std::uint32_t* instances = nullptr, LazyRenderPipeline* cut_skinned = nullptr, bool user_materials = false) {
         Impl::SpriteMaterial* current_user = nullptr;   // a project's material on the lit pass's opaque draws
         const GpuMesh* current_mesh = nullptr;
         WGPUBindGroup current_material = nullptr;
-        bool current_skinned = false, current_blend = false, current_cut = false;
-        wgpuRenderPassEncoderSetPipeline(pass, plain);
+        bool bound = false, current_skinned = false, current_blend = false, current_cut = false;
         std::size_t i = 0;
         while (i < draws.size()) {
             if (keep && !(*keep)(i)) { ++i; continue; }
@@ -12617,8 +12675,15 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
             Impl::SpriteMaterial* user = user_materials && !blend && !cutting && !d.skinned ? d.user : nullptr;
             WGPURenderPipeline user_pipe = user ? im.mesh_material_pipeline(*user) : nullptr;
             if (!user_pipe) user = nullptr;
-            if (d.skinned != current_skinned || blend != current_blend || cutting != current_cut || user != current_user) {
-                wgpuRenderPassEncoderSetPipeline(pass, user_pipe ? user_pipe : blend ? (d.skinned ? blend_skinned : blend_plain) : cutting ? (d.skinned ? cut_skinned : cut) : (d.skinned ? skinned : plain));
+            if (!bound || d.skinned != current_skinned || blend != current_blend || cutting != current_cut || user != current_user) {
+                const WGPURenderPipeline p = user_pipe ? user_pipe : (blend ? (d.skinned ? blend_skinned : blend_plain) : cutting ? (d.skinned ? cut_skinned : cut) : (d.skinned ? skinned : plain))->get();
+                if (!p) {
+                    bound = false;
+                    i += run;
+                    continue;
+                }
+                wgpuRenderPassEncoderSetPipeline(pass, p);
+                bound = true;
                 current_user = user;
                 current_skinned = d.skinned;
                 current_blend = blend;
@@ -12718,7 +12783,7 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
                 const float reach = 1.0f + d.radius / half_extent;
                 return std::fabs(p.x) <= reach && std::fabs(p.y) <= reach;
             };
-            draw_runs(spass, false, im.stats.shadow_draws, im.shadow_pipeline, im.shadow_skinned_pipeline, nullptr, nullptr, im.shadow_cut_pipeline, &over_cascade, &im.stats.shadow_instances);
+            draw_runs(spass, false, im.stats.shadow_draws, &im.shadow_pipeline, &im.shadow_skinned_pipeline, nullptr, nullptr, &im.shadow_cut_pipeline, &over_cascade, &im.stats.shadow_instances);
             wgpuRenderPassEncoderEnd(spass);
             wgpuRenderPassEncoderRelease(spass);
         }
@@ -12773,7 +12838,7 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
                 return std::fabs(p.x) <= reach && std::fabs(p.y) <= reach;
             };
             im.shelter_draws = 0;
-            draw_runs(spass, false, im.shelter_draws, im.shadow_pipeline, im.shadow_skinned_pipeline, nullptr, nullptr, im.shadow_cut_pipeline, &over_square);
+            draw_runs(spass, false, im.shelter_draws, &im.shadow_pipeline, &im.shadow_skinned_pipeline, nullptr, nullptr, &im.shadow_cut_pipeline, &over_square);
         }
         wgpuRenderPassEncoderEnd(spass);
         wgpuRenderPassEncoderRelease(spass);
@@ -12853,8 +12918,8 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
             prp.colorAttachments = &pca;
             prp.depthStencilAttachment = &pds;
             WGPURenderPassEncoder ppass = im.begin_pass(frame.encoder, prp);
-            if (im.stats.sky != 0) {
-                wgpuRenderPassEncoderSetPipeline(ppass, im.probe_sky_pipeline);
+            if (WGPURenderPipeline probe_sky = im.stats.sky != 0 ? im.probe_sky_pipeline.get() : nullptr) {
+                wgpuRenderPassEncoderSetPipeline(ppass, probe_sky);
                 wgpuRenderPassEncoderSetBindGroup(ppass, 0, group, 0, nullptr);
                 wgpuRenderPassEncoderSetBindGroup(ppass, 1, im.cloud_sky_none_bg, 0, nullptr);
                 wgpuRenderPassEncoderDraw(ppass, 3, 1, 0, 0);
@@ -12863,12 +12928,14 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
                 std::uint32_t probe_draws = 0;
                 wgpuRenderPassEncoderSetBindGroup(ppass, 0, group, 0, nullptr);
                 wgpuRenderPassEncoderSetBindGroup(ppass, 1, im.object_bg, 0, nullptr);
-                draw_runs(ppass, true, probe_draws, im.probe_pipeline, im.probe_skinned_pipeline);
+                draw_runs(ppass, true, probe_draws, &im.probe_pipeline, &im.probe_skinned_pipeline);
             }
             wgpuRenderPassEncoderEnd(ppass);
             wgpuRenderPassEncoderRelease(ppass);
         }
     };
+    // A capture's passes made the first time a probe is captured; without them, none is.
+    if (probe_capture >= 0 && !(im.probe_fill_pipeline.get() && im.prefilter_pipeline.get() && im.irradiance_pipeline.get())) probe_capture = -1;
     if (probe_capture >= 0) {
         Impl::ProbeSlot& slot = im.probe_slots[static_cast<std::size_t>(probe_capture)];
         if (!slot.captured) {
@@ -12930,10 +12997,10 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
         WGPUComputePassDescriptor cpd{};
         cpd.label = rhi::str("pocket.probe");
         WGPUComputePassEncoder cp = im.begin_compute(frame.encoder, cpd);
-        wgpuComputePassEncoderSetPipeline(cp, im.probe_fill_pipeline);
+        wgpuComputePassEncoderSetPipeline(cp, im.probe_fill_pipeline.get());
         wgpuComputePassEncoderSetBindGroup(cp, 0, fill_group, 0, nullptr);
         wgpuComputePassEncoderDispatchWorkgroups(cp, (kProbeWidth + 7) / 8, (kProbeHeight + 7) / 8, 1);
-        wgpuComputePassEncoderSetPipeline(cp, im.prefilter_pipeline);
+        wgpuComputePassEncoderSetPipeline(cp, im.prefilter_pipeline.get());
         for (std::uint32_t l = 1; l < kProbeLevels; ++l) {
             WGPUBindGroupEntry e[4]{};
             e[0].binding = 0;
@@ -12972,7 +13039,7 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
             id.entries = ie;
             WGPUBindGroup ig = wgpuDeviceCreateBindGroup(im.device->device(), &id);
             im.probe_groups.push_back(ig);
-            wgpuComputePassEncoderSetPipeline(cp, im.irradiance_pipeline);
+            wgpuComputePassEncoderSetPipeline(cp, im.irradiance_pipeline.get());
             wgpuComputePassEncoderSetBindGroup(cp, 0, ig, 0, nullptr);
             wgpuComputePassEncoderDispatchWorkgroups(cp, 1, 1, 1);
         }
@@ -12986,6 +13053,7 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
     // Irradiance volumes' probes: each drawn six ways as a reflection probe is (lit by the volume as
     // its probes so far give it, so each pass bounces the light once more), and its harmonics taken
     // from the views straight into its slot.
+    if (!grid_captures.empty() && !im.grid_pipeline.get()) grid_captures.clear();
     if (!grid_captures.empty()) {
         for (WGPUBindGroup g : im.grid_groups) wgpuBindGroupRelease(g);
         im.grid_groups.clear();
@@ -13029,7 +13097,7 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
             WGPUComputePassDescriptor gcd{};
             gcd.label = rhi::str("pocket.grid");
             WGPUComputePassEncoder gp = im.begin_compute(frame.encoder, gcd);
-            wgpuComputePassEncoderSetPipeline(gp, im.grid_pipeline);
+            wgpuComputePassEncoderSetPipeline(gp, im.grid_pipeline.get());
             wgpuComputePassEncoderSetBindGroup(gp, 0, gg, 0, nullptr);
             wgpuComputePassEncoderDispatchWorkgroups(gp, 1, 1, 1);
             wgpuComputePassEncoderEnd(gp);
@@ -13069,7 +13137,7 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
                 const Draw& d = draws[k];
                 return d.radius < 0 || length(d.center - at) <= reach + d.radius;
             };
-            draw_runs(apass, false, im.stats.shadow_draws, im.atlas_pipeline, im.atlas_skinned_pipeline, nullptr, nullptr, im.atlas_cut_pipeline, &keep, &im.stats.shadow_instances);
+            draw_runs(apass, false, im.stats.shadow_draws, &im.atlas_pipeline, &im.atlas_skinned_pipeline, nullptr, nullptr, &im.atlas_cut_pipeline, &keep, &im.stats.shadow_instances);
         }
         wgpuRenderPassEncoderEnd(apass);
         wgpuRenderPassEncoderRelease(apass);
@@ -13077,12 +13145,13 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
     // Sprites and tile layers in draw order; the same loop serves the color pass and the id pass.
     // `add`: the pipeline additive sprites draw with (the id pass gives the same one for both).
     // `lit`: the pipeline lit sprites and tile maps draw with (none in the id pass: `pipe` then).
-    auto draw_sprites = [&](WGPURenderPassEncoder pass, WGPURenderPipeline pipe, WGPURenderPipeline add, std::uint32_t& counter, bool materials = false, WGPURenderPipeline lit = nullptr) {
+    // Each is made when a sprite first draws with it; a sprite whose pipeline cannot be made is left out.
+    auto draw_sprites = [&](WGPURenderPassEncoder pass, LazyRenderPipeline* pipe, LazyRenderPipeline* add, std::uint32_t& counter, bool materials = false, LazyRenderPipeline* lit = nullptr) {
         const GpuMesh& quad = im.meshes[static_cast<std::size_t>(Primitive::Quad)];
-        wgpuRenderPassEncoderSetPipeline(pass, pipe);
-        WGPURenderPipeline current = pipe;
+        WGPURenderPipeline current = nullptr;
         auto use = [&](WGPURenderPipeline p) {
-            if (p != current) { wgpuRenderPassEncoderSetPipeline(pass, p); current = p; }
+            if (p && p != current) { wgpuRenderPassEncoderSetPipeline(pass, p); current = p; }
+            return p != nullptr;
         };
         wgpuRenderPassEncoderSetBindGroup(pass, 0, im.scene_bg, 0, nullptr);
         wgpuRenderPassEncoderSetBindGroup(pass, 1, im.object_bg, 0, nullptr);
@@ -13094,7 +13163,10 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
             const SpriteDraw& s = sprites[i];
             if (s.mesh) {
                 // A tile layer or a trail: its own buffers, one draw, then back to the quad for sprites.
-                use(s.additive ? add : s.lit && lit ? lit : pipe);
+                if (!use((s.additive ? add : s.lit && lit ? lit : pipe)->get())) {
+                    ++i;
+                    continue;
+                }
                 wgpuRenderPassEncoderSetVertexBuffer(pass, 0, s.mesh->vertices, 0, WGPU_WHOLE_SIZE);
                 wgpuRenderPassEncoderSetIndexBuffer(pass, s.mesh->indices, WGPUIndexFormat_Uint32, 0, WGPU_WHOLE_SIZE);
                 bound = s.mesh;
@@ -13111,8 +13183,7 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
             }
             if (s.gpu) {
                 // A GPU emitter's ring (the colour passes only): six vertices a slot.
-                if (materials && s.gpu->draw) {
-                    use(s.additive ? im.particle_add_pipeline : im.particle_pipeline);
+                if (materials && s.gpu->draw && use((s.additive ? im.particle_add_pipeline : im.particle_pipeline).get())) {
                     wgpuRenderPassEncoderSetBindGroup(pass, 2, s.material, 0, nullptr);
                     wgpuRenderPassEncoderSetBindGroup(pass, 3, s.gpu->draw, 0, nullptr);
                     wgpuRenderPassEncoderDraw(pass, 6, s.gpu->size, 0, 0);
@@ -13123,13 +13194,14 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
             }
             Impl::SpriteMaterial* user = materials ? s.user : nullptr;
             WGPURenderPipeline chosen = user ? im.sprite_material_pipeline(*user, s.additive) : nullptr;
-            if (!chosen) chosen = s.additive ? add : s.lit && lit ? lit : pipe;
-            use(chosen);
+            if (!chosen) chosen = (s.additive ? add : s.lit && lit ? lit : pipe)->get();
             std::size_t run = 1;
             while (i + run < sprites.size() && !sprites[i + run].mesh && !sprites[i + run].gpu && sprites[i + run].material == sprites[i].material && sprites[i + run].additive == s.additive && sprites[i + run].lit == s.lit && (!materials || sprites[i + run].user == s.user)) ++run;
-            wgpuRenderPassEncoderSetBindGroup(pass, 2, sprites[i].material, 0, nullptr);
-            wgpuRenderPassEncoderDrawIndexed(pass, quad.index_count, static_cast<std::uint32_t>(run), 0, 0, count + static_cast<std::uint32_t>(i));
-            counter++;
+            if (use(chosen)) {
+                wgpuRenderPassEncoderSetBindGroup(pass, 2, sprites[i].material, 0, nullptr);
+                wgpuRenderPassEncoderDrawIndexed(pass, quad.index_count, static_cast<std::uint32_t>(run), 0, 0, count + static_cast<std::uint32_t>(i));
+                counter++;
+            }
             i += run;
         }
     };
@@ -13143,11 +13215,11 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
     if (!im.secondary) {
         bool any = false;
         for (auto& [gid, ge] : im.gpu_emitters) any = any || (ge.seen && ge.due);
-        if (any) {
+        if (const WGPUComputePipeline simulate = any ? im.particle_sim_pipeline.get() : nullptr) {
             WGPUComputePassDescriptor cpd{};
             cpd.label = rhi::str("pocket.particles");
             WGPUComputePassEncoder cp = im.begin_compute(frame.encoder, cpd);
-            wgpuComputePassEncoderSetPipeline(cp, im.particle_sim_pipeline);
+            wgpuComputePassEncoderSetPipeline(cp, simulate);
             for (auto& [gid, ge] : im.gpu_emitters) {
                 if (!ge.seen || !ge.due) continue;
                 wgpuComputePassEncoderSetBindGroup(cp, 0, ge.sim, 0, nullptr);
@@ -13196,9 +13268,9 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
         if (!draws.empty()) {
             wgpuRenderPassEncoderSetBindGroup(ipass, 0, im.scene_bg, 0, nullptr);
             wgpuRenderPassEncoderSetBindGroup(ipass, 1, im.object_bg, 0, nullptr);
-            draw_runs(ipass, true, im.stats.id_draws, im.id_pipeline, im.id_skinned_pipeline, nullptr, nullptr, im.id_cut_pipeline, &in_view_only, nullptr, im.id_cut_skinned_pipeline);
+            draw_runs(ipass, true, im.stats.id_draws, &im.id_pipeline, &im.id_skinned_pipeline, nullptr, nullptr, &im.id_cut_pipeline, &in_view_only, nullptr, &im.id_cut_skinned_pipeline);
         }
-        if (!sprites.empty()) draw_sprites(ipass, im.id_sprite_pipeline, im.id_sprite_pipeline, im.stats.id_draws);
+        if (!sprites.empty()) draw_sprites(ipass, &im.id_sprite_pipeline, &im.id_sprite_pipeline, im.stats.id_draws);
         wgpuRenderPassEncoderEnd(ipass);
         wgpuRenderPassEncoderRelease(ipass);
         if (ao_pass) im.draw_ao(frame);
@@ -13231,8 +13303,8 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
     rp.depthStencilAttachment = &ds;
     WGPURenderPassEncoder pass = im.begin_pass(frame.encoder, rp);
     set_viewport(pass);
-    if (im.stats.sky != 0) {
-        wgpuRenderPassEncoderSetPipeline(pass, im.sky_pipeline);
+    if (WGPURenderPipeline sky_pipe = im.stats.sky != 0 ? im.sky_pipeline.get() : nullptr) {
+        wgpuRenderPassEncoderSetPipeline(pass, sky_pipe);
         wgpuRenderPassEncoderSetBindGroup(pass, 0, im.scene_bg, 0, nullptr);
         wgpuRenderPassEncoderSetBindGroup(pass, 1, im.stats.clouds ? im.cloud_sky_bgs[im.cloud_cur] : im.cloud_sky_none_bg, 0, nullptr);
         wgpuRenderPassEncoderDraw(pass, 3, 1, 0, 0);
@@ -13245,7 +13317,7 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
     if (!draws.empty()) {
         wgpuRenderPassEncoderSetBindGroup(pass, 0, im.scene_bg, 0, nullptr);
         wgpuRenderPassEncoderSetBindGroup(pass, 1, im.object_bg, 0, nullptr);
-        draw_runs(pass, true, im.stats.draw_calls, im.pipeline, im.skinned_pipeline, im.blend_pipeline, im.blend_skinned_pipeline, im.cut_pipeline, (oit || glassy) ? &solid_only : &in_view_only, nullptr, im.cut_skinned_pipeline, true);
+        draw_runs(pass, true, im.stats.draw_calls, &im.pipeline, &im.skinned_pipeline, &im.blend_pipeline, &im.blend_skinned_pipeline, &im.cut_pipeline, (oit || glassy) ? &solid_only : &in_view_only, nullptr, &im.cut_skinned_pipeline, true);
     }
     if (glassy) {
         // The scene so far copied for the glass to show through, then the glass over it, and the
@@ -13270,8 +13342,8 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
         set_viewport(pass);
         wgpuRenderPassEncoderSetBindGroup(pass, 0, im.scene_bg, 0, nullptr);
         wgpuRenderPassEncoderSetBindGroup(pass, 1, im.object_bg, 0, nullptr);
-        draw_runs(pass, true, im.stats.draw_calls, im.pipeline, im.skinned_pipeline, nullptr, nullptr, im.cut_pipeline, &glass_only, nullptr, im.cut_skinned_pipeline);
-        if (!oit && translucent_instances > 0) draw_runs(pass, true, im.stats.draw_calls, im.pipeline, im.skinned_pipeline, im.blend_pipeline, im.blend_skinned_pipeline, im.cut_pipeline, &translucent_only, nullptr, im.cut_skinned_pipeline);
+        draw_runs(pass, true, im.stats.draw_calls, &im.pipeline, &im.skinned_pipeline, nullptr, nullptr, &im.cut_pipeline, &glass_only, nullptr, &im.cut_skinned_pipeline);
+        if (!oit && translucent_instances > 0) draw_runs(pass, true, im.stats.draw_calls, &im.pipeline, &im.skinned_pipeline, &im.blend_pipeline, &im.blend_skinned_pipeline, &im.cut_pipeline, &translucent_only, nullptr, &im.cut_skinned_pipeline);
         im.stats.glass = glass_instances;
     }
     if (oit) {
@@ -13302,7 +13374,7 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
         set_viewport(opass);
         wgpuRenderPassEncoderSetBindGroup(opass, 0, im.scene_bg, 0, nullptr);
         wgpuRenderPassEncoderSetBindGroup(opass, 1, im.object_bg, 0, nullptr);
-        draw_runs(opass, true, im.stats.draw_calls, resolve ? im.oit_ms_pipeline : im.oit_pipeline, resolve ? im.oit_ms_skinned_pipeline : im.oit_skinned_pipeline, nullptr, nullptr, nullptr, &translucent_only);
+        draw_runs(opass, true, im.stats.draw_calls, resolve ? &im.oit_ms_pipeline : &im.oit_pipeline, resolve ? &im.oit_ms_skinned_pipeline : &im.oit_skinned_pipeline, nullptr, nullptr, nullptr, &translucent_only);
         wgpuRenderPassEncoderEnd(opass);
         wgpuRenderPassEncoderRelease(opass);
         WGPURenderPassColorAttachment cca{};
@@ -13315,9 +13387,11 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
         crp.colorAttachmentCount = 1;
         crp.colorAttachments = &cca;
         WGPURenderPassEncoder cpass = im.begin_pass(frame.encoder, crp);
-        wgpuRenderPassEncoderSetPipeline(cpass, resolve ? im.oit_ms_composite_pipeline : im.oit_composite_pipeline);
-        wgpuRenderPassEncoderSetBindGroup(cpass, 0, im.oit_bg, 0, nullptr);
-        wgpuRenderPassEncoderDraw(cpass, 3, 1, 0, 0);
+        if (WGPURenderPipeline composite = (resolve ? im.oit_ms_composite_pipeline : im.oit_composite_pipeline).get()) {
+            wgpuRenderPassEncoderSetPipeline(cpass, composite);
+            wgpuRenderPassEncoderSetBindGroup(cpass, 0, im.oit_bg, 0, nullptr);
+            wgpuRenderPassEncoderDraw(cpass, 3, 1, 0, 0);
+        }
         wgpuRenderPassEncoderEnd(cpass);
         wgpuRenderPassEncoderRelease(cpass);
         im.stats.draw_calls++;
@@ -13353,16 +13427,16 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
         pass = im.begin_pass(frame.encoder, wrp);
         set_viewport(pass);
     }
-    if (!sprites.empty()) draw_sprites(pass, im.sprite_pipeline, im.sprite_add_pipeline, im.stats.draw_calls, true, im.sprite_lit_pipeline);
-    if (im.weather_drops > 0 && im.weather_pipeline) {
-        wgpuRenderPassEncoderSetPipeline(pass, im.weather_pipeline);
+    if (!sprites.empty()) draw_sprites(pass, &im.sprite_pipeline, &im.sprite_add_pipeline, im.stats.draw_calls, true, &im.sprite_lit_pipeline);
+    if (WGPURenderPipeline weather = im.weather_drops > 0 ? im.weather_pipeline.get() : nullptr) {
+        wgpuRenderPassEncoderSetPipeline(pass, weather);
         wgpuRenderPassEncoderSetBindGroup(pass, 0, im.scene_bg, 0, nullptr);
         wgpuRenderPassEncoderSetBindGroup(pass, 1, im.object_bg, 0, nullptr);
         wgpuRenderPassEncoderSetBindGroup(pass, 2, im.texture_for(""), 0, nullptr);
         wgpuRenderPassEncoderDraw(pass, 6, im.weather_drops, 0, 0);
         im.stats.draw_calls++;
     }
-    if (debug && !debug->vertices().empty()) {
+    if (WGPURenderPipeline lines = debug && !debug->vertices().empty() ? im.line_pipeline.get() : nullptr) {
         const auto& verts = debug->vertices();
         if (verts.size() > im.line_capacity) {
             if (im.line_buffer) wgpuBufferRelease(im.line_buffer);
@@ -13370,7 +13444,7 @@ Status Renderer::render_scene(rhi::Frame& frame, const world::World& world, rhi:
             im.line_buffer = im.device->create_buffer("pocket.lines", WGPUBufferUsage_Vertex | WGPUBufferUsage_CopyDst, im.line_capacity * sizeof(DebugVertex));
         }
         im.device->write_buffer(im.line_buffer, 0, verts.data(), verts.size() * sizeof(DebugVertex));
-        wgpuRenderPassEncoderSetPipeline(pass, im.line_pipeline);
+        wgpuRenderPassEncoderSetPipeline(pass, lines);
         wgpuRenderPassEncoderSetBindGroup(pass, 0, im.frame_bg, 0, nullptr);
         wgpuRenderPassEncoderSetVertexBuffer(pass, 0, im.line_buffer, 0, verts.size() * sizeof(DebugVertex));
         wgpuRenderPassEncoderDraw(pass, static_cast<std::uint32_t>(verts.size()), 1, 0, 0);

@@ -16,7 +16,7 @@ static void pos(double th, double ph, double* p) {
 int main(int argc, char** argv) {
     if (argc < 4) return 2;
     int R = atoi(argv[1]), S = atoi(argv[2]);
-    FILE* f = fopen(argv[3], "w");
+    FILE* f = fopen(argv[3], "wb");   /* binary: LF lines on Windows too */
     static char buf[1 << 22];
     setvbuf(f, buf, _IOFBF, sizeof buf);
     fprintf(f, "# 3D scan export (synthetic): %d rings x %d segments\n# units: metres\no scan\n", R, S);
