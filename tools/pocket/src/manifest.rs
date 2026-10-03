@@ -276,6 +276,10 @@ pub struct Workspace {
 
 impl Workspace {
     pub fn load(root: &Path) -> Result<Self> {
+        // One spelling of the root (its case and separators as the file system has them), so paths
+        // derived from it compare and strip whatever form --root or the working directory took.
+        let canonical = dunce::canonicalize(root).unwrap_or(root.to_path_buf());
+        let root = canonical.as_path();
         let text = std::fs::read_to_string(root.join("pocket.toml")).context("reading pocket.toml")?;
         let mut file: WorkspaceFile = toml::from_str(&text).context("parsing pocket.toml")?;
         let raw_dependencies = std::mem::take(&mut file.dependencies);
@@ -309,13 +313,19 @@ impl Workspace {
     /// The workspace as a target sees it: for the iOS Simulator its dependencies resolved again
     /// with their "ios-sim" and "ios" overrides; any other target builds on the host's.
     pub fn for_target(&self, target: &str) -> Result<Workspace> {
-        if target != "ios-sim" {
-            return Ok(self.clone());
-        }
+        // The web build's dependencies are the shared fields (or a "wasm" table), never the host's:
+        // a Windows host's names its libraries `.lib`, while Emscripten builds `lib*.a`.
+        let keys: Vec<String> = match target {
+            "ios-sim" => vec!["ios-sim".to_string(), "ios".to_string()],
+            "wasm" => vec!["wasm".to_string()],
+            _ => return Ok(self.clone()),
+        };
         let mut ws = self.clone();
         ws.file.dependencies.clear();
         for d in &self.raw_dependencies {
-            ws.file.dependencies.push(d.clone().resolved(&["ios-sim".to_string(), "ios".to_string()], true)?);
+            // Frameworks and the prebuilt guard are a native host's concerns: kept as Apple's here
+            // (the web build links neither frameworks nor prebuilt archives).
+            ws.file.dependencies.push(d.clone().resolved(&keys, true)?);
         }
         Ok(ws)
     }

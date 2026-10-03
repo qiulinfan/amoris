@@ -69,9 +69,9 @@ def main():
     os.makedirs(ASSETS, exist_ok=True)
     os.makedirs(os.path.join(PROJECT, "scripts"), exist_ok=True)
     os.makedirs(BIN, exist_ok=True)
-    with open(os.path.join(PROJECT, "project.toml"), "w") as f:
+    with open(os.path.join(PROJECT, "project.toml"), "w", encoding="utf-8", newline="\n") as f:
         f.write('name = "objstress"\nentry = "scripts/main.ts"\n\n[window]\ntitle = "Pocket: OBJ stress"\nwidth = 1280\nheight = 720\n')
-    with open(os.path.join(PROJECT, "scripts", "main.ts"), "w") as f:
+    with open(os.path.join(PROJECT, "scripts", "main.ts"), "w", encoding="utf-8", newline="\n") as f:
         f.write(MAIN_TS)
     for name in ("scan", "fastobj_bench"):
         run(["cc", "-O2", "-o", os.path.join(BIN, name), os.path.join(HERE, name + ".c"), "-lm"])
@@ -93,7 +93,7 @@ def main():
     make("assembly_o", lambda p: [py, os.path.join(HERE, "assembly.py"), p, "4800", "o"])
     make("assembly_g", lambda p: [py, os.path.join(HERE, "assembly.py"), p, "4800", "g"])
     make("ngons", lambda p: [py, os.path.join(HERE, "ngons.py"), p])
-    with open(os.path.join(ASSETS, "cube_soff.obj"), "w") as f:
+    with open(os.path.join(ASSETS, "cube_soff.obj"), "w", encoding="utf-8", newline="\n") as f:
         f.write(CUBE_SOFF)
     run([os.path.join(ROOT, ".pocket", "pocket"), "ts", PROJECT, "--out", os.path.join(ROOT, "build", "ts", "objstress.js")], cwd=ROOT)
     print("project", PROJECT)

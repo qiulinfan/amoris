@@ -126,6 +126,13 @@ fn sync_runtime_files(ws: &Workspace, config: &str, tc: &toolchain::Toolchain, b
         }
     }
     let cfg = ws.config(config)?;
+    if tc.host_os == "windows" {
+        // Direct3D 12 compiles shaders with DXC when dxcompiler.dll is beside the executable
+        // (engine/rhi/src/device.cpp); the Windows SDK has one.
+        if let Some(dxc) = toolchain::windows_sdk_dxc() {
+            files.push(dxc);
+        }
+    }
     if tc.host_os == "windows" && cfg.cxx_flags.iter().any(|f| f.starts_with("-fsanitize=") && f.contains("address")) {
         let out = toolchain::command(&tc.cxx).arg("-print-runtime-dir").output()?;
         let dir = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
@@ -185,7 +192,7 @@ pub fn find_project(ws: &Workspace, name: &str) -> Option<PathBuf> {
     let direct = PathBuf::from(name);
     if direct.join("project.toml").exists() {
         // Absolute: runtimes and tools started for it run in the workspace's root, not here.
-        return Some(std::fs::canonicalize(&direct).unwrap_or(direct));
+        return Some(dunce::canonicalize(&direct).unwrap_or(direct));
     }
     for base in ["samples", "projects", "benchmarks"] {
         let p = ws.root.join(base).join(name);
@@ -447,14 +454,14 @@ fn write_project_guide(ws: &Workspace, project: &Path, name: &str) -> Result<()>
     if project.join("AGENTS.md").exists() {
         return Ok(());
     }
-    let root = std::fs::canonicalize(&ws.root).unwrap_or(ws.root.clone());
+    let root = dunce::canonicalize(&ws.root).unwrap_or(ws.root.clone());
     let tool = root.join(".pocket").join("pocket");
     let docs = root.join("docs");
     // How the tool names this project: by its name where the tool finds it by name (samples/,
     // projects/), else by its path, so every command below works wherever the project was made.
     let title = name;
-    let here = std::fs::canonicalize(project).unwrap_or(project.to_path_buf());
-    let by_name = find_project(ws, name).and_then(|p| std::fs::canonicalize(p).ok()).is_some_and(|p| p == here);
+    let here = dunce::canonicalize(project).unwrap_or(project.to_path_buf());
+    let by_name = find_project(ws, name).and_then(|p| dunce::canonicalize(p).ok()).is_some_and(|p| p == here);
     let name = if by_name { name.to_string() } else { here.display().to_string() };
     let name = name.as_str();
     // The two longest references, by size, so an agent searches them rather than reading them whole
@@ -627,13 +634,13 @@ pub fn bundle_project(ws: &Workspace, project: &Path, out: Option<&Path>) -> Res
     let out = out.map(|p| p.to_path_buf()).unwrap_or_else(|| ws.root.join("build").join("ts").join(format!("{name}.js")));
     toolchain::ensure_dir(out.parent().unwrap())?;
     let sdk_dir = ws.root.join("sdk").join("runtime");
-    let root = std::fs::canonicalize(&ws.root).unwrap_or(ws.root.clone());
+    let root = dunce::canonicalize(&ws.root).unwrap_or(ws.root.clone());
     let result = crate::ts::bundle(&entry, &sdk_dir, &root, &out)?;
     // Hand the parsed project settings to the runtime as JSON next to the bundle.
     let mut settings = serde_json::to_value(&project_file)?;
     if let serde_json::Value::Object(map) = &mut settings {
         map.insert("name".into(), serde_json::Value::String(name.clone()));
-        map.insert("dir".into(), serde_json::Value::String(std::fs::canonicalize(project).unwrap_or(project.to_path_buf()).to_string_lossy().into_owned()));
+        map.insert("dir".into(), serde_json::Value::String(dunce::canonicalize(project).unwrap_or(project.to_path_buf()).to_string_lossy().into_owned()));
         if let Some(font) = ui_font(ws) {
             map.insert("font".into(), serde_json::Value::String(font.to_string_lossy().into_owned()));
         }

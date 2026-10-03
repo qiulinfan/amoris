@@ -797,7 +797,7 @@ TEST_CASE("editor opens a project script in a text area and saves it", "[editor]
     // A scratch script beside the sample's, removed after the test.
     const std::filesystem::path file = root() / "samples" / "physics" / "scripts" / "note-test.ts";
     struct Cleanup { std::filesystem::path p; ~Cleanup() { std::filesystem::remove(p); } } cleanup{file};
-    { std::ofstream out(file); out << "export const note = 1;\n"; }
+    { std::ofstream out(file, std::ios::binary); out << "export const note = 1;\n"; }
     app::Session s(editor_options("physics"));
     ok(s.start());
     s.set_paused(true);
@@ -970,7 +970,7 @@ TEST_CASE("editor gizmo moves and turns a child exactly under a turned, scaled p
 TEST_CASE("editor places a model with a light as its node tree, from the Place button, and reimports it", "[editor][assets][import]") {
     // A glTF lamp: a shade (one triangle) and a point light two units above it.
     const std::filesystem::path lamp = root() / "samples" / "physics" / "assets" / "lamp-test.gltf";
-    std::ofstream(lamp) << R"({"asset": {"version": "2.0"}, "extensionsUsed": ["KHR_lights_punctual"],
+    std::ofstream(lamp, std::ios::binary) << R"({"asset": {"version": "2.0"}, "extensionsUsed": ["KHR_lights_punctual"],
         "extensions": {"KHR_lights_punctual": {"lights": [{"type": "point", "color": [1, 0.8, 0.6], "intensity": 100}]}},
         "scene": 0, "scenes": [{"nodes": [0, 1]}],
         "nodes": [{"name": "Shade", "mesh": 0}, {"name": "Bulb", "translation": [0, 2, 0], "extensions": {"KHR_lights_punctual": {"light": 0}}}],

@@ -825,7 +825,7 @@ def write_glb(path, doc, buf):
 def write_gltf_embedded(path, doc, buf):
     doc = dict(doc)
     doc["buffers"] = [{"byteLength": len(buf), "uri": "data:application/octet-stream;base64," + base64.b64encode(buf).decode()}]
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
         json.dump(doc, f, separators=(",", ":"))
 
 
@@ -930,7 +930,7 @@ def make_sprites(out):
         with open(os.path.join(out, name), "wb") as f:
             f.write(data)
         print(name, os.path.getsize(os.path.join(out, name)), "bytes")
-    with open(os.path.join(out, "level.tmj"), "w") as f:
+    with open(os.path.join(out, "level.tmj"), "w", encoding="utf-8", newline="\n") as f:
         json.dump(sprites_level(), f, separators=(",", ":"))
     print("level.tmj", os.path.getsize(os.path.join(out, "level.tmj")), "bytes")
 
@@ -1140,7 +1140,7 @@ def make_dungeon(out):
         with open(os.path.join(out, name), "wb") as f:
             f.write(data)
         print(name, os.path.getsize(os.path.join(out, name)), "bytes")
-    with open(os.path.join(out, "dungeon.tmj"), "w") as f:
+    with open(os.path.join(out, "dungeon.tmj"), "w", encoding="utf-8", newline="\n") as f:
         json.dump(dungeon_map(), f, separators=(",", ":"))
     print("dungeon.tmj", os.path.getsize(os.path.join(out, "dungeon.tmj")), "bytes")
 

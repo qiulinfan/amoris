@@ -1771,7 +1771,7 @@ TEST_CASE("vertex colors tint a mesh corner by corner", "[renderer][vcolor]") {
     const std::filesystem::path dir = root() / "samples" / "playground" / "assets";
     std::filesystem::create_directories(dir);
     // A quad facing +Z, its corners red, green, blue and white.
-    std::ofstream(dir / "painted.gltf") << R"({"asset": {"version": "2.0"}, "scene": 0, "scenes": [{"nodes": [0]}], "nodes": [{"mesh": 0}],
+    std::ofstream(dir / "painted.gltf", std::ios::binary) << R"({"asset": {"version": "2.0"}, "scene": 0, "scenes": [{"nodes": [0]}], "nodes": [{"mesh": 0}],
         "meshes": [{"primitives": [{"attributes": {"POSITION": 0, "NORMAL": 1, "COLOR_0": 2}, "indices": 3}]}],
         "accessors": [{"bufferView": 0, "componentType": 5126, "count": 4, "type": "VEC3", "min": [-1, -1, 0], "max": [1, 1, 0]},
                       {"bufferView": 1, "componentType": 5126, "count": 4, "type": "VEC3"},

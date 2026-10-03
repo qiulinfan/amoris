@@ -3033,10 +3033,12 @@ void Physics::move_characters(world::World& w, double dt_d) {
                     }
                 }
                 if (b.kind == 0 && b.inv_mass > 0) {
-                    // A dynamic body: the character gives way by its share of their masses, and the body
-                    // keeps only their common speed toward it (the rest of its push is the shove, 2b).
+                    // A dynamic body: the character gives way by its share of their masses, the skin
+                    // included (a whole skin each pass walked a character of any mass along before a
+                    // light ball pressed on it, a centimetre a tick), and the body keeps only their
+                    // common speed toward it (the rest of its push is the shove, 2b).
                     const float m = 1.0f / b.inv_mass, share = m / (m + std::max(c.mass, 0.01f));
-                    pos += normalize(n) * (std::max(depth, 0.0f) * share + kSkin * 0.5f);
+                    pos += normalize(n) * ((std::max(depth, 0.0f) + kSkin * 0.5f) * share);
                     const Vec3 across{n.x, 0, n.z};
                     auto it = std::lower_bound(im.bodies.begin(), im.bodies.end(), b.id, [](const Body& x, EntityId q) { return x.id < q; });
                     if (length(across) > 1e-4f && it != im.bodies.end() && it->id == b.id) {

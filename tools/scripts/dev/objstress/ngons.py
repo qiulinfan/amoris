@@ -7,7 +7,7 @@ import math, os, sys
 
 out = sys.argv[1]
 mtl = os.path.splitext(out)[0] + ".mtl"
-open(mtl, "w").write("newmtl floor\nKd 0.7 0.7 0.7\n\nnewmtl red\nKd 0.8 0.15 0.1\n\nnewmtl green\nKd 0.15 0.7 0.2\n\nnewmtl blue\nKd 0.15 0.3 0.85\n\nnewmtl gold\nKd 0.85 0.65 0.15\n")
+open(mtl, "w", encoding="utf-8", newline="\n").write("newmtl floor\nKd 0.7 0.7 0.7\n\nnewmtl red\nKd 0.8 0.15 0.1\n\nnewmtl green\nKd 0.15 0.7 0.2\n\nnewmtl blue\nKd 0.15 0.3 0.85\n\nnewmtl gold\nKd 0.85 0.65 0.15\n")
 L = ["# polygon-face export (synthetic): quads, concave n-gons, relative indices\n", f"mtllib {os.path.basename(mtl)}\n"]
 nv = nt = nn = 0
 def v(x, y, z):
@@ -73,5 +73,5 @@ for k in reversed(range(9)):
 ids = [v(x, y, -2.2) for x, y in cpts]
 fwd = vn(0, 0, 1)
 L.append("f " + " ".join(f"{rel(i, nv)}//{rel(fwd, nn)}" for i in ids) + "\n")
-open(out, "w").write("".join(L))
+open(out, "w", encoding="utf-8", newline="\n").write("".join(L))
 print("vertices", nv, "file", out)

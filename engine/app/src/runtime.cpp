@@ -13,7 +13,12 @@
 #include <cstdio>
 #include <print>
 
-#if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
+#if defined(_WIN32)
+#include <fcntl.h>
+#include <io.h>
+#include <windows.h>   // after the engine's headers: its macros must not reach them
+#include <tlhelp32.h>
+#elif !defined(__EMSCRIPTEN__)
 #include <unistd.h>
 #endif
 
@@ -217,6 +222,37 @@ namespace {
 // paused headless server, which polls no window events, still hears it.
 volatile std::sig_atomic_t g_stop = 0;
 extern "C" void on_stop_signal(int) { g_stop = 1; }
+
+#if defined(_WIN32)
+// Windows raises no SIGTERM or SIGHUP: a console's Ctrl-Break, its window closing, logoff and
+// shutdown come as console events instead (Ctrl-C reaches SIGINT through the C runtime).
+BOOL WINAPI on_console_event(DWORD event) {
+    if (event == CTRL_BREAK_EVENT || event == CTRL_CLOSE_EVENT || event == CTRL_LOGOFF_EVENT || event == CTRL_SHUTDOWN_EVENT) {
+        g_stop = 1;
+        return TRUE;
+    }
+    return FALSE;
+}
+
+// The process that started this one, held open so its exit is seen even after its id is reused;
+// null when it cannot be found.
+HANDLE open_parent() {
+    const DWORD self = GetCurrentProcessId();
+    DWORD parent = 0;
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap == INVALID_HANDLE_VALUE) return nullptr;
+    PROCESSENTRY32W e{};
+    e.dwSize = sizeof e;
+    for (BOOL more = Process32FirstW(snap, &e); more; more = Process32NextW(snap, &e)) {
+        if (e.th32ProcessID == self) {
+            parent = e.th32ParentProcessID;
+            break;
+        }
+    }
+    CloseHandle(snap);
+    return parent ? OpenProcess(SYNCHRONIZE, FALSE, parent) : nullptr;
+}
+#endif
 }  // namespace
 
 Result<Json> run(const Options& options) {
@@ -224,17 +260,17 @@ Result<Json> run(const Options& options) {
     POCKET_TRY_VOID(session.start());
     std::signal(SIGINT, on_stop_signal);
     std::signal(SIGTERM, on_stop_signal);
-#if !defined(_WIN32)
+#if defined(_WIN32)
+    SetConsoleCtrlHandler(on_console_event, TRUE);
+    HANDLE parent = options.exit_with_parent ? open_parent() : nullptr;
+    auto orphaned = [&] { return parent && WaitForSingleObject(parent, 0) == WAIT_OBJECT_0; };
+#elif !defined(__EMSCRIPTEN__)
     std::signal(SIGHUP, on_stop_signal);
     const pid_t parent = getppid();
-#endif
-    auto orphaned = [&] {
-#if !defined(_WIN32)
-        return options.exit_with_parent && getppid() != parent;
+    auto orphaned = [&] { return options.exit_with_parent && getppid() != parent; };
 #else
-        return false;
+    auto orphaned = [] { return false; };
 #endif
-    };
     std::unique_ptr<ControlServer> server;
     if (options.serve >= 0) {
         server = std::make_unique<ControlServer>(session, options.serve);
@@ -287,6 +323,11 @@ Result<Json> run(const Options& options) {
 #endif
 
 int main(int argc, char** argv) {
+#if defined(_WIN32)
+    // The JSON channel is bytes: no CR before each LF as Windows' text mode would write.
+    _setmode(_fileno(stdout), _O_BINARY);
+    _setmode(_fileno(stderr), _O_BINARY);
+#endif
     std::vector<std::string> args(argv + 1, argv + argc);
 #ifdef POCKET_IOS
     // An app (`pocket pack --ios`) carries its game in game/ beside the executable, laid out as a

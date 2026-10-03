@@ -240,14 +240,17 @@ above lets it, and `crouching` says whether it is down (asked to, or kept down u
 crouched one under, which stays down under it when told to stand and stands once out. What runs into
 a character shoves it by the share of their masses (`Character.mass`, 70): a dynamic body moving
 into its capsule gives it that share of its speed along the touch and keeps only the speed they then
-share toward it (the overlap it made is given way to by the same share), and a character walking
-into another shoves it along the same way; the shove carries it across, through its moves as its own
-velocity does, and dies away (within a fifth of a second on the ground). `physics_tests`
-(`[shove]`): a ball of 300 rolling in at 8 shoves a character a unit and more, one of 1 hardly at
-all, and one character walking into another of its mass pushes it along. With `Character.mantle`
-above 0, a character in the air (not falling faster than 4) pushing into a wall climbs onto it when
-the wall's top is within `mantle` over its feet: its capsule raised clear, moved over the top and
-set down on it, emitting `character.climbed` (as a swimmer climbing out does,
+share toward it (the overlap it made, and the skin a character keeps from what it touches, is given
+way to by the same share, so a light ball held against a heavy character by another does not walk it
+along), and a character walking into another shoves it along the same way; the shove carries it
+across, through its moves as its own velocity does, and dies away (within a fifth of a second on the
+ground). `physics_tests` (`[shove]`): a ball of 300 rolling in at 8 shoves a character a unit and
+more, one of 1 hardly at all, and one character walking into another of its mass pushes it along;
+`pocket scenario arena`: Red driving the ball into Blue, who stands in its way, leaves Blue within
+half a unit of where it stood after four seconds (it had walked Blue back four units). With
+`Character.mantle` above 0, a character in the air (not falling faster than 4) pushing into a wall
+climbs onto it when the wall's top is within `mantle` over its feet: its capsule raised clear, moved
+over the top and set down on it, emitting `character.climbed` (as a swimmer climbing out does,
 `docs/design/water.md`); `physics_tests` (`[mantle]`): a jump at a ledge 1.2 high ends on it with
 `mantle` 1.6 and back on the floor without. `physics_tests` (`[character]`) pin the rest: landing at
 half its height above the floor with no creep while standing, stopping a radius from a wall and

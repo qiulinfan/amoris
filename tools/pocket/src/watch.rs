@@ -94,8 +94,8 @@ fn send_types(ws: &Workspace, url: &str, project: &Path) {
             return;
         }
     };
-    let root = std::fs::canonicalize(&ws.root).unwrap_or(ws.root.clone());
-    let dir = std::fs::canonicalize(project).unwrap_or(project.to_path_buf());
+    let root = dunce::canonicalize(&ws.root).unwrap_or(ws.root.clone());
+    let dir = dunce::canonicalize(project).unwrap_or(project.to_path_buf());
     let prefix = dir.strip_prefix(&root).map(|p| format!("{}/", p.display())).unwrap_or_else(|_| format!("{}/", dir.display()));
     let diagnostics: Vec<Value> = rep.diagnostics.iter().map(|d| {
         let mut v = serde_json::to_value(d).unwrap_or(Value::Null);

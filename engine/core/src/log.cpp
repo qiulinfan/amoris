@@ -130,7 +130,7 @@ Sink stderr_sink() {
 }
 
 Sink jsonl_file_sink(const std::string& path) {
-    auto file = std::make_shared<std::ofstream>(path, std::ios::app);
+    auto file = std::make_shared<std::ofstream>(path, std::ios::app | std::ios::binary);   // JSON lines end in LF on every host
     if (!file->is_open()) return [](const Record&) {};
     return [file](const Record& r) {
         *file << to_json(r).dump() << '\n';

@@ -1,6 +1,7 @@
 #include <pocket/platform/platform.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <map>
 
@@ -193,6 +194,12 @@ struct Platform::Impl {
         return static_cast<int>(fingers.size() - 1);
     }
     int pixel_w = 0, pixel_h = 0;
+    // SDL's window coordinates per point (the unit the engine's windows, pointers and UI are in):
+    // 1 where SDL counts points (macOS, Linux, the web), the display's scale on Windows, where it
+    // counts pixels (a 960x540 window on a 200% display is 1920x1080 there, as on a Retina Mac).
+    float units = 1.0f;
+    float to_points(float v) const { return v / units; }
+    int to_units(int v) const { return static_cast<int>(std::lround(static_cast<float>(v) * units)); }
     Platform::WindowState asked;   // what was asked of the window (all there is headless)
     bool text_input = false;
     bool cursor_locked = false, cursor_visible = true;
@@ -243,19 +250,33 @@ Result<std::unique_ptr<Platform>> Platform::create(const Config& config) {
     SDL_WindowFlags flags = SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_RESIZABLE;
 #elif defined(__APPLE__)
     SDL_WindowFlags flags = SDL_WINDOW_METAL | SDL_WINDOW_HIGH_PIXEL_DENSITY;
+#elif defined(_WIN32)
+    SDL_WindowFlags flags = SDL_WINDOW_HIGH_PIXEL_DENSITY;   // Direct3D 12 through the window's HWND
 #else
     SDL_WindowFlags flags = SDL_WINDOW_HIGH_PIXEL_DENSITY;   // Vulkan through the window's X11 or Wayland handles
 #endif
     if (config.resizable) flags |= SDL_WINDOW_RESIZABLE;
     if (!config.visible) flags |= SDL_WINDOW_HIDDEN;
     if (config.fullscreen) flags |= SDL_WINDOW_FULLSCREEN;
-    SDL_Window* w = SDL_CreateWindow(config.title.c_str(), config.width, config.height, flags);
+#if defined(_WIN32)
+    if (const float s = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay()); s > 0) p->impl_->units = s;
+#endif
+    SDL_Window* w = SDL_CreateWindow(config.title.c_str(), p->impl_->to_units(config.width), p->impl_->to_units(config.height), flags);
     if (!w) return fail("window_create_failed", "SDL_CreateWindow failed: {}", SDL_GetError());
     p->impl_->window = w;
+#if defined(_WIN32)
+    if (const float s = SDL_GetWindowDisplayScale(w); s > 0) p->impl_->units = s;
+#endif
 #if defined(__APPLE__)
     p->impl_->metal_view = SDL_Metal_CreateView(w);
     if (!p->impl_->metal_view) return fail("metal_view_failed", "SDL_Metal_CreateView failed: {}", SDL_GetError());
     p->impl_->native.metal_layer = SDL_Metal_GetLayer(p->impl_->metal_view);
+#elif defined(_WIN32)
+    // Direct3D 12 presents into the window's HWND (docs/decisions/0008-windows.md).
+    const SDL_PropertiesID props = SDL_GetWindowProperties(w);
+    p->impl_->native.win32_hwnd = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr);
+    p->impl_->native.win32_hinstance = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WIN32_INSTANCE_POINTER, nullptr);
+    if (!p->impl_->native.win32_hwnd) return fail("window_handles_missing", "the window has no HWND (video driver {})", SDL_GetCurrentVideoDriver());
 #elif !defined(__EMSCRIPTEN__)
     const SDL_PropertiesID props = SDL_GetWindowProperties(w);
     p->impl_->native.wayland_display = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WAYLAND_DISPLAY_POINTER, nullptr);
@@ -303,7 +324,8 @@ std::vector<Event> Platform::poll() {
             }
             case SDL_EVENT_MOUSE_MOTION:
                 ev.type = EventType::MouseMove;
-                ev.x = e.motion.x; ev.y = e.motion.y; ev.dx = e.motion.xrel; ev.dy = e.motion.yrel;
+                ev.x = impl_->to_points(e.motion.x); ev.y = impl_->to_points(e.motion.y);
+                ev.dx = impl_->to_points(e.motion.xrel); ev.dy = impl_->to_points(e.motion.yrel);
                 impl_->input.mouse_x = ev.x; impl_->input.mouse_y = ev.y;
                 out.push_back(ev);
                 break;
@@ -317,7 +339,7 @@ std::vector<Event> Platform::poll() {
                     SDL_SetWindowRelativeMouseMode(impl_->window, true);
                 }
 #endif
-                ev.button = e.button.button; ev.x = e.button.x; ev.y = e.button.y;
+                ev.button = e.button.button; ev.x = impl_->to_points(e.button.x); ev.y = impl_->to_points(e.button.y);
                 ev.clicks = std::max(1, static_cast<int>(e.button.clicks));
                 ev.mods = mods_from_sdl(SDL_GetModState());
                 if (ev.button >= 0 && ev.button < static_cast<int>(impl_->input.buttons.size())) {
@@ -329,6 +351,12 @@ std::vector<Event> Platform::poll() {
                 ev.type = EventType::MouseWheel;
                 ev.dx = e.wheel.x; ev.dy = e.wheel.y;
                 out.push_back(ev);
+                break;
+            case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
+#if defined(_WIN32)
+                // Moved to a display with another scale: SDL resizes the window to keep its points.
+                if (const float s = SDL_GetWindowDisplayScale(impl_->window); s > 0) impl_->units = s;
+#endif
                 break;
             case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
                 ev.type = EventType::Resize;
@@ -397,12 +425,13 @@ std::vector<Event> Platform::poll() {
                 if (slot < 0) break;
                 int w = 0, h = 0;
                 SDL_GetWindowSize(impl_->window, &w, &h);
+                const float pw = impl_->to_points(static_cast<float>(w)), ph = impl_->to_points(static_cast<float>(h));
                 ev.type = down ? EventType::TouchDown : up ? EventType::TouchUp : EventType::TouchMove;
                 ev.pad = slot;
-                ev.x = e.tfinger.x * static_cast<float>(w);
-                ev.y = e.tfinger.y * static_cast<float>(h);
-                ev.dx = e.tfinger.dx * static_cast<float>(w);
-                ev.dy = e.tfinger.dy * static_cast<float>(h);
+                ev.x = e.tfinger.x * pw;
+                ev.y = e.tfinger.y * ph;
+                ev.dx = e.tfinger.dx * pw;
+                ev.dy = e.tfinger.dy * ph;
                 ev.value = std::clamp(e.tfinger.pressure, 0.0f, 1.0f);
                 ev.pressed = !up;
                 if (down) impl_->input.fingers++;
@@ -440,7 +469,14 @@ std::string Platform::canvas_selector() const {
 }
 int Platform::pixel_width() const { return impl_->pixel_w; }
 int Platform::pixel_height() const { return impl_->pixel_h; }
-float Platform::pixel_density() const { return impl_->window ? SDL_GetWindowPixelDensity(impl_->window) : 1.0f; }
+float Platform::pixel_density() const {
+    if (!impl_->window) return 1.0f;
+#if defined(_WIN32)
+    return impl_->units;   // SDL counts pixels: its density is 1, and the display's scale is the ratio
+#else
+    return SDL_GetWindowPixelDensity(impl_->window);
+#endif
+}
 
 void Platform::set_text_input(bool enabled) {
     if (impl_->text_input == enabled) return;
@@ -459,7 +495,7 @@ bool Platform::text_input() const { return impl_->text_input; }
 
 void Platform::set_text_input_area(int x, int y, int w, int h) {
     if (!impl_->window) return;
-    const SDL_Rect r{x, y, std::max(1, w), std::max(1, h)};
+    const SDL_Rect r{impl_->to_units(x), impl_->to_units(y), std::max(1, impl_->to_units(w)), std::max(1, impl_->to_units(h))};
     SDL_SetTextInputArea(impl_->window, &r, 0);
 }
 
@@ -516,7 +552,7 @@ void Platform::set_fullscreen(bool on) {
 void Platform::set_window_size(int width, int height) {
     impl_->asked.width = width;
     impl_->asked.height = height;
-    if (impl_->window) SDL_SetWindowSize(impl_->window, width, height);
+    if (impl_->window) SDL_SetWindowSize(impl_->window, impl_->to_units(width), impl_->to_units(height));
 }
 
 void Platform::set_title(const std::string& title) {
@@ -528,6 +564,8 @@ Platform::WindowState Platform::window_state() const {
     WindowState s = impl_->asked;
     if (impl_->window) {
         SDL_GetWindowSize(impl_->window, &s.width, &s.height);
+        s.width = static_cast<int>(std::lround(impl_->to_points(static_cast<float>(s.width))));
+        s.height = static_cast<int>(std::lround(impl_->to_points(static_cast<float>(s.height))));
         s.fullscreen = (SDL_GetWindowFlags(impl_->window) & SDL_WINDOW_FULLSCREEN) != 0;
         const char* t = SDL_GetWindowTitle(impl_->window);
         s.title = t ? t : "";

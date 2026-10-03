@@ -3,6 +3,7 @@
 #include <pocket/world/wind.hpp>
 
 #include <pocket/core/log.hpp>
+#include <pocket/core/parallel.hpp>
 #include <pocket/renderer/primitives.hpp>
 
 #ifndef __EMSCRIPTEN__
@@ -9704,7 +9705,6 @@ fn time() -> f32 { return fx.time.x; }
         lpld.bindGroupLayoutCount = 1;
         lpld.bindGroupLayouts = lbgls;
         line_layout = wgpuDeviceCreatePipelineLayout(device->device(), &lpld);
-        POCKET_TRY_VOID(create_scene_pipelines(msaa));
         POCKET_TRY_VOID(create_bloom());
         POCKET_TRY_VOID(create_post());
 
@@ -9843,17 +9843,30 @@ fn time() -> f32 { return fx.time.x; }
         ssd.compare = WGPUCompareFunction_LessEqual;
         ssd.maxAnisotropy = 1;
         shadow_sampler = wgpuDeviceCreateSampler(device->device(), &ssd);
-        POCKET_TRY_VOID(create_sky());
-        POCKET_TRY_VOID(create_ao());
-        POCKET_TRY_VOID(create_volume());
-        POCKET_TRY_VOID(create_gi());
-        POCKET_TRY_VOID(create_taa());
-        POCKET_TRY_VOID(create_fx());
-        POCKET_TRY_VOID(create_oit());
-        POCKET_TRY_VOID(create_ssr());
-        POCKET_TRY_VOID(create_water());
-        POCKET_TRY_VOID(create_probe_textures());
-        POCKET_TRY_VOID(create_probe_passes());
+        // The scene's and the passes' pipelines are made at once: each of these touches only its
+        // own members and reads layouts made above, and making pipelines is where the time goes on
+        // Direct3D 12 (naga's HLSL compiled by DXC in the process, every run: about 2.8 s one
+        // after another on the reference Windows machine, tens to hundreds of milliseconds each).
+        // A failure is reported as the first in this order would have been.
+        const std::function<Status()> setups[] = {
+            [&] { return create_scene_pipelines(msaa); },
+            [&] { return create_sky(); },
+            [&] { return create_ao(); },
+            [&] { return create_volume(); },
+            [&] { return create_gi(); },
+            [&] { return create_taa(); },
+            [&] { return create_fx(); },
+            [&] { return create_oit(); },
+            [&] { return create_ssr(); },
+            [&] { return create_water(); },
+            [&]() -> Status {
+                POCKET_TRY_VOID(create_probe_textures());
+                return create_probe_passes();
+            },
+        };
+        std::vector<Status> setup_status(std::size(setups));
+        pocket::parallel_for(std::size(setups), [&](std::size_t i) { setup_status[i] = setups[i](); });
+        for (Status& s : setup_status) POCKET_TRY_VOID(std::move(s));
         WGPUBindGroupEntry* sbe = scene_entries;
         sbe[12].binding = 12;
         sbe[12].textureView = probe_env_view;

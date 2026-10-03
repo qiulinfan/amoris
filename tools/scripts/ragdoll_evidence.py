@@ -25,9 +25,9 @@ def main():
     os.makedirs(os.path.join(stage, "scripts"))
     os.makedirs(os.path.join(stage, "assets"))
     shutil.copy(os.path.join(ROOT, "samples", "walker", "assets", "hero.glb"), os.path.join(stage, "assets"))
-    with open(os.path.join(stage, "project.toml"), "w") as f:
+    with open(os.path.join(stage, "project.toml"), "w", encoding="utf-8", newline="\n") as f:
         f.write('name = "stage"\nentry = "scripts/main.ts"\n')
-    with open(os.path.join(stage, "scripts", "main.ts"), "w") as f:
+    with open(os.path.join(stage, "scripts", "main.ts"), "w", encoding="utf-8", newline="\n") as f:
         f.write("export {};\n")
     subprocess.run([os.path.join(ROOT, ".pocket", "pocket"), "ts", stage], env=ENV, cwd=ROOT, check=True, capture_output=True)
     r = Runtime(stage, 47816, size="480x360")

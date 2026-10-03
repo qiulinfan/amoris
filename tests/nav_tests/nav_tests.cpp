@@ -627,7 +627,7 @@ TEST_CASE("hexagonal, staggered and isometric maps bake to grids whose cells sit
     for (const Case& c : cases) {
         DYNAMIC_SECTION(c.file) {
             {
-                std::ofstream f(dir / c.file);
+                std::ofstream f(dir / c.file, std::ios::binary);
                 f << c.text;
             }
             World w;

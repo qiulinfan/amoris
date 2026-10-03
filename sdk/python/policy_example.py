@@ -129,7 +129,7 @@ if __name__ == "__main__":
     a = ap.parse_args()
     result = train(a.project, a.generations, a.population, a.envs, a.spots or None, a.hold, seed=a.seed, max_ticks=a.ticks)
     if a.out:
-        with open(a.out, "w") as f:
+        with open(a.out, "w", encoding="utf-8", newline="\n") as f:
             json.dump(result, f, indent=2)
             f.write("\n")
     print(f"learned {result['best']:.2f} against scripted {result['scripted']:.2f} (mean coins over {len(result['starts'])} starts)")

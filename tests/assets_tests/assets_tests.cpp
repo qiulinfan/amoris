@@ -609,7 +609,7 @@ TEST_CASE("a material's KHR_texture_transform offset and scale are read", "[asse
     const std::filesystem::path file = project() / "assets" / "transform-test.gltf";
     struct Cleanup { std::filesystem::path p; ~Cleanup() { std::filesystem::remove(p); } } cleanup{file};
     {
-        std::ofstream out(file);
+        std::ofstream out(file, std::ios::binary);
         out << R"({"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0]}],"nodes":[{"name":"quad","mesh":0}],
             "meshes":[{"primitives":[{"attributes":{"POSITION":0,"NORMAL":1,"TEXCOORD_0":2},"indices":3,"material":0}]}],
             "materials":[{"name":"tiled","pbrMetallicRoughness":{"baseColorTexture":{"index":0,"extensions":{"KHR_texture_transform":{"offset":[0.25,0.5],"scale":[4,4],"rotation":0}}}}}],
@@ -644,7 +644,7 @@ TEST_CASE("a double-sided material gets a back: its triangles again, wound the o
     auto quad = [&](const char* name, bool two) {
         const std::filesystem::path file = project() / "assets" / name;
         {
-            std::ofstream out(file);
+            std::ofstream out(file, std::ios::binary);
             out << R"({"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0]}],"nodes":[{"name":"quad","mesh":0}],
                 "meshes":[{"primitives":[{"attributes":{"POSITION":0,"NORMAL":1,"TEXCOORD_0":2},"indices":3,"material":0}]}],
                 "materials":[{"name":"leaf","doubleSided":)" << (two ? "true" : "false") << R"(}],
@@ -682,8 +682,8 @@ TEST_CASE("a double-sided material gets a back: its triangles again, wound the o
 TEST_CASE("OBJ files with MTL materials: objects as nodes, materials, uvs flipped, missing normals smoothed", "[assets][obj]") {
     const std::filesystem::path dir = project() / "assets" / "obj-test";
     std::filesystem::create_directories(dir);
-    std::ofstream(dir / "things.mtl") << "# two materials\nnewmtl Red\nKd 0.8 0.1 0.1\nNs 250\nmap_Kd ../checker.png\nmap_Bump -bm 1.0 ../normal_up.png\n\nnewmtl Glass\nKd 0.2 0.4 0.9\nd 0.5\nPm 0.0\nPr 0.1\nKe 0.5 0.5 0\n";
-    std::ofstream(dir / "things.obj") <<
+    std::ofstream(dir / "things.mtl", std::ios::binary) << "# two materials\nnewmtl Red\nKd 0.8 0.1 0.1\nNs 250\nmap_Kd ../checker.png\nmap_Bump -bm 1.0 ../normal_up.png\n\nnewmtl Glass\nKd 0.2 0.4 0.9\nd 0.5\nPm 0.0\nPr 0.1\nKe 0.5 0.5 0\n";
+    std::ofstream(dir / "things.obj", std::ios::binary) <<
         "mtllib things.mtl\n"
         "o Floor\nv -1 0 -1\nv 1 0 -1\nv 1 0 1\nv -1 0 1\nvt 0 0\nvt 1 0\nvt 1 1\nvt 0 1\n"
         "usemtl Red\nf 1/1 4/4 3/3 2/2\n"
@@ -728,7 +728,7 @@ TEST_CASE("OBJ files with MTL materials: objects as nodes, materials, uvs flippe
     for (const Json& f : store.list()) if (f["path"] == "assets/obj-test/things.obj") listed = f["kind"] == "mesh" && f["importer"] == "obj";
     REQUIRE(listed);
     // A face pointing past the vertices is refused with the line.
-    std::ofstream(dir / "bad.obj") << "v 0 0 0\nv 1 0 0\nf 1 2 9\n";
+    std::ofstream(dir / "bad.obj", std::ios::binary) << "v 0 0 0\nv 1 0 0\nf 1 2 9\n";
     auto bad = store.mesh("assets/obj-test/bad.obj");
     REQUIRE_FALSE(bad.has_value());
     REQUIRE(bad.error().message.find(":3:") != std::string::npos);
@@ -749,7 +749,7 @@ TEST_CASE("STL files, binary and ASCII, become one flat-shaded gray mesh", "[ass
         const std::uint16_t attr = 0;
         out.write(reinterpret_cast<const char*>(&attr), 2);
     }
-    std::ofstream(dir / "tri-ascii.stl") << "solid t\n facet normal 0 0 1\n  outer loop\n   vertex 0 0 0\n   vertex 1 0 0\n   vertex 0 1 0\n  endloop\n endfacet\nendsolid t\n";
+    std::ofstream(dir / "tri-ascii.stl", std::ios::binary) << "solid t\n facet normal 0 0 1\n  outer loop\n   vertex 0 0 0\n   vertex 1 0 0\n   vertex 0 1 0\n  endloop\n endfacet\nendsolid t\n";
     assets::AssetStore store(project());
     auto b = store.mesh("assets/stl-test/tri.stl");
     REQUIRE(b.has_value());
@@ -768,7 +768,7 @@ TEST_CASE("vertex colors come in from glTF (COLOR_0, floats or normalized bytes)
     const std::filesystem::path dir = project() / "assets" / "vcolor-test";
     std::filesystem::create_directories(dir);
     // One triangle twice: colors as float RGB, then as normalized unsigned-byte RGBA.
-    std::ofstream(dir / "tri.gltf") << R"({"asset": {"version": "2.0"}, "scene": 0, "scenes": [{"nodes": [0, 1]}],
+    std::ofstream(dir / "tri.gltf", std::ios::binary) << R"({"asset": {"version": "2.0"}, "scene": 0, "scenes": [{"nodes": [0, 1]}],
         "nodes": [{"mesh": 0}, {"mesh": 1}],
         "meshes": [{"primitives": [{"attributes": {"POSITION": 0, "COLOR_0": 1}}]}, {"primitives": [{"attributes": {"POSITION": 0, "COLOR_0": 2}}]}],
         "accessors": [{"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "min": [0, 0, 0], "max": [1, 1, 0]},
@@ -790,7 +790,7 @@ TEST_CASE("vertex colors come in from glTF (COLOR_0, floats or normalized bytes)
     REQUIRE((*g)->vertices[4].color.w == Catch::Approx(128.0f / 255.0f).margin(1e-3));
     REQUIRE(store.describe("assets/vcolor-test/tri.gltf")["vertex_colors"] == true);
     // OBJ: sRGB colors after the positions; a vertex without one is white.
-    std::ofstream(dir / "paint.obj") << "v 0 0 0 1 0 0\nv 1 0 0 0.5 0.5 0.5\nv 0 1 0\nf 1 2 3\n";
+    std::ofstream(dir / "paint.obj", std::ios::binary) << "v 0 0 0 1 0 0\nv 1 0 0 0.5 0.5 0.5\nv 0 1 0\nf 1 2 3\n";
     auto o = store.mesh("assets/vcolor-test/paint.obj");
     REQUIRE(o.has_value());
     REQUIRE((*o)->vertex_colors);
@@ -799,7 +799,7 @@ TEST_CASE("vertex colors come in from glTF (COLOR_0, floats or normalized bytes)
     REQUIRE((*o)->vertices[1].color.x == Catch::Approx(0.214f).margin(0.002));   // sRGB 0.5 in linear light
     REQUIRE((*o)->vertices[2].color.x == Catch::Approx(1.0f));
     // A file without colors has none.
-    std::ofstream(dir / "plain.obj") << "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n";
+    std::ofstream(dir / "plain.obj", std::ios::binary) << "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n";
     auto p = store.mesh("assets/vcolor-test/plain.obj");
     REQUIRE(p.has_value());
     REQUIRE_FALSE((*p)->vertex_colors);
@@ -930,7 +930,7 @@ TEST_CASE("PLY files, ASCII and binary in either byte order, with normals, uvs a
     std::filesystem::create_directories(dir);
     // A unit square as one quad, coloured red, green, blue and white (bytes, sRGB), no normals, and
     // a comment and an extra property to skip.
-    std::ofstream(dir / "quad.ply") << "ply\nformat ascii 1.0\ncomment made by hand\nelement vertex 4\nproperty float x\nproperty float y\nproperty float z\n"
+    std::ofstream(dir / "quad.ply", std::ios::binary) << "ply\nformat ascii 1.0\ncomment made by hand\nelement vertex 4\nproperty float x\nproperty float y\nproperty float z\n"
                                         "property uchar red\nproperty uchar green\nproperty uchar blue\nproperty float quality\nelement face 1\nproperty list uchar int vertex_indices\nend_header\n"
                                         "0 0 0 255 0 0 1\n1 0 0 0 255 0 1\n1 0 -1 0 0 255 1\n0 0 -1 255 255 255 1\n4 0 1 2 3\n";
     // One triangle with normals and uvs, as binary, both byte orders; a trailing element of edges to skip.
@@ -981,9 +981,9 @@ TEST_CASE("PLY files, ASCII and binary in either byte order, with normals, uvs a
         REQUIRE((*t)->vertices[0].uv.y == Catch::Approx(1.0f));
     }
     // Refused: points without faces, a face past the vertices, a body shorter than the header.
-    std::ofstream(dir / "points.ply") << "ply\nformat ascii 1.0\nelement vertex 2\nproperty float x\nproperty float y\nproperty float z\nend_header\n0 0 0\n1 1 1\n";
-    std::ofstream(dir / "past.ply") << "ply\nformat ascii 1.0\nelement vertex 3\nproperty float x\nproperty float y\nproperty float z\nelement face 1\nproperty list uchar int vertex_indices\nend_header\n0 0 0\n1 0 0\n0 1 0\n3 0 1 7\n";
-    std::ofstream(dir / "short.ply") << "ply\nformat ascii 1.0\nelement vertex 3\nproperty float x\nproperty float y\nproperty float z\nend_header\n0 0 0\n1 0 0\n";
+    std::ofstream(dir / "points.ply", std::ios::binary) << "ply\nformat ascii 1.0\nelement vertex 2\nproperty float x\nproperty float y\nproperty float z\nend_header\n0 0 0\n1 1 1\n";
+    std::ofstream(dir / "past.ply", std::ios::binary) << "ply\nformat ascii 1.0\nelement vertex 3\nproperty float x\nproperty float y\nproperty float z\nelement face 1\nproperty list uchar int vertex_indices\nend_header\n0 0 0\n1 0 0\n0 1 0\n3 0 1 7\n";
+    std::ofstream(dir / "short.ply", std::ios::binary) << "ply\nformat ascii 1.0\nelement vertex 3\nproperty float x\nproperty float y\nproperty float z\nend_header\n0 0 0\n1 0 0\n";
     const auto points = parse_ply_error(store, "assets/ply-test/points.ply");
     REQUIRE(points.find("point cloud") != std::string::npos);
     REQUIRE(parse_ply_error(store, "assets/ply-test/past.ply").find("vertex 7") != std::string::npos);
@@ -1052,7 +1052,7 @@ TEST_CASE("glass and lacquer from glTF: KHR_materials_transmission, _ior, _volum
     const std::filesystem::path file = project() / "assets" / "glass-test.gltf";
     struct Cleanup { std::filesystem::path p; ~Cleanup() { std::filesystem::remove(p); } } cleanup{file};
     {
-        std::ofstream out(file);
+        std::ofstream out(file, std::ios::binary);
         out << R"({"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0,1]}],"nodes":[{"name":"glass","mesh":0},{"name":"paint","mesh":1}],
             "extensionsUsed":["KHR_materials_transmission","KHR_materials_ior","KHR_materials_volume","KHR_materials_clearcoat"],
             "meshes":[{"primitives":[{"attributes":{"POSITION":0,"NORMAL":1,"TEXCOORD_0":2},"indices":3,"material":0}]},{"primitives":[{"attributes":{"POSITION":0,"NORMAL":1,"TEXCOORD_0":2},"indices":3,"material":1}]}],
@@ -1277,7 +1277,7 @@ TEST_CASE("voxel models: text layers and MagicaVoxel files meshed greedily, colo
     const std::filesystem::path dir = project() / "assets" / "voxel-test";
     std::filesystem::create_directories(dir);
     // Two red cells side by side and one green on top of the right one; a glowing cell apart.
-    std::ofstream(dir / "pair.voxels") << R"({
+    std::ofstream(dir / "pair.voxels", std::ios::binary) << R"({
   // comments are allowed
   "voxel": 0.5,
   "palette": {"r": "#ff0000", "g": [0, 1, 0], "l": {"color": "#ffd27a", "emissive": 4}},
@@ -1310,7 +1310,7 @@ TEST_CASE("voxel models: text layers and MagicaVoxel files meshed greedily, colo
     REQUIRE(v.materials[1].emissive.x > 3.0f);
     REQUIRE(v.submeshes.size() == 2);
     REQUIRE_FALSE(store.mesh("assets/voxel-test/missing.voxels").has_value());
-    std::ofstream(dir / "bad.voxels") << R"({"palette": {"r": "#f00"}, "layers": [["rx"]]})";
+    std::ofstream(dir / "bad.voxels", std::ios::binary) << R"({"palette": {"r": "#f00"}, "layers": [["rx"]]})";
     auto bad = store.mesh("assets/voxel-test/bad.voxels");
     REQUIRE_FALSE(bad.has_value());
     REQUIRE(bad.error().message.find("'x'") != std::string::npos);
@@ -1389,7 +1389,7 @@ TEST_CASE("glTF compressed with EXT_meshopt_compression reads as the plain file 
         {"scene", 0}};
     const std::filesystem::path dir = project() / "assets" / "meshopt-test";
     std::filesystem::create_directories(dir);
-    std::ofstream(dir / "quad.gltf") << doc.dump();
+    std::ofstream(dir / "quad.gltf", std::ios::binary) << doc.dump();
     assets::AssetStore store(project());
     auto m = store.mesh("assets/meshopt-test/quad.gltf");
     INFO((m ? std::string() : m.error().to_string()));
@@ -1521,7 +1521,7 @@ TEST_CASE("KTX2 textures (Basis Universal, ETC1S and UASTC), alone and through K
         {"scene", 0}};
     const std::filesystem::path dir = project() / "assets" / "ktx2-test";
     std::filesystem::create_directories(dir);
-    std::ofstream(dir / "quad.gltf") << doc.dump();
+    std::ofstream(dir / "quad.gltf", std::ios::binary) << doc.dump();
     auto m = store.mesh("assets/ktx2-test/quad.gltf");
     REQUIRE(m.has_value());
     REQUIRE((*m)->materials[0].texture == "assets/ktx2/gradient-uastc.ktx2");

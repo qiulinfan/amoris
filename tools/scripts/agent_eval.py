@@ -179,7 +179,7 @@ def event_cause_check(env, answer):
 # the copy again, reloads the script context and checks the exposed state.
 def entry_script(project_dir):
     """The project's entry script from its project.toml (scripts/main.ts unless it says otherwise)."""
-    with open(os.path.join(project_dir, "project.toml")) as f:
+    with open(os.path.join(project_dir, "project.toml"), encoding="utf-8") as f:
         for line in f:
             m = re.match(r'\s*entry\s*=\s*"([^"]+)"', line)
             if m:
@@ -189,9 +189,9 @@ def entry_script(project_dir):
 
 def edit_main(project_dir, transform):
     path = os.path.join(project_dir, entry_script(project_dir))
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         text = f.read()
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
         f.write(transform(text))
 
 
@@ -353,7 +353,7 @@ def jump_sound_solve(env, project_dir):
 
 def coin_chime_solve(env, project_dir):
     os.makedirs(os.path.join(project_dir, "assets"), exist_ok=True)
-    with open(os.path.join(project_dir, "assets", "chime.sfx"), "w") as f:
+    with open(os.path.join(project_dir, "assets", "chime.sfx"), "w", encoding="utf-8", newline="\n") as f:
         f.write('{"preset": "coin"}\n')
 
     def transform(t):
@@ -405,7 +405,7 @@ THEME_SONG = """{
 
 def theme_song_solve(env, project_dir):
     os.makedirs(os.path.join(project_dir, "assets"), exist_ok=True)
-    with open(os.path.join(project_dir, "assets", "theme.song"), "w") as f:
+    with open(os.path.join(project_dir, "assets", "theme.song"), "w", encoding="utf-8", newline="\n") as f:
         f.write(THEME_SONG)
 
     def transform(t):
@@ -512,7 +512,7 @@ MERCHANT_TALK = """    const m = world.get(merchant, "Transform")!.position;
 
 def merchant_talk_solve(env, project_dir):
     os.makedirs(os.path.join(project_dir, "dialogue"), exist_ok=True)
-    with open(os.path.join(project_dir, "dialogue", "merchant.dialogue.json"), "w") as f:
+    with open(os.path.join(project_dir, "dialogue", "merchant.dialogue.json"), "w", encoding="utf-8", newline="\n") as f:
         f.write(MERCHANT)
 
     def transform(t):
@@ -637,7 +637,7 @@ def lamp_prefab_solve(env, project_dir):
             "children": [{"name": "Glow", "components": {"Transform": {}, "Light": {"kind": 1, "intensity": 2}}}],
         }],
     }
-    with open(os.path.join(project_dir, "prefabs", "lamp.json"), "w") as f:
+    with open(os.path.join(project_dir, "prefabs", "lamp.json"), "w", encoding="utf-8", newline="\n") as f:
         json.dump(lamp, f, indent=2)
 
     def transform(t):
@@ -710,12 +710,12 @@ def night_lamp_check(env, answer):
 def walker_sprint_solve(env, project_dir):
     # A new action in project.toml, and the speed it picks in the script.
     toml = os.path.join(project_dir, "project.toml")
-    with open(toml) as f:
+    with open(toml, encoding="utf-8") as f:
         text = f.read()
     line = 'jump = ["Space", "pad:a"]\n'
     if line not in text:
         raise RuntimeError("the walker project.toml changed shape")
-    with open(toml, "w") as f:
+    with open(toml, "w", encoding="utf-8", newline="\n") as f:
         f.write(text.replace(line, line + 'sprint = ["LShift", "pad:left_shoulder"]\n', 1))
 
     def transform(t):
@@ -1224,14 +1224,14 @@ PERSIAN = {
 
 def persian_locale_solve(env, project_dir):
     locales = os.path.join(project_dir, "locales")
-    with open(os.path.join(locales, "fa.json"), "w") as f:
+    with open(os.path.join(locales, "fa.json"), "w", encoding="utf-8", newline="\n") as f:
         json.dump(PERSIAN, f, ensure_ascii=False, indent=2)
     for lang in ("en", "zh", "ar"):
         path = os.path.join(locales, lang + ".json")
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             doc = json.load(f)
         doc["language"]["fa"] = "فارسی"
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8", newline="\n") as f:
             json.dump(doc, f, ensure_ascii=False, indent=2)
 
 
@@ -1274,7 +1274,7 @@ BLENDER = os.environ.get("POCKET_BLENDER") or "/Applications/Blender.app/Content
 
 def blender_level_solve(env, project_dir):
     script = os.path.join(project_dir, "make_level.py")
-    with open(script, "w") as f:
+    with open(script, "w", encoding="utf-8", newline="\n") as f:
         f.write("""import bpy, sys
 bpy.ops.wm.read_factory_settings(use_empty=True)
 bpy.ops.mesh.primitive_plane_add(size=10, location=(0, 0, 1))
@@ -1886,11 +1886,11 @@ expose("alive", () => alive);
 
 
 def write_game(project_dir, name, script):
-    with open(os.path.join(project_dir, "project.toml"), "w") as f:
+    with open(os.path.join(project_dir, "project.toml"), "w", encoding="utf-8", newline="\n") as f:
         f.write(GAME_TOML.format(name=os.path.basename(project_dir)))
-    with open(os.path.join(project_dir, "scene.json"), "w") as f:
+    with open(os.path.join(project_dir, "scene.json"), "w", encoding="utf-8", newline="\n") as f:
         f.write(EMPTY_SCENE)
-    with open(os.path.join(project_dir, "scripts", "main.ts"), "w") as f:
+    with open(os.path.join(project_dir, "scripts", "main.ts"), "w", encoding="utf-8", newline="\n") as f:
         f.write(script)
 
 
@@ -2104,7 +2104,7 @@ expose("time", () => Number(time.toFixed(3)));
 
 def pause_menu_solve(env, project_dir):
     write_game(project_dir, "pause_menu", PAUSE_TS)
-    with open(os.path.join(project_dir, "project.toml"), "w") as f:
+    with open(os.path.join(project_dir, "project.toml"), "w", encoding="utf-8", newline="\n") as f:
         f.write(PAUSE_TOML.format(name=os.path.basename(project_dir)))
     return None
 
@@ -2395,7 +2395,7 @@ onStart(() => {
 
 def watchman_solve(env, project_dir):
     write_game(project_dir, "watchman", WATCHMAN_TS)
-    with open(os.path.join(project_dir, "scene.json"), "w") as f:
+    with open(os.path.join(project_dir, "scene.json"), "w", encoding="utf-8", newline="\n") as f:
         f.write(json.dumps({"format": "pocket-scene", "entities": [
             {"name": "Ground", "components": {"Transform": {"position": {"x": 0, "y": -0.5, "z": 0}, "scale": {"x": 40, "y": 1, "z": 40}}, "MeshRenderer": {"mesh": "cube"}, "RigidBody": {"kind": "static"}, "Collider": {"shape": "box"}}},
             {"name": "Player", "components": {"Transform": {"position": {"x": 0, "y": 0.5, "z": -6}}, "MeshRenderer": {"mesh": "sphere"}}},
@@ -2471,10 +2471,10 @@ expose("complete", () => complete);
 
 def platformer_solve(env, project_dir):
     write_game(project_dir, "platformer", PLATFORMER_TS)
-    with open(os.path.join(project_dir, "project.toml"), "w") as f:
+    with open(os.path.join(project_dir, "project.toml"), "w", encoding="utf-8", newline="\n") as f:
         f.write(PLATFORMER_TOML.format(name=os.path.basename(project_dir)))
     os.makedirs(os.path.join(project_dir, "assets"), exist_ok=True)
-    with open(os.path.join(project_dir, "assets", "tiles.svg"), "w") as f:
+    with open(os.path.join(project_dir, "assets", "tiles.svg"), "w", encoding="utf-8", newline="\n") as f:
         f.write(PLATFORMER_SVG)
     return None
 
@@ -2629,7 +2629,7 @@ expose("solved", () => solved);
 
 def sokoban_solve(env, project_dir):
     write_game(project_dir, "sokoban", SOKOBAN_TS)
-    with open(os.path.join(project_dir, "project.toml"), "w") as f:
+    with open(os.path.join(project_dir, "project.toml"), "w", encoding="utf-8", newline="\n") as f:
         f.write(SOKOBAN_TOML.format(name=os.path.basename(project_dir)))
     return None
 
@@ -2725,7 +2725,7 @@ onTick((t) => {
 
 def villagers_solve(env, project_dir):
     write_game(project_dir, "villagers", VILLAGERS_TS)
-    with open(os.path.join(project_dir, "scene.json"), "w") as f:
+    with open(os.path.join(project_dir, "scene.json"), "w", encoding="utf-8", newline="\n") as f:
         f.write(json.dumps({"format": "pocket-scene", "entities": [
             {"name": "Ground", "components": {"Transform": {"position": {"x": 0, "y": -0.5, "z": 0}, "scale": {"x": 40, "y": 1, "z": 40}}, "MeshRenderer": {"mesh": "cube"}, "RigidBody": {"kind": "static"}, "Collider": {"shape": "box"}}},
             {"name": "Player", "components": {"Transform": {"position": {"x": 0, "y": 0, "z": 15}}, "MeshRenderer": {"mesh": "capsule"}}},
@@ -2760,7 +2760,7 @@ def wolves_solve(env, project_dir):
     sheep = [{"name": f"Sheep{i + 1}", "components": {"Transform": {"position": {"x": x, "y": y, "z": z}}, "MeshRenderer": {"mesh": "sphere", "color": "#f0f0e8"}}} for i, (x, y, z) in enumerate(WOLF_SHEEP)]
     wolf = lambda name, x: {"name": name, "components": {"Transform": {"position": {"x": x, "y": 0, "z": 0}}, "MeshRenderer": {"mesh": "capsule", "color": "#555560"},  # noqa: E731
                                                        "NavAgent": {"speed": 3}, "Behavior": {"targets": "Sheep*", "states": [{"name": "hunt", "move": "follow", "speed": 3}]}}}
-    with open(os.path.join(project_dir, "scene.json"), "w") as f:
+    with open(os.path.join(project_dir, "scene.json"), "w", encoding="utf-8", newline="\n") as f:
         f.write(json.dumps({"format": "pocket-scene", "entities": [
             {"name": "Ground", "components": {"Transform": {"position": {"x": 0, "y": -0.5, "z": 0}, "scale": {"x": 40, "y": 1, "z": 40}}, "MeshRenderer": {"mesh": "cube"}, "RigidBody": {"kind": "static"}, "Collider": {"shape": "box"}}},
             *sheep, wolf("Wolf1", -1), wolf("Wolf2", 1),
@@ -2831,7 +2831,7 @@ def wolves_check(env, answer):
 def village_weather_solve(env, project_dir):
     write_game(project_dir, "village_weather", "// A village square (the scene is the game).\nexport {};\n")
     houses = [{"name": f"House{i + 1}", "components": {"Transform": {"position": {"x": x, "y": 0, "z": z}}, "MeshRenderer": {"mesh": "house"}}} for i, (x, z) in enumerate([(-7, -5), (7, -5), (0, 8)])]
-    with open(os.path.join(project_dir, "scene.json"), "w") as f:
+    with open(os.path.join(project_dir, "scene.json"), "w", encoding="utf-8", newline="\n") as f:
         f.write(json.dumps({"format": "pocket-scene", "entities": [
             {"name": "Ground", "components": {"Transform": {"position": {"x": 0, "y": -0.5, "z": 0}, "scale": {"x": 40, "y": 1, "z": 40}}, "MeshRenderer": {"mesh": "cube", "texture": "pattern:cobble", "texture_tile": 3}, "RigidBody": {"kind": "static"}, "Collider": {"shape": "box"}}},
             *houses,
@@ -2844,7 +2844,7 @@ def village_weather_solve(env, project_dir):
 
 def village_weather_followup(env, project_dir):
     path = os.path.join(project_dir, "scene.json")
-    scene = json.load(open(path))
+    scene = json.load(open(path, encoding="utf-8"))
     for e in scene["entities"]:
         if e["name"] == "Sky":
             e["components"]["Sky"]["time_of_day"] = 20.0
@@ -2852,7 +2852,7 @@ def village_weather_followup(env, project_dir):
     for i, (x, z) in enumerate([(-5, -3), (5, -3), (-2, 6), (2, 6)]):
         scene["entities"].append({"name": f"Lamp{i + 1}", "components": {"Transform": {"position": {"x": x, "y": 0, "z": z}}, "MeshRenderer": {"mesh": "lamp"}},
                                   "children": [{"name": "Glow", "components": {"Transform": {"position": {"x": 0, "y": 2.8, "z": 0}}, "Light": {"kind": "point", "color": "#ffb060", "intensity": 3, "range": 8, "after_dark": True}}}]})
-    json.dump(scene, open(path, "w"), indent=1)
+    json.dump(scene, open(path, "w", encoding="utf-8", newline="\n"), indent=1)
     return None
 
 
@@ -3005,9 +3005,9 @@ expose("bursts", () => bursts);
 
 def fireworks_solve(env, project_dir):
     write_game(project_dir, "fireworks", FIREWORKS_TS)
-    with open(os.path.join(project_dir, "project.toml"), "w") as f:
+    with open(os.path.join(project_dir, "project.toml"), "w", encoding="utf-8", newline="\n") as f:
         f.write(FIREWORKS_TOML.format(name=os.path.basename(project_dir)))
-    with open(os.path.join(project_dir, "scene.json"), "w") as f:
+    with open(os.path.join(project_dir, "scene.json"), "w", encoding="utf-8", newline="\n") as f:
         f.write('{"format": "pocket-scene", "entities": [{"name": "Night", "components": {"Sky": {"mode": "off"}}}]}\n')
     return None
 
@@ -3099,7 +3099,7 @@ onTick(() => {
 
 def glade_solve(env, project_dir):
     write_game(project_dir, "glade", GLADE_TS)
-    with open(os.path.join(project_dir, "project.toml"), "w") as f:
+    with open(os.path.join(project_dir, "project.toml"), "w", encoding="utf-8", newline="\n") as f:
         f.write(GLADE_TOML.format(name=os.path.basename(project_dir)))
     return None
 
@@ -3254,7 +3254,7 @@ COIN_SVG = """<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" vie
 
 def svg_coin_solve(env, project_dir):
     os.makedirs(os.path.join(project_dir, "assets"), exist_ok=True)
-    with open(os.path.join(project_dir, "assets", "coin.svg"), "w") as f:
+    with open(os.path.join(project_dir, "assets", "coin.svg"), "w", encoding="utf-8", newline="\n") as f:
         f.write(COIN_SVG)
     edit_main(project_dir, lambda t: t.replace("onStart(() => {\n", 'onStart(() => {\n    world.spawn("CoinBadge", { components: { Transform: { position: { x: 2, y: 2.5, z: 0 } }, Sprite: { texture: "assets/coin.svg", size: { x: 1, y: 1 } } } });\n', 1))
     return None
@@ -3286,13 +3286,13 @@ def svg_coin_check(env, answer):
 
 def orange_ball_solve(env, project_dir):
     os.makedirs(os.path.join(project_dir, "materials"), exist_ok=True)
-    with open(os.path.join(project_dir, "materials", "orange.wgsl"), "w") as f:
+    with open(os.path.join(project_dir, "materials", "orange.wgsl"), "w", encoding="utf-8", newline="\n") as f:
         f.write("fn material(lit: vec4f, s: Surface) -> vec4f { return vec4f(1.0, 0.133, 0.0, 1.0); }\n")
     main = os.path.join(project_dir, "scripts", "main.ts")
-    with open(main) as f:
+    with open(main, encoding="utf-8") as f:
         text = f.read()
     text = text.replace('MeshRenderer: { mesh: "sphere", color:', 'MeshRenderer: { mesh: "sphere", material: "materials/orange.wgsl", color:', 1)
-    with open(main, "w") as f:
+    with open(main, "w", encoding="utf-8", newline="\n") as f:
         f.write(text)
     return None
 
@@ -3402,11 +3402,11 @@ def guard_view_check(env, answer):
 # broken one where they should agree (measured in the same runtime before the agent starts).
 
 def write_project(project_dir, script, scene=EMPTY_SCENE, toml=GAME_TOML):
-    with open(os.path.join(project_dir, "project.toml"), "w") as f:
+    with open(os.path.join(project_dir, "project.toml"), "w", encoding="utf-8", newline="\n") as f:
         f.write(toml.format(name=os.path.basename(project_dir)))
-    with open(os.path.join(project_dir, "scene.json"), "w") as f:
+    with open(os.path.join(project_dir, "scene.json"), "w", encoding="utf-8", newline="\n") as f:
         f.write(scene)
-    with open(os.path.join(project_dir, "scripts", "main.ts"), "w") as f:
+    with open(os.path.join(project_dir, "scripts", "main.ts"), "w", encoding="utf-8", newline="\n") as f:
         f.write(script)
 
 
@@ -3531,7 +3531,7 @@ def swarm_before(env):
 
 
 def swarm_solve(env, project_dir):
-    with open(os.path.join(project_dir, "scripts", "main.ts"), "w") as f:
+    with open(os.path.join(project_dir, "scripts", "main.ts"), "w", encoding="utf-8", newline="\n") as f:
         f.write(SWARM_FAST_TS)
     return None
 
@@ -3645,7 +3645,7 @@ def cannon_before(env):
 
 
 def cannon_solve(env, project_dir):
-    with open(os.path.join(project_dir, "scripts", "main.ts"), "w") as f:
+    with open(os.path.join(project_dir, "scripts", "main.ts"), "w", encoding="utf-8", newline="\n") as f:
         f.write(CANNON_FIXED_TS)
     return None
 
@@ -3711,12 +3711,12 @@ def sinking_setup(project_dir):
 
 def sinking_solve(env, project_dir):
     path = os.path.join(project_dir, "scene.json")
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         scene = json.load(f)
     for e in scene["entities"]:
         if e["name"] == "BlueCrate":
             e["components"]["Collider"]["group"] = 0
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
         json.dump(scene, f, indent=1)
     return "group"
 
@@ -3802,7 +3802,7 @@ def coins_setup(project_dir):
 
 
 def coins_solve(env, project_dir):
-    with open(os.path.join(project_dir, "scripts", "main.ts"), "w") as f:
+    with open(os.path.join(project_dir, "scripts", "main.ts"), "w", encoding="utf-8", newline="\n") as f:
         f.write(COINS_FIXED_TS)
     return None
 
@@ -3854,7 +3854,7 @@ HOUSE_VOXELS = {
 
 def house_solve(env, project_dir):
     os.makedirs(os.path.join(project_dir, "assets"), exist_ok=True)
-    with open(os.path.join(project_dir, "assets", "house.voxels"), "w") as f:
+    with open(os.path.join(project_dir, "assets", "house.voxels"), "w", encoding="utf-8", newline="\n") as f:
         json.dump(HOUSE_VOXELS, f, indent=1)
     edit_main(project_dir, lambda s: s.replace("onStart(() => {", 'onStart(() => {\n    world.spawn("House", { components: { Transform: { position: { x: 10, y: 0, z: 0 } }, MeshRenderer: { mesh: "assets/house.voxels" } } });', 1))
     return None
@@ -3935,12 +3935,12 @@ def festival_before(env):
 
 def festival_solve(env, project_dir):
     path = os.path.join(project_dir, "scene.json")
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         scene = json.load(f)
     for e in scene["entities"]:
         if e["name"].startswith("Flag_"):
             e["components"]["Cloth"]["segments"] = {"x": 16, "y": 10}
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
         json.dump(scene, f, indent=1)
     return None
 
@@ -4122,7 +4122,7 @@ TASKS = [
 
 def bundle(project_dir):
     """Bundle a project's TypeScript with the tool; the bundle lands in build/ts/<dir name>.js."""
-    proc = subprocess.run([POCKET, "ts", project_dir], capture_output=True, text=True, cwd=ROOT, env={**os.environ, "POCKET_ROOT": ROOT})
+    proc = subprocess.run([POCKET, "ts", project_dir], capture_output=True, text=True, cwd=ROOT, env={**os.environ, "POCKET_ROOT": ROOT}, encoding="utf-8", errors="replace")
     if proc.returncode != 0:
         raise RuntimeError(f"bundling {project_dir} failed: {(proc.stderr or proc.stdout).strip()[-400:]}")
 
@@ -4140,7 +4140,7 @@ def eval_dir():
         dst = os.path.join(EVAL_DIR, d)
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         shutil.copyfile(src, dst)
-        with open(src) as f:
+        with open(src, encoding="utf-8") as f:
             text = f.read()
         title = next((l.lstrip("# ").strip() for l in text.splitlines() if l.startswith("#")), d)
         # The first paragraph of prose (its lines joined: the docs are wrapped), to its first stop;
@@ -4149,7 +4149,7 @@ def eval_dir():
         prose = next((p for p in paras[1:] if not p.lstrip().startswith(("#", "|", "-", "```", "<")) and not re.match(r"\s*\d+[.)]\s", p)), "")
         first = re.split(r"(?<=[.:])\s", " ".join(l.strip() for l in prose.splitlines()), maxsplit=1)[0][:200]
         lines.append(f"- `{d}` ({len(text) // 1024 + 1} KB): {title}. {first}")
-    with open(os.path.join(EVAL_DIR, "docs", "INDEX.md"), "w") as f:
+    with open(os.path.join(EVAL_DIR, "docs", "INDEX.md"), "w", encoding="utf-8", newline="\n") as f:
         f.write("\n".join(lines) + "\n")
     return EVAL_DIR
 
@@ -4168,15 +4168,15 @@ def scratch_copy(task):
     dst = os.path.join(base, name)
     shutil.rmtree(dst, ignore_errors=True)
     source = [] if task["project"] == "blank" else ["--from", task["project"]]
-    proc = subprocess.run([POCKET, "new", name, *source, "--dir", base], capture_output=True, text=True, cwd=ROOT, env={**os.environ, "POCKET_ROOT": ROOT})
+    proc = subprocess.run([POCKET, "new", name, *source, "--dir", base], capture_output=True, text=True, cwd=ROOT, env={**os.environ, "POCKET_ROOT": ROOT}, encoding="utf-8", errors="replace")
     if proc.returncode != 0:
         raise RuntimeError(f"copying {task['project']} failed: {(proc.stderr or proc.stdout).strip()[-400:]}")
     guide = os.path.join(dst, "AGENTS.md")
     if os.path.exists(guide):
-        with open(guide) as f:
+        with open(guide, encoding="utf-8") as f:
             text = f.read()
         text = text.replace(os.path.join(ROOT, "docs"), os.path.join(base, "docs")).replace("`mcp.md` for the commands", "`INDEX.md` lists them, `mcp.md` for the commands")
-        with open(guide, "w") as f:
+        with open(guide, "w", encoding="utf-8", newline="\n") as f:
             f.write(text)
     bundle(dst)
     return dst
@@ -4200,7 +4200,7 @@ def run_external(cmd, env, task, timeout, project_dir):
     # The agent's own tools start runtimes from the copy under test too, not a build of the checkout.
     runtime = os.environ.get("POCKET_EVAL_RUNTIME")
     extra = {"POCKET_RUNTIME": os.path.abspath(runtime)} if runtime else {}
-    proc = subprocess.run(cmd, input=json.dumps(payload), capture_output=True, text=True, shell=True, timeout=timeout, env={**os.environ, "POCKET_RPC_URL": env.url, **extra})
+    proc = subprocess.run(cmd, input=json.dumps(payload), capture_output=True, text=True, shell=True, timeout=timeout, env={**os.environ, "POCKET_RPC_URL": env.url, **extra}, encoding="utf-8", errors="replace")
     answer = None
     metrics = {}
     for line in reversed(proc.stdout.strip().splitlines()):
@@ -4346,7 +4346,7 @@ def run(runner="reference", tasks=None, timeout=300, log=print, project_root=Non
         results.append(row)
         if rows_to:
             # Each task's row as it is done, so a long run that is cut short keeps what it did.
-            with open(rows_to, "a") as f:
+            with open(rows_to, "a", encoding="utf-8", newline="\n") as f:
                 f.write(json.dumps(row) + "\n")
         spent = f"  {metrics.get('tool_calls', '?')} calls, {metrics.get('tokens', {}).get('total', '?')} tokens, ${metrics.get('cost_usd', 0):.4f}" if metrics else ""
         if metrics.get("peeked"):

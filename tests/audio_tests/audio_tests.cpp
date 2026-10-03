@@ -468,7 +468,7 @@ TEST_CASE("an MP3 clip decodes whole or streams, like an Ogg", "[audio][mp3]") {
     for (std::size_t i = w_mix.size() - 4000; i < w_mix.size(); ++i) tail = std::max(tail, std::abs(w_mix[i]));
     REQUIRE(tail == 0.0f);
     // Something that is not an MP3 is refused by name.
-    std::ofstream(root() / "samples" / "audio" / "assets" / "fake.mp3") << "not an mp3 at all";
+    std::ofstream(root() / "samples" / "audio" / "assets" / "fake.mp3", std::ios::binary) << "not an mp3 at all";
     auto bad = whole->load("assets/fake.mp3");
     std::filesystem::remove(root() / "samples" / "audio" / "assets" / "fake.mp3");
     REQUIRE_FALSE(bad.has_value());
@@ -511,7 +511,7 @@ TEST_CASE("a FLAC clip decodes whole or streams, sample for sample", "[audio][fl
     float tail = 0;
     for (std::size_t i = w_mix.size() - 4000; i < w_mix.size(); ++i) tail = std::max(tail, std::abs(w_mix[i]));
     REQUIRE(tail == 0.0f);
-    std::ofstream(root() / "samples" / "audio" / "assets" / "fake.flac") << "not a flac at all";
+    std::ofstream(root() / "samples" / "audio" / "assets" / "fake.flac", std::ios::binary) << "not a flac at all";
     auto bad = whole->load("assets/fake.flac");
     std::filesystem::remove(root() / "samples" / "audio" / "assets" / "fake.flac");
     REQUIRE_FALSE(bad.has_value());
@@ -593,7 +593,7 @@ TEST_CASE("a bus thins with a high-pass, echoes with feedback and rings on, and 
 TEST_CASE("a recipe renders a sound: its pitch, its length, a preset and its seed, the same every time", "[audio][synth]") {
     const auto dir = std::filesystem::temp_directory_path() / std::format("pocket-synth-{}", std::rand());
     std::filesystem::create_directories(dir / "assets");
-    auto write = [&](const char* name, const char* text) { std::ofstream(dir / "assets" / name) << text; };
+    auto write = [&](const char* name, const char* text) { std::ofstream(dir / "assets" / name, std::ios::binary) << text; };
     write("a440.sfx", R"({"wave": "sine", "frequency": 440, "attack": 0, "hold": 0.5, "decay": 0, "volume": 0.5})");
     write("coin.sfx", R"({"preset": "coin"})");
     write("coin7.sfx", R"({"preset": "coin", "seed": 7})");
@@ -650,7 +650,7 @@ TEST_CASE("a recipe renders a sound: its pitch, its length, a preset and its see
 TEST_CASE("a score renders music: notes at their pitch and place, rests, holds, a seamless loop", "[audio][synth][song]") {
     const auto dir = std::filesystem::temp_directory_path() / std::format("pocket-song-{}", std::rand());
     std::filesystem::create_directories(dir / "assets");
-    auto write = [&](const char* name, const std::string& text) { std::ofstream(dir / "assets" / name) << text; };
+    auto write = [&](const char* name, const std::string& text) { std::ofstream(dir / "assets" / name, std::ios::binary) << text; };
     const std::string sine = R"("instruments": {"s": {"wave": "sine", "attack": 0.001, "hold": 0.01, "decay": 0.01, "volume": 0.5}})";
     // One step a second: A4 held for a second, then rests.
     write("held.song", "{\"bpm\": 60, \"steps_per_beat\": 1, " + sine + R"(, "tracks": [{"instrument": "s", "notes": "A4 . . ."}]})");
@@ -698,7 +698,7 @@ TEST_CASE("a score renders music: notes at their pitch and place, rests, holds, 
 TEST_CASE("a clip is described for an agent that cannot hear it, and read again when forgotten", "[audio][synth][analyze]") {
     const auto dir = std::filesystem::temp_directory_path() / std::format("pocket-analyze-{}", std::rand());
     std::filesystem::create_directories(dir / "assets");
-    auto write = [&](const char* name, const char* text) { std::ofstream(dir / "assets" / name) << text; };
+    auto write = [&](const char* name, const char* text) { std::ofstream(dir / "assets" / name, std::ios::binary) << text; };
     write("tone.sfx", R"({"wave": "sine", "frequency": 440, "attack": 0, "hold": 0.4, "decay": 0.1, "volume": 0.5})");
     write("coin.sfx", R"({"preset": "coin"})");
     write("hiss.sfx", R"({"wave": "noise", "frequency": 8000, "attack": 0, "hold": 0.3, "decay": 0.1, "volume": 0.5})");

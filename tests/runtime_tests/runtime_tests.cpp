@@ -138,6 +138,8 @@ TEST_CASE("hello runs headless and reports state", "[runtime]") {
     REQUIRE(rep["state_hash"].get<std::string>().size() == 16);
 #ifdef __APPLE__
     REQUIRE(rep["gpu"]["backend"] == "metal");
+#elif defined(_WIN32)
+    REQUIRE(rep["gpu"]["backend"] == (std::getenv("POCKET_GPU_BACKEND") ? std::string(std::getenv("POCKET_GPU_BACKEND")) : std::string("d3d12")));
 #else
     REQUIRE(rep["gpu"]["backend"] == "vulkan");
 #endif
@@ -219,7 +221,10 @@ TEST_CASE("script.eval has the SDK's exports as names and answers an error with 
     REQUIRE(s.command("script.eval", Json{{"source", "pocket.world.find('Evaled')"}}).value() == made);
     const Json bad = s.command("script.eval", Json{{"source", "nothingHere.x"}}).value();
     INFO(bad.dump());
-    REQUIRE(bad["error"].get<std::string>().find("Can't find variable: nothingHere") != std::string::npos);
+    // Apple's and WebKitGTK's JavaScriptCore say "Can't find variable: x"; Bun's (Windows) says
+    // V8's "x is not defined".
+    const std::string message = bad["error"].get<std::string>();
+    REQUIRE((message.find("Can't find variable: nothingHere") != std::string::npos || message.find("nothingHere is not defined") != std::string::npos));
     // An entity that a lookup did not find is said as such, not as a missing parameter.
     const Json lost = s.command("script.eval", Json{{"source", "world.get(world.find('NoSuchThing'), 'Transform')"}}).value();
     INFO(lost.dump());
@@ -234,7 +239,7 @@ TEST_CASE("a script that uses an SDK name it did not import is told where it com
     std::filesystem::create_directories(dir);
     const std::filesystem::path bundle = dir / "no-import.js";
     {
-        std::ofstream f(bundle);
+        std::ofstream f(bundle, std::ios::binary);
         f << "onStart(() => {});\n";
     }
     auto o = hello_options(-1);
@@ -721,11 +726,20 @@ TEST_CASE("the window's view drawn at a scale is stretched to the window, its co
     REQUIRE(s.command("render.scale", Json{{"scale", 1}}).has_value());
     REQUIRE(s.command("step", Json{{"ticks", 1}, {"render", "each"}}).has_value());
     REQUIRE_FALSE(s.command("render.stats", Json::object()).value().contains("scale"));
-    // Dynamic: a GPU target no frame can meet takes the fraction down to its least.
+    // Dynamic, against the least target there is (0.5 ms): a GPU that draws this whole window in
+    // more takes the fraction down; one that draws it in less (a desktop GPU takes a twentieth of
+    // it) keeps the whole window.
+    REQUIRE(s.command("step", Json{{"ticks", 10}, {"render", "each"}}).has_value());   // timings a few frames behind
+    const Json whole = s.command("render.stats", Json::object()).value();
     REQUIRE(s.command("render.scale", Json{{"dynamic", true}, {"target_ms", 0.5}, {"least", 0.5}}).has_value());
     REQUIRE(s.command("step", Json{{"ticks", 200}, {"render", "each"}}).has_value());
     const Json rs = s.command("render.stats", Json::object()).value();
-    if (rs.contains("gpu")) REQUIRE(s.command("render.scale", Json::object()).value()["drawn"]["scale"].get<double>() < 1.0);
+    if (rs.contains("gpu") && whole.contains("gpu")) {
+        INFO(whole["gpu"].dump());
+        const double scale = s.command("render.scale", Json::object()).value()["drawn"]["scale"].get<double>();
+        if (whole["gpu"]["ms"].get<double>() > 0.5) REQUIRE(scale < 1.0);
+        else REQUIRE(scale == 1.0);
+    }
 }
 
 TEST_CASE("the built-in humanoid walks, runs and stands by its speed; a one-shot plays out, die stays", "[runtime][animation][locomotion]") {
@@ -2900,7 +2914,7 @@ TEST_CASE("an isometric map is drawn, asked, walked by the grid and left alone b
     const std::filesystem::path file = o.project_dir / "assets" / "iso-test.tmj";
     struct Cleanup { std::filesystem::path p; ~Cleanup() { std::filesystem::remove(p); } } cleanup{file};
     {
-        std::ofstream out(file);
+        std::ofstream out(file, std::ios::binary);
         out << R"({"width":4,"height":3,"tilewidth":32,"tileheight":16,"orientation":"isometric","tilesets":[{"firstgid":1,"name":"tiles","image":"tiles.png","imagewidth":80,"imageheight":16,"tilewidth":16,"tileheight":16,"columns":5,"tilecount":5,"tiles":[{"id":0,"properties":[{"name":"solid","type":"bool","value":true}]}]}],"layers":[{"id":1,"type":"tilelayer","name":"floor","width":4,"height":3,"data":[1,2,3,4,1,1,1,1,2,2,2,2]}]})";
     }
     app::Session s(o);
@@ -2954,7 +2968,7 @@ TEST_CASE("a top-down mover is stopped by solid cells on isometric and orthogona
     const std::filesystem::path file = o.project_dir / "assets" / "iso-test.tmj";
     struct Cleanup { std::filesystem::path p; ~Cleanup() { std::filesystem::remove(p); } } cleanup{file};
     {
-        std::ofstream out(file);
+        std::ofstream out(file, std::ios::binary);
         out << R"({"width":4,"height":3,"tilewidth":32,"tileheight":16,"orientation":"isometric","tilesets":[{"firstgid":1,"name":"tiles","image":"tiles.png","imagewidth":80,"imageheight":16,"tilewidth":16,"tileheight":16,"columns":5,"tilecount":5,"tiles":[{"id":0,"properties":[{"name":"solid","type":"bool","value":true}]}]}],"layers":[{"id":1,"type":"tilelayer","name":"floor","width":4,"height":3,"data":[1,2,3,4,1,1,1,1,2,2,2,2]}]})";
     }
     app::Session s(o);
@@ -5510,7 +5524,7 @@ TEST_CASE("a platformer body lands on a tile's collision shape rather than its c
     const std::filesystem::path file = o.project_dir / "assets" / "shapes-test.tmj";
     struct Cleanup { std::filesystem::path p; ~Cleanup() { std::filesystem::remove(p); } } cleanup{file};
     {
-        std::ofstream out(file);
+        std::ofstream out(file, std::ios::binary);
         out << R"({"type":"map","orientation":"orthogonal","renderorder":"right-down","width":6,"height":4,"tilewidth":16,"tileheight":16,"infinite":false,"nextlayerid":2,"nextobjectid":1,
             "tilesets":[{"firstgid":1,"name":"tiles","image":"tiles.png","imagewidth":112,"imageheight":16,"tilewidth":16,"tileheight":16,"columns":7,"tilecount":7,"spacing":0,"margin":0,
                 "tiles":[{"id":0,"objectgroup":{"type":"objectgroup","objects":[{"id":1,"x":0,"y":8,"width":16,"height":8}]}},{"id":1,"properties":[{"name":"solid","type":"bool","value":true}]}]}],
@@ -5618,9 +5632,9 @@ TEST_CASE("tilemap.spawn puts prefabs at a map's objects with their properties a
     } cleanup{prefab, prefab_dir, mapfile, had_prefabs};
     std::filesystem::create_directories(prefab_dir);
     {
-        std::ofstream out(prefab);
+        std::ofstream out(prefab, std::ios::binary);
         out << R"({"format":"pocket-scene","entities":[{"name":"Marker","components":{"Transform":{},"Sprite":{"size":{"x":0.5,"y":0.5},"layer":3}}}]})";
-        std::ofstream map(mapfile);
+        std::ofstream map(mapfile, std::ios::binary);
         map << R"({"type":"map","orientation":"orthogonal","renderorder":"right-down","width":4,"height":4,"tilewidth":16,"tileheight":16,"infinite":false,"nextlayerid":2,"nextobjectid":3,"tilesets":[],
             "layers":[{"id":1,"type":"objectgroup","name":"things","objects":[
                 {"id":1,"name":"hero","type":"marker","point":true,"x":16,"y":16,"width":0,"height":0,"properties":[{"name":"Sprite.layer","type":"int","value":7},{"name":"note","type":"string","value":"kept aside"}]},
@@ -6709,7 +6723,7 @@ TEST_CASE("a Blender level: custom properties become components, a node's mesh c
     // A floor that is level geometry, a pillar with a box collider and health, a pane of glass, a
     // lacquered ball, and an empty asking for a component there is none of, all set in Blender's
     // custom properties (Object Properties > Custom Properties).
-    std::ofstream(out / "make-level.py") << R"PY(
+    std::ofstream(out / "make-level.py", std::ios::binary) << R"PY(
 import bpy, sys
 argv = sys.argv[sys.argv.index('--') + 1:]
 bpy.ops.wm.read_factory_settings(use_empty=True)
@@ -6849,7 +6863,7 @@ bpy.ops.wm.save_as_mainfile(filepath=argv[0])
     REQUIRE(model["hash"].get<std::string>().size() == 16);
     const Json frozen = s.command("world.instantiate", Json{{"mesh", "assets/import-test/level.blend"}, {"position", Json{{"x", -60}, {"y", 0}, {"z", 0}}}, {"name", "Frozen"}, {"components", Json{{"Model", Json{{"live", false}}}}}}).value()["roots"][0];
     REQUIRE(s.command("assets.reload", Json::object()).value().contains("relinked") == false);   // nothing changed yet
-    std::ofstream(out / "change-level.py") << R"PY(
+    std::ofstream(out / "change-level.py", std::ios::binary) << R"PY(
 import bpy, sys
 argv = sys.argv[sys.argv.index('--') + 1:]
 bpy.ops.wm.open_mainfile(filepath=argv[0])
@@ -6903,7 +6917,7 @@ TEST_CASE("Blender files, FBX and OBJ come in as scenes: converted once, instant
     std::filesystem::create_directories(out);
     // A Blender scene made by Blender: a beveled red cube, a warm point lamp and a camera, saved as
     // .blend and exported as .fbx.
-    std::ofstream(out / "make-scene.py") << R"PY(
+    std::ofstream(out / "make-scene.py", std::ios::binary) << R"PY(
 import bpy, sys
 argv = sys.argv[sys.argv.index('--') + 1:]
 bpy.ops.wm.read_factory_settings(use_empty=True)
@@ -6933,7 +6947,7 @@ bpy.ops.export_scene.fbx(filepath=argv[1])
     const std::string cmd = "'" + blender + "' -b --factory-startup --python '" + (out / "make-scene.py").string() + "' -- '" + (dir / "scene.blend").string() + "' '" + (dir / "scene.fbx").string() + "' > '" + (out / "make-scene.log").string() + "' 2>&1";
     REQUIRE(std::system(cmd.c_str()) == 0);
     REQUIRE(std::filesystem::is_regular_file(dir / "scene.blend"));
-    std::ofstream(dir / "post.obj") << "o Post\nv 0 0 0\nv 0.2 0 0\nv 0.2 2 0\nv 0 2 0\nf 1 2 3 4\n";
+    std::ofstream(dir / "post.obj", std::ios::binary) << "o Post\nv 0 0 0\nv 0.2 0 0\nv 0.2 2 0\nv 0 2 0\nf 1 2 3 4\n";
     app::Options o;
     o.project_dir = root() / "samples" / "assets";
     o.bundle = root() / "build" / "ts" / "assets.js";
@@ -7238,7 +7252,7 @@ TEST_CASE("project.reload reads project.toml's settings again: the input map, bu
     std::filesystem::create_directories(config.parent_path());
     Json settings = Json::parse(std::ifstream(root() / "build" / "ts" / "hello.js.project.json"));
     settings["input"] = Json{{"actions", Json{{"jump", Json::array({"Space"})}}}};
-    std::ofstream(config) << settings.dump(2);
+    std::ofstream(config, std::ios::binary) << settings.dump(2);
     app::Options o;
     o.project_dir = root() / "samples" / "hello";
     o.bundle = root() / "build" / "ts" / "hello.js";
@@ -7255,7 +7269,7 @@ TEST_CASE("project.reload reads project.toml's settings again: the input map, bu
     settings["input"]["actions"]["dash"] = Json::array({"LShift"});
     settings["audio"] = Json{{"buses", Json{{"music", Json{{"volume", 0.4}}}}}};
     settings["render"] = Json{{"bloom", true}};
-    std::ofstream(config) << settings.dump(2);
+    std::ofstream(config, std::ios::binary) << settings.dump(2);
     Json r = s.command("project.reload", Json::object()).value();
     REQUIRE(r["settings"] == true);
     Json actions = s.command("input.describe", Json::object()).value();
@@ -7268,7 +7282,7 @@ TEST_CASE("project.reload reads project.toml's settings again: the input map, bu
     REQUIRE(s.command("render.bloom", Json::object()).value()["enabled"] == true);
     // settings: false keeps what is running.
     settings["input"]["actions"].erase("dash");
-    std::ofstream(config) << settings.dump(2);
+    std::ofstream(config, std::ios::binary) << settings.dump(2);
     REQUIRE(s.command("project.reload", Json{{"settings", false}}).value()["settings"] == false);
     REQUIRE(s.command("input.describe", Json::object()).value().contains("dash"));
     REQUIRE(s.finish().has_value());
@@ -8187,7 +8201,7 @@ TEST_CASE("a timeline moves fields along its keys and easings, sets others at mo
     const std::filesystem::path dir = root() / "samples" / "hello" / "timelines";
     std::filesystem::create_directories(dir);
     struct Cleanup { std::filesystem::path p; ~Cleanup() { std::filesystem::remove_all(p); } } cleanup{dir};
-    std::ofstream(dir / "door.json") << R"({
+    std::ofstream(dir / "door.json", std::ios::binary) << R"({
       "duration": 3,
       "tracks": [
         {"entity": "Door", "component": "Transform", "field": "position.y", "keys": [[0, 0], [1, 2], [2, 2], [3, 0, "cubicOut"]]},
@@ -8198,8 +8212,8 @@ TEST_CASE("a timeline moves fields along its keys and easings, sets others at mo
       ],
       "events": [[0.5, "door.creak", {"loud": 2}], [3, "door.shut"]]
     })";
-    std::ofstream(dir / "broken.json") << R"({"tracks": [{"entity": "Door", "component": "Transform", "field": "position.y", "keys": [[0, 0], [1, 2, "wobbly"]]}]})";
-    std::ofstream(dir / "stray.json") << R"({"tracks": [{"entity": "Nobody", "component": "Transform", "field": "position.y", "keys": [[0, 0], [1, 1]]},
+    std::ofstream(dir / "broken.json", std::ios::binary) << R"({"tracks": [{"entity": "Door", "component": "Transform", "field": "position.y", "keys": [[0, 0], [1, 2, "wobbly"]]}]})";
+    std::ofstream(dir / "stray.json", std::ios::binary) << R"({"tracks": [{"entity": "Nobody", "component": "Transform", "field": "position.y", "keys": [[0, 0], [1, 1]]},
         {"entity": "Door", "component": "Transform", "field": "colour", "keys": [[0, 0]]},
         {"entity": "Door", "component": "Transform", "field": "position", "keys": [[0, [1, 2]]]}]})";
     app::Session s(hello_options(10000));
@@ -8411,9 +8425,9 @@ TEST_CASE("locale commands read the language files, switch the language and chec
     const std::filesystem::path dir = root() / "samples" / "hello" / "locales";
     std::filesystem::create_directories(dir);
     struct Cleanup { std::filesystem::path p; ~Cleanup() { std::filesystem::remove_all(p); } } cleanup{dir};
-    std::ofstream(dir / "en.json") << R"({"menu": {"start": "Start", "hello": "Hello, {name}"}, "coins": "{n, plural, one {# coin} other {# coins}}"})";
-    std::ofstream(dir / "fr.json") << R"({"menu": {"start": "Commencer", "hello": "Bonjour"}, "extra": "en trop"})";
-    std::ofstream(dir / "bad.json") << R"({"menu": {"start": 3}})";
+    std::ofstream(dir / "en.json", std::ios::binary) << R"({"menu": {"start": "Start", "hello": "Hello, {name}"}, "coins": "{n, plural, one {# coin} other {# coins}}"})";
+    std::ofstream(dir / "fr.json", std::ios::binary) << R"({"menu": {"start": "Commencer", "hello": "Bonjour"}, "extra": "en trop"})";
+    std::ofstream(dir / "bad.json", std::ios::binary) << R"({"menu": {"start": 3}})";
     app::Session s(hello_options(1000));
     REQUIRE(s.start().has_value());
     Json get = s.command("locale.get", Json::object()).value();

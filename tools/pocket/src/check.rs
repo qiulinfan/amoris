@@ -34,11 +34,11 @@ fn tsc(ws: &Workspace) -> Result<PathBuf> {
 fn includes(ws: &Workspace, project: Option<&Path>) -> Result<(String, Vec<PathBuf>)> {
     if let Some(p) = project {
         let dir = if p.is_file() { p.parent().unwrap_or(p).to_path_buf() } else { p.to_path_buf() };
-        let dir = std::fs::canonicalize(&dir).with_context(|| format!("no project at {}", p.display()))?;
+        let dir = dunce::canonicalize(&dir).with_context(|| format!("no project at {}", p.display()))?;
         let name = dir.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "project".into());
         return Ok((name, vec![dir]));
     }
-    let root = std::fs::canonicalize(&ws.root).unwrap_or(ws.root.clone());
+    let root = dunce::canonicalize(&ws.root).unwrap_or(ws.root.clone());
     let mut dirs = vec![root.join("sdk").join("runtime"), root.join("editor"), root.join("tests").join("ts")];
     if let Ok(rd) = std::fs::read_dir(root.join("samples")) {
         let mut samples: Vec<PathBuf> = rd.filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.join("project.toml").exists()).collect();
@@ -51,7 +51,7 @@ fn includes(ws: &Workspace, project: Option<&Path>) -> Result<(String, Vec<PathB
 /// The compiler's options: the SDK as the `pocket` module, JSX through its runtime, the language
 /// the script host runs (no DOM, no Node), and strict checks.
 fn tsconfig(ws: &Workspace, dirs: &[PathBuf], extra: &[PathBuf]) -> serde_json::Value {
-    let sdk = std::fs::canonicalize(ws.root.join("sdk").join("runtime")).unwrap_or(ws.root.join("sdk").join("runtime"));
+    let sdk = dunce::canonicalize(ws.root.join("sdk").join("runtime")).unwrap_or(ws.root.join("sdk").join("runtime"));
     let mut include = vec![];
     let mut exclude = vec![];
     for f in extra {
@@ -117,7 +117,7 @@ pub fn parse_tsc(text: &str, root: &Path) -> Vec<Diagnostic> {
                 file.to_string()
             } else {
                 let abs = if path.is_absolute() { path.to_path_buf() } else { root.join(path) };
-                std::fs::canonicalize(&abs).unwrap_or(abs).to_string_lossy().into_owned()
+                dunce::canonicalize(&abs).unwrap_or(abs).to_string_lossy().into_owned()
             });
         }
         out.push(d);

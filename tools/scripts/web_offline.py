@@ -98,7 +98,7 @@ def main() -> int:
         with open(os.path.join(a.out, f"offline-{a.project}.png"), "wb") as f:
             f.write(png)
         report = {"url": url, "chrome": json.loads(urllib.request.urlopen(f"http://127.0.0.1:{debug}/json/version").read())["Browser"], "online": online, "offline": offline}
-        with open(os.path.join(a.out, f"offline-{a.project}.json"), "w") as f:
+        with open(os.path.join(a.out, f"offline-{a.project}.json"), "w", encoding="utf-8", newline="\n") as f:
             json.dump(report, f, indent=2)
         print(json.dumps({"kept": len(online["kept"]), "controlled": offline["controlled"], "online": offline["online"], "state_keys": len(offline["state"]), "png_bytes": len(png)}))
         return 0 if offline["controlled"] and offline["state"] else 1

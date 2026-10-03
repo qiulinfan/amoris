@@ -88,7 +88,7 @@ class PocketEnv:
                 "--headless", "--serve", "0", "--paused", "--json", "--size", size, "--seed", str(seed), "--log-level", log_level, *extra_args]
         env = dict(os.environ)
         env.setdefault("POCKET_ROOT", self.root)
-        self.process = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, env=env)
+        self.process = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, env=env, encoding="utf-8", errors="replace")
         self.url = None
         while self.url is None:
             line = self.process.stderr.readline()
@@ -207,7 +207,7 @@ class IosEnv(PocketEnv):
         if device:
             cmd += ["--device", device]
         cmd += ["--", "--serve", str(port), "--paused", "--seed", str(seed), "--log-level", log_level, *extra_args]
-        out = subprocess.run(cmd, capture_output=True, text=True, env={**os.environ, "POCKET_ROOT": self.root})
+        out = subprocess.run(cmd, capture_output=True, text=True, env={**os.environ, "POCKET_ROOT": self.root}, encoding="utf-8", errors="replace")
         try:
             report = json.loads(out.stdout)
         except json.JSONDecodeError:

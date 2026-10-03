@@ -1,5 +1,6 @@
 #include <pocket/app/session.hpp>
 #include <pocket/core/hash.hpp>
+#include <pocket/core/process.hpp>
 #include <pocket/world/component_list.gen.hpp>
 
 #include "command_help.hpp"
@@ -27,14 +28,6 @@
 #include <set>
 #include <unordered_map>
 #include <thread>
-
-#if !defined(__EMSCRIPTEN__) && !defined(_WIN32)
-#include <fcntl.h>
-#include <spawn.h>
-#include <sys/wait.h>
-#include <unistd.h>
-extern char** environ;
-#endif
 
 namespace pocket::app {
 
@@ -229,10 +222,21 @@ void Session::record_error(const Error& e) {
     errors_.push_back(error_json(mapped));
 }
 
+namespace {
+// The name a bundle's code goes by in stacks and errors: its path with forward slashes and, on
+// Windows, the drive letter in lower case, as JavaScriptCore writes a URL's scheme (a bundle
+// evaluated as C:/... is named c:/... in its stacks, and would match nothing).
+std::string script_url(const std::filesystem::path& p) {
+    std::string s = p.generic_string();
+    if (s.size() > 1 && s[1] == ':' && std::isalpha(static_cast<unsigned char>(s[0]))) s[0] = static_cast<char>(std::tolower(static_cast<unsigned char>(s[0])));
+    return s;
+}
+}  // namespace
+
 void Session::read_bundle_lines(const std::filesystem::path& bundle) {
-    const std::string url = bundle.string();
+    const std::string url = script_url(bundle);
     std::erase_if(bundle_lines_, [&](const BundleLines& b) { return b.url == url; });
-    auto text = fs::read_text(std::filesystem::path(url + ".lines.json"));
+    auto text = fs::read_text(std::filesystem::path(bundle.string() + ".lines.json"));
     if (!text) return;   // a bundle made by hand or by an older tool: its own lines are shown
     const Json j = Json::parse(*text, nullptr, false);
     if (!j.is_object() || !j.contains("modules") || !j["modules"].is_array()) return;
@@ -639,6 +643,8 @@ Status Session::start() {
     rc.x11_window = native.x11_window;
     rc.wayland_display = native.wayland_display;
     rc.wayland_surface = native.wayland_surface;
+    rc.win32_hwnd = native.win32_hwnd;
+    rc.win32_hinstance = native.win32_hinstance;
     rc.canvas_selector = platform_->canvas_selector();
     rc.width = static_cast<std::uint32_t>(platform_->pixel_width());
     rc.height = static_cast<std::uint32_t>(platform_->pixel_height());
@@ -1057,7 +1063,7 @@ Status Session::load_bundle(const std::filesystem::path& path, const std::string
     // The SDK reads __pocket_bundle while the bundle evaluates and registers its handlers under
     // that context, so several bundles (editor + project) share one script host.
     POCKET_TRY_VOID(host_->evaluate(std::format("globalThis.__pocket_bundle = {};", Json(name).dump()), "<pocket:bundle>"));
-    POCKET_TRY_VOID(host_->evaluate(src, path.string()));
+    POCKET_TRY_VOID(host_->evaluate(src, script_url(path)));
     if (std::find(bundle_names_.begin(), bundle_names_.end(), name) == bundle_names_.end()) bundle_names_.push_back(name);
     log::info("runtime", "loaded bundle {} as context '{}'", path.filename().string(), name);
     return {};
@@ -6987,36 +6993,28 @@ Result<Json> Session::world_lint(const Json& p) {
 
 // The pocket tool run with arguments (`project.apply`): its exit code and what it printed.
 Result<std::pair<int, std::string>> Session::run_tool(const std::vector<std::string>& args) const {
-#if defined(__EMSCRIPTEN__) || defined(_WIN32)
+#if defined(__EMSCRIPTEN__)
     (void)args;
     return fail("unsupported", "running the pocket tool is not available on this platform");
 #else
     const char* root = std::getenv("POCKET_ROOT");
     const char* tool_env = std::getenv("POCKET_TOOL");
-    const std::string tool = tool_env && *tool_env ? tool_env : root && *root ? (std::filesystem::path(root) / ".pocket" / "pocket").string() : "";
+#ifdef _WIN32
+    constexpr const char* kToolName = "pocket.exe";
+#else
+    constexpr const char* kToolName = "pocket";
+#endif
+    const std::string tool = tool_env && *tool_env ? tool_env : root && *root ? (std::filesystem::path(root) / ".pocket" / kToolName).string() : "";
     std::error_code ec;
     if (tool.empty() || !std::filesystem::is_regular_file(tool, ec)) return fail("unavailable", "no pocket tool to bundle with: start the runtime through pocket (pocket run, pocket editor, the MCP server), which sets POCKET_ROOT and POCKET_TOOL");
     std::vector<std::string> all{tool};
     if (root && *root) { all.push_back("--root"); all.push_back(root); }
     all.insert(all.end(), args.begin(), args.end());
-    std::vector<char*> argv;
-    for (std::string& a : all) argv.push_back(a.data());
-    argv.push_back(nullptr);
-    const std::filesystem::path log_path = std::filesystem::temp_directory_path(ec) / std::format("pocket-apply-{}.log", static_cast<long>(getpid()));
-    const std::string log_file = log_path.string();
-    posix_spawn_file_actions_t actions;
-    posix_spawn_file_actions_init(&actions);
-    posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, log_file.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    posix_spawn_file_actions_adddup2(&actions, STDOUT_FILENO, STDERR_FILENO);
-    pid_t pid = 0;
-    const int rc = posix_spawn(&pid, tool.c_str(), &actions, nullptr, argv.data(), environ);
-    posix_spawn_file_actions_destroy(&actions);
-    if (rc != 0) return fail("unavailable", "cannot start {}: {}", tool, std::strerror(rc));
-    int status = 0;
-    while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
+    const std::filesystem::path log_path = std::filesystem::temp_directory_path(ec) / std::format("pocket-apply-{}.log", process::id());
+    POCKET_TRY(code, process::run(all, log_path));
     auto text = fs::read_text(log_path);
     std::filesystem::remove(log_path, ec);
-    return std::make_pair(WIFEXITED(status) ? WEXITSTATUS(status) : -1, text ? *text : std::string());
+    return std::make_pair(code, text ? *text : std::string());
 #endif
 }
 

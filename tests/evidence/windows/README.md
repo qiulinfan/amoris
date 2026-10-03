@@ -48,3 +48,64 @@ showed, in the release and the debug (assertion-enabled) builds of Bun's librari
   API functions that upstream WebKit locks (found by comparing each function of
   `Source/JavaScriptCore/API/*.cpp` at `a0ec3b71` with WebKit's `main`); with `jsc_locks.cpp`'s
   wrappers both builds pass.
+
+## 2026-10-02: Direct3D 12, the process API, the test modules
+
+- `pocket_runtime.exe --project samples/hello --bundle build/ts/hello.js --headless --frames 120 --json --capture hello-d3d12.png`:
+  `gpu.backend` d3d12, `gpu.shader_compiler` dxc (the Windows SDK's dxcompiler.dll 1.8.2502 beside
+  the executable), state hash 28c5a84fae20c60d (the golden); the picture shows the ball, its shadow
+  and the ground as on macOS.
+- Startup, `--frames 1`, release: Vulkan 0.77 s, Direct3D 12 with FXC about 21 s, with DXC 3.4 s,
+  and 2.6 s once the renderer makes its scene and pass pipelines at once (`renderer.cpp`, init).
+  Timing every pipeline (a temporary wrapper, not committed) put 57 pipelines at 2.8 s one after
+  another on Direct3D 12 against 0.12 s on Vulkan, where NVIDIA's driver keeps compiled shaders
+  between runs; the largest are the lit fragment shader's variants (mesh 376 ms, mesh.cut 350,
+  probe.mesh 364, oit 319) and water (229). Made at once, those few grow about threefold each: wgpu
+  compiles them through DXC one at a time.
+- Release test modules on Direct3D 12: audio (15 cases), ui (30) and renderer (50, pixel probes
+  included) pass; runtime (195 cases) passed 186 with 2 skipped (no Blender) and 7 failed, fixed
+  since: three named bundle lines wrongly (JavaScriptCore writes a Windows path's drive letter in
+  lower case, and Rust's canonicalize gave `//?/C:` paths), one wrote its fixture as CRLF, one
+  expected Apple's "Can't find variable" where Bun's JavaScriptCore says "is not defined", one
+  expected a 0.5 ms GPU target to be missed (the RTX 5060 draws that window in 0.05 ms), and two
+  wanted scenario bundles `pocket test` makes and a bare run does not.
+- Debug (AddressSanitizer and UBSan with the dynamic C runtime, the C++ library's container
+  annotations off): core, world, physics and nav pass; hello's state hash is the golden with no
+  sanitizer report.
+- `pocket run hello --config release -- --headless --serve 4711 --paused --json`, then
+  `pocket rpc project.apply '{"ticks": 10}'`: bundled in 78 ms, type-checked in 208 ms (tsc.exe),
+  reloaded and stepped, through `pocket::process::run` (CreateProcessW).
+
+## 2026-10-02: windows, the editor and packs
+
+- The display here is at 200% (`AppliedDPI` 192). SDL counts pixels on Windows (its pixel density is
+  1 there), so the platform layer now treats a point as the display's scale in pixels, as macOS does
+  on a Retina display: `pocket_runtime --hidden --frames 30` opens 960x540 points as 1920x1080
+  pixels and presents all 30 frames through the HWND's swap chain.
+- `editor-d3d12.png`:
+  `pocket editor physics --config release -- --hidden --frames 90 --capture ...`, the editor drawn
+  on Direct3D 12 at the display's scale.
+- `pocket pack hello --config release`: `dist/hello/` with `bin/pocket_runtime.exe`,
+  `pocket_jsc.dll`, `dxcompiler.dll` and `hello.cmd`; `hello.cmd --headless --frames 120 --json`
+  (from PowerShell) reports d3d12 with dxc and the golden state hash.
+- `pocket mcp` answers `initialize` and lists its 32 tools; `pocket check` finds no type errors;
+  `pocket scenario sprites --seeds 3` passes its scenarios.
+
+## 2026-10-02: every scenario, the arena fix, the web build from Windows
+
+- `pocket scenario <sample>` for the 18 samples with scenarios (5 seeds, release, Direct3D 12): 405
+  of 405 runs pass, arena's two among them after the fix below; `runtime_tests "[net]"`: 6 cases
+  pass.
+- arena: `tools/scripts/dev/arena_probe.py` printed the ball, Red and Blue every 15 ticks. Before
+  the fix Blue was walked back 0.3 units every 15 ticks (to z -10.5 at tick 330); with the shove
+  commit undone, the ball barged Blue into the goal (a goal resets the players, which is how the old
+  scenario passed); with the skin given way to by the mass share, Blue moves 0.18 in 105 ticks while
+  the ball is pressed into it, and the scenario
+  `a ball Red drives into Blue does not walk Blue back` checks it.
+- Emscripten 6.0.9 (`emsdk install 6.0.9`, with `EMSDK_PYTHON` or `python emsdk.py`, since the
+  `emsdk` script calls the Store's python3 alias): `pocket setup --target wasm` builds libwebp,
+  Draco, FreeType and HarfBuzz; `pocket build --config wasm` makes a 14 MB `pocket_runtime.wasm`;
+  `pocket pack hello --web`, served by `tools/scripts/web_evidence.py`, runs in the Claude app's
+  Chrome 152 pane on WebGPU: after `step {ticks: 120}` its state is hello's golden state (hue 0.1,
+  ball.y 0.3913, two bounces), the ball and its shadow are drawn, and the console has no WGSL or GPU
+  error.

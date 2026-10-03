@@ -88,7 +88,7 @@ for k in range(len(prof)):
     faces.append((top_c, vid(*a, z0 + gh), vid(*b, z0 + gh)))
     faces.append((bot_c, vid(*b, z0 + 0.01), vid(*a, z0 + 0.01)))
 
-with open(out, "w") as f:
+with open(out, "w", encoding="utf-8", newline="\n") as f:
     f.write("# Exported by a CAD STL/OBJ translator (synthetic test part)\n# Units: millimeters, Z up\n")
     f.write(f"# Vertices: {len(vlist)}  Faces: {len(faces)}\no machined_plate\n")
     f.write("".join(f"v {OX + x:.6f} {OY + y:.6f} {OZ + z:.6f}\n" for (x, y, z) in vlist))

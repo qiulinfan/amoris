@@ -101,16 +101,47 @@ pub fn pack(ws: &Workspace, config: &str, target: &str, out: Option<&Path>, make
     let mut total = 0u64;
     // Runtime.
     let exe = exe_path(ws, config, runtime)?;
-    let exe_dst = dist.join("bin").join("pocket_runtime");
+    let windows = cfg!(windows);
+    let exe_dst = dist.join("bin").join(exe.file_name().unwrap_or_default());
     std::fs::copy(&exe, &exe_dst)?;
     set_executable(&exe_dst)?;
     total += std::fs::metadata(&exe_dst)?.len();
+    // Windows: the DLLs the build put beside the runtime (JavaScriptCore, the shader compiler,
+    // AddressSanitizer's in a debug pack), not its debug database.
+    let mut dlls: Vec<String> = vec![];
+    if windows {
+        if let Some(bin) = exe.parent() {
+            for e in std::fs::read_dir(bin)?.filter_map(|e| e.ok()) {
+                let p = e.path();
+                if p.extension().is_some_and(|x| x.eq_ignore_ascii_case("dll")) {
+                    let to = dist.join("bin").join(e.file_name());
+                    std::fs::copy(&p, &to)?;
+                    total += std::fs::metadata(&to)?.len();
+                    dlls.push(e.file_name().to_string_lossy().into_owned());
+                }
+            }
+        }
+        dlls.sort();
+    }
     total += write_game_data(ws, &project, &bundle.out, &dist)?;
     // Launcher.
-    let launcher = dist.join(&name);
-    std::fs::write(&launcher, format!("#!/bin/sh\n# Runs {name}. Extra arguments go to the runtime (--headless, --frames N, --json, --size WxH, --serve PORT ...).\nDIR=\"$(cd \"$(dirname \"$0\")\" && pwd)\"\nexec \"$DIR/bin/pocket_runtime\" --project \"$DIR/project\" --bundle \"$DIR/project.js\" --project-config \"$DIR/project.json\" \"$@\"\n"))?;
-    set_executable(&launcher)?;
-    std::fs::write(dist.join("README.txt"), format!("{name} (packed by pocket, {config} configuration)\n\nRun ./{name} to open the game in a window.\n./{name} --headless --frames 600 --json runs it without a window and prints a report.\n./{name} --serve 4711 --paused opens the control server for agents (POST JSON-RPC to /rpc).\n\nContents: bin/pocket_runtime (the engine), project.js (the game's scripts, bundled), project.json (settings), project/ (scene and assets), fonts/ (UI font).\n"))?;
+    let launcher = if windows {
+        let l = dist.join(format!("{name}.cmd"));
+        std::fs::write(&l, format!("@rem Runs {name}. Extra arguments go to the runtime (--headless, --frames N, --json, --size WxH, --serve PORT ...).\r\n@\"%~dp0bin\\pocket_runtime.exe\" --project \"%~dp0project\" --bundle \"%~dp0project.js\" --project-config \"%~dp0project.json\" %*\r\n"))?;
+        l
+    } else {
+        let l = dist.join(&name);
+        std::fs::write(&l, format!("#!/bin/sh\n# Runs {name}. Extra arguments go to the runtime (--headless, --frames N, --json, --size WxH, --serve PORT ...).\nDIR=\"$(cd \"$(dirname \"$0\")\" && pwd)\"\nexec \"$DIR/bin/pocket_runtime\" --project \"$DIR/project\" --bundle \"$DIR/project.js\" --project-config \"$DIR/project.json\" \"$@\"\n"))?;
+        set_executable(&l)?;
+        l
+    };
+    let run = if windows { format!("{name}.cmd") } else { format!("./{name}") };
+    let engine = if windows {
+        format!("bin/pocket_runtime.exe (the engine) with {} beside it (pocket_jsc.dll is JavaScriptCore, LGPL-2.1+, replaceable; dxcompiler.dll is Microsoft's DirectX Shader Compiler; the game also needs the Visual C++ runtime, vcruntime140.dll and msvcp140.dll, which Windows usually has)", dlls.join(", "))
+    } else {
+        "bin/pocket_runtime (the engine)".to_string()
+    };
+    std::fs::write(dist.join("README.txt"), format!("{name} (packed by pocket, {config} configuration)\n\nRun {run} to open the game in a window.\n{run} --headless --frames 600 --json runs it without a window and prints a report.\n{run} --serve 4711 --paused opens the control server for agents (POST JSON-RPC to /rpc).\n\nContents: {engine}, project.js (the game's scripts, bundled), project.json (settings), project/ (scene and assets), fonts/ (UI font).\n"))?;
     let mut data = json!({ "project": project, "dist": dist, "config": config, "bytes": total, "launcher": launcher });
     if make_zip {
         let zip_path = dist.with_extension("zip");

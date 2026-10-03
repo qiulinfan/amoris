@@ -10,7 +10,7 @@ import sys
 
 
 def load(path):
-    r = json.load(open(path))
+    r = json.load(open(path, encoding="utf-8"))
     return {t["name"]: t for t in r["tasks"]}
 
 

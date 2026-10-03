@@ -15,6 +15,13 @@
 
 #include <cstring>
 
+#ifdef _WIN32
+#include <filesystem>
+#include <vector>
+
+#include <windows.h>   // last: its macros (near, far, small) must not reach the engine's headers
+#endif
+
 namespace pocket::rhi {
 
 std::string to_string(WGPUStringView s) {
@@ -36,6 +43,19 @@ constexpr const char* kBlitWgsl = R"WGSL(
     return textureSample(src, smp, uv);
 }
 )WGSL";
+
+#ifdef _WIN32
+// The directory of the running executable: where dxcompiler.dll is looked for.
+std::filesystem::path executable_dir() {
+    std::vector<wchar_t> buf(MAX_PATH);
+    for (;;) {
+        const DWORD n = GetModuleFileNameW(nullptr, buf.data(), static_cast<DWORD>(buf.size()));
+        if (n == 0) return {};
+        if (n < buf.size()) return std::filesystem::path(std::wstring(buf.data(), n)).parent_path();
+        buf.resize(buf.size() * 2);
+    }
+}
+#endif
 
 const char* backend_name(WGPUBackendType t) {
     switch (t) {
@@ -70,6 +90,8 @@ struct Device::Impl {
     WGPUQueue queue = nullptr;
     WGPUSurface surface = nullptr;
     WGPUTextureFormat surface_format = WGPUTextureFormat_BGRA8Unorm;
+    std::vector<WGPUPresentMode> present_modes;   // what the surface offers
+    std::string shader_compiler;                  // Direct3D 12: "dxc" or "fxc"
     WGPUTexture color = nullptr;
     WGPUTextureView color_view = nullptr;
     WGPUTexture depth = nullptr;
@@ -144,7 +166,7 @@ struct Device::Impl {
             sc.width = width;
             sc.height = height;
             sc.alphaMode = WGPUCompositeAlphaMode_Auto;
-            sc.presentMode = config.vsync ? WGPUPresentMode_Fifo : WGPUPresentMode_Immediate;
+            sc.presentMode = present_mode();
             wgpuSurfaceConfigure(surface, &sc);
             WGPUBindGroupEntry entries[2]{};
             entries[0].binding = 0;
@@ -230,6 +252,17 @@ struct Device::Impl {
         return {};
     }
 
+    // Fifo waits for the display, and every surface has it. Without vsync, the first the surface
+    // offers of Immediate (tearing) and Mailbox: a Direct3D 12 swap chain has Immediate only where
+    // the display allows tearing, and configuring a mode it lacks fails every frame after.
+    WGPUPresentMode present_mode() const {
+        if (config.vsync) return WGPUPresentMode_Fifo;
+        for (WGPUPresentMode m : {WGPUPresentMode_Immediate, WGPUPresentMode_Mailbox}) {
+            for (WGPUPresentMode offered : present_modes) if (offered == m) return m;
+        }
+        return WGPUPresentMode_Fifo;
+    }
+
     ~Impl() {
 #ifndef __EMSCRIPTEN__
         // The work-done callbacks name this; let them all come in before it goes.
@@ -300,7 +333,34 @@ Result<std::unique_ptr<Device>> Device::create(const Config& config) {
     std::unique_ptr<Device> d(new Device());
     Impl& im = *d->impl_;
     im.config = config;
+#ifdef _WIN32
+    // Direct3D 12 only (docs/decisions/0008-windows.md); POCKET_GPU_BACKEND=vulkan for Vulkan, to
+    // compare. Its shaders go from naga's HLSL to DXIL through DXC when dxcompiler.dll is beside
+    // the executable (pocket build puts the Windows SDK's there), else through the older FXC.
+    // WGPU_VALIDATION=1 and WGPU_DEBUG=1 turn on the backend's own checks.
+    WGPUInstanceExtras extras{};
+    extras.chain.sType = static_cast<WGPUSType>(WGPUSType_InstanceExtras);
+    const char* wanted = std::getenv("POCKET_GPU_BACKEND");
+    const bool vulkan = wanted && std::string_view(wanted) == "vulkan";
+    extras.backends = vulkan ? WGPUInstanceBackend_Vulkan : WGPUInstanceBackend_DX12;
+    extras.flags = WGPUInstanceFlag_Default | WGPUInstanceFlag_WithEnv;
+    const std::string dxc = (executable_dir() / "dxcompiler.dll").string();
+    std::error_code ec;
+    if (std::filesystem::is_regular_file(dxc, ec)) {
+        extras.dx12ShaderCompiler = WGPUDx12Compiler_Dxc;
+        extras.dxcPath = WGPUStringView{dxc.data(), dxc.size()};
+        im.shader_compiler = "dxc";
+    } else {
+        extras.dx12ShaderCompiler = WGPUDx12Compiler_Fxc;
+        im.shader_compiler = "fxc";
+    }
+    if (vulkan) im.shader_compiler.clear();
+    WGPUInstanceDescriptor idesc{};
+    idesc.nextInChain = &extras.chain;
+    im.instance = wgpuCreateInstance(&idesc);
+#else
     im.instance = wgpuCreateInstance(nullptr);
+#endif
     if (!im.instance) return fail("gpu_instance_failed", "wgpuCreateInstance returned null");
 
 #ifdef __EMSCRIPTEN__
@@ -344,6 +404,16 @@ Result<std::unique_ptr<Device>> Device::create(const Config& config) {
         sd.label = str("pocket.surface");
         im.surface = wgpuInstanceCreateSurface(im.instance, &sd);
         if (!im.surface) return fail("gpu_surface_failed", "cannot create surface from the X11 window");
+    } else if (config.win32_hwnd) {
+        WGPUSurfaceSourceWindowsHWND src{};
+        src.chain.sType = WGPUSType_SurfaceSourceWindowsHWND;
+        src.hwnd = config.win32_hwnd;
+        src.hinstance = config.win32_hinstance;
+        WGPUSurfaceDescriptor sd{};
+        sd.nextInChain = &src.chain;
+        sd.label = str("pocket.surface");
+        im.surface = wgpuInstanceCreateSurface(im.instance, &sd);
+        if (!im.surface) return fail("gpu_surface_failed", "cannot create surface from the HWND");
     }
 #endif
 
@@ -421,11 +491,12 @@ Result<std::unique_ptr<Device>> Device::create(const Config& config) {
         for (std::size_t i = 0; i < caps.formatCount; ++i) {
             if (caps.formats[i] == WGPUTextureFormat_BGRA8Unorm) im.surface_format = caps.formats[i];
         }
+        im.present_modes.assign(caps.presentModes, caps.presentModes + caps.presentModeCount);
         wgpuSurfaceCapabilitiesFreeMembers(caps);
         POCKET_TRY_VOID(im.create_blit_pipeline());
     }
     POCKET_TRY_VOID(im.create_targets(config.width, config.height));
-    log::info("rhi", "adapter {} ({}), backend {}, target {}x{}, surface {}", im.adapter_name, im.adapter_driver, im.adapter_backend, im.width, im.height, im.surface ? "yes" : "no");
+    log::info("rhi", "adapter {} ({}), backend {}{}, target {}x{}, surface {}", im.adapter_name, im.adapter_driver, im.adapter_backend, im.shader_compiler.empty() ? "" : " with " + im.shader_compiler, im.width, im.height, im.surface ? "yes" : "no");
     return d;
 }
 
@@ -626,6 +697,7 @@ Json Device::describe() const {
     j["adapter"] = impl_->adapter_name;
     j["driver"] = impl_->adapter_driver;
     j["backend"] = impl_->adapter_backend;
+    if (!impl_->shader_compiler.empty()) j["shader_compiler"] = impl_->shader_compiler;   // Direct3D 12's: dxc or fxc
     j["width"] = impl_->width;
     j["height"] = impl_->height;
     j["surface"] = impl_->surface != nullptr;

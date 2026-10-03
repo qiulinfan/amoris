@@ -30,7 +30,7 @@ def main():
     if len(sys.argv) != 2:
         print(__doc__)
         return 2
-    rep = last_report(open(sys.argv[1]).read())
+    rep = last_report(open(sys.argv[1], encoding="utf-8").read())
     if rep is None:
         print("no test report found")
         return 1

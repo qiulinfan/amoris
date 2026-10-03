@@ -68,4 +68,4 @@ entities = [
     {"name": "Sky", "components": {"Sky": {"mode": "atmosphere", "haze": 1.2}}},
 ]
 import os
-json.dump({"format": "pocket-scene", "entities": entities}, open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "samples", "fps", "scene.json"), "w"), indent=1)
+json.dump({"format": "pocket-scene", "entities": entities}, open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "samples", "fps", "scene.json"), "w", encoding="utf-8", newline="\n"), indent=1)

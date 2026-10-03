@@ -57,7 +57,7 @@ def run(sample, device):
     global PORT
     PORT += 1
     started = subprocess.run([os.path.join(ROOT, ".pocket", "pocket"), "run", sample, "--ios", "--device", device, "--json", "--", "--serve", str(PORT), "--paused"],
-                             env=ENV, cwd=ROOT, capture_output=True, text=True)
+                             env=ENV, cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace")
     report = json.loads(started.stdout)
     if not report.get("ok"):
         raise RuntimeError(f"{sample}: {report.get('summary')}")
@@ -104,7 +104,7 @@ def main():
     screenshot(udid, os.path.join(OUT, "walker.png"))
     simctl("terminate", udid, app)
 
-    with open(os.path.join(OUT, "ios.json"), "w") as f:
+    with open(os.path.join(OUT, "ios.json"), "w", encoding="utf-8", newline="\n") as f:
         json.dump(record, f, indent=2)
     print(json.dumps(record, indent=2))
 

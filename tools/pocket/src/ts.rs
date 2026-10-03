@@ -285,12 +285,12 @@ fn resolve(from: &Path, spec: &str, sdk_dir: &Path) -> Result<PathBuf> {
 /// The file a path names, as written or with a module extension or an index file.
 fn probe(candidate: &Path) -> Option<PathBuf> {
     if candidate.is_file() {
-        return std::fs::canonicalize(candidate).ok();
+        return dunce::canonicalize(candidate).ok();
     }
     let name = candidate.file_name()?.to_string_lossy().into_owned();
     let with = |ext: &str| candidate.with_file_name(format!("{name}.{ext}"));
     let tries = [with("ts"), with("tsx"), with("js"), with("mjs"), with("cjs"), with("json"), candidate.join("index.ts"), candidate.join("index.tsx"), candidate.join("index.js"), candidate.join("index.mjs"), candidate.join("index.cjs")];
-    tries.iter().find(|t| t.is_file()).and_then(|t| std::fs::canonicalize(t).ok())
+    tries.iter().find(|t| t.is_file()).and_then(|t| dunce::canonicalize(t).ok())
 }
 
 /// Node's own modules: a game has none of them.
@@ -476,7 +476,7 @@ fn load_module(path: &Path) -> Result<Module> {
 
 /// Bundle `entry` and everything it imports into `out`.
 pub fn bundle(entry: &Path, sdk_dir: &Path, root: &Path, out: &Path) -> Result<BundleOutput> {
-    let entry = std::fs::canonicalize(entry).with_context(|| format!("entry {}", entry.display()))?;
+    let entry = dunce::canonicalize(entry).with_context(|| format!("entry {}", entry.display()))?;
     // path -> the module's definition, the source line of each line of its body, and the line of
     // the definition its body starts on (0-based)
     let mut modules: IndexMap<PathBuf, (String, Vec<u32>, usize)> = IndexMap::new();
@@ -616,7 +616,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("pocket-ts-packages-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let dir = std::fs::canonicalize(&dir).unwrap();   // module ids are relative to a canonical root
+        let dir = dunce::canonicalize(&dir).unwrap();   // module ids are relative to a canonical root
         let write = |rel: &str, text: &str| {
             let p = dir.join(rel);
             std::fs::create_dir_all(p.parent().unwrap()).unwrap();

@@ -19,6 +19,8 @@ struct Config {
     std::uint64_t x11_window = 0;
     void* wayland_display = nullptr;
     void* wayland_surface = nullptr;
+    void* win32_hwnd = nullptr;   // Windows: the window's HWND and HINSTANCE
+    void* win32_hinstance = nullptr;
     std::string canvas_selector;  // web: the <canvas> to present into ("#canvas"); empty for headless
     std::uint32_t width = 640;
     std::uint32_t height = 360;

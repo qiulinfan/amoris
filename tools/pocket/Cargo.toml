@@ -24,6 +24,9 @@ tar = "0.4"
 lzma-rs = "0.3"
 indexmap = { version = "2", features = ["serde"] }
 oxc = { version = "0.150", features = ["transformer", "codegen", "semantic", "ast_visit"] }
+# Canonical paths without the verbatim prefix Windows' canonicalize adds (//?/C:/...), which other
+# programs and relative paths do not take.
+dunce = "1"
 
 [profile.release]
 opt-level = 2

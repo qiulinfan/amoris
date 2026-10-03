@@ -12,7 +12,7 @@ rng = random.Random(int(sys.argv[4]) if len(sys.argv) > 4 else 7)
 mats = {"steel": (0.56, 0.57, 0.58, 0.35), "aluminium": (0.80, 0.81, 0.83, 0.25), "brass": (0.78, 0.60, 0.25, 0.3),
         "rubber": (0.04, 0.04, 0.04, 0.9), "paint_blue": (0.10, 0.25, 0.65, 0.5)}
 mtl = os.path.splitext(out)[0] + ".mtl"
-with open(mtl, "w") as f:
+with open(mtl, "w", encoding="utf-8", newline="\n") as f:
     for name, (r, g, b, rough) in mats.items():
         f.write(f"newmtl {name}\nKd {r} {g} {b}\nNs {(1 - rough) ** 2 * 1000:.1f}\nd 1.0\nillum 2\n\n")
 names = list(mats)
@@ -67,6 +67,6 @@ for p in range(N):
     lines.append("".join(f"vn {x:.4f} {y:.4f} {z:.4f}\n" for x, y, z in ns))
     lines.append("".join(fs))
     nv += len(vs); nn += len(ns)
-with open(out, "w") as f:
+with open(out, "w", encoding="utf-8", newline="\n") as f:
     f.write("".join(lines))
 print("parts", N, "vertices", nv, "triangles", tris, "extent_m", side * 0.06)

@@ -53,9 +53,11 @@ pub fn generate(ws: &Workspace, graph: &Graph, tc: &Toolchain, config: &str) -> 
         common.push("-fms-runtime-lib=dll".into());
         // <windows.h> without min/max macros or the rarely used half; the C library's POSIX
         // names, functions without deprecation notes and M_PI; the standard library's conforming
-        // over-aligned temporary buffers (std::stable_sort of 16-byte aligned draws). Engine code
-        // calls the W (UTF-16) Win32 functions by name.
-        for d in ["NOMINMAX", "WIN32_LEAN_AND_MEAN", "_CRT_SECURE_NO_WARNINGS", "_CRT_NONSTDC_NO_DEPRECATE", "_USE_MATH_DEFINES", "_ENABLE_EXTENDED_ALIGNED_STORAGE"] {
+        // over-aligned temporary buffers (std::stable_sort of 16-byte aligned draws); and none of
+        // the string and vector annotations AddressSanitizer would add, which the linker refuses
+        // to mix with the C++ dependencies CMake builds without it. Engine code calls the W
+        // (UTF-16) Win32 functions by name.
+        for d in ["NOMINMAX", "WIN32_LEAN_AND_MEAN", "_CRT_SECURE_NO_WARNINGS", "_CRT_NONSTDC_NO_DEPRECATE", "_USE_MATH_DEFINES", "_ENABLE_EXTENDED_ALIGNED_STORAGE", "_DISABLE_STRING_ANNOTATION", "_DISABLE_VECTOR_ANNOTATION"] {
             common.push(format!("-D{d}"));
         }
     }
@@ -75,6 +77,9 @@ pub fn generate(ws: &Workspace, graph: &Graph, tc: &Toolchain, config: &str) -> 
     if windows {
         // llvm-lib writes the archive afresh, so a removed source leaves no stale object.
         writeln!(n, "rule ar\n  command = $ar /nologo /out:$out @$out.rsp\n  rspfile = $out.rsp\n  rspfile_content = $in\n  description = AR $out")?;
+    } else if tc.host_os == "windows" {
+        // The web build from Windows: emar is llvm-ar, and no POSIX shell runs the rule.
+        writeln!(n, "rule ar\n  command = cmd /c (if exist $out del /f /q $out) & $ar rcs $out @$out.rsp\n  rspfile = $out.rsp\n  rspfile_content = $in\n  description = AR $out")?;
     } else {
         writeln!(n, "rule ar\n  command = rm -f $out && $ar rcs $out $in\n  description = AR $out")?;
     }
@@ -95,6 +100,19 @@ pub fn generate(ws: &Workspace, graph: &Graph, tc: &Toolchain, config: &str) -> 
     } else {
         writeln!(n, "rule link\n  command = $cxx $ldflags -o $out $in $libs\n  description = LINK $out")?;
     }
+    // Windows: every executable carries windows.manifest (the UTF-8 code page, long paths) as a
+    // resource that LLVM's resource compiler makes once per build directory.
+    let manifest_res = if windows {
+        write_if_changed(&build_dir.join("pocket.manifest"), include_str!("windows.manifest"))?;
+        write_if_changed(&build_dir.join("pocket.rc"),"1 24 \"pocket.manifest\"\n")?;
+        let rc = Path::new(&tc.cxx).with_file_name("llvm-rc.exe");
+        writeln!(n, "rule rc\n  command = {} /nologo /fo $out $in\n  description = RC $out", q(&rc.to_string_lossy()))?;
+        let res = build_dir.join("obj").join("pocket.res");
+        writeln!(n, "build {}: rc {} | {}", pesc(&res), pesc(&build_dir.join("pocket.rc")), pesc(&build_dir.join("pocket.manifest")))?;
+        Some(res)
+    } else {
+        None
+    };
 
     let mut targets = vec![];
     for (name, m) in &graph.modules {
@@ -140,6 +158,9 @@ pub fn generate(ws: &Workspace, graph: &Graph, tc: &Toolchain, config: &str) -> 
                 // Emscripten emits <name>.js plus <name>.wasm beside it.
                 let exe = if wasm { build_dir.join("bin").join(format!("{}.js", m.output)) } else { build_dir.join("bin").join(toolchain::exe_name(&m.output, os)) };
                 let mut inputs = objs_str.clone();
+                if let Some(res) = &manifest_res {
+                    inputs.push(pesc(res));
+                }
                 let mut libs: Vec<String> = vec![];
                 for lm in &m.link_modules {
                     let Some(dep) = graph.modules.get(lm) else { continue };
@@ -185,6 +206,14 @@ pub fn generate(ws: &Workspace, graph: &Graph, tc: &Toolchain, config: &str) -> 
     writeln!(n, "default all")?;
     std::fs::write(build_dir.join("build.ninja"), n)?;
     Ok(Generated { build_dir })
+}
+
+/// Writes a file only when its text changes, so Ninja does not rebuild what depends on it.
+fn write_if_changed(path: &Path, text: &str) -> Result<()> {
+    if std::fs::read_to_string(path).map(|old| old == text).unwrap_or(false) {
+        return Ok(());
+    }
+    Ok(std::fs::write(path, text)?)
 }
 
 fn dedup(v: Vec<String>) -> Vec<String> {

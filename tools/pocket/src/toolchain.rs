@@ -61,16 +61,22 @@ pub fn emsdk() -> Result<Emsdk> {
             candidates.push(PathBuf::from(v));
         }
     }
-    if let Some(home) = std::env::var_os("HOME") {
+    // The user's home: HOME, or on Windows (where it is usually unset) USERPROFILE.
+    if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
         candidates.push(PathBuf::from(home).join(".pocket-tools").join("emsdk"));
     }
     for root in candidates {
         let emscripten = root.join("upstream").join("emscripten");
-        if emscripten.join("em++").is_file() {
+        if emscripten.join(em_tool("em++")).is_file() {
             return Ok(Emsdk { config_file: root.join(".emscripten"), cmake_toolchain: emscripten.join("cmake").join("Modules").join("Platform").join("Emscripten.cmake"), root, emscripten });
         }
     }
     bail!("Emscripten SDK not found: install it with `git clone https://github.com/emscripten-core/emsdk ~/.pocket-tools/emsdk && ~/.pocket-tools/emsdk/emsdk install latest && ~/.pocket-tools/emsdk/emsdk activate latest`, or set POCKET_EMSDK")
+}
+
+/// An Emscripten driver's file name: Windows' SDK has em++.exe, emcc.exe and emar.exe launchers.
+fn em_tool(name: &str) -> String {
+    if cfg!(windows) { format!("{name}.exe") } else { name.to_string() }
 }
 
 /// Environment for running Emscripten tools without sourcing emsdk_env.sh.
@@ -179,7 +185,7 @@ pub fn command(program: &str) -> Command {
 pub fn detect_for(target: &str) -> Result<Toolchain> {
     if target == "wasm" {
         let sdk = emsdk()?;
-        let cxx = sdk.emscripten.join("em++").to_string_lossy().into_owned();
+        let cxx = sdk.emscripten.join(em_tool("em++")).to_string_lossy().into_owned();
         let mut probe = command(&cxx);
         em_env(&mut probe, &sdk);
         let out = probe.arg("--version").output().context("running em++ --version")?;
@@ -189,8 +195,8 @@ pub fn detect_for(target: &str) -> Result<Toolchain> {
         let cxx_version = String::from_utf8_lossy(&out.stdout).lines().find(|l| l.contains("emcc")).unwrap_or("").to_string();
         return Ok(Toolchain {
             cxx,
-            cc: sdk.emscripten.join("emcc").to_string_lossy().into_owned(),
-            ar: sdk.emscripten.join("emar").to_string_lossy().into_owned(),
+            cc: sdk.emscripten.join(em_tool("emcc")).to_string_lossy().into_owned(),
+            ar: sdk.emscripten.join(em_tool("emar")).to_string_lossy().into_owned(),
             ninja: which("ninja"),
             cmake: which("cmake"),
             developer_dir: developer_dir(),
@@ -285,6 +291,19 @@ fn detect_windows() -> Result<Toolchain> {
         triple: None,
         sysroot: None,
     })
+}
+
+/// The DirectX Shader Compiler of the newest installed Windows SDK
+/// (`Windows Kits/10/bin/<version>/x64/dxcompiler.dll`).
+pub fn windows_sdk_dxc() -> Option<PathBuf> {
+    let base = std::env::var_os("ProgramFiles(x86)").map(PathBuf::from)?.join("Windows Kits").join("10").join("bin");
+    let mut found: Vec<PathBuf> = std::fs::read_dir(&base).ok()?.filter_map(|e| e.ok()).map(|e| e.path().join("x64").join("dxcompiler.dll")).filter(|p| p.is_file()).collect();
+    found.sort_by_key(|p| p.parent().and_then(|x| x.parent()).map(|v| version_key_dotted(v)).unwrap_or_default());
+    found.pop()
+}
+
+fn version_key_dotted(p: &Path) -> Vec<u64> {
+    p.file_name().and_then(|n| n.to_str()).unwrap_or("").split('.').map(|s| s.parse().unwrap_or(0)).collect()
 }
 
 /// File names on the host: an executable's (`.exe` on Windows) and a static library's

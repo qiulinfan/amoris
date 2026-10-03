@@ -5,6 +5,7 @@
 
 #include <pocket/core/fs.hpp>
 #include <pocket/core/log.hpp>
+#include <pocket/core/process.hpp>
 
 #include <algorithm>
 #include <array>
@@ -18,13 +19,6 @@
 #include <map>
 #include <sstream>
 
-#if !defined(__EMSCRIPTEN__) && !defined(_WIN32)
-#include <fcntl.h>
-#include <spawn.h>
-#include <sys/wait.h>
-#include <unistd.h>
-extern char** environ;
-#endif
 
 namespace pocket::assets {
 
@@ -482,16 +476,33 @@ std::string find_blender(const std::string& configured) {
     };
     if (!configured.empty() && executable(configured)) return configured;
     if (const char* env = std::getenv("POCKET_BLENDER"); env && executable(env)) return env;
+#ifdef _WIN32
+    // The installer's place, newest version first: Blender Foundation/Blender <version>/blender.exe.
+    if (const char* pf = std::getenv("ProgramFiles")) {
+        std::error_code ec;
+        std::vector<sfs::path> found;
+        for (const auto& e : sfs::directory_iterator(sfs::path(pf) / "Blender Foundation", ec)) {
+            if (executable(e.path() / "blender.exe")) found.push_back(e.path() / "blender.exe");
+        }
+        std::sort(found.begin(), found.end());
+        if (!found.empty()) return found.back().string();
+    }
+    constexpr char kPathSeparator = ';';
+    constexpr const char* kExecutable = "blender.exe";
+#else
     for (const char* p : {"/Applications/Blender.app/Contents/MacOS/Blender", "/usr/bin/blender", "/usr/local/bin/blender", "/opt/homebrew/bin/blender", "/snap/bin/blender"}) {
         if (executable(p)) return p;
     }
+    constexpr char kPathSeparator = ':';
+    constexpr const char* kExecutable = "blender";
+#endif
     if (const char* path = std::getenv("PATH")) {
         std::string dirs = path;
         std::size_t start = 0;
         while (start <= dirs.size()) {
-            const std::size_t end = dirs.find(':', start);
+            const std::size_t end = dirs.find(kPathSeparator, start);
             const std::string dir = dirs.substr(start, end == std::string::npos ? std::string::npos : end - start);
-            if (!dir.empty() && executable(sfs::path(dir) / "blender")) return (sfs::path(dir) / "blender").string();
+            if (!dir.empty() && executable(sfs::path(dir) / kExecutable)) return (sfs::path(dir) / kExecutable).string();
             if (end == std::string::npos) break;
             start = end + 1;
         }
@@ -573,7 +584,7 @@ Result<Conversion> convert_with_blender(const std::filesystem::path& source, con
         }
     }
     if (blender.empty()) return fail("no_blender", "{} needs Blender to import, and none was found (install Blender, or set POCKET_BLENDER or [assets] blender in project.toml)", source.filename().string());
-#if defined(__EMSCRIPTEN__) || defined(_WIN32)
+#if defined(__EMSCRIPTEN__)
     return fail("unsupported", "importing {} through Blender is not available on this platform", source.filename().string());
 #else
     std::filesystem::create_directories(out_glb.parent_path(), ec);
@@ -581,24 +592,13 @@ Result<Conversion> convert_with_blender(const std::filesystem::path& source, con
     const std::string src = source.string(), out = out_glb.string(), log_file = log_path.string();
     std::vector<std::string> args{blender, "-b", "--factory-startup", "--python-exit-code", "1", "--python-expr", kBlenderScript, "--", src, out};
     if (lower(source.extension().string()) == ".blend") args.insert(args.begin() + 1, src);
-    std::vector<char*> argv;
-    for (std::string& a : args) argv.push_back(a.data());
-    argv.push_back(nullptr);
-    posix_spawn_file_actions_t actions;
-    posix_spawn_file_actions_init(&actions);
-    posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, log_file.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    posix_spawn_file_actions_adddup2(&actions, STDOUT_FILENO, STDERR_FILENO);
     const auto start = std::chrono::steady_clock::now();
-    pid_t pid = 0;
-    const int rc = posix_spawn(&pid, blender.c_str(), &actions, nullptr, argv.data(), environ);
-    posix_spawn_file_actions_destroy(&actions);
-    if (rc != 0) return fail("blender_failed", "cannot start Blender at {}: {}", blender, std::strerror(rc));
-    int status = 0;
-    while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
+    auto ran = process::run(args, log_path);
+    if (!ran) return fail("blender_failed", "cannot start Blender at {}: {}", blender, ran.error().message);
     conv.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
     auto log_text = fs::read_text(log_path);
     const std::string output = log_text ? *log_text : std::string();
-    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0 || output.find("POCKET_OK") == std::string::npos || !std::filesystem::is_regular_file(out_glb, ec)) {
+    if (*ran != 0 || output.find("POCKET_OK") == std::string::npos || !std::filesystem::is_regular_file(out_glb, ec)) {
         std::string why = "Blender did not export it";
         if (const std::size_t e = output.find("POCKET_ERROR "); e != std::string::npos) why = output.substr(e + 13, output.find('\n', e) - e - 13);
         else if (const std::size_t t = output.rfind("Error"); t != std::string::npos) why = output.substr(t, std::min<std::size_t>(200, output.size() - t));

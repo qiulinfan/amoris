@@ -38,7 +38,7 @@ def tokens_text(s):
 def measure(sample, ticks, width, height):
     exe = os.path.join(ROOT, "build", "debug", "bin", "pocket_runtime")
     bundle = os.path.join(ROOT, "build", "ts", f"{sample}.js")
-    proc = subprocess.Popen([exe, "--project", os.path.join(ROOT, "samples", sample), "--bundle", bundle, "--headless", "--serve", "0", "--paused", "--json", "--size", f"{width}x{height}", "--log-level", "warn"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    proc = subprocess.Popen([exe, "--project", os.path.join(ROOT, "samples", sample), "--bundle", bundle, "--headless", "--serve", "0", "--paused", "--json", "--size", f"{width}x{height}", "--log-level", "warn"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
     url = None
     while url is None:
         line = proc.stderr.readline()
@@ -109,16 +109,16 @@ def main():
         lines.append("")
         lines.append(f"Tree is {q / max(t, 1):.1f}x smaller than the full JSON; the transcript summarizes {r['ticks']} ticks in {tr:,} tokens; one screenshot costs {img / max(t, 1):.1f}x the tree and shows no numbers.\n")
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
-    with open(args.out, "w") as f:
+    with open(args.out, "w", encoding="utf-8", newline="\n") as f:
         f.write("\n".join(lines) + "\n")
     ev_dir = os.path.join(ROOT, "tests", "evidence", "perception")
     os.makedirs(ev_dir, exist_ok=True)
     for r in results:
         for k, v in r["texts"].items():
             fname = k.split(" ")[0].replace(".", "-") + ".txt"
-            with open(os.path.join(ev_dir, f"{r['sample']}-{fname}"), "w") as f:
+            with open(os.path.join(ev_dir, f"{r['sample']}-{fname}"), "w", encoding="utf-8", newline="\n") as f:
                 f.write(v if v.endswith("\n") else v + "\n")
-    print(open(args.out).read())
+    print(open(args.out, encoding="utf-8").read())
 
 
 if __name__ == "__main__":

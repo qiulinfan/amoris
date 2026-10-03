@@ -76,7 +76,7 @@ def main():
                   "environment": {"POCKET_RPC_URL": payload["rpc_url"], "POCKET_ROOT": ROOT}}
         if os.environ.get("POCKET_RUNTIME"):   # the runtime under test, for runtime_start (docs/agent-eval.md)
             server["environment"]["POCKET_RUNTIME"] = os.environ["POCKET_RUNTIME"]
-        with open(os.path.join(cwd, "opencode.json"), "w") as f:
+        with open(os.path.join(cwd, "opencode.json"), "w", encoding="utf-8", newline="\n") as f:
             json.dump({"$schema": "https://opencode.ai/config.json", "mcp": {"pocket": server}}, f, indent=2)
     agent = shutil.which(a.agent) or a.agent
     cmd = [agent, "run", "--format", "json", "--auto", "--model", a.model, "--dir", cwd]
@@ -86,7 +86,7 @@ def main():
     started = time.time()
     # stdin closed: opencode run waits on a piped stdin for more of the message. The agent in a
     # process group of its own, so what it leaves running ends with it.
-    proc = subprocess.Popen(cmd, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
+    proc = subprocess.Popen(cmd, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True, encoding="utf-8", errors="replace")
     try:
         out, err = proc.communicate(timeout=a.max_time + 60)
     except subprocess.TimeoutExpired:
@@ -103,7 +103,7 @@ def main():
     traces = os.environ.get("POCKET_AGENT_TRACES")
     if traces:
         os.makedirs(traces, exist_ok=True)
-        with open(os.path.join(traces, f"{payload.get('name', 'task')}.jsonl"), "w") as f:
+        with open(os.path.join(traces, f"{payload.get('name', 'task')}.jsonl"), "w", encoding="utf-8", newline="\n") as f:
             f.write(out)
             if err.strip():
                 f.write("\n" + json.dumps({"type": "stderr", "text": err[-20000:]}) + "\n")

@@ -54,9 +54,41 @@ The owner's standing directives for this repository (given in conversation, date
 
 ## Setting up a machine
 
-Supported hosts: macOS on Apple silicon (native, the reference), Linux aarch64 and x86_64 (verified
-in containers; a native host recipe below), browsers through the web build, the iOS Simulator. There
-is no Windows or Android target yet (Windows: ADR 0005 plans V8 there; Android is research only).
+Supported hosts: Windows 11 on x86-64 with Direct3D 12 (native, where development continues from
+2026-10-02, ADR 0008), macOS on Apple silicon (native, the reference until then), Linux aarch64 and
+x86_64 (verified in containers; a native host recipe below), browsers through the web build, the iOS
+Simulator. There is no Android target yet (research only).
+
+### Windows (x86-64)
+
+What the owner installs (licences and administrator rights): Visual Studio 2022 or later with the
+"Desktop development with C++" workload and a Windows 10/11 SDK (Community or Build Tools), Git for
+Windows (Git Bash is the agents' shell), Python 3.14 from python.org, and CMake and Ninja on PATH
+(Strawberry Perl's or Visual Studio's do). The rest needs no administrator:
+
+```bash
+curl -sSL -o rustup-init.exe https://static.rust-lang.org/rustup/dist/x86_64-pc-windows-msvc/rustup-init.exe
+./rustup-init.exe -y --default-toolchain 1.98.1 --profile minimal --no-modify-path   # then add ~/.cargo/bin to PATH
+git clone git@github.com:qiulinfan/aipocket.git && cd aipocket
+python tools/scripts/dev/fetch_llvm.py     # LLVM 23.1.2's release archive, unpacked to ~/.pocket-tools/llvm-23.1.2
+./scripts/bootstrap.sh                      # builds tools/pocket, installs .pocket/pocket.exe, runs pocket setup and pocket doctor
+./.pocket/pocket build && ./.pocket/pocket build --config release
+python -m pip install pillow fonttools websocket-client
+```
+
+- The compiler is clang++ for `x86_64-pc-windows-msvc` (not clang-cl), linking with lld against the
+  newest Visual Studio's C++ library and Windows SDK, which clang finds itself. A "Developer
+  PowerShell" for an older Visual Studio changes which toolset clang picks; start the tool from an
+  ordinary shell.
+- `pocket setup` builds the CMake dependencies with that clang and links JavaScriptCore into
+  `pocket_jsc.dll` (`tools/pocket/src/windows.rs`, ADR 0008); `pocket build` copies it, the Windows
+  SDK's `dxcompiler.dll` (Direct3D 12's shader compiler) and, for debug, AddressSanitizer's runtime
+  beside the executables.
+- The checkout is LF (`.gitattributes`); Git for Windows' `core.autocrlf=true` would otherwise make
+  every file CRLF and rewrite the generated files on each build.
+- Executables embed a manifest that makes UTF-8 their code page and allows long paths
+  (`tools/pocket/src/windows.manifest`).
+- `POCKET_GPU_BACKEND=vulkan` runs wgpu's Vulkan backend instead of Direct3D 12, to compare.
 
 ### macOS (Apple silicon)
 
@@ -334,6 +366,16 @@ and how to add a task.
   notice arrives in the next: poll its output files.
 - The iOS Simulator MCP tool needs the owner's per-device grant; `simctl` does not.
 - `git checkout -- docs` once threw away uncommitted doc wrapping: look before discarding.
+- On macOS the tool shell above is zsh; on Windows it is Git Bash (with PowerShell beside it). In
+  Git Bash a heredoc fed to `python -` lost or doubled backslashes in Python string literals more
+  than once (`\\n` came out as a line break): write such scripts to a file first, or use
+  `tools/scripts/dev/edits.py`. Run Python with `PYTHONUTF8=1` (the console's code page is not
+  UTF-8). A Catch2 test name with a comma is cut there: pass a wildcard (`"script.profile*"`) or the
+  test's tag.
+- Windows: a directory junction (`mklink /J`, how a git worktree can share the main checkout's
+  `.pocket`) is followed by `git worktree remove`, which deleted the shared dependencies once
+  (`pocket setup` rebuilt them in four minutes). Remove the junction itself first
+  (`cmd //c rmdir <worktree>\.pocket`), then the worktree.
 
 ## Environment variables
 
@@ -347,6 +389,9 @@ and how to add a task.
 | `POCKET_JOBS` | `pocket scenario`, `pocket bench` | runtime processes at once |
 | `POCKET_THREADS` | `engine/core/src/parallel.cpp` | worker threads (`1` keeps all work on one) |
 | `POCKET_CXX`, `POCKET_CC`, `POCKET_AR` | `toolchain.rs` | compilers and archiver for native builds |
+| `POCKET_LLVM` | `toolchain.rs` (Windows) | an LLVM directory to take clang++ from when it is not on PATH or under `~/.pocket-tools/llvm-*` |
+| `POCKET_PYTHON` | `toolchain.rs` | the Python the tool runs (font subsetting, the web packer, the Python tests) |
+| `POCKET_GPU_BACKEND` | `engine/rhi/src/device.cpp` (Windows) | `vulkan` for wgpu's Vulkan backend instead of Direct3D 12 |
 | `POCKET_EMSDK` (or `EMSDK`), `POCKET_XCODE`, `POCKET_LINUX_ARCH` | `pocket`, scripts | Emscripten, Xcode's developer directory, `amd64` for x86_64 Linux containers |
 | `POCKET_DATA_REMOTE` | `tools/scripts/data.py` | where large test files are stored (default `pocketdata:pocket-data`; AGENTS.md, Test data) |
 | `POCKET_BLENDER` | `engine/assets/src/import.cpp`, `agent_eval.py` | Blender's executable |
@@ -363,13 +408,17 @@ and how to add a task.
   the time limit and passed when run again; docs/agent-eval.md, Results). `reference.json` and
   `null.json` cover the 72 tasks. Commits after `b0616f2` (crouch, nested spawn children, shove,
   mantle and later) are not measured by it.
-- **Known failure at the pause** (suite of 2026-10-02 14:53, 23 of 24 modules): `scenarios:arena`.
-  Red runs the ball at Blue, who stands in its way, and no goal comes within 5 s; Blue is pushed
-  from z -6 to -9.9. Cause, from 0db76ac5 (character shoves): a dynamic body that runs into a
-  character now has its speed toward it braked, so the ball stops against Blue instead of glancing
-  off; and the skin distance a character gives way by each tick (`kSkin * 0.5` in `move_characters`,
-  step 2) is not scaled by the mass share, so a light ball pressed on by Red walks Blue along
-  whatever Blue's mass (shown with `Character.mass` at 1e9). Not fixed: development is paused.
+- **Fixed after the move** (Windows, 2026-10-02): the failure the pause left, `scenarios:arena`. Red
+  runs the ball at Blue, who stands in its way, and no goal comes within 5 s; Blue is pushed from z
+  -6 to -9.9. Cause, from 0db76ac5 (character shoves): a dynamic body that runs into a character now
+  has its speed toward it braked, so the ball stops against Blue instead of glancing off; and the
+  skin distance a character gives way by each tick (`kSkin * 0.5` in `move_characters`, step 2) is
+  not scaled by the mass share, so a light ball pressed on by Red walks Blue along whatever Blue's
+  mass (shown with `Character.mass` at 1e9). The skin is now given way to by the same share; the old
+  scenario had passed only because the ball barged Blue into the goal (a goal resets the players),
+  which the shove commit meant to end, so the scenario now has Blue stand aside for the goal and a
+  second one checks that Blue, in the ball's way, stays put (`tools/scripts/dev/arena_probe.py`
+  prints the three places tick by tick).
 - **Next work**, in order: the OBJ import fixes and the cheap visible-quality fixes of
   `docs/research/2026-10-02-rendering-and-import-assessment.md` (Plan); the editor's look (the owner
   asked for it to be made nicer, 2026-10-02); Grass on `samples/hills` (deferred because benchmark

@@ -81,7 +81,7 @@ if __name__ == "__main__":
     a = ap.parse_args()
     hist = train(a.project, a.generations, a.population, a.envs, a.plan_length, a.hold, seed=a.seed, max_ticks=a.ticks)
     if a.out:
-        with open(a.out, "w") as f:
+        with open(a.out, "w", encoding="utf-8", newline="\n") as f:
             json.dump(hist, f, indent=2)
             f.write("\n")
     print(f"best score {max(h['best'] for h in hist)} after {len(hist)} generations")

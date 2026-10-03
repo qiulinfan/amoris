@@ -87,4 +87,4 @@ entities = [
     camera,
 ]
 out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "samples", "island", "scene.json")
-json.dump({"format": "pocket-scene", "entities": entities}, open(out, "w"), indent=1)
+json.dump({"format": "pocket-scene", "entities": entities}, open(out, "w", encoding="utf-8", newline="\n"), indent=1)

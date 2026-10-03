@@ -51,9 +51,9 @@ def sparks(r):
 def main():
     stage = os.path.join(tempfile.mkdtemp(), "stage")
     os.makedirs(os.path.join(stage, "scripts"))
-    with open(os.path.join(stage, "project.toml"), "w") as f:
+    with open(os.path.join(stage, "project.toml"), "w", encoding="utf-8", newline="\n") as f:
         f.write('name = "stage"\nentry = "scripts/main.ts"\n')
-    with open(os.path.join(stage, "scripts", "main.ts"), "w") as f:
+    with open(os.path.join(stage, "scripts", "main.ts"), "w", encoding="utf-8", newline="\n") as f:
         f.write("export {};\n")
     subprocess.run([os.path.join(ROOT, ".pocket", "pocket"), "ts", stage], env=ENV, cwd=ROOT, check=True, capture_output=True)
     r = Runtime(stage, 47818, size="1280x720", release=True)

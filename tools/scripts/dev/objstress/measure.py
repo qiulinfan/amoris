@@ -44,7 +44,7 @@ OUT = os.path.join(rt.ROOT, "build", "objstress")
 PROJECT = OUT   # the project is the directory itself: runtime.py finds its bundle by the directory's name
 LOGS = os.path.join(OUT, "runs", "logs")
 CAPTURES = os.path.join(OUT, "runs", "captures")
-CASES = json.load(open(os.path.join(HERE, "cases.json")))
+CASES = json.load(open(os.path.join(HERE, "cases.json"), encoding="utf-8"))
 CAMERA = {"Transform": {"position": {"x": 0.2, "y": 0.35, "z": 1.6}, "look_at": {"x": 0, "y": 0, "z": 0}}, "Camera": {"priority": 100}}
 
 
@@ -66,14 +66,14 @@ def timed_exe(time_out):
     wrapper = os.path.join(OUT, "bin", "timed_runtime.sh")
     os.makedirs(os.path.dirname(wrapper), exist_ok=True)
     flag = "-l" if platform.system() == "Darwin" else "-v"
-    with open(wrapper, "w") as f:
+    with open(wrapper, "w", encoding="utf-8", newline="\n") as f:
         f.write(f'#!/bin/sh\nexec /usr/bin/time {flag} -o "{time_out}" "{exe}" "$@"\n')
     os.chmod(wrapper, 0o755)
     return wrapper
 
 
 def rss_mb(pid):
-    out = subprocess.run(["ps", "-o", "rss=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
+    out = subprocess.run(["ps", "-o", "rss=", "-p", str(pid)], capture_output=True, text=True, encoding="utf-8", errors="replace").stdout.strip()
     return int(out) / 1024 if out else 0.0
 
 
@@ -88,7 +88,7 @@ def measure(name, spec):
     time_out = os.path.join(LOGS, name + ".time.txt")
     t_start = time.time()
     r = start(port, timed_exe(time_out))
-    children = subprocess.run(["pgrep", "-P", str(r.proc.pid)], capture_output=True, text=True).stdout.split()
+    children = subprocess.run(["pgrep", "-P", str(r.proc.pid)], capture_output=True, text=True, encoding="utf-8", errors="replace").stdout.split()
     pid = int(children[0]) if children else r.proc.pid
     peak = {"mb": 0.0, "series": []}
     stop = threading.Event()
@@ -143,14 +143,14 @@ def measure(name, spec):
     res["peak_rss_mb"] = round(peak["mb"])
     res["rss_series"] = peak["series"][::5]
     try:
-        text = open(time_out).read()
+        text = open(time_out, encoding="utf-8").read()
         res["time"] = text
         for line in text.splitlines():
             if "peak memory footprint" in line:
                 res["peak_footprint_mb"] = round(int(line.split()[0]) / 1e6)
     except OSError:
         pass
-    json.dump(res, open(os.path.join(LOGS, name + ".json"), "w"), indent=1)
+    json.dump(res, open(os.path.join(LOGS, name + ".json"), "w", encoding="utf-8", newline="\n"), indent=1)
     s, m = res["stats"], res["moving_stats"]
     print(json.dumps({"case": name, "file_mb": res["file_mb"], "load_s": res["load_s"], "peak_rss_mb": res["peak_rss_mb"],
                       "triangles": s.get("triangles"), "draws": s.get("draw_calls"), "gpu_ms": (s.get("gpu") or {}).get("ms"),
