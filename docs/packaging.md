@@ -1,7 +1,7 @@
 # Packaging
 
-`pocket pack <project>` turns a project into a folder that runs on another Mac without the
-repository, the toolchain or the TypeScript sources:
+`pocket pack <project>` turns a project into a folder that runs on another machine of the same
+system (macOS, Windows, Linux) without the repository, the toolchain or the TypeScript sources:
 
 ```
 dist/<name>/
@@ -9,7 +9,7 @@ dist/<name>/
   bin/pocket_runtime    the engine (release configuration by default; SDL3, wgpu-native and FreeType are linked statically)
   project.js            the game's scripts, bundled by `pocket ts`
   project.json          settings from project.toml plus the font path
-  project/              project.toml, the scene and assets/ (scripts/ is left out)
+  project/              project.toml, the scene, assets/ and .imported/ (scripts/ and other dot-folders are left out)
   fonts/                the UI font
   README.txt
 ```
@@ -28,7 +28,13 @@ works unchanged; only the sources are absent. Nothing is signed or notarized: di
 machine you control needs Apple's tooling on top of this. On Linux the same command packs the Linux
 runtime (checked in the container of [the build system](build-system.md), Linux: the packed hello
 runs headless on Vulkan); the machine it goes to needs WebKitGTK's JavaScriptCore
-(`libjavascriptcoregtk-4.1`) and a Vulkan driver. Windows packs arrive with Windows.
+(`libjavascriptcoregtk-4.1`) and a Vulkan driver. On Windows it packs `bin/pocket_runtime.exe` with
+the DLLs built beside it (`pocket_jsc.dll`, JavaScriptCore; `dxcompiler.dll`, the Windows SDK's
+shader compiler) and a `<name>.cmd` launcher; the machine it goes to needs the Visual C++ runtime,
+and which DXC a pack for players carries is the owner's call (`docs/development.md`, Current state).
+`project/.imported/` is the store's Blender conversions and parsed OBJ meshes
+(`docs/design/assets.md`, Formats): a packed game reads those, so a model brought in through Blender
+loads without Blender; load each such file once (a run or `assets.reload`) before packing.
 
 `pocket pack <project> --ios` makes an app for the iOS Simulator, `dist/ios/<name>.app`: the runtime
 built for the simulator as its executable, the same files as above under `game/`, an `Info.plist`

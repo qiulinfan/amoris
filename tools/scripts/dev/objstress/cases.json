@@ -1,22 +1,20 @@
 {
-  "_comment": "Cases for measure.py: each the mesh to load, the camera (cam_pos, cam_at, fov, near, far), the model's Transform, MeshRenderer fields beside the mesh (mr_extra) and variants: world.set calls made after the measurement, each followed by a capture. Units are the engine's (metres, Y up); the machined parts are millimetres and Z up, so they are scaled by 0.001 and moved back from their offset.",
+  "_comment": "Cases for measure.py: each the mesh to load, the import settings it is read with (import: up, unit, recenter, crease; through assets.import), the camera (cam_pos, cam_at, fov, near, far), the model's Transform, MeshRenderer fields beside the mesh (mr_extra) and variants: world.set calls made after the measurement, each followed by a capture. Units are the engine's (metres, Y up); the machined parts are millimetres and Z up, read so (up z, unit mm) and recentred around their bounds' centre.",
   "scan_1m": {"mesh": "assets/scan_1m.obj", "cam_pos": {"x": 0.2, "y": 0.35, "z": 1.6}, "cam_at": {"x": 0, "y": 0, "z": 0}, "near": 0.05, "far": 20},
   "scan_5m": {"mesh": "assets/scan_5m.obj", "cam_pos": {"x": 0.2, "y": 0.35, "z": 1.6}, "cam_at": {"x": 0, "y": 0, "z": 0}, "near": 0.05, "far": 20},
   "scan_5m_lod": {"mesh": "assets/scan_5m.obj", "cam_pos": {"x": 0.2, "y": 0.35, "z": 1.6}, "cam_at": {"x": 0, "y": 0, "z": 0}, "near": 0.05, "far": 20,
                   "mr_extra": {"lods": [{"screen": 4.0, "ratio": 0.1}]}},
   "scan_12m": {"mesh": "assets/scan_12m.obj", "cam_pos": {"x": 0.2, "y": 0.35, "z": 1.6}, "cam_at": {"x": 0, "y": 0, "z": 0}, "near": 0.05, "far": 20},
-  "machined": {"mesh": "assets/machined_2m.obj", "cam_pos": {"x": 0.35, "y": 0.25, "z": 1.1}, "cam_at": {"x": 0, "y": 0, "z": 0}, "near": 0.02, "far": 20,
-               "transform": {"position": {"x": -250.315, "y": -250.315, "z": -0.1}, "scale": {"x": 0.001, "y": 0.001, "z": 0.001}},
+  "machined": {"mesh": "assets/machined_2m.obj", "import": {"up": "z", "unit": "mm"}, "cam_pos": {"x": 0.45, "y": 0.75, "z": 0.75}, "cam_at": {"x": 0, "y": -0.05, "z": 0}, "near": 0.02, "far": 20,
                "variants": [
-                 {"name": "upright", "set": [
-                   {"entity": "Model", "components": {"Transform": {"position": {"x": -250.315, "y": -0.1, "z": 250.315}, "rotation": {"pitch": -90, "yaw": 0, "roll": 0}}}},
-                   {"entity": "StressCam", "components": {"Transform": {"position": {"x": 0.45, "y": 0.75, "z": 0.75}, "look_at": {"x": 0, "y": -0.05, "z": 0}}}}]},
                  {"name": "closeup", "set": [
+                   {"entity": "Model", "components": {"Transform": {"rotation": {"yaw": 0}}}},
                    {"entity": "StressCam", "components": {"Transform": {"position": {"x": -0.10, "y": 0.06, "z": 0.45}, "look_at": {"x": -0.22, "y": -0.07, "z": 0.22}}}}]}]},
-  "machined_near": {"mesh": "assets/machined_near.obj", "cam_pos": {"x": 0.05, "y": 0.06, "z": 0.3}, "cam_at": {"x": -0.07, "y": -0.07, "z": 0.07}, "near": 0.01, "far": 20,
-                    "transform": {"position": {"x": -0.2, "y": -0.02, "z": 0.2}, "rotation": {"pitch": -90, "yaw": 0, "roll": 0}, "scale": {"x": 0.001, "y": 0.001, "z": 0.001}}},
-  "machined_far": {"mesh": "assets/machined_far.obj", "cam_pos": {"x": 0.05, "y": 0.06, "z": 0.3}, "cam_at": {"x": -0.07, "y": -0.07, "z": 0.07}, "near": 0.01, "far": 20,
-                   "transform": {"position": {"x": -4500.2, "y": -0.02, "z": 4500.2}, "rotation": {"pitch": -90, "yaw": 0, "roll": 0}, "scale": {"x": 0.001, "y": 0.001, "z": 0.001}}},
+  "machined_as_is": {"mesh": "assets/machined_2m.obj", "cam_pos": {"x": 900, "y": 700, "z": 1100}, "cam_at": {"x": 0, "y": 0, "z": 0}, "near": 5, "far": 5000},
+  "machined_near": {"mesh": "assets/machined_near.obj", "import": {"up": "z", "unit": "mm", "recenter": true}, "cam_pos": {"x": 0.05, "y": 0.06, "z": 0.3}, "cam_at": {"x": -0.07, "y": -0.07, "z": 0.07}, "near": 0.01, "far": 20,
+                    "transform": {"position": {"x": 0, "y": 0.08, "z": 0}}},
+  "machined_far": {"mesh": "assets/machined_far.obj", "import": {"up": "z", "unit": "mm", "recenter": true}, "cam_pos": {"x": 0.05, "y": 0.06, "z": 0.3}, "cam_at": {"x": -0.07, "y": -0.07, "z": 0.07}, "near": 0.01, "far": 20,
+                   "transform": {"position": {"x": 0, "y": 0.08, "z": 0}}},
   "assembly_o": {"mesh": "assets/assembly_o.obj", "cam_pos": {"x": 2.0, "y": 1.6, "z": 2.3}, "cam_at": {"x": 0.51, "y": 0.45, "z": 0.51}, "fov": 50, "near": 0.05, "far": 30,
                  "variants": [{"name": "closeup", "set": [
                    {"entity": "Model", "components": {"Transform": {"rotation": {"yaw": 0}}}},

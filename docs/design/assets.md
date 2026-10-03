@@ -171,9 +171,27 @@ into the same mesh a glTF file becomes:
   (`parts` in `assets.describe`), one submesh per object and material; `Kd`, `d`/`Tr` (under 1 draws
   translucent), `Ke`, `Pr`/`Pm` (or `Ns` as a roughness), `map_Kd`, `map_Ke` and `map_Bump` (as a
   tangent-space normal map, the way Blender writes it) make the material, texture paths resolved
-  next to the `.mtl`; v runs up in OBJ and is flipped; faces with more than three corners are
-  fanned; normals the file leaves out are smoothed per position, weighted by face area; a face
-  pointing past the vertices is refused with its line number.
+  next to the `.mtl`; v runs up in OBJ and is flipped; a face pointing past the vertices is refused
+  with its line number. A polygon with more than three corners is fanned from its first corner when
+  it is convex (as before) and ear-clipped in the plane of its Newell normal when it is not, so an
+  L, a star or a comb comes out right wherever the exporter started it; a corner at the place of the
+  one before it (written twice, or an edge the exporter collapsed) is left out, since it turns
+  neither way. Normals the file leaves out are made much as Blender's auto smooth makes them: at
+  each position the faces around it are joined into fans across the edges they share, and each fan
+  gets the sum of its faces' normals weighted by area, so a welded CAD part keeps its sharp edges
+  and rounds its curved faces. Two faces are joined across an edge when they meet at no more than
+  the crease angle (30 degrees by default; a face without area, such as a T-junction's sliver, has
+  no direction and joins neither side), unless `s off` (or `s 0`) made them flat; faces after `s N`
+  are a smoothing group, smooth across any angle with the faces of their group and apart from all
+  others, as 3ds Max and Maya mean it. Coordinates are read as doubles and become floats only after
+  the import settings (below) have turned, scaled and recentred them. The text is read in one pass
+  (numbers by an exact fast path for the decimals exporters write, `std::from_chars` otherwise;
+  corners deduped through a short list per position), and the mesh it becomes, tangents included, is
+  kept in `<project>/.imported/<path>.mesh` under a stamp of the text, the settings and the reader's
+  version, with the hash of every material library it read: the next start or `assets.reload` reads
+  that instead while all of them are the same (`import.cached` in `assets.describe`). `pocket pack`
+  carries `.imported/` (and no other dot-directory), so a packed game reads the meshes parsed before
+  packing and parses the others on its first start.
 - **STL** (binary or ASCII): read directly, one node, flat normals, a gray material.
 - **PLY** (ASCII, or binary in either byte order), as Blender, MeshLab and 3D scanners write it:
   read directly, one node. The `vertex` element's `x y z`, its normals (`nx ny nz`) and texture
@@ -201,12 +219,65 @@ intensity divided by 20 to suit the engine's falloff and a `range` from the file
 intensity, their color encoded for the component), a camera node an inactive `Camera` with the
 file's field of view and clip planes, so a scene built in Blender comes in lit, and its camera can
 be switched to. `assets.import {path, force?}` (`world.importModel` in scripts) reads a model now
-and answers with its importer, where it was converted to, whether that was cached, how long Blender
-took and the mesh's description; `assets.list` marks every model with its `importer`.
-`runtime_tests` (`[import]`) has Blender make a beveled red cube, a point lamp and a camera as a
-`.blend` and an `.fbx`, imports both (Blender once, then the cache), instantiates the scene and
-checks the lamp three units up, the camera inactive and the material's roughness; `assets_tests`
-(`[obj]`, `[stl]`, `[ply]`) check the readers against small files written by the test.
+(`force` converts or parses it again) and answers with its importer, where it was converted to or
+cached, whether that was cached, how long Blender took and the mesh's description; an OBJ also takes
+its import settings (below). `assets.list` marks every model with its `importer`. `runtime_tests`
+(`[import]`) has Blender make a beveled red cube, a point lamp and a camera as a `.blend` and an
+`.fbx`, imports both (Blender once, then the cache), instantiates the scene and checks the lamp
+three units up, the camera inactive and the material's roughness; `assets_tests` (`[obj]`, `[stl]`,
+`[ply]`) check the readers against small files written by the test.
+
+## Import settings
+
+Industrial software writes OBJ in its own frame: millimetres, Z up, hundreds of metres or kilometres
+from the origin (plant, BIM and map coordinates). Each OBJ is read with settings, baked into its
+vertices:
+
+- `up`: the file's up axis, `"y"` (the default, as Blender and game tools write) or `"z"` (CAD, 3D
+  printing, GIS), turned to the engine's Y up as Blender's glTF export does ((x, y, z) becomes (x,
+  z, -y), a rotation, so faces keep their winding).
+- `unit`: metres per file unit, a number (0.001) or `"m"`, `"cm"`, `"mm"`, `"km"`, `"in"`, `"ft"`.
+- `recenter`: `"auto"` (the default) moves the part to stand around the centre of its bounds when
+  that centre lies more than 100 of the part's sizes from the file's origin, and leaves a model near
+  its own origin (a crate, a character, a level piece) where the file has it; `true` always, `false`
+  never. The subtraction is done in doubles, so a 6 mm hole 4.5 km out keeps its shape (as floats
+  there, corners would be half a millimetre apart). `assets.describe` reports `import.origin`
+  (metres, Y up): a Transform there puts the part back where the file had it.
+- `crease`: the angle in degrees (30) past which faces without normals are shaded apart; 180 smooths
+  every shared corner, 0 shades every face flat.
+
+`assets.import {path, up?, unit?, recenter?, crease?}` sets them for the rest of the session, over
+the file's current ones, and reads the file again; its answer's `project_toml` is the line that
+keeps them for every start, in the project's `[assets.import]` table:
+
+```toml
+[assets.import]
+"assets/pump_housing.obj" = { up = "z", unit = "mm" }
+```
+
+A setting the command or the table does not take is refused naming those it takes, and a wrong table
+entry fails that file's load with where it is (the log says so at start, as it does for a path the
+table names that is not there); changing the table and `project.reload` reads the files it changes
+again, and draws one that failed under the old entry. The settings are for OBJ: the command refuses
+them for other formats, and the table's entry for another format is said at start to do nothing
+(glTF is metres and Y up by definition, and Blender converts its formats to that). `assets.describe`
+gives every mesh's `size` (metres along x, y, z), an OBJ's `import` (the settings, `origin`,
+`recentered`, `cached`) and `hints` when its bounds suggest a setting: the lowest z at 0 and the
+lowest y not (a Z-up file lying on its side), or more than 50 m across (millimetres or centimetres).
+`assets_tests` (`[obj]`): a welded cube is 24 vertices with its faces' normals (8 rounded ones at a
+crease of 180 or in one smoothing group), two faces folded at a right angle smooth only within one
+group, a 16-sided cylinder's wall has radial normals and its caps their own, an L, a star and a comb
+are clipped facing their normal from every starting corner while a convex polygon keeps its fan, a
+square 4.5 km out keeps its micrometres and reports its origin, a Z-up millimetre box stands up 5 cm
+tall with the hints gone, settings are refused with what is taken, and a parsed file is read back
+from `.imported/` to the bit until its text, a material library or a setting changes or the cache is
+cut short; `runtime_tests` (`[import][obj]`) sets them through `assets.import` and a project's
+table. `tools/scripts/dev/objstress/` measures the stress files
+(`docs/research/2026-10-02-rendering-and-import-assessment.md`, Industrial OBJ import). Measured
+2026-10-02 on Windows 11 (Ryzen 9 270, 16 threads, a release build, other work running), reading to
+a mesh, the median of three: the 74 MB scan of 1M triangles 4.3 s before this reader and 0.42 s with
+it (0.16 s from its cache), the 392 MB scan of 5M 23.9 s and 2.2 s (0.81 s); scans with normals draw
+the same pixels as before.
 
 ## Voxel models
 
@@ -371,11 +442,11 @@ table and chairs, crates, a chest, torches, a bench, a sign, trees, a fence and 
 | Command | Purpose |
 |---|---|
 | `assets.list` | Files under `assets/` with kind (mesh, image, tilemap, audio, other), size, and whether they are loaded; the project's scripts under `scripts/` and `scenarios/` (`.ts`, `.tsx`, `.js`) follow with kind `script`. |
-| `assets.describe {path}` | A mesh's vertices, triangles, submeshes, nodes, materials and bounds; an image's size. Loads it if needed. |
+| `assets.describe {path}` | A mesh's vertices, triangles, submeshes, nodes, materials, bounds and size in metres (an OBJ's import settings, origin and hints: Import settings); an image's size. Loads it if needed. |
 | `assets.reload {path?}` | Forget decoded data (one path or all) and drop GPU copies; the next frame reloads from disk. Live model instances whose file changed are made again (`relinked`, Live models). |
 | `assets.stats` | Counts of loaded meshes, images and failures plus the renderer's view. |
 | `assets.preview {path, size?, out?, image?}` | A model drawn on its own, off screen, by a renderer of its own (the scene's frames, camera and history untouched): framed from three quarters above so its bounding sphere fills the view, under a procedural sky and a sun, AgX; written to `out` (project-relative or absolute) as PNG and, with `image: true`, returned as base64 PNG. The editor's thumbnails and the MCP tool `asset_preview` (which hands the picture to a model that sees) come from it, so an agent can look at a Blender file before placing it. |
-| `assets.import {path, force?}` | Read a model now (through Blender for the formats it converts, cached by content) and describe it. |
+| `assets.import {path, force?, up?, unit?, recenter?, crease?}` | Read a model now (through Blender for the formats it converts, an OBJ parsed; both cached by content) and describe it; an OBJ's import settings hold for the session, and `project_toml` in the answer keeps them. |
 
 `render.stats` reports `assets.meshes`, `assets.textures` and `assets.missing`.
 

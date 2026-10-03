@@ -394,6 +394,28 @@ void Session::apply_project_settings() {
             if (auto r = load_sprite_sheet(path.get<std::string>(), name); !r) log::warn("runtime", "sprite sheet '{}': {}", name, r.error().to_string());
         }
     }
+    if (assets_) {
+        // [assets.import] "assets/part.obj" = {up = "z", unit = "mm"}: how the engine reads a
+        // model file (docs/design/assets.md, Import settings); one read under other settings is
+        // read again.
+        const Json table = project_.contains("assets") && project_["assets"].is_object() && project_["assets"].contains("import") ? project_["assets"]["import"] : Json::object();
+        auto is_obj = [](const std::string& p) {
+            std::string e = std::filesystem::path(p).extension().string();
+            for (char& c : e) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            return e == ".obj";
+        };
+        if (!table.is_object()) log::warn("runtime", "[assets.import] is a table of model paths, each with its settings ({{up, unit, recenter, crease}})");
+        else for (const auto& [path, s] : table.items()) {
+            std::error_code ec;
+            if (auto r = assets::import_settings(s); !r) log::warn("runtime", "[assets.import] \"{}\": {}", path, r.error().message);
+            else if (!std::filesystem::exists(options_.project_dir / path, ec)) log::warn("runtime", "[assets.import] names {}, which is not in the project", path);
+            else if (!is_obj(path)) log::warn("runtime", "[assets.import] \"{}\": up, unit, recenter and crease are read for OBJ files; this one is read as its format says", path);
+        }
+        if (assets_->set_project_imports(table) > 0) {
+            if (renderer_) renderer_->drop_asset_cache();
+            if (physics_) physics_->drop_mesh_cache();
+        }
+    }
     if (project_.contains("animations") && project_["animations"].is_object() && assets_) {
         // [animations] "assets/hero.glb" = ["assets/anims/run.glb", ...]: clips from other files.
         for (const auto& [model, files] : project_["animations"].items()) {
@@ -5269,9 +5291,12 @@ Result<Json> Session::assets_command(std::string_view op, const Json& p) {
     if (op == "import") {
         // Read a model now: an OBJ or STL natively, a Blender-read format converted through Blender
         // (again with force); the answer describes what came out. The renderer uploads it anew.
+        // An OBJ's up, unit, recenter and crease go over its settings for the session.
         const std::string path = opt<std::string>(p, "path", "");
         if (path.empty()) return fail("bad_args", "import needs a project-relative path");
-        POCKET_TRY(j, assets_->import(path, opt<bool>(p, "force", false)));
+        Json settings = Json::object();
+        for (const char* k : {"up", "unit", "recenter", "crease"}) if (p.contains(k)) settings[k] = p[k];
+        POCKET_TRY(j, assets_->import(path, opt<bool>(p, "force", false), settings));
         renderer_->drop_asset_cache();
         if (physics_) physics_->drop_mesh_cache();
         if (Json relinked = relink_models(); !relinked.empty()) j["relinked"] = relinked;

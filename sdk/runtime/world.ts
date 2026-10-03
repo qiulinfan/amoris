@@ -323,11 +323,13 @@ export const world = {
     /**
      * Read a model now and describe it: glTF, OBJ (with its MTL), STL, PLY and voxel models (.vox,
      * .voxels) are read by the engine; .blend, .fbx, .dae, .usd and .abc go through Blender once per
-     * file content into `.imported/` (`force` converts again). Any mesh path works in a MeshRenderer or instantiateMesh without this; it is for
-     * seeing what a file holds (materials, lights, cameras, parts) before using it.
+     * file content into `.imported/` (`force` converts again, or parses an OBJ again). Any mesh path works in a MeshRenderer or instantiateMesh without this; it is for
+     * seeing what a file holds (materials, lights, cameras, parts) before using it. An OBJ takes
+     * import settings for the session (`settings`: its up axis, unit, recentring and crease angle;
+     * `project_toml` in the answer keeps them for every start).
      */
-    importModel(path: string, force = false): { path: string; importer: string; converted?: string; cached?: boolean; seconds?: number; blender_found: boolean; mesh: Record<string, unknown> } {
-        return command("assets.import", { path, force });
+    importModel(path: string, force = false, settings: { up?: "y" | "z"; unit?: number | "m" | "cm" | "mm" | "km" | "in" | "ft"; recenter?: boolean | "auto"; crease?: number } = {}): { path: string; importer: string; converted?: string; cache?: string; cached?: boolean; seconds?: number; project_toml?: string; blender_found: boolean; mesh: Record<string, unknown> } {
+        return command("assets.import", { path, force, ...settings });
     },
     /** Write an entity and its descendants as a prefab file under the project directory. */
     savePrefab(entity: EntityRef, path: string): { path: string; entities: number } {

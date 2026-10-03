@@ -192,6 +192,27 @@ struct AnimationClip {
     std::vector<AnimationChannel> channels;
 };
 
+// How an OBJ file is brought in (docs/design/assets.md, Import settings): its up axis and unit
+// baked into the vertices, its origin moved to the middle of its bounds when it lies far out (so
+// float vertices keep the file's detail), and, for faces without normals, the angle past which
+// faces meeting at an edge are shaded apart. Set per file by assets.import or the project's
+// [assets.import] table.
+struct ImportSettings {
+    enum class Recenter { Auto, On, Off };
+    bool z_up = false;       // the file's up is +Z (CAD, 3D printing, GIS), turned to the engine's +Y
+    double unit = 1;         // metres per file unit (0.001 for millimetres)
+    // Auto: around the bounds' centre when that lies more than 100 of the bounds' sizes from the
+    // file's origin (a part in plant or map coordinates), else where the file has it.
+    Recenter recenter = Recenter::Auto;
+    float crease = 30;       // degrees; 180 smooths every shared corner, 0 shades every face flat
+    friend bool operator==(const ImportSettings&, const ImportSettings&) = default;
+};
+// The settings a JSON object asks for over `base`: up ("y" or "z"), unit (metres per unit, or "m",
+// "cm", "mm", "km", "in", "ft"), recenter (true, false or "auto"), crease (degrees, 0 to 180). A key
+// it does not take or a value out of range is refused, naming what it takes.
+Result<ImportSettings> import_settings(const Json& j, ImportSettings base = {});
+Json describe(const ImportSettings& s);
+
 struct Mesh {
     std::string path;
     std::uint64_t revision = 0;    // bumped each time put_mesh replaces it (an engine-made mesh that changes, a cloth's)
@@ -214,6 +235,14 @@ struct Mesh {
     std::vector<TerrainChunk> chunks;       // a terrain's squares (its submeshes are their full grids, which collide)
     std::string importer = "gltf";          // how the file was read: gltf, obj, stl, or blender (converted to glTF by Blender)
     std::string converted;                  // for blender: the project-relative glTF it became
+    // An OBJ's import: the settings it was read with; the point of the file (metres, Y up) the
+    // mesh's origin stands for, so a Transform there puts the part back where the file had it
+    // (zero unless recentred); what its bounds suggest (a Z-up file, millimetres); whether it came
+    // from the parsed copy in .imported/ rather than from the text.
+    ImportSettings import;
+    std::array<double, 3> origin{0, 0, 0};
+    std::vector<std::string> hints;
+    bool cached = false;
     [[nodiscard]] bool skinned() const { return !skin_vertices.empty(); }
     // A node's matrix in the file's space with the nodes at rest (identity for -1 or out of range).
     [[nodiscard]] Mat4 rest_global(int node) const;
@@ -424,8 +453,11 @@ Result<Image> decode_image(const std::string& bytes, const std::string& display_
 // wrapping at its edges; `map=normal` makes its normal map and `map=height` its heights.
 Result<Image> pattern_image(const std::string& spec);
 // Wavefront OBJ with its MTL libraries (read through `read`, project-relative paths): one node per
-// object, one submesh per object and material, normals smoothed where the file has none.
-Result<Mesh> parse_obj(const std::string& text, const std::string& display_path, const std::function<Result<std::string>(const std::string&)>& read);
+// object, one submesh per object and material; polygons fanned when convex and ear-clipped when
+// not; where the file gives no normals, faces smoothed together across edges sharper than
+// `settings.crease` no more (`s off` flat, `s N` smoothing groups); coordinates read as doubles and
+// baked with the settings' up axis, unit and recentring before they become floats.
+Result<Mesh> parse_obj(const std::string& text, const std::string& display_path, const std::function<Result<std::string>(const std::string&)>& read, const ImportSettings& settings = {});
 // STL, binary or ASCII: one node, one gray material, flat normals.
 Result<Mesh> parse_stl(const std::string& bytes, const std::string& display_path);
 // PLY, ASCII or binary: vertex positions with their normals, texture coordinates and colours when
@@ -576,8 +608,16 @@ class AssetStore {
     // Blender for the formats it converts: a path, or "" to look for it (docs/design/assets.md, Importing models).
     void set_blender(std::string path) { blender_config_ = std::move(path); }
     [[nodiscard]] std::string blender() const { return find_blender(blender_config_); }
-    // Convert a Blender-read file now (again with force) and report it; the mesh reloads from the result.
-    Result<Json> import(const std::string& path, bool force);
+    // Convert a Blender-read file now (again with force) and report it; the mesh reloads from the
+    // result. `settings` (an OBJ's up, unit, recenter, crease: import_settings) go over the file's
+    // current ones and hold for the rest of the session; an OBJ is parsed again with force.
+    Result<Json> import(const std::string& path, bool force, const Json& settings = Json::object());
+    // The project's [assets.import] table: project path -> settings (import_settings). A loaded mesh
+    // whose settings this changes is read again, and one that failed under either table may load;
+    // answers how many of each, so callers drop what they made of them (or of the failure).
+    std::size_t set_project_imports(const Json& table);
+    // The settings a model file is read with: assets.import's, else the project's, else the defaults.
+    [[nodiscard]] Result<ImportSettings> import_settings_for(const std::string& path) const;
     // Clips from another file onto a model (docs/design/animation.md, Clips from other files): every
     // channel goes to the model's node of the same name (or the same name without a namespace:
     // "mixamorig:Hips" to "Hips"), a channel with no such node is left out, and with
@@ -588,6 +628,11 @@ class AssetStore {
 
    private:
     Result<std::filesystem::path> converted_glb(const std::string& path, const std::filesystem::path& full, bool force, Conversion* report = nullptr);
+    // An OBJ parsed, or read from its parsed copy in .imported/ when the text, its material
+    // libraries and the settings are those it was parsed from (`force` parses regardless).
+    Result<Mesh> load_obj(const std::string& path, const std::filesystem::path& full, bool force);
+    std::map<std::string, ImportSettings> imports_;   // set by assets.import
+    Json project_imports_ = Json::object();          // [assets.import] in project.toml
     std::string blender_config_;
     std::map<std::string, std::filesystem::path> converted_;   // project path of a Blender-read file -> the glTF it became
     Result<std::filesystem::path> resolve(const std::string& path) const;

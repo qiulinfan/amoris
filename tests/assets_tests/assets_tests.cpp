@@ -11,6 +11,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <format>
 #include <fstream>
 #include <set>
 
@@ -733,6 +734,410 @@ TEST_CASE("OBJ files with MTL materials: objects as nodes, materials, uvs flippe
     REQUIRE_FALSE(bad.has_value());
     REQUIRE(bad.error().message.find(":3:") != std::string::npos);
     std::filesystem::remove_all(dir);
+    std::filesystem::remove_all(project() / ".imported" / "assets" / "obj-test");
+}
+
+namespace {
+
+// An OBJ read straight from text, with the settings given (no store, no cache).
+assets::Mesh obj_mesh(const std::string& text, const assets::ImportSettings& settings = {}) {
+    auto m = assets::parse_obj(text, "assets/test.obj", [](const std::string& p) -> Result<std::string> { return fail("no_such_asset", "{}", p); }, settings);
+    INFO((m ? std::string() : m.error().to_string()));
+    REQUIRE(m.has_value());
+    return std::move(*m);
+}
+
+// A capped cylinder of `n` sides, radius 1, from y 0 to 1, welded (each position written once),
+// without normals; `extra` goes before its faces (an `s` line).
+std::string obj_cylinder(int n, const std::string& extra = "") {
+    std::string s;
+    for (int ring = 0; ring < 2; ++ring) {
+        for (int i = 0; i < n; ++i) {
+            const double a = 2 * 3.141592653589793 * i / n;
+            s += std::format("v {:.9f} {} {:.9f}\n", std::cos(a), ring, std::sin(a));
+        }
+    }
+    s += extra;
+    for (int i = 0; i < n; ++i) {
+        const int j = (i + 1) % n;
+        s += std::format("f {} {} {} {}\n", i + 1, n + i + 1, n + j + 1, j + 1);   // outward
+    }
+    s += "f";
+    for (int i = n - 1; i >= 0; --i) s += std::format(" {}", n + i + 1);   // the top, counter-clockwise seen from above
+    s += "\nf";
+    for (int i = 0; i < n; ++i) s += std::format(" {}", i + 1);
+    s += "\n";
+    return s;
+}
+
+// Every triangle's area and whether it faces along `up` (its winding against the vertex normals).
+struct TriangleCheck {
+    double area = 0;
+    bool facing = true;
+};
+TriangleCheck triangles_of(const assets::Mesh& m, Vec3 up) {
+    TriangleCheck c;
+    for (std::size_t k = 0; k + 2 < m.indices.size(); k += 3) {
+        const Vec3 a = m.vertices[m.indices[k]].position, b = m.vertices[m.indices[k + 1]].position, d = m.vertices[m.indices[k + 2]].position;
+        const Vec3 n = cross(b - a, d - a);
+        c.area += 0.5 * length(n);
+        if (dot(n, up) <= 0) c.facing = false;
+    }
+    return c;
+}
+
+}  // namespace
+
+TEST_CASE("OBJ without normals: faces past the crease angle shaded apart, s off flat, s N smoothing groups", "[assets][obj][crease]") {
+    // A welded cube (CAD and STL converters write every position once): its edges are 90 degrees,
+    // so each corner is three vertices with the three faces' normals, not one rounded normal.
+    const std::string cube = "v -1 -1 -1\nv 1 -1 -1\nv 1 1 -1\nv -1 1 -1\nv -1 -1 1\nv 1 -1 1\nv 1 1 1\nv -1 1 1\n";
+    const std::string faces = "f 1 4 3 2\nf 5 6 7 8\nf 1 2 6 5\nf 2 3 7 6\nf 3 4 8 7\nf 4 1 5 8\n";
+    auto axis_aligned = [](const assets::Mesh& m) {
+        for (const auto& v : m.vertices) {
+            const float big = std::max({std::fabs(v.normal.x), std::fabs(v.normal.y), std::fabs(v.normal.z)});
+            if (big < 0.9999f) return false;
+            // And it points out of the face it belongs to: along the position's own coordinate.
+            const float along = std::fabs(v.normal.x) > 0.5f ? v.normal.x * v.position.x : std::fabs(v.normal.y) > 0.5f ? v.normal.y * v.position.y : v.normal.z * v.position.z;
+            if (along <= 0) return false;
+        }
+        return true;
+    };
+    const assets::Mesh sharp = obj_mesh(cube + faces);
+    REQUIRE(sharp.vertices.size() == 24);
+    REQUIRE(sharp.indices.size() == 36);
+    REQUIRE(axis_aligned(sharp));
+    // s off: flat whatever the angle (the stress kit's cube_soff).
+    const assets::Mesh flat = obj_mesh(cube + "s off\n" + faces);
+    REQUIRE(flat.vertices.size() == 24);
+    REQUIRE(axis_aligned(flat));
+    // A crease of 180 smooths every shared corner, as the reader did before: eight rounded corners.
+    assets::ImportSettings round;
+    round.crease = 180;
+    const assets::Mesh smooth = obj_mesh(cube + faces, round);
+    REQUIRE(smooth.vertices.size() == 8);
+    for (const auto& v : smooth.vertices) REQUIRE(std::fabs(v.normal.x) == Catch::Approx(1 / std::sqrt(3.0f)).margin(1e-5));
+    // A smoothing group is smooth across any angle, as 3ds Max and Maya mean it.
+    REQUIRE(obj_mesh(cube + "s 1\n" + faces).vertices.size() == 8);
+
+    // Two quads folded at a right angle along x = 0, y = 0: a floor facing up and a wall facing +x.
+    const std::string fold = "v 0 0 0\nv 0 0 1\nv 1 0 1\nv 1 0 0\nv 0 1 0\nv 0 1 1\n";
+    const std::string floor_face = "f 1 2 3 4\n", wall_face = "f 1 5 6 2\n";
+    REQUIRE(obj_mesh(fold + floor_face + wall_face).vertices.size() == 8);                       // 90 degrees: past the crease
+    REQUIRE(obj_mesh(fold + "s 1\n" + floor_face + wall_face).vertices.size() == 6);             // one group: smooth across
+    REQUIRE(obj_mesh(fold + "s 1\n" + floor_face + "s 2\n" + wall_face).vertices.size() == 8);   // two groups: apart
+    REQUIRE(obj_mesh(fold + "s 0\n" + floor_face + wall_face).vertices.size() == 8);
+    const assets::Mesh folded = obj_mesh(fold + "s 1\n" + floor_face + wall_face);
+    REQUIRE(folded.vertices[0].normal.x == Catch::Approx(std::sqrt(0.5f)).margin(1e-5));        // the shared edge leans halfway
+    REQUIRE(folded.vertices[0].normal.y == Catch::Approx(std::sqrt(0.5f)).margin(1e-5));
+    // A face without area on the edge (a corner written twice, a T-junction's sliver, as CAD
+    // tessellators leave them) has no direction to agree with: it joins neither side, and the edge
+    // stays sharp.
+    for (const std::string sliver : {"f 1 2 2\n", "v 0 0 0.5\nf 1 7 2\n"}) {
+        const assets::Mesh m = obj_mesh(fold + floor_face + wall_face + sliver);
+        INFO(sliver);
+        for (std::size_t i = 0; i < 4; ++i) REQUIRE(m.vertices[i].normal.y == Catch::Approx(1.0f));        // the floor's
+        for (std::size_t i = 4; i < 8; ++i) REQUIRE(m.vertices[i].normal.x == Catch::Approx(1.0f));        // the wall's
+    }
+
+    // A drilled hole or a round tower: sixteen sides 22.5 degrees apart are one smooth wall whose
+    // normals point straight out from the axis, and the flat caps keep their own.
+    const assets::Mesh tower = obj_mesh(obj_cylinder(16));
+    REQUIRE(tower.indices.size() / 3 == 16 * 2 + 2 * 14);
+    REQUIRE(tower.vertices.size() == 64);   // each position once on the wall, once on its cap
+    int wall = 0, cap = 0;
+    for (const auto& v : tower.vertices) {
+        if (std::fabs(v.normal.y) > 0.9999f) {
+            ++cap;
+            REQUIRE(v.normal.y * (v.position.y - 0.5f) > 0);   // the top faces up, the bottom down
+        } else {
+            ++wall;
+            REQUIRE(v.normal.y == Catch::Approx(0.0f).margin(1e-5));
+            REQUIRE(v.normal.x == Catch::Approx(v.position.x).margin(1e-4));   // radial: the unit circle's own direction
+            REQUIRE(v.normal.z == Catch::Approx(v.position.z).margin(1e-4));
+        }
+    }
+    REQUIRE(wall == 32);
+    REQUIRE(cap == 32);
+    // A crease of 10 degrees makes the same sides facets.
+    assets::ImportSettings fine;
+    fine.crease = 10;
+    REQUIRE(obj_mesh(obj_cylinder(16), fine).vertices.size() == 96);
+    // Faces with the file's own normals keep them.
+    const assets::Mesh given = obj_mesh(cube + "vn 0 0 1\n" + "f 1//1 4//1 3//1 2//1\n");
+    for (const auto& v : given.vertices) REQUIRE(v.normal.z == Catch::Approx(1.0f));
+}
+
+TEST_CASE("OBJ polygons: convex ones fanned as before, concave ones ear-clipped in their plane", "[assets][obj][ngon]") {
+    // An L written from its tip, (1.2, 0): fanned from there, two of its triangles would face down
+    // and cover the notch. In the floor plane, counter-clockwise from above (z = -y of the drawing).
+    std::string l_shape = "v 0 0 0\nv 1.2 0 0\nv 1.2 0 -0.5\nv 0.5 0 -0.5\nv 0.5 0 -1.2\nv 0 0 -1.2\n";
+    const assets::Mesh l = obj_mesh(l_shape + "f 2 3 4 5 6 1\n");
+    REQUIRE(l.indices.size() == 12);
+    TriangleCheck lc = triangles_of(l, Vec3{0, 1, 0});
+    REQUIRE(lc.facing);
+    REQUIRE(lc.area == Catch::Approx(1.2 * 0.5 + 0.5 * 0.7).epsilon(1e-5));
+    // The same from each of its corners, and wound the other way (facing down).
+    for (int start = 0; start < 6; ++start) {
+        std::string f = "f", back = "f";
+        for (int k = 0; k < 6; ++k) f += std::format(" {}", (start + k) % 6 + 1);
+        for (int k = 0; k < 6; ++k) back += std::format(" {}", (start + 6 - k) % 6 + 1);
+        const TriangleCheck up = triangles_of(obj_mesh(l_shape + f + "\n"), Vec3{0, 1, 0});
+        const TriangleCheck down = triangles_of(obj_mesh(l_shape + back + "\n"), Vec3{0, -1, 0});
+        INFO(f);
+        REQUIRE(up.facing);
+        REQUIRE(down.facing);
+        REQUIRE(up.area == Catch::Approx(0.95).epsilon(1e-5));
+        REQUIRE(down.area == Catch::Approx(0.95).epsilon(1e-5));
+    }
+    // A corner written twice (an edge an exporter collapsed) turns neither way: it is left out, so it
+    // neither passes the L for convex nor hides the ears beside it.
+    for (const char* f : {"f 2 3 4 4 5 6 1\n", "f 2 2 3 4 5 6 1 1\n", "f 2 3 4 5 5 5 6 1\n"}) {
+        const TriangleCheck c = triangles_of(obj_mesh(l_shape + f), Vec3{0, 1, 0});
+        INFO(f);
+        REQUIRE(c.facing);
+        REQUIRE(c.area == Catch::Approx(0.95).epsilon(1e-5));
+    }
+    // A concave quad written A B C C D A, clockwise from above: its ears are beside the repeats.
+    const TriangleCheck quad = triangles_of(obj_mesh("v 0 0 1\nv 1.5 0 -1\nv 1 0 0.5\nv 0.5 0 0.5\nf 1 2 3 3 4 1\n"), Vec3{0, -1, 0});
+    REQUIRE(quad.facing);
+    REQUIRE(quad.area == Catch::Approx(0.5).epsilon(1e-5));
+    // A five-pointed star standing in a tilted plane, and a comb, each from a corner a fan gets wrong.
+    std::string star;
+    const Vec3 ux = normalize(Vec3{1, 0, 1}), uy = Vec3{0, 1, 0};
+    double star_area = 0;
+    std::vector<std::array<double, 2>> pts;
+    for (int k = 0; k < 10; ++k) {
+        const double a = 3.141592653589793 / 2 + k * 3.141592653589793 / 5, r = k % 2 == 0 ? 0.75 : 0.3;
+        pts.push_back({r * std::cos(a), r * std::sin(a)});
+        const Vec3 p = ux * static_cast<float>(pts.back()[0]) + uy * static_cast<float>(pts.back()[1]);
+        star += std::format("v {:.9f} {:.9f} {:.9f}\n", p.x, p.y, p.z);
+    }
+    for (int k = 0; k < 10; ++k) star_area += 0.5 * (pts[k][0] * pts[(k + 1) % 10][1] - pts[(k + 1) % 10][0] * pts[k][1]);
+    const assets::Mesh s = obj_mesh(star + "f 2 3 4 5 6 7 8 9 10 1\n");
+    REQUIRE(s.indices.size() == 24);
+    const TriangleCheck sc = triangles_of(s, cross(ux, uy));
+    REQUIRE(sc.facing);
+    REQUIRE(sc.area == Catch::Approx(star_area).epsilon(1e-4));
+    const std::string comb = "v 0 0 0\nv 1.6 0 0\nv 1.6 0 -1\nv 1.3 0 -1\nv 1.3 0 -0.3\nv 1 0 -0.3\nv 1 0 -1\nv 0.7 0 -1\nv 0.7 0 -0.3\nv 0.4 0 -0.3\nv 0.4 0 -1\nv 0 0 -1\n";
+    const TriangleCheck cc = triangles_of(obj_mesh(comb + "f 2 3 4 5 6 7 8 9 10 11 12 1\n"), Vec3{0, 1, 0});
+    REQUIRE(cc.facing);
+    REQUIRE(cc.area == Catch::Approx(1.6 * 1.0 - 2 * 0.3 * 0.7).epsilon(1e-5));
+    // A convex polygon is the fan it always was: from its first corner, in order.
+    const assets::Mesh pentagon = obj_mesh("v 0 0 0\nv 1 0 0\nv 1.3 0 -1\nv 0.5 0 -1.6\nv -0.3 0 -1\nf 1 2 3 4 5\n");
+    REQUIRE(pentagon.indices == std::vector<std::uint32_t>{0, 1, 2, 0, 2, 3, 0, 3, 4});
+    // The stress kit's polygon export: every polygon facing its normal, 320 triangles as Blender reads it.
+    const std::filesystem::path dir = project() / "assets" / "ngon-test";
+    std::filesystem::create_directories(dir);
+    std::ofstream(dir / "flat.obj", std::ios::binary) << "mtllib none.mtl\no thing\n" << comb << "vn 0 1 0\nf 2//1 3//1 4//1 5//1 6//1 7//1 8//1 9//1 10//1 11//1 12//1 1//1\n";
+    assets::AssetStore store(project());
+    auto m = store.mesh("assets/ngon-test/flat.obj");
+    REQUIRE(m.has_value());
+    REQUIRE(triangles_of(**m, Vec3{0, 1, 0}).facing);
+    std::filesystem::remove_all(dir);
+    std::filesystem::remove_all(project() / ".imported" / "assets" / "ngon-test");
+}
+
+TEST_CASE("OBJ coordinates are doubles: a part far out is recentred, and its origin says where it was", "[assets][obj][precision]") {
+    // A 6 mm square 4.5 km from the origin (plant or map coordinates, in metres). As floats there
+    // its corners would be 0.49 mm steps apart; read as doubles and moved to its centre, they keep
+    // their micrometres.
+    const std::string far = "v 4500.000 0 4500.000\nv 4500.006 0 4500.000\nv 4500.006 0 4499.994\nv 4500.000 0 4499.994\nf 1 2 3 4\n";
+    const assets::Mesh m = obj_mesh(far);
+    REQUIRE(m.origin[0] == Catch::Approx(4500.003).margin(1e-9));
+    REQUIRE(m.origin[1] == 0.0);
+    REQUIRE(m.origin[2] == Catch::Approx(4499.997).margin(1e-9));
+    REQUIRE(m.vertices[0].position.x == Catch::Approx(-0.003f).margin(1e-7));
+    REQUIRE(m.vertices[1].position.x == Catch::Approx(0.003f).margin(1e-7));
+    REQUIRE(m.vertices[2].position.z == Catch::Approx(-0.003f).margin(1e-7));
+    const Json d = m.describe();
+    REQUIRE(d["import"]["recentered"] == true);
+    REQUIRE(d["import"]["origin"][0].get<double>() == Catch::Approx(4500.003).margin(1e-9));
+    REQUIRE(d["size"][0].get<double>() == Catch::Approx(0.006).margin(1e-7));
+    // Kept where the file has it, the corners land on float steps.
+    assets::ImportSettings keep;
+    keep.recenter = assets::ImportSettings::Recenter::Off;
+    const assets::Mesh kept = obj_mesh(far, keep);
+    REQUIRE(kept.origin == std::array<double, 3>{0, 0, 0});
+    REQUIRE(kept.aabb_min.x == Catch::Approx(4500.0f));
+    REQUIRE(std::fabs((kept.vertices[1].position.x - kept.vertices[0].position.x) - 0.006f) > 1e-5f);
+    // A model near its own origin stays where it is (a crate at x 10 keeps its pivot)...
+    const assets::Mesh near = obj_mesh("v 10 0 0\nv 11 0 0\nv 11 1 0\nf 1 2 3\n");
+    REQUIRE(near.origin == std::array<double, 3>{0, 0, 0});
+    REQUIRE(near.aabb_min.x == Catch::Approx(10.0f));
+    // ...unless asked.
+    assets::ImportSettings centre;
+    centre.recenter = assets::ImportSettings::Recenter::On;
+    const assets::Mesh moved = obj_mesh("v 10 0 0\nv 11 0 0\nv 11 1 0\nf 1 2 3\n", centre);
+    REQUIRE(moved.origin[0] == Catch::Approx(10.5));
+    REQUIRE(moved.aabb_min.x == Catch::Approx(-0.5f));
+}
+
+TEST_CASE("OBJ import settings: up axis and unit baked in, size in metres, Z up suggested, refused when wrong", "[assets][obj][units]") {
+    // A Z-up millimetre box (CAD): 100 x 200 x 50 mm standing on z = 0.
+    const std::string box = "v -50 -100 0\nv 50 -100 0\nv 50 100 0\nv -50 100 0\nv -50 -100 50\nv 50 -100 50\nv 50 100 50\nv -50 100 50\n"
+                            "f 1 4 3 2\nf 5 6 7 8\nf 1 2 6 5\nf 2 3 7 6\nf 3 4 8 7\nf 4 1 5 8\n";
+    const assets::Mesh as_is = obj_mesh(box);
+    const Json d = as_is.describe();
+    REQUIRE(d["size"][2].get<double>() == Catch::Approx(50.0));
+    REQUIRE(d["hints"].size() == 2);
+    REQUIRE(d["hints"][0].get<std::string>().find("up: \"z\"") != std::string::npos);
+    REQUIRE(d["hints"][1].get<std::string>().find("unit: \"mm\"") != std::string::npos);
+    REQUIRE(d["import"]["up"] == "y");
+    auto z_mm = assets::import_settings(Json{{"up", "z"}, {"unit", "mm"}});
+    REQUIRE(z_mm.has_value());
+    REQUIRE(z_mm->z_up);
+    REQUIRE(z_mm->unit == Catch::Approx(0.001));
+    const assets::Mesh upright = obj_mesh(box, *z_mm);
+    // Turned so its z is the engine's y, in metres: 0.1 wide, 0.05 tall, 0.2 deep, on the ground.
+    REQUIRE(upright.aabb_min.y == Catch::Approx(0.0f).margin(1e-7));
+    REQUIRE(upright.aabb_max.y == Catch::Approx(0.05f));
+    REQUIRE(upright.aabb_max.x - upright.aabb_min.x == Catch::Approx(0.1f));
+    REQUIRE(upright.aabb_max.z - upright.aabb_min.z == Catch::Approx(0.2f));
+    REQUIRE_FALSE(upright.describe().contains("hints"));
+    REQUIRE(upright.describe()["import"]["unit"].get<double>() == Catch::Approx(0.001));
+    // The top is up, and every face still winds toward its normal (the turn keeps the winding).
+    bool top = false;
+    for (const auto& v : upright.vertices) top = top || (v.position.y > 0.049f && v.normal.y > 0.9999f);
+    REQUIRE(top);
+    for (std::size_t k = 0; k < upright.indices.size(); k += 3) {
+        const auto& a = upright.vertices[upright.indices[k]];
+        const Vec3 n = cross(upright.vertices[upright.indices[k + 1]].position - a.position, upright.vertices[upright.indices[k + 2]].position - a.position);
+        REQUIRE(dot(n, a.normal) > 0);
+    }
+    // Settings refused name what they take.
+    auto refused = [](const Json& j, const char* says) {
+        auto r = assets::import_settings(j);
+        REQUIRE_FALSE(r.has_value());
+        INFO(r.error().message);
+        REQUIRE(r.error().message.find(says) != std::string::npos);
+    };
+    refused(Json{{"units", 1}}, "up, unit, recenter and crease");
+    refused(Json{{"up", "x"}}, "\"y\" or \"z\"");
+    refused(Json{{"unit", -1}}, "above 0");
+    refused(Json{{"unit", "furlong"}}, "\"mm\"");
+    refused(Json{{"recenter", "yes"}}, "\"auto\"");
+    refused(Json{{"crease", 200}}, "0 to 180");
+    REQUIRE(assets::import_settings(Json{{"unit", 0.0254}, {"recenter", "auto"}, {"crease", 45}})->crease == 45);
+    // Kept per file by the store: assets.import's settings over the project's table over the defaults.
+    const std::filesystem::path dir = project() / "assets" / "units-test";
+    std::filesystem::create_directories(dir);
+    std::ofstream(dir / "box.obj", std::ios::binary) << box;
+    std::ofstream(dir / "tri.stl", std::ios::binary) << "solid t\n facet normal 0 0 1\n  outer loop\n   vertex 0 0 0\n   vertex 1 0 0\n   vertex 0 1 0\n  endloop\n endfacet\nendsolid t\n";
+    assets::AssetStore store(project());
+    REQUIRE((*store.mesh("assets/units-test/box.obj"))->aabb_max.y == Catch::Approx(100.0f));
+    store.set_project_imports(Json{{"assets/units-test/box.obj", Json{{"up", "z"}, {"unit", 0.001}}}});
+    REQUIRE((*store.mesh("assets/units-test/box.obj"))->aabb_max.y == Catch::Approx(0.05f));   // read again under the table's settings
+    auto answer = store.import("assets/units-test/box.obj", false, Json{{"unit", "cm"}});
+    INFO((answer ? answer->dump() : answer.error().to_string()));
+    REQUIRE(answer.has_value());
+    REQUIRE((*answer)["mesh"]["import"]["up"] == "z");   // the table's up, kept under the unit given
+    REQUIRE((*answer)["mesh"]["size"][1].get<double>() == Catch::Approx(0.5));
+    REQUIRE((*answer)["project_toml"].get<std::string>().find("\"assets/units-test/box.obj\" = { up = \"z\", unit = 0.01") != std::string::npos);
+    REQUIRE((*store.mesh("assets/units-test/box.obj"))->aabb_max.y == Catch::Approx(0.5f));
+    REQUIRE_FALSE(store.import("assets/units-test/tri.stl", false, Json{{"up", "z"}}).has_value());
+    REQUIRE_FALSE(store.import("assets/units-test/box.obj", false, Json{{"up", "sideways"}}).has_value());
+    // A wrong entry in the table fails the file's load with where it is.
+    assets::AssetStore other(project());
+    other.set_project_imports(Json{{"assets/units-test/box.obj", Json{{"unit", "parsec"}}}});
+    auto wrong = other.mesh("assets/units-test/box.obj");
+    REQUIRE_FALSE(wrong.has_value());
+    REQUIRE(wrong.error().message.find("project.toml [assets.import] \"assets/units-test/box.obj\"") != std::string::npos);
+    other.set_project_imports(Json::object());
+    REQUIRE(other.mesh("assets/units-test/box.obj").has_value());
+    std::filesystem::remove_all(dir);
+    std::filesystem::remove_all(project() / ".imported" / "assets" / "units-test");
+}
+
+TEST_CASE("a parsed OBJ is kept in .imported/ and read back while its text, materials and settings stay the same", "[assets][obj][cache]") {
+    const std::filesystem::path dir = project() / "assets" / "objcache-test";
+    const std::filesystem::path cache = project() / ".imported" / "assets" / "objcache-test" / "part.obj.mesh";
+    std::filesystem::remove_all(dir);
+    std::filesystem::remove_all(cache.parent_path());
+    std::filesystem::create_directories(dir);
+    std::ofstream(dir / "part.mtl", std::ios::binary) << "newmtl Steel\nKd 0.5 0.5 0.55\nPm 1\nmap_Kd ../checker.png\n";
+    std::ofstream(dir / "part.obj", std::ios::binary) << "mtllib part.mtl\no Part\nusemtl Steel\n" << obj_cylinder(16) << "o Lid\nv 0 2 0\nv 1 2 0\nv 0 2 1\nvt 0 0\nvt 1 0\nvt 0 1\nf -3/1 -1/3 -2/2\n";
+    auto parsed = [&](assets::AssetStore& s) {
+        auto m = s.mesh("assets/objcache-test/part.obj");
+        INFO((m ? std::string() : m.error().to_string()));
+        REQUIRE(m.has_value());
+        return *m;
+    };
+    assets::AssetStore first(project());
+    const assets::Mesh& a = *parsed(first);
+    REQUIRE_FALSE(a.cached);
+    REQUIRE(std::filesystem::is_regular_file(cache));
+    assets::AssetStore second(project());
+    const assets::Mesh& b = *parsed(second);
+    REQUIRE(b.cached);
+    REQUIRE(b.describe()["import"]["cached"] == true);
+    // The same mesh to the bit: vertices (with their tangents), triangles, parts and materials.
+    REQUIRE(b.vertices.size() == a.vertices.size());
+    REQUIRE(std::memcmp(b.vertices.data(), a.vertices.data(), a.vertices.size() * sizeof(assets::MeshVertex)) == 0);
+    REQUIRE(b.indices == a.indices);
+    REQUIRE(b.submeshes.size() == a.submeshes.size());
+    for (std::size_t i = 0; i < a.submeshes.size(); ++i) {
+        REQUIRE(b.submeshes[i].first_index == a.submeshes[i].first_index);
+        REQUIRE(b.submeshes[i].index_count == a.submeshes[i].index_count);
+        REQUIRE(b.submeshes[i].material == a.submeshes[i].material);
+        REQUIRE(b.submeshes[i].origin == a.submeshes[i].origin);
+    }
+    REQUIRE(b.nodes.size() == 2);
+    REQUIRE(b.nodes[1].name == "Lid");
+    REQUIRE(b.materials[0].name == "Steel");
+    REQUIRE(b.materials[0].metallic == 1.0f);
+    REQUIRE(b.materials[0].texture == "assets/checker.png");
+    REQUIRE(b.aabb_max.y == a.aabb_max.y);
+    Json da = a.describe(), db = b.describe();
+    da["import"].erase("cached");
+    db["import"].erase("cached");
+    REQUIRE(da == db);
+    // A changed material library, text or setting is parsed again.
+    std::ofstream(dir / "part.mtl", std::ios::binary) << "newmtl Steel\nKd 0.9 0.1 0.1\n";
+    assets::AssetStore third(project());
+    REQUIRE_FALSE(parsed(third)->cached);
+    REQUIRE(parsed(third)->materials[0].base_color.x == Catch::Approx(0.9f));
+    assets::AssetStore fourth(project());
+    REQUIRE(parsed(fourth)->cached);
+    fourth.set_project_imports(Json{{"assets/objcache-test/part.obj", Json{{"crease", 5}}}});
+    REQUIRE_FALSE(parsed(fourth)->cached);
+    REQUIRE(parsed(fourth)->vertices.size() > a.vertices.size());
+    std::ofstream(dir / "part.obj", std::ios::app | std::ios::binary) << "f -1 -2 -3\n";
+    assets::AssetStore fifth(project());
+    REQUIRE_FALSE(parsed(fifth)->cached);
+    REQUIRE(parsed(fifth)->indices.size() == a.indices.size() + 3);
+    // A cache cut short or written by something else is parsed past, and written again.
+    std::filesystem::resize_file(cache, std::filesystem::file_size(cache) / 2);
+    assets::AssetStore sixth(project());
+    REQUIRE_FALSE(parsed(sixth)->cached);
+    assets::AssetStore seventh(project());
+    REQUIRE(parsed(seventh)->cached);
+    // assets.import with force parses again.
+    auto forced = seventh.import("assets/objcache-test/part.obj", true);
+    REQUIRE(forced.has_value());
+    REQUIRE((*forced)["cached"] == false);
+    REQUIRE((*forced)["cache"] == ".imported/assets/objcache-test/part.obj.mesh");
+    // A material library that is missing is said to be each time, cached or not.
+    auto last = [] {
+        const auto r = log::global().recent(1);
+        return r.empty() ? std::uint64_t{0} : r.back().seq;
+    };
+    auto warned_since = [](std::uint64_t seq) {
+        for (const log::Record& r : log::global().recent(64, log::Level::Warn))
+            if (r.seq > seq && r.message.find("material library assets/objcache-test/part.mtl") != std::string::npos) return true;
+        return false;
+    };
+    std::filesystem::remove(dir / "part.mtl");
+    std::uint64_t mark = last();
+    assets::AssetStore eighth(project());
+    REQUIRE_FALSE(parsed(eighth)->cached);
+    REQUIRE(warned_since(mark));
+    mark = last();
+    assets::AssetStore ninth(project());
+    REQUIRE(parsed(ninth)->cached);
+    REQUIRE(warned_since(mark));
+    std::filesystem::remove_all(dir);
+    std::filesystem::remove_all(cache.parent_path());
 }
 
 TEST_CASE("STL files, binary and ASCII, become one flat-shaded gray mesh", "[assets][stl]") {
@@ -804,6 +1209,7 @@ TEST_CASE("vertex colors come in from glTF (COLOR_0, floats or normalized bytes)
     REQUIRE(p.has_value());
     REQUIRE_FALSE((*p)->vertex_colors);
     std::filesystem::remove_all(dir);
+    std::filesystem::remove_all(project() / ".imported" / "assets" / "vcolor-test");
 }
 
 TEST_CASE("the built-in humanoid: a skinned model with its clips, its colours from the query", "[assets][humanoid]") {

@@ -6,8 +6,19 @@
 namespace pocket::fs {
 
 Result<std::string> read_text(const std::filesystem::path& path) {
-    std::ifstream in(path, std::ios::binary);
+    std::ifstream in(path, std::ios::binary | std::ios::ate);
     if (!in) return fail("file_not_found", "cannot open {}", path.string());
+    // One read of the size the file has, not a string stream grown and copied (a model's text can
+    // be hundreds of megabytes); a file that tells no size (a pipe) is streamed.
+    const auto size = in.tellg();
+    if (size > 0) {
+        std::string out(static_cast<std::size_t>(size), '\0');
+        in.seekg(0);
+        if (!in.read(out.data(), size)) return fail("io_error", "short read on {}", path.string());
+        return out;
+    }
+    in.clear();
+    in.seekg(0);
     std::ostringstream ss;
     ss << in.rdbuf();
     return ss.str();

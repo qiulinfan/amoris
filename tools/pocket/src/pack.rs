@@ -1,6 +1,7 @@
-//! `pocket pack <project>`: a folder (or zip) that runs the project on another Mac without the
-//! repository: the runtime executable, the bundled scripts, the project config, the project's
-//! scene and assets, the UI font, and a launcher script. Scripts stay out; the bundle is what runs.
+//! `pocket pack <project>`: a folder (or zip) that runs the project on another machine of the same
+//! system without the repository: the runtime executable, the bundled scripts, the project config,
+//! the project's scene and assets, the UI font, and a launcher script. Scripts stay out; the bundle
+//! is what runs.
 //!
 //! `pocket pack <project> --web`: the same project as a static web folder (docs/web.md): the wasm
 //! runtime, the project packaged into a virtual file system by Emscripten's file packager, and an
@@ -15,6 +16,9 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+/// Copies a directory without its dot-entries (`.pocket`'s session state, `.git`), but for
+/// `.imported/`: the store's Blender conversions and parsed OBJ meshes, which a packed game reads
+/// instead of a Blender it does not have (docs/design/assets.md, Formats).
 fn copy_tree(from: &Path, to: &Path, skip: &[&str]) -> Result<u64> {
     let mut bytes = 0;
     std::fs::create_dir_all(to)?;
@@ -22,7 +26,7 @@ fn copy_tree(from: &Path, to: &Path, skip: &[&str]) -> Result<u64> {
     entries.sort_by_key(|e| e.file_name());
     for entry in entries {
         let name = entry.file_name().to_string_lossy().into_owned();
-        if name.starts_with('.') || skip.contains(&name.as_str()) {
+        if (name.starts_with('.') && name != ".imported") || skip.contains(&name.as_str()) {
             continue;
         }
         let src = entry.path();
@@ -722,6 +726,28 @@ mod tests {
         // Offline off: no worker.
         let (written, head) = write_app_files(&dir, &dir, "game", &WebSettings { offline: false, ..web }, &files, "page").unwrap();
         assert!(!written.contains(&"sw.js".to_string()) && !head.contains("serviceWorker"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn copy_tree_keeps_imported_and_leaves_other_dot_entries_out() {
+        let dir = std::env::temp_dir().join(format!("pocket-copy-tree-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let from = dir.join("project");
+        for sub in [".imported/assets", ".pocket", "assets", "scripts"] {
+            std::fs::create_dir_all(from.join(sub)).unwrap();
+        }
+        std::fs::write(from.join(".imported/assets/level.blend.glb"), b"glb").unwrap();
+        std::fs::write(from.join(".pocket/session.json"), b"{}").unwrap();
+        std::fs::write(from.join(".hidden"), b"x").unwrap();
+        std::fs::write(from.join("assets/level.blend"), b"blend").unwrap();
+        std::fs::write(from.join("scripts/main.ts"), b"").unwrap();
+        let to = dir.join("out");
+        let bytes = copy_tree(&from, &to, &["scripts"]).unwrap();
+        assert_eq!(bytes, 8);
+        assert!(to.join(".imported/assets/level.blend.glb").is_file());
+        assert!(to.join("assets/level.blend").is_file());
+        assert!(!to.join(".pocket").exists() && !to.join(".hidden").exists() && !to.join("scripts").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

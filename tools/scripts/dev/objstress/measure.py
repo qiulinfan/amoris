@@ -4,7 +4,9 @@ in cases.json). Each case runs in a fresh release runtime at 1280x720, headless 
 
 1. a camera is spawned (priority 100, look_at) and two frames drawn;
 2. `world.spawn {Model: Transform, MeshRenderer {mesh}}` and one `step {render: "each"}` are timed:
-   that is the load time (reading, parsing, tangents, upload and the first frame);
+   that is the load time (reading, parsing, tangents, upload and the first frame); a case with
+   `import` settings (up, unit, recenter, crease) has `assets.import` read the file with them first,
+   inside the timed part;
 3. thirty more frames, then render.stats, a capture and assets.describe;
 4. the model turned half a degree a frame for ten frames, so the shadow cascades are drawn again,
    then render.stats and perf once more; then each variant (world.set calls, five frames, a capture).
@@ -20,6 +22,8 @@ are noisy.
     python3 tools/scripts/dev/objstress/measure.py all                      every case whose file exists
     python3 tools/scripts/dev/objstress/measure.py freeze assets/scan_5m.obj   whether the runtime answers while it loads
     python3 tools/scripts/dev/objstress/measure.py split assets/x.obj ...    assets.import alone, then spawn and the first frame
+    python3 tools/scripts/dev/objstress/measure.py load assets/x.obj [runs] [--cached]   split's numbers, the median of runs
+                                                                            (3), the parsed-mesh cache removed first unless --cached
     python3 tools/scripts/dev/objstress/measure.py profile assets/x.obj 8   macOS `sample` of the main thread during a load
 
 References for the same files: build/objstress/bin/fastobj_bench <file.obj> (a plain C reader, the
@@ -137,6 +141,8 @@ def measure(name, spec):
         tf = {"position": {"x": 0, "y": 0, "z": 0}}
         tf.update(spec.get("transform", {}))
         t0 = time.time()
+        if "import" in spec:
+            r.rpc("assets.import", dict({"path": spec["mesh"]}, **spec["import"]))
         r.rpc("world.spawn", {"name": "Model", "components": {"Transform": tf, "MeshRenderer": dict({"mesh": spec["mesh"]}, **spec.get("mr_extra", {}))}})
         t1 = time.time()
         r.rpc("step", {"ticks": 1, "render": "each"})
@@ -212,6 +218,7 @@ def freeze(mesh):
 
 def split(meshes):
     """assets.import alone (reading, parsing, tangents), then the spawn, upload and first frame."""
+    out = []
     for mesh in meshes:
         r = start(4792)
         try:
@@ -223,9 +230,29 @@ def split(meshes):
             t1 = time.time()
             r.rpc("world.spawn", {"name": "Model", "components": {"Transform": {}, "MeshRenderer": {"mesh": mesh}}})
             r.rpc("step", {"ticks": 1, "render": "each"})
-            print(mesh, {"import_s": round(t1 - t0, 3), "spawn_upload_first_frame_s": round(time.time() - t1, 3)}, flush=True)
+            t2 = time.time()
+            res = {"import_s": round(t1 - t0, 3), "spawn_upload_first_frame_s": round(t2 - t1, 3), "load_s": round(t2 - t0, 3)}
+            print(mesh, res, flush=True)
+            out.append(res)
         finally:
             r.close()
+    return out
+
+
+def load(mesh, runs, cached):
+    """split's numbers for one file, each the median of `runs` fresh runtimes. The parsed mesh the
+    store keeps in .imported/ is removed before each run, so the parse itself is timed, unless
+    `cached` (then the first run parses and the rest read the cache)."""
+    cache = os.path.join(PROJECT, ".imported", mesh + ".mesh")
+    results = []
+    for _ in range(runs):
+        if not cached and os.path.exists(cache):
+            os.remove(cache)
+        results += split([mesh])
+    if cached:
+        results = results[1:] or results
+    med = {k: sorted(r[k] for r in results)[len(results) // 2] for k in results[0]}
+    print(json.dumps({"mesh": mesh, "runs": len(results), "cached": cached, "median": med}), flush=True)
 
 
 def profile(mesh, seconds):
@@ -260,6 +287,9 @@ def main():
         freeze(sys.argv[2])
     elif what == "split":
         split(sys.argv[2:])
+    elif what == "load":
+        rest = [a for a in sys.argv[3:] if not a.startswith("--")]
+        load(sys.argv[2], int(rest[0]) if rest else 3, "--cached" in sys.argv)
     elif what == "profile":
         profile(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else "8")
     elif what == "all":

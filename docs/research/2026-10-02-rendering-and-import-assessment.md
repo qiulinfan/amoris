@@ -174,6 +174,26 @@ alone; the C reader is `tools/scripts/dev/objstress/fastobj_bench.c`, a plain si
 | ngons: quads, concave n-gons, negative indices | 14 KB | 320 | | | | | | wrong (4 of 8 polygons) |
 | cube_soff: welded cube with `s off` | | 12 | | | | | | wrong (smoothed) |
 
+Measured again after items 1 to 5 and 8 below were fixed (2026-10-02, on Windows 11, a Ryzen 9 270
+with 16 threads and an RTX 5060, release, with other agents' builds and runtimes on the machine, so
+noisy; not the M5 above). Reading to a mesh is the store's load (the text read, parsed, tangents
+made) timed in one process against a copy of the old reader, alternating, the median of three; spawn
+to first frame is `measure.py`'s load, once each:
+
+| File | Read to a mesh, before | After | From `.imported/` | Spawn to first frame, before / after | Peak memory (working set), before / after | Picture now |
+|---|---|---|---|---|---|---|
+| scan_1m | 4.34 s | 0.42 s | 0.16 s | 4.80 / 0.60 s | 513 / 443 MB | the same pixels |
+| scan_5m | 23.9 s | 2.17 s | 0.81 s | 34.5 / 2.21 s | 1614 / 1163 MB | the same pixels |
+| machined_2m | 5.12 s | 0.69 s | 0.21 s | 5.66 / 0.82 and 1.13 s (with `up: "z"`, `unit: "mm"`) | 553 / 503 and 535 MB | right: upright, in metres, sharp |
+| machined_far | | | | | | right: the same pixels as machined_near |
+| assembly_o | 9.35 s | 0.82 s | 0.32 s | | | |
+| ngons | | | | | | right (8 of 8 polygons) |
+| cube_soff | | | | | | right (flat) |
+
+`tests/evidence/assets/obj-import-fixed.png` shows the fixed cases beside the engine before. On this
+machine the old reader was slower than on the M5 (the standard library's string streams and
+`std::map`), so the factors are larger than the M5 would show.
+
 `tests/evidence/assets/obj-import-findings.png` shows the wrong cases beside Blender's import. The
 problems, most severe first, all in `engine/assets/src/import.cpp` (`parse_obj`) unless named:
 
@@ -181,10 +201,14 @@ problems, most severe first, all in `engine/assets/src/import.cpp` (`parse_obj`)
    Welded CAD parts render as blobs: square towers round, drilled holes read as raised studs, sharp
    edges smeared. Fix: without `vn`, crease-angle normals (split a vertex between fans of faces more
    than about 30 degrees apart, Blender's auto-smooth default), `s off` / `s 0` flat, `s N` as
-   smoothing groups; the angle an import option reported by `assets.describe`.
+   smoothing groups; the angle an import option reported by `assets.describe`. **Done**
+   (2026-10-02): faces joined into fans across shared edges up to `crease` (30 degrees, an import
+   setting), `s off` flat, `s N` smooth within its group and apart from others (`assets_tests`
+   `[obj][crease]`; `docs/design/assets.md`, Importing models).
 2. **Concave n-gons are fanned from their first corner** (around line 194), so they come out right
    or wrong by where the exporter started them. Fix: fan only convex polygons; otherwise ear-clip in
-   the plane of the Newell normal.
+   the plane of the Newell normal. **Done** (2026-10-02): convex polygons keep their fan, others are
+   ear-clipped (`[obj][ngon]`); `ngons.obj` comes out right.
 3. **Loading is slow and freezes the runtime.** A `state` call sent half a second into a 5M load is
    answered after 4.7 s; 12M freezes 14 to 27 s. The profile: 870 of 1168 main-thread samples in the
    `std::map` corner dedupe (lines 207 to 227), 131 in the per-line `istringstream` split (around
@@ -192,17 +216,30 @@ problems, most severe first, all in `engine/assets/src/import.cpp` (`parse_obj`)
    one pass over the bytes (no per-line strings, `std::from_chars` or fast_float, a hash or flat
    array for the dedupe, the position index directly when every corner is `v//v`), then the import
    on a worker thread with the entity drawing nothing (or its box) until the mesh is ready and
-   `state` saying it is loading.
+   `state` saying it is loading. **Done but the worker thread** (2026-10-02): one pass over the text
+   (a line found with `memchr`, words as views, numbers by an exact fast path for exporters'
+   decimals and `std::from_chars` for the rest, corners deduped through a short list per position,
+   the file read at its size), about ten times faster (the table above). The thread is left: the
+   store answers synchronously and its callers (the world's bounds, mesh colliders, the renderer's
+   upload) take the mesh on return; loading behind them would let the wall clock decide on which
+   tick a collider or a bounds appears, against the engine's determinism, unless the tick waited for
+   it, which is the freeze again. With the cache below, a 5M-triangle file holds the runtime for
+   about a second after its first read.
 4. **Coordinates are parsed and kept as float32**, so a part far from the origin loses precision at
    load and no Transform recovers it (6 mm holes become stair-steps 4.5 km out; typical of plant,
    BIM and GIS coordinates). Fix: parse as double, subtract a double origin (the bounds' centre or a
    given pivot) before converting, and report that origin (`assets.describe`) so the part can be put
-   back.
+   back. **Done** (2026-10-02): `recenter` (by default when the bounds' centre lies more than 100 of
+   their sizes out) and `import.origin` (`[obj][precision]`); `machined_far.obj` draws the same
+   pixels as `machined_near.obj`.
 5. **No unit or up-axis options.** Z-up millimetre files arrive on their side and a thousand times
    too big, while the Blender-converted formats arrive Y-up, so formats disagree. Fix: per-asset
    import settings (`assets.import {up, unit, recenter}` and a `project.toml` table), baked into the
    mesh; `assets.describe` reporting the size in metres and suggesting Z-up when the bounds look
-   like it.
+   like it. **Done** (2026-10-02): `assets.import {path, up, unit, recenter, crease}` for the
+   session and `[assets.import]` in `project.toml` (`docs/design/assets.md`, Import settings);
+   `size` for every mesh, `hints` for a Z-up or millimetre file (`[obj][units]`, `runtime_tests`
+   `[import][obj]`).
 6. **Assemblies draw one call per part with no culling per part** (all submeshes share the entity's
    bounds sphere: inside the assembly 4800 parts and 1.98M triangles are drawn with none out of
    view), and a file with only `g` lines collapses every part into one node (lines 171 to 172),
@@ -217,10 +254,18 @@ problems, most severe first, all in `engine/assets/src/import.cpp` (`parse_obj`)
 8. **Parsed OBJ meshes are not cached** (`engine/assets/src/assets.cpp` 2107 to 2112, unlike the
    Blender path's `.imported/`): every start, reload and pack parses the text again. Fix: write the
    parsed mesh to `.imported/` under the same stamp scheme and read it when the stamp matches; a
-   pack ships the binary.
+   pack ships the binary. **Done** (2026-10-02): `.imported/<path>.mesh`, stamped with the text, the
+   settings and the reader's version, its material libraries' hashes inside; read two and a half to
+   three times faster than parsed (the table above; `[obj][cache]`). Packs do not ship it:
+   `pocket pack` leaves out every dot-directory (`tools/pocket/src/pack.rs`, `copy_tree`),
+   `.imported/` included, so a packed game parses on its first start and writes its own; that also
+   means a pack of a Blender-read file carries no conversion, though `docs/design/assets.md` says it
+   does (not changed here).
 9. Peak memory is about 5.5 times the file (about Blender's), and the CPU copy stays resident after
    upload; `assets.import` of the same files took longer than the spawn path (1.8 s against 0.96 s
-   at 1M; not investigated).
+   at 1M; not investigated). After the fixes above the new reader peaks lower (the table above) and
+   the import path is no slower than the spawn path (0.38 s import and spawn, 0.60 s spawn alone, at
+   1M on the Windows machine).
 
 ## Reproducing
 
@@ -232,6 +277,8 @@ python3 tools/scripts/dev/objstress/generate.py [--big]      # build/objstress: 
 ./.pocket/pocket build --config release                       # measure.py runs build/release/bin/pocket_runtime
 python3 tools/scripts/dev/objstress/measure.py all            # every case in cases.json -> build/objstress/runs/{logs,captures}
 python3 tools/scripts/dev/objstress/measure.py freeze assets/scan_5m.obj
+python3 tools/scripts/dev/objstress/measure.py load assets/scan_5m.obj 3 [--cached]   # import then spawn, median of three; the cache removed first unless --cached
+python3 tools/scripts/dev/objstress/evidence.py               # tests/evidence/assets/obj-import-fixed.png from before and after captures
 build/objstress/bin/fastobj_bench build/objstress/assets/scan_5m.obj
 /Applications/Blender.app/Contents/MacOS/Blender -b --factory-startup --python tools/scripts/dev/objstress/blender_import.py -- build/objstress/assets/scan_5m.obj
 ```
@@ -242,9 +289,10 @@ Rerun them after each import fix and compare with the table above (and on a quie
 
 1. **OBJ import**: crease-angle normals and smoothing groups; ear clipping; the fast parser on a
    worker thread with a binary cache; double-precision recentring; unit and up-axis options; bounds
-   per submesh, `g` as parts, automatic levels for huge meshes. Each lands with an `assets_tests`
-   case built from the stress files (`ngons.obj`, `cube_soff.obj` and a small machined part are
-   small enough to embed).
+   per submesh, `g` as parts, automatic levels for huge meshes. All but the worker thread, bounds
+   per submesh, `g` as parts and automatic levels are done (2026-10-02; items 1 to 5 and 8 above).
+   Each lands with an `assets_tests` case built from the stress files (`ngons.obj`, `cube_soff.obj`
+   and a small machined part are small enough to embed).
 2. **Visible quality, cheap**: find and fix the ocean's dark dashes; specular anti-aliasing for
    normal maps and water; skinned motion vectors, then TAA on by default in the samples; reversed-Z
    with a 32-bit float depth; the sky's below-horizon band; multi-scatter GGX, specular occlusion

@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <format>
 #include <functional>
 #include <limits>
 #include <optional>
@@ -81,6 +82,17 @@ Json Mesh::describe() const {
     }
     j["materials"] = mats;
     j["aabb"] = Json{{"min", Json::array({aabb_min.x, aabb_min.y, aabb_min.z})}, {"max", Json::array({aabb_max.x, aabb_max.y, aabb_max.z})}};
+    j["size"] = Json::array({aabb_max.x - aabb_min.x, aabb_max.y - aabb_min.y, aabb_max.z - aabb_min.z});   // metres (world units) along x, y, z
+    if (importer == "obj") {
+        // How it was read, and where its origin was in the file (metres, Y up): a Transform at
+        // `origin` puts a recentred part back where the file had it.
+        Json ij = assets::describe(import);
+        ij["origin"] = Json::array({origin[0], origin[1], origin[2]});
+        ij["recentered"] = origin[0] != 0 || origin[1] != 0 || origin[2] != 0;
+        ij["cached"] = cached;
+        j["import"] = ij;
+        if (!hints.empty()) j["hints"] = hints;
+    }
     // The nodes that carry geometry, by name (or index when unnamed), in node order: what MeshRenderer.node takes.
     Json parts = Json::array();
     std::vector<bool> seen(nodes.size(), false);
@@ -2105,11 +2117,7 @@ Result<const Mesh*> AssetStore::mesh(const std::string& path) {
         std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     }
     if (!full.empty() && ext == ".obj") {
-        POCKET_TRY(text, fs::read_text(full));
-        parsed = parse_obj(text, path, [this](const std::string& p) -> Result<std::string> {
-            POCKET_TRY(f, resolve(p));
-            return fs::read_text(f);
-        });
+        parsed = load_obj(path, full, false);
     } else if (ext == ".stl") {
         POCKET_TRY(bytes, fs::read_bytes(full));
         parsed = parse_stl(std::string(bytes.begin(), bytes.end()), path);
@@ -2149,12 +2157,12 @@ Result<const Mesh*> AssetStore::mesh(const std::string& path) {
         failures_["mesh:" + path] = path + ": no triangle geometry (a file of clips: animation.library puts them on a model)";
         return fail("bad_gltf", "{}", failures_["mesh:" + path]);
     }
-    fill_tangents(*parsed);
+    if (parsed->importer != "obj") fill_tangents(*parsed);   // an OBJ's are made as it is read, and kept in its cache
     auto owned = std::make_unique<Mesh>(std::move(*parsed));
     const Mesh* raw = owned.get();
     meshes_[path] = std::move(owned);
     version_++;
-    log::info("assets", "loaded mesh {} ({} vertices, {} triangles, {} materials)", path, raw->vertices.size(), raw->indices.size() / 3, raw->materials.size());
+    log::info("assets", "loaded mesh {} ({} vertices, {} triangles, {} materials{})", path, raw->vertices.size(), raw->indices.size() / 3, raw->materials.size(), raw->cached ? ", from .imported/" : "");
     return raw;
 }
 
@@ -2342,13 +2350,29 @@ Result<Json> AssetStore::add_clips(const std::string& model, const std::string& 
     return Json{{"model", model}, {"source", source}, {"clips", added}, {"channels_left_out", dropped}};
 }
 
-Result<Json> AssetStore::import(const std::string& path, bool force) {
+Result<Json> AssetStore::import(const std::string& path, bool force, const Json& settings) {
     POCKET_TRY(full, resolve(path));
     std::string ext = full.extension().string();
     std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    const bool given = settings.is_object() && !settings.empty();
+    if (given && ext != ".obj") return fail("bad_args", "up, unit, recenter and crease are read for OBJ files; {} is read as its format says", path);
     Json j;
     j["path"] = path;
-    if (blender_format(ext)) {
+    if (given) {
+        POCKET_TRY(base, import_settings_for(path));
+        POCKET_TRY(s, import_settings(settings, base));
+        imports_[path] = s;
+        // They hold for this session; the project's table keeps them for every start.
+        std::string toml = std::format("[assets.import]\n\"{}\" = {{ up = \"{}\", unit = {}, recenter = {}, crease = {} }}", path, s.z_up ? "z" : "y", s.unit,
+                                       s.recenter == ImportSettings::Recenter::Auto ? "\"auto\"" : s.recenter == ImportSettings::Recenter::On ? "true" : "false", s.crease);
+        j["project_toml"] = toml;
+    }
+    if (ext == ".obj") {
+        j["importer"] = "obj";
+        j["cache"] = (std::filesystem::path(".imported") / (path + ".mesh")).generic_string();
+        std::error_code ec;
+        if (force) std::filesystem::remove(project_dir_ / ".imported" / (path + ".mesh"), ec);   // parsed again
+    } else if (blender_format(ext)) {
         Conversion conv;
         POCKET_TRY(glb, converted_glb(path, full, force, &conv));
         j["importer"] = "blender";
@@ -2361,8 +2385,36 @@ Result<Json> AssetStore::import(const std::string& path, bool force) {
     }
     invalidate(path);
     POCKET_TRY(mesh, this->mesh(path));
+    if (ext == ".obj") j["cached"] = mesh->cached;
     j["mesh"] = mesh->describe();
     return j;
+}
+
+std::size_t AssetStore::set_project_imports(const Json& table) {
+    const Json before = project_imports_;
+    project_imports_ = table.is_object() ? table : Json::object();
+    // A model read under settings that have changed is read again, and one that failed under the
+    // old table may load under the new.
+    std::vector<std::string> stale;
+    for (const auto& [p, m] : meshes_) {
+        if (m->importer != "obj") continue;
+        auto s = import_settings_for(p);
+        if (!s || !(*s == m->import)) stale.push_back(p);
+    }
+    std::size_t failed = 0;
+    for (const Json* t : {&before, static_cast<const Json*>(&project_imports_)}) for (const auto& [p, s] : t->items()) failed += failures_.erase("mesh:" + p);
+    for (const std::string& p : stale) invalidate(p);
+    return stale.size() + failed;
+}
+
+Result<ImportSettings> AssetStore::import_settings_for(const std::string& path) const {
+    if (auto it = imports_.find(path); it != imports_.end()) return it->second;
+    if (project_imports_.contains(path)) {
+        auto s = import_settings(project_imports_[path]);
+        if (!s) return fail("bad_import", "project.toml [assets.import] \"{}\": {}", path, s.error().message);
+        return s;
+    }
+    return ImportSettings{};
 }
 
 void AssetStore::invalidate(const std::string& path) {

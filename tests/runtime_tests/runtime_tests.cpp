@@ -7018,6 +7018,93 @@ bpy.ops.export_scene.fbx(filepath=argv[1])
     std::filesystem::remove_all(root() / "samples" / "assets" / ".imported");
 }
 
+TEST_CASE("an OBJ's import settings: assets.import {up, unit} for the session, [assets.import] in project.toml for every start", "[runtime][import][obj]") {
+    // A Z-up millimetre box (CAD), 100 x 200 x 50 mm standing on z = 0, and a copy for the table.
+    const std::filesystem::path dir = root() / "samples" / "assets" / "assets" / "objimport-test";
+    const std::filesystem::path out = root() / "build" / "test-out";
+    std::filesystem::create_directories(dir);
+    std::filesystem::create_directories(out);
+    const std::string box = "v -50 -100 0\nv 50 -100 0\nv 50 100 0\nv -50 100 0\nv -50 -100 50\nv 50 -100 50\nv 50 100 50\nv -50 100 50\n"
+                            "f 1 4 3 2\nf 5 6 7 8\nf 1 2 6 5\nf 2 3 7 6\nf 3 4 8 7\nf 4 1 5 8\n";
+    std::ofstream(dir / "box.obj", std::ios::binary) << box;
+    std::ofstream(dir / "listed.obj", std::ios::binary) << box;
+    std::ofstream(dir / "fixed.obj", std::ios::binary) << box;
+    std::ofstream(dir / "part.stl", std::ios::binary) << "solid p\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid p\n";
+    // The project's settings as the tool hands them over, with an [assets.import] table added.
+    auto text = fs::read_text(root() / "build" / "ts" / "assets.js.project.json");
+    REQUIRE(text.has_value());
+    Json settings = Json::parse(*text);
+    settings["assets"]["import"]["assets/objimport-test/listed.obj"] = Json{{"up", "z"}, {"unit", "mm"}};
+    settings["assets"]["import"]["assets/objimport-test/fixed.obj"] = Json{{"up", "x"}};   // wrong, put right below
+    settings["assets"]["import"]["assets/objimport-test/part.stl"] = Json{{"up", "z"}};    // not an OBJ: it does nothing
+    std::ofstream(out / "objimport.project.json", std::ios::binary) << settings.dump();
+    app::Options o;
+    o.project_dir = root() / "samples" / "assets";
+    o.bundle = root() / "build" / "ts" / "assets.js";
+    o.project_config = out / "objimport.project.json";
+    o.headless = true;
+    o.frames = 1000;
+    o.width = 160;
+    o.height = 90;
+    o.log_level = "warn";
+    app::Session s(o);
+    REQUIRE(s.start().has_value());
+    // The table's entry for another format is said to do nothing.
+    bool said = false;
+    for (const log::Record& r : log::global().recent(256, log::Level::Warn))
+        said = said || r.message.find("\"assets/objimport-test/part.stl\": up, unit, recenter and crease are read for OBJ files") != std::string::npos;
+    REQUIRE(said);
+    // Read as it is, it says what it may be.
+    Json plain = s.command("assets.describe", Json{{"path", "assets/objimport-test/box.obj"}}).value();
+    INFO(plain.dump());
+    REQUIRE(plain["import"]["up"] == "y");
+    REQUIRE(plain["size"][1].get<double>() == Catch::Approx(200.0));
+    REQUIRE(plain["hints"].size() == 2);
+    // assets.import turns and scales it, and says how to keep that.
+    Json read = s.command("assets.import", Json{{"path", "assets/objimport-test/box.obj"}, {"up", "z"}, {"unit", "mm"}}).value();
+    INFO(read.dump());
+    REQUIRE(read["importer"] == "obj");
+    REQUIRE(read["mesh"]["size"][1].get<double>() == Catch::Approx(0.05).margin(1e-6));
+    REQUIRE(read["mesh"]["import"]["up"] == "z");
+    REQUIRE(read["project_toml"].get<std::string>().starts_with("[assets.import]\n\"assets/objimport-test/box.obj\" = { up = \"z\", unit = 0.001"));
+    REQUIRE(s.command("assets.describe", Json{{"path", "assets/objimport-test/box.obj"}}).value()["size"][1].get<double>() == Catch::Approx(0.05).margin(1e-6));
+    // The table's file is read with its settings from the start.
+    Json listed = s.command("assets.describe", Json{{"path", "assets/objimport-test/listed.obj"}}).value();
+    REQUIRE(listed["import"]["up"] == "z");
+    REQUIRE(listed["import"]["unit"].get<double>() == Catch::Approx(0.001));
+    // A spawned entity's bounds are the mesh as read: on the ground, five centimetres tall.
+    REQUIRE(s.command("world.spawn", Json{{"name", "Part"}, {"components", Json{{"Transform", Json::object()}, {"MeshRenderer", Json{{"mesh", "assets/objimport-test/box.obj"}}}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    Json bounds = s.command("world.get", Json{{"entity", "Part"}, {"component", "Bounds"}}).value();
+    INFO(bounds.dump());
+    REQUIRE(bounds["max"]["y"].get<double>() == Catch::Approx(0.05).margin(1e-5));
+    // Wrong settings are refused with what is taken.
+    auto unknown = s.command("assets.import", Json{{"path", "assets/objimport-test/box.obj"}, {"units", "mm"}});
+    REQUIRE_FALSE(unknown.has_value());
+    REQUIRE(unknown.error().message.find("unit?") != std::string::npos);
+    auto bad = s.command("assets.import", Json{{"path", "assets/objimport-test/box.obj"}, {"up", "x"}});
+    REQUIRE_FALSE(bad.has_value());
+    REQUIRE(bad.error().message.find("\"y\" or \"z\"") != std::string::npos);
+    // A model its entry made fail is drawn once project.reload reads the entry put right.
+    REQUIRE(s.command("world.spawn", Json{{"name", "Fixed"}, {"components", Json{{"Transform", Json{{"position", Json{{"x", 3}}}}}, {"MeshRenderer", Json{{"mesh", "assets/objimport-test/fixed.obj"}}}}}}).has_value());
+    REQUIRE(s.frame().has_value());
+    auto missing = [&] {
+        for (const Json& m : s.command("render.stats", Json::object()).value()["assets"].value("missing", Json::array()))
+            if (m.get<std::string>().find("fixed.obj") != std::string::npos) return true;
+        return false;
+    };
+    REQUIRE(missing());
+    settings["assets"]["import"]["assets/objimport-test/fixed.obj"] = Json{{"up", "z"}, {"unit", "mm"}};
+    std::ofstream(out / "objimport.project.json", std::ios::binary) << settings.dump();
+    REQUIRE(s.command("project.reload", Json{{"scene", false}, {"scripts", false}, {"settings", true}}).has_value());
+    REQUIRE(s.frame().has_value());
+    REQUIRE_FALSE(missing());
+    REQUIRE(s.command("world.get", Json{{"entity", "Fixed"}, {"component", "Bounds"}}).value()["max"]["y"].get<double>() == Catch::Approx(0.05).margin(1e-5));
+    REQUIRE(s.finish().has_value());
+    std::filesystem::remove_all(dir);
+    std::filesystem::remove_all(root() / "samples" / "assets" / ".imported" / "assets" / "objimport-test");
+}
+
 TEST_CASE("the engine says how to call its commands and refuses parameters they do not take", "[runtime][help]") {
     app::Session s(hello_options(10));
     REQUIRE(s.start().has_value());
