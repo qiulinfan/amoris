@@ -5,10 +5,44 @@
     "variant": "debugger",
     "via": "cli",
     "trial": 1,
+    "isolation": "permissions",
     "success": true,
     "bug_check": true,
+    "rules_kept": true,
     "located": true,
     "hash_chain_identical_to_clean": true,
+    "as_run": {
+      "success": true,
+      "located": true,
+      "checks": {
+        "steer": [
+          true,
+          "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+        ],
+        "goto": [
+          true,
+          "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+        ],
+        "goto_behind": [
+          true,
+          "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+        ],
+        "reach": [
+          true,
+          "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+        ],
+        "anchor": [
+          true,
+          "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+        ],
+        "tally": [
+          true,
+          "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+        ]
+      },
+      "hash_chain_identical_to_clean": true,
+      "hash_first_divergence_tick": null
+    },
     "tool_calls": 23,
     "pocket_calls": 43,
     "tool_errors": 0,
@@ -63,10 +97,44 @@
     "variant": "debugger",
     "via": "cli",
     "trial": 1,
+    "isolation": "permissions",
     "success": true,
     "bug_check": true,
+    "rules_kept": true,
     "located": true,
     "hash_chain_identical_to_clean": true,
+    "as_run": {
+      "success": true,
+      "located": true,
+      "checks": {
+        "steer": [
+          true,
+          "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+        ],
+        "goto": [
+          true,
+          "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+        ],
+        "goto_behind": [
+          true,
+          "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+        ],
+        "reach": [
+          true,
+          "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+        ],
+        "anchor": [
+          true,
+          "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+        ],
+        "tally": [
+          true,
+          "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+        ]
+      },
+      "hash_chain_identical_to_clean": true,
+      "hash_first_divergence_tick": null
+    },
     "tool_calls": 42,
     "pocket_calls": 83,
     "tool_errors": 3,
@@ -139,10 +207,44 @@
     "variant": "debugger",
     "via": "cli",
     "trial": 2,
+    "isolation": "permissions",
     "success": true,
     "bug_check": true,
+    "rules_kept": true,
     "located": true,
     "hash_chain_identical_to_clean": true,
+    "as_run": {
+      "success": true,
+      "located": true,
+      "checks": {
+        "steer": [
+          true,
+          "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+        ],
+        "goto": [
+          true,
+          "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+        ],
+        "goto_behind": [
+          true,
+          "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+        ],
+        "reach": [
+          true,
+          "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+        ],
+        "anchor": [
+          true,
+          "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+        ],
+        "tally": [
+          true,
+          "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+        ]
+      },
+      "hash_chain_identical_to_clean": true,
+      "hash_first_divergence_tick": null
+    },
     "tool_calls": 23,
     "pocket_calls": 38,
     "tool_errors": 0,
@@ -198,10 +300,44 @@
     "variant": "debugger",
     "via": "cli",
     "trial": 1,
+    "isolation": "permissions",
     "success": true,
     "bug_check": true,
+    "rules_kept": true,
     "located": true,
     "hash_chain_identical_to_clean": true,
+    "as_run": {
+      "success": true,
+      "located": true,
+      "checks": {
+        "steer": [
+          true,
+          "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+        ],
+        "goto": [
+          true,
+          "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+        ],
+        "goto_behind": [
+          true,
+          "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+        ],
+        "reach": [
+          true,
+          "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+        ],
+        "anchor": [
+          true,
+          "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+        ],
+        "tally": [
+          true,
+          "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+        ]
+      },
+      "hash_chain_identical_to_clean": true,
+      "hash_first_divergence_tick": null
+    },
     "tool_calls": 22,
     "pocket_calls": 47,
     "tool_errors": 0,
@@ -264,10 +400,44 @@
     "variant": "debugger",
     "via": "cli",
     "trial": 1,
+    "isolation": "permissions",
     "success": true,
     "bug_check": true,
-    "located": true,
+    "rules_kept": true,
+    "located": false,
     "hash_chain_identical_to_clean": true,
+    "as_run": {
+      "success": true,
+      "located": true,
+      "checks": {
+        "steer": [
+          true,
+          "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+        ],
+        "goto": [
+          true,
+          "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+        ],
+        "goto_behind": [
+          true,
+          "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+        ],
+        "reach": [
+          true,
+          "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+        ],
+        "anchor": [
+          true,
+          "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+        ],
+        "tally": [
+          true,
+          "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+        ]
+      },
+      "hash_chain_identical_to_clean": true,
+      "hash_first_divergence_tick": null
+    },
     "tool_calls": 31,
     "pocket_calls": 44,
     "tool_errors": 2,
@@ -324,10 +494,44 @@
     "variant": "debugger",
     "via": "cli",
     "trial": 1,
+    "isolation": "permissions",
     "success": true,
     "bug_check": true,
+    "rules_kept": true,
     "located": true,
     "hash_chain_identical_to_clean": true,
+    "as_run": {
+      "success": true,
+      "located": true,
+      "checks": {
+        "steer": [
+          true,
+          "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+        ],
+        "goto": [
+          true,
+          "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+        ],
+        "goto_behind": [
+          true,
+          "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+        ],
+        "reach": [
+          true,
+          "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+        ],
+        "anchor": [
+          true,
+          "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+        ],
+        "tally": [
+          true,
+          "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+        ]
+      },
+      "hash_chain_identical_to_clean": true,
+      "hash_first_divergence_tick": null
+    },
     "tool_calls": 46,
     "pocket_calls": 114,
     "tool_errors": 1,
@@ -401,10 +605,44 @@
     "variant": "debugger",
     "via": "cli",
     "trial": 1,
+    "isolation": "permissions",
     "success": true,
     "bug_check": true,
+    "rules_kept": true,
     "located": true,
     "hash_chain_identical_to_clean": true,
+    "as_run": {
+      "success": true,
+      "located": true,
+      "checks": {
+        "steer": [
+          true,
+          "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+        ],
+        "goto": [
+          true,
+          "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+        ],
+        "goto_behind": [
+          true,
+          "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+        ],
+        "reach": [
+          true,
+          "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+        ],
+        "anchor": [
+          true,
+          "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+        ],
+        "tally": [
+          true,
+          "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+        ]
+      },
+      "hash_chain_identical_to_clean": true,
+      "hash_first_divergence_tick": null
+    },
     "tool_calls": 42,
     "pocket_calls": 106,
     "tool_errors": 1,
@@ -473,10 +711,44 @@
     "variant": "free",
     "via": "cli",
     "trial": 1,
+    "isolation": "permissions",
     "success": true,
     "bug_check": true,
+    "rules_kept": true,
     "located": true,
     "hash_chain_identical_to_clean": true,
+    "as_run": {
+      "success": true,
+      "located": true,
+      "checks": {
+        "steer": [
+          true,
+          "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+        ],
+        "goto": [
+          true,
+          "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+        ],
+        "goto_behind": [
+          true,
+          "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+        ],
+        "reach": [
+          true,
+          "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+        ],
+        "anchor": [
+          true,
+          "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+        ],
+        "tally": [
+          true,
+          "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+        ]
+      },
+      "hash_chain_identical_to_clean": true,
+      "hash_first_divergence_tick": null
+    },
     "tool_calls": 40,
     "pocket_calls": 76,
     "tool_errors": 0,
@@ -538,10 +810,44 @@
     "variant": "free",
     "via": "cli",
     "trial": 2,
+    "isolation": "permissions",
     "success": true,
     "bug_check": true,
+    "rules_kept": true,
     "located": true,
     "hash_chain_identical_to_clean": true,
+    "as_run": {
+      "success": true,
+      "located": true,
+      "checks": {
+        "steer": [
+          true,
+          "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+        ],
+        "goto": [
+          true,
+          "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+        ],
+        "goto_behind": [
+          true,
+          "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+        ],
+        "reach": [
+          true,
+          "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+        ],
+        "anchor": [
+          true,
+          "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+        ],
+        "tally": [
+          true,
+          "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+        ]
+      },
+      "hash_chain_identical_to_clean": true,
+      "hash_first_divergence_tick": null
+    },
     "tool_calls": 49,
     "pocket_calls": 121,
     "tool_errors": 1,
@@ -618,10 +924,44 @@
     "variant": "free",
     "via": "cli",
     "trial": 1,
+    "isolation": "permissions",
     "success": false,
     "bug_check": false,
+    "rules_kept": true,
     "located": false,
     "hash_chain_identical_to_clean": false,
+    "as_run": {
+      "success": false,
+      "located": false,
+      "checks": {
+        "steer": [
+          true,
+          "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+        ],
+        "goto": [
+          false,
+          "closest approach to Crate4 within 15 s: 19.0 m (pass < 3 m)"
+        ],
+        "goto_behind": [
+          false,
+          "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 9.1 (-80.9; pass > +15, the short way)"
+        ],
+        "reach": [
+          true,
+          "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+        ],
+        "anchor": [
+          true,
+          "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+        ],
+        "tally": [
+          true,
+          "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+        ]
+      },
+      "hash_chain_identical_to_clean": false,
+      "hash_first_divergence_tick": 150
+    },
     "tool_calls": 53,
     "pocket_calls": 81,
     "tool_errors": 1,
@@ -682,10 +1022,44 @@
     "variant": "free",
     "via": "cli",
     "trial": 2,
+    "isolation": "permissions",
     "success": false,
     "bug_check": false,
+    "rules_kept": true,
     "located": false,
     "hash_chain_identical_to_clean": false,
+    "as_run": {
+      "success": false,
+      "located": false,
+      "checks": {
+        "steer": [
+          true,
+          "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+        ],
+        "goto": [
+          false,
+          "closest approach to Crate4 within 15 s: 19.0 m (pass < 3 m)"
+        ],
+        "goto_behind": [
+          false,
+          "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 9.1 (-80.9; pass > +15, the short way)"
+        ],
+        "reach": [
+          true,
+          "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+        ],
+        "anchor": [
+          true,
+          "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+        ],
+        "tally": [
+          true,
+          "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+        ]
+      },
+      "hash_chain_identical_to_clean": false,
+      "hash_first_divergence_tick": 150
+    },
     "tool_calls": 48,
     "pocket_calls": 124,
     "tool_errors": 2,
@@ -756,10 +1130,44 @@
     "variant": "free",
     "via": "cli",
     "trial": 3,
+    "isolation": "permissions",
     "success": true,
     "bug_check": true,
+    "rules_kept": true,
     "located": true,
     "hash_chain_identical_to_clean": true,
+    "as_run": {
+      "success": true,
+      "located": true,
+      "checks": {
+        "steer": [
+          true,
+          "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+        ],
+        "goto": [
+          true,
+          "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+        ],
+        "goto_behind": [
+          true,
+          "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+        ],
+        "reach": [
+          true,
+          "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+        ],
+        "anchor": [
+          true,
+          "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+        ],
+        "tally": [
+          true,
+          "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+        ]
+      },
+      "hash_chain_identical_to_clean": true,
+      "hash_first_divergence_tick": null
+    },
     "tool_calls": 16,
     "pocket_calls": 35,
     "tool_errors": 1,
@@ -803,10 +1211,44 @@
     "variant": "free",
     "via": "cli",
     "trial": 1,
+    "isolation": "permissions",
     "success": true,
     "bug_check": true,
+    "rules_kept": true,
     "located": true,
     "hash_chain_identical_to_clean": true,
+    "as_run": {
+      "success": true,
+      "located": true,
+      "checks": {
+        "steer": [
+          true,
+          "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+        ],
+        "goto": [
+          true,
+          "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+        ],
+        "goto_behind": [
+          true,
+          "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+        ],
+        "reach": [
+          true,
+          "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+        ],
+        "anchor": [
+          true,
+          "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+        ],
+        "tally": [
+          true,
+          "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+        ]
+      },
+      "hash_chain_identical_to_clean": true,
+      "hash_first_divergence_tick": null
+    },
     "tool_calls": 15,
     "pocket_calls": 54,
     "tool_errors": 0,
@@ -864,10 +1306,44 @@
     "variant": "free",
     "via": "cli",
     "trial": 2,
+    "isolation": "permissions",
     "success": true,
     "bug_check": true,
+    "rules_kept": true,
     "located": true,
     "hash_chain_identical_to_clean": true,
+    "as_run": {
+      "success": true,
+      "located": true,
+      "checks": {
+        "steer": [
+          true,
+          "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+        ],
+        "goto": [
+          true,
+          "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+        ],
+        "goto_behind": [
+          true,
+          "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+        ],
+        "reach": [
+          true,
+          "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+        ],
+        "anchor": [
+          true,
+          "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+        ],
+        "tally": [
+          true,
+          "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+        ]
+      },
+      "hash_chain_identical_to_clean": true,
+      "hash_first_divergence_tick": null
+    },
     "tool_calls": 16,
     "pocket_calls": 21,
     "tool_errors": 1,
@@ -914,10 +1390,44 @@
     "variant": "free",
     "via": "cli",
     "trial": 1,
+    "isolation": "permissions",
     "success": true,
     "bug_check": true,
+    "rules_kept": true,
     "located": true,
     "hash_chain_identical_to_clean": true,
+    "as_run": {
+      "success": true,
+      "located": true,
+      "checks": {
+        "steer": [
+          true,
+          "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+        ],
+        "goto": [
+          true,
+          "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+        ],
+        "goto_behind": [
+          true,
+          "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+        ],
+        "reach": [
+          true,
+          "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+        ],
+        "anchor": [
+          true,
+          "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+        ],
+        "tally": [
+          true,
+          "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+        ]
+      },
+      "hash_chain_identical_to_clean": true,
+      "hash_first_divergence_tick": null
+    },
     "tool_calls": 14,
     "pocket_calls": 21,
     "tool_errors": 1,
@@ -962,10 +1472,44 @@
     "variant": "free",
     "via": "cli",
     "trial": 2,
+    "isolation": "permissions",
     "success": true,
     "bug_check": true,
+    "rules_kept": true,
     "located": true,
     "hash_chain_identical_to_clean": true,
+    "as_run": {
+      "success": true,
+      "located": true,
+      "checks": {
+        "steer": [
+          true,
+          "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+        ],
+        "goto": [
+          true,
+          "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+        ],
+        "goto_behind": [
+          true,
+          "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+        ],
+        "reach": [
+          true,
+          "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+        ],
+        "anchor": [
+          true,
+          "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+        ],
+        "tally": [
+          true,
+          "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+        ]
+      },
+      "hash_chain_identical_to_clean": true,
+      "hash_first_divergence_tick": null
+    },
     "tool_calls": 15,
     "pocket_calls": 25,
     "tool_errors": 2,
@@ -1017,10 +1561,44 @@
     "variant": "free",
     "via": "cli",
     "trial": 1,
+    "isolation": "permissions",
     "success": true,
     "bug_check": true,
+    "rules_kept": true,
     "located": true,
     "hash_chain_identical_to_clean": true,
+    "as_run": {
+      "success": true,
+      "located": true,
+      "checks": {
+        "steer": [
+          true,
+          "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+        ],
+        "goto": [
+          true,
+          "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+        ],
+        "goto_behind": [
+          true,
+          "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+        ],
+        "reach": [
+          true,
+          "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+        ],
+        "anchor": [
+          true,
+          "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+        ],
+        "tally": [
+          true,
+          "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+        ]
+      },
+      "hash_chain_identical_to_clean": true,
+      "hash_first_divergence_tick": null
+    },
     "tool_calls": 47,
     "pocket_calls": 146,
     "tool_errors": 1,
@@ -1080,10 +1658,44 @@
     "variant": "free",
     "via": "cli",
     "trial": 2,
+    "isolation": "permissions",
     "success": true,
     "bug_check": true,
+    "rules_kept": true,
     "located": true,
     "hash_chain_identical_to_clean": true,
+    "as_run": {
+      "success": true,
+      "located": true,
+      "checks": {
+        "steer": [
+          true,
+          "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+        ],
+        "goto": [
+          true,
+          "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+        ],
+        "goto_behind": [
+          true,
+          "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+        ],
+        "reach": [
+          true,
+          "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+        ],
+        "anchor": [
+          true,
+          "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+        ],
+        "tally": [
+          true,
+          "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+        ]
+      },
+      "hash_chain_identical_to_clean": true,
+      "hash_first_divergence_tick": null
+    },
     "tool_calls": 50,
     "pocket_calls": 125,
     "tool_errors": 0,
@@ -1134,10 +1746,44 @@
     "variant": "free",
     "via": "cli",
     "trial": 1,
+    "isolation": "permissions",
     "success": true,
     "bug_check": true,
+    "rules_kept": true,
     "located": true,
     "hash_chain_identical_to_clean": true,
+    "as_run": {
+      "success": true,
+      "located": true,
+      "checks": {
+        "steer": [
+          true,
+          "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+        ],
+        "goto": [
+          true,
+          "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+        ],
+        "goto_behind": [
+          true,
+          "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+        ],
+        "reach": [
+          true,
+          "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+        ],
+        "anchor": [
+          true,
+          "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+        ],
+        "tally": [
+          true,
+          "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+        ]
+      },
+      "hash_chain_identical_to_clean": true,
+      "hash_first_divergence_tick": null
+    },
     "tool_calls": 30,
     "pocket_calls": 61,
     "tool_errors": 1,
@@ -1198,10 +1844,44 @@
     "variant": "free",
     "via": "cli",
     "trial": 2,
+    "isolation": "permissions",
     "success": true,
     "bug_check": true,
+    "rules_kept": true,
     "located": true,
     "hash_chain_identical_to_clean": true,
+    "as_run": {
+      "success": true,
+      "located": true,
+      "checks": {
+        "steer": [
+          true,
+          "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+        ],
+        "goto": [
+          true,
+          "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+        ],
+        "goto_behind": [
+          true,
+          "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+        ],
+        "reach": [
+          true,
+          "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+        ],
+        "anchor": [
+          true,
+          "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+        ],
+        "tally": [
+          true,
+          "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+        ]
+      },
+      "hash_chain_identical_to_clean": true,
+      "hash_first_divergence_tick": null
+    },
     "tool_calls": 28,
     "pocket_calls": 54,
     "tool_errors": 0,
@@ -1263,10 +1943,44 @@
     "variant": "free",
     "via": "mcp",
     "trial": 1,
+    "isolation": "permissions",
     "success": true,
     "bug_check": true,
+    "rules_kept": true,
     "located": true,
     "hash_chain_identical_to_clean": true,
+    "as_run": {
+      "success": true,
+      "located": true,
+      "checks": {
+        "steer": [
+          true,
+          "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+        ],
+        "goto": [
+          true,
+          "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+        ],
+        "goto_behind": [
+          true,
+          "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+        ],
+        "reach": [
+          true,
+          "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+        ],
+        "anchor": [
+          true,
+          "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+        ],
+        "tally": [
+          true,
+          "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+        ]
+      },
+      "hash_chain_identical_to_clean": true,
+      "hash_first_divergence_tick": null
+    },
     "tool_calls": 32,
     "pocket_calls": 37,
     "tool_errors": 4,
@@ -1324,10 +2038,44 @@
     "variant": "free",
     "via": "mcp",
     "trial": 1,
+    "isolation": "permissions",
     "success": true,
     "bug_check": true,
-    "located": true,
+    "rules_kept": true,
+    "located": false,
     "hash_chain_identical_to_clean": true,
+    "as_run": {
+      "success": true,
+      "located": true,
+      "checks": {
+        "steer": [
+          true,
+          "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+        ],
+        "goto": [
+          true,
+          "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+        ],
+        "goto_behind": [
+          true,
+          "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+        ],
+        "reach": [
+          true,
+          "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+        ],
+        "anchor": [
+          true,
+          "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+        ],
+        "tally": [
+          true,
+          "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+        ]
+      },
+      "hash_chain_identical_to_clean": true,
+      "hash_first_divergence_tick": null
+    },
     "tool_calls": 32,
     "pocket_calls": 55,
     "tool_errors": 1,
@@ -1390,10 +2138,44 @@
     "variant": "free",
     "via": "mcp",
     "trial": 1,
+    "isolation": "permissions",
     "success": true,
     "bug_check": true,
-    "located": true,
+    "rules_kept": true,
+    "located": false,
     "hash_chain_identical_to_clean": true,
+    "as_run": {
+      "success": true,
+      "located": true,
+      "checks": {
+        "steer": [
+          true,
+          "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+        ],
+        "goto": [
+          true,
+          "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+        ],
+        "goto_behind": [
+          true,
+          "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+        ],
+        "reach": [
+          true,
+          "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+        ],
+        "anchor": [
+          true,
+          "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+        ],
+        "tally": [
+          true,
+          "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+        ]
+      },
+      "hash_chain_identical_to_clean": true,
+      "hash_first_divergence_tick": null
+    },
     "tool_calls": 20,
     "pocket_calls": 45,
     "tool_errors": 0,

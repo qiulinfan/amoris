@@ -5,22 +5,32 @@ For each planted bug: copy samples/sailing with the evaluation's helm layer
 (tools/eval/debug_eval/scripts: a Helm component the player steers with, and the `helm` system that
 turns it into the Boat's controls), plant one small TypeScript mistake, start `pocket serve`, hand
 an LLM agent (opencode, by default GLM 5.3 Flash) a player's description of the SYMPTOM only, and
-let it work through the host's CLI alone: its shell runs `pocket ...` and a few text filters, its
-file tools reach only an empty scratch directory, so the game's scripts are reachable only through
-`pocket scripts read/write/apply`. Then stop the host and check, objectively, on a fresh host built
-from the scripts the agent left on disk: every feature's behavioural check (the bug's own and the
-others', so a fix that breaks something else fails), and whether a scenario's hash chain is bit
-identical to the clean game's.
+let it work through the host's CLI alone. opencode's permissions let its shell run `pocket ...` and
+a few text filters and its file tools reach only an empty scratch directory; the shell itself runs
+under sandbox-exec, which lets it read and write only that scratch directory (no home directory, no
+repository, no other temporary directory, no network but the local host). The game's scripts are
+therefore reachable only through `pocket scripts read/write/apply`. opencode runs with its own
+configuration only (XDG_CONFIG_HOME in the run directory, Claude Code compatibility off): the
+user's global rules, skills and MCP servers are not loaded; only their settings for the model's
+provider (the API key file) are copied. The run directory's name says nothing about the bug.
+
+Then the host is stopped and the scripts the agent left on disk are checked, objectively, on a
+fresh host: every feature's behavioural check (the bug's own and the others', so a fix that breaks
+something else fails) and that the rules' constants are unchanged (together: fixed), and whether a
+scenario's world hash chain is identical to the clean game's.
 
 Each run is recorded under docs/evidence/debug-eval/<bug>/<run>/: the prompt, the agent's raw event
 stream (transcript.jsonl) and a readable transcript (transcript.md), the planted and the agent's
-diffs, the host's stderr, and result.json (success, wall time, tool and CLI calls, tokens).
+diffs, the host's stderr, and result.json (success, wall time, tool and CLI calls, tokens). A run
+never replaces a recorded one: it takes the next free trial number.
 
-    python3 tools/eval/debug_eval.py --selftest                 # clean passes, every planted bug fails
+    python3 tools/eval/debug_eval.py --selftest      # checks, scenario and sandbox are sound (macOS)
     python3 tools/eval/debug_eval.py --bugs steer-sign,reach-squared --trials 2
     python3 tools/eval/debug_eval.py --bugs goto-radians --variant debugger   # must use the debugger
     python3 tools/eval/debug_eval.py --bugs goto-radians --via mcp           # MCP tools as well
-    python3 tools/eval/debug_eval.py --report     # the results table and tallies (docs/bench/debug-eval.md)
+    python3 tools/eval/debug_eval.py --bugs anchor-stale --evidence /tmp/x   # a run kept elsewhere
+    python3 tools/eval/debug_eval.py --recheck    # re-checks every recorded fix with this file's checks
+    python3 tools/eval/debug_eval.py --report     # re-reads the transcripts, writes the results table
     python3 tools/eval/debug_eval.py --list
 
 The pocket binary defaults to $CARGO_TARGET_DIR/release/pocket (--pocket to change). Standard
@@ -47,7 +57,9 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent.parent
 OVERLAY = Path(__file__).resolve().parent / "debug_eval" / "scripts"
 EVIDENCE = REPO / "docs" / "evidence" / "debug-eval"
+DOC = REPO / "docs" / "bench" / "debug-eval.md"
 DEFAULT_MODEL = "zai-coding-plan/glm-5.3-flash"
+TMP_PREFIX = "pocket-eval-"          # says nothing about the bug: the agent sees its working directory
 
 
 # --- The planted bugs ----------------------------------------------------------------------------
@@ -61,6 +73,7 @@ class Bug:
     symptom: str            # what the player reports, nothing about the code
     kind: str               # the mistake, for the report
     check: str              # the behavioural check that must fail with the bug and pass without
+    defect: tuple           # the planted file's lines (stripped) that are the defect: "located" names one
 
 
 BUGS = [
@@ -73,6 +86,7 @@ BUGS = [
                  "right, and when I turn it to the right (steer 1) it goes left."),
         kind="sign error: the wheel's rudder is negated",
         check="steer",
+        defect=("let rudder = -clamp(h.steer[r], -1, 1) * RUDDER_GAIN;",),
     ),
     Bug(
         name="goto-radians",
@@ -84,6 +98,9 @@ BUGS = [
                  "same whichever crate I pick."),
         kind="unit mix-up: the mark's bearing in radians compared with a heading in degrees",
         check="goto",
+        # The bearing in radians, or the line that compares it with the heading in degrees.
+        defect=("const bearing = Math.atan2(dx, -dz);",
+                "rudder = clamp(angleDiff(bearing, b.heading_deg[r]) * PILOT_GAIN, -1, 1);"),
     ),
     Bug(
         name="reach-squared",
@@ -101,6 +118,9 @@ BUGS = [
                  "of reach."),
         kind="squared distance compared with an unsquared reach (reach 1.7 m instead of 3 m)",
         check="reach",
+        # The squared distance, or the comparison with the unsquared reach.
+        defect=("const across = dx * dx + dz * dz; // squared: no square root on every try",
+                "if (across > REACH || Math.abs(p.y - at.y[r]) > REACH_UP) {"),
     ),
     Bug(
         name="anchor-stale",
@@ -124,6 +144,7 @@ BUGS = [
                  "keeps sailing as fast as before."),
         kind="stale variable: the hoist is written from the value read before the anchor rule",
         check="anchor",
+        defect=("b.hoist[r] = wanted;",),
     ),
     Bug(
         name="tally-off-by-one",
@@ -140,6 +161,8 @@ BUGS = [
                  "after the last one it still says one crate is left."),
         kind="off by one: the crates left are counted before the crate just taken",
         check="tally",
+        # The two lines in the wrong order: `left`, and the increment it must follow.
+        defect=("const left = tally.total[r] - tally.taken[r];", "tally.taken[r] = tally.taken[r] + 1;"),
     ),
     Bug(
         name="goto-wrap",
@@ -155,6 +178,8 @@ BUGS = [
                  "goto), he turns the long way round, to the left, nearly a full circle, before heading for it."),
         kind="a missing wrap: an angle difference below -180 degrees is not brought back into range",
         check="goto_behind",
+        # The missing statement belongs between these two.
+        defect=("if (d > 180) d -= 360;", "return d;"),
     ),
 ]
 BUG = {b.name: b for b in BUGS}
@@ -184,6 +209,54 @@ def build_project(dest: Path, bug: Bug | None) -> Path:
 
 def scripts_of(proj: Path) -> dict:
     return {p.name: p.read_text() for p in sorted((proj / "scripts").glob("*.ts"))}
+
+
+def scripts_with(bug: Bug | None) -> dict:
+    """The game's scripts (with `bug` planted), built in a temporary directory deleted at once: a run
+    never leaves a clean copy of the game where its agent could find it."""
+    tmp = Path(tempfile.mkdtemp(prefix=TMP_PREFIX))
+    try:
+        return scripts_of(build_project(tmp, bug))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def project_with(dest: Path, scripts: dict) -> Path:
+    """The game (scene and project files) at dest with exactly these scripts."""
+    proj = build_project(dest, None)
+    shutil.rmtree(proj / "scripts")
+    (proj / "scripts").mkdir()
+    for name, text in scripts.items():
+        (proj / "scripts" / name).write_text(text)
+    return proj
+
+
+# The rules' constants (`const REACH = 3;`): the prompt forbids changing them to hide a symptom.
+RULE_CONST = re.compile(r"(?m)^const ([A-Z][A-Z0-9_]*)\s*=\s*([^;\n]+);")
+
+
+def rules_changed(clean: dict, final: dict) -> list:
+    """The rules' constants of the clean game that the final scripts no longer declare with the same
+    value (whitespace ignored)."""
+    out = []
+    for name, text in clean.items():
+        have = {k: re.sub(r"\s+", "", v) for k, v in RULE_CONST.findall(final.get(name, ""))}
+        for k, v in RULE_CONST.findall(text):
+            if have.get(k) != re.sub(r"\s+", "", v):
+                out.append(f"{name}: {k} = {v.strip()} -> {have.get(k, 'gone')}")
+    return out
+
+
+def defect_lines(bug: Bug, planted_text: str) -> list:
+    """The line numbers of the defect in the planted file."""
+    return [i for i, line in enumerate(planted_text.splitlines(), 1) if line.strip() in bug.defect]
+
+
+def is_located(bug: Bug, answer, lines) -> bool:
+    """The agent's final JSON names the planted file and one of the defect's lines exactly."""
+    return bool(answer) and isinstance(answer.get("file"), str) \
+        and answer["file"].lstrip("./") in (bug.file, bug.file.split("/")[-1]) \
+        and isinstance(answer.get("line"), int) and answer["line"] in lines
 
 
 def diff(a: dict, b: dict, la: str, lb: str) -> str:
@@ -272,6 +345,9 @@ def last_seq(h: Host):
 
 
 def check_steer(h: Host):
+    # The clean game turns 23 degrees left and 14 right of the wheel-0 course (weather helm pulls
+    # it to port); the sign error turns 14 right and 23 left. 5 degrees leaves room for a fix
+    # written differently.
     out = {}
     for steer in (0, -1, 1):
         fresh(h)
@@ -279,8 +355,9 @@ def check_steer(h: Host):
         h.call("time.step", {"ticks": 90})
         out[steer] = boat(h)["Boat"]["heading_deg"]
     left, right = heading_change(out[0], out[-1]), heading_change(out[0], out[1])
-    ok = left < -10 and right > 10
-    return ok, f"heading after 1.5 s from 90: wheel 0 {out[0]:.1f}, left {out[-1]:.1f} ({left:+.1f}), right {out[1]:.1f} ({right:+.1f})"
+    ok = left < -5 and right > 5
+    return ok, (f"heading after 1.5 s from 90: wheel 0 {out[0]:.1f}, left {out[-1]:.1f} ({left:+.1f}), "
+                f"right {out[1]:.1f} ({right:+.1f}) (pass: left < -5, right > +5)")
 
 
 def crate_pos(h: Host, name):
@@ -288,6 +365,8 @@ def crate_pos(h: Host, name):
 
 
 def check_goto(h: Host):
+    # The clean helmsman passes Crate4 at 2.7 m, the radians bug at 19 m at best; 6 m leaves room
+    # for a pursuit written differently.
     fresh(h)
     edit(h, setc("Sloop", "Helm", {"goto": "Crate4"}))
     best = 1e9
@@ -296,9 +375,9 @@ def check_goto(h: Host):
         b = boat(h)["Transform"]["position"]
         c = crate_pos(h, "Crate4")
         best = min(best, math.hypot(c[0] - b[0], c[2] - b[2]))
-        if best < 3:
+        if best < 6:
             break
-    return best < 3, f"closest approach to Crate4 within 15 s: {best:.1f} m (pass < 3 m)"
+    return best < 6, f"nearest to Crate4 within 15 s (sampled every 0.5 s): {best:.1f} m (pass < 6 m)"
 
 
 def check_goto_behind(h: Host):
@@ -363,23 +442,38 @@ def check_tally(h: Host):
 CHECKS = {"steer": check_steer, "goto": check_goto, "goto_behind": check_goto_behind, "reach": check_reach,
           "anchor": check_anchor, "tally": check_tally}
 
-# A scenario exercising every feature, for the hash chain against the clean game.
+def op_set(entity, component, value):
+    return {"op": "set", "entity": entity, "component": component, "value": value}
+
+
+# A scenario exercising every feature, compared with the clean game by its world hash chain (every
+# tick, `pocket hashes --inputs`). The world hash covers the components and the persisted resources,
+# among them the event inbox (each tick's events), so an event's field (`left`) counts too. The
+# Sloop starts at the origin, heading 90: the four crates are brought alongside and taken first,
+# Crate1 at 2.5 m (inside REACH, outside the squared-distance bug's 1.7 m), so every `left` and
+# `crates.all` happens; the helmsman then steers for two spawned marks, since the crates are gone.
+# --selftest asserts that every planted bug changes the chain.
 SCENARIO = [
-    (30, [setc("Sloop", "Helm", {"steer": -1})]),
-    (90, [setc("Sloop", "Helm", {"steer": 1})]),
-    (150, [setc("Sloop", "Helm", {"steer": 0, "goto": "Crate4"})]),
-    (400, [setc("Crate2", "Transform", {"position": [-10, 0, 10]}), setc("Sloop", "Helm", {"goto": "Crate2"})]),
-    (520, [setc("Sloop", "Helm", {"goto": None, "anchor": True})]),
-    (600, [setc("Crate1", "Transform", {"position": [0, 0, 0]}), setc("Sloop", "Crew", {"take": "Crate1"})]),
+    (2, [op_set("Crate1", "Transform", {"position": [0, 0, 2.5]}), op_set("Sloop", "Crew", {"take": "Crate1"})]),
+    (4, [op_set("Crate2", "Transform", {"position": [1.0, 0, -1.2]}), op_set("Sloop", "Crew", {"take": "Crate2"})]),
+    (6, [op_set("Crate3", "Transform", {"position": [-1.0, 0, 1.0]}), op_set("Sloop", "Crew", {"take": "Crate3"})]),
+    (8, [op_set("Crate4", "Transform", {"position": [0.6, 0, 0.8]}), op_set("Sloop", "Crew", {"take": "Crate4"})]),
+    (10, [{"op": "spawn", "name": "Mark1", "components": {"Transform": {"position": [26, 0, -6]}}},
+          {"op": "spawn", "name": "Mark2", "components": {"Transform": {"position": [-10, 0, 10]}}}]),
+    (30, [op_set("Sloop", "Helm", {"steer": -1})]),
+    (90, [op_set("Sloop", "Helm", {"steer": 1})]),
+    (150, [op_set("Sloop", "Helm", {"steer": 0, "goto": "Mark1"})]),
+    (400, [op_set("Sloop", "Helm", {"goto": "Mark2"})]),
+    (520, [op_set("Sloop", "Helm", {"goto": None, "anchor": True})]),
 ]
+SCENARIO_TICKS = 720
 
 
-def scenario_hashes(pocket: str, proj: Path, inputs: Path, ticks=720):
+def scenario_hashes(pocket: str, proj: Path, inputs: Path, ticks=SCENARIO_TICKS):
     with open(inputs, "w") as f:
         for tick, edits in SCENARIO:
-            ops = [{"op": "set", **e["set"]} for e in edits]
             f.write(json.dumps({"tick": tick, "source": {"player": 0}, "name": "world_edit",
-                                "params": {"edits": ops}}) + "\n")
+                                "params": {"edits": edits}}) + "\n")
     r = subprocess.run([pocket, "hashes", str(proj), "--ticks", str(ticks), "--inputs", str(inputs)],
                        capture_output=True, text=True, timeout=600)
     if r.returncode != 0:
@@ -397,6 +491,42 @@ def run_checks(pocket: str, proj: Path, errlog: Path):
             except Exception as e:  # a refusal (the scripts do not load, an entity is gone) fails it
                 out[name] = [False, f"check failed to run: {e}"]
     return out
+
+
+def clean_reference(pocket: str) -> dict:
+    """The clean game's scripts and scenario hash chain."""
+    clean = scripts_with(None)
+    tmp = Path(tempfile.mkdtemp(prefix=TMP_PREFIX))
+    try:
+        hashes, herr = scenario_hashes(pocket, project_with(tmp, clean), tmp / "scenario.jsonl")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    if hashes is None:
+        raise SystemExit(f"the clean game's hash chain failed: {herr}")
+    return {"scripts": clean, "hashes": hashes}
+
+
+def evaluate(pocket: str, scripts: dict, reference: dict, errlog: Path) -> dict:
+    """Checks a game's final scripts on a fresh host: the behavioural checks, the rules' constants,
+    and the scenario's hash chain against the clean game's. `success` is the first two."""
+    tmp = Path(tempfile.mkdtemp(prefix=TMP_PREFIX))
+    try:
+        proj = project_with(tmp, scripts)
+        checks = run_checks(pocket, proj, errlog)
+        hashes, herr = scenario_hashes(pocket, proj, tmp / "scenario.jsonl")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    changed = rules_changed(reference["scripts"], scripts)
+    diverged = None
+    if hashes is not None and hashes != reference["hashes"]:
+        diverged = next((i for i, (x, y) in enumerate(zip(hashes, reference["hashes"])) if x != y),
+                        min(len(hashes), len(reference["hashes"])))
+    return {
+        "success": all(ok for ok, _ in checks.values()) and not changed, "checks": checks,
+        "rules_kept": not changed, "rules_changed": changed,
+        "hash_chain_identical_to_clean": hashes is not None and diverged is None,
+        "hash_first_divergence_tick": diverged, "hash_error": herr or None,
+    }
 
 
 # --- The agent -----------------------------------------------------------------------------------
@@ -446,17 +576,81 @@ DEBUGGER_RULE = """- Before you change any code, confirm the cause in the runnin
 """
 
 
-def opencode_config(workdir: Path, via: str, host_url: str):
+def user_provider(model: str) -> dict:
+    """The user's own opencode settings for the model's provider (e.g. its API key file): the one
+    thing an evaluation run takes from their global configuration."""
+    home = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "opencode" / "opencode.json"
+    try:
+        cfg = json.loads(home.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+    name = model.split("/", 1)[0]
+    p = (cfg.get("provider") or {}).get(name)
+    return {name: p} if p else {}
+
+
+def opencode_config(path: Path, via: str, host_url: str, model: str, shell: Path):
     allow = ["pocket", "pocket *", "grep *", "head *", "tail *", "wc *", "sort *", "jq *", "echo *",
              "cat *", "sleep *"]
     bash = {"*": "deny", **{p: "allow" for p in allow}}
-    cfg = {"$schema": "https://opencode.ai/config.json",
+    cfg = {"$schema": "https://opencode.ai/config.json", "shell": str(shell),
            "permission": {"*": "deny", "bash": bash, "read": {"*": "allow"}, "edit": {"*": "allow"},
                           "external_directory": "deny"}}
+    provider = user_provider(model)
+    if provider:
+        cfg["provider"] = provider
     if via == "mcp":
         cfg["mcp"] = {"pocket": {"type": "remote", "url": host_url + "/mcp", "enabled": True}}
         cfg["permission"]["pocket_*"] = "allow"
-    (workdir / "opencode.json").write_text(json.dumps(cfg, indent=2) + "\n")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(cfg, indent=2) + "\n")
+
+
+# The agent's shell runs under sandbox-exec. opencode's bash permissions match command words, not
+# paths: `grep x ../game/scripts/helm.ts` or `pocket step 1 > /tmp/x` pass them. The sandbox reads
+# and writes only the scratch directory (and the shell's own temporary directory, for heredocs),
+# reads the directory holding `pocket`, and talks only to the local host. Under SBPL a later rule
+# overrides an earlier one only for the operation it names: the allows name file-read-data, as the
+# deny does (an allow of file-read* does not lift it).
+SANDBOX = """(version 1)
+(allow default)
+(deny file-read-data file-write* {denied})
+(deny file-write* (subpath "/"))
+(allow file-write* (subpath "/dev"))
+(allow file-read-data file-write* (subpath "{work}") (subpath "{shtmp}"))
+(allow file-read-data (subpath "{bin}"))
+(deny network*)
+(allow network* (remote ip "localhost:*"))
+"""
+
+
+def denied_roots():
+    """Everything the agent must not read: home directories, other volumes, the temporary
+    directories (other runs, other agents' work), and this repository wherever it is."""
+    roots = {"/Users", "/Volumes", "/private/tmp", "/private/var/folders", str(Path.home().resolve()),
+             str(REPO.resolve()), str(Path(tempfile.gettempdir()).resolve())}
+    return " ".join(f'(subpath "{r}")' for r in sorted(roots))
+
+
+def agent_layout(tmp: Path, pocket: str, via: str, host_url: str, model: str):
+    """The agent's scratch directory and environment under `tmp` (which also holds the game): the
+    `pocket` on its PATH, the sandboxed shell, and opencode's own configuration directory."""
+    tmp = tmp.resolve()
+    workdir, bindir, shtmp, cfgdir = tmp / "agent", tmp / "bin", tmp / "shtmp", tmp / "config"
+    for d in (workdir, bindir, shtmp, cfgdir):
+        d.mkdir()
+    os.symlink(os.path.abspath(pocket), bindir / "pocket")
+    profile = tmp / "shell.sb"
+    profile.write_text(SANDBOX.format(denied=denied_roots(), work=workdir, shtmp=shtmp, bin=bindir))
+    shell = tmp / "shell" / "sh"     # opencode runs a shell named `sh` as `sh -c <command>`
+    shell.parent.mkdir()
+    shell.write_text(f"#!/bin/sh\nTMPDIR={shtmp}/ exec /usr/bin/sandbox-exec -f {profile} /bin/bash \"$@\"\n")
+    shell.chmod(0o755)
+    opencode_config(cfgdir / "opencode" / "opencode.json", via, host_url, model, shell)
+    env = {**os.environ, "POCKET_HOST": host_url, "PATH": f"{bindir}:{os.environ['PATH']}",
+           "XDG_CONFIG_HOME": str(cfgdir), "OPENCODE_DISABLE_CLAUDE_CODE": "1",
+           "OPENCODE_DISABLE_EXTERNAL_SKILLS": "1"}
+    return workdir, shell, env
 
 
 # opencode's refusal of a denied call lists every permission rule, including the allowances it adds
@@ -662,32 +856,35 @@ def planted_lines(bug: Bug, proj_text: str):
     return first, first + bug.new.count("\n") - 1
 
 
-def one_run(a, bug: Bug, trial: int, reference_hashes):
+def free_run_dir(root: Path, bug: Bug, label: str, trial: int):
+    """The run's evidence directory, `<label>-<trial>` or the next free trial number: a recorded run
+    is never replaced."""
+    while (root / bug.name / f"{label}-{trial}").exists():
+        trial += 1
+    return root / bug.name / f"{label}-{trial}", trial
+
+
+def one_run(a, bug: Bug, trial: int, reference):
     label = a.via + ("" if a.variant == "free" else f"-{a.variant}")
-    out = EVIDENCE / bug.name / f"{label}-{trial}"
-    if out.exists():
-        shutil.rmtree(out)
+    out, got = free_run_dir(a.evidence, bug, label, trial)
+    if got != trial:
+        print(f"  {bug.name}: {label}-{trial} is recorded; this run is {label}-{got}", flush=True)
+    trial = got
     out.mkdir(parents=True)
-    tmp = Path(tempfile.mkdtemp(prefix=f"pocket-debug-eval-{bug.name}-"))
+    tmp = Path(tempfile.mkdtemp(prefix=TMP_PREFIX))
     started = time.time()
     try:
         proj = build_project(tmp, bug)
         planted = scripts_of(proj)
-        clean = scripts_of(build_project(tmp / "clean", None))
-        (out / "planted.diff").write_text(diff(clean, planted, "clean", "planted"))
-        lines = planted_lines(bug, (proj / bug.file).read_text())
-        workdir = tmp / "agent"
-        workdir.mkdir()
-        bindir = tmp / "bin"
-        bindir.mkdir()
-        os.symlink(os.path.abspath(a.pocket), bindir / "pocket")
+        (out / "planted.diff").write_text(diff(reference["scripts"], planted, "clean", "planted"))
+        planted_text = (proj / bug.file).read_text()
+        lines, defect = planted_lines(bug, planted_text), defect_lines(bug, planted_text)
         prompt = PROMPT.format(symptom=bug.symptom, max_calls=a.max_calls, max_minutes=a.max_time // 60,
                                debugger=DEBUGGER_RULE if a.variant == "debugger" else "",
                                mcp=MCP_RULE if a.via == "mcp" else "")
         (out / "prompt.txt").write_text(prompt)
         with Host(a.pocket, proj, out / "serve.err") as host:
-            opencode_config(workdir, a.via, host.url)
-            env = {**os.environ, "POCKET_HOST": host.url, "PATH": f"{bindir}:{os.environ['PATH']}"}
+            workdir, _, env = agent_layout(tmp, a.pocket, a.via, host.url, a.model)
             print(f"  {bug.name} #{trial}: host {host.url}, agent {a.model} via {a.via} ...", flush=True)
             events, stopped, agent_s, stderr, code = run_opencode(
                 prompt, workdir, env, a.model, a.max_time, a.max_calls, out / "transcript.jsonl")
@@ -701,36 +898,23 @@ def one_run(a, bug: Bug, trial: int, reference_hashes):
         final = scripts_of(proj)
         (out / "fix.diff").write_text(diff(planted, final, "planted", "agent"))
         # The checks run on a fresh copy of the game whose scripts are the agent's.
-        check_proj = build_project(tmp / "check", None)
-        shutil.rmtree(check_proj / "scripts")
-        shutil.copytree(proj / "scripts", check_proj / "scripts")
-        checks = run_checks(a.pocket, check_proj, out / "check-serve.err")
-        hashes, herr = scenario_hashes(a.pocket, check_proj, tmp / "scenario.jsonl")
-        identical = hashes is not None and hashes == reference_hashes
-        diverged = None
-        if hashes and not identical:
-            diverged = next((i for i, (x, y) in enumerate(zip(hashes, reference_hashes)) if x != y), None)
-        own = checks[bug.check][0]
-        success = all(ok for ok, _ in checks.values())
+        verdict = evaluate(a.pocket, final, reference, out / "check-serve.err")
         ans = stats.pop("answer")
-        located = bool(ans) and ans.get("file", "").lstrip("./") in (bug.file, bug.file.split("/")[-1]) \
-            and isinstance(ans.get("line"), int) and lines[0] - 2 <= ans["line"] <= lines[1] + 2
         result = {
             "bug": bug.name, "kind": bug.kind, "trial": trial, "model": a.model, "via": a.via,
-            "variant": a.variant,
-            "success": success, "bug_check": own, "checks": checks,
-            "hash_chain_identical_to_clean": identical, "hash_first_divergence_tick": diverged,
-            "hash_error": herr or None,
-            "answer": ans, "located": located, "planted_at": {"file": bug.file, "lines": list(lines)},
+            "variant": a.variant, "isolation": "sandbox",
+            **verdict, "bug_check": verdict["checks"][bug.check][0],
+            "answer": ans, "located": is_located(bug, ans, defect),
+            "planted_at": {"file": bug.file, "lines": list(lines), "defect_lines": defect},
             "stopped_by": stopped, "agent_exit": code,
             "agent_s": agent_s, "wall_s": round(time.time() - started, 1),
             "budget": {"max_calls": a.max_calls, "max_time_s": a.max_time}, **stats,
             "debug_used": uses_debugger(stats["cli"]),
         }
         (out / "result.json").write_text(json.dumps(result, indent=2) + "\n")
-        print(f"  {bug.name} #{trial}: success={success} (own check {own}), located={located}, "
-              f"{stats['tool_calls']} tool calls ({stats['pocket_calls']} pocket), {agent_s} s, "
-              f"{stats['tokens']['total']} tokens, stopped_by={stopped}", flush=True)
+        print(f"  {bug.name} #{trial}: success={result['success']} (own check {result['bug_check']}), "
+              f"located={result['located']}, {stats['tool_calls']} tool calls ({stats['pocket_calls']} pocket), "
+              f"{agent_s} s, {stats['tokens']['total']} tokens, stopped_by={stopped}", flush=True)
         return result
     finally:
         kill_strays(tmp)
@@ -738,11 +922,66 @@ def one_run(a, bug: Bug, trial: int, reference_hashes):
             shutil.rmtree(tmp, ignore_errors=True)
 
 
-def report():
-    """Re-reads every run's transcript (so the counts follow this file's summarize), updates its
-    result.json, writes summary.json and prints the results table and the feature tallies."""
+def apply_diff(scripts: dict, patch_text: str) -> dict:
+    """`scripts` with a run's fix.diff applied (`patch`)."""
+    tmp = Path(tempfile.mkdtemp(prefix=TMP_PREFIX))
+    try:
+        (tmp / "scripts").mkdir()
+        for name, text in scripts.items():
+            (tmp / "scripts" / name).write_text(text)
+        if patch_text.strip():
+            r = subprocess.run(["patch", "-p1", "-E", "--batch", "--forward", "-d", str(tmp)],
+                               input=patch_text, capture_output=True, text=True)
+            if r.returncode != 0:
+                raise RuntimeError(f"fix.diff does not apply: {r.stdout}{r.stderr}")
+        return scripts_of(tmp)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def recheck(a):
+    """Re-checks every recorded run's final scripts (its planted game plus its fix.diff) with this
+    file's checks, rules, scenario and `located`, and updates result.json. The verdicts it was
+    recorded with stay under `as_run`."""
+    reference = clean_reference(a.pocket)
+    scratch = Path(tempfile.mkdtemp(prefix=TMP_PREFIX))
+    try:
+        for res in sorted(a.evidence.glob("*/*/result.json")):
+            r = json.loads(res.read_text())
+            bug = BUG[r["bug"]]
+            planted = scripts_with(bug)
+            final = apply_diff(planted, (res.parent / "fix.diff").read_text())
+            defect = defect_lines(bug, planted[bug.file.split("/")[-1]])
+            r.setdefault("as_run", {k: r.get(k) for k in ("success", "located", "checks",
+                                                          "hash_chain_identical_to_clean",
+                                                          "hash_first_divergence_tick")})
+            r.setdefault("isolation", "permissions")
+            verdict = evaluate(a.pocket, final, reference, scratch / "serve.err")
+            r.update(verdict)
+            r["bug_check"] = verdict["checks"][bug.check][0]
+            r["located"] = is_located(bug, r.get("answer"), defect)
+            r["planted_at"]["defect_lines"] = defect
+            res.write_text(json.dumps(r, indent=2) + "\n")
+            print(f"  {res.parent.relative_to(a.evidence)}: fixed {r['success']} (as run {r['as_run']['success']}), "
+                  f"rules kept {r['rules_kept']}, hash = clean {r['hash_chain_identical_to_clean']} "
+                  f"(as run {r['as_run']['hash_chain_identical_to_clean']}), located {r['located']} "
+                  f"(as run {r['as_run']['located']})", flush=True)
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+    return 0
+
+
+TABLE_BEGIN = "<!-- results table: written by `python3 tools/eval/debug_eval.py --report` -->"
+TABLE_END = "<!-- end of results table -->"
+
+
+def report(a):
+    """Re-reads every run's transcript (so the counts follow this file's summarize), rewrites its
+    result.json, transcript.md and redacted transcript.jsonl, writes summary.json and the results
+    table in docs/bench/debug-eval.md (for the default evidence directory; printed otherwise), and
+    prints the tallies."""
     runs = []
-    for res in sorted(EVIDENCE.glob("*/*/result.json")):
+    for res in sorted(a.evidence.glob("*/*/result.json")):
         r = json.loads(res.read_text())
         raw = res.parent / "transcript.jsonl"
         lines = [redact(l) for l in raw.read_text().splitlines()]
@@ -757,25 +996,41 @@ def report():
         r.update(stats)
         r["debug_used"] = uses_debugger(stats["cli"])
         res.write_text(json.dumps(r, indent=2) + "\n")
-        r["dir"] = str(res.parent.relative_to(EVIDENCE))
+        r["dir"] = str(res.parent.relative_to(a.evidence))
         runs.append(r)
     order = {b.name: i for i, b in enumerate(BUGS)}
     runs.sort(key=lambda r: (r.get("variant", "free"), r["via"], order.get(r["bug"], 99), r["trial"]))
-    (EVIDENCE / "summary.json").write_text(json.dumps(
-        [{k: r.get(k) for k in ("dir", "bug", "variant", "via", "trial", "success", "bug_check", "located",
-                                "hash_chain_identical_to_clean", "tool_calls", "pocket_calls", "tool_errors",
-                                "agent_s", "wall_s", "tokens", "debug_used", "stopped_by", "cli", "refusals",
-                                "output_chars", "largest_output_chars", "first_s", "bash_timeouts", "blocked_s",
-                                "eval_unseen_locals", "stale_bundle_after_restore")} for r in runs], indent=2) + "\n")
-    print("| Run | Bug | Fixed | Located | Hash = clean | Tool calls | `pocket` calls | Agent s | Tokens (k, cached) | Debugger | Stopped by |")
-    print("|---|---|---|---|---|---|---|---|---|---|---|")
+    (a.evidence / "summary.json").write_text(json.dumps(
+        [{k: r.get(k) for k in ("dir", "bug", "variant", "via", "trial", "isolation", "success", "bug_check",
+                                "rules_kept", "located", "hash_chain_identical_to_clean", "as_run",
+                                "tool_calls", "pocket_calls",
+                                "tool_errors", "agent_s", "wall_s", "tokens", "debug_used", "stopped_by", "cli",
+                                "refusals", "output_chars", "largest_output_chars", "first_s", "bash_timeouts",
+                                "blocked_s", "eval_unseen_locals", "stale_bundle_after_restore")} for r in runs],
+        indent=2) + "\n")
+
+    def yes(v):
+        return "yes" if v else "no"
+    base = os.path.relpath(a.evidence, DOC.parent)
+    table = ["| Run | Bug | Fixed | Located | Hash = clean | Tool calls | `pocket` calls | "
+             "Agent s | Tokens k (cached) | Debugger | Stopped by |",
+             "|---|---|---|---|---|---|---|---|---|---|---|"]
     for r in runs:
         t = r["tokens"]
-        print(f"| [{r['dir']}]({r['dir']}/transcript.md) | {r['bug']} | {'yes' if r['success'] else 'NO'} | "
-              f"{'yes' if r['located'] else 'no'} | {'yes' if r['hash_chain_identical_to_clean'] else 'no'} | "
-              f"{r['tool_calls']} | {r['pocket_calls']} | {r['agent_s']:.0f} | {t['total'] / 1000:.0f} ({t['cache_read'] / 1000:.0f}) | "
-              f"{'yes' if r['debug_used'] else '-'} | {r['stopped_by'] or '-'} |")
-    print()
+        table.append(
+            f"| [{r['dir']}]({base}/{r['dir']}/transcript.md) | {r['bug']} | {'yes' if r['success'] else 'NO'} | "
+            f"{yes(r['located'])} | {yes(r.get('hash_chain_identical_to_clean'))} | "
+            f"{r['tool_calls']} | {r['pocket_calls']} | "
+            f"{r['agent_s']:.0f} | {t['total'] / 1000:.0f} ({t['cache_read'] / 1000:.0f}) | "
+            f"{'yes' if r['debug_used'] else '-'} | {(r['stopped_by'] or '-').replace('_', ' ')} |")
+    if a.evidence.resolve() == EVIDENCE.resolve() and TABLE_BEGIN in DOC.read_text():
+        doc = DOC.read_text()
+        head, rest = doc.split(TABLE_BEGIN, 1)
+        tail = rest.split(TABLE_END, 1)[1]
+        DOC.write_text(head + TABLE_BEGIN + "\n" + "\n".join(table) + "\n" + TABLE_END + tail)
+        print(f"results table written to {DOC.relative_to(REPO)}\n")
+    else:
+        print("\n".join(table) + "\n")
     for variant in sorted({r.get("variant", "free") + "/" + r["via"] for r in runs}):
         rs = [r for r in runs if r.get("variant", "free") + "/" + r["via"] == variant]
         uses, calls, refs = {}, {}, {}
@@ -804,32 +1059,120 @@ def report():
         print(f"  tool output per run (chars): median "
               f"{sorted(r['output_chars'] for r in rs)[len(rs) // 2]:,}, largest single "
               f"{max(r['largest_output_chars'] for r in rs):,}")
+    near = [f"{r['dir']} (line {r['answer']['line']}, defect {r['planted_at'].get('defect_lines')})"
+            for r in runs if not r["located"] and r.get("answer") and isinstance(r["answer"].get("line"), int)
+            and any(abs(r["answer"]["line"] - n) <= 2 for n in r["planted_at"].get("defect_lines") or [])]
+    print(f"named the defect's file with a line one or two off: {len(near)} runs" + (": " + "; ".join(near) if near else ""))
     return 0
 
 
-def selftest(a):
-    """The clean game passes every check; each planted bug fails its own check."""
+# Commands run through the agent's sandboxed shell by --selftest, as opencode runs them (`sh -c`):
+# (command, whether it must work, text its output must contain).
+PROBES = [
+    ("pocket status", True, "tick 0"),
+    ("pocket scripts read scripts/helm.ts | grep -c atan2", True, "1"),
+    ("echo note > notes.txt && cat notes.txt", True, "note"),
+    ("cat <<'EOF' | wc -l\na\nb\nEOF", True, "2"),
+    ("head -3 ../sailing/scripts/helm.ts", False, "Operation not permitted"),
+    ("grep -rn REACH {repo}/samples/sailing/scripts", False, "Operation not permitted"),
+    ("grep -c . {home}/.config/opencode/opencode.json", False, "Operation not permitted"),
+    ("pocket step 1 > {tmpdir}/pocket-eval-probe.out", False, "Operation not permitted"),
+    ("pocket hashes ../sailing --ticks 1", False, "Operation not permitted"),
+]
+
+
+def sandbox_probe(pocket: str, model: str) -> bool:
+    """The agent's layout around a running host: what its shell can and cannot reach, and what
+    opencode resolves with the run's configuration (when opencode is installed)."""
     ok = True
-    tmp = Path(tempfile.mkdtemp(prefix="pocket-debug-eval-selftest-"))
+    tmp = Path(tempfile.mkdtemp(prefix=TMP_PREFIX))
     try:
-        for bug in [None, *[BUG[n] for n in a.bugs]]:
-            name = bug.name if bug else "clean"
-            proj = build_project(tmp / name, bug)
-            checks = run_checks(a.pocket, proj, tmp / f"{name}.err")
-            hashes, herr = scenario_hashes(a.pocket, proj, tmp / f"{name}.jsonl")
-            for c, (passed, detail) in checks.items():
-                print(f"  {name:17} {c:12} {'pass' if passed else 'FAIL'}  {detail}")
+        proj = build_project(tmp, None)
+        with Host(pocket, proj, tmp / "serve.err") as host:
+            workdir, shell, env = agent_layout(tmp, pocket, "cli", host.url, model)
+            # Printed with the machine's paths as placeholders.
+            places = {"{repo}": str(REPO), "{home}": str(Path.home()), "{tmpdir}": tempfile.gettempdir().rstrip("/")}
+            for template, must_work, want in PROBES:
+                cmd = template.format(**{k[1:-1]: v for k, v in places.items()})
+                r = subprocess.run([str(shell), "-c", cmd], cwd=workdir, env=env, capture_output=True,
+                                   text=True, timeout=60)
+                got = (r.stdout + r.stderr).strip()
+                good = want in got and (r.returncode == 0 or not must_work)
+                ok &= good
+                shown = got.splitlines()[0] if got else "(no output)"
+                for k, v in places.items():
+                    shown = shown.replace(v, k)
+                print(f"{'ok  ' if good else 'BAD '} sandbox {'allows' if must_work else 'refuses'}: "
+                      f"{template.splitlines()[0]}  ->  {shown}")
+            if shutil.which("opencode"):
+                def debug(*what):
+                    r = subprocess.run(["opencode", "debug", *what], cwd=workdir, env=env, capture_output=True,
+                                       text=True, timeout=120, stdin=subprocess.DEVNULL)
+                    return r.stdout
+                cfg = json.loads(debug("config"))
+                skills = json.loads(debug("skill"))
+                paths = dict(line.split(None, 1) for line in debug("paths").splitlines() if line.strip())
+                # opencode 1.18 reads <config>/AGENTS.md, ~/.claude/CLAUDE.md unless Claude Code
+                # compatibility is off, the `instructions` setting, and AGENTS.md, CLAUDE.md or
+                # CONTEXT.md from the working directory upwards.
+                found = [str(d / n) for d in [Path(paths.get("config", "/")), workdir, *workdir.parents]
+                         for n in ("AGENTS.md", "CLAUDE.md", "CONTEXT.md") if (d / n).exists()]
+                checks = [("opencode's configuration directory is the run's", paths.get("config", "").startswith(str(tmp.resolve()))),
+                          ("its shell is the sandboxed one", cfg.get("shell") == str(shell)),
+                          (f"MCP servers: {sorted(cfg.get('mcp') or {})}", not cfg.get("mcp")),
+                          (f"skills: {[s['name'] for s in skills]}", all(s.get("location") == "<built-in>" for s in skills)),
+                          (f"instruction files: {found + (cfg.get('instructions') or [])}, ~/.claude "
+                           f"{'off' if env.get('OPENCODE_DISABLE_CLAUDE_CODE') else 'ON'}",
+                           not found and not cfg.get("instructions") and bool(env.get("OPENCODE_DISABLE_CLAUDE_CODE")))]
+                for what, good in checks:
+                    ok &= good
+                    print(f"{'ok  ' if good else 'BAD '} opencode: {what}")
+    finally:
+        kill_strays(tmp)
+        shutil.rmtree(tmp, ignore_errors=True)
+    return ok
+
+
+def selftest(a):
+    """The clean game passes every check and its scenario replays identically; each planted bug fails
+    its own check and changes the scenario's hash chain; hiding a symptom by changing a rule's
+    constant passes the behavioural checks but is not a fix; the agent's sandbox holds."""
+    ok = True
+    reference = clean_reference(a.pocket)
+    print(f"clean reference: hash chain of {len(reference['hashes'])} ticks")
+    cases = [("clean", None, reference["scripts"])] + [(n, BUG[n], scripts_with(BUG[n])) for n in a.bugs]
+    # Forbidden by the prompt, and invisible to the behavioural checks and the scenario.
+    for name, const_old, const_new in (("steer-sign", "const RUDDER_GAIN = 0.6;", "const RUDDER_GAIN = -0.6;"),
+                                       ("reach-squared", "const REACH = 3;", "const REACH = 9;")):
+        if name in a.bugs:
+            s = scripts_with(BUG[name])
+            f = BUG[name].file.split("/")[-1]
+            s[f] = s[f].replace(const_old, const_new)
+            cases.append((f"{name}+{const_new.split()[1]}", "tweak", s))
+    tmp = Path(tempfile.mkdtemp(prefix=TMP_PREFIX))
+    try:
+        for name, bug, scripts in cases:
+            v = evaluate(a.pocket, scripts, reference, tmp / "serve.err")
+            for c, (passed, detail) in v["checks"].items():
+                print(f"  {name:22} {c:12} {'pass' if passed else 'FAIL'}  {detail}")
+            same = ("hash chain identical" if v["hash_chain_identical_to_clean"] else
+                    f"hash chain diverges at tick {v['hash_first_divergence_tick']}")
             if bug is None:
-                good = all(p for p, _ in checks.values())
+                good = v["success"] and v["hash_chain_identical_to_clean"]
+                what = f"every check passes, rules kept, {same} in a second run"
+            elif bug == "tweak":
+                good = not v["success"] and not v["rules_kept"]
+                what = (f"behavioural checks {'all pass' if all(p for p, _ in v['checks'].values()) else 'fail'}, "
+                        f"{same}; not a fix: {v['rules_changed']}")
             else:
-                good = not checks[bug.check][0]
-            others = [c for c, (p, _) in checks.items() if not p and bug and c != bug.check]
-            print(f"{'ok  ' if good else 'BAD '} {name}: " + ("every check passes" if bug is None else
-                  f"its own check ({bug.check}) fails" + (f"; also fails {others}" if others else "")) +
-                  (f"; hash chain {len(hashes)} ticks" if hashes else f"; {herr}"))
+                others = [c for c, (p, _) in v["checks"].items() if not p and c != bug.check]
+                good = not v["checks"][bug.check][0] and not v["hash_chain_identical_to_clean"]
+                what = f"its own check ({bug.check}) fails" + (f"; also fails {others}" if others else "") + f"; {same}"
+            print(f"{'ok  ' if good else 'BAD '} {name}: {what}")
             ok &= good
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+    ok &= sandbox_probe(a.pocket, a.model)
     return ok
 
 
@@ -840,7 +1183,8 @@ def main():
                     help="the pocket binary (default $CARGO_TARGET_DIR/release/pocket)")
     ap.add_argument("--bugs", default=",".join(b.name for b in BUGS))
     ap.add_argument("--trials", type=int, default=1)
-    ap.add_argument("--first-trial", type=int, default=1)
+    ap.add_argument("--first-trial", type=int, default=1,
+                    help="the first trial number (a recorded one is skipped to the next free number)")
     ap.add_argument("--model", default=DEFAULT_MODEL)
     ap.add_argument("--via", default="cli", choices=["cli", "mcp"],
                     help="cli: the shell's `pocket` only; mcp: also the host's MCP tools")
@@ -849,33 +1193,36 @@ def main():
                          "script debugger before changing code")
     ap.add_argument("--max-time", type=int, default=900, help="seconds the agent may take")
     ap.add_argument("--max-calls", type=int, default=60, help="tool calls the agent may make")
+    ap.add_argument("--evidence", default=str(EVIDENCE),
+                    help="where runs are recorded (default docs/evidence/debug-eval)")
     ap.add_argument("--selftest", action="store_true")
     ap.add_argument("--list", action="store_true")
+    ap.add_argument("--recheck", action="store_true",
+                    help="re-check every recorded run's fix with this file's checks and update result.json")
     ap.add_argument("--report", action="store_true",
-                    help="re-read every recorded run, update its result.json, print the tables")
+                    help="re-read every recorded run, update its result.json and the results table, print tallies")
     ap.add_argument("--keep", action="store_true", help="keep the temporary projects")
     a = ap.parse_args()
+    a.evidence = Path(a.evidence).resolve()
     a.bugs = [b.strip() for b in a.bugs.split(",") if b.strip()]
     for n in a.bugs:
         if n not in BUG:
             raise SystemExit(f"no bug '{n}'; bugs: {', '.join(BUG)}")
     if a.report:
-        return report()
+        return report(a)
     if a.list:
         for b in BUGS:
             print(f"{b.name:17} {b.file:17} {b.kind}\n{'':17} symptom: {b.symptom}")
         return 0
     if not Path(a.pocket).exists():
         raise SystemExit(f"{a.pocket} is not built (cargo build --release -p pocket-app, or --pocket PATH)")
+    if not Path("/usr/bin/sandbox-exec").exists():
+        raise SystemExit("the agent's shell runs under /usr/bin/sandbox-exec (macOS)")
     if a.selftest:
         return 0 if selftest(a) else 1
-    tmp = Path(tempfile.mkdtemp(prefix="pocket-debug-eval-ref-"))
-    try:
-        reference, herr = scenario_hashes(a.pocket, build_project(tmp, None), tmp / "scenario.jsonl")
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
-    if reference is None:
-        raise SystemExit(f"the clean game's hash chain failed: {herr}")
+    if a.recheck:
+        return recheck(a)
+    reference = clean_reference(a.pocket)
     results = []
     for trial in range(a.first_trial, a.first_trial + a.trials):
         for n in a.bugs:

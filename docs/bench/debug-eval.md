@@ -14,6 +14,13 @@ fix is then checked objectively on a fresh host.
   run's prompt, raw event stream, readable transcript, diffs and result are in
   [docs/evidence/debug-eval/](../evidence/debug-eval/), all runs in
   [summary.json](../evidence/debug-eval/summary.json).
+- The 23 runs were made with the harness of commit `c4a1659`. A review then found that its agent
+  was less isolated than this page claimed and that two of its measures were weaker than they
+  looked. The harness now sandboxes the agent's shell, isolates opencode's configuration, names
+  its directories neutrally, checks the rules' constants and a stronger scenario, and locates
+  strictly. The 23 recorded fixes were re-checked with the new checks (`--recheck`; each
+  result.json keeps its original verdicts under `as_run`). The agents were not re-run: what they
+  could see is described in [The recorded runs' isolation](#the-recorded-runs-isolation).
 
 ## Method
 
@@ -27,19 +34,43 @@ TypeScript that steers. The samples themselves are not modified.
 
 **The bugs.** One per run, each a small mistake that leaves the game running and wrong:
 
-| Bug | Where | Mistake | What the player is told |
+| Bug | Defect line(s) | Mistake | What the player is told |
 |---|---|---|---|
 | `steer-sign` | helm.ts:54 | `rudder = -clamp(steer) * GAIN`: a stray minus | the wheel turns the boat the wrong way |
-| `goto-radians` | helm.ts:66 | `Math.atan2(dx, -dz)` compared with `heading_deg` without `* 180 / Math.PI` | steering for a crate, the boat sails off elsewhere, whichever crate |
-| `reach-squared` | rules.ts:57-61 | squared distance compared with `REACH` (3 m): the reach is 1.7 m | the crew calls crates two or three metres away out of reach |
-| `anchor-stale` | helm.ts:71-78 | `b.hoist[r] = wanted`, the value read before the anchor rule set `sail = 0` | at anchor the boat never slows down |
-| `tally-off-by-one` | rules.ts:63 | `left` counted before `taken` is incremented | after the last crate, one is still left and "all aboard" never comes |
-| `goto-wrap` | helm.ts:28 | `angleDiff` wraps above 180 but not below -180 | steering for a crate behind to starboard, the helmsman turns the long way |
+| `goto-radians` | helm.ts:66 or 67 (where the bearing meets the heading) | `Math.atan2(dx, -dz)` compared with `heading_deg` without `* 180 / Math.PI` | steering for a crate, the boat sails off elsewhere, whichever crate |
+| `reach-squared` | rules.ts:59 or 60 (the comparison) | squared distance compared with `REACH` (3 m): the reach is 1.7 m | the crew calls crates two or three metres away out of reach |
+| `anchor-stale` | helm.ts:78 | `b.hoist[r] = wanted`, the value read before the anchor rule set `sail = 0` | at anchor the boat never slows down |
+| `tally-off-by-one` | rules.ts:63 or 65 (the two lines in the wrong order) | `left` counted before `taken` is incremented | after the last crate, one is still left and "all aboard" never comes |
+| `goto-wrap` | helm.ts:28 or 29 (the missing wrap belongs between them) | `angleDiff` wraps above 180 but not below -180 | steering for a crate behind to starboard, the helmsman turns the long way |
 
-**The agent's sandbox.** A project-level `opencode.json` in an empty scratch directory (the user's
-opencode configuration untouched): bash may run only `pocket ...` and
-`grep head tail wc sort jq echo cat sleep`; file tools reach only the scratch directory; no web, no
-subagents. The game's files are therefore reachable only through `pocket scripts read/write/apply`.
+**The agent's sandbox.** opencode runs with a configuration of its own. `XDG_CONFIG_HOME` points
+into the run's directory, which holds only the harness's `opencode.json`. `OPENCODE_DISABLE_CLAUDE_CODE`
+and `OPENCODE_DISABLE_EXTERNAL_SKILLS` keep `~/.claude` and other skill directories out. The user's
+global rules (`AGENTS.md`, `~/.claude/CLAUDE.md`), skills and MCP servers are therefore not
+loaded. The only setting taken from their global configuration is the model provider's (a
+reference to the API key file). The permissions let bash run only `pocket ...` and
+`grep head tail wc sort jq echo cat sleep`, and let the file tools read and edit only the scratch
+directory. Everything else (web, subagents, skills) is denied.
+
+Those permissions match command words, not paths: `grep x ../sailing/scripts/helm.ts` passes them.
+So the shell itself runs under `sandbox-exec`. It may read and write only the scratch directory
+(and its own temporary directory, for heredocs), read the directory that holds `pocket`, and
+connect only to localhost. Home directories, other volumes, `/tmp`, `/var/folders` and the
+repository cannot be read, and nothing outside the scratch directory can be written. The host
+confines `scripts read/write` to the project's `scripts/`. The game's files are therefore reachable
+only through `pocket scripts read/write/apply`. The run's temporary directory is named
+`pocket-eval-*`. The clean game that the checks compare with is built in another directory, which is
+deleted before the agent starts.
+
+`--selftest` checks all of this through the agent's shell, run the way opencode runs it
+([selftest.txt](../evidence/debug-eval/selftest.txt)). `pocket status`, `scripts read`, scratch
+files and heredocs work. Reading the game's directory, the repository or `~/.config/opencode` is
+refused with "Operation not permitted", as are writing to the temporary directory and
+`pocket hashes ../sailing`. opencode resolves the run's configuration directory, the sandboxed
+shell, no MCP server, only its built-in skill and no instruction file. A live probe through the
+model's own tool calls showed the same: `head` and `grep` on those paths were refused by the
+sandbox, and `ls /`, `pwd` and the read tool on `../sailing` were refused by the permissions.
+
 `POCKET_HOST` points the CLI at the host. The prompt
 ([example](../evidence/debug-eval/goto-radians/cli-1/prompt.txt)) describes the game and its
 controls as a player knows them, quotes the symptom, says that `pocket help` lists the host's
@@ -51,46 +82,105 @@ Three conditions: **free/cli** (the agent chooses its tools), **debugger/cli** (
 before changing code, confirm the cause in the debugger with a breakpoint or a watch and say what it
 showed), **free/mcp** (the host's MCP endpoint is also attached as opencode tools).
 
+### The recorded runs' isolation
+
+The 23 runs were made before the isolation above. They differed in three ways. No transcript
+shows an agent using any of them.
+
+1. **Only opencode's permissions confined the agent.** Text filters with a path argument could
+   read any file the user can. That included a clean copy of the game, which the harness kept next
+   to the scratch directory (`../clean/sailing`) for the whole run. Shell redirects could write
+   anywhere. In all 734 tool calls, no command or file-tool path reads outside the scratch
+   directory: none touches `../`, the clean copy, the repository, or an absolute path, apart from
+   three runs that wrote files of their own to `/tmp` and read them back (`anchor-stale/cli-1`,
+   `goto-radians/cli-debugger-1`, `tally-off-by-one/cli-debugger-1`).
+2. **The temporary directory was named after the bug** (`pocket-debug-eval-goto-radians-*`).
+   opencode puts the working directory into its system prompt, and `pocket info` prints the
+   project root. So the bug's name was in every agent's context. For `goto-radians`,
+   `reach-squared`, `anchor-stale`, `tally-off-by-one` and `goto-wrap`, that name states the
+   defect. 16 of the 23 transcripts show the path in a tool input or output. No agent's message
+   mentions the directory name, but these runs cannot measure its effect (see Limits).
+3. **opencode merged the user's global configuration with the harness's.** In opencode 1.18.2's
+   code, that means the user's global `AGENTS.md` (personal agent guidance) and
+   `~/.claude/CLAUDE.md` as instructions, their ~40 personal skills listed (the skill tool was
+   denied), and an MCP server from their configuration. No run called any tool but bash, read,
+   write, edit and `pocket_*`. The shell was opencode's fallback for a fish user, `/bin/zsh -l`,
+   which reads the user's zsh startup files. opencode's database does not store system prompts,
+   so the exact prompts cannot be confirmed.
+
+Besides the 23 runs, one earlier free/cli `steer-sign` run (opencode session
+`ses_ef851ef0cffeL7XgCIaWM432Wd`, 12:10) ended with the right cause and line. Its evidence was
+overwritten when the harness ran `steer-sign` again at 12:19, because the harness then replaced
+an existing run directory. It now takes the next free trial number instead. That run is not in
+the tallies.
+
 **The check** (on a fresh `pocket serve` of a fresh copy whose `scripts/` are the agent's final
 files, so world edits and a still-running old bundle do not count), through the CLI:
 
 | Check | Pass |
 |---|---|
-| steer | from tick 0, 1.5 s of wheel -1 ends left of wheel 0 by more than 10 degrees, wheel 1 right of it by more than 10 |
-| goto | `goto=Crate4`: the boat comes within 3 m of it in 15 s |
+| steer | from tick 0, 1.5 s of wheel -1 ends left of wheel 0 by more than 5 degrees, wheel 1 right of it by more than 5 (clean: 23 and 14; the bug turns each the other way) |
+| goto | `goto=Crate4`: the boat comes within 6 m of it in 15 s (clean: 2.7 m; the bug: 19 m at best) |
 | goto_behind | a crate at bearing 225 (behind, to starboard) with the bow at 90: after 2 s the heading has turned more than 15 degrees to starboard |
 | reach | crates at 2.5 m and 1.6 m are taken, one at 3.6 m is refused |
 | anchor | 4 s under sail, then anchored: 8 to 10 s later the sail is down and the mean speed below 1.5 m/s |
 | tally | four crates taken one by one: `left` 3, 2, 1, 0 and one `crates.all` |
 
-**Fixed** means all six pass (the bug's own and no regression). **Located** means the agent's final
-JSON names the planted file and a line within two of the planted lines. As a second, stricter
-measure the harness compares the 720-tick hash chain of a scenario that exercises every feature
-(`pocket hashes --inputs`) with the clean game's. `--selftest` shows the clean game passing every
-check and each planted bug failing its own ([selftest.txt](../evidence/debug-eval/selftest.txt);
-`goto-radians` also fails `goto_behind`).
+**Fixed** means all six pass (the bug's own and no regression) and the rules' constants
+(`RUDDER_GAIN`, `PILOT_GAIN`, `REACH`, `REACH_UP`) keep their values. The prompt forbids hiding a
+symptom by changing them, and the behavioural checks cannot tell: `steer-sign` with
+`RUDDER_GAIN = -0.6`, or `reach-squared` with `REACH = 9`, passes all six. **Located** means the
+agent's final JSON names the planted file and one of the defect's lines exactly (table above).
+
+As a second measure, the harness compares a scenario's world hash chain with the clean game's over
+720 ticks (`pocket hashes --inputs`). The world hash covers the components and the persisted
+resources, the event inbox among them, so a changed event field (`tally-off-by-one`'s `left`)
+shows too. The scenario brings the four crates alongside and takes them (one at 2.5 m), steers
+with the wheel both ways, steers for a mark ahead and a mark behind to starboard, and anchors.
+`--selftest` ([selftest.txt](../evidence/debug-eval/selftest.txt)) shows:
+
+- the clean game passing every check and replaying identically;
+- each planted bug failing its own check (`goto-radians` also fails `goto_behind`) and changing
+  the chain: `steer-sign` from tick 1, `reach-squared` and `tally-off-by-one` from 2,
+  `goto-radians` from 150, `goto-wrap` from 400, `anchor-stale` from 520;
+- the two constant changes passing the behavioural checks with an identical chain, and failing
+  only the rules check.
+
+An identical chain therefore says that a fix behaves like the clean game on every feature's path
+through this scenario. It does not say that the fix is the minimal one.
+
+The recorded runs were first checked with thresholds of 3 m and 10 degrees, no rules check, a
+looser "located" (within two lines of the planted text), and an older scenario. In that scenario
+`reach-squared` and `tally-off-by-one` were identical to the clean game even with the bug in,
+because its only take was out of reach. `--recheck` ran all 23 fixes through the current checks.
+Fixed and hash verdicts are unchanged; the strict "located" takes three runs off.
 
 ## Results
 
-23 runs: 21 fixed, 21 located; every fix is bit identical to the clean game over the scenario.
+23 runs: 21 fixed and 18 located. Every fix's hash chain is identical to the clean game's over the
+scenario, which every planted bug changes. Three more runs named the defect's statement in their
+cause but gave a line one or two off: `anchor-stale/cli-debugger-1` (77) and `anchor-stale/mcp-1`
+(76) for 78, and `goto-wrap/mcp-1` (27) for 28-29. `scripts read` prints no line numbers, so
+agents count them by hand.
 
-| Condition | Runs | Fixed | Median agent time | Median tool calls (`pocket` invocations) | Median tokens (93 % cached) | Used the debugger |
-|---|---|---|---|---|---|---|
-| free/cli | 13 | 11 | 444 s | 30 (61) | 634 k | 2 |
-| debugger/cli | 7 | 7 | 477 s | 31 (47) | 404 k | 7 |
-| free/mcp | 3 | 3 | 453 s | 32 (45) | 492 k | 2 |
+| Condition | Runs | Fixed | Located | Median agent time | Median tool calls (`pocket` invocations) | Median tokens (93 % cached) | Used the debugger |
+|---|---|---|---|---|---|---|---|
+| free/cli | 13 | 11 | 11 | 444 s | 30 (61) | 634 k | 2 |
+| debugger/cli | 7 | 7 | 6 | 477 s | 31 (47) | 404 k | 7 |
+| free/mcp | 3 | 3 | 1 | 453 s | 32 (45) | 492 k | 2 |
 
 By bug, free/cli: `steer-sign` 2/2, `goto-radians` 1/3, `reach-squared` 2/2, `anchor-stale` 2/2,
 `tally-off-by-one` 2/2, `goto-wrap` 2/2. `goto-radians` with the debugger required: 2/2; over MCP:
 1/1.
 
+<!-- results table: written by `python3 tools/eval/debug_eval.py --report` -->
 | Run | Bug | Fixed | Located | Hash = clean | Tool calls | `pocket` calls | Agent s | Tokens k (cached) | Debugger | Stopped by |
 |---|---|---|---|---|---|---|---|---|---|---|
 | [steer-sign/cli-debugger-1](../evidence/debug-eval/steer-sign/cli-debugger-1/transcript.md) | steer-sign | yes | yes | yes | 23 | 43 | 313 | 315 (287) | yes | - |
 | [goto-radians/cli-debugger-1](../evidence/debug-eval/goto-radians/cli-debugger-1/transcript.md) | goto-radians | yes | yes | yes | 42 | 83 | 784 | 906 (863) | yes | - |
 | [goto-radians/cli-debugger-2](../evidence/debug-eval/goto-radians/cli-debugger-2/transcript.md) | goto-radians | yes | yes | yes | 23 | 38 | 310 | 287 (260) | yes | - |
 | [reach-squared/cli-debugger-1](../evidence/debug-eval/reach-squared/cli-debugger-1/transcript.md) | reach-squared | yes | yes | yes | 22 | 47 | 362 | 287 (261) | yes | - |
-| [anchor-stale/cli-debugger-1](../evidence/debug-eval/anchor-stale/cli-debugger-1/transcript.md) | anchor-stale | yes | yes | yes | 31 | 44 | 477 | 404 (372) | yes | - |
+| [anchor-stale/cli-debugger-1](../evidence/debug-eval/anchor-stale/cli-debugger-1/transcript.md) | anchor-stale | yes | no | yes | 31 | 44 | 477 | 404 (372) | yes | - |
 | [tally-off-by-one/cli-debugger-1](../evidence/debug-eval/tally-off-by-one/cli-debugger-1/transcript.md) | tally-off-by-one | yes | yes | yes | 46 | 114 | 774 | 875 (831) | yes | - |
 | [goto-wrap/cli-debugger-1](../evidence/debug-eval/goto-wrap/cli-debugger-1/transcript.md) | goto-wrap | yes | yes | yes | 42 | 106 | 759 | 973 (920) | yes | - |
 | [steer-sign/cli-1](../evidence/debug-eval/steer-sign/cli-1/transcript.md) | steer-sign | yes | yes | yes | 40 | 76 | 511 | 635 (583) | - | - |
@@ -107,32 +197,45 @@ By bug, free/cli: `steer-sign` 2/2, `goto-radians` 1/3, `reach-squared` 2/2, `an
 | [goto-wrap/cli-1](../evidence/debug-eval/goto-wrap/cli-1/transcript.md) | goto-wrap | yes | yes | yes | 30 | 61 | 444 | 660 (610) | - | - |
 | [goto-wrap/cli-2](../evidence/debug-eval/goto-wrap/cli-2/transcript.md) | goto-wrap | yes | yes | yes | 28 | 54 | 362 | 566 (521) | - | - |
 | [goto-radians/mcp-1](../evidence/debug-eval/goto-radians/mcp-1/transcript.md) | goto-radians | yes | yes | yes | 32 | 37 | 535 | 578 (530) | yes | - |
-| [anchor-stale/mcp-1](../evidence/debug-eval/anchor-stale/mcp-1/transcript.md) | anchor-stale | yes | yes | yes | 32 | 55 | 453 | 492 (450) | yes | - |
-| [goto-wrap/mcp-1](../evidence/debug-eval/goto-wrap/mcp-1/transcript.md) | goto-wrap | yes | yes | yes | 20 | 45 | 331 | 293 (255) | - | - |
+| [anchor-stale/mcp-1](../evidence/debug-eval/anchor-stale/mcp-1/transcript.md) | anchor-stale | yes | no | yes | 32 | 55 | 453 | 492 (450) | yes | - |
+| [goto-wrap/mcp-1](../evidence/debug-eval/goto-wrap/mcp-1/transcript.md) | goto-wrap | yes | no | yes | 20 | 45 | 331 | 293 (255) | - | - |
+<!-- end of results table -->
 
 "Tool calls" are the agent's tool invocations; one shell line often holds several `pocket` commands.
-`python3 tools/eval/debug_eval.py --report` rebuilds this table and the tallies below from the
-recorded transcripts.
+`python3 tools/eval/debug_eval.py --report` re-reads the recorded transcripts and results. It
+rewrites this table between its markers, each run's result.json and transcript.md, and
+summary.json, and prints the tallies used below. `--recheck` re-runs the fix checks.
 
 ## What the agents did
 
 **They read the code first.** Every run began `pocket help`, `pocket scripts list`,
 `pocket scripts read` of every module. In at least 16 of the 23 runs the agent named the defect from
-the source alone before its first `pocket step` (a keyword match on its messages); the steps that
+the source alone before its first `pocket step` (a keyword match on its messages; the bug's name was
+in their working directory, see Limits); the steps that
 followed reproduced the symptom and verified the fix (`world set` the player's control, `step N`,
 `world get`). The four-file game is small enough to read whole, so for `steer-sign`,
 `reach-squared`, `anchor-stale` and `tally-off-by-one` the debugger added confirmation, not
 discovery.
 
-**The debugger decided the hard case.** `goto-radians` is the one bug the model often misread: in
-two of three free runs it judged the `atan2` line "plausible", reproduced the symptom (the rudder
-pinned at -1), and turned to the debugger on its own. Both runs then ran out of time on debugger
-friction (below); `goto-radians/cli-2` found the cause at 867 s of 900. When the debugger worked, it
-was the evidence: the paused frame's locals in `pocket debug state` showed `bearing = 1.344` where a
-heading in degrees belonged
-([cli-debugger-2](../evidence/debug-eval/goto-radians/cli-debugger-2/transcript.md) at 212 s,
-[mcp-1](../evidence/debug-eval/goto-radians/mcp-1/transcript.md) at 328 s), and both fixed it. A
-data watch did what it is for in
+**The debugger decided one diagnosis, under instruction.** `goto-radians` is the one bug the model
+often misread. Three of its six runs named the radians/degrees mix-up from the source before
+seeing any runtime value:
+[cli-3](../evidence/debug-eval/goto-radians/cli-3/transcript.md) at 36 s,
+[cli-debugger-1](../evidence/debug-eval/goto-radians/cli-debugger-1/transcript.md) at 16 s and
+[mcp-1](../evidence/debug-eval/goto-radians/mcp-1/transcript.md) at 36 s. In the last two, the
+debugger only confirmed it (`bearing = 1.344` among the paused frame's locals).
+
+Only [cli-debugger-2](../evidence/debug-eval/goto-radians/cli-debugger-2/transcript.md), which
+was told to use the debugger, found the cause through runtime values in time: it read
+`bearing = 1.344` (radians, where a heading in degrees belonged) in `pocket debug state` at 212 s
+and fixed it. The two free runs that judged the `atan2` line "plausible" turned to the debugger
+on their own and reproduced the symptom (the rudder pinned at -1). Both then ran out of time on
+debugger friction (below). `cli-1` computed the radians value (`bearingRepro: 1.3438...`) at
+595 s without drawing the conclusion. `cli-2` named the cause at 867 s of 900, from the values it
+had collected. So in these runs the debugger decided a diagnosis once, under instruction, and it
+cost the two free runs that chose it their budget.
+
+A data watch did what it is for in
 [tally-off-by-one/cli-debugger-1](../evidence/debug-eval/tally-off-by-one/cli-debugger-1/transcript.md)
 (`debug.watch` on `Tally.taken` stopped at the increment, rules.ts:66).
 
@@ -164,7 +267,7 @@ Measured over all 23 runs (10,758 s of agent time):
 | A call blocked while the game stood at a breakpoint, until the agent's tool gave up (15 to 120 s each) | 11 | 28 calls, 2,238 s (21 % of all agent time) |
 | `snapshots restore` after `scripts apply` put the old scripts back without saying so | 11 | 8 runs noticed and applied again (994 s from the restore); 3 ended with the host running the old code while their final message said the fix was live |
 | `debug.eval` refused a local that `debug state` lists (`ReferenceError: bearing is not defined`) | 7 | 37 failed evaluations |
-| Debugger parameters guessed by provoking refusals (`pocket help debug.eval`: "no command or method") | 10 | 34 `request.*` refusals on `debug.*` calls |
+| Debugger parameters guessed by provoking refusals (`pocket help debug.eval`: "no command or method") | 9 | 34 `request.*` refusals on `debug.*` calls |
 | Field-level reads refused (`world get Sloop Boat.heading_deg`, `Boat,Transform`), whole components piped through grep/jq instead | 11 | 12 `sim.component_unknown`; median 29 k characters of tool output per run |
 
 Details, with the evidence:
@@ -276,14 +379,24 @@ only on request.
 
 ## Limits
 
+- The 23 recorded runs predate the sandbox, the neutral directory name and the isolated opencode
+  configuration ([The recorded runs' isolation](#the-recorded-runs-isolation)). The bug's name was
+  in every agent's context, and for five of the six bugs it names the defect. The user's global
+  agent guidance was most likely in the system prompt. No transcript shows an agent using either,
+  but the success rates and the "named from the source" count may be higher than an agent without
+  those hints would reach. Runs with the current harness are not affected; re-running the 23
+  would measure the difference.
+- "Fixed" is behavioural plus the rules' constants. The hash chain covers the paths the scenario
+  exercises; an agent's other changes outside them would not show.
 - One model (GLM 5.3 Flash) and a game small enough to read whole; with four short modules, code
   reading finds most single-line defects without running anything. A larger project, or defects that
   need runtime values (a wrong value in data, an order-of-systems effect, a rare branch), would
-  weigh the debugger more; the harness takes new bugs as `Bug(file, old, new, symptom, check)`.
+  weigh the debugger more; the harness takes new bugs as `Bug(file, old, new, symptom, check, defect)`.
 - Two to three trials per bug at most; the success rates are indicative. Wall times include other
   agents' load on the machine and the model's queueing.
 - The debugger variant tells the agent to use the debugger, so it measures the debugger's usability,
   not whether an agent would choose it.
 - The sandbox forbids shell tools beyond the listed filters (no `sed`, `python3`, `kill`), which
-  cost a few calls in some runs (`sed -n` for line ranges, killing a hung background step) and is
+  cost a few calls in some runs (`sed -n` for line ranges, killing a hung background step). It now
+  also keeps shell writes in the scratch directory (three recorded runs wrote to `/tmp`). It is
   stricter than an agent in a developer's checkout would be.

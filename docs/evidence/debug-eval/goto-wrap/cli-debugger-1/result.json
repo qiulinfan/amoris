@@ -10,11 +10,11 @@
   "checks": {
     "steer": [
       true,
-      "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+      "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3) (pass: left < -5, right > +5)"
     ],
     "goto": [
       true,
-      "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+      "nearest to Crate4 within 15 s (sampled every 0.5 s): 4.4 m (pass < 6 m)"
     ],
     "goto_behind": [
       true,
@@ -47,6 +47,10 @@
     "file": "scripts/helm.ts",
     "lines": [
       27,
+      29
+    ],
+    "defect_lines": [
+      28,
       29
     ]
   },
@@ -120,5 +124,40 @@
     "reapplied_at_s": 658.86,
     "lost_s": 61.7,
     "ended_with_old_scripts": false
-  }
+  },
+  "as_run": {
+    "success": true,
+    "located": true,
+    "checks": {
+      "steer": [
+        true,
+        "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+      ],
+      "goto": [
+        true,
+        "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+      ],
+      "goto_behind": [
+        true,
+        "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+      ],
+      "reach": [
+        true,
+        "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+      ],
+      "anchor": [
+        true,
+        "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+      ],
+      "tally": [
+        true,
+        "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+      ]
+    },
+    "hash_chain_identical_to_clean": true,
+    "hash_first_divergence_tick": null
+  },
+  "isolation": "permissions",
+  "rules_kept": true,
+  "rules_changed": []
 }

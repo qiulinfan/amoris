@@ -1,49 +1,78 @@
-  clean             steer        pass  heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)
-  clean             goto         pass  closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)
-  clean             goto_behind  pass  mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)
-  clean             reach        pass  Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)
-  clean             anchor       pass  speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)
-  clean             tally        pass  left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1
-ok   clean: every check passes; hash chain 721 ticks
-  steer-sign        steer        FAIL  heading after 1.5 s from 90: wheel 0 76.9, left 91.2 (+14.3), right 53.8 (-23.2)
-  steer-sign        goto         pass  closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)
-  steer-sign        goto_behind  pass  mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)
-  steer-sign        reach        pass  Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)
-  steer-sign        anchor       pass  speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)
-  steer-sign        tally        pass  left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1
-ok   steer-sign: its own check (steer) fails; hash chain 721 ticks
-  goto-radians      steer        pass  heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)
-  goto-radians      goto         FAIL  closest approach to Crate4 within 15 s: 19.0 m (pass < 3 m)
-  goto-radians      goto_behind  FAIL  mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 9.1 (-80.9; pass > +15, the short way)
-  goto-radians      reach        pass  Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)
-  goto-radians      anchor       pass  speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)
-  goto-radians      tally        pass  left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1
-ok   goto-radians: its own check (goto) fails; also fails ['goto_behind']; hash chain 721 ticks
-  reach-squared     steer        pass  heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)
-  reach-squared     goto         pass  closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)
-  reach-squared     goto_behind  pass  mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)
-  reach-squared     reach        FAIL  Crate1 at 2.5 m: refused (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)
-  reach-squared     anchor       pass  speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)
-  reach-squared     tally        pass  left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1
-ok   reach-squared: its own check (reach) fails; hash chain 721 ticks
-  anchor-stale      steer        pass  heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)
-  anchor-stale      goto         pass  closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)
-  anchor-stale      goto_behind  pass  mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)
-  anchor-stale      reach        pass  Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)
-  anchor-stale      anchor       FAIL  speed 2.96 m/s at anchoring; 8-10 s later mean 3.42 m/s, sail 1.00 (pass: sail 0 and < 1.5 m/s)
-  anchor-stale      tally        pass  left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1
-ok   anchor-stale: its own check (anchor) fails; hash chain 721 ticks
-  tally-off-by-one  steer        pass  heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)
-  tally-off-by-one  goto         pass  closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)
-  tally-off-by-one  goto_behind  pass  mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)
-  tally-off-by-one  reach        pass  Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)
-  tally-off-by-one  anchor       pass  speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)
-  tally-off-by-one  tally        FAIL  left after each crate: [4, 3, 2, 1] (want [3, 2, 1, 0]); crates.all events: 0
-ok   tally-off-by-one: its own check (tally) fails; hash chain 721 ticks
-  goto-wrap         steer        pass  heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)
-  goto-wrap         goto         pass  closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)
-  goto-wrap         goto_behind  FAIL  mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 5.3 (-84.7; pass > +15, the short way)
-  goto-wrap         reach        pass  Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)
-  goto-wrap         anchor       pass  speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)
-  goto-wrap         tally        pass  left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1
-ok   goto-wrap: its own check (goto_behind) fails; hash chain 721 ticks
+clean reference: hash chain of 721 ticks
+  clean                  steer        pass  heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3) (pass: left < -5, right > +5)
+  clean                  goto         pass  nearest to Crate4 within 15 s (sampled every 0.5 s): 4.4 m (pass < 6 m)
+  clean                  goto_behind  pass  mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)
+  clean                  reach        pass  Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)
+  clean                  anchor       pass  speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)
+  clean                  tally        pass  left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1
+ok   clean: every check passes, rules kept, hash chain identical in a second run
+  steer-sign             steer        FAIL  heading after 1.5 s from 90: wheel 0 76.9, left 91.2 (+14.3), right 53.8 (-23.2) (pass: left < -5, right > +5)
+  steer-sign             goto         pass  nearest to Crate4 within 15 s (sampled every 0.5 s): 4.4 m (pass < 6 m)
+  steer-sign             goto_behind  pass  mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)
+  steer-sign             reach        pass  Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)
+  steer-sign             anchor       pass  speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)
+  steer-sign             tally        pass  left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1
+ok   steer-sign: its own check (steer) fails; hash chain diverges at tick 1
+  goto-radians           steer        pass  heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3) (pass: left < -5, right > +5)
+  goto-radians           goto         FAIL  nearest to Crate4 within 15 s (sampled every 0.5 s): 19.0 m (pass < 6 m)
+  goto-radians           goto_behind  FAIL  mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 9.1 (-80.9; pass > +15, the short way)
+  goto-radians           reach        pass  Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)
+  goto-radians           anchor       pass  speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)
+  goto-radians           tally        pass  left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1
+ok   goto-radians: its own check (goto) fails; also fails ['goto_behind']; hash chain diverges at tick 150
+  reach-squared          steer        pass  heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3) (pass: left < -5, right > +5)
+  reach-squared          goto         pass  nearest to Crate4 within 15 s (sampled every 0.5 s): 4.4 m (pass < 6 m)
+  reach-squared          goto_behind  pass  mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)
+  reach-squared          reach        FAIL  Crate1 at 2.5 m: refused (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)
+  reach-squared          anchor       pass  speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)
+  reach-squared          tally        pass  left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1
+ok   reach-squared: its own check (reach) fails; hash chain diverges at tick 2
+  anchor-stale           steer        pass  heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3) (pass: left < -5, right > +5)
+  anchor-stale           goto         pass  nearest to Crate4 within 15 s (sampled every 0.5 s): 4.4 m (pass < 6 m)
+  anchor-stale           goto_behind  pass  mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)
+  anchor-stale           reach        pass  Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)
+  anchor-stale           anchor       FAIL  speed 2.96 m/s at anchoring; 8-10 s later mean 3.42 m/s, sail 1.00 (pass: sail 0 and < 1.5 m/s)
+  anchor-stale           tally        pass  left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1
+ok   anchor-stale: its own check (anchor) fails; hash chain diverges at tick 520
+  tally-off-by-one       steer        pass  heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3) (pass: left < -5, right > +5)
+  tally-off-by-one       goto         pass  nearest to Crate4 within 15 s (sampled every 0.5 s): 4.4 m (pass < 6 m)
+  tally-off-by-one       goto_behind  pass  mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)
+  tally-off-by-one       reach        pass  Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)
+  tally-off-by-one       anchor       pass  speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)
+  tally-off-by-one       tally        FAIL  left after each crate: [4, 3, 2, 1] (want [3, 2, 1, 0]); crates.all events: 0
+ok   tally-off-by-one: its own check (tally) fails; hash chain diverges at tick 2
+  goto-wrap              steer        pass  heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3) (pass: left < -5, right > +5)
+  goto-wrap              goto         pass  nearest to Crate4 within 15 s (sampled every 0.5 s): 4.4 m (pass < 6 m)
+  goto-wrap              goto_behind  FAIL  mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 5.3 (-84.7; pass > +15, the short way)
+  goto-wrap              reach        pass  Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)
+  goto-wrap              anchor       pass  speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)
+  goto-wrap              tally        pass  left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1
+ok   goto-wrap: its own check (goto_behind) fails; hash chain diverges at tick 400
+  steer-sign+RUDDER_GAIN steer        pass  heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3) (pass: left < -5, right > +5)
+  steer-sign+RUDDER_GAIN goto         pass  nearest to Crate4 within 15 s (sampled every 0.5 s): 4.4 m (pass < 6 m)
+  steer-sign+RUDDER_GAIN goto_behind  pass  mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)
+  steer-sign+RUDDER_GAIN reach        pass  Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)
+  steer-sign+RUDDER_GAIN anchor       pass  speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)
+  steer-sign+RUDDER_GAIN tally        pass  left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1
+ok   steer-sign+RUDDER_GAIN: behavioural checks all pass, hash chain identical; not a fix: ['helm.ts: RUDDER_GAIN = 0.6 -> -0.6']
+  reach-squared+REACH    steer        pass  heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3) (pass: left < -5, right > +5)
+  reach-squared+REACH    goto         pass  nearest to Crate4 within 15 s (sampled every 0.5 s): 4.4 m (pass < 6 m)
+  reach-squared+REACH    goto_behind  pass  mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)
+  reach-squared+REACH    reach        pass  Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)
+  reach-squared+REACH    anchor       pass  speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)
+  reach-squared+REACH    tally        pass  left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1
+ok   reach-squared+REACH: behavioural checks all pass, hash chain identical; not a fix: ['rules.ts: REACH = 3 -> 9']
+ok   sandbox allows: pocket status  ->  tick 0 (0.00 s) edit paused real-time x1.0 | 9 entities | hash 0fb8052e39f5
+ok   sandbox allows: pocket scripts read scripts/helm.ts | grep -c atan2  ->  1
+ok   sandbox allows: echo note > notes.txt && cat notes.txt  ->  note
+ok   sandbox allows: cat <<'EOF' | wc -l  ->  2
+ok   sandbox refuses: head -3 ../sailing/scripts/helm.ts  ->  head: ../sailing/scripts/helm.ts: Operation not permitted
+ok   sandbox refuses: grep -rn REACH {repo}/samples/sailing/scripts  ->  grep: {repo}/samples/sailing/scripts: Operation not permitted
+ok   sandbox refuses: grep -c . {home}/.config/opencode/opencode.json  ->  grep: {home}/.config/opencode/opencode.json: Operation not permitted
+ok   sandbox refuses: pocket step 1 > {tmpdir}/pocket-eval-probe.out  ->  /bin/bash: {tmpdir}/pocket-eval-probe.out: Operation not permitted
+ok   sandbox refuses: pocket hashes ../sailing --ticks 1  ->  {"error":{"code":"project.unreadable","detail":{"error":"Operation not permitted (os error 1)","path":"../sailing/project.toml"},"message":"../sailing/project.toml cannot be read: Operation not permitted (os error 1)."}}
+ok   opencode: opencode's configuration directory is the run's
+ok   opencode: its shell is the sandboxed one
+ok   opencode: MCP servers: []
+ok   opencode: skills: ['customize-opencode']
+ok   opencode: instruction files: [], ~/.claude off
