@@ -1,0 +1,7 @@
+$ cargo test -p pocket-app --test debug_agent   # 2026-10-04T05:37Z
+
+running 1 test
+test an_agent_debugs_the_test_game ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.71s
+

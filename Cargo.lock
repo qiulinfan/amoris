@@ -1601,6 +1601,7 @@ name = "pocket-debug"
 version = "0.1.0"
 dependencies = [
  "pocket-contract",
+ "pocket-link",
  "pocket-script",
  "regex",
  "rquickjs",

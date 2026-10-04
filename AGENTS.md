@@ -19,7 +19,7 @@ specified under [docs/spec/](docs/spec/README.md); their measured spikes are und
 - `sdk/`: the TypeScript `pocket` module scripts import, with generated types.
 - `editor/`: the React web editor (Vite, bun).
 - `samples/`: game projects. `tools/`: Python and helper scripts (`tools/neural/` trains neural
-  assets). `third_party/`: the patched `rquickjs-sys` (QuickJS-ng with PR #1421 and P1 to P8).
+  assets). `third_party/`: the patched `rquickjs-sys` (QuickJS-ng with PR #1421 and P1 to P10).
 - `docs/`: charter, schedule, specs, spikes, evidence.
 
 ## Rules
