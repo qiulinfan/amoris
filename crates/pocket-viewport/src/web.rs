@@ -90,15 +90,27 @@ impl Viewport {
     /// Asset paths the renderer asked for since the last call; the page fetches each and calls
     /// `deliver_asset` or `asset_failed`.
     pub fn take_asset_requests(&mut self) -> Vec<String> {
-        std::mem::take(&mut *self.assets.requests.borrow_mut())
+        let mut paths = std::mem::take(&mut *self.assets.requests.borrow_mut());
+        paths.extend(self.renderer.splats.take_requests());
+        paths
     }
 
     pub fn deliver_asset(&mut self, path: &str, bytes: &[u8]) {
-        self.assets.deliver(path, Ok(bytes));
+        if is_splat(path) {
+            if let Err(e) = self.renderer.splats.deliver(path, bytes) {
+                log::warn!("splats: {e}");
+            }
+        } else {
+            self.assets.deliver(path, Ok(bytes));
+        }
     }
 
     pub fn asset_failed(&mut self, path: &str, why: &str) {
-        self.assets.deliver(path, Err(why.to_owned()));
+        if is_splat(path) {
+            log::warn!("splats: {path}: {why}");
+        } else {
+            self.assets.deliver(path, Err(why.to_owned()));
+        }
     }
 
     /// Draws from this camera: position, rotation quaternion (x, y, z, w), vertical fov degrees.
@@ -273,4 +285,10 @@ impl Viewport {
             c.fov_y.to_degrees(),
         ]
     }
+}
+
+/// Gaussian splat clouds go to the splat renderer, everything else to the model importer.
+fn is_splat(path: &str) -> bool {
+    let p = path.to_ascii_lowercase();
+    p.ends_with(".ply") || p.ends_with(".splat")
 }

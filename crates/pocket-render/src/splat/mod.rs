@@ -129,6 +129,8 @@ pub struct Splats {
     #[cfg(not(target_arch = "wasm32"))]
     files: Option<loader::SplatFiles>,
     requested: HashSet<String>,
+    /// Names no file root serves, for the page to fetch ([`Splats::take_requests`]).
+    fetches: Vec<String>,
     /// The drawn clouds from the render feed: (asset, model matrix).
     views: Vec<(String, Mat4)>,
 
@@ -343,6 +345,7 @@ impl Splats {
             #[cfg(not(target_arch = "wasm32"))]
             files: None,
             requested: HashSet::new(),
+            fetches: Vec::new(),
             views: Vec::new(),
             splat_buf: buffer(device, "splats", 64, su),
             splat_len: 0,
@@ -506,7 +509,20 @@ impl Splats {
             f.request(name);
             return;
         }
-        log::warn!("splats: no cloud named {name} and no file root: it will not draw");
+        self.fetches.push(name.to_owned());
+    }
+
+    /// The clouds the feed named that no file root serves: in the browser the page fetches each and
+    /// hands its bytes to [`Splats::deliver`].
+    pub fn take_requests(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.fetches)
+    }
+
+    /// Decodes a fetched `.ply` or `.splat` and uploads it under `name`.
+    pub fn deliver(&mut self, name: &str, bytes: &[u8]) -> Result<(), String> {
+        let cloud = loader::parse(name, bytes)?;
+        self.insert(name, &cloud);
+        Ok(())
     }
 
     fn poll_visible(&mut self) {

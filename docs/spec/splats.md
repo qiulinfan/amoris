@@ -26,6 +26,9 @@ design keeps, what it costs and what it does not do yet. The code is `crates/poc
    - natively, `Splats::set_root(dir)` starts a worker thread that reads and decodes `.ply` and
      `.splat` files under `dir` when the feed first names them (`pocket play` sets the project
      directory), so a large file never stalls a frame;
+   - in the browser, `Splats::take_requests` hands the names to the page with the model paths
+     (`Viewport::take_asset_requests`), and the page's fetch comes back through `deliver_asset`, which
+     sends `.ply`/`.splat` to `Splats::deliver`;
    - any host (the browser after fetching, an example after generating) calls
      `Splats::insert(name, &SplatCloud)` with a cloud it decoded (`splat::loader::parse`) or built
      (`SplatCloud::from_raw`).
@@ -290,4 +293,7 @@ then draws shows up as colored noise.
 - **Picking.** Splats are not in the entity-id pass, so picking and view coverage do not see them.
 - **Other transparency.** Splats draw after the opaque pass, so GPU particles (drawn inside it)
   are covered by splats even where they are in front of them; the two are not sorted together.
-- **Not run in a browser yet**; the WebGPU constraints above are checked natively.
+- **Browser**: verified in headless Chrome (WebGPU) through the web player (`web/`, the game in a
+  Worker): a 300k-splat garden `.ply` fetched by the page, drawn with the anim sample's skinned
+  characters, UI and particles; GPU 4.1 ms per frame at 1280x900 window size of which splat draw
+  2.5 ms, preprocess 0.16 ms, sort 0.27 ms (`docs/evidence/render/web-player-splats.png`).
