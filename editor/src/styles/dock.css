@@ -1,0 +1,153 @@
+/* dockview in the editor's colours: tabs with icons, gaps between groups, rounded groups. */
+
+.dock {
+  height: 100%;
+}
+
+.dockview-theme-pocket {
+  --dv-paneview-active-outline-color: var(--accent);
+  --dv-tabs-and-actions-container-font-size: 12px;
+  --dv-tabs-and-actions-container-height: 32px;
+  --dv-drag-over-background-color: rgba(79, 140, 255, 0.16);
+  --dv-drag-over-border-color: rgba(79, 140, 255, 0.6);
+  --dv-drag-over-border: 1.5px solid rgba(79, 140, 255, 0.7);
+  --dv-edge-dock-indicator-color: rgba(79, 140, 255, 0.9);
+  --dv-tabs-container-scrollbar-color: #444;
+  --dv-icon-hover-background-color: var(--bg-hover);
+  --dv-floating-box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  --dv-floating-border: 1px solid var(--line-strong);
+  --dv-overlay-z-index: 999;
+  --dv-tab-font-size: 12px;
+  --dv-border-radius: 8px;
+  --dv-tab-margin: 0;
+  --dv-sash-color: transparent;
+  --dv-active-sash-color: rgba(79, 140, 255, 0.55);
+  --dv-active-sash-transition-duration: 0.1s;
+  --dv-active-sash-transition-delay: 0.25s;
+  --dv-spacing-padding: 0px;
+  --dv-tab-border-radius: 0px;
+  --dv-sash-border-radius: 2px;
+  --dv-dropdown-border-radius: 8px;
+  --dv-tab-close-icon-size: 11px;
+  --dv-floating-group-border: 1px solid var(--line-strong);
+  --dv-floating-group-dragging-opacity: 0.6;
+  --dv-floating-titlebar-height: 18px;
+  --dv-floating-titlebar-background-color: var(--bg-2);
+  --dv-floating-titlebar-border-bottom: 1px solid var(--line);
+  --dv-tab-group-chip-padding: 4px 8px;
+  --dv-tab-group-chip-border-radius: 6px;
+  --dv-tab-group-chip-font-size: 11px;
+  --dv-tab-group-line-height: 2px;
+  --dv-tab-group-line-opacity: 0.6;
+  --dv-tab-group-color-blue: #4f8cff;
+  --dv-tab-group-color-grey: #5f6368;
+  --dv-tab-group-color-red: #f0605d;
+  --dv-tab-group-color-yellow: #e5a53a;
+  --dv-tab-group-color-green: #3fbf7f;
+  --dv-tab-group-color-pink: #e67fd6;
+  --dv-tab-group-color-purple: #9a7cf0;
+  --dv-tab-group-color-cyan: #5fd0c0;
+  --dv-tab-group-color-orange: #f08c3a;
+  --dv-group-view-background-color: var(--bg-1);
+  --dv-tabs-and-actions-container-background-color: var(--bg-2);
+  --dv-activegroup-visiblepanel-tab-background-color: var(--bg-1);
+  --dv-activegroup-hiddenpanel-tab-background-color: transparent;
+  --dv-inactivegroup-visiblepanel-tab-background-color: var(--bg-1);
+  --dv-inactivegroup-hiddenpanel-tab-background-color: transparent;
+  --dv-tab-divider-color: transparent;
+  --dv-activegroup-visiblepanel-tab-color: var(--text-0);
+  --dv-activegroup-hiddenpanel-tab-color: var(--text-2);
+  --dv-inactivegroup-visiblepanel-tab-color: var(--text-1);
+  --dv-inactivegroup-hiddenpanel-tab-color: var(--text-3);
+  --dv-separator-border: transparent;
+  --dv-paneview-header-border-color: var(--line);
+  --dv-scrollbar-background-color: rgba(255, 255, 255, 0.1);
+  color-scheme: dark;
+  background: var(--bg-0);
+}
+
+.dockview-theme-pocket .dv-groupview {
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+}
+
+.dockview-theme-pocket .dv-groupview.dv-active-group {
+  border-color: #2c3340;
+}
+
+.dockview-theme-pocket .dv-tabs-and-actions-container {
+  border-bottom: 1px solid var(--line);
+}
+
+.dockview-theme-pocket .dv-tab {
+  padding: 0 !important;
+}
+
+.dock-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 100%;
+  padding: 0 4px 0 11px;
+  position: relative;
+  white-space: nowrap;
+}
+
+.dv-active-tab .dock-tab::after {
+  content: "";
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  top: 0;
+  height: 2px;
+  border-radius: 0 0 2px 2px;
+  background: transparent;
+}
+
+.dv-active-group .dv-active-tab .dock-tab::after {
+  background: var(--accent);
+}
+
+.dock-tab-icon {
+  color: var(--text-2);
+}
+
+.dv-active-tab .dock-tab-icon {
+  color: #8fb6ff;
+}
+
+.dock-tab-title {
+  font-weight: 500;
+}
+
+.dock-tab-close {
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border-radius: 4px;
+  color: var(--text-3);
+  opacity: 0;
+}
+
+.dock-tab:hover .dock-tab-close,
+.dv-active-tab .dock-tab-close {
+  opacity: 1;
+}
+
+.dock-tab-close:hover {
+  background: var(--bg-active);
+  color: var(--text-0);
+}
+
+.dock-panel {
+  height: 100%;
+  overflow: hidden;
+}
+
+.dockview-theme-pocket .dv-watermark {
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
+}

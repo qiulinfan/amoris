@@ -27,6 +27,8 @@ their code is under `spikes/`.
 | [threads.md](threads.md) | spec-arch | 7.15 (the game and editor threads, publication, the queue and its order, the web form); 5.1 |
 | [architecture.md](architecture.md) | spec-arch | 3.9 (crates with one-way dependencies), 4.1 (stack and the `wasm32` build), the build rules |
 | [checks.md](checks.md) | spec-arch | 3.7 (the local check command), 3.9 (the crate boundaries it verifies; no line limit), 9.4 (the dependency check per commit) |
+| [host-protocol.md](host-protocol.md) | host | Charter 3.1, 4.3, 4.5 (the host's endpoints, requests, events and methods shared by the editor, agents and tools) |
+| [editor.md](editor.md) | editor | Charter 4.5 (the web editor: panels, shortcuts, the viewport renderer interface, the mock host, what the editor needs from the host) |
 | [budgets.md](budgets.md) | spec-arch | 3.10 and 12 item 2 (benchmarks on reference hardware and their reference figures, reported and never a pass condition), with the figures slice 0 measured |
 | [shared/contract/README.md](../../shared/contract/README.md) | spec-contract | 6.1 and 6.2 (the shared contract, its versioning and sync), seats and roles, the game definition, conformance checks |
 | [shared/contract/perception.md](../../shared/contract/perception.md) | spec-contract | 7.8 (perception API); 3.1 |

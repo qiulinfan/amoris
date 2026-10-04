@@ -17,7 +17,8 @@ specified under [docs/spec/](docs/spec/README.md); their measured spikes are und
   `tools/crate-graph.toml`; a new crate or edge changes it together with the charter's table.
 - `shaders/` live next to the renderer code that uses them, as `.wgsl` files, never Rust strings.
 - `sdk/`: the TypeScript `pocket` module scripts import, with generated types.
-- `editor/`: the React web editor (Vite, bun).
+- `editor/`: the React web editor (Vite, bun); [docs/spec/editor.md](docs/spec/editor.md) says how to
+  run it against the mock host (`bun run dev:mock`) or the real one, and what it needs from the host.
 - `samples/`: game projects. `tools/`: Python and helper scripts (`tools/neural/` trains neural
   assets). `third_party/`: the patched `rquickjs-sys` (QuickJS-ng with PR #1421 and P1 to P8).
 - `docs/`: charter, schedule, specs, spikes, evidence.
