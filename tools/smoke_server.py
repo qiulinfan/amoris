@@ -278,7 +278,8 @@ def main():
         r = m.rpc("tools/call", {"name": "time", "arguments": {"action": "step", "ticks": 10}})
         check(not r["result"].get("isError"), "mcp time step")
         r = m.rpc("tools/call", {"name": "debug", "arguments": {"action": "state"}})
-        check("debug.not_available" in r["result"]["content"][0]["text"], "mcp debug stub")
+        text = r["result"]["content"][0]["text"]
+        check(not r["result"].get("isError") and "breakpoints" in text, f"mcp debug state: {text[:80]}")
     finally:
         server.send_signal(signal.SIGTERM)
         try:
