@@ -218,8 +218,8 @@ look-back.
 
 Verified: Metal and Vulkan (MoltenVK) on the Apple M5 render the same image (mean absolute difference
 0.0003 of 255); with `POCKET_GPU_MINIMAL=limits,features` (WebGPU's default limits, no optional
-features) the 1M and 3M gardens render; the crate builds for `wasm32-unknown-unknown`. Not yet run
-in a browser.
+features) the 1M and 3M gardens render; the crate builds for `wasm32-unknown-unknown`, and the web player draws
+a 300k-splat cloud in Chrome's WebGPU (section 8).
 
 ## 7. Test content
 
