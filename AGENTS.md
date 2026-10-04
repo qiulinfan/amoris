@@ -48,5 +48,12 @@ specified under [docs/spec/](docs/spec/README.md); their measured spikes are und
   compile errors; `cargo run --release -p pocket-render --example gpu_probe` checks a backend.
 - Compute pipelines use `shaders::compute_options()` (no automatic workgroup zeroing: it breaks
   MoltenVK); a compute shader must initialize the workgroup memory it reads.
+- The browser: `tools/build_viewport.sh` builds the WebGPU viewport into `web/viewport/pkg`
+  (committed; the editor's `/wasm/` serves it), `tools/build_web.sh` also builds the game module into
+  `web/pkg` and packs samples into `web/projects/` (both ignored). Serve `web/`
+  (`python3 -m http.server -d web 8090`) and open `/?package=projects/samples-anim/package.json`.
+  Any edit to `pocket-assets/src/frame.rs` or `visual.rs` changes the render feed's `FORMAT`: rebuild
+  and commit the viewport with it, or viewports refuse the host's frames.
+- `node tools/web_bench.mjs <url> [s]` drives headless Chrome with WebGPU (`SHOT=`, `EVAL=`, `LOGS=1`).
 - Agents working in parallel use their own git worktree and their own cargo target directory.
 - macOS has no `timeout`; use `perl -e 'alarm 60; exec @ARGV' cmd` as a watchdog.
