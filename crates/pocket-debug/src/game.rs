@@ -441,6 +441,10 @@ impl GameHook {
             let mut st = lock(&self.inner.state);
             st.pause = Some(pause.clone());
         }
+        let loop_state = lock(&self.inner.loop_state).clone();
+        if let Some(h) = &loop_state {
+            h.set_state(pocket_link::LoopState::Breakpoint, pocket_sim_tick(tick));
+        }
         self.inner.paused.store(true, Ordering::Release);
         self.inner.changed.notify_all();
         emit(&self.inner, DebugEvent::Paused(pause));
@@ -512,6 +516,9 @@ impl GameHook {
             let mut st = lock(&self.inner.state);
             st.pause = None;
         }
+        if let Some(h) = &loop_state {
+            h.set_state(pocket_link::LoopState::Ticking, pocket_sim_tick(tick));
+        }
         self.inner.paused.store(false, Ordering::Release);
         self.inner.changed.notify_all();
         emit(&self.inner, DebugEvent::Resumed);
@@ -524,6 +531,11 @@ impl GameHook {
     fn script_of(&self, module: &str) -> Option<Arc<Script>> {
         lock(&self.inner.state).registry.module(module).cloned()
     }
+}
+
+/// The link's tick type for a tick number.
+fn pocket_sim_tick(tick: u64) -> pocket_link::Tick {
+    pocket_link::Tick(tick)
 }
 
 /// The frame of a data breakpoint seen when the system had returned: where the write was, no

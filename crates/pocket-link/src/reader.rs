@@ -165,7 +165,32 @@ impl Publisher {
     }
 }
 
+/// The loop state alone, for what stops the game thread inside a tick: the script debugger sets
+/// `Breakpoint` while it holds the thread and `Ticking` when it lets go (threads.md 3.5).
+#[derive(Clone)]
+pub struct StateHandle {
+    shared: Arc<Shared>,
+}
+
+impl StateHandle {
+    /// Records a change of state at the loop's clock, as [`Publisher::set_state`].
+    pub fn set_state(&self, state: LoopState, tick: Tick) {
+        let s = &self.shared;
+        if s.state.swap(state.code(), Ordering::AcqRel) != state.code() {
+            s.since.store((s.clock)().to_bits(), Ordering::Release);
+        }
+        s.tick.store(tick.0, Ordering::Release);
+    }
+}
+
 impl SnapshotReader {
+    /// The loop state's handle, for the game thread's owner to give a debugger (threads.md 3.5).
+    pub fn state_handle(&self) -> StateHandle {
+        StateHandle {
+            shared: self.shared.clone(),
+        }
+    }
+
     /// The latest publication; keep it as long as you like.
     pub fn latest(&self) -> Arc<WorldSnapshot> {
         self.shared.slot.load_full()

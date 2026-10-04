@@ -93,6 +93,8 @@ fn run() -> Result<(), String> {
         ThreadOptions::new(clock),
     )
     .map_err(|p| p.message)?;
+    // A pause shows as the loop state `Breakpoint` to whoever reads the status.
+    hub.set_loop_state(handle.loop_state());
     let reader = handle.reader();
     let mut dev = handle.developer();
     if wait {
@@ -110,9 +112,11 @@ fn run() -> Result<(), String> {
         let snap = reader.latest();
         let view = SnapshotView::new(&snap);
         let boats = view.entities().map(|e| e.len()).unwrap_or(0);
+        let state = format!("{:?}", reader.status().state);
         println!(
             "{}",
-            json!({"tick": snap.state().0, "paused_in_debugger": hub.is_paused(), "entities": boats})
+            json!({"tick": snap.state().0, "paused_in_debugger": hub.is_paused(),
+                   "loop_state": state, "entities": boats})
         );
     }
     hub.shutdown();

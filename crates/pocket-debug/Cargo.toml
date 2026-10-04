@@ -11,6 +11,8 @@ pocket-contract.workspace = true
 # The script host's debugger hooks (pocket_script::debug) and the vendored QuickJS-ng's debugging
 # interface (quickjs-ng PR #1421, P9, P10) it declares.
 pocket-script.workspace = true
+# The loop state a pause sets (threads.md 3.5).
+pocket-link.workspace = true
 rquickjs = { workspace = true, features = ["std"] }
 serde.workspace = true
 serde_json.workspace = true

@@ -161,6 +161,8 @@ pub(crate) struct Inner {
     pub gate: Mutex<bool>,
     pub gate_cv: Condvar,
     pub title: String,
+    /// The game loop's state, set to `Breakpoint` while paused (threads.md 3.5).
+    pub loop_state: Mutex<Option<pocket_link::StateHandle>>,
 }
 
 /// The debugger: one per game. Clone it to share it between the game thread setup, the CDP
@@ -223,6 +225,7 @@ impl DebugHub {
                 gate: Mutex::new(false),
                 gate_cv: Condvar::new(),
                 title: options.title,
+                loop_state: Mutex::new(None),
             }),
         }
     }
@@ -234,6 +237,13 @@ impl DebugHub {
         let (tx, rx) = mpsc::channel();
         *lock(&self.inner.commands) = Some(tx);
         Rc::new(GameHook::new(self.inner.clone(), rx))
+    }
+
+    /// Gives the hub the game loop's state (`pocket_runtime::thread::GameHandle::loop_state`): a
+    /// pause sets it to `Breakpoint` and a resume back to `Ticking`, so presenters reading the
+    /// status see why the game thread is still in its tick (threads.md 3.5).
+    pub fn set_loop_state(&self, handle: pocket_link::StateHandle) {
+        *lock(&self.inner.loop_state) = Some(handle);
     }
 
     /// Events for one frontend, from now on (the `debug` and `log` topics through

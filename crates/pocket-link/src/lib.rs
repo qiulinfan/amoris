@@ -19,5 +19,7 @@ pub use command::{
     source_from_json, source_in_use, source_json, tick_passed,
 };
 pub use events::{EventBatch, EventCursor, EventRecord, EventRing, RING_RECORDS};
-pub use reader::{GameStatus, LoopState, Publisher, SnapshotReader, publication};
+/// The tick a status names (for crates that see the game only through this one).
+pub use pocket_sim::Tick;
+pub use reader::{GameStatus, LoopState, Publisher, SnapshotReader, StateHandle, publication};
 pub use snapshot::{PacingStatus, RegistryInfo, SnapshotView, TimeStatus, WorldSnapshot};

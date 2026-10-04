@@ -75,6 +75,8 @@ fn an_agent_debugs_the_test_game() {
         ThreadOptions::new(clock),
     )
     .unwrap();
+    hub.set_loop_state(handle.loop_state());
+    let reader = handle.reader();
     let mut dev = handle.developer();
     const RULES: &str = "scripts/rules.ts";
 
@@ -95,6 +97,8 @@ fn an_agent_debugs_the_test_game() {
         (Some(8), Some("probe"))
     );
     assert!(s["instrumented"].as_bool().unwrap());
+    // Presenters reading the status see the game thread held at a breakpoint (threads.md 3.5).
+    assert_eq!(reader.status().state, pocket_link::LoopState::Breakpoint);
     call(&hub, "debug.continue", json!({}));
 
     // Tick 10's exception is caught in measure: no stop. Tick 12's escapes probe's run.
