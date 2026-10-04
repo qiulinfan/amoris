@@ -18,6 +18,7 @@ use pocket_physics::{
     Boat, Collider, ExternalForce, Floater, Hull, RigidBody, Sail, Sea, Transform, Trim, Velocity,
     Wind,
 };
+use pocket_assets::{Camera, Environment, Light, Model, Splat};
 use pocket_script::{EngineFns, register_engine};
 use pocket_sim::registry::{
     ComponentOrigin, ComponentSchema, FieldType, FieldValue, ProjectValues,
@@ -81,9 +82,14 @@ where
 }
 
 /// Every engine component a scene or `world_edit` can name (`Name` is the entity's own `name`).
-pub fn engine_components() -> [EngineComponent; 11] {
+pub fn engine_components() -> [EngineComponent; 16] {
     [
         entry::<Boat>(),
+        entry::<Camera>(),
+        entry::<Environment>(),
+        entry::<Light>(),
+        entry::<Model>(),
+        entry::<Splat>(),
         entry::<Collider>(),
         entry::<ExternalForce>(),
         entry::<Floater>(),
@@ -413,6 +419,11 @@ pub fn install_script_components(world: &mut World) -> Result<(), Problem> {
     ComponentRegistry::register::<Sail>(world, None)?;
     ComponentRegistry::register::<Hull>(world, None)?;
     ComponentRegistry::register::<Sea>(world, None)?;
+    ComponentRegistry::register::<Model>(world, None)?;
+    ComponentRegistry::register::<Light>(world, None)?;
+    ComponentRegistry::register::<Camera>(world, None)?;
+    ComponentRegistry::register::<Environment>(world, None)?;
+    ComponentRegistry::register::<Splat>(world, None)?;
     let after = names(world);
     if before != after {
         return Err(Problem::new(

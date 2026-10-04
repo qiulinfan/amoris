@@ -2660,9 +2660,13 @@ dependencies = [
 name = "pocket-app"
 version = "0.1.0"
 dependencies = [
+ "glam 0.33.12",
+ "image",
+ "pocket-assets",
  "pocket-check",
  "pocket-contract",
  "pocket-link",
+ "pocket-render",
  "pocket-runtime",
  "pocket-sim",
  "serde_json",
@@ -2785,6 +2789,7 @@ name = "pocket-runtime"
 version = "0.1.0"
 dependencies = [
  "bevy_ecs",
+ "pocket-assets",
  "pocket-contract",
  "pocket-interface",
  "pocket-link",

@@ -360,3 +360,126 @@ fn vs_id(v: VsIn, @builtin(instance_index) ii: u32) -> IdOut {
 fn fs_id(in: IdOut) -> @location(0) u32 {
     return in.slot + 1u;
 }
+
+// --- The ocean ------------------------------------------------------------------------------------
+// The sea pocket-physics floats boats on: the same sine waves (height a sin(k d.p - w t + phase),
+// deep-water w = sqrt(g k)), on a camera-centred ring grid that reaches the horizon, with smaller
+// wavelets in the normals only, so the geometry boats sit on is exactly the simulation's.
+
+struct Ocean {
+    level: f32,
+    count: u32,
+    time: f32,
+    _p: f32,
+    waves: array<vec4f, 16>,     // dir.x, dir.z, k, amplitude
+    phases: array<vec4f, 16>,    // omega, phase
+};
+
+@group(3) @binding(0) var<uniform> ocean: Ocean;
+
+fn ocean_height(p: vec2f, t: f32) -> vec3f {
+    // Height and its gradient (d/dx, d/dz).
+    var h = ocean.level;
+    var g = vec2f(0.0);
+    for (var i = 0u; i < ocean.count; i++) {
+        let w = ocean.waves[i];
+        let ph = ocean.phases[i];
+        let th = w.z * dot(w.xy, p) - ph.x * t + ph.y;
+        h += w.w * sin(th);
+        g += w.w * cos(th) * w.z * w.xy;
+    }
+    return vec3f(h, g);
+}
+
+struct OceanOut {
+    @builtin(position) clip: vec4f,
+    @location(0) world: vec3f,
+    @location(1) grad: vec2f,
+};
+
+@vertex
+fn vs_ocean(@location(0) ring: vec2f) -> OceanOut {
+    // `ring`: a point of the unit ring grid (radius grows geometrically outward); centred under the
+    // camera, snapped to a coarse step so the grid does not swim.
+    let cam = view.camera_pos.xz;
+    let snap = 4.0;
+    let centre = floor(cam / snap) * snap;
+    let p = centre + ring;
+    let s = ocean_height(p, ocean.time);
+    var o: OceanOut;
+    let world = vec3f(p.x, s.x, p.y);
+    o.clip = view.view_proj * vec4f(world, 1.0);
+    o.world = world;
+    o.grad = s.yz;
+    return o;
+}
+
+fn hash2(p: vec2f) -> f32 {
+    return fract(sin(dot(p, vec2f(127.1, 311.7))) * 43758.5453);
+}
+
+// Wavelets: a fixed set of short waves in many directions, in the normals only. Each fades out
+// before its wavelength drops under four pixels (`footprint`: metres per pixel), so distant water
+// does not alias into moire and sparkle.
+fn wavelets(p: vec2f, t: f32, footprint: f32) -> vec2f {
+    var g = vec2f(0.0);
+    var amp = 0.05;
+    var len = 3.1;
+    for (var i = 0u; i < 14u; i++) {
+        let a = f32(i) * 2.399963 + 0.3;  // golden angle
+        let d = vec2f(cos(a), sin(a));
+        let k = 6.2831853 / len;
+        let th = k * dot(d, p) - sqrt(9.81 * k) * t + hash2(vec2f(f32(i), 7.0)) * 6.28;
+        let keep = clamp(len / (footprint * 4.0) - 1.0, 0.0, 1.0);
+        g += amp * k * cos(th) * d * keep;
+        amp *= 0.8;
+        len *= 0.74;
+    }
+    return g;
+}
+
+@fragment
+fn fs_ocean(in: OceanOut) -> @location(0) vec4f {
+    let v_world = view.camera_pos.xyz - in.world;
+    let dist = length(v_world);
+    let v = v_world / dist;
+    let fade = clamp(1.0 - dist / 600.0, 0.0, 1.0);
+    let footprint = max(length(fwidth(in.world.xz)), 1e-3);
+    let g = in.grad + wavelets(in.world.xz, ocean.time, footprint);
+    let n = normalize(vec3f(-g.x, 1.0, -g.y));
+    let nv = max(dot(n, v), 1e-4);
+    // Water: F0 0.02; slightly rough so the sun's glitter spreads with distance.
+    let rough = clamp(0.05 + footprint * 0.04, 0.05, 0.3);
+    let a = rough * rough;
+    let f = 0.02 + 0.98 * pow(1.0 - nv, 5.0);
+    let r = reflect(-v, n);
+    let ry = vec3f(r.x, max(r.y, 0.02), r.z);
+    let levels = f32(textureNumLevels(env_cube) - 1);
+    let sky = textureSampleLevel(env_cube, env_sampler, ry, rough * levels).rgb * view.sun_color.w;
+    // The water body: deep blue-green, lit by the sky and the sun.
+    let sun = view.sun_dir.xyz;
+    let sun_lux = view.sun_dir.w * view.sun_color.rgb;
+    let deep = vec3f(0.01, 0.05, 0.07);
+    let shallow_tint = vec3f(0.02, 0.12, 0.13);
+    let body_light = sh_irradiance(vec3f(0.0, 1.0, 0.0)) * 0.08 + sun_lux * max(sun.y, 0.0) * 0.012;
+    // Light through the crests facing away from the sun (subsurface).
+    let crest = clamp((in.world.y - ocean.level) * 1.5, 0.0, 1.0);
+    let sss = pow(max(dot(v, -sun), 0.0), 4.0) * crest * 0.08;
+    var body = mix(deep, shallow_tint, crest * 0.6) * (body_light + sun_lux * sss);
+    // Sun glints.
+    var spec = vec3f(0.0);
+    if (view.sun_dir.w > 0.0) {
+        let h = normalize(sun + v);
+        let nl = max(dot(n, sun), 0.0);
+        spec = d_ggx(max(dot(n, h), 0.0), a) * v_smith(nv, nl, a) * f_schlick(vec3f(0.02), max(dot(v, h), 0.0))
+            * sun_lux * nl * shadow_factor(in.world, n, dot(in.world - view.camera_pos.xyz,
+                -vec3f(view.view[0].z, view.view[1].z, view.view[2].z)));
+    }
+    // Foam where the swell crests steeply.
+    let steep = length(in.grad);
+    let foam = smoothstep(0.32, 0.6, steep) * crest * fade;
+    var c = mix(body, sky, f) + spec;
+    c = mix(c, vec3f(0.8) * (body_light * 6.0 + sun_lux * max(sun.y, 0.0) * 0.25), foam * 0.6);
+    c = apply_fog(c, in.world);
+    return vec4f(c, 1.0);
+}

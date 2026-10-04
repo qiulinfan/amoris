@@ -23,6 +23,7 @@ use crate::gpu::Gpu;
 use crate::loader::{AssetSource, NoAssets};
 use crate::materials::MaterialPool;
 use crate::meshes::MeshPool;
+use crate::ocean::Ocean;
 use crate::post::{DEPTH, HDR, Post, SAMPLES, Targets};
 use crate::profiler::GpuProfiler;
 use crate::scene::{InstanceGpu, Part, Resolve, Scene, VARIANTS};
@@ -238,6 +239,8 @@ pub struct Renderer {
     cluster_pipeline: wgpu::ComputePipeline,
     forward: [wgpu::RenderPipeline; 4],
     shadow: [wgpu::RenderPipeline; 2],
+    empty_group: wgpu::BindGroup,
+    ocean: Ocean,
     batch_offsets: wgpu::Buffer,
     sky_pipeline: wgpu::RenderPipeline,
     layouts: Layouts,
@@ -436,10 +439,20 @@ impl Renderer {
             forward_pipe(None, "fs", "forward (double sided)"),
             forward_pipe(None, "fs_masked", "forward (masked, double sided)"),
         ];
+        // Shadow passes write the cascades, so group 1 (which samples them) is an empty group there.
+        let empty = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("empty"),
+            entries: &[],
+        });
         let shadow_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("shadow"),
-            bind_group_layouts: &[Some(&frame), Some(&lighting), Some(&textures)],
+            bind_group_layouts: &[Some(&frame), Some(&empty), Some(&textures)],
             immediate_size: 0,
+        });
+        let empty_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("empty"),
+            layout: &empty,
+            entries: &[],
         });
         let shadow_pipe = |masked: bool| device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some(if masked { "shadow casters (masked)" } else { "shadow casters" }),
@@ -477,6 +490,7 @@ impl Renderer {
             cache: None,
         });
         let shadow = [shadow_pipe(false), shadow_pipe(true)];
+        let ocean = Ocean::new(device, &fwd_module, [&frame, &lighting, &textures], HDR, DEPTH, SAMPLES);
         let sky_module = shaders::module(device, "sky");
         let sky_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("sky"),
@@ -587,6 +601,8 @@ impl Renderer {
             cluster_pipeline: compute("cluster", "assign"),
             forward,
             shadow,
+            ocean,
+            empty_group,
             batch_offsets: storage(device, "batch offsets", 64 * 4, wgpu::BufferUsages::empty()),
             sky_pipeline,
             layouts: Layouts {
@@ -998,7 +1014,7 @@ impl Renderer {
         );
         let casc = shadows::cascades(&cam, aspect, to_sun, SHADOW_DISTANCE);
         let ev = env.as_ref().map_or(0.0, |e| e.exposure_ev) + cam.exposure_ev;
-        let exposure = 0.6 * 2f32.powf(ev);
+        let exposure = 0.9 * 2f32.powf(ev);
         let vu = ViewUniform {
             view_proj: mat(vp),
             view: mat(view),
@@ -1018,6 +1034,11 @@ impl Renderer {
             counts: [self.view_stride, 0, 0, 0],
         };
         queue.write_buffer(&self.view_buf, 0, bytemuck::bytes_of(&vu));
+        if let Some(sea) = &self.scene.sea {
+            // Drawn time matches the interpolated poses: between the last two ticks.
+            let t = self.scene.t_s - self.scene.dt_s * (1.0 - f64::from(alpha));
+            self.ocean.update(&queue, sea, t as f32);
+        }
         let mut planes = [[[0.0f32; 4]; 6]; 5];
         for (i, p) in frustum_planes(vp, true).iter().enumerate() {
             planes[0][i] = p.to_array();
@@ -1118,7 +1139,7 @@ impl Renderer {
                 continue;
             }
             pass.set_bind_group(0, &binds.frame, &[]);
-            pass.set_bind_group(1, &binds.lighting, &[]);
+            pass.set_bind_group(1, &self.empty_group, &[]);
             pass.set_bind_group(2, &binds.textures, &[]);
             pass.set_vertex_buffer(0, self.meshes.vertices.slice(..));
             pass.set_index_buffer(self.meshes.indices.slice(..), wgpu::IndexFormat::Uint32);
@@ -1159,6 +1180,9 @@ impl Renderer {
             for variant in 0..VARIANTS {
                 pass.set_pipeline(&self.forward[variant as usize]);
                 draw(&mut pass, 0, variant, self.draw_meshes, fi);
+            }
+            if self.scene.sea.is_some() {
+                self.ocean.draw(&mut pass);
             }
             pass.set_pipeline(&self.sky_pipeline);
             pass.set_bind_group(0, &binds.sky, &[]);

@@ -12,6 +12,7 @@ pub mod gpu;
 pub mod loader;
 pub mod materials;
 pub mod meshes;
+mod ocean;
 mod post;
 pub mod profiler;
 pub mod renderer;

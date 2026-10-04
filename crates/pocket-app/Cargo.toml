@@ -17,3 +17,7 @@ pocket-link.workspace = true
 pocket-runtime = { workspace = true, features = ["thread", "transpile"] }
 pocket-check = { workspace = true, features = ["native"] }
 serde_json.workspace = true
+pocket-assets.workspace = true
+pocket-render = { workspace = true, features = ["window", "import"] }
+glam.workspace = true
+image.workspace = true

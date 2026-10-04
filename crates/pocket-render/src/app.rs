@@ -25,6 +25,14 @@ pub trait Host {
     fn key(&mut self, _key: &str, _pressed: bool) {}
     /// After each frame, with its stats.
     fn after_frame(&mut self, _stats: &FrameStats) {}
+    /// Whether to read the next frame back (a screenshot); `captured` receives it.
+    fn wants_capture(&mut self) -> bool {
+        false
+    }
+    /// The captured frame, RGBA8 sRGB, tightly packed. Return `true` to close the window.
+    fn captured(&mut self, _width: u32, _height: u32, _rgba: Vec<u8>) -> bool {
+        false
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -229,6 +237,12 @@ impl<H: Host> App<H> {
         st.window.pre_present_notify();
         st.renderer.gpu().queue.present(tex);
         self.host.after_frame(&stats);
+        if self.host.wants_capture() {
+            let (w, h, px) = st.renderer.capture_rgba(now);
+            if self.host.captured(w, h, px) {
+                el.exit();
+            }
+        }
         st.frames += 1;
         if let Some((skip, measure)) = self.options.bench {
             if st.frames > skip {

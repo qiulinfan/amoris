@@ -100,6 +100,7 @@ pub fn registry() -> Arc<Registry> {
     REG.get_or_init(|| {
         let mut b = pocket_persist::sim_registry();
         pocket_physics::declare(&mut b);
+        pocket_assets::declare(&mut b);
         pocket_script::scripts::declare(&mut b);
         b.build().map(Arc::new)
     })
@@ -120,6 +121,8 @@ pub struct Game {
     /// Writes applied at the current boundary.
     writes: u32,
     host_seq: u64,
+    /// Bumped whenever the world's content is replaced in place (a restore): presenters redraw all.
+    generation: u64,
 }
 
 fn bad_hash(text: &str) -> Problem {
@@ -147,6 +150,7 @@ impl Game {
             seed,
         })?;
         pocket_physics::plugin(&mut sim)?;
+        pocket_assets::plugin(&mut sim)?;
         engine::install_script_components(sim.world_mut())?;
         pocket_script::install(&mut sim, setup.limits)?;
         for f in &extras.systems {
@@ -170,7 +174,15 @@ impl Game {
             recorder: None,
             writes: 0,
             host_seq: 0,
+            generation: 0,
         })
+    }
+
+    /// Hands the render feed what changed in the visual state (presentation only; see
+    /// `present`).
+    pub fn present(&mut self, extractor: &mut crate::present::Extractor, feed: &pocket_assets::Feed) {
+        let generation = self.generation;
+        extractor.publish(self.sim.world_mut(), generation, feed);
     }
 
     pub fn sim(&self) -> &Sim {
@@ -555,6 +567,7 @@ impl Game {
             self.writes = snap.header().writes;
             self.sync_context();
         }
+        self.generation += 1;
         if let Some(rec) = &mut self.recorder
             && (r.is_ok() || self.sim.poisoned().is_none())
         {

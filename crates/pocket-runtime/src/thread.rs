@@ -43,6 +43,8 @@ pub struct ThreadOptions {
     pub on_publish: Arc<dyn Fn() + Send + Sync>,
     /// The pacing it starts with.
     pub pacing: Pacing,
+    /// The render feed the game extracts visual changes into after each publication.
+    pub feed: Option<pocket_assets::Feed>,
 }
 
 impl ThreadOptions {
@@ -53,6 +55,7 @@ impl ThreadOptions {
             clock,
             on_publish: Arc::new(|| {}),
             pacing: Pacing::Stepped,
+            feed: None,
         }
     }
 }
@@ -143,6 +146,7 @@ impl GameThread {
                     version: 1,
                     pushed: 0,
                     registry,
+                    extractor: crate::present::Extractor::new(),
                 };
                 l.run();
             })
@@ -301,6 +305,7 @@ struct Loop {
     pushed: usize,
     registry: Arc<RegistryInfo>,
     bundle: ContentHash,
+    extractor: crate::present::Extractor,
 }
 
 enum Next {
@@ -578,8 +583,12 @@ impl Loop {
         (self.options.on_publish)();
     }
 
-    /// Publishes the world as it is, when a reader is attached (threads.md 4.3).
+    /// Publishes the world as it is, when a reader is attached (threads.md 4.3), and the visual
+    /// changes to the render feed's subscribers.
     fn publish(&mut self) {
+        if let Some(feed) = &self.options.feed {
+            self.game.present(&mut self.extractor, feed);
+        }
         if !self.attached.load(Ordering::Acquire) {
             return;
         }

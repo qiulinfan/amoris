@@ -11,10 +11,11 @@
 mod check;
 mod cli;
 mod run;
+mod window;
 
 use check::Outcome;
 
-const SUBCOMMANDS: &[&str] = &["run", "check", "replay", "hashes"];
+const SUBCOMMANDS: &[&str] = &["run", "play", "check", "replay", "hashes"];
 
 fn dispatch(args: Vec<String>) -> Outcome {
     let rest = args.get(1..).map(<[String]>::to_vec).unwrap_or_default();
@@ -43,6 +44,14 @@ fn dispatch(args: Vec<String>) -> Outcome {
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // A window's event loop must run on the main thread (macOS); its game runs on its own thread.
+    if args.first().map(String::as_str) == Some("play") {
+        let outcome = window::play(&args[1..]);
+        if !outcome.stdout.is_empty() {
+            println!("{}", outcome.stdout);
+        }
+        std::process::exit(outcome.code);
+    }
     let worker = std::thread::Builder::new()
         .name("pocket-main".into())
         .stack_size(pocket_runtime::GAME_STACK_BYTES)

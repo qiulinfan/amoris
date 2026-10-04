@@ -77,6 +77,6 @@ fn atmosphere(dir: vec3f, sun: vec3f, altitude: f32) -> vec3f {
         trans *= step_t;
     }
     // A little multiple scattering, as an isotropic lift of the shadowed side.
-    return light * 1.15;
+    return light * 1.6;
 }
 

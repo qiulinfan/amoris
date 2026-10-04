@@ -18,6 +18,7 @@ pocket-contract.workspace = true
 pocket-sim.workspace = true
 pocket-persist.workspace = true
 pocket-physics.workspace = true
+pocket-assets.workspace = true
 pocket-interface.workspace = true
 pocket-script.workspace = true
 pocket-link.workspace = true
