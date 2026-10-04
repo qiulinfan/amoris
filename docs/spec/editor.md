@@ -219,8 +219,21 @@ the registry for project components (`{x, y, z}` objects, `enum`, nullable integ
 "quaternion"), since the schema cannot say; unknown shapes fall back to a JSON editor, never to
 nothing.
 
-Monaco loads the SDK's declarations when `sdk/**/*.d.ts` exists (bundled at build time), else the
-stub `editor/sdk-stub/pocket.d.ts` (script-host.md 5.1, loosely typed components).
+Monaco's TypeScript worker loads the project's declarations from the host
+(`scripts.types {text: true, tsconfig: false}`: `pocket.d.ts` and the generated `components.d.ts`,
+the files `tsc` checks in `scripts.check`, docs/sdk.md; connecting never writes a `tsconfig.json`
+into the project) on connect and after the editor's own apply. Its compiler options are fixed in
+`monaco.ts` to mirror `pocket_script::types::TSCONFIG` (strict, `es2023`, isolated modules); it does
+not read the project's `tsconfig.json`, and resolves `pocket` as `node_modules/pocket`
+(`moduleResolution` `NodeJs`, where the project's file says `bundler`). Until the declarations
+arrive (or against the mock, which lacks `scripts.types`) it uses the SDK the engine embeds
+(`crates/pocket-script/src/prelude/pocket.d.ts`, bundled at build time) with loosely typed
+components. The worker is monaco-editor 0.57's TypeScript 5.9 (JavaScript), not `tsc` 7: on the same
+declarations the two reported the same codes and places for the 15 mistakes of
+`tools/sdk_mistakes.ts.txt` (`tools/sdk_check.ts`, section 10), but they may differ in corners. The
+status bar counts the shown file's markers, the worker's and the host's; the host's `tsc` findings
+are left out of the markers once the worker has the project's declarations, since the worker reports
+them live.
 
 ## 8. What the editor needs from the host
 
@@ -320,8 +333,7 @@ wire shapes (`HostDebugState`, `HostFrame`, `HostVariable`, `HostBreakpoint`, `H
 | `src/viewport/` | The renderer interface, camera, math, gizmo, the fallback renderer |
 | `src/panels/<panel>/` | One module per panel (and its CSS) |
 | `mock/` | The mock host (section 1.1) |
-| `tools/` | `capture.ts` (evidence of every panel against the mock), `debug-host.ts` (the debugger against the real host), both through headless Chrome over CDP (`cdp.ts`) |
-| `sdk-stub/` | The `pocket` declarations Monaco uses until `sdk/` has generated ones |
+| `tools/` | `capture.ts` (evidence of every panel against the mock), `debug-host.ts` (the debugger against the real host), `sdk_check.ts` (the script editor's types against the real host), all through headless Chrome over CDP (`cdp.ts`) |
 
 ## 10. Evidence
 
@@ -355,6 +367,12 @@ log `debug-host.txt` (exit 0, every step):
 (`tools/capture.ts`) after the mock moved to the real shapes and frames (the callback and `run`, the
 closure's columns); the console evaluates on the paused frame.
 
+`docs/evidence/sdk/` shows the script editor against a real host (`pocket serve samples/sailing`),
+taken by `tools/sdk_check.ts`: with the host's declarations loaded (4 engine and 4 game components),
+a misspelt column (`b.sped`, "Did you mean 'speed'?") and a column the query's `fields` leaves out
+(`NotInFields<"Boat.heel_deg">`) are the worker's 2 errors in the status bar, and `boats.cols.Boat.`
+completes the Boat's fields.
+
 ## 11. Gaps
 
 - The editor debugs through `debug.*`, not CDP (section 8.1); the host's CDP endpoint serves Chrome
@@ -370,8 +388,11 @@ closure's columns); the console evaluates on the paused frame.
 - Agent sessions cannot be started from the editor yet (no `agent.session.*`); the form is a
   preview, and agents connect over MCP.
 - Import takes a path the host can read; there is no upload.
-- Monaco checks against the stub types until `sdk/` generates declarations.
+- The worker's declarations are fetched on connect and after the editor's own apply: a component
+  added in an unsaved file is unknown to it until the save, and one an agent adds (no push says the
+  scripts changed) until the next apply or reconnect.
 - Multi-selection edits apply to every selected entity with the component but show the primary's
   values (no mixed-value display).
-- No automated tests beyond `tools/capture.ts` (the mock) and `tools/debug-host.ts` (the real host's
-  debugger), which drive the main flows end to end.
+- No automated tests beyond `tools/capture.ts` (the mock), `tools/debug-host.ts` (the real host's
+  debugger) and `tools/sdk_check.ts` (the script editor's types against a real host), which drive the
+  main flows end to end.

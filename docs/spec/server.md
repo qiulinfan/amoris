@@ -37,7 +37,7 @@ pocket mcp samples/sailing     # MCP over stdio (uses the running host if there 
         \              |                    /
          pocket-server: Host::call(via, method, params)
            |  answered here: catalog, events.*, log.since, assets.list, docs.search,
-           |  the type check stage, debug.* and capture (plug-ins)
+           |  scripts.guide, the type check stage, debug.* and capture (plug-ins)
            v
    pocket-link: GameClient per source (Editor; one Developer for the API; one per MCP session)
            |                         ^ SnapshotReader: snapshots, event ring, log ring,
@@ -89,14 +89,16 @@ files).
 | `scripts.list` | read | `{}` | `[{path, bytes, diagnostics}]` |
 | `scripts.read` | read | `{path}` | `{path, text}` |
 | `scripts.write` | request | `{path, text}` | `{path, bytes, diagnostics}` (compiled, not swapped) |
-| `scripts.apply` | request | `{files?, force?, dry_run?}` | `{outcome, bundle, previous, systems, components, applied_at, diagnostics, typecheck}` |
-| `scripts.check` | read (server) | `{}` | `{outcome, bundle, diagnostics, typecheck}` |
+| `scripts.apply` | request | `{files?, force?, dry_run?}` (the server adds `types`) | `{outcome, bundle, previous, systems, components, applied_at, diagnostics, typecheck, tsc_ms, tsc_version, types}` |
+| `scripts.check` | read (server) | `{}` | `{outcome, bundle, diagnostics, typecheck, tsc_ms, tsc_version, reason?, types}`; `refused` when the scripts compile but would not load |
+| `scripts.types` | read | `{text?, tsconfig? = true}` | `{dir, files, tsconfig, components: {engine, project, unavailable}, project_from, diagnostics, text?}` (docs/sdk.md); `tsconfig: false` writes under `.pocket/types/` only |
+| `scripts.guide` | read (server) | `{}` | `{path: "docs/sdk.md", text}`: the agent's guide to scripts, embedded in the server |
 | `scripts.status` | read | `{}` | `{bundle, ran_last_tick}` |
 | `events.since` | read (server) | `{seq?, limit? = 100, name?}` | `{events: [event], last, missed}` |
 | `events.why` | read (server) | `{seq}` | `{event, causes: [event], complete}` |
 | `log.since` | read (server) | `{seq?, limit? = 100}` | `{lines: [log line], last}` |
 | `assets.list` | read (server) | `{dir?}` | `[{path, kind, bytes}]`, served at `/assets/<path>` |
-| `docs.search` | read (server) | `{query, limit? = 10}` | `[{command, doc}` or `{component, doc, fields}]` |
+| `docs.search` | read (server) | `{query, limit? = 10}` | `[{command, doc}`, `{component, doc, fields}` or `{guide, read}]` (a matching section of `scripts.guide`) |
 | `debug.*` | (server) | per pocket-debug | `debug.not_available` until a `DebugHub` is installed |
 | `capture` | (server) | `{camera?, kind?}` | `capture.not_available` until a `CaptureHub` is installed |
 | `subscribe` / `unsubscribe` | `/ws` only | `{topics: [topic]}` | `{topics}` |
@@ -229,7 +231,7 @@ parameters loosely and the runtime's decoder refuses unknown ones with suggestio
 | Tool | Actions -> methods |
 |---|---|
 | `world` | tree, get, query, schema, edit -> `world.*` |
-| `scripts` | list, read, write, apply, check -> `scripts.*` |
+| `scripts` | guide, list, read, write, apply, check, types -> `scripts.*` |
 | `time` | status -> `status`; pause, resume, speed -> `time.control`; step -> `time.step`; snapshots -> `snapshots.list`; rewind -> `snapshots.restore` |
 | `play` | start, stop |
 | `history` | undo, redo, list |
@@ -262,7 +264,7 @@ Schema, so help never drifts from what the host takes.
 | `pocket time pause|resume|speed <x>|stepped` | `time.control` |
 | `pocket play start [--speed x] [--paused]|stop` | `play.*` |
 | `pocket undo`, `redo`, `history` | `history.*` |
-| `pocket scripts list|read <p>|write <p> [file|-]|apply [--force]|check` | `scripts.*` |
+| `pocket scripts list|read <p>|write <p> [file|-]|apply [--force]|check|types|guide` | `scripts.*` |
 | `pocket events [--since n] [--name n.*] [--limit n]`, `--why <seq>` | `events.*` |
 | `pocket logs [--since n]`, `snapshots [list]|restore <tick>`, `assets [dir]` | `log.since`, `snapshots.*`, `assets.list` |
 | `pocket debug <action> ['<json>']` | `debug.<action>` |
@@ -270,8 +272,9 @@ Schema, so help never drifts from what the host takes.
 Output is compact text, one line per entity, row, event, edit or diagnostic, with defaults left out
 (`#3 Sloop  Boat Collider Crew ...`;
 `tick 17 hash 5eb7f9e28e7c | stopped: Boat.speed 0.96 -> 1.03`); `--json` prints the exact result. A
-refusal prints `code: message` (with its suggestions and diagnostics) to stderr and exits 1; a usage
-error exits 2.
+refusal prints `code: message` (with its suggestions and diagnostics) to stderr and exits 1, as does
+a `scripts check` with an error diagnostic (compile, load or `tsc`) or a `tsc` past its time limit;
+a usage error exits 2.
 
 ## 9. Error codes added
 
@@ -306,7 +309,14 @@ snapshots.
 1. A hierarchy component (`Parent`) for `world.tree`'s `children` and `depth`.
 2. `debug.rewind`'s replay forward from a kept snapshot needs the recorded inputs between them (a
    recorder on the edit world).
-3. The type check runs `tsc` only when installed and the `pocket` module's `.d.ts` exists in the
-   project (sdk/ is not built yet); its findings never block a swap.
+3. The type check runs `tsc` (TypeScript 7) only when installed: `POCKET_TSC`, else the first
+   TypeScript 7 (`tsc --version`, asked once per path) in a `node_modules` or `sdk/node_modules` at
+   or above the project (`cd sdk && bun install`), the repository the binary was built from, or
+   `PATH` (`pocket check`'s `types` step finds it the same way); an older one is passed over and
+   named in `reason`. Its findings never block or delay a swap: the game compiles, swaps (or, for
+   `scripts.check`, loads in a throwaway host) and writes the declarations in one
+   `scripts.apply {types}`, and `tsc` starts after it answers. `scripts.check` with no TypeScript 7
+   answers `typecheck: "unavailable"` and exits 0 on the CLI; `pocket check` calls that
+   inconclusive.
 4. The web worker's loop (`pocket-web`) runs plain step counts; stop conditions, Play and kept
    snapshots are native only.

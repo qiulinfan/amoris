@@ -257,11 +257,18 @@ committed files.
 For every project: the TypeScript type check and the stateless-script lint, through the command
 spec-script names (charter 4.2.4: `tsc` in CI and the apply command; 4.2.5: the lint in the local
 checks). Each finding is `types.error {project, path, line, column, code, message}` or the lint's
-own code (spec-script). The type checker is TypeScript 7.0.2's prebuilt `tsc`, pinned by URL and
-SHA-256 per platform as master pinned it (script-host.md 7.4): when `POCKET_TSC` names none and
-`~/.pocket-tools/typescript-7.0.2/` lacks it, `xtask` and `pocket check` download the archive from
-the npm registry, check its hash and unpack it there (no installer, no rights needed). Only when
-that fails (no network) is the step inconclusive, with `check.tool_missing {tool}`.
+own code (spec-script). When the lint passes, the step writes the project's declarations under
+`.pocket/types/` (with the `tsconfig.json` `tsc` uses when the project has none; it never writes
+into the source tree: `scripts.types`, script-host.md 7.4) from the project loaded into a game with
+no entities, then runs TypeScript 7's `tsc --noEmit -p` over them as `scripts.check` does
+(`pocket-app` hands `pocket-server`'s runner to `pocket-check`, which spawns no process itself),
+with its time as the `tsc` measurement and its version in the summary; a run past 60 s is
+`types.timeout`. `tsc` is found as the server finds it (`POCKET_TSC`, else the first TypeScript 7 in
+`sdk/node_modules` after `cd sdk && bun install`, ...; server.md); `sdk/bun.lock` pins 7.0.2 by
+version and integrity hash, so `bun install` replaces master's pinned download and nothing is
+fetched by the check itself. Without a TypeScript 7 `tsc`, or when the declarations cannot be
+written (`project.unwritable`), the step is inconclusive with `check.tool_missing {tool: "tsc"}`
+(the lint alone is no verdict), and `pocket-app`'s test 7 fails unless `POCKET_NO_TSC=1`.
 
 ## 7. `web`: the web build in headless Chrome
 
@@ -580,8 +587,8 @@ All codes of this specification, by step: `deps.crate_unlisted`, `deps.crate_mis
 `deps.edge_not_allowed`, `deps.external_not_allowed`, `deps.feature_not_allowed`,
 `deps.feature_missing`, `deps.cflags_missing`, `deps.rustflags_not_allowed`, `deps.vendor_stale`;
 `fmt.unformatted`; `clippy.warning`; `build.failed`; `gen.stale`, `gen.orphan`,
-`gen.shared_modified`; `test.failed`; `wasm.check_failed`; `types.error`; `determinism.diverged`;
-`fork.not_identical`, `fork.branch_differs`, `fork.original_changed`,
+`gen.shared_modified`; `test.failed`; `wasm.check_failed`; `types.error`, `types.timeout`;
+`determinism.diverged`; `fork.not_identical`, `fork.branch_differs`, `fork.original_changed`,
 `fork.branch_inputs_ineffective`; `replay.diverged`, `replay.divergence_too_early`;
 `reload.diverged`, `reload.not_performed`; `web.test_failed`, `web.cross_target_diverged`,
 `web.replay_diverged`, `web.threads_failed`, `web.shader_rejected`, `web.frame_empty`,

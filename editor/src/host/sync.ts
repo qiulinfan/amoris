@@ -64,6 +64,8 @@ async function bootstrap() {
     }],
     ["history.list", async () => useHistory.getState().set(await api.history.list())],
     ["scripts.list", refreshScripts],
+    // A host without it (the mock) leaves the editor on the bundled SDK.
+    ["scripts.types", () => refreshTypes().catch(() => undefined)],
     ["assets.list", async () => useAssets.getState().set(await api.assets.list())],
     ["events.since", async () => useEvents.getState().replace(await api.events.since(0, 5000))],
     ["snapshots.list", refreshSnapshots],
@@ -130,6 +132,12 @@ export async function refreshEntities(ids: Iterable<EntityId>) {
 export async function refreshScripts() {
   const files = await api.scripts.list();
   useScripts.getState().setFiles(files);
+}
+
+/** The host's declarations of `pocket` for the project (its components included), which the
+ * script editor's TypeScript worker loads: the same files `tsc` checks in scripts.check. */
+export async function refreshTypes() {
+  useScripts.getState().setTypes(await api.scripts.types());
 }
 
 export async function refreshSnapshots() {

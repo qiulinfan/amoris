@@ -2,7 +2,7 @@
 // diagnostics of both shown as markers and in the file list.
 
 import { api } from "../host/api";
-import { refreshScripts } from "../host/sync";
+import { refreshScripts, refreshTypes } from "../host/sync";
 import type { Diagnostic } from "../host/protocol";
 import { useScripts } from "../state/scripts";
 import { useUi } from "../state/ui";
@@ -35,6 +35,8 @@ export async function applyScripts() {
       : { kind: "error", title: "Scripts not applied", body: `${errors} error${errors === 1 ? "" : "s"}; the previous bundle keeps running.` },
   );
   void refreshScripts();
+  // A save can add or change the game's components: reload the declarations the worker checks with.
+  void refreshTypes().catch(() => undefined);
 }
 
 /** The open editor registers how to save its active file (Cmd+S anywhere in the Scripts panel). */

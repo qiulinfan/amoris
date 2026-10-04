@@ -25,7 +25,8 @@ export default defineConfig({
       // No /devtools or /json: the host's CDP endpoint is pocket-debug's own port (9229), and the
       // editor debugs through `debug.*` over /ws (docs/spec/editor.md 8.1).
     },
-    // The SDK's declarations (../sdk) are read at build time for Monaco.
+    // The SDK's declarations (../crates/pocket-script/src/prelude/pocket.d.ts) are read at build
+    // time for Monaco, the fallback until the host sends the project's.
     fs: { allow: [".."] },
   },
   build: {

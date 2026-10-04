@@ -34,6 +34,7 @@ mod scene;
 mod scripts;
 #[cfg(feature = "thread")]
 pub mod thread;
+pub mod types;
 mod values;
 
 pub use catalog::{CATALOG, Command, CommandDef, CommandFn, NoParams, catalog_json};

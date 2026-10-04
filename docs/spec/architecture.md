@@ -204,8 +204,9 @@ written as that specification names them.
   in Rust so the module imports only `wasm-bindgen`'s glue, and setting the stack limit to 256 KiB,
   which wasm32 requires (section 8). The `transpile` feature (oxc) is off by default and enabled by
   `pocket-app`; the shipped web build has it off, its scripts arriving transpiled, and a browser
-  editor turns it on. `typecheck` (`check_project`, which spawns `tsc` and writes files) is
-  native-only and implies `transpile`.
+  editor turns it on. The type check (`tsc`, script-host.md 7.4) is a child process of
+  `pocket-server` (`scripts.check`) and of `pocket check` (through `pocket-app`), never of a game
+  crate, so `pocket-script` has no `typecheck` feature.
 - **Threads**: the script host is not `Send` (rquickjs 0.14.0 implements `Send` only under its
   `parallel` feature, which pulls `tokio/rt-multi-thread`; `tools/crate-graph.toml` forbids that
   feature, section 10), so every thread that runs scripts builds its own host (script-host.md 9).
@@ -303,8 +304,7 @@ written as that specification names them.
   checks.md 8.4), `gen` (`--out <dir>`, `--locks <project>`), `pack`; `new`, `serve` and
   `mcp --attach` are the three commands the shared benchmark's engine adapter calls
   (shared/benchmark/README.md, 3.2). It enables the native features of the crates it links
-  (`pocket-runtime/thread`, `pocket-script/transpile` and `typecheck`, `pocket-assets/import`,
-  section 7.4).
+  (`pocket-runtime/thread`, `pocket-script/transpile`, `pocket-assets/import`, section 7.4).
 - **Build script**: `build.rs` computes `EngineVersion.source` (versions.md 3.1) over the files
   `git ls-files --cached --others --exclude-standard` lists under `crates/` and
   `shared/contract/rust/`, the workspace `Cargo.toml` and `Cargo.lock`, `rust-toolchain.toml`,
@@ -555,7 +555,6 @@ compiler, and master found that an arm64 build fused `a * b + c` where WebAssemb
 |---|---|---|---|
 | assets | `import` | `pocket-app` | glTF import, meshoptimizer (native) |
 | script | `transpile` | `pocket-app`; a browser editor page | oxc in process |
-| script | `typecheck` | `pocket-app` | `check_project`: `tsc` and the declaration files (native; implies `transpile`) |
 | runtime | `thread` | `pocket-app` | `GameThread` (std threads; native) |
 | sim | `invariants` | tests and the check's debug cross-build | the boundary invariants' index walk (simulation.md 4.1) |
 | web | `editor` | the editor page | the editor in the page |
@@ -624,7 +623,7 @@ The page runs two roles: the presenter on the main thread and the game in a Web 
 
 ### 8.3 What the web build leaves out
 
-The glTF importer (`import`), oxc (`transpile`) unless the editor feature is on, `typecheck`, the
+The glTF importer (`import`), oxc (`transpile`) unless the editor feature is on, the type check, the
 MCP server, `GameThread`, the debugger endpoint and the check orchestrator. The web build reads
 cooked assets and transpiled scripts that the native tools produce, and replays carry the compiled
 modules they need (replay.md 2.4).

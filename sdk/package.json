@@ -1,0 +1,9 @@
+{
+  "name": "@aipocket2/sdk",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The toolchain of the `pocket` script SDK: TypeScript 7, the type checker scripts.check runs.",
+  "devDependencies": {
+    "typescript": "7.0.2"
+  }
+}

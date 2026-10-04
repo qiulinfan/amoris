@@ -49,6 +49,7 @@ oxc_semantic = "=0.152.0"
 oxc_span = "=0.152.0"
 oxc_syntax = "=0.152.0"
 oxc_transformer = "=0.152.0"
+oxc_isolated_declarations = "=0.152.0" # pocket-script tests: the prelude's pocket.d.ts
 oxc_sourcemap = "=9.0.0"
 ts-rs = "=12.0.1"
 arc-swap = "=1.9.2"

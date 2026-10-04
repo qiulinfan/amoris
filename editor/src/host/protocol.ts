@@ -327,6 +327,18 @@ export interface Diagnostic {
   severity: "error" | "warning" | "info" | "hint";
   message: string;
   code?: string | number;
+  /** Who found it: `"tsc"` for the type check, else the engine's compiler, lint or loader. */
+  source?: string;
+}
+
+/** `scripts.types`: the SDK's declarations for the project (the files tsc checks against). */
+export interface ScriptTypes {
+  dir: string | null;
+  components: { engine: string[]; project: string[]; unavailable: string[] };
+  project_from: "scripts" | "registry";
+  diagnostics: Diagnostic[];
+  /** With `text: true`: `pocket.d.ts` and `components.d.ts`. */
+  text?: Record<string, string>;
 }
 
 export interface ScriptInfo {
@@ -388,6 +400,7 @@ export interface Methods {
   "scripts.read": [{ path: string }, string | { text: string }];
   "scripts.write": [{ path: string; text: string }, { diagnostics: Diagnostic[] }];
   "scripts.apply": [{ paths?: string[] }, { bundle: string | null; diagnostics: Diagnostic[] }];
+  "scripts.types": [{ text?: boolean; tsconfig?: boolean }, ScriptTypes];
   "assets.list": [{ dir?: string }, AssetInfo[]];
   "assets.import": [{ path: string }, { asset: string; meshes: number; materials: number }];
   "events.since": [{ seq: number; limit?: number }, GameEvent[]];

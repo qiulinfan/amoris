@@ -74,6 +74,8 @@ export const api = {
     },
     write: (path: string, text: string) => call("scripts.write", { path, text }),
     apply: (paths?: string[]) => call("scripts.apply", paths ? { paths } : {}, 120000),
+    // tsconfig: false: connecting an editor never writes into the project's source tree.
+    types: () => call("scripts.types", { text: true, tsconfig: false }),
   },
   assets: {
     list: (dir?: string) => call("assets.list", dir ? { dir } : {}),

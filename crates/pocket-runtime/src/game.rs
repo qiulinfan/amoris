@@ -21,6 +21,7 @@ use pocket_persist::{
 };
 use pocket_script::scripts::SchemaChange;
 use pocket_script::{CompiledSet, ScriptLimits};
+use pocket_sim::registry::ComponentSchema;
 use pocket_sim::{ContentHash, Event, NoHooks, Sim, SimConfig, StepReport, Tick, TickRate};
 use serde_json::{Value, json};
 
@@ -35,6 +36,7 @@ use crate::scene::Scene;
 use crate::scripts::{
     self, ScriptsApplyParams, ScriptsSwapParams, bundle_record, compiled_from_record,
 };
+use crate::types::{self, ScriptsTypesParams};
 use crate::{decode, engine};
 
 /// A system a game or a test adds to the schedule.
@@ -417,6 +419,10 @@ impl Game {
                 let p: ScriptPathParams = decode(p, name)?;
                 files::read(self.root(name)?, &p)
             }
+            "scripts.types" => {
+                let p: ScriptsTypesParams = decode(p, name)?;
+                self.script_types(&p)
+            }
             "status" => {
                 decode::<NoParams>(p, name)?;
                 let hash = self.world_hash().ok().map(|h| h.to_string());
@@ -683,36 +689,97 @@ impl Game {
     /// `scripts.apply` (hot-update.md 4), its stages inline (threads.md 5.5): gather and compile
     /// (the project's TypeScript as it is on disk, or `files`), answer `unchanged` for the same
     /// bundle unless `force`, then apply the `scripts.swap` Host write it produces. A compile that
-    /// fails answers `scripts.refused` with `diagnostics` in its detail.
+    /// fails answers `scripts.refused` with `diagnostics` in its detail. With `types`, the
+    /// declarations of what it compiled are written too (`scripts.types`, for the check that
+    /// follows), from the program it loaded: a dry run then also loads the scripts in a throwaway
+    /// host and is refused, as the swap would be, when they do not load.
     fn scripts_apply(&mut self, cmd: &Command) -> Result<Value, Problem> {
         let p: ScriptsApplyParams = decode(&cmd.params, "scripts.apply")?;
         let set = match self.gather(&p) {
             Ok(s) => s,
-            Err(mut e) => {
-                self.diagnostics = files::diagnostics(&e);
-                e.detail
-                    .insert("diagnostics".into(), json!(self.diagnostics));
-                return Err(e);
-            }
+            Err(e) => return Err(self.refusal(e, p.types)),
         };
         self.diagnostics.clear();
         let hash = set.bundle.hash;
-        if hash == self.current && !p.force {
-            return Ok(json!({"outcome": "unchanged", "bundle": hash.to_hex(), "diagnostics": []}));
+        let mut r = if hash == self.current && !p.force {
+            json!({"outcome": "unchanged", "bundle": hash.to_hex(), "diagnostics": []})
+        } else if p.dry_run {
+            if p.types {
+                let world = self.sim.world();
+                match pocket_script::scripts::declared_components(world, &set) {
+                    Ok(project) => {
+                        let mut r = json!({"outcome": "dry_run", "bundle": hash.to_hex(),
+                                           "diagnostics": []});
+                        r["types"] = self.write_types(Ok(project));
+                        return Ok(r);
+                    }
+                    Err(e) => return Err(self.refusal(scripts::refused("load", &e), true)),
+                }
+            }
+            json!({"outcome": "dry_run", "bundle": hash.to_hex(), "diagnostics": []})
+        } else {
+            self.bundles.insert(hash, set);
+            let swap = Command::new(
+                Source::Host,
+                self.next_host_seq(),
+                "scripts.swap",
+                json!({"bundle": hash.to_hex()}),
+            );
+            let mut r = match self.apply(&swap) {
+                Ok(r) => r,
+                Err(e) => return Err(self.refusal(e, p.types)),
+            };
+            r["diagnostics"] = json!([]);
+            r
+        };
+        if p.types {
+            r["types"] = self.write_types(Ok(pocket_script::scripts::live_components(
+                self.sim.world(),
+            )));
         }
-        if p.dry_run {
-            return Ok(json!({"outcome": "dry_run", "bundle": hash.to_hex(), "diagnostics": []}));
-        }
-        self.bundles.insert(hash, set);
-        let swap = Command::new(
-            Source::Host,
-            self.next_host_seq(),
-            "scripts.swap",
-            json!({"bundle": hash.to_hex()}),
-        );
-        let mut r = self.apply(&swap)?;
-        r["diagnostics"] = json!([]);
         Ok(r)
+    }
+
+    /// A refused apply, its `diagnostics` kept for `scripts.list` and put in its detail, and with
+    /// `types` the declarations written from the running program's components.
+    fn refusal(&mut self, mut e: Problem, types: bool) -> Problem {
+        self.diagnostics = files::diagnostics(&e);
+        e.detail
+            .insert("diagnostics".into(), json!(self.diagnostics));
+        if types {
+            let t = self.write_types(Err(self.diagnostics.clone()));
+            e.detail.insert("types".into(), t);
+        }
+        e
+    }
+
+    /// The declarations written for a check (no `tsconfig.json` in the source tree), or the reason
+    /// they were not, as `{error, message}`.
+    fn write_types(&self, project: Result<Vec<Arc<ComponentSchema>>, Vec<Value>>) -> Value {
+        let d = types::declarations(self.sim.world(), project);
+        types::write(
+            self.project.as_deref(),
+            &d,
+            &ScriptsTypesParams::for_check(),
+        )
+        .unwrap_or_else(|e| json!({"error": e.code, "message": e.message}))
+    }
+
+    /// `scripts.types`: the SDK's declarations for the scripts as they are on disk, written into
+    /// the project (`crate::types`). Scripts that are the running bundle answer the running
+    /// program's components; others are compiled and loaded in a throwaway host.
+    pub fn script_types(&self, p: &ScriptsTypesParams) -> Result<Value, Problem> {
+        let world = self.sim.world();
+        let project = match self.gather(&ScriptsApplyParams::default()) {
+            Ok(set) if set.bundle.hash == self.current => {
+                Ok(pocket_script::scripts::live_components(world))
+            }
+            Ok(set) => pocket_script::scripts::declared_components(world, &set)
+                .map_err(|e| files::diagnostics(&scripts::refused("load", &e))),
+            Err(p) => Err(files::diagnostics(&p)),
+        };
+        let d = types::declarations(world, project);
+        types::write(self.project.as_deref(), &d, p)
     }
 
     fn gather(&self, p: &ScriptsApplyParams) -> Result<CompiledSet, Problem> {

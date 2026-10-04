@@ -122,6 +122,11 @@ pub struct ScriptsApplyParams {
     /// Stop before the swap.
     #[serde(default)]
     pub dry_run: bool,
+    /// Also write the SDK's declarations of what was compiled (`scripts.types`, no
+    /// `tsconfig.json`) and answer them as `types`; a dry run then loads the scripts too and is
+    /// refused when they would not load. The server sets it for its type check.
+    #[serde(default)]
+    pub types: bool,
 }
 
 /// `scripts.swap`'s parameters: a Host write naming the prepared bundle by hash.

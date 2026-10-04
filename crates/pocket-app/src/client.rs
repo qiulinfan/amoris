@@ -4,8 +4,9 @@
 //! `--host <url|port>`, `POCKET_HOST`, or the `.pocket/host.json` a host writes in its project (from
 //! `--project <dir>` or the working directory up). Output is compact text, one line per entity,
 //! event or edit, defaults left out; `--json` prints the exact result. A refusal prints
-//! `code: message` (with its suggestions) to stderr and exits 1; a usage error exits 2. Help comes
-//! from the catalog's docs and schemas, so it says what the host takes.
+//! `code: message` (with its suggestions) to stderr and exits 1, as does a `scripts check` that finds
+//! an error; a usage error exits 2. Help comes from the catalog's docs and schemas, so it says what
+//! the host takes.
 
 use std::fmt::Write as _;
 use std::io::Read as _;
@@ -77,7 +78,7 @@ pub const COMMANDS: &[(&str, &str, &str)] = &[
     (
         "scripts",
         "scripts.list",
-        "pocket scripts list | read <path> | write <path> [<file>|-] | apply [--force] | check",
+        "pocket scripts list | read <path> | write <path> [<file>|-] | apply [--force] | check | types | guide",
     ),
     (
         "events",
@@ -513,11 +514,13 @@ fn request(cmd: &str, args: &Args) -> Result<(String, Value), Problem> {
                 "scripts.apply"
             }
             "check" => "scripts.check",
+            "types" => "scripts.types",
+            "guide" => "scripts.guide",
             other => {
                 return Err(usage(
                     format!("pocket scripts has no '{other}'"),
                     other,
-                    &["list", "read", "write", "apply", "check"],
+                    &["list", "read", "write", "apply", "check", "types", "guide"],
                 ));
             }
         },
@@ -670,7 +673,7 @@ fn diagnostics(v: &Value, out: &mut String) {
             opt(&d["line"]),
             opt(&d["column"]),
             opt(&d["code"]),
-            opt(&d["message"])
+            opt(&d["message"]).replace('\n', "\n      ")
         );
     }
 }
@@ -839,7 +842,7 @@ fn text(method: &str, v: &Value) -> String {
             }
             s
         }),
-        "scripts.read" => out = v["text"].as_str().unwrap_or("").to_owned(),
+        "scripts.read" | "scripts.guide" => out = v["text"].as_str().unwrap_or("").to_owned(),
         "scripts.write" | "scripts.apply" | "scripts.check" => {
             let mut head = Vec::new();
             for k in ["path", "outcome", "typecheck"] {
@@ -850,9 +853,39 @@ fn text(method: &str, v: &Value) -> String {
             if !v["bundle"].is_null() {
                 head.push(format!("bundle {}", short_hash(&v["bundle"])));
             }
+            if let Some(ms) = v["tsc_ms"].as_f64() {
+                let version = v["tsc_version"].as_str().unwrap_or("");
+                head.push(format!("tsc {version} {ms:.0} ms").replace("  ", " "));
+            }
             let n = v["diagnostics"].as_array().map_or(0, Vec::len);
             head.push(format!("{n} diagnostics"));
             let _ = writeln!(out, "{}", head.join(" | "));
+            diagnostics(&v["diagnostics"], &mut out);
+            if let Some(r) = v["reason"].as_str() {
+                let _ = writeln!(out, "typecheck: {r}");
+            }
+        }
+        "scripts.types" => {
+            let list = |k: &str| {
+                v["components"][k]
+                    .as_array()
+                    .map(|a| a.iter().map(opt).collect::<Vec<_>>().join(" "))
+                    .unwrap_or_default()
+            };
+            for f in v["files"].as_array().into_iter().flatten() {
+                let _ = writeln!(out, "{} {} B", opt(&f["path"]), opt(&f["bytes"]));
+            }
+            if !v["tsconfig"].is_null() {
+                let _ = writeln!(out, "tsconfig.json {}", opt(&v["tsconfig"]));
+            }
+            let _ = writeln!(out, "engine: {}", list("engine"));
+            let _ = writeln!(
+                out,
+                "game ({}): {}",
+                opt(&v["project_from"]),
+                list("project")
+            );
+            let _ = writeln!(out, "not for scripts: {}", list("unavailable"));
             diagnostics(&v["diagnostics"], &mut out);
         }
         "assets.list" => lines(&mut out, v, &|a| {
@@ -1087,6 +1120,17 @@ fn help(args: &Args) -> String {
     out
 }
 
+/// Whether a check found an error (the compile's, the load's or `tsc`'s) or `tsc` timed out, so
+/// that `pocket scripts check` exits 1 and can gate an apply: scripts are never passed unchecked.
+fn has_errors(v: &Value) -> bool {
+    v["outcome"] == "refused"
+        || v["typecheck"] == "failed"
+        || v["typecheck"] == "timeout"
+        || v["diagnostics"]
+            .as_array()
+            .is_some_and(|d| d.iter().any(|d| d["severity"] == "error"))
+}
+
 /// Runs a client command.
 pub fn run(cmd: &str, raw: &[String]) -> Outcome {
     let args = match Args::parse(raw, FLAGS) {
@@ -1139,7 +1183,7 @@ pub fn run(cmd: &str, raw: &[String]) -> Outcome {
             }
             Outcome {
                 stdout: String::new(),
-                code: 0,
+                code: i32::from(method == "scripts.check" && has_errors(&v)),
             }
         }
         Err(p) => failed(&p, 1),

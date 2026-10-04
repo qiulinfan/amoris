@@ -88,6 +88,18 @@ impl StepResult {
         }
     }
 
+    /// A problem that leaves the step without a verdict (a tool missing), unless it already failed.
+    pub fn inconclusive(&mut self, p: Problem) {
+        if self.verdict != Verdict::Fail {
+            self.verdict = Verdict::Inconclusive;
+        }
+        if self.errors.len() < MAX_PROBLEMS {
+            self.errors.push(p);
+        } else {
+            self.more_errors += 1;
+        }
+    }
+
     /// A finding that leaves the verdict alone.
     pub fn warn(&mut self, p: Problem) {
         if self.warnings.len() < MAX_PROBLEMS {

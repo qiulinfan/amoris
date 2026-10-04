@@ -13,7 +13,7 @@ import { reportError } from "../../actions/report";
 import { useDebug } from "../../state/debug";
 import { useScripts } from "../../state/scripts";
 import { cx } from "../../ui/cx";
-import { monaco, pathOf, sdkSource, uriOf } from "./monaco";
+import { monaco, pathOf, sdkLabel, uriOf } from "./monaco";
 
 type Editor = ReturnType<typeof monaco.editor.create>;
 type Model = ReturnType<typeof monaco.editor.createModel>;
@@ -43,16 +43,23 @@ async function ensureModel(path: string): Promise<Model | null> {
 export default function CodeEditor() {
   const host = useRef<HTMLDivElement>(null);
   const editorRef = useRef<Editor | null>(null);
-  const { files, open, active, dirty, diagnostics, reveal } = useScripts();
+  const { files, open, active, dirty, diagnostics, reveal, types } = useScripts();
   const breakpoints = useDebug((s) => s.breakpoints);
   const debugState = useDebug((s) => s.state);
   const [cursor, setCursor] = useState({ line: 1, column: 1 });
+  // The shown model's markers (the TypeScript worker's and the host's), counted in the status bar.
+  const [counts, setCounts] = useState({ errors: 0, warnings: 0 });
   const bpDecorations = useRef<ReturnType<Editor["createDecorationsCollection"]> | null>(null);
   const pauseDecorations = useRef<ReturnType<Editor["createDecorationsCollection"]> | null>(null);
   const hoverDecorations = useRef<ReturnType<Editor["createDecorationsCollection"]> | null>(null);
 
   // Create the editor once.
   useEffect(() => {
+    // Hovers and suggestions live in a node on the body: the dock's panels clip anything inside them,
+    // and a type error's hover is often wider than what is left of the editor.
+    const overflow = document.createElement("div");
+    overflow.className = "monaco-editor";
+    document.body.appendChild(overflow);
     const editor = monaco.editor.create(host.current!, {
       theme: "pocket-dark",
       fontFamily: "'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, Menlo, monospace",
@@ -71,6 +78,7 @@ export default function CodeEditor() {
       bracketPairColorization: { enabled: true },
       guides: { bracketPairs: "active", indentation: true },
       fixedOverflowWidgets: true,
+      overflowWidgetsDomNode: overflow,
       tabSize: 4,
       stickyScroll: { enabled: true },
       model: null,
@@ -99,6 +107,16 @@ export default function CodeEditor() {
       hoverDecorations.current?.set(line ? [{ range: new monaco.Range(line, 1, line, 1), options: { glyphMarginClassName: "bp-ghost" } }] : []);
     });
     editor.onMouseLeave(() => hoverDecorations.current?.set([]));
+    const count = () => {
+      const model = editor.getModel();
+      const ms = model ? monaco.editor.getModelMarkers({ resource: model.uri }) : [];
+      setCounts({
+        errors: ms.filter((m) => m.severity === monaco.MarkerSeverity.Error).length,
+        warnings: ms.filter((m) => m.severity === monaco.MarkerSeverity.Warning).length,
+      });
+    };
+    const markersSub = monaco.editor.onDidChangeMarkers(count);
+    editor.onDidChangeModel(count);
 
     const save = () => {
       const model = editor.getModel();
@@ -116,9 +134,11 @@ export default function CodeEditor() {
       if (model && pos) void toggleBreakpoint(pathOf(model.uri), pos.lineNumber);
     });
     return () => {
+      markersSub.dispose();
       registerScriptSaver(null);
       registerBreakpointToggler(null);
       editor.dispose();
+      overflow.remove();
       editorRef.current = null;
     };
   }, []);
@@ -172,27 +192,31 @@ export default function CodeEditor() {
     });
   }, [reveal]);
 
-  // Host diagnostics as markers.
+  // Host diagnostics as markers. Once the worker has the project's declarations it checks against the
+  // same files `tsc` did, live, so the host's `tsc` findings (stale after the next keystroke) are
+  // left to it.
   useEffect(() => {
+    const live = !!types?.text;
     for (const [path, list] of Object.entries(diagnostics)) {
       const model = monaco.editor.getModel(uriOf(path));
       if (!model) continue;
       monaco.editor.setModelMarkers(
         model,
         "pocket",
-        list.map((d) => ({
+        list.filter((d) => !(live && d.source === "tsc")).map((d) => ({
           severity: severity(d.severity),
           message: d.message,
           code: d.code !== undefined ? String(d.code) : undefined,
           source: "pocket",
-          startLineNumber: d.line,
-          startColumn: d.column,
-          endLineNumber: d.end_line ?? d.line,
-          endColumn: d.end_column ?? model.getLineMaxColumn(d.line),
+          // A finding with no place (a broken tsconfig.json) marks the first line.
+          startLineNumber: d.line || 1,
+          startColumn: d.column || 1,
+          endLineNumber: d.end_line ?? (d.line || 1),
+          endColumn: d.end_column ?? model.getLineMaxColumn(d.line || 1),
         })),
       );
     }
-  }, [diagnostics, files]);
+  }, [diagnostics, files, types]);
 
   // Breakpoints and the paused line of the shown file.
   const shown = editorRef.current?.getModel();
@@ -228,9 +252,7 @@ export default function CodeEditor() {
     );
   }, [breakpoints, debugState, shownPath, active]);
 
-  const problems = active ? (diagnostics[active] ?? []) : [];
-  const errors = problems.filter((d) => d.severity === "error").length;
-  const warnings = problems.filter((d) => d.severity === "warning").length;
+  const { errors, warnings } = counts;
 
   return (
     <div className="code-editor">
@@ -270,7 +292,7 @@ export default function CodeEditor() {
           Ln {cursor.line}, Col {cursor.column}
         </span>
         <span>TypeScript</span>
-        <span data-tip="Where the `pocket` module's types come from">SDK: {sdkSource}</span>
+        <span data-tip="Where the `pocket` module's types come from (scripts.types)">SDK: {sdkLabel(types)}</span>
         <span className={cx(errors > 0 && "err")}>{errors} errors</span>
         <span className={cx(warnings > 0 && "warn")}>{warnings} warnings</span>
         {active && dirty[active] && <span className="warn">unsaved</span>}
