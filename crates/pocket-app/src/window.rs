@@ -29,12 +29,17 @@ const FLAGS: &[Flag] = &[
     ("width", true),
     ("height", true),
     ("capture", true),
+    ("mute", false),
     ("capture-after", true),
 ];
 
 struct Play {
     mailbox: Arc<Mailbox>,
-    _game: GameHandle,
+    game: GameHandle,
+    audio: Option<pocket_audio::Audio>,
+    events: pocket_link::EventCursor,
+    /// The project's `[sounds]`: event name (or `prefix.*`) to clip.
+    sounds: std::collections::BTreeMap<String, String>,
     assets_set: Option<PathBuf>,
     /// `--capture PATH`: save the frame after `capture_after` frames, then close.
     capture: Option<(PathBuf, u32)>,
@@ -47,6 +52,34 @@ impl Host for Play {
             r.set_asset_source(Box::new(FileAssets::new(root)));
         }
         r.apply(self.mailbox.take(), now_s);
+        if let Some(audio) = self.audio.as_mut() {
+            let cam = r.camera();
+            audio.set_listener(cam.position, cam.rotation);
+            audio.sync(&r.scene.audio);
+            let batch = self.game.reader().events(&mut self.events, 256);
+            for rec in batch.records {
+                let Ok(ev) = rec.to_json() else { continue };
+                let name = ev["name"].as_str().unwrap_or("");
+                let data = &ev["data"];
+                let clip = if name == "sound" {
+                    data["clip"].as_str().map(str::to_owned)
+                } else {
+                    self.sounds.get(name).cloned().or_else(|| {
+                        self.sounds.iter().find_map(|(k, v)| {
+                            k.strip_suffix(".*").filter(|p| name.starts_with(&format!("{p}."))).map(|_| v.clone())
+                        })
+                    })
+                };
+                let Some(clip) = clip else { continue };
+                let at = ev["subject"]
+                    .as_u64()
+                    .and_then(|e| r.scene.position_of(e))
+                    .map(glam::Vec3::from);
+                let volume = data["volume"].as_f64().unwrap_or(1.0) as f32;
+                let pitch = data["pitch"].as_f64().unwrap_or(1.0) as f32;
+                audio.play_once(&clip, volume, pitch, at);
+            }
+        }
     }
 
     fn after_frame(&mut self, _stats: &FrameStats) {
@@ -113,7 +146,10 @@ fn play_inner(raw: &[String]) -> Result<Outcome, Problem> {
     let report = run(
         Play {
             mailbox,
-            _game: game,
+            game,
+            audio: if args.has("mute") { None } else { pocket_audio::Audio::new(Some(dir.clone())) },
+            events: pocket_link::EventCursor::start(),
+            sounds: project.manifest.sounds.clone(),
             assets_set: Some(dir.clone()),
             capture: args.value("capture").map(|p| {
                 (

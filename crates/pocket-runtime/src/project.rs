@@ -26,6 +26,10 @@ pub struct Manifest {
     /// The seed `pocket run` uses when none is given.
     #[serde(default = "default_seed")]
     pub seed: u64,
+    /// Sounds the presenters play when an event is emitted: event name (or `prefix.*`) to clip
+    /// (`sounds/ding.wav`, or a synthesized `sfx:coin`). Presentation only; never in the tick.
+    #[serde(default)]
+    pub sounds: std::collections::BTreeMap<String, String>,
 }
 
 fn default_rate() -> u32 {

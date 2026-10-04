@@ -4,3 +4,9 @@
 name = "sailing"
 rate = 60
 seed = 1
+
+# Sounds the presenters play for events (presentation only): event name or `prefix.*` to a clip.
+[sounds]
+"crate.taken" = "sfx:coin"
+"crates.all" = "sfx:powerup"
+"sail.*" = "sfx:blip"

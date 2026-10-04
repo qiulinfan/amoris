@@ -65,6 +65,11 @@ group = "presenter"
 deps = ["pocket-assets"]
 web = true
 
+[crate.pocket-audio]
+group = "presenter"
+deps = ["pocket-assets"]
+web = false
+
 [crate.pocket-viewport]
 group = "presenter"
 deps = ["pocket-assets", "pocket-render"]
@@ -88,7 +93,7 @@ web = false
 [crate.pocket-app]
 group = "app"
 deps = ["pocket-sim", "pocket-link", "pocket-runtime", "pocket-check", "pocket-render", "pocket-assets",
-        "pocket-mcp", "pocket-server", "pocket-debug"]
+        "pocket-mcp", "pocket-server", "pocket-debug", "pocket-audio"]
 web = false
 
 [crate.pocket-web]

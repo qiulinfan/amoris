@@ -80,6 +80,8 @@ pub struct Scene {
     pub sea: Option<SeaView>,
     pub splats: Vec<SplatView>,
     pub splats_changed: bool,
+    /// The world's sound sources (for the audio presenter).
+    pub audio: Vec<pocket_assets::frame::AudioView>,
     /// The game UI's elements.
     pub ui: Vec<pocket_assets::frame::UiView>,
     /// Animation state per entity (skeletal animation).
@@ -124,6 +126,11 @@ impl Scene {
 
     pub fn pending(&self) -> usize {
         self.pending
+    }
+
+    /// An entity's latest position, if it is drawn.
+    pub fn position_of(&self, entity: u64) -> Option<[f32; 3]> {
+        self.entities.get(&entity).map(|e| e.pose.position)
     }
 
     /// The instance slots an entity is drawn with (one per part).
@@ -259,6 +266,9 @@ impl Scene {
         }
         if let Some(u) = frame.ui {
             self.ui = u;
+        }
+        if let Some(a) = frame.audio {
+            self.audio = a;
         }
     }
 

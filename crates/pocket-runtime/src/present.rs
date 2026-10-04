@@ -16,10 +16,10 @@ use bevy_ecs::prelude::World;
 use bevy_ecs::world::{Ref, WorldId};
 use pocket_assets::frame::{
     AnimView, CameraView, EnvironmentView, InstanceUpdate, LightKindView, LightView, Look, Pose,
-    RenderFrame, SeaView, SplatView, UiView, WaveView,
+    AudioView, RenderFrame, SeaView, SplatView, UiView, WaveView,
 };
 use pocket_assets::{
-    Animator, Camera, Environment, Feed, Light, LightKind, Model, SkyKind, Splat, UiAnchor, UiBar,
+    Animator, AudioSource, Camera, Environment, Feed, Light, LightKind, Model, SkyKind, Splat, UiAnchor, UiBar,
     UiText,
 };
 use pocket_physics::{Sea, Transform};
@@ -182,6 +182,7 @@ impl Extractor {
         frame.sea = Some(Self::sea(world));
         frame.splats = Some(Self::splats(world));
         frame.ui = Some(Self::ui(world));
+        frame.audio = Some(Self::audio(world));
         frame
     }
 
@@ -253,6 +254,14 @@ impl Extractor {
                 || w.removed::<Sea>().next().is_some()
         }) {
             frame.sea = Some(Self::sea(world));
+        }
+        if changed(world, &mut |w| {
+            w.query::<(Option<Ref<Transform>>, Ref<AudioSource>)>()
+                .iter(w)
+                .any(|(t, a)| a.is_changed() || t.is_some_and(|t| t.is_changed()))
+                || w.removed::<AudioSource>().next().is_some()
+        }) {
+            frame.audio = Some(Self::audio(world));
         }
         if changed(world, &mut |w| {
             w.query::<(Option<Ref<Transform>>, Option<Ref<UiText>>, Option<Ref<UiBar>>)>()
@@ -388,6 +397,25 @@ fn anchor_code(a: UiAnchor) -> u32 {
 }
 
 impl Extractor {
+    fn audio(world: &mut World) -> Vec<AudioView> {
+        let mut v: Vec<AudioView> = world
+            .query::<(&EntityId, Option<&Transform>, &AudioSource)>()
+            .iter(world)
+            .map(|(id, t, a)| AudioView {
+                id: id.get(),
+                clip: a.clip.clone(),
+                volume: f(a.volume),
+                pitch: f(a.pitch),
+                looped: a.looped,
+                playing: a.playing,
+                spatial: a.spatial,
+                position: t.map_or([0.0; 3], |t| f3(t.position)),
+            })
+            .collect();
+        v.sort_by_key(|a| a.id);
+        v
+    }
+
     fn ui(world: &mut World) -> Vec<UiView> {
         let mut v: Vec<UiView> = Vec::new();
         let mut q = world.query::<(&EntityId, Option<&Transform>, Option<&UiText>, Option<&UiBar>)>();

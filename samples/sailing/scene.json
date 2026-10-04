@@ -6,6 +6,13 @@
       "name": "Sea",
       "prefab": {
         "kind": "island_sea"
+      },
+      "components": {
+        "AudioSource": {
+          "clip": "sfx:surf",
+          "volume": 0.5,
+          "spatial": false
+        }
       }
     },
     {
@@ -14,6 +21,13 @@
         "kind": "breeze",
         "from_deg": 270,
         "speed": 6
+      },
+      "components": {
+        "AudioSource": {
+          "clip": "sfx:wind",
+          "volume": 0.35,
+          "spatial": false
+        }
       }
     },
     {

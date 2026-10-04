@@ -310,3 +310,34 @@ impl Default for UiBar {
         }
     }
 }
+
+/// A sound playing from the entity: a looping ambience, an engine, a fire. `clip` is a file of the
+/// project (wav, ogg, mp3, flac) or a synthesized `sfx:<preset>` (coin, jump, hit, explosion,
+/// laser, powerup, blip, click, wind, surf). One-shot sounds are events instead (`sound`, or the
+/// project's `[sounds]` table mapping event names to clips).
+#[derive(Component, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, default)]
+pub struct AudioSource {
+    pub clip: String,
+    /// Linear gain, 0 to 4.
+    pub volume: f64,
+    /// Playback rate (1 = as recorded).
+    pub pitch: f64,
+    pub looped: bool,
+    pub playing: bool,
+    /// Heard from the entity's position (falls off with distance) rather than everywhere.
+    pub spatial: bool,
+}
+
+impl Default for AudioSource {
+    fn default() -> Self {
+        AudioSource {
+            clip: String::new(),
+            volume: 1.0,
+            pitch: 1.0,
+            looped: true,
+            playing: true,
+            spatial: true,
+        }
+    }
+}

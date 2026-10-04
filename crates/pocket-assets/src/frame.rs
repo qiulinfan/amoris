@@ -157,6 +157,19 @@ pub struct UiView {
     pub world: [f32; 3],
 }
 
+/// A sound source, posed.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AudioView {
+    pub id: u64,
+    pub clip: String,
+    pub volume: f32,
+    pub pitch: f32,
+    pub looped: bool,
+    pub playing: bool,
+    pub spatial: bool,
+    pub position: [f32; 3],
+}
+
 /// What changed in the visual state since the subscriber's last frame.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct RenderFrame {
@@ -182,6 +195,9 @@ pub struct RenderFrame {
     /// The full list of UI elements, when any changed (or an entity carrying one moved).
     #[serde(default)]
     pub ui: Option<Vec<UiView>>,
+    /// The full list of sound sources, when any changed or moved.
+    #[serde(default)]
+    pub audio: Option<Vec<AudioView>>,
 }
 
 impl RenderFrame {
@@ -196,6 +212,7 @@ impl RenderFrame {
             && self.sea.is_none()
             && self.splats.is_none()
             && self.ui.is_none()
+            && self.audio.is_none()
     }
 
     /// Folds `next` (a later frame) into this one, as if both had been applied in order.
@@ -263,6 +280,9 @@ impl RenderFrame {
         }
         if next.ui.is_some() {
             self.ui = next.ui;
+        }
+        if next.audio.is_some() {
+            self.audio = next.audio;
         }
     }
 
