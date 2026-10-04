@@ -60,7 +60,8 @@ impl Targets {
         let rs = ra | wgpu::TextureUsages::TEXTURE_BINDING;
         let color_msaa = tex(device, "hdr (msaa)", width, height, HDR, SAMPLES, 1, ra)
             .create_view(&Default::default());
-        let depth = tex(device, "depth (msaa)", width, height, DEPTH, SAMPLES, 1, ra)
+        // Sampled too: the splat pass copies it to one sample (splat/mod.rs).
+        let depth = tex(device, "depth (msaa)", width, height, DEPTH, SAMPLES, 1, rs)
             .create_view(&Default::default());
         let hdr = tex(device, "hdr", width, height, HDR, 1, 1, rs);
         let hdr_view = hdr.create_view(&Default::default());

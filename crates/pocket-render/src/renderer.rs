@@ -273,6 +273,8 @@ pub struct Renderer {
     post: Post,
     sky: Sky,
     profiler: GpuProfiler,
+    /// Gaussian splats (splat/): prepared before the opaque pass, drawn after it.
+    pub splats: crate::splat::Splats,
 
     view_buf: wgpu::Buffer,
     cull_buf: wgpu::Buffer,
@@ -686,6 +688,7 @@ impl Renderer {
             post: Post::new(device, output),
             sky: Sky::new(device),
             profiler: GpuProfiler::new(device, &gpu.queue, gpu.caps.timestamps),
+            splats: crate::splat::Splats::new(gpu),
             view_buf: uniform(device, "view", std::mem::size_of::<ViewUniform>() as u64),
             cull_buf: uniform(device, "cull", std::mem::size_of::<CullUniform>() as u64),
             instances: storage(device, "instances", 1024 * 80, wgpu::BufferUsages::empty()),
@@ -1394,6 +1397,9 @@ impl Renderer {
                 draw(&mut pass, c as u32 + 1, variant, self.draw_meshes, fi);
             }
         }
+        // Gaussian splats (splat/): preprocess and sort; the opaque pass keeps its depth for them.
+        self.splats
+            .prepare(&mut enc, &mut self.profiler, &mut self.scene, &cam, (w, h));
         {
             let ts = self.profiler.render_scope("opaque+sky");
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1411,7 +1417,11 @@ impl Renderer {
                     view: &self.targets.depth,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(0.0),
-                        store: wgpu::StoreOp::Discard,
+                        store: if self.splats.active() {
+                            wgpu::StoreOp::Store
+                        } else {
+                            wgpu::StoreOp::Discard
+                        },
                     }),
                     stencil_ops: None,
                 }),
@@ -1464,6 +1474,9 @@ impl Renderer {
                 &id_draw,
             );
         }
+        // Gaussian splats (splat/): drawn over the resolved image, tested against the depth.
+        self.splats
+            .draw(&mut enc, &mut self.profiler, &self.targets);
         let bloom = env.as_ref().map_or(0.15, |e| e.bloom);
         self.post.run(
             &device,

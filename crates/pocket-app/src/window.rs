@@ -49,6 +49,7 @@ struct Play {
 impl Host for Play {
     fn update(&mut self, r: &mut Renderer, now_s: f64) {
         if let Some(root) = self.assets_set.take() {
+            r.splats.set_root(root.clone());
             r.set_asset_source(Box::new(FileAssets::new(root)));
         }
         r.apply(self.mailbox.take(), now_s);
