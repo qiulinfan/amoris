@@ -1,0 +1,20 @@
+[package]
+name = "pocket-app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "pocket"
+path = "src/main.rs"
+
+[dependencies]
+pocket-contract.workspace = true
+pocket-sim.workspace = true
+pocket-persist.workspace = true
+pocket-link.workspace = true
+bevy_ecs.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true

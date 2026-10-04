@@ -511,3 +511,8 @@ resources/.pocketengine/
 /Projects/Default/**/*.raw
 /Projects/Default/**/*.mp4
 /Projects/Default/**/*.mov
+
+# Rust foundation rebuild outputs
+/target/
+/out/
+/target-*/

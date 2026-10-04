@@ -1,0 +1,22 @@
+# F0's allowed direct workspace edges. Later slices update this with the charter.
+[crate.pocket-contract]
+deps = []
+game = true
+[crate.pocket-sim]
+deps = ["pocket-contract"]
+game = true
+[crate.pocket-persist]
+deps = ["pocket-contract", "pocket-sim"]
+game = true
+[crate.pocket-link]
+deps = ["pocket-contract", "pocket-sim", "pocket-persist"]
+game = true
+[crate.pocket-app]
+deps = ["pocket-contract", "pocket-sim", "pocket-persist", "pocket-link"]
+game = false
+[crate.xtask]
+deps = []
+game = false
+
+[game]
+forbid = ["wgpu", "winit", "tokio", "rmcp", "rayon", "web-sys"]
