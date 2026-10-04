@@ -474,40 +474,39 @@ those out of typed-array packing (its Decision, item 5); slots remove the limit.
 
 ### 7.4 Type declarations and the check
 
-The engine writes these files into `<project>/.pocket/types/` (generated, never edited, not
-committed):
+`scripts.types` (a read on the game thread, milliseconds) writes these files into
+`<project>/.pocket/types/` (generated, never edited, not committed); docs/sdk.md is the agent's
+guide to them:
 
 | File | Content | Source |
 |---|---|---|
-| `pocket.d.ts` | The prelude's API (5.1) | The prelude's TypeScript, through `oxc_isolated_declarations` |
-| `components.d.ts` | `Components`, `ComponentColumns`, an interface per engine component and enum, `ScriptPhase` | Engine `ComponentSchema`s and [sim]'s phases, by the component emitter |
-| `contract.d.ts` | Event, intent and error records | [sim]'s and [contract]'s Rust types, through `ts-rs` |
-| `project.d.ts` | `declare module "pocket" { interface Components {...}; interface ComponentColumns {...} }` | Project `ComponentSchema`s, by the same emitter |
-| `tsconfig.json` | The options the runtime implies | A fixed template |
+| `pocket.d.ts` | The prelude's API (5.1), with a reference to `components.d.ts` | `src/prelude/pocket.d.ts`, emitted from the prelude's TypeScript by `oxc_isolated_declarations` in `tests/prelude.rs` (committed, as `pocket.js` is), embedded in the engine |
+| `components.d.ts` | `declare module "pocket" { interface Components {...}; interface ComponentColumns {...} }`: every component scripts can use, engine and project, a value type and a column type each, with field docs naming the declared type and default | Engine `ComponentSchema`s from the live registry; project ones from the scripts on disk, compiled and instantiated in a throwaway host (so they are current before a swap), else from the registry |
 
-One emitter writes engine and project components alike (`ts-rs` cannot see components declared at
-run time): per component a value interface with field docs naming the declared type
-(`/** Throttle, -1 astern to 1 ahead. (f64) */`) and a column interface (`Float64Array` per numeric
-field, `{x, y, z}` of them per vector). The tsconfig is `strict`, `noEmit`, `isolatedModules` (each
-file transpilable alone, as oxc does it), `target` and `lib` `es2023`, `module` `esnext`,
-`moduleResolution` `bundler`, no DOM or Node types, `pocket` mapped to `pocket.d.ts`; `lib` still
-declares `Date` and `Promise`, so the lint (script-sandbox.md 3), not `tsc`, refuses them.
+A project without a `tsconfig.json` gets one (`pocket_script::types::TSCONFIG`): `strict`, `noEmit`,
+`isolatedModules`, `allowImportingTsExtensions`, `target` and `lib` `es2023`, `module` `esnext`,
+`moduleResolution` `bundler`, no `types`, `pocket` mapped to `.pocket/types/pocket.d.ts`; `lib`
+still declares `Date` and `Promise`, so the lint (script-sandbox.md 3), not `tsc`, refuses them. One
+emitter (`pocket_script::types`) writes engine and project components alike: per field
+`/** Throttle, -1 astern to 1 ahead. (f64, default 0) */`, a column per numeric field
+(`Float64Array`; `BoolColumn` 0 or 1, `EntityColumn` an id or 0, an enum's column documents its
+variant indices, `{x, y, z, w}` of them per vector, none for strings). The prelude types the rest
+from them: a query's `fields` against its own `with` components (template literals over
+`"Component.field"`), the columns a query hands over (a column `fields` leaves out is
+`NotInFields<"Component.field">`), `world.get`, `set`, `insert` and `spawn` per component, event
+kinds and system names. Registered components without a script schema (`Model`, `Light`, ...) are
+listed in a comment and are not `ComponentName`s.
 
-`check_project(dir) -> Vec<ScriptError>` is the command the check's `types` step ([arch], checks.md
-6.4) and the apply path ([mcp]) call: it compiles (with the lint), instantiates, writes these files
-and runs `tsc --noEmit -p .pocket/types/tsconfig.json` (TypeScript 7.0.2, what master used, master
-`docs/sdk.md`, Types; no slice 0 spike ran `tsc`), each `tsc` diagnostic becoming
-`types.error {path, line, column, code, message}`. It spawns a process and writes files, so it is
-built only with `pocket-script`'s native-only feature `typecheck`, which implies `transpile` and
-which `pocket-app` enables (architecture.md 7.4); `tsc` never runs at run time or in the web build
-(charter 4.2.4). The compiler is master's pinned prebuilt archive,
-`@typescript/typescript-<platform>-7.0.2.tgz` from the npm registry (master `pocket.toml`: win32-x64
-SHA-256 `61fc4e141d2bc687db580e71bbfa63b9c209f0310645d82ca1b457eb3a24fd19`, linux-x64
-`7ecad6f67377e831856367ab062ef394f21506a611405bf8ac0ff039348637d3`, darwin-arm64
-`902e2fe1cf0799198ef902c6b8c310a450fef629a6baba41d45641ef75c04ebd`, linux-arm64
-`c83d931ac9dd7549cde6e71246aa9d6a9812843023df3e277fe3b5dcf41dd0ea`), which `cargo xtask check` and
-`pocket check` fetch into `~/.pocket-tools/typescript-7.0.2/` and verify by hash when it is missing;
-`POCKET_TSC` names another `tsc` (checks.md 6.4).
+`scripts.check` and `scripts.apply` (the server, server.md) run `scripts.types`, then
+`tsc --noEmit -p <project>` (TypeScript 7, the native compiler; `sdk/package.json` pins it) as a
+child process off the game thread, each diagnostic becoming
+`{file, line, column, code, message, severity, source: "tsc"}`, its elaborations
+(`Did you mean ...?`) appended to the message. A dry run whose scripts compile but fail to
+instantiate is answered `refused` with the load's diagnostics. `pocket check`'s `types` step
+(checks.md 6.4) does the same without a host: the lint, the declarations from the project loaded
+into a game with no entities, then `tsc`, each diagnostic a `types.error`. `tsc` never runs at run
+time or in the web build (charter 4.2). The web editor loads the same two files into Monaco's
+TypeScript worker (editor.md 7).
 
 ## 8. Module loading and transpiling
 
@@ -576,7 +575,9 @@ returns; its declaration file is emitted from its own source (7.4), so docs and 
 ```rust
 pub fn compile(source: &ScriptSource, options: &CompileOptions)   // feature `transpile`
     -> Result<CompiledSet, Vec<ScriptError>>;
-pub fn check_project(dir: &Path) -> Vec<ScriptError>;            // feature `typecheck`, 7.4
+pub fn scripts::declared_components(world: &World, set: &CompiledSet) // 7.4: a set's project
+    -> Result<Vec<Arc<ComponentSchema>>, Vec<ScriptError>>;            // components, before a swap
+pub fn types::components_dts(scriptable: &[&ComponentSchema], engine_only: &[&str]) -> String; // 7.4
 
 /// Not Send: rquickjs 0.14.0 implements Send for its Runtime and Context only under its `parallel`
 /// feature, which pulls tokio in (architecture.md 6). Built on the thread that runs it.
@@ -727,9 +728,12 @@ a `ctx` over a snapshot exported as JSON [persist] (not in slice 1).
 6. **Slice 1: the prelude's JavaScript is committed.** `crates/pocket-script/src/prelude/pocket.ts`
    is the source; it goes through `compile`'s pipeline and lint (allowed to import `pocket:host`)
    into `src/prelude/pocket.js` and its map, which are committed because the web build has no
-   transpiler. `tests/prelude.rs` fails when they are stale and `POCKET_BLESS=1` rewrites them. Not
-   built in slice 1: the declaration files and `check_project` of 7.4 (the `typecheck` feature,
-   `tsc`), so test 7 has no verdict yet.
+   transpiler. `tests/prelude.rs` fails when they are stale and `POCKET_BLESS=1` rewrites them; it
+   writes `src/prelude/pocket.d.ts` the same way (7.4). `tsc` runs outside this crate (the server,
+   and `pocket check` through `pocket-app`), so there is no `typecheck` feature. Test 7 is
+   `crates/pocket-app/tests/sdk_types.rs` over `tests/fixtures/sdk/every` (every field type and API,
+   the builder's and the emitted value types proved mutually assignable, a misspelt field's
+   `types.error`); it passes with TypeScript 7.0.2 and skips when no `tsc` is installed.
 7. **Slice 1: scripts in the schedule.** `ScriptHost` is not `Send` and `Sim::add_exclusive` takes
    `Send + Sync` systems, so the host and the program live in the world as non-send data
    (`pocket_script::Scripts`), which `script.update` takes out and puts back every tick, timing each
