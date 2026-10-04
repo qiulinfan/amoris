@@ -48,23 +48,24 @@ export const takeAboard = system({
             const target = crew.take[r];
             if (target === 0) return;
             crew.take[r] = 0;
-            const crate = target as typeof boat;
-            if (!ctx.world.exists(crate) || !ctx.world.has(crate, "Cargo")) {
-                ctx.emit("interact.ignored", { code: "sail.crate_gone", crate: target }, { subject: boat });
+            const crate = target;
+            const cargo = ctx.world.get(crate, "Cargo");
+            const place = ctx.world.get(crate, "Transform");
+            if (!cargo || !place) {
+                ctx.emit("interact.ignored", { code: "sail.crate_gone", crate }, { subject: boat });
                 return;
             }
-            const p = (ctx.world.get(crate, "Transform") as { position: { x: number; y: number; z: number } }).position;
+            const p = place.position;
             const across = Math.hypot(p.x - at.x[r], p.z - at.z[r]);
             if (across > REACH || Math.abs(p.y - at.y[r]) > REACH_UP) {
-                ctx.emit("interact.ignored", { code: "sail.out_of_reach", crate: target, range_m: Math.round(across * 10) / 10 }, { subject: boat });
+                ctx.emit("interact.ignored", { code: "sail.out_of_reach", crate, range_m: Math.round(across * 10) / 10 }, { subject: boat });
                 return;
             }
-            const value = (ctx.world.get(crate, "Cargo") as { value: number }).value;
             ctx.world.despawn(crate);
             tally.taken[r] = tally.taken[r] + 1;
-            tally.worth[r] = tally.worth[r] + value;
+            tally.worth[r] = tally.worth[r] + cargo.value;
             const left = tally.total[r] - tally.taken[r];
-            ctx.emit("crate.taken", { crate: target, taken: tally.taken[r], left }, { subject: boat });
+            ctx.emit("crate.taken", { crate, taken: tally.taken[r], left }, { subject: boat });
             if (left === 0) ctx.emit("crates.all", { taken: tally.taken[r] }, { subject: boat });
         });
     },

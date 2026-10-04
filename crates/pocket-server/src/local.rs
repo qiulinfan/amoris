@@ -123,7 +123,7 @@ pub fn server_catalog() -> Vec<Value> {
         e(
             "scripts.check",
             "read",
-            "Type checks (when tsc is installed) and compiles the scripts without swapping.",
+            "Compiles and loads the scripts without swapping, writes their types (scripts.types) and type checks them with tsc (TypeScript 7) when installed.",
             schema::<NoParams>(),
         ),
         e(
@@ -281,18 +281,19 @@ impl Host {
             "assets.list" => decode::<AssetsList>(&params, method).and_then(|p| self.assets(p)),
             "scripts.apply" => match decode::<ScriptsApply>(&params, method) {
                 Ok(_) => {
-                    let tc = typecheck::run(&self.0.project).await;
-                    let r = self.game(via, method, params).await;
+                    // The swap is sent first and the type check runs beside it: tsc never delays
+                    // a swap, and a refused swap still gets its type errors.
+                    let (r, tc) = tokio::join!(self.game(via, method, params), self.typecheck(via));
                     merge_typecheck(r, tc)
                 }
                 Err(e) => Err(e),
             },
             "scripts.check" => match decode::<NoParams>(&params, method) {
                 Ok(_) => {
-                    let tc = typecheck::run(&self.0.project).await;
-                    let r = self
-                        .game(via, "scripts.apply", json!({"dry_run": true}))
-                        .await;
+                    let (r, tc) = tokio::join!(
+                        self.game(via, "scripts.apply", json!({"dry_run": true})),
+                        self.typecheck(via)
+                    );
                     let r = match r {
                         Ok(v) => Ok(v),
                         Err(p) if p.code == "scripts.refused" => Ok(json!({
@@ -302,7 +303,7 @@ impl Host {
                         })),
                         Err(p) => Err(p),
                     };
-                    merge_typecheck(r, tc)
+                    merge_typecheck(with_load_errors(r, &tc), tc)
                 }
                 Err(e) => Err(e),
             },
@@ -326,6 +327,22 @@ impl Host {
             }
             _ => return None,
         })
+    }
+
+    /// `scripts.types` (the declarations for the scripts on disk, written by the game), then `tsc`
+    /// over them in a child process: the type check of `scripts.apply` and `scripts.check`.
+    async fn typecheck(&self, via: &Via) -> Value {
+        let types = self.game(via, "scripts.types", json!({})).await;
+        let mut tc = typecheck::run(&self.0.project).await;
+        match types {
+            Ok(t) => {
+                tc["types"] = json!({"dir": t["dir"], "tsconfig": t["tsconfig"],
+                                     "project_from": t["project_from"]});
+                tc["load_diagnostics"] = t["diagnostics"].clone();
+            }
+            Err(p) => tc["types"] = json!({"error": p.code, "message": p.message}),
+        }
+        tc
     }
 
     fn assets(&self, p: AssetsList) -> Result<Value, Problem> {
@@ -392,6 +409,23 @@ impl Host {
     }
 }
 
+/// A dry run that compiled but whose scripts would not load (the instantiation `scripts.types`
+/// made failed: an unknown component in a query, an engine name shadowed, ...) is refused, with
+/// the load's diagnostics, as the apply would be.
+fn with_load_errors(r: Result<Value, Problem>, tc: &Value) -> Result<Value, Problem> {
+    let load = tc["load_diagnostics"].as_array().filter(|d| !d.is_empty());
+    match (r, load) {
+        (Ok(mut v), Some(load)) if v["outcome"] == "dry_run" => {
+            v["outcome"] = json!("refused");
+            if let Some(all) = v["diagnostics"].as_array_mut() {
+                all.extend(load.iter().cloned());
+            }
+            Ok(v)
+        }
+        (r, _) => r,
+    }
+}
+
 /// Adds the type check's outcome to a compile's result.
 fn merge_typecheck(r: Result<Value, Problem>, tc: Value) -> Result<Value, Problem> {
     match r {
@@ -402,6 +436,11 @@ fn merge_typecheck(r: Result<Value, Problem>, tc: Value) -> Result<Value, Proble
                 all.extend(d.iter().cloned());
             }
             v["typecheck"] = tc["typecheck"].clone();
+            for k in ["tsc_ms", "reason", "types"] {
+                if !tc[k].is_null() {
+                    v[k] = tc[k].clone();
+                }
+            }
             Ok(v)
         }
         Err(mut p) => {

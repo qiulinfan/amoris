@@ -54,6 +54,11 @@ pub enum ChildAnswer {
 /// Another process, asked about the project under check.
 pub type Child = Arc<dyn Fn(&Subject, &ChildRequest) -> Result<ChildAnswer, Problem> + Send + Sync>;
 
+/// The TypeScript type check of a project directory (`tsc`, which `pocket-app` runs as
+/// `pocket-server` does for `scripts.check`): `{typecheck: "ok"|"failed"|"unavailable"|"timeout",
+/// diagnostics: [{file, line, column, code, message}], tsc_ms?, reason?}`.
+pub type TypeCheck = Arc<dyn Fn(&Path) -> serde_json::Value + Send + Sync>;
+
 /// How `pocket check` runs.
 #[derive(Clone, Default)]
 pub struct Options {
@@ -68,6 +73,8 @@ pub struct Options {
     pub command: String,
     /// The caller's clock in milliseconds, for durations (none on a target without one).
     pub clock: Option<Arc<dyn Fn() -> f64 + Send + Sync>>,
+    /// The `types` step's type check (none: the step runs the lint only, and says so).
+    pub typecheck: Option<TypeCheck>,
 }
 
 impl Options {
@@ -130,7 +137,7 @@ pub fn check_project(dir: &Path, opts: &Options) -> Report {
     let mut steps = Vec::new();
     if opts.wants("types") {
         let t = opts.now();
-        let mut step = types::check(dir, &name);
+        let mut step = types::check(dir, &name, opts.typecheck.as_ref());
         step.duration_ms = (opts.now() - t).max(0.0) as u64;
         steps.push(step);
     }

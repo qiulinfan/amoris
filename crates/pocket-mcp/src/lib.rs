@@ -42,8 +42,9 @@ pub trait Backend: Send + Sync {
 
 const INSTRUCTIONS: &str = "Pocket3D host: one authoritative world shared with the editor. \
 Read with world tree/get/query, change it with world edit (undoable), run time with time step \
-(until/watch stop early), test in play start/stop. Errors are {code, message, detail} with \
-did-you-mean suggestions.";
+(until/watch stop early), test in play start/stop. Game rules are TypeScript in scripts/ \
+(docs/sdk.md): scripts check type checks them against the project's components. Errors are \
+{code, message, detail} with did-you-mean suggestions.";
 
 /// One session's MCP handler.
 #[derive(Clone)]

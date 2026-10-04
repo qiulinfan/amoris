@@ -106,3 +106,44 @@ fn a_misspelt_check_toml_names_its_line() {
         assert_eq!(e.detail["line"], json!(line), "{text}: {e:#?}");
     }
 }
+
+/// checks.md 6.4: after the lint, the step writes the project's declarations and hands the project
+/// to the caller's type checker; each of its diagnostics is a `types.error` with its place.
+#[test]
+fn the_types_step_writes_declarations_and_reports_tsc() {
+    common::big_stack(|| {
+        let src = common::repo().join("samples/sailing");
+        let dir = common::scratch("types-tsc");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("scripts")).unwrap();
+        for f in ["project.toml", "scene.json"] {
+            std::fs::copy(src.join(f), dir.join(f)).unwrap();
+        }
+        for f in ["main.ts", "components.ts", "rules.ts"] {
+            std::fs::copy(src.join("scripts").join(f), dir.join("scripts").join(f)).unwrap();
+        }
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+        let s2 = seen.clone();
+        let opts = Options {
+            only: Some(vec!["types".into()]),
+            typecheck: Some(std::sync::Arc::new(move |p: &std::path::Path| {
+                *s2.lock().unwrap() =
+                    std::fs::read_to_string(p.join(".pocket/types/components.d.ts")).unwrap();
+                json!({"typecheck": "failed", "tsc_ms": 40.0, "diagnostics": [{
+                    "file": "scripts/rules.ts", "line": 22, "column": 89, "code": "TS2820",
+                    "message": "Did you mean '\"Log.distance\"'?"}]})
+            })),
+            ..Options::default()
+        };
+        let r = check_project(&dir, &opts);
+        let step = &r.steps[0];
+        assert_eq!(step.verdict, Verdict::Fail, "{step:#?}");
+        assert_eq!(codes(&r.steps, "types"), ["types.error"]);
+        assert_eq!(step.errors[0].detail["path"], json!("scripts/rules.ts"));
+        assert_eq!(step.errors[0].detail["line"], json!(22));
+        let components = seen.lock().unwrap().clone();
+        assert!(components.contains("Crew: {"), "{components}");
+        assert!(components.contains("Boat: {"), "{components}");
+        assert!(dir.join("tsconfig.json").is_file());
+    });
+}

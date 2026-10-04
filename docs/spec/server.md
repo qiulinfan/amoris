@@ -90,7 +90,8 @@ files).
 | `scripts.read` | read | `{path}` | `{path, text}` |
 | `scripts.write` | request | `{path, text}` | `{path, bytes, diagnostics}` (compiled, not swapped) |
 | `scripts.apply` | request | `{files?, force?, dry_run?}` | `{outcome, bundle, previous, systems, components, applied_at, diagnostics, typecheck}` |
-| `scripts.check` | read (server) | `{}` | `{outcome, bundle, diagnostics, typecheck}` |
+| `scripts.check` | read (server) | `{}` | `{outcome, bundle, diagnostics, typecheck, tsc_ms, types}`; `refused` when the scripts compile but would not load |
+| `scripts.types` | read | `{text?}` | `{dir, files, tsconfig, components: {engine, project, unavailable}, project_from, diagnostics, text?}` (docs/sdk.md) |
 | `scripts.status` | read | `{}` | `{bundle, ran_last_tick}` |
 | `events.since` | read (server) | `{seq?, limit? = 100, name?}` | `{events: [event], last, missed}` |
 | `events.why` | read (server) | `{seq}` | `{event, causes: [event], complete}` |
@@ -228,7 +229,7 @@ parameters loosely and the runtime's decoder refuses unknown ones with suggestio
 | Tool | Actions -> methods |
 |---|---|
 | `world` | tree, get, query, schema, edit -> `world.*` |
-| `scripts` | list, read, write, apply, check -> `scripts.*` |
+| `scripts` | list, read, write, apply, check, types -> `scripts.*` |
 | `time` | status -> `status`; pause, resume, speed -> `time.control`; step -> `time.step`; snapshots -> `snapshots.list`; rewind -> `snapshots.restore` |
 | `play` | start, stop |
 | `history` | undo, redo, list |
@@ -261,7 +262,7 @@ Schema, so help never drifts from what the host takes.
 | `pocket time pause|resume|speed <x>|stepped` | `time.control` |
 | `pocket play start [--speed x] [--paused]|stop` | `play.*` |
 | `pocket undo`, `redo`, `history` | `history.*` |
-| `pocket scripts list|read <p>|write <p> [file|-]|apply [--force]|check` | `scripts.*` |
+| `pocket scripts list|read <p>|write <p> [file|-]|apply [--force]|check|types` | `scripts.*` |
 | `pocket events [--since n] [--name n.*] [--limit n]`, `--why <seq>` | `events.*` |
 | `pocket logs [--since n]`, `snapshots [list]|restore <tick>`, `assets [dir]` | `log.since`, `snapshots.*`, `assets.list` |
 | `pocket debug <action> ['<json>']` | `debug.<action>` |
@@ -269,8 +270,8 @@ Schema, so help never drifts from what the host takes.
 Output is compact text, one line per entity, row, event, edit or diagnostic, with defaults left out
 (`#3 Sloop  Boat Collider Crew ...`;
 `tick 17 hash 5eb7f9e28e7c | stopped: Boat.speed 0.96 -> 1.03`); `--json` prints the exact result. A
-refusal prints `code: message` (with its suggestions and diagnostics) to stderr and exits 1; a usage
-error exits 2.
+refusal prints `code: message` (with its suggestions and diagnostics) to stderr and exits 1, as does
+a `scripts check` with an error diagnostic (compile, load or `tsc`); a usage error exits 2.
 
 ## 9. Error codes added
 
@@ -305,7 +306,10 @@ snapshots.
 1. A hierarchy component (`Parent`) for `world.tree`'s `children` and `depth`.
 2. `debug.rewind`'s replay forward from a kept snapshot needs the recorded inputs between them (a
    recorder on the edit world).
-3. The type check runs `tsc` only when installed and the `pocket` module's `.d.ts` exists in the
-   project (sdk/ is not built yet); its findings never block a swap.
+3. The type check runs `tsc` (TypeScript 7) only when installed: `POCKET_TSC`, a `node_modules` or
+   `sdk/node_modules` at or above the project (`cd sdk && bun install`), the repository the binary
+   was built from, or `PATH` (`pocket check`'s `types` step finds it the same way). Its findings
+   never block or delay a swap: `scripts.apply` sends the swap first and runs `scripts.types` and
+   `tsc` beside it.
 4. The web worker's loop (`pocket-web`) runs plain step counts; stop conditions, Play and kept
    snapshots are native only.

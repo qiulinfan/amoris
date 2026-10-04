@@ -290,6 +290,9 @@ pub fn check(raw: &[String]) -> Outcome {
         out_dir: args.value("out").map(PathBuf::from),
         command,
         clock: Some(clock()),
+        typecheck: Some(Arc::new(|dir: &Path| {
+            pocket_server::typecheck::run_blocking(dir)
+        })),
     };
     let report = check_project(&dir, &opts);
     let code = report.exit_code();
