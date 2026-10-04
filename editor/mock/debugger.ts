@@ -1,53 +1,65 @@
-// The mock's debugger (host-protocol.md section 6, JSON form): breakpoints on script lines with
-// conditions, pausing between and "inside" script systems, stepping, frames with scopes built from
-// the world, evaluation on a frame and data breakpoints on component fields.
+// The mock's debugger, answering in the real host's shapes (pocket-debug's agents' API,
+// docs/spec/debugger.md 7): breakpoints on TypeScript lines (ids `bp<n>`, moved to the next line
+// with code) with conditions and logpoints, pausing between and "inside" script systems, stepping,
+// one frame per pause with `locals` and `closure` as JSON previews, evaluation on a paused frame
+// (assignments last for the pause; they do not write the world), pause on exceptions (the mock's
+// scripts throw none) and data breakpoints on component fields written by script systems.
 
 import type { World } from "./world";
 import { MockError, isObject } from "./util";
 import { systemRanges } from "./scripts";
 
-export interface Breakpoint {
-  id: number;
+const RULES = "scripts/rules.ts";
+
+interface Breakpoint {
+  id: string;
   file: string;
+  /** The line asked for, and the line it binds to (the next with code). */
+  requested: number;
   line: number;
   condition?: string;
-  verified: boolean;
-  hits: number;
+  log?: string;
 }
 
 export interface DataWatch {
-  id: number;
+  id: string;
   entity: number;
   component: string;
   field?: string;
 }
 
-export interface Variable {
-  name: string;
-  value: string;
-  type: string;
-  children?: Variable[];
-}
-
-interface Paused {
-  reason: "breakpoint" | "step" | "pause" | "data" | "exception";
-  system: string;
-  file: string;
-  line: number;
-  detail?: string;
-}
-
-export interface Location {
+interface Location {
   file: string;
   line: number;
   column: number;
+}
+
+interface Paused {
+  reason: "breakpoint" | "step" | "pause" | "data_breakpoint";
+  system: string;
+  location: Location;
+  hit: string[];
+  data?: Record<string, unknown>;
+  /** The frame's values for the pause: evaluations (and assignments) see and change these. */
+  scope: Record<string, unknown>;
+}
+
+/** A variable as the host sends it. */
+export interface HostVariable {
+  name: string;
+  type: string;
+  value: unknown;
+  description?: string;
 }
 
 export class Debugger {
   breakpoints: Breakpoint[] = [];
   watches: DataWatch[] = [];
   paused: Paused | null = null;
-  private nextId = 1;
+  exceptions: "none" | "uncaught" | "all" = "none";
+  attached = false;
+  private nextBp = 0;
+  private nextWatch = 0;
   /** The system to run without checking once (resuming from a pause on it). */
   skipOnce: string | null = null;
   /** Pause at the next script system's first line, whatever the breakpoints. */
@@ -58,47 +70,60 @@ export class Debugger {
     private readonly source: () => Map<string, string>,
     private readonly world: () => World,
     private readonly tick: () => number,
+    private readonly log: (line: { level: "info"; source: string; message: string; file?: string; line?: number }) => void,
   ) {}
 
-  setBreakpoint(params: Record<string, unknown>): Breakpoint {
+  setBreakpoint(params: Record<string, unknown>) {
     const file = String(params.file ?? "");
     const line = Number(params.line);
     const text = this.source().get(file);
-    if (text === undefined) throw new MockError("debug.unknown_file", `There is no script '${file}'.`, { file });
+    if (text === undefined) {
+      throw new MockError("debug.unknown_file", `'${file}' is not a module of the running scripts.`, { file, allowed: [...this.source().keys()] });
+    }
     if (!Number.isInteger(line) || line < 1) throw new MockError("request.invalid_value", "line is a whole number from 1.", { line: params.line });
     const lines = text.split("\n");
-    // Move to the next line with code, as a real debugger does.
-    let actual = Math.min(line, lines.length);
-    while (actual < lines.length && /^\s*(\/\/.*)?$/.test(lines[actual - 1]!)) actual++;
-    const existing = this.breakpoints.find((b) => b.file === file && b.line === actual);
-    if (existing) {
-      existing.condition = typeof params.condition === "string" && params.condition ? params.condition : undefined;
-      return existing;
-    }
-    const inSystem = systemRanges(text).some((r) => actual >= r.body && actual <= r.end);
+    // Move to the next line with code, as the host does.
+    let actual = line;
+    while (actual <= lines.length && /^\s*(\/\/.*|\/\*\*?.*|\*.*)?$/.test(lines[actual - 1]!)) actual++;
+    if (actual > lines.length) throw new MockError("debug.no_code", `${file} has no code at or after line ${line}.`, { file, line });
+    this.attached = true;
     const bp: Breakpoint = {
-      id: this.nextId++,
+      id: `bp${++this.nextBp}`,
       file,
+      requested: line,
       line: actual,
-      condition: typeof params.condition === "string" && params.condition ? params.condition : undefined,
-      verified: inSystem,
-      hits: 0,
+      condition: typeof params.condition === "string" && params.condition.trim() ? params.condition : undefined,
+      log: typeof params.log === "string" ? params.log : undefined,
     };
     this.breakpoints.push(bp);
-    return bp;
+    return { id: bp.id, file, line: actual, verified: true, locations: [{ file, line: actual, column: 1 }] };
   }
 
-  clearBreakpoints(params: Record<string, unknown>): number {
-    const before = this.breakpoints.length;
-    if (typeof params.id === "number") this.breakpoints = this.breakpoints.filter((b) => b.id !== params.id);
-    else if (typeof params.file === "string" && typeof params.line === "number") {
-      this.breakpoints = this.breakpoints.filter((b) => !(b.file === params.file && b.line === params.line));
-    } else if (typeof params.file === "string") this.breakpoints = this.breakpoints.filter((b) => b.file !== params.file);
-    else this.breakpoints = [];
-    return before - this.breakpoints.length;
+  clearBreakpoints(params: Record<string, unknown>) {
+    if (typeof params.id === "string") {
+      if (!this.breakpoints.some((b) => b.id === params.id)) {
+        throw new MockError("debug.unknown_breakpoint", `There is no breakpoint '${params.id}'.`, { id: params.id, allowed: this.breakpoints.map((b) => b.id) });
+      }
+      this.breakpoints = this.breakpoints.filter((b) => b.id !== params.id);
+      return { cleared: 1 };
+    }
+    const n = this.breakpoints.length;
+    this.breakpoints = [];
+    return { cleared: n };
   }
 
-  addWatch(params: Record<string, unknown>): DataWatch {
+  listBreakpoints() {
+    return this.breakpoints.map((b) => ({
+      id: b.id,
+      owner: "agent",
+      target: { file: b.file, line: b.requested },
+      condition: b.condition ?? null,
+      log: b.log ?? null,
+      locations: [{ file: b.file, line: b.line, column: 1 }],
+    }));
+  }
+
+  addWatch(params: Record<string, unknown>) {
     const entity = Number(params.entity);
     const e = this.world().entities.get(entity);
     if (!e) throw new MockError("sim.entity_not_found", `There is no entity ${params.entity}.`, { entity: params.entity });
@@ -106,13 +131,26 @@ export class Debugger {
     if (!(component in e.components)) {
       throw new MockError("world.component_missing", `${e.name} has no ${component}.`, { entity, component });
     }
-    const w: DataWatch = { id: this.nextId++, entity, component, field: typeof params.field === "string" ? params.field : undefined };
+    this.attached = true;
+    const w: DataWatch = { id: `w${++this.nextWatch}`, entity, component, field: typeof params.field === "string" ? params.field : undefined };
     this.watches.push(w);
-    return w;
+    return { id: w.id, entity, component, field: w.field ?? null };
   }
 
-  private ranges(file = "scripts/rules.ts") {
+  removeWatches(params: Record<string, unknown>) {
+    const before = this.watches.length;
+    this.watches = typeof params.id === "string" ? this.watches.filter((w) => w.id !== params.id) : [];
+    const cleared = before - this.watches.length;
+    if (cleared === 0 && typeof params.id === "string") throw new MockError("debug.unknown_watch", `There is no watch '${params.id}'.`, { id: params.id });
+    return { cleared };
+  }
+
+  private ranges(file = RULES) {
     return systemRanges(this.source().get(file) ?? "");
+  }
+
+  private pause(reason: Paused["reason"], system: string, line: number, hit: string[] = [], data?: Record<string, unknown>) {
+    this.paused = { reason, system, location: { file: RULES, line, column: 9 }, hit, data, scope: this.flatScope(system) };
   }
 
   /** Called before a script system runs; true pauses before it (at a line of its body). */
@@ -127,13 +165,11 @@ export class Debugger {
       const reason = this.pauseRequested ? "pause" : "step";
       this.stopAtNextSystem = false;
       this.pauseRequested = false;
-      this.paused = { reason, system, file: "scripts/rules.ts", line: range.body };
+      this.pause(reason, system, range.body);
       return true;
     }
     const scope = this.flatScope(system);
-    for (const bp of this.breakpoints
-      .filter((b) => b.file === "scripts/rules.ts" && b.line >= range.body && b.line <= range.end)
-      .sort((a, b) => a.line - b.line)) {
+    for (const bp of this.breakpoints.filter((b) => b.file === RULES && b.line >= range.body && b.line <= range.end).sort((a, b) => a.line - b.line)) {
       if (bp.condition) {
         try {
           if (!evaluate(bp.condition, scope)) continue;
@@ -141,40 +177,54 @@ export class Debugger {
           continue;
         }
       }
-      bp.hits++;
-      this.paused = { reason: "breakpoint", system, file: bp.file, line: bp.line };
+      if (bp.log !== undefined) {
+        let message: string;
+        try {
+          message = String(evaluate(`\`${bp.log.replace(/`/g, "\\`")}\``, scope));
+        } catch (e) {
+          message = `(logpoint failed: ${e instanceof Error ? e.message : String(e)})`;
+        }
+        this.log({ level: "info", source: "script", message, file: bp.file, line: bp.line });
+        continue;
+      }
+      this.pause("breakpoint", system, bp.line, [bp.id]);
       return true;
     }
     return false;
   }
 
-  /** Called after a system (script or engine) ran with the values watched before it. */
-  afterSystem(system: string, before: Map<number, unknown>): boolean {
+  /** Called after a system ran, with the values watched before it; only script systems' writes stop. */
+  afterSystem(system: string, before: Map<string, unknown>): boolean {
+    const range = this.ranges().find((r) => r.name === system);
+    if (!range) return false;
     for (const w of this.watches) {
       const now = this.watchedValue(w);
-      if (JSON.stringify(now) !== JSON.stringify(before.get(w.id))) {
-        const e = this.world().entities.get(w.entity);
-        const range = this.ranges().find((r) => r.name === system);
-        const text = this.source().get("scripts/rules.ts") ?? "";
-        let line = range?.body ?? 1;
-        if (range && w.field) {
-          const idx = text.split("\n").findIndex((l, i) => i + 1 >= range.body && i + 1 <= range.end && l.includes(`${w.field}`) && l.includes("="));
-          if (idx >= 0) line = idx + 1;
-        }
-        this.paused = {
-          reason: "data",
-          system,
-          file: range ? "scripts/rules.ts" : `engine:${system}`,
-          line: range ? line : 0,
-          detail: `${e?.name ?? `#${w.entity}`}.${w.component}${w.field ? `.${w.field}` : ""} written by ${system}`,
-        };
-        return true;
+      const was = before.get(w.id);
+      if (JSON.stringify(now) === JSON.stringify(was)) continue;
+      const text = this.source().get(RULES) ?? "";
+      let line = range.body;
+      if (w.field) {
+        const idx = text.split("\n").findIndex((l, i) => i + 1 >= range.body && i + 1 <= range.end && l.includes(`${w.field}`) && l.includes("="));
+        if (idx >= 0) line = idx + 1;
       }
+      const at = { file: RULES, line, column: 13 };
+      this.pause("data_breakpoint", system, line, [], {
+        watch: w.id,
+        entity: w.entity,
+        component: w.component,
+        field: w.field ?? null,
+        names: [w.field ?? w.component],
+        before: was ?? null,
+        after: now ?? null,
+        written_at: at,
+        after_return: true,
+      });
+      return true;
     }
     return false;
   }
 
-  snapshotWatches(): Map<number, unknown> {
+  snapshotWatches(): Map<string, unknown> {
     return new Map(this.watches.map((w) => [w.id, this.watchedValue(w)]));
   }
 
@@ -185,17 +235,17 @@ export class Debugger {
   }
 
   step(kind: string) {
-    if (!this.paused) throw new MockError("debug.not_paused", "The game is running; pause it first.");
+    if (!this.paused) throw new MockError("debug.not_paused", "The game is running; pause it (debug.pause) or wait for a breakpoint (debug.wait) first.");
     if (!["over", "into", "out"].includes(kind)) {
       throw new MockError("request.invalid_value", "debug.step takes kind 'over', 'into' or 'out'.", { kind });
     }
     const range = this.ranges().find((r) => r.name === this.paused!.system);
-    const lines = (this.source().get("scripts/rules.ts") ?? "").split("\n");
-    if (kind !== "out" && range) {
-      let next = this.paused.line + 1;
+    const lines = (this.source().get(RULES) ?? "").split("\n");
+    if (kind !== "out" && range && this.paused.reason !== "data_breakpoint") {
+      let next = this.paused.location.line + 1;
       while (next <= range.end && /^\s*(\/\/.*|\}\)?;?|\},?)?\s*$/.test(lines[next - 1]!)) next++;
       if (next < range.end) {
-        this.paused = { ...this.paused, reason: "step", line: next };
+        this.paused = { ...this.paused, reason: "step", hit: [], data: undefined, location: { ...this.paused.location, line: next } };
         return "stay" as const;
       }
     }
@@ -207,12 +257,12 @@ export class Debugger {
   }
 
   resume() {
-    if (this.paused) this.skipOnce = this.paused.reason === "data" ? null : this.paused.system;
+    if (this.paused) this.skipOnce = this.paused.reason === "data_breakpoint" ? null : this.paused.system;
     this.paused = null;
   }
 
   location(): Location | undefined {
-    return this.paused ? { file: this.paused.file, line: this.paused.line, column: 1 } : undefined;
+    return this.paused?.location;
   }
 
   /** The values a system's code sees at its pause, as plain JavaScript. */
@@ -222,12 +272,12 @@ export class Debugger {
     const crates = [...w.entities.values()].filter((e) => e.components.Cargo);
     const boat = boats[0];
     const scope: Record<string, unknown> = {
-      ctx: { tick: this.tick(), dt: 1 / 60, time: this.tick() / 60, system: `script:${system}` },
+      ctx: { tick: this.tick(), dt: 1 / 60, time: this.tick() / 60, system },
       REACH: 3,
       REACH_UP: 3,
     };
     if (system === "muster") {
-      Object.assign(scope, { boats: { len: boats.length, ids: boats.map((b) => b.id) }, crates: { len: crates.length, ids: crates.map((c) => c.id) } });
+      Object.assign(scope, { boats: { len: boats.length }, crates: { len: crates.length } });
     }
     if (boat) {
       const b = boat.components.Boat as Record<string, number>;
@@ -235,117 +285,138 @@ export class Debugger {
       const t = boat.components.Transform as { position: number[] };
       if (system === "log") {
         Object.assign(scope, {
-          boats: { len: 1, ids: [boat.id] },
           r: 0,
           e: boat.id,
           speed: Math.abs(b.speed ?? 0),
           set: (b.hoist_now ?? 0) >= 0.5,
-          b: { speed: [b.speed], hoist_now: [b.hoist_now] },
-          l: l ? { distance: [l.distance], top_speed: [l.top_speed], sail_set: [l.sail_set ? 1 : 0] } : undefined,
+          b: { speed: new Float64Array([b.speed ?? 0]), hoist_now: new Float64Array([b.hoist_now ?? 0]) },
+          l: l ? { distance: new Float64Array([l.distance ?? 0]), top_speed: new Float64Array([l.top_speed ?? 0]), sail_set: new Uint8Array([l.sail_set ? 1 : 0]) } : undefined,
         });
       }
       if (system === "take_aboard") {
         const crew = boat.components.Crew as { take: number | null } | undefined;
         const tally = boat.components.Tally as Record<string, number> | undefined;
         Object.assign(scope, {
-          boats: { len: 1, ids: [boat.id] },
           r: 0,
           boat: boat.id,
           target: crew?.take ?? 0,
-          at: { x: [t.position[0]], y: [t.position[1]], z: [t.position[2]] },
-          tally: tally ? { taken: [tally.taken], worth: [tally.worth], total: [tally.total] } : undefined,
-          crew: { take: [crew?.take ?? 0] },
+          at: { x: new Float64Array([t.position[0]!]), y: new Float64Array([t.position[1]!]), z: new Float64Array([t.position[2]!]) },
+          tally: tally ? { taken: new Float64Array([tally.taken ?? 0]), worth: new Float64Array([tally.worth ?? 0]), total: new Float64Array([tally.total ?? 0]) } : undefined,
+          crew: { take: new Float64Array([crew?.take ?? 0]) },
         });
       }
     }
     return scope;
   }
 
-  state(system: string | null) {
-    const loc = this.location();
-    if (!this.paused || !loc) return { state: "running", tick: this.tick() };
-    const sys = this.paused.system;
-    const scope = this.flatScope(sys);
-    const locals: Variable[] = [];
-    const closure: Variable[] = [];
-    for (const [k, v] of Object.entries(scope)) {
-      if (k === "REACH" || k === "REACH_UP") closure.push(toVar(k, v));
-      else if (v !== undefined) locals.push(toVar(k, v));
+  /** `debug.state` (and, without the last group, the `debug` event). */
+  state(full = true) {
+    const extra = full
+      ? {
+          attached: this.attached,
+          instrumented: this.attached,
+          exceptions: this.exceptions,
+          breakpoints: this.listBreakpoints(),
+          watches: this.watches.map((w) => ({ id: w.id, entity: w.entity, component: w.component, field: w.field ?? null })),
+          waiting_for_debugger: false,
+          cdp: null,
+        }
+      : {};
+    const p = this.paused;
+    if (!p) return { state: "running", tick: this.tick(), system: null, ...extra };
+    const locals: HostVariable[] = [];
+    const closure: HostVariable[] = [];
+    for (const [k, v] of Object.entries(p.scope)) {
+      if (k === "REACH" || k === "REACH_UP") closure.push(hostVar(k, v));
+      else if (k !== "ctx") locals.push(hostVar(k, v));
     }
-    const w = this.world();
-    const boat = [...w.entities.values()].find((e) => e.components.Boat);
-    const entityVars = boat
-      ? Object.entries(boat.components).filter(([c]) => ["Boat", "Log", "Tally", "Crew", "Transform"].includes(c)).map(([c, v]) => toVar(c, v))
-      : [];
-    const scopes = [
-      { name: "Local", variables: locals },
-      { name: "Closure (rules.ts)", variables: closure },
-      ...(boat ? [{ name: `Entity ${boat.name} #${boat.id}`, variables: entityVars }] : []),
-    ];
+    closure.push(hostVar("ctx", p.scope.ctx));
+    const returned = p.reason === "data_breakpoint";
     const frames = [
-      { id: 0, name: loc.file.startsWith("engine:") ? sys : `run (${sys})`, file: loc.file, line: loc.line, column: 1, system: `script:${sys}`, scopes },
-      { id: 1, name: `system ${sys}`, file: "pocket:runtime/schedule", line: 0, column: 0, system: `script:${sys}`, scopes: [] },
-      { id: 2, name: `tick ${this.tick()} · update`, file: "pocket:runtime/tick", line: 0, column: 0, scopes: [] },
+      {
+        frame: 0,
+        function: returned ? "run" : "(anonymous)",
+        location: p.location,
+        locals: returned ? [] : locals,
+        closure: returned ? [] : closure,
+        returned,
+      },
     ];
     return {
       state: "paused",
-      reason: this.paused.reason,
-      detail: this.paused.detail,
-      location: loc,
-      frames,
+      reason: p.reason,
       tick: this.tick(),
-      system: system ?? `script:${sys}`,
+      system: p.system,
+      location: p.location,
+      frames,
+      hit_breakpoints: p.hit,
+      ...(p.data ? { data: p.data } : {}),
+      ...extra,
     };
   }
 
-  eval(expr: string, frame: number | undefined, globals: Record<string, unknown>) {
-    const scope = this.paused && (frame ?? 0) === 0 ? { ...globals, ...this.flatScope(this.paused.system) } : globals;
+  eval(expr: string, frame: number | undefined) {
+    const p = this.paused;
+    if (!p) throw new MockError("debug.not_paused", "The game is running; pause it (debug.pause) or wait for a breakpoint (debug.wait) first.");
+    if ((frame ?? 0) !== 0) throw new MockError("debug.no_frame", `There is no frame ${frame}; the game stopped with 1 frames.`, { frame, frames: 1 });
     try {
-      const v = evaluate(expr, scope);
-      return toVar("result", v);
+      const v = evaluate(expr, p.scope, true);
+      const h = hostVar("result", v);
+      return { type: h.type, value: h.value, description: h.description ?? describe(v) };
     } catch (e) {
-      throw new MockError("debug.eval_failed", e instanceof Error ? e.message : String(e), { expr });
+      const text = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+      throw new MockError("debug.eval_failed", `The expression threw: ${text}`, { error: text });
     }
   }
 }
 
-/** Evaluates an expression over named values. The mock is a loopback-only development tool. */
-function evaluate(expr: string, scope: Record<string, unknown>): unknown {
+/**
+ * Evaluates an expression over named values. With `assign`, a plain assignment to a name changes
+ * the scope (the mock is a loopback-only development tool).
+ */
+function evaluate(expr: string, scope: Record<string, unknown>, assign = false): unknown {
   const names = Object.keys(scope).filter((n) => /^[A-Za-z_$][\w$]*$/.test(n));
+  const m = assign ? /^\s*([A-Za-z_$][\w$]*)\s*=(?!=)([\s\S]*)$/.exec(expr) : null;
+  if (m && names.includes(m[1]!)) {
+    const v = evaluate(m[2]!, scope);
+    scope[m[1]!] = v;
+    return v;
+  }
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   const fn = new Function(...names, `"use strict"; return (${expr});`);
   return fn(...names.map((n) => scope[n]));
 }
 
-function preview(v: unknown[]): string {
-  const parts = v.slice(0, 5).map((x) => (typeof x === "string" ? JSON.stringify(x) : typeof x === "object" && x !== null ? (Array.isArray(x) ? "[…]" : "{…}") : String(x)));
-  return `[${parts.join(", ")}${v.length > 5 ? ", …" : ""}]`;
+const TYPED = [Float64Array, Float32Array, Int32Array, Uint32Array, Uint8Array, Int8Array, Uint16Array, Int16Array];
+
+function kindOf(v: unknown): string {
+  if (v === undefined) return "undefined";
+  if (v === null) return "null";
+  if (Array.isArray(v)) return "array";
+  return typeof v === "object" ? "object" : typeof v;
 }
 
-export function toVar(name: string, v: unknown, depth = 0): Variable {
-  if (v === null) return { name, value: "null", type: "null" };
-  if (v === undefined) return { name, value: "undefined", type: "undefined" };
-  if (typeof v === "number") return { name, value: Number.isInteger(v) ? String(v) : String(Math.round(v * 1e6) / 1e6), type: "number" };
-  if (typeof v === "string") return { name, value: JSON.stringify(v), type: "string" };
-  if (typeof v === "boolean") return { name, value: String(v), type: "boolean" };
-  if (typeof v === "function") return { name, value: "ƒ ()", type: "function" };
-  if (Array.isArray(v)) {
-    const isNum = v.every((x) => typeof x === "number");
-    return {
-      name,
-      value: isNum ? `Float64Array(${v.length}) [${v.map((x) => (Number.isInteger(x) ? x : (x as number).toFixed(3))).join(", ")}]` : `Array(${v.length}) ${preview(v)}`,
-      type: isNum ? "Float64Array" : "Array",
-      children: depth < 4 ? v.map((x, i) => toVar(String(i), x, depth + 1)) : undefined,
-    };
-  }
-  if (isObject(v)) {
-    const keys = Object.keys(v);
-    return {
-      name,
-      value: `{${keys.slice(0, 4).join(", ")}${keys.length > 4 ? ", …" : ""}}`,
-      type: "Object",
-      children: depth < 4 ? keys.map((k) => toVar(k, v[k], depth + 1)) : undefined,
-    };
-  }
-  return { name, value: String(v), type: typeof v };
+function describe(v: unknown): string | undefined {
+  if (Array.isArray(v)) return `Array(${v.length})`;
+  const typed = TYPED.find((t) => v instanceof t);
+  if (typed) return `${typed.name}(${(v as Float64Array).length})`;
+  if (typeof v === "function") return `function ${v.name}() { [code] }`;
+  if (isObject(v)) return "Object";
+  return undefined;
+}
+
+/** The host's JSON preview: objects to three levels, `undefined` as null at the top. */
+function preview(v: unknown, depth: number): unknown {
+  if (v === undefined) return depth === 0 ? null : "undefined";
+  if (typeof v === "number") return Number.isFinite(v) ? v : String(v);
+  if (typeof v === "function") return `[function ${v.name}]`;
+  if (v === null || typeof v !== "object") return v;
+  if (depth >= 3) return `[${describe(v)}]`;
+  if (Array.isArray(v) || TYPED.some((t) => v instanceof t)) return Array.from(v as ArrayLike<unknown>, (x) => preview(x, depth + 1));
+  return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, preview(x, depth + 1)]));
+}
+
+export function hostVar(name: string, v: unknown): HostVariable {
+  const d = typeof v === "object" || typeof v === "function" ? describe(v) : undefined;
+  return { name, type: kindOf(v), value: preview(v, 0), ...(d && v !== null ? { description: d } : {}) };
 }

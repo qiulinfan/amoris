@@ -1,7 +1,22 @@
 // Typed wrappers over the host-protocol methods, and the editor's single connection to the host.
 
 import { HostClient, endpointsFromLocation } from "./client";
-import type { EditOp, EntityRef, WorldEditParams } from "./protocol";
+import type {
+  Breakpoint,
+  DataWatch,
+  DebugState,
+  EditOp,
+  EntityId,
+  EntityRef,
+  ExceptionMode,
+  HostBreakpoint,
+  HostDataWatch,
+  HostDebugState,
+  HostVariable,
+  StackFrame,
+  Variable,
+  WorldEditParams,
+} from "./protocol";
 
 export const host = new HostClient(endpointsFromLocation());
 
@@ -74,21 +89,158 @@ export const api = {
     restore: (tick: number) => call("snapshots.restore", { tick }),
   },
   debug: {
-    setBreakpoint: (file: string, line: number, condition?: string) =>
-      call("debug.breakpoints.set", condition ? { file, line, condition } : { file, line }),
-    clearBreakpoint: (p: { id?: number; file?: string; line?: number }) => call("debug.breakpoints.clear", p),
-    listBreakpoints: () => call("debug.breakpoints.list", {}),
+    setBreakpoint: async (file: string, line: number, condition?: string): Promise<Breakpoint> => {
+      const r = await call("debug.breakpoints.set", condition ? { file, line, condition } : { file, line });
+      return { id: r.id, file: r.file, line: r.line, verified: r.verified, condition: condition || undefined, owner: "agent" };
+    },
+    /** One breakpoint, or every breakpoint set through `debug.*` (not those of CDP clients). */
+    clearBreakpoint: (id?: string) => call("debug.breakpoints.clear", id === undefined ? {} : { id }),
+    listBreakpoints: async () => (await call("debug.breakpoints.list", {})).breakpoints.map(breakpointOf),
     pause: () => call("debug.pause", {}),
     resume: () => call("debug.continue", {}),
-    step: (kind: "over" | "into" | "out") => call("debug.step", { kind }),
-    state: () => call("debug.state", {}),
-    eval: (expr: string, frame?: number) => call("debug.eval", frame === undefined ? { expr } : { expr, frame }),
-    watch: (entity: EntityRef, component: string, field?: string) =>
-      call("debug.watch", field ? { entity, component, field } : { entity, component }),
-    unwatch: (id: number) => call("debug.unwatch", { id }),
+    step: async (kind: "over" | "into" | "out") => debugState(await call("debug.step", { kind }, 15000)),
+    state: async () => debugState(await call("debug.state", {})),
+    /** The state with the breakpoints and data breakpoints every frontend set. */
+    session: async () => {
+      const r = await call("debug.state", {});
+      return { state: debugState(r), breakpoints: r.breakpoints?.map(breakpointOf), watches: r.watches?.map(dataWatchOf) };
+    },
+    /** `path`: the expression's value can be assigned through it (a variable's name). */
+    eval: async (expr: string, frame?: number, path?: string): Promise<Variable> => {
+      const r = await call("debug.eval", frame === undefined ? { expr } : { expr, frame });
+      return toVariable("result", r.value, r.type, r.description, path);
+    },
+    watch: async (entity: EntityId, component: string, field?: string) =>
+      dataWatchOf(await call("debug.watch", field ? { entity, component, field } : { entity, component })),
+    unwatch: (id: string) => call("debug.unwatch", { id }),
+    exceptions: async (mode: ExceptionMode) => (await call("debug.exceptions", { mode })).mode,
     rewind: (tick: number) => call("debug.rewind", { tick }, 120000),
   },
   profile: {
     frame: () => call("profile.frame", {}),
   },
 };
+
+// ---- The debugger's as-built shapes (docs/spec/debugger.md 7) -------------------------------------
+
+const IDENT = /^[A-Za-z_$][\w$]*$/;
+/** What the host's JSON previews put in place of a value they do not expand. */
+const ELIDED = /^\[(function\b.*|proxy|promise|getter|[A-Z]\w*(\(\d+\))?)\]$/;
+const PREVIEW_ITEMS = 5;
+
+function childPath(path: string | undefined, key: string, index: boolean): string | undefined {
+  if (path === undefined || key === "\u2026") return undefined;
+  if (index) return `${path}[${key}]`;
+  return IDENT.test(key) ? `${path}.${key}` : `${path}[${JSON.stringify(key)}]`;
+}
+
+function short(v: unknown): string {
+  if (v === null) return "null";
+  if (Array.isArray(v)) return v.length ? "[\u2026]" : "[]";
+  if (typeof v === "object") return "{\u2026}";
+  if (typeof v === "string") return ELIDED.test(v) || v === "undefined" ? v : JSON.stringify(v);
+  return String(v);
+}
+
+/**
+ * A value of the host's JSON preview as a tree. `type` and `description` are known for top-level
+ * values (variables, evaluations); nested ones are inferred from the JSON, where `undefined`,
+ * NaN and the infinities arrive as text and objects past the preview's depth as `[Description]`.
+ */
+export function toVariable(name: string, value: unknown, type?: string, description?: string | null, path?: string): Variable {
+  if (type === "undefined" || (type === undefined && value === "undefined")) return { name, value: "undefined", type: "undefined", path };
+  if (value === null) return { name, value: type === "undefined" ? "undefined" : "null", type: "null", path };
+  if (typeof value === "boolean") return { name, value: String(value), type: "boolean", path };
+  if (typeof value === "number") return { name, value: String(value), type: "number", path };
+  if (typeof value === "string") {
+    if (type === "string") return { name, value: JSON.stringify(value), type: "string", path };
+    if (type === "function" || value.startsWith("[function")) {
+      return { name, value: `\u0192 ${value.replace(/^\[function ?|\]$/g, "")}()`, type: "function" };
+    }
+    if (type !== undefined) return { name, value, type, path };
+    if (["NaN", "Infinity", "-Infinity", "-0"].includes(value)) return { name, value, type: "number", path };
+    if (ELIDED.test(value)) return { name, value: value.slice(1, -1), type: "object" };
+    return { name, value: JSON.stringify(value), type: "string", path };
+  }
+  if (Array.isArray(value)) {
+    // The host describes top-level values only (`Float64Array(1)`); a nested array may be typed.
+    const items = value.slice(0, PREVIEW_ITEMS).map(short).join(", ");
+    const head = description ? `${description} ` : "";
+    return {
+      name,
+      value: `${head}[${items}${value.length > PREVIEW_ITEMS ? ", \u2026" : ""}]`,
+      type: type ?? "array",
+      path,
+      children: value.map((x, i) => toVariable(String(i), x, undefined, undefined, childPath(path, String(i), true))),
+    };
+  }
+  if (typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>);
+    const items = entries.slice(0, PREVIEW_ITEMS).map(([k, v]) => `${k}: ${short(v)}`).join(", ");
+    const head = description && description !== "Object" ? `${description} ` : "";
+    return {
+      name,
+      value: `${head}{${items}${entries.length > PREVIEW_ITEMS ? ", \u2026" : ""}}`,
+      type: type ?? "object",
+      path,
+      children: entries.map(([k, v]) => toVariable(k, v, undefined, undefined, childPath(path, k, false))),
+    };
+  }
+  return { name, value: String(value), type: type ?? typeof value, path };
+}
+
+function scopeVars(vars: HostVariable[]): Variable[] {
+  return vars.map((v) => toVariable(v.name, v.value, v.type, v.description, IDENT.test(v.name) ? v.name : undefined));
+}
+
+/** The host's debugger state (a `debug` event or `debug.state`) as the editor shows it. */
+export function debugState(raw: HostDebugState): DebugState {
+  const frames: StackFrame[] | undefined = raw.frames?.map((f, i) => ({
+    id: i,
+    name: f.function,
+    file: f.location.file,
+    line: f.location.line,
+    column: f.location.column,
+    generated: f.location.generated,
+    returned: f.returned,
+    scopes: f.returned
+      ? []
+      : [
+          { name: "Local", variables: scopeVars(f.locals) },
+          { name: "Closure", variables: scopeVars(f.closure) },
+        ],
+  }));
+  return {
+    state: raw.state === "paused" ? "paused" : "running",
+    reason: raw.reason,
+    location: raw.location ?? undefined,
+    frames,
+    tick: raw.tick,
+    system: raw.system ?? undefined,
+    hitBreakpoints: raw.hit_breakpoints,
+    data: raw.data,
+    exception: raw.exception,
+    exceptions: raw.exceptions,
+    attached: raw.attached,
+    instrumented: raw.instrumented,
+    cdp: raw.cdp,
+  };
+}
+
+/** A breakpoint as the host lists it: where it binds (TypeScript), or what a CDP client asked. */
+export function breakpointOf(b: HostBreakpoint): Breakpoint {
+  const at = b.locations[0];
+  return {
+    id: b.id,
+    file: at?.file ?? b.target.file ?? b.target.url ?? b.target.url_regex ?? b.target.script_id ?? "",
+    line: at?.line ?? b.target.line ?? (b.target.js_line ?? 0) + 1,
+    condition: b.condition ?? undefined,
+    log: b.log ?? undefined,
+    verified: b.locations.length > 0,
+    owner: b.owner,
+  };
+}
+
+export function dataWatchOf(w: HostDataWatch): DataWatch {
+  return { id: w.id, entity: w.entity, component: w.component, field: w.field ?? undefined };
+}

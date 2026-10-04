@@ -226,11 +226,15 @@ export function registerBuiltinCommands() {
       category: "Debug",
       icon: ClipboardCopy,
       keywords: "cdp inspector vscode attach",
-      run: () => {
-        const h = host.endpoints.http ? new URL(host.endpoints.http).host : location.host;
-        const url = `devtools://devtools/bundled/inspector.html?ws=${h}/devtools/game`;
-        void navigator.clipboard?.writeText(url);
-        useUi.getState().toast({ kind: "info", title: "DevTools URL copied", body: `${url} — paste it in Chrome's address bar.` });
+      run: async () => {
+        // The host's CDP endpoint is pocket-debug's own port (9229 by default), not the host's.
+        const cdp = (await api.debug.state().catch(() => null))?.cdp ?? useDebug.getState().cdp;
+        if (!cdp) {
+          useUi.getState().toast({ kind: "error", title: "No CDP endpoint", body: "This host does not serve the Chrome DevTools Protocol (its port was taken, or it is the mock)." });
+          return;
+        }
+        void navigator.clipboard?.writeText(cdp.devtools);
+        useUi.getState().toast({ kind: "info", title: "DevTools URL copied", body: `${cdp.devtools} — paste it in Chrome's address bar (VS Code attaches to ${cdp.ws}).` });
       },
     },
     {

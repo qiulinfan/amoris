@@ -177,3 +177,20 @@
 .data-icon {
   color: var(--debug);
 }
+
+.debug-exceptions .select-field {
+  min-width: 150px;
+  height: 24px;
+}
+
+.frame-tag {
+  font-size: 10px;
+  color: var(--text-3);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+
+.bp-row.is-hit {
+  background: rgba(229, 165, 58, 0.12);
+}

@@ -30,9 +30,9 @@ export class HostError extends Error {
     this.method = method;
   }
 
-  /** "did you mean" suggestions the host attached, if any. */
+  /** "did you mean" suggestions the host attached, if any (`suggestions` as built, `did_you_mean` in the mock). */
   get suggestions(): string[] {
-    const d = this.detail.did_you_mean;
+    const d = this.detail.suggestions ?? this.detail.did_you_mean;
     return Array.isArray(d) ? d.map(String) : [];
   }
 }

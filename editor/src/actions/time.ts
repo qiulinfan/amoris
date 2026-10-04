@@ -64,9 +64,13 @@ export async function restoreSnapshot(tick: number) {
   void refreshSnapshots();
 }
 
+/** `debug.rewind`: the host restores the kept snapshot at or before `tick` and steps to it. */
 export async function rewind(tick: number) {
-  const s = await attempt(api.debug.rewind(tick), "Rewind");
-  if (s) useSession.getState().setStatus(s);
+  const r = await attempt(api.debug.rewind(tick), "Rewind");
+  if (r) {
+    const s = await attempt(api.time.control({}), "Rewind");
+    if (s) useSession.getState().setStatus(s);
+  }
   void refreshSnapshots();
 }
 

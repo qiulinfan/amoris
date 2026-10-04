@@ -223,14 +223,6 @@ try {
   await js(`pocket.openPanel('profiler');`);
   await sleep(1500);
   await shot("profiler", await panelRect("profiler"));
-  await js(`pocket.openPanel('console');`);
-  await sleep(300);
-  const [ix, iy] = await center(".console-input input");
-  await click(ix, iy);
-  await type("world.names.filter((n) => n.startsWith('Crate'))");
-  await key("Enter", "Enter", 0, 13);
-  await sleep(600);
-  await shot("console", await panelRect("console"));
   await js(`pocket.openPanel('agent'); pocket.toggleMaximize('agent');`);
   await sleep(500);
   await shot("agent", { x: 0, y: 0, width: W, height: H });
@@ -251,6 +243,15 @@ try {
   await shot("debug-paused");
   await shot("debug", await panelRect("debug"));
   await shot("scripts", await panelRect("scripts"));
+  // The console evaluates on the paused frame (the host evaluates only while the debugger holds the game).
+  await js(`pocket.openPanel('console');`);
+  await sleep(300);
+  const [ix, iy] = await center(".console-input input");
+  await click(ix, iy);
+  await type("({ speed, knots: speed * 1.944, tick: ctx.tick })");
+  await key("Enter", "Enter", 0, 13);
+  await sleep(600);
+  await shot("console", await panelRect("console"));
   await js(`await pocket.actions.debug.clearAllBreakpoints(); await pocket.actions.debug.resume();`);
   await sleep(500);
 

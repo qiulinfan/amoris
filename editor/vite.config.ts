@@ -19,11 +19,11 @@ export default defineConfig({
       "/api": http,
       "/ws": ws,
       "/render": ws,
-      "/devtools": ws,
       "/assets": http,
       "/wasm": http,
       "/mcp": http,
-      "/json": http,
+      // No /devtools or /json: the host's CDP endpoint is pocket-debug's own port (9229), and the
+      // editor debugs through `debug.*` over /ws (docs/spec/editor.md 8.1).
     },
     // The SDK's declarations (../sdk) are read at build time for Monaco.
     fs: { allow: [".."] },
