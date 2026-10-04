@@ -44,12 +44,25 @@ pub struct Look {
     pub visible: bool,
 }
 
-/// One drawn entity's change: its pose, its look, or both.
+/// A skeletal animation's state for drawing.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AnimView {
+    pub clip: String,
+    /// Seconds into the clip at this tick.
+    pub time: f32,
+    /// Seconds of clip per second of simulation (for interpolation between ticks).
+    pub rate: f32,
+    pub looped: bool,
+}
+
+/// One drawn entity's change: its pose, its look, its animation, or any of these.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct InstanceUpdate {
     pub id: u64,
     pub pose: Option<Pose>,
     pub look: Option<Look>,
+    #[serde(default)]
+    pub anim: Option<AnimView>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -198,6 +211,9 @@ impl RenderFrame {
                             }
                             if u.look.is_some() {
                                 cur.look = u.look;
+                            }
+                            if u.anim.is_some() {
+                                cur.anim = u.anim;
                             }
                         }
                         None => {
@@ -355,6 +371,7 @@ mod tests {
                 ..Pose::default()
             }),
             look: None,
+            anim: None,
         }
     }
 

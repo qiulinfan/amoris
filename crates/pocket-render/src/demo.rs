@@ -54,6 +54,7 @@ pub fn many_cubes(count: usize, dense: bool, shadows: bool) -> RenderFrame {
                     ..Pose::default()
                 }),
                 look: Some(look.clone()),
+                anim: None,
             });
         }
     } else {
@@ -78,6 +79,7 @@ pub fn many_cubes(count: usize, dense: bool, shadows: bool) -> RenderFrame {
                     scale: [1.0; 3],
                 }),
                 look: Some(look.clone()),
+                anim: None,
             });
         }
         let s = radius as f32 * 2.2;
@@ -93,6 +95,7 @@ pub fn many_cubes(count: usize, dense: bool, shadows: bool) -> RenderFrame {
                 cast_shadows: false,
                 ..look.clone()
             }),
+            anim: None,
         });
     }
     RenderFrame {

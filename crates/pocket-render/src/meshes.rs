@@ -56,7 +56,13 @@ fn buffer(
 impl MeshPool {
     pub fn new(device: &wgpu::Device) -> MeshPool {
         MeshPool {
-            vertices: buffer(device, "mesh vertices", 1 << 20, wgpu::BufferUsages::VERTEX),
+            // STORAGE: the skinning pass writes skinned parts' vertices in place.
+            vertices: buffer(
+                device,
+                "mesh vertices",
+                1 << 20,
+                wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::STORAGE,
+            ),
             indices: buffer(device, "mesh indices", 1 << 20, wgpu::BufferUsages::INDEX),
             info_buffer: buffer(device, "mesh infos", 64 * 32, wgpu::BufferUsages::STORAGE),
             infos: Vec::new(),
@@ -131,7 +137,7 @@ impl MeshPool {
                 self.vertex_len,
                 self.vertex_len + vbytes,
                 "mesh vertices",
-                wgpu::BufferUsages::VERTEX,
+                wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::STORAGE,
             );
             self.generation += 1;
         }
@@ -176,6 +182,54 @@ impl MeshPool {
         self.by_key.insert(key.to_owned(), id);
         self.info_dirty = true;
         id
+    }
+
+    /// A mesh entry with its own `count` vertices (written by the GPU, e.g. skinning) drawn with the
+    /// indices of mesh `indices_of`; its bounds are the source's grown by `grow`.
+    pub fn add_dynamic(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        key: &str,
+        indices_of: u32,
+        count: u32,
+        grow: f32,
+    ) -> Option<u32> {
+        if let Some(id) = self.by_key.get(key) {
+            return Some(*id);
+        }
+        let src = *self.infos.get(indices_of as usize)?;
+        let src_box = self.boxes.get(indices_of as usize).copied()?;
+        let vbytes = u64::from(count) * VERTEX;
+        if self.vertex_len + vbytes > self.vertices.size() {
+            self.vertices = Self::grow(
+                device,
+                queue,
+                &self.vertices,
+                self.vertex_len,
+                self.vertex_len + vbytes,
+                "mesh vertices",
+                wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::STORAGE,
+            );
+            self.generation += 1;
+        }
+        let base_vertex = (self.vertex_len / VERTEX) as i32;
+        self.vertex_len += vbytes;
+        let id = self.infos.len() as u32;
+        self.infos.push(MeshInfo {
+            radius: src.radius * grow,
+            base_vertex,
+            batch_offset: 0,
+            ..src
+        });
+        let (lo, hi) = src_box;
+        let c = [(lo[0] + hi[0]) * 0.5, (lo[1] + hi[1]) * 0.5, (lo[2] + hi[2]) * 0.5];
+        let g = |i: usize, v: [f32; 3]| c[i] + (v[i] - c[i]) * grow;
+        self.boxes.push(([g(0, lo), g(1, lo), g(2, lo)], [g(0, hi), g(1, hi), g(2, hi)]));
+        self.names.push(key.to_owned());
+        self.by_key.insert(key.to_owned(), id);
+        self.info_dirty = true;
+        Some(id)
     }
 
     /// Sets each mesh's region start in the visible lists.

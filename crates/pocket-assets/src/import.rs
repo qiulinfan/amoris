@@ -9,7 +9,10 @@ use gltf::image::Format;
 use pocket_contract::{Problem, detail};
 use serde_json::json;
 
-use crate::mesh::{AlphaMode, ImageData, MaterialData, MeshData, ModelAsset, NodeData, Vertex};
+use crate::mesh::{
+    AlphaMode, AnimationClip, Channel, ChannelPath, ImageData, Interpolation, MaterialData,
+    MeshData, ModelAsset, NodeData, SkeletonNode, SkinAsset, SkinWeights, Vertex,
+};
 
 fn failed(path: &Path, why: impl std::fmt::Display) -> Problem {
     Problem::new(
@@ -93,6 +96,8 @@ fn convert(
             let normals: Option<Vec<[f32; 3]>> = r.read_normals().map(Iterator::collect);
             let uvs: Option<Vec<[f32; 2]>> = r.read_tex_coords(0).map(|t| t.into_f32().collect());
             let tangents: Option<Vec<[f32; 4]>> = r.read_tangents().map(Iterator::collect);
+            let joints: Option<Vec<[u16; 4]>> = r.read_joints(0).map(|j| j.into_u16().collect());
+            let weights: Option<Vec<[f32; 4]>> = r.read_weights(0).map(|w| w.into_f32().collect());
             let indices: Vec<u32> = match r.read_indices() {
                 Some(i) => i.into_u32().collect(),
                 None => (0..positions.len() as u32).collect(),
@@ -107,7 +112,9 @@ fn convert(
                     tangent: tangents.as_ref().map_or([1.0, 0.0, 0.0, 1.0], |t| t[i]),
                 })
                 .collect();
-            let (vertices, indices) = if normals.is_none() {
+            // Flat normals duplicate vertices; skinned meshes keep their vertices (and weights).
+            let skinned = joints.is_some() && weights.is_some();
+            let (vertices, indices) = if normals.is_none() && !skinned {
                 flat_normals(&vertices, &indices)
             } else {
                 (std::mem::take(&mut vertices), indices)
@@ -119,6 +126,11 @@ fn convert(
             };
             let mut m = MeshData::new(&name, vertices, indices);
             m.material = prim.material().index();
+            if let (Some(j), Some(w)) = (joints, weights) {
+                if j.len() == m.vertices.len() && w.len() == m.vertices.len() {
+                    m.skin = Some(SkinWeights { joints: j, weights: w });
+                }
+            }
             if tangents.is_none() {
                 m.compute_tangents();
             }
@@ -133,6 +145,81 @@ fn convert(
             walk(&node, IDENTITY, &mesh_parts, &mut asset.nodes);
         }
     }
+    // The whole hierarchy (bones are nodes), the skins and the clips.
+    let mut parent = vec![None; doc.nodes().len()];
+    for n in doc.nodes() {
+        for c in n.children() {
+            parent[c.index()] = Some(n.index());
+        }
+    }
+    asset.skeleton = doc
+        .nodes()
+        .map(|n| {
+            let (t, r, s) = n.transform().decomposed();
+            SkeletonNode {
+                name: n.name().unwrap_or("").to_owned(),
+                parent: parent[n.index()],
+                translation: t,
+                rotation: r,
+                scale: s,
+            }
+        })
+        .collect();
+    asset.skins = doc
+        .skins()
+        .map(|sk| {
+            let r = sk.reader(|b| buffers.get(b.index()).map(|d| &d.0[..]));
+            let joints: Vec<usize> = sk.joints().map(|j| j.index()).collect();
+            let inverse_bind = r
+                .read_inverse_bind_matrices()
+                .map(|m| m.map(bytemuck_flatten).collect())
+                .unwrap_or_else(|| vec![IDENTITY; joints.len()]);
+            SkinAsset { joints, inverse_bind }
+        })
+        .collect();
+    asset.animations = doc
+        .animations()
+        .enumerate()
+        .map(|(i, a)| {
+            let mut duration = 0.0f32;
+            let channels = a
+                .channels()
+                .filter_map(|ch| {
+                    let r = ch.reader(|b| buffers.get(b.index()).map(|d| &d.0[..]));
+                    let times: Vec<f32> = r.read_inputs()?.collect();
+                    duration = duration.max(times.last().copied().unwrap_or(0.0));
+                    let (path, values): (ChannelPath, Vec<[f32; 4]>) = match r.read_outputs()? {
+                        gltf::animation::util::ReadOutputs::Translations(v) => {
+                            (ChannelPath::Translation, v.map(|x| [x[0], x[1], x[2], 0.0]).collect())
+                        }
+                        gltf::animation::util::ReadOutputs::Scales(v) => {
+                            (ChannelPath::Scale, v.map(|x| [x[0], x[1], x[2], 0.0]).collect())
+                        }
+                        gltf::animation::util::ReadOutputs::Rotations(v) => {
+                            (ChannelPath::Rotation, v.into_f32().collect())
+                        }
+                        gltf::animation::util::ReadOutputs::MorphTargetWeights(_) => return None,
+                    };
+                    Some(Channel {
+                        node: ch.target().node().index(),
+                        path,
+                        interpolation: match ch.sampler().interpolation() {
+                            gltf::animation::Interpolation::Step => Interpolation::Step,
+                            gltf::animation::Interpolation::Linear => Interpolation::Linear,
+                            gltf::animation::Interpolation::CubicSpline => Interpolation::Cubic,
+                        },
+                        times,
+                        values,
+                    })
+                })
+                .collect();
+            AnimationClip {
+                name: a.name().map_or_else(|| format!("{i}"), str::to_owned),
+                duration,
+                channels,
+            }
+        })
+        .collect();
     asset
 }
 
@@ -159,6 +246,7 @@ fn walk(node: &gltf::Node<'_>, parent: [f32; 16], parts: &[Vec<usize>], out: &mu
                 name: node.name().unwrap_or("").to_owned(),
                 mesh: m,
                 transform: world,
+                skin: node.skin().map(|s| s.index()),
             });
         }
     }

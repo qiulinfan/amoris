@@ -43,9 +43,11 @@ pub struct Part {
     pub local: Option<(Vec3, Quat, Vec3)>,
 }
 
-/// Turns a look into parts; `None` while its assets are loading.
+/// Turns an entity's look into parts; `None` while its assets are loading.
 pub trait Resolve {
-    fn parts(&mut self, look: &Look) -> Option<Vec<Part>>;
+    fn parts(&mut self, entity: u64, look: &Look) -> Option<Vec<Part>>;
+    /// The entity's parts are gone (its look changed or it was removed).
+    fn released(&mut self, _entity: u64) {}
 }
 
 struct Entry {
@@ -78,6 +80,8 @@ pub struct Scene {
     pub sea: Option<SeaView>,
     pub splats: Vec<SplatView>,
     pub splats_changed: bool,
+    /// Animation state per entity (skeletal animation).
+    pub anims: HashMap<u64, pocket_assets::frame::AnimView>,
     pub tick: u64,
     pub t_s: f64,
     pub dt_s: f64,
@@ -213,6 +217,8 @@ impl Scene {
                     self.pending -= 1;
                 }
                 self.release(e.slots);
+                self.anims.remove(&id);
+                resolve.released(id);
             }
         }
         for u in frame.instances {
@@ -252,6 +258,9 @@ impl Scene {
     }
 
     fn update(&mut self, u: InstanceUpdate, resolve: &mut dyn Resolve, moving: &mut Vec<u32>) {
+        if let Some(a) = u.anim.clone() {
+            self.anims.insert(u.id, a);
+        }
         let exists = self.entities.contains_key(&u.id);
         if !exists {
             self.entities.insert(
@@ -321,11 +330,15 @@ impl Scene {
         let was_pending = e.pending;
         let pose = e.pose;
         let look = e.look.clone();
+        let had_parts = !old.is_empty();
         self.release(old);
+        if had_parts {
+            resolve.released(id);
+        }
         let Some(look) = look else {
             return;
         };
-        let parts = resolve.parts(&look);
+        let parts = resolve.parts(id, &look);
         let e = self.entities.get_mut(&id).unwrap_or_else(|| unreachable!());
         let Some(parts) = parts else {
             if !was_pending {

@@ -3042,6 +3042,7 @@ dependencies = [
  "bevy_ecs",
  "bincode 2.0.1",
  "bytemuck",
+ "glam 0.33.12",
  "gltf",
  "image",
  "pocket-contract",

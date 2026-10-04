@@ -83,6 +83,16 @@ pub struct MeshData {
     /// Coarser versions for distance (level 1 onward), each with its own indices into `vertices`
     /// and the screen-space error it was simplified to.
     pub lods: Vec<Lod>,
+    /// Joint indices and weights per vertex, for a skinned mesh.
+    #[serde(default)]
+    pub skin: Option<SkinWeights>,
+}
+
+/// Per-vertex skinning: up to four joints (indices into the skin's joint list) and their weights.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct SkinWeights {
+    pub joints: Vec<[u16; 4]>,
+    pub weights: Vec<[f32; 4]>,
 }
 
 /// A coarser index list over the same vertices.
@@ -103,6 +113,7 @@ impl MeshData {
             bounds,
             material: None,
             lods: Vec::new(),
+            skin: None,
         }
     }
 
@@ -258,6 +269,60 @@ pub struct NodeData {
     pub mesh: usize,
     /// Column-major 4x4, relative to the asset root.
     pub transform: [f32; 16],
+    /// The skin deforming this mesh (an index into `ModelAsset::skins`).
+    #[serde(default)]
+    pub skin: Option<usize>,
+}
+
+/// A node of the file's hierarchy in its rest pose (bones are nodes).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SkeletonNode {
+    pub name: String,
+    pub parent: Option<usize>,
+    pub translation: [f32; 3],
+    pub rotation: [f32; 4],
+    pub scale: [f32; 3],
+}
+
+/// A skin: its joints (skeleton node indices) and their inverse bind matrices (column-major).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SkinAsset {
+    pub joints: Vec<usize>,
+    pub inverse_bind: Vec<[f32; 16]>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ChannelPath {
+    Translation,
+    Rotation,
+    Scale,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Interpolation {
+    Step,
+    Linear,
+    /// Cubic spline: `values` holds (in-tangent, value, out-tangent) per key.
+    Cubic,
+}
+
+/// Keys of one property of one node.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Channel {
+    pub node: usize,
+    pub path: ChannelPath,
+    pub interpolation: Interpolation,
+    pub times: Vec<f32>,
+    /// xyz (w unused) for translation and scale, xyzw for rotation.
+    pub values: Vec<[f32; 4]>,
+}
+
+/// An animation clip.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AnimationClip {
+    pub name: String,
+    pub duration: f32,
+    pub channels: Vec<Channel>,
 }
 
 /// An imported model: meshes, materials, images and the default scene's drawn nodes.
@@ -267,6 +332,13 @@ pub struct ModelAsset {
     pub materials: Vec<MaterialData>,
     pub images: Vec<ImageData>,
     pub nodes: Vec<NodeData>,
+    /// Every node of the file, in the file's order (skins and channels index it).
+    #[serde(default)]
+    pub skeleton: Vec<SkeletonNode>,
+    #[serde(default)]
+    pub skins: Vec<SkinAsset>,
+    #[serde(default)]
+    pub animations: Vec<AnimationClip>,
 }
 
 impl ModelAsset {

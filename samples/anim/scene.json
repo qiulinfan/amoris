@@ -1,0 +1,240 @@
+{
+  "format": "pocket-scene",
+  "version": 1,
+  "entities": [
+    {
+      "name": "Ground",
+      "components": {
+        "Transform": {
+          "position": [
+            0,
+            0,
+            0
+          ]
+        },
+        "Model": {
+          "mesh": "plane",
+          "scale": [
+            40,
+            1,
+            40
+          ],
+          "color": [
+            0.42,
+            0.5,
+            0.36,
+            1
+          ],
+          "roughness": 0.9
+        }
+      }
+    },
+    {
+      "name": "Sun",
+      "components": {
+        "Transform": {
+          "position": [
+            0,
+            20,
+            0
+          ],
+          "rotation": [
+            -0.3535534,
+            0.3535534,
+            0.1464466,
+            0.8535534
+          ]
+        },
+        "Light": {
+          "kind": "directional",
+          "intensity": 6.0,
+          "shadows": true
+        }
+      }
+    },
+    {
+      "name": "Sky",
+      "components": {
+        "Environment": {
+          "bloom": 0.08
+        }
+      }
+    },
+    {
+      "name": "Camera",
+      "components": {
+        "Transform": {
+          "position": [
+            0,
+            2.2,
+            6.5
+          ],
+          "rotation": [
+            -0.0871557,
+            0,
+            0,
+            0.9961947
+          ]
+        },
+        "Camera": {
+          "fov_deg": 50
+        }
+      }
+    },
+    {
+      "name": "Hero1",
+      "components": {
+        "Transform": {
+          "position": [
+            -3.2,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0.0,
+            0,
+            1.0
+          ]
+        },
+        "Model": {
+          "mesh": "models/hero.glb",
+          "color": [
+            1,
+            1,
+            1,
+            1
+          ]
+        },
+        "Animator": {
+          "clip": "idle",
+          "speed": 0.6
+        }
+      }
+    },
+    {
+      "name": "Hero2",
+      "components": {
+        "Transform": {
+          "position": [
+            -1.6,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            -0.13052619222005157,
+            0,
+            0.9914448613738104
+          ]
+        },
+        "Model": {
+          "mesh": "models/hero.glb",
+          "color": [
+            1,
+            1,
+            1,
+            1
+          ]
+        },
+        "Animator": {
+          "clip": "idle",
+          "speed": 0.8
+        }
+      }
+    },
+    {
+      "name": "Hero3",
+      "components": {
+        "Transform": {
+          "position": [
+            0.0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            -0.25881904510252074,
+            0,
+            0.9659258262890683
+          ]
+        },
+        "Model": {
+          "mesh": "models/hero.glb",
+          "color": [
+            1,
+            1,
+            1,
+            1
+          ]
+        },
+        "Animator": {
+          "clip": "idle",
+          "speed": 1.0
+        }
+      }
+    },
+    {
+      "name": "Hero4",
+      "components": {
+        "Transform": {
+          "position": [
+            1.6,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            -0.3826834323650898,
+            0,
+            0.9238795325112867
+          ]
+        },
+        "Model": {
+          "mesh": "models/hero.glb",
+          "color": [
+            1,
+            1,
+            1,
+            1
+          ]
+        },
+        "Animator": {
+          "clip": "idle",
+          "speed": 1.2000000000000002
+        }
+      }
+    },
+    {
+      "name": "Hero5",
+      "components": {
+        "Transform": {
+          "position": [
+            3.2,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            -0.49999999999999994,
+            0,
+            0.8660254037844387
+          ]
+        },
+        "Model": {
+          "mesh": "models/hero.glb",
+          "color": [
+            1,
+            1,
+            1,
+            1
+          ]
+        },
+        "Animator": {
+          "clip": "idle",
+          "speed": 1.4
+        }
+      }
+    }
+  ]
+}

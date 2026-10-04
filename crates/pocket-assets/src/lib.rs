@@ -3,6 +3,7 @@
 //! (feature `import`), and the render feed that carries visual changes from the game thread to the
 //! renderers. Game side: no GPU, no threads, builds for `wasm32`.
 
+pub mod animation;
 pub mod frame;
 #[cfg(feature = "import")]
 pub mod import;
@@ -11,12 +12,13 @@ pub mod primitives;
 pub mod visual;
 
 use pocket_contract::Problem;
-use pocket_sim::{ComponentRegistry, Persisted, RegisterPersisted, Sim};
+use bevy_ecs::prelude::{Query, Res};
+use pocket_sim::{ComponentRegistry, Persisted, RegisterPersisted, RunCondition, Sim, SimClock, TickPhase};
 use serde_reflection::{Samples, Tracer};
 
 pub use frame::{Feed, Mailbox, RenderFrame};
 pub use mesh::{MeshData, ModelAsset, Vertex};
-pub use visual::{Camera, Environment, Light, LightKind, Model, SkyKind, Splat};
+pub use visual::{Animator, Camera, Environment, Light, LightKind, Model, SkyKind, Splat};
 
 impl Persisted for Model {
     const NAME: &'static str = "Model";
@@ -53,6 +55,23 @@ impl Persisted for Splat {
     const VERSION: u32 = 1;
 }
 
+impl Persisted for Animator {
+    const NAME: &'static str = "Animator";
+    const VERSION: u32 = 1;
+}
+
+/// Advances every playing animator by one tick (per-entity arithmetic only: the result does not
+/// depend on the order entities are visited in). Clip lengths live in assets the simulation does
+/// not load, so `time` grows without wrapping; the renderer wraps or holds by `looped`.
+fn animate(clock: Res<SimClock>, mut q: Query<&mut Animator>) {
+    let dt = clock.dt();
+    for mut a in &mut q {
+        if a.playing && a.speed != 0.0 {
+            a.time += dt * a.speed;
+        }
+    }
+}
+
 /// Registers the visual components with the world's component registry.
 pub fn plugin(sim: &mut Sim) -> Result<(), Problem> {
     let w = sim.world_mut();
@@ -61,6 +80,8 @@ pub fn plugin(sim: &mut Sim) -> Result<(), Problem> {
     ComponentRegistry::register::<Camera>(w, None)?;
     ComponentRegistry::register::<Environment>(w, None)?;
     ComponentRegistry::register::<Splat>(w, None)?;
+    ComponentRegistry::register::<Animator>(w, None)?;
+    sim.add_system("assets.animate", TickPhase::Finish, RunCondition::Always, animate)?;
     Ok(())
 }
 
@@ -70,5 +91,6 @@ pub fn declare<R: RegisterPersisted>(r: &mut R) {
         .component::<Light>()
         .component::<Camera>()
         .component::<Environment>()
-        .component::<Splat>();
+        .component::<Splat>()
+        .component::<Animator>();
 }

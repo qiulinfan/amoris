@@ -15,10 +15,10 @@ use bevy_ecs::entity::Entity;
 use bevy_ecs::prelude::World;
 use bevy_ecs::world::{Ref, WorldId};
 use pocket_assets::frame::{
-    CameraView, EnvironmentView, InstanceUpdate, LightKindView, LightView, Look, Pose, RenderFrame,
-    SeaView, SplatView, WaveView,
+    AnimView, CameraView, EnvironmentView, InstanceUpdate, LightKindView, LightView, Look, Pose,
+    RenderFrame, SeaView, SplatView, WaveView,
 };
-use pocket_assets::{Camera, Environment, Feed, Light, LightKind, Model, SkyKind, Splat};
+use pocket_assets::{Animator, Camera, Environment, Feed, Light, LightKind, Model, SkyKind, Splat};
 use pocket_physics::{Sea, Transform};
 use pocket_sim::{EntityId, SimClock};
 
@@ -52,6 +52,15 @@ fn pose(t: &Transform, scale: [f64; 3]) -> Pose {
             f(t.rotation[3]),
         ],
         scale: f3(scale),
+    }
+}
+
+fn anim(a: &Animator) -> AnimView {
+    AnimView {
+        clip: a.clip.clone(),
+        time: f(a.time),
+        rate: if a.playing { f(a.speed) } else { 0.0 },
+        looped: a.looped,
     }
 }
 
@@ -134,10 +143,10 @@ impl Extractor {
         let (tick, t_s, dt_s) = Self::clock(world);
         self.drawn.clear();
         let mut instances = Vec::new();
-        let mut q = world.query::<(Entity, &EntityId, &Transform, &Model)>();
+        let mut q = world.query::<(Entity, &EntityId, &Transform, &Model, Option<&Animator>)>();
         let mut rows: Vec<(u64, Entity, InstanceUpdate)> = q
             .iter(world)
-            .map(|(e, id, t, m)| {
+            .map(|(e, id, t, m, a)| {
                 (
                     id.get(),
                     e,
@@ -145,6 +154,7 @@ impl Extractor {
                         id: id.get(),
                         pose: Some(pose(t, m.scale)),
                         look: Some(look(m)),
+                        anim: a.map(anim),
                     },
                 )
             })
@@ -193,11 +203,12 @@ impl Extractor {
                 frame.removed.push(id);
             }
         }
-        let mut q = world.query::<(Entity, &EntityId, Ref<Transform>, Ref<Model>)>();
-        for (e, id, t, m) in q.iter(world) {
+        let mut q = world.query::<(Entity, &EntityId, Ref<Transform>, Ref<Model>, Option<Ref<Animator>>)>();
+        for (e, id, t, m, a) in q.iter(world) {
             let new = !self.drawn.contains_key(&e);
             let look_changed = new || m.is_changed();
-            if new || t.is_changed() || look_changed {
+            let anim_changed = a.as_ref().is_some_and(|a| new || a.is_changed());
+            if new || t.is_changed() || look_changed || anim_changed {
                 if new {
                     self.drawn.insert(e, id.get());
                 }
@@ -205,6 +216,7 @@ impl Extractor {
                     id: id.get(),
                     pose: Some(pose(&t, m.scale)),
                     look: look_changed.then(|| look(&m)),
+                    anim: if anim_changed { a.map(|a| anim(&a)) } else { None },
                 });
             }
         }

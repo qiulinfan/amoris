@@ -1,0 +1,4 @@
+# Skeletal animation: skinned glTF characters whose Animator the simulation advances every tick.
+name = "anim"
+rate = 60
+seed = 1

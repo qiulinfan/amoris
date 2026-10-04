@@ -29,6 +29,7 @@ use crate::picking::{PickRequest, Picking, coverage};
 use crate::post::{DEPTH, HDR, Post, SAMPLES, Targets};
 use crate::profiler::GpuProfiler;
 use crate::scene::{InstanceGpu, Part, Resolve, Scene, VARIANTS};
+use crate::skinning::Skinning;
 use crate::shaders;
 use crate::shadows::{self, CASCADES, SHADOW_SIZE};
 use crate::sky::{Sky, SkyParams};
@@ -124,8 +125,10 @@ struct Model {
     /// (mesh id, material key or empty) per mesh index.
     meshes: Vec<(u32, String)>,
     names: HashMap<String, usize>,
-    /// (mesh index, local TRS) per drawn node.
-    nodes: Vec<(usize, (Vec3, Quat, Vec3))>,
+    /// (mesh index, local TRS, skin) per drawn node.
+    nodes: Vec<(usize, (Vec3, Quat, Vec3), Option<usize>)>,
+    /// The asset itself when it has skins (poses are evaluated from it every frame).
+    skinned: Option<std::sync::Arc<ModelAsset>>,
 }
 
 struct Pools<'a> {
@@ -135,10 +138,45 @@ struct Pools<'a> {
     loader: &'a mut dyn AssetSource,
     requested: &'a mut HashSet<String>,
     failed: &'a HashSet<String>,
+    skinning: &'a mut Skinning,
+    device: &'a wgpu::Device,
+    queue: &'a wgpu::Queue,
+}
+
+impl Pools<'_> {
+    /// The mesh an entity draws for node `mi` of `path`: the shared mesh, or for a skinned mesh
+    /// the entity's own skinned copy.
+    fn mesh_for(&mut self, entity: u64, path: &str, model: &Model, mi: usize, skin: Option<usize>, local: (Vec3, Quat, Vec3)) -> u32 {
+        let (mesh, _) = model.meshes[mi];
+        let (Some(skin), Some(asset)) = (skin, &model.skinned) else {
+            return mesh;
+        };
+        let Some(count) = self.skinning.add_source(path, mi, asset) else {
+            return mesh;
+        };
+        let key = format!("{path}#{mi}@{entity}");
+        let Some(dynamic) = self.meshes.add_dynamic(self.device, self.queue, &key, mesh, count, 2.0) else {
+            return mesh;
+        };
+        let dst = self.meshes.infos[dynamic as usize].base_vertex as u32;
+        self.skinning.parts.push(crate::skinning::Part {
+            entity,
+            asset: asset.clone(),
+            source: (path.to_owned(), mi),
+            skin,
+            node_global: Mat4::from_scale_rotation_translation(local.2, local.1, local.0),
+            dst,
+        });
+        dynamic
+    }
 }
 
 impl Resolve for Pools<'_> {
-    fn parts(&mut self, look: &Look) -> Option<Vec<Part>> {
+    fn released(&mut self, entity: u64) {
+        self.skinning.remove_entity(entity);
+    }
+
+    fn parts(&mut self, entity: u64, look: &Look) -> Option<Vec<Part>> {
         if let Some(mesh) = self
             .meshes
             .get(&look.mesh)
@@ -159,31 +197,33 @@ impl Resolve for Pools<'_> {
         if self.failed.contains(path) {
             return Some(Vec::new());
         }
-        let Some(model) = self.models.get(path) else {
+        let models = self.models;
+        let Some(model) = models.get(path) else {
             if self.requested.insert(path.to_owned()) {
                 self.loader.request(path);
             }
             return None;
         };
-        let mut material_for = |key: &str| -> Option<u32> {
+        let material_for = |materials: &mut MaterialPool, key: &str| -> Option<u32> {
             if !look.material.is_empty() || key.is_empty() {
-                self.materials.resolve(look)
+                materials.resolve(look)
             } else {
                 let l = Look {
                     material: key.to_owned(),
                     ..look.clone()
                 };
-                self.materials.resolve(&l)
+                materials.resolve(&l)
             }
         };
         match sub {
             None => {
                 let mut parts = Vec::with_capacity(model.nodes.len());
-                for (mi, local) in &model.nodes {
-                    let (mesh, key) = &model.meshes[*mi];
-                    let material = material_for(key)?;
+                for (mi, local, skin) in &model.nodes {
+                    let (_, key) = &model.meshes[*mi];
+                    let material = material_for(self.materials, key)?;
+                    let mesh = self.mesh_for(entity, path, model, *mi, *skin, *local);
                     parts.push(Part {
-                        mesh: *mesh,
+                        mesh,
                         material,
                         variant: 0,
                         local: Some(*local),
@@ -201,10 +241,12 @@ impl Resolve for Pools<'_> {
                     .copied()
                     .or_else(|| s.parse::<usize>().ok())
                     .filter(|&i| i < model.meshes.len())?;
-                let (mesh, key) = &model.meshes[i];
-                let material = material_for(key)?;
+                let (_, key) = &model.meshes[i];
+                let material = material_for(self.materials, key)?;
+                let skin = model.nodes.iter().find(|n| n.0 == i).and_then(|n| n.2);
+                let mesh = self.mesh_for(entity, path, model, i, skin, (Vec3::ZERO, Quat::IDENTITY, Vec3::ONE));
                 Some(vec![Part {
-                    mesh: *mesh,
+                    mesh,
                     material,
                     variant: self.materials.variant(material),
                     local: None,
@@ -250,6 +292,7 @@ pub struct Renderer {
     empty_group: wgpu::BindGroup,
     ocean: Ocean,
     picking: Picking,
+    skinning: Skinning,
     /// Editor overlays: gizmo shapes, selection outline, grid and axes.
     pub overlays: Overlays,
     /// The last finished pick: `Some(None)` when the pixel shows no entity.
@@ -669,6 +712,7 @@ impl Renderer {
             shadow,
             ocean,
             picking,
+            skinning: Skinning::new(device),
             overlays: Overlays::new(device, output),
             last_pick: None,
             last_visible: None,
@@ -770,6 +814,9 @@ impl Renderer {
             loader: self.loader.as_mut(),
             requested: &mut self.requested,
             failed: &self.failed,
+            skinning: &mut self.skinning,
+            device: &self.gpu.device,
+            queue: &self.gpu.queue,
         };
         self.scene.apply(frame, &mut pools);
     }
@@ -804,15 +851,17 @@ impl Renderer {
             .iter()
             .map(|n| {
                 let (s, r, t) = Mat4::from_cols_array(&n.transform).to_scale_rotation_translation();
-                (n.mesh, (t, r, s))
+                (n.mesh, (t, r, s), n.skin.filter(|_| !asset.skins.is_empty()))
             })
             .collect();
+        let skinned = (!asset.skins.is_empty()).then(|| std::sync::Arc::new(asset.clone()));
         self.models.insert(
             path.to_owned(),
             Model {
                 meshes,
                 names,
                 nodes,
+                skinned,
             },
         );
     }
@@ -834,6 +883,9 @@ impl Renderer {
             loader: self.loader.as_mut(),
             requested: &mut self.requested,
             failed: &self.failed,
+            skinning: &mut self.skinning,
+            device: &self.gpu.device,
+            queue: &self.gpu.queue,
         };
         self.scene.retry_pending(&mut pools);
     }
@@ -1242,6 +1294,16 @@ impl Renderer {
         if draw_bytes > 0 {
             enc.copy_buffer_to_buffer(&self.draw_template, 0, &self.draws, 0, draw_bytes);
         }
+        // Skinned parts' vertices for the drawn moment (between the last two ticks).
+        let since_tick = (f64::from(alpha) - 1.0) * self.scene.dt_s;
+        self.skinning.encode(
+            &device,
+            &queue,
+            &mut enc,
+            &self.meshes.vertices,
+            &self.scene.anims,
+            since_tick as f32,
+        );
         if n > 0 {
             let groups = n.div_ceil(256);
             let (gx, gy) = if groups > 65535 {

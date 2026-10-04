@@ -13,7 +13,7 @@
 use bevy_ecs::component::{Component, Mutable};
 use bevy_ecs::prelude::World;
 use bevy_ecs::world::{EntityRef, EntityWorldMut};
-use pocket_assets::{Camera, Environment, Light, Model, Splat};
+use pocket_assets::{Animator, Camera, Environment, Light, Model, Splat};
 use pocket_contract::{CheckOptions, Problem, Shape, detail};
 use pocket_physics::{
     Boat, Collider, ExternalForce, Floater, Hull, RigidBody, Sail, Sea, Transform, Trim, Velocity,
@@ -82,8 +82,9 @@ where
 }
 
 /// Every engine component a scene or `world_edit` can name (`Name` is the entity's own `name`).
-pub fn engine_components() -> [EngineComponent; 16] {
+pub fn engine_components() -> [EngineComponent; 17] {
     [
+        entry::<Animator>(),
         entry::<Boat>(),
         entry::<Camera>(),
         entry::<Environment>(),
@@ -424,6 +425,7 @@ pub fn install_script_components(world: &mut World) -> Result<(), Problem> {
     ComponentRegistry::register::<Camera>(world, None)?;
     ComponentRegistry::register::<Environment>(world, None)?;
     ComponentRegistry::register::<Splat>(world, None)?;
+    ComponentRegistry::register::<Animator>(world, None)?;
     let after = names(world);
     if before != after {
         return Err(Problem::new(

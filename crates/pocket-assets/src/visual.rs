@@ -196,3 +196,33 @@ impl Default for Splat {
         }
     }
 }
+
+/// A skeletal animation playing on the entity's model (a skinned glTF mesh): which clip, how far
+/// into it, how fast. The simulation advances `time` every tick (deterministically), so a fork, a
+/// replay and an agent reading the world all see the same pose; the renderer evaluates the clip at
+/// that time.
+#[derive(Component, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, default)]
+pub struct Animator {
+    /// The clip's name in the model's file (`idle`, `run`), or its index (`0`).
+    pub clip: String,
+    /// Seconds into the clip.
+    pub time: f64,
+    /// Playback rate; 1 is real time, negative plays backwards.
+    pub speed: f64,
+    /// Wrap at the clip's end (else hold the last pose).
+    pub looped: bool,
+    pub playing: bool,
+}
+
+impl Default for Animator {
+    fn default() -> Self {
+        Animator {
+            clip: String::new(),
+            time: 0.0,
+            speed: 1.0,
+            looped: true,
+            playing: true,
+        }
+    }
+}
