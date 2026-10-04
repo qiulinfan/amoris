@@ -1,0 +1,10 @@
+Begin sim.begin always
+Update script.update always
+Forces physics.wind always
+Forces physics.buoyancy always
+Forces physics.sail always
+Forces physics.hull always
+Physics physics.step always
+Physics physics.contacts always
+Finish assets.animate always
+Finish sim.finish always
