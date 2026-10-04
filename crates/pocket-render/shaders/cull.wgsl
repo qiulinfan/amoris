@@ -35,6 +35,9 @@ struct DrawArgs {
 @group(0) @binding(4) var<storage, read_write> visible: array<u32>;
 // Each batch's region in a view's visible list; a batch is (variant, mesh) at variant * meshes + mesh.
 @group(0) @binding(5) var<storage, read> batch_offsets: array<u32>;
+// The camera view's visible instances with their interpolated poses (view 0 writes here instead
+// of `visible`).
+@group(0) @binding(6) var<storage, read_write> drawn: array<Drawn>;
 
 var<workgroup> wg_batch: u32;
 var<workgroup> wg_count: array<atomic<u32>, 5>;
@@ -73,6 +76,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u, @builtin(local_invocation_ind
     var mesh = 0xffffffffu;
     var batch = 0xffffffffu;
     var live = false;
+    var d: Drawn;
     if (idx < cull.instance_count) {
         let inst = instances[idx];
         let need = FLAG_ALIVE | FLAG_VISIBLE;
@@ -82,6 +86,11 @@ fn main(@builtin(global_invocation_id) gid: vec3u, @builtin(local_invocation_ind
             batch = ((inst.flags >> VARIANT_SHIFT) & 3u) * cull.mesh_count + mesh;
             let m = meshes[mesh];
             let pose = instance_pose(inst, cull.alpha);
+            d.pos = pose.pos;
+            d.rot = pose.rot;
+            d.scale = inst.scale;
+            d.material = inst.material;
+            d.slot = idx;
             let c = pose.pos + quat_rotate(pose.rot, m.center * inst.scale);
             let s = abs(inst.scale);
             let r = m.radius * max(s.x, max(s.y, s.z));
@@ -119,6 +128,10 @@ fn main(@builtin(global_invocation_id) gid: vec3u, @builtin(local_invocation_ind
         } else {
             slot = atomicAdd(&draws[v * batches + batch].instance_count, 1u);
         }
-        visible[v * cull.view_stride + region + slot] = idx;
+        if (v == 0u) {
+            drawn[region + slot] = d;
+        } else {
+            visible[v * cull.view_stride + region + slot] = idx;
+        }
     }
 }

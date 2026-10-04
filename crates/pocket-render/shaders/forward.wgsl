@@ -8,6 +8,7 @@
 @group(0) @binding(1) var<storage, read> instances: array<Instance>;
 @group(0) @binding(2) var<storage, read> visible: array<u32>;
 @group(0) @binding(3) var<storage, read> materials: array<Material>;
+@group(0) @binding(4) var<storage, read> drawn: array<Drawn>;
 
 @group(1) @binding(0) var shadow_map: texture_depth_2d_array;
 @group(1) @binding(1) var shadow_sampler: sampler_comparison;
@@ -40,19 +41,18 @@ struct VsOut {
 
 @vertex
 fn vs(v: VsIn, @builtin(instance_index) ii: u32) -> VsOut {
-    let inst = instances[visible[ii]];
-    let pose = instance_pose(inst, view.params.x);
-    let world = pose.pos + quat_rotate(pose.rot, v.position * inst.scale);
+    let d = drawn[ii];
+    let world = d.pos + quat_rotate(d.rot, v.position * d.scale);
     // Normals under non-uniform scale: scale by the inverse, then rotate.
-    let n = normalize(quat_rotate(pose.rot, v.normal / inst.scale));
-    let t = normalize(quat_rotate(pose.rot, v.tangent.xyz * inst.scale));
+    let n = normalize(quat_rotate(d.rot, v.normal / d.scale));
+    let t = normalize(quat_rotate(d.rot, v.tangent.xyz * d.scale));
     var o: VsOut;
     o.clip = view.view_proj * vec4f(world, 1.0);
     o.world = world;
     o.normal = n;
     o.uv = v.uv;
     o.tangent = vec4f(t, v.tangent.w);
-    o.material = inst.material;
+    o.material = d.material;
     return o;
 }
 
@@ -346,13 +346,11 @@ struct IdOut {
 
 @vertex
 fn vs_id(v: VsIn, @builtin(instance_index) ii: u32) -> IdOut {
-    let slot = visible[ii];
-    let inst = instances[slot];
-    let pose = instance_pose(inst, view.params.x);
-    let world = pose.pos + quat_rotate(pose.rot, v.position * inst.scale);
+    let d = drawn[ii];
+    let world = d.pos + quat_rotate(d.rot, v.position * d.scale);
     var o: IdOut;
     o.clip = view.view_proj * vec4f(world, 1.0);
-    o.slot = slot;
+    o.slot = d.slot;
     return o;
 }
 

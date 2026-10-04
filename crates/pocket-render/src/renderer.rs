@@ -232,6 +232,8 @@ pub struct Renderer {
     cull_buf: wgpu::Buffer,
     instances: wgpu::Buffer,
     visible: wgpu::Buffer,
+    /// The camera view's visible instances with interpolated poses (48 bytes each).
+    drawn: wgpu::Buffer,
     draws: wgpu::Buffer,
     draw_template: wgpu::Buffer,
     lights: wgpu::Buffer,
@@ -349,6 +351,7 @@ impl Renderer {
                 entry(1, vf, buf_ty(true)),
                 entry(2, vf, buf_ty(true)),
                 entry(3, vf, buf_ty(true)),
+                entry(4, vf, buf_ty(true)),
             ],
         });
         let lighting = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -633,6 +636,7 @@ impl Renderer {
                 1024 * 4 * u64::from(VIEWS),
                 wgpu::BufferUsages::empty(),
             ),
+            drawn: storage(device, "drawn", 1024 * 48, wgpu::BufferUsages::empty()),
             draws: storage(device, "draws", 64 * 20, wgpu::BufferUsages::INDIRECT),
             draw_template: storage(
                 device,
@@ -871,6 +875,16 @@ impl Renderer {
                 }
                 self.view_stride = stride;
             }
+            let drawn = u64::from(stride) * 48;
+            if drawn > self.drawn.size() {
+                self.drawn = storage(
+                    device,
+                    "drawn",
+                    drawn.next_power_of_two(),
+                    wgpu::BufferUsages::empty(),
+                );
+                grown = true;
+            }
             let mut template = Vec::with_capacity((mesh_count * VIEWS * VARIANTS) as usize);
             for v in 0..VIEWS {
                 for variant in 0..VARIANTS {
@@ -969,6 +983,7 @@ impl Renderer {
                 b(3, &self.draws),
                 b(4, &self.visible),
                 b(5, &self.batch_offsets),
+                b(6, &self.drawn),
             ],
         });
         let cluster = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -990,6 +1005,7 @@ impl Renderer {
                 b(1, &self.instances),
                 b(2, &self.visible),
                 b(3, &self.materials.buffer),
+                b(4, &self.drawn),
             ],
         });
         let lighting = device.create_bind_group(&wgpu::BindGroupDescriptor {

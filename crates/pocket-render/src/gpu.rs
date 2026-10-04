@@ -153,7 +153,10 @@ impl Gpu {
         };
         // Log every validation error instead of panicking at the first: an engine keeps running and
         // reports (the editor and agents read the log).
-        device.on_uncaptured_error(Arc::new(|e: wgpu::Error| { let s = format!("{e:?}"); log::error!("wgpu: {}", &s[..s.len().min(1200)]) }));
+        device.on_uncaptured_error(Arc::new(|e: wgpu::Error| {
+            let s = format!("{e:?}");
+            log::error!("wgpu: {}", &s[..s.len().min(1200)])
+        }));
         device.set_device_lost_callback(|reason, message| {
             log::error!("GPU device lost ({reason:?}): {message}");
         });

@@ -10,7 +10,10 @@ use pocket_assets::frame::{
 /// `--benchmark`: rotate about world z then x by 0.15/60 per frame; dense: fixed).
 pub fn cubes_camera(frame: u32, dense: bool) -> crate::CameraState {
     if dense {
-        return crate::CameraState::look_at(Vec3::new(100.0, 90.0, 100.0), Vec3::new(0.0, -10.0, 0.0));
+        return crate::CameraState::look_at(
+            Vec3::new(100.0, 90.0, 100.0),
+            Vec3::new(0.0, -10.0, 0.0),
+        );
     }
     let d = 0.15 / 60.0;
     let step = Quat::from_rotation_x(d) * Quat::from_rotation_z(d);
@@ -46,7 +49,10 @@ pub fn many_cubes(count: usize, dense: bool, shadows: bool) -> RenderFrame {
             let z = i as f32 / (size * size);
             instances.push(InstanceUpdate {
                 id: i as u64 + 1,
-                pose: Some(Pose { position: [x * gap, y * gap, z * gap], ..Pose::default() }),
+                pose: Some(Pose {
+                    position: [x * gap, y * gap, z * gap],
+                    ..Pose::default()
+                }),
                 look: Some(look.clone()),
             });
         }
@@ -58,20 +64,35 @@ pub fn many_cubes(count: usize, dense: bool, shadows: bool) -> RenderFrame {
         for i in 0..count {
             let theta = std::f64::consts::TAU * i as f64 / golden;
             let phi = (1.0 - 2.0 * (i as f64 + 0.5) / count as f64).acos();
-            let p = glam::DVec3::new(phi.sin() * theta.cos(), phi.sin() * theta.sin(), phi.cos()) * radius;
+            let p = glam::DVec3::new(phi.sin() * theta.cos(), phi.sin() * theta.sin(), phi.cos())
+                * radius;
             let pos = p.as_vec3();
-            let rot = glam::Quat::from_mat4(&glam::camera::rh::view::look_at_mat4(pos, Vec3::ZERO, Vec3::Y).inverse());
+            let rot = glam::Quat::from_mat4(
+                &glam::camera::rh::view::look_at_mat4(pos, Vec3::ZERO, Vec3::Y).inverse(),
+            );
             instances.push(InstanceUpdate {
                 id: i as u64 + 1,
-                pose: Some(Pose { position: pos.to_array(), rotation: rot.to_array(), scale: [1.0; 3] }),
+                pose: Some(Pose {
+                    position: pos.to_array(),
+                    rotation: rot.to_array(),
+                    scale: [1.0; 3],
+                }),
                 look: Some(look.clone()),
             });
         }
         let s = radius as f32 * 2.2;
         instances.push(InstanceUpdate {
             id: count as u64 + 1,
-            pose: Some(Pose { position: [0.0; 3], rotation: [0.0, 0.0, 0.0, 1.0], scale: [-s, -s, -s] }),
-            look: Some(Look { color: [1.0; 4], cast_shadows: false, ..look.clone() }),
+            pose: Some(Pose {
+                position: [0.0; 3],
+                rotation: [0.0, 0.0, 0.0, 1.0],
+                scale: [-s, -s, -s],
+            }),
+            look: Some(Look {
+                color: [1.0; 4],
+                cast_shadows: false,
+                ..look.clone()
+            }),
         });
     }
     RenderFrame {
@@ -107,4 +128,3 @@ pub fn many_cubes(count: usize, dense: bool, shadows: bool) -> RenderFrame {
         splats: None,
     }
 }
-

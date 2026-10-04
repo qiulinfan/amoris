@@ -41,6 +41,16 @@ struct Instance {
     prev_rot: vec4f,
 };
 
+// A visible instance of the camera view, its pose already interpolated by the culling pass (48
+// bytes): the vertex shader does one read and no interpolation per vertex.
+struct Drawn {
+    pos: vec3f,
+    material: u32,
+    rot: vec4f,
+    scale: vec3f,
+    slot: u32,
+};
+
 struct MeshInfo {
     center: vec3f,
     radius: f32,
