@@ -40,8 +40,8 @@ export interface Status {
   mode: "edit" | "play";
   world_hash: string;
   entities: number;
-  fps: number;
-  tick_ms: number;
+  fps?: number;
+  tick_ms?: number;
   speed?: number;
 }
 

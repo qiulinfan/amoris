@@ -25,7 +25,7 @@ export function ViewportStats() {
           </span>
           {status && (
             <>
-              <span>{status.fps.toFixed(0)} fps</span>
+              <span>{status.fps != null ? status.fps.toFixed(0) : "–"} fps</span>
               <span>tick {status.tick}</span>
               <span>{status.entities} entities</span>
             </>

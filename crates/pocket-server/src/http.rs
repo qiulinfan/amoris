@@ -154,6 +154,31 @@ async fn asset(
     file(host.project(), &rel).await
 }
 
+/// The browser renderer (`web/viewport`: the editor's viewport module and its wasm package).
+async fn wasm(axum::extract::Path(rel): axum::extract::Path<String>) -> Response {
+    match find_web_viewport() {
+        Some(dir) => file(&dir, &rel).await,
+        None => (StatusCode::NOT_FOUND, "web/viewport is not built (tools/build_viewport.sh)").into_response(),
+    }
+}
+
+/// `web/viewport` beside the working directory or the binary (or `POCKET_WEB_VIEWPORT`).
+pub fn find_web_viewport() -> Option<PathBuf> {
+    if let Some(p) = std::env::var_os("POCKET_WEB_VIEWPORT") {
+        return Some(PathBuf::from(p));
+    }
+    let mut candidates = Vec::new();
+    if let Ok(cwd) = std::env::current_dir() {
+        candidates.extend(cwd.ancestors().map(|a| a.join("web/viewport")));
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        candidates.extend(exe.ancestors().map(|a| a.join("web/viewport")));
+    }
+    candidates
+        .into_iter()
+        .find(|c| c.join("pkg/pocket_viewport_bg.wasm").is_file())
+}
+
 /// The editor's files; an unknown path gets `index.html` (the editor routes itself).
 async fn editor(State(host): State<Host>, uri: Uri) -> Response {
     let Some(dist) = host.0.editor_dist.clone() else {
@@ -192,6 +217,7 @@ pub fn router(host: Host, port: u16) -> Router {
         .route("/ws", get(ws))
         .route("/render", any(render))
         .route("/assets/{*path}", get(asset))
+        .route("/wasm/{*path}", get(wasm))
         .nest_service("/mcp", mcp)
         .fallback(get(editor))
         .layer(middleware::from_fn(guard))

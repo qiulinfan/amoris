@@ -29,9 +29,16 @@ const ws = new WebSocket(target.webSocketDebuggerUrl);
 await new Promise((r) => (ws.onopen = r));
 let id = 0;
 const pending = new Map();
-ws.onmessage = (e) => { const m = JSON.parse(e.data); if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); } };
+const logs = [];
+ws.onmessage = (e) => {
+  const m = JSON.parse(e.data);
+  if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); return; }
+  if (m.method === "Runtime.consoleAPICalled") logs.push(`[${m.params.type}] ` + m.params.args.map((a) => a.value ?? a.description ?? "").join(" "));
+  if (m.method === "Runtime.exceptionThrown") logs.push("[exception] " + (m.params.exceptionDetails.exception?.description || m.params.exceptionDetails.text));
+};
 const send = (method, params = {}) => new Promise((r) => { const i = ++id; pending.set(i, r); ws.send(JSON.stringify({ id: i, method, params })); });
 await send("Page.enable");
+await send("Runtime.enable");
 await send("Page.navigate", { url });
 await sleep(Number(seconds) * 1000);
 const r = await send("Runtime.evaluate", { returnByValue: true, expression: `(() => {
@@ -50,6 +57,7 @@ if (process.env.SHOT) {
   (await import("node:fs")).writeFileSync(process.env.SHOT, Buffer.from(shot.result.data, "base64"));
   console.log("screenshot:", process.env.SHOT);
 }
+if (process.env.LOGS) for (const l of logs.slice(-40)) console.log(l.slice(0, 400));
 ws.close();
 proc.kill();
 await sleep(300);

@@ -42,11 +42,11 @@ export function Transport() {
           <span className="ro-value">{clock(status?.t_s ?? 0)}</span>
         </span>
         <span className="ro">
-          <span className="ro-value">{status ? status.fps.toFixed(0) : "–"}</span>
+          <span className="ro-value">{status?.fps != null ? status.fps.toFixed(0) : "–"}</span>
           <span className="ro-label">fps</span>
         </span>
         <span className="ro">
-          <span className="ro-value">{status ? status.tick_ms.toFixed(2) : "–"}</span>
+          <span className="ro-value">{status?.tick_ms != null ? status.tick_ms.toFixed(2) : "–"}</span>
           <span className="ro-label">ms</span>
         </span>
       </div>

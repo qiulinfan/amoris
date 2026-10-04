@@ -120,6 +120,11 @@ impl Scene {
         self.pending
     }
 
+    /// The instance slots an entity is drawn with (one per part).
+    pub fn slots_of(&self, entity: u64) -> &[u32] {
+        self.entities.get(&entity).map_or(&[], |e| e.slots.as_slice())
+    }
+
     /// The entity drawn in `slot`.
     pub fn entity_of_slot(&self, slot: u32) -> Option<u64> {
         self.slot_entity

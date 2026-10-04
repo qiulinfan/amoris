@@ -29,6 +29,11 @@ try {
     beforeFrame: (api, frame) => { if (q.get("demo") === "cubes") api.demoCubesCamera(frame, dense); },
   });
   if (q.get("demo") === "cubes") vp.demoCubes(Number(q.get("count") || 1600000), dense);
+  if (q.has("grid") || q.has("axes")) vp.raw.set_overlays(q.has("grid"), q.has("axes"));
+  if (q.get("eye")) {
+    const e = q.get("eye").split(",").map(Number), t = (q.get("target") || "0,0,0").split(",").map(Number);
+    vp.raw.set_camera_look(e[0], e[1], e[2], t[0], t[1], t[2], 0, 1, 0, 50, 0.1, 0);
+  }
   window.pocketViewport = vp;
   const samples = [];
   vp.onStats((s) => {

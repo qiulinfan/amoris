@@ -14,6 +14,8 @@ pub struct CameraState {
     pub near: f32,
     /// Exposure compensation, stops.
     pub exposure_ev: f32,
+    /// Orthographic: the view's height in world units (`None` for perspective).
+    pub ortho_height: Option<f32>,
 }
 
 impl Default for CameraState {
@@ -32,6 +34,17 @@ impl CameraState {
             fov_y: 60f32.to_radians(),
             near: 0.1,
             exposure_ev: 0.0,
+            ortho_height: None,
+        }
+    }
+
+    /// Looking from `eye` at `target` with `up` (the editor's orbit camera).
+    pub fn look_at_up(eye: Vec3, target: Vec3, up: Vec3) -> CameraState {
+        let view = glam::camera::rh::view::look_at_mat4(eye, target, up);
+        CameraState {
+            position: eye,
+            rotation: Quat::from_mat4(&view.inverse()).normalize(),
+            ..CameraState::look_at(eye, target)
         }
     }
 
@@ -44,6 +57,11 @@ impl CameraState {
     }
 
     pub fn proj(&self, aspect: f32) -> Mat4 {
+        if let Some(h) = self.ortho_height {
+            // Reversed-Z orthographic: depth 1 at the near plane, 0 at 10 km (near and far swapped).
+            let (hw, hh) = (h * 0.5 * aspect, h * 0.5);
+            return glam::camera::rh::proj::directx::orthographic(-hw, hw, -hh, hh, 10_000.0, self.near);
+        }
         glam::camera::rh::proj::directx::perspective_infinite_reverse(self.fov_y, aspect, self.near)
     }
 }

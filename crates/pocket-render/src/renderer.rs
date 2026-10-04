@@ -24,6 +24,7 @@ use crate::loader::{AssetSource, NoAssets};
 use crate::materials::MaterialPool;
 use crate::meshes::MeshPool;
 use crate::ocean::Ocean;
+use crate::overlay::Overlays;
 use crate::picking::{PickRequest, Picking, coverage};
 use crate::post::{DEPTH, HDR, Post, SAMPLES, Targets};
 use crate::profiler::GpuProfiler;
@@ -249,6 +250,8 @@ pub struct Renderer {
     empty_group: wgpu::BindGroup,
     ocean: Ocean,
     picking: Picking,
+    /// Editor overlays: gizmo shapes, selection outline, grid and axes.
+    pub overlays: Overlays,
     /// The last finished pick: `Some(None)` when the pixel shows no entity.
     last_pick: Option<Option<u64>>,
     /// The last finished coverage read: (entity, share of the view's pixels), largest first.
@@ -666,6 +669,7 @@ impl Renderer {
             shadow,
             ocean,
             picking,
+            overlays: Overlays::new(device, output),
             last_pick: None,
             last_visible: None,
             empty_group,
@@ -749,6 +753,7 @@ impl Renderer {
                 fov_y: c.fov_deg.to_radians(),
                 near: c.near.max(0.01),
                 exposure_ev: c.exposure_ev,
+                ortho_height: None,
             })
             .unwrap_or_default()
     }
@@ -1186,6 +1191,7 @@ impl Renderer {
             counts: [self.view_stride, 0, 0, 0],
         };
         queue.write_buffer(&self.view_buf, 0, bytemuck::bytes_of(&vu));
+        self.overlays.write_params(&queue);
         if let Some(sea) = &self.scene.sea {
             // Drawn time matches the interpolated poses: between the last two ticks.
             let t = self.scene.t_s - self.scene.dt_s * (1.0 - f64::from(alpha));
@@ -1347,6 +1353,7 @@ impl Renderer {
             pass.set_pipeline(&self.sky_pipeline);
             pass.set_bind_group(0, &binds.sky, &[]);
             pass.draw(0..3, 0..1);
+            self.overlays.draw_grid(&device, &mut pass, &self.view_buf);
         }
         if self.picking.wanted() {
             let meshes = self.draw_meshes;
@@ -1386,6 +1393,41 @@ impl Renderer {
             exposure,
             bloom,
         );
+        if self.overlays.any() {
+            let mut selected = Vec::new();
+            let hovered = self.overlays.hovered;
+            for (e, hov) in self
+                .overlays
+                .selection
+                .iter()
+                .map(|e| (*e, false))
+                .chain(hovered.map(|h| (h, true)))
+            {
+                for &slot in self.scene.slots_of(e) {
+                    let mesh = self.scene.slots[slot as usize].mesh as usize;
+                    if let Some(info) = self.meshes.infos.get(mesh) {
+                        selected.push((
+                            slot,
+                            info.first_index..info.first_index + info.index_count,
+                            info.base_vertex,
+                            hov,
+                        ));
+                    }
+                }
+            }
+            self.overlays.draw(
+                &device,
+                &queue,
+                &mut enc,
+                output,
+                (w, h),
+                &self.view_buf,
+                &self.instances,
+                &self.meshes.vertices,
+                &self.meshes.indices,
+                &selected,
+            );
+        }
         self.profiler.resolve(&mut enc);
         queue.submit([enc.finish()]);
         self.profiler.after_submit();

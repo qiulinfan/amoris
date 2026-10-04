@@ -34,6 +34,8 @@ pub(crate) fn status_of(host: &Host, snap: &WorldSnapshot, tps: f64) -> Value {
         "world_hash": snap.snapshot.world_hash().to_string(),
         "entities": entities,
         "tps": (tps * 10.0).round() / 10.0,
+        // The editor's transport shows the simulation's rate as fps.
+        "fps": (tps * 10.0).round() / 10.0,
         "state": format!("{state:?}").to_lowercase(),
         "version": snap.version,
     })

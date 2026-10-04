@@ -228,7 +228,7 @@ impl Picking {
         let Some(buf) = &self.readback else {
             return;
         };
-        let mut p = self.pending.lock().unwrap_or_else(|e| e.into_inner());
+        let p = self.pending.lock().unwrap_or_else(|e| e.into_inner());
         if !self.in_flight || p.ready || p.failed || p.request.is_none() {
             return;
         }

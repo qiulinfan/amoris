@@ -7,6 +7,11 @@ export const host = new HostClient(endpointsFromLocation());
 
 const call = host.call.bind(host);
 
+// The Rust host's as-built result shapes (docs/spec/server.md) wrap some lists in objects; the
+// editor's types are the plain lists. Normalize here, in one place.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const listOf = (r: any, key: string): any => (Array.isArray(r) ? r : (r?.[key] ?? []));
+
 export const api = {
   project: {
     info: () => call("project.info", {}),
@@ -31,7 +36,16 @@ export const api = {
   },
   time: {
     control: (p: { pause?: boolean; speed?: number; pacing?: string }) => call("time.control", p),
-    step: (p: { ticks?: number; until?: string } = {}) => call("time.step", p, 120000),
+    step: (p: { ticks?: number; until?: string } = {}) => {
+      // `until: "event:<name>"` or `"tick:<n>"` becomes the host's {event} / {tick} object.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const q: any = { ...p };
+      if (typeof p.until === "string") {
+        const [kind, rest] = p.until.split(/:(.*)/s);
+        q.until = kind === "tick" ? { tick: Number(rest) } : { event: rest ?? p.until };
+      }
+      return call("time.step", q, 120000);
+    },
   },
   play: {
     start: () => call("play.start", {}),
@@ -51,11 +65,12 @@ export const api = {
     import: (path: string) => call("assets.import", { path }, 120000),
   },
   events: {
-    since: (seq: number, limit?: number) => call("events.since", limit ? { seq, limit } : { seq }),
-    why: (seq: number) => call("events.why", { seq }),
+    since: async (seq: number, limit?: number) =>
+      listOf(await call("events.since", limit ? { seq, limit } : { seq }), "events"),
+    why: async (seq: number) => listOf(await call("events.why", { seq }), "chain"),
   },
   snapshots: {
-    list: () => call("snapshots.list", {}),
+    list: async () => listOf(await call("snapshots.list", {}), "snapshots"),
     restore: (tick: number) => call("snapshots.restore", { tick }),
   },
   debug: {

@@ -110,7 +110,83 @@ impl Viewport {
             fov_y: fov_deg.to_radians(),
             near: 0.1,
             exposure_ev: 0.0,
+            ortho_height: None,
         }));
+    }
+
+    /// The editor's orbit camera: eye, target, up, vertical fov, near plane, and the view height
+    /// in world units when orthographic (`ortho_height` <= 0 for perspective).
+    #[allow(clippy::too_many_arguments)]
+    pub fn set_camera_look(
+        &mut self,
+        ex: f32, ey: f32, ez: f32,
+        tx: f32, ty: f32, tz: f32,
+        ux: f32, uy: f32, uz: f32,
+        fov_deg: f32, near: f32, ortho_height: f32,
+    ) {
+        let mut c = CameraState::look_at_up(Vec3::new(ex, ey, ez), Vec3::new(tx, ty, tz), Vec3::new(ux, uy, uz));
+        c.fov_y = fov_deg.to_radians();
+        c.near = near.max(0.001);
+        c.ortho_height = (ortho_height > 0.0).then_some(ortho_height);
+        self.renderer.set_camera_override(Some(c));
+    }
+
+    /// Asks which entity is at a pixel of the backbuffer (device pixels).
+    pub fn request_pick(&mut self, x: u32, y: u32) {
+        self.renderer.request_pick(x, y);
+    }
+
+    /// The last pick: -1 while not ready, 0 for no entity, else the entity id.
+    pub fn take_pick(&mut self) -> f64 {
+        match self.renderer.take_pick() {
+            None => -1.0,
+            Some(None) => 0.0,
+            Some(Some(e)) => e as f64,
+        }
+    }
+
+    /// Asks which entities the view shows; `take_visible` answers [id, share, id, share, ...].
+    pub fn request_visible(&mut self) {
+        self.renderer.request_visible();
+    }
+
+    pub fn take_visible(&mut self) -> Option<Vec<f64>> {
+        self.renderer
+            .take_visible()
+            .map(|v| v.into_iter().flat_map(|(e, s)| [e as f64, f64::from(s)]).collect())
+    }
+
+    pub fn set_overlays(&mut self, grid: bool, axes: bool) {
+        self.renderer.overlays.grid = grid;
+        self.renderer.overlays.axes = axes;
+    }
+
+    /// Selected entities (outlined) and the hovered one (0 for none).
+    pub fn set_selection(&mut self, ids: Vec<f64>, hovered: f64) {
+        self.renderer.overlays.selection = ids.into_iter().filter(|x| *x > 0.0).map(|x| x as u64).collect();
+        self.renderer.overlays.hovered = (hovered > 0.0).then_some(hovered as u64);
+    }
+
+    /// Gizmo geometry: `lines` packs segments as [ax, ay, az, bx, by, bz, r, g, b, a, width_px]*,
+    /// `triangles` packs vertices as [x, y, z, r, g, b, a]* (colours sRGB 0..1).
+    pub fn set_gizmo(&mut self, lines: Vec<f32>, triangles: Vec<f32>) {
+        let o = &mut self.renderer.overlays;
+        o.lines = lines
+            .chunks_exact(11)
+            .map(|c| pocket_render::overlay::OverlayLine {
+                a: [c[0], c[1], c[2]],
+                b: [c[3], c[4], c[5]],
+                color: [c[6], c[7], c[8], c[9]],
+                width: c[10],
+            })
+            .collect();
+        o.polys = triangles
+            .chunks_exact(7)
+            .map(|c| pocket_render::overlay::OverlayVertex {
+                p: [c[0], c[1], c[2]],
+                color: [c[3], c[4], c[5], c[6]],
+            })
+            .collect();
     }
 
     /// Draws from the scene's active camera again.
