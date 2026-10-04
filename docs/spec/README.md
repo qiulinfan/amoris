@@ -41,6 +41,7 @@ their code is under `spikes/`.
 | [shared/contract/mcp.md](../../shared/contract/mcp.md) | spec-mcp | 7.11 (player-facing and developer-facing MCP tools) |
 | [shared/benchmark/README.md](../../shared/benchmark/README.md) | spec-mcp | 9 items 1 and 2 (the harness, metrics, statistics), 10 (the slice 0 skeleton) |
 | [shared/benchmark/tasks.md](../../shared/benchmark/tasks.md) | spec-mcp | 9 (developer and player tasks, fixtures, reference policies) |
+| [splats.md](splats.md) | render | 4.4 (3D Gaussian Splatting: files, GPU layout, preprocess, radix sort, hybrid draw, WebGPU constraints) |
 
 The shared contract and benchmark are a first draft of PocketEngine's `shared/` (charter 6.2):
 PocketEngine's `rebuild` is still at 5f8971e, which has no `shared/`, so nothing is synchronized yet

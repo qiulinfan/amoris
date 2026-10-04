@@ -26,6 +26,7 @@ mod shadows;
 mod skinning;
 mod ui;
 mod sky;
+pub mod splat;
 
 pub use camera::CameraState;
 pub use gpu::{BackendChoice, Gpu, GpuError};

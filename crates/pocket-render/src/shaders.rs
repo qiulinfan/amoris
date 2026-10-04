@@ -1,8 +1,10 @@
 //! The renderer's WGSL, kept in `.wgsl` files (charter 4.4) and composed at load time: WGSL has no
-//! includes, so `common.wgsl` (and `atmosphere.wgsl` for the sky bake) is prepended.
+//! includes, so `common.wgsl` (and `atmosphere.wgsl` for the sky bake, `splat_common.wgsl` for the
+//! splat passes) is prepended.
 
 const COMMON: &str = include_str!("../shaders/common.wgsl");
 const ATMOSPHERE: &str = include_str!("../shaders/atmosphere.wgsl");
+const SPLAT_COMMON: &str = include_str!("../shaders/splat_common.wgsl");
 
 /// The shaders by name.
 pub fn source(name: &str) -> String {
@@ -23,6 +25,20 @@ pub fn source(name: &str) -> String {
         "skin" => include_str!("../shaders/skin.wgsl"),
         "ui" => include_str!("../shaders/ui.wgsl"),
         "particles" => include_str!("../shaders/particles.wgsl"),
+        "splat_sort" => include_str!("../shaders/splat_sort.wgsl"),
+        "splat_depth" => include_str!("../shaders/splat_depth.wgsl"),
+        "splat_preprocess" => {
+            return format!(
+                "{COMMON}\n{SPLAT_COMMON}\n{}",
+                include_str!("../shaders/splat_preprocess.wgsl")
+            );
+        }
+        "splat_draw" => {
+            return format!(
+                "{COMMON}\n{SPLAT_COMMON}\n{}",
+                include_str!("../shaders/splat_draw.wgsl")
+            );
+        }
         other => panic!("no shader named {other}"),
     };
     format!("{COMMON}\n{body}")
