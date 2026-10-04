@@ -21,6 +21,8 @@ pocket-assets.workspace = true
 pocket-render = { workspace = true, features = ["window", "import"] }
 glam.workspace = true
 image.workspace = true
+axum.workspace = true
+wgpu.workspace = true
 # pocket serve, pocket mcp and the CLI client of a running host (docs/spec/server.md).
 pocket-server.workspace = true
 pocket-mcp.workspace = true

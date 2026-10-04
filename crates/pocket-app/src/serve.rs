@@ -45,6 +45,7 @@ fn start(
     seed: Option<u64>,
     editor: Option<PathBuf>,
 ) -> Result<(GameHandle, Host), Problem> {
+    let feed = pocket_assets::Feed::new();
     let project = Project::load(root)?;
     let seed = seed.unwrap_or(project.manifest.seed);
     let setup = Arc::new(project.setup(false)?);
@@ -54,6 +55,7 @@ fn start(
     let options = ThreadOptions {
         pacing: Pacing::RealTime { speed: 1.0 },
         paused: true,
+        feed: Some(feed.clone()),
         ..ThreadOptions::new(clock)
     };
     let dir = root.to_path_buf();
@@ -68,7 +70,10 @@ fn start(
         api: clients.developer(),
         developer: Arc::new(move || clients.developer()),
     };
-    Ok((handle, Host::new(access, root.to_path_buf(), editor)))
+    let host = Host::new(access, root.to_path_buf(), editor);
+    host.set_capture(Arc::new(crate::present::CaptureServer::start(&feed, root.to_path_buf())));
+    host.set_render(Arc::new(crate::present::FeedServer { feed }));
+    Ok((handle, host))
 }
 
 fn runtime() -> Result<tokio::runtime::Runtime, Problem> {

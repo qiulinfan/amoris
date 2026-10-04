@@ -557,9 +557,27 @@ impl Loop {
             Pace::WaitForCommand => {
                 self.publisher
                     .set_state(LoopState::Waiting, self.game.tick());
-                match self.rx.next() {
-                    Received::One(e) => self.pending.push_back(e),
-                    _ => return Next::Quit,
+                // With a render feed, wake every 50 ms so a viewport that subscribes while the
+                // game is paused (the edit world) still gets its first full frame.
+                loop {
+                    let got = match &self.options.feed {
+                        Some(_) => self.rx.next_within(Duration::from_millis(50)),
+                        None => self.rx.next(),
+                    };
+                    match got {
+                        Received::One(e) => {
+                            self.pending.push_back(e);
+                            break;
+                        }
+                        Received::Empty => {
+                            if let Some(feed) = &self.options.feed
+                                && feed.wants_reset()
+                            {
+                                self.game.present(&mut self.extractor, feed);
+                            }
+                        }
+                        Received::Closed => return Next::Quit,
+                    }
                 }
             }
             Pace::Quit => return Next::Quit,
@@ -580,6 +598,11 @@ impl Loop {
                 }
                 Received::Closed => return,
                 Received::Empty => {}
+            }
+            if let Some(feed) = &self.options.feed
+                && feed.wants_reset()
+            {
+                self.game.present(&mut self.extractor, feed);
             }
             let left = t - self.now();
             if left <= 0.0 {

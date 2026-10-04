@@ -3007,6 +3007,7 @@ dependencies = [
 name = "pocket-app"
 version = "0.1.0"
 dependencies = [
+ "axum",
  "glam 0.33.12",
  "image",
  "pocket-assets",
@@ -3021,6 +3022,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "ureq",
+ "wgpu",
 ]
 
 [[package]]

@@ -20,6 +20,7 @@ mod client;
 mod run;
 mod serve;
 mod window;
+mod present;
 
 use check::Outcome;
 

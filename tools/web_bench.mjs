@@ -45,6 +45,11 @@ const r = await send("Runtime.evaluate", { returnByValue: true, expression: `(()
     gpu: navigator.gpu ? "yes" : "no" };
 })()` });
 console.log(JSON.stringify(r.result.result.value, null, 2));
+if (process.env.SHOT) {
+  const shot = await send("Page.captureScreenshot", { format: "png" });
+  (await import("node:fs")).writeFileSync(process.env.SHOT, Buffer.from(shot.result.data, "base64"));
+  console.log("screenshot:", process.env.SHOT);
+}
 ws.close();
 proc.kill();
 await sleep(300);

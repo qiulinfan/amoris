@@ -16,7 +16,7 @@ import * as THREE from "three/webgpu";
 const q = new URLSearchParams(location.search);
 const count = Number(q.get("count") || 1600000);
 const dense = q.has("dense");
-const renderer = new THREE.WebGPURenderer({ antialias: true });
+const renderer = new THREE.WebGPURenderer({ antialias: true, trackTimestamp: true });
 renderer.setPixelRatio(window.devicePixelRatio);
 renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
@@ -58,10 +58,12 @@ const step = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0),
 const samples = [];
 window.pocketSamples = samples;
 let last = performance.now();
+let gpu = 0;
 function frame(now) {
   if (!dense) camera.quaternion.premultiply(step).normalize();
   renderer.render(scene, camera);
-  samples.push({ frame_ms: now - last, gpu_ms: 0, backend: renderer.backend.isWebGPUBackend ? "three.js WebGPU" : "three.js WebGL2" });
+  renderer.resolveTimestampsAsync(THREE.TimestampQuery.RENDER).then((ms) => { if (ms) gpu = ms; });
+  samples.push({ frame_ms: now - last, gpu_ms: gpu, backend: renderer.backend.isWebGPUBackend ? "three.js WebGPU" : "three.js WebGL2" });
   last = now;
   requestAnimationFrame(frame);
 }
