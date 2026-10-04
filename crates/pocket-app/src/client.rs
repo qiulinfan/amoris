@@ -920,6 +920,11 @@ fn resolve<'a>(root: &'a Value, s: &'a Value) -> &'a Value {
 
 fn type_of(root: &Value, s: &Value) -> String {
     let s = resolve(root, s);
+    if s.get("type") == Some(&json!("array"))
+        && let Some(items) = s.get("items")
+    {
+        return format!("[{}]", type_of(root, items));
+    }
     if let Some(t) = s.get("type") {
         return match t {
             Value::Array(a) => a
@@ -940,6 +945,12 @@ fn type_of(root: &Value, s: &Value) -> String {
                 .iter()
                 .map(|a| {
                     let a = resolve(root, a);
+                    if let Some(c) = a.get("const") {
+                        return opt(c);
+                    }
+                    if let Some(e) = a.get("enum").and_then(Value::as_array) {
+                        return e.iter().map(opt).collect::<Vec<_>>().join("|");
+                    }
                     if let Some(p) = a.get("properties").and_then(Value::as_object)
                         && p.len() == 1
                     {

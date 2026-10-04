@@ -515,7 +515,10 @@ impl Game {
                 Ok(p) => {
                     let edits: Vec<Edit> = p.ops.into_iter().map(Edit::from).collect();
                     let label = p.label.unwrap_or_else(|| label_of(&edits));
-                    new_edit(self.edit(edits), label)
+                    let r = self
+                        .edit(edits.clone())
+                        .map_err(|e| edit::ops_paths(e, &edits));
+                    new_edit(r, label)
                 }
                 Err(e) => Err(e),
             },

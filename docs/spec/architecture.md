@@ -279,27 +279,29 @@ written as that specification names them.
 
 ### 4.12 `pocket-mcp`: the MCP server
 
-- **Owns**: the MCP transport on `rmcp` and the mapping of spec-mcp's tools onto commands.
-- **Exports**: `serve_stdio(client_factory)` and the Streamable HTTP form on 127.0.0.1 that
-  shared/contract/mcp.md (10) asks for, with grants (mcp.md 3.1).
-- **Must not**: link the runtime. It reaches the game through `GameClient`s only, one per MCP
-  session (`threads.md`, 5.1); every MCP read is a Read command answered on the game thread
-  (shared/contract/mcp.md 10). Its tool schemas, names, descriptions and annotations come from
-  `pocket-contract`'s types and tables (charter 3.6; mcp.md 7.2 and 8.4), and test M1 compares them
-  with the schemas the command catalog carries for the same commands. `tokio` appears in this crate
-  and in `pocket-app` only.
+- **Owns**: the MCP transport on `rmcp` and the projection of the command catalog into grouped tools
+  (docs/spec/server.md 7): ten tools, each an `action` over catalog methods, served over stdio
+  (`serve_stdio`) and Streamable HTTP (`http_service`, mounted at `/mcp` by `pocket-server`).
+- **Exports**: `Backend` (opens a `Caller` per MCP session) and `Caller` (one catalog call), which
+  the host implements; `serve_stdio(backend)`, `http_service(backend)`, `tools::tools()`.
+- **Must not**: link the runtime. It holds no game: every tool call is one catalog call through the
+  session's `Caller`, which `pocket-server` backs with a `GameClient` per session (`threads.md`,
+  5.1). Its schemas stay loose and the runtime's strict decoder checks parameters, so the catalog
+  stays the one place they are checked. `tokio` and `rmcp` appear in the tool and app crates only.
 - **wasm32**: native only. In a browser the page's `window.pocket` is the same command surface
   (`threads.md`, 7.4).
 
 ### 4.13 `pocket-app`: the native binary
 
 - **Owns**: the `pocket` executable: window and input (`winit`), the presenter loop, starting the
-  game thread, the MCP server, the debugger endpoint, and the subcommands `run` (windowed or
-  `--headless`), `edit`, `new` (`--from <fixture>`, `--params <file>`), `serve` (paused, with
-  grants, `--seed`, `--tick-limit`), `mcp` (with `--grant` or `--attach`), `check <project>` (with
-  `--chain-only` and `--snapshot-at <tick>`, checks.md 8.2), `bench <workload>`, `replay` (with
-  `--verify <file>`, checks.md 8.4), `gen` (`--out <dir>`, `--locks <project>`), `pack`; `new`,
-  `serve` and `mcp --attach` are the three commands the shared benchmark's engine adapter calls
+  game thread, the host's server (`pocket serve`, `pocket-server`), the MCP server (`pocket mcp`),
+  the debugger endpoint, the CLI client of a running host (`pocket call`, `pocket world ...`,
+  docs/spec/server.md 8, over `ureq`), and the subcommands `run` (windowed or `--headless`), `edit`,
+  `new` (`--from <fixture>`, `--params <file>`), `serve` (paused, with grants, `--seed`,
+  `--tick-limit`), `mcp` (with `--grant` or `--attach`), `check <project>` (with `--chain-only` and
+  `--snapshot-at <tick>`, checks.md 8.2), `bench <workload>`, `replay` (with `--verify <file>`,
+  checks.md 8.4), `gen` (`--out <dir>`, `--locks <project>`), `pack`; `new`, `serve` and
+  `mcp --attach` are the three commands the shared benchmark's engine adapter calls
   (shared/benchmark/README.md, 3.2). It enables the native features of the crates it links
   (`pocket-runtime/thread`, `pocket-script/transpile` and `typecheck`, `pocket-assets/import`,
   section 7.4).
@@ -359,6 +361,22 @@ written as that specification names them.
   the check's `test` step runs, so the endpoint cannot rot unseen.
 - **wasm32**: native only.
 
+### 4.18 `pocket-server`: the host's server
+
+- **Owns**: the host protocol's endpoints on one loopback port (docs/spec/host-protocol.md 1;
+  docs/spec/server.md): `/api/catalog`, `/api/call`, the editor's `/ws` with its pushes (status,
+  world changes, events, log, history, agent calls), `/assets/<path>`, the editor's static files,
+  `/mcp` (through `pocket-mcp`) and the `/render` route, behind a loopback `Host`/`Origin` guard;
+  the methods answered on the presenter side (`events.since`/`why`, `log.since`, `assets.list`,
+  `docs.search`, the type check stage of `scripts.apply`), and `.pocket/host.json`.
+- **Exports**: `Host` (`new`, `call`, `serve`, `push`, `set_render`, `set_debug`, `set_capture`),
+  `GameAccess`, `Via`, `RenderFeed`, `DebugHub`, `CaptureHub`, `router`, `hostfile`.
+- **Must not**: link the runtime. It reaches the game only through `pocket-link`: `GameClient`s for
+  commands (the editor's, one for the API, one per MCP session) whose replies complete tokio
+  oneshots, and the `SnapshotReader` for what it shows and pushes. `axum` and `tokio` appear in
+  presenter, tool and app crates only.
+- **wasm32**: native only.
+
 ## 5. The dependency graph
 
 ```mermaid
@@ -381,8 +399,9 @@ flowchart BT
     render[pocket-render] --> sim & assets & link
     editor[pocket-editor] --> sim & link & render
     mcp[pocket-mcp] --> sim & link
+    server[pocket-server] --> sim & link & mcp
     debug[pocket-debug] --> script & link
-    app[pocket-app] --> runtime & check & render & editor & mcp & debug & link & sim
+    app[pocket-app] --> runtime & check & render & editor & mcp & server & debug & link & sim
     web[pocket-web] --> runtime & check & render & editor & link & sim
 ```
 
@@ -405,8 +424,9 @@ drawing's other arrows:
 | `pocket-render` | sim, assets, link | presenter | yes |
 | `pocket-editor` | sim, link, render | presenter | yes |
 | `pocket-mcp` | sim, link | tool | no |
+| `pocket-server` | sim, link, mcp | tool | no |
 | `pocket-debug` | script, link | tool | no |
-| `pocket-app` | sim, link, runtime, check, render, editor, mcp, debug | app | no |
+| `pocket-app` | sim, link, runtime, check, render, editor, mcp, server, debug | app | no |
 | `pocket-web` | sim, link, runtime, check, render, editor | app | yes (only) |
 | `xtask` | none | tool | no |
 
@@ -441,7 +461,9 @@ QuickJS-ng 0.16.2 (script-native, script-web, debugger), `oxc_* =0.152.0` and `o
 | `wgpu` | render, editor (through `egui-wgpu`), app, web | `webgpu` backend on the web; no WebGL |
 | `winit` | editor (through `egui-winit`), app, web | |
 | `egui`, `egui-wgpu`, `egui-winit` | editor, app, web | |
-| `rmcp`, `tokio` | mcp, app | never in the game group |
+| `rmcp`, `tokio` | mcp, server, app | never in the game group. `rmcp =3.5.0` (server, macros, `transport-io`, `transport-streamable-http-server`); `tokio =1.53.1` |
+| `axum`, `mime_guess` | server | `axum =0.8.9` with `ws`: the host's HTTP and WebSocket endpoints; `mime_guess =2.0.5`: content types of served files (docs/spec/server.md) |
+| `ureq` | app | `ureq =3.4.2` without default features (no TLS): the CLI's calls to a host on 127.0.0.1 |
 | `tungstenite`, `regex` | debug, xtask | the CDP endpoint and the web checker |
 | `toml`, `sha2` | xtask; `toml` also runtime and check | Slice 1: `toml =1.1.6` reads the check's configuration (`tools/*.toml`, every `check.toml`, `shared/SYNC.toml`) with line numbers for `check.config_invalid`, and `sha2 =0.11.0` gives `shared/SYNC.toml`'s SHA-256 (checks.md 5.4); `xtask` links no engine crate, so it cannot borrow a parser from one. Slice 1: `toml` also reads a project's `project.toml` in `pocket-runtime` and its `check.toml` in `pocket-check` (checks.md 8.1), both pure Rust and built for `wasm32` |
 | `wasm-bindgen`, `web-sys`, `js-sys` | render (web backend glue), web | `web` alone supplies the injected clock (threads.md 3.1) |

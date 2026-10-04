@@ -205,6 +205,41 @@ pub fn label_of(edits: &[Edit]) -> String {
     }
 }
 
+/// A refusal of `world.edit` with its paths as the caller wrote them: `/edits/0/value` (the
+/// canonical form's) becomes `/ops/0/set/value`, and `edits[0].value` in the message
+/// `ops[0].set.value`.
+pub fn ops_paths(mut p: Problem, edits: &[Edit]) -> Problem {
+    let op = |i: usize| match edits.get(i) {
+        Some(Edit::Spawn { .. }) => "spawn",
+        Some(Edit::Set { .. }) => "set",
+        Some(Edit::Remove { .. }) => "remove",
+        Some(Edit::Destroy { .. }) => "destroy",
+        Some(Edit::Revive { .. }) | None => "revive",
+    };
+    for i in 0..edits.len() {
+        let (slash, dots) = (format!("/edits/{i}"), format!("edits[{i}]"));
+        let (to_slash, to_dots) = (format!("/ops/{i}/{}", op(i)), format!("ops[{i}].{}", op(i)));
+        for v in p.detail.values_mut() {
+            let under = |s: &str, head: &str| {
+                s.strip_prefix(head)
+                    .is_some_and(|r| r.is_empty() || r.starts_with(['/', '.', '[']))
+            };
+            if let Value::String(s) = v
+                && (under(s, &slash) || under(s, &dots))
+            {
+                *s = s
+                    .replacen(&slash, &to_slash, 1)
+                    .replacen(&dots, &to_dots, 1);
+            }
+        }
+        p.message = p
+            .message
+            .replace(&format!("{dots}."), &format!("{to_dots}."))
+            .replace(&format!("{dots}'"), &format!("{to_dots}'"));
+    }
+    p
+}
+
 /// What an applied call gives: the result, the canonical recorded parameters, the inverse edits
 /// and the ids it spawned.
 pub struct Applied {
