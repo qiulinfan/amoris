@@ -315,16 +315,47 @@ impl RenderFrame {
         }
     }
 
-    /// The bytes the editor viewport receives over `/render` (host-protocol.md 5).
+    /// The bytes a viewport receives (over `/render`, host-protocol.md 5, or from a game worker):
+    /// [`FORMAT`] in little endian, then the frame in bincode 2's standard configuration.
     pub fn encode(&self) -> Vec<u8> {
-        bincode2::serde::encode_to_vec(self, bincode2::config::standard()).unwrap_or_default()
+        let mut out = FORMAT.to_le_bytes().to_vec();
+        bincode2::serde::encode_into_std_write(self, &mut out, bincode2::config::standard())
+            .unwrap_or_default();
+        out
     }
 
-    pub fn decode(bytes: &[u8]) -> Option<RenderFrame> {
-        bincode2::serde::decode_from_slice(bytes, bincode2::config::standard())
-            .ok()
+    /// The frame, or why these bytes are not one of this build's frames.
+    pub fn decode(bytes: &[u8]) -> Result<RenderFrame, String> {
+        let (format, body) = bytes
+            .split_first_chunk::<8>()
+            .ok_or_else(|| format!("a render frame of {} bytes has no format", bytes.len()))?;
+        let format = u64::from_le_bytes(*format);
+        if format != FORMAT {
+            return Err(format!(
+                "render frame format {format:016x} is not this build's {FORMAT:016x}: the sender and the \
+                 viewport were built from different revisions of pocket-assets (rebuild the viewport)"
+            ));
+        }
+        bincode2::serde::decode_from_slice(body, bincode2::config::standard())
             .map(|(f, _)| f)
+            .map_err(|e| format!("render frame: {e}"))
     }
+}
+
+/// The feed's wire format: a fingerprint of the sources of its types (this file and visual.rs), so a
+/// viewport built from another revision refuses the bytes instead of misreading them. Any edit to
+/// either file changes it; both sides rebuild together.
+pub const FORMAT: u64 = fnv1a(include_bytes!("frame.rs")) ^ fnv1a(include_bytes!("visual.rs")).rotate_left(1);
+
+const fn fnv1a(bytes: &[u8]) -> u64 {
+    let mut h = 0xcbf2_9ce4_8422_2325_u64;
+    let mut i = 0;
+    while i < bytes.len() {
+        h ^= bytes[i] as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        i += 1;
+    }
+    h
 }
 
 /// One subscriber's pending frame.
@@ -489,7 +520,9 @@ mod tests {
         );
         let f = m.take();
         assert!(!f.reset && f.instances[0].pose.unwrap().position[0] == 2.0);
-        let bytes = f.encode();
-        assert_eq!(RenderFrame::decode(&bytes), Some(f));
+        let mut bytes = f.encode();
+        assert_eq!(RenderFrame::decode(&bytes), Ok(f));
+        bytes[0] ^= 1;
+        assert!(RenderFrame::decode(&bytes).unwrap_err().contains("rebuild the viewport"));
     }
 }

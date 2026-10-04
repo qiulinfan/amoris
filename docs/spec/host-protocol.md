@@ -122,15 +122,24 @@ entity under its id with every component (server.md 3.1).
 
 ## 5. The render feed (`/render`)
 
-Not built yet: `pocket-server` routes `/render` to a `RenderFeed` the integrator installs (server.md
-6); the epoch of `SnapshotReader::world()` says when to send `reset: true`.
+The viewport renders the host's world with the same renderer compiled to wasm (WebGPU). On each
+socket the host subscribes a mailbox to the game's render feed (`pocket-assets`' `Feed`; the game
+thread extracts after each tick with change detection, `pocket-runtime/src/present.rs`) and sends
+the merged frame at up to 60 per second as one binary message:
 
-The viewport renders the host's world with the same renderer compiled to wasm (WebGPU). The host
-sends the render feed the native renderer consumes: after each tick, what changed in the visual
-components (`pocket-assets`' `RenderFrame`), encoded with `bincode` 2 (standard config) in one
-binary frame. The first frame after connecting, and after a restore or Play/Stop, has `reset: true`
-and carries everything. The client sends text frames for its camera and picking requests:
-`{"camera": {...}}`, `{"pick": {"x": px, "y": px}}` (answered on `/ws` as event `pick`).
+- the bytes are `RenderFrame::encode`: 8 bytes of `FORMAT` (little endian; a fingerprint of the
+  sources of the feed's types), then the frame in `bincode` 2's standard configuration. A viewport
+  built from another revision refuses the frame and logs that it must be rebuilt, instead of
+  misreading it;
+- the first frame after connecting, and after a restore, a reload or Play/Stop (a new world or
+  generation), has `reset: true` and carries everything; later frames carry what changed;
+- while the world is paused the game thread still wakes every 50 ms when a subscriber waits for a
+  full frame.
+
+The viewport owns its camera, picking (a CPU ray against the drawn instances' oriented boxes) and
+overlays; the client sends nothing on this socket. The same frames reach a browser game: the
+worker (`web/game.js`) extracts them when the page subscribes (`pocket.onRender`) and transfers the
+bytes to the page's viewport.
 
 ## 6. Debugging
 

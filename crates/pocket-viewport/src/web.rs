@@ -36,6 +36,8 @@ pub struct Viewport {
     surface: wgpu::Surface<'static>,
     config: wgpu::SurfaceConfiguration,
     assets: PageAssets,
+    /// A frame failed to decode (logged once).
+    frame_error: bool,
 }
 
 #[wasm_bindgen]
@@ -73,17 +75,24 @@ impl Viewport {
             surface,
             config,
             assets,
+            frame_error: false,
         })
     }
 
     /// Applies one frame of the render feed (the bytes of a `/render` message).
     pub fn push_frame(&mut self, bytes: &[u8], now_ms: f64) -> bool {
         match RenderFrame::decode(bytes) {
-            Some(f) => {
+            Ok(f) => {
                 self.renderer.apply(f, now_ms / 1000.0);
                 true
             }
-            None => false,
+            Err(e) => {
+                if !self.frame_error {
+                    self.frame_error = true;
+                    log::error!("{e}");
+                }
+                false
+            }
         }
     }
 
