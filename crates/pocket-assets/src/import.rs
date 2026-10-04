@@ -3,6 +3,9 @@
 //! are computed flat, missing tangents are computed; images are decoded to RGBA8. Runs on whatever
 //! thread calls it: the host imports on a worker thread so a large file never freezes a frame.
 
+// Asset import for the renderer: its floats never reach the world or its hash.
+#![allow(clippy::disallowed_methods)]
+
 use std::path::Path;
 
 use gltf::image::Format;
@@ -126,10 +129,11 @@ fn convert(
             };
             let mut m = MeshData::new(&name, vertices, indices);
             m.material = prim.material().index();
-            if let (Some(j), Some(w)) = (joints, weights) {
-                if j.len() == m.vertices.len() && w.len() == m.vertices.len() {
-                    m.skin = Some(SkinWeights { joints: j, weights: w });
-                }
+            if let (Some(j), Some(w)) = (joints, weights)
+                && j.len() == m.vertices.len()
+                && w.len() == m.vertices.len()
+            {
+                m.skin = Some(SkinWeights { joints: j, weights: w });
             }
             if tangents.is_none() {
                 m.compute_tangents();
@@ -265,8 +269,8 @@ fn bytemuck_flatten(m: [[f32; 4]; 4]) -> [f32; 16] {
 
 fn flat_normals(vs: &[Vertex], is: &[u32]) -> (Vec<Vertex>, Vec<u32>) {
     let mut out = Vec::with_capacity(is.len());
-    for t in is.chunks_exact(3) {
-        let [a, b, c] = [t[0], t[1], t[2]].map(|i| vs[i as usize]);
+    for t in is.as_chunks::<3>().0 {
+        let [a, b, c] = t.map(|i| vs[i as usize]);
         let e1 = [
             b.position[0] - a.position[0],
             b.position[1] - a.position[1],
@@ -301,14 +305,14 @@ fn to_rgba8(img: &gltf::image::Data, srgb: bool, index: usize) -> ImageData {
         Format::R8G8B8A8 => px.clone(),
         Format::R8G8B8 => {
             let mut o = Vec::with_capacity(n * 4);
-            for c in px.chunks_exact(3) {
+            for c in px.as_chunks::<3>().0 {
                 o.extend_from_slice(&[c[0], c[1], c[2], 255]);
             }
             o
         }
         Format::R8G8 => {
             let mut o = Vec::with_capacity(n * 4);
-            for c in px.chunks_exact(2) {
+            for c in px.as_chunks::<2>().0 {
                 o.extend_from_slice(&[c[0], c[1], 0, 255]);
             }
             o

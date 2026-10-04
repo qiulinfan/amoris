@@ -7,6 +7,9 @@
 //!
 //! Values are `f32`: the feed is presentation, and positions are relative to the world origin.
 
+// Presentation: merging frames for a subscriber; nothing here is read back by the simulation.
+#![allow(clippy::disallowed_types)]
+
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};

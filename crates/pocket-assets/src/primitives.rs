@@ -1,6 +1,9 @@
 //! The built-in meshes a `Model` can name without an asset: unit-sized, centred on the origin,
 //! +y up, counter-clockwise front faces, with normals, texture coordinates and tangents.
 
+// Mesh generation for the renderer: its floats never reach the world or its hash.
+#![allow(clippy::disallowed_methods)]
+
 use std::f32::consts::{PI, TAU};
 
 use crate::mesh::{MeshData, Vertex};
@@ -263,8 +266,8 @@ mod tests {
     fn faces_wind_outward() {
         for name in PRIMITIVES {
             let m = primitive(name).unwrap();
-            for t in m.indices.chunks_exact(3) {
-                let [a, b, c] = [t[0], t[1], t[2]].map(|i| m.vertices[i as usize].position);
+            for t in m.indices.as_chunks::<3>().0 {
+                let [a, b, c] = t.map(|i| m.vertices[i as usize].position);
                 let e1 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
                 let e2 = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
                 let n = [

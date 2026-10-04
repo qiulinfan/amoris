@@ -2,6 +2,9 @@
 //! uploads. One vertex layout for every mesh, so every mesh can live in one GPU buffer and be drawn
 //! by the same indirect draws.
 
+// CPU mesh data for the renderer: its floats never reach the world or its hash.
+#![allow(clippy::disallowed_methods)]
+
 use serde::{Deserialize, Serialize};
 
 /// One vertex: position, normal, texture coordinate, tangent (`w` is the bitangent's sign).
@@ -127,7 +130,7 @@ impl MeshData {
         let n = self.vertices.len();
         let mut tan = vec![[0.0f32; 3]; n];
         let mut bit = vec![[0.0f32; 3]; n];
-        for t in self.indices.chunks_exact(3) {
+        for t in self.indices.as_chunks::<3>().0 {
             let (a, b, c) = (t[0] as usize, t[1] as usize, t[2] as usize);
             let (pa, pb, pc) = (
                 self.vertices[a].position,

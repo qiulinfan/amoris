@@ -140,7 +140,7 @@ pub fn joint_matrices(asset: &ModelAsset, skin: usize, pose: &[Mat4], mesh_globa
             let ib = sk
                 .inverse_bind
                 .get(k)
-                .map_or(Mat4::IDENTITY, |m| Mat4::from_cols_array(m));
+                .map_or(Mat4::IDENTITY, Mat4::from_cols_array);
             inv_mesh * pose.get(node).copied().unwrap_or(Mat4::IDENTITY) * ib
         })
         .collect()
