@@ -310,7 +310,8 @@ pub struct Renderer {
     batch_offsets: wgpu::Buffer,
     sky_pipeline: wgpu::RenderPipeline,
     layouts: Layouts,
-    shadow_tex: wgpu::Texture,
+    /// The shadow cascades' texture, kept with its views.
+    _shadow_tex: wgpu::Texture,
     shadow_views: Vec<wgpu::TextureView>,
     shadow_array: wgpu::TextureView,
     shadow_sampler: wgpu::Sampler,
@@ -736,7 +737,7 @@ impl Renderer {
                 lighting,
                 textures,
             },
-            shadow_tex,
+            _shadow_tex: shadow_tex,
             shadow_views,
             shadow_array,
             shadow_sampler: device.create_sampler(&wgpu::SamplerDescriptor {

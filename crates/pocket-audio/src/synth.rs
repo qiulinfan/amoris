@@ -8,8 +8,8 @@ use std::f32::consts::TAU;
 pub const RATE: u32 = 44_100;
 
 /// The presets an `sfx:` clip may name.
-pub const PRESETS: [&str; 10] = [
-    "coin", "jump", "hit", "explosion", "laser", "powerup", "blip", "click", "wind", "surf",
+pub const PRESETS: [&str; 11] = [
+    "coin", "jump", "hit", "explosion", "laser", "powerup", "blip", "click", "wind", "surf", "chime",
 ];
 
 #[derive(Clone, Copy)]
@@ -62,6 +62,7 @@ fn program(preset: &str) -> Option<Program> {
         "click" => Program { lowpass: 0.2, volume: 0.35, ..p(Wave::Noise, 2000.0, 1.0, 0.0, 0.004, 0.02) },
         "wind" => Program { lowpass: 0.97, volume: 0.6, ..p(Wave::Noise, 60.0, 1.0, 0.6, 2.0, 1.2) },
         "surf" => Program { lowpass: 0.93, volume: 0.6, vibrato: (0.25, 0.6), ..p(Wave::Noise, 80.0, 1.0, 0.9, 1.6, 1.8) },
+        "chime" => Program { jump: 1.5, jump_at: 0.12, ..p(Wave::Sine, 880.0, 1.0, 0.005, 0.1, 0.7) },
         _ => return None,
     })
 }
