@@ -25,9 +25,17 @@ fn assembled_foundation_runs_and_identifies_the_build() {
 
 #[test]
 fn separate_processes_repeat_hashes_and_seed_changes_state() {
-    let (_, a) = invoke(&["foundation", "--ticks", "12", "--seed", "17", "--json"]);
-    let (_, b) = invoke(&["foundation", "--ticks", "12", "--seed", "17", "--json"]);
-    let (_, c) = invoke(&["foundation", "--ticks", "12", "--seed", "18", "--json"]);
+    let (code_a, a) = invoke(&["foundation", "--ticks", "12", "--seed", "17", "--json"]);
+    let (code_b, b) = invoke(&["foundation", "--ticks", "12", "--seed", "17", "--json"]);
+    let (code_c, c) = invoke(&["foundation", "--ticks", "12", "--seed", "18", "--json"]);
+    for (code, report) in [(code_a, &a), (code_b, &b), (code_c, &c)] {
+        assert_eq!(code, 0, "{report}");
+        let hash = report["world_hash"]
+            .as_str()
+            .expect("successful hash report");
+        assert_eq!(hash.len(), 32);
+        assert!(hash.bytes().all(|b| b.is_ascii_hexdigit()));
+    }
     assert_eq!(a["world_hash"], b["world_hash"]);
     assert_ne!(a["world_hash"], c["world_hash"]);
 }
