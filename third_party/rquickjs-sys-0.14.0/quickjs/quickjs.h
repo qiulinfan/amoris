@@ -567,6 +567,14 @@ JS_EXTERN JSValue JS_GetFunctionProto(JSContext *ctx);
    against a known set of breakpoint locations. */
 /* Flags passed to JSDebugTraceFunc.  Use bitwise-AND to test specific bits. */
 #define JS_DEBUG_TRACE_DEBUGGER_STMT (1 << 0) /* triggered by `debugger;` statement */
+/* Pocket3D P10: the handler also hears catchable exceptions, once per throw, in the frame that
+   throws (its position is the throwing instruction's). CAUGHT says a try will catch it: a catch
+   offset is on this frame's stack or on an instrumented caller's stack as it stood at its current
+   statement; a `finally` counts as a catch, and frames without OP_debug (not instrumented, or
+   native) count as not catching. The handler's return value is ignored, and the pending exception
+   is restored after it; JS_GetDebugTraceException returns it during the call. */
+#define JS_DEBUG_TRACE_EXCEPTION        (1 << 1)
+#define JS_DEBUG_TRACE_EXCEPTION_CAUGHT (1 << 2)
 
 typedef int JSDebugTraceFunc(JSContext *ctx,
                              JSAtom filename,
@@ -631,6 +639,18 @@ JS_EXTERN int JS_SetVariableAtLevel(JSContext *ctx, int level,
 JS_EXTERN JSValue JS_EvalInStackFrame(JSContext *ctx, int level,
                                       const char *input, size_t input_len,
                                       const char *filename);
+
+/* Pocket3D P10: the exception a JS_DEBUG_TRACE_EXCEPTION call reports (a new reference), or
+   JS_UNDEFINED outside such a call. */
+JS_EXTERN JSValue JS_GetDebugTraceException(JSContext *ctx);
+
+/* Pocket3D P10: the frame at `level` (0 = current, as JS_GetLocalVariablesAtLevel counts):
+   its file and function atoms (new references the caller frees with JS_FreeAtom; JS_ATOM_NULL
+   when absent; the function's name as backtraces give it) and the position it is at (for a
+   caller, its call; 0 when unknown). Returns 0 for a bytecode frame, 1 for a native one (no
+   atoms, no position), -1 past the outermost frame. */
+JS_EXTERN int JS_GetStackFrameInfo(JSContext *ctx, int level, JSAtom *filename,
+                                   JSAtom *funcname, int *line, int *col);
 
 /* the following functions are used to select the intrinsic object to
    save memory */

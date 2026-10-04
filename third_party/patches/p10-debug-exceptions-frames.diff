@@ -1,0 +1,250 @@
+diff --git a/quickjs/quickjs.c b/quickjs/quickjs.c
+index 02eb92a..ea3a532 100644
+--- a/quickjs/quickjs.c
++++ b/quickjs/quickjs.c
+@@ -370,6 +370,10 @@ struct JSRuntime {
+     uintptr_t stack_limit; /* lower stack limit */
+ 
+     JSValue current_exception;
++    /* Pocket3D P10: the debug trace handler heard of current_exception (reset by a new throw, a
++       catch and JS_GetException), and the exception it is hearing of (borrowed) */
++    bool debug_exception_reported;
++    JSValue debug_exception;
+     /* true if inside an out of memory error, to avoid recursing */
+     bool in_out_of_memory;
+     /* Pocket3D P2: how often memory ran out; the host compares it around each call, since an
+@@ -442,6 +446,9 @@ typedef struct JSStackFrame {
+     /* only used in generators. Current stack pointer value. NULL if
+        the function is running. */
+     JSValue *cur_sp;
++    /* Pocket3D P10: the stack pointer at the frame's current statement, set by OP_debug (NULL
++       until one runs): what the debugger's catch prediction scans of a caller's stack */
++    JSValue *debug_sp;
+     /* only set for coroutine frames (async function / generator /
+        async generator): the GC object owning this heap-allocated frame,
+        NULL for ordinary C-stack frames. Lets a var_ref capturing one of
+@@ -2426,6 +2433,7 @@ JSRuntime *JS_NewRuntime2(const JSMallocFunctions *mf, void *opaque)
+     JS_UpdateStackTop(rt);
+ 
+     rt->current_exception = JS_UNINITIALIZED;
++    rt->debug_exception = JS_UNDEFINED; /* Pocket3D P10 */
+ 
+     return rt;
+  fail:
+@@ -8386,6 +8394,7 @@ JSValue JS_Throw(JSContext *ctx, JSValue obj)
+     JSRuntime *rt = ctx->rt;
+     JS_FreeValue(ctx, rt->current_exception);
+     rt->current_exception = obj;
++    rt->debug_exception_reported = false; /* Pocket3D P10 */
+     return JS_EXCEPTION;
+ }
+ 
+@@ -8396,6 +8405,7 @@ JSValue JS_GetException(JSContext *ctx)
+     JSRuntime *rt = ctx->rt;
+     val = rt->current_exception;
+     rt->current_exception = JS_UNINITIALIZED;
++    rt->debug_exception_reported = false; /* Pocket3D P10 */
+     return val;
+ }
+ 
+@@ -18551,6 +18561,113 @@ static bool needs_backtrace(JSValue exc)
+     return can_store_error_stack(exc) || can_add_backtrace(exc);
+ }
+ 
++/* Pocket3D P10 */
++JSValue JS_GetDebugTraceException(JSContext *ctx)
++{
++    return js_dup(ctx->rt->debug_exception);
++}
++
++/* Pocket3D P10: a frame's function name as backtraces give it (the function's own `name` string,
++   which a method or an arrow assigned to a property has where the bytecode has none), as a new
++   atom. */
++static JSAtom js_debug_frame_name(JSContext *ctx, JSValueConst func,
++                                  JSFunctionBytecode *b)
++{
++    JSProperty *pr;
++    JSShapeProperty *prs;
++
++    prs = find_own_property(&pr, JS_VALUE_GET_OBJ(func), JS_ATOM_name);
++    if (prs && (prs->flags & JS_PROP_TMASK) == JS_PROP_NORMAL
++        && JS_VALUE_GET_TAG(pr->u.value) == JS_TAG_STRING)
++        return JS_ValueToAtom(ctx, pr->u.value);
++    return JS_DupAtom(ctx, b->func_name);
++}
++
++/* Pocket3D P10 */
++int JS_GetStackFrameInfo(JSContext *ctx, int level, JSAtom *filename,
++                         JSAtom *funcname, int *line, int *col)
++{
++    JSStackFrame *sf = js_get_stack_frame_at_level(ctx, level);
++    JSObject *p;
++    JSFunctionBytecode *b;
++
++    *filename = JS_ATOM_NULL;
++    *funcname = JS_ATOM_NULL;
++    *line = 0;
++    *col = 0;
++    if (sf == NULL)
++        return -1;
++    if (JS_VALUE_GET_TAG(sf->cur_func) != JS_TAG_OBJECT)
++        return 1;
++    p = JS_VALUE_GET_OBJ(sf->cur_func);
++    if (!js_class_has_bytecode(p->class_id))
++        return 1;
++    b = p->u.func.function_bytecode;
++    *filename = JS_DupAtom(ctx, b->filename);
++    *funcname = js_debug_frame_name(ctx, sf->cur_func, b);
++    if (sf->cur_pc && sf->cur_pc > b->byte_code_buf)
++        *line = find_line_num(ctx, b, (uint32_t)(sf->cur_pc - b->byte_code_buf - 1), col);
++    return 0;
++}
++
++/* Pocket3D P10: whether a catch offset (not an iterator's, whose offset is 0) lies in
++   [from, to). */
++static bool js_debug_stack_catches(JSValue *from, JSValue *to)
++{
++    JSValue *v;
++    for (v = from; v < to; v++) {
++        if (JS_VALUE_GET_TAG(*v) == JS_TAG_CATCH_OFFSET && JS_VALUE_GET_INT(*v) != 0)
++            return true;
++    }
++    return false;
++}
++
++/* Pocket3D P10: tells the debug trace handler of the catchable exception `sf` (running `b`, at
++   `pc`, with the live stack [stack_buf, sp)) is unwinding, with its catch prediction. The
++   handler runs with the exception set aside and the backtrace slot cleared; both come back. */
++static void js_debug_trace_exception(JSContext *ctx, JSFunctionBytecode *b,
++                                     JSStackFrame *sf, const uint8_t *pc,
++                                     JSValue *sp, JSValue *stack_buf)
++{
++    JSRuntime *rt = ctx->rt;
++    JSStackFrame *f;
++    JSObject *p;
++    JSFunctionBytecode *fb;
++    JSValue exc, saved_bt;
++    bool caught;
++    int line, col = 0, flags;
++    uint32_t pc_index;
++
++    rt->debug_exception_reported = true;
++    caught = js_debug_stack_catches(stack_buf, sp);
++    for (f = sf->prev_frame; f && !caught; f = f->prev_frame) {
++        if (JS_VALUE_GET_TAG(f->cur_func) != JS_TAG_OBJECT || !f->debug_sp)
++            continue;
++        p = JS_VALUE_GET_OBJ(f->cur_func);
++        if (!js_class_has_bytecode(p->class_id))
++            continue;
++        fb = p->u.func.function_bytecode;
++        caught = js_debug_stack_catches(f->var_buf + fb->var_count, f->debug_sp);
++    }
++    pc_index = pc > b->byte_code_buf ? (uint32_t)(pc - b->byte_code_buf - 1) : 0;
++    line = find_line_num(ctx, b, pc_index, &col);
++    flags = JS_DEBUG_TRACE_EXCEPTION | (caught ? JS_DEBUG_TRACE_EXCEPTION_CAUGHT : 0);
++    sf->cur_pc = (uint8_t *)pc;
++    exc = rt->current_exception;
++    rt->current_exception = JS_UNINITIALIZED;
++    rt->debug_exception = exc;
++    saved_bt = ctx->error_back_trace;
++    ctx->error_back_trace = JS_UNDEFINED;
++    ctx->debug_trace(ctx, b->filename, b->func_name, line, col, flags,
++                     ctx->debug_trace_opaque);
++    JS_FreeValue(ctx, ctx->error_back_trace);
++    ctx->error_back_trace = saved_bt;
++    rt->debug_exception = JS_UNDEFINED;
++    JS_FreeValue(ctx, rt->current_exception);
++    rt->current_exception = exc;
++    rt->debug_exception_reported = true;
++}
++
+ /* argv[] is modified if (flags & JS_CALL_FLAG_COPY_ARGV) = 0. */
+ static JSValue JS_CallInternalBody(JSContext *caller_ctx, JSValueConst func_obj,
+                                    JSValueConst this_obj, JSValueConst new_target,
+@@ -18693,6 +18810,7 @@ static JSValue JS_CallInternalBody(JSContext *caller_ctx, JSValueConst func_obj,
+         sf->var_refs[i] = NULL;
+     /* ordinary C-stack frame: not owned by a coroutine GC object */
+     sf->cur_gc_obj = NULL;
++    sf->debug_sp = NULL; /* Pocket3D P10 */
+     sp = stack_buf;
+     pc = b->byte_code_buf;
+     /* sf->cur_pc must we set to pc before any recursive calls to JS_CallInternal. */
+@@ -18714,12 +18832,14 @@ static JSValue JS_CallInternalBody(JSContext *caller_ctx, JSValueConst func_obj,
+         SWITCH(pc) {
+         CASE(OP_debug):
+         CASE(OP_debugger_stmt):
++            sf->debug_sp = sp; /* Pocket3D P10 */
+             if (unlikely(ctx->debug_trace)) {
+                 int col_num = 0;
+                 int line_num = -1;
+                 uint32_t pc_index = (uint32_t)(pc - b->byte_code_buf - 1);
+                 int flags = (pc[-1] == OP_debugger_stmt)
+                                 ? JS_DEBUG_TRACE_DEBUGGER_STMT : 0;
++                sf->cur_pc = pc; /* Pocket3D P10: JS_GetStackFrameInfo(0) */
+                 line_num = js_debug_line_num(ctx, b, pc_index, &col_num); /* Pocket3D P9 */
+ 
+                 /* Pass the JSAtom values directly — no heap allocation.
+@@ -21465,6 +21585,9 @@ static JSValue JS_CallInternalBody(JSContext *caller_ctx, JSValueConst func_obj,
+         build_backtrace(ctx, rt->current_exception, JS_UNDEFINED,
+                         NULL, 0, 0, 0);
+     }
++    if (unlikely(ctx->debug_trace) && !rt->debug_exception_reported
++        && !JS_IsUncatchableError(rt->current_exception))
++        js_debug_trace_exception(ctx, b, sf, pc, sp, stack_buf); /* Pocket3D P10 */
+     if (!JS_IsUncatchableError(rt->current_exception)) {
+         while (sp > stack_buf) {
+             JSValue val = *--sp;
+@@ -21479,6 +21602,7 @@ static JSValue JS_CallInternalBody(JSContext *caller_ctx, JSValueConst func_obj,
+                 } else {
+                     *sp++ = rt->current_exception;
+                     rt->current_exception = JS_UNINITIALIZED;
++                    rt->debug_exception_reported = false; /* Pocket3D P10 */
+                     JS_FreeValueRT(rt, ctx->error_back_trace);
+                     ctx->error_back_trace = JS_UNDEFINED;
+                     pc = b->byte_code_buf + pos;
+@@ -21717,6 +21841,7 @@ static __exception int async_func_init(JSContext *ctx, JSAsyncFunctionState *s,
+     sf->arg_count = arg_buf_len;
+     sf->var_buf = sf->arg_buf + arg_buf_len;
+     sf->cur_sp = sf->var_buf + b->var_count;
++    sf->debug_sp = NULL; /* Pocket3D P10 */
+     /* set by the caller once the owning coroutine GC object exists */
+     sf->cur_gc_obj = NULL;
+     sf->var_refs = (JSVarRef **)(sf->cur_sp + b->stack_size);
+diff --git a/quickjs/quickjs.h b/quickjs/quickjs.h
+index 2c718f5..8fc4e59 100644
+--- a/quickjs/quickjs.h
++++ b/quickjs/quickjs.h
+@@ -567,6 +567,14 @@ JS_EXTERN JSValue JS_GetFunctionProto(JSContext *ctx);
+    against a known set of breakpoint locations. */
+ /* Flags passed to JSDebugTraceFunc.  Use bitwise-AND to test specific bits. */
+ #define JS_DEBUG_TRACE_DEBUGGER_STMT (1 << 0) /* triggered by `debugger;` statement */
++/* Pocket3D P10: the handler also hears catchable exceptions, once per throw, in the frame that
++   throws (its position is the throwing instruction's). CAUGHT says a try will catch it: a catch
++   offset is on this frame's stack or on an instrumented caller's stack as it stood at its current
++   statement; a `finally` counts as a catch, and frames without OP_debug (not instrumented, or
++   native) count as not catching. The handler's return value is ignored, and the pending exception
++   is restored after it; JS_GetDebugTraceException returns it during the call. */
++#define JS_DEBUG_TRACE_EXCEPTION        (1 << 1)
++#define JS_DEBUG_TRACE_EXCEPTION_CAUGHT (1 << 2)
+ 
+ typedef int JSDebugTraceFunc(JSContext *ctx,
+                              JSAtom filename,
+@@ -632,6 +640,18 @@ JS_EXTERN JSValue JS_EvalInStackFrame(JSContext *ctx, int level,
+                                       const char *input, size_t input_len,
+                                       const char *filename);
+ 
++/* Pocket3D P10: the exception a JS_DEBUG_TRACE_EXCEPTION call reports (a new reference), or
++   JS_UNDEFINED outside such a call. */
++JS_EXTERN JSValue JS_GetDebugTraceException(JSContext *ctx);
++
++/* Pocket3D P10: the frame at `level` (0 = current, as JS_GetLocalVariablesAtLevel counts):
++   its file and function atoms (new references the caller frees with JS_FreeAtom; JS_ATOM_NULL
++   when absent; the function's name as backtraces give it) and the position it is at (for a
++   caller, its call; 0 when unknown). Returns 0 for a bytecode frame, 1 for a native one (no
++   atoms, no position), -1 past the outermost frame. */
++JS_EXTERN int JS_GetStackFrameInfo(JSContext *ctx, int level, JSAtom *filename,
++                                   JSAtom *funcname, int *line, int *col);
++
+ /* the following functions are used to select the intrinsic object to
+    save memory */
+ JS_EXTERN JSContext *JS_NewContextRaw(JSRuntime *rt);

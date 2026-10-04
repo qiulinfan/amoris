@@ -1,5 +1,5 @@
 """Builds third_party/rquickjs-sys-0.14.0/: rquickjs-sys 0.14.0 from crates.io with quickjs-ng PR
-#1421 and the script host's patches P1 to P8 applied (docs/spec/architecture.md 7.5,
+#1421 and the script host's patches P1 to P10 applied (docs/spec/architecture.md 7.5,
 docs/spec/script-sandbox.md 4.2). `.cargo/config.toml`'s [patch.crates-io] points rquickjs at the
 result, which is committed, so a fresh checkout builds without running this.
 
@@ -47,6 +47,13 @@ PATCHES = [
     # JS_DiscardPendingJobs: a failed call's queued jobs are dropped (script-sandbox.md 6).
     ("p8-discard-jobs.diff", ".",
      "13cdf6064f4b4a2e2cb6749cc85b2121e02c9fe66e5d15121c22b67c5e5844be"),
+    # The debugger (docs/spec/debugger.md 7): P9 caches each traced function's statement
+    # positions, so the trace handler costs no line-table search per statement; P10 reports
+    # exceptions to the trace handler with a catch prediction and adds JS_GetStackFrameInfo.
+    ("p9-debug-line-cache.diff", ".",
+     "1115715c66188e3b554b6f9b03c4b8bc5b9abfaadd33083ddac099c1b25ccf46"),
+    ("p10-debug-exceptions-frames.diff", ".",
+     "afcda7d470ab445911752df7810d88e722bcb55fa0a15e8a6bf5e98bf6d18ef3"),
 ]
 
 HERE = Path(__file__).resolve().parent
