@@ -1,15 +1,16 @@
 //! The agents' debugger end to end (docs/spec/debugger.md 7 and 11): the debugger's test project on
 //! a real game thread in real time, driven only through `DebugHub::call` as pocket-server and
 //! pocket-mcp drive it: a `debugger;` statement, pause on uncaught and on caught exceptions, a
-//! TypeScript breakpoint with locals and evaluation, step into and out, a data breakpoint on a
-//! component field, console lines and the detach.
+//! TypeScript breakpoint with locals, evaluation and set variables, step into and out, a data
+//! breakpoint on a component field, console lines and the detach; and Play, whose fork takes the
+//! debugger.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use pocket_debug::{DebugEvent, DebugHub, HubOptions};
-use pocket_runtime::thread::{GameThread, ThreadOptions};
+use pocket_debug::{CdpOptions, DebugEvent, DebugHub, HubOptions};
+use pocket_runtime::thread::{GameThread, Pacing, ThreadOptions};
 use pocket_runtime::{Game, Project};
 use serde_json::{Value, json};
 
@@ -177,6 +178,27 @@ fn an_agent_debugs_the_test_game() {
         .unwrap();
     let bad = hub.call("debug.eval", &json!({"exp": "1"})).unwrap_err();
     assert_eq!(bad.code, "request.unknown_field");
+    // debug.set changes a frame's variable: the loop's `let r` here (an assignment evaluated with
+    // debug.eval would not reach the frame); a const refuses.
+    let set = call(&hub, "debug.set", json!({"name": "r", "value": "r + 7"}));
+    assert_eq!(
+        (set["type"].as_str(), &set["value"]),
+        (Some("number"), &json!(7)),
+        "{set:#}"
+    );
+    assert_eq!(
+        call(&hub, "debug.eval", json!({"expr": "r"}))["value"],
+        json!(7)
+    );
+    let refused = hub
+        .call("debug.set", &json!({"name": "next", "value": "1"}))
+        .unwrap_err();
+    assert_eq!(refused.code, "debug.set_failed");
+    assert!(refused.message.contains("constant"), "{}", refused.message);
+    let unknown = hub
+        .call("debug.set", &json!({"name": "nowhere", "value": "1"}))
+        .unwrap_err();
+    assert_eq!(unknown.code, "debug.set_failed", "{}", unknown.message);
     call(&hub, "debug.breakpoints.clear", json!({}));
 
     // Step into twice, out again, and over.
@@ -188,8 +210,19 @@ fn an_agent_debugs_the_test_game() {
     );
     assert_eq!(s["frames"][0]["function"], "twice");
     assert_eq!(local(&s, 0, "x"), &json!(20));
+    // The caller's frame captured the r set above; set it back there, and twice's argument here:
+    // the call returns twice the new x.
+    assert_eq!(local(&s, 1, "r"), &json!(7), "{s:#}");
+    call(
+        &hub,
+        "debug.set",
+        json!({"name": "r", "value": "0", "frame": 1}),
+    );
+    call(&hub, "debug.set", json!({"name": "x", "value": "21"}));
     let s = call(&hub, "debug.step", json!({"kind": "out"}));
     assert_eq!(s["frames"][0]["function"], "run", "{s:#}");
+    assert_eq!(local(&s, 0, "r"), &json!(0), "{s:#}");
+    assert_eq!(local(&s, 0, "doubled"), &json!(42), "{s:#}");
     let (_, line) = at(&s);
     assert!(
         line > mark("call-twice") && line <= mark("call-risky"),
@@ -320,4 +353,123 @@ fn an_agent_debugs_the_test_game() {
     drop(dev);
     handle.shutdown(5000).unwrap();
     let _ = DebugEvent::Resumed;
+}
+
+/// Play runs a fork of the edit world (docs/spec/server.md 3.3); the game thread hands the script
+/// debugger to the fork and back on Stop, so a breakpoint set in Edit stops Play's scripts (the
+/// editor's Play, docs/spec/editor.md 8.1) and, after Stop, a step of the edit world's.
+#[test]
+fn play_takes_the_debugger_to_its_fork() {
+    const RULES: &str = "scripts/rules.ts";
+    let project = Project::load(&fixture()).unwrap();
+    let setup = Arc::new(project.setup(false).unwrap());
+    let hub = DebugHub::new(HubOptions::default());
+    let start = Instant::now();
+    let clock: pocket_runtime::thread::Clock =
+        Arc::new(move || start.elapsed().as_secs_f64() * 1000.0);
+    let h = hub.clone();
+    let handle = GameThread::spawn(
+        move || {
+            let mut g = Game::new(setup, 1)?;
+            g.set_script_debugger(Some(h.hook()));
+            Ok(g)
+        },
+        ThreadOptions {
+            pacing: Pacing::RealTime { speed: 1.0 },
+            paused: true,
+            ..ThreadOptions::new(clock)
+        },
+    )
+    .unwrap();
+    hub.set_loop_state(handle.loop_state());
+    let mut dev = handle.developer();
+
+    // In Edit, before any tick: the modules are known, the breakpoint binds.
+    let bp = call(
+        &hub,
+        "debug.breakpoints.set",
+        json!({"file": RULES, "line": mark("next")}),
+    );
+    assert_eq!(bp["verified"], true, "{bp:#}");
+    let s = call(&hub, "debug.state", json!({}));
+    assert_eq!(s["state"], "running");
+    assert!(s["cdp"].is_null(), "no CDP endpoint served: {s:#}");
+
+    let st = dev.call("play.start", json!({})).unwrap().into_json();
+    assert_eq!(st["mode"], "play", "{st:#}");
+    let s = paused(&hub);
+    assert_eq!(s["reason"], "breakpoint", "{s:#}");
+    assert_eq!(at(&s), (RULES.to_owned(), mark("next")));
+    assert_eq!(s["system"], "measure");
+    assert_eq!(s["tick"], 1, "Play's first tick: {s:#}");
+    // Setting a local's column through an evaluation writes the component the call commits.
+    call(&hub, "debug.eval", json!({"expr": "g.level[r] = 100"}));
+    // Detached, the fork runs on (its `debugger;` statement at tick 8 does not stop it).
+    call(&hub, "debug.detach", json!({}));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let level = loop {
+        let q = dev
+            .call(
+                "world.query",
+                json!({"with": ["Gauge"], "fields": ["Gauge.level"]}),
+            )
+            .unwrap()
+            .into_json();
+        let level = q[0]["Gauge.level"].as_f64().unwrap_or(0.0);
+        if level > 100.0 || Instant::now() > deadline {
+            break level;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    assert!(level > 100.0, "the set column was committed: {level}");
+    let st = dev.call("play.stop", json!({})).unwrap().into_json();
+    assert_eq!(st["mode"], "edit", "{st:#}");
+
+    // Back in Edit, the edit world has the debugger again: a step stops at a new breakpoint.
+    call(
+        &hub,
+        "debug.breakpoints.set",
+        json!({"file": RULES, "line": mark("write-level")}),
+    );
+    let stepper = std::thread::spawn(move || {
+        let r = dev
+            .call("time.step", json!({"ticks": 1}))
+            .map(|r| r.into_json());
+        (dev, r)
+    });
+    let s = paused(&hub);
+    assert_eq!(at(&s), (RULES.to_owned(), mark("write-level")), "{s:#}");
+    assert_eq!(s["tick"], 1, "the edit world's first tick: {s:#}");
+    assert_eq!(
+        local(&s, 0, "next"),
+        &json!(1),
+        "the edit world's gauge: {s:#}"
+    );
+    call(&hub, "debug.detach", json!({}));
+    let (dev, stepped) = stepper.join().unwrap();
+    assert_eq!(stepped.unwrap()["tick"], 1);
+    drop(dev);
+    hub.shutdown();
+    handle.shutdown(5000).unwrap();
+}
+
+/// `debug.state` names the CDP endpoint while the hub serves one (the editor's Copy Chrome
+/// DevTools URL), and `null` once it stopped.
+#[test]
+fn debug_state_names_the_cdp_endpoint() {
+    let hub = DebugHub::new(HubOptions::default());
+    assert!(call(&hub, "debug.state", json!({}))["cdp"].is_null());
+    let cdp = hub
+        .serve_cdp(CdpOptions {
+            port: 0,
+            ..CdpOptions::default()
+        })
+        .unwrap();
+    let s = call(&hub, "debug.state", json!({}));
+    let ws = format!("ws://{}/devtools/game", cdp.addr());
+    assert_eq!(s["cdp"]["ws"], json!(ws), "{s:#}");
+    assert_eq!(s["cdp"]["devtools"], json!(cdp.devtools_url()), "{s:#}");
+    cdp.stop();
+    assert!(call(&hub, "debug.state", json!({}))["cdp"].is_null());
+    hub.shutdown();
 }

@@ -172,7 +172,8 @@ always). A socket that falls more than 1,024 pushes behind gets
 | `log` | `{seq, level, source, message, file?, line?, tick?}` | one per line: script `console.*`, failed system runs |
 | `history` | `{undo, redo}` | after `world.edit`, undo, redo, restore, Play, Stop |
 | `agent` | `{session, kind: "call"/"result", method, ok?, summary}` | each MCP call and its result |
-| `debug`, `profile` | reserved | pushed by the plug-ins when they land |
+| `debug` | debugger.md 7's state on a pause, `{state: "running"}` on a resume | pushed by `pocket serve`'s debugger (pocket-app `forward_debug_events`); script console lines and failed calls the debugger saw go to `log` |
+| `profile` | reserved | pushed by the plug-in when it lands |
 
 `seq` in events is the stream number (`pocket-link` ring, threads.md 4.4), `id` and `cause` the
 world's event sequence numbers. `world.changed` compares section digests, then rows of the changed

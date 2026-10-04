@@ -81,3 +81,28 @@
   background: var(--bg-active);
 }
 
+
+.v-fn {
+  color: #82aaff;
+  font-style: italic;
+}
+
+.var-row.is-editable .var-value {
+  cursor: text;
+}
+
+.var-row.is-editable .var-value:hover {
+  text-decoration: underline dotted var(--text-3);
+}
+
+.var-input {
+  flex: 1;
+  min-width: 0;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: var(--bg-input);
+  border: 1px solid var(--accent, #4f8cff);
+  color: var(--text-0);
+  font: 12px var(--mono);
+}

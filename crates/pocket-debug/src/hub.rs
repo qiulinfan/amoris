@@ -163,6 +163,8 @@ pub(crate) struct Inner {
     pub title: String,
     /// The game loop's state, set to `Breakpoint` while paused (threads.md 3.5).
     pub loop_state: Mutex<Option<pocket_link::StateHandle>>,
+    /// Where the CDP endpoint listens, while it does (`debug.state`'s `cdp`).
+    pub cdp: Mutex<Option<std::net::SocketAddr>>,
 }
 
 /// The debugger: one per game. Clone it to share it between the game thread setup, the CDP
@@ -226,6 +228,7 @@ impl DebugHub {
                 gate_cv: Condvar::new(),
                 title: options.title,
                 loop_state: Mutex::new(None),
+                cdp: Mutex::new(None),
             }),
         }
     }

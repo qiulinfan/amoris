@@ -1,7 +1,7 @@
 // Keeps the stores in step with the host: loads everything on each (re)connection, applies pushed
 // events, and refetches the entities `world.changed` names (coalesced, a few requests at a time).
 
-import { api, host } from "./api";
+import { api, debugState, host } from "./api";
 import type { DebugState, EntityId, WorldChanged } from "./protocol";
 import { useAgent } from "../state/agent";
 import { useAssets } from "../state/assets";
@@ -15,7 +15,7 @@ import { useScripts } from "../state/scripts";
 import { useSelection } from "../state/selection";
 import { useSession } from "../state/session";
 import { useWorld } from "../state/world";
-import { onPaused, refreshWatches } from "../actions/debug";
+import { continueIfStopping, onPaused, refreshWatches } from "../actions/debug";
 
 let started = false;
 
@@ -36,13 +36,15 @@ export function startSync() {
   host.on("events", (batch) => useEvents.getState().push(batch));
   host.on("log", (l) => useLogs.getState().push({ ...l, level: l.level ?? "info" }));
   host.on("history", (h) => useHistory.getState().set(h));
-  host.on("debug", (d) => void onDebug(d));
+  host.on("debug", (d) => void onDebug(debugState(d)));
   host.on("profile", (p) => useProfile.getState().push(p));
   host.on("agent", (a) => useAgent.getState().push(a));
   host.connect();
-  // Snapshots grow while playing; the timeline reads them every second.
+  // Snapshots grow while playing; the timeline reads them every second (not while a script is
+  // paused: the game thread answers no command then, debugger.md 8).
   setInterval(() => {
-    if (useConnection.getState().info.state === "open" && useSession.getState().status?.mode === "play") void refreshSnapshots();
+    const playing = useSession.getState().status?.mode === "play" && useDebug.getState().state.state !== "paused";
+    if (useConnection.getState().info.state === "open" && playing) void refreshSnapshots();
   }, 1000);
 }
 
@@ -76,20 +78,28 @@ async function bootstrap() {
 
 async function restoreDebugger() {
   const local = useDebug.getState();
-  try {
-    const listed = await api.debug.listBreakpoints();
-    if (listed.breakpoints.length === 0 && local.breakpoints.length > 0) {
-      // A restarted host forgot them: set them again.
-      const again = await Promise.all(local.breakpoints.map((b) => api.debug.setBreakpoint(b.file, b.line, b.condition)));
-      local.setBreakpoints(again);
-    } else {
-      local.setBreakpoints(listed.breakpoints);
-    }
-    local.setDataWatches(listed.watches ?? []);
-  } catch {
-    // `debug.breakpoints.list` is optional; keep the editor's own list.
+  const { state, breakpoints, watches } = await api.debug.session();
+  const listed = breakpoints ?? (await api.debug.listBreakpoints().catch(() => undefined));
+  if (listed && listed.length === 0 && local.breakpoints.length > 0) {
+    // A restarted host forgot them: set them again (the editor's own; CDP clients set theirs).
+    const again = await Promise.allSettled(
+      local.breakpoints.filter((b) => (b.owner ?? "agent") === "agent").map((b) => api.debug.setBreakpoint(b.file, b.line, b.condition, b.log)),
+    );
+    local.setBreakpoints(again.flatMap((r) => (r.status === "fulfilled" ? [r.value] : [])));
+  } else if (listed) {
+    local.setBreakpoints(listed);
   }
-  await onDebug(await api.debug.state());
+  if (watches) local.setDataWatches(watches);
+  if (state.exceptions === "none" && local.exceptions !== "none") {
+    // As with breakpoints: a restarted host forgot the mode.
+    try {
+      await api.debug.exceptions(local.exceptions);
+      state.exceptions = local.exceptions;
+    } catch {
+      // Shown as the host has it.
+    }
+  }
+  await onDebug(state);
 }
 
 export async function refreshTree() {
@@ -198,6 +208,7 @@ function componentsDiffer(id: EntityId): boolean {
 }
 
 async function onDebug(d: DebugState) {
+  if (continueIfStopping(d)) return;
   let state = d;
   if (d.state === "paused" && !d.frames) {
     try {
@@ -208,8 +219,6 @@ async function onDebug(d: DebugState) {
   }
   const was = useDebug.getState().state.state;
   useDebug.getState().setState(state);
-  if (state.state === "paused") {
-    void refreshWatches();
-    if (was !== "paused") onPaused(state);
-  }
+  void refreshWatches();
+  if (state.state === "paused" && was !== "paused") onPaused(state);
 }

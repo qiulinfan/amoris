@@ -82,8 +82,24 @@ struct StepParams {
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct EvalParams {
-    /// A JavaScript expression; it sees the frame's arguments, locals and closure variables.
+    /// A JavaScript expression; it sees the frame's arguments, locals and closure variables. An
+    /// assignment to one of them does not reach the frame (`debug.set` does); one through an
+    /// object, such as a query column's element, does.
     expr: String,
+    /// The frame, as `debug.state` numbers them (0: where the game stopped).
+    #[serde(default)]
+    frame: Option<usize>,
+}
+
+/// `debug.set`.
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct SetParams {
+    /// The variable: an argument, a local or a closure variable of the frame, by name. A value
+    /// inside an object (`l.distance[0]`) is assigned through `debug.eval`.
+    name: String,
+    /// A JavaScript expression, evaluated in the frame; its value is assigned.
+    value: String,
     /// The frame, as `debug.state` numbers them (0: where the game stopped).
     #[serde(default)]
     frame: Option<usize>,
@@ -200,6 +216,11 @@ pub fn methods() -> Vec<Method> {
             name: "debug.eval",
             doc: "Evaluates an expression in a frame of the paused game.",
             params: schema::<EvalParams>(),
+        },
+        Method {
+            name: "debug.set",
+            doc: "Sets a variable (an argument, a local or a closure variable) of a frame of the paused game to an expression's value; a const refuses.",
+            params: schema::<SetParams>(),
         },
         Method {
             name: "debug.watch",
@@ -386,19 +407,7 @@ impl DebugHub {
             }
             "debug.eval" => {
                 let p: EvalParams = decode(params, method)?;
-                let pause = self.pause_info().ok_or_else(not_paused)?;
-                let index = p.frame.unwrap_or(0);
-                let frame = pause.frames.get(index).ok_or_else(|| {
-                    problem(
-                        "debug.no_frame",
-                        format!(
-                            "There is no frame {index}; the game stopped with {} frames.",
-                            pause.frames.len()
-                        ),
-                        json!({"frame": index, "frames": pause.frames.len()}),
-                    )
-                })?;
-                let level = frame.level;
+                let level = self.frame_level(p.frame)?;
                 let expression = p.expr;
                 let r = self
                     .ask(|reply| Command::Evaluate {
@@ -417,6 +426,19 @@ impl DebugHub {
                     ));
                 }
                 Ok(r)
+            }
+            "debug.set" => {
+                let p: SetParams = decode(params, method)?;
+                let level = self.frame_level(p.frame)?;
+                let (name, expression) = (p.name, p.value);
+                let fields = json!({"name": name});
+                self.ask(|reply| Command::Assign {
+                    frame: level,
+                    name: name.clone(),
+                    expression,
+                    reply,
+                })
+                .map_err(|m| problem("debug.set_failed", m, fields))
             }
             "debug.watch" => {
                 let p: WatchParams = decode(params, method)?;
@@ -468,7 +490,7 @@ impl DebugHub {
             }
             "debug.rewind" => Err(problem(
                 "debug.unsupported",
-                "debug.rewind needs the runtime's snapshot ring, which this build does not keep yet.",
+                "debug.rewind is the host's (pocket serve restores the kept snapshot at or before the tick and steps to it); a hub alone keeps no snapshots.",
                 json!({"method": method}),
             )),
             other => {
@@ -486,6 +508,23 @@ impl DebugHub {
 
     fn attach_agent(&self) {
         self.update_client(AGENT, |c| c.enabled = true);
+    }
+
+    /// The engine's level of the paused frame numbered `frame` (0 when absent), as `debug.state`
+    /// numbers them.
+    fn frame_level(&self, frame: Option<usize>) -> Result<usize, Problem> {
+        let pause = self.pause_info().ok_or_else(not_paused)?;
+        let index = frame.unwrap_or(0);
+        pause.frames.get(index).map(|f| f.level).ok_or_else(|| {
+            problem(
+                "debug.no_frame",
+                format!(
+                    "There is no frame {index}; the game stopped with {} frames.",
+                    pause.frames.len()
+                ),
+                json!({"frame": index, "frames": pause.frames.len()}),
+            )
+        })
     }
 
     /// A module path of the running program, or `debug.unknown_file` with suggestions.
@@ -562,6 +601,11 @@ impl DebugHub {
         v["breakpoints"] = json!(self.breakpoints_json());
         v["watches"] = json!(watches);
         v["waiting_for_debugger"] = json!(*lock(&self.inner.gate));
+        v["cdp"] = match *lock(&self.inner.cdp) {
+            Some(addr) => json!({"ws": format!("ws://{addr}{}", crate::cdp::TARGET_PATH),
+                                 "devtools": crate::cdp::devtools_url(&addr)}),
+            None => Json::Null,
+        };
         v
     }
 }

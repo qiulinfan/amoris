@@ -171,7 +171,7 @@ export function ConsolePanel() {
         <input
           value={input}
           spellCheck={false}
-          placeholder={paused ? `Evaluate on frame ${frame} (paused)` : "Evaluate in the game: world.names, tick, events…"}
+          placeholder={paused ? `Evaluate on frame ${frame} (paused): locals, closure, ctx…` : "Evaluates while the debugger holds the game (pause or a breakpoint first)"}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter") submit();

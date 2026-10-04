@@ -147,38 +147,36 @@ bytes to the page's viewport.
 is the specification of what is built):
 
 - `GET /json/list` and `/json/version` list one target, `pocket-game`, with
-  `webSocketDebuggerUrl: ws://127.0.0.1:<port>/devtools/game` (port 9229 by default, its own; a
-  request whose `Host` or `Origin` is not loopback is refused).
+  `webSocketDebuggerUrl: ws://127.0.0.1:<port>/devtools/game` (port 9229 by default, its own, not the
+  host's; a request whose `Host` or `Origin` is not loopback is refused).
 - Domains: `Runtime` (`enable`, `evaluate`, `getProperties`, `callFunctionOn`,
   `runIfWaitingForDebugger`), `Debugger` (`enable`, `setBreakpointByUrl`, `removeBreakpoint`,
   `setBreakpointsActive`, `pause`, `resume`, `stepOver`, `stepInto`, `stepOut`,
-  `evaluateOnCallFrame`, `setPauseOnExceptions`, `getScriptSource`), events `Debugger.scriptParsed`
-  (with `sourceMapURL` as a data URL so clients map to TypeScript), `Debugger.paused`,
-  `Debugger.resumed`, `Runtime.consoleAPICalled`, `Runtime.exceptionThrown`.
-- Chrome DevTools attaches with
-  `devtools://devtools/bundled/inspector.html?ws=127.0.0.1:<port>/devtools/game`; VS Code with a
-  `node`-type `attach` configuration on the port (`editors/vscode/launch.json`).
-
   `evaluateOnCallFrame`, `setPauseOnExceptions`, `getScriptSource`, `getPossibleBreakpoints`,
   `setBreakpoint`, `setVariableValue`, `setSkipAllPauses`), events `Debugger.scriptParsed` (url
   `pocket:///scripts/<module>.js`, with `sourceMapURL` as a data URL whose source is the TypeScript,
   embedded, so clients map to it), `Debugger.paused`, `Debugger.resumed`,
   `Debugger.breakpointResolved`, `Runtime.consoleAPICalled`, `Runtime.exceptionThrown`. Positions on
   the wire are the JavaScript's.
-- Chrome DevTools attaches with `devtools://devtools/bundled/inspector.html?ws=127.0.0.1:<port>/devtools/game`;
-  VS Code with a `node`-type `attach` configuration on the port (`editors/vscode/launch.json`).
-- The editor speaks the same CDP over `/devtools/game`.
-- The same core is exposed as JSON methods for agents (and MCP tools of the same names), with
-  TypeScript positions, 1-based (debugger.md 7 has the parameters and results):
+- Chrome DevTools attaches with
+  `devtools://devtools/bundled/js_app.html?experiments=true&v8only=true&ws=127.0.0.1:<port>/devtools/game`
+  (the page `chrome://inspect` opens for a Node target); VS Code with a `node`-type `attach`
+  configuration on the port (`editors/vscode/launch.json`). `debug.state` names the endpoint while it
+  runs (`cdp: {ws, devtools}`, `devtools` being that URL); it is the authority on the port.
+- The same core is exposed as JSON methods for agents, with TypeScript positions, 1-based
+  (debugger.md 7 has the parameters and results; MCP's `debug` tool takes some of them as actions,
+  section 7):
   `debug.attach`, `debug.detach`, `debug.breakpoints.set {file, line, condition?, log?}`,
   `debug.breakpoints.clear {id?}`, `debug.breakpoints.list`, `debug.pause {timeout_ms?}`,
   `debug.continue`, `debug.step {kind: over|into|out, timeout_ms?}`, `debug.state` (frames with
   TypeScript locations, scopes with locals, the tick and the system), `debug.eval {expr, frame?}`,
+  `debug.set {name, value, frame?}` (a frame's variable to an expression's value),
   `debug.watch {entity, component, field?}` (a data breakpoint: pause when a system's staged write
   changes it, naming the statement that wrote), `debug.unwatch {id?}`,
   `debug.exceptions {mode: none|uncaught|all}`, `debug.wait {timeout_ms?}`, and `debug.rewind {tick}`
-  (restore the kept snapshot at or before `tick` and replay to it; not built: it needs the snapshot
-  ring).
+  (restore the kept snapshot at or before `tick` and step to it; served by `pocket serve`'s bridge,
+  server.md 3.3). Pauses and resumes are pushed as `debug` events, console lines as `log`.
+- The editor uses these JSON methods over `/ws` (editor.md 8.1), not CDP.
 
 ## 7. MCP tools
 
@@ -188,7 +186,9 @@ small (each tool takes a `method`-like `action` where a group is natural):
 - Developer (built, server.md 7): `world` (tree/get/query/schema/edit), `scripts`
   (list/read/write/apply/check), `time` (status/pause/resume/speed/step/snapshots/rewind), `play`
   (start/stop), `history` (undo/redo/list), `assets` (list), `events` (since/why/log), `debug`
-  (section 6; `debug.not_available` until pocket-debug lands), `capture` (a rendered image or the id
+  (breakpoints.set/breakpoints.clear/pause/continue/step/state/eval/watch/rewind: section 6's
+  methods of those names; `breakpoints.list`, `unwatch`, `set`, `exceptions`, `wait`, `attach` and
+  `detach` are not actions yet), `capture` (a rendered image or the id
   buffer's summary of a camera view; not available yet), `docs` (search). `tools/list` is 1,236
   tokens.
 - Player (per seat, restricted perception): `observe`, `act`, `wait`, `intents`, `affordances`

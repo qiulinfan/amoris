@@ -61,11 +61,18 @@ pub struct Variable {
     pub name: String,
     pub kind: String,
     pub value: Json,
+    /// An object's one-line description (`Float64Array(1)`, `Array(3)`, `Object`), as CDP
+    /// describes it; `None` for primitives, whose `value` says it all.
+    pub description: Option<String>,
 }
 
 impl Variable {
     pub fn json(&self) -> Json {
-        json!({"name": self.name, "type": self.kind, "value": self.value})
+        let mut v = json!({"name": self.name, "type": self.kind, "value": self.value});
+        if let Some(d) = &self.description {
+            v["description"] = json!(d);
+        }
+        v
     }
 }
 
@@ -165,6 +172,9 @@ impl<'js> Inspector<'js> {
                         name: n.clone(),
                         kind: kind_of(v).to_owned(),
                         value: me.json(v, 0),
+                        description: (v.is_object() || v.is_function())
+                            .then(|| me.describe(v)["description"].as_str().map(str::to_owned))
+                            .flatten(),
                     })
                     .collect()
             };
@@ -632,12 +642,36 @@ impl<'js> Inspector<'js> {
         } else {
             Value::new_undefined(self.rctx.clone())
         };
+        self.set_at_level(level, name, &value)?;
+        Ok(json!({}))
+    }
+
+    /// The agents' `debug.set`: `expression`, evaluated in the frame at `level`, becomes the value
+    /// of the frame's variable `name`; answers the value as `debug.eval` does. An assignment
+    /// evaluated in the frame (`debug.eval "r = 7"`) does not do this: QuickJS hands an evaluation
+    /// a copy of each local no closure captured, so only writes through an object reach the frame.
+    pub fn assign(&self, level: usize, name: &str, expression: &str) -> Result<Json, String> {
+        let value = self
+            .eval_value(level, expression)
+            .map_err(|e| format!("The expression threw: {}", self.text(&e)))?;
+        let shown = json!({"type": kind_of(&value), "value": self.json(&value, 0),
+                           "description": self.describe(&value)["description"]});
+        self.set_at_level(level, name, &value)?;
+        Ok(shown)
+    }
+
+    /// Sets the variable `name` of the frame at `level` (its stack slot, or the closure's cell),
+    /// tainting the run when it did. A name declared in two block scopes of one function names the
+    /// first declaration: QuickJS keeps no scope ranges at run time.
+    fn set_at_level(&self, level: usize, name: &str, value: &Value<'js>) -> Result<(), String> {
         let cname = CString::new(name).map_err(|e| e.to_string())?;
         let level = i32::try_from(level).map_err(|e| e.to_string())?;
         let raw = unsafe { qjs::JS_DupValue(self.ctx, value.as_raw()) };
-        unsafe { pocket_script::debug::taint(self.ctx, "a debugger set a variable") };
         match unsafe { ffi::JS_SetVariableAtLevel(self.ctx, level, cname.as_ptr(), raw) } {
-            0 => Ok(json!({})),
+            0 => {
+                unsafe { pocket_script::debug::taint(self.ctx, "a debugger set a variable") };
+                Ok(())
+            }
             -2 => Err(format!("{name} is a constant.")),
             _ => Err(format!("No variable {name} in this frame.")),
         }

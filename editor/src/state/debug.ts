@@ -1,8 +1,9 @@
 // The debugger as the host reports it (`debug` events, `debug.state`), the breakpoints and data
-// breakpoints the editor set, and the watch expressions it evaluates on each pause.
+// breakpoints set on the host, the pause-on-exceptions mode, and the watch expressions the editor
+// evaluates on each pause.
 
 import { create } from "zustand";
-import type { Breakpoint, DataWatch, DebugState, Variable } from "../host/protocol";
+import type { Breakpoint, DataWatch, DebugState, ExceptionMode, Variable } from "../host/protocol";
 
 export interface WatchExpr {
   id: number;
@@ -13,15 +14,22 @@ export interface WatchExpr {
 
 interface DebugStore {
   state: DebugState;
+  /** The selected frame's index (what `debug.eval` takes). */
   frame: number;
   breakpoints: Breakpoint[];
   dataWatches: DataWatch[];
   watches: WatchExpr[];
+  exceptions: ExceptionMode;
+  /** The host's Chrome DevTools Protocol endpoint, when it serves one. */
+  cdp: { ws: string; devtools: string } | null;
   setState(s: DebugState): void;
   setFrame(f: number): void;
   setBreakpoints(b: Breakpoint[]): void;
   setDataWatches(w: DataWatch[]): void;
   setWatches(w: WatchExpr[]): void;
+  setExceptions(m: ExceptionMode): void;
+  /** Replaces a top-level variable of a frame's scopes (after the debugger assigned to it). */
+  patchVariable(frame: number, v: Variable): void;
 }
 
 export const useDebug = create<DebugStore>((set) => ({
@@ -30,11 +38,31 @@ export const useDebug = create<DebugStore>((set) => ({
   breakpoints: [],
   dataWatches: [],
   watches: [],
-  setState: (state) => set({ state, frame: 0 }),
+  exceptions: "none",
+  cdp: null,
+  setState: (state) =>
+    set((s) => ({
+      state,
+      frame: 0,
+      exceptions: state.exceptions ?? s.exceptions,
+      cdp: state.cdp !== undefined ? state.cdp : s.cdp,
+    })),
   setFrame: (frame) => set({ frame }),
   setBreakpoints: (breakpoints) => set({ breakpoints }),
   setDataWatches: (dataWatches) => set({ dataWatches }),
   setWatches: (watches) => set({ watches }),
+  setExceptions: (exceptions) => set({ exceptions }),
+  patchVariable: (frame, v) =>
+    set((s) => ({
+      state: {
+        ...s.state,
+        frames: s.state.frames?.map((f) =>
+          f.id !== frame
+            ? f
+            : { ...f, scopes: f.scopes.map((sc) => ({ ...sc, variables: sc.variables.map((x) => (x.name === v.name ? v : x)) })) },
+        ),
+      },
+    })),
 }));
 
 export function isPaused(): boolean {

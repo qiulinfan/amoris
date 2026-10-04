@@ -7,7 +7,7 @@ import { DT, SYSTEMS, engineStep, helmsman, type GameCtx, type LogLine, type Tic
 import { sailingWorld } from "./scene";
 import { allComponents, componentInfo } from "./schemas";
 import { Scripts, diagnose } from "./scripts";
-import { MockError, clone, isObject, rng, suggest, unknownField } from "./util";
+import { MockError, isObject, rng, suggest, unknownField } from "./util";
 import { emptyChanges, merge, unknownComponent, type Changes, type World } from "./world";
 import { ASSETS } from "./assets";
 
@@ -61,6 +61,7 @@ export class Session {
       () => this.scripts.files,
       () => this.world,
       () => this.tick,
+      (line) => this.log(line),
     );
     this.bundle = this.scripts.bundleHash();
   }
@@ -176,16 +177,7 @@ export class Session {
   }
 
   private announcePause() {
-    this.broadcast("debug", this.debugger.state(null));
-    const loc = this.debugger.location();
-    const p = this.debugger.paused;
-    this.log({
-      level: "info",
-      source: "debugger",
-      message: `Paused (${p?.reason ?? "?"})${p?.detail ? `: ${p.detail}` : ""}${loc && loc.line > 0 ? ` at ${loc.file}:${loc.line}` : ""}`,
-      file: loc && loc.line > 0 ? loc.file : undefined,
-      line: loc && loc.line > 0 ? loc.line : undefined,
-    });
+    this.broadcast("debug", this.debugger.state(false));
   }
 
   /** The real-time loop: called every 1/60 s of wall time. */
@@ -469,53 +461,60 @@ export class Session {
       this.broadcast("debug", { state: "running" });
       return this.status();
     },
+    "debug.attach": () => {
+      this.debugger.attached = true;
+      return this.debugger.state();
+    },
+    "debug.detach": () => {
+      this.debugger.attached = false;
+      this.debugger.breakpoints = [];
+      this.debugger.watches = [];
+      this.debugger.exceptions = "none";
+      if (this.debugger.paused) {
+        this.debugger.resume();
+        this.broadcast("debug", { state: "running" });
+      }
+      return this.debugger.state();
+    },
     "debug.breakpoints.set": (p) => this.debugger.setBreakpoint(p),
-    "debug.breakpoints.clear": (p) => ({ cleared: this.debugger.clearBreakpoints(p) }),
-    "debug.breakpoints.list": () => ({ breakpoints: this.debugger.breakpoints, watches: this.debugger.watches }),
+    "debug.breakpoints.clear": (p) => this.debugger.clearBreakpoints(p),
+    "debug.breakpoints.list": () => ({ breakpoints: this.debugger.listBreakpoints() }),
     "debug.pause": () => {
-      if (this.mode !== "play") throw new MockError("time.edit_mode", "Scripts run only in Play.");
-      this.debugger.pauseRequested = true;
-      this.paused = false;
-      return { state: "pausing" };
+      this.debugger.attached = true;
+      if (!this.debugger.paused) this.debugger.pauseRequested = true;
+      return this.debugger.state();
     },
     "debug.continue": () => {
-      this.debugger.resume();
-      this.paused = false;
-      this.broadcast("debug", { state: "running" });
+      if (this.debugger.paused) {
+        this.debugger.resume();
+        this.broadcast("debug", { state: "running" });
+      }
       return { state: "running" };
     },
     "debug.step": (p) => {
       const r = this.debugger.step(String(p.kind));
-      if (r === "stay") this.broadcast("debug", this.debugger.state(null));
+      this.broadcast("debug", { state: "running" });
+      if (r === "stay") this.broadcast("debug", this.debugger.state(false));
       else {
-        this.paused = false;
         // Run until the next system pauses (within this tick or the next).
         for (let i = 0; i < 4 && !this.debugger.paused; i++) this.stepOnce();
-        if (!this.debugger.paused) this.broadcast("debug", { state: "running" });
       }
-      return this.debugger.state(null);
+      return this.debugger.state();
     },
-    "debug.state": () => this.debugger.state(null),
-    "debug.eval": (p) => {
-      const globals: Record<string, unknown> = {
-        tick: this.tick,
-        world: {
-          entities: this.world.entities.size,
-          names: [...this.world.entities.values()].map((e) => e.name),
-          get: (ref: number | string) => clone(this.world.get(ref)),
-        },
-        events: this.events.slice(-20),
-      };
-      return this.debugger.eval(String(p.expr), p.frame as number | undefined, globals);
-    },
-    "debug.watch": (p) => {
-      const ref = p.entity as number | string;
-      const e = this.world.resolve(ref, "debug.watch");
-      return this.debugger.addWatch({ ...p, entity: e.id });
-    },
-    "debug.unwatch": (p) => {
-      this.debugger.watches = this.debugger.watches.filter((w) => w.id !== p.id);
-      return { removed: p.id };
+    "debug.state": () => this.debugger.state(),
+    "debug.wait": () => this.debugger.state(),
+    "debug.eval": (p) => this.debugger.eval(String(p.expr), p.frame as number | undefined),
+    "debug.set": (p) => this.debugger.set(String(p.name), String(p.value), p.frame as number | undefined),
+    "debug.watch": (p) => this.debugger.addWatch(p),
+    "debug.unwatch": (p) => this.debugger.removeWatches(p),
+    "debug.exceptions": (p) => {
+      const mode = String(p.mode);
+      if (mode !== "none" && mode !== "uncaught" && mode !== "all") {
+        throw new MockError("request.invalid_value", "mode is 'none', 'uncaught' or 'all'.", { mode });
+      }
+      this.debugger.attached = true;
+      this.debugger.exceptions = mode;
+      return { mode };
     },
     "debug.rewind": (p) => {
       if (this.mode !== "play") throw new MockError("time.edit_mode", "Rewind works on the Play world.");
@@ -530,7 +529,7 @@ export class Session {
       this.paused = true;
       this.log({ level: "info", source: "debugger", message: `Rewound to tick ${tick} (restored ${s.tick}, replayed ${tick - s.tick})` });
       this.broadcast("debug", { state: "running" });
-      return this.status();
+      return { restored: s.tick, tick: this.tick };
     },
     "profile.frame": () => this.profile(),
   };

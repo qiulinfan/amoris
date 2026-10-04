@@ -382,4 +382,12 @@ pub enum Command {
         value: Json,
         reply: Reply,
     },
+    /// The agents' `debug.set`: `expression`, evaluated in the frame, becomes the value of the
+    /// frame's variable `name` (an argument, a local or a closure variable).
+    Assign {
+        frame: usize,
+        name: String,
+        expression: String,
+        reply: Reply,
+    },
 }
