@@ -667,3 +667,21 @@ fn a_boundary_applies_sources_in_the_canonical_order_whatever_their_arrival() {
         }
     });
 }
+
+/// The worker's render feed carries the packaged scene's models to the page's viewport.
+#[test]
+fn the_render_feed_carries_the_packaged_scene() {
+    on_stack(|| {
+        let subject = Subject::load(&sailing()).unwrap();
+        let mut game = packaged(&subject, 1);
+        let feed = pocket_assets::Feed::new();
+        let mailbox = feed.subscribe();
+        let mut ex = pocket_runtime::Extractor::new();
+        game.present(&mut ex, &feed);
+        let full = mailbox.take();
+        assert!(full.reset);
+        assert_eq!(full.instances.len(), 5, "{full:?}");
+        let decoded = pocket_assets::RenderFrame::decode(&full.encode()).unwrap();
+        assert_eq!(decoded.instances.len(), 5);
+    });
+}

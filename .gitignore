@@ -16,3 +16,5 @@ __pycache__/
 web/bench/vendor/
 # A running host's address in its project (pocket serve)
 .pocket/
+web/pkg/
+web/projects/

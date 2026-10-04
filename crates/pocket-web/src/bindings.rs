@@ -52,6 +52,8 @@ pub struct GameWorker {
     core: WorkerCore,
     /// The snapshots' bytes of the `snap`s [`GameWorker::messages`] returned, in order.
     bytes: std::collections::VecDeque<Vec<u8>>,
+    /// The render feed this worker publishes to its page's viewport.
+    render: (pocket_runtime::Extractor, pocket_assets::Feed, std::sync::Arc<pocket_assets::Mailbox>),
 }
 
 #[wasm_bindgen]
@@ -71,9 +73,14 @@ impl GameWorker {
             WorkerCore::new(game, pacing, Box::new(performance_now))
         };
         build()
-            .map(|core| GameWorker {
-                core,
-                bytes: Default::default(),
+            .map(|core| {
+                let feed = pocket_assets::Feed::new();
+                let mailbox = feed.subscribe();
+                GameWorker {
+                    core,
+                    bytes: Default::default(),
+                    render: (pocket_runtime::Extractor::new(), feed, mailbox),
+                }
             })
             .map_err(|p| js_problem(&p))
     }
@@ -97,6 +104,15 @@ impl GameWorker {
     /// `{"next": "at", "at": ms}`.
     pub fn run(&mut self) -> String {
         self.core.run(SLICE_MS).to_json().to_string()
+    }
+
+    /// The render feed's frame since the last call (the bytes the page's viewport decodes), or
+    /// `None` when nothing visual changed.
+    pub fn render_frame(&mut self) -> Option<Vec<u8>> {
+        let (ex, feed, mailbox) = &mut self.render;
+        self.core.present(ex, feed);
+        let f = mailbox.take();
+        (!f.is_empty() || f.reset).then(|| f.encode())
     }
 
     /// `close`: what waits is answered `game.stopped`.

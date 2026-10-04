@@ -1,7 +1,8 @@
 // The browser-local run form (charter 5.1; docs/spec/threads.md 7): the sailing game in a Web
 // Worker at real time, this page drawing each snapshot it rebuilds from above, and the helm sending
-// `world_edit`s as the local human player, on the same path an agent's commands take. Rendering
-// proper comes with slice 3; this is the presenter's slice 1 stand-in.
+// `world_edit`s as the local human player, on the same path an agent's commands take. With WebGPU
+// the engine's renderer (web/viewport) draws the worker's render feed; otherwise, or with
+// `?render=2d`, the page draws each rebuilt snapshot as a map from above.
 import { loadModule, start } from "./pocket.js";
 
 const $ = (id) => document.getElementById(id);
@@ -113,6 +114,30 @@ function showBoat(view) {
   }));
 }
 
+/** The engine's renderer on the page, fed by the worker; `null` without WebGPU or with `?render=2d`. */
+async function openViewport(pocket, params) {
+  if (!navigator.gpu || params.get("render") === "2d") return null;
+  try {
+    const { createViewport } = await import("./viewport/viewport.js");
+    const canvas = $("view");
+    canvas.hidden = false;
+    $("sea").hidden = true;
+    const assetsUrl = new URL(".", new URL(await packageUrl(params), location.href)).href;
+    const vp = await createViewport(canvas, { assetsUrl });
+    window.viewport = vp;
+    pocket.onRender((bytes) => vp.pushFrame(bytes));
+    vp.onStats((s) => {
+      $("gpu").textContent = `${fmt(1000 / s.frame_ms, 0)} fps, GPU ${fmt(s.gpu_ms)} ms, ${s.instances} instances`;
+    });
+    return vp;
+  } catch (e) {
+    console.warn("no WebGPU viewport, drawing the map instead:", e);
+    $("view").hidden = true;
+    $("sea").hidden = false;
+    return null;
+  }
+}
+
 export async function runForm(params) {
   const speed = Number(params.get("speed") || 1);
   const { module } = await loadModule();
@@ -120,6 +145,7 @@ export async function runForm(params) {
   const pocket = start(module, pkg, { seed: params.get("seed") ? Number(params.get("seed")) : undefined,
     pacing: { real_time: { speed } } });
   window.pocket = pocket;
+  const viewport = await openViewport(pocket, params);
   await pocket.ready;
   $("speed").value = String(speed);
   let paused = false;
@@ -141,6 +167,23 @@ export async function runForm(params) {
     $("hoist").textContent = hoisted ? "Furl" : "Hoist";
     helm({ hoist: hoisted ? 1 : 0 });
   };
+  // The keyboard moves the same controls (and so sends the same commands).
+  const nudge = (id, d) => {
+    const el = $(id);
+    el.value = String(Math.min(Number(el.max), Math.max(Number(el.min), Number(el.value) + d)));
+    el.oninput();
+  };
+  addEventListener("keydown", (e) => {
+    if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
+    const k = e.key.toLowerCase();
+    if (k === "a" || k === "arrowleft") nudge("rudder", -0.1);
+    else if (k === "d" || k === "arrowright") nudge("rudder", 0.1);
+    else if (k === "w" || k === "arrowup") nudge("sheet", 0.1);
+    else if (k === "s" || k === "arrowdown") nudge("sheet", -0.1);
+    else if (k === " ") $("hoist").onclick();
+    else return;
+    e.preventDefault();
+  });
   let lastHash = "-";
   pocket.onTicks((hashes) => { lastHash = hashes[hashes.length - 1][1]; });
   pocket.onEvents((records) => {
@@ -160,7 +203,7 @@ export async function runForm(params) {
     if (info) {
       const view = pocket.view();
       if (!view.error) {
-        draw(canvas, view, fit);
+        if (!viewport) draw(canvas, view, fit);
         showBoat(view);
       }
       $("tick").textContent = info.tick;

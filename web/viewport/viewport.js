@@ -4,6 +4,7 @@
 //   const vp = await createViewport(canvas, { renderUrl: "ws://127.0.0.1:7878/render", assetsUrl: "/assets/" });
 //   vp.setCamera([x, y, z], [qx, qy, qz, qw], fovDeg);   // or vp.useSceneCamera()
 //   vp.onStats((s) => ...);                               // {gpu_ms, instances, tick, passes, frame_ms}
+//   vp.pushFrame(bytes);                                  // a render-feed frame from elsewhere (a game worker)
 //   vp.dispose();
 //
 // The page owns the WebSocket of the host's render feed, the asset fetches and the frame loop.
@@ -85,6 +86,7 @@ export async function createViewport(canvas, options = {}) {
     useSceneCamera() { vp.use_scene_camera(); },
     camera() { return Array.from(vp.camera()); },
     onStats(f) { listeners.push(f); },
+    pushFrame(bytes) { return vp.push_frame(bytes, performance.now()); },
     resize(w, h) { vp.resize(w, h); },
     demoCubes(count, dense) { vp.demo_cubes(count, dense, performance.now()); },
     demoCubesCamera(frame, dense) { vp.demo_cubes_camera(frame, dense); },

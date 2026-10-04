@@ -14,6 +14,7 @@ pocket-contract.workspace = true
 pocket-sim.workspace = true
 pocket-link.workspace = true
 pocket-runtime.workspace = true
+pocket-assets.workspace = true
 pocket-check.workspace = true
 serde.workspace = true
 serde_json.workspace = true

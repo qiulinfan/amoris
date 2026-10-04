@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Pocket3D sailing</title>
+<title>Pocket3D web player</title>
 <link rel="icon" href="data:,">
 <style>
   :root {
@@ -27,6 +27,7 @@
   .muted { color: var(--muted); }
   .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
   canvas { width: 100%; aspect-ratio: 16 / 10; display: block; border-radius: 6px; background: var(--sea); }
+  canvas[hidden] { display: none; }
   .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; }
   button, select { font: inherit; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--line);
     background: var(--panel); color: var(--ink); cursor: pointer; }
@@ -46,11 +47,13 @@
 <body>
 <main>
   <header>
-    <h1>Sailing, in the browser</h1>
-    <span class="muted" id="where">The game runs in a Web Worker; this page draws its snapshots.</span>
+    <h1>Pocket3D, in the browser</h1>
+    <span class="muted" id="where">The game runs in a Web Worker; this page draws it with the engine's WebGPU renderer.
+      Keys: A/D rudder, W/S sheet, Space hoist.</span>
   </header>
   <section class="panel">
     <canvas id="sea" width="960" height="600" aria-label="The sea from above: the sloop, the crates and the wind"></canvas>
+    <canvas id="view" hidden aria-label="The game drawn by the engine's renderer with WebGPU"></canvas>
     <div class="controls">
       <button id="play">Pause</button>
       <label>Speed <select id="speed"><option>1</option><option>2</option><option>4</option><option>8</option></select></label>
@@ -68,6 +71,7 @@
       <dt>Time</dt><dd id="time">-</dd>
       <dt>World hash</dt><dd><code id="hash">-</code></dd>
       <dt>Snapshots</dt><dd id="snaps">-</dd>
+      <dt>Renderer</dt><dd id="gpu">-</dd>
     </dl>
     <h2>Sloop</h2>
     <dl id="boat"></dl>

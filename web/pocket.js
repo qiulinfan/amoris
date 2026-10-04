@@ -12,6 +12,7 @@
 //   pocket.latest();                                     // {version, tick, writes, world_hash, time}
 //   pocket.onEvents((records, missed) => { ... });
 //   pocket.onTicks((hashes) => { ... });                 // [[tick, world hash], ...]: every tick, in order
+//   pocket.onRender((bytes) => viewport.pushFrame(bytes)); // the render feed's frames, for a viewport
 //   pocket.close();
 import initGlue, { Presenter } from "./pkg/pocket_web.js";
 
@@ -45,7 +46,7 @@ class Pocket {
     this.ackDelayMs = options.ackDelayMs || 0;
     this.seqs = new Map();
     this.waiting = new Map();
-    this.listeners = { events: [], ticks: [], snapshot: [], status: [] };
+    this.listeners = { events: [], ticks: [], snapshot: [], status: [], render: [] };
     this.unacked = 0;
     this.maxUnacked = 0;
     this.info = null;
@@ -84,6 +85,11 @@ class Pocket {
       case "snap":
         this.onSnap(m);
         break;
+      case "render": {
+        const bytes = new Uint8Array(m.bytes);
+        for (const f of this.listeners.render) f(bytes);
+        break;
+      }
       case "reply": {
         const key = JSON.stringify(m.source) + "|" + m.seq;
         const w = this.waiting.get(key);
@@ -154,6 +160,11 @@ class Pocket {
   onTicks(f) { this.listeners.ticks.push(f); }
   onSnapshot(f) { this.listeners.snapshot.push(f); }
   onStatus(f) { this.listeners.status.push(f); }
+  /** Subscribes to the render feed; the worker starts extracting it (its first frame is full). */
+  onRender(f) {
+    if (!this.listeners.render.length && !this.stopped) this.worker.postMessage({ t: "render" });
+    this.listeners.render.push(f);
+  }
   view() { return JSON.parse(this.presenter.view()); }
   problems() { return JSON.parse(this.presenter.problems()); }
 

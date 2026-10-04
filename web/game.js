@@ -12,6 +12,7 @@ let early = [];
 let timer = 0;
 let scheduled = false;
 let finished = false;
+let rendering = false; // the page asked for the render feed (a viewport draws it)
 const wake = new MessageChannel();
 wake.port1.onmessage = () => {
   scheduled = false;
@@ -37,7 +38,8 @@ function finish() {
   close();
 }
 
-// Posts what the game has for the page; each snapshot's bytes are transferred, not copied.
+// Posts what the game has for the page; each snapshot's bytes are transferred, not copied, and so
+// is the render feed's frame (what changed visually since the last one) for the page's viewport.
 function flush() {
   for (const m of JSON.parse(game.messages())) {
     if (m.t === "snap") {
@@ -48,6 +50,8 @@ function flush() {
       postMessage(m);
     }
   }
+  const frame = rendering ? game.render_frame() : undefined;
+  if (frame) postMessage({ t: "render", bytes: frame.buffer }, [frame.buffer]);
 }
 
 function soon() {
@@ -93,6 +97,10 @@ function handle(m) {
         game.close();
         flush();
         finish();
+        break;
+      case "render":
+        rendering = true;
+        flush();
         break;
       case "perf":
         postMessage({ t: "perf", id: m.id, ...JSON.parse(game.perf()) });
