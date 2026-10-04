@@ -119,7 +119,22 @@ impl Gpu {
                     | wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES);
         }
         // Ask for what the adapter offers: the GPU-driven buffers are large.
-        let limits = adapter.limits();
+        let mut limits = adapter.limits();
+        if let Ok(v) = std::env::var("POCKET_GPU_MINIMAL") {
+            if v.contains("features") {
+                required = wgpu::Features::empty();
+            }
+            if v.contains("timestamps") {
+                required.remove(
+                    wgpu::Features::TIMESTAMP_QUERY
+                        | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS
+                        | wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES,
+                );
+            }
+            if v.contains("limits") {
+                limits = wgpu::Limits::default().using_resolution(adapter.limits());
+            }
+        }
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("pocket"),
@@ -136,7 +151,21 @@ impl Gpu {
             shader_f16: required.contains(wgpu::Features::SHADER_F16),
             float32_filterable: required.contains(wgpu::Features::FLOAT32_FILTERABLE),
         };
+        // Log every validation error instead of panicking at the first: an engine keeps running and
+        // reports (the editor and agents read the log).
+        device.on_uncaptured_error(Arc::new(|e: wgpu::Error| { let s = format!("{e:?}"); log::error!("wgpu: {}", &s[..s.len().min(1200)]) }));
+        device.set_device_lost_callback(|reason, message| {
+            log::error!("GPU device lost ({reason:?}): {message}");
+        });
         let info = Arc::new(adapter.get_info());
+        let l = device.limits();
+        log::info!(
+            "limits: buffer {} MB, storage binding {} MB, storage buffers/stage {}, texture 2D {}",
+            l.max_buffer_size >> 20,
+            l.max_storage_buffer_binding_size >> 20,
+            l.max_storage_buffers_per_shader_stage,
+            l.max_texture_dimension_2d
+        );
         log::info!(
             "GPU: {} ({:?}, {:?}); features {:?}",
             info.name,

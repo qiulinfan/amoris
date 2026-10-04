@@ -60,7 +60,9 @@ sha2 = "=0.11.0"              # xtask: shared/SYNC.toml's SHA-256 hashes (archit
 # Presenters and assets (charter 4.1)
 gltf = { version = "=1.4.1", default-features = false, features = ["import", "utils", "names", "KHR_materials_emissive_strength", "KHR_texture_transform", "KHR_lights_punctual"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
-wgpu = "=30.0.1"
+# Metal and Vulkan natively (Vulkan on Apple through MoltenVK: vulkan-portability), WebGPU in the
+# browser; no Direct3D 12 or GL (charter 4.1).
+wgpu = { version = "=30.0.1", default-features = false, features = ["std", "parking_lot", "wgsl", "metal", "vulkan", "vulkan-portability", "webgpu"] }
 winit = "0.30"
 glam = { version = "0.33", features = ["bytemuck"] }
 bytemuck = { version = "1.25", features = ["derive"] }

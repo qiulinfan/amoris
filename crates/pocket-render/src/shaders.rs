@@ -25,3 +25,14 @@ pub fn module(device: &wgpu::Device, name: &str) -> wgpu::ShaderModule {
         source: wgpu::ShaderSource::Wgsl(source(name).into()),
     })
 }
+
+/// Compute pipelines' options. The renderer's compute shaders initialize the workgroup memory they
+/// read, so naga's automatic zeroing is off: it is redundant, and on MoltenVK its SPIR-V for
+/// workgroup arrays compiles to MSL that names an undeclared `gl_WorkGroupSize`, which loses the
+/// device. Browsers zero workgroup memory regardless (WebGPU requires it).
+pub fn compute_options() -> wgpu::PipelineCompilationOptions<'static> {
+    wgpu::PipelineCompilationOptions {
+        zero_initialize_workgroup_memory: false,
+        ..Default::default()
+    }
+}

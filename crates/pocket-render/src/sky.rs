@@ -95,7 +95,7 @@ impl Sky {
                 layout: None,
                 module: m,
                 entry_point: Some(entry),
-                compilation_options: Default::default(),
+                compilation_options: crate::shaders::compute_options(),
                 cache: None,
             })
         };
@@ -142,6 +142,10 @@ impl Sky {
     /// Bakes the sky and its light if `params` changed since the last bake.
     pub fn update(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, params: SkyParams) {
         if self.last == Some(params) {
+            return;
+        }
+        if std::env::var("POCKET_DEBUG_SKIP").is_ok_and(|v| v.contains("sky")) {
+            self.last = Some(params);
             return;
         }
         self.last = Some(params);

@@ -42,6 +42,10 @@ specified under [docs/spec/](docs/spec/README.md); their measured spikes are und
 - `wasm32-unknown-unknown` builds of QuickJS-ng need a clang with the wasm backend: the build script
   finds Homebrew's LLVM (`brew install llvm lld wasi-libc`) or `POCKET_LLVM`.
 - Vulkan on macOS runs through MoltenVK (`brew install molten-vk vulkan-loader`); select it with
-  `POCKET_BACKEND=vulkan`. Metal is the default on macOS.
+  `POCKET_BACKEND=vulkan` and launch with `DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib` so the
+  loader is found. Metal is the default on macOS. `MVK_CONFIG_LOG_LEVEL=3` prints MoltenVK's shader
+  compile errors; `cargo run --release -p pocket-render --example gpu_probe` checks a backend.
+- Compute pipelines use `shaders::compute_options()` (no automatic workgroup zeroing: it breaks
+  MoltenVK); a compute shader must initialize the workgroup memory it reads.
 - Agents working in parallel use their own git worktree and their own cargo target directory.
 - macOS has no `timeout`; use `perl -e 'alarm 60; exec @ARGV' cmd` as a watchdog.

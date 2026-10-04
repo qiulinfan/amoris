@@ -529,7 +529,7 @@ impl Renderer {
                 layout: None,
                 module: &m,
                 entry_point: Some(entry),
-                compilation_options: Default::default(),
+                compilation_options: crate::shaders::compute_options(),
                 cache: None,
             })
         };

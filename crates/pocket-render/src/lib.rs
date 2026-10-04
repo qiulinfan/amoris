@@ -25,3 +25,8 @@ pub use camera::CameraState;
 pub use gpu::{BackendChoice, Gpu, GpuError};
 pub use loader::AssetSource;
 pub use renderer::{FrameStats, Renderer, web_time};
+
+/// A renderer shader's composed WGSL (tools and backend probes).
+pub fn shader_source(name: &str) -> String {
+    shaders::source(name)
+}
