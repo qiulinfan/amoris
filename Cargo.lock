@@ -3495,6 +3495,7 @@ dependencies = [
 name = "pocket-web"
 version = "0.1.0"
 dependencies = [
+ "pocket-assets",
  "pocket-check",
  "pocket-contract",
  "pocket-link",
