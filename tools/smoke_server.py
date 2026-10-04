@@ -184,8 +184,9 @@ def main():
         # 1. The CLI first.
         r = cli("status")
         check(r.returncode == 0 and "edit paused" in r.stdout, f"cli status: {r.stdout.strip()}")
+        n = len(json.loads((proj / "scene.json").read_text())["entities"])
         r = cli("world", "tree")
-        check(r.stdout.count("\n") == 7 and "#3 Sloop" in r.stdout, "cli world tree: 7 entities")
+        check(r.stdout.count("\n") == n and "#3 Sloop" in r.stdout, f"cli world tree: {n} entities")
         r = cli("world", "set", "Crate1", "Cargo", "value=5")
         check(r.returncode == 0 and "set Cargo on Crate1" in r.stdout, f"cli world set: {r.stdout.strip()}")
         r = cli("world", "get", "Crate1", "Cargo", "--json")
