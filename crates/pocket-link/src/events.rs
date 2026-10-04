@@ -114,6 +114,92 @@ impl EventRing {
     }
 }
 
+/// `events.since` over a reader's stream (docs/spec/server.md): with `after`, the first `limit`
+/// events whose stream number is above it; without, the last `limit`. `name` keeps one event name,
+/// or a prefix written `crate.*`. Returns `{events, last, missed}`; `last` is the stream number of
+/// the newest event, the cursor for the next call.
+pub fn events_since(
+    reader: &crate::SnapshotReader,
+    after: Option<u64>,
+    limit: usize,
+    name: Option<&str>,
+) -> serde_json::Value {
+    let mut cursor = EventCursor {
+        next: after.map_or(1, |a| a + 1),
+    };
+    let batch = reader.events(&mut cursor, usize::MAX);
+    let matches = |v: &serde_json::Value| match name {
+        None => true,
+        Some(n) => {
+            let got = v["name"].as_str().unwrap_or("");
+            match n.strip_suffix(".*") {
+                Some(prefix) => got.strip_prefix(prefix).is_some_and(|r| r.starts_with('.')),
+                None => got == n,
+            }
+        }
+    };
+    let decoded = batch.records.iter().filter_map(|r| r.to_json().ok());
+    let mut events: Vec<serde_json::Value> = if after.is_some() {
+        decoded.filter(matches).take(limit).collect()
+    } else {
+        let all: Vec<serde_json::Value> = decoded.filter(matches).collect();
+        all[all.len().saturating_sub(limit)..].to_vec()
+    };
+    events.shrink_to_fit();
+    let last = batch.records.last().map_or(after.unwrap_or(0), |r| r.seq);
+    serde_json::json!({"events": events, "last": last, "missed": batch.missed})
+}
+
+/// `events.why` over a reader's stream: the event with stream number `seq` and the chain of the
+/// events that caused it, nearest first, each found as the latest earlier event with the cause's
+/// sequence number. `complete` is false when a cause is no longer in the ring.
+pub fn events_why(
+    reader: &crate::SnapshotReader,
+    seq: u64,
+) -> Result<serde_json::Value, pocket_contract::Problem> {
+    let mut cursor = EventCursor::start();
+    let batch = reader.events(&mut cursor, usize::MAX);
+    let records = &batch.records;
+    let Some(at) = records.iter().position(|r| r.seq == seq) else {
+        let range = (
+            records.first().map(|r| r.seq),
+            records.last().map(|r| r.seq),
+        );
+        return Err(pocket_contract::Problem::new(
+            "events.not_found",
+            format!("No event with stream number {seq} is held; the ring holds {range:?}."),
+            pocket_contract::detail([
+                ("seq", serde_json::json!(seq)),
+                ("oldest", serde_json::json!(range.0)),
+                ("newest", serde_json::json!(range.1)),
+            ]),
+        ));
+    };
+    let event = records[at].to_json()?;
+    let mut causes = Vec::new();
+    let mut cause = event["cause"].as_u64();
+    let mut upto = at;
+    let mut complete = true;
+    while let Some(c) = cause {
+        match records[..upto].iter().rposition(|r| r.id.0 == c) {
+            Some(i) => {
+                let e = records[i].to_json()?;
+                cause = e["cause"].as_u64();
+                causes.push(e);
+                upto = i;
+            }
+            None => {
+                complete = false;
+                break;
+            }
+        }
+        if causes.len() >= 64 {
+            break;
+        }
+    }
+    Ok(serde_json::json!({"event": event, "causes": causes, "complete": complete}))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

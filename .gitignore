@@ -13,3 +13,5 @@ editor/dist/
 # Python
 __pycache__/
 .venv/
+# A running host's address in its project (pocket serve)
+.pocket/

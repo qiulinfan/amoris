@@ -19,7 +19,9 @@ pub use command::{
     Envelope, Kind, Reply, ReplyTo, ReplyValue, Source, canonical_order, game_stopped, queue_full,
     source_from_json, source_in_use, source_json, tick_passed,
 };
-pub use events::{EventBatch, EventCursor, EventRecord, EventRing, RING_RECORDS};
+pub use events::{
+    EventBatch, EventCursor, EventRecord, EventRing, RING_RECORDS, events_since, events_why,
+};
 pub use logs::{LOG_RECORDS, LogRecord, LogRing};
 pub use reader::{
     GameStatus, LoopState, Publisher, SnapshotReader, WorldInfo, WorldMode, publication,

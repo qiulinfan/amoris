@@ -22,6 +22,8 @@ pocket-runtime = { path = "crates/pocket-runtime" }
 pocket-check = { path = "crates/pocket-check" }
 pocket-assets = { path = "crates/pocket-assets", default-features = false }
 pocket-render = { path = "crates/pocket-render" }
+pocket-mcp = { path = "crates/pocket-mcp" }
+pocket-server = { path = "crates/pocket-server" }
 
 bevy_ecs = { version = "=0.19.1", default-features = false, features = ["std"] }
 libm = "=0.2.16"
@@ -56,6 +58,12 @@ regex = "=1.13.1"
 tungstenite = "=0.30.0"
 toml = "=1.1.6"               # xtask: the check's configuration files (architecture.md 6)
 sha2 = "=0.11.0"              # xtask: shared/SYNC.toml's SHA-256 hashes (architecture.md 6)
+# The host's server side (docs/spec/server.md; architecture.md 6: presenters and tools only).
+tokio = { version = "=1.53.1", features = ["rt-multi-thread", "macros", "net", "sync", "time", "signal", "fs", "io-std", "process"] }
+axum = { version = "=0.8.9", features = ["ws"] }
+rmcp = { version = "=3.5.0", default-features = false, features = ["server", "macros", "transport-io", "transport-streamable-http-server"] }
+mime_guess = "=2.0.5"
+ureq = { version = "=3.4.2", default-features = false }
 
 # Presenters and assets (charter 4.1)
 gltf = { version = "=1.4.1", default-features = false, features = ["import", "utils", "names", "KHR_materials_emissive_strength", "KHR_texture_transform", "KHR_lights_punctual"] }

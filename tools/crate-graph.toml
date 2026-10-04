@@ -77,7 +77,11 @@ planned = true
 group = "tool"
 deps = ["pocket-sim", "pocket-link"]
 web = false
-planned = true
+
+[crate.pocket-server]
+group = "tool"
+deps = ["pocket-sim", "pocket-link", "pocket-mcp"]
+web = false
 
 [crate.pocket-debug]
 group = "tool"
@@ -88,7 +92,7 @@ planned = true
 [crate.pocket-app]
 group = "app"
 deps = ["pocket-sim", "pocket-link", "pocket-runtime", "pocket-check", "pocket-render", "pocket-editor",
-        "pocket-mcp", "pocket-debug"]
+        "pocket-mcp", "pocket-server", "pocket-debug"]
 web = false
 
 [crate.pocket-web]

@@ -27,9 +27,9 @@ use crate::ocean::Ocean;
 use crate::post::{DEPTH, HDR, Post, SAMPLES, Targets};
 use crate::profiler::GpuProfiler;
 use crate::scene::{InstanceGpu, Part, Resolve, Scene, VARIANTS};
+use crate::shaders;
 use crate::shadows::{self, CASCADES, SHADOW_SIZE};
 use crate::sky::{Sky, SkyParams};
-use crate::shaders;
 
 const VIEWS: u32 = 1 + CASCADES as u32;
 const CLUSTER_X: u32 = 16;
@@ -137,7 +137,11 @@ struct Pools<'a> {
 
 impl Resolve for Pools<'_> {
     fn parts(&mut self, look: &Look) -> Option<Vec<Part>> {
-        if let Some(mesh) = self.meshes.get(&look.mesh).filter(|_| !look.mesh.contains('.')) {
+        if let Some(mesh) = self
+            .meshes
+            .get(&look.mesh)
+            .filter(|_| !look.mesh.contains('.'))
+        {
             let material = self.materials.resolve(look)?;
             return Some(vec![Part {
                 mesh,
@@ -276,7 +280,12 @@ struct Binds {
     sky: wgpu::BindGroup,
 }
 
-fn storage(device: &wgpu::Device, label: &str, size: u64, extra: wgpu::BufferUsages) -> wgpu::Buffer {
+fn storage(
+    device: &wgpu::Device,
+    label: &str,
+    size: u64,
+    extra: wgpu::BufferUsages,
+) -> wgpu::Buffer {
     device.create_buffer(&wgpu::BufferDescriptor {
         label: Some(label),
         size: size.max(64),
@@ -294,7 +303,11 @@ fn uniform(device: &wgpu::Device, label: &str, size: u64) -> wgpu::Buffer {
     })
 }
 
-fn entry(binding: u32, vis: wgpu::ShaderStages, ty: wgpu::BindingType) -> wgpu::BindGroupLayoutEntry {
+fn entry(
+    binding: u32,
+    vis: wgpu::ShaderStages,
+    ty: wgpu::BindingType,
+) -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry {
         binding,
         visibility: vis,
@@ -350,7 +363,11 @@ impl Renderer {
                         multisampled: false,
                     },
                 ),
-                entry(1, frag, wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison)),
+                entry(
+                    1,
+                    frag,
+                    wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
+                ),
                 entry(
                     2,
                     frag,
@@ -360,7 +377,11 @@ impl Renderer {
                         multisampled: false,
                     },
                 ),
-                entry(3, frag, wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering)),
+                entry(
+                    3,
+                    frag,
+                    wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                ),
                 entry(4, frag, uni_ty()),
                 entry(5, frag, buf_ty(true)),
                 entry(6, frag, uni_ty()),
@@ -383,7 +404,11 @@ impl Renderer {
             entries: &[
                 tex_entry(0),
                 tex_entry(1),
-                entry(2, frag, wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering)),
+                entry(
+                    2,
+                    frag,
+                    wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                ),
             ],
         });
         let fwd_module = shaders::module(device, "forward");
@@ -454,43 +479,60 @@ impl Renderer {
             layout: &empty,
             entries: &[],
         });
-        let shadow_pipe = |masked: bool| device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some(if masked { "shadow casters (masked)" } else { "shadow casters" }),
-            layout: Some(&shadow_layout),
-            vertex: wgpu::VertexState {
-                module: &fwd_module,
-                entry_point: Some(if masked { "vs_shadow_masked" } else { "vs_shadow" }),
-                compilation_options: Default::default(),
-                buffers: &[Some(vertex_layout.clone())],
-            },
-            fragment: masked.then(|| wgpu::FragmentState {
-                module: &fwd_module,
-                entry_point: Some("fs_shadow_masked"),
-                compilation_options: Default::default(),
-                targets: &[],
-            }),
-            primitive: wgpu::PrimitiveState {
-                cull_mode: None,
-                unclipped_depth: false,
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: DEPTH,
-                depth_write_enabled: Some(true),
-                depth_compare: Some(wgpu::CompareFunction::LessEqual),
-                stencil: Default::default(),
-                bias: wgpu::DepthBiasState {
-                    constant: 2,
-                    slope_scale: 2.5,
-                    clamp: 0.0,
+        let shadow_pipe = |masked: bool| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(if masked {
+                    "shadow casters (masked)"
+                } else {
+                    "shadow casters"
+                }),
+                layout: Some(&shadow_layout),
+                vertex: wgpu::VertexState {
+                    module: &fwd_module,
+                    entry_point: Some(if masked {
+                        "vs_shadow_masked"
+                    } else {
+                        "vs_shadow"
+                    }),
+                    compilation_options: Default::default(),
+                    buffers: &[Some(vertex_layout.clone())],
                 },
-            }),
-            multisample: Default::default(),
-            multiview_mask: None,
-            cache: None,
-        });
+                fragment: masked.then(|| wgpu::FragmentState {
+                    module: &fwd_module,
+                    entry_point: Some("fs_shadow_masked"),
+                    compilation_options: Default::default(),
+                    targets: &[],
+                }),
+                primitive: wgpu::PrimitiveState {
+                    cull_mode: None,
+                    unclipped_depth: false,
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: DEPTH,
+                    depth_write_enabled: Some(true),
+                    depth_compare: Some(wgpu::CompareFunction::LessEqual),
+                    stencil: Default::default(),
+                    bias: wgpu::DepthBiasState {
+                        constant: 2,
+                        slope_scale: 2.5,
+                        clamp: 0.0,
+                    },
+                }),
+                multisample: Default::default(),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
         let shadow = [shadow_pipe(false), shadow_pipe(true)];
-        let ocean = Ocean::new(device, &fwd_module, [&frame, &lighting, &textures], HDR, DEPTH, SAMPLES);
+        let ocean = Ocean::new(
+            device,
+            &fwd_module,
+            [&frame, &lighting, &textures],
+            HDR,
+            DEPTH,
+            SAMPLES,
+        );
         let sky_module = shaders::module(device, "sky");
         let sky_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("sky"),
@@ -585,9 +627,19 @@ impl Renderer {
             view_buf: uniform(device, "view", std::mem::size_of::<ViewUniform>() as u64),
             cull_buf: uniform(device, "cull", std::mem::size_of::<CullUniform>() as u64),
             instances: storage(device, "instances", 1024 * 80, wgpu::BufferUsages::empty()),
-            visible: storage(device, "visible", 1024 * 4 * u64::from(VIEWS), wgpu::BufferUsages::empty()),
+            visible: storage(
+                device,
+                "visible",
+                1024 * 4 * u64::from(VIEWS),
+                wgpu::BufferUsages::empty(),
+            ),
             draws: storage(device, "draws", 64 * 20, wgpu::BufferUsages::INDIRECT),
-            draw_template: storage(device, "draw template", 64 * 20, wgpu::BufferUsages::COPY_SRC),
+            draw_template: storage(
+                device,
+                "draw template",
+                64 * 20,
+                wgpu::BufferUsages::COPY_SRC,
+            ),
             lights: storage(device, "lights", 64 * 64, wgpu::BufferUsages::empty()),
             cluster_buf: uniform(device, "clusters", 32),
             cluster_lights: storage(
@@ -651,7 +703,8 @@ impl Renderer {
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
-        if width == 0 || height == 0 || (width, height) == (self.targets.width, self.targets.height) {
+        if width == 0 || height == 0 || (width, height) == (self.targets.width, self.targets.height)
+        {
             return;
         }
         self.targets = Targets::new(&self.gpu.device, width, height);
@@ -707,14 +760,23 @@ impl Renderer {
     pub fn add_model(&mut self, path: &str, asset: &ModelAsset) {
         let device = &self.gpu.device;
         let queue = &self.gpu.queue;
-        self.materials
-            .add_asset(device, queue, &mut self.blitter, path, &asset.materials, &asset.images);
+        self.materials.add_asset(
+            device,
+            queue,
+            &mut self.blitter,
+            path,
+            &asset.materials,
+            &asset.images,
+        );
         let mut meshes = Vec::with_capacity(asset.meshes.len());
         let mut names = HashMap::new();
         for (i, m) in asset.meshes.iter().enumerate() {
             let key = format!("{path}#{}", m.name);
             let id = self.meshes.add(device, queue, &key, m);
-            let mat = m.material.map(|k| format!("{path}#{k}")).unwrap_or_default();
+            let mat = m
+                .material
+                .map(|k| format!("{path}#{k}"))
+                .unwrap_or_default();
             meshes.push((id, mat));
             names.insert(m.name.clone(), i);
         }
@@ -764,13 +826,22 @@ impl Renderer {
         let n = self.scene.instance_count() as u64;
         let mut grown = false;
         if n * 80 > self.instances.size() {
-            self.instances = storage(device, "instances", (n * 80).next_power_of_two(), wgpu::BufferUsages::empty());
+            self.instances = storage(
+                device,
+                "instances",
+                (n * 80).next_power_of_two(),
+                wgpu::BufferUsages::empty(),
+            );
             self.scene.full_upload = true;
             grown = true;
         }
         for run in self.scene.take_dirty_runs() {
             let slots: &[InstanceGpu] = &self.scene.slots[run.start as usize..run.end as usize];
-            queue.write_buffer(&self.instances, u64::from(run.start) * 80, bytemuck::cast_slice(slots));
+            queue.write_buffer(
+                &self.instances,
+                u64::from(run.start) * 80,
+                bytemuck::cast_slice(slots),
+            );
         }
         let mesh_count = self.meshes.len() as u32;
         if self.scene.counts_changed || mesh_count != self.draw_meshes {
@@ -778,15 +849,24 @@ impl Renderer {
             let (offsets, stride) = self.scene.batch_offsets(self.meshes.len());
             let ob = (offsets.len() * 4) as u64;
             if ob > self.batch_offsets.size() {
-                self.batch_offsets =
-                    storage(device, "batch offsets", ob.next_power_of_two(), wgpu::BufferUsages::empty());
+                self.batch_offsets = storage(
+                    device,
+                    "batch offsets",
+                    ob.next_power_of_two(),
+                    wgpu::BufferUsages::empty(),
+                );
                 grown = true;
             }
             queue.write_buffer(&self.batch_offsets, 0, bytemuck::cast_slice(&offsets));
             let vis = u64::from(stride) * u64::from(VIEWS) * 4;
             if vis > self.visible.size() || stride != self.view_stride {
                 if vis > self.visible.size() {
-                    self.visible = storage(device, "visible", vis.next_power_of_two(), wgpu::BufferUsages::empty());
+                    self.visible = storage(
+                        device,
+                        "visible",
+                        vis.next_power_of_two(),
+                        wgpu::BufferUsages::empty(),
+                    );
                     grown = true;
                 }
                 self.view_stride = stride;
@@ -808,9 +888,18 @@ impl Renderer {
             }
             let bytes = (template.len() * 20) as u64;
             if bytes > self.draws.size() {
-                self.draws = storage(device, "draws", bytes.next_power_of_two(), wgpu::BufferUsages::INDIRECT);
-                self.draw_template =
-                    storage(device, "draw template", bytes.next_power_of_two(), wgpu::BufferUsages::COPY_SRC);
+                self.draws = storage(
+                    device,
+                    "draws",
+                    bytes.next_power_of_two(),
+                    wgpu::BufferUsages::INDIRECT,
+                );
+                self.draw_template = storage(
+                    device,
+                    "draw template",
+                    bytes.next_power_of_two(),
+                    wgpu::BufferUsages::COPY_SRC,
+                );
                 grown = true;
             }
             queue.write_buffer(&self.draw_template, 0, bytemuck::cast_slice(&template));
@@ -842,7 +931,12 @@ impl Renderer {
                 .collect();
             let bytes = (lights.len() * 64) as u64;
             if bytes > self.lights.size() {
-                self.lights = storage(device, "lights", bytes.next_power_of_two(), wgpu::BufferUsages::empty());
+                self.lights = storage(
+                    device,
+                    "lights",
+                    bytes.next_power_of_two(),
+                    wgpu::BufferUsages::empty(),
+                );
                 grown = true;
             }
             if !lights.is_empty() {
@@ -980,7 +1074,8 @@ impl Renderer {
         let view = cam.view();
         let proj = cam.proj(aspect);
         let vp = proj * view;
-        let alpha = ((now_s - self.tick_arrived) / self.scene.dt_s.max(1e-6)).clamp(0.0, 1.0) as f32;
+        let alpha =
+            ((now_s - self.tick_arrived) / self.scene.dt_s.max(1e-6)).clamp(0.0, 1.0) as f32;
 
         // The sun: the lowest-id directional light.
         let sun = self
@@ -998,7 +1093,12 @@ impl Renderer {
                 l.intensity,
                 l.shadows,
             ),
-            None => (Vec3::new(0.3, 0.8, 0.4).normalize(), [1.0, 0.96, 0.9], 0.0, false),
+            None => (
+                Vec3::new(0.3, 0.8, 0.4).normalize(),
+                [1.0, 0.96, 0.9],
+                0.0,
+                false,
+            ),
         };
         let sky_kind = env.as_ref().map_or(0, |e| e.sky);
         let flat = env.as_ref().map_or([0.35, 0.5, 0.75], |e| e.sky_color);
@@ -1006,7 +1106,12 @@ impl Renderer {
             &device,
             &queue,
             SkyParams {
-                sun: [to_sun.x, to_sun.y, to_sun.z, if sun.is_some() { sun_lux } else { 6.0 }],
+                sun: [
+                    to_sun.x,
+                    to_sun.y,
+                    to_sun.z,
+                    if sun.is_some() { sun_lux } else { 6.0 },
+                ],
                 color: [sun_color[0], sun_color[1], sun_color[2], sky_kind as f32],
                 flat_color: [flat[0], flat[1], flat[2], 0.0],
                 size: [0; 4],
@@ -1020,14 +1125,34 @@ impl Renderer {
             view: mat(view),
             proj: mat(proj),
             inv_view_proj: mat(vp.inverse()),
-            camera_pos: [cam.position.x, cam.position.y, cam.position.z, self.scene.t_s as f32],
+            camera_pos: [
+                cam.position.x,
+                cam.position.y,
+                cam.position.z,
+                self.scene.t_s as f32,
+            ],
             viewport: [w as f32, h as f32, 1.0 / w as f32, 1.0 / h.max(1) as f32],
             sun_dir: [to_sun.x, to_sun.y, to_sun.z, sun_lux],
-            sun_color: [sun_color[0], sun_color[1], sun_color[2], env.as_ref().map_or(1.0, |e| e.ambient)],
+            sun_color: [
+                sun_color[0],
+                sun_color[1],
+                sun_color[2],
+                env.as_ref().map_or(1.0, |e| e.ambient),
+            ],
             fog: env.as_ref().map_or([0.0; 4], |e| {
-                [e.fog_color[0], e.fog_color[1], e.fog_color[2], e.fog_density]
+                [
+                    e.fog_color[0],
+                    e.fog_color[1],
+                    e.fog_color[2],
+                    e.fog_density,
+                ]
             }),
-            params: [alpha, exposure, env.as_ref().map_or(0.15, |e| e.bloom), sky_kind as f32],
+            params: [
+                alpha,
+                exposure,
+                env.as_ref().map_or(0.15, |e| e.bloom),
+                sky_kind as f32,
+            ],
             sky_color: [flat[0], flat[1], flat[2], if shadows { 1.0 } else { 0.0 }],
             cascade_splits: casc.splits,
             cascades: casc.view_proj.map(mat),
@@ -1077,14 +1202,20 @@ impl Renderer {
         );
 
         let binds = self.bind.as_ref().unwrap_or_else(|| unreachable!());
-        let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("frame") });
+        let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("frame"),
+        });
         let draw_bytes = u64::from(self.draw_meshes * VIEWS * VARIANTS) * 20;
         if draw_bytes > 0 {
             enc.copy_buffer_to_buffer(&self.draw_template, 0, &self.draws, 0, draw_bytes);
         }
         if n > 0 {
             let groups = n.div_ceil(256);
-            let (gx, gy) = if groups > 65535 { (65535, groups.div_ceil(65535)) } else { (groups, 1) };
+            let (gx, gy) = if groups > 65535 {
+                (65535, groups.div_ceil(65535))
+            } else {
+                (groups, 1)
+            };
             let ts = self.profiler.compute_scope("cull");
             let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("cull"),
@@ -1105,7 +1236,11 @@ impl Renderer {
             pass.dispatch_workgroups((CLUSTER_X * CLUSTER_Y * CLUSTER_Z).div_ceil(64), 1, 1);
         }
         // Draws one variant's batches of one view: a contiguous range of the indirect buffer.
-        let draw = |pass: &mut wgpu::RenderPass<'_>, view_index: u32, variant: u32, meshes: u32, first_instance: bool| {
+        let draw = |pass: &mut wgpu::RenderPass<'_>,
+                    view_index: u32,
+                    variant: u32,
+                    meshes: u32,
+                    first_instance: bool| {
             if meshes == 0 {
                 return;
             }
@@ -1189,8 +1324,15 @@ impl Renderer {
             pass.draw(0..3, 0..1);
         }
         let bloom = env.as_ref().map_or(0.15, |e| e.bloom);
-        self.post
-            .run(&device, &queue, &mut enc, &self.targets, output, exposure, bloom);
+        self.post.run(
+            &device,
+            &queue,
+            &mut enc,
+            &self.targets,
+            output,
+            exposure,
+            bloom,
+        );
         self.profiler.resolve(&mut enc);
         queue.submit([enc.finish()]);
         self.profiler.after_submit();
@@ -1313,7 +1455,10 @@ pub fn web_time() -> f64 {
     {
         use std::sync::OnceLock;
         static START: OnceLock<std::time::Instant> = OnceLock::new();
-        START.get_or_init(std::time::Instant::now).elapsed().as_secs_f64()
+        START
+            .get_or_init(std::time::Instant::now)
+            .elapsed()
+            .as_secs_f64()
     }
     #[cfg(target_arch = "wasm32")]
     {

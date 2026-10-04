@@ -92,10 +92,18 @@ pub struct GameHandle {
     queue: QueueSender,
     reader: SnapshotReader,
     attached: Arc<AtomicBool>,
-    sources: Arc<Mutex<BTreeMap<Source, SourceSlot>>>,
-    next_developer: AtomicU32,
+    clients: Clients,
     host_seq: AtomicU64,
     join: Option<JoinHandle<()>>,
+}
+
+/// Hands out clients of a game thread; cheap to clone, so a server can open a client per session
+/// while the handle stays with whoever shuts the game down.
+#[derive(Clone)]
+pub struct Clients {
+    queue: QueueSender,
+    sources: Arc<Mutex<BTreeMap<Source, SourceSlot>>>,
+    next_developer: Arc<AtomicU32>,
 }
 
 impl GameThread {
@@ -173,11 +181,14 @@ impl GameThread {
             .recv()
             .unwrap_or_else(|_| Err(game_stopped("the game thread ended while starting", None)))?;
         Ok(GameHandle {
-            queue: tx,
+            queue: tx.clone(),
             reader,
             attached,
-            sources: Arc::new(Mutex::new(BTreeMap::new())),
-            next_developer: AtomicU32::new(0),
+            clients: Clients {
+                queue: tx.clone(),
+                sources: Arc::new(Mutex::new(BTreeMap::new())),
+                next_developer: Arc::new(AtomicU32::new(0)),
+            },
             host_seq: AtomicU64::new(0),
             join: Some(join),
         })
@@ -221,7 +232,7 @@ fn first_snapshot(
     })
 }
 
-impl GameHandle {
+impl Clients {
     /// A client of `source`: one live client per source (`source.in_use` while another is held).
     /// A client handed out again continues the source's sequence numbers. `Source::Host` is the
     /// runtime's own and is not handed out.
@@ -263,6 +274,23 @@ impl GameHandle {
                 return c;
             }
         }
+    }
+}
+
+impl GameHandle {
+    /// A client of `source` ([`Clients::client`]).
+    pub fn client(&self, source: Source) -> Result<GameClient, Problem> {
+        self.clients.client(source)
+    }
+
+    /// The next developer session's client (`Developer(0)`, `Developer(1)`, ...).
+    pub fn developer(&self) -> GameClient {
+        self.clients.developer()
+    }
+
+    /// What hands out clients, apart from the handle.
+    pub fn clients(&self) -> Clients {
+        self.clients.clone()
     }
 
     /// A reader of the snapshots; from now on the game publishes after every tick.
@@ -581,13 +609,13 @@ impl Loop {
                 self.present();
                 let tick = self.game.tick().0;
                 let keep = self.kept.every > 0 && tick.is_multiple_of(self.kept.every);
-                if keep || self.attached.load(Ordering::Acquire) {
-                    if let Ok(snap) = self.game.snapshot() {
-                        if keep {
-                            self.kept.offer(&snap, false);
-                        }
-                        self.publish_snapshot(snap);
+                if (keep || self.attached.load(Ordering::Acquire))
+                    && let Ok(snap) = self.game.snapshot()
+                {
+                    if keep {
+                        self.kept.offer(&snap, false);
                     }
+                    self.publish_snapshot(snap);
                 }
                 self.after_tick_steps();
             }

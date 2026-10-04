@@ -78,7 +78,10 @@ impl GpuProfiler {
     }
 
     /// Timestamp writes for a pass named `label`, or `None` when disabled or out of scopes.
-    pub fn compute_scope(&mut self, label: &'static str) -> Option<wgpu::ComputePassTimestampWrites<'_>> {
+    pub fn compute_scope(
+        &mut self,
+        label: &'static str,
+    ) -> Option<wgpu::ComputePassTimestampWrites<'_>> {
         let i = self.next(label)?;
         Some(wgpu::ComputePassTimestampWrites {
             query_set: self.queries.as_ref()?,
@@ -87,7 +90,10 @@ impl GpuProfiler {
         })
     }
 
-    pub fn render_scope(&mut self, label: &'static str) -> Option<wgpu::RenderPassTimestampWrites<'_>> {
+    pub fn render_scope(
+        &mut self,
+        label: &'static str,
+    ) -> Option<wgpu::RenderPassTimestampWrites<'_>> {
         let i = self.next(label)?;
         Some(wgpu::RenderPassTimestampWrites {
             query_set: self.queries.as_ref()?,
@@ -142,7 +148,11 @@ impl GpuProfiler {
                     .slice(..)
                     .map_async(wgpu::MapMode::Read, move |r| {
                         let mut s = state.lock().unwrap_or_else(|p| p.into_inner());
-                        *s = if r.is_ok() { SlotState::Ready } else { SlotState::Free };
+                        *s = if r.is_ok() {
+                            SlotState::Ready
+                        } else {
+                            SlotState::Free
+                        };
                     });
             }
         }

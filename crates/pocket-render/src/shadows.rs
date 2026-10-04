@@ -32,7 +32,11 @@ pub fn cascades(cam: &CameraState, aspect: f32, to_sun: Vec3, distance: f32) -> 
     let right = cam.rotation * Vec3::X;
     let up = cam.rotation * Vec3::Y;
     let light_dir = -to_sun.normalize();
-    let light_up = if light_dir.y.abs() > 0.99 { Vec3::Z } else { Vec3::Y };
+    let light_up = if light_dir.y.abs() > 0.99 {
+        Vec3::Z
+    } else {
+        Vec3::Y
+    };
     let mut view_proj = [Mat4::IDENTITY; CASCADES];
     let mut prev = near;
     for (i, &far) in splits.iter().enumerate() {
@@ -64,7 +68,14 @@ pub fn cascades(cam: &CameraState, aspect: f32, to_sun: Vec3, distance: f32) -> 
         let back = radius + 200.0;
         let eye = center - light_dir * back;
         let view = glam::camera::rh::view::look_at_mat4(eye, center, light_up);
-        let proj = glam::camera::rh::proj::directx::orthographic(-radius, radius, -radius, radius, 0.0, back + radius);
+        let proj = glam::camera::rh::proj::directx::orthographic(
+            -radius,
+            radius,
+            -radius,
+            radius,
+            0.0,
+            back + radius,
+        );
         view_proj[i] = proj * view;
         prev = far;
     }

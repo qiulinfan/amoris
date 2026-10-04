@@ -242,7 +242,12 @@ impl Post {
                 ((t.width / 2) >> (i - 1), (t.height / 2) >> (i - 1))
             };
             slots.push(PostParams {
-                texel: [1.0 / sw.max(1) as f32, 1.0 / sh.max(1) as f32, 0.0, if i == 0 { 1.0 } else { 0.0 }],
+                texel: [
+                    1.0 / sw.max(1) as f32,
+                    1.0 / sh.max(1) as f32,
+                    0.0,
+                    if i == 0 { 1.0 } else { 0.0 },
+                ],
                 exposure: [exposure, 0.0, 0.0, 0.0],
             });
         }
@@ -255,7 +260,12 @@ impl Post {
             });
         }
         slots.push(PostParams {
-            texel: [1.0 / t.width as f32, 1.0 / t.height as f32, bloom, mips as f32],
+            texel: [
+                1.0 / t.width as f32,
+                1.0 / t.height as f32,
+                bloom,
+                mips as f32,
+            ],
             exposure: [exposure, if self.output_srgb { 1.0 } else { 0.0 }, 0.0, 0.0],
         });
         for (k, s) in slots.iter().enumerate() {
@@ -263,8 +273,22 @@ impl Post {
         }
         let mut slot = 0u64;
         for i in 0..mips {
-            let src = if i == 0 { &t.hdr_view } else { &t.bloom_mips[i - 1] };
-            self.pass(device, enc, &self.down, slot, src, None, &t.bloom_mips[i], true, "bloom down");
+            let src = if i == 0 {
+                &t.hdr_view
+            } else {
+                &t.bloom_mips[i - 1]
+            };
+            self.pass(
+                device,
+                enc,
+                &self.down,
+                slot,
+                src,
+                None,
+                &t.bloom_mips[i],
+                true,
+                "bloom down",
+            );
             slot += 1;
         }
         for i in (0..mips.saturating_sub(1)).rev() {

@@ -122,7 +122,10 @@ impl Scene {
 
     /// The entity drawn in `slot`.
     pub fn entity_of_slot(&self, slot: u32) -> Option<u64> {
-        self.slot_entity.get(slot as usize).copied().filter(|&e| e != 0)
+        self.slot_entity
+            .get(slot as usize)
+            .copied()
+            .filter(|&e| e != 0)
     }
 
     fn mark(&mut self, slot: u32) {
@@ -259,11 +262,17 @@ impl Scene {
         }
         let look_changed = u.look.is_some();
         if let Some(look) = u.look {
-            let e = self.entities.get_mut(&u.id).unwrap_or_else(|| unreachable!());
+            let e = self
+                .entities
+                .get_mut(&u.id)
+                .unwrap_or_else(|| unreachable!());
             e.look = Some(look);
         }
         if let Some(pose) = u.pose {
-            let e = self.entities.get_mut(&u.id).unwrap_or_else(|| unreachable!());
+            let e = self
+                .entities
+                .get_mut(&u.id)
+                .unwrap_or_else(|| unreachable!());
             e.pose = pose;
         }
         if look_changed || !exists {

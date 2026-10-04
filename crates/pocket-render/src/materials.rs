@@ -85,7 +85,12 @@ pub struct TextureArray {
 }
 
 impl TextureArray {
-    fn new(device: &wgpu::Device, format: wgpu::TextureFormat, layers: u32, label: &str) -> TextureArray {
+    fn new(
+        device: &wgpu::Device,
+        format: wgpu::TextureFormat,
+        layers: u32,
+        label: &str,
+    ) -> TextureArray {
         let mips = TEX_SIZE.ilog2() + 1;
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some(label),
@@ -180,8 +185,18 @@ impl MaterialPool {
             rows: vec![MaterialGpu::default()],
             by_key: HashMap::new(),
             assets: HashMap::new(),
-            srgb: TextureArray::new(device, wgpu::TextureFormat::Rgba8UnormSrgb, 2, "textures (sRGB)"),
-            linear: TextureArray::new(device, wgpu::TextureFormat::Rgba8Unorm, 2, "textures (linear)"),
+            srgb: TextureArray::new(
+                device,
+                wgpu::TextureFormat::Rgba8UnormSrgb,
+                2,
+                "textures (sRGB)",
+            ),
+            linear: TextureArray::new(
+                device,
+                wgpu::TextureFormat::Rgba8Unorm,
+                2,
+                "textures (linear)",
+            ),
             dirty: true,
             generation: 0,
         }
@@ -255,15 +270,31 @@ impl MaterialPool {
         let mut srgb_layer: HashMap<usize, u32> = HashMap::new();
         let mut linear_layer: HashMap<usize, u32> = HashMap::new();
         let mut layer = |pool: &mut MaterialPool, img: usize, srgb: bool| -> u32 {
-            let map = if srgb { &mut srgb_layer } else { &mut linear_layer };
+            let map = if srgb {
+                &mut srgb_layer
+            } else {
+                &mut linear_layer
+            };
             if let Some(&l) = map.get(&img) {
                 return l;
             }
             let Some(data) = images.get(img) else {
                 return NO_TEXTURE;
             };
-            let arr = if srgb { &mut pool.srgb } else { &mut pool.linear };
-            if arr.reserve(device, queue, if srgb { "textures (sRGB)" } else { "textures (linear)" }) {
+            let arr = if srgb {
+                &mut pool.srgb
+            } else {
+                &mut pool.linear
+            };
+            if arr.reserve(
+                device,
+                queue,
+                if srgb {
+                    "textures (sRGB)"
+                } else {
+                    "textures (linear)"
+                },
+            ) {
                 pool.generation += 1;
             }
             let l = arr.used;
