@@ -235,6 +235,15 @@ impl PreparedSpawn {
         Ok(id)
     }
 
+    /// Spawns the entity again under the destroyed entity's id `id` (an undo of a destroy).
+    pub fn revive(mut self, b: &mut Boundary<'_>, id: EntityId) -> Result<(), Problem> {
+        match self.name.take() {
+            Some(n) => b.revive(id, n)?,
+            None => b.revive(id, ())?,
+        };
+        self.insert(b, id)
+    }
+
     /// Inserts the components into the live entity `id` (its name, if any, is left out).
     pub fn insert(self, b: &mut Boundary<'_>, id: EntityId) -> Result<(), Problem> {
         let e = b

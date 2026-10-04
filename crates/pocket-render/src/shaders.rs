@@ -10,7 +10,12 @@ pub fn source(name: &str) -> String {
         "cull" => include_str!("../shaders/cull.wgsl"),
         "forward" => include_str!("../shaders/forward.wgsl"),
         "sky" => include_str!("../shaders/sky.wgsl"),
-        "sky_bake" => return format!("{COMMON}\n{ATMOSPHERE}\n{}", include_str!("../shaders/sky_bake.wgsl")),
+        "sky_bake" => {
+            return format!(
+                "{COMMON}\n{ATMOSPHERE}\n{}",
+                include_str!("../shaders/sky_bake.wgsl")
+            );
+        }
         "ibl" => include_str!("../shaders/ibl.wgsl"),
         "cluster" => include_str!("../shaders/cluster.wgsl"),
         "post" => include_str!("../shaders/post.wgsl"),

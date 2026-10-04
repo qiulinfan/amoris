@@ -43,7 +43,12 @@ pub struct Sky {
     last: Option<SkyParams>,
 }
 
-fn cube(device: &wgpu::Device, label: &str, size: u32, mips: u32) -> (wgpu::Texture, wgpu::TextureView) {
+fn cube(
+    device: &wgpu::Device,
+    label: &str,
+    size: u32,
+    mips: u32,
+) -> (wgpu::Texture, wgpu::TextureView) {
     let t = device.create_texture(&wgpu::TextureDescriptor {
         label: Some(label),
         size: wgpu::Extent3d {
@@ -199,7 +204,16 @@ impl Sky {
             }));
             let src = src_view(&self.raw, mip - 1..mip);
             let dst = storage_view(&self.raw, mip);
-            self.dispatch(device, &mut enc, &self.downsample, at, &src, Some(&dst), size, false);
+            self.dispatch(
+                device,
+                &mut enc,
+                &self.downsample,
+                at,
+                &src,
+                Some(&dst),
+                size,
+                false,
+            );
         }
         // Prefiltered levels from the whole raw chain.
         let src = src_view(&self.raw, 0..SKY_MIPS);
@@ -211,7 +225,16 @@ impl Sky {
                 rough: [rough, 0.0, 0.0, 0.0],
             }));
             let dst = storage_view(&self.env, mip);
-            self.dispatch(device, &mut enc, &self.prefilter, at, &src, Some(&dst), size, false);
+            self.dispatch(
+                device,
+                &mut enc,
+                &self.prefilter,
+                at,
+                &src,
+                Some(&dst),
+                size,
+                false,
+            );
         }
         // Irradiance from the 32x32 mip (level 2).
         let at = write(bytemuck::bytes_of(&IblParams {

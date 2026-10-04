@@ -6,16 +6,45 @@
 //! - `pocket hashes <project> [--seed S] [--ticks N] [--inputs FILE]`: the hash after every tick
 //!   as JSON, which the web build compares against
 //!
+//! - `pocket play <project>`: the game in a native window (window.rs)
+//! - `pocket serve <project> [--port 7878]`: the project's game (real time, paused) with the host's
+//!   server on 127.0.0.1 (docs/spec/server.md); `pocket mcp <project>`: MCP over stdio
+//! - the client of a running host: `pocket call <method> '<json>'`, `pocket status`, `pocket world
+//!   ...`, `pocket step ...`, `pocket play start|stop`, `pocket undo`, ... (`pocket help`)
+//!
 //! Everything runs on a thread whose stack holds the script host's limit (script-sandbox.md 4.3).
 
 mod check;
 mod cli;
+mod client;
 mod run;
+mod serve;
 mod window;
 
 use check::Outcome;
 
-const SUBCOMMANDS: &[&str] = &["run", "play", "check", "replay", "hashes"];
+const SUBCOMMANDS: &[&str] = &[
+    "run",
+    "play",
+    "check",
+    "replay",
+    "hashes",
+    "serve",
+    "mcp",
+    "call",
+    "status",
+    "world",
+    "step",
+    "time",
+    "undo",
+    "redo",
+    "history",
+    "scripts",
+    "events",
+    "logs",
+    "snapshots",
+    "help",
+];
 
 fn dispatch(args: Vec<String>) -> Outcome {
     let rest = args.get(1..).map(<[String]>::to_vec).unwrap_or_default();
@@ -24,12 +53,15 @@ fn dispatch(args: Vec<String>) -> Outcome {
         Some("check") => check::check(&rest),
         Some("replay") => check::replay(&rest),
         Some("hashes") => check::hashes(&rest),
+        Some("serve") => serve::serve(&rest),
+        Some("mcp") => serve::mcp(&rest),
+        Some(cmd) if client::is_client(cmd) => client::run(cmd, &rest),
+        None => client::run("help", &rest),
         other => {
             let name = other.unwrap_or("");
+            let s = pocket_contract::suggest_names(name, SUBCOMMANDS.iter().copied());
             let p = cli::usage(
-                format!(
-                    "pocket has no subcommand '{name}'; it has {SUBCOMMANDS:?}: pocket run|check|replay|hashes ..."
-                ),
+                format!("pocket has no subcommand '{name}'; did you mean {s:?}? (pocket help)"),
                 name,
                 SUBCOMMANDS,
             );
@@ -45,7 +77,10 @@ fn dispatch(args: Vec<String>) -> Outcome {
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     // A window's event loop must run on the main thread (macOS); its game runs on its own thread.
-    if args.first().map(String::as_str) == Some("play") {
+    // `pocket play start|stop` is the client's Play of a running host; `pocket play <project>` opens
+    // a window.
+    let client_play = matches!(args.get(1).map(String::as_str), Some("start" | "stop"));
+    if args.first().map(String::as_str) == Some("play") && !client_play {
         let outcome = window::play(&args[1..]);
         if !outcome.stdout.is_empty() {
             println!("{}", outcome.stdout);
@@ -70,6 +105,8 @@ fn main() {
             code: 1,
         },
     };
-    println!("{}", outcome.stdout);
+    if !outcome.stdout.is_empty() {
+        println!("{}", outcome.stdout);
+    }
     std::process::exit(outcome.code);
 }

@@ -85,7 +85,12 @@ impl Ocean {
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("ocean"),
-            bind_group_layouts: &[Some(groups[0]), Some(groups[1]), Some(groups[2]), Some(&layout3)],
+            bind_group_layouts: &[
+                Some(groups[0]),
+                Some(groups[1]),
+                Some(groups[2]),
+                Some(&layout3),
+            ],
             immediate_size: 0,
         });
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {

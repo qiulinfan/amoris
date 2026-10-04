@@ -173,7 +173,9 @@ fn scene_entities_name_each_other() {
         setup.scene = Scene::from_json(&scene.to_string()).unwrap();
         let mut g = Game::new(Arc::new(setup.clone()), 1).unwrap_or_else(|e| panic!("{e:#?}"));
         assert_eq!(get(&mut g, "Sloop", "Crew")["take"], json!(7));
-        assert_eq!(get(&mut g, "Mate", "Crew")["take"], json!(8));
+        // Ids are allocated in scene order from 1: Mate, appended last, has the last id.
+        let mate = scene["entities"].as_array().unwrap().len();
+        assert_eq!(get(&mut g, "Mate", "Crew")["take"], json!(mate));
         // A name no entity has is refused with the scene's names to choose from.
         scene["entities"][2]["components"]["Crew"] = json!({"take": "Crate9"});
         setup.scene = Scene::from_json(&scene.to_string()).unwrap();

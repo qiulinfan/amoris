@@ -656,6 +656,7 @@ order of 4.4 is total by construction, so there is no ambiguity to detect (14, c
 | `sim.entity_ids_exhausted` | an allocation past `MAX_ENTITY_ID` | `{next}` |
 | `sim.entity_id_invalid` | an id that was never allocated, 0, or not an integer in range | `{id, next}` |
 | `sim.entity_not_found` | an operation needs a live entity and the id's entity is despawned | `{id}` |
+| `sim.entity_alive` | a revival (the editor's undo of a destroy, `entity::revive`) names an id whose entity is live | `{id}` |
 | `sim.system_failed` | an invocation failed; its effects were discarded | `{tick, phase, system, entity?, cause}`, `cause` in the error protocol's shape |
 | `sim.internal` | a system panicked | `{tick, phase, system, message}` |
 | `sim.world_poisoned` | `step` on a world whose last tick panicked | `{tick}` |

@@ -159,10 +159,15 @@ impl<H: Host> App<H> {
     fn init(&mut self, el: &ActiveEventLoop) -> Result<(), String> {
         let attrs = Window::default_attributes()
             .with_title(&self.options.title)
-            .with_inner_size(winit::dpi::LogicalSize::new(self.options.width, self.options.height));
+            .with_inner_size(winit::dpi::LogicalSize::new(
+                self.options.width,
+                self.options.height,
+            ));
         let window = Arc::new(el.create_window(attrs).map_err(|e| e.to_string())?);
         let inst = instance(self.options.backend);
-        let surface = inst.create_surface(window.clone()).map_err(|e| e.to_string())?;
+        let surface = inst
+            .create_surface(window.clone())
+            .map_err(|e| e.to_string())?;
         let gpu = pollster::block_on(Gpu::new(inst, Some(&surface))).map_err(|e| e.to_string())?;
         let caps = surface.get_capabilities(&gpu.adapter);
         let format = caps
@@ -225,14 +230,17 @@ impl<H: Host> App<H> {
         }
         self.host.update(&mut st.renderer, now);
         let tex = match st.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
+            wgpu::CurrentSurfaceTexture::Success(t)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
                 st.surface.configure(&st.renderer.gpu().device, &st.config);
                 return;
             }
             _ => return,
         };
-        let view = tex.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let view = tex
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
         let stats = st.renderer.render(&view, now);
         st.window.pre_present_notify();
         st.renderer.gpu().queue.present(tex);
@@ -266,7 +274,11 @@ impl<H: Host> App<H> {
                     frame_ms_p95: ft[(ft.len() * 95 / 100).min(ft.len() - 1)],
                     gpu_ms_mean: mean(&st.gpu_times),
                     cpu_ms_mean: mean(&st.cpu_times),
-                    passes: stats.passes.iter().map(|(l, m)| ((*l).to_owned(), f64::from(*m))).collect(),
+                    passes: stats
+                        .passes
+                        .iter()
+                        .map(|(l, m)| ((*l).to_owned(), f64::from(*m)))
+                        .collect(),
                     instances: stats.instances,
                 });
                 el.exit();
@@ -339,7 +351,8 @@ impl<H: Host> ApplicationHandler for App<H> {
                     if fly.looking {
                         if let Some((x, y)) = fly.last_cursor {
                             fly.yaw += ((position.x - x) * 0.003) as f32;
-                            fly.pitch = (fly.pitch - ((position.y - y) * 0.003) as f32).clamp(-1.55, 1.55);
+                            fly.pitch =
+                                (fly.pitch - ((position.y - y) * 0.003) as f32).clamp(-1.55, 1.55);
                         }
                         fly.last_cursor = Some((position.x, position.y));
                     }

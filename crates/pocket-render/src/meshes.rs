@@ -37,7 +37,12 @@ pub struct MeshPool {
 
 const VERTEX: u64 = std::mem::size_of::<Vertex>() as u64;
 
-fn buffer(device: &wgpu::Device, label: &str, size: u64, usage: wgpu::BufferUsages) -> wgpu::Buffer {
+fn buffer(
+    device: &wgpu::Device,
+    label: &str,
+    size: u64,
+    usage: wgpu::BufferUsages,
+) -> wgpu::Buffer {
     device.create_buffer(&wgpu::BufferDescriptor {
         label: Some(label),
         size: size.max(16),
@@ -142,8 +147,16 @@ impl MeshPool {
         }
         let base_vertex = (self.vertex_len / VERTEX) as i32;
         let first_index = (self.index_len / 4) as u32;
-        queue.write_buffer(&self.vertices, self.vertex_len, bytemuck::cast_slice(&mesh.vertices));
-        queue.write_buffer(&self.indices, self.index_len, bytemuck::cast_slice(&mesh.indices));
+        queue.write_buffer(
+            &self.vertices,
+            self.vertex_len,
+            bytemuck::cast_slice(&mesh.vertices),
+        );
+        queue.write_buffer(
+            &self.indices,
+            self.index_len,
+            bytemuck::cast_slice(&mesh.indices),
+        );
         self.vertex_len += vbytes;
         self.index_len += ibytes;
         let id = self.infos.len() as u32;

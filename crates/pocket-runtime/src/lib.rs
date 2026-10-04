@@ -8,7 +8,10 @@
 //!   command at the boundary the world is at, `step` a tick, `fork`, `snapshot`, record; it
 //!   implements spec-persist's `Stepper`, so replays and lockstep drive it.
 //! - With the feature `thread` (native), [`thread::GameThread`] runs a `Game` on its own thread,
-//!   publishing snapshots and taking commands through `pocket-link`.
+//!   publishing snapshots and taking commands through `pocket-link`; it adds what needs a loop:
+//!   pacing, Play (a fork of the edit world run in real time) and the kept snapshots.
+//! - The catalog ([`CATALOG`], docs/spec/server.md) names every command with its kind and the JSON
+//!   Schema of its parameters; `world.edit` keeps an undo history ([`history`]).
 
 // A tick-code crate (numeric.md 5 and 8): its slot functions run inside ticks.
 #![deny(
@@ -18,9 +21,13 @@
 )]
 
 mod catalog;
+pub mod control;
 mod edit;
 mod engine;
+pub mod files;
 mod game;
+pub mod history;
+pub mod inspect;
 pub mod present;
 mod project;
 mod scene;
@@ -29,11 +36,12 @@ mod scripts;
 pub mod thread;
 mod values;
 
-pub use catalog::{CATALOG, Command, CommandDef, CommandFn};
-pub use edit::{Edit, WorldEditParams, WorldGetParams};
+pub use catalog::{CATALOG, Command, CommandDef, CommandFn, NoParams, catalog_json};
+pub use control::StepParams;
+pub use edit::{Edit, EditOp, WorldEditOps, WorldEditParams, WorldGetParams, label_of};
 pub use engine::{engine_component, merge};
+pub use game::{Extras, Game, GameBuilder, SystemFn, registry, run_config};
 pub use present::Extractor;
-pub use game::{Extras, Game, GameBuilder, StepParams, SystemFn, registry, run_config};
 pub use project::{GameSetup, Manifest, Project, read_file, toml_value};
 pub use scene::{Prefab, SCENE_FORMAT, Scene, SceneEntity, prefab_components};
 pub use scripts::{ENTRY, ScriptsApplyParams, bundle_record, compiled_from_record};

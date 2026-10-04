@@ -141,6 +141,51 @@ impl<'a> SnapshotView<'a> {
         Ok(found)
     }
 
+    /// Every row of one component's section as `(id, JSON)`, ascending by id, decoding the section
+    /// once (a presenter's diff or a whole column for the editor). A component no entity has gives
+    /// no rows.
+    pub fn rows_json(&self, component: &str) -> Result<Vec<(u64, Value)>, Problem> {
+        let key = SectionKey::new(SectionKind::Component, component);
+        let Some(entry) = self.snap.registry.formats.get(&key) else {
+            return Err(Problem::new(
+                "sim.component_unknown",
+                format!("There is no component '{component}'."),
+                detail([("component", json!(component))]),
+            ));
+        };
+        let Some(s) = self.snap.snapshot.section(&key) else {
+            return Ok(Vec::new());
+        };
+        let Some(format) = &entry.format else {
+            return Err(decode_failed(component, "it has no format"));
+        };
+        let rows = to_json(&rows_format(format), &s.bytes, true)
+            .map_err(|e| decode_failed(component, &format!("{e:?}")))?;
+        Ok(rows
+            .as_array()
+            .map(|rows| {
+                rows.iter()
+                    .filter_map(|row| {
+                        let pair = row.as_array()?;
+                        Some((pair.first()?.as_u64()?, pair.get(1).cloned()?))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+
+    /// The component sections this snapshot holds, with their digests: a section whose digest did
+    /// not change between two publications holds the same rows.
+    pub fn component_digests(&self) -> Vec<(String, [u8; 16])> {
+        self.snap
+            .snapshot
+            .sections()
+            .iter()
+            .filter(|s| s.key.kind == SectionKind::Component)
+            .map(|s| (s.key.name.clone(), s.digest.0))
+            .collect()
+    }
+
     /// Every live entity, ascending.
     pub fn entities(&self) -> Result<Vec<EntityId>, Problem> {
         let Some(s) = self.snap.snapshot.section(&SectionKey::entities()) else {

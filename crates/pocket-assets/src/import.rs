@@ -91,8 +91,7 @@ fn convert(
             };
             let positions: Vec<[f32; 3]> = positions.collect();
             let normals: Option<Vec<[f32; 3]>> = r.read_normals().map(Iterator::collect);
-            let uvs: Option<Vec<[f32; 2]>> =
-                r.read_tex_coords(0).map(|t| t.into_f32().collect());
+            let uvs: Option<Vec<[f32; 2]>> = r.read_tex_coords(0).map(|t| t.into_f32().collect());
             let tangents: Option<Vec<[f32; 4]>> = r.read_tangents().map(Iterator::collect);
             let indices: Vec<u32> = match r.read_indices() {
                 Some(i) => i.into_u32().collect(),
@@ -242,7 +241,15 @@ fn to_rgba8(img: &gltf::image::Data, srgb: bool, index: usize) -> ImageData {
             };
             let mut o = Vec::with_capacity(n * 4);
             for c in px.chunks_exact(ch * 2) {
-                let at = |k: usize| if k < ch { c[k * 2 + 1] } else if k == 3 { 255 } else { 0 };
+                let at = |k: usize| {
+                    if k < ch {
+                        c[k * 2 + 1]
+                    } else if k == 3 {
+                        255
+                    } else {
+                        0
+                    }
+                };
                 o.extend_from_slice(&[at(0), at(1), at(2), at(3)]);
             }
             o

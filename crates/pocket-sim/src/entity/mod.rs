@@ -8,7 +8,7 @@ mod ops;
 
 pub use index::EntityIndex;
 pub use ops::{
-    ReservedIds, SimCommands, despawn, entity, require, reserve, spawn, spawn_allocated,
+    ReservedIds, SimCommands, despawn, entity, require, reserve, revive, spawn, spawn_allocated,
 };
 
 use std::borrow::Cow;
@@ -276,6 +276,18 @@ pub fn entity_not_found(id: EntityId) -> Problem {
     Problem::new(
         "sim.entity_not_found",
         format!("Entity {} no longer exists.", id.get()),
+        detail([("id", json!(id.get()))]),
+    )
+}
+
+/// `sim.entity_alive {id}`: a revival names an id whose entity is live.
+pub fn entity_alive(id: EntityId) -> Problem {
+    Problem::new(
+        "sim.entity_alive",
+        format!(
+            "Entity {} is alive; only a destroyed entity can be revived.",
+            id.get()
+        ),
         detail([("id", json!(id.get()))]),
     )
 }

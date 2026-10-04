@@ -23,7 +23,6 @@ web = true
 group = "game"
 deps = ["pocket-sim"]
 web = true
-planned = true
 
 [crate.pocket-persist]
 group = "game"
@@ -63,21 +62,23 @@ web = true
 
 [crate.pocket-render]
 group = "presenter"
-deps = ["pocket-sim", "pocket-assets", "pocket-link"]
+deps = ["pocket-assets"]
 web = true
-planned = true
 
-[crate.pocket-editor]
+[crate.pocket-viewport]
 group = "presenter"
-deps = ["pocket-sim", "pocket-link", "pocket-render"]
+deps = ["pocket-assets", "pocket-render"]
 web = true
-planned = true
 
 [crate.pocket-mcp]
 group = "tool"
 deps = ["pocket-sim", "pocket-link"]
 web = false
-planned = true
+
+[crate.pocket-server]
+group = "tool"
+deps = ["pocket-sim", "pocket-link", "pocket-mcp"]
+web = false
 
 [crate.pocket-debug]
 group = "tool"
@@ -87,13 +88,13 @@ planned = true
 
 [crate.pocket-app]
 group = "app"
-deps = ["pocket-sim", "pocket-link", "pocket-runtime", "pocket-check", "pocket-render", "pocket-editor",
-        "pocket-mcp", "pocket-debug"]
+deps = ["pocket-sim", "pocket-link", "pocket-runtime", "pocket-check", "pocket-render", "pocket-assets",
+        "pocket-mcp", "pocket-server", "pocket-debug"]
 web = false
 
 [crate.pocket-web]
 group = "app"
-deps = ["pocket-sim", "pocket-link", "pocket-runtime", "pocket-check", "pocket-render", "pocket-editor"]
+deps = ["pocket-sim", "pocket-link", "pocket-runtime", "pocket-check", "pocket-render", "pocket-assets"]
 web = true
 
 [crate.xtask]

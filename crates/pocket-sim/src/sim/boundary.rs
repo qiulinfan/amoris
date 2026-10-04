@@ -55,6 +55,11 @@ impl<'a> Boundary<'a> {
         entity::despawn(self.world, id)
     }
 
+    /// Spawns an entity again under a destroyed entity's id (`entity::revive`).
+    pub fn revive(&mut self, id: EntityId, bundle: impl Bundle) -> Result<Entity, Problem> {
+        entity::revive(self.world, id, bundle)
+    }
+
     /// The live entity holding `id`.
     pub fn entity(&self, id: EntityId) -> Option<Entity> {
         entity::entity(self.world, id)

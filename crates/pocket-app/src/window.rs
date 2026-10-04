@@ -54,7 +54,9 @@ impl Host for Play {
     }
 
     fn wants_capture(&mut self) -> bool {
-        self.capture.as_ref().is_some_and(|(_, after)| self.frames >= *after)
+        self.capture
+            .as_ref()
+            .is_some_and(|(_, after)| self.frames >= *after)
     }
 
     fn captured(&mut self, w: u32, h: u32, rgba: Vec<u8>) -> bool {
@@ -86,7 +88,11 @@ pub fn play(raw: &[String]) -> Outcome {
 fn play_inner(raw: &[String]) -> Result<Outcome, Problem> {
     let args = Args::parse(raw, FLAGS)?;
     let dir = args.positional.first().map(PathBuf::from).ok_or_else(|| {
-        Problem::new("check.usage", "pocket play needs a project directory", detail([]))
+        Problem::new(
+            "check.usage",
+            "pocket play needs a project directory",
+            detail([]),
+        )
     })?;
     let project = Project::load(&dir)?;
     let seed = args.number::<u64>("seed")?.unwrap_or(project.manifest.seed);
@@ -110,7 +116,13 @@ fn play_inner(raw: &[String]) -> Result<Outcome, Problem> {
             _game: game,
             assets_set: Some(dir.clone()),
             capture: args.value("capture").map(|p| {
-                (PathBuf::from(p), args.number::<u32>("capture-after").ok().flatten().unwrap_or(120))
+                (
+                    PathBuf::from(p),
+                    args.number::<u32>("capture-after")
+                        .ok()
+                        .flatten()
+                        .unwrap_or(120),
+                )
             }),
             frames: 0,
         },

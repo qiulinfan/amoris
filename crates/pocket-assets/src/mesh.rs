@@ -6,7 +6,15 @@ use serde::{Deserialize, Serialize};
 
 /// One vertex: position, normal, texture coordinate, tangent (`w` is the bitangent's sign).
 #[derive(
-    Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize, bytemuck::Pod, bytemuck::Zeroable,
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    bytemuck::Pod,
+    bytemuck::Zeroable,
 )]
 #[repr(C)]
 pub struct Vertex {

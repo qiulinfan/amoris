@@ -14,3 +14,5 @@ editor/dist/
 __pycache__/
 .venv/
 web/bench/vendor/
+# A running host's address in its project (pocket serve)
+.pocket/

@@ -217,7 +217,11 @@ pub fn torus(segments: u32, sides: u32, major: f32, minor: f32) -> MeshData {
             let (cp, sp) = (p.cos(), p.sin());
             let n = [ct * cp, sp, st * cp];
             vs.push(v(
-                [ct * (major + minor * cp), minor * sp, st * (major + minor * cp)],
+                [
+                    ct * (major + minor * cp),
+                    minor * sp,
+                    st * (major + minor * cp),
+                ],
                 n,
                 [s as f32 / segments as f32, k as f32 / sides as f32],
             ));
@@ -243,30 +247,37 @@ mod tests {
         for name in PRIMITIVES {
             let m = primitive(name).unwrap();
             assert!(m.triangles() > 0, "{name}");
-            assert!(m.indices.iter().all(|&i| (i as usize) < m.vertices.len()), "{name}");
-            assert!(m.bounds.radius > 0.4 && m.bounds.radius < 0.9, "{name} {}", m.bounds.radius);
+            assert!(
+                m.indices.iter().all(|&i| (i as usize) < m.vertices.len()),
+                "{name}"
+            );
+            assert!(
+                m.bounds.radius > 0.4 && m.bounds.radius < 0.9,
+                "{name} {}",
+                m.bounds.radius
+            );
         }
     }
 
     #[test]
     fn faces_wind_outward() {
         for name in PRIMITIVES {
-        let m = primitive(name).unwrap();
-        for t in m.indices.chunks_exact(3) {
-            let [a, b, c] = [t[0], t[1], t[2]].map(|i| m.vertices[i as usize].position);
-            let e1 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
-            let e2 = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
-            let n = [
-                e1[1] * e2[2] - e1[2] * e2[1],
-                e1[2] * e2[0] - e1[0] * e2[2],
-                e1[0] * e2[1] - e1[1] * e2[0],
-            ];
-            let vn = m.vertices[t[0] as usize].normal;
-            let area = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
-            if area > 1e-9 {
-                assert!(n[0] * vn[0] + n[1] * vn[1] + n[2] * vn[2] > 0.0, "{name}");
+            let m = primitive(name).unwrap();
+            for t in m.indices.chunks_exact(3) {
+                let [a, b, c] = [t[0], t[1], t[2]].map(|i| m.vertices[i as usize].position);
+                let e1 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+                let e2 = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+                let n = [
+                    e1[1] * e2[2] - e1[2] * e2[1],
+                    e1[2] * e2[0] - e1[0] * e2[2],
+                    e1[0] * e2[1] - e1[1] * e2[0],
+                ];
+                let vn = m.vertices[t[0] as usize].normal;
+                let area = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+                if area > 1e-9 {
+                    assert!(n[0] * vn[0] + n[1] * vn[1] + n[2] * vn[2] > 0.0, "{name}");
+                }
             }
-        }
         }
     }
 }
