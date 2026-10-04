@@ -6,6 +6,7 @@
 //! `Game` directly; the game thread wraps one (`thread`).
 
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
 use bevy_ecs::prelude::World;
@@ -23,8 +24,12 @@ use pocket_script::{CompiledSet, ScriptLimits};
 use pocket_sim::{ContentHash, Event, NoHooks, Sim, SimConfig, StepReport, Tick, TickRate};
 use serde_json::{Value, json};
 
-use crate::catalog::{self, Command, CommandFn};
-use crate::edit::{self, WorldEditParams, WorldGetParams};
+use crate::catalog::{self, Command, CommandFn, NoParams};
+use crate::control::{StepParams, StepStop};
+use crate::edit::{self, Edit, WorldEditOps, WorldEditParams, WorldGetParams, label_of};
+use crate::files::{self, ScriptPathParams, ScriptWriteParams};
+use crate::history::{Entry, History};
+use crate::inspect::{self, WorldQueryParams, WorldSchemaParams, WorldTreeParams};
 use crate::project::GameSetup;
 use crate::scene::Scene;
 use crate::scripts::{
@@ -47,6 +52,7 @@ pub struct GameBuilder {
     setup: Arc<GameSetup>,
     seed: u64,
     extras: Extras,
+    project: Option<PathBuf>,
 }
 
 impl GameBuilder {
@@ -55,7 +61,15 @@ impl GameBuilder {
             setup,
             seed: 1,
             extras: Extras::default(),
+            project: None,
         }
+    }
+
+    /// The project directory the game was loaded from: `project.*` and `scripts.*` read and write
+    /// its files, and `scripts.apply` compiles the scripts as they are on disk.
+    pub fn project(mut self, root: impl Into<PathBuf>) -> GameBuilder {
+        self.project = Some(root.into());
+        self
     }
 
     pub fn seed(mut self, seed: u64) -> GameBuilder {
@@ -83,6 +97,7 @@ impl GameBuilder {
     pub fn build(self) -> Result<Game, Problem> {
         let set = self.setup.scripts.clone();
         let mut g = Game::make(self.setup, self.seed, self.extras, &set)?;
+        g.project = self.project;
         let scene = g.setup.scene.clone();
         scene.spawn_into(&mut g.sim.boundary())?;
         Ok(g)
@@ -90,7 +105,9 @@ impl GameBuilder {
 
     /// The game with no entities, running `set`: what a restore or a replay fills.
     pub fn build_empty(self, set: &CompiledSet) -> Result<Game, Problem> {
-        Game::make(self.setup, self.seed, self.extras, set)
+        let mut g = Game::make(self.setup, self.seed, self.extras, set)?;
+        g.project = self.project;
+        Ok(g)
     }
 }
 
@@ -123,6 +140,12 @@ pub struct Game {
     host_seq: u64,
     /// Bumped whenever the world's content is replaced in place (a restore): presenters redraw all.
     generation: u64,
+    /// The project directory, when the game was loaded from one.
+    project: Option<PathBuf>,
+    /// The editor's undo and redo stacks (never persisted or hashed).
+    history: History,
+    /// The last compile's diagnostics (`scripts.list`).
+    diagnostics: Vec<Value>,
 }
 
 fn bad_hash(text: &str) -> Problem {
@@ -175,12 +198,19 @@ impl Game {
             writes: 0,
             host_seq: 0,
             generation: 0,
+            project: None,
+            history: History::default(),
+            diagnostics: Vec::new(),
         })
     }
 
     /// Hands the render feed what changed in the visual state (presentation only; see
     /// `present`).
-    pub fn present(&mut self, extractor: &mut crate::present::Extractor, feed: &pocket_assets::Feed) {
+    pub fn present(
+        &mut self,
+        extractor: &mut crate::present::Extractor,
+        feed: &pocket_assets::Feed,
+    ) {
         let generation = self.generation;
         extractor.publish(self.sim.world_mut(), generation, feed);
     }
@@ -204,6 +234,25 @@ impl Game {
 
     pub fn registry(&self) -> &Arc<Registry> {
         &self.reg
+    }
+
+    /// The project directory, when the game was loaded from one.
+    pub fn project(&self) -> Option<&PathBuf> {
+        self.project.as_ref()
+    }
+
+    /// The edit history.
+    pub fn history(&self) -> &History {
+        &self.history
+    }
+
+    /// Takes the script console lines written since the last call (script-host.md 5.7).
+    pub fn take_log(&self) -> Vec<pocket_script::LogLine> {
+        self.sim
+            .world()
+            .get_non_send::<pocket_script::Scripts>()
+            .map(|s| s.host.take_log())
+            .unwrap_or_default()
     }
 
     /// The bundle the world runs.
@@ -274,61 +323,102 @@ impl Game {
         src: &dyn ReplaySource,
         replaying: bool,
     ) -> Result<Value, Problem> {
-        let kind = match catalog::find(&cmd.name) {
+        let (name, kind) = match catalog::find(&cmd.name) {
             Some(def) => {
                 if def.host_only && cmd.source != Source::Host && !replaying {
                     return Err(catalog::host_only(def.name, cmd.source));
                 }
-                def.kind
+                if def.thread {
+                    return Err(catalog::thread_only(def.name));
+                }
+                (def.name, def.kind)
             }
             None => match self.extras.commands.iter().find(|(n, _, _)| *n == cmd.name) {
-                Some((_, kind, _)) => *kind,
+                Some((_, kind, _)) => ("", *kind),
                 None => return Err(catalog::unknown(&cmd.name, &self.extras.commands)),
             },
         };
         match kind {
-            Kind::Read => self.read(cmd),
-            Kind::Write => self.write(cmd, src),
-            Kind::Request => self.scripts_apply(cmd),
-            Kind::Control => self.control(cmd),
+            Kind::Read => self.read(cmd, name),
+            Kind::Write => self.write(cmd, name, src),
+            Kind::Request => self.request(cmd, name),
+            Kind::Control => self.control(cmd, name),
         }
     }
 
-    fn read(&mut self, cmd: &Command) -> Result<Value, Problem> {
-        match cmd.name.as_str() {
-            "world_get" => {
-                let p: WorldGetParams = decode(&cmd.params, "world_get")?;
+    fn root(&self, command: &str) -> Result<&PathBuf, Problem> {
+        self.project.as_ref().ok_or_else(|| files::no_root(command))
+    }
+
+    fn read(&mut self, cmd: &Command, name: &str) -> Result<Value, Problem> {
+        let p = &cmd.params;
+        match name {
+            "catalog.list" => {
+                decode::<NoParams>(p, name)?;
+                Ok(catalog::catalog_json(&self.extras.commands))
+            }
+            "world.get" => {
+                let p: WorldGetParams = decode(p, name)?;
                 edit::world_get(self.sim.world(), &p)
             }
+            "world.tree" => inspect::tree(self.sim.world(), &decode::<WorldTreeParams>(p, name)?),
+            "world.query" => {
+                inspect::query(self.sim.world(), &decode::<WorldQueryParams>(p, name)?)
+            }
+            "world.schema" => {
+                inspect::schema(self.sim.world(), &decode::<WorldSchemaParams>(p, name)?)
+            }
+            "history.list" => {
+                decode::<NoParams>(p, name)?;
+                Ok(self.history.to_json())
+            }
+            "project.info" => {
+                decode::<NoParams>(p, name)?;
+                let rate = self.setup.rate.0;
+                Ok(match &self.project {
+                    Some(root) => files::info(root, &self.setup.name, rate),
+                    None => json!({"name": self.setup.name, "root": null, "rate": rate}),
+                })
+            }
+            "scripts.list" => {
+                decode::<NoParams>(p, name)?;
+                Ok(files::list(self.root(name)?, &self.diagnostics))
+            }
+            "scripts.read" => {
+                let p: ScriptPathParams = decode(p, name)?;
+                files::read(self.root(name)?, &p)
+            }
             "status" => {
-                decode::<NoParams>(&cmd.params, "status")?;
+                decode::<NoParams>(p, name)?;
                 let hash = self.world_hash().ok().map(|h| h.to_string());
                 let poisoned = self.sim.poisoned().map(|p| p.tick.0);
+                let entities = self.sim.world().resource::<pocket_sim::EntityIndex>().len();
                 Ok(
                     json!({"tick": self.tick().0, "writes": self.writes, "world_hash": hash,
-                          "bundle": self.current.to_hex(), "poisoned": poisoned}),
+                          "bundle": self.current.to_hex(), "poisoned": poisoned,
+                          "entities": entities}),
                 )
             }
             "snapshot" => {
-                decode::<NoParams>(&cmd.params, "snapshot")?;
+                decode::<NoParams>(p, name)?;
                 let s = self.snapshot()?;
                 Ok(pocket_link::ReplyValue::Snapshot(s).into_json())
             }
             "scripts.status" => {
-                decode::<NoParams>(&cmd.params, "scripts.status")?;
+                decode::<NoParams>(p, name)?;
                 let systems: Vec<String> = pocket_script::scripts::last_tick(self.sim.world())
                     .into_iter()
                     .map(|(n, _)| n)
                     .collect();
                 Ok(json!({"bundle": self.current.to_hex(), "ran_last_tick": systems}))
             }
-            other => {
+            _ => {
                 let (_, _, f) = self
                     .extras
                     .commands
                     .iter()
-                    .find(|(n, _, _)| n == other)
-                    .ok_or_else(|| catalog::unknown(other, &self.extras.commands))?;
+                    .find(|(n, _, _)| *n == cmd.name)
+                    .ok_or_else(|| catalog::unknown(&cmd.name, &self.extras.commands))?;
                 let f = f.clone();
                 let mark = self.sim.boundary().mark();
                 let r = f(&mut self.sim.boundary(), &cmd.params).map(|(v, _)| v);
@@ -338,43 +428,156 @@ impl Game {
         }
     }
 
-    fn write(&mut self, cmd: &Command, src: &dyn ReplaySource) -> Result<Value, Problem> {
+    /// Applies `edits` as one `world_edit`: the result, the canonical form and the inverse.
+    fn edit(&mut self, edits: Vec<Edit>) -> Result<(Value, Value, Vec<Edit>), Problem> {
+        let a = edit::world_edit(&mut self.sim.boundary(), &WorldEditParams { edits })?;
+        Ok((a.result, a.canonical, a.inverse))
+    }
+
+    /// `history.undo` (`undo`) or `history.redo`: applies the top entry's edits; an entry whose
+    /// edits no longer apply (a tick changed what they name) is dropped with `history.stale`.
+    fn undo_redo(&mut self, undo: bool) -> Result<Written, Problem> {
+        let entry = if undo {
+            self.history.pop_undo()
+        } else {
+            self.history.pop_redo()
+        };
+        let Some(entry) = entry else {
+            let which = if undo { "undo" } else { "redo" };
+            return Err(Problem::new(
+                "history.empty",
+                format!("There is nothing to {which}."),
+                detail([("stack", json!(which))]),
+            ));
+        };
+        match self.edit(entry.inverse) {
+            Ok((mut result, canonical, inverse)) => {
+                result["label"] = json!(entry.label);
+                let back = Entry {
+                    label: entry.label,
+                    inverse,
+                };
+                Ok(Written {
+                    result,
+                    canonical,
+                    recorded: "world_edit",
+                    history: Some(if undo {
+                        HistoryStep::Undone(back)
+                    } else {
+                        HistoryStep::Redone(back)
+                    }),
+                })
+            }
+            Err(p) => Err(Problem::new(
+                "history.stale",
+                format!(
+                    "'{}' can no longer be {}: {} The entry was dropped.",
+                    entry.label,
+                    if undo { "undone" } else { "redone" },
+                    p.message
+                ),
+                detail([
+                    ("label", json!(entry.label)),
+                    ("cause", serde_json::to_value(&p).unwrap_or(Value::Null)),
+                ]),
+            )),
+        }
+    }
+
+    fn write(
+        &mut self,
+        cmd: &Command,
+        name: &str,
+        src: &dyn ReplaySource,
+    ) -> Result<Value, Problem> {
         let tick = self.tick();
         let mark = self.sim.boundary().mark();
-        let outcome = match cmd.name.as_str() {
-            "world_edit" => decode::<WorldEditParams>(&cmd.params, "world_edit")
-                .and_then(|p| edit::world_edit(&mut self.sim.boundary(), &p)),
-            "scripts.swap" => self.swap(&cmd.params, src),
-            other => match self.extras.commands.iter().find(|(n, _, _)| n == other) {
+        let new_edit = |r: Result<(Value, Value, Vec<Edit>), Problem>, label: String| {
+            r.map(|(mut result, canonical, inverse)| {
+                result["label"] = json!(label);
+                Written {
+                    result,
+                    canonical,
+                    recorded: "world_edit",
+                    history: Some(HistoryStep::New(label, inverse)),
+                }
+            })
+        };
+        let outcome = match name {
+            "world_edit" => match decode::<WorldEditParams>(&cmd.params, name) {
+                Ok(p) => {
+                    let label = label_of(&p.edits);
+                    new_edit(self.edit(p.edits), label)
+                }
+                Err(e) => Err(e),
+            },
+            "world.edit" => match decode::<WorldEditOps>(&cmd.params, name) {
+                Ok(p) => {
+                    let edits: Vec<Edit> = p.ops.into_iter().map(Edit::from).collect();
+                    let label = p.label.unwrap_or_else(|| label_of(&edits));
+                    new_edit(self.edit(edits), label)
+                }
+                Err(e) => Err(e),
+            },
+            "history.undo" | "history.redo" => decode::<NoParams>(&cmd.params, name)
+                .and_then(|_| self.undo_redo(name == "history.undo")),
+            "scripts.swap" => self
+                .swap(&cmd.params, src)
+                .map(|(result, canonical)| Written {
+                    result,
+                    canonical,
+                    recorded: "scripts.swap",
+                    history: None,
+                }),
+            _ => match self.extras.commands.iter().find(|(n, _, _)| *n == cmd.name) {
                 Some((_, _, f)) => {
                     let f = f.clone();
-                    f(&mut self.sim.boundary(), &cmd.params)
+                    f(&mut self.sim.boundary(), &cmd.params).map(|(result, canonical)| Written {
+                        result,
+                        canonical,
+                        recorded: "",
+                        history: None,
+                    })
                 }
-                None => Err(catalog::unknown(other, &self.extras.commands)),
+                None => Err(catalog::unknown(&cmd.name, &self.extras.commands)),
             },
         };
-        let applied = |params: Value, index: u32| Applied {
+        let applied = |name: &str, params: Value, index: u32| Applied {
             tick: Tick(tick.0 + 1),
             index,
             source: cmd.source,
             seq: cmd.seq,
-            name: cmd.name.clone(),
+            name: name.to_owned(),
             params,
         };
         match outcome {
-            Ok((result, canonical)) => {
-                let a = applied(canonical, self.writes);
+            Ok(w) => {
+                let recorded = if w.recorded.is_empty() {
+                    cmd.name.as_str()
+                } else {
+                    w.recorded
+                };
+                let a = applied(recorded, w.canonical, self.writes);
                 self.writes += 1;
                 self.sync_context();
                 if let Some(r) = &mut self.recorder {
                     r.applied(&a);
                 }
-                Ok(result)
+                match w.history {
+                    Some(HistoryStep::New(label, inverse)) => self.history.record(label, inverse),
+                    Some(HistoryStep::Undone(e)) => self.history.push_redo(e),
+                    Some(HistoryStep::Redone(e)) => self.history.push_undo(e),
+                    None => {}
+                }
+                Ok(w.result)
             }
             Err(p) => {
                 self.sim.boundary().rollback(mark);
                 if let Some(r) = &mut self.recorder {
-                    r.refused(&applied(cmd.params.clone(), self.writes), &p.code);
+                    r.refused(
+                        &applied(&cmd.name, cmd.params.clone(), self.writes),
+                        &p.code,
+                    );
                 }
                 Err(p)
             }
@@ -423,18 +626,50 @@ impl Game {
         Ok((result, json!({"bundle": p.bundle})))
     }
 
+    /// A Request (threads.md 5.5): its stages run inline here.
+    fn request(&mut self, cmd: &Command, name: &str) -> Result<Value, Problem> {
+        match name {
+            "scripts.apply" => self.scripts_apply(cmd),
+            "scripts.write" => {
+                let p: ScriptWriteParams = decode(&cmd.params, name)?;
+                let path = files::write(self.root(name)?, &p)?;
+                let diagnostics = match self.gather(&ScriptsApplyParams::default()) {
+                    Ok(_) => Vec::new(),
+                    Err(e) => files::diagnostics(&e),
+                };
+                self.diagnostics = diagnostics.clone();
+                Ok(json!({"path": path, "bytes": p.text.len(), "diagnostics": diagnostics}))
+            }
+            "project.save" => {
+                decode::<NoParams>(&cmd.params, name)?;
+                files::save(self.sim.world(), self.root(name)?)
+            }
+            other => Err(catalog::unknown(other, &self.extras.commands)),
+        }
+    }
+
     /// `scripts.apply` (hot-update.md 4), its stages inline (threads.md 5.5): gather and compile
-    /// (the project's own TypeScript unless `files` names others), answer `unchanged` for the same
-    /// bundle unless `force`, then apply the `scripts.swap` Host write it produces.
+    /// (the project's TypeScript as it is on disk, or `files`), answer `unchanged` for the same
+    /// bundle unless `force`, then apply the `scripts.swap` Host write it produces. A compile that
+    /// fails answers `scripts.refused` with `diagnostics` in its detail.
     fn scripts_apply(&mut self, cmd: &Command) -> Result<Value, Problem> {
         let p: ScriptsApplyParams = decode(&cmd.params, "scripts.apply")?;
-        let set = self.gather(&p)?;
+        let set = match self.gather(&p) {
+            Ok(s) => s,
+            Err(mut e) => {
+                self.diagnostics = files::diagnostics(&e);
+                e.detail
+                    .insert("diagnostics".into(), json!(self.diagnostics));
+                return Err(e);
+            }
+        };
+        self.diagnostics.clear();
         let hash = set.bundle.hash;
         if hash == self.current && !p.force {
-            return Ok(json!({"outcome": "unchanged", "bundle": hash.to_hex()}));
+            return Ok(json!({"outcome": "unchanged", "bundle": hash.to_hex(), "diagnostics": []}));
         }
         if p.dry_run {
-            return Ok(json!({"outcome": "dry_run", "bundle": hash.to_hex()}));
+            return Ok(json!({"outcome": "dry_run", "bundle": hash.to_hex(), "diagnostics": []}));
         }
         self.bundles.insert(hash, set);
         let swap = Command::new(
@@ -443,7 +678,9 @@ impl Game {
             "scripts.swap",
             json!({"bundle": hash.to_hex()}),
         );
-        self.apply(&swap)
+        let mut r = self.apply(&swap)?;
+        r["diagnostics"] = json!([]);
+        Ok(r)
     }
 
     fn gather(&self, p: &ScriptsApplyParams) -> Result<CompiledSet, Problem> {
@@ -455,6 +692,16 @@ impl Game {
                     src = src.with(path, text);
                 }
                 return scripts::compile(&src, false);
+            }
+            if let Some(root) = &self.project {
+                let src = pocket_script::ScriptSource::read_dir(root).map_err(|e| {
+                    Problem::new(
+                        "project.unreadable",
+                        format!("{}/scripts cannot be read: {e}.", root.display()),
+                        detail([("path", json!(root.join("scripts").display().to_string()))]),
+                    )
+                })?;
+                return scripts::compile(&src, self.setup.lint_off);
             }
             if let Some(src) = &self.setup.source {
                 return scripts::compile(src, self.setup.lint_off);
@@ -470,21 +717,47 @@ impl Game {
         Ok(self.setup.scripts.clone())
     }
 
-    fn control(&mut self, cmd: &Command) -> Result<Value, Problem> {
-        match cmd.name.as_str() {
-            "step" => {
-                let p: StepParams = decode(&cmd.params, "step")?;
-                for _ in 0..p.ticks {
+    fn control(&mut self, cmd: &Command, name: &str) -> Result<Value, Problem> {
+        match name {
+            "time.step" => {
+                let p: StepParams = decode(&cmd.params, name)?;
+                let limit = p.limit()?;
+                let mut stop = StepStop::new(self, &p)?;
+                let mut stopped_by = None;
+                for _ in 0..limit {
                     self.step()?;
+                    if let Some(s) = &mut stop
+                        && let Some(why) = s.after_tick(self)
+                    {
+                        stopped_by = Some(why);
+                        break;
+                    }
                 }
-                Ok(json!({"tick": self.tick().0, "world_hash": self.world_hash()?.to_string()}))
+                if stop.is_some() && stopped_by.is_none() {
+                    stopped_by = Some(json!({"reason": "limit", "ticks": limit}));
+                }
+                let mut out =
+                    json!({"tick": self.tick().0, "world_hash": self.world_hash()?.to_string()});
+                if let Some(why) = stopped_by {
+                    out["stopped_by"] = why;
+                }
+                Ok(out)
             }
-            other => Err(Problem::new(
-                "time.wrong_mode",
-                format!("{other} paces the game thread; a game driven directly has no pacing."),
-                detail([("request", json!(other))]),
-            )),
+            other => Err(catalog::thread_only(other)),
         }
+    }
+
+    /// Restores a snapshot of this game's run whatever bundle it names, swapping to that bundle
+    /// first when the world runs another (a kept snapshot from before a hot update).
+    pub fn restore_any(&mut self, snap: &Snapshot) -> Result<(), Problem> {
+        let h = snap.header().bundle;
+        if h == self.current {
+            return Game::restore(self, snap);
+        }
+        let rec = self
+            .bundle_of(&h)
+            .ok_or_else(|| pocket_persist::error::bundle_unavailable(&h.to_hex(), "not kept"))?;
+        <Game as Stepper>::restore(self, snap, &rec)
     }
 
     /// Runs one tick; the recorder takes its hash. A fault poisons the world and ends the
@@ -536,6 +809,7 @@ impl Game {
         let mut g = Game::make(self.setup.clone(), 1, self.extras.clone(), &set)?;
         g.bundles = self.bundles.clone();
         g.host_seq = self.host_seq;
+        g.project = self.project.clone();
         g.restore(&snap)?;
         Ok(g)
     }
@@ -566,6 +840,7 @@ impl Game {
         if r.is_ok() {
             self.writes = snap.header().writes;
             self.sync_context();
+            self.history.clear();
         }
         self.generation += 1;
         if let Some(rec) = &mut self.recorder
@@ -645,22 +920,19 @@ pub fn run_config(limits: &ScriptLimits) -> String {
     }))
 }
 
-/// A command that takes no parameters.
-#[derive(serde::Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-struct NoParams {}
-
-/// `step`'s parameters.
-#[derive(serde::Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct StepParams {
-    /// Ticks to run, at least 1.
-    #[serde(default = "one")]
-    pub ticks: u64,
+/// What a successful write gives the recorder and the history.
+struct Written {
+    result: Value,
+    canonical: Value,
+    /// The name it is recorded under; empty: the command's own.
+    recorded: &'static str,
+    history: Option<HistoryStep>,
 }
 
-fn one() -> u64 {
-    1
+enum HistoryStep {
+    New(String, Vec<Edit>),
+    Undone(Entry),
+    Redone(Entry),
 }
 
 impl Stepper for Game {

@@ -10,6 +10,7 @@
 pub mod client;
 pub mod command;
 pub mod events;
+pub mod logs;
 pub mod reader;
 pub mod snapshot;
 
@@ -19,5 +20,8 @@ pub use command::{
     source_from_json, source_in_use, source_json, tick_passed,
 };
 pub use events::{EventBatch, EventCursor, EventRecord, EventRing, RING_RECORDS};
-pub use reader::{GameStatus, LoopState, Publisher, SnapshotReader, publication};
+pub use logs::{LOG_RECORDS, LogRecord, LogRing};
+pub use reader::{
+    GameStatus, LoopState, Publisher, SnapshotReader, WorldInfo, WorldMode, publication,
+};
 pub use snapshot::{PacingStatus, RegistryInfo, SnapshotView, TimeStatus, WorldSnapshot};

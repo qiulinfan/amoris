@@ -12,7 +12,9 @@ use bevy_ecs::prelude::{Bundle, Commands, Entity, ResMut, Resource, World};
 use bevy_ecs::system::SystemParam;
 use pocket_contract::Problem;
 
-use super::{EntityAllocator, EntityId, EntityIndex, entity_id_invalid, entity_not_found};
+use super::{
+    EntityAllocator, EntityId, EntityIndex, entity_alive, entity_id_invalid, entity_not_found,
+};
 
 fn parts(world: &mut World) -> (EntityAllocator, &mut EntityIndex) {
     let alloc = *world.resource::<EntityAllocator>();
@@ -80,6 +82,25 @@ pub fn spawn_allocated(
     if !world.resource_mut::<ReservedIds>().take(id) {
         let next = world.resource::<EntityAllocator>().next();
         return Err(entity_id_invalid(&id.get().to_string(), next));
+    }
+    let entity = world.spawn((id, bundle)).id();
+    world.resource_mut::<EntityIndex>().insert(id, entity);
+    Ok(entity)
+}
+
+/// Spawns an entity again under `id`, an id this world allocated whose entity was despawned: the
+/// editor's undo of a destroy, so the entity comes back as it was and every reference to it holds
+/// again (docs/spec/server.md, history). It is a boundary write recorded with the id, so a replay
+/// revives the same id. An id never allocated is `sim.entity_id_invalid`; a live one is
+/// `sim.entity_alive`. Ids are still never handed out twice by the allocator (simulation.md 7.2):
+/// revival brings back the same entity, never a new one under an old id.
+pub fn revive(world: &mut World, id: EntityId, bundle: impl Bundle) -> Result<Entity, Problem> {
+    let alloc = *world.resource::<EntityAllocator>();
+    if !alloc.allocated(id) || world.resource::<ReservedIds>().contains(id) {
+        return Err(entity_id_invalid(&id.get().to_string(), alloc.next()));
+    }
+    if world.resource::<EntityIndex>().get(id).is_some() {
+        return Err(entity_alive(id));
     }
     let entity = world.spawn((id, bundle)).id();
     world.resource_mut::<EntityIndex>().insert(id, entity);

@@ -13,12 +13,12 @@
 use bevy_ecs::component::{Component, Mutable};
 use bevy_ecs::prelude::World;
 use bevy_ecs::world::{EntityRef, EntityWorldMut};
+use pocket_assets::{Camera, Environment, Light, Model, Splat};
 use pocket_contract::{CheckOptions, Problem, Shape, detail};
 use pocket_physics::{
     Boat, Collider, ExternalForce, Floater, Hull, RigidBody, Sail, Sea, Transform, Trim, Velocity,
     Wind,
 };
-use pocket_assets::{Camera, Environment, Light, Model, Splat};
 use pocket_script::{EngineFns, register_engine};
 use pocket_sim::registry::{
     ComponentOrigin, ComponentSchema, FieldType, FieldValue, ProjectValues,

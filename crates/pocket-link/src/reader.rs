@@ -11,6 +11,7 @@ use arc_swap::ArcSwap;
 use pocket_sim::Tick;
 
 use crate::events::{EventBatch, EventCursor, EventRing};
+use crate::logs::{LogRecord, LogRing};
 use crate::snapshot::WorldSnapshot;
 
 /// What the game thread is doing (threads.md 3.5; not spec-sim's `TickPhase`).
@@ -45,6 +46,31 @@ impl LoopState {
     }
 }
 
+/// Which world the game shows (docs/spec/server.md, Play): the edit world, or the fork Play runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WorldMode {
+    Edit,
+    Play,
+}
+
+impl WorldMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            WorldMode::Edit => "edit",
+            WorldMode::Play => "play",
+        }
+    }
+}
+
+/// The world the publications show: its mode, and an epoch that changes whenever the world is
+/// replaced rather than advanced (a restore, Play, Stop), so a presenter knows to reset what it
+/// derived from earlier publications (the render feed's `reset`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WorldInfo {
+    pub mode: WorldMode,
+    pub epoch: u64,
+}
+
 /// The game's status: presentation data, never part of the world.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GameStatus {
@@ -64,6 +90,9 @@ struct Shared {
     since: AtomicU64,
     clock: Arc<dyn Fn() -> f64 + Send + Sync>,
     events: Mutex<EventRing>,
+    logs: Mutex<LogRing>,
+    play: AtomicU8,
+    epoch: AtomicU64,
     stopped: Mutex<Option<pocket_contract::Problem>>,
 }
 
@@ -96,6 +125,9 @@ pub fn publication(
         since: AtomicU64::new(now.to_bits()),
         clock,
         events: Mutex::new(EventRing::default()),
+        logs: Mutex::new(LogRing::default()),
+        play: AtomicU8::new(0),
+        epoch: AtomicU64::new(0),
         stopped: Mutex::new(None),
     });
     (
@@ -150,6 +182,32 @@ impl Publisher {
         ring.last()
     }
 
+    /// Up to `max` events from the cursor on (the game thread's `events.since`).
+    pub fn read_events(&self, cursor: &mut EventCursor, max: usize) -> EventBatch {
+        self.shared
+            .events
+            .lock()
+            .map(|r| r.read(cursor, max))
+            .unwrap_or_default()
+    }
+
+    /// Appends log lines.
+    pub fn log(&self, records: impl IntoIterator<Item = LogRecord>) {
+        if let Ok(mut ring) = self.shared.logs.lock() {
+            for r in records {
+                ring.push(r);
+            }
+        }
+    }
+
+    /// Says which world the next publications show.
+    pub fn set_world(&self, info: WorldInfo) {
+        let s = &self.shared;
+        s.play
+            .store(u8::from(info.mode == WorldMode::Play), Ordering::Release);
+        s.epoch.store(info.epoch, Ordering::Release);
+    }
+
     /// The stream number of the last event.
     pub fn last_event(&self) -> u64 {
         self.shared.events.lock().map_or(0, |r| r.last())
@@ -199,6 +257,28 @@ impl SnapshotReader {
             state,
             tick: Tick(s.tick.load(Ordering::Acquire)),
             since_ms: ((s.clock)() - since).max(0.0),
+        }
+    }
+
+    /// Up to `max` log lines with a stream number at least `*next`; `*next` moves past them.
+    pub fn logs(&self, next: &mut u64, max: usize) -> Vec<LogRecord> {
+        self.shared
+            .logs
+            .lock()
+            .map(|r| r.read(next, max))
+            .unwrap_or_default()
+    }
+
+    /// Which world the publications show.
+    pub fn world(&self) -> WorldInfo {
+        let s = &self.shared;
+        WorldInfo {
+            mode: if s.play.load(Ordering::Acquire) == 1 {
+                WorldMode::Play
+            } else {
+                WorldMode::Edit
+            },
+            epoch: s.epoch.load(Ordering::Acquire),
         }
     }
 

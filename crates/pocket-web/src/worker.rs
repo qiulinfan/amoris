@@ -445,19 +445,23 @@ impl WorkerCore {
     fn handle(&mut self, e: Envelope) {
         let (source, seq) = (e.source, e.seq);
         match e.name.as_str() {
-            "step" => match pocket_runtime::decode::<StepParams>(&e.params, "step") {
-                Ok(p) if p.ticks == 0 => {
+            // The web loop runs plain step counts; stop conditions (until, watch) need the native
+            // game thread's loop (docs/spec/server.md).
+            "step" | "time.step" => match pocket_runtime::decode::<StepParams>(&e.params, "step")
+                .and_then(|p| p.limit())
+            {
+                Ok(0) => {
                     let r = self.answer_step();
                     self.reply(source, seq, r);
                 }
-                Ok(p) => match self.game.sim().poisoned() {
+                Ok(ticks) => match self.game.sim().poisoned() {
                     Some(poison) => {
                         let p = pocket_sim::sim::world_poisoned(poison.tick);
                         self.reply(source, seq, Err(p));
                     }
                     None => {
-                        self.model.step(p.ticks);
-                        self.steps.push_back((p.ticks, source, seq));
+                        self.model.step(ticks);
+                        self.steps.push_back((ticks, source, seq));
                     }
                 },
                 Err(p) => self.reply(source, seq, Err(p)),

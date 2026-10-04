@@ -9,8 +9,14 @@
 //! result. Once the check passes, applying cannot fail but through an engine bug (`sim.internal`).
 //! An edit cannot name an entity an earlier edit of the same call spawns: its id is not known until
 //! it is applied (threads.md 13, Slice 1: `world_edit` as built).
+//!
+//! Every applied call also yields its inverse (docs/spec/server.md, history): the edits that bring
+//! the world back, computed from the call's net effect on each entity it touched: the entities it
+//! spawned or revived are destroyed, those it destroyed are revived whole under their ids, and the
+//! components it set or removed on the others get their values from before the call back.
+//! `world.edit` is the protocol's form of the same call (`{ops: [{set: {...}}], label}`).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use pocket_contract::{Pointer, Problem, detail};
@@ -54,6 +60,9 @@ pub enum Edit {
         entity: EntityRef,
         component: String,
         value: Map<String, Value>,
+        /// Write the value whole (fields not given take their defaults) instead of merging.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        replace: bool,
     },
     Remove {
         entity: EntityRef,
@@ -62,6 +71,146 @@ pub enum Edit {
     Destroy {
         entity: EntityRef,
     },
+    /// Spawns a destroyed entity again under its id with these components (an undo of `destroy`).
+    Revive {
+        entity: u64,
+        #[serde(default)]
+        name: Option<String>,
+        #[serde(default)]
+        components: Map<String, Value>,
+    },
+}
+
+/// `world.edit`'s parameters (docs/spec/host-protocol.md 4): one transaction.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WorldEditOps {
+    /// 1 to 64 edits, applied in order at one boundary, all or none.
+    pub ops: Vec<EditOp>,
+    /// The history's label; default: a summary of the edits.
+    #[serde(default)]
+    pub label: Option<String>,
+}
+
+/// One edit in the protocol's form.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub enum EditOp {
+    /// An entity with components, from a prefab or not.
+    Spawn(SpawnOp),
+    /// Writes the listed fields (keys may be paths: `position.1`), adding the component if missing.
+    Set(SetOp),
+    Remove(RemoveOp),
+    Destroy(DestroyOp),
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SpawnOp {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub prefab: Option<Prefab>,
+    /// Components by name; each overrides the prefab's field by field.
+    #[serde(default)]
+    pub components: Map<String, Value>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SetOp {
+    /// An id, a name, or `Name#id`.
+    pub entity: EntityRef,
+    pub component: String,
+    pub value: Map<String, Value>,
+    /// Write the value whole instead of merging fields.
+    #[serde(default)]
+    pub replace: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RemoveOp {
+    pub entity: EntityRef,
+    pub component: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DestroyOp {
+    pub entity: EntityRef,
+}
+
+impl From<EditOp> for Edit {
+    fn from(op: EditOp) -> Edit {
+        match op {
+            EditOp::Spawn(o) => Edit::Spawn {
+                name: o.name,
+                prefab: o.prefab,
+                components: o.components,
+            },
+            EditOp::Set(o) => Edit::Set {
+                entity: o.entity,
+                component: o.component,
+                value: o.value,
+                replace: o.replace,
+            },
+            EditOp::Remove(o) => Edit::Remove {
+                entity: o.entity,
+                component: o.component,
+            },
+            EditOp::Destroy(o) => Edit::Destroy { entity: o.entity },
+        }
+    }
+}
+
+fn entity_text(r: &EntityRef) -> String {
+    match r {
+        EntityRef::Id(n) => format!("#{n}"),
+        EntityRef::Name(s) => s.clone(),
+    }
+}
+
+/// A short label for a call's edits: the first edit, and how many more.
+pub fn label_of(edits: &[Edit]) -> String {
+    let first = match edits.first() {
+        Some(Edit::Spawn { name, prefab, .. }) => {
+            let what = name.clone().or_else(|| {
+                prefab.as_ref().and_then(|p| {
+                    serde_json::to_value(p)
+                        .ok()
+                        .and_then(|v| v.get("kind").and_then(Value::as_str).map(str::to_owned))
+                })
+            });
+            format!("spawn {}", what.unwrap_or_else(|| "entity".into()))
+        }
+        Some(Edit::Set {
+            entity, component, ..
+        }) => format!("set {component} on {}", entity_text(entity)),
+        Some(Edit::Remove { entity, component }) => {
+            format!("remove {component} from {}", entity_text(entity))
+        }
+        Some(Edit::Destroy { entity }) => format!("destroy {}", entity_text(entity)),
+        Some(Edit::Revive { entity, name, .. }) => {
+            format!(
+                "revive {}",
+                name.clone().unwrap_or_else(|| format!("#{entity}"))
+            )
+        }
+        None => "no edit".into(),
+    };
+    match edits.len() {
+        0 | 1 => first,
+        n => format!("{first} (+{})", n - 1),
+    }
+}
+
+/// What an applied call gives: the result, the canonical recorded parameters, the inverse edits
+/// and the ids it spawned.
+pub struct Applied {
+    pub result: Value,
+    pub canonical: Value,
+    pub inverse: Vec<Edit>,
 }
 
 /// `world_get`'s parameters.
@@ -76,9 +225,10 @@ pub struct WorldGetParams {
 
 enum Checked {
     Spawn(PreparedSpawn),
-    Set(EntityId, Setter),
-    Remove(EntityId, Remover),
+    Set(EntityId, String, Setter),
+    Remove(EntityId, String, Remover),
     Destroy(EntityId),
+    Revive(EntityId, PreparedSpawn),
 }
 
 enum Setter {
@@ -105,6 +255,7 @@ enum Pending {
 struct Plan {
     destroyed: BTreeMap<EntityId, usize>,
     pending: BTreeMap<(EntityId, String), Pending>,
+    revived: BTreeSet<EntityId>,
 }
 
 /// `sim.entity_not_found` for an entity an earlier edit of the same call destroys.
@@ -161,6 +312,7 @@ fn check_set(
     id: EntityId,
     component: &str,
     value: &Map<String, Value>,
+    replace: bool,
     at: &Pointer,
 ) -> Result<(Setter, Map<String, Value>), Problem> {
     let world = b.world();
@@ -171,6 +323,7 @@ fn check_set(
     let key = (id, component.to_owned());
     if let Some(c) = engine_component(component) {
         let mut whole = match plan.pending.get(&key) {
+            _ if replace => Value::Object(Map::new()),
             Some(Pending::Engine(v)) => v.clone(),
             Some(Pending::Removed) => Value::Object(Map::new()),
             _ => (c.get)(&e).unwrap_or_else(|| Value::Object(Map::new())),
@@ -183,6 +336,7 @@ fn check_set(
     let (schema, access) =
         project_component(world, component).ok_or_else(|| unknown_component(world, component))?;
     let base = match plan.pending.get(&key) {
+        _ if replace => pocket_script::access::defaults(&schema),
         Some(Pending::Project(v)) => v.clone(),
         Some(Pending::Removed) => pocket_script::access::defaults(&schema),
         _ => access
@@ -206,12 +360,9 @@ fn check_remove(b: &Boundary<'_>, component: &str) -> Result<Remover, Problem> {
 }
 
 /// Applies `world_edit` at a boundary: checks every edit against the world as the edits before it
-/// leave it, then applies them in order. Returns the result and the canonical recorded form of the
-/// parameters. A refused call changes nothing.
-pub fn world_edit(
-    b: &mut Boundary<'_>,
-    params: &WorldEditParams,
-) -> Result<(Value, Value), Problem> {
+/// leave it, then applies them in order. Returns the result, the canonical recorded form of the
+/// parameters and the inverse edits. A refused call changes nothing.
+pub fn world_edit(b: &mut Boundary<'_>, params: &WorldEditParams) -> Result<Applied, Problem> {
     if params.edits.is_empty() || params.edits.len() > 64 {
         return Err(bad_value(
             &Pointer::root().key("edits"),
@@ -261,18 +412,25 @@ pub fn world_edit(
                 entity,
                 component,
                 value,
+                replace,
             } => {
                 let id = r(&plan, entity)?;
-                let (setter, value) = check_set(b, &mut plan, id, component, value, &at)?;
-                checked.push(Checked::Set(id, setter));
-                canonical.push(
-                    json!({"op": "set", "entity": id.get(), "component": component,
-                                      "value": value}),
-                );
+                let (setter, value) = check_set(b, &mut plan, id, component, value, *replace, &at)?;
+                checked.push(Checked::Set(id, component.clone(), setter));
+                let mut c = json!({"op": "set", "entity": id.get(), "component": component,
+                                   "value": value});
+                if *replace {
+                    c["replace"] = json!(true);
+                }
+                canonical.push(c);
             }
             Edit::Remove { entity, component } => {
                 let id = r(&plan, entity)?;
-                checked.push(Checked::Remove(id, check_remove(b, component)?));
+                checked.push(Checked::Remove(
+                    id,
+                    component.clone(),
+                    check_remove(b, component)?,
+                ));
                 plan.pending
                     .insert((id, component.clone()), Pending::Removed);
                 canonical.push(json!({"op": "remove", "entity": id.get(), "component": component}));
@@ -283,13 +441,174 @@ pub fn world_edit(
                 checked.push(Checked::Destroy(id));
                 canonical.push(json!({"op": "destroy", "entity": id.get()}));
             }
+            Edit::Revive {
+                entity,
+                name,
+                components,
+            } => {
+                let id = check_revive(b, &plan, *entity, &at_entity)?;
+                plan.revived.insert(id);
+                checked.push(Checked::Revive(
+                    id,
+                    prepare(b.world(), name.as_deref(), None, components, &at)?,
+                ));
+                canonical.push(json!({"op": "revive", "entity": id.get(), "name": name,
+                                      "components": components}));
+            }
         }
     }
+    let before = Before::capture(b.world(), &checked);
     let mut results = Vec::with_capacity(checked.len());
+    let mut spawned = Vec::new();
     for c in checked {
-        results.push(apply(b, c).map_err(|p| applying_failed(b, &p))?);
+        let r = apply(b, c).map_err(|p| applying_failed(b, &p))?;
+        if r["op"] == "spawned"
+            && let Some(id) = r["id"].as_u64().and_then(EntityId::new)
+        {
+            spawned.push(id);
+        }
+        results.push(r);
     }
-    Ok((json!({"results": results}), json!({"edits": canonical})))
+    let inverse = before.inverse(b.world(), &spawned);
+    let ids: Vec<u64> = spawned.iter().map(|i| i.get()).collect();
+    Ok(Applied {
+        result: json!({"tick": b.tick().0, "applied": results.len(), "spawned": ids,
+                       "results": results}),
+        canonical: json!({"edits": canonical}),
+        inverse,
+    })
+}
+
+/// A revival's id: allocated, not live, not revived earlier in the call.
+fn check_revive(b: &Boundary<'_>, plan: &Plan, n: u64, at: &Pointer) -> Result<EntityId, Problem> {
+    let next = b.world().resource::<pocket_sim::EntityAllocator>().next();
+    let id = EntityId::new(n)
+        .filter(|id| id.get() < next)
+        .ok_or_else(|| pocket_sim::entity::entity_id_invalid(&n.to_string(), next))?;
+    if b.entity(id).is_some() || plan.revived.contains(&id) {
+        let mut p = pocket_sim::entity::entity_alive(id);
+        p.detail.insert("path".into(), json!(at.to_string()));
+        return Err(p);
+    }
+    Ok(id)
+}
+
+/// One component of a live entity as JSON, engine or project; `None` when it has none.
+pub fn component_json(
+    world: &bevy_ecs::prelude::World,
+    e: bevy_ecs::prelude::Entity,
+    name: &str,
+) -> Option<Value> {
+    let ent = world.entity(e);
+    if let Some(c) = engine_component(name) {
+        (c.get)(&ent)
+    } else if let Some((schema, access)) = project_component(world, name) {
+        access.read(&ent).map(|v| values::to_json(&schema, &v))
+    } else {
+        None
+    }
+}
+
+/// Every component of a live entity as JSON by name (its `Name` left out).
+pub fn components_json(
+    world: &bevy_ecs::prelude::World,
+    e: bevy_ecs::prelude::Entity,
+) -> Map<String, Value> {
+    let mut out = Map::new();
+    for entry in world.resource::<pocket_sim::ComponentRegistry>().entries() {
+        if let Some(v) = component_json(world, e, &entry.name) {
+            out.insert(entry.name.to_string(), v);
+        }
+    }
+    out
+}
+
+/// What a call's inverse needs from the world before it: the entities it destroys whole, the
+/// components it sets or removes on live entities, and the ids it revives.
+struct Before {
+    destroyed: Vec<(EntityId, Option<String>, Map<String, Value>)>,
+    touched: BTreeMap<(EntityId, String), Option<Value>>,
+    revived: Vec<EntityId>,
+}
+
+impl Before {
+    fn capture(world: &bevy_ecs::prelude::World, checked: &[Checked]) -> Before {
+        let mut out = Before {
+            destroyed: Vec::new(),
+            touched: BTreeMap::new(),
+            revived: Vec::new(),
+        };
+        let live = |id: EntityId| pocket_sim::entity::entity(world, id);
+        for c in checked {
+            match c {
+                Checked::Set(id, comp, _) | Checked::Remove(id, comp, _) => {
+                    if let Some(e) = live(*id) {
+                        out.touched
+                            .entry((*id, comp.clone()))
+                            .or_insert_with(|| component_json(world, e, comp));
+                    }
+                }
+                Checked::Destroy(id) => {
+                    if let Some(e) = live(*id)
+                        && !out.destroyed.iter().any(|(d, _, _)| d == id)
+                    {
+                        let name = world
+                            .get::<pocket_sim::Name>(e)
+                            .map(|n| n.as_str().to_owned());
+                        out.destroyed.push((*id, name, components_json(world, e)));
+                    }
+                }
+                Checked::Revive(id, _) => out.revived.push(*id),
+                Checked::Spawn(_) => {}
+            }
+        }
+        out
+    }
+
+    /// The edits that undo the call, against the world it left.
+    fn inverse(self, world: &bevy_ecs::prelude::World, spawned: &[EntityId]) -> Vec<Edit> {
+        let live = |id: EntityId| pocket_sim::entity::entity(world, id);
+        let mut inv = Vec::new();
+        for id in spawned.iter().chain(&self.revived) {
+            if live(*id).is_some() {
+                inv.push(Edit::Destroy {
+                    entity: EntityRef::Id(id.get()),
+                });
+            }
+        }
+        let gone: BTreeSet<EntityId> = self.destroyed.iter().map(|(id, _, _)| *id).collect();
+        for (id, name, components) in self.destroyed {
+            inv.push(Edit::Revive {
+                entity: id.get(),
+                name,
+                components,
+            });
+        }
+        for ((id, component), prev) in self.touched {
+            if gone.contains(&id) {
+                continue;
+            }
+            let Some(e) = live(id) else { continue };
+            match prev {
+                Some(Value::Object(value)) => inv.push(Edit::Set {
+                    entity: EntityRef::Id(id.get()),
+                    component,
+                    value,
+                    replace: true,
+                }),
+                Some(_) => {}
+                None => {
+                    if component_json(world, e, &component).is_some() {
+                        inv.push(Edit::Remove {
+                            entity: EntityRef::Id(id.get()),
+                            component,
+                        });
+                    }
+                }
+            }
+        }
+        inv
+    }
 }
 
 /// `sim.internal`: an edit that passed the check failed to apply, which the check rules out; the
@@ -319,7 +638,7 @@ fn apply(b: &mut Boundary<'_>, c: Checked) -> Result<Value, Problem> {
     };
     Ok(match c {
         Checked::Spawn(p) => json!({"op": "spawned", "id": p.spawn(b)?.get()}),
-        Checked::Set(id, s) => {
+        Checked::Set(id, _, s) => {
             let e = live(b, id)?;
             let mut ent = b.world_mut().entity_mut(e);
             match s {
@@ -332,7 +651,7 @@ fn apply(b: &mut Boundary<'_>, c: Checked) -> Result<Value, Problem> {
             }
             json!({"op": "set", "entity": id.get()})
         }
-        Checked::Remove(id, r) => {
+        Checked::Remove(id, _, r) => {
             let e = live(b, id)?;
             let mut ent = b.world_mut().entity_mut(e);
             match r {
@@ -344,6 +663,10 @@ fn apply(b: &mut Boundary<'_>, c: Checked) -> Result<Value, Problem> {
         Checked::Destroy(id) => {
             let gone = b.despawn(id)?;
             json!({"op": "destroyed", "count": u32::from(gone)})
+        }
+        Checked::Revive(id, p) => {
+            p.revive(b, id)?;
+            json!({"op": "revived", "id": id.get()})
         }
     })
 }

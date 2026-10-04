@@ -4,8 +4,14 @@
 //! through clients; at each boundary the loop takes what is queued and what was held for this tick,
 //! applies it in the canonical order, asks the time model what next, and runs a tick, waits for its
 //! clock, waits for a command or quits. The wall clock is the injected one, read only here.
+//!
+//! The loop also owns what needs one (docs/spec/server.md): Play, which forks the edit world and
+//! runs the fork in real time until Stop discards it; the kept snapshots (one every 60 ticks, the
+//! last 120) that `snapshots.restore` returns to; `time.step`'s stop conditions, checked after each
+//! tick; and the log stream (script `console.*` lines and failed invocations).
 
 use std::collections::{BTreeMap, VecDeque};
+use std::mem;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -15,17 +21,18 @@ use std::time::Duration;
 use pocket_contract::{Problem, detail};
 use pocket_interface::{Pace, TimeModel};
 use pocket_link::{
-    Envelope, GameClient, Lease, LoopState, PacingStatus, Publisher, QUEUE_CAPACITY, QueueReceiver,
-    QueueSender, Received, RegistryInfo, ReplyTo, ReplyValue, SnapshotReader, Source, TimeStatus,
-    WorldSnapshot, canonical_order, game_stopped, publication, queue, source_in_use, tick_passed,
+    Envelope, GameClient, Lease, LogRecord, LoopState, PacingStatus, Publisher, QUEUE_CAPACITY,
+    QueueReceiver, QueueSender, Received, RegistryInfo, ReplyTo, ReplyValue, SnapshotReader,
+    Source, TimeStatus, WorldInfo, WorldMode, WorldSnapshot, canonical_order, game_stopped,
+    publication, queue, source_in_use, tick_passed,
 };
+use pocket_persist::Snapshot;
 use pocket_sim::{ContentHash, Tick};
-use schemars::JsonSchema;
-use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::catalog::Command;
-use crate::game::{Game, StepParams};
+use crate::catalog::{self, Command, NoParams};
+use crate::control::{PlayParams, SnapshotsRestoreParams, StepParams, StepStop, TimeControlParams};
+use crate::game::Game;
 
 pub use crate::GAME_STACK_BYTES;
 pub use pocket_interface::{MAX_SPEED, Pacing};
@@ -45,6 +52,12 @@ pub struct ThreadOptions {
     pub pacing: Pacing,
     /// The render feed the game extracts visual changes into after each publication.
     pub feed: Option<pocket_assets::Feed>,
+    /// Start paused (the editor's edit world: real time, paused until asked).
+    pub paused: bool,
+    /// Keep a snapshot every this many ticks (0: none).
+    pub keep_every: u64,
+    /// Kept snapshots held, the oldest dropped first.
+    pub keep: usize,
 }
 
 impl ThreadOptions {
@@ -56,18 +69,11 @@ impl ThreadOptions {
             on_publish: Arc::new(|| {}),
             pacing: Pacing::Stepped,
             feed: None,
+            paused: false,
+            keep_every: 60,
+            keep: 120,
         }
     }
-}
-
-/// `time_control`'s parameters.
-#[derive(Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-struct TimeControl {
-    #[serde(default)]
-    pause: Option<bool>,
-    #[serde(default)]
-    pacing: Option<Pacing>,
 }
 
 /// Starts game threads.
@@ -118,7 +124,10 @@ impl GameThread {
                         return;
                     }
                 };
-                let model = TimeModel::new(game.sim().clock().rate, options.pacing);
+                let mut model = TimeModel::new(game.sim().clock().rate, options.pacing);
+                if options.paused {
+                    model.pause();
+                }
                 let first = match first_snapshot(&mut game, &model, &options) {
                     Ok(s) => s,
                     Err(p) => {
@@ -126,17 +135,26 @@ impl GameThread {
                         return;
                     }
                 };
-                let (publisher, reader) = publication(first, options.clock.clone());
+                let (publisher, reader) = publication(first.clone(), options.clock.clone());
                 let registry = Arc::new(game.registry_info().unwrap_or_default());
+                let mut kept = Kept::new(options.keep_every, options.keep);
+                kept.offer(&first.snapshot, true);
                 if ready_tx.send(Ok(reader)).is_err() {
                     return;
                 }
+                publisher.set_world(WorldInfo {
+                    mode: WorldMode::Edit,
+                    epoch: 0,
+                });
                 let mut l = Loop {
                     bundle: game.bundle(),
                     game,
                     rx,
                     publisher,
                     model,
+                    kept,
+                    parked: None,
+                    epoch: 0,
                     options,
                     held: Vec::new(),
                     pending: VecDeque::new(),
@@ -285,18 +303,98 @@ impl GameHandle {
     }
 }
 
+/// The kept snapshots of one world (docs/spec/server.md, snapshots): one every `every` ticks, the
+/// last `keep` of them.
+struct Kept {
+    every: u64,
+    keep: usize,
+    items: VecDeque<Snapshot>,
+}
+
+impl Kept {
+    fn new(every: u64, keep: usize) -> Kept {
+        Kept {
+            every,
+            keep,
+            items: VecDeque::new(),
+        }
+    }
+
+    /// Keeps `s` if its tick is due (or `always`, the world's first state).
+    fn offer(&mut self, s: &Snapshot, always: bool) {
+        let tick = s.header().tick.0;
+        let due = self.every > 0 && tick.is_multiple_of(self.every);
+        if !(due || always) || self.keep == 0 {
+            return;
+        }
+        if self.items.back().is_some_and(|b| b.header().tick.0 >= tick) {
+            self.drop_after(tick.saturating_sub(1));
+        }
+        if self.items.len() == self.keep {
+            self.items.pop_front();
+        }
+        self.items.push_back(s.clone());
+    }
+
+    fn at_or_before(&self, tick: u64) -> Option<Snapshot> {
+        self.items
+            .iter()
+            .rev()
+            .find(|s| s.header().tick.0 <= tick)
+            .cloned()
+    }
+
+    fn drop_after(&mut self, tick: u64) {
+        while self.items.back().is_some_and(|s| s.header().tick.0 > tick) {
+            self.items.pop_back();
+        }
+    }
+
+    fn ticks(&self) -> Vec<u64> {
+        self.items.iter().map(|s| s.header().tick.0).collect()
+    }
+
+    fn to_json(&self) -> Value {
+        let list: Vec<Value> = self
+            .items
+            .iter()
+            .map(|s| json!({"tick": s.header().tick.0, "world_hash": s.world_hash().to_string()}))
+            .collect();
+        json!({"every": self.every, "keep": self.keep, "snapshots": list})
+    }
+}
+
+/// The edit world while Play runs its fork.
+struct Parked {
+    game: Game,
+    model: TimeModel,
+    kept: Kept,
+}
+
+/// A `time.step` being run: ticks left, where the answer goes, its stop conditions.
+struct StepJob {
+    left: u64,
+    reply: ReplyTo,
+    stop: Option<StepStop>,
+}
+
 struct Loop {
     game: Game,
     rx: QueueReceiver,
     publisher: Publisher,
     model: TimeModel,
+    kept: Kept,
+    /// The edit world, while Play runs.
+    parked: Option<Parked>,
+    /// Changes whenever the world shown is replaced (restore, Play, Stop).
+    epoch: u64,
     options: ThreadOptions,
     /// Envelopes for a later tick.
     held: Vec<Envelope>,
     /// Envelopes a wait received, for the next batch.
     pending: VecDeque<Envelope>,
-    /// `step` requests: ticks still to run, and where the answer goes.
-    steps: VecDeque<(u64, ReplyTo)>,
+    /// `time.step` requests in order.
+    steps: VecDeque<StepJob>,
     /// Failed invocations of the ticks the current `step` ran (at most 20).
     errors: Vec<Problem>,
     attached: Arc<AtomicBool>,
@@ -313,9 +411,32 @@ enum Next {
     Quit,
 }
 
+fn problem(code: &str, message: String) -> Problem {
+    Problem::new(code, message, detail([]))
+}
+
+/// A console location `file:line:column` split.
+fn location(loc: &str) -> (Option<String>, Option<u64>) {
+    let mut parts = loc.rsplitn(3, ':');
+    let col = parts.next();
+    let line = parts.next();
+    match (parts.next(), line, col) {
+        (Some(file), Some(line), Some(_)) => (Some(file.to_owned()), line.parse().ok()),
+        _ => (Some(loc.to_owned()), None),
+    }
+}
+
 impl Loop {
     fn now(&self) -> f64 {
         (self.options.clock)()
+    }
+
+    fn mode(&self) -> WorldMode {
+        if self.parked.is_some() {
+            WorldMode::Play
+        } else {
+            WorldMode::Edit
+        }
     }
 
     fn run(&mut self) {
@@ -344,8 +465,8 @@ impl Loop {
         for e in self.held.drain(..).chain(self.pending.drain(..)) {
             answer(e);
         }
-        for (_, r) in self.steps.drain(..) {
-            r.send(Err(why.clone()));
+        for j in self.steps.drain(..) {
+            j.reply.send(Err(why.clone()));
         }
         while let Received::One(e) = self.rx.try_next() {
             answer(e);
@@ -386,12 +507,13 @@ impl Loop {
         self.publisher
             .set_state(LoopState::Applying, self.game.tick());
         let writes = self.game.writes();
+        let epoch = self.epoch;
         let mut quit = false;
         for e in batch {
             self.rx.done(1);
             quit |= self.handle(e);
         }
-        let wrote = self.game.writes() != writes;
+        let wrote = self.game.writes() != writes && self.epoch == epoch;
         self.push_events();
         if quit {
             return Next::Quit;
@@ -449,27 +571,31 @@ impl Loop {
         self.model.ran_tick(now);
         self.pushed = 0;
         self.push_events();
+        self.push_log(r.as_ref().ok().map(|rep| rep.errors.as_slice()));
         match r {
             Ok(report) => {
                 if !self.steps.is_empty() {
                     let room = 20usize.saturating_sub(self.errors.len());
                     self.errors.extend(report.errors.into_iter().take(room));
                 }
-                self.publish();
-                if let Some((left, _)) = self.steps.front_mut() {
-                    *left -= 1;
-                    if *left == 0
-                        && let Some((_, reply)) = self.steps.pop_front()
-                    {
-                        reply.send(self.answer_step());
+                self.present();
+                let tick = self.game.tick().0;
+                let keep = self.kept.every > 0 && tick.is_multiple_of(self.kept.every);
+                if keep || self.attached.load(Ordering::Acquire) {
+                    if let Ok(snap) = self.game.snapshot() {
+                        if keep {
+                            self.kept.offer(&snap, false);
+                        }
+                        self.publish_snapshot(snap);
                     }
                 }
+                self.after_tick_steps();
             }
             Err(p) => {
                 self.model.cancel_steps();
                 self.errors.clear();
-                for (_, reply) in self.steps.drain(..) {
-                    reply.send(Err(p.clone()));
+                for j in self.steps.drain(..) {
+                    j.reply.send(Err(p.clone()));
                 }
                 if self.game.sim().poisoned().is_some() {
                     // Nothing ticks until a restore: real time stops asking for ticks (a resume
@@ -483,10 +609,37 @@ impl Loop {
         }
     }
 
+    /// Counts the tick against the front `time.step` and answers it when it is done or its stop
+    /// condition holds; an early stop gives back the ticks the time model still owes it.
+    fn after_tick_steps(&mut self) {
+        let Some(job) = self.steps.front_mut() else {
+            return;
+        };
+        job.left = job.left.saturating_sub(1);
+        let why = job.stop.as_mut().and_then(|s| s.after_tick(&self.game));
+        if job.left > 0 && why.is_none() {
+            return;
+        }
+        let Some(job) = self.steps.pop_front() else {
+            return;
+        };
+        if job.left > 0 {
+            let owed: u64 = self.steps.iter().map(|j| j.left).sum();
+            self.model.cancel_steps();
+            self.model.step(owed);
+        }
+        let why = why.or_else(|| job.stop.as_ref().map(|_| json!({"reason": "limit"})));
+        let mut answer = self.answer_step();
+        if let (Ok(ReplyValue::Json(v)), Some(why)) = (&mut answer, why) {
+            v["stopped_by"] = why;
+        }
+        job.reply.send(answer);
+    }
+
     /// A finished `step`: the tick, the hash and the failed invocations of its ticks.
     fn answer_step(&mut self) -> Result<ReplyValue, Problem> {
         let hash = self.game.world_hash()?;
-        let errors = std::mem::take(&mut self.errors);
+        let errors = mem::take(&mut self.errors);
         Ok(ReplyValue::Json(json!({
             "tick": self.game.tick().0,
             "world_hash": hash.to_string(),
@@ -494,48 +647,215 @@ impl Loop {
         })))
     }
 
+    /// The status the loop answers `status` and `time.control` with: spec-contract's
+    /// `TimeStatus` and what the editor shows beside it.
+    fn status(&self) -> Value {
+        let mut v = serde_json::to_value(time_status(&self.game, &self.model)).unwrap_or(json!({}));
+        let world = self.game.world();
+        v["mode"] = json!(self.mode().as_str());
+        v["epoch"] = json!(self.epoch);
+        v["world_hash"] = json!(self.game.world_hash().ok().map(|h| h.to_string()));
+        v["entities"] = json!(world.resource::<pocket_sim::EntityIndex>().len());
+        v["bundle"] = json!(self.game.bundle().to_hex());
+        v["writes"] = json!(self.game.writes());
+        v["poisoned"] = json!(self.game.sim().poisoned().map(|p| p.tick.0));
+        v["steps_due"] = json!(self.model.steps_due());
+        v["kept"] = json!(self.kept.items.len());
+        v
+    }
+
+    /// Answers the step requests waiting with `why` (their world went away).
+    fn drop_steps(&mut self, why: &Problem) {
+        self.model.cancel_steps();
+        self.errors.clear();
+        for j in self.steps.drain(..) {
+            j.reply.send(Err(why.clone()));
+        }
+    }
+
+    /// The world shown was replaced: a new epoch, the stream continues from its inbox, and the
+    /// presenters get a publication at once.
+    fn world_replaced(&mut self) {
+        self.epoch += 1;
+        self.publisher.set_world(WorldInfo {
+            mode: self.mode(),
+            epoch: self.epoch,
+        });
+        self.pushed = self.game.inbox().len();
+        self.bundle = ContentHash([0; 32]);
+        self.publish();
+    }
+
+    fn play_start(&mut self, params: &Value) -> Result<Value, Problem> {
+        let p: PlayParams = crate::decode(params, "play.start")?;
+        if self.parked.is_some() {
+            return Err(problem(
+                "play.running",
+                "Play is already running; play.stop returns to the edit world.".into(),
+            ));
+        }
+        let speed = p.speed.unwrap_or(1.0);
+        let pacing = Pacing::RealTime { speed };
+        pacing.check()?;
+        let fork = self.game.fork()?;
+        let mut model = TimeModel::new(fork.sim().clock().rate, pacing);
+        if p.paused {
+            model.pause();
+        }
+        self.drop_steps(&problem(
+            "play.started",
+            "Play started; the edit world's step was dropped.".into(),
+        ));
+        let mut kept = Kept::new(self.options.keep_every, self.options.keep);
+        if let Ok(s) = fork.snapshot() {
+            kept.offer(&s, true);
+        }
+        let game = mem::replace(&mut self.game, fork);
+        let model = mem::replace(&mut self.model, model);
+        let kept = mem::replace(&mut self.kept, kept);
+        self.parked = Some(Parked { game, model, kept });
+        self.world_replaced();
+        Ok(self.status())
+    }
+
+    fn play_stop(&mut self, params: &Value) -> Result<Value, Problem> {
+        crate::decode::<NoParams>(params, "play.stop")?;
+        let Some(parked) = self.parked.take() else {
+            return Err(problem(
+                "play.not_running",
+                "Play is not running; the edit world is shown.".into(),
+            ));
+        };
+        self.drop_steps(&problem(
+            "play.stopped",
+            "Play stopped; its step was dropped.".into(),
+        ));
+        self.game = parked.game;
+        self.model = parked.model;
+        self.kept = parked.kept;
+        self.world_replaced();
+        Ok(self.status())
+    }
+
+    fn restore(&mut self, params: &Value) -> Result<Value, Problem> {
+        let p: SnapshotsRestoreParams = crate::decode(params, "snapshots.restore")?;
+        let Some(snap) = self.kept.at_or_before(p.tick) else {
+            return Err(Problem::new(
+                "snapshots.none",
+                format!("No kept snapshot is at or before tick {}.", p.tick),
+                detail([("tick", json!(p.tick)), ("kept", json!(self.kept.ticks()))]),
+            ));
+        };
+        self.game.restore_any(&snap)?;
+        let at = snap.header().tick.0;
+        self.kept.drop_after(at);
+        self.drop_steps(&problem(
+            "snapshots.restored",
+            "The world was restored; the step was dropped.".into(),
+        ));
+        self.world_replaced();
+        let mut v = self.status();
+        v["restored"] = json!(at);
+        Ok(v)
+    }
+
+    fn time_control(&mut self, params: &Value) -> Result<Value, Problem> {
+        let p: TimeControlParams = crate::decode(params, "time.control")?;
+        if let Some(speed) = p.speed {
+            let pacing = Pacing::RealTime { speed };
+            pacing.check()?;
+            self.model.set_pacing(pacing);
+        }
+        if let Some(pacing) = p.pacing {
+            pacing.check()?;
+            self.model.set_pacing(pacing);
+        }
+        match p.pause {
+            Some(true) => self.model.pause(),
+            Some(false) => self.model.resume(),
+            None => {}
+        }
+        Ok(self.status())
+    }
+
+    fn step(&mut self, e: Envelope) {
+        let p = match crate::decode::<StepParams>(&e.params, "time.step") {
+            Ok(p) => p,
+            Err(p) => return e.reply.send(Err(p)),
+        };
+        let limit = match p.limit() {
+            Ok(n) => n,
+            Err(p) => return e.reply.send(Err(p)),
+        };
+        if limit == 0 {
+            return e.reply.send(self.answer_step());
+        }
+        if let Some(poison) = self.game.sim().poisoned() {
+            return e
+                .reply
+                .send(Err(pocket_sim::sim::world_poisoned(poison.tick)));
+        }
+        match StepStop::new(&self.game, &p) {
+            Ok(stop) => {
+                self.model.step(limit);
+                self.steps.push_back(StepJob {
+                    left: limit,
+                    reply: e.reply,
+                    stop,
+                });
+            }
+            Err(p) => e.reply.send(Err(p)),
+        }
+    }
+
     /// Applies one command; `true` when it asks the loop to quit.
     fn handle(&mut self, e: Envelope) -> bool {
-        match e.name.as_str() {
+        let name = catalog::find(&e.name).map_or(e.name.as_str(), |d| d.name);
+        let json = |r: Result<Value, Problem>| r.map(ReplyValue::Json);
+        match name {
             "shutdown" if e.source == Source::Host => {
                 self.model.quit();
                 e.reply.send(Ok(ReplyValue::Json(json!({}))));
                 return true;
             }
-            "step" => match crate::decode::<StepParams>(&e.params, "step") {
-                Ok(p) if p.ticks == 0 => e.reply.send(self.answer_step()),
-                Ok(p) => match self.game.sim().poisoned() {
-                    Some(poison) => e
-                        .reply
-                        .send(Err(pocket_sim::sim::world_poisoned(poison.tick))),
-                    None => {
-                        self.model.step(p.ticks);
-                        self.steps.push_back((p.ticks, e.reply));
-                    }
-                },
-                Err(p) => e.reply.send(Err(p)),
-            },
-            "time_control" => {
-                let r = crate::decode::<TimeControl>(&e.params, "time_control").and_then(|p| {
-                    if let Some(pacing) = p.pacing {
-                        pacing.check()?;
-                        self.model.set_pacing(pacing);
-                    }
-                    match p.pause {
-                        Some(true) => self.model.pause(),
-                        Some(false) => self.model.resume(),
-                        None => {}
-                    }
-                    Ok(ReplyValue::Json(
-                        serde_json::to_value(time_status(&self.game, &self.model))
-                            .unwrap_or(Value::Null),
-                    ))
-                });
-                e.reply.send(r);
+            "time.step" => self.step(e),
+            "time.control" => {
+                let r = self.time_control(&e.params);
+                e.reply.send(json(r));
+            }
+            "status" => {
+                let r = crate::decode::<NoParams>(&e.params, "status").map(|_| self.status());
+                e.reply.send(json(r));
+            }
+            "play.start" => {
+                let r = self.play_start(&e.params);
+                e.reply.send(json(r));
+            }
+            "play.stop" => {
+                let r = self.play_stop(&e.params);
+                e.reply.send(json(r));
+            }
+            "snapshots.list" => {
+                let r = crate::decode::<NoParams>(&e.params, "snapshots.list")
+                    .map(|_| self.kept.to_json());
+                e.reply.send(json(r));
+            }
+            "snapshots.restore" => {
+                let r = self.restore(&e.params);
+                e.reply.send(json(r));
             }
             "snapshot" => {
                 let r = self.game.snapshot().map(ReplyValue::Snapshot);
                 e.reply.send(r);
+            }
+            "project.save" if self.parked.is_some() => {
+                // Play's world is never saved: the edit world is.
+                let cmd = Command::new(e.source, e.seq, &e.name, e.params);
+                let r = match &mut self.parked {
+                    Some(p) => p.game.apply(&cmd),
+                    None => Err(catalog::thread_only("project.save")),
+                };
+                e.reply.send(json(r));
             }
             _ => {
                 let cmd = Command::new(e.source, e.seq, &e.name, e.params);
@@ -564,6 +884,43 @@ impl Loop {
         self.publisher.events(new);
     }
 
+    /// Moves the scripts' console lines and the tick's failed invocations into the log stream.
+    fn push_log(&mut self, errors: Option<&[Problem]>) {
+        let tick = self.game.tick().0;
+        let lines = self.game.take_log();
+        if !self.attached.load(Ordering::Acquire) {
+            return;
+        }
+        let mut out: Vec<LogRecord> = lines
+            .into_iter()
+            .map(|l| {
+                let (file, line) = l.location.as_deref().map_or((None, None), location);
+                LogRecord {
+                    seq: 0,
+                    level: l.level,
+                    source: l.system.unwrap_or_else(|| "script".into()),
+                    message: l.text,
+                    file,
+                    line,
+                    tick: Some(l.tick),
+                }
+            })
+            .collect();
+        for p in errors.unwrap_or_default() {
+            let system = p.detail.get("system").and_then(Value::as_str);
+            let mut r = LogRecord::new(
+                "error",
+                system.unwrap_or("host"),
+                format!("{}: {}", p.code, p.message),
+            );
+            r.tick = Some(tick);
+            out.push(r);
+        }
+        if !out.is_empty() {
+            self.publisher.log(out);
+        }
+    }
+
     /// A poisoned world has no snapshot of its own (it is not at a boundary): publishes the last
     /// published world again with the halted status, when a reader is attached.
     fn publish_halted(&mut self) {
@@ -586,15 +943,27 @@ impl Loop {
     /// Publishes the world as it is, when a reader is attached (threads.md 4.3), and the visual
     /// changes to the render feed's subscribers.
     fn publish(&mut self) {
-        if let Some(feed) = &self.options.feed {
-            self.game.present(&mut self.extractor, feed);
-        }
+        self.present();
         if !self.attached.load(Ordering::Acquire) {
             return;
         }
-        let Ok(snapshot) = self.game.snapshot() else {
+        if let Ok(snapshot) = self.game.snapshot() {
+            self.publish_snapshot(snapshot);
+        }
+    }
+
+    /// Hands the render feed's subscribers the visual changes (a switch of world, Play or Stop,
+    /// is a new `World`, so the extractor sends a full frame).
+    fn present(&mut self) {
+        if let Some(feed) = &self.options.feed {
+            self.game.present(&mut self.extractor, feed);
+        }
+    }
+
+    fn publish_snapshot(&mut self, snapshot: Snapshot) {
+        if !self.attached.load(Ordering::Acquire) {
             return;
-        };
+        }
         if self.game.bundle() != self.bundle {
             self.bundle = self.game.bundle();
             self.registry = Arc::new(self.game.registry_info().unwrap_or_default());

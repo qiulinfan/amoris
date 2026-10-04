@@ -22,6 +22,24 @@ pub struct EventRecord {
     pub bytes: Arc<[u8]>,
 }
 
+impl EventRecord {
+    /// The event as JSON (docs/spec/server.md, `events`): `{seq, id, tick, name, subject, cause,
+    /// data}`, `seq` the stream number and `id` and `cause` world-wide sequence numbers.
+    pub fn to_json(&self) -> Result<serde_json::Value, pocket_contract::Problem> {
+        let e: pocket_sim::Event =
+            pocket_persist::pce::from_bytes(&self.bytes, true).map_err(|e| e.problem(0))?;
+        Ok(serde_json::json!({
+            "seq": self.seq,
+            "id": e.seq.0,
+            "tick": e.tick.0,
+            "name": e.kind.as_str(),
+            "subject": e.subject.map(|s| s.get()),
+            "cause": e.cause.map(|c| c.0),
+            "data": e.data.to_json(),
+        }))
+    }
+}
+
 /// A reader's place in the stream: the next stream number it wants.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct EventCursor {

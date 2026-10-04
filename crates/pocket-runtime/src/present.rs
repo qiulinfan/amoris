@@ -10,9 +10,9 @@
 
 use std::collections::HashMap;
 
+use bevy_ecs::change_detection::DetectChanges;
 use bevy_ecs::entity::Entity;
 use bevy_ecs::prelude::World;
-use bevy_ecs::change_detection::DetectChanges;
 use bevy_ecs::world::{Ref, WorldId};
 use pocket_assets::frame::{
     CameraView, EnvironmentView, InstanceUpdate, LightKindView, LightView, Look, Pose, RenderFrame,
@@ -45,7 +45,12 @@ fn f3(v: [f64; 3]) -> [f32; 3] {
 fn pose(t: &Transform, scale: [f64; 3]) -> Pose {
     Pose {
         position: f3(t.position),
-        rotation: [f(t.rotation[0]), f(t.rotation[1]), f(t.rotation[2]), f(t.rotation[3])],
+        rotation: [
+            f(t.rotation[0]),
+            f(t.rotation[1]),
+            f(t.rotation[2]),
+            f(t.rotation[3]),
+        ],
         scale: f3(scale),
     }
 }
@@ -159,9 +164,8 @@ impl Extractor {
         };
         frame.lights = Some(Self::lights(world));
         frame.cameras = Some(Self::cameras(world));
-        frame.environment = Self::environment(world).or_else(|| {
-            Some(env_view(&Environment::default()))
-        });
+        frame.environment =
+            Self::environment(world).or_else(|| Some(env_view(&Environment::default())));
         frame.sea = Some(Self::sea(world));
         frame.splats = Some(Self::splats(world));
         frame
@@ -222,7 +226,9 @@ impl Extractor {
             frame.cameras = Some(Self::cameras(world));
         }
         if changed(world, &mut |w| {
-            w.query::<Ref<Environment>>().iter(w).any(|e| e.is_changed())
+            w.query::<Ref<Environment>>()
+                .iter(w)
+                .any(|e| e.is_changed())
         }) {
             frame.environment = Self::environment(world);
         }
@@ -275,7 +281,12 @@ impl Extractor {
             .map(|(id, t, c)| CameraView {
                 id: id.get(),
                 position: f3(t.position),
-                rotation: [f(t.rotation[0]), f(t.rotation[1]), f(t.rotation[2]), f(t.rotation[3])],
+                rotation: [
+                    f(t.rotation[0]),
+                    f(t.rotation[1]),
+                    f(t.rotation[2]),
+                    f(t.rotation[3]),
+                ],
                 fov_deg: f(c.fov_deg),
                 near: f(c.near),
                 far: f(c.far),
