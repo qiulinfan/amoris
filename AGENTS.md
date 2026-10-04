@@ -1,9 +1,9 @@
-# PocketEngine foundation rebuild
+# Amoris foundation
 
-This worktree is the new Rust/TypeScript rebuild on `feature/rebuild-foundation`.
-Read the accepted [charter](https://github.com/qiulinfan/pocketEngine/blob/rebuild/docs/charter.md)
-and [roadmap](https://github.com/qiulinfan/pocketEngine/blob/rebuild/docs/roadmap.md) on `rebuild`
-(`git show rebuild:docs/charter.md` locally). Those documents are authoritative; the previous
+This checkout contains the Rust/TypeScript foundation merged from `feature/rebuild-foundation`.
+Read the accepted [charter](https://github.com/qiulinfan/pocketEngine/blob/documentation/docs/charter.md)
+and [roadmap](https://github.com/qiulinfan/pocketEngine/blob/documentation/docs/roadmap.md) on `documentation`
+(`git show documentation:docs/charter.md` locally). Those documents are authoritative; the previous
 Rust/Lua prototypes and legacy main are historical implementations.
 
 ## Current slice
@@ -18,7 +18,9 @@ and browser WebGPU, with shared 2D/3D backend resources and distinct draw passes
 
 - Use feature/* branches. Keep the original C++/Lua files, CMake targets, sample projects and
   owner-written README untouched. New code does not depend on those targets.
-- Decision/specification and evidence summaries live only on rebuild, not this code branch.
+- Decision/specification and evidence summaries live on documentation, not this code branch.
+- Do not commit or push documentation without explicit owner permission. Past synchronization
+  instructions do not grant standing permission for later commits or pushes.
 - State is self-contained and deterministic. Scripts will be stateless systems; fork is an
   explicit capability, never the implementation of each tick or action's atomicity.
 - Preserve restricted player projection and intentions when rebuilding gameplay; developers'
