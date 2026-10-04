@@ -503,6 +503,19 @@ impl GameHook {
                 }) => {
                     let _ = reply.send(insp.set_variable(frame, &name, &value));
                 }
+                Ok(Command::Assign {
+                    frame,
+                    name,
+                    expression,
+                    reply,
+                }) => {
+                    let r = if top.is_none() {
+                        Err("The system has returned; its variables are gone.".into())
+                    } else {
+                        insp.assign(frame, &name, &expression)
+                    };
+                    let _ = reply.send(r);
+                }
             }
         }
         drop(insp); // releases every value handed out during the pause

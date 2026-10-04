@@ -204,8 +204,16 @@ export function DebugPanel() {
                       }}
                     />
                   ) : (
-                    <span className="bp-cond-text" onClick={() => b.owner !== "cdp" && setEditingCond(b.id)} data-tip="Click to set a condition">
-                      {b.log ? `log ${b.log}` : b.condition ? `when ${b.condition}` : "always"}
+                    <span
+                      className="bp-cond-text"
+                      onClick={() => b.owner !== "cdp" && setEditingCond(b.id)}
+                      data-tip={b.log !== undefined ? "A logpoint: click to set its condition (it keeps logging)" : "Click to set a condition"}
+                    >
+                      {b.log !== undefined
+                        ? `log ${b.log}${b.condition ? ` when ${b.condition}` : ""}`
+                        : b.condition
+                          ? `when ${b.condition}`
+                          : "always"}
                     </span>
                   )}
                   {b.owner === "cdp" && <span className="bp-note" data-tip="Set by a CDP client (Chrome DevTools, VS Code)">CDP</span>}

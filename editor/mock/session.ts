@@ -504,6 +504,7 @@ export class Session {
     "debug.state": () => this.debugger.state(),
     "debug.wait": () => this.debugger.state(),
     "debug.eval": (p) => this.debugger.eval(String(p.expr), p.frame as number | undefined),
+    "debug.set": (p) => this.debugger.set(String(p.name), String(p.value), p.frame as number | undefined),
     "debug.watch": (p) => this.debugger.addWatch(p),
     "debug.unwatch": (p) => this.debugger.removeWatches(p),
     "debug.exceptions": (p) => {

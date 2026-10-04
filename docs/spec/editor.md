@@ -51,9 +51,11 @@ floating crates, a helmsman and the sample's three script systems (`muster`, `lo
 `take_aboard`) emitting events with causes, a snapshot ring with restore and rewind, the sample's
 scripts (read from `samples/sailing/scripts`, kept in memory) with fake diagnostics, a debugger
 answering in the real host's shapes (section 8.1: `bp<n>` breakpoints moved to the next line with
-code, conditions and logpoints, stepping, one frame per pause with `locals` and `closure` as JSON
-previews, evaluation only while paused, assignments that last for the pause, data breakpoints on
-fields script systems write, `debug.exceptions`),
+code, conditions and logpoints, stepping, the frames the host shows (inside an `each` callback,
+the callback with its `locals` and the run's columns and `ctx` as its `closure`, and the `run` that
+called it) as JSON previews, evaluation only while paused, `debug.set` lasting for the pause (a
+`const` refuses), data breakpoints on fields script systems write, which stop on the statement after
+the write and on a returned frame only when the write was the call's last, `debug.exceptions`),
 profile samples, assets with thumbnails, and a simulated MCP agent whose edits land in the same undo
 history. It binds 127.0.0.1 and refuses non-loopback `Origin`/`Host`, as the host does.
 
@@ -79,7 +81,7 @@ over console, events, timeline, profiler and debug; inspector over history and a
 | Viewport | The renderer's canvas (section 5) with: orbit (right-drag or Alt+drag), pan (middle-drag or Shift+right-drag), zoom (wheel, pinch), click to pick (Shift/Cmd toggles), drag on empty space for rectangle selection, double-click to frame; tools Select/Move/Rotate/Scale (Q/W/E/R) with 3D gizmos (arrows with cones, plane handles, a screen handle; rotation rings with a view ring; scale cubes), World/Local (X), snapping with steps (hold Cmd/Ctrl to invert while dragging), grid (G), the axis gizmo (click an axis to look along it, the center for perspective/orthographic), camera menu (views, frame, reset), stats, the wind, selection labels; drop assets on the ground plane | `world.edit` with `group` while dragging, one undo entry on release; Escape cancels the drag (undoes it) |
 | Inspector | The selection's name and components, each a collapsible card generated from its JSON Schema with the doc as tooltip: numbers (drag the strip to scrub, Shift ×10, Alt ×0.1; arithmetic accepted; arrows step), vectors per axis, rotations as Euler degrees (YXZ) over the stored quaternion, colours with a picker (stored linear, shown sRGB) and alpha, enums as selects with per-variant docs, booleans as switches, entity references as pickers (searchable, or drop a hierarchy row), nullable fields, nested objects, lists, tagged unions (`{Cuboid: {...}}`), the rest as JSON. Engine-written fields are marked. Card menu: reset to defaults, copy as JSON, break when written, remove. Add Component lists the registry with docs. Several selected: edits apply to each that has the component | `world.schema`, `world.get`, `world.edit` |
 | Scripts | File list with problem counts, Monaco with tabs (one model per script so imports type-check), the `pocket` module's types (section 7), Cmd/Ctrl+S saves (`scripts.write` then `scripts.apply`), host diagnostics as markers beside the TypeScript worker's own, a breakpoint gutter (click or F9; conditional and unbound breakpoints drawn differently), the paused line, sticky scroll, minimap | `scripts.list/read/write/apply`, `debug.breakpoints.*` |
-| Debug | Continue/Pause, Step Over/Into/Out (F5, F6, F10, F11, Shift+F11), pause on exceptions (off, uncaught, all); the pause reason, tick, system and TypeScript location, and for a data breakpoint the field, its value before and after and the statement that wrote it; call stack (click a frame to show its source and its scopes; a frame seen after `run` returned is marked), the frame's Local and Closure scopes as expandable trees whose leaf values can be set (double-click, type an expression, Enter: section 8.1), watch expressions re-evaluated on each pause and frame change, breakpoints with editable conditions (logpoints and CDP clients' breakpoints shown as such), data breakpoints. Three columns when wide | `debug` events, `debug.state/continue/pause/step/eval/exceptions/breakpoints.*/watch/unwatch` |
+| Debug | Continue/Pause, Step Over/Into/Out (F5, F6, F10, F11, Shift+F11), pause on exceptions (off, uncaught, all); the pause reason, tick, system and TypeScript location, and for a data breakpoint the field, its value before and after and the statement that wrote it; call stack (click a frame to show its source and its scopes; a frame seen after `run` returned is marked), the frame's Local and Closure scopes as expandable trees whose leaf values can be set (double-click, type an expression, Enter: section 8.1), watch expressions re-evaluated on each pause and frame change, breakpoints with editable conditions (the host's list, read again on each pause: logpoints, MCP agents' and CDP clients' breakpoints shown as such), data breakpoints. Three columns when wide | `debug` events, `debug.state/continue/pause/step/eval/set/exceptions/breakpoints.*/watch/unwatch` |
 | Console | The host's log with level filters and counts, search, follow, timestamps and ticks, a link to the source line; an input line evaluating in the game (on the selected frame while paused), with history; results are expandable trees | `log` events, `debug.eval` |
 | Events | The event stream as a table (seq, tick, name, subject, data) with a filter; selecting one asks the host why: the cause chain, oldest first, then the data; subjects select their entity | `events` events, `events.since`, `events.why` |
 | Timeline | Kept snapshots and event lanes (the most frequent kinds, and the selection's) on a tick ruler with the playhead; drag to scrub and release to rewind there; click a snapshot to restore it; back to the previous snapshot, pause, step | `snapshots.list/restore`, `debug.rewind`, `time.*` |
@@ -262,18 +264,26 @@ wire shapes (`HostDebugState`, `HostFrame`, `HostVariable`, `HostBreakpoint`, `H
   the infinities as text; objects past the depth as `"[Description]"`; functions as
   `"[function name]"`). The editor turns each into a tree (`Float64Array(1) [0.42]`, `{speed: …}`)
   and gives every leaf reached by names and indices a `path` (`l.distance[0]`).
-- Setting a value: the Variables tree assigns with `debug.eval {expr: "<path> = (<text>)", frame}`,
-  then evaluates the root variable again to show it (the pause's frames are captured once, at the
-  stop). The host's evaluation can change locals and query columns, which the call commits, so
-  setting `l.distance[0]` changes the boat's `Log.distance`; `const` locals refuse. Either taints
-  the run from that tick (debugger.md 5).
-- Breakpoints: `debug.breakpoints.set {file, line, condition?}` answers `{id: "bp<n>", file, line,
-  verified, locations}` with `line` where it binds (the next line with code); the host has no
-  update, so a new condition sets a new breakpoint and clears the old one. `debug.breakpoints.list`
-  and `debug.state.breakpoints` list every frontend's (`owner` `agent` or `cdp`, `target`,
-  `condition`, `log`, `locations`); `debug.breakpoints.clear {id}` removes any of them and `{}` every
-  one set through `debug.*` (the editor's and MCP agents'). A restarted host has none: the editor sets
-  its own again on reconnect, and the pause-on-exceptions mode.
+- Setting a value: a variable of the frame (an argument, a local, a closure variable: `r`, `e`) is
+  set with `debug.set {name, value: "<text>", frame}`; a value inside one (`l.distance[0]`) is
+  assigned with `debug.eval {expr: "<path> = (<text>)", frame}`. An assignment to a variable through
+  `debug.eval` would not reach the frame (QuickJS-ng evaluates on a copy of each local no closure
+  captured, debugger.md 7); one through an object writes the object, and a query column's element
+  is the component the call commits, so setting `l.distance[0]` changes the boat's `Log.distance`.
+  `const` variables refuse (`debug.set_failed`). The editor then reads the path back and reports a
+  failure when it does not read what was assigned (a typed column converts: an `Int32Array` keeps 1
+  of 1.5), and evaluates the root variable again to show it (the pause's frames are captured once,
+  at the stop). Either taints the run from that tick (debugger.md 5).
+- Breakpoints: `debug.breakpoints.set {file, line, condition?, log?}` answers `{id: "bp<n>", file,
+  line, verified, locations}` with `line` where it binds (the next line with code); the host has no
+  update, so a new condition sets a new breakpoint (a logpoint keeps its `log`) and clears the old
+  one. `debug.breakpoints.list` and `debug.state.breakpoints` list every frontend's (`owner` `agent`
+  or `cdp`, `target`, `condition`, `log`, `locations`); `debug.breakpoints.clear {id}` removes any of
+  them and `{}` every one set through `debug.*` (the editor's and MCP agents'). The host pushes no
+  event when a breakpoint is set or cleared, so the editor reads the list on (re)connection, on each
+  pause, after Clear All, and when a clear answers `debug.unknown_breakpoint` (another frontend
+  cleared it: the editor drops its entry). A restarted host has none: the editor sets its own again
+  on reconnect, and the pause-on-exceptions mode.
 - `debug.watch {entity: id, component, field?}` answers `{id: "w<n>", entity, component, field}`;
   `debug.unwatch {id}`; `debug.exceptions {mode}` answers `{mode}`.
 - `debug.eval` answers `{type, value, description}` and only while paused (`debug.not_paused`
@@ -283,6 +293,15 @@ wire shapes (`HostDebugState`, `HostFrame`, `HostVariable`, `HostBreakpoint`, `H
 - Play and Step debug the Play world: the host's game thread hands the script debugger to Play's
   fork and back on Stop, so breakpoints set in Edit hit in Play; `time.step` in Edit runs the edit
   world's scripts under the debugger too.
+- Stop while paused: the game thread answers `play.stop` only between ticks (debugger.md 8), so Stop
+  continues the pause first, and any pause later in that tick, until `play.stop` answers. The
+  timeline does not poll `snapshots.list` while paused.
+- Stop and scripts: Stop returns to the edit world exactly as it was (server.md 3.3), with the
+  bundle it ran, while scripts saved during Play are on disk. Stop reads the Play world's bundle
+  (`time.control {}`) before `play.stop`; when it differs from the edit world's, the editor runs
+  `scripts.apply` again, so the edit world and the next Play run the text the editor shows and
+  breakpoints bind to its lines. Other clients that apply scripts during Play apply them again
+  after Stop themselves.
 - Debug > Copy Chrome DevTools URL copies `debug.state.cdp.devtools`, the host's CDP endpoint
   (pocket-debug's own port, 9229 by default; absent when the port was taken). The host does not
   serve `/devtools` or `/json` on its own port, so the Vite dev server does not proxy them.
@@ -314,7 +333,8 @@ events with a cause chain, timeline, profiler, console, agent, debug, scripts, h
 
 The debugger against the real host: `pocket serve` on a copy of `samples/sailing` serving the built
 editor, driven by `tools/debug-host.ts` in headless Chrome with real input only (clicks, keys,
-typing), 2026-10-04; `debug-host-*.png` and the driver's log `debug-host.txt`:
+typing; the exceptions select excepted, step 7), 2026-10-04; `debug-host-*.png` and the driver's
+log `debug-host.txt` (exit 0, every step):
 
 | Screenshot | Shows |
 |---|---|
@@ -323,13 +343,17 @@ typing), 2026-10-04; `debug-host-*.png` and the driver's log `debug-host.txt`:
 | `debug-host-3-scopes-watches.png` | The Debug panel: Closure `b` and `l` (open), `ctx` opened (functions as `ƒ emit()`); watches `b.speed[r] * 3.6 = 0`, `l.distance[r] = 0`, `ctx.tick = 1` evaluated on the paused frame |
 | `debug-host-4-stepped.png` | F10: stopped at rules.ts:28, `speed = 0` in Local, the watches evaluated again |
 | `debug-host-5-set-value.png` | `l.distance[0]` set to 1000 by double-clicking its value in the Variables tree and typing; `distance` shows `[1000]` and the watch `l.distance[r]` 1000 |
+| `debug-host-5b-set-local.png` | The argument `r` set to 1 by double-clicking its value in Local (`debug.set`): Local shows `r = 1` and the watches, evaluated on the frame again, read `l.distance[r] = undefined` and `b.speed[r] * 3.6 = NaN`; `speed` (a `const`) refused, the toast "Set speed: debug.set_failed, speed is a constant." The driver then sets `r` back to 0 and the watch reads 1000 again |
 | `debug-host-6-next-tick.png` | After F10 over line 28 and F5: tick 2 stops at rules.ts:27 again and `l.distance` is `[1000]`, the value tick 1 committed (the boat's speed was 0 then); `b.speed[r] * 3.6 = -0.9028` |
 | `debug-host-7-data-breakpoint.png` | The line breakpoint removed, the Sloop's Log card in the inspector, Break When Written, `top_speed`; Exceptions set to uncaught (the host's `debug.state` answered `uncaught`); F5: "Paused on data breakpoint, tick 2, rules.ts:30:13, Sloop.Log.top_speed: 0 → 0.250767 (written at rules.ts:29)" |
-| `debug-host-8-running.png` | The data breakpoint removed and F5: the game runs (tick 216), the Viewport tab drawing it with WebGPU; the inspector's Log card shows Distance 1009 and Top speed 3.32 |
-| `debug-host-9-edited-script.png` | While it runs: `const knots = speed * 1.944;` typed as a new line 28 of rules.ts, Mod+S (`scripts.write`, then `scripts.apply`: the toast "Scripts applied, bundle 4685e123… hot-swapped, no errors"), a breakpoint on line 29: tick 423 stops there with `knots = 3.9595` in Local |
+| `debug-host-8-running.png` | The data breakpoint removed and F5: the game runs (tick 477), the Viewport tab drawing it with WebGPU; the inspector's Log card shows Distance 1019 and Top speed 3.32 |
+| `debug-host-9-edited-script.png` | While it runs: `const knots = speed * 1.944;` typed as a new line 28 of rules.ts, Mod+S (`scripts.write`, then `scripts.apply`: the toast "Scripts applied, bundle 4685e123… hot-swapped, no errors"), a breakpoint on line 29: tick 655 stops there with `knots = 2.4262` in Local |
+| `debug-host-10-stopped.png` | Stop clicked while paused there: Edit mode 0.1 s later (Stop continued the pause first); the edit world came back with its old bundle, so the editor applied the scripts on disk to it (the toast "Scripts applied, bundle 4685e123…"; `time.control` answers that bundle in mode `edit`); the breakpoint on line 29 stays |
+| `debug-host-11-replay.png` | Play again: the new fork runs the edited scripts, tick 1 stops on line 29 with `knots = 0` in Local. The driver then removes the breakpoint and stops again while paused |
 
 `debug.png`, `debug-paused.png`, `console.png` and `scripts.png` were taken again against the mock
-(`tools/capture.ts`) after the mock moved to the real shapes; the console evaluates on the paused frame.
+(`tools/capture.ts`) after the mock moved to the real shapes and frames (the callback and `run`, the
+closure's columns); the console evaluates on the paused frame.
 
 ## 11. Gaps
 
@@ -338,8 +362,11 @@ typing), 2026-10-04; `debug-host-*.png` and the driver's log `debug-host.txt`:
 - Values deeper than the host's preview (three levels, 48 entries) cannot be expanded further: the
   agents' API hands out no object ids. A string that reads `"undefined"` or `"[Object]"` below the top
   level shows as that marker.
-- While paused, the game thread answers no command (debugger.md 8): an inspector edit or Stop waits
-  for Continue; a value is set in the paused frame instead (section 8.1).
+- While paused, the game thread answers no command (debugger.md 8): an inspector edit (or a
+  snapshot restore) waits for Continue; a value is set in the paused frame instead, and Stop
+  continues the pause itself (section 8.1).
+- `debug.set` sets the first variable of that name a function declares: two block scopes declaring
+  one name (`for (let r ...)` twice) cannot be told apart at run time.
 - Agent sessions cannot be started from the editor yet (no `agent.session.*`); the form is a
   preview, and agents connect over MCP.
 - Import takes a path the host can read; there is no upload.

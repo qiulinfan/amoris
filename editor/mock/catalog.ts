@@ -105,6 +105,19 @@ export const CATALOG: CatalogCommand[] = [
   { name: "debug.state", kind: "read", doc: "Running or paused; when paused, why, the tick and system, and the frames with TypeScript locations and locals.", params: obj() },
   { name: "debug.eval", kind: "read", doc: "Evaluates an expression in a frame of the paused game.", params: obj({ expr: str("A JavaScript expression; it sees the frame's arguments, locals and closure variables."), frame: int("The frame, as debug.state numbers them (0: where the game stopped).") }, ["expr"]) },
   {
+    name: "debug.set",
+    kind: "control",
+    doc: "Sets a variable (an argument, a local or a closure variable) of a frame of the paused game to an expression's value; a const refuses.",
+    params: obj(
+      {
+        name: str("The variable: an argument, a local or a closure variable of the frame, by name. A value inside an object (l.distance[0]) is assigned through debug.eval."),
+        value: str("A JavaScript expression, evaluated in the frame; its value is assigned."),
+        frame: int("The frame, as debug.state numbers them (0: where the game stopped)."),
+      },
+      ["name", "value"],
+    ),
+  },
+  {
     name: "debug.watch",
     kind: "control",
     doc: "A data breakpoint: pause when a script system's staged write changes the field.",

@@ -43,6 +43,8 @@ export interface Status {
   fps?: number;
   tick_ms?: number;
   speed?: number;
+  /** The scripts' bundle hash the world runs (the game thread's status: `time.control`, `play.*`). */
+  bundle?: string;
 }
 
 export interface WorldChanged {
@@ -402,6 +404,7 @@ export interface Methods {
   "debug.step": [{ kind: "over" | "into" | "out"; timeout_ms?: number }, HostDebugState];
   "debug.state": [Record<string, never>, HostDebugState];
   "debug.eval": [{ expr: string; frame?: number }, HostEvalResult];
+  "debug.set": [{ name: string; value: string; frame?: number }, HostEvalResult];
   "debug.watch": [{ entity: EntityId; component: string; field?: string }, HostDataWatch];
   "debug.unwatch": [{ id?: string }, { cleared: number }];
   "debug.exceptions": [{ mode: ExceptionMode }, { mode: ExceptionMode }];

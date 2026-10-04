@@ -4,8 +4,10 @@
 //
 //   open rules.ts, click the gutter of a line in the `log` system, Play, the pause at that line,
 //   the call stack and the scopes, two watch expressions, step over, set a closure's column value
-//   (a component field) in the Variables tree, Continue to the next tick's pause (the value was
-//   committed), a data breakpoint from the inspector, remove the breakpoints and Continue.
+//   (a component field) in the Variables tree, set an argument (`r`) and try a const (`speed`),
+//   Continue to the next tick's pause (the value was committed), a data breakpoint from the
+//   inspector, remove the breakpoints and Continue, edit the script while it runs, then Stop while
+//   paused (the edit world takes the edited scripts) and Play again into the edited code.
 //
 //   pocket serve <copy of samples/sailing> --port 7911 --editor editor/dist
 //   bun tools/debug-host.ts --url http://127.0.0.1:7911/ [--out ../docs/evidence/editor] [--line 27]
@@ -317,6 +319,36 @@ try {
   await describe("5. l.distance[0] set to 1000 in the Variables tree");
   await shot("debug-host-5-set-value", await panelRect("debug"));
 
+  // ---- 5b. Set a variable of the frame (the argument r) and try a const (speed) -----------------
+  /** Double-clicks a top-level Variables row's value, types `value` and presses Enter. */
+  const setVar = async (name: string, value: string) => {
+    const [vx, vy] = await js<[number, number]>(`
+      const row = [...document.querySelectorAll(${JSON.stringify(VARS)})].find((r) => r.querySelector('.var-name')?.textContent === ${JSON.stringify(name)});
+      row.scrollIntoView({ block: 'center' });
+      const v = row.querySelector('.var-value').getBoundingClientRect();
+      return [v.left + 6, v.top + v.height / 2];
+    `);
+    await dblclick(vx, vy);
+    await waitFor("the value editor", `return document.querySelector('.var-input') !== null;`, 5000);
+    await js(`document.querySelector('.var-input').select();`);
+    await type(value);
+    await key("Enter", "Enter", 13);
+  };
+  const watchReads = (expr: string, value: string) =>
+    `return [...document.querySelectorAll('.debug-panel .debug-col:nth-child(3) .var-row')].some((r) => r.querySelector('.var-name')?.textContent === ${JSON.stringify(expr)} && r.querySelector('.var-value')?.textContent === ${JSON.stringify(value)});`;
+  await setVar("r", "1");
+  await waitFor("the watch on the frame's new r", watchReads("l.distance[r]", "undefined"));
+  await setVar("speed", "5");
+  await waitFor("the const refused", `return [...document.querySelectorAll('.toast')].some((t) => /constant/.test(t.textContent));`, 5000);
+  await key("Escape", "Escape", 27);
+  await sleep(500);
+  await describe("5b. r set to 1 (l.distance[r] reads undefined), speed refused as a const");
+  console.log(`  toasts: ${(await text(".toast")).join(" | ")}`);
+  await shot("debug-host-5b-set-local");
+  await setVar("r", "0");
+  await waitFor("r set back", watchReads("l.distance[r]", "1000"));
+  await sleep(300);
+
   // ---- 6. Step over the line that adds to it, then Continue to the next tick's pause -------------
   await key("F10", "F10", 121);
   await pausedAt(LINE + 2);
@@ -395,18 +427,49 @@ try {
   await waitFor("the scripts applied", `return [...document.querySelectorAll('.toast')].some((t) => t.textContent.includes('Scripts applied'));`, 30000);
   const toast = await text(".toast");
   console.log(`  toast: ${toast.join(" | ")}`);
+  const edited = /Bundle (\w+)/.exec(toast.join(" "))?.[1] ?? "";
   await sleep(1000);
   await gutter(LINE + 2);
   note(`breakpoint on rules.ts:${LINE + 2} (the line after the new one)`);
   await pausedAt(LINE + 2);
   await describe("9. the new code runs: a breakpoint after the inserted line stops with `knots` in Local");
   await shot("debug-host-9-edited-script");
-  // Leave the game running, without breakpoints.
+
+  // ---- 10. Stop while paused: Stop continues the pause; the edit world takes the edited scripts --
+  await waitFor("the earlier toasts gone", `return document.querySelectorAll('.toast').length === 0;`, 15000);
+  const [tx, ty] = await at('button[aria-label^="Stop"]');
+  const stopAt = Date.now();
+  await click(tx, ty);
+  note("Stop, while paused at rules.ts:" + (LINE + 2));
+  await waitFor("Edit mode", `return document.querySelector('button[aria-label^="Play"]') !== null;`, 15000);
+  note(`Edit mode ${((Date.now() - stopAt) / 1000).toFixed(1)} s after Stop`);
+  await waitFor("the scripts applied to the edit world", `return [...document.querySelectorAll('.toast')].some((t) => t.textContent.includes('Scripts applied'));`, 30000);
+  const editStatus = await js<{ mode: string; bundle: string }>(`const r = await fetch('/api/call', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ method: 'time.control', params: {} }) }); return (await r.json()).result;`);
+  console.log(`  edit world: mode ${editStatus.mode}, bundle ${editStatus.bundle} (step 9 applied ${edited})`);
+  if (!edited || !editStatus.bundle.startsWith(edited.replace(/\W+$/, ""))) throw new Error("the edit world does not run the edited scripts");
+  console.log(`  toasts: ${(await text(".toast")).join(" | ")}`);
+  await sleep(500);
+  await describe("10. stopped while paused: Edit mode, the edit world runs the edited bundle");
+  await shot("debug-host-10-stopped");
+
+  // ---- 11. Play again: the fork runs the edited scripts, the breakpoint stops in the new code -----
+  const [p2x, p2y] = await at('button[aria-label^="Play"]');
+  await click(p2x, p2y);
+  note("Play again");
+  await pausedAt(LINE + 2);
+  const locals = await text(VARS);
+  if (!locals.some((l) => l.startsWith("knots"))) throw new Error("the new Play does not run the edited line (no knots in Local)");
+  await describe("11. the new Play stops at rules.ts:" + (LINE + 2) + " with knots in Local");
+  await shot("debug-host-11-replay");
+
+  // Remove the breakpoint and Stop (paused again: Stop continues it).
   const [zx, zy] = await at(".debug-panel .bp-row .var-remove");
   await click(zx, zy);
   await sleep(300);
-  await key("F5", "F5", 116);
-  await waitFor("running", `return document.querySelector('.pause-banner') === null;`);
+  const [sx2, sy2] = await at('button[aria-label^="Stop"]');
+  await click(sx2, sy2);
+  await waitFor("Edit mode", `return document.querySelector('button[aria-label^="Play"]') !== null;`, 15000);
+  await waitFor("not paused", `return document.querySelector('.pause-banner') === null;`);
   console.log("done");
 } catch (e) {
   console.log(`FAILED: ${e instanceof Error ? e.message : String(e)}`);

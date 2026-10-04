@@ -1,9 +1,13 @@
 // The mock's debugger, answering in the real host's shapes (pocket-debug's agents' API,
 // docs/spec/debugger.md 7): breakpoints on TypeScript lines (ids `bp<n>`, moved to the next line
 // with code) with conditions and logpoints, pausing between and "inside" script systems, stepping,
-// one frame per pause with `locals` and `closure` as JSON previews, evaluation on a paused frame
-// (assignments last for the pause; they do not write the world), pause on exceptions (the mock's
-// scripts throw none) and data breakpoints on component fields written by script systems.
+// the frames the host shows (the `each` callback with its locals and closure, and `run` that called
+// it; `let`/`const` locals below the line read undefined), evaluation on a paused frame (an
+// assignment to a variable stays in the evaluation, as on the host; one through an object, such as a
+// column's element, lasts for the pause), `debug.set` (const variables refuse; the value lasts for
+// the pause), pause on exceptions (the mock's scripts throw none) and data breakpoints on
+// component fields written by script systems, which stop on the statement after the write, or on a
+// returned frame when the write was the system's last.
 
 import type { World } from "./world";
 import { MockError, isObject } from "./util";
@@ -34,14 +38,29 @@ interface Location {
   column: number;
 }
 
+/** A frame of a pause: its values, the names declared `const`, and where `let`/`const` locals are declared. */
+interface Frame {
+  function: string;
+  location: Location;
+  locals: Record<string, unknown>;
+  closure: Record<string, unknown>;
+  consts: Set<string>;
+  /** A local's declaration line: above it (or on it) the local is not initialized yet. */
+  declared: Record<string, number>;
+}
+
 interface Paused {
   reason: "breakpoint" | "step" | "pause" | "data_breakpoint";
   system: string;
   location: Location;
   hit: string[];
   data?: Record<string, unknown>;
-  /** The frame's values for the pause: evaluations (and assignments) see and change these. */
-  scope: Record<string, unknown>;
+  /** The system already ran (a data breakpoint): resuming does not run it again. */
+  ran: boolean;
+  /** Seen as `run` returned: a position and no scopes. */
+  returned: boolean;
+  /** Innermost first; evaluations (and `debug.set`) see and change these for the pause. */
+  frames: Frame[];
 }
 
 /** A variable as the host sends it. */
@@ -149,8 +168,9 @@ export class Debugger {
     return systemRanges(this.source().get(file) ?? "");
   }
 
-  private pause(reason: Paused["reason"], system: string, line: number, hit: string[] = [], data?: Record<string, unknown>) {
-    this.paused = { reason, system, location: { file: RULES, line, column: 9 }, hit, data, scope: this.flatScope(system) };
+  private pause(reason: Paused["reason"], system: string, line: number, hit: string[] = [], data?: Record<string, unknown>, ran = false, returned = false) {
+    const location = { file: RULES, line, column: 9 };
+    this.paused = { reason, system, location, hit, data, ran, returned, frames: returned ? [] : this.frames(system, line) };
   }
 
   /** Called before a script system runs; true pauses before it (at a line of its body). */
@@ -168,8 +188,8 @@ export class Debugger {
       this.pause(reason, system, range.body);
       return true;
     }
-    const scope = this.flatScope(system);
     for (const bp of this.breakpoints.filter((b) => b.file === RULES && b.line >= range.body && b.line <= range.end).sort((a, b) => a.line - b.line)) {
+      const scope = scopeOf(this.frames(system, bp.line)[0]);
       if (bp.condition) {
         try {
           if (!evaluate(bp.condition, scope)) continue;
@@ -201,24 +221,35 @@ export class Debugger {
       const now = this.watchedValue(w);
       const was = before.get(w.id);
       if (JSON.stringify(now) === JSON.stringify(was)) continue;
-      const text = this.source().get(RULES) ?? "";
+      const lines = (this.source().get(RULES) ?? "").split("\n");
       let line = range.body;
       if (w.field) {
-        const idx = text.split("\n").findIndex((l, i) => i + 1 >= range.body && i + 1 <= range.end && l.includes(`${w.field}`) && l.includes("="));
+        const idx = lines.findIndex((l, i) => i + 1 >= range.body && i + 1 <= range.end && l.includes(`${w.field}`) && l.includes("="));
         if (idx >= 0) line = idx + 1;
       }
+      // The host notices a staged write at the next statement it traces: the one after the write in
+      // the same call, or, when the write was the call's last, the system's return.
+      const next = nextCode(lines, line, range.end);
       const at = { file: RULES, line, column: 13 };
-      this.pause("data_breakpoint", system, line, [], {
-        watch: w.id,
-        entity: w.entity,
-        component: w.component,
-        field: w.field ?? null,
-        names: [w.field ?? w.component],
-        before: was ?? null,
-        after: now ?? null,
-        written_at: at,
-        after_return: true,
-      });
+      this.pause(
+        "data_breakpoint",
+        system,
+        next ?? line,
+        [],
+        {
+          watch: w.id,
+          entity: w.entity,
+          component: w.component,
+          field: w.field ?? null,
+          names: [w.field ?? w.component],
+          before: was ?? null,
+          after: now ?? null,
+          written_at: at,
+          after_return: next === undefined,
+        },
+        true,
+        next === undefined,
+      );
       return true;
     }
     return false;
@@ -239,25 +270,26 @@ export class Debugger {
     if (!["over", "into", "out"].includes(kind)) {
       throw new MockError("request.invalid_value", "debug.step takes kind 'over', 'into' or 'out'.", { kind });
     }
-    const range = this.ranges().find((r) => r.name === this.paused!.system);
+    const p = this.paused;
+    const range = this.ranges().find((r) => r.name === p.system);
     const lines = (this.source().get(RULES) ?? "").split("\n");
-    if (kind !== "out" && range && this.paused.reason !== "data_breakpoint") {
-      let next = this.paused.location.line + 1;
-      while (next <= range.end && /^\s*(\/\/.*|\}\)?;?|\},?)?\s*$/.test(lines[next - 1]!)) next++;
-      if (next < range.end) {
-        this.paused = { ...this.paused, reason: "step", hit: [], data: undefined, location: { ...this.paused.location, line: next } };
+    if (kind !== "out" && range && !p.returned) {
+      const next = nextCode(lines, p.location.line, range.end);
+      if (next !== undefined) {
+        const location = { ...p.location, line: next };
+        this.paused = { ...p, reason: "step", hit: [], data: undefined, location, frames: this.moved(p.frames, location) };
         return "stay" as const;
       }
     }
-    // Leave the system: run it, then stop at the next one.
-    this.skipOnce = this.paused.system;
+    // Leave the system: run it (unless it ran), then stop at the next one.
+    this.skipOnce = p.ran ? null : p.system;
     this.stopAtNextSystem = true;
     this.paused = null;
     return "resume" as const;
   }
 
   resume() {
-    if (this.paused) this.skipOnce = this.paused.reason === "data_breakpoint" ? null : this.paused.system;
+    if (this.paused) this.skipOnce = this.paused.ran ? null : this.paused.system;
     this.paused = null;
   }
 
@@ -265,48 +297,79 @@ export class Debugger {
     return this.paused?.location;
   }
 
-  /** The values a system's code sees at its pause, as plain JavaScript. */
-  flatScope(system: string): Record<string, unknown> {
+  /**
+   * The frames a system's code is in at `line`, as the host shows them: inside the `each` callback,
+   * the callback (its arguments and locals; the run's columns and `ctx` as its closure) and `run`
+   * that called it; in `run` itself, `run` alone. Values are plain JavaScript; columns are typed
+   * arrays shared by both frames, so a write through one shows in the other.
+   */
+  frames(system: string, line: number): Frame[] {
     const w = this.world();
+    const lines = (this.source().get(RULES) ?? "").split("\n");
+    const range = this.ranges().find((r) => r.name === system);
+    const eachAt = range ? lines.findIndex((l, i) => i + 1 >= range.body && i + 1 <= range.end && /\.each\(/.test(l)) + 1 : 0;
+    const declared = (names: string[]) =>
+      Object.fromEntries(
+        names.flatMap((n) => {
+          const i = lines.findIndex((l, j) => j + 1 >= (range?.body ?? 0) && j + 1 <= (range?.end ?? 0) && new RegExp(`\\b(const|let)\\s+${n}\\b`).test(l));
+          return i >= 0 ? [[n, i + 1]] : [];
+        }),
+      );
     const boats = [...w.entities.values()].filter((e) => e.components.Boat);
     const crates = [...w.entities.values()].filter((e) => e.components.Cargo);
     const boat = boats[0];
-    const scope: Record<string, unknown> = {
-      ctx: { tick: this.tick(), dt: 1 / 60, time: this.tick() / 60, system },
-      REACH: 3,
-      REACH_UP: 3,
-    };
-    if (system === "muster") {
-      Object.assign(scope, { boats: { len: boats.length }, crates: { len: crates.length } });
+    const ctx = { tick: this.tick(), dt: 1 / 60, time: this.tick() / 60, system };
+    const module = { REACH: 3, REACH_UP: 3 };
+    const runAt = { file: RULES, line: eachAt || (range?.body ?? line), column: 9 };
+    const here = { file: RULES, line, column: 9 };
+    if (system === "muster" || !boat) {
+      const locals = { ctx, boats: { len: boats.length }, crates: { len: crates.length } };
+      return [{ function: "run", location: here, locals, closure: {}, consts: new Set(), declared: {} }];
     }
-    if (boat) {
-      const b = boat.components.Boat as Record<string, number>;
-      const l = boat.components.Log as Record<string, number> | undefined;
-      const t = boat.components.Transform as { position: number[] };
-      if (system === "log") {
-        Object.assign(scope, {
-          r: 0,
-          e: boat.id,
-          speed: Math.abs(b.speed ?? 0),
-          set: (b.hoist_now ?? 0) >= 0.5,
-          b: { speed: new Float64Array([b.speed ?? 0]), hoist_now: new Float64Array([b.hoist_now ?? 0]) },
-          l: l ? { distance: new Float64Array([l.distance ?? 0]), top_speed: new Float64Array([l.top_speed ?? 0]), sail_set: new Uint8Array([l.sail_set ? 1 : 0]) } : undefined,
-        });
-      }
-      if (system === "take_aboard") {
-        const crew = boat.components.Crew as { take: number | null } | undefined;
-        const tally = boat.components.Tally as Record<string, number> | undefined;
-        Object.assign(scope, {
-          r: 0,
-          boat: boat.id,
-          target: crew?.take ?? 0,
-          at: { x: new Float64Array([t.position[0]!]), y: new Float64Array([t.position[1]!]), z: new Float64Array([t.position[2]!]) },
-          tally: tally ? { taken: new Float64Array([tally.taken ?? 0]), worth: new Float64Array([tally.worth ?? 0]), total: new Float64Array([tally.total ?? 0]) } : undefined,
-          crew: { take: new Float64Array([crew?.take ?? 0]) },
-        });
-      }
+    const b = boat.components.Boat as Record<string, number>;
+    const l = boat.components.Log as Record<string, number> | undefined;
+    const t = boat.components.Transform as { position: number[] };
+    let run: Frame;
+    let callback: Frame;
+    if (system === "log") {
+      const cols = {
+        b: { speed: new Float64Array([b.speed ?? 0]), hoist_now: new Float64Array([b.hoist_now ?? 0]) },
+        l: l ? { distance: new Float64Array([l.distance ?? 0]), top_speed: new Float64Array([l.top_speed ?? 0]), sail_set: new Uint8Array([l.sail_set ? 1 : 0]) } : undefined,
+      };
+      run = { function: "run", location: runAt, locals: { ctx, boats: { len: boats.length }, ...cols }, closure: {}, consts: new Set(["b", "l"]), declared: declared(["b", "l"]) };
+      callback = {
+        function: "(anonymous)",
+        location: here,
+        locals: { r: 0, e: boat.id, speed: Math.abs(b.speed ?? 0), set: (b.hoist_now ?? 0) >= 0.5 },
+        closure: { ...cols, ctx },
+        consts: new Set(["speed", "set", "b", "l"]),
+        declared: declared(["speed", "set"]),
+      };
+    } else {
+      const crew = boat.components.Crew as { take: number | null } | undefined;
+      const tally = boat.components.Tally as Record<string, number> | undefined;
+      const cols = {
+        crew: { take: new Float64Array([crew?.take ?? 0]) },
+        at: { x: new Float64Array([t.position[0]!]), y: new Float64Array([t.position[1]!]), z: new Float64Array([t.position[2]!]) },
+        tally: tally ? { taken: new Float64Array([tally.taken ?? 0]), worth: new Float64Array([tally.worth ?? 0]), total: new Float64Array([tally.total ?? 0]) } : undefined,
+      };
+      const named = ["crew", "at", "tally"];
+      run = { function: "run", location: runAt, locals: { ctx, boats: { len: boats.length }, ...cols }, closure: { ...module }, consts: new Set([...named, "REACH", "REACH_UP"]), declared: declared(named) };
+      callback = {
+        function: "(anonymous)",
+        location: here,
+        locals: { r: 0, boat: boat.id, target: crew?.take ?? 0 },
+        closure: { ...cols, ctx, ...module },
+        consts: new Set(["target", ...named, "REACH", "REACH_UP"]),
+        declared: declared(["target"]),
+      };
     }
-    return scope;
+    return eachAt && line > eachAt ? [callback, run] : [{ ...run, location: here }];
+  }
+
+  /** The frames after a step to `location`: the same values, the innermost frame moved. */
+  private moved(frames: Frame[], location: Location): Frame[] {
+    return frames.map((f, i) => (i === 0 ? { ...f, location } : f));
   }
 
   /** `debug.state` (and, without the last group, the `debug` event). */
@@ -324,24 +387,16 @@ export class Debugger {
       : {};
     const p = this.paused;
     if (!p) return { state: "running", tick: this.tick(), system: null, ...extra };
-    const locals: HostVariable[] = [];
-    const closure: HostVariable[] = [];
-    for (const [k, v] of Object.entries(p.scope)) {
-      if (k === "REACH" || k === "REACH_UP") closure.push(hostVar(k, v));
-      else if (k !== "ctx") locals.push(hostVar(k, v));
-    }
-    closure.push(hostVar("ctx", p.scope.ctx));
-    const returned = p.reason === "data_breakpoint";
-    const frames = [
-      {
-        frame: 0,
-        function: returned ? "run" : "(anonymous)",
-        location: p.location,
-        locals: returned ? [] : locals,
-        closure: returned ? [] : closure,
-        returned,
-      },
-    ];
+    const frames = p.returned
+      ? [{ frame: 0, function: "(returned)", location: p.location, locals: [], closure: [], returned: true }]
+      : p.frames.map((f, i) => ({
+          frame: i,
+          function: f.function,
+          location: f.location,
+          locals: Object.keys(f.locals).map((k) => hostVar(k, visible(f, k))),
+          closure: Object.entries(f.closure).map(([k, v]) => hostVar(k, v)),
+          returned: false,
+        }));
     return {
       state: "paused",
       reason: p.reason,
@@ -355,12 +410,21 @@ export class Debugger {
     };
   }
 
-  eval(expr: string, frame: number | undefined) {
+  /** The paused frame numbered `frame`, or the host's problem (`failed`: the code for a returned frame). */
+  private frameAt(frame: number | undefined, failed: string): Frame {
     const p = this.paused;
     if (!p) throw new MockError("debug.not_paused", "The game is running; pause it (debug.pause) or wait for a breakpoint (debug.wait) first.");
-    if ((frame ?? 0) !== 0) throw new MockError("debug.no_frame", `There is no frame ${frame}; the game stopped with 1 frames.`, { frame, frames: 1 });
+    const n = p.returned ? 1 : p.frames.length;
+    const i = frame ?? 0;
+    if (i >= n) throw new MockError("debug.no_frame", `There is no frame ${i}; the game stopped with ${n} frames.`, { frame: i, frames: n });
+    if (p.returned) throw new MockError(failed, "The system has returned; its variables are gone.");
+    return p.frames[i]!;
+  }
+
+  eval(expr: string, frame: number | undefined) {
+    const f = this.frameAt(frame, "debug.eval_failed");
     try {
-      const v = evaluate(expr, p.scope, true);
+      const v = evaluate(expr, scopeOf(f));
       const h = hostVar("result", v);
       return { type: h.type, value: h.value, description: h.description ?? describe(v) };
     } catch (e) {
@@ -368,20 +432,57 @@ export class Debugger {
       throw new MockError("debug.eval_failed", `The expression threw: ${text}`, { error: text });
     }
   }
+
+  /** `debug.set`: the frame's variable takes the expression's value, for the pause. */
+  set(name: string, value: string, frame: number | undefined) {
+    const f = this.frameAt(frame, "debug.set_failed");
+    const own = name in f.locals ? f.locals : name in f.closure ? f.closure : undefined;
+    if (!own) throw new MockError("debug.set_failed", `No variable ${name} in this frame.`, { name });
+    if (f.consts.has(name)) throw new MockError("debug.set_failed", `${name} is a constant.`, { name });
+    let v: unknown;
+    try {
+      v = evaluate(value, scopeOf(f));
+    } catch (e) {
+      const text = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+      throw new MockError("debug.set_failed", `The expression threw: ${text}`, { name });
+    }
+    own[name] = v;
+    delete f.declared[name];
+    const h = hostVar("result", v);
+    return { type: h.type, value: h.value, description: h.description ?? describe(v) };
+  }
+}
+
+/** A local's value as the frame sees it: undefined above its declaration. */
+function visible(f: Frame, name: string): unknown {
+  const at = f.declared[name];
+  return at !== undefined && f.location.line <= at ? undefined : f.locals[name];
+}
+
+/** What code in the frame sees: its locals over its closure. */
+function scopeOf(f: Frame | undefined): Record<string, unknown> {
+  if (!f) return {};
+  const locals = Object.fromEntries(Object.keys(f.locals).map((k) => [k, visible(f, k)]));
+  return { ...f.closure, ...locals };
+}
+
+/** The next line with code after `line`, before the system's end; none when the call ends first. */
+function nextCode(lines: string[], line: number, end: number): number | undefined {
+  for (let n = line + 1; n < end; n++) {
+    const src = lines[n - 1]!;
+    if (/^\s*\}\);?\s*$/.test(src)) return undefined; // the callback (or run) ends
+    if (/^\s*(\/\/.*|\}\)?;?|\},?)?\s*$/.test(src)) continue;
+    return n;
+  }
+  return undefined;
 }
 
 /**
- * Evaluates an expression over named values. With `assign`, a plain assignment to a name changes
- * the scope (the mock is a loopback-only development tool).
+ * Evaluates an expression over named values. The values are the function's arguments, so an
+ * assignment to a name stays in the evaluation (as on the host); a write through an object lasts.
  */
-function evaluate(expr: string, scope: Record<string, unknown>, assign = false): unknown {
+function evaluate(expr: string, scope: Record<string, unknown>): unknown {
   const names = Object.keys(scope).filter((n) => /^[A-Za-z_$][\w$]*$/.test(n));
-  const m = assign ? /^\s*([A-Za-z_$][\w$]*)\s*=(?!=)([\s\S]*)$/.exec(expr) : null;
-  if (m && names.includes(m[1]!)) {
-    const v = evaluate(m[2]!, scope);
-    scope[m[1]!] = v;
-    return v;
-  }
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   const fn = new Function(...names, `"use strict"; return (${expr});`);
   return fn(...names.map((n) => scope[n]));

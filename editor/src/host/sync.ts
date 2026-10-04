@@ -15,7 +15,7 @@ import { useScripts } from "../state/scripts";
 import { useSelection } from "../state/selection";
 import { useSession } from "../state/session";
 import { useWorld } from "../state/world";
-import { onPaused, refreshWatches } from "../actions/debug";
+import { continueIfStopping, onPaused, refreshWatches } from "../actions/debug";
 
 let started = false;
 
@@ -40,9 +40,11 @@ export function startSync() {
   host.on("profile", (p) => useProfile.getState().push(p));
   host.on("agent", (a) => useAgent.getState().push(a));
   host.connect();
-  // Snapshots grow while playing; the timeline reads them every second.
+  // Snapshots grow while playing; the timeline reads them every second (not while a script is
+  // paused: the game thread answers no command then, debugger.md 8).
   setInterval(() => {
-    if (useConnection.getState().info.state === "open" && useSession.getState().status?.mode === "play") void refreshSnapshots();
+    const playing = useSession.getState().status?.mode === "play" && useDebug.getState().state.state !== "paused";
+    if (useConnection.getState().info.state === "open" && playing) void refreshSnapshots();
   }, 1000);
 }
 
@@ -81,7 +83,7 @@ async function restoreDebugger() {
   if (listed && listed.length === 0 && local.breakpoints.length > 0) {
     // A restarted host forgot them: set them again (the editor's own; CDP clients set theirs).
     const again = await Promise.allSettled(
-      local.breakpoints.filter((b) => (b.owner ?? "agent") === "agent").map((b) => api.debug.setBreakpoint(b.file, b.line, b.condition)),
+      local.breakpoints.filter((b) => (b.owner ?? "agent") === "agent").map((b) => api.debug.setBreakpoint(b.file, b.line, b.condition, b.log)),
     );
     local.setBreakpoints(again.flatMap((r) => (r.status === "fulfilled" ? [r.value] : [])));
   } else if (listed) {
@@ -206,6 +208,7 @@ function componentsDiffer(id: EntityId): boolean {
 }
 
 async function onDebug(d: DebugState) {
+  if (continueIfStopping(d)) return;
   let state = d;
   if (d.state === "paused" && !d.frames) {
     try {

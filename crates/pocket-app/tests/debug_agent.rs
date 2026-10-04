@@ -1,8 +1,9 @@
 //! The agents' debugger end to end (docs/spec/debugger.md 7 and 11): the debugger's test project on
 //! a real game thread in real time, driven only through `DebugHub::call` as pocket-server and
 //! pocket-mcp drive it: a `debugger;` statement, pause on uncaught and on caught exceptions, a
-//! TypeScript breakpoint with locals and evaluation, step into and out, a data breakpoint on a
-//! component field, console lines and the detach; and Play, whose fork takes the debugger.
+//! TypeScript breakpoint with locals, evaluation and set variables, step into and out, a data
+//! breakpoint on a component field, console lines and the detach; and Play, whose fork takes the
+//! debugger.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -177,6 +178,27 @@ fn an_agent_debugs_the_test_game() {
         .unwrap();
     let bad = hub.call("debug.eval", &json!({"exp": "1"})).unwrap_err();
     assert_eq!(bad.code, "request.unknown_field");
+    // debug.set changes a frame's variable: the loop's `let r` here (an assignment evaluated with
+    // debug.eval would not reach the frame); a const refuses.
+    let set = call(&hub, "debug.set", json!({"name": "r", "value": "r + 7"}));
+    assert_eq!(
+        (set["type"].as_str(), &set["value"]),
+        (Some("number"), &json!(7)),
+        "{set:#}"
+    );
+    assert_eq!(
+        call(&hub, "debug.eval", json!({"expr": "r"}))["value"],
+        json!(7)
+    );
+    let refused = hub
+        .call("debug.set", &json!({"name": "next", "value": "1"}))
+        .unwrap_err();
+    assert_eq!(refused.code, "debug.set_failed");
+    assert!(refused.message.contains("constant"), "{}", refused.message);
+    let unknown = hub
+        .call("debug.set", &json!({"name": "nowhere", "value": "1"}))
+        .unwrap_err();
+    assert_eq!(unknown.code, "debug.set_failed", "{}", unknown.message);
     call(&hub, "debug.breakpoints.clear", json!({}));
 
     // Step into twice, out again, and over.
@@ -188,8 +210,19 @@ fn an_agent_debugs_the_test_game() {
     );
     assert_eq!(s["frames"][0]["function"], "twice");
     assert_eq!(local(&s, 0, "x"), &json!(20));
+    // The caller's frame captured the r set above; set it back there, and twice's argument here:
+    // the call returns twice the new x.
+    assert_eq!(local(&s, 1, "r"), &json!(7), "{s:#}");
+    call(
+        &hub,
+        "debug.set",
+        json!({"name": "r", "value": "0", "frame": 1}),
+    );
+    call(&hub, "debug.set", json!({"name": "x", "value": "21"}));
     let s = call(&hub, "debug.step", json!({"kind": "out"}));
     assert_eq!(s["frames"][0]["function"], "run", "{s:#}");
+    assert_eq!(local(&s, 0, "r"), &json!(0), "{s:#}");
+    assert_eq!(local(&s, 0, "doubled"), &json!(42), "{s:#}");
     let (_, line) = at(&s);
     assert!(
         line > mark("call-twice") && line <= mark("call-risky"),

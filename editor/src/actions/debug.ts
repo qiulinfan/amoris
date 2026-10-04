@@ -4,7 +4,8 @@
 // evaluation.
 
 import { api } from "../host/api";
-import type { DebugState, EntityId, ExceptionMode } from "../host/protocol";
+import { HostError } from "../host/client";
+import type { DebugState, EntityId, ExceptionMode, Variable } from "../host/protocol";
 import { openPanel } from "../layout/dock";
 import { useDebug, type WatchExpr } from "../state/debug";
 import { logLocal } from "../state/logs";
@@ -16,7 +17,7 @@ export function isScriptFile(file: string | undefined): file is string {
   return !!file && /\.(ts|tsx|js)$/.test(file) && !file.includes(":");
 }
 
-/** On a new pause: show the line and the debugger. */
+/** On a new pause: show the line and the debugger, and the host's breakpoints as they are now. */
 export function onPaused(state: DebugState) {
   const loc = state.location;
   openPanel("debug", true);
@@ -24,20 +25,55 @@ export function onPaused(state: DebugState) {
     useScripts.getState().openFile(loc.file, loc.line);
     openPanel("scripts", true);
   }
+  // MCP agents and CDP clients set and clear breakpoints too; the host pushes no event for that.
+  void refreshBreakpoints(true);
 }
 
-/** The breakpoints as the host has them (every frontend's). */
-export async function refreshBreakpoints() {
-  const list = await attempt(api.debug.listBreakpoints(), "Breakpoints");
-  if (list) useDebug.getState().setBreakpoints(list);
+/** Set while Stop waits for the game thread (time.ts): every pause is continued, not shown. */
+let continuing = false;
+export function continueEveryPause(on: boolean) {
+  continuing = on;
+}
+
+/** Continues a pause that comes while Stop waits; true when it did. */
+export function continueIfStopping(state: DebugState): boolean {
+  if (!continuing || state.state !== "paused") return false;
+  void api.debug.resume().catch(() => undefined);
+  return true;
+}
+
+/** The breakpoints as the host has them (every frontend's). `quiet`: a failure is not reported. */
+export async function refreshBreakpoints(quiet = false) {
+  try {
+    useDebug.getState().setBreakpoints(await api.debug.listBreakpoints());
+  } catch (e) {
+    if (!quiet) reportError(e, "Breakpoints");
+  }
+}
+
+/** The host no longer has the breakpoint: another frontend cleared it. */
+const goneBreakpoint = (e: unknown) => e instanceof HostError && e.code === "debug.unknown_breakpoint";
+
+/** Clears a breakpoint on the host and here; one the host no longer has is dropped here too. */
+async function clearBreakpoint(id: string, context: string): Promise<boolean> {
+  try {
+    await api.debug.clearBreakpoint(id);
+  } catch (e) {
+    if (!goneBreakpoint(e)) {
+      reportError(e, context);
+      return false;
+    }
+    void refreshBreakpoints(true);
+  }
+  useDebug.getState().setBreakpoints(useDebug.getState().breakpoints.filter((b) => b.id !== id));
+  return true;
 }
 
 export async function toggleBreakpoint(file: string, line: number) {
   const d = useDebug.getState();
   const existing = d.breakpoints.find((b) => b.file === file && b.line === line);
   if (existing) {
-    const r = await attempt(api.debug.clearBreakpoint(existing.id), "Clear breakpoint");
-    if (r) d.setBreakpoints(useDebug.getState().breakpoints.filter((b) => b.id !== existing.id));
+    await clearBreakpoint(existing.id, "Clear breakpoint");
     return;
   }
   const bp = await attempt(api.debug.setBreakpoint(file, line), "Set breakpoint");
@@ -53,20 +89,26 @@ export async function toggleBreakpoint(file: string, line: number) {
   d.setBreakpoints([...others, bp]);
 }
 
-/** The host cannot change a breakpoint's condition in place: set the new one, then clear the old. */
+/**
+ * The host cannot change a breakpoint's condition in place: set the new one (a logpoint stays a
+ * logpoint with its message), then clear the old.
+ */
 export async function setBreakpointCondition(id: string, condition: string) {
   const d = useDebug.getState();
   const bp = d.breakpoints.find((b) => b.id === id);
   if (!bp) return;
-  const r = await attempt(api.debug.setBreakpoint(bp.file, bp.line, condition.trim() || undefined), "Breakpoint condition");
+  const r = await attempt(api.debug.setBreakpoint(bp.file, bp.line, condition.trim() || undefined, bp.log), "Breakpoint condition");
   if (!r) return;
-  await attempt(api.debug.clearBreakpoint(id), "Breakpoint condition");
-  d.setBreakpoints(useDebug.getState().breakpoints.map((b) => (b.id === id ? r : b)));
+  try {
+    await api.debug.clearBreakpoint(id);
+  } catch (e) {
+    if (!goneBreakpoint(e)) reportError(e, "Breakpoint condition");
+  }
+  useDebug.getState().setBreakpoints([...useDebug.getState().breakpoints.filter((b) => b.id !== id && b.id !== r.id), r]);
 }
 
 export async function removeBreakpoint(id: string) {
-  const r = await attempt(api.debug.clearBreakpoint(id), "Clear breakpoint");
-  if (r) useDebug.getState().setBreakpoints(useDebug.getState().breakpoints.filter((b) => b.id !== id));
+  await clearBreakpoint(id, "Clear breakpoint");
 }
 
 /** Clears the breakpoints set through `debug.*`; those of CDP clients (DevTools, VS Code) stay. */
@@ -128,32 +170,46 @@ export async function refreshWatches() {
   useDebug.getState().setWatches(next);
 }
 
+const IDENT = /^[A-Za-z_$][\w$]*$/;
+
+/** The same value as shown (type and preview). */
+const sameValue = (a: Variable, b: Variable) => a.type === b.type && a.value === b.value;
+
 /**
  * Assigns `text` (a JavaScript expression) to a paused frame's variable or to a value inside one
- * (`l.distance[0]`), then shows the variable again. Assigning to a query column's element writes
- * the component, which the system's call commits; the run is tainted from that tick
- * (docs/spec/debugger.md 5).
+ * (`l.distance[0]`), reads it back and shows the variable again. A variable is set with `debug.set`
+ * (an assignment evaluated in the frame would not reach it: QuickJS evaluates on a copy of each
+ * local no closure captured); a value inside an object is assigned with `debug.eval`, which writes
+ * the object itself. Assigning to a query column's element writes the component, which the system's
+ * call commits. Either taints the run from that tick (docs/spec/debugger.md 5).
  */
 export async function setValue(frame: number, path: string, text: string): Promise<boolean> {
   const expr = text.trim();
   if (!expr) return false;
+  let assigned: Variable;
   try {
-    await api.debug.eval(`${path} = (${expr})`, frame);
+    assigned = IDENT.test(path) ? await api.debug.set(path, expr, frame) : await api.debug.eval(`${path} = (${expr})`, frame, path);
   } catch (e) {
     reportError(e, `Set ${path}`);
     return false;
   }
+  // What the frame holds now: a column of another type converts (an Int32Array keeps 1 of 1.5).
+  const now = await api.debug.eval(path, frame, path).catch(() => undefined);
   const root = /^[A-Za-z_$][\w$]*/.exec(path)?.[0];
   if (root) {
     try {
       const v = await api.debug.eval(root, frame, root);
       useDebug.getState().patchVariable(frame, { ...v, name: root });
     } catch {
-      // The value was set; showing it again is a nicety.
+      // Showing it again is a nicety.
     }
   }
-  logLocal("info", `Set ${path} = ${expr}`, { source: "debugger" });
   void refreshWatches();
+  if (now && !sameValue(now, assigned)) {
+    reportError(new Error(`${path} reads ${now.value} after the assignment of ${assigned.value}.`), `Set ${path}`);
+    return false;
+  }
+  logLocal("info", `Set ${path} = ${expr}${now ? ` (reads ${now.value})` : ""}`, { source: "debugger" });
   return true;
 }
 

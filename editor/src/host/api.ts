@@ -89,9 +89,13 @@ export const api = {
     restore: (tick: number) => call("snapshots.restore", { tick }),
   },
   debug: {
-    setBreakpoint: async (file: string, line: number, condition?: string): Promise<Breakpoint> => {
-      const r = await call("debug.breakpoints.set", condition ? { file, line, condition } : { file, line });
-      return { id: r.id, file: r.file, line: r.line, verified: r.verified, condition: condition || undefined, owner: "agent" };
+    /** A breakpoint, with a condition, or a logpoint (`log`: a template literal's text). */
+    setBreakpoint: async (file: string, line: number, condition?: string, log?: string): Promise<Breakpoint> => {
+      const p: { file: string; line: number; condition?: string; log?: string } = { file, line };
+      if (condition) p.condition = condition;
+      if (log !== undefined) p.log = log;
+      const r = await call("debug.breakpoints.set", p);
+      return { id: r.id, file: r.file, line: r.line, verified: r.verified, condition: condition || undefined, log, owner: "agent" };
     },
     /** One breakpoint, or every breakpoint set through `debug.*` (not those of CDP clients). */
     clearBreakpoint: (id?: string) => call("debug.breakpoints.clear", id === undefined ? {} : { id }),
@@ -109,6 +113,15 @@ export const api = {
     eval: async (expr: string, frame?: number, path?: string): Promise<Variable> => {
       const r = await call("debug.eval", frame === undefined ? { expr } : { expr, frame });
       return toVariable("result", r.value, r.type, r.description, path);
+    },
+    /**
+     * Sets a paused frame's variable (an argument, a local or a closure variable) to an expression's
+     * value; answers the value. A value inside an object is assigned through `eval` instead: an
+     * assignment to a variable evaluated in the frame does not reach it.
+     */
+    set: async (name: string, value: string, frame?: number): Promise<Variable> => {
+      const r = await call("debug.set", frame === undefined ? { name, value } : { name, value, frame });
+      return toVariable(name, r.value, r.type, r.description, name);
     },
     watch: async (entity: EntityId, component: string, field?: string) =>
       dataWatchOf(await call("debug.watch", field ? { entity, component, field } : { entity, component })),
