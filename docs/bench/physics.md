@@ -5,14 +5,16 @@
   Homebrew LLVM 23.1.2 for WebAssembly, Rust 1.98.1, Node 24.18
   ([physics/machine.txt](physics/machine.txt)).
 - **Contention.** The machine was shared with other agents' builds, Blender and benchmarks the whole
-  time: the 1-minute load average was 6 to 55 during the kept runs (00:45 to 02:30) and reached 71
-  later. A second native session at 11:40 was stopped at load 71; its 25 runs are kept apart in
+  time: the 1-minute load average was 6 to 70 during the native runs the tables use (00:45 to 02:30;
+  6 to 55 for the fastest repetitions the tables keep). A second native session at 11:40 was stopped
+  at load 71; its 25 runs are kept apart in
   [physics/bench-loaded-partial.jsonl](physics/bench-loaded-partial.jsonl) and not used. Every
   native timing below is the fastest of 3 to 8 repetitions, run interleaved so that load hits all
   configurations alike, and the engine-to-engine comparisons are also given as ratios paired within
   a repetition (runs a minute or two apart). Absolute times are pessimistic; the ratios are the more
-  reliable result. The WebAssembly runs (11:40 and 12:11, four repetitions) and the fork runs
-  (12:07) were made under the same conditions.
+  reliable result. The WebAssembly runs (nine repetitions, load 6 to 39) and the fork runs (five
+  repetitions, load 5 to 18) were redone after review, with the engine's shipped web profile for
+  Rapier's WebAssembly modules.
 - Code: [bench/physics/](../../bench/physics/). Raw outputs: [physics/](physics/); the tables of
   "Speed" are `scripts/summarize.py`'s output over them ([physics/summary.md](physics/summary.md)).
 
@@ -34,23 +36,30 @@ and a backend decision from it:
 1. **Neither engine is faster everywhere.** Single-threaded, as aipocket2 runs physics (one game
    thread, deterministic builds), Rapier steps box stacks 1.5 to 3 times faster than Jolt, the two
    are level on ray casts, and Jolt is about 1.5 times faster on convex bodies against a
-   triangle-mesh terrain and about 2.5 times faster on 160 motor-driven ragdolls. The geometric mean
-   over the five scenes is close to even. With 4 threads Jolt's lead on meshes and ragdolls grows to
-   2 to 5 times: Rapier's `parallel` speeds its stacks up 2.4 times but its ragdolls only 1.6 times.
+   triangle-mesh terrain and about 2.5 times faster on 160 motor-driven ragdolls (Rapier's
+   swing-twist joints emulated, section "Scenes"). The geometric mean over the five scenes is close
+   to even. With 4 threads Jolt's lead on meshes and ragdolls grows to 2 to 5 times: Rapier's
+   `parallel` speeds its stacks up 2.4 times but its ragdolls only 1.6 times.
 2. **Both are deterministic across native and WebAssembly in their deterministic builds**, to the
    bit, on all three scenes on Apple Silicon (aarch64) against wasm32 under V8, and both continue a
-   snapshot restored into a second world bit for bit. Jolt's guarantee is tested by its CI on 14
-   targets and cost it 0 to 20% here; Rapier's rests on aipocket2's own math rule and cost it little
-   on these scenes.
-3. **Jolt runs inside the engine's own browser module**: compiled with the LLVM aipocket2 already
-   uses for QuickJS-ng, linked into a Rust `wasm32-unknown-unknown` module, it computes the same
-   hash as native Jolt and as Jolt's CI. Without wasm SIMD (only Emscripten provides Jolt's), Jolt
-   in WebAssembly runs 1.2 to 1.5 times slower than natively and still steps all three scenes faster
-   than Rapier's deterministic build as aipocket2 ships it (without `simd128`).
-4. **Snapshots differ in kind.** Rapier's snapshot is the whole world through serde, static geometry
-   included: 408 MB for the ragdoll scene's 2.7 million terrain triangles, 0.4 to 0.8 s each way on
-   this machine. Jolt saves only the simulation state (3 MB there) and restores it into a world
-   rebuilt from its components.
+   snapshot restored into a second world bit for bit. Jolt's guarantee is tested by its CI in 17
+   configurations (15 single-precision targets, WASM32 and WASM64 among them, and 2
+   double-precision) and cost it 0 to 20% here; Rapier's rests on aipocket2's own math rule and cost
+   it little on these scenes.
+3. **Jolt runs in a Rust browser module built like the engine's**: compiled with the LLVM aipocket2
+   already uses for QuickJS-ng and linked into a Rust `wasm32-unknown-unknown` module (web profile,
+   `wasm-opt`), Jolt's Pyramid computes the same hash as native Jolt and as Jolt's CI. That module
+   is a prototype with plain exports and six WASI imports stubbed from JavaScript; linking Jolt into
+   pocket-web itself, through wasm-bindgen and beside QuickJS-ng's own libc, is untested. Without
+   wasm SIMD (only Emscripten provides Jolt's), Jolt in WebAssembly runs 1.3 to 1.7 times slower
+   than natively and still steps all four scenes faster than Rapier's deterministic build in the
+   configuration aipocket2 ships (web profile, no `simd128`), least clearly on the pyramid. With
+   `simd128`, which is not shipped, Rapier wins the pyramid.
+4. **Snapshots differ in kind.** Rapier's snapshot, as pocket-physics' Cache takes it, is the whole
+   world through serde, static geometry included: 408 MB for the ragdoll scene's 2.7 million terrain
+   triangles, about 0.1 to 0.2 s each way at moderate load and several times that under heavy load.
+   Jolt saves only the simulation state (3 MB there) and restores it into a world rebuilt from its
+   components.
 5. **Jolt from Rust costs nothing per call.** Its costs are the C++ build, a C wrapper to own (the
    best one, joltc, lacks state save and restore), and a change to the physics Cache's design.
 
@@ -76,15 +85,18 @@ Rapier until the port passes them** (section "Recommendation").
   default), `simd8`, `parallel`; `serde` adds `--fork-at N`, a snapshot through serde and bincode
   1.3.3 exactly as pocket-physics writes its Cache. Builds natively and for `wasm32-wasip1`.
 - **`bench/physics/jolt-ffi/`**: the Rust-calls-Jolt prototype through the C wrapper joltc (below,
-  "Integration"): `src/lib.rs` holds the C declarations and the scene and builds both as a native
-  binary (`src/main.rs`) and as a Rust `wasm32-unknown-unknown` module, aipocket2's browser target.
+  "Integration"): `src/lib.rs` holds the C declarations and the Pyramid scene and builds both as a
+  native binary (`src/main.rs`) and as a Rust `wasm32-unknown-unknown` module, aipocket2's browser
+  target, with plain C exports (not wasm-bindgen).
 - **`bench/physics/jolt/wasi/`**: a CMake toolchain that builds Jolt and `jolt_bench` for
   `wasm32-wasip1` with Homebrew's LLVM 23, wasi-libc and wasi-runtimes (libc++), without Emscripten.
 - **`bench/physics/scripts/`**: `build.sh` (every build), `bench.sh` (the timing matrix),
-  `perftest.sh` (Jolt's PerformanceTest), `determinism.sh`, `fork.sh`, `wasm.sh`, `summarize.py`
-  (the tables below from the raw files), `run_wasi.mjs` (runs a WASI module under Node),
-  `run_jolt_wasm.mjs` (runs the Rust `wasm32-unknown-unknown` module with Jolt inside, with no WASI
-  runtime). `focus.sh` adds repetitions of the configurations the recommendation rests on.
+  `perftest.sh` (Jolt's PerformanceTest), `determinism.sh`, `fork.sh`, `wasm.sh`, `multibody.sh`
+  (Rapier's multibody joints on the Ragdoll scene), `summarize.py` (the tables below from the raw
+  files), `run_wasi.mjs` (runs a WASI module under Node), `run_jolt_wasm.mjs` (runs the Rust
+  `wasm32-unknown-unknown` module with Jolt inside, with no WASI runtime). `focus.sh` adds
+  repetitions of the configurations the recommendation rests on. The scripts write their raw output
+  under the target directory (`$T/raw`); `RAW=docs/bench/physics` replaces the committed files.
 
 ### Configurations
 
@@ -104,9 +116,13 @@ configurations map to:
 | `parallel` + `simd-stable` | `rapier parallel`, `rapier parallel+simd8` | `parallel`; `parallel,simd8` |
 | (added) deterministic and parallel | `rapier det.+parallel` | `enhanced-determinism,parallel` |
 
-All Rapier builds use the engine's release profile (`opt-level = 3`, `codegen-units = 16`, no LTO);
-`rapier det. + LTO` adds fat LTO and one codegen unit to show what the profile leaves. Rayon's
-global pool is sized by `--threads`.
+Native Rapier builds use the engine's release profile (`opt-level = 3`, `codegen-units = 16`, no
+LTO); `rapier det. + LTO` adds fat LTO and one codegen unit to show what the profile leaves. The
+WebAssembly timings use the engine's web profile (fat LTO, one codegen unit, `panic = "abort"`)
+followed by `wasm-opt -O3` with `tools/build_web.sh`'s flags, as the browser build ships; they
+target `wasm32-wasip1` (the benchmark reads its scene files and prints through WASI) where the
+engine ships `wasm32-unknown-unknown`, the same LLVM backend. Rayon's global pool is sized by
+`--threads`.
 
 Jolt v5.6.0 (the latest release, 2026-07-11), Distribution, NEON with FMA, with
 `CROSS_PLATFORM_DETERMINISTIC` off (`Jolt`) and on (`Jolt det.`: `-ffp-contract=off`, no FMA, Jolt's
@@ -149,8 +165,19 @@ Differences that remain:
   ragdoll become capsules of their mean radius. Jolt's per-body maximum angular velocity has no
   Rapier counterpart. These are impulse joints. Rapier's multibody joints (reduced coordinates,
   which its documentation suggests for articulations) were tried with the same frames, limits and
-  motors (`--multibody`): steps took 1 to 70 s and positions reached NaN within 60 steps, with the
-  motors and without them, so no multibody numbers are reported.
+  motors (`--multibody`; `scripts/multibody.sh`, 60 steps of four variants side by side at load
+  about 30, raw output in [physics/multibody.txt](physics/multibody.txt)). With the angular limits
+  they fail: limits alone leave body positions non-finite after 24 steps (the highest body at 4,352
+  m), and limits with motors end in a panic inside Rapier in the 44th step (a `clamp` on a NaN joint
+  coordinate in its motor constraint). With motors only, or with neither, they run the 60 steps, at
+  a median of 0.6 s a step (0.3 to 2.9 s), roughly ten times or more the 35 to 85 ms the impulse
+  joints took on the same busy machine that day. The failure follows from what the emulation asks:
+  for a joint with three free angular axes, Rapier 0.36 integrates each component of the relative
+  angular velocity into its own coordinate and applies the per-axis limits and motors to those
+  coordinates (`dynamics/joint/multibody_joint/multibody_joint.rs`, which marks multi-axis limits
+  and motors as a TODO); they are not angles of the joint's rotation once it turns about more than
+  one axis. So Rapier has no articulation joint that holds a ragdoll's three-axis limits. Why its
+  multibody ragdolls are slow was not investigated, and no multibody timings enter the tables.
 - **Ragdoll terrain.** Jolt holds its terrain as 457 static bodies, compounds of scaled meshes;
   Rapier gets one fixed collider per leaf (5,786), since its compounds take no trimeshes.
 - **Convex radius.** Jolt rounds the ConvexVsMesh box and hull by 0.05 m inside the same outline;
@@ -277,16 +304,43 @@ Mean ms per step from its steps-per-second line, the fastest of 2 sessions' runs
 | Jolt det., ConvexVsMesh | 1.82 | 1.18 | 0.89 | 0.75 | 0.79 | 0.76 | 0.75 | 0.72 | 0.71 | 0.72 |
 | Jolt det., Ragdoll | 6.96 | 4.13 | 4.23 | 4.44 | 3.40 | 2.47 | 2.69 | 3.30 | 2.45 | 2.24 |
 
+Jolt, ConvexVsMesh: the first session's file stops after 4 threads (that run was cut off), so its 5
+to 10 thread entries come from the second session alone.
+
 ### WebAssembly (V8 in Node v24.18.0), deterministic builds, single thread, 300 steps
 
-Mean ms per step (p95), fastest of the repetitions; in brackets the ratio to the same engine's
-native run.
+Mean ms per step (p95), fastest of 9 repetitions (1-minute load 6 to 39); in brackets the ratio to
+the same engine's native run.
 
-| Scene | Rapier det. native | Rapier det. wasm32 | Rapier det. wasm32 simd128 | Jolt det. native | Jolt det. wasm32 (scalar) | Jolt det. in a Rust wasm32-unknown-unknown module |
+| Scene | Rapier det. native | Rapier det. wasm32, web profile + wasm-opt | Rapier det. wasm32 simd128, web profile + wasm-opt | Jolt det. native | Jolt det. wasm32 (scalar) | Jolt det. in a Rust wasm32-unknown-unknown module |
 |---|---|---|---|---|---|---|
-| Pyramid | 2.90 (3.59) | 12.70 (17.79) [4.4x] | 3.94 (5.05) [1.4x] | 5.28 (9.19) | 7.90 (13.56) [1.5x] | 7.93 (12.83) [1.5x] |
-| ConvexVsMesh | 2.65 (4.70) | 5.30 (9.80) [2.0x] | 4.12 (7.38) [1.6x] | 1.74 (3.57) | 2.55 (4.88) [1.5x] | – |
-| Ragdoll | 23.19 (29.22) | 33.30 (40.38) [1.4x] | 40.44 (52.63) [1.7x] | 12.75 (20.97) | 15.85 (19.81) [1.2x] | – |
+| Pyramid | 3.54 (4.64) | 11.15 (12.52) [3.1x] | 4.14 (6.60) [1.2x] | 4.99 (8.91) | 7.44 (12.57) [1.5x] | 8.05 (12.59) [1.6x] |
+| ConvexVsMesh | 3.40 (6.49) | 5.75 (10.34) [1.7x] | 4.35 (7.37) [1.3x] | 2.03 (4.04) | 3.09 (5.97) [1.5x] | – |
+| RagdollNoSleep | 23.90 (29.38) | 32.49 (39.66) [1.4x] | 29.54 (35.88) [1.2x] | 10.32 (14.68) | 17.23 (21.92) [1.7x] | – |
+| Ragdoll | 34.53 (49.18) | 35.72 (44.22) [1.0x] | 30.17 (37.35) [0.9x] | 10.31 (12.96) | 16.83 (22.25) [1.6x] | – |
+
+Paired within a repetition (median, range), all repetitions:
+
+| Scene | Rapier web profile + wasm-opt / release profile | Rapier det. wasm32 / Jolt det. wasm32 | Rapier det. wasm32 simd128 / Jolt det. wasm32 | Jolt in the Rust module / Jolt alone, wasm32 |
+|---|---|---|---|---|
+| Pyramid | 1.00 (n=9, 0.63–2.27) | 0.93 (n=9, 0.55–3.33) | 0.47 (n=9, 0.19–1.63) | 0.94 (n=9, 0.54–1.27) |
+| ConvexVsMesh | 0.92 (n=9, 0.68–2.10) | 2.15 (n=9, 1.08–5.18) | 1.69 (n=9, 0.75–2.86) | – |
+| RagdollNoSleep | 1.01 (n=8, 0.65–1.51) | 1.95 (n=8, 0.96–3.12) | 1.80 (n=8, 0.90–2.71) | – |
+| Ragdoll | 1.15 (n=8, 0.77–1.89) | 2.36 (n=8, 1.38–4.67) | 2.13 (n=8, 1.23–3.74) | – |
+
+The same, only repetitions whose runs all started at a 1-minute load below 10:
+
+| Scene | Rapier web profile + wasm-opt / release profile | Rapier det. wasm32 / Jolt det. wasm32 | Rapier det. wasm32 simd128 / Jolt det. wasm32 | Jolt in the Rust module / Jolt alone, wasm32 |
+|---|---|---|---|---|
+| Pyramid | 0.93 (n=2, 0.86–1.00) | 1.42 (n=2, 1.34–1.50) | 0.51 (n=2, 0.47–0.56) | 1.00 (n=2, 0.91–1.08) |
+| ConvexVsMesh | 0.82 (n=2, 0.68–0.96) | 1.49 (n=2, 1.26–1.71) | 1.19 (n=2, 0.92–1.46) | – |
+| RagdollNoSleep | 0.89 (n=2, 0.84–0.93) | 1.92 (n=2, 1.90–1.94) | 1.80 (n=2, 1.78–1.82) | – |
+| Ragdoll | 1.16 (n=2, 1.03–1.30) | 2.47 (n=2, 2.12–2.82) | 2.13 (n=2, 1.79–2.47) | – |
+
+End hashes: every native and wasm run of an engine agrees on every scene. The load swung between and
+during repetitions, and one binary's runs vary up to threefold, so the fastest times and the two
+quiet repetitions (load 6 to 8) are the readable part; raw runs in
+[physics/wasm.jsonl](physics/wasm.jsonl).
 
 ### What the numbers say
 
@@ -297,11 +351,14 @@ native run.
   both engines.
 - **Convex bodies on a mesh: Jolt, by about 1.5 times** (1.8 against 2.5 ms; paired median 1.62).
 - **Ray casts: level.** 10,000 closest-hit rays cost 2.9 to 3.3 ms in every configuration of both
-  engines (paired Rapier det. / Jolt det. 1.16); the Raycast scene's step times are ConvexVsMesh's.
+  engines (paired Rapier det. / Jolt det. 1.16). Jolt's step times in the Raycast scene are its
+  ConvexVsMesh ones; Rapier's step is 9% (det.) to 36% (default) slower there than without the rays
+  (2.75 against 2.52 ms, 3.32 against 2.44), so the paired step ratio rises from 1.62 to 1.89.
 - **Ragdolls: Jolt, by about 2.5 times** with sleeping off in both (8.6 against 23.0 ms; paired
   median 2.44, range 1.87 to 3.69), and by 2.8 times with sleeping on, where Jolt also sleeps more.
   Part of Rapier's cost may be the joint emulation (three motors and box limits per joint where Jolt
-  has one swing-twist constraint); Rapier offers nothing closer (multibody joints diverged, above).
+  has one swing-twist constraint); Rapier offers nothing closer (its multibody joints do not hold
+  three-axis limits, above).
 - **Threads.** Jolt's job system on 4 threads speeds its stacks up 1.9 times and its mesh and
   ragdoll scenes 2.3 to 2.7 times; 10 threads (6 of them efficiency cores, on a loaded machine) add
   little or lose. Rapier's `parallel` on 4 threads speeds the pyramid up 2.4 times, the large
@@ -317,14 +374,21 @@ native run.
 - **Rust calling Jolt costs nothing measurable**: through joltc the pyramid steps in the same time
   as from C++ (paired median 0.98), 10,000 single-ray calls across the C ABI take what they take in
   C++ (0.93), and reading 1,241 poses back costs 4 µs (3 ns a body). Both give the same hashes.
-- **In the browser** (V8, single thread), Jolt's deterministic build runs 1.2 to 1.5 times slower
-  than natively, without SIMD, and the same inside the Rust module as in a C++-only module. Rapier's
-  deterministic build runs 1.4 to 4.4 times slower than natively without `simd128` (what aipocket2's
-  web build ships: `tools/build_web.sh` sets no target features) and 1.4 to 1.7 times with it. As
-  shipped, Jolt is the faster engine in the browser on all three scenes (Pyramid 7.9 against 12.7
-  ms, ConvexVsMesh 2.6 against 5.3, Ragdoll 15.9 against 33.3); with `simd128` Rapier wins the
-  pyramid (3.9 ms) and still loses the mesh scene and the ragdolls. These are the fastest of four
-  repetitions on a loaded machine (two at load 7 to 13, two at 35 to 60).
+- **In the browser** (V8, single thread), Jolt's deterministic build runs 1.3 to 1.7 times slower
+  than natively, without SIMD, and the same inside the Rust module as in a C++-only module (paired
+  0.94; 1.00 in the quiet repetitions). Rapier's deterministic build, in the web profile through
+  `wasm-opt` as aipocket2 ships it (`tools/build_web.sh` sets no target features, so no `simd128`),
+  runs 1.4 to 3.3 times slower than natively on Pyramid, ConvexVsMesh and RagdollNoSleep (paired,
+  quiet repetitions); the web profile and `wasm-opt` change it by nothing consistent against the
+  release profile (paired medians 0.92 to 1.15). In that shipped configuration Jolt is the faster
+  engine in the browser on all four scenes: Pyramid 7.4 against 11.2 ms, ConvexVsMesh 3.1 against
+  5.8, RagdollNoSleep 17.2 against 32.5, Ragdoll 16.8 against 35.7 (fastest runs), and 1.4, 1.5, 1.9
+  and 2.5 times in the quiet repetitions' pairs. The Pyramid result is the least firm: over all nine
+  repetitions its paired median is 0.93, with pairs from 0.55 to 3.3 as the load came and went. With
+  `simd128`, which keeps Rapier bit-identical (section "Determinism") but is not shipped, Rapier
+  wins the pyramid (4.1 ms, half Jolt's time) and still loses the mesh scene (paired 1.2 to 1.7) and
+  the ragdolls (1.8 to 2.1). The sleeping Ragdoll scene favours Jolt, which sleeps more (3,427 of
+  3,680 bodies still active at step 300 against Rapier's 3,680); RagdollNoSleep is the fair one.
 
 ## Determinism
 
@@ -334,7 +398,7 @@ step, 300 steps for Pyramid and ConvexVsMesh, 100 for Ragdoll); Jolt runs compar
 
 | Check | Pyramid | ConvexVsMesh | Ragdoll |
 |---|---|---|---|
-| Rapier det.: native aarch64 = wasm32 (scalar) = wasm32 `simd128` = native with fat LTO | yes | yes | yes |
+| Rapier det.: native aarch64 = wasm32 (scalar) = wasm32 `simd128` = native with fat LTO, and = both wasm32 builds in the web profile through `wasm-opt` | yes | yes | yes |
 | Rapier det. + `parallel` with 1, 4 and 10 rayon threads = Rapier det. single-threaded | yes | yes | yes |
 | Rapier default: native = wasm32 | no, from step 1 | no, from step 60 | no, from step 1 |
 | Rapier default: wasm32 = wasm32 `simd128` | no, from step 1 | no, from step 60 | no, from step 1 |
@@ -342,7 +406,7 @@ step, 300 steps for Pyramid and ConvexVsMesh, 100 for Ragdoll); Jolt runs compar
 | Rapier det. + `simd8` | refused at compile time | | |
 | Jolt det.: v5.6.0 PerformanceTest on this M5 = the hashes Jolt's CI records (`-q=LinearCast`, 1 thread and 10) | yes | yes | yes (and HighSpeed) |
 | Jolt det.: native aarch64 = wasm32-wasip1 (scalar, built without Emscripten), 300 steps | yes | yes | yes |
-| Jolt det. inside a Rust `wasm32-unknown-unknown` module through joltc = native C++ = native Rust through joltc, 300 and 500 steps | yes (500 steps: Jolt's CI hash) | not built | not built |
+| Jolt det. inside a Rust `wasm32-unknown-unknown` module through joltc (web profile, `wasm-opt`) = native C++ = native Rust through joltc, 300 and 500 steps | yes (500 steps: Jolt's CI hash) | not built | not built |
 | Jolt, both builds: same end hash with 1, 4 and 10 threads | yes | yes | yes |
 | Jolt non-det. = Jolt's CI hashes | no | no | no |
 
@@ -375,10 +439,11 @@ What this says:
 - **Jolt's `CROSS_PLATFORM_DETERMINISTIC` is a stronger, CI-tested guarantee.** Jolt's architecture
   document (Docs/Architecture.md, "Deterministic Simulation") promises the same results whatever the
   compiler (MSVC, clang, gcc, Emscripten), build configuration, OS, CPU architecture and word size,
-  and its CI checks 14 targets on every build, WASM32 and WASM64 under Node among them; it puts the
-  cost at about 8%. Caveats in its docs: the same source and defines everywhere; bodies and
-  constraints added in the same order (or created with the same `BodyID`s); broad-phase queries not
-  deterministic, narrow-phase query results in no fixed order, contact and activation callbacks
+  and its CI checks the hashes in 17 configurations on every push (`determinism_check.yml`: 15
+  single-precision targets, WASM32 and WASM64 under Node among them, and 2 double-precision ones);
+  it puts the cost at about 8%. Caveats in its docs: the same source and defines everywhere; bodies
+  and constraints added in the same order (or created with the same `BodyID`s); broad-phase queries
+  not deterministic, narrow-phase query results in no fixed order, contact and activation callbacks
   arriving from several threads in no fixed order. On this M5 the hashes match the CI's for Pyramid,
   ConvexVsMesh, Ragdoll and HighSpeed, with 1 thread and 10; a scalar wasm32 build made here with
   plain clang and wasi-libc (no Emscripten) matches the native run on all three scenes, and so does
@@ -395,18 +460,19 @@ What this says:
 aipocket2 forks a world by writing its state and restoring it into another (persistence.md 6.3), and
 the physics Cache must continue after encode, decode and restore exactly as without them
 (persistence.md 8). `scripts/fork.sh` checks that in both engines the same way: 150 steps, a
-snapshot, a restore into a second world, 150 more steps in both, the end hashes compared. Raw
-output: [physics/fork.jsonl](physics/fork.jsonl). Single runs on the loaded machine; an earlier run
-of the same Rapier Ragdoll snapshot took 0.36 s each way.
+snapshot, a restore into a second world, 150 more steps in both, the end hashes compared, five
+times. Raw output: [physics/fork.jsonl](physics/fork.jsonl).
+
+Times in ms: median over 5 runs (fastest–slowest), 1-minute load 5 to 18.
 
 | Scene | Engine | Fork after / of steps | State bytes | Save ms | Rebuild ms | Restore ms | Fork's end hash = original's |
 |---|---|---|---|---|---|---|---|
-| Pyramid | Jolt det. | 150 / 300 | 1.70 MB | 6.97 | 0.7 | 4.71 | yes (`0x7df8a2e3b64262c1`) |
-| Pyramid | Rapier det. | 150 / 300 | 9.44 MB | 33.56 | – | 4.39 | yes (`0x37508ea9e0269ef8`) |
-| ConvexVsMesh | Jolt det. | 150 / 300 | 0.37 MB | 0.48 | 19.5 | 0.78 | yes (`0xe855fe5eaad06161`) |
-| ConvexVsMesh | Rapier det. | 150 / 300 | 6.49 MB | 2.50 | – | 21.67 | yes (`0x1f4ff7d50ed9ecbb`) |
-| Ragdoll | Jolt det. | 150 / 300 | 2.98 MB | 28.24 | 186.7 | 4.74 | yes (`0x4145658b2062d33a`) |
-| Ragdoll | Rapier det. | 150 / 300 | 408.06 MB | 654.08 | – | 783.78 | yes (`0x5373b95df4ee00a0`) |
+| Pyramid | Jolt det. | 150 / 300 | 1.70 MB | 2.29 (2.19–4.75) | 0.31 (0.30–0.46) | 1.80 (1.64–3.07) | yes (`0x7df8a2e3b64262c1`, 5 runs) |
+| Pyramid | Rapier det. | 150 / 300 | 9.44 MB | 3.75 (3.40–5.18) | – | 4.25 (3.79–10.2) | yes (`0x37508ea9e0269ef8`, 5 runs) |
+| ConvexVsMesh | Jolt det. | 150 / 300 | 0.37 MB | 0.46 (0.41–0.77) | 5.67 (5.31–12.7) | 0.53 (0.43–0.95) | yes (`0xe855fe5eaad06161`, 5 runs) |
+| ConvexVsMesh | Rapier det. | 150 / 300 | 6.49 MB | 2.30 (2.00–4.38) | – | 2.73 (2.62–4.99) | yes (`0x1f4ff7d50ed9ecbb`, 5 runs) |
+| Ragdoll | Jolt det. | 150 / 300 | 2.98 MB | 5.72 (5.54–9.20) | 54.1 (51.9–99.9) | 3.44 (3.41–15.5) | yes (`0x4145658b2062d33a`, 5 runs) |
+| Ragdoll | Rapier det. | 150 / 300 | 408.06 MB | 110 (101–189) | – | 137 (129–239) | yes (`0x5373b95df4ee00a0`, 5 runs) |
 
 - **Both continue bit for bit**, on all three scenes, joints and motors included.
 - **Jolt's fork is a rebuild plus a restore.** The second system is built from scratch (the same
@@ -418,9 +484,12 @@ of the same Rapier Ragdoll snapshot took 0.36 s each way.
   insertions and removals.
 - **Rapier's snapshot carries every collider's shape.** 9.4 MB for the pyramid against Jolt's 1.7
   MB; 408 MB for the Ragdoll scene, whose 2.7 million terrain triangles are in it, against Jolt's 3
-  MB (Jolt's static terrain is not state; the 187 ms of "rebuild" is loading the scene's files
+  MB (Jolt's static terrain is not state; its 54 ms of "rebuild" is loading the scene's files
   again). With Rapier, every byte-based fork of a world with a large level writes and reads its
-  level.
+  level: here 0.10 to 0.19 s to save and 0.13 to 0.24 s to restore at load 5 to 18, and several
+  times that on the busier machine of the first runs and the review (0.15 to 0.8 s each way). The
+  size is the robust number; the times follow the machine. It comes from pocket-physics' Cache
+  holding Rapier's whole `PhysicsWorld`, not from Rapier as such (see the end of "Recommendation").
 - **A Jolt Cache would be different** (persistence.md 8): each body's `BodyID` and `SaveState`'s
   bytes, restored by rebuilding the bodies from their components with
   `BodyInterface::CreateBodyWithID` (which Jolt's documentation gives for rollback) and calling
@@ -433,7 +502,7 @@ of the same Rapier Ragdoll snapshot took 0.36 s each way.
 
 | Path | Jolt | State | License | Build | Coverage | Determinism option | State save/restore | Browser |
 |---|---|---|---|---|---|---|---|---|
-| `joltc-sys` / `rolt` (SecondHalfGames/jolt-rust), crates.io 0.3.1 | 5.0.0 (crates.io, 2024-05-19); 5.3.0 on git master (pushed 2026-10-02) | "early work in progress" (its README); 9,280 downloads | MIT OR Apache-2.0 | `cmake` crate + `bindgen` (needs libclang) | JoltC: 367 functions; `rolt` 1,688 lines of safe wrapper; no ragdolls, few constraint types | `cross-platform-deterministic` feature on git master only | no | no |
+| `joltc-sys` / `rolt` (SecondHalfGames/jolt-rust), crates.io 0.3.1 | 5.0.0 (crates.io, 2024-05-19); 5.3.0 on git master (pushed 2026-10-02) | "early work in progress" (its README); 9,299 downloads | MIT OR Apache-2.0 | `cmake` crate + `bindgen` (needs libclang) | JoltC: 367 functions; `rolt` 1,688 lines of safe wrapper; no ragdolls, few constraint types | `cross-platform-deterministic` feature on git master only | no | no |
 | amerkoleci/joltc (C wrapper, not on crates.io) | 5.6.0 (pushed 2026-07-13) | maintained, 213 stars | MIT | CMake | 1,270 functions: shapes, constraints, ragdolls, CharacterVirtual, vehicles | CMake option | no | no |
 | JoltPhysics.js (`jolt-physics` on npm, 1.1.0, 2026-07-11) | 5.6.0 | official port | MIT | Emscripten | WebIDL, broad, including `StateRecorder` | build option | yes | separate Emscripten module, called through JavaScript |
 | `jolt-sys` / `jolt-physics` 0.1.5 (All8Up) | 2022 | abandoned | MIT | | | | | |
@@ -449,12 +518,13 @@ Rapier's whole `PhysicsWorld` through serde today). joltc HEAD does not compile 
 
 ### The prototype
 
-`bench/physics/jolt-ffi/` (590 lines of Rust): `build.rs` copies joltc into `OUT_DIR`, patches one
+`bench/physics/jolt-ffi/` (720 lines of Rust): `build.rs` copies joltc into `OUT_DIR`, patches one
 line (a thread count of 0 meant "all cores"), builds joltc and Jolt v5.6.0 as static libraries
 (Ninja, Distribution, GPU compute off) and links them; `src/lib.rs` declares the 24 C functions it
 uses by hand (no bindgen) and builds and steps Jolt's Pyramid across the C ABI; `src/main.rs` times
-it natively. A clean native build of Jolt and joltc takes about a minute with 3 jobs on this
-machine; the static libraries are 7.8 MB (Jolt) and 0.9 MB (joltc), the unstripped binary 1.7 MB.
+it natively. A clean native build of the prototype, Jolt and joltc included, took 24 s with 3 jobs
+(56 CPU seconds) at load 10 on this machine; the static libraries are 7.8 MB (Jolt) and 0.9 MB
+(joltc), the unstripped binary 1.7 MB.
 
 It simulates exactly what the C++ harness does: the end hash after 500 steps is `0x4925a2a9e0b2753e`
 in both, and `0x74d0118836ac0892` (Jolt's CI hash for this scene) in the deterministic builds of
@@ -476,20 +546,29 @@ not build for `wasm32-unknown-unknown` out of the box either: it recognizes WebA
 - **Jolt alone**: `jolt_bench` builds for `wasm32-wasip1` with plain clang 23, wasi-libc and
   wasi-runtimes' libc++ (`bench/physics/jolt/wasi/wasm32-wasip1.cmake`), given `-D__EMSCRIPTEN__`,
   CMake's `EMSCRIPTEN` (to drop `-pthread`) and the single-threaded job system, and runs under
-  Node's WASI with the native run's hashes on all three scenes.
-- **Jolt inside the Rust module**:
-  `cargo rustc --lib --crate-type cdylib --target wasm32-unknown-unknown --features det` in
-  `jolt-ffi`. `build.rs` compiles joltc and Jolt with the same toolchain file (144 compile steps, 41
-  CPU seconds, 14 s with 3 jobs), and rustc's linker puts them, libc++, libc++abi, wasi-libc's
-  `libc.a` and compiler-rt's builtins into the Rust module. The module imports seven WASI functions
-  (`clock_time_get`, `fd_close`, `fd_fdstat_get`, `fd_seek`, `fd_write`, `poll_oneoff`,
-  `sched_yield`: libc++'s stdio, clock and thread paths), and nothing else; `run_jolt_wasm.mjs`
-  loads it with no WASI runtime, stubs those seven and counts calls: none was called in a 500-step
-  run. A production build would define them in a shim the way QuickJS-ng's already does for its C
-  (`third_party/rquickjs-sys-0.14.0/wasm-shim/shim.c`). The module steps the pyramid to Jolt's CI
-  hash (`0x74d0118836ac0892` at 500 steps), the native hash, in 7.9 ms a step against 5.3 natively
-  (table "WebAssembly"). Stripped, the prototype's module is 1.26 MB (434 KB gzipped), Jolt's type
-  registry and the parts the pyramid uses.
+  Node's WASI with the native run's hashes on all three scenes. Jolt is compiled at `-O3` without
+  LTO, the harness file with thin LTO, and clang's driver runs `wasm-opt -O3` on the linked module.
+- **Jolt inside a Rust module built like the engine's**:
+  `cargo rustc --lib --crate-type cdylib --profile web --target wasm32-unknown-unknown --features det`
+  in `jolt-ffi`, then `wasm-opt -O3` with `tools/build_web.sh`'s flags. `build.rs` compiles joltc
+  and Jolt with the same toolchain file (144 compile steps, 41 CPU seconds and 14 s with 3 jobs in
+  the first build; 59 and 20 s in a rebuild on the loaded machine), and rustc's linker puts them,
+  libc++, libc++abi, Homebrew's wasi-libc `libc.a` and compiler-rt's builtins into the Rust module.
+  The module imports six WASI functions (`fd_close`, `fd_fdstat_get`, `fd_seek`, `fd_write`,
+  `poll_oneoff`, `sched_yield`: libc++'s stdio and thread paths; before `wasm-opt` also
+  `clock_time_get`), and nothing else; `run_jolt_wasm.mjs` loads it with no WASI runtime, stubs them
+  and counts calls: none was called in a 500-step run. The module steps the pyramid to Jolt's CI
+  hash (`0x74d0118836ac0892` at 500 steps), the native hash, in 8.0 ms a step against 5.0 natively
+  (table "WebAssembly"). It is 1.10 MB (419 KB gzipped), Jolt's type registry and the parts the
+  pyramid uses.
+- **What that does not show.** The module is a prototype: plain C exports, not wasm-bindgen; the
+  Pyramid scene only; the WASI imports stubbed from JavaScript. Jolt was not linked into pocket-web,
+  whose QuickJS-ng already brings a libc: wasi-sdk 24's `libc.a`
+  (`third_party/rquickjs-sys-0.14.0/vendor/wasi-libc`) with a shim (`wasm-shim/shim.c`) that defines
+  the clock, stdio and `abort` functions so the module needs no WASI imports. One module holds one
+  libc, so Jolt's libc++ would have to be built against that one and the shim extended to the six
+  imports above; two libc archives in one link could resolve symbols from either. That is check 1
+  under "Recommendation", untested here.
 - **Not shown: wasm SIMD.** Jolt's WebAssembly SIMD path is SSE intrinsics that only Emscripten's
   headers translate (`USE_WASM_SIMD` adds `-msimd128 -msse4.2`); clang's own `immintrin.h` refuses
   wasm32 ([physics/jolt-wasm-simd-build.txt](physics/jolt-wasm-simd-build.txt)), so these builds run
@@ -500,16 +579,19 @@ not build for `wasm32-unknown-unknown` out of the box either: it recognizes WebA
 ### What adopting Jolt would cost
 
 - **C++ in every build.** Jolt (153 source files) and joltc, through CMake from `build.rs` as the
-  prototype does: about a minute natively with 3 jobs, 14 s for wasm32, with the LLVM 23 that
+  prototype does: about 25 s natively and 14 to 20 s for wasm32 with 3 jobs, with the LLVM 23 that
   `POCKET_LLVM` already names for QuickJS-ng. The defines of library and wrapper must agree
   (`JPH_CROSS_PLATFORM_DETERMINISTIC`, `JPH_OBJECT_LAYER_BITS`, debug renderer, profiler), or
   `RegisterTypes` rejects the mismatch (it checks a version ID built from them). architecture.md 4.4
   ("wasm32: pure Rust") and its crate-graph and feature checks change, the Windows MSVC target needs
-  Jolt under clang-cl (which Jolt supports and the QuickJS-ng build already uses), and libc++,
-  libc++abi and wasi-libc for wasm32 join the vendored toolchain.
+  Jolt under clang-cl (which Jolt supports and the QuickJS-ng build already uses), and libc++ and
+  libc++abi for wasm32 join the vendored toolchain. They must be built against the one wasi-libc the
+  module can hold: QuickJS-ng already links wasi-sdk 24's `libc.a`
+  (`third_party/rquickjs-sys-0.14.0/vendor/wasi-libc`) with its own shim for the clock, stdio and
+  `abort`, while the prototype used Homebrew's wasi-libc 34 and libc++ built against it.
 - **A joltc fork to own.** Pinned to a commit and patched like the prototype's `build.rs`, plus what
   joltc lacks: `SaveState` and `RestoreState` over a byte buffer (a handful of functions around
-  `StateRecorderImpl`) and the seven WASI imports defined in a shim. joltc's 1,270 functions already
+  `StateRecorderImpl`) and the six WASI imports defined in a shim. joltc's 1,270 functions already
   cover the shapes, ray and shape queries, contact listener, mass properties, constraints, ragdolls,
   character controller and vehicles pocket-physics would grow into.
 - **The solver half of pocket-physics rewritten**: `solver.rs`, `cache.rs`, `query.rs` and part of
@@ -526,35 +608,58 @@ not build for `wasm32-unknown-unknown` out of the box either: it recognizes WebA
 
 **One backend on every target, never Rapier natively and Jolt in the browser or the reverse; move
 that one backend to Jolt with `CROSS_PLATFORM_DETERMINISTIC`, now, as a port with explicit checks,
-and keep Rapier until the port passes them.** This is charter 4.7's second branch in its "unify on
-Jolt's wasm build" form. PhysX and Chaos were not measured; Jolt, which Godot made its default 3D
-physics and Horizon Forbidden West and Death Stranding 2 ship, stands in for them.
+and keep Rapier until the port passes them.** This is charter 4.7's second branch ("Jolt
+significantly faster") in its "unify on Jolt's wasm build" form. PhysX and Chaos were not measured;
+Jolt, which Godot made its default 3D physics and Horizon Forbidden West and Death Stranding 2 ship,
+stands in for them.
+
+**Where charter 4.7's condition holds, and how firm the case is.** Jolt is significantly faster on
+convex bodies against a mesh terrain (paired medians 1.6 times on one thread, 2.2 on four) and on
+ragdolls (2.4 and 4.6 times), and in the browser's shipped configuration on all four scenes (1.4 to
+2.5 times in the quiet repetitions' pairs; on the pyramid the lead shows only in those and in the
+fastest runs, and `simd128` reverses it). It is not on box stacks, where Rapier is 1.5 to 2.4 times
+faster on one thread, nor on ray casts, where the two are level; over the five native scenes the
+geometric mean is about even. So the condition holds for the mesh and articulated workloads only,
+and the recommendation rests on those being what the engine grows into (ragdolls, characters and
+vehicles on level geometry), on Jolt's CI-tested determinism, and on the cost of switching rising
+with every feature built on Rapier. Two parts of the evidence are provisional: the ragdoll scene
+sets Jolt's swing-twist constraint against an emulation (a spherical joint with box limits and three
+motors), part of whose cost may be the emulation's own; and the snapshot sizes measure
+pocket-physics' Cache design, which stores Rapier's static geometry and could leave it out. Both are
+settled like for like only by the port's checks below.
 
 **Why one backend.** Charter 3, principle 4: the same seed and inputs give the same hash every tick,
 and forks and replays move between the native editor and the browser. Jolt natively beside Rapier in
 the browser would be two simulations of one game: different trajectories (ConvexVsMesh's highest
 body ends at 9.79 m in Jolt and at 10.35 m in Rapier from the same start), replays and forks that do
-not carry across, and two backends to keep. It is also unnecessary, since Jolt runs, to the bit, in
-the engine's own browser module.
+not carry across, and two backends to keep. Nor should it be needed: Jolt reproduced its native and
+CI hashes inside a Rust `wasm32-unknown-unknown` module built like pocket-web's. Linking it into
+pocket-web itself, through wasm-bindgen and beside QuickJS-ng's libc, is check 1 below.
 
 **Why Jolt.**
 
-- The owner's bar is PhysX and Chaos. On the workloads that dominate game physics after the stack of
-  boxes, characters and ragdolls and bodies against mesh levels, Rapier as shipped is 1.5 to 2.5
-  times slower than Jolt on one thread and 2 to 5 times on four, and Rapier's alternative for
-  articulations (multibody joints) did not run this scene at all. Rapier's lead is box stacks.
-- In the browser as shipped (no `simd128`), Jolt is faster on all three scenes measured.
-- Determinism holds in both, but Jolt's is a documented guarantee its CI checks on 14 targets, where
-  Rapier's rests on aipocket2's own rules and tests and still has a known hole (numeric.md 5: Rapier
-  computes mass properties with the platform's libm, so dynamic hulls, meshes and compounds may not
-  be given a density).
-- Snapshots: Rapier's carry all static geometry, 408 MB and 0.4 to 0.8 s each way for a
+- The owner's bar is PhysX and Chaos. Outside box stacks, on ragdolls and on bodies against mesh
+  terrain, Rapier as shipped is 1.6 to 2.4 times slower than Jolt on one thread and 2 to 5 times on
+  four (paired medians). Rapier's lead is box stacks. No character controller was measured in either
+  engine.
+- In the browser as aipocket2 ships it (web profile, no `simd128`), Jolt was faster on all four
+  scenes; with `simd128`, which keeps Rapier bit-identical but is not shipped today, Rapier takes
+  the pyramid and still loses the mesh and ragdoll scenes.
+- Determinism holds in both, but Jolt's is a documented guarantee its CI checks in 17
+  configurations, where Rapier's rests on aipocket2's own rules and tests and still has a known hole
+  (numeric.md 5: Rapier computes mass properties with the platform's libm, so dynamic hulls, meshes
+  and compounds may not be given a density).
+- Snapshots, with the Cache as pocket-physics designs it today: Rapier's carry all static geometry,
+  408 MB and 0.1 to 0.2 s each way at moderate load (several times that under heavy load) for a
   2.7-million-triangle level, and forks are a first-class operation (charter 3, principle 4), so a
-  world with a large level pays that on every byte-based fork. Jolt's state is 3 MB there.
+  world with a large level pays that on every byte-based fork. Jolt's state is 3 MB there. A Rapier
+  Cache without the static geometry would narrow this (last paragraph); the size is a design cost,
+  not a limit of Rapier.
 - Switching is cheapest now: about 1,100 lines of pocket-physics touch Rapier, and there are no
   joints and no continuous collision yet. Every feature built on Rapier raises the price.
 - Jolt has, and joltc already exposes, what the engine will need next: a character controller,
-  vehicles, swing-twist ragdolls with motors, soft bodies.
+  vehicles, swing-twist ragdolls with motors, soft bodies. Rapier has no swing-twist joint, and its
+  multibody joints do not hold three-axis angular limits (section "Scenes").
 
 **What it costs**: the list above ("What adopting Jolt would cost"); box stacks become 1.5 to 3
 times slower; the build gains C++, and the wasm module stops being pure Rust.
@@ -562,8 +667,10 @@ times slower; the build gains C++, and the wasm module stops being pure Rust.
 **The checks, in order; if one fails, stay on Rapier:**
 
 1. A joltc fork with `SaveState` / `RestoreState` and the WASI shim, building on macOS (aarch64),
-   Windows (x86-64, clang-cl) and inside pocket-web's module through wasm-bindgen (the prototype
-   used plain exports, not wasm-bindgen).
+   Windows (x86-64, clang-cl) and inside pocket-web's module through wasm-bindgen, beside
+   QuickJS-ng: one wasi-libc (QuickJS-ng's vendored wasi-sdk 24 `libc.a`) with libc++ built against
+   it, and one shim. The prototype used plain exports, not wasm-bindgen, Homebrew's wasi-libc 34,
+   and no QuickJS-ng, so none of this is shown yet.
 2. pocket-physics' solver on Jolt behind the same components and systems: the Cache holds each
    body's `BodyID` and `SaveState`'s bytes; restore rebuilds the bodies from their components with
    `CreateBodyWithID` and restores the state into them (what Jolt documents for rollback, and what
@@ -572,15 +679,14 @@ times slower; the build gains C++, and the wasm module stops being pure Rust.
    on aarch64 and x86-64 and in Chrome, and forks restored from bytes at every tick continue
    identically; this bench's `determinism.sh` and `fork.sh` on x86-64.
 4. Not a pass condition but a measurement: this bench again on an unloaded machine, the sailing
-   scene's tick cost in both engines, and the wasm SIMD attempt through Emscripten's SSE headers.
+   scene's tick cost in both engines, the ragdoll with a joint closer to Jolt's on the Rapier side
+   if one can be built, and the wasm SIMD attempt through Emscripten's SSE headers.
 
-**If the owner weighs a pure-Rust engine above speed on characters and meshes**, keeping Rapier is
+**If the owner weighs a pure-Rust engine above speed on meshes and ragdolls**, keeping Rapier is
 defensible: it is enough for today's content (the sailing scene's tick costs 27 µs, the physics
 spike) and equal or better on stacks and ray casts. Then three Rapier-side items matter: keep static
 geometry out of the physics Cache's bytes (re-attached from components on restore, which
-persistence.md 8's exact-continuation rule would have to be re-checked against), build ragdoll and
-character joints knowing they cost about 2.5 times Jolt's, and decide whether `parallel` may run
-under threads.md 3.4's helper rule (it was deterministic across 1, 4 and 10 threads here, and gives
-1.5 to 2.4 times on 4 threads).
-
-
+persistence.md 8's exact-continuation rule would have to be re-checked against), build ragdoll
+joints knowing they cost about 2.4 times Jolt's here, and decide whether `parallel` may run under
+threads.md 3.4's helper rule (it was deterministic across 1, 4 and 10 threads here, and gives 1.5 to
+2.4 times on 4 threads).

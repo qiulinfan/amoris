@@ -8,3 +8,5 @@ node: v24.18.0
 jolt: v5.6.0 (e77f175595e64cb44218cc9d9d56fc365ad0e36a)
 joltc: amerkoleci/joltc 886e088675bae3a086f8318c7803f8ee962c2f2c
 rapier3d: 0.36.0 (parry3d 0.31.1, glam 0.33.12, simba 0.10.2, wide 1.7.1)
+llvm (wasm): Homebrew llvm 23.1.2, lld 23.1.2, wasi-libc 34, wasi-runtimes 23.1.2
+wasm-opt: binaryen version 133

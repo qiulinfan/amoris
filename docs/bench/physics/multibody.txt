@@ -1,0 +1,207 @@
+# 2026-10-04 13:03, load at the start { 29.56 30.26 36.08 }; the four variants ran side by side.
+
+## limits-motors
+step 0: 4141.5 ms
+step 1: 668.4 ms
+step 2: 654.3 ms
+step 3: 640.3 ms
+step 4: 610.9 ms
+step 5: 669.8 ms
+step 6: 549.0 ms
+step 7: 474.7 ms
+step 8: 510.1 ms
+step 9: 493.9 ms
+step 10: 485.8 ms
+step 11: 491.6 ms
+step 12: 490.1 ms
+step 13: 497.2 ms
+step 14: 706.6 ms
+step 15: 1480.9 ms
+step 16: 959.0 ms
+step 17: 972.3 ms
+step 18: 776.8 ms
+step 19: 897.5 ms
+step 20: 749.7 ms
+step 21: 798.2 ms
+step 22: 717.8 ms
+step 23: 830.9 ms
+step 24: 781.9 ms
+step 25: 782.3 ms
+step 26: 797.4 ms
+step 27: 735.8 ms
+step 28: 493.6 ms
+step 29: 544.8 ms
+step 30: 504.1 ms
+step 31: 498.2 ms
+step 32: 542.9 ms
+step 33: 537.2 ms
+step 34: 483.6 ms
+step 35: 424.5 ms
+step 36: 428.2 ms
+step 37: 480.0 ms
+step 38: 491.6 ms
+step 39: 512.9 ms
+step 40: 578.4 ms
+step 41: 1013.9 ms
+step 42: 14699.5 ms
+
+thread 'main' (5775754) panicked at /rustc/48a229ceaefd4985c50990b14116b6d856af0985/library/core/src/num/f32.rs:1566:9:
+min > max, or either was NaN. min = NaN, max = NaN
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+exit status 101
+
+## limits
+step 0: 2834.5 ms
+step 1: 698.8 ms
+step 2: 643.2 ms
+step 3: 576.1 ms
+step 4: 578.8 ms
+step 5: 579.0 ms
+step 6: 451.4 ms
+step 7: 605.9 ms
+step 8: 573.5 ms
+step 9: 455.9 ms
+step 10: 432.9 ms
+step 11: 405.8 ms
+step 12: 444.9 ms
+step 13: 395.5 ms
+step 14: 446.5 ms
+step 15: 439.9 ms
+step 16: 455.5 ms
+step 17: 425.1 ms
+step 18: 593.0 ms
+step 19: 430.7 ms
+step 20: 682.1 ms
+step 21: 7954.3 ms
+step 22: 33301.1 ms
+step 23: 428.8 ms
+exit status 0
+{"engine":"rapier","version":"0.36.0","deterministic":true,"config":"enhanced-determinism native","scene":"Ragdoll","threads":1,"steps":60,"solver_iterations":4,"bodies":9466,"colliders":9786,"active_at_end":3588,"setup_ms":7153.6,"mean_ms":2284.7230,"p50_ms":573.5285,"p95_ms":7954.3412,"max_ms":33301.1429,"total_ms":54833.35,"first_step_ms":2834.5293,"mean_ms_after_first":2260.8184,"top_y":4352.253,"mean_y":NaN,"statics":5786,"triangles":2721583,"ragdoll_bodies":3680,"joints":3520,"joint_kind":"multibody","joint_motors":false,"joint_limits":true,"cpu_mean_ms":1813.0012,"cpu_p50_ms":404.7423,"nonfinite_at_step":23,"hash":"0x296ac14bab385d3d"}
+
+## motors
+step 0: 2924.1 ms
+step 1: 665.7 ms
+step 2: 611.5 ms
+step 3: 572.4 ms
+step 4: 591.1 ms
+step 5: 557.2 ms
+step 6: 435.1 ms
+step 7: 497.2 ms
+step 8: 562.9 ms
+step 9: 449.3 ms
+step 10: 432.4 ms
+step 11: 401.4 ms
+step 12: 445.2 ms
+step 13: 412.6 ms
+step 14: 460.6 ms
+step 15: 427.1 ms
+step 16: 461.6 ms
+step 17: 459.7 ms
+step 18: 692.1 ms
+step 19: 1133.2 ms
+step 20: 792.1 ms
+step 21: 946.0 ms
+step 22: 708.6 ms
+step 23: 726.1 ms
+step 24: 813.3 ms
+step 25: 668.8 ms
+step 26: 678.5 ms
+step 27: 667.4 ms
+step 28: 740.0 ms
+step 29: 665.9 ms
+step 30: 654.4 ms
+step 31: 712.2 ms
+step 32: 721.2 ms
+step 33: 614.3 ms
+step 34: 413.1 ms
+step 35: 490.1 ms
+step 36: 515.8 ms
+step 37: 512.6 ms
+step 38: 619.2 ms
+step 39: 558.0 ms
+step 40: 430.6 ms
+step 41: 459.0 ms
+step 42: 454.5 ms
+step 43: 498.7 ms
+step 44: 462.0 ms
+step 45: 551.9 ms
+step 46: 582.0 ms
+step 47: 911.7 ms
+step 48: 828.4 ms
+step 49: 806.0 ms
+step 50: 684.1 ms
+step 51: 717.0 ms
+step 52: 604.4 ms
+step 53: 685.5 ms
+step 54: 652.6 ms
+step 55: 807.8 ms
+step 56: 1448.9 ms
+step 57: 653.1 ms
+step 58: 771.3 ms
+step 59: 618.0 ms
+exit status 0
+{"engine":"rapier","version":"0.36.0","deterministic":true,"config":"enhanced-determinism native","scene":"Ragdoll","threads":1,"steps":60,"solver_iterations":4,"bodies":9466,"colliders":9786,"active_at_end":3680,"setup_ms":7322.1,"mean_ms":667.2947,"p50_ms":617.9713,"p95_ms":946.0139,"max_ms":2924.0852,"total_ms":40037.68,"first_step_ms":2924.0852,"mean_ms_after_first":629.0440,"top_y":8.167,"mean_y":0.989,"statics":5786,"triangles":2721583,"ragdoll_bodies":3680,"joints":3520,"joint_kind":"multibody","joint_motors":true,"joint_limits":false,"cpu_mean_ms":493.3139,"cpu_p50_ms":445.8807,"hash":"0xd84f1f422aa0c371"}
+
+## free
+step 0: 1658.5 ms
+step 1: 542.7 ms
+step 2: 567.6 ms
+step 3: 563.2 ms
+step 4: 550.4 ms
+step 5: 487.2 ms
+step 6: 475.7 ms
+step 7: 495.0 ms
+step 8: 478.8 ms
+step 9: 398.9 ms
+step 10: 487.8 ms
+step 11: 485.9 ms
+step 12: 425.9 ms
+step 13: 385.8 ms
+step 14: 335.2 ms
+step 15: 336.7 ms
+step 16: 395.3 ms
+step 17: 335.8 ms
+step 18: 357.8 ms
+step 19: 385.1 ms
+step 20: 380.2 ms
+step 21: 406.9 ms
+step 22: 369.4 ms
+step 23: 508.1 ms
+step 24: 394.3 ms
+step 25: 272.1 ms
+step 26: 836.6 ms
+step 27: 616.3 ms
+step 28: 878.9 ms
+step 29: 740.7 ms
+step 30: 660.8 ms
+step 31: 700.5 ms
+step 32: 694.4 ms
+step 33: 675.1 ms
+step 34: 717.3 ms
+step 35: 766.0 ms
+step 36: 722.0 ms
+step 37: 701.6 ms
+step 38: 718.1 ms
+step 39: 872.0 ms
+step 40: 694.6 ms
+step 41: 489.4 ms
+step 42: 639.9 ms
+step 43: 550.7 ms
+step 44: 762.1 ms
+step 45: 642.5 ms
+step 46: 544.4 ms
+step 47: 553.8 ms
+step 48: 618.6 ms
+step 49: 492.9 ms
+step 50: 527.4 ms
+step 51: 774.4 ms
+step 52: 1215.2 ms
+step 53: 797.8 ms
+step 54: 1017.6 ms
+step 55: 708.2 ms
+step 56: 705.3 ms
+step 57: 598.5 ms
+step 58: 668.6 ms
+step 59: 971.6 ms
+exit status 0
+{"engine":"rapier","version":"0.36.0","deterministic":true,"config":"enhanced-determinism native","scene":"Ragdoll","threads":1,"steps":60,"solver_iterations":4,"bodies":9466,"colliders":9786,"active_at_end":3680,"setup_ms":7232.4,"mean_ms":612.5698,"p50_ms":567.6275,"p95_ms":971.5782,"max_ms":1658.5350,"total_ms":36754.19,"first_step_ms":1658.5350,"mean_ms_after_first":594.8416,"top_y":8.250,"mean_y":0.786,"statics":5786,"triangles":2721583,"ragdoll_bodies":3680,"joints":3520,"joint_kind":"multibody","joint_motors":false,"joint_limits":false,"cpu_mean_ms":456.4543,"cpu_p50_ms":410.0962,"hash":"0x7dd1bdf6f91d0f42"}

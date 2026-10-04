@@ -1,8 +1,10 @@
-# 2026-10-04 11:34 EDT, branch feat/physics-bench, scripts/determinism.sh
+# 2026-10-04 13:52 EDT, branch feat/physics-bench, scripts/determinism.sh
 == Rapier 0.36.0 native aarch64 vs wasm32-wasip1 (Node v24.18.0)
  enhanced-determinism:
   Pyramid: det-wasm == det-native (all 300 steps)
   Pyramid: det-wasm-simd128 == det-native (all 300 steps)
+  Pyramid: det-wasm-web == det-native (all 300 steps)
+  Pyramid: det-wasm-web-simd128 == det-native (all 300 steps)
   Pyramid: det-lto == det-native (all 300 steps)
  enhanced-determinism + parallel:
   Pyramid: det-parallel-t1 == det-native (all 300 steps)
@@ -17,6 +19,8 @@
  enhanced-determinism:
   ConvexVsMesh: det-wasm == det-native (all 300 steps)
   ConvexVsMesh: det-wasm-simd128 == det-native (all 300 steps)
+  ConvexVsMesh: det-wasm-web == det-native (all 300 steps)
+  ConvexVsMesh: det-wasm-web-simd128 == det-native (all 300 steps)
   ConvexVsMesh: det-lto == det-native (all 300 steps)
  enhanced-determinism + parallel:
   ConvexVsMesh: det-parallel-t1 == det-native (all 300 steps)
@@ -31,6 +35,8 @@
  enhanced-determinism:
   Ragdoll: det-wasm == det-native (all 100 steps)
   Ragdoll: det-wasm-simd128 == det-native (all 100 steps)
+  Ragdoll: det-wasm-web == det-native (all 100 steps)
+  Ragdoll: det-wasm-web-simd128 == det-native (all 100 steps)
   Ragdoll: det-lto == det-native (all 100 steps)
  enhanced-determinism + parallel:
   Ragdoll: det-parallel-t1 == det-native (all 100 steps)
