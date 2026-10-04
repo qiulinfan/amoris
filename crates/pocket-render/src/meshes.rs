@@ -27,6 +27,8 @@ pub struct MeshPool {
     pub info_buffer: wgpu::Buffer,
     pub infos: Vec<MeshInfo>,
     names: Vec<String>,
+    /// Local-space bounding boxes (min, max), for ray picking on the CPU.
+    pub boxes: Vec<([f32; 3], [f32; 3])>,
     by_key: HashMap<String, u32>,
     vertex_len: u64,
     index_len: u64,
@@ -59,6 +61,7 @@ impl MeshPool {
             info_buffer: buffer(device, "mesh infos", 64 * 32, wgpu::BufferUsages::STORAGE),
             infos: Vec::new(),
             names: Vec::new(),
+            boxes: Vec::new(),
             by_key: HashMap::new(),
             vertex_len: 0,
             index_len: 0,
@@ -169,6 +172,7 @@ impl MeshPool {
             batch_offset: 0,
         });
         self.names.push(key.to_owned());
+        self.boxes.push((mesh.bounds.min, mesh.bounds.max));
         self.by_key.insert(key.to_owned(), id);
         self.info_dirty = true;
         id

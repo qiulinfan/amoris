@@ -41,6 +41,15 @@ await send("Page.enable");
 await send("Runtime.enable");
 await send("Page.navigate", { url });
 await sleep(Number(seconds) * 1000);
+// CLICK="x,y[;x,y...]": mouse clicks (CSS pixels) before measuring and the screenshot.
+for (const c of (process.env.CLICK || "").split(";").filter(Boolean)) {
+  const [x, y] = c.split(",").map(Number);
+  for (const type of ["mouseMoved", "mousePressed", "mouseReleased"]) {
+    await send("Input.dispatchMouseEvent", { type, x, y, button: "left", clickCount: 1 });
+    await sleep(60);
+  }
+  await sleep(800);
+}
 const r = await send("Runtime.evaluate", { returnByValue: true, expression: `(() => {
   const s = (window.pocketSamples || []).slice(-300);
   const ft = s.map((x) => x.frame_ms).sort((a, b) => a - b);
@@ -52,6 +61,10 @@ const r = await send("Runtime.evaluate", { returnByValue: true, expression: `(()
     gpu: navigator.gpu ? "yes" : "no" };
 })()` });
 console.log(JSON.stringify(r.result.result.value, null, 2));
+if (process.env.EVAL) {
+  const e = await send("Runtime.evaluate", { expression: process.env.EVAL, awaitPromise: true, returnByValue: true });
+  console.log("eval:", JSON.stringify(e.result.result.value ?? e.result.exceptionDetails ?? e.result.result));
+}
 if (process.env.SHOT) {
   const shot = await send("Page.captureScreenshot", { format: "png" });
   (await import("node:fs")).writeFileSync(process.env.SHOT, Buffer.from(shot.result.data, "base64"));

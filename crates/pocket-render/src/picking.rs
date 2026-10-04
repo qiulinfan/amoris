@@ -22,6 +22,8 @@ struct Pending {
     request: Option<PickRequest>,
     /// Width and height of the copied region and its row pitch, in u32 texels.
     size: (u32, u32, u32),
+    /// `map_async` was called for this read (it must be called once).
+    mapping: bool,
     ready: bool,
     failed: bool,
 }
@@ -91,6 +93,15 @@ impl Picking {
             pending: Arc::new(Mutex::new(Pending::default())),
             in_flight: false,
         }
+    }
+
+    /// The state, for diagnostics.
+    pub fn debug(&self) -> String {
+        let p = self.pending.lock().unwrap_or_else(|e| e.into_inner());
+        format!(
+            "want={:?} in_flight={} request={:?} mapping={} ready={} failed={}",
+            self.want, self.in_flight, p.request, p.mapping, p.ready, p.failed
+        )
     }
 
     pub fn request(&mut self, r: PickRequest) {
@@ -217,6 +228,7 @@ impl Picking {
         *p = Pending {
             request: Some(req),
             size: (cw, ch, pitch / 4),
+            mapping: false,
             ready: false,
             failed: false,
         };
@@ -228,10 +240,11 @@ impl Picking {
         let Some(buf) = &self.readback else {
             return;
         };
-        let p = self.pending.lock().unwrap_or_else(|e| e.into_inner());
-        if !self.in_flight || p.ready || p.failed || p.request.is_none() {
+        let mut p = self.pending.lock().unwrap_or_else(|e| e.into_inner());
+        if !self.in_flight || p.mapping || p.ready || p.failed || p.request.is_none() {
             return;
         }
+        p.mapping = true;
         let state = self.pending.clone();
         let bytes = u64::from(p.size.2) * 4 * u64::from(p.size.1);
         drop(p);
@@ -261,9 +274,10 @@ impl Picking {
         let bytes = u64::from(pitch) * 4 * u64::from(ch);
         let mut ids = Vec::with_capacity((cw * ch) as usize);
         if let Ok(data) = buf.slice(..bytes).get_mapped_range() {
-            let all: &[u32] = bytemuck::cast_slice(&data);
+            // Mapped memory in the browser carries no alignment guarantee: decode, do not cast.
             for y in 0..ch {
-                ids.extend_from_slice(&all[(y * pitch) as usize..(y * pitch + cw) as usize]);
+                let row = &data[(y * pitch * 4) as usize..((y * pitch + cw) * 4) as usize];
+                ids.extend(row.chunks_exact(4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]])));
             }
         }
         buf.unmap();

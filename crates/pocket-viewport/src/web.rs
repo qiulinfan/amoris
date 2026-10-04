@@ -131,6 +131,15 @@ impl Viewport {
         self.renderer.set_camera_override(Some(c));
     }
 
+    /// The entity under a pixel of the backbuffer (device pixels), at once: [entity, x, y, z] of
+    /// the first hit, or empty.
+    pub fn pick_ray(&self, x: f32, y: f32) -> Vec<f64> {
+        match self.renderer.pick_ray(x, y) {
+            Some((e, _, p)) => vec![e as f64, f64::from(p[0]), f64::from(p[1]), f64::from(p[2])],
+            None => Vec::new(),
+        }
+    }
+
     /// Asks which entity is at a pixel of the backbuffer (device pixels).
     pub fn request_pick(&mut self, x: u32, y: u32) {
         self.renderer.request_pick(x, y);
@@ -143,6 +152,10 @@ impl Viewport {
             Some(None) => 0.0,
             Some(Some(e)) => e as f64,
         }
+    }
+
+    pub fn pick_debug(&self) -> String {
+        self.renderer.pick_debug()
     }
 
     /// Asks which entities the view shows; `take_visible` answers [id, share, id, share, ...].

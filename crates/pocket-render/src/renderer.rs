@@ -1448,6 +1448,58 @@ impl Renderer {
         self.last.clone()
     }
 
+    /// The entity a ray through pixel (x, y) of the output hits first, with the distance and the
+    /// world point: a CPU test of each drawn part's oriented bounding box, answered at once (the
+    /// editor's click; the GPU id pass answers coverage questions).
+    pub fn pick_ray(&self, x: f32, y: f32) -> Option<(u64, f32, [f32; 3])> {
+        let (w, h) = (self.targets.width as f32, self.targets.height as f32);
+        let cam = self.camera();
+        let vp = cam.proj(w / h.max(1.0)) * cam.view();
+        let inv = vp.inverse();
+        let ndc = glam::Vec2::new(x / w * 2.0 - 1.0, 1.0 - y / h * 2.0);
+        let near = inv.project_point3(glam::Vec3::new(ndc.x, ndc.y, 1.0));
+        let far = inv.project_point3(glam::Vec3::new(ndc.x, ndc.y, 1e-4));
+        let origin = near;
+        let dir = (far - near).normalize_or_zero();
+        if dir == glam::Vec3::ZERO {
+            return None;
+        }
+        let mut best: Option<(u64, f32)> = None;
+        for (slot, inst) in self.scene.slots.iter().enumerate() {
+            if inst.flags & crate::scene::FLAG_ALIVE == 0 || inst.flags & crate::scene::FLAG_VISIBLE == 0 {
+                continue;
+            }
+            let Some(&(lo, hi)) = self.meshes.boxes.get(inst.mesh as usize) else {
+                continue;
+            };
+            let rot = Quat::from_array(inst.rot);
+            let inv_rot = rot.inverse();
+            let scale = Vec3::from(inst.scale);
+            let safe = |v: f32| if v.abs() < 1e-6 { 1e-6f32.copysign(v) } else { v };
+            let s = Vec3::new(safe(scale.x), safe(scale.y), safe(scale.z));
+            // The ray in the part's unscaled local frame.
+            let o = inv_rot * (origin - Vec3::from(inst.pos)) / s;
+            let d = inv_rot * dir / s;
+            let (lo, hi) = (Vec3::from(lo), Vec3::from(hi));
+            let t1 = (lo - o) / d;
+            let t2 = (hi - o) / d;
+            let tmin = t1.min(t2).max_element();
+            let tmax = t1.max(t2).min_element();
+            if tmax >= tmin.max(0.0) {
+                let t = tmin.max(0.0);
+                if best.is_none_or(|(_, bt)| t < bt) {
+                    if let Some(e) = self.scene.entity_of_slot(slot as u32) {
+                        best = Some((e, t));
+                    }
+                }
+            }
+        }
+        best.map(|(e, t)| {
+            let p = origin + dir * t;
+            (e, t, p.to_array())
+        })
+    }
+
     /// Asks which entity is at pixel (x, y) of the output (answered a frame or two later by
     /// `take_pick`).
     pub fn request_pick(&mut self, x: u32, y: u32) {
@@ -1458,6 +1510,11 @@ impl Renderer {
     pub fn take_pick(&mut self) -> Option<Option<u64>> {
         self.collect_pick();
         self.last_pick.take()
+    }
+
+    /// The picking state, for diagnostics.
+    pub fn pick_debug(&self) -> String {
+        self.picking.debug()
     }
 
     /// Asks which entities the view shows and how much of it each covers.

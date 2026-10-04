@@ -165,7 +165,11 @@ impl GpuProfiler {
                 let Ok(data) = slot.readback.slice(..).get_mapped_range() else {
                     continue;
                 };
-                let ticks: &[u64] = bytemuck::cast_slice(&data[..slot.labels.len() * 16]);
+                // Decode rather than cast: mapped memory may be unaligned in the browser.
+                let ticks: Vec<u64> = data[..slot.labels.len() * 16]
+                    .chunks_exact(8)
+                    .map(|b| u64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]))
+                    .collect();
                 self.last = slot
                     .labels
                     .iter()

@@ -82,11 +82,10 @@ export async function createViewport(canvas, options) {
       vp.set_camera_look(...c.position, ...c.target, ...c.up, c.fov_y_deg, c.near, ortho);
     },
     pick(x, y) {
-      return new Promise((resolve) => {
-        const px = Math.round(x * dpr), py = Math.round(y * dpr);
-        picks.push({ x: px, y: py, resolve });
-        if (picks.length === 1) vp.request_pick(px, py);
-      });
+      // A ray against the parts' oriented boxes, answered at once (the GPU id pass, whose
+      // readback the browser delays by many frames, is kept for coverage questions).
+      const r = vp.pick_ray(x * dpr, y * dpr);
+      return Promise.resolve(r.length ? { entity: r[0], position: [r[1], r[2], r[3]] } : null);
     },
     resize(width, height, devicePixelRatio) {
       dpr = devicePixelRatio || 1;
