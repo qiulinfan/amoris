@@ -12,7 +12,7 @@ use std::ffi::{CStr, CString};
 use std::ptr::NonNull;
 use std::sync::Arc;
 
-use pocket_script::debug::{FrameInfo, frame_info, guarded, stack_depth};
+use pocket_script::debug::{FrameInfo, Guard, frame_info, guarded, stack_depth};
 use pocket_script::ffi;
 use rquickjs::function::{Rest, This};
 use rquickjs::{Ctx, Function, Type, Value, qjs};
@@ -181,7 +181,6 @@ impl<'js> Inspector<'js> {
             cdp.push(json!({
                 "callFrameId": level.to_string(),
                 "functionName": function,
-                "functionLocation": {"scriptId": script.id, "lineNumber": js.0, "columnNumber": 0},
                 "location": {"scriptId": script.id, "lineNumber": js.0, "columnNumber": js.1},
                 "url": script.url,
                 "scopeChain": [scope("local", &local_id, "Local"),
@@ -504,7 +503,12 @@ impl<'js> Inspector<'js> {
 
     /// Evaluates `expression` in the frame at `level`: the value, or the exception it threw.
     pub fn eval_value(&self, level: usize, expression: &str) -> Result<Value<'js>, Value<'js>> {
-        eval_in_frame(&self.rctx, level, expression)
+        eval_in_frame(
+            &self.rctx,
+            level,
+            expression,
+            Guard::Evaluate("a debugger evaluated an expression"),
+        )
     }
 
     /// `Debugger.evaluateOnCallFrame`'s answer.
@@ -587,7 +591,7 @@ impl<'js> Inspector<'js> {
         }
         let ctx = self.rctx.clone();
         let called = unsafe {
-            guarded(self.ctx, || {
+            guarded(self.ctx, Guard::Read, || {
                 let f: Function = match eval_global(&ctx, &format!("({declaration})")) {
                     Ok(v) => match v.into_function() {
                         Some(f) => f,
@@ -631,6 +635,7 @@ impl<'js> Inspector<'js> {
         let cname = CString::new(name).map_err(|e| e.to_string())?;
         let level = i32::try_from(level).map_err(|e| e.to_string())?;
         let raw = unsafe { qjs::JS_DupValue(self.ctx, value.as_raw()) };
+        unsafe { pocket_script::debug::taint(self.ctx, "a debugger set a variable") };
         match unsafe { ffi::JS_SetVariableAtLevel(self.ctx, level, cname.as_ptr(), raw) } {
             0 => Ok(json!({})),
             -2 => Err(format!("{name} is a constant.")),
@@ -706,11 +711,13 @@ enum Prop<'js> {
 }
 
 /// Evaluates in the frame at `level`, under the host's guard (the trace handler is cleared by
-/// the caller during a pause).
+/// the caller during a pause): the natives that write refuse, and `guard` says whether it taints
+/// the run.
 pub fn eval_in_frame<'js>(
     ctx: &Ctx<'js>,
     level: usize,
     expression: &str,
+    guard: Guard,
 ) -> Result<Value<'js>, Value<'js>> {
     let raw = ctx.as_raw().as_ptr();
     let Ok(input) = CString::new(expression) else {
@@ -718,7 +725,7 @@ pub fn eval_in_frame<'js>(
     };
     let level = i32::try_from(level).unwrap_or(i32::MAX);
     let v = unsafe {
-        guarded(raw, || {
+        guarded(raw, guard, || {
             ffi::JS_EvalInStackFrame(
                 raw,
                 level,
@@ -742,7 +749,7 @@ fn eval_global<'js>(ctx: &Ctx<'js>, source: &str) -> Result<Value<'js>, Value<'j
         return Err(Value::new_undefined(ctx.clone()));
     };
     let v = unsafe {
-        guarded(raw, || {
+        guarded(raw, Guard::Read, || {
             qjs::JS_Eval(
                 raw,
                 input.as_ptr(),
@@ -768,7 +775,12 @@ pub unsafe fn condition_holds(ctx: *mut qjs::JSContext, condition: &str) -> bool
         return false;
     };
     let rctx = unsafe { Ctx::from_raw(raw) };
-    match eval_in_frame(&rctx, 0, condition) {
+    match eval_in_frame(
+        &rctx,
+        0,
+        condition,
+        Guard::Evaluate("a breakpoint condition ran"),
+    ) {
         Ok(v) => unsafe { qjs::JS_ToBool(ctx, v.as_raw()) > 0 },
         Err(_) => false,
     }
@@ -785,7 +797,12 @@ pub unsafe fn log_message(ctx: *mut qjs::JSContext, template: &str) -> String {
     let rctx = unsafe { Ctx::from_raw(raw) };
     let escaped = template.replace('\\', "\\\\").replace('`', "\\`");
     let insp = unsafe { Inspector::new(ctx, 0) };
-    match eval_in_frame(&rctx, 0, &format!("`{escaped}`")) {
+    match eval_in_frame(
+        &rctx,
+        0,
+        &format!("`{escaped}`"),
+        Guard::Evaluate("a logpoint's message ran"),
+    ) {
         Ok(v) => insp.text(&v),
         Err(e) => format!("(logpoint failed: {})", insp.text(&e)),
     }

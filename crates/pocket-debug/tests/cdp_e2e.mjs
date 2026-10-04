@@ -6,7 +6,7 @@
 // pause (file, TypeScript line, caller frame), the locals, an evaluation on the frame, a step over,
 // a conditional breakpoint, a logpoint (console), Debugger.pause and the resume.
 //
-//   node crates/pocket-debug/tests/cdp_e2e.mjs [--exe PATH] [--port 9239] [--log FILE]
+//   node crates/pocket-debug/tests/cdp_e2e.mjs [--exe PATH] [--port 9239] [--log FILE] [--game-log FILE]
 //
 // Node 24 (global WebSocket and fetch). Exit 0 when every check holds.
 
@@ -26,6 +26,8 @@ const target = process.env.CARGO_TARGET_DIR ?? join(root, "target");
 const EXE = arg("--exe", join(target, "debug/examples/debug_sailing"));
 const PORT = Number(arg("--port", "9239"));
 const LOG = arg("--log", null);
+// The game's stderr (with POCKET_CDP_LOG=1 in the environment, every CDP message).
+const GAME_LOG = arg("--game-log", null);
 const RULES = join(root, "samples/sailing/scripts/rules.ts");
 const TS = readFileSync(RULES, "utf8").split("\n");
 const transcript = [];
@@ -266,20 +268,19 @@ async function main() {
     await c.call("Debugger.pause");
     p = await c.event("Debugger.paused");
     check("Debugger.pause stops in a script", p.callFrames.length > 0 && p.callFrames[0].url.startsWith("pocket:///scripts/"), p.callFrames[0]?.url);
-    await c.call("Debugger.resume");
-    await c.event("Debugger.resumed");
 
-    // Detaching resumes and the game runs on.
+    // Leaving while the game is stopped resumes it (V8 drops a session's pauses with it).
     c.ws.close();
     await new Promise((r) => setTimeout(r, 1500));
     const status = [];
     lines.on("line", (l) => status.push(JSON.parse(l)));
     await new Promise((r) => setTimeout(r, 2200));
     const last = status.at(-1);
-    check("after the client leaves the game runs on, not paused", last && !last.paused_in_debugger && last.tick > tick2, last);
+    check("the client leaves while paused: the game resumes and runs on", last && !last.paused_in_debugger && last.tick > tick2, last);
   } finally {
     game.kill();
     if (LOG) writeFileSync(LOG, transcript.map(([d, m]) => `${d} ${JSON.stringify(m)}`).join("\n") + "\n");
+    if (GAME_LOG) writeFileSync(GAME_LOG, stderr.join(""));
   }
   const failed = checks.filter(([, ok]) => !ok);
   console.log(`${checks.length - failed.length}/${checks.length} checks passed`);

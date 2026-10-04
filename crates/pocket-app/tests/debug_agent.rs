@@ -153,6 +153,21 @@ fn an_agent_debugs_the_test_game() {
         json!({"expr": "next * 10 + gauges.len"}),
     );
     assert_eq!(e["value"], json!(201), "{e:#}");
+    // An evaluation may not write: world edits, events and random draws refuse.
+    for expr in [
+        "ctx.world.set(gauges.id(0), 'Gauge', { level: 0 })",
+        "ctx.rng.next()",
+        "Math.random()",
+    ] {
+        let refused = hub
+            .call("debug.eval", &json!({ "expr": expr }))
+            .unwrap_err();
+        assert!(
+            refused.message.contains("cannot write"),
+            "{expr}: {}",
+            refused.message
+        );
+    }
     let gauge = call(&hub, "debug.eval", json!({"expr": "gauges.id(0)"}))["value"]
         .as_u64()
         .unwrap();
@@ -201,6 +216,59 @@ fn an_agent_debugs_the_test_game() {
     );
     assert_eq!(after, before + 1.0, "{s:#}");
     call(&hub, "debug.unwatch", json!({}));
+    call(&hub, "debug.continue", json!({}));
+
+    // Conditions and evaluations ran inside ticks: the run is tainted from the first of them.
+    let status = dev.call("status", json!({})).unwrap().into_json();
+    let tainted = status["tainted"].as_u64().expect("a tainted tick");
+    assert!((13..=20).contains(&tainted), "{status:#}");
+
+    // A hot update while attached: the new rules.ts is a new script, instrumented, and a
+    // breakpoint set on it stops at its (shifted) TypeScript line.
+    let dir = fixture().join("scripts");
+    let read = |f: &str| std::fs::read_to_string(dir.join(f)).unwrap();
+    let edited = format!("// A line added by a hot update.\n{}", read("rules.ts"));
+    let applied = dev
+        .call(
+            "scripts.apply",
+            json!({"files": {"scripts/main.ts": read("main.ts"),
+                              "scripts/components.ts": read("components.ts"),
+                              "scripts/rules.ts": edited}}),
+        )
+        .unwrap()
+        .into_json();
+    assert_eq!(applied["outcome"], "applied", "{applied:#}");
+    let mut seen: Vec<DebugEvent> = Vec::new();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let fresh = loop {
+        if let Ok(e) = events.recv_timeout(Duration::from_millis(100)) {
+            seen.push(e);
+        }
+        let found = seen.iter().find_map(|e| match e {
+            DebugEvent::Scripts(s) => s
+                .iter()
+                .find(|s| s.module == RULES && s.ts.starts_with("// A line added"))
+                .cloned(),
+            _ => None,
+        });
+        if let Some(f) = found {
+            break f;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the hot update announces the new rules.ts"
+        );
+    };
+    assert!(fresh.js.contains("twice"));
+    let bp = call(
+        &hub,
+        "debug.breakpoints.set",
+        json!({"file": RULES, "line": mark("write-level") + 1}),
+    );
+    let s = paused(&hub);
+    assert_eq!(s["hit_breakpoints"][0], bp["id"], "{s:#}");
+    assert_eq!(at(&s), (RULES.to_owned(), mark("write-level") + 1));
+    call(&hub, "debug.breakpoints.clear", json!({}));
 
     // Pause on request, then detach: the game runs on, uninstrumented.
     call(&hub, "debug.continue", json!({}));
@@ -218,7 +286,8 @@ fn an_agent_debugs_the_test_game() {
     assert_eq!(s["instrumented"], false, "{s:#}");
 
     // What the frontends heard: the debug events and the failed system's log line.
-    let heard: Vec<Value> = events.try_iter().filter_map(|e| e.json()).collect();
+    seen.extend(events.try_iter());
+    let heard: Vec<Value> = seen.iter().filter_map(|e| e.json()).collect();
     assert!(
         heard
             .iter()

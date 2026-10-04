@@ -65,6 +65,8 @@ struct Local {
     scripts: Vec<Arc<Script>>,
     by_module: HashMap<String, usize>,
     atoms: HashMap<JSAtom, Option<usize>>,
+    /// The last atom looked up: consecutive statements are mostly in one module.
+    last_atom: Option<(JSAtom, Option<usize>)>,
     /// Per script: generated lines with a breakpoint.
     hot: Vec<Vec<bool>>,
     bps: HashMap<(usize, u32), Vec<Bp>>,
@@ -96,6 +98,7 @@ impl Local {
                 .any(|(a, b)| !Arc::ptr_eq(a, b));
         if reload {
             self.atoms.clear();
+            self.last_atom = None;
             self.prev = None;
         }
         self.scripts = s.scripts;
@@ -143,12 +146,21 @@ impl Local {
     }
 
     fn script_index(&mut self, ctx: *mut JSContext, atom: JSAtom) -> Option<usize> {
-        if let Some(hit) = self.atoms.get(&atom) {
-            return *hit;
+        if let Some((a, hit)) = self.last_atom
+            && a == atom
+        {
+            return hit;
         }
-        let name = unsafe { pocket_script::debug::atom_text(ctx, atom) };
-        let found = self.by_module.get(&name).copied();
-        self.atoms.insert(atom, found);
+        let found = match self.atoms.get(&atom) {
+            Some(hit) => *hit,
+            None => {
+                let name = unsafe { pocket_script::debug::atom_text(ctx, atom) };
+                let found = self.by_module.get(&name).copied();
+                self.atoms.insert(atom, found);
+                found
+            }
+        };
+        self.last_atom = Some((atom, found));
         found
     }
 
@@ -226,6 +238,11 @@ pub(crate) struct GameHook {
     local: RefCell<Local>,
     /// The call running: tick, system, serial.
     call: RefCell<Option<(u64, String, u64)>>,
+    /// Statements traced since the last publication to `Inner::traced`.
+    traced: std::cell::Cell<u64>,
+    /// The generation whose settings leave nothing to do at a plain statement (no breakpoint, no
+    /// watch, no step): a statement then costs the hook two loads and a compare.
+    idle: std::cell::Cell<u64>,
 }
 
 impl GameHook {
@@ -238,6 +255,7 @@ impl GameHook {
                 scripts: Vec::new(),
                 by_module: HashMap::new(),
                 atoms: HashMap::new(),
+                last_atom: None,
                 hot: Vec::new(),
                 bps: HashMap::new(),
                 watches: Vec::new(),
@@ -249,6 +267,8 @@ impl GameHook {
                 last_throw: None,
             }),
             call: RefCell::new(None),
+            traced: std::cell::Cell::new(0),
+            idle: std::cell::Cell::new(0),
         }
     }
 
@@ -257,6 +277,11 @@ impl GameHook {
             return (Decision::Go, None);
         };
         local.refresh(&self.inner);
+        if local.bps.is_empty() && local.watches.is_empty() && local.step == Step::None {
+            self.idle.set(local.generation);
+        } else {
+            self.idle.set(0);
+        }
         let idx = local.script_index(t.ctx, t.file);
         let line = t.line.saturating_sub(1);
         let col = t.column.saturating_sub(1);
@@ -287,7 +312,9 @@ impl GameHook {
         };
         let prev = local.prev.replace((i, line, col));
         let mut stop: Option<Reason> = None;
-        if self.inner.pause_requested.swap(false, Ordering::AcqRel) {
+        if self.inner.pause_requested.load(Ordering::Relaxed)
+            && self.inner.pause_requested.swap(false, Ordering::AcqRel)
+        {
             stop = Some(Reason::Request);
         } else if t.kind == TraceKind::DebuggerStatement && local.debugger_statements {
             stop = Some(Reason::DebuggerStatement);
@@ -478,6 +505,9 @@ impl GameHook {
         if let Ok(mut local) = self.local.try_borrow_mut() {
             local.step = step;
         }
+        if step != Step::None {
+            self.idle.set(0);
+        }
         {
             let mut st = lock(&self.inner.state);
             st.pause = None;
@@ -631,6 +661,10 @@ impl DebugHook for GameHook {
             l.location(at)
         });
         *self.call.borrow_mut() = None;
+        let n = self.traced.replace(0);
+        if n > 0 {
+            self.inner.traced.fetch_add(n, Ordering::Relaxed);
+        }
         if let Some(e) = error
             && self.inner.listeners.load(Ordering::Acquire) > 0
         {
@@ -655,6 +689,13 @@ impl DebugHook for GameHook {
 
     fn trace(&self, t: &Trace) {
         if !self.inner.attached.load(Ordering::Relaxed) {
+            return;
+        }
+        self.traced.set(self.traced.get() + 1);
+        if t.kind == TraceKind::Statement
+            && self.idle.get() == self.inner.generation.load(Ordering::Acquire)
+            && !self.inner.pause_requested.load(Ordering::Relaxed)
+        {
             return;
         }
         let (decision, idx) = self.decide(t);

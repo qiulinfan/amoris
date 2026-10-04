@@ -150,6 +150,8 @@ pub(crate) struct Inner {
     pub paused: AtomicBool,
     /// Subscribers: without any, console lines are not even located.
     pub listeners: AtomicUsize,
+    /// Statements the hook has looked at while attached.
+    pub traced: AtomicU64,
     pub state: Mutex<State>,
     /// Notified when the game pauses or resumes.
     pub changed: Condvar,
@@ -202,6 +204,7 @@ impl DebugHub {
                 pause_requested: AtomicBool::new(false),
                 paused: AtomicBool::new(false),
                 listeners: AtomicUsize::new(0),
+                traced: AtomicU64::new(0),
                 state: Mutex::new(State {
                     clients,
                     next_client: 1,
@@ -240,6 +243,12 @@ impl DebugHub {
         lock(&self.inner.subscribers).push(tx);
         self.inner.listeners.fetch_add(1, Ordering::AcqRel);
         rx
+    }
+
+    /// Statements the game thread's hook has looked at while a frontend was attached (each trace
+    /// call of an instrumented program): what the debugger's cost scales with.
+    pub fn traced_statements(&self) -> u64 {
+        self.inner.traced.load(Ordering::Relaxed)
     }
 
     /// Whether the game thread is stopped.
