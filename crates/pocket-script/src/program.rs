@@ -126,6 +126,8 @@ pub struct Program {
     roots: Persistent<rquickjs::Array<'static>>,
     ctx_key: usize,
     shared: Rc<crate::host::Shared>,
+    /// Compiled with the debugger's trace handler set (docs/spec/debugger.md 3).
+    instrumented: bool,
     // Last: the context outlives the values above.
     ctx: Context,
 }
@@ -215,6 +217,8 @@ impl ScriptHost {
         })?;
         let set = Arc::new(set.clone());
         let maps = Rc::new(maps_of(&set));
+        let hook = sh.debug.borrow().clone();
+        let instrumented = hook.as_ref().is_some_and(|h| h.instrument());
         *sh.loading.borrow_mut() = Some(Rc::new((*set).clone()));
         *sh.maps.borrow_mut() = Some(maps.clone());
         *sh.load_error.borrow_mut() = None;
@@ -240,10 +244,17 @@ impl ScriptHost {
                 *sh.iterators.borrow_mut() = locked.iterators;
             }
             let roots = Persistent::save(&ctx, locked.roots);
+            // The debugger's instrumentation (docs/spec/debugger.md 3): modules compiled while the
+            // trace handler is set get a trace call at every statement; it stays set for them.
+            if instrumented {
+                unsafe { crate::debug::install(crate::js::raw(&ctx), sh, true) };
+                sh.instrumenting.set(true);
+            }
             let steps = begin_budget(&ctx, sh, sh.limits.load_steps);
             let loaded = import(&ctx, &set.entry)
                 .and_then(|ns| Ok((ns, import(&ctx, crate::resolve::PRELUDE)?)));
             end_budget(&ctx, sh, steps);
+            sh.instrumenting.set(false);
             let (ns, prelude) = match loaded {
                 Ok(x) if !out_of_memory(sh) => x,
                 Ok(_) => return Err(out_of_memory_error(ErrorPhase::Load)),
@@ -327,6 +338,9 @@ impl ScriptHost {
         sh.rejections.borrow_mut().clear();
         let (infos, entries, components, make_context, wrap_query, roots, ctx_key) =
             result.map_err(|e| vec![e])?;
+        if let Some(h) = hook {
+            h.loaded(&set, instrumented);
+        }
         Ok(Program {
             infos,
             entries,
@@ -338,6 +352,7 @@ impl ScriptHost {
             roots,
             ctx_key,
             shared: sh.clone(),
+            instrumented,
             ctx,
         })
     }
@@ -362,6 +377,16 @@ impl Program {
     /// The compiled set it was instantiated from: what a replay embeds.
     pub fn compiled(&self) -> &CompiledSet {
         &self.set
+    }
+
+    /// The compiled set, shared.
+    pub fn compiled_arc(&self) -> &Arc<CompiledSet> {
+        &self.set
+    }
+
+    /// Whether it was compiled with the debugger's trace handler (docs/spec/debugger.md 3).
+    pub fn instrumented(&self) -> bool {
+        self.instrumented
     }
 
     /// Runs system `index` as one invocation (script-host.md 5.4): its queries prepared, `run`
@@ -390,10 +415,23 @@ impl Program {
         let allowed = u32::try_from(budget.steps_left.min(u64::from(sh.limits.steps_per_system)))
             .unwrap_or(u32::MAX);
         let mut used = 0;
+        let hook = sh.debug.borrow().clone();
+        let call_info = crate::debug::CallInfo {
+            tick: tick.tick.0,
+            system: &info.name,
+            index,
+            serial,
+        };
         let validated = self.ctx.with(|ctx| {
             let steps = begin_budget(&ctx, sh, allowed);
+            if let Some(h) = &hook {
+                h.call_begin(&call_info);
+            }
             let ran = self.call_run(&ctx, info, entry, tick);
             used = end_budget(&ctx, sh, steps);
+            if let Some(h) = &hook {
+                h.call_returned(crate::js::raw(&ctx), &call_info);
+            }
             let mut error = match ran {
                 Ok(()) => None,
                 Err(v) => Some(error_from_value(&ctx, sh, &v, ErrorPhase::Run)),
@@ -459,7 +497,7 @@ impl Program {
         });
         *sh.call.borrow_mut() = None;
         *sh.maps.borrow_mut() = None;
-        match result {
+        let outcome = match result {
             Ok(()) => {
                 commit_invocation(world, inv);
                 SystemOutcome::Ok(stats)
@@ -473,12 +511,17 @@ impl Program {
                     error.detail.location = info.defined_at.clone();
                 }
                 if error.is_fault() {
-                    return SystemOutcome::Fault { error };
+                    SystemOutcome::Fault { error }
+                } else {
+                    report_failure(world, tick.tick, &info.key, &info.name, &error);
+                    SystemOutcome::Failed { error, stats }
                 }
-                report_failure(world, tick.tick, &info.key, &info.name, &error);
-                SystemOutcome::Failed { error, stats }
             }
+        };
+        if let Some(h) = &hook {
+            h.call_end(&call_info, &outcome);
         }
+        outcome
     }
 
     fn call_run<'js>(

@@ -69,6 +69,7 @@ fn update(world: &mut World, sys: &mut SystemCtx<'_>) {
         return;
     };
     scripts.last_tick.clear();
+    reinstrument(world, &mut scripts);
     if let Some(program) = &scripts.program {
         let tick = TickInfo::of(world);
         let mut budget = TickBudget {
@@ -111,6 +112,26 @@ fn update(world: &mut World, sys: &mut SystemCtx<'_>) {
         }
     }
     world.insert_non_send(scripts);
+}
+
+/// Instantiates the installed program again when the debugger wants it instrumented and it is not,
+/// or the other way round (docs/spec/debugger.md 3). No script of this tick has run yet and programs
+/// hold no state, so this is a reload at the boundary; a failure (which a program that loaded once
+/// should not meet) keeps the installed program.
+fn reinstrument(world: &World, scripts: &mut Scripts) {
+    let Some(hook) = scripts.host.debugger() else {
+        return;
+    };
+    let Some(program) = &scripts.program else {
+        return;
+    };
+    if hook.instrument() == program.instrumented() {
+        return;
+    }
+    let set = program.compiled_arc().clone();
+    if let Ok(p) = scripts.host.instantiate(&set, world) {
+        scripts.program = Some(p);
+    }
 }
 
 /// A project component's change across a swap (hot-update.md 6).
@@ -369,6 +390,8 @@ pub fn rehost(world: &mut World, limits: ScriptLimits) -> Result<(), Vec<ScriptE
             return Err(vec![e]);
         }
     };
+    // The debugger stays attached to the world.
+    *host.shared.debug.borrow_mut() = old.host.debugger();
     let program = match old
         .program
         .as_ref()

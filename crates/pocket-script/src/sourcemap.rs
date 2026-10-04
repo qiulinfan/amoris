@@ -45,6 +45,21 @@ impl LineMap {
         let s = if i == 0 { segs.first()? } else { &segs[i - 1] };
         Some((s.src_line + 1, s.src_col + 1))
     }
+
+    /// Every mapping as `(generated line, generated column, source line, source column)`, 0-based,
+    /// by generated line then column (the debugger's reverse lookups, docs/spec/debugger.md 4).
+    pub fn segments(&self) -> impl Iterator<Item = (u32, u32, u32, u32)> + '_ {
+        self.lines.iter().enumerate().flat_map(|(l, segs)| {
+            let line = u32::try_from(l).unwrap_or(u32::MAX);
+            segs.iter()
+                .map(move |s| (line, s.gen_col, s.src_line, s.src_col))
+        })
+    }
+
+    /// The number of generated lines the map covers.
+    pub fn line_count(&self) -> usize {
+        self.lines.len()
+    }
 }
 
 fn base64(c: u8) -> Option<i64> {

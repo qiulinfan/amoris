@@ -204,6 +204,16 @@ impl Game {
         self.writes
     }
 
+    /// Attaches a script debugger to this game's script host, or detaches it (`None`), on the
+    /// thread that owns the game (docs/spec/debugger.md 8; `pocket_debug::DebugHub::hook`). A fork
+    /// or a replay of this game is not debugged.
+    pub fn set_script_debugger(
+        &mut self,
+        hook: Option<std::rc::Rc<dyn pocket_script::debug::DebugHook>>,
+    ) {
+        pocket_script::debug::attach(self.sim.world_mut(), hook);
+    }
+
     pub fn snapshot(&self) -> Result<Snapshot, Problem> {
         pocket_persist::snapshot(self.sim.world(), &self.reg)
     }
