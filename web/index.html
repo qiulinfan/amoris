@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pocket3D sailing</title>
+<link rel="icon" href="data:,">
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --ink: #1d2330; --muted: #5d6677; --line: #d9dde5;
+    --sea: #d7e8f3; --sea-line: #bcd6e8; --boat: #b4462f; --crate: #8a6a2f; --accent: #2a6db0;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #12151b; --panel: #1a1f27; --ink: #e5e8ee; --muted: #9aa3b3; --line: #2c3340;
+      --sea: #13293a; --sea-line: #1d3a50; --boat: #e0745a; --crate: #d1aa5e; --accent: #6aa8e8;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1080px; margin: 0 auto; padding: 16px; display: grid; gap: 16px;
+    grid-template-columns: minmax(0, 1fr) 300px; }
+  @media (max-width: 760px) { main { grid-template-columns: minmax(0, 1fr); } }
+  header { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; }
+  h1 { font-size: 18px; margin: 0; }
+  .muted { color: var(--muted); }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+  canvas { width: 100%; aspect-ratio: 16 / 10; display: block; border-radius: 6px; background: var(--sea); }
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; }
+  button, select { font: inherit; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--line);
+    background: var(--panel); color: var(--ink); cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  label { display: flex; align-items: center; gap: 6px; }
+  input[type=range] { width: 120px; }
+  dl { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; margin: 0; }
+  dt { color: var(--muted); }
+  dd { margin: 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 12px 0 6px; }
+  h2:first-child { margin-top: 0; }
+  ol { margin: 0; padding-left: 18px; max-height: 180px; overflow: auto; }
+  code { font: 12px/1.4 ui-monospace, Consolas, monospace; }
+  pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.4 ui-monospace, Consolas, monospace; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Sailing, in the browser</h1>
+    <span class="muted" id="where">The game runs in a Web Worker; this page draws its snapshots.</span>
+  </header>
+  <section class="panel">
+    <canvas id="sea" width="960" height="600" aria-label="The sea from above: the sloop, the crates and the wind"></canvas>
+    <div class="controls">
+      <button id="play">Pause</button>
+      <label>Speed <select id="speed"><option>1</option><option>2</option><option>4</option><option>8</option></select></label>
+      <button id="step1">Step 1</button>
+      <button id="step60">Step 60</button>
+      <label>Rudder <input id="rudder" type="range" min="-1" max="1" step="0.05" value="0"></label>
+      <label>Sheet <input id="sheet" type="range" min="0" max="1" step="0.05" value="1"></label>
+      <button id="hoist">Furl</button>
+    </div>
+  </section>
+  <aside class="panel">
+    <h2>Run</h2>
+    <dl>
+      <dt>Tick</dt><dd id="tick">-</dd>
+      <dt>Time</dt><dd id="time">-</dd>
+      <dt>World hash</dt><dd><code id="hash">-</code></dd>
+      <dt>Snapshots</dt><dd id="snaps">-</dd>
+    </dl>
+    <h2>Sloop</h2>
+    <dl id="boat"></dl>
+    <h2>Events</h2>
+    <ol id="events"></ol>
+  </aside>
+  <pre id="out" class="muted" hidden></pre>
+</main>
+<script type="module">
+const params = new URLSearchParams(location.search);
+const out = document.getElementById("out");
+if (params.has("check")) {
+  out.hidden = false;
+  out.textContent = "Running the web check...";
+  const { main } = await import("./check.js");
+  await main(out);
+} else {
+  const { runForm } = await import("./form.js");
+  runForm(params).catch((e) => {
+    out.hidden = false;
+    out.textContent = "The run could not start: " + (e.stack || e.message || JSON.stringify(e));
+  });
+}
+</script>
+</body>
+</html>

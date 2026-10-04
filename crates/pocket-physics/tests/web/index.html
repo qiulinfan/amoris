@@ -1,0 +1,15 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>pocket-physics web tests</title>
+<!-- The web tests of pocket-physics in a Web Worker of a browser (checks.md 7.2), as run.mjs runs
+     them in Node: serve a directory holding this page, worker.js, web_physics.wasm and the native
+     report as expected.txt, and load it through tools/webcheck.py. -->
+<script type="module">
+  const worker = new Worker("worker.js", { type: "module" });
+  worker.onmessage = (e) => {
+    document.title = (e.data.ok ? "DONE " : "FAIL ") + JSON.stringify(e.data);
+  };
+  worker.onerror = (e) => {
+    document.title = "FAIL " + JSON.stringify({ error: String(e.message) });
+  };
+</script>

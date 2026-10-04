@@ -1,0 +1,149 @@
+diff --git a/build.rs b/build.rs
+index a6150ef..d11f0fc 100644
+--- a/build.rs
++++ b/build.rs
+@@ -117,6 +117,7 @@ fn main() {
+         println!("cargo:rerun-if-env-changed={}", feature_to_cargo(feature));
+     }
+     println!("cargo:rerun-if-env-changed=CARGO_CFG_SANITIZE");
++    println!("cargo:rerun-if-env-changed=POCKET_LLVM");
+ 
+     let src_dir = Path::new("quickjs");
+ 
+@@ -151,12 +152,22 @@ fn main() {
+     let target_env = env::var("CARGO_CFG_TARGET_ENV").unwrap();
+ 
+     let mut builder = cc::Build::new();
++    // Pocket3D P7: the pinned clang when no compiler is named for the target (pocket_compiler).
++    let clang_cl = pocket_compiler(&mut builder);
+     builder
+         .extra_warnings(false)
+         .flag_if_supported("-Wno-implicit-const-int-float-conversion")
+         //.flag("-Wno-array-bounds")
+         //.flag("-Wno-format-truncation")
+         ;
++    // Pocket3D P4: no fused multiply-add on one platform and not another. On the MSVC target the
++    // CFLAGS of .cargo/config.toml are replaced below, so the flag is passed here too: clang-cl
++    // takes it through /clang:, and MSVC's cl contracts only under /fp:contract, never passed.
++    if clang_cl {
++        builder.flag("/clang:-ffp-contract=off");
++    } else {
++        builder.flag_if_supported("-ffp-contract=off");
++    }
+ 
+     match env::var("CARGO_CFG_SANITIZE").as_deref() {
+         Ok("address") => {
+@@ -211,8 +222,9 @@ fn main() {
+ 
+     if is_wasm_unknown {
+         println!("cargo:rerun-if-changed=vendor/wasi-libc/include");
+-        let vendor_include = Path::new("vendor/wasi-libc/include")
+-            .canonicalize()
++        // Pocket3D P7: an absolute path, not `canonicalize`, which gives a verbatim `\\?\` path
++        // on Windows that takes no `/` separator and so hides the nested wasi-libc headers.
++        let vendor_include = std::path::absolute("vendor/wasi-libc/include")
+             .expect("vendor/wasi-libc/include is missing; run scripts/vendor-wasm-libc.sh");
+         let flag = format!("-isystem{}", vendor_include.display());
+         builder.flag(&flag);
+@@ -269,19 +281,85 @@ fn main() {
+         builder.file("wasm-shim/shim.c");
+     }
+ 
++    // Pocket3D P7: which C compiler built QuickJS-ng, for EngineVersion and the perf step.
++    println!("cargo:rustc-env=POCKET_QJS_CC={}", compiler_id(&builder));
++
+     builder.compile("libquickjs.a");
+ 
+     // Emitted after `compile` so `-lquickjs` precedes `-lc` on the link line.
+     if is_wasm_unknown {
+         println!("cargo:rerun-if-changed=vendor/wasi-libc/lib/libc.a");
+-        let vendor_lib = Path::new("vendor/wasi-libc/lib")
+-            .canonicalize()
++        let vendor_lib = std::path::absolute("vendor/wasi-libc/lib")
+             .expect("vendor/wasi-libc/lib is missing; run scripts/vendor-wasm-libc.sh");
+         println!("cargo:rustc-link-search=native={}", vendor_lib.display());
+         println!("cargo:rustc-link-lib=static=c");
+     }
+ }
+ 
++/// Pocket3D P7: QuickJS-ng is compiled by clang-cl on the Windows MSVC target and by clang for
++/// wasm32-unknown-unknown (docs/spec/architecture.md 7.3 and 8.1). When the build names no
++/// compiler for the target (`CC_<target>`, `TARGET_CC`, `CC`), the pinned LLVM is used if it is
++/// installed: `$POCKET_LLVM`, else `~/.pocket-tools/llvm-23.1.2`. Every build of a checkout then
++/// compiles QuickJS-ng the same way, whether or not `cargo xtask` started it. Returns whether the
++/// compiler is clang-cl (decided from its name: asking cc would cache CFLAGS before the MSVC
++/// branch below sets them).
++fn pocket_compiler(builder: &mut cc::Build) -> bool {
++    let target = env::var("TARGET").unwrap();
++    let named = [
++        format!("CC_{target}"),
++        format!("CC_{}", target.replace('-', "_")),
++        "TARGET_CC".to_string(),
++        "CC".to_string(),
++    ];
++    if let Some(cc) = named.iter().find_map(env::var_os) {
++        return Path::new(&cc).file_stem().is_some_and(|s| s == "clang-cl");
++    }
++    let (cc, ar) = match target.as_str() {
++        "x86_64-pc-windows-msvc" | "aarch64-pc-windows-msvc" => ("clang-cl", None),
++        "wasm32-unknown-unknown" => ("clang", Some("llvm-ar")),
++        _ => return false,
++    };
++    let home = env::var_os("USERPROFILE").or_else(|| env::var_os("HOME"));
++    let llvm = env::var_os("POCKET_LLVM")
++        .map(PathBuf::from)
++        .or_else(|| home.map(|h| PathBuf::from(h).join(".pocket-tools").join("llvm-23.1.2")));
++    let Some(bin) = llvm.map(|l| l.join("bin")) else {
++        return false;
++    };
++    let exe = |name: &str| {
++        let p = bin.join(format!("{name}{}", env::consts::EXE_SUFFIX));
++        p.is_file().then_some(p)
++    };
++    if let Some(c) = exe(cc) {
++        builder.compiler(c);
++        if let Some(a) = ar.and_then(exe) {
++            builder.archiver(a);
++        }
++        return cc == "clang-cl";
++    }
++    false
++}
++
++/// Pocket3D P7: the compiler's family and the first line of its `--version`.
++fn compiler_id(builder: &cc::Build) -> String {
++    let tool = builder.get_compiler();
++    let name = tool
++        .path()
++        .file_stem()
++        .map_or_else(String::new, |s| s.to_string_lossy().into_owned());
++    let version = process::Command::new(tool.path())
++        .arg("--version")
++        .output()
++        .ok()
++        .and_then(|o| {
++            let text = String::from_utf8_lossy(&o.stdout).into_owned()
++                + &String::from_utf8_lossy(&o.stderr);
++            text.lines().map(str::trim).find(|l| !l.is_empty()).map(str::to_owned)
++        })
++        .unwrap_or_default();
++    format!("{name}: {version}").replace(['\r', '\n'], " ")
++}
++
+ fn feature_to_cargo(name: impl AsRef<str>) -> String {
+     format!("CARGO_FEATURE_{}", feature_to_define(name))
+ }
+diff --git a/src/lib.rs b/src/lib.rs
+index 357c5e6..83f93dd 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -15,6 +15,9 @@ pub const SIZE_T_ERROR: &str =
+ 
+ include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
+ 
++/// Pocket3D P7: the C compiler that built QuickJS-ng, `<file stem>: <first line of --version>`.
++pub const POCKET_QJS_CC: &str = env!("POCKET_QJS_CC");
++
+ #[cfg(not(feature = "bindgen"))]
+ include!(concat!("bindings/", bindings_env!("TARGET"), ".rs"));
+ 

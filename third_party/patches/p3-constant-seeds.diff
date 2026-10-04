@@ -1,0 +1,16 @@
+diff --git a/quickjs/quickjs.c b/quickjs/quickjs.c
+index 5128484..c2f73c3 100644
+--- a/quickjs/quickjs.c
++++ b/quickjs/quickjs.c
+@@ -2898,8 +2898,9 @@ JSContext *JS_NewContextRaw(JSRuntime *rt)
+     ctx->error_prepare_stack = JS_UNDEFINED;
+     ctx->error_stack_trace_limit = js_int32(10);
+     init_list_head(&ctx->loaded_modules);
+-    // TODO(bnoordhuis) use getrandom() etc.
+-    ctx->random_state = js__gettimeofday_us();
++    /* Pocket3D P3: a constant seed, not js__gettimeofday_us(): Math.random is replaced and the
++       hash seed only places Map and Set entries in buckets, but the runtime reads no clock. */
++    ctx->random_state = 0x853c49e6748fea9bULL;
+     // the state must be non zero
+     if (ctx->random_state == 0)
+         ctx->random_state = 1;

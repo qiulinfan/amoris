@@ -1,0 +1,15 @@
+[package]
+name = "pocket-interface"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Perception, actions and time modes; in slice 1 the time model's pacing"
+
+[dependencies]
+pocket-contract.workspace = true
+pocket-sim.workspace = true
+pocket-physics.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true

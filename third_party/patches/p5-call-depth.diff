@@ -1,0 +1,472 @@
+diff --git a/quickjs/libregexp.c b/quickjs/libregexp.c
+index 49c474c..8085fec 100644
+--- a/quickjs/libregexp.c
++++ b/quickjs/libregexp.c
+@@ -1423,7 +1423,21 @@ static int re_parse_class_set_operand(REParseState *s, REStringList *cr, const u
+     return 0;
+ }
+ 
++static int re_parse_nested_class_body(REParseState *s, REStringList *cr,
++                                      const uint8_t **pp);
++
++/* Pocket3D P5: one nesting level per nested class. */
+ static int re_parse_nested_class(REParseState *s, REStringList *cr, const uint8_t **pp)
++{
++    int ret;
++    if (lre_depth_enter(s->opaque))
++        return re_parse_error(s, "call depth limit exceeded");
++    ret = re_parse_nested_class_body(s, cr, pp);
++    lre_depth_leave(s->opaque);
++    return ret;
++}
++
++static int re_parse_nested_class_body(REParseState *s, REStringList *cr, const uint8_t **pp)
+ {
+     const uint8_t *p;
+     uint32_t c1, c2;
+@@ -2452,7 +2466,20 @@ static int re_parse_alternative(REParseState *s, bool is_backward_dir)
+     return 0;
+ }
+ 
++static int re_parse_disjunction_body(REParseState *s, bool is_backward_dir);
++
++/* Pocket3D P5: one nesting level per nested group. */
+ static int re_parse_disjunction(REParseState *s, bool is_backward_dir)
++{
++    int ret;
++    if (lre_depth_enter(s->opaque))
++        return re_parse_error(s, "call depth limit exceeded");
++    ret = re_parse_disjunction_body(s, is_backward_dir);
++    lre_depth_leave(s->opaque);
++    return ret;
++}
++
++static int re_parse_disjunction_body(REParseState *s, bool is_backward_dir)
+ {
+     int start, len, pos;
+ 
+@@ -3471,6 +3498,15 @@ bool lre_check_stack_overflow(void *opaque, size_t alloca_size)
+     return false;
+ }
+ 
++bool lre_depth_enter(void *opaque)
++{
++    return false;
++}
++
++void lre_depth_leave(void *opaque)
++{
++}
++
+ void *lre_realloc(void *opaque, void *ptr, size_t size)
+ {
+     return realloc(ptr, size);
+diff --git a/quickjs/libregexp.h b/quickjs/libregexp.h
+index 44eded3..0405fa2 100644
+--- a/quickjs/libregexp.h
++++ b/quickjs/libregexp.h
+@@ -67,6 +67,9 @@ int lre_parse_escape(const uint8_t **pp, int allow_utf16);
+ 
+ /* must be provided by the user */
+ bool lre_check_stack_overflow(void *opaque, size_t alloca_size);
++/* Pocket3D P5: enter one nesting level of the parser (true past the limit) and leave it. */
++bool lre_depth_enter(void *opaque);
++void lre_depth_leave(void *opaque);
+ /* must be provided by the user, return non zero if time out */
+ int lre_check_timeout(void *opaque);
+ void *lre_realloc(void *opaque, void *ptr, size_t size);
+diff --git a/quickjs/quickjs.c b/quickjs/quickjs.c
+index ebdbdfb..ee6a115 100644
+--- a/quickjs/quickjs.c
++++ b/quickjs/quickjs.c
+@@ -612,6 +612,11 @@ struct JSContext {
+ 
+     /* when the counter reaches zero, JSRutime.interrupt_handler is called */
+     int interrupt_counter;
++    /* Pocket3D P5: nested calls and nesting levels of C-recursive builtins now running, and the
++       limit past which they throw an uncatchable InternalError (0: no limit). */
++    uint32_t call_depth;
++    uint32_t call_depth_limit;
++    bool call_depth_exceeded; /* set when a regular expression's nesting passed the limit */
+ 
+     struct list_head loaded_modules; /* list of JSModuleDef.link */
+ 
+@@ -8909,6 +8914,44 @@ uint32_t JS_GetOutOfMemoryCount(JSRuntime *rt)
+     return rt->out_of_memory_count;
+ }
+ 
++/* Pocket3D P5: the error of a call past the depth limit. The limit is lifted while the error
++   and its stack are built (Error.prepareStackTrace is a call). */
++static JSValue JS_ThrowCallDepth(JSContext *ctx)
++{
++    uint32_t limit = ctx->call_depth_limit;
++    ctx->call_depth_limit = 0;
++    JS_ThrowInternalError(ctx, "call depth limit exceeded");
++    ctx->call_depth_limit = limit;
++    JS_SetUncatchableError(ctx, ctx->rt->current_exception);
++    return JS_EXCEPTION;
++}
++
++/* Pocket3D P5: enters one nesting level; true (the error thrown) past the limit. */
++static inline bool js_depth_enter(JSContext *ctx)
++{
++    if (unlikely(ctx->call_depth_limit != 0 && ctx->call_depth >= ctx->call_depth_limit)) {
++        JS_ThrowCallDepth(ctx);
++        return true;
++    }
++    ctx->call_depth++;
++    return false;
++}
++
++static inline void js_depth_leave(JSContext *ctx)
++{
++    ctx->call_depth--;
++}
++
++void JS_SetCallDepthLimit(JSContext *ctx, uint32_t limit)
++{
++    ctx->call_depth_limit = limit;
++}
++
++uint32_t JS_GetCallDepth(JSContext *ctx)
++{
++    return ctx->call_depth;
++}
++
+ static JSValue JS_ThrowStackOverflow(JSContext *ctx)
+ {
+     /* Pocket3D P2: where the native stack runs out depends on the target and the build. */
+@@ -18381,9 +18424,26 @@ static bool needs_backtrace(JSValue exc)
+ }
+ 
+ /* argv[] is modified if (flags & JS_CALL_FLAG_COPY_ARGV) = 0. */
++static JSValue JS_CallInternalBody(JSContext *caller_ctx, JSValueConst func_obj,
++                                   JSValueConst this_obj, JSValueConst new_target,
++                                   int argc, JSValueConst *argv, int flags);
++
++/* Pocket3D P5: every call (bytecode, C functions, bound functions, generators) is one level. */
+ static JSValue JS_CallInternal(JSContext *caller_ctx, JSValueConst func_obj,
+                                JSValueConst this_obj, JSValueConst new_target,
+                                int argc, JSValueConst *argv, int flags)
++{
++    JSValue ret;
++    if (js_depth_enter(caller_ctx))
++        return JS_EXCEPTION;
++    ret = JS_CallInternalBody(caller_ctx, func_obj, this_obj, new_target, argc, argv, flags);
++    js_depth_leave(caller_ctx);
++    return ret;
++}
++
++static JSValue JS_CallInternalBody(JSContext *caller_ctx, JSValueConst func_obj,
++                                   JSValueConst this_obj, JSValueConst new_target,
++                                   int argc, JSValueConst *argv, int flags)
+ {
+     JSRuntime *rt = caller_ctx->rt;
+     JSContext *ctx;
+@@ -44967,11 +45027,33 @@ static JSValue js_array_copyWithin(JSContext *ctx, JSValueConst this_val,
+     return JS_EXCEPTION;
+ }
+ 
++static int64_t JS_FlattenIntoArrayBody(JSContext *ctx, JSValueConst target,
++                                       JSValueConst source, int64_t sourceLen,
++                                       int64_t targetIndex, int depth,
++                                       JSValueConst mapperFunction,
++                                       JSValueConst thisArg);
++
++/* Pocket3D P5: one nesting level per nested array flattened. */
+ static int64_t JS_FlattenIntoArray(JSContext *ctx, JSValueConst target,
+                                    JSValueConst source, int64_t sourceLen,
+                                    int64_t targetIndex, int depth,
+                                    JSValueConst mapperFunction,
+                                    JSValueConst thisArg)
++{
++    int64_t ret;
++    if (js_depth_enter(ctx))
++        return -1;
++    ret = JS_FlattenIntoArrayBody(ctx, target, source, sourceLen, targetIndex, depth,
++                                  mapperFunction, thisArg);
++    js_depth_leave(ctx);
++    return ret;
++}
++
++static int64_t JS_FlattenIntoArrayBody(JSContext *ctx, JSValueConst target,
++                                   JSValueConst source, int64_t sourceLen,
++                                   int64_t targetIndex, int depth,
++                                   JSValueConst mapperFunction,
++                                   JSValueConst thisArg)
+ {
+     JSValue element;
+     int64_t sourceIndex, elementLen;
+@@ -49650,6 +49732,11 @@ static JSValue js_compile_regexp(JSContext *ctx, JSValueConst pattern,
+                                   sizeof(error_msg), str, len, re_flags, ctx);
+     JS_FreeCString(ctx, str);
+     if (!re_bytecode_buf) {
++        if (ctx->call_depth_exceeded) {
++            /* Pocket3D P5 */
++            ctx->call_depth_exceeded = false;
++            return JS_ThrowCallDepth(ctx);
++        }
+         JS_ThrowSyntaxError(ctx, "%s", error_msg);
+         return JS_EXCEPTION;
+     }
+@@ -50030,6 +50117,25 @@ bool lre_check_stack_overflow(void *opaque, size_t alloca_size)
+     return js_check_stack_overflow(ctx->rt, alloca_size);
+ }
+ 
++/* Pocket3D P5: the regular expression parser's nesting, in the context's depth counter. Past
++   the limit the parse fails and js_compile_regexp throws the call-depth error. */
++bool lre_depth_enter(void *opaque)
++{
++    JSContext *ctx = opaque;
++    if (ctx->call_depth_limit != 0 && ctx->call_depth >= ctx->call_depth_limit) {
++        ctx->call_depth_exceeded = true;
++        return true;
++    }
++    ctx->call_depth++;
++    return false;
++}
++
++void lre_depth_leave(void *opaque)
++{
++    JSContext *ctx = opaque;
++    ctx->call_depth--;
++}
++
+ int lre_check_timeout(void *opaque)
+ {
+     JSContext *ctx = opaque;
+@@ -51416,8 +51522,21 @@ static void json_free_parse_record(JSContext *ctx, JSONParseRecord *pr)
+     pr->value = JS_UNDEFINED; /* fail safe */
+ }
+ 
+-/* 'pr' can be NULL */
++static JSValue json_parse_value_body(JSParseState *s, JSONParseRecord *pr);
++
++/* Pocket3D P5: one nesting level per JSON value parsed inside another. */
+ static JSValue json_parse_value(JSParseState *s, JSONParseRecord *pr)
++{
++    JSValue ret;
++    if (js_depth_enter(s->ctx))
++        return JS_EXCEPTION;
++    ret = json_parse_value_body(s, pr);
++    js_depth_leave(s->ctx);
++    return ret;
++}
++
++/* 'pr' can be NULL */
++static JSValue json_parse_value_body(JSParseState *s, JSONParseRecord *pr)
+ {
+     JSContext *ctx = s->ctx;
+     JSValue val = JS_NULL;
+@@ -51922,9 +52041,29 @@ exception:
+     return JS_EXCEPTION;
+ }
+ 
++static int js_json_to_str_body(JSContext *ctx, JSONStringifyContext *jsc,
++                               JSValueConst holder, JSValue val,
++                               JSValueConst indent);
++
++/* Pocket3D P5: one nesting level per value stringified inside another. The body owns `val`, so
++   it is freed here when the level is refused. */
+ static int js_json_to_str(JSContext *ctx, JSONStringifyContext *jsc,
+                           JSValueConst holder, JSValue val,
+                           JSValueConst indent)
++{
++    int ret;
++    if (js_depth_enter(ctx)) {
++        JS_FreeValue(ctx, val);
++        return -1;
++    }
++    ret = js_json_to_str_body(ctx, jsc, holder, val, indent);
++    js_depth_leave(ctx);
++    return ret;
++}
++
++static int js_json_to_str_body(JSContext *ctx, JSONStringifyContext *jsc,
++                          JSValueConst holder, JSValue val,
++                          JSValueConst indent)
+ {
+     JSValue indent1, sep, sep1, tab, v, prop;
+     JSObject *p;
+@@ -52484,6 +52623,59 @@ static JSValue JS_ThrowTypeErrorRevokedProxy(JSContext *ctx)
+     return JS_ThrowTypeError(ctx, "revoked proxy");
+ }
+ 
++/* Pocket3D P5: one nesting level per proxy internal method. A method forwards to its target,
++   and reads its trap from its handler, either of which can be another Proxy, so a chain of
++   Proxies recurses in C without a call; counted here, it stops at max_call_depth as calls do,
++   instead of at the stack check, whose depth differs between targets. */
++#define JS_PROXY_DEPTH(ret_type, fail, name, params, args) \
++    static ret_type name##_body params;                    \
++    static ret_type name params                            \
++    {                                                      \
++        ret_type ret;                                      \
++        if (js_depth_enter(ctx))                           \
++            return fail;                                   \
++        ret = name##_body args;                            \
++        js_depth_leave(ctx);                               \
++        return ret;                                        \
++    }
++JS_PROXY_DEPTH(JSValue, JS_EXCEPTION, js_proxy_getPrototypeOf,
++               (JSContext *ctx, JSValueConst obj),
++               (ctx, obj))
++JS_PROXY_DEPTH(int, -1, js_proxy_setPrototypeOf,
++               (JSContext *ctx, JSValueConst obj, JSValueConst proto_val, bool throw_flag),
++               (ctx, obj, proto_val, throw_flag))
++JS_PROXY_DEPTH(int, -1, js_proxy_isExtensible,
++               (JSContext *ctx, JSValueConst obj),
++               (ctx, obj))
++JS_PROXY_DEPTH(int, -1, js_proxy_preventExtensions,
++               (JSContext *ctx, JSValueConst obj),
++               (ctx, obj))
++JS_PROXY_DEPTH(int, -1, js_proxy_has,
++               (JSContext *ctx, JSValueConst obj, JSAtom atom),
++               (ctx, obj, atom))
++JS_PROXY_DEPTH(JSValue, JS_EXCEPTION, js_proxy_get,
++               (JSContext *ctx, JSValueConst obj, JSAtom atom, JSValueConst receiver),
++               (ctx, obj, atom, receiver))
++JS_PROXY_DEPTH(int, -1, js_proxy_set,
++               (JSContext *ctx, JSValueConst obj, JSAtom atom, JSValueConst value, JSValueConst receiver, int flags),
++               (ctx, obj, atom, value, receiver, flags))
++JS_PROXY_DEPTH(int, -1, js_proxy_get_own_property,
++               (JSContext *ctx, JSPropertyDescriptor *pdesc, JSValueConst obj, JSAtom prop),
++               (ctx, pdesc, obj, prop))
++JS_PROXY_DEPTH(int, -1, js_proxy_define_own_property,
++               (JSContext *ctx, JSValueConst obj, JSAtom prop, JSValueConst val, JSValueConst getter, JSValueConst setter, int flags),
++               (ctx, obj, prop, val, getter, setter, flags))
++JS_PROXY_DEPTH(int, -1, js_proxy_delete_property,
++               (JSContext *ctx, JSValueConst obj, JSAtom atom),
++               (ctx, obj, atom))
++JS_PROXY_DEPTH(int, -1, js_proxy_get_own_property_names,
++               (JSContext *ctx, JSPropertyEnum **ptab, uint32_t *plen, JSValueConst obj),
++               (ctx, ptab, plen, obj))
++JS_PROXY_DEPTH(int, -1, js_proxy_isArray,
++               (JSContext *ctx, JSValueConst obj),
++               (ctx, obj))
++#undef JS_PROXY_DEPTH
++
+ static JSProxyData *get_proxy_method(JSContext *ctx, JSValue *pmethod,
+                                      JSValueConst obj, JSAtom name)
+ {
+@@ -52510,7 +52702,7 @@ static JSProxyData *get_proxy_method(JSContext *ctx, JSValue *pmethod,
+     return s;
+ }
+ 
+-static JSValue js_proxy_getPrototypeOf(JSContext *ctx, JSValueConst obj)
++static JSValue js_proxy_getPrototypeOf_body(JSContext *ctx, JSValueConst obj)
+ {
+     JSProxyData *s;
+     JSValue method, ret, proto1;
+@@ -52551,7 +52743,7 @@ static JSValue js_proxy_getPrototypeOf(JSContext *ctx, JSValueConst obj)
+     return ret;
+ }
+ 
+-static int js_proxy_setPrototypeOf(JSContext *ctx, JSValueConst obj,
++static int js_proxy_setPrototypeOf_body(JSContext *ctx, JSValueConst obj,
+                                    JSValueConst proto_val, bool throw_flag)
+ {
+     JSProxyData *s;
+@@ -52596,7 +52788,7 @@ static int js_proxy_setPrototypeOf(JSContext *ctx, JSValueConst obj,
+     return true;
+ }
+ 
+-static int js_proxy_isExtensible(JSContext *ctx, JSValueConst obj)
++static int js_proxy_isExtensible_body(JSContext *ctx, JSValueConst obj)
+ {
+     JSProxyData *s;
+     JSValue method, ret;
+@@ -52622,7 +52814,7 @@ static int js_proxy_isExtensible(JSContext *ctx, JSValueConst obj)
+     return res;
+ }
+ 
+-static int js_proxy_preventExtensions(JSContext *ctx, JSValueConst obj)
++static int js_proxy_preventExtensions_body(JSContext *ctx, JSValueConst obj)
+ {
+     JSProxyData *s;
+     JSValue method, ret;
+@@ -52650,7 +52842,7 @@ static int js_proxy_preventExtensions(JSContext *ctx, JSValueConst obj)
+     return res;
+ }
+ 
+-static int js_proxy_has(JSContext *ctx, JSValueConst obj, JSAtom atom)
++static int js_proxy_has_body(JSContext *ctx, JSValueConst obj, JSAtom atom)
+ {
+     JSProxyData *s;
+     JSValue method, ret1, atom_val;
+@@ -52700,7 +52892,7 @@ static int js_proxy_has(JSContext *ctx, JSValueConst obj, JSAtom atom)
+     return ret;
+ }
+ 
+-static JSValue js_proxy_get(JSContext *ctx, JSValueConst obj, JSAtom atom,
++static JSValue js_proxy_get_body(JSContext *ctx, JSValueConst obj, JSAtom atom,
+                             JSValueConst receiver)
+ {
+     JSProxyData *s;
+@@ -52750,7 +52942,7 @@ static JSValue js_proxy_get(JSContext *ctx, JSValueConst obj, JSAtom atom,
+     return ret;
+ }
+ 
+-static int js_proxy_set(JSContext *ctx, JSValueConst obj, JSAtom atom,
++static int js_proxy_set_body(JSContext *ctx, JSValueConst obj, JSAtom atom,
+                         JSValueConst value, JSValueConst receiver, int flags)
+ {
+     JSProxyData *s;
+@@ -52846,7 +53038,7 @@ static JSValue js_create_desc(JSContext *ctx, JSValueConst val,
+     return ret;
+ }
+ 
+-static int js_proxy_get_own_property(JSContext *ctx, JSPropertyDescriptor *pdesc,
++static int js_proxy_get_own_property_body(JSContext *ctx, JSPropertyDescriptor *pdesc,
+                                      JSValueConst obj, JSAtom prop)
+ {
+     JSProxyData *s;
+@@ -52950,7 +53142,7 @@ static int js_proxy_get_own_property(JSContext *ctx, JSPropertyDescriptor *pdesc
+     return ret;
+ }
+ 
+-static int js_proxy_define_own_property(JSContext *ctx, JSValueConst obj,
++static int js_proxy_define_own_property_body(JSContext *ctx, JSValueConst obj,
+                                         JSAtom prop, JSValueConst val,
+                                         JSValueConst getter,
+                                         JSValueConst setter, int flags)
+@@ -53058,7 +53250,7 @@ static int js_proxy_define_own_property(JSContext *ctx, JSValueConst obj,
+     return 1;
+ }
+ 
+-static int js_proxy_delete_property(JSContext *ctx, JSValueConst obj,
++static int js_proxy_delete_property_body(JSContext *ctx, JSValueConst obj,
+                                     JSAtom atom)
+ {
+     JSProxyData *s;
+@@ -53119,7 +53311,7 @@ static int find_prop_key(const JSPropertyEnum *tab, int n, JSAtom atom)
+     return -1;
+ }
+ 
+-static int js_proxy_get_own_property_names(JSContext *ctx,
++static int js_proxy_get_own_property_names_body(JSContext *ctx,
+                                            JSPropertyEnum **ptab,
+                                            uint32_t *plen,
+                                            JSValueConst obj)
+@@ -53327,7 +53519,7 @@ static JSValue js_proxy_call(JSContext *ctx, JSValueConst func_obj,
+     return ret;
+ }
+ 
+-static int js_proxy_isArray(JSContext *ctx, JSValueConst obj)
++static int js_proxy_isArray_body(JSContext *ctx, JSValueConst obj)
+ {
+     JSProxyData *s = JS_GetOpaque(obj, JS_CLASS_PROXY);
+     if (!s)
+diff --git a/quickjs/quickjs.h b/quickjs/quickjs.h
+index 1da2133..09e398a 100644
+--- a/quickjs/quickjs.h
++++ b/quickjs/quickjs.h
+@@ -1274,6 +1274,9 @@ JS_EXTERN void JS_SetInterruptHandler(JSRuntime *rt, JSInterruptHandler *cb, voi
+ /* Pocket3D P1: the context's interrupt counter (the polls left before the handler runs). */
+ JS_EXTERN void JS_SetInterruptCounter(JSContext *ctx, int32_t counter);
+ JS_EXTERN int32_t JS_GetInterruptCounter(JSContext *ctx);
++/* Pocket3D P5: nested calls past `limit` (0: none) throw an uncatchable InternalError. */
++JS_EXTERN void JS_SetCallDepthLimit(JSContext *ctx, uint32_t limit);
++JS_EXTERN uint32_t JS_GetCallDepth(JSContext *ctx);
+ /* if can_block is true, Atomics.wait() can be used */
+ JS_EXTERN void JS_SetCanBlock(JSRuntime *rt, bool can_block);
+ /* set the [IsHTMLDDA] internal slot */

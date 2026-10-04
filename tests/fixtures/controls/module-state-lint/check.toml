@@ -1,0 +1,6 @@
+[run]
+seeds = [1]
+ticks = 30
+
+[expect]
+fail = "lint.module_let"

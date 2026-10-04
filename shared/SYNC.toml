@@ -1,0 +1,30 @@
+# The PocketEngine commit this copy of the shared contract and benchmark was synchronized from
+# (charter 6.2; docs/spec/checks.md 5.4). "" until the first synchronization: PocketEngine's
+# rebuild branch (5f8971e) has no shared/ yet, so these hashes are this line's draft.
+commit = ""
+
+[files]
+"benchmark/README.md" = "114e47023bb48b2ef7ecb38d03b00b7291c318c8b57098f4738a4d14d45f465d"
+"benchmark/tasks.md" = "0a235710c33dc4b534290e70ee402e80caecf308377341cb8c3fcbc7fbecfb9c"
+"contract/actions.md" = "a0d5c477415ca681a2b86601eb33c8e322e812cdc89fae9d678b1bff3a9511c4"
+"contract/errors.md" = "cff8e606df84756e5beae737868b1b343e5c5e908a4627bc12186ca598b1b61b"
+"contract/mcp.md" = "dccbb793b44d0af369530925fa89738d144a8c7edc41caf9da277f01841829ce"
+"contract/perception.md" = "8cc8af363ffaed7dc352cae9bfea38e0dfeeb893e1571048f62dfb751699c89c"
+"contract/projection.md" = "2575ebcdf0176ff9fcf05d511b7b95d2bcde7f7ff3d1646793b674944fabc88a"
+"contract/README.md" = "92407bb62b1de4aee064dd07f48d481435f1b601c96b2394d38d3b4e4091e81e"
+"contract/rust/Cargo.toml" = "8ed27168a3f8171619eb214121d1dda24fb2f1742c6ad546362ca5e8c6327a9a"
+"contract/rust/src/codes/mod.rs" = "c5a32f7bd777ed4c73819ebfbdd49aa2bf107e40991f6f8ed36dd6ddc7814270"
+"contract/rust/src/codes/play.rs" = "b2b20f339a69556fda67b1e9e390268fa511e3eb39eaa94defb946edc0bb2810"
+"contract/rust/src/codes/request.rs" = "22f0aaa49b3dc1d9b3a40194f9805fe72bc7f61708f2b90dc5bdf676ef05ec2a"
+"contract/rust/src/codes/session.rs" = "1e19b507fd65038639fd17c345bbf452e04a73ca4aa149b5da4367780f02863a"
+"contract/rust/src/lib.rs" = "faafa2c638a5bb3a74297fb4a172d113a23b6e3c98ad9812758a6603006c5c6a"
+"contract/rust/src/pointer.rs" = "093faefbe1833ecebef301f725730463c8313de811e48318c121679c6f969b65"
+"contract/rust/src/problem.rs" = "6e79b1d88dcfcbf54d83b8e7e2d7d782984ae49cb87591cd66429fb9cbce0940"
+"contract/rust/src/render.rs" = "9f5362e17aeb612dfd4a04ac3a7ccc68a44ee6aced2bb1f1694de34299b7a1af"
+"contract/rust/src/shape/mod.rs" = "3a63e818b761504013e3b5ad6d00b9b4ebb048ea8416b54195fbf624f7b5b3b1"
+"contract/rust/src/shape/object.rs" = "33c333b3aa8c938be39fd965dd4adf4325397bf546397f4eb83f2f0fa073b680"
+"contract/rust/src/shape/union.rs" = "079b19fcc5a7e87a8beb0d9d14d1332e74ebf33e9bcbe9d590e2abcc667c7879"
+"contract/rust/src/suggest.rs" = "e74b8a78368a55cb810346f00d085e35eff75eae9e5666eb8d1cf0a1da1e81aa"
+"contract/rust/tests/shape.rs" = "3c9e4d674e903e395aee9b62eb1c1fec8fa90b2c582441447aa57c751c50c636"
+"contract/sailing.md" = "efb305fc9c920c4e6863cce63ae754a7f4973a7f3bd16e516176a37df411f43e"
+"contract/time.md" = "dcb57e8e2a757548887d263f0ae8e3f0aa73c3cf23ca49089f03e891f41ad540"

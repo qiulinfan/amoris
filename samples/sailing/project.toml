@@ -1,0 +1,6 @@
+# The sailing showcase, headless (charter 2.4.1, slice 1): a sloop running before a steady breeze
+# on master's island sea, with crates adrift for the crew to take aboard. Ported from master's
+# samples/island and its `sailboat` task (tools/scripts/agent_eval.py).
+name = "sailing"
+rate = 60
+seed = 1

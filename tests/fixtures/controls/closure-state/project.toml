@@ -1,0 +1,4 @@
+# Negative control (checks.md 8.6): a rule that hides a counter in a closure made at load time.
+# The lint refuses such code (lint.load_time_code), so this fixture compiles with the lint off and
+# the reload-equivalence check, the backstop, must catch it.
+name = "closure-state"

@@ -1,0 +1,26 @@
+[package]
+name = "pocket-persist"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Canonical serialization, the world hash, snapshot, restore, fork, replays, divergence and versions"
+
+[dependencies]
+pocket-contract.workspace = true
+pocket-sim.workspace = true
+# The world the whole-world operations read and write, and the derives of the test types
+# (architecture.md 6: the Component derive needs a direct dependency).
+bevy_ecs.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+serde-reflection.workspace = true
+xxhash-rust.workspace = true
+blake3.workspace = true
+
+# A small wasm32 program that prints the pinned vectors' report (persistence.md 12, P4), run under
+# Node by tests/web/run.mjs so it is checked identical natively and in WebAssembly.
+[[example]]
+name = "web_vectors"
+crate-type = ["cdylib"]

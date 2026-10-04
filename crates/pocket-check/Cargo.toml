@@ -1,0 +1,27 @@
+[package]
+name = "pocket-check"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "In-process checks: determinism, fork consistency, replay and reload equivalence"
+
+[features]
+# Projects read and compiled from disk (pocket-runtime's transpile), as `pocket check` runs them;
+# the web check page gives the checks compiled setups instead.
+native = ["pocket-runtime/transpile"]
+
+[dependencies]
+pocket-contract.workspace = true
+pocket-sim.workspace = true
+pocket-persist.workspace = true
+pocket-runtime.workspace = true
+pocket-link.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+# check.toml (checks.md 8.1; architecture.md 6, toml: the reason recorded there).
+toml.workspace = true
+
+[dev-dependencies]
+pocket-runtime = { workspace = true, features = ["transpile"] }

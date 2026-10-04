@@ -1,0 +1,115 @@
+diff --git a/quickjs/quickjs.c b/quickjs/quickjs.c
+index c5c9126..d5e5562 100644
+--- a/quickjs/quickjs.c
++++ b/quickjs/quickjs.c
+@@ -372,6 +372,9 @@ struct JSRuntime {
+     JSValue current_exception;
+     /* true if inside an out of memory error, to avoid recursing */
+     bool in_out_of_memory;
++    /* Pocket3D P2: how often memory ran out; the host compares it around each call, since an
++       out-of-memory error a builtin swallows (or replaces with its own) must still fault it */
++    uint32_t out_of_memory_count;
+     /* true if inside build_backtrace, to avoid recursing */
+     bool in_build_stack_trace;
+     /* true if inside JS_FreeRuntime */
+@@ -595,6 +598,9 @@ struct JSContext {
+     JSValue array_proto_values;
+     JSValue throw_type_error;
+     JSValue eval_obj;
++    /* Pocket3D P2: the context's uncatchable InternalError("out of memory"), made with the
++       intrinsics, so running out of memory throws without allocating */
++    JSValue oom_error;
+ 
+     JSValue global_obj; /* global object */
+     JSValue global_var_obj; /* contains the global let/const definitions */
+@@ -2894,6 +2900,7 @@ JSContext *JS_NewContextRaw(JSRuntime *rt)
+     ctx->regexp_ctor = JS_NULL;
+     ctx->promise_ctor = JS_NULL;
+     ctx->error_ctor = JS_NULL;
++    ctx->oom_error = JS_UNDEFINED;
+     ctx->error_back_trace = JS_UNDEFINED;
+     ctx->error_prepare_stack = JS_UNDEFINED;
+     ctx->error_stack_trace_limit = js_int32(10);
+@@ -3321,6 +3328,7 @@ static void JS_MarkContext(JSRuntime *rt, JSContext *ctx,
+ 
+     JS_MarkValue(rt, ctx->throw_type_error, mark_func);
+     JS_MarkValue(rt, ctx->eval_obj, mark_func);
++    JS_MarkValue(rt, ctx->oom_error, mark_func);
+ 
+     JS_MarkValue(rt, ctx->array_proto_values, mark_func);
+     for(i = 0; i < JS_NATIVE_ERROR_COUNT; i++) {
+@@ -3403,6 +3411,7 @@ void JS_FreeContext(JSContext *ctx)
+ 
+     JS_FreeValue(ctx, ctx->throw_type_error);
+     JS_FreeValue(ctx, ctx->eval_obj);
++    JS_FreeValue(ctx, ctx->oom_error);
+ 
+     JS_FreeValue(ctx, ctx->array_proto_values);
+     for(i = 0; i < JS_NATIVE_ERROR_COUNT; i++) {
+@@ -8875,17 +8884,36 @@ static int JS_ThrowTypeErrorReadOnly(JSContext *ctx, int flags, JSAtom atom)
+ JSValue JS_ThrowOutOfMemory(JSContext *ctx)
+ {
+     JSRuntime *rt = ctx->rt;
++    /* Pocket3D P2: where memory runs out depends on the platform and on garbage-collection
++       history, so no script may catch it and carry on differently per platform. The error is the
++       context's own, made uncatchable in advance: making one here would need memory, and a
++       failed allocation would throw null, which no flag can make uncatchable. The count tells
++       the host that memory ran out even when a builtin swallows the error, and the zeroed
++       interrupt counter makes the next poll ask the host's handler, which stops the call. */
++    rt->out_of_memory_count++;
++    ctx->interrupt_counter = 0;
++    if (JS_VALUE_GET_TAG(ctx->oom_error) == JS_TAG_OBJECT)
++        return JS_Throw(ctx, js_dup(ctx->oom_error));
+     if (!rt->in_out_of_memory) {
+         rt->in_out_of_memory = true;
+         JS_ThrowInternalError(ctx, "out of memory");
++        JS_SetUncatchableError(ctx, rt->current_exception);
+         rt->in_out_of_memory = false;
+     }
+     return JS_EXCEPTION;
+ }
+ 
++uint32_t JS_GetOutOfMemoryCount(JSRuntime *rt)
++{
++    return rt->out_of_memory_count;
++}
++
+ static JSValue JS_ThrowStackOverflow(JSContext *ctx)
+ {
+-    return JS_ThrowRangeError(ctx, "Maximum call stack size exceeded");
++    /* Pocket3D P2: where the native stack runs out depends on the target and the build. */
++    JS_ThrowRangeError(ctx, "Maximum call stack size exceeded");
++    JS_SetUncatchableError(ctx, ctx->rt->current_exception);
++    return JS_EXCEPTION;
+ }
+ 
+ static JSValue JS_ThrowTypeErrorNotAConstructor(JSContext *ctx,
+@@ -59110,6 +59138,15 @@ static int JS_AddIntrinsicBasicObjects(JSContext *ctx)
+         ctx->native_error_proto[i] = proto;
+     }
+ 
++    /* Pocket3D P2: the error JS_ThrowOutOfMemory throws. Its stack is set to the empty string
++       now, so throwing it never builds a backtrace (which allocates and calls
++       Error.prepareStackTrace) and no call leaves its stack on it for the next. */
++    ctx->oom_error = JS_MakeError2(ctx, JS_INTERNAL_ERROR, false, "out of memory");
++    if (JS_IsException(ctx->oom_error))
++        return -1;
++    JS_VALUE_GET_OBJ(ctx->oom_error)->u.object_data = js_empty_string(ctx->rt);
++    JS_SetUncatchableError(ctx, ctx->oom_error);
++
+     /* the array prototype is an array */
+     ctx->class_proto[JS_CLASS_ARRAY] =
+         JS_NewObjectProtoClass(ctx, ctx->class_proto[JS_CLASS_OBJECT],
+diff --git a/quickjs/quickjs.h b/quickjs/quickjs.h
+index cc9cde7..1da2133 100644
+--- a/quickjs/quickjs.h
++++ b/quickjs/quickjs.h
+@@ -951,6 +951,8 @@ JS_EXTERN JSValue JS_PRINTF_FORMAT_ATTR(2, 3) JS_ThrowSyntaxError(JSContext *ctx
+ JS_EXTERN JSValue JS_PRINTF_FORMAT_ATTR(2, 3) JS_ThrowTypeError(JSContext *ctx, JS_PRINTF_FORMAT const char *fmt, ...);
+ JS_EXTERN JSValue JS_PRINTF_FORMAT_ATTR(3, 4) JS_ThrowDOMException(JSContext *ctx, const char *name, JS_PRINTF_FORMAT const char *fmt, ...);
+ JS_EXTERN JSValue JS_ThrowOutOfMemory(JSContext *ctx);
++/* Pocket3D P2: how often memory ran out in this runtime (wrapping). */
++JS_EXTERN uint32_t JS_GetOutOfMemoryCount(JSRuntime *rt);
+ JS_EXTERN void JS_FreeValue(JSContext *ctx, JSValue v);
+ JS_EXTERN void JS_FreeValueRT(JSRuntime *rt, JSValue v);
+ #define JS_FreeValues(ctx, ...) JS_CALLX_(JS_FreeValue, ctx, JS_COUNT_ARGS(__VA_ARGS__), __VA_ARGS__)

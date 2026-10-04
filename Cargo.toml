@@ -1,0 +1,102 @@
+# The Pocket3D rebuild's workspace (docs/spec/architecture.md). Crates and their allowed
+# dependencies are architecture.md 5; external crates are pinned exactly as slice 0 ran them (6).
+[workspace]
+resolver = "3"
+members = ["shared/contract/rust", "crates/*", "xtask"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+publish = false
+
+[workspace.dependencies]
+pocket-contract = { path = "shared/contract/rust" }
+pocket-sim = { path = "crates/pocket-sim" }
+pocket-persist = { path = "crates/pocket-persist" }
+pocket-physics = { path = "crates/pocket-physics" }
+pocket-interface = { path = "crates/pocket-interface" }
+pocket-script = { path = "crates/pocket-script" }
+pocket-link = { path = "crates/pocket-link" }
+pocket-runtime = { path = "crates/pocket-runtime" }
+pocket-check = { path = "crates/pocket-check" }
+
+bevy_ecs = { version = "=0.19.1", default-features = false, features = ["std"] }
+libm = "=0.2.16"
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = { version = "=1.0.151", features = ["float_roundtrip"] }
+schemars = "=1.2.2"
+strsim = "=0.11.1"
+serde-reflection = "=0.6.0"
+xxhash-rust = { version = "=0.8.19", features = ["xxh3"] }
+blake3 = "=1.8.7"
+rapier3d = { version = "=0.36.0", features = ["enhanced-determinism", "serde-serialize"] }
+bincode = "=1.3.3"            # pocket-physics: the physics cache's bytes (architecture.md 6)
+rquickjs = { version = "=0.14.0", default-features = false }
+oxc_allocator = "=0.152.0"
+oxc_ast = "=0.152.0"
+oxc_ast_visit = "=0.152.0"
+oxc_codegen = "=0.152.0"
+oxc_diagnostics = "=0.152.0"
+oxc_parser = "=0.152.0"
+oxc_semantic = "=0.152.0"
+oxc_span = "=0.152.0"
+oxc_syntax = "=0.152.0"
+oxc_transformer = "=0.152.0"
+oxc_sourcemap = "=9.0.0"
+ts-rs = "=12.0.1"
+arc-swap = "=1.9.2"
+wasm-bindgen = "=0.2.129"
+wasm-bindgen-futures = "=0.4.79"
+js-sys = "=0.3.106"
+web-sys = "=0.3.106"
+regex = "=1.13.1"
+tungstenite = "=0.30.0"
+toml = "=1.1.6"               # xtask: the check's configuration files (architecture.md 6)
+sha2 = "=0.11.0"              # xtask: shared/SYNC.toml's SHA-256 hashes (architecture.md 6)
+
+[profile.release]            # what timings measure and what ships natively (architecture.md 7.2)
+opt-level = 3
+lto = false
+codegen-units = 16
+debug = "line-tables-only"
+panic = "unwind"
+
+[profile.web]                # the shipped browser build
+inherits = "release"
+lto = true
+codegen-units = 1
+panic = "abort"
+debug = false
+
+# numeric.md 8: the tick-code crates check integer overflow in release builds too, so debug and
+# release behave alike and an overflow is an internal error, never a silent wrap.
+[profile.release.package.pocket-sim]
+overflow-checks = true
+
+[profile.web.package.pocket-sim]
+overflow-checks = true
+
+[profile.release.package.pocket-physics]
+overflow-checks = true
+
+[profile.web.package.pocket-physics]
+overflow-checks = true
+
+[profile.release.package.pocket-script]
+overflow-checks = true
+
+[profile.web.package.pocket-script]
+overflow-checks = true
+
+[profile.release.package.pocket-interface]
+overflow-checks = true
+
+[profile.web.package.pocket-interface]
+overflow-checks = true
+
+[profile.release.package.pocket-runtime]
+overflow-checks = true
+
+[profile.web.package.pocket-runtime]
+overflow-checks = true

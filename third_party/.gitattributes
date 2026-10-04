@@ -1,0 +1,4 @@
+# The vendored crate is committed byte for byte as vendor.py writes it (`--check` compares every
+# byte): three of rquickjs-sys 0.14.0's Windows bindings (src/bindings/*-windows-*.rs) hold CRLF
+# line ends, which the root's eol=lf would rewrite.
+rquickjs-sys-0.14.0/** -text

@@ -1,0 +1,56 @@
+[package]
+name = "pocket-script"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "The script host: TypeScript rules on QuickJS-ng, sandboxed, budgeted and hot-updated"
+
+[features]
+# oxc in process: TypeScript to JavaScript with source maps, and the lint (architecture.md 4.6
+# and 7.4). Off in the shipped web build, whose scripts arrive compiled.
+transpile = [
+    "dep:oxc_allocator",
+    "dep:oxc_ast",
+    "dep:oxc_ast_visit",
+    "dep:oxc_codegen",
+    "dep:oxc_diagnostics",
+    "dep:oxc_parser",
+    "dep:oxc_semantic",
+    "dep:oxc_span",
+    "dep:oxc_syntax",
+    "dep:oxc_transformer",
+    "dep:oxc_sourcemap",
+]
+
+[dependencies]
+pocket-contract.workspace = true
+pocket-sim.workspace = true
+# The world the host reads and writes (architecture.md 6, bevy_ecs; script-host.md 7.3 registers
+# project components through its dynamic-component API).
+bevy_ecs.workspace = true
+# QuickJS-ng; `loader` for the resolver and loader of script-host.md 8.1. The vendored
+# rquickjs-sys under third_party/ is substituted by .cargo/config.toml's [patch.crates-io].
+rquickjs = { workspace = true, features = ["std", "loader"] }
+serde.workspace = true
+serde_json.workspace = true
+oxc_allocator = { workspace = true, optional = true }
+oxc_ast = { workspace = true, optional = true }
+oxc_ast_visit = { workspace = true, optional = true }
+oxc_codegen = { workspace = true, optional = true }
+oxc_diagnostics = { workspace = true, optional = true }
+oxc_parser = { workspace = true, optional = true }
+oxc_semantic = { workspace = true, optional = true }
+oxc_span = { workspace = true, optional = true }
+oxc_syntax = { workspace = true, optional = true }
+oxc_transformer = { workspace = true, optional = true }
+oxc_sourcemap = { workspace = true, optional = true }
+
+[dev-dependencies]
+schemars.workspace = true
+
+# A WebAssembly module with no imports that runs a script workload and reports its per-tick
+# hashes, so tests/web/run.mjs can compare them with the native build's (script-host.md 12).
+[[example]]
+name = "web_workload"
+crate-type = ["cdylib"]

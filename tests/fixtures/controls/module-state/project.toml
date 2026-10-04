@@ -1,0 +1,3 @@
+# Negative control (checks.md 8.6, `module-state`): a module-level counter that feeds a component,
+# compiled with the lint off; the reload-equivalence check must catch it.
+name = "module-state"

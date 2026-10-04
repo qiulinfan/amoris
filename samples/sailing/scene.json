@@ -1,0 +1,22 @@
+{
+  "format": "pocket-scene",
+  "version": 1,
+  "entities": [
+    {"name": "Sea", "prefab": {"kind": "island_sea"}},
+    {"name": "Breeze", "prefab": {"kind": "breeze", "from_deg": 270, "speed": 6}},
+    {
+      "name": "Sloop",
+      "prefab": {"kind": "sloop", "position": [0, 0, 0], "heading_deg": 90},
+      "components": {
+        "Boat": {"hoist": 1, "hoist_now": 1, "sheet": 1, "sheet_now": 1},
+        "Crew": {},
+        "Tally": {},
+        "Log": {}
+      }
+    },
+    {"name": "Crate1", "prefab": {"kind": "crate", "position": [5, 0, 2.2], "yaw_deg": 10}, "components": {"Cargo": {"value": 1}}},
+    {"name": "Crate2", "prefab": {"kind": "crate", "position": [11, 0, -2.4], "yaw_deg": 35}, "components": {"Cargo": {"value": 2}}},
+    {"name": "Crate3", "prefab": {"kind": "crate", "position": [18, 0, 2.6], "yaw_deg": 60}, "components": {"Cargo": {"value": 1}}},
+    {"name": "Crate4", "prefab": {"kind": "crate", "position": [26, 0, -6], "yaw_deg": 80}, "components": {"Cargo": {"value": 3}}}
+  ]
+}

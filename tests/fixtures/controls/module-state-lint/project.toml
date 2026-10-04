@@ -1,0 +1,3 @@
+# Negative control (checks.md 8.6, `module-state-lint`): module-state's script with the lint on;
+# the `types` step must refuse it with the lint's code.
+name = "module-state-lint"

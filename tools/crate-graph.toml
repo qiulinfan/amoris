@@ -1,0 +1,127 @@
+# The crate graph of docs/spec/architecture.md 5, checked by `cargo xtask check`'s `deps` step
+# against `cargo metadata` for the host and for wasm32-unknown-unknown (docs/spec/checks.md 5.2).
+# A new crate or a new edge changes architecture.md 5 and this file together.
+#
+# deps:    the workspace crates a crate may depend on, for normal, dev and build dependencies alike
+#          (a test may use a crate below its own, never one above).
+# web:     the crate builds for wasm32-unknown-unknown (clippy and the wasm step check it there).
+# any:     every crate may depend on it (pocket-contract, architecture.md 4.16).
+# planned: in architecture.md 5 but not created yet, so its absence is not deps.crate_missing.
+
+[crate.pocket-contract]
+group = "contract"
+deps = []
+web = true
+any = true
+
+[crate.pocket-sim]
+group = "game"
+deps = []
+web = true
+
+[crate.pocket-assets]
+group = "game"
+deps = ["pocket-sim"]
+web = true
+planned = true
+
+[crate.pocket-persist]
+group = "game"
+deps = ["pocket-sim"]
+web = true
+
+[crate.pocket-physics]
+group = "game"
+deps = ["pocket-sim", "pocket-assets"]
+web = true
+
+[crate.pocket-interface]
+group = "game"
+deps = ["pocket-sim", "pocket-physics"]
+web = true
+
+[crate.pocket-script]
+group = "game"
+deps = ["pocket-sim", "pocket-physics", "pocket-interface"]
+web = true
+
+[crate.pocket-link]
+group = "link"
+deps = ["pocket-sim", "pocket-persist"]
+web = true
+
+[crate.pocket-runtime]
+group = "game"
+deps = ["pocket-sim", "pocket-assets", "pocket-persist", "pocket-physics", "pocket-interface",
+        "pocket-script", "pocket-link"]
+web = true
+
+[crate.pocket-check]
+group = "game"
+deps = ["pocket-sim", "pocket-persist", "pocket-runtime", "pocket-link"]
+web = true
+
+[crate.pocket-render]
+group = "presenter"
+deps = ["pocket-sim", "pocket-assets", "pocket-link"]
+web = true
+planned = true
+
+[crate.pocket-editor]
+group = "presenter"
+deps = ["pocket-sim", "pocket-link", "pocket-render"]
+web = true
+planned = true
+
+[crate.pocket-mcp]
+group = "tool"
+deps = ["pocket-sim", "pocket-link"]
+web = false
+planned = true
+
+[crate.pocket-debug]
+group = "tool"
+deps = ["pocket-script", "pocket-link"]
+web = false
+planned = true
+
+[crate.pocket-app]
+group = "app"
+deps = ["pocket-sim", "pocket-link", "pocket-runtime", "pocket-check", "pocket-render", "pocket-editor",
+        "pocket-mcp", "pocket-debug"]
+web = false
+
+[crate.pocket-web]
+group = "app"
+deps = ["pocket-sim", "pocket-link", "pocket-runtime", "pocket-check", "pocket-render", "pocket-editor"]
+web = true
+
+[crate.xtask]
+group = "tool"
+deps = []
+web = false
+
+# Forbidden anywhere in the transitive normal dependencies of the group's crates, on any target
+# (architecture.md 2.1 and 6). wasm-bindgen and js-sys appear below pocket-sim on wasm32 through
+# bevy_ecs's bevy_tasks, so they are forbidden only as direct dependencies.
+[group.game]
+forbid = ["wgpu", "winit", "egui", "egui-wgpu", "egui-winit", "tokio", "rmcp", "rayon", "web-sys"]
+forbid_direct = ["wasm-bindgen", "js-sys"]
+
+[features.bevy_ecs]
+forbid = ["multi_threaded", "serialize"]          # persistence.md 12, P6
+
+[features.serde_json]
+require = ["float_roundtrip"]
+forbid = ["preserve_order"]                       # replay.md 2.1
+
+[features.rapier3d]
+require = ["enhanced-determinism", "serde-serialize"]   # architecture.md 6; the physics spike
+forbid = ["parallel", "simd8"]
+
+[features.rquickjs]
+forbid = ["parallel"]     # it implements Send by pulling tokio/rt-multi-thread (architecture.md 4.6)
+
+[build]
+cflags_must_contain = "-ffp-contract=off"
+rustflags_forbid = ["target-cpu", "+fma"]
