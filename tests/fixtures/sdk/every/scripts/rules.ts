@@ -1,6 +1,6 @@
 // One system that uses every API of the prelude (script-host.md 5.1), with the types it expects.
 import { system } from "pocket";
-import type { BoolColumn, Entity, EntityColumn, EnumColumn, GameEvent, Rng, Vec3Columns, Vec4Columns } from "pocket";
+import type { BoolColumn, Entity, EntityColumn, EnumColumn, GameEvent, NotInFields, Rng, Vec3Columns, Vec4Columns } from "pocket";
 
 export const all = system({
     name: "every_api", phase: "update", doc: "Uses every API of the prelude.",
@@ -13,8 +13,9 @@ export const all = system({
             fields: ["Every.a_f64", "Every.a_bool", "Every.a_entity", "Every.a_enum", "Every.a_vec3", "Transform.position"],
         },
         whole: { with: ["Every"] },
+        none: { with: ["Every"], fields: [] },
     },
-    run(ctx, { rows, whole }) {
+    run(ctx, { rows, whole, none }) {
         const f: Float64Array = rows.cols.Every.a_f64;
         const b: BoolColumn = rows.cols.Every.a_bool;
         const en: EntityColumn = rows.cols.Every.a_entity;
@@ -62,6 +63,13 @@ export const all = system({
         streams[0].fill(new Float64Array(2));
         const q = ctx.query({ with: ["Transform"], fields: ["Transform.position"] });
         const x: Float64Array = q.cols.Transform.position.x;
-        f[0] += draws + picked.length + order.length + x.length;
+        const every = ctx.query({ with: ["Every"] });
+        const y: Float64Array = every.cols.Every.a_tick;
+        // `fields: []` hands over the rows and no column.
+        const gone: NotInFields<"Every.a_f64"> = none.cols.Every.a_f64;
+        const empty = ctx.query({ with: ["Every"], fields: [] });
+        const gone2: NotInFields<"Every.a_tick"> = empty.cols.Every.a_tick;
+        f[0] += draws + picked.length + order.length + x.length + y.length + none.len + empty.len;
+        void [gone, gone2];
     },
 });

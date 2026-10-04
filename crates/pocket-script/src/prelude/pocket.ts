@@ -106,14 +106,13 @@ export interface NotInFields<Path extends string> {
     readonly "add it to the query's fields": Path;
 }
 
-/** The columns of component C a query with `fields` F hands over (all when F is never). */
-export type QueryColumnsOf<C extends ComponentName, F extends string> = [F] extends [never]
-    ? ColumnsOf<C>
-    : {
-          readonly [K in keyof ColumnsOf<C>]: `${C}.${K & string}` extends F
-              ? ColumnsOf<C>[K]
-              : NotInFields<`${C}.${K & string}`>;
-      };
+/** The columns of component C a query hands over when F names the `"Component.field"`s it hands
+ * over (every one of `W`'s when the query has no `fields`, none for `fields: []`). */
+export type QueryColumnsOf<C extends ComponentName, F extends string> = {
+    readonly [K in keyof ColumnsOf<C>]: `${C}.${K & string}` extends F
+        ? ColumnsOf<C>[K]
+        : NotInFields<`${C}.${K & string}`>;
+};
 
 /** A query's columns: per `with` component, its field columns. */
 export type QueryColumns<W extends ComponentName, F extends string> = {
@@ -133,21 +132,22 @@ export interface QuerySpec<W extends ComponentName = ComponentName, F extends st
 /** A system's declared queries, by name. */
 export type Queries = { readonly [name: string]: QuerySpec };
 
-/** The query a spec gives. */
+/** The query a spec gives: the columns its `fields` names, every column of its `with` components
+ * when it has none, and none for `fields: []`. */
 export type QueryOf<S> = S extends { readonly with: readonly (infer W extends ComponentName)[] }
-    ? Query<W, S extends { readonly fields: readonly (infer F extends string)[] } ? F : never>
+    ? Query<W, S extends { readonly fields: readonly (infer F extends string)[] } ? F : FieldPath<W>>
     : never;
 
 /** A system's declared queries, prepared: what `run` receives as its second argument. */
 export type QueryResults<Q> = { readonly [K in keyof Q]: QueryOf<Q[K]> };
 
-/** Queries with each query's `fields` checked against its own `with` components (what `system()`
- * requires of its queries). */
-export type CheckedQueries<Q> = {
-    readonly [K in keyof Q]: Q[K] extends { readonly with: readonly (infer W extends ComponentName)[] }
-        ? QuerySpec<W, FieldPath<W>>
-        : QuerySpec;
-};
+/** A query with its `fields` checked against its own `with` components. */
+export type CheckedQuery<S> = S extends { readonly with: readonly (infer W extends ComponentName)[] }
+    ? QuerySpec<W, FieldPath<W>>
+    : QuerySpec;
+
+/** Queries, each checked as `CheckedQuery` (what `system()` requires of its queries). */
+export type CheckedQueries<Q> = { readonly [K in keyof Q]: CheckedQuery<Q[K]> };
 
 /** A game event as systems read it (`ctx.events`). */
 export interface GameEvent {
@@ -174,17 +174,47 @@ export type ReservedEventPrefix =
     | "decision"
     | "perception";
 
+type LowerLetter =
+    | "a" | "b" | "c" | "d" | "e" | "f" | "g" | "h" | "i" | "j" | "k" | "l" | "m"
+    | "n" | "o" | "p" | "q" | "r" | "s" | "t" | "u" | "v" | "w" | "x" | "y" | "z";
+type WordChar = LowerLetter | "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "_";
+type WordTail<S extends string> = S extends `${infer C}${infer R}`
+    ? C extends WordChar
+        ? WordTail<R>
+        : false
+    : true;
+/** Whether S is one snake_case word, `^[a-z][a-z0-9_]*$`: a system's name, a part of an event kind. */
+export type IsWord<S extends string> = S extends `${infer C}${infer R}`
+    ? C extends LowerLetter
+        ? WordTail<R>
+        : false
+    : false;
+type DottedWords<S extends string> = S extends `${infer W}.${infer R}`
+    ? IsWord<W> extends true
+        ? DottedWords<R>
+        : false
+    : IsWord<S>;
+/** Whether S is an event kind: snake_case words joined by dots, at least two. */
+export type IsEventKind<S extends string> = S extends `${infer W}.${infer R}`
+    ? IsWord<W> extends true
+        ? DottedWords<R>
+        : false
+    : false;
+
 /**
- * An event kind: lowercase dotted words named after the game (`"crate.taken"`), not starting with
- * an engine prefix (`ReservedEventPrefix`).
+ * An event kind: snake_case words joined by dots, named after the game (`"crate.taken"`), not
+ * starting with an engine prefix (`ReservedEventPrefix`). A kind held in a `string` is checked when
+ * it is emitted (`sim.event_kind_invalid`, `script.event_reserved`).
  */
 export type EventKind<K extends string> = string extends K
     ? K
     : K extends `${ReservedEventPrefix}.${string}`
-      ? NoInfer<`${K} is reserved: name the event after your game, such as "game.${K}"`>
-      : K extends `${string}.${string}`
+      ? NoInfer<`${K} is reserved: name the event after your game, such as 'game.${K}'`>
+      : IsEventKind<K> extends true
         ? K
-        : NoInfer<`${K}.${string}`>;
+        : IsWord<K> extends true
+          ? NoInfer<`${K}.${string}`>
+          : NoInfer<"an event kind: snake_case words joined by dots, such as 'crate.taken'">;
 
 /** Where an event comes from and what led to it. */
 export interface EmitOptions {
@@ -260,7 +290,7 @@ interface RawQuery {
  * `q.cols.Boat.speed[row]`. Columns are the system's own copies; cells it changes are written back
  * when `run` returns.
  */
-export class Query<W extends ComponentName = ComponentName, F extends string = never> {
+export class Query<W extends ComponentName = ComponentName, F extends string = string> {
     /** The number of rows. */
     readonly len: number;
     /** Each row's entity, ascending. */
@@ -337,7 +367,7 @@ export interface SystemContext {
     /** The one entity with the component (else `script.single_count`). */
     single(component: ComponentName): Entity;
     /** A query prepared on demand, at the cost of a declared one. */
-    query<const W extends ComponentName, const F extends FieldPath<W> = never>(
+    query<const W extends ComponentName, const F extends FieldPath<W> = FieldPath<W>>(
         spec: QuerySpec<W, F>,
     ): Query<W, F>;
     /** Appends an event when the system's commands apply: `ctx.emit("crate.taken", {left}, {subject: boat})`. */
@@ -472,14 +502,14 @@ export interface Component<N extends string = string, F extends Fields = Fields>
     readonly def: ComponentDef<F>;
 }
 
-/** A system's name: `^[a-z][a-z0-9_]*$` (lowercase words joined by `_`). */
+/** A system's name: `^[a-z][a-z0-9_]*$` (lowercase words joined by `_`), at most 56 bytes. */
 export type SystemName<N extends string> = string extends N
     ? N
-    : N extends Lowercase<N>
-      ? N extends `${string}${"-" | " " | "."}${string}` | ""
-          ? NoInfer<"a system name: lowercase words joined by _">
-          : N
-      : NoInfer<Lowercase<N>>;
+    : IsWord<N> extends true
+      ? N
+      : IsWord<Lowercase<N>> extends true
+        ? NoInfer<Lowercase<N>>
+        : NoInfer<"a system name: a lowercase letter, then lowercase letters, digits and _">;
 
 /** A system's declaration (script-host.md 5.1). */
 export interface SystemDef<Q = Queries, N extends string = string> {

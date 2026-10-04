@@ -215,3 +215,25 @@ pub fn intent<'js>(_ctx: &Ctx<'js>, _args: &[Value<'js>]) -> NResult<'js> {
     )
     .into())
 }
+
+#[cfg(test)]
+mod tests {
+    /// The SDK's `ReservedEventPrefix` (prelude/pocket.ts), which makes `ctx.emit("script.x")` a
+    /// type error, names exactly the prefixes `emit` refuses.
+    #[test]
+    fn the_sdk_reserves_the_prefixes_emit_refuses() {
+        let ts = include_str!("../prelude/pocket.ts");
+        let start = ts
+            .find("export type ReservedEventPrefix =")
+            .expect("pocket.ts declares ReservedEventPrefix");
+        let body = &ts[start..];
+        let body = &body[..body.find(';').unwrap()];
+        let typed: Vec<String> = body
+            .split('"')
+            .skip(1)
+            .step_by(2)
+            .map(|p| format!("{p}."))
+            .collect();
+        assert_eq!(typed, super::RESERVED);
+    }
+}
