@@ -20,6 +20,8 @@ pocket-script = { path = "crates/pocket-script" }
 pocket-link = { path = "crates/pocket-link" }
 pocket-runtime = { path = "crates/pocket-runtime" }
 pocket-check = { path = "crates/pocket-check" }
+pocket-assets = { path = "crates/pocket-assets", default-features = false }
+pocket-render = { path = "crates/pocket-render" }
 
 bevy_ecs = { version = "=0.19.1", default-features = false, features = ["std"] }
 libm = "=0.2.16"
@@ -54,6 +56,16 @@ regex = "=1.13.1"
 tungstenite = "=0.30.0"
 toml = "=1.1.6"               # xtask: the check's configuration files (architecture.md 6)
 sha2 = "=0.11.0"              # xtask: shared/SYNC.toml's SHA-256 hashes (architecture.md 6)
+
+# Presenters and assets (charter 4.1)
+gltf = { version = "=1.4.1", default-features = false, features = ["import", "utils", "names", "KHR_materials_emissive_strength", "KHR_texture_transform", "KHR_lights_punctual"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+wgpu = "=30.0.1"
+winit = "0.30"
+glam = { version = "0.33", features = ["bytemuck"] }
+bytemuck = { version = "1.25", features = ["derive"] }
+pollster = "0.4"
+bincode2 = { package = "bincode", version = "2.0.1", default-features = false, features = ["std", "serde"] }
 
 [profile.release]            # what timings measure and what ships natively (architecture.md 7.2)
 opt-level = 3

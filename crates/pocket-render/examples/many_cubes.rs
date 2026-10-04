@@ -1,0 +1,190 @@
+//! The Bevy `many_cubes` stress test, rebuilt on this renderer for a like-for-like comparison
+//! (docs/bench/bevy-baseline.md): 1,600,000 cubes on a sphere (or a dense grid), one mesh, one
+//! material, a directional light, a camera turning at a fixed rate per frame.
+//!
+//! `cargo run --release -p pocket-render --example many_cubes -- [--dense] [--count N]
+//!  [--bench FRAMES] [--shadows] [--vsync]`
+
+use glam::{Quat, Vec3};
+use pocket_assets::frame::{
+    EnvironmentView, InstanceUpdate, LightKindView, LightView, Look, Pose, RenderFrame,
+};
+use pocket_render::app::{Host, RunOptions, run};
+use pocket_render::{BackendChoice, Renderer};
+
+struct Cubes {
+    frame: Option<RenderFrame>,
+    rot: Quat,
+    dense: bool,
+}
+
+fn arg(name: &str) -> Option<String> {
+    let args: Vec<String> = std::env::args().collect();
+    args.iter().position(|a| a == name).and_then(|i| args.get(i + 1).cloned())
+}
+
+fn flag(name: &str) -> bool {
+    std::env::args().any(|a| a == name)
+}
+
+fn build(count: usize, dense: bool, shadows: bool) -> RenderFrame {
+    let look = Look {
+        mesh: "cube".into(),
+        material: String::new(),
+        color: [0.8, 0.7, 0.6, 1.0],
+        metallic: 0.0,
+        roughness: 0.6,
+        emissive: [0.0; 3],
+        cast_shadows: shadows,
+        visible: true,
+    };
+    let mut instances = Vec::with_capacity(count + 1);
+    if dense {
+        // Bevy's Layout::Dense, exactly: x, y wrap at cbrt(count), z grows continuously.
+        let size = (count as f32).cbrt().round();
+        let gap = 1.25;
+        for i in 0..count {
+            let x = i as f32 % size;
+            let y = (i as f32 / size) % size;
+            let z = i as f32 / (size * size);
+            instances.push(InstanceUpdate {
+                id: i as u64 + 1,
+                pose: Some(Pose { position: [x * gap, y * gap, z * gap], ..Pose::default() }),
+                look: Some(look.clone()),
+            });
+        }
+    } else {
+        // Bevy's Layout::Sphere, exactly: a Fibonacci spiral on a sphere of radius 500, each cube
+        // facing the centre, plus the inside-out box around them.
+        let radius = 200.0f64 * 2.5;
+        let golden = 0.5f64 * (1.0 + 5f64.sqrt());
+        for i in 0..count {
+            let theta = std::f64::consts::TAU * i as f64 / golden;
+            let phi = (1.0 - 2.0 * (i as f64 + 0.5) / count as f64).acos();
+            let p = glam::DVec3::new(phi.sin() * theta.cos(), phi.sin() * theta.sin(), phi.cos()) * radius;
+            let pos = p.as_vec3();
+            let rot = glam::Quat::from_mat4(&glam::camera::rh::view::look_at_mat4(pos, Vec3::ZERO, Vec3::Y).inverse());
+            instances.push(InstanceUpdate {
+                id: i as u64 + 1,
+                pose: Some(Pose { position: pos.to_array(), rotation: rot.to_array(), scale: [1.0; 3] }),
+                look: Some(look.clone()),
+            });
+        }
+        let s = radius as f32 * 2.2;
+        instances.push(InstanceUpdate {
+            id: count as u64 + 1,
+            pose: Some(Pose { position: [0.0; 3], rotation: [0.0, 0.0, 0.0, 1.0], scale: [-s, -s, -s] }),
+            look: Some(Look { color: [1.0; 4], cast_shadows: false, ..look.clone() }),
+        });
+    }
+    RenderFrame {
+        tick: 1,
+        t_s: 0.0,
+        dt_s: 1.0 / 60.0,
+        reset: true,
+        instances,
+        removed: vec![],
+        lights: Some(vec![LightView {
+            id: 0,
+            kind: LightKindView::Directional,
+            position: [0.0; 3],
+            direction: Vec3::new(0.0, -1.0, -1.0).normalize().to_array(),
+            color: [1.0, 0.96, 0.9],
+            intensity: 6.0,
+            range: 0.0,
+            inner_deg: 0.0,
+            outer_deg: 0.0,
+            shadows,
+        }]),
+        cameras: Some(vec![]),
+        environment: Some(EnvironmentView {
+            sky: 0,
+            sky_color: [0.3, 0.5, 0.8],
+            ambient: 1.0,
+            fog_density: 0.0,
+            fog_color: [0.6, 0.7, 0.8],
+            exposure_ev: 0.0,
+            bloom: 0.1,
+        }),
+        sea: None,
+        splats: None,
+    }
+}
+
+impl Host for Cubes {
+    fn update(&mut self, r: &mut Renderer, now: f64) {
+        if let Some(f) = self.frame.take() {
+            r.apply(f, now);
+        }
+        // Bevy's move_camera with --benchmark: rotate about local z then x by 0.15/60 each frame;
+        // the dense layout's camera stands still.
+        let cam = if self.dense {
+            pocket_render::CameraState::look_at(Vec3::new(100.0, 90.0, 100.0), Vec3::new(0.0, -10.0, 0.0))
+        } else {
+            // Transform::rotate_z then rotate_x: both rotate about the world axes.
+            let d = 0.15 / 60.0;
+            self.rot = (Quat::from_rotation_x(d) * Quat::from_rotation_z(d) * self.rot).normalize();
+            let mut c = pocket_render::CameraState::look_at(Vec3::ZERO, -Vec3::Z);
+            c.rotation = self.rot;
+            c
+        };
+        r.set_camera_override(Some(cam));
+    }
+}
+
+fn main() {
+    env_logger_init();
+    let count: usize = arg("--count").and_then(|s| s.parse().ok()).unwrap_or(1_600_000);
+    let dense = flag("--dense");
+    let shadows = flag("--shadows");
+    let bench: Option<u32> = arg("--bench").and_then(|s| s.parse().ok());
+    let t = std::time::Instant::now();
+    let frame = build(count, dense, shadows);
+    println!("built {} cubes in {:.0} ms", count, t.elapsed().as_secs_f64() * 1000.0);
+    if let Some(path) = arg("--capture") {
+        // Headless: draw a few frames offscreen and save the last.
+        let gpu = pocket_render::Gpu::headless(BackendChoice::from_env()).expect("gpu");
+        let mut r = Renderer::new(&gpu, wgpu::TextureFormat::Rgba8UnormSrgb, 1600, 900);
+        let mut host = Cubes { frame: Some(frame), rot: Quat::IDENTITY, dense };
+        for i in 0..5 {
+            host.update(&mut r, i as f64 / 60.0);
+            let _ = r.capture_rgba(i as f64 / 60.0);
+        }
+        let (w, h, px) = r.capture_rgba(0.1);
+        image::save_buffer(&path, &px, w, h, image::ColorType::Rgba8).expect("png");
+        println!("saved {path} ({w}x{h}); {:?}", r.last);
+        return;
+    }
+    let options = RunOptions {
+        title: format!("many_cubes ({count}{})", if dense { ", dense" } else { "" }),
+        width: 1280,
+        height: 720,
+        backend: BackendChoice::from_env(),
+        vsync: flag("--vsync"),
+        fly_camera: None,
+        bench: bench.map(|n| (60, n)),
+    };
+    match run(Cubes { frame: Some(frame), rot: Quat::IDENTITY, dense }, options) {
+        Ok(Some(r)) => println!("{r:#?}"),
+        Ok(None) => {}
+        Err(e) => eprintln!("error: {e}"),
+    }
+}
+
+fn env_logger_init() {
+    struct L;
+    impl log::Log for L {
+        fn enabled(&self, m: &log::Metadata<'_>) -> bool {
+            m.level() <= log::Level::Info && !m.target().starts_with("wgpu") && !m.target().starts_with("naga")
+        }
+        fn log(&self, r: &log::Record<'_>) {
+            if self.enabled(r.metadata()) {
+                eprintln!("[{}] {}", r.level(), r.args());
+            }
+        }
+        fn flush(&self) {}
+    }
+    static LOGGER: L = L;
+    let _ = log::set_logger(&LOGGER);
+    log::set_max_level(log::LevelFilter::Info);
+}

@@ -1,0 +1,29 @@
+[package]
+name = "pocket-render"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "The wgpu renderer: GPU-driven, clustered PBR, shadows, sky, ocean, post; Metal, Vulkan and WebGPU"
+
+[dependencies]
+pocket-assets.workspace = true
+wgpu.workspace = true
+glam.workspace = true
+bytemuck.workspace = true
+log = "0.4"
+winit = { workspace = true, optional = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+pollster.workspace = true
+
+[features]
+import = ["pocket-assets/import"]
+default = ["window", "import"]
+# A native window runner (winit) for examples and the `pocket` binary.
+window = ["dep:winit"]
+
+[dev-dependencies]
+wgpu.workspace = true
+image.workspace = true
+log = "0.4"

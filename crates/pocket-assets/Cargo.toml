@@ -1,0 +1,25 @@
+[package]
+name = "pocket-assets"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Asset identity, the visual components, CPU mesh data and glTF import, and the render feed"
+
+[dependencies]
+pocket-contract.workspace = true
+pocket-sim.workspace = true
+bevy_ecs.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+serde-reflection.workspace = true
+bincode2.workspace = true
+bytemuck.workspace = true
+# glTF 2.0 import (charter 4.1): meshes, materials, embedded and external images.
+gltf = { workspace = true, optional = true }
+image = { workspace = true, optional = true }
+
+[features]
+default = ["import"]
+import = ["dep:gltf", "dep:image"]
