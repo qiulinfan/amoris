@@ -37,6 +37,7 @@ pub(crate) mod sandbox;
 pub mod scripts;
 pub mod source;
 pub mod sourcemap;
+pub mod types;
 pub mod web;
 
 pub use access::{ComponentAccess, EngineFns, ScriptAccess, register_engine, register_project};

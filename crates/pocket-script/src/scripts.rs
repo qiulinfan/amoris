@@ -344,6 +344,24 @@ fn swap_in(
     })
 }
 
+/// The project components `set` declares, as a swap would register them: the set instantiated in a
+/// throwaway host against the world's registry, with no debugger and nothing shared with the
+/// world's program, which stays as it was. What the type emitter needs before a swap
+/// (`scripts.types`); a set that would not load answers its errors, as a swap would.
+pub fn declared_components(
+    world: &World,
+    set: &CompiledSet,
+) -> Result<Vec<std::sync::Arc<ComponentSchema>>, Vec<ScriptError>> {
+    let limits = world
+        .get_non_send::<Scripts>()
+        .map_or_else(ScriptLimits::default, |s| *s.host.limits());
+    let host = ScriptHost::new(limits).map_err(|e| vec![e])?;
+    let program = host.instantiate(set, world)?;
+    let components = program.project_components().to_vec();
+    drop(program);
+    Ok(components)
+}
+
 /// The outcomes of the last tick's script systems.
 pub fn last_tick(world: &World) -> Vec<(String, SystemOutcome)> {
     world
