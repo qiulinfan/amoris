@@ -1,0 +1,156 @@
+{
+  "bug": "anchor-stale",
+  "kind": "stale variable: the hoist is written from the value read before the anchor rule",
+  "trial": 1,
+  "model": "zai-coding-plan/glm-5.3-flash",
+  "via": "mcp",
+  "variant": "free",
+  "success": true,
+  "bug_check": true,
+  "checks": {
+    "steer": [
+      true,
+      "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3) (pass: left < -5, right > +5)"
+    ],
+    "goto": [
+      true,
+      "nearest to Crate4 within 15 s (sampled every 0.5 s): 4.4 m (pass < 6 m)"
+    ],
+    "goto_behind": [
+      true,
+      "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+    ],
+    "reach": [
+      true,
+      "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+    ],
+    "anchor": [
+      true,
+      "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+    ],
+    "tally": [
+      true,
+      "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+    ]
+  },
+  "hash_chain_identical_to_clean": true,
+  "hash_first_divergence_tick": null,
+  "hash_error": null,
+  "answer": {
+    "cause": "The helm system computed the anchored sail (0) into a local variable but wrote the un-anchored `wanted` to the Boat's hoist control, so the sail never came down and the sloop kept sailing at anchor.",
+    "file": "scripts/helm.ts",
+    "line": 76,
+    "fixed": true
+  },
+  "located": false,
+  "planted_at": {
+    "file": "scripts/helm.ts",
+    "lines": [
+      71,
+      78
+    ],
+    "defect_lines": [
+      78
+    ]
+  },
+  "stopped_by": null,
+  "agent_exit": 0,
+  "agent_s": 453.0,
+  "wall_s": 455.7,
+  "budget": {
+    "max_calls": 60,
+    "max_time_s": 900
+  },
+  "tools": {
+    "bash": 32
+  },
+  "tool_calls": 32,
+  "tool_errors": 1,
+  "cli": {
+    "help": 1,
+    "scripts list": 1,
+    "scripts read": 6,
+    "world schema": 1,
+    "world get": 12,
+    "status": 1,
+    "world set": 3,
+    "step": 10,
+    "snapshots list": 1,
+    "scripts write": 1,
+    "scripts apply": 2,
+    "snapshots restore": 1,
+    "events": 2,
+    "scripts status": 1,
+    "debug breakpoints.set": 1,
+    "debug state": 2,
+    "debug eval": 3,
+    "debug continue": 1,
+    "time status": 1,
+    "world tree": 1,
+    "call scripts.status": 2,
+    "debug breakpoints.clear": 1
+  },
+  "pocket_calls": 55,
+  "turns": 28,
+  "tokens": {
+    "input": 33260,
+    "output": 3103,
+    "reasoning": 5578,
+    "cache_read": 450240,
+    "total": 492181
+  },
+  "cost_usd": 0.0,
+  "refusals": {},
+  "output_chars": 30501,
+  "largest_output_chars": 11497,
+  "bash_timeouts": 1,
+  "first_s": {
+    "scripts_read": 2.71,
+    "scripts_write": 105.47,
+    "debug": 158.51
+  },
+  "debug_used": true,
+  "blocked_s": 120.1,
+  "eval_unseen_locals": 0,
+  "stale_bundle_after_restore": {
+    "restore_at_s": 110.52002399999999,
+    "reapplied_at_s": 394.49,
+    "lost_s": 284.0,
+    "ended_with_old_scripts": false
+  },
+  "as_run": {
+    "success": true,
+    "located": true,
+    "checks": {
+      "steer": [
+        true,
+        "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+      ],
+      "goto": [
+        true,
+        "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+      ],
+      "goto_behind": [
+        true,
+        "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+      ],
+      "reach": [
+        true,
+        "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+      ],
+      "anchor": [
+        true,
+        "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+      ],
+      "tally": [
+        true,
+        "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+      ]
+    },
+    "hash_chain_identical_to_clean": true,
+    "hash_first_divergence_tick": null
+  },
+  "isolation": "permissions",
+  "rules_kept": true,
+  "rules_changed": []
+}

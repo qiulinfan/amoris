@@ -1,0 +1,142 @@
+{
+  "bug": "reach-squared",
+  "kind": "squared distance compared with an unsquared reach (reach 1.7 m instead of 3 m)",
+  "trial": 2,
+  "model": "zai-coding-plan/glm-5.3-flash",
+  "via": "cli",
+  "variant": "free",
+  "success": true,
+  "bug_check": true,
+  "checks": {
+    "steer": [
+      true,
+      "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3) (pass: left < -5, right > +5)"
+    ],
+    "goto": [
+      true,
+      "nearest to Crate4 within 15 s (sampled every 0.5 s): 4.4 m (pass < 6 m)"
+    ],
+    "goto_behind": [
+      true,
+      "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+    ],
+    "reach": [
+      true,
+      "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+    ],
+    "anchor": [
+      true,
+      "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+    ],
+    "tally": [
+      true,
+      "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+    ]
+  },
+  "hash_chain_identical_to_clean": true,
+  "hash_first_divergence_tick": null,
+  "hash_error": null,
+  "answer": {
+    "cause": "The take_aboard system compared the crate's squared horizontal distance against REACH in metres instead of REACH squared, so crates beyond sqrt(3) m were wrongly 'out of reach'.",
+    "file": "scripts/rules.ts",
+    "line": 60,
+    "fixed": true
+  },
+  "located": true,
+  "planted_at": {
+    "file": "scripts/rules.ts",
+    "lines": [
+      57,
+      61
+    ],
+    "defect_lines": [
+      59,
+      60
+    ]
+  },
+  "stopped_by": null,
+  "agent_exit": 0,
+  "agent_s": 120.8,
+  "wall_s": 123.3,
+  "budget": {
+    "max_calls": 60,
+    "max_time_s": 900
+  },
+  "tools": {
+    "bash": 15,
+    "write": 1
+  },
+  "tool_calls": 16,
+  "tool_errors": 1,
+  "cli": {
+    "help": 1,
+    "scripts list": 1,
+    "scripts read": 4,
+    "world query": 5,
+    "scripts write": 1,
+    "scripts apply": 1,
+    "status": 1,
+    "info": 1,
+    "world set": 2,
+    "step": 2,
+    "events": 1,
+    "world get": 1
+  },
+  "pocket_calls": 21,
+  "turns": 15,
+  "tokens": {
+    "input": 14382,
+    "output": 1910,
+    "reasoning": 1270,
+    "cache_read": 138304,
+    "total": 155866
+  },
+  "cost_usd": 0.0,
+  "debug_used": false,
+  "refusals": {},
+  "output_chars": 13386,
+  "largest_output_chars": 4459,
+  "bash_timeouts": 0,
+  "blocked_s": 0.0,
+  "eval_unseen_locals": 0,
+  "stale_bundle_after_restore": null,
+  "first_s": {
+    "scripts_read": 6.75,
+    "scripts_write": 53.85
+  },
+  "as_run": {
+    "success": true,
+    "located": true,
+    "checks": {
+      "steer": [
+        true,
+        "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+      ],
+      "goto": [
+        true,
+        "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+      ],
+      "goto_behind": [
+        true,
+        "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+      ],
+      "reach": [
+        true,
+        "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+      ],
+      "anchor": [
+        true,
+        "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+      ],
+      "tally": [
+        true,
+        "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+      ]
+    },
+    "hash_chain_identical_to_clean": true,
+    "hash_first_divergence_tick": null
+  },
+  "isolation": "permissions",
+  "rules_kept": true,
+  "rules_changed": []
+}

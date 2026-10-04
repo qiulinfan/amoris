@@ -1,0 +1,36 @@
+You are helping the player of a small sailing game made with the Pocket3D engine.
+
+The game is running in a host that you reach only through the `pocket` command-line client, which
+is on your PATH and already connected to it (POCKET_HOST is set). The game is paused at tick 0 in
+its edit world; `pocket step <ticks>` advances it.
+
+The game: a sloop (the entity `Sloop`) sails on a sea in a steady breeze, with crates (`Crate1` to
+`Crate4`) adrift. The player plays by setting the Sloop's controls, for example
+`pocket world set Sloop Helm steer=-1` (the wheel), `pocket world set Sloop Helm goto=Crate2` (the
+helmsman steers for a crate), `pocket world set Sloop Helm anchor=true`, or
+`pocket world set Sloop Crew take=Crate1` (the crew takes a crate aboard if it is within reach).
+
+The player reports:
+  "When I turn the wheel to the left (the Sloop's Helm steer at -1) the sloop turns to the right, and when I turn it to the right (steer 1) it goes left."
+
+Your job: find the cause of this in the game's scripts, fix it, and confirm the fix in the running
+game.
+
+Rules:
+- Use only `pocket` commands (plus grep/head/tail/wc/sort/jq on their output). Start with
+  `pocket help`; `pocket help <command>` explains one. The host has commands to inspect the world,
+  step time with stop conditions, read events and logs, debug the scripts (breakpoints, watches,
+  evaluation) and read, write and apply scripts.
+- Read the scripts with `pocket scripts read <path>`. Change one by writing its whole new text with
+  `pocket scripts write <path> - <<'EOF' ... EOF` (or from a file you create in your working
+  directory), then load it into the game with `pocket scripts apply`.
+- Before you change any code, confirm the cause in the running game with the script debugger
+  (`pocket debug <action> '<json>'`): stop the game inside the system you suspect with a breakpoint
+  or a data watch, and look at the values there (`pocket debug state`, `pocket debug eval`). Say in
+  your final message what the debugger showed.
+- Fix the code; do not hide the symptom by changing the scene, the player's controls or constants
+  that set the game's rules.
+- Budget: at most 60 tool calls and 15 minutes.
+
+When you are done, end your final message with one line of JSON:
+{"cause": "<one sentence>", "file": "scripts/<name>.ts", "line": <the line of the defect>, "fixed": true}

@@ -1,0 +1,149 @@
+{
+  "bug": "steer-sign",
+  "kind": "sign error: the wheel's rudder is negated",
+  "trial": 1,
+  "model": "zai-coding-plan/glm-5.3-flash",
+  "via": "cli",
+  "variant": "debugger",
+  "success": true,
+  "bug_check": true,
+  "checks": {
+    "steer": [
+      true,
+      "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3) (pass: left < -5, right > +5)"
+    ],
+    "goto": [
+      true,
+      "nearest to Crate4 within 15 s (sampled every 0.5 s): 4.4 m (pass < 6 m)"
+    ],
+    "goto_behind": [
+      true,
+      "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+    ],
+    "reach": [
+      true,
+      "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+    ],
+    "anchor": [
+      true,
+      "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+    ],
+    "tally": [
+      true,
+      "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+    ]
+  },
+  "hash_chain_identical_to_clean": true,
+  "hash_first_divergence_tick": null,
+  "hash_error": null,
+  "answer": {
+    "cause": "The wheel branch of the helm system negated the steer input, so steer=-1 produced a positive rudder, which the engine defines as turning the bow to starboard.",
+    "file": "scripts/helm.ts",
+    "line": 54,
+    "fixed": true
+  },
+  "located": true,
+  "planted_at": {
+    "file": "scripts/helm.ts",
+    "lines": [
+      54,
+      54
+    ],
+    "defect_lines": [
+      54
+    ]
+  },
+  "stopped_by": null,
+  "agent_exit": 0,
+  "agent_s": 313.1,
+  "wall_s": 315.2,
+  "budget": {
+    "max_calls": 60,
+    "max_time_s": 900
+  },
+  "tools": {
+    "bash": 22,
+    "write": 1
+  },
+  "tool_calls": 23,
+  "tool_errors": 0,
+  "cli": {
+    "help": 1,
+    "scripts list": 1,
+    "status": 1,
+    "scripts read": 4,
+    "world schema": 1,
+    "help debug": 1,
+    "call debug.breakpoints.set": 3,
+    "debug state": 6,
+    "world set": 6,
+    "step": 6,
+    "call debug.pause": 1,
+    "call debug.continue": 2,
+    "call debug.eval": 2,
+    "call debug.breakpoints.clear": 2,
+    "scripts write": 1,
+    "scripts apply": 1,
+    "world get": 4
+  },
+  "pocket_calls": 43,
+  "turns": 23,
+  "tokens": {
+    "input": 21694,
+    "output": 2233,
+    "reasoning": 4088,
+    "cache_read": 287360,
+    "total": 315375
+  },
+  "cost_usd": 0.0,
+  "refusals": {
+    "request.missing_field": 1,
+    "sim.component_unknown": 1
+  },
+  "output_chars": 33716,
+  "largest_output_chars": 9947,
+  "bash_timeouts": 1,
+  "first_s": {
+    "scripts_read": 8.77,
+    "scripts_write": 255.49
+  },
+  "debug_used": true,
+  "blocked_s": 120.1,
+  "eval_unseen_locals": 0,
+  "stale_bundle_after_restore": null,
+  "as_run": {
+    "success": true,
+    "located": true,
+    "checks": {
+      "steer": [
+        true,
+        "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+      ],
+      "goto": [
+        true,
+        "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+      ],
+      "goto_behind": [
+        true,
+        "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+      ],
+      "reach": [
+        true,
+        "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+      ],
+      "anchor": [
+        true,
+        "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+      ],
+      "tally": [
+        true,
+        "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+      ]
+    },
+    "hash_chain_identical_to_clean": true,
+    "hash_first_divergence_tick": null
+  },
+  "isolation": "permissions",
+  "rules_kept": true,
+  "rules_changed": []
+}

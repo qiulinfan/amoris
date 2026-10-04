@@ -1,0 +1,170 @@
+{
+  "bug": "tally-off-by-one",
+  "kind": "off by one: the crates left are counted before the crate just taken",
+  "trial": 1,
+  "model": "zai-coding-plan/glm-5.3-flash",
+  "via": "cli",
+  "variant": "debugger",
+  "success": true,
+  "bug_check": true,
+  "checks": {
+    "steer": [
+      true,
+      "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3) (pass: left < -5, right > +5)"
+    ],
+    "goto": [
+      true,
+      "nearest to Crate4 within 15 s (sampled every 0.5 s): 4.4 m (pass < 6 m)"
+    ],
+    "goto_behind": [
+      true,
+      "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+    ],
+    "reach": [
+      true,
+      "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+    ],
+    "anchor": [
+      true,
+      "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+    ],
+    "tally": [
+      true,
+      "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+    ]
+  },
+  "hash_chain_identical_to_clean": true,
+  "hash_first_divergence_tick": null,
+  "hash_error": null,
+  "answer": {
+    "cause": "takeAboard computed `left` as total - taken before incrementing tally.taken, so every crate.taken reported one crate too many left and crates.all (left === 0) never fired on the last crate.",
+    "file": "scripts/rules.ts",
+    "line": 63,
+    "fixed": true
+  },
+  "located": true,
+  "planted_at": {
+    "file": "scripts/rules.ts",
+    "lines": [
+      63,
+      66
+    ],
+    "defect_lines": [
+      63,
+      65
+    ]
+  },
+  "stopped_by": null,
+  "agent_exit": 0,
+  "agent_s": 773.8,
+  "wall_s": 776.5,
+  "budget": {
+    "max_calls": 60,
+    "max_time_s": 900
+  },
+  "tools": {
+    "bash": 44,
+    "read": 1,
+    "edit": 1
+  },
+  "tool_calls": 46,
+  "tool_errors": 1,
+  "cli": {
+    "help": 1,
+    "scripts list": 1,
+    "status": 3,
+    "scripts read": 2,
+    "help debug": 1,
+    "world tree": 1,
+    "world query": 1,
+    "help debug.breakpoints.set": 1,
+    "help debug.eval": 1,
+    "help debug.watch": 1,
+    "call debug.state": 8,
+    "catalog": 1,
+    "call debug.breakpoints.set": 3,
+    "call debug.watch": 3,
+    "world set": 23,
+    "step": 17,
+    "events": 5,
+    "logs": 1,
+    "world edit": 2,
+    "help world_edit": 1,
+    "call debug.continue": 4,
+    "call debug.eval": 7,
+    "world get": 4,
+    "call debug.watch.clear": 2,
+    "snapshots list": 1,
+    "call debug.breakpoints.clear": 2,
+    "call debug.unwatch": 1,
+    "call debug.step": 4,
+    "scripts write": 1,
+    "scripts apply": 1,
+    "world spawn": 9,
+    "help world.spawn": 1
+  },
+  "pocket_calls": 114,
+  "turns": 46,
+  "tokens": {
+    "input": 30217,
+    "output": 3749,
+    "reasoning": 10617,
+    "cache_read": 830720,
+    "total": 875303
+  },
+  "cost_usd": 0.0,
+  "refusals": {
+    "request.missing_field": 3,
+    "request.wrong_type": 2,
+    "request.misplaced_field": 1,
+    "request.unknown_field": 1,
+    "request.unknown_method": 1,
+    "debug.eval_failed": 5
+  },
+  "output_chars": 32032,
+  "largest_output_chars": 8738,
+  "bash_timeouts": 5,
+  "first_s": {
+    "scripts_read": 9.96,
+    "scripts_write": 696.2
+  },
+  "debug_used": true,
+  "blocked_s": 240.5,
+  "eval_unseen_locals": 5,
+  "stale_bundle_after_restore": null,
+  "as_run": {
+    "success": true,
+    "located": true,
+    "checks": {
+      "steer": [
+        true,
+        "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+      ],
+      "goto": [
+        true,
+        "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+      ],
+      "goto_behind": [
+        true,
+        "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+      ],
+      "reach": [
+        true,
+        "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+      ],
+      "anchor": [
+        true,
+        "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+      ],
+      "tally": [
+        true,
+        "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+      ]
+    },
+    "hash_chain_identical_to_clean": true,
+    "hash_first_divergence_tick": null
+  },
+  "isolation": "permissions",
+  "rules_kept": true,
+  "rules_changed": []
+}

@@ -1,0 +1,19 @@
+--- clean/scripts/helm.ts
++++ planted/scripts/helm.ts
+@@ -68,13 +68,14 @@
+                 }
+             }
+ 
+-            let sail = clamp(h.sail[r], 0, 1);
++            const wanted = clamp(h.sail[r], 0, 1);
++            let sail = wanted;
+             if (h.anchor[r] === 1) {
+                 sail = 0;
+                 rudder = 0;
+             }
+             b.rudder[r] = rudder;
+-            b.hoist[r] = sail;
++            b.hoist[r] = wanted;
+             b.sheet[r] = bestSheet(b.awa_deg[r]);
+         });
+     },

@@ -1,0 +1,14 @@
+--- planted/scripts/helm.ts
++++ agent/scripts/helm.ts
+@@ -50,8 +50,9 @@
+         const b = boats.cols.Boat;
+         const at = boats.cols.Transform.position;
+         boats.each((r, boat) => {
+-            // The wheel, unless the helmsman is steering for a mark.
+-            let rudder = -clamp(h.steer[r], -1, 1) * RUDDER_GAIN;
++            // The wheel, unless the helmsman is steering for a mark. Positive rudder turns the
++            // bow to starboard, so steer 1 (starboard) must put positive rudder on.
++            let rudder = clamp(h.steer[r], -1, 1) * RUDDER_GAIN;
+ 
+             const mark = h.goto[r];
+             if (mark !== 0) {

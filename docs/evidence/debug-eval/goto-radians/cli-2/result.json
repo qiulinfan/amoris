@@ -1,0 +1,160 @@
+{
+  "bug": "goto-radians",
+  "kind": "unit mix-up: the mark's bearing in radians compared with a heading in degrees",
+  "trial": 2,
+  "model": "zai-coding-plan/glm-5.3-flash",
+  "via": "cli",
+  "variant": "free",
+  "success": false,
+  "bug_check": false,
+  "checks": {
+    "steer": [
+      true,
+      "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3) (pass: left < -5, right > +5)"
+    ],
+    "goto": [
+      false,
+      "nearest to Crate4 within 15 s (sampled every 0.5 s): 19.0 m (pass < 6 m)"
+    ],
+    "goto_behind": [
+      false,
+      "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 9.1 (-80.9; pass > +15, the short way)"
+    ],
+    "reach": [
+      true,
+      "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+    ],
+    "anchor": [
+      true,
+      "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+    ],
+    "tally": [
+      true,
+      "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+    ]
+  },
+  "hash_chain_identical_to_clean": false,
+  "hash_first_divergence_tick": 150,
+  "hash_error": null,
+  "answer": null,
+  "located": false,
+  "planted_at": {
+    "file": "scripts/helm.ts",
+    "lines": [
+      66,
+      66
+    ],
+    "defect_lines": [
+      66,
+      67
+    ]
+  },
+  "stopped_by": "time_budget",
+  "agent_exit": -9,
+  "agent_s": 900.5,
+  "wall_s": 913.3,
+  "budget": {
+    "max_calls": 60,
+    "max_time_s": 900
+  },
+  "tools": {
+    "bash": 48
+  },
+  "tool_calls": 48,
+  "tool_errors": 2,
+  "cli": {
+    "help": 1,
+    "scripts list": 1,
+    "status": 3,
+    "scripts read": 7,
+    "world tree": 1,
+    "world get": 16,
+    "world query": 2,
+    "world set": 3,
+    "step": 14,
+    "world schema": 1,
+    "help debug": 1,
+    "debug state": 17,
+    "debug breakpoints.set": 5,
+    "help debug.breakpoints.set": 1,
+    "help debug.rewind": 1,
+    "help debug.eval": 2,
+    "call debug.rewind": 2,
+    "help debug.pause": 1,
+    "help debug.step": 1,
+    "debug pause": 2,
+    "debug step": 2,
+    "call debug.pause": 1,
+    "call docs.search": 1,
+    "call catalog.list": 2,
+    "debug eval": 21,
+    "debug continue": 5,
+    "events": 1,
+    "debug breakpoints.clear": 6,
+    "history": 1,
+    "debug watch": 2
+  },
+  "pocket_calls": 124,
+  "turns": 48,
+  "tokens": {
+    "input": 55106,
+    "output": 2545,
+    "reasoning": 8266,
+    "cache_read": 691904,
+    "total": 757821
+  },
+  "cost_usd": 0.0,
+  "debug_used": true,
+  "refusals": {
+    "sim.component_unknown": 1,
+    "request.invalid_value": 1,
+    "request.missing_field": 3,
+    "debug.not_paused": 1,
+    "debug.eval_failed": 5
+  },
+  "output_chars": 32326,
+  "largest_output_chars": 4502,
+  "bash_timeouts": 3,
+  "blocked_s": 360.4,
+  "eval_unseen_locals": 4,
+  "stale_bundle_after_restore": null,
+  "first_s": {
+    "scripts_read": 9.03,
+    "debug": 95.64
+  },
+  "as_run": {
+    "success": false,
+    "located": false,
+    "checks": {
+      "steer": [
+        true,
+        "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+      ],
+      "goto": [
+        false,
+        "closest approach to Crate4 within 15 s: 19.0 m (pass < 3 m)"
+      ],
+      "goto_behind": [
+        false,
+        "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 9.1 (-80.9; pass > +15, the short way)"
+      ],
+      "reach": [
+        true,
+        "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+      ],
+      "anchor": [
+        true,
+        "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+      ],
+      "tally": [
+        true,
+        "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+      ]
+    },
+    "hash_chain_identical_to_clean": false,
+    "hash_first_divergence_tick": 150
+  },
+  "isolation": "permissions",
+  "rules_kept": true,
+  "rules_changed": []
+}
