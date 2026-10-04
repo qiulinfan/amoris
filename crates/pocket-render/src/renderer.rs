@@ -1119,7 +1119,8 @@ impl Renderer {
             }
         };
         let fi = self.gpu.caps.indirect_first_instance;
-        for c in 0..CASCADES {
+        // Without shadows the cascades are never sampled (`shadow_factor` returns 1): skip them.
+        for c in 0..if shadows { CASCADES } else { 0 } {
             let ts = self.profiler.render_scope("shadows");
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("shadow cascade"),
@@ -1135,9 +1136,6 @@ impl Renderer {
                 timestamp_writes: ts,
                 ..Default::default()
             });
-            if !shadows {
-                continue;
-            }
             pass.set_bind_group(0, &binds.frame, &[]);
             pass.set_bind_group(1, &self.empty_group, &[]);
             pass.set_bind_group(2, &binds.textures, &[]);

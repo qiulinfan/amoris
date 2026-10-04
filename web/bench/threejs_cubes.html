@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>three.js many_cubes</title>
+<style>html,body{margin:0;height:100%;background:#000}canvas{position:fixed;inset:0;width:100vw;height:100vh}</style>
+<script type="importmap">{ "imports": { "three": "./vendor/three.webgpu.js", "three/webgpu": "./vendor/three.webgpu.js", "three/tsl": "./vendor/three.tsl.js" } }</script>
+</head>
+<body>
+<script type="module">
+// The many_cubes scene of Bevy (and of crates/pocket-render's demo) in three.js r186 with its
+// WebGPURenderer: one InstancedMesh (three.js's fastest path for many copies of one mesh), a
+// MeshStandardMaterial, a directional light plus hemisphere light, 4x MSAA, the same sphere
+// layout and the same per-frame camera rotation. ?count=N, ?dense.
+import * as THREE from "three/webgpu";
+const q = new URLSearchParams(location.search);
+const count = Number(q.get("count") || 1600000);
+const dense = q.has("dense");
+const renderer = new THREE.WebGPURenderer({ antialias: true });
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setSize(window.innerWidth, window.innerHeight);
+document.body.appendChild(renderer.domElement);
+await renderer.init();
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x6688aa);
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 5000);
+const sun = new THREE.DirectionalLight(0xfff5e6, 3);
+sun.position.set(0, 1, 1);
+scene.add(sun, new THREE.HemisphereLight(0x9bbbe0, 0x40382e, 1));
+const geo = new THREE.BoxGeometry(1, 1, 1);
+const mat = new THREE.MeshStandardMaterial({ color: 0xccb399, roughness: 0.6 });
+const mesh = new THREE.InstancedMesh(geo, mat, count);
+const m = new THREE.Matrix4(), p = new THREE.Vector3(), qt = new THREE.Quaternion(), s = new THREE.Vector3(1, 1, 1);
+const look = new THREE.Matrix4(), up = new THREE.Vector3(0, 1, 0), zero = new THREE.Vector3();
+if (dense) {
+  const size = Math.round(Math.cbrt(count)), gap = 1.25;
+  for (let i = 0; i < count; i++) {
+    p.set((i % size) * gap, (Math.floor(i / size) % size) * gap, (i / (size * size)) * gap);
+    m.makeTranslation(p.x, p.y, p.z);
+    mesh.setMatrixAt(i, m);
+  }
+  camera.position.set(100, 90, 100);
+  camera.lookAt(0, -10, 0);
+} else {
+  const radius = 500, golden = 0.5 * (1 + Math.sqrt(5));
+  for (let i = 0; i < count; i++) {
+    const theta = 2 * Math.PI * i / golden, phi = Math.acos(1 - 2 * (i + 0.5) / count);
+    p.set(Math.sin(phi) * Math.cos(theta), Math.sin(phi) * Math.sin(theta), Math.cos(phi)).multiplyScalar(radius);
+    look.lookAt(p, zero, up);
+    qt.setFromRotationMatrix(look);
+    m.compose(p, qt, s);
+    mesh.setMatrixAt(i, m);
+  }
+}
+scene.add(mesh);
+const step = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), 0.15 / 60)
+  .multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), 0.15 / 60));
+const samples = [];
+window.pocketSamples = samples;
+let last = performance.now();
+function frame(now) {
+  if (!dense) camera.quaternion.premultiply(step).normalize();
+  renderer.render(scene, camera);
+  samples.push({ frame_ms: now - last, gpu_ms: 0, backend: renderer.backend.isWebGPUBackend ? "three.js WebGPU" : "three.js WebGL2" });
+  last = now;
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

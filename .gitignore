@@ -13,3 +13,4 @@ editor/dist/
 # Python
 __pycache__/
 .venv/
+web/bench/vendor/

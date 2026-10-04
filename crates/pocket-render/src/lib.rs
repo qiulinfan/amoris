@@ -8,6 +8,7 @@
 pub mod app;
 mod blit;
 pub mod camera;
+pub mod demo;
 pub mod gpu;
 pub mod loader;
 pub mod materials;

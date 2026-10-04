@@ -21,7 +21,7 @@ pocket-link = { path = "crates/pocket-link" }
 pocket-runtime = { path = "crates/pocket-runtime" }
 pocket-check = { path = "crates/pocket-check" }
 pocket-assets = { path = "crates/pocket-assets", default-features = false }
-pocket-render = { path = "crates/pocket-render" }
+pocket-render = { path = "crates/pocket-render", default-features = false }
 
 bevy_ecs = { version = "=0.19.1", default-features = false, features = ["std"] }
 libm = "=0.2.16"

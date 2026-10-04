@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pocket3D Viewport</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; background: #0b0d10; color: #d8dde3; font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  canvas { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; }
+  #hud { position: fixed; left: 12px; top: 10px; background: rgba(10,12,16,.72); padding: 8px 10px; border-radius: 6px; white-space: pre; pointer-events: none; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud">loading…</div>
+<script type="module">
+// Modes: ?demo=cubes[&count=N][&dense] draws Bevy's many_cubes layouts in the browser;
+// ?render=ws://127.0.0.1:7878/render[&assets=http://127.0.0.1:7878/assets/] shows a host's world.
+import { createViewport } from "./viewport.js";
+const q = new URLSearchParams(location.search);
+const hud = document.getElementById("hud");
+const canvas = document.getElementById("c");
+const dense = q.has("dense");
+try {
+  const vp = await createViewport(canvas, {
+    renderUrl: q.get("render") || undefined,
+    assetsUrl: q.get("assets") || "/assets/",
+    beforeFrame: (api, frame) => { if (q.get("demo") === "cubes") api.demoCubesCamera(frame, dense); },
+  });
+  if (q.get("demo") === "cubes") vp.demoCubes(Number(q.get("count") || 1600000), dense);
+  window.pocketViewport = vp;
+  const samples = [];
+  vp.onStats((s) => {
+    samples.push(s);
+    if (samples.length > 600) samples.shift();
+    window.pocketStats = s;
+    hud.textContent = `${s.backend}  ${canvas.width}x${canvas.height}\nframe ${s.frame_ms.toFixed(2)} ms   gpu ${s.gpu_ms.toFixed(2)} ms\ninstances ${s.instances}  tick ${s.tick}\n` +
+      (s.passes || []).map((p) => `  ${p.pass.padEnd(12)} ${p.ms.toFixed(2)} ms`).join("\n");
+  });
+  window.pocketSamples = samples;
+} catch (e) {
+  hud.textContent = "error: " + e.message;
+  console.error(e);
+}
+</script>
+</body>
+</html>

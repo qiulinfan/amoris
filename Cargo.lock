@@ -2792,6 +2792,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "pocket-viewport"
+version = "0.1.0"
+dependencies = [
+ "glam 0.33.12",
+ "js-sys",
+ "log",
+ "pocket-assets",
+ "pocket-render",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "wgpu",
+]
+
+[[package]]
 name = "pocket-web"
 version = "0.1.0"
 dependencies = [
