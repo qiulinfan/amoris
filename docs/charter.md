@@ -29,9 +29,17 @@ Pocket3D 是一个 **agent-native** 的 3D 游戏引擎。agent 在三个角色�
 | agent 当玩家 | 在运行中的世界里，以受限感知和意图式动作玩游戏 | 按 observer 投影的感知层、意图与 affordance、显式时间模型、决策时暂停 |
 | agent 当调试者 | 定位"为什么"：断点、单步、数据断点、因果链、时间回溯 | 与人类共用的调试核心：人用 Chrome DevTools / VS Code / 编辑器，agent 用 MCP 工具 |
 
+所有者 2026-10-04 给出的目标：
+
+- **最强的 agent 原生能力**：agent 玩游戏、开发游戏、调试游戏。CLI 与架构比 MCP 更重要：agent
+  通过 shell 使用工具最顺手、最省 token；MCP 只是同一命令目录的薄投影。
+- **渲染与物理性能比肩 Unity 与 UE5**。
+- **web 渲染性能比肩 three.js**。
+
 本轮必须证明五件事（所有者 2026-10-03 的要求）：
 
-1. **性能**：能与前沿引擎竞争。在同一台机器上与 Bevy 0.19 对照测量（第 7 节）。
+1. **性能**：渲染与物理比肩 Unity/UE5，web 比肩 three.js。同机对照测量：Bevy 0.19（Rust/wgpu 的
+   前沿）、three.js WebGPURenderer（web）、Jolt（物理，Godot 4.4 起的默认 3D 物理）（第 6 节）。
 2. **agent-native gameplay**：LLM agent 通过 MCP、在受限感知下玩通游戏；脚本里的决策模型每秒做
    上百次决策；fork 前瞻。
 3. **web 渲染与神经渲染的先进性**：同一渲染器在浏览器 WebGPU 上运行；3D Gaussian Splatting 与神经
@@ -69,7 +77,7 @@ Pocket3D 是一个 **agent-native** 的 3D 游戏引擎。agent 在三个角色�
 | 构建 | **Cargo workspace + `cargo xtask`**；TS 包用 bun；web 用 wasm-bindgen + wasm-opt | — | 不自研构建系统（见 4.6） |
 | ECS | `bevy_ecs`（只用 ECS） | 0.19.1 | 实体加组件本身就是语义 schema；单线程确定调度，遍历按 EntityId 排序 |
 | 模拟数学 | `pocket_sim::math`（基于 `libm`，禁用平台超越函数，`-ffp-contract=off`） | libm 0.2.16 | 跨平台、跨原生/web 位级一致 |
-| 物理 | **Rapier 3D**，`enhanced-determinism` | 0.36.0 | 原生与 wasm 3001/3001 tick 一致，fork 后逐位延续（aipocket 物理 spike） |
+| 物理 | **Rapier 3D**，`enhanced-determinism`；与 Jolt 同机对照后定终选（见 4.7） | 0.36.0 | 原生与 wasm 3001/3001 tick 一致，fork 后逐位延续（aipocket 物理 spike）；性能需对标 PhysX/Chaos |
 | 持久化 | PCE 规范编码、分节哈希树（XXH3-128 / BLAKE3）、snapshot/restore/fork、replay 与首个分叉 | 自研 | 哈希定义在规范编码上而非内存布局 |
 | 脚本语言 | **TypeScript** | TS 7（类型检查） | AI 时代的第一语言：模型语料最多、类型反馈最好 |
 | 脚本转译 | **oxc**，进程内转译并产出 source map | 0.152 | 无需 Node；毫秒级；错误与断点都映射回 TS 行 |
@@ -82,7 +90,7 @@ Pocket3D 是一个 **agent-native** 的 3D 游戏引擎。agent 在三个角色�
 | 资源 | glTF 2.0（`gltf`）、PNG/JPEG（`image`）、网格处理（`meshopt`：LOD、顶点缓存、meshlet）；导入在工作线程异步进行；内容哈希作为 ID | gltf 1.4、meshopt 0.6 | aipocket 的 OBJ 导入冻结 14–27 秒，本线只走 glTF 且异步 |
 | 神经渲染 | 3D Gaussian Splatting（GPU 排序、与网格深度混合）；神经纹理压缩（潜变量网格 + 小型 MLP，在片元着色器里解码） | 自研 | 见 4.4 |
 | 音频 | kira（cpal；web 上为 WebAudio） | 0.12 | 混音、空间音频、补间 |
-| agent 接口 | 一张命令目录 → MCP（`rmcp`，stdio 与 Streamable HTTP）、编辑器 WebSocket、CLI、脚本 API、测试 | rmcp 3.5 | 官方 Rust SDK |
+| agent 接口 | **CLI 优先**：一张命令目录 → `pocket` CLI（连接运行中的宿主，紧凑文本输出，`--json` 精确输出，帮助文本来自目录）、编辑器 WebSocket、脚本 API、测试；MCP（`rmcp`）是同一目录的薄投影 | rmcp 3.5 | agent 在 shell 里最顺手、最省 token；目录唯一，所有前端不漂移 |
 | 服务端 | axum + tokio（只在 presenter 一侧） | axum 0.8 | 游戏侧 crate 禁止依赖 tokio |
 | 编辑器 | **Web 应用：TypeScript + React + Vite**；dockview 停靠布局；Monaco 代码编辑；视口是编译到 wasm 的引擎渲染器（WebGPU），经 WebSocket 与宿主同步 | React 19、Vite 8 | 见 4.5 |
 | 调试 | 调试核心在 `pocket-debug`（QuickJS-ng PR #1421 的 trace 钩子）；前端：CDP 端点（Chrome DevTools、VS Code js-debug）、编辑器、MCP 工具 | 自研 | 见 4.3 |
@@ -160,6 +168,16 @@ Pocket3D 是一个 **agent-native** 的 3D 游戏引擎。agent 在三个角色�
   之上重复了增量构建、特性与目标管理。
 - TypeScript 包（`sdk/`、`editor/`）用 bun 安装与运行脚本，Vite 打包编辑器。
 - web：`wasm32-unknown-unknown` + wasm-bindgen + wasm-opt；QuickJS-ng 的 C 代码用 wasi-libc 编译。
+
+### 4.7 物理性能与后端
+
+所有者要求物理性能比肩 Unity（PhysX）与 UE5（Chaos）。Rapier 在确定性配置下关闭了 SIMD 与并行，
+吞吐量是风险点。做法：在同一台机器上用同一组场景（箱子金字塔、大量球体、布娃娃、射线查询）测量
+Rapier（确定性配置、SIMD+并行配置）与 Jolt（原生 C++ 构建，其跨平台确定性选项开与关），据此决定：
+
+- Rapier 足够：保持单一后端；
+- Jolt 显著更快：`pocket-physics` 抽象出后端接口，原生默认 Jolt（经 C 封装），web 与确定性检查
+  继续用 Rapier，或以 Jolt 的 wasm 构建统一。
 
 ## 5. 架构
 
