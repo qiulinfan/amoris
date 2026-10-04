@@ -109,6 +109,35 @@
         "Animator": {
           "clip": "idle",
           "speed": 0.6
+        },
+        "UiText": {
+          "text": "Hero 1  \u00d70.6",
+          "size": 15,
+          "anchor": "entity",
+          "world_offset": [
+            0,
+            2.05,
+            0
+          ],
+          "offset": [
+            0,
+            -12
+          ]
+        },
+        "UiBar": {
+          "value": 20,
+          "max": 100,
+          "color": [
+            0.83,
+            0.42,
+            0.25,
+            1
+          ],
+          "world_offset": [
+            0,
+            2.05,
+            0
+          ]
         }
       }
     },
@@ -140,6 +169,35 @@
         "Animator": {
           "clip": "idle",
           "speed": 0.8
+        },
+        "UiText": {
+          "text": "Hero 2  \u00d70.8",
+          "size": 15,
+          "anchor": "entity",
+          "world_offset": [
+            0,
+            2.05,
+            0
+          ],
+          "offset": [
+            0,
+            -12
+          ]
+        },
+        "UiBar": {
+          "value": 40,
+          "max": 100,
+          "color": [
+            0.71,
+            0.54,
+            0.25,
+            1
+          ],
+          "world_offset": [
+            0,
+            2.05,
+            0
+          ]
         }
       }
     },
@@ -171,6 +229,35 @@
         "Animator": {
           "clip": "idle",
           "speed": 1.0
+        },
+        "UiText": {
+          "text": "Hero 3  \u00d71.0",
+          "size": 15,
+          "anchor": "entity",
+          "world_offset": [
+            0,
+            2.05,
+            0
+          ],
+          "offset": [
+            0,
+            -12
+          ]
+        },
+        "UiBar": {
+          "value": 60,
+          "max": 100,
+          "color": [
+            0.59,
+            0.6599999999999999,
+            0.25,
+            1
+          ],
+          "world_offset": [
+            0,
+            2.05,
+            0
+          ]
         }
       }
     },
@@ -202,6 +289,35 @@
         "Animator": {
           "clip": "idle",
           "speed": 1.2000000000000002
+        },
+        "UiText": {
+          "text": "Hero 4  \u00d71.2",
+          "size": 15,
+          "anchor": "entity",
+          "world_offset": [
+            0,
+            2.05,
+            0
+          ],
+          "offset": [
+            0,
+            -12
+          ]
+        },
+        "UiBar": {
+          "value": 80,
+          "max": 100,
+          "color": [
+            0.47,
+            0.78,
+            0.25,
+            1
+          ],
+          "world_offset": [
+            0,
+            2.05,
+            0
+          ]
         }
       }
     },
@@ -233,6 +349,69 @@
         "Animator": {
           "clip": "idle",
           "speed": 1.4
+        },
+        "UiText": {
+          "text": "Hero 5  \u00d71.4",
+          "size": 15,
+          "anchor": "entity",
+          "world_offset": [
+            0,
+            2.05,
+            0
+          ],
+          "offset": [
+            0,
+            -12
+          ]
+        },
+        "UiBar": {
+          "value": 100,
+          "max": 100,
+          "color": [
+            0.35,
+            0.8999999999999999,
+            0.25,
+            1
+          ],
+          "world_offset": [
+            0,
+            2.05,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "Hud",
+      "components": {
+        "UiText": {
+          "text": "Pocket3D \u2014 skeletal animation, GPU skinning, game UI",
+          "size": 22,
+          "anchor": "top_left",
+          "offset": [
+            24,
+            20
+          ]
+        }
+      }
+    },
+    {
+      "name": "Hint",
+      "components": {
+        "UiText": {
+          "text": "5 skinned characters \u00b7 Animator.speed 0.6\u20131.4",
+          "size": 16,
+          "color": [
+            0.85,
+            0.9,
+            1,
+            0.9
+          ],
+          "anchor": "bottom_right",
+          "offset": [
+            24,
+            20
+          ]
         }
       }
     }

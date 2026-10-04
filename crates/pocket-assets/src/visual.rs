@@ -226,3 +226,87 @@ impl Default for Animator {
         }
     }
 }
+
+/// Where on the screen a UI element hangs from.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum UiAnchor {
+    TopLeft,
+    Top,
+    TopRight,
+    Left,
+    #[default]
+    Center,
+    Right,
+    BottomLeft,
+    Bottom,
+    BottomRight,
+    /// Above the entity in the world: its `Transform` plus `world_offset`, projected each frame
+    /// (name tags, damage numbers).
+    Entity,
+}
+
+/// Text on the screen, or over the entity. Game state like everything else: agents read what the
+/// HUD says from the world, and a fork or replay shows the same text.
+#[derive(Component, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, default)]
+pub struct UiText {
+    pub text: String,
+    /// Height of a line, logical pixels.
+    pub size: f64,
+    /// sRGB colour with alpha.
+    pub color: [f64; 4],
+    pub anchor: UiAnchor,
+    /// Logical pixels from the anchor (+x right, +y down).
+    pub offset: [f64; 2],
+    /// `anchor: entity`: metres from the entity's origin.
+    pub world_offset: [f64; 3],
+    pub visible: bool,
+}
+
+impl Default for UiText {
+    fn default() -> Self {
+        UiText {
+            text: String::new(),
+            size: 20.0,
+            color: [1.0, 1.0, 1.0, 1.0],
+            anchor: UiAnchor::TopLeft,
+            offset: [16.0, 16.0],
+            world_offset: [0.0, 2.0, 0.0],
+            visible: true,
+        }
+    }
+}
+
+/// A bar (health, mana, progress) on the screen or over the entity.
+#[derive(Component, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, default)]
+pub struct UiBar {
+    pub value: f64,
+    pub max: f64,
+    /// Logical pixels.
+    pub size: [f64; 2],
+    /// sRGB with alpha: the filled part, then the background.
+    pub color: [f64; 4],
+    pub back: [f64; 4],
+    pub anchor: UiAnchor,
+    pub offset: [f64; 2],
+    pub world_offset: [f64; 3],
+    pub visible: bool,
+}
+
+impl Default for UiBar {
+    fn default() -> Self {
+        UiBar {
+            value: 1.0,
+            max: 1.0,
+            size: [60.0, 7.0],
+            color: [0.35, 0.85, 0.35, 1.0],
+            back: [0.0, 0.0, 0.0, 0.6],
+            anchor: UiAnchor::Entity,
+            offset: [0.0, 0.0],
+            world_offset: [0.0, 2.2, 0.0],
+            visible: true,
+        }
+    }
+}

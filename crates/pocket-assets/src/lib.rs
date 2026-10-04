@@ -18,7 +18,9 @@ use serde_reflection::{Samples, Tracer};
 
 pub use frame::{Feed, Mailbox, RenderFrame};
 pub use mesh::{MeshData, ModelAsset, Vertex};
-pub use visual::{Animator, Camera, Environment, Light, LightKind, Model, SkyKind, Splat};
+pub use visual::{
+    Animator, Camera, Environment, Light, LightKind, Model, SkyKind, Splat, UiAnchor, UiBar, UiText,
+};
 
 impl Persisted for Model {
     const NAME: &'static str = "Model";
@@ -55,6 +57,26 @@ impl Persisted for Splat {
     const VERSION: u32 = 1;
 }
 
+impl Persisted for UiText {
+    const NAME: &'static str = "UiText";
+    const VERSION: u32 = 1;
+
+    fn trace(t: &mut Tracer, s: &Samples) -> serde_reflection::Result<()> {
+        t.trace_type::<UiAnchor>(s)?;
+        t.trace_type::<Self>(s).map(|_| ())
+    }
+}
+
+impl Persisted for UiBar {
+    const NAME: &'static str = "UiBar";
+    const VERSION: u32 = 1;
+
+    fn trace(t: &mut Tracer, s: &Samples) -> serde_reflection::Result<()> {
+        t.trace_type::<UiAnchor>(s)?;
+        t.trace_type::<Self>(s).map(|_| ())
+    }
+}
+
 impl Persisted for Animator {
     const NAME: &'static str = "Animator";
     const VERSION: u32 = 1;
@@ -81,6 +103,8 @@ pub fn plugin(sim: &mut Sim) -> Result<(), Problem> {
     ComponentRegistry::register::<Environment>(w, None)?;
     ComponentRegistry::register::<Splat>(w, None)?;
     ComponentRegistry::register::<Animator>(w, None)?;
+    ComponentRegistry::register::<UiText>(w, None)?;
+    ComponentRegistry::register::<UiBar>(w, None)?;
     sim.add_system("assets.animate", TickPhase::Finish, RunCondition::Always, animate)?;
     Ok(())
 }
@@ -92,5 +116,7 @@ pub fn declare<R: RegisterPersisted>(r: &mut R) {
         .component::<Camera>()
         .component::<Environment>()
         .component::<Splat>()
-        .component::<Animator>();
+        .component::<Animator>()
+        .component::<UiText>()
+        .component::<UiBar>();
 }

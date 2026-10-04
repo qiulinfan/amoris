@@ -30,6 +30,7 @@ use crate::post::{DEPTH, HDR, Post, SAMPLES, Targets};
 use crate::profiler::GpuProfiler;
 use crate::scene::{InstanceGpu, Part, Resolve, Scene, VARIANTS};
 use crate::skinning::Skinning;
+use crate::ui::Ui;
 use crate::shaders;
 use crate::shadows::{self, CASCADES, SHADOW_SIZE};
 use crate::sky::{Sky, SkyParams};
@@ -293,6 +294,7 @@ pub struct Renderer {
     ocean: Ocean,
     picking: Picking,
     skinning: Skinning,
+    ui: Ui,
     /// Editor overlays: gizmo shapes, selection outline, grid and axes.
     pub overlays: Overlays,
     /// The last finished pick: `Some(None)` when the pixel shows no entity.
@@ -713,6 +715,7 @@ impl Renderer {
             ocean,
             picking,
             skinning: Skinning::new(device),
+            ui: Ui::new(device, output),
             overlays: Overlays::new(device, output),
             last_pick: None,
             last_visible: None,
@@ -774,6 +777,11 @@ impl Renderer {
 
     pub fn size(&self) -> (u32, u32) {
         (self.targets.width, self.targets.height)
+    }
+
+    /// Device pixels per logical pixel for the game UI (the window's scale factor).
+    pub fn set_ui_scale(&mut self, scale: f32) {
+        self.ui.scale = scale.max(0.5);
     }
 
     /// Draws from this camera instead of the scene's active one (`None`: the scene's).
@@ -1489,6 +1497,10 @@ impl Renderer {
                 &self.meshes.indices,
                 &selected,
             );
+        }
+        if !self.scene.ui.is_empty() {
+            self.ui.items = self.scene.ui.clone();
+            self.ui.draw(&device, &queue, &mut enc, output, (w, h), vp);
         }
         self.profiler.resolve(&mut enc);
         queue.submit([enc.finish()]);

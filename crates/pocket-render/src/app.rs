@@ -200,7 +200,8 @@ impl<H: Host> App<H> {
             present_mode
         );
         surface.configure(&gpu.device, &config);
-        let renderer = Renderer::new(&gpu, format, config.width, config.height);
+        let mut renderer = Renderer::new(&gpu, format, config.width, config.height);
+        renderer.set_ui_scale(window.scale_factor() as f32);
         self.state = Some(State {
             window,
             surface,

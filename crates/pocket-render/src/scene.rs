@@ -80,6 +80,8 @@ pub struct Scene {
     pub sea: Option<SeaView>,
     pub splats: Vec<SplatView>,
     pub splats_changed: bool,
+    /// The game UI's elements.
+    pub ui: Vec<pocket_assets::frame::UiView>,
     /// Animation state per entity (skeletal animation).
     pub anims: HashMap<u64, pocket_assets::frame::AnimView>,
     pub tick: u64,
@@ -254,6 +256,9 @@ impl Scene {
         if let Some(s) = frame.splats {
             self.splats = s;
             self.splats_changed = true;
+        }
+        if let Some(u) = frame.ui {
+            self.ui = u;
         }
     }
 

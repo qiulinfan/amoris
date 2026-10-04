@@ -16,9 +16,12 @@ use bevy_ecs::prelude::World;
 use bevy_ecs::world::{Ref, WorldId};
 use pocket_assets::frame::{
     AnimView, CameraView, EnvironmentView, InstanceUpdate, LightKindView, LightView, Look, Pose,
-    RenderFrame, SeaView, SplatView, WaveView,
+    RenderFrame, SeaView, SplatView, UiView, WaveView,
 };
-use pocket_assets::{Animator, Camera, Environment, Feed, Light, LightKind, Model, SkyKind, Splat};
+use pocket_assets::{
+    Animator, Camera, Environment, Feed, Light, LightKind, Model, SkyKind, Splat, UiAnchor, UiBar,
+    UiText,
+};
 use pocket_physics::{Sea, Transform};
 use pocket_sim::{EntityId, SimClock};
 
@@ -178,6 +181,7 @@ impl Extractor {
             Self::environment(world).or_else(|| Some(env_view(&Environment::default())));
         frame.sea = Some(Self::sea(world));
         frame.splats = Some(Self::splats(world));
+        frame.ui = Some(Self::ui(world));
         frame
     }
 
@@ -249,6 +253,20 @@ impl Extractor {
                 || w.removed::<Sea>().next().is_some()
         }) {
             frame.sea = Some(Self::sea(world));
+        }
+        if changed(world, &mut |w| {
+            w.query::<(Option<Ref<Transform>>, Option<Ref<UiText>>, Option<Ref<UiBar>>)>()
+                .iter(w)
+                .any(|(t, a, b)| {
+                    (a.is_some() || b.is_some())
+                        && (t.is_some_and(|t| t.is_changed())
+                            || a.is_some_and(|a| a.is_changed())
+                            || b.is_some_and(|b| b.is_changed()))
+                })
+                || w.removed::<UiText>().next().is_some()
+                || w.removed::<UiBar>().next().is_some()
+        }) {
+            frame.ui = Some(Self::ui(world));
         }
         if changed(world, &mut |w| {
             w.query::<(Ref<Transform>, Ref<Splat>)>()
@@ -350,6 +368,63 @@ impl Extractor {
             })
             .collect();
         v.sort_by_key(|s| s.id);
+        v
+    }
+}
+
+fn anchor_code(a: UiAnchor) -> u32 {
+    match a {
+        UiAnchor::TopLeft => 0,
+        UiAnchor::Top => 1,
+        UiAnchor::TopRight => 2,
+        UiAnchor::Left => 3,
+        UiAnchor::Center => 4,
+        UiAnchor::Right => 5,
+        UiAnchor::BottomLeft => 6,
+        UiAnchor::Bottom => 7,
+        UiAnchor::BottomRight => 8,
+        UiAnchor::Entity => 9,
+    }
+}
+
+impl Extractor {
+    fn ui(world: &mut World) -> Vec<UiView> {
+        let mut v: Vec<UiView> = Vec::new();
+        let mut q = world.query::<(&EntityId, Option<&Transform>, Option<&UiText>, Option<&UiBar>)>();
+        for (id, t, text, bar) in q.iter(world) {
+            let base = t.map_or([0.0; 3], |t| f3(t.position));
+            let at = |o: [f64; 3]| [base[0] + f(o[0]), base[1] + f(o[1]), base[2] + f(o[2])];
+            if let Some(b) = bar.filter(|b| b.visible) {
+                let fill = if b.max > 0.0 { (b.value / b.max).clamp(0.0, 1.0) } else { 0.0 };
+                v.push(UiView {
+                    id: id.get(),
+                    text: String::new(),
+                    fill: f(fill),
+                    bar: true,
+                    size: [f(b.size[0]), f(b.size[1])],
+                    color: [f(b.color[0]), f(b.color[1]), f(b.color[2]), f(b.color[3])],
+                    back: [f(b.back[0]), f(b.back[1]), f(b.back[2]), f(b.back[3])],
+                    anchor: anchor_code(b.anchor),
+                    offset: [f(b.offset[0]), f(b.offset[1])],
+                    world: at(b.world_offset),
+                });
+            }
+            if let Some(x) = text.filter(|x| x.visible && !x.text.is_empty()) {
+                v.push(UiView {
+                    id: id.get(),
+                    text: x.text.clone(),
+                    fill: 0.0,
+                    bar: false,
+                    size: [f(x.size), f(x.size)],
+                    color: [f(x.color[0]), f(x.color[1]), f(x.color[2]), f(x.color[3])],
+                    back: [0.0; 4],
+                    anchor: anchor_code(x.anchor),
+                    offset: [f(x.offset[0]), f(x.offset[1])],
+                    world: at(x.world_offset),
+                });
+            }
+        }
+        v.sort_by_key(|u| (u.id, u.bar));
         v
     }
 }

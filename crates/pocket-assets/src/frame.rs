@@ -139,6 +139,24 @@ pub struct SplatView {
     pub visible: bool,
 }
 
+/// One UI element to draw this frame (text or bar), anchored on the screen or at a world point.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct UiView {
+    pub id: u64,
+    /// The text; empty for a bar.
+    pub text: String,
+    /// Bar fill 0..1 (bars only).
+    pub fill: f32,
+    pub bar: bool,
+    pub size: [f32; 2],
+    pub color: [f32; 4],
+    pub back: [f32; 4],
+    /// 0 top-left .. 8 bottom-right (row-major 3x3), 9: at `world`.
+    pub anchor: u32,
+    pub offset: [f32; 2],
+    pub world: [f32; 3],
+}
+
 /// What changed in the visual state since the subscriber's last frame.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct RenderFrame {
@@ -161,6 +179,9 @@ pub struct RenderFrame {
     pub sea: Option<Option<SeaView>>,
     /// The full list, when any splat changed.
     pub splats: Option<Vec<SplatView>>,
+    /// The full list of UI elements, when any changed (or an entity carrying one moved).
+    #[serde(default)]
+    pub ui: Option<Vec<UiView>>,
 }
 
 impl RenderFrame {
@@ -174,6 +195,7 @@ impl RenderFrame {
             && self.environment.is_none()
             && self.sea.is_none()
             && self.splats.is_none()
+            && self.ui.is_none()
     }
 
     /// Folds `next` (a later frame) into this one, as if both had been applied in order.
@@ -238,6 +260,9 @@ impl RenderFrame {
         }
         if next.splats.is_some() {
             self.splats = next.splats;
+        }
+        if next.ui.is_some() {
+            self.ui = next.ui;
         }
     }
 

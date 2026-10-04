@@ -23,6 +23,7 @@ pub mod scene;
 mod shaders;
 mod shadows;
 mod skinning;
+mod ui;
 mod sky;
 
 pub use camera::CameraState;
