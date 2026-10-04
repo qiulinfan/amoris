@@ -22,6 +22,7 @@ pub(crate) mod caught;
 #[cfg(feature = "transpile")]
 pub mod compile;
 pub(crate) mod convert;
+pub mod debug;
 mod define;
 pub mod error;
 pub mod ffi;

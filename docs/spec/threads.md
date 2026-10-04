@@ -212,12 +212,13 @@ of the world. When the native debugger (the debugger spike, `docs/spikes/debugge
 boundary happens, queued commands and agents' steps wait until it resumes, and the editor stays
 responsive on its own thread with the last snapshot. The spike pauses on the game thread inside the
 trace callback and keeps its protocol server on another thread that only forwards requests, the
-split section 6 describes; that thread is `pocket-debug`'s (architecture.md 4.17). Its handler
-doubles the cost of every statement while installed (2.04 times with no client) and costs nothing
-measurable while compiled in and not installed (0.98 to 1.03 times on a loaded machine), so
-attaching and detaching are Control commands that re-instrument the scripts at a boundary
-(`docs/spikes/debugger.md`, Verdict; script-host.md 13). An evaluation inside a paused tick taints
-the run (script-host.md 13).
+split section 6 describes; that thread is `pocket-debug`'s (architecture.md 4.17). The PR's handler
+doubled the cost of every statement while installed (2.04 times with no client) and cost nothing
+measurable while compiled in and not installed, so scripts are instrumented only while a debugger is
+attached, re-instrumented at the start of the next tick (debugger.md 2); with P9 an attached
+debugger costs 1.05 times (debugger.md 10). `pocket-debug` sets the state `Breakpoint` through the
+handle `GameHandle::loop_state` gives it and `Ticking` when it resumes. An evaluation inside a
+paused tick taints the run (script-host.md 13).
 
 ### 3.6 Worlds: main and branches
 

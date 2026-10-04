@@ -1,0 +1,11 @@
+$ node crates/pocket-debug/tests/devtools_chrome.mjs   # 2026-10-04T05:37Z, Google Chrome headless
+     Chrome/154.0.8037.95: http://127.0.0.1:9333/devtools/js_app.html?experiments=true&v8only=true&ws=127.0.0.1:9243/devtools/game
+ok   DevTools' workspace has the TypeScript from the source maps: ["pocket:///scripts/components.ts","pocket:///scripts/main.ts","pocket:///scripts/rules.ts"]
+ok   rules.ts's content in DevTools is the TypeScript file: 3512
+ok   DevTools pauses at the breakpoint's TypeScript line in rules.ts: {"url":"pocket:///scripts/rules.ts","line":26,"fn":""}
+ok   DevTools' call stack: the callback, then run at boats.each: [{"url":"pocket:///scripts/rules.ts","line":26,"fn":""},{"url":"pocket:///scripts/rules.ts","line":25,"fn":"run"}]
+ok   DevTools' Scope pane: Local has r = 0 and e: {"type":"local","names":["r=0","e=3","speed=undefined","set=undefined"]}
+ok   DevTools' console evaluates on the paused frame: "log:0"
+ok   DevTools step over: the next TypeScript line: {"url":"pocket:///scripts/rules.ts","line":27,"fn":""}
+ok   after DevTools resumes the game runs on: {"entities":7,"loop_state":"Ticking","paused_in_debugger":false,"tick":137}
+8/8 checks passed

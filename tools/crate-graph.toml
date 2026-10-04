@@ -84,7 +84,6 @@ web = false
 group = "tool"
 deps = ["pocket-script", "pocket-link"]
 web = false
-planned = true
 
 [crate.pocket-app]
 group = "app"

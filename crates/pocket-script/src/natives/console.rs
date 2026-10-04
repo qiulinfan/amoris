@@ -208,13 +208,19 @@ fn write<'js>(ctx: &Ctx<'js>, level: &str, args: &[Value<'js>]) -> NResult<'js> 
         unsafe { qjs::JS_SetMemoryLimit(rt, 0) };
         let text = format(ctx, args);
         unsafe { qjs::JS_SetMemoryLimit(rt, sh.limits.memory_bytes as _) };
-        sh.log.borrow_mut().push(LogLine {
+        let line = LogLine {
             tick,
             system,
             level: level.to_owned(),
             location: None,
             text,
-        });
+        };
+        // The debugger hears the line as written (docs/spec/debugger.md 5).
+        let hook = sh.debug.borrow().clone();
+        if let Some(h) = hook {
+            h.console(js::raw(ctx), &line);
+        }
+        sh.log.borrow_mut().push(line);
     }
     Ok(Value::new_undefined(ctx.clone()))
 }

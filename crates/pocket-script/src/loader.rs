@@ -85,7 +85,17 @@ impl Loader for SetLoader {
             return Module::declare_def::<crate::natives::HostModule, _>(ctx.clone(), name);
         }
         if name == PRELUDE {
-            return Module::declare(ctx.clone(), name, PRELUDE_JS);
+            // The prelude is engine code: the debugger never stops in it (docs/spec/debugger.md 3).
+            let sh = shared(ctx);
+            let raw = crate::js::raw(ctx);
+            if sh.instrumenting.get() {
+                unsafe { crate::debug::install(raw, &sh, false) };
+            }
+            let declared = Module::declare(ctx.clone(), name, PRELUDE_JS);
+            if sh.instrumenting.get() {
+                unsafe { crate::debug::install(raw, &sh, true) };
+            }
+            return declared;
         }
         let sh = shared(ctx);
         let js = sh

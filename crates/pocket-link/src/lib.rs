@@ -23,7 +23,10 @@ pub use events::{
     EventBatch, EventCursor, EventRecord, EventRing, RING_RECORDS, events_since, events_why,
 };
 pub use logs::{LOG_RECORDS, LogRecord, LogRing};
+/// The tick a status names (for crates that see the game only through this one).
+pub use pocket_sim::Tick;
 pub use reader::{
-    GameStatus, LoopState, Publisher, SnapshotReader, WorldInfo, WorldMode, publication,
+    GameStatus, LoopState, Publisher, SnapshotReader, StateHandle, WorldInfo, WorldMode,
+    publication,
 };
 pub use snapshot::{PacingStatus, RegistryInfo, SnapshotView, TimeStatus, WorldSnapshot};

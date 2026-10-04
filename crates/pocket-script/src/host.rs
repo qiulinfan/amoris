@@ -130,6 +130,15 @@ pub(crate) struct Shared {
         RefCell<std::collections::BTreeMap<usize, Rc<std::collections::BTreeSet<usize>>>>,
     /// The class ids of generators and built-in iterators.
     pub iterators: RefCell<Vec<u32>>,
+    /// The debugger attached to this host (docs/spec/debugger.md 3), if any.
+    pub debug: RefCell<Option<Rc<dyn crate::debug::DebugHook>>>,
+    /// A program is being instantiated with the trace handler set: the loader compiles the prelude
+    /// without it, so the debugger steps through project code only.
+    pub instrumenting: Cell<bool>,
+    /// A debugger's JavaScript runs: the natives that write refuse (`script.debug_read_only`).
+    pub debug_read_only: Cell<bool>,
+    /// The first tick a debugger evaluated in, and why, until the game takes it.
+    pub taint: RefCell<Option<(u64, String)>>,
 }
 
 /// The source maps of a program's modules and of the prelude, by module name.
@@ -204,6 +213,10 @@ impl ScriptHost {
             log_count: Cell::new(0),
             intrinsics: RefCell::new(std::collections::BTreeMap::new()),
             iterators: RefCell::new(Vec::new()),
+            debug: RefCell::new(None),
+            instrumenting: Cell::new(false),
+            debug_read_only: Cell::new(false),
+            taint: RefCell::new(None),
         });
         let sh = shared.clone();
         rt.set_interrupt_handler(Some(Box::new(move || {
@@ -231,6 +244,11 @@ impl ScriptHost {
     /// Takes the console lines written since the last call.
     pub fn take_log(&self) -> Vec<LogLine> {
         std::mem::take(&mut self.shared.log.borrow_mut())
+    }
+
+    /// The debugger attached to this host, if any.
+    pub fn debugger(&self) -> Option<Rc<dyn crate::debug::DebugHook>> {
+        self.shared.debug.borrow().clone()
     }
 
     /// The heap QuickJS-ng holds, in bytes.

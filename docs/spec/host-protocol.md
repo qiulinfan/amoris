@@ -30,6 +30,8 @@ endpoint, which `pocket-debug` serves on its own port (9229). A request whose `H
 | `POST /mcp` | MCP Streamable HTTP (rmcp) | agents |
 | `GET /json/list`, `GET /json/version`, `WS /devtools/<id>` | CDP discovery and endpoint (section 6), on pocket-debug's port | Chrome DevTools, VS Code |
 
+| `GET /json/list`, `GET /json/version`, `WS /devtools/game` | CDP discovery and endpoint (section 6), on `pocket-debug`'s own port (default 9229, where VS Code's `node` attach looks); the host may proxy them | Chrome DevTools, VS Code, the editor |
+
 `pocket mcp <project>` serves the same MCP tools over stdio instead (through the running host when
 there is one). The `pocket` CLI is a client of the same `/api/call` (server.md 8).
 
@@ -132,10 +134,12 @@ and carries everything. The client sends text frames for its camera and picking 
 
 ## 6. Debugging
 
-`pocket-debug` serves the Chrome DevTools Protocol for the game's scripts:
+`pocket-debug` serves the Chrome DevTools Protocol for the game's scripts ([debugger.md](debugger.md)
+is the specification of what is built):
 
 - `GET /json/list` and `/json/version` list one target, `pocket-game`, with
-  `webSocketDebuggerUrl: ws://127.0.0.1:<port>/devtools/game`.
+  `webSocketDebuggerUrl: ws://127.0.0.1:<port>/devtools/game` (port 9229 by default, its own; a
+  request whose `Host` or `Origin` is not loopback is refused).
 - Domains: `Runtime` (`enable`, `evaluate`, `getProperties`, `callFunctionOn`,
   `runIfWaitingForDebugger`), `Debugger` (`enable`, `setBreakpointByUrl`, `removeBreakpoint`,
   `setBreakpointsActive`, `pause`, `resume`, `stepOver`, `stepInto`, `stepOut`,
@@ -145,13 +149,27 @@ and carries everything. The client sends text frames for its camera and picking 
 - Chrome DevTools attaches with
   `devtools://devtools/bundled/inspector.html?ws=127.0.0.1:<port>/devtools/game`; VS Code with a
   `node`-type `attach` configuration on the port (`editors/vscode/launch.json`).
+
+  `evaluateOnCallFrame`, `setPauseOnExceptions`, `getScriptSource`, `getPossibleBreakpoints`,
+  `setBreakpoint`, `setVariableValue`, `setSkipAllPauses`), events `Debugger.scriptParsed` (url
+  `pocket:///scripts/<module>.js`, with `sourceMapURL` as a data URL whose source is the TypeScript,
+  embedded, so clients map to it), `Debugger.paused`, `Debugger.resumed`,
+  `Debugger.breakpointResolved`, `Runtime.consoleAPICalled`, `Runtime.exceptionThrown`. Positions on
+  the wire are the JavaScript's.
+- Chrome DevTools attaches with `devtools://devtools/bundled/inspector.html?ws=127.0.0.1:<port>/devtools/game`;
+  VS Code with a `node`-type `attach` configuration on the port (`editors/vscode/launch.json`).
 - The editor speaks the same CDP over `/devtools/game`.
-- The same core is exposed as JSON methods for agents (and MCP tools of the same names):
-  `debug.breakpoints.set {file, line, condition?}`, `debug.breakpoints.clear`, `debug.pause`,
-  `debug.continue`, `debug.step {over|into|out}`, `debug.state` (frames with TypeScript locations,
-  scopes with locals, the tick and the system), `debug.eval {expr, frame?}`,
-  `debug.watch {entity, component, field?}` (a data breakpoint: pause when a system writes it),
-  `debug.rewind {tick}` (restore the kept snapshot at or before `tick` and replay to it).
+- The same core is exposed as JSON methods for agents (and MCP tools of the same names), with
+  TypeScript positions, 1-based (debugger.md 7 has the parameters and results):
+  `debug.attach`, `debug.detach`, `debug.breakpoints.set {file, line, condition?, log?}`,
+  `debug.breakpoints.clear {id?}`, `debug.breakpoints.list`, `debug.pause {timeout_ms?}`,
+  `debug.continue`, `debug.step {kind: over|into|out, timeout_ms?}`, `debug.state` (frames with
+  TypeScript locations, scopes with locals, the tick and the system), `debug.eval {expr, frame?}`,
+  `debug.watch {entity, component, field?}` (a data breakpoint: pause when a system's staged write
+  changes it, naming the statement that wrote), `debug.unwatch {id?}`,
+  `debug.exceptions {mode: none|uncaught|all}`, `debug.wait {timeout_ms?}`, and `debug.rewind {tick}`
+  (restore the kept snapshot at or before `tick` and replay to it; not built: it needs the snapshot
+  ring).
 
 ## 7. MCP tools
 

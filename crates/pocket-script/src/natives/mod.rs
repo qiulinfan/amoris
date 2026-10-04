@@ -48,36 +48,37 @@ pub type NResult<'js> = Result<Value<'js>, Thrown>;
 /// A native's body.
 pub type Native = for<'js> fn(&Ctx<'js>, &[Value<'js>]) -> NResult<'js>;
 
-/// The natives `pocket:host` exports.
-const NATIVES: &[(&str, Native)] = &[
-    ("harden", harden::harden),
-    ("freeze", harden::freeze),
-    ("query", query::query),
-    ("single", world::single),
-    ("exists", world::exists),
-    ("has", world::has),
-    ("get", world::get),
-    ("set", world::set),
-    ("insert", world::insert),
-    ("remove", world::remove),
-    ("despawn", world::despawn),
-    ("spawn", world::spawn),
-    ("emit", events::emit),
-    ("events", events::events),
-    ("intent", events::intent),
-    ("rngSystem", rng::system),
-    ("rngEntity", rng::entity),
-    ("rngNamed", rng::named),
-    ("rngTimeless", rng::timeless),
-    ("rngNext", rng::next),
-    ("rngInt", rng::int),
-    ("rngRange", rng::range),
-    ("rngChance", rng::chance),
-    ("rngPick", rng::pick),
-    ("rngShuffle", rng::shuffle),
-    ("rngWeighted", rng::weighted),
-    ("rngNormal", rng::normal),
-    ("rngFill", rng::fill),
+/// The natives `pocket:host` exports, and whether each writes: what a debugger's evaluation may
+/// not call (`script.debug_read_only`, script-host.md 13).
+const NATIVES: &[(&str, Native, bool)] = &[
+    ("harden", harden::harden, false),
+    ("freeze", harden::freeze, false),
+    ("query", query::query, false),
+    ("single", world::single, false),
+    ("exists", world::exists, false),
+    ("has", world::has, false),
+    ("get", world::get, false),
+    ("set", world::set, true),
+    ("insert", world::insert, true),
+    ("remove", world::remove, true),
+    ("despawn", world::despawn, true),
+    ("spawn", world::spawn, true),
+    ("emit", events::emit, true),
+    ("events", events::events, false),
+    ("intent", events::intent, true),
+    ("rngSystem", rng::system, false),
+    ("rngEntity", rng::entity, false),
+    ("rngNamed", rng::named, false),
+    ("rngTimeless", rng::timeless, false),
+    ("rngNext", rng::next, true),
+    ("rngInt", rng::int, true),
+    ("rngRange", rng::range, true),
+    ("rngChance", rng::chance, true),
+    ("rngPick", rng::pick, true),
+    ("rngShuffle", rng::shuffle, true),
+    ("rngWeighted", rng::weighted, true),
+    ("rngNormal", rng::normal, true),
+    ("rngFill", rng::fill, true),
 ];
 
 /// The native module `pocket:host`.
@@ -85,15 +86,20 @@ pub struct HostModule;
 
 impl ModuleDef for HostModule {
     fn declare<'js>(decl: &Declarations<'js>) -> rquickjs::Result<()> {
-        for (name, _) in NATIVES {
+        for (name, _, _) in NATIVES {
             decl.declare(*name)?;
         }
         Ok(())
     }
 
     fn evaluate<'js>(ctx: &Ctx<'js>, exports: &Exports<'js>) -> rquickjs::Result<()> {
-        for (name, f) in NATIVES {
-            exports.export(*name, function(ctx, name, *f)?)?;
+        for (name, f, writes) in NATIVES {
+            let f = if *writes {
+                writing(ctx, name, *f)?
+            } else {
+                function(ctx, name, *f)?
+            };
+            exports.export(*name, f)?;
         }
         Ok(())
     }
@@ -102,6 +108,23 @@ impl ModuleDef for HostModule {
 /// A JavaScript function running `f` under the natives' rules.
 pub fn function<'js>(ctx: &Ctx<'js>, name: &str, f: Native) -> rquickjs::Result<Function<'js>> {
     Function::new(ctx.clone(), move |ctx: Ctx<'js>, args: Rest<Value<'js>>| {
+        run(&ctx, f, &args.0)
+    })?
+    .with_name(name)
+}
+
+/// A native that writes: refused while a debugger's own JavaScript runs.
+pub fn writing<'js>(ctx: &Ctx<'js>, name: &str, f: Native) -> rquickjs::Result<Function<'js>> {
+    let what = name.to_owned();
+    Function::new(ctx.clone(), move |ctx: Ctx<'js>, args: Rest<Value<'js>>| {
+        if shared(&ctx).debug_read_only.get() {
+            let e = ScriptError::new(
+                "script.debug_read_only",
+                format!("A debugger's evaluation cannot write ({what}): it would change the run."),
+                ErrorPhase::Run,
+            );
+            return Err(crate::caught::throw(&ctx, &e));
+        }
         run(&ctx, f, &args.0)
     })?
     .with_name(name)

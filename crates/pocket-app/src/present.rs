@@ -177,3 +177,59 @@ impl CaptureHub for CaptureServer {
         })
     }
 }
+
+/// The script debugger behind the host's `debug.*` methods and the editor's debugging panel
+/// (docs/spec/debugger.md): agents' calls go to the hub; `debug.rewind` restores the kept snapshot
+/// at or before a tick and runs the world forward to it.
+pub struct DebugBridge {
+    pub hub: pocket_debug::DebugHub,
+    pub host: pocket_server::Host,
+}
+
+impl pocket_server::DebugHub for DebugBridge {
+    fn call(&self, method: &str, params: Value) -> BoxFuture<Result<Value, Problem>> {
+        let hub = self.hub.clone();
+        let host = self.host.clone();
+        let method = method.to_owned();
+        Box::pin(async move {
+            if method == "debug.rewind" {
+                let tick = params.get("tick").and_then(Value::as_u64).ok_or_else(|| {
+                    Problem::new(
+                        "request.invalid_value",
+                        "debug.rewind needs {tick}: the tick to stand at.",
+                        detail([]),
+                    )
+                })?;
+                let via = pocket_server::Via::Api;
+                let restored = host.call(&via, "snapshots.restore", json!({"tick": tick})).await?;
+                let at = restored.get("tick").and_then(Value::as_u64).unwrap_or(tick);
+                let mut out = json!({"restored": at, "tick": at});
+                if tick > at {
+                    let stepped = host.call(&via, "time.step", json!({"ticks": tick - at})).await?;
+                    out["tick"] = stepped.get("tick").cloned().unwrap_or(json!(tick));
+                }
+                return Ok(out);
+            }
+            tokio::task::spawn_blocking(move || hub.call(&method, &params))
+                .await
+                .unwrap_or_else(|e| Err(Problem::new("debug.failed", e.to_string(), detail([]))))
+        })
+    }
+}
+
+/// Forwards the debugger's pauses, resumes, console lines and exceptions to editors (`debug` and
+/// `log` topics).
+pub fn forward_debug_events(hub: &pocket_debug::DebugHub, host: pocket_server::Host) {
+    let rx = hub.subscribe();
+    std::thread::Builder::new()
+        .name("pocket-debug-events".into())
+        .spawn(move || {
+            for ev in rx {
+                if let Some(j) = ev.json() {
+                    let topic = if j["event"] == "debug" { "debug" } else { "log" };
+                    host.push(topic, j["data"].clone());
+                }
+            }
+        })
+        .ok();
+}

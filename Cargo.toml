@@ -24,6 +24,7 @@ pocket-assets = { path = "crates/pocket-assets", default-features = false }
 pocket-render = { path = "crates/pocket-render", default-features = false }
 pocket-mcp = { path = "crates/pocket-mcp" }
 pocket-server = { path = "crates/pocket-server" }
+pocket-debug = { path = "crates/pocket-debug" }
 
 bevy_ecs = { version = "=0.19.1", default-features = false, features = ["std"] }
 libm = "=0.2.16"

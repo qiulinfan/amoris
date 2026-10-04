@@ -40,11 +40,27 @@ fn project_dir(args: &Args) -> Result<PathBuf, Problem> {
 }
 
 /// The project's game on its thread, real time and paused, and the host over it.
-fn start(
-    root: &Path,
-    seed: Option<u64>,
-    editor: Option<PathBuf>,
-) -> Result<(GameHandle, Host), Problem> {
+/// A served game: its thread, the host over it, and the script debugger (CDP on 127.0.0.1:9229
+/// when the port is free).
+struct Served {
+    handle: GameHandle,
+    host: Host,
+    hub: pocket_debug::DebugHub,
+    cdp: Option<pocket_debug::CdpServer>,
+}
+
+impl Served {
+    fn shutdown(self) {
+        self.hub.shutdown();
+        drop(self.host);
+        let _ = self.handle.shutdown(2000);
+        if let Some(c) = self.cdp {
+            c.stop();
+        }
+    }
+}
+
+fn start(root: &Path, seed: Option<u64>, editor: Option<PathBuf>) -> Result<Served, Problem> {
     let feed = pocket_assets::Feed::new();
     let project = Project::load(root)?;
     let seed = seed.unwrap_or(project.manifest.seed);
@@ -59,10 +75,27 @@ fn start(
         ..ThreadOptions::new(clock)
     };
     let dir = root.to_path_buf();
+    let hub = pocket_debug::DebugHub::new(pocket_debug::HubOptions {
+        title: format!("Pocket3D: {}", project.manifest.name),
+        ..pocket_debug::HubOptions::default()
+    });
+    let cdp = match hub.serve_cdp(pocket_debug::CdpOptions::default()) {
+        Ok(c) => Some(c),
+        Err(e) => {
+            eprintln!("pocket: the debugger's CDP endpoint did not start ({e}); debug.* still works");
+            None
+        }
+    };
+    let h = hub.clone();
     let handle = GameThread::spawn(
-        move || GameBuilder::new(setup).seed(seed).project(dir).build(),
+        move || {
+            let mut game = GameBuilder::new(setup).seed(seed).project(dir).build()?;
+            game.set_script_debugger(Some(h.hook()));
+            Ok(game)
+        },
         options,
     )?;
+    hub.set_loop_state(handle.loop_state());
     let clients = handle.clients();
     let access = GameAccess {
         reader: handle.reader(),
@@ -73,7 +106,12 @@ fn start(
     let host = Host::new(access, root.to_path_buf(), editor);
     host.set_capture(Arc::new(crate::present::CaptureServer::start(&feed, root.to_path_buf())));
     host.set_render(Arc::new(crate::present::FeedServer { feed }));
-    Ok((handle, host))
+    host.set_debug(Arc::new(crate::present::DebugBridge {
+        hub: hub.clone(),
+        host: host.clone(),
+    }));
+    crate::present::forward_debug_events(&hub, host.clone());
+    Ok(Served { handle, host, hub, cdp })
 }
 
 fn runtime() -> Result<tokio::runtime::Runtime, Problem> {
@@ -121,7 +159,8 @@ fn serving(args: &Args) -> Result<(), Problem> {
         .value("editor")
         .map(PathBuf::from)
         .or_else(pocket_server::find_editor_dist);
-    let (handle, host) = start(&root, args.number::<u64>("seed")?, editor.clone())?;
+    let served = start(&root, args.number::<u64>("seed")?, editor.clone())?;
+    let host = served.host.clone();
     let rt = runtime()?;
     let r = rt.block_on(async {
         let (addr, task) = host.serve(&ServeOptions { port }, stopped()).await?;
@@ -150,7 +189,7 @@ fn serving(args: &Args) -> Result<(), Problem> {
     hostfile::remove(&root);
     rt.shutdown_timeout(std::time::Duration::from_secs(2));
     drop(host);
-    let _ = handle.shutdown(2000);
+    served.shutdown();
     r
 }
 
@@ -213,12 +252,11 @@ fn mcp_session(args: &Args) -> Result<(), Problem> {
         let backend: Arc<dyn Backend> = Arc::new(Remote { url: f.url });
         return rt.block_on(pocket_mcp::serve_stdio(backend));
     }
-    let (handle, host) = start(&root, args.number::<u64>("seed")?, None)?;
+    let served = start(&root, args.number::<u64>("seed")?, None)?;
     eprintln!("pocket mcp: running {} in this process", root.display());
-    let backend: Arc<dyn Backend> = Arc::new(McpBackend::new(host.clone()));
+    let backend: Arc<dyn Backend> = Arc::new(McpBackend::new(served.host.clone()));
     let r = rt.block_on(pocket_mcp::serve_stdio(backend));
     rt.shutdown_timeout(std::time::Duration::from_secs(2));
-    drop(host);
-    let _ = handle.shutdown(2000);
+    served.shutdown();
     r
 }

@@ -1,0 +1,25 @@
+{
+  // Attach VS Code's JavaScript debugger (js-debug) to a running game's script debugger:
+  // cargo run -p pocket-app --example debug_sailing (docs/spec/debugger.md 9). Copy this file to
+  // .vscode/launch.json in the repository (or a project) and press F5.
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Attach to Pocket3D (sailing)",
+      "type": "node",
+      "request": "attach",
+      "address": "127.0.0.1",
+      "port": 9229,
+      "sourceMaps": true,
+      // The scripts are pocket:///scripts/*.js, not files: let js-debug read their source maps.
+      "resolveSourceMapLocations": null,
+      // The source maps name pocket:///scripts/<module>.ts; these are the project's files.
+      "sourceMapPathOverrides": {
+        "pocket:///*": "${workspaceFolder}/samples/sailing/*"
+      },
+      // Start a game held with --wait.
+      "continueOnAttach": true,
+      "skipFiles": []
+    }
+  ]
+}

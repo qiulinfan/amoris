@@ -1,0 +1,22 @@
+[package]
+name = "pocket-debug"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "The script debugger: breakpoints, stepping and data breakpoints over the script host's trace hook, a Chrome DevTools Protocol endpoint and a JSON API for agents"
+
+[dependencies]
+pocket-contract.workspace = true
+# The script host's debugger hooks (pocket_script::debug) and the vendored QuickJS-ng's debugging
+# interface (quickjs-ng PR #1421, P9, P10) it declares.
+pocket-script.workspace = true
+# The loop state a pause sets (threads.md 3.5).
+pocket-link.workspace = true
+rquickjs = { workspace = true, features = ["std"] }
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+# CDP: js-debug's urlRegex breakpoints, and the WebSocket (the debugger spike's choices).
+regex.workspace = true
+tungstenite.workspace = true

@@ -667,16 +667,20 @@ All run in the local check command [arch]; those marked web also run in the wasm
 
 ## 13. Debugging hooks
 
-The breakpoint debugger (charter 4.2.6) follows the debugger spike's recipe: its CDP endpoint, in
-the native-only crate `pocket-debug` (architecture.md 4.17), presents the TypeScript files and maps
-every location through the modules' source maps, which the host keeps; scripts are instrumented only
-while a client is attached (attach and detach are Controls that reinstantiate the current bundle at
-a boundary, threads.md 3.5, [hot-update.md](hot-update.md) 4.1), since the PR's handler ran the
-debugger spike's workload at 2.04 times the stock time while installed and cost nothing measurable
-while not (0.98 to 1.03 times, inside that loaded machine's noise); the spike's operand form of
-`OP_debug` brought the installed cost to 1.08 times and is a proposal for upstream, not carried. The
-spike's 19 CDP checks (`spikes/debugger/cdp_test.py`) become a Rust integration test of
-`pocket-debug` that the check's `test` step runs.
+The breakpoint debugger (charter 4.2.6) is built: [debugger.md](debugger.md) is its specification.
+The host's side is `pocket_script::debug` (a `DebugHook` attached per world with
+`Game::set_script_debugger`): scripts are instrumented only while a frontend is attached, since the
+PR's handler ran the debugger spike's workload at 2.04 times the stock time while installed and
+costs nothing while not; `script.update` instantiates the installed bundle again at the start of the
+first tick after attach or detach, before any script of that tick runs, which is the boundary reload
+this section asked for. Carried with the PR: P9, a per-function cache of statement positions (the
+spike's operand form of `OP_debug` renumbers opcodes and breaks QuickJS-ng's precompiled builtins),
+and P10, exceptions in the trace handler and `JS_GetStackFrameInfo` (script-sandbox.md 4.2). With
+both, a traced statement costs 4.3 ns more (1.05 times the workload; debugger.md 10). The CDP
+endpoint (`pocket-debug`, architecture.md 4.17) announces each module's JavaScript with a data-URL
+source map whose source is the TypeScript, so clients map locations themselves; agents speak
+TypeScript positions. The spike's CDP checks became `crates/pocket-debug/tests/cdp_e2e.mjs` and
+`crates/pocket-app/tests/debug_agent.rs` (debugger.md 11).
 
 A paused tick changes nothing, as no simulation reads a clock. A debugger evaluation and a
 breakpoint condition run with the write natives refusing (`script.debug_read_only`) and the
@@ -689,13 +693,13 @@ recorder writes a `Tainted { tick, reason }` record (replay.md 2.2), `verify` st
 breakpoints, stepping and reading variables do not taint.
 
 **VS Code.** The charter's check (a breakpoint on a `.ts` line in VS Code) runs headless, with no
-UI: the pinned release asset `js-debug-dap-v<version>.tar.gz` of microsoft/vscode-js-debug and a
-portable Node archive are downloaded into `~/.pocket-tools/` (no installer),
-`node js-debug/src/dapDebugServer.js <port>` serves VS Code's own debug adapter, and a small Debug
-Adapter Protocol client attaches it to the engine's CDP port (`type: "pwa-node"`,
-`request: "attach"`), calls `setBreakpoints` on a `.ts` line, waits for `stopped`, and runs
-`stackTrace`, `evaluate`, `next` and `continue`. The versions and results are recorded in
-`docs/spikes/debugger.md`; until that run the check has no verdict (README.md 3).
+UI and nothing downloaded: `crates/pocket-debug/tests/jsdebug_dap.mjs` loads the js-debug that
+the installed VS Code ships (1.140.0, its extension bundle under a stand-in for the `vscode` module;
+the app has no standalone `dapDebugServer.js`), resolves `editors/vscode/launch.json` through
+js-debug's own configuration provider, and speaks the Debug Adapter Protocol to its adapter as VS
+Code does: `setBreakpoints` on a `.ts` path, `stopped`, `stackTrace`, `scopes`, `variables`,
+`evaluate`, `next`, `continue`, `disconnect`; 13 of 13 checks on 2026-10-04. Chrome DevTools is
+checked the same way (`devtools_chrome.mjs`, 8 of 8). Debugger.md 11 records both.
 
 The Node fallback works because a system touches only its `ctx` and `pocket`: a prelude shim builds
 a `ctx` over a snapshot exported as JSON [persist] (not in slice 1).

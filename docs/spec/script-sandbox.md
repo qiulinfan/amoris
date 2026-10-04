@@ -193,6 +193,9 @@ The script host needs these further changes, carried the same way and proposed u
 | P6 | Every float store into a typed array or a `DataView` (`Float16`, `Float32`, `Float64`) writes the canonical NaN for any NaN (`0x7FF8000000000000` for f64, `0x7FC00000` for f32, `0x7E00` for f16), and a float16 or float32 element read as a number canonicalizes a NaN | QuickJS-ng NaN-boxes values only on 32-bit targets (`JS_NAN_BOXING` when `INTPTR_MAX < INT64_MAX`, quickjs.h), where every NaN becomes `0x7FF8000000000000`; 64-bit native builds keep the payload, and 0/0 is `0xFFF8000000000000` on x86. Without P6, `f[0] = 0/0; new Uint8Array(f.buffer)[7]` reads 0xFF natively and 0x7F on the web, and a script that hashes floats through an aliased typed array diverges |
 | P7 | `rquickjs-sys`'s build script makes the wasi-libc include path absolute with `std::path::absolute` instead of `canonicalize`, and emits `cargo:rustc-env=POCKET_QJS_CC=<compiler id>` | `canonicalize` gives a verbatim `\\?\` path on Windows that hides nested wasi-libc headers (script-web spike, Problems 1), which the spikes worked around with a copied header directory; the compiler id lets `EngineVersion` and the perf step see which C compiler built QuickJS-ng (architecture.md 7.3) |
 
+| P9 | Each function the debugger traces builds a table of its statement positions on its first trace; `OP_debug` reads it instead of searching the line table from the start | The PR's search was about 90 percent of the instrumented cost (debugger spike); the spike's alternative, line and column as `OP_debug` operands with the opcodes moved before the temporary block, renumbers the short opcodes and breaks the precompiled builtin bytecode QuickJS-ng embeds (debugger.md 2) |
+| P10 | The trace handler also hears catchable exceptions, once per throw, with a catch prediction from the catch offsets on the value stacks (`OP_debug` records each frame's stack pointer); `JS_GetDebugTraceException`; `JS_GetStackFrameInfo(level)` | Pause on uncaught exceptions at the throw, and callers' positions without parsing `Error().stack` (debugger.md 2, 3) |
+
 A call's steps must not change while the debugger instruments it (script-host.md 12, test 3).
 
 ### 4.3 Call depth, memory and stack
@@ -351,8 +354,9 @@ world (4.3).
    `cee271d0...`) and the diffs in `third_party/patches/`, each pinned by its SHA-256 in the script:
    quickjs-ng PR #1421 unmodified, then `p1-interrupt-counter.diff`, `p2-uncatchable-faults.diff`,
    `p3-constant-seeds.diff`, `p5-call-depth.diff`, `p6-canonical-nan.diff`, `p4-p7-build.diff` (P4
-   and P7 both change the build script, so they are one diff) and `p8-discard-jobs.diff` (choice
-   14). `--check` rebuilds into a temporary directory and fails on any byte that differs, as
+   and P7 both change the build script, so they are one diff), `p8-discard-jobs.diff` (choice
+   14), `p9-debug-line-cache.diff` and `p10-debug-exceptions-frames.diff` (the debugger,
+   debugger.md 2). `--check` rebuilds into a temporary directory and fails on any byte that differs, as
    `cargo xtask vendor --check` will (architecture.md 7.5); the script stays until xtask's Rust
    version replaces it.
 2. **Slice 1: P7 picks the pinned compiler.** When a build names no C compiler for the target

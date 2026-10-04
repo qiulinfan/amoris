@@ -28,3 +28,5 @@ pocket-server.workspace = true
 pocket-mcp.workspace = true
 tokio.workspace = true
 ureq.workspace = true
+# The script debugger (docs/spec/debugger.md): pocket serve's DebugHub and CDP endpoint.
+pocket-debug.workspace = true

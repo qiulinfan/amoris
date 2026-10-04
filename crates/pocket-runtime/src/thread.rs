@@ -293,6 +293,12 @@ impl GameHandle {
         self.clients.clone()
     }
 
+    /// The loop state's handle: what a script debugger sets while it holds the game thread inside
+    /// a tick (`pocket_debug::DebugHub::set_loop_state`; threads.md 3.5).
+    pub fn loop_state(&self) -> pocket_link::StateHandle {
+        self.reader.state_handle()
+    }
+
     /// A reader of the snapshots; from now on the game publishes after every tick.
     pub fn reader(&self) -> SnapshotReader {
         self.attached.store(true, Ordering::Release);

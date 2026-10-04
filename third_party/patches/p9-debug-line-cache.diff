@@ -1,0 +1,113 @@
+diff --git a/quickjs/quickjs.c b/quickjs/quickjs.c
+index e43a754..02eb92a 100644
+--- a/quickjs/quickjs.c
++++ b/quickjs/quickjs.c
+@@ -935,6 +935,9 @@ typedef struct JSFunctionBytecode {
+     int pc2line_len;
+     uint8_t *pc2line_buf;
+     char *source;
++    /* Pocket3D P9: per bytecode offset, the source position (line << 32 | column) find_line_num
++       gives, built when the debug trace handler first runs in this function (NULL until then) */
++    uint64_t *debug_lines;
+ } JSFunctionBytecode;
+ 
+ typedef struct JSBoundFunction {
+@@ -8508,6 +8511,81 @@ fail:
+     return b->line_num;
+ }
+ 
++/* Pocket3D P9: fills b->debug_lines from the line table, so that debug_lines[pc] is what
++   find_line_num(ctx, b, pc) gives. Returns false (and leaves it NULL) if memory or the table
++   fails; the caller then searches the table. */
++static bool js_debug_build_lines(JSContext *ctx, JSFunctionBytecode *b)
++{
++    const uint8_t *p, *p_end;
++    uint64_t *tab, cur;
++    int line_num, col_num, pc, ret, i, len;
++    uint32_t val;
++    int32_t v;
++    unsigned int op;
++
++    len = b->byte_code_len;
++    if (!b->pc2line_buf || len <= 0)
++        return false;
++    tab = js_malloc_rt(ctx->rt, sizeof(tab[0]) * len);
++    if (!tab)
++        return false;
++    p = b->pc2line_buf;
++    p_end = p + b->pc2line_len;
++    pc = 0;
++    i = 0;
++    line_num = b->line_num;
++    col_num = b->col_num;
++    cur = ((uint64_t)(uint32_t)line_num << 32) | (uint32_t)col_num;
++    while (p < p_end) {
++        op = *p++;
++        if (op == 0) {
++            ret = get_leb128(&val, p, p_end);
++            if (ret < 0)
++                goto fail;
++            pc += val;
++            p += ret;
++            ret = get_sleb128(&v, p, p_end);
++            if (ret < 0)
++                goto fail;
++            p += ret;
++            line_num += v;
++        } else {
++            op -= PC2LINE_OP_FIRST;
++            pc += (op / PC2LINE_RANGE);
++            line_num += (op % PC2LINE_RANGE) + PC2LINE_BASE;
++        }
++        ret = get_sleb128(&v, p, p_end);
++        if (ret < 0)
++            goto fail;
++        p += ret;
++        col_num += v;
++        /* offsets before this entry's keep the previous position */
++        for (; i < pc && i < len; i++)
++            tab[i] = cur;
++        cur = ((uint64_t)(uint32_t)line_num << 32) | (uint32_t)col_num;
++    }
++    for (; i < len; i++)
++        tab[i] = cur;
++    b->debug_lines = tab;
++    return true;
++ fail:
++    js_free_rt(ctx->rt, tab);
++    return false;
++}
++
++/* Pocket3D P9: the source position of the statement opcode at `pc`, from the table. */
++static int js_debug_line_num(JSContext *ctx, JSFunctionBytecode *b, uint32_t pc,
++                             int *col)
++{
++    uint64_t v;
++
++    if (unlikely(!b->debug_lines) && !js_debug_build_lines(ctx, b))
++        return find_line_num(ctx, b, pc, col);
++    v = b->debug_lines[pc];
++    *col = (int)(uint32_t)v;
++    return (int)(uint32_t)(v >> 32);
++}
++
+ /* in order to avoid executing arbitrary code during the stack trace
+    generation, we only look at simple 'name' properties containing a
+    string. */
+@@ -18642,7 +18720,7 @@ static JSValue JS_CallInternalBody(JSContext *caller_ctx, JSValueConst func_obj,
+                 uint32_t pc_index = (uint32_t)(pc - b->byte_code_buf - 1);
+                 int flags = (pc[-1] == OP_debugger_stmt)
+                                 ? JS_DEBUG_TRACE_DEBUGGER_STMT : 0;
+-                line_num = find_line_num(ctx, b, pc_index, &col_num);
++                line_num = js_debug_line_num(ctx, b, pc_index, &col_num); /* Pocket3D P9 */
+ 
+                 /* Pass the JSAtom values directly — no heap allocation.
+                    The atoms are valid for the lifetime of the bytecode
+@@ -37697,6 +37775,7 @@ static void free_function_bytecode(JSRuntime *rt, JSFunctionBytecode *b)
+     JS_FreeAtomRT(rt, b->filename);
+     js_free_rt(rt, b->pc2line_buf);
+     js_free_rt(rt, b->source);
++    js_free_rt(rt, b->debug_lines); /* Pocket3D P9 */
+ 
+     remove_gc_object(&b->header);
+     if (rt->gc_phase == JS_GC_PHASE_REMOVE_CYCLES && JS_REF_COUNT(b) != 0) {

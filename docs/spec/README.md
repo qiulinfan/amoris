@@ -24,6 +24,7 @@ their code is under `spikes/`.
 | [script-host.md](script-host.md) | spec-script | 7.7 (script host API, batch queries, executors, `.d.ts`, the Rust API, tests, debugging); 4.2 |
 | [script-sandbox.md](script-sandbox.md) | spec-script | 7.7 (the freeze and the lint, the execution budget, call depth and faults, the QuickJS-ng patches, script errors); 4.2.4, 4.2.5 |
 | [hot-update.md](hot-update.md) | spec-script | 7.14 (hot update at a boundary, kept on failure, tried in a fork) |
+| [debugger.md](debugger.md) | slice 1 | Charter 4.3 (the script debugger: its core, the CDP endpoint, the agents' `debug.*`, P9 and P10, its cost and its checks against VS Code's js-debug and Chrome DevTools) |
 | [threads.md](threads.md) | spec-arch | 7.15 (the game and editor threads, publication, the queue and its order, the web form); 5.1 |
 | [architecture.md](architecture.md) | spec-arch | 3.9 (crates with one-way dependencies), 4.1 (stack and the `wasm32` build), the build rules |
 | [checks.md](checks.md) | spec-arch | 3.7 (the local check command), 3.9 (the crate boundaries it verifies; no line limit), 9.4 (the dependency check per commit) |

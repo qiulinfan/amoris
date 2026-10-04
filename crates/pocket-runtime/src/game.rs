@@ -146,6 +146,9 @@ pub struct Game {
     history: History,
     /// The last compile's diagnostics (`scripts.list`).
     diagnostics: Vec<Value>,
+    /// The first tick a script debugger evaluated in (script-host.md 13): the run is not
+    /// replayable from it on.
+    tainted: Option<u64>,
 }
 
 fn bad_hash(text: &str) -> Problem {
@@ -201,6 +204,7 @@ impl Game {
             project: None,
             history: History::default(),
             diagnostics: Vec::new(),
+            tainted: None,
         })
     }
 
@@ -263,6 +267,16 @@ impl Game {
     /// Writes applied at the current boundary.
     pub fn writes(&self) -> u32 {
         self.writes
+    }
+
+    /// Attaches a script debugger to this game's script host, or detaches it (`None`), on the
+    /// thread that owns the game (docs/spec/debugger.md 8; `pocket_debug::DebugHub::hook`). A fork
+    /// or a replay of this game is not debugged.
+    pub fn set_script_debugger(
+        &mut self,
+        hook: Option<std::rc::Rc<dyn pocket_script::debug::DebugHook>>,
+    ) {
+        pocket_script::debug::attach(self.sim.world_mut(), hook);
     }
 
     pub fn snapshot(&self) -> Result<Snapshot, Problem> {
@@ -396,7 +410,7 @@ impl Game {
                 Ok(
                     json!({"tick": self.tick().0, "writes": self.writes, "world_hash": hash,
                           "bundle": self.current.to_hex(), "poisoned": poisoned,
-                          "entities": entities}),
+                          "entities": entities, "tainted": self.tainted}),
                 )
             }
             "snapshot" => {
@@ -770,7 +784,15 @@ impl Game {
         if let Some(p) = self.sim.poisoned() {
             return Err(pocket_sim::sim::world_poisoned(p.tick));
         }
-        match self.sim.step(&mut NoHooks) {
+        let stepped = self.sim.step(&mut NoHooks);
+        // A script debugger that evaluated inside the tick taints the run (script-host.md 13).
+        if let Some((tick, why)) = pocket_script::debug::take_taint(self.sim.world_mut()) {
+            self.tainted.get_or_insert(tick);
+            if let Some(rec) = &mut self.recorder {
+                rec.tainted(Tick(tick), &why);
+            }
+        }
+        match stepped {
             Ok(r) => {
                 self.writes = 0;
                 self.sync_context();

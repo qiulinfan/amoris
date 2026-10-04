@@ -92,6 +92,10 @@ fn get_wasi_sdk_path() -> PathBuf {
 }
 
 fn main() {
+    // aipocket2: the vendored, patched QuickJS-ng sources (P1 to P10) must rebuild the library when
+    // they change; the rerun lines below would otherwise be the only triggers.
+    println!("cargo:rerun-if-changed=quickjs");
+    println!("cargo:rerun-if-changed=build.rs");
     #[cfg(feature = "logging")]
     pretty_env_logger::init();
 

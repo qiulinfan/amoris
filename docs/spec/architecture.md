@@ -349,16 +349,18 @@ written as that specification names them.
   (shared/contract/errors.md) and the request checker reads schemars' schemas as JSON values.
 - **wasm32**: pure Rust.
 
-### 4.17 `pocket-debug`: the debugger's endpoint
+### 4.17 `pocket-debug`: the debugger
 
-- **Owns**: the Chrome DevTools Protocol endpoint the breakpoint debugger serves (script-host.md 13;
-  the debugger spike's recipe): a WebSocket server on 127.0.0.1 on its own thread, which forwards
-  requests to the script host's debug hooks on the game thread and presents the TypeScript files
-  through their source maps.
-- **Depends on**: `pocket-script` (the debug hooks) and `pocket-link` (commands to the game thread);
-  external crates `tungstenite` and `regex`. Linked by `pocket-app` only.
-- **Tests**: the spike's 19 CDP checks (`spikes/debugger/cdp_test.py`) as a Rust integration test
-  the check's `test` step runs, so the endpoint cannot rot unseen.
+- **Owns**: the script debugger ([debugger.md](debugger.md)): the core (`DebugHub`), the hook the
+  script host calls on the game thread (`pocket_script::debug::DebugHook`), the Chrome DevTools
+  Protocol endpoint on 127.0.0.1 (its own port, 9229 by default; threads of its own that never touch
+  the context) and the agents' `debug.*` JSON API.
+- **Depends on**: `pocket-script` (the hooks), `pocket-link` (the loop state a pause sets);
+  `pocket-contract`; external crates `rquickjs`, `tungstenite`, `regex`. Linked by `pocket-app` only
+  (its examples `debug_sailing` and `debug_overhead`, and `tests/debug_agent.rs`, so far).
+- **Tests**: `pocket-app`'s `tests/debug_agent.rs` (the agents' API on a real game thread) in the
+  check's `test` step; the CDP and real-client checks are Node scripts under
+  `crates/pocket-debug/tests/` (debugger.md 11).
 - **wasm32**: native only.
 
 ### 4.18 `pocket-server`: the host's server
