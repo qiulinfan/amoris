@@ -59,6 +59,7 @@ export const api = {
     },
     write: (path: string, text: string) => call("scripts.write", { path, text }),
     apply: (paths?: string[]) => call("scripts.apply", paths ? { paths } : {}, 120000),
+    types: () => call("scripts.types", { text: true }),
   },
   assets: {
     list: (dir?: string) => call("assets.list", dir ? { dir } : {}),

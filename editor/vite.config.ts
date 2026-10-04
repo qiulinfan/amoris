@@ -25,7 +25,8 @@ export default defineConfig({
       "/mcp": http,
       "/json": http,
     },
-    // The SDK's declarations (../sdk) are read at build time for Monaco.
+    // The SDK's declarations (../crates/pocket-script/src/prelude/pocket.d.ts) are read at build
+    // time for Monaco, the fallback until the host sends the project's.
     fs: { allow: [".."] },
   },
   build: {

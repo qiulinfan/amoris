@@ -1,0 +1,32 @@
+import { component, field, system } from "pocket";
+
+export const m1 = system({ name: "m1", phase: "update", doc: "d",
+    queries: { boats: { with: ["Boa"] } }, run() {} });
+export const m2 = system({ name: "m2", phase: "update", doc: "d",
+    queries: { boats: { with: ["Boat", "Log"], fields: ["Boat.speed", "Log.distnce"] } }, run() {} });
+export const m3 = system({ name: "m3", phase: "update", doc: "d",
+    queries: { boats: { with: ["Boat"], fields: ["Boat.speed"] } },
+    run(_ctx, { boats }) { const x: number = boats.cols.Boat.hoist[0]; void x; } });
+export const m4 = system({ name: "m4", phase: "update", doc: "d",
+    queries: { boats: { with: ["Boat"] } },
+    run(_ctx, { boats }) { const x: number = boats.cols.Boat.sped[0]; void x; } });
+export const m5 = system({ name: "m5", phase: "update", doc: "d",
+    run(ctx) { const e = ctx.single("Tally"); ctx.world.set(e, "Tally", { totl: 1 }); } });
+export const m6 = system({ name: "m6", phase: "update", doc: "d",
+    run(ctx) { const e = ctx.single("Tally"); const n: number = ctx.world.get(e, "Tally").taken; void n; } });
+export const m7 = system({ name: "m7", phase: "update", doc: "d",
+    run(ctx) { const e = ctx.single("Tally"); const t = ctx.world.get(e, "Tally")!; t.taken = 2; } });
+export const m8 = system({ name: "m8", phase: "update", doc: "d",
+    run(ctx) { const e = ctx.single("Tally"); ctx.world.get(e, "Model"); } });
+export const m9 = system({ name: "m9", phase: "update", doc: "d",
+    run(ctx) { ctx.emit("crate", {}); } });
+export const m10 = system({ name: "m10", phase: "update", doc: "d",
+    run(ctx) { ctx.emit("script.x", {}); } });
+export const m11 = system({ name: "Muster", phase: "update", doc: "d", run() {} });
+export const m12 = system({ name: "m12", phase: "update", doc: "d",
+    queries: { boats: { with: ["Crew"] } },
+    run(_ctx, { boats }) { boats.cols.Crew.take[0] = 5; } });
+export const Bad = component("Bad", { version: 1, doc: "d",
+    fields: { mood: field.enum(["a", "b"], "c", "d") } });
+export const m13 = system({ name: "m13", phase: "update", doc: "d",
+    run(ctx) { const e = ctx.single("Tally"); ctx.world.get(e, "Bad"); } });

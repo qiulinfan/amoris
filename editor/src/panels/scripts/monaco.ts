@@ -8,7 +8,11 @@ import "monaco-editor/languages/definitions/typescript/register";
 import * as ts from "monaco-editor/languages/features/typescript/register";
 import EditorWorker from "monaco-editor/editor/editor.worker?worker";
 import TsWorker from "monaco-editor/languages/features/typescript/ts.worker?worker";
-import stub from "../../../sdk-stub/pocket.d.ts?raw";
+// The SDK as the engine embeds it (generated from the prelude by crates/pocket-script/tests/prelude.rs),
+// for when the host has not sent the project's declarations yet.
+import bundledSdk from "../../../../crates/pocket-script/src/prelude/pocket.d.ts?raw";
+import type { ScriptTypes } from "../../host/protocol";
+import { useScripts } from "../../state/scripts";
 
 self.MonacoEnvironment = {
   getWorker(_id: string, label: string) {
@@ -16,37 +20,60 @@ self.MonacoEnvironment = {
   },
 };
 
-// The SDK's generated declarations when sdk/ has them (bundled at build time), else the stub.
-const sdk = import.meta.glob("../../../../sdk/**/*.d.ts", { query: "?raw", import: "default", eager: true }) as Record<string, string>;
-
+// The options of the tsconfig.json the engine writes into a project (pocket-script's types::TSCONFIG),
+// so the worker reports what `tsc` reports in scripts.check.
 ts.typescriptDefaults.setCompilerOptions({
   target: ts.ScriptTarget.ESNext,
   module: ts.ModuleKind.ESNext,
   moduleResolution: ts.ModuleResolutionKind.NodeJs,
-  lib: ["es2022"],
+  lib: ["es2023"],
   strict: true,
   noEmit: true,
+  isolatedModules: true,
+  allowImportingTsExtensions: true,
   allowNonTsExtensions: true,
-  noUnusedLocals: true,
 });
 ts.typescriptDefaults.setDiagnosticsOptions({ noSemanticValidation: false, noSyntaxValidation: false });
 ts.typescriptDefaults.setEagerModelSync(true);
 
-export const sdkSource: string = (() => {
-  const entries = Object.entries(sdk);
-  if (entries.length === 0) {
-    ts.typescriptDefaults.addExtraLib(stub, "file:///node_modules/@types/pocket/index.d.ts");
-    return "stub (editor/sdk-stub/pocket.d.ts)";
-  }
-  for (const [path, text] of entries) {
-    const rel = path.replace(/^.*\/sdk\//, "");
-    ts.typescriptDefaults.addExtraLib(text, `file:///node_modules/pocket/${rel}`);
-  }
-  if (!entries.some(([p]) => /\/index\.d\.ts$/.test(p))) {
-    ts.typescriptDefaults.addExtraLib(stub, "file:///node_modules/@types/pocket/index.d.ts");
-  }
-  return `sdk/ (${entries.length} declaration files)`;
-})();
+/** Until the host's declarations arrive: any component name, loosely typed. */
+const LOOSE_COMPONENTS = `export {};
+declare module "pocket" {
+  interface Components { [name: string]: any }
+  interface ComponentColumns { [name: string]: any }
+}
+`;
+
+let loaded: { dispose(): void }[] = [];
+
+/** Loads `pocket`'s declarations into the TypeScript worker as `node_modules/pocket`. */
+function loadSdk(pocket: string, components: string) {
+  for (const lib of loaded) lib.dispose();
+  loaded = [
+    ts.typescriptDefaults.addExtraLib(pocket, "file:///node_modules/pocket/index.d.ts"),
+    ts.typescriptDefaults.addExtraLib(components, "file:///node_modules/pocket/components.d.ts"),
+  ];
+}
+
+/** Where the `pocket` module's types come from, for the status bar. */
+export function sdkLabel(types: ScriptTypes | null): string {
+  if (!types?.text) return "bundled (components untyped until the host answers scripts.types)";
+  const c = types.components;
+  return `.pocket/types (${c.engine.length} engine + ${c.project.length} game components)`;
+}
+
+function apply() {
+  const text = useScripts.getState().types?.text;
+  const pocket = text?.["pocket.d.ts"];
+  const components = text?.["components.d.ts"];
+  if (pocket && components) loadSdk(pocket, components);
+  else loadSdk(bundledSdk, LOOSE_COMPONENTS);
+}
+
+apply();
+useScripts.subscribe((s, prev) => {
+  if (s.types !== prev.types) apply();
+});
 
 monaco.editor.defineTheme("pocket-dark", {
   base: "vs-dark",
