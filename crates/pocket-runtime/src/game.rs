@@ -279,6 +279,21 @@ impl Game {
         pocket_script::debug::attach(self.sim.world_mut(), hook);
     }
 
+    /// The first tick a script debugger evaluated in, if one did (script-host.md 13): the run is
+    /// not a replayable record from there.
+    pub fn tainted(&self) -> Option<u64> {
+        self.tainted
+    }
+
+    /// The script debugger attached to this game, if any (Play hands it to its fork and back,
+    /// `thread.rs`).
+    pub fn script_debugger(&self) -> Option<std::rc::Rc<dyn pocket_script::debug::DebugHook>> {
+        self.sim
+            .world()
+            .get_non_send::<pocket_script::Scripts>()
+            .and_then(|s| s.host.debugger())
+    }
+
     pub fn snapshot(&self) -> Result<Snapshot, Problem> {
         pocket_persist::snapshot(self.sim.world(), &self.reg)
     }

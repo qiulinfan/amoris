@@ -61,11 +61,18 @@ pub struct Variable {
     pub name: String,
     pub kind: String,
     pub value: Json,
+    /// An object's one-line description (`Float64Array(1)`, `Array(3)`, `Object`), as CDP
+    /// describes it; `None` for primitives, whose `value` says it all.
+    pub description: Option<String>,
 }
 
 impl Variable {
     pub fn json(&self) -> Json {
-        json!({"name": self.name, "type": self.kind, "value": self.value})
+        let mut v = json!({"name": self.name, "type": self.kind, "value": self.value});
+        if let Some(d) = &self.description {
+            v["description"] = json!(d);
+        }
+        v
     }
 }
 
@@ -165,6 +172,9 @@ impl<'js> Inspector<'js> {
                         name: n.clone(),
                         kind: kind_of(v).to_owned(),
                         value: me.json(v, 0),
+                        description: (v.is_object() || v.is_function())
+                            .then(|| me.describe(v)["description"].as_str().map(str::to_owned))
+                            .flatten(),
                     })
                     .collect()
             };

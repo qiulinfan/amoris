@@ -468,7 +468,7 @@ impl DebugHub {
             }
             "debug.rewind" => Err(problem(
                 "debug.unsupported",
-                "debug.rewind needs the runtime's snapshot ring, which this build does not keep yet.",
+                "debug.rewind is the host's (pocket serve restores the kept snapshot at or before the tick and steps to it); a hub alone keeps no snapshots.",
                 json!({"method": method}),
             )),
             other => {
@@ -562,6 +562,11 @@ impl DebugHub {
         v["breakpoints"] = json!(self.breakpoints_json());
         v["watches"] = json!(watches);
         v["waiting_for_debugger"] = json!(*lock(&self.inner.gate));
+        v["cdp"] = match *lock(&self.inner.cdp) {
+            Some(addr) => json!({"ws": format!("ws://{addr}{}", crate::cdp::TARGET_PATH),
+                                 "devtools": crate::cdp::devtools_url(&addr)}),
+            None => Json::Null,
+        };
         v
     }
 }

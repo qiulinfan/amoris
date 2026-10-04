@@ -52,6 +52,7 @@ pub struct CdpServer {
     addr: SocketAddr,
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
+    hub: DebugHub,
 }
 
 impl CdpServer {
@@ -77,6 +78,7 @@ impl CdpServer {
 
     fn halt(&mut self) {
         self.stop.store(true, Ordering::Release);
+        crate::hub::lock(&self.hub.inner.cdp).take();
         if let Some(t) = self.thread.take() {
             let _ = t.join();
         }
@@ -89,7 +91,7 @@ impl Drop for CdpServer {
     }
 }
 
-fn devtools_url(addr: &SocketAddr) -> String {
+pub(crate) fn devtools_url(addr: &SocketAddr) -> String {
     format!(
         "devtools://devtools/bundled/js_app.html?experiments=true&v8only=true&ws={addr}{TARGET_PATH}"
     )
@@ -113,10 +115,12 @@ impl DebugHub {
         let thread = std::thread::Builder::new()
             .name("pocket-cdp".into())
             .spawn(move || accept(listener, addr, hub, flag, options.log))?;
+        *crate::hub::lock(&self.inner.cdp) = Some(addr);
         Ok(CdpServer {
             addr,
             stop,
             thread: Some(thread),
+            hub: self.clone(),
         })
     }
 }

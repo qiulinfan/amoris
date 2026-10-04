@@ -718,6 +718,8 @@ impl Loop {
         v["poisoned"] = json!(self.game.sim().poisoned().map(|p| p.tick.0));
         v["steps_due"] = json!(self.model.steps_due());
         v["kept"] = json!(self.kept.items.len());
+        // The first tick a script debugger evaluated in (script-host.md 13; debugger.md 5).
+        v["tainted"] = json!(self.game.tainted());
         v
     }
 
@@ -754,7 +756,13 @@ impl Loop {
         let speed = p.speed.unwrap_or(1.0);
         let pacing = Pacing::RealTime { speed };
         pacing.check()?;
-        let fork = self.game.fork()?;
+        let mut fork = self.game.fork()?;
+        // The script debugger follows the world that runs (docs/spec/debugger.md 8): Play's fork
+        // takes it, Stop hands it back.
+        if let Some(hook) = self.game.script_debugger() {
+            self.game.set_script_debugger(None);
+            fork.set_script_debugger(Some(hook));
+        }
         let mut model = TimeModel::new(fork.sim().clock().rate, pacing);
         if p.paused {
             model.pause();
@@ -777,7 +785,7 @@ impl Loop {
 
     fn play_stop(&mut self, params: &Value) -> Result<Value, Problem> {
         crate::decode::<NoParams>(params, "play.stop")?;
-        let Some(parked) = self.parked.take() else {
+        let Some(mut parked) = self.parked.take() else {
             return Err(problem(
                 "play.not_running",
                 "Play is not running; the edit world is shown.".into(),
@@ -787,6 +795,10 @@ impl Loop {
             "play.stopped",
             "Play stopped; its step was dropped.".into(),
         ));
+        if let Some(hook) = self.game.script_debugger() {
+            self.game.set_script_debugger(None);
+            parked.game.set_script_debugger(Some(hook));
+        }
         self.game = parked.game;
         self.model = parked.model;
         self.kept = parked.kept;
