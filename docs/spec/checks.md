@@ -257,14 +257,18 @@ committed files.
 For every project: the TypeScript type check and the stateless-script lint, through the command
 spec-script names (charter 4.2.4: `tsc` in CI and the apply command; 4.2.5: the lint in the local
 checks). Each finding is `types.error {project, path, line, column, code, message}` or the lint's
-own code (spec-script). When the lint passes, the step writes the project's declarations
-(`.pocket/types/`, and a `tsconfig.json` if it has none: `scripts.types`, script-host.md 7.4) from
-the project loaded into a game with no entities, then runs TypeScript 7's `tsc --noEmit -p .` over
-them as `scripts.check` does (`pocket-app` hands `pocket-server`'s runner to `pocket-check`, which
-spawns no process itself), with its time as the `tsc` measurement; a run past 60 s is
-`types.timeout`. `tsc` is found as the server finds it (`POCKET_TSC`, `sdk/node_modules` after
-`cd sdk && bun install`, ...; server.md); nothing is downloaded. Without one, the step passes on the
-lint with the warning `check.tool_missing {tool: "tsc"}` and the summary "tsc not found".
+own code (spec-script). When the lint passes, the step writes the project's declarations under
+`.pocket/types/` (with the `tsconfig.json` `tsc` uses when the project has none; it never writes
+into the source tree: `scripts.types`, script-host.md 7.4) from the project loaded into a game with
+no entities, then runs TypeScript 7's `tsc --noEmit -p` over them as `scripts.check` does
+(`pocket-app` hands `pocket-server`'s runner to `pocket-check`, which spawns no process itself),
+with its time as the `tsc` measurement and its version in the summary; a run past 60 s is
+`types.timeout`. `tsc` is found as the server finds it (`POCKET_TSC`, else the first TypeScript 7 in
+`sdk/node_modules` after `cd sdk && bun install`, ...; server.md); `sdk/bun.lock` pins 7.0.2 by
+version and integrity hash, so `bun install` replaces master's pinned download and nothing is
+fetched by the check itself. Without a TypeScript 7 `tsc`, or when the declarations cannot be
+written (`project.unwritable`), the step is inconclusive with `check.tool_missing {tool: "tsc"}`
+(the lint alone is no verdict), and `pocket-app`'s test 7 fails unless `POCKET_NO_TSC=1`.
 
 ## 7. `web`: the web build in headless Chrome
 

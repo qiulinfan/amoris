@@ -214,15 +214,20 @@ the registry for project components (`{x, y, z}` objects, `enum`, nullable integ
 nothing.
 
 Monaco's TypeScript worker loads the project's declarations from the host
-(`scripts.types {text: true}`: `pocket.d.ts` and the generated `components.d.ts`, the files `tsc`
-checks in `scripts.check`, docs/sdk.md) on connect and after every apply, with the options of the
-project's `tsconfig.json`; until they arrive (or against the mock, which lacks `scripts.types`) it
-uses the SDK the engine embeds (`crates/pocket-script/src/prelude/pocket.d.ts`, bundled at build
-time) with loosely typed components. The worker is monaco-editor 0.57's TypeScript 5.9 (JavaScript),
-not `tsc` 7: on the same declarations the two report the same codes and places for the mistakes of
-`tools/sdk_check.ts` (section 10), but they may differ in corners. The status bar counts the shown
-file's markers, the worker's and the host's; the host's `tsc` findings are left out of the markers
-once the worker has the project's declarations, since the worker reports them live.
+(`scripts.types {text: true, tsconfig: false}`: `pocket.d.ts` and the generated `components.d.ts`,
+the files `tsc` checks in `scripts.check`, docs/sdk.md; connecting never writes a `tsconfig.json`
+into the project) on connect and after the editor's own apply. Its compiler options are fixed in
+`monaco.ts` to mirror `pocket_script::types::TSCONFIG` (strict, `es2023`, isolated modules); it does
+not read the project's `tsconfig.json`, and resolves `pocket` as `node_modules/pocket`
+(`moduleResolution` `NodeJs`, where the project's file says `bundler`). Until the declarations
+arrive (or against the mock, which lacks `scripts.types`) it uses the SDK the engine embeds
+(`crates/pocket-script/src/prelude/pocket.d.ts`, bundled at build time) with loosely typed
+components. The worker is monaco-editor 0.57's TypeScript 5.9 (JavaScript), not `tsc` 7: on the same
+declarations the two reported the same codes and places for the 15 mistakes of
+`tools/sdk_mistakes.ts.txt` (`tools/sdk_check.ts`, section 10), but they may differ in corners. The
+status bar counts the shown file's markers, the worker's and the host's; the host's `tsc` findings
+are left out of the markers once the worker has the project's declarations, since the worker reports
+them live.
 
 ## 8. What the editor needs from the host
 

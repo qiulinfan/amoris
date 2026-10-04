@@ -7,9 +7,6 @@ export const m2 = system({ name: "m2", phase: "update", doc: "d",
 export const m3 = system({ name: "m3", phase: "update", doc: "d",
     queries: { boats: { with: ["Boat"], fields: ["Boat.speed"] } },
     run(_ctx, { boats }) { const x: number = boats.cols.Boat.hoist[0]; void x; } });
-export const m4 = system({ name: "m4", phase: "update", doc: "d",
-    queries: { boats: { with: ["Boat"] } },
-    run(_ctx, { boats }) { const x: number = boats.cols.Boat.sped[0]; void x; } });
 export const m5 = system({ name: "m5", phase: "update", doc: "d",
     run(ctx) { const e = ctx.single("Tally"); ctx.world.set(e, "Tally", { totl: 1 }); } });
 export const m6 = system({ name: "m6", phase: "update", doc: "d",
@@ -30,3 +27,7 @@ export const Bad = component("Bad", { version: 1, doc: "d",
     fields: { mood: field.enum(["a", "b"], "c", "d") } });
 export const m13 = system({ name: "m13", phase: "update", doc: "d",
     run(ctx) { const e = ctx.single("Tally"); ctx.world.get(e, "Bad"); } });
+export const m14 = system({ name: "m14", phase: "update", doc: "d",
+    run(ctx) { ctx.emit("Crate.Taken", {}); } });
+const queries = { boats: { with: ["Boat"] } };
+export const m15 = system({ name: "m15", phase: "update", doc: "d", queries, run() {} });
