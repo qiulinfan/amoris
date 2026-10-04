@@ -4,12 +4,16 @@
 //!
 //!   physics-bench --scene <Pyramid|Pyramid30|ConvexVsMesh|Raycast|Ragdoll> [--steps N]
 //!                 [--threads N] [--iters N] [--data DIR] [--csv FILE] [--hash-chain FILE] [--no-sleep]
-//!                 [--fork-at N] [--multibody]
+//!                 [--fork-at N] [--multibody] [--no-joint-motors] [--no-joint-limits]
 //!
 //! Build configurations are features: `det` (what aipocket2 ships), none, `simd8`, `parallel`.
 //! `--fork-at N` (feature `serde`) snapshots the world after N steps the way pocket-physics writes
 //! its Cache (serde through bincode 1.3.3, fixed-width little-endian), restores the bytes into a
 //! second world, steps both to the end and reports the fork's hash beside the original's.
+//! `--multibody` builds the Ragdoll's joints as multibody joints instead of impulse joints, prints
+//! every step's time to stderr and stops at the first step that leaves a body position non-finite
+//! (reported as `nonfinite_at_step`); `--no-joint-motors` and `--no-joint-limits` drop the joints'
+//! motors or limits, to find which part of the emulated swing-twist joint a failure comes from.
 
 mod ragdoll;
 mod scenes;
@@ -31,7 +35,7 @@ struct Args {
     hash_chain: Option<PathBuf>,
     no_sleep: bool,
     fork_at: Option<usize>,
-    multibody: bool,
+    joints: ragdoll::JointOptions,
 }
 
 fn args() -> Args {
@@ -45,7 +49,11 @@ fn args() -> Args {
         hash_chain: None,
         no_sleep: false,
         fork_at: None,
-        multibody: false,
+        joints: ragdoll::JointOptions {
+            multibody: false,
+            motors: true,
+            limits: true,
+        },
     };
     let mut it = std::env::args().skip(1);
     while let Some(k) = it.next() {
@@ -66,7 +74,9 @@ fn args() -> Args {
             "--csv" => a.csv = Some(PathBuf::from(v())),
             "--hash-chain" => a.hash_chain = Some(PathBuf::from(v())),
             "--no-sleep" => a.no_sleep = true,
-            "--multibody" => a.multibody = true,
+            "--multibody" => a.joints.multibody = true,
+            "--no-joint-motors" => a.joints.motors = false,
+            "--no-joint-limits" => a.joints.limits = false,
             "--fork-at" => a.fork_at = Some(v().parse().expect("fork-at")),
             _ => panic!("unknown argument {k}"),
         }
@@ -89,7 +99,11 @@ fn config() -> String {
         parts.push("default");
     }
     let mut s = parts.join("+");
-    s.push_str(if cfg!(target_arch = "wasm32") { " wasm32" } else { " native" });
+    s.push_str(if cfg!(target_arch = "wasm32") {
+        " wasm32"
+    } else {
+        " native"
+    });
     s
 }
 
@@ -116,7 +130,10 @@ fn body_hash(world: &PhysicsWorld) -> u64 {
 /// step's cost without the time the scheduler gave other processes (the benchmark machine is shared).
 #[cfg(not(target_arch = "wasm32"))]
 fn thread_cpu_ms() -> f64 {
-    let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
     // SAFETY: clock_gettime writes the timespec it is given.
     unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut ts) };
     ts.tv_sec as f64 * 1e3 + ts.tv_nsec as f64 * 1e-6
@@ -137,20 +154,35 @@ struct Summary {
 
 fn summarize(ms: &[f64]) -> Summary {
     if ms.is_empty() {
-        return Summary { mean: 0.0, p50: 0.0, p95: 0.0, max: 0.0, total: 0.0 };
+        return Summary {
+            mean: 0.0,
+            p50: 0.0,
+            p95: 0.0,
+            max: 0.0,
+            total: 0.0,
+        };
     }
     let total: f64 = ms.iter().sum();
     let mut s = ms.to_vec();
     s.sort_by(f64::total_cmp);
     let pct = |p: f64| s[((p * (s.len() - 1) as f64 + 0.5) as usize).min(s.len() - 1)];
-    Summary { mean: total / ms.len() as f64, p50: pct(0.5), p95: pct(0.95), max: s[s.len() - 1], total }
+    Summary {
+        mean: total / ms.len() as f64,
+        p50: pct(0.5),
+        p95: pct(0.95),
+        max: s[s.len() - 1],
+        total,
+    }
 }
 
 /// The world's bytes as pocket-physics' Cache writes them (crates/pocket-physics/src/cache.rs).
 #[cfg(feature = "serde")]
 fn snapshot_options() -> impl bincode::Options {
     use bincode::Options;
-    bincode::DefaultOptions::new().with_fixint_encoding().with_little_endian().reject_trailing_bytes()
+    bincode::DefaultOptions::new()
+        .with_fixint_encoding()
+        .with_little_endian()
+        .reject_trailing_bytes()
 }
 
 /// Snapshot and restore: (the restored world, its byte count, save ms, restore ms).
@@ -158,11 +190,20 @@ fn snapshot_options() -> impl bincode::Options {
 fn fork(world: &PhysicsWorld) -> (PhysicsWorld, usize, f64, f64) {
     use bincode::Options;
     let t0 = Instant::now();
-    let bytes = snapshot_options().serialize(world).expect("serialize the world");
+    let bytes = snapshot_options()
+        .serialize(world)
+        .expect("serialize the world");
     let t1 = Instant::now();
-    let restored: PhysicsWorld = snapshot_options().deserialize(&bytes).expect("deserialize the world");
+    let restored: PhysicsWorld = snapshot_options()
+        .deserialize(&bytes)
+        .expect("deserialize the world");
     let t2 = Instant::now();
-    (restored, bytes.len(), (t1 - t0).as_secs_f64() * 1e3, (t2 - t1).as_secs_f64() * 1e3)
+    (
+        restored,
+        bytes.len(),
+        (t1 - t0).as_secs_f64() * 1e3,
+        (t2 - t1).as_secs_f64() * 1e3,
+    )
 }
 
 #[cfg(not(feature = "serde"))]
@@ -174,7 +215,10 @@ fn main() {
     let a = args();
 
     #[cfg(feature = "parallel")]
-    rayon::ThreadPoolBuilder::new().num_threads(a.threads).build_global().expect("rayon pool");
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(a.threads)
+        .build_global()
+        .expect("rayon pool");
     #[cfg(not(feature = "parallel"))]
     assert_eq!(a.threads, 1, "--threads needs the `parallel` feature");
 
@@ -196,14 +240,25 @@ fn main() {
             rays = scenes::ray_grid();
         }
         "Ragdoll" => {
-            let (f, st) = ragdoll::build(&mut world, &a.data.join("ragdoll.txt"), a.no_sleep, a.multibody);
+            let (f, st) = ragdoll::build(
+                &mut world,
+                &a.data.join("ragdoll.txt"),
+                a.no_sleep,
+                a.joints,
+            );
             extra = format!(
-                ",\"statics\":{},\"triangles\":{},\"ragdoll_bodies\":{},\"joints\":{},\"joint_kind\":\"{}\"",
+                ",\"statics\":{},\"triangles\":{},\"ragdoll_bodies\":{},\"joints\":{},\"joint_kind\":\"{}\",\"joint_motors\":{},\"joint_limits\":{}",
                 st.statics,
                 st.triangles,
                 st.bodies,
                 st.joints,
-                if a.multibody { "multibody" } else { "impulse" }
+                if a.joints.multibody {
+                    "multibody"
+                } else {
+                    "impulse"
+                },
+                a.joints.motors,
+                a.joints.limits
             );
             filter = Some(f);
         }
@@ -211,7 +266,10 @@ fn main() {
     }
     // Like jolt_bench's --no-sleep: every body stays awake; the scene reports as <Scene>NoSleep.
     let scene_name = if a.no_sleep {
-        assert_eq!(a.scene, "Ragdoll", "--no-sleep is for the Ragdoll scene (the others set sleeping as Jolt's do)");
+        assert_eq!(
+            a.scene, "Ragdoll",
+            "--no-sleep is for the Ragdoll scene (the others set sleeping as Jolt's do)"
+        );
         format!("{}NoSleep", a.scene)
     } else {
         a.scene.clone()
@@ -227,9 +285,14 @@ fn main() {
     let mut ray_ms = Vec::new();
     let mut hits = 0u64;
     let mut fraction_sum = 0f64;
-    let mut chain: Option<(u64, File)> =
-        a.hash_chain.as_ref().map(|p| (0xcbf2_9ce4_8422_2325, File::create(p).expect("hash chain file")));
+    let mut chain: Option<(u64, File)> = a.hash_chain.as_ref().map(|p| {
+        (
+            0xcbf2_9ce4_8422_2325,
+            File::create(p).expect("hash chain file"),
+        )
+    });
     let mut forked: Option<(PhysicsWorld, usize, f64, f64)> = None;
+    let mut nonfinite_at = None;
     for i in 0..a.steps {
         if a.fork_at == Some(i) {
             forked = Some(fork(&world));
@@ -241,6 +304,17 @@ fn main() {
         cpu_ms.push(thread_cpu_ms() - c0);
         if let Some((f, ..)) = forked.as_mut() {
             f.step_with_events(hooks, &()); // not timed
+        }
+        if a.joints.multibody {
+            eprintln!("step {i}: {:.1} ms", step_ms[i]);
+            let finite = world
+                .bodies
+                .iter()
+                .all(|(_, b)| b.translation().is_finite());
+            if !finite {
+                nonfinite_at = Some(i);
+                break;
+            }
         }
 
         if !rays.is_empty() {
@@ -264,7 +338,12 @@ fn main() {
 
     if let Some(p) = &a.csv {
         let mut f = File::create(p).expect("csv");
-        writeln!(f, "step,step_ms{}", if rays.is_empty() { "" } else { ",ray_ms" }).unwrap();
+        writeln!(
+            f,
+            "step,step_ms{}",
+            if rays.is_empty() { "" } else { ",ray_ms" }
+        )
+        .unwrap();
         for (i, s) in step_ms.iter().enumerate() {
             match ray_ms.get(i) {
                 Some(r) => writeln!(f, "{i},{s},{r}").unwrap(),
@@ -312,7 +391,10 @@ fn main() {
     );
     if a.threads == 1 && !cfg!(feature = "parallel") && !cfg!(target_arch = "wasm32") {
         let c = summarize(&cpu_ms);
-        out.push_str(&format!(",\"cpu_mean_ms\":{:.4},\"cpu_p50_ms\":{:.4}", c.mean, c.p50));
+        out.push_str(&format!(
+            ",\"cpu_mean_ms\":{:.4},\"cpu_p50_ms\":{:.4}",
+            c.mean, c.p50
+        ));
     }
     if !rays.is_empty() {
         let r = summarize(&ray_ms);
@@ -334,6 +416,9 @@ fn main() {
             ",\"fork_at\":{at},\"state_bytes\":{bytes},\"save_ms\":{save:.3},\"restore_ms\":{restore:.3},\"fork_hash\":\"0x{:016x}\"",
             body_hash(f)
         ));
+    }
+    if let Some(i) = nonfinite_at {
+        out.push_str(&format!(",\"nonfinite_at_step\":{i}"));
     }
     out.push_str(&format!(",\"hash\":\"0x{:016x}\"}}", body_hash(&world)));
     println!("{out}");

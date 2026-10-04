@@ -15,7 +15,10 @@ use jolt_ffi_proto::{Pyramid, Quat, Vec3};
 /// CPU time of the calling thread in ms (single-threaded runs: the step without time given to other
 /// processes).
 fn thread_cpu_ms() -> f64 {
-    let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
     // SAFETY: clock_gettime writes the timespec it is given.
     unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut ts) };
     ts.tv_sec as f64 * 1e3 + ts.tv_nsec as f64 * 1e-6
@@ -29,13 +32,21 @@ struct Summary {
 
 fn summarize(ms: &[f64]) -> Summary {
     if ms.is_empty() {
-        return Summary { mean: 0.0, p95: 0.0, total: 0.0 };
+        return Summary {
+            mean: 0.0,
+            p95: 0.0,
+            total: 0.0,
+        };
     }
     let total: f64 = ms.iter().sum();
     let mut s = ms.to_vec();
     s.sort_by(f64::total_cmp);
     let p95 = s[((0.95 * (s.len() - 1) as f64 + 0.5) as usize).min(s.len() - 1)];
-    Summary { mean: total / ms.len() as f64, p95, total }
+    Summary {
+        mean: total / ms.len() as f64,
+        p95,
+        total,
+    }
 }
 
 fn main() {
@@ -58,7 +69,8 @@ fn main() {
 
     let mut scene = Pyramid::new(height, threads);
     let mut poses = vec![(Vec3::default(), Quat::default()); scene.ids.len()];
-    let (mut step_ms, mut sync_ms, mut ray_ms, mut cpu_ms) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let (mut step_ms, mut sync_ms, mut ray_ms, mut cpu_ms) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new());
     let (mut hits, mut fraction_sum) = (0u64, 0f64);
     for _ in 0..steps {
         let c0 = thread_cpu_ms();
@@ -89,7 +101,11 @@ fn main() {
     let mut out = format!(
         "{{\"engine\":\"jolt-via-joltc\",\"deterministic\":{},\"scene\":\"Pyramid{}\",\"threads\":{},\"steps\":{},\"bodies\":{},\"mean_ms\":{:.4},\"p95_ms\":{:.4},\"total_ms\":{:.2},\"mean_ms_after_first\":{:.4}",
         cfg!(feature = "det"),
-        if height == 15 { String::new() } else { height.to_string() },
+        if height == 15 {
+            String::new()
+        } else {
+            height.to_string()
+        },
         threads,
         steps,
         bodies,
@@ -103,7 +119,11 @@ fn main() {
     }
     if sync {
         let y = summarize(&sync_ms);
-        out.push_str(&format!(",\"sync_mean_ms\":{:.4},\"sync_ns_per_body\":{:.1}", y.mean, y.mean * 1e6 / bodies as f64));
+        out.push_str(&format!(
+            ",\"sync_mean_ms\":{:.4},\"sync_ns_per_body\":{:.1}",
+            y.mean,
+            y.mean * 1e6 / bodies as f64
+        ));
     }
     if rays_on {
         let r = summarize(&ray_ms);

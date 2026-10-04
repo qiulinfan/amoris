@@ -17,7 +17,10 @@ set(CMAKE_CXX_COMPILER_TARGET wasm32-wasip1)
 set(CMAKE_SYSROOT ${WASI_SYSROOT})
 set(CMAKE_CXX_FLAGS_INIT "-resource-dir ${WASI_RESOURCE_DIR} -D__EMSCRIPTEN__ -D_WASI_EMULATED_SIGNAL")
 set(CMAKE_C_FLAGS_INIT "-resource-dir ${WASI_RESOURCE_DIR}")
-set(CMAKE_EXE_LINKER_FLAGS_INIT "-resource-dir ${WASI_RESOURCE_DIR} --ld-path=/opt/homebrew/opt/lld/bin/wasm-ld -lwasi-emulated-signal -Wl,-z,stack-size=8388608 -Wl,--initial-memory=1073741824")
+# clang's WebAssembly driver ignores --ld-path (and warns); -fuse-ld with an absolute path names
+# lld's wasm-ld. When wasm-opt is on PATH the driver also runs it on the linked module at the
+# compile's -O level (-O3 for Distribution), the way tools/build_web.sh treats the engine's module.
+set(CMAKE_EXE_LINKER_FLAGS_INIT "-resource-dir ${WASI_RESOURCE_DIR} -fuse-ld=/opt/homebrew/opt/lld/bin/wasm-ld -lwasi-emulated-signal -Wl,-z,stack-size=8388608 -Wl,--initial-memory=1073741824")
 set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
 # Jolt.cmake adds -pthread on every non-Windows platform except Emscripten; -pthread would make
 # wasm-ld ask for shared memory, which a wasip1 build has not.

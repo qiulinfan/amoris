@@ -15,11 +15,18 @@ publish = false
 det = []
 
 [dependencies]
-libc = "0.2"                  # the calling thread's CPU time per step
+libc = "=0.2.190"             # the calling thread's CPU time per step
 
 [build-dependencies]
-cmake = "0.1"
+cmake = "=0.1.58"
 
 [profile.release]
 opt-level = 3
 debug = "line-tables-only"
+
+[profile.web]                # the engine's shipped browser profile (Cargo.toml at the repository root)
+inherits = "release"
+lto = true
+codegen-units = 1
+panic = "abort"
+debug = false

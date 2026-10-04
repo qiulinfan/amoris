@@ -72,13 +72,28 @@ pub struct RagdollStats {
     pub joints: usize,
 }
 
-/// `multibody`: the joints become Rapier multibody joints (reduced coordinates, each ragdoll one
-/// articulation rooted at its first part) instead of impulse joints; the same frames, limits and
-/// motors.
-pub fn build(world: &mut PhysicsWorld, path: &Path, no_sleep: bool, multibody: bool) -> (RagdollFilter, RagdollStats) {
+/// How the ragdoll joints are built. `multibody`: Rapier multibody joints (reduced coordinates, each
+/// ragdoll one articulation rooted at its first part) instead of impulse joints, with the same
+/// frames, limits and motors. `motors` and `limits` off drop the three position motors or the three
+/// angular limits (diagnosis only; the benchmark keeps both).
+#[derive(Clone, Copy)]
+pub struct JointOptions {
+    pub multibody: bool,
+    pub motors: bool,
+    pub limits: bool,
+}
+
+pub fn build(
+    world: &mut PhysicsWorld,
+    path: &Path,
+    no_sleep: bool,
+    opts: JointOptions,
+) -> (RagdollFilter, RagdollStats) {
     let text = fs::read_to_string(path).expect("ragdoll scene file (jolt_bench --export)");
     let tri_bytes = fs::read(path.with_extension("txt.tri")).expect("ragdoll triangles (.tri)");
-    let mut t = Tokens { it: text.split_ascii_whitespace() };
+    let mut t = Tokens {
+        it: text.split_ascii_whitespace(),
+    };
 
     // Static leaf shapes in world space: a trimesh each, or a convex hull for convex leaves. Jolt
     // groups them into 457 static bodies (compounds of scaled meshes); here each is its own fixed
@@ -87,8 +102,10 @@ pub fn build(world: &mut PhysicsWorld, path: &Path, no_sleep: bool, multibody: b
     let nstatics = t.u();
     let ntris = t.u();
     assert_eq!(tri_bytes.len(), ntris * 36);
-    let floats: Vec<f32> =
-        tri_bytes.chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
+    let floats: Vec<f32> = tri_bytes
+        .chunks_exact(4)
+        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .collect();
     let mut first = 0usize;
     let mut statics = 0;
     for _ in 0..nstatics {
@@ -104,7 +121,9 @@ pub fn build(world: &mut PhysicsWorld, path: &Path, no_sleep: bool, multibody: b
         let co = if convex {
             ColliderBuilder::convex_hull(&verts).expect("convex leaf")
         } else {
-            let indices: Vec<[u32; 3]> = (0..count as u32).map(|i| [3 * i, 3 * i + 1, 3 * i + 2]).collect();
+            let indices: Vec<[u32; 3]> = (0..count as u32)
+                .map(|i| [3 * i, 3 * i + 1, 3 * i + 2])
+                .collect();
             // Jolt's meshes have active-edge detection on; FIX_INTERNAL_EDGES is Rapier's
             // equivalent (it also welds the duplicated vertices of this triangle soup).
             ColliderBuilder::trimesh_with_flags(verts, indices, TriMeshFlags::FIX_INTERNAL_EDGES)
@@ -135,7 +154,11 @@ pub fn build(world: &mut PhysicsWorld, path: &Path, no_sleep: bool, multibody: b
         let sub_group = t.u();
         let can_sleep = t.u() == 1;
         let leaves = t.u();
-        let inertia = Vector::new(1.0 / inv_inertia.x, 1.0 / inv_inertia.y, 1.0 / inv_inertia.z);
+        let inertia = Vector::new(
+            1.0 / inv_inertia.x,
+            1.0 / inv_inertia.y,
+            1.0 / inv_inertia.z,
+        );
         let rb = RigidBodyBuilder::dynamic()
             .pose(Pose::from_parts(com, rot))
             .linear_damping(lin_damp)
@@ -218,28 +241,37 @@ pub fn build(world: &mut PhysicsWorld, path: &Path, no_sleep: bool, multibody: b
         let mut j = GenericJointBuilder::new(JointAxesMask::LOCKED_SPHERICAL_AXES)
             .local_frame1(Pose::from_parts(p1, q1))
             .local_frame2(Pose::from_parts(p2, q2))
-            .contacts_enabled(false)
-            .limits(JointAxis::AngX, [twist_min, twist_max])
-            .limits(JointAxis::AngY, [-plane_half_cone, plane_half_cone])
-            .limits(JointAxis::AngZ, [-normal_half_cone, normal_half_cone]);
+            .contacts_enabled(false);
+        if opts.limits {
+            j = j
+                .limits(JointAxis::AngX, [twist_min, twist_max])
+                .limits(JointAxis::AngY, [-plane_half_cone, plane_half_cone])
+                .limits(JointAxis::AngZ, [-normal_half_cone, normal_half_cone]);
+        }
         // Position motors (Jolt EMotorState::Position = 2) as springs of Jolt's frequency and
         // damping ratio; Rapier's acceleration-based model takes stiffness w^2 and damping 2 z w.
         // libm, not std: std's asin calls the platform's C library natively, and the native and
         // wasm32 runs then diverge from the first step (seen here before this used libm).
         let target_angle = |c: f32| 2.0 * libm::asinf(c.clamp(-1.0, 1.0));
-        let motor = |j: GenericJointBuilder, axis, target: f32, (_mode, freq, zeta, max_torque): (usize, f32, f32, f32)| {
+        let motor = |j: GenericJointBuilder,
+                     axis,
+                     target: f32,
+                     (_mode, freq, zeta, max_torque): (usize, f32, f32, f32)| {
             let w = 2.0 * std::f32::consts::PI * freq;
-            j.motor_position(axis, target, w * w, 2.0 * zeta * w).motor_max_force(axis, max_torque)
+            j.motor_position(axis, target, w * w, 2.0 * zeta * w)
+                .motor_max_force(axis, max_torque)
         };
-        if twist_state == 2 {
+        if opts.motors && twist_state == 2 {
             j = motor(j, JointAxis::AngX, target_angle(target.x), twist);
         }
-        if swing_state == 2 {
+        if opts.motors && swing_state == 2 {
             j = motor(j, JointAxis::AngY, target_angle(target.y), swing);
             j = motor(j, JointAxis::AngZ, target_angle(target.z), swing);
         }
-        if multibody {
-            world.insert_multibody_joint(handles[b1], handles[b2], j).expect("a ragdoll is a tree of joints");
+        if opts.multibody {
+            world
+                .insert_multibody_joint(handles[b1], handles[b2], j)
+                .expect("a ragdoll is a tree of joints");
         } else {
             world.insert_impulse_joint(handles[b1], handles[b2], j);
         }
@@ -247,6 +279,11 @@ pub fn build(world: &mut PhysicsWorld, path: &Path, no_sleep: bool, multibody: b
     t.expect("end");
     (
         RagdollFilter { parts, off },
-        RagdollStats { statics, triangles: ntris, bodies: nbodies, joints: njoints },
+        RagdollStats {
+            statics,
+            triangles: ntris,
+            bodies: nbodies,
+            joints: njoints,
+        },
     )
 }

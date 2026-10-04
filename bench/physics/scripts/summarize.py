@@ -13,6 +13,8 @@ import sys
 from collections import defaultdict
 
 SCENES = ["Pyramid", "Pyramid30", "ConvexVsMesh", "Raycast", "RagdollNoSleep", "Ragdoll"]
+# WebAssembly runs: repetitions whose runs all started below this 1-minute load are also paired apart.
+QUIET_LOAD = 10
 
 
 def load(path):
@@ -108,7 +110,7 @@ def perftest(raw_dir):
     each thread count across the sessions' files (jolt-perftest-<config>-<scene>-<session>.txt)."""
     import glob
     import os
-    rows, sessions = {}, set()
+    rows, sessions, counts = {}, set(), defaultdict(int)
     for v in ("nondet", "det"):
         for sc in ("Pyramid", "ConvexVsMesh", "Ragdoll"):
             for f in sorted(glob.glob(os.path.join(raw_dir, f"jolt-perftest-{v}-{sc}-*.txt"))):
@@ -119,6 +121,7 @@ def perftest(raw_dir):
                         ms = 1000.0 / float(parts[2])
                         r = rows.setdefault((v, sc), {})
                         r[int(parts[1])] = min(ms, r.get(int(parts[1]), ms))
+                        counts[(v, sc, int(parts[1]))] += 1
     if not rows:
         return
     threads = sorted({t for r in rows.values() for t in r})
@@ -131,6 +134,12 @@ def perftest(raw_dir):
         label = ("Jolt det., " if v == "det" else "Jolt, ") + sc
         print(f"| {label} | " + " | ".join(f"{r[t]:.2f}" if t in r else "–" for t in threads) + " |")
     print()
+    for (v, sc), r in rows.items():
+        short = [t for t in threads if counts[(v, sc, t)] < len(sessions)]
+        if short:
+            label = ("Jolt det., " if v == "det" else "Jolt, ") + sc
+            print(f"{label}: {min(short)} to {max(short)} threads come from fewer sessions "
+                  f"({', '.join(str(counts[(v, sc, t)]) for t in short)}): a session's file stops early.\n")
 
 
 def main():
@@ -224,25 +233,34 @@ def main():
 def wasm(raw_dir):
     """WebAssembly against native, deterministic builds, single thread (scripts/wasm.sh)."""
     import os
+    import statistics
     f = os.path.join(raw_dir, "wasm.jsonl")
     if not os.path.exists(f):
         return
-    best = {}
+    best, by_rep, loads, rep_load = {}, defaultdict(dict), [], defaultdict(float)
     for line in open(f):
         if line.strip():
             d = json.loads(line)
             k = (d["run"], d["scene"])
+            loads.append(d["load1"])
+            by_rep[(d["scene"], d["rep"])][d["run"]] = d["mean_ms"]
+            rep_load[(d["scene"], d["rep"])] = max(rep_load[(d["scene"], d["rep"])], d["load1"])
             if k not in best or d["mean_ms"] < best[k]["mean_ms"]:
                 best[k] = d
-    cols = [("Rapier det. native", "rapier-det-native"), ("Rapier det. wasm32", "rapier-det-wasm"),
-            ("Rapier det. wasm32 simd128", "rapier-det-wasm-simd128"), ("Jolt det. native", "jolt-det-native"),
-            ("Jolt det. wasm32 (scalar)", "jolt-det-wasm"), ("Jolt det. in a Rust wasm32-unknown-unknown module", "jolt-det-rust-wasm")]
+    cols = [("Rapier det. native", "rapier-det-native"),
+            ("Rapier det. wasm32, web profile + wasm-opt", "rapier-det-wasm-web"),
+            ("Rapier det. wasm32 simd128, web profile + wasm-opt", "rapier-det-wasm-web-simd128"),
+            ("Jolt det. native", "jolt-det-native"), ("Jolt det. wasm32 (scalar)", "jolt-det-wasm"),
+            ("Jolt det. in a Rust wasm32-unknown-unknown module", "jolt-det-rust-wasm")]
     steps = next(iter(best.values()))["steps"]
-    print(f"### WebAssembly (V8 in Node {next((d['node'] for d in best.values() if 'node' in d), '24')}), deterministic builds, single thread, {steps} steps\n")
-    print("Mean ms per step (p95), fastest of the repetitions; in brackets the ratio to the same engine's native run.\n")
+    reps = len({r for (_, r) in by_rep})
+    node = next((d["node"] for d in best.values() if "node" in d), "24")
+    print(f"### WebAssembly (V8 in Node {node}), deterministic builds, single thread, {steps} steps\n")
+    print(f"Mean ms per step (p95), fastest of {reps} repetitions (1-minute load {min(loads):.0f} to "
+          f"{max(loads):.0f}); in brackets the ratio to the same engine's native run.\n")
     print("| Scene | " + " | ".join(label for label, _ in cols) + " |")
     print("|---|" + "---|" * len(cols))
-    for sc in ("Pyramid", "ConvexVsMesh", "Ragdoll"):
+    for sc in ("Pyramid", "ConvexVsMesh", "RagdollNoSleep", "Ragdoll"):
         row = []
         for _, run in cols:
             b = best.get((run, sc))
@@ -254,24 +272,71 @@ def wasm(raw_dir):
             row.append(f"{b['mean_ms']:.2f} ({b['p95_ms']:.2f}){ratio}")
         print(f"| {sc} | " + " | ".join(row) + " |")
     print()
+    # Same-repetition ratios: what the shipped web profile changes, and Rapier against Jolt in wasm.
+    pairs = [("rapier-det-wasm-web", "rapier-det-wasm-release", "Rapier web profile + wasm-opt / release profile"),
+             ("rapier-det-wasm-web", "jolt-det-wasm", "Rapier det. wasm32 / Jolt det. wasm32"),
+             ("rapier-det-wasm-web-simd128", "jolt-det-wasm", "Rapier det. wasm32 simd128 / Jolt det. wasm32"),
+             ("jolt-det-rust-wasm", "jolt-det-wasm", "Jolt in the Rust module / Jolt alone, wasm32")]
+    for title, quiet in (("Paired within a repetition (median, range), all repetitions:", None),
+                         (f"The same, only repetitions whose runs all started at a 1-minute load below {QUIET_LOAD}:",
+                          QUIET_LOAD)):
+        print(title + "\n")
+        print("| Scene | " + " | ".join(label for _, _, label in pairs) + " |")
+        print("|---|" + "---|" * len(pairs))
+        for sc in ("Pyramid", "ConvexVsMesh", "RagdollNoSleep", "Ragdoll"):
+            cells = []
+            for a, b, _ in pairs:
+                rs = [r[a] / r[b] for (scene, rp), r in by_rep.items()
+                      if scene == sc and a in r and b in r and (quiet is None or rep_load[(scene, rp)] < quiet)]
+                cells.append(f"{statistics.median(rs):.2f} (n={len(rs)}, {min(rs):.2f}–{max(rs):.2f})" if rs else "–")
+            print(f"| {sc} | " + " | ".join(cells) + " |")
+        print()
+    hashes = defaultdict(set)
+    for (run, sc), d in best.items():
+        hashes[(sc, run.split("-")[0])].add(d["hash"])
+    split = [f"{sc} ({e})" for (sc, e), h in hashes.items() if len(h) > 1]
+    print("End hashes: " + ("every native and wasm run of an engine agrees on every scene." if not split
+                            else "differ for " + ", ".join(split) + ".") + "\n")
 
 
 def forks(raw_dir):
-    """Snapshot, restore into a second world, step both (scripts/fork.sh)."""
+    """Snapshot, restore into a second world, step both (scripts/fork.sh): per scene and engine the
+    state size, the median and range of the save, rebuild and restore times over the repetitions,
+    and whether every repetition's fork ended with the original's hash."""
     import os
+    import statistics
     f = os.path.join(raw_dir, "fork.jsonl")
     if not os.path.exists(f):
         return
-    runs = [json.loads(line) for line in open(f) if line.strip()]
+    runs = defaultdict(list)
+    for line in open(f):
+        if line.strip():
+            d = json.loads(line)
+            runs[(d["scene"], d["engine"])].append(d)
+    loads = [d["load1"] for ds in runs.values() for d in ds if "load1" in d]
+    n = max(len(ds) for ds in runs.values())
     print(f"### Snapshots and forks, deterministic builds, single thread\n")
+    print(f"Times in ms: median over {n} runs (fastest–slowest)"
+          + (f", 1-minute load {min(loads):.0f} to {max(loads):.0f}" if loads else "") + ".\n")
     print("| Scene | Engine | Fork after / of steps | State bytes | Save ms | Rebuild ms | Restore ms | Fork's end hash = original's |")
     print("|---|---|---|---|---|---|---|---|")
-    for d in runs:
-        engine = "Jolt det." if d["engine"] == "jolt" else "Rapier det."
-        rebuild = f"{d['rebuild_ms']:.1f}" if "rebuild_ms" in d else "–"
-        same = "yes" if d["fork_hash"] == d["hash"] else "**no**"
-        print(f"| {d['scene']} | {engine} | {d['fork_at']} / {d['steps']} | {d['state_bytes'] / 1e6:.2f} MB | "
-              f"{d['save_ms']:.2f} | {rebuild} | {d['restore_ms']:.2f} | {same} (`{d['hash']}`) |")
+
+    def ms(x):
+        return f"{x:.0f}" if x >= 100 else f"{x:.1f}" if x >= 10 else f"{x:.2f}"
+
+    def spread(ds, k):
+        v = [d[k] for d in ds]
+        return f"{ms(statistics.median(v))} ({ms(min(v))}–{ms(max(v))})"
+
+    for (scene, engine), ds in runs.items():
+        d = ds[0]
+        label = "Jolt det." if engine == "jolt" else "Rapier det."
+        sizes = {x["state_bytes"] for x in ds}
+        size = f"{d['state_bytes'] / 1e6:.2f} MB" if len(sizes) == 1 else "varies"
+        rebuild = spread(ds, "rebuild_ms") if "rebuild_ms" in d else "–"
+        same = all(x["fork_hash"] == x["hash"] for x in ds) and len({x["hash"] for x in ds}) == 1
+        print(f"| {scene} | {label} | {d['fork_at']} / {d['steps']} | {size} | {spread(ds, 'save_ms')} | "
+              f"{rebuild} | {spread(ds, 'restore_ms')} | {'yes' if same else '**no**'} (`{d['hash']}`, {len(ds)} runs) |")
     print()
 
 

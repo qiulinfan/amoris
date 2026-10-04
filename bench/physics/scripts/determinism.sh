@@ -2,13 +2,14 @@
 # Determinism checks behind docs/bench/physics.md ("Determinism"). Prints a report on stdout.
 #
 # Rapier: per-step body-hash chains (FNV-1a over every body's position and rotation bits after each
-# step) compared between native aarch64 and wasm32-wasip1 under Node, for each build configuration,
-# and across rayon thread counts for `det,parallel`. Jolt: PerformanceTest against the hashes Jolt's
+# step) compared between native aarch64 and wasm32-wasip1 under Node, for each build configuration
+# (the det. build also in the web profile through wasm-opt, as tools/build_web.sh ships it), and across rayon thread counts for `det,parallel`. Jolt: PerformanceTest against the hashes Jolt's
 # CI records for its cross-platform-deterministic build (.github/workflows/determinism_check.yml),
 # and jolt_bench's end hash across thread counts.
 #
 # Needs the builds of bench/physics/scripts/build.sh. T is the target directory.
-T=${T:-/Users/qiulinfan/Desktop/aipocket2-wt/target-physics}
+REPO=$(cd "$(dirname "$0")/../../.." && pwd)
+T=${T:-${CARGO_TARGET_DIR:-$REPO/target}/physics-bench}
 J=${J:-$HOME/Reference/JoltPhysics-v5.6.0}
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=$T/det
@@ -34,6 +35,8 @@ for scene in Pyramid:300 ConvexVsMesh:300 Ragdoll:100; do
   chain det-native "$s" "$n" "$T/rapier-det/release/physics-bench"
   chain det-wasm "$s" "$n" node --no-warnings "$HERE/run_wasi.mjs" "$T/rapier-det/wasm32-wasip1/release/physics-bench.wasm"
   chain det-wasm-simd128 "$s" "$n" node --no-warnings "$HERE/run_wasi.mjs" "$T/rapier-det-simd128/wasm32-wasip1/release/physics-bench.wasm"
+  chain det-wasm-web "$s" "$n" node --no-warnings "$HERE/run_wasi.mjs" "$T/wasm/rapier-det.wasm"
+  chain det-wasm-web-simd128 "$s" "$n" node --no-warnings "$HERE/run_wasi.mjs" "$T/wasm/rapier-det-simd128.wasm"
   chain det-lto "$s" "$n" "$T/rapier-det/release-lto/physics-bench"
   chain default-native "$s" "$n" "$T/rapier-default/release/physics-bench"
   chain default-wasm "$s" "$n" node --no-warnings "$HERE/run_wasi.mjs" "$T/rapier-default/wasm32-wasip1/release/physics-bench.wasm"
@@ -45,6 +48,8 @@ for scene in Pyramid:300 ConvexVsMesh:300 Ragdoll:100; do
   echo " enhanced-determinism:"
   compare "$s" det-native det-wasm
   compare "$s" det-native det-wasm-simd128
+  compare "$s" det-native det-wasm-web
+  compare "$s" det-native det-wasm-web-simd128
   compare "$s" det-native det-lto
   echo " enhanced-determinism + parallel:"
   for th in 1 4 10; do compare "$s" det-native det-parallel-t$th; done
@@ -65,7 +70,7 @@ for v in det nondet; do
   for th in max 1; do
     for s in ConvexVsMesh:CONVEX_VS_MESH_HASH Ragdoll:RAGDOLL_HASH Pyramid:PYRAMID_HASH HighSpeed:HIGH_SPEED_HASH; do
       scene=${s%%:*}; key=${s#*:}; want=$(ci $key)
-      got=$(cd "$J/Build/bench-$v" && watchdog ./PerformanceTest -q=LinearCast -t=$th -s=$scene | tail -1 | awk -F', ' '{print $4}')
+      got=$(cd "$J" && watchdog "$T/jolt-perftest-$v/PerformanceTest" -q=LinearCast -t=$th -s=$scene | tail -1 | awk -F', ' '{print $4}')
       [ "$got" = "$want" ] && r=match || r=differs
       echo "  CROSS_PLATFORM_DETERMINISTIC=$v threads=$th $scene: $got (CI $want) $r"
     done
@@ -99,7 +104,7 @@ echo "== Jolt v5.6.0 CROSS_PLATFORM_DETERMINISTIC inside a Rust wasm32-unknown-u
 for n in 300 500; do
   c=$(watchdog "$T/jolt-det/jolt_bench" --scene Pyramid --steps $n | sed 's/.*"hash":"\([0-9a-fx]*\)".*/\1/')
   f=$(watchdog "$T/jolt-ffi-det/release/jolt-ffi-proto" --steps $n | sed 's/.*"hash":"\([0-9a-fx]*\)".*/\1/')
-  w=$(watchdog node --no-warnings "$HERE/run_jolt_wasm.mjs" "$T/jolt-ffi-wasm/wasm32-unknown-unknown/release/jolt_ffi_proto.wasm" --steps $n | sed 's/.*"hash":"\([0-9a-fx]*\)".*/\1/')
+  w=$(watchdog node --no-warnings "$HERE/run_jolt_wasm.mjs" "$T/wasm/jolt-ffi-det.wasm" --steps $n | sed 's/.*"hash":"\([0-9a-fx]*\)".*/\1/')
   [ "$c" = "$w" ] && [ "$f" = "$w" ] && r=identical || r=differs
   echo "  $n steps: C++ native $c, Rust native via joltc $f, Rust wasm32-unknown-unknown via joltc $w: $r"
 done

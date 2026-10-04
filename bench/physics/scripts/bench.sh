@@ -3,10 +3,12 @@
 # with the repetition and the machine's 1-minute load average and appends it to $RAW/bench.jsonl.
 # REPS repetitions (default 3) of every configuration, interleaved so that background load affects
 # all configurations alike; scripts/summarize.py keeps the fastest repetition of each. APPEND=1 adds
-# repetitions FIRST_REP.. to an existing bench.jsonl instead of starting it anew.
-T=${T:-/Users/qiulinfan/Desktop/aipocket2-wt/target-physics}
+# repetitions FIRST_REP.. to an existing bench.jsonl instead of starting it anew. RAW defaults to
+# $T/raw; the committed results are docs/bench/physics/ (RAW=docs/bench/physics replaces them).
+REPO=$(cd "$(dirname "$0")/../../.." && pwd)
+T=${T:-${CARGO_TARGET_DIR:-$REPO/target}/physics-bench}
 J=${J:-$HOME/Reference/JoltPhysics-v5.6.0}
-RAW=${RAW:-$(cd "$(dirname "$0")/../../.." && pwd)/docs/bench/physics}
+RAW=${RAW:-$T/raw}
 REPS=${REPS:-3}
 STEPS=${STEPS:-500}
 mkdir -p "$RAW"

@@ -30,8 +30,12 @@ fn copy_dir(from: &Path, to: &Path) {
 
 fn main() {
     let home = env::var("HOME").unwrap();
-    let joltc = PathBuf::from(env::var("JOLTC_ROOT").unwrap_or(format!("{home}/Reference/joltc-amerkoleci")));
-    let jolt = PathBuf::from(env::var("JOLT_ROOT").unwrap_or(format!("{home}/Reference/JoltPhysics-v5.6.0")));
+    let joltc = PathBuf::from(
+        env::var("JOLTC_ROOT").unwrap_or(format!("{home}/Reference/joltc-amerkoleci")),
+    );
+    let jolt = PathBuf::from(
+        env::var("JOLT_ROOT").unwrap_or(format!("{home}/Reference/JoltPhysics-v5.6.0")),
+    );
     println!("cargo:rerun-if-env-changed=JOLTC_ROOT");
     println!("cargo:rerun-if-env-changed=JOLT_ROOT");
     println!("cargo:rerun-if-changed=build.rs");
@@ -54,7 +58,10 @@ fn main() {
             .collect::<Vec<_>>()
             .join("\n");
     }
-    cpp = cpp.replace("createConfig.numThreads > 0 ? createConfig.numThreads : -1", "createConfig.numThreads >= 0 ? createConfig.numThreads : -1");
+    cpp = cpp.replace(
+        "createConfig.numThreads > 0 ? createConfig.numThreads : -1",
+        "createConfig.numThreads >= 0 ? createConfig.numThreads : -1",
+    );
     fs::write(&cpp_path, cpp).unwrap();
 
     let det = env::var("CARGO_FEATURE_DET").is_ok();
@@ -76,7 +83,10 @@ fn main() {
         .define("DEBUG_RENDERER_IN_DISTRIBUTION", "OFF")
         .define("PROFILER_IN_DISTRIBUTION", "OFF")
         .define("ENABLE_ALL_WARNINGS", "OFF")
-        .define("CROSS_PLATFORM_DETERMINISTIC", if det { "ON" } else { "OFF" })
+        .define(
+            "CROSS_PLATFORM_DETERMINISTIC",
+            if det { "ON" } else { "OFF" },
+        )
         .build_target("joltc")
         .build();
     let lib = dst.join("build/lib");
@@ -97,7 +107,9 @@ fn main() {
 fn build_wasm(src: &Path, jolt: &Path, out: &Path, det: bool) {
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let toolchain = manifest.join("../jolt/wasi/wasm32-wasip1.cmake");
-    let sysroot = PathBuf::from(env::var("WASI_SYSROOT").unwrap_or("/opt/homebrew/share/wasi-sysroot".into()));
+    let sysroot = PathBuf::from(
+        env::var("WASI_SYSROOT").unwrap_or("/opt/homebrew/share/wasi-sysroot".into()),
+    );
     println!("cargo:rerun-if-env-changed=WASI_SYSROOT");
     println!("cargo:rerun-if-changed={}", toolchain.display());
     let build = out.join("build-wasm");
@@ -114,7 +126,10 @@ fn build_wasm(src: &Path, jolt: &Path, out: &Path, det: bool) {
         .args(["-G", "Ninja", "-DCMAKE_BUILD_TYPE=Distribution"])
         .arg(format!("-DCMAKE_TOOLCHAIN_FILE={}", toolchain.display()))
         .arg(format!("-DJOLT_PHYSICS_ROOT={}", jolt.display()))
-        .arg(format!("-DCROSS_PLATFORM_DETERMINISTIC={}", if det { "ON" } else { "OFF" }))
+        .arg(format!(
+            "-DCROSS_PLATFORM_DETERMINISTIC={}",
+            if det { "ON" } else { "OFF" }
+        ))
         .args([
             "-DJPH_BUILD_SHARED=OFF",
             "-DJPH_SAMPLES=OFF",
@@ -129,7 +144,10 @@ fn build_wasm(src: &Path, jolt: &Path, out: &Path, det: bool) {
             "-DUSE_WASM_SIMD=OFF",
             "-DINTERPROCEDURAL_OPTIMIZATION=OFF",
         ]));
-    run(Command::new("cmake").arg("--build").arg(&build).args(["--target", "joltc", "-j", &jobs]));
+    run(Command::new("cmake")
+        .arg("--build")
+        .arg(&build)
+        .args(["--target", "joltc", "-j", &jobs]));
 
     let mut lib_dirs = vec![build.join("lib"), build.clone()];
     lib_dirs.push(sysroot.join("lib/wasm32-wasip1"));
@@ -137,13 +155,21 @@ fn build_wasm(src: &Path, jolt: &Path, out: &Path, det: bool) {
         println!("cargo:rustc-link-search=native={}", d.display());
     }
     // compiler-rt's builtins for wasm32 (128-bit integer helpers and the like).
-    let runtimes = sysroot.parent().unwrap().join("wasi-runtimes/lib/wasm32-unknown-wasip1");
+    let runtimes = sysroot
+        .parent()
+        .unwrap()
+        .join("wasi-runtimes/lib/wasm32-unknown-wasip1");
     let runtimes = if runtimes.exists() {
         runtimes
     } else {
         // Homebrew links share/wasi-runtimes only inside the keg.
         let cellar = PathBuf::from("/opt/homebrew/Cellar/wasi-runtimes");
-        let version = fs::read_dir(&cellar).expect("brew install wasi-runtimes").next().unwrap().unwrap().path();
+        let version = fs::read_dir(&cellar)
+            .expect("brew install wasi-runtimes")
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
         version.join("share/wasi-runtimes/lib/wasm32-unknown-wasip1")
     };
     println!("cargo:rustc-link-search=native={}", runtimes.display());

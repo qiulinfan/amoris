@@ -2,11 +2,13 @@
 # Extra repetitions of the configurations the recommendation rests on (docs/bench/physics.md), for a
 # machine shared with other builds: the fastest repetition of a configuration is the least disturbed
 # one, and more repetitions make an undisturbed one likelier. Appends to $RAW/bench.jsonl in
-# bench.sh's format, repetitions FIRST_REP.. (default 4).
-T=${T:-/Users/qiulinfan/Desktop/aipocket2-wt/target-physics}
-RAW=${RAW:-$(cd "$(dirname "$0")/../../.." && pwd)/docs/bench/physics}
+# bench.sh's format, repetitions FIRST_REP.. (default 4). RAW defaults to $T/raw, as in bench.sh.
+REPO=$(cd "$(dirname "$0")/../../.." && pwd)
+T=${T:-${CARGO_TARGET_DIR:-$REPO/target}/physics-bench}
+RAW=${RAW:-$T/raw}
 REPS=${REPS:-5}
 STEPS=${STEPS:-500}
+mkdir -p "$RAW"
 OUTF=$RAW/bench.jsonl
 
 run() { # tag command...

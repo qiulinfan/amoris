@@ -284,7 +284,7 @@ static void ExportScene(PhysicsSystem &inSystem, const char *inPath)
 	}
 
 	// The triangles go to <path>.tri as little-endian f32 (x, y, z per vertex, 3 vertices each): the
-	// Ragdoll terrain has 2.1 million of them.
+	// Ragdoll terrain has 2.7 million of them (2.1 million in its largest leaf).
 	string tri_path = string(inPath) + ".tri";
 	ofstream t(tri_path, ios::binary);
 	t.write(reinterpret_cast<const char *>(tris.data()), streamsize(tris.size() * sizeof(Float3)));

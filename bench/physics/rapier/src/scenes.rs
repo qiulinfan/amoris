@@ -1,5 +1,5 @@
 //! The benchmark scenes, built to match Jolt's PerformanceTest scenes (JoltPhysics/PerformanceTest,
-//! read at commit 5830c342) as closely as Rapier allows. Differences are listed in
+//! v5.6.0) as closely as Rapier allows. Differences are listed in
 //! docs/bench/physics.md.
 
 use rapier3d::prelude::*;
@@ -60,8 +60,10 @@ pub fn convex_vs_mesh(world: &mut PhysicsWorld) {
     let mut vertices = vec![Vector::ZERO; (n + 1) * (n + 1)];
     for x in 0..=n {
         for z in 0..=n {
-            let height = libm::sinf(x as f32 * 50.0 / n as f32) * libm::cosf(z as f32 * 50.0 / n as f32);
-            vertices[z * (n + 1) + x] = Vector::new(cell * x as f32, max_height * height, cell * z as f32);
+            let height =
+                libm::sinf(x as f32 * 50.0 / n as f32) * libm::cosf(z as f32 * 50.0 / n as f32);
+            vertices[z * (n + 1) + x] =
+                Vector::new(cell * x as f32, max_height * height, cell * z as f32);
         }
     }
     let mut indices = Vec::with_capacity(n * n * 2);
@@ -73,10 +75,11 @@ pub fn convex_vs_mesh(world: &mut PhysicsWorld) {
             indices.push([start + 1, start + n + 1, start + n + 2]);
         }
     }
-    let terrain = ColliderBuilder::trimesh_with_flags(vertices, indices, TriMeshFlags::FIX_INTERNAL_EDGES)
-        .expect("terrain mesh")
-        .friction(0.5)
-        .restitution(0.6);
+    let terrain =
+        ColliderBuilder::trimesh_with_flags(vertices, indices, TriMeshFlags::FIX_INTERNAL_EDGES)
+            .expect("terrain mesh")
+            .friction(0.5)
+            .restitution(0.6);
     world.insert(
         RigidBodyBuilder::fixed().translation(Vector::new(-center, max_height, -center)),
         terrain,
