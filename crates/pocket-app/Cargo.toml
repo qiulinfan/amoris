@@ -17,3 +17,7 @@ pocket-link.workspace = true
 pocket-runtime = { workspace = true, features = ["thread", "transpile"] }
 pocket-check = { workspace = true, features = ["native"] }
 serde_json.workspace = true
+
+[dev-dependencies]
+# The examples debug_sailing and debug_overhead (docs/spec/debugger.md 9 and 10).
+pocket-debug.workspace = true

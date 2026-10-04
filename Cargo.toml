@@ -20,6 +20,7 @@ pocket-script = { path = "crates/pocket-script" }
 pocket-link = { path = "crates/pocket-link" }
 pocket-runtime = { path = "crates/pocket-runtime" }
 pocket-check = { path = "crates/pocket-check" }
+pocket-debug = { path = "crates/pocket-debug" }
 
 bevy_ecs = { version = "=0.19.1", default-features = false, features = ["std"] }
 libm = "=0.2.16"
