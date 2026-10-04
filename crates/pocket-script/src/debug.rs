@@ -184,21 +184,39 @@ pub(crate) unsafe fn install(ctx: *mut JSContext, sh: &Rc<Shared>, on: bool) {
     }
 }
 
+/// What a debugger's own JavaScript is (script-host.md 13).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Guard {
+    /// The debugger's own reading: a property listing, a value's preview (CDP
+    /// `callFunctionOn`). It does not taint the run.
+    Read,
+    /// An evaluation the user wrote (an expression on a frame, a breakpoint's condition, a
+    /// logpoint's message): it taints the run, with this reason, when it runs inside a tick.
+    Evaluate(&'static str),
+}
+
 /// Runs `f`, a debugger's own JavaScript on the game thread while a script is stopped in `ctx` (an
 /// evaluation, a breakpoint's condition, a property listing), under its own budget of
-/// `steps_per_call` steps; then puts back the stopped call's budget, its overrun flag and its
-/// out-of-memory baseline, so what `f` ran is not charged to the call. Memory `f` runs out of is
-/// `f`'s failure, not the call's.
+/// `steps_per_call` steps, with the natives that write (world edits, events, intents, random draws)
+/// refusing with `script.debug_read_only`; then puts back the stopped call's budget, its overrun
+/// flag and its out-of-memory baseline, so what `f` ran is not charged to the call. Memory `f` runs
+/// out of is `f`'s failure, not the call's. An [`Guard::Evaluate`] inside a system call taints the
+/// run from this tick on ([`take_taint`]): it can still change the call's locals and its query
+/// columns, which are written back.
 ///
 /// # Safety
 /// `ctx` must be a live context of a script host, on its thread.
-pub unsafe fn guarded<R>(ctx: *mut JSContext, f: impl FnOnce() -> R) -> R {
+pub unsafe fn guarded<R>(ctx: *mut JSContext, guard: Guard, f: impl FnOnce() -> R) -> R {
     let Some(raw) = NonNull::new(ctx) else {
         return f();
     };
     // SAFETY: the caller hands a live context on its thread.
     let rctx = unsafe { Ctx::from_raw(raw) };
     let sh = shared(&rctx);
+    if let Guard::Evaluate(why) = guard {
+        mark_taint(&sh, why);
+    }
+    let read_only = sh.debug_read_only.replace(true);
     let rt = unsafe { qjs::JS_GetRuntime(ctx) };
     let active = sh.budget_active.get();
     let exceeded = sh.exceeded.get();
@@ -215,10 +233,37 @@ pub unsafe fn guarded<R>(ctx: *mut JSContext, f: impl FnOnce() -> R) -> R {
     unsafe { ffi::JS_SetInterruptCounter(ctx, counter) };
     sh.budget_active.set(active);
     sh.exceeded.set(exceeded);
+    sh.debug_read_only.set(read_only);
     match r {
         Ok(r) => r,
         Err(p) => resume_unwind(p),
     }
+}
+
+fn mark_taint(sh: &Shared, why: &str) {
+    let tick = sh.call.borrow().as_ref().map(|c| c.tick.0);
+    if let Some(tick) = tick {
+        sh.taint.borrow_mut().get_or_insert((tick, why.to_owned()));
+    }
+}
+
+/// Taints the run from the current tick on (a debugger set a variable of a stopped frame, which
+/// runs no JavaScript), when a system call is running in `ctx`.
+///
+/// # Safety
+/// `ctx` must be a live context of a script host, on its thread.
+pub unsafe fn taint(ctx: *mut JSContext, why: &'static str) {
+    let Some(raw) = NonNull::new(ctx) else { return };
+    // SAFETY: the caller hands a live context on its thread.
+    let rctx = unsafe { Ctx::from_raw(raw) };
+    mark_taint(&shared(&rctx), why);
+}
+
+/// The first taint since the last call, as `(tick, reason)`: a debugger evaluated inside that tick,
+/// so the run from it on is not replayable (replay.md 2.2's `Tainted`). The game records it.
+pub fn take_taint(world: &mut World) -> Option<(u64, String)> {
+    let scripts = world.get_non_send_mut::<Scripts>()?;
+    scripts.host.shared.taint.borrow_mut().take()
 }
 
 /// An atom's text ("" for none).

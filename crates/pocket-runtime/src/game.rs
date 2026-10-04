@@ -120,6 +120,9 @@ pub struct Game {
     /// Writes applied at the current boundary.
     writes: u32,
     host_seq: u64,
+    /// The first tick a script debugger evaluated in (script-host.md 13): the run is not
+    /// replayable from it on.
+    tainted: Option<u64>,
 }
 
 fn bad_hash(text: &str) -> Problem {
@@ -170,6 +173,7 @@ impl Game {
             recorder: None,
             writes: 0,
             host_seq: 0,
+            tainted: None,
         })
     }
 
@@ -304,7 +308,8 @@ impl Game {
                 let poisoned = self.sim.poisoned().map(|p| p.tick.0);
                 Ok(
                     json!({"tick": self.tick().0, "writes": self.writes, "world_hash": hash,
-                          "bundle": self.current.to_hex(), "poisoned": poisoned}),
+                          "bundle": self.current.to_hex(), "poisoned": poisoned,
+                          "tainted": self.tainted}),
                 )
             }
             "snapshot" => {
@@ -492,7 +497,15 @@ impl Game {
         if let Some(p) = self.sim.poisoned() {
             return Err(pocket_sim::sim::world_poisoned(p.tick));
         }
-        match self.sim.step(&mut NoHooks) {
+        let stepped = self.sim.step(&mut NoHooks);
+        // A script debugger that evaluated inside the tick taints the run (script-host.md 13).
+        if let Some((tick, why)) = pocket_script::debug::take_taint(self.sim.world_mut()) {
+            self.tainted.get_or_insert(tick);
+            if let Some(rec) = &mut self.recorder {
+                rec.tainted(Tick(tick), &why);
+            }
+        }
+        match stepped {
             Ok(r) => {
                 self.writes = 0;
                 self.sync_context();

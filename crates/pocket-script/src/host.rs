@@ -135,6 +135,10 @@ pub(crate) struct Shared {
     /// A program is being instantiated with the trace handler set: the loader compiles the prelude
     /// without it, so the debugger steps through project code only.
     pub instrumenting: Cell<bool>,
+    /// A debugger's JavaScript runs: the natives that write refuse (`script.debug_read_only`).
+    pub debug_read_only: Cell<bool>,
+    /// The first tick a debugger evaluated in, and why, until the game takes it.
+    pub taint: RefCell<Option<(u64, String)>>,
 }
 
 /// The source maps of a program's modules and of the prelude, by module name.
@@ -211,6 +215,8 @@ impl ScriptHost {
             iterators: RefCell::new(Vec::new()),
             debug: RefCell::new(None),
             instrumenting: Cell::new(false),
+            debug_read_only: Cell::new(false),
+            taint: RefCell::new(None),
         });
         let sh = shared.clone();
         rt.set_interrupt_handler(Some(Box::new(move || {

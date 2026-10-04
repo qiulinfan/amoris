@@ -233,7 +233,7 @@ fn math_object<'js>(ctx: &Ctx<'js>) -> rquickjs::Result<Object<'js>> {
     )?;
     m.set(
         "random",
-        natives::function(ctx, "random", natives::rng::math_random)?,
+        natives::writing(ctx, "random", natives::rng::math_random)?,
     )?;
     Ok(m)
 }
