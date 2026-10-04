@@ -1,7 +1,8 @@
 //! Methods the server answers itself (docs/spec/server.md, methods): the merged catalog, the event
 //! and log streams `pocket-link` keeps for presenters, the project's asset files, the type check
-//! stage of `scripts.apply` and `scripts.check`, and the plug-ins (`debug.*`, `capture`), which
-//! answer `*.not_available` until the integrator installs them.
+//! stage of `scripts.apply` and `scripts.check`, the script guide (`scripts.guide`), and the
+//! plug-ins (`debug.*`, `capture`), which answer `*.not_available` until the integrator installs
+//! them.
 
 use std::path::{Component, Path};
 
@@ -12,6 +13,10 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
 use crate::{Host, Via, typecheck};
+
+/// docs/sdk.md, the agent's guide to game scripts, served by `scripts.guide` so that an agent with
+/// only the host (MCP, the CLI outside the repository) can read it.
+const GUIDE: &str = include_str!("../../../docs/sdk.md");
 
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -123,13 +128,19 @@ pub fn server_catalog() -> Vec<Value> {
         e(
             "scripts.check",
             "read",
-            "Compiles and loads the scripts without swapping, writes their types (scripts.types) and type checks them with tsc (TypeScript 7) when installed.",
+            "Compiles and loads the scripts without swapping, writes their declarations under .pocket/types and type checks them with tsc (TypeScript 7) when installed.",
+            schema::<NoParams>(),
+        ),
+        e(
+            "scripts.guide",
+            "read",
+            "How game scripts are written (docs/sdk.md): the pocket SDK, one example per concept, common mistakes and their messages.",
             schema::<NoParams>(),
         ),
         e(
             "docs.search",
             "read",
-            "Searches command and component names and docs.",
+            "Searches command and component names and docs, and the sections of the script guide.",
             schema::<DocsSearch>(),
         ),
         e(
@@ -281,19 +292,22 @@ impl Host {
             "assets.list" => decode::<AssetsList>(&params, method).and_then(|p| self.assets(p)),
             "scripts.apply" => match decode::<ScriptsApply>(&params, method) {
                 Ok(_) => {
-                    // The swap is sent first and the type check runs beside it: tsc never delays
-                    // a swap, and a refused swap still gets its type errors.
-                    let (r, tc) = tokio::join!(self.game(via, method, params), self.typecheck(via));
+                    // The game compiles, swaps and writes the declarations of what it loaded in
+                    // one pass; tsc runs after it in a child process, so it never delays a swap,
+                    // and a refused swap still gets its type errors.
+                    let mut params = params;
+                    params["types"] = json!(true);
+                    let r = self.game(via, method, params).await;
+                    let tc = self.typecheck(&r).await;
                     merge_typecheck(r, tc)
                 }
                 Err(e) => Err(e),
             },
             "scripts.check" => match decode::<NoParams>(&params, method) {
                 Ok(_) => {
-                    let (r, tc) = tokio::join!(
-                        self.game(via, "scripts.apply", json!({"dry_run": true})),
-                        self.typecheck(via)
-                    );
+                    let dry = json!({"dry_run": true, "types": true});
+                    let r = self.game(via, "scripts.apply", dry).await;
+                    let tc = self.typecheck(&r).await;
                     let r = match r {
                         Ok(v) => Ok(v),
                         Err(p) if p.code == "scripts.refused" => Ok(json!({
@@ -303,10 +317,12 @@ impl Host {
                         })),
                         Err(p) => Err(p),
                     };
-                    merge_typecheck(with_load_errors(r, &tc), tc)
+                    merge_typecheck(r, tc)
                 }
                 Err(e) => Err(e),
             },
+            "scripts.guide" => decode::<NoParams>(&params, method)
+                .map(|_| json!({"path": "docs/sdk.md", "text": GUIDE})),
             "docs.search" => match decode::<DocsSearch>(&params, method) {
                 Ok(p) => self.docs(&p.query, usize_of(p.limit, 10)).await,
                 Err(e) => Err(e),
@@ -329,19 +345,26 @@ impl Host {
         })
     }
 
-    /// `scripts.types` (the declarations for the scripts on disk, written by the game), then `tsc`
-    /// over them in a child process: the type check of `scripts.apply` and `scripts.check`.
-    async fn typecheck(&self, via: &Via) -> Value {
-        let types = self.game(via, "scripts.types", json!({})).await;
-        let mut tc = typecheck::run(&self.0.project).await;
-        match types {
-            Ok(t) => {
-                tc["types"] = json!({"dir": t["dir"], "tsconfig": t["tsconfig"],
-                                     "project_from": t["project_from"]});
-                tc["load_diagnostics"] = t["diagnostics"].clone();
-            }
-            Err(p) => tc["types"] = json!({"error": p.code, "message": p.message}),
+    /// `tsc` over the declarations the game wrote with `scripts.apply {types}` (its answer's
+    /// `types`, or its refusal's): the type check of `scripts.apply` and `scripts.check`, in a
+    /// child process.
+    async fn typecheck(&self, r: &Result<Value, Problem>) -> Value {
+        let t = match r {
+            Ok(v) => v.get("types"),
+            Err(p) => p.detail.get("types"),
         }
+        .cloned()
+        .unwrap_or(Value::Null);
+        if let Some(code) = t.get("error") {
+            return json!({"typecheck": "unavailable", "diagnostics": [],
+                          "reason": format!("the declarations were not written ({}): {}",
+                                            code.as_str().unwrap_or(""),
+                                            t["message"].as_str().unwrap_or("")),
+                          "types": t});
+        }
+        let mut tc = typecheck::run(&self.0.project).await;
+        tc["types"] = json!({"dir": t["dir"], "tsconfig": t["tsconfig"],
+                             "project_from": t["project_from"]});
         tc
     }
 
@@ -385,6 +408,17 @@ impl Host {
                 }
             }
         }
+        // The guide's sections, as pointers: `scripts.guide` returns the whole text.
+        for section in GUIDE.split("\n## ").skip(1) {
+            let title = section.lines().next().unwrap_or("");
+            let s = score(section);
+            if s > 0 {
+                hits.push((
+                    s + score(title) * 2,
+                    json!({"guide": title, "read": "scripts.guide (docs/sdk.md)"}),
+                ));
+            }
+        }
         if let Ok(Value::Array(comps)) = self.game(&Via::Api, "world.schema", json!({})).await {
             for c in comps {
                 let name = c["name"].as_str().unwrap_or("");
@@ -409,23 +443,6 @@ impl Host {
     }
 }
 
-/// A dry run that compiled but whose scripts would not load (the instantiation `scripts.types`
-/// made failed: an unknown component in a query, an engine name shadowed, ...) is refused, with
-/// the load's diagnostics, as the apply would be.
-fn with_load_errors(r: Result<Value, Problem>, tc: &Value) -> Result<Value, Problem> {
-    let load = tc["load_diagnostics"].as_array().filter(|d| !d.is_empty());
-    match (r, load) {
-        (Ok(mut v), Some(load)) if v["outcome"] == "dry_run" => {
-            v["outcome"] = json!("refused");
-            if let Some(all) = v["diagnostics"].as_array_mut() {
-                all.extend(load.iter().cloned());
-            }
-            Ok(v)
-        }
-        (r, _) => r,
-    }
-}
-
 /// Adds the type check's outcome to a compile's result.
 fn merge_typecheck(r: Result<Value, Problem>, tc: Value) -> Result<Value, Problem> {
     match r {
@@ -436,7 +453,7 @@ fn merge_typecheck(r: Result<Value, Problem>, tc: Value) -> Result<Value, Proble
                 all.extend(d.iter().cloned());
             }
             v["typecheck"] = tc["typecheck"].clone();
-            for k in ["tsc_ms", "reason", "types"] {
+            for k in ["tsc_ms", "tsc_version", "reason", "types"] {
                 if !tc[k].is_null() {
                     v[k] = tc[k].clone();
                 }
@@ -445,6 +462,7 @@ fn merge_typecheck(r: Result<Value, Problem>, tc: Value) -> Result<Value, Proble
         }
         Err(mut p) => {
             p.detail.insert("typecheck".into(), tc["typecheck"].clone());
+            p.detail.insert("types".into(), tc["types"].clone());
             if let Some(d) = tc["diagnostics"].as_array()
                 && !d.is_empty()
             {

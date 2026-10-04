@@ -362,6 +362,16 @@ pub fn declared_components(
     Ok(components)
 }
 
+/// The project components of the program the world runs (none before the first swap): what
+/// [`declared_components`] gives for the running bundle, with no compile or instantiation.
+pub fn live_components(world: &World) -> Vec<std::sync::Arc<ComponentSchema>> {
+    world
+        .get_non_send::<Scripts>()
+        .and_then(|s| s.program.as_ref())
+        .map(|p| p.project_components().to_vec())
+        .unwrap_or_default()
+}
+
 /// The outcomes of the last tick's script systems.
 pub fn last_tick(world: &World) -> Vec<(String, SystemOutcome)> {
     world

@@ -52,14 +52,15 @@ pub fn tools() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "scripts",
-            description: "TypeScript under scripts/ (the pocket SDK: docs/sdk.md). list; read \
-                {path}; write {path, text} (diagnostics, no swap); apply: compile, hot-swap, type \
-                check with tsc (diagnostics with TS locations); check: the same, nothing swapped; \
-                types: write .pocket/types (pocket.d.ts, components.d.ts: every component and \
-                field scripts can name) and list the components.",
+            description: "TypeScript under scripts/ (the pocket SDK). guide: how to write \
+                them (read it first); list; read {path}; write {path, text} (diagnostics, no \
+                swap); apply: compile, hot-swap, type check with tsc (diagnostics with TS \
+                locations); check: the same, nothing swapped; types: write .pocket/types \
+                (pocket.d.ts, components.d.ts: every component and field scripts can name) and \
+                list the components.",
             schema: obj(
                 json!({
-                    "action": action(&["list", "read", "write", "apply", "check", "types"]),
+                    "action": action(&["guide", "list", "read", "write", "apply", "check", "types"]),
                     "path": {"type": "string"},
                     "text": {"type": ["string", "boolean"],
                              "description": "write: the file's text; types: true to return the \

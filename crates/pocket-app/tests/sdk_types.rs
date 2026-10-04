@@ -1,9 +1,11 @@
 //! The SDK's types (script-host.md 12, test 7), with the real `tsc`: `pocket check`'s `types` step
 //! over tests/fixtures/sdk/every, a component with one field of every type and a system using every
 //! API of the prelude, writes the project's declarations and type-checks it clean, the builder's
-//! value type and the emitted one included (the fixture proves them mutually assignable); a
-//! misspelt `"Component.field"` is then a `types.error` naming the field it meant. Skipped, with a
-//! line saying so, when no `tsc` is installed (`cd sdk && bun install`).
+//! value type and the emitted one included (the fixture proves them mutually assignable), and the
+//! mistakes of `scripts/mistakes.ts` are each refused (`@ts-expect-error`); a misspelt
+//! `"Component.field"` is then a `types.error` naming the field it meant. It needs TypeScript 7
+//! (`cd sdk && bun install`, or `POCKET_TSC`) and fails without it, so that a missing `tsc` is seen;
+//! `POCKET_NO_TSC=1` skips it on a machine that cannot have one.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -47,9 +49,12 @@ fn the_declarations_type_check_every_field_type_and_api() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("sdk-every");
     let _ = std::fs::remove_dir_all(&dir);
     copy_dir(&repo.join("tests/fixtures/sdk/every"), &dir);
-    if pocket_server::typecheck::find_tsc(&dir).is_none() {
-        eprintln!("skipped: no tsc (POCKET_TSC, or `bun install` in sdk/)");
-        return;
+    if let Err(why) = pocket_server::typecheck::find_tsc(&dir) {
+        if std::env::var_os("POCKET_NO_TSC").is_some() {
+            eprintln!("skipped (POCKET_NO_TSC): {why}");
+            return;
+        }
+        panic!("{why}; POCKET_NO_TSC=1 skips this test");
     }
 
     let r = check_types(dir.clone());
@@ -64,7 +69,9 @@ fn the_declarations_type_check_every_field_type_and_api() {
         components.contains("readonly a_enum: \"calm\" | \"cross\";"),
         "{components}"
     );
-    assert!(dir.join("tsconfig.json").is_file());
+    // The check writes into the engine's directory only; tsc ran with its tsconfig.json.
+    assert!(!dir.join("tsconfig.json").exists());
+    assert!(dir.join(".pocket/types/tsconfig.json").is_file());
 
     let rules = dir.join("scripts/rules.ts");
     let text = std::fs::read_to_string(&rules).unwrap();

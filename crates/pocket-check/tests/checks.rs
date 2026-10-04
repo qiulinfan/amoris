@@ -144,6 +144,26 @@ fn the_types_step_writes_declarations_and_reports_tsc() {
         let components = seen.lock().unwrap().clone();
         assert!(components.contains("Crew: {"), "{components}");
         assert!(components.contains("Boat: {"), "{components}");
-        assert!(dir.join("tsconfig.json").is_file());
+        // A check writes only the engine's generated directory, never the source tree.
+        assert!(!dir.join("tsconfig.json").exists());
+        assert!(dir.join(".pocket/types/tsconfig.json").is_file());
+
+        // Without a type checker that can run, the lint alone is no verdict.
+        let opts = Options {
+            only: Some(vec!["types".into()]),
+            typecheck: Some(std::sync::Arc::new(|_: &std::path::Path| {
+                json!({"typecheck": "unavailable", "diagnostics": [],
+                       "reason": "no TypeScript 7 tsc"})
+            })),
+            ..Options::default()
+        };
+        let r = check_project(&dir, &opts);
+        assert_eq!(
+            r.steps[0].verdict,
+            Verdict::Inconclusive,
+            "{:#?}",
+            r.steps[0]
+        );
+        assert_eq!(codes(&r.steps, "types"), ["check.tool_missing"]);
     });
 }

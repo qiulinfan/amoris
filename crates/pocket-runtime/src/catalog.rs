@@ -231,7 +231,7 @@ pub const CATALOG: &[CommandDef] = &[
     def(
         "scripts.types",
         Kind::Read,
-        "Writes the SDK's declarations for the scripts into .pocket/types (pocket.d.ts, components.d.ts from the registry and the scripts on disk) and a tsconfig.json if the project has none.",
+        "Writes the SDK's declarations for the scripts on disk into .pocket/types (pocket.d.ts, components.d.ts, and the tsconfig.json tsc uses there) and, unless tsconfig is false, a tsconfig.json for editors if the project has none.",
         schema::<ScriptsTypesParams>,
     ),
     def(

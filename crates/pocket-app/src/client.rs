@@ -78,7 +78,7 @@ pub const COMMANDS: &[(&str, &str, &str)] = &[
     (
         "scripts",
         "scripts.list",
-        "pocket scripts list | read <path> | write <path> [<file>|-] | apply [--force] | check | types",
+        "pocket scripts list | read <path> | write <path> [<file>|-] | apply [--force] | check | types | guide",
     ),
     (
         "events",
@@ -515,11 +515,12 @@ fn request(cmd: &str, args: &Args) -> Result<(String, Value), Problem> {
             }
             "check" => "scripts.check",
             "types" => "scripts.types",
+            "guide" => "scripts.guide",
             other => {
                 return Err(usage(
                     format!("pocket scripts has no '{other}'"),
                     other,
-                    &["list", "read", "write", "apply", "check", "types"],
+                    &["list", "read", "write", "apply", "check", "types", "guide"],
                 ));
             }
         },
@@ -841,7 +842,7 @@ fn text(method: &str, v: &Value) -> String {
             }
             s
         }),
-        "scripts.read" => out = v["text"].as_str().unwrap_or("").to_owned(),
+        "scripts.read" | "scripts.guide" => out = v["text"].as_str().unwrap_or("").to_owned(),
         "scripts.write" | "scripts.apply" | "scripts.check" => {
             let mut head = Vec::new();
             for k in ["path", "outcome", "typecheck"] {
@@ -853,7 +854,8 @@ fn text(method: &str, v: &Value) -> String {
                 head.push(format!("bundle {}", short_hash(&v["bundle"])));
             }
             if let Some(ms) = v["tsc_ms"].as_f64() {
-                head.push(format!("tsc {ms:.0} ms"));
+                let version = v["tsc_version"].as_str().unwrap_or("");
+                head.push(format!("tsc {version} {ms:.0} ms").replace("  ", " "));
             }
             let n = v["diagnostics"].as_array().map_or(0, Vec::len);
             head.push(format!("{n} diagnostics"));
@@ -1118,11 +1120,12 @@ fn help(args: &Args) -> String {
     out
 }
 
-/// Whether a check found an error (the compile's, the load's or `tsc`'s), so that `pocket scripts
-/// check` exits 1 and can gate an apply.
+/// Whether a check found an error (the compile's, the load's or `tsc`'s) or `tsc` timed out, so
+/// that `pocket scripts check` exits 1 and can gate an apply: scripts are never passed unchecked.
 fn has_errors(v: &Value) -> bool {
     v["outcome"] == "refused"
         || v["typecheck"] == "failed"
+        || v["typecheck"] == "timeout"
         || v["diagnostics"]
             .as_array()
             .is_some_and(|d| d.iter().any(|d| d["severity"] == "error"))

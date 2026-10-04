@@ -293,7 +293,7 @@ export interface Methods {
   "scripts.read": [{ path: string }, string | { text: string }];
   "scripts.write": [{ path: string; text: string }, { diagnostics: Diagnostic[] }];
   "scripts.apply": [{ paths?: string[] }, { bundle: string | null; diagnostics: Diagnostic[] }];
-  "scripts.types": [{ text?: boolean }, ScriptTypes];
+  "scripts.types": [{ text?: boolean; tsconfig?: boolean }, ScriptTypes];
   "assets.list": [{ dir?: string }, AssetInfo[]];
   "assets.import": [{ path: string }, { asset: string; meshes: number; materials: number }];
   "events.since": [{ seq: number; limit?: number }, GameEvent[]];
