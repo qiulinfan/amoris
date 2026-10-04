@@ -39,7 +39,7 @@ Pocket3D 是一个 **agent-native** 的 3D 游戏引擎。agent 在三个角色�
 本轮必须证明五件事（所有者 2026-10-03 的要求）：
 
 1. **性能**：渲染与物理比肩 Unity/UE5，web 比肩 three.js。同机对照测量：Bevy 0.19（Rust/wgpu 的
-   前沿）、three.js WebGPURenderer（web）、Jolt（物理，Godot 4.4 起的默认 3D 物理）（第 6 节）。
+   前沿）、three.js WebGPURenderer（web）、Jolt（物理，Godot 4.6 起新项目的默认 3D 物理）（第 6 节）。
 2. **agent-native gameplay**：LLM agent 通过 MCP、在受限感知下玩通游戏；脚本里的决策模型每秒做
    上百次决策；fork 前瞻。
 3. **web 渲染与神经渲染的先进性**：同一渲染器在浏览器 WebGPU 上运行；3D Gaussian Splatting 与神经
