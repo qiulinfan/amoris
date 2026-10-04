@@ -24,6 +24,7 @@ use crate::loader::{AssetSource, NoAssets};
 use crate::materials::MaterialPool;
 use crate::meshes::MeshPool;
 use crate::ocean::Ocean;
+use crate::picking::{PickRequest, Picking, coverage};
 use crate::post::{DEPTH, HDR, Post, SAMPLES, Targets};
 use crate::profiler::GpuProfiler;
 use crate::scene::{InstanceGpu, Part, Resolve, Scene, VARIANTS};
@@ -247,6 +248,11 @@ pub struct Renderer {
     shadow: [wgpu::RenderPipeline; 2],
     empty_group: wgpu::BindGroup,
     ocean: Ocean,
+    picking: Picking,
+    /// The last finished pick: `Some(None)` when the pixel shows no entity.
+    last_pick: Option<Option<u64>>,
+    /// The last finished coverage read: (entity, share of the view's pixels), largest first.
+    last_visible: Option<Vec<(u64, f32)>>,
     batch_offsets: wgpu::Buffer,
     sky_pipeline: wgpu::RenderPipeline,
     layouts: Layouts,
@@ -528,6 +534,7 @@ impl Renderer {
             })
         };
         let shadow = [shadow_pipe(false), shadow_pipe(true)];
+        let picking = Picking::new(device, &fwd_module, &frame, vertex_layout.clone());
         let ocean = Ocean::new(
             device,
             &fwd_module,
@@ -658,6 +665,9 @@ impl Renderer {
             forward,
             shadow,
             ocean,
+            picking,
+            last_pick: None,
+            last_visible: None,
             empty_group,
             batch_offsets: storage(device, "batch offsets", 64 * 4, wgpu::BufferUsages::empty()),
             sky_pipeline,
@@ -1080,6 +1090,7 @@ impl Renderer {
     /// Draws a frame into `output` (a texture view of the renderer's output format).
     pub fn render(&mut self, output: &wgpu::TextureView, now_s: f64) -> FrameStats {
         let cpu = web_time();
+        self.collect_pick();
         self.poll_assets();
         self.sync();
         let device = self.gpu.device.clone();
@@ -1337,6 +1348,34 @@ impl Renderer {
             pass.set_bind_group(0, &binds.sky, &[]);
             pass.draw(0..3, 0..1);
         }
+        if self.picking.wanted() {
+            let meshes = self.draw_meshes;
+            let draws = &self.draws;
+            let id_draw = |pass: &mut wgpu::RenderPass<'_>| {
+                for variant in 0..VARIANTS {
+                    if meshes == 0 {
+                        return;
+                    }
+                    let offset = u64::from(variant * meshes) * 20;
+                    if fi {
+                        pass.multi_draw_indexed_indirect(draws, offset, meshes);
+                    } else {
+                        for m in 0..meshes {
+                            pass.draw_indexed_indirect(draws, offset + u64::from(m) * 20);
+                        }
+                    }
+                }
+            };
+            self.picking.encode(
+                &device,
+                &mut enc,
+                (w, h),
+                &binds.frame,
+                &self.meshes.vertices,
+                &self.meshes.indices,
+                &id_draw,
+            );
+        }
         let bloom = env.as_ref().map_or(0.15, |e| e.bloom);
         self.post.run(
             &device,
@@ -1350,6 +1389,7 @@ impl Renderer {
         self.profiler.resolve(&mut enc);
         queue.submit([enc.finish()]);
         self.profiler.after_submit();
+        self.picking.after_submit();
         self.last = FrameStats {
             cpu_ms: (web_time() - cpu) as f32 * 1000.0,
             gpu_ms: self.profiler.total_ms(),
@@ -1364,6 +1404,61 @@ impl Renderer {
             backend: self.gpu.backend_name(),
         };
         self.last.clone()
+    }
+
+    /// Asks which entity is at pixel (x, y) of the output (answered a frame or two later by
+    /// `take_pick`).
+    pub fn request_pick(&mut self, x: u32, y: u32) {
+        self.picking.request(PickRequest::Pixel(x, y));
+    }
+
+    /// The answer to the last `request_pick`: `None` until it is ready, then `Some(entity)` once.
+    pub fn take_pick(&mut self) -> Option<Option<u64>> {
+        self.collect_pick();
+        self.last_pick.take()
+    }
+
+    /// Asks which entities the view shows and how much of it each covers.
+    pub fn request_visible(&mut self) {
+        self.picking.request(PickRequest::Full);
+    }
+
+    /// The answer to the last `request_visible`: (entity, share of pixels), largest first.
+    pub fn take_visible(&mut self) -> Option<Vec<(u64, f32)>> {
+        self.collect_pick();
+        self.last_visible.take()
+    }
+
+    fn collect_pick(&mut self) {
+        let _ = self.gpu.device.poll(wgpu::PollType::Poll);
+        let Some(r) = self.picking.take() else {
+            return;
+        };
+        match r.request {
+            PickRequest::Pixel(..) => {
+                let id = r.ids.first().copied().unwrap_or(0);
+                self.last_pick = Some(if id == 0 {
+                    None
+                } else {
+                    self.scene.entity_of_slot(id - 1)
+                });
+            }
+            PickRequest::Full => {
+                let total = r.ids.len().max(1) as f32;
+                let mut by_entity: HashMap<u64, u32> = HashMap::new();
+                for (slot, n) in coverage(&r.ids) {
+                    if let Some(e) = self.scene.entity_of_slot(slot) {
+                        *by_entity.entry(e).or_insert(0) += n;
+                    }
+                }
+                let mut v: Vec<(u64, f32)> = by_entity
+                    .into_iter()
+                    .map(|(e, n)| (e, n as f32 / total))
+                    .collect();
+                v.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
+                self.last_visible = Some(v);
+            }
+        }
     }
 
     pub fn output_format(&self) -> wgpu::TextureFormat {

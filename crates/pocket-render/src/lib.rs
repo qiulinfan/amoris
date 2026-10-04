@@ -14,6 +14,7 @@ pub mod loader;
 pub mod materials;
 pub mod meshes;
 mod ocean;
+pub mod picking;
 mod post;
 pub mod profiler;
 pub mod renderer;
