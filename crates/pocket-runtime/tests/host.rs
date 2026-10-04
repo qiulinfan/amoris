@@ -176,3 +176,39 @@ fn play_stop_and_kept_snapshots_on_the_thread() {
     drop(dev);
     h.shutdown(2000).unwrap();
 }
+
+#[test]
+fn script_types_declare_engine_and_game_components() {
+    common::big_stack(|| {
+        let mut g = Game::new(common::sailing(), 1).unwrap();
+        let r = ok(&mut g, "scripts.types", json!({"text": true}));
+        let names = |k: &str| r["components"][k].as_array().unwrap().clone();
+        assert!(names("engine").contains(&json!("Boat")), "{r}");
+        assert!(names("engine").contains(&json!("Transform")), "{r}");
+        assert_eq!(
+            names("project"),
+            vec![json!("Crew"), json!("Tally"), json!("Log"), json!("Cargo")]
+        );
+        assert!(names("unavailable").contains(&json!("Model")), "{r}");
+        assert_eq!(r["project_from"], json!("scripts"), "{r}");
+        // A game built from data has no project directory: the text only.
+        assert_eq!(r["dir"], Value::Null);
+        let components = r["text"]["components.d.ts"].as_str().unwrap();
+        assert!(components.contains("declare module \"pocket\""));
+        assert!(
+            components.contains("readonly take: Entity | null;"),
+            "{components}"
+        );
+        assert!(
+            components.contains("readonly take: EntityColumn;"),
+            "{components}"
+        );
+        assert!(
+            components.contains("readonly position: Vec3Columns;"),
+            "{components}"
+        );
+        let pocket = r["text"]["pocket.d.ts"].as_str().unwrap();
+        assert!(pocket.starts_with("/// <reference path=\"./components.d.ts\" />"));
+        assert!(pocket.contains("export declare function system<"));
+    });
+}

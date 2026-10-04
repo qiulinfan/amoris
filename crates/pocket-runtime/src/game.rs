@@ -35,6 +35,7 @@ use crate::scene::Scene;
 use crate::scripts::{
     self, ScriptsApplyParams, ScriptsSwapParams, bundle_record, compiled_from_record,
 };
+use crate::types::{self, ScriptsTypesParams};
 use crate::{decode, engine};
 
 /// A system a game or a test adds to the schedule.
@@ -402,6 +403,10 @@ impl Game {
                 let p: ScriptPathParams = decode(p, name)?;
                 files::read(self.root(name)?, &p)
             }
+            "scripts.types" => {
+                let p: ScriptsTypesParams = decode(p, name)?;
+                self.script_types(&p)
+            }
             "status" => {
                 decode::<NoParams>(p, name)?;
                 let hash = self.world_hash().ok().map(|h| h.to_string());
@@ -698,6 +703,19 @@ impl Game {
         let mut r = self.apply(&swap)?;
         r["diagnostics"] = json!([]);
         Ok(r)
+    }
+
+    /// `scripts.types`: the SDK's declarations for the scripts as they are on disk, written into
+    /// the project (`crate::types`).
+    pub fn script_types(&self, p: &ScriptsTypesParams) -> Result<Value, Problem> {
+        let world = self.sim.world();
+        let candidate = match self.gather(&ScriptsApplyParams::default()) {
+            Ok(set) => pocket_script::scripts::declared_components(world, &set)
+                .map_err(|e| files::diagnostics(&scripts::refused("load", &e))),
+            Err(p) => Err(files::diagnostics(&p)),
+        };
+        let d = types::declarations(world, candidate);
+        types::write(self.project.as_deref(), &d, p)
     }
 
     fn gather(&self, p: &ScriptsApplyParams) -> Result<CompiledSet, Problem> {

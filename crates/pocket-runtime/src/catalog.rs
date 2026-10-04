@@ -25,6 +25,7 @@ use crate::edit::{WorldEditOps, WorldEditParams, WorldGetParams};
 use crate::files::{ScriptPathParams, ScriptWriteParams};
 use crate::inspect::{WorldQueryParams, WorldSchemaParams, WorldTreeParams};
 use crate::scripts::{ScriptsApplyParams, ScriptsSwapParams};
+use crate::types::ScriptsTypesParams;
 
 /// A command that takes no parameters.
 #[derive(Deserialize, JsonSchema)]
@@ -226,6 +227,12 @@ pub const CATALOG: &[CommandDef] = &[
         Kind::Request,
         "Writes a script file and compiles the scripts with it (no swap); returns diagnostics.",
         schema::<ScriptWriteParams>,
+    ),
+    def(
+        "scripts.types",
+        Kind::Read,
+        "Writes the SDK's declarations for the scripts into .pocket/types (pocket.d.ts, components.d.ts from the registry and the scripts on disk) and a tsconfig.json if the project has none.",
+        schema::<ScriptsTypesParams>,
     ),
     def(
         "scripts.apply",
