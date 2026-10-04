@@ -1,0 +1,180 @@
+.level-chips {
+  display: flex;
+  gap: 3px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: 5px;
+  color: var(--text-3);
+  font: 500 11px var(--mono);
+  border: 1px solid transparent;
+}
+
+.chip.is-on {
+  background: var(--bg-input);
+  border-color: var(--line);
+  color: var(--text-1);
+}
+
+.chip-error.is-on svg {
+  color: var(--error);
+}
+.chip-warn.is-on svg {
+  color: var(--warn);
+}
+.chip-info.is-on svg {
+  color: var(--info);
+}
+.chip-debug.is-on svg {
+  color: var(--debug);
+}
+
+.log-list {
+  flex: 1;
+  overflow: auto;
+  font: 12px/1.5 var(--mono);
+  padding: 2px 0;
+}
+
+.log-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 1px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.025);
+  cursor: default;
+  white-space: nowrap;
+}
+
+.log-row:hover {
+  background: var(--bg-hover);
+}
+
+.log-row.is-open {
+  white-space: pre-wrap;
+}
+
+.log-row.is-open .log-msg {
+  overflow: visible;
+  word-break: break-word;
+}
+
+.log-time {
+  color: var(--text-3);
+  flex: none;
+  font-size: 11px;
+}
+
+.log-icon {
+  flex: none;
+  width: 12px;
+  align-self: center;
+  display: grid;
+  color: var(--text-3);
+}
+
+.log-source {
+  flex: none;
+  color: var(--text-2);
+  font-size: 11px;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.log-msg {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-1);
+}
+
+.lvl-error {
+  background: rgba(240, 96, 93, 0.06);
+}
+.lvl-error .log-msg,
+.lvl-error .log-icon {
+  color: #ff8a87;
+}
+.lvl-warn {
+  background: rgba(229, 165, 58, 0.05);
+}
+.lvl-warn .log-msg,
+.lvl-warn .log-icon {
+  color: #f0c27a;
+}
+.lvl-info .log-icon {
+  color: var(--info);
+}
+.lvl-debug .log-msg {
+  color: var(--text-2);
+}
+.lvl-input .log-msg {
+  color: #9cc4ff;
+}
+.lvl-result .log-msg {
+  color: #a5d6a7;
+}
+
+.result-arrow {
+  color: var(--text-3);
+  font-size: 11px;
+}
+
+.log-link {
+  flex: none;
+  color: var(--accent);
+  font: 11px var(--mono);
+}
+
+.log-link:hover {
+  text-decoration: underline;
+}
+
+.console-input {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
+  border-top: 1px solid var(--line);
+  background: var(--bg-0);
+  flex: none;
+}
+
+.console-input .prompt {
+  color: var(--accent);
+}
+
+.console-input input {
+  flex: 1;
+  background: none;
+  border: none;
+  outline: none;
+  color: var(--text-0);
+  font: 12px var(--mono);
+}
+
+.console-scope {
+  font-size: 10.5px;
+  color: var(--text-3);
+}
+
+.log-tree {
+  align-items: flex-start;
+}
+
+.log-value {
+  flex: 1;
+  min-width: 0;
+  margin-left: -8px;
+}
+
+.log-value .var-row:hover {
+  background: none;
+}

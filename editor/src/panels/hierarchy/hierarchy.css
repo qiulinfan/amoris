@@ -1,0 +1,30 @@
+.hierarchy .row-id {
+  font: 10px var(--mono);
+  color: var(--text-3);
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+
+.hierarchy .tree-row:hover .row-id,
+.hierarchy .tree-row.is-selected .row-id {
+  opacity: 1;
+}
+
+.tone-camera {
+  color: #9fb4d9;
+}
+.tone-light {
+  color: #f2c14e;
+}
+.tone-actor {
+  color: #6fc3ff;
+}
+.tone-env {
+  color: #5fd0c0;
+}
+.tone-mesh {
+  color: #c9a27a;
+}
+.tone-empty {
+  color: var(--text-2);
+}

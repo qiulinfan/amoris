@@ -26,6 +26,7 @@ endpoint, which `pocket-debug` serves on its own port (9229). A request whose `H
 | `GET /ws` | WebSocket, JSON text frames: requests, responses, pushed events (sections 2, 3) | editor |
 | `GET /render` | WebSocket, binary frames: the render feed (section 5); `501 render.not_available` until the integrator installs it | editor viewport |
 | `GET /assets/<path>` | the project's asset files (glTF, textures, splats, neural assets) | editor viewport |
+| `GET /wasm/<path>` | pocket-web's wasm-bindgen output, `pocket_web.js` exporting `createViewport` (editor.md 5) | editor viewport |
 | `POST /mcp` | MCP Streamable HTTP (rmcp) | agents |
 | `GET /json/list`, `GET /json/version`, `WS /devtools/<id>` | CDP discovery and endpoint (section 6), on pocket-debug's port | Chrome DevTools, VS Code |
 
@@ -167,3 +168,12 @@ small (each tool takes a `method`-like `action` where a group is natural):
   (shared/contract/mcp.md); not projected yet.
 
 Every MCP call is also pushed to editors as an `agent` event, so a human sees what agents do.
+
+## 8. Forms the editor relies on
+
+The editor ([editor.md](editor.md) 8) and its mock host settle forms this draft leaves open:
+`world.edit` takes `group` (consecutive edits of one group are one undo entry, so a drag streams
+live and undoes at once), `set` of `Name` takes a string, the hierarchy is a `Parent` component,
+`debug.step` takes `{kind}`, the shapes of the `debug.*` results, `debug.breakpoints.list` and
+`debug.unwatch`, the order of `redo` (next first) and the `agent:` prefix of agent edits' labels.
+The host adopts them, or the editor changes with this file.
