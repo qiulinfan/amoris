@@ -1,0 +1,107 @@
+{
+  "bug": "tally-off-by-one",
+  "kind": "off by one: the crates left are counted before the crate just taken",
+  "trial": 2,
+  "model": "zai-coding-plan/glm-5.3-flash",
+  "via": "cli",
+  "variant": "free",
+  "success": true,
+  "bug_check": true,
+  "checks": {
+    "steer": [
+      true,
+      "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+    ],
+    "goto": [
+      true,
+      "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+    ],
+    "goto_behind": [
+      true,
+      "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+    ],
+    "reach": [
+      true,
+      "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+    ],
+    "anchor": [
+      true,
+      "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+    ],
+    "tally": [
+      true,
+      "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+    ]
+  },
+  "hash_chain_identical_to_clean": true,
+  "hash_first_divergence_tick": null,
+  "hash_error": null,
+  "answer": {
+    "cause": "In the takeAboard system, the remaining-crate count `left` was computed before tally.taken was incremented, so the last crate reported left=1 and the left===0 check never emitted crates.all.",
+    "file": "scripts/rules.ts",
+    "line": 63,
+    "fixed": true
+  },
+  "located": true,
+  "planted_at": {
+    "file": "scripts/rules.ts",
+    "lines": [
+      63,
+      66
+    ]
+  },
+  "stopped_by": null,
+  "agent_exit": 0,
+  "agent_s": 471.8,
+  "wall_s": 473.7,
+  "budget": {
+    "max_calls": 60,
+    "max_time_s": 900
+  },
+  "tools": {
+    "bash": 49,
+    "write": 1
+  },
+  "tool_calls": 50,
+  "tool_errors": 0,
+  "cli": {
+    "help": 1,
+    "scripts list": 1,
+    "help scripts": 1,
+    "scripts read": 3,
+    "world query": 34,
+    "world tree": 1,
+    "scripts write": 1,
+    "scripts apply": 1,
+    "step": 40,
+    "world set": 14,
+    "events": 9,
+    "world get": 18,
+    "world schema": 1
+  },
+  "pocket_calls": 125,
+  "turns": 48,
+  "tokens": {
+    "input": 26585,
+    "output": 3777,
+    "reasoning": 7891,
+    "cache_read": 780032,
+    "total": 818285
+  },
+  "cost_usd": 0.0,
+  "debug_used": false,
+  "refusals": {
+    "sim.component_unknown": 1,
+    "sim.entity_id_invalid": 1
+  },
+  "output_chars": 22434,
+  "largest_output_chars": 4459,
+  "bash_timeouts": 0,
+  "blocked_s": 0.0,
+  "eval_unseen_locals": 0,
+  "stale_bundle_after_restore": null,
+  "first_s": {
+    "scripts_read": 5.44,
+    "scripts_write": 50.05
+  }
+}

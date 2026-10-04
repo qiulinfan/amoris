@@ -1,0 +1,113 @@
+{
+  "bug": "reach-squared",
+  "kind": "squared distance compared with an unsquared reach (reach 1.7 m instead of 3 m)",
+  "trial": 1,
+  "model": "zai-coding-plan/glm-5.3-flash",
+  "via": "cli",
+  "variant": "free",
+  "success": true,
+  "bug_check": true,
+  "checks": {
+    "steer": [
+      true,
+      "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+    ],
+    "goto": [
+      true,
+      "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+    ],
+    "goto_behind": [
+      true,
+      "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+    ],
+    "reach": [
+      true,
+      "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+    ],
+    "anchor": [
+      true,
+      "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+    ],
+    "tally": [
+      true,
+      "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+    ]
+  },
+  "hash_chain_identical_to_clean": true,
+  "hash_first_divergence_tick": null,
+  "hash_error": null,
+  "answer": {
+    "cause": "takeAboard compared the squared horizontal distance to the crate against the unsquared 3-metre REACH, so crates farther than 1.73 m were wrongly reported out of reach.",
+    "file": "scripts/rules.ts",
+    "line": 60,
+    "fixed": true
+  },
+  "located": true,
+  "planted_at": {
+    "file": "scripts/rules.ts",
+    "lines": [
+      57,
+      61
+    ]
+  },
+  "stopped_by": null,
+  "agent_exit": 0,
+  "agent_s": 192.3,
+  "wall_s": 195.9,
+  "budget": {
+    "max_calls": 60,
+    "max_time_s": 900
+  },
+  "tools": {
+    "bash": 15
+  },
+  "tool_calls": 15,
+  "tool_errors": 0,
+  "cli": {
+    "help": 1,
+    "scripts list": 1,
+    "world tree": 4,
+    "scripts read": 3,
+    "world query": 2,
+    "world set": 9,
+    "step": 6,
+    "events": 6,
+    "scripts write": 1,
+    "scripts apply": 3,
+    "world get": 5,
+    "undo": 4,
+    "status": 4,
+    "snapshots list": 1,
+    "snapshots restore": 3,
+    "call scripts.status": 1
+  },
+  "pocket_calls": 54,
+  "turns": 14,
+  "tokens": {
+    "input": 21689,
+    "output": 2196,
+    "reasoning": 3080,
+    "cache_read": 132608,
+    "total": 159573
+  },
+  "cost_usd": 0.0,
+  "debug_used": false,
+  "refusals": {
+    "history.stale": 1
+  },
+  "output_chars": 16422,
+  "largest_output_chars": 4459,
+  "bash_timeouts": 0,
+  "blocked_s": 0.0,
+  "eval_unseen_locals": 0,
+  "stale_bundle_after_restore": {
+    "restore_at_s": 102.040025,
+    "reapplied_at_s": 161.35,
+    "lost_s": 59.3,
+    "ended_with_old_scripts": false
+  },
+  "first_s": {
+    "scripts_read": 9.33,
+    "scripts_write": 59.52
+  }
+}

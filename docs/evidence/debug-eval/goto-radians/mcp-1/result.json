@@ -1,0 +1,117 @@
+{
+  "bug": "goto-radians",
+  "kind": "unit mix-up: the mark's bearing in radians compared with a heading in degrees",
+  "trial": 1,
+  "model": "zai-coding-plan/glm-5.3-flash",
+  "via": "mcp",
+  "variant": "free",
+  "success": true,
+  "bug_check": true,
+  "checks": {
+    "steer": [
+      true,
+      "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+    ],
+    "goto": [
+      true,
+      "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+    ],
+    "goto_behind": [
+      true,
+      "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+    ],
+    "reach": [
+      true,
+      "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+    ],
+    "anchor": [
+      true,
+      "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+    ],
+    "tally": [
+      true,
+      "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+    ]
+  },
+  "hash_chain_identical_to_clean": true,
+  "hash_first_divergence_tick": null,
+  "hash_error": null,
+  "answer": {
+    "cause": "The helmsman computed the mark's bearing with Math.atan2 in radians but compared it to Boat.heading_deg in degrees, so the rudder was driven by the raw radian value and the sloop settled on a false heading instead of steering for the crate.",
+    "file": "scripts/helm.ts",
+    "line": 66,
+    "fixed": true
+  },
+  "located": true,
+  "planted_at": {
+    "file": "scripts/helm.ts",
+    "lines": [
+      66,
+      66
+    ]
+  },
+  "stopped_by": null,
+  "agent_exit": 0,
+  "agent_s": 535.2,
+  "wall_s": 537.8,
+  "budget": {
+    "max_calls": 60,
+    "max_time_s": 900
+  },
+  "tools": {
+    "pocket_scripts": 6,
+    "bash": 11,
+    "pocket_world": 6,
+    "pocket_time": 8,
+    "pocket_debug": 1
+  },
+  "tool_calls": 32,
+  "tool_errors": 4,
+  "cli": {
+    "mcp scripts list": 1,
+    "help": 1,
+    "mcp scripts read": 4,
+    "mcp world schema": 1,
+    "mcp world edit": 2,
+    "mcp time step": 8,
+    "mcp world query": 3,
+    "mcp debug breakpoints.set": 1,
+    "debug breakpoints.set": 1,
+    "debug state": 1,
+    "debug breakpoints.clear": 1,
+    "debug continue": 1,
+    "mcp scripts write": 1,
+    "scripts apply": 1,
+    "world query": 6,
+    "snapshots": 1,
+    "snapshots restore": 1,
+    "world get": 2
+  },
+  "pocket_calls": 37,
+  "turns": 28,
+  "tokens": {
+    "input": 34562,
+    "output": 2674,
+    "reasoning": 10758,
+    "cache_read": 529856,
+    "total": 577850
+  },
+  "cost_usd": 0.0,
+  "refusals": {},
+  "output_chars": 31451,
+  "largest_output_chars": 9811,
+  "bash_timeouts": 1,
+  "first_s": {
+    "debug": 196.38,
+    "scripts_write": 349.53
+  },
+  "debug_used": true,
+  "blocked_s": 60.0,
+  "eval_unseen_locals": 0,
+  "stale_bundle_after_restore": {
+    "restore_at_s": 440.68,
+    "reapplied_at_s": null,
+    "lost_s": 82.0,
+    "ended_with_old_scripts": true
+  }
+}

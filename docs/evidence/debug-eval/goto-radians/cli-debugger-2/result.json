@@ -1,0 +1,112 @@
+{
+  "bug": "goto-radians",
+  "kind": "unit mix-up: the mark's bearing in radians compared with a heading in degrees",
+  "trial": 2,
+  "model": "zai-coding-plan/glm-5.3-flash",
+  "via": "cli",
+  "variant": "debugger",
+  "success": true,
+  "bug_check": true,
+  "checks": {
+    "steer": [
+      true,
+      "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+    ],
+    "goto": [
+      true,
+      "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+    ],
+    "goto_behind": [
+      true,
+      "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+    ],
+    "reach": [
+      true,
+      "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+    ],
+    "anchor": [
+      true,
+      "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+    ],
+    "tally": [
+      true,
+      "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+    ]
+  },
+  "hash_chain_identical_to_clean": true,
+  "hash_first_divergence_tick": null,
+  "hash_error": null,
+  "answer": {
+    "cause": "The helmsman's bearing from Math.atan2 was left in radians and compared with Boat.heading_deg in degrees, so the goto rudder was wrong in size and sign for every mark.",
+    "file": "scripts/helm.ts",
+    "line": 66,
+    "fixed": true
+  },
+  "located": true,
+  "planted_at": {
+    "file": "scripts/helm.ts",
+    "lines": [
+      66,
+      66
+    ]
+  },
+  "stopped_by": null,
+  "agent_exit": 0,
+  "agent_s": 310.2,
+  "wall_s": 312.3,
+  "budget": {
+    "max_calls": 60,
+    "max_time_s": 900
+  },
+  "tools": {
+    "bash": 22,
+    "edit": 1
+  },
+  "tool_calls": 23,
+  "tool_errors": 0,
+  "cli": {
+    "help": 1,
+    "scripts list": 1,
+    "info": 1,
+    "scripts read": 5,
+    "help debug": 1,
+    "call debug.breakpoints.set": 2,
+    "world get": 10,
+    "world tree": 1,
+    "world set": 1,
+    "step": 5,
+    "call debug.state": 1,
+    "call debug.eval": 4,
+    "call debug.breakpoints.clear": 1,
+    "call debug.continue": 1,
+    "scripts write": 1,
+    "scripts apply": 1,
+    "world query": 1
+  },
+  "pocket_calls": 38,
+  "turns": 23,
+  "tokens": {
+    "input": 23217,
+    "output": 1172,
+    "reasoning": 2148,
+    "cache_read": 260096,
+    "total": 286633
+  },
+  "cost_usd": 0.0,
+  "refusals": {
+    "request.missing_field": 1,
+    "debug.eval_failed": 2,
+    "sim.component_unknown": 1
+  },
+  "output_chars": 28017,
+  "largest_output_chars": 9526,
+  "bash_timeouts": 1,
+  "blocked_s": 120.1,
+  "eval_unseen_locals": 2,
+  "stale_bundle_after_restore": null,
+  "first_s": {
+    "scripts_read": 9.14,
+    "scripts_write": 241.34
+  },
+  "debug_used": true
+}

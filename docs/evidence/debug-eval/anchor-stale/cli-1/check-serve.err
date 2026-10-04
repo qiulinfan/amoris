@@ -1,0 +1,2 @@
+pocket: the debugger's CDP endpoint did not start (Address already in use (os error 48)); debug.* still works
+pocket: serving /private/var/folders/nl/h1vtq2cx2rv5jvtw9ypr9p6h0000gn/T/pocket-debug-eval-anchor-stale-fts67au1/check/sailing at http://127.0.0.1:58356 (editor not built, MCP http://127.0.0.1:58356/mcp); Ctrl-C stops

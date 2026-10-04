@@ -1,0 +1,16 @@
+--- clean/scripts/rules.ts
++++ planted/scripts/rules.ts
+@@ -54,9 +54,11 @@
+                 return;
+             }
+             const p = (ctx.world.get(crate, "Transform") as { position: { x: number; y: number; z: number } }).position;
+-            const across = Math.hypot(p.x - at.x[r], p.z - at.z[r]);
++            const dx = p.x - at.x[r];
++            const dz = p.z - at.z[r];
++            const across = dx * dx + dz * dz; // squared: no square root on every try
+             if (across > REACH || Math.abs(p.y - at.y[r]) > REACH_UP) {
+-                ctx.emit("interact.ignored", { code: "sail.out_of_reach", crate: target, range_m: Math.round(across * 10) / 10 }, { subject: boat });
++                ctx.emit("interact.ignored", { code: "sail.out_of_reach", crate: target, range_m: Math.round(Math.sqrt(across) * 10) / 10 }, { subject: boat });
+                 return;
+             }
+             const value = (ctx.world.get(crate, "Cargo") as { value: number }).value;

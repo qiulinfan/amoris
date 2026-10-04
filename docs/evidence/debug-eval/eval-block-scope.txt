@@ -1,0 +1,39 @@
+debug.eval cannot see the second and later let/const of a block, though debug.state lists them
+Reproduced 2026-10-04 by hand (target-debug-eval/release/pocket, main 1e5b94f), on the clean
+evaluation game (tools/eval/debug_eval.py's build_project(..., None)); first hit by the agent in
+goto-radians/cli-1 (transcript.md, 431 s to 655 s: seven failed evaluations).
+
+scripts/helm.ts, inside boats.each((r, boat) => { ... }):
+  56            const mark = h.goto[r];
+  57            if (mark !== 0) {
+  58                const t = ctx.world.get(mark as typeof boat, "Transform");
+  ...
+  62                } else {
+  64                    const dx = t.position.x - at.x[r];
+  65                    const dz = t.position.z - at.z[r];
+  66                    const bearing = Math.atan2(dx, -dz) * 180 / Math.PI;
+  67                    rudder = clamp(angleDiff(bearing, b.heading_deg[r]) * PILOT_GAIN, -1, 1);
+
+$ pocket world set Sloop Helm goto=Crate4
+$ pocket debug breakpoints.set '{"file":"scripts/helm.ts","line":67}'
+$ pocket step 1 &            # blocks until the pause is resumed
+$ pocket debug state --json  # frame 0 locals at helm.ts:67
+  r=0 boat=3 rudder=0 mark=7 t={position:{x:26,y:0,z:-6},...} dx=26 dz=-6 bearing=77.00538320808349 sail=undefined
+$ pocket debug eval '{"expr":"dx"}'              -> 26
+$ pocket debug eval '{"expr":"t"}'               -> {position: {x: 26, y: 0, z: -6}, ...}
+$ pocket debug eval '{"expr":"mark"}'            -> 7
+$ pocket debug eval '{"expr":"dz"}'              -> debug.eval_failed: ReferenceError: dz is not defined
+$ pocket debug eval '{"expr":"bearing"}'         -> debug.eval_failed: ReferenceError: bearing is not defined
+$ pocket debug eval '{"expr":"typeof bearing"}'  -> "undefined"
+
+Cause (third_party/rquickjs-sys-0.14.0/quickjs/quickjs.c, JS_EvalInStackFrame from PR #1421): it
+picks the eval's scope as the FIRST local with the deepest scope_level (`if (vd->scope_level >
+max_level)`), here `dx`, and add_closure_variables() then walks scope_next from it, which links each
+variable to the one declared before it. Variables declared after that one in the same block (`dz`,
+`bearing`) are never reached; neither is any block that is not on the deepest block's chain. The
+debugger's locals listing (JS_GetLocalVariablesAtLevel) reads every vardef and so shows them.
+
+What it should do: take the scope live at the frame's pc (the innermost block containing the paused
+statement) and start from that block's last declared variable. The bytecode keeps no pc-to-scope
+map after compilation, so the patch needs one (or the scope's variable range per OP_debug), in the
+style of P9's per-function statement table.

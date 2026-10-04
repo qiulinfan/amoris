@@ -1,0 +1,11 @@
+--- planted/scripts/rules.ts
++++ agent/scripts/rules.ts
+@@ -57,7 +57,7 @@
+             const dx = p.x - at.x[r];
+             const dz = p.z - at.z[r];
+             const across = dx * dx + dz * dz; // squared: no square root on every try
+-            if (across > REACH || Math.abs(p.y - at.y[r]) > REACH_UP) {
++            if (across > REACH * REACH || Math.abs(p.y - at.y[r]) > REACH_UP) {
+                 ctx.emit("interact.ignored", { code: "sail.out_of_reach", crate: target, range_m: Math.round(Math.sqrt(across) * 10) / 10 }, { subject: boat });
+                 return;
+             }

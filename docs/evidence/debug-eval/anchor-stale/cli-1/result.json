@@ -1,0 +1,101 @@
+{
+  "bug": "anchor-stale",
+  "kind": "stale variable: the hoist is written from the value read before the anchor rule",
+  "trial": 1,
+  "model": "zai-coding-plan/glm-5.3-flash",
+  "via": "cli",
+  "variant": "free",
+  "success": true,
+  "bug_check": true,
+  "checks": {
+    "steer": [
+      true,
+      "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+    ],
+    "goto": [
+      true,
+      "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+    ],
+    "goto_behind": [
+      true,
+      "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+    ],
+    "reach": [
+      true,
+      "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+    ],
+    "anchor": [
+      true,
+      "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+    ],
+    "tally": [
+      true,
+      "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+    ]
+  },
+  "hash_chain_identical_to_clean": true,
+  "hash_first_divergence_tick": null,
+  "hash_error": null,
+  "answer": {
+    "cause": "At anchor the helm system computed a furled sail into the local `sail` variable but then wrote the player's unmodified request into the boat's hoist control (`b.hoist[r] = wanted`), so the sail never came down and the sloop kept sailing.",
+    "file": "scripts/helm.ts",
+    "line": 78,
+    "fixed": true
+  },
+  "located": true,
+  "planted_at": {
+    "file": "scripts/helm.ts",
+    "lines": [
+      71,
+      78
+    ]
+  },
+  "stopped_by": null,
+  "agent_exit": 0,
+  "agent_s": 134.3,
+  "wall_s": 137.3,
+  "budget": {
+    "max_calls": 60,
+    "max_time_s": 900
+  },
+  "tools": {
+    "bash": 13,
+    "write": 1
+  },
+  "tool_calls": 14,
+  "tool_errors": 1,
+  "cli": {
+    "scripts list": 1,
+    "help": 1,
+    "scripts read": 6,
+    "world schema": 1,
+    "world set": 2,
+    "step": 3,
+    "world get": 3,
+    "scripts write": 1,
+    "scripts apply": 1,
+    "events": 2
+  },
+  "pocket_calls": 21,
+  "turns": 12,
+  "tokens": {
+    "input": 22578,
+    "output": 2037,
+    "reasoning": 1545,
+    "cache_read": 126016,
+    "total": 152176
+  },
+  "cost_usd": 0.0,
+  "debug_used": false,
+  "refusals": {},
+  "output_chars": 16514,
+  "largest_output_chars": 4459,
+  "bash_timeouts": 0,
+  "blocked_s": 0.0,
+  "eval_unseen_locals": 0,
+  "stale_bundle_after_restore": null,
+  "first_s": {
+    "scripts_read": 5.45,
+    "scripts_write": 82.72
+  }
+}

@@ -55,5 +55,9 @@ specified under [docs/spec/](docs/spec/README.md); their measured spikes are und
   Any edit to `pocket-assets/src/frame.rs` or `visual.rs` changes the render feed's `FORMAT`: rebuild
   and commit the viewport with it, or viewports refuse the host's frames.
 - `node tools/web_bench.mjs <url> [s]` drives headless Chrome with WebGPU (`SHOT=`, `EVAL=`, `LOGS=1`).
+- `python3 tools/eval/debug_eval.py` hands an LLM agent (opencode, GLM 5.3 Flash) a planted script
+  bug in the sailing game through `pocket serve` and the CLI, then checks the fix
+  ([docs/bench/debug-eval.md](docs/bench/debug-eval.md)); `--selftest` first, `--report` rebuilds
+  the results from `docs/evidence/debug-eval/`.
 - Agents working in parallel use their own git worktree and their own cargo target directory.
 - macOS has no `timeout`; use `perl -e 'alarm 60; exec @ARGV' cmd` as a watchdog.

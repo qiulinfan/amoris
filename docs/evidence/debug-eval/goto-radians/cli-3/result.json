@@ -1,0 +1,100 @@
+{
+  "bug": "goto-radians",
+  "kind": "unit mix-up: the mark's bearing in radians compared with a heading in degrees",
+  "trial": 3,
+  "model": "zai-coding-plan/glm-5.3-flash",
+  "via": "cli",
+  "variant": "free",
+  "success": true,
+  "bug_check": true,
+  "checks": {
+    "steer": [
+      true,
+      "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+    ],
+    "goto": [
+      true,
+      "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+    ],
+    "goto_behind": [
+      true,
+      "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+    ],
+    "reach": [
+      true,
+      "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+    ],
+    "anchor": [
+      true,
+      "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+    ],
+    "tally": [
+      true,
+      "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+    ]
+  },
+  "hash_chain_identical_to_clean": true,
+  "hash_first_divergence_tick": null,
+  "hash_error": null,
+  "answer": {
+    "cause": "The helmsman's goto steering fed Math.atan2's radian result straight into a degrees-based angleDiff against Boat.heading_deg, so the computed rudder was wrong for any mark and the sloop sailed away from every crate.",
+    "file": "scripts/helm.ts",
+    "line": 66,
+    "fixed": true
+  },
+  "located": true,
+  "planted_at": {
+    "file": "scripts/helm.ts",
+    "lines": [
+      66,
+      66
+    ]
+  },
+  "stopped_by": null,
+  "agent_exit": 0,
+  "agent_s": 143.9,
+  "wall_s": 146.9,
+  "budget": {
+    "max_calls": 60,
+    "max_time_s": 900
+  },
+  "tools": {
+    "bash": 15,
+    "write": 1
+  },
+  "tool_calls": 16,
+  "tool_errors": 1,
+  "cli": {
+    "help": 1,
+    "scripts list": 1,
+    "world tree": 1,
+    "scripts read": 4,
+    "world get": 14,
+    "world set": 4,
+    "step": 6,
+    "scripts write": 2,
+    "scripts apply": 2
+  },
+  "pocket_calls": 35,
+  "turns": 17,
+  "tokens": {
+    "input": 20603,
+    "output": 2128,
+    "reasoning": 2093,
+    "cache_read": 163072,
+    "total": 187896
+  },
+  "cost_usd": 0.0,
+  "refusals": {},
+  "output_chars": 15745,
+  "largest_output_chars": 4901,
+  "bash_timeouts": 0,
+  "blocked_s": 0.0,
+  "eval_unseen_locals": 0,
+  "stale_bundle_after_restore": null,
+  "first_s": {
+    "scripts_read": 9.07,
+    "scripts_write": 71.02
+  },
+  "debug_used": false
+}

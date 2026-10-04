@@ -1,0 +1,111 @@
+{
+  "bug": "goto-radians",
+  "kind": "unit mix-up: the mark's bearing in radians compared with a heading in degrees",
+  "trial": 1,
+  "model": "zai-coding-plan/glm-5.3-flash",
+  "via": "cli",
+  "variant": "free",
+  "success": false,
+  "bug_check": false,
+  "checks": {
+    "steer": [
+      true,
+      "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+    ],
+    "goto": [
+      false,
+      "closest approach to Crate4 within 15 s: 19.0 m (pass < 3 m)"
+    ],
+    "goto_behind": [
+      false,
+      "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 9.1 (-80.9; pass > +15, the short way)"
+    ],
+    "reach": [
+      true,
+      "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+    ],
+    "anchor": [
+      true,
+      "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+    ],
+    "tally": [
+      true,
+      "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+    ]
+  },
+  "hash_chain_identical_to_clean": false,
+  "hash_first_divergence_tick": 150,
+  "hash_error": null,
+  "answer": null,
+  "located": false,
+  "planted_at": {
+    "file": "scripts/helm.ts",
+    "lines": [
+      66,
+      66
+    ]
+  },
+  "stopped_by": "time_budget",
+  "agent_exit": -9,
+  "agent_s": 900.7,
+  "wall_s": 903.7,
+  "budget": {
+    "max_calls": 60,
+    "max_time_s": 900
+  },
+  "tools": {
+    "bash": 53
+  },
+  "tool_calls": 53,
+  "tool_errors": 1,
+  "cli": {
+    "help": 1,
+    "world tree": 1,
+    "scripts list": 1,
+    "scripts read": 7,
+    "world schema": 1,
+    "world get": 7,
+    "world set": 1,
+    "step": 3,
+    "help debug": 1,
+    "debug state": 7,
+    "call debug.breakpoints.set": 5,
+    "call debug.continue": 4,
+    "call debug.remove": 1,
+    "call time.step": 3,
+    "call debug.eval": 19,
+    "call debug.breakpoints.clear": 3,
+    "call debug.step": 8,
+    "call debug.wait": 2,
+    "call scripts.status": 1,
+    "scripts check": 1,
+    "call project.info": 2,
+    "logs": 1,
+    "events": 1
+  },
+  "pocket_calls": 81,
+  "turns": 50,
+  "tokens": {
+    "input": 27237,
+    "output": 2751,
+    "reasoning": 12191,
+    "cache_read": 874752,
+    "total": 916931
+  },
+  "cost_usd": 0.0,
+  "debug_used": true,
+  "refusals": {
+    "request.missing_field": 5,
+    "debug.eval_failed": 11,
+    "debug.not_paused": 1
+  },
+  "output_chars": 35809,
+  "largest_output_chars": 9437,
+  "bash_timeouts": 3,
+  "blocked_s": 270.3,
+  "eval_unseen_locals": 8,
+  "stale_bundle_after_restore": null,
+  "first_s": {
+    "scripts_read": 9.9
+  }
+}

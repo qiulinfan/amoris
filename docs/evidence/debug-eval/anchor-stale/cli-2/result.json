@@ -1,0 +1,108 @@
+{
+  "bug": "anchor-stale",
+  "kind": "stale variable: the hoist is written from the value read before the anchor rule",
+  "trial": 2,
+  "model": "zai-coding-plan/glm-5.3-flash",
+  "via": "cli",
+  "variant": "free",
+  "success": true,
+  "bug_check": true,
+  "checks": {
+    "steer": [
+      true,
+      "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+    ],
+    "goto": [
+      true,
+      "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+    ],
+    "goto_behind": [
+      true,
+      "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+    ],
+    "reach": [
+      true,
+      "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+    ],
+    "anchor": [
+      true,
+      "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+    ],
+    "tally": [
+      true,
+      "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+    ]
+  },
+  "hash_chain_identical_to_clean": true,
+  "hash_first_divergence_tick": null,
+  "hash_error": null,
+  "answer": {
+    "cause": "In the helm system the anchored branch set the local sail to 0 but line 78 assigned Boat.hoist from `wanted`, so the sail was never furled at anchor and the boat kept its full sail drive.",
+    "file": "scripts/helm.ts",
+    "line": 78,
+    "fixed": true
+  },
+  "located": true,
+  "planted_at": {
+    "file": "scripts/helm.ts",
+    "lines": [
+      71,
+      78
+    ]
+  },
+  "stopped_by": null,
+  "agent_exit": 0,
+  "agent_s": 146.1,
+  "wall_s": 148.2,
+  "budget": {
+    "max_calls": 60,
+    "max_time_s": 900
+  },
+  "tools": {
+    "bash": 14,
+    "write": 1
+  },
+  "tool_calls": 15,
+  "tool_errors": 2,
+  "cli": {
+    "help": 1,
+    "scripts list": 1,
+    "world tree": 1,
+    "scripts read": 4,
+    "scripts write": 1,
+    "scripts apply": 1,
+    "world set": 2,
+    "step": 5,
+    "world get": 5,
+    "snapshots restore": 2,
+    "status": 1,
+    "snapshots list": 1
+  },
+  "pocket_calls": 25,
+  "turns": 16,
+  "tokens": {
+    "input": 13740,
+    "output": 1837,
+    "reasoning": 1313,
+    "cache_read": 141824,
+    "total": 158714
+  },
+  "cost_usd": 0.0,
+  "debug_used": false,
+  "refusals": {},
+  "output_chars": 10566,
+  "largest_output_chars": 4459,
+  "bash_timeouts": 0,
+  "blocked_s": 0.0,
+  "eval_unseen_locals": 0,
+  "stale_bundle_after_restore": {
+    "restore_at_s": 122.01,
+    "reapplied_at_s": null,
+    "lost_s": 16.2,
+    "ended_with_old_scripts": true
+  },
+  "first_s": {
+    "scripts_read": 9.28,
+    "scripts_write": 55.04
+  }
+}

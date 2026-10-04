@@ -1,0 +1,119 @@
+{
+  "bug": "reach-squared",
+  "kind": "squared distance compared with an unsquared reach (reach 1.7 m instead of 3 m)",
+  "trial": 1,
+  "model": "zai-coding-plan/glm-5.3-flash",
+  "via": "cli",
+  "variant": "debugger",
+  "success": true,
+  "bug_check": true,
+  "checks": {
+    "steer": [
+      true,
+      "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+    ],
+    "goto": [
+      true,
+      "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+    ],
+    "goto_behind": [
+      true,
+      "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+    ],
+    "reach": [
+      true,
+      "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+    ],
+    "anchor": [
+      true,
+      "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+    ],
+    "tally": [
+      true,
+      "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+    ]
+  },
+  "hash_chain_identical_to_clean": true,
+  "hash_first_divergence_tick": null,
+  "hash_error": null,
+  "answer": {
+    "cause": "The reach test compared the squared horizontal distance (across) against REACH in metres instead of REACH squared, so crates farther than sqrt(3)\u22481.73 m were declared out of reach.",
+    "file": "scripts/rules.ts",
+    "line": 60,
+    "fixed": true
+  },
+  "located": true,
+  "planted_at": {
+    "file": "scripts/rules.ts",
+    "lines": [
+      57,
+      61
+    ]
+  },
+  "stopped_by": null,
+  "agent_exit": 0,
+  "agent_s": 361.7,
+  "wall_s": 363.9,
+  "budget": {
+    "max_calls": 60,
+    "max_time_s": 900
+  },
+  "tools": {
+    "bash": 21,
+    "write": 1
+  },
+  "tool_calls": 22,
+  "tool_errors": 0,
+  "cli": {
+    "help": 1,
+    "scripts list": 1,
+    "status": 1,
+    "scripts read": 2,
+    "help debug": 1,
+    "world tree": 1,
+    "world query": 4,
+    "help debug.breakpoints.set": 1,
+    "help debug.watch": 1,
+    "help debug.eval": 1,
+    "help debug.step": 1,
+    "call debug.state": 2,
+    "call debug.breakpoints.set": 3,
+    "call debug.watch": 2,
+    "call debug.eval": 12,
+    "world set": 3,
+    "step": 3,
+    "call debug.breakpoints.clear": 1,
+    "call debug.continue": 1,
+    "events": 2,
+    "scripts write": 1,
+    "scripts apply": 1,
+    "world get": 1
+  },
+  "pocket_calls": 47,
+  "turns": 22,
+  "tokens": {
+    "input": 19351,
+    "output": 2445,
+    "reasoning": 3893,
+    "cache_read": 261248,
+    "total": 286937
+  },
+  "cost_usd": 0.0,
+  "refusals": {
+    "request.missing_field": 4,
+    "request.unknown_field": 2,
+    "debug.eval_failed": 8,
+    "debug.no_frame": 1
+  },
+  "output_chars": 26475,
+  "largest_output_chars": 8858,
+  "bash_timeouts": 1,
+  "first_s": {
+    "scripts_read": 9.61,
+    "scripts_write": 316.31
+  },
+  "debug_used": true,
+  "blocked_s": 120.1,
+  "eval_unseen_locals": 8,
+  "stale_bundle_after_restore": null
+}
