@@ -414,6 +414,126 @@
           ]
         }
       }
+    },
+    {
+      "name": "FireSparks",
+      "components": {
+        "Transform": {
+          "position": [
+            0,
+            0.2,
+            2.2
+          ]
+        },
+        "Model": {
+          "mesh": "cylinder",
+          "scale": [
+            0.7,
+            0.15,
+            0.7
+          ],
+          "color": [
+            0.25,
+            0.16,
+            0.1,
+            1
+          ],
+          "roughness": 0.9
+        },
+        "ParticleEmitter": {
+          "rate": 220,
+          "lifetime": 0.9,
+          "speed": 3.2,
+          "spread_deg": 18,
+          "acceleration": [
+            0,
+            1.5,
+            0
+          ],
+          "drag": 0.6,
+          "size": [
+            0.16,
+            0.04
+          ],
+          "color_start": [
+            6,
+            2.4,
+            0.6,
+            0.0
+          ],
+          "color_end": [
+            1.5,
+            0.2,
+            0.05,
+            0.0
+          ],
+          "radius": 0.25
+        }
+      }
+    },
+    {
+      "name": "FireSmoke",
+      "components": {
+        "Transform": {
+          "position": [
+            0,
+            0.9,
+            2.2
+          ]
+        },
+        "ParticleEmitter": {
+          "rate": 40,
+          "lifetime": 3.2,
+          "speed": 1.2,
+          "spread_deg": 15,
+          "acceleration": [
+            0.3,
+            0.5,
+            0
+          ],
+          "drag": 0.2,
+          "size": [
+            0.4,
+            1.6
+          ],
+          "color_start": [
+            0.35,
+            0.33,
+            0.32,
+            0.55
+          ],
+          "color_end": [
+            0.5,
+            0.5,
+            0.52,
+            0.0
+          ],
+          "radius": 0.2
+        }
+      }
+    },
+    {
+      "name": "FireLight",
+      "components": {
+        "Transform": {
+          "position": [
+            0,
+            1.0,
+            2.2
+          ]
+        },
+        "Light": {
+          "kind": "point",
+          "color": [
+            1,
+            0.55,
+            0.25
+          ],
+          "intensity": 30,
+          "range": 8,
+          "shadows": false
+        }
+      }
     }
   ]
 }

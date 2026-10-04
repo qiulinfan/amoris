@@ -31,6 +31,7 @@ use crate::profiler::GpuProfiler;
 use crate::scene::{InstanceGpu, Part, Resolve, Scene, VARIANTS};
 use crate::skinning::Skinning;
 use crate::ui::Ui;
+use crate::particles::Particles;
 use crate::shaders;
 use crate::shadows::{self, CASCADES, SHADOW_SIZE};
 use crate::sky::{Sky, SkyParams};
@@ -295,6 +296,9 @@ pub struct Renderer {
     picking: Picking,
     skinning: Skinning,
     ui: Ui,
+    particles: Particles,
+    /// The wall clock of the last frame (particle steps).
+    last_frame_s: Option<f64>,
     /// Editor overlays: gizmo shapes, selection outline, grid and axes.
     pub overlays: Overlays,
     /// The last finished pick: `Some(None)` when the pixel shows no entity.
@@ -716,6 +720,8 @@ impl Renderer {
             picking,
             skinning: Skinning::new(device),
             ui: Ui::new(device, output),
+            particles: Particles::new(device),
+            last_frame_s: None,
             overlays: Overlays::new(device, output),
             last_pick: None,
             last_visible: None,
@@ -1302,6 +1308,10 @@ impl Renderer {
         if draw_bytes > 0 {
             enc.copy_buffer_to_buffer(&self.draw_template, 0, &self.draws, 0, draw_bytes);
         }
+        let frame_dt = self.last_frame_s.map_or(1.0 / 60.0, |t| (now_s - t).clamp(0.0, 0.1)) as f32;
+        self.last_frame_s = Some(now_s);
+        self.particles
+            .update(&device, &queue, &mut enc, &self.scene.emitters, frame_dt);
         // Skinned parts' vertices for the drawn moment (between the last two ticks).
         let since_tick = (f64::from(alpha) - 1.0) * self.scene.dt_s;
         self.skinning.encode(
@@ -1423,6 +1433,7 @@ impl Renderer {
             pass.set_pipeline(&self.sky_pipeline);
             pass.set_bind_group(0, &binds.sky, &[]);
             pass.draw(0..3, 0..1);
+            self.particles.draw(&device, &mut pass, &self.view_buf);
             self.overlays.draw_grid(&device, &mut pass, &self.view_buf);
         }
         if self.picking.wanted() {

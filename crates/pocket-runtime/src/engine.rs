@@ -13,7 +13,7 @@
 use bevy_ecs::component::{Component, Mutable};
 use bevy_ecs::prelude::World;
 use bevy_ecs::world::{EntityRef, EntityWorldMut};
-use pocket_assets::{Animator, AudioSource, Camera, Environment, Light, Model, Splat, UiBar, UiText};
+use pocket_assets::{Animator, AudioSource, Camera, Environment, Light, Model, ParticleEmitter, Splat, UiBar, UiText};
 use pocket_contract::{CheckOptions, Problem, Shape, detail};
 use pocket_physics::{
     Boat, Collider, ExternalForce, Floater, Hull, RigidBody, Sail, Sea, Transform, Trim, Velocity,
@@ -82,7 +82,7 @@ where
 }
 
 /// Every engine component a scene or `world_edit` can name (`Name` is the entity's own `name`).
-pub fn engine_components() -> [EngineComponent; 20] {
+pub fn engine_components() -> [EngineComponent; 21] {
     [
         entry::<Animator>(),
         entry::<AudioSource>(),
@@ -91,6 +91,7 @@ pub fn engine_components() -> [EngineComponent; 20] {
         entry::<Environment>(),
         entry::<Light>(),
         entry::<Model>(),
+        entry::<ParticleEmitter>(),
         entry::<Splat>(),
         entry::<UiBar>(),
         entry::<UiText>(),
@@ -432,6 +433,7 @@ pub fn install_script_components(world: &mut World) -> Result<(), Problem> {
     ComponentRegistry::register::<UiText>(world, None)?;
     ComponentRegistry::register::<UiBar>(world, None)?;
     ComponentRegistry::register::<AudioSource>(world, None)?;
+    ComponentRegistry::register::<ParticleEmitter>(world, None)?;
     let after = names(world);
     if before != after {
         return Err(Problem::new(

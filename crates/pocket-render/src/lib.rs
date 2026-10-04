@@ -14,6 +14,7 @@ pub mod loader;
 pub mod materials;
 pub mod meshes;
 mod ocean;
+mod particles;
 pub mod overlay;
 pub mod picking;
 mod post;

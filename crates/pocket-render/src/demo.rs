@@ -131,5 +131,6 @@ pub fn many_cubes(count: usize, dense: bool, shadows: bool) -> RenderFrame {
         splats: None,
         ui: None,
         audio: None,
+        emitters: None,
     }
 }

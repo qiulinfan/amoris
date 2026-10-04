@@ -80,6 +80,8 @@ pub struct Scene {
     pub sea: Option<SeaView>,
     pub splats: Vec<SplatView>,
     pub splats_changed: bool,
+    /// The world's particle emitters.
+    pub emitters: Vec<pocket_assets::frame::EmitterView>,
     /// The world's sound sources (for the audio presenter).
     pub audio: Vec<pocket_assets::frame::AudioView>,
     /// The game UI's elements.
@@ -269,6 +271,9 @@ impl Scene {
         }
         if let Some(a) = frame.audio {
             self.audio = a;
+        }
+        if let Some(e) = frame.emitters {
+            self.emitters = e;
         }
     }
 

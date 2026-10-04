@@ -341,3 +341,53 @@ impl Default for AudioSource {
         }
     }
 }
+
+/// A particle emitter at the entity (sparks, smoke, spray, fire). Particles are presentation: the
+/// renderer simulates them on the GPU; the emitter's settings are world state like the rest.
+#[derive(Component, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, default)]
+pub struct ParticleEmitter {
+    /// Particles per second while emitting.
+    pub rate: f64,
+    /// Particles released at once when `burst_id` changes (an explosion).
+    pub burst: u32,
+    /// Change it (any value) to fire `burst` again.
+    pub burst_id: u32,
+    pub emitting: bool,
+    /// Seconds a particle lives.
+    pub lifetime: f64,
+    /// Initial speed, m/s, along the entity's +y within `spread_deg` of it.
+    pub speed: f64,
+    pub spread_deg: f64,
+    /// Acceleration, m/s^2 (gravity is [0, -9.8, 0]; smoke rises).
+    pub acceleration: [f64; 3],
+    /// Fraction of velocity lost per second.
+    pub drag: f64,
+    /// Size at birth and death, metres.
+    pub size: [f64; 2],
+    /// Linear colour with alpha at birth and death; alpha 0 with bright colour adds light (sparks).
+    pub color_start: [f64; 4],
+    pub color_end: [f64; 4],
+    /// Emit from a sphere of this radius around the entity.
+    pub radius: f64,
+}
+
+impl Default for ParticleEmitter {
+    fn default() -> Self {
+        ParticleEmitter {
+            rate: 30.0,
+            burst: 0,
+            burst_id: 0,
+            emitting: true,
+            lifetime: 1.5,
+            speed: 3.0,
+            spread_deg: 25.0,
+            acceleration: [0.0, -2.0, 0.0],
+            drag: 0.3,
+            size: [0.15, 0.4],
+            color_start: [1.0, 0.8, 0.4, 0.9],
+            color_end: [0.4, 0.4, 0.4, 0.0],
+            radius: 0.1,
+        }
+    }
+}

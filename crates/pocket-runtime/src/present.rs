@@ -16,10 +16,10 @@ use bevy_ecs::prelude::World;
 use bevy_ecs::world::{Ref, WorldId};
 use pocket_assets::frame::{
     AnimView, CameraView, EnvironmentView, InstanceUpdate, LightKindView, LightView, Look, Pose,
-    AudioView, RenderFrame, SeaView, SplatView, UiView, WaveView,
+    AudioView, EmitterView, RenderFrame, SeaView, SplatView, UiView, WaveView,
 };
 use pocket_assets::{
-    Animator, AudioSource, Camera, Environment, Feed, Light, LightKind, Model, SkyKind, Splat, UiAnchor, UiBar,
+    Animator, AudioSource, Camera, Environment, Feed, Light, LightKind, Model, ParticleEmitter, SkyKind, Splat, UiAnchor, UiBar,
     UiText,
 };
 use pocket_physics::{Sea, Transform};
@@ -183,6 +183,7 @@ impl Extractor {
         frame.splats = Some(Self::splats(world));
         frame.ui = Some(Self::ui(world));
         frame.audio = Some(Self::audio(world));
+        frame.emitters = Some(Self::emitters(world));
         frame
     }
 
@@ -254,6 +255,14 @@ impl Extractor {
                 || w.removed::<Sea>().next().is_some()
         }) {
             frame.sea = Some(Self::sea(world));
+        }
+        if changed(world, &mut |w| {
+            w.query::<(Option<Ref<Transform>>, Ref<ParticleEmitter>)>()
+                .iter(w)
+                .any(|(t, a)| a.is_changed() || t.is_some_and(|t| t.is_changed()))
+                || w.removed::<ParticleEmitter>().next().is_some()
+        }) {
+            frame.emitters = Some(Self::emitters(world));
         }
         if changed(world, &mut |w| {
             w.query::<(Option<Ref<Transform>>, Ref<AudioSource>)>()
@@ -397,6 +406,41 @@ fn anchor_code(a: UiAnchor) -> u32 {
 }
 
 impl Extractor {
+    fn emitters(world: &mut World) -> Vec<EmitterView> {
+        let mut v: Vec<EmitterView> = world
+            .query::<(&EntityId, Option<&Transform>, &ParticleEmitter)>()
+            .iter(world)
+            .map(|(id, t, e)| {
+                let up = t.map_or([0.0, 1.0, 0.0], |t| {
+                    let q = t.rotation;
+                    // The entity's +y: the rotation applied to (0, 1, 0).
+                    let (x, y, z, w) = (q[0], q[1], q[2], q[3]);
+                    f3([2.0 * (x * y - w * z), 1.0 - 2.0 * (x * x + z * z), 2.0 * (y * z + w * x)])
+                });
+                EmitterView {
+                    id: id.get(),
+                    position: t.map_or([0.0; 3], |t| f3(t.position)),
+                    up,
+                    rate: f(e.rate),
+                    burst: e.burst,
+                    burst_id: e.burst_id,
+                    emitting: e.emitting,
+                    lifetime: f(e.lifetime),
+                    speed: f(e.speed),
+                    spread_deg: f(e.spread_deg),
+                    acceleration: f3(e.acceleration),
+                    drag: f(e.drag),
+                    size: [f(e.size[0]), f(e.size[1])],
+                    color_start: [f(e.color_start[0]), f(e.color_start[1]), f(e.color_start[2]), f(e.color_start[3])],
+                    color_end: [f(e.color_end[0]), f(e.color_end[1]), f(e.color_end[2]), f(e.color_end[3])],
+                    radius: f(e.radius),
+                }
+            })
+            .collect();
+        v.sort_by_key(|e| e.id);
+        v
+    }
+
     fn audio(world: &mut World) -> Vec<AudioView> {
         let mut v: Vec<AudioView> = world
             .query::<(&EntityId, Option<&Transform>, &AudioSource)>()

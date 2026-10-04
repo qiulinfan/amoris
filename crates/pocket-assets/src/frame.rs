@@ -157,6 +157,28 @@ pub struct UiView {
     pub world: [f32; 3],
 }
 
+/// A particle emitter, posed.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct EmitterView {
+    pub id: u64,
+    pub position: [f32; 3],
+    /// The entity's +y (the emission axis).
+    pub up: [f32; 3],
+    pub rate: f32,
+    pub burst: u32,
+    pub burst_id: u32,
+    pub emitting: bool,
+    pub lifetime: f32,
+    pub speed: f32,
+    pub spread_deg: f32,
+    pub acceleration: [f32; 3],
+    pub drag: f32,
+    pub size: [f32; 2],
+    pub color_start: [f32; 4],
+    pub color_end: [f32; 4],
+    pub radius: f32,
+}
+
 /// A sound source, posed.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AudioView {
@@ -198,6 +220,9 @@ pub struct RenderFrame {
     /// The full list of sound sources, when any changed or moved.
     #[serde(default)]
     pub audio: Option<Vec<AudioView>>,
+    /// The full list of particle emitters, when any changed or moved.
+    #[serde(default)]
+    pub emitters: Option<Vec<EmitterView>>,
 }
 
 impl RenderFrame {
@@ -213,6 +238,7 @@ impl RenderFrame {
             && self.splats.is_none()
             && self.ui.is_none()
             && self.audio.is_none()
+            && self.emitters.is_none()
     }
 
     /// Folds `next` (a later frame) into this one, as if both had been applied in order.
@@ -283,6 +309,9 @@ impl RenderFrame {
         }
         if next.audio.is_some() {
             self.audio = next.audio;
+        }
+        if next.emitters.is_some() {
+            self.emitters = next.emitters;
         }
     }
 

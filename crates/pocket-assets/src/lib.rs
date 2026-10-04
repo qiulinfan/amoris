@@ -19,7 +19,7 @@ use serde_reflection::{Samples, Tracer};
 pub use frame::{Feed, Mailbox, RenderFrame};
 pub use mesh::{MeshData, ModelAsset, Vertex};
 pub use visual::{
-    Animator, AudioSource, Camera, Environment, Light, LightKind, Model, SkyKind, Splat, UiAnchor, UiBar, UiText,
+    Animator, AudioSource, Camera, Environment, Light, LightKind, Model, ParticleEmitter, SkyKind, Splat, UiAnchor, UiBar, UiText,
 };
 
 impl Persisted for Model {
@@ -77,6 +77,11 @@ impl Persisted for UiBar {
     }
 }
 
+impl Persisted for ParticleEmitter {
+    const NAME: &'static str = "ParticleEmitter";
+    const VERSION: u32 = 1;
+}
+
 impl Persisted for AudioSource {
     const NAME: &'static str = "AudioSource";
     const VERSION: u32 = 1;
@@ -111,6 +116,7 @@ pub fn plugin(sim: &mut Sim) -> Result<(), Problem> {
     ComponentRegistry::register::<UiText>(w, None)?;
     ComponentRegistry::register::<UiBar>(w, None)?;
     ComponentRegistry::register::<AudioSource>(w, None)?;
+    ComponentRegistry::register::<ParticleEmitter>(w, None)?;
     sim.add_system("assets.animate", TickPhase::Finish, RunCondition::Always, animate)?;
     Ok(())
 }
@@ -125,5 +131,6 @@ pub fn declare<R: RegisterPersisted>(r: &mut R) {
         .component::<Animator>()
         .component::<UiText>()
         .component::<UiBar>()
-        .component::<AudioSource>();
+        .component::<AudioSource>()
+        .component::<ParticleEmitter>();
 }

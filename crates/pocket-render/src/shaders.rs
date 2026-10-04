@@ -22,6 +22,7 @@ pub fn source(name: &str) -> String {
         "overlay" => include_str!("../shaders/overlay.wgsl"),
         "skin" => include_str!("../shaders/skin.wgsl"),
         "ui" => include_str!("../shaders/ui.wgsl"),
+        "particles" => include_str!("../shaders/particles.wgsl"),
         other => panic!("no shader named {other}"),
     };
     format!("{COMMON}\n{body}")
