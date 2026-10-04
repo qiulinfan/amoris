@@ -1,0 +1,14 @@
+# 2026-10-04 00:43 load { 9.12 7.40 7.35 }
+Single precision ARM 64-bit with instructions: NEON FMADD (16-bit ObjectLayer) (ObjectStream) 
+Running scene: Ragdoll
+Motion Quality, Thread Count, Steps / Second, Hash
+Discrete, 1, 112.433216, 0xfea6a21b5bc97952
+Discrete, 2, 74.160969, 0xfea6a21b5bc97952
+Discrete, 3, 76.321003, 0xfea6a21b5bc97952
+Discrete, 4, 93.856743, 0xfea6a21b5bc97952
+Discrete, 5, 106.847034, 0xfea6a21b5bc97952
+Discrete, 6, 116.563642, 0xfea6a21b5bc97952
+Discrete, 7, 108.402635, 0xfea6a21b5bc97952
+Discrete, 8, 137.142677, 0xfea6a21b5bc97952
+Discrete, 9, 168.236783, 0xfea6a21b5bc97952
+Discrete, 10, 170.691905, 0xfea6a21b5bc97952
