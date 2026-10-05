@@ -1,122 +1,134 @@
-# <img src="docs/icon.png" alt="PocketEngine icon" width="10%"> PocketEngine 
+# <img src="assets/branding/amoris-icon-morandi.png" alt="Amoris icon" width="64" valign="middle"> Amoris
 
-PocketEngine is a cross-platform 2D runtime + editor game engine, written in C++17 on top of
-SDL2, Lua, Box2D, Dear ImGui, and JSON scene assets. It hosts Lua for game logic scripting.
-It is a variant of the [A2 Engine](https://a2engine.org/). For basic usage, check the documentation of A2 engine for the APIs.
+Amoris is a 3D game engine with a Rust host, TypeScript gameplay, and a web editor.
+The editor, CLI, and agents share one command API. A wgpu renderer runs natively
+on Metal and Vulkan, and in the browser on WebGPU.
 
-PocketEngine Lua API documentation lives here:
-- local source: [docs/lua-api/index.md](docs/lua-api/index.md)
-- GitHub Pages: https://qiulinfan.github.io/pocketEngine/
+[Showcase](https://qiulinfan.github.io/amoris/) ·
+[Editor guide](https://qiulinfan.github.io/amoris/documentation/editor/) ·
+[Script API](https://qiulinfan.github.io/amoris/documentation/sdk/) ·
+[CLI and MCP](https://qiulinfan.github.io/amoris/documentation/api/) ·
+[Measurements](https://qiulinfan.github.io/amoris/documentation/data/)
 
-> Below is a demo of the editor and runtime in action, running the example
-> "ball game" included in `Projects/Default/`. This example game originates from the
-> [A2 Engine](https://a2engine.org/) ecosystem.
+[![A high-detail scene rendered by Amoris](site/media/scene-poster.jpg)](site/media/scene.mp4)
 
-![PocketEngine Demo](docs/show.gif)
+*Bistro exterior, captured in the Amoris renderer: 2.83 million triangles and 132 materials.*
 
-The game has a Unity-like editor layout and runtime integration with:
-- `SceneView` panel with actor-picking and drag&drop editing;
-- embedded `Viewport` panel for pure runtime output;
-- `Project` browser rooted at the currently opened project folder with scene opening and asset drag&drop support;
-- `Hierarchy` tree with create, duplicate, delete, rename, actor reparenting;
-- `Inspector` for component add/remove/rename and property editing
-- actor parenting with local/world `Transform` and physics hierarchy inspection
-- play-mode live editing and automatic scene-backed actor UID persistence
-- `Sprite Editor` for creating and editing sprite assets.
+[Amazon Lumberyard / ORCA](https://developer.nvidia.com/orca/amazon-lumberyard-bistro),
+CC BY 4.0. [Asset credits](site/content/credits.md).
 
-## Build
-### Linux Release
-Install:
-```bash
-git clone https://github.com/qiulinfan/pocketEngine.git
+## What you can do
+
+- Build games with typed components and stateless TypeScript systems.
+- Inspect and edit a scene through the web editor, CLI, HTTP, or MCP.
+- Run Play in a fork, pause or step the simulation, and return to the edit world.
+- Debug TypeScript with breakpoints, locals, watches, and source-level stepping.
+- Record snapshots, replay inputs, and check deterministic runs.
+
+The web editor combines a WebGPU viewport with a Hierarchy, Inspector, asset browser,
+Monaco script editor, debugger, History, Timeline, and Profiler. Its edits and agent
+commands enter the same undoable history.
+
+## Start the editor
+
+Install [Rust](https://rustup.rs/) and [Bun](https://bun.sh/). The repository pins its
+Rust toolchain in [rust-toolchain.toml](rust-toolchain.toml).
+
+```sh
+git clone https://github.com/qiulinfan/amoris.git
+cd amoris
+
+cd sdk
+bun install --frozen-lockfile
+cd ../editor
+bun install --frozen-lockfile
+bun run build
+cd ..
+
+cargo build --release -p pocket-app
+./target/release/pocket serve samples/sailing --editor editor/dist
 ```
 
-Build:
-```bash
-cd pocketEngine
-cmake --preset unix-makefiles-release
-cmake --build --preset unix-makefiles-release -j4
+Open **http://127.0.0.1:7878/** and press **Play**. The executable is currently named
+`pocket`. The browser viewport requires WebGPU.
+
+Select **Sloop** in the Hierarchy to edit its components. Open `scripts/rules.ts` to
+change its gameplay; **Cmd/Ctrl+S** applies the script. Set a breakpoint in the gutter,
+then use **F5**, **F10**, and **F11** to continue, step over, and step into. **Stop**
+returns to the original edit world. See the [editor guide](site/content/editor.md).
+
+For a native game window:
+
+```sh
+./target/release/pocket play samples/sailing
+./target/release/pocket play samples/anim
 ```
 
-Run the editor from the project root:
-```bash
-./pocket
+## The small technology map
+
+| Responsibility | Technology |
+| --- | --- |
+| Host and entities | Rust · Bevy ECS |
+| Gameplay | TypeScript 7 · oxc · QuickJS-ng |
+| Physics | Rapier 3D with enhanced determinism |
+| Rendering | wgpu · WGSL · Metal / Vulkan / WebGPU |
+| Editor | React · dockview · Monaco |
+| Automation | CLI · HTTP / WebSocket · MCP |
+
+Game state lives in components. Scripts run as stateless systems, and the renderer
+reads the simulation's output. Snapshots, replay, and explicit forks operate on the
+same self-contained world.
+
+## API and agents
+
+Discover commands and inspect a running game:
+
+```sh
+./target/release/pocket help
+./target/release/pocket catalog --host http://127.0.0.1:7878 --json
+./target/release/pocket world get Sloop Boat Tally --host http://127.0.0.1:7878 --json
 ```
 
-Run the game executable:
-```bash
-./game
+Use `./target/release/pocket mcp samples/sailing` as a stdio MCP server, or connect to
+the running host at `http://127.0.0.1:7878/mcp`. These tools expose the developer
+command surface. Player-specific `observe` / `act` MCP tools are still pending.
+
+- [Script API](site/content/sdk.md): components, queries, systems, events, and types.
+- [CLI and MCP](site/content/api.md): discovery, world edits, time, capture, and debugging.
+- [Host protocol](docs/spec/host-protocol.md): HTTP calls, WebSocket feeds, and schemas.
+
+## Samples and measurements
+
+| Project | Demonstrates |
+| --- | --- |
+| [Sailing](samples/sailing) | Wind, buoyancy, boat controls, and cargo collection |
+| [Animation](samples/anim) | Animation, particles, and in-game UI |
+
+Rendering measurements report their scene, hardware, resolution, and timing method.
+Recorded demonstration videos use fixed simulation steps; playback frame rate is
+separate from the engine's measured performance. See the [showcase data](site/content/data.md),
+[web rendering study](docs/bench/web.md), and [physics study](docs/bench/physics.md).
+
+### High-detail showcase
+
+The site includes native Bistro and Flight Helmet videos, a CC0 Dutch ship controlled
+through MCP, and a recording of the real WebGPU editor. Fetch the pinned CC0 models
+locally to open the detailed sailing sample:
+
+```sh
+python3 tools/showcase_assets.py --projects
+./target/release/pocket serve site/demos/harbor --editor editor/dist
 ```
 
-### Windows Release
-Requires:
-- Visual Studio 2022 with `Desktop development with C++`
+At 1920 × 1080 on Apple M5 / Metal, 1,024 complete Flight Helmets contribute
+96,995,330 scene triangles before culling. The static render-and-wait workload took
+82.43 ms mean and 83.66 ms p95 over 300 completed frames. This excludes game simulation
+and window presentation. [Method and raw data](site/content/data.md).
 
-Download the source from GitHub and extract it. Then open PowerShell in the extracted `pocketEngine` folder.
-
-Build:
-
-```powershell
-cmake --preset vs2022-x64
-cmake --build --preset vs-release
-```
-
-Run the editor:
-
-```powershell
-.\pocket.exe
-```
-
-Run the game executable:
-
-```powershell
-.\game.exe
-```
-
-## Repository Layout and Architecture
-
-- `src/app/runtime`, `src/app/editor`: executable hosts
-- `src/engine/*`: runtime systems
-- `src/editor/*`: editor shell, documents, panels
-- `src/shared/*`: config, scene format, resource helpers
-- `include/*`: public headers for the same layers
-- `Projects/Default/*`: the default sample project
-- `Projects/*`: local project slots; every project except `Default` is ignored by this engine repository
-- `.engine/*`: editor-facing config, state, fonts, and icons
-- `thirdparty/*`: dependencies
-
-## Projects
-PocketEngine suggests project management in the `Projects/` directory, butyou are also welcome to create projects anywhere and open them with the editor through `File -> Open Project...`.
-
-There is a sample project(the ballgame) bundled with installation of the engine, located at `Projects/Default/`. The editor opens this project by default on startup, so it is recommended to keep it
- and the editor's default project root. 
-
-`File -> New Project...` creates a complete minimal project. Linux users can type any local or absolute path, and Windows/macOS users can also use a system-native UI to choose the location.
-
-## Architecture Illustration
-A new project is initialized with `game.config`, `rendering.config`, `scenes/main.scene`, `actor_templates/empty.template`, and the standard project direcgtories: `audio/`, `component_types/`, `fonts/`, `images/`, `scenes/`, and `actor_templates/`.
-
-All files under `docs/architecture/` are diagram-only for explaining the architecture.
-- [Frame Pipeline](docs/architecture/frame-pipeline.md)
-- [Asset Pipeline](docs/architecture/asset-pipeline.md)
-- [Module Dependency](docs/architecture/module-dependency.md)
-- [Editor Workflow](docs/architecture/editor-workflow.md)
-
-AI-native editor development documents:
-- [Implementation Spec](docs/development/ai-native-editor-spec.md)
-- [Devlog](docs/development/ai-native-editor-devlog.md)
-
-### Read-only AI Assistant (Phase 1)
-
-Build the sidecar once with `npm --prefix tools/pocket-agent-host install`, then build and run the editor normally. The AI Assistant probes locally installed Codex and Claude Code CLIs and uses their existing login state.
-
-Phase 1 binds a bearer-protected MCP server only on `127.0.0.1`. Agent sessions can inspect the current editor, scene, actors, component types, and project assets, but receive no PocketEngine write tools. The sidecar injects session-local MCP configuration and does not modify global Codex or Claude settings.
-
-## Sample Project
-`Projects/Default/` contains the default sample project.
+Large third-party models stay outside Git; the website serves compact videos and
+posters. Source authors and licenses are preserved in the [credits](site/content/credits.md).
 
 ## License
 
-PocketEngine is released under the [MIT License](LICENSE).
-
-Third-party libraries under `thirdparty/` keep their own upstream licenses.
+Amoris is released under the [MIT License](LICENSE). Third-party dependencies and
+showcase assets retain their own licenses and attribution.

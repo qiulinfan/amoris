@@ -1,0 +1,16 @@
+WEBVTT
+
+00:00.000 --> 00:02.000
+Select a real scene entity and inspect its component fields.
+
+00:02.000 --> 00:05.500
+Edit the imported ship's tint, then undo through the shared history.
+
+00:05.500 --> 00:10.500
+Play runs an explicit fork of the edit world on the real Rust host.
+
+00:10.500 --> 00:14.000
+Pause and step a single simulation tick. The WebGPU viewport follows the same world.
+
+00:14.000 --> 00:18.000
+Stop discards the Play fork and returns to the original edit world.

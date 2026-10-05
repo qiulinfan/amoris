@@ -3417,6 +3417,8 @@ dependencies = [
  "log",
  "pocket-assets",
  "pollster",
+ "serde",
+ "serde_json",
  "wgpu",
  "winit",
 ]

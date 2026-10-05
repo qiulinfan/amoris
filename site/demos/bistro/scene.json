@@ -1,0 +1,64 @@
+{
+  "format": "pocket-scene",
+  "version": 1,
+  "entities": [
+    {
+      "name": "Camera",
+      "components": {
+        "Transform": {
+          "position": [
+            12,
+            5,
+            18
+          ],
+          "rotation": [
+            0.0,
+            0.28978414868843005,
+            -0.0,
+            0.9570920264890529
+          ]
+        },
+        "Camera": {
+          "fov_deg": 55
+        }
+      }
+    },
+    {
+      "name": "Sun",
+      "components": {
+        "Transform": {
+          "rotation": [
+            -0.41317079808035645,
+            0.38499142786379575,
+            0.1985801518132756,
+            0.8010227308827468
+          ]
+        },
+        "Light": {
+          "kind": "directional",
+          "intensity": 5,
+          "shadows": true
+        }
+      }
+    },
+    {
+      "name": "Environment",
+      "components": {
+        "Environment": {
+          "ambient": 1.0,
+          "exposure_ev": 0.55,
+          "bloom": 0.05
+        }
+      }
+    },
+    {
+      "name": "Bistro",
+      "components": {
+        "Model": {
+          "mesh": "models/third-party/BistroExterior.glb"
+        },
+        "Transform": {}
+      }
+    }
+  ]
+}

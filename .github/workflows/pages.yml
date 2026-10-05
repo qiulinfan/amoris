@@ -1,0 +1,51 @@
+name: Amoris showcase and documentation
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - site/**
+      - tools/build_site.py
+      - tools/check_site.py
+      - .github/workflows/pages.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: amoris-pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: read
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r site/requirements.txt
+      - uses: actions/configure-pages@v6.0.0
+      - run: python tools/build_site.py
+      - run: python tools/check_site.py --links-only
+      - uses: actions/upload-pages-artifact@v5.0.0
+        with:
+          path: out/site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5.0.1

@@ -1,0 +1,7 @@
+name = "Dutch Ship — sailing"
+rate = 60
+seed = 1
+
+[sounds]
+"crate.taken" = "sfx:coin"
+"crates.all" = "sfx:powerup"

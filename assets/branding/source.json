@@ -1,0 +1,24 @@
+{
+  "source": "Owner-approved Amoris branding",
+  "copied_on": "2026-10-05",
+  "files": [
+    {
+      "file": "amoris-icon-morandi.svg",
+      "sha256": "b019560e0f3d0684cc7a1446f5b7046eaa9f91e4507b444853a50efe3afb94eb",
+      "bytes": 4211,
+      "modified": false
+    },
+    {
+      "file": "amoris-icon-morandi.png",
+      "sha256": "619f37674b17888fb5453a65928475b4dd70ea224127b2ec3f42c45b90c8cec5",
+      "bytes": 64013,
+      "modified": false
+    },
+    {
+      "file": "amoris-icon-sandbox-three-point.svg",
+      "sha256": "6901b0800c6583cb085f0ec912cd17299219cf63fb3a6e0ec9007b643f7f1efd",
+      "bytes": 1804,
+      "modified": false
+    }
+  ]
+}

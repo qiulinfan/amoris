@@ -1,0 +1,2459 @@
+{
+  "schema": "amoris-showcase-provenance-v1",
+  "acquired_on": "2026-10-05",
+  "scope": "Third-party art used or prepared for Amoris showcase captures; source acquisition facts are separate from derived asset and renderer validation.",
+  "assets": [
+    {
+      "id": "dutch-ship-medium",
+      "name": "Dutch Ship Medium",
+      "authors": [
+        {
+          "name": "James Ray Cock",
+          "contribution": "Model, textures, cleanup"
+        },
+        {
+          "name": "Rico Cilliers",
+          "contribution": "Sails model, textures"
+        },
+        {
+          "name": "Nicol\u00f2 Zubbini",
+          "contribution": "Original model"
+        }
+      ],
+      "source_url": "https://polyhaven.com/a/dutch_ship_medium",
+      "metadata_url": "https://api.polyhaven.com/info/dutch_ship_medium",
+      "files_api_url": "https://api.polyhaven.com/files/dutch_ship_medium",
+      "retrieved_at": "2026-10-05T06:45:10.264504+00:00",
+      "license": {
+        "spdx": "CC0-1.0",
+        "url": "https://polyhaven.com/license",
+        "legalcode_url": "https://creativecommons.org/publicdomain/zero/1.0/legalcode",
+        "attribution_required": false,
+        "source_license_file": {
+          "filename": "LICENSE-CC0-1.0.txt",
+          "sha256": "a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499",
+          "size_bytes": 7048
+        }
+      },
+      "selected_edition": "Uncompressed glTF 2.0, 2K JPG textures; no animation or compression extensions.",
+      "source_inventory": {
+        "unique_triangles": 69162,
+        "meshes": 3,
+        "materials": 3,
+        "texture_images": 9,
+        "image_dimensions": [
+          [
+            2048,
+            2048
+          ]
+        ],
+        "geometry_bytes": 2480380,
+        "total_source_bytes": 27684024
+      },
+      "source_files": [
+        {
+          "file": "textures/dutch_ship_medium_rigging_nor_gl_2k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/dutch_ship_medium/dutch_ship_medium_rigging_nor_gl_2k.jpg",
+          "size": 1926834,
+          "sha256": "b3992d44700770a124085d165d41c925cd0fb21da4d8bca65f3ee5b7cd203c61",
+          "source_md5": "601ee50212a629c6762b3826ac79b1f6"
+        },
+        {
+          "file": "dutch_ship_medium.bin",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Models/gltf/4k/dutch_ship_medium/dutch_ship_medium.bin",
+          "size": 2480380,
+          "sha256": "7ff5d886d3baea1f60afdc17c50b99029d7abca159db10212c89c95e39c5437e",
+          "source_md5": "f73e0108855bc3aef1a65a737a37f575"
+        },
+        {
+          "file": "textures/dutch_ship_medium_hull_diff_2k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/dutch_ship_medium/dutch_ship_medium_hull_diff_2k.jpg",
+          "size": 2945586,
+          "sha256": "a82695a4d093723de3f9f29e9b8f809b43ed54d4401b0e4046caae9e10d2f192",
+          "source_md5": "af0fd1ca5255e1671345ddb3d9e07c73"
+        },
+        {
+          "file": "textures/dutch_ship_medium_hull_nor_gl_2k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/dutch_ship_medium/dutch_ship_medium_hull_nor_gl_2k.jpg",
+          "size": 3666864,
+          "sha256": "84dff5d5a002bb6e06767594864e2fae1107a1a3880550c477f406a860104868",
+          "source_md5": "0c68896a86bf25c8469bfc18e9a3fa0b"
+        },
+        {
+          "file": "textures/dutch_ship_medium_rigging_arm_2k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/dutch_ship_medium/dutch_ship_medium_rigging_arm_2k.jpg",
+          "size": 2058601,
+          "sha256": "5e300de802699affe8c9585ef154f4e2425aa383512411e02ad7fe5e48a85fc5",
+          "source_md5": "c4d84f67e2a0f67ff8ee17546c3d7818"
+        },
+        {
+          "file": "textures/dutch_ship_medium_rigging_diff_2k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/dutch_ship_medium/dutch_ship_medium_rigging_diff_2k.jpg",
+          "size": 2198962,
+          "sha256": "129c4173d1e1911d8e5989676aa2b1de5878ec0cb4b43fecf96fda4a7c473784",
+          "source_md5": "3e7756baa30b638788e494d6c51b57b1"
+        },
+        {
+          "file": "textures/dutch_ship_medium_sails_nor_gl_2k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/dutch_ship_medium/dutch_ship_medium_sails_nor_gl_2k.jpg",
+          "size": 3334525,
+          "sha256": "8652602222249156553913adbc837656198b1bbb016f32ce4194cc02460f29ef",
+          "source_md5": "38100504cb72662f531dd1bd5e8a821b"
+        },
+        {
+          "file": "textures/dutch_ship_medium_hull_arm_2k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/dutch_ship_medium/dutch_ship_medium_hull_arm_2k.jpg",
+          "size": 3901702,
+          "sha256": "9b85322cac6c81e755d53a16e072cc08f0ee5d7898eeb8f9ac2da8f9982ec23b",
+          "source_md5": "27b7637fe58293ca2c6d70e1176c9abd"
+        },
+        {
+          "file": "textures/dutch_ship_medium_sails_arm_2k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/dutch_ship_medium/dutch_ship_medium_sails_arm_2k.jpg",
+          "size": 2506529,
+          "sha256": "9458ce6469aae5f8de32f1167252c63fd463564b93d9c9588033484545574c92",
+          "source_md5": "1de6299082cd847e8b0958b53f74c64f"
+        },
+        {
+          "file": "textures/dutch_ship_medium_sails_diff_2k.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/dutch_ship_medium/dutch_ship_medium_sails_diff_2k.jpg",
+          "size": 2656547,
+          "sha256": "09264e16a5a7628cf46159e55ba608389aa28f581b1c0a235f97fa1e29a32049",
+          "source_md5": "49842bd4280188ecf405caf474f51b9a"
+        },
+        {
+          "file": "dutch_ship_medium_2k.gltf",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Models/gltf/2k/dutch_ship_medium/dutch_ship_medium_2k.gltf",
+          "size": 7494,
+          "sha256": "bdab86733b6bf72ebf52adae62addbe904bc8367058f03df8381fcbccbf0638e",
+          "source_md5": "55813b7ee04c49f7bc703277dc6691f8"
+        }
+      ],
+      "modifications": {
+        "source_acquisition": "No geometry or texture edits during acquisition. Source files matched published MD5 values.",
+        "presentation_scope": "Imported into an Amoris scene to follow the existing sailing simulation. Scene placement and scale are presentation choices; simulation behavior is independent of the model.",
+        "renderer_scope": "Source textures are resized by the current renderer to its 1024-pixel texture-array layer limit.",
+        "derived_asset_record": "The capture pipeline records resource packing, placement, output hashes and native-render validation separately."
+      },
+      "validation": {
+        "source_paths_and_hashes": "passed",
+        "all_resource_uris_local_and_present": "passed",
+        "native_render": "passed in the showcase capture workflow",
+        "animation_retarget": "not_applicable"
+      }
+    },
+    {
+      "id": "flight-helmet",
+      "name": "Flight Helmet",
+      "authors": [
+        {
+          "name": "Public",
+          "contribution": "Source asset, copyright 2018 as recorded by Khronos"
+        },
+        {
+          "name": "Gary Hsu",
+          "contribution": "Conversion from Maya"
+        }
+      ],
+      "source_url": "https://github.com/KhronosGroup/glTF-Sample-Assets/tree/edc7c9e67c639d230715049ee31f9a96a6babbbe/Models/FlightHelmet",
+      "repository": "https://github.com/KhronosGroup/glTF-Sample-Assets",
+      "source_commit": "edc7c9e67c639d230715049ee31f9a96a6babbbe",
+      "retrieved_at": "2026-10-05T06:45:06.734832+00:00",
+      "license": {
+        "spdx": "CC0-1.0",
+        "url": "https://creativecommons.org/publicdomain/zero/1.0/legalcode",
+        "attribution_required": false,
+        "source_license_file": {
+          "filename": "LICENSE-CC0-1.0.txt",
+          "sha256": "a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499",
+          "size_bytes": 7048
+        },
+        "source_readme_file": {
+          "filename": "SOURCE-README.md",
+          "sha256": "7724b64fb4fae1135ddec3738d1eb9320d3bb9c890f599c423a09e205fb7257f",
+          "size_bytes": 3348
+        }
+      },
+      "selected_edition": "Uncompressed glTF folder with PNG images; KTX/BasisU edition was not acquired.",
+      "source_inventory": {
+        "unique_triangles": 94722,
+        "meshes": 6,
+        "materials": 6,
+        "texture_images": 15,
+        "image_dimensions": [
+          [
+            1024,
+            1024
+          ],
+          [
+            2048,
+            2048
+          ]
+        ],
+        "geometry_bytes": 3227148,
+        "total_source_bytes": 48392569,
+        "extensions_used": [
+          "KHR_materials_transmission"
+        ],
+        "extensions_required": []
+      },
+      "source_files": [
+        {
+          "file": "FlightHelmet.bin",
+          "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/edc7c9e67c639d230715049ee31f9a96a6babbbe/Models/FlightHelmet/glTF/FlightHelmet.bin",
+          "size": 3227148,
+          "sha256": "9e623a27f837e1cc995d1380da5fd3becf4d29586fefba882fc0ba76b49f94bf"
+        },
+        {
+          "file": "FlightHelmet.gltf",
+          "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/edc7c9e67c639d230715049ee31f9a96a6babbbe/Models/FlightHelmet/glTF/FlightHelmet.gltf",
+          "size": 18698,
+          "sha256": "c9c16c8b85749f62f38ec6069700e5388c6894d8e566f51a35cc270255402cd3"
+        },
+        {
+          "file": "FlightHelmet_Materials_GlassPlasticMat_BaseColor.png",
+          "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/edc7c9e67c639d230715049ee31f9a96a6babbbe/Models/FlightHelmet/glTF/FlightHelmet_Materials_GlassPlasticMat_BaseColor.png",
+          "size": 2306649,
+          "sha256": "0914544aabe161046f417274051e34ecc85163cfce6698581b3e1e18c96fe4f1"
+        },
+        {
+          "file": "FlightHelmet_Materials_GlassPlasticMat_Normal.png",
+          "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/edc7c9e67c639d230715049ee31f9a96a6babbbe/Models/FlightHelmet/glTF/FlightHelmet_Materials_GlassPlasticMat_Normal.png",
+          "size": 2648815,
+          "sha256": "c297f18f3b4259fc8b411cdc843a4a44b8cef3e3a53b21cec7b53574e5ef6872"
+        },
+        {
+          "file": "FlightHelmet_Materials_GlassPlasticMat_OcclusionRoughMetal.png",
+          "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/edc7c9e67c639d230715049ee31f9a96a6babbbe/Models/FlightHelmet/glTF/FlightHelmet_Materials_GlassPlasticMat_OcclusionRoughMetal.png",
+          "size": 3696183,
+          "sha256": "d4519704f15395c7138421a5814b478df549a2411bc6fa97dd6d02ba62dc6c54"
+        },
+        {
+          "file": "FlightHelmet_Materials_LeatherPartsMat_BaseColor.png",
+          "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/edc7c9e67c639d230715049ee31f9a96a6babbbe/Models/FlightHelmet/glTF/FlightHelmet_Materials_LeatherPartsMat_BaseColor.png",
+          "size": 5478748,
+          "sha256": "c9346ac6daa3ad34d0b36c1e7cf311ccbcc298710ea453cdf3b6ad40dc60013f"
+        },
+        {
+          "file": "FlightHelmet_Materials_LeatherPartsMat_Normal.png",
+          "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/edc7c9e67c639d230715049ee31f9a96a6babbbe/Models/FlightHelmet/glTF/FlightHelmet_Materials_LeatherPartsMat_Normal.png",
+          "size": 5675531,
+          "sha256": "7fb69b26f80c67df41e87d7344bde9d24dda0be77546b0a6acabc4040694872a"
+        },
+        {
+          "file": "FlightHelmet_Materials_LeatherPartsMat_OcclusionRoughMetal.png",
+          "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/edc7c9e67c639d230715049ee31f9a96a6babbbe/Models/FlightHelmet/glTF/FlightHelmet_Materials_LeatherPartsMat_OcclusionRoughMetal.png",
+          "size": 4375686,
+          "sha256": "b77e60f175e4632cd3d892bc9f0e748f522c9288a469585d5cb90270cd68910e"
+        },
+        {
+          "file": "FlightHelmet_Materials_LensesMat_BaseColor.png",
+          "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/edc7c9e67c639d230715049ee31f9a96a6babbbe/Models/FlightHelmet/glTF/FlightHelmet_Materials_LensesMat_BaseColor.png",
+          "size": 696304,
+          "sha256": "b55f6561f8adabc907360443aab010f3effaf05074fdccea46d8c2d66247cf16"
+        },
+        {
+          "file": "FlightHelmet_Materials_LensesMat_Normal.png",
+          "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/edc7c9e67c639d230715049ee31f9a96a6babbbe/Models/FlightHelmet/glTF/FlightHelmet_Materials_LensesMat_Normal.png",
+          "size": 5575,
+          "sha256": "430775894001933044c89070b1bfd4f9b8489f74780b1ab7079efb0afca95d8d"
+        },
+        {
+          "file": "FlightHelmet_Materials_LensesMat_OcclusionRoughMetal.png",
+          "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/edc7c9e67c639d230715049ee31f9a96a6babbbe/Models/FlightHelmet/glTF/FlightHelmet_Materials_LensesMat_OcclusionRoughMetal.png",
+          "size": 601603,
+          "sha256": "35d81a71ab184f9b50f63ff8f3e0f90cfb6c99f9b2d9ed9d9887a902c16a458d"
+        },
+        {
+          "file": "FlightHelmet_Materials_MetalPartsMat_BaseColor.png",
+          "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/edc7c9e67c639d230715049ee31f9a96a6babbbe/Models/FlightHelmet/glTF/FlightHelmet_Materials_MetalPartsMat_BaseColor.png",
+          "size": 2680488,
+          "sha256": "8e26add3ad1b2398d58638580bb1fe56f2fbae3572b4a682b6595a5a26fb1b40"
+        },
+        {
+          "file": "FlightHelmet_Materials_MetalPartsMat_Normal.png",
+          "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/edc7c9e67c639d230715049ee31f9a96a6babbbe/Models/FlightHelmet/glTF/FlightHelmet_Materials_MetalPartsMat_Normal.png",
+          "size": 3273483,
+          "sha256": "a833fcc12718c02bcba97cbc9760d06c4a711ce7f36c23076e7cf6d4393a80e7"
+        },
+        {
+          "file": "FlightHelmet_Materials_MetalPartsMat_OcclusionRoughMetal.png",
+          "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/edc7c9e67c639d230715049ee31f9a96a6babbbe/Models/FlightHelmet/glTF/FlightHelmet_Materials_MetalPartsMat_OcclusionRoughMetal.png",
+          "size": 2976508,
+          "sha256": "17f3e27b51011b8f98751dae25958e2b850fcf1467f1019bec812553e0e5eb1d"
+        },
+        {
+          "file": "FlightHelmet_Materials_RubberWoodMat_BaseColor.png",
+          "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/edc7c9e67c639d230715049ee31f9a96a6babbbe/Models/FlightHelmet/glTF/FlightHelmet_Materials_RubberWoodMat_BaseColor.png",
+          "size": 3594300,
+          "sha256": "f751d643d1f220b300705d9ad57ed284a883eb7d3788469199b752f4381dcc37"
+        },
+        {
+          "file": "FlightHelmet_Materials_RubberWoodMat_Normal.png",
+          "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/edc7c9e67c639d230715049ee31f9a96a6babbbe/Models/FlightHelmet/glTF/FlightHelmet_Materials_RubberWoodMat_Normal.png",
+          "size": 3327566,
+          "sha256": "bb70753c836c59db7e245e5fe2c9db8eee833d29d67e03da348f6adb1e95142a"
+        },
+        {
+          "file": "FlightHelmet_Materials_RubberWoodMat_OcclusionRoughMetal.png",
+          "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/edc7c9e67c639d230715049ee31f9a96a6babbbe/Models/FlightHelmet/glTF/FlightHelmet_Materials_RubberWoodMat_OcclusionRoughMetal.png",
+          "size": 3809284,
+          "sha256": "2727d4638514f75fcbd29777bf03db6bd2f0f1ad926e2976cf2346aa22c0bd19"
+        }
+      ],
+      "modifications": {
+        "source_acquisition": "No geometry or texture edits during acquisition.",
+        "renderer_scope": "Source images are resized by the current renderer to its 1024-pixel texture-array layer limit.",
+        "unsupported_material_feature": "KHR_materials_transmission is not implemented by this renderer. Helmet lenses use the ordinary opaque material path; these captures do not demonstrate glass refraction.",
+        "derived_asset_record": "The capture pipeline records GLB resource packing and output hashes separately."
+      },
+      "validation": {
+        "source_paths_and_hashes": "passed",
+        "all_resource_uris_local_and_present": "passed",
+        "native_render": "passed in the showcase capture workflow",
+        "animation_retarget": "not_applicable"
+      }
+    },
+    {
+      "id": "bistro-exterior",
+      "name": "Amazon Lumberyard Bistro Exterior",
+      "authors": [
+        {
+          "name": "Amazon Lumberyard",
+          "contribution": "Original scene donated to ORCA"
+        }
+      ],
+      "source_url": "https://developer.nvidia.com/orca/amazon-lumberyard-bistro",
+      "download_url": "https://developer.nvidia.com/bistro",
+      "version": "Bistro_v5_2",
+      "retrieved_at": "2026-10-05T06:47:14.819636+00:00",
+      "license": {
+        "spdx": "CC-BY-4.0",
+        "url": "https://creativecommons.org/licenses/by/4.0/",
+        "legalcode_url": "https://creativecommons.org/licenses/by/4.0/legalcode",
+        "attribution_required": true,
+        "attribution": "Amazon Lumberyard Bistro, Open Research Content Archive (ORCA), Amazon Lumberyard, July 2017.",
+        "source_license_file": {
+          "filename": "LICENSE.txt",
+          "sha256": "9a9ef3c33320eebe6126b0c7dc327885806bde242283bbe6e4ae77641ad703e4",
+          "size_bytes": 19044
+        }
+      },
+      "citation": {
+        "title": "Amazon Lumberyard Bistro, Open Research Content Archive (ORCA)",
+        "author": "Amazon Lumberyard",
+        "year": 2017,
+        "month": "July",
+        "url": "https://developer.nvidia.com/orca/amazon-lumberyard-bistro"
+      },
+      "archive": {
+        "filename": "Bistro_v5_2.zip",
+        "size_bytes": 894377473,
+        "sha256": "0d50e3c724c6c5da19f8eb99ad3f53e36fec37ffa2df9621f9ccf0603f3934e1"
+      },
+      "selected_edition": "Exterior FBX and 405 referenced DDS/TGA textures; interior scenes, Falcor Python scene files and HDR environment map were not selected.",
+      "source_inventory": {
+        "unique_triangles_declared_by_author": 2799704,
+        "total_triangles_declared_by_author": 2832120,
+        "selected_texture_files": 405,
+        "selected_source_files": 409,
+        "selected_source_bytes": 1090284721,
+        "selected_fbx": {
+          "filename": "BistroExterior.fbx",
+          "size_bytes": 119845216,
+          "sha256": "471991629c7e35a88338c48f3565390ad19cc5d1d7c7e067fc2a60b4f3b5f195"
+        },
+        "material_conventions_declared_by_author": {
+          "BaseColor": "RGB base color; alpha opacity",
+          "Specular": "R ambient occlusion, G roughness, B metalness; this is already an ORM map",
+          "Normal": "DirectX convention",
+          "Emissive": "RGB emissive color"
+        }
+      },
+      "source_subset_manifest": {
+        "sha256": "1464d8135dcceae672381aab227e99e3ff3d0d7335d5ef266cb247157079bf7a",
+        "definition": "SHA256 of the public source-file records in source_files, encoded as UTF-8 JSON with sorted keys and compact separators."
+      },
+      "source_files": [
+        {
+          "file": "BistroExterior.fbx",
+          "size": 119845216,
+          "sha256": "471991629c7e35a88338c48f3565390ad19cc5d1d7c7e067fc2a60b4f3b5f195"
+        },
+        {
+          "file": "LICENSE.txt",
+          "size": 19044,
+          "sha256": "9a9ef3c33320eebe6126b0c7dc327885806bde242283bbe6e4ae77641ad703e4"
+        },
+        {
+          "file": "README.txt",
+          "size": 1686,
+          "sha256": "c87c5b60992cedee49fce1ea9bfe10cf60498ebf1113685b723d6dc9006c2bef"
+        },
+        {
+          "file": "CHANGELOG.txt",
+          "size": 1407,
+          "sha256": "5db7c7a64b0e1268b2f3193945806f2cd875c7bc3eb6184d14f370241e5e4b38"
+        },
+        {
+          "file": "Textures/Antenna_Metal_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "9a4c4c5df383253cc0ca2df1a805d51ac224e69c620a2d045d9176ecfb7513fc"
+        },
+        {
+          "file": "Textures/Antenna_Metal_Normal.dds",
+          "size": 5592560,
+          "sha256": "3c690eece4bbc88a6227b739b582e5fada1f2d16cbaf5b355513f92b82786c4f"
+        },
+        {
+          "file": "Textures/Antenna_Metal_Specular.dds",
+          "size": 496,
+          "sha256": "777690cc9362c7bd85c4c1ebab0d062f710bd5036d1a355a20c58ff6c0d585b5"
+        },
+        {
+          "file": "Textures/Antenna_Plastic_BaseColor.dds",
+          "size": 496,
+          "sha256": "473e332d3cdfbcb9ad3f575fb4d08e62c898c71bb00d5a9960b11ce93b8d7b23"
+        },
+        {
+          "file": "Textures/Antenna_Plastic_Blue_BaseColor.dds",
+          "size": 496,
+          "sha256": "473e332d3cdfbcb9ad3f575fb4d08e62c898c71bb00d5a9960b11ce93b8d7b23"
+        },
+        {
+          "file": "Textures/Antenna_Plastic_Blue_Normal.dds",
+          "size": 5592560,
+          "sha256": "0d396df83fdbae573f53b9915c7b6363a3b83840ae1dcaf4a5046bdd36edbac3"
+        },
+        {
+          "file": "Textures/Antenna_Plastic_Blue_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Antenna_Plastic_Normal.dds",
+          "size": 5592560,
+          "sha256": "0d396df83fdbae573f53b9915c7b6363a3b83840ae1dcaf4a5046bdd36edbac3"
+        },
+        {
+          "file": "Textures/Antenna_Plastic_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Ashtray_BaseColor.dds",
+          "size": 496,
+          "sha256": "2ac0f92c4387cae82476bb72eeb032cef8f24be5992857958ef61e23f7284829"
+        },
+        {
+          "file": "Textures/Ashtray_Normal.dds",
+          "size": 5592560,
+          "sha256": "8289408ae52336a8f08c5e17b1b9d46e52bda945a4e5cbcfec5f355adbe8533c"
+        },
+        {
+          "file": "Textures/Ashtray_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Awnings_Beams_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "0e4ea505cf8f242851237c1960ce0744367417d7c0cc3ac6c1fe8b93e879f500"
+        },
+        {
+          "file": "Textures/Awnings_Beams_Normal.dds",
+          "size": 5592560,
+          "sha256": "93566c0b7c7197ea4852d9ff59903525fd9a1a7d76121990b7a36d2afe9d5908"
+        },
+        {
+          "file": "Textures/Awnings_Beams_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Awnings_Fabric_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "54e501044e5c6f38cf9428891a4519063e656fc385331d8de297cdddfb0241cc"
+        },
+        {
+          "file": "Textures/Awnings_Fabric_Normal.dds",
+          "size": 5592560,
+          "sha256": "66ea4e6d3d2933a675e2b57f7fc9dc513a7c60507423eb848093fbefcc615a37"
+        },
+        {
+          "file": "Textures/Awnings_Fabric_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Awnings_Hotel_Fabric_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "53c338e10a0d42c5531da0f2e7aec11135b7f4828de0fb7bd21c9497684e007a"
+        },
+        {
+          "file": "Textures/Awnings_Hotel_Fabric_Normal.dds",
+          "size": 5592560,
+          "sha256": "b6b26a8b0519da2d33bd33c65f3767ab23285f0524601f09d8cf3ecb66307468"
+        },
+        {
+          "file": "Textures/Awnings_Hotel_Fabric_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Balcony_Concrete_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "179edb3da3781868942df79e187d8224cd238011375498534a10597de1cae5a1"
+        },
+        {
+          "file": "Textures/Balcony_Concrete_Normal.dds",
+          "size": 5592560,
+          "sha256": "a1602f46583a3db3bf3f50f05d3d7fbad2fecebc3227fd0c0501b1375212fef1"
+        },
+        {
+          "file": "Textures/Balcony_Concrete_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Balcony_Green_Wood_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "1b0f87d8ac0e5e3f1b573447285ba1fa3dc022228b93ea0433d72f06891122c1"
+        },
+        {
+          "file": "Textures/Balcony_Green_Wood_Normal.dds",
+          "size": 5592560,
+          "sha256": "85d18cccfcdd39a35ff125a63ec0e8a71bc8a1255b749aefed6534b4bc4b3bcf"
+        },
+        {
+          "file": "Textures/Balcony_Green_Wood_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Balcony_Ornaments_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "77720dd887212f10b451c7feb73a994a804fd43fdf7ef1298bbac9937d03ef93"
+        },
+        {
+          "file": "Textures/Balcony_Ornaments_Normal.dds",
+          "size": 5592560,
+          "sha256": "2d4f75cb683a0e07c4b5fb3de9807006dfc2ea1fe3844a4ebd44fe9d9aa5b402"
+        },
+        {
+          "file": "Textures/Balcony_Ornaments_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Balcony_Trims_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "8d42cc67f9acb506fd76124c61fcba6a959e9461f57a6a335bcc03b4973f44ad"
+        },
+        {
+          "file": "Textures/Balcony_Trims_Normal.dds",
+          "size": 5592560,
+          "sha256": "358aa6ac9980c32ea2e4ec05ab19afc3b8913ef237957b652bfe115937409827"
+        },
+        {
+          "file": "Textures/Balcony_Trims_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Banner_Metal_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "7dd4c1dbd4e649278a9329d082acb74f7322692016435dd472fb67f44c11d0dd"
+        },
+        {
+          "file": "Textures/Banner_Metal_Normal.dds",
+          "size": 5592560,
+          "sha256": "26e923379d2ae9b3d8ddf402213cdf571dd8ac49c5ddaeeaa3cd3c4551a13d3c"
+        },
+        {
+          "file": "Textures/Banner_Metal_Specular.dds",
+          "size": 496,
+          "sha256": "777690cc9362c7bd85c4c1ebab0d062f710bd5036d1a355a20c58ff6c0d585b5"
+        },
+        {
+          "file": "Textures/Bistro_Sign_Letters_BaseColor.dds",
+          "size": 496,
+          "sha256": "eaedc4a83a727e47898d8365f22518a5a0deeef88b5b5cff6fc5c713796ff743"
+        },
+        {
+          "file": "Textures/Bistro_Sign_Letters_Normal.dds",
+          "size": 144,
+          "sha256": "4b8431bd4379641037c0214a5707d948951d679462acc59a7a525e30b0aeadb5"
+        },
+        {
+          "file": "Textures/Bistro_Sign_Letters_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Bistro_Sign_Main_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "6743e9d7ca489d6bf80333654603d779c6832d32ffe684c0a823def410be6b62"
+        },
+        {
+          "file": "Textures/Bistro_Sign_Main_Normal.dds",
+          "size": 5592560,
+          "sha256": "37e644af69f43e8c42d357a101975c2fcc44a9cc8564834c2da9368bc64df659"
+        },
+        {
+          "file": "Textures/Bistro_Sign_Main_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Bollards_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "75b1f4deb8682ef189641311b6290515ae7b5a619bfbfd624841e9f214305643"
+        },
+        {
+          "file": "Textures/Bollards_Normal.dds",
+          "size": 5592560,
+          "sha256": "7c59b1c5c5afb2ccd11746bbf242e4dfdbcc3cedd98500db58f0b0a834ffc0f0"
+        },
+        {
+          "file": "Textures/Bollards_Specular.dds",
+          "size": 496,
+          "sha256": "777690cc9362c7bd85c4c1ebab0d062f710bd5036d1a355a20c58ff6c0d585b5"
+        },
+        {
+          "file": "Textures/Chimneys_Metal_BaseColor.dds",
+          "size": 496,
+          "sha256": "f65a6313360305dfa01b01dba0f428bcb8ee3661e103b6b762fe4041711791ae"
+        },
+        {
+          "file": "Textures/Chimneys_Metal_Normal.dds",
+          "size": 5592560,
+          "sha256": "0b081cd79601569e1649389b04e259b2bad42491a228281b1bf05f630d685a29"
+        },
+        {
+          "file": "Textures/Chimneys_Metal_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Concrete2_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "6394eae366db6979de5c0190542d1b48d8aaf090ad3008164c3d599705c36a65"
+        },
+        {
+          "file": "Textures/Concrete2_Normal.dds",
+          "size": 5592560,
+          "sha256": "dd72f8a9747ec49d91a95270e86ac3fecec630852537da7f1025acab8b3a9985"
+        },
+        {
+          "file": "Textures/Concrete2_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Concrete3_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "e25548c6f1af25237cfecc14cb63b8ecd8887578b03efe0d8fb901f41bcec2d1"
+        },
+        {
+          "file": "Textures/Concrete3_Normal.dds",
+          "size": 5592560,
+          "sha256": "96289cc0605b24ccdf4e0f5abee85551dcdb323ebe375246ff7124d8d3de36f8"
+        },
+        {
+          "file": "Textures/Concrete3_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Concrete_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "e25548c6f1af25237cfecc14cb63b8ecd8887578b03efe0d8fb901f41bcec2d1"
+        },
+        {
+          "file": "Textures/Concrete_Normal.dds",
+          "size": 5592560,
+          "sha256": "bfd82aa097a0ba78513dae8c357be339cd94353a7f3b6065bf8b30089ef582f5"
+        },
+        {
+          "file": "Textures/Concrete_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Concrete_Striped_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "cb02b5a2ac35fa8456a47f5170ddb29eef06cbc944f2c27c9d7c8e4b30ff9eb1"
+        },
+        {
+          "file": "Textures/Concrete_Striped_Normal.dds",
+          "size": 5592560,
+          "sha256": "a41889b9445d047d9f8a76d5f76cbfff87dd2178b7ddfb70d56023d3814cf8b5"
+        },
+        {
+          "file": "Textures/Concrete_Striped_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/ElectricBox_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "34bc32682d4c43e16f590b75b904ce9ecfb2fb32049d22742e76ce421a216b76"
+        },
+        {
+          "file": "Textures/ElectricBox_Normal.dds",
+          "size": 5592560,
+          "sha256": "6be2c33b152cec2bef831220c75d2ba5cf40c526678caea81b09ba05687f12e2"
+        },
+        {
+          "file": "Textures/ElectricBox_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Emissive_StreetLight_BaseColor.dds",
+          "size": 496,
+          "sha256": "f65a6313360305dfa01b01dba0f428bcb8ee3661e103b6b762fe4041711791ae"
+        },
+        {
+          "file": "Textures/Emissive_StreetLight_Emissive.dds",
+          "size": 2872,
+          "sha256": "bf89728e2c83ee6b7d296450fd6aa8e77fa9226dcab3eb3f350acba161a69681"
+        },
+        {
+          "file": "Textures/Emissive_StreetLight_Normal.dds",
+          "size": 144,
+          "sha256": "4b8431bd4379641037c0214a5707d948951d679462acc59a7a525e30b0aeadb5"
+        },
+        {
+          "file": "Textures/Emissive_StreetLight_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Foliage_Bux_Hedges46_BaseColor.dds",
+          "size": 5592560,
+          "sha256": "c18fe165eb4b1b1afe07a7db0c7b6795907a3f2930e90b0b265f171050e0f4ca"
+        },
+        {
+          "file": "Textures/Foliage_Bux_Hedges46_Normal.dds",
+          "size": 5592560,
+          "sha256": "6b6b63a5b934d8cfaa91871c068ff07d67c119a4759737118ef4cf1b4a2b5853"
+        },
+        {
+          "file": "Textures/Foliage_Bux_Hedges46_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Foliage_Flowers_BaseColor.dds",
+          "size": 5592560,
+          "sha256": "7141dac55a901f4cdf5ebccac8a8e7bf1e4fab02525653951f7974c074debe7f"
+        },
+        {
+          "file": "Textures/Foliage_Flowers_Normal.dds",
+          "size": 5592560,
+          "sha256": "a0e708e748125dd9c25b275ef310114b8be0c234096efb6639946525f8858e3a"
+        },
+        {
+          "file": "Textures/Foliage_Flowers_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Foliage_Ivy_branches_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "acd0885cba3f06c24c94387d5976c57cc5456d1545f6422d97dae4e32c77efc4"
+        },
+        {
+          "file": "Textures/Foliage_Ivy_branches_Normal.dds",
+          "size": 5592560,
+          "sha256": "d94a231c3685bfe340e97cf4e8dc3a95e46633993d3659899083cf2ca01e1bd5"
+        },
+        {
+          "file": "Textures/Foliage_Ivy_branches_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Foliage_Ivy_leaf_a_BaseColor.dds",
+          "size": 5592560,
+          "sha256": "7aa9da8a0157168553d49c225ce0f990073cd7cb614fc715a05a2789ac32fb56"
+        },
+        {
+          "file": "Textures/Foliage_Ivy_leaf_a_Normal.dds",
+          "size": 5592560,
+          "sha256": "203d6b94374bad1415ee688a12e8cac1a7e3f65be4abb4737a6922e157917514"
+        },
+        {
+          "file": "Textures/Foliage_Ivy_leaf_a_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Foliage_Leaves_BaseColor.dds",
+          "size": 5592560,
+          "sha256": "220e88463938a2f5e2d0c8ac0492410c56a43e627bb959e5cd76fe0eca018eac"
+        },
+        {
+          "file": "Textures/Foliage_Leaves_Normal.dds",
+          "size": 5592560,
+          "sha256": "7834e82537dbea3bc01cbc6879c4ed491b78e8cf51f2fa734ebf0576c10e97bc"
+        },
+        {
+          "file": "Textures/Foliage_Leaves_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Foliage_Linde_Tree_Large_Green_Leaves_BaseColor.dds",
+          "size": 5592560,
+          "sha256": "b8c02d24abc1da1dd321458e5442e7ead1eb55f2a21a16ef41b57c94260f9405"
+        },
+        {
+          "file": "Textures/Foliage_Linde_Tree_Large_Green_Leaves_Normal.dds",
+          "size": 144,
+          "sha256": "4b8431bd4379641037c0214a5707d948951d679462acc59a7a525e30b0aeadb5"
+        },
+        {
+          "file": "Textures/Foliage_Linde_Tree_Large_Green_Leaves_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Foliage_Linde_Tree_Large_Orange_Leaves_BaseColor.dds",
+          "size": 5592560,
+          "sha256": "391db874c954b7e5e3c97db138b1fa8bea7e37920155b4f88c711e66c6c098e6"
+        },
+        {
+          "file": "Textures/Foliage_Linde_Tree_Large_Orange_Leaves_Normal.dds",
+          "size": 144,
+          "sha256": "4b8431bd4379641037c0214a5707d948951d679462acc59a7a525e30b0aeadb5"
+        },
+        {
+          "file": "Textures/Foliage_Linde_Tree_Large_Orange_Leaves_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Foliage_Linde_Tree_Large_Trunk_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "d1cc632017fea4896bf1541cff534fa53d6a139bee36338a1b82fb91e6f6f5ad"
+        },
+        {
+          "file": "Textures/Foliage_Linde_Tree_Large_Trunk_Normal.dds",
+          "size": 5592560,
+          "sha256": "bb13a8fea291417c784dbaf862f5629b4afccc97ca95670b5ac6ea4f02b0a6fe"
+        },
+        {
+          "file": "Textures/Foliage_Linde_Tree_Large_Trunk_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Foliage_Paris_Flowers_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "e188a6eeb73babfb40fee8e6c7bad77f6b724941a54a326ef13140fa81daa92c"
+        },
+        {
+          "file": "Textures/Foliage_Paris_Flowers_Normal.dds",
+          "size": 5592560,
+          "sha256": "79001fc0fc0a17da5f36b8135360abc9c6dbc92d5d89a56654f296b351f5aa5f"
+        },
+        {
+          "file": "Textures/Foliage_Paris_Flowers_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Foliage_Trunk_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "67352616aba249b730e70beda508b20f877c38cf19ab16ffd47082bed5a19300"
+        },
+        {
+          "file": "Textures/Foliage_Trunk_Normal.dds",
+          "size": 144,
+          "sha256": "4b8431bd4379641037c0214a5707d948951d679462acc59a7a525e30b0aeadb5"
+        },
+        {
+          "file": "Textures/Foliage_Trunk_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/LanternEmissive_BaseColor.dds",
+          "size": 5592560,
+          "sha256": "277a3af8587e2eda5b9d48c9dca77fb667d6f4fbcb3d0e20e7d5cbab77b6104f"
+        },
+        {
+          "file": "Textures/LanternEmissive_Normal.dds",
+          "size": 5592560,
+          "sha256": "d6a5d1677bfaff1c0330489d1611b3b14f0b766f83585e57cdaf68260b3b016e"
+        },
+        {
+          "file": "Textures/LanternEmissive_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/MASTER_Awning_Beams_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "8e89886c19da69450a542716d0297967b76f7268113379c6cf961294cd9f3488"
+        },
+        {
+          "file": "Textures/MASTER_Awning_Beams_Normal.dds",
+          "size": 5592560,
+          "sha256": "93566c0b7c7197ea4852d9ff59903525fd9a1a7d76121990b7a36d2afe9d5908"
+        },
+        {
+          "file": "Textures/MASTER_Awning_Beams_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/MASTER_Awning_Fabric_Cyan_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "ba75593b0fc3c449b840960354ca58bdca2842d0af449e817e812d035e7d3aa7"
+        },
+        {
+          "file": "Textures/MASTER_Awning_Fabric_Cyan_Normal.dds",
+          "size": 5592560,
+          "sha256": "66ea4e6d3d2933a675e2b57f7fc9dc513a7c60507423eb848093fbefcc615a37"
+        },
+        {
+          "file": "Textures/MASTER_Awning_Fabric_Cyan_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/MASTER_Awning_Fabric_Red_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "54e501044e5c6f38cf9428891a4519063e656fc385331d8de297cdddfb0241cc"
+        },
+        {
+          "file": "Textures/MASTER_Awning_Fabric_Red_Normal.dds",
+          "size": 5592560,
+          "sha256": "66ea4e6d3d2933a675e2b57f7fc9dc513a7c60507423eb848093fbefcc615a37"
+        },
+        {
+          "file": "Textures/MASTER_Awning_Fabric_Red_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/MASTER_Bistro_Main_Door_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "9867510c22c0adaef3c84cf371369f3ba697271ec35f372c2012d007fa61e64c"
+        },
+        {
+          "file": "Textures/MASTER_Bistro_Main_Door_Normal.dds",
+          "size": 5592560,
+          "sha256": "f4f667f6062b4cb38641c421f2b111c9bfbf0a35649db132577da4416b2ffb69"
+        },
+        {
+          "file": "Textures/MASTER_Bistro_Main_Door_Specular.dds",
+          "size": 2796344,
+          "sha256": "98e846b14204960488ed06dfd7b06c30c8d0dde05df4e69f5b1dd96e801cd4ec"
+        },
+        {
+          "file": "Textures/MASTER_Black_Metal_BaseColor.dds",
+          "size": 496,
+          "sha256": "dabe1f4273034f4a6544f49a26e4d47cbf114f4759843580afabc20c61333088"
+        },
+        {
+          "file": "Textures/MASTER_Black_Metal_Normal.dds",
+          "size": 5592560,
+          "sha256": "0b081cd79601569e1649389b04e259b2bad42491a228281b1bf05f630d685a29"
+        },
+        {
+          "file": "Textures/MASTER_Black_Metal_Specular.dds",
+          "size": 496,
+          "sha256": "777690cc9362c7bd85c4c1ebab0d062f710bd5036d1a355a20c58ff6c0d585b5"
+        },
+        {
+          "file": "Textures/MASTER_Book_Covers_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "eee940a71fdf5be4e6c0084eb82c77a44ea7d79a36257a2427ccdbbb5d4ccf91"
+        },
+        {
+          "file": "Textures/MASTER_Book_Covers_Normal.dds",
+          "size": 144,
+          "sha256": "4b8431bd4379641037c0214a5707d948951d679462acc59a7a525e30b0aeadb5"
+        },
+        {
+          "file": "Textures/MASTER_Book_Covers_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/MASTER_Boulangerie_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "71fc9e3d91671d915d7755754bd620c27f357c8863d864f90c400e8f6a75f67d"
+        },
+        {
+          "file": "Textures/MASTER_Boulangerie_Normal.dds",
+          "size": 144,
+          "sha256": "4b8431bd4379641037c0214a5707d948951d679462acc59a7a525e30b0aeadb5"
+        },
+        {
+          "file": "Textures/MASTER_Boulangerie_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/MASTER_Brick_Large_Beige_BLENDSHADER_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "880efd79fdbe8c091f3aeb403da68f95a3dd165ab2c5caa10e59fb3ef2b20b82"
+        },
+        {
+          "file": "Textures/MASTER_Brick_Large_Beige_BLENDSHADER_Normal.dds",
+          "size": 5592560,
+          "sha256": "39798fbab60464956643790393cc597aadef38bf23687f75cd1fa28a217b22f4"
+        },
+        {
+          "file": "Textures/MASTER_Brick_Large_Beige_BLENDSHADER_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/MASTER_Brick_Large_White_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "2962e5cefc4622e1add61c1de440b131cf32908cb52ee0905a36969d35b85f2d"
+        },
+        {
+          "file": "Textures/MASTER_Brick_Large_White_Normal.dds",
+          "size": 5592560,
+          "sha256": "3c312637a4375fed7ce963ad33e78388d36b3814ff0db90d9ccc715d8436e1b4"
+        },
+        {
+          "file": "Textures/MASTER_Brick_Large_White_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/MASTER_Brick_Small_Red_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "3bd53e224c10215e0bd424b2b960a9ef486cdee3b2892773a44a34d3f59cac08"
+        },
+        {
+          "file": "Textures/MASTER_Brick_Small_Red_BLENDSHADER_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "6105c6511cb09f300b05b1e499095c85a65b95524060632524b0b99c89742738"
+        },
+        {
+          "file": "Textures/MASTER_Brick_Small_Red_BLENDSHADER_Normal.dds",
+          "size": 5592560,
+          "sha256": "26ff66eae5974513595206476c0d787d02b5452c19be0957653d4222ae590a1b"
+        },
+        {
+          "file": "Textures/MASTER_Brick_Small_Red_BLENDSHADER_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/MASTER_Brick_Small_Red_Normal.dds",
+          "size": 5592560,
+          "sha256": "a72665639d78dc76013ed0edbc89efa631bda9cf14072648f4a719a74c4ab51c"
+        },
+        {
+          "file": "Textures/MASTER_Brick_Small_Red_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/MASTER_Bronze_BLENDSHADER_BaseColor.dds",
+          "size": 496,
+          "sha256": "bd4613554721fbf1ab9f924956a4dde4b318d9d5496bde2ffc89aa1a2ee904ca"
+        },
+        {
+          "file": "Textures/MASTER_Bronze_BLENDSHADER_Normal.dds",
+          "size": 5592560,
+          "sha256": "3c690eece4bbc88a6227b739b582e5fada1f2d16cbaf5b355513f92b82786c4f"
+        },
+        {
+          "file": "Textures/MASTER_Bronze_BLENDSHADER_Specular.dds",
+          "size": 496,
+          "sha256": "777690cc9362c7bd85c4c1ebab0d062f710bd5036d1a355a20c58ff6c0d585b5"
+        },
+        {
+          "file": "Textures/MASTER_Building_Details_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "d1c82e3a07d252975a92cdc2ae2bd869368f0b0e1c7ecb3cd297d2dd4d422fab"
+        },
+        {
+          "file": "Textures/MASTER_Building_Details_Normal.dds",
+          "size": 5592560,
+          "sha256": "c76fc4f7d7e9d70da99cafaf2cc0e53ebd3524143837e0ceac728e360c53e5a4"
+        },
+        {
+          "file": "Textures/MASTER_Building_Details_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/MASTER_Concrete1_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "6528ef375405e1b1f48852a7afc8a683fd1a49027887a55d820e70e8170fddea"
+        },
+        {
+          "file": "Textures/MASTER_Concrete1_Normal.dds",
+          "size": 5592560,
+          "sha256": "fb91ba9367cc89c5577e1d11d97beec2e408506cf25f04319d11d551027373c1"
+        },
+        {
+          "file": "Textures/MASTER_Concrete1_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/MASTER_Concrete_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "e25548c6f1af25237cfecc14cb63b8ecd8887578b03efe0d8fb901f41bcec2d1"
+        },
+        {
+          "file": "Textures/MASTER_Concrete_Grooved_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "cb02b5a2ac35fa8456a47f5170ddb29eef06cbc944f2c27c9d7c8e4b30ff9eb1"
+        },
+        {
+          "file": "Textures/MASTER_Concrete_Grooved_Normal.dds",
+          "size": 5592560,
+          "sha256": "a41889b9445d047d9f8a76d5f76cbfff87dd2178b7ddfb70d56023d3814cf8b5"
+        },
+        {
+          "file": "Textures/MASTER_Concrete_Grooved_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/MASTER_Concrete_Normal.dds",
+          "size": 5592560,
+          "sha256": "96289cc0605b24ccdf4e0f5abee85551dcdb323ebe375246ff7124d8d3de36f8"
+        },
+        {
+          "file": "Textures/MASTER_Concrete_Plaster1_BLENDSHADER_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "86b9a40f862ae672bdd8749b567a2b54aa4a17a1a8789fb511c5e95e248efae4"
+        },
+        {
+          "file": "Textures/MASTER_Concrete_Plaster1_BLENDSHADER_Normal.dds",
+          "size": 5592560,
+          "sha256": "96289cc0605b24ccdf4e0f5abee85551dcdb323ebe375246ff7124d8d3de36f8"
+        },
+        {
+          "file": "Textures/MASTER_Concrete_Plaster1_BLENDSHADER_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/MASTER_Concrete_Plaster_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "86b9a40f862ae672bdd8749b567a2b54aa4a17a1a8789fb511c5e95e248efae4"
+        },
+        {
+          "file": "Textures/MASTER_Concrete_Plaster_Normal.dds",
+          "size": 5592560,
+          "sha256": "5574016f025a1ce37781452c0d587ce6f10d124488d4200e79a6a167af269aa7"
+        },
+        {
+          "file": "Textures/MASTER_Concrete_Plaster_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/MASTER_Concrete_Smooth_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "86b9a40f862ae672bdd8749b567a2b54aa4a17a1a8789fb511c5e95e248efae4"
+        },
+        {
+          "file": "Textures/MASTER_Concrete_Smooth_BLENDSHADER_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "6394eae366db6979de5c0190542d1b48d8aaf090ad3008164c3d599705c36a65"
+        },
+        {
+          "file": "Textures/MASTER_Concrete_Smooth_BLENDSHADER_Normal.dds",
+          "size": 5592560,
+          "sha256": "dd72f8a9747ec49d91a95270e86ac3fecec630852537da7f1025acab8b3a9985"
+        },
+        {
+          "file": "Textures/MASTER_Concrete_Smooth_BLENDSHADER_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/MASTER_Concrete_Smooth_Normal.dds",
+          "size": 5592560,
+          "sha256": "5574016f025a1ce37781452c0d587ce6f10d124488d4200e79a6a167af269aa7"
+        },
+        {
+          "file": "Textures/MASTER_Concrete_Smooth_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/MASTER_Concrete_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/MASTER_Concrete_White_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "7261d60a5bc01b68c7c467c022493c75f6f29dad29987f57630e50df322c7839"
+        },
+        {
+          "file": "Textures/MASTER_Concrete_White_Normal.dds",
+          "size": 5592560,
+          "sha256": "96289cc0605b24ccdf4e0f5abee85551dcdb323ebe375246ff7124d8d3de36f8"
+        },
+        {
+          "file": "Textures/MASTER_Concrete_White_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/MASTER_Concrete_Yellow_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "f9653100409d76cdaafd0d0f3754b42cb2519fdb080a1898dd0d29a7ebb88859"
+        },
+        {
+          "file": "Textures/MASTER_Concrete_Yellow_Normal.dds",
+          "size": 5592560,
+          "sha256": "96289cc0605b24ccdf4e0f5abee85551dcdb323ebe375246ff7124d8d3de36f8"
+        },
+        {
+          "file": "Textures/MASTER_Concrete_Yellow_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/MASTER_Curtains_BaseColor.dds",
+          "size": 5592560,
+          "sha256": "3df6a4f1c9cf53ca5442829fbdeb2fc7c9e6e0651969e11533b5e088c9dbdee4"
+        },
+        {
+          "file": "Textures/MASTER_Curtains_Normal.dds",
+          "size": 5592560,
+          "sha256": "42e8a4ad89101512310e75bdd4b049968eabc1afe9a0b7082f79f5ec5b12b943"
+        },
+        {
+          "file": "Textures/MASTER_Curtains_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/MASTER_Details_Dark_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "d1c82e3a07d252975a92cdc2ae2bd869368f0b0e1c7ecb3cd297d2dd4d422fab"
+        },
+        {
+          "file": "Textures/MASTER_Details_Dark_Normal.dds",
+          "size": 5592560,
+          "sha256": "c76fc4f7d7e9d70da99cafaf2cc0e53ebd3524143837e0ceac728e360c53e5a4"
+        },
+        {
+          "file": "Textures/MASTER_Details_Dark_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/MASTER_Doors_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "9c47e159df0af111e71dd248cc9d7d96d64f7bddc3b326d054d1ef7285e9b5b4"
+        },
+        {
+          "file": "Textures/MASTER_Doors_Normal.dds",
+          "size": 5592560,
+          "sha256": "64b29b59a6e0575bd9613630925132562db6a5e47a0cc077dee326debeab6c0e"
+        },
+        {
+          "file": "Textures/MASTER_Doors_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/MASTER_Focus_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "0946507946c8ece00987311ba3ca5c05ad5d7f9dc380d432aab09bb9928cc7da"
+        },
+        {
+          "file": "Textures/MASTER_Focus_Normal.dds",
+          "size": 5592560,
+          "sha256": "7938d06d002cfba72f3916fd8d16a6c9fb0284d69c153865aa2de23bae552553"
+        },
+        {
+          "file": "Textures/MASTER_Focus_Ornament_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "461d5a27ddfd038c175224c4f323bb6bc0acaac756651347a2968b88fed6a779"
+        },
+        {
+          "file": "Textures/MASTER_Focus_Ornament_Normal.dds",
+          "size": 5592560,
+          "sha256": "6bc130d3ee207e8861c401366ed0790019d22c118354931a544967002d0f6a29"
+        },
+        {
+          "file": "Textures/MASTER_Focus_Ornament_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/MASTER_Focus_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/MASTER_Forge_Metal_BaseColor.dds",
+          "size": 5592560,
+          "sha256": "21c5eaee1de278ce4e170aad152e33a1b94ef563b40dc2f9156a3525ff87dc4e"
+        },
+        {
+          "file": "Textures/MASTER_Forge_Metal_Normal.dds",
+          "size": 5592560,
+          "sha256": "c6ea7e63babc8f8e92d32a07a756729397acf8a4f3e4440285d0a3fc9e632975"
+        },
+        {
+          "file": "Textures/MASTER_Forge_Metal_Specular.dds",
+          "size": 496,
+          "sha256": "777690cc9362c7bd85c4c1ebab0d062f710bd5036d1a355a20c58ff6c0d585b5"
+        },
+        {
+          "file": "Textures/MASTER_Frosted_Glass_BaseColor.dds",
+          "size": 496,
+          "sha256": "13997198e0503925036f8cb337dfca8384d0c5242d6c9f4265a8f6b05bc2486f"
+        },
+        {
+          "file": "Textures/MASTER_Frosted_Glass_Normal.dds",
+          "size": 5592560,
+          "sha256": "faa312174606697ea7976c35cd088ff47c9d03489d0213fb5d80a3b89cfa7a1f"
+        },
+        {
+          "file": "Textures/MASTER_Frosted_Glass_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/MASTER_Glass_Dirty_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "dfccede154fb2be457ac4b852e105a55627a2f86640d44c342fca2601b230050"
+        },
+        {
+          "file": "Textures/MASTER_Glass_Dirty_MASKED_BaseColor.dds",
+          "size": 5592560,
+          "sha256": "cd3eaf54d34527814bed50dfa82b8ca5615d3e7ddd7e3ce8c410fcc861cf8bec"
+        },
+        {
+          "file": "Textures/MASTER_Glass_Dirty_MASKED_Normal.dds",
+          "size": 5592560,
+          "sha256": "85d18cccfcdd39a35ff125a63ec0e8a71bc8a1255b749aefed6534b4bc4b3bcf"
+        },
+        {
+          "file": "Textures/MASTER_Glass_Dirty_MASKED_Specular.dds",
+          "size": 496,
+          "sha256": "f65a6313360305dfa01b01dba0f428bcb8ee3661e103b6b762fe4041711791ae"
+        },
+        {
+          "file": "Textures/MASTER_Glass_Dirty_Normal.dds",
+          "size": 5592560,
+          "sha256": "85d18cccfcdd39a35ff125a63ec0e8a71bc8a1255b749aefed6534b4bc4b3bcf"
+        },
+        {
+          "file": "Textures/MASTER_Glass_Dirty_Specular.dds",
+          "size": 496,
+          "sha256": "f65a6313360305dfa01b01dba0f428bcb8ee3661e103b6b762fe4041711791ae"
+        },
+        {
+          "file": "Textures/MASTER_Glass_Exterior_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "dfccede154fb2be457ac4b852e105a55627a2f86640d44c342fca2601b230050"
+        },
+        {
+          "file": "Textures/MASTER_Glass_Exterior_Normal.dds",
+          "size": 5592560,
+          "sha256": "85d18cccfcdd39a35ff125a63ec0e8a71bc8a1255b749aefed6534b4bc4b3bcf"
+        },
+        {
+          "file": "Textures/MASTER_Glass_Exterior_Specular.dds",
+          "size": 496,
+          "sha256": "f65a6313360305dfa01b01dba0f428bcb8ee3661e103b6b762fe4041711791ae"
+        },
+        {
+          "file": "Textures/MASTER_Grain_Metal_BaseColor.dds",
+          "size": 496,
+          "sha256": "dabe1f4273034f4a6544f49a26e4d47cbf114f4759843580afabc20c61333088"
+        },
+        {
+          "file": "Textures/MASTER_Grain_Metal_Normal.dds",
+          "size": 5592560,
+          "sha256": "0b081cd79601569e1649389b04e259b2bad42491a228281b1bf05f630d685a29"
+        },
+        {
+          "file": "Textures/MASTER_Grain_Metal_Specular.dds",
+          "size": 496,
+          "sha256": "777690cc9362c7bd85c4c1ebab0d062f710bd5036d1a355a20c58ff6c0d585b5"
+        },
+        {
+          "file": "Textures/MASTER_Light_Bulb_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "0946507946c8ece00987311ba3ca5c05ad5d7f9dc380d432aab09bb9928cc7da"
+        },
+        {
+          "file": "Textures/MASTER_Light_Bulb_Normal.dds",
+          "size": 144,
+          "sha256": "4b8431bd4379641037c0214a5707d948951d679462acc59a7a525e30b0aeadb5"
+        },
+        {
+          "file": "Textures/MASTER_Light_Bulb_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/MASTER_Metal_BaseColor.dds",
+          "size": 496,
+          "sha256": "11b9e2c0c108ac2c33ab89092a474bb240c05aef557bb0ac6a50ffcf1a55d49a"
+        },
+        {
+          "file": "Textures/MASTER_Metal_Normal.dds",
+          "size": 5592560,
+          "sha256": "26e923379d2ae9b3d8ddf402213cdf571dd8ac49c5ddaeeaa3cd3c4551a13d3c"
+        },
+        {
+          "file": "Textures/MASTER_Metal_Pipe_BaseColor.dds",
+          "size": 496,
+          "sha256": "dabe1f4273034f4a6544f49a26e4d47cbf114f4759843580afabc20c61333088"
+        },
+        {
+          "file": "Textures/MASTER_Metal_Pipe_Normal.dds",
+          "size": 5592560,
+          "sha256": "0b081cd79601569e1649389b04e259b2bad42491a228281b1bf05f630d685a29"
+        },
+        {
+          "file": "Textures/MASTER_Metal_Pipe_Specular.dds",
+          "size": 496,
+          "sha256": "777690cc9362c7bd85c4c1ebab0d062f710bd5036d1a355a20c58ff6c0d585b5"
+        },
+        {
+          "file": "Textures/MASTER_Metal_Specular.dds",
+          "size": 496,
+          "sha256": "777690cc9362c7bd85c4c1ebab0d062f710bd5036d1a355a20c58ff6c0d585b5"
+        },
+        {
+          "file": "Textures/MASTER_Plastic_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "14e7cbe36842148cebef72566a0cd77ec28ea0d05fc5ed956288c53b105f4c66"
+        },
+        {
+          "file": "Textures/MASTER_Plastic_Normal.dds",
+          "size": 5592560,
+          "sha256": "0b081cd79601569e1649389b04e259b2bad42491a228281b1bf05f630d685a29"
+        },
+        {
+          "file": "Textures/MASTER_Plastic_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/MASTER_Rollup_Door_BaseColor.dds",
+          "size": 496,
+          "sha256": "f65a6313360305dfa01b01dba0f428bcb8ee3661e103b6b762fe4041711791ae"
+        },
+        {
+          "file": "Textures/MASTER_Rollup_Door_Normal.dds",
+          "size": 5592560,
+          "sha256": "6c125ca2973ca16278144e64eb24abd6ec2851fab94a59248fea175e2b237bc6"
+        },
+        {
+          "file": "Textures/MASTER_Rollup_Door_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/MASTER_Roofing_Metal_01_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "f285c5265fac25463c23cd020468e35e444ae307f3220a6b028acfb3f6ccbc02"
+        },
+        {
+          "file": "Textures/MASTER_Roofing_Metal_01_Normal.dds",
+          "size": 5592560,
+          "sha256": "ef20c7c99be5e3d5c067aaca06b098a72aa8a529943266e0b69c155ac9e5783b"
+        },
+        {
+          "file": "Textures/MASTER_Roofing_Metal_01_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/MASTER_Roofing_Shingle_Green_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "2800682d1d3b1ae25143dcfb004485522110b8ef2e56ea446daa388b0ba16460"
+        },
+        {
+          "file": "Textures/MASTER_Roofing_Shingle_Green_Normal.dds",
+          "size": 5592560,
+          "sha256": "bd37098071563c7cf8de4c2455b6ab53bcd3efa69d42c7885be5744a84b23224"
+        },
+        {
+          "file": "Textures/MASTER_Roofing_Shingle_Green_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/MASTER_Roofing_Shingle_Grey_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "18378c454d003de4e95b55526d28079ad6cb5537ae1fbf08a3de2e45b2c14bdc"
+        },
+        {
+          "file": "Textures/MASTER_Roofing_Shingle_Grey_Normal.dds",
+          "size": 5592560,
+          "sha256": "bbff0d0730e21de6565af89b3b0bc270df25e83974ff23d77049659bf84f68ca"
+        },
+        {
+          "file": "Textures/MASTER_Roofing_Shingle_Grey_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/MASTER_Room_Interior_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "160d56ce44e5f3ca169240f21a70460a13a61b801a9f5cb9a11345071d2a1f57"
+        },
+        {
+          "file": "Textures/MASTER_Room_Interior_Normal.dds",
+          "size": 144,
+          "sha256": "4b8431bd4379641037c0214a5707d948951d679462acc59a7a525e30b0aeadb5"
+        },
+        {
+          "file": "Textures/MASTER_Room_Interior_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/MASTER_Side_Letters_BaseColor.dds",
+          "size": 5592560,
+          "sha256": "cc3b417636c981259a4696e4a8e0d4fdc1447fe3df9eebf3250d14aacccde672"
+        },
+        {
+          "file": "Textures/MASTER_Side_Letters_Normal.dds",
+          "size": 5592560,
+          "sha256": "b6a787df4c9d0deb59b8393fbe6234f9dc87273f0e08d94befac4beafc3968b6"
+        },
+        {
+          "file": "Textures/MASTER_Side_Letters_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/MASTER_Trim_Cornice_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "b269d2ef0e60fce9d2f414ba667598f77168b5e8ea0414a5e973e200e1035f44"
+        },
+        {
+          "file": "Textures/MASTER_Trim_Cornice_Normal.dds",
+          "size": 5592560,
+          "sha256": "52d6aeb8adff0f470fde3d7f81a395c589bdaaf89978cb1b905310aab40c5e0c"
+        },
+        {
+          "file": "Textures/MASTER_Trim_Cornice_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/MASTER_Wood_Brown_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "b0ca7303b7e82911844ad65f140c7fa70640357ec13619220713745faec36776"
+        },
+        {
+          "file": "Textures/MASTER_Wood_Brown_Normal.dds",
+          "size": 5592560,
+          "sha256": "6156e3e9111d58f994fa568d6da3c2e68af25eed84d17919d2b7f9a3a9032f83"
+        },
+        {
+          "file": "Textures/MASTER_Wood_Brown_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/MASTER_Wood_Painted3_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "e1c21f1075df65a6a295cb293881d1da3d4dad9cbc4f6bd23a17c6c39b38decd"
+        },
+        {
+          "file": "Textures/MASTER_Wood_Painted3_Normal.dds",
+          "size": 5592560,
+          "sha256": "b6a787df4c9d0deb59b8393fbe6234f9dc87273f0e08d94befac4beafc3968b6"
+        },
+        {
+          "file": "Textures/MASTER_Wood_Painted3_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/MASTER_Wood_Painted_Cyan_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "f87f6f4f7f9b585a540dadbc45bbed560d7c9299eefeed929eda0ff7de5af9c7"
+        },
+        {
+          "file": "Textures/MASTER_Wood_Painted_Cyan_Normal.dds",
+          "size": 5592560,
+          "sha256": "b6a787df4c9d0deb59b8393fbe6234f9dc87273f0e08d94befac4beafc3968b6"
+        },
+        {
+          "file": "Textures/MASTER_Wood_Painted_Cyan_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/MASTER_Wood_Painted_Green_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "08243aeb8298fca283d14f85de122d2fc8d6b62597956144b951b690b93320a5"
+        },
+        {
+          "file": "Textures/MASTER_Wood_Painted_Green_BLENDSHADER_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "e1c21f1075df65a6a295cb293881d1da3d4dad9cbc4f6bd23a17c6c39b38decd"
+        },
+        {
+          "file": "Textures/MASTER_Wood_Painted_Green_BLENDSHADER_Normal.dds",
+          "size": 5592560,
+          "sha256": "b6a787df4c9d0deb59b8393fbe6234f9dc87273f0e08d94befac4beafc3968b6"
+        },
+        {
+          "file": "Textures/MASTER_Wood_Painted_Green_BLENDSHADER_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/MASTER_Wood_Painted_Green_Normal.dds",
+          "size": 5592560,
+          "sha256": "b6a787df4c9d0deb59b8393fbe6234f9dc87273f0e08d94befac4beafc3968b6"
+        },
+        {
+          "file": "Textures/MASTER_Wood_Painted_Green_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/MASTER_Wood_Polished_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "b0ca7303b7e82911844ad65f140c7fa70640357ec13619220713745faec36776"
+        },
+        {
+          "file": "Textures/MASTER_Wood_Polished_Normal.dds",
+          "size": 5592560,
+          "sha256": "6156e3e9111d58f994fa568d6da3c2e68af25eed84d17919d2b7f9a3a9032f83"
+        },
+        {
+          "file": "Textures/MASTER_Wood_Polished_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/MenuSign_01_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "6d96f351bdbf7f1c562c81d5d5e508a6dc603ddb54dad5b647bb836778c51c15"
+        },
+        {
+          "file": "Textures/MenuSign_01_Normal.dds",
+          "size": 5592560,
+          "sha256": "822b777e3ff387cd37298f951ae72e309245ec5300ea99ab730ab237fdfa7b0b"
+        },
+        {
+          "file": "Textures/MenuSign_01_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/MenuSign_02_Glass_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "dfccede154fb2be457ac4b852e105a55627a2f86640d44c342fca2601b230050"
+        },
+        {
+          "file": "Textures/MenuSign_02_Glass_Normal.dds",
+          "size": 5592560,
+          "sha256": "85d18cccfcdd39a35ff125a63ec0e8a71bc8a1255b749aefed6534b4bc4b3bcf"
+        },
+        {
+          "file": "Textures/MenuSign_02_Glass_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/MenuSign_02_Mesh_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "6a44a78cc22f2bb800e6deb5c69e6bdb7acf9cf18a3fcdfe8b96f9218ef04518"
+        },
+        {
+          "file": "Textures/MenuSign_02_Mesh_Normal.dds",
+          "size": 5592560,
+          "sha256": "0ec4134aeee51f6dbeea7a3912aa3a95a9a45879b385d2c581f5d41360ef6328"
+        },
+        {
+          "file": "Textures/MenuSign_02_Mesh_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/NapkinHolder_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "eee1f733eeba84e1859afda8f79fc0d9608171326a01f0d124a43e520492a13e"
+        },
+        {
+          "file": "Textures/NapkinHolder_Normal.dds",
+          "size": 144,
+          "sha256": "4b8431bd4379641037c0214a5707d948951d679462acc59a7a525e30b0aeadb5"
+        },
+        {
+          "file": "Textures/NapkinHolder_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Paris_Chair_01_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "071397327e2052956c1a2f120788d14a4b33f372ec3a79f320f0ccfb058bea37"
+        },
+        {
+          "file": "Textures/Paris_Chair_01_Normal.dds",
+          "size": 5592560,
+          "sha256": "7a9ecd1e3668cbf21da71cbd7e18e18c01e30223353a91a4590d5322c91b6865"
+        },
+        {
+          "file": "Textures/Paris_Chair_01_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Paris_LiquorBottle_01_Caps_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "c9df82e7c23d8f7b24e80592188aacc7c45e8f1dab5efca384301d2c0c5e1af8"
+        },
+        {
+          "file": "Textures/Paris_LiquorBottle_01_Caps_Normal.dds",
+          "size": 5592560,
+          "sha256": "fbbabcaf2c591b8e095f5623d1bf876f66633d1c9c3fd9a5064855d722b540d1"
+        },
+        {
+          "file": "Textures/Paris_LiquorBottle_01_Caps_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Paris_LiquorBottle_01_Glass_Wine_BaseColor.dds",
+          "size": 496,
+          "sha256": "1647eca6f1e6a2119243fd09bba2721cbb7593d610a28436d158a63d6c552fe6"
+        },
+        {
+          "file": "Textures/Paris_LiquorBottle_01_Glass_Wine_Normal.dds",
+          "size": 144,
+          "sha256": "4b8431bd4379641037c0214a5707d948951d679462acc59a7a525e30b0aeadb5"
+        },
+        {
+          "file": "Textures/Paris_LiquorBottle_01_Glass_Wine_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Paris_LiquorBottle_01_Labels_BaseColor.dds",
+          "size": 496,
+          "sha256": "36e17cb3c97c61ae38e8ae067100ebf92dda97a6a73115839eefdc5502a542ff"
+        },
+        {
+          "file": "Textures/Paris_LiquorBottle_01_Labels_Normal.dds",
+          "size": 5592560,
+          "sha256": "cee68892ce8414032350389cd24ebcb44753ff9d02441f99bd24819d3e9a520c"
+        },
+        {
+          "file": "Textures/Paris_StreetPivot_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "21eeda828f8b98292550947cd1c3aee0f6a16bc42c2960190f217473b7647954"
+        },
+        {
+          "file": "Textures/Paris_StreetPivot_Normal.dds",
+          "size": 5592560,
+          "sha256": "c77f1a827ca4d4310f19b580575836a03d1af9ed7de61621d650b40c825b9a5c"
+        },
+        {
+          "file": "Textures/Paris_StreetPivot_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Paris_StreetSign_01_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "ac95efbedd0ccd26cf28ef54c3c124feb4a32539e54f7d6fe2d87a68a56ea6c8"
+        },
+        {
+          "file": "Textures/Paris_StreetSign_01_Normal.dds",
+          "size": 5592560,
+          "sha256": "2eb7191d0c0488163a628d7ffda22cb430483b137ddde2e7fd9626d15f6abf26"
+        },
+        {
+          "file": "Textures/Paris_StreetSign_01_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Paris_StringLights_01_Blue_Color_Emissive_BaseColor.dds",
+          "size": 496,
+          "sha256": "4f471a0eeb31116315d0fe805c49ff74d9f060d7b42e883b9f5fc831816cda30"
+        },
+        {
+          "file": "Textures/Paris_StringLights_01_Blue_Color_Emissive_Emissive.dds",
+          "size": 2872,
+          "sha256": "404b676b6dc64ff825c877725ca64a81afafaa49d803c58089d5f12b59e37aac"
+        },
+        {
+          "file": "Textures/Paris_StringLights_01_Blue_Color_Emissive_Normal.dds",
+          "size": 144,
+          "sha256": "4b8431bd4379641037c0214a5707d948951d679462acc59a7a525e30b0aeadb5"
+        },
+        {
+          "file": "Textures/Paris_StringLights_01_Blue_Color_Emissive_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Paris_StringLights_01_Green_Color_Emissive_BaseColor.dds",
+          "size": 496,
+          "sha256": "91270fc7a819eee3341dc0cc4c686f0c1cb12d9f7a77c26e46aa122aeca2d27e"
+        },
+        {
+          "file": "Textures/Paris_StringLights_01_Green_Color_Emissive_Emissive.dds",
+          "size": 2872,
+          "sha256": "6836dd4c5efde2064c69efc411bfb224cdbcc672d10ced6e1b718e7095908871"
+        },
+        {
+          "file": "Textures/Paris_StringLights_01_Green_Color_Emissive_Normal.dds",
+          "size": 144,
+          "sha256": "4b8431bd4379641037c0214a5707d948951d679462acc59a7a525e30b0aeadb5"
+        },
+        {
+          "file": "Textures/Paris_StringLights_01_Green_Color_Emissive_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Paris_StringLights_01_Orange_Color_Emissive_BaseColor.dds",
+          "size": 496,
+          "sha256": "a8d20070aa9eb432e5c91cf511242186647fdf7ccde589c8c355b7441af419fe"
+        },
+        {
+          "file": "Textures/Paris_StringLights_01_Orange_Color_Emissive_Emissive.dds",
+          "size": 2872,
+          "sha256": "988aef4ff1359a8bc496be1632c3789b5b741ba105072661b35bbae3770152e3"
+        },
+        {
+          "file": "Textures/Paris_StringLights_01_Orange_Color_Emissive_Normal.dds",
+          "size": 144,
+          "sha256": "4b8431bd4379641037c0214a5707d948951d679462acc59a7a525e30b0aeadb5"
+        },
+        {
+          "file": "Textures/Paris_StringLights_01_Orange_Color_Emissive_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Paris_StringLights_01_Pink_Color_Emissive_BaseColor.dds",
+          "size": 496,
+          "sha256": "e6888fc7851dac3ea22afabb1d08b630b1345cdfdccdebd8eec518035da84147"
+        },
+        {
+          "file": "Textures/Paris_StringLights_01_Pink_Color_Emissive_Emissive.dds",
+          "size": 2872,
+          "sha256": "abefc791204897a7f57f204ab276e6e8033dad2c8009558d59849ff6b8f223b8"
+        },
+        {
+          "file": "Textures/Paris_StringLights_01_Pink_Color_Emissive_Normal.dds",
+          "size": 144,
+          "sha256": "4b8431bd4379641037c0214a5707d948951d679462acc59a7a525e30b0aeadb5"
+        },
+        {
+          "file": "Textures/Paris_StringLights_01_Pink_Color_Emissive_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Paris_StringLights_01_Red_Color_Emissive_BaseColor.dds",
+          "size": 496,
+          "sha256": "d6af4d62e90b9d4b883d0d39ee4ccb42098901d5991bee4c47d9313038cb6e2a"
+        },
+        {
+          "file": "Textures/Paris_StringLights_01_Red_Color_Emissive_Emissive.dds",
+          "size": 2872,
+          "sha256": "ba3f93583d30df6f95c193286e47b95ec6a5c325e6d34eefdd04868917b7c676"
+        },
+        {
+          "file": "Textures/Paris_StringLights_01_Red_Color_Emissive_Normal.dds",
+          "size": 144,
+          "sha256": "4b8431bd4379641037c0214a5707d948951d679462acc59a7a525e30b0aeadb5"
+        },
+        {
+          "file": "Textures/Paris_StringLights_01_Red_Color_Emissive_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Paris_StringLights_01_White_Color_BaseColor.dds",
+          "size": 496,
+          "sha256": "7bce718ad7ab935f75e59bd05e76ce78296a3ae63e33a1fe3639c0976dc359a6"
+        },
+        {
+          "file": "Textures/Paris_StringLights_01_White_Color_Emissive_BaseColor.dds",
+          "size": 496,
+          "sha256": "7bce718ad7ab935f75e59bd05e76ce78296a3ae63e33a1fe3639c0976dc359a6"
+        },
+        {
+          "file": "Textures/Paris_StringLights_01_White_Color_Emissive_Emissive.dds",
+          "size": 2872,
+          "sha256": "47a50d1d719011201cd95776c4db2583943bb10616b19b22235e52463f0df052"
+        },
+        {
+          "file": "Textures/Paris_StringLights_01_White_Color_Emissive_Normal.dds",
+          "size": 144,
+          "sha256": "4b8431bd4379641037c0214a5707d948951d679462acc59a7a525e30b0aeadb5"
+        },
+        {
+          "file": "Textures/Paris_StringLights_01_White_Color_Emissive_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Paris_StringLights_01_White_Color_Normal.dds",
+          "size": 144,
+          "sha256": "4b8431bd4379641037c0214a5707d948951d679462acc59a7a525e30b0aeadb5"
+        },
+        {
+          "file": "Textures/Paris_StringLights_01_White_Color_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Paris_Table_Terrace_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "2d69ce8a3f2016c0718a31381e1caab0cf7a04a9331f10f05ea7f2aa32673bf4"
+        },
+        {
+          "file": "Textures/Paris_Table_Terrace_Normal.dds",
+          "size": 5592560,
+          "sha256": "aa29e4ab0f8dad07afda44712738fc2303fa94ccce5658d77fddca09285eaea6"
+        },
+        {
+          "file": "Textures/Paris_Table_Terrace_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Paris_TrafficSign_A_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "035d0cba28f7e00705ba6d0dc87f9616ac58fa441f13a2ecc72b4e2ea27af73f"
+        },
+        {
+          "file": "Textures/Paris_TrafficSign_A_Normal.dds",
+          "size": 5592560,
+          "sha256": "1213816a84e625c077a2f5439f04e2131e765cca54b709db46b838ef8417bbf9"
+        },
+        {
+          "file": "Textures/Paris_TrafficSign_A_Specular.dds",
+          "size": 2796344,
+          "sha256": "3d5cea824f35e0f23c15c32542d3cbd64f3b844f3ee05980b9ebeda2f5fb7dfa"
+        },
+        {
+          "file": "Textures/Pavement_Brick_BLENDSHADER_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "165d955839fa4dacad0547cc8825f449871d0d23d0ee1b561ba4d100db1e9560"
+        },
+        {
+          "file": "Textures/Pavement_Brick_BLENDSHADER_Normal.dds",
+          "size": 5592560,
+          "sha256": "4b98ad456d374958d6541e0e8274589a55afde21c131459467ba0c939d5f4d03"
+        },
+        {
+          "file": "Textures/Pavement_Brick_BLENDSHADER_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Pavement_Cobble_Leaves_BLENDSHADER_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "6082c5d744087eb965a7d04761bf93f00e126bf53da9a192a2cf8c75ccd5f71d"
+        },
+        {
+          "file": "Textures/Pavement_Cobble_Leaves_BLENDSHADER_Normal.dds",
+          "size": 5592560,
+          "sha256": "35be8a7dadc115a04d399956fb208091431735bbcec531f36f7ae55e83d9a6a1"
+        },
+        {
+          "file": "Textures/Pavement_Cobble_Leaves_BLENDSHADER_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Pavement_Cobblestone_01_BLENDSHADER_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "6082c5d744087eb965a7d04761bf93f00e126bf53da9a192a2cf8c75ccd5f71d"
+        },
+        {
+          "file": "Textures/Pavement_Cobblestone_01_BLENDSHADER_Normal.dds",
+          "size": 5592560,
+          "sha256": "35be8a7dadc115a04d399956fb208091431735bbcec531f36f7ae55e83d9a6a1"
+        },
+        {
+          "file": "Textures/Pavement_Cobblestone_01_BLENDSHADER_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Pavement_Cobblestone_02_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "208513d2da15d5a945f489fba10267aa15d324739ae360d18bbf156270e14334"
+        },
+        {
+          "file": "Textures/Pavement_Cobblestone_02_Normal.dds",
+          "size": 5592560,
+          "sha256": "6cd6fa44cac8d895d1c5b0694d69a06dc0cd964d0eef3a82e0875b29544c411b"
+        },
+        {
+          "file": "Textures/Pavement_Cobblestone_02_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Pavement_Cobblestone_Big_BLENDSHADER_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "74ddd68ec80947972f5a8639e721a18c304d1d595e5fc6efa37ad56b0e90b877"
+        },
+        {
+          "file": "Textures/Pavement_Cobblestone_Big_BLENDSHADER_Normal.dds",
+          "size": 5592560,
+          "sha256": "2e3a0f343105f219c9906de7a8c3575c7f59bc7720a6d7f5ea470582fb3b35d6"
+        },
+        {
+          "file": "Textures/Pavement_Cobblestone_Big_BLENDSHADER_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Pavement_Cobblestone_Small_BLENDSHADER_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "d32c9026641b89bafb57e85d9fbceb3860d214c834a2e89a72f0b68de73f8842"
+        },
+        {
+          "file": "Textures/Pavement_Cobblestone_Small_BLENDSHADER_Normal.dds",
+          "size": 5592560,
+          "sha256": "ed0d664fbb0e40bf3de9a77fb61c94b4b758ea0f33f544df60a88ececf0475ee"
+        },
+        {
+          "file": "Textures/Pavement_Cobblestone_Small_BLENDSHADER_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Pavement_Cobblestone_Wet_BLENDSHADER_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "a903cc94409acacb742c274dacd50455c9ebae042b1e7eecc2c7c4f9a1149eb8"
+        },
+        {
+          "file": "Textures/Pavement_Cobblestone_Wet_BLENDSHADER_Normal.dds",
+          "size": 5592560,
+          "sha256": "5df8ce6622976bf4cfee28f2c73d029d00c0394254545641c6ff912419adbf62"
+        },
+        {
+          "file": "Textures/Pavement_Cobblestone_Wet_BLENDSHADER_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Pavement_Cobblestone_Wet_Leaves_BLENDSHADER_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "a903cc94409acacb742c274dacd50455c9ebae042b1e7eecc2c7c4f9a1149eb8"
+        },
+        {
+          "file": "Textures/Pavement_Cobblestone_Wet_Leaves_BLENDSHADER_Normal.dds",
+          "size": 5592560,
+          "sha256": "5df8ce6622976bf4cfee28f2c73d029d00c0394254545641c6ff912419adbf62"
+        },
+        {
+          "file": "Textures/Pavement_Cobblestone_Wet_Leaves_BLENDSHADER_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Pavement_Curbstones_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "74d55e379548aefed2c47667642a144cae98ee661e21ca4da474a2b16eac4316"
+        },
+        {
+          "file": "Textures/Pavement_Curbstones_Normal.dds",
+          "size": 5592560,
+          "sha256": "14f11b18f7cb1a9abe01d25e907b39bf42335bb0c62ff51bf57c0bc62c419cc9"
+        },
+        {
+          "file": "Textures/Pavement_Curbstones_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Pavement_Ground_Wet_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "b134c53cc5a9c4d3ddf3c37ff115ac6addd6fff42fa032ddb49c1fcd1807aeb7"
+        },
+        {
+          "file": "Textures/Pavement_Ground_Wet_Normal.dds",
+          "size": 5592560,
+          "sha256": "39f14086c2c80a2dd0f33694aecab2606be991ff4e93fb1633b65bae580f6c0b"
+        },
+        {
+          "file": "Textures/Pavement_Ground_Wet_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Pavement_Manhole_Cover_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "2200eea9c2421be2d8a1a4cf95e255647f2e527f47b895150e8cff98bbe819af"
+        },
+        {
+          "file": "Textures/Pavement_Manhole_Cover_Normal.dds",
+          "size": 5592560,
+          "sha256": "41c089a324b15647d1abf7267d3a93e2dc273f928bb559cef0d34063dda8cad0"
+        },
+        {
+          "file": "Textures/Pavement_Manhole_Cover_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Plantpots_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "18f289ca5e8e4dc111a6f5d8711f3cb891305cad556ce3d3a84945edd0d7560d"
+        },
+        {
+          "file": "Textures/Plantpots_Normal.dds",
+          "size": 5592560,
+          "sha256": "5c3ca0d5171ee7780726c1663dea6d092b871a9ba253752f6e4631acc4da4ac0"
+        },
+        {
+          "file": "Textures/Plantpots_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Plaster_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "a2bd0599a1748f5caf623764fd26cc7afbdec57b0a619f739cd8c0bf8efb90a8"
+        },
+        {
+          "file": "Textures/Plaster_Normal.dds",
+          "size": 5592560,
+          "sha256": "c831b5d9d3c5ada2438979d2bc4b6c8f1d3dab52265da91232d62b31174c7b6b"
+        },
+        {
+          "file": "Textures/Plaster_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Shopsign_Bakery_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "fcb006f076ed8cae4e557275811f49ffa147ed44337495d0b61e5ed427ece55f"
+        },
+        {
+          "file": "Textures/Shopsign_Bakery_Normal.dds",
+          "size": 5592560,
+          "sha256": "808b6bd4a67aabfe41b3a06949e6ee326ee756719dec497e896f24b3160e8abd"
+        },
+        {
+          "file": "Textures/Shopsign_Bakery_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Shopsign_Book_Store_Emissive_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "160aeb81d150a2c16f0319c756ff8c08481ce2300fad8f2d8186cd5f0507b1d8"
+        },
+        {
+          "file": "Textures/Shopsign_Book_Store_Emissive_Emissive.dds",
+          "size": 2796344,
+          "sha256": "160aeb81d150a2c16f0319c756ff8c08481ce2300fad8f2d8186cd5f0507b1d8"
+        },
+        {
+          "file": "Textures/Shopsign_Book_Store_Emissive_Normal.dds",
+          "size": 5592560,
+          "sha256": "f5d82667f6ec79466f7ca41952ee5f4d888ba47094099766af2d31098011d0af"
+        },
+        {
+          "file": "Textures/Shopsign_Book_Store_Emissive_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Shopsign_Pharmacy_Emissive_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "1d4be8ffa461c968b575df11d93bb2ca152ab9747474dcfcdb014ebefb6c732b"
+        },
+        {
+          "file": "Textures/Shopsign_Pharmacy_Emissive_Emissive.dds",
+          "size": 2796344,
+          "sha256": "0a4784027c206c34bce33279051fb552d3e50b7417c5040e3fe65893f524bf5e"
+        },
+        {
+          "file": "Textures/Shopsign_Pharmacy_Emissive_Normal.dds",
+          "size": 5592560,
+          "sha256": "c0992b5645c1828addfb7b64533ab42719c895c4015685e446dd95ef504ae8af"
+        },
+        {
+          "file": "Textures/Shopsign_Pharmacy_Emissive_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Shopsign_Ties_Shop_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "4fad890c10ad97fa0073350f8f69c66a97bba15f188c58d6dea5fbc9124f2632"
+        },
+        {
+          "file": "Textures/Shopsign_Ties_Shop_Normal.dds",
+          "size": 5592560,
+          "sha256": "b5c5e2a1b8abadb286dabf16a4afe9065f09a0c0e2965b3bbc76e24ec35d29e9"
+        },
+        {
+          "file": "Textures/Shopsign_Ties_Shop_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Sidewalkbarrier_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "4b4a5c7e6019f12eb1209ff23585d2ab4d3338a1a90ee16e212412abcd46d581"
+        },
+        {
+          "file": "Textures/Sidewalkbarrier_Normal.dds",
+          "size": 5592560,
+          "sha256": "423b750ffcbd91b2ef521a28ee97574b66c99fd392f3f8077df70b88270c0bdb"
+        },
+        {
+          "file": "Textures/Sidewalkbarrier_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Spotlight_Emissive_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "0946507946c8ece00987311ba3ca5c05ad5d7f9dc380d432aab09bb9928cc7da"
+        },
+        {
+          "file": "Textures/Spotlight_Emissive_Normal.dds",
+          "size": 144,
+          "sha256": "4b8431bd4379641037c0214a5707d948951d679462acc59a7a525e30b0aeadb5"
+        },
+        {
+          "file": "Textures/Spotlight_Emissive_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Spotlight_Glass_Emissive_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "3cda292bfa8bfa1f272d0d5ec01de168725dcd983554aab558dd57eb10713e3d"
+        },
+        {
+          "file": "Textures/Spotlight_Glass_Emissive_Emissive.dds",
+          "size": 2872,
+          "sha256": "47a50d1d719011201cd95776c4db2583943bb10616b19b22235e52463f0df052"
+        },
+        {
+          "file": "Textures/Spotlight_Glass_Emissive_Normal.dds",
+          "size": 5592560,
+          "sha256": "be2c9ea0b770433dc96d4edca6c93c4970ec13740e7013a4256f72e4d072136f"
+        },
+        {
+          "file": "Textures/Spotlight_Glass_Emissive_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Spotlight_Main_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "0946507946c8ece00987311ba3ca5c05ad5d7f9dc380d432aab09bb9928cc7da"
+        },
+        {
+          "file": "Textures/Spotlight_Main_Normal.dds",
+          "size": 5592560,
+          "sha256": "7938d06d002cfba72f3916fd8d16a6c9fb0284d69c153865aa2de23bae552553"
+        },
+        {
+          "file": "Textures/Spotlight_Main_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Streetlight_Chains_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "9fe641fe2fb45c473e6477fff39af6bb7d92f39b562df73ba11f97664859a564"
+        },
+        {
+          "file": "Textures/Streetlight_Chains_Normal.dds",
+          "size": 5592560,
+          "sha256": "4d9a8efcc0094c3525b0e04fca0b7efd022ac039c37bd2d281ccf7f4becc3926"
+        },
+        {
+          "file": "Textures/Streetlight_Chains_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Streetlight_Metal_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "352da936fc056cdad0229b62fe50f6e65e765c9436b04b27cc259afe8a68249d"
+        },
+        {
+          "file": "Textures/Streetlight_Metal_Normal.dds",
+          "size": 5592560,
+          "sha256": "ad289c37d41d81053441c4a34b54ccaa8de20f36f8f6866f3ec3740d07af0e0a"
+        },
+        {
+          "file": "Textures/Streetlight_Metal_Specular.dds",
+          "size": 496,
+          "sha256": "777690cc9362c7bd85c4c1ebab0d062f710bd5036d1a355a20c58ff6c0d585b5"
+        },
+        {
+          "file": "Textures/Streetlight_Support_Bulb_BaseColor.dds",
+          "size": 496,
+          "sha256": "adb1ef9297cc5b5d5fe10f82c9a61ce5156ee0df7d5b0bfabeb1a109489f1731"
+        },
+        {
+          "file": "Textures/Streetlight_Support_Bulb_Normal.dds",
+          "size": 5592560,
+          "sha256": "85d18cccfcdd39a35ff125a63ec0e8a71bc8a1255b749aefed6534b4bc4b3bcf"
+        },
+        {
+          "file": "Textures/Streetlight_Support_Bulb_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Stringlights_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "967779dc659dc10f8d3bae88016dbbc06b1ecca62e60a3b09c1a13c8223a7aa7"
+        },
+        {
+          "file": "Textures/Stringlights_Normal.dds",
+          "size": 5592560,
+          "sha256": "f2f5c51f2edf4915a51bc06c9fd79dc66164c014be6776a9fe798f4442658138"
+        },
+        {
+          "file": "Textures/Stringlights_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Trashcan_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "923e7802f6b90afd6751398d02433d7a0bd3b8d4a6619b5ae528b6334d4328c2"
+        },
+        {
+          "file": "Textures/Trashcan_Normal.dds",
+          "size": 5592560,
+          "sha256": "c1965e936dde3df22d8791080a0d10da5bfb900159b5bd915594cc31892aa167"
+        },
+        {
+          "file": "Textures/Trashcan_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Vespa_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "b611a2afbab2825e5fb7f8c2554333247aecff8e2d1b5acfaa3117dd3a133265"
+        },
+        {
+          "file": "Textures/Vespa_Headlight_BaseColor.dds",
+          "size": 496,
+          "sha256": "7bce718ad7ab935f75e59bd05e76ce78296a3ae63e33a1fe3639c0976dc359a6"
+        },
+        {
+          "file": "Textures/Vespa_Headlight_Normal.dds",
+          "size": 5592560,
+          "sha256": "3e06a864fd8f6803a01c37bb8ff7759eb3fca7acd4859f6fa86c0ec22b85a78b"
+        },
+        {
+          "file": "Textures/Vespa_Headlight_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Vespa_Normal.dds",
+          "size": 5592560,
+          "sha256": "3e06a864fd8f6803a01c37bb8ff7759eb3fca7acd4859f6fa86c0ec22b85a78b"
+        },
+        {
+          "file": "Textures/Vespa_Odometer_BaseColor.dds",
+          "size": 2796344,
+          "sha256": "7919b0063a3e944144bf818d8c26c2eda93dfdc805e85c78a274e948ef6f1132"
+        },
+        {
+          "file": "Textures/Vespa_Odometer_Glass_BaseColor.dds",
+          "size": 496,
+          "sha256": "7bce718ad7ab935f75e59bd05e76ce78296a3ae63e33a1fe3639c0976dc359a6"
+        },
+        {
+          "file": "Textures/Vespa_Odometer_Glass_Normal.dds",
+          "size": 144,
+          "sha256": "4b8431bd4379641037c0214a5707d948951d679462acc59a7a525e30b0aeadb5"
+        },
+        {
+          "file": "Textures/Vespa_Odometer_Glass_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Vespa_Odometer_Normal.dds",
+          "size": 5592560,
+          "sha256": "56b844383a42d4ce2ee88d061d3ff20e855d76d1fd6bd5f43726583227b1adf2"
+        },
+        {
+          "file": "Textures/Vespa_Odometer_Specular.dds",
+          "size": 496,
+          "sha256": "9b12472151675ae46afa28d1f7e1b504a5bf8f852c13f31e745e598c1287a7ec"
+        },
+        {
+          "file": "Textures/Vespa_Specular.dds",
+          "size": 2796344,
+          "sha256": "707d492b7247bcde022a3016ddede72b8b7a520141aef191b42981484aeaadf0"
+        }
+      ],
+      "modifications": {
+        "status": "converted_and_rendered_prototype",
+        "intended_geometry_scope": "Convert exterior FBX to self-contained glTF metallic-roughness GLB; retain source geometry unless the derivative receipt states a specific change.",
+        "intended_texture_scope": "Decode DDS/TGA into renderer-compatible images; use authored ORM channel meanings; invert the DirectX normal-map green channel for glTF.",
+        "renderer_scope": "Current 1024-pixel texture-array layers and unsupported glass transmission remain capture limitations.",
+        "validation_boundary": "Structural and texture payload checks passed. The accepted native camera route was visually inspected. Full glTF glass/blend/extension fidelity remains unsupported and is not certified.",
+        "geometry_scope": "1296 mesh objects, 2829226 triangles retained across clean GLB import; no geometry decimation/merging.",
+        "texture_scope": "405 source-sized embedded PNGs; original ORM channels preserved, only DirectX normal green inverted."
+      },
+      "validation": {
+        "source_archive_and_safe_extraction": "passed",
+        "referenced_texture_names_present": "passed",
+        "conversion": "structural_and_pixel_channel_checks_passed",
+        "native_render": "accepted_camera_route_captured_with_zero_pending_assets",
+        "browser_render": "not_tested_for_this_large_scene"
+      },
+      "delivery": {
+        "filename": "BistroExterior.glb",
+        "bytes": 893590804,
+        "sha256": "b6930eb95fb6b38f5136b6de0895425076f752d12d5ec51b8db9c85229eae41d",
+        "mesh_objects": 1296,
+        "scene_triangles": 2829226,
+        "materials": 132,
+        "embedded_images": 405,
+        "source_decoded_rgba_bytes": 3758384208
+      }
+    }
+  ],
+  "capture_claims": {
+    "renderer": "Amoris pocket-render, wgpu",
+    "third_party_render_previews_used_as_engine_evidence": false,
+    "source_triangle_counts_are_not_frame_triangle_counts": true,
+    "current_texture_array_layer_dimension": 1024,
+    "glass_transmission_supported": false
+  }
+}

@@ -1,0 +1,86 @@
+{
+  "engine_commit": "37fd91dd6e0487db921d866c41804f3ca92bc9d8",
+  "recorded_on": "2026-10-05",
+  "clips": [
+    {
+      "name": "scene",
+      "dimensions": [
+        1920,
+        1080
+      ],
+      "frames": 360,
+      "fps": 30,
+      "duration_seconds": 12.0,
+      "sha256": "515c55fd4098fb048a2eb4322a97f2daaa614635fa7d1a497bb5ecdb3bc3f3d1",
+      "capture": "actual native renderer frames",
+      "camera_path_sha256": "176aeaea9252330e0ba803b67427a1ef9d381162998d642a408b888cf08498f4",
+      "recording_script_sha256": "39f2b85a9f2b436bb3203bffdca784229c93a4dd166f6bae61c79cf837e2cf3b",
+      "timing": "Static scene camera-keyframe capture; encoded playback rate is not measured runtime FPS."
+    },
+    {
+      "name": "agent",
+      "dimensions": [
+        1280,
+        720
+      ],
+      "frames": 360,
+      "fps": 30,
+      "duration_seconds": 12.0,
+      "sha256": "a46d9c5f983ba443e4edc7257ae9f406b6f2c5c2d4158c67190419c66c9fbd89",
+      "capture": "actual native renderer frames",
+      "pilot": "scripted MCP, developer access",
+      "cargo_taken": 2,
+      "mcp_calls": 1273,
+      "timing": "2 simulation ticks per recorded frame; 60Hz world, 30fps encoded playback."
+    },
+    {
+      "name": "detail",
+      "dimensions": [
+        1920,
+        1080
+      ],
+      "frames": 240,
+      "fps": 30,
+      "duration_seconds": 8.0,
+      "sha256": "4fe37fd92fd3a138fdc38bcf2fd02207509b9cc9c18217c726b954203d6c64e3",
+      "capture": "actual native renderer frames",
+      "camera_path_sha256": "a628838edbc4271b0ab0b5a3203c7669c9fe0330441ca3f3a5d3409a1de85b51",
+      "recording_script_sha256": "39f2b85a9f2b436bb3203bffdca784229c93a4dd166f6bae61c79cf837e2cf3b",
+      "timing": "Static scene camera-keyframe capture; encoded playback rate is not measured runtime FPS."
+    },
+    {
+      "name": "editor",
+      "dimensions": [
+        1280,
+        720
+      ],
+      "frames": 538,
+      "fps": 30,
+      "duration_seconds": 17.933333,
+      "sha256": "aec7a2351116505bca3051970c2c70743ae3226565a2afc2458b37d28772105a",
+      "capture": "actual browser WebGPU editor screencast"
+    }
+  ],
+  "models": [
+    {
+      "file": "BistroExterior.glb",
+      "sha256": "b6930eb95fb6b38f5136b6de0895425076f752d12d5ec51b8db9c85229eae41d",
+      "project": "bistro",
+      "scene_sha256": "d35f4f0c909840dcf47cc1ba78bc57d87ae7f479fdedee545761fe6880e7f754"
+    },
+    {
+      "file": "FlightHelmet.glb",
+      "sha256": "74a4b22953a5b24fe158899b166e20f77184b29cec2c6ea35e30e63d01a467c9",
+      "project": "detail",
+      "scene_sha256": "5923c7d3c11da22103560bcd5808807ad4bc6fe6209844bd0a77d6dfabbf8785"
+    },
+    {
+      "file": "DutchShip.glb",
+      "sha256": "ba6cbf3a1be5a8539387c41cdb1a53b661e7ce86fee3238a518329b1093e43cf",
+      "project": "harbor",
+      "scene_sha256": "c795b2f7ff86cccc4e5a2f292a21e6002c56bf35a0b27700f4e13660ee22e657"
+    }
+  ],
+  "notes": "Native frames are captured offscreen along declared cameras. Playback FPS is separate from measured stress workload timing. The editor is the real WebGPU frontend connected to the Rust host.",
+  "engine_binary_sha256": "6a5ecebb6bc201bda5cd23d7e2194d526b16d305dffecd98f55294fd2196d5fb"
+}

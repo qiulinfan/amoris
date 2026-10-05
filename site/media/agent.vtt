@@ -1,0 +1,10 @@
+WEBVTT
+
+00:00.000 --> 00:04.000
+A scripted MCP client inspects the boat and evaluates four steering forks.
+
+00:04.000 --> 00:08.000
+The chosen action changes the rudder; fixed simulation ticks advance the same world.
+
+00:08.000 --> 00:12.000
+Two crates were collected in this recording. The client has developer access, not player MCP.

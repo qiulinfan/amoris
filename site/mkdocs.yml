@@ -1,0 +1,28 @@
+site_name: Amoris Documentation
+site_description: Build the Amoris host, use the editor, and write stateless TypeScript game systems.
+site_url: https://qiulinfan.github.io/amoris/documentation/
+repo_url: https://github.com/qiulinfan/amoris
+repo_name: qiulinfan/amoris
+edit_uri: ''
+docs_dir: content
+theme:
+  name: mkdocs
+  custom_dir: theme
+  color_mode: dark
+  user_color_mode_toggle: false
+  nav_style: dark
+  highlightjs: false
+nav:
+  - Getting started: index.md
+  - Editor: editor.md
+  - Script API: sdk.md
+  - CLI and MCP: api.md
+  - Data and validation: data.md
+  - Asset credits: credits.md
+extra_css:
+  - ../site.css
+markdown_extensions:
+  - tables
+  - admonition
+plugins:
+  - search
