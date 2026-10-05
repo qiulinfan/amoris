@@ -1,0 +1,12 @@
+date: 2026-10-04 00:40 EDT
+cpu: Apple M5, 10 cores (4 performance, 6 efficiency), memory 32 GB
+os: macOS 27.0.1 (26A434)
+clang: Apple clang version 21.0.0 (clang-2100.3.34.2)
+cmake: cmake version 4.4.0
+rustc: rustc 1.98.1 (48a229cea 2026-09-01)
+node: v24.18.0
+jolt: v5.6.0 (e77f175595e64cb44218cc9d9d56fc365ad0e36a)
+joltc: amerkoleci/joltc 886e088675bae3a086f8318c7803f8ee962c2f2c
+rapier3d: 0.36.0 (parry3d 0.31.1, glam 0.33.12, simba 0.10.2, wide 1.7.1)
+llvm (wasm): Homebrew llvm 23.1.2, lld 23.1.2, wasi-libc 34, wasi-runtimes 23.1.2
+wasm-opt: binaryen version 133

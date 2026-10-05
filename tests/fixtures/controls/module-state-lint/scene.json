@@ -1,0 +1,7 @@
+{
+  "format": "pocket-scene",
+  "version": 1,
+  "entities": [
+    {"name": "Counter", "components": {"Count": {}}}
+  ]
+}

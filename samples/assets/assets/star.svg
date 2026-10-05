@@ -1,5 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">
-  <!-- A badge an agent can write as text: a gold star on a blue disc, a dark ring around it. -->
-  <circle cx="24" cy="24" r="22" fill="#2a5db0" stroke="#0e2240" stroke-width="3"/>
-  <polygon points="24,7 28.7,18.5 41,19.2 31.5,27.1 34.6,39.1 24,32.4 13.4,39.1 16.5,27.1 7,19.2 19.3,18.5" fill="#ffcc33"/>
-</svg>

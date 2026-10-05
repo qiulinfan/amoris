@@ -1,0 +1,2 @@
+{"tick": 5, "source": {"player": 0}, "name": "world_edit", "params": {"edits": [{"op": "set", "entity": "Sloop", "component": "Boat", "value": {"rudder": 0.8}}]}}
+{"tick": 30, "source": {"player": 0}, "name": "world_edit", "params": {"edits": [{"op": "set", "entity": "Sloop", "component": "Boat", "value": {"hoist": 0}}]}}

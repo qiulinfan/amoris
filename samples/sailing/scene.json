@@ -1,0 +1,232 @@
+{
+  "format": "pocket-scene",
+  "version": 1,
+  "entities": [
+    {
+      "name": "Sea",
+      "prefab": {
+        "kind": "island_sea"
+      },
+      "components": {
+        "AudioSource": {
+          "clip": "sfx:surf",
+          "volume": 0.5,
+          "spatial": false
+        }
+      }
+    },
+    {
+      "name": "Breeze",
+      "prefab": {
+        "kind": "breeze",
+        "from_deg": 270,
+        "speed": 6
+      },
+      "components": {
+        "AudioSource": {
+          "clip": "sfx:wind",
+          "volume": 0.35,
+          "spatial": false
+        }
+      }
+    },
+    {
+      "name": "Sloop",
+      "prefab": {
+        "kind": "sloop",
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "heading_deg": 90
+      },
+      "components": {
+        "Boat": {
+          "hoist": 1,
+          "hoist_now": 1,
+          "sheet": 1,
+          "sheet_now": 1
+        },
+        "Crew": {},
+        "Tally": {},
+        "Log": {},
+        "Model": {
+          "mesh": "capsule",
+          "scale": [
+            1.6,
+            1.4,
+            6.0
+          ],
+          "color": [
+            0.9,
+            0.9,
+            0.85,
+            1
+          ],
+          "roughness": 0.4
+        }
+      }
+    },
+    {
+      "name": "Crate1",
+      "prefab": {
+        "kind": "crate",
+        "position": [
+          5,
+          0,
+          2.2
+        ],
+        "yaw_deg": 10
+      },
+      "components": {
+        "Cargo": {
+          "value": 1
+        },
+        "Model": {
+          "mesh": "cube",
+          "scale": [
+            0.6,
+            0.6,
+            0.6
+          ],
+          "color": [
+            0.55,
+            0.36,
+            0.2,
+            1
+          ],
+          "roughness": 0.8
+        }
+      }
+    },
+    {
+      "name": "Crate2",
+      "prefab": {
+        "kind": "crate",
+        "position": [
+          11,
+          0,
+          -2.4
+        ],
+        "yaw_deg": 35
+      },
+      "components": {
+        "Cargo": {
+          "value": 2
+        },
+        "Model": {
+          "mesh": "cube",
+          "scale": [
+            0.6,
+            0.6,
+            0.6
+          ],
+          "color": [
+            0.55,
+            0.36,
+            0.2,
+            1
+          ],
+          "roughness": 0.8
+        }
+      }
+    },
+    {
+      "name": "Crate3",
+      "prefab": {
+        "kind": "crate",
+        "position": [
+          18,
+          0,
+          2.6
+        ],
+        "yaw_deg": 60
+      },
+      "components": {
+        "Cargo": {
+          "value": 1
+        },
+        "Model": {
+          "mesh": "cube",
+          "scale": [
+            0.6,
+            0.6,
+            0.6
+          ],
+          "color": [
+            0.55,
+            0.36,
+            0.2,
+            1
+          ],
+          "roughness": 0.8
+        }
+      }
+    },
+    {
+      "name": "Crate4",
+      "prefab": {
+        "kind": "crate",
+        "position": [
+          26,
+          0,
+          -6
+        ],
+        "yaw_deg": 80
+      },
+      "components": {
+        "Cargo": {
+          "value": 3
+        },
+        "Model": {
+          "mesh": "cube",
+          "scale": [
+            0.6,
+            0.6,
+            0.6
+          ],
+          "color": [
+            0.55,
+            0.36,
+            0.2,
+            1
+          ],
+          "roughness": 0.8
+        }
+      }
+    },
+    {
+      "name": "Sun",
+      "components": {
+        "Transform": {
+          "position": [
+            0,
+            50,
+            0
+          ],
+          "rotation": [
+            -0.3535534,
+            0.3535534,
+            0.1464466,
+            0.8535534
+          ]
+        },
+        "Light": {
+          "kind": "directional",
+          "intensity": 6.0,
+          "shadows": true
+        }
+      }
+    },
+    {
+      "name": "Sky",
+      "components": {
+        "Environment": {
+          "fog_density": 0.0015,
+          "bloom": 0.12
+        }
+      }
+    }
+  ]
+}

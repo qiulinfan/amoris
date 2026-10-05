@@ -1,8 +1,0 @@
-name = "ui"
-entry = "scripts/main.tsx"
-scene = "scene.json"
-
-[window]
-width = 960
-height = 540
-title = "Pocket UI sample"

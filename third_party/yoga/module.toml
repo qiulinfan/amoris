@@ -1,6 +1,0 @@
-name = "yoga"
-kind = "static_library"
-description = "Yoga 3.2.1 flexbox layout engine (Meta). MIT."
-sources = ["yoga/**/*.cpp"]
-public_include = ["."]
-third_party = true

@@ -1,6 +1,0 @@
-world: 5 entities, 5 roots, tick 240
-- Ground #493 [Transform pos=(0,-0.5,0) scl=(10,1,10) | WorldTransform | MeshRenderer color=(0.3,0.35,0.3,1) | Bounds]
-- Generator #494 [Transform pos=(0,0.5,0) | WorldTransform | MeshRenderer mesh="cylinder" color=(0.5,0.6,0.9,1) | Bounds | AudioSource clip="assets/hum.wav" volume=0.6 loop=true autoplay=true playing=true voice=1]
-- Sun #495 [Transform pos=(0,0,0) rot=(-0.4,0.2,0.1,0.89) | WorldTransform | Light intensity=1.1]
-- Camera #496 [Transform pos=(3,2.5,5) rot=(-0.2,0.26,0.055,0.94) | WorldTransform | Camera]
-- Crate #497 [Transform pos=(1.5,0.3,0) scl=(0.6,0.6,0.6) | WorldTransform | MeshRenderer color=(0.9,0.6,0.3,1) | Bounds]

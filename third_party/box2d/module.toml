@@ -1,8 +1,0 @@
-name = "box2d"
-kind = "static_library"
-description = "Box2D 3.1.1 2D rigid body physics (github.com/erincatto/box2d, tag v3.1.1, the src and include directories unchanged). MIT."
-sources = ["src/*.c"]
-public_include = ["include"]
-third_party = true
-# Box2D's own build compiles it as GNU C (CMake's default extensions): its timer needs clock_gettime.
-c_flags = ["-std=gnu17"]

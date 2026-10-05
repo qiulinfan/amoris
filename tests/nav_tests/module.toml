@@ -1,5 +1,0 @@
-name = "nav_tests"
-kind = "test"
-description = "Navigation tests: A* over hand-built grids (gaps, corner cutting, partial paths, smoothing), grids baked from colliders (walls, ledges above the step height, agent radius) and from the sprites tile map (top-down and platformer with jump links)."
-sources = ["*.cpp"]
-private_deps = ["pocket_nav", "catch2"]

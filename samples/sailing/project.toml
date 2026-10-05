@@ -1,0 +1,12 @@
+# The sailing showcase, headless (charter 2.4.1, slice 1): a sloop running before a steady breeze
+# on master's island sea, with crates adrift for the crew to take aboard. Ported from master's
+# samples/island and its `sailboat` task (tools/scripts/agent_eval.py).
+name = "sailing"
+rate = 60
+seed = 1
+
+# Sounds the presenters play for events (presentation only): event name or `prefix.*` to a clip.
+[sounds]
+"crate.taken" = "sfx:coin"
+"crates.all" = "sfx:powerup"
+"sail.*" = "sfx:blip"

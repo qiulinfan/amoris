@@ -1,0 +1,5 @@
+# The SDK's type test (script-host.md 12, test 7): a component with every field type and a system
+# using every API of the prelude, type-checked by tsc against the generated declarations.
+name = "sdk-every"
+rate = 60
+seed = 1

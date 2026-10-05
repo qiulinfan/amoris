@@ -1,0 +1,33 @@
+[package]
+name = "pocket-app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "The native binary `pocket`"
+
+[[bin]]
+name = "pocket"
+path = "src/main.rs"
+
+[dependencies]
+pocket-contract.workspace = true
+pocket-sim.workspace = true
+pocket-link.workspace = true
+pocket-runtime = { workspace = true, features = ["thread", "transpile"] }
+pocket-check = { workspace = true, features = ["native"] }
+serde_json.workspace = true
+pocket-assets.workspace = true
+pocket-render = { workspace = true, features = ["window", "import"] }
+glam.workspace = true
+image.workspace = true
+axum.workspace = true
+wgpu.workspace = true
+# pocket serve, pocket mcp and the CLI client of a running host (docs/spec/server.md).
+pocket-server.workspace = true
+pocket-mcp.workspace = true
+tokio.workspace = true
+ureq.workspace = true
+# The script debugger (docs/spec/debugger.md): pocket serve's DebugHub and CDP endpoint.
+pocket-debug.workspace = true
+pocket-audio.workspace = true

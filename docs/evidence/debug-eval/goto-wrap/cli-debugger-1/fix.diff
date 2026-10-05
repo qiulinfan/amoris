@@ -1,0 +1,10 @@
+--- planted/scripts/helm.ts
++++ agent/scripts/helm.ts
+@@ -26,6 +26,7 @@
+ function angleDiff(a: number, b: number): number {
+     let d = (a - b) % 360;
+     if (d > 180) d -= 360;
++    else if (d < -180) d += 360;
+     return d;
+ }
+ 

@@ -1,0 +1,156 @@
+{
+  "bug": "goto-wrap",
+  "kind": "a missing wrap: an angle difference below -180 degrees is not brought back into range",
+  "trial": 2,
+  "model": "zai-coding-plan/glm-5.3-flash",
+  "via": "cli",
+  "variant": "free",
+  "success": true,
+  "bug_check": true,
+  "checks": {
+    "steer": [
+      true,
+      "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3) (pass: left < -5, right > +5)"
+    ],
+    "goto": [
+      true,
+      "nearest to Crate4 within 15 s (sampled every 0.5 s): 4.4 m (pass < 6 m)"
+    ],
+    "goto_behind": [
+      true,
+      "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+    ],
+    "reach": [
+      true,
+      "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+    ],
+    "anchor": [
+      true,
+      "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+    ],
+    "tally": [
+      true,
+      "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+    ]
+  },
+  "hash_chain_identical_to_clean": true,
+  "hash_first_divergence_tick": null,
+  "hash_error": null,
+  "answer": {
+    "cause": "The helmsman's bearing-error wrap in angleDiff only corrected d > 180 but not d < -180 (JS % keeps the sign), so a mark behind to starboard produced a negative error and hard-port rudder, circling left the long way round.",
+    "file": "scripts/helm.ts",
+    "line": 28,
+    "fixed": true
+  },
+  "located": true,
+  "planted_at": {
+    "file": "scripts/helm.ts",
+    "lines": [
+      27,
+      29
+    ],
+    "defect_lines": [
+      28,
+      29
+    ]
+  },
+  "stopped_by": null,
+  "agent_exit": 0,
+  "agent_s": 361.5,
+  "wall_s": 364.1,
+  "budget": {
+    "max_calls": 60,
+    "max_time_s": 900
+  },
+  "tools": {
+    "bash": 28
+  },
+  "tool_calls": 28,
+  "tool_errors": 0,
+  "cli": {
+    "help": 1,
+    "scripts list": 1,
+    "scripts read": 4,
+    "world query": 6,
+    "world schema": 2,
+    "world get": 11,
+    "step": 9,
+    "world set": 5,
+    "scripts write": 1,
+    "scripts apply": 1,
+    "world edit": 2,
+    "help world.edit": 1,
+    "help world_edit": 1,
+    "history": 1,
+    "undo": 4,
+    "snapshots list": 1,
+    "snapshots restore": 1,
+    "status": 1,
+    "scripts check": 1
+  },
+  "pocket_calls": 54,
+  "turns": 27,
+  "tokens": {
+    "input": 34754,
+    "output": 2568,
+    "reasoning": 8485,
+    "cache_read": 520576,
+    "total": 566383
+  },
+  "cost_usd": 0.0,
+  "debug_used": false,
+  "refusals": {
+    "sim.component_unknown": 2,
+    "request.misplaced_field": 2
+  },
+  "output_chars": 31429,
+  "largest_output_chars": 11485,
+  "bash_timeouts": 0,
+  "blocked_s": 0.0,
+  "eval_unseen_locals": 0,
+  "stale_bundle_after_restore": {
+    "restore_at_s": 339.050033,
+    "reapplied_at_s": null,
+    "lost_s": 16.1,
+    "ended_with_old_scripts": true
+  },
+  "first_s": {
+    "scripts_read": 9.23,
+    "scripts_write": 249.94
+  },
+  "as_run": {
+    "success": true,
+    "located": true,
+    "checks": {
+      "steer": [
+        true,
+        "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+      ],
+      "goto": [
+        true,
+        "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+      ],
+      "goto_behind": [
+        true,
+        "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+      ],
+      "reach": [
+        true,
+        "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+      ],
+      "anchor": [
+        true,
+        "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+      ],
+      "tally": [
+        true,
+        "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+      ]
+    },
+    "hash_chain_identical_to_clean": true,
+    "hash_first_divergence_tick": null
+  },
+  "isolation": "permissions",
+  "rules_kept": true,
+  "rules_changed": []
+}

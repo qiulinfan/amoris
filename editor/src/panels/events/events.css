@@ -1,0 +1,179 @@
+.ev-table {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.ev-row {
+  display: grid;
+  grid-template-columns: 52px 60px minmax(120px, 1.1fr) minmax(80px, 0.8fr) 2fr;
+  gap: 8px;
+  align-items: center;
+  height: 24px;
+  padding: 0 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+  cursor: default;
+  white-space: nowrap;
+}
+
+.ev-row > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ev-header {
+  flex: none;
+  height: 24px;
+  color: var(--text-3);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 600;
+  background: var(--bg-0);
+  border-bottom: 1px solid var(--line);
+}
+
+.ev-body {
+  flex: 1;
+  overflow: auto;
+}
+
+.ev-body .ev-row:hover {
+  background: var(--bg-hover);
+}
+
+.ev-row.is-selected {
+  background: var(--accent-soft) !important;
+}
+
+.ev-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-0);
+}
+
+.ev-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.caused {
+  color: var(--text-3);
+}
+
+.ev-data {
+  color: var(--text-2);
+  font-size: 11px;
+}
+
+.why {
+  height: 100%;
+  overflow: auto;
+  padding: 10px 12px;
+}
+
+.why-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.why-name {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-0);
+}
+
+.why-data {
+  margin: 4px 0 8px;
+  max-height: 160px;
+  overflow: auto;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--bg-0);
+  border: 1px solid var(--line);
+  font: 11.5px/1.5 var(--mono);
+  color: var(--text-1);
+  white-space: pre-wrap;
+}
+
+.why-title {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.chain {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  position: relative;
+}
+
+.chain::before {
+  content: "";
+  position: absolute;
+  left: 10px;
+  top: 12px;
+  bottom: 12px;
+  width: 1px;
+  background: var(--line-strong);
+}
+
+.chain li {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  padding: 2px 6px 2px 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.chain li:hover {
+  background: var(--bg-hover);
+}
+
+.chain li.is-self .chain-name {
+  color: var(--accent);
+}
+
+.chain-step {
+  width: 21px;
+  height: 21px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--bg-2);
+  border: 1px solid var(--line-strong);
+  font: 600 10px var(--mono);
+  color: var(--text-1);
+  z-index: 1;
+}
+
+.chain-name {
+  font-weight: 500;
+  color: var(--text-0);
+}
+
+.chain-data {
+  color: var(--text-2);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.pad {
+  padding: 6px 0;
+}

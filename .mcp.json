@@ -1,8 +1,0 @@
-{
-  "mcpServers": {
-    "pocket": {
-      "command": "./.pocket/pocket",
-      "args": ["mcp"]
-    }
-  }
-}

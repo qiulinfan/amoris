@@ -1,7 +1,0 @@
-name = "pocket_assets"
-kind = "static_library"
-description = "Project assets: a minimal glTF 2.0 reader (.glb and .gltf; positions, normals, texture coordinates, indices, per-primitive base color and texture), image decoding through stb_image, and an AssetStore that resolves project-relative paths, caches what it loaded and describes it for agents."
-sources = ["src/**/*.cpp"]
-public_include = ["include"]
-public_deps = ["pocket_core"]
-private_deps = ["stb", "meshoptimizer", "libwebp", "draco", "basisu"]

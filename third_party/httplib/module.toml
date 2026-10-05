@@ -1,7 +1,0 @@
-name = "httplib"
-kind = "static_library"
-description = "cpp-httplib 0.56.0 single header HTTP server and client. MIT."
-sources = []
-public_include = ["include"]
-public_defines = ["CPPHTTPLIB_NO_EXCEPTIONS=0"]
-third_party = true

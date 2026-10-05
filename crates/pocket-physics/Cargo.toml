@@ -1,0 +1,33 @@
+[package]
+name = "pocket-physics"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Rigid bodies on Rapier, buoyancy on waves, wind on a sail, keel, rudder and hull drag"
+
+[dependencies]
+pocket-contract.workspace = true
+pocket-sim.workspace = true
+bevy_ecs.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+# Persisted::trace takes its Tracer: the components hold enums below their top level, which their
+# trace explores first (persistence.md 14, choice 9; architecture.md 6).
+serde-reflection.workspace = true
+# The solver: enhanced-determinism and serde-serialize, never parallel or simd8 (architecture.md
+# 4.4 and 6; the physics spike).
+rapier3d.workspace = true
+# The physics cache's bytes: Rapier's PhysicsWorld through serde, as the physics spike wrote and
+# restored them natively and in the browser (architecture.md 6, the reason recorded there).
+bincode.workspace = true
+# parry's BVH rounds a log2 the platform computes natively; a test compares it with libm's
+# (numeric.md 10, item 8). The forces use pocket_sim::math, not libm directly.
+libm.workspace = true
+
+# The web tests (pocket_physics::WEB_TESTS: the sailing scene's hash chain, forks, the BVH log2)
+# as a WebAssembly module with no imports, run under Node by tests/web/run.mjs.
+[[example]]
+name = "web_physics"
+crate-type = ["cdylib"]

@@ -1,0 +1,29 @@
+[package]
+name = "pocket-web"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "The browser entry points: the game in a Web Worker and the page's presenter"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+pocket-contract.workspace = true
+pocket-sim.workspace = true
+pocket-link.workspace = true
+pocket-runtime.workspace = true
+pocket-assets.workspace = true
+pocket-check.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+# The exports of both roles and the injected clock, performance.now() (architecture.md 4.14).
+wasm-bindgen.workspace = true
+
+[dev-dependencies]
+# examples/pack.rs compiles a project's TypeScript natively into the web package, and the tests
+# build projects from disk; the shipped module never links oxc (architecture.md 8.3).
+pocket-runtime = { workspace = true, features = ["transpile"] }
+pocket-check = { workspace = true, features = ["native"] }

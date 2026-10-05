@@ -1,8 +1,0 @@
-name = "playground"
-entry = "scripts/main.ts"
-scene = "scene.json"
-
-[window]
-title = "Pocket: playground"
-width = 960
-height = 540

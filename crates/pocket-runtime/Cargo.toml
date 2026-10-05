@@ -1,0 +1,33 @@
+[package]
+name = "pocket-runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "The game: composition, command application at tick boundaries, the game thread"
+
+[features]
+# TypeScript compiled in process (pocket-script's oxc), for loading projects from disk and hot
+# updates; the shipped web build receives compiled scripts (architecture.md 7.4).
+transpile = ["pocket-script/transpile"]
+# GameThread: the game on its own std thread (native; threads.md 3).
+thread = []
+
+[dependencies]
+pocket-contract.workspace = true
+pocket-sim.workspace = true
+pocket-persist.workspace = true
+pocket-physics.workspace = true
+pocket-assets.workspace = true
+pocket-interface.workspace = true
+pocket-script.workspace = true
+pocket-link.workspace = true
+bevy_ecs.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+# project.toml (architecture.md 6, toml: the reason recorded there).
+toml.workspace = true
+
+[dev-dependencies]
+pocket-script = { workspace = true, features = ["transpile"] }

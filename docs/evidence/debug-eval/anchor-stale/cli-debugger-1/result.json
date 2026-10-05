@@ -1,0 +1,151 @@
+{
+  "bug": "anchor-stale",
+  "kind": "stale variable: the hoist is written from the value read before the anchor rule",
+  "trial": 1,
+  "model": "zai-coding-plan/glm-5.3-flash",
+  "via": "cli",
+  "variant": "debugger",
+  "success": true,
+  "bug_check": true,
+  "checks": {
+    "steer": [
+      true,
+      "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3) (pass: left < -5, right > +5)"
+    ],
+    "goto": [
+      true,
+      "nearest to Crate4 within 15 s (sampled every 0.5 s): 4.4 m (pass < 6 m)"
+    ],
+    "goto_behind": [
+      true,
+      "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+    ],
+    "reach": [
+      true,
+      "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+    ],
+    "anchor": [
+      true,
+      "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+    ],
+    "tally": [
+      true,
+      "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+    ]
+  },
+  "hash_chain_identical_to_clean": true,
+  "hash_first_divergence_tick": null,
+  "hash_error": null,
+  "answer": {
+    "cause": "The helm system computed the anchored sail (0) into a local `sail` variable but then assigned `b.hoist[r] = wanted`, so the sail stayed hoisted and the sloop never slowed at anchor.",
+    "file": "scripts/helm.ts",
+    "line": 77,
+    "fixed": true
+  },
+  "located": false,
+  "planted_at": {
+    "file": "scripts/helm.ts",
+    "lines": [
+      71,
+      78
+    ],
+    "defect_lines": [
+      78
+    ]
+  },
+  "stopped_by": null,
+  "agent_exit": 0,
+  "agent_s": 477.3,
+  "wall_s": 479.6,
+  "budget": {
+    "max_calls": 60,
+    "max_time_s": 900
+  },
+  "tools": {
+    "bash": 30,
+    "write": 1
+  },
+  "tool_calls": 31,
+  "tool_errors": 2,
+  "cli": {
+    "help": 1,
+    "world get": 9,
+    "help world": 1,
+    "scripts list": 1,
+    "world tree": 1,
+    "scripts read": 2,
+    "help debug": 1,
+    "status": 2,
+    "debug breakpoints.set": 4,
+    "help debug.breakpoints.set": 1,
+    "step": 7,
+    "debug state": 2,
+    "debug breakpoints.clear": 2,
+    "debug continue": 2,
+    "world set": 2,
+    "debug eval": 4,
+    "scripts write": 1,
+    "scripts apply": 1
+  },
+  "pocket_calls": 44,
+  "turns": 28,
+  "tokens": {
+    "input": 26278,
+    "output": 2620,
+    "reasoning": 3742,
+    "cache_read": 371584,
+    "total": 404224
+  },
+  "cost_usd": 0.0,
+  "refusals": {
+    "request.missing_field": 1,
+    "request.unknown_field": 1
+  },
+  "output_chars": 26635,
+  "largest_output_chars": 9343,
+  "bash_timeouts": 3,
+  "first_s": {
+    "scripts_read": 6.99,
+    "debug": 22.41,
+    "scripts_write": 410.01
+  },
+  "debug_used": true,
+  "blocked_s": 210.4,
+  "eval_unseen_locals": 0,
+  "stale_bundle_after_restore": null,
+  "as_run": {
+    "success": true,
+    "located": true,
+    "checks": {
+      "steer": [
+        true,
+        "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+      ],
+      "goto": [
+        true,
+        "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+      ],
+      "goto_behind": [
+        true,
+        "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+      ],
+      "reach": [
+        true,
+        "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+      ],
+      "anchor": [
+        true,
+        "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+      ],
+      "tally": [
+        true,
+        "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+      ]
+    },
+    "hash_chain_identical_to_clean": true,
+    "hash_first_divergence_tick": null
+  },
+  "isolation": "permissions",
+  "rules_kept": true,
+  "rules_changed": []
+}

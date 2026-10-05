@@ -1,0 +1,54 @@
+debug_sailing: waiting for a debugger (Runtime.runIfWaitingForDebugger)
+pocket-cdp: client 1 attached
+pocket-cdp <- {"id":2,"method":"Profiler.enable","params":{}}
+pocket-cdp -> {"id":2,"result":{}}
+pocket-cdp <- {"id":3,"method":"Runtime.enable","params":{}}
+pocket-cdp -> {"method":"Runtime.executionContextCreated","params":{"context":{"auxData":{"isDefault":true},"id":1,"name":"Pocket3D: sailing","origin":"","uniqueId":"pocket-game-1"}}}
+pocket-cdp -> {"id":3,"result":{}}
+pocket-cdp <- {"id":4,"method":"Debugger.enable","params":{"maxScriptsCacheSize":10000000}}
+pocket-cdp -> {"method":"Debugger.scriptParsed","params":{"embedderName":"pocket:///scripts/components.js","endColumn":0,"endLine":36,"executionContextAuxData":{"isDefault":true},"executionContextId":1,"hasSourceURL":false,"hash":"78347b5d88284a70","isLiveEdit":false,"isModule":true,"length":1586,"scriptId":"1","scriptLanguage":"JavaScript","sourceMapURL":"data:application/json;charset=utf-8;base64,eyJmaWxlIjoi
+pocket-cdp -> {"method":"Debugger.scriptParsed","params":{"embedderName":"pocket:///scripts/main.js","endColumn":0,"endLine":21,"executionContextAuxData":{"isDefault":true},"executionContextId":1,"hasSourceURL":false,"hash":"7b4f45316aba89d6","isLiveEdit":false,"isModule":true,"length":488,"scriptId":"2","scriptLanguage":"JavaScript","sourceMapURL":"data:application/json;charset=utf-8;base64,eyJmaWxlIjoibWFpbi5
+pocket-cdp -> {"method":"Debugger.scriptParsed","params":{"embedderName":"pocket:///scripts/rules.js","endColumn":0,"endLine":112,"executionContextAuxData":{"isDefault":true},"executionContextId":1,"hasSourceURL":false,"hash":"c9d21f078c797284","isLiveEdit":false,"isModule":true,"length":3496,"scriptId":"3","scriptLanguage":"JavaScript","sourceMapURL":"data:application/json;charset=utf-8;base64,eyJmaWxlIjoicnVs
+pocket-cdp -> {"id":4,"result":{"debuggerId":"pocket-game-debugger"}}
+pocket-cdp <- {"id":5,"method":"Debugger.setPauseOnExceptions","params":{"state":"none"}}
+pocket-cdp -> {"id":5,"result":{}}
+pocket-cdp <- {"id":6,"method":"Debugger.setAsyncCallStackDepth","params":{"maxDepth":32}}
+pocket-cdp -> {"id":6,"result":{}}
+pocket-cdp <- {"id":7,"method":"Network.enable","params":{"maxPostDataSize":65536,"maxTotalBufferSize":262144000,"reportDirectSocketTraffic":true}}
+pocket-cdp -> {"id":7,"result":{}}
+pocket-cdp <- {"id":8,"method":"Network.setAttachDebugStack","params":{"enabled":true}}
+pocket-cdp -> {"id":8,"result":{}}
+pocket-cdp <- {"id":9,"method":"Runtime.getIsolateId","params":{}}
+pocket-cdp -> {"id":9,"result":{"id":"pocket-game"}}
+pocket-cdp <- {"id":10,"method":"Debugger.setBlackboxPatterns","params":{"patterns":["/node_modules/|^node:"],"skipAnonymous":false}}
+pocket-cdp -> {"id":10,"result":{}}
+pocket-cdp <- {"id":11,"method":"Network.setBlockedURLs","params":{"urlPatterns":[]}}
+pocket-cdp -> {"id":11,"result":{}}
+pocket-cdp <- {"id":12,"method":"Network.emulateNetworkConditionsByRule","params":{"offline":false,"emulateOfflineServiceWorker":false,"matchedNetworkConditions":[]}}
+pocket-cdp -> {"id":12,"result":{}}
+pocket-cdp <- {"id":13,"method":"Network.overrideNetworkState","params":{"offline":false,"latency":0,"downloadThroughput":-1,"uploadThroughput":-1,"connectionType":"none"}}
+pocket-cdp -> {"id":13,"result":{}}
+pocket-cdp <- {"id":14,"method":"Runtime.runIfWaitingForDebugger","params":{}}
+pocket-cdp -> {"id":14,"result":{}}
+pocket-cdp <- {"id":15,"method":"Debugger.getScriptSource","params":{"scriptId":"3"}}
+pocket-cdp -> {"id":15,"result":{"scriptSource":"// The sailing game's rules: stateless systems over the world (charter 3.2). The boat itself is the\n// engine's Boat component, which wind, sail, keel and rudder drive (pocket-physics); these rules\n// keep the score and the log.\nimport { system } from \"pocket\";\n/** How near a crate must float, across the water, to be taken aboard (master's REACH). */\nconst
+pocket-cdp <- {"id":16,"method":"Debugger.setBreakpointByUrl","params":{"lineNumber":39,"url":"pocket:///scripts/rules.js","columnNumber":3,"condition":""}}
+pocket-cdp -> {"id":16,"result":{"breakpointId":"bp1","locations":[{"columnNumber":3,"lineNumber":39,"scriptId":"3"}]}}
+pocket-cdp -> {"method":"Debugger.paused","params":{"callFrames":[{"callFrameId":"0","canBeRestarted":false,"functionName":"","location":{"columnNumber":3,"lineNumber":39,"scriptId":"3"},"scopeChain":[{"name":"Local","object":{"className":"Object","description":"Local","objectId":"p1:s1","type":"object"},"type":"local"},{"name":"Closure","object":{"className":"Object","description":"Closure","objectId":"p1:s2",
+pocket-cdp <- {"id":17,"method":"Debugger.getPossibleBreakpoints","params":{"start":{"scriptId":"3","lineNumber":21,"columnNumber":0},"end":{"scriptId":"3","lineNumber":40,"columnNumber":3},"restrictToFunction":false}}
+pocket-cdp -> {"id":17,"result":{"locations":[{"columnNumber":0,"lineNumber":21,"scriptId":"3"},{"columnNumber":1,"lineNumber":22,"scriptId":"3"},{"columnNumber":1,"lineNumber":23,"scriptId":"3"},{"columnNumber":1,"lineNumber":24,"scriptId":"3"},{"columnNumber":1,"lineNumber":25,"scriptId":"3"},{"columnNumber":2,"lineNumber":26,"scriptId":"3"},{"columnNumber":2,"lineNumber":27,"scriptId":"3"},{"columnNumber":3,
+pocket-cdp <- {"id":18,"method":"Runtime.getProperties","params":{"objectId":"p1:s1","ownProperties":false,"accessorPropertiesOnly":false,"nonIndexedPropertiesOnly":false,"generatePreview":true}}
+pocket-cdp -> {"id":18,"result":{"internalProperties":[],"result":[{"configurable":true,"enumerable":true,"isOwn":true,"name":"r","value":{"description":"0","type":"number","value":0},"writable":true},{"configurable":true,"enumerable":true,"isOwn":true,"name":"e","value":{"description":"3","type":"number","value":3.0},"writable":true},{"configurable":true,"enumerable":true,"isOwn":true,"name":"speed","value":{"
+pocket-cdp <- {"id":19,"method":"Debugger.evaluateOnCallFrame","params":{"callFrameId":"0","expression":"ctx.system + \":\" + r","objectGroup":"console","includeCommandLineAPI":true,"silent":false,"returnByValue":true,"generatePreview":false}}
+pocket-cdp -> {"id":19,"result":{"result":{"type":"string","value":"log:0"}}}
+pocket-cdp <- {"id":20,"method":"Debugger.stepOver","params":{"skipList":[{"scriptId":"3","start":{"lineNumber":39,"columnNumber":3},"end":{"lineNumber":39,"columnNumber":9}}]}}
+pocket-cdp -> {"id":20,"result":{}}
+pocket-cdp -> {"method":"Debugger.resumed","params":{}}
+pocket-cdp -> {"method":"Debugger.paused","params":{"callFrames":[{"callFrameId":"0","canBeRestarted":false,"functionName":"","location":{"columnNumber":3,"lineNumber":40,"scriptId":"3"},"scopeChain":[{"name":"Local","object":{"className":"Object","description":"Local","objectId":"p2:s1","type":"object"},"type":"local"},{"name":"Closure","object":{"className":"Object","description":"Closure","objectId":"p2:s2",
+pocket-cdp <- {"id":21,"method":"Runtime.getProperties","params":{"objectId":"p2:s1","ownProperties":false,"accessorPropertiesOnly":false,"nonIndexedPropertiesOnly":false,"generatePreview":true}}
+pocket-cdp -> {"id":21,"result":{"internalProperties":[],"result":[{"configurable":true,"enumerable":true,"isOwn":true,"name":"r","value":{"description":"0","type":"number","value":0},"writable":true},{"configurable":true,"enumerable":true,"isOwn":true,"name":"e","value":{"description":"3","type":"number","value":3.0},"writable":true},{"configurable":true,"enumerable":true,"isOwn":true,"name":"speed","value":{"
+pocket-cdp <- {"id":22,"method":"Debugger.removeBreakpoint","params":{"breakpointId":"bp1"}}
+pocket-cdp -> {"id":22,"result":{}}
+pocket-cdp <- {"id":23,"method":"Debugger.resume","params":{"terminateOnResume":false}}
+pocket-cdp -> {"id":23,"result":{}}
+pocket-cdp -> {"method":"Debugger.resumed","params":{}}

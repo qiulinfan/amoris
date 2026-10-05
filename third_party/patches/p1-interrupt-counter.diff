@@ -1,0 +1,39 @@
+diff --git a/quickjs/quickjs.c b/quickjs/quickjs.c
+index f426e07..c5c9126 100644
+--- a/quickjs/quickjs.c
++++ b/quickjs/quickjs.c
+@@ -2483,6 +2483,20 @@ void JS_SetInterruptHandler(JSRuntime *rt, JSInterruptHandler *cb, void *opaque)
+     rt->interrupt_opaque = opaque;
+ }
+ 
++/* Pocket3D P1: the host sets the interrupt counter to a call's budget before the call and reads
++   it afterwards, so where a budget ends depends on the call alone, never on what the context ran
++   before. The handler runs when the counter reaches zero; it then restarts from
++   JS_INTERRUPT_COUNTER_INIT. */
++void JS_SetInterruptCounter(JSContext *ctx, int32_t counter)
++{
++    ctx->interrupt_counter = counter;
++}
++
++int32_t JS_GetInterruptCounter(JSContext *ctx)
++{
++    return ctx->interrupt_counter;
++}
++
+ void JS_SetCanBlock(JSRuntime *rt, bool can_block)
+ {
+     rt->can_block = can_block;
+diff --git a/quickjs/quickjs.h b/quickjs/quickjs.h
+index 3bdda38..cc9cde7 100644
+--- a/quickjs/quickjs.h
++++ b/quickjs/quickjs.h
+@@ -1269,6 +1269,9 @@ JS_EXTERN void JS_SetHostPromiseRejectionTracker(JSRuntime *rt, JSHostPromiseRej
+ /* return != 0 if the JS code needs to be interrupted */
+ typedef int JSInterruptHandler(JSRuntime *rt, void *opaque);
+ JS_EXTERN void JS_SetInterruptHandler(JSRuntime *rt, JSInterruptHandler *cb, void *opaque);
++/* Pocket3D P1: the context's interrupt counter (the polls left before the handler runs). */
++JS_EXTERN void JS_SetInterruptCounter(JSContext *ctx, int32_t counter);
++JS_EXTERN int32_t JS_GetInterruptCounter(JSContext *ctx);
+ /* if can_block is true, Atomics.wait() can be used */
+ JS_EXTERN void JS_SetCanBlock(JSRuntime *rt, bool can_block);
+ /* set the [IsHTMLDDA] internal slot */

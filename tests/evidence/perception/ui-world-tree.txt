@@ -1,5 +1,0 @@
-world: 4 entities, 4 roots, tick 240
-- Ground #493 [Transform pos=(0,-0.5,0) scl=(12,1,12) | WorldTransform | MeshRenderer color=(0.32,0.36,0.3,1) | Bounds]
-- Crate #494 [Transform pos=(0,0.5,0) | WorldTransform | MeshRenderer color=(0.8,0.55,0.25,1) | Bounds]
-- Sun #495 [Transform pos=(0,0,0) rot=(-0.4,0.2,0.1,0.89) | WorldTransform | Light intensity=1.2]
-- Camera #496 [Transform pos=(4,3.5,6) rot=(-0.2,0.28,0.06,0.94) | WorldTransform | Camera]

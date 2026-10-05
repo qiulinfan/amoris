@@ -1,5 +1,0 @@
-world: 4 entities, 4 roots, tick 240
-- Ground #493 [Transform pos=(0,-0.05,0) scl=(8,0.1,8) | WorldTransform | MeshRenderer color=(0.4,0.45,0.4,1) | Bounds]
-- Ball #494 [Transform pos=(0,0.5,0) | WorldTransform | MeshRenderer mesh="sphere" color=(0.9,0.5,0.2,1) | Bounds]
-- Sun #495 [Transform pos=(0,0,0) rot=(-0.46,0.2,0.1,0.86) | WorldTransform | Light intensity=1.2]
-- Camera #496 [Transform pos=(0,2.5,7) rot=(-0.13,0,0,0.99) | WorldTransform | Camera fov_degrees=50]

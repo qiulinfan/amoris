@@ -1,7 +1,0 @@
-name = "pocket_physics"
-kind = "static_library"
-description = "Deterministic rigid body physics: boxes and spheres, static/dynamic/kinematic bodies, gravity, sequential impulse contact solver with friction and restitution, sleeping, triggers, raycasts, and collision events with causes."
-sources = ["src/**/*.cpp"]
-public_include = ["include"]
-public_deps = ["pocket_core", "pocket_world", "pocket_assets"]
-private_deps = ["box2d"]

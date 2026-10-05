@@ -1,3 +1,0 @@
-transcript ticks 0-239 (2 segments)
-t0-238 (239 ticks): beeps rising 0->4, hum.position rising 0.017->0.983, voices = 1 | events: audio.finishedx7 audio.loopedx3 audio.startedx8 entity.spawnedx5(/Ground,/Generator,/Sun,/Camera)
-t239-239 (1 ticks): hum.position = 0 | events: audio.loopedx1@t239

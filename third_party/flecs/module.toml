@@ -1,7 +1,0 @@
-name = "flecs"
-kind = "static_library"
-description = "flecs 4.1.6 entity component system (single amalgamated C source). MIT."
-sources = ["src/flecs.c"]
-public_include = ["include"]
-public_defines = ["FLECS_CUSTOM_BUILD", "FLECS_CPP", "FLECS_MODULE", "FLECS_SYSTEM", "FLECS_PIPELINE", "FLECS_TIMER", "FLECS_META", "FLECS_UNITS", "FLECS_JSON", "FLECS_DOC", "FLECS_LOG", "FLECS_SCRIPT", "FLECS_STATS", "FLECS_METRICS", "FLECS_ALERTS", "FLECS_OS_API_IMPL"]
-third_party = true

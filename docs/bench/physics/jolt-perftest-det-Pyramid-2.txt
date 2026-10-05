@@ -1,0 +1,14 @@
+# 2026-10-04 11:43 load { 6.56 9.07 7.66 }
+Single precision ARM 64-bit with instructions: NEON (Cross Platform Deterministic) (16-bit ObjectLayer) (ObjectStream) 
+Running scene: Pyramid
+Motion Quality, Thread Count, Steps / Second, Hash
+Discrete, 1, 177.378429, 0x74d0118836ac0892
+Discrete, 2, 243.006176, 0x74d0118836ac0892
+Discrete, 3, 232.830390, 0x74d0118836ac0892
+Discrete, 4, 233.105294, 0x74d0118836ac0892
+Discrete, 5, 266.486593, 0x74d0118836ac0892
+Discrete, 6, 242.121235, 0x74d0118836ac0892
+Discrete, 7, 224.637174, 0x74d0118836ac0892
+Discrete, 8, 275.453497, 0x74d0118836ac0892
+Discrete, 9, 261.458970, 0x74d0118836ac0892
+Discrete, 10, 192.677051, 0x74d0118836ac0892

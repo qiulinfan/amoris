@@ -1,6 +1,0 @@
-name = "pocket_core"
-kind = "static_library"
-description = "Foundation: structured logging, error type, fixed-step clock, seeded RNG, hashing, JSON, math, filesystem helpers. No platform or graphics dependencies."
-sources = ["src/**/*.cpp"]
-public_include = ["include"]
-public_deps = ["json"]

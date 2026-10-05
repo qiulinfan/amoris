@@ -1,0 +1,171 @@
+{
+  "bug": "steer-sign",
+  "kind": "sign error: the wheel's rudder is negated",
+  "trial": 2,
+  "model": "zai-coding-plan/glm-5.3-flash",
+  "via": "cli",
+  "variant": "free",
+  "success": true,
+  "bug_check": true,
+  "checks": {
+    "steer": [
+      true,
+      "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3) (pass: left < -5, right > +5)"
+    ],
+    "goto": [
+      true,
+      "nearest to Crate4 within 15 s (sampled every 0.5 s): 4.4 m (pass < 6 m)"
+    ],
+    "goto_behind": [
+      true,
+      "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+    ],
+    "reach": [
+      true,
+      "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+    ],
+    "anchor": [
+      true,
+      "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+    ],
+    "tally": [
+      true,
+      "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+    ]
+  },
+  "hash_chain_identical_to_clean": true,
+  "hash_first_divergence_tick": null,
+  "hash_error": null,
+  "answer": {
+    "cause": "The helm system negated the player's wheel input (rudder = -clamp(steer)\u00b7RUDDER_GAIN) even though positive Boat.rudder turns the bow to starboard and steer=-1 means port, so left/right were swapped.",
+    "file": "scripts/helm.ts",
+    "line": 54,
+    "fixed": true
+  },
+  "located": true,
+  "planted_at": {
+    "file": "scripts/helm.ts",
+    "lines": [
+      54,
+      54
+    ],
+    "defect_lines": [
+      54
+    ]
+  },
+  "stopped_by": null,
+  "agent_exit": 0,
+  "agent_s": 854.7,
+  "wall_s": 855.7,
+  "budget": {
+    "max_calls": 60,
+    "max_time_s": 900
+  },
+  "tools": {
+    "bash": 48,
+    "edit": 1
+  },
+  "tool_calls": 49,
+  "tool_errors": 1,
+  "cli": {
+    "help": 1,
+    "scripts list": 2,
+    "scripts read": 7,
+    "world schema": 1,
+    "world get": 28,
+    "world set": 15,
+    "step": 16,
+    "scripts write": 1,
+    "scripts apply": 3,
+    "snapshots list": 1,
+    "snapshots restore": 7,
+    "scripts status": 1,
+    "status": 3,
+    "events": 1,
+    "logs": 1,
+    "world tree": 1,
+    "scripts check": 1,
+    "call scripts.status": 6,
+    "play start": 2,
+    "call project.info": 1,
+    "assets": 1,
+    "help scripts.apply": 1,
+    "help scripts.write": 1,
+    "help scripts.check": 1,
+    "call docs.search": 2,
+    "play stop": 2,
+    "world query": 1,
+    "world edit": 5,
+    "help world_edit": 1,
+    "call world_edit": 1,
+    "call world.edit": 1,
+    "undo": 5
+  },
+  "pocket_calls": 121,
+  "turns": 47,
+  "tokens": {
+    "input": 56778,
+    "output": 3541,
+    "reasoning": 23774,
+    "cache_read": 1276992,
+    "total": 1361085
+  },
+  "cost_usd": 0.0,
+  "debug_used": false,
+  "refusals": {
+    "sim.component_unknown": 1,
+    "sim.entity_id_invalid": 1,
+    "request.misplaced_field": 1,
+    "request.unknown_field": 3
+  },
+  "output_chars": 52748,
+  "largest_output_chars": 25266,
+  "bash_timeouts": 0,
+  "blocked_s": 0.0,
+  "eval_unseen_locals": 0,
+  "stale_bundle_after_restore": {
+    "restore_at_s": 82.65,
+    "reapplied_at_s": 357.67,
+    "lost_s": 275.0,
+    "ended_with_old_scripts": false
+  },
+  "first_s": {
+    "scripts_read": 9.21,
+    "scripts_write": 66.59
+  },
+  "as_run": {
+    "success": true,
+    "located": true,
+    "checks": {
+      "steer": [
+        true,
+        "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+      ],
+      "goto": [
+        true,
+        "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+      ],
+      "goto_behind": [
+        true,
+        "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+      ],
+      "reach": [
+        true,
+        "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+      ],
+      "anchor": [
+        true,
+        "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+      ],
+      "tally": [
+        true,
+        "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+      ]
+    },
+    "hash_chain_identical_to_clean": true,
+    "hash_first_divergence_tick": null
+  },
+  "isolation": "permissions",
+  "rules_kept": true,
+  "rules_changed": []
+}

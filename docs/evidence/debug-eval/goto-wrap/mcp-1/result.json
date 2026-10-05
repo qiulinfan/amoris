@@ -1,0 +1,146 @@
+{
+  "bug": "goto-wrap",
+  "kind": "a missing wrap: an angle difference below -180 degrees is not brought back into range",
+  "trial": 1,
+  "model": "zai-coding-plan/glm-5.3-flash",
+  "via": "mcp",
+  "variant": "free",
+  "success": true,
+  "bug_check": true,
+  "checks": {
+    "steer": [
+      true,
+      "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3) (pass: left < -5, right > +5)"
+    ],
+    "goto": [
+      true,
+      "nearest to Crate4 within 15 s (sampled every 0.5 s): 4.4 m (pass < 6 m)"
+    ],
+    "goto_behind": [
+      true,
+      "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+    ],
+    "reach": [
+      true,
+      "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+    ],
+    "anchor": [
+      true,
+      "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+    ],
+    "tally": [
+      true,
+      "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+    ]
+  },
+  "hash_chain_identical_to_clean": true,
+  "hash_first_divergence_tick": null,
+  "hash_error": null,
+  "answer": {
+    "cause": "angleDiff in helm.ts only wrapped angle differences greater than +180, so a crate behind on the right produced a raw difference below -180 that was left unwrapped, driving the rudder hard to port (the long way round) instead of to starboard.",
+    "file": "scripts/helm.ts",
+    "line": 27,
+    "fixed": true
+  },
+  "located": false,
+  "planted_at": {
+    "file": "scripts/helm.ts",
+    "lines": [
+      27,
+      29
+    ],
+    "defect_lines": [
+      28,
+      29
+    ]
+  },
+  "stopped_by": null,
+  "agent_exit": 0,
+  "agent_s": 330.9,
+  "wall_s": 332.8,
+  "budget": {
+    "max_calls": 60,
+    "max_time_s": 900
+  },
+  "tools": {
+    "pocket_scripts": 4,
+    "bash": 16
+  },
+  "tool_calls": 20,
+  "tool_errors": 0,
+  "cli": {
+    "mcp scripts list": 1,
+    "help": 1,
+    "mcp scripts read": 3,
+    "world tree": 1,
+    "world query": 6,
+    "world get": 9,
+    "play start": 2,
+    "world set": 7,
+    "step": 8,
+    "world schema": 1,
+    "play stop": 2,
+    "scripts write": 1,
+    "scripts apply": 1,
+    "scripts check": 1,
+    "status": 1
+  },
+  "pocket_calls": 45,
+  "turns": 18,
+  "tokens": {
+    "input": 25850,
+    "output": 2512,
+    "reasoning": 10140,
+    "cache_read": 254720,
+    "total": 293222
+  },
+  "cost_usd": 0.0,
+  "refusals": {
+    "sim.component_unknown": 1
+  },
+  "output_chars": 18204,
+  "largest_output_chars": 4459,
+  "bash_timeouts": 0,
+  "first_s": {
+    "scripts_write": 145.74
+  },
+  "debug_used": false,
+  "blocked_s": 0.0,
+  "eval_unseen_locals": 0,
+  "stale_bundle_after_restore": null,
+  "as_run": {
+    "success": true,
+    "located": true,
+    "checks": {
+      "steer": [
+        true,
+        "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+      ],
+      "goto": [
+        true,
+        "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+      ],
+      "goto_behind": [
+        true,
+        "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+      ],
+      "reach": [
+        true,
+        "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+      ],
+      "anchor": [
+        true,
+        "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+      ],
+      "tally": [
+        true,
+        "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+      ]
+    },
+    "hash_chain_identical_to_clean": true,
+    "hash_first_divergence_tick": null
+  },
+  "isolation": "permissions",
+  "rules_kept": true,
+  "rules_changed": []
+}

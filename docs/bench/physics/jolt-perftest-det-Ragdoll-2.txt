@@ -1,0 +1,14 @@
+# 2026-10-04 11:44 load { 13.20 10.17 8.10 }
+Single precision ARM 64-bit with instructions: NEON (Cross Platform Deterministic) (16-bit ObjectLayer) (ObjectStream) 
+Running scene: Ragdoll
+Motion Quality, Thread Count, Steps / Second, Hash
+Discrete, 1, 30.053561, 0x4cb2f5a89651219
+Discrete, 2, 43.550173, 0x4cb2f5a89651219
+Discrete, 3, 54.740846, 0x4cb2f5a89651219
+Discrete, 4, 67.398853, 0x4cb2f5a89651219
+Discrete, 5, 73.245648, 0x4cb2f5a89651219
+Discrete, 6, 87.785815, 0x4cb2f5a89651219
+Discrete, 7, 78.885490, 0x4cb2f5a89651219
+Discrete, 8, 97.260002, 0x4cb2f5a89651219
+Discrete, 9, 78.030499, 0x4cb2f5a89651219
+Discrete, 10, 85.733800, 0x4cb2f5a89651219

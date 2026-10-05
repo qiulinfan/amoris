@@ -1,0 +1,108 @@
+/* Variable trees: debugger scopes, watches and console results. */
+
+.var-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 22px;
+  padding-right: 8px;
+  font: 12px var(--mono);
+  cursor: default;
+}
+
+.var-row:hover {
+  background: var(--bg-hover);
+}
+
+.var-twisty {
+  width: 14px;
+  display: grid;
+  place-items: center;
+  color: var(--text-2);
+  flex: none;
+}
+
+.var-twisty.has {
+  cursor: pointer;
+}
+
+.var-twisty.open svg {
+  transform: rotate(90deg);
+}
+
+.var-name {
+  color: #9cc4ff;
+}
+
+.var-sep {
+  color: var(--text-3);
+}
+
+.var-value {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.v-num {
+  color: #f78c6c;
+}
+.v-str {
+  color: #a5d6a7;
+}
+.v-bool {
+  color: #c792ea;
+}
+.v-null {
+  color: var(--text-3);
+}
+.v-obj {
+  color: var(--text-1);
+}
+.v-err {
+  color: var(--error);
+}
+
+.var-remove {
+  color: var(--text-3);
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  opacity: 0;
+}
+
+.var-row:hover .var-remove {
+  opacity: 1;
+}
+
+.var-remove:hover {
+  color: var(--text-0);
+  background: var(--bg-active);
+}
+
+
+.v-fn {
+  color: #82aaff;
+  font-style: italic;
+}
+
+.var-row.is-editable .var-value {
+  cursor: text;
+}
+
+.var-row.is-editable .var-value:hover {
+  text-decoration: underline dotted var(--text-3);
+}
+
+.var-input {
+  flex: 1;
+  min-width: 0;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: var(--bg-input);
+  border: 1px solid var(--accent, #4f8cff);
+  color: var(--text-0);
+  font: 12px var(--mono);
+}

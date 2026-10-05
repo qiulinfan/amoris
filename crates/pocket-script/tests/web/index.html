@@ -1,0 +1,34 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>script host web report</title>
+<!--
+  The script host's web report in a browser's Web Worker (the game thread's form on the web):
+  serve a directory holding this page, worker.js, web_workload.wasm, set.json and expected.txt (the
+  native report), then `python tools/webcheck.py http://127.0.0.1:<port>/index.html --serve <dir>`.
+  The title becomes DONE or FAIL with the first differing line.
+-->
+<pre id="out"></pre>
+<script type="module">
+const out = document.getElementById("out");
+const expected = (await (await fetch("expected.txt")).text()).replace(/\r\n/g, "\n");
+const worker = new Worker("worker.js", { type: "module" });
+worker.onmessage = ({ data }) => {
+  out.textContent = data.report;
+  const a = expected.split("\n");
+  const b = data.report.split("\n");
+  const i = a.findIndex((line, k) => line !== b[k]);
+  const failed = data.report.split("\n").some((l) => l.startsWith("FAIL"));
+  const result = {
+    identical: expected === data.report,
+    lines: b.length,
+    ms: Math.round(data.ms),
+    imports: data.imports,
+    crossOriginIsolated: self.crossOriginIsolated,
+    first: b[0],
+    last: b[b.length - 2],
+  };
+  if (!result.identical) result.differs = { line: i + 1, native: a[i], web: b[i] };
+  document.title = (result.identical && !failed && data.imports === 0 ? "DONE " : "FAIL ") + JSON.stringify(result);
+};
+worker.onerror = (e) => { document.title = "FAIL " + JSON.stringify({ error: String(e.message) }); };
+</script>

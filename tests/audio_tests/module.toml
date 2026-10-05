@@ -1,5 +1,0 @@
-name = "audio_tests"
-kind = "test"
-description = "Audio tests: WAV decoding through SDL, voices advanced by the simulation tick (positions, finish and loop events, stop by id/clip/tag), and the AudioSource component started by the session in a headless run of samples/audio."
-sources = ["*.cpp"]
-private_deps = ["pocket_audio", "pocket_app", "catch2"]

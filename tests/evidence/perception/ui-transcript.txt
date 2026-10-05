@@ -1,2 +1,0 @@
-transcript ticks 0-239 (1 segments)
-t0-239 (240 ticks): health = 100, paused = 0, score = 0 | events: entity.spawnedx4(/Ground,/Crate,/Sun,/Camera)

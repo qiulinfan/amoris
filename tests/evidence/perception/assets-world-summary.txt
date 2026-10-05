@@ -1,1 +1,0 @@
-{"tick":240,"entities":6,"roots":6,"components":{"Transform":6,"WorldTransform":6,"Camera":1,"Light":1,"MeshRenderer":4,"Bounds":4},"events":6,"hash":"12b93ead294ee869"}

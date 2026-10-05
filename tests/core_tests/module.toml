@@ -1,5 +1,0 @@
-name = "core_tests"
-kind = "test"
-description = "Unit tests for pocket_core."
-sources = ["*.cpp"]
-private_deps = ["pocket_core", "catch2"]

@@ -1,0 +1,32 @@
+# A minimal Rust-calls-Jolt prototype (docs/bench/physics.md, "Integration"): Jolt through the C
+# wrapper joltc (github.com/amerkoleci/joltc, MIT), built by build.rs with CMake from local
+# checkouts, called through hand-written declarations of the few functions it needs.
+[package]
+name = "jolt-ffi-proto"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+publish = false
+
+[workspace]
+
+[features]
+# Jolt's CROSS_PLATFORM_DETERMINISTIC CMake option.
+det = []
+
+[dependencies]
+libc = "=0.2.190"             # the calling thread's CPU time per step
+
+[build-dependencies]
+cmake = "=0.1.58"
+
+[profile.release]
+opt-level = 3
+debug = "line-tables-only"
+
+[profile.web]                # the engine's shipped browser profile (Cargo.toml at the repository root)
+inherits = "release"
+lto = true
+codegen-units = 1
+panic = "abort"
+debug = false

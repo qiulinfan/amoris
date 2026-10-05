@@ -1,7 +1,0 @@
-{
-  "layers": [
-    { "wave": "noise", "frequency": 1100, "to": 90, "attack": 0.004, "hold": 0.12, "decay": 0.7, "lowpass": 2600, "volume": 0.7 },
-    { "wave": "sine", "frequency": 70, "to": 35, "attack": 0.004, "hold": 0.1, "decay": 0.5, "volume": 0.5 },
-    { "wave": "square", "duty": 0.25, "frequency": 520, "to": 260, "delay": 0.02, "attack": 0.002, "hold": 0.03, "decay": 0.15, "volume": 0.2 }
-  ]
-}

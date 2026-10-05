@@ -1,0 +1,10 @@
+{"tick": 40, "source": {"player": 0}, "name": "world_edit", "params": {"edits": [{"op": "set", "entity": "Sloop", "component": "Boat", "value": {"rudder": 0.15}}]}}
+{"tick": 60, "source": {"player": 0}, "name": "world_edit", "params": {"edits": [{"op": "set", "entity": "Sloop", "component": "Crew", "value": {"take": "Crate1"}}]}}
+{"tick": 100, "source": {"player": 0}, "name": "world_edit", "params": {"edits": [{"op": "set", "entity": "Sloop", "component": "Crew", "value": {"take": "Crate1"}}]}}
+{"tick": 200, "source": {"player": 0}, "name": "world_edit", "params": {"edits": [{"op": "set", "entity": "Sloop", "component": "Boat", "value": {"rudder": -0.1}}]}}
+{"tick": 200, "source": {"developer": 0}, "name": "world_edit", "params": {"edits": [{"op": "set", "entity": "Breeze", "component": "Wind", "value": {"gust": 0.1}}]}}
+{"tick": 260, "source": {"player": 0}, "name": "world_edit", "params": {"edits": [{"op": "set", "entity": "Sloop", "component": "Crew", "value": {"take": "Crate2"}}]}}
+{"tick": 330, "source": {"player": 0}, "name": "world_edit", "params": {"edits": [{"op": "set", "entity": "Sloop", "component": "Boat", "value": {"rudder": 0.0, "sheet": 0.6}}]}}
+{"tick": 400, "source": {"player": 0}, "name": "world_edit", "params": {"edits": [{"op": "set", "entity": "Sloop", "component": "Crew", "value": {"take": "Crate3"}}]}}
+{"tick": 450, "source": {"player": 0}, "name": "world_edit", "params": {"edits": [{"op": "set", "entity": "Sloop", "component": "Crew", "value": {"take": "Crate2"}}]}}
+{"tick": 500, "source": {"player": 0}, "name": "world_edit", "params": {"edits": [{"op": "set", "entity": "Sloop", "component": "Boat", "value": {"hoist": 0}}]}}

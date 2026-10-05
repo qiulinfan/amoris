@@ -1,0 +1,15 @@
+$ node crates/pocket-debug/tests/jsdebug_dap.mjs   # 2026-10-04T05:37Z, js-debug from /Applications/Visual Studio Code.app
+ok   js-debug 1.140.0 from VS Code activates and registers its adapter factory: ["pwa-extensionHost","node-terminal","pwa-node","pwa-chrome","pwa-msedge","pwa-editor-browser"]
+ok   the root session finds the pocket-game target and starts a child session: "af1f523bbcabc8f64ae78526"
+ok   the breakpoint set by the TypeScript file's path verifies: [{"id":0,"verified":true,"source":{"name":"samples/sailing/scripts/rules.ts","path":"/Users/qiulinfan/Desktop/aipocket2-wt/debug/samples/sailing/scripts/rules.ts","sourceReference":0},"line":27,"column":13}]
+ok   stopped on the breakpoint: {"reason":"breakpoint","description":"Paused on breakpoint","threadId":0,"hitBreakpointIds":[0],"allThreadsStopped":false}
+ok   the top frame is rules.ts on disk at the breakpoint's TypeScript line: {"path":"/Users/qiulinfan/Desktop/aipocket2-wt/debug/samples/sailing/scripts/rules.ts","line":27,"name":"<anonymous>"}
+ok   a caller frame is the system's run in rules.ts at `boats.each`: {"name":"run","line":26}
+ok   Variables: Local shows r = 0 and e: {"e":"3","r":"0","set":"undefined","speed":"undefined","this":"undefined"}
+ok   Variables: Closure shows b, l and ctx: ["b","ctx","l"]
+ok   Variables: ctx expands to its fields: ["dt","emit","events","intent","part","query","rng","rngFor","rngNamed","rngTimeless","single","system","tick","time","world"]
+ok   Debug Console evaluation in the frame: "'log r=0'"
+ok   hover over a column shows a Float64Array: "Float64Array(1) [0.0]"
+ok   step over: the next TypeScript line: {"reason":"step","line":28}
+ok   after disconnect the game runs on, not paused: {"entities":7,"loop_state":"Ticking","paused_in_debugger":false,"tick":119}
+13/13 checks passed

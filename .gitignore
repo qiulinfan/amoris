@@ -1,20 +1,20 @@
-/build/
-/.pocket/
+# Build outputs
 target/
-node_modules/
-.venv/
-__pycache__/
-*.pyc
-.DS_Store
-*.swp
 dist/
-projects/
-**/.pocket/editor.json
-**/.pocket/thumbs/
-.claude/
-
-# Models converted through Blender (docs/design/assets.md, Importing models); rebuilt from the sources.
-.imported/
-
-# Written by every `pocket build` with this machine's absolute paths (tools/pocket/src/commands.rs).
-/compile_commands.json
+node_modules/
+*.wasm.map
+# Local state of the tools and of runs
+.cache/
+out/
+# Editor and SDK packages
+editor/node_modules/
+sdk/node_modules/
+editor/dist/
+# Python
+__pycache__/
+.venv/
+web/bench/vendor/
+# A running host's address in its project (pocket serve)
+.pocket/
+web/pkg/
+web/projects/

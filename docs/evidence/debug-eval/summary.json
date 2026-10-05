@@ -1,0 +1,2223 @@
+[
+  {
+    "dir": "steer-sign/cli-debugger-1",
+    "bug": "steer-sign",
+    "variant": "debugger",
+    "via": "cli",
+    "trial": 1,
+    "isolation": "permissions",
+    "success": true,
+    "bug_check": true,
+    "rules_kept": true,
+    "located": true,
+    "hash_chain_identical_to_clean": true,
+    "as_run": {
+      "success": true,
+      "located": true,
+      "checks": {
+        "steer": [
+          true,
+          "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+        ],
+        "goto": [
+          true,
+          "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+        ],
+        "goto_behind": [
+          true,
+          "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+        ],
+        "reach": [
+          true,
+          "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+        ],
+        "anchor": [
+          true,
+          "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+        ],
+        "tally": [
+          true,
+          "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+        ]
+      },
+      "hash_chain_identical_to_clean": true,
+      "hash_first_divergence_tick": null
+    },
+    "tool_calls": 23,
+    "pocket_calls": 43,
+    "tool_errors": 0,
+    "agent_s": 313.1,
+    "wall_s": 315.2,
+    "tokens": {
+      "input": 21694,
+      "output": 2233,
+      "reasoning": 4088,
+      "cache_read": 287360,
+      "total": 315375
+    },
+    "debug_used": true,
+    "stopped_by": null,
+    "cli": {
+      "help": 1,
+      "scripts list": 1,
+      "status": 1,
+      "scripts read": 4,
+      "world schema": 1,
+      "help debug": 1,
+      "call debug.breakpoints.set": 3,
+      "debug state": 6,
+      "world set": 6,
+      "step": 6,
+      "call debug.pause": 1,
+      "call debug.continue": 2,
+      "call debug.eval": 2,
+      "call debug.breakpoints.clear": 2,
+      "scripts write": 1,
+      "scripts apply": 1,
+      "world get": 4
+    },
+    "refusals": {
+      "request.missing_field": 1,
+      "sim.component_unknown": 1
+    },
+    "output_chars": 33716,
+    "largest_output_chars": 9947,
+    "first_s": {
+      "scripts_read": 8.77,
+      "scripts_write": 255.49
+    },
+    "bash_timeouts": 1,
+    "blocked_s": 120.1,
+    "eval_unseen_locals": 0,
+    "stale_bundle_after_restore": null
+  },
+  {
+    "dir": "goto-radians/cli-debugger-1",
+    "bug": "goto-radians",
+    "variant": "debugger",
+    "via": "cli",
+    "trial": 1,
+    "isolation": "permissions",
+    "success": true,
+    "bug_check": true,
+    "rules_kept": true,
+    "located": true,
+    "hash_chain_identical_to_clean": true,
+    "as_run": {
+      "success": true,
+      "located": true,
+      "checks": {
+        "steer": [
+          true,
+          "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+        ],
+        "goto": [
+          true,
+          "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+        ],
+        "goto_behind": [
+          true,
+          "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+        ],
+        "reach": [
+          true,
+          "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+        ],
+        "anchor": [
+          true,
+          "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+        ],
+        "tally": [
+          true,
+          "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+        ]
+      },
+      "hash_chain_identical_to_clean": true,
+      "hash_first_divergence_tick": null
+    },
+    "tool_calls": 42,
+    "pocket_calls": 83,
+    "tool_errors": 3,
+    "agent_s": 783.8,
+    "wall_s": 784.9,
+    "tokens": {
+      "input": 33670,
+      "output": 3794,
+      "reasoning": 6035,
+      "cache_read": 862592,
+      "total": 906091
+    },
+    "debug_used": true,
+    "stopped_by": null,
+    "cli": {
+      "help": 1,
+      "scripts list": 1,
+      "info": 1,
+      "scripts read": 6,
+      "world tree": 1,
+      "world get": 9,
+      "help debug": 1,
+      "call debug.breakpoints.set": 2,
+      "world set": 4,
+      "step": 8,
+      "debug state": 1,
+      "debug eval": 3,
+      "call catalog.list": 1,
+      "call docs.search": 2,
+      "help debug.eval": 1,
+      "call debug.eval": 4,
+      "call debug.step": 1,
+      "call debug.state": 2,
+      "call debug.breakpoints.clear": 2,
+      "call debug.continue": 3,
+      "scripts write": 1,
+      "scripts apply": 5,
+      "snapshots restore": 3,
+      "world query": 11,
+      "call scripts.status": 5,
+      "time pause": 2,
+      "status": 2
+    },
+    "refusals": {
+      "debug.eval_failed": 6,
+      "request.unknown_field": 1,
+      "request.missing_field": 1,
+      "sim.component_unknown": 1
+    },
+    "output_chars": 43373,
+    "largest_output_chars": 11643,
+    "first_s": {
+      "scripts_read": 6.36,
+      "debug": 174.73,
+      "scripts_write": 389.11
+    },
+    "bash_timeouts": 6,
+    "blocked_s": 420.6,
+    "eval_unseen_locals": 6,
+    "stale_bundle_after_restore": {
+      "restore_at_s": 395.24,
+      "reapplied_at_s": 552.5700350000001,
+      "lost_s": 157.3,
+      "ended_with_old_scripts": false
+    }
+  },
+  {
+    "dir": "goto-radians/cli-debugger-2",
+    "bug": "goto-radians",
+    "variant": "debugger",
+    "via": "cli",
+    "trial": 2,
+    "isolation": "permissions",
+    "success": true,
+    "bug_check": true,
+    "rules_kept": true,
+    "located": true,
+    "hash_chain_identical_to_clean": true,
+    "as_run": {
+      "success": true,
+      "located": true,
+      "checks": {
+        "steer": [
+          true,
+          "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+        ],
+        "goto": [
+          true,
+          "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+        ],
+        "goto_behind": [
+          true,
+          "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+        ],
+        "reach": [
+          true,
+          "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+        ],
+        "anchor": [
+          true,
+          "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+        ],
+        "tally": [
+          true,
+          "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+        ]
+      },
+      "hash_chain_identical_to_clean": true,
+      "hash_first_divergence_tick": null
+    },
+    "tool_calls": 23,
+    "pocket_calls": 38,
+    "tool_errors": 0,
+    "agent_s": 310.2,
+    "wall_s": 312.3,
+    "tokens": {
+      "input": 23217,
+      "output": 1172,
+      "reasoning": 2148,
+      "cache_read": 260096,
+      "total": 286633
+    },
+    "debug_used": true,
+    "stopped_by": null,
+    "cli": {
+      "help": 1,
+      "scripts list": 1,
+      "info": 1,
+      "scripts read": 5,
+      "help debug": 1,
+      "call debug.breakpoints.set": 2,
+      "world get": 10,
+      "world tree": 1,
+      "world set": 1,
+      "step": 5,
+      "call debug.state": 1,
+      "call debug.eval": 4,
+      "call debug.breakpoints.clear": 1,
+      "call debug.continue": 1,
+      "scripts write": 1,
+      "scripts apply": 1,
+      "world query": 1
+    },
+    "refusals": {
+      "request.missing_field": 1,
+      "debug.eval_failed": 2,
+      "sim.component_unknown": 1
+    },
+    "output_chars": 28017,
+    "largest_output_chars": 9526,
+    "first_s": {
+      "scripts_read": 9.14,
+      "scripts_write": 241.34
+    },
+    "bash_timeouts": 1,
+    "blocked_s": 120.1,
+    "eval_unseen_locals": 2,
+    "stale_bundle_after_restore": null
+  },
+  {
+    "dir": "reach-squared/cli-debugger-1",
+    "bug": "reach-squared",
+    "variant": "debugger",
+    "via": "cli",
+    "trial": 1,
+    "isolation": "permissions",
+    "success": true,
+    "bug_check": true,
+    "rules_kept": true,
+    "located": true,
+    "hash_chain_identical_to_clean": true,
+    "as_run": {
+      "success": true,
+      "located": true,
+      "checks": {
+        "steer": [
+          true,
+          "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+        ],
+        "goto": [
+          true,
+          "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+        ],
+        "goto_behind": [
+          true,
+          "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+        ],
+        "reach": [
+          true,
+          "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+        ],
+        "anchor": [
+          true,
+          "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+        ],
+        "tally": [
+          true,
+          "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+        ]
+      },
+      "hash_chain_identical_to_clean": true,
+      "hash_first_divergence_tick": null
+    },
+    "tool_calls": 22,
+    "pocket_calls": 47,
+    "tool_errors": 0,
+    "agent_s": 361.7,
+    "wall_s": 363.9,
+    "tokens": {
+      "input": 19351,
+      "output": 2445,
+      "reasoning": 3893,
+      "cache_read": 261248,
+      "total": 286937
+    },
+    "debug_used": true,
+    "stopped_by": null,
+    "cli": {
+      "help": 1,
+      "scripts list": 1,
+      "status": 1,
+      "scripts read": 2,
+      "help debug": 1,
+      "world tree": 1,
+      "world query": 4,
+      "help debug.breakpoints.set": 1,
+      "help debug.watch": 1,
+      "help debug.eval": 1,
+      "help debug.step": 1,
+      "call debug.state": 2,
+      "call debug.breakpoints.set": 3,
+      "call debug.watch": 2,
+      "call debug.eval": 12,
+      "world set": 3,
+      "step": 3,
+      "call debug.breakpoints.clear": 1,
+      "call debug.continue": 1,
+      "events": 2,
+      "scripts write": 1,
+      "scripts apply": 1,
+      "world get": 1
+    },
+    "refusals": {
+      "request.missing_field": 4,
+      "request.unknown_field": 2,
+      "debug.eval_failed": 8,
+      "debug.no_frame": 1
+    },
+    "output_chars": 26475,
+    "largest_output_chars": 8858,
+    "first_s": {
+      "scripts_read": 9.61,
+      "scripts_write": 316.31
+    },
+    "bash_timeouts": 1,
+    "blocked_s": 120.1,
+    "eval_unseen_locals": 8,
+    "stale_bundle_after_restore": null
+  },
+  {
+    "dir": "anchor-stale/cli-debugger-1",
+    "bug": "anchor-stale",
+    "variant": "debugger",
+    "via": "cli",
+    "trial": 1,
+    "isolation": "permissions",
+    "success": true,
+    "bug_check": true,
+    "rules_kept": true,
+    "located": false,
+    "hash_chain_identical_to_clean": true,
+    "as_run": {
+      "success": true,
+      "located": true,
+      "checks": {
+        "steer": [
+          true,
+          "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+        ],
+        "goto": [
+          true,
+          "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+        ],
+        "goto_behind": [
+          true,
+          "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+        ],
+        "reach": [
+          true,
+          "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+        ],
+        "anchor": [
+          true,
+          "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+        ],
+        "tally": [
+          true,
+          "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+        ]
+      },
+      "hash_chain_identical_to_clean": true,
+      "hash_first_divergence_tick": null
+    },
+    "tool_calls": 31,
+    "pocket_calls": 44,
+    "tool_errors": 2,
+    "agent_s": 477.3,
+    "wall_s": 479.6,
+    "tokens": {
+      "input": 26278,
+      "output": 2620,
+      "reasoning": 3742,
+      "cache_read": 371584,
+      "total": 404224
+    },
+    "debug_used": true,
+    "stopped_by": null,
+    "cli": {
+      "help": 1,
+      "world get": 9,
+      "help world": 1,
+      "scripts list": 1,
+      "world tree": 1,
+      "scripts read": 2,
+      "help debug": 1,
+      "status": 2,
+      "debug breakpoints.set": 4,
+      "help debug.breakpoints.set": 1,
+      "step": 7,
+      "debug state": 2,
+      "debug breakpoints.clear": 2,
+      "debug continue": 2,
+      "world set": 2,
+      "debug eval": 4,
+      "scripts write": 1,
+      "scripts apply": 1
+    },
+    "refusals": {
+      "request.missing_field": 1,
+      "request.unknown_field": 1
+    },
+    "output_chars": 26635,
+    "largest_output_chars": 9343,
+    "first_s": {
+      "scripts_read": 6.99,
+      "debug": 22.41,
+      "scripts_write": 410.01
+    },
+    "bash_timeouts": 3,
+    "blocked_s": 210.4,
+    "eval_unseen_locals": 0,
+    "stale_bundle_after_restore": null
+  },
+  {
+    "dir": "tally-off-by-one/cli-debugger-1",
+    "bug": "tally-off-by-one",
+    "variant": "debugger",
+    "via": "cli",
+    "trial": 1,
+    "isolation": "permissions",
+    "success": true,
+    "bug_check": true,
+    "rules_kept": true,
+    "located": true,
+    "hash_chain_identical_to_clean": true,
+    "as_run": {
+      "success": true,
+      "located": true,
+      "checks": {
+        "steer": [
+          true,
+          "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+        ],
+        "goto": [
+          true,
+          "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+        ],
+        "goto_behind": [
+          true,
+          "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+        ],
+        "reach": [
+          true,
+          "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+        ],
+        "anchor": [
+          true,
+          "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+        ],
+        "tally": [
+          true,
+          "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+        ]
+      },
+      "hash_chain_identical_to_clean": true,
+      "hash_first_divergence_tick": null
+    },
+    "tool_calls": 46,
+    "pocket_calls": 114,
+    "tool_errors": 1,
+    "agent_s": 773.8,
+    "wall_s": 776.5,
+    "tokens": {
+      "input": 30217,
+      "output": 3749,
+      "reasoning": 10617,
+      "cache_read": 830720,
+      "total": 875303
+    },
+    "debug_used": true,
+    "stopped_by": null,
+    "cli": {
+      "help": 1,
+      "scripts list": 1,
+      "status": 3,
+      "scripts read": 2,
+      "help debug": 1,
+      "world tree": 1,
+      "world query": 1,
+      "help debug.breakpoints.set": 1,
+      "help debug.eval": 1,
+      "help debug.watch": 1,
+      "call debug.state": 8,
+      "catalog": 1,
+      "call debug.breakpoints.set": 3,
+      "call debug.watch": 3,
+      "world set": 23,
+      "step": 17,
+      "events": 5,
+      "logs": 1,
+      "world edit": 2,
+      "help world_edit": 1,
+      "call debug.continue": 4,
+      "call debug.eval": 7,
+      "world get": 4,
+      "call debug.watch.clear": 2,
+      "snapshots list": 1,
+      "call debug.breakpoints.clear": 2,
+      "call debug.unwatch": 1,
+      "call debug.step": 4,
+      "scripts write": 1,
+      "scripts apply": 1,
+      "world spawn": 9,
+      "help world.spawn": 1
+    },
+    "refusals": {
+      "request.missing_field": 3,
+      "request.wrong_type": 2,
+      "request.misplaced_field": 1,
+      "request.unknown_field": 1,
+      "request.unknown_method": 1,
+      "debug.eval_failed": 5
+    },
+    "output_chars": 32032,
+    "largest_output_chars": 8738,
+    "first_s": {
+      "scripts_read": 9.96,
+      "scripts_write": 696.2
+    },
+    "bash_timeouts": 5,
+    "blocked_s": 240.5,
+    "eval_unseen_locals": 5,
+    "stale_bundle_after_restore": null
+  },
+  {
+    "dir": "goto-wrap/cli-debugger-1",
+    "bug": "goto-wrap",
+    "variant": "debugger",
+    "via": "cli",
+    "trial": 1,
+    "isolation": "permissions",
+    "success": true,
+    "bug_check": true,
+    "rules_kept": true,
+    "located": true,
+    "hash_chain_identical_to_clean": true,
+    "as_run": {
+      "success": true,
+      "located": true,
+      "checks": {
+        "steer": [
+          true,
+          "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+        ],
+        "goto": [
+          true,
+          "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+        ],
+        "goto_behind": [
+          true,
+          "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+        ],
+        "reach": [
+          true,
+          "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+        ],
+        "anchor": [
+          true,
+          "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+        ],
+        "tally": [
+          true,
+          "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+        ]
+      },
+      "hash_chain_identical_to_clean": true,
+      "hash_first_divergence_tick": null
+    },
+    "tool_calls": 42,
+    "pocket_calls": 106,
+    "tool_errors": 1,
+    "agent_s": 759.1,
+    "wall_s": 761.1,
+    "tokens": {
+      "input": 35862,
+      "output": 3670,
+      "reasoning": 13533,
+      "cache_read": 919616,
+      "total": 972681
+    },
+    "debug_used": true,
+    "stopped_by": null,
+    "cli": {
+      "help": 1,
+      "scripts list": 3,
+      "world tree": 1,
+      "scripts read": 8,
+      "world get": 23,
+      "world query": 1,
+      "world schema": 2,
+      "help debug": 1,
+      "call debug.breakpoints.set": 4,
+      "help debug.watch": 1,
+      "call debug.watch": 2,
+      "call debug.eval": 8,
+      "info": 1,
+      "world set": 7,
+      "step": 11,
+      "debug state": 4,
+      "call debug.breakpoints.clear": 1,
+      "call debug.continue": 2,
+      "call debug.pause": 2,
+      "scripts write": 1,
+      "scripts apply": 6,
+      "snapshots list": 2,
+      "status": 5,
+      "scripts status": 1,
+      "snapshots restore": 4,
+      "call scripts.status": 4
+    },
+    "refusals": {
+      "request.missing_field": 6,
+      "debug.eval_failed": 4
+    },
+    "output_chars": 34838,
+    "largest_output_chars": 9860,
+    "first_s": {
+      "scripts_read": 3.44,
+      "scripts_write": 482.7
+    },
+    "bash_timeouts": 3,
+    "blocked_s": 195.4,
+    "eval_unseen_locals": 4,
+    "stale_bundle_after_restore": {
+      "restore_at_s": 597.110035,
+      "reapplied_at_s": 658.86,
+      "lost_s": 61.7,
+      "ended_with_old_scripts": false
+    }
+  },
+  {
+    "dir": "steer-sign/cli-1",
+    "bug": "steer-sign",
+    "variant": "free",
+    "via": "cli",
+    "trial": 1,
+    "isolation": "permissions",
+    "success": true,
+    "bug_check": true,
+    "rules_kept": true,
+    "located": true,
+    "hash_chain_identical_to_clean": true,
+    "as_run": {
+      "success": true,
+      "located": true,
+      "checks": {
+        "steer": [
+          true,
+          "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+        ],
+        "goto": [
+          true,
+          "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+        ],
+        "goto_behind": [
+          true,
+          "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+        ],
+        "reach": [
+          true,
+          "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+        ],
+        "anchor": [
+          true,
+          "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+        ],
+        "tally": [
+          true,
+          "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+        ]
+      },
+      "hash_chain_identical_to_clean": true,
+      "hash_first_divergence_tick": null
+    },
+    "tool_calls": 40,
+    "pocket_calls": 76,
+    "tool_errors": 0,
+    "agent_s": 511.3,
+    "wall_s": 513.4,
+    "tokens": {
+      "input": 38015,
+      "output": 3403,
+      "reasoning": 10264,
+      "cache_read": 583232,
+      "total": 634914
+    },
+    "debug_used": false,
+    "stopped_by": null,
+    "cli": {
+      "help": 1,
+      "world tree": 1,
+      "scripts list": 1,
+      "scripts read": 6,
+      "world schema": 1,
+      "world get": 19,
+      "world set": 11,
+      "step": 12,
+      "docs.search": 1,
+      "info": 1,
+      "call docs.search": 3,
+      "snapshots list": 1,
+      "snapshots restore": 7,
+      "scripts write": 1,
+      "scripts apply": 6,
+      "scripts check": 1,
+      "scripts status": 1,
+      "call scripts.status": 1,
+      "status": 1
+    },
+    "refusals": {
+      "request.unknown_field": 2,
+      "sim.component_unknown": 1
+    },
+    "output_chars": 32737,
+    "largest_output_chars": 11440,
+    "first_s": {
+      "scripts_read": 9.4,
+      "scripts_write": 237.23
+    },
+    "bash_timeouts": 0,
+    "blocked_s": 0.0,
+    "eval_unseen_locals": 0,
+    "stale_bundle_after_restore": {
+      "restore_at_s": 251.38,
+      "reapplied_at_s": 287.57,
+      "lost_s": 36.2,
+      "ended_with_old_scripts": false
+    }
+  },
+  {
+    "dir": "steer-sign/cli-2",
+    "bug": "steer-sign",
+    "variant": "free",
+    "via": "cli",
+    "trial": 2,
+    "isolation": "permissions",
+    "success": true,
+    "bug_check": true,
+    "rules_kept": true,
+    "located": true,
+    "hash_chain_identical_to_clean": true,
+    "as_run": {
+      "success": true,
+      "located": true,
+      "checks": {
+        "steer": [
+          true,
+          "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+        ],
+        "goto": [
+          true,
+          "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+        ],
+        "goto_behind": [
+          true,
+          "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+        ],
+        "reach": [
+          true,
+          "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+        ],
+        "anchor": [
+          true,
+          "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+        ],
+        "tally": [
+          true,
+          "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+        ]
+      },
+      "hash_chain_identical_to_clean": true,
+      "hash_first_divergence_tick": null
+    },
+    "tool_calls": 49,
+    "pocket_calls": 121,
+    "tool_errors": 1,
+    "agent_s": 854.7,
+    "wall_s": 855.7,
+    "tokens": {
+      "input": 56778,
+      "output": 3541,
+      "reasoning": 23774,
+      "cache_read": 1276992,
+      "total": 1361085
+    },
+    "debug_used": false,
+    "stopped_by": null,
+    "cli": {
+      "help": 1,
+      "scripts list": 2,
+      "scripts read": 7,
+      "world schema": 1,
+      "world get": 28,
+      "world set": 15,
+      "step": 16,
+      "scripts write": 1,
+      "scripts apply": 3,
+      "snapshots list": 1,
+      "snapshots restore": 7,
+      "scripts status": 1,
+      "status": 3,
+      "events": 1,
+      "logs": 1,
+      "world tree": 1,
+      "scripts check": 1,
+      "call scripts.status": 6,
+      "play start": 2,
+      "call project.info": 1,
+      "assets": 1,
+      "help scripts.apply": 1,
+      "help scripts.write": 1,
+      "help scripts.check": 1,
+      "call docs.search": 2,
+      "play stop": 2,
+      "world query": 1,
+      "world edit": 5,
+      "help world_edit": 1,
+      "call world_edit": 1,
+      "call world.edit": 1,
+      "undo": 5
+    },
+    "refusals": {
+      "sim.component_unknown": 1,
+      "sim.entity_id_invalid": 1,
+      "request.misplaced_field": 1,
+      "request.unknown_field": 3
+    },
+    "output_chars": 52748,
+    "largest_output_chars": 25266,
+    "first_s": {
+      "scripts_read": 9.21,
+      "scripts_write": 66.59
+    },
+    "bash_timeouts": 0,
+    "blocked_s": 0.0,
+    "eval_unseen_locals": 0,
+    "stale_bundle_after_restore": {
+      "restore_at_s": 82.65,
+      "reapplied_at_s": 357.67,
+      "lost_s": 275.0,
+      "ended_with_old_scripts": false
+    }
+  },
+  {
+    "dir": "goto-radians/cli-1",
+    "bug": "goto-radians",
+    "variant": "free",
+    "via": "cli",
+    "trial": 1,
+    "isolation": "permissions",
+    "success": false,
+    "bug_check": false,
+    "rules_kept": true,
+    "located": false,
+    "hash_chain_identical_to_clean": false,
+    "as_run": {
+      "success": false,
+      "located": false,
+      "checks": {
+        "steer": [
+          true,
+          "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+        ],
+        "goto": [
+          false,
+          "closest approach to Crate4 within 15 s: 19.0 m (pass < 3 m)"
+        ],
+        "goto_behind": [
+          false,
+          "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 9.1 (-80.9; pass > +15, the short way)"
+        ],
+        "reach": [
+          true,
+          "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+        ],
+        "anchor": [
+          true,
+          "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+        ],
+        "tally": [
+          true,
+          "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+        ]
+      },
+      "hash_chain_identical_to_clean": false,
+      "hash_first_divergence_tick": 150
+    },
+    "tool_calls": 53,
+    "pocket_calls": 81,
+    "tool_errors": 1,
+    "agent_s": 900.7,
+    "wall_s": 903.7,
+    "tokens": {
+      "input": 27237,
+      "output": 2751,
+      "reasoning": 12191,
+      "cache_read": 874752,
+      "total": 916931
+    },
+    "debug_used": true,
+    "stopped_by": "time_budget",
+    "cli": {
+      "help": 1,
+      "world tree": 1,
+      "scripts list": 1,
+      "scripts read": 7,
+      "world schema": 1,
+      "world get": 7,
+      "world set": 1,
+      "step": 3,
+      "help debug": 1,
+      "debug state": 7,
+      "call debug.breakpoints.set": 5,
+      "call debug.continue": 4,
+      "call debug.remove": 1,
+      "call time.step": 3,
+      "call debug.eval": 19,
+      "call debug.breakpoints.clear": 3,
+      "call debug.step": 8,
+      "call debug.wait": 2,
+      "call scripts.status": 1,
+      "scripts check": 1,
+      "call project.info": 2,
+      "logs": 1,
+      "events": 1
+    },
+    "refusals": {
+      "request.missing_field": 5,
+      "debug.eval_failed": 11,
+      "debug.not_paused": 1
+    },
+    "output_chars": 35809,
+    "largest_output_chars": 9437,
+    "first_s": {
+      "scripts_read": 9.9
+    },
+    "bash_timeouts": 3,
+    "blocked_s": 270.3,
+    "eval_unseen_locals": 8,
+    "stale_bundle_after_restore": null
+  },
+  {
+    "dir": "goto-radians/cli-2",
+    "bug": "goto-radians",
+    "variant": "free",
+    "via": "cli",
+    "trial": 2,
+    "isolation": "permissions",
+    "success": false,
+    "bug_check": false,
+    "rules_kept": true,
+    "located": false,
+    "hash_chain_identical_to_clean": false,
+    "as_run": {
+      "success": false,
+      "located": false,
+      "checks": {
+        "steer": [
+          true,
+          "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+        ],
+        "goto": [
+          false,
+          "closest approach to Crate4 within 15 s: 19.0 m (pass < 3 m)"
+        ],
+        "goto_behind": [
+          false,
+          "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 9.1 (-80.9; pass > +15, the short way)"
+        ],
+        "reach": [
+          true,
+          "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+        ],
+        "anchor": [
+          true,
+          "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+        ],
+        "tally": [
+          true,
+          "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+        ]
+      },
+      "hash_chain_identical_to_clean": false,
+      "hash_first_divergence_tick": 150
+    },
+    "tool_calls": 48,
+    "pocket_calls": 124,
+    "tool_errors": 2,
+    "agent_s": 900.5,
+    "wall_s": 913.3,
+    "tokens": {
+      "input": 55106,
+      "output": 2545,
+      "reasoning": 8266,
+      "cache_read": 691904,
+      "total": 757821
+    },
+    "debug_used": true,
+    "stopped_by": "time_budget",
+    "cli": {
+      "help": 1,
+      "scripts list": 1,
+      "status": 3,
+      "scripts read": 7,
+      "world tree": 1,
+      "world get": 16,
+      "world query": 2,
+      "world set": 3,
+      "step": 14,
+      "world schema": 1,
+      "help debug": 1,
+      "debug state": 17,
+      "debug breakpoints.set": 5,
+      "help debug.breakpoints.set": 1,
+      "help debug.rewind": 1,
+      "help debug.eval": 2,
+      "call debug.rewind": 2,
+      "help debug.pause": 1,
+      "help debug.step": 1,
+      "debug pause": 2,
+      "debug step": 2,
+      "call debug.pause": 1,
+      "call docs.search": 1,
+      "call catalog.list": 2,
+      "debug eval": 21,
+      "debug continue": 5,
+      "events": 1,
+      "debug breakpoints.clear": 6,
+      "history": 1,
+      "debug watch": 2
+    },
+    "refusals": {
+      "sim.component_unknown": 1,
+      "request.invalid_value": 1,
+      "request.missing_field": 3,
+      "debug.not_paused": 1,
+      "debug.eval_failed": 5
+    },
+    "output_chars": 32326,
+    "largest_output_chars": 4502,
+    "first_s": {
+      "scripts_read": 9.03,
+      "debug": 95.64
+    },
+    "bash_timeouts": 3,
+    "blocked_s": 360.4,
+    "eval_unseen_locals": 4,
+    "stale_bundle_after_restore": null
+  },
+  {
+    "dir": "goto-radians/cli-3",
+    "bug": "goto-radians",
+    "variant": "free",
+    "via": "cli",
+    "trial": 3,
+    "isolation": "permissions",
+    "success": true,
+    "bug_check": true,
+    "rules_kept": true,
+    "located": true,
+    "hash_chain_identical_to_clean": true,
+    "as_run": {
+      "success": true,
+      "located": true,
+      "checks": {
+        "steer": [
+          true,
+          "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+        ],
+        "goto": [
+          true,
+          "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+        ],
+        "goto_behind": [
+          true,
+          "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+        ],
+        "reach": [
+          true,
+          "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+        ],
+        "anchor": [
+          true,
+          "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+        ],
+        "tally": [
+          true,
+          "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+        ]
+      },
+      "hash_chain_identical_to_clean": true,
+      "hash_first_divergence_tick": null
+    },
+    "tool_calls": 16,
+    "pocket_calls": 35,
+    "tool_errors": 1,
+    "agent_s": 143.9,
+    "wall_s": 146.9,
+    "tokens": {
+      "input": 20603,
+      "output": 2128,
+      "reasoning": 2093,
+      "cache_read": 163072,
+      "total": 187896
+    },
+    "debug_used": false,
+    "stopped_by": null,
+    "cli": {
+      "help": 1,
+      "scripts list": 1,
+      "world tree": 1,
+      "scripts read": 4,
+      "world get": 14,
+      "world set": 4,
+      "step": 6,
+      "scripts write": 2,
+      "scripts apply": 2
+    },
+    "refusals": {},
+    "output_chars": 15745,
+    "largest_output_chars": 4901,
+    "first_s": {
+      "scripts_read": 9.07,
+      "scripts_write": 71.02
+    },
+    "bash_timeouts": 0,
+    "blocked_s": 0.0,
+    "eval_unseen_locals": 0,
+    "stale_bundle_after_restore": null
+  },
+  {
+    "dir": "reach-squared/cli-1",
+    "bug": "reach-squared",
+    "variant": "free",
+    "via": "cli",
+    "trial": 1,
+    "isolation": "permissions",
+    "success": true,
+    "bug_check": true,
+    "rules_kept": true,
+    "located": true,
+    "hash_chain_identical_to_clean": true,
+    "as_run": {
+      "success": true,
+      "located": true,
+      "checks": {
+        "steer": [
+          true,
+          "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+        ],
+        "goto": [
+          true,
+          "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+        ],
+        "goto_behind": [
+          true,
+          "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+        ],
+        "reach": [
+          true,
+          "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+        ],
+        "anchor": [
+          true,
+          "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+        ],
+        "tally": [
+          true,
+          "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+        ]
+      },
+      "hash_chain_identical_to_clean": true,
+      "hash_first_divergence_tick": null
+    },
+    "tool_calls": 15,
+    "pocket_calls": 54,
+    "tool_errors": 0,
+    "agent_s": 192.3,
+    "wall_s": 195.9,
+    "tokens": {
+      "input": 21689,
+      "output": 2196,
+      "reasoning": 3080,
+      "cache_read": 132608,
+      "total": 159573
+    },
+    "debug_used": false,
+    "stopped_by": null,
+    "cli": {
+      "help": 1,
+      "scripts list": 1,
+      "world tree": 4,
+      "scripts read": 3,
+      "world query": 2,
+      "world set": 9,
+      "step": 6,
+      "events": 6,
+      "scripts write": 1,
+      "scripts apply": 3,
+      "world get": 5,
+      "undo": 4,
+      "status": 4,
+      "snapshots list": 1,
+      "snapshots restore": 3,
+      "call scripts.status": 1
+    },
+    "refusals": {
+      "history.stale": 1
+    },
+    "output_chars": 16422,
+    "largest_output_chars": 4459,
+    "first_s": {
+      "scripts_read": 9.33,
+      "scripts_write": 59.52
+    },
+    "bash_timeouts": 0,
+    "blocked_s": 0.0,
+    "eval_unseen_locals": 0,
+    "stale_bundle_after_restore": {
+      "restore_at_s": 102.040025,
+      "reapplied_at_s": 161.35,
+      "lost_s": 59.3,
+      "ended_with_old_scripts": false
+    }
+  },
+  {
+    "dir": "reach-squared/cli-2",
+    "bug": "reach-squared",
+    "variant": "free",
+    "via": "cli",
+    "trial": 2,
+    "isolation": "permissions",
+    "success": true,
+    "bug_check": true,
+    "rules_kept": true,
+    "located": true,
+    "hash_chain_identical_to_clean": true,
+    "as_run": {
+      "success": true,
+      "located": true,
+      "checks": {
+        "steer": [
+          true,
+          "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+        ],
+        "goto": [
+          true,
+          "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+        ],
+        "goto_behind": [
+          true,
+          "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+        ],
+        "reach": [
+          true,
+          "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+        ],
+        "anchor": [
+          true,
+          "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+        ],
+        "tally": [
+          true,
+          "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+        ]
+      },
+      "hash_chain_identical_to_clean": true,
+      "hash_first_divergence_tick": null
+    },
+    "tool_calls": 16,
+    "pocket_calls": 21,
+    "tool_errors": 1,
+    "agent_s": 120.8,
+    "wall_s": 123.3,
+    "tokens": {
+      "input": 14382,
+      "output": 1910,
+      "reasoning": 1270,
+      "cache_read": 138304,
+      "total": 155866
+    },
+    "debug_used": false,
+    "stopped_by": null,
+    "cli": {
+      "help": 1,
+      "scripts list": 1,
+      "scripts read": 4,
+      "world query": 5,
+      "scripts write": 1,
+      "scripts apply": 1,
+      "status": 1,
+      "info": 1,
+      "world set": 2,
+      "step": 2,
+      "events": 1,
+      "world get": 1
+    },
+    "refusals": {},
+    "output_chars": 13386,
+    "largest_output_chars": 4459,
+    "first_s": {
+      "scripts_read": 6.75,
+      "scripts_write": 53.85
+    },
+    "bash_timeouts": 0,
+    "blocked_s": 0.0,
+    "eval_unseen_locals": 0,
+    "stale_bundle_after_restore": null
+  },
+  {
+    "dir": "anchor-stale/cli-1",
+    "bug": "anchor-stale",
+    "variant": "free",
+    "via": "cli",
+    "trial": 1,
+    "isolation": "permissions",
+    "success": true,
+    "bug_check": true,
+    "rules_kept": true,
+    "located": true,
+    "hash_chain_identical_to_clean": true,
+    "as_run": {
+      "success": true,
+      "located": true,
+      "checks": {
+        "steer": [
+          true,
+          "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+        ],
+        "goto": [
+          true,
+          "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+        ],
+        "goto_behind": [
+          true,
+          "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+        ],
+        "reach": [
+          true,
+          "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+        ],
+        "anchor": [
+          true,
+          "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+        ],
+        "tally": [
+          true,
+          "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+        ]
+      },
+      "hash_chain_identical_to_clean": true,
+      "hash_first_divergence_tick": null
+    },
+    "tool_calls": 14,
+    "pocket_calls": 21,
+    "tool_errors": 1,
+    "agent_s": 134.3,
+    "wall_s": 137.3,
+    "tokens": {
+      "input": 22578,
+      "output": 2037,
+      "reasoning": 1545,
+      "cache_read": 126016,
+      "total": 152176
+    },
+    "debug_used": false,
+    "stopped_by": null,
+    "cli": {
+      "scripts list": 1,
+      "help": 1,
+      "scripts read": 6,
+      "world schema": 1,
+      "world set": 2,
+      "step": 3,
+      "world get": 3,
+      "scripts write": 1,
+      "scripts apply": 1,
+      "events": 2
+    },
+    "refusals": {},
+    "output_chars": 16514,
+    "largest_output_chars": 4459,
+    "first_s": {
+      "scripts_read": 5.45,
+      "scripts_write": 82.72
+    },
+    "bash_timeouts": 0,
+    "blocked_s": 0.0,
+    "eval_unseen_locals": 0,
+    "stale_bundle_after_restore": null
+  },
+  {
+    "dir": "anchor-stale/cli-2",
+    "bug": "anchor-stale",
+    "variant": "free",
+    "via": "cli",
+    "trial": 2,
+    "isolation": "permissions",
+    "success": true,
+    "bug_check": true,
+    "rules_kept": true,
+    "located": true,
+    "hash_chain_identical_to_clean": true,
+    "as_run": {
+      "success": true,
+      "located": true,
+      "checks": {
+        "steer": [
+          true,
+          "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+        ],
+        "goto": [
+          true,
+          "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+        ],
+        "goto_behind": [
+          true,
+          "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+        ],
+        "reach": [
+          true,
+          "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+        ],
+        "anchor": [
+          true,
+          "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+        ],
+        "tally": [
+          true,
+          "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+        ]
+      },
+      "hash_chain_identical_to_clean": true,
+      "hash_first_divergence_tick": null
+    },
+    "tool_calls": 15,
+    "pocket_calls": 25,
+    "tool_errors": 2,
+    "agent_s": 146.1,
+    "wall_s": 148.2,
+    "tokens": {
+      "input": 13740,
+      "output": 1837,
+      "reasoning": 1313,
+      "cache_read": 141824,
+      "total": 158714
+    },
+    "debug_used": false,
+    "stopped_by": null,
+    "cli": {
+      "help": 1,
+      "scripts list": 1,
+      "world tree": 1,
+      "scripts read": 4,
+      "scripts write": 1,
+      "scripts apply": 1,
+      "world set": 2,
+      "step": 5,
+      "world get": 5,
+      "snapshots restore": 2,
+      "status": 1,
+      "snapshots list": 1
+    },
+    "refusals": {},
+    "output_chars": 10566,
+    "largest_output_chars": 4459,
+    "first_s": {
+      "scripts_read": 9.28,
+      "scripts_write": 55.04
+    },
+    "bash_timeouts": 0,
+    "blocked_s": 0.0,
+    "eval_unseen_locals": 0,
+    "stale_bundle_after_restore": {
+      "restore_at_s": 122.01,
+      "reapplied_at_s": null,
+      "lost_s": 16.2,
+      "ended_with_old_scripts": true
+    }
+  },
+  {
+    "dir": "tally-off-by-one/cli-1",
+    "bug": "tally-off-by-one",
+    "variant": "free",
+    "via": "cli",
+    "trial": 1,
+    "isolation": "permissions",
+    "success": true,
+    "bug_check": true,
+    "rules_kept": true,
+    "located": true,
+    "hash_chain_identical_to_clean": true,
+    "as_run": {
+      "success": true,
+      "located": true,
+      "checks": {
+        "steer": [
+          true,
+          "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+        ],
+        "goto": [
+          true,
+          "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+        ],
+        "goto_behind": [
+          true,
+          "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+        ],
+        "reach": [
+          true,
+          "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+        ],
+        "anchor": [
+          true,
+          "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+        ],
+        "tally": [
+          true,
+          "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+        ]
+      },
+      "hash_chain_identical_to_clean": true,
+      "hash_first_divergence_tick": null
+    },
+    "tool_calls": 47,
+    "pocket_calls": 146,
+    "tool_errors": 1,
+    "agent_s": 478.2,
+    "wall_s": 479.5,
+    "tokens": {
+      "input": 28065,
+      "output": 3257,
+      "reasoning": 9148,
+      "cache_read": 801728,
+      "total": 842198
+    },
+    "debug_used": false,
+    "stopped_by": null,
+    "cli": {
+      "help": 1,
+      "scripts list": 1,
+      "help scripts": 1,
+      "scripts read": 7,
+      "world query": 1,
+      "world tree": 2,
+      "world get": 30,
+      "step": 32,
+      "world set": 36,
+      "events": 15,
+      "logs": 1,
+      "scripts write": 1,
+      "scripts apply": 5,
+      "snapshots list": 1,
+      "snapshots restore": 4,
+      "scripts status": 1,
+      "status": 1,
+      "call scripts.status": 6
+    },
+    "refusals": {
+      "sim.component_unknown": 1
+    },
+    "output_chars": 25371,
+    "largest_output_chars": 5155,
+    "first_s": {
+      "scripts_read": 5.54,
+      "scripts_write": 308.66
+    },
+    "bash_timeouts": 0,
+    "blocked_s": 0.0,
+    "eval_unseen_locals": 0,
+    "stale_bundle_after_restore": {
+      "restore_at_s": 331.57,
+      "reapplied_at_s": 401.06,
+      "lost_s": 69.5,
+      "ended_with_old_scripts": false
+    }
+  },
+  {
+    "dir": "tally-off-by-one/cli-2",
+    "bug": "tally-off-by-one",
+    "variant": "free",
+    "via": "cli",
+    "trial": 2,
+    "isolation": "permissions",
+    "success": true,
+    "bug_check": true,
+    "rules_kept": true,
+    "located": true,
+    "hash_chain_identical_to_clean": true,
+    "as_run": {
+      "success": true,
+      "located": true,
+      "checks": {
+        "steer": [
+          true,
+          "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+        ],
+        "goto": [
+          true,
+          "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+        ],
+        "goto_behind": [
+          true,
+          "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+        ],
+        "reach": [
+          true,
+          "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+        ],
+        "anchor": [
+          true,
+          "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+        ],
+        "tally": [
+          true,
+          "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+        ]
+      },
+      "hash_chain_identical_to_clean": true,
+      "hash_first_divergence_tick": null
+    },
+    "tool_calls": 50,
+    "pocket_calls": 125,
+    "tool_errors": 0,
+    "agent_s": 471.8,
+    "wall_s": 473.7,
+    "tokens": {
+      "input": 26585,
+      "output": 3777,
+      "reasoning": 7891,
+      "cache_read": 780032,
+      "total": 818285
+    },
+    "debug_used": false,
+    "stopped_by": null,
+    "cli": {
+      "help": 1,
+      "scripts list": 1,
+      "help scripts": 1,
+      "scripts read": 3,
+      "world query": 34,
+      "world tree": 1,
+      "scripts write": 1,
+      "scripts apply": 1,
+      "step": 40,
+      "world set": 14,
+      "events": 9,
+      "world get": 18,
+      "world schema": 1
+    },
+    "refusals": {
+      "sim.component_unknown": 1,
+      "sim.entity_id_invalid": 1
+    },
+    "output_chars": 22434,
+    "largest_output_chars": 4459,
+    "first_s": {
+      "scripts_read": 5.44,
+      "scripts_write": 50.05
+    },
+    "bash_timeouts": 0,
+    "blocked_s": 0.0,
+    "eval_unseen_locals": 0,
+    "stale_bundle_after_restore": null
+  },
+  {
+    "dir": "goto-wrap/cli-1",
+    "bug": "goto-wrap",
+    "variant": "free",
+    "via": "cli",
+    "trial": 1,
+    "isolation": "permissions",
+    "success": true,
+    "bug_check": true,
+    "rules_kept": true,
+    "located": true,
+    "hash_chain_identical_to_clean": true,
+    "as_run": {
+      "success": true,
+      "located": true,
+      "checks": {
+        "steer": [
+          true,
+          "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+        ],
+        "goto": [
+          true,
+          "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+        ],
+        "goto_behind": [
+          true,
+          "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+        ],
+        "reach": [
+          true,
+          "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+        ],
+        "anchor": [
+          true,
+          "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+        ],
+        "tally": [
+          true,
+          "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+        ]
+      },
+      "hash_chain_identical_to_clean": true,
+      "hash_first_divergence_tick": null
+    },
+    "tool_calls": 30,
+    "pocket_calls": 61,
+    "tool_errors": 1,
+    "agent_s": 443.9,
+    "wall_s": 446.1,
+    "tokens": {
+      "input": 36364,
+      "output": 2674,
+      "reasoning": 10151,
+      "cache_read": 610368,
+      "total": 659557
+    },
+    "debug_used": false,
+    "stopped_by": null,
+    "cli": {
+      "help": 1,
+      "scripts list": 1,
+      "status": 1,
+      "scripts read": 6,
+      "world get": 20,
+      "world query": 1,
+      "world tree": 1,
+      "world set": 5,
+      "step": 10,
+      "snapshots list": 1,
+      "help debug": 1,
+      "snapshots restore": 2,
+      "call world.get": 1,
+      "scripts write": 1,
+      "scripts apply": 2,
+      "scripts status": 2,
+      "scripts check": 2,
+      "call scripts.status": 2,
+      "logs": 1
+    },
+    "refusals": {
+      "sim.component_unknown": 1
+    },
+    "output_chars": 29278,
+    "largest_output_chars": 11104,
+    "first_s": {
+      "scripts_read": 8.95,
+      "scripts_write": 328.55
+    },
+    "bash_timeouts": 0,
+    "blocked_s": 0.0,
+    "eval_unseen_locals": 0,
+    "stale_bundle_after_restore": {
+      "restore_at_s": 334.010024,
+      "reapplied_at_s": 384.74,
+      "lost_s": 50.7,
+      "ended_with_old_scripts": false
+    }
+  },
+  {
+    "dir": "goto-wrap/cli-2",
+    "bug": "goto-wrap",
+    "variant": "free",
+    "via": "cli",
+    "trial": 2,
+    "isolation": "permissions",
+    "success": true,
+    "bug_check": true,
+    "rules_kept": true,
+    "located": true,
+    "hash_chain_identical_to_clean": true,
+    "as_run": {
+      "success": true,
+      "located": true,
+      "checks": {
+        "steer": [
+          true,
+          "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+        ],
+        "goto": [
+          true,
+          "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+        ],
+        "goto_behind": [
+          true,
+          "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+        ],
+        "reach": [
+          true,
+          "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+        ],
+        "anchor": [
+          true,
+          "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+        ],
+        "tally": [
+          true,
+          "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+        ]
+      },
+      "hash_chain_identical_to_clean": true,
+      "hash_first_divergence_tick": null
+    },
+    "tool_calls": 28,
+    "pocket_calls": 54,
+    "tool_errors": 0,
+    "agent_s": 361.5,
+    "wall_s": 364.1,
+    "tokens": {
+      "input": 34754,
+      "output": 2568,
+      "reasoning": 8485,
+      "cache_read": 520576,
+      "total": 566383
+    },
+    "debug_used": false,
+    "stopped_by": null,
+    "cli": {
+      "help": 1,
+      "scripts list": 1,
+      "scripts read": 4,
+      "world query": 6,
+      "world schema": 2,
+      "world get": 11,
+      "step": 9,
+      "world set": 5,
+      "scripts write": 1,
+      "scripts apply": 1,
+      "world edit": 2,
+      "help world.edit": 1,
+      "help world_edit": 1,
+      "history": 1,
+      "undo": 4,
+      "snapshots list": 1,
+      "snapshots restore": 1,
+      "status": 1,
+      "scripts check": 1
+    },
+    "refusals": {
+      "sim.component_unknown": 2,
+      "request.misplaced_field": 2
+    },
+    "output_chars": 31429,
+    "largest_output_chars": 11485,
+    "first_s": {
+      "scripts_read": 9.23,
+      "scripts_write": 249.94
+    },
+    "bash_timeouts": 0,
+    "blocked_s": 0.0,
+    "eval_unseen_locals": 0,
+    "stale_bundle_after_restore": {
+      "restore_at_s": 339.050033,
+      "reapplied_at_s": null,
+      "lost_s": 16.1,
+      "ended_with_old_scripts": true
+    }
+  },
+  {
+    "dir": "goto-radians/mcp-1",
+    "bug": "goto-radians",
+    "variant": "free",
+    "via": "mcp",
+    "trial": 1,
+    "isolation": "permissions",
+    "success": true,
+    "bug_check": true,
+    "rules_kept": true,
+    "located": true,
+    "hash_chain_identical_to_clean": true,
+    "as_run": {
+      "success": true,
+      "located": true,
+      "checks": {
+        "steer": [
+          true,
+          "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+        ],
+        "goto": [
+          true,
+          "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+        ],
+        "goto_behind": [
+          true,
+          "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+        ],
+        "reach": [
+          true,
+          "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+        ],
+        "anchor": [
+          true,
+          "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+        ],
+        "tally": [
+          true,
+          "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+        ]
+      },
+      "hash_chain_identical_to_clean": true,
+      "hash_first_divergence_tick": null
+    },
+    "tool_calls": 32,
+    "pocket_calls": 37,
+    "tool_errors": 4,
+    "agent_s": 535.2,
+    "wall_s": 537.8,
+    "tokens": {
+      "input": 34562,
+      "output": 2674,
+      "reasoning": 10758,
+      "cache_read": 529856,
+      "total": 577850
+    },
+    "debug_used": true,
+    "stopped_by": null,
+    "cli": {
+      "mcp scripts list": 1,
+      "help": 1,
+      "mcp scripts read": 4,
+      "mcp world schema": 1,
+      "mcp world edit": 2,
+      "mcp time step": 8,
+      "mcp world query": 3,
+      "mcp debug breakpoints.set": 1,
+      "debug breakpoints.set": 1,
+      "debug state": 1,
+      "debug breakpoints.clear": 1,
+      "debug continue": 1,
+      "mcp scripts write": 1,
+      "scripts apply": 1,
+      "world query": 6,
+      "snapshots": 1,
+      "snapshots restore": 1,
+      "world get": 2
+    },
+    "refusals": {},
+    "output_chars": 31451,
+    "largest_output_chars": 9811,
+    "first_s": {
+      "debug": 196.38,
+      "scripts_write": 349.53
+    },
+    "bash_timeouts": 1,
+    "blocked_s": 60.0,
+    "eval_unseen_locals": 0,
+    "stale_bundle_after_restore": {
+      "restore_at_s": 440.68,
+      "reapplied_at_s": null,
+      "lost_s": 82.0,
+      "ended_with_old_scripts": true
+    }
+  },
+  {
+    "dir": "anchor-stale/mcp-1",
+    "bug": "anchor-stale",
+    "variant": "free",
+    "via": "mcp",
+    "trial": 1,
+    "isolation": "permissions",
+    "success": true,
+    "bug_check": true,
+    "rules_kept": true,
+    "located": false,
+    "hash_chain_identical_to_clean": true,
+    "as_run": {
+      "success": true,
+      "located": true,
+      "checks": {
+        "steer": [
+          true,
+          "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+        ],
+        "goto": [
+          true,
+          "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+        ],
+        "goto_behind": [
+          true,
+          "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+        ],
+        "reach": [
+          true,
+          "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+        ],
+        "anchor": [
+          true,
+          "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+        ],
+        "tally": [
+          true,
+          "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+        ]
+      },
+      "hash_chain_identical_to_clean": true,
+      "hash_first_divergence_tick": null
+    },
+    "tool_calls": 32,
+    "pocket_calls": 55,
+    "tool_errors": 1,
+    "agent_s": 453.0,
+    "wall_s": 455.7,
+    "tokens": {
+      "input": 33260,
+      "output": 3103,
+      "reasoning": 5578,
+      "cache_read": 450240,
+      "total": 492181
+    },
+    "debug_used": true,
+    "stopped_by": null,
+    "cli": {
+      "help": 1,
+      "scripts list": 1,
+      "scripts read": 6,
+      "world schema": 1,
+      "world get": 12,
+      "status": 1,
+      "world set": 3,
+      "step": 10,
+      "snapshots list": 1,
+      "scripts write": 1,
+      "scripts apply": 2,
+      "snapshots restore": 1,
+      "events": 2,
+      "scripts status": 1,
+      "debug breakpoints.set": 1,
+      "debug state": 2,
+      "debug eval": 3,
+      "debug continue": 1,
+      "time status": 1,
+      "world tree": 1,
+      "call scripts.status": 2,
+      "debug breakpoints.clear": 1
+    },
+    "refusals": {},
+    "output_chars": 30501,
+    "largest_output_chars": 11497,
+    "first_s": {
+      "scripts_read": 2.71,
+      "scripts_write": 105.47,
+      "debug": 158.51
+    },
+    "bash_timeouts": 1,
+    "blocked_s": 120.1,
+    "eval_unseen_locals": 0,
+    "stale_bundle_after_restore": {
+      "restore_at_s": 110.52002399999999,
+      "reapplied_at_s": 394.49,
+      "lost_s": 284.0,
+      "ended_with_old_scripts": false
+    }
+  },
+  {
+    "dir": "goto-wrap/mcp-1",
+    "bug": "goto-wrap",
+    "variant": "free",
+    "via": "mcp",
+    "trial": 1,
+    "isolation": "permissions",
+    "success": true,
+    "bug_check": true,
+    "rules_kept": true,
+    "located": false,
+    "hash_chain_identical_to_clean": true,
+    "as_run": {
+      "success": true,
+      "located": true,
+      "checks": {
+        "steer": [
+          true,
+          "heading after 1.5 s from 90: wheel 0 76.9, left 53.8 (-23.2), right 91.2 (+14.3)"
+        ],
+        "goto": [
+          true,
+          "closest approach to Crate4 within 15 s: 2.7 m (pass < 3 m)"
+        ],
+        "goto_behind": [
+          true,
+          "mark at bearing 225 (behind, to starboard), heading 90: after 2 s heading 132.6 (+42.6; pass > +15, the short way)"
+        ],
+        "reach": [
+          true,
+          "Crate1 at 2.5 m: taken (want taken); Crate2 at 1.56 m: taken (want taken); Crate3 at 3.63 m: refused (want refused)"
+        ],
+        "anchor": [
+          true,
+          "speed 2.96 m/s at anchoring; 8-10 s later mean 0.55 m/s, sail 0.00 (pass: sail 0 and < 1.5 m/s)"
+        ],
+        "tally": [
+          true,
+          "left after each crate: [3, 2, 1, 0] (want [3, 2, 1, 0]); crates.all events: 1"
+        ]
+      },
+      "hash_chain_identical_to_clean": true,
+      "hash_first_divergence_tick": null
+    },
+    "tool_calls": 20,
+    "pocket_calls": 45,
+    "tool_errors": 0,
+    "agent_s": 330.9,
+    "wall_s": 332.8,
+    "tokens": {
+      "input": 25850,
+      "output": 2512,
+      "reasoning": 10140,
+      "cache_read": 254720,
+      "total": 293222
+    },
+    "debug_used": false,
+    "stopped_by": null,
+    "cli": {
+      "mcp scripts list": 1,
+      "help": 1,
+      "mcp scripts read": 3,
+      "world tree": 1,
+      "world query": 6,
+      "world get": 9,
+      "play start": 2,
+      "world set": 7,
+      "step": 8,
+      "world schema": 1,
+      "play stop": 2,
+      "scripts write": 1,
+      "scripts apply": 1,
+      "scripts check": 1,
+      "status": 1
+    },
+    "refusals": {
+      "sim.component_unknown": 1
+    },
+    "output_chars": 18204,
+    "largest_output_chars": 4459,
+    "first_s": {
+      "scripts_write": 145.74
+    },
+    "bash_timeouts": 0,
+    "blocked_s": 0.0,
+    "eval_unseen_locals": 0,
+    "stale_bundle_after_restore": null
+  }
+]

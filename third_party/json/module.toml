@@ -1,6 +1,0 @@
-name = "json"
-kind = "static_library"
-description = "nlohmann/json 3.12.0 single header. MIT."
-sources = []
-public_include = ["include"]
-third_party = true

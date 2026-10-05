@@ -1,0 +1,10 @@
+[run]
+seeds = [1]
+ticks = 90
+
+[reload]
+at = [30]
+
+[expect]
+fail = "reload.diverged"
+lint = false

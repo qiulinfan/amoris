@@ -1,7 +1,0 @@
-name = "pocket_ui"
-kind = "static_library"
-description = "Pocket UI (ADR 0004): a 2D batch painter on the RHI (anti-aliased rounded rectangles, borders, glyphs from a FreeType atlas, scissor clipping), text layout and measurement, and the retained element tree with Yoga flexbox layout, a CSS subset, hit testing, focus, text input and text snapshots for agents."
-sources = ["src/**/*.cpp"]
-public_include = ["include"]
-public_deps = ["pocket_core", "pocket_rhi", "pocket_platform"]
-private_deps = ["freetype", "harfbuzz", "yoga"]

@@ -1,5 +1,0 @@
-name = "world_tests"
-kind = "test"
-description = "Unit tests for pocket_world: hierarchy, generic component access, tree text, queries, events, hashing, scenes and built-in systems."
-sources = ["*.cpp"]
-private_deps = ["pocket_world", "catch2"]

@@ -1,0 +1,5 @@
+# The debugger's test project (docs/spec/debugger.md 11): a gauge that rises a tick, a caught
+# exception every fifth tick, a debugger statement at tick 8 and an uncaught one at tick 12.
+name = "debugme"
+rate = 60
+seed = 1

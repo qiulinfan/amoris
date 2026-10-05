@@ -1,0 +1,11 @@
+--- planted/scripts/helm.ts
++++ agent/scripts/helm.ts
+@@ -75,7 +75,7 @@
+                 rudder = 0;
+             }
+             b.rudder[r] = rudder;
+-            b.hoist[r] = wanted;
++            b.hoist[r] = sail;
+             b.sheet[r] = bestSheet(b.awa_deg[r]);
+         });
+     },

@@ -1,0 +1,13 @@
+[package]
+name = "pocket-audio"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Audio presentation: kira playback of the world's sound sources and of sound events, with synthesized sfx presets"
+
+[dependencies]
+pocket-assets.workspace = true
+kira.workspace = true
+glam = { workspace = true, features = ["mint"] }
+log = "0.4"

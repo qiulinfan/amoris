@@ -1,0 +1,41 @@
+diff --git a/quickjs/quickjs.c b/quickjs/quickjs.c
+index 86c0eb7..e2e9691 100644
+--- a/quickjs/quickjs.c
++++ b/quickjs/quickjs.c
+@@ -2580,6 +2580,23 @@ bool JS_IsJobPending(JSRuntime *rt)
+     return !list_empty(&rt->job_list);
+ }
+ 
++/* Pocket3D P8: frees every pending job without running it. A script call that throws or runs out
++   of its budget leaves the jobs it queued behind; run later, they would act under another call's
++   state, or not at all on a host built afresh, so the host drops them when a call fails. */
++void JS_DiscardPendingJobs(JSRuntime *rt)
++{
++    struct list_head *el, *el1;
++    int i;
++
++    list_for_each_safe(el, el1, &rt->job_list) {
++        JSJobEntry *e = list_entry(el, JSJobEntry, link);
++        list_del(&e->link);
++        for(i = 0; i < e->argc; i++)
++            JS_FreeValueRT(rt, e->argv[i]);
++        js_free_rt(rt, e);
++    }
++}
++
+ JSContext *JS_GetPendingJobContext(JSRuntime *rt)
+ {
+     if (JS_IsJobPending(rt)) {
+diff --git a/quickjs/quickjs.h b/quickjs/quickjs.h
+index 09e398a..2c718f5 100644
+--- a/quickjs/quickjs.h
++++ b/quickjs/quickjs.h
+@@ -1339,6 +1339,8 @@ JS_EXTERN int JS_EnqueueJob(JSContext *ctx, JSJobFunc *job_func,
+                             int argc, JSValueConst *argv);
+ 
+ JS_EXTERN bool JS_IsJobPending(JSRuntime *rt);
++/* Pocket3D P8: frees every pending job without running it. */
++JS_EXTERN void JS_DiscardPendingJobs(JSRuntime *rt);
+ JS_EXTERN JSContext *JS_GetPendingJobContext(JSRuntime *rt);
+ JS_EXTERN int JS_ExecutePendingJob(JSRuntime *rt, JSContext **pctx);
+ 
