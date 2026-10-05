@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="title description">
+<title id="title">Amoris macOS icon</title>
+<desc id="description">macOS continuous-corner silhouette with a 32px black frame. 824px artwork centered in a 1024px transparent canvas. The approved A geometry and Morandi palette are retained.</desc>
+<defs>
+<linearGradient xmlns="http://www.w3.org/2000/svg" id="morandi-sage" gradientUnits="userSpaceOnUse" x1="100" y1="100" x2="924" y2="924">
+      <stop offset="0" stop-color="#D2D8CF" /><stop offset="0.5" stop-color="#BBC5B9" /><stop offset="1" stop-color="#A6B2A3" />
+    </linearGradient>
+
+<linearGradient xmlns="http://www.w3.org/2000/svg" id="morandi-mauve" gradientUnits="userSpaceOnUse" x1="100" y1="100" x2="924" y2="924">
+      <stop offset="0" stop-color="#D8D1DC" /><stop offset="0.5" stop-color="#C2B8C8" /><stop offset="1" stop-color="#AC9FB4" />
+    </linearGradient>
+
+<linearGradient xmlns="http://www.w3.org/2000/svg" id="morandi-taupe" gradientUnits="userSpaceOnUse" x1="100" y1="100" x2="924" y2="924">
+      <stop offset="0" stop-color="#DDD3C7" /><stop offset="0.5" stop-color="#CBBBAD" /><stop offset="1" stop-color="#B49F8D" />
+    </linearGradient>
+
+<path id="platform-shape" transform="translate(0.000000,1024.000000) scale(0.100000,-0.100000)" d="M3323 9229 c-520 -22 -861 -89 -1149 -228 -215 -104 -366 -210 -538 -379 -171 -169 -287 -330 -392 -547 -147 -303 -210 -619 -234 -1186 -13 -292 -13 -3246 0 -3538 24 -563 87 -882 231 -1181 187 -387 473 -686 854 -893 306 -165 661 -241 1245 -267 293 -13 3267 -13 3560 0 584 26 939 102 1245 267 381 207 667 506 854 893 144 299 207 618 231 1181 13 292 13 3246 0 3538 -24 567 -87 883 -234 1186 -105 217 -221 378 -392 547 -172 169 -323 275 -538 379 -296 143 -617 205 -1181 229 -267 11 -3288 11 -3562 -1z"/>
+<clipPath id="platform-interior" clipPathUnits="userSpaceOnUse"><use href="#platform-shape" transform="translate(39.766990291262118 39.766990291262118) scale(0.922330097087379)"/></clipPath>
+<mask id="outside-letter" maskUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024" style="mask-type:luminance"><rect width="1024" height="1024" fill="white"/><g transform="translate(-76 -122) scale(0.944)"><g transform="translate(0 1254) scale(0.1 -0.1)"><path d="M6140 10436 c-133 -28 -244 -89 -341 -185 -86 -87 -90 -92 -356 -556 -126 -220 -338 -587 -470 -815 -784 -1355 -1219 -2145 -1753 -3190 -210 -410 -622 -1207 -895 -1730 -68 -129 -185 -354 -260 -500 -75 -146 -200 -382 -276 -525 -82 -155 -145 -284 -154 -320 -53 -205 36 -410 213 -493 l57 -27 836 0 835 0 75 37 c82 40 147 101 191 178 24 42 222 500 593 1375 86 204 175 403 198 444 110 195 293 299 602 343 131 19 1901 19 2030 0 214 -31 364 -92 467 -189 112 -107 99 -80 441 -903 339 -816 436 -1042 468 -1091 45 -70 130 -144 197 -171 l57 -23 830 0 830 0 62 29 c76 35 153 113 191 193 25 53 27 68 27 183 0 148 11 121 -202 515 -250 464 -657 1261 -1100 2155 -664 1339 -746 1502 -912 1810 -297 552 -518 947 -1029 1840 -206 360 -456 799 -555 975 -201 359 -221 388 -312 473 -119 112 -258 170 -425 177 -59 3 -120 -1 -160 -9z" fill="black"/></g></g></mask>
+</defs>
+<use href="#platform-shape" fill="#000000"/>
+<g clip-path="url(#platform-interior)">
+<rect width="1024" height="1024" fill="white"/>
+<g transform="translate(55.411255411255411 55.411255411255411) scale(0.891774891774892)">
+<g xmlns="http://www.w3.org/2000/svg" id="three-sandbox-regions" mask="url(#outside-letter)">
+    <rect id="left-region" x="68" y="68" width="444" height="888" fill="url(#morandi-sage)" />
+    <rect id="right-region" x="512" y="68" width="444" height="888" fill="url(#morandi-mauve)" />
+    <path id="lower-region" d="M 512 565 L 68 835 L 68 956 L 956 956 L 956 835 Z" fill="url(#morandi-taupe)" />
+  </g>
+
+<g xmlns="http://www.w3.org/2000/svg" transform="translate(-76 -122) scale(0.944)">
+    <g transform="translate(0 1254) scale(0.1 -0.1)" fill="#000000" fill-rule="evenodd">
+      <path d="M6140 10436 c-133 -28 -244 -89 -341 -185 -86 -87 -90 -92 -356 -556 -126 -220 -338 -587 -470 -815 -784 -1355 -1219 -2145 -1753 -3190 -210 -410 -622 -1207 -895 -1730 -68 -129 -185 -354 -260 -500 -75 -146 -200 -382 -276 -525 -82 -155 -145 -284 -154 -320 -53 -205 36 -410 213 -493 l57 -27 836 0 835 0 75 37 c82 40 147 101 191 178 24 42 222 500 593 1375 86 204 175 403 198 444 110 195 293 299 602 343 131 19 1901 19 2030 0 214 -31 364 -92 467 -189 112 -107 99 -80 441 -903 339 -816 436 -1042 468 -1091 45 -70 130 -144 197 -171 l57 -23 830 0 830 0 62 29 c76 35 153 113 191 193 25 53 27 68 27 183 0 148 11 121 -202 515 -250 464 -657 1261 -1100 2155 -664 1339 -746 1502 -912 1810 -297 552 -518 947 -1029 1840 -206 360 -456 799 -555 975 -201 359 -221 388 -312 473 -119 112 -258 170 -425 177 -59 3 -120 -1 -160 -9z m528 -2206 c45 -245 109 -438 263 -802 267 -630 332 -874 332 -1253 1 -293 -57 -505 -193 -705 -179 -263 -541 -427 -902 -407 -488 28 -782 280 -891 765 -18 84 -21 128 -21 327 0 213 2 239 27 358 57 268 155 525 346 905 237 474 548 933 899 1327 l107 120 6 -260 c5 -201 11 -286 27 -375z" />
+    </g>
+  </g>
+
+</g>
+</g>
+</svg>

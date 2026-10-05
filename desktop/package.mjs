@@ -28,7 +28,8 @@ for (const file of ['main.cjs', 'host.cjs', 'preload.cjs', 'security.cjs', 'reso
   await fs.copyFile(path.join(desktop, file), path.join(application, file));
 }
 await fs.cp(path.join(desktop, 'launcher'), path.join(application, 'launcher'), { recursive: true });
-await fs.copyFile(path.join(repo, 'assets/branding/amoris-icon-morandi.png'),
+const brandIcon = process.platform === 'darwin' ? 'amoris-icon-macos.png' : 'amoris-icon-morandi.png';
+await fs.copyFile(path.join(repo, 'assets/branding', brandIcon),
   path.join(application, 'assets/icon.png'));
 await fs.copyFile(path.join(repo, 'LICENSE'), path.join(application, 'LICENSE'));
 await fs.writeFile(path.join(application, 'package.json'), JSON.stringify({

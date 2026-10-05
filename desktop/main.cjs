@@ -11,8 +11,9 @@ app.enableSandbox();
 let window, host = null, origin = null, project = null, modified = false;
 let busy = false, allowClose = false, allowQuit = false, recents = [], operation = Promise.resolve();
 const launcherUrl = pathToFileURL(path.join(__dirname, 'launcher/index.html')).href;
+const brandIcon = process.platform === 'darwin' ? 'amoris-icon-macos.png' : 'amoris-icon-morandi.png';
 const icon = app.isPackaged ? path.join(__dirname, 'assets/icon.png') :
-  process.env.AMORIS_BRAND_ICON || path.join(__dirname, '../assets/branding/amoris-icon-morandi.png');
+  process.env.AMORIS_BRAND_ICON || path.join(__dirname, '../assets/branding', brandIcon);
 
 function serialize(action) {
   const next = operation.then(action, action);
