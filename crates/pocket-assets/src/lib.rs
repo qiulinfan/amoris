@@ -25,7 +25,7 @@ pub use visual::{
 
 impl Persisted for Model {
     const NAME: &'static str = "Model";
-    const VERSION: u32 = 1;
+    const VERSION: u32 = 2;
 }
 
 impl Persisted for Light {

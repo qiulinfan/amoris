@@ -1,0 +1,385 @@
+{
+  "format": "pocket-scene",
+  "version": 1,
+  "entities": [
+    {
+      "name": "Floor",
+      "components": {
+        "Transform": {
+          "position": [
+            0,
+            -0.05,
+            0
+          ]
+        },
+        "Model": {
+          "mesh": "cube",
+          "scale": [
+            5,
+            0.1,
+            4.5
+          ],
+          "color": [
+            0.65,
+            0.65,
+            0.65,
+            1
+          ],
+          "roughness": 0.8
+        }
+      }
+    },
+    {
+      "name": "Back",
+      "components": {
+        "Transform": {
+          "position": [
+            0,
+            1.7,
+            -2.1
+          ]
+        },
+        "Model": {
+          "mesh": "cube",
+          "scale": [
+            5,
+            3.4,
+            0.1
+          ],
+          "color": [
+            0.75,
+            0.75,
+            0.75,
+            1
+          ],
+          "roughness": 0.8
+        }
+      }
+    },
+    {
+      "name": "RedWall",
+      "components": {
+        "Transform": {
+          "position": [
+            -2.5,
+            1.7,
+            0
+          ]
+        },
+        "Model": {
+          "mesh": "cube",
+          "scale": [
+            0.1,
+            3.4,
+            4.5
+          ],
+          "color": [
+            0.65,
+            0.035,
+            0.02,
+            1
+          ],
+          "roughness": 0.8
+        }
+      }
+    },
+    {
+      "name": "Gold",
+      "components": {
+        "Transform": {
+          "position": [
+            -1.35,
+            0.7,
+            0.45
+          ]
+        },
+        "Model": {
+          "mesh": "sphere",
+          "scale": [
+            1.4,
+            1.4,
+            1.4
+          ],
+          "color": [
+            1,
+            0.66,
+            0.22,
+            1
+          ],
+          "metallic": 1,
+          "roughness": 0.22
+        }
+      }
+    },
+    {
+      "name": "Glass",
+      "components": {
+        "Transform": {
+          "position": [
+            0.1,
+            0.72,
+            0.6
+          ]
+        },
+        "Model": {
+          "mesh": "sphere",
+          "scale": [
+            1.44,
+            1.44,
+            1.44
+          ],
+          "color": [
+            0.98,
+            0.99,
+            1,
+            1
+          ],
+          "roughness": 0.06,
+          "transmission": 1,
+          "ior": 1.5
+        }
+      }
+    },
+    {
+      "name": "RoughMetal",
+      "components": {
+        "Transform": {
+          "position": [
+            1.45,
+            0.65,
+            -0.4
+          ]
+        },
+        "Model": {
+          "mesh": "sphere",
+          "scale": [
+            1.3,
+            1.3,
+            1.3
+          ],
+          "color": [
+            0.6,
+            0.7,
+            0.85,
+            1
+          ],
+          "metallic": 1,
+          "roughness": 0.6
+        }
+      }
+    },
+    {
+      "name": "Mirror",
+      "components": {
+        "Transform": {
+          "position": [
+            0.1,
+            0.45,
+            -1.05
+          ]
+        },
+        "Model": {
+          "mesh": "cube",
+          "scale": [
+            0.8,
+            0.9,
+            0.8
+          ],
+          "color": [
+            0.95,
+            0.95,
+            0.95,
+            1
+          ],
+          "metallic": 1,
+          "roughness": 0
+        }
+      }
+    },
+    {
+      "name": "CheckerCard",
+      "components": {
+        "Transform": {
+          "position": [
+            -1.75,
+            0.15,
+            -1.95
+          ]
+        },
+        "Model": {
+          "mesh": "materials.gltf#CheckerCard"
+        }
+      }
+    },
+    {
+      "name": "CutoutCard",
+      "components": {
+        "Transform": {
+          "position": [
+            1.1,
+            0.05,
+            1.3
+          ]
+        },
+        "Model": {
+          "mesh": "materials.gltf#CutoutCard",
+          "scale": [
+            0.8,
+            0.8,
+            0.8
+          ]
+        }
+      }
+    },
+    {
+      "name": "BlendCard",
+      "components": {
+        "Transform": {
+          "position": [
+            -0.8,
+            0.1,
+            1.7
+          ]
+        },
+        "Model": {
+          "mesh": "materials.gltf#BlendCard",
+          "scale": [
+            0.45,
+            0.45,
+            0.45
+          ]
+        }
+      }
+    },
+    {
+      "name": "AreaEmitter",
+      "components": {
+        "Transform": {
+          "position": [
+            0,
+            3.05,
+            -0.5
+          ]
+        },
+        "Model": {
+          "mesh": "cube",
+          "scale": [
+            1.4,
+            0.06,
+            1.2
+          ],
+          "emissive": [
+            8,
+            7,
+            5
+          ],
+          "roughness": 0.8
+        }
+      }
+    },
+    {
+      "name": "Point",
+      "components": {
+        "Transform": {
+          "position": [
+            -1.7,
+            2.3,
+            1.1
+          ]
+        },
+        "Light": {
+          "kind": "point",
+          "color": [
+            0.45,
+            0.65,
+            1
+          ],
+          "intensity": 3,
+          "range": 10
+        }
+      }
+    },
+    {
+      "name": "Spot",
+      "components": {
+        "Transform": {
+          "position": [
+            1.9,
+            2.8,
+            1.8
+          ],
+          "rotation": [
+            -0.29552,
+            0,
+            0,
+            0.9553365
+          ]
+        },
+        "Light": {
+          "kind": "spot",
+          "color": [
+            1,
+            0.6,
+            0.3
+          ],
+          "intensity": 8,
+          "range": 10,
+          "inner_deg": 25,
+          "outer_deg": 40
+        }
+      }
+    },
+    {
+      "name": "Sun",
+      "components": {
+        "Transform": {
+          "rotation": [
+            -0.47942554,
+            0,
+            0,
+            0.87758256
+          ]
+        },
+        "Light": {
+          "kind": "directional",
+          "intensity": 0.3,
+          "color": [
+            1,
+            0.95,
+            0.85
+          ]
+        }
+      }
+    },
+    {
+      "name": "Environment",
+      "components": {
+        "Environment": {
+          "sky": "color",
+          "sky_color": [
+            0.06,
+            0.08,
+            0.12
+          ],
+          "ambient": 1,
+          "bloom": 0
+        }
+      }
+    },
+    {
+      "name": "Camera",
+      "components": {
+        "Transform": {
+          "position": [
+            0,
+            1.7,
+            7
+          ]
+        },
+        "Camera": {
+          "fov_deg": 42
+        }
+      }
+    }
+  ]
+}

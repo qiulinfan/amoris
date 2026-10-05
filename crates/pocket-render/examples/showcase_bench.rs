@@ -167,6 +167,8 @@ fn load_frame(root: &Path) -> Result<(RenderFrame, Vec<String>), String> {
                     color: model.color.map(|value| value as f32),
                     metallic: model.metallic as f32,
                     roughness: model.roughness as f32,
+                    transmission: model.transmission.map(|value| value as f32),
+                    ior: model.ior.map(|value| value as f32),
                     emissive: model.emissive.map(|value| value as f32),
                     cast_shadows: model.cast_shadows,
                     visible: model.visible,

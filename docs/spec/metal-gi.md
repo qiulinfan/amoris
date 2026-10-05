@@ -30,3 +30,10 @@ Baked and learned fields are integrated into the native/WebGPU forward renderer.
 ReSTIR currently run in the isolated Metal tracer with constant diffuse materials and emission.
 ReSTIR reuse is opt-in experimentation with negative quality results; the default has no reuse.
 The learned field is offline supervised approximation of the baked teacher, not online dynamic NRC.
+
+## Surface PT and online NRC follow-up
+
+The subsequent [surface PT and online NRC](path-tracing-nrc.md) implementation adds full static
+PBR/refraction transport and actual GPU training from new traced path tails. The offline six-input
+baked-field model above remains a separate experiment. The bounded ReSTIR implementation retains
+its stated limitations; it is not replaced by a claim of complete ReSTIR PT.

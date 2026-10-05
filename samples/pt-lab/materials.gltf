@@ -1,0 +1,284 @@
+{
+  "asset": {
+    "version": "2.0",
+    "generator": "Amoris authored PT fixture"
+  },
+  "extensionsUsed": [
+    "KHR_materials_transmission",
+    "KHR_materials_ior"
+  ],
+  "buffers": [
+    {
+      "byteLength": 204,
+      "uri": "data:application/octet-stream;base64,MzMzvwAAAAAAAAAAMzMzPwAAAAAAAAAAMzMzPzMzsz8AAAAAMzMzvzMzsz8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAgD8AAIA/AACAPwAAgD8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AACAPwAAAAAAAAAAAACAPwAAgD8AAAAAAAAAAAAAgD8AAIA/AAAAAAAAAAAAAIA/AAABAAIAAAACAAMA"
+    }
+  ],
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteOffset": 0,
+      "byteLength": 48
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 48,
+      "byteLength": 48
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 96,
+      "byteLength": 32
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 128,
+      "byteLength": 64
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 192,
+      "byteLength": 12
+    }
+  ],
+  "accessors": [
+    {
+      "bufferView": 0,
+      "componentType": 5126,
+      "count": 4,
+      "type": "VEC3",
+      "min": [
+        -0.7,
+        0,
+        0
+      ],
+      "max": [
+        0.7,
+        1.4,
+        0
+      ]
+    },
+    {
+      "bufferView": 1,
+      "componentType": 5126,
+      "count": 4,
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 2,
+      "componentType": 5126,
+      "count": 4,
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 3,
+      "componentType": 5126,
+      "count": 4,
+      "type": "VEC4"
+    },
+    {
+      "bufferView": 4,
+      "componentType": 5123,
+      "count": 6,
+      "type": "SCALAR"
+    }
+  ],
+  "images": [
+    {
+      "uri": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAUklEQVR4nO3SIQEAIAwF0XXBUIOmZCIENYYFPJw5MfXFnriYveZ+pY3jXu8hAAf8fnjvAngAHqEAHIBHKAAH4BEKwAF4hAJwAB6hAByARyiABiz1M8SISruXSwAAAABJRU5ErkJggg=="
+    },
+    {
+      "uri": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAATUlEQVR4nO3SoQEAMAjEQPZflSFa/6oGUhGBesGJVHefuIob3ccfCHgBrD7MXcAXADxCATgAj1AADsAjFIAD8AgF4AA8QgE4AI9QAAq42rgCxCgDSBsAAAAASUVORK5CYII="
+    },
+    {
+      "uri": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAEw0lEQVR4nB3WIQy2VBSAYaPRatPkLGwWghvFkaQRaczCZiC4UdxI0miYmIVgILhRHEka8TMxC5uB4EZyJGn4fP+9e3bqW+7u+ej57KPn+YKAkIiYhJSMnIKSipqGlo6egZGJmYWVFxs7BycXN89H7mcfCyAgJCImISUjp6CkoqahpaNnYGRiZmHlxcbOwcnFzfPxO+ATAQSERMQkpGTkFJRU1DS0dPQMjEzMLKy82Ng5OLm4eT55B3wqgICQiJiElIycgpKKmoaWjp6BkYmZhZUXGzsHJxc3z6fvgM8FEBASEZOQkpFTUFJR09DS0TMwMjGzsPJiY+fg5OLm+fwd8KUAAkIiYhJSMnIKSipqGlo6egZGJmYWVl5s7BycXNw8X74DvhJAQEhETEJKRk5BSUVNQ0tHz8DIxMzCyouNnYOTi5vnq3fA1wIICImISUjJyCkoqahpaOnoGRiZmFlYebGxc3BycfN8/Q74RgABIRExCSkZOQUlFTUNLR09AyMTMwsrLzZ2Dk4ubp5v3gHfCiAgJCImISUjp6CkoqahpaNnYGRiZmHlxcbOwcnFzfPtOyAVQEBIRExCSkZOQUlFTUNLR8/AyMTMwsqLjZ2Dk4ubJ30HZAIICImISUjJyCkoqahpaOnoGRiZmFlYebGxc3BycfNk74DvBBAQEhGTkJKRU1BSUdPQ0tEzMDIxs7DyYmPn4OTi5vnuHfC9AAJCImISUjJyCkoqahpaOnoGRiZmFlZebOwcnFzcPN+/A34QQEBIRExCSkZOQUlFTUNLR8/AyMTMwsqLjZ2Dk4ub54d3wI8CCAiJiElIycgpKKmoaWjp6BkYmZhZWHmxsXNwcnHz/PgO+EkAASERMQkpGTkFJRU1DS0dPQMjEzMLKy82dg5OLm6en94BrQACQiJiElIycgpKKmoaWjp6BkYmZhZWXmzsHJxc3DztO+BnAQSERMQkpGTkFJRU1DS0dPQMjEzMLKy82Ng5OLm4eX5+B/wigICQiJiElIycgpKKmoaWjp6BkYmZhZUXGzsHJxc3zy/vgF8FEBASEZOQkpFTUFJR09DS0TMwMjGzsPJiY+fg5OLm+fUd8JsAAkIiYhJSMnIKSipqGlo6egZGJmYWVl5s7BycXNw8v70DfhdAQEhETEJKRk5BSUVNQ0tHz8DIxMzCyouNnYOTi5vn93fAHwIICImISUjJyCkoqahpaOnoGRiZmFlYebGxc3BycfP88Q5YBRAQEhGTkJKRU1BSUdPQ0tEzMDIxs7DyYmPn4OTi5lnfAX8KICAkIiYhJSOnoKSipqGlo2dgZGJmYeXFxs7BycXN8+c74C8BBIRExCSkZOQUlFTUNLR09AyMTMwsrLzY2Dk4ubh5/noH/C2AgJCImISUjJyCkoqahpaOnoGRiZmFlRcbOwcnFzfP3++AfwQQEBIRk5CSkVNQUlHT0NLRMzAyMbOw8mJj5+Dk4ub55x3wrwACQiJiElIycgpKKmoaWjp6BkYmZhZWXmzsHJxc3Dz/vgP+E0BASERMQkpGTkFJRU1DS0fPwMjEzMLKi42dg5OLm+e/d4D5BQEhETHJh53xvbYJoKCkoqb58JkJoGdgZGJm+fDKBLCxc3BycT8fzv81ZDS1Bg+KDAAAAABJRU5ErkJggg=="
+    },
+    {
+      "uri": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAEUklEQVR4nM2X0aqqQBSGe80xTQzBECQvJLyQDCS8kAgkQQpMlPEFz97tau991vnmKTwXP2vN/80sB3VNtjhMLzlPT7lNDxmnD5mmPzIQ2+lLKliGIrg3fYoFM3LJQ3gKK1FD3uNpmFFHXrOmgCUogDvUVDCb6HOtGJ7DFofxLefxJbfxS8bxU6bxQwZiy7iCZSiCe+NDLJiRSx6OT0lhJWrIezwNM+rIa9YUsAQF1HKoqWA20Wccw3PY4nD9kfP1W27Xl4zXL5muDxmI7fUtFSxDEdyDW/gW3L0+JYSnsBI15D2ehmnmdMytWVPAEhTAHXwFt4k+PIbnsMXh9FfOp1+5nb5lPL1kOj1lOL2lPf1IBctQBPfgFtzIhYfwFFaihrzH0zCjjrk1awpYggK4A1fUtuE+PIbnsMVhL3Le/5Xb/kfG/Vum/UsGYrv/lQo/g0dEb88GYEYueQhPYSVqyHs8DTPqyGvWFLCEGMAdaiqYTfS5VoyfwxeHLXdgyx3Ycge23IEtd4DYMq7wM3hE9LZvsWBGLnm45Q7AStSQ93gaZtSR16wpYAkxoJZDTQWziT7jGD/fmjuw5h1Y8w6seQfWD5nQsOYdYFzhZ/Bo/RZvzcVhRi48xEvhJWrIezwNM+qYW+MVrE3gAbUcuILZyGcc4+dr8w4s6YIlXbCkDZe0IRqWdMGSLsDP4NGSNoRbMCMXHuKl8BI15D2ehhl1zK3xCtYm8IBaDlzBbOTDY/x8abpAcQ4ozgHFBhQbUJwDxFaxAViGIrinOAdgRi55CE9hJWrIezwNM+rIa9YUsAQFcIeaCmYTfa4Vw3NlzoHVt5xXb7mtOAdWnAMr7sDqIe3qKRV+hqIV5wDcghu58BAvhZWoIe/xNMyoY26NV8ASFFDLgStq23AfHuPnXHtx2PzKefMjt81bxs1Tps2XDMSWcYWfwaMN58CGDoAZueQhXgorUUPe42mYUUde4xWwhBoBtRxqKphN9BnH+Dl8cdjRhjvacEcb7ugCNOxoQ8YVfgaPdnTBjjaEGbnwEC+Fl6gh7/E0zKhjbo1XsDaBB9Ry4ApmI59xjJ/vTBse2cCRDRzZwJFz4MgGiC3jCj+DR0TvyAZgRi55eGQDsBI15D2ehhl15DVrClhCDKjlUFPBbKLPOMbPj2YDFx7BhUdw4RFceAQXHsGFc+DCOQDLUAT34BbcyIWH8BRWooa8x9Mwo465NWsKWIICuANX1LbhPjyG5xfzCO68hHdewvtTxjvnwP1TBmJ75xyAZSiCe3eeP8zIJQ/hKaxEDXmPp2FGHXnNmgKWoADuUFPBbKLPtWJ4fjcvoaYNNW2oaUNNG2rakNhq2hCWoQjuwS18C+5q2hCewkrUkPd4GqaZ0zG3Zk0BS1AAd/AV3Cb68Bie69f/sIHZH8HsL+HsbTj7QTT7UTz7j9HsP8ezf5DM/kk2+0fp7J/ls/8xmf2v2ex/Tmf+e/4PYOLiAna8VuAAAAAASUVORK5CYII="
+    }
+  ],
+  "samplers": [
+    {
+      "magFilter": 9729,
+      "minFilter": 9729,
+      "wrapS": 10497,
+      "wrapT": 10497
+    }
+  ],
+  "textures": [
+    {
+      "sampler": 0,
+      "source": 0
+    },
+    {
+      "sampler": 0,
+      "source": 1
+    },
+    {
+      "sampler": 0,
+      "source": 2
+    },
+    {
+      "sampler": 0,
+      "source": 3
+    }
+  ],
+  "materials": [
+    {
+      "name": "CheckerPBR",
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 0
+        },
+        "metallicFactor": 1,
+        "roughnessFactor": 1,
+        "metallicRoughnessTexture": {
+          "index": 2
+        }
+      },
+      "normalTexture": {
+        "index": 3
+      }
+    },
+    {
+      "name": "Cutout",
+      "alphaMode": "MASK",
+      "alphaCutoff": 0.5,
+      "doubleSided": true,
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 1
+        },
+        "metallicFactor": 0,
+        "roughnessFactor": 0.8
+      }
+    },
+    {
+      "name": "ImportedGlass",
+      "doubleSided": true,
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          0.98,
+          0.99,
+          1,
+          1
+        ],
+        "metallicFactor": 0,
+        "roughnessFactor": 0.12
+      },
+      "extensions": {
+        "KHR_materials_transmission": {
+          "transmissionFactor": 1
+        },
+        "KHR_materials_ior": {
+          "ior": 1.45
+        }
+      }
+    },
+    {
+      "name": "Blend",
+      "alphaMode": "BLEND",
+      "doubleSided": true,
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          0.7,
+          0.9,
+          1,
+          0.45
+        ],
+        "metallicFactor": 0,
+        "roughnessFactor": 0.35
+      }
+    }
+  ],
+  "meshes": [
+    {
+      "name": "CheckerCard",
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 0,
+            "NORMAL": 1,
+            "TEXCOORD_0": 2,
+            "TANGENT": 3
+          },
+          "indices": 4,
+          "material": 0
+        }
+      ]
+    },
+    {
+      "name": "CutoutCard",
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 0,
+            "NORMAL": 1,
+            "TEXCOORD_0": 2,
+            "TANGENT": 3
+          },
+          "indices": 4,
+          "material": 1
+        }
+      ]
+    },
+    {
+      "name": "GlassCard",
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 0,
+            "NORMAL": 1,
+            "TEXCOORD_0": 2,
+            "TANGENT": 3
+          },
+          "indices": 4,
+          "material": 2
+        }
+      ]
+    },
+    {
+      "name": "BlendCard",
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 0,
+            "NORMAL": 1,
+            "TEXCOORD_0": 2,
+            "TANGENT": 3
+          },
+          "indices": 4,
+          "material": 3
+        }
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "mesh": 0,
+      "name": "CheckerCard"
+    },
+    {
+      "mesh": 1,
+      "name": "CutoutCard"
+    },
+    {
+      "mesh": 2,
+      "name": "GlassCard"
+    },
+    {
+      "mesh": 3,
+      "name": "BlendCard"
+    }
+  ],
+  "scenes": [
+    {
+      "nodes": [
+        0,
+        1,
+        2,
+        3
+      ]
+    }
+  ],
+  "scene": 0
+}

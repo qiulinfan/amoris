@@ -19,6 +19,7 @@ winit = { workspace = true, optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 pollster.workspace = true
+image.workspace = true
 
 [features]
 import = ["pocket-assets/import"]

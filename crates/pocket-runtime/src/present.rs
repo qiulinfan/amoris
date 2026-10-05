@@ -74,6 +74,8 @@ fn look(m: &Model) -> Look {
         color: [f(m.color[0]), f(m.color[1]), f(m.color[2]), f(m.color[3])],
         metallic: f(m.metallic),
         roughness: f(m.roughness),
+        transmission: m.transmission.map(f),
+        ior: m.ior.map(f),
         emissive: f3(m.emissive),
         cast_shadows: m.cast_shadows,
         visible: m.visible,

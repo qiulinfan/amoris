@@ -1,0 +1,26 @@
+{
+  "date": "2026-10-05",
+  "branch": "feature/metal",
+  "measurement_parent_commit": "cc98f8d540f4627a0bb3189adb65f0ecacf4a142",
+  "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+  "workspace": {
+    "command": "cargo test --workspace",
+    "passed": 419,
+    "failed": 0,
+    "ignored": 6
+  },
+  "renderer_with_native_gpu": {
+    "command": "cargo test -p pocket-render --lib -- --include-ignored",
+    "passed": 39,
+    "failed": 0,
+    "ignored": 0
+  },
+  "viewport": "tools/build_viewport.sh passed; actual host loaded in Chrome WebGPU without format/GPU errors",
+  "bsdf_gpu_probe": {
+    "cases": 3456,
+    "failed": 0
+  },
+  "nrc_gpu_probe": "GPU gradients and inference parity; synthetic dynamic fitting passed",
+  "material_scene": "Metal, 320x240, 1024 spp, zero GPU errors/nonfinite paths",
+  "artifacts": "PNG previews and full JSON reports here; linear float32 outputs reproducible under out/pt/"
+}

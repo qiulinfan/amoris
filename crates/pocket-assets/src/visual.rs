@@ -33,6 +33,10 @@ pub struct Model {
     pub metallic: f64,
     /// 0 mirror to 1 rough.
     pub roughness: f64,
+    /// Optional transmission override for path tracing; None preserves the imported material.
+    pub transmission: Option<f64>,
+    /// Optional index of refraction override for path tracing; None preserves the material.
+    pub ior: Option<f64>,
     /// Emitted light, linear RGB in nits-like units (1 = as bright as a lit white surface).
     pub emissive: [f64; 3],
     /// Whether it casts shadows.
@@ -50,6 +54,8 @@ impl Default for Model {
             color: [1.0; 4],
             metallic: 0.0,
             roughness: 0.5,
+            transmission: None,
+            ior: None,
             emissive: [0.0; 3],
             cast_shadows: true,
             visible: true,

@@ -5,6 +5,11 @@ use pocket_assets::gi::{BakedGi, NeuralGi};
 
 #[cfg(all(not(target_arch = "wasm32"), feature = "import"))]
 pub mod bake;
+pub mod bsdf;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod nrc;
+#[cfg(all(not(target_arch = "wasm32"), feature = "import"))]
+pub mod pt;
 pub mod reservoir;
 #[cfg(all(not(target_arch = "wasm32"), feature = "import"))]
 pub mod rt;

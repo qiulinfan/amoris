@@ -225,6 +225,12 @@ pub struct MaterialData {
     pub base_color: [f32; 4],
     pub metallic: f32,
     pub roughness: f32,
+    /// KHR_materials_transmission: fraction of nonmetallic light transmitted through the surface.
+    #[serde(default)]
+    pub transmission: f32,
+    /// KHR_materials_ior; 1.5 for ordinary glass.
+    #[serde(default = "default_ior")]
+    pub ior: f32,
     pub emissive: [f32; 3],
     /// Indices into the asset's images.
     pub base_color_texture: Option<usize>,
@@ -232,6 +238,12 @@ pub struct MaterialData {
     pub normal_texture: Option<usize>,
     pub emissive_texture: Option<usize>,
     pub occlusion_texture: Option<usize>,
+    #[serde(default)]
+    pub transmission_texture: Option<usize>,
+    #[serde(default = "unit_scale")]
+    pub normal_scale: f32,
+    #[serde(default = "unit_scale")]
+    pub occlusion_strength: f32,
     pub alpha_mode: AlphaMode,
     pub alpha_cutoff: f32,
     pub double_sided: bool,
@@ -244,17 +256,29 @@ impl Default for MaterialData {
             base_color: [1.0; 4],
             metallic: 0.0,
             roughness: 0.5,
+            transmission: 0.0,
+            ior: default_ior(),
             emissive: [0.0; 3],
             base_color_texture: None,
             metallic_roughness_texture: None,
             normal_texture: None,
             emissive_texture: None,
             occlusion_texture: None,
+            transmission_texture: None,
+            normal_scale: 1.0,
+            occlusion_strength: 1.0,
             alpha_mode: AlphaMode::Opaque,
             alpha_cutoff: 0.5,
             double_sided: false,
         }
     }
+}
+
+fn default_ior() -> f32 {
+    1.5
+}
+fn unit_scale() -> f32 {
+    1.0
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

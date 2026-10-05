@@ -486,6 +486,8 @@ fn look(mesh: &str, color: [f32; 4], roughness: f32) -> Look {
         color,
         metallic: 0.0,
         roughness,
+        transmission: None,
+        ior: None,
         emissive: [0.0; 3],
         cast_shadows: true,
         visible: true,

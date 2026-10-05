@@ -34,6 +34,8 @@ pub fn many_cubes(count: usize, dense: bool, shadows: bool) -> RenderFrame {
         color: [0.8, 0.7, 0.6, 1.0],
         metallic: 0.0,
         roughness: 0.6,
+        transmission: None,
+        ior: None,
         emissive: [0.0; 3],
         cast_shadows: shadows,
         visible: true,

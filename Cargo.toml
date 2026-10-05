@@ -69,7 +69,7 @@ mime_guess = "=2.0.5"
 ureq = { version = "=3.4.2", default-features = false }
 
 # Presenters and assets (charter 4.1)
-gltf = { version = "=1.4.1", default-features = false, features = ["import", "utils", "names", "KHR_materials_emissive_strength", "KHR_texture_transform", "KHR_lights_punctual"] }
+gltf = { version = "=1.4.1", default-features = false, features = ["import", "utils", "names", "KHR_materials_emissive_strength", "KHR_texture_transform", "KHR_lights_punctual", "KHR_materials_transmission", "KHR_materials_ior"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 # Metal and Vulkan natively (Vulkan on Apple through MoltenVK: vulkan-portability), WebGPU in the
 # browser; no Direct3D 12 or GL (charter 4.1).

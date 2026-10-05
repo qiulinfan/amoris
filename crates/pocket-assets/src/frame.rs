@@ -42,6 +42,8 @@ pub struct Look {
     pub color: [f32; 4],
     pub metallic: f32,
     pub roughness: f32,
+    pub transmission: Option<f32>,
+    pub ior: Option<f32>,
     pub emissive: [f32; 3],
     pub cast_shadows: bool,
     pub visible: bool,
@@ -352,7 +354,8 @@ impl RenderFrame {
 /// The feed's wire format: a fingerprint of the sources of its types (this file and visual.rs), so a
 /// viewport built from another revision refuses the bytes instead of misreading them. Any edit to
 /// either file changes it; both sides rebuild together.
-pub const FORMAT: u64 = fnv1a(include_bytes!("frame.rs")) ^ fnv1a(include_bytes!("visual.rs")).rotate_left(1);
+pub const FORMAT: u64 =
+    fnv1a(include_bytes!("frame.rs")) ^ fnv1a(include_bytes!("visual.rs")).rotate_left(1);
 
 const fn fnv1a(bytes: &[u8]) -> u64 {
     let mut h = 0xcbf2_9ce4_8422_2325_u64;
@@ -550,6 +553,10 @@ mod tests {
         let mut bytes = f.encode();
         assert_eq!(RenderFrame::decode(&bytes), Ok(f));
         bytes[0] ^= 1;
-        assert!(RenderFrame::decode(&bytes).unwrap_err().contains("rebuild the viewport"));
+        assert!(
+            RenderFrame::decode(&bytes)
+                .unwrap_err()
+                .contains("rebuild the viewport")
+        );
     }
 }

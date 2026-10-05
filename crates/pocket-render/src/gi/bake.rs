@@ -170,6 +170,7 @@ pub struct RayScene {
     nodes: Vec<Node>,
     lights: Vec<SceneLight>,
     environment: Vec3,
+    environment_settings: Environment,
     signature: String,
 }
 
@@ -224,7 +225,24 @@ struct RayCounts {
 impl RayScene {
     #[cfg(all(not(target_arch = "wasm32"), feature = "import"))]
     pub fn from_project(root: &Path) -> Result<Self, String> {
-        let path = root.join("scene.json");
+        Self::load_project(root, false, "scene.json")
+    }
+
+    /// Import a static surface scene for full path tracing. Baking retains its stricter contract.
+    #[cfg(all(not(target_arch = "wasm32"), feature = "import"))]
+    pub fn for_path_tracing(root: &Path) -> Result<Self, String> {
+        Self::load_project(root, true, "scene.json")
+    }
+
+    #[cfg(all(not(target_arch = "wasm32"), feature = "import"))]
+    fn load_project(root: &Path, path_tracing: bool, scene_file: &str) -> Result<Self, String> {
+        if Path::new(scene_file)
+            .components()
+            .any(|c| !matches!(c, Component::Normal(_)))
+        {
+            return Err("scene file must be a project-relative path without ..".into());
+        }
+        let path = root.join(scene_file);
         let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
         let scene: Value =
             serde_json::from_slice(&bytes).map_err(|e| format!("scene.json: {e}"))?;
@@ -240,6 +258,7 @@ impl RayScene {
             nodes: Vec::new(),
             lights: Vec::new(),
             environment: Vec3::ZERO,
+            environment_settings: Environment::default(),
             signature: String::new(),
         };
         let mut assets = BTreeMap::<String, Arc<ModelAsset>>::new();
@@ -281,11 +300,12 @@ impl RayScene {
                     let env: Environment = component(value)?;
                     validate_numbers(&[env.ambient], "environment ambient", 0.0, 2.0)?;
                     validate_numbers(&env.sky_color, "environment sky color", 0.0, 1e6)?;
-                    if env.sky != SkyKind::Color {
+                    if !path_tracing && env.sky != SkyKind::Color {
                         return Err("static GI bake supports sky: color; atmosphere needs a matching sky-radiance export".into());
                     }
                     result.environment =
                         Vec3::from(env.sky_color.map(|n| n as f32)) * env.ambient as f32;
+                    result.environment_settings = env;
                     environment_found = true;
                 }
             }
@@ -303,7 +323,7 @@ impl RayScene {
                     return Err("spot angles must be finite with 0 <= inner <= outer <= 90".into());
                 }
                 // The renderer lights with the first directional entity only.
-                if light.kind != LightKind::Directional || !sun_found {
+                if path_tracing || light.kind != LightKind::Directional || !sun_found {
                     sun_found |= light.kind == LightKind::Directional;
                     result.lights.push(SceneLight {
                         light,
@@ -342,7 +362,14 @@ impl RayScene {
                 Vec3::from(model.scale.map(|s| s as f32)),
             );
             if let Some(mesh) = pocket_assets::primitives::primitive(&model.mesh) {
-                let surface = resolve_surface(root, &model, None, &mut assets, &mut image_cache)?;
+                let surface = resolve_surface(
+                    root,
+                    &model,
+                    None,
+                    &mut assets,
+                    &mut image_cache,
+                    path_tracing,
+                )?;
                 result.add_mesh(&mesh, matrix(pose), surface)?;
                 continue;
             }
@@ -363,6 +390,7 @@ impl RayScene {
                     Some((path, mesh, &asset)),
                     &mut assets,
                     &mut image_cache,
+                    path_tracing,
                 )?;
                 result.add_mesh(mesh, matrix(pose), surface)?;
             } else {
@@ -388,12 +416,13 @@ impl RayScene {
                         Some((path, mesh, &asset)),
                         &mut assets,
                         &mut image_cache,
+                        path_tracing,
                     )?;
                     result.add_mesh(mesh, matrix(combined), surface)?;
                 }
             }
         }
-        if !environment_found {
+        if !environment_found && !path_tracing {
             return Err("scene needs an explicit Environment with sky: color (default atmosphere is not baked)".into());
         }
         for (path, asset) in assets {
@@ -401,11 +430,17 @@ impl RayScene {
             // Decoded images and mesh/node/material values include external .gltf/.bin/image content.
             hash.feed(&serde_json::to_vec(&*asset).map_err(|e| e.to_string())?);
         }
-        result.signature = format!("fnv1a64-static-diffuse-v1:{:016x}", hash.0);
+        let signature_kind = if path_tracing { "surface" } else { "diffuse" };
+        result.signature = format!("fnv1a64-static-{signature_kind}-v1:{:016x}", hash.0);
         if !result.triangles.is_empty() {
             result.build_node(0, result.triangles.len());
         }
         Ok(result)
+    }
+
+    #[cfg(all(not(target_arch = "wasm32"), feature = "import"))]
+    pub fn for_path_tracing_file(root: &Path, scene_file: &str) -> Result<Self, String> {
+        Self::load_project(root, true, scene_file)
     }
 
     pub fn triangle_count(&self) -> usize {
@@ -418,6 +453,10 @@ impl RayScene {
     /// Constant incoming diffuse environment radiance (sky_color multiplied by ambient).
     pub fn world_sky_color(&self) -> Vec3 {
         self.environment
+    }
+
+    pub fn world_environment(&self) -> &Environment {
+        &self.environment_settings
     }
 
     pub fn environment_radiance(&self) -> [f32; 3] {
@@ -1112,6 +1151,7 @@ fn resolve_surface(
     source: Option<(&str, &MeshData, &ModelAsset)>,
     cache: &mut BTreeMap<String, Arc<ModelAsset>>,
     image_cache: &mut BTreeMap<String, Arc<Vec<ImageData>>>,
+    path_tracing: bool,
 ) -> Result<Surface, String> {
     let mut material = MaterialData::default();
     let mut images = Arc::new(Vec::new());
@@ -1148,7 +1188,11 @@ fn resolve_surface(
     } else {
         false
     };
-    if material.alpha_mode == AlphaMode::Blend {
+    if !path_tracing
+        && (material.alpha_mode == AlphaMode::Blend
+            || material.transmission > 0.0
+            || model.transmission.is_some_and(|t| t > 0.0))
+    {
         return Err(format!(
             "material {}: alpha blending/transmission is not supported by diffuse baking",
             material.name
@@ -1178,6 +1222,7 @@ fn resolve_surface(
         material.normal_texture,
         material.emissive_texture,
         material.occlusion_texture,
+        material.transmission_texture,
     ]
     .into_iter()
     .flatten()
@@ -1207,6 +1252,21 @@ fn resolve_surface(
         material.roughness = model.roughness as f32;
         material.emissive = model.emissive.map(|e| e as f32);
     }
+    if let Some(transmission) = model.transmission {
+        validate_numbers(&[transmission], "model transmission", 0.0, 1.0)?;
+        material.transmission = transmission as f32;
+    }
+    if let Some(ior) = model.ior {
+        validate_numbers(&[ior], "model ior", 1.0, 3.0)?;
+        material.ior = ior as f32;
+    }
+    validate_numbers(
+        &[material.transmission as f64],
+        "material transmission",
+        0.0,
+        1.0,
+    )?;
+    validate_numbers(&[material.ior as f64], "material ior", 1.0, 3.0)?;
     Ok(Surface {
         material,
         images,
@@ -1287,6 +1347,11 @@ mod tests {
             nodes: Vec::new(),
             lights: Vec::new(),
             environment,
+            environment_settings: Environment {
+                sky: SkyKind::Color,
+                sky_color: environment.to_array().map(f64::from),
+                ..Environment::default()
+            },
             signature: "test".into(),
         }
     }
@@ -1649,6 +1714,76 @@ mod tests {
                 .unwrap()
                 .contains("sky: color")
         );
+    }
+
+    #[cfg(all(not(target_arch = "wasm32"), feature = "import"))]
+    #[test]
+    fn path_tracing_accepts_atmosphere_and_glass_without_weakening_baker() {
+        use serde_json::json;
+        struct Temp(std::path::PathBuf);
+        impl Drop for Temp {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let temp = Temp(
+            std::env::temp_dir().join(format!("amoris-pt-loader-test-{}", std::process::id())),
+        );
+        std::fs::create_dir_all(&temp.0).unwrap();
+        let positions: [f32; 9] = [-0.5, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 1.0, 0.0];
+        std::fs::write(
+            temp.0.join("tri.bin"),
+            positions
+                .iter()
+                .flat_map(|v| v.to_le_bytes())
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+        let gltf = json!({"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0]}],"nodes":[{"mesh":0}],
+            "extensionsUsed":["KHR_materials_transmission","KHR_materials_ior"],
+            "buffers":[{"uri":"tri.bin","byteLength":36}],"bufferViews":[{"buffer":0,"byteLength":36}],
+            "accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3","min":[-0.5,0,0],"max":[0.5,1,0]}],
+            "materials":[{"pbrMetallicRoughness":{"metallicFactor":0},"extensions":{"KHR_materials_transmission":{"transmissionFactor":0.85},"KHR_materials_ior":{"ior":1.33}}}],
+            "meshes":[{"primitives":[{"attributes":{"POSITION":0},"material":0}]}]});
+        std::fs::write(
+            temp.0.join("glass.gltf"),
+            serde_json::to_vec(&gltf).unwrap(),
+        )
+        .unwrap();
+        let mut project = json!({"format":"pocket-scene","version":1,"entities":[
+            {"components":{"Environment":{"sky":"atmosphere","ambient":0.7}}},
+            {"components":{"Model":{"mesh":"glass.gltf"}}}]});
+        std::fs::write(
+            temp.0.join("scene.json"),
+            serde_json::to_vec(&project).unwrap(),
+        )
+        .unwrap();
+        let loaded = RayScene::for_path_tracing(&temp.0).unwrap();
+        let material = loaded.world_materials().next().unwrap().material;
+        assert_eq!(material.transmission, 0.85);
+        assert_eq!(material.ior, 1.33);
+        assert_eq!(loaded.world_environment().sky, SkyKind::Atmosphere);
+        assert_eq!(loaded.world_environment().ambient, 0.7);
+        assert!(RayScene::from_project(&temp.0).is_err());
+        project["entities"][0]["components"]["Environment"]["sky"] = json!("color");
+        project["entities"][1]["components"]["Model"]["transmission"] = json!(0.5);
+        project["entities"][1]["components"]["Model"]["ior"] = json!(1.7);
+        std::fs::write(
+            temp.0.join("scene.json"),
+            serde_json::to_vec(&project).unwrap(),
+        )
+        .unwrap();
+        let overridden = RayScene::for_path_tracing(&temp.0).unwrap();
+        let material = overridden.world_materials().next().unwrap().material;
+        assert_eq!(material.transmission, 0.5);
+        assert_eq!(material.ior, 1.7);
+        assert!(
+            RayScene::from_project(&temp.0)
+                .err()
+                .unwrap()
+                .contains("diffuse baking")
+        );
+        assert!(RayScene::for_path_tracing_file(&temp.0, "../scene.json").is_err());
     }
 
     #[test]

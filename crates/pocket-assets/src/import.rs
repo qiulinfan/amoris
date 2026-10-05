@@ -68,12 +68,17 @@ fn convert(
             base_color: pbr.base_color_factor(),
             metallic: pbr.metallic_factor(),
             roughness: pbr.roughness_factor(),
+            transmission: m.transmission().map_or(0.0, |t| t.transmission_factor()),
+            ior: m.ior().unwrap_or(1.5),
             emissive: [e[0] * strength, e[1] * strength, e[2] * strength],
             base_color_texture: tex(pbr.base_color_texture()),
             metallic_roughness_texture: tex(pbr.metallic_roughness_texture()),
             normal_texture: m.normal_texture().map(|t| t.texture().source().index()),
             emissive_texture: tex(m.emissive_texture()),
             occlusion_texture: m.occlusion_texture().map(|t| t.texture().source().index()),
+            transmission_texture: m.transmission().and_then(|t| tex(t.transmission_texture())),
+            normal_scale: m.normal_texture().map_or(1.0, |t| t.scale()),
+            occlusion_strength: m.occlusion_texture().map_or(1.0, |t| t.strength()),
             alpha_mode: match m.alpha_mode() {
                 gltf::material::AlphaMode::Opaque => AlphaMode::Opaque,
                 gltf::material::AlphaMode::Mask => AlphaMode::Mask,
@@ -133,7 +138,10 @@ fn convert(
                 && j.len() == m.vertices.len()
                 && w.len() == m.vertices.len()
             {
-                m.skin = Some(SkinWeights { joints: j, weights: w });
+                m.skin = Some(SkinWeights {
+                    joints: j,
+                    weights: w,
+                });
             }
             if tangents.is_none() {
                 m.compute_tangents();
@@ -178,7 +186,10 @@ fn convert(
                 .read_inverse_bind_matrices()
                 .map(|m| m.map(bytemuck_flatten).collect())
                 .unwrap_or_else(|| vec![IDENTITY; joints.len()]);
-            SkinAsset { joints, inverse_bind }
+            SkinAsset {
+                joints,
+                inverse_bind,
+            }
         })
         .collect();
     asset.animations = doc
@@ -193,12 +204,14 @@ fn convert(
                     let times: Vec<f32> = r.read_inputs()?.collect();
                     duration = duration.max(times.last().copied().unwrap_or(0.0));
                     let (path, values): (ChannelPath, Vec<[f32; 4]>) = match r.read_outputs()? {
-                        gltf::animation::util::ReadOutputs::Translations(v) => {
-                            (ChannelPath::Translation, v.map(|x| [x[0], x[1], x[2], 0.0]).collect())
-                        }
-                        gltf::animation::util::ReadOutputs::Scales(v) => {
-                            (ChannelPath::Scale, v.map(|x| [x[0], x[1], x[2], 0.0]).collect())
-                        }
+                        gltf::animation::util::ReadOutputs::Translations(v) => (
+                            ChannelPath::Translation,
+                            v.map(|x| [x[0], x[1], x[2], 0.0]).collect(),
+                        ),
+                        gltf::animation::util::ReadOutputs::Scales(v) => (
+                            ChannelPath::Scale,
+                            v.map(|x| [x[0], x[1], x[2], 0.0]).collect(),
+                        ),
                         gltf::animation::util::ReadOutputs::Rotations(v) => {
                             (ChannelPath::Rotation, v.into_f32().collect())
                         }
