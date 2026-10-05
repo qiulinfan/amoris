@@ -1,5 +1,0 @@
-add_subdirectory(ai)
-add_subdirectory(bridge)
-add_subdirectory(core)
-add_subdirectory(documents)
-add_subdirectory(panels)

@@ -1,5 +1,0 @@
-[alias]
-xtask = "run --quiet --package xtask --"
-
-[env]
-CFLAGS = "-ffp-contract=off"

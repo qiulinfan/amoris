@@ -1,4 +1,0 @@
-interface:
-  display_name: "PocketEngine Scene Authoring"
-  short_description: "Inspect and author PocketEngine scenes safely"
-  default_prompt: "Use $pocketengine-scene-authoring to inspect the current PocketEngine scene and explain its actors."

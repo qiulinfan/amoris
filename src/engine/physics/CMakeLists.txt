@@ -1,9 +1,0 @@
-target_sources(
-    engine_runtime
-    PRIVATE
-        "${CMAKE_CURRENT_SOURCE_DIR}/RayCast.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/Rigidbody.cpp"
-        "${PROJECT_SOURCE_DIR}/include/engine/physics/Collision.h"
-        "${PROJECT_SOURCE_DIR}/include/engine/physics/RayCast.h"
-        "${PROJECT_SOURCE_DIR}/include/engine/physics/Rigidbody.h"
-)
