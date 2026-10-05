@@ -1,7 +1,6 @@
 # Actions
 
-- Status: Draft, slice 0. Draft, proposed for PocketEngine's `shared/contract` (README,
-  Synchronization with PocketEngine).
+- Status: Draft, slice 0. Maintained in Amoris's `shared/contract` (README, Contract record).
 - Charter: 2.4.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.10, 5.1, 7 (item 9).
 - Contract version: 0.1 (draft).
 
@@ -20,7 +19,7 @@ through the human input path (master `docs/design/input.md`, Agents), and the en
 interface's `env.step {actions}` held them for a step (master `docs/design/environment.md`,
 Commands). A key-timing subtlety (a press of a key still down only held it longer) cost one agent 85
 calls on a dialogue task until presses a tick apart were made two presses (master
-`docs/agent-eval.md`, Conversations as text); PocketEngine's charter lists the same failure under
+`docs/agent-eval.md`, Conversations as text); Amoris's predecessor charter lists the same failure under
 its lessons ("actions were low-level input only"). The rebuild gives agents intents with completion
 and failure, and gives controls a value or pulse semantics with no key timing in it at all.
 

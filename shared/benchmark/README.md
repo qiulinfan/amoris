@@ -1,20 +1,18 @@
 # The shared benchmark
 
-Status: Draft, slice 0. Proposed for PocketEngine's `shared/benchmark/` (charter 6.2); not yet
-synced, so no PocketEngine commit is recorded.
+Status: Draft, slice 0. Maintained in Amoris's `shared/benchmark/`.
 
 Charter: 2.2 (two agent roles), 3.1 (perception, the omniscient view for checkers), 6.1 item 2 (a
 shared benchmark), 6.3 (what is compared), 8 (material brought from `master`), 9 (evaluation), 10
 (slice 0: the harness skeleton; slice 2: the first player benchmark), 12 item 7 (sandboxing agents).
 
-The benchmark turns charter 9 into numbers. It has two suites, run by one harness against either
-engine through the MCP tools of [the shared contract](../contract/mcp.md):
+The benchmark turns charter 9 into numbers. It has two suites, run by one harness against Amoris
+configurations through the MCP tools of [the shared contract](../contract/mcp.md):
 
 - **The developer suite**: an agent changes or builds a game through the developer tools and the
   project's files, from "edit through a command" to "build a whole game from a brief". It ports
   `master`'s 72 tasks and harness (master `tools/scripts/agent_eval.py`, `docs/agent-eval.md`). The
-  same model's pass rate, calls and tokens on both lines compare TypeScript with Lua as the language
-  agents write (charter 6.3).
+  model's pass rate, calls and tokens measure agents writing TypeScript through Amoris's interfaces.
 - **The player suite**: an agent plays the sailing game through the player tools with limited
   perception. It measures completion, decision calls and tokens, the difference fork lookahead
   makes, and the difference between perception and the omniscient view (charter 9, item 2).
@@ -29,16 +27,16 @@ skeleton slice 0 builds.
    holds and does, read through a checker's session (a developer's, where the check must play the
    game) that the agent never sees (charter 9: "checkers use the omniscient view; player agents
    cannot"). Nothing is scored by a model or on style.
-2. **One harness, two engines.** The harness talks to an engine only through the shared MCP tools
-   and three commands each line provides (section 3.2). A task's text, checker, reference solution
-   and fixture description are shared; each line implements the fixtures in its own scene format and
-   script language. The per-line parts are named: the fixtures, the script solutions under
+2. **One harness, explicit configurations.** The harness talks to an engine only through the shared MCP tools
+   and three commands each configuration provides (section 3.2). A task's text, checker, reference solution
+   and fixture description are shared; configurations use Amoris's scene format and TypeScript
+   scripts. The per-configuration parts are named: the fixtures, the script solutions under
    `solution/<line>/`, and, for the few developer tasks whose checker must read an engine component
    (`sailboat`, `raft`, `calm_sea`, `sinking_crate`: a collider, the water's fields, the wind), a
    `check_<line>.py` beside the shared `task.py`, reviewed with the task. Every other checker reads
    only contract types (3.5).
 3. **Every task is checked both ways before it counts.** Its reference solution passes and the null
-   runner fails, on both lines (master `docs/agent-eval.md`, Adding a task).
+   runner fails, on all configurations (master `docs/agent-eval.md`, Adding a task).
 4. **Every number is measured and repeated.** Tokens and cost come from the agent's own accounting;
    calls and answer sizes from a proxy on the MCP connection; results from several runs with their
    mean and variance (charter 9, item 1). `master` ran each configuration once and saw runs of the
@@ -61,8 +59,7 @@ shared/benchmark/
     report.py             rows, the report, its JSON Schema
     fake_engine.py        a stand-in engine for the self-test (section 8)
   engines/
-    pocket3d.toml         how this line starts, serves and attaches (section 3.2)
-    pocketengine.toml
+    amoris.toml           how this configuration starts, serves and attaches (section 3.2)
   tasks/
     dev/<task>/           task.py (text, setup, solve, check); solution/<line>/ for script tasks
     play/<task>/          task.py; the reference policy
@@ -71,7 +68,7 @@ shared/benchmark/
 ```
 
 `master` kept its 72 tasks, solutions, checks and harness in one file of 4,384 lines; one directory
-per task keeps every file under the limit (charter 3.9) and lets each line add its own solution
+per task keeps every file under the limit (charter 3.9) and lets each configuration add its own solution
 files beside the shared ones.
 
 ## 3. The harness
@@ -80,16 +77,16 @@ files beside the shared ones.
 
 The harness is Python, standard library only. `master`'s harness and its agent runners are Python
 and port with the least change; the runners wrap agent command lines, which is shell work; the
-harness must be one program for two Rust engines and sits on neither engine's build or run path.
+harness compares Amoris configurations and stays outside the engine's build and run paths.
 Python 3.12 is the floor: the harness needs nothing newer, and the reference machine runs 3.14.3.
 
 ### 3.2 The engine adapter
 
-Each line provides three commands, named in `engines/<line>.toml`:
+Each configuration provides three commands, named in `engines/<line>.toml`:
 
 ```toml
-name = "pocket3d"
-script_language = "typescript"      # what the line's agents write
+name = "amoris"
+script_language = "typescript"      # what the configuration's agents write
 entry = "scripts/main.ts"           # the entry script a brief calls {entry}
 binary = "{root}/target/release/pocket{exe}"   # frozen per run: copied before the run starts
 # A fresh project from a fixture (tasks.md, Fixtures) or empty, in a directory of its own; the
@@ -112,7 +109,7 @@ result (holds actions, moves things, steps). For a player task: the agent's play
 set to `omniscient_player`, as the contract's README prescribes for this ablation), a developer
 grant for setup that the harness closes before the agent starts, and the checker's `checker` grant,
 which reads and never acts or steps. The harness writes the file, so the agent never sees the
-checker's token. Until slice 2 gives the engine these commands, `engines/pocket3d.toml` holds them
+checker's token. Until slice 2 gives the engine these commands, `engines/amoris.toml` holds them
 as written above with `status = "planned"`, and the harness refuses to run against it.
 
 ### 3.3 A task's run
@@ -175,7 +172,7 @@ relays newline-delimited JSON-RPC both ways unchanged and writes one line per `t
 
 `text_tokens` is `mcp.md`'s token unit over the result's text. Because the proxy is shared code on
 the agent's side of the connection, calls and answer sizes are counted the same way for every agent
-and on both lines. The allowlist filters `tools/list` and refuses other calls as the engine would
+and on all configurations. The allowlist filters `tools/list` and refuses other calls as the engine would
 (`session.policy_denies` for a tool the condition withholds, `permission.denied` for one the role
 lacks): a second guard behind the engine's roles, and the way a condition withholds `fork` from the
 tool list. The proxy enforces the task's call limit too: a call past `limits.calls` is answered with
@@ -190,7 +187,7 @@ call with `error.data.code` as its `code`, so `failed_calls` counts it like an `
   `session {all: true}`; `observe`, `nearby` and `events` with `omniscient: true`, whose percepts
   always carry `pos_m` (perception.md, The omniscient view) and whose events carry spec-sim's
   `EventSeq`; `intents`; `why`; `replay`; and `world_get` of the fixture's own project components
-  (`Course`), whose fields tasks.md fixes for both lines. A developer task's checker has a developer
+  (`Course`), whose fields tasks.md fixes for all configurations. A developer task's checker has a developer
   grant and adds `act`, `step`, `world_edit`, `apply` and `reset`; where it must read an engine
   component, the task's `check_<line>.py` does (1, item 2). These tools are in slice 2's rollout
   (`mcp.md`, 12).
@@ -217,7 +214,7 @@ The protocol of an external runner (version 1): the task arrives as JSON on stdi
 leaves as the last JSON line on stdout.
 
 ```json
-{"protocol": 1, "suite": "play", "name": "beat_to_windward", "line": "pocket3d",
+{"protocol": 1, "suite": "play", "name": "beat_to_windward", "line": "amoris",
  "task": "...", "answer": "null", "project_dir": "/tmp/pocket-bench-x/game-412-07",
  "mcp": {"command": ["python", ".../proxy.py", "--log", "...", "--", "..."], "env": {}},
  "docs": [".../docs/INDEX.md"], "limits": {"wall_s": 900, "calls": 300}}
@@ -244,7 +241,7 @@ leaves as the last JSON line on stdout.
   harness's disagreed, and the shorter one decided silently (Running and recording a full run).
 - `agents/` ports `master`'s `opencode_agent.py` and `pi_agent.py` (as `omp`) and adds Claude Code
   (`claude -p --output-format stream-json --mcp-config <file>`) and Codex (`codex exec --json`). The
-  PocketEngine line's TypeScript agent host can be a runner too, through the same protocol.
+  A TypeScript agent host can be a runner too, through the same protocol.
 - With `BENCH_TRACES=<dir>` the runners keep each agent's event stream, and the row gains `master`'s
   trace summary (turns, tokens, calls, kilobytes read, failed calls, calls before and after the
   first edit, `stuck`).
@@ -298,7 +295,7 @@ tokens there.
 
 - **Repeats.** A model runner runs each task `n` times per condition; `n` is 5 by default
   (`--repeats`). Repeat `i` uses world seed `i`, the same list for every condition, every model and
-  both lines, so results pair by `(task, condition, seed)`: common random numbers, the established
+  all configurations, so results pair by `(task, condition, seed)`: common random numbers, the established
   way to compare two treatments on the same instances.
 - **Summary per task and condition.** `n`; the pass rate with its Wilson 95% interval; for each
   numeric metric the mean, the sample variance (divisor `n - 1`), the minimum and the maximum. Over
@@ -306,13 +303,13 @@ tokens there.
 - **Comparisons.** `bench.py compare A.json B.json` pairs rows and reports, per metric, the mean of
   the paired differences with its sample variance and `n`, and for passes the counts of pairs passed
   on one side only (the two discordant counts of McNemar's test, which the report leaves to the
-  reader to test). Comparisons of the two lines use the same model, agent, agent version, task set
+  reader to test). Comparisons of the configurations use the same model, agent, agent version, task set
   and seeds; the report refuses to compare rows that differ in any of these.
 - **Deterministic runners.** `reference`, `null`, `random` and `reference-omniscient` run each task
   twice; their rows must be equal in everything but wall time. A difference is a determinism failure
   of the whole stack (engine, MCP tools, harness) and fails the run. Their time requests pass
   `max_wall_ms: 600000`, and a row with `wall_limit_stops` above 0 is a harness error, not a result:
-  where a step stops must not depend on how fast a line runs ticks.
+  where a step stops must not depend on how fast a configuration runs ticks.
 
 ## 6. Baselines
 
@@ -325,7 +322,7 @@ tokens there.
 | Player | `reference` under perception | A scripted sailor solves the task with limited perception, so the task is fair. |
 | Player | `reference-omniscient` | What full knowledge is worth to the same policy: the upper reference for the perception gap. |
 
-A task joins a suite only when, on both lines, `reference` passes it, `null` fails it, and a second
+A task joins a suite only when, on all configurations, `reference` passes it, `null` fails it, and a second
 `reference` run gives identical rows.
 
 ## 7. Reports
@@ -333,7 +330,7 @@ A task joins a suite only when, on both lines, `reference` passes it, `null` fai
 A report is one JSON object:
 
 ```json
-{"schema": 1, "suite": "play", "line": "pocket3d",
+{"schema": 1, "suite": "play", "line": "amoris",
  "engine": {"commit": "...", "version": "...", "binary_sha256": "...",
             "script_language": "typescript"},
  "shared": {"commit": "..."}, "harness": {"commit": "..."},
@@ -347,8 +344,8 @@ A report is one JSON object:
 A row holds the task's identity (`task`, `suite`, `tier`, `condition`, `seed`, `world_params`,
 `repeat`), its outcome (`ok`, `score`, `answer`, `detail`, `error`, among them `engine_halt`, 3.3)
 and the metrics of section 4 that apply. `harness/report.py` holds the report's JSON Schema, and
-`bench.py` validates every report it writes against it. Each line keeps its reports as evidence
-(Pocket3D under `bench/reports/`, `docs/spec/architecture.md` 3), with a results entry saying what
+`bench.py` validates every report it writes against it. Each configuration keeps its reports as evidence
+(Amoris under `bench/reports/`, `docs/spec/architecture.md` 3), with a results entry saying what
 the run showed and which failures led to which changes, as `master`'s `docs/agent-eval.md` did.
 
 ## 8. The slice 0 skeleton
@@ -365,7 +362,7 @@ arrive in slice 2.
   entities. It exists to test the harness; its world is not the engine's.
 - Two self-test tasks: `selftest_reach` (player: reach a mark 50 units downwind with limited
   perception) and `selftest_spawn` (developer: spawn a named entity at a place).
-- `engines/pocket3d.toml` with the planned commands and `status = "planned"`.
+- `engines/amoris.toml` with the planned commands and `status = "planned"`.
 
 Acceptance, all from one command, `python shared/benchmark/harness/bench.py self-test`:
 
@@ -380,7 +377,7 @@ Acceptance, all from one command, `python shared/benchmark/harness/bench.py self
    an unknown tool a JSON-RPC error, and one that exceeds `limits.calls` `session.limit_reached`;
    the row counts all four in `failed_calls`.
 7. It finishes in under 60 seconds on the reference machine (the budget `bench.selftest` of
-   `docs/spec/budgets.md` in the Pocket3D line; proposed, not measured, since the harness is not
+   `docs/spec/budgets.md` in Amoris; proposed, not measured, since the harness is not
    built yet).
 
 The self-test SHOULD join the local check command (spec-arch), so the harness stays working while
@@ -391,7 +388,7 @@ the engine grows. It needs loopback sockets, which some agent sandboxes block (m
 
 | Slice | The benchmark gains |
 |---|---|
-| 0 | The skeleton and the self-test; this file and `tasks.md`; `engines/pocket3d.toml` planned. |
+| 0 | The skeleton and the self-test; this file and `tasks.md`; `engines/amoris.toml` planned. |
 | 1 | The engine's `new` and `serve`; the fixtures `blank`, `hello`, `bodies`, `arena`, `hopper`, and `open_sea` and `island` on slice 1's headless sailing scene (tasks.md, Fixtures). |
 | 2 | The player suite on the sailing fixtures: the slice's acceptance (Claude completes a sailing task over MCP with limited perception) is the task `run_to_mark` passing with `claude-code`; the developer tasks of tier S2 once `apply`, `project_brief`, `docs_search`, `schema` and `checks` exist (`mcp.md`, open choice 2). |
 | 3, 4 | Tiers S3 and S4 as rendering and the showcase land. |
@@ -404,7 +401,7 @@ the engine grows. It needs loopback sockets, which some agent sandboxes block (m
 2. **Repeats against cost.** Five repeats of the 27 developer tasks of slice 2 are 135 agent runs;
    `master`'s full run of 72 took about three and a half hours. Recommended: five repeats for the
    comparison runs that decide something, one for a quick look, and the report says which.
-3. **Where reports live.** Each line's evidence directory (Pocket3D: `bench/reports/`), with the
-   shared summary of a cross-line comparison under `shared/benchmark/results/` once both lines run.
+3. **Where reports live.** Amoris's evidence directory (`bench/reports/`), with summaries of
+   configuration comparisons under `shared/benchmark/results/`.
 4. **A model judge.** None: every check is code. A task whose result only a person can judge (how a
    level looks) stays out of the suites.

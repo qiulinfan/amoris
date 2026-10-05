@@ -198,8 +198,8 @@ Problems: `debug.not_paused`, `debug.no_frame`, `debug.eval_failed {error}`, `de
 {name}` (a constant, no such variable, the expression threw, a returned frame), `debug.unknown_file
 {suggestions, allowed}`, `debug.no_code`, `debug.unknown_breakpoint`, `debug.unknown_watch`,
 `debug.unsupported`; an evaluation that calls a writing native fails with `script.debug_read_only`.
-The `debug` family is not yet a row of shared/contract/errors.md's family table: the shared contract
-changes on both lines first (charter 6.2).
+The `debug` family is not yet a row of shared/contract/errors.md's family table; changes to that
+table update the contract record in this repository.
 
 `DebugHub::subscribe()` gives `DebugEvent`s; `DebugEvent::json()` is the host protocol's pushed event
 (host-protocol.md 3): `{"event": "debug", "data": <state as debug.state>}` on a pause,
@@ -213,7 +213,7 @@ and the same with `code` for a system that failed.
 use pocket_debug::{CdpOptions, DebugHub, HubOptions};
 
 // Once per game, on any thread.
-let hub = DebugHub::new(HubOptions { title: "Pocket3D: sailing".into(), ..HubOptions::default() });
+let hub = DebugHub::new(HubOptions { title: "Amoris: sailing".into(), ..HubOptions::default() });
 let cdp = hub.serve_cdp(CdpOptions::default())?;          // 127.0.0.1:9229, its own threads
 
 // The game thread's setup (pocket_runtime::thread::GameThread::spawn's closure).
@@ -272,7 +272,7 @@ then a status line a second (`tick`, `paused_in_debugger`, `loop_state`).
   frontend page directly). Sources shows `pocket://scripts/*.ts` from the source maps; click a line
   number to break.
 - **VS Code**: copy `editors/vscode/launch.json` to `.vscode/launch.json` and run "Attach to
-  Pocket3D (sailing)". It is a `node` attach on 9229 with `sourceMaps`, `resolveSourceMapLocations:
+  Amoris (sailing)". It is a `node` attach on 9229 with `sourceMaps`, `resolveSourceMapLocations:
   null` (the scripts are not files) and `sourceMapPathOverrides: {"pocket:///*":
   "${workspaceFolder}/samples/sailing/*"}`, so breakpoints set in `samples/sailing/scripts/*.ts` bind.
   See `editors/vscode/README.md`.

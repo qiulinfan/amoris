@@ -33,27 +33,27 @@ PATCHES = [
     ("quickjs-ng-pr1421.diff", "quickjs",
      "b97233ca42edcd180f50df5a0b53bd33cc1264fa9aaf3b3680c42545fae8df66"),
     ("p1-interrupt-counter.diff", ".",
-     "05b34022d1d3173c3db7d66db6806b7c5f208b95125dd7b7dcc68a1c0c091291"),
+     "c7e807716aa20dfd896bbb5aa19abd58daf760948acba99170c454e928b2404d"),
     ("p2-uncatchable-faults.diff", ".",
-     "b1e0db37b41def39c1e53cb31c2a1ccbc7804f49a84722cc51466d2765b30dc8"),
+     "fb8eadb5f6ec52b2a69e0a2b709ae7ae423456ffa8c8ac639a3140055fa0e9fc"),
     ("p3-constant-seeds.diff", ".",
-     "77bd74c93a01f491d35e174deace6487a208690e7ae97aaeb2f41460fe9ec3b9"),
+     "b05f83117ea0569ccee5268d67027db974f45e16a777b8361b4359f1d217876a"),
     ("p5-call-depth.diff", ".",
-     "4ea9114b301cd971735ebb455a4208e060b128ac2905d9e9d263d894d2cdf53a"),
+     "7100107bcbc05076cafe9f15e1452e1b14ae83c3b47e28d8e0f6a3de7b4f0f03"),
     ("p6-canonical-nan.diff", ".",
-     "47f0f08139b5c0b38ddb2f099f776596b51e15320a678b378632414ca54cfca2"),
+     "4554b112fa9d047f5fc94d65580bcc5f5939ddee1d63a9663ce5b7518aad1480"),
     ("p4-p7-build.diff", ".",
-     "068b1d1be2119893259a3b7abff103f9d50666e92a2c55d3947ca847b905c4ed"),
+     "0750a8d42f020ecc4184fe499260ba4e03f6b07965e8eff7d945bf8e436b33b1"),
     # JS_DiscardPendingJobs: a failed call's queued jobs are dropped (script-sandbox.md 6).
     ("p8-discard-jobs.diff", ".",
-     "13cdf6064f4b4a2e2cb6749cc85b2121e02c9fe66e5d15121c22b67c5e5844be"),
+     "18552de7aca358ec54921057225a49924e3457d689b0e164b36596a6f6c7ea8a"),
     # The debugger (docs/spec/debugger.md 7): P9 caches each traced function's statement
     # positions, so the trace handler costs no line-table search per statement; P10 reports
     # exceptions to the trace handler with a catch prediction and adds JS_GetStackFrameInfo.
     ("p9-debug-line-cache.diff", ".",
-     "1115715c66188e3b554b6f9b03c4b8bc5b9abfaadd33083ddac099c1b25ccf46"),
+     "1a1b4146cc3f3f51deb93582164d1abd2d0eaa409581c0d58d4e6bcac473ef82"),
     ("p10-debug-exceptions-frames.diff", ".",
-     "afcda7d470ab445911752df7810d88e722bcb55fa0a15e8a6bf5e98bf6d18ef3"),
+     "8f4ef0154f234850a310f69366b91b87fc115fbb23d8040317e06dd457ac72a3"),
 ]
 
 HERE = Path(__file__).resolve().parent
@@ -72,7 +72,7 @@ def fetch_crate() -> bytes:
             return data
     url = f"https://static.crates.io/crates/{CRATE}/{CRATE}-{VERSION}.crate"
     print(f"downloading {url}")
-    req = urllib.request.Request(url, headers={"User-Agent": "pocket3d-vendor"})
+    req = urllib.request.Request(url, headers={"User-Agent": "amoris-vendor"})
     with urllib.request.urlopen(req) as resp:
         return resp.read()
 

@@ -784,7 +784,7 @@ a `ctx` over a snapshot exported as JSON [persist] (not in slice 1).
     detail has an `extra` map for fields particular to a code (`binding`, `import`, `path`, `count`,
     `variants`); `to_problem` flattens it into the contract's `detail`.
 11. **Slice 1: module hashes.** `CompiledModule` carries `source_hash: ContentHash` (BLAKE3
-    `derive_key` with the context `Pocket3D 2026-10-03 script module source v1`) instead of
+    `derive_key` with the context `Amoris 2026-10-03 script module source v1`) instead of
     `source_sha256`, since `sha2` is `xtask`'s alone (architecture.md 6), and `systems`, where each
     system's `run` is written.
 12. **Slice 1: queries and key parts.** A declared query or `ctx.query` refuses any key but `with`,

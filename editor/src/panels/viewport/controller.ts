@@ -13,7 +13,7 @@ import type { Gizmo, GizmoHandle, Viewport } from "../../viewport/engine";
 import { applyRotation, beginDrag, buildGizmo, dragTo, hitGizmo, type DragStart } from "../../viewport/gizmo";
 import { add, asQuat, asVec3, DEG, IDENTITY, length, rayPlane, scale, sub } from "../../viewport/math";
 
-const ORBIT_KEY = "aipocket2.editor.camera.v1";
+const ORBIT_KEY = "amoris.editor.camera.v1";
 
 interface DragTarget {
   id: EntityId;

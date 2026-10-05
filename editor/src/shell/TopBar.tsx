@@ -28,7 +28,7 @@ export function TopBar() {
     <header className="topbar">
       <div className="topbar-left">
         <Logo />
-        <span className="brand">Pocket3D</span>
+        <span className="brand">Amoris</span>
         <span className="project" data-tip={project ? `${project.root}` : "No project"}>
           {project?.name ?? "—"}
         </span>

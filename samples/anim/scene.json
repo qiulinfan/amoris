@@ -385,7 +385,7 @@
       "name": "Hud",
       "components": {
         "UiText": {
-          "text": "Pocket3D \u2014 skeletal animation, GPU skinning, game UI",
+          "text": "Amoris \u2014 skeletal animation, GPU skinning, game UI",
           "size": 22,
           "anchor": "top_left",
           "offset": [

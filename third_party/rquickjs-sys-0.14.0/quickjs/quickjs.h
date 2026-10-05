@@ -567,7 +567,7 @@ JS_EXTERN JSValue JS_GetFunctionProto(JSContext *ctx);
    against a known set of breakpoint locations. */
 /* Flags passed to JSDebugTraceFunc.  Use bitwise-AND to test specific bits. */
 #define JS_DEBUG_TRACE_DEBUGGER_STMT (1 << 0) /* triggered by `debugger;` statement */
-/* Pocket3D P10: the handler also hears catchable exceptions, once per throw, in the frame that
+/* Amoris P10: the handler also hears catchable exceptions, once per throw, in the frame that
    throws (its position is the throwing instruction's). CAUGHT says a try will catch it: a catch
    offset is on this frame's stack or on an instrumented caller's stack as it stood at its current
    statement; a `finally` counts as a catch, and frames without OP_debug (not instrumented, or
@@ -640,11 +640,11 @@ JS_EXTERN JSValue JS_EvalInStackFrame(JSContext *ctx, int level,
                                       const char *input, size_t input_len,
                                       const char *filename);
 
-/* Pocket3D P10: the exception a JS_DEBUG_TRACE_EXCEPTION call reports (a new reference), or
+/* Amoris P10: the exception a JS_DEBUG_TRACE_EXCEPTION call reports (a new reference), or
    JS_UNDEFINED outside such a call. */
 JS_EXTERN JSValue JS_GetDebugTraceException(JSContext *ctx);
 
-/* Pocket3D P10: the frame at `level` (0 = current, as JS_GetLocalVariablesAtLevel counts):
+/* Amoris P10: the frame at `level` (0 = current, as JS_GetLocalVariablesAtLevel counts):
    its file and function atoms (new references the caller frees with JS_FreeAtom; JS_ATOM_NULL
    when absent; the function's name as backtraces give it) and the position it is at (for a
    caller, its call; 0 when unknown). Returns 0 for a bytecode frame, 1 for a native one (no
@@ -971,7 +971,7 @@ JS_EXTERN JSValue JS_PRINTF_FORMAT_ATTR(2, 3) JS_ThrowSyntaxError(JSContext *ctx
 JS_EXTERN JSValue JS_PRINTF_FORMAT_ATTR(2, 3) JS_ThrowTypeError(JSContext *ctx, JS_PRINTF_FORMAT const char *fmt, ...);
 JS_EXTERN JSValue JS_PRINTF_FORMAT_ATTR(3, 4) JS_ThrowDOMException(JSContext *ctx, const char *name, JS_PRINTF_FORMAT const char *fmt, ...);
 JS_EXTERN JSValue JS_ThrowOutOfMemory(JSContext *ctx);
-/* Pocket3D P2: how often memory ran out in this runtime (wrapping). */
+/* Amoris P2: how often memory ran out in this runtime (wrapping). */
 JS_EXTERN uint32_t JS_GetOutOfMemoryCount(JSRuntime *rt);
 JS_EXTERN void JS_FreeValue(JSContext *ctx, JSValue v);
 JS_EXTERN void JS_FreeValueRT(JSRuntime *rt, JSValue v);
@@ -1291,10 +1291,10 @@ JS_EXTERN void JS_SetHostPromiseRejectionTracker(JSRuntime *rt, JSHostPromiseRej
 /* return != 0 if the JS code needs to be interrupted */
 typedef int JSInterruptHandler(JSRuntime *rt, void *opaque);
 JS_EXTERN void JS_SetInterruptHandler(JSRuntime *rt, JSInterruptHandler *cb, void *opaque);
-/* Pocket3D P1: the context's interrupt counter (the polls left before the handler runs). */
+/* Amoris P1: the context's interrupt counter (the polls left before the handler runs). */
 JS_EXTERN void JS_SetInterruptCounter(JSContext *ctx, int32_t counter);
 JS_EXTERN int32_t JS_GetInterruptCounter(JSContext *ctx);
-/* Pocket3D P5: nested calls past `limit` (0: none) throw an uncatchable InternalError. */
+/* Amoris P5: nested calls past `limit` (0: none) throw an uncatchable InternalError. */
 JS_EXTERN void JS_SetCallDepthLimit(JSContext *ctx, uint32_t limit);
 JS_EXTERN uint32_t JS_GetCallDepth(JSContext *ctx);
 /* if can_block is true, Atomics.wait() can be used */
@@ -1359,7 +1359,7 @@ JS_EXTERN int JS_EnqueueJob(JSContext *ctx, JSJobFunc *job_func,
                             int argc, JSValueConst *argv);
 
 JS_EXTERN bool JS_IsJobPending(JSRuntime *rt);
-/* Pocket3D P8: frees every pending job without running it. */
+/* Amoris P8: frees every pending job without running it. */
 JS_EXTERN void JS_DiscardPendingJobs(JSRuntime *rt);
 JS_EXTERN JSContext *JS_GetPendingJobContext(JSRuntime *rt);
 JS_EXTERN int JS_ExecutePendingJob(JSRuntime *rt, JSContext **pctx);

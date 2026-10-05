@@ -1426,7 +1426,7 @@ static int re_parse_class_set_operand(REParseState *s, REStringList *cr, const u
 static int re_parse_nested_class_body(REParseState *s, REStringList *cr,
                                       const uint8_t **pp);
 
-/* Pocket3D P5: one nesting level per nested class. */
+/* Amoris P5: one nesting level per nested class. */
 static int re_parse_nested_class(REParseState *s, REStringList *cr, const uint8_t **pp)
 {
     int ret;
@@ -2468,7 +2468,7 @@ static int re_parse_alternative(REParseState *s, bool is_backward_dir)
 
 static int re_parse_disjunction_body(REParseState *s, bool is_backward_dir);
 
-/* Pocket3D P5: one nesting level per nested group. */
+/* Amoris P5: one nesting level per nested group. */
 static int re_parse_disjunction(REParseState *s, bool is_backward_dir)
 {
     int ret;

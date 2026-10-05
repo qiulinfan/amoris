@@ -1,4 +1,4 @@
-# pocket3d 实施排期
+# amoris 实施排期
 
 日期：2026-10-04。本文是本轮任务的第三项交付物：技术栈见 [charter.md](charter.md)，探索实验的结果见
 `docs/bench/`、`docs/spec/` 与 `docs/evidence/`，这里给出现状与把产品做到可交付的排期。
@@ -16,7 +16,7 @@
 3. `cargo xtask check` 在 M5 上完整跑过一次，日志入库。
 4. 展示场景（`samples/harbor` 帆船港湾、`samples/arena` 对战）原生与浏览器都能跑。
 
-不在本周范围：Windows 与 Direct3D 12、桌面编辑器外壳（Tauri）、迁入 PocketEngine（所有者自行处理）。
+不在本周范围：Windows 与 Direct3D 12、桌面编辑器外壳（Tauri）。本轮实现已迁入 Amoris。
 
 ## 2. 技术栈（定稿摘要）
 
@@ -93,7 +93,7 @@
 
 ### 第 1 天（10-03，已完成）
 
-纲领 v1.0；从 aipocket rebuild 线导入游戏侧 crate、QuickJS-ng 与 xtask；GPU 驱动渲染器的骨架。
+纲领 v1.0；从 Amoris Pioneer rebuild 线导入游戏侧 crate、QuickJS-ng 与 xtask；GPU 驱动渲染器的骨架。
 
 ### 第 2 天（10-04，已完成）
 

@@ -18,7 +18,7 @@ export function App() {
   const mode = useSession((s) => s.status?.mode);
   const paused = useDebug((s) => s.state.state === "paused");
   useEffect(() => {
-    document.title = `${mode === "play" ? "▶ " : ""}Pocket3D Editor`;
+    document.title = `${mode === "play" ? "▶ " : ""}Amoris Editor`;
   }, [mode]);
   return (
     <div className={cx("app", mode === "play" && "mode-play", paused && "is-debug-paused")}>

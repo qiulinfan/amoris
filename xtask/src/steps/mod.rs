@@ -168,7 +168,7 @@ impl Run<'_> {
             }
             "contract" => {
                 let sync = if prep.sync_commit.is_empty() {
-                    "contract.sync: shared/SYNC.toml records no PocketEngine commit yet"
+                    "contract.sync: shared/SYNC.toml records no reference commit yet"
                 } else {
                     "contract.sync: not built yet"
                 };

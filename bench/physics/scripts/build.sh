@@ -82,7 +82,7 @@ $WASM_OPT --enable-simd "$T/rapier-det-simd128/wasm32-wasip1/web/physics-bench.w
 cd "$HERE/jolt-ffi"
 CARGO_TARGET_DIR=$T/jolt-ffi cargo build --release
 CARGO_TARGET_DIR=$T/jolt-ffi-det cargo build --release --features det
-# The same library as a Rust wasm32-unknown-unknown module (aipocket2's browser target), deterministic,
+# The same library as a Rust wasm32-unknown-unknown module (Amoris's browser target), deterministic,
 # in the web profile and through wasm-opt like the engine's module (but with plain exports, not
 # wasm-bindgen).
 CARGO_TARGET_DIR=$T/jolt-ffi-wasm cargo rustc --lib --profile web --target wasm32-unknown-unknown --features det --crate-type cdylib

@@ -41,9 +41,9 @@ function NewSession() {
   const [model, setModel] = useState("claude-opus-5.5");
   const [goal, setGoal] = useState("Make every crate reachable on the sloop's course, then sail the course and report the tally.");
   const [edit, setEdit] = useState(true);
-  const [open, setOpen] = useState(() => localStorage.getItem("aipocket2.editor.agent.new") === "1");
+  const [open, setOpen] = useState(() => localStorage.getItem("amoris.editor.agent.new") === "1");
   const toggle = () => {
-    localStorage.setItem("aipocket2.editor.agent.new", open ? "0" : "1");
+    localStorage.setItem("amoris.editor.agent.new", open ? "0" : "1");
     setOpen(!open);
   };
   if (!open) {

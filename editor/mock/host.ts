@@ -112,7 +112,7 @@ const server = Bun.serve<Client>({
       const index = Bun.file(join(DIST, "index.html"));
       if (await index.exists()) return new Response(index);
     }
-    return new Response("aipocket2 mock host: build the editor (bun run build) or run it with vite (bun run dev:mock).", {
+    return new Response("Amoris mock host: build the editor (bun run build) or run it with vite (bun run dev:mock).", {
       status: 404,
     });
   },
@@ -173,4 +173,4 @@ session.log({ level: "debug", source: "scripts", message: "Type-checked 3 script
 
 if (!flag("--no-agent")) agent.start();
 
-console.log(`aipocket2 mock host on http://127.0.0.1:${server.port} (ws /ws, catalog /api/catalog)`);
+console.log(`Amoris mock host on http://127.0.0.1:${server.port} (ws /ws, catalog /api/catalog)`);

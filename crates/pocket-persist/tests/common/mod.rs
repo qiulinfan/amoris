@@ -281,7 +281,7 @@ pub fn content() -> (&'static str, ContentHash, &'static [u8]) {
     const BYTES: &[u8] = &[3, 1, 4, 1, 5];
     (
         "levels/reef.bin",
-        ContentHash::derive("Pocket3D 2026-10-03 test data v1", BYTES),
+        ContentHash::derive("Amoris 2026-10-03 test data v1", BYTES),
         BYTES,
     )
 }

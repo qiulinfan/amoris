@@ -67,7 +67,7 @@ int lre_parse_escape(const uint8_t **pp, int allow_utf16);
 
 /* must be provided by the user */
 bool lre_check_stack_overflow(void *opaque, size_t alloca_size);
-/* Pocket3D P5: enter one nesting level of the parser (true past the limit) and leave it. */
+/* Amoris P5: enter one nesting level of the parser (true past the limit) and leave it. */
 bool lre_depth_enter(void *opaque);
 void lre_depth_leave(void *opaque);
 /* must be provided by the user, return non zero if time out */

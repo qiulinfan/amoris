@@ -24,7 +24,7 @@ bincode = { version = "=1.3.3", optional = true }
 libc = "=0.2.190"             # the calling thread's CPU time (main.rs, thread_cpu_ms)
 
 [features]
-# The configuration aipocket2 ships (crates/pocket-physics): cross-platform deterministic.
+# The configuration Amoris ships (crates/pocket-physics): cross-platform deterministic.
 det = ["rapier3d/enhanced-determinism"]
 # 8-lane SIMD for the solver (refuses to compile together with `det`).
 simd8 = ["rapier3d/simd8"]

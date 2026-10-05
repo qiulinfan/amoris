@@ -1,21 +1,20 @@
 # MCP tools
 
-Status: Draft, slice 0. Proposed for PocketEngine's `shared/contract/` (charter 6.2); not yet
-synced, so no PocketEngine commit is recorded. Contract version 0.1 (README, Versioning).
+Status: Draft, slice 0. Maintained in Amoris's `shared/contract/`.
+Contract version 0.1 (README, Versioning).
 
 Charter: 3.1 (pull perception, token budgets, the marked omniscient view), 3.3 (fork, restore,
 replay), 3.4 (structured errors, refusal of unknown fields), 3.5 (time model), 3.6 (tools with
 schemas from Rust types), 3.7 (checks an agent can run), 4.1 (`rmcp`), 5.1 (two threads), 6.1 (the
 shared external contract), 7 item 11 (MCP tools), 9 (evaluation), 10 (slices 2 and 5).
 
-This file fixes the Model Context Protocol tools both engines serve. The player-facing requests and
+This file fixes the Model Context Protocol tools Amoris serves. The player-facing requests and
 answers are the contract's own types ([perception.md](perception.md), [actions.md](actions.md),
 [time.md](time.md)), carried unchanged; this file adds what only the MCP layer has: sessions and
 their grants, which tools a session lists, the worlds a session can address (main and its forks),
 snapshots, restore and replay queries, the developer-facing tools, how answers fit a token budget
 outside perception, how the schemas come from Rust types through `rmcp`, and the tests that hold all
-of it. An agent sees the same tools on Pocket3D and on PocketEngine; only the script language behind
-them differs (charter 6.1).
+of it. An agent sees the same tool definitions across Amoris's transports and runtime targets.
 
 ## 1. Concepts used from other specifications
 
@@ -39,8 +38,8 @@ Used by name and not defined here. Names in `code` are the owners'.
 1. **One tool per request type, schemas from Rust types.** Each player tool takes one of the
    contract's request types and answers its response type; each developer tool takes and answers
    types defined here. All derive `serde` and `schemars`, and `rmcp` publishes the generated schemas
-   (charter 3.6). Both lines serve the same names and JSON shapes, held by golden schemas (test M1).
-   Byte formats inside each engine may differ (charter 6.1, item 3).
+   (charter 3.6). All transports serve the same names and JSON shapes, held by golden schemas (test M1).
+   Internal byte formats remain the responsibility of their subsystem specifications.
 2. **Typed tools, no gateway, and a tool list that fits the session.** Master served about thirty
    MCP tools plus `runtime_command`, a gateway to over two hundred untyped commands, and needed
    `help`, `commands {text}` and usage lines so agents could find them (master `docs/mcp.md`, Asking
@@ -187,7 +186,7 @@ pub struct WorldRef(pub String);
   (`additionalProperties: false` at every level) before `serde` reads it (section 7.2).
 - In the text projection the two fields are one first line, `world b1 hash 9f3c...`, written only
   when the world is a branch or the caller has a hash; a player on main reads exactly the contract's
-  projection, the bytes both lines share. The omniscient mark stays on the projection's header line
+  projection, the bytes all clients share. The omniscient mark stays on the projection's header line
   (projection.md, Text projection), which then is the second line.
 - Developer tools' answers carry `tick`, `world`, `hash` and `omniscient: true` (everything they
   read is unfiltered: perception.md, The omniscient view) at their head.
@@ -459,7 +458,7 @@ The tools of charter 2.2's agent as developer; the editor's panels call the same
 | `reset` | `seed?`, `tick_limit?` | `{tick, world, hash}` | A new episode (time.md, Episodes): a fresh world from the scene and the loaded scripts with the seed; branches and snapshots of the old main are dropped, cursors restart. Recorded as the end of main's segment and a `Rebase` (5.6). |
 | `checks` | `only?`, `seeds?` | `pocket check`'s report | The project's determinism, fork, replay and reload checks (`checks.md`, 2 and 8), run in throwaway worlds; a failure carries its code and divergence. |
 | `profile` | `world`, `ticks` (default 120) | `{tick, ticks, systems, scripts, timing}` | Runs `ticks` in a fork and reports time per system and per script handler with file and line, against the budget `tick.sail` (`docs/spec/budgets.md`). Main is untouched. |
-| `eval` | `world`, `code`, `at_tick?`, `budget_tokens` | `{tick, world, value, logs}` | Evaluates code in the line's script language in a throwaway fork of `world` (at `at_tick`, re-simulated, when given), compiled through the script host's loader and lint as a module, since the sandbox has no `eval` (`docs/spec/script-sandbox.md`, 2.2); a script error comes back source-mapped (charter 4.2.6: restore to any tick, inspect and evaluate). |
+| `eval` | `world`, `code`, `at_tick?`, `budget_tokens` | `{tick, world, value, logs}` | Evaluates code in TypeScript in a throwaway fork of `world` (at `at_tick`, re-simulated, when given), compiled through the script host's loader and lint as a module, since the sandbox has no `eval` (`docs/spec/script-sandbox.md`, 2.2); a script error comes back source-mapped (charter 4.2.6: restore to any tick, inspect and evaluate). |
 | `assets`, `asset_import` | `prefix?`, `kind?`; `path` or `job`, `wait_ms?` | the asset list; `{job, status, progress, result?}` | Slice 3. Import runs off the game thread (charter 4.4); the call returns after `wait_ms` (default 0) with the job's state. |
 
 Reserved for slice 3: `capture` (the frame as an image, with the entities visible in it) and
@@ -610,11 +609,11 @@ slice 2 revisits them. Annotations: `readOnlyHint` on every tool a checker may c
 and `eval` (they work in throwaway worlds); `destructiveHint` on `restore`, `discard`, `reset`,
 `world_edit` and `apply`.
 
-The tool names, descriptions and annotations are not the handlers' doc comments in each line's
+The tool names, descriptions and annotations are not the handlers' doc comments in each transport's
 server: they are a table in `pocket-contract` beside the types (`tools::TOOLS`, one entry per tool:
-name, description, annotations, parameter and result types), which both lines' servers read, so the
+name, description, annotations, parameter and result types), which the servers read, so the
 whole `tools/list` an agent reads every turn is shared. The `initialize` result carries no
-`instructions` string on either line.
+`instructions` string on either transport.
 
 ## 8. Token budgets
 
@@ -718,9 +717,9 @@ measured (no tool list exists yet); slice 2 measures them and test M9 holds them
 
 ## 11. Tests and checks
 
-These run in the local check command (spec-arch) on each line, natively and, where marked, against
+These run in the local check command (spec-arch) for Amoris, natively and, where marked, against
 the `wasm32` build through `window.pocket`. Fixtures live in `shared/contract/conformance/mcp/` and
-are synchronized like the prose, so both lines run the same ones. Perception, action, time and error
+are recorded like the prose, so runtime targets run the same ones. Perception, action, time and error
 behaviour is held by the contract's own conformance checks (README, Conformance); these hold the MCP
 layer.
 
@@ -735,7 +734,7 @@ layer.
 | M7 | Forks through MCP are consistent. | Charter 3.7's fork check driven only through `fork`, `act`, `step` and `world_get`: the same actions on main and branch give the same hashes; acting only on the branch leaves main's hash unchanged; the branch's push cursor starts at its parent's. |
 | M8 | Roles hold. | Each role lists exactly the tools of 3.3 for each pacing and policy; every unlisted tool and every restricted parameter is refused with the code of 7.1 that says why (`permission.denied`, `time.wrong_mode`, `session.policy_denies`, `perception.omniscient_forbidden`, `seat.not_yours`); a checker's calls send only Read commands; a player with `fork` and no `rewind` restores its own branch from its own snapshot and is refused restoring main; with `rewind` it restores main; a player's `intents` shows only its seat's. |
 | M9 | The tool list fits. | `tokens` of each role's `tools/list` text within 3,000 (stepped player) and 9,000 (developer) tokens; every description within its byte limit. |
-| M10 | Both lines agree on meaning. | `conformance/mcp/*.jsonl`: calls with expected answers on the minimal sailing fixture, compared after normalization (ids mapped by name, floats within the contract's rounding). |
+| M10 | Runtime targets agree on meaning. | `conformance/mcp/*.jsonl`: calls with expected answers on the minimal sailing fixture, compared after normalization (ids mapped by name, floats within the contract's rounding). |
 | M11 | MCP does not slow the game. | Release build, sailing fixture: an `observe` answers within the budget `mcp.observe`; tick time with a client calling `observe` in a loop stays within `mcp.tick_overhead` percent of tick time without one (charter 3.10). Both are rows of `docs/spec/budgets.md` (5.6), not measured in slice 0. |
 
 ## 12. Rollout
@@ -752,7 +751,7 @@ layer.
 1. **One shared types crate.** As README's open choice 1 recommends: `pocket-contract` under
    `shared/contract/rust/` holds this file's types with the contract's, which makes M1 hold by
    construction. Recommended.
-2. **Developer tools before slice 5.** The developer benchmark (TypeScript against Lua, charter 6.3)
+2. **Developer tools before slice 5.** The developer benchmark
    needs `apply`, `project_brief`, `docs_search`, `schema` and `checks`, thin over slice 1's
    machinery. Recommended: pull them into slice 2.
 3. **Protocol version.** MCP 2026-07-28 replaces the `initialize` handshake with per-request

@@ -92,7 +92,7 @@ fn get_wasi_sdk_path() -> PathBuf {
 }
 
 fn main() {
-    // aipocket2: the vendored, patched QuickJS-ng sources (P1 to P10) must rebuild the library when
+    // amoris: the vendored, patched QuickJS-ng sources (P1 to P10) must rebuild the library when
     // they change; the rerun lines below would otherwise be the only triggers.
     println!("cargo:rerun-if-changed=quickjs");
     println!("cargo:rerun-if-changed=build.rs");
@@ -156,7 +156,7 @@ fn main() {
     let target_env = env::var("CARGO_CFG_TARGET_ENV").unwrap();
 
     let mut builder = cc::Build::new();
-    // Pocket3D P7: the pinned clang when no compiler is named for the target (pocket_compiler).
+    // Amoris P7: the pinned clang when no compiler is named for the target (pocket_compiler).
     let clang_cl = pocket_compiler(&mut builder);
     builder
         .extra_warnings(false)
@@ -164,7 +164,7 @@ fn main() {
         //.flag("-Wno-array-bounds")
         //.flag("-Wno-format-truncation")
         ;
-    // Pocket3D P4: no fused multiply-add on one platform and not another. On the MSVC target the
+    // Amoris P4: no fused multiply-add on one platform and not another. On the MSVC target the
     // CFLAGS of .cargo/config.toml are replaced below, so the flag is passed here too: clang-cl
     // takes it through /clang:, and MSVC's cl contracts only under /fp:contract, never passed.
     if clang_cl {
@@ -226,7 +226,7 @@ fn main() {
 
     if is_wasm_unknown {
         println!("cargo:rerun-if-changed=vendor/wasi-libc/include");
-        // Pocket3D P7: an absolute path, not `canonicalize`, which gives a verbatim `\\?\` path
+        // Amoris P7: an absolute path, not `canonicalize`, which gives a verbatim `\\?\` path
         // on Windows that takes no `/` separator and so hides the nested wasi-libc headers.
         let vendor_include = std::path::absolute("vendor/wasi-libc/include")
             .expect("vendor/wasi-libc/include is missing; run scripts/vendor-wasm-libc.sh");
@@ -285,7 +285,7 @@ fn main() {
         builder.file("wasm-shim/shim.c");
     }
 
-    // Pocket3D P7: which C compiler built QuickJS-ng, for EngineVersion and the perf step.
+    // Amoris P7: which C compiler built QuickJS-ng, for EngineVersion and the perf step.
     println!("cargo:rustc-env=POCKET_QJS_CC={}", compiler_id(&builder));
 
     builder.compile("libquickjs.a");
@@ -300,7 +300,7 @@ fn main() {
     }
 }
 
-/// Pocket3D P7: QuickJS-ng is compiled by clang-cl on the Windows MSVC target and by clang for
+/// Amoris P7: QuickJS-ng is compiled by clang-cl on the Windows MSVC target and by clang for
 /// wasm32-unknown-unknown (docs/spec/architecture.md 7.3 and 8.1). When the build names no
 /// compiler for the target (`CC_<target>`, `TARGET_CC`, `CC`), the pinned LLVM is used if it is
 /// installed: `$POCKET_LLVM`, else `~/.pocket-tools/llvm-23.1.2`. Every build of a checkout then
@@ -324,7 +324,7 @@ fn pocket_compiler(builder: &mut cc::Build) -> bool {
         _ => return false,
     };
     let home = env::var_os("USERPROFILE").or_else(|| env::var_os("HOME"));
-    // aipocket2: Homebrew's LLVM (which has the wasm32 backend Apple's clang lacks) when neither
+    // amoris: Homebrew's LLVM (which has the wasm32 backend Apple's clang lacks) when neither
     // POCKET_LLVM nor the pinned toolchain is there.
     let homebrew = ["/opt/homebrew/opt/llvm", "/usr/local/opt/llvm"]
         .into_iter()
@@ -354,7 +354,7 @@ fn pocket_compiler(builder: &mut cc::Build) -> bool {
     false
 }
 
-/// Pocket3D P7: the compiler's family and the first line of its `--version`.
+/// Amoris P7: the compiler's family and the first line of its `--version`.
 fn compiler_id(builder: &cc::Build) -> String {
     let tool = builder.get_compiler();
     let name = tool

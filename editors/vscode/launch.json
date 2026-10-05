@@ -5,7 +5,7 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Attach to Pocket3D (sailing)",
+      "name": "Attach to Amoris (sailing)",
       "type": "node",
       "request": "attach",
       "address": "127.0.0.1",

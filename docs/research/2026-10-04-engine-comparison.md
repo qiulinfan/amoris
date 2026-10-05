@@ -1,4 +1,4 @@
-# 引擎对照研究：UE5、Godot 4、Bevy 0.19、three.js 与 Pocket3D 的计划
+# 引擎对照研究：UE5、Godot 4、Bevy 0.19、three.js 与 Amoris 的计划
 
 状态：研究报告（只读调查；不改变纲领，建议需所有者决定）<br>
 日期：2026-10-04<br>
@@ -12,13 +12,13 @@
 | `Godot:` | `~/Reference/godot/` | master，2026-10 |
 | `Bevy:` | `~/Reference/bevy/` | 0.19.0 |
 | `three:` | `~/Reference/threejs/` | dev，2026-10 |
-| `wgpu:` | `~/.cargo/registry/src/index.crates.io-*/wgpu-30.0.1/` | 30.0.1（Pocket3D 所用版本） |
+| `wgpu:` | `~/.cargo/registry/src/index.crates.io-*/wgpu-30.0.1/` | 30.0.1（Amoris 所用版本） |
 
 网络来源列在文末，正文用 [n] 引用。
 
 ## 0. 十五条要点
 
-| # | 教训 | 来源 | Pocket3D 的计划要改什么 | 优先级 |
+| # | 教训 | 来源 | Amoris 的计划要改什么 | 优先级 |
 |---|---|---|---|---|
 | 1 | 浏览器 WebGPU 的基线装不下 Bevy 式 GPU 剔除。multi-draw indirect 仍要开实验 flag；`indirect-first-instance` 是可选特性；immediates 2026 年才在 Chrome 进入发货流程；默认每个着色阶段只有 8 个 storage buffer、4 个 storage texture。Bevy 的 GPU 剔除要求 `INDIRECT_FIRST_INSTANCE \| IMMEDIATES` 以及 12/10 的限额，meshlet 只支持 Vulkan 与 Metal | Bevy、WebGPU 规范 [10][11][12] | 渲染规格拆成 web 层与原生层：web 层每批一次 `draw_indexed_indirect`，`first_instance` 置 0，实例基址经动态偏移 uniform 传入，Hi-Z 每趟最多写 4 个 mip；原生层再启用 MDI 与 immediates。能力检测结果写进 `RenderStats` | P0 |
 | 2 | 所有 127.0.0.1 端点都要校验令牌和 `Origin`。UE 5.8 的 MCP 只靠回环、没有认证；Unity 要求人工批准新连接；Chrome 111 起 DevTools 端点拒绝未知 Origin | UE [1]、Unity [4]、Chrome [17] | host 启动时生成会话令牌（写入项目的 `.pocket/session`），`/ws`、`/render`、MCP HTTP、CDP 都校验令牌与 `Origin`，CLI 自动读取令牌 | P0 |
@@ -50,7 +50,7 @@
 - **UE**：组件的 `CreateSceneProxy()`（`UE:Engine/Source/Runtime/Engine/Classes/Components/PrimitiveComponent.h`）生成渲染线程拥有的 `FPrimitiveSceneProxy`（`Runtime/Engine/Public/PrimitiveSceneProxy.h`），之后的改动用 `ENQUEUE_RENDER_COMMAND`（`Runtime/RenderCore/Public/RenderingThread.h`）把 lambda 送过去。GPU 侧 `Runtime/Renderer/Private/GPUScene.h` 使用持久图元索引和 `EPrimitiveDirtyState`，只把脏图元经 `FRDGAsyncScatterUploadBuffer` 散写上传。
 - **Godot**：节点只持有 RID，经 `RenderingServer` API 修改；`Godot:servers/rendering/rendering_server_default.h` 在非服务线程调用时压入 `CommandQueueMT`。独立渲染线程（`rendering/driver/threads/thread_model` = Separate）在 `main/main.cpp` 里仍被警告为实验性、可能崩溃。固定步长到帧的插值在渲染侧完成：`renderer_scene_cull.h` 的 `update_interpolation_tick/frame`。
 - **Bevy**：主世界与渲染世界分开。`crates/bevy_render/src/extract_plugin.rs` 的 `ExtractSchedule` 同时访问两个世界，期间主世界被占用，文档要求它尽量短；`pipelined_rendering.rs` 把渲染子应用放到另一个线程；`sync_world.rs` 维护 `RenderEntity`/`MainEntity` 映射。
-- **Pocket3D 现状**：游戏线程发布不可变快照（分节 `Arc`），`/render` 发视觉组件的差量（`docs/spec/threads.md` 4、`host-protocol.md` 5）。它不阻塞游戏线程，比 Bevy 的 extract 耦合更松，方向正确；缺的是渲染端"持久槽位加散写"的规格。
+- **Amoris 现状**：游戏线程发布不可变快照（分节 `Arc`），`/render` 发视觉组件的差量（`docs/spec/threads.md` 4、`host-protocol.md` 5）。它不阻塞游戏线程，比 Bevy 的 extract 耦合更松，方向正确；缺的是渲染端"持久槽位加散写"的规格。
 
 ### 1.3 GPU 驱动与剔除
 
@@ -79,7 +79,7 @@
 
 UE：`Runtime/Renderer/Private/PostProcess/TemporalSuperResolution.cpp`（TSR）、`TemporalAA.cpp`。Godot：`renderer_rd/effects/` 下 `taa.cpp`、`fsr.cpp`、`fsr2.cpp`、`smaa.cpp`、`metal_fx.cpp`（MetalFX 空间与时间超分，实现 `SpatialUpscaler` 接口）。Bevy：`crates/bevy_anti_alias/src/{taa, smaa, fxaa, contrast_adaptive_sharpening, dlss}`。three.js：`examples/jsm/tsl/display/TRAANode.js`、`FSR1Node.js`。
 
-### 1.7 对 Pocket3D 的教训
+### 1.7 对 Amoris 的教训
 
 1. **渲染图做轻量版**（要点 6）。wgpu 自动插入屏障，又不提供放置资源，UE RDG 最贵的两项（屏障推导、内存别名）在 wgpu 上要么已经免费、要么做不到；Godot 和 Bevy 0.19 说明"声明顺序加自动跟踪"已经够用。值得从 RDG 学的三点：没有消费者的通道不执行（调试视图等）；TAA 历史、Hi-Z 这类跨帧资源显式声明；每个通道一个 GPU 时间戳。图导出为 JSON，供 `render.graph` 命令让 agent 查看这一帧画了什么。
 2. **GPU 驱动分两层**（要点 1，证据见 1.3）。web 层：一个计算通道做视锥剔除加上一帧 Hi-Z 遮挡剔除，按"网格×材质"批次压缩可见实例并写 `DrawIndexedIndirect` 参数；不依赖 `indirect-first-instance` 与 immediates。原生层在 `MULTI_DRAW_INDIRECT_COUNT` 可用时合并成一次调用。meshlet 与虚拟几何不进本轮，因为连 Bevy 的实现都只支持 Vulkan/Metal。
@@ -135,11 +135,11 @@ UE 4.23 弃用 HTML5，4.24 移出引擎交给社区，UE5 从未支持；官方
 
 ### 3.3 对 TS on QuickJS-ng + CDP 的判断
 
-Pocket3D 已经确定：CDP 端点，编辑器使用同一个 CDP，agent 用 MCP 的 `debug.*`，调试器连接时才重编译插桩（spike 数据：编入补丁但未装 handler 时为原速的 0.98–1.00 倍，装上 handler 后 2.04 倍，改成操作数形式后 1.08 倍）。对照三家之后的结论：
+Amoris 已经确定：CDP 端点，编辑器使用同一个 CDP，agent 用 MCP 的 `debug.*`，调试器连接时才重编译插桩（spike 数据：编入补丁但未装 handler 时为原速的 0.98–1.00 倍，装上 handler 后 2.04 倍，改成操作数形式后 1.08 倍）。对照三家之后的结论：
 
 1. **无状态脚本加重载等价检查优于三家的热重载**：GDScript 按成员名搬状态，C# 要序列化委托，UE 要重新实例化对象。这一点保持不变。需要补的是：项目组件的 schema 变化在 swap 时走迁移函数（`hot-update.md` 6 已列出），并把它做成可测的检查。
 2. **出错即暂停**（要点 4）。agent 调试最常见的入口是"脚本报错"，Godot 默认就这样处理，而 debugger spike 记录补丁缺"异常暂停"。做法：调试器连接时，在 QuickJS 抛出异常、栈尚未展开的位置进入暂停（需要在 throw 路径加钩子），CDP 发出 `Debugger.paused{reason: "exception"}`；未连接时维持现有规则，停止 tick 并返回带 TS 行号与调用栈的结构化错误。
-3. **暂停时的世界视图要包含未提交的写入**。Godot 暂停时仍能查看对象；Pocket3D 的系统是事务（写入先暂存），断点处可见的快照是上一个边界的状态，agent 看不到这个系统正要写什么。`debug.state` 增加 `staged_writes`。
+3. **暂停时的世界视图要包含未提交的写入**。Godot 暂停时仍能查看对象；Amoris 的系统是事务（写入先暂存），断点处可见的快照是上一个边界的状态，agent 看不到这个系统正要写什么。`debug.state` 增加 `staged_writes`。
 4. **调试传输与 LSP 放在哪里**。CDP 留在 host，不像 Godot 那样放在编辑器里，因为编辑器是网页，权威在 host。web 构建借鉴 Godot 的 `messageport://`：Worker 里的调试核心用 `postMessage` 发 CDP 帧，页面可以再转成 WebSocket 给 DevTools。LSP 不自研：Monaco 自带 TS 语言服务，加上生成的 `.d.ts`；组件注册表变化时 host 推送新的 `.d.ts`（Godot 的 LSP 离不开活的 ClassDB，原因相同）。
 5. **启动前即可下断点**。Godot 用 `--breakpoints`；CDP 的对应做法是"等待调试器"，协议里已有 `Runtime.runIfWaitingForDebugger`。补一个 `pocket run --wait-debugger`，让第一个 tick 之前设置的断点也能命中。
 
@@ -161,13 +161,13 @@ Pocket3D 已经确定：CDP 端点，编辑器使用同一个 CDP，agent 用 MC
 
 ### 4.3 哪种分离适合"web 编辑器 + 原生宿主"
 
-Pocket3D 实际上组合了两家：UI 在进程外（同 Godot，编辑器崩溃不影响世界，也天然支持多客户端），世界与 Play 在宿主进程内（同 UE PIE，但 Play 是 ECS fork，不需要像 UE 那样复制对象再改包名，隔离由 fork 一致性检查保证）。教训：
+Amoris 实际上组合了两家：UI 在进程外（同 Godot，编辑器崩溃不影响世界，也天然支持多客户端），世界与 Play 在宿主进程内（同 UE PIE，但 Play 是 ECS fork，不需要像 UE 那样复制对象再改包名，隔离由 fork 一致性检查保证）。教训：
 
 1. **撤销记录组件级前后状态，不手写逆操作**（要点 11）。命令目录会持续增长，agent 也会调用，这样任何命令都自动可撤销；PCE 规范编码已有，前后字节就相当于 UE `FTransaction` 的快照差分。Godot 的 `MERGE_ENDS` 必须有，否则一次 Gizmo 拖动会产生几百条历史。
-2. **Play 分支有自己的历史，并提供"带回"命令**。Godot 区分了 `REMOTE_HISTORY`，UE 有 `KeepSimulationChanges`。Pocket3D 增加 `play.keep {entities, components}`：把分支上选中实体的组件差异作为一个事务应用到编辑世界。
+2. **Play 分支有自己的历史，并提供"带回"命令**。Godot 区分了 `REMOTE_HISTORY`，UE 有 `KeepSimulationChanges`。Amoris 增加 `play.keep {entities, components}`：把分支上选中实体的组件差异作为一个事务应用到编辑世界。
 3. **检视器提示**见要点 12 与 5.4。
-4. **Play 中也要能在画面里拾取**。Godot 的 `runtime_node_select` 说明运行时需要在游戏画面里选对象；Pocket3D 已有实体 ID 缓冲，Play 分支应走同一条拾取路径，返回实体路径与组件。
-5. **编辑器扩展限定为"命令加面板"**。Godot 的 `EditorPlugin` 和 `@tool` 在编辑器进程里执行任意代码，UE 是 C++ 模块；Pocket3D 的扩展面板应是前端模块，只经命令目录与宿主交互，维持"编辑器没有特权通道"（纲领 3.1）。
+4. **Play 中也要能在画面里拾取**。Godot 的 `runtime_node_select` 说明运行时需要在游戏画面里选对象；Amoris 已有实体 ID 缓冲，Play 分支应走同一条拾取路径，返回实体路径与组件。
+5. **编辑器扩展限定为"命令加面板"**。Godot 的 `EditorPlugin` 和 `@tool` 在编辑器进程里执行任意代码，UE 是 C++ 模块；Amoris 的扩展面板应是前端模块，只经命令目录与宿主交互，维持"编辑器没有特权通道"（纲领 3.1）。
 
 ## 5. 反射、序列化与 schema
 
@@ -189,10 +189,10 @@ UHT（C# 实现，`UE:Engine/Source/Programs/Shared/EpicGames.UHT/`）解析 `UC
 
 Rust 方案相当于"UE 的编译期反射"加上"Godot 的 JSON 导出"，却不需要 UHT 那样的额外解析器，derive 宏在 cargo 内部完成。教训：
 
-1. **一份 `engine-api.json`**（要点 13）。Godot 的经验是"一个机读文件生成所有语言绑定，并做跨版本检查"。Pocket3D 有 `.d.ts`、JSON Schema、CLI 帮助、MCP 工具表、文档五个消费者，如果各自从 Rust 类型生成，容易互相漂移。
-2. **编辑提示放进 schema 扩展**（要点 12），并标注对玩家 agent 的可见性。Godot 的 `usage` 标志（`PROPERTY_USAGE_STORAGE`、`PROPERTY_USAGE_EDITOR` 等）把"存不存、显不显示"与类型分开；Pocket3D 还要额外区分"玩家可感知"与"仅全知视图"。
+1. **一份 `engine-api.json`**（要点 13）。Godot 的经验是"一个机读文件生成所有语言绑定，并做跨版本检查"。Amoris 有 `.d.ts`、JSON Schema、CLI 帮助、MCP 工具表、文档五个消费者，如果各自从 Rust 类型生成，容易互相漂移。
+2. **编辑提示放进 schema 扩展**（要点 12），并标注对玩家 agent 的可见性。Godot 的 `usage` 标志（`PROPERTY_USAGE_STORAGE`、`PROPERTY_USAGE_EDITOR` 等）把"存不存、显不显示"与类型分开；Amoris 还要额外区分"玩家可感知"与"仅全知视图"。
 3. **编辑格式与持久化格式分开**。PCE 是严格、规范、用于哈希的格式；人和 agent 编辑的场景应像 `.tscn`：文本、稳定 ID、只写非默认值（新增字段时不会让所有场景文件都变）、外部资源用 UID 引用。预制件的覆盖用补丁表达（Bevy BSN、Godot 继承场景）。
-4. **迁移函数必须覆盖每次 schema 变化**。UE 的标签化序列化可以跳过未知属性；Pocket3D 的严格解码会拒绝未知字段，这对 agent 是对的，但也意味着每次改 schema 都要有迁移，并在 `pocket-check` 里用旧版本快照做回归。
+4. **迁移函数必须覆盖每次 schema 变化**。UE 的标签化序列化可以跳过未知属性；Amoris 的严格解码会拒绝未知字段，这对 agent 是对的，但也意味着每次改 schema 都要有迁移，并在 `pocket-check` 里用旧版本快照做回归。
 
 ## 6. 资源管线
 
@@ -235,8 +235,8 @@ Rust 方案相当于"UE 的编译期反射"加上"Godot 的 JSON 导出"，却�
 ### 7.3 教训
 
 1. **后端统一，或显式隔离**（要点 15）。纲领 4.7 的备选方案"原生用 Jolt、web 用 Rapier"会让 replay、fork 一致性和"原生与 wasm 哈希相同"同时失效。Jolt 的跨平台确定性是编译期选项，Godot 的默认构建就没有打开，不能当作默认成立。对照测量要包含"Jolt 打开确定性"这一列（纲领已列），再加一项：同一场景在原生与 wasm 上逐 tick 比较哈希。
-2. **追赶上限**。Godot 的 `max_physics_steps_per_frame` 限制每帧最多补几个 tick。Pocket3D 的时间模型已有 `behind_ms`，应补一个明确的上限和降速策略（放弃追赶真实时间，而不是丢 tick），写进 `threads.md` 3.3。
-3. **网络先做 lockstep，回滚以后建立在已有的快照环上**。UE 的重模拟是"非确定性加服务器纠错"，需要 `FRewindData` 记录粒子历史；Pocket3D 有逐 tick 哈希和快照，只传输入的 lockstep 与"首个分叉 tick"诊断成本很低。回滚只需在快照环上加输入延迟与重放；`FixedRollback` 只存在于固定步长模式，说明固定步长是前提。
+2. **追赶上限**。Godot 的 `max_physics_steps_per_frame` 限制每帧最多补几个 tick。Amoris 的时间模型已有 `behind_ms`，应补一个明确的上限和降速策略（放弃追赶真实时间，而不是丢 tick），写进 `threads.md` 3.3。
+3. **网络先做 lockstep，回滚以后建立在已有的快照环上**。UE 的重模拟是"非确定性加服务器纠错"，需要 `FRewindData` 记录粒子历史；Amoris 有逐 tick 哈希和快照，只传输入的 lockstep 与"首个分叉 tick"诊断成本很低。回滚只需在快照环上加输入延迟与重放；`FixedRollback` 只存在于固定步长模式，说明固定步长是前提。
 4. **确定性的代价要测出来**。Chaos 承认排序约束有开销，Rapier 的确定性配置关掉了 SIMD 与并行。物理基准同时列"确定"和"非确定"两组数字，"比肩 PhysX/Chaos"的结论才可解释。
 
 ## 8. 构建系统
@@ -251,10 +251,10 @@ Rust 方案相当于"UE 的编译期反射"加上"Godot 的 JSON 导出"，却�
 
 ### 8.3 判断与教训
 
-不自研构建系统是对的：cargo 已经提供了 UBT 的模块图，proc-macro 相当于 UHT 的代码生成；aipocket master 的第二套构建工具也已被否决。可借鉴的是周边做法：
+不自研构建系统是对的：cargo 已经提供了 UBT 的模块图，proc-macro 相当于 UHT 的代码生成；Amoris Pioneer master 的第二套构建工具也已被否决。可借鉴的是周边做法：
 
 1. **生成物入库并做差**。`.d.ts`、`engine-api.json`、着色器反射结果由 `cargo xtask gen` 生成并入库，`xtask check` 报告未提交的生成差异（Godot 把 `gdextension_interface.json` 到头文件的生成放在构建里）。这样 agent 和审阅者看 diff 就知道接口变了。
-2. **着色器在构建期校验**。所有 WGSL（含材质模板和常用特性组合）在 `xtask check` 中过 naga，可选再过 Tint（Dawn 的 `tint` 命令行或无头 Chrome），代替"改着色器后在浏览器里验证"这条纪律。Godot 在构建期处理 GLSL，aipocket 有"naga 通过、Tint 拒绝"的教训。
+2. **着色器在构建期校验**。所有 WGSL（含材质模板和常用特性组合）在 `xtask check` 中过 naga，可选再过 Tint（Dawn 的 `tint` 命令行或无头 Chrome），代替"改着色器后在浏览器里验证"这条纪律。Godot 在构建期处理 GLSL，Amoris Pioneer 有"naga 通过、Tint 拒绝"的教训。
 3. **项目级 feature profile**。按项目关闭不用的 crate 特性，压缩 wasm 体积（Godot `build_profile`）。
 4. **编译时间**。UE 用 unity build 与 UBA，Godot 用 SCU；Rust 侧对应的是 crate 划分（已有）和可选的 sccache，不需要更多机制。
 
@@ -269,13 +269,13 @@ Rust 方案相当于"UE 的编译期反射"加上"Godot 的 JSON 导出"，却�
 
 ### 9.2 agent-native 引擎还应提供什么
 
-三家都只覆盖"agent 当开发者"，而且只是把编辑器操作变成 RPC。Pocket3D 规划的玩家接口、受限感知、fork 与 replay、数据断点、因果链，在它们那里都没有对应物。补充教训：
+三家都只覆盖"agent 当开发者"，而且只是把编辑器操作变成 RPC。Amoris 规划的玩家接口、受限感知、fork 与 replay、数据断点、因果链，在它们那里都没有对应物。补充教训：
 
 1. **CLI 为主，MCP 是投影**（要点 5），"在运行中的世界里求值"做成一等命令。Unity 提供 `unity eval`，说明 agent 需要用一行表达式直接问世界。`pocket eval` 在 tick 边界以只读方式执行 TS（沙箱与脚本相同）；需要写操作时在 fork 里执行。
-2. **安全**（要点 2）。UE 回环加无认证的做法在浏览器环境里有现实风险：网页可以向 127.0.0.1 发起 WebSocket，Chrome 111 正是为此给 DevTools 加了 Origin 限制。Pocket3D 同时开着 MCP HTTP、编辑器 WS、CDP 三类端点。
-3. **写命令自带验证结果**。UE 的 `AICallable` 与 Pocket3D 的命令目录思路相同（工具从类型生成）；差异化在于每个写命令都返回可验证的信息：事务 ID、受影响实体，以及可选的 fork 内预演哈希，让 agent 一步确认结果。第三方 UE MCP 服务器要靠 `describe_graph` 回读来补这一环 [3]，说明官方插件缺这一块。
-4. **随引擎分发 agent 技能**。Unity 用 `unity skill install`；Pocket3D 从 `engine-api.json` 生成工作流技能文档（编辑-应用-验证、调试、玩家回合），与引擎版本绑定。
-5. **可复现的评测作为卖点**。三家都没有可复现的 agent 评测；Pocket3D 的确定性让"同种子、同输入、同模型"的评测可以复现。建议公开任务集格式（纲领第 6 节已有测量计划）。
+2. **安全**（要点 2）。UE 回环加无认证的做法在浏览器环境里有现实风险：网页可以向 127.0.0.1 发起 WebSocket，Chrome 111 正是为此给 DevTools 加了 Origin 限制。Amoris 同时开着 MCP HTTP、编辑器 WS、CDP 三类端点。
+3. **写命令自带验证结果**。UE 的 `AICallable` 与 Amoris 的命令目录思路相同（工具从类型生成）；差异化在于每个写命令都返回可验证的信息：事务 ID、受影响实体，以及可选的 fork 内预演哈希，让 agent 一步确认结果。第三方 UE MCP 服务器要靠 `describe_graph` 回读来补这一环 [3]，说明官方插件缺这一块。
+4. **随引擎分发 agent 技能**。Unity 用 `unity skill install`；Amoris 从 `engine-api.json` 生成工作流技能文档（编辑-应用-验证、调试、玩家回合），与引擎版本绑定。
+5. **可复现的评测作为卖点**。三家都没有可复现的 agent 评测；Amoris 的确定性让"同种子、同输入、同模型"的评测可以复现。建议公开任务集格式（纲领第 6 节已有测量计划）。
 
 ## 附 A：对现有文档的事实更正
 

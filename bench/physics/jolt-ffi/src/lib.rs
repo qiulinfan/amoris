@@ -1,7 +1,7 @@
 //! Rust stepping Jolt through joltc (github.com/amerkoleci/joltc, MIT): the 24 C functions the
 //! prototype needs, declared by hand, and Jolt's Pyramid scene built and stepped across the C ABI.
 //! The same code runs natively (src/main.rs, timed like bench/physics/jolt/jolt_bench.cpp) and
-//! inside a Rust `wasm32-unknown-unknown` module, the target aipocket2's browser build uses
+//! inside a Rust `wasm32-unknown-unknown` module, the target Amoris's browser build uses
 //! (`web` below, driven by bench/physics/scripts/run_jolt_wasm.mjs).
 //!
 //! The end-of-run hash is jolt_bench's (FNV-1a over positions and rotations, in body order), so equal

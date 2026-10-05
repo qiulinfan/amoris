@@ -99,8 +99,8 @@ export function AboutDialog() {
   if (!open) return null;
   return (
     <Dialog onClose={() => useUi.getState().set({ aboutOpen: false })} className="about-dialog">
-      <div className="dialog-title">Pocket3D Editor</div>
-      <p className="muted">The aipocket2 web editor: a client of the host protocol (docs/spec/host-protocol.md), with no private channel. Everything here an agent can do over MCP.</p>
+      <div className="dialog-title">Amoris Editor</div>
+      <p className="muted">The Amoris web editor: a client of the host protocol (docs/spec/host-protocol.md), with no private channel. Everything here an agent can do over MCP.</p>
       <dl className="about-list">
         <dt>Host</dt>
         <dd className="mono">{host.endpoints.label}{project?.host ? ` (${project.host})` : ""}</dd>

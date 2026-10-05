@@ -67,7 +67,7 @@ fn run() -> Result<(), String> {
         } else {
             SourceRoot::Relative
         },
-        title: format!("Pocket3D: {}", project.manifest.name),
+        title: format!("Amoris: {}", project.manifest.name),
     });
     let cdp = hub
         .serve_cdp(CdpOptions {

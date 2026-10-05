@@ -1,26 +1,25 @@
-# aipocket2 纲领：Pocket3D 统一技术栈
+# Amoris 纲领：统一技术栈
 
 状态：Accepted（本轮方向与技术栈）<br>
 版本：1.0<br>
 日期：2026-10-04<br>
-仓库：私有仓库 `qiulinfan/aipocket2`（本地 `~/Desktop/aipocket2`）<br>
-来源：所有者 2026-10-03/04 的指示；PocketEngine `rebuild` 分支纲领 v0.11；`aipocket` 的 `rebuild`
-线（纲领 0.4，提交 `e9e53545`）与 `master` 线；PocketEngine `feature/rust-core` 与
+仓库：私有仓库 `qiulinfan/amoris`（本地 `~/Desktop/amoris`）<br>
+来源：所有者 2026-10-03/04 的指示；Amoris 前序 `rebuild` 分支纲领 v0.11；`Amoris Pioneer` 的 `rebuild`
+线（纲领 0.4，提交 `e9e53545`）与 `master` 线；Amoris 前序 `feature/rust-core` 与
 `feature/agent-native-rust` 原型
 
 ## 1. 这份文档是什么
 
-所有者在 2026-10-03 推翻了"PocketEngine 走 Rust + Lua、aipocket 走 Rust + TypeScript"的双线方案：
-两条线不再区分技术栈，TypeScript 重新成为第一语言（Lua 暂时搁置），宿主统一为 Rust，放弃 C++
-宿主。本轮由 agent 独立在私有仓库 `aipocket2` 里做出一个完整的引擎与完整的技术栈；所有者之后会把
-产品拆开复盘，再按更顺的实现顺序构建到 PocketEngine。
+所有者在 2026-10-03 决定将前序实验统一到 Rust 宿主与 TypeScript 脚本栈：Lua 暂时搁置，
+放弃 C++ 宿主。本轮实现已迁入 Amoris；本仓库承载完整引擎及其技术栈，继续按可运行的
+端到端成果推进。Amoris Pioneer 保留前序实验与测量历史。
 
-本文固定 `aipocket2` 的定位、技术栈及理由、架构、证明目标与来源。子系统的细节规格在 `docs/spec/`
-（多数来自 `aipocket` rebuild 线，随代码一起导入），实施排期在 [schedule.md](schedule.md)。
+本文固定 `Amoris` 的定位、技术栈及理由、架构、证明目标与来源。子系统的细节规格在 `docs/spec/`
+（多数来自 `Amoris Pioneer` rebuild 线，随代码一起导入），实施排期在 [schedule.md](schedule.md)。
 
 ## 2. 定位
 
-Pocket3D 是一个 **agent-native** 的 3D 游戏引擎。agent 在三个角色上都是一等公民，并且与人类使用
+Amoris 是一个 **agent-native** 的 3D 游戏引擎。agent 在三个角色上都是一等公民，并且与人类使用
 同一套接口：
 
 | 角色 | 含义 | 引擎提供什么 |
@@ -53,7 +52,7 @@ Pocket3D 是一个 **agent-native** 的 3D 游戏引擎。agent 在三个角色�
 ## 3. 原则
 
 1. **同一接口**。编辑器、agent、脚本、测试使用同一张命令目录；编辑器没有特权通道，所以人能做的
-   agent 都能做，反之亦然（`aipocket` master 验证过的做法）。
+   agent 都能做，反之亦然（`Amoris Pioneer` master 验证过的做法）。
 2. **感知是游戏定义的一部分**。每个 observer 经同一感知层取信息（有范围、遮挡、注意力）；全知视图
    必须显式标记，只给调试与评测。观察以拉取为主，事件推送差量，每次调用支持 token 预算。
 3. **状态全在世界里，由运行时强制**。游戏状态只存在 ECS 组件里；脚本是无状态系统，冻结的全局、
@@ -77,7 +76,7 @@ Pocket3D 是一个 **agent-native** 的 3D 游戏引擎。agent 在三个角色�
 | 构建 | **Cargo workspace + `cargo xtask`**；TS 包用 bun；web 用 wasm-bindgen + wasm-opt | — | 不自研构建系统（见 4.6） |
 | ECS | `bevy_ecs`（只用 ECS） | 0.19.1 | 实体加组件本身就是语义 schema；单线程确定调度，遍历按 EntityId 排序 |
 | 模拟数学 | `pocket_sim::math`（基于 `libm`，禁用平台超越函数，`-ffp-contract=off`） | libm 0.2.16 | 跨平台、跨原生/web 位级一致 |
-| 物理 | **Rapier 3D**，`enhanced-determinism`；与 Jolt 同机对照后定终选（见 4.7） | 0.36.0 | 原生与 wasm 3001/3001 tick 一致，fork 后逐位延续（aipocket 物理 spike）；性能需对标 PhysX/Chaos |
+| 物理 | **Rapier 3D**，`enhanced-determinism`；与 Jolt 同机对照后定终选（见 4.7） | 0.36.0 | 原生与 wasm 3001/3001 tick 一致，fork 后逐位延续（Amoris Pioneer 物理 spike）；性能需对标 PhysX/Chaos |
 | 持久化 | PCE 规范编码、分节哈希树（XXH3-128 / BLAKE3）、snapshot/restore/fork、replay 与首个分叉 | 自研 | 哈希定义在规范编码上而非内存布局 |
 | 脚本语言 | **TypeScript** | TS 7（类型检查） | AI 时代的第一语言：模型语料最多、类型反馈最好 |
 | 脚本转译 | **oxc**，进程内转译并产出 source map | 0.152 | 无需 Node；毫秒级；错误与断点都映射回 TS 行 |
@@ -87,7 +86,7 @@ Pocket3D 是一个 **agent-native** 的 3D 游戏引擎。agent 在三个角色�
 | 原生图形后端 | **Metal**（macOS）、**Vulkan**（Linux/Windows；macOS 上经 MoltenVK 验证） | — | 所有者 2026-10-04 指定只做这两个原生后端；不做 Direct3D 12 |
 | Web 图形 | WebGPU（wgpu 的浏览器后端，同一份代码） | — | 证明 web 渲染；不做 WebGL 回退 |
 | 窗口与输入 | winit；gilrs（手柄） | 0.30 | 事实标准 |
-| 资源 | glTF 2.0（`gltf`）、PNG/JPEG（`image`）、网格处理（`meshopt`：LOD、顶点缓存、meshlet）；导入在工作线程异步进行；内容哈希作为 ID | gltf 1.4、meshopt 0.6 | aipocket 的 OBJ 导入冻结 14–27 秒，本线只走 glTF 且异步 |
+| 资源 | glTF 2.0（`gltf`）、PNG/JPEG（`image`）、网格处理（`meshopt`：LOD、顶点缓存、meshlet）；导入在工作线程异步进行；内容哈希作为 ID | gltf 1.4、meshopt 0.6 | Amoris Pioneer 的 OBJ 导入冻结 14–27 秒，本线只走 glTF 且异步 |
 | 神经渲染 | 3D Gaussian Splatting（GPU 排序、与网格深度混合）；神经纹理压缩（潜变量网格 + 小型 MLP，在片元着色器里解码） | 自研 | 见 4.4 |
 | 音频 | kira（cpal；web 上为 WebAudio） | 0.12 | 混音、空间音频、补间 |
 | agent 接口 | **CLI 优先**：一张命令目录 → `pocket` CLI（连接运行中的宿主，紧凑文本输出，`--json` 精确输出，帮助文本来自目录）、编辑器 WebSocket、脚本 API、测试；MCP（`rmcp`）是同一目录的薄投影 | rmcp 3.5 | agent 在 shell 里最顺手、最省 token；目录唯一，所有前端不漂移 |
@@ -110,11 +109,11 @@ Pocket3D 是一个 **agent-native** 的 3D 游戏引擎。agent 在三个角色�
   - **P9–P10**（调试器，2026-10-04）：被跟踪函数的语句位置缓存（插桩后每条语句的开销从约 16 ns
     降到约 4 ns）；异常进入 trace 回调并附带是否会被捕获的预测，以及任意栈帧的位置查询。
 - 预算：每系统 100 万步、每 tick 200 万步、64 MiB 内存；步数不进入世界哈希。
-- 性能定位：解释执行比同等 Rust 规则慢 21–27 倍（aipocket 的 script-native spike）。对策是让脚本
+- 性能定位：解释执行比同等 Rust 规则慢 21–27 倍（Amoris Pioneer 的 script-native spike）。对策是让脚本
   做编排、让引擎做重活：物理、动画、寻路、感知、渲染都在 Rust 里，脚本经批量列接口调用。
   与 Godot 的 GDScript 处在同一量级，与 Unity C# 有差距；JIT 后端作为测量实验列入排期，不进入
   本轮默认路径。
-- 被否决：V8（aipocket master：预编译库与 Chromium libc++ 冲突、源码构建数小时）、
+- 被否决：V8（Amoris Pioneer master：预编译库与 Chromium libc++ 冲突、源码构建数小时）、
   JavaScriptCore（Windows 上要封装 46 MB 的 Bun DLL）、Lua 5.4（所有者搁置）、Luau、WASM 脚本。
 
 ### 4.3 调试
@@ -160,13 +159,13 @@ Pocket3D 是一个 **agent-native** 的 3D 游戏引擎。agent 在三个角色�
 - 面板：层级树、检视器（由 JSON Schema 生成）、视口（拾取、平移/旋转/缩放 Gizmo、吸附）、资源
   浏览器、脚本编辑器（Monaco，诊断与断点）、调试（调用栈、变量、监视）、控制台、事件与因果、
   时间线（tick 拨动、快照、回溯）、性能分析、agent 面板（agent 的操作流与对话）。
-- 被否决：egui（所有者要求 TS + React）；把编辑器 UI 做成引擎自己的 UI 系统（aipocket master 的
-  Pocket UI，效果与工作量不划算）；视口按 PNG 轮询推帧（PocketEngine 原型，4 Hz）。
+- 被否决：egui（所有者要求 TS + React）；把编辑器 UI 做成引擎自己的 UI 系统（Amoris Pioneer master 的
+  Pocket UI，效果与工作量不划算）；视口按 PNG 轮询推帧（Amoris 原型，4 Hz）。
 
 ### 4.6 构建链
 
 - Cargo workspace 加 `cargo xtask`（检查、代码生成、vendoring、web 打包）。不自研构建系统：
-  aipocket master 的 `pocket` 工具（Rust 写的第二套构建系统，嵌入 n2 后又换回 Ninja）在 Cargo
+  Amoris Pioneer master 的 `pocket` 工具（Rust 写的第二套构建系统，嵌入 n2 后又换回 Ninja）在 Cargo
   之上重复了增量构建、特性与目标管理。
 - TypeScript 包（`sdk/`、`editor/`）用 bun 安装与运行脚本，Vite 打包编辑器。
 - web：`wasm32-unknown-unknown` + wasm-bindgen + wasm-opt；QuickJS-ng 的 C 代码用 wasi-libc 编译。
@@ -225,7 +224,7 @@ Python：`tools/neural/`（神经资源训练）、`tools/eval/`（评测）。
 ### 5.3 web
 
 - 游戏在 Web Worker 里跑同一个 wasm；页面主线程跑 WebGPU 渲染；快照以 transferable buffer 传递
-  （aipocket threads spike：10⁵ 实体 0.39 ms）。
+  （Amoris Pioneer threads spike：10⁵ 实体 0.39 ms）。
 
 ## 6. 证明目标与测量
 
@@ -244,13 +243,12 @@ Python：`tools/neural/`（神经资源训练）、`tools/eval/`（评测）。
 
 | 来源 | 取用 | 不取 |
 |---|---|---|
-| `aipocket` rebuild（`e9e53545`） | 游戏侧 crate、共享契约、vendored QuickJS-ng 与补丁、xtask、`docs/spec/` 与 `docs/spikes/` | egui 编辑器决定 |
-| `aipocket` master | 编辑器的面板与交互清单、命令目录做法、感知工具（`world.tree`、`events.why`、`step until/watch`）、评测 harness 设计、渲染技术清单 | C++ 宿主、JSC、`pocket` 构建工具、13.8k 行的单文件渲染器 |
-| PocketEngine `feature/rust-core` 与 `feature/agent-native-rust` | wgpu 渲染要素（海面、尾迹、级联阴影、reversed-Z）、MCP 工具形状、React 编辑器的布局与协议驱动做法 | Lua 脚本层、每步 fork 的核心、PNG 轮询视口 |
+| `Amoris Pioneer` rebuild（`e9e53545`） | 游戏侧 crate、共享契约、vendored QuickJS-ng 与补丁、xtask、`docs/spec/` 与 `docs/spikes/` | egui 编辑器决定 |
+| `Amoris Pioneer` master | 编辑器的面板与交互清单、命令目录做法、感知工具（`world.tree`、`events.why`、`step until/watch`）、评测 harness 设计、渲染技术清单 | C++ 宿主、JSC、`pocket` 构建工具、13.8k 行的单文件渲染器 |
+| Amoris 前序 `feature/rust-core` 与 `feature/agent-native-rust` | wgpu 渲染要素（海面、尾迹、级联阴影、reversed-Z）、MCP 工具形状、React 编辑器的布局与协议驱动做法 | Lua 脚本层、每步 fork 的核心、PNG 轮询视口 |
 
 ## 8. 待决事项
 
 1. 脚本 JIT 后端（原生 V8 或浏览器自身的 JS 引擎）是否进入路线：先做同负载的测量。
 2. 真实拍摄的 splat 场景与 CC0 材质集的来源（需要所有者同意下载）。
 3. 桌面编辑器外壳（Tauri 2）的时机。
-4. 拆分回 PocketEngine 的顺序（所有者复盘时决定）。

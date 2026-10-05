@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::{ErrorPhase, ScriptError};
 
 /// The context string of the bundle hash (versions.md 3.2).
-pub const BUNDLE_CONTEXT: &str = "Pocket3D 2026-10-03 script bundle v1";
+pub const BUNDLE_CONTEXT: &str = "Amoris 2026-10-03 script bundle v1";
 
 /// The entry module unless the project manifest names another.
 pub const DEFAULT_ENTRY: &str = "scripts/main.ts";

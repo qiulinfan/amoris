@@ -164,7 +164,7 @@ fn play_inner(raw: &[String]) -> Result<Outcome, Problem> {
             frames: 0,
         },
         RunOptions {
-            title: format!("Pocket3D — {}", project.manifest.name),
+            title: format!("Amoris — {}", project.manifest.name),
             width: args.number::<u32>("width")?.unwrap_or(1280),
             height: args.number::<u32>("height")?.unwrap_or(720),
             backend: BackendChoice::from_env(),

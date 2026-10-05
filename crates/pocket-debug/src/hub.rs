@@ -40,7 +40,7 @@ impl Default for HubOptions {
     fn default() -> HubOptions {
         HubOptions {
             source_root: SourceRoot::Relative,
-            title: "Pocket3D game".into(),
+            title: "Amoris game".into(),
         }
     }
 }

@@ -28,7 +28,7 @@ numbers are in [rng.md](rng.md).
   `cos`, `atan2`, `exp`, `pow` differ in the last bit between macOS's libm and the musl in a web
   build, and between JavaScriptCore (native scripts), V8 and other engines", and built
   `pocket::repro` to compute them from `+ - * /` and `sqrt` alone (`docs/design/networking.md`,
-  Determinism, "Reproducible math"). The PocketEngine charter counts `Math.sin` results that differ
+  Determinism, "Reproducible math"). The Amoris charter counts `Math.sin` results that differ
   by platform among the old engine's failures (8.2). Measured here (section 6.4): Rust's own
   `f64::sin` and 22 other standard functions (25 of 26 sweeps) give different bits natively on
   Windows and in WebAssembly in Chrome over the same inputs; only `sqrt` agrees. The script-web
@@ -570,7 +570,7 @@ wrap (hashes, PCG32) says so with `wrapping_*`. In scripts, integers are doubles
 - Charter: `docs/charter.md` 3.3, 4.2.4, 4.2.7, 7.2.
 - Master: `docs/design/networking.md` (Determinism), `engine/core/src/repro.cpp`,
   `sdk/runtime/repro.ts` (commit 50514a2d).
-- PocketEngine charter (`origin/rebuild:docs/charter.md`, 8.2).
+- Amoris predecessor charter (`origin/rebuild:docs/charter.md`, 8.2).
 - Rust RFC 3514, "Float semantics"; Rust standard library documentation of `f64` (precision of the
   math functions, `min` and `max`).
 - The `libm` crate 0.2.16 (rust-lang/compiler-builtins), a port of musl's libm.

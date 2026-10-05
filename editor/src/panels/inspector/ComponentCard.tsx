@@ -14,7 +14,7 @@ import { entityName } from "../../state/world";
 import { FieldRow } from "./FieldEditor";
 import type { EditPhase } from "../../ui/fields/NumberField";
 
-const FOLD_KEY = "aipocket2.editor.inspector.folded";
+const FOLD_KEY = "amoris.editor.inspector.folded";
 
 function loadFolded(): Set<string> {
   try {

@@ -482,7 +482,7 @@ impl Session {
                     None if p["objectGroup"].as_str() == Some("console")
                         || p["replMode"].as_bool() == Some(true) =>
                     {
-                        let text = "Pocket3D: the game thread is running; pause it to evaluate.";
+                        let text = "Amoris: the game thread is running; pause it to evaluate.";
                         Ok(
                             json!({"result": {"type": "object", "subtype": "error", "className": "Error", "description": text},
                                   "exceptionDetails": {"exceptionId": 1, "text": text, "lineNumber": 0, "columnNumber": 0}}),

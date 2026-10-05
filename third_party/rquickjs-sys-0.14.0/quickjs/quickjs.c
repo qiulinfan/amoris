@@ -370,13 +370,13 @@ struct JSRuntime {
     uintptr_t stack_limit; /* lower stack limit */
 
     JSValue current_exception;
-    /* Pocket3D P10: the debug trace handler heard of current_exception (reset by a new throw, a
+    /* Amoris P10: the debug trace handler heard of current_exception (reset by a new throw, a
        catch and JS_GetException), and the exception it is hearing of (borrowed) */
     bool debug_exception_reported;
     JSValue debug_exception;
     /* true if inside an out of memory error, to avoid recursing */
     bool in_out_of_memory;
-    /* Pocket3D P2: how often memory ran out; the host compares it around each call, since an
+    /* Amoris P2: how often memory ran out; the host compares it around each call, since an
        out-of-memory error a builtin swallows (or replaces with its own) must still fault it */
     uint32_t out_of_memory_count;
     /* true if inside build_backtrace, to avoid recursing */
@@ -446,7 +446,7 @@ typedef struct JSStackFrame {
     /* only used in generators. Current stack pointer value. NULL if
        the function is running. */
     JSValue *cur_sp;
-    /* Pocket3D P10: the stack pointer at the frame's current statement, set by OP_debug (NULL
+    /* Amoris P10: the stack pointer at the frame's current statement, set by OP_debug (NULL
        until one runs): what the debugger's catch prediction scans of a caller's stack */
     JSValue *debug_sp;
     /* only set for coroutine frames (async function / generator /
@@ -605,7 +605,7 @@ struct JSContext {
     JSValue array_proto_values;
     JSValue throw_type_error;
     JSValue eval_obj;
-    /* Pocket3D P2: the context's uncatchable InternalError("out of memory"), made with the
+    /* Amoris P2: the context's uncatchable InternalError("out of memory"), made with the
        intrinsics, so running out of memory throws without allocating */
     JSValue oom_error;
 
@@ -619,7 +619,7 @@ struct JSContext {
 
     /* when the counter reaches zero, JSRutime.interrupt_handler is called */
     int interrupt_counter;
-    /* Pocket3D P5: nested calls and nesting levels of C-recursive builtins now running, and the
+    /* Amoris P5: nested calls and nesting levels of C-recursive builtins now running, and the
        limit past which they throw an uncatchable InternalError (0: no limit). */
     uint32_t call_depth;
     uint32_t call_depth_limit;
@@ -646,7 +646,7 @@ typedef union JSFloat64Union {
     uint32_t u32[2];
 } JSFloat64Union;
 
-/* Pocket3D P6: one NaN in typed arrays and DataViews. QuickJS-ng NaN-boxes values only on 32-bit
+/* Amoris P6: one NaN in typed arrays and DataViews. QuickJS-ng NaN-boxes values only on 32-bit
    targets, so a 64-bit native build keeps a NaN's sign and payload (0/0 is 0xFFF8000000000000 on
    x86) where wasm32 has 0x7FF8000000000000, and a script reading a float's bytes through another
    view would see the difference. Every float store writes the canonical NaN, and a float16 or
@@ -942,7 +942,7 @@ typedef struct JSFunctionBytecode {
     int pc2line_len;
     uint8_t *pc2line_buf;
     char *source;
-    /* Pocket3D P9: per bytecode offset, the source position (line << 32 | column) find_line_num
+    /* Amoris P9: per bytecode offset, the source position (line << 32 | column) find_line_num
        gives, built when the debug trace handler first runs in this function (NULL until then) */
     uint64_t *debug_lines;
 } JSFunctionBytecode;
@@ -2433,7 +2433,7 @@ JSRuntime *JS_NewRuntime2(const JSMallocFunctions *mf, void *opaque)
     JS_UpdateStackTop(rt);
 
     rt->current_exception = JS_UNINITIALIZED;
-    rt->debug_exception = JS_UNDEFINED; /* Pocket3D P10 */
+    rt->debug_exception = JS_UNDEFINED; /* Amoris P10 */
 
     return rt;
  fail:
@@ -2538,7 +2538,7 @@ void JS_SetInterruptHandler(JSRuntime *rt, JSInterruptHandler *cb, void *opaque)
     rt->interrupt_opaque = opaque;
 }
 
-/* Pocket3D P1: the host sets the interrupt counter to a call's budget before the call and reads
+/* Amoris P1: the host sets the interrupt counter to a call's budget before the call and reads
    it afterwards, so where a budget ends depends on the call alone, never on what the context ran
    before. The handler runs when the counter reaches zero; it then restarts from
    JS_INTERRUPT_COUNTER_INIT. */
@@ -2591,7 +2591,7 @@ bool JS_IsJobPending(JSRuntime *rt)
     return !list_empty(&rt->job_list);
 }
 
-/* Pocket3D P8: frees every pending job without running it. A script call that throws or runs out
+/* Amoris P8: frees every pending job without running it. A script call that throws or runs out
    of its budget leaves the jobs it queued behind; run later, they would act under another call's
    state, or not at all on a host built afresh, so the host drops them when a call fails. */
 void JS_DiscardPendingJobs(JSRuntime *rt)
@@ -2971,7 +2971,7 @@ JSContext *JS_NewContextRaw(JSRuntime *rt)
     ctx->error_prepare_stack = JS_UNDEFINED;
     ctx->error_stack_trace_limit = js_int32(10);
     init_list_head(&ctx->loaded_modules);
-    /* Pocket3D P3: a constant seed, not js__gettimeofday_us(): Math.random is replaced and the
+    /* Amoris P3: a constant seed, not js__gettimeofday_us(): Math.random is replaced and the
        hash seed only places Map and Set entries in buckets, but the runtime reads no clock. */
     ctx->random_state = 0x853c49e6748fea9bULL;
     // the state must be non zero
@@ -8394,7 +8394,7 @@ JSValue JS_Throw(JSContext *ctx, JSValue obj)
     JSRuntime *rt = ctx->rt;
     JS_FreeValue(ctx, rt->current_exception);
     rt->current_exception = obj;
-    rt->debug_exception_reported = false; /* Pocket3D P10 */
+    rt->debug_exception_reported = false; /* Amoris P10 */
     return JS_EXCEPTION;
 }
 
@@ -8405,7 +8405,7 @@ JSValue JS_GetException(JSContext *ctx)
     JSRuntime *rt = ctx->rt;
     val = rt->current_exception;
     rt->current_exception = JS_UNINITIALIZED;
-    rt->debug_exception_reported = false; /* Pocket3D P10 */
+    rt->debug_exception_reported = false; /* Amoris P10 */
     return val;
 }
 
@@ -8521,7 +8521,7 @@ fail:
     return b->line_num;
 }
 
-/* Pocket3D P9: fills b->debug_lines from the line table, so that debug_lines[pc] is what
+/* Amoris P9: fills b->debug_lines from the line table, so that debug_lines[pc] is what
    find_line_num(ctx, b, pc) gives. Returns false (and leaves it NULL) if memory or the table
    fails; the caller then searches the table. */
 static bool js_debug_build_lines(JSContext *ctx, JSFunctionBytecode *b)
@@ -8583,7 +8583,7 @@ static bool js_debug_build_lines(JSContext *ctx, JSFunctionBytecode *b)
     return false;
 }
 
-/* Pocket3D P9: the source position of the statement opcode at `pc`, from the table. */
+/* Amoris P9: the source position of the statement opcode at `pc`, from the table. */
 static int js_debug_line_num(JSContext *ctx, JSFunctionBytecode *b, uint32_t pc,
                              int *col)
 {
@@ -9028,7 +9028,7 @@ static int JS_ThrowTypeErrorReadOnly(JSContext *ctx, int flags, JSAtom atom)
 JSValue JS_ThrowOutOfMemory(JSContext *ctx)
 {
     JSRuntime *rt = ctx->rt;
-    /* Pocket3D P2: where memory runs out depends on the platform and on garbage-collection
+    /* Amoris P2: where memory runs out depends on the platform and on garbage-collection
        history, so no script may catch it and carry on differently per platform. The error is the
        context's own, made uncatchable in advance: making one here would need memory, and a
        failed allocation would throw null, which no flag can make uncatchable. The count tells
@@ -9052,7 +9052,7 @@ uint32_t JS_GetOutOfMemoryCount(JSRuntime *rt)
     return rt->out_of_memory_count;
 }
 
-/* Pocket3D P5: the error of a call past the depth limit. The limit is lifted while the error
+/* Amoris P5: the error of a call past the depth limit. The limit is lifted while the error
    and its stack are built (Error.prepareStackTrace is a call). */
 static JSValue JS_ThrowCallDepth(JSContext *ctx)
 {
@@ -9064,7 +9064,7 @@ static JSValue JS_ThrowCallDepth(JSContext *ctx)
     return JS_EXCEPTION;
 }
 
-/* Pocket3D P5: enters one nesting level; true (the error thrown) past the limit. */
+/* Amoris P5: enters one nesting level; true (the error thrown) past the limit. */
 static inline bool js_depth_enter(JSContext *ctx)
 {
     if (unlikely(ctx->call_depth_limit != 0 && ctx->call_depth >= ctx->call_depth_limit)) {
@@ -9092,7 +9092,7 @@ uint32_t JS_GetCallDepth(JSContext *ctx)
 
 static JSValue JS_ThrowStackOverflow(JSContext *ctx)
 {
-    /* Pocket3D P2: where the native stack runs out depends on the target and the build. */
+    /* Amoris P2: where the native stack runs out depends on the target and the build. */
     JS_ThrowRangeError(ctx, "Maximum call stack size exceeded");
     JS_SetUncatchableError(ctx, ctx->rt->current_exception);
     return JS_EXCEPTION;
@@ -18561,13 +18561,13 @@ static bool needs_backtrace(JSValue exc)
     return can_store_error_stack(exc) || can_add_backtrace(exc);
 }
 
-/* Pocket3D P10 */
+/* Amoris P10 */
 JSValue JS_GetDebugTraceException(JSContext *ctx)
 {
     return js_dup(ctx->rt->debug_exception);
 }
 
-/* Pocket3D P10: a frame's function name as backtraces give it (the function's own `name` string,
+/* Amoris P10: a frame's function name as backtraces give it (the function's own `name` string,
    which a method or an arrow assigned to a property has where the bytecode has none), as a new
    atom. */
 static JSAtom js_debug_frame_name(JSContext *ctx, JSValueConst func,
@@ -18583,7 +18583,7 @@ static JSAtom js_debug_frame_name(JSContext *ctx, JSValueConst func,
     return JS_DupAtom(ctx, b->func_name);
 }
 
-/* Pocket3D P10 */
+/* Amoris P10 */
 int JS_GetStackFrameInfo(JSContext *ctx, int level, JSAtom *filename,
                          JSAtom *funcname, int *line, int *col)
 {
@@ -18610,7 +18610,7 @@ int JS_GetStackFrameInfo(JSContext *ctx, int level, JSAtom *filename,
     return 0;
 }
 
-/* Pocket3D P10: whether a catch offset (not an iterator's, whose offset is 0) lies in
+/* Amoris P10: whether a catch offset (not an iterator's, whose offset is 0) lies in
    [from, to). */
 static bool js_debug_stack_catches(JSValue *from, JSValue *to)
 {
@@ -18622,7 +18622,7 @@ static bool js_debug_stack_catches(JSValue *from, JSValue *to)
     return false;
 }
 
-/* Pocket3D P10: tells the debug trace handler of the catchable exception `sf` (running `b`, at
+/* Amoris P10: tells the debug trace handler of the catchable exception `sf` (running `b`, at
    `pc`, with the live stack [stack_buf, sp)) is unwinding, with its catch prediction. The
    handler runs with the exception set aside and the backtrace slot cleared; both come back. */
 static void js_debug_trace_exception(JSContext *ctx, JSFunctionBytecode *b,
@@ -18673,7 +18673,7 @@ static JSValue JS_CallInternalBody(JSContext *caller_ctx, JSValueConst func_obj,
                                    JSValueConst this_obj, JSValueConst new_target,
                                    int argc, JSValueConst *argv, int flags);
 
-/* Pocket3D P5: every call (bytecode, C functions, bound functions, generators) is one level. */
+/* Amoris P5: every call (bytecode, C functions, bound functions, generators) is one level. */
 static JSValue JS_CallInternal(JSContext *caller_ctx, JSValueConst func_obj,
                                JSValueConst this_obj, JSValueConst new_target,
                                int argc, JSValueConst *argv, int flags)
@@ -18810,7 +18810,7 @@ static JSValue JS_CallInternalBody(JSContext *caller_ctx, JSValueConst func_obj,
         sf->var_refs[i] = NULL;
     /* ordinary C-stack frame: not owned by a coroutine GC object */
     sf->cur_gc_obj = NULL;
-    sf->debug_sp = NULL; /* Pocket3D P10 */
+    sf->debug_sp = NULL; /* Amoris P10 */
     sp = stack_buf;
     pc = b->byte_code_buf;
     /* sf->cur_pc must we set to pc before any recursive calls to JS_CallInternal. */
@@ -18832,15 +18832,15 @@ static JSValue JS_CallInternalBody(JSContext *caller_ctx, JSValueConst func_obj,
         SWITCH(pc) {
         CASE(OP_debug):
         CASE(OP_debugger_stmt):
-            sf->debug_sp = sp; /* Pocket3D P10 */
+            sf->debug_sp = sp; /* Amoris P10 */
             if (unlikely(ctx->debug_trace)) {
                 int col_num = 0;
                 int line_num = -1;
                 uint32_t pc_index = (uint32_t)(pc - b->byte_code_buf - 1);
                 int flags = (pc[-1] == OP_debugger_stmt)
                                 ? JS_DEBUG_TRACE_DEBUGGER_STMT : 0;
-                sf->cur_pc = pc; /* Pocket3D P10: JS_GetStackFrameInfo(0) */
-                line_num = js_debug_line_num(ctx, b, pc_index, &col_num); /* Pocket3D P9 */
+                sf->cur_pc = pc; /* Amoris P10: JS_GetStackFrameInfo(0) */
+                line_num = js_debug_line_num(ctx, b, pc_index, &col_num); /* Amoris P9 */
 
                 /* Pass the JSAtom values directly — no heap allocation.
                    The atoms are valid for the lifetime of the bytecode
@@ -21587,7 +21587,7 @@ static JSValue JS_CallInternalBody(JSContext *caller_ctx, JSValueConst func_obj,
     }
     if (unlikely(ctx->debug_trace) && !rt->debug_exception_reported
         && !JS_IsUncatchableError(rt->current_exception))
-        js_debug_trace_exception(ctx, b, sf, pc, sp, stack_buf); /* Pocket3D P10 */
+        js_debug_trace_exception(ctx, b, sf, pc, sp, stack_buf); /* Amoris P10 */
     if (!JS_IsUncatchableError(rt->current_exception)) {
         while (sp > stack_buf) {
             JSValue val = *--sp;
@@ -21602,7 +21602,7 @@ static JSValue JS_CallInternalBody(JSContext *caller_ctx, JSValueConst func_obj,
                 } else {
                     *sp++ = rt->current_exception;
                     rt->current_exception = JS_UNINITIALIZED;
-                    rt->debug_exception_reported = false; /* Pocket3D P10 */
+                    rt->debug_exception_reported = false; /* Amoris P10 */
                     JS_FreeValueRT(rt, ctx->error_back_trace);
                     ctx->error_back_trace = JS_UNDEFINED;
                     pc = b->byte_code_buf + pos;
@@ -21841,7 +21841,7 @@ static __exception int async_func_init(JSContext *ctx, JSAsyncFunctionState *s,
     sf->arg_count = arg_buf_len;
     sf->var_buf = sf->arg_buf + arg_buf_len;
     sf->cur_sp = sf->var_buf + b->var_count;
-    sf->debug_sp = NULL; /* Pocket3D P10 */
+    sf->debug_sp = NULL; /* Amoris P10 */
     /* set by the caller once the owning coroutine GC object exists */
     sf->cur_gc_obj = NULL;
     sf->var_refs = (JSVarRef **)(sf->cur_sp + b->stack_size);
@@ -37900,7 +37900,7 @@ static void free_function_bytecode(JSRuntime *rt, JSFunctionBytecode *b)
     JS_FreeAtomRT(rt, b->filename);
     js_free_rt(rt, b->pc2line_buf);
     js_free_rt(rt, b->source);
-    js_free_rt(rt, b->debug_lines); /* Pocket3D P9 */
+    js_free_rt(rt, b->debug_lines); /* Amoris P9 */
 
     remove_gc_object(&b->header);
     if (rt->gc_phase == JS_GC_PHASE_REMOVE_CYCLES && JS_REF_COUNT(b) != 0) {
@@ -45287,7 +45287,7 @@ static int64_t JS_FlattenIntoArrayBody(JSContext *ctx, JSValueConst target,
                                        JSValueConst mapperFunction,
                                        JSValueConst thisArg);
 
-/* Pocket3D P5: one nesting level per nested array flattened. */
+/* Amoris P5: one nesting level per nested array flattened. */
 static int64_t JS_FlattenIntoArray(JSContext *ctx, JSValueConst target,
                                    JSValueConst source, int64_t sourceLen,
                                    int64_t targetIndex, int depth,
@@ -49987,7 +49987,7 @@ static JSValue js_compile_regexp(JSContext *ctx, JSValueConst pattern,
     JS_FreeCString(ctx, str);
     if (!re_bytecode_buf) {
         if (ctx->call_depth_exceeded) {
-            /* Pocket3D P5 */
+            /* Amoris P5 */
             ctx->call_depth_exceeded = false;
             return JS_ThrowCallDepth(ctx);
         }
@@ -50371,7 +50371,7 @@ bool lre_check_stack_overflow(void *opaque, size_t alloca_size)
     return js_check_stack_overflow(ctx->rt, alloca_size);
 }
 
-/* Pocket3D P5: the regular expression parser's nesting, in the context's depth counter. Past
+/* Amoris P5: the regular expression parser's nesting, in the context's depth counter. Past
    the limit the parse fails and js_compile_regexp throws the call-depth error. */
 bool lre_depth_enter(void *opaque)
 {
@@ -51778,7 +51778,7 @@ static void json_free_parse_record(JSContext *ctx, JSONParseRecord *pr)
 
 static JSValue json_parse_value_body(JSParseState *s, JSONParseRecord *pr);
 
-/* Pocket3D P5: one nesting level per JSON value parsed inside another. */
+/* Amoris P5: one nesting level per JSON value parsed inside another. */
 static JSValue json_parse_value(JSParseState *s, JSONParseRecord *pr)
 {
     JSValue ret;
@@ -52299,7 +52299,7 @@ static int js_json_to_str_body(JSContext *ctx, JSONStringifyContext *jsc,
                                JSValueConst holder, JSValue val,
                                JSValueConst indent);
 
-/* Pocket3D P5: one nesting level per value stringified inside another. The body owns `val`, so
+/* Amoris P5: one nesting level per value stringified inside another. The body owns `val`, so
    it is freed here when the level is refused. */
 static int js_json_to_str(JSContext *ctx, JSONStringifyContext *jsc,
                           JSValueConst holder, JSValue val,
@@ -52877,7 +52877,7 @@ static JSValue JS_ThrowTypeErrorRevokedProxy(JSContext *ctx)
     return JS_ThrowTypeError(ctx, "revoked proxy");
 }
 
-/* Pocket3D P5: one nesting level per proxy internal method. A method forwards to its target,
+/* Amoris P5: one nesting level per proxy internal method. A method forwards to its target,
    and reads its trap from its handler, either of which can be another Proxy, so a chain of
    Proxies recurses in C without a call; counted here, it stops at max_call_depth as calls do,
    instead of at the stack check, whose depth differs between targets. */
@@ -59585,7 +59585,7 @@ static int JS_AddIntrinsicBasicObjects(JSContext *ctx)
         ctx->native_error_proto[i] = proto;
     }
 
-    /* Pocket3D P2: the error JS_ThrowOutOfMemory throws. Its stack is set to the empty string
+    /* Amoris P2: the error JS_ThrowOutOfMemory throws. Its stack is set to the empty string
        now, so throwing it never builds a backtrace (which allocates and calls
        Error.prepareStackTrace) and no call leaves its stack on it for the next. */
     ctx->oom_error = JS_MakeError2(ctx, JS_INTERNAL_ERROR, false, "out of memory");

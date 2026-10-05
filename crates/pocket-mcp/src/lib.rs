@@ -40,7 +40,7 @@ pub trait Backend: Send + Sync {
     fn open(&self) -> Arc<dyn Caller>;
 }
 
-const INSTRUCTIONS: &str = "Pocket3D host: one authoritative world shared with the editor. \
+const INSTRUCTIONS: &str = "Amoris host: one authoritative world shared with the editor. \
 Read with world tree/get/query, change it with world edit (undoable), run time with time step \
 (until/watch stop early), test in play start/stop. Game rules are TypeScript in scripts/: \
 scripts guide says how to write them, scripts check type checks them against the project's \

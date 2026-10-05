@@ -43,10 +43,10 @@ their code is under `spikes/`.
 | [shared/benchmark/tasks.md](../../shared/benchmark/tasks.md) | spec-mcp | 9 (developer and player tasks, fixtures, reference policies) |
 | [splats.md](splats.md) | render | 4.4 (3D Gaussian Splatting: files, GPU layout, preprocess, radix sort, hybrid draw, WebGPU constraints) |
 
-The shared contract and benchmark are a first draft of PocketEngine's `shared/` (charter 6.2):
-PocketEngine's `rebuild` is still at 5f8971e, which has no `shared/`, so nothing is synchronized yet
-and `shared/SYNC.toml` records `commit = ""` with each shared file's hash (checks.md 5.4, where
-`contract.sync` is `Skipped` until a commit is recorded).
+The shared contract and benchmark are maintained in this repository's `shared/`.
+`shared/SYNC.toml` records each shared file's hash and an optional reference commit (checks.md 5.4).
+`contract.sync` remains `Skipped` while no reference commit is recorded or the comparison is
+unavailable; `gen.shared_modified` checks the recorded file hashes either way.
 
 ## 2. Slice 0 verdicts
 

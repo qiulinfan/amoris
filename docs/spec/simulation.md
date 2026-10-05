@@ -787,7 +787,7 @@ is built.
   (Determinism and hashing; Events with causes; Physics as events: "bodies are processed in entity
   id order"), `docs/design/scenarios.md` (runs deterministic per seed), `docs/design/water.md` (time
   from the tick).
-- PocketEngine charter (`origin/rebuild:docs/charter.md`, 8.2): reloads that left handlers and
+- Amoris predecessor charter (`origin/rebuild:docs/charter.md`, 8.2): reloads that left handlers and
   random seeds behind, and loads that changed entity ids and lost RNG state and contact caches, are
   the failures the boundary invariants and the allocator answer.
 - Glenn Fiedler, "Fix Your Timestep!" (2004).

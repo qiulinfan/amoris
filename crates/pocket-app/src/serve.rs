@@ -76,7 +76,7 @@ fn start(root: &Path, seed: Option<u64>, editor: Option<PathBuf>) -> Result<Serv
     };
     let dir = root.to_path_buf();
     let hub = pocket_debug::DebugHub::new(pocket_debug::HubOptions {
-        title: format!("Pocket3D: {}", project.manifest.name),
+        title: format!("Amoris: {}", project.manifest.name),
         ..pocket_debug::HubOptions::default()
     });
     let cdp = match hub.serve_cdp(pocket_debug::CdpOptions::default()) {

@@ -26,7 +26,7 @@ measurements and their reference figures.
 | spec-mcp | the MCP tools, the benchmark | [shared/contract/mcp.md](../../shared/contract/mcp.md), [shared/benchmark/](../../shared/benchmark/README.md) |
 | spec-arch (this agent) | crates, threads, the check command, budgets, the web build | `architecture.md`, `threads.md`, `checks.md`, `budgets.md` |
 
-The shared contract and benchmark live under `shared/`, as charter 6.2 places them; the other
+The shared contract and benchmark live under this repository's `shared/`; the other
 specifications are beside this one in `docs/spec/`.
 
 ## 2. Principles of the layout
@@ -80,7 +80,7 @@ crates/
 xtask/                  the local check command, code generation and vendoring (cargo xtask)
 third_party/            rquickjs-sys-0.14.0/ (patched, committed), patches/ (PR #1421 and P1 to P7), section 7.5
 shared/                 the shared contract (prose, schemas, contract/rust = pocket-contract) and benchmark,
-                        copied from PocketEngine (charter 6.2)
+                        maintained in this repository
 samples/                game projects in TypeScript (the sailing showcase first)
 tests/fixtures/         small projects the checks use, including the negative controls
 bench/                  budgets/ (one file per area), baselines, calibration values, the workloads' inputs,
@@ -340,8 +340,8 @@ written as that specification names them.
 ### 4.16 `pocket-contract`: the shared contract's types
 
 - **Owns**: nothing of its own; it is spec-contract's recommended types-only crate, kept under
-  `shared/contract/rust/` and synchronized with PocketEngine like the prose
-  (shared/contract/README.md, Open choices 1): the requests, answers and declarations of the
+  `shared/contract/rust/` and recorded in `shared/SYNC.toml` like the prose
+  (shared/contract/README.md, Contract record): the requests, answers and declarations of the
   contract, and `Problem`, the error protocol's type with its constructors per code.
 - **Depends on**: `serde`, `schemars` and `strsim` only; no engine crate. Every workspace crate may
   depend on it, which is how `pocket-sim` and everything above return `Problem`. Slice 1: also

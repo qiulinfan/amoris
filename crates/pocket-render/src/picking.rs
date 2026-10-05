@@ -1,7 +1,7 @@
 //! Which entity is at a pixel, and which entities a view shows: an entity-id pass drawn on demand
 //! (the camera view's visible instances into an `R32Uint` target with its own depth), read back
 //! without stalling. The editor picks with it; agents get "what is on screen, how much of it" with
-//! a capture (aipocket's `render.visible`, the perception an agent has of the rendered view).
+//! a capture (Amoris Pioneer's `render.visible`, the perception an agent has of the rendered view).
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};

@@ -247,7 +247,7 @@ fn connection(stream: TcpStream, addr: SocketAddr, hub: DebugHub, log: bool) {
     let ws = format!("{addr}{TARGET_PATH}");
     let body: Option<Json> = match path.split('?').next().unwrap_or("") {
         "/json" | "/json/list" | "/json/list/" => Some(json!([{
-            "description": "Pocket3D game thread (QuickJS-ng)",
+            "description": "Amoris game thread (QuickJS-ng)",
             "devtoolsFrontendUrl": devtools_url(&addr),
             "devtoolsFrontendUrlCompat": format!("devtools://devtools/bundled/inspector.html?experiments=true&v8only=true&ws={ws}"),
             "faviconUrl": "",
@@ -259,7 +259,7 @@ fn connection(stream: TcpStream, addr: SocketAddr, hub: DebugHub, log: bool) {
         }])),
         // As Node answers: no webSocketDebuggerUrl here, or js-debug takes the target for a browser.
         "/json/version" => {
-            Some(json!({"Browser": "Pocket3D/0.1 (QuickJS-ng 0.16.2)", "Protocol-Version": "1.3"}))
+            Some(json!({"Browser": "Amoris/0.1 (QuickJS-ng 0.16.2)", "Protocol-Version": "1.3"}))
         }
         "/json/protocol" => Some(json!({"version": {"major": "1", "minor": "3"}, "domains": []})),
         _ => None,

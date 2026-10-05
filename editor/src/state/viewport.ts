@@ -50,7 +50,7 @@ export const useViewport = create<ViewportState>()(
       look: (dir) => set({ view: { dir, nonce: (get().view?.nonce ?? 0) + 1 } }),
     }),
     {
-      name: "aipocket2.editor.viewport.v1",
+      name: "amoris.editor.viewport.v1",
       partialize: (s) => ({ tool: s.tool, space: s.space, snap: s.snap, grid: s.grid, stats: s.stats }),
     },
   ),

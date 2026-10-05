@@ -26,6 +26,10 @@ The rule in one line: **a replay asserts reproduction, a save asserts continuati
 verified only against the same engine, scripts, configuration, data and schemas; a save loads into
 any later engine and scripts that can migrate its data.
 
+On 2026-10-05 the naming cleanup changes all hash domain contexts to `Amoris`, including engine
+source, script bundles, module sources and schema fingerprints. Identifiers produced under the
+previous name are incompatible. This change provides no migration or fallback.
+
 ## 2. What can change, and what records it
 
 | What changes | Identifier | Recorded in |
@@ -51,7 +55,7 @@ pub struct EngineVersion {
     pub source: ContentHash,  // the source tree the binary was built from (below)
     pub target: String,       // target triple: "x86_64-pc-windows-msvc", "wasm32-unknown-unknown"
     pub profile: String,      // "release", "web", "debug"
-    pub contract: String,     // the shared contract's version (charter 6.2): its sync commit
+    pub contract: String,     // the shared contract's version and optional reference commit
     pub c_compiler: String,   // the compiler that built QuickJS-ng: POCKET_QJS_CC (script-sandbox.md 4.2, P7)
 }
 impl EngineVersion { pub fn current() -> &'static EngineVersion; }
@@ -63,7 +67,7 @@ tree (the native and web builds of one check run) must be recognized as the same
 `pocket-app`'s build script computes (architecture.md 4.13)
 
 ```text
-source = BLAKE3-derive_key("Pocket3D 2026-10-03 engine source v1",
+source = BLAKE3-derive_key("Amoris 2026-10-03 engine source v1",
            per file in path order: ULEB128(len path) || path || BLAKE3(content))
 ```
 
@@ -86,7 +90,7 @@ A bundle is the reachable set of TypeScript modules the script host loads, which
 what the bundle hash covers" (script-host.md 8.1). Its hash is
 
 ```text
-bundle_hash = BLAKE3-derive_key("Pocket3D 2026-10-03 script bundle v1",
+bundle_hash = BLAKE3-derive_key("Amoris 2026-10-03 script bundle v1",
                 per module in path order:
                   ULEB128(len path) || path || ULEB128(len source) || source)
 ```
@@ -128,7 +132,7 @@ Every persisted resource and component type has a schema version, a `u32` from 1
 shape change made without a bump:
 
 ```text
-fingerprint = first 16 bytes of BLAKE3-derive_key("Pocket3D 2026-10-03 schema fingerprint v1",
+fingerprint = first 16 bytes of BLAKE3-derive_key("Amoris 2026-10-03 schema fingerprint v1",
                 PCE(resolve(format)))
 ```
 
@@ -659,7 +663,7 @@ Beside persistence.md's P1 to P7, run in the check command (charter 3.7; checks.
   `docs/design/environment.md` (Learning: save slots as branch points need `onSave` and tween
   snapshots; Limits: saves without the contact cache branch inexactly), `docs/development.md`
   (Tests: golden hashes change only deliberately, with the reason in the commit).
-- PocketEngine charter (`origin/rebuild:docs/charter.md`), 3.3 and 8.2: ids changed after a load,
+- Amoris predecessor charter (`origin/rebuild:docs/charter.md`), 3.3 and 8.2: ids changed after a load,
   the RNG and the contact cache were not saved.
 - Practice: append-only ordered migrations (Flyway, Diesel, Rails); schemas checked against a
   committed baseline (`buf breaking`); RFC 6901 for paths.

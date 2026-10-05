@@ -1,4 +1,4 @@
-// The Jolt side of aipocket2's physics benchmark (docs/bench/physics.md).
+// The Jolt side of Amoris's physics benchmark (docs/bench/physics.md).
 //
 // Runs Jolt's own PerformanceTest scenes (Pyramid, ConvexVsMesh, Ragdoll; their headers are
 // included unchanged from JoltPhysics/PerformanceTest) plus two scenes the Rapier side also builds:
@@ -13,7 +13,7 @@
 //
 // --rays casts the Raycast scene's 10,000 rays after every step of any scene; --vel and --pos set
 // Jolt's velocity and position iteration counts. --fork-at N is the snapshot-and-fork check
-// aipocket2's persistence needs: after N steps the whole simulation state is saved
+// Amoris's persistence needs: after N steps the whole simulation state is saved
 // (PhysicsSystem::SaveState, all of it: bodies, contacts with their warm-start impulses,
 // constraints), the scene is built again in a fresh PhysicsSystem, the state restored into it, and
 // both systems step to the end; the fork's end hash is reported beside the original's.

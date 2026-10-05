@@ -1,7 +1,6 @@
 # Errors
 
-- Status: Draft, slice 0. Draft, proposed for PocketEngine's `shared/contract` (README,
-  Synchronization with PocketEngine).
+- Status: Draft, slice 0. Maintained in Amoris's `shared/contract` (README, Contract record).
 - Charter: 3.4, 3.6, 4.2.6, 6.1, 7 (item 12).
 - Contract version: 0.1 (draft).
 
@@ -19,7 +18,7 @@ find out why (master `docs/mcp.md`, Asking the engine how to call it; `docs/agen
 the agents changed the interface). After commands refused unknown parameters and named the ones they
 took, and fields were refused with the nearest name
 (`Light has no field 'colr'; did you mean 'color'?`), failed calls in a run of fifty-seven tasks
-fell from 48 to 15 (master `docs/agent-eval.md`, Fifty-seven on opencode). PocketEngine's charter
+fell from 48 to 15 (master `docs/agent-eval.md`, Fifty-seven on opencode). Amoris's predecessor charter
 lists the same lesson and the "did you mean" mechanism among what it carries over.
 
 Precedents: RFC 9457 (problem details for HTTP APIs: a type, a human-readable detail, extension
@@ -130,7 +129,7 @@ it is absent and `allowed_count` and `see` (the call that lists them, such as
 `describe {"part": "intents"}`) stand in its place.
 
 **Placeholders.** A template's placeholders are detail fields of its code, with four derived ones,
-rendered the same way on both lines:
+rendered the same way on all runtime targets:
 
 - `{field}` is the last segment of `path` (`/actions/0/params/heading_deg` gives `heading_deg`; an
   array index gives `item <n>`).
@@ -242,7 +241,7 @@ a script error under the harness (master `docs/agent-eval.md`, The first failure
 Every place a request names something (a field, a parameter, a method, a seat, a control, an intent,
 a verb, a kind, an instrument, an enumeration value, an entity's name) is checked against what is
 valid there, and an unknown name is refused with suggestions. Suggestions are computed the same way
-everywhere, deterministically, so the two lines give the same ones.
+everywhere, deterministically, so the runtime targets give the same ones.
 
 **Normalization** of a name `s`: insert `_` between a lowercase letter or digit and a following
 uppercase letter (`headingDeg` to `heading_Deg`); lowercase ASCII; replace `-`, space and `.` with
@@ -353,7 +352,7 @@ The sailing game's codes are in [sailing.md](sailing.md), Codes.
 ## Determinism
 
 Problems are deterministic: the same request against the same world and caller gives the same code,
-detail and message bytes on both lines. Validation reads the request, the caller's perception and
+detail and message bytes on all runtime targets. Validation reads the request, the caller's perception and
 the game definition only; suggestion order is total; numbers are rounded by the shared rule. No
 problem carries a wall-clock time, a memory address or a hash-map iteration order. Refusals change
 nothing (actions.md, Validation and atomicity), so a refused call cannot make two runs diverge.
@@ -362,7 +361,7 @@ nothing (actions.md, Validation and atomicity), so a refused call cannot make tw
 
 - **`contract.errors.golden`**: shared cases in `shared/contract/conformance/errors.jsonl` against
   the sailing showcase at a fixed tick, each a request, the caller's role and seat, and the expected
-  problem (code, detail, message). Both lines must give them byte for byte. The first cases:
+  problem (code, detail, message). All runtime targets must give them byte for byte. The first cases:
 
 | Request (abridged) | Expected |
 |---|---|
@@ -410,7 +409,7 @@ The suggestions in the table were computed with a Python prototype of the algori
 script of this task, not part of the repository), which also gave `heading_rad` to `heading_deg`
 (score 2), `mark1` to `Mark1` (score 0), `Port` to `port`, `best_trim` to `best` (score 3), and
 nothing for `left` among the `turn` values or `steer` among the controls; the implementations in
-both lines must reproduce them.
+all runtime targets must reproduce them.
 
 ## Open choices
 
@@ -425,12 +424,12 @@ both lines must reproduce them.
    which costs one round trip and teaches the vocabulary.
 4. **Integer `error.code` numbers for JSON-RPC.** Recommended: the two JSON-RPC codes above, with
    the contract's code in `data`; the string code is the one that matters.
-5. **Slice 1 (Pocket3D, to propose to PocketEngine): how `pocket-contract` implements this file.**
+5. **Slice 1 (Amoris): how `pocket-contract` implements this file.**
    - One constructor per code of the contract's families in `pocket_contract::codes`, each rendering
      the template of the tables above through one renderer (`render::render`) that game codes use
      too (`Problem::from_template`); `CodeDef` waits for perception.md's `FactDef`, which the crate
      does not declare yet. Detail numbers that are integral doubles below 2^53 are written as JSON
-     integers (`max_m: 3`, not `3.0`), so details compare equal on both lines.
+     integers (`max_m: 3`, not `3.0`), so details compare equal on all runtime targets.
    - With no suggestion, `did you mean {suggestions}?` becomes `it takes {allowed}.` only for at
      most eight names (Messages); with more, `see {see}.` when the caller names where to look, else
      `it takes one of N names, listed in the detail.`; with neither list nor `see` (an unknown

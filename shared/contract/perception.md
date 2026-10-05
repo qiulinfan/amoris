@@ -1,7 +1,6 @@
 # Perception
 
-- Status: Draft, slice 0. Draft, proposed for PocketEngine's `shared/contract` (README,
-  Synchronization with PocketEngine).
+- Status: Draft, slice 0. Maintained in Amoris's `shared/contract` (README, Contract record).
 - Charter: 2.3, 2.4.1, 3.1, 3.2, 3.3, 3.6, 3.7, 3.10, 4.4, 5.1, 7 (item 8).
 - Contract version: 0.1 (draft).
 
@@ -329,7 +328,7 @@ The visibility state for `Seen` is not stored separately: it is the set of memor
 
 ### Geometry
 
-Both lines compute these expressions exactly as written, with the deterministic math library
+All runtime targets compute these expressions exactly as written, with the deterministic math library
 (spec-sim), so a value at the edge of a range or a field of view falls on the same side on both.
 
 - **Visibility range** (step 2): `dx*dx + dy*dy + dz*dz <= r*r`, the sum in that order, from the
@@ -582,7 +581,7 @@ instruments, budget, tensor layout and ranking; every `Perceivable` entity `Seen
 detail, `Hidden` facts and `pos_m` included; every event of a declared kind, whatever its scope; no
 range, field of view, occlusion or memory; non-`Perceivable` entities excluded. Its answers are
 marked omniscient. So the condition differs from the perception condition only in what is known, and
-both lines give it the same bytes.
+all runtime targets give it the same bytes.
 
 ## Projections
 
@@ -608,7 +607,7 @@ and an example observation are [sailing.md](sailing.md), The skipper's perceptio
 ## Checks
 
 These run in the local check command (spec-arch) on the sailing showcase from slice 2 and on a small
-fixture world from slice 1, and the projection golden cases in both lines.
+fixture world from slice 1, and the projection golden cases in all runtime targets.
 
 - **`contract.perception.read_only`**: a seeded run of 3600 ticks with a fixed action script, run
   twice, once with no queries and once with every query kind issued every tick for every seat and
@@ -639,7 +638,7 @@ fixture world from slice 1, and the projection golden cases in both lines.
   remembered entity dropped when its place comes into sight, kept when it does not; memory expiry at
   exactly `memory_s`; capacity eviction order; event scopes of each kind, an undeclared kind
   perceived by no player, and a cause kept only when perceived. The edge cases also enter the shared
-  golden cases, so both lines put them on the same side.
+  golden cases, so all runtime targets put them on the same side.
 
 ## Performance
 

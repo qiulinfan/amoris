@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "@aipocket2/sdk",
+      "name": "@amoris/sdk",
       "devDependencies": {
         "typescript": "7.0.2",
       },

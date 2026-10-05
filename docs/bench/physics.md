@@ -20,7 +20,7 @@
 
 ## The question
 
-The owner wants physics on par with Unity (PhysX) and UE5 (Chaos). aipocket2 ships Rapier 0.36 with
+The owner wants physics on par with Unity (PhysX) and UE5 (Chaos). Amoris ships Rapier 0.36 with
 `enhanced-determinism`, without `parallel` or `simd8`, because the simulation must give the same
 bits natively and in the browser (`docs/spikes/physics.md`). Charter 4.7 asks for a same-machine
 comparison with Jolt Physics (MIT; its README names Horizon Forbidden West and Death Stranding 2 as
@@ -33,7 +33,7 @@ and a backend decision from it:
 
 ## Verdict
 
-1. **Neither engine is faster everywhere.** Single-threaded, as aipocket2 runs physics (one game
+1. **Neither engine is faster everywhere.** Single-threaded, as Amoris runs physics (one game
    thread, deterministic builds), Rapier steps box stacks 1.5 to 3 times faster than Jolt, the two
    are level on ray casts, and Jolt is about 1.5 times faster on convex bodies against a
    triangle-mesh terrain and about 2.5 times faster on 160 motor-driven ragdolls (Rapier's
@@ -44,16 +44,16 @@ and a backend decision from it:
    bit, on all three scenes on Apple Silicon (aarch64) against wasm32 under V8, and both continue a
    snapshot restored into a second world bit for bit. Jolt's guarantee is tested by its CI in 17
    configurations (15 single-precision targets, WASM32 and WASM64 among them, and 2
-   double-precision) and cost it 0 to 20% here; Rapier's rests on aipocket2's own math rule and cost
+   double-precision) and cost it 0 to 20% here; Rapier's rests on Amoris's own math rule and cost
    it little on these scenes.
-3. **Jolt runs in a Rust browser module built like the engine's**: compiled with the LLVM aipocket2
+3. **Jolt runs in a Rust browser module built like the engine's**: compiled with the LLVM Amoris
    already uses for QuickJS-ng and linked into a Rust `wasm32-unknown-unknown` module (web profile,
    `wasm-opt`), Jolt's Pyramid computes the same hash as native Jolt and as Jolt's CI. That module
    is a prototype with plain exports and six WASI imports stubbed from JavaScript; linking Jolt into
    pocket-web itself, through wasm-bindgen and beside QuickJS-ng's own libc, is untested. Without
    wasm SIMD (only Emscripten provides Jolt's), Jolt in WebAssembly runs 1.3 to 1.7 times slower
    than natively and still steps all four scenes faster than Rapier's deterministic build in the
-   configuration aipocket2 ships (web profile, no `simd128`), least clearly on the pyramid. With
+   configuration Amoris ships (web profile, no `simd128`), least clearly on the pyramid. With
    `simd128`, which is not shipped, Rapier wins the pyramid.
 4. **Snapshots differ in kind.** Rapier's snapshot, as pocket-physics' Cache takes it, is the whole
    world through serde, static geometry included: 408 MB for the ragdoll scene's 2.7 million terrain
@@ -81,12 +81,12 @@ Rapier until the port passes them** (section "Recommendation").
 - **`bench/physics/rapier/`**: the Rapier side, a standalone Cargo package (not a workspace member,
   so its feature sets do not unify with `pocket-physics`), pinned to the engine's `rapier3d =0.36.0`
   and its resolved versions (parry3d 0.31.1, glam 0.33.12, simba 0.10.2, wide 1.7.1). Features
-  select the configuration: `det` (`enhanced-determinism`, what aipocket2 ships), none (Rapier's
+  select the configuration: `det` (`enhanced-determinism`, what Amoris ships), none (Rapier's
   default), `simd8`, `parallel`; `serde` adds `--fork-at N`, a snapshot through serde and bincode
   1.3.3 exactly as pocket-physics writes its Cache. Builds natively and for `wasm32-wasip1`.
 - **`bench/physics/jolt-ffi/`**: the Rust-calls-Jolt prototype through the C wrapper joltc (below,
   "Integration"): `src/lib.rs` holds the C declarations and the Pyramid scene and builds both as a
-  native binary (`src/main.rs`) and as a Rust `wasm32-unknown-unknown` module, aipocket2's browser
+  native binary (`src/main.rs`) and as a Rust `wasm32-unknown-unknown` module, Amoris's browser
   target, with plain C exports (not wasm-bindgen).
 - **`bench/physics/jolt/wasi/`**: a CMake toolchain that builds Jolt and `jolt_bench` for
   `wasm32-wasip1` with Homebrew's LLVM 23, wasi-libc and wasi-runtimes (libc++), without Emscripten.
@@ -111,7 +111,7 @@ configurations map to:
 
 | Requested | Measured as | Features |
 |---|---|---|
-| deterministic, as aipocket2 ships it | `rapier det.` | `enhanced-determinism` |
+| deterministic, as Amoris ships it | `rapier det.` | `enhanced-determinism` |
 | `simd-stable` | `rapier default` (4-lane SIMD, glam SIMD, std math) and `rapier simd8` | none; `simd8` |
 | `parallel` + `simd-stable` | `rapier parallel`, `rapier parallel+simd8` | `parallel`; `parallel,simd8` |
 | (added) deterministic and parallel | `rapier det.+parallel` | `enhanced-determinism,parallel` |
@@ -364,7 +364,7 @@ quiet repetitions (load 6 to 8) are the readable part; raw runs in
   little or lose. Rapier's `parallel` on 4 threads speeds the pyramid up 2.4 times, the large
   pyramid 1.5, the mesh scene 2.0 and the ragdolls 1.6. So at 4 threads Rapier det. + `parallel` is
   2.5 to 3 times faster on stacks and Jolt det. 2 to 5 times faster on meshes and ragdolls. Today
-  aipocket2's tick runs on one thread (threads.md 3.4), so the single-thread columns are the
+  Amoris's tick runs on one thread (threads.md 3.4), so the single-thread columns are the
   relevant ones until a helper-thread rule admits a physics pool.
 - **What determinism costs.** Jolt det. against Jolt: paired medians 0.93 to 1.19, about the 8%
   Jolt's documentation states, within this machine's noise. Rapier det. against Rapier's default:
@@ -377,7 +377,7 @@ quiet repetitions (load 6 to 8) are the readable part; raw runs in
 - **In the browser** (V8, single thread), Jolt's deterministic build runs 1.3 to 1.7 times slower
   than natively, without SIMD, and the same inside the Rust module as in a C++-only module (paired
   0.94; 1.00 in the quiet repetitions). Rapier's deterministic build, in the web profile through
-  `wasm-opt` as aipocket2 ships it (`tools/build_web.sh` sets no target features, so no `simd128`),
+  `wasm-opt` as Amoris ships it (`tools/build_web.sh` sets no target features, so no `simd128`),
   runs 1.4 to 3.3 times slower than natively on Pyramid, ConvexVsMesh and RagdollNoSleep (paired,
   quiet repetitions); the web profile and `wasm-opt` change it by nothing consistent against the
   release profile (paired medians 0.92 to 1.15). In that shipped configuration Jolt is the faster
@@ -457,7 +457,7 @@ What this says:
 
 ## Snapshots and forks
 
-aipocket2 forks a world by writing its state and restoring it into another (persistence.md 6.3), and
+Amoris forks a world by writing its state and restoring it into another (persistence.md 6.3), and
 the physics Cache must continue after encode, decode and restore exactly as without them
 (persistence.md 8). `scripts/fork.sh` checks that in both engines the same way: 150 steps, a
 snapshot, a restore into a second world, 150 more steps in both, the end hashes compared, five
@@ -479,7 +479,7 @@ Times in ms: median over 5 runs (fastest–slowest), 1-minute load 5 to 18.
   bodies in the same order, so the same `BodyID`s, and a fresh broad phase) and only the simulation
   state is restored into it: velocities, contacts with their warm-start impulses, constraint
   impulses, sleep timers. That its fork still matches shows, for these scenes, that Jolt's results
-  do not depend on the history of its broad phase. simulation.md 8.5 explains why aipocket2 carries
+  do not depend on the history of its broad phase. simulation.md 8.5 explains why Amoris carries
   Rapier's whole solver instead of rebuilding it: Rapier's internal order depends on the history of
   insertions and removals.
 - **Rapier's snapshot carries every collider's shape.** 9.4 MB for the pyramid against Jolt's 1.7
@@ -510,7 +510,7 @@ Times in ms: median over 5 runs (fastest–slowest), 1-minute load 5 to 18.
 
 No Rust crate is current, complete and deterministic at once. joltc is the usable base: current,
 MIT, broad, with `BodyInterface_CreateBodyWithID` and a contact listener. None of the C wrappers
-exposes Jolt's `StateRecorder` (`PhysicsSystem::SaveState` / `RestoreState`), which aipocket2's
+exposes Jolt's `StateRecorder` (`PhysicsSystem::SaveState` / `RestoreState`), which Amoris's
 snapshot, fork and replay would need from a Jolt backend (charter 3.3; pocket-physics serializes
 Rapier's whole `PhysicsWorld` through serde today). joltc HEAD does not compile against Jolt master
 (it still sets the removed `PhysicsSettings::mDeterministicSimulation` and reads removed
@@ -537,7 +537,7 @@ Rust is the build and the wrapper, not the calls.
 
 ### Jolt in the browser
 
-aipocket2's browser build is `wasm32-unknown-unknown` through wasm-bindgen (charter 4.1), which has
+Amoris's browser build is `wasm32-unknown-unknown` through wasm-bindgen (charter 4.1), which has
 no C++ standard library. Jolt's own web route is Emscripten (JoltPhysics.js), whose module cannot be
 linked into a wasm-bindgen module; it would run beside it, every call crossing JavaScript. Jolt does
 not build for `wasm32-unknown-unknown` out of the box either: it recognizes WebAssembly only through
@@ -642,11 +642,11 @@ pocket-web itself, through wasm-bindgen and beside QuickJS-ng's libc, is check 1
   terrain, Rapier as shipped is 1.6 to 2.4 times slower than Jolt on one thread and 2 to 5 times on
   four (paired medians). Rapier's lead is box stacks. No character controller was measured in either
   engine.
-- In the browser as aipocket2 ships it (web profile, no `simd128`), Jolt was faster on all four
+- In the browser as Amoris ships it (web profile, no `simd128`), Jolt was faster on all four
   scenes; with `simd128`, which keeps Rapier bit-identical but is not shipped today, Rapier takes
   the pyramid and still loses the mesh and ragdoll scenes.
 - Determinism holds in both, but Jolt's is a documented guarantee its CI checks in 17
-  configurations, where Rapier's rests on aipocket2's own rules and tests and still has a known hole
+  configurations, where Rapier's rests on Amoris's own rules and tests and still has a known hole
   (numeric.md 5: Rapier computes mass properties with the platform's libm, so dynamic hulls, meshes
   and compounds may not be given a density).
 - Snapshots, with the Cache as pocket-physics designs it today: Rapier's carry all static geometry,

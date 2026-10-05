@@ -51,7 +51,7 @@ pub struct RunOptions {
 impl Default for RunOptions {
     fn default() -> Self {
         RunOptions {
-            title: "Pocket3D".into(),
+            title: "Amoris".into(),
             width: 1280,
             height: 720,
             backend: BackendChoice::from_env(),

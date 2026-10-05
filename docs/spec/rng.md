@@ -22,7 +22,7 @@ code lives in `pocket-sim` ([architecture.md](architecture.md), 4.1).
 | spec-contract | the error protocol, boundary writes from agents | [errors.md](../../shared/contract/errors.md), [actions.md](../../shared/contract/actions.md) |
 | spec-arch | the local check command, the web build | `checks.md`, `architecture.md` |
 
-## 2. What master and the old PocketEngine taught
+## 2. What master and the old Amoris taught
 
 - Master's game scripts drew from one stream for the whole run (`random()`, `sdk/runtime/rng.ts`).
   With one stream, a draw added anywhere moves every later draw of every system, so an edit to one
@@ -38,8 +38,8 @@ code lives in `pocket-sim` ([architecture.md](architecture.md), 4.1).
   and each particle emitter "owns a PCG stream seeded from its entity id"
   (`engine/renderer/include/pocket/renderer/particles.hpp`). This specification makes that the only
   way to draw.
-- The old PocketEngine did not reset random seeds on reload and did not save RNG state with a save
-  (PocketEngine charter, `origin/rebuild:docs/charter.md`, 8.2).
+- The old Amoris did not reset random seeds on reload and did not save RNG state with a save
+  (Amoris predecessor charter, `origin/rebuild:docs/charter.md`, 8.2).
 - Master's `Random::next_double` used 27 random bits; the doubles here carry 53.
 
 ## 3. Design: derived streams

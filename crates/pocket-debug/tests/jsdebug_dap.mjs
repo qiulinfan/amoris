@@ -108,7 +108,7 @@ class Uri {
 const descriptors = [];
 const providers = new Map();
 const childLaunches = [];
-const folder = { uri: Uri.file(root), name: "aipocket2", index: 0 };
+const folder = { uri: Uri.file(root), name: "amoris", index: 0 };
 const configuration = (section) => ({
   get: (_key, dflt) => dflt,
   has: () => false,

@@ -6,7 +6,7 @@ index 7cec509..d6ffe9c 100644
      uint32_t u32[2];
  } JSFloat64Union;
  
-+/* Pocket3D P6: one NaN in typed arrays and DataViews. QuickJS-ng NaN-boxes values only on 32-bit
++/* Amoris P6: one NaN in typed arrays and DataViews. QuickJS-ng NaN-boxes values only on 32-bit
 +   targets, so a 64-bit native build keeps a NaN's sign and payload (0/0 is 0xFFF8000000000000 on
 +   x86) where wasm32 has 0x7FF8000000000000, and a script reading a float's bytes through another
 +   view would see the difference. Every float store writes the canonical NaN, and a float16 or

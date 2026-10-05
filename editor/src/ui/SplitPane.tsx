@@ -18,7 +18,7 @@ export function SplitPane({
   children: [ReactNode, ReactNode];
   className?: string;
 }) {
-  const key = `aipocket2.editor.split.${id}`;
+  const key = `amoris.editor.split.${id}`;
   const [size, setSize] = useState(() => Number(localStorage.getItem(key)) || initial);
   const ref = useRef<HTMLDivElement>(null);
   const onDown = (e: React.PointerEvent) => {

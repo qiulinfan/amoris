@@ -1,5 +1,5 @@
 // Runs the Rust `wasm32-unknown-unknown` module that calls Jolt through joltc
-// (bench/physics/jolt-ffi, src/lib.rs `web`) under Node (V8), as aipocket2's browser build would
+// (bench/physics/jolt-ffi, src/lib.rs `web`) under Node (V8), as Amoris's browser build would
 // load it: no WASI runtime. The module's only imports are the few WASI functions wasi-libc and
 // libc++ still name; they get stubs here, and the script reports which were called.
 //   node run_jolt_wasm.mjs <jolt_ffi_proto.wasm> [--steps N] [--height H] [--rays]

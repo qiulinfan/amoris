@@ -1,5 +1,5 @@
 //! Where model assets come from. Natively, a worker thread imports glTF files under the project
-//! root, so a large model never freezes a frame (aipocket's OBJ import froze for 14-27 s); in the
+//! root, so a large model never freezes a frame (Amoris Pioneer's OBJ import froze for 14-27 s); in the
 //! browser the page fetches them and hands the bytes in.
 
 use pocket_assets::mesh::ModelAsset;

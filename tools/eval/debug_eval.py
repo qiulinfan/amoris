@@ -531,7 +531,7 @@ def evaluate(pocket: str, scripts: dict, reference: dict, errlog: Path) -> dict:
 
 # --- The agent -----------------------------------------------------------------------------------
 
-PROMPT = """You are helping the player of a small sailing game made with the Pocket3D engine.
+PROMPT = """You are helping the player of a small sailing game made with the Amoris engine.
 
 The game is running in a host that you reach only through the `pocket` command-line client, which
 is on your PATH and already connected to it (POCKET_HOST is set). The game is paused at tick 0 in

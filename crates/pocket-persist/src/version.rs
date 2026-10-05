@@ -15,9 +15,9 @@ use crate::pce::write_uleb;
 use crate::registry::Registry;
 
 /// The context of an engine's source hash (3.1).
-pub const SOURCE_CONTEXT: &str = "Pocket3D 2026-10-03 engine source v1";
+pub const SOURCE_CONTEXT: &str = "Amoris 2026-10-03 engine source v1";
 /// The context of a bundle hash (3.2).
-pub const BUNDLE_CONTEXT: &str = "Pocket3D 2026-10-03 script bundle v1";
+pub const BUNDLE_CONTEXT: &str = "Amoris 2026-10-03 script bundle v1";
 
 /// The engine a snapshot, replay or save was made by (3.1).
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]

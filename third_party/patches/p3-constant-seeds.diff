@@ -8,7 +8,7 @@ index 5128484..c2f73c3 100644
      init_list_head(&ctx->loaded_modules);
 -    // TODO(bnoordhuis) use getrandom() etc.
 -    ctx->random_state = js__gettimeofday_us();
-+    /* Pocket3D P3: a constant seed, not js__gettimeofday_us(): Math.random is replaced and the
++    /* Amoris P3: a constant seed, not js__gettimeofday_us(): Math.random is replaced and the
 +       hash seed only places Map and Set entries in buckets, but the runtime reads no clock. */
 +    ctx->random_state = 0x853c49e6748fea9bULL;
      // the state must be non zero

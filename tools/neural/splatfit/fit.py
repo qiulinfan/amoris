@@ -1,4 +1,4 @@
-"""Fit 3D Gaussian splats to multi-view images rendered by aipocket2's own renderer.
+"""Fit 3D Gaussian splats to multi-view images rendered by Amoris's own renderer.
 
 The closed loop of docs/spec/splats.md 7.1, with no downloaded data:
 

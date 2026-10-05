@@ -15,7 +15,7 @@ pub const SIZE_T_ERROR: &str =
 
 include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 
-/// Pocket3D P7: the C compiler that built QuickJS-ng, `<file stem>: <first line of --version>`.
+/// Amoris P7: the C compiler that built QuickJS-ng, `<file stem>: <first line of --version>`.
 pub const POCKET_QJS_CC: &str = env!("POCKET_QJS_CC");
 
 #[cfg(not(feature = "bindgen"))]

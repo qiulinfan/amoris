@@ -59,7 +59,7 @@ export function AssetsPanel() {
   const assets = useAssets((s) => s.assets);
   const [q, setQ] = useState("");
   const [kind, setKind] = useState("all");
-  const [view, setView] = useState<"grid" | "list">(() => (localStorage.getItem("aipocket2.editor.assets.view") as "grid" | "list") ?? "grid");
+  const [view, setView] = useState<"grid" | "list">(() => (localStorage.getItem("amoris.editor.assets.view") as "grid" | "list") ?? "grid");
   const [selected, setSelected] = useState<string | null>(null);
   const shown = useMemo(
     () => assets.filter((a) => (kind === "all" || a.kind === kind) && (!q || a.path.toLowerCase().includes(q.toLowerCase()))),
@@ -100,8 +100,8 @@ export function AssetsPanel() {
     <>
     <Toolbar>
       <SearchInput value={q} onChange={setQ} placeholder="Search assets" />
-      <IconButton icon={LayoutGrid} label="Grid" active={view === "grid"} onClick={() => (setView("grid"), localStorage.setItem("aipocket2.editor.assets.view", "grid"))} />
-      <IconButton icon={List} label="List" active={view === "list"} onClick={() => (setView("list"), localStorage.setItem("aipocket2.editor.assets.view", "list"))} />
+      <IconButton icon={LayoutGrid} label="Grid" active={view === "grid"} onClick={() => (setView("grid"), localStorage.setItem("amoris.editor.assets.view", "grid"))} />
+      <IconButton icon={List} label="List" active={view === "list"} onClick={() => (setView("list"), localStorage.setItem("amoris.editor.assets.view", "list"))} />
       <ToolbarSeparator />
       <IconButton icon={RefreshCw} label="Refresh" onClick={() => void refreshAssets()} />
       <Button size="sm" icon={Import} onClick={() => void importAsset()} data-tip="Import a file into the project's assets">

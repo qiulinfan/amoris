@@ -1,13 +1,12 @@
 # Benchmark tasks
 
-Status: Draft, slice 0. Proposed for PocketEngine's `shared/benchmark/` (charter 6.2); not yet
-synced, so no PocketEngine commit is recorded.
+Status: Draft, slice 0. Maintained in Amoris's `shared/benchmark/`.
 
 Charter: 2.4.1 (the sailing showcase), 3.1 (limited perception), 3.2 (all state in the world), 3.8
 (narrow scope), 6.1 item 2 (a shared benchmark), 8 (material from `master`), 9 items 1 and 2 (the
 developer and player benchmarks).
 
-This file is the catalogue: the fixtures both lines implement, how each of `master`'s 72 developer
+This file is the catalogue: the fixtures all configurations implement, how each of `master`'s 72 developer
 tasks ports, the tasks added for this rebuild's principles, and the sailing tasks of the player
 suite. [README.md](README.md) covers the harness that runs them. Tasks and checkers come from
 `master` at `50514a2d` (`tools/scripts/agent_eval.py`, `docs/agent-eval.md`; the island sample,
@@ -15,10 +14,10 @@ suite. [README.md](README.md) covers the harness that runs them. Tasks and check
 
 ## 1. Fixtures
 
-A fixture is a small project both lines implement, each in its own scene format and script language,
-to the description below. A fixture's numbers are part of the contract: checkers and briefs rely on
+A fixture is a small Amoris project matching the description below. Runtime configurations use
+the same scene format and TypeScript scripts. A fixture's numbers are part of the contract: checkers and briefs rely on
 them. Every fixture keeps all its state in components (charter 3.2): where `master`'s samples kept a
-score in a script variable, these keep it in a project component on a named entity. Each line tests
+score in a script variable, these keep it in a project component on a named entity. Each configuration tests
 its fixtures with the reference solutions before a task may use them (README, Baselines).
 
 Common to all: the contract's units, frame and names (`../contract/README.md`, Conventions every
@@ -36,7 +35,7 @@ before then reads them.
 | `bodies` | `hello`'s ground and twelve dynamic bodies named `Body_0` to `Body_11` (spheres of radius 0.5 and boxes of side 1, alternating), dropped from y 2 at fixed places in a 12 by 12 square around the origin, listed in the fixture's scene. |
 | `arena` | `Ground` 40 by 40. `Player`: a kinematic capsule (radius 0.4, height 1.8) the actions `move_x` and `move_z` move at 5 a second, with the project component `Health {current, max, invulnerable}` (60, 60, 0.5). `Enemy` entities: the script spawns one every 2 seconds at the arena's edge, up to 6, each with the project component `Enemy {kind, damage, speed}` (kind a value name: `grunt` or `brute`; 10, 3) and walking straight at the Player. An Enemy within 1 of the Player hits it: `player.hit {damage}` with the enemy's spawn event as its cause, then no more hits from it for 1 second. A project component `Hazard {damage, every}` on any entity with a trigger collider hurts what stands in it, every `every` seconds. `Health.current` reaching 0 emits `health.depleted` once. |
 | `hopper` | A 3D platformer moved by its script: `Ground` 60 by 10; `Player` at (0, 0.5, 0) with the project component `Motion {vx, vy, grounded}`, walking at 5 a second on `move_x`, gravity 20, a jump speed of 9.6 (a jump rises 2.304); `Coin_0` to `Coin_4` at x 3, 6, 9, 12, 15, y 1, taken when the Player's centre comes within 0.8: the coin is destroyed and `coin.taken {coins}` emitted; a `Game` entity with `Score {coins}`. |
-| `open_sea` | The sailing game of the contract (`../contract/sailing.md`) on open water: `Sea` at height 0 to the horizon, its waves a deterministic function of time; `Breeze`, a steady wind; `Sloop`, the body of seat `skipper` (the game's only seat), at the origin, bow north (-z), sail furled (`hoist` 0), under slice 1's sailing simulation (no drive within the no-go half-angle of 45 degrees). A `Course` entity carries the fixture's project component `Course {goal, next, rounded, crates, finished_tick, aground}` (`goal` a value name: `arrive`, `out_and_back`, `round`, `crates`; `finished_tick` 0 until finished), whose JSON form is the same on both lines, kept by the fixture's course rule: it counts marks rounded (`mark.rounded`), crates taken and running aground (`boat.aground`), and when the task's goal is met (6.1, Done) it sets `finished_tick` and emits `course.finished`. The wind, the marks, the crates and the goal come from the fixture's parameters (6.1, Seeds), read when the world is made. |
+| `open_sea` | The sailing game of the contract (`../contract/sailing.md`) on open water: `Sea` at height 0 to the horizon, its waves a deterministic function of time; `Breeze`, a steady wind; `Sloop`, the body of seat `skipper` (the game's only seat), at the origin, bow north (-z), sail furled (`hoist` 0), under slice 1's sailing simulation (no drive within the no-go half-angle of 45 degrees). A `Course` entity carries the fixture's project component `Course {goal, next, rounded, crates, finished_tick, aground}` (`goal` a value name: `arrive`, `out_and_back`, `round`, `crates`; `finished_tick` 0 until finished), whose JSON form is the same on all configurations, kept by the fixture's course rule: it counts marks rounded (`mark.rounded`), crates taken and running aground (`boat.aground`), and when the task's goal is met (6.1, Done) it sets `finished_tick` and emits `course.finished`. The wind, the marks, the crates and the goal come from the fixture's parameters (6.1, Seeds), read when the world is made. |
 | `open_sea_basic` | `open_sea` whose only seat, `skipper`, lacks the intent `sail_to` (`come_to_heading` and `trim_sail` only), for the task that asks the agent to tack: one seat per body (`../contract/README.md`, Seats and callers). |
 | `island` | `open_sea` with three islands (kind `island`, occluders), each a static footprint, a vertical cylinder from the sea bed to 15 above the water, laid out after `master`'s `samples/island` and scaled to the contract's sight ranges: `Isle`, radius 150 at (0, 0); `Islet1`, radius 60 at (700, -480); `Islet2`, radius 55 at (-660, 540). The Sloop starts at (0, 400), south of the Isle, bow north, sail furled. Crates come aboard only through `take_aboard` within 3 (../contract/sailing.md, Taking a crate aboard). |
 
@@ -49,7 +48,7 @@ sighting, a crate taken, a mark rounded, running aground, ten seconds idle, two 
 
 `master`'s briefs change in four ways when they port; nothing else about a task changes.
 
-1. **Language-neutral.** A brief names `{entry}` (the line's entry script, `engines/<line>.toml`)
+1. **Language-neutral.** A brief names `{entry}` (the configuration's entry script, `engines/<line>.toml`)
    and "the project's scripts", never a file type; reference solutions are kept per line.
 2. **State in components.** Where a brief said "expose `score`", it now says which project component
    on which entity holds it ("`GameState {alive, time_alive}` on an entity named `Game`"), since
@@ -184,7 +183,7 @@ answer is a JSON value; "answer null" unless said. Tolerances in a checker are s
   surface is 0.5 at five sampled points over 60 ticks.
 - `sailboat` (blank): `master`'s text with the contract's convention for the wind, "a steady
   westerly of 6 (blowing toward +x)", and without "the project's ground taken away" (blank has
-  none). Check (per line: the sail, the motor and the wind are engine components): the Sloop has its
+  none). Check (per configuration: the sail, the motor and the wind are engine components): the Sloop has its
   sail hoisted and no motor, the wind is from 270 at 6, five seconds of sailing carry it 5 or more
   along +x, and it stays afloat.
 
@@ -232,9 +231,9 @@ languages; the checker compares the fixed game with the broken one where they ou
   while landed pellets rest on it, so they pile up. Check: 30 seconds of play against the broken
   game's shots and landings, and the pellets left about.
 - `sinking_crate`: the BlueCrate's collider has the floor's collision group, which the Ghost shares
-  on purpose. Check (per line: the answer names a field of the line's own collider component):
+  on purpose. Check (per configuration: the answer names a field of the configuration's own collider component):
   BlueCrate at rest on the floor, the others as they were, the Ghost through the floor, the answer
-  the field's name in the line's collider component.
+  the field's name in the configuration's collider component.
 - `frozen_coins`: the rule lights the next coin by index after each one taken, and past the last one
   the index runs off the end and the script errors. Check: four coins taken walking right with no
   script error, `coin.taken` four times, `level.complete` once, the next coin lit each time.
@@ -246,12 +245,10 @@ These test what this rebuild adds: stateless scripts, replay, versions and causa
 
 - `hidden_state` (blank, written by `setup`): a spinner game as an agent used to another engine
   would write it, its lap count in a module-level variable, which this engine refuses to load
-  (spec-script freezes module values and its lint forbids mutable module bindings; PocketEngine's
-  global table is read-only). "This game will not load. Make it load and play as it was written to:
+  (spec-script freezes module values and its lint forbids mutable module bindings). "This game will not load. Make it load and play as it was written to:
   the same laps tick for tick, the count kept across a hot update." Check: it loads;
   `checks {only: ["reload"]}` passes; the laps over 600 ticks equal the reference's tick for tick.
-  It measures how each language's refusal leads an agent to put state in the world (charter 6.3, the
-  third row).
+  It measures how the script host's refusal leads an agent to put state in the world.
 - `first_divergence` (island, two recordings made by `setup`): the same inputs under two versions of
   the course rule, the second counting a mark rounded only when the boat passes within 60 of it, so
   the runs agree until the boat passes the first mark wide. "Answer with the first tick at which the
@@ -271,7 +268,7 @@ These test what this rebuild adds: stateless scripts, replay, versions and causa
 ### 6.1 Common rules
 
 - **Seat and grant.** The agent's player grant names seat `skipper` with `clock: true`,
-  `max_wall_ms: 600000` (so where a step stops never depends on a line's tick speed) and `rewind`
+  `max_wall_ms: 600000` (so where a step stops never depends on a configuration's tick speed) and `rewind`
   off; the runtime runs in stepped pacing, the benchmark's default (../contract/sailing.md, Time),
   with the game's default decision filter. `beat_to_windward` runs on `open_sea_basic`, whose seat
   has no `sail_to`.
@@ -287,7 +284,7 @@ These test what this rebuild adds: stateless scripts, replay, versions and causa
 - **Seeds.** A task's world for seed `s` (the wind, marks, crates) is computed by the harness, not
   the engine: `random.Random(s)`, only its `random()` method (whose sequence Python keeps across
   versions), in the fixed order and formulas below. The harness writes them as the fixture's
-  parameters, one JSON object both lines read the same way, and hands them to the line's `new`
+  parameters, one JSON object all configurations read the same way, and hands them to the configuration's `new`
   command (`--params`, README 3.2), so the world is made with them and no engine component's JSON
   form is involved:
 
@@ -300,7 +297,7 @@ These test what this rebuild adds: stateless scripts, replay, versions and causa
 (An illustration for `run_to_mark`, M1 380 downwind of the start; not a real seed's numbers.) `goal`
 is `arrive`, `out_and_back`, `round` or `crates`; `marks` and `crates` may be empty; `start_line` is
 `{"from": {"x", "z"}, "to": {"x", "z"}, "cross_toward_deg": 90}` for `round_the_island`, else
-`null`. Both lines therefore sail identical worlds for the same seed, which the paired comparison
+`null`. All configurations therefore sail identical worlds for the same seed, which the paired comparison
 needs (README, section 5); the object goes into the row as `world_params`.
 - **Setup sequence.** `new` with the parameters, `serve` with the seed and the task's tick limit
   (`--tick-limit`), then the setup developer session's `step {ticks: 1}`, so the perception update
@@ -398,13 +395,13 @@ from paired rows: fork on minus fork off, and omniscient minus perception, for e
 
 ## 7. Adding a task
 
-1. Write `tasks/<suite>/<name>/task.py` with the text, the answer's form, `solve` (or per-line
+1. Write `tasks/<suite>/<name>/task.py` with the text, the answer's form, `solve` (or per-configuration
    solution files), `check` and the limits; a fixture change goes into section 1 first, on both
    lines.
 2. The brief states the whole contract the checker relies on: names, units, tolerances, what the
    game must read from the world every tick (`master`'s `villagers` and `sokoban` failed on briefs
    that left these out).
-3. Check it both ways on both lines (`reference` passes, `null` fails) and run `reference` twice for
+3. Check it both ways on all configurations (`reference` passes, `null` fails) and run `reference` twice for
    identical rows.
 4. Add its row to this file and run one model on it before it joins a recorded run.
 5. A failed agent call in a run is traced to an engine change, a documentation fix or a brief or

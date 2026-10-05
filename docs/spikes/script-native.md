@@ -363,12 +363,11 @@ shim can load it as WebAssembly.
 | clang-cl | 23.1.2 | `C:/Users/rynne/.pocket-tools/llvm-23.1.2`, https://github.com/llvm/llvm-project |
 | Node (WASI runner for `math-sweep`) | 25.8.1 | installed on the machine |
 | PCG32 | reference `pcg32_srandom_r` and `pcg32_random_r` | https://www.pcg-random.org |
-| Math algorithms | ported from aipocket `master` 50514a2d `sdk/runtime/repro.ts` | this repository's `master` |
+| Math algorithms | ported from Amoris Pioneer `master` 50514a2d `sdk/runtime/repro.ts` | this repository's `master` |
 
-Nothing was downloaded beyond crates. The clang-cl build used its own target directory,
-`C:/Users/rynne/Desktop/aipocket-rebuild-target/script-native-clangcl`, because the C compiler is an
-input of rquickjs-sys's build script and switching it in the shared directory would rebuild the
-other agents' QuickJS.
+Nothing was downloaded beyond crates. The clang-cl build used its own target directory outside
+the checkout, because the C compiler is an input of rquickjs-sys's build script and switching it in
+the shared directory would rebuild the other agents' QuickJS.
 
 ## Problems met
 

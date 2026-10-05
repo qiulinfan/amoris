@@ -1,7 +1,6 @@
 # Time
 
-- Status: Draft, slice 0. Draft, proposed for PocketEngine's `shared/contract` (README,
-  Synchronization with PocketEngine).
+- Status: Draft, slice 0. Maintained in Amoris's `shared/contract` (README, Contract record).
 - Charter: 2.4.1, 3.3, 3.5, 3.7, 5.1, 7 (item 10).
 - Contract version: 0.1 (draft).
 

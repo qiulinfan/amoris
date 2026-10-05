@@ -36,7 +36,7 @@ import "./debug.css";
 function useOpen(key: string, initial = true): [boolean, () => void] {
   const [open, setOpen] = useState(() => {
     try {
-      const v = localStorage.getItem(`aipocket2.editor.debug.${key}`);
+      const v = localStorage.getItem(`amoris.editor.debug.${key}`);
       return v === null ? initial : v === "1";
     } catch {
       return initial;
@@ -46,7 +46,7 @@ function useOpen(key: string, initial = true): [boolean, () => void] {
     open,
     () => {
       try {
-        localStorage.setItem(`aipocket2.editor.debug.${key}`, open ? "0" : "1");
+        localStorage.setItem(`amoris.editor.debug.${key}`, open ? "0" : "1");
       } catch {
         // Storage refused: the section still toggles.
       }

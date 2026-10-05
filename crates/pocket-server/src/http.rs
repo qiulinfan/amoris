@@ -194,9 +194,9 @@ async fn editor(State(host): State<Host>, uri: Uri) -> Response {
 }
 
 fn placeholder() -> Response {
-    let body = "<!doctype html><meta charset=utf-8><title>Pocket3D host</title>\
+    let body = "<!doctype html><meta charset=utf-8><title>Amoris host</title>\
         <style>body{font:15px system-ui;margin:2rem;max-width:40rem}</style>\
-        <h1>Pocket3D host</h1><p>The editor is not built (editor/dist). The host serves \
+        <h1>Amoris host</h1><p>The editor is not built (editor/dist). The host serves \
         <code>GET /api/catalog</code>, <code>POST /api/call</code>, <code>/ws</code>, \
         <code>/assets/&lt;path&gt;</code> and <code>POST /mcp</code>.</p>";
     (

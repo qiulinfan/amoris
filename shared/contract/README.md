@@ -1,9 +1,6 @@
 # The shared contract
 
-- Status: Draft, slice 0. Draft, proposed for PocketEngine's `shared/contract`: charter 6.2 makes
-  PocketEngine's top-level `shared/` the authoritative copy, and PocketEngine's `rebuild` branch at
-  5f8971e has no `shared/` yet, so this directory is the first draft of it and nothing has been
-  synchronized.
+- Status: Draft, slice 0. Maintained in this repository's `shared/contract/`.
 - Charter: 2.2, 3.1, 3.4, 3.5, 3.6, 3.7, 6.1, 6.2, 7 (items 8, 9, 10 and 12).
 - Contract version: 0.1 (draft).
 
@@ -11,12 +8,9 @@
 
 The shared contract is the interface a running game presents to whoever plays it or checks it: an
 LLM agent over MCP, an RL policy through the environment interface, a human through the rendered
-image and the HUD, a benchmark checker. It is the same on both engines (charter 6.1): an agent that
-plays the sailing showcase on Pocket3D and on PocketEngine sees the same observations, sends the
-same actions, meets the same time modes and reads the same errors; only the scripting language
-behind the game differs. That is what makes the cross-line comparison (charter 6.3) measure the
-scripting language and the quality of each line's perception and action layers rather than two
-different interfaces.
+image and the HUD, a benchmark checker. Amoris uses the same observations, actions, time modes and
+errors for all clients. This lets benchmark configurations measure perception and action behaviour
+through one interface.
 
 The contract is part of the game's definition (charter 3.1). A game declares who can play it
 (seats), what each player can perceive (observer profiles, instruments, kinds and their facts), what
@@ -26,7 +20,7 @@ its JSON Schemas (charter 3.6) and the `describe` answer an agent reads first.
 
 | File | What it fixes |
 |---|---|
-| `README.md` | Versioning, synchronization with PocketEngine, the conventions every file uses (units, frame, numbers, names, entity references), seats and caller roles, the game definition, the conformance checks. |
+| `README.md` | Versioning, the contract record, the conventions every file uses (units, frame, numbers, names, entity references), seats and caller roles, the game definition, the conformance checks. |
 | [`perception.md`](perception.md) | Observers, limited perception (occlusion, fog, attention range, memory, charts), its geometry, pull queries with token budgets, pushed event deltas, the marked omniscient view and the `omniscient_player` profile. |
 | [`projection.md`](projection.md) | Rounding and stored rounded values, the JSON projection, the text projection's grammar (shared byte for byte), the tensor projection, the image. |
 | [`actions.md`](actions.md) | Low-level controls, intents and their lifecycle, executors, affordances declared by entities, atomic validation, what a replay records. |
@@ -41,20 +35,20 @@ specifications, below); the tools carry the types defined here unchanged.
 
 ## What is shared and what is not
 
-Shared byte for byte between the two lines:
+Shared by all Amoris clients:
 
 - The JSON shapes of every request and response in these files, their field names, units and value
   ranges, and the JSON Schemas generated from them.
 - The semantics: what a query returns for a given world, when an action takes effect, what each
   intent does, when each code is returned.
 - The text projection (projection.md, Text projection): the same observation renders to the same
-  bytes on both lines, because it is what an LLM reads and a difference in it would confound the
+  bytes across clients, because it is what an LLM reads and a difference in it would confound the
   comparison.
 - The error codes, their detail fields and their message templates.
 
-Not shared (charter 6.1, point 3): each line's crate layout, internal storage, script host, physics,
-and the byte formats of snapshots, replays and hashes. Two lines may compute a bearing differently
-inside, but they report it in the same frame, unit and rounding.
+The contract does not define the crate layout, internal storage, script host, physics, or the byte
+formats of snapshots, replays and hashes. Their specifications live under `docs/spec/`; public
+answers use this contract's frame, unit and rounding.
 
 ## Versioning
 
@@ -79,41 +73,28 @@ engine's own version applies.
 |---|---|
 | 0.1 | First draft (2026-10-03), integrated the same day with the slice 0 specifications and spikes: names settled (`Problem`, `EventSeq`, `ActOrigin`, applied writes by `tick`), halts after a script failure (time.md), `describe` taking `entity` or `part` (mcp.md 5.2). Revised the same day after review: world state separated from wire forms; projections and the sailing declarations in files of their own; the `intents` tool; entity references in the projections' forms; the text grammar for every perception answer; undeclared events hidden; declared requested decisions and episodes; `omniscient_player`; one seat per body. |
 
-## Synchronization with PocketEngine
+## Contract record
 
-Charter 6.2 fixes the arrangement: the authoritative copy lives in PocketEngine under
-`shared/contract/`; this line keeps a copy in its own `shared/contract/` and records the
-PocketEngine commit it was synced from; a change is proposed and synchronized on both sides before
-either implements it.
-
-The synchronization record is `shared/SYNC.toml` (spec-arch, `docs/spec/checks.md`, 5.4): the
-PocketEngine commit the copy came from and each file's hash. Until the first synchronization its
-`commit` is `""` and its hashes are this draft's, so `gen.shared_modified` still holds the files to
-them and `contract.sync` reports `Skipped` ("not yet synchronized"): PocketEngine's `rebuild` at
-5f8971e has no `shared/`, and this draft is proposed for it.
+The authoritative contract and benchmark live in this repository under `shared/contract/` and
+`shared/benchmark/`. `shared/SYNC.toml` records each shared file's SHA-256 and an optional reference
+`commit` (`docs/spec/checks.md`, 5.4). An empty `commit` means no reference commit is recorded; the
+file hashes still apply.
 
 The procedure:
 
-1. A change starts as a proposal against PocketEngine's `shared/contract/` (a commit on a branch
-   there), with the version bumped and the version table updated.
-2. The same files are copied here unchanged, and `shared/SYNC.toml` is set to that commit and the
-   files' hashes. Neither line implements the change before both copies hold it.
-3. The local check command (spec-arch) fails with `gen.shared_modified` when a file differs from its
-   recorded hash. `contract.sync` adds, when a PocketEngine checkout is reachable
-   (`POCKETENGINE_DIR`, default `../pocketEngine`), that every file equals
-   `git -C $POCKETENGINE_DIR show <commit>:shared/contract/<file>`; without a checkout it reports
-   "skipped" with the reason, never "passed".
-4. The JSON Schemas generated from the contract's Rust types are committed under
-   `shared/contract/schema/` (one file per request, response and declaration type, never edited by
-   hand); spec-arch's `gen` step fails with `gen.stale` when they differ from what the generator
-   writes now.
+1. Edit the contract here, with the version bumped and the version table updated when the contract
+   changes as described above.
+2. Refresh the changed files' hashes in `shared/SYNC.toml` in the same change. The local check fails
+   with `gen.shared_modified` when a file differs from its recorded hash.
+3. `contract.sync` is a planned comparison with the optional reference commit. It reports
+   `Skipped` when no reference commit is recorded or the comparison is unavailable, never
+   `Passed`. It does not make another checkout the authority for this contract.
+4. Generated JSON Schemas belong under `shared/contract/schema/` (one file per request, response
+   and declaration type, never edited by hand); the generation check reports `gen.stale` when
+   they differ from what the generator writes now.
 
-Recommended (open choice 1): the contract's Rust types live in one types-only crate,
-`pocket-contract` (serde, schemars and strsim only, no engine dependency), kept under
-`shared/contract/rust/` and synchronized like the prose. Both lines are Rust hosts, so one source of
-types gives both lines the same schemas by construction, and `gen.stale` then only guards against a
-stale generated copy. The alternative, each line writing its own types and comparing generated
-schemas, works but turns every naming difference in a derive into a spurious failure.
+The contract's types-only crate, `pocket-contract`, lives under `shared/contract/rust/` and is used
+by Amoris's workspace crates. One source of types keeps request and response schemas consistent.
 
 ## Conventions every file uses
 
@@ -133,9 +114,9 @@ A type marked `#[derive(Component)]` or `#[derive(Resource)]` is world state: ha
 and forked (`Controls`, `IntentTable`, `ObserverMemory`, `ObserverEvents`, `TurnState`). Its listing
 gives its content. The serde attributes shown on it and its parts (untagged and internally tagged
 enums, omitted `None` fields, `Problem.detail` as a JSON map) describe its **wire form**, used only
-when an answer or a tool shows the value. Each line persists world state in its own form, which the
+when an answer or a tool shows the value. Amoris persists world state in the form that the
 contract does not share (What is shared, above), converting to the wire form only at the interface.
-On Pocket3D the persisted forms are `docs/spec/persistence.md` 3.5's: every enum externally tagged,
+On Amoris the persisted forms are `docs/spec/persistence.md` 3.5's: every enum externally tagged,
 every `Option` encoded, free-form data as `PlainData`, and an intent's failure stored as its code
 and detail only, its message rendered from the code's template when the failure is shown, so no
 English text enters the world hash.
@@ -160,7 +141,7 @@ English text enters the world hash.
 
 ### The frame
 
-The contract has its own world frame, which each line maps its internal frame onto: right-handed,
+The contract has its own world frame, which the runtime maps its internal frame onto: right-handed,
 metres, `+y` up, the ground plane `x`-`z`, **north is `-z` and east is `+x`** (so a map drawn from
 above has east to the right and north up).
 
@@ -195,7 +176,7 @@ above has east to the right and north up).
   (`request.out_of_range`), never clamped or wrapped. A bearing of 360 is refused with the hint that
   it is 0.
 - Output numbers are rounded to the precision their declaration gives (projection.md, Rounding), so
-  an observation is compact, stable and identical on both lines.
+  an observation is compact, stable and identical across clients.
 
 ### Positions and entity references
 
@@ -231,7 +212,7 @@ that depends on the world carries the `tick` it describes.
 
 Wherever the contract speaks of tokens it means the deterministic estimate
 `tokens(bytes) = ceil(bytes / 4)` over the UTF-8 bytes of the projected output (perception.md, Token
-budgets). It is the same on both lines and needs no tokenizer; the player benchmark (spec-mcp)
+budgets). It is the same for all clients and needs no tokenizer; the player benchmark (spec-mcp)
 reports the real token counts beside it.
 
 ## Seats and callers
@@ -336,12 +317,12 @@ selects one item of a part.
 
 ## Conformance
 
-Both lines run the same checks; the local check command (spec-arch) runs them, and their names are
-fixed here so the two lines' reports can be compared.
+The local check command (spec-arch) runs these checks; their names are fixed here so reports
+from different runtime configurations can be compared.
 
 | Check | File | What it proves |
 |---|---|---|
-| `contract.sync` | README | This copy equals the PocketEngine commit `shared/SYNC.toml` records. |
+| `contract.sync` | README | The files equal the optional reference commit `shared/SYNC.toml` records. |
 | `gen.stale` (spec-arch) | README | The generated JSON Schemas equal the committed ones. |
 | `contract.perception.read_only` | perception | Observing never changes the world hash. |
 | `contract.perception.deterministic` | perception | The same world, observer and request give the same bytes, also after fork and restore. |
@@ -358,8 +339,8 @@ fixed here so the two lines' reports can be compared.
 The game-independent cases (projection golden files, error cases) live in
 `shared/contract/conformance/` as JSON Lines, one case a line,
 `{"case": name, "given": .., "expect": ..}`; they are written with the first implementation of each
-part (slice 1 for errors, slice 2 for perception and actions) and synchronized like the prose. The
-sailing cases run against the sailing showcase, the one game both lines build (charter 2.4.1).
+part (slice 1 for errors, slice 2 for perception and actions) and recorded like the prose. The
+sailing cases run against Amoris's sailing showcase.
 
 ## The sailing showcase in the contract
 
@@ -401,11 +382,10 @@ order).
 
 ## Open choices
 
-1. **One shared types crate.** Recommended: `pocket-contract` under `shared/contract/rust/`, used by
-   both lines (above). Alternative: separate types compared through generated schemas.
+1. **One shared types crate.** `pocket-contract` under `shared/contract/rust/` is the workspace
+   source for contract types and their generated schemas (above).
 2. **The text projection shared byte for byte.** Recommended, since it is what the LLM reads
-   (perception.md). The alternative, sharing only the JSON and letting each line render text, makes
-   the player benchmark compare two prompts as well as two engines.
+   (perception.md). A stable projection keeps benchmark comparisons from changing the prompt.
 3. **Declared aliases.** Recommended: a field MAY declare aliases, and every unit-suffixed field
    takes its bare stem (`heading` for `heading_deg`) unless that stem is ambiguous in its object; an
    alias is accepted and reported as the warning `request.alias_used`, never fuzzily inferred

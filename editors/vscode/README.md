@@ -13,7 +13,7 @@ TypeScript under `samples/<game>/scripts/`.
    It listens on `127.0.0.1:9229` (`--port` to change; update `port` below to match).
 2. Copy `launch.json` to `.vscode/launch.json` at the repository root (or merge its configuration
    into yours), open `samples/sailing/scripts/rules.ts`, set a breakpoint, and run
-   **Attach to Pocket3D (sailing)** (F5).
+   **Attach to Amoris (sailing)** (F5).
 
 What the configuration does:
 

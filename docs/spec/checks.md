@@ -33,7 +33,7 @@ whole-run checks of charter 3.7 (8).
 
 Master's suite (`pocket test`) did not build or run the web configurations, Linux, iOS or the agent
 benchmark (`docs/development.md`, Tests), its CI was switched off, and its rules lived in
-documentation that agents had to remember (master AGENTS.md rules 3, 10 and 12; PocketEngine's
+documentation that agents had to remember (master AGENTS.md rules 3, 10 and 12; Amoris's
 charter 8.2 lists among master's failures that CI was switched off when its quota ran out and work
 was verified by hand). The rebuild turns each rule into a step of one command that fails, so
 correctness does not depend on discipline (charter 3.7).
@@ -205,13 +205,12 @@ the projects' locks (versions.md 5).
 |---|---|
 | `gen.stale` `{path}` | a generated file differs from what its generator writes now |
 | `gen.orphan` `{path}` | a file carries `@generated` but no generator writes it |
-| `gen.shared_modified` `{path}` | a file under `shared/` differs from the hash recorded in `shared/SYNC.toml` (charter 6.2: the contract changes on both sides first) |
+| `gen.shared_modified` `{path}` | a file under `shared/` differs from the hash recorded in `shared/SYNC.toml` (the contract record is updated with the change) |
 
-`shared/SYNC.toml` holds `commit` (the PocketEngine commit the copy was synced from) and a `[files]`
-table of each shared file's SHA-256. Until the first synchronization `commit` is `""` and the hashes
-are those of this line's draft; `gen.shared_modified` compares the files with the recorded hashes
-either way, so an edit to `shared/` without updating the record fails whether or not a commit is
-recorded. The file is committed with the draft (README.md 1).
+`shared/SYNC.toml` holds an optional reference `commit` and a `[files]` table of each shared file's
+SHA-256. `commit = ""` means no reference commit is recorded. `gen.shared_modified` compares the
+files with the recorded hashes either way, so an edit to `shared/` without updating the record fails
+whether or not a reference commit is recorded. The record is committed with the shared files.
 
 ## 6. Build, tests, the web target, types
 
@@ -463,15 +462,14 @@ its child), so no fixture code ships in the `pocket` binary.
 
 ### 8.7 Contract conformance and the benchmark self-test
 
-The shared contract names the checks both lines run, so their reports compare
+The shared contract names the checks Amoris runs, so reports from runtime targets compare
 (shared/contract/README.md, Conformance: `contract.sync`, `contract.perception.*`,
 `contract.projection.golden`, `contract.actions.*` and the rest). The `contract` step runs each
 under exactly that name, as a `StepResult` measurement row per check, and reports a failure with the
-problem code the contract gives it. `contract.sync` compares `shared/` with the PocketEngine commit
-`shared/SYNC.toml` records, in a checkout named by `POCKETENGINE_DIR`. While `commit` is `""` (not
-yet synchronized) or no checkout is reachable, it is `Skipped` with that reason, never passed and
-never inconclusive, as the contract asks, while `gen.shared_modified` (5.4) still holds the copy to
-its recorded hashes.
+problem code the contract gives it. `contract.sync` is a planned comparison of `shared/` with the
+optional reference commit recorded in `shared/SYNC.toml`. While `commit` is `""` (no reference
+commit) or the comparison is unavailable, it is `Skipped` with that reason, never passed and never
+inconclusive, while `gen.shared_modified` (5.4) still holds the files to their recorded hashes.
 
 The same step runs the benchmark harness's self-test (shared/benchmark/README.md, 8: a fake engine,
 the proxy, the reports), which needs loopback sockets; its duration is reported as `bench.selftest`

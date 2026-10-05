@@ -33,7 +33,7 @@ function bucket(level: ConsoleLevel): Filter {
   return "info";
 }
 
-const HISTORY_KEY = "aipocket2.editor.console.history";
+const HISTORY_KEY = "amoris.editor.console.history";
 
 function Line({ line }: { line: ConsoleLine }) {
   const [open, setOpen] = useState(false);

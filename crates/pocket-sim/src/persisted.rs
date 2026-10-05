@@ -224,14 +224,14 @@ mod tests {
 
     #[test]
     fn content_hash_is_derive_key() {
-        let a = ContentHash::derive("Pocket3D 2026-10-03 test v1", b"hello");
-        let mut h = ContentHash::hasher("Pocket3D 2026-10-03 test v1");
+        let a = ContentHash::derive("Amoris 2026-10-03 test v1", b"hello");
+        let mut h = ContentHash::hasher("Amoris 2026-10-03 test v1");
         h.update(b"hel").update(b"lo");
         assert_eq!(h.finish(), a);
         assert_eq!(ContentHash::from_hex(&a.to_hex()), Some(a));
         assert_ne!(
             a,
-            ContentHash::derive("Pocket3D 2026-10-03 other v1", b"hello")
+            ContentHash::derive("Amoris 2026-10-03 other v1", b"hello")
         );
         assert!(ContentHash::from_hex("zz").is_none());
     }

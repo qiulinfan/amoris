@@ -109,7 +109,7 @@ pub fn check_hash_vectors() -> Result<(), String> {
 /// The tiny world's world hash and the BLAKE3 of its snapshot's bytes, pinned.
 pub const TINY_WORLD_HASH: &str = "be5c1391f6a928100f74ef5bbe9653a3";
 pub const TINY_SNAPSHOT_BLAKE3: &str =
-    "bc59fcf973a15bbb8efba8ce49040dd155055ec7840ecfdebd837dae26528b76";
+    "60c564abf39f9fc3b9382ba139f34d4bea7706d8ea44afbc9055156e04fc755a";
 /// The world hash after 120 ticks of the tiny world, and of a fork made at tick 60 and run on.
 pub const RUN_WORLD_HASH: &str = "37d0990d0a1d99cc2cd0a7fcc1cfd7f6";
 

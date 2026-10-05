@@ -1,7 +1,6 @@
 # Projections
 
-- Status: Draft, slice 0. Draft, proposed for PocketEngine's `shared/contract` (README,
-  Synchronization with PocketEngine).
+- Status: Draft, slice 0. Maintained in Amoris's `shared/contract` (README, Contract record).
 - Charter: 3.1 (the rendered screen, a text projection for LLMs and a tensor projection for RL are
   projections of one perception layer), 3.6, 7 (item 8).
 - Contract version: 0.1 (draft).
@@ -11,7 +10,7 @@
 How perception's answers ([perception.md](perception.md), Queries) and the answers that carry
 perceived events (`act`, [actions.md](actions.md); the time requests, [time.md](time.md)) are
 written: the rounding every projection shares, the JSON projection, the text projection an LLM reads
-(shared byte for byte between the two lines, README, Open choices 2), the tensor projection for RL
+(shared byte for byte across runtime targets, README, Open choices 2), the tensor projection for RL
 observers, and the image. It was split from perception.md, which defines what is perceived.
 
 ## Rounding
@@ -20,8 +19,7 @@ A fact or instrument value is projected at its declared precision: the value is 
 Rust's `format!("{:.*}", precision, value)`, which rounds the exact binary value to the nearest
 decimal and ties to even; a result of `-0` (any number of zeros) is written `0`; a `Bearing` that
 rounds to 360 is written 0. In JSON the value is the number that string denotes, written as an
-integer when the precision is 0. Both lines are Rust hosts, so both get these bytes from the same
-formatter. Checked with rustc 1.98.1 on this machine, printing `format!("{:.*}", p, v)` for each
+integer when the precision is 0. Amoris gets these bytes from one Rust formatter across runtime targets. Checked with rustc 1.98.1 on this machine, printing `format!("{:.*}", p, v)` for each
 pair from a program built with `rustc -O`: `0.5`, `1.5`, `2.5` at precision 0 give `0`, `2`, `2`;
 `0.25` and `0.35` at 1 give `0.2` and `0.3` (0.35 is stored just below a tie); `-0.04` at 1 gives
 `-0.0`, which the rule writes `0`; `359.6` at 0 gives `360`, which a bearing writes `0`.
@@ -34,7 +32,7 @@ Geometry).
 
 **Stored values.** Where world state keeps a value already rounded, the stored value is
 `format!("{:.*}", p, v)` parsed back with `str::parse::<f64>`, with `-0` stored as `0` and a bearing
-of 360 as 0, so both lines store the same bits. Which stored fields are rounded:
+of 360 as 0, so all runtime targets store the same bits. Which stored fields are rounded:
 
 | Stored field | Rounded |
 |---|---|
@@ -157,7 +155,7 @@ Rendering never feeds perception: occlusion here comes from colliders, headless,
 
 - **`contract.projection.golden`**: shared cases in `shared/contract/conformance/projection.jsonl`,
   each an answer in JSON (an observation, a `nearby`, a `describe` of an entity, an `events` answer,
-  an `act` answer with an events delta) and its expected text; both lines render each to the
+  an `act` answer with an events delta) and its expected text; all runtime targets render each to the
   expected bytes. The cases cover rounding ties, negative zero, bearings near 360 and at zero range,
   a bearing below 100 m (three digits in text, one decimal in JSON), quoting of text values, every
   section empty and full, each decision reason, an intent with a target entity, a target point and a
@@ -166,4 +164,4 @@ Rendering never feeds perception: occlusion here comes from colliders, headless,
   (perception.md, The omniscient view).
 - **Stored rounding**: a fact value whose rounding differs between `(x * 10^p).round() / 10^p` and
   the parsed formatted decimal is stored as the latter in memory, in the ring and in an intent's
-  progress, on both lines.
+  progress, on all runtime targets.

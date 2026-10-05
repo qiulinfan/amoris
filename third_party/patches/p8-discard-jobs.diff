@@ -6,7 +6,7 @@ index 86c0eb7..e2e9691 100644
      return !list_empty(&rt->job_list);
  }
  
-+/* Pocket3D P8: frees every pending job without running it. A script call that throws or runs out
++/* Amoris P8: frees every pending job without running it. A script call that throws or runs out
 +   of its budget leaves the jobs it queued behind; run later, they would act under another call's
 +   state, or not at all on a host built afresh, so the host drops them when a call fails. */
 +void JS_DiscardPendingJobs(JSRuntime *rt)
@@ -34,7 +34,7 @@ index 09e398a..2c718f5 100644
                              int argc, JSValueConst *argv);
  
  JS_EXTERN bool JS_IsJobPending(JSRuntime *rt);
-+/* Pocket3D P8: frees every pending job without running it. */
++/* Amoris P8: frees every pending job without running it. */
 +JS_EXTERN void JS_DiscardPendingJobs(JSRuntime *rt);
  JS_EXTERN JSContext *JS_GetPendingJobContext(JSRuntime *rt);
  JS_EXTERN int JS_ExecutePendingJob(JSRuntime *rt, JSContext **pctx);

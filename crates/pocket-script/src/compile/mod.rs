@@ -26,7 +26,7 @@ pub const COMPILER: &str = concat!(
 );
 
 /// The context of a module's source hash.
-const SOURCE_CONTEXT: &str = "Pocket3D 2026-10-03 script module source v1";
+const SOURCE_CONTEXT: &str = "Amoris 2026-10-03 script module source v1";
 
 /// Options of `compile`.
 #[derive(Clone, Copy, Debug, Default)]

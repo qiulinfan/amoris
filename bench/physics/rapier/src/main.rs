@@ -1,4 +1,4 @@
-//! The Rapier side of aipocket2's physics benchmark (docs/bench/physics.md): the scenes of Jolt's
+//! The Rapier side of Amoris's physics benchmark (docs/bench/physics.md): the scenes of Jolt's
 //! PerformanceTest, stepped at 1/60 s, one JSON line of per-step timings per run, matching
 //! bench/physics/jolt/jolt_bench.cpp's output.
 //!
@@ -6,7 +6,7 @@
 //!                 [--threads N] [--iters N] [--data DIR] [--csv FILE] [--hash-chain FILE] [--no-sleep]
 //!                 [--fork-at N] [--multibody] [--no-joint-motors] [--no-joint-limits]
 //!
-//! Build configurations are features: `det` (what aipocket2 ships), none, `simd8`, `parallel`.
+//! Build configurations are features: `det` (what Amoris ships), none, `simd8`, `parallel`.
 //! `--fork-at N` (feature `serde`) snapshots the world after N steps the way pocket-physics writes
 //! its Cache (serde through bincode 1.3.3, fixed-width little-endian), restores the bytes into a
 //! second world, steps both to the end and reports the fork's hash beside the original's.

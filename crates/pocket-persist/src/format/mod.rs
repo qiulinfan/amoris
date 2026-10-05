@@ -84,7 +84,7 @@ impl fmt::Display for Fingerprint {
     }
 }
 
-const FINGERPRINT_CONTEXT: &str = "Pocket3D 2026-10-03 schema fingerprint v1";
+const FINGERPRINT_CONTEXT: &str = "Amoris 2026-10-03 schema fingerprint v1";
 
 impl Fingerprint {
     /// The fingerprint of a resolved format.

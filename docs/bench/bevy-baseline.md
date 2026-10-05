@@ -12,7 +12,7 @@
 
 Reproduce: `~/Reference/bevy/target/release/examples/many_cubes --benchmark [--layout dense]`.
 
-## Pocket3D on the same machine and scenes
+## Amoris on the same machine and scenes
 
 `cargo run --release -p pocket-render --example many_cubes -- --bench 400 [--dense]`: the same
 layouts as Bevy's (sphere: Fibonacci spiral of radius 500 facing the centre plus the inside-out box,
@@ -20,7 +20,7 @@ camera at the origin turning 0.15/60 rad about z and x per frame; dense: cbrt(n)
 fixed camera), 1,600,000 cubes, one mesh, one material, a directional light without shadows, 4x
 MSAA, 1280x720 logical (2560x1440 physical) window, Metal, Immediate present mode.
 
-| Layout | Pocket3D frame | Pocket3D GPU (timestamps) | Bevy 0.19 frame |
+| Layout | Amoris frame | Amoris GPU (timestamps) | Bevy 0.19 frame |
 |---|---|---|---|
 | sphere | 8.35 ms (held at the display's 120 Hz) | 2.3-3.4 ms (cull 1.2-1.7 ms) | 10.3-10.5 ms |
 | dense | 11.7 ms | opaque 9.3 ms, cull 1.6 ms | 13.0-13.1 ms |

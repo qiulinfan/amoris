@@ -271,7 +271,7 @@ Two runs diverge at tick `t` when their `TickHash`es after `t` differ and those 
 equal. A tick hash does not chain earlier ticks, so a difference that later disappears is reported
 with both facts. Master's per-tick hash was a chain and its run report kept the last eight tick
 hashes, so a divergence could be detected but not placed (master `engine/app/src/session.cpp`,
-`tick_hash_tail`; PocketEngine charter 8.2); a replay here keeps every tick's hash.
+`tick_hash_tail`; Amoris charter 8.2); a replay here keeps every tick's hash.
 
 Two recordings are compared segment by segment, paired by index: a segment's start snapshot hash is
 compared first (a difference is a divergence at the segment's first tick, kind `Hash`), then its

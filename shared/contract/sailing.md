@@ -1,7 +1,6 @@
 # Sailing
 
-- Status: Draft, slice 0. Draft, proposed for PocketEngine's `shared/contract` (README,
-  Synchronization with PocketEngine).
+- Status: Draft, slice 0. Maintained in Amoris's `shared/contract` (README, Contract record).
 - Charter: 2.4.1 (the sailing showcase), 3.1, 3.4, 3.5, 7 (items 8, 9, 10 and 12).
 - Contract version: 0.1 (draft).
 

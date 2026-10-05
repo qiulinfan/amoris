@@ -9,7 +9,7 @@ import { bindDock } from "./dock";
 import { PANEL_BY_ID, PANELS, type Area } from "./panels";
 import { logLocal } from "../state/logs";
 
-const LAYOUT_KEY = "aipocket2.editor.layout.v1";
+const LAYOUT_KEY = "amoris.editor.layout.v1";
 
 const theme: DockviewTheme = {
   name: "pocket",

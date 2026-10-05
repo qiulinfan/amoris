@@ -1,4 +1,4 @@
-# The Pocket3D rebuild's workspace (docs/spec/architecture.md). Crates and their allowed
+# The Amoris rebuild's workspace (docs/spec/architecture.md). Crates and their allowed
 # dependencies are architecture.md 5; external crates are pinned exactly as slice 0 ran them (6).
 [workspace]
 resolver = "3"

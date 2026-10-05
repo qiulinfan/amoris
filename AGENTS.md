@@ -1,6 +1,6 @@
-# Working on aipocket2 (Pocket3D)
+# Working on Amoris
 
-aipocket2 is an agent-native 3D game engine: Rust host, TypeScript scripts on QuickJS-ng, wgpu
+Amoris is an agent-native 3D game engine: Rust host, TypeScript scripts on QuickJS-ng, wgpu
 rendering (Metal and Vulkan natively, WebGPU in the browser), a React web editor, MCP for agents.
 Read [the charter](docs/charter.md) first: it fixes the stack, the architecture and what this round
 must prove. The schedule is [docs/schedule.md](docs/schedule.md). The game-side subsystems are
@@ -34,7 +34,7 @@ specified under [docs/spec/](docs/spec/README.md); their measured spikes are und
    recorded (docs/bench/), never a pass condition.
 4. Testing is light and targeted: run the tests of the crate you touch; run the workspace before a
    commit that touches shared code. Research, reach and performance come first.
-5. Material brought from another repository (aipocket, PocketEngine) names its source repository
+5. Material brought from another repository (such as Amoris Pioneer) names its source repository
    and commit in the commit message.
 6. Owner-facing explanations are Chinese; code, identifiers, commit messages and specs are English.
    The charter and schedule are Chinese.
