@@ -1,0 +1,19 @@
+{
+  "name": "amoris-desktop",
+  "productName": "Amoris",
+  "version": "0.1.0",
+  "description": "Native Amoris desktop editor",
+  "private": true,
+  "main": "main.cjs",
+  "author": "Qiulin Fan",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/*.test.cjs",
+    "package": "node package.mjs"
+  },
+  "devDependencies": {
+    "@electron/packager": "20.3.0",
+    "electron": "44.5.1"
+  }
+}

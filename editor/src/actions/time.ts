@@ -8,6 +8,7 @@ import { useSession } from "../state/session";
 import { continueEveryPause } from "./debug";
 import { attempt } from "./report";
 import { applyScripts } from "./scripts";
+import { desktopEditHash, markDesktopSceneSaved } from "../desktop";
 
 const status = () => useSession.getState().status;
 
@@ -97,6 +98,18 @@ export async function rewind(tick: number) {
 }
 
 export async function saveProject() {
+  if (window.amorisDesktop) {
+    const before = await api.time.control({}).catch(() => null);
+    if (before) useSession.getState().setStatus(before);
+  }
+  const savingHash = desktopEditHash();
   const r = await attempt(api.project.save(), "Save project");
+  if (r && window.amorisDesktop) {
+    const s = await api.time.control({}).catch(() => null);
+    if (s) {
+      useSession.getState().setStatus(s);
+      markDesktopSceneSaved(savingHash);
+    }
+  }
   return r;
 }

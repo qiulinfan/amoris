@@ -11,9 +11,11 @@ import { App } from "./App";
 import { registerBuiltinCommands } from "./commands/builtin";
 import { installKeyboard } from "./commands/registry";
 import { startSync } from "./host/sync";
+import { installDesktop } from "./desktop";
 
 registerBuiltinCommands();
 installKeyboard();
+installDesktop();
 startSync();
 
 // The editor is driven by people and by tests: expose the stores for inspection in DevTools.

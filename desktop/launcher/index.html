@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:;">
+  <title>Amoris</title>
+  <link rel="stylesheet" href="launcher.css">
+</head>
+<body>
+  <main>
+    <img class="brand" alt="Amoris">
+    <p class="eyebrow">YOUR WORLDS, WITHIN REACH</p>
+    <h1>Amoris</h1>
+    <p class="intro">Open a project and make something worth playing.</p>
+    <button id="open" type="button">Open Project… <span>⌘ O</span></button>
+    <p id="error" role="alert"></p>
+    <section aria-labelledby="recent-title">
+      <h2 id="recent-title">Recent projects</h2>
+      <div id="recent"><p class="empty">Your projects will appear here.</p></div>
+    </section>
+    <p class="hint">Choose a folder containing project.toml and scene.json.</p>
+  </main>
+  <script src="launcher.js"></script>
+</body>
+</html>

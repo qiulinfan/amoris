@@ -5,6 +5,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { cx } from "../cx";
 import { num } from "../format";
 import { dragState } from "../../state/viewport";
+import { evaluateNumber } from "./arithmetic";
 
 export type EditPhase = "live" | "commit";
 
@@ -23,18 +24,6 @@ export interface NumberFieldProps {
   disabled?: boolean;
   mixed?: boolean;
   className?: string;
-}
-
-function evaluate(text: string): number | null {
-  const t = text.trim();
-  if (!t) return null;
-  if (!/^[-+*/().\d\seE]+$/.test(t)) return null;
-  try {
-    const v = Function(`"use strict"; return (${t});`)() as unknown;
-    return typeof v === "number" && Number.isFinite(v) ? v : null;
-  } catch {
-    return null;
-  }
 }
 
 function clamp(v: number, min?: number, max?: number) {
@@ -62,6 +51,7 @@ export function NumberField({
   const [text, setText] = useState<string | null>(null);
   const [scrubbing, setScrubbing] = useState(false);
   const input = useRef<HTMLInputElement>(null);
+  const committed = useRef(false);
   const drag = useRef<{ start: number; acc: number; moved: boolean; last: number } | null>(null);
 
   const perPixel = step ?? (integer ? 0.1 : min !== undefined && max !== undefined && max - min <= 2 ? (max - min) / 300 : 0.02);
@@ -126,7 +116,12 @@ export function NumberField({
 
   const commitText = () => {
     if (text === null) return;
-    const v = evaluate(text);
+    if (committed.current) {
+      setText(null);
+      return;
+    }
+    committed.current = true;
+    const v = evaluateNumber(text);
     setText(null);
     if (v !== null && v !== value) onChange(fix(v), "commit");
   };
@@ -150,22 +145,28 @@ export function NumberField({
         spellCheck={false}
         inputMode="decimal"
         onFocus={(e) => {
+          committed.current = false;
           setText(mixed ? "" : String(Math.round(value * 1e6) / 1e6));
           requestAnimationFrame(() => e.target.select());
         }}
-        onChange={(e) => setText(e.target.value)}
+        onChange={(e) => {
+          committed.current = false;
+          setText(e.target.value);
+        }}
         onBlur={commitText}
         onKeyDown={(e) => {
           if (e.key === "Enter") {
             commitText();
             e.currentTarget.blur();
           } else if (e.key === "Escape") {
+            committed.current = true;
             setText(null);
             e.currentTarget.blur();
           } else if (e.key === "ArrowUp" || e.key === "ArrowDown") {
             e.preventDefault();
             const mult = e.shiftKey ? 10 : e.altKey ? 0.1 : 1;
             const v = fix(value + (e.key === "ArrowUp" ? 1 : -1) * keyStep * mult);
+            committed.current = true;
             setText(String(v));
             onChange(v, "commit");
           }

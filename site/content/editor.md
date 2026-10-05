@@ -3,6 +3,17 @@
 The editor is a client of the Rust host. Its viewport uses the engine's WebGPU renderer;
 edits use the same commands exposed to CLI and MCP clients.
 
+## Desktop application
+
+The desktop editor opens the same panels in an independent Amoris window. It provides a native
+project-folder picker, recent projects, and application menus, and manages the Rust host for you.
+Choose a folder containing `project.toml`, or use **Cmd/Ctrl+O** to switch projects. Closing or
+switching asks before discarding unsaved scene changes or script buffers.
+
+Build and package the app using the [README](https://github.com/qiulinfan/amoris#start-the-desktop-editor).
+The local application includes the engine, WebGPU module, and TypeScript checker. Its viewport
+uses the same engine renderer as the browser editor.
+
 ## A first edit
 
 1. Open the sailing sample using the [quick start](index.md).
