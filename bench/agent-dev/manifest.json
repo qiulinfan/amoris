@@ -1,0 +1,78 @@
+{
+  "format": 1,
+  "suite_version": "courier-v1",
+  "fixture_sha256": "126bf315b27a4bc1f6bc6282988606c48ab946dd5d9a343a75064a98d0ef7456",
+  "grader_sha256": "9f95bc39e540208b50d5cdd7a59913a9e77d5ce889712c0a0748ff8bc6e094e8",
+  "tasks": [
+    {
+      "id": "collection-range",
+      "title": "Repair collection radius",
+      "kind": "bugfix",
+      "allowed_files": [
+        "scripts/collect.ts"
+      ],
+      "suite_version": "courier-v1",
+      "prompt": "You are developing Courier Arena in the running Amoris engine.\n\nParcels two or three metres away are incorrectly rejected. Collection must accept horizontal distance at most 3 units, and vertical distance at most 2 units, inclusive. Reject either distance outside these bounds. Keep missing-parcel handling, consumed intents and score intact.\n\nUse the native host's scripts/world/time/play APIs to inspect, change, apply and verify the game. scripts.guide explains the SDK. State belongs in ECS components; systems are stateless. Only edit scripts/collect.ts. Preserve existing component schemas, other modules, scene.json, project.toml and check.toml. Do not change the engine or grader. Apply your scripts and check their types. Finish with a concise description and your runtime checks.\n"
+    },
+    {
+      "id": "score-values",
+      "title": "Repair parcel value scoring",
+      "kind": "bugfix",
+      "allowed_files": [
+        "scripts/collect.ts"
+      ],
+      "suite_version": "courier-v1",
+      "prompt": "You are developing Courier Arena in the running Amoris engine.\n\nCollecting valuable parcels increases score by just one. Score must add each Cargo.value exactly once (including value zero), while collected counts parcels. Rejected or repeated attempts must not score. Preserve collection range and objective behavior.\n\nUse the native host's scripts/world/time/play APIs to inspect, change, apply and verify the game. scripts.guide explains the SDK. State belongs in ECS components; systems are stateless. Only edit scripts/collect.ts. Preserve existing component schemas, other modules, scene.json, project.toml and check.toml. Do not change the engine or grader. Apply your scripts and check their types. Finish with a concise description and your runtime checks.\n"
+    },
+    {
+      "id": "objective-victory",
+      "title": "Implement collection victory",
+      "kind": "feature",
+      "allowed_files": [
+        "scripts/progress.ts"
+      ],
+      "suite_version": "courier-v1",
+      "prompt": "You are developing Courier Arena in the running Amoris engine.\n\nImplement victory in updateProgress. When Wallet.total is positive and collected reaches or exceeds total, set that courier's Progress.completed and emit game.won once, with {collected, points} and that courier as subject. No victory for an empty objective. Persist the flag in the component so later ticks and forced script reloads do not repeat the event. Keep the existing score milestone feature.\n\nUse the native host's scripts/world/time/play APIs to inspect, change, apply and verify the game. scripts.guide explains the SDK. State belongs in ECS components; systems are stateless. Only edit scripts/progress.ts. Preserve existing component schemas, other modules, scene.json, project.toml and check.toml. Do not change the engine or grader. Apply your scripts and check their types. Finish with a concise description and your runtime checks.\n"
+    },
+    {
+      "id": "dash-cooldown",
+      "title": "Implement persistent dash cooldown",
+      "kind": "feature",
+      "allowed_files": [
+        "scripts/dash.ts"
+      ],
+      "suite_version": "courier-v1",
+      "prompt": "You are developing Courier Arena in the running Amoris engine.\n\nAdd dash behavior to moveCourier. A request on a tick at or after DashState.ready_at multiplies that tick's clamped movement by 4, sets ready_at to ctx.tick + 5, and emits courier.dashed with {ready_at} and the courier as subject. Earlier requests keep normal movement. Consume every request, whether accepted or rejected. Normal movement remains one unit per axis per tick, with each axis clamped to [-1,1]. Cooldown must live in DashState and survive forced reload and Play's explicit fork without changing the edit world.\n\nUse the native host's scripts/world/time/play APIs to inspect, change, apply and verify the game. scripts.guide explains the SDK. State belongs in ECS components; systems are stateless. Only edit scripts/dash.ts. Preserve existing component schemas, other modules, scene.json, project.toml and check.toml. Do not change the engine or grader. Apply your scripts and check their types. Finish with a concise description and your runtime checks.\n"
+    },
+    {
+      "id": "milestone-event",
+      "title": "Implement once-only score milestone",
+      "kind": "feature",
+      "allowed_files": [
+        "scripts/progress.ts"
+      ],
+      "suite_version": "courier-v1",
+      "prompt": "You are developing Courier Arena in the running Amoris engine.\n\nImplement the score milestone in updateProgress. Each courier reaching at least 10 Wallet.points for the first time sets its Progress.milestone and emits score.milestone with {points} and that courier as subject. It must not emit below 10, after falling below and crossing again, on later ticks, or after forced reload. Independent couriers each have their own flag. Keep collection victory working.\n\nUse the native host's scripts/world/time/play APIs to inspect, change, apply and verify the game. scripts.guide explains the SDK. State belongs in ECS components; systems are stateless. Only edit scripts/progress.ts. Preserve existing component schemas, other modules, scene.json, project.toml and check.toml. Do not change the engine or grader. Apply your scripts and check their types. Finish with a concise description and your runtime checks.\n"
+    },
+    {
+      "id": "damage-and-defeat",
+      "title": "Implement armored damage and defeat",
+      "kind": "feature",
+      "allowed_files": [
+        "scripts/damage.ts"
+      ],
+      "suite_version": "courier-v1",
+      "prompt": "You are developing Courier Arena in the running Amoris engine.\n\nImplement applyDamage. Consume DamageInput.amount on the next tick. Positive hits reduce health by max(0, amount - Vitals.armor), clamped at zero; armor never heals. A hit leaving health at zero sets Vitals.defeated and emits game.lost with {health:0} and that courier as subject exactly once. Zero input does nothing. The defeated flag must survive reload. Preserve all unrelated collection, score, movement and progress behavior.\n\nUse the native host's scripts/world/time/play APIs to inspect, change, apply and verify the game. scripts.guide explains the SDK. State belongs in ECS components; systems are stateless. Only edit scripts/damage.ts. Preserve existing component schemas, other modules, scene.json, project.toml and check.toml. Do not change the engine or grader. Apply your scripts and check their types. Finish with a concise description and your runtime checks.\n"
+    }
+  ],
+  "scoring": {
+    "primary": "strict all-or-nothing success",
+    "requires": [
+      "target_behavior",
+      "all_other_behaviors",
+      "types",
+      "native_integrity",
+      "file_scope"
+    ]
+  }
+}

@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+import shutil
 from pathlib import Path
 import urllib.request
 
@@ -47,3 +48,8 @@ if __name__ == "__main__":
         static_project("detail",helmet)
         for count in [64,256,1024]:static_project(f"stress-{count}",helmet,count)
         ship_project(ship)
+        player = ROOT / "site/demos/agent-sailing"
+        if player.is_dir():
+            target = player / "models/third-party" / ship.name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(ship, target)

@@ -59,6 +59,22 @@
       "duration_seconds": 17.933333,
       "sha256": "aec7a2351116505bca3051970c2c70743ae3226565a2afc2458b37d28772105a",
       "capture": "actual browser WebGPU editor screencast"
+    },
+    {
+      "name": "deepseek-gameplay",
+      "dimensions": [
+        1280,
+        720
+      ],
+      "frames": 849,
+      "fps": 30,
+      "duration_seconds": 28.3,
+      "sha256": "9d4aed5bc4f2df09f0311c46cd6750c523ec79ae98fbfea48eb9303f5f780408",
+      "capture": "hash-verified native replay of real DeepSeek tool-selected intentions",
+      "cargo_taken": 4,
+      "selected_condition": "gameplay-v2/episode-2 (first successful low-effort trial)",
+      "captured_frames": 789,
+      "end_hold_seconds": 2
     }
   ],
   "models": [

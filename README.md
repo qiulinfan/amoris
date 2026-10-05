@@ -151,6 +151,18 @@ and window presentation. [Method and raw data](site/content/data.md).
 Large third-party models stay outside Git; the website serves compact videos and
 posters. Source authors and licenses are preserved in the [credits](site/content/credits.md).
 
+### Real agent gameplay and development
+
+DeepSeek Flash plays the detailed sailing course through a project-level player gateway.
+Its native replay matches every recorded action and final world hash. The selected clip
+collects 4/4 cargo; all trials and limitations are retained in the
+[agent report](site/content/agents.md).
+
+A frozen six-task development benchmark uses native MCP tools, fresh candidate projects
+and external grading. All **18/18 patches** passed behavior, regression, types and native
+integrity checks; **15/18 agent sessions** ended cleanly, with three provider disconnects
+after valid patches. Each golden control exercises 63 actual component/event assertions.
+
 ## License
 
 Amoris is released under the [MIT License](LICENSE). Third-party dependencies and

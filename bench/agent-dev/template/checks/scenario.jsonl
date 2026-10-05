@@ -1,0 +1,12 @@
+{"tick": 2, "source": {"player": 0}, "name": "world_edit", "params": {"edits": [{"op": "set", "entity": "Courier", "component": "DashInput", "value": {"dx": 1, "request": true}}]}}
+{"tick": 3, "source": {"player": 0}, "name": "world_edit", "params": {"edits": [{"op": "set", "entity": "Courier", "component": "DashInput", "value": {"dx": 0, "request": true}}]}}
+{"tick": 8, "source": {"player": 0}, "name": "world_edit", "params": {"edits": [{"op": "set", "entity": "Courier", "component": "DashInput", "value": {"dx": 0, "request": true}}]}}
+{"tick": 9, "source": {"player": 0}, "name": "world_edit", "params": {"edits": [{"op": "set", "entity": "ParcelA", "component": "Transform", "value": {"position": [5, 0, 0]}}]}}
+{"tick": 9, "source": {"player": 0}, "name": "world_edit", "params": {"edits": [{"op": "set", "entity": "Courier", "component": "Command", "value": {"take": "ParcelA"}}]}}
+{"tick": 12, "source": {"player": 0}, "name": "world_edit", "params": {"edits": [{"op": "set", "entity": "ParcelB", "component": "Transform", "value": {"position": [5, 0, 0]}}]}}
+{"tick": 12, "source": {"player": 0}, "name": "world_edit", "params": {"edits": [{"op": "set", "entity": "Courier", "component": "Command", "value": {"take": "ParcelB"}}]}}
+{"tick": 17, "source": {"player": 0}, "name": "world_edit", "params": {"edits": [{"op": "set", "entity": "ParcelC", "component": "Transform", "value": {"position": [5, 0, 0]}}]}}
+{"tick": 17, "source": {"player": 0}, "name": "world_edit", "params": {"edits": [{"op": "set", "entity": "Courier", "component": "Command", "value": {"take": "ParcelC"}}]}}
+{"tick": 30, "source": {"player": 0}, "name": "world_edit", "params": {"edits": [{"op": "set", "entity": "Courier", "component": "DashInput", "value": {"dx": 1, "dz": 0}}]}}
+{"tick": 31, "source": {"player": 0}, "name": "world_edit", "params": {"edits": [{"op": "set", "entity": "Courier", "component": "DamageInput", "value": {"amount": 20}}]}}
+{"tick": 36, "source": {"player": 0}, "name": "world_edit", "params": {"edits": [{"op": "set", "entity": "Courier", "component": "DamageInput", "value": {"amount": 200}}]}}

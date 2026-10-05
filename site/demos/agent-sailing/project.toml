@@ -1,0 +1,7 @@
+name = "Agent sailing — frozen downwind course"
+rate = 60
+seed = 1
+
+[sounds]
+"crate.taken" = "sfx:coin"
+"crates.all" = "sfx:powerup"
