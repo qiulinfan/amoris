@@ -152,6 +152,12 @@ pub struct Environment {
     pub sky_color: [f64; 3],
     /// How much the sky lights the scene (image-based light), 0 to 2.
     pub ambient: f64,
+    /// Project-relative baked GI JSON asset; empty disables world-space baked probes.
+    pub baked_gi: String,
+    /// Project-relative neural GI JSON asset; takes precedence over `baked_gi` when nonempty.
+    pub neural_gi: String,
+    /// Multiplier for diffuse light reconstructed from baked probes or a learned field.
+    pub gi_intensity: f64,
     /// Exponential height fog density per metre; 0 for none.
     pub fog_density: f64,
     /// Linear RGB.
@@ -168,6 +174,9 @@ impl Default for Environment {
             sky: SkyKind::Atmosphere,
             sky_color: [0.35, 0.5, 0.75],
             ambient: 1.0,
+            baked_gi: String::new(),
+            neural_gi: String::new(),
+            gi_intensity: 1.0,
             fog_density: 0.0,
             fog_color: [0.6, 0.7, 0.8],
             exposure_ev: 0.0,

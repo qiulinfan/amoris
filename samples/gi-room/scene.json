@@ -1,0 +1,266 @@
+{
+  "format": "pocket-scene",
+  "version": 1,
+  "entities": [
+    {
+      "name": "Floor",
+      "components": {
+        "Transform": {
+          "position": [
+            0,
+            -0.05,
+            0
+          ]
+        },
+        "Model": {
+          "mesh": "cube",
+          "scale": [
+            4.1,
+            0.1,
+            4.1
+          ],
+          "color": [
+            0.75,
+            0.75,
+            0.75,
+            1
+          ],
+          "roughness": 0.85
+        }
+      }
+    },
+    {
+      "name": "Ceiling",
+      "components": {
+        "Transform": {
+          "position": [
+            0,
+            4.05,
+            0
+          ]
+        },
+        "Model": {
+          "mesh": "cube",
+          "scale": [
+            4.1,
+            0.1,
+            4.1
+          ],
+          "color": [
+            0.75,
+            0.75,
+            0.75,
+            1
+          ],
+          "roughness": 0.85
+        }
+      }
+    },
+    {
+      "name": "Back",
+      "components": {
+        "Transform": {
+          "position": [
+            0,
+            2,
+            -2.05
+          ]
+        },
+        "Model": {
+          "mesh": "cube",
+          "scale": [
+            4.1,
+            4,
+            0.1
+          ],
+          "color": [
+            0.75,
+            0.75,
+            0.75,
+            1
+          ],
+          "roughness": 0.85
+        }
+      }
+    },
+    {
+      "name": "RedWall",
+      "components": {
+        "Transform": {
+          "position": [
+            -2.05,
+            2,
+            0
+          ]
+        },
+        "Model": {
+          "mesh": "cube",
+          "scale": [
+            0.1,
+            4,
+            4.1
+          ],
+          "color": [
+            0.8,
+            0.06,
+            0.035,
+            1
+          ],
+          "roughness": 0.85
+        }
+      }
+    },
+    {
+      "name": "GreenWall",
+      "components": {
+        "Transform": {
+          "position": [
+            2.05,
+            2,
+            0
+          ]
+        },
+        "Model": {
+          "mesh": "cube",
+          "scale": [
+            0.1,
+            4,
+            4.1
+          ],
+          "color": [
+            0.05,
+            0.7,
+            0.08,
+            1
+          ],
+          "roughness": 0.85
+        }
+      }
+    },
+    {
+      "name": "TallBlock",
+      "components": {
+        "Transform": {
+          "position": [
+            -0.65,
+            0.7,
+            -0.4
+          ]
+        },
+        "Model": {
+          "mesh": "cube",
+          "scale": [
+            1,
+            1.4,
+            1
+          ],
+          "color": [
+            0.65,
+            0.65,
+            0.65,
+            1
+          ],
+          "roughness": 0.85
+        }
+      }
+    },
+    {
+      "name": "LowBlock",
+      "components": {
+        "Transform": {
+          "position": [
+            0.8,
+            0.4,
+            0.4
+          ]
+        },
+        "Model": {
+          "mesh": "cube",
+          "scale": [
+            1,
+            0.8,
+            1
+          ],
+          "color": [
+            0.75,
+            0.75,
+            0.75,
+            1
+          ],
+          "roughness": 0.85
+        }
+      }
+    },
+    {
+      "name": "AreaEmitter",
+      "components": {
+        "Transform": {
+          "position": [
+            0,
+            3.96,
+            -0.3
+          ]
+        },
+        "Model": {
+          "mesh": "cube",
+          "scale": [
+            1.5,
+            0.06,
+            1.5
+          ],
+          "color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "roughness": 0.85,
+          "emissive": [
+            8,
+            7.5,
+            6.5
+          ]
+        }
+      }
+    },
+    {
+      "name": "Environment",
+      "components": {
+        "Environment": {
+          "sky": "color",
+          "sky_color": [
+            0,
+            0,
+            0
+          ],
+          "ambient": 0,
+          "bloom": 0,
+          "exposure_ev": 0,
+          "baked_gi": "lighting/probes.json",
+          "gi_intensity": 1
+        }
+      }
+    },
+    {
+      "name": "Camera",
+      "components": {
+        "Transform": {
+          "position": [
+            0,
+            2,
+            7
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "Camera": {
+          "fov_deg": 44
+        }
+      }
+    }
+  ]
+}

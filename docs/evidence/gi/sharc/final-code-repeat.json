@@ -1,0 +1,44 @@
+{
+  "workload": "current implementation; 320x240, 128 frames, last64, 6 bounces, 1 spp, default cache settings",
+  "runs": [
+    {
+      "raw": {
+        "gpu_last64_ms": 0.6450371093749999,
+        "wall_last64_ms": 1.0277362968750001,
+        "errors": []
+      },
+      "sharc": {
+        "gpu_last64_ms": 0.5106203750000001,
+        "wall_last64_ms": 0.96900003125,
+        "errors": []
+      }
+    },
+    {
+      "sharc": {
+        "gpu_last64_ms": 0.8474589843750003,
+        "wall_last64_ms": 1.6078234531250002,
+        "errors": []
+      },
+      "raw": {
+        "gpu_last64_ms": 0.8814146718750001,
+        "wall_last64_ms": 1.289908796875,
+        "errors": []
+      }
+    },
+    {
+      "raw": {
+        "gpu_last64_ms": 0.7320787656250002,
+        "wall_last64_ms": 1.3720266718749998,
+        "errors": []
+      },
+      "sharc": {
+        "gpu_last64_ms": 0.8597948749999998,
+        "wall_last64_ms": 2.733332,
+        "errors": []
+      }
+    }
+  ],
+  "raw_gpu_ms": 0.7528435156250001,
+  "sharc_gpu_ms": 0.7392914114583334,
+  "gpu_reduction": 0.018001223209601402
+}

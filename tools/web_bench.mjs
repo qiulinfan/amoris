@@ -39,6 +39,8 @@ ws.onmessage = (e) => {
 const send = (method, params = {}) => new Promise((r) => { const i = ++id; pending.set(i, r); ws.send(JSON.stringify({ id: i, method, params })); });
 await send("Page.enable");
 await send("Runtime.enable");
+// INIT prepares a reproducible temporary-profile state before application modules read it.
+if (process.env.INIT) await send("Page.addScriptToEvaluateOnNewDocument", { source: process.env.INIT });
 await send("Page.navigate", { url });
 await sleep(Number(seconds) * 1000);
 // CLICK="x,y[;x,y...]": mouse clicks (CSS pixels) before measuring and the screenshot.
@@ -73,5 +75,7 @@ if (process.env.SHOT) {
 if (process.env.LOGS) for (const l of logs.slice(-40)) console.log(l.slice(0, 400));
 ws.close();
 proc.kill();
-await sleep(300);
-rmSync(profile, { recursive: true, force: true });
+if (proc.exitCode === null && proc.signalCode === null) {
+  await Promise.race([new Promise((resolve) => proc.once("exit", resolve)), sleep(2000)]);
+}
+rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });

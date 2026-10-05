@@ -3,6 +3,7 @@
 //! browser the page fetches them and hands the bytes in.
 
 use pocket_assets::mesh::ModelAsset;
+use pocket_assets::gi::{BakedGi, NeuralGi};
 
 /// A source of model assets by project-relative path.
 pub trait AssetSource {
@@ -10,6 +11,12 @@ pub trait AssetSource {
     fn request(&mut self, path: &str);
     /// Loads that finished since the last call.
     fn poll(&mut self) -> Vec<(String, Result<ModelAsset, String>)>;
+    fn request_baked_gi(&mut self, path: &str) {
+        log::warn!("this asset source cannot load baked GI: {path}");
+    }
+    fn poll_baked_gi(&mut self) -> Vec<(String, Result<BakedGi, String>)> { Vec::new() }
+    fn request_neural_gi(&mut self, path: &str) { log::warn!("this asset source cannot load neural GI: {path}"); }
+    fn poll_neural_gi(&mut self) -> Vec<(String, Result<NeuralGi, String>)> { Vec::new() }
 }
 
 /// No assets: only primitives draw.
@@ -28,19 +35,40 @@ impl AssetSource for NoAssets {
 /// Imports from the file system on a worker thread.
 #[cfg(all(not(target_arch = "wasm32"), feature = "import"))]
 pub struct FileAssets {
-    tx: std::sync::mpsc::Sender<String>,
-    rx: std::sync::mpsc::Receiver<(String, Result<ModelAsset, String>)>,
+    tx: std::sync::mpsc::Sender<Job>,
+    rx: std::sync::mpsc::Receiver<Loaded>,
+    models_done: Vec<(String, Result<ModelAsset, String>)>,
+    gi_done: Vec<(String, Result<BakedGi, String>)>,
+    neural_done: Vec<(String, Result<NeuralGi, String>)>,
 }
+
+#[cfg(all(not(target_arch = "wasm32"), feature = "import"))]
+enum Job { Model(String), Gi(String), Neural(String) }
+#[cfg(all(not(target_arch = "wasm32"), feature = "import"))]
+enum Loaded { Model(String, Result<ModelAsset, String>), Gi(String, Result<BakedGi, String>), Neural(String, Result<NeuralGi, String>) }
 
 #[cfg(all(not(target_arch = "wasm32"), feature = "import"))]
 impl FileAssets {
     pub fn new(root: std::path::PathBuf) -> FileAssets {
-        let (tx, jobs) = std::sync::mpsc::channel::<String>();
+        let (tx, jobs) = std::sync::mpsc::channel::<Job>();
         let (done, rx) = std::sync::mpsc::channel();
         std::thread::Builder::new()
             .name("pocket-assets".into())
             .spawn(move || {
-                for path in jobs {
+                for job in jobs {
+                    let path = match job {
+                        Job::Neural(path) => {
+                            let result = NeuralGi::load(&root.join(&path));
+                            if done.send(Loaded::Neural(path, result)).is_err() { break; }
+                            continue;
+                        }
+                        Job::Gi(path) => {
+                            let result = BakedGi::load(&root.join(&path));
+                            if done.send(Loaded::Gi(path, result)).is_err() { break; }
+                            continue;
+                        }
+                        Job::Model(path) => path,
+                    };
                     let full = root.join(&path);
                     let t = std::time::Instant::now();
                     let r = pocket_assets::import::import_gltf(&full).map_err(|p| p.message);
@@ -53,22 +81,43 @@ impl FileAssets {
                             t.elapsed().as_secs_f64() * 1000.0
                         );
                     }
-                    if done.send((path, r)).is_err() {
+                    if done.send(Loaded::Model(path, r)).is_err() {
                         break;
                     }
                 }
             })
             .ok();
-        FileAssets { tx, rx }
+        FileAssets { tx, rx, models_done: Vec::new(), gi_done: Vec::new(), neural_done: Vec::new() }
+    }
+
+    fn collect(&mut self) {
+        for item in self.rx.try_iter() {
+            match item {
+                Loaded::Model(path, result) => self.models_done.push((path, result)),
+                Loaded::Gi(path, result) => self.gi_done.push((path, result)),
+                Loaded::Neural(path, result) => self.neural_done.push((path, result)),
+            }
+        }
     }
 }
 
 #[cfg(all(not(target_arch = "wasm32"), feature = "import"))]
 impl AssetSource for FileAssets {
     fn request(&mut self, path: &str) {
-        let _ = self.tx.send(path.to_owned());
+        let _ = self.tx.send(Job::Model(path.to_owned()));
     }
     fn poll(&mut self) -> Vec<(String, Result<ModelAsset, String>)> {
-        self.rx.try_iter().collect()
+        self.collect();
+        std::mem::take(&mut self.models_done)
+    }
+    fn request_baked_gi(&mut self, path: &str) { let _ = self.tx.send(Job::Gi(path.to_owned())); }
+    fn poll_baked_gi(&mut self) -> Vec<(String, Result<BakedGi, String>)> {
+        self.collect();
+        std::mem::take(&mut self.gi_done)
+    }
+    fn request_neural_gi(&mut self, path: &str) { let _ = self.tx.send(Job::Neural(path.to_owned())); }
+    fn poll_neural_gi(&mut self) -> Vec<(String, Result<NeuralGi, String>)> {
+        self.collect();
+        std::mem::take(&mut self.neural_done)
     }
 }

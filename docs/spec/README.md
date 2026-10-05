@@ -31,6 +31,7 @@ their code is under `spikes/`.
 | [host-protocol.md](host-protocol.md) | host | Charter 3.1, 4.3, 4.5 (the host's endpoints, requests, events and methods shared by the editor, agents and tools) |
 | [editor.md](editor.md) | editor | Charter 4.5 (the web editor: panels, shortcuts, the viewport renderer interface, the mock host, what the editor needs from the host) |
 | [budgets.md](budgets.md) | spec-arch | 3.10 and 12 item 2 (benchmarks on reference hardware and their reference figures, reported and never a pass condition), with the figures slice 0 measured |
+| [metal-gi.md](metal-gi.md) | metal | Charter 4.4 (world-space probe baking, SHaRC, ReSTIR exploration and learned diffuse fields), with measured limits in docs/bench/metal-gi.md |
 | [shared/contract/README.md](../../shared/contract/README.md) | spec-contract | 6.1 and 6.2 (the shared contract, its versioning and sync), seats and roles, the game definition, conformance checks |
 | [shared/contract/perception.md](../../shared/contract/perception.md) | spec-contract | 7.8 (perception API); 3.1 |
 | [shared/contract/projection.md](../../shared/contract/projection.md) | spec-contract | 7.8 (the text, JSON and tensor projections, rounding); 3.1 |

@@ -10,6 +10,7 @@ mod blit;
 pub mod camera;
 pub mod demo;
 pub mod gpu;
+pub mod gi;
 pub mod loader;
 pub mod materials;
 pub mod meshes;

@@ -1,0 +1,4 @@
+{
+  "exit_code": 1,
+  "error": "showcase benchmark failed: GI asset failed during warmup: invalid neural GI JSON: missing field `origin` at line 1 column 20"
+}

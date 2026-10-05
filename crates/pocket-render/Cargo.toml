@@ -13,6 +13,8 @@ glam.workspace = true
 bytemuck.workspace = true
 log = "0.4"
 fontdue = "0.9"
+serde.workspace = true
+serde_json.workspace = true
 winit = { workspace = true, optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

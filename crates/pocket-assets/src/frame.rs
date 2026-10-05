@@ -111,6 +111,10 @@ pub struct EnvironmentView {
     pub sky: u32,
     pub sky_color: [f32; 3],
     pub ambient: f32,
+    pub baked_gi: String,
+    /// Project-relative neural GI asset; the renderer uses this before `baked_gi` when present.
+    pub neural_gi: String,
+    pub gi_intensity: f32,
     pub fog_density: f32,
     pub fog_color: [f32; 3],
     pub exposure_ev: f32,
@@ -499,6 +503,26 @@ mod tests {
         assert_eq!(a.instances.len(), 2);
         assert_eq!(a.instances[0].pose.unwrap().position[0], 5.0);
         assert_eq!(a.removed, vec![2]);
+    }
+
+    #[test]
+    fn environment_baked_gi_survives_frame_transport() {
+        let frame = RenderFrame {
+            environment: Some(EnvironmentView {
+                sky: 1,
+                sky_color: [0.0; 3],
+                ambient: 0.0,
+                baked_gi: "lighting/room.gi.json".into(),
+                neural_gi: "lighting/room.neural-gi.json".into(),
+                gi_intensity: 0.75,
+                fog_density: 0.0,
+                fog_color: [0.0; 3],
+                exposure_ev: 0.0,
+                bloom: 0.0,
+            }),
+            ..RenderFrame::default()
+        };
+        assert_eq!(RenderFrame::decode(&frame.encode()), Ok(frame));
     }
 
     #[test]

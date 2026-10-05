@@ -1,0 +1,41 @@
+{
+  "abs_tolerance": 0.00001,
+  "adapter": {
+    "backend": "Metal",
+    "device_type": "IntegratedGpu",
+    "name": "Apple M5"
+  },
+  "error": null,
+  "failed_points": 0,
+  "gpu_errors": [],
+  "max_abs": 1.1563976825001987e-6,
+  "max_relative": 0.00011029648824025717,
+  "points": 1190,
+  "relative_tolerance": 0.00003,
+  "worst": {
+    "component": 0,
+    "cpu_f64": [
+      4.249293124608177,
+      4.003733048897794,
+      3.416922788386052,
+      1.0
+    ],
+    "gpu_f32": [
+      4.249294281005859,
+      4.003733158111572,
+      3.4169235229492188,
+      1.0
+    ],
+    "index": 716,
+    "normal": [
+      0.0,
+      1.0,
+      0.0
+    ],
+    "world": [
+      0.515625,
+      3.546875,
+      -0.515625
+    ]
+  }
+}

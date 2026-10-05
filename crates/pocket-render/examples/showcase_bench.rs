@@ -44,6 +44,14 @@ impl AssetSource for TrackedSource {
     fn request(&mut self, path: &str) {
         self.source.request(path);
     }
+    fn request_baked_gi(&mut self, path: &str) { self.source.request_baked_gi(path); }
+    fn poll_baked_gi(&mut self) -> Vec<(String, Result<pocket_assets::gi::BakedGi, String>)> {
+        self.source.poll_baked_gi()
+    }
+    fn request_neural_gi(&mut self, path: &str) { self.source.request_neural_gi(path); }
+    fn poll_neural_gi(&mut self) -> Vec<(String, Result<pocket_assets::gi::NeuralGi, String>)> {
+        self.source.poll_neural_gi()
+    }
 
     fn poll(&mut self) -> Vec<(String, Result<ModelAsset, String>)> {
         let ready = self.source.poll();
@@ -215,6 +223,9 @@ fn load_frame(root: &Path) -> Result<(RenderFrame, Vec<String>), String> {
                 },
                 sky_color: environment.sky_color.map(|value| value as f32),
                 ambient: environment.ambient as f32,
+                baked_gi: environment.baked_gi,
+                neural_gi: environment.neural_gi,
+                gi_intensity: environment.gi_intensity as f32,
                 fog_density: environment.fog_density as f32,
                 fog_color: environment.fog_color.map(|value| value as f32),
                 exposure_ev: environment.exposure_ev as f32,
@@ -313,6 +324,9 @@ fn run() -> Result<(), String> {
             return Err("asset loading/warmup exceeded 120 seconds".into());
         }
         let stats = renderer.render(&view, started.elapsed().as_secs_f64());
+        if let Some(error) = renderer.gi_error() {
+            return Err(format!("GI asset failed during warmup: {error}"));
+        }
         gpu.device
             .poll(wgpu::PollType::wait_indefinitely())
             .map_err(|error| error.to_string())?;

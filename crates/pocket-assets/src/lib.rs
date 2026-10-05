@@ -5,6 +5,7 @@
 
 pub mod animation;
 pub mod frame;
+pub mod gi;
 #[cfg(feature = "import")]
 pub mod import;
 pub mod mesh;
@@ -44,7 +45,7 @@ impl Persisted for Camera {
 
 impl Persisted for Environment {
     const NAME: &'static str = "Environment";
-    const VERSION: u32 = 1;
+    const VERSION: u32 = 3;
 
     fn trace(t: &mut Tracer, s: &Samples) -> serde_reflection::Result<()> {
         t.trace_type::<SkyKind>(s)?;

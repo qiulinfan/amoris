@@ -272,6 +272,7 @@ pub struct Renderer {
     targets: Targets,
     post: Post,
     sky: Sky,
+    gi: crate::gi::ProbeVolume,
     profiler: GpuProfiler,
     /// Gaussian splats (splat/): prepared before the opaque pass, drawn after it.
     pub splats: crate::splat::Splats,
@@ -450,6 +451,9 @@ impl Renderer {
                 entry(5, frag, buf_ty(true)),
                 entry(6, frag, uni_ty()),
                 entry(7, frag, buf_ty(true)),
+                entry(8, frag, uni_ty()),
+                entry(9, frag, buf_ty(true)),
+                entry(10, frag, buf_ty(true)),
             ],
         });
         let tex_entry = |b: u32| {
@@ -688,6 +692,7 @@ impl Renderer {
             targets: Targets::new(device, width, height),
             post: Post::new(device, output),
             sky: Sky::new(device),
+            gi: crate::gi::ProbeVolume::new(device, &gpu.queue),
             profiler: GpuProfiler::new(device, &gpu.queue, gpu.caps.timestamps),
             splats: crate::splat::Splats::new(gpu),
             view_buf: uniform(device, "view", std::mem::size_of::<ViewUniform>() as u64),
@@ -775,6 +780,9 @@ impl Renderer {
 
     pub fn set_asset_source(&mut self, source: Box<dyn AssetSource>) {
         self.loader = source;
+        self.gi.asset.clear();
+        self.gi.loading = false;
+        self.gi.clear(&self.gpu.queue);
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
@@ -822,6 +830,11 @@ impl Renderer {
 
     /// Applies a frame of the render feed; `now_s` is the wall clock (interpolation).
     pub fn apply(&mut self, frame: RenderFrame, now_s: f64) {
+        if frame.reset {
+            self.gi.asset.clear();
+            self.gi.loading = false;
+            self.gi.clear(&self.gpu.queue);
+        }
         if frame.tick != self.scene.tick || frame.reset {
             self.tick_arrived = now_s;
         }
@@ -907,6 +920,53 @@ impl Renderer {
         };
         self.scene.retry_pending(&mut pools);
     }
+
+    fn poll_gi(&mut self) {
+        let neural_path = self.scene.environment.as_ref().map_or("", |e| e.neural_gi.as_str());
+        let is_neural = !neural_path.is_empty();
+        let path = if is_neural { neural_path } else { self.scene.environment.as_ref().map_or("", |e| e.baked_gi.as_str()) }.to_owned();
+        let intensity = self.scene.environment.as_ref().map_or(1.0, |e| e.gi_intensity);
+        self.gi.set_intensity(&self.gpu.queue, intensity);
+        if path != self.gi.asset || is_neural != self.gi.requested_neural {
+            self.gi.asset = path.clone();
+            self.gi.requested_neural = is_neural;
+            self.gi.clear(&self.gpu.queue);
+            self.gi.loading = !path.is_empty();
+            if !path.is_empty() {
+                if is_neural { self.loader.request_neural_gi(&path); } else { self.loader.request_baked_gi(&path); }
+            }
+        }
+        for (loaded_path, result) in self.loader.poll_baked_gi() {
+            if loaded_path != self.gi.asset || is_neural { continue; }
+            self.gi.loading = false;
+            match result.and_then(|data| self.gi.upload(&self.gpu.device, &self.gpu.queue, data)) {
+                Ok(()) => log::info!("loaded baked GI: {loaded_path}"),
+                Err(error) => {
+                    log::error!("baked GI {loaded_path}: {error}");
+                    self.gi.error = Some(error);
+                }
+            }
+        }
+        for (loaded_path, result) in self.loader.poll_neural_gi() {
+            if loaded_path != self.gi.asset || !is_neural { continue; }
+            self.gi.loading = false;
+            match result.and_then(|data| self.gi.upload_neural(&self.gpu.device, &self.gpu.queue, data)) {
+                Ok(()) => log::info!("loaded neural GI: {loaded_path}"),
+                Err(error) => {
+                    log::error!("neural GI {loaded_path}: {error}");
+                    self.gi.error = Some(error);
+                }
+            }
+        }
+    }
+
+    /// Loads a validated GI field explicitly (capture tools and GPU experiments).
+    pub fn set_baked_gi(&mut self, data: pocket_assets::gi::BakedGi) -> Result<(), String> {
+        self.gi.upload(&self.gpu.device, &self.gpu.queue, data)
+    }
+
+    /// A failed GI asset must not be mistaken for a successfully measured lighting mode.
+    pub fn gi_error(&self) -> Option<&str> { self.gi.error.as_deref() }
 
     /// Writes the scene's changes to the GPU, growing buffers as needed.
     fn sync(&mut self) {
@@ -1043,7 +1103,7 @@ impl Renderer {
             }
             self.light_count = lights.len() as u32;
         }
-        let key = (self.meshes.generation, self.materials.generation, 0);
+        let key = (self.meshes.generation, self.materials.generation, self.gi.generation);
         if grown || self.bind.is_none() || key != self.bind_key {
             self.bind_key = key;
             self.rebind();
@@ -1117,6 +1177,9 @@ impl Renderer {
                 b(5, &self.lights),
                 b(6, &self.cluster_buf),
                 b(7, &self.cluster_lights),
+                b(8, &self.gi.params),
+                b(9, &self.gi.radiance),
+                b(10, &self.gi.distances),
             ],
         });
         let textures = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -1167,6 +1230,7 @@ impl Renderer {
         let cpu = web_time();
         self.collect_pick();
         self.poll_assets();
+        self.poll_gi();
         self.sync();
         let device = self.gpu.device.clone();
         let queue = self.gpu.queue.clone();
@@ -1540,7 +1604,7 @@ impl Renderer {
             meshes: self.meshes.len(),
             materials: self.materials.len(),
             lights: self.light_count as usize,
-            pending_assets: self.scene.pending(),
+            pending_assets: self.scene.pending() + usize::from(self.gi.loading),
             tick: self.scene.tick,
             backend: self.gpu.backend_name(),
         };

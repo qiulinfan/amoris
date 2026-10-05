@@ -1,0 +1,12 @@
+[project]
+name = "amoris-neural-gi"
+version = "0.1.0"
+description = "Offline approximation of Amoris baked diffuse GI with a small shader MLP"
+requires-python = ">=3.12"
+dependencies = [
+    "torch>=2.8",
+    "numpy>=2.0",
+]
+
+[tool.uv]
+package = false

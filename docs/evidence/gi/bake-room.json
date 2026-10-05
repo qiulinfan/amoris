@@ -1,0 +1,1 @@
+{"bake_seconds":0.15815125,"classification_rays":4000,"distance_rays":61440,"invalid_probe_indices":[26,31,53,56,78],"load_seconds":0.000250834,"output":"samples/gi-room/lighting/probes.json","probes":125,"radiance_rays":122880,"rays":445927,"scene_signature":"fnv1a64-static-diffuse-v1:cd6aee6e3adfa945:c0a5649fa1d2535d","secondary_rays":257607,"shadow_rays":0,"triangles":96}
