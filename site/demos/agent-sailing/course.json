@@ -1,0 +1,51 @@
+{
+  "id": "agent-sailing-downwind-v1",
+  "frozen_before_model_runs": true,
+  "seed": 1,
+  "rate_hz": 60,
+  "boat_start": {
+    "position": [
+      0,
+      0,
+      0
+    ],
+    "heading_deg": 90
+  },
+  "wind": {
+    "from_deg": 270,
+    "speed_m_s": 6
+  },
+  "cargo_positions": {
+    "Crate1": [
+      5,
+      0,
+      2.2
+    ],
+    "Crate2": [
+      15,
+      0,
+      -5
+    ],
+    "Crate3": [
+      25,
+      0,
+      2
+    ],
+    "Crate4": [
+      35,
+      0,
+      10
+    ]
+  },
+  "rules": "Original sailing rules retained unchanged: take within3m horizontal and3m vertical, Crew intent consumed eachtry.",
+  "navigation_executor": "Explicitly disclosed game-script Helm executor; target must be observed and within30m, no route/tacking/nearest-target policy.",
+  "source_ship": "https://polyhaven.com/a/dutch_ship_medium",
+  "license": "CC0-1.0",
+  "constraints": {
+    "observe_radius_m": 30,
+    "wait_ticks": [
+      1,
+      120
+    ]
+  }
+}

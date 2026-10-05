@@ -1,0 +1,17 @@
+# The charter's four checks on the sailing scene (checks.md 8.1).
+[run]
+seeds = [1, 2, 3]
+ticks = 600
+inputs = "checks/inputs.jsonl"
+
+[fork]
+at = [120, 300]
+ticks = 120
+branch_inputs = "checks/branch.jsonl"
+
+[reload]
+at = [60, 240]
+
+# The page runs it in a Web Worker against the native hash chains (checks.md 7.1 and 7.2).
+[web]
+workload = true

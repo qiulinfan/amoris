@@ -1,0 +1,271 @@
+{
+  "format": "pocket-scene",
+  "version": 1,
+  "entities": [
+    {
+      "name": "Sea",
+      "prefab": {
+        "kind": "island_sea"
+      },
+      "components": {
+        "AudioSource": {
+          "clip": "sfx:surf",
+          "volume": 0.5,
+          "spatial": false
+        }
+      }
+    },
+    {
+      "name": "Breeze",
+      "prefab": {
+        "kind": "breeze",
+        "from_deg": 270,
+        "speed": 6
+      },
+      "components": {
+        "AudioSource": {
+          "clip": "sfx:wind",
+          "volume": 0.35,
+          "spatial": false
+        }
+      }
+    },
+    {
+      "name": "Sloop",
+      "prefab": {
+        "kind": "sloop",
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "heading_deg": 90
+      },
+      "components": {
+        "Boat": {
+          "hoist": 1,
+          "hoist_now": 1,
+          "sheet": 1,
+          "sheet_now": 1
+        },
+        "Crew": {},
+        "Tally": {},
+        "Log": {},
+        "Model": {
+          "mesh": "capsule",
+          "scale": [
+            2.25,
+            0.85,
+            6.8
+          ],
+          "color": [
+            0.018,
+            0.08,
+            0.12,
+            1
+          ],
+          "roughness": 0.3,
+          "visible": false
+        },
+        "Helm": {}
+      }
+    },
+    {
+      "name": "Crate1",
+      "prefab": {
+        "kind": "crate",
+        "position": [
+          5,
+          0,
+          2.2
+        ],
+        "yaw_deg": 10
+      },
+      "components": {
+        "Cargo": {
+          "value": 1
+        },
+        "Model": {
+          "mesh": "cube",
+          "scale": [
+            1.1,
+            1.1,
+            1.1
+          ],
+          "color": [
+            0.65,
+            0.33,
+            0.09,
+            1
+          ],
+          "roughness": 0.8
+        }
+      }
+    },
+    {
+      "name": "Crate2",
+      "prefab": {
+        "kind": "crate",
+        "position": [
+          15,
+          0,
+          -5
+        ],
+        "yaw_deg": 35
+      },
+      "components": {
+        "Cargo": {
+          "value": 2
+        },
+        "Model": {
+          "mesh": "cube",
+          "scale": [
+            1.1,
+            1.1,
+            1.1
+          ],
+          "color": [
+            0.65,
+            0.33,
+            0.09,
+            1
+          ],
+          "roughness": 0.8
+        }
+      }
+    },
+    {
+      "name": "Crate3",
+      "prefab": {
+        "kind": "crate",
+        "position": [
+          25,
+          0,
+          2
+        ],
+        "yaw_deg": 60
+      },
+      "components": {
+        "Cargo": {
+          "value": 1
+        },
+        "Model": {
+          "mesh": "cube",
+          "scale": [
+            1.1,
+            1.1,
+            1.1
+          ],
+          "color": [
+            0.65,
+            0.33,
+            0.09,
+            1
+          ],
+          "roughness": 0.8
+        }
+      }
+    },
+    {
+      "name": "Crate4",
+      "prefab": {
+        "kind": "crate",
+        "position": [
+          35,
+          0,
+          10
+        ],
+        "yaw_deg": 80
+      },
+      "components": {
+        "Cargo": {
+          "value": 3
+        },
+        "Model": {
+          "mesh": "cube",
+          "scale": [
+            1.1,
+            1.1,
+            1.1
+          ],
+          "color": [
+            0.65,
+            0.33,
+            0.09,
+            1
+          ],
+          "roughness": 0.8
+        }
+      }
+    },
+    {
+      "name": "Sun",
+      "components": {
+        "Transform": {
+          "position": [
+            0,
+            50,
+            0
+          ],
+          "rotation": [
+            -0.3535534,
+            0.3535534,
+            0.1464466,
+            0.8535534
+          ]
+        },
+        "Light": {
+          "kind": "directional",
+          "intensity": 6.0,
+          "shadows": true
+        }
+      }
+    },
+    {
+      "name": "Sky",
+      "components": {
+        "Environment": {
+          "fog_density": 0.0012,
+          "bloom": 0.08,
+          "ambient": 1.1
+        }
+      }
+    },
+    {
+      "name": "Dutch Ship",
+      "components": {
+        "Transform": {
+          "position": [
+            0,
+            0.38,
+            0
+          ],
+          "rotation": [
+            0,
+            0.7071067811865476,
+            0,
+            0.7071067811865476
+          ]
+        },
+        "Model": {
+          "mesh": "models/third-party/DutchShip.glb",
+          "scale": [
+            0.28,
+            0.28,
+            0.28
+          ]
+        },
+        "ShipPart": {
+          "boat": 3,
+          "ox": 0,
+          "oy": 0.38,
+          "oz": 0,
+          "qx": 0,
+          "qy": 0.7071067811865476,
+          "qz": 0,
+          "qw": 0.7071067811865476
+        }
+      }
+    }
+  ]
+}
