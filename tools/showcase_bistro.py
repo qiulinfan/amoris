@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import struct
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -26,6 +27,22 @@ def sha(path: Path) -> str:
 
 def write_json(path: Path, value: object) -> None:
     path.write_text(json.dumps(value, indent=2) + "\n")
+
+
+def dds_bc5_format(path: Path) -> str | None:
+    """Identify two-channel BC5 from the DDS pixel-format/DX10 header, not a filename guess."""
+    with path.open("rb") as stream:
+        header = stream.read(148)
+    if len(header) < 128 or header[:4] != b"DDS ":
+        return None
+    fourcc = header[84:88]
+    if fourcc in (b"ATI2", b"BC5U"):
+        return "BC5_UNORM"
+    if fourcc == b"BC5S":
+        return "BC5_SNORM"
+    if fourcc == b"DX10" and len(header) >= 148:
+        return {82: "BC5_TYPELESS", 83: "BC5_UNORM", 84: "BC5_SNORM"}.get(struct.unpack_from("<I", header, 128)[0])
+    return None
 
 
 def parser() -> argparse.ArgumentParser:
@@ -248,8 +265,14 @@ def main(args) -> None:
             continue
         destination = texture_dir / (source.stem + ".png")
         command = [str(args.magick), str(source) + "[0]"]
+        bc5 = dds_bc5_format(source) if source.stem.endswith("_Normal") else None
         if source.stem.endswith("_Normal"):
             command += ["-channel", "G", "-negate", "+channel"]
+            if bc5:
+                # BC5 stores only X/Y. Keep the existing DirectX -> glTF green inversion above,
+                # then reconstruct positive Z; changing only B preserves R/G and alpha.
+                command += ["-channel", "B", "-fx",
+                            "0.5+0.5*sqrt(max(1-(2*r-1)*(2*r-1)-(2*g-1)*(2*g-1),0))", "+channel"]
         command += ["-depth", "8", "-define", "png:color-type=6", str(destination)]
         subprocess.run(command, check=True, timeout=120)
         alpha_min = 1.0
@@ -261,7 +284,10 @@ def main(args) -> None:
             "source": str(source), "source_sha256": item["sha256"],
             "converted": str(destination), "sha256": sha(destination),
             "conversion": "DDS level 0 to lossless 8-bit PNG" +
-                          ("; green inverted: DirectX to OpenGL normal" if source.stem.endswith("_Normal") else ""),
+                          ("; green inverted: DirectX to OpenGL normal" if source.stem.endswith("_Normal") else "") +
+                          (f"; {bc5} positive normal Z reconstructed from RG after green inversion" if bc5 else ""),
+            "normal_z_reconstructed": bool(bc5),
+            "dds_normal_format": bc5,
             "alpha_min": alpha_min,
         })
         if len(records) % 25 == 0:
@@ -283,6 +309,8 @@ def main(args) -> None:
         "created_at": datetime.now(timezone.utc).isoformat(),
         "delivery": str(args.output_root / "BistroExterior.glb"),
         "sha256": sha(args.output_root / "BistroExterior.glb"),
+        "normal_z_reconstructed_textures": sum(record["normal_z_reconstructed"] for record in records),
+        "normal_conversion": "Existing DirectX-to-glTF green inversion, then positive Z reconstructed for header-identified BC5 normal textures only.",
         "source_meshes": source["mesh_objects"], "imported_meshes": imported["mesh_objects"],
         "source_triangles": source["total_triangles"], "imported_triangles": imported["total_triangles"],
         "source_bounds": source["bounds_blender_xyz_m"], "imported_bounds": imported["bounds_blender_xyz_m"],

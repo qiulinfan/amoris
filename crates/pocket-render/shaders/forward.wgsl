@@ -168,14 +168,27 @@ fn surface(in: VsOut, facing: bool) -> Surface {
         s.metallic *= mr.b;
     }
     var n = normalize(in.normal);
+    let view_direction = normalize(view.camera_pos.xyz - in.world);
+    var geometric = cross(dpdx(in.world), dpdy(in.world));
+    if dot(geometric, geometric) > 1e-12 {
+        geometric = normalize(geometric);
+        if dot(geometric, view_direction) < 0.0 { geometric = -geometric; }
+    } else {
+        geometric = select(-n, n, facing);
+    }
+    if (!facing) { n = -n; }
+    if dot(n, geometric) < 0.0 { n = -n; }
+    if dot(n, view_direction) <= 0.001 { n = geometric; }
     if (m.normal_tex != NO_TEXTURE) {
         let t = normalize(in.tangent.xyz - n * dot(n, in.tangent.xyz));
         let b = cross(n, t) * in.tangent.w;
         let tn = textureSampleGrad(tex_linear, tex_sampler, in.uv, m.normal_tex, du, dv).xyz * 2.0 - 1.0;
-        n = normalize(t * tn.x + b * tn.y + n * tn.z);
-    }
-    if (!facing) {
-        n = -n;
+        let candidate = t * tn.x + b * tn.y + n * tn.z;
+        if dot(candidate, candidate) > 1e-12 {
+            let mapped = normalize(candidate);
+            // Match the path tracer: a malformed/inward normal map must not invert transport.
+            if dot(mapped, geometric) > 0.001 && dot(mapped, view_direction) > 0.001 { n = mapped; }
+        }
     }
     s.n = n;
     s.emissive = m.emissive;

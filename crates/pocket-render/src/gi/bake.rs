@@ -758,6 +758,18 @@ impl RayScene {
                 if normal == Vec3::ZERO {
                     normal = geometric_normal;
                 }
+                // Orient the geometric and shading frames before mapping, as in the GPU PT.
+                // Back faces of double-sided meshes still shade toward the incoming ray.
+                if det < 0.0 {
+                    normal = -normal;
+                    geometric_normal = -geometric_normal;
+                }
+                if normal.dot(geometric_normal) < 0.0 {
+                    normal = -normal;
+                }
+                if normal.dot(-direction) <= 0.001 {
+                    normal = geometric_normal;
+                }
                 if material.normal_texture.is_some() {
                     let tangent = triangle.tangent[0] * weight.x
                         + triangle.tangent[1] * weight.y
@@ -768,11 +780,12 @@ impl RayScene {
                     let n = sample_texture(surface, material.normal_texture, uv, false).truncate()
                         * 2.0
                         - Vec3::ONE;
-                    normal = (t * n.x + bitangent * n.y + normal * n.z).normalize_or(normal);
-                }
-                if det < 0.0 {
-                    normal = -normal;
-                    geometric_normal = -geometric_normal;
+                    let mapped = (t * n.x + bitangent * n.y + normal * n.z).normalize_or(normal);
+                    // Reject maps below the geometric/view hemisphere instead of losing sun
+                    // light or launching cosine-sampled bounce rays into the surface itself.
+                    if mapped.dot(geometric_normal) > 0.001 && mapped.dot(-direction) > 0.001 {
+                        normal = mapped;
+                    }
                 }
                 let metallic = material.metallic
                     * sample_texture(surface, material.metallic_roughness_texture, uv, false).z;
@@ -1594,6 +1607,78 @@ mod tests {
         let two = scene.trace_radiance(Vec3::Y, -Vec3::Y, 2, 3).unwrap();
         assert_eq!(one, Vec3::ZERO);
         assert!(two.x > 0.35 && two.x < 0.4, "{two:?}");
+    }
+
+    #[test]
+    fn inward_normal_map_preserves_sun_and_bounces_but_valid_maps_still_apply() {
+        let make_scene = |pixel: [u8; 4]| {
+            let mut scene = empty(Vec3::splat(0.5));
+            let mut material = surface(Vec3::splat(0.8), Vec3::ZERO, true);
+            material.material.normal_texture = Some(0);
+            material.images = Arc::new(vec![ImageData {
+                name: "normal-direction-regression".into(),
+                width: 1,
+                height: 1,
+                srgb: false,
+                rgba8: pixel.to_vec(),
+            }]);
+            scene
+                .add_mesh(
+                    &pocket_assets::primitives::primitive("plane").unwrap(),
+                    Mat4::from_scale(Vec3::splat(10.0)),
+                    material,
+                )
+                .unwrap();
+            scene.lights.push(SceneLight {
+                light: Light {
+                    kind: LightKind::Directional,
+                    intensity: 3.0,
+                    shadows: true,
+                    color: [1.0; 3],
+                    ..Light::default()
+                },
+                position: Vec3::ZERO,
+                direction: -Vec3::Y,
+            });
+            scene.build_node(0, scene.triangles.len());
+            scene
+        };
+        let invalid = make_scene([127, 128, 0, 255]);
+        let hit = invalid.intersect(Vec3::Y, -Vec3::Y, 10.0).unwrap();
+        assert!(hit.normal.dot(Vec3::Y) > 0.999, "{hit:?}");
+        let direct = invalid.trace_radiance(Vec3::Y, -Vec3::Y, 1, 3).unwrap();
+        let bounced = invalid.trace_radiance(Vec3::Y, -Vec3::Y, 2, 3).unwrap();
+        assert!(
+            direct.min_element() > 0.7,
+            "the sun must survive: {direct:?}"
+        );
+        assert!(
+            bounced.min_element() > direct.min_element() + 0.3,
+            "the bounce must escape the surface: {direct:?}, {bounced:?}"
+        );
+        let valid = make_scene([191, 128, 238, 255]);
+        let hit = valid.intersect(Vec3::Y, -Vec3::Y, 10.0).unwrap();
+        assert!(
+            hit.normal.x > 0.4 && hit.normal.y > 0.8 && hit.normal.y < 0.95,
+            "a legal normal map must still perturb shading: {hit:?}"
+        );
+        let back = valid.intersect(-Vec3::Y, Vec3::Y, 10.0).unwrap();
+        assert!(
+            !back.front_face
+                && back.normal.dot(back.geometric_normal) > 0.8
+                && back.normal.dot(-Vec3::Y) > 0.8,
+            "double-sided frame: {back:?}"
+        );
+
+        // Parse and validate the complete forward shader without creating a GPU device.
+        let source = crate::shader_source("forward");
+        let module = wgpu::naga::front::wgsl::parse_str(&source).unwrap();
+        wgpu::naga::valid::Validator::new(
+            wgpu::naga::valid::ValidationFlags::all(),
+            wgpu::naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .unwrap();
     }
 
     #[test]
