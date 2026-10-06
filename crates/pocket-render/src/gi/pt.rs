@@ -21,6 +21,28 @@ use crate::sky::{Sky, SkyParams};
 pub use super::rt::RayCamera;
 const COUNTERS: u64 = 16;
 
+/// Explicit upload settings for static scenes; these do not change path sampling.
+#[derive(Clone, Copy, Debug, Serialize)]
+pub struct PtSceneOptions {
+    /// Maximum width and height of the common material texture array, in texels.
+    pub texture_size: u32,
+}
+
+impl Default for PtSceneOptions {
+    fn default() -> Self {
+        Self { texture_size: 2048 }
+    }
+}
+
+impl PtSceneOptions {
+    pub fn validate(&self) -> Result<(), String> {
+        if !(1..=2048).contains(&self.texture_size) {
+            return Err("PT texture size must be in 1..=2048".into());
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct PtOptions {
     pub width: u32,
@@ -218,6 +240,7 @@ pub struct PtStats {
     pub adapter: String,
     pub scene_signature: String,
     pub options: PtOptions,
+    pub scene_options: PtSceneOptions,
     pub triangles: usize,
     pub materials: usize,
     pub lights: usize,
@@ -271,12 +294,74 @@ fn storage_upload<T: Pod>(
     data: &[T],
 ) -> Result<wgpu::Buffer, String> {
     let bytes = std::mem::size_of_val(data) as u64;
-    if bytes > u64::from(device.limits().max_storage_buffer_binding_size) {
+    validate_storage_bytes(label, bytes, &device.limits())?;
+    Ok(upload(device, label, data, wgpu::BufferUsages::STORAGE))
+}
+
+fn validate_storage_bytes(label: &str, bytes: u64, limits: &wgpu::Limits) -> Result<(), String> {
+    if bytes > limits.max_storage_buffer_binding_size || bytes > limits.max_buffer_size {
         return Err(format!(
-            "{label} exceeds this device's storage binding limit"
+            "{label} needs {bytes} bytes; GPU storage/buffer limits are {}/{} bytes",
+            limits.max_storage_buffer_binding_size, limits.max_buffer_size
         ));
     }
-    Ok(upload(device, label, data, wgpu::BufferUsages::STORAGE))
+    Ok(())
+}
+
+fn validate_triangle_capacity(count: usize, limits: &wgpu::Limits) -> Result<(), String> {
+    let count = u64::try_from(count).map_err(|_| "PT triangle count overflow")?;
+    if count == 0
+        || count > u64::from(limits.max_blas_primitive_count)
+        || count > u64::from(u32::MAX) / 3
+    {
+        return Err(format!(
+            "PT triangle count {count} exceeds BLAS/vertex limits ({} primitives, {} vertices)",
+            limits.max_blas_primitive_count,
+            u32::MAX
+        ));
+    }
+    validate_storage_bytes(
+        "PT triangle shading data",
+        count * std::mem::size_of::<TriangleGpu>() as u64,
+        limits,
+    )?;
+    let vertex_bytes = count * 3 * std::mem::size_of::<[f32; 3]>() as u64;
+    if vertex_bytes > limits.max_buffer_size {
+        return Err(format!(
+            "PT BLAS vertices need {vertex_bytes} bytes; GPU buffer limit is {} bytes",
+            limits.max_buffer_size
+        ));
+    }
+    Ok(())
+}
+
+fn texture_shape(
+    source_width: u32,
+    source_height: u32,
+    layers: usize,
+    options: &PtSceneOptions,
+    limits: &wgpu::Limits,
+) -> Result<[u32; 2], String> {
+    options.validate()?;
+    let layers = layers.max(1) as u64;
+    if layers > u64::from(limits.max_texture_array_layers) {
+        return Err(format!(
+            "PT needs {layers} texture layers; GPU supports {}",
+            limits.max_texture_array_layers
+        ));
+    }
+    let width = source_width.max(1).min(options.texture_size);
+    let height = source_height.max(1).min(options.texture_size);
+    if width > limits.max_texture_dimension_2d || height > limits.max_texture_dimension_2d {
+        return Err("PT texture dimensions exceed the GPU limit".into());
+    }
+    let bytes = u64::from(width) * u64::from(height) * layers * 4;
+    if bytes > 512 * 1024 * 1024 {
+        return Err(format!(
+            "PT texture array needs {bytes} bytes, exceeding 512 MiB; choose a smaller explicit texture_size / --texture-size"
+        ));
+    }
+    Ok([width, height])
 }
 pub(crate) fn wait(device: &wgpu::Device, submission: wgpu::SubmissionIndex) -> Result<(), String> {
     device
@@ -418,6 +503,7 @@ pub struct PathTracer {
     pub(crate) errors: Arc<Mutex<Vec<String>>>,
     adapter: String,
     scene_signature: String,
+    scene_options: PtSceneOptions,
     triangle_count: usize,
     material_count: usize,
     light_count: usize,
@@ -432,6 +518,15 @@ pub struct PathTracer {
 
 impl PathTracer {
     pub fn new(gpu: &Gpu, scene: &RayScene) -> Result<Self, String> {
+        Self::with_scene_options(gpu, scene, &PtSceneOptions::default())
+    }
+
+    pub fn with_scene_options(
+        gpu: &Gpu,
+        scene: &RayScene,
+        options: &PtSceneOptions,
+    ) -> Result<Self, String> {
+        options.validate()?;
         if gpu.info.backend != wgpu::Backend::Metal {
             return Err("surface PT currently requires Metal".into());
         }
@@ -440,8 +535,15 @@ impl PathTracer {
             return Err("adapter has no Metal ray-query support".into());
         }
         let timestamp_enabled = have.contains(wgpu::Features::TIMESTAMP_QUERY);
+        let adapter_limits = gpu.adapter.limits();
         let mut limits =
-            wgpu::Limits::default().using_acceleration_structure_values(gpu.adapter.limits());
+            wgpu::Limits::default().using_acceleration_structure_values(adapter_limits.clone());
+        // Native scene data can exceed WebGPU's default 128 MiB storage limit. Request the real
+        // adapter limits explicitly, then validate resource bytes before building/uploading them.
+        limits.max_storage_buffer_binding_size = adapter_limits.max_storage_buffer_binding_size;
+        limits.max_buffer_size = adapter_limits.max_buffer_size;
+        limits.max_texture_array_layers = adapter_limits.max_texture_array_layers;
+        validate_triangle_capacity(scene.triangle_count(), &limits)?;
         // Reserve enough native storage slots for the toy online NRC group added by the caller.
         limits.max_storage_buffers_per_shader_stage =
             16.min(gpu.adapter.limits().max_storage_buffers_per_shader_stage);
@@ -539,30 +641,24 @@ impl PathTracer {
         if materials.is_empty() {
             return Err("PT scene needs at least one material".into());
         }
+        validate_storage_bytes(
+            "PT full materials",
+            (materials.len() * std::mem::size_of::<MaterialGpu>()) as u64,
+            &device.limits(),
+        )?;
         let texture_layers = images.len();
-        if texture_layers > device.limits().max_texture_array_layers as usize {
-            return Err("too many texture layers for GPU".into());
-        }
         // A single filtered array keeps material lookup bindless without optional binding-array features.
         // The original image aspect is retained through UV coordinates; resizing to common dimensions
         // changes texel density only. Bound upload size so test assets cannot exhaust unified memory.
-        let width = images
-            .iter()
-            .map(|(i, _)| i.width)
-            .max()
-            .unwrap_or(1)
-            .min(2048);
-        let height = images
-            .iter()
-            .map(|(i, _)| i.height)
-            .max()
-            .unwrap_or(1)
-            .min(2048);
-        if u64::from(width) * u64::from(height) * texture_layers.max(1) as u64 * 4
-            > 512 * 1024 * 1024
-        {
-            return Err("PT texture array exceeds 512 MiB".into());
-        }
+        let source_width = images.iter().map(|(i, _)| i.width).max().unwrap_or(1);
+        let source_height = images.iter().map(|(i, _)| i.height).max().unwrap_or(1);
+        let [width, height] = texture_shape(
+            source_width,
+            source_height,
+            texture_layers,
+            options,
+            &device.limits(),
+        )?;
         let textures = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("PT linear/sRGB source image array"),
             size: wgpu::Extent3d {
@@ -642,17 +738,15 @@ impl PathTracer {
             ..Default::default()
         });
 
-        let world_triangles: Vec<_> = scene.world_triangles().collect();
-        if world_triangles.is_empty() || world_triangles.len() > 1_000_000 {
-            return Err("PT requires 1..=1000000 triangles".into());
-        }
-        let mut positions = Vec::new();
-        let mut triangles = Vec::new();
+        // Stream world triangles directly; a large scene otherwise needs another full CPU copy.
+        let triangle_count = scene.triangle_count();
+        let mut positions = Vec::with_capacity(triangle_count * 3);
+        let mut triangles = Vec::with_capacity(triangle_count);
         let mut emitters = Vec::new();
         let mut power_cdf = 0.0;
         let mut bounds_min = Vec3::splat(f32::INFINITY);
         let mut bounds_max = Vec3::splat(f32::NEG_INFINITY);
-        for (index, tri) in world_triangles.iter().enumerate() {
+        for (index, tri) in scene.world_triangles().enumerate() {
             if tri.material >= materials.len() {
                 return Err("triangle material index out of range".into());
             }
@@ -895,6 +989,7 @@ impl PathTracer {
             errors,
             adapter: gpu.info.name.clone(),
             scene_signature: scene.scene_signature().into(),
+            scene_options: *options,
             triangle_count: triangles.len(),
             material_count: materials.len(),
             light_count,
@@ -1531,6 +1626,7 @@ impl PathTracer {
             adapter: self.adapter.clone(),
             scene_signature: self.scene_signature.clone(),
             options: options.clone(),
+            scene_options: self.scene_options,
             triangles: self.triangle_count,
             materials: self.material_count,
             lights: self.light_count,
@@ -1567,6 +1663,42 @@ impl PathTracer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn large_native_scene_capacity_uses_device_bytes_and_blas_limits() {
+        let mut limits =
+            wgpu::Limits::default().using_minimum_supported_acceleration_structure_values();
+        limits.max_storage_buffer_binding_size = 4 * 1024 * 1024 * 1024;
+        limits.max_buffer_size = 4 * 1024 * 1024 * 1024;
+        assert!(validate_triangle_capacity(2_829_226, &limits).is_ok());
+        limits.max_storage_buffer_binding_size = 128 * 1024 * 1024;
+        assert!(validate_triangle_capacity(2_829_226, &limits).is_err());
+        limits.max_storage_buffer_binding_size = 4 * 1024 * 1024 * 1024;
+        limits.max_blas_primitive_count = 2_000_000;
+        assert!(validate_triangle_capacity(2_829_226, &limits).is_err());
+        assert!(validate_triangle_capacity(0, &limits).is_err());
+        assert!(validate_triangle_capacity(u32::MAX as usize, &limits).is_err());
+    }
+
+    #[test]
+    fn texture_size_is_explicit_and_checked_against_layers_and_upload_bytes() {
+        let mut limits = wgpu::Limits::default();
+        limits.max_texture_array_layers = 2048;
+        let options = PtSceneOptions { texture_size: 512 };
+        assert_eq!(
+            texture_shape(2048, 4096, 405, &options, &limits).unwrap(),
+            [512, 512]
+        );
+        assert!(texture_shape(2048, 4096, 405, &PtSceneOptions::default(), &limits).is_err());
+        limits.max_texture_array_layers = 256;
+        assert!(texture_shape(2048, 4096, 405, &options, &limits).is_err());
+        assert_eq!(
+            texture_shape(32, 16, 0, &options, &limits).unwrap(),
+            [32, 16]
+        );
+        assert!(PtSceneOptions { texture_size: 0 }.validate().is_err());
+        assert!(PtSceneOptions { texture_size: 2049 }.validate().is_err());
+    }
     #[test]
     fn pt_gpu_abi_and_limits_are_explicit() {
         assert_eq!(std::mem::size_of::<TriangleGpu>(), 192);

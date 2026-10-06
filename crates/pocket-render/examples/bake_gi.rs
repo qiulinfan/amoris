@@ -1,7 +1,7 @@
 //! Offline world-space diffuse probe baking.
 //! cargo run --release -p pocket-render --example bake_gi -- PROJECT --output FILE
 //!   --origin x,y,z --spacing x,y,z --dims n,n,n --rays N --bounces N --seed N
-//!   [--distance-resolution N] [--max-distance N]
+//!   [--distance-resolution N] [--max-distance N] [--sky-cube FILE]
 
 #[cfg(all(not(target_arch = "wasm32"), feature = "import"))]
 fn main() {
@@ -18,10 +18,11 @@ fn main() {
 
 #[cfg(all(not(target_arch = "wasm32"), feature = "import"))]
 fn run() -> Result<(), String> {
-    use pocket_render::gi::bake::{BakeOptions, bake_project};
+    use pocket_render::gi::bake::{BakeOptions, RayScene, bake_project, bake_scene};
+    use pocket_render::gi::sky_radiance::SkyRadianceCube;
     use std::path::PathBuf;
 
-    const USAGE: &str = "usage: bake_gi PROJECT --output FILE --origin x,y,z --spacing x,y,z --dims n,n,n --rays N --bounces N --seed N [--distance-resolution N] [--max-distance N]";
+    const USAGE: &str = "usage: bake_gi PROJECT --output FILE --origin x,y,z --spacing x,y,z --dims n,n,n --rays N --bounces N --seed N [--distance-resolution N] [--max-distance N] [--sky-cube FILE]";
     let mut args = std::env::args().skip(1);
     let project = args.next().ok_or(USAGE)?;
     if project == "--help" || project == "-h" {
@@ -33,6 +34,7 @@ fn run() -> Result<(), String> {
     }
     let mut options = BakeOptions::default();
     let mut output = None;
+    let mut sky_cube = None;
     let mut seen = std::collections::BTreeSet::new();
     while let Some(flag) = args.next() {
         if !seen.insert(flag.clone()) {
@@ -53,12 +55,24 @@ fn run() -> Result<(), String> {
                 options.distance_resolution = number(&value, "distance resolution")?
             }
             "--max-distance" => options.max_distance = number(&value, "max distance")?,
+            "--sky-cube" => sky_cube = Some(PathBuf::from(value)),
             _ => return Err(format!("unknown option {flag}; {USAGE}")),
         }
     }
     let output = output.ok_or("--output FILE is required")?;
     options.validate()?;
-    let (asset, stats) = bake_project(&PathBuf::from(project), &options)?;
+    let root = PathBuf::from(project);
+    let (asset, stats) = if let Some(path) = sky_cube {
+        let start = std::time::Instant::now();
+        let mut scene = RayScene::from_project(&root)?;
+        scene.set_environment_cube(SkyRadianceCube::load(&path)?)?;
+        let load_seconds = start.elapsed().as_secs_f64();
+        let (asset, mut stats) = bake_scene(&scene, &options)?;
+        stats.load_seconds = load_seconds;
+        (asset, stats)
+    } else {
+        bake_project(&root, &options)?
+    };
     let bytes = serde_json::to_vec(&asset).map_err(|e| e.to_string())?;
     if bytes.len() > pocket_assets::gi::MAX_JSON_BYTES {
         return Err("serialized asset exceeds 64 MiB; split the volume".into());

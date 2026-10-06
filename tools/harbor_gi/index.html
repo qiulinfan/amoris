@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Harbor · Amoris 光照展示</title>
+  <style>
+    :root { color-scheme: dark; --background: #0e161e; --panel: #15212b; --line: #2a3a47; --text: #eef3f5; --muted: #9aabb8; --accent: #90c8dc; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--background); color: var(--text); font: 14px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
+    button, input, a { -webkit-tap-highlight-color: transparent; }
+    button { font: inherit; }
+    button, a { touch-action: manipulation; }
+    button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+    a { color: inherit; }
+    .shell { width: min(1280px, calc(100% - 64px)); margin: 0 auto; }
+    .header { height: 88px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--line); }
+    .brand { display: flex; align-items: center; gap: 13px; text-decoration: none; }
+    .brand img { width: 34px; height: 34px; }
+    .brand-name { font-weight: 650; font-size: 16px; letter-spacing: .025em; }
+    .brand-divider { width: 1px; height: 20px; background: var(--line); margin: 0 5px; }
+    .brand-game { color: var(--muted); font-size: 11px; letter-spacing: .18em; }
+    .editor-link { display: inline-flex; align-items: center; gap: 20px; color: #c4d6e1; text-decoration: none; font-size: 12px; }
+    .editor-link:hover { color: var(--accent); }
+    .intro { padding: 35px 0 25px; display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; }
+    .eyebrow { margin: 0 0 8px; color: var(--accent); font-size: 10px; letter-spacing: .18em; }
+    h1 { margin: 0; font-size: clamp(25px, 3vw, 36px); letter-spacing: -.035em; font-weight: 550; line-height: 1.3; }
+    .intro-copy { margin: 10px 0 0; color: var(--muted); font-size: 13px; }
+    .capture-tag { flex-shrink: 0; display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 11px; margin-bottom: 4px; }
+    .capture-tag::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
+    .viewer { position: relative; isolation: isolate; aspect-ratio: 16 / 9; overflow: hidden; border-radius: 12px; border: 1px solid #344854; background: #182733; }
+    .frame { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+    #before-image { z-index: 1; clip-path: inset(0 50% 0 0); }
+    .image-shade { position: absolute; z-index: 2; pointer-events: none; inset: 0; background: linear-gradient(180deg, rgba(5, 14, 20, .35), transparent 22%, transparent 78%, rgba(5, 14, 20, .35)); }
+    .view-caption { position: absolute; z-index: 3; left: 24px; top: 21px; pointer-events: none; display: flex; align-items: center; gap: 10px; font-size: 12px; text-shadow: 0 1px 8px #0008; }
+    .view-number { color: #cfdae1; font-size: 10px; letter-spacing: .12em; }
+    .view-caption::after { content: ""; height: 1px; width: 34px; background: #d1e6ed70; }
+    .image-label { position: absolute; z-index: 3; bottom: 23px; padding: 6px 12px; border: 1px solid #ffffff35; border-radius: 4px; color: #f2f6f7; background: #0b182c60; font-size: 11px; pointer-events: none; backdrop-filter: blur(6px); }
+    #before-label { left: 24px; }
+    #after-label { right: 24px; }
+    .divider { position: absolute; z-index: 3; left: 50%; top: 0; bottom: 0; width: 1px; background: #f4fcffcc; pointer-events: none; filter: drop-shadow(0 0 2px #0005); }
+    .divider-handle { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 43px; height: 43px; border-radius: 50%; border: 1px solid #eef7fa; background: #132731b8; display: flex; justify-content: center; align-items: center; gap: 10px; backdrop-filter: blur(8px); }
+    .divider-handle::before, .divider-handle::after { content: ""; width: 6px; height: 6px; border-top: 1px solid white; border-left: 1px solid white; }
+    .divider-handle::before { transform: rotate(-45deg); }
+    .divider-handle::after { transform: rotate(135deg); }
+    .comparison-range { position: absolute; z-index: 4; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: col-resize; touch-action: none; }
+    .viewer:has(.comparison-range:focus-visible) { outline: 2px solid var(--accent); outline-offset: 4px; }
+    .viewer[data-mode="after"] #before-image, .viewer[data-mode="after"] #before-label,
+    .viewer[data-mode="before"] #after-label { visibility: hidden; }
+    .viewer[data-mode="before"] #before-image { clip-path: none !important; }
+    .viewer:not([data-mode="compare"]) .divider, .viewer:not([data-mode="compare"]) .comparison-range { display: none; }
+    .loading { position: absolute; z-index: 5; inset: 0; display: grid; place-items: center; background: #182733; color: #bdced9; font-size: 13px; }
+    .loading[hidden] { display: none; }
+    .loading span { display: flex; align-items: center; gap: 10px; }
+    .loading span::before { content: ""; height: 12px; width: 12px; border: 1px solid #608499; border-top-color: #d7edf6; border-radius: 50%; animation: spin 1s linear infinite; }
+    .loading[data-error="true"] span::before { animation: none; background: #668799; border: none; height: 5px; width: 5px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 17px 0; }
+    .mode-group { display: inline-flex; padding: 3px; background: var(--panel); border: 1px solid var(--line); border-radius: 7px; gap: 3px; }
+    .mode-button { border: 0; background: transparent; color: var(--muted); padding: 7px 17px; font-size: 12px; border-radius: 4px; cursor: pointer; }
+    .mode-button:hover { color: var(--text); }
+    .mode-button[aria-pressed="true"] { color: #e8f4f8; background: #304653; }
+    .slider-hint { margin: 0; color: var(--muted); font-size: 11px; }
+    .slider-hint[hidden] { display: none; }
+    .detail { display: flex; justify-content: space-between; gap: 20px; align-items: baseline; padding: 10px 0 20px; }
+    #description { margin: 0; color: #b9c8d2; font-size: 13px; }
+    #resolution { margin: 0; font-size: 10px; letter-spacing: .07em; color: #728c9d; white-space: nowrap; }
+    .views { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 15px; }
+    .view-button { position: relative; display: grid; grid-template-columns: 115px 1fr; align-items: center; gap: 17px; padding: 9px; border: 1px solid var(--line); border-radius: 8px; background: #121e27; text-align: left; color: var(--muted); cursor: pointer; transition: border-color .18s, background .18s; min-width: 0; }
+    .view-button:hover { border-color: #5f7e91; background: #182631; }
+    .view-button[aria-pressed="true"] { border-color: #84b4c8; background: #1b2d38; color: var(--text); }
+    .thumbnail { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; display: block; border-radius: 4px; background: #243541; }
+    .view-text { min-width: 0; }
+    .view-text small { color: #7996a8; font-size: 9px; letter-spacing: .12em; display: block; margin-bottom: 2px; }
+    .view-text strong { font-size: 13px; font-weight: 500; }
+    .footer { margin: 29px 0 28px; padding-top: 20px; border-top: 1px solid var(--line); display: flex; justify-content: space-between; gap: 40px; color: #839aa9; font-size: 11px; }
+    .footer p { margin: 0; }
+    .limits { max-width: 730px; }
+    .capture-note { flex-shrink: 0; text-align: right; }
+    .capture-note span { color: #647d8d; }
+    .no-data { padding: 60px 0; color: var(--muted); }
+    [hidden] { display: none !important; }
+    @media (max-width: 900px) {
+      .shell { width: calc(100% - 36px); }
+      .header { height: 72px; }
+      .intro { padding-top: 26px; }
+      .capture-tag { display: none; }
+      .views { gap: 10px; }
+      .view-button { display: block; padding: 7px; }
+      .view-text { padding: 9px 3px 4px; }
+      .view-text small { display: none; }
+      .footer { gap: 24px; }
+    }
+    @media (max-width: 580px) {
+      .shell { width: calc(100% - 24px); }
+      .header { height: 65px; }
+      .brand { gap: 9px; }
+      .brand img { width: 27px; height: 27px; }
+      .brand-name { font-size: 14px; }
+      .brand-divider, .brand-game { display: none; }
+      .editor-link { gap: 8px; font-size: 11px; }
+      .intro { padding: 22px 0 18px; }
+      .intro-copy { font-size: 12px; max-width: 33em; }
+      .viewer { border-radius: 7px; }
+      .view-caption { left: 12px; top: 10px; font-size: 10px; gap: 7px; }
+      .view-caption::after { display: none; }
+      .image-label { bottom: 10px; padding: 3px 6px; font-size: 9px; }
+      #before-label { left: 10px; }
+      #after-label { right: 10px; }
+      .divider-handle { width: 34px; height: 34px; gap: 8px; }
+      .toolbar { gap: 8px; padding: 13px 0; align-items: flex-start; }
+      .mode-button { padding: 6px 10px; font-size: 11px; }
+      .slider-hint { font-size: 10px; max-width: 10em; text-align: right; padding-top: 5px; }
+      .detail { padding: 4px 0 15px; display: block; }
+      #description { font-size: 12px; }
+      #resolution { margin-top: 5px; font-size: 9px; }
+      .views { gap: 7px; }
+      .view-button { border-radius: 6px; padding: 5px; }
+      .view-text { padding: 7px 2px 3px; }
+      .view-text strong { font-size: 11px; }
+      .footer { margin-top: 23px; padding-top: 16px; display: block; }
+      .capture-note { text-align: left; margin-top: 13px !important; }
+    }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header class="header">
+      <a class="brand" href="./" aria-label="Amoris Harbor 光照展示">
+        <img src="logo.svg" alt="" width="34" height="34">
+        <span class="brand-name">Amoris</span><span class="brand-divider" aria-hidden="true"></span><span class="brand-game">HARBOR</span>
+      </a>
+      <a id="editor-link" class="editor-link" target="_blank" rel="noopener noreferrer">打开 Harbor 编辑器 <span aria-hidden="true">↗</span></a>
+    </header>
+    <main id="main" hidden>
+      <section class="intro" aria-labelledby="title">
+        <div>
+          <p class="eyebrow">HARBOR / LIGHT &amp; SEA</p>
+          <h1 id="title">Harbor 的探针光照</h1>
+          <p class="intro-copy">同一片港湾，同一束阳光。观察船身、帆与甲板之间的明暗变化。</p>
+        </div>
+        <div class="capture-tag" id="source-tag">真实 Amoris Metal 捕获</div>
+      </section>
+      <section aria-label="Harbor 光照画面对比">
+        <div id="viewer" class="viewer" data-mode="after">
+          <img id="after-image" class="frame" alt="">
+          <img id="before-image" class="frame" alt="">
+          <div class="image-shade" aria-hidden="true"></div>
+          <div class="view-caption"><span id="view-number" class="view-number">01</span><span id="view-label"></span></div>
+          <span id="before-label" class="image-label">原有光照</span>
+          <span id="after-label" class="image-label">探针 GI</span>
+          <div id="divider" class="divider" aria-hidden="true"><span class="divider-handle"></span></div>
+          <input id="comparison" class="comparison-range" type="range" min="0" max="100" value="50" step="1" aria-label="原有光照与探针 GI 的画面对比分界" aria-valuetext="原有光照占画面 50%">
+          <div id="loading" class="loading" role="status"><span id="loading-text">正在载入港湾画面…</span></div>
+        </div>
+        <div class="toolbar">
+          <div class="mode-group" role="group" aria-label="光照显示方式">
+            <button class="mode-button" type="button" data-mode="before" aria-pressed="false">原有光照</button>
+            <button class="mode-button" type="button" data-mode="after" aria-pressed="true">开启 GI</button>
+            <button class="mode-button" type="button" data-mode="compare" aria-pressed="false">对比</button>
+          </div>
+          <p id="slider-hint" class="slider-hint" hidden>拖动分界线 · 方向键微调</p>
+        </div>
+        <div class="detail"><p id="description" aria-live="polite"></p><p id="resolution"></p></div>
+        <div id="views" class="views" role="group" aria-label="相机视角"></div>
+      </section>
+      <footer class="footer">
+        <p id="limitations" class="limits"></p>
+        <p class="capture-note">预先捕获的同场景静帧<br><span>非实时路径追踪窗口</span></p>
+      </footer>
+    </main>
+    <p id="no-data" class="no-data" role="status">正在准备 Harbor 光照展示…</p>
+  </div>
+  <script src="./data.js"></script>
+  <script>
+    (() => {
+      "use strict";
+      const data = window.HARBOR_GI;
+      const byId = (id) => document.getElementById(id);
+      const noData = byId("no-data");
+      if (!data || !Array.isArray(data.views) || !data.views.length) {
+        noData.textContent = "暂未找到 Harbor 展示数据，请确认同目录的 data.js 已生成。";
+        return;
+      }
+      const views = data.views.filter((view) => view && typeof view.id === "string" && typeof view.before === "string" && typeof view.after === "string");
+      if (!views.length) {
+        noData.textContent = "Harbor 展示数据中没有可用的相机视角。";
+        return;
+      }
+      const viewer = byId("viewer");
+      const before = byId("before-image");
+      const after = byId("after-image");
+      const loading = byId("loading");
+      const comparison = byId("comparison");
+      let mode = "after";
+      let selected = -1;
+      let generation = 0;
+      let beforeReady = false;
+      let afterReady = false;
+      let failed = false;
+      const buttons = [];
+      const title = typeof data.title === "string" ? data.title : "Harbor";
+      document.title = title + " · Amoris 光照展示";
+      byId("title").textContent = title + " 的探针光照";
+      byId("source-tag").textContent = data.source_note || "真实 Amoris Metal 捕获";
+      byId("limitations").textContent = data.limitations || "停船快照烘焙，仅帆船和箱子的漫反射；海面保留原有天空、太阳与反射模型。";
+      if (Array.isArray(data.resolution) && data.resolution.length === 2 && data.resolution.every((v) => Number.isFinite(v) && v > 0)) {
+        viewer.style.aspectRatio = data.resolution[0] + " / " + data.resolution[1];
+        byId("resolution").textContent = data.resolution[0] + " × " + data.resolution[1] + " / 同一相机";
+      }
+      try {
+        const url = new URL(data.host_url || "http://127.0.0.1:8794", location.href);
+        if (url.protocol === "http:" || url.protocol === "https:") byId("editor-link").href = url.href;
+      } catch (_) { byId("editor-link").hidden = true; }
+      function updateLoading() {
+        const ready = mode === "after" ? afterReady : mode === "before" ? beforeReady : beforeReady && afterReady;
+        loading.hidden = ready && !failed;
+        loading.dataset.error = String(failed);
+        byId("loading-text").textContent = failed ? "画面未能载入，请检查 images 目录后刷新。" : "正在载入港湾画面…";
+      }
+      function setMode(next) {
+        mode = next;
+        viewer.dataset.mode = mode;
+        document.querySelectorAll(".mode-button").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.mode === mode)));
+        comparison.disabled = mode !== "compare";
+        byId("slider-hint").hidden = mode !== "compare";
+        updateLoading();
+      }
+      function updateComparison() {
+        const percent = Number(comparison.value);
+        before.style.clipPath = "inset(0 " + (100 - percent) + "% 0 0)";
+        byId("divider").style.left = percent + "%";
+        comparison.setAttribute("aria-valuetext", "原有光照占画面 " + percent + "%");
+      }
+      function selectView(index) {
+        if (index === selected) return;
+        selected = index;
+        const view = views[index];
+        const token = ++generation;
+        beforeReady = false;
+        afterReady = false;
+        failed = false;
+        buttons.forEach((button, at) => button.setAttribute("aria-pressed", String(at === index)));
+        byId("view-number").textContent = String(index + 1).padStart(2, "0");
+        byId("view-label").textContent = view.label || view.id;
+        byId("description").textContent = view.description || "查看这一视角下的船身、帆与甲板光照。";
+        before.alt = (view.label || view.id) + "，原有太阳与天空光照";
+        after.alt = (view.label || view.id) + "，开启烘焙探针 GI";
+        function prepare(image, source, kind) {
+          image.onload = () => {
+            if (token !== generation) return;
+            if (kind === "before") beforeReady = true; else afterReady = true;
+            if (beforeReady && afterReady && (before.naturalWidth !== after.naturalWidth || before.naturalHeight !== after.naturalHeight)) {
+              failed = true;
+              loading.hidden = false;
+              loading.dataset.error = "true";
+              byId("loading-text").textContent = "两张画面尺寸不同，无法进行准确对比。";
+              return;
+            }
+            updateLoading();
+          };
+          image.onerror = () => { if (token === generation) { failed = true; updateLoading(); } };
+          image.src = source;
+        }
+        updateLoading();
+        prepare(before, view.before, "before");
+        prepare(after, view.after, "after");
+      }
+      views.forEach((view, index) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "view-button";
+        button.setAttribute("aria-pressed", "false");
+        button.setAttribute("aria-label", "查看" + (view.label || view.id));
+        const image = document.createElement("img");
+        image.className = "thumbnail";
+        image.src = view.after;
+        image.alt = "";
+        image.loading = "lazy";
+        const label = document.createElement("span");
+        label.className = "view-text";
+        const number = document.createElement("small");
+        number.textContent = "VIEW " + String(index + 1).padStart(2, "0");
+        const name = document.createElement("strong");
+        name.textContent = view.label || view.id;
+        label.append(number, name);
+        button.append(image, label);
+        button.addEventListener("click", () => selectView(index));
+        byId("views").append(button);
+        buttons.push(button);
+      });
+      document.querySelectorAll(".mode-button").forEach((button) => button.addEventListener("click", () => setMode(button.dataset.mode)));
+      comparison.addEventListener("input", updateComparison);
+      function pointerPosition(event) {
+        const rectangle = comparison.getBoundingClientRect();
+        comparison.value = String(Math.round(Math.max(0, Math.min(100, (event.clientX - rectangle.left) / rectangle.width * 100))));
+        updateComparison();
+      }
+      comparison.addEventListener("pointerdown", (event) => {
+        if (mode !== "compare" || event.button !== 0) return;
+        event.preventDefault();
+        comparison.focus({ preventScroll: true });
+        comparison.setPointerCapture(event.pointerId);
+        pointerPosition(event);
+      });
+      comparison.addEventListener("pointermove", (event) => {
+        if (comparison.hasPointerCapture(event.pointerId)) pointerPosition(event);
+      });
+      comparison.addEventListener("pointerup", (event) => {
+        if (comparison.hasPointerCapture(event.pointerId)) comparison.releasePointerCapture(event.pointerId);
+      });
+      byId("main").hidden = false;
+      noData.hidden = true;
+      updateComparison();
+      setMode("after");
+      selectView(0);
+    })();
+  </script>
+</body>
+</html>

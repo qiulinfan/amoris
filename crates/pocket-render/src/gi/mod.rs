@@ -13,6 +13,8 @@ pub mod pt;
 pub mod reservoir;
 #[cfg(all(not(target_arch = "wasm32"), feature = "import"))]
 pub mod rt;
+#[cfg(all(not(target_arch = "wasm32"), feature = "import"))]
+pub mod sky_radiance;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]

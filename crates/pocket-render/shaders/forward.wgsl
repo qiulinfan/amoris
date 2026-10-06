@@ -285,7 +285,8 @@ fn shade(in: VsOut, s: Surface) -> vec4f {
     // Horizon occlusion: reflections pointing below the surface fade.
     let horizon = clamp(1.0 + dot(r, normalize(in.normal)), 0.0, 1.0);
     let baked = baked_diffuse(in.world, n);
-    let diffuse_light = select(sh_irradiance(n) * ambient, baked.xyz, baked.w > 0.0);
+    // sh_irradiance returns E; both diffuse inputs need E / PI before multiplying albedo.
+    let diffuse_light = select(sh_irradiance(n) * (ambient / PI), baked.xyz, baked.w > 0.0);
     color += diffuse_color * diffuse_light + prefiltered * brdf * horizon * horizon * ambient;
 
     color += s.emissive;

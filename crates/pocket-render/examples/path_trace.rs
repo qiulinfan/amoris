@@ -2,7 +2,7 @@
 use glam::{Quat, Vec3};
 use pocket_render::gi::bake::RayScene;
 use pocket_render::gi::nrc::NrcConfig;
-use pocket_render::gi::pt::{PathTracer, PtOptions, RayCamera};
+use pocket_render::gi::pt::{PathTracer, PtOptions, PtSceneOptions, RayCamera};
 use pocket_render::{BackendChoice, Gpu};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -61,10 +61,12 @@ fn main() {
 }
 fn run() -> Result<(), String> {
     let mut args = std::env::args().skip(1);
-    let root = PathBuf::from(args.next().ok_or("usage: path_trace PROJECT [--scene scene.json --output PNG --width W --height H --samples N --frames N --bounces N --rr-start N --nee true|false --rr true|false --readback-every-frame true|false --synchronize true|false --seed N --emission-scale N --punctual-scale N --environment-scale N]")?);
+    let root = PathBuf::from(args.next().ok_or("usage: path_trace PROJECT [--scene scene.json --output PNG --texture-size N --exposure-ev EV --width W --height H --samples N --frames N --bounces N --rr-start N --nee true|false --rr true|false --readback-every-frame true|false --synchronize true|false --seed N --emission-scale N --punctual-scale N --environment-scale N]")?);
     let mut options = PtOptions::default();
+    let mut scene_options = PtSceneOptions::default();
     let mut nrc = NrcConfig::default();
     let mut use_nrc = false;
+    let mut preview_exposure = None;
     let mut scene_file = "scene.json".to_owned();
     let mut output = PathBuf::from("path-trace.png");
     while let Some(flag) = args.next() {
@@ -89,6 +91,8 @@ fn run() -> Result<(), String> {
         match flag.as_str() {
             "--output" => output = PathBuf::from(value),
             "--scene" => scene_file = value,
+            "--texture-size" => scene_options.texture_size = integer()?,
+            "--exposure-ev" => preview_exposure = Some(number()?),
             "--width" => options.width = integer()?,
             "--height" => options.height = integer()?,
             "--samples" => options.samples = integer()?,
@@ -125,14 +129,21 @@ fn run() -> Result<(), String> {
     if output.extension().and_then(|x| x.to_str()) != Some("png") {
         return Err("output must end in .png".into());
     }
+    scene_options.validate()?;
+    options.validate()?;
     let scene = RayScene::for_path_tracing_file(&root, &scene_file)?;
+    let exposure_ev = preview_exposure.unwrap_or(scene.world_environment().exposure_ev as f32);
+    if !exposure_ev.is_finite() || !(-16.0..=16.0).contains(&exposure_ev) {
+        return Err("preview exposure must be finite in -16..=16 EV".into());
+    }
     let camera = camera(&root, &scene_file)?;
     let gpu = Gpu::headless(BackendChoice::Metal).map_err(|e| e.to_string())?;
-    let mut tracer = PathTracer::new(&gpu, &scene)?;
+    let mut tracer = PathTracer::with_scene_options(&gpu, &scene, &scene_options)?;
     let traced = tracer.render(&camera, &options)?;
     let mut preview = image::RgbImage::new(options.width, options.height);
     let encode = |v: f32| {
-        let mapped = v.max(0.0) / (1.0 + v.max(0.0));
+        let exposed = v.max(0.0) * 2.0_f32.powf(exposure_ev);
+        let mapped = exposed / (1.0 + exposed);
         let srgb = if mapped <= 0.0031308 {
             12.92 * mapped
         } else {
@@ -154,9 +165,11 @@ fn run() -> Result<(), String> {
         }
     }
     std::fs::write(output.with_extension("linear.f32"), bytes).map_err(|e| e.to_string())?;
+    let mut report = serde_json::to_value(&traced.stats).map_err(|e| e.to_string())?;
+    report["preview"] = serde_json::json!({"exposure_ev": exposure_ev, "tone_map": "reinhard", "encoding": "srgb", "linear_sidecar_exposed": false});
     std::fs::write(
         output.with_extension("json"),
-        serde_json::to_vec_pretty(&traced.stats).map_err(|e| e.to_string())?,
+        serde_json::to_vec_pretty(&report).map_err(|e| e.to_string())?,
     )
     .map_err(|e| e.to_string())?;
     println!(

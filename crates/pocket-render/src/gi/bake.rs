@@ -8,7 +8,8 @@
 //! This is a diffuse transport baseline, not a GGX path tracer. Metallic surfaces contribute only
 //! their diffuse lobe; specular transport, transmission, atmosphere and animated geometry are
 //! rejected or explicitly outside this bake. Color skies, opaque/alpha-mask meshes, normal maps,
-//! base-color/emissive/metallic textures, and static glTF node transforms are supported.
+//! base-color/emissive/metallic textures, and static glTF node transforms are supported. An exact
+//! renderer sky-radiance cube can replace the color sky for an atmospheric bake.
 
 #![allow(clippy::disallowed_methods)]
 
@@ -24,6 +25,8 @@ use pocket_assets::mesh::{AlphaMode, ImageData, MaterialData, MeshData, ModelAss
 use pocket_assets::visual::{Environment, Light, LightKind, Model, SkyKind};
 use serde::Serialize;
 use serde_json::Value;
+
+use super::sky_radiance::SkyRadianceCube;
 
 const EPSILON: f32 = 1e-4;
 const DISTANCE_SAMPLES: u32 = 8;
@@ -171,6 +174,7 @@ pub struct RayScene {
     lights: Vec<SceneLight>,
     environment: Vec3,
     environment_settings: Environment,
+    environment_cube: Option<SkyRadianceCube>,
     signature: String,
 }
 
@@ -259,6 +263,7 @@ impl RayScene {
             lights: Vec::new(),
             environment: Vec3::ZERO,
             environment_settings: Environment::default(),
+            environment_cube: None,
             signature: String::new(),
         };
         let mut assets = BTreeMap::<String, Arc<ModelAsset>>::new();
@@ -428,7 +433,10 @@ impl RayScene {
         for (path, asset) in assets {
             hash.feed(path.as_bytes());
             // Decoded images and mesh/node/material values include external .gltf/.bin/image content.
-            hash.feed(&serde_json::to_vec(&*asset).map_err(|e| e.to_string())?);
+            // Stream the identical JSON bytes into the hash: large decoded images must not require
+            // a multi-gigabyte serialization allocation just to identify the scene.
+            serde_json::to_writer(SignatureWriter(&mut hash), &*asset)
+                .map_err(|e| e.to_string())?;
         }
         let signature_kind = if path_tracing { "surface" } else { "diffuse" };
         result.signature = format!("fnv1a64-static-{signature_kind}-v1:{:016x}", hash.0);
@@ -461,6 +469,40 @@ impl RayScene {
 
     pub fn environment_radiance(&self) -> [f32; 3] {
         self.environment.to_array()
+    }
+
+    /// Incoming sky radiance along a ray, using the exported atmosphere when one is attached.
+    pub fn environment_radiance_direction(&self, direction: Vec3) -> Vec3 {
+        self.environment_cube
+            .as_ref()
+            .map_or(self.environment, |cube| cube.sample(direction))
+    }
+
+    /// Attach an exact renderer sky to a static color-placeholder scene. Geometry/material bake
+    /// restrictions remain unchanged; the sky export's ambient value is applied only by sampling.
+    pub fn set_environment_cube(&mut self, cube: SkyRadianceCube) -> Result<(), String> {
+        cube.validate()?;
+        let mut hash = Signature::new();
+        hash.feed(cube.format.as_bytes());
+        hash.feed(&cube.size.to_le_bytes());
+        hash.feed(&cube.ambient.to_le_bytes());
+        for texel in &cube.texels {
+            for value in texel {
+                hash.feed(&value.to_le_bytes());
+            }
+        }
+        // Replacing a previous sky produces the same signature as attaching this sky once.
+        if self.environment_cube.is_some() {
+            let prefix = self
+                .signature
+                .rsplit_once(":sky-cube-v1:")
+                .ok_or("sky signature is missing its derived suffix")?
+                .0;
+            self.signature = prefix.to_string();
+        }
+        self.signature = format!("{}:sky-cube-v1:{:016x}", self.signature, hash.0);
+        self.environment_cube = Some(cube);
+        Ok(())
     }
 
     pub fn explicit_light_count(&self) -> usize {
@@ -785,7 +827,7 @@ impl RayScene {
         let mut throughput = Vec3::ONE;
         for bounce in 0..bounces {
             let Some(hit) = self.intersection(origin, direction, f32::INFINITY, false) else {
-                radiance += throughput * self.environment;
+                radiance += throughput * self.environment_radiance_direction(direction);
                 break;
             };
             radiance += throughput * (hit.emissive + self.direct(&hit, -direction, counts));
@@ -1325,6 +1367,18 @@ impl Rng {
     }
 }
 struct Signature(u64);
+struct SignatureWriter<'a>(&'a mut Signature);
+
+impl std::io::Write for SignatureWriter<'_> {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.feed(bytes);
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 impl Signature {
     fn new() -> Self {
         Self(0xcbf29ce484222325)
@@ -1340,6 +1394,32 @@ impl Signature {
 mod tests {
     use super::*;
 
+    #[test]
+    fn streaming_asset_signature_matches_previous_json_bytes() {
+        let asset = ModelAsset {
+            meshes: vec![pocket_assets::primitives::cube()],
+            materials: vec![MaterialData::default()],
+            images: vec![ImageData {
+                name: "sky \"雪\"".into(),
+                width: 1,
+                height: 64,
+                srgb: true,
+                rgba8: (0..=255).collect(),
+            }],
+            nodes: Vec::new(),
+            skeleton: Vec::new(),
+            skins: Vec::new(),
+            animations: Vec::new(),
+        };
+        let mut old = Signature::new();
+        old.feed(b"model.glb");
+        old.feed(&serde_json::to_vec(&asset).unwrap());
+        let mut streamed = Signature::new();
+        streamed.feed(b"model.glb");
+        serde_json::to_writer(SignatureWriter(&mut streamed), &asset).unwrap();
+        assert_eq!(old.0, streamed.0);
+    }
+
     fn empty(environment: Vec3) -> RayScene {
         RayScene {
             triangles: Vec::new(),
@@ -1352,6 +1432,7 @@ mod tests {
                 sky_color: environment.to_array().map(f64::from),
                 ..Environment::default()
             },
+            environment_cube: None,
             signature: "test".into(),
         }
     }
@@ -1513,6 +1594,42 @@ mod tests {
         let two = scene.trace_radiance(Vec3::Y, -Vec3::Y, 2, 3).unwrap();
         assert_eq!(one, Vec3::ZERO);
         assert!(two.x > 0.35 && two.x < 0.4, "{two:?}");
+    }
+
+    #[test]
+    fn sky_cube_routes_primary_and_secondary_misses_and_updates_signature() {
+        let cube = SkyRadianceCube {
+            format: super::super::sky_radiance::SKY_RADIANCE_FORMAT.into(),
+            size: 1,
+            texels: vec![[0.5; 3]; 6],
+            ambient: 1.1,
+            source: None,
+        };
+        let mut scene = empty(Vec3::ZERO);
+        let original_signature = scene.scene_signature().to_string();
+        scene.set_environment_cube(cube.clone()).unwrap();
+        assert_ne!(scene.scene_signature(), original_signature);
+        let first_signature = scene.scene_signature().to_string();
+        scene.set_environment_cube(cube.clone()).unwrap();
+        assert_eq!(scene.scene_signature(), first_signature);
+        assert_eq!(
+            scene.trace_radiance(Vec3::ZERO, Vec3::Y, 1, 3).unwrap(),
+            Vec3::splat(0.55)
+        );
+        scene
+            .add_mesh(
+                &pocket_assets::primitives::plane(),
+                Mat4::from_scale(Vec3::splat(10.0)),
+                surface(Vec3::splat(0.8), Vec3::ZERO, false),
+            )
+            .unwrap();
+        scene.build_node(0, scene.triangles.len());
+        let bounced = scene.trace_radiance(Vec3::Y, -Vec3::Y, 2, 3).unwrap();
+        assert!(bounced.x > 0.38 && bounced.x < 0.44, "{bounced:?}");
+        let mut changed = cube;
+        changed.ambient = 0.8;
+        scene.set_environment_cube(changed).unwrap();
+        assert_ne!(scene.scene_signature(), first_signature);
     }
 
     #[test]
