@@ -19,6 +19,22 @@
       "sha256": "6901b0800c6583cb085f0ec912cd17299219cf63fb3a6e0ec9007b643f7f1efd",
       "bytes": 1804,
       "modified": false
+    },
+    {
+      "file": "amoris-icon-macos.svg",
+      "sha256": "5a65cebd2e6b50410ee3407b197253bae0df7234a34687ee33462c8e559acfda",
+      "bytes": 5106,
+      "modified": false,
+      "derived_from": "amoris-icon-morandi.svg",
+      "purpose": "macOS continuous-corner silhouette: 824px artwork centered in a 1024px canvas; 100px transparent margins; preserves the approved A and palette"
+    },
+    {
+      "file": "amoris-icon-macos.png",
+      "sha256": "4c3eea2083fbdc3d5c1cb2813aac8b3f2e5bf03cf837220e7045ec6376f42ba4",
+      "bytes": 68751,
+      "modified": false,
+      "derived_from": "amoris-icon-morandi.svg",
+      "purpose": "macOS continuous-corner silhouette: 824px artwork centered in a 1024px canvas; 100px transparent margins; preserves the approved A and palette"
     }
   ]
 }

@@ -19,6 +19,7 @@ import {
   Command as CommandIcon,
   Copy,
   Focus,
+  FolderOpen,
   Gauge,
   Globe,
   Grid3x3,
@@ -75,6 +76,15 @@ const inScripts = () => !!document.activeElement?.closest(".panel-scripts");
 export function registerBuiltinCommands() {
   const commands: Command[] = [
     // ---- File
+    ...(window.amorisDesktop ? [{
+      id: "file.openProject",
+      title: "Open Project…",
+      category: "File" as const,
+      icon: FolderOpen,
+      keys: ["Mod+O"],
+      global: true,
+      run: () => window.amorisDesktop!.openProject(),
+    }] : []),
     {
       id: "file.save",
       title: "Save",
@@ -97,6 +107,7 @@ export function registerBuiltinCommands() {
       category: "File",
       icon: Unplug,
       keywords: "host url port mock",
+      enabled: () => !window.amorisDesktop,
       run: async () => {
         const v = await promptText({ title: "Connect to a host", label: "Host address (empty: the one serving the editor)", value: new URLSearchParams(location.search).get("host") ?? "", placeholder: "127.0.0.1:7878", confirm: "Connect" });
         if (v === null) return;

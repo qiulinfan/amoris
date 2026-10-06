@@ -91,7 +91,7 @@ Amoris 是一个 **agent-native** 的 3D 游戏引擎。agent 在三个角色上
 | 音频 | kira（cpal；web 上为 WebAudio） | 0.12 | 混音、空间音频、补间 |
 | agent 接口 | **CLI 优先**：一张命令目录 → `pocket` CLI（连接运行中的宿主，紧凑文本输出，`--json` 精确输出，帮助文本来自目录）、编辑器 WebSocket、脚本 API、测试；MCP（`rmcp`）是同一目录的薄投影 | rmcp 3.5 | agent 在 shell 里最顺手、最省 token；目录唯一，所有前端不漂移 |
 | 服务端 | axum + tokio（只在 presenter 一侧） | axum 0.8 | 游戏侧 crate 禁止依赖 tokio |
-| 编辑器 | **Web 应用：TypeScript + React + Vite**；dockview 停靠布局；Monaco 代码编辑；视口是编译到 wasm 的引擎渲染器（WebGPU），经 WebSocket 与宿主同步 | React 19、Vite 8 | 见 4.5 |
+| 编辑器 | **TypeScript + React + Vite**；Electron 桌面窗口与 Web 共用 dockview、Monaco 和 wasm/WebGPU 视口，经 WebSocket 与宿主同步 | React 19、Vite 8、Electron 44 | 见 4.5 |
 | 调试 | 调试核心在 `pocket-debug`（QuickJS-ng PR #1421 的 trace 钩子）；前端：CDP 端点（Chrome DevTools、VS Code js-debug）、编辑器、MCP 工具 | 自研 | 见 4.3 |
 | 性能分析 | 内建分析器：每个系统的 CPU 区段 + 每个渲染通道的 GPU 时间戳，推送到编辑器；Tracy 为可选特性 | tracy-client 0.19 | 测量为依据 |
 | 离线工具 | **Python 3.14 + uv**：神经资源训练（PyTorch，Apple MPS）、评测 harness、分析脚本 | — | 只在工具层，不嵌入运行时 |
@@ -162,8 +162,10 @@ Amoris 是一个 **agent-native** 的 3D 游戏引擎。agent 在三个角色上
 
 ### 4.5 编辑器
 
-- 形态：Web 应用（TypeScript + React + Vite），由宿主在 127.0.0.1 上提供；之后可用 Tauri 打包成
-  桌面应用（排期）。
+- 形态：Web 应用（TypeScript + React + Vite），由宿主在 127.0.0.1 上提供；桌面版使用 Electron
+  打包相同界面。所有者 2026-10-05 授权桌面 GUI：选用随应用分发的 Chromium，固定 WebGPU
+  运行环境；原生菜单、目录选择器和宿主生命周期由桌面主进程负责。此项替换此前待实施的 Tauri
+  包装计划，不更改模拟、渲染器或命令接口。实现与验证见 [desktop.md](spec/desktop.md)。
 - 视口：引擎渲染器编译到 wasm，在页面里用 WebGPU 绘制；场景由宿主经 WebSocket 推送快照与差量，
   资源经 HTTP 获取。原生窗口（Metal/Vulkan）用于独立运行与 Play。
 - 权威：唯一权威是宿主进程里的世界。编辑器的每次修改都是一条命令，进入可撤销的事务历史；agent

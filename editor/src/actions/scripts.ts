@@ -16,10 +16,10 @@ function byFile(diags: Diagnostic[], fallback: string): Record<string, Diagnosti
 
 export async function saveScript(path: string, text: string) {
   const written = await attempt(api.scripts.write(path, text), `Save ${path}`);
-  if (!written) return;
-  useScripts.getState().setDirty(path, false);
+  if (!written) return false;
   useScripts.getState().setDiagnostics({ [path]: written.diagnostics.filter((d) => !d.file || d.file === path) });
   await applyScripts();
+  return true;
 }
 
 export async function applyScripts() {

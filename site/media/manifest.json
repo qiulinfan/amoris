@@ -59,6 +59,22 @@
       "duration_seconds": 17.933333,
       "sha256": "aec7a2351116505bca3051970c2c70743ae3226565a2afc2458b37d28772105a",
       "capture": "actual browser WebGPU editor screencast"
+    },
+    {
+      "name": "deepseek-gameplay",
+      "dimensions": [
+        1280,
+        720
+      ],
+      "frames": 849,
+      "fps": 30,
+      "duration_seconds": 28.3,
+      "sha256": "9d4aed5bc4f2df09f0311c46cd6750c523ec79ae98fbfea48eb9303f5f780408",
+      "capture": "hash-verified native replay of real DeepSeek tool-selected intentions",
+      "cargo_taken": 4,
+      "selected_condition": "gameplay-v2/episode-2 (first successful low-effort trial)",
+      "captured_frames": 789,
+      "end_hold_seconds": 2
     }
   ],
   "models": [
@@ -115,7 +131,7 @@
       "capture": "actual engine render",
       "renderer": "native Metal forward with baked diffuse GI",
       "scene": "lighting/harbor-scene.json",
-      "scene_sha256": "c795b2f7ff86cccc4e5a2f292a21e6002c56bf35a0b27700f4e13660ee22e657",
+      "scene_sha256": "1ef6bcf668f0641b9c0ab963ea4cc404f3dfbfc8ff00d26a277f9e2918bfa83f",
       "probe_asset_sha256": "f2b8128fa729e4d236eacd351fd49c08402c9b029a0af62b07f4773d3669dcc9",
       "probe_count": 2940,
       "capture_tick": 60,
@@ -134,7 +150,9 @@
       },
       "scope": "Fixed-pose ship and cargo mesh diffuse GI. Ocean retains its existing sky/sun/reflection lighting.",
       "source_capture_sha256": "e8c9d7d2cdb66608207a39f75918aab0e18304eb0798d4400cdf21d6f9001ff4",
-      "engine_commit": "dfc93213c474ade1da06d62cd5fbcba91542d545"
+      "engine_commit": "dfc93213c474ade1da06d62cd5fbcba91542d545",
+      "source_project_scene_sha256": "c795b2f7ff86cccc4e5a2f292a21e6002c56bf35a0b27700f4e13660ee22e657",
+      "scene_kind": "Frozen tick-60 mesh/light/environment snapshot; procedural ocean and sailing systems remain in the source project."
     },
     {
       "file": "detail-poster.jpg",

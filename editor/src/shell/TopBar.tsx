@@ -1,4 +1,5 @@
-import { Search } from "lucide-react";
+import { FolderOpen, Search } from "lucide-react";
+import amorisIcon from "../../../assets/branding/amoris-icon-morandi.svg";
 import { formatKeys } from "../commands/keys";
 import { useConnection } from "../state/connection";
 import { useUi } from "../state/ui";
@@ -7,18 +8,7 @@ import { MenuBar } from "./MenuBar";
 import { Transport } from "./Transport";
 
 function Logo() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" className="logo" aria-hidden>
-      <defs>
-        <linearGradient id="lg" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stopColor="#7aa8ff" />
-          <stop offset="1" stopColor="#4f6dff" />
-        </linearGradient>
-      </defs>
-      <path d="M12 2 21 7v10l-9 5-9-5V7z" fill="url(#lg)" />
-      <path d="M12 2v20M3 7l9 5 9-5" stroke="#0d0f13" strokeOpacity=".35" strokeWidth="1.2" fill="none" />
-    </svg>
-  );
+  return <img src={amorisIcon} width="22" height="22" className="logo" alt="" />;
 }
 
 export function TopBar() {
@@ -32,6 +22,7 @@ export function TopBar() {
         <span className="project" data-tip={project ? `${project.root}` : "No project"}>
           {project?.name ?? "—"}
         </span>
+        {window.amorisDesktop && <button type="button" className="btn btn-ghost" aria-label="Open Project" data-tip="Open Project (Cmd/Ctrl+O)" onClick={() => void window.amorisDesktop!.openProject()}><FolderOpen size={15} /></button>}
         <MenuBar />
       </div>
       <Transport />

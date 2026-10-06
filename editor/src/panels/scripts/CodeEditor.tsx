@@ -21,6 +21,7 @@ type Model = ReturnType<typeof monaco.editor.createModel>;
 /** The text each file had on the host when last read or saved. */
 const hostText = new Map<string, string>();
 const viewStates = new Map<string, unknown>();
+const saving = new Set<string>();
 
 function severity(s: Diagnostic["severity"]) {
   return s === "error" ? monaco.MarkerSeverity.Error : s === "warning" ? monaco.MarkerSeverity.Warning : s === "info" ? monaco.MarkerSeverity.Info : monaco.MarkerSeverity.Hint;
@@ -122,10 +123,14 @@ export default function CodeEditor() {
       const model = editor.getModel();
       if (!model) return;
       const path = pathOf(model.uri);
+      if (saving.has(path)) return;
       const text = model.getValue();
-      hostText.set(path, text);
-      useScripts.getState().setDirty(path, false);
-      void saveScript(path, text);
+      saving.add(path);
+      void saveScript(path, text).then((saved) => {
+        if (!saved) return;
+        hostText.set(path, text);
+        useScripts.getState().setDirty(path, model.isDisposed() || model.getValue() !== text);
+      }).finally(() => saving.delete(path));
     };
     registerScriptSaver(save);
     registerBreakpointToggler(() => {

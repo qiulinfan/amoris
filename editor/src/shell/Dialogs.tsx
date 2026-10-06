@@ -100,7 +100,7 @@ export function AboutDialog() {
   return (
     <Dialog onClose={() => useUi.getState().set({ aboutOpen: false })} className="about-dialog">
       <div className="dialog-title">Amoris Editor</div>
-      <p className="muted">The Amoris web editor: a client of the host protocol (docs/spec/host-protocol.md), with no private channel. Everything here an agent can do over MCP.</p>
+      <p className="muted">Inspect, edit, play, and debug through the same host commands available to CLI and MCP clients.</p>
       <dl className="about-list">
         <dt>Host</dt>
         <dd className="mono">{host.endpoints.label}{project?.host ? ` (${project.host})` : ""}</dd>
@@ -113,7 +113,7 @@ export function AboutDialog() {
         <dt>Live drags</dt>
         <dd>{groups ? "streamed as grouped world.edit (one undo entry)" : "previewed locally, sent on release"}</dd>
         <dt>Build</dt>
-        <dd className="mono">React 19 · dockview · Monaco · Vite</dd>
+        <dd className="mono">{window.amorisDesktop ? "Desktop · Electron · " : "Web · "}React 19 · dockview · Monaco · Vite</dd>
       </dl>
     </Dialog>
   );

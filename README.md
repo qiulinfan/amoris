@@ -1,6 +1,6 @@
 # <img src="assets/branding/amoris-icon-morandi.png" alt="Amoris icon" width="64" valign="middle"> Amoris
 
-Amoris is a 3D game engine with a Rust host, TypeScript gameplay, and a web editor.
+Amoris is a 3D game engine with a Rust host, TypeScript gameplay, and desktop and web editors.
 The editor, CLI, and agents share one command API. A wgpu renderer runs natively
 on Metal and Vulkan, and in the browser on WebGPU.
 
@@ -20,16 +20,39 @@ CC BY 4.0. [Asset credits](site/content/credits.md).
 ## What you can do
 
 - Build games with typed components and stateless TypeScript systems.
-- Inspect and edit a scene through the web editor, CLI, HTTP, or MCP.
+- Inspect and edit a scene through the desktop or web editor, CLI, HTTP, or MCP.
 - Run Play in a fork, pause or step the simulation, and return to the edit world.
 - Debug TypeScript with breakpoints, locals, watches, and source-level stepping.
 - Record snapshots, replay inputs, and check deterministic runs.
 
-The web editor combines a WebGPU viewport with a Hierarchy, Inspector, asset browser,
+The editor combines a WebGPU viewport with a Hierarchy, Inspector, asset browser,
 Monaco script editor, debugger, History, Timeline, and Profiler. Its edits and agent
 commands enter the same undoable history.
 
-## Start the editor
+## Start the desktop editor
+
+The desktop app opens projects in its own window, with a native folder picker, recent
+projects, and application menus. It starts and stops the Rust host for you. The app
+includes the engine, WebGPU viewport, and TypeScript checker.
+
+Install [Rust](https://rustup.rs/), [Bun](https://bun.sh/), and [Node.js](https://nodejs.org/),
+then build from the repository:
+
+```sh
+cd sdk && bun install --frozen-lockfile
+cd ../editor && bun install --frozen-lockfile && bun run build
+cd ..
+cargo build --release -p pocket-app
+cd desktop && npm ci
+npm start -- ../samples/sailing
+```
+
+To create a local macOS application bundle, run `npm run package` in `desktop/`.
+Open **Amoris.app** from `out/desktop/`; choose a folder containing `project.toml`.
+**Cmd/Ctrl+O** switches projects. The app asks before discarding unsaved edits.
+See the [desktop build guide](docs/spec/desktop.md) for packaging options.
+
+## Start the web editor
 
 Install [Rust](https://rustup.rs/) and [Bun](https://bun.sh/). The repository pins its
 Rust toolchain in [rust-toolchain.toml](rust-toolchain.toml).
@@ -72,7 +95,7 @@ For a native game window:
 | Gameplay | TypeScript 7 · oxc · QuickJS-ng |
 | Physics | Rapier 3D with enhanced determinism |
 | Rendering | wgpu · WGSL · Metal / Vulkan / WebGPU |
-| Editor | React · dockview · Monaco |
+| Editor | React · dockview · Monaco · Electron (desktop) |
 | Automation | CLI · HTTP / WebSocket · MCP |
 
 Game state lives in components. Scripts run as stateless systems, and the renderer
@@ -127,6 +150,18 @@ and window presentation. [Method and raw data](site/content/data.md).
 
 Large third-party models stay outside Git; the website serves compact videos and
 posters. Source authors and licenses are preserved in the [credits](site/content/credits.md).
+
+### Real agent gameplay and development
+
+DeepSeek Flash plays the detailed sailing course through a project-level player gateway.
+Its native replay matches every recorded action and final world hash. The selected clip
+collects 4/4 cargo; all trials and limitations are retained in the
+[agent report](site/content/agents.md).
+
+A frozen six-task development benchmark uses native MCP tools, fresh candidate projects
+and external grading. All **18/18 patches** passed behavior, regression, types and native
+integrity checks; **15/18 agent sessions** ended cleanly, with three provider disconnects
+after valid patches. Each golden control exercises 63 actual component/event assertions.
 
 ## License
 

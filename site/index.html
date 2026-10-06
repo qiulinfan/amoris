@@ -54,11 +54,11 @@
             <div class="card-copy"><span class="card-number">01 / Metal path tracing</span><h3>Bistro</h3><p>The public Bistro exterior in sunlight, with multi-bounce lighting. An offline 1024 × 768 render at 512 samples per pixel, a 12-bounce limit, and textures capped at 512 px.</p><div class="tags"><span>Authored scene</span><span>512 spp</span><span>12-bounce limit</span></div><p class="fineprint">This still has no real-time FPS measurement. <a href="media/scene.mp4">Earlier recording: native forward-renderer walkthrough.</a></p></div>
           </article>
           <article class="section-card demo-card">
-            <img class="demo-render" src="media/agent-poster.jpg" alt="Harbor's CC0 Dutch ship and cargo meshes in Amoris, with baked probe diffuse global illumination at a fixed pose" loading="lazy">
+            <img class="demo-render" src="media/agent-poster.jpg" alt="Harbor's CC0 Dutch ship and cargo meshes in Amoris, with baked probe diffuse global illumination at a fixed pose" width="1280" height="720" loading="lazy">
             <div class="card-copy"><span class="card-number">02 / Baked probe lighting</span><h3>Harbor</h3><p>World-space probes light the ship and cargo meshes in a fixed sailing pose. The ocean keeps its existing sky, sun, and reflection lighting.</p><div class="tags"><span>Baked probes</span><span>Mesh diffuse GI</span><span>Fixed pose</span></div><p class="fineprint"><a href="media/agent.mp4">Earlier recording: sailing through MCP.</a> A scripted pilot tests four steering forks, chooses an action, and takes reachable cargo aboard. Developer-mode automation · 2 crates collected · not an autonomous LLM player.</p></div>
           </article>
           <article class="section-card demo-card detail-card">
-            <img class="demo-render" src="media/detail-poster.jpg" alt="CC0 Flight Helmet rendered in Amoris with Metal path tracing and its authored PBR material maps" loading="lazy">
+            <img class="demo-render" src="media/detail-poster.jpg" alt="CC0 Flight Helmet rendered in Amoris with Metal path tracing and its authored PBR material maps" width="1280" height="960" loading="lazy">
             <div class="card-copy"><span class="card-number">03 / Metal path tracing</span><h3>Materials, up close.</h3><p>The CC0 Flight Helmet: 94,722 triangles, six materials, and authored color, normal, and roughness maps. This offline Metal path-traced still shows its materials under multi-bounce lighting.</p><div class="tags"><span>glTF</span><span>PBR materials</span><span>94.7K triangles</span></div><p class="fineprint"><a href="media/detail.mp4">Earlier recording: forward-rendered material close-up.</a></p></div>
           </article>
         </div>
@@ -67,7 +67,7 @@
       <section id="editor" class="page-section" aria-labelledby="editor-title">
         <div class="section-heading"><div><span class="eyebrow">A shared workspace</span><h2 id="editor-title">Edit, play, and debug.</h2></div><a class="text-link" href="documentation/editor/">Editor guide <span aria-hidden="true">→</span></a></div>
         <figure class="section-card editor-media">
-          <img class="editor-render" src="media/editor-poster.jpg" alt="The Amoris web editor connected to a real Rust host, showing Harbor with baked probe GI in the WebGPU viewport" loading="lazy">
+          <img class="editor-render" src="media/editor-poster.jpg" alt="The Amoris web editor connected to a real Rust host, showing Harbor with baked probe GI in the WebGPU viewport" width="1280" height="720" loading="lazy">
           <figcaption><span>Harbor with baked probe GI. Connected to the real Rust host; the viewport is the engine's WebGPU renderer.</span><a class="recording-link" href="media/editor.mp4">Earlier recording <span aria-hidden="true">↗</span></a></figcaption>
         </figure>
         <div class="section-grid editor-points">
@@ -75,6 +75,17 @@
           <article class="section-card"><span class="small-icon" aria-hidden="true">{ }</span><h3>Typed game scripts</h3><p>Monaco loads declarations from the live component registry. Check TypeScript, then apply at a tick boundary.</p></article>
           <article class="section-card"><span class="small-icon" aria-hidden="true">⏸</span><h3>Pause at the source</h3><p>Set a TypeScript breakpoint, inspect variables, step the script, and follow an event back to its cause.</p></article>
         </div>
+      </section>
+
+      <section id="agents" class="page-section" aria-labelledby="agents-title">
+        <div class="section-heading"><div><span class="eyebrow">Agents developing games</span><h2 id="agents-title">A native development benchmark.</h2></div><a class="text-link" href="documentation/agents/">Protocol and every trial →</a></div>
+        <article class="section-card benchmark-card"><h3>DeepSeek at the helm.</h3><p>DeepSeek Flash reads a 30 m radar and sends game intentions. The earlier native replay matches a real model run, including every action and final world hash.</p><div class="tags"><span>Real model calls</span><span>Player gateway</span><span>Hash-verified replay</span></div><p class="fineprint">4/4 cargo in the first successful low-effort run. <a href="media/deepseek-gameplay.mp4">Watch the earlier forward-rendered replay.</a> <a href="documentation/agents/">All trials, tools and limitations.</a></p></article>
+        <div class="metric-grid">
+          <article class="section-card metric"><span class="metric-value">18/18</span><h3>Patches passed strict grading</h3><p>Six frozen microtasks, three fresh trials each. Two repairs and four gameplay features.</p></article>
+          <article class="section-card metric"><span class="metric-value">63</span><h3>Native behavioral assertions</h3><p>Positive, negative and boundary cases, plus types, determinism, fork, replay and reload.</p></article>
+          <article class="section-card metric"><span class="metric-value">15/18</span><h3>Clean agent completions</h3><p>Three provider disconnects happened after valid patches. Their artifacts and interrupted status stay in the data.</p></article>
+        </div>
+        <article class="section-card benchmark-card"><h3>Small gameplay tasks, through the engine API.</h3><p>Collection radius · parcel value scoring · collection victory · dash cooldown · once-only milestones · armored damage and defeat.</p><p>DeepSeek Flash inspects, writes and applies scripts using native developer MCP tools. The grader and reference source stay outside the candidate project.</p><p class="fineprint">One experimental task set and one model. Read the raw calls, final patches, elapsed time, token usage and cost upper bounds in the <a href="documentation/agents/">full report</a>.</p></article>
       </section>
 
       <section id="data" class="page-section" aria-labelledby="data-title">

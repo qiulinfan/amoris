@@ -9,7 +9,7 @@ import type { MenuEntry } from "../state/ui";
 type Spec = string | "-" | { sub: string; items: Spec[]; strip?: string };
 
 export const MENUS: { label: string; items: Spec[] }[] = [
-  { label: "File", items: ["file.save", "file.saveScene", "-", "file.import", "-", "file.connect", "file.reconnect"] },
+  { label: "File", items: ["file.openProject", "file.save", "file.saveScene", "-", "file.import", "-", "file.connect", "file.reconnect"] },
   {
     label: "Edit",
     items: [

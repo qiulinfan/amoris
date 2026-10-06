@@ -1,0 +1,11 @@
+[run]
+seeds = [19, 23]
+ticks = 60
+inputs = "checks/scenario.jsonl"
+
+[fork]
+at = [10, 25]
+ticks = 10
+
+[reload]
+at = [8, 20]

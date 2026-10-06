@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "test:desktop": "bun test test/",
     "dev": "vite",
     "dev:mock": "bun mock/dev.ts",
     "mock": "bun mock/host.ts",

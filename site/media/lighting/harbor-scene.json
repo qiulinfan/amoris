@@ -3,208 +3,246 @@
   "version": 1,
   "entities": [
     {
-      "name": "Sea",
-      "prefab": {
-        "kind": "island_sea"
-      },
-      "components": {
-        "AudioSource": {
-          "clip": "sfx:surf",
-          "volume": 0.5,
-          "spatial": false
-        }
-      }
-    },
-    {
-      "name": "Breeze",
-      "prefab": {
-        "kind": "breeze",
-        "from_deg": 270,
-        "speed": 6
-      },
-      "components": {
-        "AudioSource": {
-          "clip": "sfx:wind",
-          "volume": 0.35,
-          "spatial": false
-        }
-      }
-    },
-    {
       "name": "Sloop",
-      "prefab": {
-        "kind": "sloop",
-        "position": [
-          0,
-          0,
-          0
-        ],
-        "heading_deg": 90
-      },
       "components": {
-        "Boat": {
-          "hoist": 1,
-          "hoist_now": 1,
-          "sheet": 1,
-          "sheet_now": 1
-        },
-        "Crew": {},
-        "Tally": {},
-        "Log": {},
         "Model": {
+          "cast_shadows": true,
+          "color": [
+            0.018,
+            0.08,
+            0.12,
+            1.0
+          ],
+          "emissive": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "ior": null,
+          "material": "",
           "mesh": "capsule",
+          "metallic": 0.0,
+          "roughness": 0.3,
           "scale": [
             2.25,
             0.85,
             6.8
           ],
-          "color": [
-            0.018,
-            0.08,
-            0.12,
-            1
-          ],
-          "roughness": 0.3,
+          "transmission": null,
           "visible": false
+        },
+        "Transform": {
+          "position": [
+            1.541653037071228,
+            -0.369495689868927,
+            0.23899179697036743
+          ],
+          "rotation": [
+            -0.00802513025701046,
+            -0.8104081153869629,
+            -0.035627737641334534,
+            0.5847265720367432
+          ]
         }
       }
     },
     {
       "name": "Crate1",
-      "prefab": {
-        "kind": "crate",
-        "position": [
-          5,
-          0,
-          2.2
-        ],
-        "yaw_deg": 10
-      },
       "components": {
-        "Cargo": {
-          "value": 1
-        },
         "Model": {
+          "cast_shadows": true,
+          "color": [
+            0.65,
+            0.33,
+            0.09,
+            1.0
+          ],
+          "emissive": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "ior": null,
+          "material": "",
           "mesh": "cube",
+          "metallic": 0.0,
+          "roughness": 0.8,
           "scale": [
             1.1,
             1.1,
             1.1
           ],
-          "color": [
-            0.65,
-            0.33,
-            0.09,
-            1
+          "transmission": null,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            5.0703911781311035,
+            0.10369618982076645,
+            2.183657646179199
           ],
-          "roughness": 0.8
+          "rotation": [
+            -0.14839819073677063,
+            0.07719624042510986,
+            0.1922370046377182,
+            0.9669869542121887
+          ]
         }
       }
     },
     {
       "name": "Crate2",
-      "prefab": {
-        "kind": "crate",
-        "position": [
-          11,
-          0,
-          -2.4
-        ],
-        "yaw_deg": 35
-      },
       "components": {
-        "Cargo": {
-          "value": 2
-        },
         "Model": {
+          "cast_shadows": true,
+          "color": [
+            0.65,
+            0.33,
+            0.09,
+            1.0
+          ],
+          "emissive": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "ior": null,
+          "material": "",
           "mesh": "cube",
+          "metallic": 0.0,
+          "roughness": 0.8,
           "scale": [
             1.1,
             1.1,
             1.1
           ],
-          "color": [
-            0.65,
-            0.33,
-            0.09,
-            1
+          "transmission": null,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            11.093363761901855,
+            -0.08023352175951004,
+            -2.393756151199341
           ],
-          "roughness": 0.8
+          "rotation": [
+            -0.051093850284814835,
+            0.2826642692089081,
+            0.3362334370613098,
+            0.8969044089317322
+          ]
         }
       }
     },
     {
       "name": "Crate3",
-      "prefab": {
-        "kind": "crate",
-        "position": [
-          18,
-          0,
-          2.6
-        ],
-        "yaw_deg": 60
-      },
       "components": {
-        "Cargo": {
-          "value": 1
-        },
         "Model": {
+          "cast_shadows": true,
+          "color": [
+            0.65,
+            0.33,
+            0.09,
+            1.0
+          ],
+          "emissive": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "ior": null,
+          "material": "",
           "mesh": "cube",
+          "metallic": 0.0,
+          "roughness": 0.8,
           "scale": [
             1.1,
             1.1,
             1.1
           ],
-          "color": [
-            0.65,
-            0.33,
-            0.09,
-            1
+          "transmission": null,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            17.845823287963867,
+            -0.0091097392141819,
+            2.5360279083251953
           ],
-          "roughness": 0.8
+          "rotation": [
+            -0.1677081137895584,
+            0.4900931119918823,
+            -0.22196431457996368,
+            0.8260838389396667
+          ]
         }
       }
     },
     {
       "name": "Crate4",
-      "prefab": {
-        "kind": "crate",
-        "position": [
-          26,
-          0,
-          -6
-        ],
-        "yaw_deg": 80
-      },
       "components": {
-        "Cargo": {
-          "value": 3
-        },
         "Model": {
+          "cast_shadows": true,
+          "color": [
+            0.65,
+            0.33,
+            0.09,
+            1.0
+          ],
+          "emissive": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "ior": null,
+          "material": "",
           "mesh": "cube",
+          "metallic": 0.0,
+          "roughness": 0.8,
           "scale": [
             1.1,
             1.1,
             1.1
           ],
-          "color": [
-            0.65,
-            0.33,
-            0.09,
-            1
+          "transmission": null,
+          "visible": true
+        },
+        "Transform": {
+          "position": [
+            25.983169555664062,
+            0.18515832722187042,
+            -5.949190616607666
           ],
-          "roughness": 0.8
+          "rotation": [
+            0.03903121128678322,
+            0.6028279066085815,
+            -0.335847944021225,
+            0.7226902842521667
+          ]
         }
       }
     },
     {
       "name": "Sun",
       "components": {
+        "Light": {
+          "color": [
+            1.0,
+            0.96,
+            0.9
+          ],
+          "inner_deg": 25.0,
+          "intensity": 6.0,
+          "kind": "directional",
+          "outer_deg": 35.0,
+          "range": 20.0,
+          "shadows": true
+        },
         "Transform": {
           "position": [
-            0,
-            50,
-            0
+            0.0,
+            50.0,
+            0.0
           ],
           "rotation": [
             -0.3535534,
@@ -212,11 +250,6 @@
             0.1464466,
             0.8535534
           ]
-        },
-        "Light": {
-          "kind": "directional",
-          "intensity": 6.0,
-          "shadows": true
         }
       }
     },
@@ -224,45 +257,68 @@
       "name": "Sky",
       "components": {
         "Environment": {
-          "fog_density": 0.0012,
+          "ambient": 1.1,
+          "baked_gi": "lighting/harbor-probes.json",
           "bloom": 0.08,
-          "ambient": 1.1
+          "exposure_ev": 0.0,
+          "fog_color": [
+            0.6,
+            0.7,
+            0.8
+          ],
+          "fog_density": 0.0012,
+          "gi_intensity": 1.0,
+          "neural_gi": "",
+          "sky": "atmosphere",
+          "sky_color": [
+            0.35,
+            0.5,
+            0.75
+          ]
         }
       }
     },
     {
       "name": "Dutch Ship",
       "components": {
-        "Transform": {
-          "position": [
-            0,
-            0.38,
-            0
-          ],
-          "rotation": [
-            0,
-            0.7071067811865476,
-            0,
-            0.7071067811865476
-          ]
-        },
         "Model": {
+          "cast_shadows": true,
+          "color": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "emissive": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "ior": null,
+          "material": "",
           "mesh": "models/third-party/DutchShip.glb",
+          "metallic": 0.0,
+          "roughness": 0.5,
           "scale": [
             0.28,
             0.28,
             0.28
-          ]
+          ],
+          "transmission": null,
+          "visible": true
         },
-        "ShipPart": {
-          "boat": 3,
-          "ox": 0,
-          "oy": 0.38,
-          "oz": 0,
-          "qx": 0,
-          "qy": 0.7071067811865476,
-          "qz": 0,
-          "qw": 0.7071067811865476
+        "Transform": {
+          "position": [
+            1.5239331161418193,
+            0.011614248672919979,
+            0.23933879222494875
+          ],
+          "rotation": [
+            0.01674348621292654,
+            -0.15741198857351857,
+            -0.030702359120696666,
+            0.9869136393041875
+          ]
         }
       }
     }

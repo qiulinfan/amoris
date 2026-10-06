@@ -1,0 +1,64 @@
+{
+  "format": "pocket-scene",
+  "version": 1,
+  "entities": [
+    {
+      "name": "Courier",
+      "components": {
+        "Transform": {},
+        "Command": {},
+        "Wallet": {},
+        "Progress": {},
+        "DashInput": {},
+        "DashState": {},
+        "DamageInput": {},
+        "Vitals": {}
+      }
+    },
+    {
+      "name": "ParcelA",
+      "components": {
+        "Transform": {
+          "position": [
+            8,
+            0,
+            0
+          ]
+        },
+        "Cargo": {
+          "value": 2
+        }
+      }
+    },
+    {
+      "name": "ParcelB",
+      "components": {
+        "Transform": {
+          "position": [
+            12,
+            0,
+            0
+          ]
+        },
+        "Cargo": {
+          "value": 7
+        }
+      }
+    },
+    {
+      "name": "ParcelC",
+      "components": {
+        "Transform": {
+          "position": [
+            16,
+            0,
+            0
+          ]
+        },
+        "Cargo": {
+          "value": 11
+        }
+      }
+    }
+  ]
+}
