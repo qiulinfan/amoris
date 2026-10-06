@@ -82,5 +82,97 @@
     }
   ],
   "notes": "Native frames are captured offscreen along declared cameras. Playback FPS is separate from measured stress workload timing. The editor is the real WebGPU frontend connected to the Rust host.",
-  "engine_binary_sha256": "6a5ecebb6bc201bda5cd23d7e2194d526b16d305dffecd98f55294fd2196d5fb"
+  "engine_binary_sha256": "6a5ecebb6bc201bda5cd23d7e2194d526b16d305dffecd98f55294fd2196d5fb",
+  "stills": [
+    {
+      "file": "scene-poster.jpg",
+      "dimensions": [
+        1024,
+        768
+      ],
+      "sha256": "c19d04e8149187407959742f0554acda2b4454472321afe56d9305ca5dae2d60",
+      "captured_on": "2026-10-05",
+      "capture": "actual engine render",
+      "renderer": "Metal surface PT",
+      "scene": "lighting/scene-scene.json",
+      "scene_sha256": "06d220751282b10eba09815f9860ad8cb941dd513f19a090584519e265b61617",
+      "report": "lighting/scene-pt-report.json",
+      "samples_per_pixel": 512,
+      "bounce_limit": 12,
+      "texture_size": 512,
+      "online_nrc": false,
+      "source_capture_sha256": "0a35f727aaa6424e60e148008d54d16e23846dfa1331a4963ccfc95796b6f7ba",
+      "engine_commit": "dfc93213c474ade1da06d62cd5fbcba91542d545"
+    },
+    {
+      "file": "agent-poster.jpg",
+      "dimensions": [
+        1280,
+        720
+      ],
+      "sha256": "bfa375d4ce0ef953fcc0ccc739b922f3def9c9f40d4dd0e9ccef32d365010146",
+      "captured_on": "2026-10-05",
+      "capture": "actual engine render",
+      "renderer": "native Metal forward with baked diffuse GI",
+      "scene": "lighting/harbor-scene.json",
+      "scene_sha256": "c795b2f7ff86cccc4e5a2f292a21e6002c56bf35a0b27700f4e13660ee22e657",
+      "probe_asset_sha256": "f2b8128fa729e4d236eacd351fd49c08402c9b029a0af62b07f4773d3669dcc9",
+      "probe_count": 2940,
+      "capture_tick": 60,
+      "camera": {
+        "position": [
+          -8.296346962928771,
+          5.8,
+          8.028991796970367
+        ],
+        "look_at": [
+          2.541653037071228,
+          2.8,
+          -0.7610082030296326
+        ],
+        "fov_deg": 44
+      },
+      "scope": "Fixed-pose ship and cargo mesh diffuse GI. Ocean retains its existing sky/sun/reflection lighting.",
+      "source_capture_sha256": "e8c9d7d2cdb66608207a39f75918aab0e18304eb0798d4400cdf21d6f9001ff4",
+      "engine_commit": "dfc93213c474ade1da06d62cd5fbcba91542d545"
+    },
+    {
+      "file": "detail-poster.jpg",
+      "dimensions": [
+        1280,
+        960
+      ],
+      "sha256": "24a5ba3f061c88d8dca768e36a467db826a2472fbaeedf3ad26c8a8f09353a65",
+      "captured_on": "2026-10-05",
+      "capture": "actual engine render",
+      "renderer": "Metal surface PT",
+      "scene": "lighting/detail-scene.json",
+      "scene_sha256": "46c551578652c74fa4625bc62cd0c196e825fc6fde5904d50ba80e801623f202",
+      "report": "lighting/detail-pt-report.json",
+      "samples_per_pixel": 512,
+      "bounce_limit": 12,
+      "texture_size": 2048,
+      "online_nrc": false,
+      "source_capture_sha256": "0ccd8561646490658896cb30e2ce408ff74706ca3426e9d26a4d1c2ea3167b78",
+      "engine_commit": "dfc93213c474ade1da06d62cd5fbcba91542d545"
+    },
+    {
+      "file": "editor-poster.jpg",
+      "dimensions": [
+        1280,
+        720
+      ],
+      "sha256": "7decc7b6ccc67df9a752bb96ef953b8c7ef673533a16554441d324fb6b7d3f5f",
+      "captured_on": "2026-10-05",
+      "capture": "actual engine render",
+      "renderer": "real browser WebGPU editor with baked diffuse GI",
+      "capture_tick": 60,
+      "project": "Harbor",
+      "probe_asset_sha256": "f2b8128fa729e4d236eacd351fd49c08402c9b029a0af62b07f4773d3669dcc9",
+      "scope": "Real Rust host; Sky selected to show the loaded baked_gi asset and gi_intensity.",
+      "source_capture_sha256": "1bde3e47bfce40d7cd17e60f58612e1e448b1b79372874d07a9251b96097eff6",
+      "engine_commit": "dfc93213c474ade1da06d62cd5fbcba91542d545"
+    }
+  ],
+  "stills_notes": "New global-illumination stills replace showcase posters. Clips retain their original forward-renderer capture provenance. PT stills are offline renders; prior stress timing does not describe their performance. Source settings and PT reports accompany the images."
 }

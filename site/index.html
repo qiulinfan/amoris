@@ -9,7 +9,6 @@
   <link rel="icon" href="assets/icon.svg">
   <link rel="apple-touch-icon" href="assets/icon.svg">
   <link rel="stylesheet" href="site.css">
-  <script src="site.js" defer></script>
 </head>
 <body class="showcase">
   <a class="skip-link" href="#main">Skip to content</a>
@@ -36,10 +35,8 @@
           <p class="fineprint">A working prototype. The examples below come from the engine.</p>
         </article>
         <figure class="hero-card hero-media">
-          <video class="ambient-video" autoplay loop muted playsinline preload="metadata" poster="media/scene-poster.jpg" aria-label="Bistro running in the native Amoris renderer">
-            <source src="media/scene.mp4" type="video/mp4">
-          </video>
-          <figcaption><div><span class="live-dot" aria-hidden="true"></span> Bistro <span class="muted">/ native renderer</span></div><button class="motion-toggle" type="button" aria-label="Pause the scene video" aria-pressed="false">Pause motion</button></figcaption>
+          <img class="hero-render" src="media/scene-poster.jpg" alt="Bistro street in sunlight, rendered in Amoris with multi-bounce Metal path tracing" width="1024" height="768" fetchpriority="high">
+          <figcaption><div>Bistro <span class="muted">/ Metal path tracing · rendered still</span></div><a class="recording-link" href="media/scene.mp4">Earlier recording <span aria-hidden="true">↗</span></a></figcaption>
         </figure>
       </section>
 
@@ -50,25 +47,19 @@
       </section>
 
       <section id="showcase" class="page-section" aria-labelledby="showcase-title">
-        <div class="section-heading"><div><span class="eyebrow">In the engine</span><h2 id="showcase-title">High-detail scenes, running.</h2></div><p>Real renders and recorded sessions. Use the controls to watch each example.</p></div>
+        <div class="section-heading"><div><span class="eyebrow">In the engine</span><h2 id="showcase-title">Scenes with global illumination.</h2></div><p>Actual engine stills. Metal path tracing for Bistro and Flight Helmet; baked probes for Harbor.</p></div>
         <div class="demo-grid">
           <article class="section-card demo-card">
-            <video controls playsinline preload="none" poster="media/scene-poster.jpg" aria-label="Bistro scene walkthrough">
-              <source src="media/scene.mp4" type="video/mp4"><track kind="captions" src="media/scene.vtt" srclang="en" label="English">
-            </video>
-            <div class="card-copy"><span class="card-number">01 / Rendering</span><h3>Bistro</h3><p>A detailed public scene, imported into the engine with its authored geometry and textures. Real lighting, shadows, and camera movement.</p><div class="tags"><span>Authored scene</span><span>PBR textures</span><span>native GPU</span></div></div>
+            <img class="demo-render" src="media/scene-poster.jpg" alt="Amoris Metal path-traced Bistro exterior, with sunlight, building shadows, and light reflected between surfaces" width="1024" height="768" loading="lazy">
+            <div class="card-copy"><span class="card-number">01 / Metal path tracing</span><h3>Bistro</h3><p>The public Bistro exterior in sunlight, with multi-bounce lighting. An offline 1024 × 768 render at 512 samples per pixel, a 12-bounce limit, and textures capped at 512 px.</p><div class="tags"><span>Authored scene</span><span>512 spp</span><span>12-bounce limit</span></div><p class="fineprint">This still has no real-time FPS measurement. <a href="media/scene.mp4">Earlier recording: native forward-renderer walkthrough.</a></p></div>
           </article>
           <article class="section-card demo-card">
-            <video controls playsinline preload="none" poster="media/agent-poster.jpg" aria-label="A sailing task controlled through the Amoris API">
-              <source src="media/agent.mp4" type="video/mp4"><track kind="captions" src="media/agent.vtt" srclang="en" label="English" default>
-            </video>
-            <div class="card-copy"><span class="card-number">02 / Agent workflow</span><h3>Sailing through MCP.</h3><p>A detailed CC0 Dutch ship sails through the real physics simulation. A scripted MCP pilot tests four steering forks, chooses an action, and takes reachable cargo aboard.</p><div class="tags"><span>MCP-controlled session</span><span>explicit look-ahead</span><span>deterministic ticks</span></div><p class="fineprint">Developer-mode automation · 2 crates collected · not an autonomous LLM player.</p></div>
+            <img class="demo-render" src="media/agent-poster.jpg" alt="Harbor's CC0 Dutch ship and cargo meshes in Amoris, with baked probe diffuse global illumination at a fixed pose" loading="lazy">
+            <div class="card-copy"><span class="card-number">02 / Baked probe lighting</span><h3>Harbor</h3><p>World-space probes light the ship and cargo meshes in a fixed sailing pose. The ocean keeps its existing sky, sun, and reflection lighting.</p><div class="tags"><span>Baked probes</span><span>Mesh diffuse GI</span><span>Fixed pose</span></div><p class="fineprint"><a href="media/agent.mp4">Earlier recording: sailing through MCP.</a> A scripted pilot tests four steering forks, chooses an action, and takes reachable cargo aboard. Developer-mode automation · 2 crates collected · not an autonomous LLM player.</p></div>
           </article>
           <article class="section-card demo-card detail-card">
-            <video controls playsinline preload="none" poster="media/detail-poster.jpg" aria-label="Flight Helmet material close-up rendered in Amoris">
-              <source src="media/detail.mp4" type="video/mp4"><track kind="captions" src="media/detail.vtt" srclang="en" label="English">
-            </video>
-            <div class="card-copy"><span class="card-number">03 / Material detail</span><h3>Materials, up close.</h3><p>The CC0 Flight Helmet: 94,722 triangles, six materials, and authored color, normal, and roughness maps. A close camera pass reveals the surface detail.</p><div class="tags"><span>glTF</span><span>PBR materials</span><span>94.7K triangles</span></div></div>
+            <img class="demo-render" src="media/detail-poster.jpg" alt="CC0 Flight Helmet rendered in Amoris with Metal path tracing and its authored PBR material maps" loading="lazy">
+            <div class="card-copy"><span class="card-number">03 / Metal path tracing</span><h3>Materials, up close.</h3><p>The CC0 Flight Helmet: 94,722 triangles, six materials, and authored color, normal, and roughness maps. This offline Metal path-traced still shows its materials under multi-bounce lighting.</p><div class="tags"><span>glTF</span><span>PBR materials</span><span>94.7K triangles</span></div><p class="fineprint"><a href="media/detail.mp4">Earlier recording: forward-rendered material close-up.</a></p></div>
           </article>
         </div>
       </section>
@@ -76,10 +67,8 @@
       <section id="editor" class="page-section" aria-labelledby="editor-title">
         <div class="section-heading"><div><span class="eyebrow">A shared workspace</span><h2 id="editor-title">Edit, play, and debug.</h2></div><a class="text-link" href="documentation/editor/">Editor guide <span aria-hidden="true">→</span></a></div>
         <figure class="section-card editor-media">
-          <video controls playsinline preload="none" poster="media/editor-poster.jpg" aria-label="Amoris editor connected to a real running host">
-            <source src="media/editor.mp4" type="video/mp4"><track kind="captions" src="media/editor.vtt" srclang="en" label="English" default>
-          </video>
-          <figcaption>Connected to the real Rust host. The viewport is the engine's WebGPU renderer.</figcaption>
+          <img class="editor-render" src="media/editor-poster.jpg" alt="The Amoris web editor connected to a real Rust host, showing Harbor with baked probe GI in the WebGPU viewport" loading="lazy">
+          <figcaption><span>Harbor with baked probe GI. Connected to the real Rust host; the viewport is the engine's WebGPU renderer.</span><a class="recording-link" href="media/editor.mp4">Earlier recording <span aria-hidden="true">↗</span></a></figcaption>
         </figure>
         <div class="section-grid editor-points">
           <article class="section-card"><span class="small-icon" aria-hidden="true">↔</span><h3>A docked editor</h3><p>Viewport, hierarchy, inspector, assets, history, and a command palette in one window.</p></article>
@@ -89,11 +78,12 @@
       </section>
 
       <section id="data" class="page-section" aria-labelledby="data-title">
-        <div class="section-heading"><div><span class="eyebrow">Measured, with context</span><h2 id="data-title">Detail, at scale.</h2></div><a class="text-link" href="documentation/data/">Method and evidence <span aria-hidden="true">→</span></a></div>
+        <div class="section-heading"><div><span class="eyebrow">Forward rendering · 5 October 2026</span><h2 id="data-title">Detail, at scale.</h2></div><a class="text-link" href="documentation/data/">Method and evidence <span aria-hidden="true">→</span></a></div>
+        <p class="data-context">These historical forward-renderer measurements use a separate workload. They do not measure the path-traced stills or baked GI shown above.</p>
         <div class="metric-grid">
           <article class="section-card metric"><span class="metric-value">2.83M</span><h3>Triangles in the Bistro exterior</h3><p>132 authored materials. 12.02 ms mean render-and-wait at 1080p on Apple M5.</p></article>
           <article class="section-card metric"><span class="metric-value">97.0M</span><h3>Scene triangles at 1,024 copies</h3><p>6,145 primitive instances before GPU culling. 1,021 helmets contribute visible pixels.</p></article>
-          <article class="section-card metric"><span class="metric-value">1080p</span><h3>Fresh native stress sweep</h3><p>Apple M5 · Metal · 300 measured frames after 60 fully loaded warm-up frames.</p></article>
+          <article class="section-card metric"><span class="metric-value">1080p</span><h3>Native stress sweep</h3><p>Apple M5 · Metal · 300 measured frames after 60 fully loaded warm-up frames.</p></article>
         </div>
         <article class="section-card benchmark-card">
           <div class="benchmark-heading"><h3>High-detail mesh stress</h3><span class="muted">Render and wait for GPU idle — lower is better</span></div>
@@ -101,7 +91,7 @@
           <div class="bar-row"><span class="bar-label">64 helmets<br><small>6.06M triangles</small></span><div class="bar-pair"><div class="bar amoris-bar" style="--bar-width:12.8%"><span>10.52 ms</span></div></div></div>
           <div class="bar-row"><span class="bar-label">256 helmets<br><small>24.25M triangles</small></span><div class="bar-pair"><div class="bar amoris-bar" style="--bar-width:35%"><span>28.81 ms</span></div></div></div>
           <div class="bar-row"><span class="bar-label">1,024 helmets<br><small>97.00M triangles</small></span><div class="bar-pair"><div class="bar amoris-bar" style="--bar-width:100%"><span>82.43 ms</span></div></div></div>
-          <p class="fineprint">5 October 2026 · 1920 × 1080 · authored PBR maps, directional shadows and postprocessing enabled. Static rendering without simulation, presentation or PNG encoding. Geometry counts precede culling; this is not a full-game FPS claim. <a href="documentation/data/">Method, p95 and raw results.</a></p>
+          <p class="fineprint">5 October 2026 · forward renderer · 1920 × 1080 · authored PBR maps, directional shadows and postprocessing enabled. Static rendering without simulation, presentation or PNG encoding. Geometry counts precede culling; this is not a full-game FPS claim or a PT measurement. <a href="documentation/data/">Method, p95 and raw results.</a></p>
         </article>
       </section>
 

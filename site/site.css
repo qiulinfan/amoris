@@ -262,11 +262,12 @@ p {
   min-width:0
 }
 
-.hero-media video {
+.hero-media .hero-render {
   width:100%;
   flex:1;
   min-height:300px;
-  object-fit:cover;
+  min-width:0;
+  object-fit:contain;
   background:#131b21
 }
 
@@ -285,27 +286,16 @@ p {
   color:var(--muted)
 }
 
-.live-dot {
-  display:inline-block;
-  width:6px;
-  height:6px;
-  background:var(--accent-2);
-  border-radius:50%;
-  margin-right:7px
-}
-
-.motion-toggle {
-  border:0;
-  background:none;
-  padding:2px 0;
+.recording-link {
   color:var(--muted);
   font-size:11px;
-  cursor:pointer;
-  white-space:nowrap
+  white-space:nowrap;
+  text-decoration:none
 }
 
-.motion-toggle:hover {
-  color:var(--text)
+.recording-link:hover {
+  color:var(--text);
+  text-decoration:underline
 }
 
 .summary-strip {
@@ -377,7 +367,7 @@ p {
   grid-column: 1 / -1;
   grid-template-columns: 1.3fr 1fr;
 }
-.detail-card video {
+.detail-card .demo-render {
   height: 100%;
   border-bottom: 0;
   border-right: 1px solid var(--border);
@@ -386,10 +376,11 @@ p {
   align-self: center;
 }
 
-.demo-card video {
+.demo-card .demo-render {
   width:100%;
-  aspect-ratio:16/9;
-  object-fit:cover;
+  height:auto;
+  aspect-ratio:4/3;
+  object-fit:contain;
   background:#12171c;
   border-bottom:1px solid var(--border)
 }
@@ -443,14 +434,18 @@ p {
   margin:0
 }
 
-.editor-media video {
+.editor-media .editor-render {
   width:100%;
-  aspect-ratio:16/9;
+  height:auto;
   background:#11151a;
   object-fit:contain
 }
 
 .editor-media figcaption {
+  display:flex;
+  justify-content:space-between;
+  align-items:baseline;
+  gap:18px;
   padding:12px 18px;
   border-top:1px solid var(--border);
   font-size:12px;
@@ -490,6 +485,12 @@ p {
   display:grid;
   grid-template-columns:repeat(3,minmax(0,1fr));
   gap:18px
+}
+
+.data-context {
+  font-size:13px;
+  max-width:780px;
+  margin:-8px 0 23px
 }
 
 .metric {
@@ -920,9 +921,9 @@ body:not(.showcase) footer {
   .hero-copy p {
     font-size:14px
   }
-  .hero-media video {
+  .hero-media .hero-render {
     min-height:0;
-    aspect-ratio:16/10
+    aspect-ratio:4/3
   }
   .summary-strip {
     grid-template-columns:1fr;
@@ -956,13 +957,14 @@ body:not(.showcase) footer {
   .demo-grid,.section-grid,.metric-grid {
     grid-template-columns:1fr
   }
-  .editor-media video {
-    aspect-ratio:16/9
+  .editor-media figcaption {
+    flex-wrap:wrap;
+    gap:8px
   }
   .detail-card {
     grid-template-columns:1fr;
   }
-  .detail-card video {
+  .detail-card .demo-render {
     border-right:0;
     border-bottom:1px solid var(--border);
   }

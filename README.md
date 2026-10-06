@@ -10,9 +10,9 @@ on Metal and Vulkan, and in the browser on WebGPU.
 [CLI and MCP](https://qiulinfan.github.io/amoris/documentation/api/) ·
 [Measurements](https://qiulinfan.github.io/amoris/documentation/data/)
 
-[![A high-detail scene rendered by Amoris](site/media/scene-poster.jpg)](site/media/scene.mp4)
+[![Bistro with global illumination rendered by Amoris](site/media/scene-poster.jpg)](https://qiulinfan.github.io/amoris/#showcase)
 
-*Bistro exterior, captured in the Amoris renderer: 2.83 million triangles and 132 materials.*
+*Bistro exterior, captured with multi-bounce Metal path tracing: 512 spp and a 12-bounce limit.*
 
 [Amazon Lumberyard / ORCA](https://developer.nvidia.com/orca/amazon-lumberyard-bistro),
 CC BY 4.0. [Asset credits](site/content/credits.md).

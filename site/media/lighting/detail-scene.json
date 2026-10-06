@@ -1,0 +1,103 @@
+{
+  "format": "pocket-scene",
+  "version": 1,
+  "entities": [
+    {
+      "name": "Camera",
+      "components": {
+        "Transform": {
+          "position": [
+            0.62,
+            0.52,
+            1.12
+          ],
+          "rotation": [
+            -0.06386753496121887,
+            0.24956203775469235,
+            0.016498039172772216,
+            0.9661094875805519
+          ]
+        },
+        "Camera": {
+          "fov_deg": 34
+        }
+      }
+    },
+    {
+      "name": "Sun",
+      "components": {
+        "Transform": {
+          "rotation": [
+            -0.34690135409951683,
+            0.3078278892089324,
+            0.1216864244838268,
+            0.8775499160990426
+          ]
+        },
+        "Light": {
+          "kind": "directional",
+          "intensity": 5,
+          "shadows": true
+        }
+      }
+    },
+    {
+      "name": "Environment",
+      "components": {
+        "Environment": {
+          "sky": "color",
+          "sky_color": [
+            0.16,
+            0.2,
+            0.28
+          ],
+          "ambient": 0.7,
+          "bloom": 0.04,
+          "exposure_ev": 0.65
+        }
+      }
+    },
+    {
+      "name": "Ground",
+      "components": {
+        "Transform": {
+          "position": [
+            0,
+            -0.004,
+            0
+          ]
+        },
+        "Model": {
+          "mesh": "plane",
+          "scale": [
+            1.2,
+            1,
+            1.2
+          ],
+          "color": [
+            0.034,
+            0.043,
+            0.053,
+            1
+          ],
+          "roughness": 0.5
+        }
+      }
+    },
+    {
+      "name": "Helmet0001",
+      "components": {
+        "Transform": {
+          "position": [
+            0.0,
+            0,
+            0.0
+          ]
+        },
+        "Model": {
+          "mesh": "models/third-party/FlightHelmet.glb"
+        }
+      }
+    }
+  ]
+}

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify the actual built showcase links, anchors, captions, and video files."""
+"""Verify the actual built showcase links, anchors, captions, videos, and rendered stills."""
 from pathlib import Path
 from html.parser import HTMLParser
 from urllib.parse import urlsplit, unquote
@@ -67,6 +67,51 @@ def main():
     search = json.loads((site / "documentation/search/search_index.json").read_text())
     assert len(search["docs"]) >= 5
     manifest = json.loads((site / "media/manifest.json").read_text())
+    stills = manifest.get("stills", [])
+    if not isinstance(stills, list):
+        problems.append("media/manifest.json: stills must be a list")
+        stills = []
+    still_files = set()
+    for still in stills:
+        if not isinstance(still, dict):
+            problems.append("media/manifest.json: each still must be an object")
+            continue
+        filename = still.get("file")
+        if (not isinstance(filename, str) or Path(filename).name != filename or "\\" in filename
+                or Path(filename).suffix.lower() not in {".jpg", ".png"}):
+            problems.append(f"media/manifest.json: invalid still filename {filename!r}; expected a jpg/png basename")
+            continue
+        if filename.casefold() in still_files:
+            problems.append(f"media/{filename}: duplicate still file in the capture manifest")
+            continue
+        still_files.add(filename.casefold())
+        dimensions = still.get("dimensions")
+        if (not isinstance(dimensions, list) or len(dimensions) != 2
+                or any(type(value) is not int or value <= 0 for value in dimensions)):
+            problems.append(f"media/{filename}: dimensions must contain two positive integers")
+            continue
+        checksum = still.get("sha256")
+        if (not isinstance(checksum, str) or len(checksum) != 64
+                or any(character not in "0123456789abcdef" for character in checksum)):
+            problems.append(f"media/{filename}: sha256 must contain 64 lowercase hexadecimal characters")
+            continue
+        image = site / "media" / filename
+        if not image.is_file():
+            problems.append(f"media/{filename}: missing still file")
+            continue
+        if hashlib.sha256(image.read_bytes()).hexdigest() != checksum:
+            problems.append(f"media/{filename}: checksum does not match the capture manifest")
+        if not args.links_only:
+            try:
+                probe = json.loads(subprocess.check_output([
+                    "ffprobe", "-v", "error", "-show_entries", "stream=width,height", "-of", "json", str(image),
+                ], text=True))
+                streams = probe.get("streams", [])
+                actual = [streams[0].get("width"), streams[0].get("height")] if streams else None
+                if actual != dimensions:
+                    problems.append(f"media/{filename}: dimensions {actual} do not match the capture manifest {dimensions}")
+            except (subprocess.CalledProcessError, json.JSONDecodeError) as error:
+                problems.append(f"media/{filename}: ffprobe could not read the still ({error})")
     assert len(manifest["clips"]) >= 3
     assert len({clip["name"] for clip in manifest["clips"]}) == len(manifest["clips"])
     for clip in manifest["clips"]:
@@ -88,6 +133,7 @@ def main():
     if problems:
         raise SystemExit("\n".join(problems))
     print(json.dumps({"html_pages": len(pages), "local_references": checked, "video_files": len(manifest["clips"]),
+                      "still_files": len(stills),
                       "search_entries": len(search["docs"]), "problems": 0}))
 
 
