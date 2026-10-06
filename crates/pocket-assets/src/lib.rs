@@ -4,6 +4,8 @@
 //! renderers. Game side: no GPU, no threads, builds for `wasm32`.
 
 pub mod animation;
+#[cfg(feature = "import")]
+pub mod collision;
 pub mod frame;
 pub mod gi;
 #[cfg(feature = "import")]

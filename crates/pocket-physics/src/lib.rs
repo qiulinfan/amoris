@@ -33,6 +33,7 @@ mod readings;
 pub mod sailing;
 pub mod sea;
 pub mod solver;
+pub mod walk;
 
 pub use boat::{Boat, BuoyPoint, Floater, Hull, Sail, Trim, best_sheet};
 pub use body::{

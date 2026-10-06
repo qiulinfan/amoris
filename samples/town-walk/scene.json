@@ -1,0 +1,113 @@
+{
+  "format": "pocket-scene",
+  "version": 1,
+  "entities": [
+    {
+      "name": "Camera",
+      "components": {
+        "Transform": {
+          "position": [
+            12,
+            2.1,
+            18
+          ],
+          "rotation": [
+            0.0,
+            0.28978414868843005,
+            -0.0,
+            0.9570920264890529
+          ]
+        },
+        "Camera": {
+          "fov_deg": 70
+        }
+      }
+    },
+    {
+      "name": "Sun",
+      "components": {
+        "Transform": {
+          "rotation": [
+            -0.448503047444147,
+            -0.33637728558311025,
+            0.0,
+            0.828067230469273
+          ]
+        },
+        "Light": {
+          "kind": "directional",
+          "intensity": 12,
+          "shadows": true,
+          "color": [
+            1,
+            0.93,
+            0.83
+          ]
+        }
+      }
+    },
+    {
+      "name": "Environment",
+      "components": {
+        "Environment": {
+          "ambient": 0.7,
+          "exposure_ev": 1.25,
+          "bloom": 0.035,
+          "baked_gi": "lighting/town-probes.json",
+          "gi_intensity": 1.0,
+          "neural_gi": "",
+          "fog_density": 0.0008
+        }
+      }
+    },
+    {
+      "name": "Bistro",
+      "components": {
+        "Model": {
+          "mesh": "models/third-party/BistroExterior.glb"
+        },
+        "Transform": {}
+      }
+    },
+    {
+      "name": "TownTitle",
+      "components": {
+        "UiText": {
+          "text": "Amoris Town",
+          "anchor": "top_left",
+          "offset": [
+            24,
+            24
+          ],
+          "size": 22,
+          "color": [
+            1,
+            0.96,
+            0.9,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "TownControls",
+      "components": {
+        "UiText": {
+          "text": "WASD move  |  Shift run  |  Space jump  |  R reset",
+          "anchor": "bottom_left",
+          "offset": [
+            24,
+            52
+          ],
+          "size": 15,
+          "color": [
+            1,
+            1,
+            1,
+            0.9
+          ]
+        }
+      }
+    }
+  ]
+}

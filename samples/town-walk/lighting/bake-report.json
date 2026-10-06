@@ -1,0 +1,19 @@
+{
+  "bake_seconds": 182.546454917,
+  "classification_rays": 1399200,
+  "distance_rays": 21520896,
+  "load_seconds": 27.549389,
+  "output": "lighting/town-probes.json",
+  "probes": 43725,
+  "radiance_rays": 21520896,
+  "rays": 71845047,
+  "scene_signature": "fnv1a64-static-diffuse-v1:9c38001f833e45c5:sky-cube-v1:dc78380758ee7b8b:998ffec0628ce131",
+  "secondary_rays": 17083659,
+  "shadow_rays": 10320396,
+  "triangles": 2829125,
+  "diffuse_bake_excluded_transparent_primitives": 13,
+  "visible_model_unchanged": true,
+  "asset_sha256": "1c55acefabfa9fdc288a624d539976a40d1bf5e32844bb739fcfd7ede8ff66c9",
+  "invalid_probe_count": 1692,
+  "normal_rg_positive_z_reconstruction": true
+}

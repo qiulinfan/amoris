@@ -375,6 +375,31 @@ fn run() -> Result<(), String> {
             }
         }
     }
+    // A same-camera GI comparison is untimed and reuses the resident model and probe field.
+    if let Some(index) = arguments.iter().position(|value| value == "--gi-compare") {
+        let directory = PathBuf::from(arguments.get(index + 1).ok_or("missing --gi-compare directory")?);
+        std::fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
+        if !renderer.gi_loaded() {
+            return Err("GI comparison needs a successfully loaded probe or neural asset".into());
+        }
+        let intensity = renderer.scene.environment.as_ref().ok_or("GI comparison needs Environment")?.gi_intensity;
+        for (name, value) in [("on", intensity), ("off", 0.0), ("on-repeat", intensity)] {
+            renderer.scene.environment.as_mut().unwrap().gi_intensity = value;
+            for _ in 0..32 {
+                renderer.render(&view, 0.0);
+                gpu.device.poll(wgpu::PollType::wait_indefinitely()).map_err(|e| e.to_string())?;
+            }
+            let (w, h, pixels) = renderer.capture_rgba(0.0);
+            image::save_buffer(directory.join(format!("{name}.png")), &pixels, w, h, image::ColorType::Rgba8).map_err(|e| e.to_string())?;
+        }
+        std::fs::write(directory.join("capture.json"), serde_json::to_vec_pretty(&json!({
+            "adapter":gpu.info.name,"backend":gpu.backend_name(),"loaded":renderer.gi_loaded(),
+            "gi_error":renderer.gi_error(),"pending_assets":renderer.last.pending_assets,
+            "gi_asset":renderer.scene.environment.as_ref().map(|e|e.baked_gi.as_str()),
+            "intensity_on":intensity,"intensity_off":0.0,"settle_frames":32,
+            "same_camera_material_lights_exposure":true,"capture_time":0.0
+        })).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
+    }
     // Pixel coverage is an extra ID pass after timing, so its readback cannot affect the sample.
     renderer.request_visible();
     renderer.render(&view, started.elapsed().as_secs_f64());

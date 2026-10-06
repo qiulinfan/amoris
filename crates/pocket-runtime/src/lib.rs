@@ -47,6 +47,8 @@ pub use project::{GameSetup, Manifest, Project, read_file, toml_value};
 pub use scene::{Prefab, SCENE_FORMAT, Scene, SceneEntity, prefab_components};
 pub use scripts::{ENTRY, ScriptsApplyParams, bundle_record, compiled_from_record};
 pub use values::{EntityRef, named, resolve};
+/// Presenter-side static walking queries; authoritative gameplay remains in the game world.
+pub use pocket_physics::walk;
 
 #[cfg(feature = "transpile")]
 pub use project::lint;

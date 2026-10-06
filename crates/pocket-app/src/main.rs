@@ -17,10 +17,10 @@
 mod check;
 mod cli;
 mod client;
+mod present;
 mod run;
 mod serve;
 mod window;
-mod present;
 
 use check::Outcome;
 
@@ -76,7 +76,21 @@ fn dispatch(args: Vec<String>) -> Outcome {
 }
 
 fn main() {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    if args.is_empty() {
+        if let Some(game) = std::env::current_exe()
+            .ok()
+            .as_deref()
+            .and_then(bundled_game)
+        {
+            args = vec![
+                "play".into(),
+                game.to_string_lossy().into_owned(),
+                "--walk".into(),
+                "--vsync".into(),
+            ];
+        }
+    }
     // A window's event loop must run on the main thread (macOS); its game runs on its own thread.
     // `pocket play start|stop` is the client's Play of a running host; `pocket play <project>` opens
     // a window.
@@ -110,4 +124,36 @@ fn main() {
         println!("{}", outcome.stdout);
     }
     std::process::exit(outcome.code);
+}
+
+/// An app bundle carries the project beside MacOS/ in Contents/Resources/game/.
+/// Plain CLI binaries keep their no-argument help behavior.
+fn bundled_game(exe: &std::path::Path) -> Option<std::path::PathBuf> {
+    let game = exe.parent()?.parent()?.join("Resources/game");
+    game.join("project.toml").is_file().then_some(game)
+}
+
+#[cfg(test)]
+mod bundle_tests {
+    use super::*;
+
+    #[test]
+    fn no_argument_bundle_discovery_requires_a_project_beside_the_executable() {
+        let root = std::env::temp_dir().join(format!(
+            "amoris bundle test {} {}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let exe = root.join("Test Town.app/Contents/MacOS/pocket");
+        assert!(bundled_game(&exe).is_none());
+        let game = root.join("Test Town.app/Contents/Resources/game");
+        std::fs::create_dir_all(&game).unwrap();
+        std::fs::write(game.join("project.toml"), "name = 'Town'\n").unwrap();
+        assert_eq!(bundled_game(&exe), Some(game));
+        assert!(bundled_game(&root.join("bin/pocket")).is_none());
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

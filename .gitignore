@@ -22,3 +22,7 @@ web/projects/
 # Licensed showcase assets are fetched and hash-verified, not vendored into Git.
 site/demos/*/models/third-party/
 site/demos/stress-*/
+
+# Large audited town-world model is packaged locally.
+samples/town-walk/models/third-party/
+samples/town-walk/lighting/town-probes.json

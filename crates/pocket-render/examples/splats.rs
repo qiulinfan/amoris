@@ -999,6 +999,7 @@ fn main() {
         backend: BackendChoice::from_env(),
         vsync: flag("--vsync"),
         fly_camera: fly,
+        walk: false,
         bench: bench.map(|n| (60, n)),
     };
     match run(host, options) {

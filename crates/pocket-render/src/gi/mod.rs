@@ -80,6 +80,10 @@ impl ProbeVolume {
         self.write_params(queue);
     }
 
+    pub fn has_data(&self) -> bool {
+        self.data.is_some() || self.network.is_some()
+    }
+
     pub fn set_intensity(&mut self, queue: &wgpu::Queue, intensity: f32) {
         let value = if intensity.is_finite() {
             intensity.max(0.0)

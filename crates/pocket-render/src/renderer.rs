@@ -968,6 +968,11 @@ impl Renderer {
     /// A failed GI asset must not be mistaken for a successfully measured lighting mode.
     pub fn gi_error(&self) -> Option<&str> { self.gi.error.as_deref() }
 
+    /// Whether a validated lighting field is resident and its asynchronous load succeeded.
+    pub fn gi_loaded(&self) -> bool {
+        self.gi.has_data() && !self.gi.loading && self.gi.error.is_none()
+    }
+
     /// Writes the scene's changes to the GPU, growing buffers as needed.
     fn sync(&mut self) {
         let device = &self.gpu.device;

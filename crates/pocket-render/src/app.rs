@@ -8,10 +8,12 @@ use std::sync::Arc;
 
 use glam::{Quat, Vec3};
 use winit::application::ApplicationHandler;
-use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
+use winit::event::{
+    DeviceEvent, DeviceId, ElementState, MouseButton, MouseScrollDelta, WindowEvent,
+};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
-use winit::window::{Window, WindowId};
+use winit::window::{CursorGrabMode, Window, WindowId};
 
 use crate::camera::CameraState;
 use crate::gpu::{BackendChoice, Gpu, instance};
@@ -23,6 +25,12 @@ pub trait Host {
     fn update(&mut self, renderer: &mut Renderer, now_s: f64);
     /// A key went down or up (the key's winit name, e.g. `KeyW`).
     fn key(&mut self, _key: &str, _pressed: bool) {}
+    /// Presenter-only first-person input; the host owns collision and the camera pose.
+    fn walk_input(&mut self, _input: WalkInput) {}
+    /// Optional loading or interaction status appended to the native window title.
+    fn status(&self) -> Option<&str> {
+        None
+    }
     /// After each frame, with its stats.
     fn after_frame(&mut self, _stats: &FrameStats) {}
     /// Whether to read the next frame back (a screenshot); `captured` receives it.
@@ -35,6 +43,20 @@ pub trait Host {
     }
 }
 
+/// One frame of native first-person controls. Motion is a unit-length horizontal input;
+/// look deltas are relative mouse pixels and jump is a press edge, never a held key.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct WalkInput {
+    pub motion: [f32; 2],
+    pub look: [f32; 2],
+    pub fast: bool,
+    pub jump: bool,
+    pub reset: bool,
+    pub gi_toggle: bool,
+    pub captured: bool,
+    pub dt_s: f32,
+}
+
 #[derive(Clone, Debug)]
 pub struct RunOptions {
     pub title: String,
@@ -44,6 +66,8 @@ pub struct RunOptions {
     pub vsync: bool,
     /// Start with this free camera (the host may still override it).
     pub fly_camera: Option<CameraState>,
+    /// Capture the mouse on click and forward first-person controls to the host.
+    pub walk: bool,
     /// Benchmark: frames to skip, then frames to measure; the window closes after.
     pub bench: Option<(u32, u32)>,
 }
@@ -57,8 +81,63 @@ impl Default for RunOptions {
             backend: BackendChoice::from_env(),
             vsync: true,
             fly_camera: None,
+            walk: false,
             bench: None,
         }
+    }
+}
+
+#[derive(Default)]
+struct WalkControls {
+    keys: HashSet<KeyCode>,
+    look: [f32; 2],
+    jump: bool,
+    reset: bool,
+    gi_toggle: bool,
+    captured: bool,
+}
+
+impl WalkControls {
+    fn release(&mut self, window: &Window) {
+        let _ = window.set_cursor_grab(CursorGrabMode::None);
+        window.set_cursor_visible(true);
+        self.keys.clear();
+        self.look = [0.0; 2];
+        self.jump = false;
+        self.reset = false;
+        self.gi_toggle = false;
+        self.captured = false;
+    }
+
+    fn capture(&mut self, window: &Window) {
+        match window
+            .set_cursor_grab(CursorGrabMode::Locked)
+            .or_else(|_| window.set_cursor_grab(CursorGrabMode::Confined))
+        {
+            Ok(()) => {
+                self.captured = true;
+                window.set_cursor_visible(false);
+            }
+            Err(e) => eprintln!("could not capture mouse: {e}"),
+        }
+    }
+
+    fn input(&mut self, dt_s: f32) -> WalkInput {
+        let key = |code| self.keys.contains(&code);
+        let x = u8::from(key(KeyCode::KeyD)) as f32 - u8::from(key(KeyCode::KeyA)) as f32;
+        let z = u8::from(key(KeyCode::KeyW)) as f32 - u8::from(key(KeyCode::KeyS)) as f32;
+        let length = (x * x + z * z).sqrt().max(1.0);
+        let input = WalkInput {
+            motion: [x / length, z / length],
+            look: std::mem::take(&mut self.look),
+            fast: key(KeyCode::ShiftLeft) || key(KeyCode::ShiftRight),
+            jump: std::mem::take(&mut self.jump),
+            reset: std::mem::take(&mut self.reset),
+            gi_toggle: std::mem::take(&mut self.gi_toggle),
+            captured: self.captured,
+            dt_s: dt_s.clamp(0.0, 0.1),
+        };
+        input
     }
 }
 
@@ -139,6 +218,7 @@ struct State {
     config: wgpu::SurfaceConfiguration,
     renderer: Renderer,
     fly: Option<Fly>,
+    walk: Option<WalkControls>,
     last_frame: f64,
     frame_times: Vec<f64>,
     gpu_times: Vec<f64>,
@@ -208,6 +288,7 @@ impl<H: Host> App<H> {
             config,
             renderer,
             fly: self.options.fly_camera.map(Fly::new),
+            walk: self.options.walk.then(WalkControls::default),
             last_frame: web_time(),
             frame_times: Vec::new(),
             gpu_times: Vec::new(),
@@ -228,6 +309,9 @@ impl<H: Host> App<H> {
         if let Some(fly) = st.fly.as_mut() {
             fly.step(dt.min(0.1));
             st.renderer.set_camera_override(Some(fly.cam));
+        }
+        if let Some(walk) = st.walk.as_mut() {
+            self.host.walk_input(walk.input(dt));
         }
         self.host.update(&mut st.renderer, now);
         let tex = match st.surface.get_current_texture() {
@@ -287,9 +371,21 @@ impl<H: Host> App<H> {
         }
         if now - st.title_at > 0.5 {
             st.title_at = now;
+            if self.options.walk {
+                st.window.set_title(&format!(
+                    "{} — {}",
+                    self.options.title,
+                    self.host.status().unwrap_or("Walk")
+                ));
+                return;
+            }
             st.window.set_title(&format!(
-                "{} — {} {}x{} — {:.2} ms frame, {:.2} ms GPU, {} instances",
+                "{}{} — {} {}x{} — {:.2} ms frame, {:.2} ms GPU, {} instances",
                 self.options.title,
+                self.host
+                    .status()
+                    .map(|s| format!(" — {s}"))
+                    .unwrap_or_default(),
                 stats.backend,
                 st.config.width,
                 st.config.height,
@@ -326,8 +422,33 @@ impl<H: Host> ApplicationHandler for App<H> {
             WindowEvent::KeyboardInput { event, .. } => {
                 if let PhysicalKey::Code(code) = event.physical_key {
                     let down = event.state == ElementState::Pressed;
-                    if code == KeyCode::Escape && down {
-                        el.exit();
+                    if code == KeyCode::Escape && down && !event.repeat {
+                        if let Some(st) = self.state.as_mut() {
+                            if let Some(walk) = st.walk.as_mut().filter(|w| w.captured) {
+                                walk.release(&st.window);
+                            } else {
+                                el.exit();
+                            }
+                        } else {
+                            el.exit();
+                        }
+                    }
+                    if let Some(walk) = self.state.as_mut().and_then(|s| s.walk.as_mut()) {
+                        // Lighting comparison also works while the mouse is released.
+                        if code == KeyCode::KeyG && down && !event.repeat {
+                            walk.gi_toggle = true;
+                        }
+                        if down && walk.captured {
+                            walk.keys.insert(code);
+                            if code == KeyCode::Space && !event.repeat {
+                                walk.jump = true;
+                            }
+                            if code == KeyCode::KeyR && !event.repeat {
+                                walk.reset = true;
+                            }
+                        } else {
+                            walk.keys.remove(&code);
+                        }
                     }
                     if let Some(fly) = self.state.as_mut().and_then(|s| s.fly.as_mut()) {
                         if down {
@@ -340,9 +461,28 @@ impl<H: Host> ApplicationHandler for App<H> {
                 }
             }
             WindowEvent::MouseInput { state, button, .. } => {
+                if button == MouseButton::Left && state == ElementState::Pressed {
+                    if let Some(st) = self.state.as_mut() {
+                        if let Some(walk) = st.walk.as_mut() {
+                            walk.capture(&st.window);
+                        }
+                    }
+                }
                 if button == MouseButton::Right {
                     if let Some(fly) = self.state.as_mut().and_then(|s| s.fly.as_mut()) {
                         fly.looking = state == ElementState::Pressed;
+                        fly.last_cursor = None;
+                    }
+                }
+            }
+            WindowEvent::Focused(false) => {
+                if let Some(st) = self.state.as_mut() {
+                    if let Some(walk) = st.walk.as_mut() {
+                        walk.release(&st.window);
+                    }
+                    if let Some(fly) = st.fly.as_mut() {
+                        fly.keys.clear();
+                        fly.looking = false;
                         fly.last_cursor = None;
                     }
                 }
@@ -372,6 +512,17 @@ impl<H: Host> ApplicationHandler for App<H> {
         }
     }
 
+    fn device_event(&mut self, _el: &ActiveEventLoop, _id: DeviceId, event: DeviceEvent) {
+        if let DeviceEvent::MouseMotion { delta } = event {
+            if let Some(walk) = self.state.as_mut().and_then(|s| s.walk.as_mut()) {
+                if walk.captured {
+                    walk.look[0] += delta.0 as f32;
+                    walk.look[1] += delta.1 as f32;
+                }
+            }
+        }
+    }
+
     fn about_to_wait(&mut self, _el: &ActiveEventLoop) {
         if let Some(st) = &self.state {
             st.window.request_redraw();
@@ -381,6 +532,9 @@ impl<H: Host> ApplicationHandler for App<H> {
 
 /// Opens the window and runs until it closes; a benchmark run returns its report.
 pub fn run<H: Host>(host: H, options: RunOptions) -> Result<Option<BenchReport>, String> {
+    if options.walk && options.fly_camera.is_some() {
+        return Err("walk and fly camera controls cannot be enabled together".into());
+    }
     let el = EventLoop::new().map_err(|e| e.to_string())?;
     el.set_control_flow(ControlFlow::Poll);
     let mut app = App {
@@ -395,4 +549,35 @@ pub fn run<H: Host>(host: H, options: RunOptions) -> Result<Option<BenchReport>,
         return Err(e);
     }
     Ok(app.report)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn walk_input_normalizes_diagonal_motion_and_consumes_press_edges() {
+        let mut controls = WalkControls::default();
+        controls.captured = true;
+        controls
+            .keys
+            .extend([KeyCode::KeyW, KeyCode::KeyD, KeyCode::ShiftRight]);
+        controls.look = [10.0, -3.0];
+        controls.jump = true;
+        controls.reset = true;
+        controls.gi_toggle = true;
+        let input = controls.input(1.0);
+        assert!((input.motion[0].hypot(input.motion[1]) - 1.0).abs() < 1e-6);
+        assert!(input.fast && input.captured && input.jump && input.reset);
+        assert!(input.gi_toggle);
+        assert_eq!(input.look, [10.0, -3.0]);
+        assert_eq!(input.dt_s, 0.1);
+        let next = controls.input(1.0 / 60.0);
+        assert!(!next.jump && !next.reset);
+        assert!(!next.gi_toggle);
+        assert_eq!(next.look, [0.0; 2]);
+        controls.keys.insert(KeyCode::KeyA);
+        controls.keys.insert(KeyCode::KeyS);
+        assert_eq!(controls.input(0.0).motion, [0.0; 2]);
+    }
 }

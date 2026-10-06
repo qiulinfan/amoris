@@ -76,6 +76,7 @@ fn main() {
         backend: BackendChoice::from_env(),
         vsync: flag("--vsync"),
         fly_camera: None,
+        walk: false,
         bench: bench.map(|n| (60, n)),
     };
     match run(Cubes { frame: Some(frame), rot: Quat::IDENTITY, dense }, options) {

@@ -1,0 +1,20 @@
+{
+  "format": "amoris-walk-model-v1",
+  "source_sha256": "b6930eb95fb6b38f5136b6de0895425076f752d12d5ec51b8db9c85229eae41d",
+  "sha256": "a67e148efc15c76c4b855ff1c5b4f1d6901e6a05312271f15a13794e544a079f",
+  "source_bytes": 893590804,
+  "bytes": 450728264,
+  "maximum_texture_dimension": 1024,
+  "preserved_nonimage_buffer_views_sha256": "ebda067a22225a8e3d59f10237dcab60a4b54ff88d5044f184533b01d22935c6",
+  "preserved": "All nonimage buffer-view bytes, accessors, meshes, node transforms, materials, extensions and scene instances.",
+  "image_count": 405,
+  "normal_z_reconstructed_images": 132,
+  "normal_z_rule": "Only material normal-usage images with an entirely zero source B channel; +Z=sqrt(max(1-X^2-Y^2,0)); R/G/alpha retained and no green flip.",
+  "attribution": "Amazon Lumberyard Bistro, Open Research Content Archive (ORCA), Amazon Lumberyard, July 2017.",
+  "source_url": "https://developer.nvidia.com/orca/amazon-lumberyard-bistro",
+  "license": "CC-BY-4.0",
+  "license_url": "https://creativecommons.org/licenses/by/4.0/",
+  "changes": "Embedded textures resized with Lanczos to the stated maximum dimension; missing positive Z reconstructed only for normal-only RG/B=0 textures, without flipping green; GLB buffer-view offsets and lengths repacked at 4-byte alignment.",
+  "seconds": 25.32231087499531,
+  "packed_file": "models/third-party/BistroExterior.glb"
+}
