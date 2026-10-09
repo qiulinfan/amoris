@@ -91,8 +91,8 @@ Amoris 是一个 **agent-native** 的 3D 游戏引擎。agent 在三个角色上
 | 脚本转译 | **oxc**，进程内转译并产出 source map | 0.152 | 无需 Node；毫秒级；错误与断点都映射回 TS 行 |
 | 脚本 VM | **QuickJS-ng**，经 `rquickjs`，vendored 并打补丁 | 0.16.2 / rquickjs 0.14.0 | 小型解释器，所有平台同一份，确定；补丁见 4.2 |
 | 脚本类型 | Rust 组件注册表 → `.d.ts` 与 JSON Schema | ts-rs 12、schemars 1.2 | 改了引擎类型，agent 与脚本看到的接口自动同步 |
-| 渲染 | **wgpu + WGSL** | 30.0.1 | 一套渲染器覆盖 Metal、Vulkan 与浏览器 WebGPU |
-| 原生图形后端 | **Metal**（macOS）、**Vulkan**（Linux/Windows；macOS 上经 MoltenVK 验证） | — | 所有者 2026-10-04 指定只做这两个原生后端；不做 Direct3D 12 |
+| 渲染 | **wgpu + WGSL** | 30.0.1 | 一套渲染器覆盖 Metal、Vulkan、Direct3D 12 与浏览器 WebGPU |
+| 原生图形后端 | **Metal**（macOS）、**Vulkan**（Linux/Windows；macOS 上经 MoltenVK 验证）、**Direct3D 12**（Windows，Pioneer 2026-10-09） | — | 所有者 2026-10-04 指定只做 Metal 与 Vulkan；Pioneer 2026-10-09 应所有者的探索要求加入 Direct3D 12，Windows 默认后端由测量决定（见 4.4） |
 | Web 图形 | WebGPU（wgpu 的浏览器后端，同一份代码） | — | 证明 web 渲染；不做 WebGL 回退 |
 | 窗口与输入 | winit；gilrs（手柄） | 0.30 | 事实标准 |
 | 资源 | glTF 2.0（`gltf`）、PNG/JPEG（`image`）、网格处理（`meshopt`：LOD、顶点缓存、meshlet）；导入在工作线程异步进行；内容哈希作为 ID | gltf 1.4、meshopt 0.6 | Amoris Pioneer 的 OBJ 导入冻结 14–27 秒，本线只走 glTF 且异步 |
@@ -158,6 +158,14 @@ Amoris 是一个 **agent-native** 的 3D 游戏引擎。agent 在三个角色上
   已交付独立的静态 Metal 表面 PT 与在线 NRC 实验入口；统一读回减少了测得的批次耗时，
   NRC 学习链路成立但仍有偏差、尚未加速渲染。契约见
   [表面 PT 与在线 NRC](spec/path-tracing-nrc.md)，数据见 [测量记录](bench/path-tracing-nrc.md)。
+- 2026-10-09（Pioneer）：所有者要求 Pioneer 自主探索 DirectX、WebGPU、3DGS 等方向。Direct3D 12
+  加入为 Windows 上与 Metal、Vulkan 并列的原生后端：打开 wgpu 的 `dx12` 特性，DXC 在运行时从
+  Windows SDK 加载（不用会在构建时下载二进制的 `static-dxc`），`POCKET_BACKEND=dx12` 选择它，
+  `POCKET_ADAPTER` 在双 GPU 的笔记本上选适配器。理由：同一份 wgpu 代码只需开一个特性；Chrome
+  的 Dawn 在 Windows 上也走 Direct3D 12，原生与浏览器同一底层便于对照；本机早先的渲染 spike
+  （`docs/spikes/render.md`）在 Radeon 780M 上测得 Vulkan 比 Direct3D 12 慢 25–53%。Windows 的
+  `Auto` 后端由测量决定：Direct3D 12 至少同样快且画面一致才取代 Vulkan。测量与结论见
+  [bench/dx12.md](bench/dx12.md)。光线追踪与浏览器不在此决定内。
 
 - 一套 wgpu 渲染器，WGSL 着色器放在独立的 `.wgsl` 文件里（不放进 Rust 字符串），按通道组织模块。
 - **渲染图**：每帧由通道组成的有向无环图，资源（瞬态纹理与缓冲）由图分配与复用。
@@ -170,7 +178,7 @@ Amoris 是一个 **agent-native** 的 3D 游戏引擎。agent 在三个角色上
     混合，与网格深度缓冲合成，即混合网格与 splat 的场景。
   - 神经纹理压缩：材质的多通道纹理压缩为低分辨率潜变量网格加一个小 MLP（Python/PyTorch 训练），
     在片元着色器里逐像素推理解码；对比未压缩与传统压缩的体积和质量。
-- 浏览器 WebGPU 与原生 Metal/Vulkan 走同一份代码；只使用 WebGPU 默认可用的特性作为基线，
+- 浏览器 WebGPU 与原生 Metal/Vulkan/Direct3D 12 走同一份代码；只使用 WebGPU 默认可用的特性作为基线，
   原生可选特性（如 multi-draw indirect、时间戳查询）作为加速路径。
 
 ### 4.5 编辑器

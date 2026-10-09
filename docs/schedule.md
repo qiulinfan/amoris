@@ -17,6 +17,8 @@
 4. 展示场景（`samples/harbor` 帆船港湾、`samples/arena` 对战）原生与浏览器都能跑。
 
 不在本周范围：Windows 与 Direct3D 12、桌面编辑器外壳（Tauri）。本轮实现已迁入 Amoris。
+Direct3D 12 已于 2026-10-09 作为 Pioneer 的探索方向重新纳入（纲领 4.1 与 4.4，测量见
+`docs/bench/dx12.md`），不改变本周的交付定义。
 
 ## 2. 技术栈（定稿摘要）
 
@@ -26,7 +28,7 @@
 | 世界 | bevy_ecs 0.19（只用 ECS），确定性 tick，PCE 规范编码，snapshot / fork / replay |
 | 游戏逻辑 | TypeScript：oxc 转译，QuickJS-ng 执行（vendored，补丁 P1–P11），TypeScript 7 做类型检查 |
 | 物理 | 现为 Rapier 0.36（确定性配置）；按 `docs/bench/physics.md` 的建议迁往 Jolt（第 4 天） |
-| 渲染 | wgpu 30，WGSL；原生 Metal、Vulkan（macOS 上经 MoltenVK），浏览器 WebGPU；GPU 驱动 |
+| 渲染 | wgpu 30，WGSL；原生 Metal、Vulkan（macOS 上经 MoltenVK）、Direct3D 12（Windows，Pioneer 2026-10-09），浏览器 WebGPU；GPU 驱动 |
 | 浏览器 | 游戏在 Web Worker 里跑同一份 wasm，页面用同一个渲染器（`pocket-viewport`）绘制 |
 | agent 接口 | 一张命令目录投影出 CLI（第一位）、HTTP/WebSocket、MCP（薄投影）与 `.d.ts` |
 | 调试 | CDP 端点（Chrome DevTools、VS Code）、`debug.*` 命令（agent 与编辑器共用） |
@@ -169,5 +171,6 @@ check 日志入库。
 
 ## 6. 第 7 天之后
 
-Windows 与 Direct3D 12；Tauri 桌面外壳；地形细节贴图与 splatting；时间性抗锯齿与超分；资源导入
-管线与压缩纹理；把引擎按第 4 节的顺序拆分迁入所有者的引擎（由所有者主导）。
+Windows 与 Direct3D 12（Pioneer 2026-10-09 已开始：`docs/bench/dx12.md`）；Tauri 桌面外壳；地形
+细节贴图与 splatting；时间性抗锯齿与超分；资源导入管线与压缩纹理；把引擎按第 4 节的顺序拆分迁入
+所有者的引擎（由所有者主导）。

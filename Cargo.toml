@@ -70,9 +70,10 @@ ureq = { version = "=3.4.2", default-features = false }
 # Presenters and assets (charter 4.1)
 gltf = { version = "=1.4.1", default-features = false, features = ["import", "utils", "names", "KHR_materials_emissive_strength", "KHR_texture_transform", "KHR_lights_punctual", "KHR_materials_transmission", "KHR_materials_ior"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
-# Metal and Vulkan natively (Vulkan on Apple through MoltenVK: vulkan-portability), WebGPU in the
-# browser; no Direct3D 12 or GL (charter 4.1).
-wgpu = { version = "=30.0.1", default-features = false, features = ["std", "parking_lot", "wgsl", "metal", "vulkan", "vulkan-portability", "webgpu"] }
+# Metal and Vulkan natively (Vulkan on Apple through MoltenVK: vulkan-portability), Direct3D 12 on
+# Windows (a Pioneer decision of 2026-10-09; DXC is loaded from the Windows SDK at run time, never
+# `static-dxc`), WebGPU in the browser; no GL (charter 4.1).
+wgpu = { version = "=30.0.1", default-features = false, features = ["std", "parking_lot", "wgsl", "metal", "vulkan", "vulkan-portability", "dx12", "webgpu"] }
 winit = "0.30"
 glam = { version = "0.33", features = ["bytemuck"] }
 bytemuck = { version = "1.25", features = ["derive"] }
