@@ -1,0 +1,6 @@
+# The debugger's evaluation-scope project (P11; docs/bench/debug-eval.md, finding 3): block-scoped
+# locals declared one after another, as the evaluation's helm.ts had them, beside a deeper sibling
+# block whose locals are out of scope where the game stops.
+name = "scopes"
+rate = 60
+seed = 1

@@ -1,0 +1,284 @@
+diff --git a/quickjs/quickjs-opcode.h b/quickjs/quickjs-opcode.h
+index ce954cbb..66096492 100644
+--- a/quickjs/quickjs-opcode.h
++++ b/quickjs/quickjs-opcode.h
+@@ -297,6 +297,11 @@ def( set_class_name, 5, 1, 1, u32) /* emitted in phase 1, removed in phase 2 */
+ def( dispose_scope, 3, 0, 0, u16) /* emitted in phase 1, removed in phase 2 */
+ 
+ def(     source_loc, 9, 0, 0, u32x2) /* emitted in phase 1, removed in phase 3 */
++/* Amoris P11: the lexical scope of the statement whose OP_debug or OP_debugger_stmt follows, the
++   index of the last variable declared in its scope chain plus one (0: none); emitted in phase 1
++   while a debug trace handler is set, moved into the function's debug_scopes in phase 3. A
++   temporary opcode: the opcodes bytecode keeps are not renumbered. */
++def(    debug_scope, 3, 0, 0, u16)
+ 
+ DEF(    push_minus1, 1, 0, 1, none_int)
+ DEF(         push_0, 1, 0, 1, none_int)
+diff --git a/quickjs/quickjs.c b/quickjs/quickjs.c
+index 9ceba546..eab96aff 100644
+--- a/quickjs/quickjs.c
++++ b/quickjs/quickjs.c
+@@ -449,6 +449,9 @@ typedef struct JSStackFrame {
+     /* Amoris P10: the stack pointer at the frame's current statement, set by OP_debug (NULL
+        until one runs): what the debugger's catch prediction scans of a caller's stack */
+     JSValue *debug_sp;
++    /* Amoris P11: the PC after the frame's current statement opcode, set by OP_debug (NULL until
++       one runs): JS_EvalInStackFrame finds the statement's lexical scope from it */
++    const uint8_t *debug_pc;
+     /* only set for coroutine frames (async function / generator /
+        async generator): the GC object owning this heap-allocated frame,
+        NULL for ordinary C-stack frames. Lets a var_ref capturing one of
+@@ -945,6 +948,11 @@ typedef struct JSFunctionBytecode {
+     /* Amoris P9: per bytecode offset, the source position (line << 32 | column) find_line_num
+        gives, built when the debug trace handler first runs in this function (NULL until then) */
+     uint64_t *debug_lines;
++    /* Amoris P11: for each OP_debug and OP_debugger_stmt compiled with a debug trace handler set,
++       ascending by offset, the pair (offset, scope): the index of the last variable declared in
++       the statement's scope chain (-1: none); NULL in functions compiled without one */
++    uint32_t *debug_scopes;
++    int debug_scope_count;
+ } JSFunctionBytecode;
+ 
+ typedef struct JSBoundFunction {
+@@ -3327,16 +3335,40 @@ JSValue JS_EvalInStackFrame(JSContext *ctx, int level,
+                                  level);
+     JSFunctionBytecode *b = p->u.func.function_bytecode;
+ 
+-    /* Pick the deepest lexical scope index so add_closure_variables() walks
+-       through every enclosing block scope, exposing let/const bindings as
+-       well as args, var-declared locals and closure refs. */
+-    int scope_idx = -1;
+-    int max_level = 0;
+-    for (int i = 0; i < b->var_count; i++) {
+-        JSVarDef *vd = &b->vardefs[b->arg_count + i];
+-        if (vd->scope_level > max_level) {
+-            max_level = vd->scope_level;
+-            scope_idx = i;
++    /* Amoris P11: the scope of the statement the frame stands at (its last OP_debug, whose scope
++       the compiler recorded), so that the evaluation sees what a direct eval there would: every
++       let/const declared before it in its block and the enclosing ones, with args, var-declared
++       locals and closure refs. */
++    int scope_idx = -2;
++    if (target->debug_pc && b->debug_scopes &&
++        target->debug_pc > b->byte_code_buf &&
++        target->debug_pc <= b->byte_code_buf + b->byte_code_len) {
++        uint32_t at = (uint32_t)(target->debug_pc - b->byte_code_buf - 1);
++        int lo = 0, hi = b->debug_scope_count - 1;
++        while (lo <= hi) {
++            int mid = lo + (hi - lo) / 2;
++            uint32_t pc = b->debug_scopes[2 * mid];
++            if (pc == at) {
++                scope_idx = (int32_t)b->debug_scopes[2 * mid + 1];
++                break;
++            }
++            if (pc < at)
++                lo = mid + 1;
++            else
++                hi = mid - 1;
++        }
++    }
++    if (scope_idx < -1 || scope_idx >= (int)b->var_count) {
++        /* No recorded statement: the deepest lexical scope's first variable, as PR #1421 picks
++           it, so add_closure_variables() walks through enclosing block scopes. */
++        int max_level = 0;
++        scope_idx = -1;
++        for (int i = 0; i < b->var_count; i++) {
++            JSVarDef *vd = &b->vardefs[b->arg_count + i];
++            if (vd->scope_level > max_level) {
++                max_level = vd->scope_level;
++                scope_idx = i;
++            }
+         }
+     }
+ 
+@@ -18811,6 +18843,7 @@ static JSValue JS_CallInternalBody(JSContext *caller_ctx, JSValueConst func_obj,
+     /* ordinary C-stack frame: not owned by a coroutine GC object */
+     sf->cur_gc_obj = NULL;
+     sf->debug_sp = NULL; /* Amoris P10 */
++    sf->debug_pc = NULL; /* Amoris P11 */
+     sp = stack_buf;
+     pc = b->byte_code_buf;
+     /* sf->cur_pc must we set to pc before any recursive calls to JS_CallInternal. */
+@@ -18833,6 +18866,7 @@ static JSValue JS_CallInternalBody(JSContext *caller_ctx, JSValueConst func_obj,
+         CASE(OP_debug):
+         CASE(OP_debugger_stmt):
+             sf->debug_sp = sp; /* Amoris P10 */
++            sf->debug_pc = pc; /* Amoris P11 */
+             if (unlikely(ctx->debug_trace)) {
+                 int col_num = 0;
+                 int line_num = -1;
+@@ -21842,6 +21876,7 @@ static __exception int async_func_init(JSContext *ctx, JSAsyncFunctionState *s,
+     sf->var_buf = sf->arg_buf + arg_buf_len;
+     sf->cur_sp = sf->var_buf + b->var_count;
+     sf->debug_sp = NULL; /* Amoris P10 */
++    sf->debug_pc = NULL; /* Amoris P11 */
+     /* set by the caller once the owning coroutine GC object exists */
+     sf->cur_gc_obj = NULL;
+     sf->var_refs = (JSVarRef **)(sf->cur_sp + b->stack_size);
+@@ -23040,6 +23075,8 @@ typedef struct JSFunctionDef {
+     int line_num;
+     int col_num;
+     DynBuf pc2line;
++    /* Amoris P11: (offset, scope) pairs of the statement opcodes, built in phase 3 */
++    DynBuf debug_scopes;
+ 
+     char *source;  /* raw source, utf-8 encoded */
+     int source_len;
+@@ -24708,10 +24745,21 @@ static void emit_source_loc(JSParseState *s)
+     emit_source_loc_at(s, s->token.line_num, s->token.col_num);
+ }
+ 
++/* Amoris P11: the scope a direct eval at the statement that starts here would see, the last
++   lexical variable declared so far in the scope chain, for the statement opcode that follows. */
++static void emit_debug_scope(JSParseState *s)
++{
++    JSFunctionDef *fd = s->cur_func;
++    dbuf_putc(&fd->byte_code, OP_debug_scope);
++    dbuf_put_u16(&fd->byte_code, (uint16_t)(fd->scope_first + 1));
++}
++
+ static void emit_debug(JSParseState *s)
+ {
+-    if (unlikely(s->ctx->debug_trace))
++    if (unlikely(s->ctx->debug_trace)) {
++        emit_debug_scope(s); /* Amoris P11 */
+         dbuf_putc(&s->cur_func->byte_code, OP_debug);
++    }
+ }
+ 
+ static void emit_source_loc_debug(JSParseState *s)
+@@ -30951,6 +30999,8 @@ static __exception int js_parse_statement_or_decl(JSParseState *s,
+            from a statement-boundary OP_debug via the JS_DEBUG_TRACE_DEBUGGER_STMT
+            flag. */
+         emit_source_loc(s);
++        if (unlikely(s->ctx->debug_trace))
++            emit_debug_scope(s); /* Amoris P11 */
+         dbuf_putc(&s->cur_func->byte_code, OP_debugger_stmt);
+         if (next_token(s))
+             goto fail;
+@@ -33717,6 +33767,7 @@ static JSFunctionDef *js_new_function_def(JSContext *ctx,
+     fd->col_num = col_num;
+ 
+     js_dbuf_init(ctx, &fd->pc2line);
++    js_dbuf_init(ctx, &fd->debug_scopes); /* Amoris P11 */
+     //fd->pc2line_last_line_num = line_num;
+     //fd->pc2line_last_pc = 0;
+ 
+@@ -33814,6 +33865,7 @@ static void js_free_function_def(JSContext *ctx, JSFunctionDef *fd)
+ 
+     JS_FreeAtom(ctx, fd->filename);
+     dbuf_free(&fd->pc2line);
++    dbuf_free(&fd->debug_scopes); /* Amoris P11 */
+ 
+     js_free(ctx, fd->source);
+ 
+@@ -35512,7 +35564,8 @@ static bool code_match(CodeContext *s, int pos, ...)
+                 line_num = get_u32(tab + pos + 1);
+                 col_num = get_u32(tab + pos + 5);
+                 pos = pos_next;
+-            } else if (op == OP_debug || op == OP_debugger_stmt) {
++            } else if (op == OP_debug || op == OP_debugger_stmt ||
++                       op == OP_debug_scope /* Amoris P11 */) {
+                 pos = pos_next;
+             } else {
+                 break;
+@@ -35805,6 +35858,9 @@ static int get_label_pos(JSFunctionDef *s, int label)
+             case OP_debugger_stmt:
+                 pos += 1;
+                 continue;
++            case OP_debug_scope: /* Amoris P11 */
++                pos += 3;
++                continue;
+             case OP_label:
+                 pos += 5;
+                 continue;
+@@ -36453,6 +36509,17 @@ static void put_short_code(DynBuf *bc_out, int op, int idx)
+ }
+ 
+ /* peephole optimizations and resolve goto/labels */
++/* Amoris P11: records the pending statement scope (`*scope`, -2: none) for the statement opcode
++   at `pc` of the output, and clears it. */
++static void add_debug_scope(JSFunctionDef *s, uint32_t pc, int *scope)
++{
++    if (*scope < -1)
++        return;
++    dbuf_put_u32(&s->debug_scopes, pc);
++    dbuf_put_u32(&s->debug_scopes, (uint32_t)*scope);
++    *scope = -2;
++}
++
+ static __exception int resolve_labels(JSContext *ctx, JSFunctionDef *s)
+ {
+     int pos, pos_next, bc_len, op, op1, len, i, line_num, col_num, patch_offsets;
+@@ -36463,6 +36530,7 @@ static __exception int resolve_labels(JSContext *ctx, JSFunctionDef *s)
+     CodeContext cc;
+     int label;
+     JumpSlot *jp;
++    int debug_scope = -2; /* Amoris P11: the pending OP_debug_scope's, -2: none */
+ 
+     label_slots = s->label_slots;
+ 
+@@ -36566,16 +36634,23 @@ static __exception int resolve_labels(JSContext *ctx, JSFunctionDef *s)
+             col_num = get_u32(bc_buf + pos + 5);
+             break;
+ 
++        case OP_debug_scope:
++            /* Amoris P11: the scope of the statement opcode that follows, for the table */
++            debug_scope = (int)get_u16(bc_buf + pos + 1) - 1;
++            break;
++
+         case OP_debug:
+             /* record pc2line so the debugger can resolve the source
+                location when OP_debug is hit at runtime */
+             add_pc2line_info(s, bc_out.size, line_num, col_num);
++            add_debug_scope(s, bc_out.size, &debug_scope); /* Amoris P11 */
+             dbuf_putc(&bc_out, OP_debug);
+             break;
+ 
+         case OP_debugger_stmt:
+             /* same as OP_debug but carries the `debugger;` flag at runtime */
+             add_pc2line_info(s, bc_out.size, line_num, col_num);
++            add_debug_scope(s, bc_out.size, &debug_scope); /* Amoris P11 */
+             dbuf_putc(&bc_out, OP_debugger_stmt);
+             break;
+ 
+@@ -37334,6 +37409,12 @@ static __exception int resolve_labels(JSContext *ctx, JSFunctionDef *s)
+                     if (s->source_loc_slots[j].pc > pos)
+                         s->source_loc_slots[j].pc -= delta;
+                 }
++                /* Amoris P11: the statement opcodes' offsets move with the code */
++                for (j = 0; j + 8 <= (int)s->debug_scopes.size; j += 8) {
++                    uint32_t at = get_u32(s->debug_scopes.buf + j);
++                    if (at > (uint32_t)pos)
++                        put_u32(s->debug_scopes.buf + j, at - delta);
++                }
+                 continue;
+             }
+             break;
+@@ -37825,6 +37906,18 @@ static JSValue js_create_function(JSContext *ctx, JSFunctionDef *fd)
+     if (!b->pc2line_buf)
+         b->pc2line_buf = fd->pc2line.buf;
+     b->pc2line_len = fd->pc2line.size;
++    /* Amoris P11: the statement opcodes' scopes, in instrumented functions */
++    b->debug_scopes = NULL;
++    b->debug_scope_count = 0;
++    if (fd->debug_scopes.size >= 8 && !dbuf_error(&fd->debug_scopes)) {
++        b->debug_scopes = (uint32_t *)fd->debug_scopes.buf;
++        b->debug_scope_count = (int)(fd->debug_scopes.size / 8);
++    } else {
++        dbuf_free(&fd->debug_scopes);
++    }
++    fd->debug_scopes.buf = NULL;
++    fd->debug_scopes.size = 0;
++    fd->debug_scopes.allocated_size = 0;
+     b->source = fd->source;
+     b->source_len = fd->source_len;
+ 
+@@ -37901,6 +37994,7 @@ static void free_function_bytecode(JSRuntime *rt, JSFunctionBytecode *b)
+     js_free_rt(rt, b->pc2line_buf);
+     js_free_rt(rt, b->source);
+     js_free_rt(rt, b->debug_lines); /* Amoris P9 */
++    js_free_rt(rt, b->debug_scopes); /* Amoris P11 */
+ 
+     remove_gc_object(&b->header);
+     if (rt->gc_phase == JS_GC_PHASE_REMOVE_CYCLES && JS_REF_COUNT(b) != 0) {

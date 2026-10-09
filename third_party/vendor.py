@@ -1,5 +1,5 @@
 """Builds third_party/rquickjs-sys-0.14.0/: rquickjs-sys 0.14.0 from crates.io with quickjs-ng PR
-#1421 and the script host's patches P1 to P10 applied (docs/spec/architecture.md 7.5,
+#1421 and the script host's patches P1 to P11 applied (docs/spec/architecture.md 7.5,
 docs/spec/script-sandbox.md 4.2). `.cargo/config.toml`'s [patch.crates-io] points rquickjs at the
 result, which is committed, so a fresh checkout builds without running this.
 
@@ -44,6 +44,12 @@ PATCHES = [
     # exceptions to the trace handler with a catch prediction and adds JS_GetStackFrameInfo.
     ("p9-debug-line-cache.diff", "."),
     ("p10-debug-exceptions-frames.diff", "."),
+    # P11 (Pioneer, 2026-10-09; docs/bench/debug-eval.md, finding 3): the compiler records each
+    # instrumented statement's lexical scope (a temporary opcode, so no opcode is renumbered,
+    # moved into a per-function table), each frame keeps its current statement's PC, and
+    # JS_EvalInStackFrame resolves names from that scope: an evaluation sees the block-scoped
+    # locals in scope, not the deepest block's from its first variable.
+    ("p11-debug-eval-scope.diff", "."),
 ]
 
 HERE = Path(__file__).resolve().parent

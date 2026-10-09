@@ -453,6 +453,118 @@ fn play_takes_the_debugger_to_its_fork() {
     handle.shutdown(5000).unwrap();
 }
 
+/// P11 (docs/bench/debug-eval.md, finding 3): an evaluation sees the block-scoped locals in scope
+/// at the statement its frame stands at, every one declared before it in its block and the
+/// enclosing ones, in the stopped frame and in a caller's; not a sibling block's. PR #1421 started
+/// from the function's deepest block, which showed the evaluation's helm.ts `dx` and not `dz` or
+/// `bearing` declared after it, and here would show `hidden`.
+#[test]
+fn eval_sees_the_block_scoped_locals_in_scope() {
+    let dir =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../pocket-debug/tests/fixtures/scopes");
+    let mark_at = |name: &str| -> u64 {
+        let text = std::fs::read_to_string(dir.join("scripts/rules.ts")).unwrap();
+        let tag = format!("MARK {name}");
+        text.lines()
+            .position(|l| l.trim_end().ends_with(&tag))
+            .unwrap_or_else(|| panic!("no {tag}")) as u64
+            + 1
+    };
+    let project = Project::load(&dir).unwrap();
+    let setup = Arc::new(project.setup(false).unwrap());
+    let hub = DebugHub::new(HubOptions::default());
+    let start = Instant::now();
+    let clock: pocket_runtime::thread::Clock =
+        Arc::new(move || start.elapsed().as_secs_f64() * 1000.0);
+    let h = hub.clone();
+    let handle = GameThread::spawn(
+        move || {
+            let mut g = Game::new(setup, 1)?;
+            g.set_script_debugger(Some(h.hook()));
+            Ok(g)
+        },
+        ThreadOptions::new(clock),
+    )
+    .unwrap();
+    hub.set_loop_state(handle.loop_state());
+    let mut dev = handle.developer();
+    let eval =
+        |expr: &str, frame: usize| hub.call("debug.eval", &json!({"expr": expr, "frame": frame}));
+    let num = |expr: &str, frame: usize| -> f64 {
+        let v = eval(expr, frame).unwrap_or_else(|p| panic!("{expr}: {}", p.message));
+        v["value"]
+            .as_f64()
+            .unwrap_or_else(|| panic!("{expr}: {v:#}"))
+    };
+
+    call(
+        &hub,
+        "debug.breakpoints.set",
+        json!({"file": "rules.ts", "line": mark_at("after-block")}),
+    );
+    call(
+        &hub,
+        "debug.breakpoints.set",
+        json!({"file": "rules.ts", "line": mark_at("inner")}),
+    );
+    call(
+        &hub,
+        "debug.breakpoints.set",
+        json!({"file": "rules.ts", "line": mark_at("aim")}),
+    );
+    let stepper = std::thread::spawn(move || {
+        let r = dev
+            .call("time.step", json!({"ticks": 1}))
+            .map(|r| r.into_json());
+        (dev, r)
+    });
+
+    // In bearingOf, called from the loop's block: its own local, and in the caller's frame the
+    // block's locals declared before the call.
+    let s = paused(&hub);
+    assert_eq!(at(&s).1, mark_at("inner"), "{s:#}");
+    assert_eq!(num("b", 0), (3.0f64).atan2(-5.0));
+    assert_eq!(num("dx + dz", 0), 8.0, "bearingOf's arguments");
+    assert_eq!(s["frames"][1]["function"], "run", "{s:#}");
+    assert_eq!(num("dx * 10 + dz", 1), 35.0, "the caller's block");
+    assert_eq!(num("r", 1), 0.0);
+    let turn = eval("turn", 1).unwrap_err();
+    assert!(
+        turn.message.contains("turn"),
+        "declared after the call's statement: {}",
+        turn.message
+    );
+    call(&hub, "debug.continue", json!({}));
+
+    // After the sibling block: dx, dz and bearing, declared one after another as in helm.ts, the
+    // module's constant through the closure; not the if block's `hidden`.
+    let s = paused(&hub);
+    assert_eq!(at(&s).1, mark_at("after-block"), "{s:#}");
+    assert_eq!(num("dz", 0), 5.0);
+    assert_eq!(num("bearing", 0), (3.0f64).atan2(-5.0));
+    assert_eq!(
+        num("bearing * GAIN + dx", 0),
+        (3.0f64).atan2(-5.0) * 0.5 + 3.0
+    );
+    let hidden = eval("hidden", 0).unwrap_err();
+    assert!(hidden.message.contains("hidden"), "{}", hidden.message);
+    call(&hub, "debug.continue", json!({}));
+
+    // helm.ts:67 as the evaluation had it: PR #1421 saw `dx` here and not `dz` or `bearing`.
+    let s = paused(&hub);
+    assert_eq!(at(&s).1, mark_at("aim"), "{s:#}");
+    assert_eq!(num("dx", 0), 3.0);
+    assert_eq!(num("dz", 0), 5.0);
+    assert_eq!(num("bearing", 0), (3.0f64).atan2(-5.0));
+    assert_eq!(num("i + tick", 0), 1.0);
+    call(&hub, "debug.detach", json!({}));
+    let (dev, stepped) = stepper.join().unwrap();
+    assert_eq!(stepped.unwrap()["tick"], 1);
+    drop(dev);
+    hub.shutdown();
+    handle.shutdown(5000).unwrap();
+}
+
 /// `debug.state` names the CDP endpoint while the hub serves one (the editor's Copy Chrome
 /// DevTools URL), and `null` once it stopped.
 #[test]

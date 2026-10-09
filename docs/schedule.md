@@ -24,7 +24,7 @@
 |---|---|
 | 宿主 | Rust 1.98.1，cargo workspace + `cargo xtask`（不自研构建工具） |
 | 世界 | bevy_ecs 0.19（只用 ECS），确定性 tick，PCE 规范编码，snapshot / fork / replay |
-| 游戏逻辑 | TypeScript：oxc 转译，QuickJS-ng 执行（vendored，补丁 P1–P10），TypeScript 7 做类型检查 |
+| 游戏逻辑 | TypeScript：oxc 转译，QuickJS-ng 执行（vendored，补丁 P1–P11），TypeScript 7 做类型检查 |
 | 物理 | 现为 Rapier 0.36（确定性配置）；按 `docs/bench/physics.md` 的建议迁往 Jolt（第 4 天） |
 | 渲染 | wgpu 30，WGSL；原生 Metal、Vulkan（macOS 上经 MoltenVK），浏览器 WebGPU；GPU 驱动 |
 | 浏览器 | 游戏在 Web Worker 里跑同一份 wasm，页面用同一个渲染器（`pocket-viewport`）绘制 |

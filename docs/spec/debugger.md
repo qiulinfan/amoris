@@ -1,8 +1,8 @@
 # The script debugger
 
 Status: Built, slice 1 (2026-10-04); served by `pocket serve` and driven by the editor (8, 11).
-Code: `crates/pocket-debug`, `crates/pocket-script/src/debug.rs`, `third_party/patches/p9-*.diff` and
-`p10-*.diff`.
+Code: `crates/pocket-debug`, `crates/pocket-script/src/debug.rs`, `third_party/patches/p9-*.diff`,
+`p10-*.diff` and `p11-*.diff`.
 
 Charter: 2 (agent as debugger), 4.2 (QuickJS-ng with PR #1421), 4.3 (one debugging core, three
 frontends; instrumentation only while a client is attached), 5.2 (a pause blocks only the game
@@ -69,6 +69,19 @@ The vendored QuickJS-ng carries two more patches for the debugger:
   before the temporary block, renumbers `nop` and the short opcodes, which breaks the precompiled
   builtin bytecode QuickJS-ng embeds (`builtin-array-fromasync.h`, the `Iterator.zip` helpers): the
   wasm workload test aborted in `JS_FreeRuntime`. The cache keeps the bytecode format.
+- **P11** (`p11-debug-eval-scope.diff`, Pioneer 2026-10-09): an evaluation in a frame resolves names
+  in the lexical scope of the statement the frame stands at. PR #1421 started from the first
+  variable of the function's deepest block, so at the debug evaluation's helm.ts:67 an evaluation
+  saw `dx` and not `dz` or `bearing`, declared after it in the same block, and anywhere it could see
+  a sibling block's locals. While a trace handler is set the compiler emits a temporary opcode
+  before each statement opcode, holding the last lexical variable declared so far in its scope
+  chain (what a direct `eval` there would see); phase 3 moves it into a per-function table of
+  (offset, scope) and adjusts it when jumps shrink; `OP_debug` stores the frame's statement PC
+  beside P10's stack pointer, and `JS_EvalInStackFrame` looks the scope up there. Being temporary,
+  the opcode renumbers nothing the final bytecode keeps (P9's constraint); the first attempt, a
+  `u16` operand on `OP_debug` itself, failed: the compiler's passes read phase 1 and 2 bytecode
+  through `opcode_info[op]`, which for the opcodes after the short ones (`OP_debug` is the last)
+  is another opcode's entry, so the operand was read as code (`invalid opcode` at load).
 - **P10** (`p10-debug-exceptions-frames.diff`): the handler also hears catchable exceptions, once per
   throw, in the throwing frame (flag `JS_DEBUG_TRACE_EXCEPTION`), with a catch prediction
   (`JS_DEBUG_TRACE_EXCEPTION_CAUGHT`): a catch offset on the throwing frame's stack or on an
@@ -138,9 +151,11 @@ published (`Debugger.paused`, the `debug` event, `debug.state`) and the loop sta
 
 Evaluation (`evaluateOnCallFrame`, `debug.eval`, conditions, logpoint messages) uses PR #1421's
 `JS_EvalInStackFrame`: the expression sees the frame's arguments, locals and closure variables (the
-system's `ctx` included). It runs under `pocket_script::debug::guarded`: its own budget of
-`steps_per_call`, the stopped call's budget, overrun flag and out-of-memory baseline put back after
-it, and the natives that write (world edits, events, intents, random draws, `Math.random`)
+system's `ctx` included); with P11, the block-scoped locals are those in scope at the frame's
+statement (every `let` and `const` declared before it in its block and the enclosing ones), in the
+stopped frame and in callers', and not a sibling block's. It runs under
+`pocket_script::debug::guarded`: its own budget of `steps_per_call`, the stopped call's budget,
+overrun flag and out-of-memory baseline put back after it, and the natives that write (world edits, events, intents, random draws, `Math.random`)
 refusing with `script.debug_read_only`. It can still change the call's locals and its query
 columns, which are written back, so an evaluation, a condition, a logpoint message or a variable
 set inside a system call taints the run from that tick (script-host.md 13): the game's recorder
@@ -319,6 +334,7 @@ over round trip 5 ms.
 |---|---|---|---|
 | `cargo test -p pocket-app --test debug_agent` | The agents' API on a real game thread, real time, the test project `crates/pocket-debug/tests/fixtures/debugme`: `debugger;`, uncaught and caught exceptions with the prediction, a conditional TypeScript breakpoint with locals and evaluation, read-only evaluations, `debug.set` on a `let` local (the loop's `r`, seen by the caller's frame of the next pause and set back there with `frame: 1`) and on an argument (`twice`'s `x`, whose call then returns twice the new value), a `const` refused, step into/out/over, a data breakpoint with `written_at`, the taint, a hot update while attached (new script announced, its breakpoint stops), pause, detach (uninstrumented), events, problems, the `Breakpoint` loop state | pass | [agent-api-test.txt](../evidence/debug/agent-api-test.txt) |
 | `cargo test -p pocket-app --test debug_agent` (`play_takes_the_debugger_to_its_fork`, `debug_state_names_the_cdp_endpoint`) | `play.start` on a game thread started paused (as `pocket serve` starts it): a breakpoint set in Edit stops Play's fork at its first tick, an evaluation that assigns a query column (`g.level[r] = 100`) is committed, `play.stop` hands the hook back and a `time.step` of the edit world stops at a new breakpoint; `debug.state`'s `cdp` names an endpoint served on port 0 and is `null` once it stopped | pass (3 of 3 with the test above; `--release`) | the test's output |
+| `cargo test -p pocket-app --test debug_agent` (`eval_sees_the_block_scoped_locals_in_scope`, 2026-10-09, Windows) | **P11** on the test project `crates/pocket-debug/tests/fixtures/scopes`: in a called function its local and arguments, in the caller's frame the block's locals declared before the call and not one declared after it; after a sibling block, the block's `dx`, `dz`, `bearing` and the module's `GAIN`, not the sibling's `hidden`; the debug evaluation's helm.ts:67 shape (three consts in the deepest block) with all three. Without P11's lookup the run fails at `hidden` (the control was run) | pass; `node crates/pocket-debug/tests/cdp_e2e.mjs` 20/20 on the same build ([cdp-e2e-p11.txt](../evidence/agentdebug/cdp-e2e-p11.txt)) | the test's output |
 | `cargo test -p pocket-app --test paused_host` (2026-10-09, Windows) | **A held host** through `pocket_server::Host::call` over the test project on a game thread started as `pocket serve` starts it: the catalog's entry of every method (kind, schema), a breakpoint by the module's short name, a `time.step {ticks: 5}` answered at the stop (`stopped_by` breakpoint, tick 4, `paused: true`) and ended with that tick, `status` and seven reads equal to the game's own reads of the same world, `scripts.apply`, `time.step`, `snapshots.list`, `history.list` and `world.edit` refused with `debug.paused` within 500 ms, `debug.watch` by name (a misspelt name refused with the suggestion), `debug.state {brief}`, a data watch stopping a step, `debug.rewind` under the applied scripts; and the MCP `debug` tool naming every method and parameter | pass | the test's output; [smoke-server.txt](../evidence/agentdebug/smoke-server.txt) does the same through the CLI and MCP |
 | `editor/tools/debug-host.ts` | **The editor** (built, served by `pocket serve` on a copy of the sailing sample) in headless Chrome, real input only: a gutter breakpoint, Play, the pause with the call stack, scopes and watches, step over, a column value set in the Variables tree and committed, an argument set with `debug.set` and a `const` refused, a data breakpoint from the inspector, pause on exceptions, a script edited and hot-swapped while running and a breakpoint in the new code, Stop while paused (the edit world takes the edited scripts) and Play again into the new code (editor.md 10) | every step (12 views) | [debug-host.txt](../evidence/editor/debug-host.txt), `debug-host-*.png` |
 | `node crates/pocket-debug/tests/cdp_e2e.mjs` | A CDP client as clients behave: discovery as js-debug does it, Origin refusal, `scriptParsed` and the data-URL map, a breakpoint on a TypeScript line mapped through the map, the pause at that line with the caller `run`, locals, closure, `evaluateOnCallFrame` on two frames, `getProperties`, step over, a conditional breakpoint, a logpoint (`consoleAPICalled` located in rules.js, no pause), `Debugger.pause`, leaving while paused resumes | 20/20 | [cdp-e2e.txt](../evidence/debug/cdp-e2e.txt), [messages](../evidence/debug/cdp-e2e-messages.log) |

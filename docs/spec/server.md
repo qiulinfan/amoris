@@ -203,9 +203,10 @@ read`, and the CLI had no read timeout, so 28 calls in 11 runs hung until the ag
   the game stands without asking the hub.
 - **A step answers at the stop.** A call waiting on the game looks for a new stop every 5 ms; a
   `time.step` then answers `{tick, world_hash: null, errors: [], paused: true, stopped_by}` with
-  the stop's summary (3.2), and the loop ends that step with the stopped tick. Measured: 3.7 ms from
-  the call to the answer in `paused_host.rs`, 33 to 44 ms for `pocket step 60` through the CLI
-  including its process start (agent-debug.md; provisional).
+  the stop's summary (3.2), and the loop ends that step with the stopped tick. Measured
+  (provisional, a loaded Windows machine; agent-debug.md): 3.7 ms from the call to the answer in
+  `paused_host.rs`, 18 ms over HTTP on the sailing sample (the 5 ms look meets Windows' 15.6 ms
+  timer), tens of milliseconds through the CLI, most of it the process's start.
 - **Reads answer from the last publication**, the world at the boundary before the tick the game
   stands in: `status` (with `state: "breakpoint"` and `paused_at`), `world.get`, `world.tree`,
   `world.query`, `world.schema`, `scripts.status` (the bundle in the snapshot's header) and

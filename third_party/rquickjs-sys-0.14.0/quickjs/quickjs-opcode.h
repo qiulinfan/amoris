@@ -297,6 +297,11 @@ def( set_class_name, 5, 1, 1, u32) /* emitted in phase 1, removed in phase 2 */
 def( dispose_scope, 3, 0, 0, u16) /* emitted in phase 1, removed in phase 2 */
 
 def(     source_loc, 9, 0, 0, u32x2) /* emitted in phase 1, removed in phase 3 */
+/* Amoris P11: the lexical scope of the statement whose OP_debug or OP_debugger_stmt follows, the
+   index of the last variable declared in its scope chain plus one (0: none); emitted in phase 1
+   while a debug trace handler is set, moved into the function's debug_scopes in phase 3. A
+   temporary opcode: the opcodes bytecode keeps are not renumbered. */
+def(    debug_scope, 3, 0, 0, u16)
 
 DEF(    push_minus1, 1, 0, 1, none_int)
 DEF(         push_0, 1, 0, 1, none_int)
