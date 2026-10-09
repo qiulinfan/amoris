@@ -16,6 +16,7 @@ pub mod loader;
 pub mod lod;
 pub mod materials;
 pub mod meshes;
+pub mod neural;
 pub mod occlusion;
 mod ocean;
 pub mod overlay;

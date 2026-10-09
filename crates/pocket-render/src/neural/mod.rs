@@ -1,0 +1,528 @@
+//! Neural textures on the GPU (charter 4.4; docs/spec/neural-textures.md): the decoder the forward
+//! pass and the encoder's report share (`shaders/neural_texture.wgsl`), the table of loaded
+//! textures it reads (latent texels in an `rg32uint` texture, descriptors and f16 weights in one
+//! uniform buffer), and, natively, the encoder's GPU trainer (`train`) and a whole-mip decode for
+//! quality reports and parity tests.
+//!
+//! A network's shape is compiled into the shaders (its loops run to constants, so drivers unroll
+//! them and keep the activations in registers): the first neural texture a renderer loads fixes the
+//! profile, and a texture of another shape is refused.
+
+#[cfg(not(target_arch = "wasm32"))]
+pub mod train;
+
+use pocket_assets::neural::{Channel, NeuralLayout, NeuralTexture, Sampling};
+
+/// Latent texels per row of the latent texture (`NT_ROW` in neural_texture.wgsl).
+pub const ROW: u32 = 4096;
+/// Descriptor words before a texture's weights (`NT_DESC`).
+pub const DESC: u32 = 20;
+/// The data uniform's words: 64 KiB, WebGPU's default uniform binding limit.
+pub const DATA_WORDS: usize = 4096;
+/// `channels` word value for a channel group the texture lacks.
+pub const ABSENT: u32 = 0xff;
+
+const PRECISION_F32: &str = include_str!("../../shaders/neural_f32.wgsl");
+const PRECISION_F16: &str = include_str!("../../shaders/neural_f16.wgsl");
+const DECODER: &str = include_str!("../../shaders/neural_texture.wgsl");
+const EVAL: &str = include_str!("../../shaders/neural_eval.wgsl");
+
+/// The `NT_*` constants that compile a layout's shape into the shaders.
+pub fn profile_constants(layout: &NeuralLayout) -> String {
+    let consts = [
+        ("NT_SAMPLING", layout.sampling as u32),
+        ("NT_FINE_BITS", layout.fine.bits),
+        ("NT_FINE_F", layout.fine.features),
+        ("NT_COARSE_BITS", layout.coarse.bits),
+        ("NT_COARSE_F", layout.coarse.features),
+        ("NT_PE", layout.pe_octaves),
+        ("NT_FINE_IN", layout.fine_inputs()),
+        ("NT_FINE_IN4", layout.fine_inputs() / 4),
+        ("NT_IN", layout.inputs()),
+        ("NT_INP", layout.inputs_padded()),
+        ("NT_IN4", layout.inputs_padded() / 4),
+        ("NT_H1", layout.hidden[0]),
+        ("NT_H2", layout.hidden[1]),
+        ("NT_H1_4", layout.hidden[0] / 4),
+        ("NT_H2_4", layout.hidden[1] / 4),
+        ("NT_OUT", layout.channels.len() as u32),
+        ("NT_OUTP", layout.outputs_padded()),
+        ("NT_OUT4", layout.outputs_padded() / 4),
+    ];
+    let mut s = String::from("// The neural texture profile (neural.rs).\n");
+    for (name, v) in consts {
+        s.push_str(&format!("const {name}: u32 = {v}u;\n"));
+    }
+    s
+}
+
+/// The decoder for `layout` in half or single precision, followed by `body` (the shader that
+/// declares `nt_latents` and `nt_data`). With `f16` the result begins with `enable f16;`, so a
+/// shader that composes it must put nothing before it.
+pub fn decoder_source(layout: &NeuralLayout, f16: bool, body: &str) -> String {
+    format!(
+        "{}\n{}\n{DECODER}\n{body}",
+        if f16 { PRECISION_F16 } else { PRECISION_F32 },
+        profile_constants(layout)
+    )
+}
+
+/// Whether two layouts compile to the same shaders (the channels' meaning aside, their count).
+pub fn same_profile(a: &NeuralLayout, b: &NeuralLayout) -> bool {
+    a.channels.len() == b.channels.len()
+        && a.fine == b.fine
+        && a.coarse == b.coarse
+        && a.sampling == b.sampling
+        && a.pe_octaves == b.pe_octaves
+        && a.hidden == b.hidden
+}
+
+/// Descriptor word 1's x: the first output of base color, normal, occlusion and roughness, a byte
+/// each; y: metallic, emissive and height ([`ABSENT`] where missing).
+pub fn channel_words(layout: &NeuralLayout) -> [u32; 2] {
+    let at = |c: Channel| layout.output_of(c).map_or(ABSENT, |i| i as u32);
+    [
+        at(Channel::BaseR)
+            | at(Channel::NormalX) << 8
+            | at(Channel::Occlusion) << 16
+            | at(Channel::Roughness) << 24,
+        at(Channel::Metallic) | at(Channel::EmissiveR) << 8 | at(Channel::Height) << 16,
+    ]
+}
+
+/// The latent texels of a texture, every grid in order (level by level, fine then coarse), with
+/// each grid's first texel relative to the block's start.
+pub fn latent_block(texture: &NeuralTexture) -> (Vec<u32>, Vec<[u32; 2]>) {
+    let mut words = Vec::new();
+    let mut firsts = Vec::new();
+    for level in &texture.levels {
+        let mut pair = [0; 2];
+        for (slot, grid) in pair.iter_mut().zip([&level.fine, &level.coarse]) {
+            *slot = (words.len() / 2) as u32;
+            words.extend_from_slice(&grid.words);
+        }
+        firsts.push(pair);
+    }
+    (words, firsts)
+}
+
+/// A texture's descriptor and weights as data-uniform words, its latents starting at latent
+/// texel `first_texel`.
+pub fn data_words(texture: &NeuralTexture, first_texel: u32) -> Vec<[u32; 4]> {
+    let layout = &texture.layout;
+    let (_, firsts) = latent_block(texture);
+    let mut out = vec![[0u32; 4]; DESC as usize];
+    out[0] = [
+        texture.width,
+        texture.height,
+        texture.mip_count,
+        texture.levels.len() as u32,
+    ];
+    let channels = channel_words(layout);
+    out[1] = [channels[0], channels[1], layout.channels.len() as u32, 0];
+    for (l, level) in texture.levels.iter().enumerate() {
+        out[4 + 2 * l] = [
+            level.fine.width,
+            level.fine.height,
+            first_texel + firsts[l][0],
+            0,
+        ];
+        out[5 + 2 * l] = [
+            level.coarse.width,
+            level.coarse.height,
+            first_texel + firsts[l][1],
+            0,
+        ];
+    }
+    out.extend(pack_weights(layout, &texture.weights));
+    out
+}
+
+/// The network's halves in the decoder's block order: per layer, for each output block and input
+/// block, the 4x4 block column by column in two words; then a word per output block of biases,
+/// padded to an even number of words (every block starts on an even word).
+pub fn pack_weights(layout: &NeuralLayout, halves: &[u16]) -> Vec<[u32; 4]> {
+    let pair = |a: u16, b: u16| u32::from(a) | u32::from(b) << 16;
+    let mut out = Vec::new();
+    for (&(outputs, inputs), &(w, b)) in layout.layers().iter().zip(&layout.offsets()) {
+        let at = |o: u32, i: u32| halves[w + (o * inputs + i) as usize];
+        for ob in 0..outputs / 4 {
+            for ib in 0..inputs / 4 {
+                // Column c holds rows 4 ob..4 ob + 3 of input 4 ib + c.
+                let col = |c: u32| -> [u16; 4] {
+                    std::array::from_fn(|r| at(4 * ob + r as u32, 4 * ib + c))
+                };
+                let [c0, c1, c2, c3] = [col(0), col(1), col(2), col(3)];
+                out.push([
+                    pair(c0[0], c0[1]),
+                    pair(c0[2], c0[3]),
+                    pair(c1[0], c1[1]),
+                    pair(c1[2], c1[3]),
+                ]);
+                out.push([
+                    pair(c2[0], c2[1]),
+                    pair(c2[2], c2[3]),
+                    pair(c3[0], c3[1]),
+                    pair(c3[2], c3[3]),
+                ]);
+            }
+        }
+        for ob in 0..outputs / 4 {
+            let bias = |r: u32| halves[b + (4 * ob + r) as usize];
+            out.push([pair(bias(0), bias(1)), pair(bias(2), bias(3)), 0, 0]);
+        }
+        // Keep the next layer's blocks on an even word.
+        if (outputs / 4) % 2 == 1 {
+            out.push([0; 4]);
+        }
+    }
+    out
+}
+
+/// The latent texels and descriptors of every neural texture a renderer (or a report) has loaded:
+/// what the decoder's `nt_latents` and `nt_data` bind.
+pub struct NeuralTable {
+    pub latents: wgpu::Texture,
+    pub latents_view: wgpu::TextureView,
+    pub data: wgpu::Buffer,
+    words: Vec<[u32; 4]>,
+    /// Latent texture rows in use (each texture's block starts on a row).
+    rows_used: u32,
+    /// The shape every loaded texture shares (the shaders are compiled for it).
+    pub profile: Option<NeuralLayout>,
+    /// Bumped when a resource is replaced (bind groups must be rebuilt).
+    pub generation: u64,
+}
+
+fn latent_texture(device: &wgpu::Device, rows: u32) -> wgpu::Texture {
+    device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("neural latents"),
+        size: wgpu::Extent3d {
+            width: ROW,
+            height: rows,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rg32Uint,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::COPY_DST
+            | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    })
+}
+
+impl NeuralTable {
+    pub fn new(device: &wgpu::Device) -> NeuralTable {
+        let latents = latent_texture(device, 1);
+        NeuralTable {
+            latents_view: latents.create_view(&Default::default()),
+            latents,
+            data: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("neural data"),
+                size: (DATA_WORDS * 16) as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }),
+            words: Vec::new(),
+            rows_used: 0,
+            profile: None,
+            generation: 0,
+        }
+    }
+
+    /// Uploads a texture; returns its descriptor's word (what a material row points at). The
+    /// first texture fixes the profile; a texture of another shape, or one that would overflow
+    /// the data uniform or the latent texture, is refused.
+    pub fn add(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        texture: &NeuralTexture,
+    ) -> Result<u32, String> {
+        texture.validate()?;
+        if let Some(p) = &self.profile
+            && !same_profile(p, &texture.layout)
+        {
+            return Err(
+                "its network has another shape than the neural textures already loaded".into(),
+            );
+        }
+        let (block, _) = latent_block(texture);
+        let texels = (block.len() / 2) as u32;
+        let rows = texels.div_ceil(ROW);
+        let first_row = self.rows_used;
+        let words = data_words(texture, first_row * ROW);
+        if self.words.len() + words.len() > DATA_WORDS {
+            return Err(format!(
+                "the neural data uniform is full ({} of {DATA_WORDS} words used, {} more needed)",
+                self.words.len(),
+                words.len()
+            ));
+        }
+        let max_rows = device.limits().max_texture_dimension_2d;
+        if first_row + rows > max_rows {
+            return Err("the neural latent texture is full".into());
+        }
+        if first_row + rows > self.latents.height() {
+            let grown =
+                latent_texture(device, (first_row + rows).next_power_of_two().min(max_rows));
+            if self.rows_used > 0 {
+                let mut enc = device.create_command_encoder(&Default::default());
+                enc.copy_texture_to_texture(
+                    self.latents.as_image_copy(),
+                    grown.as_image_copy(),
+                    wgpu::Extent3d {
+                        width: ROW,
+                        height: self.rows_used,
+                        depth_or_array_layers: 1,
+                    },
+                );
+                queue.submit([enc.finish()]);
+            }
+            self.latents_view = grown.create_view(&Default::default());
+            self.latents = grown;
+            self.generation += 1;
+        }
+        let mut padded = block;
+        padded.resize((rows * ROW * 2) as usize, 0);
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.latents,
+                mip_level: 0,
+                origin: wgpu::Origin3d {
+                    x: 0,
+                    y: first_row,
+                    z: 0,
+                },
+                aspect: wgpu::TextureAspect::All,
+            },
+            bytemuck::cast_slice(&padded),
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(ROW * 8),
+                rows_per_image: Some(rows),
+            },
+            wgpu::Extent3d {
+                width: ROW,
+                height: rows,
+                depth_or_array_layers: 1,
+            },
+        );
+        self.rows_used += rows;
+        // The decoder finds the weights at `base + DESC` and the latents at absolute texels.
+        let base = self.words.len() as u32;
+        self.words.extend(words);
+        queue.write_buffer(&self.data, 0, bytemuck::cast_slice(&self.words));
+        if self.profile.is_none() {
+            self.profile = Some(texture.layout.clone());
+        }
+        Ok(base)
+    }
+
+    /// Words of the data uniform in use.
+    pub fn words_used(&self) -> usize {
+        self.words.len()
+    }
+}
+
+/// Whether a layout's channels include a group the forward pass shades with.
+pub fn shades(layout: &NeuralLayout) -> bool {
+    layout.channels.iter().any(|c| *c != Channel::Height)
+}
+
+/// A short name of the layout for logs and reports.
+pub fn describe(layout: &NeuralLayout) -> String {
+    format!(
+        "{}ch {}x{}b/{}x{}b grids, 1/{} res, {}, pe {}, mlp {}-{}-{}-{}",
+        layout.channels.len(),
+        layout.fine.features,
+        layout.fine.bits,
+        layout.coarse.features,
+        layout.coarse.bits,
+        1 << layout.fine_shift,
+        match layout.sampling {
+            Sampling::Bilinear => "bilinear",
+            Sampling::Taps4 => "4 taps",
+        },
+        layout.pe_octaves,
+        layout.inputs(),
+        layout.hidden[0],
+        layout.hidden[1],
+        layout.channels.len()
+    )
+}
+
+/// Decodes every texel of every mip with the runtime decoder on the GPU: per mip, `width *
+/// height * channels` values, channel fastest (unclamped).
+#[cfg(not(target_arch = "wasm32"))]
+pub fn decode_on_gpu(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    texture: &NeuralTexture,
+    f16: bool,
+) -> Result<Vec<Vec<f32>>, String> {
+    use wgpu::util::DeviceExt;
+    let mut table = NeuralTable::new(device);
+    let base = table.add(device, queue, texture)?;
+    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("neural decode"),
+        source: wgpu::ShaderSource::Wgsl(decoder_source(&texture.layout, f16, EVAL).into()),
+    });
+    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("neural decode"),
+        layout: None,
+        module: &module,
+        entry_point: Some("decode_mip"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+    let channels = texture.layout.channels.len();
+    let mut mips = Vec::new();
+    for mip in 0..texture.mip_count {
+        let [w, h] = pocket_assets::neural::mip_size(texture.width, texture.height, mip);
+        let params = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("neural decode params"),
+            contents: bytemuck::cast_slice(&[base, mip, w, h]),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        let size = (w * h) as u64 * channels as u64 * 4;
+        let out = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("neural decode output"),
+            size,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        let mut entries = vec![
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&table.latents_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: table.data.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: params.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: out.as_entire_binding(),
+            },
+        ];
+        if f16 {
+            entries.push(wgpu::BindGroupEntry {
+                binding: 4,
+                resource: table.data.as_entire_binding(),
+            });
+        }
+        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("neural decode"),
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &entries,
+        });
+        let mut enc = device.create_command_encoder(&Default::default());
+        {
+            let mut pass = enc.begin_compute_pass(&Default::default());
+            pass.set_pipeline(&pipeline);
+            pass.set_bind_group(0, &group, &[]);
+            pass.dispatch_workgroups(w.div_ceil(8), h.div_ceil(8), 1);
+        }
+        queue.submit([enc.finish()]);
+        let bytes = crate::gi::nrc::read_buffer(device, queue, &out, size)?;
+        mips.push(bytemuck::cast_slice(&bytes).to_vec());
+    }
+    Ok(mips)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pocket_assets::neural::{GridSpec, f32_to_f16};
+
+    fn layout() -> NeuralLayout {
+        NeuralLayout {
+            channels: vec![
+                Channel::BaseR,
+                Channel::BaseG,
+                Channel::BaseB,
+                Channel::Roughness,
+            ],
+            fine: GridSpec {
+                features: 8,
+                bits: 8,
+            },
+            coarse: GridSpec {
+                features: 8,
+                bits: 8,
+            },
+            fine_shift: 2,
+            sampling: Sampling::Bilinear,
+            pe_octaves: 2,
+            hidden: [8, 4],
+        }
+    }
+
+    #[test]
+    fn weights_pack_into_column_major_blocks() {
+        let l = layout();
+        let halves: Vec<u16> = (0..l.weight_count()).map(|i| i as u16).collect();
+        let packed = pack_weights(&l, &halves);
+        let [(w1, b1), (w2, _), _] = l.offsets();
+        let inputs = l.inputs_padded() as usize;
+        // Layer 1, output block 0, input block 0: column 0 is rows 0..4 of input 0.
+        let lo = |w: u32| (w & 0xffff) as usize;
+        let hi = |w: u32| (w >> 16) as usize;
+        assert_eq!(lo(packed[0][0]), w1);
+        assert_eq!(hi(packed[0][0]), w1 + inputs);
+        assert_eq!(lo(packed[0][1]), w1 + 2 * inputs);
+        assert_eq!(lo(packed[0][2]), w1 + 1, "column 1 is input 1");
+        assert_eq!(hi(packed[1][3]), w1 + 3 * inputs + 3);
+        // Input block 1 of output block 0 follows.
+        assert_eq!(lo(packed[2][0]), w1 + 4);
+        // Then output block 1, then the biases.
+        let blocks = (l.hidden[0] / 4 * l.inputs_padded() / 4) as usize;
+        assert_eq!(lo(packed[2 * (blocks / 2)][0]), w1 + 4 * inputs);
+        assert_eq!(lo(packed[2 * blocks][0]), b1);
+        assert_eq!(hi(packed[2 * blocks][1]), b1 + 3);
+        assert_eq!(lo(packed[2 * blocks + 2][0]), w2);
+        let total: usize = l
+            .layers()
+            .iter()
+            .map(|&(o, i)| (2 * (o / 4) * (i / 4) + (o / 4).next_multiple_of(2)) as usize)
+            .sum();
+        assert_eq!(packed.len(), total);
+        let _ = f32_to_f16(1.0);
+    }
+
+    #[test]
+    fn profile_constants_are_consistent() {
+        let l = layout();
+        let s = profile_constants(&l);
+        assert!(s.contains("const NT_IN: u32 = 26u;"));
+        assert!(s.contains("const NT_IN4: u32 = 7u;"));
+        assert!(s.contains("const NT_OUT4: u32 = 1u;"));
+        let mut other = l.clone();
+        other.channels = vec![Channel::Height, Channel::NormalX];
+        assert!(!same_profile(&l, &other));
+        other.channels = vec![
+            Channel::NormalX,
+            Channel::NormalY,
+            Channel::Occlusion,
+            Channel::Height,
+        ];
+        assert!(same_profile(&l, &other));
+    }
+
+    #[test]
+    fn channel_words_locate_each_group() {
+        let l = layout();
+        let [a, b] = channel_words(&l);
+        assert_eq!(a & 0xff, 0);
+        assert_eq!(a >> 8 & 0xff, ABSENT);
+        assert_eq!(a >> 24, 3);
+        assert_eq!(b & 0xff, ABSENT);
+    }
+}
