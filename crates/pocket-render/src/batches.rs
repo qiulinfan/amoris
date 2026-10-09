@@ -12,6 +12,11 @@
 //!   (group 3) set before each batch's draw.
 //!
 //! The CPU's work per frame grows with the batches that hold instances, not with the instances.
+//!
+//! With occlusion culling (docs/spec/occlusion.md) the camera view has a second set of arguments,
+//! [`LATE`]: the instances the late culling pass finds newly visible, written to the same regions
+//! of the camera's list (the early draws are done with them by then), so a late batch has the
+//! camera's base on every path.
 
 use std::num::NonZeroU64;
 
@@ -24,6 +29,11 @@ use crate::shadows::CASCADES;
 
 /// The camera and the shadow cascades.
 pub const VIEWS: u32 = 1 + CASCADES as u32;
+/// The argument set of the camera's late draws (occlusion culling's second phase), after the
+/// views' sets (`LATE` in cull.wgsl).
+pub const LATE: u32 = VIEWS;
+/// Argument sets: the views' and the late one.
+const SETS: u32 = VIEWS + 1;
 /// Bytes of one set of indexed indirect arguments.
 const ARGS: u64 = 20;
 /// Bytes of the base uniform the shaders read (`vec4u`).
@@ -123,6 +133,11 @@ fn bind(
     })
 }
 
+/// The view whose list an argument set draws from: the late set draws the camera's.
+fn view_of(set: u32) -> u32 {
+    if set == LATE { 0 } else { set }
+}
+
 impl Batches {
     pub fn new(device: &wgpu::Device, caps: &Capabilities) -> Batches {
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -201,8 +216,9 @@ impl Batches {
                     .copied()
                     .unwrap_or(0)
         };
-        let mut template = Vec::with_capacity((meshes * VIEWS * VARIANTS) as usize);
-        for v in 0..VIEWS {
+        let mut template = Vec::with_capacity((meshes * SETS * VARIANTS) as usize);
+        for set in 0..SETS {
+            let v = view_of(set);
             for variant in 0..VARIANTS {
                 for (m, info) in infos.iter().enumerate() {
                     template.push(DrawArgs {
@@ -266,19 +282,20 @@ impl Batches {
 
     /// Starts a frame's arguments from the template (the culling pass then counts into them).
     pub fn reset(&self, enc: &mut wgpu::CommandEncoder) {
-        let bytes = u64::from(self.meshes * VIEWS * VARIANTS) * ARGS;
+        let bytes = u64::from(self.meshes * SETS * VARIANTS) * ARGS;
         if bytes > 0 {
             enc.copy_buffer_to_buffer(&self.template, 0, &self.draws, 0, bytes);
         }
     }
 
-    /// Draws one variant's batches of one view with the pass's current pipeline; returns the
-    /// number of draw calls issued.
-    pub fn draw(&self, pass: &mut wgpu::RenderPass<'_>, view: u32, variant: u32) -> u32 {
+    /// Draws one variant's batches of one argument set (a view, or [`LATE`]) with the pass's
+    /// current pipeline; returns the number of draw calls issued.
+    pub fn draw(&self, pass: &mut wgpu::RenderPass<'_>, set: u32, variant: u32) -> u32 {
         if self.meshes == 0 {
             return 0;
         }
-        let first = u64::from((view * VARIANTS + variant) * self.meshes) * ARGS;
+        let view = view_of(set);
+        let first = u64::from((set * VARIANTS + variant) * self.meshes) * ARGS;
         let run = self.live_at[variant as usize]..self.live_at[variant as usize + 1];
         match self.path {
             DrawPath::MultiDraw => {

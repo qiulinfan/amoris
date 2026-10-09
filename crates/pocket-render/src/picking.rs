@@ -39,6 +39,8 @@ pub struct Picking {
     )>,
     readback: Option<wgpu::Buffer>,
     want: Option<PickRequest>,
+    /// The request this frame's id pass draws (between `begin` and `finish`).
+    current: Option<PickRequest>,
     pending: Arc<Mutex<Pending>>,
     in_flight: bool,
 }
@@ -98,6 +100,7 @@ impl Picking {
             target: None,
             readback: None,
             want: None,
+            current: None,
             pending: Arc::new(Mutex::new(Pending::default())),
             in_flight: false,
         }
@@ -121,22 +124,15 @@ impl Picking {
         self.want.is_some() && !self.in_flight
     }
 
-    /// Draws the id pass (the camera view's batches through `draw`) and copies the requested region
-    /// for reading back; `timestamps` times the pass.
-    #[allow(clippy::too_many_arguments)]
-    pub fn encode(
-        &mut self,
-        device: &wgpu::Device,
-        enc: &mut wgpu::CommandEncoder,
-        size: (u32, u32),
-        frame: &wgpu::BindGroup,
-        vertices: &wgpu::Buffer,
-        indices: &wgpu::Buffer,
-        draw: &dyn Fn(&mut wgpu::RenderPass<'_>),
-        timestamps: Option<wgpu::RenderPassTimestampWrites<'_>>,
-    ) {
+    /// Starts this frame's id pass if one is wanted: takes the request and readies the target for
+    /// `size`. The pass is then drawn by one or more [`Picking::draw`] calls and read back by
+    /// [`Picking::finish`].
+    pub fn begin(&mut self, device: &wgpu::Device, size: (u32, u32)) -> bool {
+        if self.in_flight {
+            return false;
+        }
         let Some(req) = self.want.take() else {
-            return;
+            return false;
         };
         let (w, h) = size;
         if self.target.as_ref().is_none_or(|t| (t.3, t.4) != (w, h)) {
@@ -162,41 +158,79 @@ impl Picking {
             let dv = d.create_view(&Default::default());
             self.target = Some((t, tv, dv, w, h));
         }
-        let Some((tex, view, depth, _, _)) = &self.target else {
+        self.current = Some(req);
+        true
+    }
+
+    /// Draws the camera view's batches through `draw` into the id target: `first` clears it (the
+    /// frame's first call), otherwise it is loaded (occlusion culling's late draws); `last` lets
+    /// the depth go. `timestamps` times the pass.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw(
+        &mut self,
+        enc: &mut wgpu::CommandEncoder,
+        frame: &wgpu::BindGroup,
+        vertices: &wgpu::Buffer,
+        indices: &wgpu::Buffer,
+        draw: &dyn Fn(&mut wgpu::RenderPass<'_>),
+        timestamps: Option<wgpu::RenderPassTimestampWrites<'_>>,
+        first: bool,
+        last: bool,
+    ) {
+        let (Some(req), Some((_, view, depth, w, h))) = (self.current, &self.target) else {
             return;
         };
-        {
-            let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("entity ids"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                        store: wgpu::StoreOp::Store,
+        let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("entity ids"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: if first {
+                        wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT)
+                    } else {
+                        wgpu::LoadOp::Load
                     },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: depth,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(0.0),
-                        store: wgpu::StoreOp::Discard,
-                    }),
-                    stencil_ops: None,
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: depth,
+                depth_ops: Some(wgpu::Operations {
+                    load: if first {
+                        wgpu::LoadOp::Clear(0.0)
+                    } else {
+                        wgpu::LoadOp::Load
+                    },
+                    store: if last {
+                        wgpu::StoreOp::Discard
+                    } else {
+                        wgpu::StoreOp::Store
+                    },
                 }),
-                timestamp_writes: timestamps,
-                ..Default::default()
-            });
-            if let PickRequest::Pixel(x, y) = req {
-                pass.set_scissor_rect(x.min(w - 1), y.min(h - 1), 1, 1);
-            }
-            pass.set_pipeline(&self.pipeline);
-            pass.set_bind_group(0, frame, &[]);
-            pass.set_vertex_buffer(0, vertices.slice(..));
-            pass.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint32);
-            draw(&mut pass);
+                stencil_ops: None,
+            }),
+            timestamp_writes: timestamps,
+            ..Default::default()
+        });
+        if let PickRequest::Pixel(x, y) = req {
+            pass.set_scissor_rect(x.min(w - 1), y.min(h - 1), 1, 1);
         }
+        pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(0, frame, &[]);
+        pass.set_vertex_buffer(0, vertices.slice(..));
+        pass.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint32);
+        draw(&mut pass);
+    }
+
+    /// Copies the requested region of the id target for reading back (after the last
+    /// [`Picking::draw`]).
+    pub fn finish(&mut self, device: &wgpu::Device, enc: &mut wgpu::CommandEncoder) {
+        let (Some(req), Some((tex, _, _, w, h))) = (self.current.take(), &self.target) else {
+            return;
+        };
+        let (w, h) = (*w, *h);
         let (ox, oy, cw, ch) = match req {
             PickRequest::Pixel(x, y) => (x.min(w - 1), y.min(h - 1), 1, 1),
             PickRequest::Full => (0, 0, w, h),

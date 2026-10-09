@@ -8,6 +8,10 @@
 //! 4. draw the opaque scene and the sky into the multisampled HDR target (likewise);
 //! 5. bloom and the display transform into the output.
 //!
+//! With occlusion culling (occlusion.rs) step 1 keeps only what the camera saw last frame, and
+//! step 4 is two passes: those instances, then a depth pyramid and a late culling pass, then the
+//! instances it finds newly visible with the sky and the rest.
+//!
 //! The CPU's work per frame does not grow with the number of instances. How the indirect draws
 //! are issued (multi-draw, or WebGPU's baseline without `indirect-first-instance`) is batches.rs.
 
@@ -19,13 +23,14 @@ use pocket_assets::frame::{LightKindView, Look, RenderFrame};
 use pocket_assets::mesh::ModelAsset;
 use pocket_assets::primitives::{PRIMITIVES, primitive};
 
-use crate::batches::{Batches, VIEWS};
+use crate::batches::{Batches, LATE, VIEWS};
 use crate::blit::Blitter;
 use crate::camera::{CameraState, frustum_planes};
 use crate::gpu::Gpu;
 use crate::loader::{AssetSource, NoAssets};
 use crate::materials::MaterialPool;
 use crate::meshes::MeshPool;
+use crate::occlusion::{LateInputs, Occlusion, OcclusionMode, OcclusionStats};
 use crate::ocean::Ocean;
 use crate::overlay::Overlays;
 use crate::particles::Particles;
@@ -69,12 +74,16 @@ struct ViewUniform {
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct CullUniform {
     planes: [[[f32; 4]; 6]; 5],
+    view_proj: [[f32; 4]; 4],
     instance_count: u32,
     view_count: u32,
     mesh_count: u32,
     view_stride: u32,
     alpha: f32,
     lod_scale: f32,
+    occlusion: u32,
+    hiz_levels: u32,
+    viewport: [f32; 2],
     _pad: [u32; 2],
 }
 
@@ -116,6 +125,10 @@ pub struct FrameStats {
     pub draw_path: &'static str,
     /// Draw calls the shadow and opaque passes issued for the GPU-driven batches.
     pub draw_calls: u32,
+    /// Occlusion culling this frame: `off`, `on`, `auto-on` or `auto-off` (occlusion.rs).
+    pub occlusion: &'static str,
+    /// The latest reading of the late culling pass's counters (a few frames old).
+    pub occlusion_stats: Option<OcclusionStats>,
 }
 
 /// A loaded model: its meshes by name and index, and its scene's nodes.
@@ -301,6 +314,10 @@ pub struct Renderer {
     drawn: wgpu::Buffer,
     /// The indirect draws and how they are issued.
     batches: Batches,
+    /// Occlusion culling: the depth pyramid, the late culling pass and the auto mode.
+    occlusion: Occlusion,
+    /// Per instance slot, the occlusion state (`state` in cull.wgsl).
+    vis_state: wgpu::Buffer,
     lights: wgpu::Buffer,
     cluster_buf: wgpu::Buffer,
     cluster_lights: wgpu::Buffer,
@@ -753,6 +770,13 @@ impl Renderer {
             ),
             drawn: storage(device, "drawn", 1024 * 48, wgpu::BufferUsages::empty()),
             batches,
+            occlusion: Occlusion::new(device, OcclusionMode::from_env()),
+            vis_state: storage(
+                device,
+                "occlusion state",
+                1024 * 4,
+                wgpu::BufferUsages::empty(),
+            ),
             lights: storage(device, "lights", 64 * 64, wgpu::BufferUsages::empty()),
             cluster_buf: uniform(device, "clusters", 32),
             cluster_lights: storage(
@@ -844,6 +868,18 @@ impl Renderer {
             return;
         }
         self.targets = Targets::new(&self.gpu.device, width, height);
+        // The pyramid's first level reads the old depth target.
+        self.occlusion.invalidate(true);
+    }
+
+    /// Whether the camera view is occlusion culled (occlusion.rs; `POCKET_OCCLUSION` sets the
+    /// starting mode).
+    pub fn set_occlusion(&mut self, mode: OcclusionMode) {
+        self.occlusion.set_mode(mode);
+    }
+
+    pub fn occlusion(&self) -> OcclusionMode {
+        self.occlusion.mode
     }
 
     pub fn size(&self) -> (u32, u32) {
@@ -1075,6 +1111,16 @@ impl Renderer {
             self.scene.full_upload = true;
             grown = true;
         }
+        if n * 4 > self.vis_state.size() {
+            // Zeroed: nothing counts as visible last frame, so the next frame draws late.
+            self.vis_state = storage(
+                device,
+                "occlusion state",
+                (n * 4).next_power_of_two(),
+                wgpu::BufferUsages::empty(),
+            );
+            grown = true;
+        }
         let runs = self.scene.take_dirty_runs();
         if let Some(rt) = &mut self.rt_shadows {
             rt.slots_changed(!runs.is_empty());
@@ -1203,8 +1249,10 @@ impl Renderer {
                 b(4, &self.visible),
                 b(5, &self.batch_offsets),
                 b(6, &self.drawn),
+                b(7, &self.vis_state),
             ],
         });
+        self.occlusion.invalidate(false);
         let cluster = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("clusters"),
             layout: &self.cluster_pipeline.get_bind_group_layout(0),
@@ -1422,14 +1470,20 @@ impl Renderer {
         let cascades = shadows && self.rt_shadows.is_none();
         let views = if cascades { VIEWS } else { 1 };
         let n = self.scene.instance_count() as u32;
+        // Two phases this frame (occlusion.rs)?
+        let occl = self.occlusion.begin_frame() && n > 0;
         let cu = CullUniform {
             planes,
+            view_proj: mat(vp),
             instance_count: n,
             view_count: views,
             mesh_count: self.draw_meshes,
             view_stride: self.view_stride,
             alpha,
             lod_scale: 0.0,
+            occlusion: u32::from(occl),
+            hiz_levels: crate::occlusion::levels(w, h),
+            viewport: [w as f32, h as f32],
             _pad: [0; 2],
         };
         queue.write_buffer(&self.cull_buf, 0, bytemuck::bytes_of(&cu));
@@ -1529,34 +1583,20 @@ impl Renderer {
         // Gaussian splats (splat/): preprocess and sort; the opaque pass keeps its depth for them.
         self.splats
             .prepare(&mut enc, &mut self.profiler, &mut self.scene, &cam, (w, h));
+        let picking = self.picking.begin(&device, (w, h));
+        // The opaque pass, or with occlusion culling its early half: what the camera saw last frame.
         {
-            let ts = self.profiler.render_scope("opaque+sky");
-            let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("opaque"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.targets.color_msaa,
-                    depth_slice: None,
-                    resolve_target: Some(&self.targets.hdr_view),
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Discard,
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.targets.depth,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(0.0),
-                        store: if self.splats.active() {
-                            wgpu::StoreOp::Store
-                        } else {
-                            wgpu::StoreOp::Discard
-                        },
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: ts,
-                ..Default::default()
-            });
+            let ts = self
+                .profiler
+                .render_scope(if occl { "opaque early" } else { "opaque+sky" });
+            let mut pass = opaque_pass(
+                &mut enc,
+                &self.targets,
+                ts,
+                true,
+                !occl,
+                self.splats.active(),
+            );
             pass.set_bind_group(0, &binds.frame, &[]);
             pass.set_bind_group(1, &binds.lighting, &[]);
             pass.set_bind_group(2, &binds.textures, &[]);
@@ -1566,39 +1606,84 @@ impl Renderer {
                 pass.set_pipeline(&self.forward[variant as usize]);
                 draw_calls += self.batches.draw(&mut pass, 0, variant);
             }
-            if self.scene.sea.is_some() {
-                self.ocean.draw(&mut pass);
+            if !occl {
+                self.draw_after_opaque(&device, &mut pass, binds);
             }
-            pass.set_pipeline(&self.sky_pipeline);
-            pass.set_bind_group(0, &binds.sky, &[]);
-            pass.draw(0..3, 0..1);
-            self.particles.draw(&device, &mut pass, &self.view_buf);
-            self.overlays.draw_grid(&device, &mut pass, &self.view_buf);
         }
-        if self.picking.wanted() {
-            let batches = &self.batches;
-            let empty = &self.empty_group;
-            let splats = &self.splats;
-            // The camera view's batches, every variant through the one id pipeline.
-            let id_draw = |pass: &mut wgpu::RenderPass<'_>| {
-                pass.set_bind_group(1, empty, &[]);
-                pass.set_bind_group(2, empty, &[]);
-                for variant in 0..VARIANTS {
-                    batches.draw(pass, 0, variant);
-                }
-                // Gaussian splats (splat/): after the meshes, against their depth.
-                splats.draw_ids(pass);
-            };
-            self.picking.encode(
+        let ids = IdPass {
+            frame: &binds.frame,
+            empty: &self.empty_group,
+            batches: &self.batches,
+            meshes: &self.meshes,
+            splats: &self.splats,
+        };
+        if picking {
+            ids.draw(
+                &mut self.picking,
+                &mut self.profiler,
+                &mut enc,
+                0,
+                true,
+                !occl,
+            );
+        }
+        if occl {
+            self.occlusion.encode_pyramid(
                 &device,
                 &mut enc,
+                &mut self.profiler,
+                &self.targets.depth,
                 (w, h),
-                &binds.frame,
-                &self.meshes.vertices,
-                &self.meshes.indices,
-                &id_draw,
-                self.profiler.render_scope("entity ids"),
             );
+            self.occlusion.encode_late(
+                &device,
+                &mut enc,
+                &mut self.profiler,
+                &LateInputs {
+                    cull: &self.cull_buf,
+                    instances: &self.instances,
+                    meshes: &self.meshes.info_buffer,
+                    draws: &self.batches.draws,
+                    offsets: &self.batch_offsets,
+                    drawn: &self.drawn,
+                    state: &self.vis_state,
+                },
+                n,
+            );
+            // The late half: the newly visible instances, then the sky and the rest.
+            let ts = self.profiler.render_scope("opaque+sky");
+            let mut pass = opaque_pass(
+                &mut enc,
+                &self.targets,
+                ts,
+                false,
+                true,
+                self.splats.active(),
+            );
+            pass.set_bind_group(0, &binds.frame, &[]);
+            pass.set_bind_group(1, &binds.lighting, &[]);
+            pass.set_bind_group(2, &binds.textures, &[]);
+            pass.set_vertex_buffer(0, self.meshes.vertices.slice(..));
+            pass.set_index_buffer(self.meshes.indices.slice(..), wgpu::IndexFormat::Uint32);
+            for variant in 0..VARIANTS {
+                pass.set_pipeline(&self.forward[variant as usize]);
+                draw_calls += self.batches.draw(&mut pass, LATE, variant);
+            }
+            self.draw_after_opaque(&device, &mut pass, binds);
+            drop(pass);
+            if picking {
+                ids.draw(
+                    &mut self.picking,
+                    &mut self.profiler,
+                    &mut enc,
+                    LATE,
+                    false,
+                    true,
+                );
+            }
+        }
+        if picking {
+            self.picking.finish(&device, &mut enc);
             self.pick_splats = self.splats.drawn_entities().to_vec();
         }
         // Gaussian splats (splat/): drawn over the resolved image, tested against the depth.
@@ -1657,6 +1742,7 @@ impl Renderer {
         queue.submit([enc.finish()]);
         self.profiler.after_submit();
         self.picking.after_submit();
+        self.occlusion.after_submit();
         self.last = FrameStats {
             cpu_ms: (web_time() - cpu) as f32 * 1000.0,
             gpu_ms: self.profiler.total_ms(),
@@ -1671,8 +1757,28 @@ impl Renderer {
             backend: self.gpu.backend_name(),
             draw_path: self.batches.path.name(),
             draw_calls,
+            occlusion: self.occlusion.label(),
+            occlusion_stats: self.occlusion.last,
         };
         self.last.clone()
+    }
+
+    /// What the opaque pass draws after the instances: the ocean, the sky, particles and the
+    /// editor's grid.
+    fn draw_after_opaque(
+        &self,
+        device: &wgpu::Device,
+        pass: &mut wgpu::RenderPass<'_>,
+        binds: &Binds,
+    ) {
+        if self.scene.sea.is_some() {
+            self.ocean.draw(pass);
+        }
+        pass.set_pipeline(&self.sky_pipeline);
+        pass.set_bind_group(0, &binds.sky, &[]);
+        pass.draw(0..3, 0..1);
+        self.particles.draw(device, pass, &self.view_buf);
+        self.overlays.draw_grid(device, pass, &self.view_buf);
     }
 
     /// The entity a ray through pixel (x, y) of the output hits first, with the distance and the
@@ -1900,6 +2006,101 @@ fn merge_passes(p: &[(&'static str, f32)]) -> Vec<(&'static str, f32)> {
         }
     }
     out
+}
+
+/// The entity-id pass over one argument set of the camera's batches (the camera's, or the late
+/// one), every variant through the one id pipeline; the last call adds the splats.
+struct IdPass<'a> {
+    frame: &'a wgpu::BindGroup,
+    empty: &'a wgpu::BindGroup,
+    batches: &'a Batches,
+    meshes: &'a MeshPool,
+    splats: &'a crate::splat::Splats,
+}
+
+impl IdPass<'_> {
+    fn draw(
+        &self,
+        picking: &mut Picking,
+        profiler: &mut GpuProfiler,
+        enc: &mut wgpu::CommandEncoder,
+        set: u32,
+        first: bool,
+        last: bool,
+    ) {
+        let id_draw = |pass: &mut wgpu::RenderPass<'_>| {
+            pass.set_bind_group(1, self.empty, &[]);
+            pass.set_bind_group(2, self.empty, &[]);
+            for variant in 0..VARIANTS {
+                self.batches.draw(pass, set, variant);
+            }
+            // Gaussian splats (splat/): after the meshes, against their depth.
+            if last {
+                self.splats.draw_ids(pass);
+            }
+        };
+        picking.draw(
+            enc,
+            self.frame,
+            &self.meshes.vertices,
+            &self.meshes.indices,
+            &id_draw,
+            profiler.render_scope("entity ids"),
+            first,
+            last,
+        );
+    }
+}
+
+/// A pass into the multisampled HDR target and its depth: `first` clears them (else they are
+/// loaded), `last` resolves the color into the HDR image; the depth is kept unless it is the last
+/// pass and nothing reads it afterwards (`keep_depth`: the splats).
+fn opaque_pass<'e>(
+    enc: &'e mut wgpu::CommandEncoder,
+    t: &Targets,
+    timestamps: Option<wgpu::RenderPassTimestampWrites<'_>>,
+    first: bool,
+    last: bool,
+    keep_depth: bool,
+) -> wgpu::RenderPass<'e> {
+    enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some(if last { "opaque" } else { "opaque (early)" }),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view: &t.color_msaa,
+            depth_slice: None,
+            resolve_target: last.then_some(&t.hdr_view),
+            ops: wgpu::Operations {
+                load: if first {
+                    wgpu::LoadOp::Clear(wgpu::Color::BLACK)
+                } else {
+                    wgpu::LoadOp::Load
+                },
+                store: if last {
+                    wgpu::StoreOp::Discard
+                } else {
+                    wgpu::StoreOp::Store
+                },
+            },
+        })],
+        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+            view: &t.depth,
+            depth_ops: Some(wgpu::Operations {
+                load: if first {
+                    wgpu::LoadOp::Clear(0.0)
+                } else {
+                    wgpu::LoadOp::Load
+                },
+                store: if last && !keep_depth {
+                    wgpu::StoreOp::Discard
+                } else {
+                    wgpu::StoreOp::Store
+                },
+            }),
+            stencil_ops: None,
+        }),
+        timestamp_writes: timestamps,
+        ..Default::default()
+    })
 }
 
 /// Seconds from an arbitrary origin, monotonic.

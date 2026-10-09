@@ -10,6 +10,7 @@ const SPLAT_COMMON: &str = include_str!("../shaders/splat_common.wgsl");
 pub fn source(name: &str) -> String {
     let body = match name {
         "cull" => include_str!("../shaders/cull.wgsl"),
+        "hiz" => include_str!("../shaders/hiz.wgsl"),
         "forward" => {
             return format!(
                 "{COMMON}\n{}\n{}",

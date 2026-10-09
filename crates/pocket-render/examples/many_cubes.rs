@@ -2,18 +2,25 @@
 //! (docs/bench/bevy-baseline.md): 1,600,000 cubes on a sphere (or a dense grid), one mesh, one
 //! material, a directional light, a camera turning at a fixed rate per frame.
 //!
-//! `cargo run --release -p pocket-render --example many_cubes -- [--dense] [--count N]
-//!  [--bench FRAMES] [--shadows] [--vsync]`
+//! `cargo run --release -p pocket-render --example many_cubes -- [--dense] [--orbit] [--count N]
+//!  [--bench FRAMES] [--shadows] [--vsync] [--occlusion off|on|auto]`
+//!
+//! `--orbit` lays the cubes out densely and circles them from outside (occlusion culling's
+//! benchmark, docs/bench/occlusion.md); `--occlusion` overrides `POCKET_OCCLUSION`.
 
 use glam::{Quat, Vec3};
 use pocket_assets::frame::RenderFrame;
 use pocket_render::app::{Host, RunOptions, run};
-use pocket_render::{BackendChoice, Renderer};
+use pocket_render::{BackendChoice, OcclusionMode, Renderer};
 
 struct Cubes {
     frame: Option<RenderFrame>,
     rot: Quat,
     dense: bool,
+    /// Circle the dense layout from outside (`--orbit`), at this frame.
+    orbit: Option<u32>,
+    count: usize,
+    occlusion: Option<OcclusionMode>,
 }
 
 fn arg(name: &str) -> Option<String> {
@@ -31,6 +38,14 @@ impl Host for Cubes {
     fn update(&mut self, r: &mut Renderer, now: f64) {
         if let Some(f) = self.frame.take() {
             r.apply(f, now);
+            if let Some(m) = self.occlusion {
+                r.set_occlusion(m);
+            }
+        }
+        if let Some(frame) = &mut self.orbit {
+            r.set_camera_override(Some(pocket_render::demo::orbit_camera(*frame, self.count)));
+            *frame += 1;
+            return;
         }
         // Bevy's move_camera with --benchmark: rotate about local z then x by 0.15/60 each frame;
         // the dense layout's camera stands still.
@@ -56,7 +71,9 @@ fn main() {
     let count: usize = arg("--count")
         .and_then(|s| s.parse().ok())
         .unwrap_or(1_600_000);
-    let dense = flag("--dense");
+    let orbit = flag("--orbit");
+    let dense = flag("--dense") || orbit;
+    let occlusion = arg("--occlusion").and_then(|s| OcclusionMode::parse(&s));
     let shadows = flag("--shadows");
     let bench: Option<u32> = arg("--bench").and_then(|s| s.parse().ok());
     let t = std::time::Instant::now();
@@ -74,6 +91,9 @@ fn main() {
             frame: Some(frame),
             rot: Quat::IDENTITY,
             dense,
+            orbit: orbit.then_some(0),
+            count,
+            occlusion,
         };
         for i in 0..5 {
             host.update(&mut r, i as f64 / 60.0);
@@ -96,6 +116,9 @@ fn main() {
                 frame: Some(frame),
                 rot: Quat::IDENTITY,
                 dense,
+                orbit: orbit.then_some(0),
+                count,
+                occlusion,
             },
             size,
             frames,
@@ -103,7 +126,16 @@ fn main() {
         return;
     }
     let options = RunOptions {
-        title: format!("many_cubes ({count}{})", if dense { ", dense" } else { "" }),
+        title: format!(
+            "many_cubes ({count}{})",
+            if orbit {
+                ", orbit"
+            } else if dense {
+                ", dense"
+            } else {
+                ""
+            }
+        ),
         width: 1280,
         height: 720,
         backend: BackendChoice::from_env(),
@@ -117,6 +149,9 @@ fn main() {
             frame: Some(frame),
             rot: Quat::IDENTITY,
             dense,
+            orbit: orbit.then_some(0),
+            count,
+            occlusion,
         },
         options,
     ) {
@@ -159,6 +194,8 @@ fn headless_bench(mut host: Cubes, size: (u32, u32), frames: u32) {
     let mut passes: Vec<(&'static str, f64, u32)> = Vec::new();
     // Ray-traced shadows (POCKET_RT_SHADOWS=1): measured frames that rebuilt the casters' TLAS.
     let mut rt_rebuilds = 0;
+    let mut modes: Vec<(&'static str, u32)> = Vec::new();
+    let mut occluded_share = Vec::new();
     let warm = 60;
     for i in 0..warm + frames {
         let now = f64::from(i) / 60.0;
@@ -176,6 +213,13 @@ fn headless_bench(mut host: Cubes, size: (u32, u32), frames: u32) {
         wall.push(ms);
         cpu.push(f64::from(stats.cpu_ms));
         rt_rebuilds += u32::from(r.rt_shadow_stats().is_some_and(|s| s.rebuilt));
+        match modes.iter_mut().find(|(m, _)| *m == stats.occlusion) {
+            Some(e) => e.1 += 1,
+            None => modes.push((stats.occlusion, 1)),
+        }
+        if let Some(o) = &stats.occlusion_stats {
+            occluded_share.push(o.occluded_share());
+        }
         if !stats.passes.is_empty() {
             gpu_ms.push(f64::from(stats.gpu_ms));
         }
@@ -199,8 +243,31 @@ fn headless_bench(mut host: Cubes, size: (u32, u32), frames: u32) {
             "p95": round(v.get((v.len() * 95 / 100).min(v.len().saturating_sub(1))).copied().unwrap_or(0.0)),
         })
     };
+    let occlusion = r.last.occlusion_stats.map(|o| {
+        serde_json::json!({
+            "frustum": o.frustum,
+            "occluded": o.occluded,
+            "early": o.early,
+            "late": o.late,
+            "frustum_triangles": o.frustum_triangles,
+            "occluded_triangles": o.occluded_triangles,
+        })
+    });
     let report = serde_json::json!({
-        "bench": if host.dense { "many_cubes dense" } else { "many_cubes sphere" },
+        "bench": if host.orbit.is_some() {
+            "many_cubes orbit"
+        } else if host.dense {
+            "many_cubes dense"
+        } else {
+            "many_cubes sphere"
+        },
+        "occlusion_mode": r.occlusion().name(),
+        "occlusion_frames": modes
+            .iter()
+            .map(|(m, n)| ((*m).to_owned(), serde_json::json!(n)))
+            .collect::<serde_json::Map<_, _>>(),
+        "occluded_triangle_share": summary(&mut occluded_share),
+        "occlusion_last": occlusion,
         "backend": gpu.backend_name(),
         "adapter": gpu.info.name,
         "driver": format!("{} {}", gpu.info.driver, gpu.info.driver_info),

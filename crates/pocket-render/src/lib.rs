@@ -15,6 +15,7 @@ pub mod gpu;
 pub mod loader;
 pub mod materials;
 pub mod meshes;
+pub mod occlusion;
 mod ocean;
 pub mod overlay;
 mod particles;
@@ -34,6 +35,7 @@ mod ui;
 pub use camera::CameraState;
 pub use gpu::{BackendChoice, Gpu, GpuError};
 pub use loader::AssetSource;
+pub use occlusion::{OcclusionMode, OcclusionStats};
 pub use renderer::{FrameStats, Renderer, web_time};
 
 /// A renderer shader's composed WGSL (tools and backend probes).

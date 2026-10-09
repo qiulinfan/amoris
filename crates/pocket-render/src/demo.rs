@@ -31,6 +31,17 @@ pub fn cubes_camera(frame: u32, dense: bool) -> crate::CameraState {
     c
 }
 
+/// A camera circling the dense layout of `count` cubes from outside at frame `frame` (half a
+/// degree per frame), looking at its centre: most cubes are hidden behind its faces, and every
+/// frame uncovers some (the occlusion culling benchmark, docs/bench/occlusion.md).
+pub fn orbit_camera(frame: u32, count: usize) -> crate::CameraState {
+    let side = (count as f32).cbrt().round() * 1.25;
+    let centre = Vec3::splat(side * 0.5);
+    let a = frame as f32 * 0.5f32.to_radians();
+    let eye = centre + Vec3::new(a.cos() * side * 1.5, side * 0.9, a.sin() * side * 1.5);
+    crate::CameraState::look_at(eye, centre)
+}
+
 pub fn many_cubes(count: usize, dense: bool, shadows: bool) -> RenderFrame {
     let look = Look {
         mesh: "cube".into(),
@@ -293,4 +304,156 @@ pub fn mixed(n: u32) -> RenderFrame {
 pub fn mixed_camera(n: u32) -> crate::CameraState {
     let d = n as f32 * 3.0;
     crate::CameraState::look_at(Vec3::new(0.0, d * 0.55, d * 0.95), Vec3::new(0.0, 0.5, 0.0))
+}
+
+/// The occlusion culling check's scene (tests/occlusion.rs): on a ground, a wall of two boxes with
+/// a narrow slit between them, an alpha-masked double-sided cylinder (the masked occluder of
+/// [`mixed_model`], whose holes must not hide anything) and, behind them, a grid of every
+/// primitive at several depths and heights, some peeking over the wall's top or past its ends,
+/// some seen only through the slit or the holes; three boxes stand in front. Register
+/// [`mixed_model`] under [`MIXED_MODEL`] first. `wall_y` is the left wall's height (the check
+/// lowers it into the ground to uncover what it hid).
+pub fn occluders(wall_y: f32) -> RenderFrame {
+    let look = |mesh: &str, color: [f32; 3]| Look {
+        mesh: mesh.into(),
+        material: String::new(),
+        color: [color[0], color[1], color[2], 1.0],
+        metallic: 0.0,
+        roughness: 0.6,
+        transmission: None,
+        ior: None,
+        emissive: [0.0; 3],
+        cast_shadows: true,
+        visible: true,
+    };
+    let item =
+        |id: u64, mesh: &str, color: [f32; 3], pos: [f32; 3], scale: [f32; 3]| InstanceUpdate {
+            id,
+            pose: Some(Pose {
+                position: pos,
+                rotation: Quat::from_rotation_y(id as f32 * 0.7).to_array(),
+                scale,
+            }),
+            look: Some(look(mesh, color)),
+            anim: None,
+        };
+    let wall = |id: u64, x: f32, y: f32| InstanceUpdate {
+        id,
+        pose: Some(Pose {
+            position: [x, y, 0.0],
+            rotation: [0.0, 0.0, 0.0, 1.0],
+            scale: [10.0, 6.0, 0.5],
+        }),
+        look: Some(look("cube", [0.75, 0.72, 0.68])),
+        anim: None,
+    };
+    let mut instances = vec![
+        InstanceUpdate {
+            id: 1,
+            pose: Some(Pose {
+                position: [0.0; 3],
+                rotation: [0.0, 0.0, 0.0, 1.0],
+                scale: [80.0, 1.0, 80.0],
+            }),
+            look: Some(look("plane", [0.5, 0.5, 0.48])),
+            anim: None,
+        },
+        wall(2, -5.25, wall_y),
+        wall(3, 5.25, 3.0),
+        InstanceUpdate {
+            id: 4,
+            pose: Some(Pose {
+                position: [-8.0, 2.0, 3.0],
+                rotation: [0.0, 0.0, 0.0, 1.0],
+                scale: [3.0, 4.0, 3.0],
+            }),
+            look: Some(Look {
+                color: [1.0; 4],
+                ..look(&format!("{MIXED_MODEL}#masked_double"), [1.0; 3])
+            }),
+            anim: None,
+        },
+    ];
+    for i in 0..3u64 {
+        instances.push(item(
+            10 + i,
+            "cube",
+            [0.9, 0.3, 0.2],
+            [-4.0 + 4.0 * i as f32, 0.5, 5.0],
+            [1.0; 3],
+        ));
+    }
+    // A picket fence past the right wall's end and, behind the wall's top edge, small spheres
+    // peeking over it by a few centimetres: partly hidden instances at every scale.
+    for i in 0..9u64 {
+        instances.push(InstanceUpdate {
+            id: 20 + i,
+            pose: Some(Pose {
+                position: [10.9 + 0.8 * i as f32, 3.0, 1.0],
+                rotation: [0.0, 0.0, 0.0, 1.0],
+                scale: [0.3, 6.0, 0.3],
+            }),
+            look: Some(look("cube", [0.35, 0.3, 0.28])),
+            anim: None,
+        });
+    }
+    for i in 0..24u64 {
+        let s = 0.2 + 0.05 * (i % 4) as f32;
+        instances.push(item(
+            40 + i,
+            "sphere",
+            [0.95, 0.85, 0.2],
+            [
+                -9.6 + 0.83 * i as f32,
+                6.0 - s * 0.5 + 0.02 * (i % 5) as f32,
+                -0.6,
+            ],
+            [s; 3],
+        ));
+    }
+    let mut id = 100;
+    for z in 0..4 {
+        for x in 0..12 {
+            for y in 0..3 {
+                let mesh = PRIMITIVES[(id as usize) % PRIMITIVES.len()];
+                let hue = id as f32 * 0.37;
+                let size = 0.6 + 0.25 * ((x + y + z) % 3) as f32;
+                instances.push(item(
+                    id,
+                    if mesh == "plane" { "cube" } else { mesh },
+                    [
+                        0.5 + 0.4 * hue.sin(),
+                        0.5 + 0.4 * (hue + 2.1).sin(),
+                        0.5 + 0.4 * (hue + 4.2).sin(),
+                    ],
+                    [
+                        -17.6 + 3.2 * x as f32,
+                        0.6 + 2.6 * y as f32 + 0.3 * z as f32,
+                        -2.0 - 3.0 * z as f32,
+                    ],
+                    [size; 3],
+                ));
+                id += 1;
+            }
+        }
+    }
+    sunlit(instances, Vec3::new(-0.4, -1.0, -0.5), true)
+}
+
+/// The cameras of [`occluders`]: in front of the wall (most of the grid hidden), and from the
+/// side, a cut away (most of it in view).
+pub fn occluders_cameras() -> [crate::CameraState; 2] {
+    [
+        occluders_sweep(0.0),
+        crate::CameraState::look_at(Vec3::new(22.0, 6.0, -4.0), Vec3::new(0.0, 2.0, -6.0)),
+    ]
+}
+
+/// The front camera of [`occluders`] moved `x` metres sideways (and a little up and closer): a
+/// sweep moves the wall's edges, the slit and the fence across the pyramid's texels.
+pub fn occluders_sweep(x: f32) -> crate::CameraState {
+    crate::CameraState::look_at(
+        Vec3::new(0.5 + x, 6.4 + 0.11 * x, 15.0 - 0.3 * x.abs()),
+        Vec3::new(0.3 * x, 2.5, 0.0),
+    )
 }

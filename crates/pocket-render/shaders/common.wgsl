@@ -52,12 +52,16 @@ struct Drawn {
 };
 
 struct MeshInfo {
-    center: vec3f,
+    center: vec3f,           // the bounding sphere (frustum culling)
     radius: f32,
     index_count: u32,
     first_index: u32,
     base_vertex: i32,
     batch_offset: u32,       // where this mesh's region starts in each view's visible list
+    box_center: vec3f,       // the bounding box (occlusion culling)
+    _p0: u32,
+    box_half: vec3f,
+    _p1: u32,
 };
 
 struct Material {

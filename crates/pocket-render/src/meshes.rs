@@ -19,6 +19,19 @@ pub struct MeshInfo {
     pub base_vertex: i32,
     /// Where this mesh's region starts in each view's visible list (set by the scene).
     pub batch_offset: u32,
+    /// The bounding box's centre and half extents (occlusion culling).
+    pub box_center: [f32; 3],
+    pub _p0: u32,
+    pub box_half: [f32; 3],
+    pub _p1: u32,
+}
+
+/// A box's centre and half extents from its corners.
+fn center_half(lo: [f32; 3], hi: [f32; 3]) -> ([f32; 3], [f32; 3]) {
+    (
+        std::array::from_fn(|i| (lo[i] + hi[i]) * 0.5),
+        std::array::from_fn(|i| ((hi[i] - lo[i]) * 0.5).max(0.0)),
+    )
 }
 
 pub struct MeshPool {
@@ -187,6 +200,7 @@ impl MeshPool {
         self.vertex_len += vbytes;
         self.index_len += ibytes;
         let id = self.infos.len() as u32;
+        let (box_center, box_half) = center_half(mesh.bounds.min, mesh.bounds.max);
         self.infos.push(MeshInfo {
             center: mesh.bounds.center,
             radius: mesh.bounds.radius,
@@ -194,6 +208,10 @@ impl MeshPool {
             first_index,
             base_vertex,
             batch_offset: 0,
+            box_center,
+            _p0: 0,
+            box_half,
+            _p1: 0,
         });
         self.names.push(key.to_owned());
         self.boxes.push((mesh.bounds.min, mesh.bounds.max));
@@ -236,12 +254,6 @@ impl MeshPool {
         let base_vertex = (self.vertex_len / VERTEX) as i32;
         self.vertex_len += vbytes;
         let id = self.infos.len() as u32;
-        self.infos.push(MeshInfo {
-            radius: src.radius * grow,
-            base_vertex,
-            batch_offset: 0,
-            ..src
-        });
         let (lo, hi) = src_box;
         let c = [
             (lo[0] + hi[0]) * 0.5,
@@ -249,10 +261,20 @@ impl MeshPool {
             (lo[2] + hi[2]) * 0.5,
         ];
         let g = |i: usize, v: [f32; 3]| c[i] + (v[i] - c[i]) * grow;
-        self.boxes.push((
+        let grown = (
             [g(0, lo), g(1, lo), g(2, lo)],
             [g(0, hi), g(1, hi), g(2, hi)],
-        ));
+        );
+        let (box_center, box_half) = center_half(grown.0, grown.1);
+        self.infos.push(MeshInfo {
+            radius: src.radius * grow,
+            base_vertex,
+            batch_offset: 0,
+            box_center,
+            box_half,
+            ..src
+        });
+        self.boxes.push(grown);
         self.names.push(key.to_owned());
         self.vertex_counts.push(count);
         self.dynamic.push(true);
