@@ -369,6 +369,9 @@ impl WorkerCore {
         for (_, source, seq) in std::mem::take(&mut self.steps) {
             self.reply(source, seq, Err(why.clone()));
         }
+        for (source, seq) in self.players.drain() {
+            self.reply(source, seq, Err(why.clone()));
+        }
         self.model.quit();
         self.stopped = Some(why);
     }
@@ -571,8 +574,10 @@ impl WorkerCore {
         let t0 = self.now();
         let r = self.game.step();
         let t1 = self.now();
-        // The tick ran, or began and poisoned the world.
-        self.model.ran_tick(t1);
+        // The tick ran, or began and poisoned the world: it counts against the model and the front
+        // step at once, before the players' hooks ask the model again for what is owed.
+        let front = self.steps.front_mut().map(|(left, _, _)| left);
+        pocket_runtime::boundary::ran_tick(&mut self.model, front, t1);
         self.push_events();
         match r {
             Ok(report) => {
@@ -594,16 +599,13 @@ impl WorkerCore {
                     publish_ms: t2 - t1,
                     posted,
                 });
-                if let Some((left, _, _)) = self.steps.front_mut() {
-                    *left -= 1;
-                    if *left == 0
-                        && let Some((_, source, seq)) = self.steps.pop_front()
-                    {
-                        let r = Ok(json!({"tick": self.game.tick().0,
-                            "world_hash": self.last_hash.clone(),
-                            "errors": std::mem::take(&mut self.errors)}));
-                        self.reply(source, seq, r);
-                    }
+                if self.steps.front().is_some_and(|(left, _, _)| *left == 0)
+                    && let Some((_, source, seq)) = self.steps.pop_front()
+                {
+                    let r = Ok(json!({"tick": self.game.tick().0,
+                        "world_hash": self.last_hash.clone(),
+                        "errors": std::mem::take(&mut self.errors)}));
+                    self.reply(source, seq, r);
                 }
             }
             Err(p) if self.game.sim().poisoned().is_some() => self.halt(&p),
@@ -627,11 +629,10 @@ impl WorkerCore {
     }
 
     /// The ticks the model owes: those the `step`s and the players' stepped `wait`s still ask for
-    /// (a step and a wait under way at once share the ticks the model runs).
+    /// (`boundary::owe`).
     fn reowe(&mut self) {
         let steps: u64 = self.steps.iter().map(|(left, _, _)| left).sum();
-        self.model.cancel_steps();
-        self.model.step(steps.max(self.players.owed()));
+        pocket_runtime::boundary::owe(&mut self.model, steps, &self.players);
     }
 
     /// The answer at this boundary (`PlayerWaits::pace`): players' waits whose wall limit passed

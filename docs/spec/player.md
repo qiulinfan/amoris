@@ -129,7 +129,18 @@ script failure. Every seat of a built game starts with the episode's `start` dec
   started holding, a sighting, a mark rounded, a crate aboard, ten idle seconds, a two-minute
   heartbeat: the sailing filter), the episode's end or a halt. Moving time on answers the pending
   decision. On a game driven directly the run is inline; on the game thread and in the browser's
-  worker the loop asks its time model for the run's ticks and serves its queue between them.
+  worker the loop asks its time model for the run's ticks and serves its queue between them. A
+  developer's step and a wait under way at once share the ticks the model runs: it owes what the
+  steps or the stepped waits still ask for, whichever is more (`boundary::owe`), and every tick
+  counts against the model and the front step as it runs, before the players' hooks ask the model
+  again (`boundary::ran_tick`). Until 2026-10-09 the step counted its tick only after those hooks,
+  so a wait ending inside a step left the model owing one tick nobody asked for, on both loops (the
+  thread's since the player layer, the worker's once it shared the thread's loop core); and the
+  thread's `time.step` added its ticks to a wait's, which `status.steps_due` showed until the wait
+  ended. When a loop stops (the thread's shutdown or panic, the worker's `close` or failure), the
+  waits under way are answered `game.stopped` with the steps. Until 2026-10-09 the thread dropped
+  them, its callers seeing a closed channel, and so did the worker once it held waits;
+  `web/pocket.js` fails its own pending calls on `close` and `fatal`, so the page never hung on it.
 - **Real time with pause-on-decision** (game thread and worker):
   `player.pacing {"pacing": {"pacing": "real_time", "speed": 4, "pause_on_decision": true, "clock": {...}}}`
   from a developer. The boundary's pace then comes from the players' session: a pending decision
@@ -322,8 +333,9 @@ every tick, and its player scenario passes the four checks.
 | The rebuild line's interface tests: visibility edges, noninterference (proptest), budgets, golden projections, actions, lifecycle, transparency, pacing, time | `crates/pocket-interface/tests/` |
 | Team vision | `pocket-interface/tests/perception_team.rs` |
 | A player is its seat; a game without players says so; one bad action applies nothing; the scripted agent plays the course through the player tools and the run replays | `pocket-runtime/tests/player.rs` |
-| A stepped wait on the thread; real time paused on each decision; the skipper finishes through a player client of the thread, after which waits are refused and a developer still steps | `pocket-runtime/tests/thread_player.rs` |
-| The same in the browser's worker, natively: a stepped wait runs its ticks through the loop (every tick's hash, snapshots and a developer's read meanwhile); decision points after a developer's step; real time paused on each decision, the long poll and its wall limit; a player refused the loop's controls | `pocket-web/tests/worker_players.rs` |
+| A stepped wait on the thread; real time paused on each decision; the skipper finishes through a player client of the thread, after which waits are refused and a developer still steps; a wait ending inside a developer's step leaves no tick owed; a shutdown answers a wait under way `game.stopped` | `pocket-runtime/tests/thread_player.rs` |
+| The same in the browser's worker, natively: a stepped wait runs its ticks through the loop (every tick's hash, snapshots and a developer's read meanwhile); decision points after a developer's step; real time paused on each decision, the long poll and its wall limit; a player refused the loop's controls; a wait ending inside a developer's step leaves no tick owed; `close` answers a wait under way `game.stopped` | `pocket-web/tests/worker_players.rs` |
+| A tick counts against the model and the front step before the model is asked again | `pocket-runtime/src/boundary.rs` (tests) |
 | A developer naming a seat leaves its push cursor | `pocket-runtime/tests/player.rs` |
 | A player's developer calls refused by the game and the thread; a throwing rule halts the players until a hot update, a developer's resume or a restore; a restore rebases the seat's decisions and push cursor | `pocket-runtime/tests/player.rs`, `pocket-runtime/tests/player_session.rs`, `pocket-interface/src/time/control.rs` (tests) |
 | A seat over HTTP and a seat-bound MCP session (in process, newline JSON-RPC over a pipe) play through the player tools alone; the host refuses the game's and its own developer methods; an unknown seat says `seat.unknown` | `pocket-app/tests/player_host.rs` |

@@ -252,6 +252,76 @@ fn decision_points_follow_every_tick_the_loop_runs() {
     });
 }
 
+/// A player's stepped wait that ends while a developer's `step` is under way leaves the time model
+/// owing nothing the step had already run: the tick counts against the step before the players'
+/// hooks ask the model again for what is owed (`boundary::ran_tick`), so the step answers at its own
+/// tick and the loop then waits for a command.
+#[test]
+fn a_wait_ending_inside_a_step_leaves_no_tick_owed() {
+    on_stack(|| {
+        let t = time();
+        let mut w = WorkerCore::new(packaged(), Pacing::Stepped, t.clock()).unwrap();
+        let mut page = Page::default();
+        page.take(&mut w);
+        // One batch: the step begins, then the wait, which ends at the sightings of tick 1.
+        let act = page.send(&mut w, PLAYER(), "player.act", sail_to_mark1());
+        let step = page.send(&mut w, DEV(), "step", json!({"ticks": 5}));
+        let wait = page.send(&mut w, PLAYER(), "player.wait", json!({"ticks": 1}));
+        page.run_until(&mut w, &t, 1.0, step, 200);
+        page.ok(act);
+        let waited = page.ok(wait);
+        assert_eq!(
+            (waited["stopped"].clone(), waited["tick"].clone()),
+            (json!("decision"), json!(1)),
+            "{waited:#}"
+        );
+        assert_eq!(page.ok(step)["tick"], json!(5));
+        for _ in 0..20 {
+            t.set(t.get() + 1.0);
+            w.run(8.0);
+            page.take(&mut w);
+        }
+        assert_eq!(w.game().tick().0, 5, "the loop ran a tick nobody asked for");
+        assert_eq!(w.run(8.0), Next::Command);
+    });
+}
+
+/// Closing the game answers a player's wait under way with `game.stopped`, as it does a developer's
+/// step (`WorkerCore::close`).
+#[test]
+fn close_answers_a_wait_under_way() {
+    on_stack(|| {
+        let t = time();
+        let moving = {
+            let t = t.clone();
+            Arc::new(move || {
+                t.set(t.get() + 1.0);
+                t.get()
+            }) as Clock
+        };
+        let mut w = WorkerCore::new(packaged(), Pacing::Stepped, moving).unwrap();
+        let mut page = Page::default();
+        page.take(&mut w);
+        let act = page.send(&mut w, PLAYER(), "player.act", sail_to_mark1());
+        let long = page.send(
+            &mut w,
+            PLAYER(),
+            "player.wait",
+            json!({"until": {"event": "mark.rounded"}}),
+        );
+        w.run(8.0);
+        page.take(&mut w);
+        page.ok(act);
+        assert!(page.reply(long).is_none(), "the wait ended in one task");
+        w.close();
+        page.take(&mut w);
+        let r = page
+            .reply(long)
+            .unwrap_or_else(|| panic!("close left the wait unanswered: {:?}", page.replies));
+        assert_eq!(r["error"]["code"], json!("game.stopped"), "{r:#}");
+    });
+}
+
 /// Real time with pause-on-decision on the web: the world holds at the episode's start until the
 /// seat answers, runs to the sightings of tick 1 and holds again; `continue` runs it on, and the
 /// long poll answers at the next decision or at its wall limit. A player chooses no pacing and

@@ -153,6 +153,78 @@ fn real_time_pauses_on_each_decision_until_the_seat_answers() {
     h.shutdown(2000).unwrap();
 }
 
+/// A player's stepped wait that ends while a developer's `time.step` is under way leaves the time
+/// model owing nothing the step had already run: the tick counts against the step before the
+/// players' hooks ask the model again for what is owed (`boundary::ran_tick`), so the step answers
+/// at its own tick and the loop runs no tick after it.
+#[test]
+fn a_wait_ending_inside_a_step_leaves_no_tick_owed() {
+    const STEP: u64 = 600;
+    let h = spawn();
+    let mut player = h.client(Source::Player(0)).unwrap();
+    let mut dev = h.developer();
+    let act = json!({"actions": [{"do": "start", "intent": "sail_to", "target": "Mark1",
+                                  "params": {"arrive_m": 8}}]});
+    player.call("player.act", act).unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    dev.send("time.step", json!({"ticks": STEP}), None, move |r| {
+        let _ = tx.send(r);
+    })
+    .unwrap();
+    // Queued behind the step, so it begins while the step runs and ends at the next tick.
+    let w = player
+        .call("player.wait", json!({"ticks": 1}))
+        .unwrap()
+        .into_json();
+    let ended = w["tick"].as_u64().unwrap();
+    assert!(ended < STEP, "the wait did not end inside the step: {w:#}");
+    let s = rx
+        .recv_timeout(Duration::from_secs(60))
+        .unwrap()
+        .unwrap()
+        .into_json();
+    assert_eq!(s["tick"], json!(STEP), "{s:#}");
+    // Whether the loop runs a tick still owed before or after this read, one of the two shows it.
+    let st = dev.call("status", json!({})).unwrap().into_json();
+    assert_eq!(
+        (st["tick"].as_u64(), st["steps_due"].as_u64()),
+        (Some(STEP), Some(0)),
+        "the loop owes or ran a tick nobody asked for: {st:#}"
+    );
+    drop((player, dev));
+    h.shutdown(2000).unwrap();
+}
+
+/// Shutting the game down answers a player's wait under way with `game.stopped`, as it does a
+/// developer's step, rather than dropping its reply with the loop.
+#[test]
+fn shutdown_answers_a_wait_under_way() {
+    let h = spawn();
+    let mut player = h.client(Source::Player(0)).unwrap();
+    let act = json!({"actions": [{"do": "start", "intent": "sail_to", "target": "Mark1",
+                                  "params": {"arrive_m": 8}}]});
+    player.call("player.act", act).unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    // Over a thousand ticks away: under way when the shutdown is taken, a tick later at most.
+    player
+        .send(
+            "player.wait",
+            json!({"until": {"event": "mark.rounded"}}),
+            None,
+            move |r| {
+                let _ = tx.send(r);
+            },
+        )
+        .unwrap();
+    h.shutdown(2000).unwrap();
+    let r = rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the wait's reply was dropped unanswered");
+    let e = r.unwrap_err();
+    assert_eq!(e.code, "game.stopped", "{e:#?}");
+    drop(player);
+}
+
 /// The reference skipper plays the course through a player client of the game thread to its end;
 /// then a player's wait is refused with `time.episode_over`, and a developer's `time.step` still
 /// runs (the episode's end holds the players' time, not a developer's).

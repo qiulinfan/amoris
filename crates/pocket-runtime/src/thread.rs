@@ -514,6 +514,7 @@ impl Loop {
         for j in self.steps.drain(..) {
             j.reply.send(Err(why.clone()));
         }
+        self.drop_player_runs(&why);
         while let Received::One(e) = self.rx.try_next() {
             answer(e);
         }
@@ -646,7 +647,10 @@ impl Loop {
         let r = self.game.step();
         let stopped = held && !self.release_step_reply();
         let now = self.now();
-        self.model.ran_tick(now);
+        // The tick counts against the model and the front step at once, before the players' hooks
+        // ask the model again for what is owed (`boundary::ran_tick`).
+        let front = self.steps.front_mut().map(|j| &mut j.left);
+        crate::boundary::ran_tick(&mut self.model, front, now);
         self.pushed = 0;
         self.push_events();
         self.push_log(r.as_ref().ok().map(|rep| rep.errors.as_slice()));
@@ -714,15 +718,15 @@ impl Loop {
         true
     }
 
-    /// Counts the tick against the front `time.step` and answers it when it is done or its stop
-    /// condition holds; an early stop gives back the ticks the time model still owes it.
-    /// `stopped`: the script debugger stopped the game inside the tick and answered the step there
-    /// (`stopped_by` the stop's summary), so the step ends with the tick and its rest is dropped.
+    /// Answers the front `time.step` when it is done (the tick was counted against it as it ran,
+    /// `boundary::ran_tick`) or its stop condition holds; an early stop gives back the ticks the
+    /// time model still owes it. `stopped`: the script debugger stopped the game inside the tick
+    /// and answered the step there (`stopped_by` the stop's summary), so the step ends with the
+    /// tick and its rest is dropped.
     fn after_tick_steps(&mut self, stopped: bool) {
         let Some(job) = self.steps.front_mut() else {
             return;
         };
-        job.left = job.left.saturating_sub(1);
         if stopped {
             self.errors.clear();
             self.end_front_step();
@@ -762,11 +766,10 @@ impl Loop {
     }
 
     /// The ticks the model owes: those the `time.step`s and the players' stepped `wait`s still ask
-    /// for (a step and a wait under way at once share the ticks the model runs).
+    /// for (`boundary::owe`).
     fn reowe(&mut self) {
         let steps: u64 = self.steps.iter().map(|j| j.left).sum();
-        self.model.cancel_steps();
-        self.model.step(steps.max(self.players.owed()));
+        crate::boundary::owe(&mut self.model, steps, &self.players);
     }
 
     /// The answer at this boundary (`PlayerWaits::pace`): players' waits whose wall limit passed
@@ -1034,13 +1037,13 @@ impl Loop {
             .and_then(|stop| Ok((stop, Sampler::new(&self.game, &p, limit)?)));
         match checked {
             Ok((stop, sample)) => {
-                self.model.step(limit);
                 self.steps.push_back(StepJob {
                     left: limit,
                     reply: e.reply,
                     stop,
                     sample,
                 });
+                self.reowe();
             }
             Err(p) => e.reply.send(Err(p)),
         }

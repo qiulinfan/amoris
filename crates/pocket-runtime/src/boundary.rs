@@ -1,7 +1,8 @@
 //! What every loop over a [`crate::Game`] does at its boundaries, on every target: the native game
 //! thread ([`crate::thread`]) and the browser's worker (`pocket-web`'s `worker.rs`) share it, so the
 //! two loops keep one rule (docs/spec/threads.md 5.2 and 7.3, docs/spec/player.md 6): which held
-//! commands are due, and the players' waits, decision points and pace.
+//! commands are due, how a tick counts against what the model owes, and the players' waits,
+//! decision points and pace.
 
 use std::mem;
 
@@ -30,6 +31,29 @@ pub fn take_held(held: &mut Vec<Envelope>, next: Tick) -> (Vec<Envelope>, Vec<En
         }
     }
     (due, passed)
+}
+
+/// A tick ran, or began and poisoned the world: it counts at once against the loop's time model
+/// (the ticks it owes, else its clock) and against the developer's step at the front of the loop's
+/// queue (`front_step`: the ticks that step still asks for), before anything after the tick asks
+/// the model again for what is owed ([`owe`]: a players' wait that ends in the tick's hooks does).
+/// A step still counting the tick that ran there would have the model owe one tick nobody asked
+/// for. The step is answered later in the boundary, when its count is zero.
+pub fn ran_tick(model: &mut TimeModel, front_step: Option<&mut u64>, now_ms: f64) {
+    model.ran_tick(now_ms);
+    if let Some(left) = front_step {
+        *left = left.saturating_sub(1);
+    }
+}
+
+/// Asks the loop's model again for what is owed, whenever a developer's step or a players' wait
+/// begins or ends before its count does: what the steps still ask for (`steps_left`, their counts
+/// summed, the tick just run already counted by [`ran_tick`]) or the most any stepped wait does
+/// ([`PlayerWaits::owed`]), whichever is more, since a step and a wait under way at once share the
+/// ticks the model runs.
+pub fn owe<R>(model: &mut TimeModel, steps_left: u64, waits: &PlayerWaits<R>) {
+    model.cancel_steps();
+    model.step(steps_left.max(waits.owed()));
 }
 
 /// A players' wait that ended: where its answer goes, and the answer.
@@ -221,5 +245,19 @@ mod tests {
             (seqs(&due), seqs(&passed), held.len()),
             (vec![3], vec![], 0)
         );
+    }
+
+    /// A tick counts against the model and the front step together, so asking the model again
+    /// right after it, as a players' wait ending in the tick's hooks does, owes what the step
+    /// still asks for and not the tick that just ran.
+    #[test]
+    fn a_tick_counts_against_the_front_step_before_the_model_is_asked_again() {
+        let mut model = TimeModel::new(pocket_sim::TickRate::DEFAULT, Pacing::Stepped);
+        let waits = PlayerWaits::<()>::default();
+        let mut left = 3;
+        owe(&mut model, left, &waits);
+        ran_tick(&mut model, Some(&mut left), 0.0);
+        owe(&mut model, left, &waits);
+        assert_eq!((left, model.steps_due()), (2, 2));
     }
 }
