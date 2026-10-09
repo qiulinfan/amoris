@@ -2,8 +2,11 @@
 //! buffer (a mesh entry that reuses the source mesh's indices), rewritten every frame by a compute
 //! pass from the rest vertices, the per-vertex joint weights and the joint matrices of the
 //! entity's animation pose. Everything after that (culling, shadows, drawing) treats it as a mesh.
+//!
+//! For TAA's object motion the pass first copies what each part's range held (last frame's skinned
+//! vertices) into [`History`], which the forward vertex shader reads (`skin_prev` in forward.wgsl).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use bytemuck::{Pod, Zeroable};
@@ -46,6 +49,22 @@ pub struct Part {
     pub node_global: Mat4,
     /// The output range's first vertex (the dynamic mesh entry's base vertex).
     pub dst: u32,
+    /// The dynamic mesh entry.
+    pub mesh: u32,
+}
+
+/// Mark of a mesh without last frame's vertices in the history's table (`NO_TEXTURE` in WGSL).
+const NONE: u32 = u32::MAX;
+
+/// Last frame's skinned vertices: the table's length in meshes, per mesh id two words (the part's
+/// first vertex in the pool or [`NONE`], where its copy starts in words), then the copies, 12 words
+/// a vertex.
+pub struct History {
+    pub buffer: wgpu::Buffer,
+    /// Bumped whenever `buffer` is replaced (bind groups hold it).
+    pub generation: u64,
+    /// The parts skinned last frame: (entity, mesh, first vertex).
+    last: HashSet<(u64, u32, u32)>,
 }
 
 pub struct Skinning {
@@ -59,6 +78,7 @@ pub struct Skinning {
     pub parts: Vec<Part>,
     palette: Option<wgpu::Buffer>,
     jobs: Option<wgpu::Buffer>,
+    pub history: History,
 }
 
 impl Skinning {
@@ -82,6 +102,11 @@ impl Skinning {
             parts: Vec::new(),
             palette: None,
             jobs: None,
+            history: History {
+                buffer: history_buffer(device, 64),
+                generation: 0,
+                last: HashSet::new(),
+            },
         }
     }
 
@@ -121,9 +146,62 @@ impl Skinning {
         self.parts.retain(|p| p.entity != entity);
     }
 
+    /// Copies what the parts' ranges hold (last frame's vertices) into the history, for parts
+    /// skinned into the same range last frame; the others get no history (their motion reads as
+    /// none for a frame). Without `motion` the table is emptied.
+    fn keep_history(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        enc: &mut wgpu::CommandEncoder,
+        vertices: &wgpu::Buffer,
+        motion: bool,
+    ) {
+        let h = &mut self.history;
+        let now: HashSet<(u64, u32, u32)> = self
+            .parts
+            .iter()
+            .map(|p| (p.entity, p.mesh, p.dst))
+            .collect();
+        let meshes = self.parts.iter().map(|p| p.mesh + 1).max().unwrap_or(0) as usize;
+        let mut table = vec![NONE; 1 + meshes * 2];
+        table[0] = meshes as u32;
+        let mut words = table.len() as u64;
+        let mut copies = Vec::new();
+        if motion {
+            for p in &self.parts {
+                let Some(src) = self.sources.get(&p.source) else {
+                    continue;
+                };
+                let at = 1 + p.mesh as usize * 2;
+                if !h.last.contains(&(p.entity, p.mesh, p.dst)) || table[at] != NONE {
+                    continue;
+                }
+                table[at] = p.dst;
+                table[at + 1] = words as u32;
+                copies.push((u64::from(p.dst) * 48, words * 4, u64::from(src.count) * 48));
+                words += u64::from(src.count) * 12;
+            }
+        }
+        h.last = now;
+        let bytes = (words * 4).max(16);
+        if bytes > h.buffer.size() {
+            h.buffer = history_buffer(device, bytes.next_power_of_two());
+            h.generation += 1;
+        }
+        queue.write_buffer(&h.buffer, 0, bytemuck::cast_slice(&table));
+        for (from, to, size) in copies {
+            if from + size <= vertices.size() {
+                enc.copy_buffer_to_buffer(vertices, from, &h.buffer, to, size);
+            }
+        }
+    }
+
     /// Evaluates every skinned part's pose at its interpolated clip time (`since_tick_s` is the
     /// drawn moment relative to the last tick: between -dt and 0) and encodes the skinning pass that
-    /// writes their vertices into `vertices`.
+    /// writes their vertices into `vertices`, after keeping last frame's in the history when
+    /// `motion` (TAA) wants them.
+    #[allow(clippy::too_many_arguments)]
     pub fn encode(
         &mut self,
         device: &wgpu::Device,
@@ -132,7 +210,9 @@ impl Skinning {
         vertices: &wgpu::Buffer,
         anims: &HashMap<u64, AnimView>,
         since_tick_s: f32,
+        motion: bool,
     ) {
+        self.keep_history(device, queue, enc, vertices, motion);
         if self.parts.is_empty() {
             return;
         }
@@ -262,4 +342,13 @@ impl Skinning {
             pass.dispatch_workgroups(count.div_ceil(64), 1, 1);
         }
     }
+}
+
+fn history_buffer(device: &wgpu::Device, size: u64) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("skinned vertices (last frame)"),
+        size,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    })
 }

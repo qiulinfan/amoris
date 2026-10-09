@@ -53,6 +53,8 @@ pub fn source(name: &str) -> String {
             );
         }
         "splat_composite" => include_str!("../shaders/splat_composite.wgsl"),
+        "gtao" => include_str!("../shaders/gtao.wgsl"),
+        "taa" => include_str!("../shaders/taa.wgsl"),
         other => panic!("no shader named {other}"),
     };
     format!("{COMMON}\n{body}")
@@ -92,6 +94,26 @@ pub fn module(device: &wgpu::Device, name: &str) -> wgpu::ShaderModule {
     device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some(name),
         source: wgpu::ShaderSource::Wgsl(source(name).into()),
+    })
+}
+
+/// `name`'s source for an opaque pass of `samples` samples per pixel. The shaders that read the
+/// opaque pass's depth declare it `texture_depth_multisampled_2d`; with one sample it is a
+/// `texture_depth_2d`, whose `textureLoad` takes a mip level (0) where the multisampled one takes a
+/// sample index (0 too), and which has one sample.
+pub fn depth_source(name: &str, samples: u32) -> String {
+    let s = source(name);
+    if samples > 1 {
+        return s;
+    }
+    s.replace("texture_depth_multisampled_2d", "texture_depth_2d")
+        .replace("textureNumSamples(depth)", "1u")
+}
+
+pub fn depth_module(device: &wgpu::Device, name: &str, samples: u32) -> wgpu::ShaderModule {
+    device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some(name),
+        source: wgpu::ShaderSource::Wgsl(depth_source(name, samples).into()),
     })
 }
 

@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use bytemuck::{Pod, Zeroable};
 use pocket_assets::frame::EmitterView;
 
-use crate::post::{DEPTH, HDR, SAMPLES};
+use crate::post::{DEPTH, SceneFormat};
 use crate::shaders;
 
 pub const POOL: u32 = 1 << 17;
@@ -42,6 +42,7 @@ struct SimParams {
 }
 
 pub struct Particles {
+    module: wgpu::ShaderModule,
     spawn: wgpu::ComputePipeline,
     simulate: wgpu::ComputePipeline,
     draw: wgpu::RenderPipeline,
@@ -56,8 +57,57 @@ pub struct Particles {
     active: bool,
 }
 
+/// The particles' pipeline in the opaque pass (premultiplied blending, depth tested, not written;
+/// the opaque pass's extra targets left as they are).
+fn draw_pipeline(
+    device: &wgpu::Device,
+    m: &wgpu::ShaderModule,
+    format: SceneFormat,
+) -> wgpu::RenderPipeline {
+    let premultiplied = wgpu::BlendState {
+        color: wgpu::BlendComponent {
+            src_factor: wgpu::BlendFactor::One,
+            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+            operation: wgpu::BlendOperation::Add,
+        },
+        alpha: wgpu::BlendComponent::OVER,
+    };
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("particles"),
+        layout: None,
+        vertex: wgpu::VertexState {
+            module: m,
+            entry_point: Some("vs"),
+            compilation_options: Default::default(),
+            buffers: &[],
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: m,
+            entry_point: Some("fs"),
+            compilation_options: Default::default(),
+            targets: &format.targets(Some(premultiplied), false),
+        }),
+        primitive: Default::default(),
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: DEPTH,
+            depth_write_enabled: Some(false),
+            depth_compare: Some(wgpu::CompareFunction::Greater),
+            stencil: Default::default(),
+            bias: Default::default(),
+        }),
+        multisample: format.multisample(),
+        multiview_mask: None,
+        cache: None,
+    })
+}
+
 impl Particles {
-    pub fn new(device: &wgpu::Device) -> Particles {
+    /// Rebuilds the drawing pipeline for an opaque pass of `format`.
+    pub fn set_format(&mut self, device: &wgpu::Device, format: SceneFormat) {
+        self.draw = draw_pipeline(device, &self.module, format);
+    }
+
+    pub fn new(device: &wgpu::Device, format: SceneFormat) -> Particles {
         let m = shaders::module(device, "particles");
         let compute = |entry: &str| {
             device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
@@ -69,48 +119,7 @@ impl Particles {
                 cache: None,
             })
         };
-        let premultiplied = wgpu::BlendState {
-            color: wgpu::BlendComponent {
-                src_factor: wgpu::BlendFactor::One,
-                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                operation: wgpu::BlendOperation::Add,
-            },
-            alpha: wgpu::BlendComponent::OVER,
-        };
-        let draw = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("particles"),
-            layout: None,
-            vertex: wgpu::VertexState {
-                module: &m,
-                entry_point: Some("vs"),
-                compilation_options: Default::default(),
-                buffers: &[],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &m,
-                entry_point: Some("fs"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: HDR,
-                    blend: Some(premultiplied),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: Default::default(),
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: DEPTH,
-                depth_write_enabled: Some(false),
-                depth_compare: Some(wgpu::CompareFunction::Greater),
-                stencil: Default::default(),
-                bias: Default::default(),
-            }),
-            multisample: wgpu::MultisampleState {
-                count: SAMPLES,
-                ..Default::default()
-            },
-            multiview_mask: None,
-            cache: None,
-        });
+        let draw = draw_pipeline(device, &m, format);
         let buf = |label: &str, size: u64, usage: wgpu::BufferUsages| {
             device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some(label),
@@ -135,6 +144,7 @@ impl Particles {
             carry: HashMap::new(),
             frame: 0,
             active: false,
+            module: m,
         }
     }
 

@@ -12,6 +12,7 @@ pub mod camera;
 pub mod demo;
 pub mod gi;
 pub mod gpu;
+mod gtao;
 pub mod loader;
 pub mod lod;
 pub mod materials;
@@ -32,6 +33,7 @@ mod shadows;
 mod skinning;
 mod sky;
 pub mod splat;
+pub mod taa;
 mod ui;
 
 pub use camera::CameraState;
@@ -39,6 +41,7 @@ pub use gpu::{BackendChoice, Gpu, GpuError};
 pub use loader::AssetSource;
 pub use lod::{DrawCounts, LodMode, LodSettings};
 pub use occlusion::{OcclusionMode, OcclusionStats};
+pub use post::{Antialiasing, AoNormals, Gtao};
 pub use renderer::{FrameStats, Renderer, web_time};
 
 /// A renderer shader's composed WGSL (tools and backend probes).

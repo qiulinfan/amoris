@@ -5,7 +5,7 @@
 
 use bytemuck::{Pod, Zeroable};
 
-use crate::post::{DEPTH, HDR, SAMPLES};
+use crate::post::{DEPTH, SceneFormat};
 use crate::shaders;
 
 /// A line segment in world space, `width` pixels wide, colour sRGB with alpha.
@@ -51,6 +51,43 @@ pub struct Overlays {
     pub axes: bool,
     mask: Option<(wgpu::Texture, wgpu::TextureView, u32, u32)>,
     output_srgb: bool,
+    module: wgpu::ShaderModule,
+}
+
+/// The ground grid's pipeline in the opaque pass (alpha blended, depth tested, not written; the
+/// opaque pass's extra targets left as they are).
+fn grid_pipeline(
+    device: &wgpu::Device,
+    m: &wgpu::ShaderModule,
+    format: SceneFormat,
+) -> wgpu::RenderPipeline {
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("ground grid"),
+        layout: None,
+        vertex: wgpu::VertexState {
+            module: m,
+            entry_point: Some("vs_grid"),
+            compilation_options: Default::default(),
+            buffers: &[],
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: m,
+            entry_point: Some("fs_grid"),
+            compilation_options: Default::default(),
+            targets: &format.targets(Some(wgpu::BlendState::ALPHA_BLENDING), false),
+        }),
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: DEPTH,
+            depth_write_enabled: Some(false),
+            depth_compare: Some(wgpu::CompareFunction::Greater),
+            stencil: Default::default(),
+            bias: Default::default(),
+        }),
+        multisample: format.multisample(),
+        multiview_mask: None,
+        cache: None,
+    })
 }
 
 const LINE_ATTRS: [wgpu::VertexAttribute; 4] =
@@ -59,7 +96,16 @@ const POLY_ATTRS: [wgpu::VertexAttribute; 2] =
     wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x4];
 
 impl Overlays {
-    pub fn new(device: &wgpu::Device, output: wgpu::TextureFormat) -> Overlays {
+    /// Rebuilds the ground grid's pipeline for an opaque pass of `format`.
+    pub fn set_format(&mut self, device: &wgpu::Device, format: SceneFormat) {
+        self.grid_pipe = grid_pipeline(device, &self.module, format);
+    }
+
+    pub fn new(
+        device: &wgpu::Device,
+        output: wgpu::TextureFormat,
+        format: SceneFormat,
+    ) -> Overlays {
         let m = shaders::module(device, "overlay");
         let alpha = Some(wgpu::BlendState::ALPHA_BLENDING);
         let pipe = |label: &str,
@@ -151,22 +197,7 @@ impl Overlays {
             None,
             1,
         );
-        let grid_pipe = pipe(
-            "ground grid",
-            "vs_grid",
-            "fs_grid",
-            &[],
-            HDR,
-            alpha,
-            Some(wgpu::DepthStencilState {
-                format: DEPTH,
-                depth_write_enabled: Some(false),
-                depth_compare: Some(wgpu::CompareFunction::Greater),
-                stencil: Default::default(),
-                bias: Default::default(),
-            }),
-            SAMPLES,
-        );
+        let grid_pipe = grid_pipeline(device, &m, format);
         Overlays {
             line,
             poly,
@@ -189,6 +220,7 @@ impl Overlays {
             axes: false,
             mask: None,
             output_srgb: output.is_srgb(),
+            module: m,
         }
     }
 

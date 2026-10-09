@@ -236,6 +236,8 @@ pub struct Splats {
     draw_pipeline: wgpu::RenderPipeline,
     id_pipeline: wgpu::RenderPipeline,
     depth_pipeline: wgpu::RenderPipeline,
+    /// The samples of the depth target `depth_pipeline` reads.
+    depth_samples: u32,
     /// The single-sample depth target and the bind group reading the multisampled depth it copies.
     depth: Option<DepthCopy>,
     sort: RadixSort,
@@ -407,34 +409,7 @@ impl Splats {
             multiview_mask: None,
             cache: None,
         });
-        let depth_module = shaders::module(device, "splat_depth");
-        let depth_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("splat depth"),
-            layout: None,
-            vertex: wgpu::VertexState {
-                module: &depth_module,
-                entry_point: Some("vs_full"),
-                compilation_options: Default::default(),
-                buffers: &[],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &depth_module,
-                entry_point: Some("fs_depth"),
-                compilation_options: Default::default(),
-                targets: &[],
-            }),
-            primitive: Default::default(),
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: DEPTH,
-                depth_write_enabled: Some(true),
-                depth_compare: Some(wgpu::CompareFunction::Always),
-                stencil: Default::default(),
-                bias: Default::default(),
-            }),
-            multisample: Default::default(),
-            multiview_mask: None,
-            cache: None,
-        });
+        let depth_pipeline = depth_copy_pipeline(device, 4);
         let su = storage_usage();
         let indices: Vec<u16> = (0..BATCH as u16)
             .flat_map(|q| {
@@ -510,6 +485,7 @@ impl Splats {
             draw_pipeline,
             id_pipeline,
             depth_pipeline,
+            depth_samples: 4,
             depth: None,
             sort: RadixSort::new(device),
             draw_layout,
@@ -1204,6 +1180,11 @@ impl Splats {
             }
             return;
         }
+        if self.depth_samples != targets.format.samples {
+            self.depth_pipeline = depth_copy_pipeline(&self.gpu.device, targets.format.samples);
+            self.depth_samples = targets.format.samples;
+            self.depth = None;
+        }
         if self
             .depth
             .as_ref()
@@ -1291,4 +1272,37 @@ impl Splats {
         pass.set_index_buffer(self.quads.slice(..), wgpu::IndexFormat::Uint16);
         pass.draw_indexed_indirect(&self.control, DRAW_OFFSET);
     }
+}
+
+/// The pipeline that copies the first sample of the opaque pass's depth (of `samples` samples) to
+/// the single-sample depth the quads test against.
+fn depth_copy_pipeline(device: &wgpu::Device, samples: u32) -> wgpu::RenderPipeline {
+    let depth_module = shaders::depth_module(device, "splat_depth", samples);
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("splat depth"),
+        layout: None,
+        vertex: wgpu::VertexState {
+            module: &depth_module,
+            entry_point: Some("vs_full"),
+            compilation_options: Default::default(),
+            buffers: &[],
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &depth_module,
+            entry_point: Some("fs_depth"),
+            compilation_options: Default::default(),
+            targets: &[],
+        }),
+        primitive: Default::default(),
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: DEPTH,
+            depth_write_enabled: Some(true),
+            depth_compare: Some(wgpu::CompareFunction::Always),
+            stencil: Default::default(),
+            bias: Default::default(),
+        }),
+        multisample: Default::default(),
+        multiview_mask: None,
+        cache: None,
+    })
 }

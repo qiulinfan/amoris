@@ -96,6 +96,6 @@ fn surface_neural(in: VsOut, facing: bool) -> Surface {
 }
 
 @fragment
-fn fs_neural(in: VsOut, @builtin(front_facing) facing: bool) -> @location(0) vec4f {
+fn fs_neural(in: VsOut, @builtin(front_facing) facing: bool) -> SceneOut {
     return shade(in, surface_neural(in, facing));
 }

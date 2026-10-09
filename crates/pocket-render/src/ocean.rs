@@ -6,6 +6,8 @@
 use bytemuck::{Pod, Zeroable};
 use pocket_assets::frame::SeaView;
 
+use crate::post::{DEPTH, SceneFormat};
+
 const MAX_WAVES: usize = 16;
 const SEGMENTS: u32 = 192;
 const GRAVITY: f32 = 9.81;
@@ -23,6 +25,7 @@ struct OceanUniform {
 
 pub struct Ocean {
     pub pipeline: wgpu::RenderPipeline,
+    layout: wgpu::PipelineLayout,
     vertices: wgpu::Buffer,
     indices: wgpu::Buffer,
     index_count: u32,
@@ -61,14 +64,63 @@ fn ring_grid() -> (Vec<[f32; 2]>, Vec<u32>) {
     (v, idx)
 }
 
+/// The sea's pipeline in the opaque pass (`fs_ocean` writes the color only: the opaque pass's extra
+/// targets are left as they are, so it reads as unoccluded, unmoving surface).
+fn pipeline(
+    device: &wgpu::Device,
+    module: &wgpu::ShaderModule,
+    layout: &wgpu::PipelineLayout,
+    format: SceneFormat,
+) -> wgpu::RenderPipeline {
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("ocean"),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module,
+            entry_point: Some("vs_ocean"),
+            compilation_options: Default::default(),
+            buffers: &[Some(wgpu::VertexBufferLayout {
+                array_stride: 8,
+                step_mode: wgpu::VertexStepMode::Vertex,
+                attributes: &wgpu::vertex_attr_array![0 => Float32x2],
+            })],
+        },
+        fragment: Some(wgpu::FragmentState {
+            module,
+            entry_point: Some("fs_ocean"),
+            compilation_options: Default::default(),
+            targets: &format.targets(None, false),
+        }),
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: DEPTH,
+            depth_write_enabled: Some(true),
+            depth_compare: Some(wgpu::CompareFunction::Greater),
+            stencil: Default::default(),
+            bias: Default::default(),
+        }),
+        multisample: format.multisample(),
+        multiview_mask: None,
+        cache: None,
+    })
+}
+
 impl Ocean {
+    /// Rebuilds the pipeline for an opaque pass of `format` (`module`: the lit forward module).
+    pub fn set_format(
+        &mut self,
+        device: &wgpu::Device,
+        module: &wgpu::ShaderModule,
+        format: SceneFormat,
+    ) {
+        self.pipeline = pipeline(device, module, &self.layout, format);
+    }
+
     pub fn new(
         device: &wgpu::Device,
         module: &wgpu::ShaderModule,
         groups: [&wgpu::BindGroupLayout; 3],
-        hdr: wgpu::TextureFormat,
-        depth: wgpu::TextureFormat,
-        samples: u32,
+        format: SceneFormat,
     ) -> Ocean {
         let layout3 = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("ocean"),
@@ -93,40 +145,7 @@ impl Ocean {
             ],
             immediate_size: 0,
         });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("ocean"),
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module,
-                entry_point: Some("vs_ocean"),
-                compilation_options: Default::default(),
-                buffers: &[Some(wgpu::VertexBufferLayout {
-                    array_stride: 8,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x2],
-                })],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module,
-                entry_point: Some("fs_ocean"),
-                compilation_options: Default::default(),
-                targets: &[Some(hdr.into())],
-            }),
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: depth,
-                depth_write_enabled: Some(true),
-                depth_compare: Some(wgpu::CompareFunction::Greater),
-                stencil: Default::default(),
-                bias: Default::default(),
-            }),
-            multisample: wgpu::MultisampleState {
-                count: samples,
-                ..Default::default()
-            },
-            multiview_mask: None,
-            cache: None,
-        });
+        let pipeline = pipeline(device, module, &layout, format);
         let (v, i) = ring_grid();
         let vertices = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("ocean grid"),
@@ -168,6 +187,7 @@ impl Ocean {
         });
         Ocean {
             pipeline,
+            layout,
             vertices,
             indices,
             index_count: i.len() as u32,

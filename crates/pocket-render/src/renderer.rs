@@ -5,8 +5,10 @@
 //!    writes the visible lists and the instance counts of every indirect draw;
 //! 2. assign punctual lights to the cluster grid;
 //! 3. draw each shadow cascade (one multi-draw per pipeline variant natively);
-//! 4. draw the opaque scene and the sky into the multisampled HDR target (likewise);
-//! 5. bloom and the display transform into the output.
+//! 4. draw the opaque scene and the sky into the HDR target, multisampled or not, with TAA's
+//!    jitter and the extra targets GTAO and TAA read (post.rs `SceneFormat`; likewise);
+//! 5. GTAO darkens the indirect light, TAA blends the frame with its history (gtao.rs, taa.rs);
+//! 6. splats, bloom and the display transform into the output; overlays and UI over it.
 //!
 //! With occlusion culling (occlusion.rs) step 1 keeps only what the camera saw last frame, and
 //! step 4 is two passes: those instances, then a depth pyramid and a late culling pass, then the
@@ -41,7 +43,7 @@ use crate::ocean::Ocean;
 use crate::overlay::Overlays;
 use crate::particles::Particles;
 use crate::picking::{PickRequest, Picking, coverage};
-use crate::post::{DEPTH, HDR, Post, SAMPLES, Targets};
+use crate::post::{Antialiasing, DEPTH, Gtao, Post, SceneFormat, Targets};
 use crate::profiler::GpuProfiler;
 use crate::scene::{InstanceGpu, NEURAL_VARIANT, Part, Resolve, Scene, VARIANTS};
 use crate::shaders;
@@ -74,6 +76,8 @@ struct ViewUniform {
     cascade_splits: [f32; 4],
     cascades: [[[f32; 4]; 4]; 4],
     counts: [u32; 4],
+    prev_view_proj: [[f32; 4]; 4],
+    motion: [f32; 4],
 }
 
 #[repr(C)]
@@ -141,6 +145,9 @@ pub struct FrameStats {
     /// Levels of detail this frame: `on`, `off`, or `off-limit` (asked for, but the views' lists
     /// would pass the device's binding limit with them; docs/spec/lod.md 5).
     pub lod: &'static str,
+    /// Anti-aliasing (`off`, `msaa`, `taa`, `msaa+taa`) and GTAO (`off`, `depth`, `target`).
+    pub antialiasing: &'static str,
+    pub gtao: &'static str,
 }
 
 /// A drawn node: (mesh index, local TRS, skin).
@@ -203,6 +210,7 @@ impl Pools<'_> {
             skin,
             node_global: Mat4::from_scale_rotation_translation(local.2, local.1, local.0),
             dst,
+            mesh: dynamic,
         });
         dynamic
     }
@@ -330,6 +338,8 @@ pub struct Renderer {
     pub splats: crate::splat::Splats,
 
     view_buf: wgpu::Buffer,
+    /// The same uniform without TAA's jitter: the entity-id pass, the overlays and the grid.
+    view_stable: wgpu::Buffer,
     cull_buf: wgpu::Buffer,
     instances: wgpu::Buffer,
     visible: wgpu::Buffer,
@@ -352,7 +362,6 @@ pub struct Renderer {
     /// The neural-texture variants' pipelines (variants 4..8), built when the first neural texture
     /// loads, for its network's shape (neural.rs).
     neural_forward: Option<[wgpu::RenderPipeline; 4]>,
-    forward_layout: wgpu::PipelineLayout,
     /// Loaded neural textures: their latents and networks (neural.rs).
     neural: NeuralTable,
     /// Whether neural textures decode in half precision (shader-f16 and not
@@ -383,6 +392,22 @@ pub struct Renderer {
     batch_offsets: wgpu::Buffer,
     sky_pipeline: wgpu::RenderPipeline,
     layouts: Layouts,
+    /// What the opaque pass's format-dependent pipelines are built from.
+    forward_layout: wgpu::PipelineLayout,
+    lit_module: wgpu::ShaderModule,
+    sky_module: wgpu::ShaderModule,
+    /// Anti-aliasing and GTAO (post.rs), and the opaque pass's format they give.
+    aa: Antialiasing,
+    gtao_mode: Gtao,
+    format: SceneFormat,
+    /// Sharpening after TAA in the display transform (0: off; docs/spec/taa-gtao.md).
+    pub sharpen: f32,
+    taa: crate::taa::Taa,
+    gtao: crate::gtao::Gtao,
+    /// Frames drawn (GTAO's noise).
+    frame_count: u32,
+    /// Whether the last frame's HDR image was TAA's history (no splats) rather than `targets.hdr`.
+    image_in_history: bool,
     /// The shadow cascades' texture, kept with its views.
     _shadow_tex: wgpu::Texture,
     shadow_views: Vec<wgpu::TextureView>,
@@ -391,7 +416,7 @@ pub struct Renderer {
     tex_sampler: wgpu::Sampler,
 
     bind: Option<Binds>,
-    bind_key: (u64, u64, u64, u64),
+    bind_key: (u64, u64, u64, u64, u64),
     view_stride: u32,
     draw_meshes: u32,
     /// How levels of detail are picked (lod.rs); whether levels were asked for when the batches'
@@ -417,6 +442,8 @@ struct Binds {
     cull: wgpu::BindGroup,
     cluster: wgpu::BindGroup,
     frame: wgpu::BindGroup,
+    /// `frame` with the unjittered view (the entity-id pass).
+    frame_stable: wgpu::BindGroup,
     lighting: wgpu::BindGroup,
     textures: wgpu::BindGroup,
     sky: wgpu::BindGroup,
@@ -510,6 +537,128 @@ fn mat(m: Mat4) -> [[f32; 4]; 4] {
     m.to_cols_array_2d()
 }
 
+const VERTEX_ATTRS: [wgpu::VertexAttribute; 4] =
+    wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x4];
+
+/// The mesh pool's vertex layout (pocket_assets::Vertex).
+fn vertex_layout() -> wgpu::VertexBufferLayout<'static> {
+    wgpu::VertexBufferLayout {
+        array_stride: std::mem::size_of::<pocket_assets::Vertex>() as u64,
+        step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: &VERTEX_ATTRS,
+    }
+}
+
+/// The forward pipelines for an opaque pass of `format`. Variants: 0 opaque, 1 alpha-masked, 2
+/// double-sided, 3 both.
+fn forward_pipelines(
+    device: &wgpu::Device,
+    module: &wgpu::ShaderModule,
+    layout: &wgpu::PipelineLayout,
+    format: SceneFormat,
+) -> [wgpu::RenderPipeline; 4] {
+    forward_pipelines_with(
+        device,
+        module,
+        layout,
+        format,
+        ["fs", "fs_masked", "fs", "fs_masked"],
+        [
+            "forward",
+            "forward (masked)",
+            "forward (double sided)",
+            "forward (masked, double sided)",
+        ],
+    )
+}
+
+/// The four forward variants of `module` for an opaque pass of `format`, with fragment entry
+/// points `entries` (back-face culled, back-face culled, double-sided, double-sided).
+fn forward_pipelines_with(
+    device: &wgpu::Device,
+    module: &wgpu::ShaderModule,
+    layout: &wgpu::PipelineLayout,
+    format: SceneFormat,
+    entries: [&str; 4],
+    labels: [&str; 4],
+) -> [wgpu::RenderPipeline; 4] {
+    let targets = format.targets(None, true);
+    let pipe = |cull: Option<wgpu::Face>, fs: &str, label: &str| {
+        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some(label),
+            layout: Some(layout),
+            vertex: wgpu::VertexState {
+                module,
+                entry_point: Some("vs"),
+                compilation_options: Default::default(),
+                buffers: &[Some(vertex_layout())],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module,
+                entry_point: Some(fs),
+                compilation_options: Default::default(),
+                targets: &targets,
+            }),
+            primitive: wgpu::PrimitiveState {
+                cull_mode: cull,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Greater),
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: format.multisample(),
+            multiview_mask: None,
+            cache: None,
+        })
+    };
+    [
+        pipe(Some(wgpu::Face::Back), entries[0], labels[0]),
+        pipe(Some(wgpu::Face::Back), entries[1], labels[1]),
+        pipe(None, entries[2], labels[2]),
+        pipe(None, entries[3], labels[3]),
+    ]
+}
+
+/// The sky behind the scene, for an opaque pass of `format` (it writes the color only: no occlusion
+/// share, no object motion).
+fn sky_pipeline(
+    device: &wgpu::Device,
+    module: &wgpu::ShaderModule,
+    format: SceneFormat,
+) -> wgpu::RenderPipeline {
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("sky"),
+        layout: None,
+        vertex: wgpu::VertexState {
+            module,
+            entry_point: Some("vs_sky"),
+            compilation_options: Default::default(),
+            buffers: &[],
+        },
+        fragment: Some(wgpu::FragmentState {
+            module,
+            entry_point: Some("fs_sky"),
+            compilation_options: Default::default(),
+            targets: &format.targets(None, false),
+        }),
+        primitive: Default::default(),
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: DEPTH,
+            depth_write_enabled: Some(false),
+            depth_compare: Some(wgpu::CompareFunction::GreaterEqual),
+            stencil: Default::default(),
+            bias: Default::default(),
+        }),
+        multisample: format.multisample(),
+        multiview_mask: None,
+        cache: None,
+    })
+}
+
 impl Renderer {
     /// A renderer drawing into textures of `output` format at `width` x `height`.
     pub fn new(gpu: &Gpu, output: wgpu::TextureFormat, width: u32, height: u32) -> Renderer {
@@ -524,6 +673,8 @@ impl Renderer {
                 entry(2, vf, buf_ty(true)),
                 entry(3, vf, buf_ty(true)),
                 entry(4, vf, buf_ty(true)),
+                // Last frame's skinned vertices (skinning.rs `History`; TAA's object motion).
+                entry(5, wgpu::ShaderStages::VERTEX, buf_ty(true)),
             ],
         });
         let rt_shadows = crate::rt_shadows::RtShadows::new(gpu);
@@ -625,17 +776,11 @@ impl Renderer {
             ],
             immediate_size: 0,
         });
+        let aa = Antialiasing::from_env();
+        let gtao_mode = Gtao::from_env();
+        let format = SceneFormat::new(aa, gtao_mode);
         let vertex_layout = vertex_layout();
-        let forward_pipe = |cull: Option<wgpu::Face>, fs: &str, label: &str| {
-            forward_pipeline(device, &layout, lit_module, cull, fs, label)
-        };
-        // Variants: 0 opaque, 1 alpha-masked, 2 double-sided, 3 both.
-        let forward = [
-            forward_pipe(Some(wgpu::Face::Back), "fs", "forward"),
-            forward_pipe(Some(wgpu::Face::Back), "fs_masked", "forward (masked)"),
-            forward_pipe(None, "fs", "forward (double sided)"),
-            forward_pipe(None, "fs_masked", "forward (masked, double sided)"),
-        ];
+        let forward = forward_pipelines(device, lit_module, &layout, format);
         // Shadow passes write the cascades, so group 1 (which samples them) is an empty group there.
         let empty = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("empty"),
@@ -708,45 +853,9 @@ impl Renderer {
             [&frame, &empty, &empty, &batches.layout],
             vertex_layout.clone(),
         );
-        let ocean = Ocean::new(
-            device,
-            lit_module,
-            [&frame, &lighting, &textures],
-            HDR,
-            DEPTH,
-            SAMPLES,
-        );
+        let ocean = Ocean::new(device, lit_module, [&frame, &lighting, &textures], format);
         let sky_module = shaders::module(device, "sky");
-        let sky_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("sky"),
-            layout: None,
-            vertex: wgpu::VertexState {
-                module: &sky_module,
-                entry_point: Some("vs_sky"),
-                compilation_options: Default::default(),
-                buffers: &[],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &sky_module,
-                entry_point: Some("fs_sky"),
-                compilation_options: Default::default(),
-                targets: &[Some(HDR.into())],
-            }),
-            primitive: Default::default(),
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: DEPTH,
-                depth_write_enabled: Some(false),
-                depth_compare: Some(wgpu::CompareFunction::GreaterEqual),
-                stencil: Default::default(),
-                bias: Default::default(),
-            }),
-            multisample: wgpu::MultisampleState {
-                count: SAMPLES,
-                ..Default::default()
-            },
-            multiview_mask: None,
-            cache: None,
-        });
+        let sky_pipeline = sky_pipeline(device, &sky_module, format);
         let compute = |name: &str, entry: &str| {
             let m = shaders::module(device, name);
             device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
@@ -804,7 +913,7 @@ impl Renderer {
             requested: HashSet::new(),
             failed: HashSet::new(),
             blitter: Blitter::new(device),
-            targets: Targets::new(device, width, height),
+            targets: Targets::new(device, width, height, format),
             post: Post::new(device, output),
             sky: Sky::new(device),
             gi: crate::gi::ProbeVolume::new(device, &gpu.queue),
@@ -812,6 +921,11 @@ impl Renderer {
             profiler: GpuProfiler::new(device, &gpu.queue, gpu.caps.timestamps),
             splats: crate::splat::Splats::new(gpu),
             view_buf: uniform(device, "view", std::mem::size_of::<ViewUniform>() as u64),
+            view_stable: uniform(
+                device,
+                "view (unjittered)",
+                std::mem::size_of::<ViewUniform>() as u64,
+            ),
             cull_buf: uniform(device, "cull", std::mem::size_of::<CullUniform>() as u64),
             instances: storage(device, "instances", 1024 * 80, wgpu::BufferUsages::empty()),
             visible: storage(
@@ -822,7 +936,13 @@ impl Renderer {
             ),
             drawn: storage(device, "drawn", 1024 * 48, wgpu::BufferUsages::empty()),
             batches,
-            occlusion: Occlusion::new(device, OcclusionMode::from_env()),
+            occlusion: {
+                let mut o = Occlusion::new(device, OcclusionMode::from_env());
+                if format.samples != 4 {
+                    o.set_samples(device, format.samples);
+                }
+                o
+            },
             vis_state: storage(
                 device,
                 "occlusion state",
@@ -842,7 +962,6 @@ impl Renderer {
             cluster_pipeline: compute("cluster", "assign"),
             forward,
             neural_forward: None,
-            forward_layout: layout,
             neural: NeuralTable::new(device),
             neural_f16: gpu.caps.shader_f16
                 && std::env::var("POCKET_NEURAL_PRECISION").map_or(true, |v| v.trim() != "f32"),
@@ -851,9 +970,9 @@ impl Renderer {
             picking,
             skinning: Skinning::new(device),
             ui: Ui::new(device, output),
-            particles: Particles::new(device),
+            particles: Particles::new(device, format),
             last_frame_s: None,
-            overlays: Overlays::new(device, output),
+            overlays: Overlays::new(device, output, format),
             last_pick: None,
             last_visible: None,
             last_ids: None,
@@ -867,6 +986,24 @@ impl Renderer {
                 lighting,
                 textures,
             },
+            forward_layout: layout.clone(),
+            lit_module: lit_module.clone(),
+            sky_module,
+            aa,
+            gtao_mode,
+            format,
+            sharpen: 0.0,
+            taa: crate::taa::Taa::new(device, format.samples),
+            gtao: crate::gtao::Gtao::new(
+                device,
+                format.samples,
+                match gtao_mode {
+                    Gtao::On(n) => n,
+                    Gtao::Off => crate::post::AoNormals::Depth,
+                },
+            ),
+            frame_count: 0,
+            image_in_history: false,
             _shadow_tex: shadow_tex,
             shadow_views,
             shadow_array,
@@ -888,7 +1025,7 @@ impl Renderer {
                 ..Default::default()
             }),
             bind: None,
-            bind_key: (u64::MAX, 0, 0, 0),
+            bind_key: (u64::MAX, 0, 0, 0, 0),
             view_stride: 1,
             draw_meshes: 0,
             lod: LodSettings::from_env(),
@@ -929,7 +1066,7 @@ impl Renderer {
         {
             return;
         }
-        self.targets = Targets::new(&self.gpu.device, width, height);
+        self.targets = Targets::new(&self.gpu.device, width, height, self.format);
         // The pyramid's first level reads the old depth target.
         self.occlusion.invalidate(true);
     }
@@ -938,6 +1075,75 @@ impl Renderer {
     /// starting mode).
     pub fn set_occlusion(&mut self, mode: OcclusionMode) {
         self.occlusion.set_mode(mode);
+    }
+
+    /// Anti-aliasing: samples per pixel and TAA (post.rs; `POCKET_AA` sets the starting mode).
+    /// A change rebuilds the opaque pass's targets and pipelines and drops TAA's history.
+    pub fn set_antialiasing(&mut self, aa: Antialiasing) {
+        self.aa = aa;
+        self.reformat();
+    }
+
+    pub fn antialiasing(&self) -> Antialiasing {
+        self.aa
+    }
+
+    /// Ground-truth ambient occlusion on indirect light (gtao.rs; `POCKET_GTAO` sets the starting
+    /// mode).
+    pub fn set_gtao(&mut self, gtao: Gtao) {
+        self.gtao_mode = gtao;
+        if let Gtao::On(n) = gtao {
+            self.gtao.normals = n;
+        }
+        self.reformat();
+    }
+
+    pub fn gtao(&self) -> Gtao {
+        self.gtao_mode
+    }
+
+    /// TAA's mode and switches (evaluation: the accumulated reference, ablations), and a way to
+    /// drop its history (a camera cut the renderer cannot see).
+    pub fn taa_mut(&mut self) -> &mut crate::taa::Taa {
+        &mut self.taa
+    }
+
+    /// GTAO's radius in metres.
+    pub fn set_gtao_radius(&mut self, radius: f32) {
+        self.gtao.radius = radius.max(0.01);
+    }
+
+    /// Rebuilds what depends on the opaque pass's format when the options changed it.
+    fn reformat(&mut self) {
+        let format = SceneFormat::new(self.aa, self.gtao_mode);
+        if format == self.format {
+            return;
+        }
+        let device = &self.gpu.device;
+        let samples_changed = format.samples != self.format.samples;
+        self.format = format;
+        self.forward = forward_pipelines(device, &self.lit_module, &self.forward_layout, format);
+        if let Some(layout) = self.neural.profile.clone() {
+            self.neural_forward = Some(self.neural_pipelines(&layout));
+        }
+        let device = &self.gpu.device;
+        self.sky_pipeline = sky_pipeline(device, &self.sky_module, format);
+        self.ocean.set_format(device, &self.lit_module, format);
+        self.particles.set_format(device, format);
+        self.overlays.set_format(device, format);
+        self.targets = Targets::new(device, self.targets.width, self.targets.height, format);
+        if samples_changed {
+            self.occlusion.set_samples(device, format.samples);
+            self.taa = crate::taa::Taa::new(device, format.samples);
+            let normals = self.gtao.normals;
+            let radius = self.gtao.radius;
+            self.gtao = crate::gtao::Gtao::new(device, format.samples, normals);
+            self.gtao.radius = radius;
+        }
+        self.occlusion.invalidate(true);
+        self.taa.reset();
+        // The sky's bind group follows its (rebuilt) pipeline's layout.
+        self.bind = None;
     }
 
     pub fn occlusion(&self) -> OcclusionMode {
@@ -1101,23 +1307,20 @@ impl Renderer {
             label: Some("forward (neural textures)"),
             source: wgpu::ShaderSource::Wgsl(source.into()),
         });
-        let pipe = |cull: Option<wgpu::Face>, label: &str| {
-            forward_pipeline(
-                device,
-                &self.forward_layout,
-                &module,
-                cull,
-                "fs_neural",
-                label,
-            )
-        };
         // Neural materials are never alpha-masked: variants 5 and 7 hold no instances.
-        [
-            pipe(Some(wgpu::Face::Back), "forward (neural)"),
-            pipe(Some(wgpu::Face::Back), "forward (neural, unused masked)"),
-            pipe(None, "forward (neural, double sided)"),
-            pipe(None, "forward (neural, unused masked double sided)"),
-        ]
+        forward_pipelines_with(
+            device,
+            &module,
+            &self.forward_layout,
+            self.format,
+            ["fs_neural"; 4],
+            [
+                "forward (neural)",
+                "forward (neural, unused masked)",
+                "forward (neural, double sided)",
+                "forward (neural, unused masked double sided)",
+            ],
+        )
     }
 
     /// Registers a loaded model under `path` (natively the loader does this; the browser calls it
@@ -1451,6 +1654,7 @@ impl Renderer {
             self.materials.generation,
             self.gi.generation,
             self.neural.generation,
+            self.skinning.history.generation,
         );
         if grown || self.bind.is_none() || key != self.bind_key {
             self.bind_key = key;
@@ -1492,17 +1696,22 @@ impl Renderer {
                 b(4, &self.cluster_overflow),
             ],
         });
-        let frame = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("frame"),
-            layout: &self.layouts.frame,
-            entries: &[
-                b(0, &self.view_buf),
-                b(1, &self.instances),
-                b(2, &self.visible),
-                b(3, &self.materials.buffer),
-                b(4, &self.drawn),
-            ],
-        });
+        let frame_group = |view: &wgpu::Buffer| {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("frame"),
+                layout: &self.layouts.frame,
+                entries: &[
+                    b(0, view),
+                    b(1, &self.instances),
+                    b(2, &self.visible),
+                    b(3, &self.materials.buffer),
+                    b(4, &self.drawn),
+                    b(5, &self.skinning.history.buffer),
+                ],
+            })
+        };
+        let frame = frame_group(&self.view_buf);
+        let frame_stable = frame_group(&self.view_stable);
         let mut lighting_entries = vec![
             wgpu::BindGroupEntry {
                 binding: 0,
@@ -1579,6 +1788,7 @@ impl Renderer {
             cull,
             cluster,
             frame,
+            frame_stable,
             lighting,
             textures,
             sky,
@@ -1602,6 +1812,24 @@ impl Renderer {
         let vp = proj * view;
         let alpha =
             ((now_s - self.tick_arrived) / self.scene.dt_s.max(1e-6)).clamp(0.0, 1.0) as f32;
+        // TAA: this frame's jitter and what motion vectors need from the last (taa.rs). The
+        // jittered matrices draw the scene; `vp` stays for the id pass, overlays, UI and culling's
+        // CPU side.
+        let taa_on = self.aa.taa();
+        let drawn_t = self.scene.t_s - self.scene.dt_s * f64::from(1.0 - alpha);
+        let jitter = self.taa.begin_frame(
+            taa_on,
+            &cam,
+            view,
+            vp,
+            (w, h),
+            drawn_t,
+            alpha,
+            self.scene.dt_s,
+        );
+        let proj_j = jitter.apply(proj);
+        let vp_j = proj_j * view;
+        self.frame_count = self.frame_count.wrapping_add(1);
 
         // The sun: the lowest-id directional light.
         let sun = self
@@ -1646,11 +1874,11 @@ impl Renderer {
         let casc = shadows::cascades(&cam, aspect, to_sun, SHADOW_DISTANCE);
         let ev = env.as_ref().map_or(0.0, |e| e.exposure_ev) + cam.exposure_ev;
         let exposure = 0.9 * 2f32.powf(ev);
-        let vu = ViewUniform {
-            view_proj: mat(vp),
+        let mut vu = ViewUniform {
+            view_proj: mat(vp_j),
             view: mat(view),
-            proj: mat(proj),
-            inv_view_proj: mat(vp.inverse()),
+            proj: mat(proj_j),
+            inv_view_proj: mat(vp_j.inverse()),
             camera_pos: [
                 cam.position.x,
                 cam.position.y,
@@ -1683,8 +1911,21 @@ impl Renderer {
             cascade_splits: casc.splits,
             cascades: casc.view_proj.map(mat),
             counts: [self.view_stride, 0, 0, 0],
+            prev_view_proj: mat(jitter.prev_view_proj),
+            motion: [
+                jitter.prev_alpha,
+                if self.format.motion { 1.0 } else { 0.0 },
+                jitter.ndc.x,
+                jitter.ndc.y,
+            ],
         };
         queue.write_buffer(&self.view_buf, 0, bytemuck::bytes_of(&vu));
+        // The unjittered copy: the entity-id pass, the overlays and the grid.
+        vu.view_proj = mat(vp);
+        vu.proj = mat(proj);
+        vu.inv_view_proj = mat(vp.inverse());
+        vu.motion = [jitter.prev_alpha, 0.0, 0.0, 0.0];
+        queue.write_buffer(&self.view_stable, 0, bytemuck::bytes_of(&vu));
         self.overlays.write_params(&queue);
         if let Some(sea) = &self.scene.sea {
             // Drawn time matches the interpolated poses: between the last two ticks.
@@ -1692,7 +1933,8 @@ impl Renderer {
             self.ocean.update(&queue, sea, t as f32);
         }
         let mut planes = [[[0.0f32; 4]; 6]; 5];
-        for (i, p) in frustum_planes(vp, true).iter().enumerate() {
+        // The jittered frustum and matrix: the depth pyramid holds the jittered depth.
+        for (i, p) in frustum_planes(vp_j, true).iter().enumerate() {
             planes[0][i] = p.to_array();
         }
         for c in 0..CASCADES {
@@ -1711,7 +1953,7 @@ impl Renderer {
         let (eye, ortho) = self.lod.camera_terms(&cam, h);
         let cu = CullUniform {
             planes,
-            view_proj: mat(vp),
+            view_proj: mat(vp_j),
             instance_count: n,
             view_count: views,
             mesh_count: self.draw_meshes,
@@ -1747,7 +1989,6 @@ impl Renderer {
             }),
         );
 
-        let binds = self.bind.as_ref().unwrap_or_else(|| unreachable!());
         let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("frame"),
         });
@@ -1767,7 +2008,14 @@ impl Renderer {
             &self.meshes.vertices,
             &self.scene.anims,
             since_tick as f32,
+            self.format.motion && self.taa.tuning.skinned_motion,
         );
+        if self.skinning.history.generation != self.bind_key.4 {
+            // The skinned vertices' history grew: the frame groups hold the old buffer.
+            self.bind_key.4 = self.skinning.history.generation;
+            self.rebind();
+        }
+        let binds = self.bind.as_ref().unwrap_or_else(|| unreachable!());
         if n > 0 {
             let groups = n.div_ceil(256);
             let (gx, gy) = if groups > 65535 {
@@ -1829,19 +2077,14 @@ impl Renderer {
         self.splats
             .prepare(&mut enc, &mut self.profiler, &mut self.scene, &cam, (w, h));
         let picking = self.picking.begin(&device, (w, h));
+        // Splats, GTAO and TAA read the depth after the opaque pass.
+        let keep_depth = self.splats.active() || self.gtao_mode.on() || taa_on;
         // The opaque pass, or with occlusion culling its early half: what the camera saw last frame.
         {
             let ts = self
                 .profiler
                 .render_scope(if occl { "opaque early" } else { "opaque+sky" });
-            let mut pass = opaque_pass(
-                &mut enc,
-                &self.targets,
-                ts,
-                true,
-                !occl,
-                self.splats.active(),
-            );
+            let mut pass = opaque_pass(&mut enc, &self.targets, ts, true, !occl, keep_depth);
             pass.set_bind_group(0, &binds.frame, &[]);
             pass.set_bind_group(1, &binds.lighting, &[]);
             pass.set_bind_group(2, &binds.textures, &[]);
@@ -1859,7 +2102,7 @@ impl Renderer {
             }
         }
         let ids = IdPass {
-            frame: &binds.frame,
+            frame: &binds.frame_stable,
             empty: &self.empty_group,
             batches: &self.batches,
             meshes: &self.meshes,
@@ -1900,14 +2143,7 @@ impl Renderer {
             );
             // The late half: the newly visible instances, then the sky and the rest.
             let ts = self.profiler.render_scope("opaque+sky");
-            let mut pass = opaque_pass(
-                &mut enc,
-                &self.targets,
-                ts,
-                false,
-                true,
-                self.splats.active(),
-            );
+            let mut pass = opaque_pass(&mut enc, &self.targets, ts, false, true, keep_depth);
             pass.set_bind_group(0, &binds.frame, &[]);
             pass.set_bind_group(1, &binds.lighting, &[]);
             pass.set_bind_group(2, &binds.textures, &[]);
@@ -1937,7 +2173,42 @@ impl Renderer {
             self.picking.finish(&device, &mut enc);
             self.pick_splats = self.splats.drawn_entities().to_vec();
         }
-        // Gaussian splats (splat/): drawn over the resolved image, tested against the depth.
+        // GTAO darkens the indirect light, then TAA blends the frame with its history into the image
+        // the rest of the frame reads (gtao.rs, taa.rs).
+        if self.gtao_mode.on() {
+            self.gtao.run(
+                &device,
+                &queue,
+                &mut enc,
+                &mut self.profiler,
+                &self.targets,
+                proj_j,
+                cam.ortho_height.is_some(),
+                self.frame_count,
+                taa_on,
+            );
+        }
+        if taa_on {
+            self.taa.run(
+                &device,
+                &queue,
+                &mut enc,
+                &mut self.profiler,
+                &self.targets,
+                &jitter,
+                view,
+                vp,
+                self.splats.active(),
+            );
+        }
+        // The image the rest of the frame reads: TAA's history, unless it was copied for splats.
+        self.image_in_history = taa_on && !self.splats.active();
+        let image = match (self.image_in_history, self.taa.output()) {
+            (true, Some((_, v))) => v.clone(),
+            _ => self.targets.hdr_view.clone(),
+        };
+        // Gaussian splats (splat/): drawn over the resolved image (after TAA, unjittered), tested
+        // against the depth.
         self.splats
             .draw(&mut enc, &mut self.profiler, &self.targets);
         let bloom = env.as_ref().map_or(0.15, |e| e.bloom);
@@ -1946,9 +2217,11 @@ impl Renderer {
             &queue,
             &mut enc,
             &self.targets,
+            &image,
             output,
             exposure,
             bloom,
+            if taa_on { self.sharpen } else { 0.0 },
         );
         if self.overlays.any() {
             let mut selected = Vec::new();
@@ -1978,7 +2251,7 @@ impl Renderer {
                 &mut enc,
                 output,
                 (w, h),
-                &self.view_buf,
+                &self.view_stable,
                 &self.instances,
                 &self.meshes.vertices,
                 &self.meshes.indices,
@@ -2015,6 +2288,8 @@ impl Renderer {
                 (false, Some(true)) => "off-limit",
                 _ => "off",
             },
+            antialiasing: self.aa.name(),
+            gtao: self.gtao_mode.name(),
         };
         self.last.clone()
     }
@@ -2034,7 +2309,8 @@ impl Renderer {
         pass.set_bind_group(0, &binds.sky, &[]);
         pass.draw(0..3, 0..1);
         self.particles.draw(device, pass, &self.view_buf);
-        self.overlays.draw_grid(device, pass, &self.view_buf);
+        // Editor overlays are never jittered.
+        self.overlays.draw_grid(device, pass, &self.view_stable);
     }
 
     /// The entity a ray through pixel (x, y) of the output hits first, with the distance and the
@@ -2272,6 +2548,98 @@ impl Renderer {
         buf.unmap();
         (w, h, out)
     }
+
+    /// Draws a frame offscreen and reads back the HDR image the display transform reads (after
+    /// GTAO, TAA and splats; before bloom, sharpening and tone mapping), linear RGBA, row by row.
+    /// Blocks until the GPU is done (evaluation: docs/bench/taa-gtao.md).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn capture_hdr(&mut self, now_s: f64) -> (u32, u32, Vec<f32>) {
+        let (w, h) = (self.targets.width, self.targets.height);
+        let device = self.gpu.device.clone();
+        let output = crate::post::tex(
+            &device,
+            "capture (hdr)",
+            w,
+            h,
+            self.output,
+            1,
+            1,
+            wgpu::TextureUsages::RENDER_ATTACHMENT,
+        );
+        self.render(&output.create_view(&Default::default()), now_s);
+        let row = (w * 8).div_ceil(256) * 256;
+        let buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("capture readback (hdr)"),
+            size: u64::from(row * h),
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let image = match (self.image_in_history, self.taa.output()) {
+            (true, Some((t, _))) => t.clone(),
+            _ => self.targets.hdr.clone(),
+        };
+        let mut enc = device.create_command_encoder(&Default::default());
+        enc.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: &image,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buf,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(row),
+                    rows_per_image: Some(h),
+                },
+            },
+            wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+        );
+        self.gpu.queue.submit([enc.finish()]);
+        let slice = buf.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |r| {
+            let _ = tx.send(r);
+        });
+        let _ = device.poll(wgpu::PollType::wait_indefinitely());
+        let mut out = Vec::with_capacity((w * h * 4) as usize);
+        if let Ok(Ok(())) = rx.recv()
+            && let Ok(data) = slice.get_mapped_range()
+        {
+            for y in 0..h {
+                let r = &data[(y * row) as usize..(y * row + w * 8) as usize];
+                for &[a, b] in r.as_chunks::<2>().0 {
+                    out.push(f16_to_f32(u16::from_le_bytes([a, b])));
+                }
+            }
+        }
+        buf.unmap();
+        (w, h, out)
+    }
+}
+
+/// An IEEE half-precision float's value.
+#[cfg(not(target_arch = "wasm32"))]
+fn f16_to_f32(h: u16) -> f32 {
+    let sign = if h & 0x8000 != 0 { -1.0 } else { 1.0 };
+    let exp = i32::from((h >> 10) & 0x1f);
+    let frac = f32::from(h & 0x3ff);
+    sign * match exp {
+        0 => frac * 2f32.powi(-24),
+        31 => {
+            if frac == 0.0 {
+                f32::INFINITY
+            } else {
+                f32::NAN
+            }
+        }
+        e => (1.0 + frac / 1024.0) * 2f32.powi(e - 15),
+    }
 }
 
 fn merge_passes(p: &[(&'static str, f32)]) -> Vec<(&'static str, f32)> {
@@ -2329,9 +2697,10 @@ impl IdPass<'_> {
     }
 }
 
-/// A pass into the multisampled HDR target and its depth: `first` clears them (else they are
-/// loaded), `last` resolves the color into the HDR image; the depth is kept unless it is the last
-/// pass and nothing reads it afterwards (`keep_depth`: the splats).
+/// A pass into the opaque pass's targets (post.rs `Targets::attachments`) and its depth: `first`
+/// clears them (else they are loaded), `last` resolves the multisampled ones; the depth is kept
+/// unless it is the last pass and nothing reads it afterwards (`keep_depth`: the splats, GTAO,
+/// TAA).
 fn opaque_pass<'e>(
     enc: &'e mut wgpu::CommandEncoder,
     t: &Targets,
@@ -2340,25 +2709,10 @@ fn opaque_pass<'e>(
     last: bool,
     keep_depth: bool,
 ) -> wgpu::RenderPass<'e> {
+    let color = t.attachments(first, last);
     enc.begin_render_pass(&wgpu::RenderPassDescriptor {
         label: Some(if last { "opaque" } else { "opaque (early)" }),
-        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-            view: &t.color_msaa,
-            depth_slice: None,
-            resolve_target: last.then_some(&t.hdr_view),
-            ops: wgpu::Operations {
-                load: if first {
-                    wgpu::LoadOp::Clear(wgpu::Color::BLACK)
-                } else {
-                    wgpu::LoadOp::Load
-                },
-                store: if last {
-                    wgpu::StoreOp::Discard
-                } else {
-                    wgpu::StoreOp::Store
-                },
-            },
-        })],
+        color_attachments: &color,
         depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
             view: &t.depth,
             depth_ops: Some(wgpu::Operations {
@@ -2409,48 +2763,7 @@ fn vertex_layout() -> wgpu::VertexBufferLayout<'static> {
 }
 
 /// A forward pipeline: `vs` and fragment entry `fs` of `module` into the multisampled HDR target.
-fn forward_pipeline(
-    device: &wgpu::Device,
-    layout: &wgpu::PipelineLayout,
-    module: &wgpu::ShaderModule,
-    cull: Option<wgpu::Face>,
-    fs: &str,
-    label: &str,
-) -> wgpu::RenderPipeline {
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some(label),
-        layout: Some(layout),
-        vertex: wgpu::VertexState {
-            module,
-            entry_point: Some("vs"),
-            compilation_options: Default::default(),
-            buffers: &[Some(vertex_layout())],
-        },
-        fragment: Some(wgpu::FragmentState {
-            module,
-            entry_point: Some(fs),
-            compilation_options: Default::default(),
-            targets: &[Some(HDR.into())],
-        }),
-        primitive: wgpu::PrimitiveState {
-            cull_mode: cull,
-            ..Default::default()
-        },
-        depth_stencil: Some(wgpu::DepthStencilState {
-            format: DEPTH,
-            depth_write_enabled: Some(true),
-            depth_compare: Some(wgpu::CompareFunction::Greater),
-            stencil: Default::default(),
-            bias: Default::default(),
-        }),
-        multisample: wgpu::MultisampleState {
-            count: SAMPLES,
-            ..Default::default()
-        },
-        multiview_mask: None,
-        cache: None,
-    })
-}
+
 
 /// The forward pipeline of `variant`: the neural ones only once a neural texture has loaded.
 fn forward_for<'a>(

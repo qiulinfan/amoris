@@ -71,6 +71,8 @@ pub(crate) struct TileRaster {
     emit: wgpu::ComputePipeline,
     ranges: wgpu::ComputePipeline,
     raster: wgpu::ComputePipeline,
+    /// The samples of the depth target `raster` reads.
+    raster_samples: u32,
     composite: wgpu::RenderPipeline,
     pub(crate) control: wgpu::Buffer,
     /// The raster's (pixel, splat) tests this frame (two words, cleared in `prepare`).
@@ -177,6 +179,7 @@ impl TileRaster {
             emit: compute("tile_emit"),
             ranges: compute("tile_ranges"),
             raster: compute("tile_raster"),
+            raster_samples: 4,
             composite,
             control: super::buffer(
                 device,
@@ -479,6 +482,19 @@ impl TileRaster {
         let device = self.gpu.device.clone();
         let size = (targets.width.max(1), targets.height.max(1));
         let parity = (self.sort_passes() % 2) as usize;
+        if self.raster_samples != targets.format.samples {
+            let m = shaders::depth_module(&device, "splat_tile", targets.format.samples);
+            self.raster = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("tile_raster"),
+                layout: None,
+                module: &m,
+                entry_point: Some("tile_raster"),
+                compilation_options: shaders::compute_options(),
+                cache: None,
+            });
+            self.raster_samples = targets.format.samples;
+            self.image = None;
+        }
         if self
             .image
             .as_ref()

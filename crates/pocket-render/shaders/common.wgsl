@@ -29,6 +29,11 @@ struct View {
     cascade_splits: vec4f,   // far distance of each cascade, metres
     cascades: array<mat4x4f, 4>,
     counts: vec4u,           // x: entries per view in the visible list (the shadow pass's cascade)
+    // TAA (docs/spec/taa-gtao.md): `view_proj` above carries this frame's jitter (the id pass and
+    // the overlays get a copy of this uniform without it); motion vectors use these.
+    prev_view_proj: mat4x4f, // last frame's view-projection, unjittered
+    motion: vec4f,           // x: the interpolation alpha of last frame's poses (may be < 0);
+                             // y: 1 when the forward shader writes object motion; zw: jitter (NDC)
 };
 
 // One drawn thing, 80 bytes. Poses of the last two ticks; drawn at mix(prev, cur, alpha).

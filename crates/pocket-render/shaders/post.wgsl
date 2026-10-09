@@ -120,9 +120,32 @@ fn linear_to_srgb(c: vec3f) -> vec3f {
     return select(1.055 * pow(c, vec3f(1.0 / 2.4)) - 0.055, c * 12.92, c <= vec3f(0.0031308));
 }
 
+// Sharpening (after TAA, whose history resampling softens the image): the centre pushed away from
+// the mean of its four neighbours by `amount`, in a perceptual space (c / (1 + luma), so highlights
+// do not ring) and clamped to the five values' range, so it adds no new extremes.
+fn sharpened(uv: vec2f, c: vec3f, amount: f32) -> vec3f {
+    let t = pp.texel.xy;
+    let n = textureSample(src, src_sampler, uv + vec2f(0.0, -t.y)).rgb;
+    let s = textureSample(src, src_sampler, uv + vec2f(0.0, t.y)).rgb;
+    let e = textureSample(src, src_sampler, uv + vec2f(t.x, 0.0)).rgb;
+    let w = textureSample(src, src_sampler, uv + vec2f(-t.x, 0.0)).rgb;
+    let pc = c / (1.0 + luminance(c));
+    let pn = n / (1.0 + luminance(n));
+    let ps = s / (1.0 + luminance(s));
+    let pe = e / (1.0 + luminance(e));
+    let pw = w / (1.0 + luminance(w));
+    let lo = min(pc, min(min(pn, ps), min(pe, pw)));
+    let hi = max(pc, max(max(pn, ps), max(pe, pw)));
+    let p = clamp(pc + amount * (pc - 0.25 * (pn + ps + pe + pw)), lo, hi);
+    return p / max(1.0 - luminance(p), 1e-4);
+}
+
 @fragment
 fn fs_tonemap(in: FsIn) -> @location(0) vec4f {
     var c = textureSample(src, src_sampler, in.uv).rgb;
+    if (pp.exposure.z > 0.0) {
+        c = sharpened(in.uv, c, pp.exposure.z);
+    }
     // The upsample chain sums every level: divide by their count (texel.w) for an energy-preserving
     // blur, then blend it in.
     let b = textureSample(bloom, src_sampler, in.uv).rgb / max(pp.texel.w, 1.0);

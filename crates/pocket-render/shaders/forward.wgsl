@@ -9,6 +9,11 @@
 @group(0) @binding(2) var<storage, read> visible: array<u32>;
 @group(0) @binding(3) var<storage, read> materials: array<Material>;
 @group(0) @binding(4) var<storage, read> drawn: array<Drawn>;
+// Skinned parts' vertices as last frame drew them (skinning.rs `History`): the table's length in
+// meshes, per mesh two words (the part's first vertex in the pool, or NO_TEXTURE when it has no
+// history, and where its copy starts), then the copies, 12 words a vertex. Vertex stage only
+// (TAA's object motion).
+@group(0) @binding(5) var<storage, read> skin_prev: array<u32>;
 
 @group(1) @binding(0) var shadow_map: texture_depth_2d_array;
 @group(1) @binding(1) var shadow_sampler: sampler_comparison;
@@ -42,10 +47,29 @@ struct VsOut {
     @location(2) uv: vec2f,
     @location(3) tangent: vec4f,
     @location(4) @interpolate(flat) material: u32,
+    // Where this point was last frame (TAA's object motion; `world` when nothing moved).
+    @location(5) prev_world: vec3f,
 };
 
+// A vertex's local position as last frame drew it: a skinned part's from its copy (skin_prev).
+fn prev_local(position: vec3f, vertex: u32, mesh: u32) -> vec3f {
+    if (mesh >= skin_prev[0]) {
+        return position;
+    }
+    let first = skin_prev[1u + mesh * 2u];
+    if (first == NO_TEXTURE || vertex < first) {
+        return position;
+    }
+    let k = skin_prev[2u + mesh * 2u] + (vertex - first) * 12u;
+    if (k + 2u >= arrayLength(&skin_prev)) {
+        return position;
+    }
+    return vec3f(bitcast<f32>(skin_prev[k]), bitcast<f32>(skin_prev[k + 1u]),
+        bitcast<f32>(skin_prev[k + 2u]));
+}
+
 @vertex
-fn vs(v: VsIn, @builtin(instance_index) ii: u32) -> VsOut {
+fn vs(v: VsIn, @builtin(instance_index) ii: u32, @builtin(vertex_index) vi: u32) -> VsOut {
     let d = drawn[ii + batch.x];
     let world = d.pos + quat_rotate(d.rot, v.position * d.scale);
     // Normals under non-uniform scale: scale by the inverse, then rotate.
@@ -58,6 +82,13 @@ fn vs(v: VsIn, @builtin(instance_index) ii: u32) -> VsOut {
     o.uv = v.uv;
     o.tangent = vec4f(t, v.tangent.w);
     o.material = d.material;
+    o.prev_world = world;
+    if (view.motion.y > 0.5) {
+        // Last frame's pose: the instance's two tick poses at last frame's alpha.
+        let inst = instances[d.slot];
+        let pose = instance_pose(inst, view.motion.x);
+        o.prev_world = pose.pos + quat_rotate(pose.rot, prev_local(v.position, vi, inst.mesh) * d.scale);
+    }
     return o;
 }
 
@@ -225,26 +256,57 @@ fn surface(in: VsOut, facing: bool) -> Surface {
     return s;
 }
 
-fn apply_fog(c: vec3f, world: vec3f) -> vec3f {
+// How much of the color at `world` the fog replaces.
+fn fog_amount(world: vec3f) -> f32 {
     let density = view.fog.w;
     if (density <= 0.0) {
-        return c;
+        return 0.0;
     }
     let d = distance(world, view.camera_pos.xyz);
     // Exponential height fog: thinner with altitude.
     let h = max(world.y, 0.0);
-    let f = 1.0 - exp(-density * d * exp(-h * 0.02));
-    return mix(c, view.fog.rgb * view.sun_color.w, clamp(f, 0.0, 1.0));
+    return clamp(1.0 - exp(-density * d * exp(-h * 0.02)), 0.0, 1.0);
+}
+
+fn apply_fog(c: vec3f, world: vec3f) -> vec3f {
+    return mix(c, view.fog.rgb * view.sun_color.w, fog_amount(world));
+}
+
+// What the opaque pass's forward pipelines write; the targets after the color exist only when TAA
+// or GTAO need them (post.rs `SceneFormat`), and a pipeline without them ignores those outputs.
+struct SceneOut {
+    @location(0) color: vec4f,
+    // The share of each channel of `color` that is indirect light (GTAO darkens only that).
+    @location(1) share: vec4f,
+    // Object motion (TAA): last frame's position of this point minus where it would be had the
+    // object not moved, in last frame's normalized device coordinates.
+    @location(2) motion: vec4f,
+    // The view-space shading normal, `n * 0.5 + 0.5` (GTAO's optional normal source).
+    @location(3) normal: vec4f,
+};
+
+fn scene_out(in: VsOut, n: vec3f, color: vec3f, indirect: vec3f) -> SceneOut {
+    var o: SceneOut;
+    o.color = vec4f(color, 1.0);
+    o.share = vec4f(clamp(indirect / max(color, vec3f(1e-6)), vec3f(0.0), vec3f(1.0)), 1.0);
+    let moved = view.prev_view_proj * vec4f(in.prev_world, 1.0);
+    let still = view.prev_view_proj * vec4f(in.world, 1.0);
+    if (moved.w > 1e-6 && still.w > 1e-6) {
+        o.motion = vec4f(moved.xy / moved.w - still.xy / still.w, 0.0, 0.0);
+    }
+    let vn = (view.view * vec4f(n, 0.0)).xyz;
+    o.normal = vec4f(vn * 0.5 + 0.5, 1.0);
+    return o;
 }
 
 @fragment
-fn fs(in: VsOut, @builtin(front_facing) facing: bool) -> @location(0) vec4f {
+fn fs(in: VsOut, @builtin(front_facing) facing: bool) -> SceneOut {
     return shade(in, surface(in, facing));
 }
 
 // Alpha-tested materials only: the one entry point with `discard`.
 @fragment
-fn fs_masked(in: VsOut, @builtin(front_facing) facing: bool) -> @location(0) vec4f {
+fn fs_masked(in: VsOut, @builtin(front_facing) facing: bool) -> SceneOut {
     let s = surface(in, facing);
     if (s.alpha < materials[in.material].alpha_cutoff) {
         discard;
@@ -252,11 +314,11 @@ fn fs_masked(in: VsOut, @builtin(front_facing) facing: bool) -> @location(0) vec
     return shade(in, s);
 }
 
-fn shade(in: VsOut, s: Surface) -> vec4f {
+fn shade(in: VsOut, s: Surface) -> SceneOut {
     let frag = in.clip;
     let m = materials[in.material];
     if ((m.flags & 4u) != 0u) {
-        return vec4f(s.albedo + s.emissive, 1.0);
+        return scene_out(in, s.n, s.albedo + s.emissive, vec3f(0.0));
     }
     let v = normalize(view.camera_pos.xyz - in.world);
     let n = s.n;
@@ -321,12 +383,13 @@ fn shade(in: VsOut, s: Surface) -> vec4f {
     let baked = baked_diffuse(in.world, n);
     // sh_irradiance returns E; both diffuse inputs need E / PI before multiplying albedo.
     let diffuse_light = select(sh_irradiance(n) * (ambient / PI), baked.xyz, baked.w > 0.0);
-    color += (diffuse_color * diffuse_light + prefiltered * brdf * horizon * horizon * ambient)
-        * s.occlusion;
+    let indirect = (diffuse_color * diffuse_light + prefiltered * brdf * horizon * horizon * ambient) * s.occlusion;
+    color += indirect;
 
     color += s.emissive;
-    color = apply_fog(color, in.world);
-    return vec4f(color, 1.0);
+    let fog = fog_amount(in.world);
+    color = mix(color, view.fog.rgb * view.sun_color.w, fog);
+    return scene_out(in, n, color, indirect * (1.0 - fog));
 }
 
 // --- Shadow casters ----------------------------------------------------------------------------

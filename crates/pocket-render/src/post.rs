@@ -1,5 +1,7 @@
-//! The frame's targets (multisampled HDR color and reversed-Z depth, the resolved HDR image, the
-//! bloom chain) and the post passes: bloom down and up, then the display transform into the output.
+//! The frame's targets (the opaque pass's color, depth and extra targets, the resolved HDR image,
+//! the bloom chain), the anti-aliasing and ambient-occlusion options that shape them, and the post
+//! passes: bloom down and up, then the display transform (and the optional sharpening) into the
+//! output.
 
 use bytemuck::{Pod, Zeroable};
 
@@ -7,8 +9,195 @@ use crate::shaders;
 
 pub const HDR: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 pub const DEPTH: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
-pub const SAMPLES: u32 = 4;
+/// The share of each pixel's color that is indirect light, per channel (what GTAO darkens).
+pub const SHARE: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+/// The object motion: where the surface was last frame relative to where it would be had it not
+/// moved, in normalized device coordinates (TAA; camera motion comes from the depth).
+pub const MOTION: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
+/// View-space normals (GTAO's optional normal source), `n * 0.5 + 0.5`.
+pub const NORMALS: wgpu::TextureFormat = wgpu::TextureFormat::Rgb10a2Unorm;
 const BLOOM_MIPS: u32 = 6;
+
+/// Anti-aliasing (charter 4.4, Pioneer 2026-10-09; docs/spec/taa-gtao.md): the opaque pass's
+/// samples per pixel and whether TAA runs. Every combination draws; the default is measured
+/// (docs/bench/taa-gtao.md).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Antialiasing {
+    /// One sample, no TAA (aliased; the cheapest).
+    Off,
+    /// Four samples per pixel, resolved (the renderer's only mode before TAA).
+    Msaa,
+    /// One sample, jittered, accumulated over frames.
+    Taa,
+    /// Four samples, jittered, accumulated over frames.
+    MsaaTaa,
+}
+
+impl Antialiasing {
+    pub const DEFAULT: Antialiasing = Antialiasing::Msaa;
+
+    /// `off`, `msaa`, `taa` or `msaa+taa` (any case; `taa+msaa` too).
+    pub fn parse(s: &str) -> Option<Antialiasing> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "off" | "none" | "0" => Some(Antialiasing::Off),
+            "msaa" | "msaa4" => Some(Antialiasing::Msaa),
+            "taa" => Some(Antialiasing::Taa),
+            "msaa+taa" | "taa+msaa" => Some(Antialiasing::MsaaTaa),
+            _ => None,
+        }
+    }
+
+    /// From `POCKET_AA` (natively); [`Antialiasing::DEFAULT`] when it is unset or unknown.
+    pub fn from_env() -> Antialiasing {
+        match std::env::var("POCKET_AA") {
+            Ok(v) => Antialiasing::parse(&v).unwrap_or_else(|| {
+                log::warn!("POCKET_AA: {v:?} is not off, msaa, taa or msaa+taa; using the default");
+                Antialiasing::DEFAULT
+            }),
+            Err(_) => Antialiasing::DEFAULT,
+        }
+    }
+
+    pub fn samples(self) -> u32 {
+        match self {
+            Antialiasing::Msaa | Antialiasing::MsaaTaa => 4,
+            Antialiasing::Off | Antialiasing::Taa => 1,
+        }
+    }
+
+    pub fn taa(self) -> bool {
+        matches!(self, Antialiasing::Taa | Antialiasing::MsaaTaa)
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Antialiasing::Off => "off",
+            Antialiasing::Msaa => "msaa",
+            Antialiasing::Taa => "taa",
+            Antialiasing::MsaaTaa => "msaa+taa",
+        }
+    }
+}
+
+/// Where GTAO takes its view-space normals from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AoNormals {
+    /// Reconstructed from the half-resolution depth (no extra target in the opaque pass).
+    Depth,
+    /// A normal target the forward shader writes (normal maps included).
+    Target,
+}
+
+/// Ground-truth ambient occlusion on indirect light (docs/spec/taa-gtao.md): off, or on with a
+/// normal source.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Gtao {
+    Off,
+    On(AoNormals),
+}
+
+impl Gtao {
+    pub const DEFAULT: Gtao = Gtao::Off;
+
+    /// `off`, `on` or `depth` (normals from the depth), `target` (the normal target); any case,
+    /// `0`/`1` too.
+    pub fn parse(s: &str) -> Option<Gtao> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "off" | "0" | "false" | "no" => Some(Gtao::Off),
+            "on" | "1" | "true" | "yes" | "depth" => Some(Gtao::On(AoNormals::Depth)),
+            "target" | "normals" => Some(Gtao::On(AoNormals::Target)),
+            _ => None,
+        }
+    }
+
+    /// From `POCKET_GTAO` (natively); [`Gtao::DEFAULT`] when it is unset or unknown.
+    pub fn from_env() -> Gtao {
+        match std::env::var("POCKET_GTAO") {
+            Ok(v) => Gtao::parse(&v).unwrap_or_else(|| {
+                log::warn!("POCKET_GTAO: {v:?} is not off, on, depth or target; using the default");
+                Gtao::DEFAULT
+            }),
+            Err(_) => Gtao::DEFAULT,
+        }
+    }
+
+    pub fn on(self) -> bool {
+        self != Gtao::Off
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Gtao::Off => "off",
+            Gtao::On(AoNormals::Depth) => "depth",
+            Gtao::On(AoNormals::Target) => "target",
+        }
+    }
+}
+
+/// What the opaque pass draws into; every pipeline drawn in it is built for one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SceneFormat {
+    pub samples: u32,
+    /// The indirect share target (GTAO).
+    pub share: bool,
+    /// The object motion target (TAA).
+    pub motion: bool,
+    /// The view-space normal target (GTAO with [`AoNormals::Target`]).
+    pub normals: bool,
+}
+
+impl SceneFormat {
+    pub fn new(aa: Antialiasing, gtao: Gtao) -> SceneFormat {
+        SceneFormat {
+            samples: aa.samples(),
+            share: gtao.on(),
+            motion: aa.taa(),
+            normals: gtao == Gtao::On(AoNormals::Target),
+        }
+    }
+
+    /// The color targets of a pipeline drawn in the opaque pass: the HDR color with `blend`, then
+    /// the extra targets that exist, which `extras` says the fragment shader writes (the forward
+    /// shader's `SceneOut`); without, they are left as they are (write mask empty).
+    pub fn targets(
+        &self,
+        blend: Option<wgpu::BlendState>,
+        extras: bool,
+    ) -> Vec<Option<wgpu::ColorTargetState>> {
+        let extra = |on: bool, format| {
+            on.then_some(wgpu::ColorTargetState {
+                format,
+                blend: None,
+                write_mask: if extras {
+                    wgpu::ColorWrites::ALL
+                } else {
+                    wgpu::ColorWrites::empty()
+                },
+            })
+        };
+        let mut t = vec![
+            Some(wgpu::ColorTargetState {
+                format: HDR,
+                blend,
+                write_mask: wgpu::ColorWrites::ALL,
+            }),
+            extra(self.share, SHARE),
+            extra(self.motion, MOTION),
+            extra(self.normals, NORMALS),
+        ];
+        while t.last().is_some_and(Option::is_none) {
+            t.pop();
+        }
+        t
+    }
+
+    pub fn multisample(&self) -> wgpu::MultisampleState {
+        wgpu::MultisampleState {
+            count: self.samples,
+            ..Default::default()
+        }
+    }
+}
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -17,20 +206,37 @@ struct PostParams {
     exposure: [f32; 4],
 }
 
+/// A target of the opaque pass: drawn multisampled and resolved into `view`, or drawn into `view`.
+pub struct SceneTarget {
+    pub msaa: Option<wgpu::TextureView>,
+    pub texture: wgpu::Texture,
+    pub view: wgpu::TextureView,
+}
+
 pub struct Targets {
     pub width: u32,
     pub height: u32,
-    pub color_msaa: wgpu::TextureView,
+    pub format: SceneFormat,
+    /// The opaque pass's color: `hdr`, or with TAA `raw`.
+    pub color: SceneTarget,
+    /// The opaque pass's depth (reversed-Z), `format.samples` samples.
     pub depth: wgpu::TextureView,
+    /// The image the rest of the frame reads (splats, bloom, the display transform): the opaque
+    /// pass's resolved color, or with TAA its output.
     pub hdr: wgpu::Texture,
     pub hdr_view: wgpu::TextureView,
+    /// With TAA, the opaque pass's own (jittered) image: TAA's input.
+    pub raw: Option<wgpu::TextureView>,
+    pub share: Option<SceneTarget>,
+    pub motion: Option<SceneTarget>,
+    pub normals: Option<SceneTarget>,
     pub bloom: wgpu::Texture,
     bloom_mips: Vec<wgpu::TextureView>,
 }
 
 // A texture descriptor's fields, as the crate's other GPU helpers take them.
 #[allow(clippy::too_many_arguments)]
-fn tex(
+pub(crate) fn tex(
     device: &wgpu::Device,
     label: &str,
     w: u32,
@@ -57,15 +263,46 @@ fn tex(
 }
 
 impl Targets {
-    pub fn new(device: &wgpu::Device, width: u32, height: u32) -> Targets {
+    pub fn new(device: &wgpu::Device, width: u32, height: u32, format: SceneFormat) -> Targets {
         let ra = wgpu::TextureUsages::RENDER_ATTACHMENT;
         let rs = ra | wgpu::TextureUsages::TEXTURE_BINDING;
-        let color_msaa = tex(device, "hdr (msaa)", width, height, HDR, SAMPLES, 1, ra)
+        // The HDR image is copied out for evaluation (`Renderer::capture_hdr`).
+        let rsc = rs | wgpu::TextureUsages::COPY_SRC;
+        let samples = format.samples;
+        let scene = |label: &str, f: wgpu::TextureFormat| {
+            let msaa = (samples > 1).then(|| {
+                tex(device, label, width, height, f, samples, 1, ra)
+                    .create_view(&Default::default())
+            });
+            let texture = tex(device, label, width, height, f, 1, 1, rsc);
+            SceneTarget {
+                msaa,
+                view: texture.create_view(&Default::default()),
+                texture,
+            }
+        };
+        // Sampled too: the splat pass copies it to one sample (splat/mod.rs); GTAO and TAA read it.
+        let depth = tex(device, "depth", width, height, DEPTH, samples, 1, rs)
             .create_view(&Default::default());
-        // Sampled too: the splat pass copies it to one sample (splat/mod.rs).
-        let depth = tex(device, "depth (msaa)", width, height, DEPTH, SAMPLES, 1, rs)
-            .create_view(&Default::default());
-        let hdr = tex(device, "hdr", width, height, HDR, 1, 1, rs);
+        let color = scene("hdr (scene)", HDR);
+        // With TAA the opaque pass resolves into `raw` and TAA writes `hdr`.
+        let (hdr, raw) = if format.motion {
+            (
+                tex(
+                    device,
+                    "hdr",
+                    width,
+                    height,
+                    HDR,
+                    1,
+                    1,
+                    rsc | wgpu::TextureUsages::STORAGE_BINDING,
+                ),
+                Some(color.view.clone()),
+            )
+        } else {
+            (color.texture.clone(), None)
+        };
         let hdr_view = hdr.create_view(&Default::default());
         let (bw, bh) = ((width / 2).max(1), (height / 2).max(1));
         let mips = BLOOM_MIPS.min(bw.min(bh).ilog2().max(1));
@@ -82,13 +319,69 @@ impl Targets {
         Targets {
             width,
             height,
-            color_msaa,
+            format,
+            color,
             depth,
             hdr,
             hdr_view,
+            raw,
+            share: format.share.then(|| scene("indirect share", SHARE)),
+            motion: format.motion.then(|| scene("motion", MOTION)),
+            normals: format.normals.then(|| scene("normals", NORMALS)),
             bloom,
             bloom_mips,
         }
+    }
+
+    /// The opaque pass's color attachments: `first` clears them (else they are loaded), `last`
+    /// resolves the multisampled ones (and discards their samples).
+    pub fn attachments(
+        &self,
+        first: bool,
+        last: bool,
+    ) -> Vec<Option<wgpu::RenderPassColorAttachment<'_>>> {
+        fn att(
+            t: &SceneTarget,
+            first: bool,
+            last: bool,
+        ) -> Option<wgpu::RenderPassColorAttachment<'_>> {
+            let ops = |multisampled: bool| wgpu::Operations {
+                load: if first {
+                    wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT)
+                } else {
+                    wgpu::LoadOp::Load
+                },
+                store: if last && multisampled {
+                    wgpu::StoreOp::Discard
+                } else {
+                    wgpu::StoreOp::Store
+                },
+            };
+            Some(match &t.msaa {
+                Some(m) => wgpu::RenderPassColorAttachment {
+                    view: m,
+                    depth_slice: None,
+                    resolve_target: last.then_some(&t.view),
+                    ops: ops(true),
+                },
+                None => wgpu::RenderPassColorAttachment {
+                    view: &t.view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: ops(false),
+                },
+            })
+        }
+        let mut v = vec![
+            att(&self.color, first, last),
+            self.share.as_ref().and_then(|t| att(t, first, last)),
+            self.motion.as_ref().and_then(|t| att(t, first, last)),
+            self.normals.as_ref().and_then(|t| att(t, first, last)),
+        ];
+        while v.last().is_some_and(Option::is_none) {
+            v.pop();
+        }
+        v
     }
 }
 
@@ -225,7 +518,9 @@ impl Post {
         pass.draw(0..3, 0..1);
     }
 
-    /// Bloom, then the display transform from the targets' HDR image into `output`.
+    /// Bloom, then the display transform from `src` (the frame's HDR image, the size of `t`) into
+    /// `output`; `sharpen` (0: off) sharpens the image before the display transform
+    /// (docs/spec/taa-gtao.md).
     #[allow(clippy::too_many_arguments)]
     pub fn run(
         &self,
@@ -233,9 +528,11 @@ impl Post {
         queue: &wgpu::Queue,
         enc: &mut wgpu::CommandEncoder,
         t: &Targets,
+        src: &wgpu::TextureView,
         output: &wgpu::TextureView,
         exposure: f32,
         bloom: f32,
+        sharpen: f32,
     ) {
         let mips = t.bloom_mips.len();
         let mut slots: Vec<PostParams> = Vec::new();
@@ -271,18 +568,19 @@ impl Post {
                 bloom,
                 mips as f32,
             ],
-            exposure: [exposure, if self.output_srgb { 1.0 } else { 0.0 }, 0.0, 0.0],
+            exposure: [
+                exposure,
+                if self.output_srgb { 1.0 } else { 0.0 },
+                sharpen,
+                0.0,
+            ],
         });
         for (k, s) in slots.iter().enumerate() {
             queue.write_buffer(&self.params, k as u64 * 256, bytemuck::bytes_of(s));
         }
         let mut slot = 0u64;
         for i in 0..mips {
-            let src = if i == 0 {
-                &t.hdr_view
-            } else {
-                &t.bloom_mips[i - 1]
-            };
+            let src = if i == 0 { src } else { &t.bloom_mips[i - 1] };
             self.pass(
                 device,
                 enc,
@@ -315,7 +613,7 @@ impl Post {
             enc,
             &self.tonemap,
             slot,
-            &t.hdr_view,
+            src,
             Some(&t.bloom_mips[0]),
             output,
             true,

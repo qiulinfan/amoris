@@ -47,11 +47,6 @@ const MISSES: u32 = 3;
 const PROBE_TIMEOUT: u64 = 600;
 /// Readback buffers for the late pass's counters.
 const RING: usize = 4;
-// hiz.wgsl's first level reads the depth target as `texture_depth_multisampled_2d`.
-const _: () = assert!(
-    crate::post::SAMPLES > 1,
-    "the depth pyramid reads a multisampled target"
-);
 
 /// Whether the camera view is occlusion culled.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -400,6 +395,21 @@ impl Occlusion {
             (OcclusionMode::Auto, false) => "auto-off",
             (m, _) => m.name(),
         }
+    }
+
+    /// Rebuilds the pyramid's first step for a depth target of `samples` samples (hiz.wgsl reads
+    /// every sample; shaders.rs `depth_module`), and forgets the pyramid.
+    pub fn set_samples(&mut self, device: &wgpu::Device, samples: u32) {
+        let m = shaders::depth_module(device, "hiz", samples);
+        self.from_depth = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("from_depth"),
+            layout: None,
+            module: &m,
+            entry_point: Some("from_depth"),
+            compilation_options: shaders::compute_options(),
+            cache: None,
+        });
+        self.invalidate(true);
     }
 
     pub fn set_mode(&mut self, mode: OcclusionMode) {
