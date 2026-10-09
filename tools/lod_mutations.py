@@ -3,7 +3,7 @@
 
     python tools/lod_mutations.py [--out docs/evidence/lod/mutations.json] [filter ...]
 
-Each mutation edits cull.wgsl, meshes.rs, renderer.rs or pocket-assets' lod.rs, runs
+Each mutation edits cull.wgsl, meshes.rs, renderer.rs, lod.rs or pocket-assets' lod.rs, runs
 `cargo test --release -p pocket-render --test lod --test draw_paths --test occlusion` (and
 pocket-assets' own tests for the generator's mutations), and restores the file with `git checkout`;
 it refuses to start while those files have uncommitted changes. POCKET_BACKEND, POCKET_ADAPTER and
@@ -26,6 +26,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CULL = "crates/pocket-render/shaders/cull.wgsl"
 MESHES = "crates/pocket-render/src/meshes.rs"
 RENDERER = "crates/pocket-render/src/renderer.rs"
+SELECT = "crates/pocket-render/src/lod.rs"
 GENERATE = "crates/pocket-assets/src/lod.rs"
 RENDER_TESTS = ["-p", "pocket-render", "--test", "lod", "--test", "draw_paths", "--test",
                 "occlusion"]
@@ -58,6 +59,21 @@ MUTATIONS = [
         "lv = coarsest(first, count, smax, cull.lod_cascades[v - 1u]);",
         "lv = 0u;",
     )]),
+    ("cull: the cascades draw the camera's level", RENDER_TESTS, [(
+        CULL,
+        "lv = coarsest(first, count, smax, cull.lod_cascades[v - 1u]);",
+        "lv = camera_level;",
+    )]),
+    ("cull: the cascades' bound four times too loose", RENDER_TESTS, [(
+        CULL,
+        "lv = coarsest(first, count, smax, cull.lod_cascades[v - 1u]);",
+        "lv = coarsest(first, count, smax, cull.lod_cascades[v - 1u] * 4.0);",
+    )]),
+    ("lod: the cascades' bound ignores shadow_texels", RENDER_TESTS, [(
+        SELECT,
+        "texels.map(|t| t * self.shadow_texels)",
+        "texels.map(|t| t)",
+    )]),
     ("cull: a level's row one too far", RENDER_TESTS, [(
         CULL,
         "return (lods & 0xffffffu) + level - 1u;",
@@ -78,10 +94,25 @@ MUTATIONS = [
         "                    mesh.lods[level - 1].error",
         "                    0.0",
     )]),
+    ("meshes: a skinned copy's levels read the bind pose", RENDER_TESTS, [(
+        MESHES,
+        "                base_vertex,\n                batch_offset: 0,\n"
+        "                lods: if level == 0 {\n"
+        "                    pack_lods(levels as usize, id as usize + 1)",
+        "                base_vertex: if level == 0 { base_vertex } else { from.base_vertex },\n"
+        "                batch_offset: 0,\n"
+        "                lods: if level == 0 {\n"
+        "                    pack_lods(levels as usize, id as usize + 1)",
+    )]),
     ("renderer: level rows get no regions", RENDER_TESTS, [(
         RENDERER,
         "if lod_on || o == row as u32 {",
         "if o == row as u32 {",
+    )]),
+    ("renderer: levels kept past the binding limit", RENDER_TESTS, [(
+        RENDERER,
+        "if lod_on && largest(stride) > limit {",
+        "if false && lod_on && largest(stride) > limit {",
     )]),
 
     ("generate: vertices left in their first order", ASSET_TESTS, [(

@@ -4,13 +4,15 @@
 //!
 //! `cargo run --release -p pocket-render --example lod_field -- [--n 48] [--spacing 6]
 //!  [--detail 6] [--size 1280x720] [--t 0] [--fly] [--frames 120] [--warm 30] [--lod on|off]
-//!  [--pixels 1] [--occlusion off|on|auto] [--capture OUT.png]`
+//!  [--pixels 1] [--occlusion off|on|auto] [--crowd 0] [--capture OUT.png]`
 //!
 //! Prints one JSON object: how long making the meshes and their levels took, the levels, frame wall
 //! time (submit to GPU idle), CPU encoding and timestamped GPU time with its passes, and what the
 //! last frame drew per level (read back from the indirect arguments). `--fly` moves the camera from
 //! the corner toward the middle over the measured frames; `--capture` saves the frame drawn after
-//! the measurement at camera position `--t`.
+//! the measurement at camera position `--t`. `--crowd N` adds N skinned columns
+//! (`demo::bent_columns`) in a row across the field: each draws its own skinned copy and levels,
+//! which on the per-batch paths are draw calls of their own (docs/bench/lod.md 6).
 
 use std::time::Instant;
 
@@ -60,6 +62,7 @@ fn main() {
     let warm: u32 = number("--warm", 30).max(3);
     let t: f32 = number("--t", 0.0);
     let fly = flag("--fly");
+    let crowd: u32 = number("--crowd", 0);
 
     let start = Instant::now();
     let mut raw = demo::lod_meshes(detail);
@@ -106,7 +109,17 @@ fn main() {
     }
     let start = Instant::now();
     r.add_model(demo::LOD_MODEL, &model);
-    r.apply(demo::lod_field(n, spacing), 0.0);
+    let mut field = demo::lod_field(n, spacing);
+    if crowd > 0 {
+        // Skinned columns in a row across the field: each its own skinned copy with its levels.
+        r.add_model(demo::BENT_MODEL, &demo::bent_model());
+        let at = glam::Vec3::new(0.0, 0.0, 2.0 * spacing);
+        let first = u64::from(n * n) + 100;
+        field
+            .instances
+            .extend(demo::bent_columns(crowd, at, 1.5, first));
+    }
+    r.apply(field, 0.0);
     let upload_ms = start.elapsed().as_secs_f64() * 1000.0;
 
     let tex = gpu.device.create_texture(&wgpu::TextureDescriptor {
@@ -181,6 +194,7 @@ fn main() {
         "size": [w, h],
         "n": n,
         "instances": n * n,
+        "crowd": crowd,
         "spacing": spacing,
         "detail": detail,
         "lod": r.last.lod,

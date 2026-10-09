@@ -11,13 +11,21 @@
 //!    of the mesh table like any other, and the late pass draws the level the early pass chose.
 //! 3. Hysteresis: one rock seen from distances around the one where its first coarser level becomes
 //!    acceptable keeps its level until the margin is passed, both ways.
-//! 4. The binding limit: on WebGPU's default limits, a scene whose lists would pass 128 MiB with
+//! 4. Shadow cascades: one rock seen from distances that put it in every cascade, at scales 1 and
+//!    2 and with a bound of one and two texels: each cascade draws the coarsest level whose scaled
+//!    error is within its bound, computed on the CPU from the cascades' texels.
+//! 5. Skinned meshes: a column bent by its clip, far enough away to draw level 2 or coarser, puts
+//!    its silhouette where its full mesh does (its levels are skinned, not drawn from the bind
+//!    pose); on the baseline path each skinned copy's levels are draw calls of their own.
+//! 6. The binding limit: on WebGPU's default limits, a scene whose lists would pass 128 MiB with
 //!    levels draws exactly as it does with levels off, and gets its levels back when it shrinks.
 
 use pocket_assets::frame::{InstanceUpdate, Look, Pose, RenderFrame};
 use pocket_render::gpu::Minimal;
 use pocket_render::lod::DrawCounts;
-use pocket_render::{BackendChoice, CameraState, Gpu, LodMode, OcclusionMode, Renderer, demo};
+use pocket_render::{
+    BackendChoice, CameraState, Gpu, LodMode, LodSettings, OcclusionMode, Renderer, demo,
+};
 
 const W: u32 = 640;
 const H: u32 = 360;
@@ -269,8 +277,8 @@ fn every_draw_path_and_occlusion_draw_the_same_levels() {
     }
 }
 
-/// One rock at the origin scaled by `scale`, nothing else.
-fn rock_alone(scale: f32) -> RenderFrame {
+/// One rock at the origin scaled by `scale`, casting shadows or not, nothing else.
+fn rock_alone(scale: f32, cast_shadows: bool) -> RenderFrame {
     let mut f = demo::lod_field(1, SPACING);
     f.instances = vec![InstanceUpdate {
         id: 7,
@@ -288,7 +296,7 @@ fn rock_alone(scale: f32) -> RenderFrame {
             transmission: None,
             ior: None,
             emissive: [0.0; 3],
-            cast_shadows: false,
+            cast_shadows,
             visible: true,
         }),
         anim: None,
@@ -316,7 +324,7 @@ fn hysteresis_holds_a_level_until_the_margin() {
         let mut r = Renderer::new(&gpu, wgpu::TextureFormat::Rgba8UnormSrgb, W, H);
         r.set_occlusion(occlusion);
         r.add_model(demo::LOD_MODEL, &model);
-        r.apply(rock_alone(scale), 0.0);
+        r.apply(rock_alone(scale, false), 0.0);
         let settings = r.lod();
         // The culling pass measures from the bounding sphere's nearest point; level 1 is
         // acceptable from distance e1 / w there, and taken (coarsening) from (1 + hysteresis) e1 /
@@ -366,6 +374,183 @@ fn hysteresis_holds_a_level_until_the_margin() {
                 occlusion.name()
             );
         }
+    }
+}
+
+/// The coarsest level (0: the full mesh; `k`: `errors[k - 1]`) whose error, scaled by `scale`, is
+/// at most `bound`: cull.wgsl's `coarsest` on the CPU.
+fn coarsest(errors: &[f32], scale: f32, bound: f32) -> usize {
+    errors
+        .iter()
+        .rposition(|&e| e * scale <= bound)
+        .map_or(0, |k| k + 1)
+}
+
+#[test]
+fn cascades_pick_levels_by_their_texels() {
+    let Ok(gpu) = Gpu::headless(BackendChoice::from_env()) else {
+        eprintln!("no GPU: skipped");
+        return;
+    };
+    let model = demo::lod_model(DETAIL);
+    let errors: Vec<f32> = model.meshes[0].lods.iter().map(|l| l.error).collect();
+    let mut seen = [0usize; 4];
+    let (mut unlike_camera, mut unlike_four) = (0, 0);
+    // A scaled instance's errors scale with it; the texel bound's factor is `shadow_texels`.
+    for (scale, texels) in [(1.0f32, 1.0f32), (2.0, 1.0), (1.0, 2.0)] {
+        let mut r = Renderer::new(&gpu, wgpu::TextureFormat::Rgba8UnormSrgb, W, H);
+        r.set_occlusion(OcclusionMode::Off);
+        r.set_lod_settings(LodSettings {
+            shadow_texels: texels,
+            ..LodSettings::default()
+        });
+        r.add_model(demo::LOD_MODEL, &model);
+        r.apply(rock_alone(scale, true), 0.0);
+        let mut now = 1.0;
+        // The rock from inside the nearest cascade's slice to inside the farthest's (the splits
+        // fall near 8, 18, 42 and 150 m); a cascade's box reaches past its slice, so the rock is
+        // often in two.
+        for d in [5.0f32, 10.0, 16.0, 30.0, 70.0, 130.0] {
+            let cam = CameraState::look_at(glam::Vec3::new(0.0, 1.0, d), glam::Vec3::ZERO);
+            r.set_camera_override(Some(cam));
+            now += 1.0 / 60.0;
+            let _ = r.capture_rgba(now);
+            let counts = r.draw_counts();
+            let camera = camera_levels(&counts).iter().position(|&n| n == 1);
+            let texel = r.cascade_texels(&cam);
+            for (i, c) in counts.cascades.iter().enumerate() {
+                match c.instances() {
+                    0 => continue,
+                    1 => {}
+                    n => panic!("cascade {i} drew the rock {n} times"),
+                }
+                let got = c.instances.iter().position(|&n| n == 1).unwrap_or(99);
+                let bound = texel[i] * texels;
+                // Within rounding of a level's error, either side is right.
+                if errors
+                    .iter()
+                    .any(|&e| (e * scale - bound).abs() <= bound * 1e-3)
+                {
+                    eprintln!("at {d} m, cascade {i}: bound {bound} on a level's error, skipped");
+                    continue;
+                }
+                let want = coarsest(&errors, scale, bound);
+                eprintln!(
+                    "scale {scale}, {texels} texels, at {d} m: cascade {i} (texel {:.4} m) draws \
+                     level {got}, the camera {camera:?}",
+                    texel[i]
+                );
+                assert_eq!(
+                    got, want,
+                    "scale {scale}, {texels} texels, at {d} m: cascade {i}'s level (bound {bound})"
+                );
+                seen[i] += 1;
+                unlike_camera += usize::from(camera != Some(want));
+                unlike_four += usize::from(coarsest(&errors, scale, 4.0 * bound) != want);
+            }
+        }
+    }
+    // The placements must tell a cascade's own level from the camera's and from a bound four
+    // times too loose, in most cascades.
+    eprintln!(
+        "checks per cascade {seen:?}; {unlike_camera} unlike the camera's level, {unlike_four} \
+         unlike a bound four times as loose"
+    );
+    assert!(seen.iter().filter(|&&n| n > 0).count() >= 3, "{seen:?}");
+    assert!(unlike_camera > 0 && unlike_four > 0);
+}
+
+/// One frame of `n` skinned columns (`demo::bent_columns`) under the LOD field's sun.
+fn columns(n: u32) -> RenderFrame {
+    let mut f = demo::lod_field(1, SPACING);
+    f.instances = demo::bent_columns(n, glam::Vec3::ZERO, 3.0, 100);
+    f
+}
+
+#[test]
+fn skinned_levels_follow_the_pose() {
+    let choice = BackendChoice::from_env();
+    let Ok(gpu) = Gpu::headless(choice) else {
+        eprintln!("no GPU: skipped");
+        return;
+    };
+    let model = demo::bent_model();
+    let column = &model.meshes[0];
+    assert!(column.lods.len() >= 3, "{} levels", column.lods.len());
+    // Far enough that the copy's level 2 is taken on the first frame: the culling pass measures
+    // from the nearest point of the copy's grown sphere and coarsens past the hysteresis margin.
+    let settings = LodSettings::default();
+    let probe = CameraState::look_at(glam::Vec3::Z, glam::Vec3::ZERO);
+    let w = settings.camera_terms(&probe, H).0[3];
+    let centre = glam::Vec3::from(column.bounds.center);
+    let radius = column.bounds.radius * pocket_render::meshes::SKINNED_GROW;
+    let d = 1.25 * column.lods[1].error * (1.0 + settings.hysteresis) / w + radius;
+    let cam = CameraState::look_at(
+        centre + glam::Vec3::new(-0.8, 0.0, d),
+        glam::Vec3::new(-0.8, 1.6, 0.0),
+    );
+    let make = |gpu: &Gpu, mode: LodMode, n: u32| {
+        let mut r = Renderer::new(gpu, wgpu::TextureFormat::Rgba8UnormSrgb, W, H);
+        r.set_lod(mode);
+        r.set_occlusion(OcclusionMode::Off);
+        r.add_model(demo::BENT_MODEL, &model);
+        r.apply(columns(n), 0.0);
+        r.set_camera_override(Some(cam));
+        r
+    };
+    let mut full = make(&gpu, LodMode::Off, 1);
+    let mut lod = make(&gpu, LodMode::On, 1);
+    let a = shoot(&mut full, 1.0);
+    let b = shoot(&mut lod, 1.0);
+    let (la, lb) = (camera_levels(&a.counts), camera_levels(&b.counts));
+    let covered = a.ids.iter().filter(|&&id| id != 0).count();
+    let (differ, far) = id_mismatch(&a.ids, &b.ids, 2);
+    eprintln!(
+        "column at {d:.1} m ({covered} pixels): levels {la:?} off, {lb:?} on; {differ} pixels \
+         show another entity, {far} more than 2 pixels from an edge"
+    );
+    assert_eq!(la[0], 1, "levels off draws the full mesh");
+    assert_eq!(
+        lb[2..].iter().sum::<u64>(),
+        1,
+        "the copy draws level 2 or coarser"
+    );
+    assert!(covered > 2000, "the column fills {covered} pixels");
+    // A level skinned like the full mesh puts the bent column where the full mesh does; one drawn
+    // from the bind pose's vertices stands straight up, metres away.
+    assert_eq!(
+        far, 0,
+        "the skinned level's silhouette stays within two pixels"
+    );
+
+    // What a skinned entity costs on the per-batch paths: its copy's levels are batches of their
+    // own, each live with its one instance, in every view (docs/bench/lod.md 6).
+    let Ok(baseline) = Gpu::headless_with(
+        choice,
+        Minimal {
+            first_instance: true,
+            ..Minimal::default()
+        },
+    ) else {
+        return;
+    };
+    let levels = 1 + column.lods.len() as u32;
+    for n in [1u32, 16] {
+        let mut calls = [0u32; 2];
+        let mut path = "";
+        for (k, mode) in [LodMode::Off, LodMode::On].into_iter().enumerate() {
+            let mut r = make(&baseline, mode, n);
+            let _ = r.capture_rgba(1.0);
+            calls[k] = r.last.draw_calls;
+            path = r.draw_path();
+        }
+        eprintln!(
+            "{path} path, {n} skinned columns of {levels} levels: {} draw calls with levels off, \
+             {} on",
+            calls[0], calls[1]
+        );
+        // The camera and the four cascades each draw every level of every copy.
+        assert_eq!(calls[1] - calls[0], n * (levels - 1) * 5);
     }
 }
 

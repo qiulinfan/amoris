@@ -746,3 +746,109 @@ pub fn lod_field_camera(n: u32, spacing: f32, t: f32) -> crate::CameraState {
     let eye = start.lerp(middle, t.clamp(0.0, 1.0));
     crate::CameraState::look_at(eye, eye + Vec3::new(1.0, -0.15, 1.0))
 }
+
+/// The path [`bent_model`] is registered under (`Renderer::add_model`).
+pub const BENT_MODEL: &str = "demo/bent.glb";
+
+/// A skinned column about 5 m tall standing on the origin, with its levels of detail: a rock of
+/// 5,120 triangles ([`rock_mesh`]) stretched, on two joints, the second at 2 m (the weights blend
+/// between 1.6 and 2.4 m). Its only clip bends the upper half 90 degrees toward -x, so a pose
+/// drawn from the bind pose's vertices instead of the skinned ones stands out by metres. Its levels
+/// are made from the straight bind pose.
+pub fn bent_model() -> ModelAsset {
+    use pocket_assets::mesh::{
+        AnimationClip, Bounds, Channel, ChannelPath, Interpolation, SkeletonNode, SkinAsset,
+        SkinWeights,
+    };
+    let mut m = rock_mesh(4, 5);
+    m.name = "column".into();
+    for v in &mut m.vertices {
+        let [x, y, z] = v.position;
+        v.position = [x * 0.5, y * 2.0 + 2.0, z * 0.5];
+        let [nx, ny, nz] = v.normal;
+        v.normal = Vec3::new(nx * 2.0, ny * 0.5, nz * 2.0)
+            .normalize_or(Vec3::Y)
+            .to_array();
+    }
+    m.bounds = Bounds::of(&m.vertices);
+    m.compute_tangents();
+    let weights = m
+        .vertices
+        .iter()
+        .map(|v| {
+            let t = ((v.position[1] - 1.6) / 0.8).clamp(0.0, 1.0);
+            let t = t * t * (3.0 - 2.0 * t);
+            [1.0 - t, t, 0.0, 0.0]
+        })
+        .collect();
+    m.skin = Some(SkinWeights {
+        joints: vec![[0, 1, 0, 0]; m.vertices.len()],
+        weights,
+    });
+    pocket_assets::lod::build(&mut m, &pocket_assets::lod::LodOptions::default());
+    let joint = |name: &str, parent: Option<usize>, y: f32| SkeletonNode {
+        name: name.into(),
+        parent,
+        translation: [0.0, y, 0.0],
+        rotation: [0.0, 0.0, 0.0, 1.0],
+        scale: [1.0; 3],
+    };
+    ModelAsset {
+        meshes: vec![m],
+        nodes: vec![NodeData {
+            name: "column".into(),
+            mesh: 0,
+            transform: glam::Mat4::IDENTITY.to_cols_array(),
+            skin: Some(0),
+        }],
+        skeleton: vec![joint("root", None, 0.0), joint("bend", Some(0), 2.0)],
+        skins: vec![SkinAsset {
+            joints: vec![0, 1],
+            inverse_bind: vec![
+                glam::Mat4::IDENTITY.to_cols_array(),
+                glam::Mat4::from_translation(Vec3::new(0.0, -2.0, 0.0)).to_cols_array(),
+            ],
+        }],
+        animations: vec![AnimationClip {
+            name: "bent".into(),
+            duration: 1.0,
+            channels: vec![Channel {
+                node: 1,
+                path: ChannelPath::Rotation,
+                interpolation: Interpolation::Linear,
+                times: vec![0.0],
+                values: vec![Quat::from_rotation_z(std::f32::consts::FRAC_PI_2).to_array()],
+            }],
+        }],
+        ..ModelAsset::default()
+    }
+}
+
+/// `n` entities of [`bent_model`] (register it under [`BENT_MODEL`] first), `spacing` metres apart
+/// along +x from `at`, ids from `first_id`: each gets its own skinned copy of the column and of
+/// its levels (meshes.rs `add_dynamic`).
+pub fn bent_columns(n: u32, at: Vec3, spacing: f32, first_id: u64) -> Vec<InstanceUpdate> {
+    (0..n)
+        .map(|i| InstanceUpdate {
+            id: first_id + u64::from(i),
+            pose: Some(Pose {
+                position: (at + Vec3::X * spacing * i as f32).to_array(),
+                rotation: [0.0, 0.0, 0.0, 1.0],
+                scale: [1.0; 3],
+            }),
+            look: Some(Look {
+                mesh: BENT_MODEL.into(),
+                material: String::new(),
+                color: [0.7, 0.62, 0.5, 1.0],
+                metallic: 0.0,
+                roughness: 0.8,
+                transmission: None,
+                ior: None,
+                emissive: [0.0; 3],
+                cast_shadows: true,
+                visible: true,
+            }),
+            anim: None,
+        })
+        .collect()
+}

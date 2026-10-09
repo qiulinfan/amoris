@@ -958,6 +958,13 @@ impl Renderer {
         self.lod
     }
 
+    /// Each shadow cascade's texel in metres when drawn from `cam` at this renderer's size: a
+    /// cascade draws the coarsest level whose error is at most `shadow_texels` of them (lod.rs).
+    pub fn cascade_texels(&self, cam: &CameraState) -> [f32; CASCADES] {
+        let aspect = self.targets.width as f32 / self.targets.height.max(1) as f32;
+        shadows::cascades(cam, aspect, Vec3::Y, SHADOW_DISTANCE).texel
+    }
+
     /// The bytes the views' lists need for the current regions: the camera's `drawn` records (48
     /// bytes per entry) and the cascades' `visible` indices (4 bytes per entry and view). Levels of
     /// detail multiply a mesh's entries by its levels (docs/spec/lod.md 5).
