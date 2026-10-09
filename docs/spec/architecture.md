@@ -316,9 +316,20 @@ written as that specification names them.
 - **Build script**: `build.rs` computes `EngineVersion.source` (versions.md 3.1) over the files
   `git ls-files --cached --others --exclude-standard` lists under `crates/` and
   `shared/contract/rust/`, the workspace `Cargo.toml` and `Cargo.lock`, `rust-toolchain.toml`,
-  `.cargo/config.toml` and `third_party/` (the vendored QuickJS-ng and its patches, 7.5), and sets
-  `commit`, `profile` and `c_compiler` (from `POCKET_QJS_CC`, 7.3). `pocket-web`'s build script runs
-  the same function, so both report one `source` (versions.md V9).
+  `.cargo/config.toml` and all of `third_party/` (the vendored QuickJS-ng, its patches and the older
+  `vendor.py`, 7.5), and sets `commit`, `profile` and `c_compiler` (from `POCKET_QJS_CC`,
+  7.3). `pocket-web`'s build script runs the same function, so both report one `source`
+  (versions.md V9). The function lives in `crates/engine_version.rs`, beside the crates and in
+  none (2026-10-09, Pioneer): each build script includes it with `#[path]`, so neither reaches into
+  the other crate's directory and `tools/crate-graph.toml` has no edge to miss. It used to be
+  `pocket-app`'s `build/engine_version.rs`, which `pocket-web` included across crates, an edge the
+  graph could not see; a crate of its own would have made the edge visible at the cost of a crate
+  for one build-time file. It sits under `crates/` (a file: the workspace's `crates/*` takes
+  directories only), so the source hash covers it. The script reruns when the listed files can
+  change (the watched directories, the root `.gitignore`, `info/exclude`) and when the commit can:
+  `HEAD`, the branch's loose ref, `packed-refs`, and while the branch is packed the directory its
+  next loose ref appears in, all resolved through `git rev-parse --git-path`, which finds a
+  worktree's own `HEAD` and the common directory's refs.
 - **Must not**: hold logic another crate owns; it wires.
 - **wasm32**: not built; `pocket-web` is its browser counterpart.
 
@@ -736,9 +747,9 @@ step can confirm it or change the layout.
     `pocket-persist`, so `pocket-check` re-exports the `Snapshot`, `WorldHash` and `TickRef` its
     child protocol carries. Slice 1's subcommands are `run --headless`, `check`, `replay --verify`
     and `hashes` (a run's world hash after every tick as JSON, for the web build to compare).
-    2026-10-09 (Pioneer): the build script of 4.13 is built.
-    `crates/pocket-app/build/engine_version.rs` computes `source`, `commit`, `target`, `profile`
-    and `contract` and is run by `pocket-app`'s and `pocket-web`'s build scripts alike;
+    2026-10-09 (Pioneer): the build script of 4.13 is built. `crates/engine_version.rs` (first
+    `crates/pocket-app/build/engine_version.rs`, 4.13) computes `source`, `commit`, `target`,
+    `profile` and `contract` and is run by `pocket-app`'s and `pocket-web`'s build scripts alike;
     `pocket_runtime::install_engine_version!`
     installs them with `c_compiler` (`pocket_script::QJS_CC`) where `pocket` starts and where the
     web worker builds its game, and `pocket version` prints them. Tests and examples install

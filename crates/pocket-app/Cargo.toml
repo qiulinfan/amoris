@@ -32,6 +32,10 @@ ureq.workspace = true
 pocket-debug.workspace = true
 pocket-audio.workspace = true
 
-# The engine source hash of build/engine_version.rs (versions.md 3.1).
+# The engine source hash of crates/engine_version.rs (versions.md 3.1).
 [build-dependencies]
+blake3.workspace = true
+
+# tests/engine_version.rs includes crates/engine_version.rs to check what its build script watches.
+[dev-dependencies]
 blake3.workspace = true

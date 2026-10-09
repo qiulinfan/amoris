@@ -3,13 +3,19 @@
 //! compiled into the engine, not the unbuilt engine's; its commit, profile and C compiler are this
 //! build's; and a replay another engine recorded is refused by `pocket replay --verify` with
 //! `version.mismatch` naming the engine source, its compiled modules compiled again rather than
-//! reused (replay.md 2.4).
+//! reused (replay.md 2.4). The build script's file reruns it when the commit or the listed files
+//! can change, packed refs included.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use pocket_runtime::version::{BuiltEngine, QJS_CC, install_engine, source_hash};
 use serde_json::{Value, json};
+
+// The build scripts' own file, to check what it watches (`emit` and the hashing are not called).
+#[allow(dead_code)]
+#[path = "../../engine_version.rs"]
+mod engine_version;
 
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -122,4 +128,63 @@ fn a_replay_of_another_engine_is_refused() {
     assert_eq!(v["stopped"]["code"], json!("version.mismatch"), "{v}");
     let message = v["stopped"]["message"].as_str().unwrap();
     assert!(message.contains("engine source"), "{message}");
+}
+
+/// Runs git in `dir` as a test identity, and says whether it succeeded.
+fn git_in(dir: &Path, args: &[&str]) -> bool {
+    Command::new("git")
+        .args([
+            "-c",
+            "user.name=pocket",
+            "-c",
+            "user.email=pocket@example.invalid",
+        ])
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .is_ok_and(|o| o.status.success())
+}
+
+/// architecture.md 4.13: the build script reruns when the commit can change, wherever git keeps
+/// the branch. A branch `git pack-refs` packed has no loose ref, and the next commit writes one: the
+/// script then watches `packed-refs` and the directory the loose ref will appear in (a missing path
+/// cannot be watched: cargo would rerun the script on every build), and once the ref is loose
+/// again, the ref itself. The root `.gitignore`, which decides what git lists, is watched too.
+#[test]
+fn the_build_script_watches_packed_refs_and_the_gitignore() {
+    let dir = std::env::temp_dir().join(format!("pocket-engine-watch-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("crates")).unwrap();
+    if !git_in(&dir, &["init", "-q", "-b", "main"]) {
+        eprintln!("no git: what the build script watches is not checked");
+        return;
+    }
+    std::fs::write(dir.join(".gitignore"), "target/\n").unwrap();
+    let commit = |message: &str| {
+        std::fs::write(dir.join("crates/a.rs"), format!("// {message}\n")).unwrap();
+        assert!(git_in(&dir, &["add", "-A"]));
+        assert!(git_in(&dir, &["commit", "-q", "-m", message]));
+    };
+    commit("one");
+    let repo = dir.join(".git");
+    let loose = repo.join("refs/heads/main");
+    let watched = engine_version::watched(&dir);
+    for p in [
+        &repo.join("HEAD"),
+        &loose,
+        &dir.join(".gitignore"),
+        &dir.join("crates"),
+    ] {
+        assert!(watched.contains(p), "{} not in {watched:?}", p.display());
+    }
+    assert!(git_in(&dir, &["pack-refs", "--all"]));
+    assert!(!loose.exists(), "the branch was not packed");
+    let watched = engine_version::watched(&dir);
+    for p in [&repo.join("packed-refs"), &repo.join("refs/heads")] {
+        assert!(watched.contains(p), "{} not in {watched:?}", p.display());
+    }
+    assert!(watched.iter().all(|p| p.exists()), "{watched:?}");
+    commit("two");
+    assert!(engine_version::watched(&dir).contains(&loose));
+    let _ = std::fs::remove_dir_all(&dir);
 }

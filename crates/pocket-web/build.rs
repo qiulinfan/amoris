@@ -1,7 +1,8 @@
-//! The engine's identity for `EngineVersion`, computed by `pocket-app`'s own file so the native
-//! and the web build of one tree report one source (docs/spec/versions.md 3.1 and V9).
+//! The engine's identity for `EngineVersion`, computed by `crates/engine_version.rs`, which
+//! `pocket-app`'s build script runs too, so the native and the web build of one tree report one
+//! source (docs/spec/versions.md 3.1 and V9; architecture.md 4.13).
 
-#[path = "../pocket-app/build/engine_version.rs"]
+#[path = "../engine_version.rs"]
 mod engine_version;
 
 fn main() {

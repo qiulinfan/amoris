@@ -6,7 +6,7 @@
 //! - `pocket hashes <project> [--seed S] [--ticks N] [--inputs FILE]`: the hash after every tick
 //!   as JSON, which the web build compares against
 //! - `pocket version`: the engine version every replay, snapshot and save records, as JSON
-//!   (versions.md 3.1; computed by the build script, `build/engine_version.rs`)
+//!   (versions.md 3.1; computed by the build script, `crates/engine_version.rs`)
 //!
 //! - `pocket play <project>`: the game in a native window (window.rs)
 //! - `pocket serve <project> [--port 7878]`: the project's game (real time, paused) with the host's

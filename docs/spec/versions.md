@@ -64,7 +64,8 @@ impl EngineVersion { pub fn current() -> &'static EngineVersion; }
 `source` decides whether two binaries run the same code; a commit hash does not, since most
 development builds come from a working tree with uncommitted changes, and two builds of one dirty
 tree (the native and web builds of one check run) must be recognized as the same code.
-`pocket-app`'s build script computes (architecture.md 4.13)
+`pocket-app`'s and `pocket-web`'s build scripts compute, with one shared file (architecture.md
+4.13)
 
 ```text
 source = BLAKE3-derive_key("Amoris 2026-10-03 engine source v1",
@@ -73,10 +74,14 @@ source = BLAKE3-derive_key("Amoris 2026-10-03 engine source v1",
 
 over the files `git ls-files --cached --others --exclude-standard` lists under the paths compiled
 into the engine: the crates, `shared/contract/rust/`, the workspace `Cargo.toml` and `Cargo.lock`,
-`rust-toolchain.toml`, `.cargo/config.toml`, and the vendored, patched QuickJS-ng under
-`third_party/` (`rquickjs-sys-0.14.0/` and `patches/`), which is committed so that the list sees it
-(architecture.md 4.13 and 7.5 fix the list). Paths are relative to the repository root with `/`
-separators; contents are raw bytes (`.gitattributes` keeps text LF on every machine). Project
+`rust-toolchain.toml`, `.cargo/config.toml`, and everything under `third_party/`, which is committed
+so that the list sees it: today the vendored, patched QuickJS-ng (`rquickjs-sys-0.14.0/`), its
+`patches/` and the older `vendor.py` (architecture.md 4.13 and 7.5 fix the list). The whole
+directory rather than the vendored crate and its patches alone: a file there that does not reach the
+binary only makes two builds look different, which is safe (a replay refused, a bundle compiled
+again), while a crate vendored there later and left out would make two different binaries look the
+same. Native and web builds use the one list (V9). Paths are relative to the repository root with
+`/` separators; contents are raw bytes (`.gitattributes` keeps text LF on every machine). Project
 scripts and data are not in it.
 
 `target`, `profile` and `c_compiler` are recorded for diagnosis and do not decide comparability:

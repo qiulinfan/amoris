@@ -1,5 +1,5 @@
 //! The running engine's version (docs/spec/versions.md 3.1): what the top crate's build script
-//! computed (`crates/pocket-app/build/engine_version.rs`, shared by `pocket-web`), installed once
+//! computed (`crates/engine_version.rs`, run by `pocket-app` and `pocket-web`), installed once
 //! where the binary starts with [`install_engine_version!`](crate::install_engine_version), before
 //! anything records. Replays then carry the engine's `source`, `Verify` refuses a replay of another
 //! source, and a recorded bundle's compiled JavaScript is reused only from the same source
@@ -62,7 +62,7 @@ pub fn install_engine(
 }
 
 /// Installs the version the calling crate's build script emitted (the `POCKET_ENGINE_*`
-/// variables of `crates/pocket-app/build/engine_version.rs`), with the calling crate's version as
+/// variables of `crates/engine_version.rs`), with the calling crate's version as
 /// `semver`; see [`install_engine`].
 #[macro_export]
 macro_rules! install_engine_version {
