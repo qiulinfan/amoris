@@ -12,6 +12,7 @@ struct SplatParams {
     counts: vec4u,     // x: splats over all drawn clouds; y: clouds; z: key bits (32: raw float
                        // bits); w: unused
     color: vec4f,      // x: radiance multiplier
+    tiles: vec4u,      // the tile rasterizer (splat_tile.wgsl): tiles across, down; pair capacity
 };
 
 // One drawn splat after the preprocess, 24 bytes.

@@ -45,6 +45,13 @@ pub fn source(name: &str) -> String {
                 include_str!("../shaders/splat_draw.wgsl")
             );
         }
+        "splat_tile" => {
+            return format!(
+                "{COMMON}\n{SPLAT_COMMON}\n{}",
+                include_str!("../shaders/splat_tile.wgsl")
+            );
+        }
+        "splat_composite" => include_str!("../shaders/splat_composite.wgsl"),
         other => panic!("no shader named {other}"),
     };
     format!("{COMMON}\n{body}")

@@ -7,7 +7,11 @@
 //! `cargo run --release -p pocket-render --example splats -- [--count N] [--ply PATH [--flip]
 //!  [--scale S]] [--save PATH.ply] [--capture OUT.png [--angle DEG] [--distance F] [--look X,Y,Z]]
 //!  [--bench FRAMES] [--headless-bench FRAMES] [--size WxH] [--key-bits 16|24|32] [--radiance R]
-//!  [--no-meshes] [--orbit] [--vsync]`
+//!  [--raster quad|tile] [--compare PREFIX] [--no-meshes] [--orbit] [--vsync]`
+//!
+//! `--raster` picks the quad draw or the compute tile rasterizer (default: `POCKET_SPLAT_RASTER`,
+//! else quads). `--compare PREFIX` captures the same view with both and writes `PREFIX_quad.png`,
+//! `PREFIX_tile.png`, `PREFIX_diff.png` (the absolute difference, x8) and prints the difference.
 //!
 //! Without `--capture` or a benchmark it opens a window with a fly camera (right mouse to look,
 //! WASD/QE to move); `--orbit` turns the camera around the scene instead.
@@ -23,7 +27,7 @@ use pocket_assets::frame::{
     EnvironmentView, InstanceUpdate, LightKindView, LightView, Look, Pose, RenderFrame, SplatView,
 };
 use pocket_render::app::{Host, RunOptions, run};
-use pocket_render::splat::{RawSplat, SplatCloud, loader};
+use pocket_render::splat::{RawSplat, SplatCloud, SplatRaster, loader};
 use pocket_render::{BackendChoice, CameraState, Renderer};
 
 fn arg(name: &str) -> Option<String> {
@@ -662,6 +666,7 @@ struct Garden {
     clouds: Vec<(String, SplatCloud)>,
     key_bits: u32,
     radiance: f32,
+    raster: SplatRaster,
     orbit: bool,
     /// Orbit center, radius, height.
     focus: (Vec3, f32, f32),
@@ -685,6 +690,7 @@ impl Host for Garden {
         }
         r.splats.key_bits = self.key_bits;
         r.splats.radiance = self.radiance;
+        r.splats.raster = self.raster;
         if let Some(f) = self.frame.take() {
             r.apply(f, now);
         }
@@ -948,40 +954,92 @@ fn main() {
     let radiance = arg("--radiance")
         .and_then(|s| s.parse().ok())
         .unwrap_or(1.6);
-    let host = Garden {
+    let raster = match arg("--raster").as_deref() {
+        Some("tile") | Some("tiles") => SplatRaster::Tiles,
+        Some("quad") | Some("quads") => SplatRaster::Quads,
+        _ => SplatRaster::from_env(SplatRaster::Quads),
+    };
+    let mut host = Garden {
         frame: Some(scene_frame(meshes, ply)),
         clouds,
         key_bits,
         radiance,
+        raster,
         orbit: true,
         focus,
         angle,
         frames: 0,
     };
+    if let Some(d) = arg("--distance").and_then(|s| s.parse::<f32>().ok()) {
+        host.focus.1 *= d;
+        host.focus.2 *= d;
+    }
+    if let Some(l) = arg("--look").and_then(|s| {
+        let v: Vec<f32> = s.split(',').filter_map(|x| x.parse().ok()).collect();
+        (v.len() == 3).then(|| Vec3::new(v[0], v[1], v[2]))
+    }) {
+        host.focus.0 = l;
+    }
 
-    if let Some(path) = arg("--capture") {
+    let compare = arg("--compare");
+    if let Some(path) = arg("--capture").or(compare.clone()) {
         let gpu = pocket_render::Gpu::headless(BackendChoice::from_env()).expect("gpu");
         let mut r = Renderer::new(&gpu, wgpu::TextureFormat::Rgba8UnormSrgb, size.0, size.1);
         let mut host = host;
         host.orbit = false;
-        if let Some(d) = arg("--distance").and_then(|s| s.parse::<f32>().ok()) {
-            host.focus.1 *= d;
-            host.focus.2 *= d;
-        }
-        if let Some(l) = arg("--look").and_then(|s| {
-            let v: Vec<f32> = s.split(',').filter_map(|x| x.parse().ok()).collect();
-            (v.len() == 3).then(|| Vec3::new(v[0], v[1], v[2]))
-        }) {
-            host.focus.0 = l;
-        }
         r.set_camera_override(Some(host.camera()));
-        for i in 0..5 {
-            host.update(&mut r, i as f64 / 60.0);
-            let _ = r.capture_rgba(i as f64 / 60.0);
+        let shoot = |host: &mut Garden, r: &mut Renderer| {
+            // Several frames: assets upload, and the readbacks that size buffers arrive late.
+            for i in 0..8 {
+                host.update(r, i as f64 / 60.0);
+                let _ = r.capture_rgba(i as f64 / 60.0);
+            }
+            r.capture_rgba(0.1)
+        };
+        if compare.is_none() {
+            let (w, h, px) = shoot(&mut host, &mut r);
+            image::save_buffer(&path, &px, w, h, image::ColorType::Rgba8).expect("png");
+            println!("saved {path} ({w}x{h}); {:?}; {:?}", r.last, r.splats.stats);
+            return;
         }
-        let (w, h, px) = r.capture_rgba(0.1);
-        image::save_buffer(&path, &px, w, h, image::ColorType::Rgba8).expect("png");
-        println!("saved {path} ({w}x{h}); {:?}; {:?}", r.last, r.splats.stats);
+        host.raster = SplatRaster::Quads;
+        let (w, h, quad) = shoot(&mut host, &mut r);
+        host.raster = SplatRaster::Tiles;
+        let (_, _, tile) = shoot(&mut host, &mut r);
+        println!("{:?}", r.splats.stats);
+        let save = |suffix: &str, px: &[u8]| {
+            let p = format!("{path}_{suffix}.png");
+            image::save_buffer(&p, px, w, h, image::ColorType::Rgba8).expect("png");
+            p
+        };
+        save("quad", &quad);
+        save("tile", &tile);
+        let mut diff = vec![255u8; quad.len()];
+        let (mut sum, mut sq, mut max, mut over2, mut over8) = (0u64, 0f64, 0u8, 0u64, 0u64);
+        for (i, (a, b)) in quad.chunks_exact(4).zip(tile.chunks_exact(4)).enumerate() {
+            let mut px_max = 0u8;
+            for c in 0..3 {
+                let d = a[c].abs_diff(b[c]);
+                sum += u64::from(d);
+                sq += f64::from(d) * f64::from(d);
+                px_max = px_max.max(d);
+                diff[i * 4 + c] = d.saturating_mul(8);
+            }
+            max = max.max(px_max);
+            over2 += u64::from(px_max > 2);
+            over8 += u64::from(px_max > 8);
+        }
+        let n = (w * h) as f64;
+        let mse = sq / (n * 3.0);
+        save("diff", &diff);
+        println!(
+            "compare {w}x{h}: mean abs diff {:.4} of 255, max {max}, PSNR {:.2} dB, pixels over 2: \
+             {:.3}%, over 8: {:.3}%",
+            sum as f64 / (n * 3.0),
+            10.0 * (255.0f64 * 255.0 / mse.max(1e-12)).log10(),
+            over2 as f64 / n * 100.0,
+            over8 as f64 / n * 100.0
+        );
         return;
     }
     if let Some(frames) = arg("--headless-bench").and_then(|s| s.parse::<u32>().ok()) {
@@ -989,7 +1047,6 @@ fn main() {
         return;
     }
     let bench: Option<u32> = arg("--bench").and_then(|s| s.parse().ok());
-    let mut host = host;
     host.orbit = bench.is_some() || flag("--orbit");
     let fly = (!host.orbit).then(|| host.camera());
     let options = RunOptions {
@@ -1030,12 +1087,13 @@ fn headless_bench(mut host: Garden, size: (u32, u32), frames: u32) {
     });
     let view = tex.create_view(&Default::default());
     println!(
-        "{} on {}, {}x{}, key bits {}",
+        "{} on {}, {}x{}, key bits {}, {:?}",
         gpu.backend_name(),
         gpu.info.name,
         size.0,
         size.1,
-        host.key_bits
+        host.key_bits,
+        host.raster
     );
     for draw in [true, false] {
         r.splats.draw_enabled = draw;
@@ -1078,6 +1136,17 @@ fn headless_bench(mut host: Garden, size: (u32, u32), frames: u32) {
         );
         for (l, s) in &sums {
             println!("  {l:<18} {:.3} ms", s / n);
+        }
+        let st = &r.splats.stats;
+        if let Some(p) = st.tile_pairs {
+            println!(
+                "  tile pairs {p} ({:.2} per visible splat), capacity {}, dropped {}; splat GPU \
+                 buffers {:.0} MB",
+                p as f64 / f64::from(st.visible.unwrap_or(1).max(1)),
+                st.pair_capacity,
+                st.tile_dropped,
+                st.gpu_bytes as f64 / 1e6
+            );
         }
     }
 }

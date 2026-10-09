@@ -23,6 +23,7 @@
 pub mod cloud;
 pub mod loader;
 pub mod sort;
+pub mod tile;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -49,6 +50,27 @@ const DRAW_OFFSET: u64 = 32;
 pub(crate) const BATCH: u32 = 16383;
 const PROJECTED_BYTES: u64 = 24;
 
+/// How the sorted splats are drawn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SplatRaster {
+    /// One alpha-blended quad per splat, back to front, through the fixed-function blender.
+    Quads,
+    /// The compute tile rasterizer (tile.rs): per 16x16-pixel tile, front to back with early
+    /// termination, then composited.
+    Tiles,
+}
+
+impl SplatRaster {
+    /// From `POCKET_SPLAT_RASTER` (`tile`, `tiles`, `quad`, `quads`); `default` otherwise.
+    pub fn from_env(default: SplatRaster) -> SplatRaster {
+        match std::env::var("POCKET_SPLAT_RASTER").as_deref() {
+            Ok("tile") | Ok("tiles") => SplatRaster::Tiles,
+            Ok("quad") | Ok("quads") => SplatRaster::Quads,
+            _ => default,
+        }
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Default, Pod, Zeroable)]
 struct ParamsGpu {
@@ -57,6 +79,7 @@ struct ParamsGpu {
     depth: [f32; 4],
     counts: [u32; 4],
     color: [f32; 4],
+    tiles: [u32; 4],
 }
 
 /// A drawn cloud (matches `Cloud` in splat_preprocess.wgsl, 112 bytes).
@@ -100,6 +123,13 @@ pub struct SplatStats {
     pub quad_pixels: Option<u64>,
     /// Bytes of GPU buffers the splats hold.
     pub gpu_bytes: u64,
+    /// The tile rasterizer's (tile, splat) pairs the last read frame wanted, read back with
+    /// `visible`, and the capacity of its pair buffers.
+    pub tile_pairs: Option<u64>,
+    pub pair_capacity: u32,
+    /// Pairs the tile rasterizer dropped (the farthest splats' tiles) because the wanted count
+    /// exceeded what the device can bind; 0 when everything was drawn.
+    pub tile_dropped: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -161,6 +191,13 @@ pub struct Splats {
     depth: Option<DepthCopy>,
     sort: RadixSort,
     binds: Option<Binds>,
+    /// Counts the rebinding of the buffers above (the tile rasterizer's bindings follow it).
+    generation: u64,
+    tiles: tile::TileRaster,
+    /// The rasterizer of the frame being prepared.
+    drawn_with: SplatRaster,
+    /// Whether the current overflow of the tile pairs was logged.
+    overflow_logged: bool,
     active: bool,
 
     /// Sort key width: 16 or 24 (log depth over the drawn clouds' range, 2 or 3 sort passes) or 32
@@ -170,10 +207,12 @@ pub struct Splats {
     pub radiance: f32,
     /// Whether the draw runs (benchmarks turn it off to time the rest).
     pub draw_enabled: bool,
+    /// Quads or tiles (default: quads, or `POCKET_SPLAT_RASTER`).
+    pub raster: SplatRaster,
     pub stats: SplatStats,
 }
 
-fn buffer(
+pub(crate) fn buffer(
     device: &wgpu::Device,
     label: &str,
     size: u64,
@@ -187,7 +226,7 @@ fn buffer(
     })
 }
 
-fn storage_usage() -> wgpu::BufferUsages {
+pub(crate) fn storage_usage() -> wgpu::BufferUsages {
     wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC
 }
 
@@ -378,7 +417,7 @@ impl Splats {
             readback: buffer(
                 device,
                 "splat count readback",
-                16,
+                32,
                 wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             ),
             readback_state: Arc::new(Mutex::new(Readback::Idle)),
@@ -391,10 +430,15 @@ impl Splats {
             pre_layout,
             draw_layout,
             binds: None,
+            generation: 0,
+            tiles: tile::TileRaster::new(gpu),
+            drawn_with: SplatRaster::Quads,
+            overflow_logged: false,
             active: false,
             key_bits: 24,
             radiance: 1.0,
             draw_enabled: true,
+            raster: SplatRaster::from_env(SplatRaster::Quads),
             stats: SplatStats::default(),
             gpu: gpu.clone(),
         }
@@ -405,6 +449,13 @@ impl Splats {
     pub fn set_root(&mut self, root: std::path::PathBuf) {
         self.files = Some(loader::SplatFiles::new(root));
         self.requested.retain(|n| self.assets.contains_key(n));
+    }
+
+    /// Caps the tile rasterizer's (tile, splat) pairs below what the device binds (`None`: the
+    /// device's limit); beyond it the farthest splats' pairs are dropped and counted in
+    /// [`SplatStats::tile_dropped`].
+    pub fn limit_tile_pairs(&mut self, limit: Option<u32>) {
+        self.tiles.limit_pairs(limit);
     }
 
     /// Whether a cloud named `name` is in GPU memory.
@@ -549,9 +600,17 @@ impl Splats {
             }
             Readback::Ready => {
                 if let Ok(data) = self.readback.slice(..).get_mapped_range() {
-                    let v = bytemuck::cast_slice::<u8, u32>(&data);
+                    // Decoded, not cast: mapped memory in the browser has no alignment guarantee.
+                    let v: Vec<u32> = data
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
+                        .map(|b| u32::from_le_bytes(*b))
+                        .collect();
                     self.stats.visible = Some(v[0]);
                     self.stats.quad_pixels = Some(u64::from(v[1]) * 16);
+                    // The tile control's [1], when the frame drew tiles (0 otherwise).
+                    self.stats.tile_pairs = (v[5] > 0).then_some(u64::from(v[5]));
                 }
                 self.readback.unmap();
                 *self
@@ -634,7 +693,8 @@ impl Splats {
             sort,
             draw: [draw(0), draw(1)],
         });
-        let bytes = [
+        self.generation += 1;
+        let bytes: u64 = [
             &self.splat_buf,
             &self.sh_buf,
             &self.projected,
@@ -647,7 +707,7 @@ impl Splats {
         .iter()
         .map(|b| b.size())
         .sum();
-        self.stats.gpu_bytes = bytes;
+        self.stats.gpu_bytes = bytes + self.tiles.gpu_bytes();
     }
 
     fn sort_passes(&self) -> u32 {
@@ -757,6 +817,32 @@ impl Splats {
         }
         let total = total as u32;
         self.ensure_capacity(total);
+        self.drawn_with = self.raster;
+        let tiles = self.drawn_with == SplatRaster::Tiles;
+        if tiles {
+            let wanted = self.stats.tile_pairs.unwrap_or(0);
+            if self
+                .tiles
+                .ensure(self.capacity, wanted + wanted / 4, (w, h))
+            {
+                // Rebinding recounts the GPU bytes; the tile bindings follow the generation.
+                self.binds = None;
+            }
+            self.stats.pair_capacity = self.tiles.pair_capacity;
+            self.stats.tile_dropped = wanted.saturating_sub(u64::from(self.tiles.pair_capacity));
+            let at_limit = self.tiles.pair_capacity >= self.tiles.pair_limit;
+            if self.stats.tile_dropped == 0 {
+                self.overflow_logged = false;
+            } else if at_limit && !self.overflow_logged {
+                self.overflow_logged = true;
+                log::warn!(
+                    "splats: the tile rasterizer wants {wanted} pairs, the device binds {}: the \
+                     farthest splats' {} are dropped",
+                    self.tiles.pair_limit,
+                    self.stats.tile_dropped
+                );
+            }
+        }
         let device = self.gpu.device.clone();
         let queue = self.gpu.queue.clone();
         let cb = (clouds.len() * std::mem::size_of::<CloudGpu>()) as u64;
@@ -791,6 +877,12 @@ impl Splats {
                 0,
             ],
             color: [self.radiance, 0.0, 0.0, 0.0],
+            tiles: [
+                self.tiles.tiles.0,
+                self.tiles.tiles.1,
+                self.tiles.pair_capacity,
+                0,
+            ],
         };
         queue.write_buffer(&self.params_buf, 0, bytemuck::bytes_of(&params));
         if self.binds.is_none() {
@@ -827,12 +919,29 @@ impl Splats {
             self.sort
                 .encode(&mut pass, &binds.sort, self.sort_passes(), &self.control);
         }
+        if tiles && self.draw_enabled {
+            let s = (self.sort_passes() % 2) as usize;
+            let inputs = tile::Inputs {
+                params: &self.params_buf,
+                control: &self.control,
+                keys: &self.keys[s],
+                vals: &self.vals[s],
+                projected: &self.projected,
+            };
+            self.tiles
+                .prepare(enc, profiler, &self.sort, &inputs, self.generation);
+        }
         let mut st = self
             .readback_state
             .lock()
             .unwrap_or_else(|p| p.into_inner());
         if *st == Readback::Idle {
             enc.copy_buffer_to_buffer(&self.control, 0, &self.readback, 0, 16);
+            if tiles && self.draw_enabled {
+                enc.copy_buffer_to_buffer(&self.tiles.control, 0, &self.readback, 16, 16);
+            } else {
+                enc.clear_buffer(&self.readback, 16, Some(16));
+            }
             *st = Readback::Copied;
         }
         drop(st);
@@ -853,6 +962,10 @@ impl Splats {
         targets: &Targets,
     ) {
         if !self.active() || self.binds.is_none() {
+            return;
+        }
+        if self.drawn_with == SplatRaster::Tiles {
+            self.tiles.draw(enc, profiler, targets, &self.params_buf);
             return;
         }
         if self
