@@ -180,6 +180,12 @@ The caller is the command's source: `Source::Player(i)` is a player at the decla
 `perception.omniscient_forbidden`); every other source is a developer, who names a seat (or the only
 one is meant) and may ask for the marked omniscient view.
 
+The push cursor is the seat's own (perception.md, Push). The answers of `player.act`, `player.wait`
+and `player.continue` carry the seat's events delta since it, and only the seat's player moves it:
+a developer who names the seat reads the same delta and leaves the cursor where the seat's calls
+put it, so watching or driving a seat never takes events from the player who plays it
+(`pocket_interface::time::session::push_delta`; before 2026-10-09 a developer's call consumed them).
+
 **The role is enforced by the engine** (charter 5.1, the Pioneer note after review). In a game that
 declares players, a player source sends the `player.*` commands alone; every other command is a
 developer's and is refused with `permission.denied` (`{request, role: "player", needs:

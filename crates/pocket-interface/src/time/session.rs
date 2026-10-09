@@ -360,24 +360,7 @@ pub(super) fn finish(
     answer.waiting_for = ctl.waiting_for(Tick(answer.tick.0 + 1));
     let mut v = answer.to_json();
     if let Some(seat) = seat {
-        let since = ctl.push.get(seat).copied().unwrap_or(0);
-        let limit = usize::try_from(budget_tokens.unwrap_or(400)).unwrap_or(usize::MAX) * 4;
-        if let Ok(d) = crate::perception::delta(
-            world,
-            seat,
-            since,
-            crate::projection::Projection::Json,
-            limit,
-        ) {
-            v["events"] = Value::Array(
-                d.events
-                    .iter()
-                    .filter_map(|e| serde_json::from_str(e).ok())
-                    .collect(),
-            );
-            v["cursor"] = json!(d.cursor);
-            ctl.push.insert(seat.to_owned(), d.cursor);
-        }
+        push_delta(world, ctl, caller, seat, budget_tokens, &mut v);
     }
     if let Some(o) = observe {
         v["observation"] = observation(world, ctl, caller, seat, o)?;
@@ -799,23 +782,42 @@ pub fn act(
     }
     warnings.extend(ctl.take_warnings(&seat));
     v["warnings"] = serde_json::to_value(&warnings).unwrap_or(Value::Null);
-    let since = ctl.push.get(&seat).copied().unwrap_or(0);
+    push_delta(t.world(), ctl, caller, &seat, budget, &mut v);
+    Ok((v, done))
+}
+
+/// The events delta of `seat` since its push cursor within `budget` (default 400) tokens, into `v`
+/// as `events` and `cursor` (perception.md, Push). The cursor is the seat's: it moves past what was
+/// shown only when the seat's own player called. A developer who names the seat reads the same
+/// delta and leaves the cursor where the seat's calls put it, so the player still receives those
+/// events.
+pub fn push_delta(
+    world: &World,
+    ctl: &mut Controller,
+    caller: &Caller,
+    seat: &str,
+    budget: Option<u32>,
+    v: &mut Value,
+) {
+    let since = ctl.push.get(seat).copied().unwrap_or(0);
     let limit = usize::try_from(budget.unwrap_or(400)).unwrap_or(usize::MAX) * 4;
-    if let Ok(d) = crate::perception::delta(
-        t.world(),
-        &seat,
+    let Ok(d) = crate::perception::delta(
+        world,
+        seat,
         since,
         crate::projection::Projection::Json,
         limit,
-    ) {
-        v["events"] = Value::Array(
-            d.events
-                .iter()
-                .filter_map(|e| serde_json::from_str(e).ok())
-                .collect(),
-        );
-        v["cursor"] = json!(d.cursor);
-        ctl.push.insert(seat, d.cursor);
+    ) else {
+        return;
+    };
+    v["events"] = Value::Array(
+        d.events
+            .iter()
+            .filter_map(|e| serde_json::from_str(e).ok())
+            .collect(),
+    );
+    v["cursor"] = json!(d.cursor);
+    if matches!(caller, Caller::Player { seat: own } if own == seat) {
+        ctl.push.insert(seat.to_owned(), d.cursor);
     }
-    Ok((v, done))
 }

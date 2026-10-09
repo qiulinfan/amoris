@@ -896,10 +896,12 @@ pub fn act_apply(
 
 /// The session's part of an applied `player.act`: the seat was driven (idle restarts), `resume`
 /// answers its pending decision, its later warnings, and the events delta since its push cursor
-/// (perception.md, Push). The answer is actions.md's `ActResult`.
+/// (perception.md, Push), which moves only for the seat's own player (`push_delta`). The answer is
+/// actions.md's `ActResult`.
 pub fn act_answer(
     world: &World,
     ctl: &mut Controller,
+    source: Source,
     applied: &Value,
     raw: &Value,
     now_ms: f64,
@@ -921,31 +923,9 @@ pub fn act_answer(
     let tick = world.resource::<SimClock>().tick.0;
     let mut v = json!({"tick": tick, "applied_at": applied_at.0, "pending": false,
                        "outcomes": applied["outcomes"], "warnings": warnings});
-    push_events(world, ctl, &seat, budget, &mut v);
+    let who = caller(world, source).unwrap_or(Caller::Developer);
+    pocket_interface::time::session::push_delta(world, ctl, &who, &seat, budget, &mut v);
     v
-}
-
-/// The events delta of `seat` since its push cursor within `budget` (default 400) tokens, into
-/// `v` as `events` and `cursor`; the cursor moves past what was shown.
-fn push_events(
-    world: &World,
-    ctl: &mut Controller,
-    seat: &str,
-    budget: Option<u32>,
-    v: &mut Value,
-) {
-    let since = ctl.push.get(seat).copied().unwrap_or(0);
-    let limit = usize::try_from(budget.unwrap_or(400)).unwrap_or(usize::MAX) * 4;
-    if let Ok(d) = perception::delta(world, seat, since, Projection::Json, limit) {
-        v["events"] = Value::Array(
-            d.events
-                .iter()
-                .filter_map(|e| serde_json::from_str(e).ok())
-                .collect(),
-        );
-        v["cursor"] = json!(d.cursor);
-        ctl.push.insert(seat.to_owned(), d.cursor);
-    }
 }
 
 /// `player.wait` (time.md, Requests, `wait`; charter 5.1, Pioneer): let time pass for the seat

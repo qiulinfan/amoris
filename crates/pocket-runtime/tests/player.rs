@@ -237,6 +237,45 @@ fn a_game_without_players_says_so() {
     });
 }
 
+/// perception.md, Push; player.md 7: the push cursor is the seat's own. A developer's `player.wait`
+/// and `player.act` naming the seat carry the events delta since it and leave it where it was, so
+/// the player's next call still receives those events; the player's own calls move it.
+#[test]
+fn a_developer_naming_a_seat_leaves_its_push_cursor() {
+    common::big_stack(|| {
+        let mut g = Game::new(course(), 1).unwrap_or_else(|e| panic!("{e:#?}"));
+        let mut seq = 0;
+        let mut call = |g: &mut Game, source: Source, name: &str, params: Value| {
+            seq += 1;
+            g.apply(&Command::new(source, seq, name, params))
+                .unwrap_or_else(|e| panic!("{name}: {e:#?}"))
+        };
+        let (dev, player) = (Source::Developer(0), Source::Player(0));
+        let sighted = |v: &Value| {
+            v["events"]
+                .as_array()
+                .is_some_and(|e| e.iter().any(|e| e["kind"] == "sighted"))
+        };
+        let w = call(&mut g, dev, "player.wait", json!({"seat": "skipper"}));
+        assert_eq!(w["tick"], json!(1), "{w:#}");
+        assert!(sighted(&w) && w["cursor"].as_u64() > Some(0), "{w:#}");
+        let s = call(&mut g, player, "player.session", json!({}));
+        assert_eq!(s["cursor"], json!(0), "a developer's wait moved it: {s:#}");
+        let act = json!({"seat": "skipper", "actions": [{"do": "start", "intent": "sail_to",
+                         "target": "Mark1", "params": {"arrive_m": 8}}]});
+        let a = call(&mut g, dev, "player.act", act);
+        assert!(sighted(&a), "{a:#}");
+        let s = call(&mut g, player, "player.session", json!({}));
+        assert_eq!(s["cursor"], json!(0), "a developer's act moved it: {s:#}");
+        // The player's own call carries the sightings and moves the cursor past them.
+        let w = call(&mut g, player, "player.wait", json!({"ticks": 1}));
+        assert!(sighted(&w), "{w:#}");
+        let s = call(&mut g, player, "player.session", json!({}));
+        assert_eq!(s["cursor"], w["cursor"], "{s:#}");
+        assert!(s["cursor"].as_u64() > Some(0), "{s:#}");
+    });
+}
+
 /// `player.act` validates the whole call before anything of it applies (actions.md, Validation
 /// and atomicity): one bad action refuses the call and the world hash is unchanged.
 #[test]

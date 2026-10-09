@@ -453,6 +453,7 @@ impl Game {
                 Ok(crate::player::act_answer(
                     world,
                     &mut self.player,
+                    cmd.source,
                     &applied,
                     &cmd.params,
                     now,
