@@ -562,10 +562,13 @@ impl DebugHub {
             }
             "debug.wait" => {
                 let p: WaitParams = decode(params, method)?;
-                if !self.is_paused() {
-                    let before = self.state().pauses;
-                    self.wait_pause(before, wait_ms(p.timeout_ms, DEFAULT_WAIT_MS));
-                }
+                // Read under the state's lock: a pause published since the last resume (whether
+                // or not its `paused` flag is up yet) is the one to answer with.
+                let before = {
+                    let st = self.state();
+                    st.pauses - u64::from(st.pause.is_some())
+                };
+                self.wait_pause(before, wait_ms(p.timeout_ms, DEFAULT_WAIT_MS));
                 Ok(self.state_json())
             }
             "debug.rewind" => Err(problem(

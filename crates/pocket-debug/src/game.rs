@@ -397,11 +397,9 @@ impl GameHook {
         unsafe { set_tracing(ctx, false) };
         while self.rx.try_recv().is_ok() {} // requests from before this pause
         let scripts: Vec<Arc<Script>> = self.local.borrow().scripts.clone();
-        let serial = {
-            let mut st = lock(&self.inner.state);
-            st.pauses += 1;
-            st.pauses
-        };
+        // The count is raised when the pause is published (below), not now: a `debug.wait` that
+        // reads it while the frames are captured must still wait for this pause.
+        let serial = lock(&self.inner.state).pauses + 1;
         let mut insp = unsafe { Inspector::new(ctx, serial) };
         let lookup = |module: &str| scripts.iter().find(|s| s.module == module).cloned();
         let (frames, cdp_frames) = match &top {
@@ -439,6 +437,7 @@ impl GameHook {
         let depth = unsafe { stack_depth(ctx) };
         {
             let mut st = lock(&self.inner.state);
+            st.pauses = serial;
             st.pause = Some(pause.clone());
         }
         let loop_state = lock(&self.inner.loop_state).clone();
