@@ -47,6 +47,20 @@ AGENTS.md rule 6 wraps documentation at 100 columns, and nothing checked it: `do
 `tools/wrap_docs.py --check` over the Markdown under `docs/` and `shared/`, each file it would
 change being `docs.unwrapped {path}`; no Python is `check.tool_missing`.
 
+Amended 2026-10-09 (Pioneer, the xtask track). The rule is now AGENTS.md rule 7 (rule 6 became the
+language rule), and the step checks a width, not a canonical form: `--check` had demanded the exact
+greedy refill of every paragraph, which 67 of the 85 files failed although most were wrapped by
+hand below 100 columns, and it counted code points and joined lines with spaces, so Chinese prose
+(two columns a character, no spaces) became one unbreakable line. `wrap_docs.py` now refills only
+a paragraph or list item that has a line wider than 100 display columns (East Asian wide characters
+count two), breaks Chinese between two CJK characters (never before closing or after opening
+punctuation) and joins such a break back without a space, keeps hard line breaks and link
+definitions, and has a `--selftest`. The purpose is unchanged: a search returns a line, not a
+paragraph. The step reads `docs/` only, without `docs/evidence/`, whose transcripts are kept as
+recorded; `shared/` is the contract's text, which changes only through its record
+(`gen.shared_modified`), so this step does not reformat it. A paragraph with an unbreakable token
+wider than the limit (a long command in a code span) passes once it is refilled.
+
 ## 10. `gen` without the build
 
 The generators that need no engine build run even when `build` failed: every `clippy.toml` from
@@ -85,7 +99,9 @@ the step reads (a stale `Cargo.lock` under `--locked`, a failing build script, a
 and the warning `check.not_implemented {what}`, given while `third_party/rquickjs-sys-0.14.0/`
 exists and `cargo xtask vendor --check` does not (`deps.vendor_stale` is not checked yet). Exit code
 2's report holds one step named `check` with the refusal. The human form labels an inconclusive step
-`INCO`.
+`INCO`. 2026-10-09 (Pioneer): `deps.vendor_stale` is checked (13), and the warning
+`deps.vendor_unchecked {tail}` replaces `check.not_implemented` when the pinned crate is not in
+cargo's cache.
 
 ## 13. What `deps` reads
 
@@ -94,6 +110,15 @@ crates and features from `cargo metadata --filter-platform` for the host and the
 `tools/crate-graph.toml` lists every crate of architecture.md 5, those not created yet with
 `planned = true`, so their absence is not `deps.crate_missing`. `CFLAGS` in the environment is
 checked too, since cargo's `[env]` does not override a variable that is already set.
+
+2026-10-09 (Pioneer): the vendored QuickJS-ng is compared too. Until `cargo xtask vendor` exists,
+`deps` runs `python third_party/vendor.py --check --offline`, which rebuilds the directory from the
+pinned crate and `third_party/patches/` into a temporary directory (about 7 s) and names each file
+that differs, `deps.vendor_stale {path}`. `--offline` takes the crate from cargo's cache only, since
+the check fetches nothing; when it is not there (a fresh machine: the `[patch]` means cargo never
+downloads it) the step passes with the warning `deps.vendor_unchecked`, and one
+`python third_party/vendor.py --check` with the network fills the cache. No Python is
+`check.tool_missing`, as for `docs`.
 
 ## 14. Running `xtask` while a manifest is broken
 
@@ -247,3 +272,31 @@ module built without the canonical sort still matched the native chain on every 
 scratch `expected.json` holding two copies of the sailing workload as controls, one with a native
 hash changed, reported that one `caught` and the other not, which the step's judgement turned into
 `<dir>/control_caught` and `check.control_passed`.
+
+## 23. A full run on Windows (Pioneer, 2026-10-09)
+
+With every tool of 6.3, 6.4 and 22 installed on R1 (the pinned LLVM, wasm-bindgen 0.2.129, wasm-opt
+132, Chrome 155, Python with websocket-client, TypeScript 7.0.2 through `POCKET_TSC`), every step
+but `contract` and `perf` runs, and the check passed in full for the first time since the old
+rebuild branch once `docs/evidence/xtask/render-gi-lint.diff`, applied in the working tree, cleared
+the clippy findings of the files other tracks own this wave and compiled their Metal test on macOS
+only (docs/bench/xtask.md, with both runs' reports beside the diff). What it took: the `docs`
+step's width rule (9); clippy 1.98.1's findings, with `pocket_sim::math::min_f32` and `max_f32` for
+the determinism lists' `f32::min` and `f32::max`; the comparison of the vendored crate (13); ignored
+tests that skip what a machine lacks (checks.md 6.2); and the engine version that `pocket-app` and
+`pocket-web` now install (versions.md, open choice 6), under which the `web` step's replays pass
+because the worker, built from the same tree, reports the native build's source.
+
+A finding in one crate hides every crate above it: `-D warnings` fails that crate, and cargo then
+lints none of its dependents, so the first run's nine findings in pocket-assets and pocket-physics
+hid pocket-render's 43, and pocket-render's hid pocket-viewport's two on wasm32. Fixing by rounds,
+or `cargo clippy --no-deps -p <crate>` for the crates above a failing one, finds them all.
+
+`contract` stays skipped: it needs the contract's conformance checks as code
+(`contract.perception.*`, `contract.projection.golden`, `contract.actions.*`), the benchmark
+harness's self-test (shared/benchmark/README.md 8), and, for `contract.sync`, a reference commit in
+`shared/SYNC.toml` with a way to read the other line's `shared/` at it. `perf` stays skipped: it
+needs `bench/budgets/`, `pocket bench <workload> --json`, `cargo xtask perf --calibrate` and
+`--set-unset` (budgets.md 8), the page's `perf` step and `build.web.memory`; the `web` step already
+measures the module's sizes and the start-up, tick, hash, publication and transfer times it would
+report.

@@ -160,7 +160,7 @@ rustflags_forbid = ["target-cpu", "+fma"]
 | resolved features per target | `deps.feature_not_allowed`, `deps.feature_missing` | `{package, feature, target}` |
 | `.cargo/config.toml` sets `CFLAGS` with `-ffp-contract=off` | `deps.cflags_missing` | `{found}` |
 | no `target-cpu` or `+fma` in the config's `rustflags` or the environment's `RUSTFLAGS` | `deps.rustflags_not_allowed` | `{source, value}` |
-| `third_party/rquickjs-sys-0.14.0/` is exactly what `cargo xtask vendor` rebuilds from the pinned crate and the diffs (architecture.md 7.5) | `deps.vendor_stale` | `{path}`: the first file that differs |
+| `third_party/rquickjs-sys-0.14.0/` is exactly what `cargo xtask vendor` rebuilds from the pinned crate and the diffs (architecture.md 7.5); until it exists, `python third_party/vendor.py --check --offline` (checks-slice1.md 13) | `deps.vendor_stale` | `{path}`: each file that differs, at most 20 |
 
 Why the features and flags: `architecture.md`, 6 and 7.3 (master's fused multiply-adds broke
 cross-target hashes, `docs/design/networking.md`, Determinism).
@@ -228,13 +228,17 @@ also enable through a dev-dependency.
 
 `cargo test --workspace --release --locked --no-fail-fast`, plus `-- --include-ignored` in the full
 check, which runs the long variants tests mark `#[ignore]` (threads.md 11: 20 producer timings
-instead of 5); `--quick` leaves them out. The step parses libtest's stable text output
-(`test <name> ... FAILED` and the failures section) into `test.failed {crate, test, message}` with
-the message cut to 20 lines. The exit status of `cargo test` is authoritative; the step never reads
-its result through a pipe (master once committed with a failing assertion because `| tail` hid the
-exit status, `docs/development.md`, Tests). The tests include those the other specifications list
-(simulation.md 12, rng.md 10, persistence.md 12, versions.md 10, script-host.md 12), the threads'
-tests (`threads.md`, 11) and the controls that need a Rust-side defect (8.6).
+instead of 5); `--quick` leaves them out. So an ignored test that needs what a machine may lack (a
+GPU feature, a platform, an asset outside the repository) skips itself at run time with a line
+saying why, or is compiled only where it can run (`#[cfg(target_os = "macos")]` for Metal), never
+assumes it (2026-10-09, Pioneer: the Windows run found two that did). The step parses libtest's
+stable text output (`test <name> ... FAILED` and the failures section) into
+`test.failed {crate, test, message}` with the message cut to 20 lines. The exit status of
+`cargo test` is authoritative; the step never reads its result through a pipe (master once committed
+with a failing assertion because `| tail` hid the exit status, `docs/development.md`, Tests). The
+tests include those the other specifications list (simulation.md 12, rng.md 10, persistence.md 12,
+versions.md 10, script-host.md 12), the threads' tests (`threads.md`, 11) and the controls that need
+a Rust-side defect (8.6).
 
 ### 6.3 `wasm`
 
@@ -583,7 +587,8 @@ FAIL  (1 failed, 0 inconclusive, 10 passed) in 6m 12s; report: out/check/report.
 
 All codes of this specification, by step: `deps.crate_unlisted`, `deps.crate_missing`,
 `deps.edge_not_allowed`, `deps.external_not_allowed`, `deps.feature_not_allowed`,
-`deps.feature_missing`, `deps.cflags_missing`, `deps.rustflags_not_allowed`, `deps.vendor_stale`;
+`deps.feature_missing`, `deps.cflags_missing`, `deps.rustflags_not_allowed`, `deps.vendor_stale`,
+the warning `deps.vendor_unchecked`;
 `fmt.unformatted`; `clippy.warning`; `build.failed`; `gen.stale`, `gen.orphan`,
 `gen.shared_modified`; `test.failed`; `wasm.check_failed`; `types.error`, `types.timeout`;
 `determinism.diverged`; `fork.not_identical`, `fork.branch_differs`, `fork.original_changed`,
@@ -660,4 +665,5 @@ file to keep in sync. The full report stays in `out/check/report.json` on the ma
    codes added; 13, what `deps` reads; 14, running `xtask` while a manifest is broken; 15, the web
    check's pieces; 16, `check.toml` as built; 17, how the four checks run; 18, codes added; 19, the
    Rust-side controls; 20, the cross-build variant as built; 21, what `pocket check` refuses and
-   what its children may answer; 22, the web step as built.
+   what its children may answer; 22, the web step as built; 23, a full run on Windows (Pioneer,
+   2026-10-09: what it fixed, and what `contract` and `perf` still need).

@@ -243,20 +243,28 @@ impl Viewport {
     pub fn set_gizmo(&mut self, lines: Vec<f32>, triangles: Vec<f32>) {
         let o = &mut self.renderer.overlays;
         o.lines = lines
-            .chunks_exact(11)
-            .map(|c| pocket_render::overlay::OverlayLine {
-                a: [c[0], c[1], c[2]],
-                b: [c[3], c[4], c[5]],
-                color: [c[6], c[7], c[8], c[9]],
-                width: c[10],
+            .as_chunks::<11>()
+            .0
+            .iter()
+            .map(|&[ax, ay, az, bx, by, bz, r, g, b, a, width]| {
+                pocket_render::overlay::OverlayLine {
+                    a: [ax, ay, az],
+                    b: [bx, by, bz],
+                    color: [r, g, b, a],
+                    width,
+                }
             })
             .collect();
         o.polys = triangles
-            .chunks_exact(7)
-            .map(|c| pocket_render::overlay::OverlayVertex {
-                p: [c[0], c[1], c[2]],
-                color: [c[3], c[4], c[5], c[6]],
-            })
+            .as_chunks::<7>()
+            .0
+            .iter()
+            .map(
+                |&[x, y, z, r, g, b, a]| pocket_render::overlay::OverlayVertex {
+                    p: [x, y, z],
+                    color: [r, g, b, a],
+                },
+            )
             .collect();
     }
 
