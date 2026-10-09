@@ -795,7 +795,10 @@ request (decision 1 above). The player-facing requests arrived on that design
   to a seat by the process that serves it, not by a token grant: `pocket mcp <project> --seat
   <seat>` over stdio (in process or against a running host) and `/api/call {..., "seat"}` over
   HTTP make every call the seat's player's. A seat-bound MCP session lists the `player` tool alone
-  and refuses the others with `permission.denied` (3.3). Each seat's push cursor and decision
+  and refuses the others with `permission.denied` (3.3). The engine enforces the role beneath any
+  session: in a game that declares players, the runtime refuses a player source every command but
+  the `player.*` ones, and the host every method a seat's call names but those, its own answers
+  (`events.since`, the debugger's methods) included (`docs/spec/player.md` 7). Each seat's push cursor and decision
   state live in the runtime's one players' session, so two clients of one seat share them (5.3
   keeps one cursor per session).
 - **Not built**: grants and tokens over HTTP MCP, the checker role, `fork`, `discard`, `snapshot`,

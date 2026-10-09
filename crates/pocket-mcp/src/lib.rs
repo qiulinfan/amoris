@@ -157,6 +157,17 @@ impl ServerHandler for PocketMcp {
 
 /// Serves one MCP session over stdin and stdout until the client closes it.
 pub async fn serve_stdio(backend: Arc<dyn Backend>) -> Result<(), Problem> {
+    let (read, write) = rmcp::transport::stdio();
+    serve_io(backend, read, write).await
+}
+
+/// Serves one MCP session over a byte stream pair (newline-delimited JSON-RPC, as over stdio)
+/// until the client closes it: stdin and stdout for `pocket mcp`, an in-process pipe for tests.
+pub async fn serve_io<R, W>(backend: Arc<dyn Backend>, read: R, write: W) -> Result<(), Problem>
+where
+    R: tokio::io::AsyncRead + Send + Unpin + 'static,
+    W: tokio::io::AsyncWrite + Send + Unpin + 'static,
+{
     let fail = |e: String| {
         Problem::new(
             "mcp.transport",
@@ -165,7 +176,7 @@ pub async fn serve_stdio(backend: Arc<dyn Backend>) -> Result<(), Problem> {
         )
     };
     let running = PocketMcp::new(backend.open())
-        .serve(rmcp::transport::stdio())
+        .serve((read, write))
         .await
         .map_err(|e| fail(e.to_string()))?;
     running.waiting().await.map_err(|e| fail(e.to_string()))?;

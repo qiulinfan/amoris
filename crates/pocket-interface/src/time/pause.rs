@@ -112,10 +112,7 @@ pub fn resume(
     let req: PauseRequest = decode(raw, &CheckOptions::new("the resume request"))?.value;
     let real_time = matches!(ctl.pacing, PlayPacing::RealTime { .. });
     match caller {
-        Caller::Developer => {
-            ctl.paused_by_developer = false;
-            ctl.halted = None;
-        }
+        Caller::Developer => ctl.developer_resumed(),
         Caller::Checker => {
             return Err(codes::permission_denied("resume", "checker", "developer"));
         }

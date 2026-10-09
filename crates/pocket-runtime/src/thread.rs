@@ -1057,7 +1057,12 @@ impl Loop {
         }
         match p.pause {
             Some(true) => self.model.pause(),
-            Some(false) => self.model.resume(),
+            Some(false) => {
+                self.model.resume();
+                // A developer's resume also ends the players' halt after a script failure
+                // (time.md, Halts); a game's player never gets here (`player::permitted`).
+                self.game.player_mut().developer_resumed();
+            }
             None => {}
         }
         Ok(self.status())

@@ -182,6 +182,24 @@ fn reasons(
     out
 }
 
+/// The seat's state rebased on a world replaced at `clock`'s tick whose observer last perceived
+/// the event `latest` (`Controller::world_replaced`). Everything up to the restored tick is the
+/// past both timelines share, whose decision points arose already: the cursor moves to `latest`,
+/// an idle point stays raised only if the seat had been idle long enough by then, and the
+/// heartbeat counts from the restored tick at the latest. The pending point is dropped (its tick
+/// may lie in the abandoned future) and a turn's point is raised again from the restored turn on.
+/// The counts of points arisen and answered are the session's and stay.
+pub fn rebase(st: &mut SeatDecisions, clock: SimClock, latest: u64) {
+    let tick = clock.tick;
+    st.pending = None;
+    st.cursor = latest;
+    st.last_point = st.last_point.min(tick);
+    st.idle_from = st.idle_from.min(tick);
+    let idle_s = Tick(tick.0 - st.idle_from.0).to_f64() * clock.dt();
+    st.idle_raised = st.idle_raised && st.filter.idle_s.is_some_and(|i| idle_s >= i);
+    st.turn_raised = 0;
+}
+
 /// The seat acted: it is driven from now, and may be idle again later.
 pub fn acted(st: &mut SeatDecisions, tick: Tick) {
     st.idle_from = tick;

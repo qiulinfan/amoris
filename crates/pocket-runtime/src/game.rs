@@ -907,6 +907,8 @@ impl Game {
         let previous = self.current;
         self.current = hash;
         self.sync_context();
+        // A hot update ends the players' halt after a script failure (time.md, Halts).
+        self.player.hot_update_landed();
         if let Some(r) = &mut self.recorder {
             r.bundle_loaded(&bundle_record(&set));
             if report
@@ -1297,6 +1299,8 @@ impl Game {
             self.writes = snap.header().writes;
             self.sync_context();
             self.history.clear();
+            // The players' session follows the restored timeline (decision points, push cursors).
+            self.player.world_replaced(self.sim.world());
         }
         self.generation += 1;
         if let Some(rec) = &mut self.recorder

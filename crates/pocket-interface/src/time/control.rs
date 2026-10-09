@@ -47,6 +47,21 @@ impl ClockState {
     }
 }
 
+/// Whether a tick's error is a script system's failure, which halts the world (time.md, Halts):
+/// a `script.*` problem, or the simulation's `sim.system_failed` whose cause is one (how a rule
+/// that throws reaches a tick's report: the invocation's effects discarded, the script's error as
+/// its `cause`).
+pub fn script_failure(e: &Problem) -> bool {
+    let script = |code: &str| code.split('.').next() == Some("script");
+    script(&e.code)
+        || (e.code == "sim.system_failed"
+            && e.detail
+                .get("cause")
+                .and_then(|c| c.get("code"))
+                .and_then(Value::as_str)
+                .is_some_and(script))
+}
+
 /// The time controller of one world's session.
 #[derive(Clone, Debug)]
 pub struct Controller {
@@ -174,7 +189,7 @@ impl Controller {
         now_ms: f64,
     ) -> Vec<DecisionPoint> {
         if self.halted.is_none()
-            && let Some(e) = errors.iter().find(|e| e.family() == "script")
+            && let Some(e) = errors.iter().find(|e| script_failure(e))
         {
             self.halted = Some(e.clone());
         }
@@ -201,6 +216,56 @@ impl Controller {
 
     /// A hot update landed (time.md, Halts): it ends a halt, as a developer's `resume` does.
     pub fn hot_update_landed(&mut self) {
+        self.halted = None;
+    }
+
+    /// A developer resumed (time.md, `resume`): its pause ends, and a halt in any pacing.
+    pub fn developer_resumed(&mut self) {
+        self.paused_by_developer = false;
+        self.halted = None;
+    }
+
+    /// The world was replaced under the session (a restore, a rewind): every seat's decision
+    /// state is rebased on it ([`decide::rebase`]), so decision points and push deltas follow the
+    /// restored timeline rather than the abandoned one: the event cursor is the last event the
+    /// restored observer perceived (its ring restarts there), the push cursor comes back to it
+    /// at the latest, the pending decision is dropped; at tick 0 every seat has the episode's
+    /// `start` point again. Seats the world no longer declares are forgotten; running thinking
+    /// clocks stop, queued lockstep acts are dropped and commitments come back to the restored
+    /// tick. A halt ends, as mcp.md 7.1 has a `restore` end it: the restored world has not failed
+    /// (if the same rule fails again at the same tick, the world halts again there).
+    pub fn world_replaced(&mut self, world: &World) {
+        let clock = *world.resource::<SimClock>();
+        let tick = clock.tick;
+        let rows = seats(world).unwrap_or_default();
+        let catalog = world.get_resource::<crate::action::ActionCatalog>();
+        self.seats.retain(|s, _| rows.iter().any(|r| r.id == *s));
+        for row in &rows {
+            let latest = catalog.map_or(0, |c| {
+                (c.view)(world, row)
+                    .events_since(0)
+                    .last()
+                    .map_or(0, |e| e.seq)
+            });
+            if let Some(st) = self.seats.get_mut(&row.id) {
+                decide::rebase(st, clock, latest);
+            }
+            if let Some(push) = self.push.get_mut(&row.id) {
+                *push = (*push).min(latest);
+            }
+        }
+        self.push.retain(|s, _| rows.iter().any(|r| r.id == *s));
+        if tick == Tick(0) {
+            decide::start(world, &mut self.seats);
+        }
+        for c in self.clocks.values_mut() {
+            c.since_ms = None;
+        }
+        self.queued.clear();
+        for t in self.commitments.values_mut() {
+            *t = (*t).min(tick);
+        }
+        self.held = false;
         self.halted = None;
     }
 
@@ -420,5 +485,31 @@ impl Controller {
             "episode": super::turns::outcome(world),
             "behind_ms": model.behind_ms(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use pocket_contract::{Problem, detail};
+    use pocket_sim::sim::system_failed;
+    use pocket_sim::{SystemKey, Tick, TickPhase};
+
+    use super::script_failure;
+
+    /// A rule that throws reaches a tick's report as `sim.system_failed` with the script's error as
+    /// its cause (pocket-script's `program.rs`), which halts like a `script.*` problem; a failed
+    /// system of another family does not.
+    #[test]
+    fn a_failed_script_system_is_a_script_failure() {
+        let key = SystemKey::new("script:rounding").unwrap();
+        let cause = Problem::new("script.exception", "planted", detail([]));
+        let failed = system_failed(Tick(3), TickPhase::Update, &key, None, &cause);
+        assert!(script_failure(&failed));
+        assert!(script_failure(&cause));
+        let physics = Problem::new("physics.solver_diverged", "too fast", detail([]));
+        let key = SystemKey::new("physics.step").unwrap();
+        let failed = system_failed(Tick(3), TickPhase::Update, &key, None, &physics);
+        assert!(!script_failure(&failed));
+        assert!(!script_failure(&physics));
     }
 }

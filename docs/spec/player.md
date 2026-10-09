@@ -141,6 +141,24 @@ script failure. Every seat of a built game starts with the episode's `start` dec
   phase); its data are the result. Waits answer `stopped: "done"` with the outcome, and further acts
   and waits are refused with `time.episode_over`.
 
+- **Halts** (time.md, Halts). A rule that throws reaches the tick's report as `sim.system_failed`
+  whose `cause` is the script's problem (`script.exception`, a step limit, ...); the session halts
+  on it as on any `script.*` problem (`pocket_interface::time::control::script_failure`). A
+  player's wait then answers `stopped: "halted"` with the generic `time.halted`, a developer's with
+  the failure itself, and real time holds. The halt ends when a hot update lands (every successful
+  `scripts.swap`, so `scripts.apply`), when a developer resumes (`time.control {pause: false}` on
+  the game thread, the runtime's `resume`), or with a restore (mcp.md 7.1). A developer's
+  `time.step` is never held by it. Under `pocket serve`, whose edit world is real time paused,
+  `{pause: false}` also starts real time; `{pause: true}` after it holds the world again with the
+  halt ended.
+- **The world replaced** (`snapshots.restore`, `debug.rewind`, which restores; every
+  `Game::restore`). Decision state is session state about one timeline, so the session is rebased
+  on the restored world (`Controller::world_replaced`): each seat's event cursor moves to the last
+  event its restored observer perceived, its push cursor comes back to it at the latest, the
+  pending decision is dropped, the heartbeat and idleness count from the restored tick at the
+  latest, and at tick 0 every seat has the episode's `start` point again. A wait after a restore
+  to tick 0 therefore stops at the sightings of tick 1 and carries them, as on a fresh world.
+
 Lockstep pacing exists in pocket-interface (`commit`) but `player.pacing` refuses it: no command
 carries `commit` yet (section 10).
 
@@ -161,6 +179,28 @@ The caller is the command's source: `Source::Player(i)` is a player at the decla
 `i`, restricted to its own seat's perception and actions (`seat.not_yours`,
 `perception.omniscient_forbidden`); every other source is a developer, who names a seat (or the only
 one is meant) and may ask for the marked omniscient view.
+
+**The role is enforced by the engine** (charter 5.1, the Pioneer note after review). In a game that
+declares players, a player source sends the `player.*` commands alone; every other command is a
+developer's and is refused with `permission.denied` (`{request, role: "player", needs:
+"developer"}`) before anything runs, in three places:
+
+- the game (`pocket_runtime::player::permitted`, in `Game::apply` before the host-only and
+  thread-only checks), for every catalog command by its name or an alias and for a game's own
+  commands;
+- the game thread, for the commands its loop answers itself (`time.step`, `time.control`,
+  `play.*`, `snapshots.*`, `status`, `snapshot`);
+- the host (`pocket_server::seat_permits`), for every call made as a seat (`Via::Player`): those
+  the host answers without the game see no source at all (`events.since` lists every world event,
+  `log.since`, `assets.list`, the debugger's methods, a read answered from the last publication
+  while the debugger holds the game). `/api/call` refuses such a method before it looks the seat
+  up, and a `seat` that is not a string with `request.wrong_type`; `pocket call --seat` refuses it
+  before sending.
+
+A replay applies what was recorded and is not asked. In a game without players, `Source::Player`
+keeps slice 1's meaning: an input source ordered after developers (threads.md 5.2), as the web
+form's human player and `samples/sailing`'s check inputs send `world_edit`; it names no seat and has
+no perception to keep it to. The web form plays a game with players through `player.act` instead.
 
 The commands are projected like every catalog command:
 
@@ -220,7 +260,11 @@ every tick, and its player scenario passes the four checks.
   (provisional, bench/player.md); testing the ray against the occluders' bounds first is the obvious
   next step.
 - **`sail_to` does not steer round land** (actions.md, open choice 3).
-- **The web build**: the package carries `PlayerSpec`, but no browser run of a player game was made.
+- **The web build**: the package carries `PlayerSpec`. One browser run of a player game was made
+  (headless Chrome, the 2D map, [evidence/player/web-form.json](../evidence/player/web-form.json)):
+  the form's helm sets the skipper's controls through `player.act`, and the same player's
+  `world_edit` and `world.get` are refused in the worker as natively; `samples/sailing`, without
+  players, still takes the helm as `world_edit`. No agent played in the browser.
 - **A default budget cuts what a policy needs.** The first run of the reference skipper read the
   observation at the profile's 400 tokens, in which Mark2 was among the omitted percepts; it found
   no next mark, never acted again and waited through heartbeats for 2.3 million ticks before the
@@ -236,6 +280,19 @@ every tick, and its player scenario passes the four checks.
   step waited for ever; a step under way now runs whatever holds the players.
 - A game without `[player]` answers every `player.*` command with `player.not_declared` rather than
   with whatever the first missing piece would have said (`request.missing_field` for the seat).
+- **An adversarial review found three gaps the first version shipped with** (all fixed, each with
+  a test that fails when the gap is put back):
+  - *The player role was the MCP layer's alone.* Only a seat-bound MCP session's tool list kept a
+    player to the `player` tool; `/api/call {seat}` with `world.query`, `world.get {Crate4}` (an
+    entity the seat cannot see), `world.edit` and `time.step` were all answered, unmarked. The
+    runtime and the host now refuse them (section 7).
+  - *Halts never fired.* The controller looked for a problem of the `script` family, but this
+    runtime reports a throwing rule as `sim.system_failed` with the script's error as its cause,
+    and nothing ended a halt (no hot update or developer resume reached the session). The
+    synthetic `script.failed` the interface's pacing test injected hid both.
+  - *A restore left the session on the abandoned timeline.* The seat's event cursor stayed past the
+    restored ring's sequence numbers, so after `snapshots.restore {tick: 0}` a wait ran 120 ticks
+    past the tick-1 sightings with no decision and no events until the ring caught up.
 
 ## 11. Tests and checks
 
@@ -245,6 +302,9 @@ every tick, and its player scenario passes the four checks.
 | Team vision | `pocket-interface/tests/perception_team.rs` |
 | A player is its seat; a game without players says so; one bad action applies nothing; the scripted agent plays the course through the player tools and the run replays | `pocket-runtime/tests/player.rs` |
 | A stepped wait on the thread; real time paused on each decision; the skipper finishes through a player client of the thread, after which waits are refused and a developer still steps | `pocket-runtime/tests/thread_player.rs` |
+| A player's developer calls refused by the game and the thread; a throwing rule halts the players until a hot update, a developer's resume or a restore; a restore rebases the seat's decisions and push cursor | `pocket-runtime/tests/player.rs`, `pocket-runtime/tests/player_session.rs`, `pocket-interface/src/time/control.rs` (tests) |
+| A seat over HTTP and a seat-bound MCP session (in process, newline JSON-RPC over a pipe) play through the player tools alone; the host refuses the game's and its own developer methods; an unknown seat says `seat.unknown` | `pocket-app/tests/player_host.rs` |
+| The review's three findings replayed against the release `pocket serve` over HTTP | `tools/player_http_probe.py`, [evidence/player/seat-http.txt](../evidence/player/seat-http.txt) |
 | The course's schedule | `pocket-runtime/tests/schedule.rs` |
 | The player scenario passes the four checks | `pocket-check/tests/checks.rs`, `samples/sailing-course/check.toml` |
 | The `player` tool's routing; `pocket player`'s forms | `pocket-mcp/src/tools.rs`, `pocket-app/src/client.rs` |
