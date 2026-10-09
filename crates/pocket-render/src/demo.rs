@@ -925,3 +925,231 @@ pub fn neural_camera(view: u32) -> crate::CameraState {
         _ => crate::CameraState::look_at(Vec3::new(0.0, 1.7, 6.0), Vec3::new(0.0, 0.0, -8.0)),
     }
 }
+
+/// The path the anti-aliasing check's model is registered under (`Renderer::add_model`).
+pub const AA_MODEL: &str = "demo/aa.glb";
+
+/// The anti-aliasing check's model: a ground plane whose fine checker (6 cm squares on the 60 m
+/// ground of [`aa_scene`]) repeats 30 times across it, a test of texture minification and moire.
+pub fn aa_model() -> ModelAsset {
+    let size = 256u32;
+    let mut rgba8 = Vec::with_capacity((size * size * 4) as usize);
+    for y in 0..size {
+        for x in 0..size {
+            let on = ((x / 8) + (y / 8)) % 2 == 0;
+            let v = if on { 225 } else { 40 };
+            rgba8.extend_from_slice(&[v, v, v, 255]);
+        }
+    }
+    let mut ground = primitive("plane").unwrap_or_default();
+    for v in &mut ground.vertices {
+        v.uv = [v.uv[0] * 30.0, v.uv[1] * 30.0];
+    }
+    ground.name = "ground".into();
+    ground.material = Some(0);
+    ModelAsset {
+        images: vec![ImageData {
+            name: "fine checker".into(),
+            width: size,
+            height: size,
+            rgba8,
+            srgb: true,
+        }],
+        meshes: vec![ground],
+        materials: vec![MaterialData {
+            name: "checker".into(),
+            base_color: [1.0; 4],
+            roughness: 0.7,
+            base_color_texture: Some(0),
+            ..MaterialData::default()
+        }],
+        nodes: vec![NodeData {
+            name: "ground".into(),
+            mesh: 0,
+            transform: glam::Mat4::IDENTITY.to_cols_array(),
+            skin: None,
+        }],
+        ..ModelAsset::default()
+    }
+}
+
+/// The ids of [`aa_scene`]'s moving instances: a cube sliding sideways and a spinning torus.
+pub const AA_MOVING: [u64; 2] = [500, 501];
+
+/// The moving cube's position at simulated time `t` (seconds): 2.4 m/s sideways along a triangle
+/// wave between x = 5.5 (where it starts) and -1.5, in front of the spheres and the fence.
+pub fn aa_cube_position(t: f32) -> [f32; 3] {
+    let phase = (t * 2.4 / 14.0).rem_euclid(1.0);
+    let x = if phase < 0.5 {
+        5.5 - 14.0 * phase
+    } else {
+        -8.5 + 14.0 * phase
+    };
+    [x, 0.6, 2.6]
+}
+
+/// The anti-aliasing and ambient-occlusion check's scene at tick `tick` (60 ticks a second;
+/// docs/bench/taa-gtao.md): a finely checkered ground, a picket fence and wires a pixel or less
+/// wide, chrome spheres (specular aliasing), a dark slab against the sky, a walled corner with
+/// boxes and a ball in it (occlusion), and two moving instances ([`AA_MOVING`]) when `moving`
+/// (otherwise they stay at their tick-0 poses). `full` gives the whole scene (a reset; the first
+/// frame), otherwise only the moving instances' poses. Register [`aa_model`] under [`AA_MODEL`]
+/// first.
+pub fn aa_scene(tick: u64, moving: bool, full: bool) -> RenderFrame {
+    let dt = 1.0 / 60.0;
+    let t = if moving { tick as f32 * dt } else { 0.0 };
+    let look = |mesh: &str, color: [f32; 3], metallic: f32, roughness: f32| Look {
+        mesh: mesh.into(),
+        material: String::new(),
+        color: [color[0], color[1], color[2], 1.0],
+        metallic,
+        roughness,
+        transmission: None,
+        ior: None,
+        emissive: [0.0; 3],
+        cast_shadows: true,
+        visible: true,
+    };
+    let item = |id: u64, look: Look, pos: [f32; 3], rot: Quat, scale: [f32; 3]| InstanceUpdate {
+        id,
+        pose: Some(Pose {
+            position: pos,
+            rotation: rot.to_array(),
+            scale,
+        }),
+        look: Some(look),
+        anim: None,
+    };
+    let mut instances = Vec::new();
+    let spin = Quat::from_rotation_y(t * 1.5) * Quat::from_rotation_x(t * 0.9 + 0.5);
+    instances.push(item(
+        AA_MOVING[0],
+        look("cube", [0.85, 0.12, 0.08], 0.0, 0.5),
+        aa_cube_position(t),
+        Quat::IDENTITY,
+        [1.2; 3],
+    ));
+    instances.push(item(
+        AA_MOVING[1],
+        look("torus", [0.95, 0.75, 0.3], 1.0, 0.25),
+        [2.6, 1.4, -0.5],
+        spin,
+        [1.6; 3],
+    ));
+    if !full {
+        for i in &mut instances {
+            i.look = None;
+        }
+        return RenderFrame {
+            tick: tick + 1,
+            t_s: tick as f64 * f64::from(dt),
+            dt_s: f64::from(dt),
+            instances,
+            ..RenderFrame::default()
+        };
+    }
+    instances.push(item(
+        1,
+        Look {
+            color: [1.0; 4],
+            ..look(&format!("{AA_MODEL}#ground"), [1.0; 3], 0.0, 0.7)
+        },
+        [0.0; 3],
+        Quat::IDENTITY,
+        [60.0, 1.0, 60.0],
+    ));
+    // A picket fence of 3 cm posts and, behind it, wires 1 cm thick at slight angles.
+    for i in 0..40u64 {
+        instances.push(item(
+            10 + i,
+            look("cube", [0.9, 0.88, 0.82], 0.0, 0.6),
+            [-7.0 + 0.35 * i as f32, 0.7, -4.0],
+            Quat::IDENTITY,
+            [0.03, 1.4, 0.03],
+        ));
+    }
+    for i in 0..5u64 {
+        instances.push(item(
+            60 + i,
+            look("cube", [0.08, 0.08, 0.09], 0.0, 0.5),
+            [0.0, 1.6 + 0.35 * i as f32, -6.0],
+            Quat::from_rotation_z(0.02 + 0.035 * i as f32),
+            [16.0, 0.012, 0.012],
+        ));
+    }
+    // Chrome spheres: specular aliasing on curved, glossy metal.
+    for (i, (x, r)) in [(-1.6f32, 0.04f32), (-0.4, 0.12), (0.8, 0.3)]
+        .into_iter()
+        .enumerate()
+    {
+        instances.push(item(
+            70 + i as u64,
+            look("sphere", [0.95, 0.95, 0.97], 1.0, r),
+            [x, 0.5, -0.8],
+            Quat::IDENTITY,
+            [1.0; 3],
+        ));
+    }
+    // A dark slab against the sky, rolled: long silhouette edges at shallow angles.
+    instances.push(item(
+        80,
+        look("cube", [0.06, 0.06, 0.07], 0.0, 0.8),
+        [1.5, 3.6, -3.0],
+        Quat::from_rotation_z(0.35) * Quat::from_rotation_y(0.2),
+        [3.5, 0.08, 1.2],
+    ));
+    // A walled corner with stacked boxes and a ball: contact and crease occlusion.
+    let wall = [0.8, 0.78, 0.74];
+    instances.push(item(
+        90,
+        look("cube", wall, 0.0, 0.9),
+        [-4.6, 1.25, -2.0],
+        Quat::IDENTITY,
+        [3.6, 2.5, 0.2],
+    ));
+    instances.push(item(
+        91,
+        look("cube", wall, 0.0, 0.9),
+        [-6.3, 1.25, -0.3],
+        Quat::IDENTITY,
+        [0.2, 2.5, 3.6],
+    ));
+    instances.push(item(
+        92,
+        look("cube", [0.55, 0.6, 0.7], 0.0, 0.8),
+        [-5.4, 0.45, -1.1],
+        Quat::from_rotation_y(0.3),
+        [0.9; 3],
+    ));
+    instances.push(item(
+        93,
+        look("cube", [0.7, 0.62, 0.5], 0.0, 0.8),
+        [-5.3, 1.2, -1.2],
+        Quat::from_rotation_y(-0.2),
+        [0.6; 3],
+    ));
+    instances.push(item(
+        94,
+        look("sphere", [0.65, 0.7, 0.55], 0.0, 0.7),
+        [-3.9, 0.35, -1.0],
+        Quat::IDENTITY,
+        [0.7; 3],
+    ));
+    let mut frame = sunlit(instances, Vec3::new(-0.5, -1.0, -0.4), true);
+    frame.tick = tick + 1;
+    frame.t_s = tick as f64 * f64::from(dt);
+    if let Some(env) = &mut frame.environment {
+        env.bloom = 0.0;
+    }
+    frame
+}
+
+/// [`aa_scene`]'s camera at frame `frame`: still, or with `pan` moving sideways at 0.6 m/s and
+/// turning to keep the corner in view.
+pub fn aa_camera(frame: u32, pan: bool) -> crate::CameraState {
+    let t = if pan { frame as f32 / 60.0 } else { 0.0 };
+    crate::CameraState::look_at(
+        Vec3::new(-0.6 + 0.6 * t, 1.6, 7.0),
+        Vec3::new(-0.8 + 0.3 * t, 1.0, -2.0),
+    )
+}
