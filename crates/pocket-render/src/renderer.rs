@@ -782,8 +782,10 @@ impl Renderer {
             ],
             immediate_size: 0,
         });
-        let aa = Antialiasing::from_env();
-        let gtao_mode = Gtao::from_env();
+        // The measured defaults for this adapter, unless POCKET_AA or POCKET_GTAO say otherwise.
+        let (default_aa, default_gtao) = crate::post::defaults_for(&gpu.info);
+        let aa = Antialiasing::from_env(default_aa);
+        let gtao_mode = Gtao::from_env(default_gtao);
         let format = SceneFormat::new(aa, gtao_mode);
         let vertex_layout = vertex_layout();
         let forward = forward_pipelines(device, lit_module, &layout, format);

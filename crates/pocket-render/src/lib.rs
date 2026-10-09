@@ -41,7 +41,7 @@ pub use gpu::{BackendChoice, Gpu, GpuError};
 pub use loader::AssetSource;
 pub use lod::{DrawCounts, LodMode, LodSettings};
 pub use occlusion::{OcclusionMode, OcclusionStats};
-pub use post::{Antialiasing, AoNormals, Gtao};
+pub use post::{Antialiasing, AoNormals, Gtao, defaults_for};
 pub use renderer::{FrameStats, Renderer, web_time};
 
 /// A renderer shader's composed WGSL (tools and backend probes).

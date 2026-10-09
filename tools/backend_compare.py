@@ -112,6 +112,10 @@ def capture(case, backend, adapter, out, port):
     env = dict(os.environ, POCKET_BACKEND=backend, RUST_LOG="info")
     if adapter:
         env["POCKET_ADAPTER"] = adapter
+    # The renderer's anti-aliasing and GTAO defaults depend on the adapter's kind
+    # (docs/spec/taa-gtao.md); captures compared across adapters pin them unless asked otherwise.
+    env.setdefault("POCKET_AA", "msaa")
+    env.setdefault("POCKET_GTAO", "off")
     spec = CASES[case]
     png = out.relative_to(ROOT).as_posix() if out.is_relative_to(ROOT) else str(out)
     record = {"backend": backend, "adapter": adapter, "png": png}

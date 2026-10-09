@@ -244,6 +244,16 @@ Amoris 是一个 **agent-native** 的 3D 游戏引擎。agent 在三个角色上
   物体处恰为零，多重采样解析不会把它混坏；MSAA 已经在帧内，TAA 是取代还是叠加应由画质与开销的
   数据决定。进度表所记的 `feat/gtao` 分支已遗失，此为重新实现。规格见
   [TAA 与 GTAO](spec/taa-gtao.md)。
+  同日补充（Pioneer，测量之后）：默认值按适配器类别取测量结果（`post::defaults_for`）。Vulkan 与
+  Direct3D 12 上的独立显卡保持 4x MSAA，并默认开启 GTAO；集成显卡默认单采样加 TAA，不开 GTAO；
+  未测量的 Apple GPU（tile 架构，MSAA 本就便宜）与浏览器（无法得知适配器类别，Chrome 在 Radeon
+  780M 上的时间戳不可用）保持 MSAA、不开 GTAO。`POCKET_AA`、`POCKET_GTAO` 与渲染器选项覆盖默认，
+  跨适配器比较画面的工具固定这两项。理由：没有一种模式处处更好。对 256 帧超采样参考，静止画面、
+  alpha 测试的边缘与镜面高光上 TAA 高 5 到 7 dB；摄像机平移时 MSAA 略好（PSNR 高零点几 dB，
+  帧间稳定度高 1 到 2 dB），亚像素细线也只有 MSAA 每帧都画得出。成本则因适配器而异：RTX 5060 上
+  单采样加 TAA 与 4x MSAA 相差不到 0.1 ms，故保留在运动中更好的 MSAA，GTAO 在 1600x900 只要约
+  0.15 ms；Radeon 780M 上 4x MSAA 比 TAA 贵 1.5 ms（轻场景）到 7 ms（160 万立方体），在画质相当时
+  取便宜者，而 GTAO 在那里要 0.4 到 0.8 ms。测量与数据见 [bench/taa-gtao.md](bench/taa-gtao.md)。
 - **神经渲染**：
   - 3D Gaussian Splatting：预处理计算着色器（投影、剔除、球谐取色）、GPU 基数排序、实例化四边形
     混合，与网格深度缓冲合成，即混合网格与 splat 的场景。

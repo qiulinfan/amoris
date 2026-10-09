@@ -701,6 +701,10 @@ mod tests {
 
     fn renderer_with(gpu: &Gpu, c: &SplatCloud) -> Renderer {
         let mut r = Renderer::new(gpu, wgpu::TextureFormat::Rgba8UnormSrgb, 200, 120);
+        // These checks compare redraws pixel for pixel: no TAA (whose jitter and history change
+        // every frame; an integrated GPU's default) and no GTAO, whatever the adapter.
+        r.set_antialiasing(crate::Antialiasing::Msaa);
+        r.set_gtao(crate::Gtao::Off);
         r.splats.insert("c", c);
         r.apply(
             RenderFrame {

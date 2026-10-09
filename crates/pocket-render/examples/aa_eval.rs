@@ -166,6 +166,22 @@ fn crop(img: &[f32], w: u32, r: Rect, zoom: u32) -> (u32, u32, Vec<u8>) {
     (cw, ch, out)
 }
 
+/// The whole image at half size (2x2 box), as 8-bit RGB rows: full frames stay small as evidence.
+fn half(img: &[f32], w: u32, h: u32) -> (u32, u32, Vec<u8>) {
+    let (hw, hh) = (w / 2, h / 2);
+    let mut out = Vec::with_capacity((hw * hh * 3) as usize);
+    for y in 0..hh {
+        for x in 0..hw {
+            for k in 0..3 {
+                let at = |dx: u32, dy: u32| img[(((2 * y + dy) * w + 2 * x + dx) * 3) as usize + k];
+                let v = 0.25 * (at(0, 0) + at(1, 0) + at(0, 1) + at(1, 1));
+                out.push((v * 255.0 + 0.5).clamp(0.0, 255.0) as u8);
+            }
+        }
+    }
+    (hw, hh, out)
+}
+
 /// Saves crops side by side with a 4-pixel gap.
 fn strip(path: &Path, tiles: &[(u32, u32, Vec<u8>)]) {
     let w: u32 = tiles.iter().map(|t| t.0 + 4).sum::<u32>() - 4;
@@ -445,19 +461,41 @@ fn converge(s: &Setup, out: &Path) -> Value {
                 4,
             ),
         ),
+        (
+            "chain-link",
+            screen_rect(
+                &aa_camera(0, false),
+                s.w,
+                s.h,
+                Vec3::new(3.6, 1.0, -2.2),
+                Vec3::new(1.2, 0.8, 0.6),
+                0,
+            ),
+        ),
     ];
+    let mut by_region = BTreeMap::new();
     for (label, rect) in regions {
         let mut tiles = Vec::new();
+        let mut row = BTreeMap::new();
         for m in MODES {
             tiles.push(crop(&finals[m.name()], s.w, rect, 2));
+            row.insert(
+                m.name(),
+                psnr(&finals[m.name()], &ref_disp, s.w, Some(rect)),
+            );
         }
         tiles.push(crop(&ref_disp, s.w, rect, 2));
         strip(&out.join(format!("converge-{label}.png")), &tiles);
+        by_region.insert(
+            label,
+            json!({"rect": [rect.0, rect.1, rect.2, rect.3], "psnr_frame64": row}),
+        );
     }
     json!({
         "reference": format!("{REFERENCE_FRAMES} frames, 1 sample, Halton (2,3) jitter over the pixel"),
         "strip_order": ["off", "msaa", "taa", "msaa+taa", "reference"],
         "modes": results,
+        "regions": by_region,
     })
 }
 
@@ -719,6 +757,7 @@ fn gtao(s: &Setup, out: &Path) -> Value {
             Antialiasing::Msaa,
             Gtao::On(AoNormals::Target),
         ),
+        ("taa", Antialiasing::Taa, Gtao::Off),
         ("taa+gtao", Antialiasing::Taa, Gtao::On(AoNormals::Depth)),
     ] {
         let mut r = s.renderer(aa, g);
@@ -731,7 +770,8 @@ fn gtao(s: &Setup, out: &Path) -> Value {
     }
     // The visibility applied: on / off per pixel (luminance), where the scene is lit indirectly.
     let off = &images["msaa"];
-    let ratio = |on: &[f32]| -> Vec<f32> {
+    // The visibility applied: with GTAO / without, per pixel, under the same anti-aliasing.
+    let ratio_to = |off: &[f32], on: &[f32]| -> Vec<f32> {
         off.chunks(4)
             .zip(on.chunks(4))
             .flat_map(|(a, b)| {
@@ -746,13 +786,18 @@ fn gtao(s: &Setup, out: &Path) -> Value {
             })
             .collect()
     };
-    let full = (0, 0, s.w, s.h);
+    let ratio = |on: &[f32]| ratio_to(off, on);
     let mut summary = BTreeMap::new();
     for (name, img) in &images {
-        if *name == "msaa" {
+        if *name == "msaa" || *name == "taa" {
             continue;
         }
-        let r = ratio(img);
+        let base = if name.starts_with("taa") {
+            &images["taa"]
+        } else {
+            off
+        };
+        let r = ratio_to(base, img);
         let mean = r.iter().step_by(3).map(|v| f64::from(*v)).sum::<f64>() / (r.len() / 3) as f64;
         let darker =
             r.iter().step_by(3).filter(|v| **v < 0.95).count() as f64 / (r.len() / 3) as f64;
@@ -771,9 +816,9 @@ fn gtao(s: &Setup, out: &Path) -> Value {
     strip(
         &out.join("gtao.png"),
         &[
-            crop(&d_off, s.w, full, 1),
-            crop(&d_on, s.w, full, 1),
-            crop(&ratio(&images["msaa+gtao"]), s.w, full, 1),
+            half(&d_off, s.w, s.h),
+            half(&d_on, s.w, s.h),
+            half(&ratio(&images["msaa+gtao"]), s.w, s.h),
         ],
     );
     let corner = screen_rect(

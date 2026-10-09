@@ -19,8 +19,8 @@ pub const NORMALS: wgpu::TextureFormat = wgpu::TextureFormat::Rgb10a2Unorm;
 const BLOOM_MIPS: u32 = 6;
 
 /// Anti-aliasing (charter 4.4, Pioneer 2026-10-09; docs/spec/taa-gtao.md): the opaque pass's
-/// samples per pixel and whether TAA runs. Every combination draws; the default is measured
-/// (docs/bench/taa-gtao.md).
+/// samples per pixel and whether TAA runs. Every combination draws; the defaults are measured
+/// ([`defaults_for`], docs/bench/taa-gtao.md).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Antialiasing {
     /// One sample, no TAA (aliased; the cheapest).
@@ -33,9 +33,25 @@ pub enum Antialiasing {
     MsaaTaa,
 }
 
-impl Antialiasing {
-    pub const DEFAULT: Antialiasing = Antialiasing::Msaa;
+/// The measured defaults for an adapter (docs/bench/taa-gtao.md 5): a discrete GPU keeps
+/// multisampling (TAA costs about as much there and loses to it under camera motion) and gets
+/// GTAO (0.15 ms at 1600x900 on the RTX 5060); an integrated GPU on Vulkan or Direct3D 12 gets
+/// TAA at one sample (multisampling cost the Radeon 780M 1.5 to 7 ms more) and no GTAO (0.4 to
+/// 0.8 ms there). Apple's GPUs (tile-based, where multisampling is cheap) and the browser, whose
+/// adapter's kind is unknown, were not measured and keep multisampling without GTAO.
+pub fn defaults_for(info: &wgpu::AdapterInfo) -> (Antialiasing, Gtao) {
+    match (info.device_type, info.backend) {
+        (wgpu::DeviceType::DiscreteGpu, wgpu::Backend::Vulkan | wgpu::Backend::Dx12) => {
+            (Antialiasing::Msaa, Gtao::On(AoNormals::Depth))
+        }
+        (wgpu::DeviceType::IntegratedGpu, wgpu::Backend::Vulkan | wgpu::Backend::Dx12) => {
+            (Antialiasing::Taa, Gtao::Off)
+        }
+        _ => (Antialiasing::Msaa, Gtao::Off),
+    }
+}
 
+impl Antialiasing {
     /// `off`, `msaa`, `taa` or `msaa+taa` (any case; `taa+msaa` too).
     pub fn parse(s: &str) -> Option<Antialiasing> {
         match s.trim().to_ascii_lowercase().as_str() {
@@ -47,14 +63,14 @@ impl Antialiasing {
         }
     }
 
-    /// From `POCKET_AA` (natively); [`Antialiasing::DEFAULT`] when it is unset or unknown.
-    pub fn from_env() -> Antialiasing {
+    /// From `POCKET_AA` (natively); `default` when it is unset or unknown.
+    pub fn from_env(default: Antialiasing) -> Antialiasing {
         match std::env::var("POCKET_AA") {
             Ok(v) => Antialiasing::parse(&v).unwrap_or_else(|| {
                 log::warn!("POCKET_AA: {v:?} is not off, msaa, taa or msaa+taa; using the default");
-                Antialiasing::DEFAULT
+                default
             }),
-            Err(_) => Antialiasing::DEFAULT,
+            Err(_) => default,
         }
     }
 
@@ -97,8 +113,6 @@ pub enum Gtao {
 }
 
 impl Gtao {
-    pub const DEFAULT: Gtao = Gtao::Off;
-
     /// `off`, `on` or `depth` (normals from the depth), `target` (the normal target); any case,
     /// `0`/`1` too.
     pub fn parse(s: &str) -> Option<Gtao> {
@@ -110,14 +124,14 @@ impl Gtao {
         }
     }
 
-    /// From `POCKET_GTAO` (natively); [`Gtao::DEFAULT`] when it is unset or unknown.
-    pub fn from_env() -> Gtao {
+    /// From `POCKET_GTAO` (natively); `default` when it is unset or unknown.
+    pub fn from_env(default: Gtao) -> Gtao {
         match std::env::var("POCKET_GTAO") {
             Ok(v) => Gtao::parse(&v).unwrap_or_else(|| {
                 log::warn!("POCKET_GTAO: {v:?} is not off, on, depth or target; using the default");
-                Gtao::DEFAULT
+                default
             }),
-            Err(_) => Gtao::DEFAULT,
+            Err(_) => default,
         }
     }
 

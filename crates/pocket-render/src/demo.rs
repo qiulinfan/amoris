@@ -930,7 +930,8 @@ pub fn neural_camera(view: u32) -> crate::CameraState {
 pub const AA_MODEL: &str = "demo/aa.glb";
 
 /// The anti-aliasing check's model: a ground plane whose fine checker (6 cm squares on the 60 m
-/// ground of [`aa_scene`]) repeats 30 times across it, a test of texture minification and moire.
+/// ground of [`aa_scene`]) repeats 30 times across it, a test of texture minification and moire;
+/// and a chain-link panel, alpha-tested (multisampling does not smooth alpha-test edges).
 pub fn aa_model() -> ModelAsset {
     let size = 256u32;
     let mut rgba8 = Vec::with_capacity((size * size * 4) as usize);
@@ -947,28 +948,66 @@ pub fn aa_model() -> ModelAsset {
     }
     ground.name = "ground".into();
     ground.material = Some(0);
+    // Chain link: wires 3 texels wide along both diagonals every 16 texels.
+    let link = 128u32;
+    let mut links = Vec::with_capacity((link * link * 4) as usize);
+    for y in 0..link {
+        for x in 0..link {
+            let a = (x + y) % 16 < 3 || (x + link - y) % 16 < 3;
+            links.extend_from_slice(&[150, 155, 160, if a { 255 } else { 0 }]);
+        }
+    }
+    let mut panel = primitive("plane").unwrap_or_default();
+    for v in &mut panel.vertices {
+        v.uv = [v.uv[0] * 6.0, v.uv[1] * 3.6];
+    }
+    panel.name = "chain_link".into();
+    panel.material = Some(1);
+    let node = |name: &str, mesh: usize| NodeData {
+        name: name.into(),
+        mesh,
+        transform: glam::Mat4::IDENTITY.to_cols_array(),
+        skin: None,
+    };
     ModelAsset {
-        images: vec![ImageData {
-            name: "fine checker".into(),
-            width: size,
-            height: size,
-            rgba8,
-            srgb: true,
-        }],
-        meshes: vec![ground],
-        materials: vec![MaterialData {
-            name: "checker".into(),
-            base_color: [1.0; 4],
-            roughness: 0.7,
-            base_color_texture: Some(0),
-            ..MaterialData::default()
-        }],
-        nodes: vec![NodeData {
-            name: "ground".into(),
-            mesh: 0,
-            transform: glam::Mat4::IDENTITY.to_cols_array(),
-            skin: None,
-        }],
+        images: vec![
+            ImageData {
+                name: "fine checker".into(),
+                width: size,
+                height: size,
+                rgba8,
+                srgb: true,
+            },
+            ImageData {
+                name: "chain link".into(),
+                width: link,
+                height: link,
+                rgba8: links,
+                srgb: true,
+            },
+        ],
+        meshes: vec![ground, panel],
+        materials: vec![
+            MaterialData {
+                name: "checker".into(),
+                base_color: [1.0; 4],
+                roughness: 0.7,
+                base_color_texture: Some(0),
+                ..MaterialData::default()
+            },
+            MaterialData {
+                name: "chain link".into(),
+                base_color: [1.0; 4],
+                metallic: 0.7,
+                roughness: 0.35,
+                base_color_texture: Some(1),
+                alpha_mode: AlphaMode::Mask,
+                alpha_cutoff: 0.5,
+                double_sided: true,
+                ..MaterialData::default()
+            },
+        ],
+        nodes: vec![node("ground", 0), node("chain_link", 1)],
         ..ModelAsset::default()
     }
 }
@@ -990,8 +1029,9 @@ pub fn aa_cube_position(t: f32) -> [f32; 3] {
 
 /// The anti-aliasing and ambient-occlusion check's scene at tick `tick` (60 ticks a second;
 /// docs/bench/taa-gtao.md): a finely checkered ground, a picket fence and wires a pixel or less
-/// wide, chrome spheres (specular aliasing), a dark slab against the sky, a walled corner with
-/// boxes and a ball in it (occlusion), and two moving instances ([`AA_MOVING`]) when `moving`
+/// wide, an alpha-tested chain-link panel, chrome spheres (specular aliasing), a dark slab against
+/// the sky, a walled corner with boxes and a ball in it (occlusion), and two moving instances
+/// ([`AA_MOVING`]) when `moving`
 /// (otherwise they stay at their tick-0 poses). `full` gives the whole scene (a reset; the first
 /// frame), otherwise only the moving instances' poses. Register [`aa_model`] under [`AA_MODEL`]
 /// first.
@@ -1077,6 +1117,17 @@ pub fn aa_scene(tick: u64, moving: bool, full: bool) -> RenderFrame {
             [16.0, 0.012, 0.012],
         ));
     }
+    // An alpha-tested chain-link panel standing beside the spheres.
+    instances.push(item(
+        85,
+        Look {
+            color: [1.0; 4],
+            ..look(&format!("{AA_MODEL}#chain_link"), [1.0; 3], 0.7, 0.35)
+        },
+        [3.6, 1.0, -2.2],
+        Quat::from_rotation_y(-0.5) * Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
+        [3.0, 1.0, 1.8],
+    ));
     // Chrome spheres: specular aliasing on curved, glossy metal.
     for (i, (x, r)) in [(-1.6f32, 0.04f32), (-0.4, 0.12), (0.8, 0.3)]
         .into_iter()
