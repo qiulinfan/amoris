@@ -20,6 +20,7 @@
     clippy::cast_precision_loss
 )]
 
+pub mod boundary;
 mod catalog;
 pub mod control;
 mod edit;
@@ -40,6 +41,7 @@ pub mod types;
 mod values;
 pub mod version;
 
+pub use boundary::take_held;
 pub use catalog::{CATALOG, Command, CommandDef, CommandFn, NoParams, catalog_json};
 pub use control::{RestoreBundle, Sample, SnapshotsRestoreParams, StepParams};
 pub use edit::{Edit, EditOp, WorldEditOps, WorldEditParams, WorldGetParams, label_of};

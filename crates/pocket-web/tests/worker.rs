@@ -14,9 +14,9 @@ use std::sync::Arc;
 
 use pocket_check::{Subject, runs};
 use pocket_contract::{Problem, detail};
-use pocket_link::source_json;
+use pocket_link::{Kind, source_json};
 use pocket_runtime::{Game, GameBuilder};
-use pocket_sim::{EventKind, NewEvent, RunCondition, Sim, TickPhase};
+use pocket_sim::{EventKind, NewEvent, RunCondition, Sim, SimClock, Tick, TickPhase};
 use pocket_web::Pacing;
 use pocket_web::package::Package;
 use pocket_web::presenter::PresenterCore;
@@ -321,6 +321,82 @@ fn commands_are_held_for_their_tick_and_refused_once_it_passed() {
             .count();
         assert_eq!(stopped, pocket_link::QUEUE_CAPACITY);
         assert_eq!(w.run(8.0), Next::Quit);
+    });
+}
+
+/// threads.md 5.2: a held command whose tick the world passed without stopping at its boundary (a
+/// world replaced at a later tick; here a test command moves the clock, as the game thread's test
+/// does) is answered `command.tick_passed` at the next boundary and gives back its place in the
+/// queue, rather than waiting for a boundary that never comes.
+#[test]
+fn held_commands_whose_tick_passed_are_answered_and_freed() {
+    on_stack(|| {
+        let subject = Subject::load(&sailing()).unwrap();
+        let bytes = Package::from_setup(&subject.setup, 1).to_bytes();
+        let setup = Package::from_bytes(&bytes).unwrap().setup().unwrap();
+        let game = GameBuilder::new(Arc::new(setup))
+            .seed(1)
+            .command(
+                "test.jump",
+                Kind::Write,
+                Arc::new(|b, _| {
+                    b.world_mut().resource_mut::<SimClock>().tick = Tick(50);
+                    Ok((json!({}), json!({})))
+                }),
+            )
+            .build()
+            .unwrap();
+        let (_, now) = clock();
+        let mut w = WorkerCore::new(game, Pacing::Stepped, now).unwrap();
+        let mut page = Page::default();
+        let held = pocket_link::QUEUE_CAPACITY as u64 - 1;
+        for seq in 1..=held {
+            w.push(&cmd(
+                json!({"player": 0}),
+                seq,
+                Some(5),
+                "status",
+                json!({}),
+            ));
+        }
+        w.run(8.0);
+        page.take(&mut w);
+        assert!(page.replies.is_empty(), "{:?}", page.replies);
+        w.push(&cmd(
+            json!({"developer": 0}),
+            1,
+            None,
+            "test.jump",
+            json!({}),
+        ));
+        // The jump applies at this boundary; the next one answers every held command of tick 5.
+        w.run(8.0);
+        assert_eq!(w.game().tick().0, 50);
+        w.run(8.0);
+        page.take(&mut w);
+        let passed: Vec<&Value> = page
+            .replies
+            .iter()
+            .filter(|r| r["source"] == json!({"player": 0}))
+            .collect();
+        assert_eq!(passed.len() as u64, held, "{:?}", page.replies);
+        for r in passed {
+            assert_eq!(r["error"]["code"], json!("command.tick_passed"), "{r}");
+            assert_eq!(r["error"]["detail"]["boundary"], json!(50), "{r}");
+        }
+        // Their places are free again: the queue takes as many held commands once more.
+        page.replies.clear();
+        for seq in held + 1..=2 * held {
+            w.push(&cmd(
+                json!({"player": 0}),
+                seq,
+                Some(1_000),
+                "status",
+                json!({}),
+            ));
+        }
+        page.take(&mut w);
+        assert!(page.replies.is_empty(), "{:?}", page.replies);
     });
 }
 

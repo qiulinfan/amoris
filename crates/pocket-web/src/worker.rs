@@ -11,7 +11,8 @@
 //!   next tick, are one batch at the task's first boundary, applied in the canonical order
 //!   (`pocket_link::canonical_order`, threads.md 5.2); ticks inside one task have empty batches
 //!   between them. An `at` in the future is held (and counts against the queue's capacity), one in
-//!   the past is `command.tick_passed`.
+//!   the past is `command.tick_passed`, and so is a held one whose tick a replaced world skipped
+//!   (`pocket_runtime::take_held`, as on the game thread).
 //! - **Controls** are the game thread's (threads-slice1.md 8): `step {ticks}`, answered after its
 //!   last tick, and `time_control {pause?, pacing?}`; `snapshot` answers its tick, writes and hash.
 //! - **Pacing.** A task runs boundaries and ticks until the time model says wait or [`SLICE_MS`] of
@@ -414,10 +415,13 @@ impl WorkerCore {
     /// One boundary: gather, sort, apply, pace; `None` when a tick ran and the task may go on.
     fn boundary(&mut self) -> Option<Next> {
         let next = Tick(self.game.tick().0 + 1);
-        let (due, later): (Vec<Envelope>, Vec<Envelope>) =
-            self.held.drain(..).partition(|e| e.at == Some(next));
-        self.held = later;
-        let mut batch = due;
+        let (mut batch, passed) = pocket_runtime::take_held(&mut self.held, next);
+        // A world replaced at a later tick can carry the game past a held command's tick: it is
+        // answered and its place in the queue freed, as on the game thread (threads.md 5.2).
+        for e in passed {
+            let p = tick_passed(e.at.unwrap_or(next), self.game.tick());
+            self.reply(e.source, e.seq, Err(p));
+        }
         for e in std::mem::take(&mut self.incoming) {
             match e.at {
                 Some(t) if t > next => self.held.push(e),
