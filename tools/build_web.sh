@@ -7,9 +7,8 @@
 set -e
 cd "$(dirname "$0")/.."
 if [ -f "$HOME/.cargo/env" ]; then . "$HOME/.cargo/env"; fi
-# Homebrew's LLVM where it is installed; otherwise rquickjs-sys's build script looks for the pinned
-# toolchain (~/.pocket-tools/llvm-23.1.2) itself.
-if [ -z "${POCKET_LLVM:-}" ] && [ -d /opt/homebrew/opt/llvm ]; then export POCKET_LLVM=/opt/homebrew/opt/llvm; fi
+# The C compiler is rquickjs-sys's build script's choice: POCKET_LLVM, else the pinned
+# ~/.pocket-tools/llvm-23.1.2, else Homebrew's LLVM, so every build compiles QuickJS-ng the same way.
 cargo build --profile web --target wasm32-unknown-unknown -p pocket-web
 wasm-bindgen --target web --no-typescript --out-dir web/pkg \
   target/wasm32-unknown-unknown/web/pocket_web.wasm

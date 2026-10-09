@@ -7,9 +7,8 @@ cd "$(dirname "$0")/.."
 # rustup's env file exists on macOS and Linux, not on Windows; `.` of a missing file would end a
 # POSIX shell even behind `|| true`.
 if [ -f "$HOME/.cargo/env" ]; then . "$HOME/.cargo/env"; fi
-# Homebrew's LLVM where it is installed; otherwise rquickjs-sys's build script looks for the pinned
-# toolchain (~/.pocket-tools/llvm-23.1.2) itself.
-if [ -z "${POCKET_LLVM:-}" ] && [ -d /opt/homebrew/opt/llvm ]; then export POCKET_LLVM=/opt/homebrew/opt/llvm; fi
+# The C compiler is rquickjs-sys's build script's choice: POCKET_LLVM, else the pinned
+# ~/.pocket-tools/llvm-23.1.2, else Homebrew's LLVM, so every build compiles QuickJS-ng the same way.
 cargo build --profile web --target wasm32-unknown-unknown -p pocket-viewport
 OUT=web/viewport/pkg
 mkdir -p "$OUT"
@@ -22,4 +21,4 @@ else
   echo "wasm-opt not found: the package is not optimized"
 fi
 ls -la "$OUT"
-gzip -9 -c "$OUT/pocket_viewport_bg.wasm" | wc -c | awk '{printf "gzip: %.2f MB\n", $1/1048576}'
+gzip -9 -c "$OUT/pocket_viewport_bg.wasm" | wc -c | awk '{printf "gzip: %d bytes\n", $1}'

@@ -126,6 +126,18 @@ pub struct Minimal {
 
 impl Minimal {
     pub fn parse(s: &str) -> Minimal {
+        const TOKENS: [&str; 5] = [
+            "features",
+            "first-instance",
+            "multi-draw",
+            "timestamps",
+            "limits",
+        ];
+        for w in s.split(',').map(str::trim).filter(|w| !w.is_empty()) {
+            if !TOKENS.contains(&w) {
+                log::warn!("POCKET_GPU_MINIMAL: unknown token {w:?} ignored (known: {TOKENS:?})");
+            }
+        }
         let has = |t: &str| s.split(',').any(|w| w.trim() == t);
         Minimal {
             features: has("features"),
