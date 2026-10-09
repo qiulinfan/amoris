@@ -252,7 +252,16 @@ Amoris 是一个 **agent-native** 的 3D 游戏引擎。agent 在三个角色上
   以内（轻场景 TAA 贵 0.09 到 0.43 ms，160 万立方体便宜 0.06 到 0.17 ms），故保留在运动中更好的
   MSAA，GTAO 在 1600x900 只要约 0.15 ms；Radeon 780M 上 4x MSAA 在 Vulkan 下比 TAA 贵 1.6 到 4.2
   ms，在 Direct3D 12 下轻场景相当、160 万立方体贵 2 ms，在画质相当时取便宜者，而 GTAO 在那里要 0.5
-  到 0.9 ms。测量与数据见 [bench/taa-gtao.md](bench/taa-gtao.md)。
+  到 0.9 ms。测量与数据见 [bench/taa-gtao.md](bench/taa-gtao.md)。同日再补（Pioneer，评审之后）：三
+  处修正。其一，开启 TAA 时 splat 不再对抖动后的深度做测试：渲染器为它们另画一遍不抖动的深度（只写深
+  度，含 alpha 测试的材质与海面），splat 的两种光栅化都对这张深度测试。理由：splat 画在 TAA 之后、不
+  进历史，对抖动深度测试时网格遮住 splat 的边缘随抖动逐帧跳动（静止画面上轮廓两像素内每帧有数百像素
+  闪烁），而单帧抖动深度里取不出不抖动的边缘；这遍深度只在 TAA 与 splat 同时开启时绘制。其二，一次性
+  的离屏截图（MCP 与 CLI 的 `capture`）在 TAA 下从清空的历史起连画 16 帧（一个抖动周期）再读回：TAA
+  的第一帧只是一个抖动样本，PSNR 比 MSAA 低 4 到 5 dB，而集成显卡默认用 TAA。其三，默认值另按厂商与
+  驱动认出 Apple：Apple GPU 与经 MoltenVK 的 Vulkan（任何 GPU，未测量）保持 MSAA、不开 GTAO，与上文
+  对未测量的 Apple GPU 的规定一致；此前它们按适配器类别取到 TAA 或 GTAO（Apple Silicon 报告为集成显
+  卡）。
 - **神经渲染**：
   - 3D Gaussian Splatting：预处理计算着色器（投影、剔除、球谐取色）、GPU 基数排序、实例化四边形
     混合，与网格深度缓冲合成，即混合网格与 splat 的场景。

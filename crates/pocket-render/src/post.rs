@@ -33,14 +33,21 @@ pub enum Antialiasing {
     MsaaTaa,
 }
 
+/// Apple's PCI vendor id (its GPUs on Metal, and through MoltenVK on Vulkan).
+const APPLE: u32 = 0x106b;
+
 /// The measured defaults for an adapter (docs/bench/taa-gtao.md 5): a discrete GPU keeps
 /// multisampling (TAA costs within 0.45 ms of it there and loses to it under camera motion) and
 /// gets GTAO (0.14 to 0.19 ms at 1600x900 on the RTX 5060); an integrated GPU on Vulkan or
 /// Direct3D 12 gets TAA at one sample (multisampling cost the Radeon 780M up to 4.2 ms more, and
 /// never less) and no GTAO (0.5 to 0.9 ms there). Apple's GPUs (tile-based, where multisampling is
-/// cheap) and the browser, whose adapter's kind is unknown, were not measured and keep
-/// multisampling without GTAO.
+/// cheap; Apple Silicon reports itself integrated), any GPU through MoltenVK, and the browser, whose
+/// adapter's kind is unknown, were not measured and keep multisampling without GTAO.
 pub fn defaults_for(info: &wgpu::AdapterInfo) -> (Antialiasing, Gtao) {
+    let unmeasured = info.vendor == APPLE || info.driver.to_ascii_lowercase().contains("moltenvk");
+    if unmeasured {
+        return (Antialiasing::Msaa, Gtao::Off);
+    }
     match (info.device_type, info.backend) {
         (wgpu::DeviceType::DiscreteGpu, wgpu::Backend::Vulkan | wgpu::Backend::Dx12) => {
             (Antialiasing::Msaa, Gtao::On(AoNormals::Depth))
@@ -634,5 +641,77 @@ impl Post {
             true,
             "display transform",
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn defaults_by_adapter() {
+        use wgpu::{Backend, DeviceType};
+        let info = |kind, backend, vendor: u32, driver: &str| {
+            let mut i = wgpu::AdapterInfo::new(kind, backend);
+            i.vendor = vendor;
+            i.driver = driver.into();
+            i
+        };
+        let msaa = (Antialiasing::Msaa, Gtao::Off);
+        let discrete = (Antialiasing::Msaa, Gtao::On(AoNormals::Depth));
+        let integrated = (Antialiasing::Taa, Gtao::Off);
+        for (kind, backend, vendor, driver, want) in [
+            // Measured: the RTX 5060 and the Radeon 780M on Vulkan and Direct3D 12.
+            (
+                DeviceType::DiscreteGpu,
+                Backend::Vulkan,
+                0x10de,
+                "NVIDIA",
+                discrete,
+            ),
+            (DeviceType::DiscreteGpu, Backend::Dx12, 0x10de, "", discrete),
+            (
+                DeviceType::IntegratedGpu,
+                Backend::Vulkan,
+                0x1002,
+                "AMD proprietary driver",
+                integrated,
+            ),
+            (
+                DeviceType::IntegratedGpu,
+                Backend::Dx12,
+                0x1002,
+                "",
+                integrated,
+            ),
+            // Not measured: Apple's GPUs on Metal or MoltenVK, any GPU through MoltenVK, the
+            // browser, software adapters.
+            (DeviceType::IntegratedGpu, Backend::Metal, APPLE, "", msaa),
+            (
+                DeviceType::IntegratedGpu,
+                Backend::Vulkan,
+                APPLE,
+                "MoltenVK",
+                msaa,
+            ),
+            (DeviceType::IntegratedGpu, Backend::Vulkan, APPLE, "", msaa),
+            (
+                DeviceType::DiscreteGpu,
+                Backend::Vulkan,
+                0x1002,
+                "MoltenVK",
+                msaa,
+            ),
+            (DeviceType::DiscreteGpu, Backend::BrowserWebGpu, 0, "", msaa),
+            (DeviceType::Other, Backend::BrowserWebGpu, 0, "", msaa),
+            (DeviceType::Cpu, Backend::Vulkan, 0x10005, "llvmpipe", msaa),
+            (DeviceType::Cpu, Backend::Dx12, 0x1414, "", msaa),
+        ] {
+            assert_eq!(
+                defaults_for(&info(kind, backend, vendor, driver)),
+                want,
+                "{kind:?} {backend:?} vendor {vendor:#x} driver {driver:?}"
+            );
+        }
     }
 }

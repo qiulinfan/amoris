@@ -541,8 +541,11 @@ fn wavelets(p: vec2f, t: f32, footprint: f32) -> vec2f {
     return g;
 }
 
+// The sea writes every target of the opaque pass, since it writes depth over what lies under it:
+// no indirect share (GTAO leaves it as it is), no object motion (it reprojects as a still surface
+// under the camera), its own normal.
 @fragment
-fn fs_ocean(in: OceanOut) -> @location(0) vec4f {
+fn fs_ocean(in: OceanOut) -> SceneOut {
     let v_world = view.camera_pos.xyz - in.world;
     let dist = length(v_world);
     let v = v_world / dist;
@@ -584,5 +587,10 @@ fn fs_ocean(in: OceanOut) -> @location(0) vec4f {
     var c = mix(body, sky, f) + spec;
     c = mix(c, vec3f(0.8) * (body_light * 6.0 + sun_lux * max(sun.y, 0.0) * 0.25), foam * 0.6);
     c = apply_fog(c, in.world);
-    return vec4f(c, 1.0);
+    var o: SceneOut;
+    o.color = vec4f(c, 1.0);
+    o.share = vec4f(0.0);
+    o.motion = vec4f(0.0);
+    o.normal = vec4f((view.view * vec4f(n, 0.0)).xyz * 0.5 + 0.5, 1.0);
+    return o;
 }

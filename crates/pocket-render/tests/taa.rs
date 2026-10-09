@@ -11,7 +11,7 @@
 //! - Camera cuts and resizes drop the history.
 
 use glam::{Quat, Vec3};
-use pocket_assets::frame::{InstanceUpdate, Look, Pose, RenderFrame};
+use pocket_assets::frame::{InstanceUpdate, Look, Pose, RenderFrame, SeaView};
 use pocket_render::demo::{AA_MODEL, aa_model, aa_scene};
 use pocket_render::{Antialiasing, AoNormals, BackendChoice, CameraState, Gpu, Gtao, Renderer};
 
@@ -340,4 +340,134 @@ fn camera_cuts_and_resizes_drop_the_history() {
     r.set_antialiasing(Antialiasing::MsaaTaa);
     let _ = r.capture_rgba(11.0 * DT);
     assert_eq!(r.taa_mut().frames(), 1);
+}
+
+/// Luminance of an HDR pixel.
+fn lum(p: &[f32]) -> f32 {
+    0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2]
+}
+
+/// The pixels where `a` and `b` differ by more than 2% in luminance, and every pixel within 2 of
+/// them does too (the inside of what one image has and the other has not).
+fn inside_of_difference(a: &[f32], b: &[f32]) -> Vec<bool> {
+    let raw: Vec<bool> = a
+        .chunks(4)
+        .zip(b.chunks(4))
+        .map(|(p, q)| (lum(p) - lum(q)).abs() > 0.02 * lum(p).max(1e-3))
+        .collect();
+    let (w, h) = (W as i32, H as i32);
+    (0..w * h)
+        .map(|i| {
+            let (x, y) = (i % w, i / w);
+            (-2..=2).all(|dy| {
+                (-2..=2).all(|dx| {
+                    let (u, v) = (x + dx, y + dy);
+                    u >= 0 && v >= 0 && u < w && v < h && raw[(v * w + u) as usize]
+                })
+            })
+        })
+        .collect()
+}
+
+/// The sea's level in [`sunk_scene`].
+const SEA: f32 = 0.6;
+
+/// The moving cube of `still_scene`, shrunk and sunk under the sea, at tick `k` (sliding 4 cm a
+/// tick: never visible).
+fn sunk_cube(k: u64) -> InstanceUpdate {
+    InstanceUpdate {
+        id: pocket_render::demo::AA_MOVING[0],
+        pose: Some(Pose {
+            position: [3.0 - 0.04 * k as f32, 0.25, 2.6],
+            rotation: Quat::IDENTITY.to_array(),
+            scale: [0.4; 3],
+        }),
+        look: None,
+        anim: None,
+    }
+}
+
+/// `still_scene` with its moving cube sunk ([`sunk_cube`]) and, with `sea`, a calm sea at [`SEA`]
+/// over the ground and the cube; the walled corner and the spheres stand in it. Without the
+/// fence, the wires and the chain link: thinner than a pixel, they share pixels with the sea.
+fn sunk_scene(sea: bool) -> RenderFrame {
+    let mut f = still_scene(1.0);
+    f.instances.retain(|i| !matches!(i.id, 10..=65 | 85));
+    for i in &mut f.instances {
+        if i.id == pocket_render::demo::AA_MOVING[0] {
+            i.pose = sunk_cube(0).pose;
+        }
+    }
+    f.sea = Some(sea.then(|| SeaView {
+        level: SEA,
+        waves: vec![],
+    }));
+    f
+}
+
+/// The image after `frames` frames of [`sunk_scene`] from the still camera, the sunk cube sliding
+/// when `slide`.
+fn sunk_run(r: &mut Renderer, sea: bool, slide: bool, frames: u64) -> Vec<f32> {
+    r.apply(sunk_scene(sea), 0.0);
+    r.set_camera_override(Some(pocket_render::demo::aa_camera(0, false)));
+    let mut img = Vec::new();
+    for k in 1..=frames {
+        if slide {
+            r.apply(
+                RenderFrame {
+                    tick: k + 1,
+                    t_s: k as f64 * DT,
+                    dt_s: DT,
+                    instances: vec![sunk_cube(k)],
+                    ..RenderFrame::default()
+                },
+                k as f64 * DT,
+            );
+        }
+        img = r.capture_hdr(k as f64 * DT + 0.5 * DT).2;
+    }
+    img
+}
+
+/// The sea writes depth over the ground and whatever is sunk in it, so it must also write the
+/// opaque pass's extra targets: otherwise each sea pixel keeps the indirect share and the object
+/// motion of the surface under it, GTAO darkens the water and TAA moves it with a hidden object.
+#[test]
+fn the_sea_hides_what_lies_under_it() {
+    let Some(gpu) = gpu() else { return };
+    let msaa = |gtao: Gtao, sea: bool| {
+        let mut r = renderer(&gpu, Antialiasing::Msaa, gtao);
+        sunk_run(&mut r, sea, false, 3)
+    };
+    let dry = msaa(Gtao::Off, false);
+    let wet = msaa(Gtao::Off, true);
+    let ocean = inside_of_difference(&dry, &wet);
+    let n = ocean.iter().filter(|&&o| o).count();
+    eprintln!("{n} pixels inside the sea");
+    assert!(n > (W * H / 8) as usize, "the sea covers only {n} pixels");
+    // GTAO darkens indirect light only, and the sea has none.
+    let shaded = msaa(Gtao::On(AoNormals::Depth), true);
+    let changed = |a: &[f32], b: &[f32]| {
+        (0..(W * H) as usize)
+            .filter(|&i| {
+                let (p, q) = (lum(&a[i * 4..i * 4 + 3]), lum(&b[i * 4..i * 4 + 3]));
+                ocean[i] && (p - q).abs() > 1e-4 * q.max(1e-4)
+            })
+            .count()
+    };
+    let darkened = changed(&shaded, &wet);
+    eprintln!("GTAO changed {darkened} of them");
+    assert_eq!(darkened, 0, "GTAO changed {darkened} pixels of the sea");
+    // A cube sliding under the water moves nothing on it.
+    let taa = |object_motion: bool| {
+        let mut r = renderer(&gpu, Antialiasing::Taa, Gtao::Off);
+        r.taa_mut().tuning.object_motion = object_motion;
+        sunk_run(&mut r, true, true, 40)
+    };
+    let moved = changed(&taa(true), &taa(false));
+    eprintln!("object motion changed {moved} of them");
+    assert_eq!(
+        moved, 0,
+        "a hidden cube's motion moved {moved} pixels of the sea"
+    );
 }

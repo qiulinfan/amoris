@@ -56,7 +56,8 @@ unjittered positions.
 
 **Defaults** (`post::defaults_for`, measured: charter 4.4 and docs/bench/taa-gtao.md 5): a discrete
 GPU on Vulkan or Direct3D 12 draws with `msaa` and GTAO on; an integrated one with `taa` and GTAO
-off; anything else (Metal, the browser, software adapters) with `msaa` and GTAO off. The
+off; anything else (Metal, the browser, software adapters, and Apple's GPUs and any GPU through
+MoltenVK on Vulkan, known by Apple's vendor id or the driver's name) with `msaa` and GTAO off. The
 environment variables and the setters override them. Tools that compare images across adapters
 pin both (`tools/backend_compare.py`), and checks that compare redraws pixel for pixel pin `msaa`
 without GTAO.
@@ -79,9 +80,14 @@ index; hiz.wgsl's sample count becomes 1). TAA's history is dropped.
 | 3 | `Rgb10a2Unorm`, view normals | GTAO `target` | forward pipelines | GTAO's horizon search |
 
 The forward fragment shaders always write all four outputs; a pipeline whose format lacks a target
-has no target there, and WebGPU ignores the output. The sky, ocean, particles and grid write the
-color only: their pipelines have the extra targets with an empty write mask, so they keep what is
-under them (cleared to zero: no share, no motion). Multisampled targets resolve into one-sample
+has no target there, and WebGPU ignores the output. The ocean writes all four too (no share, zero
+motion, its own normal): it writes depth over the ground and whatever is sunk in it, which would
+otherwise show through in the extra targets, GTAO darkening the water by the occlusion of the
+ground under it and TAA moving it with a hidden hull (`tests/taa.rs`). The sky, particles and grid
+write the color only: their pipelines have the extra targets with an empty write mask, so they keep
+what is under them. The sky is drawn only where nothing was (cleared to zero: no share, no motion);
+particles and the grid, blended without writing depth, keep the share and motion of the surface
+they are drawn over. Multisampled targets resolve into one-sample
 textures of the same format at the end of the pass and their samples are discarded; with one sample
 the pass draws into those textures directly. At most 20 bytes per sample (8 + 4 + 4 + 4): within
 WebGPU's default 32.
@@ -148,8 +154,9 @@ fragment version doing nine loads and conversions per pixel cost 1.5 times as mu
 7. blend in tone-mapped space with the current frame's weight `max(1 / (n + 1), alpha)` (n frames
    since the reset, `alpha` 0.1), raised toward 0.25 as the reprojection moves up to 8 pixels.
 
-Particles, the ocean, the sky and the grid write no object motion and reproject as still surfaces
-under the camera; a moving particle relies on the clip. The output alpha is the view depth, which
+The ocean writes zero object motion and reprojects as a still surface under the camera (its waves
+are not followed), as the sky does; particles and the grid move with the surface under them, and a
+moving particle relies on the clip. The output alpha is the view depth, which
 bloom and the display transform ignore.
 
 ## 5. GTAO
@@ -201,9 +208,11 @@ the options from its URL (`?aa=`, `?gtao=`, `?sharpen=`) and draws the check sce
   pixels a frame does too through the object motion, and does not without it; a still camera's
   history stays near the mean of the jittered frames; the id pass's coverage is the same with TAA;
   GTAO leaves a scene lit only directly untouched and never brightens a pixel; cuts, resizes and
-  option changes drop the history. Each check failed with its defect put back (a one-pixel
-  reprojection offset, camera motion ignored, object motion reversed, the jittered view in the id
-  pass, GTAO on all light, no cut detection).
+  option changes drop the history; a sea over the ground, the walled corner and a sunk cube sliding
+  under it is left untouched by GTAO and by the cube's object motion. Each check failed with its
+  defect put back (a one-pixel reprojection offset, camera motion ignored, object motion reversed,
+  the jittered view in the id pass, GTAO on all light, no cut detection, the sea writing the color
+  only: GTAO changed 15,935 of its 16,330 inside pixels and the hidden cube's motion 457).
 - `examples/aa_eval.rs`: PSNR against supersampled references while converging, under motion, with
   skinning, with ablations; GTAO images; per-option costs. `tools/aa_bench.py` and
   `tools/aa_web_bench.py` run the cost matrix natively and in Chrome.

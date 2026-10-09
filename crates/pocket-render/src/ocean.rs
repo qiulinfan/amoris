@@ -64,8 +64,9 @@ fn ring_grid() -> (Vec<[f32; 2]>, Vec<u32>) {
     (v, idx)
 }
 
-/// The sea's pipeline in the opaque pass (`fs_ocean` writes the color only: the opaque pass's extra
-/// targets are left as they are, so it reads as unoccluded, unmoving surface).
+/// The sea's pipeline in the opaque pass. `fs_ocean` writes every target (no indirect share, no
+/// object motion, its normal): it writes depth over what lies under the water, whose share and
+/// motion would otherwise show through (GTAO darkening the sea, a sunk hull's motion moving it).
 fn pipeline(
     device: &wgpu::Device,
     module: &wgpu::ShaderModule,
@@ -89,7 +90,7 @@ fn pipeline(
             module,
             entry_point: Some("fs_ocean"),
             compilation_options: Default::default(),
-            targets: &format.targets(None, false),
+            targets: &format.targets(None, true),
         }),
         primitive: wgpu::PrimitiveState::default(),
         depth_stencil: Some(wgpu::DepthStencilState {
