@@ -50,15 +50,17 @@ pub struct PickResult {
 }
 
 impl Picking {
+    /// `groups`: the frame group, two empty ones and the batch base (batches.rs); the pass binds
+    /// group 0 and `draw` the rest.
     pub fn new(
         device: &wgpu::Device,
         module: &wgpu::ShaderModule,
-        frame: &wgpu::BindGroupLayout,
+        groups: [&wgpu::BindGroupLayout; 4],
         vertex: wgpu::VertexBufferLayout<'_>,
     ) -> Picking {
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("entity ids"),
-            bind_group_layouts: &[Some(frame)],
+            bind_group_layouts: &groups.map(Some),
             immediate_size: 0,
         });
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {

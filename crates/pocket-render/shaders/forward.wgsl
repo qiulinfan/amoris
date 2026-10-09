@@ -23,6 +23,11 @@
 @group(2) @binding(1) var tex_linear: texture_2d_array<f32>;
 @group(2) @binding(2) var tex_sampler: sampler;
 
+// The draw batch's base in the visible lists (batches.rs), added to `instance_index`: 0 when the
+// base is the draw's `first_instance`; the base itself on WebGPU's baseline path, where
+// `first_instance` must be 0. (Binding 0 of group 3 is the ocean's, in its own pipeline.)
+@group(3) @binding(1) var<uniform> batch: vec4u;
+
 struct VsIn {
     @location(0) position: vec3f,
     @location(1) normal: vec3f,
@@ -41,7 +46,7 @@ struct VsOut {
 
 @vertex
 fn vs(v: VsIn, @builtin(instance_index) ii: u32) -> VsOut {
-    let d = drawn[ii];
+    let d = drawn[ii + batch.x];
     let world = d.pos + quat_rotate(d.rot, v.position * d.scale);
     // Normals under non-uniform scale: scale by the inverse, then rotate.
     let n = normalize(quat_rotate(d.rot, v.normal / d.scale));
@@ -315,11 +320,12 @@ struct ShadowOut {
 
 @vertex
 fn vs_shadow(v: VsIn, @builtin(instance_index) ii: u32) -> ShadowOut {
-    let inst = instances[visible[ii]];
+    let i = ii + batch.x;
+    let inst = instances[visible[i]];
     let pose = instance_pose(inst, view.params.x);
     let world = pose.pos + quat_rotate(pose.rot, v.position * inst.scale);
     var o: ShadowOut;
-    o.clip = view.cascades[min(ii / view.counts.x, 4u) - 1u] * vec4f(world, 1.0);
+    o.clip = view.cascades[min(i / view.counts.x, 4u) - 1u] * vec4f(world, 1.0);
     return o;
 }
 
@@ -331,11 +337,12 @@ struct MaskedShadowOut {
 
 @vertex
 fn vs_shadow_masked(v: VsIn, @builtin(instance_index) ii: u32) -> MaskedShadowOut {
-    let inst = instances[visible[ii]];
+    let i = ii + batch.x;
+    let inst = instances[visible[i]];
     let pose = instance_pose(inst, view.params.x);
     let world = pose.pos + quat_rotate(pose.rot, v.position * inst.scale);
     var o: MaskedShadowOut;
-    o.clip = view.cascades[min(ii / view.counts.x, 4u) - 1u] * vec4f(world, 1.0);
+    o.clip = view.cascades[min(i / view.counts.x, 4u) - 1u] * vec4f(world, 1.0);
     o.uv = v.uv;
     o.material = inst.material;
     return o;
@@ -362,7 +369,7 @@ struct IdOut {
 
 @vertex
 fn vs_id(v: VsIn, @builtin(instance_index) ii: u32) -> IdOut {
-    let d = drawn[ii];
+    let d = drawn[ii + batch.x];
     let world = d.pos + quat_rotate(d.rot, v.position * d.scale);
     var o: IdOut;
     o.clip = view.view_proj * vec4f(world, 1.0);

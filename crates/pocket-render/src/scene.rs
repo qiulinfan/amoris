@@ -449,6 +449,20 @@ impl Scene {
         runs
     }
 
+    /// Instances per batch, in `batch_offsets`' order (variant-major: `variant * meshes + mesh`).
+    pub fn batch_sizes(&self, meshes: usize) -> Vec<u32> {
+        (0..VARIANTS as usize)
+            .flat_map(|v| {
+                (0..meshes).map(move |m| {
+                    self.mesh_counts
+                        .get(m * VARIANTS as usize + v)
+                        .copied()
+                        .unwrap_or(0)
+                })
+            })
+            .collect()
+    }
+
     /// Visible-list regions per batch (variant-major: `variant * meshes + mesh`, prefix sums of
     /// the instance counts) and the per-view stride.
     pub fn batch_offsets(&self, meshes: usize) -> (Vec<u32>, u32) {

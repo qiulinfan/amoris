@@ -4,10 +4,12 @@
 //! 1. cull every instance against the camera and the four shadow cascades in one dispatch, which
 //!    writes the visible lists and the instance counts of every indirect draw;
 //! 2. assign punctual lights to the cluster grid;
-//! 3. draw each shadow cascade (one multi-draw each);
-//! 4. draw the opaque scene and the sky into the multisampled HDR target (one multi-draw);
+//! 3. draw each shadow cascade (one multi-draw per pipeline variant natively);
+//! 4. draw the opaque scene and the sky into the multisampled HDR target (likewise);
 //! 5. bloom and the display transform into the output.
-//! The CPU's work per frame does not grow with the number of instances.
+//!
+//! The CPU's work per frame does not grow with the number of instances. How the indirect draws
+//! are issued (multi-draw, or WebGPU's baseline without `indirect-first-instance`) is batches.rs.
 
 use std::collections::{HashMap, HashSet};
 
@@ -17,6 +19,7 @@ use pocket_assets::frame::{LightKindView, Look, RenderFrame};
 use pocket_assets::mesh::ModelAsset;
 use pocket_assets::primitives::{PRIMITIVES, primitive};
 
+use crate::batches::{Batches, VIEWS};
 use crate::blit::Blitter;
 use crate::camera::{CameraState, frustum_planes};
 use crate::gpu::Gpu;
@@ -36,7 +39,6 @@ use crate::skinning::Skinning;
 use crate::sky::{Sky, SkyParams};
 use crate::ui::Ui;
 
-const VIEWS: u32 = 1 + CASCADES as u32;
 const CLUSTER_X: u32 = 16;
 const CLUSTER_Y: u32 = 9;
 const CLUSTER_Z: u32 = 24;
@@ -96,16 +98,6 @@ struct ClusterUniform {
     params: [f32; 4],
 }
 
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-struct DrawArgs {
-    index_count: u32,
-    instance_count: u32,
-    first_index: u32,
-    base_vertex: i32,
-    first_instance: u32,
-}
-
 /// What a frame cost and drew.
 #[derive(Clone, Debug, Default)]
 pub struct FrameStats {
@@ -120,6 +112,10 @@ pub struct FrameStats {
     pub pending_assets: usize,
     pub tick: u64,
     pub backend: &'static str,
+    /// How the indirect draws were issued (`multi-draw`, `first-instance` or `baseline`).
+    pub draw_path: &'static str,
+    /// Draw calls the shadow and opaque passes issued for the GPU-driven batches.
+    pub draw_calls: u32,
 }
 
 /// A loaded model: its meshes by name and index, and its scene's nodes.
@@ -301,8 +297,8 @@ pub struct Renderer {
     visible: wgpu::Buffer,
     /// The camera view's visible instances with interpolated poses (48 bytes each).
     drawn: wgpu::Buffer,
-    draws: wgpu::Buffer,
-    draw_template: wgpu::Buffer,
+    /// The indirect draws and how they are issued.
+    batches: Batches,
     lights: wgpu::Buffer,
     cluster_buf: wgpu::Buffer,
     cluster_lights: wgpu::Buffer,
@@ -498,9 +494,15 @@ impl Renderer {
             ],
         });
         let fwd_module = shaders::module(device, "forward");
+        let batches = Batches::new(device, &gpu.caps);
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("forward"),
-            bind_group_layouts: &[Some(&frame), Some(&lighting), Some(&textures)],
+            bind_group_layouts: &[
+                Some(&frame),
+                Some(&lighting),
+                Some(&textures),
+                Some(&batches.layout),
+            ],
             immediate_size: 0,
         });
         let vertex_layout = wgpu::VertexBufferLayout {
@@ -557,7 +559,12 @@ impl Renderer {
         });
         let shadow_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("shadow"),
-            bind_group_layouts: &[Some(&frame), Some(&empty), Some(&textures)],
+            bind_group_layouts: &[
+                Some(&frame),
+                Some(&empty),
+                Some(&textures),
+                Some(&batches.layout),
+            ],
             immediate_size: 0,
         });
         let empty_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -611,7 +618,12 @@ impl Renderer {
             })
         };
         let shadow = [shadow_pipe(false), shadow_pipe(true)];
-        let picking = Picking::new(device, &fwd_module, &frame, vertex_layout.clone());
+        let picking = Picking::new(
+            device,
+            &fwd_module,
+            [&frame, &empty, &empty, &batches.layout],
+            vertex_layout.clone(),
+        );
         let ocean = Ocean::new(
             device,
             &fwd_module,
@@ -723,13 +735,7 @@ impl Renderer {
                 wgpu::BufferUsages::empty(),
             ),
             drawn: storage(device, "drawn", 1024 * 48, wgpu::BufferUsages::empty()),
-            draws: storage(device, "draws", 64 * 20, wgpu::BufferUsages::INDIRECT),
-            draw_template: storage(
-                device,
-                "draw template",
-                64 * 20,
-                wgpu::BufferUsages::COPY_SRC,
-            ),
+            batches,
             lights: storage(device, "lights", 64 * 64, wgpu::BufferUsages::empty()),
             cluster_buf: uniform(device, "clusters", 32),
             cluster_lights: storage(
@@ -794,6 +800,12 @@ impl Renderer {
 
     pub fn gpu(&self) -> &Gpu {
         &self.gpu
+    }
+
+    /// How the GPU-driven passes issue their indirect draws (`multi-draw`, `first-instance` or
+    /// `baseline`; batches.rs).
+    pub fn draw_path(&self) -> &'static str {
+        self.batches.path.name()
     }
 
     pub fn set_asset_source(&mut self, source: Box<dyn AssetSource>) {
@@ -1086,38 +1098,10 @@ impl Renderer {
                 );
                 grown = true;
             }
-            let mut template = Vec::with_capacity((mesh_count * VIEWS * VARIANTS) as usize);
-            for v in 0..VIEWS {
-                for variant in 0..VARIANTS {
-                    for (m, info) in self.meshes.infos.iter().enumerate() {
-                        template.push(DrawArgs {
-                            index_count: info.index_count,
-                            instance_count: 0,
-                            first_index: info.first_index,
-                            base_vertex: info.base_vertex,
-                            first_instance: v * stride
-                                + offsets[(variant * mesh_count) as usize + m],
-                        });
-                    }
-                }
-            }
-            let bytes = (template.len() * 20) as u64;
-            if bytes > self.draws.size() {
-                self.draws = storage(
-                    device,
-                    "draws",
-                    bytes.next_power_of_two(),
-                    wgpu::BufferUsages::INDIRECT,
-                );
-                self.draw_template = storage(
-                    device,
-                    "draw template",
-                    bytes.next_power_of_two(),
-                    wgpu::BufferUsages::COPY_SRC,
-                );
-                grown = true;
-            }
-            queue.write_buffer(&self.draw_template, 0, bytemuck::cast_slice(&template));
+            let sizes = self.scene.batch_sizes(self.meshes.len());
+            grown |=
+                self.batches
+                    .rebuild(device, queue, &self.meshes.infos, &offsets, &sizes, stride);
             self.draw_meshes = mesh_count;
         }
         grown |= self.meshes.flush(device, queue);
@@ -1185,7 +1169,7 @@ impl Renderer {
                 b(0, &self.cull_buf),
                 b(1, &self.instances),
                 b(2, &self.meshes.info_buffer),
-                b(3, &self.draws),
+                b(3, &self.batches.draws),
                 b(4, &self.visible),
                 b(5, &self.batch_offsets),
                 b(6, &self.drawn),
@@ -1432,10 +1416,7 @@ impl Renderer {
         let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("frame"),
         });
-        let draw_bytes = u64::from(self.draw_meshes * VIEWS * VARIANTS) * 20;
-        if draw_bytes > 0 {
-            enc.copy_buffer_to_buffer(&self.draw_template, 0, &self.draws, 0, draw_bytes);
-        }
+        self.batches.reset(&mut enc);
         let frame_dt = self
             .last_frame_s
             .map_or(1.0 / 60.0, |t| (now_s - t).clamp(0.0, 0.1)) as f32;
@@ -1478,25 +1459,7 @@ impl Renderer {
             pass.set_bind_group(0, &binds.cluster, &[]);
             pass.dispatch_workgroups((CLUSTER_X * CLUSTER_Y * CLUSTER_Z).div_ceil(64), 1, 1);
         }
-        // Draws one variant's batches of one view: a contiguous range of the indirect buffer.
-        let draw = |pass: &mut wgpu::RenderPass<'_>,
-                    view_index: u32,
-                    variant: u32,
-                    meshes: u32,
-                    first_instance: bool| {
-            if meshes == 0 {
-                return;
-            }
-            let offset = u64::from((view_index * VARIANTS + variant) * meshes) * 20;
-            if first_instance {
-                pass.multi_draw_indexed_indirect(&self.draws, offset, meshes);
-            } else {
-                for m in 0..meshes {
-                    pass.draw_indexed_indirect(&self.draws, offset + u64::from(m) * 20);
-                }
-            }
-        };
-        let fi = self.gpu.caps.indirect_first_instance;
+        let mut draw_calls = 0;
         // Without shadows the cascades are never sampled (`shadow_factor` returns 1): skip them.
         for c in 0..if shadows { CASCADES } else { 0 } {
             let ts = self.profiler.render_scope("shadows");
@@ -1521,7 +1484,7 @@ impl Renderer {
             pass.set_index_buffer(self.meshes.indices.slice(..), wgpu::IndexFormat::Uint32);
             for variant in 0..VARIANTS {
                 pass.set_pipeline(&self.shadow[(variant & 1) as usize]);
-                draw(&mut pass, c as u32 + 1, variant, self.draw_meshes, fi);
+                draw_calls += self.batches.draw(&mut pass, c as u32 + 1, variant);
             }
         }
         // Gaussian splats (splat/): preprocess and sort; the opaque pass keeps its depth for them.
@@ -1562,7 +1525,7 @@ impl Renderer {
             pass.set_index_buffer(self.meshes.indices.slice(..), wgpu::IndexFormat::Uint32);
             for variant in 0..VARIANTS {
                 pass.set_pipeline(&self.forward[variant as usize]);
-                draw(&mut pass, 0, variant, self.draw_meshes, fi);
+                draw_calls += self.batches.draw(&mut pass, 0, variant);
             }
             if self.scene.sea.is_some() {
                 self.ocean.draw(&mut pass);
@@ -1574,21 +1537,14 @@ impl Renderer {
             self.overlays.draw_grid(&device, &mut pass, &self.view_buf);
         }
         if self.picking.wanted() {
-            let meshes = self.draw_meshes;
-            let draws = &self.draws;
+            let batches = &self.batches;
+            let empty = &self.empty_group;
+            // The camera view's batches, every variant through the one id pipeline.
             let id_draw = |pass: &mut wgpu::RenderPass<'_>| {
+                pass.set_bind_group(1, empty, &[]);
+                pass.set_bind_group(2, empty, &[]);
                 for variant in 0..VARIANTS {
-                    if meshes == 0 {
-                        return;
-                    }
-                    let offset = u64::from(variant * meshes) * 20;
-                    if fi {
-                        pass.multi_draw_indexed_indirect(draws, offset, meshes);
-                    } else {
-                        for m in 0..meshes {
-                            pass.draw_indexed_indirect(draws, offset + u64::from(m) * 20);
-                        }
-                    }
+                    batches.draw(pass, 0, variant);
                 }
             };
             self.picking.encode(
@@ -1669,6 +1625,8 @@ impl Renderer {
             pending_assets: self.scene.pending() + usize::from(self.gi.loading),
             tick: self.scene.tick,
             backend: self.gpu.backend_name(),
+            draw_path: self.batches.path.name(),
+            draw_calls,
         };
         self.last.clone()
     }

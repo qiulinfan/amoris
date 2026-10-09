@@ -72,8 +72,14 @@ impl BackendChoice {
 /// What the renderer may use beyond WebGPU's defaults.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Capabilities {
-    /// `first_instance` in indirect draws: one multi-draw per pass for every batch.
+    /// A nonzero `first_instance` in indirect draws (WebGPU's optional `indirect-first-instance`):
+    /// a batch's instance base travels in its draw arguments. Without it a nonzero value makes the
+    /// draw a no-op, so the base goes through a dynamic-offset uniform instead (batches.rs).
     pub indirect_first_instance: bool,
+    /// `multi_draw_indexed_indirect` runs as native commands (wgpu-core on Vulkan, Metal, DX12).
+    /// wgpu 30 offers the call wherever indirect execution exists, but in the browser it is a loop
+    /// of single draws (WebGPU has no multi-draw), so there the renderer skips empty batches itself.
+    pub multi_draw_indirect: bool,
     /// GPU timestamps around passes (the profiler).
     pub timestamps: bool,
     /// Half-precision arithmetic in shaders (neural decoding).
@@ -104,14 +110,55 @@ impl std::fmt::Display for GpuError {
 
 impl std::error::Error for GpuError {}
 
+/// What to leave out of the device, to run natively as a browser would (`POCKET_GPU_MINIMAL`, or
+/// the viewport page's `?gpu_minimal=`): a comma-separated list of `features` (no optional
+/// features at all), `first-instance` (no `indirect-first-instance` only), `multi-draw` (draw
+/// batch by batch as in the browser even where multi-draw is native), `timestamps` (no GPU
+/// timestamps) and `limits` (WebGPU's default limits).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Minimal {
+    pub features: bool,
+    pub first_instance: bool,
+    pub multi_draw: bool,
+    pub timestamps: bool,
+    pub limits: bool,
+}
+
+impl Minimal {
+    pub fn parse(s: &str) -> Minimal {
+        let has = |t: &str| s.split(',').any(|w| w.trim() == t);
+        Minimal {
+            features: has("features"),
+            first_instance: has("first-instance"),
+            multi_draw: has("multi-draw"),
+            timestamps: has("timestamps"),
+            limits: has("limits"),
+        }
+    }
+
+    /// From `POCKET_GPU_MINIMAL` (nothing left out when it is unset, and in the browser).
+    pub fn from_env() -> Minimal {
+        Minimal::parse(&std::env::var("POCKET_GPU_MINIMAL").unwrap_or_default())
+    }
+
+    /// Whether `indirect-first-instance` is left out.
+    pub fn drops_first_instance(self) -> bool {
+        self.features || self.first_instance
+    }
+}
+
+/// An instance on `choice`'s backends, leaving out what `POCKET_GPU_MINIMAL` says.
 pub fn instance(choice: BackendChoice) -> wgpu::Instance {
+    instance_with(choice, Minimal::from_env())
+}
+
+/// An instance on `choice`'s backends, leaving out what `minimal` says (see [`instance_flags_with`]
+/// for its flags).
+pub fn instance_with(choice: BackendChoice, minimal: Minimal) -> wgpu::Instance {
     let backends = choice.backends();
     let mut desc = wgpu::InstanceDescriptor {
         backends,
-        // wgpu's own switches override these defaults: `WGPU_VALIDATION=1` (with the Direct3D 12
-        // debug layer or Vulkan's validation layers) and `WGPU_VALIDATION_INDIRECT_CALL=0|1` (to
-        // time what indirect validation costs, docs/bench/dx12.md) work in release builds too.
-        flags: instance_flags(backends, cfg!(debug_assertions)).with_env(),
+        flags: instance_flags_with(backends, minimal),
         ..wgpu::InstanceDescriptor::new_without_display_handle()
     };
     if backends.contains(wgpu::Backends::DX12) {
@@ -145,11 +192,37 @@ pub fn instance_flags(backends: wgpu::Backends, debug: bool) -> wgpu::InstanceFl
     flags
 }
 
+/// The flags of an instance on `backends` made by [`instance_with`]: [`instance_flags`], then wgpu's
+/// own switches, which work in release builds too (`WGPU_VALIDATION=1` with the Direct3D 12 debug
+/// layer or Vulkan's validation layers, `WGPU_VALIDATION_INDIRECT_CALL=0|1` to time what indirect
+/// validation costs, docs/bench/dx12.md). When `minimal` leaves out `indirect-first-instance`,
+/// indirect-call validation stays on whatever the environment says: it turns an indirect draw whose
+/// `first_instance` is nonzero into a no-op, as browsers do, where a native driver would draw it
+/// anyway and hide a missing baseline path (docs/spec/webgpu-baseline.md).
+pub fn instance_flags_with(backends: wgpu::Backends, minimal: Minimal) -> wgpu::InstanceFlags {
+    let mut flags = instance_flags(backends, cfg!(debug_assertions)).with_env();
+    if minimal.drops_first_instance() {
+        flags |= wgpu::InstanceFlags::VALIDATION_INDIRECT_CALL;
+    }
+    flags
+}
+
 impl Gpu {
-    /// A device on the best adapter of `instance`, compatible with `surface` when given.
+    /// A device on the best adapter of `instance`, compatible with `surface` when given, leaving
+    /// out what `POCKET_GPU_MINIMAL` says.
     pub async fn new(
         instance: wgpu::Instance,
         surface: Option<&wgpu::Surface<'_>>,
+    ) -> Result<Gpu, GpuError> {
+        Gpu::new_with(instance, surface, Minimal::from_env()).await
+    }
+
+    /// A device on the best adapter of `instance` (or the one `POCKET_ADAPTER` names), leaving out
+    /// what `minimal` says.
+    pub async fn new_with(
+        instance: wgpu::Instance,
+        surface: Option<&wgpu::Surface<'_>>,
+        minimal: Minimal,
     ) -> Result<Gpu, GpuError> {
         let adapter = match adapter_override() {
             Some(wanted) => pick_adapter(&instance, surface, &wanted).await?,
@@ -177,20 +250,21 @@ impl Gpu {
         }
         // Ask for what the adapter offers: the GPU-driven buffers are large.
         let mut limits = adapter.limits();
-        if let Ok(v) = std::env::var("POCKET_GPU_MINIMAL") {
-            if v.contains("features") {
-                required = wgpu::Features::empty();
-            }
-            if v.contains("timestamps") {
-                required.remove(
-                    wgpu::Features::TIMESTAMP_QUERY
-                        | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS
-                        | wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES,
-                );
-            }
-            if v.contains("limits") {
-                limits = wgpu::Limits::default().using_resolution(adapter.limits());
-            }
+        if minimal.features {
+            required = wgpu::Features::empty();
+        }
+        if minimal.first_instance {
+            required.remove(wgpu::Features::INDIRECT_FIRST_INSTANCE);
+        }
+        if minimal.timestamps {
+            required.remove(
+                wgpu::Features::TIMESTAMP_QUERY
+                    | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS
+                    | wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES,
+            );
+        }
+        if minimal.limits {
+            limits = wgpu::Limits::default().using_resolution(adapter.limits());
         }
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
@@ -202,8 +276,15 @@ impl Gpu {
             })
             .await
             .map_err(|e| GpuError(format!("no GPU device: {e}")))?;
+        let info = Arc::new(adapter.get_info());
         let caps = Capabilities {
             indirect_first_instance: required.contains(wgpu::Features::INDIRECT_FIRST_INSTANCE),
+            multi_draw_indirect: info.backend != wgpu::Backend::BrowserWebGpu
+                && !minimal.multi_draw
+                && adapter
+                    .get_downlevel_capabilities()
+                    .flags
+                    .contains(wgpu::DownlevelFlags::INDIRECT_EXECUTION),
             timestamps: required.contains(wgpu::Features::TIMESTAMP_QUERY),
             shader_f16: required.contains(wgpu::Features::SHADER_F16),
             float32_filterable: required.contains(wgpu::Features::FLOAT32_FILTERABLE),
@@ -217,7 +298,6 @@ impl Gpu {
         device.set_device_lost_callback(|reason, message| {
             log::error!("GPU device lost ({reason:?}): {message}");
         });
-        let info = Arc::new(adapter.get_info());
         let l = device.limits();
         log::info!(
             "limits: buffer {} MB, storage binding {} MB, storage buffers/stage {}, texture 2D {}",
@@ -248,7 +328,14 @@ impl Gpu {
     /// A headless device (offscreen rendering, benchmarks, tests), blocking.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn headless(choice: BackendChoice) -> Result<Gpu, GpuError> {
-        pollster::block_on(Gpu::new(instance(choice), None))
+        Gpu::headless_with(choice, Minimal::from_env())
+    }
+
+    /// A headless device leaving out what `minimal` says (a test comparing both draw paths in one
+    /// process).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn headless_with(choice: BackendChoice, minimal: Minimal) -> Result<Gpu, GpuError> {
+        pollster::block_on(Gpu::new_with(instance_with(choice, minimal), None, minimal))
     }
 
     pub fn backend_name(&self) -> &'static str {
