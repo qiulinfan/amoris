@@ -266,12 +266,34 @@ crowns).
 Capacity: the pair buffers start at three pairs per submitted splat (at least 1M) and grow to 1.25x
 the wanted count when a readback a few frames late shows more, up to the storage binding size (a
 quarter of it in pairs). Until the readback arrives, a sudden jump in pairs drops the farthest
-splats' tiles for a few frames; beyond the device's limit they stay dropped. Either way
-`SplatStats::tile_pairs` and `tile_dropped` report it and the renderer logs the overflow once
-(`limit_tile_pairs` lowers the limit to test this path). Cost and comparison with the quads:
-[docs/bench/splats.md](../bench/splats.md); on the RTX 5060 the tiles win at 2560x1440, with 3M
-splats and on close-ups and lose at 1600x900 with 1M, and lose clearly where pixels do not saturate
-(section 8). The default stays the quads until the reference machine (Apple M5, where the quads'
+splats' tiles for a few frames; beyond the device's limit they stay dropped. The readback carries
+the tile control's pairs sorted and wanted, so `SplatStats::tile_dropped` is the read frame's own
+loss (wanted minus sorted), whether transient or at the limit; `tile_drop_frames` counts the read
+frames that lost anything, and the renderer logs once per episode at the limit (transient drops at
+debug level). The per-splat buffers (the 32-byte rasterizer records and the 16-byte rectangles)
+follow the splat capacity but stop at the binding size too: `tile_setup` bins at most
+`params.tiles.w` splats, so beyond it the farthest visible splats are left out of the tiles and
+counted in `tile_splats_dropped` (only at the limit: below it the buffers hold every submitted
+splat). `limit_tile_pairs` and `limit_tile_splats` lower the limits to test these paths; GPU tests
+cover the transient drop (40k large splats against the 1M-pair start), both limits, and growth past
+WebGPU's default binding size (`growth_respects_binding_limit`, ignored by default: run it with
+`POCKET_GPU_MINIMAL=limits`).
+
+Work counter: with `Splats::count_tests` (params flag `SPLAT_COUNT_TESTS`) the raster adds the
+(pixel, splat) pairs its pixels tested to a 64-bit counter (a workgroup sum, then one global atomic
+per workgroup), read back as `SplatStats::tile_visits`. It is off by default because the workgroup
+sum costs about 6% of the raster; with the flag off the raster runs as fast as without the code.
+On the 1M garden at 1600x900 a tile pair costs 34 tests of a possible 256 (116 without the sub-tile
+lists); `subtile_culling_limits_tests` asserts the lists cut the tests for small splats below 0.4
+of 256 per pair (0.18 measured, 1.0 without them). The test exists because a leftover ablation
+(`if (true)` in place of the sub-tile test) shipped in the first commit of the rasterizer and
+went unnoticed: it changes no pixel, only the cost (26-48% of the raster on the RTX 5060).
+
+Cost and comparison with the quads: [docs/bench/splats.md](../bench/splats.md). On the RTX 5060 the
+tiles win at 2560x1440 with 3M splats and on close-ups (0.80-0.88 of the quads' time), tie at 3M
+and 1600x900 and at 1M and 2560x1440 (0.87-1.00), lose at 1M and 1600x900 (1.10-1.12) and lose
+clearly where pixels do not saturate (anti-aliased 1.21-1.28, the distant view 1.48, both 1.89;
+section 8). The default stays the quads until the reference machine (Apple M5, where the quads'
 blending cost is highest) has measured both.
 
 ### 4.3 Anti-aliased mode
@@ -368,7 +390,7 @@ look-back.
 | workgroup memory (16 KiB) | scatter 10 KiB, histogram 1 KiB, compact 1 KiB, tile raster 12.3 KiB, tile count and emit 1 KiB |
 | invocations per workgroup (256) | 256 everywhere |
 | workgroups per dimension (65,535) | preprocess spills into y; sort tiles are 4096 keys (268M keys per dispatch) |
-| storage binding size (128 MiB) | splats 32 B: 4.19M per cloud set; projected 24 B: 5.59M submitted; SH degree 3 at 92 B: 1.46M splats; tile pairs 4 B: 33.5M pairs, beyond which they are dropped and reported (section 4.2). `Gpu::new` asks for the adapter's limits, which browsers raise on request (2-4 GiB on desktop Chrome) |
+| storage binding size (128 MiB) | splats 32 B: 4.19M per cloud set; projected 24 B: 5.59M submitted (the per-splat buffers grow by half again but stop there; clouds past it are skipped, counted in `SplatStats::skipped` and logged once); SH degree 3 at 92 B: 1.46M splats; tile records 32 B: 4.19M binned splats (rectangles 16 B: 8.39M), beyond which the farthest visible splats are left out of the tiles and reported; tile pairs 4 B: 33.5M pairs, beyond which they are dropped and reported (section 4.2). `Gpu::new` asks for the adapter's limits, which browsers raise on request (2-4 GiB on desktop Chrome) |
 | no `shader-f16`, no subgroups, no `INDIRECT_FIRST_INSTANCE` | halves through `pack2x16float`; workgroup-memory multisplit; the draw's batches use `instance_index`, `first_instance` is 0 |
 | no multi-draw indirect | one indexed indirect draw |
 | uniformity analysis | barriers only in uniform control flow; counts read from read-only storage; `workgroupUniformLoad` for the tile raster's range and stop flag |
@@ -449,15 +471,19 @@ layers that the engine then draws shows up as colored noise.
   is most of the frame (4-6 ms and 21-30 ms at 1600x900 on the M5; 1.9 and 5.0 ms on the RTX 5060,
   whose fixed-function blending is far cheaper). The compute tile rasterizer (section 4.2) stops
   early but pays for binning and a second sort; level of detail for distant splats would cut both.
-- **The tile rasterizer's costs.** Binning (0.5 ms at 1M, 1.3 ms at 3M) and the pair sort (0.4 and
-  1.1 ms) come on top of the shared preprocess and depth sort, and a splat costs a whole 8x4-pixel
-  sub-tile in the raster where a quad costs its own pixels. Where pixels do not saturate (distant,
-  sub-pixel or semi-transparent content: the garden at 2.5x the distance, or the anti-aliased mode,
-  whose compensated sub-pixel splats are nearly transparent) early termination does not happen and
-  the tiles cost 1.6-2.1x the quads on the RTX 5060. `tile_count`'s random read of the projected
-  records is its main cost; writing the rasterizer's record in the preprocess (the projected record
-  growing to 32 bytes with the depth) would save a 32-byte copy per splat. Not tried: smaller tiles,
-  several pixels per invocation, a subgroup path.
+- **The tile rasterizer's costs.** Binning (0.4 ms at 1M, 1.2 ms at 3M) and the pair sort (0.45
+  and 1.1 ms) come on top of the shared preprocess and depth sort. The raster itself is cheaper than
+  the quads' depth copy and draw in every measured view but the distant ones (1M at 1600x900: 1.48
+  against 2.09 ms; anti-aliased: 1.74 against 1.89 ms), so where the tiles lose on near views (1M at
+  1600x900: 1.10x; anti-aliased: 1.28x) the binning and the second sort decide it. Where pixels do
+  not saturate (the garden at 2.5x the distance: sky and thin layers of sub-pixel splats) early
+  termination rarely fires and the raster about ties the draw (1.28 against 1.23 ms; the tiles cost
+  1.48x the quads); with anti-aliasing there, whose compensated sub-pixel splats are nearly
+  transparent, a faint splat still costs the 32 pixels of each 8x4 sub-tile it touches where a quad
+  costs its own few, and the raster is 1.7x the draw (tiles 1.89x the quads). `tile_count`'s random
+  read of the projected records is its main cost; writing the rasterizer's record in the
+  preprocess (the projected record growing to 32 bytes with the depth) would save a 32-byte copy per
+  splat. Not tried: smaller tiles, several pixels per invocation, a subgroup path.
 - **No lighting or shadows.** Splats carry baked radiance (times `radiance`); they neither cast nor
   receive the sun's shadows and are not lit by scene lights.
 - **Anti-aliasing.** The 2D filter with opacity compensation is an option (section 4.3); the

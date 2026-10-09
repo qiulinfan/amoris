@@ -1049,7 +1049,8 @@ fn main() {
         save("tile", &tile);
         let mut diff = vec![255u8; quad.len()];
         let (mut sum, mut sq, mut max, mut over2, mut over8) = (0u64, 0f64, 0u8, 0u64, 0u64);
-        for (i, (a, b)) in quad.chunks_exact(4).zip(tile.chunks_exact(4)).enumerate() {
+        let pixels = quad.as_chunks::<4>().0.iter().zip(tile.as_chunks::<4>().0);
+        for (i, (a, b)) in pixels.enumerate() {
             let mut px_max = 0u8;
             for c in 0..3 {
                 let d = a[c].abs_diff(b[c]);
@@ -1173,13 +1174,35 @@ fn headless_bench(mut host: Garden, size: (u32, u32), frames: u32) {
         let st = &r.splats.stats;
         if let Some(p) = st.tile_pairs {
             println!(
-                "  tile pairs {p} ({:.2} per visible splat), capacity {}, dropped {}; splat GPU \
-                 buffers {:.0} MB",
+                "  tile pairs {p} ({:.2} per visible splat), capacity {}, dropped {}; splats \
+                 left out {}; frames that dropped {}; splat GPU buffers {:.0} MB",
                 p as f64 / f64::from(st.visible.unwrap_or(1).max(1)),
                 st.pair_capacity,
                 st.tile_dropped,
+                st.tile_splats_dropped,
+                st.tile_drop_frames,
                 st.gpu_bytes as f64 / 1e6
             );
+            if draw {
+                // The raster's work, counted after the timed frames (counting costs time).
+                r.splats.count_tests = true;
+                let t0 = f64::from(warm + frames) / 60.0;
+                for i in 0..6 {
+                    host.update(&mut r, t0 + f64::from(i) / 60.0);
+                    let _ = r.render(&view, t0 + f64::from(i) / 60.0);
+                    let _ = gpu.device.poll(wgpu::PollType::wait_indefinitely());
+                }
+                r.splats.count_tests = false;
+                let st = &r.splats.stats;
+                if let (Some(v), Some(p)) = (st.tile_visits, st.tile_pairs) {
+                    println!(
+                        "  raster tests {v} (pixel, splat) pairs: {:.1} per pixel, {:.1} per tile \
+                         pair",
+                        v as f64 / f64::from(size.0 * size.1),
+                        v as f64 / p.max(1) as f64
+                    );
+                }
+            }
         }
     }
 }

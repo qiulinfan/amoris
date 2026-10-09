@@ -3,8 +3,9 @@
 // binned into 16x16-pixel screen tiles and each tile is blended front to back by one workgroup that
 // stops once every pixel is saturated or has reached the scene's depth.
 //
-//   tile_setup   (1 thread) the indirect dispatch over the visible splats;
-//   tile_count   one thread per visible splat in front-to-back order p: its record for the
+//   tile_setup   (1 thread) the indirect dispatch over the binned splats: the visible ones, at most
+//                as many as the per-splat buffers hold (the farthest beyond are left out);
+//   tile_count   one thread per binned splat in front-to-back order p: its record for the
 //                rasterizer, and the tiles its quad overlaps (the quad's bounding box, each tile
 //                tested exactly against the oriented quad); per workgroup the number of pairs;
 //   tile_scan    (1 workgroup) the workgroups' pair counts become offsets; the pair count, clamped
@@ -17,7 +18,8 @@
 //   tile_raster  one workgroup per tile, one thread per pixel.
 //
 // Only WebGPU core: no subgroups, no 64-bit atomics, 13 KiB of workgroup memory, at most 7 storage
-// buffers per kernel, an rgba16float write-only storage texture.
+// buffers per kernel, an rgba16float write-only storage texture. `params.tiles` is (tiles across,
+// tiles down, pair capacity, splat capacity of the per-splat buffers).
 
 const TILE_PX: u32 = 16u;          // tile.rs TILE_PX
 const WG: u32 = 256u;
@@ -36,8 +38,9 @@ struct TileSplat {
 @group(0) @binding(0) var<uniform> params: SplatParams;
 // [0]: visible splats (written by the preprocess).
 @group(0) @binding(1) var<storage, read> control: array<u32>;
-// [0] pairs to sort (at most the capacity), [1] pairs wanted, [4..6] the sort's and tile_ranges'
-// dispatch, [8..10] the dispatch over the visible splats (x, y, 1).
+// [0] pairs to sort (at most the capacity), [1] pairs wanted, [2] splats binned, [4..6] the sort's
+// and tile_ranges' dispatch, [8..10] the dispatch over the binned splats (x, y, 1). [0..4] are read
+// back (splat/mod.rs SplatStats).
 @group(0) @binding(2) var<storage, read_write> tile_control: array<u32>;
 @group(0) @binding(3) var<storage, read> keys: array<u32>;          // depth-sorted, back to front
 @group(0) @binding(4) var<storage, read> vals: array<u32>;
@@ -57,6 +60,9 @@ struct TileSplat {
 @group(0) @binding(16) var<storage, read> tsplats_ro: array<TileSplat>;
 @group(0) @binding(17) var scene_depth: texture_depth_multisampled_2d;
 @group(0) @binding(18) var out_image: texture_storage_2d<rgba16float, write>;
+// The raster's (pixel, splat) tests this frame, low and high words, when SPLAT_COUNT_TESTS is set:
+// its work, read back.
+@group(0) @binding(19) var<storage, read_write> visits: array<atomic<u32>, 2>;
 
 var<workgroup> wg_scan: array<u32, 256>;
 var<workgroup> wg_sum: atomic<u32>;
@@ -103,10 +109,18 @@ fn tile_middle(x: u32, y: u32) -> vec2f {
     return vec2f(f32(x * TILE_PX) + 8.0, f32(y * TILE_PX) + 8.0);
 }
 
+// The splats binned this frame: the visible ones, front to back, up to what the per-splat buffers
+// hold (they are sized below the device's storage binding limit; tile.rs).
+fn binned() -> u32 {
+    return min(control[0], params.tiles.w);
+}
+
 @compute @workgroup_size(1)
 fn tile_setup() {
-    let groups = (control[0] + WG - 1u) / WG;
+    let n = binned();
+    let groups = (n + WG - 1u) / WG;
     let gx = min(groups, 65535u);
+    tile_control[2] = n;
     tile_control[8] = gx;
     tile_control[9] = (groups + 65534u) / 65535u;
     tile_control[10] = 1u;
@@ -124,9 +138,9 @@ fn tile_count(
     workgroupBarrier();
     let block = wid.y * groups.x + wid.x;
     let p = block * WG + lid;
-    let n = control[0];
+    let n = binned();
     if (p < n) {
-        let i = n - 1u - p;                       // front to back
+        let i = control[0] - 1u - p;              // front to back
         let s = projected[vals[i]];
         let w = params.viewport.x;
         let h = params.viewport.y;
@@ -179,7 +193,7 @@ fn tile_count(
 
 @compute @workgroup_size(256)
 fn tile_scan(@builtin(local_invocation_index) t: u32) {
-    let n = control[0];
+    let n = binned();
     let nb = (n + WG - 1u) / WG;
     let per = (nb + WG - 1u) / WG;
     let lo = min(t * per, nb);
@@ -214,7 +228,7 @@ fn tile_emit(
 ) {
     let block = wid.y * groups.x + wid.x;
     let p = block * WG + lid;
-    let n = control[0];
+    let n = binned();
     var r = vec4u(1u, 0u, 0u, 0u);
     if (p < n) {
         r = rects[p];
@@ -279,6 +293,7 @@ var<workgroup> s_bits: array<atomic<u32>, 64>;
 var<workgroup> wg_done: atomic<u32>;
 var<workgroup> wg_flag: u32;
 var<workgroup> wg_range: vec2u;
+var<workgroup> wg_visits: array<atomic<u32>, 2>;
 
 // One workgroup per tile, one thread per pixel: the tile's splats front to back in batches of 256
 // staged in workgroup memory, with one 256-bit list per 8x4-pixel sub-tile of the splats whose
@@ -286,7 +301,9 @@ var<workgroup> wg_range: vec2u;
 // walks one list in step (its reads of a splat are broadcasts). A pixel stops at the first splat
 // behind the scene's depth (every later one is farther) or once its transmittance falls below
 // 1/255; the workgroup stops when all its pixels have. Writes (premultiplied color,
-// transmittance), composited by splat_composite.wgsl.
+// transmittance), composited by splat_composite.wgsl. With SPLAT_COUNT_TESTS it adds the (pixel,
+// splat) pairs its pixels tested to `visits` (one global atomic per workgroup; off by default: the
+// workgroup sum cost about 6% of the raster on the RTX 5060).
 @compute @workgroup_size(256)
 fn tile_raster(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) lid: u32) {
     let sub = lid >> 5u;
@@ -302,8 +319,11 @@ fn tile_raster(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_inde
     var color = vec3f(0.0);
     var trans = 1.0;
     var done = !inside;
+    var tested = 0u;
     if (lid == 0u) {
         atomicStore(&wg_done, 0u);
+        atomicStore(&wg_visits[0], 0u);
+        atomicStore(&wg_visits[1], 0u);
         wg_range = ranges_ro[wid.y * params.tiles.x + wid.x];
     }
     workgroupBarrier();
@@ -334,7 +354,7 @@ fn tile_raster(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_inde
             let bit = 1u << (lid & 31u);
             for (var m = 0u; m < 8u; m++) {
                 let mid = origin + vec2f(f32(m & 1u) * 8.0 + 4.0, f32(m >> 1u) * 4.0 + 2.0);
-                if (true) {
+                if (quad_overlaps(s.center, ia1, ia2, s.k, ext, mid, vec2f(3.5, 1.5))) {
                     atomicOr(&s_bits[m * 8u + (lid >> 5u)], bit);
                 }
             }
@@ -346,6 +366,7 @@ fn tile_raster(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_inde
                 while (bits != 0u) {
                     let j = w * 32u + firstTrailingBit(bits);
                     bits &= bits - 1u;
+                    tested += 1u;
                     let a = s_pos[j];
                     if (a.z <= zo) {
                         done = true;   // behind the scene's surface, as is every later splat
@@ -378,6 +399,23 @@ fn tile_raster(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_inde
             }
         }
         workgroupBarrier();
+    }
+    // The workgroup's tests into the frame's 64-bit count (a carry wherever a low word wraps); the
+    // flag is uniform, so the barrier may sit in the branch.
+    if ((params.counts.w & SPLAT_COUNT_TESTS) != 0u) {
+        let o = atomicAdd(&wg_visits[0], tested);
+        if (o + tested < o) {
+            atomicAdd(&wg_visits[1], 1u);
+        }
+        workgroupBarrier();
+        if (lid == 0u) {
+            let lo = atomicLoad(&wg_visits[0]);
+            let hi = atomicLoad(&wg_visits[1]);
+            if ((lo | hi) != 0u) {
+                let g = atomicAdd(&visits[0], lo);
+                atomicAdd(&visits[1], hi + u32(g + lo < g));
+            }
+        }
     }
     if (inside) {
         textureStore(out_image, vec2i(px), vec4f(color, trans));

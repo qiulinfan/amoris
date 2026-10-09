@@ -11,7 +11,9 @@
 //!
 //! The pairs live in buffers of a fixed capacity, grown from a readback of the wanted count a few
 //! frames late (the CPU never waits) up to the device's storage binding size; pairs beyond the
-//! capacity are dropped from the farthest splats and reported in [`super::SplatStats`].
+//! capacity are dropped from the farthest splats and reported in [`super::SplatStats`]. The
+//! per-splat buffers (32 bytes a splat) stop at the binding size too: beyond it the farthest
+//! visible splats are left out, also reported.
 
 use super::sort::{self, RadixSort, SortBinding};
 use crate::gpu::Gpu;
@@ -24,8 +26,8 @@ pub(crate) const TILE_PX: u32 = 16;
 const WG: u64 = 256;
 /// Bytes of a rasterizer record (`TileSplat`).
 const TILE_SPLAT_BYTES: u64 = 32;
-/// The tile control: [0] pairs to sort, [1] pairs wanted, the sort's dispatch at 16, the dispatch
-/// over the visible splats at 32.
+/// The tile control: [0] pairs to sort, [1] pairs wanted, [2] splats binned, the sort's dispatch
+/// at 16, the dispatch over the binned splats at 32.
 const CONTROL_BYTES: u64 = 64;
 const SPLAT_DISPATCH: u64 = 32;
 
@@ -71,6 +73,8 @@ pub(crate) struct TileRaster {
     raster: wgpu::ComputePipeline,
     composite: wgpu::RenderPipeline,
     pub(crate) control: wgpu::Buffer,
+    /// The raster's (pixel, splat) tests this frame (two words, cleared in `prepare`).
+    pub(crate) visits: wgpu::Buffer,
     rects: wgpu::Buffer,
     tsplats: wgpu::Buffer,
     blocks: wgpu::Buffer,
@@ -78,8 +82,12 @@ pub(crate) struct TileRaster {
     pair_vals: [wgpu::Buffer; 2],
     hist: wgpu::Buffer,
     range_buf: wgpu::Buffer,
-    /// Visible splats the per-splat buffers hold.
-    capacity: u32,
+    /// Visible splats the per-splat buffers hold (`params.tiles.w`: the binned splats are at most
+    /// this many).
+    pub(crate) capacity: u32,
+    /// The largest such capacity: what the device binds, or less ([`TileRaster::limit_splats`]).
+    pub(crate) splat_limit: u32,
+    device_splat_limit: u32,
     /// Pairs the pair buffers hold.
     pub(crate) pair_capacity: u32,
     /// The largest pair capacity: what the device binds, or less ([`TileRaster::limit_pairs`]).
@@ -161,6 +169,7 @@ impl TileRaster {
             .min(limits.max_buffer_size);
         let su = super::storage_usage();
         let device_pair_limit = (max / 4).min(u64::from(u32::MAX - sort::TILE)) as u32;
+        let device_splat_limit = (max / TILE_SPLAT_BYTES).min(u64::from(u32::MAX)) as u32;
         TileRaster {
             setup: compute("tile_setup"),
             count: compute("tile_count"),
@@ -175,6 +184,7 @@ impl TileRaster {
                 CONTROL_BYTES,
                 su | wgpu::BufferUsages::INDIRECT,
             ),
+            visits: storage(device, "splat raster visits", 16),
             rects: storage(device, "splat tile rects", 64),
             tsplats: storage(device, "splat tile splats", 64),
             blocks: storage(device, "splat tile blocks", 64),
@@ -189,6 +199,8 @@ impl TileRaster {
             hist: storage(device, "splat pair histogram", sort::hist_bytes(0)),
             range_buf: storage(device, "splat tile ranges", 64),
             capacity: 0,
+            splat_limit: device_splat_limit,
+            device_splat_limit,
             pair_capacity: 0,
             pair_limit: device_pair_limit,
             device_pair_limit,
@@ -213,6 +225,19 @@ impl TileRaster {
         }
     }
 
+    /// Caps the per-splat buffers below what the device binds (`None`: the device's limit), to
+    /// test and show the path that leaves the farthest visible splats out.
+    pub(crate) fn limit_splats(&mut self, limit: Option<u32>) {
+        let l = limit.map_or(self.device_splat_limit, |l| {
+            l.clamp(WG as u32, self.device_splat_limit)
+        });
+        if l != self.splat_limit {
+            self.splat_limit = l;
+            self.capacity = 0;
+            self.binds = None;
+        }
+    }
+
     /// Sort passes for the tile ids (8 bits each): enough that the sorted bits of `NO_TILE` (all
     /// ones) exceed every tile, so padding pairs sort last.
     pub(crate) fn sort_passes(&self) -> u32 {
@@ -221,9 +246,10 @@ impl TileRaster {
         bits.div_ceil(8).max(1)
     }
 
-    /// Sizes the buffers for `capacity` visible splats, at least `pairs` pairs and a target of
-    /// `size` pixels; returns whether anything was reallocated.
+    /// Sizes the buffers for `capacity` visible splats (at most [`TileRaster::splat_limit`]), at
+    /// least `pairs` pairs and a target of `size` pixels; returns whether anything was reallocated.
     pub(crate) fn ensure(&mut self, capacity: u32, pairs: u64, size: (u32, u32)) -> bool {
+        let capacity = capacity.min(self.splat_limit);
         let device = self.gpu.device.clone();
         let mut changed = false;
         self.tiles = (size.0.div_ceil(TILE_PX), size.1.div_ceil(TILE_PX));
@@ -299,7 +325,11 @@ impl TileRaster {
         let setup = group(
             &self.setup,
             "splat tile setup",
-            &[entry(1, inp.control), entry(2, &self.control)],
+            &[
+                entry(0, inp.params),
+                entry(1, inp.control),
+                entry(2, &self.control),
+            ],
         );
         let count = group(
             &self.count,
@@ -391,6 +421,7 @@ impl TileRaster {
             return;
         };
         enc.clear_buffer(&self.range_buf, 0, None);
+        enc.clear_buffer(&self.visits, 0, None);
         {
             let ts = profiler.compute_scope("splat tile count");
             let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -505,6 +536,7 @@ impl TileRaster {
                             binding: 18,
                             resource: wgpu::BindingResource::TextureView(&img.view),
                         },
+                        entry(19, &self.visits),
                     ],
                 })
             };
@@ -594,6 +626,53 @@ mod tests {
                     rotation: Quat::from_rotation_z(u * 6.0).to_array(),
                     color: [u, v, 1.0 - u],
                     opacity: 0.6,
+                }
+            })
+            .collect();
+        SplatCloud::from_raw(&raw, 0, &[])
+    }
+
+    /// Splats of a few pixels, isotropic and faint, before the sky: no pixel saturates and none is
+    /// hidden, so the raster's tests per pair are set by its sub-tile culling alone.
+    fn faint(n: usize) -> SplatCloud {
+        let mut x = 0x2545_f491u32;
+        let mut f = move || {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            (x >> 8) as f32 / (1u32 << 24) as f32
+        };
+        let raw: Vec<RawSplat> = (0..n)
+            .map(|_| RawSplat {
+                position: [f() * 4.0 - 2.0, f() * 2.4 - 1.2, -f() * 4.0],
+                scale: [0.004; 3],
+                rotation: [0.0, 0.0, 0.0, 1.0],
+                color: [f(), f(), f()],
+                opacity: 0.05,
+            })
+            .collect();
+        SplatCloud::from_raw(&raw, 0, &[])
+    }
+
+    /// Splats each covering much of the 200x120 view: far more (tile, splat) pairs than the pair
+    /// buffers start with.
+    fn big(n: usize) -> SplatCloud {
+        let mut x = 0x6d2b_79f5u32;
+        let mut f = move || {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            (x >> 8) as f32 / (1u32 << 24) as f32
+        };
+        let raw: Vec<RawSplat> = (0..n)
+            .map(|_| {
+                let q = Quat::from_xyzw(f() - 0.5, f() - 0.5, f() - 0.5, f() - 0.5).normalize();
+                RawSplat {
+                    position: [f() * 4.0 - 2.0, f() * 2.4 - 1.2, -f() * 4.0],
+                    scale: [1.5, 1.5, 0.1],
+                    rotation: q.to_array(),
+                    color: [f(), f(), f()],
+                    opacity: 0.5,
                 }
             })
             .collect();
@@ -833,5 +912,146 @@ mod tests {
         let back = shoot(&mut r, SplatRaster::Tiles);
         assert_eq!(r.splats.stats.tile_dropped, 0);
         assert!(mean_abs_diff(&full, &back) < 0.01);
+    }
+
+    /// A pixel tests only the splats whose quads reach its 8x4-pixel sub-tile: with splats of a
+    /// few pixels that is well under half the tile's pixels per (tile, splat) pair (0.18 of 256 on
+    /// the RTX 5060), where a raster without the sub-tile lists tests every pixel of the tile
+    /// against every pair (1.0 of 256 here). Skipped without a GPU.
+    #[test]
+    fn subtile_culling_limits_tests() {
+        let Ok(gpu) = Gpu::headless(BackendChoice::from_env()) else {
+            eprintln!("no GPU: skipped");
+            return;
+        };
+        let mut r = renderer_with(&gpu, &faint(20_000));
+        r.splats.count_tests = true;
+        let _ = shoot(&mut r, SplatRaster::Tiles);
+        let st = r.splats.stats.clone();
+        let pairs = st.tile_pairs.unwrap_or(0);
+        let tests = st.tile_visits.unwrap_or(0);
+        let per_pair = tests as f64 / (pairs.max(1) * 256) as f64;
+        eprintln!("{pairs} pairs, {tests} tests: {per_pair:.3} of 256 per pair");
+        assert!(pairs > 10_000 && tests > 0, "{st:?}");
+        assert!(
+            per_pair < 0.4,
+            "sub-tile culling is off: {per_pair:.3} of 256 per pair"
+        );
+    }
+
+    /// Pairs dropped while the pair buffers grow (the readback that sizes them arrives a few frames
+    /// late) are reported for the frames that dropped them, and the image then catches up with
+    /// the quads'. Skipped without a GPU.
+    #[test]
+    fn transient_pair_drops_are_reported() {
+        let Ok(gpu) = Gpu::headless(BackendChoice::from_env()) else {
+            eprintln!("no GPU: skipped");
+            return;
+        };
+        let mut r = renderer_with(&gpu, &big(40_000));
+        r.splats.raster = SplatRaster::Tiles;
+        let mut seen = Vec::new();
+        for i in 0..8 {
+            let _ = r.capture_rgba(f64::from(i) / 60.0);
+            let st = &r.splats.stats;
+            seen.push((st.tile_pairs, st.pair_capacity, st.tile_dropped));
+        }
+        eprintln!("(pairs wanted, capacity, dropped) per frame: {seen:?}");
+        let st = r.splats.stats.clone();
+        let wanted = st.tile_pairs.unwrap_or(0);
+        assert!(
+            wanted > 2 << 20,
+            "the cloud wants more pairs than the start: {st:?}"
+        );
+        assert!(
+            seen.iter().any(|s| s.2 > 0),
+            "the early frames' drops are reported: {seen:?}"
+        );
+        assert!(st.tile_drop_frames >= 1, "{st:?}");
+        assert_eq!(st.tile_dropped, 0, "the buffers grew: {st:?}");
+        let tiles = r.capture_rgba(0.2).2;
+        let quads = shoot(&mut r, SplatRaster::Quads);
+        let diff = mean_abs_diff(&quads, &tiles);
+        assert!(diff < 0.5, "mean difference {diff}");
+    }
+
+    /// With per-splat buffers smaller than the visible splats, the tiles draw the nearest ones and
+    /// report the rest; nothing fails validation. Skipped without a GPU.
+    #[test]
+    fn splat_overflow_is_reported() {
+        let Ok(gpu) = Gpu::headless(BackendChoice::from_env()) else {
+            eprintln!("no GPU: skipped");
+            return;
+        };
+        let mut r = renderer(&gpu, 20_000);
+        let full = shoot(&mut r, SplatRaster::Tiles);
+        let visible = r.splats.stats.visible.unwrap_or(0);
+        assert!(visible > 8192, "{:?}", r.splats.stats);
+        r.splats.limit_tile_splats(Some(2048));
+        let scope = gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let cut = shoot(&mut r, SplatRaster::Tiles);
+        let error = pollster::block_on(scope.pop());
+        assert!(error.is_none(), "{error:?}");
+        let st = r.splats.stats.clone();
+        assert_eq!(st.tile_splats_dropped, u64::from(visible - 2048), "{st:?}");
+        assert!(st.tile_drop_frames >= 1, "{st:?}");
+        let diff = mean_abs_diff(&full, &cut);
+        eprintln!("the nearest 2048 of {visible} splats differ from all by {diff:.3}");
+        assert!(diff > 0.1, "leaving splats out shows ({diff})");
+        r.splats.limit_tile_splats(None);
+        let back = shoot(&mut r, SplatRaster::Tiles);
+        assert_eq!(r.splats.stats.tile_splats_dropped, 0);
+        assert!(mean_abs_diff(&full, &back) < 0.01);
+    }
+
+    /// The splat buffers grow by half again (here from 3.8M to 5.7M splats), which at WebGPU's
+    /// default 128 MiB binding size both the quads' 24-byte projected records and the tiles'
+    /// 32-byte records exceed: both rasterizers must still validate and draw every visible splat.
+    /// Heavy (4.1M splats, about 0.9 GB of GPU buffers):
+    /// `POCKET_GPU_MINIMAL=limits cargo test --release -p pocket-render --lib
+    /// growth_respects_binding_limit -- --ignored`.
+    #[test]
+    #[ignore = "4.1M splats; run with POCKET_GPU_MINIMAL=limits"]
+    fn growth_respects_binding_limit() {
+        let Ok(gpu) = Gpu::headless(BackendChoice::from_env()) else {
+            eprintln!("no GPU: skipped");
+            return;
+        };
+        let l = gpu.device.limits();
+        eprintln!(
+            "storage binding {} MB, buffer {} MB",
+            l.max_storage_buffer_binding_size >> 20,
+            l.max_buffer_size >> 20
+        );
+        let mut r = renderer_with(&gpu, &cloud(3_800_000));
+        let _ = shoot(&mut r, SplatRaster::Tiles);
+        r.splats.insert("d", &cloud(300_000));
+        let view = |id: u64, asset: &str| SplatView {
+            id,
+            asset: asset.into(),
+            pose: Pose::default(),
+            visible: true,
+        };
+        r.apply(
+            RenderFrame {
+                tick: 2,
+                splats: Some(vec![view(7, "c"), view(8, "d")]),
+                ..RenderFrame::default()
+            },
+            0.0,
+        );
+        let scope = gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let tiles = shoot(&mut r, SplatRaster::Tiles);
+        let st = r.splats.stats.clone();
+        let quads = shoot(&mut r, SplatRaster::Quads);
+        let error = pollster::block_on(scope.pop());
+        eprintln!("{st:?}");
+        assert!(error.is_none(), "{error:?}");
+        assert_eq!(st.submitted, 4_100_000, "{st:?}");
+        assert_eq!(st.skipped, 0, "{st:?}");
+        assert_eq!(st.tile_splats_dropped, 0, "{st:?}");
+        assert_eq!(st.tile_dropped, 0, "{st:?}");
+        let diff = mean_abs_diff(&quads, &tiles);
+        assert!(diff < 0.5, "mean difference {diff}");
     }
 }
