@@ -18,9 +18,70 @@ use crate::scene::{SCENE_FORMAT, project_component};
 /// `scripts.read`'s parameters.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct ScriptPathParams {
+pub struct ScriptReadParams {
     /// Under `scripts/`: `scripts/rules.ts` or `rules.ts`.
     pub path: String,
+    /// Only these lines, 1-based and inclusive: `50-80`, `50-` (to the end), `-20` or `67`.
+    #[serde(default)]
+    pub lines: Option<String>,
+    /// Each line prefixed with its number (`67| `), as breakpoints and errors count them.
+    #[serde(default)]
+    pub numbered: bool,
+}
+
+/// A text's lines `spec` (`a-b`, `a-`, `-b`, `a`; 1-based, inclusive), numbered if asked:
+/// `(text, first, last, total)`. The host's server reads files the same way while the game is
+/// held at a breakpoint (pocket-server `paused.rs`).
+pub fn slice_lines(
+    text: &str,
+    spec: Option<&str>,
+    numbered: bool,
+) -> Result<(String, usize, usize, usize), Problem> {
+    let all: Vec<&str> = text.lines().collect();
+    let total = all.len();
+    let bad = |why: String| {
+        Problem::new(
+            "request.invalid_value",
+            why,
+            detail([("path", json!("/lines")), ("lines", json!(total))]),
+        )
+    };
+    let (first, last) = match spec.map(str::trim) {
+        None | Some("") => (1, total),
+        Some(s) => {
+            let num = |t: &str| -> Result<usize, Problem> {
+                t.trim()
+                    .parse::<usize>()
+                    .map_err(|_| bad(format!("'{s}' is not a line range (50-80, 50-, -20, 67).")))
+            };
+            match s.split_once('-') {
+                Some((a, b)) => (
+                    if a.trim().is_empty() { 1 } else { num(a)? },
+                    if b.trim().is_empty() { total } else { num(b)? },
+                ),
+                None => {
+                    let n = num(s)?;
+                    (n, n)
+                }
+            }
+        }
+    };
+    if first == 0 || first > last.max(1) || (first > total && total > 0) {
+        return Err(bad(format!(
+            "Lines {first} to {last} are not in the file, which has {total} lines."
+        )));
+    }
+    let last = last.min(total);
+    let width = last.to_string().len();
+    let mut out = String::new();
+    for (i, line) in all.iter().enumerate().take(last).skip(first - 1) {
+        if numbered {
+            out.push_str(&format!("{:>width$}| ", i + 1));
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    Ok((out, first, last, total))
 }
 
 /// `scripts.write`'s parameters.
@@ -142,12 +203,16 @@ pub fn list(root: &Path, last: &[Value]) -> Value {
     Value::Array(files)
 }
 
-/// `scripts.read`.
-pub fn read(root: &Path, p: &ScriptPathParams) -> Result<Value, Problem> {
+/// `scripts.read`: the whole text, or the lines asked for with `first`, `last` and `total`.
+pub fn read(root: &Path, p: &ScriptReadParams) -> Result<Value, Problem> {
     let rel = script_path(&p.path)?;
     let full = root.join(&rel);
     let text = std::fs::read_to_string(&full).map_err(|e| io_problem(&full, &e))?;
-    Ok(json!({"path": rel, "text": text}))
+    if p.lines.is_none() && !p.numbered {
+        return Ok(json!({"path": rel, "text": text}));
+    }
+    let (text, first, last, total) = slice_lines(&text, p.lines.as_deref(), p.numbered)?;
+    Ok(json!({"path": rel, "text": text, "first": first, "last": last, "total": total}))
 }
 
 /// Writes a script file; returns its normalized path.

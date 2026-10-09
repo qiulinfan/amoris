@@ -26,9 +26,9 @@ use pocket_sim::{ContentHash, Event, NoHooks, Sim, SimConfig, StepReport, Tick, 
 use serde_json::{Value, json};
 
 use crate::catalog::{self, Command, CommandFn, NoParams};
-use crate::control::{StepParams, StepStop};
+use crate::control::{Sampler, StepParams, StepStop};
 use crate::edit::{self, Edit, WorldEditOps, WorldEditParams, WorldGetParams, label_of};
-use crate::files::{self, ScriptPathParams, ScriptWriteParams};
+use crate::files::{self, ScriptReadParams, ScriptWriteParams};
 use crate::history::{Entry, History};
 use crate::inspect::{self, WorldQueryParams, WorldSchemaParams, WorldTreeParams};
 use crate::project::GameSetup;
@@ -416,7 +416,7 @@ impl Game {
                 Ok(files::list(self.root(name)?, &self.diagnostics))
             }
             "scripts.read" => {
-                let p: ScriptPathParams = decode(p, name)?;
+                let p: ScriptReadParams = decode(p, name)?;
                 files::read(self.root(name)?, &p)
             }
             "scripts.types" => {
@@ -822,9 +822,13 @@ impl Game {
                 let p: StepParams = decode(&cmd.params, name)?;
                 let limit = p.limit()?;
                 let mut stop = StepStop::new(self, &p)?;
+                let mut sample = Sampler::new(self, &p, limit)?;
                 let mut stopped_by = None;
                 for _ in 0..limit {
                     self.step()?;
+                    if let Some(s) = &mut sample {
+                        s.after_tick(self);
+                    }
                     if let Some(s) = &mut stop
                         && let Some(why) = s.after_tick(self)
                     {
@@ -840,10 +844,27 @@ impl Game {
                 if let Some(why) = stopped_by {
                     out["stopped_by"] = why;
                 }
+                if let Some(s) = sample {
+                    out["samples"] = s.finish(self);
+                }
                 Ok(out)
             }
             other => Err(catalog::thread_only(other)),
         }
+    }
+
+    /// Swaps the world's program for a bundle this game has run or prepared, as `scripts.apply`
+    /// does: a `scripts.swap` Host write at this boundary, recorded with the bundle (hot-update.md
+    /// 5). The game thread's restore uses it to put the applied scripts back on a world restored
+    /// from a snapshot kept with older ones.
+    pub fn swap_bundle(&mut self, hash: ContentHash) -> Result<Value, Problem> {
+        let swap = Command::new(
+            Source::Host,
+            self.next_host_seq(),
+            "scripts.swap",
+            json!({"bundle": hash.to_hex()}),
+        );
+        self.apply(&swap)
     }
 
     /// Restores a snapshot of this game's run whatever bundle it names, swapping to that bundle

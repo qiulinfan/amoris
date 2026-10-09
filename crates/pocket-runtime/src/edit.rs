@@ -253,9 +253,14 @@ pub struct Applied {
 #[serde(deny_unknown_fields)]
 pub struct WorldGetParams {
     pub entity: EntityRef,
-    /// Components to read; empty: every one the entity has.
+    /// Components to read; empty: every one the entity has (none when only fields are asked
+    /// for). An entry with a dot is a field (`Boat.rudder`).
     #[serde(default)]
     pub components: Vec<String>,
+    /// Fields to read alone, as `Component.field` or a path into it (`Transform.position.y`),
+    /// answered under `fields`.
+    #[serde(default)]
+    pub fields: Vec<String>,
 }
 
 enum Checked {
@@ -706,7 +711,53 @@ fn apply(b: &mut Boundary<'_>, c: Checked) -> Result<Value, Problem> {
     })
 }
 
-/// `world_get`: the entity's components as JSON, engine and project alike.
+/// One component of an entity as JSON (`Name` too), `None` when the entity has none; an unknown
+/// component is refused with suggestions.
+fn component_of(
+    world: &bevy_ecs::prelude::World,
+    ent: &bevy_ecs::world::EntityRef<'_>,
+    name: &str,
+) -> Result<Option<Value>, Problem> {
+    Ok(if let Some(c) = engine_component(name) {
+        (c.get)(ent)
+    } else if let Some((schema, access)) = project_component(world, name) {
+        access.read(ent).map(|v| values::to_json(&schema, &v))
+    } else if name == "Name" {
+        ent.get::<pocket_sim::Name>().map(|n| json!(n.as_str()))
+    } else {
+        return Err(unknown_component(world, name));
+    })
+}
+
+/// `request.invalid_value`: a field path the component's value does not have, with its fields.
+pub fn no_field(spec: &str, component: &str, path: &str, value: &Value) -> Problem {
+    let keys: Vec<&str> = value
+        .as_object()
+        .map(|m| m.keys().map(String::as_str).collect())
+        .unwrap_or_default();
+    let first = path.split('.').next().unwrap_or(path);
+    let suggestions = pocket_contract::suggest_names(first, keys.iter().copied());
+    Problem::new(
+        "request.invalid_value",
+        format!(
+            "{component} has no field '{path}'; it has {}.",
+            if keys.is_empty() {
+                "no fields".to_owned()
+            } else {
+                keys.join(", ")
+            }
+        ),
+        detail([
+            ("path", json!("/fields")),
+            ("field", json!(spec)),
+            ("suggestions", json!(suggestions)),
+            ("allowed", json!(keys)),
+        ]),
+    )
+}
+
+/// `world_get`: the entity's components as JSON, engine and project alike, and the fields asked
+/// for alone (`fields`: `{"Boat.rudder": 0.3}`; `null` where the entity lacks the component).
 pub fn world_get(
     world: &bevy_ecs::prelude::World,
     params: &WorldGetParams,
@@ -714,8 +765,15 @@ pub fn world_get(
     let id = resolve(world, &params.entity, &Pointer::root().key("entity"))?;
     let e = pocket_sim::entity::require(world, id)?;
     let ent = world.entity(e);
+    let (named, dotted): (Vec<String>, Vec<String>) = params
+        .components
+        .iter()
+        .cloned()
+        .partition(|c| !c.contains('.'));
+    let fields: Vec<String> = dotted.into_iter().chain(params.fields.clone()).collect();
+    let all = named.is_empty() && fields.is_empty();
     let mut out = Map::new();
-    let wanted: Vec<String> = if params.components.is_empty() {
+    let wanted: Vec<String> = if all {
         world
             .resource::<pocket_sim::ComponentRegistry>()
             .entries()
@@ -723,24 +781,33 @@ pub fn world_get(
             .map(|e| e.name.to_string())
             .collect()
     } else {
-        params.components.clone()
+        named
     };
     for name in &wanted {
-        let v = if let Some(c) = engine_component(name) {
-            (c.get)(&ent)
-        } else if let Some((schema, access)) = project_component(world, name) {
-            access.read(&ent).map(|v| values::to_json(&schema, &v))
-        } else if name == "Name" {
-            ent.get::<pocket_sim::Name>().map(|n| json!(n.as_str()))
-        } else if params.components.is_empty() {
-            None
-        } else {
-            return Err(unknown_component(world, name));
+        let v = match component_of(world, &ent, name) {
+            Ok(v) => v,
+            Err(_) if all => None,
+            Err(p) => return Err(p),
         };
         if let Some(v) = v {
             out.insert(name.clone(), v);
         }
     }
     let name = ent.get::<pocket_sim::Name>().map(|n| n.as_str().to_owned());
-    Ok(json!({"id": id.get(), "name": name, "components": out}))
+    let mut answer = json!({"id": id.get(), "name": name, "components": out});
+    if !fields.is_empty() {
+        let mut got = Map::new();
+        for spec in &fields {
+            let (c, path) = crate::inspect::split_field(spec);
+            let v = match component_of(world, &ent, c)? {
+                None => Value::Null,
+                Some(v) => crate::inspect::field_at(&v, path)
+                    .cloned()
+                    .ok_or_else(|| no_field(spec, c, path, &v))?,
+            };
+            got.insert(spec.clone(), v);
+        }
+        answer["fields"] = Value::Object(got);
+    }
+    Ok(answer)
 }

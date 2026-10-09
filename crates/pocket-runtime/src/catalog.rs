@@ -22,7 +22,7 @@ use serde_json::{Value, json};
 
 use crate::control::{PlayParams, SnapshotsRestoreParams, StepParams, TimeControlParams};
 use crate::edit::{WorldEditOps, WorldEditParams, WorldGetParams};
-use crate::files::{ScriptPathParams, ScriptWriteParams};
+use crate::files::{ScriptReadParams, ScriptWriteParams};
 use crate::inspect::{WorldQueryParams, WorldSchemaParams, WorldTreeParams};
 use crate::scripts::{ScriptsApplyParams, ScriptsSwapParams};
 use crate::types::ScriptsTypesParams;
@@ -220,7 +220,7 @@ pub const CATALOG: &[CommandDef] = &[
         "scripts.read",
         Kind::Read,
         "A script file's text.",
-        schema::<ScriptPathParams>,
+        schema::<ScriptReadParams>,
     ),
     def(
         "scripts.write",

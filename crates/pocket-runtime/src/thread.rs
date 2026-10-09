@@ -31,7 +31,10 @@ use pocket_sim::{ContentHash, Tick};
 use serde_json::{Value, json};
 
 use crate::catalog::{self, Command, NoParams};
-use crate::control::{PlayParams, SnapshotsRestoreParams, StepParams, StepStop, TimeControlParams};
+use crate::control::{
+    PlayParams, RestoreBundle, Sampler, SnapshotsRestoreParams, StepParams, StepStop,
+    TimeControlParams,
+};
 use crate::game::Game;
 
 pub use crate::GAME_STACK_BYTES;
@@ -405,11 +408,12 @@ struct Parked {
     kept: Kept,
 }
 
-/// A `time.step` being run: ticks left, where the answer goes, its stop conditions.
+/// A `time.step` being run: ticks left, where the answer goes, its stop conditions and sampler.
 struct StepJob {
     left: u64,
     reply: ReplyTo,
     stop: Option<StepStop>,
+    sample: Option<Sampler>,
 }
 
 struct Loop {
@@ -623,7 +627,10 @@ impl Loop {
     fn tick(&mut self) {
         self.publisher
             .set_state(LoopState::Ticking, self.next_tick());
+        // A stop of the script debugger inside this tick ends the `time.step` it belongs to.
+        let stops = self.publisher.debug_stops();
         let r = self.game.step();
+        let debugged = self.publisher.debug_stops() != stops;
         let now = self.now();
         self.model.ran_tick(now);
         self.pushed = 0;
@@ -646,7 +653,7 @@ impl Loop {
                     }
                     self.publish_snapshot(snap);
                 }
-                self.after_tick_steps();
+                self.after_tick_steps(debugged);
             }
             Err(p) => {
                 self.model.cancel_steps();
@@ -666,14 +673,20 @@ impl Loop {
         }
     }
 
-    /// Counts the tick against the front `time.step` and answers it when it is done or its stop
-    /// condition holds; an early stop gives back the ticks the time model still owes it.
-    fn after_tick_steps(&mut self) {
+    /// Counts the tick against the front `time.step` and answers it when it is done, its stop
+    /// condition holds or the script debugger stopped the game inside the tick (`debugged`: the
+    /// step ends with that tick, `stopped_by` the stop's summary); an early stop gives back the
+    /// ticks the time model still owes it.
+    fn after_tick_steps(&mut self, debugged: bool) {
         let Some(job) = self.steps.front_mut() else {
             return;
         };
         job.left = job.left.saturating_sub(1);
-        let why = job.stop.as_mut().and_then(|s| s.after_tick(&self.game));
+        if let Some(s) = &mut job.sample {
+            s.after_tick(&self.game);
+        }
+        let debugger = debugged.then(|| self.publisher.last_debug_stop()).flatten();
+        let why = debugger.or_else(|| job.stop.as_mut().and_then(|s| s.after_tick(&self.game)));
         if job.left > 0 && why.is_none() {
             return;
         }
@@ -687,8 +700,13 @@ impl Loop {
         }
         let why = why.or_else(|| job.stop.as_ref().map(|_| json!({"reason": "limit"})));
         let mut answer = self.answer_step();
-        if let (Ok(ReplyValue::Json(v)), Some(why)) = (&mut answer, why) {
-            v["stopped_by"] = why;
+        if let Ok(ReplyValue::Json(v)) = &mut answer {
+            if let Some(why) = why {
+                v["stopped_by"] = why;
+            }
+            if let Some(s) = job.sample {
+                v["samples"] = s.finish(&self.game);
+            }
         }
         job.reply.send(answer);
     }
@@ -806,6 +824,11 @@ impl Loop {
         Ok(self.status())
     }
 
+    /// `snapshots.restore`: the kept snapshot at or before the tick, under the scripts applied now
+    /// unless `bundle: "snapshot"` asks for the snapshot's own. The world is restored under the
+    /// bundle it was kept with and, when that is not the applied one, swapped back to it by the
+    /// hot update's Host write (`scripts.swap`, which migrates components a newer bundle changed),
+    /// so a recording sees the restore and then the swap, as they ran.
     fn restore(&mut self, params: &Value) -> Result<Value, Problem> {
         let p: SnapshotsRestoreParams = crate::decode(params, "snapshots.restore")?;
         let Some(snap) = self.kept.at_or_before(p.tick) else {
@@ -815,8 +838,32 @@ impl Loop {
                 detail([("tick", json!(p.tick)), ("kept", json!(self.kept.ticks()))]),
             ));
         };
+        let applied = self.game.bundle();
         self.game.restore_any(&snap)?;
         let at = snap.header().tick.0;
+        let kept_with = snap.header().bundle;
+        let mut scripts = json!({
+            "bundle": kept_with.to_hex(),
+            "kept": "snapshot",
+            "snapshot_bundle": kept_with.to_hex(),
+        });
+        if p.bundle == RestoreBundle::Applied {
+            if kept_with == applied {
+                scripts["kept"] = json!("applied");
+            } else {
+                match self.game.swap_bundle(applied) {
+                    Ok(_) => {
+                        scripts["kept"] = json!("applied");
+                        scripts["bundle"] = json!(applied.to_hex());
+                        scripts["swapped"] = json!(true);
+                    }
+                    // The applied scripts do not load on this world: it runs the snapshot's.
+                    Err(e) => {
+                        scripts["swap_refused"] = serde_json::to_value(&e).unwrap_or(Value::Null);
+                    }
+                }
+            }
+        }
         self.kept.drop_after(at);
         self.drop_steps(&problem(
             "snapshots.restored",
@@ -825,6 +872,7 @@ impl Loop {
         self.world_replaced();
         let mut v = self.status();
         v["restored"] = json!(at);
+        v["scripts"] = scripts;
         Ok(v)
     }
 
@@ -864,13 +912,16 @@ impl Loop {
                 .reply
                 .send(Err(pocket_sim::sim::world_poisoned(poison.tick)));
         }
-        match StepStop::new(&self.game, &p) {
-            Ok(stop) => {
+        let checked = StepStop::new(&self.game, &p)
+            .and_then(|stop| Ok((stop, Sampler::new(&self.game, &p, limit)?)));
+        match checked {
+            Ok((stop, sample)) => {
                 self.model.step(limit);
                 self.steps.push_back(StepJob {
                     left: limit,
                     reply: e.reply,
                     stop,
+                    sample,
                 });
             }
             Err(p) => e.reply.send(Err(p)),

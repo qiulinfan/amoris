@@ -38,7 +38,7 @@ pub mod types;
 mod values;
 
 pub use catalog::{CATALOG, Command, CommandDef, CommandFn, NoParams, catalog_json};
-pub use control::StepParams;
+pub use control::{RestoreBundle, Sample, SnapshotsRestoreParams, StepParams};
 pub use edit::{Edit, EditOp, WorldEditOps, WorldEditParams, WorldGetParams, label_of};
 pub use engine::{engine_component, merge};
 pub use game::{Extras, Game, GameBuilder, SystemFn, registry, run_config};

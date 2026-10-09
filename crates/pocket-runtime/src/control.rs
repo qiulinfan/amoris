@@ -52,6 +52,21 @@ pub struct StepParams {
     /// Stop after the tick that changes a component field so its test holds.
     #[serde(default)]
     pub watch: Option<Watch>,
+    /// Read fields every few ticks and answer them as a table (`samples`).
+    #[serde(default)]
+    pub sample: Option<Sample>,
+}
+
+/// A `time.step`'s sampler: fields read after every `every`-th tick of the step and after its last.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Sample {
+    /// `Entity.Component.field`, a path into the component after the field (`Sloop.Boat.rudder`,
+    /// `Sloop.Transform.position.y`); the entity by name, id or `Name#id`.
+    pub fields: Vec<String>,
+    /// Ticks between two rows, default 1.
+    #[serde(default)]
+    pub every: Option<u64>,
 }
 
 /// An event or tick stop condition.
@@ -124,6 +139,22 @@ pub struct PlayParams {
 pub struct SnapshotsRestoreParams {
     /// The kept snapshot at or before this tick is restored.
     pub tick: u64,
+    /// The scripts the restored world runs: `applied` (default), the bundle running now, or
+    /// `snapshot`, the bundle the snapshot was kept with.
+    #[serde(default)]
+    pub bundle: RestoreBundle,
+}
+
+/// Which scripts a restored world runs (docs/spec/server.md 3.3). Programs hold no state (charter
+/// 3.2), so a snapshot's world runs under any bundle that loads on it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RestoreBundle {
+    /// The bundle running now: a fix applied since the snapshot stays applied.
+    #[default]
+    Applied,
+    /// The bundle the snapshot was kept with.
+    Snapshot,
 }
 
 fn bad(path: &str, why: &str) -> Problem {
@@ -323,5 +354,121 @@ impl StepStop {
             }
         }
         None
+    }
+}
+
+/// The most rows a `time.step`'s sample answers.
+pub const MAX_SAMPLE_ROWS: u64 = 10_000;
+
+/// One sampled field: its entity and where in which component.
+struct Column {
+    id: EntityId,
+    component: String,
+    path: String,
+}
+
+/// A `time.step`'s sampler ([`Sample`]): resolved once, read after each tick, answered as
+/// `{columns: ["tick", spec..], rows: [[tick, value..]], every}`.
+pub struct Sampler {
+    every: u64,
+    columns: Vec<Column>,
+    names: Vec<String>,
+    rows: Vec<Value>,
+    start: u64,
+    last: Option<u64>,
+}
+
+impl Sampler {
+    /// The sampler of `p` over a step of at most `limit` ticks, checked against the world now;
+    /// `None` without one.
+    pub fn new(game: &Game, p: &StepParams, limit: u64) -> Result<Option<Sampler>, Problem> {
+        let Some(sample) = &p.sample else {
+            return Ok(None);
+        };
+        let every = sample.every.unwrap_or(1);
+        if every == 0 {
+            return Err(bad("/sample/every", "give at least 1"));
+        }
+        if sample.fields.is_empty() {
+            return Err(bad(
+                "/sample/fields",
+                "give at least one Entity.Component.field",
+            ));
+        }
+        if limit / every > MAX_SAMPLE_ROWS {
+            return Err(bad(
+                "/sample/every",
+                &format!(
+                    "{limit} ticks every {every} would be {} rows, more than {MAX_SAMPLE_ROWS};                      sample less often",
+                    limit / every
+                ),
+            ));
+        }
+        let world = game.world();
+        let reg = world.resource::<pocket_sim::ComponentRegistry>();
+        let mut columns = Vec::new();
+        for (i, spec) in sample.fields.iter().enumerate() {
+            let at = Pointer::root().key("sample").key("fields").index(i);
+            let mut parts = spec.splitn(3, '.');
+            let (Some(e), Some(c)) = (parts.next(), parts.next()) else {
+                return Err(bad(
+                    &at.to_string(),
+                    &format!("'{spec}' is not Entity.Component.field (Sloop.Boat.rudder)"),
+                ));
+            };
+            let entity: EntityRef =
+                serde_json::from_value(e.parse::<u64>().map_or_else(|_| json!(e), |n| json!(n)))
+                    .map_err(|_| bad(&at.to_string(), &format!("'{e}' is not an entity")))?;
+            let id = resolve(world, &entity, &at)?;
+            if reg.get(c).is_none() {
+                return Err(unknown_component(world, c));
+            }
+            columns.push(Column {
+                id,
+                component: c.to_owned(),
+                path: parts.next().unwrap_or("").to_owned(),
+            });
+        }
+        Ok(Some(Sampler {
+            every,
+            columns,
+            names: sample.fields.clone(),
+            rows: Vec::new(),
+            start: game.tick().0,
+            last: None,
+        }))
+    }
+
+    fn row(&mut self, game: &Game) {
+        let tick = game.tick().0;
+        if self.last == Some(tick) {
+            return;
+        }
+        let mut row = vec![json!(tick)];
+        for c in &self.columns {
+            row.push(read_field(game, c.id, &c.component, &c.path).unwrap_or(Value::Null));
+        }
+        self.rows.push(Value::Array(row));
+        self.last = Some(tick);
+    }
+
+    /// After a tick: a row when it is due.
+    pub fn after_tick(&mut self, game: &Game) {
+        if game
+            .tick()
+            .0
+            .saturating_sub(self.start)
+            .is_multiple_of(self.every)
+        {
+            self.row(game);
+        }
+    }
+
+    /// The table, with a row for the last tick if it was not due.
+    pub fn finish(mut self, game: &Game) -> Value {
+        self.row(game);
+        let mut columns = vec![json!("tick")];
+        columns.extend(self.names.iter().map(|n| json!(n)));
+        json!({"columns": columns, "rows": self.rows, "every": self.every})
     }
 }
