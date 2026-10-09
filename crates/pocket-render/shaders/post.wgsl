@@ -130,8 +130,10 @@ fn fs_tonemap(in: FsIn) -> @location(0) vec4f {
     c *= pp.exposure.x;
     // AgX's output is display-encoded (sRGB-like transfer built in).
     var o = agx(c);
-    // Triangular dither against banding in skies.
-    let n = fract(sin(dot(in.pos.xy, vec2f(12.9898, 78.233))) * 43758.5453);
+    // Dither against banding in skies: a uniform value per pixel from an integer hash, identical on
+    // every GPU and API (common.wgsl, `pcg_hash`).
+    let px = vec2u(in.pos.xy);
+    let n = unit_from_hash(pcg_hash(px.x + pcg_hash(px.y)));
     o += (n - 0.5) / 255.0;
     if (pp.exposure.y > 0.5) {
         // The surface encodes to sRGB: hand it linear values that encode to AgX's output.

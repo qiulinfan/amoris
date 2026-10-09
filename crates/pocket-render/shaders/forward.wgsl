@@ -428,10 +428,6 @@ fn vs_ocean(@location(0) ring: vec2f) -> OceanOut {
     return o;
 }
 
-fn hash2(p: vec2f) -> f32 {
-    return fract(sin(dot(p, vec2f(127.1, 311.7))) * 43758.5453);
-}
-
 // Wavelets: a fixed set of short waves in many directions, in the normals only. Each fades out
 // before its wavelength drops under four pixels (`footprint`: metres per pixel), so distant water
 // does not alias into moire and sparkle.
@@ -443,7 +439,8 @@ fn wavelets(p: vec2f, t: f32, footprint: f32) -> vec2f {
         let a = f32(i) * 2.399963 + 0.3;  // golden angle
         let d = vec2f(cos(a), sin(a));
         let k = 6.2831853 / len;
-        let th = k * dot(d, p) - sqrt(9.81 * k) * t + hash2(vec2f(f32(i), 7.0)) * 6.28;
+        let phase = unit_from_hash(pcg_hash(i * 2654435769u + 7u)) * 6.28;
+        let th = k * dot(d, p) - sqrt(9.81 * k) * t + phase;
         let keep = clamp(len / (footprint * 4.0) - 1.0, 0.0, 1.0);
         g += amp * k * cos(th) * d * keep;
         amp *= 0.8;

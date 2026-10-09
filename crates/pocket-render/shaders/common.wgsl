@@ -125,3 +125,18 @@ fn srgb_to_linear(c: vec3f) -> vec3f {
 fn luminance(c: vec3f) -> f32 {
     return dot(c, vec3f(0.2126, 0.7152, 0.0722));
 }
+
+// A PCG integer hash (Jarzynski and Olano, "Hash Functions for GPU Rendering", 2020): the same bits
+// on every GPU, API and shader compiler. The usual `fract(sin(x) * 43758.5453)` is not: `sin` of a
+// large argument rounds differently per vendor and compiler, and the multiplication amplifies it
+// (the sea's wavelets on a Radeon differed between Direct3D 12 and Vulkan; docs/bench/dx12.md).
+fn pcg_hash(v: u32) -> u32 {
+    let s = v * 747796405u + 2891336453u;
+    let w = ((s >> ((s >> 28u) + 4u)) ^ s) * 277803737u;
+    return (w >> 22u) ^ w;
+}
+
+// A uniform value in [0, 1) from a hash's top 24 bits (exact in an f32).
+fn unit_from_hash(h: u32) -> f32 {
+    return f32(h >> 8u) * (1.0 / 16777216.0);
+}

@@ -3,10 +3,11 @@
 //! channels in 8-bit units, PSNR, and how many pixels differ by more than a few thresholds.
 //!
 //! `cargo run --release -p pocket-render --example image_diff -- A.png B.png [--heatmap OUT.png]
-//!  [--gain G]`
+//!  [--gain G] [--strip OUT.png [--strip-width W]]`
 //!
 //! `--heatmap` writes the per-pixel maximum channel difference times `G` (default 8) as grey, so
-//! a difference of 32 (out of 255) is already white.
+//! a difference of 32 (out of 255) is already white. `--strip` writes A, B and the heat map side by
+//! side, each scaled to `W` pixels wide (default 320): small enough to keep as evidence.
 
 use serde_json::json;
 
@@ -103,6 +104,26 @@ fn main() {
     );
     if let Some(path) = arg("--heatmap") {
         heat.save(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
+        eprintln!("wrote {path}");
+    }
+    if let Some(path) = arg("--strip") {
+        let sw: u32 = arg("--strip-width")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(320);
+        let sh = (u64::from(sw) * u64::from(h) / u64::from(w)).max(1) as u32;
+        let small = |img: &image::RgbaImage| {
+            image::imageops::resize(img, sw, sh, image::imageops::FilterType::Triangle)
+        };
+        let heat_rgba = image::DynamicImage::ImageLuma8(heat).to_rgba8();
+        let mut strip = image::RgbaImage::new(sw * 3, sh);
+        for (i, img) in [&a, &b, &heat_rgba].into_iter().enumerate() {
+            image::imageops::replace(&mut strip, &small(img), i64::from(sw) * i as i64, 0);
+        }
+        // Opaque: captures carry the renderer's alpha, which is not part of the comparison.
+        for p in strip.pixels_mut() {
+            p[3] = 255;
+        }
+        strip.save(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
         eprintln!("wrote {path}");
     }
 }
