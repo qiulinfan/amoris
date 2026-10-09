@@ -34,11 +34,12 @@ pub enum Antialiasing {
 }
 
 /// The measured defaults for an adapter (docs/bench/taa-gtao.md 5): a discrete GPU keeps
-/// multisampling (TAA costs about as much there and loses to it under camera motion) and gets
-/// GTAO (0.15 ms at 1600x900 on the RTX 5060); an integrated GPU on Vulkan or Direct3D 12 gets
-/// TAA at one sample (multisampling cost the Radeon 780M 1.5 to 7 ms more) and no GTAO (0.4 to
-/// 0.8 ms there). Apple's GPUs (tile-based, where multisampling is cheap) and the browser, whose
-/// adapter's kind is unknown, were not measured and keep multisampling without GTAO.
+/// multisampling (TAA costs within 0.45 ms of it there and loses to it under camera motion) and
+/// gets GTAO (0.14 to 0.19 ms at 1600x900 on the RTX 5060); an integrated GPU on Vulkan or
+/// Direct3D 12 gets TAA at one sample (multisampling cost the Radeon 780M up to 4.2 ms more, and
+/// never less) and no GTAO (0.5 to 0.9 ms there). Apple's GPUs (tile-based, where multisampling is
+/// cheap) and the browser, whose adapter's kind is unknown, were not measured and keep
+/// multisampling without GTAO.
 pub fn defaults_for(info: &wgpu::AdapterInfo) -> (Antialiasing, Gtao) {
     match (info.device_type, info.backend) {
         (wgpu::DeviceType::DiscreteGpu, wgpu::Backend::Vulkan | wgpu::Backend::Dx12) => {

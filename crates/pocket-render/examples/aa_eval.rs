@@ -759,6 +759,8 @@ fn gtao(s: &Setup, out: &Path) -> Value {
         ),
         ("taa", Antialiasing::Taa, Gtao::Off),
         ("taa+gtao", Antialiasing::Taa, Gtao::On(AoNormals::Depth)),
+        ("off", Antialiasing::Off, Gtao::Off),
+        ("off+gtao", Antialiasing::Off, Gtao::On(AoNormals::Depth)),
     ] {
         let mut r = s.renderer(aa, g);
         s.apply(&mut r, 0, false, None);
@@ -789,11 +791,13 @@ fn gtao(s: &Setup, out: &Path) -> Value {
     let ratio = |on: &[f32]| ratio_to(off, on);
     let mut summary = BTreeMap::new();
     for (name, img) in &images {
-        if *name == "msaa" || *name == "taa" {
+        if ["msaa", "taa", "off"].contains(name) {
             continue;
         }
         let base = if name.starts_with("taa") {
             &images["taa"]
+        } else if name.starts_with("off") {
+            &images["off"]
         } else {
             off
         };
@@ -801,9 +805,18 @@ fn gtao(s: &Setup, out: &Path) -> Value {
         let mean = r.iter().step_by(3).map(|v| f64::from(*v)).sum::<f64>() / (r.len() / 3) as f64;
         let darker =
             r.iter().step_by(3).filter(|v| **v < 0.95).count() as f64 / (r.len() / 3) as f64;
+        // GTAO never brightens a pixel; with TAA the two runs' histories may also differ, and the
+        // pixels that came out brighter measure that.
+        let brighter = base
+            .chunks(4)
+            .zip(img.chunks(4))
+            .filter(|(a, b)| luminance([b[0], b[1], b[2]]) > 1.05 * luminance([a[0], a[1], a[2]]))
+            .count() as f64
+            / (r.len() / 3) as f64;
         summary.insert(
             *name,
-            json!({"mean_luminance_ratio": mean, "share_darkened_5pct": darker}),
+            json!({"mean_luminance_ratio": mean, "share_darkened_5pct": darker,
+                   "share_brightened_5pct": brighter}),
         );
     }
     let d_off = display(off, s.w, s.h, 0.0);
