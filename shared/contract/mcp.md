@@ -1,7 +1,7 @@
 # MCP tools
 
-Status: Draft, slice 0. Maintained in Amoris's `shared/contract/`.
-Contract version 0.1 (README, Versioning).
+Status: Draft, slice 0. Maintained in Amoris's `shared/contract/`. Section 14: what Pioneer built.
+Contract version 0.2 (README, Versioning).
 
 Charter: 3.1 (pull perception, token budgets, the marked omniscient view), 3.3 (fork, restore,
 replay), 3.4 (structured errors, refusal of unknown fields), 3.5 (time model), 3.6 (tools with
@@ -773,3 +773,32 @@ layer.
    serving the same tools through `window.pocket`.
 8. **Idempotent retries.** A client that retries a timed-out `act` would apply it twice. Not in
    slice 2; if traces show it, an optional client `request_id` remembered per session.
+
+## 14. As built on Pioneer (0.2)
+
+Pioneer's MCP server is a projection of the runtime's command catalog into a few grouped tools,
+each an `action` over catalog methods (`docs/spec/server.md`), rather than one typed tool per
+request (decision 1 above). The player-facing requests arrived on that design
+(`docs/spec/player.md` 7):
+
+- **The requests are catalog commands**: `player.session`, `player.describe` (`DescribeParams`,
+  5.2), `player.observe`, `player.nearby`, `player.events`, `player.affordances`, `player.intents`
+  (Reads), `player.act` (a Write, recorded in its canonical form), `player.wait`,
+  `player.continue`, `player.pacing` (Controls). The request and answer types are the contract's,
+  unchanged but for `wait`'s `ticks` (time.md, Requests).
+- **One MCP tool `player`** carries them: `{action, ...the request's fields}`. Reads an LLM reads
+  (`observe`, `nearby`, `events`, `describe {entity}`) default to the text projection and are sent
+  as the text itself (4.3); a call may still ask for `"projection": "json"`. The CLI's
+  `pocket player <action>` and the HTTP API carry the same commands.
+- **Roles by source, sessions by seat.** A command sent as `Source::Player(i)` is a player at the
+  declared seat of index `i` (3.1, Sources); every other source is a developer. A session is bound
+  to a seat by the process that serves it, not by a token grant: `pocket mcp <project> --seat
+  <seat>` over stdio (in process or against a running host) and `/api/call {..., "seat"}` over
+  HTTP make every call the seat's player's. A seat-bound MCP session lists the `player` tool alone
+  and refuses the others with `permission.denied` (3.3). Each seat's push cursor and decision
+  state live in the runtime's one players' session, so two clients of one seat share them (5.3
+  keeps one cursor per session).
+- **Not built**: grants and tokens over HTTP MCP, the checker role, `fork`, `discard`, `snapshot`,
+  `restore` and `replay` for players (5.5 to 5.7), `world` and `hash` in answers (4.1; a
+  developer's `player.wait` carries `world_hash`), statistics across sessions, the M1 to M11
+  checks as named checks.

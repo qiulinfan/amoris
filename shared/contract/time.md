@@ -2,7 +2,7 @@
 
 - Status: Draft, slice 0. Maintained in Amoris's `shared/contract` (README, Contract record).
 - Charter: 2.4.1, 3.3, 3.5, 3.7, 5.1, 7 (item 10).
-- Contract version: 0.1 (draft).
+- Contract version: 0.2 (draft).
 
 ## What this fixes
 
@@ -314,6 +314,7 @@ pub struct CommitRequest {
 
 pub struct WaitRequest {
     pub seat: Option<SeatId>,
+    pub ticks: Option<u32>,                  // stepped pacing only (0.2): at most 36000
     pub until: Option<Until>,                // default "decision"
     pub max_wall_ms: Option<u32>,            // default 30000, at most 600000
     pub observe: Option<ObserveRequest>,
@@ -337,8 +338,11 @@ pub struct ContinueRequest {
   is waiting for. The commitment stands after a `waiting` answer; the seat then calls `wait`.
 - **`wait`** (real time and lockstep): answers when `until` holds (by default, when the seat has a
   decision point), at the episode's end, or at `max_wall_ms`. It is the long poll by which an agent
-  in real time learns of its decisions (perception.md, Push). In stepped pacing it is refused with
-  `time.wrong_mode`.
+  in real time learns of its decisions (perception.md, Push). As built on Pioneer (0.2), in stepped
+  pacing a player that holds the clock may `wait` too: it is a `step` of at most `ticks` (default
+  and largest 36000) with `until: "decision"` unless the request names another condition, so an
+  agent lets time pass the same way in either pacing (`docs/spec/player.md` 6); anyone else's is
+  refused with `time.not_clock_holder`.
 - **`continue`**: answers the seat's pending decision. Without one it answers with the warning
   `time.no_decision` and changes nothing.
 - **`pause`** and **`resume`** (real time; a developer's `resume` also ends a halt in any pacing,

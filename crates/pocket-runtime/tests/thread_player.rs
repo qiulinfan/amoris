@@ -152,3 +152,44 @@ fn real_time_pauses_on_each_decision_until_the_seat_answers() {
     drop((player, dev));
     h.shutdown(2000).unwrap();
 }
+
+/// The reference skipper plays the course through a player client of the game thread to its end;
+/// then a player's wait is refused with `time.episode_over`, and a developer's `time.step` still
+/// runs (the episode's end holds the players' time, not a developer's).
+#[test]
+fn the_skipper_finishes_on_the_thread_and_a_developer_still_steps() {
+    let h = spawn();
+    let mut player = h.client(Source::Player(0)).unwrap();
+    let mut dev = h.developer();
+    let mut skipper = pocket_runtime::skipper::Skipper::new();
+    let mut done = false;
+    for _ in 0..100 {
+        let obs = player
+            .call("player.observe", json!({"budget_tokens": 1500}))
+            .unwrap()
+            .into_json();
+        if let Some(act) = skipper.decide(&obs) {
+            player.call("player.act", act).unwrap();
+        }
+        let w = player.call("player.wait", json!({})).unwrap().into_json();
+        if w["stopped"] == json!("done") {
+            done = true;
+            break;
+        }
+    }
+    assert!(done, "the course was not finished");
+    let e = player.call("player.wait", json!({})).unwrap_err();
+    assert_eq!(e.code, "time.episode_over", "{e:#?}");
+    let before = dev.call("status", json!({})).unwrap().into_json()["tick"].clone();
+    let s = dev
+        .call("time.step", json!({"ticks": 10}))
+        .unwrap()
+        .into_json();
+    assert_eq!(
+        s["tick"].as_u64().unwrap(),
+        before.as_u64().unwrap() + 10,
+        "{s:#}"
+    );
+    drop((player, dev));
+    h.shutdown(2000).unwrap();
+}

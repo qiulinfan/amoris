@@ -432,10 +432,13 @@ impl Game {
                 None => return Err(catalog::unknown(&cmd.name, &self.extras.commands)),
             },
         };
+        if name.starts_with("player.") && !crate::player::declared(self.sim.world()) {
+            return Err(crate::player::no_layer(name));
+        }
         match kind {
             Kind::Read => self.read(cmd, name),
             Kind::Write if name == "player.act" => {
-                let applied = self.write_act(cmd, src, replaying)?;
+                let applied = self.write_act(cmd, replaying)?;
                 if replaying {
                     return Ok(applied);
                 }
@@ -457,13 +460,7 @@ impl Game {
 
     /// `player.act`'s Write: validated whole and applied at this boundary, recorded in its
     /// canonical form (actions.md, What a replay records); refused, it changes nothing.
-    fn write_act(
-        &mut self,
-        cmd: &Command,
-        src: &dyn ReplaySource,
-        replaying: bool,
-    ) -> Result<Value, Problem> {
-        let _ = src;
+    fn write_act(&mut self, cmd: &Command, replaying: bool) -> Result<Value, Problem> {
         let tick = self.tick();
         let mark = self.sim.boundary().mark();
         let r = crate::player::act_apply(self.sim.world_mut(), cmd.source, replaying, &cmd.params);

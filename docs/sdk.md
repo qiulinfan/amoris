@@ -107,6 +107,41 @@ Writes apply when `run` returns (none if it throws); `get`/`has`/`exists` see th
 `ctx.tick`, `ctx.dt`, `ctx.time`; `Math.random()` is the system's stream. Events: declare
 `events: ["crate."]`, read `ctx.events`.
 
+## Players, intents and executors
+
+A game with players (agents, RL policies, people) declares them in `project.toml`; its rules stay
+ordinary systems. Example: `samples/sailing-course` ([spec/player.md](spec/player.md)).
+
+```toml
+[player]
+perception = "perception.json"   # what each seat perceives: profiles, instruments, kinds, events
+actions = "sailing"              # the engine's controls, intents (Rust executors) and affordances
+done_event = "course.finished"   # emitting it ends the episode; its data are the result
+```
+
+- **What players perceive** is opt-in: a fact or an event a player can know is declared in
+  `perception.json` (kinds' facts read component fields, your components' included:
+  `{"from": "field", "component": "Mark", "path": "order"}`; events have a scope). An event your
+  rule emits reaches a player only when declared:
+  `{"kind": "mark.rounded", "scope": {"scope": "private"}, ...}` reaches the seat whose body is its
+  `subject`, so emit it with `{ subject: boat }`. The scene marks what can be seen: `Perceivable`,
+  `Occluder`, and an `Observer {profile, seat}` on each seat's body.
+- **What players do** goes through intents and controls the engine executes before your rules run
+  (`interface.intents`, Control phase): `sail_to` steers the `Boat`, so your rules see its effect.
+  An affordance's pulse lands in a field your rule reads: `take_aboard` writes the crate's id into
+  `Crew.take` for one tick; the rule takes the crate and clears the field, or emits
+  `interact.ignored` with a `code` saying why not. Keep that answer in an event, never in module
+  state.
+- **Executors in TypeScript are not available yet**: `game()` refuses `executor({...})` and
+  `ctx.intent` throws `script.restricted`; a game's own intents are engine catalogs for now
+  (spec/player.md 10). A decision model can still run in the tick as an ordinary system that writes
+  controls, as the player bench's `pilot` does (docs/bench/player.md 2).
+- Playing it: `pocket player observe --seat skipper`,
+  `pocket player act '[{"do": "start", "intent": "sail_to", "target": "Mark1"}]' --seat skipper`,
+  `pocket player wait --seat skipper` (runs to the seat's next decision point),
+  `pocket player describe '{"part": "intents"}'`; MCP: `pocket mcp <project> --seat skipper` lists
+  the `player` tool alone.
+
 ## Common mistakes and what `scripts check` says
 
 | Mistake | Message (abridged) |

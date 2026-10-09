@@ -2,7 +2,7 @@
 
 - Status: Draft, slice 0. Maintained in Amoris's `shared/contract` (README, Contract record).
 - Charter: 3.4, 3.6, 4.2.6, 6.1, 7 (item 12).
-- Contract version: 0.1 (draft).
+- Contract version: 0.2 (draft).
 
 ## What this fixes
 

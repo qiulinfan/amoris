@@ -2,7 +2,7 @@
 
 - Status: Draft, slice 0. Maintained in Amoris's `shared/contract` (README, Contract record).
 - Charter: 2.4.1 (the sailing showcase), 3.1, 3.4, 3.5, 7 (items 8, 9, 10 and 12).
-- Contract version: 0.1 (draft).
+- Contract version: 0.2 (draft).
 
 ## What this fixes
 
@@ -263,6 +263,13 @@ supersedes the holding `trim_sail`, and the sail stays trimmed because `sail_to`
 - A typical agent loop in stepped pacing is three calls a decision: `act` (start an intent),
   `step {ticks: 36000, until: "decision", observe: {}}` (which returns the next decision with an
   observation), and the agent's own reasoning. At 60 ticks a second a ten-minute leg is one `step`.
+- **As built on Pioneer (0.2)**, in `samples/sailing-course` (`docs/spec/player.md` 8): the loop
+  is `observe`, `act`, `wait` (a `step` until the next decision point, time.md); the default
+  filter adds `interact.ignored`, so a crate the crew could not take aboard is a decision too; the
+  episode ends in the tick the course rule emits `course.finished` (rounding a mark is coming
+  within 15 m of it, its side not judged), and the outcome's `result` is that event's data,
+  `marks_rounded`; `finished`, `crates_taken` and `aground` are not reported yet. The reference
+  skipper finishes the course in 12 decisions and 5148 ticks (`docs/bench/player.md`).
 
 ## Codes
 

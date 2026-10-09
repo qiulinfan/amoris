@@ -41,7 +41,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 /// The contract version the player tools speak (shared/contract/README.md, Versioning).
-pub const CONTRACT: &str = "0.1";
+pub const CONTRACT: &str = "0.2";
 
 /// The engine's action catalogs a project can name in `[player] actions`.
 pub const CATALOGS: &[&str] = &["sailing", "none"];
@@ -350,7 +350,7 @@ pub fn perception_caller(caller: &Caller) -> perception::Caller<'_> {
     }
 }
 
-/// `player.layer_missing`: a player command in a game that declares no player layer.
+/// `player.not_declared {command}`: a player command in a game that declares no player layer.
 pub fn no_layer(command: &str) -> Problem {
     Problem::new(
         "player.not_declared",
@@ -1063,6 +1063,9 @@ pub struct PacingParams {
 
 /// Checks `player.pacing` for the caller: a developer's, and a pacing the runtime runs.
 pub fn pacing_params(world: &World, source: Source, raw: &Value) -> Result<PlayPacing, Problem> {
+    if !declared(world) {
+        return Err(no_layer("player.pacing"));
+    }
     let who = caller(world, source)?;
     let p: PacingParams =
         pocket_contract::decode(raw, &CheckOptions::new("the pacing request"))?.value;

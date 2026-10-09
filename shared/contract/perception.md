@@ -2,7 +2,7 @@
 
 - Status: Draft, slice 0. Maintained in Amoris's `shared/contract` (README, Contract record).
 - Charter: 2.3, 2.4.1, 3.1, 3.2, 3.3, 3.6, 3.7, 3.10, 4.4, 5.1, 7 (item 8).
-- Contract version: 0.1 (draft).
+- Contract version: 0.2 (draft).
 
 ## What this fixes
 
@@ -66,9 +66,10 @@ The engine components (world state, part of the world hash, copied by a fork; sp
 serializes them like any component):
 
 ```rust
-/// One seat per body: a body observes for at most one seat (README, Seats and callers).
+/// One seat per body: a body observes for at most one seat (README, Seats and callers). `team`
+/// (0.2): observers of one team share what they see (The perception update, step 5a).
 #[derive(Component)]
-pub struct Observer { pub profile: String, pub seat: Option<SeatId> }
+pub struct Observer { pub profile: String, pub seat: Option<SeatId>, pub team: Option<String> }
 
 /// What the observer remembers: one entry per entity it has seen and not yet forgotten.
 /// Updated only by the perception update (below), never by a query.
@@ -284,6 +285,13 @@ applied to `P.sight.eye_m`) and forward bearing `h`:
    determinism.
 5. **Detail.** A visible C within `P.attention_m` is seen with `Detail::Full`; beyond it, with
    `Detail::Coarse`.
+
+   5a. **Team vision** (0.2). Steps 1 to 5 are computed for every observer first. An observer
+   whose `team` is set then also sees every entity another observer of that team sees (its own
+   body left out), at the best detail any of them sees it; an omniscient binding shares nothing.
+   Steps 6 and 7 stay the observer's own: its memory and forgetting (a teammate seeing the empty
+   place of a remembered entity does not drop it), its sightings, its event ring (an event is
+   perceived by the observer's own senses), and bearings and ranges from its own body.
 6. **Memory.** Every visible C is written to O's memory (its kind, name, position, facts of its
    detail level, rounded as projection.md's Stored values says, its `relative` facts left out,
    `seen_tick = T`). A visible C that had no memory entry before this tick and whose kind is in
@@ -639,6 +647,10 @@ fixture world from slice 1, and the projection golden cases in all runtime targe
   exactly `memory_s`; capacity eviction order; event scopes of each kind, an undeclared kind
   perceived by no player, and a cause kept only when perceived. The edge cases also enter the shared
   golden cases, so all runtime targets put them on the same side.
+- **Team vision** (0.2): an observer behind an occluder sees what its teammate sees past it, at the
+  teammate's detail and with its own sighting; an observer of another team, or of none, does not;
+  the observer remembers it by its own memory rule once the teammate looks away
+  (`crates/pocket-interface/tests/perception_team.rs`).
 
 ## Performance
 

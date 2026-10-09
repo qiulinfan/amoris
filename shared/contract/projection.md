@@ -3,7 +3,7 @@
 - Status: Draft, slice 0. Maintained in Amoris's `shared/contract` (README, Contract record).
 - Charter: 3.1 (the rendered screen, a text projection for LLMs and a tensor projection for RL are
   projections of one perception layer), 3.6, 7 (item 8).
-- Contract version: 0.1 (draft).
+- Contract version: 0.2 (draft).
 
 ## What this fixes
 

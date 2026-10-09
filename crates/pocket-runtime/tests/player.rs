@@ -63,7 +63,7 @@ fn a_player_is_its_seat_and_sees_through_its_own_perception() {
             "{s:#}"
         );
         let d = p.ok("player.describe", json!({}));
-        assert_eq!(d["contract"], json!("0.1"), "{d:#}");
+        assert_eq!(d["contract"], json!("0.2"), "{d:#}");
         // The whole definition is beyond the default 2000 tokens: names only, and the call for
         // the rest (README, The game definition).
         assert_eq!(d["seats"], json!(["skipper"]), "{d:#}");
@@ -131,6 +131,37 @@ fn a_player_is_its_seat_and_sees_through_its_own_perception() {
             ))
             .unwrap_or_else(|e| panic!("{e:#?}"));
         assert_eq!(dev["omniscient"], json!(true), "{dev:#}");
+    });
+}
+
+/// A game without `[player]` answers the player commands with `player.not_declared`, and its
+/// world carries none of the player layer's state.
+#[test]
+fn a_game_without_players_says_so() {
+    common::big_stack(|| {
+        let mut g = Game::new(common::sailing(), 1).unwrap_or_else(|e| panic!("{e:#?}"));
+        for (name, params) in [
+            ("player.observe", json!({})),
+            (
+                "player.act",
+                json!({"actions": [{"do": "set", "controls": {"rudder": 0.1}}]}),
+            ),
+            ("player.wait", json!({})),
+        ] {
+            let e = g
+                .apply(&Command::new(Source::Developer(0), 1, name, params))
+                .unwrap_err();
+            assert_eq!(e.code, "player.not_declared", "{name}: {e:#?}");
+        }
+        let tree = g
+            .apply(&Command::new(
+                Source::Developer(0),
+                2,
+                "world.tree",
+                json!({"with": ["Observer"]}),
+            ))
+            .unwrap();
+        assert_eq!(tree, json!([]), "{tree:#}");
     });
 }
 

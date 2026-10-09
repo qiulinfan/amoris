@@ -772,12 +772,13 @@ impl Loop {
     }
 
     /// The answer at this boundary: for a game with players their session decides (a halt, the
-    /// episode's end, real time held by a pending decision), else the model. Players' runs whose
-    /// wall limit passed are answered first, and the earliest wall limit of those still waiting
-    /// wakes the loop.
+    /// episode's end, real time held by a pending decision), else the model; a developer's
+    /// `time.step` under way runs its ticks whatever holds the players. Players' runs whose wall
+    /// limit passed are answered first, and the earliest wall limit of those still waiting wakes
+    /// the loop.
     fn pace(&mut self, now: f64) -> Pace {
         self.end_player_runs(now);
-        let pace = if self.game.has_players() {
+        let pace = if self.game.has_players() && self.steps.is_empty() {
             self.game.player_pace(&mut self.model, now)
         } else {
             self.model.pace(now)
