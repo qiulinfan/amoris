@@ -4,15 +4,19 @@
 //!
 //! Per frame, when any cloud is drawn:
 //! 1. `splat preprocess` (compute): one thread per splat of every drawn cloud projects it (EWA),
-//!    culls it, evaluates its spherical harmonics and appends it with a depth key; a one-thread
-//!    dispatch then writes the sort's indirect dispatch and the draw's arguments;
+//!    culls it, evaluates its spherical harmonics and writes it at its index with a depth key;
+//!    `splat compact` gathers the visible ones' keys and indices in index order (so ties sort the
+//!    same way every frame) and writes the sort's indirect dispatch and the draw's arguments;
 //! 2. `splat sort` (compute): the portable radix sort (sort.rs) orders the visible splats back to
 //!    front;
-//! 3. after the opaque pass: `splat depth` copies the first sample of the multisampled depth into a
-//!    single-sample depth target, and `splat draw` draws the quads (one indexed indirect draw)
-//!    into the resolved HDR image, blended premultiplied, depth-tested and not written. Blending
-//!    into one sample instead of four measured 2.2x cheaper (docs/bench/splats.md); the cost is a
-//!    per-pixel, not per-sample, edge where a mesh hides splats.
+//! 3. after the opaque pass, either the quads ([`SplatRaster::Quads`]): `splat depth` copies the
+//!    first sample of the multisampled depth into a single-sample depth target, and `splat draw`
+//!    draws the quads (one indexed indirect draw) into the resolved HDR image, blended
+//!    premultiplied, depth-tested and not written (blending into one sample instead of four
+//!    measured 2.2x cheaper, docs/bench/splats.md; the cost is a per-pixel, not per-sample, edge
+//!    where a mesh hides splats); or the compute tile rasterizer ([`SplatRaster::Tiles`],
+//!    tile.rs), which bins and sorts (tile, splat) pairs before the opaque pass;
+//! 4. on demand, [`Splats::draw_ids`] draws them into the entity-id pass (picking.rs).
 //!
 //! The CPU's per-frame work is per cloud, never per splat, and it never waits for the GPU.
 //!
@@ -150,6 +154,9 @@ struct DepthCopy {
 
 struct Binds {
     preprocess: wgpu::BindGroup,
+    scan: wgpu::BindGroup,
+    compact: wgpu::BindGroup,
+    finish: wgpu::BindGroup,
     sort: sort::SortBinding,
     /// Reading the keys and values from buffer A (an even number of sort passes) or B.
     draw: [wgpu::BindGroup; 2],
@@ -172,9 +179,12 @@ pub struct Splats {
     sh_len: u64,
     clouds_buf: wgpu::Buffer,
     params_buf: wgpu::Buffer,
+    /// Per thread of the preprocess (every splat of the drawn clouds).
     projected: wgpu::Buffer,
     keys: [wgpu::Buffer; 2],
     vals: [wgpu::Buffer; 2],
+    /// The preprocess workgroups' visible counts, then their first slots.
+    blocks: wgpu::Buffer,
     hist: wgpu::Buffer,
     control: wgpu::Buffer,
     capacity: u32,
@@ -183,9 +193,10 @@ pub struct Splats {
     /// The index buffer of one batch of quads.
     quads: wgpu::Buffer,
 
-    pre_layout: wgpu::BindGroupLayout,
     draw_layout: wgpu::BindGroupLayout,
     preprocess: wgpu::ComputePipeline,
+    scan: wgpu::ComputePipeline,
+    compact: wgpu::ComputePipeline,
     finish: wgpu::ComputePipeline,
     draw_pipeline: wgpu::RenderPipeline,
     depth_pipeline: wgpu::RenderPipeline,
@@ -258,23 +269,8 @@ fn layout_entry(
 impl Splats {
     pub fn new(gpu: &Gpu) -> Splats {
         let device = &gpu.device;
-        let cs = wgpu::ShaderStages::COMPUTE;
         let uniform = wgpu::BufferBindingType::Uniform;
         let ro = wgpu::BufferBindingType::Storage { read_only: true };
-        let rw = wgpu::BufferBindingType::Storage { read_only: false };
-        let pre_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("splat preprocess"),
-            entries: &[
-                layout_entry(0, cs, uniform),
-                layout_entry(1, cs, ro),
-                layout_entry(2, cs, ro),
-                layout_entry(3, cs, ro),
-                layout_entry(4, cs, rw),
-                layout_entry(5, cs, rw),
-                layout_entry(6, cs, rw),
-                layout_entry(7, cs, rw),
-            ],
-        });
         let vs = wgpu::ShaderStages::VERTEX;
         let draw_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("splat draw"),
@@ -286,16 +282,12 @@ impl Splats {
                 layout_entry(4, vs, ro),
             ],
         });
-        let pre_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("splat preprocess"),
-            bind_group_layouts: &[Some(&pre_layout)],
-            immediate_size: 0,
-        });
+        // One layout per kernel (each uses at most 7 storage buffers; all together use 9).
         let pre_module = shaders::module(device, "splat_preprocess");
         let compute = |entry: &str| {
             device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some(entry),
-                layout: Some(&pre_pl),
+                layout: None,
                 module: &pre_module,
                 entry_point: Some(entry),
                 compilation_options: shaders::compute_options(),
@@ -414,6 +406,7 @@ impl Splats {
                 buffer(device, "splat values A", 64, su),
                 buffer(device, "splat values B", 64, su),
             ],
+            blocks: buffer(device, "splat blocks", 64, su),
             hist: buffer(device, "splat sort histogram", sort::hist_bytes(0), su),
             control: buffer(
                 device,
@@ -430,12 +423,13 @@ impl Splats {
             ),
             readback_state: Arc::new(Mutex::new(Readback::Idle)),
             preprocess: compute("preprocess"),
+            scan: compute("scan"),
+            compact: compute("compact"),
             finish: compute("finish"),
             draw_pipeline,
             depth_pipeline,
             depth: None,
             sort: RadixSort::new(device),
-            pre_layout,
             draw_layout,
             binds: None,
             generation: 0,
@@ -650,6 +644,7 @@ impl Splats {
             buffer(device, "splat values A", c * 4, su),
             buffer(device, "splat values B", c * 4, su),
         ];
+        self.blocks = buffer(device, "splat blocks", c.div_ceil(256) * 4, su);
         self.hist = buffer(device, "splat sort histogram", sort::hist_bytes(cap), su);
         self.capacity = cap;
         self.binds = None;
@@ -663,20 +658,46 @@ impl Splats {
                 resource: buf.as_entire_binding(),
             }
         }
-        let preprocess = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("splat preprocess"),
-            layout: &self.pre_layout,
-            entries: &[
+        let group = |p: &wgpu::ComputePipeline, entries: &[wgpu::BindGroupEntry<'_>]| {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("splat preprocess"),
+                layout: &p.get_bind_group_layout(0),
+                entries,
+            })
+        };
+        // The keys' buffer B stages the preprocess's keys by thread index; the sort starts from A.
+        let preprocess = group(
+            &self.preprocess,
+            &[
                 e(0, &self.params_buf),
                 e(1, &self.splat_buf),
                 e(2, &self.sh_buf),
                 e(3, &self.clouds_buf),
                 e(4, &self.projected),
+                e(7, &self.control),
+                e(8, &self.keys[1]),
+                e(9, &self.blocks),
+            ],
+        );
+        let scan = group(
+            &self.scan,
+            &[
+                e(0, &self.params_buf),
+                e(7, &self.control),
+                e(9, &self.blocks),
+            ],
+        );
+        let compact = group(
+            &self.compact,
+            &[
+                e(0, &self.params_buf),
                 e(5, &self.keys[0]),
                 e(6, &self.vals[0]),
-                e(7, &self.control),
+                e(8, &self.keys[1]),
+                e(9, &self.blocks),
             ],
-        });
+        );
+        let finish = group(&self.finish, &[e(7, &self.control)]);
         let draw = |i: usize| {
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("splat draw"),
@@ -699,6 +720,9 @@ impl Splats {
         );
         self.binds = Some(Binds {
             preprocess,
+            scan,
+            compact,
+            finish,
             sort,
             draw: [draw(0), draw(1)],
         });
@@ -711,6 +735,7 @@ impl Splats {
             &self.keys[1],
             &self.vals[0],
             &self.vals[1],
+            &self.blocks,
             &self.hist,
         ]
         .iter()
@@ -901,21 +926,35 @@ impl Splats {
             return;
         };
         enc.clear_buffer(&self.control, 0, None);
+        let groups = total.div_ceil(256);
+        let (gx, gy) = if groups > 65535 {
+            (65535, groups.div_ceil(65535))
+        } else {
+            (groups, 1)
+        };
         {
             let ts = profiler.compute_scope("splat preprocess");
             let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("splat preprocess"),
                 timestamp_writes: ts,
             });
-            let groups = total.div_ceil(256);
-            let (gx, gy) = if groups > 65535 {
-                (65535, groups.div_ceil(65535))
-            } else {
-                (groups, 1)
-            };
             pass.set_bind_group(0, &binds.preprocess, &[]);
             pass.set_pipeline(&self.preprocess);
             pass.dispatch_workgroups(gx, gy, 1);
+        }
+        {
+            let ts = profiler.compute_scope("splat compact");
+            let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("splat compact"),
+                timestamp_writes: ts,
+            });
+            pass.set_bind_group(0, &binds.scan, &[]);
+            pass.set_pipeline(&self.scan);
+            pass.dispatch_workgroups(1, 1, 1);
+            pass.set_bind_group(0, &binds.compact, &[]);
+            pass.set_pipeline(&self.compact);
+            pass.dispatch_workgroups(gx, gy, 1);
+            pass.set_bind_group(0, &binds.finish, &[]);
             pass.set_pipeline(&self.finish);
             pass.dispatch_workgroups(1, 1, 1);
         }

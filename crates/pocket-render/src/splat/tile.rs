@@ -580,9 +580,33 @@ mod tests {
         SplatCloud::from_raw(&raw, 0, &[])
     }
 
+    /// Overlapping discs on one plane facing the camera: every sort key ties.
+    fn wall(n: usize) -> SplatCloud {
+        let raw: Vec<RawSplat> = (0..n)
+            .map(|i| {
+                let (u, v) = (
+                    (i * 37 % n) as f32 / n as f32,
+                    (i * 61 % n) as f32 / n as f32,
+                );
+                RawSplat {
+                    position: [u * 3.0 - 1.5, v * 2.0 - 1.0, -2.0],
+                    scale: [0.12, 0.08, 0.001],
+                    rotation: Quat::from_rotation_z(u * 6.0).to_array(),
+                    color: [u, v, 1.0 - u],
+                    opacity: 0.6,
+                }
+            })
+            .collect();
+        SplatCloud::from_raw(&raw, 0, &[])
+    }
+
     fn renderer(gpu: &Gpu, n: usize) -> Renderer {
+        renderer_with(gpu, &cloud(n))
+    }
+
+    fn renderer_with(gpu: &Gpu, c: &SplatCloud) -> Renderer {
         let mut r = Renderer::new(gpu, wgpu::TextureFormat::Rgba8UnormSrgb, 200, 120);
-        r.splats.insert("c", &cloud(n));
+        r.splats.insert("c", c);
         r.apply(
             RenderFrame {
                 tick: 1,
@@ -682,6 +706,31 @@ mod tests {
             close(changes[0], changes[2]) && close(changes[1], changes[3]),
             "{changes:?}"
         );
+    }
+
+    /// A still view draws the same image every frame, even where every sort key ties (splats with
+    /// equal keys keep their order in the cloud). Skipped without a GPU.
+    #[test]
+    fn ties_are_stable() {
+        let Ok(gpu) = Gpu::headless(BackendChoice::from_env()) else {
+            eprintln!("no GPU: skipped");
+            return;
+        };
+        let mut r = renderer_with(&gpu, &wall(30_000));
+        r.set_camera_override(Some(CameraState::look_at(
+            Vec3::new(0.0, 0.0, 3.0),
+            Vec3::new(0.0, 0.0, -2.0),
+        )));
+        for raster in [SplatRaster::Quads, SplatRaster::Tiles] {
+            let first = shoot(&mut r, raster);
+            let mut changed = 0;
+            for _ in 0..4 {
+                let again = shoot(&mut r, raster);
+                changed += first.iter().zip(&again).filter(|(a, b)| a != b).count();
+            }
+            eprintln!("{raster:?}: {changed} channel values changed over 4 redraws");
+            assert_eq!(changed, 0, "{raster:?}");
+        }
     }
 
     /// With fewer pair slots than the frame wants, the overflow is counted, not silent, and the

@@ -3,8 +3,11 @@
 // the frustum by more than its extent, transparent), projects its 3D covariance to a 2D screen
 // covariance (EWA splatting: the Jacobian of the perspective projection at the splat's center),
 // takes the ellipse's axes from the eigen-decomposition, evaluates the spherical harmonics toward
-// the camera, and appends the result with its depth key for the sort. Appends count per workgroup
-// first, so 3M splats pay 12k global atomics, not 3M.
+// the camera, and writes the result at its own index with its depth key (or NOT_VISIBLE) in a
+// staging array. Then, for the sort, the visible splats are compacted in index order: `scan`
+// turns the workgroups' visible counts into offsets and `compact` writes each visible splat's key
+// and index at its offset plus its rank in its workgroup (from a bit mask, not an atomic). The
+// stable sort therefore breaks ties by index, the same way every frame.
 
 // One Gaussian as stored (cloud.rs PackedSplat), 32 bytes.
 struct Splat {
@@ -32,16 +35,25 @@ struct Cloud {
 @group(0) @binding(1) var<storage, read> splats: array<Splat>;
 @group(0) @binding(2) var<storage, read> sh: array<u32>;
 @group(0) @binding(3) var<storage, read> clouds: array<Cloud>;
+// Per thread index (every splat of the drawn clouds), written only for visible splats.
 @group(0) @binding(4) var<storage, read_write> projected: array<Projected>;
+// The sort's input: visible splats' keys and thread indices, in index order.
 @group(0) @binding(5) var<storage, read_write> keys: array<u32>;
 @group(0) @binding(6) var<storage, read_write> vals: array<u32>;
 // [0] visible count; [1] their quads' area in units of 16 pixels (each clipped to the screen's
 // size: a fill estimate); [4..7] the sort's indirect dispatch; [8..13] the indexed indirect draw.
 @group(0) @binding(7) var<storage, read_write> control: array<atomic<u32>>;
+// Per thread index: the depth key, or NOT_VISIBLE.
+@group(0) @binding(8) var<storage, read_write> stage: array<u32>;
+// Per workgroup of 256 threads: its visible count, then (after `scan`) its first slot.
+@group(0) @binding(9) var<storage, read_write> blocks: array<u32>;
+
+const NOT_VISIBLE: u32 = 0xffffffffu;   // no depth key is all ones (tz > 0)
 
 var<workgroup> wg_count: atomic<u32>;
 var<workgroup> wg_area: atomic<u32>;
-var<workgroup> wg_base: u32;
+var<workgroup> wg_mask: array<atomic<u32>, 8>;
+var<workgroup> wg_scan: array<u32, 256>;
 
 fn unpack_quat(p: u32) -> vec4f {
     let largest = p >> 30u;
@@ -215,25 +227,95 @@ fn preprocess(
             }
         }
     }
-    var local = 0u;
     if (visible) {
-        local = atomicAdd(&wg_count, 1u);
+        atomicAdd(&wg_count, 1u);
+        projected[g] = out;
+    }
+    if (g < params.counts.x) {
+        stage[g] = select(NOT_VISIBLE, key, visible);
     }
     workgroupBarrier();
     if (lid == 0u) {
-        wg_base = atomicAdd(&control[0], atomicLoad(&wg_count));
+        blocks[wid.y * groups.x + wid.x] = atomicLoad(&wg_count);
         atomicAdd(&control[1], atomicLoad(&wg_area));
-    }
-    let base = workgroupUniformLoad(&wg_base);
-    if (visible) {
-        let slot = base + local;
-        projected[slot] = out;
-        keys[slot] = key;
-        vals[slot] = slot;
     }
 }
 
-// After the preprocess: the sort's dispatch (one workgroup per tile) and the draw's arguments.
+// The exclusive prefix sum of `v` over the workgroup (Hillis-Steele; uniform control flow only).
+fn exclusive_scan(t: u32, v: u32) -> u32 {
+    wg_scan[t] = v;
+    workgroupBarrier();
+    for (var o = 1u; o < 256u; o = o << 1u) {
+        var x = 0u;
+        if (t >= o) {
+            x = wg_scan[t - o];
+        }
+        workgroupBarrier();
+        wg_scan[t] = wg_scan[t] + x;
+        workgroupBarrier();
+    }
+    return wg_scan[t] - v;
+}
+
+// One workgroup: the preprocess workgroups' visible counts become their first slots; the total is
+// the visible count.
+@compute @workgroup_size(256)
+fn scan(@builtin(local_invocation_index) t: u32) {
+    let nb = (params.counts.x + 255u) / 256u;
+    let per = (nb + 255u) / 256u;
+    let lo = min(t * per, nb);
+    let hi = min(lo + per, nb);
+    var sum = 0u;
+    for (var i = lo; i < hi; i++) {
+        sum += blocks[i];
+    }
+    var run = exclusive_scan(t, sum);
+    for (var i = lo; i < hi; i++) {
+        let c = blocks[i];
+        blocks[i] = run;
+        run += c;
+    }
+    if (t == 255u) {
+        atomicStore(&control[0], run);
+    }
+}
+
+// The visible splats' keys and indices in index order (the preprocess's grid): a splat's slot is
+// its workgroup's first slot plus the visible splats before it in the workgroup.
+@compute @workgroup_size(256)
+fn compact(
+    @builtin(workgroup_id) wid: vec3u,
+    @builtin(num_workgroups) groups: vec3u,
+    @builtin(local_invocation_index) lid: u32,
+) {
+    if (lid < 8u) {
+        atomicStore(&wg_mask[lid], 0u);
+    }
+    workgroupBarrier();
+    let block = wid.y * groups.x + wid.x;
+    let g = block * 256u + lid;
+    var key = NOT_VISIBLE;
+    if (g < params.counts.x) {
+        key = stage[g];
+    }
+    let word = lid >> 5u;
+    let bit = 1u << (lid & 31u);
+    if (key != NOT_VISIBLE) {
+        atomicOr(&wg_mask[word], bit);
+    }
+    workgroupBarrier();
+    if (key != NOT_VISIBLE) {
+        var rank = countOneBits(atomicLoad(&wg_mask[word]) & (bit - 1u));
+        for (var w = 0u; w < word; w++) {
+            rank += countOneBits(atomicLoad(&wg_mask[w]));
+        }
+        let slot = blocks[block] + rank;
+        keys[slot] = key;
+        vals[slot] = g;
+    }
+}
+
+// After the scan: the sort's dispatch (one workgroup per tile) and the draw's arguments.
 @compute @workgroup_size(1)
 fn finish() {
     let n = atomicLoad(&control[0]);
