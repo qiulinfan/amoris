@@ -1,9 +1,28 @@
 //! Creates the renderer's kinds of resources one by one inside error scopes and prints the first
 //! failure of each, then builds the whole renderer (every pipeline, so every shader goes through
-//! the backend's compiler) and draws one empty frame: a quick check of a backend
-//! (`POCKET_BACKEND=vulkan`, `POCKET_BACKEND=dx12`, `POCKET_ADAPTER=780m`).
+//! the backend's compiler) and draws a few frames of shadowed cubes (several views, so indirect
+//! draws with a non-zero first instance): a quick check of a backend (`POCKET_BACKEND=vulkan`,
+//! `POCKET_BACKEND=dx12`, `POCKET_ADAPTER=780m`). Backend warnings and errors are printed, so
+//! `WGPU_VALIDATION=1` shows the Direct3D 12 debug layer's or Vulkan's validation messages.
+
+struct Logger;
+
+impl log::Log for Logger {
+    fn enabled(&self, m: &log::Metadata<'_>) -> bool {
+        m.level() <= log::Level::Warn
+    }
+    fn log(&self, r: &log::Record<'_>) {
+        if self.enabled(r.metadata()) {
+            println!("[{} {}] {}", r.level(), r.target(), r.args());
+        }
+    }
+    fn flush(&self) {}
+}
 
 fn main() {
+    static LOGGER: Logger = Logger;
+    let _ = log::set_logger(&LOGGER);
+    log::set_max_level(log::LevelFilter::Warn);
     let choice = pocket_render::BackendChoice::from_env();
     if choice.backends().contains(wgpu::Backends::DX12) {
         println!("shader compiler: {}", pocket_render::gpu::dx12_compiler().1);
@@ -27,7 +46,11 @@ fn main() {
         let mut r =
             pocket_render::Renderer::new(&gpu, wgpu::TextureFormat::Rgba8UnormSrgb, 640, 360);
         let built = t.elapsed();
-        let (w, h, px) = r.capture_rgba(0.0);
+        r.apply(pocket_render::demo::many_cubes(4096, false, true), 0.0);
+        for i in 0..3 {
+            let _ = r.capture_rgba(f64::from(i) / 60.0);
+        }
+        let (w, h, px) = r.capture_rgba(0.05);
         let errors = [
             pollster::block_on(validation.pop()),
             pollster::block_on(internal.pop()),

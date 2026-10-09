@@ -5,8 +5,8 @@
 //!
 //! Environment: `POCKET_BACKEND` (`metal`, `vulkan`, `dx12`), `POCKET_ADAPTER` (an adapter's index
 //! or a case-insensitive part of its name, for machines with two GPUs) and, for Direct3D 12,
-//! `POCKET_DXC` (the `dxcompiler.dll` to use, its directory, or `fxc`). `POCKET_INDIRECT_VALIDATION`
-//! is a measurement switch (see [`instance`]).
+//! `POCKET_DXC` (the `dxcompiler.dll` to use, its directory, or `fxc`). wgpu's `WGPU_*` instance
+//! flags (`WGPU_VALIDATION`, `WGPU_VALIDATION_INDIRECT_CALL`) apply on top (see [`instance`]).
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -121,15 +121,10 @@ pub fn instance(choice: BackendChoice) -> wgpu::Instance {
         // (docs/bench/dx12.md): without this every batch but the first draws the wrong instances.
         desc.flags |= wgpu::InstanceFlags::VALIDATION_INDIRECT_CALL;
     }
-    // A measurement switch (docs/bench/dx12.md): `POCKET_INDIRECT_VALIDATION=0` or `1` forces
-    // wgpu's indirect-call validation off or on for any backend, to time what it costs.
-    match std::env::var("POCKET_INDIRECT_VALIDATION").as_deref() {
-        Ok("0") => desc
-            .flags
-            .remove(wgpu::InstanceFlags::VALIDATION_INDIRECT_CALL),
-        Ok("1") => desc.flags |= wgpu::InstanceFlags::VALIDATION_INDIRECT_CALL,
-        _ => {}
-    }
+    // wgpu's own switches override these defaults: `WGPU_VALIDATION=1` (with the Direct3D 12 debug
+    // layer or Vulkan's validation layers) and `WGPU_VALIDATION_INDIRECT_CALL=0|1` (to time what
+    // indirect validation costs, docs/bench/dx12.md) work in release builds too.
+    desc.flags = desc.flags.with_env();
     wgpu::Instance::new(desc)
 }
 

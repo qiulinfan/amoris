@@ -203,7 +203,7 @@ def main():
     text = json.dumps(summary, indent=1)
     if args.summary:
         Path(ROOT / args.summary).parent.mkdir(parents=True, exist_ok=True)
-        Path(ROOT / args.summary).write_text(text + "\n")
+        Path(ROOT / args.summary).write_text(text + "\n", newline="\n")
     print(text)
 
 

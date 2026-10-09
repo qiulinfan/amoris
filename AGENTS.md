@@ -1,7 +1,7 @@
 # Working on Amoris
 
 Amoris is an agent-native 3D game engine: Rust host, TypeScript scripts on QuickJS-ng, wgpu
-rendering (Metal and Vulkan natively, WebGPU in the browser), a React web editor, MCP for agents.
+rendering (Metal/Vulkan natively, Direct3D 12 on Windows, WebGPU in the browser), a React web editor, MCP for agents.
 Read [the charter](docs/charter.md) first: it fixes the stack, the architecture and what this round
 must prove. The schedule is [docs/schedule.md](docs/schedule.md). The game-side subsystems are
 specified under [docs/spec/](docs/spec/README.md); their measured spikes are under
@@ -49,6 +49,14 @@ specified under [docs/spec/](docs/spec/README.md); their measured spikes are und
   `POCKET_BACKEND=vulkan` and launch with `DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib` so the
   loader is found. Metal is the default on macOS. `MVK_CONFIG_LOG_LEVEL=3` prints MoltenVK's shader
   compile errors; `cargo run --release -p pocket-render --example gpu_probe` checks a backend.
+- Direct3D 12 on Windows: `POCKET_BACKEND=dx12`. DXC comes from the newest Windows SDK's
+  `bin\<version>\x64\dxcompiler.dll` (or `POCKET_DXC`; `POCKET_DXC=fxc` for FXC); never enable
+  wgpu's `static-dxc` (it downloads binaries). `POCKET_ADAPTER=780m` (or an index) picks an adapter
+  on a two-GPU machine, for any backend. D3D12 needs wgpu's indirect validation for
+  `first_instance` (gpu.rs sets it); `tools/backend_compare.py` compares frames across backends
+  and `tools/backend_bench.py` times them ([docs/bench/dx12.md](docs/bench/dx12.md)).
+- Shader hashes are integer (`pcg_hash` in common.wgsl): `fract(sin(x) * k)` differs per vendor
+  and API.
 - Compute pipelines use `shaders::compute_options()` (no automatic workgroup zeroing: it breaks
   MoltenVK); a compute shader must initialize the workgroup memory it reads.
 - The browser: `tools/build_viewport.sh` builds the WebGPU viewport into `web/viewport/pkg`

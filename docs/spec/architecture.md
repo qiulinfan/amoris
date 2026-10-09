@@ -267,6 +267,13 @@ written as that specification names them.
   the Radeon 780M's frame for 43.5 to 51.9 ms (`budgets.md`, `import.frame_max`).
 - **Must not**: depend on the runtime, the script host, physics or persistence directly (it reads
   snapshots through `pocket-link`); open windows (`winit` stays in the app and the editor).
+- **Backends** (`gpu.rs`): Metal by default on Apple platforms, Vulkan by default elsewhere
+  (MoltenVK on demand on macOS), Direct3D 12 on Windows on demand (Pioneer, charter 4.4;
+  `POCKET_BACKEND=dx12`, DXC loaded from the Windows SDK at run time). `POCKET_ADAPTER` picks an
+  adapter by index or name. Direct3D 12 keeps wgpu's indirect validation on, which is what feeds
+  `first_instance` to `instance_index` there. The Windows default stays Vulkan by measurement
+  (`docs/bench/dx12.md` 6). Shader hashes are integer (`pcg_hash`), so frames match across
+  vendors and APIs.
 - **wasm32**: `wgpu` with its `webgpu` backend only (charter 4.4: no WebGL renderer).
 
 ### 4.11 `pocket-editor`: the editor
