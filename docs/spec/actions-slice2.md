@@ -43,11 +43,11 @@ factory and how the seats' bodies are found (the entities whose `Observer` names
 ## 3. Affordances come from the perception declarations
 
 A kind's affordances are carried by perception's `KindDef.affordances` (the sailing ones in
-`samples/sailing-course/perception.json`) and read by the action layer as `AffordanceDef`s, with `effect` a
-nested object as the contract's listing writes it. `ActionCatalog::validate` checks the declarations
-at load: names unique, channels named, every effect an intent that takes the kind as its target or a
-pulse that targets it, and every `Fact` requirement on an instrument or on a fact a player may know
-(`Hidden` and `Owner` facts of another entity are `definition.invalid`).
+`samples/sailing-course/perception.json`) and read by the action layer as `AffordanceDef`s, with
+`effect` a nested object as the contract's listing writes it. `ActionCatalog::validate` checks the
+declarations at load: names unique, channels named, every effect an intent that takes the kind as
+its target or a pulse that targets it, and every `Fact` requirement on an instrument or on a fact a
+player may know (`Hidden` and `Owner` facts of another entity are `definition.invalid`).
 
 ## 4. The act request in the runtime
 
@@ -78,12 +78,13 @@ and the turn state are taken before applying and put back.
 ## 5. The interface in every game
 
 Every game the runtime builds installs the sailing showcase's interface after the engine's
-components are registered: perception with the declarations of `samples/sailing-course/perception.json`
-(compiled in, so a replay and the web build have them), the sailing action catalog, the continuous
-time rules, the script host's bridge (`pocket_script::interface::InterfaceBridge`,
-script-host-slice2.md), the `FieldWriter` and a stepped session. A world with no observer naming a
-seat has it inert. A game's own interface declarations wait for the project definition that declares
-them (shared/contract/README.md, The game definition).
+components are registered: perception with the declarations of
+`samples/sailing-course/perception.json` (compiled in, so a replay and the web build have them), the
+sailing action catalog, the continuous time rules, the script host's bridge
+(`pocket_script::interface::InterfaceBridge`, script-host-slice2.md), the `FieldWriter` and a
+stepped session. A world with no observer naming a seat has it inert. A game's own interface
+declarations wait for the project definition that declares them (shared/contract/README.md, The game
+definition).
 
 The runtime's `FieldWriter` writes a pulse's target into the bound field of a project component
 through the field's schema, as `world_edit` writes it, inserting the component with its defaults on

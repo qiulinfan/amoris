@@ -90,10 +90,40 @@ def fill(text, first, rest):
     return lines
 
 
+# A setext heading's underline or a thematic break: `===`, `---`, `***`, `___` alone on a line.
+RULE = re.compile(r"^ {0,3}(=+|-+|(\* *){3,}|(_ *){3,})\s*$")
+# A table's delimiter row, with or without outer pipes: `--|--`, `:--- | ---:`.
+DELIMITER = re.compile(r"^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?\s*$")
+
+
+def protected(lines):
+    """The lines no paragraph may take in: YAML front matter, setext headings (text and underline)
+    and thematic breaks, and tables written without outer pipes (header, delimiter and body rows)."""
+    keep = set()
+    if lines and lines[0].strip() == "---":
+        for i in range(1, len(lines)):
+            if lines[i].strip() in ("---", "..."):
+                keep.update(range(i + 1))
+                break
+    for i, line in enumerate(lines):
+        if RULE.match(line):
+            keep.add(i)
+            if i and lines[i - 1].strip() and line.strip()[0] in "=-":
+                keep.add(i - 1)
+        elif DELIMITER.match(line) and i and "|" in lines[i - 1]:
+            j = i - 1
+            while j < len(lines) and lines[j].strip():
+                keep.add(j)
+                j += 1
+    return keep
+
+
 def rewrap(src):
     out = []
     block = None     # [first prefix, rest prefix, stripped lines, original lines]
     fence = False
+    lines = src.split("\n")
+    keep = protected(lines)
 
     def flush(hard=""):
         nonlocal block
@@ -106,9 +136,13 @@ def rewrap(src):
                 out.extend(block[3])
         block = None
 
-    for raw in src.split("\n"):
+    for i, raw in enumerate(lines):
         line = raw.rstrip()
         s = line.strip()
+        if i in keep and not fence:
+            flush()
+            out.append(raw)
+            continue
         if s.startswith("```") or s.startswith("~~~"):
             flush()
             fence = not fence
@@ -152,6 +186,12 @@ def selftest():
         long_en + "  \nnext\n": None,
         # Tables, headings and code are never touched.
         "| " + long_en + " |\n# " + long_en + "\n```\n" + long_en + "\n```\n": None,
+        # Setext headings, thematic breaks, front matter and pipe-less tables neither.
+        long_en + "\n---\n\nnext\n": long_en + "\n---\n\nnext\n",
+        long_en + "\n===\n": long_en + "\n===\n",
+        "---\ntitle: " + long_en + "\n---\n\nshort\n": "---\ntitle: " + long_en + "\n---\n\nshort\n",
+        "a | b\n--|--\nc | " + long_en + "\n": "a | b\n--|--\nc | " + long_en + "\n",
+        "para\n\n***\n": "para\n\n***\n",
     }
     for src, want in cases.items():
         got = rewrap(src)
@@ -162,7 +202,7 @@ def selftest():
         if src.startswith("|"):
             assert got == src
         for line in got.split("\n"):
-            if not line.startswith(("|", "#")) and line != long_en:
+            if not line.startswith(("|", "#", "title:", "c |")) and line != long_en:
                 assert width(line.rstrip()) <= WIDTH or " " not in line.strip(), line
     assert rewrap(long_en + "  \nnext\n").split("\n")[1].endswith("  ")
     print("selftest passed")
