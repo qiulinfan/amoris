@@ -85,6 +85,9 @@ pub struct Capabilities {
     /// Half-precision arithmetic in shaders (neural decoding).
     pub shader_f16: bool,
     pub float32_filterable: bool,
+    /// Inline ray queries (`EXPERIMENTAL_RAY_QUERY`), requested only for ray-traced sun shadows
+    /// (`POCKET_RT_SHADOWS=1`, rt_shadows.rs) on a native adapter that has them.
+    pub ray_query: bool,
 }
 
 /// The device the renderer draws with.
@@ -236,6 +239,17 @@ impl Gpu {
         surface: Option<&wgpu::Surface<'_>>,
         minimal: Minimal,
     ) -> Result<Gpu, GpuError> {
+        Gpu::create(instance, surface, minimal, crate::rt_shadows::requested()).await
+    }
+
+    /// [`Gpu::new_with`], asking for ray queries when `wants_ray_query` (instead of when
+    /// `POCKET_RT_SHADOWS=1` does).
+    async fn create(
+        instance: wgpu::Instance,
+        surface: Option<&wgpu::Surface<'_>>,
+        minimal: Minimal,
+        wants_ray_query: bool,
+    ) -> Result<Gpu, GpuError> {
         let adapter = match adapter_override() {
             Some(wanted) => pick_adapter(&instance, surface, &wanted).await?,
             None => instance
@@ -278,12 +292,32 @@ impl Gpu {
         if minimal.limits {
             limits = wgpu::Limits::default().using_resolution(adapter.limits());
         }
+        // Ray-traced sun shadows are opt-in: only then does the device carry experimental ray
+        // queries (charter 4.4, Pioneer 2026-10-09).
+        let ray_query = wants_ray_query
+            && !cfg!(target_arch = "wasm32")
+            && !minimal.features
+            && have.contains(wgpu::Features::EXPERIMENTAL_RAY_QUERY);
+        if wants_ray_query && !ray_query {
+            log::warn!(
+                "ray-traced shadows asked for, but this device has no ray queries: cascades"
+            );
+        }
+        let mut experimental_features = wgpu::ExperimentalFeatures::disabled();
+        if ray_query {
+            required |= wgpu::Features::EXPERIMENTAL_RAY_QUERY;
+            limits = limits.using_acceleration_structure_values(adapter.limits());
+            // SAFETY: requested only when POCKET_RT_SHADOWS=1 opts into wgpu's experimental ray
+            // queries; validation stays on and errors are logged like any other.
+            experimental_features = unsafe { wgpu::ExperimentalFeatures::enabled() };
+        }
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("pocket"),
                 required_features: required,
                 required_limits: limits,
                 memory_hints: wgpu::MemoryHints::Performance,
+                experimental_features,
                 ..Default::default()
             })
             .await
@@ -312,6 +346,7 @@ impl Gpu {
             timestamps: required.contains(wgpu::Features::TIMESTAMP_QUERY),
             shader_f16: required.contains(wgpu::Features::SHADER_F16),
             float32_filterable: required.contains(wgpu::Features::FLOAT32_FILTERABLE),
+            ray_query,
         };
         // Log every validation error instead of panicking at the first: an engine keeps running and
         // reports (the editor and agents read the log).
@@ -360,6 +395,20 @@ impl Gpu {
     #[cfg(not(target_arch = "wasm32"))]
     pub fn headless_with(choice: BackendChoice, minimal: Minimal) -> Result<Gpu, GpuError> {
         pollster::block_on(Gpu::new_with(instance_with(choice, minimal), None, minimal))
+    }
+
+    /// A headless device with ray queries when `ray_query` and the adapter has them (what
+    /// `POCKET_RT_SHADOWS=1` asks), or without: both shadow paths in one process (tests,
+    /// the `rt_shadows` example). `caps.ray_query` tells which it got.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn headless_ray_query(choice: BackendChoice, ray_query: bool) -> Result<Gpu, GpuError> {
+        let minimal = Minimal::from_env();
+        pollster::block_on(Gpu::create(
+            instance_with(choice, minimal),
+            None,
+            minimal,
+            ray_query,
+        ))
     }
 
     pub fn backend_name(&self) -> &'static str {

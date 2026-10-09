@@ -59,6 +59,14 @@ specified under [docs/spec/](docs/spec/README.md); their measured spikes are und
   backends and `tools/backend_bench.py` times them ([docs/bench/dx12.md](docs/bench/dx12.md)).
 - Shader hashes are integer (`pcg_hash` in common.wgsl): `fract(sin(x) * k)` differs per vendor
   and API.
+- Ray queries: the research tracers (`path_trace`, `gi_trace`, `ray_query_probe`;
+  `crates/pocket-render/src/gi/`) and the opt-in ray-traced sun shadows (`POCKET_RT_SHADOWS=1`,
+  [docs/spec/rt-shadows.md](docs/spec/rt-shadows.md)) need an adapter with wgpu's
+  `EXPERIMENTAL_RAY_QUERY` (Metal; Vulkan and D3D12 on the RTX 5060 and the 780M here); their GPU
+  tests run on every such backend and skip elsewhere. Keep ray queries local to the function that
+  traces (naga 30 panics on a `ray_query` pointer argument) and test facing by triangle winding,
+  not `candidate.front_face` (AMD's D3D12 driver miscompiles it). `python tools/rt_bench.py
+  correctness|timing` compares the tracers with the M5 references (docs/bench/path-tracing-nrc.md).
 - Compute pipelines use `shaders::compute_options()` (no automatic workgroup zeroing: it breaks
   MoltenVK); a compute shader must initialize the workgroup memory it reads.
 - The browser: `tools/build_viewport.sh` builds the WebGPU viewport into `web/viewport/pkg`

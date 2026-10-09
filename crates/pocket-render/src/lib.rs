@@ -22,6 +22,7 @@ pub mod picking;
 mod post;
 pub mod profiler;
 pub mod renderer;
+pub mod rt_shadows;
 pub mod scene;
 mod shaders;
 mod shadows;

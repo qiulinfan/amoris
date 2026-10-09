@@ -287,6 +287,8 @@ pub struct Renderer {
     post: Post,
     sky: Sky,
     gi: crate::gi::ProbeVolume,
+    /// Ray-traced sun shadows in place of the cascades (rt_shadows.rs, `POCKET_RT_SHADOWS=1`).
+    rt_shadows: Option<crate::rt_shadows::RtShadows>,
     profiler: GpuProfiler,
     /// Gaussian splats (splat/): prepared before the opaque pass, drawn after it.
     pub splats: crate::splat::Splats,
@@ -433,45 +435,51 @@ impl Renderer {
                 entry(4, vf, buf_ty(true)),
             ],
         });
+        let rt_shadows = crate::rt_shadows::RtShadows::new(gpu);
+        let mut lighting_entries = vec![
+            entry(
+                0,
+                frag,
+                wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Depth,
+                    view_dimension: wgpu::TextureViewDimension::D2Array,
+                    multisampled: false,
+                },
+            ),
+            entry(
+                1,
+                frag,
+                wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
+            ),
+            entry(
+                2,
+                frag,
+                wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::Cube,
+                    multisampled: false,
+                },
+            ),
+            entry(
+                3,
+                frag,
+                wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+            ),
+            entry(4, frag, uni_ty()),
+            entry(5, frag, buf_ty(true)),
+            entry(6, frag, uni_ty()),
+            entry(7, frag, buf_ty(true)),
+            entry(8, frag, uni_ty()),
+            entry(9, frag, buf_ty(true)),
+            entry(10, frag, buf_ty(true)),
+        ];
+        // Ray-traced shadows: the casters' top level and table, and the mesh pool (rt_shadows.rs).
+        if rt_shadows.is_some() {
+            lighting_entries.extend(crate::rt_shadows::RtShadows::layout_entries());
+        }
         let lighting = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("lighting"),
-            entries: &[
-                entry(
-                    0,
-                    frag,
-                    wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Depth,
-                        view_dimension: wgpu::TextureViewDimension::D2Array,
-                        multisampled: false,
-                    },
-                ),
-                entry(
-                    1,
-                    frag,
-                    wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
-                ),
-                entry(
-                    2,
-                    frag,
-                    wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::Cube,
-                        multisampled: false,
-                    },
-                ),
-                entry(
-                    3,
-                    frag,
-                    wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                ),
-                entry(4, frag, uni_ty()),
-                entry(5, frag, buf_ty(true)),
-                entry(6, frag, uni_ty()),
-                entry(7, frag, buf_ty(true)),
-                entry(8, frag, uni_ty()),
-                entry(9, frag, buf_ty(true)),
-                entry(10, frag, buf_ty(true)),
-            ],
+            entries: &lighting_entries,
         });
         let tex_entry = |b: u32| {
             entry(
@@ -497,6 +505,11 @@ impl Renderer {
             ],
         });
         let fwd_module = shaders::module(device, "forward");
+        // With ray-traced shadows the lit pipelines (forward, ocean) trace the sun's shadow rays.
+        let rt_module = rt_shadows
+            .as_ref()
+            .map(|_| crate::rt_shadows::RtShadows::forward_module(device));
+        let lit_module = rt_module.as_ref().unwrap_or(&fwd_module);
         let batches = Batches::new(device, &gpu.caps);
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("forward"),
@@ -518,13 +531,13 @@ impl Renderer {
                 label: Some(label),
                 layout: Some(&layout),
                 vertex: wgpu::VertexState {
-                    module: &fwd_module,
+                    module: lit_module,
                     entry_point: Some("vs"),
                     compilation_options: Default::default(),
                     buffers: &[Some(vertex_layout.clone())],
                 },
                 fragment: Some(wgpu::FragmentState {
-                    module: &fwd_module,
+                    module: lit_module,
                     entry_point: Some(fs),
                     compilation_options: Default::default(),
                     targets: &[Some(HDR.into())],
@@ -629,7 +642,7 @@ impl Renderer {
         );
         let ocean = Ocean::new(
             device,
-            &fwd_module,
+            lit_module,
             [&frame, &lighting, &textures],
             HDR,
             DEPTH,
@@ -726,6 +739,7 @@ impl Renderer {
             post: Post::new(device, output),
             sky: Sky::new(device),
             gi: crate::gi::ProbeVolume::new(device, &gpu.queue),
+            rt_shadows,
             profiler: GpuProfiler::new(device, &gpu.queue, gpu.caps.timestamps),
             splats: crate::splat::Splats::new(gpu),
             view_buf: uniform(device, "view", std::mem::size_of::<ViewUniform>() as u64),
@@ -810,6 +824,11 @@ impl Renderer {
     /// `baseline`; batches.rs).
     pub fn draw_path(&self) -> &'static str {
         self.batches.path.name()
+    }
+
+    /// The ray-traced sun shadows' last frame, when they replace the cascades (rt_shadows.rs).
+    pub fn rt_shadow_stats(&self) -> Option<crate::rt_shadows::RtShadowStats> {
+        self.rt_shadows.as_ref().map(|rt| rt.stats)
     }
 
     pub fn set_asset_source(&mut self, source: Box<dyn AssetSource>) {
@@ -1056,7 +1075,11 @@ impl Renderer {
             self.scene.full_upload = true;
             grown = true;
         }
-        for run in self.scene.take_dirty_runs() {
+        let runs = self.scene.take_dirty_runs();
+        if let Some(rt) = &mut self.rt_shadows {
+            rt.slots_changed(!runs.is_empty());
+        }
+        for run in runs {
             let slots: &[InstanceGpu] = &self.scene.slots[run.start as usize..run.end as usize];
             queue.write_buffer(
                 &self.instances,
@@ -1147,6 +1170,9 @@ impl Renderer {
             }
             self.light_count = lights.len() as u32;
         }
+        if let Some(rt) = &mut self.rt_shadows {
+            grown |= rt.prepare(device, queue, &self.meshes, self.scene.slots.len());
+        }
         let key = (
             self.meshes.generation,
             self.materials.generation,
@@ -1201,34 +1227,38 @@ impl Renderer {
                 b(4, &self.drawn),
             ],
         });
+        let mut lighting_entries = vec![
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&self.shadow_array),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(&self.shadow_sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::TextureView(&self.sky.env_cube),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: wgpu::BindingResource::Sampler(&self.sky.sampler),
+            },
+            b(4, &self.sky.sh),
+            b(5, &self.lights),
+            b(6, &self.cluster_buf),
+            b(7, &self.cluster_lights),
+            b(8, &self.gi.params),
+            b(9, &self.gi.radiance),
+            b(10, &self.gi.distances),
+        ];
+        if let Some(rt) = &self.rt_shadows {
+            lighting_entries.extend(rt.bind_entries(&self.meshes));
+        }
         let lighting = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("lighting"),
             layout: &self.layouts.lighting,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&self.shadow_array),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&self.shadow_sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&self.sky.env_cube),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::Sampler(&self.sky.sampler),
-                },
-                b(4, &self.sky.sh),
-                b(5, &self.lights),
-                b(6, &self.cluster_buf),
-                b(7, &self.cluster_lights),
-                b(8, &self.gi.params),
-                b(9, &self.gi.radiance),
-                b(10, &self.gi.distances),
-            ],
+            entries: &lighting_entries,
         });
         let textures = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("textures"),
@@ -1388,7 +1418,9 @@ impl Renderer {
                 planes[c + 1][i] = p.to_array();
             }
         }
-        let views = if shadows { VIEWS } else { 1 };
+        // Ray-traced shadows replace the cascades: no cascade views to cull or draw.
+        let cascades = shadows && self.rt_shadows.is_none();
+        let views = if cascades { VIEWS } else { 1 };
         let n = self.scene.instance_count() as u32;
         let cu = CullUniform {
             planes,
@@ -1463,9 +1495,12 @@ impl Renderer {
             pass.set_bind_group(0, &binds.cluster, &[]);
             pass.dispatch_workgroups((CLUSTER_X * CLUSTER_Y * CLUSTER_Z).div_ceil(64), 1, 1);
         }
+        if let Some(rt) = &mut self.rt_shadows {
+            rt.encode(&mut enc, &queue, &self.meshes, &self.scene, alpha);
+        }
         let mut draw_calls = 0;
         // Without shadows the cascades are never sampled (`shadow_factor` returns 1): skip them.
-        for c in 0..if shadows { CASCADES } else { 0 } {
+        for c in 0..if cascades { CASCADES } else { 0 } {
             let ts = self.profiler.render_scope("shadows");
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("shadow cascade"),

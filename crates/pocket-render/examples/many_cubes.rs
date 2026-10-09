@@ -157,6 +157,8 @@ fn headless_bench(mut host: Cubes, size: (u32, u32), frames: u32) {
     let mut cpu = Vec::new();
     let mut gpu_ms = Vec::new();
     let mut passes: Vec<(&'static str, f64, u32)> = Vec::new();
+    // Ray-traced shadows (POCKET_RT_SHADOWS=1): measured frames that rebuilt the casters' TLAS.
+    let mut rt_rebuilds = 0;
     let warm = 60;
     for i in 0..warm + frames {
         let now = f64::from(i) / 60.0;
@@ -173,6 +175,7 @@ fn headless_bench(mut host: Cubes, size: (u32, u32), frames: u32) {
         }
         wall.push(ms);
         cpu.push(f64::from(stats.cpu_ms));
+        rt_rebuilds += u32::from(r.rt_shadow_stats().is_some_and(|s| s.rebuilt));
         if !stats.passes.is_empty() {
             gpu_ms.push(f64::from(stats.gpu_ms));
         }
@@ -210,6 +213,9 @@ fn headless_bench(mut host: Cubes, size: (u32, u32), frames: u32) {
         "submit_to_idle_ms": summary(&mut wall),
         "cpu_encode_ms": summary(&mut cpu),
         "gpu_ms": summary(&mut gpu_ms),
+        "rt_shadows": r.rt_shadow_stats().map(|s| serde_json::json!({
+            "instances": s.instances, "meshes": s.meshes, "rebuilt_frames": rt_rebuilds,
+        })),
         "passes_ms": passes
             .iter()
             .map(|(l, s, n)| ((*l).to_owned(), serde_json::json!((s / f64::from(*n) * 1000.0).round() / 1000.0)))

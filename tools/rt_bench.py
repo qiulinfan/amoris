@@ -464,7 +464,8 @@ def main():
     summary = correctness(args) if args.suite == "correctness" else timing(args)
     if args.summary:
         Path(args.summary).parent.mkdir(parents=True, exist_ok=True)
-        Path(args.summary).write_text(json.dumps(summary, indent=1, allow_nan=False) + "\n")
+        text = json.dumps(summary, indent=1, allow_nan=False) + "\n"
+        Path(args.summary).write_text(text, encoding="utf-8", newline="\n")
 
 
 if __name__ == "__main__":

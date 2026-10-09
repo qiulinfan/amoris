@@ -29,6 +29,10 @@ pub struct MeshPool {
     names: Vec<String>,
     /// Local-space bounding boxes (min, max), for ray picking on the CPU.
     pub boxes: Vec<([f32; 3], [f32; 3])>,
+    /// Each mesh's vertex count, and whether the GPU writes its vertices (skinning): what
+    /// ray-traced shadows need to build acceleration structures (rt_shadows.rs).
+    pub vertex_counts: Vec<u32>,
+    pub dynamic: Vec<bool>,
     by_key: HashMap<String, u32>,
     vertex_len: u64,
     index_len: u64,
@@ -45,10 +49,22 @@ fn buffer(
     size: u64,
     usage: wgpu::BufferUsages,
 ) -> wgpu::Buffer {
+    // Geometry also feeds acceleration-structure builds, and masked casters' texture lookups, on
+    // a device with ray queries, which only ray-traced shadows request (rt_shadows.rs).
+    let geometry = usage.intersects(wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::INDEX);
+    let blas_input = if geometry
+        && device
+            .features()
+            .contains(wgpu::Features::EXPERIMENTAL_RAY_QUERY)
+    {
+        wgpu::BufferUsages::BLAS_INPUT | wgpu::BufferUsages::STORAGE
+    } else {
+        wgpu::BufferUsages::empty()
+    };
     device.create_buffer(&wgpu::BufferDescriptor {
         label: Some(label),
         size: size.max(16),
-        usage: usage | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+        usage: usage | blas_input | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
         mapped_at_creation: false,
     })
 }
@@ -68,6 +84,8 @@ impl MeshPool {
             infos: Vec::new(),
             names: Vec::new(),
             boxes: Vec::new(),
+            vertex_counts: Vec::new(),
+            dynamic: Vec::new(),
             by_key: HashMap::new(),
             vertex_len: 0,
             index_len: 0,
@@ -179,6 +197,8 @@ impl MeshPool {
         });
         self.names.push(key.to_owned());
         self.boxes.push((mesh.bounds.min, mesh.bounds.max));
+        self.vertex_counts.push(mesh.vertices.len() as u32);
+        self.dynamic.push(false);
         self.by_key.insert(key.to_owned(), id);
         self.info_dirty = true;
         id
@@ -234,6 +254,8 @@ impl MeshPool {
             [g(0, hi), g(1, hi), g(2, hi)],
         ));
         self.names.push(key.to_owned());
+        self.vertex_counts.push(count);
+        self.dynamic.push(true);
         self.by_key.insert(key.to_owned(), id);
         self.info_dirty = true;
         Some(id)

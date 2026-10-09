@@ -118,6 +118,12 @@ impl Scene {
         }
     }
 
+    /// Whether some slot is drawn between two poses, so its drawn pose changes from frame to frame
+    /// (ray-traced shadows rebuild their acceleration structure then; rt_shadows.rs).
+    pub fn interpolating(&self) -> bool {
+        !self.moving.is_empty()
+    }
+
     pub fn instance_count(&self) -> usize {
         self.slots.len()
     }

@@ -32,6 +32,8 @@ their code is under `spikes/`.
 | [editor.md](editor.md) | editor | Charter 4.5 (the web editor: panels, shortcuts, the viewport renderer interface, the mock host, what the editor needs from the host) |
 | [budgets.md](budgets.md) | spec-arch | 3.10 and 12 item 2 (benchmarks on reference hardware and their reference figures, reported and never a pass condition), with the figures slice 0 measured |
 | [metal-gi.md](metal-gi.md) | metal | Charter 4.4 (world-space probe baking, SHaRC, ReSTIR exploration and learned diffuse fields), with measured limits in docs/bench/metal-gi.md |
+| [path-tracing-nrc.md](path-tracing-nrc.md) | metal, rt | Charter 4.4 (static surface path tracing and the online NRC toy, on every backend with ray queries since 2026-10-09), measured in docs/bench/path-tracing-nrc.md |
+| [rt-shadows.md](rt-shadows.md) | rt | Charter 4.4 (Pioneer 2026-10-09: opt-in ray-traced sun shadows in the interactive renderer), measured in docs/bench/rt-shadows.md |
 | [shared/contract/README.md](../../shared/contract/README.md) | spec-contract | 6.1 and 6.2 (the shared contract, its versioning and sync), seats and roles, the game definition, conformance checks |
 | [shared/contract/perception.md](../../shared/contract/perception.md) | spec-contract | 7.8 (perception API); 3.1 |
 | [shared/contract/projection.md](../../shared/contract/projection.md) | spec-contract | 7.8 (the text, JSON and tensor projections, rounding); 3.1 |

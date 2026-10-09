@@ -176,6 +176,18 @@ Amoris 是一个 **agent-native** 的 3D 游戏引擎。agent 在三个角色上
   RTX 5060 支持两者，能在同一块 GPU 上对照 Vulkan 与 Direct3D 12 的光追开销与画面，M5 的 Metal
   结果保留为参考。规格与测量见 [表面 PT 与在线 NRC](spec/path-tracing-nrc.md)、
   [GI 实现](spec/metal-gi.md) 及其测量记录的 Windows 章节。
+- 2026-10-09（Pioneer）：交互渲染器加入第一个光追效果，默认关闭：光追太阳阴影，
+  `POCKET_RT_SHADOWS=1` 开启。只有开启且原生适配器暴露 ray query 时，主设备才请求
+  `EXPERIMENTAL_RAY_QUERY`；渲染器为网格建 BLAS（蒙皮网格每帧重建），按插值后的位姿重建
+  TLAS，前向通道的片元着色器向太阳发一条 inline ray query 阴影射线，代替级联阴影贴图
+  （开启时不再渲染级联）。
+  WebGPU、基线绘制路径与默认的原生路径不变。理由：前向渲染器没有 G-buffer 与深度预通道，
+  计算通道无法在着色之前给出可见性，inline ray query 是改动最小的接入方式；先测量它相对
+  级联阴影的开销与画面差异，再决定是否扩展到软阴影、AO 或 GI。规格见
+  [光追阴影](spec/rt-shadows.md)。暂定测量：小场景里与四个级联通道的开销相当（RTX 5060 上
+  Vulkan +12%、Direct3D 12 −15%，Radeon 780M −17% 至 −23%），可见实例多时更贵（20 万立方体
+  +60%；wgpu 每次提交逐实例校验 TLAS 依赖，静态场景也要约 4.5 ms CPU）；与级联阴影的阴影
+  区域交并比 0.90，差别在边缘。见 [测量记录](bench/rt-shadows.md)。
 
 - 一套 wgpu 渲染器，WGSL 着色器放在独立的 `.wgsl` 文件里（不放进 Rust 字符串），按通道组织模块。
 - **渲染图**：每帧由通道组成的有向无环图，资源（瞬态纹理与缓冲）由图分配与复用。
