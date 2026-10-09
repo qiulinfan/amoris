@@ -35,7 +35,8 @@ export async function createViewport(canvas, options) {
   let dpr = window.devicePixelRatio || 1;
   canvas.width = Math.max(1, Math.round(canvas.clientWidth * dpr));
   canvas.height = Math.max(1, Math.round(canvas.clientHeight * dpr));
-  const vp = await Viewport.create(canvas);
+  // options.gpuMinimal: device features to leave out ("first-instance": WebGPU's baseline draws).
+  const vp = await Viewport.create(canvas, options.gpuMinimal || undefined);
   let disposed = false;
   let socket = null;
   const picks = [];

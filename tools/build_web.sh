@@ -6,8 +6,10 @@
 # Then: python3 -m http.server -d web 8090 and open http://127.0.0.1:8090/?package=projects/<slug>/package.json
 set -e
 cd "$(dirname "$0")/.."
-. "$HOME/.cargo/env" 2>/dev/null || true
-export POCKET_LLVM="${POCKET_LLVM:-/opt/homebrew/opt/llvm}"
+if [ -f "$HOME/.cargo/env" ]; then . "$HOME/.cargo/env"; fi
+# Homebrew's LLVM where it is installed; otherwise rquickjs-sys's build script looks for the pinned
+# toolchain (~/.pocket-tools/llvm-23.1.2) itself.
+if [ -z "${POCKET_LLVM:-}" ] && [ -d /opt/homebrew/opt/llvm ]; then export POCKET_LLVM=/opt/homebrew/opt/llvm; fi
 cargo build --profile web --target wasm32-unknown-unknown -p pocket-web
 wasm-bindgen --target web --no-typescript --out-dir web/pkg \
   target/wasm32-unknown-unknown/web/pocket_web.wasm

@@ -123,11 +123,18 @@ async function openViewport(pocket, params) {
     canvas.hidden = false;
     $("sea").hidden = true;
     const assetsUrl = new URL(".", new URL(await packageUrl(params), location.href)).href;
-    const vp = await createViewport(canvas, { assetsUrl });
+    // ?gpu_minimal=first-instance draws on WebGPU's baseline path (docs/spec/webgpu-baseline.md).
+    const vp = await createViewport(canvas, { assetsUrl, gpuMinimal: params.get("gpu_minimal") || undefined });
     window.viewport = vp;
+    window.pocketViewport = vp;
     pocket.onRender((bytes) => vp.pushFrame(bytes));
+    // The recent frames' stats, for tools/web_bench.mjs.
+    const samples = (window.pocketSamples = []);
     vp.onStats((s) => {
-      $("gpu").textContent = `${fmt(1000 / s.frame_ms, 0)} fps, GPU ${fmt(s.gpu_ms)} ms, ${s.instances} instances`;
+      samples.push(s);
+      if (samples.length > 600) samples.shift();
+      window.pocketStats = s;
+      $("gpu").textContent = `${fmt(1000 / s.frame_ms, 0)} fps, GPU ${fmt(s.gpu_ms)} ms, ${s.instances} instances, ${s.draw_path} draws`;
     });
     return vp;
   } catch (e) {

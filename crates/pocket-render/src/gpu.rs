@@ -277,8 +277,20 @@ impl Gpu {
             .await
             .map_err(|e| GpuError(format!("no GPU device: {e}")))?;
         let info = Arc::new(adapter.get_info());
+        // Direct3D 12 sees an indirect draw's first instance only through wgpu's indirect
+        // validation (instance_flags). Where the environment turned it off, the batches take the
+        // baseline path, whose draws all start at instance 0, instead of drawing wrong instances.
+        let dx12_first_instance = info.backend != wgpu::Backend::Dx12
+            || instance_flags_with(wgpu::Backends::DX12, minimal)
+                .contains(wgpu::InstanceFlags::VALIDATION_INDIRECT_CALL);
+        if !dx12_first_instance {
+            log::warn!(
+                "Direct3D 12 without indirect validation: indirect draws lose their first                  instance, so batches take the baseline path"
+            );
+        }
         let caps = Capabilities {
-            indirect_first_instance: required.contains(wgpu::Features::INDIRECT_FIRST_INSTANCE),
+            indirect_first_instance: required.contains(wgpu::Features::INDIRECT_FIRST_INSTANCE)
+                && dx12_first_instance,
             multi_draw_indirect: info.backend != wgpu::Backend::BrowserWebGpu
                 && !minimal.multi_draw
                 && adapter
@@ -496,7 +508,13 @@ mod tests {
                 eprintln!("{choice:?}: no GPU, skipped");
                 continue;
             };
-            if !gpu.caps.indirect_first_instance {
+            // The device's feature, not `caps`: on Direct3D 12 without indirect validation `caps`
+            // sends the renderer down the baseline path, and this test should then fail.
+            if !gpu
+                .device
+                .features()
+                .contains(wgpu::Features::INDIRECT_FIRST_INSTANCE)
+            {
                 eprintln!(
                     "{}: no INDIRECT_FIRST_INSTANCE, skipped",
                     gpu.backend_name()
@@ -516,6 +534,20 @@ mod tests {
                     gpu.info.name
                 );
             }
+        }
+    }
+
+    /// Leaving out `indirect-first-instance` keeps indirect validation on for every backend, so the
+    /// native browser emulation drops nonzero first instances as browsers do; Direct3D 12 keeps it
+    /// regardless (when no `WGPU_*` override is set, as in the test environment).
+    #[test]
+    fn browser_emulation_and_d3d12_keep_indirect_validation() {
+        let v = wgpu::InstanceFlags::VALIDATION_INDIRECT_CALL;
+        let drop_fi = Minimal::parse("first-instance");
+        assert!(instance_flags_with(wgpu::Backends::VULKAN, drop_fi).contains(v));
+        assert!(instance_flags_with(wgpu::Backends::METAL, Minimal::parse("features")).contains(v));
+        if std::env::var_os("WGPU_VALIDATION_INDIRECT_CALL").is_none() {
+            assert!(instance_flags_with(wgpu::Backends::DX12, Minimal::default()).contains(v));
         }
     }
 

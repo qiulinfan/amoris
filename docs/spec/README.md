@@ -43,6 +43,7 @@ their code is under `spikes/`.
 | [shared/benchmark/README.md](../../shared/benchmark/README.md) | spec-mcp | 9 items 1 and 2 (the harness, metrics, statistics), 10 (the slice 0 skeleton) |
 | [shared/benchmark/tasks.md](../../shared/benchmark/tasks.md) | spec-mcp | 9 (developer and player tasks, fixtures, reference policies) |
 | [splats.md](splats.md) | render | 4.4 (3D Gaussian Splatting: files, GPU layout, preprocess, radix sort, hybrid draw, WebGPU constraints) |
+| [webgpu-baseline.md](webgpu-baseline.md) | render | 4.4 (the optional GPU features and what the renderer does without each; the indirect draw paths on WebGPU's defaults; emulating a browser natively) |
 
 The shared contract and benchmark are maintained in this repository's `shared/`.
 `shared/SYNC.toml` records each shared file's hash and an optional reference commit (checks.md 5.4).

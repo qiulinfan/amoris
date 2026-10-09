@@ -67,7 +67,18 @@ specified under [docs/spec/](docs/spec/README.md); their measured spikes are und
   (`python3 -m http.server -d web 8090`) and open `/?package=projects/samples-anim/package.json`.
   Any edit to `pocket-assets/src/frame.rs` or `visual.rs` changes the render feed's `FORMAT`: rebuild
   and commit the viewport with it, or viewports refuse the host's frames.
-- `node tools/web_bench.mjs <url> [s]` drives headless Chrome with WebGPU (`SHOT=`, `EVAL=`, `LOGS=1`).
+- `node tools/web_bench.mjs <url> [s]` drives headless Chrome with WebGPU (`SHOT=`, `EVAL=`, `LOGS=1`;
+  finds Chrome on macOS, Windows and Linux or takes `CHROME=`; on a hybrid-GPU Windows laptop Chrome
+  picks the integrated GPU unless `CHROME_FLAGS=--force_high_performance_gpu`).
+- The renderer's WebGPU baseline ([docs/spec/webgpu-baseline.md](docs/spec/webgpu-baseline.md)):
+  `POCKET_GPU_MINIMAL=features,limits,timestamps` (or `first-instance`, `multi-draw`) runs natively
+  as a browser would, the viewport page takes the same list as `?gpu_minimal=`, and
+  `crates/pocket-render/tests/draw_paths.rs`, the `pocket-app` example `draw_paths` and
+  `tools/web_draw_paths.py` check that every draw path draws the same frame.
+- The viewport's wasm needs no C compiler; only the game module (`pocket-web`, QuickJS-ng) needs a
+  clang with the wasm backend, which `rquickjs-sys`'s build script finds as `POCKET_LLVM`, the
+  pinned `~/.pocket-tools/llvm-23.1.2` or Homebrew's LLVM. On Windows, put `~/.cargo/bin` on `PATH`
+  (there is no `~/.cargo/env`).
 - `python3 tools/eval/debug_eval.py` hands an LLM agent (opencode, GLM 5.3 Flash) a planted script
   bug in the sailing game through `pocket serve` and the CLI, then checks the fix
   ([docs/bench/debug-eval.md](docs/bench/debug-eval.md)); `--selftest` first, `--report` rebuilds
