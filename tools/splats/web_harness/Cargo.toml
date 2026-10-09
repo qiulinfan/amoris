@@ -1,0 +1,35 @@
+# A browser harness for the splat rasterizers (docs/bench/splats.md, 2026-10-09): the engine's
+# renderer on a canvas drawing a random splat cloud with the quads, then the tile rasterizer, in
+# Chrome's WebGPU. Its own workspace, outside the engine's; from the repository root:
+#
+#   cp Cargo.lock tools/splats/web_harness/        (the engine's pinned versions)
+#   cd tools/splats/web_harness
+#   cargo build --release --target wasm32-unknown-unknown
+#   wasm-bindgen --target web --no-typescript --out-dir www/pkg \
+#     target/wasm32-unknown-unknown/release/splatweb.wasm
+#   python -m http.server -d www 8732 --bind 127.0.0.1      (another shell)
+#   node drive.mjs "http://127.0.0.1:8732/index.html?n=200000" OUTDIR
+[package]
+name = "splatweb"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[workspace]
+
+[dependencies]
+pocket-render = { path = "../../../crates/pocket-render" }
+pocket-assets = { path = "../../../crates/pocket-assets" }
+wgpu = { version = "=30.0.1", default-features = false, features = ["std", "parking_lot", "wgsl", "webgpu"] }
+glam = { version = "0.33", features = ["bytemuck"] }
+wasm-bindgen = "=0.2.129"
+wasm-bindgen-futures = "=0.4.79"
+web-sys = { version = "=0.3.106", features = ["HtmlCanvasElement", "console"] }
+log = "0.4"
+
+[profile.release]
+debug = false
+opt-level = 3

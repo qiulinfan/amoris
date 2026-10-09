@@ -324,7 +324,8 @@ Ties keep the order of the sort's input, which the compaction (section 4 step 3)
 index order: the clouds' order and each cloud's splat order, the same every frame. A still view
 draws the same image every frame even where every key ties (a GPU test draws a wall of 30,000 splats
 at one depth: 39,626 channel values changed over four redraws with the earlier atomic append, none
-now, with either rasterizer).
+now, with either rasterizer). Captures are now reproducible bit for bit: the 1M garden rendered
+identically in separate runs and with the preprocess forced into a 2D dispatch.
 
 ### 5.2 Algorithm
 
@@ -382,8 +383,9 @@ optional features) the 1M and 3M gardens render; the crate builds for `wasm32-un
 the web player draws a 300k-splat cloud in Chrome's WebGPU (section 8). 2026-10-09, Windows with the
 RTX 5060 (Vulkan): both rasterizers at the default and at WebGPU's default limits; Chrome 155's
 WebGPU (Tint, D3D12) compiles every splat module and creates all 17 splat pipelines at its default
-limits (`tools/splats/wgsl_check`, `docs/evidence/splats/chrome-wgsl-check.json`); the tile
-rasterizer has not yet run end to end in a browser.
+limits (`tools/splats/wgsl_check`, `docs/evidence/splats/chrome-wgsl-check.json`), and the renderer
+built for `wasm32` draws 200,000 splats with both rasterizers in it, whose images agree to 55.4 dB
+(at most 3 of 255; `tools/splats/web_harness`, `browser-tiles.png`).
 
 ## 7. Test content
 

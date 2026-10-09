@@ -221,8 +221,11 @@ fn preprocess(
         stage[g] = select(NOT_VISIBLE, key, visible);
     }
     workgroupBarrier();
-    if (lid == 0u) {
-        blocks[wid.y * groups.x + wid.x] = atomicLoad(&wg_count);
+    // (A 2D dispatch has padding workgroups past the last block: they write nothing, or a clamped
+    // out-of-bounds write could land on the last real block.)
+    let block = wid.y * groups.x + wid.x;
+    if (lid == 0u && block * 256u < params.counts.x) {
+        blocks[block] = atomicLoad(&wg_count);
         atomicAdd(&control[1], atomicLoad(&wg_area));
     }
 }
