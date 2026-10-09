@@ -153,6 +153,31 @@ struct Auto {
     brief: bool,
 }
 
+/// Begins the frame after `*frame` and says whether it runs two phases (never without instances).
+/// The frame is counted first, so the readings that arrived since (oldest first) decide at it: an
+/// auto activation goes on at the frame about to run, whose early pass draws a stale set, so its
+/// `since` names that frame and that frame's own reading does not count.
+fn begin(
+    mode: OcclusionMode,
+    auto: &mut Auto,
+    frame: &mut u64,
+    readings: &[OcclusionStats],
+    instances: bool,
+) -> bool {
+    *frame += 1;
+    let runs = match mode {
+        OcclusionMode::Off => false,
+        OcclusionMode::On => true,
+        OcclusionMode::Auto => {
+            for s in readings {
+                auto.reading(s, *frame);
+            }
+            auto.runs(*frame, instances)
+        }
+    };
+    runs && instances
+}
+
 impl Auto {
     /// Whether frame `frame` runs two phases. A frame without instances runs none, and moves a
     /// probe or an activation that would have started there to the next frame.
@@ -182,6 +207,7 @@ impl Auto {
         s.occluded_triangles as f64 >= cost * margin
     }
 
+    /// Reading `s` arrived as frame `now` begins (the frame an activation goes on).
     fn reading(&mut self, s: &OcclusionStats, now: u64) {
         if let Some(p) = self.probe {
             if s.frame <= p {
@@ -350,13 +376,15 @@ impl Occlusion {
     /// (never without instances: an auto activation then starts counting at the first frame that
     /// has some, whose early set is the first one it computed).
     pub fn begin_frame(&mut self, instances: bool) -> bool {
-        self.collect();
-        self.frame += 1;
-        self.active = match self.mode {
-            OcclusionMode::Off => false,
-            OcclusionMode::On => true,
-            OcclusionMode::Auto => self.auto.runs(self.frame, instances),
-        } && instances;
+        let readings = self.collect();
+        self.last = readings.last().copied().or(self.last);
+        self.active = begin(
+            self.mode,
+            &mut self.auto,
+            &mut self.frame,
+            &readings,
+            instances,
+        );
         self.active
     }
 
@@ -577,8 +605,8 @@ impl Occlusion {
         }
     }
 
-    /// Reads the finished counters, oldest first, and lets the auto mode decide.
-    fn collect(&mut self) {
+    /// The finished counters, oldest first.
+    fn collect(&mut self) -> Vec<OcclusionStats> {
         let mut readings = Vec::new();
         for slot in &mut self.ring {
             let mut st = slot.state.lock().unwrap_or_else(|e| e.into_inner());
@@ -597,12 +625,7 @@ impl Occlusion {
             *st = Slot::Free;
         }
         readings.sort_by_key(|s| s.frame);
-        for s in readings {
-            if self.mode == OcclusionMode::Auto {
-                self.auto.reading(&s, self.frame);
-            }
-            self.last = Some(s);
-        }
+        readings
     }
 }
 
@@ -698,6 +721,39 @@ mod tests {
         assert_eq!(c.probe, Some(3));
         assert!(!c.runs(4 + PROBE_TIMEOUT + 1, true));
         assert!(c.probe.is_none() && c.next_probe == 4 + PROBE_TIMEOUT + 1 + PROBE_EVERY);
+    }
+
+    /// A brief probe (after one failed) runs two frames and is off until its reading; the reading
+    /// that turns occlusion culling on arrives as frame `on` begins, which runs two phases with an
+    /// early set from the probe, frames ago. Its own reading must not count, the next one must.
+    #[test]
+    fn a_brief_probe_counts_readings_from_the_frame_after_activation() {
+        let mut a = Auto {
+            brief: true,
+            next_probe: 10,
+            ..Auto::default()
+        };
+        let mut frame = 8;
+        let mut next = |a: &mut Auto, readings: &[OcclusionStats]| {
+            let runs = begin(OcclusionMode::Auto, a, &mut frame, readings, true);
+            (frame, runs)
+        };
+        assert_eq!(next(&mut a, &[]), (9, false));
+        assert_eq!(next(&mut a, &[]), (10, true));
+        assert_eq!(next(&mut a, &[]), (11, true));
+        assert_eq!(next(&mut a, &[]), (12, false));
+        assert_eq!(next(&mut a, &[]), (13, false));
+        // The probe's second frame pays as frame 14 begins: frame 14 is the first one on.
+        let paid = [stats(10, 400_000, 0), stats(11, 400_000, 9_000_000)];
+        assert_eq!(next(&mut a, &paid), (14, true));
+        assert!(a.on && a.since == 14, "{a:?}");
+        // Frame 14's reading (a stale early set: nothing occluded) does not count...
+        assert_eq!(next(&mut a, &[]), (15, true));
+        assert_eq!(next(&mut a, &[stats(14, 400_000, 0)]), (16, true));
+        assert_eq!(a.misses, 0, "{a:?}");
+        // ...frame 15's does.
+        assert_eq!(next(&mut a, &[stats(15, 400_000, 0)]), (17, true));
+        assert_eq!(a.misses, 1, "{a:?}");
     }
 
     #[test]
