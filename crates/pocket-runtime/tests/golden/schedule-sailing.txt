@@ -1,4 +1,5 @@
 Begin sim.begin always
+Control interface.intents always
 Update script.update always
 Forces physics.wind always
 Forces physics.buoyancy always
@@ -6,5 +7,7 @@ Forces physics.sail always
 Forces physics.hull always
 Physics physics.step always
 Physics physics.contacts always
+Finish interface.perception always
+Finish interface.turns always
 Finish assets.animate always
 Finish sim.finish always

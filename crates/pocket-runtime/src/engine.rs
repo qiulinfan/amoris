@@ -83,9 +83,14 @@ where
     }
 }
 
-/// Every engine component a scene or `world_edit` can name (`Name` is the entity's own `name`).
-pub fn engine_components() -> [EngineComponent; 21] {
+/// Every engine component a scene or `world_edit` can name (`Name` is the entity's own `name`);
+/// the first three are the player layer's (perception.md: who observes, what can be perceived,
+/// what blocks sight).
+pub fn engine_components() -> [EngineComponent; 24] {
     [
+        entry::<pocket_interface::perception::Observer>(),
+        entry::<pocket_interface::perception::Perceivable>(),
+        entry::<pocket_interface::perception::Occluder>(),
         entry::<Animator>(),
         entry::<AudioSource>(),
         entry::<Boat>(),

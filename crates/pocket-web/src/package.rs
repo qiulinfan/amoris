@@ -33,6 +33,9 @@ pub struct Package {
     pub scene: Scene,
     /// The compiled scripts (`pocket_script::CompiledSet` as JSON: modules, entry, bundle).
     pub scripts: Value,
+    /// The player declarations (pocket-runtime's `PlayerSpec`), when the game has players.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub player: Option<pocket_runtime::player::PlayerSpec>,
 }
 
 fn invalid(message: String) -> Problem {
@@ -54,6 +57,7 @@ impl Package {
             seed,
             scene: setup.scene.clone(),
             scripts: serde_json::to_value(&setup.scripts).unwrap_or(Value::Null),
+            player: setup.player.clone(),
         }
     }
 
@@ -87,6 +91,7 @@ impl Package {
             source: None,
             limits: Default::default(),
             lint_off: false,
+            player: self.player.clone(),
         })
     }
 }

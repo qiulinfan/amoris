@@ -23,6 +23,8 @@ pocket-interface.workspace = true
 pocket-script.workspace = true
 pocket-link.workspace = true
 bevy_ecs.workspace = true
+# PlayerSpec's Persisted::trace (the player declarations as world state; docs/spec/player.md).
+serde-reflection.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 schemars.workspace = true

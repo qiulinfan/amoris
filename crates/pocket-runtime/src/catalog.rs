@@ -255,6 +255,74 @@ pub const CATALOG: &[CommandDef] = &[
         "The current bundle hash and the systems that ran last tick.",
         schema::<NoParams>,
     ),
+    // The player tools (docs/spec/player.md; shared/contract/mcp.md 5): a command sent as
+    // `Source::Player(i)` is a player at seat i, restricted to its own perception.
+    def(
+        "player.session",
+        Kind::Read,
+        "Who you are: role, seat, pacing, the pending decision, the push cursor, decision stats.",
+        schema::<crate::player::SessionParams>,
+    ),
+    def(
+        "player.describe",
+        Kind::Read,
+        "The game definition for your seat (or one part: intents, kinds, ...), or one entity you know: its facts, affordances and latest events.",
+        schema::<crate::player::DescribeParams>,
+    ),
+    def(
+        "player.observe",
+        Kind::Read,
+        "Your seat's instruments, intents, pending decision, ranked percepts and events since, within budget_tokens; projection text, json or tensor.",
+        schema::<pocket_interface::perception::ObserveRequest>,
+    ),
+    def(
+        "player.nearby",
+        Kind::Read,
+        "Percepts filtered by kind, distance, sector and visibility.",
+        schema::<pocket_interface::perception::NearbyRequest>,
+    ),
+    def(
+        "player.events",
+        Kind::Read,
+        "Your perceived events after a seq, oldest first.",
+        schema::<pocket_interface::perception::EventsRequest>,
+    ),
+    def(
+        "player.affordances",
+        Kind::Read,
+        "What you can do with what you perceive: each verb, available or why not.",
+        schema::<pocket_interface::action::AffordancesRequest>,
+    ),
+    def(
+        "player.intents",
+        Kind::Read,
+        "Your intents, newest first, failed ones with their whole problem.",
+        schema::<pocket_interface::action::IntentsRequest>,
+    ),
+    def(
+        "player.act",
+        Kind::Write,
+        "Actions for your seat, validated whole and applied at this boundary: set, pulse, start an intent, use an affordance, cancel; resume answers the pending decision.",
+        schema::<pocket_interface::action::ActRequest>,
+    ),
+    def(
+        "player.wait",
+        Kind::Control,
+        "Lets time pass until your next decision point (or until), at most ticks; answers with the events since your cursor and, with observe, an observation.",
+        schema::<crate::player::WaitParams>,
+    ),
+    def(
+        "player.continue",
+        Kind::Control,
+        "Answers your pending decision without acting (real time resumes).",
+        schema::<pocket_interface::time::play::ContinueRequest>,
+    ),
+    def(
+        "player.pacing",
+        Kind::Control,
+        "Developer: the players' pacing: stepped, or real_time {speed, pause_on_decision, clock}.",
+        schema::<crate::player::PacingParams>,
+    ),
 ];
 
 /// A command a game or a test adds: a function over the boundary that returns the result and the

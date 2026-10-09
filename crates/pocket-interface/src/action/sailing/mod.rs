@@ -508,7 +508,7 @@ pub fn catalog(
 /// The sailing game as a game runs it: seats are the bodies whose observer names them, each seat
 /// acts through its observer's perception (`perception::bridge`), `interact` is delivered into
 /// the project's `Crew.take`, and the crate's affordances are those the perception declarations
-/// carry on its kind (`samples/sailing/perception.json`). Validated against `defs`.
+/// carry on its kind (`samples/sailing-course/perception.json`). Validated against `defs`.
 pub fn game_catalog(defs: &crate::perception::PerceptionDefs) -> Result<ActionCatalog, Problem> {
     let mut c = catalog(
         crate::perception::bridge::bodies,

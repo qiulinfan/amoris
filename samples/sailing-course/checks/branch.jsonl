@@ -1,0 +1,1 @@
+{"tick": 5, "source": {"player": 0}, "name": "player.act", "params": {"actions": [{"do": "set", "controls": {"rudder": -0.5, "hoist": 0.5}}]}}

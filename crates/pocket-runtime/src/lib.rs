@@ -28,6 +28,7 @@ pub mod files;
 mod game;
 pub mod history;
 pub mod inspect;
+pub mod player;
 pub mod present;
 mod project;
 mod scene;

@@ -2,7 +2,7 @@
 //! perception): what the skipper reads that is not a component field as it stands (the true wind
 //! at the boat, the point of sail, the tack, the trim's name, the course over the ground, the next
 //! mark, the crates left) and the observer-relative facts of islands and crates. The declarations
-//! that name them are game data (`samples/sailing/perception.json`); these are the engine-provided
+//! that name them are game data (`samples/sailing-course/perception.json`); these are the engine-provided
 //! functions beside the sailing systems (README, The game definition).
 
 use pocket_physics::geom::{self, V3};

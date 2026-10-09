@@ -43,7 +43,7 @@ factory and how the seats' bodies are found (the entities whose `Observer` names
 ## 3. Affordances come from the perception declarations
 
 A kind's affordances are carried by perception's `KindDef.affordances` (the sailing ones in
-`samples/sailing/perception.json`) and read by the action layer as `AffordanceDef`s, with `effect` a
+`samples/sailing-course/perception.json`) and read by the action layer as `AffordanceDef`s, with `effect` a
 nested object as the contract's listing writes it. `ActionCatalog::validate` checks the declarations
 at load: names unique, channels named, every effect an intent that takes the kind as its target or a
 pulse that targets it, and every `Fact` requirement on an instrument or on a fact a player may know
@@ -78,7 +78,7 @@ and the turn state are taken before applying and put back.
 ## 5. The interface in every game
 
 Every game the runtime builds installs the sailing showcase's interface after the engine's
-components are registered: perception with the declarations of `samples/sailing/perception.json`
+components are registered: perception with the declarations of `samples/sailing-course/perception.json`
 (compiled in, so a replay and the web build have them), the sailing action catalog, the continuous
 time rules, the script host's bridge (`pocket_script::interface::InterfaceBridge`,
 script-host-slice2.md), the `FieldWriter` and a stepped session. A world with no observer naming a

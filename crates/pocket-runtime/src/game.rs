@@ -11,6 +11,8 @@ use std::sync::{Arc, OnceLock};
 
 use bevy_ecs::prelude::World;
 use pocket_contract::{Problem, detail};
+use pocket_interface::time::control::Controller;
+use pocket_interface::time::play::PlayPacing;
 use pocket_link::{Kind, RegistryInfo, Source};
 use pocket_persist::replay::{
     Applied, BundleRecord, RebaseCause, RecordOptions, RecordSink, RecordedWrite, Recorder, Replay,
@@ -121,6 +123,7 @@ pub fn registry() -> Arc<Registry> {
         pocket_physics::declare(&mut b);
         pocket_assets::declare(&mut b);
         pocket_script::scripts::declare(&mut b);
+        crate::player::declare(&mut b);
         b.build().map(Arc::new)
     })
     .clone()
@@ -151,6 +154,9 @@ pub struct Game {
     /// The first tick a script debugger evaluated in (script-host.md 13): the run is not
     /// replayable from it on.
     tainted: Option<u64>,
+    /// The players' session: pacing, every seat's decision points and push cursor (session state,
+    /// never persisted or hashed; `crate::player`).
+    player: Controller,
 }
 
 fn bad_hash(text: &str) -> Problem {
@@ -180,6 +186,7 @@ impl Game {
         pocket_physics::plugin(&mut sim)?;
         pocket_assets::plugin(&mut sim)?;
         engine::install_script_components(sim.world_mut())?;
+        crate::player::install(&mut sim, setup.player.as_ref())?;
         pocket_script::install(&mut sim, setup.limits)?;
         for f in &extras.systems {
             f(&mut sim)?;
@@ -192,7 +199,13 @@ impl Game {
         });
         let mut bundles = BTreeMap::new();
         bundles.insert(set.bundle.hash, set.clone());
+        let filter = setup
+            .player
+            .as_ref()
+            .map(|s| s.decisions.clone())
+            .unwrap_or_default();
         Ok(Game {
+            player: Controller::new(PlayPacing::Stepped, filter, Vec::new()),
             sim,
             reg: registry(),
             current: set.bundle.hash,
@@ -371,10 +384,79 @@ impl Game {
         };
         match kind {
             Kind::Read => self.read(cmd, name),
+            Kind::Write if name == "player.act" => {
+                let applied = self.write_act(cmd, src, replaying)?;
+                if replaying {
+                    return Ok(applied);
+                }
+                let world = self.sim.world();
+                Ok(crate::player::act_answer(
+                    world,
+                    &mut self.player,
+                    &applied,
+                    &cmd.params,
+                    0.0,
+                ))
+            }
             Kind::Write => self.write(cmd, name, src),
             Kind::Request => self.request(cmd, name),
             Kind::Control => self.control(cmd, name),
         }
+    }
+
+    /// `player.act`'s Write: validated whole and applied at this boundary, recorded in its
+    /// canonical form (actions.md, What a replay records); refused, it changes nothing.
+    fn write_act(
+        &mut self,
+        cmd: &Command,
+        src: &dyn ReplaySource,
+        replaying: bool,
+    ) -> Result<Value, Problem> {
+        let _ = src;
+        let tick = self.tick();
+        let mark = self.sim.boundary().mark();
+        let r = crate::player::act_apply(self.sim.world_mut(), cmd.source, replaying, &cmd.params);
+        let applied = |params: Value, index: u32| Applied {
+            tick: Tick(tick.0 + 1),
+            index,
+            source: cmd.source,
+            seq: cmd.seq,
+            name: "player.act".to_owned(),
+            params,
+        };
+        match r {
+            Ok((answer, canonical)) => {
+                let a = applied(canonical, self.writes);
+                self.writes += 1;
+                self.sync_context();
+                if let Some(rec) = &mut self.recorder {
+                    rec.applied(&a);
+                }
+                Ok(answer)
+            }
+            Err(p) => {
+                self.sim.boundary().rollback(mark);
+                if let Some(rec) = &mut self.recorder {
+                    rec.refused(&applied(cmd.params.clone(), self.writes), &p.code);
+                }
+                Err(p)
+            }
+        }
+    }
+
+    /// The players' session (decision points, push cursors, pacing): session state beside the
+    /// world (`crate::player`).
+    pub fn player(&self) -> &Controller {
+        &self.player
+    }
+
+    pub fn player_mut(&mut self) -> &mut Controller {
+        &mut self.player
+    }
+
+    /// The world and the players' session together, for the game thread's player runs.
+    pub fn world_and_player(&mut self) -> (&World, &mut Controller) {
+        (self.sim.world(), &mut self.player)
     }
 
     fn root(&self, command: &str) -> Result<&PathBuf, Problem> {
@@ -447,6 +529,27 @@ impl Game {
                     .collect();
                 Ok(json!({"bundle": self.current.to_hex(), "ran_last_tick": systems}))
             }
+            "player.session" => {
+                let model = pocket_interface::TimeModel::new(
+                    self.sim.clock().rate,
+                    self.player.pacing.loop_pacing(),
+                );
+                let world = self.sim.world();
+                crate::player::session(world, &mut self.player, cmd.source, p, &model, 0.0)
+            }
+            "player.describe" => {
+                let world = self.sim.world();
+                self.player.attach(world);
+                crate::player::describe(world, &self.player, cmd.source, p)
+            }
+            "player.observe" => {
+                let world = self.sim.world();
+                crate::player::observe(world, &mut self.player, cmd.source, p)
+            }
+            "player.nearby" => crate::player::nearby(self.sim.world(), cmd.source, p),
+            "player.events" => crate::player::events(self.sim.world(), cmd.source, p),
+            "player.affordances" => crate::player::affordances(self.sim.world(), cmd.source, p),
+            "player.intents" => crate::player::intents(self.sim.world(), cmd.source, p),
             _ => {
                 let (_, _, f) = self
                     .extras
@@ -849,8 +952,69 @@ impl Game {
                 }
                 Ok(out)
             }
+            "player.wait" => self.player_wait(cmd),
+            "player.continue" => {
+                if !crate::player::declared(self.sim.world()) {
+                    return Err(crate::player::no_layer("player.continue"));
+                }
+                let who = crate::player::caller(self.sim.world(), cmd.source)?;
+                let mut ctl = self.take_player();
+                let r = pocket_interface::time::session::continue_(
+                    &GameTicker { game: self },
+                    &mut ctl,
+                    &who,
+                    &cmd.params,
+                    &mut || 0.0,
+                );
+                self.player = ctl;
+                r
+            }
+            "player.pacing" => {
+                let pacing =
+                    crate::player::pacing_params(self.sim.world(), cmd.source, &cmd.params)?;
+                self.player.set_pacing(pacing);
+                Ok(json!({"pacing": self.player.pacing}))
+            }
             other => Err(catalog::thread_only(other)),
         }
+    }
+
+    /// The players' session, taken out while a run holds the game (put back by the caller).
+    fn take_player(&mut self) -> Controller {
+        let filter = self.player.default_filter.clone();
+        std::mem::replace(
+            &mut self.player,
+            Controller::new(PlayPacing::Stepped, filter, Vec::new()),
+        )
+    }
+
+    /// `player.wait` on a game driven directly: stepped pacing, the run inline (time.md, `step`
+    /// with `until: "decision"` unless the request says otherwise). A game driven directly has no
+    /// wall clock, so its runs stop at their ticks, `until`, the episode's end or a halt. Real time
+    /// is the game thread's.
+    fn player_wait(&mut self, cmd: &Command) -> Result<Value, Problem> {
+        if !crate::player::declared(self.sim.world()) {
+            return Err(crate::player::no_layer("player.wait"));
+        }
+        let step = crate::player::wait_as_step(&cmd.params)?;
+        if !matches!(self.player.pacing, PlayPacing::Stepped) {
+            return Err(catalog::thread_only("player.wait in real time"));
+        }
+        let who = crate::player::caller(self.sim.world(), cmd.source)?;
+        let mut ctl = self.take_player();
+        let r = pocket_interface::time::session::step(
+            &mut GameTicker { game: self },
+            &mut ctl,
+            &who,
+            &step,
+            &mut || 0.0,
+        );
+        self.player = ctl;
+        let mut v = r?;
+        if !matches!(cmd.source, Source::Player(_)) {
+            v["world_hash"] = json!(self.world_hash()?.to_string());
+        }
+        Ok(v)
     }
 
     /// Swaps the world's program for a bundle this game has run or prepared, as `scripts.apply`
@@ -939,6 +1103,7 @@ impl Game {
         g.host_seq = self.host_seq;
         g.project = self.project.clone();
         g.restore(&snap)?;
+        g.player = self.player.clone();
         Ok(g)
     }
 
@@ -1028,6 +1193,8 @@ impl Game {
             source: None,
             limits: ScriptLimits::default(),
             lint_off: false,
+            // The start snapshot carries the player declarations, if any (`crate::player`).
+            player: None,
         };
         GameBuilder::new(Arc::new(setup)).build_empty(&set)
     }
@@ -1046,6 +1213,34 @@ pub fn run_config(limits: &ScriptLimits) -> String {
         "steps_per_system": limits.steps_per_system,
         "steps_per_tick": limits.steps_per_tick,
     }))
+}
+
+/// The game as a player's run steps it (pocket-interface's `Ticker`): its ticks through
+/// [`Game::step`], recorded when recording.
+struct GameTicker<'g> {
+    game: &'g mut Game,
+}
+
+impl pocket_interface::time::session::Ticker for GameTicker<'_> {
+    fn world(&self) -> &World {
+        self.game.sim.world()
+    }
+
+    fn tick(&mut self) -> Result<StepReport, Problem> {
+        self.game.step()
+    }
+
+    fn act(
+        &mut self,
+        _caller: &pocket_interface::action::Caller,
+        _raw: &Value,
+    ) -> Result<pocket_interface::action::ActDone, Problem> {
+        // Only lockstep queues acts for a later boundary, and `player.pacing` refuses lockstep.
+        Err(pocket_interface::action::state::internal(
+            "player",
+            "a queued lockstep act in a game without lockstep",
+        ))
+    }
 }
 
 /// What a successful write gives the recorder and the history.

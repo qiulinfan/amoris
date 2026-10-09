@@ -1,6 +1,6 @@
 //! What a game declares perceivable (shared/contract/perception.md, Observers and What can be
 //! perceived): observer profiles, instruments, kinds with their facts, and events with their scope.
-//! These are game data: the sailing showcase reads them from `samples/sailing/perception.json`,
+//! These are game data: the sailing showcase reads them from `samples/sailing-course/perception.json`,
 //! and they are installed with the game ([`super::plugin`]), never part of the world hash.
 //!
 //! Derived facts and instruments name Rust functions registered with the declarations

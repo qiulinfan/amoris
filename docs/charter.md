@@ -296,6 +296,22 @@ presenter 与工具侧：
 TypeScript：`sdk/`（脚本的 `pocket` 模块与生成的类型）、`editor/`（React 编辑器）。
 Python：`tools/neural/`（神经资源训练）、`tools/eval/`（评测）。
 
+2026-10-09（Pioneer）：玩家层（第 2 节的证明目标 2）以 rebuild 线 `57ed4ea1` 的感知、投影、动作与
+时间实现为基础导入 `pocket-interface`，并在共享契约之外做三个取舍。其一，游戏在 `project.toml` 的
+`[player]` 里声明感知文件、引擎提供的动作目录、默认决策过滤与回合结束事件；这份声明作为世界状态
+（`PlayerSpec`）进入快照、哈希、fork 与 replay，恢复后由它重建感知定义与执行器，三个接口系统
+（`interface.intents`、`interface.perception`、`interface.turns`）在每个游戏里都安装，没有声明时
+不做任何事。理由：replay 只携带快照与脚本 bundle，若声明只在项目文件里，回放就无法重建玩家层，
+世界哈希链也无从验证。其二，`Observer` 增加可选的 `team`：同队观察者共享“看见”的实体（各自的记忆
+与事件环仍然独立，位置与方位从各自的身体算起）。理由：契约的“一个座位一个身体”让合作的座位无从
+共享视野，而队伍视野是即时战略类游戏的常见需要。其三，玩家工具是命令目录里的 `player.*` 命令
+（`session`、`describe`、`observe`、`nearby`、`events`、`affordances`、`intents`、`act`、`wait`、
+`continue`），MCP 的 `player` 工具与 CLI 的 `pocket player` 只是它们的投影；以 `Source::Player`
+发出的调用由引擎按玩家角色限制；步进节奏下由玩家持有时钟时，`wait` 即“运行到本座位的下一个决策点”。
+理由：Amoris 的 Python 网关（`tools/eval/agent_gameplay.py`）给 agent 五个工具，其中四个是
+observe、动作与 wait；一个 `wait` 同时覆盖步进与实时（暂停于决策）两种节奏，agent 不必学两套推进
+时间的方法。实现与测量见 [spec/player.md](spec/player.md) 与 [bench/player.md](bench/player.md)。
+
 ### 5.2 线程（原生）
 
 - **游戏线程**：在 tick 边界按规范顺序应用命令，运行系统（Rust 与 TS），发布快照与事件。

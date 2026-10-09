@@ -30,6 +30,11 @@ pub struct Manifest {
     /// (`sounds/ding.wav`, or a synthesized `sfx:coin`). Presentation only; never in the tick.
     #[serde(default)]
     pub sounds: std::collections::BTreeMap<String, String>,
+    /// The game's players (docs/spec/player.md): its perception file, the engine's action
+    /// catalog, the default decision filter and the event that ends an episode. Absent: the game
+    /// has no player layer.
+    #[serde(default)]
+    pub player: Option<crate::player::PlayerManifest>,
 }
 
 fn default_rate() -> u32 {
@@ -53,6 +58,9 @@ pub struct GameSetup {
     pub limits: ScriptLimits,
     /// Compile with the lint off: the negative controls only (script-sandbox.md 3).
     pub lint_off: bool,
+    /// The player declarations the world starts with (docs/spec/player.md), if the game has
+    /// players.
+    pub player: Option<crate::player::PlayerSpec>,
 }
 
 /// A project read from disk.
@@ -62,6 +70,8 @@ pub struct Project {
     pub manifest: Manifest,
     pub scene: Scene,
     pub source: ScriptSource,
+    /// `[player]` with its perception file read and checked.
+    pub player: Option<crate::player::PlayerSpec>,
 }
 
 /// `project.missing_file {path}` or `project.unreadable {path, error}`.
@@ -114,11 +124,19 @@ impl Project {
                 detail([("path", json!(root.join("scripts").display().to_string()))]),
             )
         })?;
+        let player = match &manifest.player {
+            Some(m) => {
+                let text = read_file(&root.join(&m.perception))?;
+                Some(crate::player::PlayerSpec::new(m, text)?)
+            }
+            None => None,
+        };
         Ok(Project {
             root: root.to_path_buf(),
             manifest,
             scene,
             source,
+            player,
         })
     }
 
@@ -133,6 +151,7 @@ impl Project {
             source: Some(self.source.clone()),
             limits: ScriptLimits::default(),
             lint_off,
+            player: self.player.clone(),
         })
     }
 }

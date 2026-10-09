@@ -1,0 +1,280 @@
+{
+  "observers": [
+    {
+      "name": "skipper",
+      "doc": "The skipper of a sailing boat: sees all round from 2 m above the water out to 2 km, islands hiding what lies behind them; reads the boat's instruments and the chart.",
+      "sight": {"range_m": 2000, "fov_deg": 360, "eye_m": {"x": 0, "y": 2, "z": 0}, "occlusion": true},
+      "hearing": {"scale": 1},
+      "attention_m": 300,
+      "memory_s": 600,
+      "memory_capacity": 64,
+      "event_capacity": 256,
+      "sightings": ["mark", "boat", "crate"],
+      "chart": true,
+      "positions": true,
+      "instruments": ["heading_deg", "course_deg", "speed_mps", "wind_from_deg", "wind_mps", "twa_deg", "awa_deg", "aws_mps", "point_of_sail", "tack", "hoist", "sheet", "trim", "drive", "rudder", "heel_deg", "pos_m", "afloat", "next_mark", "taken", "left"],
+      "budget_tokens": 400
+    }
+  ],
+  "instruments": [
+    {"name": "heading_deg", "doc": "Where the bow points.", "unit": {"unit": "bearing"}, "precision": 0, "source": {"from": "field", "component": "Boat", "path": "heading_deg"}},
+    {"name": "course_deg", "doc": "Direction of travel over the ground.", "unit": {"unit": "bearing"}, "precision": 0, "source": {"from": "derived", "function": "sailing.course_deg"}},
+    {"name": "speed_mps", "doc": "Speed through the water, positive ahead.", "unit": {"unit": "metres_per_second"}, "precision": 1, "source": {"from": "field", "component": "Boat", "path": "speed"}},
+    {"name": "wind_from_deg", "doc": "The true wind's direction: where it blows from.", "unit": {"unit": "bearing"}, "precision": 0, "source": {"from": "derived", "function": "sailing.wind_from_deg"}},
+    {"name": "wind_mps", "doc": "The true wind's speed at the boat, gusts included.", "unit": {"unit": "metres_per_second"}, "precision": 1, "source": {"from": "derived", "function": "sailing.wind_mps"}},
+    {"name": "twa_deg", "doc": "True wind angle off the bow, positive when the wind comes over the starboard side.", "unit": {"unit": "angle"}, "precision": 0, "source": {"from": "derived", "function": "sailing.twa_deg"}},
+    {"name": "awa_deg", "doc": "Apparent wind angle off the bow, positive over the starboard side.", "unit": {"unit": "angle"}, "precision": 0, "source": {"from": "field", "component": "Boat", "path": "awa_deg"}},
+    {"name": "aws_mps", "doc": "Apparent wind speed.", "unit": {"unit": "metres_per_second"}, "precision": 1, "source": {"from": "field", "component": "Boat", "path": "aws"}},
+    {"name": "point_of_sail", "doc": "By the true wind angle: in irons below 45, close-hauled to 60, close reach to 80, beam reach to 100, broad reach to 150, running from 150.", "unit": {"unit": "enum", "values": ["in_irons", "close_hauled", "close_reach", "beam_reach", "broad_reach", "running"]}, "precision": 0, "source": {"from": "derived", "function": "sailing.point_of_sail"}},
+    {"name": "tack", "doc": "starboard when the wind comes over the starboard side, else port.", "unit": {"unit": "enum", "values": ["port", "starboard"]}, "precision": 0, "source": {"from": "derived", "function": "sailing.tack"}},
+    {"name": "hoist", "doc": "How much sail is set.", "unit": {"unit": "fraction", "min": 0, "max": 1}, "precision": 2, "source": {"from": "field", "component": "Boat", "path": "hoist_now"}},
+    {"name": "sheet", "doc": "0 hard in, 1 eased right out.", "unit": {"unit": "fraction", "min": 0, "max": 1}, "precision": 2, "source": {"from": "field", "component": "Boat", "path": "sheet_now"}},
+    {"name": "trim", "doc": "furled, luffing (eased too far), good, overtrimmed (in too far).", "unit": {"unit": "enum", "values": ["furled", "luffing", "good", "overtrimmed"]}, "precision": 0, "source": {"from": "derived", "function": "sailing.trim"}},
+    {"name": "drive", "doc": "The sail's drive as a share of the best drive at this apparent wind.", "unit": {"unit": "fraction", "min": 0, "max": 1}, "precision": 2, "source": {"from": "field", "component": "Boat", "path": "drive"}},
+    {"name": "rudder", "doc": "Positive turns the bow to starboard.", "unit": {"unit": "fraction", "min": -1, "max": 1}, "precision": 2, "source": {"from": "field", "component": "Boat", "path": "rudder_now"}},
+    {"name": "heel_deg", "doc": "Positive heeled to starboard.", "unit": {"unit": "angle"}, "precision": 0, "source": {"from": "field", "component": "Boat", "path": "heel_deg"}},
+    {"name": "pos_m", "doc": "Where the boat is.", "unit": {"unit": "position"}, "precision": 1, "source": {"from": "field", "component": "Transform", "path": "position"}},
+    {"name": "afloat", "doc": "The hull is in the water and not aground.", "unit": {"unit": "bool"}, "precision": 0, "source": {"from": "field", "component": "Boat", "path": "afloat"}},
+    {"name": "next_mark", "doc": "The course's next mark, or none.", "unit": {"unit": "text"}, "precision": 0, "source": {"from": "derived", "function": "sailing.next_mark"}},
+    {"name": "taken", "doc": "Crates aboard.", "unit": {"unit": "count"}, "precision": 0, "source": {"from": "field", "component": "Tally", "path": "taken"}},
+    {"name": "left", "doc": "Crates still adrift.", "unit": {"unit": "count"}, "precision": 0, "source": {"from": "derived", "function": "sailing.left"}}
+  ],
+  "kinds": [
+    {
+      "kind": "island",
+      "doc": "Land: on the chart at its centre, it hides what lies behind it.",
+      "facts": [
+        {"name": "radius_m", "doc": "How far the island reaches from its centre.", "unit": {"unit": "metres"}, "precision": 0, "exposure": "chart", "source": {"from": "derived", "function": "sailing.island_radius"}},
+        {"name": "shore_m", "doc": "Distance from your boat to the island's nearest shore.", "unit": {"unit": "metres"}, "precision": 0, "exposure": "coarse", "source": {"from": "derived", "function": "sailing.shore_m"}, "relative": true},
+        {"name": "shore_brg_deg", "doc": "Bearing of that shore point.", "unit": {"unit": "bearing"}, "precision": 0, "exposure": "coarse", "source": {"from": "derived", "function": "sailing.shore_brg_deg"}, "relative": true}
+      ]
+    },
+    {
+      "kind": "mark",
+      "doc": "A course mark: a buoy to round on the given side, in order.",
+      "facts": [
+        {"name": "color", "doc": "Its colour.", "unit": {"unit": "text"}, "precision": 0, "exposure": "chart", "source": {"from": "field", "component": "Mark", "path": "color"}},
+        {"name": "round_to", "doc": "The side to leave it on.", "unit": {"unit": "enum", "values": ["port", "starboard"]}, "precision": 0, "exposure": "chart", "source": {"from": "field", "component": "Mark", "path": "round_to"}},
+        {"name": "order", "doc": "Its place in the course.", "unit": {"unit": "count"}, "precision": 0, "exposure": "chart", "source": {"from": "field", "component": "Mark", "path": "order"}},
+        {"name": "next", "doc": "Whether it is the course's next mark.", "unit": {"unit": "bool"}, "precision": 0, "exposure": "chart", "source": {"from": "derived", "function": "sailing.mark_next"}}
+      ]
+    },
+    {
+      "kind": "boat",
+      "doc": "Another boat.",
+      "facts": [
+        {"name": "heading_deg", "doc": "Where its bow points.", "unit": {"unit": "bearing"}, "precision": 0, "exposure": "coarse", "source": {"from": "field", "component": "Boat", "path": "heading_deg"}},
+        {"name": "sail", "doc": "Its sail: set or furled.", "unit": {"unit": "enum", "values": ["set", "furled"]}, "precision": 0, "exposure": "coarse", "source": {"from": "derived", "function": "sailing.sail"}},
+        {"name": "speed_mps", "doc": "Its speed through the water.", "unit": {"unit": "metres_per_second"}, "precision": 1, "exposure": "full", "source": {"from": "field", "component": "Boat", "path": "speed"}}
+      ]
+    },
+    {
+      "kind": "crate",
+      "doc": "A crate adrift; take it aboard when it floats alongside.",
+      "facts": [
+        {"name": "alongside", "doc": "Within reach of your boat to be taken aboard.", "unit": {"unit": "bool"}, "precision": 0, "exposure": "full", "source": {"from": "derived", "function": "sailing.alongside"}, "relative": true}
+      ],
+      "affordances": [
+        {"verb": "take_aboard", "doc": "Take the crate aboard: an interact pulse at it.", "effect": {"effect": "pulse", "control": "interact"}, "requires": [{"requires": "seen"}, {"requires": "within", "max_m": 3}]}
+      ]
+    }
+  ],
+  "events": [
+    {
+      "kind": "crate.taken",
+      "doc": "A crate came aboard a boat.",
+      "scope": {"scope": "sight"},
+      "data": [
+        {"name": "taken", "doc": "Crates aboard that boat.", "unit": {"unit": "count"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "taken"}},
+        {"name": "left", "doc": "Crates still adrift.", "unit": {"unit": "count"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "left"}}
+      ]
+    },
+    {
+      "kind": "mark.rounded",
+      "doc": "You rounded a mark.",
+      "scope": {"scope": "private"},
+      "data": [
+        {"name": "mark", "doc": "The mark.", "unit": {"unit": "text"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "mark"}},
+        {"name": "order", "doc": "Its order.", "unit": {"unit": "count"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "order"}}
+      ]
+    },
+    {
+      "kind": "course.finished",
+      "doc": "You finished the course.",
+      "scope": {"scope": "private"},
+      "data": [
+        {"name": "marks_rounded", "doc": "Marks rounded.", "unit": {"unit": "count"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "marks_rounded"}}
+      ]
+    },
+    {
+      "kind": "boat.aground",
+      "doc": "A boat ran aground.",
+      "scope": {"scope": "sight"},
+      "data": [
+        {"name": "island", "doc": "The island.", "unit": {"unit": "text"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "island"}}
+      ]
+    },
+    {"kind": "sail.set", "doc": "A boat set its sail.", "scope": {"scope": "sight"}, "data": []},
+    {"kind": "sail.furled", "doc": "A boat furled its sail.", "scope": {"scope": "sight"}, "data": []},
+    {
+      "kind": "interact.ignored",
+      "doc": "A pulse the game rule could not act on, and why.",
+      "scope": {"scope": "private"},
+      "data": [
+        {"name": "code", "doc": "Why.", "unit": {"unit": "text"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "code"}},
+        {"name": "message", "doc": "The reason in words.", "unit": {"unit": "text"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "message"}}
+      ]
+    },
+    {
+      "kind": "intent.started",
+      "doc": "An intent of yours started.",
+      "scope": {"scope": "private"},
+      "data": [
+        {"name": "intent_id", "doc": "The intent's id.", "unit": {"unit": "count"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "intent_id"}},
+        {"name": "intent", "doc": "The intent's name.", "unit": {"unit": "text"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "intent"}},
+        {"name": "tag", "doc": "The caller's label.", "unit": {"unit": "text"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "tag"}},
+        {"name": "code", "doc": "The failure's code.", "unit": {"unit": "text"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "code"}},
+        {"name": "message", "doc": "The failure's message.", "unit": {"unit": "text"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "message"}},
+        {"name": "distance_m", "doc": "Distance to the target.", "unit": {"unit": "metres"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "distance_m"}},
+        {"name": "bearing_deg", "doc": "Bearing of the target.", "unit": {"unit": "bearing"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "bearing_deg"}},
+        {"name": "vmg_mps", "doc": "Velocity made good toward the target.", "unit": {"unit": "metres_per_second"}, "precision": 1, "exposure": "coarse", "source": {"from": "data", "path": "vmg_mps"}},
+        {"name": "eta_s", "doc": "Time to the target at that speed.", "unit": {"unit": "seconds"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "eta_s"}},
+        {"name": "leg", "doc": "direct, port_tack or starboard_tack.", "unit": {"unit": "enum", "values": ["direct", "port_tack", "starboard_tack"]}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "leg"}},
+        {"name": "tacks", "doc": "Tacks made.", "unit": {"unit": "count"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "tacks"}},
+        {"name": "heading_error_deg", "doc": "Angle from the heading to the target heading.", "unit": {"unit": "angle"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "heading_error_deg"}},
+        {"name": "turning", "doc": "port, starboard or steady.", "unit": {"unit": "enum", "values": ["port", "starboard", "steady"]}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "turning"}},
+        {"name": "on_heading_s", "doc": "Seconds within tolerance so far.", "unit": {"unit": "seconds"}, "precision": 1, "exposure": "coarse", "source": {"from": "data", "path": "on_heading_s"}},
+        {"name": "sheet", "doc": "The sheet now.", "unit": {"unit": "fraction", "min": 0, "max": 1}, "precision": 2, "exposure": "coarse", "source": {"from": "data", "path": "sheet"}},
+        {"name": "target_sheet", "doc": "The sheet trimmed to.", "unit": {"unit": "fraction", "min": 0, "max": 1}, "precision": 2, "exposure": "coarse", "source": {"from": "data", "path": "target_sheet"}},
+        {"name": "trim", "doc": "The sail's trim.", "unit": {"unit": "enum", "values": ["furled", "luffing", "good", "overtrimmed"]}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "trim"}},
+        {"name": "drive", "doc": "The sail's drive.", "unit": {"unit": "fraction", "min": 0, "max": 1}, "precision": 2, "exposure": "coarse", "source": {"from": "data", "path": "drive"}}
+      ]
+    },
+    {
+      "kind": "intent.reached",
+      "doc": "An intent of yours reached its goal and holds it.",
+      "scope": {"scope": "private"},
+      "data": [
+        {"name": "intent_id", "doc": "The intent's id.", "unit": {"unit": "count"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "intent_id"}},
+        {"name": "intent", "doc": "The intent's name.", "unit": {"unit": "text"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "intent"}},
+        {"name": "tag", "doc": "The caller's label.", "unit": {"unit": "text"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "tag"}},
+        {"name": "code", "doc": "The failure's code.", "unit": {"unit": "text"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "code"}},
+        {"name": "message", "doc": "The failure's message.", "unit": {"unit": "text"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "message"}},
+        {"name": "distance_m", "doc": "Distance to the target.", "unit": {"unit": "metres"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "distance_m"}},
+        {"name": "bearing_deg", "doc": "Bearing of the target.", "unit": {"unit": "bearing"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "bearing_deg"}},
+        {"name": "vmg_mps", "doc": "Velocity made good toward the target.", "unit": {"unit": "metres_per_second"}, "precision": 1, "exposure": "coarse", "source": {"from": "data", "path": "vmg_mps"}},
+        {"name": "eta_s", "doc": "Time to the target at that speed.", "unit": {"unit": "seconds"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "eta_s"}},
+        {"name": "leg", "doc": "direct, port_tack or starboard_tack.", "unit": {"unit": "enum", "values": ["direct", "port_tack", "starboard_tack"]}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "leg"}},
+        {"name": "tacks", "doc": "Tacks made.", "unit": {"unit": "count"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "tacks"}},
+        {"name": "heading_error_deg", "doc": "Angle from the heading to the target heading.", "unit": {"unit": "angle"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "heading_error_deg"}},
+        {"name": "turning", "doc": "port, starboard or steady.", "unit": {"unit": "enum", "values": ["port", "starboard", "steady"]}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "turning"}},
+        {"name": "on_heading_s", "doc": "Seconds within tolerance so far.", "unit": {"unit": "seconds"}, "precision": 1, "exposure": "coarse", "source": {"from": "data", "path": "on_heading_s"}},
+        {"name": "sheet", "doc": "The sheet now.", "unit": {"unit": "fraction", "min": 0, "max": 1}, "precision": 2, "exposure": "coarse", "source": {"from": "data", "path": "sheet"}},
+        {"name": "target_sheet", "doc": "The sheet trimmed to.", "unit": {"unit": "fraction", "min": 0, "max": 1}, "precision": 2, "exposure": "coarse", "source": {"from": "data", "path": "target_sheet"}},
+        {"name": "trim", "doc": "The sail's trim.", "unit": {"unit": "enum", "values": ["furled", "luffing", "good", "overtrimmed"]}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "trim"}},
+        {"name": "drive", "doc": "The sail's drive.", "unit": {"unit": "fraction", "min": 0, "max": 1}, "precision": 2, "exposure": "coarse", "source": {"from": "data", "path": "drive"}}
+      ]
+    },
+    {
+      "kind": "intent.succeeded",
+      "doc": "An intent of yours succeeded.",
+      "scope": {"scope": "private"},
+      "data": [
+        {"name": "intent_id", "doc": "The intent's id.", "unit": {"unit": "count"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "intent_id"}},
+        {"name": "intent", "doc": "The intent's name.", "unit": {"unit": "text"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "intent"}},
+        {"name": "tag", "doc": "The caller's label.", "unit": {"unit": "text"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "tag"}},
+        {"name": "code", "doc": "The failure's code.", "unit": {"unit": "text"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "code"}},
+        {"name": "message", "doc": "The failure's message.", "unit": {"unit": "text"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "message"}},
+        {"name": "distance_m", "doc": "Distance to the target.", "unit": {"unit": "metres"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "distance_m"}},
+        {"name": "bearing_deg", "doc": "Bearing of the target.", "unit": {"unit": "bearing"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "bearing_deg"}},
+        {"name": "vmg_mps", "doc": "Velocity made good toward the target.", "unit": {"unit": "metres_per_second"}, "precision": 1, "exposure": "coarse", "source": {"from": "data", "path": "vmg_mps"}},
+        {"name": "eta_s", "doc": "Time to the target at that speed.", "unit": {"unit": "seconds"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "eta_s"}},
+        {"name": "leg", "doc": "direct, port_tack or starboard_tack.", "unit": {"unit": "enum", "values": ["direct", "port_tack", "starboard_tack"]}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "leg"}},
+        {"name": "tacks", "doc": "Tacks made.", "unit": {"unit": "count"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "tacks"}},
+        {"name": "heading_error_deg", "doc": "Angle from the heading to the target heading.", "unit": {"unit": "angle"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "heading_error_deg"}},
+        {"name": "turning", "doc": "port, starboard or steady.", "unit": {"unit": "enum", "values": ["port", "starboard", "steady"]}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "turning"}},
+        {"name": "on_heading_s", "doc": "Seconds within tolerance so far.", "unit": {"unit": "seconds"}, "precision": 1, "exposure": "coarse", "source": {"from": "data", "path": "on_heading_s"}},
+        {"name": "sheet", "doc": "The sheet now.", "unit": {"unit": "fraction", "min": 0, "max": 1}, "precision": 2, "exposure": "coarse", "source": {"from": "data", "path": "sheet"}},
+        {"name": "target_sheet", "doc": "The sheet trimmed to.", "unit": {"unit": "fraction", "min": 0, "max": 1}, "precision": 2, "exposure": "coarse", "source": {"from": "data", "path": "target_sheet"}},
+        {"name": "trim", "doc": "The sail's trim.", "unit": {"unit": "enum", "values": ["furled", "luffing", "good", "overtrimmed"]}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "trim"}},
+        {"name": "drive", "doc": "The sail's drive.", "unit": {"unit": "fraction", "min": 0, "max": 1}, "precision": 2, "exposure": "coarse", "source": {"from": "data", "path": "drive"}}
+      ]
+    },
+    {
+      "kind": "intent.failed",
+      "doc": "An intent of yours failed; code and message say why.",
+      "scope": {"scope": "private"},
+      "data": [
+        {"name": "intent_id", "doc": "The intent's id.", "unit": {"unit": "count"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "intent_id"}},
+        {"name": "intent", "doc": "The intent's name.", "unit": {"unit": "text"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "intent"}},
+        {"name": "tag", "doc": "The caller's label.", "unit": {"unit": "text"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "tag"}},
+        {"name": "code", "doc": "The failure's code.", "unit": {"unit": "text"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "code"}},
+        {"name": "message", "doc": "The failure's message.", "unit": {"unit": "text"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "message"}},
+        {"name": "distance_m", "doc": "Distance to the target.", "unit": {"unit": "metres"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "distance_m"}},
+        {"name": "bearing_deg", "doc": "Bearing of the target.", "unit": {"unit": "bearing"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "bearing_deg"}},
+        {"name": "vmg_mps", "doc": "Velocity made good toward the target.", "unit": {"unit": "metres_per_second"}, "precision": 1, "exposure": "coarse", "source": {"from": "data", "path": "vmg_mps"}},
+        {"name": "eta_s", "doc": "Time to the target at that speed.", "unit": {"unit": "seconds"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "eta_s"}},
+        {"name": "leg", "doc": "direct, port_tack or starboard_tack.", "unit": {"unit": "enum", "values": ["direct", "port_tack", "starboard_tack"]}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "leg"}},
+        {"name": "tacks", "doc": "Tacks made.", "unit": {"unit": "count"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "tacks"}},
+        {"name": "heading_error_deg", "doc": "Angle from the heading to the target heading.", "unit": {"unit": "angle"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "heading_error_deg"}},
+        {"name": "turning", "doc": "port, starboard or steady.", "unit": {"unit": "enum", "values": ["port", "starboard", "steady"]}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "turning"}},
+        {"name": "on_heading_s", "doc": "Seconds within tolerance so far.", "unit": {"unit": "seconds"}, "precision": 1, "exposure": "coarse", "source": {"from": "data", "path": "on_heading_s"}},
+        {"name": "sheet", "doc": "The sheet now.", "unit": {"unit": "fraction", "min": 0, "max": 1}, "precision": 2, "exposure": "coarse", "source": {"from": "data", "path": "sheet"}},
+        {"name": "target_sheet", "doc": "The sheet trimmed to.", "unit": {"unit": "fraction", "min": 0, "max": 1}, "precision": 2, "exposure": "coarse", "source": {"from": "data", "path": "target_sheet"}},
+        {"name": "trim", "doc": "The sail's trim.", "unit": {"unit": "enum", "values": ["furled", "luffing", "good", "overtrimmed"]}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "trim"}},
+        {"name": "drive", "doc": "The sail's drive.", "unit": {"unit": "fraction", "min": 0, "max": 1}, "precision": 2, "exposure": "coarse", "source": {"from": "data", "path": "drive"}}
+      ]
+    },
+    {
+      "kind": "intent.cancelled",
+      "doc": "An intent of yours was cancelled.",
+      "scope": {"scope": "private"},
+      "data": [
+        {"name": "intent_id", "doc": "The intent's id.", "unit": {"unit": "count"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "intent_id"}},
+        {"name": "intent", "doc": "The intent's name.", "unit": {"unit": "text"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "intent"}},
+        {"name": "tag", "doc": "The caller's label.", "unit": {"unit": "text"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "tag"}},
+        {"name": "code", "doc": "The failure's code.", "unit": {"unit": "text"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "code"}},
+        {"name": "message", "doc": "The failure's message.", "unit": {"unit": "text"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "message"}},
+        {"name": "distance_m", "doc": "Distance to the target.", "unit": {"unit": "metres"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "distance_m"}},
+        {"name": "bearing_deg", "doc": "Bearing of the target.", "unit": {"unit": "bearing"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "bearing_deg"}},
+        {"name": "vmg_mps", "doc": "Velocity made good toward the target.", "unit": {"unit": "metres_per_second"}, "precision": 1, "exposure": "coarse", "source": {"from": "data", "path": "vmg_mps"}},
+        {"name": "eta_s", "doc": "Time to the target at that speed.", "unit": {"unit": "seconds"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "eta_s"}},
+        {"name": "leg", "doc": "direct, port_tack or starboard_tack.", "unit": {"unit": "enum", "values": ["direct", "port_tack", "starboard_tack"]}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "leg"}},
+        {"name": "tacks", "doc": "Tacks made.", "unit": {"unit": "count"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "tacks"}},
+        {"name": "heading_error_deg", "doc": "Angle from the heading to the target heading.", "unit": {"unit": "angle"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "heading_error_deg"}},
+        {"name": "turning", "doc": "port, starboard or steady.", "unit": {"unit": "enum", "values": ["port", "starboard", "steady"]}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "turning"}},
+        {"name": "on_heading_s", "doc": "Seconds within tolerance so far.", "unit": {"unit": "seconds"}, "precision": 1, "exposure": "coarse", "source": {"from": "data", "path": "on_heading_s"}},
+        {"name": "sheet", "doc": "The sheet now.", "unit": {"unit": "fraction", "min": 0, "max": 1}, "precision": 2, "exposure": "coarse", "source": {"from": "data", "path": "sheet"}},
+        {"name": "target_sheet", "doc": "The sheet trimmed to.", "unit": {"unit": "fraction", "min": 0, "max": 1}, "precision": 2, "exposure": "coarse", "source": {"from": "data", "path": "target_sheet"}},
+        {"name": "trim", "doc": "The sail's trim.", "unit": {"unit": "enum", "values": ["furled", "luffing", "good", "overtrimmed"]}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "trim"}},
+        {"name": "drive", "doc": "The sail's drive.", "unit": {"unit": "fraction", "min": 0, "max": 1}, "precision": 2, "exposure": "coarse", "source": {"from": "data", "path": "drive"}}
+      ]
+    },
+    {
+      "kind": "intent.superseded",
+      "doc": "An intent of yours was superseded.",
+      "scope": {"scope": "private"},
+      "data": [
+        {"name": "intent_id", "doc": "The intent's id.", "unit": {"unit": "count"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "intent_id"}},
+        {"name": "intent", "doc": "The intent's name.", "unit": {"unit": "text"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "intent"}},
+        {"name": "tag", "doc": "The caller's label.", "unit": {"unit": "text"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "tag"}},
+        {"name": "code", "doc": "The failure's code.", "unit": {"unit": "text"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "code"}},
+        {"name": "message", "doc": "The failure's message.", "unit": {"unit": "text"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "message"}},
+        {"name": "distance_m", "doc": "Distance to the target.", "unit": {"unit": "metres"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "distance_m"}},
+        {"name": "bearing_deg", "doc": "Bearing of the target.", "unit": {"unit": "bearing"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "bearing_deg"}},
+        {"name": "vmg_mps", "doc": "Velocity made good toward the target.", "unit": {"unit": "metres_per_second"}, "precision": 1, "exposure": "coarse", "source": {"from": "data", "path": "vmg_mps"}},
+        {"name": "eta_s", "doc": "Time to the target at that speed.", "unit": {"unit": "seconds"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "eta_s"}},
+        {"name": "leg", "doc": "direct, port_tack or starboard_tack.", "unit": {"unit": "enum", "values": ["direct", "port_tack", "starboard_tack"]}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "leg"}},
+        {"name": "tacks", "doc": "Tacks made.", "unit": {"unit": "count"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "tacks"}},
+        {"name": "heading_error_deg", "doc": "Angle from the heading to the target heading.", "unit": {"unit": "angle"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "heading_error_deg"}},
+        {"name": "turning", "doc": "port, starboard or steady.", "unit": {"unit": "enum", "values": ["port", "starboard", "steady"]}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "turning"}},
+        {"name": "on_heading_s", "doc": "Seconds within tolerance so far.", "unit": {"unit": "seconds"}, "precision": 1, "exposure": "coarse", "source": {"from": "data", "path": "on_heading_s"}},
+        {"name": "sheet", "doc": "The sheet now.", "unit": {"unit": "fraction", "min": 0, "max": 1}, "precision": 2, "exposure": "coarse", "source": {"from": "data", "path": "sheet"}},
+        {"name": "target_sheet", "doc": "The sheet trimmed to.", "unit": {"unit": "fraction", "min": 0, "max": 1}, "precision": 2, "exposure": "coarse", "source": {"from": "data", "path": "target_sheet"}},
+        {"name": "trim", "doc": "The sail's trim.", "unit": {"unit": "enum", "values": ["furled", "luffing", "good", "overtrimmed"]}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "trim"}},
+        {"name": "drive", "doc": "The sail's drive.", "unit": {"unit": "fraction", "min": 0, "max": 1}, "precision": 2, "exposure": "coarse", "source": {"from": "data", "path": "drive"}},
+        {"name": "by", "doc": "The intent of yours that superseded it, if one did.", "unit": {"unit": "count"}, "precision": 0, "exposure": "coarse", "source": {"from": "data", "path": "by"}}
+      ]
+    }
+  ]
+}

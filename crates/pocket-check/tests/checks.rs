@@ -51,6 +51,33 @@ fn the_sailing_scene_passes_the_four_checks() {
     });
 }
 
+/// The player scenario (docs/spec/player.md): the sailing course with the skipper's acts as
+/// players' Writes passes determinism, fork, replay and reload equivalence; the world carries the
+/// player declarations, so the replay rebuilds perception and the executors from its snapshot.
+#[test]
+fn the_sailing_course_player_scenario_passes_the_four_checks() {
+    common::big_stack(|| {
+        let s = common::subject("samples/sailing-course");
+        let opts = Options {
+            child: Some(common::in_process()),
+            out_dir: Some(common::scratch("sailing-course-replays")),
+            ..Options::default()
+        };
+        let steps = check_subject(&s, &opts);
+        let names: Vec<&str> = steps.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, ["determinism", "fork", "replay", "reload"]);
+        for step in &steps {
+            assert_eq!(
+                step.verdict,
+                Verdict::Pass,
+                "{}: {:#?}",
+                step.name,
+                step.errors
+            );
+        }
+    });
+}
+
 #[test]
 fn closure_and_module_state_fail_reload_equivalence() {
     common::big_stack(|| {

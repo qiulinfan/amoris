@@ -1,0 +1,527 @@
+{
+  "format": "pocket-scene",
+  "version": 1,
+  "entities": [
+    {
+      "name": "Sea",
+      "prefab": {
+        "kind": "island_sea"
+      },
+      "components": {
+        "AudioSource": {
+          "clip": "sfx:surf",
+          "volume": 0.5,
+          "spatial": false
+        }
+      }
+    },
+    {
+      "name": "Breeze",
+      "prefab": {
+        "kind": "breeze",
+        "from_deg": 270,
+        "speed": 6
+      },
+      "components": {
+        "AudioSource": {
+          "clip": "sfx:wind",
+          "volume": 0.35,
+          "spatial": false
+        }
+      }
+    },
+    {
+      "name": "Sloop",
+      "prefab": {
+        "kind": "sloop",
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "heading_deg": 90
+      },
+      "components": {
+        "Observer": {
+          "profile": "skipper",
+          "seat": "skipper"
+        },
+        "Perceivable": {
+          "kind": "boat",
+          "detect_m": 1500,
+          "height_m": 6,
+          "priority": 70
+        },
+        "Crew": {},
+        "Tally": {},
+        "Model": {
+          "mesh": "capsule",
+          "scale": [
+            1.6,
+            1.4,
+            6.0
+          ],
+          "color": [
+            0.9,
+            0.9,
+            0.85,
+            1
+          ],
+          "roughness": 0.4
+        }
+      }
+    },
+    {
+      "name": "Course",
+      "components": {
+        "Course": {}
+      }
+    },
+    {
+      "name": "Mark1",
+      "components": {
+        "Transform": {
+          "position": [
+            90,
+            0,
+            -30
+          ]
+        },
+        "Mark": {
+          "order": 1,
+          "label": "Mark1",
+          "color": "yellow",
+          "round_to": "port"
+        },
+        "Perceivable": {
+          "kind": "mark",
+          "detect_m": 400,
+          "height_m": 2,
+          "priority": 80,
+          "chart_m": {
+            "x": 90,
+            "y": 0,
+            "z": -30
+          }
+        },
+        "Model": {
+          "mesh": "cylinder",
+          "scale": [
+            0.8,
+            2.0,
+            0.8
+          ],
+          "color": [
+            1.0,
+            0.85,
+            0.1,
+            1
+          ],
+          "roughness": 0.5
+        }
+      }
+    },
+    {
+      "name": "Mark2",
+      "components": {
+        "Transform": {
+          "position": [
+            170,
+            0,
+            30
+          ]
+        },
+        "Mark": {
+          "order": 2,
+          "label": "Mark2",
+          "color": "red",
+          "round_to": "port"
+        },
+        "Perceivable": {
+          "kind": "mark",
+          "detect_m": 400,
+          "height_m": 2,
+          "priority": 80,
+          "chart_m": {
+            "x": 170,
+            "y": 0,
+            "z": 30
+          }
+        },
+        "Model": {
+          "mesh": "cylinder",
+          "scale": [
+            0.8,
+            2.0,
+            0.8
+          ],
+          "color": [
+            0.9,
+            0.15,
+            0.1,
+            1
+          ],
+          "roughness": 0.5
+        }
+      }
+    },
+    {
+      "name": "Mark3",
+      "components": {
+        "Transform": {
+          "position": [
+            250,
+            0,
+            -40
+          ]
+        },
+        "Mark": {
+          "order": 3,
+          "label": "Mark3",
+          "color": "yellow",
+          "round_to": "starboard"
+        },
+        "Perceivable": {
+          "kind": "mark",
+          "detect_m": 400,
+          "height_m": 2,
+          "priority": 80,
+          "chart_m": {
+            "x": 250,
+            "y": 0,
+            "z": -40
+          }
+        },
+        "Model": {
+          "mesh": "cylinder",
+          "scale": [
+            0.8,
+            2.0,
+            0.8
+          ],
+          "color": [
+            1.0,
+            0.85,
+            0.1,
+            1
+          ],
+          "roughness": 0.5
+        }
+      }
+    },
+    {
+      "name": "Isle",
+      "components": {
+        "Transform": {
+          "position": [
+            150,
+            0,
+            -24
+          ]
+        },
+        "RigidBody": {
+          "kind": "Fixed"
+        },
+        "Collider": {
+          "shape": {
+            "ConvexHull": {
+              "points": [
+                [
+                  10.0,
+                  -5,
+                  0.0
+                ],
+                [
+                  10.0,
+                  15,
+                  0.0
+                ],
+                [
+                  7.071068,
+                  -5,
+                  7.071068
+                ],
+                [
+                  7.071068,
+                  15,
+                  7.071068
+                ],
+                [
+                  0.0,
+                  -5,
+                  10.0
+                ],
+                [
+                  0.0,
+                  15,
+                  10.0
+                ],
+                [
+                  -7.071068,
+                  -5,
+                  7.071068
+                ],
+                [
+                  -7.071068,
+                  15,
+                  7.071068
+                ],
+                [
+                  -10.0,
+                  -5,
+                  0.0
+                ],
+                [
+                  -10.0,
+                  15,
+                  0.0
+                ],
+                [
+                  -7.071068,
+                  -5,
+                  -7.071068
+                ],
+                [
+                  -7.071068,
+                  15,
+                  -7.071068
+                ],
+                [
+                  -0.0,
+                  -5,
+                  -10.0
+                ],
+                [
+                  -0.0,
+                  15,
+                  -10.0
+                ],
+                [
+                  7.071068,
+                  -5,
+                  -7.071068
+                ],
+                [
+                  7.071068,
+                  15,
+                  -7.071068
+                ]
+              ]
+            }
+          }
+        },
+        "Occluder": {},
+        "Perceivable": {
+          "kind": "island",
+          "detect_m": 3000,
+          "height_m": 15,
+          "priority": 50,
+          "chart_m": {
+            "x": 150,
+            "y": 0,
+            "z": -24
+          }
+        },
+        "Model": {
+          "mesh": "cylinder",
+          "scale": [
+            20,
+            20,
+            20
+          ],
+          "color": [
+            0.35,
+            0.55,
+            0.25,
+            1
+          ],
+          "roughness": 0.9
+        }
+      }
+    },
+    {
+      "name": "Crate1",
+      "prefab": {
+        "kind": "crate",
+        "position": [
+          45,
+          0,
+          -12
+        ],
+        "yaw_deg": 20
+      },
+      "components": {
+        "Cargo": {
+          "value": 1
+        },
+        "Perceivable": {
+          "kind": "crate",
+          "detect_m": 120,
+          "height_m": 0.5,
+          "priority": 40
+        },
+        "Model": {
+          "mesh": "cube",
+          "scale": [
+            0.6,
+            0.6,
+            0.6
+          ],
+          "color": [
+            0.55,
+            0.36,
+            0.2,
+            1
+          ],
+          "roughness": 0.8
+        }
+      }
+    },
+    {
+      "name": "Crate2",
+      "prefab": {
+        "kind": "crate",
+        "position": [
+          128,
+          0,
+          2
+        ],
+        "yaw_deg": 20
+      },
+      "components": {
+        "Cargo": {
+          "value": 2
+        },
+        "Perceivable": {
+          "kind": "crate",
+          "detect_m": 120,
+          "height_m": 0.5,
+          "priority": 40
+        },
+        "Model": {
+          "mesh": "cube",
+          "scale": [
+            0.6,
+            0.6,
+            0.6
+          ],
+          "color": [
+            0.55,
+            0.36,
+            0.2,
+            1
+          ],
+          "roughness": 0.8
+        }
+      }
+    },
+    {
+      "name": "Crate3",
+      "prefab": {
+        "kind": "crate",
+        "position": [
+          212,
+          0,
+          -2
+        ],
+        "yaw_deg": 20
+      },
+      "components": {
+        "Cargo": {
+          "value": 1
+        },
+        "Perceivable": {
+          "kind": "crate",
+          "detect_m": 120,
+          "height_m": 0.5,
+          "priority": 40
+        },
+        "Model": {
+          "mesh": "cube",
+          "scale": [
+            0.6,
+            0.6,
+            0.6
+          ],
+          "color": [
+            0.55,
+            0.36,
+            0.2,
+            1
+          ],
+          "roughness": 0.8
+        }
+      }
+    },
+    {
+      "name": "Crate4",
+      "prefab": {
+        "kind": "crate",
+        "position": [
+          175,
+          0,
+          -30
+        ],
+        "yaw_deg": 20
+      },
+      "components": {
+        "Cargo": {
+          "value": 3
+        },
+        "Perceivable": {
+          "kind": "crate",
+          "detect_m": 120,
+          "height_m": 0.5,
+          "priority": 40
+        },
+        "Model": {
+          "mesh": "cube",
+          "scale": [
+            0.6,
+            0.6,
+            0.6
+          ],
+          "color": [
+            0.55,
+            0.36,
+            0.2,
+            1
+          ],
+          "roughness": 0.8
+        }
+      }
+    },
+    {
+      "name": "Sun",
+      "components": {
+        "Transform": {
+          "position": [
+            0,
+            50,
+            0
+          ],
+          "rotation": [
+            -0.3535534,
+            0.3535534,
+            0.1464466,
+            0.8535534
+          ]
+        },
+        "Light": {
+          "kind": "directional",
+          "intensity": 6.0,
+          "shadows": true
+        }
+      }
+    },
+    {
+      "name": "Sky",
+      "components": {
+        "Environment": {
+          "fog_density": 0.0015,
+          "bloom": 0.12
+        }
+      }
+    }
+  ]
+}

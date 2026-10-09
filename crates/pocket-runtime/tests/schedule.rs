@@ -41,3 +41,8 @@ fn the_sailing_schedule_is_pinned() {
 fn the_anim_schedule_is_pinned() {
     check("anim");
 }
+
+#[test]
+fn the_sailing_course_schedule_is_pinned() {
+    check("sailing-course");
+}

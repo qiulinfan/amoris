@@ -3441,6 +3441,7 @@ dependencies = [
  "pocket-sim",
  "schemars",
  "serde",
+ "serde-reflection",
  "serde_json",
  "toml",
 ]

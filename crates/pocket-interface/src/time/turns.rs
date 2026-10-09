@@ -168,7 +168,7 @@ pub fn plugin(sim: &mut Sim, rules: TimeRules) -> Result<(), Problem> {
 
 /// `interface.turns`: ends a resolving phase whose rule holds and begins the next turn, then
 /// latches the episode's end when `done` holds.
-fn turns_system(world: &mut World) {
+pub fn turns_system(world: &mut World) {
     let Some(rules) = world.get_resource::<TimeRules>().cloned() else {
         return;
     };

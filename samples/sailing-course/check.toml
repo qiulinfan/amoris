@@ -1,0 +1,17 @@
+# The charter's four checks on the sailing course (checks.md 8.1), with a player scenario: the
+# skipper's acts arrive as players' Writes (`player.act` from {"player": 0}), recorded in their
+# canonical form and replayed through the same validation, beside a developer's edit of the wind.
+# The acts only name what the seat knows from the start (the charted marks) or its own intents,
+# so they are valid at their ticks whatever was sighted by then.
+[run]
+seeds = [1, 2, 3]
+ticks = 1200
+inputs = "checks/inputs.jsonl"
+
+[fork]
+at = [320, 720]
+ticks = 120
+branch_inputs = "checks/branch.jsonl"
+
+[reload]
+at = [60, 400]

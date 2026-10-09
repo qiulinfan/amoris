@@ -4,7 +4,7 @@ Status: Draft, slice 2
 
 The decisions slice 2's implementation of perception and its projections (the modules `perception`
 and `projection` of `pocket-interface`, and the skipper's declarations in
-`samples/sailing/perception.json`) took where [perception.md](../../shared/contract/perception.md),
+`samples/sailing-course/perception.json`) took where [perception.md](../../shared/contract/perception.md),
 [projection.md](../../shared/contract/projection.md) and
 [sailing.md](../../shared/contract/sailing.md) (The skipper's perception) were ambiguous or wrong
 for the code. Those files are the shared contract, which changes on both lines first and is pinned

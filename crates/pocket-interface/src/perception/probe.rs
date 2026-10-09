@@ -4,7 +4,7 @@
 //!
 //! The world is the sailing showcase's skipper on a calm sea under a steady westerly, among an
 //! island that hides a crate behind it, two charted islets, two charted marks (one beyond sight),
-//! crates near and far, and a second boat; its declarations are `samples/sailing/perception.json`
+//! crates near and far, and a second boat; its declarations are `samples/sailing-course/perception.json`
 //! with a few test-only additions (a hidden fact, a hidden-scope, a sound and a global event, and
 //! a tensor layout for the skipper).
 
@@ -24,7 +24,7 @@ use crate::projection::Projection;
 use crate::projection::tensor::{TensorBlock, TensorSpec};
 
 /// The sailing showcase's perception declarations.
-pub const SAILING: &str = include_str!("../../../../samples/sailing/perception.json");
+pub const SAILING: &str = include_str!("../../../../samples/sailing-course/perception.json");
 
 /// The sailing declarations with the fixture's additions: a hidden fact on islands
 /// (`restitution`), and events of hidden (`secret.signal`), sound (`horn.blast`, 200 m) and global

@@ -1,0 +1,20 @@
+# The sailing course (charter 2, proof target 2; docs/spec/player.md): the skipper sails the
+# Sloop round three marks in order, past an island that hides the last one, taking crates aboard
+# on the way. The game has one seat, `skipper`, played through the player tools (player.observe,
+# player.act, player.wait, player.describe) by an agent, a scripted policy or a person.
+name = "sailing-course"
+rate = 60
+seed = 1
+
+[sounds]
+"crate.taken" = "sfx:coin"
+"mark.rounded" = "sfx:blip"
+"course.finished" = "sfx:powerup"
+
+# The player layer: the skipper's perception (shared/contract/sailing.md, The skipper's
+# perception), the engine's sailing controls and intents, and an episode that ends when the
+# course is finished.
+[player]
+perception = "perception.json"
+actions = "sailing"
+done_event = "course.finished"

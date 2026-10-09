@@ -1,0 +1,6 @@
+{"tick": 1, "source": {"player": 0}, "name": "player.act", "params": {"actions": [{"do": "start", "intent": "trim_sail", "params": {"hoist": 1, "sheet": "best", "keep": true}}, {"do": "start", "intent": "come_to_heading", "params": {"heading_deg": 70, "keep": true}, "tag": "first-leg"}]}}
+{"tick": 300, "source": {"player": 0}, "name": "player.act", "params": {"actions": [{"do": "start", "intent": "sail_to", "target": "Mark1", "params": {"arrive_m": 8}}]}}
+{"tick": 500, "source": {"developer": 0}, "name": "world_edit", "params": {"edits": [{"op": "set", "entity": "Breeze", "component": "Wind", "value": {"gust": 0.1}}]}}
+{"tick": 600, "source": {"player": 0}, "name": "player.act", "params": {"actions": [{"do": "set", "controls": {"rudder": 0.2}}]}}
+{"tick": 700, "source": {"player": 0}, "name": "player.act", "params": {"actions": [{"do": "start", "intent": "sail_to", "target": "Mark1#5", "params": {"arrive_m": 8}}]}}
+{"tick": 900, "source": {"player": 0}, "name": "player.act", "params": {"actions": [{"do": "cancel", "intent_id": "#4"}, {"do": "start", "intent": "come_to_heading", "params": {"heading_deg": 120}}]}}
