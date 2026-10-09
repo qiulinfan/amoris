@@ -340,6 +340,10 @@ pub struct Renderer {
     view_buf: wgpu::Buffer,
     /// The same uniform without TAA's jitter: the entity-id pass, the overlays and the grid.
     view_stable: wgpu::Buffer,
+    /// With TAA, one bit per instance slot: whether it moved this tick or is skinned, so the
+    /// forward vertex shader reads last frame's pose only for those (forward.wgsl `moving`).
+    moving_bits: wgpu::Buffer,
+    moving_cpu: Vec<u32>,
     cull_buf: wgpu::Buffer,
     instances: wgpu::Buffer,
     visible: wgpu::Buffer,
@@ -675,6 +679,8 @@ impl Renderer {
                 entry(4, vf, buf_ty(true)),
                 // Last frame's skinned vertices (skinning.rs `History`; TAA's object motion).
                 entry(5, wgpu::ShaderStages::VERTEX, buf_ty(true)),
+                // One bit per slot: drawn between two poses or skinned (`moving_bits`).
+                entry(6, wgpu::ShaderStages::VERTEX, buf_ty(true)),
             ],
         });
         let rt_shadows = crate::rt_shadows::RtShadows::new(gpu);
@@ -926,6 +932,8 @@ impl Renderer {
                 "view (unjittered)",
                 std::mem::size_of::<ViewUniform>() as u64,
             ),
+            moving_bits: storage(device, "moving slots", 64, wgpu::BufferUsages::empty()),
+            moving_cpu: Vec::new(),
             cull_buf: uniform(device, "cull", std::mem::size_of::<CullUniform>() as u64),
             instances: storage(device, "instances", 1024 * 80, wgpu::BufferUsages::empty()),
             visible: storage(
@@ -1649,6 +1657,37 @@ impl Renderer {
         if let Some(rt) = &mut self.rt_shadows {
             grown |= rt.prepare(device, queue, &self.meshes, self.scene.slots.len());
         }
+        if self.format.motion {
+            // The slots TAA's object motion must read last frame's pose for.
+            let mut bits = vec![0u32; self.scene.instance_count().div_ceil(32).max(1)];
+            let mut set = |s: u32| {
+                if let Some(w) = bits.get_mut((s / 32) as usize) {
+                    *w |= 1 << (s % 32);
+                }
+            };
+            for &s in self.scene.moving_slots() {
+                set(s);
+            }
+            for p in &self.skinning.parts {
+                for &s in self.scene.slots_of(p.entity) {
+                    set(s);
+                }
+            }
+            if bits != self.moving_cpu {
+                let bytes = (bits.len() * 4) as u64;
+                if bytes > self.moving_bits.size() {
+                    self.moving_bits = storage(
+                        device,
+                        "moving slots",
+                        bytes.next_power_of_two(),
+                        wgpu::BufferUsages::empty(),
+                    );
+                    grown = true;
+                }
+                queue.write_buffer(&self.moving_bits, 0, bytemuck::cast_slice(&bits));
+                self.moving_cpu = bits;
+            }
+        }
         let key = (
             self.meshes.generation,
             self.materials.generation,
@@ -1707,6 +1746,7 @@ impl Renderer {
                     b(3, &self.materials.buffer),
                     b(4, &self.drawn),
                     b(5, &self.skinning.history.buffer),
+                    b(6, &self.moving_bits),
                 ],
             })
         };

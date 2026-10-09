@@ -127,6 +127,11 @@ impl Scene {
         !self.moving.is_empty()
     }
 
+    /// The slots drawn between two different poses (TAA reads their last pose; renderer.rs).
+    pub fn moving_slots(&self) -> &[u32] {
+        &self.moving
+    }
+
     pub fn instance_count(&self) -> usize {
         self.slots.len()
     }

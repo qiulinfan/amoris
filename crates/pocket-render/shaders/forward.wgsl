@@ -14,6 +14,9 @@
 // history, and where its copy starts), then the copies, 12 words a vertex. Vertex stage only
 // (TAA's object motion).
 @group(0) @binding(5) var<storage, read> skin_prev: array<u32>;
+// One bit per instance slot: moved this tick or skinned (renderer.rs `moving_bits`); only those
+// read last frame's pose. Vertex stage only.
+@group(0) @binding(6) var<storage, read> moving: array<u32>;
 
 @group(1) @binding(0) var shadow_map: texture_depth_2d_array;
 @group(1) @binding(1) var shadow_sampler: sampler_comparison;
@@ -83,7 +86,9 @@ fn vs(v: VsIn, @builtin(instance_index) ii: u32, @builtin(vertex_index) vi: u32)
     o.tangent = vec4f(t, v.tangent.w);
     o.material = d.material;
     o.prev_world = world;
-    if (view.motion.y > 0.5) {
+    let word = d.slot >> 5u;
+    let moved = word < arrayLength(&moving) && ((moving[word] >> (d.slot & 31u)) & 1u) != 0u;
+    if (view.motion.y > 0.5 && moved) {
         // Last frame's pose: the instance's two tick poses at last frame's alpha.
         let inst = instances[d.slot];
         let pose = instance_pose(inst, view.motion.x);
