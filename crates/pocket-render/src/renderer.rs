@@ -1121,9 +1121,12 @@ impl Renderer {
             );
             grown = true;
         }
+        // A full upload (a reset, possibly to an empty scene, or grown buffers) changes the casters
+        // even when it leaves no dirty run behind.
+        let full_upload = self.scene.full_upload;
         let runs = self.scene.take_dirty_runs();
         if let Some(rt) = &mut self.rt_shadows {
-            rt.slots_changed(!runs.is_empty());
+            rt.slots_changed(full_upload || !runs.is_empty());
         }
         for run in runs {
             let slots: &[InstanceGpu] = &self.scene.slots[run.start as usize..run.end as usize];

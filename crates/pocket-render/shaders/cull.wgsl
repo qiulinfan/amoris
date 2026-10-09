@@ -182,11 +182,13 @@ fn main(@builtin(global_invocation_id) gid: vec3u, @builtin(local_invocation_ind
     }
 }
 
-// Whether a box (world-space centre `c` and half axes `a0`, `a1`, `a2`) is hidden: its nearest
-// point is farther than the farthest depth the pyramid holds over every pixel it can cover. A box
-// reaching behind the camera or past the near plane is never hidden.
-fn occluded(c: vec3f, a0: vec3f, a1: vec3f, a2: vec3f) -> bool {
-    let vp = cull.view_proj;
+// Whether a box (world-space centre `c` and half axes `a0`, `a1`, `a2`) is hidden from the camera
+// `vp` (view-projection, reversed Z) over a `size`-pixel target whose pyramid has `levels` levels:
+// its nearest point is farther than the farthest depth the pyramid holds over every pixel it can
+// cover. A box reaching behind the camera or past the near plane is never hidden. (The view comes
+// in as arguments so that tests/hiz.rs can run this function on its own.)
+fn occluded(vp: mat4x4f, size: vec2f, levels: u32, c: vec3f, a0: vec3f, a1: vec3f, a2: vec3f)
+    -> bool {
     let cc = vp * vec4f(c, 1.0);
     let x = vp * vec4f(a0, 0.0);
     let y = vp * vec4f(a1, 0.0);
@@ -209,7 +211,6 @@ fn occluded(c: vec3f, a0: vec3f, a1: vec3f, a2: vec3f) -> bool {
         return false;
     }
     // The pixels the box can cover (y down), with a pixel of margin, clamped to the target.
-    let size = cull.viewport;
     let top = size - 1.0;
     let p0 = clamp(vec2f(lo.x * 0.5 + 0.5, 0.5 - hi.y * 0.5) * size - 1.0, vec2f(0.0), top);
     let p1 = clamp(vec2f(hi.x * 0.5 + 0.5, 0.5 - lo.y * 0.5) * size + 1.0, vec2f(0.0), top);
@@ -221,7 +222,7 @@ fn occluded(c: vec3f, a0: vec3f, a1: vec3f, a2: vec3f) -> bool {
     if (extent > 2u) {
         k = firstLeadingBit(extent - 1u);
     }
-    k = min(k, cull.hiz_levels - 1u);
+    k = min(k, levels - 1u);
     let last = textureDimensions(hiz, k) - 1u;
     let t0 = min(i0 >> vec2u(k + 1u), last);
     let t1 = min(i1 >> vec2u(k + 1u), last);
@@ -270,6 +271,9 @@ fn late(@builtin(global_invocation_id) gid: vec3u, @builtin(local_invocation_ind
             let c = pose.pos + quat_rotate(pose.rot, m.box_center * inst.scale);
             let h = m.box_half * inst.scale;
             seen = !occluded(
+                cull.view_proj,
+                cull.viewport,
+                cull.hiz_levels,
                 c,
                 quat_rotate(pose.rot, vec3f(h.x, 0.0, 0.0)),
                 quat_rotate(pose.rot, vec3f(0.0, h.y, 0.0)),

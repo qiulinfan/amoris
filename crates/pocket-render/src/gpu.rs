@@ -294,13 +294,22 @@ impl Gpu {
         }
         // Ray-traced sun shadows are opt-in: only then does the device carry experimental ray
         // queries (charter 4.4, Pioneer 2026-10-09).
+        // The ray-traced forward pass binds 3 storage buffers beyond the cascaded one's 8, so a
+        // device held to WebGPU's default limits (8 per stage) keeps the cascades.
+        let rt_bindings = limits.max_storage_buffers_per_shader_stage >= 11;
         let ray_query = wants_ray_query
             && !cfg!(target_arch = "wasm32")
             && !minimal.features
+            && rt_bindings
             && have.contains(wgpu::Features::EXPERIMENTAL_RAY_QUERY);
         if wants_ray_query && !ray_query {
             log::warn!(
-                "ray-traced shadows asked for, but this device has no ray queries: cascades"
+                "ray-traced shadows asked for, but this device has no ray queries{}: cascades",
+                if rt_bindings {
+                    ""
+                } else {
+                    " within its storage-buffer limit"
+                }
             );
         }
         let mut experimental_features = wgpu::ExperimentalFeatures::disabled();

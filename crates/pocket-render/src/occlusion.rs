@@ -246,6 +246,7 @@ struct Readback {
 /// `w` x `h` depth target.
 struct Pyramid {
     size: (u32, u32),
+    texture: wgpu::Texture,
     /// Every level, for the late culling pass.
     all: wgpu::TextureView,
     /// Per level: its bind group (level 0 reads the depth target, the others the level below) and
@@ -390,6 +391,11 @@ impl Occlusion {
         }
     }
 
+    /// The depth pyramid built last (an `r32float` texture with every level), if any.
+    pub fn pyramid(&self) -> Option<&wgpu::Texture> {
+        self.pyramid.as_ref().map(|p| &p.texture)
+    }
+
     /// Builds the depth pyramid from `depth` (the multisampled depth target, `size` pixels).
     pub fn encode_pyramid(
         &mut self,
@@ -441,7 +447,10 @@ impl Occlusion {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::R32Float,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::STORAGE_BINDING,
+            // COPY_SRC: tests/hiz.rs reads it back.
+            usage: wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::STORAGE_BINDING
+                | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
         let mip = |k: u32| {
@@ -480,6 +489,7 @@ impl Occlusion {
         Pyramid {
             size,
             all: texture.create_view(&Default::default()),
+            texture,
             levels,
         }
     }

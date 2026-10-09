@@ -73,8 +73,9 @@ specified under [docs/spec/](docs/spec/README.md); their measured spikes are und
   MoltenVK); a compute shader must initialize the workgroup memory it reads.
 - Occlusion culling (two-phase Hi-Z, [docs/spec/occlusion.md](docs/spec/occlusion.md)) runs in
   `auto` mode by default; `POCKET_OCCLUSION=off|on|auto` (the viewport page: `?occlusion=`) sets
-  it. A change to culling or the opaque passes runs `cargo test -p pocket-render --test occlusion`
-  and `tools/occlusion_compare.py`: it must not change a single entity's coverage.
+  it. A change to culling or the opaque passes runs `cargo test -p pocket-render --test occlusion
+  --test hiz` and `tools/occlusion_compare.py`: it must not change a single entity's coverage. A
+  change to the pyramid or the late test also runs `tools/occlusion_mutations.py`.
 - The browser: `tools/build_viewport.sh` builds the WebGPU viewport into `web/viewport/pkg`
   (committed; the editor's `/wasm/` serves it), `tools/build_web.sh` also builds the game module into
   `web/pkg` and packs samples into `web/projects/` (both ignored). Serve `web/`

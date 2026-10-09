@@ -97,7 +97,8 @@ For an instance with `VIS_FRUSTUM`, the late pass takes its interpolated pose (t
 copy the cube around its grown sphere, `meshes::dynamic_bounds`; section 5). It then:
 
 1. transforms the box's centre and its three scaled, rotated half axes by the camera's
-   view-projection (`Cull.view_proj`) and forms the eight corners in clip space;
+   view-projection (`Cull.view_proj`, passed to `occluded` with the target's size and the
+   pyramid's levels) and forms the eight corners in clip space;
 2. if any corner has `w <= 1e-6` (behind the camera) or the nearest corner's depth is `>= 1`
    (reaching past the near plane), the instance is visible;
 3. takes the corners' screen rectangle in pixels (y down), widens it by one pixel on each side and
@@ -218,6 +219,12 @@ about the probe margin below.
 - Frames without instances run one phase and move a pending probe, or the start of an activation,
   to the next frame that has some.
 
+A share of the frustum's triangles was the first measure (on at 25%, off below 10%), dropped
+before measuring: the gain is the triangles removed, not their share, so it would keep occlusion
+culling off in a scene losing 10% of ten million triangles, far more than the second phase costs,
+and it ignores that the late test's cost grows with the instances in the frustum (charter 4.4's
+Pioneer note, docs/bench/occlusion.md 6).
+
 The constants were fit on one GPU. Counting in triangles makes them carry across scenes; across
 GPUs they carry roughly, because a slower GPU's triangles and its fixed costs are both slower: on
 the Radeon 780M, 2 to 6 times slower, the crossover fell between the same cube counts.
@@ -236,24 +243,64 @@ the Radeon 780M, 2 to 6 times slower, the crossover fell between the same cube c
 
 ## 9. Checks
 
+- `crates/pocket-render/tests/hiz.rs` checks the two parts the scene below exercises only by
+  chance against brute force, with the renderer's own code: `Occlusion::encode_pyramid` reduces a
+  multisampled depth target that `tests/hiz_probe.wgsl` fills with one depth per sample, and the
+  probe calls cull.wgsl's `occluded` (which takes the camera as arguments for this).
+  - The pyramid: at 481x271, 1281x721, 7x3 and 1x1, with an independent random depth per sample,
+    every texel of every level must equal the CPU's minimum over every sample of the pixels it
+    covers (section 3's mapping), exactly.
+  - The test: over walls at 6, 10, 16 and 25 m in cells of 97x61 pixels (one cell in eight empty)
+    with holes in a third of the cells (one pixel in 48, in all samples or in one), 20,000 random
+    boxes (2 cm to 3 m, any orientation, centred up to 20% beyond the view, 3 to 35 m away). A box
+    `occluded` hides must be farther at its nearest corner than every sample of every pixel its
+    corners' rectangle touches, and boxes reaching behind the camera or past the near plane must
+    never be hidden. It must hide at least 30% of the boxes brute force could hide (it hides 1,723
+    of 3,999; 16,508 boxes are on screen).
 - `crates/pocket-render/tests/occlusion.rs` draws `demo::occluders` (a wall with a 0.5 m slit, an
   alpha-masked double-sided cylinder with holes, a picket fence past the wall's end, 24 small
-  spheres peeking over the wall's top by a few centimetres, and 144 primitives behind) with
-  occlusion culling off and forced on, through the same frames: the cold first frame, a warm frame,
-  a camera cut, a six-step sideways sweep, the left wall sinking into the ground (halfway through
-  the interpolation, then arrived), a resize, a camera against the slit and an orthographic camera.
-  Each step's id pass is drawn in the first frame after the change. The id coverage per entity must
-  match within 1e-6 and fewer than 1 in 2,000 pixels may differ by more than 2 levels; the forced-on
-  renderer must have occluded at least 20 instances by the warm step. It runs on the device
-  `POCKET_BACKEND` and `POCKET_GPU_MINIMAL` describe, then on the other two draw paths; it skips
-  without a GPU. Reading only one of the 2x2 texels makes it fail (sweep 1: a sphere peeking over
-  the wall is dropped).
+  spheres peeking over the wall's top by a few centimetres, and 144 primitives behind) with two
+  instances of its own: a 4 m beam through the right wall pointing at the front camera, seen end-on
+  (its far end behind the wall, its near end in front: only its nearest corner keeps it), and a cube
+  hidden behind the right wall. It draws the scene with occlusion culling off and forced on, through
+  the same frames: the cold first frame, a warm frame, a camera cut, a six-step sideways sweep, the
+  left wall sinking into the ground and then the cube rising over the right wall (each halfway
+  through its interpolation, then arrived; halfway up, the cube is newly visible, so the late pass
+  tests and draws it at the interpolated pose), a resize, a camera against the slit and an
+  orthographic camera. Each step's id pass is drawn in the first frame after the change. The id
+  coverage per entity must match within 1e-6 and the images must be identical (the scene has no
+  surfaces at equal depth; off and on have been bit-identical at every step in every configuration
+  run, docs/bench/occlusion.md 2); the forced-on renderer must have occluded at least 20 instances
+  by the warm step, the beam must show, and the cube must be hidden before it rises and show halfway
+  up. It runs on the device `POCKET_BACKEND` and `POCKET_GPU_MINIMAL` describe, then on the other
+  two draw paths; it skips without a GPU.
+- `python tools/occlusion_mutations.py [--out file.json]` puts known bugs into the code one at a
+  time, runs `hiz.rs` and `occlusion.rs` against each and restores the file; it fails if any
+  mutation survives. Every one makes at least one check fail, identically on the RTX 5060 with
+  Vulkan and the Radeon 780M with Direct3D 12 (`docs/evidence/hiz/mutations-*.json`; box counts
+  from the RTX run):
+
+  | Mutation | hiz.rs pyramid | hiz.rs test | occlusion.rs scene |
+  |---|---|---|---|
+  | hiz.wgsl: a level's last texel ignores the odd remainder | fails (481x271 level 0, its last column) | fails (78 boxes) | passes |
+  | hiz.wgsl: level 0 reads sample 0 only | fails (24,333 of 32,400 texels) | fails (9 boxes) | passes |
+  | cull.wgsl: one of the 2x2 texels read | passes | fails (124 boxes) | fails (sweep 4: the ground's coverage) |
+  | cull.wgsl: a level one too fine (the 2x2 texels miss the middle) | passes | fails (13 boxes) | passes |
+  | cull.wgsl: the farthest corner's depth for the nearest | passes | fails (29 boxes) | fails (warm: the beam dropped) |
+  | cull.wgsl: the late pass tests and draws at alpha 1 | passes | passes | fails (rising) |
+  | renderer.rs: the late id-pass draws skipped | passes | passes | fails (cold) |
+
+  A review found that the scene check as first written (without `hiz.rs`, the beam and the cube,
+  and letting 1 in 2,000 pixels differ) passed five of these, all but reading one texel and
+  skipping the late id draws; it also said reading one texel failed at sweep 1, where it fails at
+  sweep 4.
 - `occlusion.rs` unit tests: the pyramid's level count, the auto mode's decisions and backoff, the
   mode names.
 - `tests/skinned_bounds.rs` skins samples/anim's hero on the CPU (its rest pose, its clips at eight
   times, each upper arm swung 90 degrees four ways) and requires every vertex of every pose that
   stays in the grown sphere to be inside the occlusion box; with the per-axis box it fails (the
-  left arm swung forward). `meshes.rs`' unit test checks the box against the sphere directly.
+  left arm swung forward), as does `meshes.rs`' unit test, which checks the box against the sphere
+  directly.
 - `cargo run --release -p pocket-app --example draw_paths -- --compare occlusion <scenes>` draws a
   scene twice in one process at one moment, off and forced on, and compares pixels and coverage.
 - `python tools/occlusion_compare.py` runs that and every capture of `tools/backend_compare.py`

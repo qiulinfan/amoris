@@ -1,18 +1,80 @@
 //! Occlusion culling never drops a visible instance (docs/spec/occlusion.md). The occluder scene
 //! (`demo::occluders`: a wall with a slit, an alpha-masked occluder with holes, a picket fence,
-//! small spheres peeking over the wall, a grid of every primitive behind them) is drawn by two
-//! renderers on the same device, one with occlusion culling off and one with it forced on,
-//! through the same sequence of frames: the cold first frame, a warm frame, a camera cut, a
-//! sideways sweep (the wall's edges, the slit and the fence move across the pyramid's texels), an
-//! occluder moving away (mid-interpolation and arrived), a resize, a camera against the slit and
-//! an orthographic camera. At each step the entity-id pass must show the same entities with the
-//! same pixel coverage and the images must match; the forced-on renderer must also have culled
-//! something. Each step's id pass is drawn in the first frame after the change, when last frame's
-//! visible set is the most wrong. Runs on the device `POCKET_BACKEND` and `POCKET_GPU_MINIMAL`
-//! describe, then on the two other draw paths (batches.rs); skips without a GPU.
+//! small spheres peeking over the wall, a grid of every primitive behind them; and the check's
+//! own beam through the wall, seen end-on, and a cube hidden behind it) is drawn by two renderers
+//! on the same device, one with occlusion culling off and one with it forced on, through the same
+//! sequence of frames: the cold first frame, a warm frame, a camera cut, a sideways sweep (the
+//! wall's edges, the slit and the fence move across the pyramid's texels), an occluder moving
+//! away and an occludee rising into view (each mid-interpolation and arrived), a resize, a camera
+//! against the slit and an orthographic camera. At each step the entity-id pass must show the
+//! same entities with the same pixel coverage and the images must be identical; the forced-on
+//! renderer must also have culled something. Each step's id pass is drawn in the first frame
+//! after the change, when last frame's visible set is the most wrong. Runs on the device
+//! `POCKET_BACKEND` and `POCKET_GPU_MINIMAL` describe, then on the two other draw paths
+//! (batches.rs); skips without a GPU. tests/hiz.rs checks the pyramid and the test itself
+//! against brute force.
 
+use glam::{Quat, Vec3};
+use pocket_assets::frame::{InstanceUpdate, Pose, RenderFrame};
 use pocket_render::gpu::Minimal;
 use pocket_render::{BackendChoice, Gpu, OcclusionMode, OcclusionStats, Renderer, demo};
+
+/// The check's own instances (`scene`).
+const BEAM: u64 = 300;
+const RISER: u64 = 301;
+
+/// `demo::occluders` with two instances of the check's own. A beam through the right wall points
+/// at the front camera: seen end-on, its far end is behind the wall and its near end in front, so
+/// only its nearest corner's depth keeps it. A cube stands behind the right wall at height `rise`:
+/// hidden at 1 m, its top over the wall at 6 m, clear of it at 11 m.
+fn scene(rise: f32) -> RenderFrame {
+    let mut f = demo::occluders(3.0);
+    let wall = f
+        .instances
+        .iter()
+        .find(|i| i.id == 3)
+        .and_then(|i| i.look.clone())
+        .expect("the right wall");
+    let eye = demo::occluders_cameras()[0].position;
+    let at = Vec3::new(5.0, 3.0, 0.0);
+    let mut beam = wall.clone();
+    beam.color = [0.2, 0.45, 0.9, 1.0];
+    f.instances.push(InstanceUpdate {
+        id: BEAM,
+        pose: Some(Pose {
+            position: at.to_array(),
+            rotation: Quat::from_rotation_arc(Vec3::Z, (eye - at).normalize()).to_array(),
+            scale: [0.3, 0.3, 4.0],
+        }),
+        look: Some(beam),
+        anim: None,
+    });
+    let mut riser = wall;
+    riser.color = [0.3, 0.85, 0.35, 1.0];
+    f.instances.push(InstanceUpdate {
+        id: RISER,
+        pose: Some(Pose {
+            position: [6.0, rise, -1.5],
+            rotation: [0.0, 0.0, 0.0, 1.0],
+            scale: [1.0; 3],
+        }),
+        look: Some(riser),
+        anim: None,
+    });
+    f
+}
+
+/// An update of instance `id` alone to its pose in `f`, as tick `tick`.
+fn update(mut f: RenderFrame, id: u64, tick: u64) -> RenderFrame {
+    f.tick = tick;
+    f.reset = false;
+    f.lights = None;
+    f.environment = None;
+    f.cameras = None;
+    f.instances.retain(|i| i.id == id);
+    f.instances[0].look = None;
+    f
+}
 
 struct Shot {
     step: &'static str,
@@ -60,7 +122,7 @@ fn run(gpu: &Gpu, mode: OcclusionMode) -> Vec<Shot> {
     r.set_occlusion(mode);
     r.add_model(demo::MIXED_MODEL, &demo::mixed_model());
     let mut t = 0.0;
-    r.apply(demo::occluders(3.0), t);
+    r.apply(scene(1.0), t);
     r.set_camera_override(Some(front));
     let mut shots = vec![shot(&mut r, "cold", &mut t)];
     frames(&mut r, 4, &mut t);
@@ -80,17 +142,16 @@ fn run(gpu: &Gpu, mode: OcclusionMode) -> Vec<Shot> {
     r.set_camera_override(Some(front));
     frames(&mut r, 4, &mut t);
     // The left wall sinks into the ground over one tick: drawn halfway, then arrived.
-    let mut moved = demo::occluders(-3.5);
-    moved.tick = 2;
-    moved.reset = false;
-    moved.lights = None;
-    moved.environment = None;
-    moved.cameras = None;
-    moved.instances.retain(|i| i.id == 2);
-    moved.instances[0].look = None;
-    r.apply(moved, t + 1.0 / 60.0 - 1.0 / 120.0);
+    let half_tick = t + 1.0 / 60.0 - 1.0 / 120.0;
+    r.apply(update(demo::occluders(-3.5), 2, 2), half_tick);
     shots.push(shot(&mut r, "moving", &mut t));
     shots.push(shot(&mut r, "moved", &mut t));
+    // The hidden cube rises over the right wall in one tick: drawn halfway, newly visible (so by
+    // the late pass, at the interpolated pose), then arrived.
+    let half_tick = t + 1.0 / 60.0 - 1.0 / 120.0;
+    r.apply(update(scene(11.0), RISER, 3), half_tick);
+    shots.push(shot(&mut r, "rising", &mut t));
+    shots.push(shot(&mut r, "risen", &mut t));
     r.resize(640, 360);
     shots.push(shot(&mut r, "resized", &mut t));
     // Against the right wall's slit end: the grid behind is seen through 0.5 m.
@@ -125,6 +186,8 @@ fn agree(off: &Shot, on: &Shot, path: &str) {
             on.stats
         );
     }
+    // The scene has no surfaces at equal depth, where the two phases' draw order could pick
+    // another one (docs/spec/occlusion.md 5): the images must be the same to the bit.
     assert_eq!(off.rgba.len(), on.rgba.len(), "{path}, {step}");
     let differing = off
         .rgba
@@ -132,12 +195,9 @@ fn agree(off: &Shot, on: &Shot, path: &str) {
         .0
         .iter()
         .zip(on.rgba.as_chunks::<4>().0)
-        .filter(|(p, q)| (0..3).any(|i| p[i].abs_diff(q[i]) > 2))
+        .filter(|(p, q)| p != q)
         .count();
-    assert!(
-        differing * 2000 < off.rgba.len() / 4,
-        "{path}, {step}: {differing} pixels differ"
-    );
+    assert!(differing == 0, "{path}, {step}: {differing} pixels differ");
 }
 
 fn check(gpu: &Gpu, label: &str) {
@@ -178,6 +238,22 @@ fn check(gpu: &Gpu, label: &str) {
             .iter()
             .any(|(e, _)| share(&before.visible, *e) == 0.0),
         "lowering the wall uncovered nothing"
+    );
+    // The beam shows from the front; the cube is hidden until it rises, and shows halfway up.
+    let at = |step: &str| off.iter().find(|s| s.step == step).expect("a step");
+    assert!(share(&front.visible, BEAM) > 0.0, "the beam is hidden");
+    assert_eq!(
+        share(&moved.visible, RISER),
+        0.0,
+        "the cube shows before it rises"
+    );
+    let (rising, risen) = (
+        share(&at("rising").visible, RISER),
+        share(&at("risen").visible, RISER),
+    );
+    assert!(
+        rising > 0.0 && risen > rising,
+        "the cube covers {rising} rising, {risen} risen"
     );
 }
 
