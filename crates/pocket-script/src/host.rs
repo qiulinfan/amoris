@@ -60,11 +60,20 @@ impl Default for ScriptLimits {
 /// The stack QuickJS-ng may use per call (script-sandbox.md 4.3): wasm32's limit (script-web spike;
 /// the web report shows `max_call_depth` fits in it), and natively the use tests/depth.rs measured at
 /// `max_call_depth` through the deepest frame shape, times 1.5, rounded up: 356,186 bytes in a
-/// release build and 3,467,626 in a debug build on x86_64-pc-windows-msvc with clang-cl.
+/// release build and 3,467,626 in a debug build on x86_64-pc-windows-msvc with clang-cl. When MSVC's
+/// cl 19.50 compiled QuickJS-ng (the vendored build script's fallback, which it warns about;
+/// [`crate::QJS_MSVC`]), the release build took 1,170,892 bytes, 3.2 times clang-cl's 368,468 on
+/// the same day, so its
+/// limit is 2 MiB; unoptimized, both compilers' frames are alike (3,479,908 bytes with cl), and
+/// the debug limit holds for either (docs/bench/xtask.md, 2026-10-09).
 #[cfg(target_arch = "wasm32")]
 pub const DEFAULT_STACK_BYTES: usize = 256 * 1024;
 #[cfg(all(not(target_arch = "wasm32"), not(debug_assertions)))]
-pub const DEFAULT_STACK_BYTES: usize = 1 << 20;
+pub const DEFAULT_STACK_BYTES: usize = if crate::ffi::QJS_MSVC {
+    2 << 20
+} else {
+    1 << 20
+};
 #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
 pub const DEFAULT_STACK_BYTES: usize = 6 << 20;
 

@@ -18,6 +18,9 @@ include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 /// Amoris P7: the C compiler that built QuickJS-ng, `<file stem>: <first line of --version>`.
 pub const POCKET_QJS_CC: &str = env!("POCKET_QJS_CC");
 
+/// Amoris P7: whether MSVC's cl (not clang-cl) built QuickJS-ng, whose frames take more stack.
+pub const POCKET_QJS_MSVC: bool = cfg!(pocket_qjs_msvc);
+
 #[cfg(not(feature = "bindgen"))]
 include!(concat!("bindings/", bindings_env!("TARGET"), ".rs"));
 

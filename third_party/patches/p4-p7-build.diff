@@ -1,10 +1,10 @@
 diff --git a/build.rs b/build.rs
-index a6150ef..d11f0fc 100644
+index a6150ef..b98952a 100644
 --- a/build.rs
 +++ b/build.rs
-@@ -92,6 +92,10 @@ fn get_wasi_sdk_path() {
+@@ -92,6 +92,10 @@ fn get_wasi_sdk_path() -> PathBuf {
  }
-
+ 
  fn main() {
 +    // amoris: the vendored, patched QuickJS-ng sources (P1 to P10) must rebuild the library when
 +    // they change; the rerun lines below would otherwise be the only triggers.
@@ -12,7 +12,7 @@ index a6150ef..d11f0fc 100644
 +    println!("cargo:rerun-if-changed=build.rs");
      #[cfg(feature = "logging")]
      pretty_env_logger::init();
-
+ 
 @@ -117,6 +121,7 @@ fn main() {
          println!("cargo:rerun-if-env-changed={}", feature_to_cargo(feature));
      }
@@ -56,12 +56,28 @@ index a6150ef..d11f0fc 100644
              .expect("vendor/wasi-libc/include is missing; run scripts/vendor-wasm-libc.sh");
          let flag = format!("-isystem{}", vendor_include.display());
          builder.flag(&flag);
-@@ -269,19 +285,95 @@ fn main() {
+@@ -269,19 +285,110 @@ fn main() {
          builder.file("wasm-shim/shim.c");
      }
  
 +    // Amoris P7: which C compiler built QuickJS-ng, for EngineVersion and the perf step.
-+    println!("cargo:rustc-env=POCKET_QJS_CC={}", compiler_id(&builder));
++    let tool = builder.get_compiler();
++    println!("cargo:rustc-env=POCKET_QJS_CC={}", compiler_id(&tool));
++    // Amoris P7: MSVC's cl, the fallback when the pinned clang-cl is missing, lays out frames that
++    // take over three times clang-cl's stack per call, so `POCKET_QJS_MSVC` lets the script host's
++    // default stack limit follow it, and its timings are not the reference figures': every build
++    // says so.
++    println!("cargo:rustc-check-cfg=cfg(pocket_qjs_msvc)");
++    if tool.is_like_msvc() && !tool.is_like_clang_cl() {
++        println!("cargo:rustc-cfg=pocket_qjs_msvc");
++        println!(
++            "cargo:warning=QuickJS-ng is compiled by MSVC's cl ({}), not clang-cl: the pinned LLVM \
++             (POCKET_LLVM, else ~/.pocket-tools/llvm-23.1.2) has no clang-cl, or the build named \
++             cl. Scripts get a larger stack limit and run slower than with clang-cl \
++             (docs/spec/architecture.md 7.3).",
++            tool.path().display()
++        );
++    }
 +
      builder.compile("libquickjs.a");
  
@@ -132,8 +148,7 @@ index a6150ef..d11f0fc 100644
 +}
 +
 +/// Amoris P7: the compiler's family and the first line of its `--version`.
-+fn compiler_id(builder: &cc::Build) -> String {
-+    let tool = builder.get_compiler();
++fn compiler_id(tool: &cc::Tool) -> String {
 +    let name = tool
 +        .path()
 +        .file_stem()
@@ -155,15 +170,18 @@ index a6150ef..d11f0fc 100644
      format!("CARGO_FEATURE_{}", feature_to_define(name))
  }
 diff --git a/src/lib.rs b/src/lib.rs
-index 357c5e6..83f93dd 100644
+index 357c5e6..3597c75 100644
 --- a/src/lib.rs
 +++ b/src/lib.rs
-@@ -15,6 +15,9 @@ pub const SIZE_T_ERROR: &str =
+@@ -15,6 +15,12 @@ pub const SIZE_T_ERROR: &str =
  
  include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
  
 +/// Amoris P7: the C compiler that built QuickJS-ng, `<file stem>: <first line of --version>`.
 +pub const POCKET_QJS_CC: &str = env!("POCKET_QJS_CC");
++
++/// Amoris P7: whether MSVC's cl (not clang-cl) built QuickJS-ng, whose frames take more stack.
++pub const POCKET_QJS_MSVC: bool = cfg!(pocket_qjs_msvc);
 +
  #[cfg(not(feature = "bindgen"))]
  include!(concat!("bindings/", bindings_env!("TARGET"), ".rs"));

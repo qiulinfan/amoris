@@ -55,6 +55,8 @@ pub use source::{Bundle, CompiledModule, CompiledSet, ScriptSource};
 
 /// The C compiler that built QuickJS-ng (P7): `EngineVersion.c_compiler`.
 pub const QJS_CC: &str = ffi::QJS_CC;
+/// Whether it is MSVC's cl rather than clang-cl (P7), which [`host::DEFAULT_STACK_BYTES`] follows.
+pub const QJS_MSVC: bool = ffi::QJS_MSVC;
 
 /// The one import QuickJS-ng's wasm32 shim needs (the clock behind `Date` and `performance`, which
 /// the sandbox leaves out): defined here so the module imports nothing from `env` (script-web

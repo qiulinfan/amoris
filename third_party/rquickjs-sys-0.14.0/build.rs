@@ -286,7 +286,23 @@ fn main() {
     }
 
     // Amoris P7: which C compiler built QuickJS-ng, for EngineVersion and the perf step.
-    println!("cargo:rustc-env=POCKET_QJS_CC={}", compiler_id(&builder));
+    let tool = builder.get_compiler();
+    println!("cargo:rustc-env=POCKET_QJS_CC={}", compiler_id(&tool));
+    // Amoris P7: MSVC's cl, the fallback when the pinned clang-cl is missing, lays out frames that
+    // take over three times clang-cl's stack per call, so `POCKET_QJS_MSVC` lets the script host's
+    // default stack limit follow it, and its timings are not the reference figures': every build
+    // says so.
+    println!("cargo:rustc-check-cfg=cfg(pocket_qjs_msvc)");
+    if tool.is_like_msvc() && !tool.is_like_clang_cl() {
+        println!("cargo:rustc-cfg=pocket_qjs_msvc");
+        println!(
+            "cargo:warning=QuickJS-ng is compiled by MSVC's cl ({}), not clang-cl: the pinned LLVM \
+             (POCKET_LLVM, else ~/.pocket-tools/llvm-23.1.2) has no clang-cl, or the build named \
+             cl. Scripts get a larger stack limit and run slower than with clang-cl \
+             (docs/spec/architecture.md 7.3).",
+            tool.path().display()
+        );
+    }
 
     builder.compile("libquickjs.a");
 
@@ -355,8 +371,7 @@ fn pocket_compiler(builder: &mut cc::Build) -> bool {
 }
 
 /// Amoris P7: the compiler's family and the first line of its `--version`.
-fn compiler_id(builder: &cc::Build) -> String {
-    let tool = builder.get_compiler();
+fn compiler_id(tool: &cc::Tool) -> String {
     let name = tool
         .path()
         .file_stem()

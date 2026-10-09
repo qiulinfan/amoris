@@ -8,8 +8,10 @@ result, which is committed, so a fresh checkout builds without running this.
 
 The crate comes from cargo's cache or crates.io and the upstream dependency is pinned by SHA-256 below; a
 mismatch, a patch that does not apply cleanly or (with --check) any byte that differs from the
-committed directory fails with exit 1. Standard library and git (as a plain patch tool) only.
-Slice 1 keeps this script until `cargo xtask vendor` replaces it (script-sandbox.md 6).
+committed directory fails with exit 1. With --offline the crate comes from cargo's cache only, and
+its absence exits 3: `cargo xtask check`'s `deps` step runs `--check --offline` (checks-slice1.md
+13). Standard library and git (as a plain patch tool) only. Slice 1 keeps this script until
+`cargo xtask vendor` replaces it (script-sandbox.md 6).
 """
 
 import hashlib
@@ -36,6 +38,8 @@ PATCHES = [
     ("p3-constant-seeds.diff", "."),
     ("p5-call-depth.diff", "."),
     ("p6-canonical-nan.diff", "."),
+    # P4 and P7; since 2026-10-09 (Pioneer) P7 also warns when MSVC's cl compiled QuickJS-ng and
+    # exports POCKET_QJS_MSVC, which the script host's default stack limit follows.
     ("p4-p7-build.diff", "."),
     # JS_DiscardPendingJobs: a failed call's queued jobs are dropped (script-sandbox.md 6).
     ("p8-discard-jobs.diff", "."),
@@ -60,12 +64,19 @@ def sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+class NotCached(Exception):
+    pass
+
+
 def fetch_crate() -> bytes:
-    cache = Path.home() / ".cargo" / "registry" / "cache"
+    home = os.environ.get("CARGO_HOME")
+    cache = (Path(home) if home else Path.home() / ".cargo") / "registry" / "cache"
     for hit in sorted(cache.glob(f"*/{CRATE}-{VERSION}.crate")):
         data = hit.read_bytes()
         if sha256(data) == CRATE_SHA256:
             return data
+    if "--offline" in sys.argv:
+        raise NotCached(f"{CRATE}-{VERSION}.crate is not in {cache}")
     url = f"https://static.crates.io/crates/{CRATE}/{CRATE}-{VERSION}.crate"
     print(f"downloading {url}")
     req = urllib.request.Request(url, headers={"User-Agent": "amoris-vendor"})
@@ -136,4 +147,8 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except NotCached as e:
+        print(f"not cached: {e}")
+        sys.exit(3)

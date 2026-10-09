@@ -22,6 +22,8 @@ unsafe extern "C" {
 
 /// P7: the C compiler that built QuickJS-ng.
 pub const QJS_CC: &str = rquickjs::qjs::POCKET_QJS_CC;
+/// P7: whether that compiler is MSVC's cl, whose frames need a larger stack limit.
+pub const QJS_MSVC: bool = rquickjs::qjs::POCKET_QJS_MSVC;
 
 /// Set in a trace call's `flags` when it fired on a `debugger;` statement (PR #1421).
 pub const JS_DEBUG_TRACE_DEBUGGER_STMT: c_int = 1;
