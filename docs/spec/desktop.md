@@ -57,6 +57,35 @@ an application check, use a copy of a sample outside the checkout, launch the pa
 Apply a TypeScript script to verify the bundled checker, switch projects, and quit; the previous
 host must exit and remove `.pocket/host.json`.
 
+`node tools/desktop_smoke.mjs [--sample samples/sailing] [--out <dir>]` runs that check without a
+person, up to the edit: it starts the app on a copy of the sample with Chromium's remote debugging,
+and through the DevTools protocol checks the host's readiness identity, **WebGPU (wasm)** in the
+status bar and a drawing canvas, Play (the world forks and ticks run) and Stop (the edit world's
+hash is back), then closes the window as a person would (WM_CLOSE on Windows, SIGTERM elsewhere)
+and checks that the host exited and removed `.pocket/host.json`. It writes a JSON summary and
+half-size screenshots of the edit and play views.
+
+### Windows (2026-10-09, Pioneer)
+
+Run from source on Windows 11 with Electron 44.5.1 (`npm ci` in `desktop/`), the editor built in
+`editor/`, a debug `pocket.exe` (`AMORIS_POCKET_BINARY`) and the SDK's `tsc.exe` (`AMORIS_TSC`):
+`npm test` passes (18, the packaged-runtime test skipped without `AMORIS_TEST_RESOURCES`); that test
+passes too with the resources assembled by hand; and `tools/desktop_smoke.mjs` passes every step on
+samples/sailing ([evidence/polish/desktop/](../evidence/polish/desktop/)). Electron chose the Radeon
+780M (`amd rdna-3`), as Chrome does without `--force_high_performance_gpu`.
+
+Until then the app could not open any project on Windows: `pocket serve` canonicalized the project
+to a verbatim path (`\\?\C:\...`) and reported it in its readiness line, which `host.cjs` compares
+with `fs.realpath` (`C:\...`), so every start ended in "Engine returned an invalid readiness
+response". The host now reports the plain form (server.md 1, `hostfile::project_root`); master's
+`pocket.exe` still fails the packaged-runtime test, this one passes it
+([evidence/polish/desktop-node-tests.txt](../evidence/polish/desktop-node-tests.txt)).
+
+Not verified on Windows: `npm run package` and a packaged app (the run used the checkout's files),
+editing and applying a script through Monaco, and switching projects. On Windows the app stops its
+host with `child.kill()`, which terminates the process rather than asking it to stop (Node has no
+Ctrl-Break for a child); `host.cjs` then removes `.pocket/host.json` itself, as the smoke run saw.
+
 The shell uses Electron's [security
 guidance](https://www.electronjs.org/docs/latest/tutorial/security) and [application
 packaging](https://www.electronjs.org/docs/latest/tutorial/application-distribution). The first
