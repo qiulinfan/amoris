@@ -98,6 +98,8 @@ export async function createViewport(canvas, options = {}) {
     demoCubes(count, dense) { vp.demo_cubes(count, dense, performance.now()); },
     demoMixed(n) { vp.demo_mixed(n, performance.now()); },
     demoCubesCamera(frame, dense) { vp.demo_cubes_camera(frame, dense); },
+    demoOccluders() { vp.demo_occluders(performance.now()); },
+    setOcclusion(mode) { vp.set_occlusion(mode); },
     dispose() {
       disposed = true;
       observer.disconnect();

@@ -1,15 +1,15 @@
 //! Occlusion culling never drops a visible instance (docs/spec/occlusion.md). The occluder scene
-//! (`demo::occluders`: a wall with a slit, an alpha-masked occluder with holes, a grid of every
-//! primitive behind them) is drawn by two renderers on the same device, one with occlusion
-//! culling off and one with it forced on, through the same sequence of frames: the cold first
-//! frame, a warm frame, a camera cut, a camera sweep, an occluder moving away (mid-interpolation and arrived),
-//! and a resize. At each step the entity-id pass must show the same entities with the same pixel
-//! coverage and the images must match; the forced-on renderer must also have culled something.
-//! A sideways camera sweep moves the wall's edges, a slit, a picket fence and small spheres
-//! peeking over the wall across the pyramid's texels.
-//! Each step's id pass is drawn in the first frame after the change, when last frame's visible
-//! set is the most wrong. Runs on the device `POCKET_BACKEND` and `POCKET_GPU_MINIMAL` describe,
-//! then on the two other draw paths (batches.rs); skips without a GPU.
+//! (`demo::occluders`: a wall with a slit, an alpha-masked occluder with holes, a picket fence,
+//! small spheres peeking over the wall, a grid of every primitive behind them) is drawn by two
+//! renderers on the same device, one with occlusion culling off and one with it forced on,
+//! through the same sequence of frames: the cold first frame, a warm frame, a camera cut, a
+//! sideways sweep (the wall's edges, the slit and the fence move across the pyramid's texels), an
+//! occluder moving away (mid-interpolation and arrived), a resize, a camera against the slit and
+//! an orthographic camera. At each step the entity-id pass must show the same entities with the
+//! same pixel coverage and the images must match; the forced-on renderer must also have culled
+//! something. Each step's id pass is drawn in the first frame after the change, when last frame's
+//! visible set is the most wrong. Runs on the device `POCKET_BACKEND` and `POCKET_GPU_MINIMAL`
+//! describe, then on the two other draw paths (batches.rs); skips without a GPU.
 
 use pocket_render::gpu::Minimal;
 use pocket_render::{BackendChoice, Gpu, OcclusionMode, OcclusionStats, Renderer, demo};
@@ -93,6 +93,17 @@ fn run(gpu: &Gpu, mode: OcclusionMode) -> Vec<Shot> {
     shots.push(shot(&mut r, "moved", &mut t));
     r.resize(640, 360);
     shots.push(shot(&mut r, "resized", &mut t));
+    // Against the right wall's slit end: the grid behind is seen through 0.5 m.
+    r.set_camera_override(Some(pocket_render::CameraState::look_at(
+        glam::Vec3::new(0.0, 3.0, 0.6),
+        glam::Vec3::new(0.0, 2.8, -10.0),
+    )));
+    shots.push(shot(&mut r, "close", &mut t));
+    r.set_camera_override(Some(pocket_render::CameraState {
+        ortho_height: Some(18.0),
+        ..front
+    }));
+    shots.push(shot(&mut r, "ortho", &mut t));
     shots
 }
 
@@ -156,7 +167,11 @@ fn check(gpu: &Gpu, label: &str) {
     let warm = on[1].stats.expect("a reading by the warm step");
     assert!(warm.occluded >= 20, "{warm:?}");
     // The lowered wall uncovered instances it hid.
-    let (before, after) = (&off[1], &off[off.len() - 2]);
+    let moved = off
+        .iter()
+        .find(|s| s.step == "moved")
+        .expect("a moved step");
+    let (before, after) = (&off[1], moved);
     assert!(
         after
             .visible

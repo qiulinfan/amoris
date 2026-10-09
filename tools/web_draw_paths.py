@@ -12,6 +12,9 @@ hidden; the two runs' coverage and pixels are compared (pixels need Pillow).
 
 Writes <name>-<path>.json per run, <name>.json (the comparison) and the screenshots (one when
 both are identical; downscaled to --keep-width) to --out.
+
+`--compare occlusion` runs the page with `occlusion=off` and with `occlusion=on` instead
+(docs/spec/occlusion.md): occlusion culling must not change the coverage or the pixels.
 """
 
 import argparse
@@ -104,12 +107,18 @@ def main():
     ap.add_argument("--size", default="960x540")
     ap.add_argument("--chrome-flags", default="")
     ap.add_argument("--keep-width", type=int, default=480, help="downscale kept images to this width")
+    ap.add_argument("--compare", choices=["paths", "occlusion"], default="paths")
     a = ap.parse_args()
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     sep = "&" if "?" in a.url else "?"
     runs = {}
-    for label, url in [("first-instance", a.url), ("baseline", f"{a.url}{sep}gpu_minimal=first-instance")]:
+    if a.compare == "occlusion":
+        variants = [("off", f"{a.url}{sep}occlusion=off"), ("on", f"{a.url}{sep}occlusion=on")]
+    else:
+        variants = [("first-instance", a.url), ("baseline", f"{a.url}{sep}gpu_minimal=first-instance")]
+    (la, _), (lb, _) = variants
+    for label, url in variants:
         shot = out / f"{a.name}-{label}.png"
         stats, evaluated, logs = run(url, shot, a.seconds, a.size, a.chrome_flags)
         kept = dict(evaluated)
@@ -121,19 +130,21 @@ def main():
         record = {"url": url, "stats": stats, "id_pass": kept, "logs": logs[-12:]}
         (out / f"{a.name}-{label}.json").write_text(json.dumps(record, indent=1))
         runs[label] = (shot, stats, evaluated)
-    (sa, _, ea), (sb, _, eb) = runs["first-instance"], runs["baseline"]
+    (sa, ta, ea), (sb, tb, eb) = runs[la], runs[lb]
     ca = dict((e, s) for e, s in ea.get("coverage", []))
     cb = dict((e, s) for e, s in eb.get("coverage", []))
     ids = sorted(set(ca) | set(cb))
     summary = {
         "name": a.name,
+        "compare": [la, lb],
         "paths": [ea.get("draw_path"), eb.get("draw_path")],
+        "occlusion": [ta.get("occlusion"), tb.get("occlusion")],
         "adapter": ea.get("adapter"),
         "entities": [len(ca), len(cb)],
         "id_readback_ms": [ea.get("readback_ms"), eb.get("readback_ms")],
         "coverage_l1": round(sum(abs(ca.get(e, 0) - cb.get(e, 0)) for e in ids), 6),
-        "only_first_instance": [e for e in ids if e not in cb],
-        "only_baseline": [e for e in ids if e not in ca],
+        f"only_{la.replace('-', '_')}": [e for e in ids if e not in cb],
+        f"only_{lb.replace('-', '_')}": [e for e in ids if e not in ca],
         "pixels": pixels(sa, sb, out / f"{a.name}-diff.png"),
     }
     if summary["pixels"] and summary["pixels"].get("differing_gt8") == 0:

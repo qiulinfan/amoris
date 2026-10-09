@@ -14,6 +14,10 @@
 //! with shadows), or a project directory (the game runs `--ticks` ticks headless and its render
 //! feed's merged frame is drawn from the scene's camera). Prints one JSON line per scene and writes
 //! `<scene>-full.png`, `<scene>-baseline.png`, `<scene>-diff.png` and `draw_paths.json` to `--out`.
+//!
+//! `--compare occlusion` compares occlusion culling instead (docs/bench/occlusion.md): both shots
+//! on the full device, one with occlusion culling off and one with it forced on (`<scene>-off.png`,
+//! `<scene>-on.png`). Both draw the same fixed moment, so animated scenes compare exactly.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -22,7 +26,7 @@ use pocket_assets::Feed;
 use pocket_assets::frame::RenderFrame;
 use pocket_render::gpu::Minimal;
 use pocket_render::loader::FileAssets;
-use pocket_render::{BackendChoice, CameraState, Gpu, Renderer, demo};
+use pocket_render::{BackendChoice, CameraState, Gpu, OcclusionMode, Renderer, demo};
 use pocket_runtime::{Extractor, Game, Project};
 use serde_json::{Value, json};
 
@@ -87,9 +91,15 @@ struct Shot {
     info: Value,
 }
 
-fn draw(src: &Source, minimal: Minimal, size: (u32, u32)) -> Result<Shot, String> {
+fn draw(
+    src: &Source,
+    minimal: Minimal,
+    size: (u32, u32),
+    occlusion: OcclusionMode,
+) -> Result<Shot, String> {
     let gpu = Gpu::headless_with(BackendChoice::from_env(), minimal).map_err(|e| e.to_string())?;
     let mut r = Renderer::new(&gpu, wgpu::TextureFormat::Rgba8UnormSrgb, size.0, size.1);
+    r.set_occlusion(occlusion);
     if let Some(root) = &src.root {
         r.splats.set_root(root.clone());
         r.set_asset_source(Box::new(FileAssets::new(root.clone())));
@@ -130,6 +140,7 @@ fn draw(src: &Source, minimal: Minimal, size: (u32, u32)) -> Result<Shot, String
             "multi_draw_indirect": gpu.caps.multi_draw_indirect,
             "timestamps": gpu.caps.timestamps,
             "draw_path": r.draw_path(),
+            "occlusion": s.occlusion,
             "instances": s.instances,
             "meshes": s.meshes,
             "materials": s.materials,
@@ -156,6 +167,12 @@ fn run() -> Result<(), String> {
     let minimal = Minimal::parse(
         &value(&args, "--minimal").unwrap_or_else(|| "features,limits,timestamps".into()),
     );
+    let occlusion = value(&args, "--compare").as_deref() == Some("occlusion");
+    let labels = if occlusion {
+        ["off", "on"]
+    } else {
+        ["full", "baseline"]
+    };
     let mut scenes = Vec::new();
     let mut skip = false;
     for a in &args {
@@ -174,14 +191,24 @@ fn run() -> Result<(), String> {
     let mut report = Vec::new();
     for scene in &scenes {
         let src = source(scene, ticks)?;
-        let full = draw(&src, Minimal::default(), (w, h))?;
-        let base = draw(&src, minimal, (w, h))?;
+        let (full, base) = if occlusion {
+            (
+                draw(&src, Minimal::default(), (w, h), OcclusionMode::Off)?,
+                draw(&src, Minimal::default(), (w, h), OcclusionMode::On)?,
+            )
+        } else {
+            let mode = OcclusionMode::from_env();
+            (
+                draw(&src, Minimal::default(), (w, h), mode)?,
+                draw(&src, minimal, (w, h), mode)?,
+            )
+        };
         let name = Path::new(scene)
             .file_name()
             .map_or(scene.clone(), |n| n.to_string_lossy().into_owned());
-        let cmp = compare(&full, &base, (w, h), &out, &name)?;
-        let line = json!({"scene": scene, "size": [w, h], "full": full.info,
-            "baseline": base.info, "compare": cmp});
+        let cmp = compare(&full, &base, (w, h), &out, &name, labels)?;
+        let line = json!({"scene": scene, "size": [w, h], labels[0]: full.info,
+            labels[1]: base.info, "compare": cmp});
         println!("{line}");
         report.push(line);
     }
@@ -199,6 +226,7 @@ fn compare(
     (w, h): (u32, u32),
     out: &Path,
     name: &str,
+    [la, lb]: [&str; 2],
 ) -> Result<Value, String> {
     let mut differing = 0u64;
     let mut sum = 0u64;
@@ -225,8 +253,8 @@ fn compare(
         image::save_buffer(out.join(file), px, w, h, image::ColorType::Rgba8)
             .map_err(|e| e.to_string())
     };
-    save(format!("{name}-full.png"), &a.rgba)?;
-    save(format!("{name}-baseline.png"), &b.rgba)?;
+    save(format!("{name}-{la}.png"), &a.rgba)?;
+    save(format!("{name}-{lb}.png"), &b.rgba)?;
     save(format!("{name}-diff.png"), &diff)?;
     let share = |v: &[(u64, f32)], e: u64| v.iter().find(|x| x.0 == e).map_or(0.0, |x| x.1);
     let mut ids: Vec<u64> = a.visible.iter().chain(&b.visible).map(|x| x.0).collect();
@@ -243,10 +271,10 @@ fn compare(
         "pixels_differing_share": differing as f64 / pixels.max(1) as f64,
         "mean_abs_diff": sum as f64 / pixels.max(1) as f64,
         "max_abs_diff": max,
-        "entities_visible_full": a.visible.len(),
-        "entities_visible_baseline": b.visible.len(),
-        "entities_only_full": only_full,
-        "entities_only_baseline": only_baseline,
+        format!("entities_visible_{la}"): a.visible.len(),
+        format!("entities_visible_{lb}"): b.visible.len(),
+        format!("entities_only_{la}"): only_full,
+        format!("entities_only_{lb}"): only_baseline,
         "coverage_l1": coverage_l1,
     }))
 }

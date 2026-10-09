@@ -10,8 +10,12 @@
 //! frame, a resize or a camera cut draw correctly, just with more late work.
 //!
 //! [`OcclusionMode::Auto`] turns it off where it does not pay: the late pass counts what it
-//! culled, read back a few frames later; when too few triangles are occluded the renderer goes
-//! back to one culling pass and one opaque pass, and probes again every [`PROBE_EVERY`] frames.
+//! culled, read back a few frames later; when the occluded triangles do not cover the second
+//! phase's cost (a fixed part and a part per instance in the frustum, both counted in triangles)
+//! the renderer goes back to one culling pass and one opaque pass, and probes again
+//! [`PROBE_EVERY`] frames later, waiting twice as long after each probe that finds it still does
+//! not pay (up to [`PROBE_MAX`]): a reading takes a few frames natively but up to a second in a
+//! browser, and a probe stays on until its first reading arrives.
 //!
 //! [`LATE`]: crate::batches::LATE
 
@@ -20,15 +24,21 @@ use std::sync::{Arc, Mutex};
 use crate::profiler::GpuProfiler;
 use crate::shaders;
 
-/// Frames between probes while [`OcclusionMode::Auto`] has occlusion culling off.
+/// Frames before the first probe after [`OcclusionMode::Auto`] turned occlusion culling off...
 pub const PROBE_EVERY: u64 = 120;
-/// A probe turns occlusion culling on when it culls at least this share of the frustum's
-/// triangles...
-const ON_SHARE: f64 = 0.25;
-/// ...and at least this many triangles; it stays on while both hold with the lower share below.
-const MIN_TRIANGLES: u64 = 250_000;
-/// The share below which it goes off again (after [`MISSES`] readings in a row).
-const OFF_SHARE: f64 = 0.10;
+/// ...doubled after every probe that does not pay, up to this.
+pub const PROBE_MAX: u64 = 8 * PROBE_EVERY;
+/// The second phase's cost in the triangles it must remove to pay (the auto mode's model,
+/// calibrated on many_cubes on an RTX 5060, where about a million instanced triangles cost a
+/// millisecond; docs/bench/occlusion.md): a fixed part (the pyramid, the second opaque pass's
+/// load and resolve)...
+const FIXED_TRIANGLES: f64 = 200_000.0;
+/// ...and a part per instance in the frustum (the late culling pass's test).
+const TRIANGLES_PER_INSTANCE: f64 = 0.5;
+/// A probe turns occlusion culling on when the occluded triangles exceed the cost by this factor;
+/// it then stays on while they cover the cost, going off after [`MISSES`] readings in a row that
+/// do not.
+const PROBE_MARGIN: f64 = 1.5;
 const MISSES: u32 = 3;
 /// Readback buffers for the late pass's counters.
 const RING: usize = 4;
@@ -125,6 +135,8 @@ struct Auto {
     probing: bool,
     misses: u32,
     next_probe: u64,
+    /// The wait after the next probe that does not pay (0: [`PROBE_EVERY`]).
+    backoff: u64,
 }
 
 impl Auto {
@@ -132,18 +144,30 @@ impl Auto {
         if !self.active || s.frame <= self.since {
             return;
         }
-        let share = s.occluded_share();
-        let bar = if self.probing { ON_SHARE } else { OFF_SHARE };
-        if s.occluded_triangles >= MIN_TRIANGLES && share >= bar {
+        let cost = FIXED_TRIANGLES + TRIANGLES_PER_INSTANCE * f64::from(s.frustum);
+        let bar = if self.probing {
+            cost * PROBE_MARGIN
+        } else {
+            cost
+        };
+        if s.occluded_triangles as f64 >= bar {
             self.probing = false;
             self.misses = 0;
+            self.backoff = PROBE_EVERY;
             return;
         }
         self.misses += 1;
         if self.probing || self.misses >= MISSES {
+            // A failed probe waits longer each time; culling that stopped paying probes soon.
+            let wait = if self.probing {
+                self.backoff.max(PROBE_EVERY)
+            } else {
+                PROBE_EVERY
+            };
+            self.backoff = (wait * 2).min(PROBE_MAX);
             self.active = false;
             self.misses = 0;
-            self.next_probe = now + PROBE_EVERY;
+            self.next_probe = now + wait;
         }
     }
 }
@@ -529,10 +553,11 @@ impl Occlusion {
 mod tests {
     use super::*;
 
-    fn stats(frame: u64, frustum: u64, occluded: u64) -> OcclusionStats {
+    fn stats(frame: u64, instances: u32, occluded: u64) -> OcclusionStats {
         OcclusionStats {
             frame,
-            frustum_triangles: frustum,
+            frustum: instances,
+            frustum_triangles: 20_000_000,
             occluded_triangles: occluded,
             ..OcclusionStats::default()
         }
@@ -555,35 +580,59 @@ mod tests {
             ..Auto::default()
         };
         // The activation's own frame does not count.
-        a.reading(&stats(0, 10_000_000, 0), 1);
+        a.reading(&stats(0, 0, 0), 1);
         assert!(a.active && a.probing);
-        a.reading(&stats(1, 10_000_000, 9_000_000), 3);
+        a.reading(&stats(1, 400_000, 9_000_000), 3);
         assert!(a.active && !a.probing);
-        // Below the lower bar three times in a row: off, probed again later.
-        for f in 2..4 {
-            a.reading(&stats(f, 10_000_000, 500_000), f + 2);
+        // Once on, 300,000 triangles cover the cost of 200,000 instances (200,000 + 100,000)...
+        a.reading(&stats(2, 200_000, 300_000), 4);
+        assert!(a.active && a.misses == 0);
+        // ...and less three times in a row turns it off, to be probed again later.
+        for f in 3..5 {
+            a.reading(&stats(f, 200_000, 299_000), f + 2);
             assert!(a.active);
         }
-        a.reading(&stats(4, 10_000_000, 500_000), 6);
+        a.reading(&stats(5, 200_000, 299_000), 7);
         assert!(!a.active);
-        assert_eq!(a.next_probe, 6 + PROBE_EVERY);
-        // A probe that finds too little goes straight off.
-        let mut p = Auto {
-            active: true,
-            since: 10,
-            probing: true,
-            ..Auto::default()
+        assert_eq!(a.next_probe, 7 + PROBE_EVERY);
+        // A probe must clear the cost by half again: 400,000 triangles do not pay for it there.
+        let probe = |instances, occluded| {
+            let mut p = Auto {
+                active: true,
+                since: 10,
+                probing: true,
+                ..Auto::default()
+            };
+            p.reading(&stats(11, instances, occluded), 13);
+            p.active
         };
-        p.reading(&stats(11, 10_000_000, 2_000_000), 13);
-        assert!(!p.active);
-        // Few triangles never pay, whatever the share.
-        let mut q = Auto {
-            active: true,
-            probing: true,
-            ..Auto::default()
-        };
-        q.reading(&stats(1, 1000, 900), 3);
-        assert!(!q.active);
+        assert!(!probe(200_000, 400_000));
+        assert!(probe(200_000, 450_000));
+        // Many instances in the frustum raise the bar; few occluded triangles never pay.
+        assert!(!probe(1_600_000, 1_400_000));
+        assert!(probe(1_600_000, 1_600_000));
+        assert!(!probe(100, 1000));
+        // Probes that keep failing wait 120, 240, 480, 960, 960... frames.
+        let mut b = Auto::default();
+        let mut now = 0;
+        let mut waits = Vec::new();
+        for _ in 0..5 {
+            b.active = true;
+            b.probing = true;
+            b.since = now;
+            now += 3;
+            b.reading(&stats(now - 2, 1000, 0), now);
+            assert!(!b.active);
+            waits.push(b.next_probe - now);
+            now = b.next_probe;
+        }
+        assert_eq!(waits, [120, 240, 480, 960, 960]);
+        // A probe that pays resets the wait.
+        b.active = true;
+        b.probing = true;
+        b.since = now;
+        b.reading(&stats(now + 1, 1000, 9_000_000), now + 3);
+        assert!(b.active && b.backoff == PROBE_EVERY);
     }
 
     #[test]

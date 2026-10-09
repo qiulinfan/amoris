@@ -298,7 +298,7 @@ impl Viewport {
             .map(|(l, ms)| format!("{{\"pass\":\"{l}\",\"ms\":{ms:.3}}}"))
             .collect();
         format!(
-            "{{\"gpu_ms\":{:.3},\"instances\":{},\"entities\":{},\"meshes\":{},\"pending_assets\":{},\"tick\":{},\"backend\":\"{}\",\"draw_path\":\"{}\",\"draw_calls\":{},\"passes\":[{}]}}",
+            "{{\"gpu_ms\":{:.3},\"instances\":{},\"entities\":{},\"meshes\":{},\"pending_assets\":{},\"tick\":{},\"backend\":\"{}\",\"draw_path\":\"{}\",\"draw_calls\":{},\"occlusion\":\"{}\",\"occluded\":{},\"passes\":[{}]}}",
             s.gpu_ms,
             s.instances,
             s.entities,
@@ -308,6 +308,8 @@ impl Viewport {
             s.backend,
             s.draw_path,
             s.draw_calls,
+            s.occlusion,
+            s.occlusion_stats.map_or(0, |o| o.occluded),
             passes.join(",")
         )
     }
@@ -322,6 +324,27 @@ impl Viewport {
             .apply(pocket_render::demo::mixed(n), now_ms / 1000.0);
         self.renderer
             .set_camera_override(Some(pocket_render::demo::mixed_camera(n)));
+    }
+
+    /// Occlusion culling of the camera view: `off`, `on` or `auto` (the default; anything else
+    /// leaves it as it is).
+    pub fn set_occlusion(&mut self, mode: &str) {
+        if let Some(m) = pocket_render::OcclusionMode::parse(mode) {
+            self.renderer.set_occlusion(m);
+        }
+    }
+
+    /// Loads the occlusion culling check's scene (a wall with a slit, an alpha-masked occluder, a
+    /// grid of primitives behind them) with its front camera.
+    pub fn demo_occluders(&mut self, now_ms: f64) {
+        self.renderer.add_model(
+            pocket_render::demo::MIXED_MODEL,
+            &pocket_render::demo::mixed_model(),
+        );
+        self.renderer
+            .apply(pocket_render::demo::occluders(3.0), now_ms / 1000.0);
+        let [front, _] = pocket_render::demo::occluders_cameras();
+        self.renderer.set_camera_override(Some(front));
     }
 
     /// Loads the many_cubes benchmark scene (Bevy's layouts) for in-browser measurement.

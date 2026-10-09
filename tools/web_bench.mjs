@@ -79,6 +79,7 @@ const r = await send("Runtime.evaluate", { returnByValue: true, expression: `(()
     backend: s.length ? s[0].backend : null, passes: s.length ? s[s.length - 1].passes : null,
     draw_path: s.length ? s[s.length - 1].draw_path : null, draw_calls: s.length ? s[s.length - 1].draw_calls : null,
     instances: s.length ? s[s.length - 1].instances : null,
+    occlusion: s.length ? s[s.length - 1].occlusion : null, occluded: s.length ? s[s.length - 1].occluded : null,
     canvas: (() => { const c = document.querySelector("canvas"); return c ? [c.width, c.height] : null; })(),
     gpu: navigator.gpu ? "yes" : "no" };
 })()` });
