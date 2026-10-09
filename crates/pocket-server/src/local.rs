@@ -154,16 +154,48 @@ pub fn server_catalog() -> Vec<Value> {
             "capture",
             "read",
             "A rendered image or the id buffer's summary of a camera view.",
-            any.clone(),
-        ),
-        e(
-            "debug.state",
-            "read",
-            "The debugger: debug.breakpoints.set, debug.breakpoints.clear, debug.pause, \
-             debug.continue, debug.step, debug.state, debug.eval, debug.watch, debug.rewind.",
             any,
         ),
     ]
+}
+
+/// `debug.rewind`'s parameters: the host's own debugger method (it keeps the snapshots).
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RewindParams {
+    /// The tick to stand at: the kept snapshot at or before it is restored and stepped to it.
+    pub tick: u64,
+    /// The scripts the rewound world runs: `applied` (default, the bundle running now) or
+    /// `snapshot` (the bundle the snapshot was kept with).
+    #[serde(default)]
+    pub bundle: Option<String>,
+}
+
+/// The catalog entries of the debugger installed as `hub` (its methods, and the host's
+/// `debug.rewind`), or a placeholder that says no debugger is installed.
+pub fn debug_catalog(hub: Option<&dyn crate::DebugHub>) -> Vec<Value> {
+    let entry = |m: &Value| {
+        json!({"name": m["name"], "kind": m.get("kind").cloned().unwrap_or(json!("read")),
+               "doc": m["doc"], "aliases": m.get("aliases").cloned().unwrap_or(json!([])),
+               "thread": false, "params": m["params"], "server": true})
+    };
+    let Some(hub) = hub else {
+        return vec![
+            json!({"name": "debug.state", "kind": "read", "aliases": [], "thread": false,
+            "server": true, "params": {"type": "object"},
+            "doc": "The script debugger (debug.*): not installed in this host."}),
+        ];
+    };
+    let mut out: Vec<Value> = hub.methods().iter().map(entry).collect();
+    out.push(entry(&json!({
+        "name": "debug.rewind",
+        "kind": "control",
+        "doc": "Time travel: restores the kept snapshot at or before tick (one every 60 ticks) \
+                under the applied scripts (bundle: snapshot for the snapshot's own) and steps \
+                the world to tick; a breakpoint on the way stops it.",
+        "params": schema::<RewindParams>(),
+    })));
+    out
 }
 
 fn decode<T: DeserializeOwned + JsonSchema>(v: &Value, owner: &str) -> Result<T, Problem> {
@@ -232,20 +264,62 @@ pub(crate) fn inside(path: &str) -> bool {
 }
 
 impl Host {
-    /// The catalog: the runtime's commands (fetched once) and the server's.
+    /// The catalog: the runtime's commands (fetched once), the server's and the debugger's.
     pub async fn catalog(&self) -> Result<Value, Problem> {
-        if let Some(c) = self.0.catalog.get() {
-            return Ok(c.clone());
-        }
-        let mut all = match self.game(&Via::Api, "catalog.list", json!({})).await? {
+        let runtime = match self.0.catalog.get() {
+            Some(c) => c.clone(),
+            None => {
+                let c = self.game(&Via::Api, "catalog.list", json!({})).await?;
+                let _ = self.0.catalog.set(c.clone());
+                c
+            }
+        };
+        let mut all = match runtime {
             Value::Array(a) => a,
             _ => Vec::new(),
         };
         all.extend(server_catalog());
+        let hub = self.0.debug.read().ok().and_then(|h| h.clone());
+        all.extend(debug_catalog(hub.as_deref()));
         all.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
-        let c = Value::Array(all);
-        let _ = self.0.catalog.set(c.clone());
-        Ok(c)
+        Ok(Value::Array(all))
+    }
+
+    /// `debug.rewind {tick, bundle?}`: the kept snapshot at or before `tick` restored (under the
+    /// applied scripts unless `bundle: "snapshot"`), then stepped to `tick`.
+    async fn rewind(&self, via: &Via, params: Value) -> Result<Value, Problem> {
+        let p: RewindParams = decode(&params, "debug.rewind")?;
+        let mut restore = json!({"tick": p.tick});
+        if let Some(b) = &p.bundle {
+            restore["bundle"] = json!(b);
+        }
+        let restored = self.game(via, "snapshots.restore", restore).await?;
+        if let Ok(h) = self.game(&Via::Api, "history.list", json!({})).await {
+            self.push("history", h);
+        }
+        let at = restored["restored"].as_u64().unwrap_or(p.tick);
+        let mut out = json!({"restored": at, "tick": at, "scripts": restored["scripts"]});
+        if p.tick > at {
+            let stepped = self
+                .game(via, "time.step", json!({"ticks": p.tick - at}))
+                .await?;
+            out["tick"] = stepped["tick"].clone();
+            if !stepped["stopped_by"].is_null() {
+                out["stopped_by"] = stepped["stopped_by"].clone();
+            }
+        }
+        Ok(out)
+    }
+
+    /// The registry's components as `world.schema` lists them, from the last publication (the
+    /// game's own registry, so it answers while the game is held).
+    fn schemas(&self) -> Vec<Value> {
+        let snap = self.0.reader.latest();
+        snap.registry
+            .components
+            .iter()
+            .map(|c| serde_json::to_value(c).unwrap_or(Value::Null))
+            .collect()
     }
 
     /// Answers `method` on the server side, or `None` when the game answers it.
@@ -337,7 +411,20 @@ impl Host {
             m if m.starts_with("debug.") => {
                 let hub = self.0.debug.read().ok().and_then(|h| h.clone());
                 match hub {
-                    Some(h) => h.call(m, params).await,
+                    Some(_) if m == "debug.rewind" => self.rewind(via, params).await,
+                    Some(h) => {
+                        let mut params = params;
+                        // Entities by name, as every other command takes them.
+                        if m == "debug.watch"
+                            && let Some(e) = params.get("entity").filter(|e| e.is_string())
+                        {
+                            match self.entity_id(e) {
+                                Ok(id) => params["entity"] = json!(id),
+                                Err(p) => return Some(Err(p)),
+                            }
+                        }
+                        h.call(m, params).await
+                    }
                     None => Err(not_available("debug", m)),
                 }
             }
@@ -419,21 +506,19 @@ impl Host {
                 ));
             }
         }
-        if let Ok(Value::Array(comps)) = self.game(&Via::Api, "world.schema", json!({})).await {
-            for c in comps {
-                let name = c["name"].as_str().unwrap_or("");
-                let doc = c["doc"].as_str().unwrap_or("");
-                let s = score(&format!("{name} {doc} {}", c["schema"]));
-                if s > 0 {
-                    let fields: Vec<&String> = c["schema"]["properties"]
-                        .as_object()
-                        .map(|m| m.keys().collect())
-                        .unwrap_or_default();
-                    hits.push((
-                        s + score(name) * 2,
-                        json!({"component": name, "doc": doc, "fields": fields}),
-                    ));
-                }
+        for c in self.schemas() {
+            let name = c["name"].as_str().unwrap_or("");
+            let doc = c["doc"].as_str().unwrap_or("");
+            let s = score(&format!("{name} {doc} {}", c["schema"]));
+            if s > 0 {
+                let fields: Vec<&String> = c["schema"]["properties"]
+                    .as_object()
+                    .map(|m| m.keys().collect())
+                    .unwrap_or_default();
+                hits.push((
+                    s + score(name) * 2,
+                    json!({"component": name, "doc": doc, "fields": fields}),
+                ));
             }
         }
         hits.sort_by_key(|h| std::cmp::Reverse(h.0));

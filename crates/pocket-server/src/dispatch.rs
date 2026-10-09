@@ -4,12 +4,16 @@
 //! session's calls are pushed as `agent` events.
 
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use pocket_contract::{Problem, detail};
 use pocket_link::{GameClient, game_stopped};
 use serde_json::{Value, json};
 
-use crate::Host;
+use crate::{Host, paused};
+
+/// How often a call waiting on the game looks for a stop of the script debugger.
+const PAUSE_POLL: Duration = Duration::from_millis(5);
 
 /// Whose client a call goes through.
 #[derive(Clone)]
@@ -56,14 +60,23 @@ impl Host {
         }
     }
 
-    /// Sends a command to the game thread and awaits its reply.
+    /// Sends a command to the game thread and awaits its reply, never behind the script
+    /// debugger (server.md 3.4): a game held at a breakpoint refuses the call at once with
+    /// `debug.paused`; a stop that comes while the call waits answers a `time.step` with where it
+    /// stopped (`{tick, stopped_by, paused: true}`; the loop ends the step with that tick) and
+    /// any other call with `debug.paused {queued: true}` (it runs when the game goes on).
     pub(crate) async fn game(
         &self,
         via: &Via,
         method: &str,
         params: Value,
     ) -> Result<Value, Problem> {
-        let (tx, rx) = tokio::sync::oneshot::channel();
+        let reader = &self.0.reader;
+        if let Some(stop) = reader.debug_stop() {
+            return Err(paused::refusal(method, &stop, false));
+        }
+        let stops = reader.debug_stops();
+        let (tx, mut rx) = tokio::sync::oneshot::channel();
         {
             let client = self.client(via);
             let mut c = client.lock().map_err(|_| {
@@ -77,13 +90,32 @@ impl Host {
                 let _ = tx.send(r);
             })?;
         }
-        match rx.await {
-            Ok(r) => r.map(pocket_link::ReplyValue::into_json),
-            Err(_) => Err(self
-                .0
-                .reader
-                .stop_reason()
-                .unwrap_or_else(|| game_stopped("the game ended before it answered", None))),
+        let mut poll = tokio::time::interval(PAUSE_POLL);
+        poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tokio::select! {
+                r = &mut rx => {
+                    return match r {
+                        Ok(r) => r.map(pocket_link::ReplyValue::into_json),
+                        Err(_) => Err(reader.stop_reason().unwrap_or_else(|| {
+                            game_stopped("the game ended before it answered", None)
+                        })),
+                    };
+                }
+                _ = poll.tick() => {
+                    if reader.debug_stops() == stops {
+                        continue;
+                    }
+                    let Some(stop) = reader.debug_stop() else {
+                        continue;
+                    };
+                    if matches!(method, "time.step" | "step") {
+                        return Ok(json!({"tick": stop["tick"], "world_hash": null, "errors": [],
+                                         "paused": true, "stopped_by": stop}));
+                    }
+                    return Err(paused::refusal(method, &stop, true));
+                }
+            }
         }
     }
 
@@ -111,7 +143,10 @@ impl Host {
         }
         let r = match self.local(via, method, params.clone()).await {
             Some(r) => r,
-            None => self.game(via, method, params).await,
+            None => match self.paused_read(method, &params) {
+                Some(r) => r,
+                None => self.game(via, method, params).await,
+            },
         };
         if r.is_ok()
             && HISTORY.contains(&method)

@@ -14,6 +14,7 @@ pub mod hostfile;
 mod http;
 mod local;
 mod mcp;
+mod paused;
 mod push;
 pub mod typecheck;
 mod ws;
@@ -30,16 +31,25 @@ use tokio::sync::broadcast;
 
 pub use dispatch::Via;
 pub use http::{find_editor_dist, router};
-pub use local::server_catalog;
+pub use local::{RewindParams, debug_catalog, server_catalog};
 pub use mcp::McpBackend;
+pub use paused::PAUSED_READS;
 
 /// A boxed future, as the plug-in traits return them.
 pub type BoxFuture<T> = pocket_mcp::BoxFuture<T>;
 
 /// The script debugger as the server reaches it (`pocket-debug`'s hub, installed by the
-/// integrator): `debug.*` methods by name (`debug.state`, `debug.breakpoints.set`, ...).
+/// integrator): `debug.*` methods by name (`debug.state`, `debug.breakpoints.set`, ...). The
+/// server serves `debug.rewind` itself and resolves `debug.watch`'s entity names first.
 pub trait DebugHub: Send + Sync {
     fn call(&self, method: &str, params: Value) -> BoxFuture<Result<Value, Problem>>;
+
+    /// The methods' catalog entries, `{name, kind, doc, aliases, params}` with `params` their
+    /// JSON Schema (pocket-debug's `methods()`): `catalog.list`, `pocket help debug.watch` and
+    /// `docs.search` describe the debugger like every other command.
+    fn methods(&self) -> Vec<Value> {
+        Vec::new()
+    }
 }
 
 /// Renders a camera view for `capture` (an image or the id buffer's summary).
@@ -185,6 +195,9 @@ impl Host {
         let addr = listener
             .local_addr()
             .map_err(|e| Problem::new("host.bind_failed", e.to_string(), detail([])))?;
+        // The runtime's catalog, fetched while the game answers: a host held at a breakpoint
+        // still lists its commands.
+        let _ = self.catalog().await;
         self.start_pushers();
         let app = router(self.clone(), addr.port());
         let task = tokio::spawn(async move {
