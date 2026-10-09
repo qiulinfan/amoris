@@ -166,6 +166,16 @@ Amoris 是一个 **agent-native** 的 3D 游戏引擎。agent 在三个角色上
   （`docs/spikes/render.md`）在 Radeon 780M 上测得 Vulkan 比 Direct3D 12 慢 25–53%。Windows 的
   `Auto` 后端由测量决定：Direct3D 12 至少同样快且画面一致才取代 Vulkan。测量与结论见
   [bench/dx12.md](bench/dx12.md)。光线追踪与浏览器不在此决定内。
+- 2026-10-09（Pioneer）：光追研究从 Metal 扩展到所有暴露 ray query 的后端。2026-10-05 的 GI
+  决定以 Metal ray query 表述，表面 PT、SHaRC/ReSTIR 原型与在线 NRC 也只在 Metal 上运行；
+  现在它们在 Vulkan（`VK_KHR_ray_query`）与 Direct3D 12（DXR 1.1、Shader Model 6.5）上同样运行，
+  门槛是适配器暴露 wgpu 的 `EXPERIMENTAL_RAY_QUERY`，而不是后端名称；没有该特性的适配器与
+  浏览器 WebGPU 明确拒绝。研究器材仍是独立设备上的独立工具，不改变交互渲染器与 WebGPU 基线。
+  理由：所有者要求自主探索 DirectX；wgpu 30 在这两个后端上提供同一个 ray query 接口，同一份
+  WGSL 经 naga 生成 MSL、SPIR-V 与 HLSL，跨后端运行能暴露着色器翻译与驱动的差异；本机的
+  RTX 5060 支持两者，能在同一块 GPU 上对照 Vulkan 与 Direct3D 12 的光追开销与画面，M5 的 Metal
+  结果保留为参考。规格与测量见 [表面 PT 与在线 NRC](spec/path-tracing-nrc.md)、
+  [GI 实现](spec/metal-gi.md) 及其测量记录的 Windows 章节。
 
 - 一套 wgpu 渲染器，WGSL 着色器放在独立的 `.wgsl` 文件里（不放进 Rust 字符串），按通道组织模块。
 - **渲染图**：每帧由通道组成的有向无环图，资源（瞬态纹理与缓冲）由图分配与复用。

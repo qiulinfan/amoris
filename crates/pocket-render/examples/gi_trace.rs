@@ -1,4 +1,5 @@
-//! Static Metal diffuse tracing / SHaRC / bounded RIS-ReSTIR GI experiments.
+//! Static ray-query diffuse tracing / SHaRC / bounded RIS-ReSTIR GI experiments, on any adapter with
+//! ray queries (Metal, Vulkan, Direct3D 12; `POCKET_BACKEND` and `POCKET_ADAPTER` choose).
 //! `cargo run --release -p pocket-render --example gi_trace -- PROJECT --mode raw|sharc|restir
 //!    --output image.png --width 320 --height 240 --samples 1 --frames 64`
 //! Writes a preview PNG, a JSON report, and linear float32 RGBA for unbiased image comparisons.
@@ -118,7 +119,7 @@ fn run() -> Result<(), String> {
     }
     let scene = RayScene::from_project(&root)?;
     let camera = camera(&root)?;
-    let gpu = Gpu::headless(BackendChoice::Metal).map_err(|e| e.to_string())?;
+    let gpu = Gpu::headless(BackendChoice::from_env()).map_err(|e| e.to_string())?;
     let mut lighting = RayLighting::new(&gpu, &scene)?;
     let traced = lighting.render(&camera, &options, mode)?;
     let mut preview = image::RgbImage::new(options.width, options.height);

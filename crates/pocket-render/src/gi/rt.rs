@@ -1,4 +1,4 @@
-//! Isolated Metal diffuse path tracer, SHaRC-style cache and bounded secondary-surface RIS/ReSTIR GI.
+//! Isolated ray-query diffuse path tracer, SHaRC-style cache and bounded secondary-surface RIS/ReSTIR GI.
 //!
 //! Update traces independent sparse paths, Resolve combines history, and Query terminates eligible
 //! secondary path suffixes. This implements the algorithm's three responsibilities in WGSL rather
@@ -8,8 +8,10 @@
 //!
 //! This tool accepts static opaque constant Lambertian materials, emissive triangles and a black
 //! environment. It rejects textures, alpha, metallic transport and explicit lights. It owns a second
-//! device requested from the supplied Metal adapter, because the ordinary renderer's device does
-//! not enable experimental ray queries. It is not yet a pass in the interactive renderer.
+//! device requested from the supplied adapter, because the ordinary renderer's device does not
+//! enable experimental ray queries. Any adapter that exposes them qualifies: Metal, Vulkan
+//! (`VK_KHR_ray_query`) or Direct3D 12 (DXR 1.1); see [`super::require_ray_query`]. It is not yet a
+//! pass in the interactive renderer.
 //! ReSTIR's fresh RIS baseline is available without reuse; temporal/spatial source reuse is an
 //! explicitly biased experiment with incomplete support/M correction, not a ReSTIR PT implementation.
 
@@ -37,17 +39,23 @@ pub enum TraceMode {
     Restir,
 }
 
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(test)]
 mod tests {
     use super::*;
 
+    /// Runs on every native backend whose adapter exposes ray queries; skipped elsewhere.
     #[test]
-    #[ignore = "requires real Metal ray-query hardware; verifies cache age and reset against raw rays"]
-    fn metal_cache_requires_history_and_resets() {
+    fn ray_query_cache_requires_history_and_resets() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../samples/gi-room");
         let scene = RayScene::from_project(&root).expect("static room");
-        let gpu = Gpu::headless(crate::BackendChoice::Metal).expect("Metal GPU");
-        let mut lighting = RayLighting::new(&gpu, &scene).expect("Metal ray query");
+        for gpu in crate::gi::ray_query_gpus() {
+            cache_requires_history_and_resets(&gpu, &scene);
+        }
+    }
+
+    fn cache_requires_history_and_resets(gpu: &Gpu, scene: &RayScene) {
+        let backend = gpu.backend_name();
+        let mut lighting = RayLighting::new(gpu, scene).expect("ray-query device");
         let camera = RayCamera {
             position: [0.0, 2.0, 7.0],
             forward: [0.0, 0.0, -1.0],
@@ -69,7 +77,7 @@ mod tests {
             .expect("empty cache");
         assert_eq!(
             raw.radiance, cached.radiance,
-            "empty/ineligible cache must preserve raw path samples"
+            "{backend}: empty/ineligible cache must preserve raw path samples"
         );
         assert!(
             cached
@@ -92,23 +100,29 @@ mod tests {
             .expect("cache warmup");
         assert_eq!(
             warmed.stats.frames[0].cache_hits, 0,
-            "new render clears previous history"
+            "{backend}: new render clears previous history"
         );
         assert_eq!(
             warmed.stats.frames[1].cache_hits, 0,
-            "at least three frames are required"
+            "{backend}: at least three frames are required"
         );
         assert!(warmed.stats.frames.iter().any(|frame| frame.cache_hits > 0));
         assert!(warmed.stats.gpu_errors.is_empty());
     }
 
+    /// Runs on every native backend whose adapter exposes ray queries; skipped elsewhere.
     #[test]
-    #[ignore = "requires real Metal ray-query hardware; verifies RIS, M counting and history reset"]
-    fn metal_ris_matches_raw_and_bounds_history() {
+    fn ray_query_ris_matches_raw_and_bounds_history() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../samples/gi-room");
         let scene = RayScene::from_project(&root).expect("static room");
-        let gpu = Gpu::headless(crate::BackendChoice::Metal).expect("Metal GPU");
-        let mut lighting = RayLighting::new(&gpu, &scene).expect("Metal ray query");
+        for gpu in crate::gi::ray_query_gpus() {
+            ris_matches_raw_and_bounds_history(&gpu, &scene);
+        }
+    }
+
+    fn ris_matches_raw_and_bounds_history(gpu: &Gpu, scene: &RayScene) {
+        let backend = gpu.backend_name();
+        let mut lighting = RayLighting::new(gpu, scene).expect("ray-query device");
         let camera = RayCamera {
             position: [0.0, 2.0, 7.0],
             forward: [0.0, 0.0, -1.0],
@@ -138,7 +152,7 @@ mod tests {
             .fold(0.0f32, f32::max);
         assert!(
             maximum_relative < 2e-5,
-            "RIS K1 should preserve raw transport: {maximum_relative}"
+            "{backend}: RIS K1 should preserve raw transport: {maximum_relative}"
         );
         assert!(ris.stats.frames.iter().all(|f| f.visibility_blocked == 0
             && f.maximum_reservoir_m == 1
@@ -412,7 +426,7 @@ fn wait(device: &wgpu::Device, submission: wgpu::SubmissionIndex) -> Result<(), 
             timeout: Some(Duration::from_secs(30)),
         })
         .map(|_| ())
-        .map_err(|error| format!("Metal GPU wait: {error}"))
+        .map_err(|error| format!("ray-query GPU wait: {error}"))
 }
 
 /// Immutable geometry and material resources plus an explicitly resettable world-space cache.
@@ -435,6 +449,7 @@ pub struct RayLighting {
     timestamp_enabled: bool,
     errors: Arc<Mutex<Vec<String>>>,
     adapter: String,
+    backend: &'static str,
     scene_signature: String,
     triangle_count: usize,
     emitter_count: usize,
@@ -444,20 +459,12 @@ pub struct RayLighting {
 
 impl RayLighting {
     pub fn new(gpu: &Gpu, scene: &RayScene) -> Result<Self, String> {
-        if gpu.info.backend != wgpu::Backend::Metal {
-            return Err("this isolated prototype requires the Metal backend".into());
-        }
+        super::require_ray_query(gpu)?;
         let have = gpu.adapter.features();
-        if !have.contains(wgpu::Features::EXPERIMENTAL_RAY_QUERY) {
-            return Err(format!(
-                "{} does not expose EXPERIMENTAL_RAY_QUERY",
-                gpu.info.name
-            ));
-        }
         if scene.environment_radiance().iter().any(|v| *v != 0.0)
             || scene.explicit_light_count() != 0
         {
-            return Err("Metal trace prototype supports emissive triangle lights and a black environment only".into());
+            return Err("the trace prototype supports emissive triangle lights and a black environment only".into());
         }
         let world_materials: Vec<_> = scene.world_materials().collect();
         let mut materials = Vec::with_capacity(world_materials.len());
@@ -470,7 +477,7 @@ impl RayLighting {
                 || material.occlusion_texture.is_some()
             {
                 return Err(format!(
-                    "material {index}: textured transport is not implemented in the Metal prototype"
+                    "material {index}: textured transport is not implemented in the trace prototype"
                 ));
             }
             if material.alpha_mode != AlphaMode::Opaque
@@ -563,7 +570,7 @@ impl RayLighting {
         limits.max_storage_buffers_per_shader_stage = 14;
         let (device, queue) =
             pollster::block_on(gpu.adapter.request_device(&wgpu::DeviceDescriptor {
-                label: Some("Metal GI prototype"),
+                label: Some("ray-query GI prototype"),
                 required_features: features,
                 required_limits: limits,
                 // SAFETY: this isolated tool deliberately opts into experimental ray-query APIs.
@@ -574,12 +581,12 @@ impl RayLighting {
         let errors = Arc::new(Mutex::new(Vec::<String>::new()));
         let captured = errors.clone();
         device.on_uncaptured_error(Arc::new(move |error| {
-            eprintln!("Metal GI uncaptured GPU error: {error}");
+            eprintln!("ray-query GI uncaptured GPU error: {error}");
             captured.lock().unwrap().push(error.to_string());
         }));
         let lost = errors.clone();
         device.set_device_lost_callback(move |reason, message| {
-            eprintln!("Metal GI device lost ({reason:?}): {message}");
+            eprintln!("ray-query GI device lost ({reason:?}): {message}");
             lost.lock()
                 .unwrap()
                 .push(format!("device lost ({reason:?}): {message}"));
@@ -744,7 +751,7 @@ impl RayLighting {
             pipeline("restir_shade"),
         ];
         if let Some(error) = pollster::block_on(scope.pop()) {
-            return Err(format!("Metal GI setup validation: {error}"));
+            return Err(format!("ray-query GI setup validation: {error}"));
         }
         let pending = errors.lock().unwrap().clone();
         if !pending.is_empty() {
@@ -769,6 +776,7 @@ impl RayLighting {
             timestamp_enabled,
             errors,
             adapter: gpu.info.name.clone(),
+            backend: gpu.backend_name(),
             scene_signature: scene.scene_signature().to_owned(),
             triangle_count: triangles.len(),
             emitter_count,
@@ -1336,7 +1344,7 @@ impl RayLighting {
             stats: TraceStats {
                 mode,
                 adapter: self.adapter.clone(),
-                backend: "Metal".into(),
+                backend: self.backend.into(),
                 scene_signature: self.scene_signature.clone(),
                 triangles: self.triangle_count,
                 emissive_triangles: self.emitter_count,

@@ -1,6 +1,8 @@
-//! Static surface path tracing on Metal ray queries. Geometry is immutable; lighting scales and
-//! camera sampling are parameters. Native batches retain accumulation and statistics on the GPU
-//! and read back once. The ordinary renderer and earlier GI experiments remain independent.
+//! Static surface path tracing on wgpu ray queries: Metal, Vulkan (`VK_KHR_ray_query`) or
+//! Direct3D 12 (DXR 1.1), wherever the adapter exposes `EXPERIMENTAL_RAY_QUERY`
+//! ([`super::require_ray_query`]). Geometry is immutable; lighting scales and camera sampling are
+//! parameters. Native batches retain accumulation and statistics on the GPU and read back once.
+//! The ordinary renderer and earlier GI experiments remain independent.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, mpsc};
@@ -238,6 +240,7 @@ pub struct NrcAdaptation {
 pub struct PtStats {
     pub format: &'static str,
     pub adapter: String,
+    pub backend: &'static str,
     pub scene_signature: String,
     pub options: PtOptions,
     pub scene_options: PtSceneOptions,
@@ -502,6 +505,7 @@ pub struct PathTracer {
     pub(crate) timestamp_enabled: bool,
     pub(crate) errors: Arc<Mutex<Vec<String>>>,
     adapter: String,
+    backend: &'static str,
     scene_signature: String,
     scene_options: PtSceneOptions,
     triangle_count: usize,
@@ -527,13 +531,8 @@ impl PathTracer {
         options: &PtSceneOptions,
     ) -> Result<Self, String> {
         options.validate()?;
-        if gpu.info.backend != wgpu::Backend::Metal {
-            return Err("surface PT currently requires Metal".into());
-        }
+        super::require_ray_query(gpu)?;
         let have = gpu.adapter.features();
-        if !have.contains(wgpu::Features::EXPERIMENTAL_RAY_QUERY) {
-            return Err("adapter has no Metal ray-query support".into());
-        }
         let timestamp_enabled = have.contains(wgpu::Features::TIMESTAMP_QUERY);
         let adapter_limits = gpu.adapter.limits();
         let mut limits =
@@ -560,7 +559,7 @@ impl PathTracer {
                         wgpu::Features::empty()
                     },
                 required_limits: limits,
-                // SAFETY: this native tool explicitly opts into experimental Metal ray queries.
+                // SAFETY: this native tool explicitly opts into experimental ray queries.
                 experimental_features: unsafe { wgpu::ExperimentalFeatures::enabled() },
                 ..Default::default()
             }))
@@ -988,6 +987,7 @@ impl PathTracer {
             timestamp_enabled,
             errors,
             adapter: gpu.info.name.clone(),
+            backend: gpu.backend_name(),
             scene_signature: scene.scene_signature().into(),
             scene_options: *options,
             triangle_count: triangles.len(),
@@ -1624,6 +1624,7 @@ impl PathTracer {
         let stats = PtStats {
             format: "amoris-surface-pt-v1",
             adapter: self.adapter.clone(),
+            backend: self.backend,
             scene_signature: self.scene_signature.clone(),
             options: options.clone(),
             scene_options: self.scene_options,
@@ -1733,13 +1734,20 @@ mod tests {
         assert_eq!(color[3], linear[3]);
     }
 
+    /// Complete PT and actual online training, on every native backend whose adapter exposes ray
+    /// queries; skipped elsewhere.
     #[test]
-    #[ignore = "requires native Metal ray queries; exercises complete PT and actual online training"]
-    fn metal_pt_transport_training_and_accumulation() {
+    fn ray_query_pt_transport_training_and_accumulation() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../samples/pt-lab");
         let scene = RayScene::for_path_tracing(&root).unwrap();
-        let gpu = Gpu::headless(crate::BackendChoice::Metal).unwrap();
-        let mut tracer = PathTracer::new(&gpu, &scene).unwrap();
+        for gpu in crate::gi::ray_query_gpus() {
+            pt_transport_training_and_accumulation(&gpu, &scene);
+        }
+    }
+
+    fn pt_transport_training_and_accumulation(gpu: &Gpu, scene: &RayScene) {
+        let backend = gpu.backend_name();
+        let mut tracer = PathTracer::new(gpu, scene).unwrap();
         let camera = RayCamera {
             position: [0.0, 1.7, 7.0],
             forward: [0.0, 0.0, -1.0],
@@ -1753,20 +1761,30 @@ mod tests {
             ..Default::default()
         };
         let raw = tracer.render(&camera, &options).unwrap();
-        assert!(raw.stats.frames.iter().any(|f| f.transmission_samples > 0));
-        assert!(raw.stats.frames.iter().any(|f| f.metallic_samples > 0));
-        assert!(raw.stats.frames.iter().any(|f| f.textured_vertices > 0));
+        let frames = &raw.stats.frames;
         assert!(
-            raw.stats
-                .frames
+            frames.iter().any(|f| f.transmission_samples > 0),
+            "{backend}: no transmission samples"
+        );
+        assert!(
+            frames.iter().any(|f| f.metallic_samples > 0),
+            "{backend}: no metallic samples"
+        );
+        assert!(
+            frames.iter().any(|f| f.textured_vertices > 0),
+            "{backend}: no textured vertices"
+        );
+        assert!(
+            frames
                 .iter()
-                .any(|f| f.alpha_rejections > 0 && f.transparent_candidates > 0)
+                .any(|f| f.alpha_rejections > 0 && f.transparent_candidates > 0),
+            "{backend}: no alpha rejections or transparent candidates"
         );
         options.readback_every_frame = true;
         let blocking = tracer.render(&camera, &options).unwrap();
         assert_eq!(
             raw.radiance, blocking.radiance,
-            "readback optimization preserves all samples"
+            "{backend}: readback optimization preserves all samples"
         );
         options.readback_every_frame = false;
         options.online_nrc = Some(NrcConfig {
@@ -1783,7 +1801,7 @@ mod tests {
             .fold(0.0, f32::max);
         assert!(
             max_error < 2e-5,
-            "uncached teacher paths preserve camera transport: {max_error}"
+            "{backend}: uncached teacher paths preserve camera transport: {max_error}"
         );
         assert!(
             training

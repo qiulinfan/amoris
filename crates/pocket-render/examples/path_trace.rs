@@ -1,4 +1,5 @@
-//! Complete static surface path tracing on Metal; writes linear HDR, preview PNG and a report.
+//! Complete static surface path tracing on any adapter with ray queries (Metal, Vulkan, Direct3D 12;
+//! `POCKET_BACKEND` and `POCKET_ADAPTER` choose); writes linear HDR, preview PNG and a report.
 use glam::{Quat, Vec3};
 use pocket_render::gi::bake::RayScene;
 use pocket_render::gi::nrc::NrcConfig;
@@ -137,7 +138,7 @@ fn run() -> Result<(), String> {
         return Err("preview exposure must be finite in -16..=16 EV".into());
     }
     let camera = camera(&root, &scene_file)?;
-    let gpu = Gpu::headless(BackendChoice::Metal).map_err(|e| e.to_string())?;
+    let gpu = Gpu::headless(BackendChoice::from_env()).map_err(|e| e.to_string())?;
     let mut tracer = PathTracer::with_scene_options(&gpu, &scene, &scene_options)?;
     let traced = tracer.render(&camera, &options)?;
     let mut preview = image::RgbImage::new(options.width, options.height);

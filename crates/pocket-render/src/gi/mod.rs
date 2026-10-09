@@ -16,6 +16,64 @@ pub mod rt;
 #[cfg(all(not(target_arch = "wasm32"), feature = "import"))]
 pub mod sky_radiance;
 
+/// The ray-query research tools' gate (charter 4.4, Pioneer 2026-10-09): the adapter must expose
+/// wgpu's `EXPERIMENTAL_RAY_QUERY`, whatever its backend. wgpu 30 offers it on Metal, on Vulkan
+/// with `VK_KHR_ray_query` and on Direct3D 12 with DXR tier 1.1 and Shader Model 6.5; never in
+/// the browser.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn require_ray_query(gpu: &crate::Gpu) -> Result<(), String> {
+    if gpu
+        .adapter
+        .features()
+        .contains(wgpu::Features::EXPERIMENTAL_RAY_QUERY)
+    {
+        return Ok(());
+    }
+    Err(format!(
+        "{} on {} does not expose EXPERIMENTAL_RAY_QUERY (Metal ray tracing, Vulkan \
+         VK_KHR_ray_query, or Direct3D 12 DXR 1.1 with Shader Model 6.5)",
+        gpu.backend_name(),
+        gpu.info.name
+    ))
+}
+
+/// One GPU per native backend of this platform whose adapter exposes ray queries (Vulkan and
+/// Direct3D 12 on Windows, Metal on Apple, Vulkan elsewhere). A backend without an adapter or
+/// without ray queries is skipped with a note, so the GPU tests pass cleanly on machines that
+/// cannot run them. `POCKET_ADAPTER` picks the adapter as everywhere else.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) fn ray_query_gpus() -> Vec<crate::Gpu> {
+    use crate::BackendChoice;
+    let backends: &[BackendChoice] = if cfg!(windows) {
+        &[BackendChoice::Vulkan, BackendChoice::Dx12]
+    } else if cfg!(any(target_os = "macos", target_os = "ios")) {
+        &[BackendChoice::Metal]
+    } else {
+        &[BackendChoice::Vulkan]
+    };
+    // Tests run in parallel; Vulkan instance creation and adapter enumeration from several threads
+    // at once sometimes find no adapter at all here (Windows, two GPUs), so one at a time.
+    static OPEN: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let mut gpus = Vec::new();
+    for &choice in backends {
+        let opened = {
+            let _one = OPEN.lock().unwrap_or_else(|e| e.into_inner());
+            crate::Gpu::headless(choice)
+        };
+        match opened {
+            Ok(gpu) => match require_ray_query(&gpu) {
+                Ok(()) => {
+                    eprintln!("{} on {}: ray queries", gpu.backend_name(), gpu.info.name);
+                    gpus.push(gpu)
+                }
+                Err(why) => eprintln!("{choice:?}: {why}; skipped"),
+            },
+            Err(why) => eprintln!("{choice:?}: no GPU ({why}); skipped"),
+        }
+    }
+    gpus
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct Params {

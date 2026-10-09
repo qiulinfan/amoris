@@ -1,4 +1,5 @@
-//! Metal numeric validation of the real WGSL BSDF against its independent f64 reference.
+//! GPU numeric validation of the real WGSL BSDF against its independent f64 reference, on the
+//! backend `POCKET_BACKEND` names (Metal, Vulkan, Direct3D 12; `POCKET_ADAPTER` picks the GPU).
 //! Run cargo run --release -p pocket-render --example pt_bsdf_probe.
 //! Tests opaque/GGX, smooth and rough dielectric entering/exiting, mixed materials and grazing views.
 #[allow(dead_code)]
@@ -112,9 +113,10 @@ fn cpu(input: &Input) -> [[f64; 4]; 4] {
     ]
 }
 fn execute(report: &mut Value) -> Result<(), String> {
-    let gpu = pocket_render::Gpu::headless(pocket_render::BackendChoice::Metal)
+    let gpu = pocket_render::Gpu::headless(pocket_render::BackendChoice::from_env())
         .map_err(|e| e.to_string())?;
     report["adapter"] = json!(gpu.info.name);
+    report["backend"] = json!(gpu.backend_name());
     let errors = Arc::new(Mutex::new(Vec::<String>::new()));
     let captured = errors.clone();
     gpu.device.on_uncaptured_error(Arc::new(move |e| {
