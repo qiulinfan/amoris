@@ -53,10 +53,72 @@ pub fn begin(
     Ok(Begun::Running(Box::new(s)))
 }
 
+/// Checks a real-time `wait` for `caller` and readies its run (time.md, Requests): the loop runs
+/// its ticks by the clock and hands each one's report to [`Stepping::after_points`]. Answered at
+/// once when the session is halted, or when `until` is `decision` (the default) and the seat has
+/// a decision pending already.
+pub fn begin_wait(
+    world: &World,
+    ctl: &mut Controller,
+    caller: &Caller,
+    raw: &Value,
+    now_ms: f64,
+) -> Result<Begun, Problem> {
+    let (req, run) = session::prepare_wait(world, ctl, caller, raw)?;
+    let (mut progress, stopped) = Progress::start(world, ctl, &run, now_ms)?;
+    let pending = run.seat.as_deref().and_then(|s| ctl.pending(s)).is_some();
+    let decided = matches!(run.until, Some(super::play::Until::Decision)) && pending;
+    if decided {
+        progress.answer.stopped = super::play::StopReason::Decision;
+    }
+    let s = Stepping {
+        caller: caller.clone(),
+        req,
+        run,
+        progress,
+    };
+    if stopped || decided {
+        return s.finish(world, ctl).map(Begun::Answered);
+    }
+    Ok(Begun::Running(Box::new(s)))
+}
+
 impl Stepping {
     /// The most ticks the run may still take: what the loop's time model is asked to run.
     pub fn ticks_left(&self) -> u64 {
         self.run.max_ticks.saturating_sub(self.progress.answer.ran)
+    }
+
+    /// The seat whose decisions and perception the run follows.
+    pub fn seat(&self) -> Option<&str> {
+        self.run.seat.as_deref()
+    }
+
+    /// The wall-clock instant (the loop's milliseconds) at which the run answers `wall_limit` if
+    /// nothing else stopped it first.
+    pub fn wall_deadline(&self) -> f64 {
+        self.progress.started + self.run.max_wall_ms
+    }
+
+    /// Ends the run at a boundary on its wall limit (real time held paused: no tick reached it).
+    pub fn stop_at_wall(&mut self) {
+        self.progress.answer.stopped = super::play::StopReason::WallLimit;
+    }
+
+    /// [`Stepping::after_tick`] with the tick's decision points computed already, once for every
+    /// run under way; `true` when the run ends.
+    pub fn after_points(
+        &mut self,
+        world: &World,
+        ctl: &mut Controller,
+        report: &StepReport,
+        points: &[super::play::DecisionPoint],
+        now_ms: f64,
+    ) -> Result<bool, Problem> {
+        let stop = self
+            .progress
+            .after_points(world, ctl, &self.run, report, points, now_ms)?;
+        Ok(stop || self.progress.answer.ran >= self.run.max_ticks)
     }
 
     /// Before the loop runs the next tick: whether it may (`false`: the run ends here, answered

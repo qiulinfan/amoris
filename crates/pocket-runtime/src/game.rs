@@ -104,6 +104,8 @@ impl GameBuilder {
         g.project = self.project;
         let scene = g.setup.scene.clone();
         scene.spawn_into(&mut g.sim.boundary())?;
+        // Every seat of the scene starts with the episode's `start` decision point (time.md).
+        g.player.attach(g.sim.world());
         Ok(g)
     }
 
@@ -157,6 +159,53 @@ pub struct Game {
     /// The players' session: pacing, every seat's decision points and push cursor (session state,
     /// never persisted or hashed; `crate::player`).
     player: Controller,
+    /// The wall clock the players' session reads (the game thread's), if any.
+    wall: Option<Arc<dyn Fn() -> f64 + Send + Sync>>,
+}
+
+/// A player's `wait` the game thread drives (`Game::begin_player_wait`).
+pub struct PlayerRun {
+    run: Box<pocket_interface::time::stepping::Stepping>,
+    source: Source,
+    real_time: bool,
+}
+
+impl PlayerRun {
+    /// Stepped pacing: the most ticks the run may still take (what the loop's model is asked
+    /// for); real time: none, the clock runs the ticks.
+    pub fn ticks_left(&self) -> u64 {
+        if self.real_time {
+            0
+        } else {
+            self.run.ticks_left()
+        }
+    }
+
+    /// Whether the clock, not the run, drives its ticks.
+    pub fn real_time(&self) -> bool {
+        self.real_time
+    }
+
+    /// Before the loop's next tick: whether the run wants it (`false`: it ends without it).
+    pub fn before_tick(&mut self, game: &Game) -> bool {
+        self.run.before_tick(game.world())
+    }
+
+    /// When the run answers `wall_limit` at the latest (the loop's milliseconds).
+    pub fn wall_deadline(&self) -> f64 {
+        self.run.wall_deadline()
+    }
+
+    /// Ends the run at a boundary on its wall limit.
+    pub fn stop_at_wall(&mut self) {
+        self.run.stop_at_wall();
+    }
+}
+
+/// What `Game::begin_player_wait` gives: the answer at once, or the run for the loop to drive.
+pub enum PlayerStart {
+    Answered(Value),
+    Running(PlayerRun),
 }
 
 fn bad_hash(text: &str) -> Problem {
@@ -206,6 +255,7 @@ impl Game {
             .unwrap_or_default();
         Ok(Game {
             player: Controller::new(PlayPacing::Stepped, filter, Vec::new()),
+            wall: None,
             sim,
             reg: registry(),
             current: set.bundle.hash,
@@ -389,13 +439,14 @@ impl Game {
                 if replaying {
                     return Ok(applied);
                 }
+                let now = self.now();
                 let world = self.sim.world();
                 Ok(crate::player::act_answer(
                     world,
                     &mut self.player,
                     &applied,
                     &cmd.params,
-                    0.0,
+                    now,
                 ))
             }
             Kind::Write => self.write(cmd, name, src),
@@ -454,9 +505,115 @@ impl Game {
         &mut self.player
     }
 
-    /// The world and the players' session together, for the game thread's player runs.
-    pub fn world_and_player(&mut self) -> (&World, &mut Controller) {
-        (self.sim.world(), &mut self.player)
+    /// Installs the wall clock (milliseconds) the players' session measures `max_wall_ms` and
+    /// thinking clocks with: the game thread's injected clock. It decides only where a run stops
+    /// and when real time resumes, never what a tick computes; a game without one reads 0.
+    pub fn set_wall_clock(&mut self, clock: Arc<dyn Fn() -> f64 + Send + Sync>) {
+        self.wall = Some(clock);
+    }
+
+    /// The wall clock's now, or 0 without one.
+    fn now(&self) -> f64 {
+        self.wall.as_ref().map_or(0.0, |c| c())
+    }
+
+    /// Whether the world declares a player layer (`crate::player`).
+    pub fn has_players(&self) -> bool {
+        crate::player::declared(self.sim.world())
+    }
+
+    /// The game thread's answer at a boundary for a game with players: the players' session decides
+    /// (a halt, the episode's end, real time held by a pending decision with pause-on-decision or a
+    /// thinking clock running), deferring to the loop's model otherwise (time.md, Threads and the
+    /// web).
+    pub fn player_pace(
+        &mut self,
+        model: &mut pocket_interface::TimeModel,
+        now_ms: f64,
+    ) -> pocket_interface::Pace {
+        // A seat whose body was spawned since gets its decision state.
+        self.player.attach(self.sim.world());
+        self.player.pace(self.sim.world(), model, now_ms)
+    }
+
+    /// After a tick the game thread's loop ran: the players' decision points, computed once for the
+    /// tick, and each player run's stop; the runs that ended, by index.
+    pub fn player_after_tick(
+        &mut self,
+        report: &StepReport,
+        runs: &mut [PlayerRun],
+        now_ms: f64,
+    ) -> Vec<usize> {
+        if !crate::player::declared(self.sim.world()) {
+            return Vec::new();
+        }
+        let world = self.sim.world();
+        let points = self
+            .player
+            .after_tick(world, &report.decisions, &report.errors, now_ms);
+        let mut ended = Vec::new();
+        for (i, r) in runs.iter_mut().enumerate() {
+            match r
+                .run
+                .after_points(world, &mut self.player, report, &points, now_ms)
+            {
+                Ok(false) => {}
+                Ok(true) | Err(_) => ended.push(i),
+            }
+        }
+        ended
+    }
+
+    /// Begins a player's `wait` on the game thread (time.md, Requests): in stepped pacing a run of
+    /// ticks the loop drives one per boundary, so its queue is served between ticks; in real time
+    /// a run the clock drives, answered when the seat's decision comes. Answered at once when no
+    /// tick is to run.
+    pub fn begin_player_wait(&mut self, cmd: &Command) -> Result<PlayerStart, Problem> {
+        use pocket_interface::time::stepping::{Begun, begin, begin_wait};
+        if !crate::player::declared(self.sim.world()) {
+            return Err(crate::player::no_layer("player.wait"));
+        }
+        let step = crate::player::wait_as_step(&cmd.params)?;
+        let who = crate::player::caller(self.sim.world(), cmd.source)?;
+        let now = self.now();
+        let real_time = matches!(self.player.pacing, PlayPacing::RealTime { .. });
+        let world = self.sim.world();
+        let begun = if real_time {
+            begin_wait(world, &mut self.player, &who, &step, now)?
+        } else {
+            begin(world, &mut self.player, &who, &step, now)?
+        };
+        match begun {
+            Begun::Answered(v) => self.with_hash(cmd.source, v).map(PlayerStart::Answered),
+            Begun::Running(run) => Ok(PlayerStart::Running(PlayerRun {
+                run,
+                source: cmd.source,
+                real_time,
+            })),
+        }
+    }
+
+    /// The `TimeResult` of a player run that ended.
+    pub fn finish_player_run(&mut self, run: PlayerRun) -> Result<Value, Problem> {
+        let source = run.source;
+        let v = run.run.finish(self.sim.world(), &mut self.player)?;
+        self.with_hash(source, v)
+    }
+
+    /// A developer's time answer carries the world hash; a player's never does (mcp.md 4.1).
+    fn with_hash(&self, source: Source, mut v: Value) -> Result<Value, Problem> {
+        if !matches!(source, Source::Player(_)) {
+            v["world_hash"] = json!(self.world_hash()?.to_string());
+        }
+        Ok(v)
+    }
+
+    /// `player.pacing` on the game thread: the players' pacing, and the loop pacing that times
+    /// its ticks (stepped, or real time at its speed, running).
+    pub fn set_player_pacing(&mut self, cmd: &Command) -> Result<(PlayPacing, Value), Problem> {
+        let pacing = crate::player::pacing_params(self.sim.world(), cmd.source, &cmd.params)?;
+        self.player.set_pacing(pacing.clone());
+        Ok((pacing, json!({"pacing": self.player.pacing})))
     }
 
     fn root(&self, command: &str) -> Result<&PathBuf, Problem> {
@@ -534,8 +691,9 @@ impl Game {
                     self.sim.clock().rate,
                     self.player.pacing.loop_pacing(),
                 );
+                let now = self.now();
                 let world = self.sim.world();
-                crate::player::session(world, &mut self.player, cmd.source, p, &model, 0.0)
+                crate::player::session(world, &mut self.player, cmd.source, p, &model, now)
             }
             "player.describe" => {
                 let world = self.sim.world();
@@ -958,23 +1116,19 @@ impl Game {
                     return Err(crate::player::no_layer("player.continue"));
                 }
                 let who = crate::player::caller(self.sim.world(), cmd.source)?;
+                let wall = self.wall.clone();
                 let mut ctl = self.take_player();
                 let r = pocket_interface::time::session::continue_(
                     &GameTicker { game: self },
                     &mut ctl,
                     &who,
                     &cmd.params,
-                    &mut || 0.0,
+                    &mut || wall.as_ref().map_or(0.0, |c| c()),
                 );
                 self.player = ctl;
                 r
             }
-            "player.pacing" => {
-                let pacing =
-                    crate::player::pacing_params(self.sim.world(), cmd.source, &cmd.params)?;
-                self.player.set_pacing(pacing);
-                Ok(json!({"pacing": self.player.pacing}))
-            }
+            "player.pacing" => self.set_player_pacing(cmd).map(|(_, v)| v),
             other => Err(catalog::thread_only(other)),
         }
     }
@@ -989,9 +1143,8 @@ impl Game {
     }
 
     /// `player.wait` on a game driven directly: stepped pacing, the run inline (time.md, `step`
-    /// with `until: "decision"` unless the request says otherwise). A game driven directly has no
-    /// wall clock, so its runs stop at their ticks, `until`, the episode's end or a halt. Real time
-    /// is the game thread's.
+    /// with `until: "decision"` unless the request says otherwise). Without a wall clock its runs
+    /// stop at their ticks, `until`, the episode's end or a halt. Real time is the game thread's.
     fn player_wait(&mut self, cmd: &Command) -> Result<Value, Problem> {
         if !crate::player::declared(self.sim.world()) {
             return Err(crate::player::no_layer("player.wait"));
@@ -1001,20 +1154,17 @@ impl Game {
             return Err(catalog::thread_only("player.wait in real time"));
         }
         let who = crate::player::caller(self.sim.world(), cmd.source)?;
+        let wall = self.wall.clone();
         let mut ctl = self.take_player();
         let r = pocket_interface::time::session::step(
             &mut GameTicker { game: self },
             &mut ctl,
             &who,
             &step,
-            &mut || 0.0,
+            &mut || wall.as_ref().map_or(0.0, |c| c()),
         );
         self.player = ctl;
-        let mut v = r?;
-        if !matches!(cmd.source, Source::Player(_)) {
-            v["world_hash"] = json!(self.world_hash()?.to_string());
-        }
-        Ok(v)
+        self.with_hash(cmd.source, r?)
     }
 
     /// Swaps the world's program for a bundle this game has run or prepared, as `scripts.apply`
@@ -1104,6 +1254,7 @@ impl Game {
         g.project = self.project.clone();
         g.restore(&snap)?;
         g.player = self.player.clone();
+        g.wall = self.wall.clone();
         Ok(g)
     }
 

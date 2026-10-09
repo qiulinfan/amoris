@@ -157,7 +157,7 @@ fn last_seq(world: &World, seat: &str, omniscient: bool) -> Result<u64, Problem>
 pub(super) struct Progress {
     pub(super) answer: TimeAnswer,
     seen: u64,
-    started: f64,
+    pub(super) started: f64,
 }
 
 impl Progress {
@@ -239,10 +239,24 @@ impl Progress {
         report: &StepReport,
         now_ms: f64,
     ) -> Result<bool, Problem> {
+        let points = ctl.after_tick(world, &report.decisions, &report.errors, now_ms);
+        self.after_points(world, ctl, run, report, &points, now_ms)
+    }
+
+    /// [`Progress::after`] with the tick's decision points already computed (once per tick, for
+    /// every run under way: the game thread's several waiting seats).
+    pub(super) fn after_points(
+        &mut self,
+        world: &World,
+        ctl: &mut Controller,
+        run: &Run,
+        report: &StepReport,
+        points: &[DecisionPoint],
+        now_ms: f64,
+    ) -> Result<bool, Problem> {
         let answer = &mut self.answer;
         answer.ran += 1;
         answer.tick = report.tick;
-        let points = ctl.after_tick(world, &report.decisions, &report.errors, now_ms);
         let mine: Option<&DecisionPoint> = run
             .seat
             .as_deref()
@@ -454,6 +468,55 @@ pub(super) fn prepare_step(
         until: req.until.clone(),
         base,
         max_ticks: req.ticks,
+        max_wall_ms: wall(req.max_wall_ms),
+        through: None,
+        omniscient,
+    };
+    Ok((req, run))
+}
+
+/// Checks a real-time `wait` and readies its run (time.md, Requests: `wait` answers when `until`
+/// holds, by default when the seat has a decision point, at the episode's end, or at
+/// `max_wall_ms`). Ticks follow the clock, so the run has no tick limit; waiting does not answer
+/// the seat's pending decision (`continue` or `act {resume}` does).
+pub(super) fn prepare_wait(
+    world: &World,
+    ctl: &mut Controller,
+    caller: &Caller,
+    raw: &Value,
+) -> Result<(StepRequest, Run), Problem> {
+    let req: StepRequest = decode(raw, &CheckOptions::new("the wait request"))?.value;
+    ctl.attach(world);
+    if !matches!(ctl.pacing, PlayPacing::RealTime { .. }) {
+        return Err(codes::time_wrong_mode(
+            "wait",
+            ctl.pacing.name(),
+            "continuous",
+            &["step"],
+        ));
+    }
+    let omniscient = req.omniscient == Some(true);
+    match caller {
+        Caller::Player { .. } if omniscient => {
+            return Err(codes::omniscient_forbidden("player"));
+        }
+        Caller::Checker => {
+            return Err(codes::permission_denied(
+                "wait",
+                "checker",
+                "player or developer",
+            ));
+        }
+        _ => {}
+    }
+    turns::check_episode(world)?;
+    let seat = seat_of(world, caller, req.seat.as_deref(), "wait")?;
+    let base = check_until(world, seat.as_deref(), req.until.as_ref(), omniscient)?;
+    let run = Run {
+        seat,
+        until: req.until.clone(),
+        base,
+        max_ticks: u64::MAX,
         max_wall_ms: wall(req.max_wall_ms),
         through: None,
         omniscient,

@@ -42,7 +42,7 @@ pub use catalog::{CATALOG, Command, CommandDef, CommandFn, NoParams, catalog_jso
 pub use control::{RestoreBundle, Sample, SnapshotsRestoreParams, StepParams};
 pub use edit::{Edit, EditOp, WorldEditOps, WorldEditParams, WorldGetParams, label_of};
 pub use engine::{engine_component, merge};
-pub use game::{Extras, Game, GameBuilder, SystemFn, registry, run_config};
+pub use game::{Extras, Game, GameBuilder, PlayerRun, PlayerStart, SystemFn, registry, run_config};
 /// Presenter-side static walking queries; authoritative gameplay remains in the game world.
 pub use pocket_physics::walk;
 pub use present::Extractor;
