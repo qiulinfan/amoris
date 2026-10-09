@@ -57,14 +57,16 @@ specified under [docs/spec/](docs/spec/README.md); their measured spikes are und
   `POCKET_BACKEND=vulkan` and launch with `DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib` so the
   loader is found. Metal is the default on macOS. `MVK_CONFIG_LOG_LEVEL=3` prints MoltenVK's shader
   compile errors; `cargo run --release -p pocket-render --example gpu_probe` checks a backend.
-- Direct3D 12 on Windows: `POCKET_BACKEND=dx12`. DXC comes from the newest Windows SDK whose
-  `bin\<version>\x64\dxcompiler.dll` is DXC 1.8.2502 or newer, wgpu's minimum (or `POCKET_DXC`;
-  `POCKET_DXC=fxc` for FXC; an older DXC loses the device, so it is passed over for FXC); never
-  enable wgpu's `static-dxc` (it downloads binaries). `POCKET_ADAPTER=780m` (or an index) picks an
-  adapter on a two-GPU machine, for any backend. D3D12 needs wgpu's indirect validation for
-  `first_instance` (gpu.rs sets it); `cargo test -p pocket-render` checks it on Vulkan and D3D12
-  (`indirect_draws_keep_their_first_instance`), `tools/backend_compare.py` compares frames across
-  backends and `tools/backend_bench.py` times them ([docs/bench/dx12.md](docs/bench/dx12.md)).
+- Direct3D 12 is the Windows default (owner, 2026-10-09; `POCKET_BACKEND=vulkan` picks Vulkan,
+  `POCKET_BACKEND=dx12` names D3D12 explicitly on any Windows run). DXC comes from the newest
+  Windows SDK whose `bin\<version>\x64\dxcompiler.dll` is DXC 1.8.2502 or newer, wgpu's minimum (or
+  `POCKET_DXC`; `POCKET_DXC=fxc` for FXC; an older DXC loses the device, so it is passed over for
+  FXC); never enable wgpu's `static-dxc` (it downloads binaries). `POCKET_ADAPTER=780m` (or an
+  index) picks an adapter on a two-GPU machine, for any backend. D3D12 needs wgpu's indirect
+  validation for `first_instance` (gpu.rs sets it); `cargo test -p pocket-render` checks it on
+  Vulkan and D3D12 (`indirect_draws_keep_their_first_instance`), `tools/backend_compare.py` compares
+  frames across backends and `tools/backend_bench.py` times them
+  ([docs/bench/dx12.md](docs/bench/dx12.md)).
 - Shader hashes are integer (`pcg_hash` in common.wgsl): `fract(sin(x) * k)` differs per vendor
   and API.
 - Ray queries: the research tracers (`path_trace`, `gi_trace`, `ray_query_probe`;

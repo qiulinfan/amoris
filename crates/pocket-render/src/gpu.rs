@@ -1,7 +1,7 @@
-//! The GPU: instance, adapter, device and queue, with the backend chosen explicitly (charter 4.1:
-//! Metal on macOS, Vulkan elsewhere and on demand through MoltenVK, Direct3D 12 on Windows on
-//! demand, WebGPU in the browser) and the optional features the renderer uses when the adapter has
-//! them.
+//! The GPU: instance, adapter, device and queue, with the backend chosen explicitly (charter 4.1 and
+//! 4.4: Metal on macOS, Direct3D 12 on Windows, Vulkan elsewhere and on demand on Windows and
+//! through MoltenVK, WebGPU in the browser) and the optional features the renderer uses when the
+//! adapter has them.
 //!
 //! Environment: `POCKET_BACKEND` (`metal`, `vulkan`, `dx12`), `POCKET_ADAPTER` (an adapter's index
 //! or a case-insensitive part of its name, for machines with two GPUs) and, for Direct3D 12,
@@ -18,7 +18,8 @@ pub use dxc::{Dx12CompilerChoice, dx12_compiler};
 /// Which backend to use.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BackendChoice {
-    /// Metal on Apple platforms, Vulkan elsewhere, WebGPU in the browser.
+    /// Metal on Apple platforms, Direct3D 12 on Windows (the owner's choice, charter 4.4), Vulkan
+    /// elsewhere, WebGPU in the browser.
     Auto,
     Metal,
     Vulkan,
@@ -61,6 +62,8 @@ impl BackendChoice {
             BackendChoice::Auto => {
                 if cfg!(any(target_os = "macos", target_os = "ios")) {
                     wgpu::Backends::METAL
+                } else if cfg!(windows) {
+                    wgpu::Backends::DX12
                 } else {
                     wgpu::Backends::VULKAN
                 }
@@ -492,6 +495,22 @@ pub fn match_adapter(names: &[&str], wanted: &str) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `Auto` is Metal on Apple platforms, Direct3D 12 on Windows (the owner's choice, charter
+    /// 4.4) and Vulkan elsewhere.
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn auto_picks_the_platform_default() {
+        let want = if cfg!(any(target_os = "macos", target_os = "ios")) {
+            wgpu::Backends::METAL
+        } else if cfg!(windows) {
+            wgpu::Backends::DX12
+        } else {
+            wgpu::Backends::VULKAN
+        };
+        assert_eq!(BackendChoice::Auto.backends(), want);
+        assert_eq!(BackendChoice::Vulkan.backends(), wgpu::Backends::VULKAN);
+    }
 
     #[test]
     fn backend_names_parse_in_any_case() {

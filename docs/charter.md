@@ -92,7 +92,7 @@ Amoris 是一个 **agent-native** 的 3D 游戏引擎。agent 在三个角色上
 | 脚本 VM | **QuickJS-ng**，经 `rquickjs`，vendored 并打补丁 | 0.16.2 / rquickjs 0.14.0 | 小型解释器，所有平台同一份，确定；补丁见 4.2 |
 | 脚本类型 | Rust 组件注册表 → `.d.ts` 与 JSON Schema | ts-rs 12、schemars 1.2 | 改了引擎类型，agent 与脚本看到的接口自动同步 |
 | 渲染 | **wgpu + WGSL** | 30.0.1 | 一套渲染器覆盖 Metal、Vulkan、Direct3D 12 与浏览器 WebGPU |
-| 原生图形后端 | **Metal**（macOS）、**Vulkan**（Linux/Windows；macOS 上经 MoltenVK 验证）、**Direct3D 12**（Windows，Pioneer 2026-10-09） | — | 所有者 2026-10-04 指定只做 Metal 与 Vulkan；Pioneer 2026-10-09 应所有者的探索要求加入 Direct3D 12，Windows 默认后端由测量决定（见 4.4） |
+| 原生图形后端 | **Metal**（macOS）、**Vulkan**（Linux/Windows；macOS 上经 MoltenVK 验证）、**Direct3D 12**（Windows，Pioneer 2026-10-09） | — | 所有者 2026-10-04 指定只做 Metal 与 Vulkan；Pioneer 2026-10-09 应所有者的探索要求加入 Direct3D 12；所有者 2026-10-09 指定 Windows 默认后端为 Direct3D 12（见 4.4） |
 | Web 图形 | WebGPU（wgpu 的浏览器后端，同一份代码） | — | 证明 web 渲染；不做 WebGL 回退 |
 | 窗口与输入 | winit；gilrs（手柄） | 0.30 | 事实标准 |
 | 资源 | glTF 2.0（`gltf`）、PNG/JPEG（`image`）、网格处理（`meshopt`：LOD、顶点缓存、meshlet）；导入在工作线程异步进行；内容哈希作为 ID | gltf 1.4、meshopt 0.6 | Amoris Pioneer 的 OBJ 导入冻结 14–27 秒，本线只走 glTF 且异步 |
@@ -165,6 +165,12 @@ Amoris 是一个 **agent-native** 的 3D 游戏引擎。agent 在三个角色上
   （`docs/spikes/render.md`）在 Radeon 780M 上测得 Vulkan 比 Direct3D 12 慢 25–53%。Windows 的
   `Auto` 后端由测量决定：Direct3D 12 至少同样快且画面一致才取代 Vulkan。测量与结论见
   [bench/dx12.md](bench/dx12.md)。光线追踪与浏览器不在此决定内。
+- 2026-10-09（所有者决定，取代上一条"由测量决定"的规则）：Windows 的 `Auto` 后端改为
+  Direct3D 12，Vulkan 仍可用 `POCKET_BACKEND=vulkan` 选择，macOS 仍为 Metal，其他平台仍为
+  Vulkan。决定前的安静环境重测（分支 `explore/quiet`，`docs/bench/quiet-2026-10-09.md`）：两种
+  后端画面一致；RTX 5060 上 Direct3D 12 在 GPU 密集的 dense 场景慢约 24%，渲染器启动多约 0.9 s
+  （DXC 编译管线），其余场景持平；Radeon 780M 上 Direct3D 12 快 12%–30%。这些代价由 Pioneer 继续
+  优化（启动、dense 场景的 GPU 时间、每帧 CPU 编码），测量记入 [bench/dx12.md](bench/dx12.md)。
 - 2026-10-09（Pioneer）：光追研究从 Metal 扩展到所有暴露 ray query 的后端。2026-10-05 的 GI
   决定以 Metal ray query 表述，表面 PT、SHaRC/ReSTIR 原型与在线 NRC 也只在 Metal 上运行；
   现在它们在 Vulkan（`VK_KHR_ray_query`）与 Direct3D 12（DXR 1.1、Shader Model 6.5）上同样运行，
