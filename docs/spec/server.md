@@ -24,7 +24,11 @@ pocket mcp samples/sailing     # MCP over stdio (uses the running host if there 
 - `pocket serve` loads the project, builds its game on the game thread (threads.md 3) in real time
   at speed 1, **paused** (the edit world), and serves 127.0.0.1:`port` (0: any free port). It prints
   one JSON line to stdout, `{url, port, pid, project, mcp, editor}`, and writes the same to
-  `<project>/.pocket/host.json`, which it removes on Ctrl-C or SIGTERM. The editor's files come from
+  `<project>/.pocket/host.json`, which it removes on Ctrl-C or SIGTERM. `project` (and
+  `project.info`'s `root`) is the canonical directory in its plain form: on Windows without the
+  verbatim `\\?\` prefix `canonicalize` adds, unless only the verbatim form can name the path
+  (`pocket_server::hostfile::project_root`), so it equals what other programs resolve the directory
+  to (the desktop compares it with Node's `fs.realpath`). The editor's files come from
   `--editor`, `POCKET_EDITOR_DIST`, or the first `editor/dist` with an `index.html` above the
   working directory or the executable; without one, `GET /` is a page listing the endpoints.
 - `pocket mcp <project>` serves one MCP session over stdio. When `.pocket/host.json` names a host

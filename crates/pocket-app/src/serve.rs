@@ -28,9 +28,13 @@ fn fail(p: &Problem, code: i32) -> Outcome {
     }
 }
 
+/// The project directory, canonical and in the plain form other programs resolve it to (on
+/// Windows without the `\\?\` prefix where it can do without, `hostfile::project_root`): the host
+/// file, the readiness line and `project.info` report it, and the desktop compares it with
+/// `fs.realpath`.
 fn project_dir(args: &Args) -> Result<PathBuf, Problem> {
     let dir = PathBuf::from(args.positional.first().map_or(".", String::as_str));
-    dir.canonicalize().map_err(|e| {
+    hostfile::project_root(&dir).map_err(|e| {
         Problem::new(
             "project.missing_file",
             format!("{} is not a project directory: {e}.", dir.display()),
