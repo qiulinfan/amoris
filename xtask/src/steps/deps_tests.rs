@@ -366,3 +366,19 @@ fn optional_dependencies_count_only_when_a_feature_turns_them_on() {
 }
 
 use serde_json::Value;
+
+#[test]
+fn the_vendored_files_that_differ_are_read() {
+    let out = "deps.vendor_stale: rquickjs-sys-0.14.0/build.rs\n\
+               deps.vendor_stale: rquickjs-sys-0.14.0/quickjs/quickjs.c\n\
+               2 files differ from what the pins and patches produce\n";
+    assert_eq!(
+        vendor_stale(out),
+        [
+            "third_party/rquickjs-sys-0.14.0/build.rs",
+            "third_party/rquickjs-sys-0.14.0/quickjs/quickjs.c"
+        ]
+    );
+    let fine = "rquickjs-sys-0.14.0: 306 files as the pins and patches produce them\n";
+    assert!(vendor_stale(fine).is_empty());
+}

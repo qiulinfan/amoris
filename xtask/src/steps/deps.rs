@@ -341,15 +341,75 @@ pub fn run(env: &Env, graph: &Graph, log: &std::path::Path) -> (StepResult, Opti
         }
     }
     let mut step = check(graph, &targets, &flags(&env.root));
-    if env.root.join("third_party/rquickjs-sys-0.14.0").is_dir() {
-        step.warn(Problem::new(
-            "check.not_implemented",
-            "third_party/rquickjs-sys-0.14.0 exists, but `cargo xtask vendor --check` is not built yet, so deps.vendor_stale is not checked",
-            json!({"what": "cargo xtask vendor --check"}),
-        ));
+    if env.root.join(VENDORED).is_dir() {
+        vendor(env, &mut step, log);
     }
     let host = targets.into_iter().next().map(|(_, m)| m);
     (step, host)
+}
+
+/// The vendored, patched QuickJS-ng (architecture.md 7.5).
+pub const VENDORED: &str = "third_party/rquickjs-sys-0.14.0";
+
+/// `deps.vendor_stale {path}` for each file of [`VENDORED`] that differs from what
+/// `third_party/vendor.py --check --offline` rebuilds from the pinned crate and patches. Without
+/// the pinned crate in cargo's cache (exit 3) the comparison cannot run, which is a warning, since
+/// the check fetches nothing.
+fn vendor(env: &Env, step: &mut StepResult, log: &std::path::Path) {
+    let Some(python) = run::python() else {
+        step.inconclusive(Problem::new(
+            "check.tool_missing",
+            "no Python 3 to run third_party/vendor.py --check (python or python3, or POCKET_PYTHON)",
+            json!({"tool": "python"}),
+        ));
+        return;
+    };
+    let mut cmd = std::process::Command::new(python);
+    cmd.args(["third_party/vendor.py", "--check", "--offline"])
+        .current_dir(&env.root)
+        .env("PYTHONUTF8", "1");
+    let line = run::describe(&cmd);
+    let out = match run::run_merged(cmd, log, &mut |_| {}) {
+        Ok(o) => o,
+        Err(e) => {
+            step.problem(run::start_failed(&line, &e));
+            return;
+        }
+    };
+    let stale = vendor_stale(&out.text);
+    for path in &stale {
+        step.error(Problem::new(
+            "deps.vendor_stale",
+            format!(
+                "{path} differs from what the pinned crate and third_party/patches/ give; \
+                 run python third_party/vendor.py, or record the change as a patch"
+            ),
+            json!({"path": path}),
+        ));
+    }
+    match out.code {
+        Some(0) => step.summary.push_str("; QuickJS-ng as its pins and patches give it"),
+        Some(3) => step.warn(Problem::new(
+            "deps.vendor_unchecked",
+            "the pinned rquickjs-sys crate is not in cargo's cache, so the vendored QuickJS-ng is not compared; run python third_party/vendor.py --check once",
+            json!({"tail": out.tail(3)}),
+        )),
+        _ if stale.is_empty() => step.error(Problem::new(
+            "check.command_failed",
+            format!("{line} failed (exit {:?})", out.code),
+            json!({"command": line, "status": out.code, "tail": out.tail(20)}),
+        )),
+        _ => {}
+    }
+}
+
+/// The paths `vendor.py --check` names as `deps.vendor_stale: <dir>/<file>`, from the root.
+pub fn vendor_stale(output: &str) -> Vec<String> {
+    output
+        .lines()
+        .filter_map(|l| l.strip_prefix("deps.vendor_stale: "))
+        .map(|p| format!("third_party/{}", p.trim()))
+        .collect()
 }
 
 fn failed(command: &str, message: &str) -> StepResult {
