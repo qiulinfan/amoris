@@ -103,7 +103,7 @@ Amoris 是一个 **agent-native** 的 3D 游戏引擎。agent 在三个角色上
 | 编辑器 | **TypeScript + React + Vite**；Electron 桌面窗口与 Web 共用 dockview、Monaco 和 wasm/WebGPU 视口，经 WebSocket 与宿主同步 | React 19、Vite 8、Electron 44 | 见 4.5 |
 | 调试 | 调试核心在 `pocket-debug`（QuickJS-ng PR #1421 的 trace 钩子）；前端：CDP 端点（Chrome DevTools、VS Code js-debug）、编辑器、MCP 工具 | 自研 | 见 4.3 |
 | 性能分析 | 内建分析器：每个系统的 CPU 区段 + 每个渲染通道的 GPU 时间戳，推送到编辑器；Tracy 为可选特性 | tracy-client 0.19 | 测量为依据 |
-| 离线工具 | **Python 3.14 + uv**：神经资源训练（PyTorch，Apple MPS）、评测 harness、分析脚本 | — | 只在工具层，不嵌入运行时 |
+| 离线工具 | **Python 3.14 + uv**：神经资源训练（PyTorch，Apple MPS；神经纹理例外，2026-10-09 Pioneer 起在引擎的 wgpu 计算着色器里训练，见 4.4）、评测 harness、分析脚本 | — | 只在工具层，不嵌入运行时 |
 
 ### 4.2 脚本：TypeScript on QuickJS-ng
 
@@ -241,6 +241,16 @@ Amoris 是一个 **agent-native** 的 3D 游戏引擎。agent 在三个角色上
     着色器），默认值待参考机测量后再定（见 `docs/spec/splats.md` 4.2 与 `docs/bench/splats.md`）。
   - 神经纹理压缩：材质的多通道纹理压缩为低分辨率潜变量网格加一个小 MLP（Python/PyTorch 训练），
     在片元着色器里逐像素推理解码；对比未压缩与传统压缩的体积和质量。
+    2026-10-09（Pioneer）：神经纹理的训练改在引擎自己的 wgpu 计算着色器里进行，不用 Python/PyTorch：
+    离线编码器是 `pocket-render` 的一个 cargo 示例，手写前向与反向传播（与在线 NRC 同样不用浮点原子
+    操作：潜变量梯度以定点整数原子累加，与顺序无关，MLP 梯度按固定顺序分块归约），同一种子的结果
+    可复现。编码结果是带版本号、严格校验的二进制文件（`.ntex`），类型在 `pocket-assets`（游戏侧，
+    可编译到 wasm）；`Model.material` 写 `.ntex` 路径即为神经材质，渲染输入流的格式不变。神经材质
+    走自己的管线变体，其他材质的着色器与绘制不变；有 `SHADER_F16` 时以 f16 解码，否则 f32，
+    WebGPU 基线与浏览器同样运行。理由：本机没有 PyTorch（CUDA 版约 3 GB 下载）；训练与运行时解码
+    共用同一套 WGSL 约定，编码器在 Metal、Vulkan、Direct3D 12 上都能跑，不再需要另一套语言与
+    运行环境；网络很小，手写反向传播可行（在线 NRC 已验证这种做法）。BCn 对照用 crates.io 的
+    CPU 编码器（只作工具层的开发依赖）。规格见 [神经纹理](spec/neural-textures.md)。
 - 浏览器 WebGPU 与原生 Metal/Vulkan/Direct3D 12 走同一份代码；只使用 WebGPU 默认可用的特性作为基线，
   原生可选特性（如 multi-draw indirect、时间戳查询）作为加速路径。
 
