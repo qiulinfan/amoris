@@ -62,6 +62,16 @@ environment variables and the setters override them. Tools that compare images a
 pin both (`tools/backend_compare.py`), and checks that compare redraws pixel for pixel pin `msaa`
 without GTAO.
 
+**One-shot captures.** With TAA a single frame after a reset is one jittered sample, 4 to 5 dB below
+multisampling against a supersampled reference. `Renderer::capture_still` restarts the history and
+the jitter sequence and draws `STILL_FRAMES` (16, one jitter cycle) at the same moment before
+reading back; without TAA it draws one frame. The capture server behind the MCP and CLI `capture`
+(pocket-app `present.rs`) takes it once the scene's assets have arrived, as do `showcase_bench
+--capture` and `sky_gi_units`. On the check scene at 256x144 a still capture reaches 40.2 dB against
+the mean of 64 jittered frames, against 36.5 for multisampling and 31.3 for TAA's first frame
+(RTX 5060, Vulkan); a 640x360 capture of samples/sailing took 88 ms through `pocket call capture`
+on the Radeon 780M (provisional). The windowed app's capture reads the running history.
+
 A change of anti-aliasing or GTAO rebuilds what depends on the opaque pass's format: its targets,
 the forward pipelines, the sky's, the ocean's, the particles' and the grid's pipelines (each takes a
 `SceneFormat`), and, when the sample count changes, the shaders that read the opaque depth. Those
@@ -209,10 +219,13 @@ the options from its URL (`?aa=`, `?gtao=`, `?sharpen=`) and draws the check sce
   history stays near the mean of the jittered frames; the id pass's coverage is the same with TAA;
   GTAO leaves a scene lit only directly untouched and never brightens a pixel; cuts, resizes and
   option changes drop the history; a sea over the ground, the walled corner and a sunk cube sliding
-  under it is left untouched by GTAO and by the cube's object motion. Each check failed with its
+  under it is left untouched by GTAO and by the cube's object motion; a still capture under TAA
+  lands above multisampling where TAA's first frame lands below it, and repeats exactly. Each check
+  failed with its
   defect put back (a one-pixel reprojection offset, camera motion ignored, object motion reversed,
   the jittered view in the id pass, GTAO on all light, no cut detection, the sea writing the color
-  only: GTAO changed 15,935 of its 16,330 inside pixels and the hidden cube's motion 457).
+  only: GTAO changed 15,935 of its 16,330 inside pixels and the hidden cube's motion 457; a still
+  capture of one frame: 31.3 dB). `post::tests::defaults_by_adapter` tables the defaults.
 - `examples/aa_eval.rs`: PSNR against supersampled references while converging, under motion, with
   skinning, with ablations; GTAO images; per-option costs. `tools/aa_bench.py` and
   `tools/aa_web_bench.py` run the cost matrix natively and in Chrome.

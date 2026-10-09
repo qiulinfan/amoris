@@ -471,3 +471,61 @@ fn the_sea_hides_what_lies_under_it() {
         "a hidden cube's motion moved {moved} pixels of the sea"
     );
 }
+
+/// PSNR of an 8-bit image against a reference in the same units (0 to 255).
+fn psnr8(a: &[u8], reference: &[f64]) -> f64 {
+    let mut sum = 0.0;
+    let mut n = 0u64;
+    for (i, (&p, &q)) in a.iter().zip(reference).enumerate() {
+        if i % 4 != 3 {
+            let d = f64::from(p) - q;
+            sum += d * d;
+            n += 1;
+        }
+    }
+    10.0 * (255.0f64 * 255.0 / (sum / n.max(1) as f64).max(1e-12)).log10()
+}
+
+/// A one-shot capture (an agent's `capture`) under TAA draws a whole jitter cycle from a reset:
+/// TAA's first frame alone is one jittered sample, below multisampling; the settled capture is
+/// above it, and the same capture taken twice is the same image.
+#[test]
+fn a_still_capture_settles_taa() {
+    let Some(gpu) = gpu() else { return };
+    let camera = pocket_render::demo::aa_camera(0, false);
+    let t = 0.5;
+    let fresh = |aa: Antialiasing| {
+        let mut r = renderer(&gpu, aa, Gtao::Off);
+        r.apply(still_scene(1.0), 0.0);
+        r.set_camera_override(Some(camera));
+        r
+    };
+    // The reference: the mean of 64 jittered frames as displayed.
+    let mut jittered = fresh(Antialiasing::Taa);
+    jittered.taa_mut().mode = pocket_render::taa::TaaMode::Jittered;
+    let mut reference = vec![0.0f64; (W * H * 4) as usize];
+    for _ in 0..64 {
+        for (m, v) in reference.iter_mut().zip(jittered.capture_rgba(t).2) {
+            *m += f64::from(v) / 64.0;
+        }
+    }
+    let msaa = psnr8(&fresh(Antialiasing::Msaa).capture_rgba(t).2, &reference);
+    let first = psnr8(&fresh(Antialiasing::Taa).capture_rgba(t).2, &reference);
+    let mut taa = fresh(Antialiasing::Taa);
+    let still = taa.capture_still(t).2;
+    let settled = psnr8(&still, &reference);
+    eprintln!(
+        "against 64 jittered frames: msaa {msaa:.2} dB, taa's first frame {first:.2} dB, a still \
+         capture {settled:.2} dB"
+    );
+    assert!(first < msaa, "TAA's first frame is not below MSAA here");
+    assert!(
+        settled > msaa + 1.0,
+        "a still capture with TAA reached {settled:.2} dB (MSAA {msaa:.2} dB)"
+    );
+    assert_eq!(
+        taa.capture_still(t).2,
+        still,
+        "a second still capture differs"
+    );
+}

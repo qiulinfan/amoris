@@ -152,11 +152,18 @@ fn capture_thread(rx: mpsc::Receiver<CaptureJob>, mailbox: Arc<Mailbox>, root: P
         r.set_camera_override(camera_from(&job.params));
         // A few frames so assets requested by this frame's scene can arrive (bounded wait).
         let mut frames = 0;
-        let (mut cw, mut ch, mut px) = r.capture_rgba(now);
+        let mut t = now;
+        let (mut cw, mut ch, mut px) = r.capture_rgba(t);
         while r.last.pending_assets > 0 && frames < 120 {
             std::thread::sleep(Duration::from_millis(25));
-            (cw, ch, px) = r.capture_rgba(start.elapsed().as_secs_f64());
+            t = start.elapsed().as_secs_f64();
+            (cw, ch, px) = r.capture_rgba(t);
             frames += 1;
+        }
+        // With TAA (an integrated GPU's default) one frame is a single jittered sample: draw a
+        // whole jitter cycle from a reset instead.
+        if r.antialiasing().taa() {
+            (cw, ch, px) = r.capture_still(t);
         }
         n += 1;
         let dir = root.join(".pocket").join("captures");

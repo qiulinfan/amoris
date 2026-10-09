@@ -58,6 +58,8 @@ const CLUSTER_Z: u32 = 24;
 const CLUSTER_MAX: u32 = 64;
 const CLUSTER_FAR: f32 = 400.0;
 const SHADOW_DISTANCE: f32 = 150.0;
+/// The frames [`Renderer::capture_still`] draws with TAA: one cycle of the jitter sequence.
+pub const STILL_FRAMES: u32 = crate::taa::JITTER_PHASES;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -2510,10 +2512,31 @@ impl Renderer {
         self.output
     }
 
-    /// Draws a frame offscreen and reads it back as tightly packed RGBA8 (sRGB) pixels: the
-    /// `capture` an agent or a test asks for. Blocks until the GPU is done.
+    /// Draws a frame offscreen and reads it back as tightly packed RGBA8 (sRGB) pixels. Blocks
+    /// until the GPU is done. With TAA this is the next frame of the running history: a one-shot
+    /// capture takes [`Renderer::capture_still`].
     #[cfg(not(target_arch = "wasm32"))]
     pub fn capture_rgba(&mut self, now_s: f64) -> (u32, u32, Vec<u8>) {
+        self.capture_frames(now_s, 1)
+    }
+
+    /// A still image of the scene at `now_s`, read back like [`Renderer::capture_rgba`]: the
+    /// `capture` an agent asks for. With TAA the history and the jitter sequence restart and
+    /// [`STILL_FRAMES`] frames are drawn at that moment, a whole jitter cycle (TAA's first frame
+    /// alone is one jittered sample, 4 to 5 dB below multisampling); otherwise one frame.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn capture_still(&mut self, now_s: f64) -> (u32, u32, Vec<u8>) {
+        if self.aa.taa() {
+            self.taa.restart();
+            self.capture_frames(now_s, STILL_FRAMES)
+        } else {
+            self.capture_frames(now_s, 1)
+        }
+    }
+
+    /// Draws `frames` frames at `now_s` into one offscreen target and reads the last back.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn capture_frames(&mut self, now_s: f64, frames: u32) -> (u32, u32, Vec<u8>) {
         let (w, h) = (self.targets.width, self.targets.height);
         let device = self.gpu.device.clone();
         let tex = device.create_texture(&wgpu::TextureDescriptor {
@@ -2531,7 +2554,9 @@ impl Renderer {
             view_formats: &[],
         });
         let view = tex.create_view(&Default::default());
-        self.render(&view, now_s);
+        for _ in 0..frames.max(1) {
+            self.render(&view, now_s);
+        }
         let row = (w * 4).div_ceil(256) * 256;
         let buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("capture readback"),

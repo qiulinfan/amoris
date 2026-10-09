@@ -280,6 +280,13 @@ impl Taa {
         self.reset_requested = true;
     }
 
+    /// Drops the history and restarts the jitter sequence at the next frame, so what follows does
+    /// not depend on what was drawn before (`Renderer::capture_still`).
+    pub fn restart(&mut self) {
+        self.reset_requested = true;
+        self.frame = 0;
+    }
+
     /// Frames accumulated since the history was last reset.
     pub fn frames(&self) -> u32 {
         self.frames

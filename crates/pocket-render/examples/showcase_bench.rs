@@ -391,7 +391,7 @@ fn run() -> Result<(), String> {
                 .poll(wgpu::PollType::wait_indefinitely())
                 .map_err(|e| e.to_string())?;
         }
-        let (w, h, pixels) = renderer.capture_rgba(0.0);
+        let (w, h, pixels) = renderer.capture_still(0.0);
         image::save_buffer(&path, &pixels, w, h, image::ColorType::Rgba8)
             .map_err(|e| e.to_string())?;
         eprintln!("saved {} ({w}x{h})", path.display());

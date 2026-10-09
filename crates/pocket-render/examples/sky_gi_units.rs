@@ -132,7 +132,7 @@ mod native {
         renderer.apply(frame(path, tick), 0.0);
         // poll_gi requests and receives through the same resource path used by real projects.
         let _ = renderer.capture_rgba(0.0);
-        let (w, h, rgba) = renderer.capture_rgba(0.0);
+        let (w, h, rgba) = renderer.capture_still(0.0);
         if let Some(error) = renderer.gi_error() {
             return Err(format!("GI load: {error}"));
         }
