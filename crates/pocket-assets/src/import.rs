@@ -1,7 +1,8 @@
 //! glTF 2.0 import (charter 4.1): a `.gltf` or `.glb` file to a [`ModelAsset`]. Meshes are split
 //! per primitive (one material each), positions and normals are taken as stored, missing normals
-//! are computed flat, missing tangents are computed; images are decoded to RGBA8. Runs on whatever
-//! thread calls it: the host imports on a worker thread so a large file never freezes a frame.
+//! are computed flat, missing tangents are computed; each mesh gets its LOD chain and the GPU's
+//! vertex order (lod.rs); images are decoded to RGBA8. Runs on whatever thread calls it: the host
+//! imports on a worker thread so a large file never freezes a frame.
 
 // Asset import for the renderer: its floats never reach the world or its hash.
 #![allow(clippy::disallowed_methods)]
@@ -146,6 +147,8 @@ fn convert(
             if tangents.is_none() {
                 m.compute_tangents();
             }
+            // Coarser levels and the GPU's vertex order (lod.rs, docs/spec/lod.md).
+            crate::lod::build(&mut m, &crate::lod::LodOptions::default());
             parts.push(asset.meshes.len());
             asset.meshes.push(m);
         }

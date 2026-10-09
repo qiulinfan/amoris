@@ -139,6 +139,13 @@ written as that specification names them.
   in Chrome (four workers, 3.8 s for its 122 MB scene), but its workers shared the file through a
   `SharedArrayBuffer`, which needs the cross-origin isolation a shared link may lack (charter 5.1),
   and each held its own copy of the file.
+  Pioneer, 2026-10-09 (charter 4.4's note on mesh LOD): no cooked format exists yet, and the
+  browser viewport (`pocket-viewport`) imports the `.glb` files it fetches with this importer in
+  WebAssembly; the game module (`pocket-web`) still links neither. Levels of detail are made at
+  import there as natively: meshoptimizer (feature `lod`, which `import` enables) builds for
+  `wasm32-unknown-unknown` with the stripped headers the `meshopt` crate ships, and needs no C++
+  standard library, only `operator new` and `operator delete`, which `pocket_assets::lod` supplies
+  from Rust's allocator (docs/spec/lod.md 2).
 
 ### 4.3 `pocket-persist`: persistence
 
@@ -478,7 +485,7 @@ QuickJS-ng 0.16.2 (script-native, script-web, debugger), `oxc_* =0.152.0` and `o
 | `bincode` | physics | Slice 1: `bincode =1.3.3` writes the physics cache's bytes (Rapier's `PhysicsWorld` through its own `serde` output, fixed-width integers, trailing bytes refused on decode), the encoding the physics spike wrote and restored natively and in the browser to the same bytes; `pocket-physics` cannot link `pocket-persist`'s PCE (5) and a cache section is opaque (persistence.md 4.1), so the cache's identity names it (11, choice 8) |
 | `rquickjs` | script | QuickJS-ng; `std`/`os` modules never loaded (spec-script); `parallel` never enabled (it implements `Send` for the runtime by pulling `tokio/rt-multi-thread`) |
 | `oxc_*` | script | feature `transpile` only |
-| `gltf`, `meshopt` | assets | feature `import` only (native) |
+| `gltf`, `meshopt` | assets | `gltf`: feature `import`; `meshopt`: feature `lod`, which `import` and `pocket-render` (its primitives' levels) enable, natively and on wasm32 (Pioneer 2026-10-09, docs/spec/lod.md) |
 | `wgpu` | render, editor (through `egui-wgpu`), app, web | `webgpu` backend on the web; no WebGL |
 | `winit` | editor (through `egui-winit`), app, web | |
 | `egui`, `egui-wgpu`, `egui-winit` | editor, app, web | |
@@ -539,7 +546,8 @@ build: master measured its debug build 25 to 31 times slower than release
 ### 7.3 C code and floating point
 
 QuickJS-ng (through `rquickjs`'s build script) is the only C code the game runs; meshoptimizer is
-C++ in the native-only importer. Lockstep and cross-target determinism need the same bits from every
+C++ in the importer and the renderer's levels of detail, never in a tick. Lockstep and
+cross-target determinism need the same bits from every
 compiler, and master found that an arm64 build fused `a * b + c` where WebAssembly rounds twice
 (`docs/design/networking.md`, Determinism, "No fused multiply-adds"). So:
 
@@ -572,7 +580,8 @@ compiler, and master found that an arm64 build fused `a * b + c` where WebAssemb
 
 | Crate | Feature | Enabled by | Meaning |
 |---|---|---|---|
-| assets | `import` | `pocket-app` | glTF import, meshoptimizer (native) |
+| assets | `import` | `pocket-app` | glTF import, meshoptimizer (natively; the browser viewport too, Pioneer 2026-10-09) |
+| assets | `lod` | `import`, `pocket-render` | meshoptimizer: LOD chains and GPU vertex order (docs/spec/lod.md) |
 | script | `transpile` | `pocket-app`; a browser editor page | oxc in process |
 | runtime | `thread` | `pocket-app` | `GameThread` (std threads; native) |
 | sim | `invariants` | tests and the check's debug cross-build | the boundary invariants' index walk (simulation.md 4.1) |

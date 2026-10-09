@@ -20,7 +20,11 @@ glam.workspace = true
 # glTF 2.0 import (charter 4.1): meshes, materials, embedded and external images.
 gltf = { workspace = true, optional = true }
 image = { workspace = true, optional = true }
+# Levels of detail and GPU vertex order (lod.rs; docs/spec/lod.md).
+meshopt = { workspace = true, optional = true }
 
 [features]
 default = ["import"]
-import = ["dep:gltf", "dep:image"]
+import = ["dep:gltf", "dep:image", "lod"]
+# Mesh LOD chains (meshoptimizer's C++): the importer, and the renderer for its primitives.
+lod = ["dep:meshopt"]

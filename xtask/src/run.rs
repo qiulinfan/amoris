@@ -85,6 +85,17 @@ impl Env {
                 env.push((format!("{var}_wasm32_unknown_unknown"), p));
             }
         }
+        // meshoptimizer's build script (pocket-assets' `lod`, docs/spec/lod.md 2) names its
+        // wasm32 archiver `llvm-ar` on a Windows host and finds it on PATH: the pinned LLVM's
+        // tools go first there.
+        let bin = self.llvm.join("bin");
+        if self.host.contains("windows") && bin.is_dir() {
+            let rest = std::env::var_os("PATH").unwrap_or_default();
+            let paths = std::iter::once(bin).chain(std::env::split_paths(&rest));
+            if let Ok(joined) = std::env::join_paths(paths) {
+                env.push(("PATH".into(), joined.to_string_lossy().into_owned()));
+            }
+        }
         env
     }
 

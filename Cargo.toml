@@ -70,6 +70,9 @@ ureq = { version = "=3.4.2", default-features = false }
 # Presenters and assets (charter 4.1)
 gltf = { version = "=1.4.1", default-features = false, features = ["import", "utils", "names", "KHR_materials_emissive_strength", "KHR_texture_transform", "KHR_lights_punctual", "KHR_materials_transmission", "KHR_materials_ior"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+# Mesh LOD chains, vertex cache and fetch order (charter 4.1, 4.4's Pioneer note of 2026-10-09;
+# docs/spec/lod.md). C++ built by `cc`: clang-cl or MSVC natively, the pinned clang for wasm32.
+meshopt = "=0.6.2"
 # Metal and Vulkan natively (Vulkan on Apple through MoltenVK: vulkan-portability), Direct3D 12 on
 # Windows (a Pioneer decision of 2026-10-09; DXC is loaded from the Windows SDK at run time, never
 # `static-dxc`), WebGPU in the browser; no GL (charter 4.1).

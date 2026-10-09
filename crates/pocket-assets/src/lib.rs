@@ -10,6 +10,8 @@ pub mod frame;
 pub mod gi;
 #[cfg(feature = "import")]
 pub mod import;
+#[cfg(feature = "lod")]
+pub mod lod;
 pub mod mesh;
 pub mod primitives;
 pub mod visual;

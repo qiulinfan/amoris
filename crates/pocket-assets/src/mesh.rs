@@ -84,7 +84,7 @@ pub struct MeshData {
     /// The index of its material in the asset, if any.
     pub material: Option<usize>,
     /// Coarser versions for distance (level 1 onward), each with its own indices into `vertices`
-    /// and the screen-space error it was simplified to.
+    /// and the geometric error it was simplified to (lod.rs).
     pub lods: Vec<Lod>,
     /// Joint indices and weights per vertex, for a skinned mesh.
     #[serde(default)]
@@ -102,7 +102,8 @@ pub struct SkinWeights {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Lod {
     pub indices: Vec<u32>,
-    /// Relative geometric error of this level (0 exact), from the simplifier.
+    /// How far this level's surface may stray from the full mesh's, in the mesh's own units (0
+    /// exact), from the simplifier; never less than a finer level's.
     pub error: f32,
 }
 
