@@ -234,6 +234,37 @@ impl Pause {
         v
     }
 
+    /// The stop in a few fields, for what is not a debugger frontend: the loop state's record
+    /// (`pocket_link::StateHandle::stopped`), which a `time.step` stopped by the debugger answers
+    /// with as its `stopped_by` and which the host names in `debug.paused` refusals.
+    /// `{reason, tick, system, location, breakpoint?, watch?, exception?}`.
+    pub fn summary(&self) -> Json {
+        let mut v = json!({
+            "reason": self.reason.name(),
+            "tick": self.tick,
+            "system": self.system,
+            "location": self.location().map(|l| l.json()),
+        });
+        if let Some(bp) = self.hit_breakpoints.first() {
+            v["breakpoint"] = json!(bp);
+        }
+        if let Some(d) = &self.data {
+            v["watch"] = json!({
+                "id": d.watch,
+                "entity": d.entity,
+                "component": d.component,
+                "field": d.field,
+                "before": d.before,
+                "after": d.after,
+                "written_at": d.written_at.as_ref().map(Location::json),
+            });
+        }
+        if let Some((_, text)) = &self.exception {
+            v["exception"] = json!(text);
+        }
+        v
+    }
+
     /// CDP `Debugger.paused`'s parameters.
     pub fn cdp(&self) -> Json {
         let mut p = json!({

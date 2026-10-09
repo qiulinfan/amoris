@@ -105,12 +105,32 @@ struct SetParams {
     frame: Option<usize>,
 }
 
+/// An entity as `debug.watch` takes it: an id, or a name (`Sloop`, `Sloop#3`) that the host
+/// resolves in the world it shows before the hub sees it.
+#[derive(Deserialize, JsonSchema)]
+#[serde(untagged)]
+enum EntityParam {
+    Id(u64),
+    Name(String),
+}
+
+/// `debug.state`.
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct StateParams {
+    /// Only what locating a defect needs: the innermost frame's locals (without `ctx`), the
+    /// other frames' functions and locations; closures, breakpoints' resolutions and the CDP
+    /// endpoint left out.
+    #[serde(default)]
+    brief: bool,
+}
+
 /// `debug.watch`.
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct WatchParams {
-    /// The entity's id.
-    entity: u64,
+    /// The entity: its id, a name or `Name#id`.
+    entity: EntityParam,
     /// A component scripts can write, such as `Log`.
     component: String,
     /// One field (every field when absent).
@@ -154,9 +174,22 @@ struct WaitParams {
 /// One method of the agents' debugger.
 pub struct Method {
     pub name: &'static str,
+    /// As the command catalog says it: `read` (looks only), `control` (stops, resumes, steps,
+    /// sets breakpoints and watches) or `write` (changes a paused frame's variable).
+    pub kind: &'static str,
+    /// Other names that reach it.
+    pub aliases: &'static [&'static str],
     pub doc: &'static str,
     /// Its parameters' JSON Schema.
     pub params: Json,
+}
+
+impl Method {
+    /// The command catalog's entry: `{name, kind, doc, aliases, params}`.
+    pub fn entry(&self) -> Json {
+        json!({"name": self.name, "kind": self.kind, "doc": self.doc,
+               "aliases": self.aliases, "params": self.params})
+    }
 }
 
 fn schema<T: JsonSchema>() -> Json {
@@ -169,76 +202,106 @@ pub fn methods() -> Vec<Method> {
     vec![
         Method {
             name: "debug.attach",
+            kind: "control",
+            aliases: &[],
             doc: "Starts debugging: the scripts are instrumented from the next tick (breakpoints, pauses and watches attach implicitly).",
             params: schema::<NoParams>(),
         },
         Method {
             name: "debug.detach",
+            kind: "control",
+            aliases: &[],
             doc: "Stops debugging: the agents' breakpoints and watches go, a pause resumes, scripts run uninstrumented from the next tick.",
             params: schema::<NoParams>(),
         },
         Method {
             name: "debug.breakpoints.set",
+            kind: "control",
+            aliases: &["debug.break"],
             doc: "Sets a breakpoint on a TypeScript line (1-based), with an optional condition, or a logpoint.",
             params: schema::<BreakpointSet>(),
         },
         Method {
             name: "debug.breakpoints.clear",
+            kind: "control",
+            aliases: &[],
             doc: "Removes a breakpoint, or every breakpoint agents set.",
             params: schema::<BreakpointClear>(),
         },
         Method {
             name: "debug.breakpoints.list",
+            kind: "read",
+            aliases: &[],
             doc: "Lists every breakpoint (the agents' and the CDP clients') with where it resolves.",
             params: schema::<NoParams>(),
         },
         Method {
             name: "debug.pause",
+            kind: "control",
+            aliases: &[],
             doc: "Stops the game at the next script statement; waits up to timeout_ms for it.",
             params: schema::<PauseParams>(),
         },
         Method {
             name: "debug.continue",
+            kind: "control",
+            aliases: &[],
             doc: "Resumes a paused game (and releases a game waiting for a debugger).",
             params: schema::<NoParams>(),
         },
         Method {
             name: "debug.step",
+            kind: "control",
+            aliases: &[],
             doc: "Steps over, into or out of the current statement and returns where it stopped.",
             params: schema::<StepParams>(),
         },
         Method {
             name: "debug.state",
-            doc: "Running or paused; when paused, why, the tick and system, and the frames with TypeScript locations and locals.",
-            params: schema::<NoParams>(),
+            kind: "read",
+            aliases: &[],
+            doc: "Running or paused; when paused, why, the tick and system, and the frames with TypeScript locations and locals (brief: the innermost frame's locals and the other frames' locations only).",
+            params: schema::<StateParams>(),
         },
         Method {
             name: "debug.eval",
+            kind: "read",
+            aliases: &[],
             doc: "Evaluates an expression in a frame of the paused game.",
             params: schema::<EvalParams>(),
         },
         Method {
             name: "debug.set",
+            kind: "write",
+            aliases: &[],
             doc: "Sets a variable (an argument, a local or a closure variable) of a frame of the paused game to an expression's value; a const refuses.",
             params: schema::<SetParams>(),
         },
         Method {
             name: "debug.watch",
-            doc: "A data breakpoint: pause when a script system's staged write changes the field.",
+            kind: "control",
+            aliases: &[],
+            doc: "A data breakpoint: pause when a script system's staged write changes the field (entity by id or name).",
             params: schema::<WatchParams>(),
         },
         Method {
             name: "debug.unwatch",
+            kind: "control",
+            aliases: &["debug.watch.clear"],
             doc: "Removes a data breakpoint, or every one agents set.",
             params: schema::<UnwatchParams>(),
         },
         Method {
             name: "debug.exceptions",
+            kind: "control",
+            aliases: &[],
             doc: "Pauses on exceptions: none, uncaught (no try catches them) or all.",
             params: schema::<ExceptionsParams>(),
         },
         Method {
             name: "debug.wait",
+            kind: "read",
+            aliases: &[],
             doc: "Waits up to timeout_ms for the game to stop and returns the state.",
             params: schema::<WaitParams>(),
         },
@@ -279,6 +342,11 @@ impl DebugHub {
     /// Serves one method of the agents' debugger (`debug.*`, [`methods`]). Blocks at most for the
     /// waits the method asks (`timeout_ms`), never for the game thread otherwise.
     pub fn call(&self, method: &str, params: &Json) -> Result<Json, Problem> {
+        let method = match method {
+            "debug.break" => "debug.breakpoints.set",
+            "debug.watch.clear" => "debug.unwatch",
+            m => m,
+        };
         match method {
             "debug.attach" => {
                 decode::<NoParams>(params, method)?;
@@ -402,8 +470,9 @@ impl DebugHub {
                 Ok(self.state_json())
             }
             "debug.state" => {
-                decode::<NoParams>(params, method)?;
-                Ok(self.state_json())
+                let p: StateParams = decode(params, method)?;
+                let state = self.state_json();
+                Ok(if p.brief { brief(&state) } else { state })
             }
             "debug.eval" => {
                 let p: EvalParams = decode(params, method)?;
@@ -442,11 +511,22 @@ impl DebugHub {
             }
             "debug.watch" => {
                 let p: WatchParams = decode(params, method)?;
+                let entity = match p.entity {
+                    EntityParam::Id(id) => id,
+                    EntityParam::Name(name) => {
+                        return Err(problem(
+                            "request.wrong_type",
+                            format!(
+                                "The debugger alone takes an entity id; '{name}' is a name, which \
+                                 the host (pocket serve) resolves."
+                            ),
+                            json!({"path": "/entity", "got": name}),
+                        ));
+                    }
+                };
                 self.attach_agent();
-                let id = self.add_watch(AGENT, p.entity, &p.component, p.field.as_deref());
-                Ok(
-                    json!({"id": id, "entity": p.entity, "component": p.component, "field": p.field}),
-                )
+                let id = self.add_watch(AGENT, entity, &p.component, p.field.as_deref());
+                Ok(json!({"id": id, "entity": entity, "component": p.component, "field": p.field}))
             }
             "debug.unwatch" => {
                 let p: UnwatchParams = decode(params, method)?;
@@ -535,9 +615,15 @@ impl DebugHub {
             return Ok(wanted);
         }
         let modules = st.registry.modules();
-        // A path that ends with the module path (an absolute path from an editor) names it.
+        // A path that ends with the module path (an absolute path from an editor) names it, as
+        // does the module path's end (`helm.ts` for `scripts/helm.ts`) when only one ends so.
         if let Some(m) = modules.iter().find(|m| wanted.ends_with(m.as_str())) {
             return Ok(m.clone());
+        }
+        let tail = format!("/{wanted}");
+        let ends: Vec<&String> = modules.iter().filter(|m| m.ends_with(&tail)).collect();
+        if let [m] = ends.as_slice() {
+            return Ok((*m).clone());
         }
         Err(problem(
             "debug.unknown_file",
@@ -608,4 +694,54 @@ impl DebugHub {
         };
         v
     }
+}
+
+/// `debug.state {brief: true}` of a full state: where it stopped and why, the innermost frame's
+/// locals without `ctx` (the system's context, kilobytes of closures), one line per other frame,
+/// the breakpoints by id and place, the watches.
+fn brief(state: &Json) -> Json {
+    let mut v = json!({
+        "state": state["state"],
+        "reason": state["reason"],
+        "tick": state["tick"],
+        "system": state["system"],
+        "location": state["location"],
+    });
+    for k in ["hit_breakpoints", "exception", "data"] {
+        if !state[k].is_null() {
+            v[k] = state[k].clone();
+        }
+    }
+    if let Some(frames) = state["frames"].as_array() {
+        let mut out = Vec::new();
+        for (i, f) in frames.iter().enumerate() {
+            let mut b = json!({"frame": f["frame"], "function": f["function"],
+                               "location": f["location"]});
+            if i == 0 {
+                let locals: Vec<Json> = f["locals"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter(|l| l["name"] != "ctx")
+                    .cloned()
+                    .collect();
+                b["locals"] = Json::Array(locals);
+            }
+            out.push(b);
+        }
+        v["frames"] = Json::Array(out);
+    }
+    v["breakpoints"] = Json::Array(
+        state["breakpoints"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|b| {
+                json!({"id": b["id"], "at": b["locations"][0], "condition": b["condition"],
+                       "log": b["log"]})
+            })
+            .collect(),
+    );
+    v["watches"] = state["watches"].clone();
+    v
 }

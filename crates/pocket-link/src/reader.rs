@@ -94,6 +94,10 @@ struct Shared {
     play: AtomicU8,
     epoch: AtomicU64,
     stopped: Mutex<Option<pocket_contract::Problem>>,
+    /// The script debugger's stops so far, and the last one's summary (threads.md 3.5): what
+    /// presenters show while the game thread is held, and what ends a `time.step` early.
+    debug_stops: AtomicU64,
+    debug_stop: Mutex<Option<serde_json::Value>>,
 }
 
 /// The game thread's side: publishes snapshots, events and status.
@@ -129,6 +133,8 @@ pub fn publication(
         play: AtomicU8::new(0),
         epoch: AtomicU64::new(0),
         stopped: Mutex::new(None),
+        debug_stops: AtomicU64::new(0),
+        debug_stop: Mutex::new(None),
     });
     (
         Publisher {
@@ -213,6 +219,17 @@ impl Publisher {
         self.shared.events.lock().map_or(0, |r| r.last())
     }
 
+    /// How many times the script debugger has stopped the game thread ([`StateHandle::stopped`]):
+    /// the loop compares it around a tick to end a `time.step` the debugger stopped.
+    pub fn debug_stops(&self) -> u64 {
+        self.shared.debug_stops.load(Ordering::Acquire)
+    }
+
+    /// The last stop's summary, whether or not the game is still held there.
+    pub fn last_debug_stop(&self) -> Option<serde_json::Value> {
+        self.shared.debug_stop.lock().ok().and_then(|s| s.clone())
+    }
+
     /// The game stopped: the status says so and readers waiting for a newer snapshot wake.
     pub fn stopped(&self, tick: Tick, why: Option<pocket_contract::Problem>) {
         if let Ok(mut s) = self.shared.stopped.lock() {
@@ -238,6 +255,18 @@ impl StateHandle {
             s.since.store((s.clock)().to_bits(), Ordering::Release);
         }
         s.tick.store(tick.0, Ordering::Release);
+    }
+
+    /// The script debugger holds the game thread inside tick `tick`: records the stop's summary
+    /// (`{reason, tick, system, location, ...}`, pocket-debug's `Pause::summary`), counts it and
+    /// sets the state to `Breakpoint`. Leaving it is `set_state(Ticking)`.
+    pub fn stopped(&self, tick: Tick, summary: serde_json::Value) {
+        let s = &self.shared;
+        if let Ok(mut d) = s.debug_stop.lock() {
+            *d = Some(summary);
+        }
+        s.debug_stops.fetch_add(1, Ordering::AcqRel);
+        self.set_state(LoopState::Breakpoint, tick);
     }
 }
 
@@ -305,6 +334,20 @@ impl SnapshotReader {
             },
             epoch: s.epoch.load(Ordering::Acquire),
         }
+    }
+
+    /// Where the script debugger holds the game thread, while it does (the state is `Breakpoint`):
+    /// the stop's summary as [`StateHandle::stopped`] recorded it.
+    pub fn debug_stop(&self) -> Option<serde_json::Value> {
+        if self.status().state != LoopState::Breakpoint {
+            return None;
+        }
+        self.shared.debug_stop.lock().ok().and_then(|s| s.clone())
+    }
+
+    /// How many times the script debugger has stopped the game thread so far.
+    pub fn debug_stops(&self) -> u64 {
+        self.shared.debug_stops.load(Ordering::Acquire)
     }
 
     /// Why the game stopped, once it has.

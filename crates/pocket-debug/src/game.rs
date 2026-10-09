@@ -443,7 +443,7 @@ impl GameHook {
         }
         let loop_state = lock(&self.inner.loop_state).clone();
         if let Some(h) = &loop_state {
-            h.set_state(pocket_link::LoopState::Breakpoint, pocket_sim_tick(tick));
+            h.stopped(pocket_sim_tick(tick), pause.summary());
         }
         self.inner.paused.store(true, Ordering::Release);
         self.inner.changed.notify_all();
