@@ -736,9 +736,10 @@ step can confirm it or change the layout.
     `pocket-persist`, so `pocket-check` re-exports the `Snapshot`, `WorldHash` and `TickRef` its
     child protocol carries. Slice 1's subcommands are `run --headless`, `check`, `replay --verify`
     and `hashes` (a run's world hash after every tick as JSON, for the web build to compare).
-    2026-10-09 (Pioneer): the build script of 4.13 is built. `crates/pocket-app/build/
-    engine_version.rs` computes `source`, `commit`, `target`, `profile` and `contract` and is run by
-    `pocket-app`'s and `pocket-web`'s build scripts alike; `pocket_runtime::install_engine_version!`
+    2026-10-09 (Pioneer): the build script of 4.13 is built.
+    `crates/pocket-app/build/engine_version.rs` computes `source`, `commit`, `target`, `profile`
+    and `contract` and is run by `pocket-app`'s and `pocket-web`'s build scripts alike;
+    `pocket_runtime::install_engine_version!`
     installs them with `c_compiler` (`pocket_script::QJS_CC`) where `pocket` starts and where the
     web worker builds its game, and `pocket version` prints them. Tests and examples install
     nothing and report `EngineVersion::unbuilt()`.

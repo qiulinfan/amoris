@@ -461,7 +461,11 @@ enqueued. At boundary T-1, whose writes are the inputs of tick T, the game threa
 
 1. takes every envelope in the queue at that moment, and every held envelope whose `at` is T;
 2. holds envelopes whose `at` is later than T (they count against the capacity), and answers
-   `command.tick_passed` to those whose `at` is earlier, applying nothing;
+   `command.tick_passed` to those whose `at` is earlier, applying nothing. Held envelopes are
+   matched by tick the same way at every boundary: one whose `at` the world passed without stopping
+   at its boundary (a world replaced at a later tick) is answered `command.tick_passed` and its
+   place in the queue freed, never held for a boundary that cannot come. The worker (7.3) does the
+   same (`pocket_runtime::take_held`);
 3. sorts the batch by `(source, seq)`: Host, then Editor, then Developer sessions by number, then
    players by the game's seat order (shared/contract/README.md, Seats and callers), each source's
    commands in its own order;

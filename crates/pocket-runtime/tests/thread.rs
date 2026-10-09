@@ -80,7 +80,7 @@ fn commands_are_held_for_their_tick_and_refused_when_it_passed() {
     h.shutdown(2000).unwrap();
 }
 
-/// threads.md 5.3: a held command whose tick the world passed without stopping at its boundary
+/// threads.md 5.2: a held command whose tick the world passed without stopping at its boundary
 /// (a world replaced at a later tick; here a test command moves the clock, since today's restores
 /// and Play's swaps only move it back) is answered `command.tick_passed` and gives back its place
 /// in the queue, rather than waiting for a boundary that never comes.

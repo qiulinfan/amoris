@@ -530,7 +530,7 @@ impl Loop {
         let mut batch: Vec<Envelope> = Vec::new();
         let (due, passed) = take_held(&mut self.held, next);
         // A world replaced at a later tick (a restore or Play's fork swapped in) can carry the
-        // game past a held envelope's tick: it is answered and its place freed (threads.md 5.3).
+        // game past a held envelope's tick: it is answered and its place freed (threads.md 5.2).
         for e in passed {
             self.rx.done(1);
             let at = e.at.unwrap_or(next);
@@ -1292,7 +1292,7 @@ impl Loop {
 }
 
 /// Takes from `held` the envelopes due at the boundary before tick `next` and those whose tick has
-/// passed, leaving the later ones held (threads.md 5.3: held envelopes are matched by tick like
+/// passed, leaving the later ones held (threads.md 5.2: held envelopes are matched by tick like
 /// queued ones, so one whose tick a replaced world skipped is answered rather than stranded).
 fn take_held(held: &mut Vec<Envelope>, next: Tick) -> (Vec<Envelope>, Vec<Envelope>) {
     let mut due = Vec::new();
@@ -1329,7 +1329,7 @@ mod tests {
         }
     }
 
-    /// threads.md 5.3: at the boundary before tick 10, a held envelope of tick 10 is due, one of a
+    /// threads.md 5.2: at the boundary before tick 10, a held envelope of tick 10 is due, one of a
     /// later tick stays held, and one of an earlier tick, which a world replaced at a later tick
     /// would otherwise strand, is taken out to be answered `command.tick_passed`.
     #[test]

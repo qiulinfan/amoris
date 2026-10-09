@@ -32,6 +32,8 @@ trunc 301a10c762672711
 sqrt_any 0194f03608a4c0b9
 min 423ca059543eca99
 max 76847d1adb722db3
+min_f32 7d6adae72c216800
+max_f32 291633c7db94330c
 canonical 40a8e0e5644ea625
 powi f3acba19bb9c4617
 wrap_angle 0c2a12ad868dfcca

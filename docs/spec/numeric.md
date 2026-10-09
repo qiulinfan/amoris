@@ -171,7 +171,8 @@ below resolves in clippy 1.98.1, checked with a scratch crate on 2026-10-03 for 
 - The transcendental functions of `std` have unspecified precision (2) and are replaced by `math`.
 - `powi` is replaced by `math::powi`, whose multiplication order is fixed (6.2); `std`'s is an LLVM
   intrinsic whose order is not.
-- `min` and `max` are replaced by `math::min` and `math::max`, defined by comparisons (6.2).
+- `min` and `max` are replaced by `math::min` and `math::max`, defined by comparisons (6.2), and
+  `f32::min` and `f32::max` by `math::min_f32` and `math::max_f32`, the same comparisons in `f32`.
 - `mul_add` is correctly rounded and so deterministic in itself, but a fused expression in a Rust
   system and its unfused twin in a script give different bits; one rounding model keeps engine and
   script arithmetic interchangeable. (The `libm` crate uses fused operations inside a few functions,
@@ -293,6 +294,9 @@ Defined here, with their exact operation sequence:
 ```rust
 pub fn min(a: f64, b: f64) -> f64 { if b < a { b } else { a } }   // ties and NaN: returns a
 pub fn max(a: f64, b: f64) -> f64 { if b > a { b } else { a } }   // ties and NaN: returns a
+/// The f32 forms (Rapier's and the assets' scalars), the same comparisons and the same rule.
+pub fn min_f32(a: f32, b: f32) -> f32 { if b < a { b } else { a } } // ties and NaN: returns a
+pub fn max_f32(a: f32, b: f32) -> f32 { if b > a { b } else { a } } // ties and NaN: returns a
 pub fn clamp(x: f64, lo: f64, hi: f64) -> f64 { if x < lo { lo } else if x > hi { hi } else { x } } // lo <= hi
 pub fn lerp(a: f64, b: f64, t: f64) -> f64 { a + (b - a) * t }
 /// x^n by squaring: r = 1, b = x, e = |n|; while e > 0 { if e odd { r *= b }; b *= b; e >>= 1 };
@@ -436,8 +440,9 @@ wrap (hashes, PCG32) says so with `wrapping_*`. In scripts, integers are doubles
    Chrome (`checks.md`, 7.2), all equal to the file. A `libm` update that changes a result fails
    here first. The same file pins sweeps of the allowed operations that reach a C library in some
    build: Rust's `%` with subnormal, huge, negative and negative-zero operands, `floor`, `ceil`,
-   `trunc`, `sqrt` and `math::min` and `max`, and `math::canonical` over NaNs of every sign and
-   payload; script-host.md 12, test 2, sweeps the same operations in QuickJS-ng.
+   `trunc`, `sqrt`, `math::min` and `max` and their `f32` forms `min_f32` and `max_f32`, and
+   `math::canonical` over NaNs of every sign and payload; script-host.md 12, test 2, sweeps the
+   same operations in QuickJS-ng (which has no `f32` forms).
 2. **Accuracy** (`math.accuracy`): a committed table of inputs and correctly rounded results per
    function, generated offline with mpmath (Python is offline tooling; the check reads the table and
    never runs Python); every function's error stays within 2 ulp, so an update that makes accuracy
@@ -475,13 +480,16 @@ wrap (hashes, PCG32) says so with `wrapping_*`. In scripts, integers are doubles
    comparison per write and hides nothing that determinism needs.
 5. **Strict integer conversion.** Recommendation: strict (8), as `script-host.md` (6) also
    recommends. Rounding on write would hide bugs that the structured error names at the line.
-6. **Slice 1: the golden sweeps.** `pocket_sim::math::sweep` defines 36 sweeps of 100,000 inputs:
+6. **Slice 1: the golden sweeps.** `pocket_sim::math::sweep` defines 38 sweeps of 100,000 inputs:
    the 26 of 6.4 (each function of 6.2 over its sampled range, `sin` also over ±1e5 and ±1e9) and
-   ten of the allowed operations of 10, item 1 (`%`, `floor`, `ceil`, `trunc` and `sqrt` over finite
-   doubles of every exponent with signed zeros, `min` and `max` over signed zeros and NaNs,
-   `canonical` over NaNs of every sign and payload, `powi`, `wrap_angle`). Inputs come from PCG32
-   seeded by the sweep's name, built by integer bit construction and exact arithmetic; each result's
-   bits are folded into FNV-1a 64. The hashes are committed as
+   twelve of the allowed operations of 10, item 1 (`%`, `floor`, `ceil`, `trunc` and `sqrt` over
+   finite doubles of every exponent with signed zeros, `min` and `max` over signed zeros and NaNs,
+   `min_f32` and `max_f32` likewise in `f32`, `canonical` over NaNs of every sign and payload,
+   `powi`, `wrap_angle`). The `f32` sweeps build their NaNs from bits and fold each result's 32 bits
+   unconverted, since a conversion to `f64` is an arithmetic operation whose NaN bits differ between
+   targets (2); they were added on 2026-10-09 (Pioneer) without changing the other 36. Inputs come
+   from PCG32 seeded by the sweep's name, built by integer bit construction and exact arithmetic;
+   each result's bits are folded into FNV-1a 64. The hashes are committed as
    `crates/pocket-sim/src/math/golden.txt` (rewritten only by
    `POCKET_BLESS=1 cargo test -p pocket-sim --test math golden_sweep`, with a `libm` change); native
    debug, native release and the `wasm32-unknown-unknown` build reproduce them (the web tests

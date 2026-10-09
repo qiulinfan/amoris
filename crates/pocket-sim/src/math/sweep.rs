@@ -6,8 +6,9 @@
 //!
 //! The first 26 sweeps are numeric.md 6.2's functions over its sampled ranges; the rest pin the
 //! allowed operations that reach a C library in some build (`%`, `floor`, `ceil`, `trunc`, `sqrt`
-//! over every exponent, subnormals and signed zeros included), `min` and `max` on signed zeros and
-//! NaNs, `canonical` over NaNs of every sign and payload, `powi` and `wrap_angle`.
+//! over every exponent, subnormals and signed zeros included), `min` and `max` and their `f32` forms
+//! on signed zeros and NaNs, `canonical` over NaNs of every sign and payload, `powi` and
+//! `wrap_angle`.
 
 use super::*;
 use crate::rng::{Pcg32, fnv1a64_extend};
@@ -70,6 +71,31 @@ fn edgy(r: &mut Pcg32) -> f64 {
     }
 }
 
+/// [`edgy`] in `f32`, NaNs of every sign and payload built from their bits: a conversion from `f64`
+/// would be an arithmetic operation, whose NaN bits differ between targets (numeric.md 2).
+fn edgy_f32(r: &mut Pcg32) -> f32 {
+    match r.next_u32() % 6 {
+        0 => 0.0,
+        1 => -0.0,
+        2 => {
+            let sign = (r.next_u32() & 1) << 31;
+            f32::from_bits(sign | (0xFF << 23) | (r.next_u32() & ((1 << 23) - 1)) | 1)
+        }
+        _ => {
+            // 24 random bits are exact in f32: [0, 1) times 20, minus 10, rounded once each.
+            #[allow(clippy::cast_precision_loss)]
+            let u = (r.next_u32() >> 8) as f32 * (1.0 / 16_777_216.0);
+            u * 20.0 - 10.0
+        }
+    }
+}
+
+/// An `f32` result as a sweep's value: its bits in the low half, no conversion (which would change
+/// a NaN's bits on some targets).
+fn bits_f32(x: f32) -> f64 {
+    f64::from_bits(u64::from(x.to_bits()))
+}
+
 /// One sweep: its name, and the function that evaluates input `i` with the sweep's generator.
 type Sweep = (&'static str, fn(&mut Pcg32) -> f64);
 
@@ -127,6 +153,14 @@ pub const SWEEPS: &[Sweep] = &[
     ("max", |r| {
         let a = edgy(r);
         max(a, edgy(r))
+    }),
+    ("min_f32", |r| {
+        let a = edgy_f32(r);
+        bits_f32(min_f32(a, edgy_f32(r)))
+    }),
+    ("max_f32", |r| {
+        let a = edgy_f32(r);
+        bits_f32(max_f32(a, edgy_f32(r)))
     }),
     ("canonical", |r| canonical(any_nan(r))),
     ("powi", |r| {
