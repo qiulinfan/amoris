@@ -11,6 +11,8 @@
 //!    of the mesh table like any other, and the late pass draws the level the early pass chose.
 //! 3. Hysteresis: one rock seen from distances around the one where its first coarser level becomes
 //!    acceptable keeps its level until the margin is passed, both ways.
+//! 4. The binding limit: on WebGPU's default limits, a scene whose lists would pass 128 MiB with
+//!    levels draws exactly as it does with levels off, and gets its levels back when it shrinks.
 
 use pocket_assets::frame::{InstanceUpdate, Look, Pose, RenderFrame};
 use pocket_render::gpu::Minimal;
@@ -365,4 +367,127 @@ fn hysteresis_holds_a_level_until_the_margin() {
             );
         }
     }
+}
+
+/// `shown` spheres in front of a camera at the origin and `hidden` far behind it, out of every
+/// view, under a sun straight above: the hidden ones fill the views' lists and draw nothing.
+fn spheres(shown: u32, hidden: u32) -> RenderFrame {
+    let mut f = demo::lod_field(1, SPACING);
+    if let Some(lights) = &mut f.lights {
+        for l in lights {
+            l.direction = [0.0, -1.0, 0.0];
+        }
+    }
+    let look = Look {
+        mesh: "sphere".into(),
+        material: String::new(),
+        color: [0.8, 0.7, 0.6, 1.0],
+        metallic: 0.0,
+        roughness: 0.6,
+        transmission: None,
+        ior: None,
+        emissive: [0.0; 3],
+        cast_shadows: true,
+        visible: true,
+    };
+    let side = (f64::from(hidden).sqrt().ceil() as u32).max(1);
+    f.instances = (0..shown + hidden)
+        .map(|i| {
+            let position = if i < shown {
+                // Along the view from 3 to 60 m, spread across it.
+                let z = 3.0 + 57.0 * i as f32 / shown as f32;
+                [(i as f32 * 0.7).sin() * z * 0.4, 0.0, -z]
+            } else {
+                let k = i - shown;
+                [
+                    (k % side) as f32 * 2.0 - side as f32,
+                    0.0,
+                    1000.0 + (k / side) as f32 * 2.0,
+                ]
+            };
+            InstanceUpdate {
+                id: u64::from(i) + 1,
+                pose: Some(Pose {
+                    position,
+                    rotation: [0.0, 0.0, 0.0, 1.0],
+                    scale: [1.0; 3],
+                }),
+                look: Some(look.clone()),
+                anim: None,
+            }
+        })
+        .collect();
+    f
+}
+
+#[test]
+fn levels_give_way_at_the_binding_limit() {
+    let choice = BackendChoice::from_env();
+    // WebGPU's default limits: a storage buffer binds at most 128 MiB.
+    let Ok(gpu) = Gpu::headless_with(
+        choice,
+        Minimal {
+            limits: true,
+            ..Minimal::default()
+        },
+    ) else {
+        eprintln!("no GPU: skipped");
+        return;
+    };
+    let limit = gpu.device.limits().max_storage_buffer_binding_size;
+    let mut sphere = pocket_assets::primitives::primitive("sphere").expect("the sphere");
+    pocket_assets::lod::build(&mut sphere, &pocket_assets::lod::LodOptions::default());
+    let levels = 1 + sphere.lods.len() as u64;
+    assert!(levels >= 4, "the sphere has {levels} levels");
+    // Just past the limit with levels (the camera's list takes 48 bytes per instance and level),
+    // far within it without them.
+    let shown = 64u32;
+    let hidden = (limit / (48 * levels) * 21 / 20) as u32;
+    let cam = CameraState::look_at(
+        glam::Vec3::new(0.0, 1.5, 0.0),
+        glam::Vec3::new(0.0, 0.0, -20.0),
+    );
+    let mut runs = Vec::new();
+    for mode in [LodMode::Off, LodMode::On] {
+        let mut r = Renderer::new(&gpu, wgpu::TextureFormat::Rgba8UnormSrgb, W, H);
+        r.set_lod(mode);
+        r.set_occlusion(OcclusionMode::Off);
+        r.set_camera_override(Some(cam));
+        r.apply(spheres(shown, hidden), 0.0);
+        let _ = r.capture_rgba(1.0);
+        runs.push((r.draw_counts(), r.last.lod, r.list_bytes(), r));
+    }
+    let (off, on) = (&runs[0], &runs[1]);
+    eprintln!(
+        "{hidden} hidden spheres of {levels} levels, limit {limit} bytes: levels {} ({} list \
+         bytes), camera instances {} and {}, cascades' triangles {} and {}",
+        on.1,
+        on.2,
+        off.0.camera.instances(),
+        on.0.camera.instances(),
+        off.0.shadow_triangles(),
+        on.0.shadow_triangles(),
+    );
+    assert_eq!(on.1, "off-limit", "levels give way");
+    assert!(off.0.camera.instances() > 0 && off.0.shadow_triangles() > 0);
+    assert_eq!(on.0, off.0, "the scene draws as it does with levels off");
+    let shown_drawn = off.0.camera.instances();
+    // Once the scene shrinks, levels come back.
+    let mut r = runs.pop().expect("the run with levels").3;
+    let mut fewer = spheres(shown, 0);
+    fewer.reset = false;
+    fewer.tick = 2;
+    fewer.instances.clear();
+    fewer.removed = (shown + 1..=shown + hidden).map(u64::from).collect();
+    r.apply(fewer, 1.5);
+    let _ = r.capture_rgba(2.0);
+    let counts = r.draw_counts();
+    eprintln!(
+        "without the hidden ones: levels {}, camera instances per level {:?}",
+        r.last.lod,
+        camera_levels(&counts)
+    );
+    assert_eq!(r.last.lod, "on");
+    assert_eq!(counts.camera.instances(), shown_drawn);
+    assert!(camera_levels_used(&counts) > 0);
 }

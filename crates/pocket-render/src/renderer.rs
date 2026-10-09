@@ -136,7 +136,8 @@ pub struct FrameStats {
     pub occlusion: &'static str,
     /// The latest reading of the late culling pass's counters (a few frames old).
     pub occlusion_stats: Option<OcclusionStats>,
-    /// Levels of detail this frame: `on` or `off` (lod.rs).
+    /// Levels of detail this frame: `on`, `off`, or `off-limit` (asked for, but the views' lists
+    /// would pass the device's binding limit with them; docs/spec/lod.md 5).
     pub lod: &'static str,
 }
 
@@ -374,9 +375,11 @@ pub struct Renderer {
     bind_key: (u64, u64, u64),
     view_stride: u32,
     draw_meshes: u32,
-    /// How levels of detail are picked (lod.rs), and whether the batches' regions were last sized
-    /// with levels on.
+    /// How levels of detail are picked (lod.rs); whether levels were asked for when the batches'
+    /// regions were last laid out, and whether those regions hold level rows (not when the lists
+    /// would pass the device's binding limit, docs/spec/lod.md 5).
     lod: LodSettings,
+    regions_want: Option<bool>,
     regions_lod: Option<bool>,
     light_count: u32,
 
@@ -412,6 +415,38 @@ fn storage(
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | extra,
         mapped_at_creation: false,
     })
+}
+
+/// The bytes of the views' lists for `stride` entries per view: the camera's `drawn` records (48
+/// bytes each) and the `visible` indices (4 bytes per entry and view).
+fn list_bytes(stride: u32) -> (u64, u64) {
+    (
+        u64::from(stride) * 48,
+        u64::from(stride) * 4 * u64::from(VIEWS),
+    )
+}
+
+/// The largest list the device can bind whole (a multiple of 256 bytes).
+fn list_limit(device: &wgpu::Device) -> u64 {
+    let l = device.limits();
+    l.max_storage_buffer_binding_size.min(l.max_buffer_size) & !255
+}
+
+/// Grows `buf` to hold `need` bytes, doubling up to `limit`; also replaces a buffer past `limit`
+/// once `need` fits. Returns whether it was replaced.
+fn fit_list(
+    device: &wgpu::Device,
+    buf: &mut wgpu::Buffer,
+    label: &str,
+    need: u64,
+    limit: u64,
+) -> bool {
+    if need <= buf.size() && (buf.size() <= limit || need > limit) {
+        return false;
+    }
+    let size = need.next_power_of_two().min(limit.max(need));
+    *buf = storage(device, label, size, wgpu::BufferUsages::empty());
+    true
 }
 
 fn uniform(device: &wgpu::Device, label: &str, size: u64) -> wgpu::Buffer {
@@ -856,6 +891,7 @@ impl Renderer {
             view_stride: 1,
             draw_meshes: 0,
             lod: LodSettings::from_env(),
+            regions_want: None,
             regions_lod: None,
             light_count: 0,
             camera_override: None,
@@ -926,7 +962,8 @@ impl Renderer {
     /// bytes per entry) and the cascades' `visible` indices (4 bytes per entry and view). Levels of
     /// detail multiply a mesh's entries by its levels (docs/spec/lod.md 5).
     pub fn list_bytes(&self) -> u64 {
-        u64::from(self.view_stride) * (48 + 4 * u64::from(VIEWS))
+        let (drawn, visible) = list_bytes(self.view_stride);
+        drawn + visible
     }
 
     /// What the last submitted frame drew, per argument set and level of detail, read back from
@@ -1207,28 +1244,58 @@ impl Renderer {
         let mesh_count = self.meshes.len() as u32;
         // Ray-traced shadows meet the full meshes: a receiver drawn coarser than the mesh its rays
         // start from shadows itself (docs/spec/lod.md 7), so they draw full meshes.
-        let lod_on = self.lod.on() && self.rt_shadows.is_none();
+        let want_lod = self.lod.on() && self.rt_shadows.is_none();
         if self.scene.counts_changed
             || mesh_count != self.draw_meshes
-            || self.regions_lod != Some(lod_on)
+            || self.regions_want != Some(want_lod)
         {
             self.scene.counts_changed = false;
-            self.regions_lod = Some(lod_on);
+            self.regions_want = Some(want_lod);
             // A level row draws its mesh's instances while levels are on, none while they are off.
-            let owners: Vec<u32> = self
-                .meshes
-                .owner
-                .iter()
-                .enumerate()
-                .map(|(row, &o)| {
-                    if lod_on || o == row as u32 {
-                        o
-                    } else {
-                        u32::MAX
-                    }
-                })
-                .collect();
-            let (offsets, stride) = self.scene.batch_offsets(&owners);
+            let owners_with = |lod_on: bool| -> Vec<u32> {
+                self.meshes
+                    .owner
+                    .iter()
+                    .enumerate()
+                    .map(|(row, &o)| {
+                        if lod_on || o == row as u32 {
+                            o
+                        } else {
+                            u32::MAX
+                        }
+                    })
+                    .collect()
+            };
+            // The lists are bound whole: a level row's region holds every instance of its mesh,
+            // so levels multiply them, and past the device's limit nothing would draw. Then the
+            // scene draws full meshes with the lists it had without levels (docs/spec/lod.md 5).
+            let limit = list_limit(device);
+            let largest = |stride: u32| {
+                let (drawn, visible) = list_bytes(stride);
+                drawn.max(visible)
+            };
+            let mut lod_on = want_lod;
+            let mut owners = owners_with(lod_on);
+            let (mut offsets, mut stride) = self.scene.batch_offsets(&owners);
+            if lod_on && largest(stride) > limit {
+                let with = largest(stride);
+                lod_on = false;
+                owners = owners_with(false);
+                (offsets, stride) = self.scene.batch_offsets(&owners);
+                log::warn!(
+                    "levels of detail off: with them a view list would take {with} bytes, over \
+                     this device's {limit}-byte binding limit ({} without them)",
+                    largest(stride)
+                );
+            }
+            if largest(stride) > limit {
+                log::error!(
+                    "a view list takes {} bytes, over this device's {limit}-byte binding limit: \
+                     instances will not draw",
+                    largest(stride)
+                );
+            }
+            self.regions_lod = Some(lod_on);
             let ob = (offsets.len() * 4) as u64;
             if ob > self.batch_offsets.size() {
                 self.batch_offsets = storage(
@@ -1240,29 +1307,10 @@ impl Renderer {
                 grown = true;
             }
             queue.write_buffer(&self.batch_offsets, 0, bytemuck::cast_slice(&offsets));
-            let vis = u64::from(stride) * u64::from(VIEWS) * 4;
-            if vis > self.visible.size() || stride != self.view_stride {
-                if vis > self.visible.size() {
-                    self.visible = storage(
-                        device,
-                        "visible",
-                        vis.next_power_of_two(),
-                        wgpu::BufferUsages::empty(),
-                    );
-                    grown = true;
-                }
-                self.view_stride = stride;
-            }
-            let drawn = u64::from(stride) * 48;
-            if drawn > self.drawn.size() {
-                self.drawn = storage(
-                    device,
-                    "drawn",
-                    drawn.next_power_of_two(),
-                    wgpu::BufferUsages::empty(),
-                );
-                grown = true;
-            }
+            let (drawn, vis) = list_bytes(stride);
+            grown |= fit_list(device, &mut self.visible, "visible", vis, limit);
+            grown |= fit_list(device, &mut self.drawn, "drawn", drawn, limit);
+            self.view_stride = stride;
             let sizes = self.scene.batch_sizes(&owners);
             grown |=
                 self.batches
@@ -1862,7 +1910,11 @@ impl Renderer {
             draw_calls,
             occlusion: self.occlusion.label(),
             occlusion_stats: self.occlusion.last,
-            lod: if lod_on { "on" } else { "off" },
+            lod: match (lod_on, self.regions_want) {
+                (true, _) => "on",
+                (false, Some(true)) => "off-limit",
+                _ => "off",
+            },
         };
         self.last.clone()
     }
