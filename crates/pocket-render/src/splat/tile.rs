@@ -650,6 +650,40 @@ mod tests {
         assert!(max.unwrap_or(0) < 32, "largest difference {max:?}");
     }
 
+    /// Seen from far away (every splat below a pixel), the anti-aliased mode keeps each splat's
+    /// integral, so the cloud covers less of the image than with the plain low-pass, in both
+    /// rasterizers alike. Skipped without a GPU.
+    #[test]
+    fn antialias_fades_subpixel_splats() {
+        let Ok(gpu) = Gpu::headless(BackendChoice::from_env()) else {
+            eprintln!("no GPU: skipped");
+            return;
+        };
+        let mut r = renderer(&gpu, 20_000);
+        r.set_camera_override(Some(CameraState::look_at(
+            Vec3::new(1.0, 1.5, 25.0),
+            Vec3::new(0.0, 0.0, -2.0),
+        )));
+        r.splats.draw_enabled = false;
+        let none = shoot(&mut r, SplatRaster::Quads);
+        r.splats.draw_enabled = true;
+        let mut changes = Vec::new();
+        for raster in [SplatRaster::Quads, SplatRaster::Tiles] {
+            for aa in [false, true] {
+                r.splats.antialias = aa;
+                changes.push(mean_abs_diff(&shoot(&mut r, raster), &none));
+            }
+        }
+        eprintln!("image change (quads, quads aa, tiles, tiles aa): {changes:?}");
+        assert!(changes[1] < changes[0] * 0.8, "{changes:?}");
+        assert!(changes[3] < changes[2] * 0.8, "{changes:?}");
+        let close = |a: f64, b: f64| (a - b).abs() < 0.05 * a.max(b);
+        assert!(
+            close(changes[0], changes[2]) && close(changes[1], changes[3]),
+            "{changes:?}"
+        );
+    }
+
     /// With fewer pair slots than the frame wants, the overflow is counted, not silent, and the
     /// nearest splats still draw. Skipped without a GPU.
     #[test]

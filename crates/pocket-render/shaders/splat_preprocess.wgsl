@@ -148,7 +148,7 @@ fn preprocess(
         let t = (cloud.model_view * vec4f(s.pos, 1.0)).xyz;
         let tz = -t.z;
         let so = unpack2x16float(s.scale_opacity.y);
-        let opacity = so.y;
+        var opacity = so.y;
         if (tz > params.depth.x && opacity >= 1.0 / 255.0) {
             // Covariance: (A R S)(A R S)^T with A the model-view's linear part; then the 2D
             // covariance J W Sigma W^T J^T in pixels, with W folded into A.
@@ -170,6 +170,13 @@ fn preprocess(
             let ca = dot(g0, g0) + 0.3;
             let cb = dot(g0, g1);
             let cc = dot(g1, g1) + 0.3;
+            if ((params.counts.w & SPLAT_ANTIALIAS) != 0u) {
+                // Anti-aliased (gsplat's `antialiased` mode, Mip-Splatting's 2D filter): the
+                // low-pass keeps the splat's integral, opacity times sqrt(det Sigma / det (Sigma +
+                // 0.3 I)), so a sub-pixel splat fades instead of growing to a pixel at full opacity.
+                let det0 = dot(g0, g0) * dot(g1, g1) - cb * cb;
+                opacity *= sqrt(max(det0, 0.0) / max(ca * cc - cb * cb, 1e-12));
+            }
             let mid = 0.5 * (ca + cc);
             let disc = sqrt(max(0.1, mid * mid - (ca * cc - cb * cb)));
             let l1 = mid + disc;
@@ -184,7 +191,7 @@ fn preprocess(
             let k = min(sqrt(max(2.0 * log(255.0 * opacity), 0.0)), 3.0);
             let ndc = vec2f(params.proj.x, params.proj.y) * t.xy / tz;
             let extent = k * sqrt(vec2f(ca, cc)) * 2.0 * params.viewport.zw;
-            if (all(abs(ndc) <= vec2f(1.0) + extent)) {
+            if (all(abs(ndc) <= vec2f(1.0) + extent) && opacity >= 1.0 / 255.0) {
                 visible = true;
                 let to_ndc = 2.0 * params.viewport.zw;
                 // (Clamped into f16's range: only a splat around the camera gets near it.)

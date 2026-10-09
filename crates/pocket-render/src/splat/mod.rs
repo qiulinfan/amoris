@@ -49,6 +49,8 @@ const DRAW_OFFSET: u64 = 32;
 /// and the vertex cache shades each corner once).
 pub(crate) const BATCH: u32 = 16383;
 const PROJECTED_BYTES: u64 = 24;
+/// `SPLAT_ANTIALIAS` in splat_common.wgsl: the params' flag for [`Splats::antialias`].
+const ANTIALIAS: u32 = 1;
 
 /// How the sorted splats are drawn.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -209,6 +211,12 @@ pub struct Splats {
     pub draw_enabled: bool,
     /// Quads or tiles (default: quads, or `POCKET_SPLAT_RASTER`).
     pub raster: SplatRaster,
+    /// Opacity compensation for the 0.3 px^2 low-pass (gsplat's `antialiased` mode, the 2D filter
+    /// of Mip-Splatting): a splat smaller than a pixel keeps its integral and fades instead of
+    /// growing to a pixel at full opacity. Right for clouds trained that way and for generated
+    /// ones; it thins clouds trained with the original 3DGS, which learned the plain low-pass.
+    /// Default off, or `POCKET_SPLAT_AA=1`.
+    pub antialias: bool,
     pub stats: SplatStats,
 }
 
@@ -439,6 +447,7 @@ impl Splats {
             radiance: 1.0,
             draw_enabled: true,
             raster: SplatRaster::from_env(SplatRaster::Quads),
+            antialias: std::env::var("POCKET_SPLAT_AA").is_ok_and(|v| v == "1"),
             stats: SplatStats::default(),
             gpu: gpu.clone(),
         }
@@ -874,7 +883,7 @@ impl Splats {
                 total,
                 clouds.len() as u32,
                 if bits >= 32 { 32 } else { bits },
-                0,
+                if self.antialias { ANTIALIAS } else { 0 },
             ],
             color: [self.radiance, 0.0, 0.0, 0.0],
             tiles: [

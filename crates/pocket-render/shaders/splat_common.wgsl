@@ -2,6 +2,7 @@
 
 const SORT_TILE: u32 = 4096u;   // keys per sort tile: splat_sort.wgsl TILE, sort.rs TILE
 const DRAW_BATCH: u32 = 16383u; // quads per drawn instance: splat/mod.rs BATCH
+const SPLAT_ANTIALIAS: u32 = 1u; // counts.w flag: opacity compensation for the low-pass
 
 // Per frame, written by splat/mod.rs.
 struct SplatParams {
@@ -10,7 +11,7 @@ struct SplatParams {
     depth: vec4f,      // x: nearest drawn depth; y: log2 of the key range's near end;
                        // z: key range per log2 unit (1 / (log2 far - log2 near)); w: largest key
     counts: vec4u,     // x: splats over all drawn clouds; y: clouds; z: key bits (32: raw float
-                       // bits); w: unused
+                       // bits); w: flags (SPLAT_ANTIALIAS)
     color: vec4f,      // x: radiance multiplier
     tiles: vec4u,      // the tile rasterizer (splat_tile.wgsl): tiles across, down; pair capacity
 };

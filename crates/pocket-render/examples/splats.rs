@@ -7,7 +7,7 @@
 //! `cargo run --release -p pocket-render --example splats -- [--count N] [--ply PATH [--flip]
 //!  [--scale S]] [--save PATH.ply] [--capture OUT.png [--angle DEG] [--distance F] [--look X,Y,Z]]
 //!  [--bench FRAMES] [--headless-bench FRAMES] [--size WxH] [--key-bits 16|24|32] [--radiance R]
-//!  [--raster quad|tile] [--compare PREFIX] [--no-meshes] [--orbit] [--vsync]`
+//!  [--raster quad|tile] [--antialias] [--compare PREFIX] [--no-meshes] [--orbit] [--vsync]`
 //!
 //! `--raster` picks the quad draw or the compute tile rasterizer (default: `POCKET_SPLAT_RASTER`,
 //! else quads). `--compare PREFIX` captures the same view with both and writes `PREFIX_quad.png`,
@@ -667,6 +667,7 @@ struct Garden {
     key_bits: u32,
     radiance: f32,
     raster: SplatRaster,
+    antialias: bool,
     orbit: bool,
     /// Orbit center, radius, height.
     focus: (Vec3, f32, f32),
@@ -691,6 +692,7 @@ impl Host for Garden {
         r.splats.key_bits = self.key_bits;
         r.splats.radiance = self.radiance;
         r.splats.raster = self.raster;
+        r.splats.antialias = self.antialias;
         if let Some(f) = self.frame.take() {
             r.apply(f, now);
         }
@@ -965,6 +967,7 @@ fn main() {
         key_bits,
         radiance,
         raster,
+        antialias: flag("--antialias") || std::env::var("POCKET_SPLAT_AA").is_ok_and(|v| v == "1"),
         orbit: true,
         focus,
         angle,
