@@ -93,8 +93,8 @@ old depth target.
 
 For an instance with `VIS_FRUSTUM`, the late pass takes its interpolated pose (the same
 `instance_pose` the early pass and the `Drawn` records use) and its mesh's bounding box
-(`MeshInfo.box_center`, `box_half`; the mesh's `bounds.min`/`max`, grown by the same factor as the
-sphere for skinned meshes' own copies, `MeshPool::add_dynamic`). It then:
+(`MeshInfo.box_center`, `box_half`: the mesh's `bounds.min`/`max`, and for a skinned mesh's own
+copy the cube around its grown sphere, `meshes::dynamic_bounds`; section 5). It then:
 
 1. transforms the box's centre and its three scaled, rotated half axes by the camera's
    view-projection (`Cull.view_proj`) and forms the eight corners in clip space;
@@ -132,9 +132,15 @@ of those pixels. So `near >= far`, and the test keeps the instance.
 
 What this relies on:
 
-- the bounding box contains the drawn mesh. For skinned meshes the box is the bind pose's grown by
-  2 (the same assumption frustum culling makes with the sphere); an animation reaching further
-  would be culled wrongly by both;
+- the bounding box contains the drawn mesh. A skinned mesh's copy has no bounds of its pose:
+  frustum culling assumes it stays in the bind pose's sphere with its radius doubled
+  (`meshes::SKINNED_GROW`), and its occlusion box is the cube around that sphere, so occlusion
+  culling assumes nothing more. A pose inside the sphere is inside the box; one reaching further
+  would be culled wrongly by both. The bind pose's box grown by 2 on each axis, used first, assumed
+  more: samples/anim's hero with an upper arm swung forward reaches 0.615 m from the centre along
+  its body's thin axis, where that box allowed 0.27 m and the sphere 1.15 m, so a character
+  sideways behind a wall corner with its arm past the corner could lose the whole part
+  (`tests/skinned_bounds.rs`);
 - the early phase's depth is real geometry: alpha-masked instances write depth only where they
   are opaque, so their holes do not occlude (the check's masked cylinder, section 9). The ocean,
   particles, splats and the sky are drawn after the pyramid and never occlude;
@@ -244,6 +250,10 @@ the Radeon 780M, 2 to 6 times slower, the crossover fell between the same cube c
   the wall is dropped).
 - `occlusion.rs` unit tests: the pyramid's level count, the auto mode's decisions and backoff, the
   mode names.
+- `tests/skinned_bounds.rs` skins samples/anim's hero on the CPU (its rest pose, its clips at eight
+  times, each upper arm swung 90 degrees four ways) and requires every vertex of every pose that
+  stays in the grown sphere to be inside the occlusion box; with the per-axis box it fails (the
+  left arm swung forward). `meshes.rs`' unit test checks the box against the sphere directly.
 - `cargo run --release -p pocket-app --example draw_paths -- --compare occlusion <scenes>` draws a
   scene twice in one process at one moment, off and forced on, and compares pixels and coverage.
 - `python tools/occlusion_compare.py` runs that and every capture of `tools/backend_compare.py`
@@ -261,7 +271,9 @@ the Radeon 780M, 2 to 6 times slower, the crossover fell between the same cube c
 - Instances are the unit: a large mesh partly hidden is drawn whole. Meshlet (cluster) culling would
   need mesh splitting and a cluster pass.
 - The auto mode's constants were fit on two GPUs while other processes loaded the machine.
-- The bounding box is per mesh; a skinned part's box is the bind pose's grown by 2.
+- The bounding box is per mesh. A skinned part's is the cube around its grown sphere, larger than
+  most poses need; bounds from the joints' positions each frame would be tighter, and would also
+  remove the assumption that animations stay in the sphere.
 - Mesh LOD (charter 4.4's meshopt; `MeshData.lods` is never filled and `Cull.lod_scale` is unused)
   was not attempted. What it needs: (1) generating levels: meshopt is C++ built through `cc`, and
   the browser imports glTF in wasm (`pocket-assets` `import` on `wasm32`), so meshopt must build for

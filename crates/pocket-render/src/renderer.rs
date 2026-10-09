@@ -29,7 +29,7 @@ use crate::camera::{CameraState, frustum_planes};
 use crate::gpu::Gpu;
 use crate::loader::{AssetSource, NoAssets};
 use crate::materials::MaterialPool;
-use crate::meshes::MeshPool;
+use crate::meshes::{MeshPool, SKINNED_GROW};
 use crate::occlusion::{LateInputs, Occlusion, OcclusionMode, OcclusionStats};
 use crate::ocean::Ocean;
 use crate::overlay::Overlays;
@@ -176,7 +176,7 @@ impl Pools<'_> {
         let key = format!("{path}#{mi}@{entity}");
         let Some(dynamic) =
             self.meshes
-                .add_dynamic(self.device, self.queue, &key, mesh, count, 2.0)
+                .add_dynamic(self.device, self.queue, &key, mesh, count, SKINNED_GROW)
         else {
             return mesh;
         };

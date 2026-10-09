@@ -34,6 +34,25 @@ fn center_half(lo: [f32; 3], hi: [f32; 3]) -> ([f32; 3], [f32; 3]) {
     )
 }
 
+/// How far a skinned copy's bounds reach beyond its bind pose's: its sphere's radius grows by this
+/// (an assumption about how far animations move vertices, not a guarantee).
+pub const SKINNED_GROW: f32 = 2.0;
+
+/// The culling bounds of a mesh whose vertices move (a skinned copy) from its source's: the
+/// source's sphere grown by `grow`, and as the occlusion box the cube around that sphere. A pose
+/// may reach anywhere the grown sphere does (an arm swung forward goes far along a body's thin
+/// axis), so the box must hold the sphere for occlusion culling to assume no more than frustum
+/// culling does; the source's box grown per axis does not (docs/spec/occlusion.md 5).
+pub fn dynamic_bounds(src: &MeshInfo, grow: f32) -> MeshInfo {
+    let radius = src.radius * grow;
+    MeshInfo {
+        radius,
+        box_center: src.center,
+        box_half: [radius; 3],
+        ..*src
+    }
+}
+
 pub struct MeshPool {
     pub vertices: wgpu::Buffer,
     pub indices: wgpu::Buffer,
@@ -223,7 +242,7 @@ impl MeshPool {
     }
 
     /// A mesh entry with its own `count` vertices (written by the GPU, e.g. skinning) drawn with the
-    /// indices of mesh `indices_of`; its bounds are the source's grown by `grow`.
+    /// indices of mesh `indices_of`; its culling bounds are [`dynamic_bounds`] of the source's.
     pub fn add_dynamic(
         &mut self,
         device: &wgpu::Device,
@@ -261,20 +280,16 @@ impl MeshPool {
             (lo[2] + hi[2]) * 0.5,
         ];
         let g = |i: usize, v: [f32; 3]| c[i] + (v[i] - c[i]) * grow;
-        let grown = (
-            [g(0, lo), g(1, lo), g(2, lo)],
-            [g(0, hi), g(1, hi), g(2, hi)],
-        );
-        let (box_center, box_half) = center_half(grown.0, grown.1);
         self.infos.push(MeshInfo {
-            radius: src.radius * grow,
             base_vertex,
             batch_offset: 0,
-            box_center,
-            box_half,
-            ..src
+            ..dynamic_bounds(&src, grow)
         });
-        self.boxes.push(grown);
+        // Ray picking keeps the source's box grown per axis.
+        self.boxes.push((
+            [g(0, lo), g(1, lo), g(2, lo)],
+            [g(0, hi), g(1, hi), g(2, hi)],
+        ));
         self.names.push(key.to_owned());
         self.vertex_counts.push(count);
         self.dynamic.push(true);
@@ -317,5 +332,37 @@ impl MeshPool {
 
     pub fn total_bytes(&self) -> u64 {
         self.vertex_len + self.index_len
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_skinned_copys_occlusion_box_holds_its_grown_sphere() {
+        // samples/anim hero.0's bind pose: a thin box (0.135 m half depth) in a 0.573 m sphere.
+        let src = MeshInfo {
+            center: [0.01, 1.02, 0.03],
+            radius: 0.573,
+            index_count: 3,
+            box_center: [0.01, 1.02, 0.03],
+            box_half: [0.315, 0.475, 0.135],
+            ..MeshInfo::default()
+        };
+        let d = dynamic_bounds(&src, SKINNED_GROW);
+        assert_eq!(d.radius, 0.573 * SKINNED_GROW);
+        assert_eq!((d.center, d.index_count), (src.center, src.index_count));
+        // Every point of the sphere frustum culling assumes is in the box occlusion culling tests:
+        // an arm swung forward 0.61 m along the thin axis, inside the sphere, is inside the box.
+        for i in 0..3 {
+            assert_eq!(d.box_center[i], d.center[i]);
+            assert!(
+                d.box_half[i] >= d.radius,
+                "{:?} against {}",
+                d.box_half,
+                d.radius
+            );
+        }
     }
 }
