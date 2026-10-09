@@ -17,7 +17,7 @@ use pocket_persist::replay::{
 use pocket_physics::{Boat, Transform, Wind};
 use pocket_runtime::thread::{Clock, GameHandle, GameThread, ThreadOptions};
 use pocket_runtime::{Game, GameBuilder};
-use pocket_sim::{RunCondition, Tick, TickPhase};
+use pocket_sim::{RunCondition, SimClock, Tick, TickPhase};
 use serde_json::{Value, json};
 
 fn clock() -> Clock {
@@ -76,6 +76,56 @@ fn commands_are_held_for_their_tick_and_refused_when_it_passed() {
     assert_eq!(e.code, "command.tick_passed");
     assert_eq!(e.detail["boundary"], json!(4));
     assert_eq!(rudder_now(&mut dev), 0.5);
+    drop((dev, player));
+    h.shutdown(2000).unwrap();
+}
+
+/// threads.md 5.3: a held command whose tick the world passed without stopping at its boundary
+/// (a world replaced at a later tick; here a test command moves the clock, since today's restores
+/// and Play's swaps only move it back) is answered `command.tick_passed` and gives back its place
+/// in the queue, rather than waiting for a boundary that never comes.
+#[test]
+fn held_commands_whose_tick_passed_are_answered_and_freed() {
+    let h = spawn(|| {
+        GameBuilder::new(common::sailing())
+            .command(
+                "test.jump",
+                Kind::Write,
+                Arc::new(|b, _| {
+                    b.world_mut().resource_mut::<SimClock>().tick = Tick(50);
+                    Ok((json!({}), json!({})))
+                }),
+            )
+            .build()
+    });
+    let mut player = h.client(Source::Player(0)).unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let held = pocket_link::QUEUE_CAPACITY - 1;
+    for _ in 0..held {
+        let tx = tx.clone();
+        player
+            .send("world_edit", rudder(0.1), Some(Tick(5)), move |r| {
+                let _ = tx.send(r.err().map(|e| (e.code, e.detail["boundary"].clone())));
+            })
+            .unwrap();
+    }
+    let mut dev = h.developer();
+    dev.call("test.jump", json!({})).unwrap();
+    // The next boundary answers every held command of tick 5.
+    assert_eq!(
+        dev.call("status", json!({})).unwrap().into_json()["tick"],
+        50
+    );
+    for _ in 0..held {
+        let got = rx.recv_timeout(Duration::from_secs(10)).expect("an answer");
+        assert_eq!(got, Some(("command.tick_passed".to_owned(), json!(50))));
+    }
+    // Their places are free again: the queue takes as many held commands once more.
+    for _ in 0..held {
+        player
+            .send("world_edit", rudder(0.2), Some(Tick(1_000)), |_| {})
+            .unwrap();
+    }
     drop((dev, player));
     h.shutdown(2000).unwrap();
 }

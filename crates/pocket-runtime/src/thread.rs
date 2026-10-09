@@ -528,9 +528,14 @@ impl Loop {
     fn boundary(&mut self) -> Next {
         let next = self.next_tick();
         let mut batch: Vec<Envelope> = Vec::new();
-        let (due, later): (Vec<Envelope>, Vec<Envelope>) =
-            self.held.drain(..).partition(|e| e.at == Some(next));
-        self.held = later;
+        let (due, passed) = take_held(&mut self.held, next);
+        // A world replaced at a later tick (a restore or Play's fork swapped in) can carry the
+        // game past a held envelope's tick: it is answered and its place freed (threads.md 5.3).
+        for e in passed {
+            self.rx.done(1);
+            let at = e.at.unwrap_or(next);
+            e.reply.send(Err(tick_passed(at, self.game.tick())));
+        }
         batch.extend(due);
         let mut incoming: Vec<Envelope> = self.pending.drain(..).collect();
         loop {
@@ -1286,9 +1291,64 @@ impl Loop {
     }
 }
 
+/// Takes from `held` the envelopes due at the boundary before tick `next` and those whose tick has
+/// passed, leaving the later ones held (threads.md 5.3: held envelopes are matched by tick like
+/// queued ones, so one whose tick a replaced world skipped is answered rather than stranded).
+fn take_held(held: &mut Vec<Envelope>, next: Tick) -> (Vec<Envelope>, Vec<Envelope>) {
+    let mut due = Vec::new();
+    let mut passed = Vec::new();
+    for e in mem::take(held) {
+        match e.at {
+            Some(t) if t > next => held.push(e),
+            Some(t) if t < next => passed.push(e),
+            _ => due.push(e),
+        }
+    }
+    (due, passed)
+}
+
 /// `game.stopped` when the thread could not be reached; used by callers that want the reason.
 pub fn stopped_detail(reader: &SnapshotReader) -> Problem {
     reader
         .stop_reason()
         .unwrap_or_else(|| Problem::new("game.stopped", "The game has stopped.", detail([])))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn envelope(seq: u64, at: Option<u64>) -> Envelope {
+        Envelope {
+            source: Source::Player(0),
+            seq,
+            at: at.map(Tick),
+            name: "status".into(),
+            params: json!({}),
+            reply: ReplyTo::none(),
+        }
+    }
+
+    /// threads.md 5.3: at the boundary before tick 10, a held envelope of tick 10 is due, one of a
+    /// later tick stays held, and one of an earlier tick, which a world replaced at a later tick
+    /// would otherwise strand, is taken out to be answered `command.tick_passed`.
+    #[test]
+    fn held_envelopes_whose_tick_passed_are_taken_out() {
+        let mut held = vec![
+            envelope(1, Some(4)),
+            envelope(2, Some(10)),
+            envelope(3, Some(12)),
+            envelope(4, Some(9)),
+        ];
+        let (due, passed) = take_held(&mut held, Tick(10));
+        let seqs = |v: &[Envelope]| v.iter().map(|e| e.seq).collect::<Vec<_>>();
+        assert_eq!(seqs(&due), [2]);
+        assert_eq!(seqs(&passed), [1, 4]);
+        assert_eq!(seqs(&held), [3]);
+        let (due, passed) = take_held(&mut held, Tick(12));
+        assert_eq!(
+            (seqs(&due), seqs(&passed), held.len()),
+            (vec![3], vec![], 0)
+        );
+    }
 }
