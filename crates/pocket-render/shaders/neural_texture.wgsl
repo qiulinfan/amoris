@@ -12,7 +12,8 @@
 // Weights: per layer, a 4x4 block of halves per (output block, input block), column-major in two
 // words, then a word per output block of biases (xy), padded to an even count so blocks stay on
 // even words (the f16 view reads two words at a time). A texture's words start on an even word.
-// Every loop runs to a constant. The precision file defines `nt_t`, `nt_mat` and `nt_bias`.
+// The precision file defines `nt_t`, `nt_mat` and `nt_bias`; neural_mlp.wgsl, composed after this
+// file, `nt_decode`.
 
 const NT_ROW: u32 = 4096u;
 const NT_DESC: u32 = 20u;
@@ -84,61 +85,57 @@ fn nt_inputs(base: u32, mip: u32, uv: vec2f) -> array<vec4<nt_t>, NT_IN4> {
     let fine = nt_taps(nt_data[base + 4u + 2u * level], u);
     let coarse = nt_taps(nt_data[base + 5u + 2u * level], u);
     var x: array<vec4<nt_t>, NT_IN4>;
+    // Written without loops (naga's loop bounds keep drivers from unrolling them, see
+    // tests/neural_mlp.rs): a statement per block a profile may have, behind constant conditions,
+    // indices clamped to stay valid in every profile.
+    let f4 = NT_FINE_F / 4u;
     if NT_SAMPLING == 0u {
-        for (var b = 0u; b < NT_FINE_F / 4u; b++) {
-            x[b] = vec4<nt_t>(nt_blend(fine, b, NT_FINE_BITS));
+        x[0] = vec4<nt_t>(nt_blend(fine, 0u, NT_FINE_BITS));
+        x[min(1u, NT_IN4 - 1u)] = vec4<nt_t>(nt_blend(fine, 1u, NT_FINE_BITS));
+        if f4 > 2u {
+            x[min(2u, NT_IN4 - 1u)] = vec4<nt_t>(nt_blend(fine, 2u, NT_FINE_BITS));
+            x[min(3u, NT_IN4 - 1u)] = vec4<nt_t>(nt_blend(fine, 3u, NT_FINE_BITS));
         }
     } else {
-        let f4 = NT_FINE_F / 4u;
-        for (var b = 0u; b < f4; b++) {
-            x[b] = vec4<nt_t>(nt_block(fine.t00, b, NT_FINE_BITS));
-            x[f4 + b] = vec4<nt_t>(nt_block(fine.t10, b, NT_FINE_BITS));
-            x[2u * f4 + b] = vec4<nt_t>(nt_block(fine.t01, b, NT_FINE_BITS));
-            x[3u * f4 + b] = vec4<nt_t>(nt_block(fine.t11, b, NT_FINE_BITS));
-        }
+        nt_put_taps(&x, 0u, fine.t00);
+        nt_put_taps(&x, f4, fine.t10);
+        nt_put_taps(&x, 2u * f4, fine.t01);
+        nt_put_taps(&x, 3u * f4, fine.t11);
     }
-    for (var b = 0u; b < NT_COARSE_F / 4u; b++) {
-        x[NT_FINE_IN4 + b] = vec4<nt_t>(nt_blend(coarse, b, NT_COARSE_BITS));
+    x[min(NT_FINE_IN4, NT_IN4 - 1u)] = vec4<nt_t>(nt_blend(coarse, 0u, NT_COARSE_BITS));
+    x[min(NT_FINE_IN4 + 1u, NT_IN4 - 1u)] = vec4<nt_t>(nt_blend(coarse, 1u, NT_COARSE_BITS));
+    if NT_COARSE_F > 8u {
+        x[min(NT_FINE_IN4 + 2u, NT_IN4 - 1u)] = vec4<nt_t>(nt_blend(coarse, 2u, NT_COARSE_BITS));
+        x[min(NT_FINE_IN4 + 3u, NT_IN4 - 1u)] = vec4<nt_t>(nt_blend(coarse, 3u, NT_COARSE_BITS));
     }
-    for (var o = 0u; o < NT_PE; o++) {
-        let s = f32(1u << o);
-        let p = fine.p * s;
-        x[NT_FINE_IN4 + NT_COARSE_F / 4u + o] = vec4<nt_t>(nt_tri(vec4f(p.x, p.x + 0.25, p.y, p.y + 0.25)));
+    let pe = NT_FINE_IN4 + NT_COARSE_F / 4u;
+    let p = fine.p;
+    if NT_PE > 0u {
+        x[min(pe, NT_IN4 - 1u)] = vec4<nt_t>(nt_tri(vec4f(p.x, p.x + 0.25, p.y, p.y + 0.25)));
+    }
+    if NT_PE > 1u {
+        let q = 2.0 * p;
+        x[min(pe + 1u, NT_IN4 - 1u)] = vec4<nt_t>(nt_tri(vec4f(q.x, q.x + 0.25, q.y, q.y + 0.25)));
+    }
+    if NT_PE > 2u {
+        let q = 4.0 * p;
+        x[min(pe + 2u, NT_IN4 - 1u)] = vec4<nt_t>(nt_tri(vec4f(q.x, q.x + 0.25, q.y, q.y + 0.25)));
     }
     x[NT_IN4 - 1u] = vec4<nt_t>(vec4f(f32(mip & 1u), f32(level) / 8.0, 0.0, 0.0));
     return x;
 }
 
-// Every channel of mip `mip` at `uv`, unclamped, in the texture's channel order (4 per vector).
-fn nt_decode(base: u32, mip: u32, uv: vec2f) -> array<vec4<nt_t>, NT_OUT4> {
-    let x = nt_inputs(base, mip, uv);
-    let w = base + NT_DESC;
-    var h1: array<vec4<nt_t>, NT_H1_4>;
-    for (var j = 0u; j < NT_H1_4; j++) {
-        var acc = nt_bias(w + NT_L1B + j);
-        for (var k = 0u; k < NT_IN4; k++) {
-            acc += nt_mat(w + NT_L1W + 2u * (j * NT_IN4 + k)) * x[k];
-        }
-        h1[j] = max(acc, vec4<nt_t>(0.0));
+// One fine tap's blocks at `x[at..]` (concatenated sampling).
+fn nt_put_taps(x: ptr<function, array<vec4<nt_t>, NT_IN4>>, at: u32, t: vec2u) {
+    (*x)[min(at, NT_IN4 - 1u)] = vec4<nt_t>(nt_block(t, 0u, NT_FINE_BITS));
+    (*x)[min(at + 1u, NT_IN4 - 1u)] = vec4<nt_t>(nt_block(t, 1u, NT_FINE_BITS));
+    if NT_FINE_F > 8u {
+        (*x)[min(at + 2u, NT_IN4 - 1u)] = vec4<nt_t>(nt_block(t, 2u, NT_FINE_BITS));
+        (*x)[min(at + 3u, NT_IN4 - 1u)] = vec4<nt_t>(nt_block(t, 3u, NT_FINE_BITS));
     }
-    var h2: array<vec4<nt_t>, NT_H2_4>;
-    for (var j = 0u; j < NT_H2_4; j++) {
-        var acc = nt_bias(w + NT_L2B + j);
-        for (var k = 0u; k < NT_H1_4; k++) {
-            acc += nt_mat(w + NT_L2W + 2u * (j * NT_H1_4 + k)) * h1[k];
-        }
-        h2[j] = max(acc, vec4<nt_t>(0.0));
-    }
-    var y: array<vec4<nt_t>, NT_OUT4>;
-    for (var j = 0u; j < NT_OUT4; j++) {
-        var acc = nt_bias(w + NT_L3B + j);
-        for (var k = 0u; k < NT_H2_4; k++) {
-            acc += nt_mat(w + NT_L3W + 2u * (j * NT_H2_4 + k)) * h2[k];
-        }
-        y[j] = acc;
-    }
-    return y;
 }
+
+// `nt_decode` (the network) is neural_mlp.wgsl, generated unrolled by tests/neural_mlp.rs.
 
 // Output channel `i` of a decode, as f32 (callers clamp).
 fn nt_channel(y: array<vec4<nt_t>, NT_OUT4>, i: u32) -> f32 {
