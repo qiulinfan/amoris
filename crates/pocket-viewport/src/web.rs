@@ -345,7 +345,7 @@ impl Viewport {
             .map(|(l, ms)| format!("{{\"pass\":\"{l}\",\"ms\":{ms:.3}}}"))
             .collect();
         self.last_stats = format!(
-            "{{\"gpu_ms\":{:.3},\"instances\":{},\"entities\":{},\"meshes\":{},\"pending_assets\":{},\"tick\":{},\"backend\":\"{}\",\"draw_path\":\"{}\",\"draw_calls\":{},\"occlusion\":\"{}\",\"occluded\":{},\"lod\":\"{}\",\"passes\":[{}]}}",
+            "{{\"gpu_ms\":{:.3},\"instances\":{},\"entities\":{},\"meshes\":{},\"pending_assets\":{},\"tick\":{},\"backend\":\"{}\",\"draw_path\":\"{}\",\"draw_calls\":{},\"occlusion\":\"{}\",\"occluded\":{},\"lod\":\"{}\",\"antialiasing\":\"{}\",\"gtao\":\"{}\",\"passes\":[{}]}}",
             s.gpu_ms,
             s.instances,
             s.entities,
@@ -358,6 +358,8 @@ impl Viewport {
             s.occlusion,
             s.occlusion_stats.map_or(0, |o| o.occluded),
             s.lod,
+            s.antialiasing,
+            s.gtao,
             passes.join(",")
         );
         self.last_stats.clone()
@@ -408,6 +410,53 @@ impl Viewport {
         if let Some(m) = pocket_render::OcclusionMode::parse(mode) {
             self.renderer.set_occlusion(m);
         }
+    }
+
+    /// Anti-aliasing: `off`, `msaa`, `taa` or `msaa+taa` (anything else leaves it as it is;
+    /// docs/spec/taa-gtao.md).
+    pub fn set_antialiasing(&mut self, mode: &str) {
+        if let Some(aa) = pocket_render::Antialiasing::parse(mode) {
+            self.renderer.set_antialiasing(aa);
+        }
+    }
+
+    /// GTAO on indirect light: `off`, `on` (normals from the depth) or `target` (anything else
+    /// leaves it as it is).
+    pub fn set_gtao(&mut self, mode: &str) {
+        if let Some(g) = pocket_render::Gtao::parse(mode) {
+            self.renderer.set_gtao(g);
+        }
+    }
+
+    /// Sharpening after TAA (0: off).
+    pub fn set_sharpen(&mut self, amount: f32) {
+        self.renderer.sharpen = amount.max(0.0);
+    }
+
+    /// Loads the anti-aliasing and occlusion check's scene (`demo::aa_scene`) at tick 0 with its
+    /// camera.
+    pub fn demo_aa(&mut self, now_ms: f64) {
+        self.renderer.add_model(
+            pocket_render::demo::AA_MODEL,
+            &pocket_render::demo::aa_model(),
+        );
+        self.renderer.apply(
+            pocket_render::demo::aa_scene(0, true, true),
+            now_ms / 1000.0,
+        );
+        self.renderer
+            .set_camera_override(Some(pocket_render::demo::aa_camera(0, false)));
+    }
+
+    /// Moves the check scene's instances to tick `tick` and, with `pan`, its camera to frame
+    /// `tick`.
+    pub fn demo_aa_tick(&mut self, tick: u32, pan: bool, now_ms: f64) {
+        self.renderer.apply(
+            pocket_render::demo::aa_scene(u64::from(tick), true, false),
+            now_ms / 1000.0,
+        );
+        self.renderer
+            .set_camera_override(Some(pocket_render::demo::aa_camera(tick, pan)));
     }
 
     /// Loads the occlusion culling check's scene (a wall with a slit, an alpha-masked occluder, a

@@ -25,6 +25,10 @@
 // ?demo=lod[&n=48][&spacing=6][&detail=6][&t=0][&fly] the levels-of-detail field (docs/spec/lod.md),
 // its camera at t (0..1) or, with fly, walking from the corner to the middle over 600 frames;
 // ?lod=off|on forces every instance's full mesh or picks levels (on by default);
+// ?demo=aa[&moving][&pan] the anti-aliasing and occlusion check's scene (docs/spec/taa-gtao.md),
+// its instances moving (60 ticks a second) and its camera panning on request;
+// ?aa=off|msaa|taa|msaa+taa, ?gtao=off|on|target and ?sharpen=0.25 set the anti-aliasing,
+// ambient occlusion and sharpening options;
 // ?render=ws://127.0.0.1:7878/render[&assets=http://127.0.0.1:7878/assets/] shows a host's world.
 // ?gpu_minimal=first-instance (or features,limits) leaves device features out as
 // POCKET_GPU_MINIMAL does natively: without indirect-first-instance the renderer takes WebGPU's
@@ -43,6 +47,7 @@ try {
     beforeFrame: (api, frame) => {
       if (q.get("demo") === "cubes") api.demoCubesCamera(frame, dense);
       if (q.get("demo") === "lod" && q.has("fly")) api.demoLodCamera(lodField[0], lodField[1], (frame % 600) / 599);
+      if (q.get("demo") === "aa" && (q.has("moving") || q.has("pan"))) api.demoAaTick(frame, q.has("pan"));
     },
   });
   if (q.get("demo") === "cubes") vp.demoCubes(Number(q.get("count") || 1600000), dense);
@@ -61,6 +66,10 @@ try {
   if (q.get("occlusion")) vp.setOcclusion(q.get("occlusion"));
   if (q.has("in_flight")) vp.raw.set_max_frames_in_flight(Number(q.get("in_flight")));
   if (q.get("lod")) vp.setLod(q.get("lod"));
+  if (q.get("demo") === "aa") vp.demoAa();
+  if (q.get("aa")) vp.setAntialiasing(q.get("aa"));
+  if (q.get("gtao")) vp.setGtao(q.get("gtao"));
+  if (q.get("sharpen")) vp.setSharpen(Number(q.get("sharpen")));
   if (q.has("grid") || q.has("axes")) vp.raw.set_overlays(q.has("grid"), q.has("axes"));
   if (q.get("eye")) {
     const e = q.get("eye").split(",").map(Number), t = (q.get("target") || "0,0,0").split(",").map(Number);
@@ -72,7 +81,7 @@ try {
     samples.push(s);
     if (samples.length > 600) samples.shift();
     window.pocketStats = s;
-    hud.textContent = `${s.backend}  ${canvas.width}x${canvas.height}  draws: ${s.draw_path} (${s.draw_calls})  occlusion: ${s.occlusion}  lod: ${s.lod}\nframe ${s.frame_ms.toFixed(2)} ms   gpu ${s.gpu_ms.toFixed(2)} ms\ninstances ${s.instances}  tick ${s.tick}\n` +
+    hud.textContent = `${s.backend}  ${canvas.width}x${canvas.height}  draws: ${s.draw_path} (${s.draw_calls})  occlusion: ${s.occlusion}  lod: ${s.lod}  aa: ${s.antialiasing}  gtao: ${s.gtao}\nframe ${s.frame_ms.toFixed(2)} ms   gpu ${s.gpu_ms.toFixed(2)} ms\ninstances ${s.instances}  tick ${s.tick}\n` +
       (s.passes || []).map((p) => `  ${p.pass.padEnd(12)} ${p.ms.toFixed(2)} ms`).join("\n");
   });
   window.pocketSamples = samples;

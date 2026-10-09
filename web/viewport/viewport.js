@@ -111,6 +111,11 @@ export async function createViewport(canvas, options = {}) {
     demoLod(n, spacing, detail, t) { vp.demo_lod(n, spacing, detail, t, performance.now()); },
     demoLodCamera(n, spacing, t) { vp.demo_lod_camera(n, spacing, t); },
     setLod(mode) { vp.set_lod(mode); },
+    setAntialiasing(mode) { vp.set_antialiasing(mode); },
+    setGtao(mode) { vp.set_gtao(mode); },
+    setSharpen(amount) { vp.set_sharpen(amount); },
+    demoAa() { vp.demo_aa(performance.now()); },
+    demoAaTick(tick, pan) { vp.demo_aa_tick(tick, pan, performance.now()); },
     dispose() {
       disposed = true;
       observer.disconnect();
