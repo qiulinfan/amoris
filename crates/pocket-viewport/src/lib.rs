@@ -13,15 +13,18 @@ use pocket_assets::gi::{BakedGi, NeuralGi};
 use pocket_assets::mesh::ModelAsset;
 use pocket_render::AssetSource;
 
+/// Loads the page completed, each with its path, shared with the page's glue.
+pub type Loads<T> = Rc<RefCell<Vec<(String, Result<T, String>)>>>;
+
 /// Asset requests queued for the page, and loads it completed.
 #[derive(Clone, Default)]
 pub struct PageAssets {
     pub requests: Rc<RefCell<Vec<String>>>,
-    pub done: Rc<RefCell<Vec<(String, Result<ModelAsset, String>)>>>,
+    pub done: Loads<ModelAsset>,
     gi_requests: Rc<RefCell<std::collections::HashSet<String>>>,
-    gi_done: Rc<RefCell<Vec<(String, Result<BakedGi, String>)>>>,
+    gi_done: Loads<BakedGi>,
     neural_requests: Rc<RefCell<std::collections::HashSet<String>>>,
-    neural_done: Rc<RefCell<Vec<(String, Result<NeuralGi, String>)>>>,
+    neural_done: Loads<NeuralGi>,
 }
 
 impl AssetSource for PageAssets {

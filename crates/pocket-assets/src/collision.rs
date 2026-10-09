@@ -81,14 +81,14 @@ pub fn collision_primitive(name: &str) -> Option<RawCollisionMesh> {
         .into_iter()
         .map(|vertex| vertex.position)
         .collect();
-    let indices = mesh
-        .indices
-        .chunks_exact(3)
-        .filter_map(|v| {
-            let p = Vec3::from_array(vertices[v[0] as usize]);
-            let q = Vec3::from_array(vertices[v[1] as usize]);
-            let r = Vec3::from_array(vertices[v[2] as usize]);
-            ((q - p).cross(r - p).length_squared() > 1e-16).then_some([v[0], v[1], v[2]])
+    let (triangles, _) = mesh.indices.as_chunks::<3>();
+    let indices = triangles
+        .iter()
+        .filter_map(|&[a, b, c]| {
+            let p = Vec3::from_array(vertices[a as usize]);
+            let q = Vec3::from_array(vertices[b as usize]);
+            let r = Vec3::from_array(vertices[c as usize]);
+            ((q - p).cross(r - p).length_squared() > 1e-16).then_some([a, b, c])
         })
         .collect();
     Some(RawCollisionMesh { vertices, indices })
@@ -185,7 +185,8 @@ fn walk(
                     || (0..positions.len() as u32).collect(),
                     |indices| indices.into_u32().collect(),
                 );
-                if indices.len() % 3 != 0 || indices.iter().any(|&i| i as usize >= positions.len())
+                if !indices.len().is_multiple_of(3)
+                    || indices.iter().any(|&i| i as usize >= positions.len())
                 {
                     return Err(failed(
                         path,
@@ -197,8 +198,7 @@ fn walk(
                     indices: Vec::with_capacity(indices.len() / 3),
                 };
                 part.apply_transform(world)?;
-                for triangle in indices.chunks_exact(3) {
-                    let [a, b, c] = [triangle[0], triangle[1], triangle[2]];
+                for &[a, b, c] in indices.as_chunks::<3>().0 {
                     let p = Vec3::from_array(part.vertices[a as usize]);
                     let q = Vec3::from_array(part.vertices[b as usize]);
                     let r = Vec3::from_array(part.vertices[c as usize]);

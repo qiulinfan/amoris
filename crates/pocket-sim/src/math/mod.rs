@@ -124,6 +124,18 @@ pub fn max(a: f64, b: f64) -> f64 {
     if b > a { b } else { a }
 }
 
+/// [`min`] for `f32` (Rapier's and the assets' scalars): on a tie or a NaN, `a`.
+#[inline]
+pub fn min_f32(a: f32, b: f32) -> f32 {
+    if b < a { b } else { a }
+}
+
+/// [`max`] for `f32`: on a tie or a NaN, `a`.
+#[inline]
+pub fn max_f32(a: f32, b: f32) -> f32 {
+    if b > a { b } else { a }
+}
+
 /// `x` limited to [lo, hi] by comparisons (lo <= hi): below `lo` gives `lo`, above `hi` gives `hi`.
 #[inline]
 pub fn clamp(x: f64, lo: f64, hi: f64) -> f64 {
@@ -202,6 +214,10 @@ mod tests {
         assert!(min(f64::NAN, 1.0).is_nan());
         assert_eq!(min(1.0, f64::NAN), 1.0);
         assert_eq!(max(1.0, f64::NAN), 1.0);
+        assert_eq!(min_f32(0.0, -0.0).to_bits(), 0.0f32.to_bits());
+        assert_eq!(max_f32(-0.0, 0.0).to_bits(), (-0.0f32).to_bits());
+        assert_eq!(min_f32(2.0, 1.0), 1.0);
+        assert_eq!(max_f32(1.0, f32::NAN), 1.0);
         assert_eq!(clamp(5.0, 0.0, 1.0), 1.0);
         assert_eq!(clamp(-5.0, 0.0, 1.0), 0.0);
         assert_eq!(clamp(0.5, 0.0, 1.0), 0.5);

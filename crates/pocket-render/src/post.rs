@@ -28,6 +28,8 @@ pub struct Targets {
     bloom_mips: Vec<wgpu::TextureView>,
 }
 
+// A texture descriptor's fields, as the crate's other GPU helpers take them.
+#[allow(clippy::too_many_arguments)]
 fn tex(
     device: &wgpu::Device,
     label: &str,
@@ -159,6 +161,7 @@ impl Post {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn pass(
         &self,
         device: &wgpu::Device,
@@ -223,6 +226,7 @@ impl Post {
     }
 
     /// Bloom, then the display transform from the targets' HDR image into `output`.
+    #[allow(clippy::too_many_arguments)]
     pub fn run(
         &self,
         device: &wgpu::Device,

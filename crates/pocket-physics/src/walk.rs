@@ -1,6 +1,7 @@
 //! Static first-person exploration with Rapier shape sweeps. This state belongs to a presenter,
 //! not the authoritative ECS player simulation, snapshot, or replay.
 
+use pocket_sim::math::{max_f32, min_f32};
 use rapier3d::control::{CharacterAutostep, CharacterLength, KinematicCharacterController};
 use rapier3d::math::{Pose, Vector};
 use rapier3d::prelude::{ColliderBuilder, PhysicsWorld, SharedShape, TriMeshFlags};
@@ -153,11 +154,11 @@ impl WalkController {
             self.vertical_speed = JUMP_SPEED;
             self.grounded = false;
         }
-        let mut remaining = dt.min(0.1);
+        let mut remaining = min_f32(dt, 0.1);
         while remaining > 1e-7 {
-            let step_dt = remaining.min(SUBSTEP);
+            let step_dt = min_f32(remaining, SUBSTEP);
             remaining -= step_dt;
-            self.vertical_speed = (self.vertical_speed - GRAVITY * step_dt).max(-50.0);
+            self.vertical_speed = max_f32(self.vertical_speed - GRAVITY * step_dt, -50.0);
             let desired = Vector::new(
                 desired_horizontal_velocity[0],
                 self.vertical_speed,
@@ -320,7 +321,7 @@ mod tests {
             let state = controller
                 .step(&world, 1.0 / 60.0, [0.0; 3], false)
                 .unwrap();
-            maximum = maximum.max(state.eye[1]);
+            maximum = max_f32(maximum, state.eye[1]);
         }
         assert!(maximum - start.eye[1] > 1.1 && maximum - start.eye[1] < 1.4);
         assert!(controller.state().grounded);

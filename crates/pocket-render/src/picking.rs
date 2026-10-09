@@ -323,8 +323,10 @@ impl Picking {
             for y in 0..ch {
                 let row = &data[(y * pitch * 4) as usize..((y * pitch + cw) * 4) as usize];
                 ids.extend(
-                    row.chunks_exact(4)
-                        .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]])),
+                    row.as_chunks::<4>()
+                        .0
+                        .iter()
+                        .map(|b| u32::from_le_bytes(*b)),
                 );
             }
         }

@@ -127,7 +127,7 @@ impl WalkControls {
         let x = u8::from(key(KeyCode::KeyD)) as f32 - u8::from(key(KeyCode::KeyA)) as f32;
         let z = u8::from(key(KeyCode::KeyW)) as f32 - u8::from(key(KeyCode::KeyS)) as f32;
         let length = (x * x + z * z).sqrt().max(1.0);
-        let input = WalkInput {
+        WalkInput {
             motion: [x / length, z / length],
             look: std::mem::take(&mut self.look),
             fast: key(KeyCode::ShiftLeft) || key(KeyCode::ShiftRight),
@@ -136,8 +136,7 @@ impl WalkControls {
             gi_toggle: std::mem::take(&mut self.gi_toggle),
             captured: self.captured,
             dt_s: dt_s.clamp(0.0, 0.1),
-        };
-        input
+        }
     }
 }
 
@@ -399,11 +398,11 @@ impl<H: Host> App<H> {
 
 impl<H: Host> ApplicationHandler for App<H> {
     fn resumed(&mut self, el: &ActiveEventLoop) {
-        if self.state.is_none() {
-            if let Err(e) = self.init(el) {
-                self.error = Some(e);
-                el.exit();
-            }
+        if self.state.is_none()
+            && let Err(e) = self.init(el)
+        {
+            self.error = Some(e);
+            el.exit();
         }
     }
 
@@ -461,18 +460,18 @@ impl<H: Host> ApplicationHandler for App<H> {
                 }
             }
             WindowEvent::MouseInput { state, button, .. } => {
-                if button == MouseButton::Left && state == ElementState::Pressed {
-                    if let Some(st) = self.state.as_mut() {
-                        if let Some(walk) = st.walk.as_mut() {
-                            walk.capture(&st.window);
-                        }
-                    }
+                if button == MouseButton::Left
+                    && state == ElementState::Pressed
+                    && let Some(st) = self.state.as_mut()
+                    && let Some(walk) = st.walk.as_mut()
+                {
+                    walk.capture(&st.window);
                 }
-                if button == MouseButton::Right {
-                    if let Some(fly) = self.state.as_mut().and_then(|s| s.fly.as_mut()) {
-                        fly.looking = state == ElementState::Pressed;
-                        fly.last_cursor = None;
-                    }
+                if button == MouseButton::Right
+                    && let Some(fly) = self.state.as_mut().and_then(|s| s.fly.as_mut())
+                {
+                    fly.looking = state == ElementState::Pressed;
+                    fly.last_cursor = None;
                 }
             }
             WindowEvent::Focused(false) => {
@@ -488,15 +487,15 @@ impl<H: Host> ApplicationHandler for App<H> {
                 }
             }
             WindowEvent::CursorMoved { position, .. } => {
-                if let Some(fly) = self.state.as_mut().and_then(|s| s.fly.as_mut()) {
-                    if fly.looking {
-                        if let Some((x, y)) = fly.last_cursor {
-                            fly.yaw += ((position.x - x) * 0.003) as f32;
-                            fly.pitch =
-                                (fly.pitch - ((position.y - y) * 0.003) as f32).clamp(-1.55, 1.55);
-                        }
-                        fly.last_cursor = Some((position.x, position.y));
+                if let Some(fly) = self.state.as_mut().and_then(|s| s.fly.as_mut())
+                    && fly.looking
+                {
+                    if let Some((x, y)) = fly.last_cursor {
+                        fly.yaw += ((position.x - x) * 0.003) as f32;
+                        fly.pitch =
+                            (fly.pitch - ((position.y - y) * 0.003) as f32).clamp(-1.55, 1.55);
                     }
+                    fly.last_cursor = Some((position.x, position.y));
                 }
             }
             WindowEvent::MouseWheel { delta, .. } => {
@@ -513,13 +512,12 @@ impl<H: Host> ApplicationHandler for App<H> {
     }
 
     fn device_event(&mut self, _el: &ActiveEventLoop, _id: DeviceId, event: DeviceEvent) {
-        if let DeviceEvent::MouseMotion { delta } = event {
-            if let Some(walk) = self.state.as_mut().and_then(|s| s.walk.as_mut()) {
-                if walk.captured {
-                    walk.look[0] += delta.0 as f32;
-                    walk.look[1] += delta.1 as f32;
-                }
-            }
+        if let DeviceEvent::MouseMotion { delta } = event
+            && let Some(walk) = self.state.as_mut().and_then(|s| s.walk.as_mut())
+            && walk.captured
+        {
+            walk.look[0] += delta.0 as f32;
+            walk.look[1] += delta.1 as f32;
         }
     }
 
@@ -557,15 +555,14 @@ mod tests {
 
     #[test]
     fn walk_input_normalizes_diagonal_motion_and_consumes_press_edges() {
-        let mut controls = WalkControls::default();
-        controls.captured = true;
-        controls
-            .keys
-            .extend([KeyCode::KeyW, KeyCode::KeyD, KeyCode::ShiftRight]);
-        controls.look = [10.0, -3.0];
-        controls.jump = true;
-        controls.reset = true;
-        controls.gi_toggle = true;
+        let mut controls = WalkControls {
+            keys: [KeyCode::KeyW, KeyCode::KeyD, KeyCode::ShiftRight].into(),
+            look: [10.0, -3.0],
+            jump: true,
+            reset: true,
+            gi_toggle: true,
+            captured: true,
+        };
         let input = controls.input(1.0);
         assert!((input.motion[0].hypot(input.motion[1]) - 1.0).abs() < 1e-6);
         assert!(input.fast && input.captured && input.jump && input.reset);

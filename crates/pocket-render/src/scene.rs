@@ -441,7 +441,7 @@ impl Scene {
             return if self.slots.is_empty() {
                 Vec::new()
             } else {
-                vec![0..self.slots.len() as u32]
+                std::iter::once(0..self.slots.len() as u32).collect()
             };
         }
         d.sort_unstable();

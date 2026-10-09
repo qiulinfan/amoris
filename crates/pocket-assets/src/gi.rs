@@ -5,6 +5,7 @@
 //! The directional distance moments use row-major octahedral texels. They record the distance to
 //! the first geometry hit, capped at `max_distance`, independently of radiance path bounces.
 
+use pocket_sim::math::max_f32;
 use serde::{Deserialize, Serialize};
 
 pub const BAKED_GI_FORMAT: &str = "amoris-baked-gi-v1";
@@ -182,6 +183,171 @@ pub struct BakedProbe {
     pub radiance_sh: [[f32; 3]; 9],
     /// `[E[distance], E[distance squared]]` per octahedral texel.
     pub distance_moments: Vec<[f32; 2]>,
+}
+
+impl BakedGi {
+    /// Strictly decodes and validates a bounded JSON asset on native or web platforms.
+    pub fn from_json(bytes: &[u8]) -> Result<Self, String> {
+        if bytes.len() > MAX_JSON_BYTES {
+            return Err(format!(
+                "baked GI JSON is {} bytes; maximum is {MAX_JSON_BYTES}",
+                bytes.len()
+            ));
+        }
+        let gi: Self = serde_json::from_slice(bytes)
+            .map_err(|error| format!("invalid baked GI JSON: {error}"))?;
+        gi.validate()?;
+        Ok(gi)
+    }
+
+    /// Loads at most the documented JSON capacity; no GPU dependency is required.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn load(path: &std::path::Path) -> Result<Self, String> {
+        use std::io::Read;
+        let file = std::fs::File::open(path)
+            .map_err(|error| format!("cannot open baked GI {}: {error}", path.display()))?;
+        let mut bytes = Vec::new();
+        file.take(MAX_JSON_BYTES as u64 + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|error| format!("cannot read baked GI {}: {error}", path.display()))?;
+        Self::from_json(&bytes)
+    }
+
+    /// Rejects malformed, non-finite and over-capacity assets before GPU allocation.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.format != BAKED_GI_FORMAT {
+            return Err(format!(
+                "unsupported baked GI format {:?}; expected {BAKED_GI_FORMAT}",
+                self.format
+            ));
+        }
+        if self.scene_signature.is_empty() || self.scene_signature.len() > 256 {
+            return Err("baked GI scene_signature must contain 1..256 bytes".into());
+        }
+        let count = self.probe_count()?;
+        if self.probes.len() != count {
+            return Err(format!(
+                "baked GI dimensions require {count} probes, found {}",
+                self.probes.len()
+            ));
+        }
+        for axis in 0..3 {
+            if !self.origin[axis].is_finite() {
+                return Err(format!("baked GI origin[{axis}] must be finite"));
+            }
+            if !self.spacing[axis].is_finite() || self.spacing[axis] <= 0.0 {
+                return Err(format!(
+                    "baked GI spacing[{axis}] must be finite and positive"
+                ));
+            }
+            let end = self.origin[axis] + self.spacing[axis] * (self.dimensions[axis] - 1) as f32;
+            if !end.is_finite() {
+                return Err(format!("baked GI axis {axis} has a non-finite extent"));
+            }
+        }
+        if !(1..=MAX_DISTANCE_RESOLUTION).contains(&self.distance_resolution) {
+            return Err(format!(
+                "baked GI distance_resolution must be 1..{MAX_DISTANCE_RESOLUTION}"
+            ));
+        }
+        let texels = (self.distance_resolution as usize).pow(2);
+        let total = count
+            .checked_mul(texels)
+            .ok_or("baked GI distance moment count overflows")?;
+        if total > MAX_DISTANCE_MOMENTS {
+            return Err(format!(
+                "baked GI requires {total} distance moments; maximum is {MAX_DISTANCE_MOMENTS}"
+            ));
+        }
+        if !self.max_distance.is_finite()
+            || self.max_distance <= 0.0
+            || !(self.max_distance * self.max_distance).is_finite()
+        {
+            return Err("baked GI max_distance and its square must be finite and positive".into());
+        }
+        if !(1..=MAX_RAYS_PER_PROBE).contains(&self.rays_per_probe) {
+            return Err(format!(
+                "baked GI rays_per_probe must be 1..{MAX_RAYS_PER_PROBE}"
+            ));
+        }
+        if !(1..=MAX_BOUNCES).contains(&self.bounces) {
+            return Err(format!("baked GI bounces must be 1..{MAX_BOUNCES}"));
+        }
+        let max_squared = self.max_distance * self.max_distance;
+        for (index, probe) in self.probes.iter().enumerate() {
+            if !probe
+                .radiance_sh
+                .iter()
+                .flatten()
+                .all(|value| value.is_finite())
+            {
+                return Err(format!("baked GI probe {index} has non-finite radiance SH"));
+            }
+            if probe.distance_moments.len() != texels {
+                return Err(format!(
+                    "baked GI probe {index} requires {texels} distance moments, found {}",
+                    probe.distance_moments.len()
+                ));
+            }
+            for (texel, &[mean, second]) in probe.distance_moments.iter().enumerate() {
+                // F32 accumulation may round E[d²] below E[d]² by a few ULPs.
+                let tolerance = 2e-5 * max_f32(max_f32(second, mean * mean), 1.0);
+                if !mean.is_finite()
+                    || !second.is_finite()
+                    || mean < 0.0
+                    || second < 0.0
+                    || mean > self.max_distance
+                    || second > max_squared + tolerance
+                    || second + tolerance < mean * mean
+                {
+                    return Err(format!(
+                        "baked GI probe {index} texel {texel} has invalid distance moments"
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The grid capacity, checked independently of probe allocation.
+    pub fn probe_count(&self) -> Result<usize, String> {
+        let mut count = 1usize;
+        for (axis, &dimension) in self.dimensions.iter().enumerate() {
+            if dimension == 0 {
+                return Err(format!("baked GI dimensions[{axis}] must be positive"));
+            }
+            count = count
+                .checked_mul(dimension as usize)
+                .ok_or("baked GI probe count overflows")?;
+        }
+        if count > MAX_PROBES {
+            return Err(format!(
+                "baked GI requires {count} probes; maximum is {MAX_PROBES}"
+            ));
+        }
+        Ok(count)
+    }
+
+    pub fn probe_index(&self, cell: [u32; 3]) -> Option<usize> {
+        if cell
+            .iter()
+            .zip(self.dimensions)
+            .any(|(&value, size)| value >= size)
+        {
+            return None;
+        }
+        let [x, y, z] = cell.map(|value| value as usize);
+        let [nx, ny, _] = self.dimensions.map(|value| value as usize);
+        nx.checked_mul(ny.checked_mul(z)?.checked_add(y)?)?
+            .checked_add(x)
+    }
+
+    pub fn probe_position(&self, cell: [u32; 3]) -> Option<[f32; 3]> {
+        self.probe_index(cell)?;
+        Some(std::array::from_fn(|axis| {
+            self.origin[axis] + self.spacing[axis] * cell[axis] as f32
+        }))
+    }
 }
 
 #[cfg(test)]
@@ -405,170 +571,5 @@ mod tests {
         gi = fixture();
         gi.bounces = MAX_BOUNCES + 1;
         assert!(gi.validate().unwrap_err().contains("bounces"));
-    }
-}
-
-impl BakedGi {
-    /// Strictly decodes and validates a bounded JSON asset on native or web platforms.
-    pub fn from_json(bytes: &[u8]) -> Result<Self, String> {
-        if bytes.len() > MAX_JSON_BYTES {
-            return Err(format!(
-                "baked GI JSON is {} bytes; maximum is {MAX_JSON_BYTES}",
-                bytes.len()
-            ));
-        }
-        let gi: Self = serde_json::from_slice(bytes)
-            .map_err(|error| format!("invalid baked GI JSON: {error}"))?;
-        gi.validate()?;
-        Ok(gi)
-    }
-
-    /// Loads at most the documented JSON capacity; no GPU dependency is required.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn load(path: &std::path::Path) -> Result<Self, String> {
-        use std::io::Read;
-        let file = std::fs::File::open(path)
-            .map_err(|error| format!("cannot open baked GI {}: {error}", path.display()))?;
-        let mut bytes = Vec::new();
-        file.take(MAX_JSON_BYTES as u64 + 1)
-            .read_to_end(&mut bytes)
-            .map_err(|error| format!("cannot read baked GI {}: {error}", path.display()))?;
-        Self::from_json(&bytes)
-    }
-
-    /// Rejects malformed, non-finite and over-capacity assets before GPU allocation.
-    pub fn validate(&self) -> Result<(), String> {
-        if self.format != BAKED_GI_FORMAT {
-            return Err(format!(
-                "unsupported baked GI format {:?}; expected {BAKED_GI_FORMAT}",
-                self.format
-            ));
-        }
-        if self.scene_signature.is_empty() || self.scene_signature.len() > 256 {
-            return Err("baked GI scene_signature must contain 1..256 bytes".into());
-        }
-        let count = self.probe_count()?;
-        if self.probes.len() != count {
-            return Err(format!(
-                "baked GI dimensions require {count} probes, found {}",
-                self.probes.len()
-            ));
-        }
-        for axis in 0..3 {
-            if !self.origin[axis].is_finite() {
-                return Err(format!("baked GI origin[{axis}] must be finite"));
-            }
-            if !self.spacing[axis].is_finite() || self.spacing[axis] <= 0.0 {
-                return Err(format!(
-                    "baked GI spacing[{axis}] must be finite and positive"
-                ));
-            }
-            let end = self.origin[axis] + self.spacing[axis] * (self.dimensions[axis] - 1) as f32;
-            if !end.is_finite() {
-                return Err(format!("baked GI axis {axis} has a non-finite extent"));
-            }
-        }
-        if !(1..=MAX_DISTANCE_RESOLUTION).contains(&self.distance_resolution) {
-            return Err(format!(
-                "baked GI distance_resolution must be 1..{MAX_DISTANCE_RESOLUTION}"
-            ));
-        }
-        let texels = (self.distance_resolution as usize).pow(2);
-        let total = count
-            .checked_mul(texels)
-            .ok_or("baked GI distance moment count overflows")?;
-        if total > MAX_DISTANCE_MOMENTS {
-            return Err(format!(
-                "baked GI requires {total} distance moments; maximum is {MAX_DISTANCE_MOMENTS}"
-            ));
-        }
-        if !self.max_distance.is_finite()
-            || self.max_distance <= 0.0
-            || !(self.max_distance * self.max_distance).is_finite()
-        {
-            return Err("baked GI max_distance and its square must be finite and positive".into());
-        }
-        if !(1..=MAX_RAYS_PER_PROBE).contains(&self.rays_per_probe) {
-            return Err(format!(
-                "baked GI rays_per_probe must be 1..{MAX_RAYS_PER_PROBE}"
-            ));
-        }
-        if !(1..=MAX_BOUNCES).contains(&self.bounces) {
-            return Err(format!("baked GI bounces must be 1..{MAX_BOUNCES}"));
-        }
-        let max_squared = self.max_distance * self.max_distance;
-        for (index, probe) in self.probes.iter().enumerate() {
-            if !probe
-                .radiance_sh
-                .iter()
-                .flatten()
-                .all(|value| value.is_finite())
-            {
-                return Err(format!("baked GI probe {index} has non-finite radiance SH"));
-            }
-            if probe.distance_moments.len() != texels {
-                return Err(format!(
-                    "baked GI probe {index} requires {texels} distance moments, found {}",
-                    probe.distance_moments.len()
-                ));
-            }
-            for (texel, &[mean, second]) in probe.distance_moments.iter().enumerate() {
-                // F32 accumulation may round E[d²] below E[d]² by a few ULPs.
-                let tolerance = 2e-5 * second.max(mean * mean).max(1.0);
-                if !mean.is_finite()
-                    || !second.is_finite()
-                    || mean < 0.0
-                    || second < 0.0
-                    || mean > self.max_distance
-                    || second > max_squared + tolerance
-                    || second + tolerance < mean * mean
-                {
-                    return Err(format!(
-                        "baked GI probe {index} texel {texel} has invalid distance moments"
-                    ));
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// The grid capacity, checked independently of probe allocation.
-    pub fn probe_count(&self) -> Result<usize, String> {
-        let mut count = 1usize;
-        for (axis, &dimension) in self.dimensions.iter().enumerate() {
-            if dimension == 0 {
-                return Err(format!("baked GI dimensions[{axis}] must be positive"));
-            }
-            count = count
-                .checked_mul(dimension as usize)
-                .ok_or("baked GI probe count overflows")?;
-        }
-        if count > MAX_PROBES {
-            return Err(format!(
-                "baked GI requires {count} probes; maximum is {MAX_PROBES}"
-            ));
-        }
-        Ok(count)
-    }
-
-    pub fn probe_index(&self, cell: [u32; 3]) -> Option<usize> {
-        if cell
-            .iter()
-            .zip(self.dimensions)
-            .any(|(&value, size)| value >= size)
-        {
-            return None;
-        }
-        let [x, y, z] = cell.map(|value| value as usize);
-        let [nx, ny, _] = self.dimensions.map(|value| value as usize);
-        nx.checked_mul(ny.checked_mul(z)?.checked_add(y)?)?
-            .checked_add(x)
-    }
-
-    pub fn probe_position(&self, cell: [u32; 3]) -> Option<[f32; 3]> {
-        self.probe_index(cell)?;
-        Some(std::array::from_fn(|axis| {
-            self.origin[axis] + self.spacing[axis] * cell[axis] as f32
-        }))
     }
 }

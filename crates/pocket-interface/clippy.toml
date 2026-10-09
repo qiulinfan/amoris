@@ -72,8 +72,8 @@ disallowed-methods = [
     { path = "f32::log", reason = "use pocket_sim::math::ln(x) / pocket_sim::math::ln(base) (numeric.md, 6)" },
     { path = "f32::powf", reason = "use pocket_sim::math::pow (numeric.md, 6)" },
     { path = "f32::powi", reason = "use pocket_sim::math::powi, whose multiplication order is fixed (numeric.md, 6.2)" },
-    { path = "f32::min", reason = "signed zeros differ between builds; use pocket_sim::math::min (numeric.md, 5)" },
-    { path = "f32::max", reason = "signed zeros differ between builds; use pocket_sim::math::max (numeric.md, 5)" },
+    { path = "f32::min", reason = "signed zeros differ between builds; use pocket_sim::math::min_f32 (numeric.md, 5)" },
+    { path = "f32::max", reason = "signed zeros differ between builds; use pocket_sim::math::max_f32 (numeric.md, 5)" },
     { path = "f32::mul_add", reason = "one rounding model: no fused multiply-add in tick code (numeric.md, 5)" },
 ]
 disallowed-types = [
