@@ -72,6 +72,12 @@ pub struct PtOptions {
     pub light_change_factor: f32,
     /// Diagnostic baseline that retains NRC shader code even for uncached PT.
     pub specialize_nrc: bool,
+    /// Build the trace and training shaders without naga's loop bounding and ray-query
+    /// initialization tracking (bounds and division checks stay). Their loops terminate, their ray
+    /// queries follow the rules and the trace rejects nonfinite rays itself; on the RTX 5060 these
+    /// two checks cost a quarter of the trace and most of Direct3D 12's NRC time
+    /// (docs/bench/path-tracing-nrc.md, Windows). Off by default, as the M5 numbers were taken.
+    pub lean_shaders: bool,
 }
 impl Default for PtOptions {
     fn default() -> Self {
@@ -94,6 +100,7 @@ impl Default for PtOptions {
             light_change_frame: None,
             light_change_factor: 1.0,
             specialize_nrc: true,
+            lean_shaders: false,
         }
     }
 }
@@ -450,6 +457,7 @@ fn trace_pipeline(
     nrc: &wgpu::BindGroupLayout,
     workgroup: u32,
     nrc_enabled: bool,
+    lean_shaders: bool,
 ) -> wgpu::ComputePipeline {
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("PT and online NRC layout"),
@@ -462,10 +470,23 @@ fn trace_pipeline(
         super::nrc::WGSL,
         include_str!("../../shaders/pt_trace.wgsl")
     );
-    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+    let desc = wgpu::ShaderModuleDescriptor {
         label: Some("PT BSDF, online cache and integrator"),
         source: wgpu::ShaderSource::Wgsl(source.into()),
-    });
+    };
+    let module = if lean_shaders {
+        let mut checks = wgpu::ShaderRuntimeChecks::checked();
+        checks.force_loop_bounding = false;
+        checks.ray_query_initialization_tracking = false;
+        // SAFETY: every loop in pt_bsdf.wgsl, online_nrc.wgsl and pt_trace.wgsl runs to a bound
+        // (path depth, samples, network sizes, a halving binary search, ray-query traversal);
+        // pt_trace initializes each query before proceeding, reads candidates only while
+        // proceeding, confirms only triangles, reads the committed hit after traversal and returns
+        // a miss for a nonfinite ray instead of tracing it. Bounds and division checks stay on.
+        unsafe { device.create_shader_module_trusted(desc, checks) }
+    } else {
+        device.create_shader_module(desc)
+    };
     let constants = [
         ("PT_WORKGROUP", f64::from(workgroup)),
         ("NRC_ENABLED", f64::from(nrc_enabled)),
@@ -963,7 +984,7 @@ impl PathTracer {
                 ..Default::default()
             },
         )?;
-        let pipeline = trace_pipeline(&device, &layout, &online_nrc.layout, 64, false);
+        let pipeline = trace_pipeline(&device, &layout, &online_nrc.layout, 64, false, false);
         if let Some(e) = pollster::block_on(scope.pop()) {
             return Err(format!("PT setup: {e}"));
         }
@@ -1158,13 +1179,15 @@ impl PathTracer {
         });
         config.origin = self.bounds_min;
         config.extent = self.bounds_extent;
-        self.online_nrc = OnlineNrc::new(&self.device, &self.queue, config)?;
+        self.online_nrc =
+            OnlineNrc::with_shaders(&self.device, &self.queue, config, options.lean_shaders)?;
         self.pipeline = trace_pipeline(
             &self.device,
             &self.layout,
             &self.online_nrc.layout,
             options.workgroup,
             options.online_nrc.is_some() || !options.specialize_nrc,
+            options.lean_shaders,
         );
         let nrc_enabled = options.online_nrc.is_some();
         let training = nrc_enabled && self.online_nrc.config.training;
@@ -1787,18 +1810,36 @@ mod tests {
             "{backend}: readback optimization preserves all samples"
         );
         options.readback_every_frame = false;
+        let max_relative = |a: &PtOutput, b: &PtOutput| {
+            a.radiance
+                .iter()
+                .zip(&b.radiance)
+                .flat_map(|(a, b)| (0..3).map(move |c| (a[c] - b[c]).abs() / (1.0 + a[c])))
+                .fold(0.0, f32::max)
+        };
+        options.lean_shaders = true;
+        let lean = tracer.render(&camera, &options).unwrap();
+        // Compiled differently, so rounding may differ (2e-4 on the Radeon 780M with Vulkan);
+        // a path that took another branch would differ by far more.
+        let lean_error = max_relative(&raw, &lean);
+        assert!(
+            lean_error < 1e-3,
+            "{backend}: shaders without loop bounds and query tracking trace the same paths: \
+             {lean_error}"
+        );
         options.online_nrc = Some(NrcConfig {
             querying: false,
             min_query_depth: 1,
             ..Default::default()
         });
+        let lean_training = tracer.render(&camera, &options).unwrap();
+        options.lean_shaders = false;
         let training = tracer.render(&camera, &options).unwrap();
-        let max_error = raw
-            .radiance
-            .iter()
-            .zip(&training.radiance)
-            .flat_map(|(a, b)| (0..3).map(move |c| (a[c] - b[c]).abs() / (1.0 + a[c])))
-            .fold(0.0, f32::max);
+        let max_error = max_relative(&raw, &training);
+        assert!(
+            max_relative(&training, &lean_training) < 1e-3,
+            "{backend}: the lean trainer's teacher paths match"
+        );
         assert!(
             max_error < 2e-5,
             "{backend}: uncached teacher paths preserve camera transport: {max_error}"

@@ -164,6 +164,18 @@ impl OnlineNrc {
         queue: &wgpu::Queue,
         config: NrcConfig,
     ) -> Result<Self, String> {
+        Self::with_shaders(device, queue, config, false)
+    }
+
+    /// `lean_shaders` builds the trainer without naga's loop bounding, which kept Direct3D 12's
+    /// compiler from optimizing the network's loops (docs/bench/path-tracing-nrc.md, Windows);
+    /// every other runtime check stays.
+    pub fn with_shaders(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        config: NrcConfig,
+        lean_shaders: bool,
+    ) -> Result<Self, String> {
         config.validate()?;
         let gradient_bytes = u64::from(config.batch_size) * PARAMETER_COUNT as u64 * 4;
         if gradient_bytes > u64::from(device.limits().max_storage_buffer_binding_size) {
@@ -248,10 +260,19 @@ impl OnlineNrc {
             bind_group_layouts: &[Some(&empty_layout), Some(&layout)],
             immediate_size: 0,
         });
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let desc = wgpu::ShaderModuleDescriptor {
             label: Some("online NRC training and inference"),
             source: wgpu::ShaderSource::Wgsl(WGSL.into()),
-        });
+        };
+        let shader = if lean_shaders {
+            let mut checks = wgpu::ShaderRuntimeChecks::checked();
+            checks.force_loop_bounding = false;
+            // SAFETY: every loop in online_nrc.wgsl runs to a constant or to the batch size, so
+            // none needs naga's injected bound to terminate; all other checks stay on.
+            unsafe { device.create_shader_module_trusted(desc, checks) }
+        } else {
+            device.create_shader_module(desc)
+        };
         let pipeline = |entry: &'static str| {
             device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some(entry),

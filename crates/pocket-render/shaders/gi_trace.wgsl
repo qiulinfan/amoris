@@ -96,6 +96,13 @@ fn trace(origin: vec3<f32>, direction: vec3<f32>, maximum: f32, shadow: bool, up
     // Naga 30's MSL lowering cannot reset an intersection_query through assignment. Declare it
     // outside the loop and reinitialize it through rayQueryInitialize for each skipped back face.
     var query: ray_query;
+    // A nonfinite ray or an empty interval misses instead of reaching rayQueryInitialize, as naga's
+    // query tracking would make it; the lean shader variant (RayLighting::with_shaders) leaves
+    // that check out.
+    if !(all(abs(origin) < vec3<f32>(1e30)) && all(abs(direction) < vec3<f32>(1e30))
+        && maximum < 1e30 && maximum >= params.grid.y) {
+        return Hit(0u, -1.0, 0u, 0u, vec3<f32>(0.0), vec3<f32>(0.0));
+    }
     // A material may be single-sided. Skip its back faces explicitly, rather than treating every
     // opaque triangle as two-sided. Shadow rays test all opaque blockers, including back faces.
     for (var skip = 0u; skip < 16u; skip++) {

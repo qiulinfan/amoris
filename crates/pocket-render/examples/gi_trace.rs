@@ -67,10 +67,11 @@ fn main() {
 
 fn run() -> Result<(), String> {
     let mut args = std::env::args().skip(1);
-    let root = PathBuf::from(args.next().ok_or("usage: gi_trace PROJECT --mode raw|sharc|restir --output PNG [--width W --height H --samples N --frames N --bounces N --cell-size M --min-cache-samples N --seed N --candidates K --reuse none|temporal|spatial|both --history-m N]")?);
+    let root = PathBuf::from(args.next().ok_or("usage: gi_trace PROJECT --mode raw|sharc|restir --output PNG [--width W --height H --samples N --frames N --bounces N --cell-size M --min-cache-samples N --seed N --candidates K --reuse none|temporal|spatial|both --history-m N --lean-shaders true|false]")?);
     let mut options = TraceOptions::default();
     let mut mode = TraceMode::Raw;
     let mut output = PathBuf::from("gi-trace.png");
+    let mut lean_shaders = false;
     while let Some(flag) = args.next() {
         let value = args
             .next()
@@ -98,6 +99,11 @@ fn run() -> Result<(), String> {
             "--min-cache-samples" => options.minimum_cache_samples = integer(&value)?,
             "--seed" => options.seed = integer(&value)?,
             "--candidates" => options.candidates = integer(&value)?,
+            "--lean-shaders" => {
+                lean_shaders = value
+                    .parse()
+                    .map_err(|_| "--lean-shaders needs true or false")?
+            }
             "--history-m" => options.history_m = integer(&value)?,
             "--reuse" => {
                 options.reuse = match value.as_str() {
@@ -120,7 +126,7 @@ fn run() -> Result<(), String> {
     let scene = RayScene::from_project(&root)?;
     let camera = camera(&root)?;
     let gpu = Gpu::headless(BackendChoice::from_env()).map_err(|e| e.to_string())?;
-    let mut lighting = RayLighting::new(&gpu, &scene)?;
+    let mut lighting = RayLighting::with_shaders(&gpu, &scene, lean_shaders)?;
     let traced = lighting.render(&camera, &options, mode)?;
     let mut preview = image::RgbImage::new(options.width, options.height);
     let srgb = |linear: f32| {

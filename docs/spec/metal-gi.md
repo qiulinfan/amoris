@@ -1,6 +1,8 @@
-# Metal global illumination implementation
+# Global illumination implementation (Metal first, every ray-query backend since 2026-10-09)
 
-Status: accepted implementation order, 2026-10-05; `feature/metal`.
+Status: accepted implementation order, 2026-10-05; `feature/metal`. 2026-10-09 (Pioneer, charter
+4.4): the ray-query tracers below run on Vulkan and Direct3D 12 as well as Metal, wherever the
+adapter exposes `EXPERIMENTAL_RAY_QUERY`; the file keeps its name so links stay valid.
 
 1. Bake a world-space probe volume from project geometry and lighting. Use a versioned JSON asset,
    directional radiance SH and directional distance moments. Load it asynchronously and evaluate
@@ -27,9 +29,21 @@ dynamic response and limitations. Timings are measurements, not passing threshol
 
 The current slices and limitations are recorded in [the measured report](../bench/metal-gi.md).
 Baked and learned fields are integrated into the native/WebGPU forward renderer. SHaRC and
-ReSTIR currently run in the isolated Metal tracer with constant diffuse materials and emission.
+ReSTIR currently run in the isolated ray-query tracer (`gi::rt::RayLighting`, example `gi_trace`;
+Metal, Vulkan or Direct3D 12) with constant diffuse materials and emission.
 ReSTIR reuse is opt-in experimentation with negative quality results; the default has no reuse.
 The learned field is offline supervised approximation of the baked teacher, not online dynamic NRC.
+
+## Backends (Pioneer, 2026-10-09)
+
+The tracer's device, gate, probe, tests and the optional lean shaders (`RayLighting::with_shaders`,
+`gi_trace --lean-shaders true`: no naga loop bounds or ray-query tracking) are shared with the
+surface path tracer and described in its spec's
+[Backends](path-tracing-nrc.md#backends-pioneer-2026-10-09) section. `trace` returns a miss for a
+nonfinite ray or an empty interval before initializing a query. SHaRC's hash insertion races by
+design (exact keys, insertion winners), so cached images differ slightly from run to run and between
+backends; uncached and RIS images reproduce the M5 ones to rounding
+([measurements](../bench/metal-gi.md#windows-vulkan-and-direct3d-12-pioneer-2026-10-09)).
 
 ## Surface PT and online NRC follow-up
 

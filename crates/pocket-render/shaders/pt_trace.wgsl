@@ -70,6 +70,11 @@ fn pt_trace(origin: vec3<f32>, direction: vec3<f32>, maximum: f32, shadow: bool,
     // Naga 30 MSL does not preserve assignment reset of loop-local ray queries.
     var query: ray_query;
     atomicAdd(&pt_counters[select(1u, 2u, shadow)], 1u);
+    // A nonfinite ray misses instead of reaching rayQueryInitialize: the lean shader variant
+    // (PtOptions::lean_shaders) leaves out naga's own check.
+    if !(all(abs(origin) < vec3<f32>(1e30)) && all(abs(direction) < vec3<f32>(1e30))) {
+        return PtHit(0u, 0u, 0u, 0.0, vec2<f32>(0.0));
+    }
     let flags = select(RAY_FLAG_NONE, RAY_FLAG_TERMINATE_ON_FIRST_HIT,
         shadow && pt_params.controls.w != 0u);
     rayQueryInitialize(&query, pt_scene, RayDesc(flags, 255u, pt_params.ray.x, maximum, origin, direction));

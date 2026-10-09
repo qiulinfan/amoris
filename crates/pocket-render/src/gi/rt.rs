@@ -94,6 +94,22 @@ mod tests {
                 .any(|frame| frame.cache_deposits > 0)
         );
         assert!(raw.radiance.iter().any(|pixel| pixel[0] > 0.0));
+        // Without loop bounds and query tracking the same paths are traced; the shaders are
+        // compiled differently, so rounding may differ, while another branch would differ by more.
+        let lean = RayLighting::with_shaders(gpu, scene, true)
+            .expect("lean ray-query device")
+            .render(&camera, &options, TraceMode::Raw)
+            .expect("lean raw");
+        let lean_error = raw
+            .radiance
+            .iter()
+            .zip(&lean.radiance)
+            .flat_map(|(a, b)| (0..3).map(move |c| (a[c] - b[c]).abs() / (1.0 + a[c])))
+            .fold(0.0f32, f32::max);
+        assert!(
+            lean_error < 1e-3,
+            "{backend}: lean shaders trace the same paths: {lean_error}"
+        );
         options.frames = 32;
         let warmed = lighting
             .render(&camera, &options, TraceMode::Sharc)
@@ -339,6 +355,8 @@ pub struct TraceStats {
     pub mode: TraceMode,
     pub adapter: String,
     pub backend: String,
+    /// Built without naga's loop bounding and ray-query tracking (`RayLighting::with_shaders`).
+    pub lean_shaders: bool,
     pub scene_signature: String,
     pub triangles: usize,
     pub emissive_triangles: usize,
@@ -450,6 +468,7 @@ pub struct RayLighting {
     errors: Arc<Mutex<Vec<String>>>,
     adapter: String,
     backend: &'static str,
+    lean_shaders: bool,
     scene_signature: String,
     triangle_count: usize,
     emitter_count: usize,
@@ -459,6 +478,13 @@ pub struct RayLighting {
 
 impl RayLighting {
     pub fn new(gpu: &Gpu, scene: &RayScene) -> Result<Self, String> {
+        Self::with_shaders(gpu, scene, false)
+    }
+
+    /// `lean_shaders` builds the trace shaders without naga's loop bounding and ray-query
+    /// initialization tracking (bounds and division checks stay), as `PtOptions::lean_shaders`
+    /// does for the path tracer; measured in docs/bench/metal-gi.md (Windows).
+    pub fn with_shaders(gpu: &Gpu, scene: &RayScene, lean_shaders: bool) -> Result<Self, String> {
         super::require_ray_query(gpu)?;
         let have = gpu.adapter.features();
         if scene.environment_radiance().iter().any(|v| *v != 0.0)
@@ -717,7 +743,7 @@ impl RayLighting {
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let desc = wgpu::ShaderModuleDescriptor {
             label: Some("GI path trace and SHaRC"),
             source: wgpu::ShaderSource::Wgsl(
                 format!(
@@ -727,7 +753,21 @@ impl RayLighting {
                 )
                 .into(),
             ),
-        });
+        };
+        let module = if lean_shaders {
+            let mut checks = wgpu::ShaderRuntimeChecks::checked();
+            checks.force_loop_bounding = false;
+            checks.ray_query_initialization_tracking = false;
+            // SAFETY: every loop in gi_trace.wgsl and gi_reservoir.wgsl runs to a constant or a
+            // uniform bound (16 skips, probes and attempts, the path horizon, samples, emitters,
+            // candidates, 4 neighbors, a countdown) or is a ray-query traversal; `trace` initializes
+            // each query before proceeding, reads the committed hit after traversal and returns a
+            // miss for a nonfinite ray or an empty interval instead of tracing it. Bounds and
+            // division checks stay on.
+            unsafe { device.create_shader_module_trusted(desc, checks) }
+        } else {
+            device.create_shader_module(desc)
+        };
         let pipeline = |entry| {
             device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some(entry),
@@ -777,6 +817,7 @@ impl RayLighting {
             errors,
             adapter: gpu.info.name.clone(),
             backend: gpu.backend_name(),
+            lean_shaders,
             scene_signature: scene.scene_signature().to_owned(),
             triangle_count: triangles.len(),
             emitter_count,
@@ -1345,6 +1386,7 @@ impl RayLighting {
                 mode,
                 adapter: self.adapter.clone(),
                 backend: self.backend.into(),
+                lean_shaders: self.lean_shaders,
                 scene_signature: self.scene_signature.clone(),
                 triangles: self.triangle_count,
                 emissive_triangles: self.emitter_count,
