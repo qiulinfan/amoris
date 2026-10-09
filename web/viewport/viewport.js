@@ -5,7 +5,7 @@
 //                                             gpuMinimal: "first-instance" /* optional */ });
 //   vp.setCamera([x, y, z], [qx, qy, qz, qw], fovDeg);   // or vp.useSceneCamera()
 //   vp.onStats((s) => ...);                               // {gpu_ms, instances, tick, passes, frame_ms,
-//                                                         //  render_ms, draw_path, draw_calls}
+//                                                         //  render_ms, draw_path, draw_calls}, per frame drawn
 //   vp.pushFrame(bytes);                                  // a render-feed frame from elsewhere (a game worker)
 //   vp.dispose();
 //
@@ -72,6 +72,12 @@ export async function createViewport(canvas, options = {}) {
     fetchAssets();
     const t0 = performance.now();
     const stats = JSON.parse(vp.render(now));
+    // Under a frames-in-flight limit (`raw.set_max_frames_in_flight`) a call made while the GPU
+    // is that far behind draws nothing: it is not a frame.
+    if (stats.skipped) {
+      requestAnimationFrame(tick);
+      return;
+    }
     // The CPU time of the render call (the renderer's own cpu_ms has no clock in wasm).
     stats.render_ms = performance.now() - t0;
     const dt = now - last;

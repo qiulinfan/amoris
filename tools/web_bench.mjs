@@ -3,7 +3,8 @@
 // [width] [height]. The page publishes `window.pocketSamples` ({frame_ms, gpu_ms, backend}).
 // A temporary profile is used; the user's Chrome profile is never touched. Chrome is found at its
 // default install path on macOS, Windows and Linux, or at `CHROME=<path>`. `CHROME_FLAGS="..."`
-// adds switches (e.g. `--force_high_performance_gpu`).
+// adds switches (e.g. `--force_high_performance_gpu`); `VSYNC=1` keeps Chrome's vsync and frame-rate
+// limit, which the page otherwise runs without.
 import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -27,10 +28,12 @@ const port = 9300 + Math.floor(Math.random() * 600);
 // switch (kept from the macOS runs) is left out on Windows, where it would move Chrome's own
 // compositing to Vulkan beside Dawn's D3D12.
 const platformFlags = process.platform === "win32" ? [] : ["--enable-features=Vulkan"];
+// The frame loop runs uncapped (no vsync, no frame-rate limit) unless VSYNC=1.
+const uncapped = process.env.VSYNC === "1" ? [] : ["--disable-frame-rate-limit", "--disable-gpu-vsync"];
 const proc = spawn(chrome, [
   "--headless=new", `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`,
-  "--enable-unsafe-webgpu", ...platformFlags, "--disable-frame-rate-limit",
-  "--disable-gpu-vsync", `--window-size=${width},${height}`, "--no-first-run", "--no-default-browser-check",
+  "--enable-unsafe-webgpu", ...platformFlags, ...uncapped,
+  `--window-size=${width},${height}`, "--no-first-run", "--no-default-browser-check",
   ...(process.env.CHROME_FLAGS || "").split(" ").filter(Boolean), "about:blank",
 ], { stdio: "ignore" });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

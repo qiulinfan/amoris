@@ -1,5 +1,8 @@
 //! The wasm-bindgen surface of the viewport.
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
+
 use glam::{Quat, Vec3};
 use pocket_assets::RenderFrame;
 use pocket_render::{CameraState, Gpu, Renderer};
@@ -40,6 +43,12 @@ pub struct Viewport {
     assets: PageAssets,
     /// A frame failed to decode (logged once).
     frame_error: bool,
+    /// Frames submitted and not yet done on the GPU (counted only under a limit), and the most
+    /// allowed (0: no limit, the default; `set_max_frames_in_flight`).
+    in_flight: Arc<AtomicU32>,
+    max_in_flight: u32,
+    /// The last frame's stats, which a skipped call answers again (marked `skipped`).
+    last_stats: String,
 }
 
 #[wasm_bindgen]
@@ -85,6 +94,9 @@ impl Viewport {
             config,
             assets,
             frame_error: false,
+            in_flight: Arc::new(AtomicU32::new(0)),
+            max_in_flight: 0,
+            last_stats: "{}".into(),
         })
     }
 
@@ -284,8 +296,27 @@ impl Viewport {
         self.renderer.resize(width, height);
     }
 
-    /// Draws a frame; returns its stats as JSON.
+    /// How many frames the page may have on the GPU at once; 0 (the default) for no limit
+    /// (docs/bench/polish.md 3). A page whose frame loop is not held to the display (Chrome
+    /// without vsync or a frame-rate limit, as the benchmarks run it) otherwise submits 300 to 370
+    /// frames ahead of Chrome's GPU process, and every readback (the entity-id pass, the GPU
+    /// timestamps, occlusion culling's counters) waits behind them, up to seconds; held to the
+    /// display it answers in two or three frames, as natively, where the swap chain bounds the same
+    /// queue. With a limit of 2 to 4 an uncapped page's readbacks answered in 3 to 7 frames, but it
+    /// drew 3 to 10 times fewer frames, and in some runs nearly none for seconds (Chrome's
+    /// `onSubmittedWorkDone`, which counts the frames done, then answered after hundreds of
+    /// milliseconds), so no limit is the default.
+    pub fn set_max_frames_in_flight(&mut self, n: u32) {
+        self.max_in_flight = n;
+    }
+
+    /// Draws a frame; returns its stats as JSON. Under a limit (`set_max_frames_in_flight`), while
+    /// that many frames are on the GPU it draws nothing and answers the last frame's stats with
+    /// `"skipped": true`, so the page never runs further ahead of the GPU than that.
     pub fn render(&mut self, now_ms: f64) -> String {
+        if self.max_in_flight > 0 && self.in_flight.load(Ordering::Acquire) >= self.max_in_flight {
+            return skipped(&self.last_stats);
+        }
         let tex = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t)
             | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
@@ -299,13 +330,21 @@ impl Viewport {
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
         let s = self.renderer.render(&view, now_ms / 1000.0);
-        self.renderer.gpu().queue.present(tex);
+        let gpu = self.renderer.gpu();
+        gpu.queue.present(tex);
+        if self.max_in_flight > 0 {
+            self.in_flight.fetch_add(1, Ordering::AcqRel);
+            let in_flight = self.in_flight.clone();
+            gpu.queue.on_submitted_work_done(move || {
+                in_flight.fetch_sub(1, Ordering::AcqRel);
+            });
+        }
         let passes: Vec<String> = s
             .passes
             .iter()
             .map(|(l, ms)| format!("{{\"pass\":\"{l}\",\"ms\":{ms:.3}}}"))
             .collect();
-        format!(
+        self.last_stats = format!(
             "{{\"gpu_ms\":{:.3},\"instances\":{},\"entities\":{},\"meshes\":{},\"pending_assets\":{},\"tick\":{},\"backend\":\"{}\",\"draw_path\":\"{}\",\"draw_calls\":{},\"occlusion\":\"{}\",\"occluded\":{},\"passes\":[{}]}}",
             s.gpu_ms,
             s.instances,
@@ -319,7 +358,8 @@ impl Viewport {
             s.occlusion,
             s.occlusion_stats.map_or(0, |o| o.occluded),
             passes.join(",")
-        )
+        );
+        self.last_stats.clone()
     }
 
     /// Loads the mixed scene (every pipeline variant in every view; the draw paths' check).
@@ -380,6 +420,14 @@ impl Viewport {
             c.rotation.w,
             c.fov_y.to_degrees(),
         ]
+    }
+}
+
+/// `stats` (a JSON object) with `"skipped": true`: a call that drew nothing.
+fn skipped(stats: &str) -> String {
+    match stats.strip_suffix('}') {
+        Some(head) if head.len() > 1 => format!("{head},\"skipped\":true}}"),
+        _ => "{\"skipped\":true}".into(),
     }
 }
 

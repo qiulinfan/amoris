@@ -19,6 +19,7 @@
 // ?demo=mixed[&n=8] a grid of every mesh kind and pipeline variant under cascaded shadows;
 // ?demo=occluders the occlusion culling check's scene (docs/spec/occlusion.md);
 // ?occlusion=off|on|auto sets occlusion culling (auto by default);
+// ?in_flight=N lets at most N frames be on the GPU (no limit by default; docs/bench/polish.md 3);
 // ?render=ws://127.0.0.1:7878/render[&assets=http://127.0.0.1:7878/assets/] shows a host's world.
 // ?gpu_minimal=first-instance (or features,limits) leaves device features out as
 // POCKET_GPU_MINIMAL does natively: without indirect-first-instance the renderer takes WebGPU's
@@ -39,6 +40,7 @@ try {
   if (q.get("demo") === "mixed") vp.demoMixed(Number(q.get("n") || 8));
   if (q.get("demo") === "occluders") vp.demoOccluders();
   if (q.get("occlusion")) vp.setOcclusion(q.get("occlusion"));
+  if (q.has("in_flight")) vp.raw.set_max_frames_in_flight(Number(q.get("in_flight")));
   if (q.has("grid") || q.has("axes")) vp.raw.set_overlays(q.has("grid"), q.has("axes"));
   if (q.get("eye")) {
     const e = q.get("eye").split(",").map(Number), t = (q.get("target") || "0,0,0").split(",").map(Number);
