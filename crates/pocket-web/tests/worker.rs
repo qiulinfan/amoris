@@ -7,10 +7,9 @@
 //! follows the clock; and every snapshot rebuilds on the presenter to the worker's hash, while a
 //! reordered or altered one is reported.
 
-use std::cell::Cell;
 use std::path::PathBuf;
-use std::rc::Rc;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use pocket_check::{Subject, runs};
 use pocket_contract::{Problem, detail};
@@ -20,7 +19,7 @@ use pocket_sim::{EventKind, NewEvent, RunCondition, Sim, SimClock, Tick, TickPha
 use pocket_web::Pacing;
 use pocket_web::package::Package;
 use pocket_web::presenter::PresenterCore;
-use pocket_web::worker::{MAX_IN_FLIGHT, Next, Out, WorkerCore};
+use pocket_web::worker::{Clock, MAX_IN_FLIGHT, Next, Out, WorkerCore};
 use serde_json::{Value, json};
 
 const TICKS: u64 = 600;
@@ -39,20 +38,34 @@ fn on_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
         .unwrap()
 }
 
+/// The time of a clock the test moves, in milliseconds (an `f64`'s bits).
+#[derive(Clone)]
+struct Time(Arc<AtomicU64>);
+
+impl Time {
+    fn set(&self, ms: f64) {
+        self.0.store(ms.to_bits(), Ordering::SeqCst);
+    }
+
+    fn get(&self) -> f64 {
+        f64::from_bits(self.0.load(Ordering::SeqCst))
+    }
+}
+
 /// A clock the test moves.
-fn clock() -> (Rc<Cell<f64>>, Box<dyn Fn() -> f64>) {
-    let now = Rc::new(Cell::new(0.0));
-    let c = now.clone();
-    (now, Box::new(move || c.get()))
+fn clock() -> (Time, Clock) {
+    let time = Time(Arc::new(AtomicU64::new(0)));
+    let read = time.clone();
+    (time, Arc::new(move || read.get()))
 }
 
 /// A clock that moves a millisecond each time it is read, so a task's 8 ms budget runs out after a
 /// few ticks and the page's acknowledgements land between them.
-fn moving_clock() -> Box<dyn Fn() -> f64> {
-    let now = Cell::new(0.0);
-    Box::new(move || {
-        now.set(now.get() + 1.0);
-        now.get()
+fn moving_clock() -> Clock {
+    let (time, _) = clock();
+    Arc::new(move || {
+        time.set(time.get() + 1.0);
+        time.get()
     })
 }
 

@@ -26,7 +26,7 @@
 | Actions: controls, intents with lifecycle, channels and supersession, the Rust executors `come_to_heading`, `trim_sail`, `sail_to`, affordances (`take_aboard`), the `act` request validated in three phases | `pocket-interface/src/action/` |
 | Time: turns and episodes, decision points and filters, `until`, the session controller (stepped, lockstep, real time with pause-on-decision and thinking clocks), `step`, `commit`, `continue`, the real-time `wait` | `pocket-interface/src/time/` |
 | The declaration as world state, the three interface systems in every game, the `player.*` commands, the session beside the world | `pocket-runtime/src/player.rs`, `game.rs` |
-| Players' waits on the game thread, pace from the players' session | `pocket-runtime/src/thread.rs` |
+| Players' waits on a loop, decision points after every tick, pace from the players' session: one core the game thread and the browser worker share | `pocket-runtime/src/boundary.rs` (`PlayerWaits`), `thread.rs`, `pocket-web/src/worker.rs` |
 | The reference skipper (a decision model outside the tick) | `pocket-runtime/src/skipper.rs` |
 | The `player` MCP tool, seat-bound MCP sessions | `pocket-mcp`, `pocket-server/src/mcp.rs` |
 | Calls made as a seat over HTTP, `pocket player`, `pocket mcp --seat` | `pocket-server`, `pocket-app` |
@@ -128,15 +128,20 @@ script failure. Every seat of a built game starts with the episode's `start` dec
   largest 36000) ticks: time runs until the seat's next decision point (an intent finished or
   started holding, a sighting, a mark rounded, a crate aboard, ten idle seconds, a two-minute
   heartbeat: the sailing filter), the episode's end or a halt. Moving time on answers the pending
-  decision. On a game driven directly the run is inline; on the game thread the loop asks its time
-  model for the run's ticks and serves its queue between them.
-- **Real time with pause-on-decision** (game thread):
+  decision. On a game driven directly the run is inline; on the game thread and in the browser's
+  worker the loop asks its time model for the run's ticks and serves its queue between them.
+- **Real time with pause-on-decision** (game thread and worker):
   `player.pacing {"pacing": {"pacing": "real_time", "speed": 4, "pause_on_decision": true, "clock": {...}}}`
   from a developer. The boundary's pace then comes from the players' session: a pending decision
   holds the world (as long as the seat's thinking clock has time, if it has one) until the seat
   answers it with `player.continue` or `player.act {resume: true}`; `player.wait` is the long poll
   that answers when the seat's decision comes (at once when one is pending), at its wall limit, or
-  at the episode's end. Decision points are computed once after every tick, whatever ran it.
+  at the episode's end. Decision points are computed once after every tick, whatever ran it. The
+  browser's worker does all of this as the game thread does: both drive
+  `pocket_runtime::boundary::PlayerWaits` (waits under way, their stop and wall limits, the decision
+  points after each tick, the pace) and `boundary::player_pacing`, with the runtime's `TimeModel`
+  (the worker's copy of it is gone, threads-slice1.md 13), and the worker refuses a player the
+  controls it answers itself (`step`, `time_control`, `snapshot`), as the thread does for its own.
 - **The episode** ends in the tick the spec's `done_event` is emitted (`interface.turns`, Finish
   phase); its data are the result. Waits answer `stopped: "done"` with the outcome, and further acts
   and waits are refused with `time.episode_over`.
@@ -195,7 +200,8 @@ developer's and is refused with `permission.denied` (`{request, role: "player", 
   thread-only checks), for every catalog command by its name or an alias and for a game's own
   commands;
 - the game thread, for the commands its loop answers itself (`time.step`, `time.control`,
-  `play.*`, `snapshots.*`, `status`, `snapshot`);
+  `play.*`, `snapshots.*`, `status`, `snapshot`), and the browser's worker for its own (`step`,
+  `time_control`, `snapshot`);
 - the host (`pocket_server::seat_permits`), for every call made as a seat (`Via::Player`): those
   the host answers without the game see no source at all (`events.since` lists every world event,
   `log.since`, `assets.list`, the debugger's methods, a read answered from the last publication
@@ -273,6 +279,13 @@ every tick, and its player scenario passes the four checks.
   the form's helm sets the skipper's controls through `player.act`, and the same player's
   `world_edit` and `world.get` are refused in the worker as natively; `samples/sailing`, without
   players, still takes the helm as `world_edit`. No agent played in the browser.
+  Until 2026-10-09 the worker never fed the players' session: a `player.wait` ran inline through
+  `Game::apply`, up to 36,000 ticks in one task, with no publication and no tick hashes for those
+  ticks; `player.pacing` real time set the session's pacing but not the worker's model, so no tick
+  ran and every wait was refused (`command.thread_only`); and decision points never followed the
+  worker's own ticks. The worker now drives the loop core the thread does (section 6); its tests
+  run the course's package natively (`pocket-web/tests/worker_players.rs`). A browser run of an
+  agent through the worker is still to be made.
 - **A default budget cuts what a policy needs.** The first run of the reference skipper read the
   observation at the profile's 400 tokens, in which Mark2 was among the omitted percepts; it found
   no next mark, never acted again and waited through heartbeats for 2.3 million ticks before the
@@ -310,6 +323,8 @@ every tick, and its player scenario passes the four checks.
 | Team vision | `pocket-interface/tests/perception_team.rs` |
 | A player is its seat; a game without players says so; one bad action applies nothing; the scripted agent plays the course through the player tools and the run replays | `pocket-runtime/tests/player.rs` |
 | A stepped wait on the thread; real time paused on each decision; the skipper finishes through a player client of the thread, after which waits are refused and a developer still steps | `pocket-runtime/tests/thread_player.rs` |
+| The same in the browser's worker, natively: a stepped wait runs its ticks through the loop (every tick's hash, snapshots and a developer's read meanwhile); decision points after a developer's step; real time paused on each decision, the long poll and its wall limit; a player refused the loop's controls | `pocket-web/tests/worker_players.rs` |
+| A developer naming a seat leaves its push cursor | `pocket-runtime/tests/player.rs` |
 | A player's developer calls refused by the game and the thread; a throwing rule halts the players until a hot update, a developer's resume or a restore; a restore rebases the seat's decisions and push cursor | `pocket-runtime/tests/player.rs`, `pocket-runtime/tests/player_session.rs`, `pocket-interface/src/time/control.rs` (tests) |
 | A seat over HTTP and a seat-bound MCP session (in process, newline JSON-RPC over a pipe) play through the player tools alone; the host refuses the game's and its own developer methods; an unknown seat says `seat.unknown` | `pocket-app/tests/player_host.rs` |
 | The review's three findings replayed against the release `pocket serve` over HTTP | `tools/player_http_probe.py`, [evidence/player/seat-http.txt](../evidence/player/seat-http.txt) |

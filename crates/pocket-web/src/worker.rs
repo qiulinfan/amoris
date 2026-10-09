@@ -15,6 +15,14 @@
 //!   (`pocket_runtime::take_held`, as on the game thread).
 //! - **Controls** are the game thread's (threads-slice1.md 8): `step {ticks}`, answered after its
 //!   last tick, and `time_control {pause?, pacing?}`; `snapshot` answers its tick, writes and hash.
+//!   In a game with players a player sends none of them (`pocket_runtime::player::permitted`).
+//! - **Players** (docs/spec/player.md 6) as on the game thread, through the loop core both share
+//!   (`pocket_runtime::boundary`): `player.wait` runs its ticks through this loop, one per boundary
+//!   in stepped pacing (so the hash stream, the publications and the queue go on between them) or
+//!   as the long poll of real time; `player.pacing` sets the players' pacing and the time model;
+//!   the decision points are computed after every tick, whatever ran it; and for a game with
+//!   players the boundary's pace is their session's (pause-on-decision, a halt, the episode's
+//!   end). The time model is `pocket_runtime::TimeModel`, the game thread's.
 //! - **Pacing.** A task runs boundaries and ticks until the time model says wait or [`SLICE_MS`] of
 //!   work is spent, then answers [`Next`]: run again now, at an instant, or when a message comes.
 //! - **Publication.** After every tick, and after a boundary whose Write succeeded when no tick
@@ -29,6 +37,7 @@
 //!   keeps answering commands.
 
 use std::collections::{BTreeMap, VecDeque};
+use std::sync::Arc;
 
 use pocket_check::Snapshot;
 use pocket_contract::codes::{Range, out_of_range};
@@ -38,13 +47,12 @@ use pocket_link::{
     canonical_order, game_stopped, queue_full, source_from_json, source_in_use, source_json,
     tick_passed,
 };
-use pocket_runtime::{Command, Game, StepParams};
+use pocket_runtime::boundary::{Answer, PlayerWaits};
+use pocket_runtime::{Command, Game, Pace, Pacing, StepParams, TimeModel};
 use pocket_sim::{ContentHash, Tick};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{Value, json};
-
-use crate::pace::{Pace, Pacing, TimeModel};
 
 /// Snapshots posted and not acknowledged, at most (threads.md 7.3).
 pub const MAX_IN_FLIGHT: u32 = 2;
@@ -58,8 +66,9 @@ const STEP_ERRORS: usize = 20;
 /// Tick timings kept for `perf` (the last ones).
 const TIMINGS: usize = 16_384;
 
-/// The loop's clock in milliseconds, monotonic: `performance.now()` in a worker.
-pub type Clock = Box<dyn Fn() -> f64>;
+/// The loop's clock in milliseconds, monotonic: `performance.now()` in a worker. The players'
+/// session reads it too (wall limits, thinking clocks), through the game's wall clock.
+pub type Clock = Arc<dyn Fn() -> f64 + Send + Sync>;
 
 /// When the worker runs the loop again.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -143,6 +152,8 @@ pub struct WorkerCore {
     last_seq: BTreeMap<Source, u64>,
     /// `step`s: ticks still to run and whom to answer.
     steps: VecDeque<(u64, Source, u64)>,
+    /// Players' `wait`s under way, answered by source and seq.
+    players: PlayerWaits<(Source, u64)>,
     errors: Vec<Problem>,
     out: VecDeque<Out>,
     version: u64,
@@ -181,8 +192,10 @@ fn problem_json(p: &Problem) -> Value {
 impl WorkerCore {
     /// The loop over `game`, paced by `pacing`; posts `ready` and the first snapshot (version 1,
     /// with tick 0's hash and the registry).
-    pub fn new(game: Game, pacing: Pacing, clock: Clock) -> Result<WorkerCore, Problem> {
+    pub fn new(mut game: Game, pacing: Pacing, clock: Clock) -> Result<WorkerCore, Problem> {
         pacing.check()?;
+        // The players' session measures wall limits and thinking clocks with the loop's clock.
+        game.set_wall_clock(clock.clone());
         let model = TimeModel::new(game.sim().clock().rate, pacing);
         let since_ms = clock();
         let mut w = WorkerCore {
@@ -193,6 +206,7 @@ impl WorkerCore {
             held: Vec::new(),
             last_seq: BTreeMap::new(),
             steps: VecDeque::new(),
+            players: PlayerWaits::default(),
             errors: Vec::new(),
             out: VecDeque::new(),
             version: 0,
@@ -392,7 +406,11 @@ impl WorkerCore {
 
     /// Posts `status` when the loop starts or stops running ticks on its own (threads.md 3.5).
     fn status(&mut self) {
-        let running = self.model.running();
+        let held = self.game.has_players() && self.game.player().holds();
+        let running = self.model.steps_due() > 0
+            || (!self.model.paused()
+                && !held
+                && matches!(self.model.pacing(), Pacing::RealTime { .. }));
         if self.running == Some(running) {
             return;
         }
@@ -440,7 +458,7 @@ impl WorkerCore {
         let wrote = self.game.writes() != writes;
         self.push_events();
         let now = self.now();
-        let pace = self.model.pace(now);
+        let pace = self.pace(now);
         if wrote && pace != Pace::RunTick {
             self.publish();
         }
@@ -457,6 +475,15 @@ impl WorkerCore {
 
     fn handle(&mut self, e: Envelope) {
         let (source, seq) = (e.source, e.seq);
+        // A player sends the player tools alone: the commands this loop answers itself are refused
+        // here, the others again by the game (as on the game thread).
+        let name = pocket_runtime::CATALOG
+            .iter()
+            .find(|c| c.name == e.name || c.aliases.contains(&e.name.as_str()))
+            .map_or(e.name.as_str(), |c| c.name);
+        if let Err(p) = pocket_runtime::player::permitted(self.game.sim().world(), name, source) {
+            return self.reply(source, seq, Err(p));
+        }
         match e.name.as_str() {
             // The web loop runs plain step counts; stop conditions (until, watch) need the native
             // game thread's loop (docs/spec/server.md).
@@ -473,8 +500,8 @@ impl WorkerCore {
                         self.reply(source, seq, Err(p));
                     }
                     None => {
-                        self.model.step(ticks);
                         self.steps.push_back((ticks, source, seq));
+                        self.reowe();
                     }
                 },
                 Err(p) => self.reply(source, seq, Err(p)),
@@ -488,7 +515,12 @@ impl WorkerCore {
                         }
                         match p.pause {
                             Some(true) => self.model.pause(),
-                            Some(false) => self.model.resume(),
+                            Some(false) => {
+                                self.model.resume();
+                                // A developer's resume also ends the players' halt after a script
+                                // failure (time.md, Halts); a player never gets here.
+                                self.game.player_mut().developer_resumed();
+                            }
                             None => {}
                         }
                         Ok(serde_json::to_value(self.time_status()).unwrap_or(Value::Null))
@@ -501,6 +533,19 @@ impl WorkerCore {
                     .game
                     .snapshot()
                     .map(|s| ReplyValue::Snapshot(s).into_json());
+                self.reply(source, seq, r);
+            }
+            "player.wait" => {
+                let cmd = Command::new(source, seq, &e.name, e.params);
+                match self.players.begin(&mut self.game, &cmd, (source, seq)) {
+                    Some(answer) => self.answer_players(vec![answer]),
+                    None => self.reowe(),
+                }
+            }
+            "player.pacing" => {
+                let cmd = Command::new(source, seq, &e.name, e.params);
+                let r =
+                    pocket_runtime::boundary::player_pacing(&mut self.game, &mut self.model, &cmd);
                 self.reply(source, seq, r);
             }
             _ => {
@@ -533,9 +578,13 @@ impl WorkerCore {
             Ok(report) => {
                 if !self.steps.is_empty() {
                     let room = STEP_ERRORS.saturating_sub(self.errors.len());
-                    self.errors.extend(report.errors.into_iter().take(room));
+                    self.errors.extend(report.errors.iter().take(room).cloned());
                 }
                 let posted = self.after_tick();
+                let mut ended = Vec::new();
+                self.players
+                    .after_tick(&mut self.game, &report, t1, &mut ended);
+                self.answer_players(ended);
                 let t2 = self.now();
                 if self.timings.len() == TIMINGS {
                     self.timings.pop_front();
@@ -565,13 +614,47 @@ impl WorkerCore {
         }
     }
 
-    /// Ends every `step` with `p`.
+    /// Ends every `step` and every players' wait with `p`.
     fn cancel_steps(&mut self, p: &Problem) {
         self.model.cancel_steps();
         self.errors.clear();
         for (_, source, seq) in std::mem::take(&mut self.steps) {
             self.reply(source, seq, Err(p.clone()));
         }
+        for (source, seq) in self.players.drain() {
+            self.reply(source, seq, Err(p.clone()));
+        }
+    }
+
+    /// The ticks the model owes: those the `step`s and the players' stepped `wait`s still ask for
+    /// (a step and a wait under way at once share the ticks the model runs).
+    fn reowe(&mut self) {
+        let steps: u64 = self.steps.iter().map(|(left, _, _)| left).sum();
+        self.model.cancel_steps();
+        self.model.step(steps.max(self.players.owed()));
+    }
+
+    /// The answer at this boundary (`PlayerWaits::pace`): players' waits whose wall limit passed
+    /// are answered first, then their session decides for a game with players unless a `step` is
+    /// under way, else the model.
+    fn pace(&mut self, now: f64) -> Pace {
+        let mut ended = Vec::new();
+        self.players.end_due(&mut self.game, now, &mut ended);
+        self.answer_players(ended);
+        let stepping = !self.steps.is_empty();
+        self.players
+            .pace(&mut self.game, &mut self.model, stepping, now)
+    }
+
+    /// Answers the players' waits that ended and gives back the ticks they no longer owe.
+    fn answer_players(&mut self, ended: Vec<Answer<(Source, u64)>>) {
+        if ended.is_empty() {
+            return;
+        }
+        for ((source, seq), answer) in ended {
+            self.reply(source, seq, answer);
+        }
+        self.reowe();
     }
 
     /// A poisoned world halts (threads.md 8): its steps end with `p`, nothing ticks until a

@@ -8,7 +8,7 @@ use pocket_runtime::{Game, GameBuilder};
 use serde_json::{Value, json};
 use wasm_bindgen::prelude::*;
 
-use crate::pace::Pacing;
+use crate::Pacing;
 use crate::package::Package;
 use crate::presenter::PresenterCore;
 use crate::worker::{Out, SLICE_MS, WorkerCore};
@@ -78,7 +78,7 @@ impl GameWorker {
             let game: Game = GameBuilder::new(setup)
                 .seed(seed.unwrap_or(package.seed))
                 .build()?;
-            WorkerCore::new(game, pacing, Box::new(performance_now))
+            WorkerCore::new(game, pacing, std::sync::Arc::new(performance_now))
         };
         build()
             .map(|core| {

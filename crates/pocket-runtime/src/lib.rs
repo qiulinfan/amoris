@@ -47,6 +47,9 @@ pub use control::{RestoreBundle, Sample, SnapshotsRestoreParams, StepParams};
 pub use edit::{Edit, EditOp, WorldEditOps, WorldEditParams, WorldGetParams, label_of};
 pub use engine::{engine_component, merge};
 pub use game::{Extras, Game, GameBuilder, PlayerRun, PlayerStart, SystemFn, registry, run_config};
+/// The time model every loop paces with (threads.md 3.3), on every target: the game thread's and
+/// the browser worker's.
+pub use pocket_interface::{MAX_CATCH_UP, MAX_SPEED, Pace, Pacing, TimeModel};
 /// The engine version replays, snapshots and saves record (versions.md 3.1).
 pub use pocket_persist::EngineVersion;
 /// Presenter-side static walking queries; authoritative gameplay remains in the game world.

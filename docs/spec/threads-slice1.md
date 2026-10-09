@@ -113,6 +113,11 @@ The pacing is a copy of `pocket_interface::TimeModel`'s slice 1 subset
 `pocket-web` no edge to `pocket-interface` and `pocket-runtime` re-exports the time model only under
 its native feature `thread`. The copy is a bounded stopgap: it goes when `pocket-runtime` exports
 the time model (or a loop core both the game thread and the worker drive) on every target.
+2026-10-09 (Pioneer): gone. `pocket-runtime` exports `TimeModel`, `Pace` and `Pacing` on every
+target and the loop core `boundary` (held commands, the players' waits and pace) that both loops
+drive; the worker's catch-up is now threads.md 3.3's (at most `MAX_CATCH_UP` ticks back to back,
+then the next waits its interval) rather than the copy's (drop the excess when more than
+`MAX_CATCH_UP` intervals late).
 
 ## 14. The web messages as built (slice 1, the web task)
 

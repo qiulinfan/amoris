@@ -30,13 +30,13 @@ use pocket_persist::Snapshot;
 use pocket_sim::{ContentHash, Tick};
 use serde_json::{Value, json};
 
-use crate::boundary::take_held;
+use crate::boundary::{Answer, PlayerWaits, take_held};
 use crate::catalog::{self, Command, NoParams};
 use crate::control::{
     PlayParams, RestoreBundle, Sampler, SnapshotsRestoreParams, StepParams, StepStop,
     TimeControlParams,
 };
-use crate::game::{Game, PlayerRun, PlayerStart};
+use crate::game::Game;
 
 pub use crate::GAME_STACK_BYTES;
 pub use pocket_interface::{MAX_SPEED, Pacing};
@@ -174,8 +174,7 @@ impl GameThread {
                     held: Vec::new(),
                     pending: VecDeque::new(),
                     steps: VecDeque::new(),
-                    player_runs: Vec::new(),
-                    player_replies: Vec::new(),
+                    players: PlayerWaits::default(),
                     errors: Vec::new(),
                     attached: seen,
                     version: 1,
@@ -441,8 +440,7 @@ struct Loop {
     steps: VecDeque<StepJob>,
     /// Players' `wait`s under way (docs/spec/player.md), each with where its answer goes: stepped
     /// ones run their ticks one per boundary, real-time ones wait for their seat's decision.
-    player_runs: Vec<PlayerRun>,
-    player_replies: Vec<ReplyTo>,
+    players: PlayerWaits<ReplyTo>,
     /// Failed invocations of the ticks the current `step` ran (at most 20).
     errors: Vec<Problem>,
     attached: Arc<AtomicBool>,
@@ -767,120 +765,61 @@ impl Loop {
     /// for (a step and a wait under way at once share the ticks the model runs).
     fn reowe(&mut self) {
         let steps: u64 = self.steps.iter().map(|j| j.left).sum();
-        let players = self
-            .player_runs
-            .iter()
-            .map(PlayerRun::ticks_left)
-            .max()
-            .unwrap_or(0);
         self.model.cancel_steps();
-        self.model.step(steps.max(players));
+        self.model.step(steps.max(self.players.owed()));
     }
 
-    /// The answer at this boundary: for a game with players their session decides (a halt, the
-    /// episode's end, real time held by a pending decision), else the model; a developer's
-    /// `time.step` under way runs its ticks whatever holds the players. Players' runs whose wall
-    /// limit passed are answered first, and the earliest wall limit of those still waiting wakes
-    /// the loop.
+    /// The answer at this boundary (`PlayerWaits::pace`): players' waits whose wall limit passed
+    /// are answered first, then their session decides for a game with players unless a developer's
+    /// `time.step` is under way, else the model.
     fn pace(&mut self, now: f64) -> Pace {
-        self.end_player_runs(now);
-        let pace = if self.game.has_players() && self.steps.is_empty() {
-            self.game.player_pace(&mut self.model, now)
-        } else {
-            self.model.pace(now)
-        };
-        let deadline = self
-            .player_runs
-            .iter()
-            .map(PlayerRun::wall_deadline)
-            .reduce(pocket_sim::math::min);
-        match (pace, deadline) {
-            (Pace::WaitForCommand, Some(d)) => Pace::WaitUntil(d),
-            (Pace::WaitUntil(t), Some(d)) => Pace::WaitUntil(pocket_sim::math::min(t, d)),
-            (p, _) => p,
-        }
-    }
-
-    /// Answers the players' runs that end at this boundary: past their wall limit, or (stepped)
-    /// unable to take the next tick.
-    fn end_player_runs(&mut self, now: f64) {
         let mut ended = Vec::new();
-        for (i, r) in self.player_runs.iter_mut().enumerate() {
-            if now >= r.wall_deadline() {
-                r.stop_at_wall();
-                ended.push(i);
-            } else if !r.real_time() && !r.before_tick(&self.game) {
-                ended.push(i);
-            }
-        }
-        self.finish_player_runs(ended);
+        self.players.end_due(&mut self.game, now, &mut ended);
+        self.answer_players(ended);
+        let stepping = !self.steps.is_empty();
+        self.players
+            .pace(&mut self.game, &mut self.model, stepping, now)
     }
 
-    /// After a tick: the players' decision points, once, and every run's stop.
+    /// After a tick: the players' decision points, once, and every wait's stop.
     fn after_tick_players(&mut self, report: &pocket_sim::StepReport, now: f64) {
-        let ended = self
-            .game
-            .player_after_tick(report, &mut self.player_runs, now);
-        self.finish_player_runs(ended);
+        let mut ended = Vec::new();
+        self.players
+            .after_tick(&mut self.game, report, now, &mut ended);
+        self.answer_players(ended);
     }
 
-    /// Answers the runs at these indices (ascending) and gives back what they no longer owe.
-    fn finish_player_runs(&mut self, ended: Vec<usize>) {
+    /// Answers the players' waits that ended and gives back the ticks they no longer owe.
+    fn answer_players(&mut self, ended: Vec<Answer<ReplyTo>>) {
         if ended.is_empty() {
             return;
         }
-        for i in ended.into_iter().rev() {
-            let run = self.player_runs.remove(i);
-            let reply = self.player_replies.remove(i);
-            let answer = self.game.finish_player_run(run).map(ReplyValue::Json);
-            reply.send(answer);
+        for (reply, answer) in ended {
+            reply.send(answer.map(ReplyValue::Json));
         }
         self.reowe();
     }
 
-    /// Answers the players' runs with `why` (their world went away or a tick failed).
+    /// Answers the players' waits with `why` (their world went away or a tick failed).
     fn drop_player_runs(&mut self, why: &Problem) {
-        self.player_runs.clear();
-        for reply in self.player_replies.drain(..) {
+        for reply in self.players.drain() {
             reply.send(Err(why.clone()));
         }
     }
 
-    /// `player.wait` on the loop (docs/spec/player.md): stepped pacing asks the model for the
-    /// run's ticks and counts them as they run, so the queue is served between ticks; real time
-    /// waits for the seat's decision as the clock runs the ticks.
+    /// `player.wait` on the loop (docs/spec/player.md 6, `PlayerWaits::begin`).
     fn player_wait(&mut self, e: Envelope) {
-        if let Some(poison) = self.game.sim().poisoned() {
-            return e
-                .reply
-                .send(Err(pocket_sim::sim::world_poisoned(poison.tick)));
-        }
         let cmd = Command::new(e.source, e.seq, &e.name, e.params);
-        match self.game.begin_player_wait(&cmd) {
-            Ok(PlayerStart::Answered(v)) => e.reply.send(Ok(ReplyValue::Json(v))),
-            Ok(PlayerStart::Running(run)) => {
-                self.player_runs.push(run);
-                self.player_replies.push(e.reply);
-                self.reowe();
-            }
-            Err(p) => e.reply.send(Err(p)),
+        match self.players.begin(&mut self.game, &cmd, e.reply) {
+            Some((reply, answer)) => reply.send(answer.map(ReplyValue::Json)),
+            None => self.reowe(),
         }
     }
 
-    /// `player.pacing` on the loop: the players' pacing, and the loop's model to time it (real
-    /// time runs, unpaused; stepped waits for steps and waits).
+    /// `player.pacing` on the loop (`boundary::player_pacing`).
     fn player_pacing(&mut self, e: Envelope) {
         let cmd = Command::new(e.source, e.seq, &e.name, e.params);
-        let r = self.game.set_player_pacing(&cmd).map(|(pacing, v)| {
-            match pacing {
-                pocket_interface::time::play::PlayPacing::RealTime { speed, .. } => {
-                    self.model.set_pacing(Pacing::RealTime { speed });
-                    self.model.resume();
-                }
-                _ => self.model.set_pacing(Pacing::Stepped),
-            }
-            v
-        });
+        let r = crate::boundary::player_pacing(&mut self.game, &mut self.model, &cmd);
         e.reply.send(r.map(ReplyValue::Json));
     }
 

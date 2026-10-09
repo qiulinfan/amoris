@@ -25,9 +25,10 @@
 )]
 
 pub mod bindings;
-mod pace;
 pub mod package;
 pub mod presenter;
 pub mod worker;
 
-pub use pace::{MAX_CATCH_UP, MAX_SPEED, Pace, Pacing, TimeModel};
+/// The time model of every loop, the game thread's (threads.md 3.3; the copy that stood here until
+/// 2026-10-09 went when the runtime exported it on every target, threads-slice1.md 13).
+pub use pocket_runtime::{MAX_CATCH_UP, MAX_SPEED, Pace, Pacing, TimeModel};

@@ -369,6 +369,12 @@ impl Controller {
         }
     }
 
+    /// Whether real time was held by a decision or a pause at the last boundary [`Controller::pace`]
+    /// answered (a loop's status says waiting then, though its model would run).
+    pub fn holds(&self) -> bool {
+        self.held
+    }
+
     /// The answer at a boundary (time.md, Threads and the web): the halt, the episode's end and a
     /// turn's deciding phase stop ticks in every pacing; lockstep runs a tick when every seat has
     /// committed through it; real time holds while a decision or a pause source holds, waking for

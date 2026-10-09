@@ -649,6 +649,9 @@ the encoding lives in `pocket-link::wire` and is independent of `postMessage`.
   previous `snap` posted, which the page always has, since messages arrive in order.
 - The page posts `ack` after it has rebuilt the snapshot, not after it has drawn it, so a slow frame
   delays snapshots by one at most and never stalls the worker.
+- The worker paces with the game thread's time model and shares its loop core
+  (`pocket_runtime::boundary`): the held commands of 5.2, and in a game with players the players'
+  waits, their decision points after every tick and their session's pace (player.md 6).
 
 ### 7.4 The page's handle
 
