@@ -82,9 +82,11 @@ pub fn decoder_source(layout: &NeuralLayout, f16: bool, body: &str) -> String {
     )
 }
 
-/// Whether two layouts compile to the same shaders (the channels' meaning aside, their count).
+/// Whether two layouts share the forward pass's neural pipelines: the same grids, sampling,
+/// encoding and hidden widths, and channel counts that pad to the same number of four-vectors
+/// (which channels they are is each texture's descriptor's business).
 pub fn same_profile(a: &NeuralLayout, b: &NeuralLayout) -> bool {
-    a.channels.len() == b.channels.len()
+    a.outputs_padded() == b.outputs_padded()
         && a.fine == b.fine
         && a.coarse == b.coarse
         && a.sampling == b.sampling
@@ -123,7 +125,7 @@ pub fn latent_block(texture: &NeuralTexture) -> (Vec<u32>, Vec<[u32; 2]>) {
 
 /// A texture's descriptor and weights as data-uniform words, its latents starting at latent
 /// texel `first_texel`.
-pub fn data_words(texture: &NeuralTexture, first_texel: u32) -> Vec<[u32; 4]> {
+pub fn data_words(texture: &NeuralTexture, first_texel: u32, base: u32) -> Vec<[u32; 4]> {
     let layout = &texture.layout;
     let (_, firsts) = latent_block(texture);
     let mut out = vec![[0u32; 4]; DESC as usize];
@@ -135,6 +137,9 @@ pub fn data_words(texture: &NeuralTexture, first_texel: u32) -> Vec<[u32; 4]> {
     ];
     let channels = channel_words(layout);
     out[1] = [channels[0], channels[1], layout.channels.len() as u32, 0];
+    // Where the weights start, twice (each of two decodes reads its own word; neural_mlp.wgsl).
+    out[2] = [base + DESC, 0, 0, 0];
+    out[3] = out[2];
     for (l, level) in texture.levels.iter().enumerate() {
         out[4 + 2 * l] = [
             level.fine.width,
@@ -268,7 +273,7 @@ impl NeuralTable {
         let texels = (block.len() / 2) as u32;
         let rows = texels.div_ceil(ROW);
         let first_row = self.rows_used;
-        let words = data_words(texture, first_row * ROW);
+        let words = data_words(texture, first_row * ROW, self.words.len() as u32);
         if self.words.len() + words.len() > DATA_WORDS {
             return Err(format!(
                 "the neural data uniform is full ({} of {DATA_WORDS} words used, {} more needed)",
@@ -520,8 +525,22 @@ mod tests {
         assert!(s.contains("const NT_IN4: u32 = 7u;"));
         assert!(s.contains("const NT_OUT4: u32 = 1u;"));
         let mut other = l.clone();
+        other.channels = vec![
+            Channel::BaseR,
+            Channel::BaseG,
+            Channel::BaseB,
+            Channel::NormalX,
+            Channel::NormalY,
+        ];
+        assert!(
+            !same_profile(&l, &other),
+            "five channels pad to two vectors"
+        );
         other.channels = vec![Channel::Height, Channel::NormalX];
-        assert!(!same_profile(&l, &other));
+        assert!(
+            same_profile(&l, &other),
+            "two channels pad to one vector, as four do"
+        );
         other.channels = vec![
             Channel::NormalX,
             Channel::NormalY,

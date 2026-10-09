@@ -20,8 +20,10 @@ fn srgb_to_linear3(c: vec3f) -> vec3f {
 }
 
 // Output `i` of a decode clamped to [0, 1], or `fallback` when the texture lacks it (0xff).
+// Textures whose channel counts pad to the same four-vectors share the pipelines, so the bound
+// is the padded count, not the first texture's `NT_OUT`.
 fn nt_get(y: array<vec4<nt_t>, NT_OUT4>, i: u32, fallback: f32) -> f32 {
-    if i >= NT_OUT {
+    if i >= 4u * NT_OUT4 {
         return fallback;
     }
     return clamp(nt_channel(y, i), 0.0, 1.0);
@@ -40,14 +42,16 @@ fn surface_neural(in: VsOut, facing: bool) -> Surface {
     let m0 = u32(floor(level));
     let t = clamp((level - f32(m0) - (0.5 - 0.5 * NT_BLEND_BAND)) / NT_BLEND_BAND, 0.0, 1.0);
     // One decode, or two blended in the band: a loop around a single call, so the shader holds
-    // one copy of the unrolled network (four inlined copies, one per branch, overflowed the
-    // instruction caches where neighbouring pixels took different branches).
+    // one copy of the unrolled network. Each iteration reads where the weights are from its own
+    // descriptor word (2 or 3, the same value): otherwise compilers shared the two decodes'
+    // identical weight loads, holding thousands of values in registers (or hoisted them out of the
+    // loop), and spilled; docs/bench/neural-textures.md 5.
     let last = extent.z - 1u;
     let first_mip = select(m0, m0 + 1u, t >= 1.0 && m0 < last);
     let count = select(1u, 2u, t > 0.0 && t < 1.0 && m0 < last);
     var y: array<vec4<nt_t>, NT_OUT4>;
     for (var i = 0u; i < count; i++) {
-        let d = nt_decode(base, first_mip + i, in.uv);
+        let d = nt_decode(base, nt_data[base + 2u + i].x, first_mip + i, in.uv);
         let w = select(nt_t(1.0), select(nt_t(1.0 - t), nt_t(t), i == 1u), count == 2u);
         y[0] += d[0] * w;
         if NT_OUT4 > 1u { y[min(1u, NT_OUT4 - 1u)] += d[min(1u, NT_OUT4 - 1u)] * w; }
@@ -65,7 +69,7 @@ fn surface_neural(in: VsOut, facing: bool) -> Surface {
 
     var s: Surface;
     var albedo = vec3f(1.0);
-    if base_at < NT_OUT {
+    if base_at < 4u * NT_OUT4 {
         albedo = srgb_to_linear3(vec3f(nt_get(y, base_at, 1.0), nt_get(y, base_at + 1u, 1.0),
             nt_get(y, base_at + 2u, 1.0)));
     }
@@ -74,7 +78,7 @@ fn surface_neural(in: VsOut, facing: bool) -> Surface {
     s.metallic = m.metallic * nt_get(y, metal_at, 1.0);
     s.occlusion = nt_get(y, occlusion_at, 1.0);
     var tn = vec3f(0.0, 0.0, 1.0);
-    let mapped = normal_at < NT_OUT;
+    let mapped = normal_at < 4u * NT_OUT4;
     if mapped {
         let xy = vec2f(nt_get(y, normal_at, 0.5), nt_get(y, normal_at + 1u, 0.5)) * 2.0 - 1.0;
         tn = vec3f(xy, sqrt(max(1.0 - dot(xy, xy), 0.0)));
@@ -82,7 +86,7 @@ fn surface_neural(in: VsOut, facing: bool) -> Surface {
     let n = shading_normal(in, facing, tn, mapped);
     s.n = n;
     var emissive = vec3f(1.0);
-    if emissive_at < NT_OUT {
+    if emissive_at < 4u * NT_OUT4 {
         emissive = srgb_to_linear3(vec3f(nt_get(y, emissive_at, 0.0), nt_get(y, emissive_at + 1u, 0.0),
             nt_get(y, emissive_at + 2u, 0.0)));
     }

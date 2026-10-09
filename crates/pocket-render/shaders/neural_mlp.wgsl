@@ -3,9 +3,12 @@
 // for why. Uses neural_texture.wgsl's layout constants, `nt_inputs`, `nt_mat` and `nt_bias`.
 
 // Every channel of mip `mip` at `uv`, unclamped, in the texture's channel order (4 a vector).
-fn nt_decode(base: u32, mip: u32, uv: vec2f) -> array<vec4<nt_t>, NT_OUT4> {
+// `weights` is the data word where the texture's weights start, read by the caller from
+// descriptor word 2 or 3 (both hold it): two decodes reading it from different words keep a
+// compiler from sharing, and so holding, every weight load between them (forward_neural.wgsl).
+fn nt_decode(base: u32, weights: u32, mip: u32, uv: vec2f) -> array<vec4<nt_t>, NT_OUT4> {
     let x = nt_inputs(base, mip, uv);
-    let w = base + NT_DESC;
+    let w = weights;
     var a0 = vec4<nt_t>(0.0);
     if NT_H1_4 > 0u {
         a0 = nt_bias(w + NT_L1B + 0u);

@@ -19,7 +19,7 @@ fn decode_mip(@builtin(global_invocation_id) gid: vec3u) {
         return;
     }
     let uv = (vec2f(gid.xy) + 0.5) / vec2f(eval.zw);
-    let y = nt_decode(eval.x, eval.y, uv);
+    let y = nt_decode(eval.x, nt_data[eval.x + 2u].x, eval.y, uv);
     let at = (gid.y * eval.z + gid.x) * NT_OUT;
     for (var c = 0u; c < NT_OUT; c++) {
         decoded[at + c] = nt_channel(y, c);

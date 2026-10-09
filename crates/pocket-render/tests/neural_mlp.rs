@@ -69,9 +69,12 @@ fn generate() -> String {
     let mut o: Vec<String> = vec![
         "".into(),
         "// Every channel of mip `mip` at `uv`, unclamped, in the texture's channel order (4 a vector).".into(),
-        "fn nt_decode(base: u32, mip: u32, uv: vec2f) -> array<vec4<nt_t>, NT_OUT4> {".into(),
+        "// `weights` is the data word where the texture's weights start, read by the caller from".into(),
+        "// descriptor word 2 or 3 (both hold it): two decodes reading it from different words keep a".into(),
+        "// compiler from sharing, and so holding, every weight load between them (forward_neural.wgsl).".into(),
+        "fn nt_decode(base: u32, weights: u32, mip: u32, uv: vec2f) -> array<vec4<nt_t>, NT_OUT4> {".into(),
         "    let x = nt_inputs(base, mip, uv);".into(),
-        "    let w = base + NT_DESC;".into(),
+        "    let w = weights;".into(),
     ];
     for l in [
         Layer {
