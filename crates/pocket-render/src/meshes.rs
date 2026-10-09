@@ -2,6 +2,12 @@
 //! geometry reachable from one draw call), with a table of per-mesh draw ranges and bounds the
 //! culling pass reads. Buffers grow by doubling; growing bumps `generation` so bind groups and
 //! pipelines that hold the old buffers are rebuilt.
+//!
+//! A mesh with levels of detail (`MeshData::lods`, docs/spec/lod.md) takes one row of the table
+//! per level: its own row (level 0, the id instances name) followed by a row per coarser level with
+//! that level's index range over the same vertices and its error. A level row is a mesh like any
+//! other to the draw batches; only the culling pass, which picks an instance's level, knows that
+//! it stands for its mesh.
 
 use std::collections::HashMap;
 
@@ -21,9 +27,36 @@ pub struct MeshInfo {
     pub batch_offset: u32,
     /// The bounding box's centre and half extents (occlusion culling).
     pub box_center: [f32; 3],
-    pub _p0: u32,
+    /// On a mesh's own row, its levels: the count (the full mesh included) in the top 8 bits and
+    /// the row of level 1 in the low 24 (`lods >> 24 < 2`: no coarser levels). 0 on level rows.
+    pub lods: u32,
     pub box_half: [f32; 3],
-    pub _p1: u32,
+    /// The level's geometric error in the mesh's units (0 for the full mesh).
+    pub lod_error: f32,
+}
+
+impl MeshInfo {
+    /// The mesh's levels, the full mesh included (1 without coarser levels).
+    pub fn levels(&self) -> u32 {
+        (self.lods >> 24).max(1)
+    }
+
+    /// The row of level `level` (1 or more) of this mesh.
+    pub fn level_row(&self, level: u32) -> u32 {
+        (self.lods & 0x00ff_ffff) + level - 1
+    }
+}
+
+/// Packs a level count and the row of level 1 into [`MeshInfo::lods`].
+fn pack_lods(levels: usize, first: usize) -> u32 {
+    if levels < 2 {
+        return 0;
+    }
+    assert!(
+        first < 1 << 24 && levels < 256,
+        "mesh table too large for LOD rows"
+    );
+    ((levels as u32) << 24) | first as u32
 }
 
 /// A box's centre and half extents from its corners.
@@ -49,6 +82,7 @@ pub fn dynamic_bounds(src: &MeshInfo, grow: f32) -> MeshInfo {
         radius,
         box_center: src.center,
         box_half: [radius; 3],
+        lods: 0,
         ..*src
     }
 }
@@ -65,6 +99,9 @@ pub struct MeshPool {
     /// ray-traced shadows need to build acceleration structures (rt_shadows.rs).
     pub vertex_counts: Vec<u32>,
     pub dynamic: Vec<bool>,
+    /// Per row, the row whose instances it draws: itself for a mesh's own row, the mesh's row for a
+    /// level row (the draw batches size a level's regions by its mesh's instances).
+    pub owner: Vec<u32>,
     by_key: HashMap<String, u32>,
     vertex_len: u64,
     index_len: u64,
@@ -118,6 +155,7 @@ impl MeshPool {
             boxes: Vec::new(),
             vertex_counts: Vec::new(),
             dynamic: Vec::new(),
+            owner: Vec::new(),
             by_key: HashMap::new(),
             vertex_len: 0,
             index_len: 0,
@@ -140,6 +178,19 @@ impl MeshPool {
 
     pub fn is_empty(&self) -> bool {
         self.infos.is_empty()
+    }
+
+    /// Whether row `id` is a coarser level of another mesh.
+    pub fn is_level(&self, id: u32) -> bool {
+        self.owner.get(id as usize).is_some_and(|&o| o != id)
+    }
+
+    /// The level of detail row `id` draws (0: a mesh's own row).
+    pub fn level_of(&self, id: u32) -> u32 {
+        match self.owner.get(id as usize) {
+            Some(&o) if o != id => id - self.infos[o as usize].level_row(1) + 1,
+            _ => 0,
+        }
     }
 
     fn grow(
@@ -178,7 +229,12 @@ impl MeshPool {
             return *id;
         }
         let vbytes = mesh.vertices.len() as u64 * VERTEX;
-        let ibytes = mesh.indices.len() as u64 * 4;
+        let levels = 1 + mesh.lods.len().min(pocket_assets::lod::MAX_LEVELS - 1);
+        let lists: Vec<&[u32]> = std::iter::once(mesh.indices.as_slice())
+            .chain(mesh.lods.iter().map(|l| l.indices.as_slice()))
+            .take(levels)
+            .collect();
+        let ibytes = lists.iter().map(|l| l.len() as u64 * 4).sum::<u64>();
         if self.vertex_len + vbytes > self.vertices.size() {
             self.vertices = Self::grow(
                 device,
@@ -211,31 +267,45 @@ impl MeshPool {
             self.vertex_len,
             bytemuck::cast_slice(&mesh.vertices),
         );
-        queue.write_buffer(
-            &self.indices,
-            self.index_len,
-            bytemuck::cast_slice(&mesh.indices),
-        );
+        let all: Vec<u32> = lists.concat();
+        queue.write_buffer(&self.indices, self.index_len, bytemuck::cast_slice(&all));
         self.vertex_len += vbytes;
         self.index_len += ibytes;
         let id = self.infos.len() as u32;
         let (box_center, box_half) = center_half(mesh.bounds.min, mesh.bounds.max);
-        self.infos.push(MeshInfo {
-            center: mesh.bounds.center,
-            radius: mesh.bounds.radius,
-            index_count: mesh.indices.len() as u32,
-            first_index,
-            base_vertex,
-            batch_offset: 0,
-            box_center,
-            _p0: 0,
-            box_half,
-            _p1: 0,
-        });
-        self.names.push(key.to_owned());
-        self.boxes.push((mesh.bounds.min, mesh.bounds.max));
-        self.vertex_counts.push(mesh.vertices.len() as u32);
-        self.dynamic.push(false);
+        let mut first = first_index;
+        for (level, list) in lists.iter().enumerate() {
+            self.infos.push(MeshInfo {
+                center: mesh.bounds.center,
+                radius: mesh.bounds.radius,
+                index_count: list.len() as u32,
+                first_index: first,
+                base_vertex,
+                batch_offset: 0,
+                box_center,
+                lods: if level == 0 {
+                    pack_lods(levels, id as usize + 1)
+                } else {
+                    0
+                },
+                box_half,
+                lod_error: if level == 0 {
+                    0.0
+                } else {
+                    mesh.lods[level - 1].error
+                },
+            });
+            first += list.len() as u32;
+            self.names.push(if level == 0 {
+                key.to_owned()
+            } else {
+                format!("{key}@lod{level}")
+            });
+            self.boxes.push((mesh.bounds.min, mesh.bounds.max));
+            self.vertex_counts.push(mesh.vertices.len() as u32);
+            self.dynamic.push(false);
+            self.owner.push(id);
+        }
         self.by_key.insert(key.to_owned(), id);
         self.info_dirty = true;
         id
@@ -280,19 +350,39 @@ impl MeshPool {
             (lo[2] + hi[2]) * 0.5,
         ];
         let g = |i: usize, v: [f32; 3]| c[i] + (v[i] - c[i]) * grow;
-        self.infos.push(MeshInfo {
-            base_vertex,
-            batch_offset: 0,
-            ..dynamic_bounds(&src, grow)
-        });
-        // Ray picking keeps the source's box grown per axis.
-        self.boxes.push((
-            [g(0, lo), g(1, lo), g(2, lo)],
-            [g(0, hi), g(1, hi), g(2, hi)],
-        ));
-        self.names.push(key.to_owned());
-        self.vertex_counts.push(count);
-        self.dynamic.push(true);
+        // The copy's levels: the source's index ranges over the copy's own vertices.
+        let levels = src.levels();
+        for level in 0..levels {
+            let from = if level == 0 {
+                src
+            } else {
+                self.infos[src.level_row(level) as usize]
+            };
+            self.infos.push(MeshInfo {
+                base_vertex,
+                batch_offset: 0,
+                lods: if level == 0 {
+                    pack_lods(levels as usize, id as usize + 1)
+                } else {
+                    0
+                },
+                lod_error: from.lod_error,
+                ..dynamic_bounds(&from, grow)
+            });
+            // Ray picking keeps the source's box grown per axis.
+            self.boxes.push((
+                [g(0, lo), g(1, lo), g(2, lo)],
+                [g(0, hi), g(1, hi), g(2, hi)],
+            ));
+            self.names.push(if level == 0 {
+                key.to_owned()
+            } else {
+                format!("{key}@lod{level}")
+            });
+            self.vertex_counts.push(count);
+            self.dynamic.push(true);
+            self.owner.push(id);
+        }
         self.by_key.insert(key.to_owned(), id);
         self.info_dirty = true;
         Some(id)

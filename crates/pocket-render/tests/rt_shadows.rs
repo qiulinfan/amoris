@@ -173,6 +173,9 @@ fn renderer(gpu: &Gpu, hero: &ModelAsset) -> Renderer {
     r.add_model(OPAQUE_MODEL, &opaque_model());
     r.add_model(HERO, hero);
     r.set_camera_override(Some(demo::mixed_camera(N)));
+    // The ray-traced renderer draws full meshes (docs/spec/lod.md 7): so do the ones it is
+    // compared with, or their receivers' silhouettes would differ from its.
+    r.set_lod(pocket_render::LodMode::Off);
     r
 }
 

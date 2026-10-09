@@ -13,6 +13,7 @@ pub mod demo;
 pub mod gi;
 pub mod gpu;
 pub mod loader;
+pub mod lod;
 pub mod materials;
 pub mod meshes;
 pub mod occlusion;
@@ -35,6 +36,7 @@ mod ui;
 pub use camera::CameraState;
 pub use gpu::{BackendChoice, Gpu, GpuError};
 pub use loader::AssetSource;
+pub use lod::{DrawCounts, LodMode, LodSettings};
 pub use occlusion::{OcclusionMode, OcclusionStats};
 pub use renderer::{FrameStats, Renderer, web_time};
 

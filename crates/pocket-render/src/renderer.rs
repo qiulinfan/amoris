@@ -12,6 +12,9 @@
 //! step 4 is two passes: those instances, then a depth pyramid and a late culling pass, then the
 //! instances it finds newly visible with the sky and the rest.
 //!
+//! Step 1 also picks each instance's level of detail per view (lod.rs, docs/spec/lod.md); a level
+//! is a row of the mesh table, so the passes draw levels as they draw meshes.
+//!
 //! The CPU's work per frame does not grow with the number of instances. How the indirect draws
 //! are issued (multi-draw, or WebGPU's baseline without `indirect-first-instance`) is batches.rs.
 
@@ -28,6 +31,7 @@ use crate::blit::Blitter;
 use crate::camera::{CameraState, frustum_planes};
 use crate::gpu::Gpu;
 use crate::loader::{AssetSource, NoAssets};
+use crate::lod::{LodMode, LodSettings};
 use crate::materials::MaterialPool;
 use crate::meshes::{MeshPool, SKINNED_GROW};
 use crate::occlusion::{LateInputs, Occlusion, OcclusionMode, OcclusionStats};
@@ -80,11 +84,14 @@ struct CullUniform {
     mesh_count: u32,
     view_stride: u32,
     alpha: f32,
-    lod_scale: f32,
+    lod_on: u32,
     occlusion: u32,
     hiz_levels: u32,
     viewport: [f32; 2],
     _pad: [u32; 2],
+    eye: [f32; 4],
+    lod: [f32; 4],
+    lod_cascades: [f32; 4],
 }
 
 #[repr(C)]
@@ -129,6 +136,8 @@ pub struct FrameStats {
     pub occlusion: &'static str,
     /// The latest reading of the late culling pass's counters (a few frames old).
     pub occlusion_stats: Option<OcclusionStats>,
+    /// Levels of detail this frame: `on` or `off` (lod.rs).
+    pub lod: &'static str,
 }
 
 /// A drawn node: (mesh index, local TRS, skin).
@@ -344,6 +353,8 @@ pub struct Renderer {
     last_pick: Option<Option<u64>>,
     /// The last finished coverage read: (entity, share of the view's pixels), largest first.
     last_visible: Option<Vec<(u64, f32)>>,
+    /// That read's slot ids per pixel (`slot + 1`, 0 for nothing), row by row.
+    last_ids: Option<Vec<u32>>,
     /// The splat clouds' entities when the pending id pass was drawn (its `SPLAT_PICK` ids index
     /// them).
     pick_splats: Vec<u64>,
@@ -361,6 +372,10 @@ pub struct Renderer {
     bind_key: (u64, u64, u64),
     view_stride: u32,
     draw_meshes: u32,
+    /// How levels of detail are picked (lod.rs), and whether the batches' regions were last sized
+    /// with levels on.
+    lod: LodSettings,
+    regions_lod: Option<bool>,
     light_count: u32,
 
     camera_override: Option<CameraState>,
@@ -741,7 +756,8 @@ impl Renderer {
         let cells = u64::from(CLUSTER_X * CLUSTER_Y * CLUSTER_Z);
         let mut meshes = MeshPool::new(device);
         for name in PRIMITIVES {
-            if let Some(m) = primitive(name) {
+            if let Some(mut m) = primitive(name) {
+                pocket_assets::lod::build(&mut m, &pocket_assets::lod::LodOptions::default());
                 meshes.add(device, &gpu.queue, name, &m);
             }
         }
@@ -802,6 +818,7 @@ impl Renderer {
             overlays: Overlays::new(device, output),
             last_pick: None,
             last_visible: None,
+            last_ids: None,
             pick_splats: Vec::new(),
             empty_group,
             batch_offsets: storage(device, "batch offsets", 64 * 4, wgpu::BufferUsages::empty()),
@@ -835,6 +852,8 @@ impl Renderer {
             bind_key: (u64::MAX, 0, 0),
             view_stride: 1,
             draw_meshes: 0,
+            lod: LodSettings::from_env(),
+            regions_lod: None,
             light_count: 0,
             camera_override: None,
             tick_arrived: 0.0,
@@ -883,6 +902,49 @@ impl Renderer {
 
     pub fn occlusion(&self) -> OcclusionMode {
         self.occlusion.mode
+    }
+
+    /// Whether instances draw coarser levels of detail (lod.rs; `POCKET_LOD` sets the starting
+    /// mode). Turning them off draws every instance's full mesh from the next frame.
+    pub fn set_lod(&mut self, mode: LodMode) {
+        self.lod.mode = mode;
+    }
+
+    /// How levels are picked: the mode, the pixel and texel bounds and the hysteresis.
+    pub fn set_lod_settings(&mut self, settings: LodSettings) {
+        self.lod = settings;
+    }
+
+    pub fn lod(&self) -> LodSettings {
+        self.lod
+    }
+
+    /// The bytes the views' lists need for the current regions: the camera's `drawn` records (48
+    /// bytes per entry) and the cascades' `visible` indices (4 bytes per entry and view). Levels of
+    /// detail multiply a mesh's entries by its levels (docs/spec/lod.md 5).
+    pub fn list_bytes(&self) -> u64 {
+        u64::from(self.view_stride) * (48 + 4 * u64::from(VIEWS))
+    }
+
+    /// What the last submitted frame drew, per argument set and level of detail, read back from
+    /// the GPU's indirect arguments. Blocks until the GPU is done (checks and benchmarks).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn draw_counts(&self) -> crate::lod::DrawCounts {
+        let args = self.batches.read_back(&self.gpu.device, &self.gpu.queue);
+        let rows = self.batches.rows() as usize;
+        let mut out = crate::lod::DrawCounts::default();
+        for (i, a) in args.iter().enumerate() {
+            let set = i / (rows * VARIANTS as usize);
+            let level = (self.meshes.level_of((i % rows) as u32) as usize).min(7);
+            let counts = match set {
+                0 => &mut out.camera,
+                s if (s as u32) < VIEWS => &mut out.cascades[s - 1],
+                _ => &mut out.late,
+            };
+            counts.instances[level] += u64::from(a[1]);
+            counts.triangles[level] += u64::from(a[1]) * u64::from(a[0] / 3);
+        }
+        out
     }
 
     pub fn size(&self) -> (u32, u32) {
@@ -1140,9 +1202,30 @@ impl Renderer {
             );
         }
         let mesh_count = self.meshes.len() as u32;
-        if self.scene.counts_changed || mesh_count != self.draw_meshes {
+        // Ray-traced shadows meet the full meshes: a receiver drawn coarser than the mesh its rays
+        // start from shadows itself (docs/spec/lod.md 7), so they draw full meshes.
+        let lod_on = self.lod.on() && self.rt_shadows.is_none();
+        if self.scene.counts_changed
+            || mesh_count != self.draw_meshes
+            || self.regions_lod != Some(lod_on)
+        {
             self.scene.counts_changed = false;
-            let (offsets, stride) = self.scene.batch_offsets(self.meshes.len());
+            self.regions_lod = Some(lod_on);
+            // A level row draws its mesh's instances while levels are on, none while they are off.
+            let owners: Vec<u32> = self
+                .meshes
+                .owner
+                .iter()
+                .enumerate()
+                .map(|(row, &o)| {
+                    if lod_on || o == row as u32 {
+                        o
+                    } else {
+                        u32::MAX
+                    }
+                })
+                .collect();
+            let (offsets, stride) = self.scene.batch_offsets(&owners);
             let ob = (offsets.len() * 4) as u64;
             if ob > self.batch_offsets.size() {
                 self.batch_offsets = storage(
@@ -1177,7 +1260,7 @@ impl Renderer {
                 );
                 grown = true;
             }
-            let sizes = self.scene.batch_sizes(self.meshes.len());
+            let sizes = self.scene.batch_sizes(&owners);
             grown |=
                 self.batches
                     .rebuild(device, queue, &self.meshes.infos, &offsets, &sizes, stride);
@@ -1478,6 +1561,9 @@ impl Renderer {
         let n = self.scene.instance_count() as u32;
         // Two phases this frame (occlusion.rs)?
         let occl = self.occlusion.begin_frame(n > 0);
+        // Levels of detail: the regions were sized for this mode in `sync` (lod.rs).
+        let lod_on = self.regions_lod == Some(true);
+        let (eye, ortho) = self.lod.camera_terms(&cam, h);
         let cu = CullUniform {
             planes,
             view_proj: mat(vp),
@@ -1486,11 +1572,19 @@ impl Renderer {
             mesh_count: self.draw_meshes,
             view_stride: self.view_stride,
             alpha,
-            lod_scale: 0.0,
+            lod_on: u32::from(lod_on),
             occlusion: u32::from(occl),
             hiz_levels: crate::occlusion::levels(w, h),
             viewport: [w as f32, h as f32],
             _pad: [0; 2],
+            eye,
+            lod: [
+                if ortho { 1.0 } else { 0.0 },
+                self.lod.hysteresis.max(0.0),
+                0.0,
+                0.0,
+            ],
+            lod_cascades: self.lod.cascade_terms(&casc.texel),
         };
         queue.write_buffer(&self.cull_buf, 0, bytemuck::bytes_of(&cu));
         let near = cam.near.max(0.01);
@@ -1765,6 +1859,7 @@ impl Renderer {
             draw_calls,
             occlusion: self.occlusion.label(),
             occlusion_stats: self.occlusion.last,
+            lod: if lod_on { "on" } else { "off" },
         };
         self.last.clone()
     }
@@ -1870,6 +1965,17 @@ impl Renderer {
     }
 
     /// The answer to the last `request_visible`: (entity, share of pixels), largest first.
+    /// The entity at every pixel (0 for none), row by row, from the read that gave the last
+    /// [`Renderer::take_visible`] answer (checks compare whole id images).
+    pub fn take_id_image(&mut self) -> Option<Vec<u64>> {
+        let ids = self.last_ids.take()?;
+        Some(
+            ids.iter()
+                .map(|&id| self.entity_of_id(id).unwrap_or(0))
+                .collect(),
+        )
+    }
+
     pub fn take_visible(&mut self) -> Option<Vec<(u64, f32)>> {
         self.collect_pick();
         self.last_visible.take()
@@ -1899,6 +2005,7 @@ impl Renderer {
                     .collect();
                 v.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
                 self.last_visible = Some(v);
+                self.last_ids = Some(r.ids);
             }
         }
     }

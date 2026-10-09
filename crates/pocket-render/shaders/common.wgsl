@@ -59,9 +59,12 @@ struct MeshInfo {
     base_vertex: i32,
     batch_offset: u32,       // where this mesh's region starts in each view's visible list
     box_center: vec3f,       // the bounding box (occlusion culling)
-    _p0: u32,
+    // On a mesh's own row, its levels of detail (docs/spec/lod.md): the count, the full mesh
+    // included, in the top 8 bits (below 2: none) and the row of level 1 in the low 24; 0 on the
+    // rows of coarser levels.
+    lods: u32,
     box_half: vec3f,
-    _p1: u32,
+    lod_error: f32,          // the level's geometric error, in the mesh's units (0: the full mesh)
 };
 
 struct Material {

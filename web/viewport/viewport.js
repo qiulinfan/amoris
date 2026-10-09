@@ -106,6 +106,9 @@ export async function createViewport(canvas, options = {}) {
     demoCubesCamera(frame, dense) { vp.demo_cubes_camera(frame, dense); },
     demoOccluders() { vp.demo_occluders(performance.now()); },
     setOcclusion(mode) { vp.set_occlusion(mode); },
+    demoLod(n, spacing, detail, t) { vp.demo_lod(n, spacing, detail, t, performance.now()); },
+    demoLodCamera(n, spacing, t) { vp.demo_lod_camera(n, spacing, t); },
+    setLod(mode) { vp.set_lod(mode); },
     dispose() {
       disposed = true;
       observer.disconnect();

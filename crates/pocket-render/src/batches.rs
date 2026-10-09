@@ -17,6 +17,10 @@
 //! [`LATE`]: the instances the late culling pass finds newly visible, written to the same regions
 //! of the camera's list (the early draws are done with them by then), so a late batch has the
 //! camera's base on every path.
+//!
+//! A "mesh" here is a row of the mesh table, so a mesh's levels of detail (docs/spec/lod.md) are
+//! batches of their own, with regions sized by the mesh's instances: nothing in this file knows
+//! about levels.
 
 use std::num::NonZeroU64;
 
@@ -38,6 +42,10 @@ const SETS: u32 = VIEWS + 1;
 const ARGS: u64 = 20;
 /// Bytes of the base uniform the shaders read (`vec4u`).
 const BASE: u64 = 16;
+/// The live arguments: counted into by the culling passes, drawn from, read back by checks.
+const DRAWS_USAGE: wgpu::BufferUsages = wgpu::BufferUsages::STORAGE
+    .union(wgpu::BufferUsages::INDIRECT)
+    .union(wgpu::BufferUsages::COPY_SRC);
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -168,12 +176,7 @@ impl Batches {
                 64 * ARGS,
                 wgpu::BufferUsages::COPY_SRC,
             ),
-            draws: buffer(
-                device,
-                "draws",
-                64 * ARGS,
-                wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::INDIRECT,
-            ),
+            draws: buffer(device, "draws", 64 * ARGS, DRAWS_USAGE),
             meshes: 0,
             live: Vec::new(),
             live_at: [0; VARIANTS as usize + 1],
@@ -239,12 +242,7 @@ impl Batches {
         let bytes = template.len() as u64 * ARGS;
         if bytes > self.draws.size() {
             let size = bytes.next_power_of_two();
-            self.draws = buffer(
-                device,
-                "draws",
-                size,
-                wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::INDIRECT,
-            );
+            self.draws = buffer(device, "draws", size, DRAWS_USAGE);
             self.template = buffer(device, "draw template", size, wgpu::BufferUsages::COPY_SRC);
             grown = true;
         }
@@ -278,6 +276,46 @@ impl Batches {
             queue.write_buffer(&self.bases, 0, bytemuck::cast_slice(&data));
         }
         grown
+    }
+
+    /// The arguments the last submitted frame drew, as `[index_count, instance_count, first_index,
+    /// base_vertex, first_instance]` per (set, variant, mesh row) in that order. Blocks until the
+    /// GPU is done (checks and benchmarks only).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn read_back(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Vec<[u32; 5]> {
+        let bytes = u64::from(self.meshes * SETS * VARIANTS) * ARGS;
+        if bytes == 0 {
+            return Vec::new();
+        }
+        let buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("draws readback"),
+            size: bytes,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut enc = device.create_command_encoder(&Default::default());
+        enc.copy_buffer_to_buffer(&self.draws, 0, &buf, 0, bytes);
+        queue.submit([enc.finish()]);
+        let slice = buf.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |r| {
+            let _ = tx.send(r);
+        });
+        let _ = device.poll(wgpu::PollType::wait_indefinitely());
+        let mut out = Vec::new();
+        if let Ok(Ok(())) = rx.recv()
+            && let Ok(data) = slice.get_mapped_range()
+        {
+            let words: &[u32] = bytemuck::cast_slice(&data);
+            out = words.as_chunks::<5>().0.to_vec();
+        }
+        buf.unmap();
+        out
+    }
+
+    /// Mesh rows per argument set and variant (the readback's layout).
+    pub fn rows(&self) -> u32 {
+        self.meshes
     }
 
     /// Starts a frame's arguments from the template (the culling pass then counts into them).

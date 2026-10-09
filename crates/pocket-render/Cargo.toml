@@ -7,7 +7,8 @@ publish.workspace = true
 description = "The wgpu renderer: GPU-driven, clustered PBR, shadows, sky, ocean, post; Metal, Vulkan and WebGPU"
 
 [dependencies]
-pocket-assets.workspace = true
+# `lod`: the primitives' levels of detail (docs/spec/lod.md).
+pocket-assets = { workspace = true, features = ["lod"] }
 wgpu.workspace = true
 glam.workspace = true
 bytemuck.workspace = true

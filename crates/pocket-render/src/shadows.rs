@@ -13,6 +13,8 @@ pub const SHADOW_SIZE: u32 = 2048;
 pub struct Cascades {
     pub view_proj: [Mat4; CASCADES],
     pub splits: [f32; CASCADES],
+    /// A texel's width in metres, per cascade (levels of detail drawn into it; lod.rs).
+    pub texel: [f32; CASCADES],
 }
 
 /// Cascades over `[near, distance]` of the camera, for light travelling along `-to_sun`.
@@ -38,6 +40,7 @@ pub fn cascades(cam: &CameraState, aspect: f32, to_sun: Vec3, distance: f32) -> 
         Vec3::Y
     };
     let mut view_proj = [Mat4::IDENTITY; CASCADES];
+    let mut texels = [0.0f32; CASCADES];
     let mut prev = near;
     for (i, &far) in splits.iter().enumerate() {
         // The slice's eight corners, then the sphere around them.
@@ -60,6 +63,7 @@ pub fn cascades(cam: &CameraState, aspect: f32, to_sun: Vec3, distance: f32) -> 
         // Snap the center to the shadow map's texels in light space.
         let light_view = glam::camera::rh::view::look_at_mat4(Vec3::ZERO, light_dir, light_up);
         let texel = 2.0 * radius / SHADOW_SIZE as f32;
+        texels[i] = texel;
         let mut lc = light_view.transform_point3(center);
         lc.x = (lc.x / texel).floor() * texel;
         lc.y = (lc.y / texel).floor() * texel;
@@ -79,7 +83,11 @@ pub fn cascades(cam: &CameraState, aspect: f32, to_sun: Vec3, distance: f32) -> 
         view_proj[i] = proj * view;
         prev = far;
     }
-    Cascades { view_proj, splits }
+    Cascades {
+        view_proj,
+        splits,
+        texel: texels,
+    }
 }
 
 /// The cascade's planes for culling (standard depth 0..1).

@@ -345,7 +345,7 @@ impl Viewport {
             .map(|(l, ms)| format!("{{\"pass\":\"{l}\",\"ms\":{ms:.3}}}"))
             .collect();
         self.last_stats = format!(
-            "{{\"gpu_ms\":{:.3},\"instances\":{},\"entities\":{},\"meshes\":{},\"pending_assets\":{},\"tick\":{},\"backend\":\"{}\",\"draw_path\":\"{}\",\"draw_calls\":{},\"occlusion\":\"{}\",\"occluded\":{},\"passes\":[{}]}}",
+            "{{\"gpu_ms\":{:.3},\"instances\":{},\"entities\":{},\"meshes\":{},\"pending_assets\":{},\"tick\":{},\"backend\":\"{}\",\"draw_path\":\"{}\",\"draw_calls\":{},\"occlusion\":\"{}\",\"occluded\":{},\"lod\":\"{}\",\"passes\":[{}]}}",
             s.gpu_ms,
             s.instances,
             s.entities,
@@ -357,9 +357,37 @@ impl Viewport {
             s.draw_calls,
             s.occlusion,
             s.occlusion_stats.map_or(0, |o| o.occluded),
+            s.lod,
             passes.join(",")
         );
         self.last_stats.clone()
+    }
+
+    /// Levels of detail: `off` draws every instance's full mesh, `on` (the default) picks levels
+    /// per instance and view (docs/spec/lod.md); anything else leaves it as it is.
+    pub fn set_lod(&mut self, mode: &str) {
+        if let Some(m) = pocket_render::LodMode::parse(mode) {
+            self.renderer.set_lod(m);
+        }
+    }
+
+    /// Loads the levels-of-detail benchmark's field (`n` x `n` dense rocks and knots `spacing`
+    /// metres apart, meshes of subdivision `detail`), its levels made here as the importer makes
+    /// them, with its camera at `t`.
+    pub fn demo_lod(&mut self, n: u32, spacing: f32, detail: u32, t: f32, now_ms: f64) {
+        self.renderer.add_model(
+            pocket_render::demo::LOD_MODEL,
+            &pocket_render::demo::lod_model(detail),
+        );
+        self.renderer
+            .apply(pocket_render::demo::lod_field(n, spacing), now_ms / 1000.0);
+        self.demo_lod_camera(n, spacing, t);
+    }
+
+    /// The levels-of-detail field's camera at `t` (0: in the first cell, 1: near the middle).
+    pub fn demo_lod_camera(&mut self, n: u32, spacing: f32, t: f32) {
+        self.renderer
+            .set_camera_override(Some(pocket_render::demo::lod_field_camera(n, spacing, t)));
     }
 
     /// Loads the mixed scene (every pipeline variant in every view; the draw paths' check).

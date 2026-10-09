@@ -455,33 +455,37 @@ impl Scene {
         runs
     }
 
-    /// Instances per batch, in `batch_offsets`' order (variant-major: `variant * meshes + mesh`).
-    pub fn batch_sizes(&self, meshes: usize) -> Vec<u32> {
+    /// The instances of variant `v` that mesh row `row` may draw: those of the mesh whose instances
+    /// it draws, `owners[row]` (itself, or for a level row its mesh; docs/spec/lod.md), none for
+    /// `u32::MAX`.
+    fn row_count(&self, owners: &[u32], row: usize, v: usize) -> u32 {
+        match owners.get(row) {
+            Some(&o) if o != u32::MAX => self
+                .mesh_counts
+                .get(o as usize * VARIANTS as usize + v)
+                .copied()
+                .unwrap_or(0),
+            _ => 0,
+        }
+    }
+
+    /// Instances per batch, in `batch_offsets`' order (variant-major: `variant * rows + row`), for
+    /// mesh rows drawing the instances of `owners` (one entry per row).
+    pub fn batch_sizes(&self, owners: &[u32]) -> Vec<u32> {
         (0..VARIANTS as usize)
-            .flat_map(|v| {
-                (0..meshes).map(move |m| {
-                    self.mesh_counts
-                        .get(m * VARIANTS as usize + v)
-                        .copied()
-                        .unwrap_or(0)
-                })
-            })
+            .flat_map(|v| (0..owners.len()).map(move |r| self.row_count(owners, r, v)))
             .collect()
     }
 
-    /// Visible-list regions per batch (variant-major: `variant * meshes + mesh`, prefix sums of
-    /// the instance counts) and the per-view stride.
-    pub fn batch_offsets(&self, meshes: usize) -> (Vec<u32>, u32) {
-        let mut offsets = Vec::with_capacity(meshes * VARIANTS as usize);
+    /// Visible-list regions per batch (variant-major: `variant * rows + row`, prefix sums of the
+    /// sizes [`Scene::batch_sizes`] gives) and the per-view stride.
+    pub fn batch_offsets(&self, owners: &[u32]) -> (Vec<u32>, u32) {
+        let mut offsets = Vec::with_capacity(owners.len() * VARIANTS as usize);
         let mut at = 0u32;
         for v in 0..VARIANTS as usize {
-            for m in 0..meshes {
+            for r in 0..owners.len() {
                 offsets.push(at);
-                at += self
-                    .mesh_counts
-                    .get(m * VARIANTS as usize + v)
-                    .copied()
-                    .unwrap_or(0);
+                at += self.row_count(owners, r, v);
             }
         }
         (offsets, at.max(1))

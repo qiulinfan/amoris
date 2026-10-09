@@ -56,7 +56,9 @@ struct CasterGpu {
 
 pub struct RtShadows {
     /// Opaque bottom levels by mesh id (skinned meshes' too, rebuilt every frame they cast).
-    blas: Vec<wgpu::Blas>,
+    /// Per mesh row; none for the rows of coarser levels of detail (shadow rays always meet an
+    /// instance's full mesh).
+    blas: Vec<Option<wgpu::Blas>>,
     /// Skinned meshes' geometry, by mesh id: what their per-frame rebuilds read.
     skinned: HashMap<u32, wgpu::BlasTriangleGeometrySizeDescriptor>,
     /// The last build held skinned casters, so the next frame rebuilds as well.
@@ -316,10 +318,14 @@ impl RtShadows {
         if self.blas.len() < meshes.len() {
             let first = self.blas.len() as u32;
             let ids: Vec<u32> = (first..meshes.len() as u32)
-                .filter(|&id| !meshes.dynamic[id as usize])
+                .filter(|&id| !meshes.dynamic[id as usize] && !meshes.is_level(id))
                 .collect();
             let mut built = build_blas(device, queue, meshes, &ids, true).into_iter();
             for id in first..meshes.len() as u32 {
+                if meshes.is_level(id) {
+                    self.blas.push(None);
+                    continue;
+                }
                 let blas = if meshes.dynamic[id as usize] {
                     // Built in the frame's encoder whenever an instance casts (encode).
                     let size = geometry_size(meshes, id, true);
@@ -329,7 +335,7 @@ impl RtShadows {
                 } else {
                     built.next().unwrap_or_else(|| unreachable!())
                 };
-                self.blas.push(blas);
+                self.blas.push(Some(blas));
             }
             // Instances of the new meshes join the next build.
             self.stale = true;
@@ -347,7 +353,7 @@ impl RtShadows {
             }
             self.stale = true;
         }
-        self.stats.meshes = (self.blas.len() + self.masked.len()) as u32;
+        self.stats.meshes = (self.blas.iter().flatten().count() + self.masked.len()) as u32;
         let need = (slots as u32).max(1);
         if need > self.capacity {
             self.capacity = need.next_power_of_two();
@@ -393,7 +399,7 @@ impl RtShadows {
             if slot.flags & need != need || table.len() == self.capacity as usize {
                 continue;
             }
-            let Some(opaque) = self.blas.get(slot.mesh as usize) else {
+            let Some(opaque) = self.blas.get(slot.mesh as usize).and_then(Option::as_ref) else {
                 continue;
             };
             let is_skinned = self.skinned.contains_key(&slot.mesh);
@@ -439,7 +445,10 @@ impl RtShadows {
         self.skinned_casters = !skinned.is_empty();
         let entries: Vec<_> = skinned
             .iter()
-            .map(|&id| build_entry(&self.blas[id as usize], &self.skinned[&id], meshes, id))
+            .filter_map(|&id| {
+                let blas = self.blas[id as usize].as_ref()?;
+                Some(build_entry(blas, &self.skinned[&id], meshes, id))
+            })
             .collect();
         enc.build_acceleration_structures(&entries, [&self.tlas]);
         self.built = table.len();

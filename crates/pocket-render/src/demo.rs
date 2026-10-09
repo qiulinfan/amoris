@@ -3,11 +3,13 @@
 //! mixed scene whose draw batches cover every view and pipeline variant (the WebGPU baseline
 //! path's check, batches.rs).
 
+use std::collections::HashMap;
+
 use glam::{Quat, Vec3};
 use pocket_assets::frame::{
     EnvironmentView, InstanceUpdate, LightKindView, LightView, Look, Pose, RenderFrame,
 };
-use pocket_assets::mesh::{AlphaMode, ImageData, MaterialData, ModelAsset, NodeData};
+use pocket_assets::mesh::{AlphaMode, ImageData, MaterialData, MeshData, ModelAsset, NodeData};
 use pocket_assets::primitives::{PRIMITIVES, primitive};
 
 /// The camera of the many_cubes benchmark at frame `frame` (Bevy's `move_camera` with
@@ -207,6 +209,8 @@ pub fn mixed_model() -> ModelAsset {
         let mut mesh = primitive(shape).unwrap_or_default();
         mesh.name = name.into();
         mesh.material = Some(i);
+        // As the importer would (docs/spec/lod.md).
+        pocket_assets::lod::build(&mut mesh, &pocket_assets::lod::LodOptions::default());
         asset.meshes.push(mesh);
         asset.materials.push(MaterialData {
             name: name.into(),
@@ -456,4 +460,289 @@ pub fn occluders_sweep(x: f32) -> crate::CameraState {
         Vec3::new(0.5 + x, 6.4 + 0.11 * x, 15.0 - 0.3 * x.abs()),
         Vec3::new(0.3 * x, 2.5, 0.0),
     )
+}
+
+/// The path the LOD field's model is registered under (`Renderer::add_model`).
+pub const LOD_MODEL: &str = "demo/lod.glb";
+
+/// A bumpy rock: an icosphere subdivided `subdivisions` times (20 * 4^s triangles, every vertex
+/// shared: no seams) of radius about 1, displaced along its normal by a sum of smooth waves seeded
+/// by `seed`, with smooth normals.
+pub fn rock_mesh(subdivisions: u32, seed: u32) -> MeshData {
+    let t = (1.0 + 5f32.sqrt()) * 0.5;
+    let mut positions: Vec<Vec3> = [
+        [-1.0, t, 0.0],
+        [1.0, t, 0.0],
+        [-1.0, -t, 0.0],
+        [1.0, -t, 0.0],
+        [0.0, -1.0, t],
+        [0.0, 1.0, t],
+        [0.0, -1.0, -t],
+        [0.0, 1.0, -t],
+        [t, 0.0, -1.0],
+        [t, 0.0, 1.0],
+        [-t, 0.0, -1.0],
+        [-t, 0.0, 1.0],
+    ]
+    .iter()
+    .map(|p| Vec3::from(*p).normalize())
+    .collect();
+    let mut faces: Vec<[u32; 3]> = vec![
+        [0, 11, 5],
+        [0, 5, 1],
+        [0, 1, 7],
+        [0, 7, 10],
+        [0, 10, 11],
+        [1, 5, 9],
+        [5, 11, 4],
+        [11, 10, 2],
+        [10, 7, 6],
+        [7, 1, 8],
+        [3, 9, 4],
+        [3, 4, 2],
+        [3, 2, 6],
+        [3, 6, 8],
+        [3, 8, 9],
+        [4, 9, 5],
+        [2, 4, 11],
+        [6, 2, 10],
+        [8, 6, 7],
+        [9, 8, 1],
+    ];
+    for _ in 0..subdivisions {
+        let mut mid: HashMap<(u32, u32), u32> = HashMap::new();
+        let mut midpoint = |a: u32, b: u32, positions: &mut Vec<Vec3>| -> u32 {
+            *mid.entry((a.min(b), a.max(b))).or_insert_with(|| {
+                positions.push(((positions[a as usize] + positions[b as usize]) * 0.5).normalize());
+                (positions.len() - 1) as u32
+            })
+        };
+        let mut next = Vec::with_capacity(faces.len() * 4);
+        for [a, b, c] in faces {
+            let ab = midpoint(a, b, &mut positions);
+            let bc = midpoint(b, c, &mut positions);
+            let ca = midpoint(c, a, &mut positions);
+            next.extend_from_slice(&[[a, ab, ca], [b, bc, ab], [c, ca, bc], [ab, bc, ca]]);
+        }
+        faces = next;
+    }
+    // Smooth waves in seeded directions: low frequencies shape the rock, high ones roughen it down
+    // to a few edges of the finest subdivision per wavelength.
+    let finest = 0.4 * (1u32 << subdivisions) as f32;
+    let waves: Vec<(Vec3, f32, f32, f32)> = (0..12u32)
+        .map(|k| {
+            let h = |i: u32| unit_hash(seed.wrapping_mul(97).wrapping_add(k * 13 + i));
+            let dir = Vec3::new(h(1) * 2.0 - 1.0, h(2) * 2.0 - 1.0, h(3) * 2.0 - 1.0)
+                .normalize_or(Vec3::Y);
+            let freq = 1.5 * 1.6f32.powi(k as i32);
+            let amplitude = if freq > finest {
+                0.0
+            } else {
+                0.16 / 1.45f32.powi(k as i32)
+            };
+            (dir, freq, amplitude, h(4) * std::f32::consts::TAU)
+        })
+        .collect();
+    for p in &mut positions {
+        let bump: f32 = waves
+            .iter()
+            .map(|(d, f, a, phase)| a * (p.dot(*d) * f + phase).sin())
+            .sum();
+        *p *= 1.0 + bump;
+    }
+    let indices: Vec<u32> = faces.iter().flatten().copied().collect();
+    let uvs: Vec<[f32; 2]> = positions
+        .iter()
+        .map(|p| [p.x * 0.5 + 0.5, p.y * 0.5 + 0.5])
+        .collect();
+    smooth_mesh("rock", &positions, &uvs, indices)
+}
+
+/// A uniform value in [0, 1) from `i` (a PCG hash, as common.wgsl's).
+fn unit_hash(i: u32) -> f32 {
+    let s = i.wrapping_mul(747_796_405).wrapping_add(2_891_336_453);
+    let w = ((s >> ((s >> 28) + 4)) ^ s).wrapping_mul(277_803_737);
+    (((w >> 22) ^ w) >> 8) as f32 / 16_777_216.0
+}
+
+/// A (2, 3) torus knot's tube: `segments` rings along the curve of `sides` vertices each, closed
+/// in both directions (no seams), about 1.7 across.
+pub fn knot_mesh(segments: u32, sides: u32) -> MeshData {
+    let (p, q) = (2.0f32, 3.0f32);
+    let tube = 0.35;
+    let scale = 0.5;
+    // The curve: twice the torus's core circle plus `normal`, a unit vector perpendicular to the
+    // curve (the core's tangent and `normal`'s own derivative are both perpendicular to it).
+    let curve = |t: f32| {
+        let core = Vec3::new((p * t).cos(), (p * t).sin(), 0.0);
+        let normal = core * (q * t).cos() + Vec3::new(0.0, 0.0, -(q * t).sin());
+        (core * 2.0 + normal, normal)
+    };
+    let mut positions = Vec::with_capacity((segments * sides) as usize);
+    let mut uvs = Vec::with_capacity(positions.capacity());
+    for i in 0..segments {
+        let t = std::f32::consts::TAU * i as f32 / segments as f32;
+        let (c, n) = curve(t);
+        let tangent = (curve(t + 1e-3).0 - curve(t - 1e-3).0).normalize();
+        let n = (n - tangent * tangent.dot(n)).normalize();
+        let b = tangent.cross(n);
+        for j in 0..sides {
+            let a = std::f32::consts::TAU * j as f32 / sides as f32;
+            positions.push((c + (n * a.cos() + b * a.sin()) * tube) * scale);
+            uvs.push([8.0 * i as f32 / segments as f32, j as f32 / sides as f32]);
+        }
+    }
+    let mut indices = Vec::with_capacity((segments * sides * 6) as usize);
+    for i in 0..segments {
+        let i1 = (i + 1) % segments;
+        for j in 0..sides {
+            let j1 = (j + 1) % sides;
+            let (a, b) = (i * sides + j, i1 * sides + j);
+            let (c, d) = (i1 * sides + j1, i * sides + j1);
+            indices.extend_from_slice(&[a, b, c, a, c, d]);
+        }
+    }
+    smooth_mesh("knot", &positions, &uvs, indices)
+}
+
+/// A mesh with area-weighted smooth normals and tangents from positions, texture coordinates and
+/// indices.
+fn smooth_mesh(name: &str, positions: &[Vec3], uvs: &[[f32; 2]], indices: Vec<u32>) -> MeshData {
+    let mut normals = vec![Vec3::ZERO; positions.len()];
+    for t in indices.as_chunks::<3>().0 {
+        let [a, b, c] = t.map(|i| positions[i as usize]);
+        let n = (b - a).cross(c - a);
+        for &i in t {
+            normals[i as usize] += n;
+        }
+    }
+    let vertices = positions
+        .iter()
+        .zip(&normals)
+        .zip(uvs)
+        .map(|((p, n), uv)| pocket_assets::mesh::Vertex {
+            position: p.to_array(),
+            normal: n.normalize_or(Vec3::Y).to_array(),
+            uv: *uv,
+            tangent: [1.0, 0.0, 0.0, 1.0],
+        })
+        .collect();
+    let mut m = MeshData::new(name, vertices, indices);
+    m.compute_tangents();
+    m
+}
+
+/// The LOD field's meshes without their levels: three seeded rocks and a torus knot. `detail` 6
+/// gives rocks of 81,920 triangles and a knot of 49,152; each step down a quarter of that.
+pub fn lod_meshes(detail: u32) -> Vec<MeshData> {
+    let detail = detail.clamp(2, 7);
+    vec![
+        rock_mesh(detail, 1),
+        rock_mesh(detail, 2),
+        rock_mesh(detail, 3),
+        knot_mesh(12 << detail, 4 << (detail / 2)),
+    ]
+}
+
+/// The LOD field's model: [`lod_meshes`], each with its LOD chain (`pocket_assets::lod::build`, as
+/// the importer gives a glTF's meshes).
+pub fn lod_model(detail: u32) -> ModelAsset {
+    let mut meshes = lod_meshes(detail);
+    for m in &mut meshes {
+        pocket_assets::lod::build(m, &pocket_assets::lod::LodOptions::default());
+    }
+    lod_asset(meshes)
+}
+
+/// The LOD field's model from its four meshes (levels already built or not): names and materials.
+pub fn lod_asset(mut meshes: Vec<MeshData>) -> ModelAsset {
+    let names = ["rock_a", "rock_b", "rock_c", "knot"];
+    let colors = [
+        [0.55, 0.5, 0.45],
+        [0.5, 0.48, 0.46],
+        [0.6, 0.55, 0.42],
+        [0.85, 0.42, 0.18],
+    ];
+    let mut asset = ModelAsset::default();
+    for (i, m) in meshes.iter_mut().enumerate().take(4) {
+        m.name = names[i].into();
+        m.material = Some(i);
+        let c = colors[i];
+        asset.materials.push(MaterialData {
+            name: names[i].into(),
+            base_color: [c[0], c[1], c[2], 1.0],
+            roughness: if i == 3 { 0.35 } else { 0.85 },
+            metallic: if i == 3 { 0.3 } else { 0.0 },
+            ..MaterialData::default()
+        });
+    }
+    asset.meshes = meshes;
+    asset
+}
+
+/// A field of `n` x `n` cells `spacing` metres apart on a ground under a shadow-casting sun, each
+/// holding a rock or a knot of [`lod_model`] (one knot in four), jittered, turned and scaled
+/// (0.6 to 1.5): many dense meshes from a few metres to hundreds away. Register [`lod_model`]
+/// under [`LOD_MODEL`] first.
+pub fn lod_field(n: u32, spacing: f32) -> RenderFrame {
+    let look = |mesh: &str, color: [f32; 4]| Look {
+        mesh: mesh.into(),
+        material: String::new(),
+        color,
+        metallic: 0.0,
+        roughness: 0.8,
+        transmission: None,
+        ior: None,
+        emissive: [0.0; 3],
+        cast_shadows: true,
+        visible: true,
+    };
+    let size = n as f32 * spacing;
+    let mut instances = vec![InstanceUpdate {
+        id: 1,
+        pose: Some(Pose {
+            position: [size * 0.5, 0.0, size * 0.5],
+            rotation: [0.0, 0.0, 0.0, 1.0],
+            scale: [size + 40.0, 1.0, size + 40.0],
+        }),
+        look: Some(look("plane", [0.42, 0.45, 0.36, 1.0])),
+        anim: None,
+    }];
+    let hash = |i: u32, k: u32| unit_hash(i.wrapping_mul(8).wrapping_add(k));
+    for i in 0..n * n {
+        let (x, z) = (i % n, i / n);
+        let kind = if i % 4 == 3 {
+            "knot"
+        } else {
+            ["rock_a", "rock_b", "rock_c"][(i % 3) as usize]
+        };
+        let s = 0.6 + 0.9 * hash(i, 1);
+        let rot = Quat::from_rotation_y(hash(i, 2) * std::f32::consts::TAU)
+            * Quat::from_rotation_x((hash(i, 3) - 0.5) * 1.2);
+        instances.push(InstanceUpdate {
+            id: u64::from(i) + 2,
+            pose: Some(Pose {
+                position: [
+                    (x as f32 + 0.5 + (hash(i, 4) - 0.5) * 0.6) * spacing,
+                    s * 0.8,
+                    (z as f32 + 0.5 + (hash(i, 5) - 0.5) * 0.6) * spacing,
+                ],
+                rotation: rot.to_array(),
+                scale: [s; 3],
+            }),
+            look: Some(look(&format!("{LOD_MODEL}#{kind}"), [1.0; 4])),
+            anim: None,
+        });
+    }
+    sunlit(instances, Vec3::new(-0.5, -0.8, -0.3), true)
+}
+
+/// The LOD field's camera at `t` in [0, 1]: at head height in the field's first cell looking
+/// along the diagonal (0), walking toward the middle (1).
+pub fn lod_field_camera(n: u32, spacing: f32, t: f32) -> crate::CameraState {
+    let size = n as f32 * spacing;
+    let start = Vec3::new(0.35 * spacing, 2.2, 0.15 * spacing);
+    let middle = Vec3::new(0.5 * size, 2.2, 0.5 * size - 0.2 * spacing);
+    let eye = start.lerp(middle, t.clamp(0.0, 1.0));
+    crate::CameraState::look_at(eye, eye + Vec3::new(1.0, -0.15, 1.0))
 }

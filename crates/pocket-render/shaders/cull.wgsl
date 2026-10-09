@@ -2,7 +2,14 @@
 // shadow cascade's box) and appends its index to that view's visible list in its mesh's region,
 // counting the instances of each indirect draw. Counting is two-level: threads of a workgroup
 // whose instance has the workgroup's common mesh add to a workgroup counter first, so a scene of
-// one mesh pays one global atomic per workgroup and view instead of one per instance.
+// one mesh pays one global atomic per workgroup, view and level instead of one per instance.
+//
+// Levels of detail (docs/spec/lod.md): an instance of a mesh with coarser levels draws, in each
+// view, the coarsest level whose geometric error is small enough there: on screen, at most
+// `lod_pixels` pixels at the distance of its bounding sphere's nearest point, with hysteresis
+// against its last level (kept in `state`); in a shadow cascade, at most one shadow texel. Each
+// level is a row of the mesh table with its own batches, whose regions hold every instance of the
+// mesh, so the level is just another row index here.
 //
 // With occlusion culling on (docs/spec/occlusion.md) the camera view is culled in two phases:
 // `main` (the early pass) keeps only the instances visible at the end of the last frame, which are
@@ -20,15 +27,20 @@ struct Cull {
     view_proj: mat4x4f,      // the camera's (the occlusion test)
     instance_count: u32,
     view_count: u32,
-    mesh_count: u32,
+    mesh_count: u32,         // rows of the mesh table (levels included)
     view_stride: u32,        // entries per view in the visible list
     alpha: f32,
-    lod_scale: f32,          // unused yet: screen-size LOD selection
+    lod_on: u32,             // 1: pick levels of detail; 0: every instance draws its full mesh
     occlusion: u32,          // 1: two-phase occlusion culling this frame
     hiz_levels: u32,         // the depth pyramid's levels
     viewport: vec2f,         // the depth target's size, pixels
     _pad0: u32,
     _pad1: u32,
+    // The camera's position; w: the geometric error (world units) a level may have per metre of
+    // distance (perspective) or in all (orthographic).
+    eye: vec4f,
+    lod: vec4f,              // x: 1 for an orthographic camera; y: the hysteresis margin
+    lod_cascades: vec4f,     // per cascade, the error a level may have (world units)
 };
 
 struct DrawArgs {
@@ -44,13 +56,15 @@ struct DrawArgs {
 @group(0) @binding(2) var<storage, read> meshes: array<MeshInfo>;
 @group(0) @binding(3) var<storage, read_write> draws: array<DrawArgs>;
 @group(0) @binding(4) var<storage, read_write> visible: array<u32>;
-// Each batch's region in a view's visible list; a batch is (variant, mesh) at variant * meshes + mesh.
+// Each batch's region in a view's visible list; a batch is (variant, mesh row) at
+// variant * mesh_count + row.
 @group(0) @binding(5) var<storage, read> batch_offsets: array<u32>;
 // The camera view's visible instances with their interpolated poses (view 0 writes here instead
 // of `visible`).
 @group(0) @binding(6) var<storage, read_write> drawn: array<Drawn>;
-// Per instance slot, the occlusion state: VIS_VISIBLE between frames (written by `late`),
-// VIS_FRUSTUM | VIS_EARLY between the two passes of a frame (written by `main`).
+// Per instance slot: the occlusion state, VIS_VISIBLE between frames (written by `late`),
+// VIS_FRUSTUM | VIS_EARLY between the two passes of a frame (written by `main`); and in bits 4-7
+// the camera's level of detail (written by `main`, kept by `late`).
 @group(0) @binding(7) var<storage, read_write> state: array<u32>;
 // The depth pyramid (late pass only).
 @group(0) @binding(8) var hiz: texture_2d<f32>;
@@ -61,12 +75,21 @@ struct DrawArgs {
 const VIS_VISIBLE: u32 = 1u;
 const VIS_FRUSTUM: u32 = 2u;
 const VIS_EARLY: u32 = 4u;
+// The camera's level of detail in the state word.
+const LOD_SHIFT: u32 = 4u;
+const LOD_MASK: u32 = 0xf0u;
+// Levels a mesh may have, the full mesh included (pocket_assets::lod::MAX_LEVELS).
+const MAX_LODS: u32 = 8u;
 // The late arguments' set among the draw arguments: after the camera and the four cascades.
 const LATE: u32 = 5u;
+const NONE: u32 = 0xffffffffu;
 
+// The workgroup's first instance's batch (variant, mesh) and its mesh's levels.
 var<workgroup> wg_batch: u32;
-var<workgroup> wg_count: array<atomic<u32>, 5>;
-var<workgroup> wg_base: array<u32, 5>;
+var<workgroup> wg_lods: u32;
+// Per (view, level), the instances of the workgroup's batch: counted, then their base.
+var<workgroup> wg_count: array<atomic<u32>, 40>;
+var<workgroup> wg_base: array<u32, 40>;
 var<workgroup> wg_stats: array<atomic<u32>, 6>;
 
 fn sphere_in(view: u32, c: vec3f, r: f32) -> bool {
@@ -90,36 +113,67 @@ fn first_batch(first: u32) -> u32 {
         let f = instances[first];
         return ((f.flags >> VARIANT_SHIFT) & 3u) * cull.mesh_count + f.mesh;
     }
-    return 0xffffffffu;
+    return NONE;
+}
+
+// The row of the mesh table drawing level `level` of the mesh whose own row is `mesh`.
+fn level_row(mesh: u32, lods: u32, level: u32) -> u32 {
+    if (level == 0u) {
+        return mesh;
+    }
+    return (lods & 0xffffffu) + level - 1u;
+}
+
+// The coarsest of a mesh's `count` levels (level 1's row `first`) whose error, scaled by `scale`,
+// is at most `bound`. Errors never decrease with the level (pocket_assets::lod).
+fn coarsest(first: u32, count: u32, scale: f32, bound: f32) -> u32 {
+    var l = 0u;
+    for (var k = 1u; k < count; k++) {
+        if (meshes[first + k - 1u].lod_error * scale <= bound) {
+            l = k;
+        }
+    }
+    return l;
 }
 
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) gid: vec3u, @builtin(local_invocation_index) lid: u32,
         @builtin(workgroup_id) wid: vec3u, @builtin(num_workgroups) nwg: vec3u) {
     let idx = gid.x + gid.y * nwg.x * 256u;
+    if (lid < 40u) {
+        atomicStore(&wg_count[lid], 0u);
+    }
     if (lid == 0u) {
         wg_batch = first_batch(group_first(wid, nwg));
-        for (var v = 0u; v < 5u; v++) {
-            atomicStore(&wg_count[v], 0u);
+        wg_lods = 0u;
+        if (wg_batch != NONE) {
+            wg_lods = meshes[wg_batch % cull.mesh_count].lods;
         }
     }
     workgroupBarrier();
 
     var inside: array<bool, 5>;
+    var level: array<u32, 5>;
     var local_slot: array<u32, 5>;
-    var mesh = 0xffffffffu;
-    var batch = 0xffffffffu;
+    var mesh = NONE;
+    var lods = 0u;
+    var variant = 0u;
+    var key = NONE;
     var live = false;
     var d: Drawn;
     if (idx < cull.instance_count) {
         let inst = instances[idx];
         let need = FLAG_ALIVE | FLAG_VISIBLE;
+        let before = state[idx];
         var occl = 0u;
+        var camera_level = 0u;
         if ((inst.flags & need) == need && inst.mesh < cull.mesh_count) {
             live = true;
             mesh = inst.mesh;
-            batch = ((inst.flags >> VARIANT_SHIFT) & 3u) * cull.mesh_count + mesh;
+            variant = (inst.flags >> VARIANT_SHIFT) & 3u;
+            key = variant * cull.mesh_count + mesh;
             let m = meshes[mesh];
+            lods = m.lods;
             let pose = instance_pose(inst, cull.alpha);
             d.pos = pose.pos;
             d.rot = pose.rot;
@@ -128,52 +182,80 @@ fn main(@builtin(global_invocation_id) gid: vec3u, @builtin(local_invocation_ind
             d.slot = idx;
             let c = pose.pos + quat_rotate(pose.rot, m.center * inst.scale);
             let s = abs(inst.scale);
-            let r = m.radius * max(s.x, max(s.y, s.z));
+            let smax = max(s.x, max(s.y, s.z));
+            let r = m.radius * smax;
+            // The levels this frame may pick from (1: the full mesh only).
+            let levels = min(lods >> 24u, MAX_LODS);
+            let count = select(1u, levels, cull.lod_on != 0u && levels > 1u);
+            let first = lods & 0xffffffu;
+            if (count > 1u) {
+                // On screen: the error's projection at the sphere's nearest point stays within
+                // the bound; coarser only past the hysteresis margin, finer at once.
+                var dist = 1.0;
+                if (cull.lod.x == 0.0) {
+                    dist = max(length(c - cull.eye.xyz) - r, 1e-4);
+                }
+                let bound = dist * cull.eye.w;
+                let fine = coarsest(first, count, smax, bound);
+                let coarse = coarsest(first, count, smax, bound / (1.0 + cull.lod.y));
+                let last = (before & LOD_MASK) >> LOD_SHIFT;
+                camera_level = clamp(last, coarse, fine);
+            }
             for (var v = 0u; v < cull.view_count; v++) {
                 let shadow_ok = v == 0u || (inst.flags & FLAG_SHADOW) != 0u;
                 var in_view = shadow_ok && sphere_in(v, c, r);
                 if (v == 0u && cull.occlusion != 0u) {
                     // The early pass draws what was visible at the end of the last frame.
-                    let was = (state[idx] & VIS_VISIBLE) != 0u;
+                    let was = (before & VIS_VISIBLE) != 0u;
                     occl = select(0u, VIS_FRUSTUM, in_view);
                     in_view = in_view && was;
                     occl |= select(0u, VIS_EARLY, in_view);
                 }
+                var lv = camera_level;
+                if (v > 0u && count > 1u) {
+                    // A cascade cannot show detail finer than its texels.
+                    lv = coarsest(first, count, smax, cull.lod_cascades[v - 1u]);
+                }
+                level[v] = lv;
                 inside[v] = in_view;
-                if (inside[v] && batch == wg_batch) {
-                    local_slot[v] = atomicAdd(&wg_count[v], 1u);
+                if (in_view && key == wg_batch) {
+                    local_slot[v] = atomicAdd(&wg_count[v * MAX_LODS + lv], 1u);
                 }
             }
         }
         if (cull.occlusion != 0u) {
-            state[idx] = occl;
+            state[idx] = occl | (camera_level << LOD_SHIFT);
+        } else if (cull.lod_on != 0u) {
+            state[idx] = (before & VIS_VISIBLE) | (camera_level << LOD_SHIFT);
         }
     }
     workgroupBarrier();
     let batches = cull.mesh_count * VARIANTS;
-    if (lid == 0u && wg_batch != 0xffffffffu) {
-        for (var v = 0u; v < cull.view_count; v++) {
-            let n = atomicLoad(&wg_count[v]);
-            if (n > 0u) {
-                wg_base[v] = atomicAdd(&draws[v * batches + wg_batch].instance_count, n);
-            }
+    if (lid < 40u && wg_batch != NONE) {
+        let v = lid / MAX_LODS;
+        let n = atomicLoad(&wg_count[lid]);
+        if (v < cull.view_count && n > 0u) {
+            let row = level_row(wg_batch % cull.mesh_count, wg_lods, lid % MAX_LODS);
+            let at = v * batches + (wg_batch / cull.mesh_count) * cull.mesh_count + row;
+            wg_base[lid] = atomicAdd(&draws[at].instance_count, n);
         }
     }
     workgroupBarrier();
     if (!live) {
         return;
     }
-    let region = batch_offsets[batch];
     for (var v = 0u; v < cull.view_count; v++) {
         if (!inside[v]) {
             continue;
         }
+        let batch = variant * cull.mesh_count + level_row(mesh, lods, level[v]);
         var slot: u32;
-        if (batch == wg_batch) {
-            slot = wg_base[v] + local_slot[v];
+        if (key == wg_batch) {
+            slot = wg_base[v * MAX_LODS + level[v]] + local_slot[v];
         } else {
             slot = atomicAdd(&draws[v * batches + batch].instance_count, 1u);
         }
+        let region = batch_offsets[batch];
         if (v == 0u) {
             drawn[region + slot] = d;
         } else {
@@ -246,27 +328,40 @@ fn add_wide(at: u32, v: u32) {
 fn late(@builtin(global_invocation_id) gid: vec3u, @builtin(local_invocation_index) lid: u32,
         @builtin(workgroup_id) wid: vec3u, @builtin(num_workgroups) nwg: vec3u) {
     let idx = gid.x + gid.y * nwg.x * 256u;
+    if (lid < MAX_LODS) {
+        atomicStore(&wg_count[lid], 0u);
+    }
+    if (lid < 6u) {
+        atomicStore(&wg_stats[lid], 0u);
+    }
     if (lid == 0u) {
         wg_batch = first_batch(group_first(wid, nwg));
-        atomicStore(&wg_count[0], 0u);
-        for (var i = 0u; i < 6u; i++) {
-            atomicStore(&wg_stats[i], 0u);
+        wg_lods = 0u;
+        if (wg_batch != NONE) {
+            wg_lods = meshes[wg_batch % cull.mesh_count].lods;
         }
     }
     workgroupBarrier();
 
     var draw = false;
-    var batch = 0xffffffffu;
+    var batch = NONE;
+    var key = NONE;
+    var level = 0u;
     var local_slot = 0u;
     var d: Drawn;
     if (idx < cull.instance_count) {
         let st = state[idx];
         var seen = false;
         if ((st & VIS_FRUSTUM) != 0u) {
-            // In the frustum (so alive, visible and of a known mesh) by the early pass's own test.
+            // In the frustum (so alive, visible and of a known mesh) by the early pass's own test,
+            // drawn at the level the early pass chose for the camera.
             let inst = instances[idx];
             let m = meshes[inst.mesh];
-            batch = ((inst.flags >> VARIANT_SHIFT) & 3u) * cull.mesh_count + inst.mesh;
+            let variant = (inst.flags >> VARIANT_SHIFT) & 3u;
+            key = variant * cull.mesh_count + inst.mesh;
+            level = (st & LOD_MASK) >> LOD_SHIFT;
+            let row = level_row(inst.mesh, m.lods, level);
+            batch = variant * cull.mesh_count + row;
             let pose = instance_pose(inst, cull.alpha);
             let c = pose.pos + quat_rotate(pose.rot, m.box_center * inst.scale);
             let h = m.box_half * inst.scale;
@@ -279,7 +374,8 @@ fn late(@builtin(global_invocation_id) gid: vec3u, @builtin(local_invocation_ind
                 quat_rotate(pose.rot, vec3f(0.0, h.y, 0.0)),
                 quat_rotate(pose.rot, vec3f(0.0, 0.0, h.z)),
             );
-            let tris = m.index_count / 3u;
+            // The triangles this instance draws at its level.
+            let tris = meshes[row].index_count / 3u;
             atomicAdd(&wg_stats[0], 1u);
             atomicAdd(&wg_stats[4], tris);
             if (!seen) {
@@ -296,22 +392,24 @@ fn late(@builtin(global_invocation_id) gid: vec3u, @builtin(local_invocation_ind
                 d.scale = inst.scale;
                 d.material = inst.material;
                 d.slot = idx;
-                if (batch == wg_batch) {
-                    local_slot = atomicAdd(&wg_count[0], 1u);
+                if (key == wg_batch) {
+                    local_slot = atomicAdd(&wg_count[level], 1u);
                 }
             }
         }
-        state[idx] = select(0u, VIS_VISIBLE, seen);
+        state[idx] = select(0u, VIS_VISIBLE, seen) | (st & LOD_MASK);
     }
     workgroupBarrier();
     let batches = cull.mesh_count * VARIANTS;
-    if (lid == 0u) {
-        if (wg_batch != 0xffffffffu) {
-            let n = atomicLoad(&wg_count[0]);
-            if (n > 0u) {
-                wg_base[0] = atomicAdd(&draws[LATE * batches + wg_batch].instance_count, n);
-            }
+    if (lid < MAX_LODS && wg_batch != NONE) {
+        let n = atomicLoad(&wg_count[lid]);
+        if (n > 0u) {
+            let row = level_row(wg_batch % cull.mesh_count, wg_lods, lid);
+            let at = LATE * batches + (wg_batch / cull.mesh_count) * cull.mesh_count + row;
+            wg_base[lid] = atomicAdd(&draws[at].instance_count, n);
         }
+    }
+    if (lid == 0u) {
         for (var i = 0u; i < 4u; i++) {
             let n = atomicLoad(&wg_stats[i]);
             if (n > 0u) {
@@ -326,8 +424,8 @@ fn late(@builtin(global_invocation_id) gid: vec3u, @builtin(local_invocation_ind
         return;
     }
     var slot: u32;
-    if (batch == wg_batch) {
-        slot = wg_base[0] + local_slot;
+    if (key == wg_batch) {
+        slot = wg_base[level] + local_slot;
     } else {
         slot = atomicAdd(&draws[LATE * batches + batch].instance_count, 1u);
     }
