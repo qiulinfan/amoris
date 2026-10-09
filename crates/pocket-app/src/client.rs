@@ -50,6 +50,7 @@ const FLAGS: &[Flag] = &[
     ("numbers", false),
     ("sample", true),
     ("every", true),
+    ("seat", true),
 ];
 
 /// How long the CLI waits for an answer unless `--timeout <s>` or `POCKET_TIMEOUT` says otherwise
@@ -113,6 +114,11 @@ pub const COMMANDS: &[(&str, &str, &str)] = &[
         "debug",
         "debug.state",
         "pocket debug state [--full] | break <file>:<line> [--if <expr>] [--log <text>] | clear [id] | list | eval <expr> [--frame n] | set <name> <expr> [--frame n] | watch <entity>.<C>[.<field>] | unwatch [id] | continue | step [over|into|out] | pause | wait [ms] | exceptions none|uncaught|all | rewind <tick> [--bundle snapshot] | attach | detach | <action> '<json params>'",
+    ),
+    (
+        "player",
+        "player.observe",
+        "pocket player observe | describe | act | wait | nearby | events | affordances | intents | continue | session | pacing ['<json params>'] [--seat <seat>] [--ticks n]   (--seat plays as that seat; act also takes '[actions]')",
     ),
     ("help", "", "pocket help [command|method]"),
 ];
@@ -187,7 +193,23 @@ pub fn call_url_within(
     params: Value,
     timeout: Duration,
 ) -> Result<Value, Problem> {
-    let body = json!({"id": 1, "method": method, "params": params}).to_string();
+    call_url_as(url, method, params, None, timeout)
+}
+
+/// [`call_url_within`] made as `seat`'s player when one is given (docs/spec/player.md): the host
+/// sends it from the seat's player source, which the runtime restricts to the seat's perception.
+pub fn call_url_as(
+    url: &str,
+    method: &str,
+    params: Value,
+    seat: Option<&str>,
+    timeout: Duration,
+) -> Result<Value, Problem> {
+    let mut body = json!({"id": 1, "method": method, "params": params});
+    if let Some(s) = seat {
+        body["seat"] = json!(s);
+    }
+    let body = body.to_string();
     let failed = |e: ureq::Error| match e {
         ureq::Error::Timeout(_) => timed_out(url, method, timeout),
         e => unreachable(url, &e.to_string()),
@@ -678,9 +700,51 @@ fn request(cmd: &str, args: &Args) -> Result<(String, Value), Problem> {
             "assets.list"
         }
         "debug" => return debug_request(args),
+        "player" => return player_request(args),
         _ => return Err(bad(format!("'{cmd}' is not a client command"))),
     };
     Ok((method.to_owned(), Value::Object(p)))
+}
+
+/// The `player` tool's actions (`pocket-mcp`'s, the `player.*` catalog methods).
+const PLAYER_ACTIONS: [&str; 11] = pocket_mcp::tools::PLAYER_ACTIONS;
+
+/// `pocket player <action> ['<json params>'] [--seat s]` (docs/spec/player.md): a `player.*`
+/// method. Observations, nearby percepts, events and a described entity come as their text
+/// projection unless `--json` or the parameters ask otherwise; `act` also takes the actions alone
+/// (`pocket player act '[{"do": "start", ...}]'`).
+fn player_request(args: &Args) -> Result<(String, Value), Problem> {
+    let action = pos(args, 0).unwrap_or("observe");
+    if !PLAYER_ACTIONS.contains(&action) {
+        return Err(usage(
+            format!("pocket player has no '{action}'"),
+            action,
+            &PLAYER_ACTIONS,
+        ));
+    }
+    let mut p = match pos(args, 1) {
+        Some(text) => match json_arg(text)? {
+            Value::Object(m) => m,
+            Value::Array(actions) if action == "act" => {
+                Map::from_iter([("actions".to_owned(), Value::Array(actions))])
+            }
+            _ => {
+                return Err(bad(format!(
+                    "pocket player {action} takes a JSON object of its parameters"
+                )));
+            }
+        },
+        None => Map::new(),
+    };
+    let reads_text = matches!(action, "observe" | "nearby" | "events")
+        || (action == "describe" && p.contains_key("entity"));
+    if reads_text && !args.has("json") && !p.contains_key("projection") {
+        p.insert("projection".into(), json!("text"));
+    }
+    if let Some(t) = args.number::<u64>("ticks")? {
+        p.insert("ticks".into(), json!(t));
+    }
+    Ok((format!("player.{action}"), Value::Object(p)))
 }
 
 /// `pocket debug ...`: the debugger's short forms, or `<action> ['<json params>']` for any
@@ -1567,6 +1631,11 @@ fn text(method: &str, v: &Value, full: bool) -> String {
                 let _ = writeln!(out, "{k}: {shown}");
             }
         }
+        // A player's JSON answers (act, wait, session, describe) on one line: what an agent reads
+        // in its shell costs tokens.
+        m if m.starts_with("player.") => {
+            out = serde_json::to_string(v).unwrap_or_default() + "\n";
+        }
         _ => {
             out = serde_json::to_string_pretty(v).unwrap_or_default() + "\n";
         }
@@ -1855,10 +1924,17 @@ pub fn run(cmd: &str, raw: &[String]) -> Outcome {
         Err(p) => return failed(&p, 2),
     };
     let timeout = timeout_for(given, &params);
-    match call_url_within(&url, &method, params, timeout) {
+    let seat = args.value("seat");
+    match call_url_as(&url, &method, params, seat, timeout) {
         Ok(v) => {
             if json_out {
                 println!("{v}");
+            } else if let Value::String(s) = &v {
+                // A text projection (an observation) prints as it is.
+                print!("{s}");
+                if !s.ends_with('\n') {
+                    println!();
+                }
             } else {
                 print!("{}", text(&method, &v, args.has("full")));
             }
@@ -1944,6 +2020,36 @@ mod tests {
         let raw = vec!["step".to_owned(), "sideways".to_owned()];
         let a = Args::parse(&raw, FLAGS).unwrap();
         assert_eq!(debug_request(&a).unwrap_err().code, "check.usage");
+    }
+
+    /// `pocket player`: the `player.*` methods, observations as text unless `--json`, the
+    /// actions alone for `act`.
+    #[test]
+    fn player_short_forms() {
+        assert_eq!(
+            req("player", &["observe"]),
+            ("player.observe".into(), json!({"projection": "text"}))
+        );
+        assert_eq!(
+            req("player", &["observe", "--json"]),
+            ("player.observe".into(), json!({}))
+        );
+        assert_eq!(
+            req("player", &["wait", "--ticks", "120"]),
+            ("player.wait".into(), json!({"ticks": 120}))
+        );
+        let (m, p) = req(
+            "player",
+            &[
+                "act",
+                r#"[{"do": "start", "intent": "sail_to", "target": "Mark1"}]"#,
+            ],
+        );
+        assert_eq!(m, "player.act");
+        assert_eq!(p["actions"][0]["intent"], json!("sail_to"));
+        let raw: Vec<String> = ["observ"].iter().map(|s| (*s).to_owned()).collect();
+        let e = request("player", &Args::parse(&raw, FLAGS).unwrap()).unwrap_err();
+        assert!(format!("{e:?}").contains("observe"), "{e:?}");
     }
 
     /// Field-level reads (finding 5): fields with paths, line ranges, a sampled step.

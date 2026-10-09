@@ -102,7 +102,14 @@ struct Inner {
     capture: RwLock<Option<Arc<dyn CaptureHub>>>,
     render: RwLock<Option<Arc<dyn RenderFeed>>>,
     sessions: AtomicU64,
+    /// Opens a client of a player's source (`Source::Player(i)`), when the integrator installs it.
+    players: RwLock<Option<PlayerClients>>,
+    /// The player clients opened, one per seat index, shared by every call made as that seat.
+    seats: Mutex<std::collections::BTreeMap<u32, Arc<Mutex<GameClient>>>>,
 }
+
+/// Opens the client of a player's source: the seat's index in the game's declared seats.
+pub type PlayerClients = Arc<dyn Fn(u32) -> Result<GameClient, Problem> + Send + Sync>;
 
 /// Where the server is.
 #[derive(Clone, Debug)]
@@ -128,7 +135,66 @@ impl Host {
             capture: RwLock::new(None),
             render: RwLock::new(None),
             sessions: AtomicU64::new(0),
+            players: RwLock::new(None),
+            seats: Mutex::new(std::collections::BTreeMap::new()),
         }))
+    }
+
+    /// Installs player clients (docs/spec/player.md): calls made as a seat (`/api/call` with
+    /// `seat`, `pocket mcp --seat`) then reach the game from that seat's player source, which the
+    /// runtime restricts to the seat's own perception and actions.
+    pub fn set_players(&self, open: PlayerClients) {
+        if let Ok(mut p) = self.0.players.write() {
+            *p = Some(open);
+        }
+    }
+
+    /// The way calls made as `seat` reach the game: its player client, opened on first use (the
+    /// seat's index is asked of the game), named `player:<seat>` in `agent` events.
+    pub async fn player_via(&self, seat: &str) -> Result<Via, Problem> {
+        let session = self
+            .game(&Via::Api, "player.session", json!({"seat": seat}))
+            .await?;
+        let Some(index) = session["index"]
+            .as_u64()
+            .and_then(|i| u32::try_from(i).ok())
+        else {
+            return Err(Problem::new(
+                "seat.not_playable",
+                format!("The seat '{seat}' is not one the game declares for players."),
+                detail([("seat", json!(seat))]),
+            ));
+        };
+        let open = self
+            .0
+            .players
+            .read()
+            .ok()
+            .and_then(|p| p.clone())
+            .ok_or_else(|| {
+                Problem::new(
+                    "host.no_players",
+                    "This host opens no player clients; calls are a developer's.",
+                    detail([]),
+                )
+            })?;
+        let lock = || {
+            Problem::new(
+                "internal.error",
+                "The player clients' lock is poisoned.",
+                detail([]),
+            )
+        };
+        let mut seats = self.0.seats.lock().map_err(|_| lock())?;
+        let client = match seats.get(&index) {
+            Some(c) => c.clone(),
+            None => {
+                let c = Arc::new(Mutex::new(open(index)?));
+                seats.insert(index, c.clone());
+                c
+            }
+        };
+        Ok(Via::Session(client, format!("player:{seat}")))
     }
 
     pub fn reader(&self) -> &SnapshotReader {

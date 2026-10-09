@@ -19,7 +19,7 @@ use crate::check::Outcome;
 use crate::cli::{Args, Flag};
 
 const SERVE_FLAGS: &[Flag] = &[("port", true), ("editor", true), ("seed", true)];
-const MCP_FLAGS: &[Flag] = &[("seed", true), ("own", false)];
+const MCP_FLAGS: &[Flag] = &[("seed", true), ("own", false), ("seat", true)];
 
 fn fail(p: &Problem, code: i32) -> Outcome {
     Outcome {
@@ -99,6 +99,7 @@ fn start(root: &Path, seed: Option<u64>, editor: Option<PathBuf>) -> Result<Serv
     )?;
     hub.set_loop_state(handle.loop_state());
     let clients = handle.clients();
+    let players = clients.clone();
     let access = GameAccess {
         reader: handle.reader(),
         editor: clients.client(Source::Editor)?,
@@ -106,6 +107,9 @@ fn start(root: &Path, seed: Option<u64>, editor: Option<PathBuf>) -> Result<Serv
         developer: Arc::new(move || clients.developer()),
     };
     let host = Host::new(access, root.to_path_buf(), editor);
+    // Calls made as a seat (`/api/call` with `seat`, `pocket mcp --seat`) come from that seat's
+    // player source (docs/spec/player.md).
+    host.set_players(Arc::new(move |i| players.client(Source::Player(i))));
     host.set_capture(Arc::new(crate::present::CaptureServer::start(
         &feed,
         root.to_path_buf(),
@@ -213,21 +217,29 @@ fn serving(args: &Args) -> Result<(), Problem> {
     r
 }
 
-/// A host serving the project over HTTP, as `pocket mcp` reaches it.
+/// A host serving the project over HTTP, as `pocket mcp` reaches it; with a seat, as that seat's
+/// player.
 struct Remote {
     url: String,
+    seat: Option<String>,
 }
 
 impl Caller for Remote {
     fn call(&self, method: String, params: Value) -> BoxFuture<Result<Value, Problem>> {
         let url = self.url.clone();
+        let seat = self.seat.clone();
         Box::pin(async move {
-            tokio::task::spawn_blocking(move || crate::client::call_url(&url, &method, params))
-                .await
-                .unwrap_or_else(|e| {
-                    Err(Problem::new("host.unreachable", e.to_string(), detail([])))
-                })
+            tokio::task::spawn_blocking(move || {
+                let timeout = crate::client::timeout_for(None, &params);
+                crate::client::call_url_as(&url, &method, params, seat.as_deref(), timeout)
+            })
+            .await
+            .unwrap_or_else(|e| Err(Problem::new("host.unreachable", e.to_string(), detail([]))))
         })
+    }
+
+    fn seat(&self) -> Option<String> {
+        self.seat.clone()
     }
 }
 
@@ -235,6 +247,7 @@ impl Backend for Remote {
     fn open(&self) -> Arc<dyn Caller> {
         Arc::new(Remote {
             url: self.url.clone(),
+            seat: self.seat.clone(),
         })
     }
 }
@@ -267,14 +280,18 @@ fn mcp_session(args: &Args) -> Result<(), Problem> {
         .then(|| hostfile::read(&hostfile::path(&root)))
         .flatten()
         .filter(|f| crate::client::call_url(&f.url, "status", json!({})).is_ok());
+    let seat = args.value("seat").map(str::to_owned);
     if let Some(f) = running {
         eprintln!("pocket mcp: using the host at {}", f.url);
-        let backend: Arc<dyn Backend> = Arc::new(Remote { url: f.url });
+        let backend: Arc<dyn Backend> = Arc::new(Remote { url: f.url, seat });
         return rt.block_on(pocket_mcp::serve_stdio(backend));
     }
     let served = start(&root, args.number::<u64>("seed")?, None)?;
     eprintln!("pocket mcp: running {} in this process", root.display());
-    let backend: Arc<dyn Backend> = Arc::new(McpBackend::new(served.host.clone()));
+    let backend: Arc<dyn Backend> = match &seat {
+        Some(s) => Arc::new(McpBackend::player(served.host.clone(), s)),
+        None => Arc::new(McpBackend::new(served.host.clone())),
+    };
     let r = rt.block_on(pocket_mcp::serve_stdio(backend));
     rt.shutdown_timeout(std::time::Duration::from_secs(2));
     served.shutdown();

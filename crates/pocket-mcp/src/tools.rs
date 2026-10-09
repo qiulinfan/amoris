@@ -215,7 +215,74 @@ pub fn tools() -> Vec<ToolDef> {
             description: "Search the commands and components {query}.",
             schema: obj(json!({"query": {"type": "string"}}), &["query"]),
         },
+        ToolDef {
+            name: "player",
+            description: "Play a seat through its own perception (docs/spec/player.md). \
+                describe: the rules for your seat {part: seats|instruments|controls|intents|\
+                kinds|events|codes|..., name} or one entity you know {entity}; observe: \
+                instruments, intents, pending decision, ranked percepts (Name#id), events \
+                {since, budget_tokens, projection: text|json}; nearby {kinds, within_m, sector}; \
+                events {since}; affordances; intents; act {actions: [{do: start, intent, target, \
+                params} | {do: use, entity, verb} | {do: set, controls} | {do: cancel, \
+                intent_id}], resume}; wait: time runs until your next decision point {until, \
+                ticks, observe}; continue; session. A developer names the seat.",
+            schema: obj(
+                json!({
+                    "action": action(&PLAYER_ACTIONS),
+                    "seat": {"type": "string"},
+                    "entity": entity,
+                    "part": {"type": "string"},
+                    "name": {"type": "string"},
+                    "budget_tokens": {"type": "integer"},
+                    "projection": action(&["text", "json", "tensor"]),
+                    "since": {"type": "integer"},
+                    "kinds": strings,
+                    "within_m": {"type": "number"},
+                    "sector": {"type": "object"},
+                    "visibility": strings,
+                    "limit": {"type": "integer"},
+                    "available_only": {"type": "boolean"},
+                    "active_only": {"type": "boolean"},
+                    "ids": {"type": "array"},
+                    "actions": {"type": "array", "items": {"type": "object"}},
+                    "resume": {"type": "boolean"},
+                    "until": {"description": "\"decision\" (default), {event}, {intent}, {fact}, {any}"},
+                    "ticks": {"type": "integer"},
+                    "max_wall_ms": {"type": "integer"},
+                    "observe": {"type": "object"},
+                    "pacing": {"type": "object"},
+                    "omniscient": {"type": "boolean"},
+                }),
+                &["action"],
+            ),
+        },
     ]
+}
+
+/// The `player` tool's actions: the `player.*` catalog methods.
+pub const PLAYER_ACTIONS: [&str; 11] = [
+    "session",
+    "describe",
+    "observe",
+    "nearby",
+    "events",
+    "affordances",
+    "intents",
+    "act",
+    "wait",
+    "continue",
+    "pacing",
+];
+
+/// The player's reads an LLM reads as text unless it asks for JSON (mcp.md 4.3: text by default
+/// for MCP): an observation, nearby percepts, events, one entity described.
+fn text_by_default(action: &str, args: &Map<String, Value>) -> bool {
+    !args.contains_key("projection")
+        && match action {
+            "observe" | "nearby" | "events" => true,
+            "describe" => args.contains_key("entity"),
+            _ => false,
+        }
 }
 
 /// The catalog method and parameters a tool call stands for, or why it stands for none.
@@ -256,7 +323,71 @@ pub fn route(tool: &str, mut args: Map<String, Value>) -> Result<(String, Value)
         },
         "capture" => ("capture".into(), rest(args)),
         "docs" => ("docs.search".into(), rest(args)),
+        "player" => {
+            let a = need(action)?;
+            if !PLAYER_ACTIONS.contains(&a.as_str()) {
+                return Err(format!(
+                    "player has no action '{a}'; it has {}",
+                    PLAYER_ACTIONS.join(", ")
+                ));
+            }
+            if text_by_default(&a, &args) {
+                args.insert("projection".into(), json!("text"));
+            }
+            (format!("player.{a}"), rest(args))
+        }
         other => return Err(format!("there is no tool '{other}'")),
     };
     Ok((method, params))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(v: Value) -> Map<String, Value> {
+        match v {
+            Value::Object(m) => m,
+            _ => Map::new(),
+        }
+    }
+
+    /// The player tool reaches the `player.*` methods; what an LLM reads comes as text unless it
+    /// asks for JSON; a player session lists the player tool alone.
+    #[test]
+    fn the_player_tool_routes_to_the_player_methods() {
+        let (m, p) = route("player", args(json!({"action": "observe"}))).unwrap();
+        assert_eq!(
+            (m.as_str(), p),
+            ("player.observe", json!({"projection": "text"}))
+        );
+        let (m, p) = route(
+            "player",
+            args(json!({"action": "observe", "projection": "json", "budget_tokens": 600})),
+        )
+        .unwrap();
+        assert_eq!(m, "player.observe");
+        assert_eq!(p, json!({"projection": "json", "budget_tokens": 600}));
+        let act = json!({"action": "act", "actions": [{"do": "use", "entity": "Crate1#9",
+                         "verb": "take_aboard"}]});
+        let (m, p) = route("player", args(act)).unwrap();
+        assert_eq!(m, "player.act");
+        assert!(p.get("projection").is_none(), "{p}");
+        let (_, p) = route("player", args(json!({"action": "describe"}))).unwrap();
+        assert!(p.get("projection").is_none(), "the definition is JSON: {p}");
+        let (_, p) = route(
+            "player",
+            args(json!({"action": "describe", "entity": "Mark1"})),
+        )
+        .unwrap();
+        assert_eq!(p["projection"], json!("text"));
+        let e = route("player", args(json!({"action": "observ"}))).unwrap_err();
+        assert!(e.contains("observe"), "{e}");
+        let names: Vec<&str> = tools()
+            .into_iter()
+            .filter(|t| t.name == "player")
+            .map(|t| t.name)
+            .collect();
+        assert_eq!(names, ["player"]);
+    }
 }

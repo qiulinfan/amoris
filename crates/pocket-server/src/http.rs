@@ -76,7 +76,9 @@ async fn catalog(State(host): State<Host>) -> Response {
     }
 }
 
-/// `POST /api/call`: `{id?, method, params?}` answered `{id, result}` or `{id, error}`.
+/// `POST /api/call`: `{id?, method, params?, seat?}` answered `{id, result}` or `{id, error}`;
+/// with `seat` the call is made as that seat's player (docs/spec/player.md), restricted by the
+/// runtime to its own perception and actions.
 async fn call(State(host): State<Host>, body: String) -> Response {
     let req: Value = match serde_json::from_str(&body) {
         Ok(v) => v,
@@ -89,6 +91,12 @@ async fn call(State(host): State<Host>, body: String) -> Response {
             return problem_response(StatusCode::BAD_REQUEST, &p);
         }
     };
+    if let Some(seat) = req.get("seat").and_then(Value::as_str) {
+        return match host.player_via(seat).await {
+            Ok(via) => json_response(&crate::ws::answer(&host, &via, req).await),
+            Err(p) => json_response(&json!({"id": req.get("id"), "error": p})),
+        };
+    }
     json_response(&crate::ws::answer(&host, &Via::Api, req).await)
 }
 

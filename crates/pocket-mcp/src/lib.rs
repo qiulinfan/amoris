@@ -33,6 +33,12 @@ pub type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
 pub trait Caller: Send + Sync {
     /// Calls a catalog method with JSON parameters.
     fn call(&self, method: String, params: Value) -> BoxFuture<Result<Value, Problem>>;
+
+    /// The seat a player session plays (docs/spec/player.md): it lists the `player` tool alone,
+    /// and the runtime restricts its calls to the seat's own perception and actions.
+    fn seat(&self) -> Option<String> {
+        None
+    }
 }
 
 /// The host side: a caller for each new MCP session.
@@ -44,7 +50,15 @@ const INSTRUCTIONS: &str = "Amoris host: one authoritative world shared with the
 Read with world tree/get/query, change it with world edit (undoable), run time with time step \
 (until/watch stop early), test in play start/stop. Game rules are TypeScript in scripts/: \
 scripts guide says how to write them, scripts check type checks them against the project's \
-components. Errors are {code, message, detail} with did-you-mean suggestions.";
+components. A game with players is played with the player tool (describe, observe, act, wait). \
+Errors are {code, message, detail} with did-you-mean suggestions.";
+
+const PLAYER_INSTRUCTIONS: &str = "You play one seat of an Amoris game through the player tool. \
+Read the rules once with describe (part intents/kinds/events for details), then loop: observe \
+(what your seat perceives: instruments, intents, percepts, events), act (start intents such as \
+sail_to, use affordances such as take_aboard, set controls), wait (time runs until your next \
+decision point: an intent finished, something sighted, a mark rounded). Entities are Name#id; \
+you know only what your seat perceives. Errors are {code, message, detail} with suggestions.";
 
 /// One session's MCP handler.
 #[derive(Clone)]
@@ -60,8 +74,14 @@ impl PocketMcp {
 
 /// The tools as rmcp declares them.
 pub fn tool_list() -> Vec<Tool> {
+    tool_list_for(false)
+}
+
+/// The tools a session lists: a player session the `player` tool alone (mcp.md 3.3).
+pub fn tool_list_for(player: bool) -> Vec<Tool> {
     tools::tools()
         .into_iter()
+        .filter(|t| !player || t.name == "player")
         .map(|t| {
             let schema = match t.schema {
                 Value::Object(m) => m,
@@ -78,9 +98,14 @@ fn problem_text(p: &Problem) -> String {
 
 impl ServerHandler for PocketMcp {
     fn get_info(&self) -> ServerConfig {
+        let instructions = if self.caller.seat().is_some() {
+            PLAYER_INSTRUCTIONS
+        } else {
+            INSTRUCTIONS
+        };
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("pocket", env!("CARGO_PKG_VERSION")))
-            .with_instructions(INSTRUCTIONS)
+            .with_instructions(instructions)
     }
 
     async fn list_tools(
@@ -88,7 +113,9 @@ impl ServerHandler for PocketMcp {
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
-        Ok(ListToolsResult::with_all_items(tool_list()))
+        Ok(ListToolsResult::with_all_items(tool_list_for(
+            self.caller.seat().is_some(),
+        )))
     }
 
     async fn call_tool(
@@ -96,6 +123,14 @@ impl ServerHandler for PocketMcp {
         request: CallToolRequestParams,
         _context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
+        if let Some(seat) = self.caller.seat()
+            && request.name != "player"
+        {
+            let mut p =
+                pocket_contract::codes::permission_denied(&request.name, "player", "developer");
+            p.detail.insert("seat".into(), json!(seat));
+            return Ok(CallToolResult::error(vec![ContentBlock::text(problem_text(&p))]).into());
+        }
         let args = request.arguments.unwrap_or_default();
         let (method, params) = match tools::route(&request.name, args) {
             Ok(r) => r,
@@ -112,6 +147,9 @@ impl ServerHandler for PocketMcp {
             }
         };
         let result = match self.caller.call(method, params).await {
+            // A text projection (an observation an LLM reads) goes as the text itself, not as a
+            // JSON string full of escaped newlines (mcp.md 4.3).
+            Ok(Value::String(text)) => CallToolResult::success(vec![ContentBlock::text(text)]),
             Ok(v) => CallToolResult::success(vec![ContentBlock::text(
                 serde_json::to_string(&v).unwrap_or_default(),
             )]),
