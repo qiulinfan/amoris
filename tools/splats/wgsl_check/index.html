@@ -1,0 +1,62 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>splat wgsl check</title>
+<script src="shaders.js"></script>
+<script>
+// Creates every splat module and pipeline on a device with WebGPU's default limits and no
+// optional features, and publishes the outcome in window.result.
+window.result = (async () => {
+  const out = { adapter: null, modules: {}, pipelines: {}, errors: [] };
+  const adapter = await navigator.gpu?.requestAdapter({ powerPreference: 'high-performance' });
+  if (!adapter) return { error: 'no WebGPU adapter' };
+  const info = adapter.info || {};
+  out.adapter = `${info.vendor} ${info.architecture} ${info.device} ${info.description}`;
+  const device = await adapter.requestDevice();
+  device.addEventListener('uncapturederror', (e) => out.errors.push(String(e.error.message)));
+  for (const [name, code] of Object.entries(window.SHADERS)) {
+    const m = device.createShaderModule({ code, label: name });
+    const ci = await m.getCompilationInfo();
+    out.modules[name] = ci.messages.map((x) => `${x.type} ${x.lineNum}:${x.linePos} ${x.message}`);
+  }
+  const mod = (n) => device.createShaderModule({ code: window.SHADERS[n], label: n });
+  const compute = async (n, entry) => {
+    const key = `${n}:${entry}`;
+    try {
+      device.pushErrorScope('validation');
+      await device.createComputePipelineAsync({ layout: 'auto', compute: { module: mod(n), entryPoint: entry } });
+      const e = await device.popErrorScope();
+      out.pipelines[key] = e ? String(e.message) : 'ok';
+    } catch (e) {
+      out.pipelines[key] = String(e.message || e);
+    }
+  };
+  const render = async (n, vs, fs, format, depth, blend) => {
+    const key = `${n}:${vs}/${fs}`;
+    try {
+      device.pushErrorScope('validation');
+      await device.createRenderPipelineAsync({
+        layout: 'auto',
+        vertex: { module: mod(n), entryPoint: vs },
+        fragment: { module: mod(n), entryPoint: fs, targets: format ? [{ format, blend }] : [] },
+        primitive: { topology: 'triangle-list' },
+        depthStencil: depth ? { format: 'depth32float', depthWriteEnabled: depth.write, depthCompare: depth.compare } : undefined,
+      });
+      const e = await device.popErrorScope();
+      out.pipelines[key] = e ? String(e.message) : 'ok';
+    } catch (e) {
+      out.pipelines[key] = String(e.message || e);
+    }
+  };
+  for (const e of ['preprocess', 'scan', 'compact', 'finish']) await compute('splat_preprocess', e);
+  for (const e of ['histogram', 'scan_bins', 'scatter']) await compute('splat_sort', e);
+  for (const e of ['tile_setup', 'tile_count', 'tile_scan', 'tile_emit', 'tile_ranges', 'tile_raster']) await compute('splat_tile', e);
+  const premul = { color: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' }, alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' } };
+  await render('splat_draw', 'vs_splat', 'fs_splat', 'rgba16float', { write: false, compare: 'greater' }, premul);
+  await render('splat_draw', 'vs_splat_id', 'fs_splat_id', 'r32uint', { write: true, compare: 'greater' });
+  await render('splat_depth', 'vs_full', 'fs_depth', null, { write: true, compare: 'always' });
+  const comp = { color: { srcFactor: 'one', dstFactor: 'src-alpha' }, alpha: { srcFactor: 'zero', dstFactor: 'one' } };
+  await render('splat_composite', 'vs_full', 'fs_composite', 'rgba16float', null, comp);
+  out.limits = { storageBuffersPerStage: device.limits.maxStorageBuffersPerShaderStage, workgroupStorage: device.limits.maxComputeWorkgroupStorageSize };
+  return out;
+})();
+</script>
