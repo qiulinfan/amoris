@@ -294,7 +294,7 @@ impl RtShadows {
     }
 
     /// The forward module for ray-traced shadows, with all of naga's runtime checks: without the
-    /// ray-query tracker the one shadow ray per pixel was only 2% to 4% cheaper
+    /// ray-query tracker the one shadow ray per pixel was only about 1% cheaper
     /// (docs/spec/rt-shadows.md), unlike the research tracers' loops of queries.
     pub fn forward_module(device: &wgpu::Device) -> wgpu::ShaderModule {
         device.create_shader_module(wgpu::ShaderModuleDescriptor {

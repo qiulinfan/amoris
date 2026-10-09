@@ -64,11 +64,11 @@ shaded fragment (overdraw included), where the cascades cost four depth passes.
 
 - wgpu-core validates every top-level instance's bottom level at each submission that uses the top
   level (`command/ray_tracing.rs`: one dependency entry per instance, not per distinct bottom
-  level), so CPU time grows with the instance count even for a static scene (about 4.5 ms per frame
+  level), so CPU time grows with the instance count even for a static scene (about 2.8 ms per frame
   at 200,000 instances here). Rebuilding the top level every frame adds the instances' transforms
   on the CPU and the build on the GPU.
-- naga's ray-query tracking costs 2% to 4% of the frame here (one query per pixel), so the forward
-  module keeps every runtime check, unlike the research tracers' lean option.
+- naga's ray-query tracking costs about 1% of the forward pass here (one query per pixel), so the
+  forward module keeps every runtime check, unlike the research tracers' lean option.
 - Native only. WebGPU has no ray queries; nothing of this is compiled into a pipeline there.
 
 ## Interfaces

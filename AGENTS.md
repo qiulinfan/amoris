@@ -66,7 +66,9 @@ specified under [docs/spec/](docs/spec/README.md); their measured spikes are und
   tests run on every such backend and skip elsewhere. Keep ray queries local to the function that
   traces (naga 30 panics on a `ray_query` pointer argument) and test facing by triangle winding,
   not `candidate.front_face` (AMD's D3D12 driver miscompiles it). `python tools/rt_bench.py
-  correctness|timing` compares the tracers with the M5 references (docs/bench/path-tracing-nrc.md).
+  correctness|timing` compares the tracers with the M5 references (docs/bench/path-tracing-nrc.md);
+  `python tools/rt_shadows_bench.py` measures ray-traced against cascaded shadows and regenerates
+  their evidence (docs/bench/rt-shadows.md).
 - Compute pipelines use `shaders::compute_options()` (no automatic workgroup zeroing: it breaks
   MoltenVK); a compute shader must initialize the workgroup memory it reads.
 - The browser: `tools/build_viewport.sh` builds the WebGPU viewport into `web/viewport/pkg`
