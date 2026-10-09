@@ -497,6 +497,7 @@ QuickJS-ng 0.16.2 (script-native, script-web, debugger), `oxc_* =0.152.0` and `o
 | `wasm-bindgen`, `web-sys`, `js-sys` | render (web backend glue), web | `web` alone supplies the injected clock (threads.md 3.1) |
 | `tracing` | any | spans per system and pass; `tracing-tracy` in app and web behind `profile` |
 | `arc-swap` | link | the snapshot slot (`threads.md`, 4.3) |
+| `intel_tex_2`, `texture2ddecoder` | render, dev-dependencies only | Pioneer 2026-10-09: the neural texture encoder's BCn baseline (`examples/neural_encode`, docs/spec/neural-textures.md). `intel_tex_2 =0.5.0` is Intel's ISPC texture compressor with its prebuilt kernels (BC1, BC4, BC5, BC7); `texture2ddecoder =0.1.2` a pure-Rust BCn decoder. Never in a library |
 
 The game group's transitive normal dependencies MUST NOT include `wgpu`, `winit`, `egui*`, `tokio`,
 `rmcp`, `rayon` or `web-sys`, on any target. `wasm-bindgen` and `js-sys` MUST NOT be direct

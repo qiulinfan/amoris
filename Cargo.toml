@@ -81,6 +81,10 @@ winit = "0.30"
 glam = { version = "0.33", features = ["bytemuck"] }
 bytemuck = { version = "1.25", features = ["derive"] }
 pollster = "0.4"
+# The neural texture encoder's BCn baseline (pocket-render's example only; architecture.md 6):
+# Intel's ISPC texture compressor with its prebuilt kernels, and a pure-Rust BCn decoder.
+intel_tex_2 = "=0.5.0"
+texture2ddecoder = "=0.1.2"
 kira = { version = "0.12", default-features = false, features = ["cpal", "wav", "ogg", "mp3", "flac"] }
 bincode2 = { package = "bincode", version = "2.0.1", default-features = false, features = ["std", "serde"] }
 
