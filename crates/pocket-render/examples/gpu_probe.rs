@@ -1,9 +1,11 @@
 //! Creates the renderer's kinds of resources one by one inside error scopes and prints the first
 //! failure of each, then builds the whole renderer (every pipeline, so every shader goes through
-//! the backend's compiler) and draws a few frames of shadowed cubes (several views, so indirect
-//! draws with a non-zero first instance): a quick check of a backend (`POCKET_BACKEND=vulkan`,
-//! `POCKET_BACKEND=dx12`, `POCKET_ADAPTER=780m`). Backend warnings and errors are printed, so
-//! `WGPU_VALIDATION=1` shows the Direct3D 12 debug layer's or Vulkan's validation messages.
+//! the backend's compiler) and draws a few frames of shadowed cubes: a quick check of a backend
+//! (`POCKET_BACKEND=vulkan`, `POCKET_BACKEND=dx12`, `POCKET_ADAPTER=780m`) for errors, not for
+//! pixels. Backend warnings and errors are printed, so `WGPU_VALIDATION=1` shows the Direct3D 12
+//! debug layer's or Vulkan's validation messages. Wrong instances in indirect draws (Direct3D 12
+//! without indirect validation) raise no error and barely change these frames; the test
+//! `gpu::tests::indirect_draws_keep_their_first_instance` checks for them.
 
 struct Logger;
 
@@ -25,7 +27,10 @@ fn main() {
     log::set_max_level(log::LevelFilter::Warn);
     let choice = pocket_render::BackendChoice::from_env();
     if choice.backends().contains(wgpu::Backends::DX12) {
-        println!("shader compiler: {}", pocket_render::gpu::dx12_compiler().1);
+        println!(
+            "shader compiler: {}",
+            pocket_render::gpu::dx12_compiler().why
+        );
     }
     let gpu = pocket_render::Gpu::headless(choice).expect("gpu");
     println!(

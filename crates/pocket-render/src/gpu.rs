@@ -5,11 +5,15 @@
 //!
 //! Environment: `POCKET_BACKEND` (`metal`, `vulkan`, `dx12`), `POCKET_ADAPTER` (an adapter's index
 //! or a case-insensitive part of its name, for machines with two GPUs) and, for Direct3D 12,
-//! `POCKET_DXC` (the `dxcompiler.dll` to use, its directory, or `fxc`). wgpu's `WGPU_*` instance
-//! flags (`WGPU_VALIDATION`, `WGPU_VALIDATION_INDIRECT_CALL`) apply on top (see [`instance`]).
+//! `POCKET_DXC` (the `dxcompiler.dll` to use, its directory, or `fxc`; see [`dx12_compiler`]).
+//! wgpu's `WGPU_*` instance flags (`WGPU_VALIDATION`, `WGPU_VALIDATION_INDIRECT_CALL`) apply on top
+//! (see [`instance`]).
 
-use std::path::PathBuf;
+mod dxc;
+
 use std::sync::Arc;
+
+pub use dxc::{Dx12CompilerChoice, dx12_compiler};
 
 /// Which backend to use.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -104,90 +108,41 @@ pub fn instance(choice: BackendChoice) -> wgpu::Instance {
     let backends = choice.backends();
     let mut desc = wgpu::InstanceDescriptor {
         backends,
-        flags: if cfg!(debug_assertions) {
-            wgpu::InstanceFlags::debugging()
-        } else {
-            wgpu::InstanceFlags::empty()
-        },
+        // wgpu's own switches override these defaults: `WGPU_VALIDATION=1` (with the Direct3D 12
+        // debug layer or Vulkan's validation layers) and `WGPU_VALIDATION_INDIRECT_CALL=0|1` (to
+        // time what indirect validation costs, docs/bench/dx12.md) work in release builds too.
+        flags: instance_flags(backends, cfg!(debug_assertions)).with_env(),
         ..wgpu::InstanceDescriptor::new_without_display_handle()
     };
     if backends.contains(wgpu::Backends::DX12) {
-        let (compiler, why) = dx12_compiler();
-        log::info!("Direct3D 12 shader compiler: {why}");
-        desc.backend_options.dx12.shader_compiler = compiler;
-        // Direct3D's SV_InstanceID ignores an indirect draw's first instance; wgpu feeds it to the
-        // shader through root constants only when it rewrites indirect arguments, which is part of
-        // indirect validation. The renderer's multi-draws rely on `first_instance`
-        // (docs/bench/dx12.md): without this every batch but the first draws the wrong instances.
-        desc.flags |= wgpu::InstanceFlags::VALIDATION_INDIRECT_CALL;
+        let dxc = dx12_compiler();
+        if dxc.degraded {
+            log::warn!("Direct3D 12 shader compiler: {}", dxc.why);
+        } else {
+            log::info!("Direct3D 12 shader compiler: {}", dxc.why);
+        }
+        desc.backend_options.dx12.shader_compiler = dxc.compiler;
     }
-    // wgpu's own switches override these defaults: `WGPU_VALIDATION=1` (with the Direct3D 12 debug
-    // layer or Vulkan's validation layers) and `WGPU_VALIDATION_INDIRECT_CALL=0|1` (to time what
-    // indirect validation costs, docs/bench/dx12.md) work in release builds too.
-    desc.flags = desc.flags.with_env();
     wgpu::Instance::new(desc)
 }
 
-/// The Direct3D 12 shader compiler: DXC from `POCKET_DXC` or from the newest Windows SDK that has
-/// one, FXC otherwise or with `POCKET_DXC=fxc`. DXC is loaded at run time; wgpu's `static-dxc`
-/// feature (which downloads binaries at build time) is not used. Returns the choice and, for the
-/// log, where it came from.
-pub fn dx12_compiler() -> (wgpu::Dx12Compiler, String) {
-    let dxc = |path: PathBuf, from: String| {
-        let dxc_path = path.display().to_string();
-        let why = format!("DXC {dxc_path} ({from})");
-        (wgpu::Dx12Compiler::DynamicDxc { dxc_path }, why)
+/// The renderer's instance flags for `backends`, before wgpu's `WGPU_*` environment overrides:
+/// wgpu's debugging set in debug builds, nothing in release builds, except that Direct3D 12 always
+/// keeps `VALIDATION_INDIRECT_CALL`. Direct3D's `SV_InstanceID` ignores an indirect draw's first
+/// instance; wgpu feeds it to the shader through root constants only when it rewrites indirect
+/// arguments, which is part of indirect validation. The renderer's multi-draws rely on
+/// `first_instance` (docs/bench/dx12.md 2.1): without the flag every batch but the first draws the
+/// wrong instances (the test `indirect_draws_keep_their_first_instance` catches it).
+pub fn instance_flags(backends: wgpu::Backends, debug: bool) -> wgpu::InstanceFlags {
+    let mut flags = if debug {
+        wgpu::InstanceFlags::debugging()
+    } else {
+        wgpu::InstanceFlags::empty()
     };
-    let fxc = |why: String| (wgpu::Dx12Compiler::Fxc, format!("FXC ({why})"));
-    match std::env::var("POCKET_DXC") {
-        Ok(v) if v.eq_ignore_ascii_case("fxc") => fxc("POCKET_DXC=fxc".into()),
-        Ok(v) if !v.is_empty() => {
-            let mut path = PathBuf::from(&v);
-            if path.is_dir() {
-                path.push("dxcompiler.dll");
-            }
-            if path.is_file() {
-                dxc(path, "POCKET_DXC".into())
-            } else {
-                fxc(format!("POCKET_DXC={v} has no dxcompiler.dll"))
-            }
-        }
-        _ => match newest_sdk_dxc() {
-            Some((sdk, path)) => dxc(path, format!("Windows SDK {sdk}")),
-            None => fxc("no Windows SDK dxcompiler.dll found".into()),
-        },
+    if backends.contains(wgpu::Backends::DX12) {
+        flags |= wgpu::InstanceFlags::VALIDATION_INDIRECT_CALL;
     }
-}
-
-/// `<Windows Kits>\10\bin\<version>\x64\dxcompiler.dll` of the highest version that has one.
-fn newest_sdk_dxc() -> Option<(String, PathBuf)> {
-    if !cfg!(all(windows, target_arch = "x86_64")) {
-        return None;
-    }
-    let base = std::env::var_os("ProgramFiles(x86)")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(r"C:\Program Files (x86)"))
-        .join("Windows Kits")
-        .join("10")
-        .join("bin");
-    let mut best: Option<(Vec<u32>, String, PathBuf)> = None;
-    for entry in std::fs::read_dir(&base).ok()?.flatten() {
-        let name = entry.file_name().to_string_lossy().into_owned();
-        let Some(version) = sdk_version(&name) else {
-            continue;
-        };
-        let dll = entry.path().join("x64").join("dxcompiler.dll");
-        if dll.is_file() && best.as_ref().is_none_or(|(v, _, _)| version > *v) {
-            best = Some((version, name, dll));
-        }
-    }
-    best.map(|(_, name, dll)| (name, dll))
-}
-
-/// `10.0.26100.0` as numbers; `None` for anything else (`x64`, `arm64`).
-fn sdk_version(name: &str) -> Option<Vec<u32>> {
-    let parts: Option<Vec<u32>> = name.split('.').map(|p| p.parse().ok()).collect();
-    parts.filter(|p| p.len() == 4)
+    flags
 }
 
 impl Gpu {
@@ -319,8 +274,8 @@ fn adapter_override() -> Option<String> {
         .filter(|v| !v.is_empty())
 }
 
-/// The adapter `wanted` names among those that can present to `surface`: an index into that list or
-/// a case-insensitive part of an adapter's name. The error lists them all when none matches.
+/// The adapter `wanted` names among those that can present to `surface` (see [`match_adapter`]).
+/// The error lists them all when none matches.
 async fn pick_adapter(
     instance: &wgpu::Instance,
     surface: Option<&wgpu::Surface<'_>>,
@@ -332,32 +287,37 @@ async fn pick_adapter(
         .into_iter()
         .filter(|a| surface.is_none_or(|s| a.is_surface_supported(s)))
         .collect();
-    let names: Vec<String> = adapters
+    let infos: Vec<wgpu::AdapterInfo> = adapters.iter().map(wgpu::Adapter::get_info).collect();
+    let listed: Vec<String> = infos
         .iter()
         .enumerate()
-        .map(|(i, a)| {
-            let info = a.get_info();
-            format!("{i}: {} ({:?})", info.name, info.backend)
-        })
+        .map(|(i, info)| format!("{i}: {} ({:?})", info.name, info.backend))
         .collect();
-    log::info!("adapters: {}", names.join(", "));
-    let found = match wanted.parse::<usize>() {
-        Ok(i) => (i < adapters.len()).then_some(i),
-        Err(_) => {
-            let needle = wanted.to_lowercase();
-            adapters
-                .iter()
-                .position(|a| a.get_info().name.to_lowercase().contains(&needle))
-        }
-    };
-    found
+    log::info!("adapters: {}", listed.join(", "));
+    let names: Vec<&str> = infos.iter().map(|i| i.name.as_str()).collect();
+    match_adapter(&names, wanted)
         .and_then(|i| adapters.into_iter().nth(i))
         .ok_or_else(|| {
             GpuError(format!(
                 "POCKET_ADAPTER={wanted} matches no adapter; have [{}]",
-                names.join(", ")
+                listed.join(", ")
             ))
         })
+}
+
+/// Which of the adapters `names` `wanted` means: an index into the list, or else the first name
+/// that contains it, ignoring case (so `5060` finds an RTX 5060 although it is no valid index).
+pub fn match_adapter(names: &[&str], wanted: &str) -> Option<usize> {
+    let wanted = wanted.trim();
+    if let Ok(i) = wanted.parse::<usize>()
+        && i < names.len()
+    {
+        return Some(i);
+    }
+    let needle = wanted.to_lowercase();
+    names
+        .iter()
+        .position(|n| n.to_lowercase().contains(&needle))
 }
 
 #[cfg(test)]
@@ -378,11 +338,222 @@ mod tests {
     }
 
     #[test]
-    fn sdk_versions_order_numerically() {
-        assert_eq!(sdk_version("10.0.26100.0"), Some(vec![10, 0, 26100, 0]));
-        assert_eq!(sdk_version("x64"), None);
-        assert_eq!(sdk_version("10.0.1"), None);
-        assert!(sdk_version("10.0.26100.0") > sdk_version("10.0.22621.0"));
-        assert!(sdk_version("10.0.9200.0") < sdk_version("10.0.10240.0"));
+    fn direct3d_12_keeps_indirect_validation() {
+        use wgpu::{Backends, InstanceFlags};
+        let indirect = InstanceFlags::VALIDATION_INDIRECT_CALL;
+        assert_eq!(instance_flags(Backends::DX12, false), indirect);
+        assert_eq!(
+            instance_flags(Backends::VULKAN, false),
+            InstanceFlags::empty()
+        );
+        assert_eq!(
+            instance_flags(Backends::METAL, false),
+            InstanceFlags::empty()
+        );
+        assert!(instance_flags(Backends::VULKAN | Backends::DX12, false).contains(indirect));
+        assert_eq!(
+            instance_flags(Backends::DX12, true),
+            InstanceFlags::debugging() | indirect
+        );
+        assert_eq!(
+            instance_flags(Backends::VULKAN, true),
+            InstanceFlags::debugging()
+        );
+    }
+
+    #[test]
+    fn adapters_match_by_index_or_name() {
+        let names = [
+            "NVIDIA GeForce RTX 5060 Laptop GPU",
+            "AMD Radeon 780M Graphics",
+            "Microsoft Basic Render Driver",
+        ];
+        assert_eq!(match_adapter(&names, "0"), Some(0));
+        assert_eq!(match_adapter(&names, " 2 "), Some(2));
+        assert_eq!(match_adapter(&names, "nvidia"), Some(0));
+        assert_eq!(match_adapter(&names, "780M"), Some(1));
+        assert_eq!(match_adapter(&names, "radeon 780m"), Some(1));
+        // A number that is no index is part of a name.
+        assert_eq!(match_adapter(&names, "5060"), Some(0));
+        assert_eq!(match_adapter(&names, "780"), Some(1));
+        // The first name that matches wins.
+        assert_eq!(match_adapter(&names, "r"), Some(0));
+        assert_eq!(match_adapter(&names, "intel"), None);
+        assert_eq!(match_adapter(&names, "3"), None);
+        assert_eq!(match_adapter(&[], "0"), None);
+    }
+
+    /// The native backends of this platform. A GPU test that guards a difference between backends
+    /// runs on each (Vulkan and Direct3D 12 on Windows), skipping any without an adapter.
+    fn native_backends() -> &'static [BackendChoice] {
+        if cfg!(windows) {
+            &[BackendChoice::Vulkan, BackendChoice::Dx12]
+        } else if cfg!(any(target_os = "macos", target_os = "ios")) {
+            &[BackendChoice::Metal]
+        } else {
+            &[BackendChoice::Vulkan]
+        }
+    }
+
+    /// Indirect draws at a non-zero first instance, as the renderer's multi-draws make them (each
+    /// batch at `view * stride + offset`), reach `instance_index` with the first instance included,
+    /// on every native backend. Direct3D 12 does so only through wgpu's indirect validation
+    /// ([`instance_flags`]): with `WGPU_VALIDATION_INDIRECT_CALL=0` this fails there. Skipped
+    /// without a GPU or without `INDIRECT_FIRST_INSTANCE`.
+    #[test]
+    fn indirect_draws_keep_their_first_instance() {
+        // Draw A: one instance at 0, column 0; draw B: two instances at 3, columns 3 and 4.
+        let expected = [1, 0, 0, 4, 5, 0, 0, 0];
+        for &choice in native_backends() {
+            let Ok(gpu) = Gpu::headless(choice) else {
+                eprintln!("{choice:?}: no GPU, skipped");
+                continue;
+            };
+            if !gpu.caps.indirect_first_instance {
+                eprintln!(
+                    "{}: no INDIRECT_FIRST_INSTANCE, skipped",
+                    gpu.backend_name()
+                );
+                continue;
+            }
+            let rows = draw_instance_columns(&gpu);
+            for (row, how) in rows
+                .iter()
+                .zip(["multi-draw indirect", "indirect", "direct"])
+            {
+                assert_eq!(
+                    row,
+                    &expected,
+                    "{} on {}, {how} draws",
+                    gpu.backend_name(),
+                    gpu.info.name
+                );
+            }
+        }
+    }
+
+    /// Draws A and B (first_instance_check.wgsl) into an 8x3 `R32Uint` target, one row each way:
+    /// one indirect multi-draw, two indirect draws, and two direct draws (the control).
+    fn draw_instance_columns(gpu: &Gpu) -> Vec<[u32; 8]> {
+        use wgpu::util::DeviceExt;
+        const W: u32 = 8;
+        const H: u32 = 3;
+        let device = &gpu.device;
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("first instance check"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("../shaders/first_instance_check.wgsl").into(),
+            ),
+        });
+        let format = wgpu::TextureFormat::R32Uint;
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("first instance check"),
+            layout: None,
+            vertex: wgpu::VertexState {
+                module: &module,
+                entry_point: Some("vs"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &module,
+                entry_point: Some("fs"),
+                compilation_options: Default::default(),
+                targets: &[Some(format.into())],
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+        let buffer = |label: &str, contents: &[u32], usage: wgpu::BufferUsages| {
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some(label),
+                contents: bytemuck::cast_slice(contents),
+                usage,
+            })
+        };
+        let indices = buffer("quad", &[0, 1, 2, 2, 1, 3], wgpu::BufferUsages::INDEX);
+        // Index count, instance count, first index, base vertex, first instance.
+        let draws = buffer(
+            "draws",
+            &[6, 1, 0, 0, 0, 6, 2, 0, 0, 3],
+            wgpu::BufferUsages::INDIRECT,
+        );
+        let target = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("columns"),
+            size: wgpu::Extent3d {
+                width: W,
+                height: H,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = target.create_view(&Default::default());
+        let mut enc = device.create_command_encoder(&Default::default());
+        {
+            let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("columns"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                ..Default::default()
+            });
+            pass.set_pipeline(&pipeline);
+            pass.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint32);
+            let row = |pass: &mut wgpu::RenderPass<'_>, y: u32| {
+                pass.set_viewport(0.0, y as f32, W as f32, 1.0, 0.0, 1.0);
+            };
+            row(&mut pass, 0);
+            pass.multi_draw_indexed_indirect(&draws, 0, 2);
+            row(&mut pass, 1);
+            pass.draw_indexed_indirect(&draws, 0);
+            pass.draw_indexed_indirect(&draws, 20);
+            row(&mut pass, 2);
+            pass.draw_indexed(0..6, 0, 0..1);
+            pass.draw_indexed(0..6, 0, 3..5);
+        }
+        let stride = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let readback = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("columns readback"),
+            size: u64::from(stride * H),
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        enc.copy_texture_to_buffer(
+            target.as_image_copy(),
+            wgpu::TexelCopyBufferInfo {
+                buffer: &readback,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(stride),
+                    rows_per_image: Some(H),
+                },
+            },
+            target.size(),
+        );
+        gpu.queue.submit([enc.finish()]);
+        readback.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+        let _ = device.poll(wgpu::PollType::wait_indefinitely());
+        let bytes = readback.slice(..).get_mapped_range().expect("mapped");
+        (0..H as usize)
+            .map(|y| {
+                let start = y * stride as usize;
+                let texels: &[u32] = bytemuck::cast_slice(&bytes[start..start + W as usize * 4]);
+                texels.try_into().expect("8 columns")
+            })
+            .collect()
     }
 }

@@ -269,7 +269,8 @@ written as that specification names them.
   snapshots through `pocket-link`); open windows (`winit` stays in the app and the editor).
 - **Backends** (`gpu.rs`): Metal by default on Apple platforms, Vulkan by default elsewhere
   (MoltenVK on demand on macOS), Direct3D 12 on Windows on demand (Pioneer, charter 4.4;
-  `POCKET_BACKEND=dx12`, DXC loaded from the Windows SDK at run time). `POCKET_ADAPTER` picks an
+  `POCKET_BACKEND=dx12`, DXC 1.8.2502 or newer loaded from the Windows SDK at run time, FXC
+  without one; `gpu/dxc.rs`). `POCKET_ADAPTER` picks an
   adapter by index or name. Direct3D 12 keeps wgpu's indirect validation on, which is what feeds
   `first_instance` to `instance_index` there. The Windows default stays Vulkan by measurement
   (`docs/bench/dx12.md` 6). Shader hashes are integer (`pcg_hash`), so frames match across
