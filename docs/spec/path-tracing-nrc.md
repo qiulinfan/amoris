@@ -4,12 +4,12 @@ Status: implemented and measured on Apple M5, 2026-10-05, `feature/metal`. Since
 (Pioneer, charter 4.4) it also runs on Vulkan and Direct3D 12 wherever the adapter exposes ray
 queries; see [Backends](#backends-pioneer-2026-10-09).
 
-The first implementation is a complete standard surface path integrator for the engine's static scenes:
-metallic-roughness GGX plus diffuse, dielectric reflection/refraction, textures and cutouts,
+The first implementation is a complete standard surface path integrator for the engine's static
+scenes: metallic-roughness GGX plus diffuse, dielectric reflection/refraction, textures and cutouts,
 emissive triangles, directional/point/spot lights, environment radiance, NEE/MIS, Russian roulette
 and progressive accumulation. Sampling and PDFs must agree. Geometry/animation streaming and
-volumetric/BSSRDF transport are separate engine features, not claims of this integrator.
-Measure practical optimizations at identical scene, resolution, transport and sampling settings.
+volumetric/BSSRDF transport are separate engine features, not claims of this integrator. Measure
+practical optimizations at identical scene, resolution, transport and sampling settings.
 
 The subsequent online NRC is deliberately a toy for one M5. It must generate new path-traced
 training targets during rendering, update a small network on the GPU and query it on eligible
@@ -33,8 +33,8 @@ Base/emissive textures use an sRGB texture view: decoding happens before hardwar
 Normal, roughness/metallic, transmission and alpha data use the linear view. Resizing color images
 to the bounded common array dimensions also filters in linear light. Occlusion textures are not
 multiplied into physical transport, because geometry already determines visibility. The current
-texture path uses UV0, repeat/linear sampling and LOD 0, not ray footprints or glTF sampler variants.
-Blend uses stochastic coverage; solid refraction uses transmission/IOR rather than alpha.
+texture path uses UV0, repeat/linear sampling and LOD 0, not ray footprints or glTF sampler
+variants. Blend uses stochastic coverage; solid refraction uses transmission/IOR rather than alpha.
 
 Optional `Model.transmission` and `Model.ior` override imported values only when present; glTF
 KHR_materials_transmission and KHR_materials_ior are imported. Model persistence is version 2.
@@ -105,22 +105,22 @@ GPU/backend pairs, which is also what the M5 images imply.
 Single-sided culling in `pt_trace` no longer reads `candidate.front_face`: it compares the
 triangle's winding with the ray direction, which is equal by that convention. Reading
 `candidate.front_face` in the same condition as the material loads made AMD's Direct3D 12 driver
-(Radeon 780M, 32.0.13062.3005) treat front faces as back faces, so every camera ray missed; the
-DXIL is correct and the same shader works on Vulkan on that GPU and on both backends of the RTX
-5060 ([measurements](../bench/path-tracing-nrc.md#windows-vulkan-and-direct3d-12-pioneer-2026-10-09)).
+(Radeon 780M, 32.0.13062.3005) treat front faces as back faces, so every camera ray missed; the DXIL
+is correct and the same shader works on Vulkan on that GPU and on both backends of the RTX 5060
+([measurements](../bench/path-tracing-nrc.md#windows-vulkan-and-direct3d-12-pioneer-2026-10-09)).
 The committed hit's `front_face` (emission sidedness, entering or leaving glass) is unaffected.
 
 Two checks keep the winding test honest, in the PT GPU test on every ray-query backend. With
-`PtOptions::check_facing` (`--check-facing true`; the override constant `PT_CHECK_FACING`) `pt_trace`
-compares each committed hit's `front_face` with its triangle's winding after the traversal and
-counts disagreements away from grazing incidence (counter 11, `facing_mismatches`); the test turns
-it on and requires zero, so a backend whose hardware convention differed, Metal included, fails it.
-It changes no path but costs 2% to 3% of the trace with Vulkan and 7% to 8% with Direct3D 12 on the
-RTX 5060 (gi-room and pt-lab, 320x240), so it is off by default, where it costs nothing measurable.
-And the test's pt-lab render must have a known mean radiance (channel sum 0.6945 within 10%):
-culling front faces instead of back faces gives 0.105, the AMD miscompile 0.262. Both were checked
-by putting the defects back. The counters and sample checks alone had passed with the culling
-inverted.
+`PtOptions::check_facing` (`--check-facing true`; the override constant `PT_CHECK_FACING`)
+`pt_trace` compares each committed hit's `front_face` with its triangle's winding after the
+traversal and counts disagreements away from grazing incidence (counter 11, `facing_mismatches`);
+the test turns it on and requires zero, so a backend whose hardware convention differed, Metal
+included, fails it. It changes no path but costs 2% to 3% of the trace with Vulkan and 7% to 8% with
+Direct3D 12 on the RTX 5060 (gi-room and pt-lab, 320x240), so it is off by default, where it costs
+nothing measurable. And the test's pt-lab render must have a known mean radiance (channel sum 0.6945
+within 10%): culling front faces instead of back faces gives 0.105, the AMD miscompile 0.262. Both
+were checked by putting the defects back. The counters and sample checks alone had passed with the
+culling inverted.
 
 Two naga 30 limitations shape the shaders: its SPIR-V and HLSL writers panic (rather than report
 an error) when a `ptr<function, ray_query>` is passed to another function, so queries stay local
@@ -138,6 +138,7 @@ Vulkan elsewhere) and skip with a note otherwise; `POCKET_ADAPTER=780m` runs the
 `tools/rt_bench.py` renders every configuration whose M5 report is committed and compares the
 result with it, and times the documented settings per backend.
 
-Equation references: [PBRT surface path tracing](https://pbr-book.org/4ed/Light_Transport_I_Surface_Reflection/A_Better_Path_Tracer),
-[PBRT dielectric BSDF](https://pbr-book.org/4ed/Reflection_Models/Dielectric_BSDF),
-[Heitz GGX visible normals](https://jcgt.org/published/0007/04/01/). The code is independently authored.
+Equation references: [PBRT surface path
+tracing](https://pbr-book.org/4ed/Light_Transport_I_Surface_Reflection/A_Better_Path_Tracer), [PBRT
+dielectric BSDF](https://pbr-book.org/4ed/Reflection_Models/Dielectric_BSDF), [Heitz GGX visible
+normals](https://jcgt.org/published/0007/04/01/). The code is independently authored.

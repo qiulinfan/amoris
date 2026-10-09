@@ -6,9 +6,9 @@ Code: `crates/pocket-debug`, `crates/pocket-script/src/debug.rs`, `third_party/p
 
 Charter: 2 (agent as debugger), 4.2 (QuickJS-ng with PR #1421), 4.3 (one debugging core, three
 frontends; instrumentation only while a client is attached), 5.2 (a pause blocks only the game
-thread). Related: [script-host.md](script-host.md) 13 (the hooks), [threads.md](threads.md) 3.5 (stalls
-and the debugger), [host-protocol.md](host-protocol.md) 6 (the `debug.*` methods), the spike report
-[../spikes/debugger.md](../spikes/debugger.md).
+thread). Related: [script-host.md](script-host.md) 13 (the hooks), [threads.md](threads.md) 3.5
+(stalls and the debugger), [host-protocol.md](host-protocol.md) 6 (the `debug.*` methods), the spike
+report [../spikes/debugger.md](../spikes/debugger.md).
 
 This file says how the debugger is built, what each frontend sees, what it costs, how a game wires
 it in, how to attach, and how it was verified against real clients.
@@ -39,9 +39,10 @@ flowchart LR
 Frontends never touch the JavaScript context. They edit the hub (breakpoints, watches, modes) and
 bump its generation; the game thread's hook rereads a snapshot of the settings when the generation
 changes. While the game is stopped, frontends send `Command`s (resume, step, evaluate, properties,
-`callFunctionOn`, `setVariableValue`) through a channel and wait for the answer; the hook serves them
-from inside the trace call that stopped the thread. Rendering, the servers and every other thread go
-on; the game loop shows the state `Breakpoint` (threads.md 3.5) and its commands wait for the resume.
+`callFunctionOn`, `setVariableValue`) through a channel and wait for the answer; the hook serves
+them from inside the trace call that stopped the thread. Rendering, the servers and every other
+thread go on; the game loop shows the state `Breakpoint` (threads.md 3.5) and its commands wait for
+the resume.
 
 ## 2. Instrumentation
 
@@ -52,9 +53,9 @@ handler is set on the context, and calls the handler at each one while it is set
   after the lockdown and before the modules compile, and leaves it installed. The prelude (`pocket`)
   is compiled without it: the debugger stops and steps in project code only.
 - `script.update` asks again at the start of every tick and, when the answer differs from the
-  installed program's, instantiates the same compiled set again. Programs hold no state and no script
-  of the tick has run yet, so this is the boundary reload of script-host.md 13; a program that loaded
-  once does not fail to load again, and if it did the old one stays.
+  installed program's, instantiates the same compiled set again. Programs hold no state and no
+  script of the tick has run yet, so this is the boundary reload of script-host.md 13; a program
+  that loaded once does not fail to load again, and if it did the old one stays.
 - `instrument()` is true while any frontend is attached: a CDP session that sent `Debugger.enable`,
   or agents after `debug.attach`, a breakpoint, a watch or a pause request. The last one leaving
   (a closed socket, `debug.detach`) resumes a pause and drops its breakpoints and watches.
@@ -82,8 +83,8 @@ The vendored QuickJS-ng carries two more patches for the debugger:
   `u16` operand on `OP_debug` itself, failed: the compiler's passes read phase 1 and 2 bytecode
   through `opcode_info[op]`, which for the opcodes after the short ones (`OP_debug` is the last)
   is another opcode's entry, so the operand was read as code (`invalid opcode` at load).
-- **P10** (`p10-debug-exceptions-frames.diff`): the handler also hears catchable exceptions, once per
-  throw, in the throwing frame (flag `JS_DEBUG_TRACE_EXCEPTION`), with a catch prediction
+- **P10** (`p10-debug-exceptions-frames.diff`): the handler also hears catchable exceptions, once
+  per throw, in the throwing frame (flag `JS_DEBUG_TRACE_EXCEPTION`), with a catch prediction
   (`JS_DEBUG_TRACE_EXCEPTION_CAUGHT`): a catch offset on the throwing frame's stack or on an
   instrumented caller's stack as it stood at its current statement (`OP_debug` records each frame's
   stack pointer in `JSStackFrame.debug_sp`). `JS_GetDebugTraceException` gives the exception during
@@ -126,8 +127,8 @@ sees it as:
   in `sourcesContent`. `HubOptions::source_root = SourceRoot::Project(dir)` writes absolute
   `file://` sources instead, for editors that should open the files without a path override.
 - `Debugger.getScriptSource` returns the JavaScript, and every position on the wire is the
-  JavaScript's, 0-based. Clients map to TypeScript themselves; breakpoints arrive as JavaScript lines
-  (`setBreakpointByUrl` with `url`, `urlRegex` or `scriptHash`, or `setBreakpoint` by script).
+  JavaScript's, 0-based. Clients map to TypeScript themselves; breakpoints arrive as JavaScript
+  lines (`setBreakpointByUrl` with `url`, `urlRegex` or `scriptHash`, or `setBreakpoint` by script).
   `getPossibleBreakpoints` lists the lines with mappings and their first mapped column.
 - Call frames are the project's bytecode frames, innermost first; native frames and the prelude's
   are left out (V8 leaves out natives), their levels kept as `callFrameId`. Each has three scopes:
@@ -135,11 +136,11 @@ sees it as:
   `global`. Properties are read from descriptors: no getter or Proxy trap runs; accessors are listed
   as `get`/`set`. Objects carry a short `preview`.
 
-Agents speak TypeScript: `{file: "scripts/rules.ts", line: 27, column: 13}`, 1-based, the module path
-as `scripts.list` names it. A breakpoint on a line without code moves to the next line with code
-(as V8 moves one), and is set on every generated line mapped from that TypeScript line. Generated
-code no TypeScript wrote (the harden epilogue) is reported with `generated: true` and stepped
-through.
+Agents speak TypeScript: `{file: "scripts/rules.ts", line: 27, column: 13}`, 1-based, the module
+path as `scripts.list` names it. A breakpoint on a line without code moves to the next line with
+code (as V8 moves one), and is set on every generated line mapped from that TypeScript line.
+Generated code no TypeScript wrote (the harden epilogue) is reported with `generated: true` and
+stepped through.
 
 ## 5. Pause, inspection, steps
 
@@ -155,12 +156,13 @@ system's `ctx` included); with P11, the block-scoped locals are those in scope a
 statement (every `let` and `const` declared before it in its block and the enclosing ones), in the
 stopped frame and in callers', and not a sibling block's. It runs under
 `pocket_script::debug::guarded`: its own budget of `steps_per_call`, the stopped call's budget,
-overrun flag and out-of-memory baseline put back after it, and the natives that write (world edits, events, intents, random draws, `Math.random`)
-refusing with `script.debug_read_only`. It can still change the call's locals and its query
-columns, which are written back, so an evaluation, a condition, a logpoint message or a variable
-set inside a system call taints the run from that tick (script-host.md 13): the game's recorder
-writes `Tainted {tick, reason}` (replay.md 2.2, where `verify` stops) and `status` shows `tainted`.
-Property listings and `callFunctionOn` previews do not taint.
+overrun flag and out-of-memory baseline put back after it, and the natives that write (world edits,
+events, intents, random draws, `Math.random`) refusing with `script.debug_read_only`. It can still
+change the call's locals and its query columns, which are written back, so an evaluation, a
+condition, a logpoint message or a variable set inside a system call taints the run from that tick
+(script-host.md 13): the game's recorder writes `Tainted {tick, reason}` (replay.md 2.2, where
+`verify` stops) and `status` shows `tainted`. Property listings and `callFunctionOn` previews do not
+taint.
 
 Steps compare frame depth (native frames included) and the generated line: *over* stops at the
 next statement in this frame or a shallower one on another line; *into* at the next statement in
@@ -220,11 +222,11 @@ Problems: `debug.not_paused`, `debug.no_frame`, `debug.eval_failed {error}`, `de
 The `debug` family is not yet a row of shared/contract/errors.md's family table; changes to that
 table update the contract record in this repository.
 
-`DebugHub::subscribe()` gives `DebugEvent`s; `DebugEvent::json()` is the host protocol's pushed event
-(host-protocol.md 3): `{"event": "debug", "data": <state as debug.state>}` on a pause,
-`{"event": "debug", "data": {"state": "running"}}` on a resume, `{"event": "log", "data": {level,
-source: "script", message, tick, system, file?, line?, column?}}` for a console line or a logpoint,
-and the same with `code` for a system that failed.
+`DebugHub::subscribe()` gives `DebugEvent`s; `DebugEvent::json()` is the host protocol's pushed
+event (host-protocol.md 3): `{"event": "debug", "data": <state as debug.state>}` on a pause,
+`{"event": "debug", "data": {"state": "running"}}` on a resume,
+`{"event": "log", "data": {level, source: "script", message, tick, system, file?, line?, column?}}`
+for a console line or a logpoint, and the same with `code` for a system that failed.
 
 ## 8. Wiring a game
 
@@ -294,19 +296,19 @@ Run the sailing sample in real time with the endpoint on:
 cargo run -p pocket-app --example debug_sailing -- [--port 9229] [--wait] [--speed 1] [--file-sources]
 ```
 
-It prints `{"ws": "ws://127.0.0.1:9229/devtools/game", "devtools": "devtools://devtools/...", ...}` and
-then a status line a second (`tick`, `paused_in_debugger`, `loop_state`).
+It prints `{"ws": "ws://127.0.0.1:9229/devtools/game", "devtools": "devtools://devtools/...", ...}`
+and then a status line a second (`tick`, `paused_in_debugger`, `loop_state`).
 
-- **Chrome DevTools**: open the printed `devtools://devtools/bundled/js_app.html?...&ws=127.0.0.1:9229/devtools/game`
-  in Chrome (or `chrome://inspect`, Configure, add `127.0.0.1:9229`, then inspect the
-  `pocket-game` target; this route was not exercised by the harness of 11, which opens the same
-  frontend page directly). Sources shows `pocket://scripts/*.ts` from the source maps; click a line
-  number to break.
-- **VS Code**: copy `editors/vscode/launch.json` to `.vscode/launch.json` and run "Attach to
-  Amoris (sailing)". It is a `node` attach on 9229 with `sourceMaps`, `resolveSourceMapLocations:
-  null` (the scripts are not files) and `sourceMapPathOverrides: {"pocket:///*":
-  "${workspaceFolder}/samples/sailing/*"}`, so breakpoints set in `samples/sailing/scripts/*.ts` bind.
-  See `editors/vscode/README.md`.
+- **Chrome DevTools**: open the printed
+  `devtools://devtools/bundled/js_app.html?...&ws=127.0.0.1:9229/devtools/game` in Chrome (or
+  `chrome://inspect`, Configure, add `127.0.0.1:9229`, then inspect the `pocket-game` target; this
+  route was not exercised by the harness of 11, which opens the same frontend page directly).
+  Sources shows `pocket://scripts/*.ts` from the source maps; click a line number to break.
+- **VS Code**: copy `editors/vscode/launch.json` to `.vscode/launch.json` and run "Attach to Amoris
+  (sailing)". It is a `node` attach on 9229 with `sourceMaps`, `resolveSourceMapLocations: null`
+  (the scripts are not files) and
+  `sourceMapPathOverrides: {"pocket:///*": "${workspaceFolder}/samples/sailing/*"}`, so breakpoints
+  set in `samples/sailing/scripts/*.ts` bind. See `editors/vscode/README.md`.
 - **Agents**: through pocket-server or pocket-mcp, the methods of 7.
 - **The editor**: `pocket serve <project>` serves it; its Debug panel and the Scripts panel's gutter
   use the methods of 7 over `/ws` (editor.md 8.1, evidence in editor.md 10).
@@ -328,8 +330,8 @@ core, timing the thread's CPU; three processes per build, alternating builds; me
 | armed: a conditional breakpoint on a line no tick runs | 1,232.6 us | 1.146 (15.0 ns) | 1,332.1 us | 1.239 (22.9 ns) |
 | watch: a data breakpoint probed at every statement, never hit | 4,788.8 us | 4.412 (352 ns) | 4,803.5 us | 4.538 |
 
-Detached costs nothing (the bytecode is the stock engine's). Attached costs 5 percent with P9 and
-16 without; the spike measured 2.04 times for the PR's handler before its own fast path. A breakpoint
+Detached costs nothing (the bytecode is the stock engine's). Attached costs 5 percent with P9 and 16
+without; the spike measured 2.04 times for the PR's handler before its own fast path. A breakpoint
 anywhere puts every statement through the full check (15 percent). A data breakpoint costs 4.4 times
 while set: it reads the call's staged state at every statement (6). A pause costs nothing per
 statement; the first pause after `runIfWaitingForDebugger` came 25 ms later on a debug build, a step
@@ -348,8 +350,9 @@ over round trip 5 ms.
 | `node crates/pocket-debug/tests/jsdebug_dap.mjs` | **VS Code's js-debug 1.140.0** as installed in `/Applications/Visual Studio Code.app` (its extension bundle loaded under a stand-in for the `vscode` module, since the app ships no standalone DAP server), resolving `editors/vscode/launch.json` through its own configuration provider and spoken to over DAP as VS Code does (root session, then the child session it starts for the target): a breakpoint set by the `.ts` path verifies, `stopped` at rules.ts:27 on disk, the caller `run` at 26, Local `r = 0`, `e`, Closure `b`, `l`, `ctx` and `ctx` expanded, a REPL evaluation, a hover (`Float64Array(1) [0.0]`), `next` to line 28, disconnect leaves the game running | 13/13 | [jsdebug-dap.txt](../evidence/debug/jsdebug-dap.txt), [DAP](../evidence/debug/jsdebug-dap-messages.log), [CDP it sent](../evidence/debug/jsdebug-cdp.log) |
 | `node crates/pocket-debug/tests/devtools_chrome.mjs` | **Chrome DevTools** (the frontend Google Chrome 154 serves at `/devtools/js_app.html`, the page `chrome://inspect` opens for a Node target) in a headless Chrome against the endpoint, worked through its own modules: the workspace holds `pocket:///scripts/{main,components,rules}.ts` with the TypeScript text, `BreakpointManager.setBreakpoint` on rules.ts:27 pauses there with the call stack and the Scope pane, console evaluation, step over to 28, resume | 8/8 | [devtools-chrome.txt](../evidence/debug/devtools-chrome.txt), [screenshot paused](../evidence/debug/devtools-paused.png), [stepped](../evidence/debug/devtools-stepped.png), [CDP it sent](../evidence/debug/devtools-cdp.log) |
 
-The harnesses start `debug_sailing` (default `$CARGO_TARGET_DIR/debug/examples/debug_sailing`, `--exe`
-to change) and stop it; `POCKET_CDP_LOG=1` logs every CDP message on its stderr (`--game-log FILE`).
+The harnesses start `debug_sailing` (default `$CARGO_TARGET_DIR/debug/examples/debug_sailing`,
+`--exe` to change) and stop it; `POCKET_CDP_LOG=1` logs every CDP message on its stderr
+(`--game-log FILE`).
 
 ## 12. Limits and open items
 
@@ -357,8 +360,8 @@ to change) and stop it; `POCKET_CDP_LOG=1` logs every CDP message on its stderr 
   build needs a relay (the page, or the host's server) to carry CDP. Not built.
 - **`debug.rewind`** is the host's (7): it restores the kept snapshot at or before the tick (one
   every 60 ticks, the last 120) and steps forward to it. The commands applied between the snapshot
-  and the tick are not recorded, so a rewind past an edit lands on a world without it (server.md 11);
-  a breakpoint on the way stops the replay like any tick.
+  and the tick are not recorded, so a rewind past an edit lands on a world without it (server.md
+  11); a breakpoint on the way stops the replay like any tick.
 - **Catch prediction**: a `finally` counts as a catch; a `catch` in the prelude or a native is not
   seen (the prelude's only one, in `each`, rethrows).
 - **Callers' positions** are those of their calls (QuickJS-ng's `cur_pc`), so a caller stopped in a

@@ -110,19 +110,20 @@ Direct3D 12 已于 2026-10-09 作为 Pioneer 的探索方向重新纳入（纲�
 1. 跑完 sdk 合并后 `pocket-script`、`pocket-check` 的测试，推送 main。
 2. 用保存的脚本恢复两个 workflow（已完成的 agent 从缓存回放），完成 play、neural、hzb、gtao 的修复
    与 art 的复查。
-3. 依次合并：art → hzb → gtao → neural → play。neural 与 hzb/gtao 都改 `renderer.rs`；play 与 sdk 都改
-   `client.rs`、`catalog.rs`、`game.rs` 与 MCP。每次合并后重建并提交 `web/viewport/pkg`（帧格式指纹）。
+3. 依次合并：art → hzb → gtao → neural → play。neural 与 hzb/gtao 都改 `renderer.rs`；play 与 sdk 都
+   改 `client.rs`、`catalog.rs`、`game.rs` 与 MCP。每次合并后重建并提交 `web/viewport/pkg`（帧格式指
+   纹）。
 4. 在 M5 上完整跑一次 `cargo xtask check`，日志入库。
 
-退出条件：main 含全部分支；`pocket play samples/harbor`、`pocket match samples/arena`、浏览器播放页都能跑；
-check 日志入库。
+退出条件：main 含全部分支；`pocket play samples/harbor`、`pocket match samples/arena`、浏览器播放页
+都能跑； check 日志入库。
 
 ### 第 4 天（10-06）：物理迁往 Jolt
 
 按 `docs/bench/physics.md` 给出的顺序做四项检查，任何一项失败就留在 Rapier：
 
-1. joltc 分叉加 `SaveState` / `RestoreState` 与 WASI shim，原生与 pocket-web 的 wasm（wasm-bindgen，与
-   QuickJS-ng 共用一份 wasi-libc）都能构建。
+1. joltc 分叉加 `SaveState` / `RestoreState` 与 WASI shim，原生与 pocket-web 的 wasm（wasm-bindgen，
+   与 QuickJS-ng 共用一份 wasi-libc）都能构建。
 2. `pocket-physics` 的求解器部分（约 1,100 行）换成 Jolt，组件与力（浮力、风、帆、船体）不变。
 3. 确定性：帆船场景 3,001 tick 原生与 Chrome 哈希一致；每个 tick 从字节恢复的 fork 继续一致。
 4. 测量：本仓库物理 bench 与帆船场景在安静机器上重跑。

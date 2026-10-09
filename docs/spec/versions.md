@@ -663,7 +663,7 @@ Beside persistence.md's P1 to P7, run in the check command (charter 3.7; checks.
   `docs/design/environment.md` (Learning: save slots as branch points need `onSave` and tween
   snapshots; Limits: saves without the contact cache branch inexactly), `docs/development.md`
   (Tests: golden hashes change only deliberately, with the reason in the commit).
-- Amoris predecessor charter (`origin/rebuild:docs/charter.md`), 3.3 and 8.2: ids changed after a load,
-  the RNG and the contact cache were not saved.
+- Amoris predecessor charter (`origin/rebuild:docs/charter.md`), 3.3 and 8.2: ids changed after a
+  load, the RNG and the contact cache were not saved.
 - Practice: append-only ordered migrations (Flyway, Diesel, Rails); schemas checked against a
   committed baseline (`buf breaking`); RFC 6901 for paths.

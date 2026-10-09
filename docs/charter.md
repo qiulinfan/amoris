@@ -37,8 +37,8 @@ Amoris 是一个 **agent-native** 的 3D 游戏引擎。agent 在三个角色上
 
 本轮必须证明五件事（所有者 2026-10-03 的要求）：
 
-1. **性能**：渲染与物理比肩 Unity/UE5，web 比肩 three.js。同机对照测量：Bevy 0.19（Rust/wgpu 的
-   前沿）、three.js WebGPURenderer（web）、Jolt（物理，Godot 4.6 起新项目的默认 3D 物理）（第 6 节）。
+1. **性能**：渲染与物理比肩 Unity/UE5，web 比肩 three.js。同机对照测量：Bevy 0.19（Rust/wgpu 的前
+   沿）、three.js WebGPURenderer（web）、Jolt（物理，Godot 4.6 起新项目的默认 3D 物理）（第 6 节）。
 2. **agent-native gameplay**：LLM agent 通过 MCP、在受限感知下玩通游戏；脚本里的决策模型每秒做
    上百次决策；fork 前瞻。
 3. **web 渲染与神经渲染的先进性**：同一渲染器在浏览器 WebGPU 上运行；3D Gaussian Splatting 与神经
@@ -122,10 +122,9 @@ Amoris 是一个 **agent-native** 的 3D 游戏引擎。agent 在三个角色上
     理由：agent 调试评测（`docs/bench/debug-eval.md` 第 3 项）里，求值看不到同一块里后声明的
     `let`/`const`，7 次运行共 37 次求值失败。
 - 预算：每系统 100 万步、每 tick 200 万步、64 MiB 内存；步数不进入世界哈希。
-- 性能定位：解释执行比同等 Rust 规则慢 21–27 倍（Amoris Pioneer 的 script-native spike）。对策是让脚本
-  做编排、让引擎做重活：物理、动画、寻路、感知、渲染都在 Rust 里，脚本经批量列接口调用。
-  与 Godot 的 GDScript 处在同一量级，与 Unity C# 有差距；JIT 后端作为测量实验列入排期，不进入
-  本轮默认路径。
+- 性能定位：解释执行比同等 Rust 规则慢 21–27 倍（Amoris Pioneer 的 script-native spike）。对策是让脚
+  本做编排、让引擎做重活：物理、动画、寻路、感知、渲染都在 Rust 里，脚本经批量列接口调用。与 Godot
+  的 GDScript 处在同一量级，与 Unity C# 有差距；JIT 后端作为测量实验列入排期，不进入本轮默认路径。
 - 被否决：V8（Amoris Pioneer master：预编译库与 Chromium libc++ 冲突、源码构建数小时）、
   JavaScriptCore（Windows 上要封装 46 MB 的 Bun DLL）、Lua 5.4（所有者搁置）、Luau、WASM 脚本。
 
@@ -242,8 +241,8 @@ Amoris 是一个 **agent-native** 的 3D 游戏引擎。agent 在三个角色上
 - 面板：层级树、检视器（由 JSON Schema 生成）、视口（拾取、平移/旋转/缩放 Gizmo、吸附）、资源
   浏览器、脚本编辑器（Monaco，诊断与断点）、调试（调用栈、变量、监视）、控制台、事件与因果、
   时间线（tick 拨动、快照、回溯）、性能分析、agent 面板（agent 的操作流与对话）。
-- 被否决：egui（所有者要求 TS + React）；把编辑器 UI 做成引擎自己的 UI 系统（Amoris Pioneer master 的
-  Pocket UI，效果与工作量不划算）；视口按 PNG 轮询推帧（Amoris 原型，4 Hz）。
+- 被否决：egui（所有者要求 TS + React）；把编辑器 UI 做成引擎自己的 UI 系统（Amoris Pioneer master
+  的 Pocket UI，效果与工作量不划算）；视口按 PNG 轮询推帧（Amoris 原型，4 Hz）。
 
 ### 4.6 构建链
 

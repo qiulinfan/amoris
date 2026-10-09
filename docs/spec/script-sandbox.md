@@ -355,9 +355,9 @@ world (4.3).
    `cee271d0...`) and the diffs in `third_party/patches/`, each pinned by its SHA-256 in the script:
    quickjs-ng PR #1421 unmodified, then `p1-interrupt-counter.diff`, `p2-uncatchable-faults.diff`,
    `p3-constant-seeds.diff`, `p5-call-depth.diff`, `p6-canonical-nan.diff`, `p4-p7-build.diff` (P4
-   and P7 both change the build script, so they are one diff), `p8-discard-jobs.diff` (choice
-   14), `p9-debug-line-cache.diff` and `p10-debug-exceptions-frames.diff` (the debugger,
-   debugger.md 2). `--check` rebuilds into a temporary directory and fails on any byte that differs, as
+   and P7 both change the build script, so they are one diff), `p8-discard-jobs.diff` (choice 14),
+   `p9-debug-line-cache.diff` and `p10-debug-exceptions-frames.diff` (the debugger, debugger.md 2).
+   `--check` rebuilds into a temporary directory and fails on any byte that differs, as
    `cargo xtask vendor --check` will (architecture.md 7.5); the script stays until xtask's Rust
    version replaces it.
 2. **Slice 1: P7 picks the pinned compiler.** When a build names no C compiler for the target

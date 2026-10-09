@@ -38,6 +38,10 @@ specified under [docs/spec/](docs/spec/README.md); their measured spikes are und
    repository and commit in the commit message.
 6. Owner-facing explanations are Chinese; code, identifiers, commit messages and specs are English.
    The charter and schedule are Chinese.
+7. Markdown under `docs/` is hard-wrapped at 100 display columns (a CJK character counts two), so a
+   search returns a line, not a paragraph: `python tools/wrap_docs.py <file>` refills what is too
+   wide, and `cargo xtask check`'s `docs` step checks it. Recorded evidence under `docs/evidence/`
+   stays as recorded, and `shared/` changes only with its contract record.
 
 ## Building
 

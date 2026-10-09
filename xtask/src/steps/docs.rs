@@ -1,5 +1,7 @@
-//! `docs`: documentation is prose wrapped at 100 columns (AGENTS.md rule 6), checked with
-//! `tools/wrap_docs.py --check` over the Markdown under `docs/` and `shared/` (checks.md 14, Slice 1).
+//! `docs`: documentation is prose hard-wrapped at 100 display columns (AGENTS.md rule 7), checked
+//! with `tools/wrap_docs.py --check` over the Markdown under `docs/`, except the recorded evidence
+//! under `docs/evidence/` (checks-slice1.md 9). `shared/` is the contract's text, which changes
+//! only through its own record (`gen.shared_modified`), so this step does not reformat it.
 
 use crate::report::{Problem, StepResult};
 use crate::run::{self, Env};
@@ -18,14 +20,17 @@ pub fn parse(output: &str) -> Vec<String> {
         .collect()
 }
 
+/// Whether the step reads a file: Markdown under `docs/`, but not `docs/evidence/`, whose
+/// transcripts and logs are kept as they were recorded.
+pub fn checked(path: &str) -> bool {
+    path.starts_with("docs/") && !path.starts_with("docs/evidence/") && path.ends_with(".md")
+}
+
 pub fn run(env: &Env, listed: &[String]) -> StepResult {
     let mut step = StepResult::new("docs");
     let log = env.new_log("docs");
     step.log = Some(env.rel(&log));
-    let docs: Vec<&String> = listed
-        .iter()
-        .filter(|p| (p.starts_with("docs/") || p.starts_with("shared/")) && p.ends_with(".md"))
-        .collect();
+    let docs: Vec<&String> = listed.iter().filter(|p| checked(p)).collect();
     let Some(python) = run::python() else {
         step.inconclusive(Problem::new(
             "check.tool_missing",
@@ -61,13 +66,15 @@ pub fn run(env: &Env, listed: &[String]) -> StepResult {
     for path in &unwrapped {
         step.error(Problem::new(
             "docs.unwrapped",
-            format!("{path} is not wrapped at 100 columns; run python tools/wrap_docs.py {path}"),
+            format!(
+                "{path} has prose wider than 100 columns; run python tools/wrap_docs.py {path}"
+            ),
             json!({"path": path}),
         ));
     }
     step.measure("docs.files", docs.len() as f64, "count");
     step.summary = format!(
-        "{} Markdown files under docs/ and shared/, {} need wrapping",
+        "{} Markdown files under docs/ (not docs/evidence/), {} need wrapping",
         docs.len(),
         unwrapped.len()
     );
@@ -83,5 +90,16 @@ mod tests {
         let out = "would change 2 of 30\n  docs/a.md\n  shared/contract/b.md\n";
         assert_eq!(parse(out), ["docs/a.md", "shared/contract/b.md"]);
         assert!(parse("would change 0 of 30\n").is_empty());
+    }
+
+    #[test]
+    fn evidence_and_shared_are_not_checked() {
+        assert!(checked("docs/spec/checks.md"));
+        assert!(!checked("shared/contract/mcp.md"));
+        assert!(!checked(
+            "docs/evidence/debug-eval/steer-sign/cli-1/transcript.md"
+        ));
+        assert!(!checked("docs/spec/checks.json"));
+        assert!(!checked("README.md"));
     }
 }

@@ -1,7 +1,7 @@
 # Metal rendering and global illumination options
 
-Date: 2026-10-05. Branch: `feature/metal`. Inspected engine commit: `a4141946`.
-Status: source-led comparison, followed by the accepted implementation order in `../spec/metal-gi.md`.
+Date: 2026-10-05. Branch: `feature/metal`. Inspected engine commit: `a4141946`. Status: source-led
+comparison, followed by the accepted implementation order in `../spec/metal-gi.md`.
 
 ## Verified starting point
 
@@ -100,7 +100,8 @@ or a measured ranking. Neural caching has an additional runtime implementation b
 ## NRC hardware feasibility: later-stage candidate
 
 The owner initially deferred NRC on 2026-10-05, then authorized a small-network experiment after
-baking, SHaRC and ReSTIR exploration. Online dynamic NRC remains distinct from that offline experiment.
+baking, SHaRC and ReSTIR exploration. Online dynamic NRC remains distinct from that offline
+experiment.
 
 There are two distinct implementation choices:
 
@@ -131,10 +132,11 @@ has been established.
 
 ## Initial shortlist and decision evidence
 
-DDGI and UE 5.8's irradiance-field approach are the world-space diffuse references. Split Radiance Cascades is a useful
-research comparison for spatial detail. Surface ray-traced GI is the direct-sampling alternative.
-SSGI is useful as a screen-space baseline or complement. Keep baked GI and voxel cone tracing
-in the comparison when static content or a ray-query-independent implementation matters.
+DDGI and UE 5.8's irradiance-field approach are the world-space diffuse references. Split Radiance
+Cascades is a useful research comparison for spatial detail. Surface ray-traced GI is the
+direct-sampling alternative. SSGI is useful as a screen-space baseline or complement. Keep baked GI
+and voxel cone tracing in the comparison when static content or a ray-query-independent
+implementation matters.
 
 Before making a selection:
 
@@ -154,22 +156,34 @@ limitations are recorded in `../bench/metal-gi.md`; they do not establish a gene
 - [Split Radiance Cascades, July 2026](https://arxiv.org/abs/2607.20384).
   The abstract was inspected; the full PDF exceeded the browser's fetch limit.
 - [Voxel cone tracing paper](https://research.nvidia.com/labs/rtr/publication/crassin2011givoxels/).
-- [Epic's SSGI documentation](https://dev.epicgames.com/documentation/en-us/unreal-engine/screen-space-global-illumination?application_version=4.27).
-- [Metal acceleration structures and ray tracing](https://developer.apple.com/documentation/metal/ray-tracing-with-acceleration-structures).
-- [Apple's Metal ray-tracing performance guidance](https://developer.apple.com/videos/play/wwdc2022/10105/).
+- [Epic's SSGI
+  documentation](https://dev.epicgames.com/documentation/en-us/unreal-engine/screen-space-global-illumination?application_version=4.27).
+- [Metal acceleration structures and ray
+  tracing](https://developer.apple.com/documentation/metal/ray-tracing-with-acceleration-structures).
+- [Apple's Metal ray-tracing performance
+  guidance](https://developer.apple.com/videos/play/wwdc2022/10105/).
 - [Metal neural rendering and denoising](https://developer.apple.com/videos/play/wwdc2026/359/).
-- [wgpu 30.0.1 feature documentation](https://docs.rs/wgpu/30.0.1/wgpu/struct.Features.html#associatedconstant.EXPERIMENTAL_RAY_QUERY).
+- [wgpu 30.0.1 feature
+  documentation](https://docs.rs/wgpu/30.0.1/wgpu/struct.Features.html#associatedconstant.EXPERIMENTAL_RAY_QUERY).
 - [Production DDGI extensions](https://jcgt.org/published/0010/02/01/).
-- [Godot's current SDFGI limitations](https://docs.godotengine.org/en/stable/tutorials/3d/global_illumination/using_sdfgi.html).
+- [Godot's current SDFGI
+  limitations](https://docs.godotengine.org/en/stable/tutorials/3d/global_illumination/using_sdfgi.html).
 - [SHaRC integration guide](https://github.com/NVIDIA-RTX/SHARC/blob/main/docs/Integration.md).
-- [NRC integration and platform requirements](https://github.com/NVIDIA-RTX/RTXGI/blob/main/Docs/NrcGuide.md).
+- [NRC integration and platform
+  requirements](https://github.com/NVIDIA-RTX/RTXGI/blob/main/Docs/NrcGuide.md).
 - [NIRC / Two-Level Monte Carlo author implementation](https://github.com/Mishok43/IVD_NIRC).
-- [RTXDI's distinction between ReSTIR DI, GI, PT and denoising](https://github.com/NVIDIA-RTX/RTXDI).
-- [ReSTIR PT Enhanced (2026)](https://research.nvidia.com/labs/rtr/publication/lin2026restirptenhanced/).
+- [RTXDI's distinction between ReSTIR DI, GI, PT and
+  denoising](https://github.com/NVIDIA-RTX/RTXDI).
+- [ReSTIR PT Enhanced
+  (2026)](https://research.nvidia.com/labs/rtr/publication/lin2026restirptenhanced/).
 - [ReSTIR PG (2025)](https://research.nvidia.com/labs/rtr/publication/zeng2025restirpg/).
 - [ReSTIR BDPT (2025)](https://research.nvidia.com/labs/rtr/publication/hedstrom2025restir/).
 - [NVIDIA NRC GPU prerequisites](https://github.com/NVIDIA-RTX/RTXGI/blob/main/Readme.md).
-- [Apple M5 ray tracing and GPU Neural Accelerators](https://www.apple.com/newsroom/2025/10/apple-unleashes-m5-the-next-big-leap-in-ai-performance-for-apple-silicon/).
-- [Metal GPU training of an irradiance MLP](https://developer.apple.com/documentation/metal/training-a-neural-network-to-render-irradiance-in-real-time).
-- [MPSGraph GPU-training example](https://developer.apple.com/documentation/MetalPerformanceShadersGraph/training-a-neural-network-using-mps-graph).
-- [MPP tensor operations on M5](https://developer.apple.com/download/files/Metal-Performance-Primitives-Programming-Guide.pdf).
+- [Apple M5 ray tracing and GPU Neural
+  Accelerators](https://www.apple.com/newsroom/2025/10/apple-unleashes-m5-the-next-big-leap-in-ai-performance-for-apple-silicon/).
+- [Metal GPU training of an irradiance
+  MLP](https://developer.apple.com/documentation/metal/training-a-neural-network-to-render-irradiance-in-real-time).
+- [MPSGraph GPU-training
+  example](https://developer.apple.com/documentation/MetalPerformanceShadersGraph/training-a-neural-network-using-mps-graph).
+- [MPP tensor operations on
+  M5](https://developer.apple.com/download/files/Metal-Performance-Primitives-Programming-Guide.pdf).

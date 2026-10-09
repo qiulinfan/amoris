@@ -1,10 +1,11 @@
 # The editor
 
-Status: Draft 1, built (2026-10-04); the debugger verified against the real host (section 10). Charter: 2 (proof 4, the editor's modernity and completeness), 3.1
-(one interface), 4.3 (debugging), 4.5 (the editor). Wire protocol: [host-protocol.md](host-protocol.md).
+Status: Draft 1, built (2026-10-04); the debugger verified against the real host (section 10).
+Charter: 2 (proof 4, the editor's modernity and completeness), 3.1 (one interface), 4.3 (debugging),
+4.5 (the editor). Wire protocol: [host-protocol.md](host-protocol.md).
 
-The editor is a web application in `editor/` (React 19, TypeScript 7, Vite 8, bun). It is a client of
-the host protocol and nothing else: every panel reads and writes through the same command catalog
+The editor is a web application in `editor/` (React 19, TypeScript 7, Vite 8, bun). It is a client
+of the host protocol and nothing else: every panel reads and writes through the same command catalog
 agents use over MCP, so the editor has no private channel (charter 3.1). The host serves the built
 editor (`editor/dist`) at `/`; during development Vite serves it and proxies the host's endpoints.
 
@@ -64,8 +65,9 @@ history. It binds 127.0.0.1 and refuses non-loopback `Origin`/`Host`, as the hos
 One window: a top bar, the dock, a status bar. The dock is dockview: every panel can be dragged to
 another group or edge, floated, maximized, closed and reopened (View > Panels, the palette, or
 Cmd/Ctrl+Alt+1–9); the layout is saved in `localStorage` and View > Reset Layout restores the
-default, which follows Godot's: hierarchy over assets on the left; viewport and scripts in the middle
-over console, events, timeline, profiler and debug; inspector over history and agent on the right.
+default, which follows Godot's: hierarchy over assets on the left; viewport and scripts in the
+middle over console, events, timeline, profiler and debug; inspector over history and agent on the
+right.
 
 | Area | Contents |
 |---|---|
@@ -112,8 +114,8 @@ code editor. Help > Keyboard Shortcuts (Mod+/) lists them all from the registry.
 ## 5. The viewport interface
 
 The engine's renderer, compiled to wasm with wasm-bindgen (`crates/pocket-viewport`, built into
-`web/viewport/pkg` by `tools/build_viewport.sh`), implements this behind `web/viewport/pocket_web.js`;
-`editor/src/viewport/engine.ts` is the source of truth.
+`web/viewport/pkg` by `tools/build_viewport.sh`), implements this behind
+`web/viewport/pocket_web.js`; `editor/src/viewport/engine.ts` is the source of truth.
 
 ```ts
 // Served by the host at /wasm/pocket_web.js (web/viewport; the wasm-bindgen output in pkg/ beside it).
@@ -172,12 +174,12 @@ interface Overlays { grid: boolean; axes: boolean }
 ```
 
 Conventions: right-handed, +y up, metres, quaternions `[x, y, z, w]`; the projection is the ordinary
-perspective (or orthographic) of `Camera` with the canvas's aspect, which `editor/src/viewport/
-camera.ts` (`View`) reproduces for hit tests and drops, so the two must agree. The renderer draws the
-world from the render feed; the editor owns the camera (orbit), the selection, the gizmo geometry and
-its hit testing and drag math (`viewport/gizmo.ts`), so a renderer only draws `shapes` on top of the
-scene, in order (they are sorted far to near), and outlines the selection. `pick` should come from
-the entity id buffer (charter 4.4).
+perspective (or orthographic) of `Camera` with the canvas's aspect, which
+`editor/src/viewport/ camera.ts` (`View`) reproduces for hit tests and drops, so the two must agree.
+The renderer draws the world from the render feed; the editor owns the camera (orbit), the
+selection, the gizmo geometry and its hit testing and drag math (`viewport/gizmo.ts`), so a renderer
+only draws `shapes` on top of the scene, in order (they are sorted far to near), and outlines the
+selection. `pick` should come from the entity id buffer (charter 4.4).
 
 Loading (`loadViewport`): `HEAD /wasm/pocket_web.js` (the host serves `web/viewport`, found beside
 the working directory or the executable, or `POCKET_WEB_VIEWPORT`); if it is JavaScript, import it,
@@ -205,22 +207,22 @@ previews locally and sends one edit on release instead.
 
 Mapping: rename is `set` of `Name` with a string value; reparent is `set` `Parent {parent}` (or
 `remove` it) and needs a `Parent` component in the registry; duplicate is `world.get` then `spawn`
-with the components (without `Name`) and the next free name (`Crate4` → `Crate5`, `Sloop` → `Sloop
-2`); create spawns `Transform` plus `Model {mesh: "primitive:cube"}`, `Light {kind}` or `Camera` from
-the schemas' defaults (entries are disabled when the registry lacks the component); placing an asset
-spawns `Transform` and `Model {mesh: <asset path>}` at the ground point under the drop. Add
-Component sets the component's schema defaults; scale handles edit `Transform.scale` when it exists,
-else `Model.scale`.
+with the components (without `Name`) and the next free name (`Crate4` → `Crate5`, `Sloop` →
+`Sloop 2`); create spawns `Transform` plus `Model {mesh: "primitive:cube"}`, `Light {kind}` or
+`Camera` from the schemas' defaults (entries are disabled when the registry lacks the component);
+placing an asset spawns `Transform` and `Model {mesh: <asset path>}` at the ground point under the
+drop. Add Component sets the component's schema defaults; scale handles edit `Transform.scale` when
+it exists, else `Model.scale`.
 
 ## 7. Schema-driven fields and script types
 
 `world.schema` answers `[{name, origin, version, doc, schema}]` (pocket-sim's `ComponentInfo`).
-`src/host/schema.ts` reads both producers: schemars for engine components (`$ref`/`$defs`, fixed-size
-number arrays, `oneOf` of documented `const`s, externally tagged unions, `EntityId` by `$ref`) and
-the registry for project components (`{x, y, z}` objects, `enum`, nullable integers bounded by
-2^53 − 1 for entities). Colours and rotations are recognised by name and doc (`color`, "RGBA",
-"quaternion"), since the schema cannot say; unknown shapes fall back to a JSON editor, never to
-nothing.
+`src/host/schema.ts` reads both producers: schemars for engine components (`$ref`/`$defs`,
+fixed-size number arrays, `oneOf` of documented `const`s, externally tagged unions, `EntityId` by
+`$ref`) and the registry for project components (`{x, y, z}` objects, `enum`, nullable integers
+bounded by 2^53 − 1 for entities). Colours and rotations are recognised by name and doc (`color`,
+"RGBA", "quaternion"), since the schema cannot say; unknown shapes fall back to a JSON editor, never
+to nothing.
 
 Monaco's TypeScript worker loads the project's declarations from the host
 (`scripts.types {text: true, tsconfig: false}`: `pocket.d.ts` and the generated `components.d.ts`,
@@ -257,15 +259,15 @@ adopt them or the editor should change:
 8. `snapshots.list` answers `[{tick, t_s?, hash?}]`; `events.why` answers the chain oldest first,
    ending with the event itself; `status` may carry `speed`.
 9. `GET /api/catalog` answers an array of commands or `{commands}`; `kind` in any case.
-10. The host serves the browser viewport (`web/viewport`, pocket-viewport's wasm-bindgen output) under
-    `/wasm/` (section 5).
+10. The host serves the browser viewport (`web/viewport`, pocket-viewport's wasm-bindgen output)
+    under `/wasm/` (section 5).
 
 ### 8.1 The debugger
 
 The editor drives the script debugger through the host's `debug.*` methods over `/ws`: they are
 pocket-debug's agents' API ([debugger.md](debugger.md) 7), the same core Chrome DevTools and VS Code
-reach over CDP, and the `debug` topic pushes its pauses and resumes. `src/host/protocol.ts` types the
-wire shapes (`HostDebugState`, `HostFrame`, `HostVariable`, `HostBreakpoint`, `HostDataWatch`,
+reach over CDP, and the `debug` topic pushes its pauses and resumes. `src/host/protocol.ts` types
+the wire shapes (`HostDebugState`, `HostFrame`, `HostVariable`, `HostBreakpoint`, `HostDataWatch`,
 `HostEvalResult`) and `src/host/api.ts` normalizes them, in one place, into what the panels show:
 
 - `debug.state` and the `debug` event: `{state, reason, tick, system, location: {file, line,
@@ -290,16 +292,16 @@ wire shapes (`HostDebugState`, `HostFrame`, `HostVariable`, `HostBreakpoint`, `H
   failure when it does not read what was assigned (a typed column converts: an `Int32Array` keeps 1
   of 1.5), and evaluates the root variable again to show it (the pause's frames are captured once,
   at the stop). Either taints the run from that tick (debugger.md 5).
-- Breakpoints: `debug.breakpoints.set {file, line, condition?, log?}` answers `{id: "bp<n>", file,
-  line, verified, locations}` with `line` where it binds (the next line with code); the host has no
-  update, so a new condition sets a new breakpoint (a logpoint keeps its `log`) and clears the old
-  one. `debug.breakpoints.list` and `debug.state.breakpoints` list every frontend's (`owner` `agent`
-  or `cdp`, `target`, `condition`, `log`, `locations`); `debug.breakpoints.clear {id}` removes any of
-  them and `{}` every one set through `debug.*` (the editor's and MCP agents'). The host pushes no
-  event when a breakpoint is set or cleared, so the editor reads the list on (re)connection, on each
-  pause, after Clear All, and when a clear answers `debug.unknown_breakpoint` (another frontend
-  cleared it: the editor drops its entry). A restarted host has none: the editor sets its own again
-  on reconnect, and the pause-on-exceptions mode.
+- Breakpoints: `debug.breakpoints.set {file, line, condition?, log?}` answers
+  `{id: "bp<n>", file, line, verified, locations}` with `line` where it binds (the next line with
+  code); the host has no update, so a new condition sets a new breakpoint (a logpoint keeps its
+  `log`) and clears the old one. `debug.breakpoints.list` and `debug.state.breakpoints` list every
+  frontend's (`owner` `agent` or `cdp`, `target`, `condition`, `log`, `locations`);
+  `debug.breakpoints.clear {id}` removes any of them and `{}` every one set through `debug.*` (the
+  editor's and MCP agents'). The host pushes no event when a breakpoint is set or cleared, so the
+  editor reads the list on (re)connection, on each pause, after Clear All, and when a clear answers
+  `debug.unknown_breakpoint` (another frontend cleared it: the editor drops its entry). A restarted
+  host has none: the editor sets its own again on reconnect, and the pause-on-exceptions mode.
 - `debug.watch {entity: id, component, field?}` answers `{id: "w<n>", entity, component, field}`;
   `debug.unwatch {id}`; `debug.exceptions {mode}` answers `{mode}`.
 - `debug.eval` answers `{type, value, description}` and only while paused (`debug.not_paused`
@@ -317,8 +319,8 @@ wire shapes (`HostDebugState`, `HostFrame`, `HostVariable`, `HostBreakpoint`, `H
 - While paused, the host answers reads from the last publication and refuses calls that need the
   game thread at once with `debug.paused` (server.md 3.4): an inspector edit, a snapshot restore,
   Step, a script apply or a project save shows the refusal as an error toast, which says where the
-  game stands. Pause (`time.control {pause: true}`) is queued instead, shown as an information toast:
-  after Continue, Play rests at the end of the held tick, where every call works.
+  game stands. Pause (`time.control {pause: true}`) is queued instead, shown as an information
+  toast: after Continue, Play rests at the end of the held tick, where every call works.
 - Stop and scripts: Stop returns to the edit world exactly as it was (server.md 3.3), with the
   bundle it ran, while scripts saved during Play are on disk. Stop reads the Play world's bundle
   (`time.control {}`, answered while paused too) before `play.stop`; when it differs from the edit
@@ -355,13 +357,14 @@ events with a cause chain, timeline, profiler, console, agent, debug, scripts, h
 
 The debugger against the real host: `pocket serve` on a copy of `samples/sailing` serving the built
 editor, driven by `tools/debug-host.ts` in headless Chrome with real input only (clicks, keys,
-typing; the exceptions select excepted, step 7), 2026-10-04; `debug-host-*.png` and the driver's
-log `debug-host.txt` (exit 0, every step). Run again on 2026-10-09 on Windows against the host whose
+typing; the exceptions select excepted, step 7), 2026-10-04; `debug-host-*.png` and the driver's log
+`debug-host.txt` (exit 0, every step). Run again on 2026-10-09 on Windows against the host whose
 Stop crosses a pause (server.md 3.4), with the editor built by Vite under Node and the driver run by
 Node 25 (`--experimental-transform-types`, a preload defining `Bun.sleep`, `Bun.write` and
 `Bun.spawn`; no Bun on that machine): exit 0, every step, Edit mode 0.1 s after Stop and the edit
-world on the edited bundle; the log and steps 9 and 10 downscaled are in `docs/evidence/agentdebug/`.
-The driver pressed Cmd+S for Mod+S everywhere; it now presses Ctrl+S off macOS.
+world on the edited bundle; the log and steps 9 and 10 downscaled are in
+`docs/evidence/agentdebug/`. The driver pressed Cmd+S for Mod+S everywhere; it now presses Ctrl+S
+off macOS.
 
 | Screenshot | Shows |
 |---|---|
@@ -393,8 +396,8 @@ completes the Boat's fields.
 - The editor debugs through `debug.*`, not CDP (section 8.1); the host's CDP endpoint serves Chrome
   DevTools and VS Code beside it (Debug > Copy Chrome DevTools URL).
 - Values deeper than the host's preview (three levels, 48 entries) cannot be expanded further: the
-  agents' API hands out no object ids. A string that reads `"undefined"` or `"[Object]"` below the top
-  level shows as that marker.
+  agents' API hands out no object ids. A string that reads `"undefined"` or `"[Object]"` below the
+  top level shows as that marker.
 - While paused, the game thread answers no command (debugger.md 8): an inspector edit, a snapshot
   restore or a save is refused at once (server.md 3.4) and is not retried after Continue; a value
   is set in the paused frame instead, and Stop and Pause cross the pause (section 8.1). A breakpoint
@@ -411,5 +414,5 @@ completes the Boat's fields.
 - Multi-selection edits apply to every selected entity with the component but show the primary's
   values (no mixed-value display).
 - No automated tests beyond `tools/capture.ts` (the mock), `tools/debug-host.ts` (the real host's
-  debugger) and `tools/sdk_check.ts` (the script editor's types against a real host), which drive the
-  main flows end to end.
+  debugger) and `tools/sdk_check.ts` (the script editor's types against a real host), which drive
+  the main flows end to end.

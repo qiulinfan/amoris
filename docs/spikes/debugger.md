@@ -259,5 +259,5 @@ sum (59) and the script returned 45 in both.
   scope (shown as `undefined`); a caller's position points at the call's last argument, not the
   callee.
 - Upstream: report the opcode placement and propose the operand form on PR #1421 (the owner's call;
-  nothing was posted). For comparison, Amoris's earlier Lua prototype needs no engine patch: Lua's debug
-  hook already exists (its charter names LuaPanda over DAP).
+  nothing was posted). For comparison, Amoris's earlier Lua prototype needs no engine patch: Lua's
+  debug hook already exists (its charter names LuaPanda over DAP).

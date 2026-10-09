@@ -5,8 +5,7 @@ material test room or Bistro. The live project's sailing scripts and ocean remai
 a separate preview copy is paused at tick 60 for a geometry-matched lighting comparison.
 
 The packed DutchShip asset was recovered from an existing local checkout and verified against
-the original media manifest: 27,681,384 bytes, SHA-256
-`ba6cbf3a1be5a8539387c41cdb1a53b661e7ce86fee3238a518329b1093e43cf`, CC0-1.0.
+the original media manifest: 27,681,384 bytes, CC0-1.0.
 The static bake contains the actual 69,162-triangle ship and four crates: 69,210 triangles total.
 The project's `island_sea` is a physics/wave prefab, not an island terrain mesh.
 
@@ -30,10 +29,10 @@ this was an ordinary workflow run, not an isolated benchmark.
 
 The native forward pass substitutes the visible probe diffuse term for unoccluded sky diffuse,
 retaining existing direct sun, specular sky, fog and bloom. It therefore changes occlusion as well
-as surface bounce light; it is not an additive brightness control. The procedural ocean shader
-does not query probe GI. No water-reflection bounce, moving-geometry rebake or dynamic GI is claimed.
-The static volume belongs to the baked stop-pose; resuming the sailing simulation invalidates
-that pose-dependent occlusion and self-bounce approximation.
+as surface bounce light; it is not an additive brightness control. The procedural ocean shader does
+not query probe GI. No water-reflection bounce, moving-geometry rebake or dynamic GI is claimed. The
+static volume belongs to the baked stop-pose; resuming the sailing simulation invalidates that
+pose-dependent occlusion and self-bounce approximation.
 
 ## Sky normalization fix
 

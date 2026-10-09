@@ -35,12 +35,13 @@ one stalled all: a 5M-triangle import held a `state` call for 4.7 s
 
 - **The game thread** owns the world, the script host, physics, the time model and the recorder. It
   alone mutates state and steps the tick (charter 5.1).
-- **The presenter thread** is the process's main thread: the window, renderer and audio (the
-  editor is a web application in its own process since Amoris's predecessor charter 1.0, served by the
-  host's server threads; its viewport is the renderer compiled to WebAssembly). The charter's "editor
-  thread" is this thread. It is the main thread because windowing requires it on some platforms
-  (`winit` creates its event loop on the main thread, as macOS demands) and because a shipped game
-  keeps the same split (charter 5.1: "the game thread simulates, the main thread presents").
+- **The presenter thread** is the process's main thread: the window, renderer and audio (the editor
+  is a web application in its own process since Amoris's predecessor charter 1.0, served by the
+  host's server threads; its viewport is the renderer compiled to WebAssembly). The charter's
+  "editor thread" is this thread. It is the main thread because windowing requires it on some
+  platforms (`winit` creates its event loop on the main thread, as macOS demands) and because a
+  shipped game keeps the same split (charter 5.1: "the game thread simulates, the main thread
+  presents").
 - **Worker threads** (asset import, transpiling, hot-update trials, throwaway forks, MCP and network
   I/O, the debugger's endpoint) own no world state they share: a fork a worker steps is its own
   value. They talk to the game thread only through the command queue (section 6).

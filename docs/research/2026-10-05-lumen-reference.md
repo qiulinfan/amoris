@@ -106,16 +106,18 @@ Metal SM5 has Lumen/distance-field support but its RT flags are disabled.
 - `Engine/Config/Mac/DataDrivenPlatformInfo.ini:54,95`: platform capability differences.
 - `Engine/Source/Runtime/Apple/MetalRHI/Private/MetalDevice.cpp:373`: device ray-tracing capability.
 - `Engine/Source/Runtime/Apple/MetalRHI/Private/MetalRHI.cpp:1120`: runtime RT feature setup.
-- `Engine/Source/Runtime/Apple/MetalRHI/Private/MetalRHIPrivate.h:48`: Shader Converter compile gate.
+- `Engine/Source/Runtime/Apple/MetalRHI/Private/MetalRHIPrivate.h:48`: Shader Converter compile
+  gate.
 - `Lumen/LumenHardwareRayTracingCommon.cpp:174`: project, CVar and view eligibility.
 
 The previously verified M5 Metal capability is consistent with this route. It does not demonstrate
 that a particular UE project has HWRT enabled or establish performance on this machine.
 
 The UE support category also differs from dedicated hardware acceleration: M2 supports Metal
-ray-tracing APIs, while dedicated hardware-accelerated ray tracing arrived on Mac with M3.
-An engine's HWRT-path support threshold does not by itself identify the chip's fixed-function
-ray-tracing hardware. See [Apple's M3 announcement](https://www.apple.com/newsroom/2023/10/apple-unveils-m3-m3-pro-and-m3-max-the-most-advanced-chips-for-a-personal-computer/).
+ray-tracing APIs, while dedicated hardware-accelerated ray tracing arrived on Mac with M3. An
+engine's HWRT-path support threshold does not by itself identify the chip's fixed-function
+ray-tracing hardware. See [Apple's M3
+announcement](https://www.apple.com/newsroom/2023/10/apple-unveils-m3-m3-pro-and-m3-max-the-most-advanced-chips-for-a-personal-computer/).
 
 ## Implications for Amoris
 
@@ -141,7 +143,11 @@ No GI method has been selected; this adds a source-backed UE reference to the co
 
 ## Official references
 
-- [Lumen technical details](https://dev.epicgames.com/documentation/unreal-engine/lumen-technical-details-in-unreal-engine).
-- [Lumen performance guide, including Lite](https://dev.epicgames.com/documentation/unreal-engine/lumen-performance-guide-for-unreal-engine?lang=en-US).
-- [UE 5.8 release notes](https://dev.epicgames.com/documentation/unreal-engine/unreal-engine-5-8-release-notes?lang=en-US).
-- [Current macOS requirements](https://dev.epicgames.com/documentation/unreal-engine/macos-development-requirements-for-unreal-engine?lang=en-US).
+- [Lumen technical
+  details](https://dev.epicgames.com/documentation/unreal-engine/lumen-technical-details-in-unreal-engine).
+- [Lumen performance guide, including
+  Lite](https://dev.epicgames.com/documentation/unreal-engine/lumen-performance-guide-for-unreal-engine?lang=en-US).
+- [UE 5.8 release
+  notes](https://dev.epicgames.com/documentation/unreal-engine/unreal-engine-5-8-release-notes?lang=en-US).
+- [Current macOS
+  requirements](https://dev.epicgames.com/documentation/unreal-engine/macos-development-requirements-for-unreal-engine?lang=en-US).

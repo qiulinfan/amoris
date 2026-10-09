@@ -151,12 +151,12 @@ bytes to the page's viewport.
 
 ## 6. Debugging
 
-`pocket-debug` serves the Chrome DevTools Protocol for the game's scripts ([debugger.md](debugger.md)
-is the specification of what is built):
+`pocket-debug` serves the Chrome DevTools Protocol for the game's scripts
+([debugger.md](debugger.md) is the specification of what is built):
 
 - `GET /json/list` and `/json/version` list one target, `pocket-game`, with
-  `webSocketDebuggerUrl: ws://127.0.0.1:<port>/devtools/game` (port 9229 by default, its own, not the
-  host's; a request whose `Host` or `Origin` is not loopback is refused).
+  `webSocketDebuggerUrl: ws://127.0.0.1:<port>/devtools/game` (port 9229 by default, its own, not
+  the host's; a request whose `Host` or `Origin` is not loopback is refused).
 - Domains: `Runtime` (`enable`, `evaluate`, `getProperties`, `callFunctionOn`,
   `runIfWaitingForDebugger`), `Debugger` (`enable`, `setBreakpointByUrl`, `removeBreakpoint`,
   `setBreakpointsActive`, `pause`, `resume`, `stepOver`, `stepInto`, `stepOut`,
@@ -169,8 +169,8 @@ is the specification of what is built):
 - Chrome DevTools attaches with
   `devtools://devtools/bundled/js_app.html?experiments=true&v8only=true&ws=127.0.0.1:<port>/devtools/game`
   (the page `chrome://inspect` opens for a Node target); VS Code with a `node`-type `attach`
-  configuration on the port (`editors/vscode/launch.json`). `debug.state` names the endpoint while it
-  runs (`cdp: {ws, devtools}`, `devtools` being that URL); it is the authority on the port.
+  configuration on the port (`editors/vscode/launch.json`). `debug.state` names the endpoint while
+  it runs (`cdp: {ws, devtools}`, `devtools` being that URL); it is the authority on the port.
 - The same core is exposed as JSON methods for agents, with TypeScript positions, 1-based
   (debugger.md 7 has the parameters and results, the catalog an entry with the schema of each; MCP's
   `debug` tool takes every one as an action and lists their parameters, section 7):
