@@ -201,45 +201,35 @@ impl CaptureHub for CaptureServer {
 }
 
 /// The script debugger behind the host's `debug.*` methods and the editor's debugging panel
-/// (docs/spec/debugger.md): agents' calls go to the hub; `debug.rewind` restores the kept snapshot
-/// at or before a tick and runs the world forward to it.
+/// (docs/spec/debugger.md): agents' calls go to the hub on a blocking thread (a step or a wait
+/// blocks up to its `timeout_ms`); the host serves `debug.rewind` and resolves `debug.watch`'s
+/// entity names itself (pocket-server `local.rs`).
 pub struct DebugBridge {
     pub hub: pocket_debug::DebugHub,
-    pub host: pocket_server::Host,
+}
+
+/// The debugger's catalog entries (pocket-debug's methods), for the host's catalog and the CLI's
+/// help without a host.
+pub fn debug_methods() -> Vec<Value> {
+    pocket_debug::methods()
+        .iter()
+        .map(pocket_debug::Method::entry)
+        .collect()
 }
 
 impl pocket_server::DebugHub for DebugBridge {
     fn call(&self, method: &str, params: Value) -> BoxFuture<Result<Value, Problem>> {
         let hub = self.hub.clone();
-        let host = self.host.clone();
         let method = method.to_owned();
         Box::pin(async move {
-            if method == "debug.rewind" {
-                let tick = params.get("tick").and_then(Value::as_u64).ok_or_else(|| {
-                    Problem::new(
-                        "request.invalid_value",
-                        "debug.rewind needs {tick}: the tick to stand at.",
-                        detail([]),
-                    )
-                })?;
-                let via = pocket_server::Via::Api;
-                let restored = host
-                    .call(&via, "snapshots.restore", json!({"tick": tick}))
-                    .await?;
-                let at = restored.get("tick").and_then(Value::as_u64).unwrap_or(tick);
-                let mut out = json!({"restored": at, "tick": at});
-                if tick > at {
-                    let stepped = host
-                        .call(&via, "time.step", json!({"ticks": tick - at}))
-                        .await?;
-                    out["tick"] = stepped.get("tick").cloned().unwrap_or(json!(tick));
-                }
-                return Ok(out);
-            }
             tokio::task::spawn_blocking(move || hub.call(&method, &params))
                 .await
                 .unwrap_or_else(|e| Err(Problem::new("debug.failed", e.to_string(), detail([]))))
         })
+    }
+
+    fn methods(&self) -> Vec<Value> {
+        debug_methods()
     }
 }
 

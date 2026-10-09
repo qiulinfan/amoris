@@ -12,6 +12,27 @@ pub struct ToolDef {
     pub schema: Value,
 }
 
+/// The `debug` tool's actions: every `debug.*` method (pocket-debug's `methods()` and the host's
+/// `debug.rewind`; pocket-app's tests check the two agree).
+pub const DEBUG_ACTIONS: &[&str] = &[
+    "attach",
+    "detach",
+    "breakpoints.set",
+    "breakpoints.clear",
+    "breakpoints.list",
+    "pause",
+    "continue",
+    "step",
+    "state",
+    "eval",
+    "set",
+    "watch",
+    "unwatch",
+    "exceptions",
+    "wait",
+    "rewind",
+];
+
 fn action(values: &[&str]) -> Value {
     json!({"type": "string", "enum": values})
 }
@@ -28,11 +49,12 @@ pub fn tools() -> Vec<ToolDef> {
         ToolDef {
             name: "world",
             description: "The authoritative world (editors see your edits live). tree: entities with \
-                component names (filter, with). get {entity, components}. query {with, fields \
-                ['Boat.speed'], name, limit}: rows. schema {component}. edit {ops, label}: one \
-                undoable transaction, ops [{spawn:{name,prefab,components}} | {set:{entity,\
-                component,value}} (fields merge) | {remove:{entity,component}} | \
-                {destroy:{entity}}].",
+                component names (filter, with). get {entity, components, fields ['Boat.rudder']}. \
+                query {with, fields ['Boat.speed'], name, limit}: rows. schema {component}. edit \
+                {ops, label}: one undoable transaction, ops [{spawn:{name,prefab,components}} | \
+                {set:{entity,component,value}} (fields merge) | {remove:{entity,component}} | \
+                {destroy:{entity}}]. While the debugger holds the game, reads answer from the \
+                last tick's end (paused_at).",
             schema: obj(
                 json!({
                     "action": action(&["tree", "get", "query", "schema", "edit"]),
@@ -53,18 +75,23 @@ pub fn tools() -> Vec<ToolDef> {
         ToolDef {
             name: "scripts",
             description: "TypeScript under scripts/ (the pocket SDK). guide: how to write \
-                them (read it first); list; read {path}; write {path, text} (diagnostics, no \
-                swap); apply: compile, hot-swap, type check with tsc (diagnostics with TS \
-                locations); check: the same, nothing swapped; types: write .pocket/types \
-                (pocket.d.ts, components.d.ts: every component and field scripts can name) and \
-                list the components.",
+                them (read it first); list; read {path, lines '50-80', numbered}; write {path, \
+                text} (diagnostics, no swap); apply: compile, hot-swap, type check with tsc \
+                (diagnostics with TS locations); check: the same, nothing swapped; status: the \
+                bundle running; types: write .pocket/types (pocket.d.ts, components.d.ts: every \
+                component and field scripts can name) and list the components.",
             schema: obj(
                 json!({
-                    "action": action(&["guide", "list", "read", "write", "apply", "check", "types"]),
+                    "action": action(&["guide", "list", "read", "write", "apply", "check",
+                                       "status", "types"]),
                     "path": {"type": "string"},
                     "text": {"type": ["string", "boolean"],
                              "description": "write: the file's text; types: true to return the \
                                  declarations' text too"},
+                    "lines": {"type": "string", "description": "read: 1-based, inclusive: \
+                        50-80, 50-, -20 or 67"},
+                    "numbered": {"type": "boolean", "description": "read: prefix each line \
+                        with its number"},
                     "force": {"type": "boolean"},
                 }),
                 &["action"],
@@ -74,9 +101,11 @@ pub fn tools() -> Vec<ToolDef> {
             name: "time",
             description: "Time of the world shown. status; pause; resume; speed {speed}; step \
                 {ticks, until:{event:'crate.taken'|'crate.*', subject, tick}, watch:{entity, \
-                component, field, op:changes|crosses|>|>=|<|<=|==|!=, value}}: stops early when \
-                met; snapshots: kept every 60 ticks; rewind {tick}: restore the kept snapshot at \
-                or before tick.",
+                component, field, op:changes|crosses|>|>=|<|<=|==|!=, value}, sample:{fields \
+                ['Sloop.Boat.rudder'], every}}: stops early when met or at a breakpoint \
+                (stopped_by), samples come back as a table; snapshots: kept every 60 ticks; \
+                rewind {tick, bundle}: restore the kept snapshot at or before tick under the \
+                applied scripts (bundle 'snapshot': its own).",
             schema: obj(
                 json!({
                     "action": action(&["status", "pause", "resume", "speed", "step", "snapshots",
@@ -85,7 +114,10 @@ pub fn tools() -> Vec<ToolDef> {
                     "speed": {"type": "number"},
                     "until": {"type": "object"},
                     "watch": {"type": "object"},
+                    "sample": {"type": "object", "properties": {
+                        "fields": strings, "every": {"type": "integer"}}},
                     "tick": {"type": "integer"},
+                    "bundle": {"type": "string", "enum": ["applied", "snapshot"]},
                 }),
                 &["action"],
             ),
@@ -135,13 +167,35 @@ pub fn tools() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "debug",
-            description: "Script debugger: breakpoints.set {file, line, condition}, \
-                breakpoints.clear, pause, continue, step {kind: over|into|out}, state, eval \
-                {expr, frame}, watch {entity, component, field}, rewind {tick}.",
+            description: "Script debugger (TypeScript lines, 1-based). breakpoints.set {file, \
+                line, condition, log}; breakpoints.clear {id}; breakpoints.list; state {brief}; \
+                eval {expr, frame}; set {name, value, frame}; step {kind: over|into|out}; \
+                continue; pause; wait {timeout_ms}; watch {entity, component, field}: pause when \
+                a script's write changes it; unwatch {id}; exceptions {mode: \
+                none|uncaught|all}; rewind {tick, bundle}; attach; detach. A time step that \
+                hits a breakpoint returns at once (stopped_by); while held, reads still answer \
+                and other calls are refused with debug.paused.",
             schema: obj(
                 json!({
-                    "action": action(&["breakpoints.set", "breakpoints.clear", "pause",
-                                       "continue", "step", "state", "eval", "watch", "rewind"]),
+                    "action": action(DEBUG_ACTIONS),
+                    "file": {"type": "string", "description": "scripts/helm.ts"},
+                    "line": {"type": "integer"},
+                    "condition": {"type": "string"},
+                    "log": {"type": "string"},
+                    "id": {"type": "string"},
+                    "brief": {"type": "boolean"},
+                    "expr": {"type": "string"},
+                    "frame": {"type": "integer"},
+                    "name": {"type": "string"},
+                    "value": {"type": "string"},
+                    "kind": action(&["over", "into", "out"]),
+                    "timeout_ms": {"type": "integer"},
+                    "entity": entity,
+                    "component": {"type": "string"},
+                    "field": {"type": "string"},
+                    "mode": action(&["none", "uncaught", "all"]),
+                    "tick": {"type": "integer"},
+                    "bundle": {"type": "string", "enum": ["applied", "snapshot"]},
                 }),
                 &["action"],
             ),

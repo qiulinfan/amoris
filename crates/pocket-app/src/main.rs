@@ -77,19 +77,18 @@ fn dispatch(args: Vec<String>) -> Outcome {
 
 fn main() {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
-    if args.is_empty() {
-        if let Some(game) = std::env::current_exe()
+    if args.is_empty()
+        && let Some(game) = std::env::current_exe()
             .ok()
             .as_deref()
             .and_then(bundled_game)
-        {
-            args = vec![
-                "play".into(),
-                game.to_string_lossy().into_owned(),
-                "--walk".into(),
-                "--vsync".into(),
-            ];
-        }
+    {
+        args = vec![
+            "play".into(),
+            game.to_string_lossy().into_owned(),
+            "--walk".into(),
+            "--vsync".into(),
+        ];
     }
     // A window's event loop must run on the main thread (macOS); its game runs on its own thread.
     // `pocket play start|stop` is the client's Play of a running host; `pocket play <project>` opens

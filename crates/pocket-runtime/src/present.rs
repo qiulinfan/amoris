@@ -8,6 +8,10 @@
 //! splats, the environment and the sea when any of them changed. A new subscriber, a restore, a
 //! fork swapped in (Play, Stop) or a reload gets a full frame.
 
+// The determinism lists (clippy.toml) are the tick code's: this extraction reads change detection
+// and keeps a map of what it drew, which never reaches the world, its hash or a replay.
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
+
 use std::collections::HashMap;
 
 use bevy_ecs::change_detection::DetectChanges;

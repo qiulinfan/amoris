@@ -8,8 +8,14 @@ samples/sailing and drives it the three ways clients do.
    world.changed and status pushes, Play and Stop).
 3. MCP over Streamable HTTP (`initialize`, `tools/list` with its size, a `world` call, a refused
    call).
+4. A host the script debugger holds (docs/bench/debug-eval.md, findings 1, 2 and 4): a step that
+   stops at a breakpoint returns at once, reads answer from the last tick's end, calls that need
+   the game are refused at once with `debug.paused`, the debugger's short forms, and a restore
+   that keeps the scripts applied since the snapshot.
 
-Standard library only. Usage: python3 tools/smoke_server.py [--pocket target/debug/pocket]
+Standard library only; macOS, Linux and Windows (where the host is stopped with Ctrl-Break, the
+console event a process group can be sent, instead of SIGTERM).
+Usage: python3 tools/smoke_server.py [--pocket target/debug/pocket]
 """
 
 import argparse
@@ -28,6 +34,8 @@ import urllib.request
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
+WINDOWS = os.name == "nt"
+EXE = ".exe" if WINDOWS else ""
 FAILURES = []
 
 
@@ -156,18 +164,21 @@ class MCP:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--pocket", default=str(REPO / "target/debug/pocket"))
+    ap.add_argument("--pocket", default=str(REPO / f"target/debug/pocket{EXE}"))
     ap.add_argument("--keep", action="store_true", help="keep the project copy")
     a = ap.parse_args()
-    pocket = a.pocket
+    # Absolute: the CLI runs in the project's copy.
+    pocket = str(Path(a.pocket).resolve())
     if not Path(pocket).exists():
         sys.exit(f"{pocket} is not built (cargo build -p pocket-app, or --pocket PATH)")
     tmp = Path(tempfile.mkdtemp(prefix="pocket-smoke-"))
     proj = tmp / "sailing"
     shutil.copytree(REPO / "samples/sailing", proj)
     errlog = open(tmp / "serve.err", "w")
+    # On Windows the host gets its own process group, so Ctrl-Break reaches it alone.
+    group = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if WINDOWS else {}
     server = subprocess.Popen([pocket, "serve", str(proj), "--port", "0"],
-                              stdout=subprocess.PIPE, stderr=errlog, text=True)
+                              stdout=subprocess.PIPE, stderr=errlog, text=True, **group)
     try:
         line = server.stdout.readline()
         info = json.loads(line)
@@ -233,7 +244,10 @@ def main():
         check(f and "result" in f, "ws subscribe")
         f, seen = ws.request(2, "world.edit", {"ops": [{"set": {"entity": "Crate3", "component": "Cargo", "value": {"value": 9}}}]})
         check(f and "result" in f, "ws world.edit")
-        h, seen2 = ws.until(lambda f: f.get("event") == "history", 5)
+        # The host pushes the history before it answers; the push can arrive first.
+        h = next((p for p in seen if p.get("event") == "history"), None)
+        if h is None:
+            h, _ = ws.until(lambda f: f.get("event") == "history", 5)
         check(h is not None and h["data"]["undo"], "ws: history pushed after the edit")
         # Pushes coalesce over 100 ms: a reset (the CLI's Play and Stop just before) covers the
         # edit too.
@@ -280,8 +294,73 @@ def main():
         r = m.rpc("tools/call", {"name": "debug", "arguments": {"action": "state"}})
         text = r["result"]["content"][0]["text"]
         check(not r["result"].get("isError") and "breakpoints" in text, f"mcp debug state: {text[:80]}")
+        debug_tool = next(t for t in tools if t["name"] == "debug")
+        props = debug_tool["inputSchema"]["properties"]
+        check({"file", "line", "condition", "expr", "frame", "kind", "entity", "component",
+               "field", "id"} <= set(props), f"mcp debug tool lists {len(props)} parameters")
+
+        # 5. A host the debugger holds.
+        def timed(*args, ok=True):
+            t = time.perf_counter()
+            r = cli(*args, ok=ok)
+            return r, (time.perf_counter() - t) * 1000
+
+        line = 1 + next(i for i, l in enumerate((proj / "scripts/rules.ts").read_text().splitlines())
+                        if "const speed = Math.abs" in l)
+        r = cli("debug", "break", f"rules.ts:{line}")
+        check(r.returncode == 0 and f"scripts/rules.ts:{line}" in r.stdout,
+              f"cli debug break: {r.stdout.strip()}")
+        r, ms = timed("step", "60")
+        check(f"stopped at scripts/rules.ts:{line} (breakpoint" in r.stdout,
+              f"cli step returns at the breakpoint in {ms:.0f} ms: {r.stdout.strip()}")
+        r, ms = timed("status")
+        check(r.returncode == 0 and f"HELD at scripts/rules.ts:{line}" in r.stdout,
+              f"cli status while held, {ms:.0f} ms: {r.stdout.strip()}")
+        r, ms = timed("world", "get", "Sloop", "Boat.speed,Log.distance")
+        check(r.returncode == 0 and "(paused at" in r.stdout and "Boat.speed =" in r.stdout,
+              f"cli world get fields while held, {ms:.0f} ms")
+        r = cli("world", "tree", "--with", "Boat")
+        check(r.returncode == 0 and "#3 Sloop" in r.stdout, "cli world tree while held")
+        r = cli("scripts", "read", "rules.ts", "--lines", str(line))
+        check(r.stdout.startswith(f"{line}| "), f"cli scripts read --lines: {r.stdout.strip()}")
+        r, ms = timed("scripts", "apply", ok=False)
+        check(r.returncode == 1 and "debug.paused" in r.stderr and ms < 5000,
+              f"cli scripts apply refused at once while held, {ms:.0f} ms")
+        r = cli("debug", "state")
+        check(r.stdout.startswith(f"paused at scripts/rules.ts:{line}") and "    r = " in r.stdout
+              and "ctx" not in r.stdout, f"cli debug state, {len(r.stdout)} bytes")
+        r = cli("debug", "eval", "r", "+", "1")
+        check(r.stdout.strip() == "1  (number)", f"cli debug eval: {r.stdout.strip()}")
+        r = m.rpc("tools/call", {"name": "debug", "arguments": {"action": "state", "brief": True}})
+        text = r["result"]["content"][0]["text"]
+        check(not r["result"].get("isError") and '"paused"' in text,
+              f"mcp debug state brief: {len(text)} bytes")
+        r = m.rpc("tools/call", {"name": "world", "arguments": {"action": "get", "entity": "Sloop",
+                                                               "fields": ["Boat.speed"]}})
+        text = r["result"]["content"][0]["text"]
+        check(not r["result"].get("isError") and "paused_at" in text, "mcp world get while held")
+        h = call(base, "debug.watch", {"entity": "Sloop", "component": "Log", "field": "distance"})
+        check(h.get("result", {}).get("entity") == 3, "api debug.watch by name")
+        call(base, "debug.unwatch")
+        r = cli("debug", "clear")
+        r = cli("debug", "continue")
+        check(r.stdout.strip() == "running", "cli debug continue")
+        r = cli("step", "1")
+        check(r.returncode == 0 and "stopped" not in r.stdout, f"cli step after: {r.stdout.strip()}")
+
+        # A restore keeps the scripts applied since the snapshot.
+        rules = proj / "scripts/rules.ts"
+        rules.write_text(rules.read_text().replace("speed * ctx.dt", "2 * speed * ctx.dt", 1))
+        r = cli("scripts", "apply")
+        applied = next((w for w in r.stdout.split(" | ") if w.startswith("bundle ")), "")[7:]
+        r = cli("snapshots", "restore", "0")
+        check(applied and f"scripts {applied} (applied)" in r.stdout,
+              f"cli restore keeps the applied scripts: {r.stdout.strip()}")
+        r = cli("snapshots", "restore", "0", "--bundle", "snapshot")
+        check("(snapshot)" in r.stdout and f"scripts {applied}" not in r.stdout,
+              f"cli restore --bundle snapshot: {r.stdout.strip()}")
     finally:
-        server.send_signal(signal.SIGTERM)
+        server.send_signal(signal.CTRL_BREAK_EVENT if WINDOWS else signal.SIGTERM)
         try:
             server.wait(10)
         except subprocess.TimeoutExpired:

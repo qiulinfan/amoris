@@ -111,10 +111,7 @@ fn start(root: &Path, seed: Option<u64>, editor: Option<PathBuf>) -> Result<Serv
         root.to_path_buf(),
     )));
     host.set_render(Arc::new(crate::present::FeedServer { feed }));
-    host.set_debug(Arc::new(crate::present::DebugBridge {
-        hub: hub.clone(),
-        host: host.clone(),
-    }));
+    host.set_debug(Arc::new(crate::present::DebugBridge { hub: hub.clone() }));
     crate::present::forward_debug_events(&hub, host.clone());
     Ok(Served {
         handle,
@@ -132,6 +129,9 @@ fn runtime() -> Result<tokio::runtime::Runtime, Problem> {
         .map_err(|e| Problem::new("host.runtime", e.to_string(), detail([])))
 }
 
+/// Resolves when the host is asked to stop: Ctrl-C, SIGTERM on Unix, and on Windows Ctrl-Break,
+/// the console event a parent can send a child in its own process group (what
+/// `tools/smoke_server.py` sends; SIGTERM has no Windows counterpart a process can catch).
 async fn stopped() {
     #[cfg(unix)]
     {
@@ -140,6 +140,16 @@ async fn stopped() {
             tokio::select! {
                 _ = tokio::signal::ctrl_c() => {}
                 _ = term.recv() => {}
+            }
+            return;
+        }
+    }
+    #[cfg(windows)]
+    {
+        if let Ok(mut brk) = tokio::signal::windows::ctrl_break() {
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {}
+                _ = brk.recv() => {}
             }
             return;
         }

@@ -40,7 +40,22 @@ const FLAGS: &[Flag] = &[
     ("label", true),
     ("components", true),
     ("prefab", true),
+    ("timeout", true),
+    ("if", true),
+    ("log", true),
+    ("frame", true),
+    ("full", false),
+    ("bundle", true),
+    ("lines", true),
+    ("numbers", false),
+    ("sample", true),
+    ("every", true),
 ];
+
+/// How long the CLI waits for an answer unless `--timeout <s>` or `POCKET_TIMEOUT` says otherwise
+/// (a debugger's `timeout_ms` waits longer): nothing a held host refuses at once can hang an
+/// agent's shell (docs/bench/debug-eval.md, the first finding).
+pub const DEFAULT_TIMEOUT_S: f64 = 60.0;
 
 /// The short forms: command, the method it calls, usage.
 pub const COMMANDS: &[(&str, &str, &str)] = &[
@@ -93,10 +108,11 @@ pub const COMMANDS: &[(&str, &str, &str)] = &[
     ),
     ("assets", "assets.list", "pocket assets [dir]"),
     ("catalog", "catalog.list", "pocket catalog"),
+    ("docs", "docs.search", "pocket docs <words..> [--limit n]"),
     (
         "debug",
         "debug.state",
-        "pocket debug <action> ['<json params>']   (debug.<action>)",
+        "pocket debug state [--full] | break <file>:<line> [--if <expr>] [--log <text>] | clear [id] | list | eval <expr> [--frame n] | set <name> <expr> [--frame n] | watch <entity>.<C>[.<field>] | unwatch [id] | continue | step [over|into|out] | pause | wait [ms] | exceptions none|uncaught|all | rewind <tick> [--bundle snapshot] | attach | detach | <action> '<json params>'",
     ),
     ("help", "", "pocket help [command|method]"),
 ];
@@ -106,10 +122,11 @@ pub fn is_client(cmd: &str) -> bool {
     COMMANDS.iter().any(|(c, _, _)| *c == cmd)
 }
 
-fn agent() -> ureq::Agent {
+fn agent(timeout: Duration) -> ureq::Agent {
     ureq::Agent::config_builder()
         .http_status_as_error(false)
         .timeout_connect(Some(Duration::from_secs(2)))
+        .timeout_global(Some(timeout))
         .build()
         .into()
 }
@@ -122,20 +139,70 @@ fn unreachable(url: &str, why: &str) -> Problem {
     )
 }
 
-/// Calls `method` on the host at `url` (`POST /api/call`).
+/// What a request that ran out of time says.
+fn timed_out(url: &str, method: &str, waited: Duration) -> Problem {
+    Problem::new(
+        "host.timeout",
+        format!(
+            "The host at {url} did not answer {method} within {:.0} s. It may still be running it \
+             (a long step or type check); `pocket status` and `pocket debug state` answer \
+             meanwhile. --timeout <s> or POCKET_TIMEOUT waits longer.",
+            waited.as_secs_f64()
+        ),
+        detail([
+            ("url", json!(url)),
+            ("method", json!(method)),
+            ("waited_s", json!(waited.as_secs_f64())),
+        ]),
+    )
+}
+
+/// How long to wait for `method`: `given` seconds (`--timeout`), else `POCKET_TIMEOUT`, else
+/// [`DEFAULT_TIMEOUT_S`]; at least 10 s past a `timeout_ms` the call itself asks to wait.
+pub fn timeout_for(given: Option<f64>, params: &Value) -> Duration {
+    let base = given
+        .or_else(|| {
+            std::env::var("POCKET_TIMEOUT")
+                .ok()
+                .and_then(|t| t.parse().ok())
+        })
+        .filter(|t: &f64| t.is_finite() && *t > 0.0)
+        .unwrap_or(DEFAULT_TIMEOUT_S);
+    let asked = params["timeout_ms"]
+        .as_f64()
+        .map_or(0.0, |ms| ms / 1000.0 + 10.0);
+    Duration::from_secs_f64(base.max(asked))
+}
+
+/// Calls `method` on the host at `url` (`POST /api/call`), waiting as [`timeout_for`] says.
 pub fn call_url(url: &str, method: &str, params: Value) -> Result<Value, Problem> {
+    let timeout = timeout_for(None, &params);
+    call_url_within(url, method, params, timeout)
+}
+
+/// [`call_url`] waiting at most `timeout` for the answer: `host.timeout` after it.
+pub fn call_url_within(
+    url: &str,
+    method: &str,
+    params: Value,
+    timeout: Duration,
+) -> Result<Value, Problem> {
     let body = json!({"id": 1, "method": method, "params": params}).to_string();
-    let mut resp = agent()
+    let failed = |e: ureq::Error| match e {
+        ureq::Error::Timeout(_) => timed_out(url, method, timeout),
+        e => unreachable(url, &e.to_string()),
+    };
+    let mut resp = agent(timeout)
         .post(format!("{url}/api/call"))
         .content_type("application/json")
         .send(&body)
-        .map_err(|e| unreachable(url, &e.to_string()))?;
+        .map_err(failed)?;
     let text = resp
         .body_mut()
         .with_config()
         .limit(256 << 20)
         .read_to_string()
-        .map_err(|e| unreachable(url, &e.to_string()))?;
+        .map_err(failed)?;
     let v: Value = serde_json::from_str(&text)
         .map_err(|e| unreachable(url, &format!("the answer is not JSON ({e})")))?;
     if let Some(e) = v.get("error") {
@@ -146,7 +213,7 @@ pub fn call_url(url: &str, method: &str, params: Value) -> Result<Value, Problem
 }
 
 fn get_url(url: &str, path: &str) -> Result<Value, Problem> {
-    let mut resp = agent()
+    let mut resp = agent(Duration::from_secs(10))
         .get(format!("{url}{path}"))
         .call()
         .map_err(|e| unreachable(url, &e.to_string()))?;
@@ -298,13 +365,33 @@ fn request(cmd: &str, args: &Args) -> Result<(String, Value), Problem> {
                 "world.tree"
             }
             "get" => {
-                let e = pos(args, 1).ok_or_else(|| bad("pocket world get <entity> [C..]"))?;
+                let e = pos(args, 1)
+                    .ok_or_else(|| bad("pocket world get <entity> [C.. | C.f,C.g..]"))?;
                 p.insert("entity".into(), entity(e));
-                let comps: Vec<&String> = args.positional.iter().skip(2).collect();
+                // Components and fields alike, space or comma separated: `Boat Transform`,
+                // `Boat.heading_deg,Boat.rudder`.
+                let mut wanted: Vec<String> = args
+                    .positional
+                    .iter()
+                    .skip(2)
+                    .flat_map(|a| list(a))
+                    .collect();
+                if wanted.is_empty()
+                    && let Some(c) = args.value("components")
+                {
+                    wanted = list(c);
+                }
+                let (fields, comps): (Vec<String>, Vec<String>) =
+                    wanted.into_iter().partition(|w| w.contains('.'));
                 if !comps.is_empty() {
                     p.insert("components".into(), json!(comps));
-                } else if let Some(c) = args.value("components") {
-                    p.insert("components".into(), json!(list(c)));
+                }
+                if let Some(f) = args.value("fields") {
+                    let mut all = fields;
+                    all.extend(list(f));
+                    p.insert("fields".into(), json!(all));
+                } else if !fields.is_empty() {
+                    p.insert("fields".into(), json!(fields));
                 }
                 "world.get"
             }
@@ -430,6 +517,13 @@ fn request(cmd: &str, args: &Args) -> Result<(String, Value), Problem> {
             if let Some(w) = args.value("watch") {
                 p.insert("watch".into(), field_test(w)?);
             }
+            if let Some(s) = args.value("sample") {
+                let mut sample = json!({"fields": list(s)});
+                if let Some(every) = args.number::<u64>("every")? {
+                    sample["every"] = json!(every);
+                }
+                p.insert("sample".into(), sample);
+            }
             "time.step"
         }
         "time" => match pos(args, 0).unwrap_or("status") {
@@ -485,8 +579,17 @@ fn request(cmd: &str, args: &Args) -> Result<(String, Value), Problem> {
         "scripts" => match pos(args, 0).unwrap_or("list") {
             "list" => "scripts.list",
             "read" => {
-                let path = pos(args, 1).ok_or_else(|| bad("pocket scripts read <path>"))?;
+                let path = pos(args, 1)
+                    .ok_or_else(|| bad("pocket scripts read <path> [--lines 50-80] [--numbers]"))?;
                 p.insert("path".into(), json!(path));
+                // Line numbers whenever lines are picked: what breakpoints and errors count.
+                if let Some(l) = args.value("lines") {
+                    p.insert("lines".into(), json!(l));
+                    p.insert("numbered".into(), json!(true));
+                }
+                if args.has("numbers") {
+                    p.insert("numbered".into(), json!(true));
+                }
                 "scripts.read"
             }
             "write" => {
@@ -516,14 +619,26 @@ fn request(cmd: &str, args: &Args) -> Result<(String, Value), Problem> {
             "check" => "scripts.check",
             "types" => "scripts.types",
             "guide" => "scripts.guide",
+            "status" => "scripts.status",
             other => {
                 return Err(usage(
                     format!("pocket scripts has no '{other}'"),
                     other,
-                    &["list", "read", "write", "apply", "check", "types", "guide"],
+                    &[
+                        "list", "read", "write", "apply", "check", "types", "guide", "status",
+                    ],
                 ));
             }
         },
+        "docs" => {
+            let words: Vec<&str> = args.positional.iter().map(String::as_str).collect();
+            if words.is_empty() {
+                return Err(bad("pocket docs <words..>"));
+            }
+            p.insert("query".into(), json!(words.join(" ")));
+            put(&mut p, "limit", num("limit")?);
+            "docs.search"
+        }
         "events" => {
             if let Some(w) = args.number::<u64>("why")? {
                 p.insert("seq".into(), json!(w));
@@ -545,8 +660,9 @@ fn request(cmd: &str, args: &Args) -> Result<(String, Value), Problem> {
             "restore" => {
                 let t: u64 = pos(args, 1)
                     .and_then(|t| t.parse().ok())
-                    .ok_or_else(|| bad("pocket snapshots restore <tick>"))?;
+                    .ok_or_else(|| bad("pocket snapshots restore <tick> [--bundle snapshot]"))?;
                 p.insert("tick".into(), json!(t));
+                put(&mut p, "bundle", args.value("bundle").map(|b| json!(b)));
                 "snapshots.restore"
             }
             other => {
@@ -561,20 +677,388 @@ fn request(cmd: &str, args: &Args) -> Result<(String, Value), Problem> {
             put(&mut p, "dir", pos(args, 0).map(|d| json!(d)));
             "assets.list"
         }
-        "debug" => {
-            let action = pos(args, 0).unwrap_or("state");
-            let params = match pos(args, 1) {
-                Some(t) => json_arg(t)?,
-                None => json!({}),
-            };
-            return Ok((format!("debug.{action}"), params));
-        }
+        "debug" => return debug_request(args),
         _ => return Err(bad(format!("'{cmd}' is not a client command"))),
     };
     Ok((method.to_owned(), Value::Object(p)))
 }
 
+/// `pocket debug ...`: the debugger's short forms, or `<action> ['<json params>']` for any
+/// `debug.*` method with its exact parameters.
+fn debug_request(args: &Args) -> Result<(String, Value), Problem> {
+    let action = pos(args, 0).unwrap_or("state");
+    let rest: Vec<&str> = args.positional.iter().skip(1).map(String::as_str).collect();
+    let canonical = match action {
+        "break" => "breakpoints.set",
+        "clear" => "breakpoints.clear",
+        "list" => "breakpoints.list",
+        a => a,
+    };
+    if let [one] = rest.as_slice()
+        && one.trim_start().starts_with('{')
+        && let Ok(v @ Value::Object(_)) = serde_json::from_str::<Value>(one)
+    {
+        return Ok((format!("debug.{canonical}"), v));
+    }
+    let mut p = Map::new();
+    let frame = args.number::<u64>("frame")?.map(|f| json!(f));
+    let method = match canonical {
+        "state" => "debug.state",
+        "breakpoints.set" => {
+            let usage = "pocket debug break <file>:<line> [--if <expr>] [--log <text>]";
+            let spec = rest.first().ok_or_else(|| bad(usage))?;
+            let (file, line) = spec
+                .rsplit_once(':')
+                .and_then(|(f, l)| Some((f, l.parse::<u64>().ok()?)))
+                .ok_or_else(|| {
+                    bad(format!(
+                        "'{spec}' is not <file>:<line> (scripts/helm.ts:67)"
+                    ))
+                })?;
+            p.insert("file".into(), json!(file));
+            p.insert("line".into(), json!(line));
+            put(&mut p, "condition", args.value("if").map(|c| json!(c)));
+            put(&mut p, "log", args.value("log").map(|l| json!(l)));
+            "debug.breakpoints.set"
+        }
+        "breakpoints.clear" => {
+            put(&mut p, "id", rest.first().map(|i| json!(i)));
+            "debug.breakpoints.clear"
+        }
+        "breakpoints.list" => "debug.breakpoints.list",
+        "eval" => {
+            if rest.is_empty() {
+                return Err(bad("pocket debug eval <expression> [--frame n]"));
+            }
+            p.insert("expr".into(), json!(rest.join(" ")));
+            put(&mut p, "frame", frame);
+            "debug.eval"
+        }
+        "set" => {
+            let [name, value @ ..] = rest.as_slice() else {
+                return Err(bad("pocket debug set <name> <expression> [--frame n]"));
+            };
+            if value.is_empty() {
+                return Err(bad("pocket debug set <name> <expression> [--frame n]"));
+            }
+            p.insert("name".into(), json!(name));
+            p.insert("value".into(), json!(value.join(" ")));
+            put(&mut p, "frame", frame);
+            "debug.set"
+        }
+        "watch" => {
+            let spec = rest
+                .first()
+                .ok_or_else(|| bad("pocket debug watch <entity>.<Component>[.<field>]"))?;
+            let mut parts = spec.splitn(3, '.');
+            let (Some(e), Some(c)) = (parts.next(), parts.next()) else {
+                return Err(bad(format!(
+                    "'{spec}' is not <entity>.<Component>[.<field>] (Sloop.Boat.hoist)"
+                )));
+            };
+            p.insert("entity".into(), entity(e));
+            p.insert("component".into(), json!(c));
+            put(&mut p, "field", parts.next().map(|f| json!(f)));
+            "debug.watch"
+        }
+        "unwatch" => {
+            put(&mut p, "id", rest.first().map(|i| json!(i)));
+            "debug.unwatch"
+        }
+        "continue" => "debug.continue",
+        "step" => {
+            let kind = rest.first().copied().unwrap_or("over");
+            if !["over", "into", "out"].contains(&kind) {
+                return Err(usage(
+                    format!("pocket debug step takes over, into or out, not '{kind}'"),
+                    kind,
+                    &["over", "into", "out"],
+                ));
+            }
+            p.insert("kind".into(), json!(kind));
+            "debug.step"
+        }
+        "pause" | "wait" => {
+            let ms = match rest.first() {
+                Some(t) => t
+                    .parse::<u64>()
+                    .map_err(|_| bad(format!("'{t}' is not a number of milliseconds")))?,
+                None => 2000,
+            };
+            p.insert("timeout_ms".into(), json!(ms));
+            if canonical == "pause" {
+                "debug.pause"
+            } else {
+                "debug.wait"
+            }
+        }
+        "exceptions" => {
+            let mode = rest
+                .first()
+                .ok_or_else(|| bad("pocket debug exceptions none|uncaught|all"))?;
+            p.insert("mode".into(), json!(mode));
+            "debug.exceptions"
+        }
+        "rewind" => {
+            let t: u64 = rest
+                .first()
+                .and_then(|t| t.parse().ok())
+                .ok_or_else(|| bad("pocket debug rewind <tick> [--bundle snapshot]"))?;
+            p.insert("tick".into(), json!(t));
+            put(&mut p, "bundle", args.value("bundle").map(|b| json!(b)));
+            "debug.rewind"
+        }
+        "attach" => "debug.attach",
+        "detach" => "debug.detach",
+        other => {
+            let params = match rest.first() {
+                Some(t) => json_arg(t)?,
+                None => json!({}),
+            };
+            return Ok((format!("debug.{other}"), params));
+        }
+    };
+    Ok((method.to_owned(), Value::Object(p)))
+}
+
 // --- Text forms ----------------------------------------------------------------------------------
+
+/// A value for reading: arrays past 8 items cut to their first 3 and a count (`--json` has them
+/// all), so `world get` of an entity with buoyancy points or hulls stays a few lines.
+fn shorten(v: &Value) -> Value {
+    match v {
+        Value::Array(a) if a.len() > 8 => {
+            let mut out: Vec<Value> = a.iter().take(3).map(shorten).collect();
+            out.push(json!(format!("... {} more", a.len() - 3)));
+            Value::Array(out)
+        }
+        Value::Array(a) => Value::Array(a.iter().map(shorten).collect()),
+        Value::Object(m) => Value::Object(m.iter().map(|(k, v)| (k.clone(), shorten(v))).collect()),
+        other => other.clone(),
+    }
+}
+
+/// A value in a table or a locals list: numbers to 6 decimals at most, long texts cut.
+fn cell(v: &Value) -> String {
+    let s = match v {
+        Value::Number(n) if n.is_f64() => {
+            let f = n.as_f64().unwrap_or(0.0);
+            let t = format!("{f:.6}");
+            let t = t.trim_end_matches('0').trim_end_matches('.');
+            if t.is_empty() || t == "-" {
+                "0".to_owned()
+            } else {
+                t.to_owned()
+            }
+        }
+        other => opt(other),
+    };
+    if s.chars().count() > 120 {
+        let cut: String = s.chars().take(117).collect();
+        format!("{cut}...")
+    } else {
+        s
+    }
+}
+
+/// Where and why the debugger stopped, in one line:
+/// `scripts/helm.ts:67 (breakpoint bp1 in helm, tick 6)`.
+fn stop_line(s: &Value) -> String {
+    let loc = &s["location"];
+    let at = match (loc["file"].as_str(), loc["line"].as_u64()) {
+        (Some(f), Some(l)) => format!("{f}:{l}"),
+        _ => "a script statement".to_owned(),
+    };
+    let mut why = s["reason"].as_str().unwrap_or("pause").replace('_', " ");
+    if let Some(bp) = s["breakpoint"]
+        .as_str()
+        .or_else(|| s["hit_breakpoints"][0].as_str())
+    {
+        let _ = write!(why, " {bp}");
+    }
+    let mut out = format!("{at} ({why}");
+    if let Some(sys) = s["system"].as_str() {
+        let _ = write!(out, " in {sys}");
+    }
+    let _ = write!(out, ", tick {})", opt(&s["tick"]));
+    out
+}
+
+/// A data breakpoint's hit: `w1 #3 Boat.hoist 0 -> 1, written at scripts/helm.ts:78`.
+fn watch_hit(w: &Value) -> String {
+    let id = w["id"]
+        .as_str()
+        .or_else(|| w["watch"].as_str())
+        .unwrap_or("?");
+    let field = w["field"]
+        .as_str()
+        .map_or_else(String::new, |f| format!(".{f}"));
+    let mut s = format!(
+        "{id} #{} {}{field} {} -> {}",
+        opt(&w["entity"]),
+        opt(&w["component"]),
+        cell(&w["before"]),
+        cell(&w["after"])
+    );
+    let at = &w["written_at"];
+    if let (Some(f), Some(l)) = (at["file"].as_str(), at["line"].as_u64()) {
+        let _ = write!(s, ", written at {f}:{l}");
+    }
+    s
+}
+
+/// A local as `name = value`: an object's description (`Float64Array(1)`), else its JSON.
+fn local_line(l: &Value) -> String {
+    let v = &l["value"];
+    let shown = match (l["description"].as_str(), v) {
+        (Some(d), Value::Object(_) | Value::Array(_) | Value::Null) => d.to_owned(),
+        // `undefined`, or a `let` its statement has not reached yet.
+        (None, Value::Null) if l["type"] != "null" => opt(&l["type"]),
+        _ => cell(v),
+    };
+    format!("{} = {shown}", opt(&l["name"]))
+}
+
+/// `debug.state` as text: where and why, the innermost frame's locals (`ctx` and closures only
+/// with `--full`), one line per other frame, the breakpoints and watches.
+fn debug_state_text(v: &Value, full: bool) -> String {
+    let mut out = String::new();
+    if v["state"] == "paused" {
+        let _ = writeln!(out, "paused at {}", stop_line(v));
+        if !v["data"].is_null() {
+            let _ = writeln!(out, "  watch {}", watch_hit(&v["data"]));
+        }
+        if let Some(t) = v["exception"]["text"].as_str() {
+            let caught = if v["exception"]["caught"] == json!(true) {
+                "caught"
+            } else {
+                "uncaught"
+            };
+            let _ = writeln!(out, "  exception ({caught}): {t}");
+        }
+        for (i, f) in v["frames"].as_array().into_iter().flatten().enumerate() {
+            let loc = &f["location"];
+            let _ = writeln!(
+                out,
+                "#{} {} {}:{}{}",
+                opt(&f["frame"]),
+                opt(&f["function"]),
+                opt(&loc["file"]),
+                opt(&loc["line"]),
+                if f["returned"] == json!(true) {
+                    " (returned)"
+                } else {
+                    ""
+                }
+            );
+            if i == 0 || full {
+                for l in f["locals"].as_array().into_iter().flatten() {
+                    if l["name"] == "ctx" && !full {
+                        continue;
+                    }
+                    let _ = writeln!(out, "    {}", local_line(l));
+                }
+            }
+            if full {
+                for l in f["closure"].as_array().into_iter().flatten() {
+                    let _ = writeln!(out, "    (closure) {}", local_line(l));
+                }
+            }
+        }
+    } else {
+        let _ = writeln!(
+            out,
+            "running (tick {}{}; attached {}, instrumented {})",
+            opt(&v["tick"]),
+            v["system"]
+                .as_str()
+                .map_or_else(String::new, |s| format!(", last in {s}")),
+            opt(&v["attached"]),
+            opt(&v["instrumented"])
+        );
+    }
+    for b in v["breakpoints"].as_array().into_iter().flatten() {
+        let at = &b["locations"][0];
+        let mut s = format!(
+            "breakpoint {} {}:{}",
+            opt(&b["id"]),
+            opt(&at["file"]),
+            opt(&at["line"])
+        );
+        if let Some(c) = b["condition"].as_str() {
+            let _ = write!(s, " if {c}");
+        }
+        if let Some(l) = b["log"].as_str() {
+            let _ = write!(s, " log {l}");
+        }
+        let _ = writeln!(out, "{s}");
+    }
+    for w in v["watches"].as_array().into_iter().flatten() {
+        let field = w["field"]
+            .as_str()
+            .map_or_else(String::new, |f| format!(".{f}"));
+        let _ = writeln!(
+            out,
+            "watch {} #{} {}{field}",
+            opt(&w["id"]),
+            opt(&w["entity"]),
+            opt(&w["component"])
+        );
+    }
+    if v["state"] == "paused" && !full {
+        out.push_str("(pocket debug eval <expr> | step [over|into|out] | continue; --full for every frame)\n");
+    }
+    out
+}
+
+/// A `time.step`'s samples as a table: a header, one row per sample, columns aligned.
+fn samples_table(s: &Value, out: &mut String) {
+    let header: Vec<String> = s["columns"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(opt)
+        .collect();
+    let rows: Vec<Vec<String>> = s["rows"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|r| r.as_array().into_iter().flatten().map(cell).collect())
+        .collect();
+    let widths: Vec<usize> = (0..header.len())
+        .map(|i| {
+            rows.iter()
+                .filter_map(|r| r.get(i))
+                .chain(std::iter::once(&header[i]))
+                .map(|c| c.chars().count())
+                .max()
+                .unwrap_or(0)
+        })
+        .collect();
+    let line = |cells: &[String]| -> String {
+        cells
+            .iter()
+            .zip(&widths)
+            .map(|(c, w)| format!("{c:<w$}"))
+            .collect::<Vec<_>>()
+            .join("  ")
+            .trim_end()
+            .to_owned()
+    };
+    let _ = writeln!(out, "{}", line(&header));
+    for r in &rows {
+        let _ = writeln!(out, "{}", line(r));
+    }
+}
+
+/// The note a read made while the debugger holds the game starts with.
+fn paused_note(p: &Value) -> String {
+    format!(
+        "(paused at {}: the world as of tick {}'s end)",
+        stop_line(p),
+        opt(&p["snapshot_tick"])
+    )
+}
 
 fn compact(v: &Value) -> String {
     v.to_string()
@@ -618,11 +1102,31 @@ fn status_line(v: &Value) -> String {
         let _ = write!(s, " | {n} entities");
     }
     let _ = write!(s, " | hash {}", short_hash(&v["world_hash"]));
+    // The bundle the world runs: after an apply or a restore, which scripts are live.
+    if !v["bundle"].is_null() {
+        let _ = write!(s, " | scripts {}", short_hash(&v["bundle"]));
+    }
     if v["halted"] == json!(true) || !v["poisoned"].is_null() {
         let _ = write!(s, " | HALTED (poisoned at {})", opt(&v["poisoned"]));
     }
+    if let Some(p) = v.get("paused_at") {
+        let _ = write!(s, " | HELD at {}", stop_line(p));
+    }
     if let Some(r) = v.get("restored") {
-        s = format!("restored tick {}; {s}", opt(r));
+        let sc = &v["scripts"];
+        let scripts = match sc["kept"].as_str() {
+            Some(kept) => format!(
+                "; scripts {} ({kept}{})",
+                short_hash(&sc["bundle"]),
+                if sc["swap_refused"].is_null() {
+                    ""
+                } else {
+                    ": the applied ones do not load on it"
+                }
+            ),
+            None => String::new(),
+        };
+        s = format!("restored tick {}{scripts} | {s}", opt(r));
     }
     s
 }
@@ -695,8 +1199,19 @@ fn edit_line(v: &Value) -> String {
     s
 }
 
-/// The text form of a method's result.
-fn text(method: &str, v: &Value) -> String {
+/// The note a list read while the debugger holds the game starts with (its rows carry the tick).
+fn paused_rows_note(v: &Value, out: &mut String) {
+    if let Some(t) = v[0]["paused_at"].as_u64() {
+        let _ = writeln!(
+            out,
+            "(paused in tick {t}: the world as of tick {}'s end; pocket debug state)",
+            t.saturating_sub(1)
+        );
+    }
+}
+
+/// The text form of a method's result; `full`: every frame of a debugger state.
+fn text(method: &str, v: &Value, full: bool) -> String {
     let mut out = String::new();
     let lines = |out: &mut String, items: &Value, f: &dyn Fn(&Value) -> String| {
         for i in items.as_array().into_iter().flatten() {
@@ -707,22 +1222,109 @@ fn text(method: &str, v: &Value) -> String {
         "status" | "time.control" | "play.start" | "play.stop" | "snapshots.restore" => {
             out = status_line(v) + "\n";
         }
-        "world.tree" => lines(&mut out, v, &entity_line),
-        "world.get" => {
+        "world.tree" => {
+            paused_rows_note(v, &mut out);
+            lines(&mut out, v, &entity_line);
+        }
+        "world.get" | "world_get" => {
+            if !v["paused_at"].is_null() {
+                let _ = writeln!(out, "{}", paused_note(&v["paused_at"]));
+            }
             let _ = writeln!(out, "#{} {}", opt(&v["id"]), opt(&v["name"]));
             for (c, val) in v["components"].as_object().into_iter().flatten() {
-                let _ = writeln!(out, "  {c}: {}", compact(val));
+                let _ = writeln!(out, "  {c}: {}", compact(&shorten(val)));
+            }
+            for (f, val) in v["fields"].as_object().into_iter().flatten() {
+                let _ = writeln!(out, "  {f} = {}", compact(&shorten(val)));
             }
         }
-        "world.query" => lines(&mut out, v, &|r| {
-            let mut s = format!("#{} {}", opt(&r["id"]), opt(&r["name"]));
-            for (k, val) in r.as_object().into_iter().flatten() {
-                if k != "id" && k != "name" {
-                    let _ = write!(s, "  {k}={}", compact(val));
+        "world.query" => {
+            paused_rows_note(v, &mut out);
+            lines(&mut out, v, &|r| {
+                let mut s = format!("#{} {}", opt(&r["id"]), opt(&r["name"]));
+                for (k, val) in r.as_object().into_iter().flatten() {
+                    if k != "id" && k != "name" && k != "paused_at" {
+                        let _ = write!(s, "  {k}={}", compact(&shorten(val)));
+                    }
                 }
+                s
+            });
+        }
+        "debug.state" | "debug.step" | "debug.pause" | "debug.wait" | "debug.attach"
+        | "debug.detach" => out = debug_state_text(v, full),
+        "debug.continue" => out = "running\n".into(),
+        "debug.breakpoints.set" | "debug.break" => {
+            let _ = write!(
+                out,
+                "{} {}:{}",
+                opt(&v["id"]),
+                opt(&v["file"]),
+                opt(&v["line"])
+            );
+            if v["verified"] != json!(true) {
+                out.push_str(" (not verified)");
             }
-            s
-        }),
+            out.push('\n');
+        }
+        "debug.breakpoints.list" => {
+            for b in v["breakpoints"].as_array().into_iter().flatten() {
+                let at = &b["locations"][0];
+                let mut s = format!(
+                    "{} {} {}:{}",
+                    opt(&b["id"]),
+                    opt(&b["owner"]),
+                    opt(&at["file"]),
+                    opt(&at["line"])
+                );
+                if let Some(c) = b["condition"].as_str() {
+                    let _ = write!(s, " if {c}");
+                }
+                if let Some(l) = b["log"].as_str() {
+                    let _ = write!(s, " log {l}");
+                }
+                let _ = writeln!(out, "{s}");
+            }
+        }
+        "debug.breakpoints.clear" | "debug.unwatch" | "debug.watch.clear" => {
+            let _ = writeln!(out, "cleared {}", opt(&v["cleared"]));
+        }
+        "debug.eval" | "debug.set" => {
+            let shown = match (v["description"].as_str(), &v["value"]) {
+                (Some(d), Value::Object(_) | Value::Array(_) | Value::Null) => d.to_owned(),
+                _ => compact(&v["value"]),
+            };
+            let _ = writeln!(out, "{shown}  ({})", opt(&v["type"]));
+        }
+        "debug.watch" => {
+            let field = v["field"]
+                .as_str()
+                .map_or_else(String::new, |f| format!(".{f}"));
+            let _ = writeln!(
+                out,
+                "{} watching #{} {}{field}",
+                opt(&v["id"]),
+                opt(&v["entity"]),
+                opt(&v["component"])
+            );
+        }
+        "debug.exceptions" => {
+            let _ = writeln!(out, "pause on exceptions: {}", opt(&v["mode"]));
+        }
+        "debug.rewind" => {
+            let sc = &v["scripts"];
+            let _ = write!(
+                out,
+                "restored tick {}; scripts {} ({}) | at tick {}",
+                opt(&v["restored"]),
+                short_hash(&sc["bundle"]),
+                opt(&sc["kept"]),
+                opt(&v["tick"])
+            );
+            if !v["stopped_by"].is_null() {
+                let _ = write!(out, " | stopped at {}", stop_line(&v["stopped_by"]));
+            }
+            out.push('\n');
+        }
         "world.schema" => {
             if v.is_array() {
                 lines(&mut out, v, &|c| {
@@ -782,6 +1384,19 @@ fn text(method: &str, v: &Value) -> String {
                         opt(&why["value"])
                     );
                 }
+                // The script debugger stopped the game inside the tick.
+                Some(
+                    "breakpoint" | "data_breakpoint" | "step" | "pause" | "exception"
+                    | "debugger_statement",
+                ) => {
+                    let _ = write!(out, " | stopped at {}", stop_line(why));
+                    if !why["watch"].is_null() {
+                        let _ = write!(out, "; {}", watch_hit(&why["watch"]));
+                    }
+                    if v["paused"] == json!(true) {
+                        out.push_str(": pocket debug state | pocket debug continue");
+                    }
+                }
                 Some(r) => {
                     let _ = write!(out, " | stopped: {r}");
                 }
@@ -792,6 +1407,9 @@ fn text(method: &str, v: &Value) -> String {
                 for e in errs {
                     let _ = writeln!(out, "  error {}: {}", opt(&e["code"]), opt(&e["message"]));
                 }
+            }
+            if v["samples"].is_object() {
+                samples_table(&v["samples"], &mut out);
             }
         }
         "snapshots.list" => {
@@ -843,6 +1461,42 @@ fn text(method: &str, v: &Value) -> String {
             s
         }),
         "scripts.read" | "scripts.guide" => out = v["text"].as_str().unwrap_or("").to_owned(),
+        "scripts.status" => {
+            let ran: Vec<String> = v["ran_last_tick"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(opt)
+                .collect();
+            let _ = writeln!(
+                out,
+                "scripts {} (running){}",
+                opt(&v["bundle"]),
+                if v["ran_last_tick"].is_null() {
+                    String::new()
+                } else {
+                    format!(" | ran last tick: {}", ran.join(" "))
+                }
+            );
+            if !v["paused_at"].is_null() {
+                let _ = writeln!(out, "{}", paused_note(&v["paused_at"]));
+            }
+        }
+        "docs.search" => lines(&mut out, v, &|d| {
+            if let Some(c) = d["command"].as_str() {
+                format!("command {c}: {}", opt(&d["doc"]))
+            } else if let Some(c) = d["component"].as_str() {
+                let fields: Vec<String> = d["fields"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(opt)
+                    .collect();
+                format!("component {c} ({}): {}", fields.join(", "), opt(&d["doc"]))
+            } else {
+                format!("guide: {} ({})", opt(&d["guide"]), opt(&d["read"]))
+            }
+        }),
         "scripts.write" | "scripts.apply" | "scripts.check" => {
             let mut head = Vec::new();
             for k in ["path", "outcome", "typecheck"] {
@@ -1042,6 +1696,26 @@ fn props(root: &Value, s: &Value, indent: &str, out: &mut String) {
     }
 }
 
+/// The debugger's methods for the catalog without a host.
+struct OfflineDebugger;
+
+impl pocket_server::DebugHub for OfflineDebugger {
+    fn call(&self, method: &str, _: Value) -> pocket_server::BoxFuture<Result<Value, Problem>> {
+        let m = method.to_owned();
+        Box::pin(async move {
+            Err(Problem::new(
+                "debug.not_available",
+                format!("{m} needs a running host."),
+                detail([]),
+            ))
+        })
+    }
+
+    fn methods(&self) -> Vec<Value> {
+        crate::present::debug_methods()
+    }
+}
+
 fn catalog(args: &Args) -> Value {
     if let Ok(url) = host_url(args)
         && let Ok(c) = get_url(&url, "/api/catalog")
@@ -1053,6 +1727,8 @@ fn catalog(args: &Args) -> Value {
         _ => Vec::new(),
     };
     all.extend(pocket_server::server_catalog());
+    all.extend(pocket_server::debug_catalog(Some(&OfflineDebugger)));
+    all.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
     Value::Array(all)
 }
 
@@ -1174,12 +1850,17 @@ pub fn run(cmd: &str, raw: &[String]) -> Outcome {
         Ok(u) => u,
         Err(p) => return failed(&p, 1),
     };
-    match call_url(&url, &method, params) {
+    let given = match args.number::<f64>("timeout") {
+        Ok(t) => t,
+        Err(p) => return failed(&p, 2),
+    };
+    let timeout = timeout_for(given, &params);
+    match call_url_within(&url, &method, params, timeout) {
         Ok(v) => {
             if json_out {
                 println!("{v}");
             } else {
-                print!("{}", text(&method, &v));
+                print!("{}", text(&method, &v, args.has("full")));
             }
             Outcome {
                 stdout: String::new(),
@@ -1187,5 +1868,204 @@ pub fn run(cmd: &str, raw: &[String]) -> Outcome {
             }
         }
         Err(p) => failed(&p, 1),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn req(cmd: &str, args: &[&str]) -> (String, Value) {
+        let raw: Vec<String> = args.iter().map(|s| (*s).to_owned()).collect();
+        let a = Args::parse(&raw, FLAGS).unwrap();
+        request(cmd, &a).unwrap_or_else(|p| panic!("{}: {}", p.code, p.message))
+    }
+
+    /// The debugger's short forms (docs/bench/debug-eval.md, finding 4).
+    #[test]
+    fn debug_short_forms() {
+        assert_eq!(
+            req(
+                "debug",
+                &["break", "scripts/helm.ts:67", "--if", "steer < 0"]
+            ),
+            (
+                "debug.breakpoints.set".into(),
+                json!({"file": "scripts/helm.ts", "line": 67, "condition": "steer < 0"})
+            )
+        );
+        assert_eq!(
+            req("debug", &["eval", "bearing", "*", "180"]),
+            ("debug.eval".into(), json!({"expr": "bearing * 180"}))
+        );
+        assert_eq!(
+            req("debug", &["watch", "Sloop.Boat.hoist"]),
+            (
+                "debug.watch".into(),
+                json!({"entity": "Sloop", "component": "Boat", "field": "hoist"})
+            )
+        );
+        assert_eq!(
+            req("debug", &["watch", "3.Log"]),
+            (
+                "debug.watch".into(),
+                json!({"entity": 3, "component": "Log"})
+            )
+        );
+        assert_eq!(
+            req("debug", &["step"]),
+            ("debug.step".into(), json!({"kind": "over"}))
+        );
+        assert_eq!(
+            req("debug", &["rewind", "120", "--bundle", "snapshot"]),
+            (
+                "debug.rewind".into(),
+                json!({"tick": 120, "bundle": "snapshot"})
+            )
+        );
+        // The exact parameters still work, for every method.
+        assert_eq!(
+            req(
+                "debug",
+                &["breakpoints.set", r#"{"file": "scripts/x.ts", "line": 3}"#]
+            ),
+            (
+                "debug.breakpoints.set".into(),
+                json!({"file": "scripts/x.ts", "line": 3})
+            )
+        );
+        assert_eq!(
+            req("debug", &["set", "r", "r", "+", "1", "--frame", "1"]),
+            (
+                "debug.set".into(),
+                json!({"name": "r", "value": "r + 1", "frame": 1})
+            )
+        );
+        let raw = vec!["step".to_owned(), "sideways".to_owned()];
+        let a = Args::parse(&raw, FLAGS).unwrap();
+        assert_eq!(debug_request(&a).unwrap_err().code, "check.usage");
+    }
+
+    /// Field-level reads (finding 5): fields with paths, line ranges, a sampled step.
+    #[test]
+    fn field_level_short_forms() {
+        assert_eq!(
+            req(
+                "world",
+                &["get", "Sloop", "Boat.heading_deg,Boat.rudder", "Crew"]
+            ),
+            (
+                "world.get".into(),
+                json!({"entity": "Sloop", "components": ["Crew"],
+                       "fields": ["Boat.heading_deg", "Boat.rudder"]})
+            )
+        );
+        assert_eq!(
+            req("scripts", &["read", "helm.ts", "--lines", "50-80"]),
+            (
+                "scripts.read".into(),
+                json!({"path": "helm.ts", "lines": "50-80", "numbered": true})
+            )
+        );
+        assert_eq!(
+            req(
+                "step",
+                &[
+                    "300",
+                    "--sample",
+                    "Sloop.Boat.heading_deg,Sloop.Boat.rudder",
+                    "--every",
+                    "30"
+                ]
+            ),
+            (
+                "time.step".into(),
+                json!({"ticks": 300, "sample": {"fields": ["Sloop.Boat.heading_deg",
+                       "Sloop.Boat.rudder"], "every": 30}})
+            )
+        );
+        assert_eq!(
+            req("snapshots", &["restore", "0", "--bundle", "snapshot"]),
+            (
+                "snapshots.restore".into(),
+                json!({"tick": 0, "bundle": "snapshot"})
+            )
+        );
+        assert_eq!(
+            req("docs", &["data", "breakpoint"]),
+            ("docs.search".into(), json!({"query": "data breakpoint"}))
+        );
+    }
+
+    /// A paused state as text: the place, the innermost frame's locals without `ctx`, one line
+    /// per other frame; the step that stopped names where.
+    #[test]
+    fn debug_state_reads_in_a_few_lines() {
+        let state = json!({
+            "state": "paused", "reason": "breakpoint", "tick": 6, "system": "helm",
+            "location": {"file": "scripts/helm.ts", "line": 67, "column": 9},
+            "hit_breakpoints": ["bp1"],
+            "frames": [
+                {"frame": 0, "function": "run", "returned": false,
+                 "location": {"file": "scripts/helm.ts", "line": 67},
+                 "locals": [{"name": "bearing", "type": "number", "value": 1.3438123456789},
+                            {"name": "ctx", "type": "object", "value": {"big": [1, 2, 3]},
+                             "description": "Object"},
+                            {"name": "later", "type": "undefined", "value": null},
+                            {"name": "q", "type": "object", "value": {},
+                             "description": "Float64Array(1)"}],
+                 "closure": [{"name": "GAIN", "type": "number", "value": 0.6}]},
+                {"frame": 2, "function": "each", "returned": false,
+                 "location": {"file": "scripts/helm.ts", "line": 40},
+                 "locals": [{"name": "i", "type": "number", "value": 0}], "closure": []}
+            ],
+            "breakpoints": [{"id": "bp1", "locations": [{"file": "scripts/helm.ts", "line": 67}],
+                             "condition": null, "log": null}],
+            "watches": []
+        });
+        let t = debug_state_text(&state, false);
+        assert!(
+            t.starts_with("paused at scripts/helm.ts:67 (breakpoint bp1 in helm, tick 6)\n"),
+            "{t}"
+        );
+        assert!(t.contains("    bearing = 1.343812\n"), "{t}");
+        assert!(t.contains("    later = undefined\n"), "{t}");
+        assert!(t.contains("    q = Float64Array(1)\n"), "{t}");
+        assert!(
+            !t.contains("ctx") && !t.contains("GAIN") && !t.contains("i = 0"),
+            "{t}"
+        );
+        assert!(t.contains("#2 each scripts/helm.ts:40\n"), "{t}");
+        let full = debug_state_text(&state, true);
+        assert!(full.contains("ctx = Object") && full.contains("(closure) GAIN = 0.6"));
+        let step = json!({"tick": 6, "world_hash": null, "errors": [], "paused": true,
+                          "stopped_by": {"reason": "breakpoint", "tick": 6, "system": "helm",
+                                         "breakpoint": "bp1", "location": state["location"]}});
+        assert_eq!(
+            text("time.step", &step, false),
+            "tick 6 hash - | stopped at scripts/helm.ts:67 (breakpoint bp1 in helm, tick 6): \
+             pocket debug state | pocket debug continue\n"
+        );
+    }
+
+    #[test]
+    fn samples_and_long_arrays_read_as_text() {
+        let v = json!({"tick": 60, "world_hash": "abc", "errors": [],
+                       "samples": {"columns": ["tick", "Sloop.Boat.rudder"],
+                                   "rows": [[30, 0.25], [60, -0.5]], "every": 30}});
+        assert_eq!(
+            text("time.step", &v, false),
+            "tick 60 hash abc\ntick  Sloop.Boat.rudder\n30    0.25\n60    -0.5\n"
+        );
+        let points: Vec<Value> = (0..70).map(|i| json!(i)).collect();
+        assert_eq!(
+            compact(&shorten(&json!({ "points": points }))),
+            r#"{"points":[0,1,2,"... 67 more"]}"#
+        );
+        assert_eq!(
+            timeout_for(Some(5.0), &json!({"timeout_ms": 30000})),
+            Duration::from_secs(40)
+        );
+        assert_eq!(timeout_for(Some(5.0), &json!({})), Duration::from_secs(5));
     }
 }
