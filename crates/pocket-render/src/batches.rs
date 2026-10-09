@@ -28,7 +28,7 @@ use bytemuck::{Pod, Zeroable};
 
 use crate::gpu::Capabilities;
 use crate::meshes::MeshInfo;
-use crate::scene::VARIANTS;
+use crate::scene::{NEURAL_VARIANT, VARIANTS};
 use crate::shadows::CASCADES;
 
 /// The camera and the shadow cascades.
@@ -336,6 +336,9 @@ impl Batches {
         let first = u64::from((set * VARIANTS + variant) * self.meshes) * ARGS;
         let run = self.live_at[variant as usize]..self.live_at[variant as usize + 1];
         match self.path {
+            // The neural variants are drawn only while a neural material is in use, so a scene
+            // without one issues exactly the draws it did before they existed.
+            DrawPath::MultiDraw if variant >= NEURAL_VARIANT && run.is_empty() => 0,
             DrawPath::MultiDraw => {
                 pass.set_bind_group(3, &self.group, &[0]);
                 pass.multi_draw_indexed_indirect(&self.draws, first, self.meshes);

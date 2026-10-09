@@ -42,7 +42,11 @@ fn layout(sampling: Sampling) -> NeuralLayout {
         fine_shift: 2,
         sampling,
         pe_octaves: 2,
-        hidden: [16, 16],
+        // Odd block counts (12 = 3 blocks) exercise the decoder's bias padding.
+        hidden: match sampling {
+            Sampling::Bilinear => [12, 20],
+            Sampling::Taps4 => [16, 16],
+        },
     }
 }
 

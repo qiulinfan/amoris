@@ -11,6 +11,7 @@ use std::rc::Rc;
 
 use pocket_assets::gi::{BakedGi, NeuralGi};
 use pocket_assets::mesh::ModelAsset;
+use pocket_assets::neural::NeuralTexture;
 use pocket_render::AssetSource;
 
 /// Loads the page completed, each with its path, shared with the page's glue.
@@ -25,6 +26,8 @@ pub struct PageAssets {
     gi_done: Loads<BakedGi>,
     neural_requests: Rc<RefCell<std::collections::HashSet<String>>>,
     neural_done: Loads<NeuralGi>,
+    texture_requests: Rc<RefCell<std::collections::HashSet<String>>>,
+    textures_done: Loads<NeuralTexture>,
 }
 
 impl AssetSource for PageAssets {
@@ -49,11 +52,24 @@ impl AssetSource for PageAssets {
     fn poll_neural_gi(&mut self) -> Vec<(String, Result<NeuralGi, String>)> {
         std::mem::take(&mut *self.neural_done.borrow_mut())
     }
+    fn request_neural_texture(&mut self, path: &str) {
+        self.texture_requests.borrow_mut().insert(path.to_owned());
+        self.requests.borrow_mut().push(path.to_owned());
+    }
+    fn poll_neural_textures(&mut self) -> Vec<(String, Result<NeuralTexture, String>)> {
+        std::mem::take(&mut *self.textures_done.borrow_mut())
+    }
 }
 
 impl PageAssets {
     /// Imports a fetched `.glb` (or reports the fetch's failure).
     pub fn deliver(&self, path: &str, bytes: Result<&[u8], String>) {
+        if self.texture_requests.borrow_mut().remove(path) {
+            self.textures_done
+                .borrow_mut()
+                .push((path.to_owned(), bytes.and_then(NeuralTexture::from_bytes)));
+            return;
+        }
         if self.neural_requests.borrow_mut().remove(path) {
             self.neural_done
                 .borrow_mut()

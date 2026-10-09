@@ -282,14 +282,22 @@ impl RtShadows {
     /// The forward shader with `shadow_factor` replaced by rt_shadows.wgsl's ray query (the
     /// cascaded version stays, unused, as `csm_shadow_factor`).
     pub fn forward_source() -> String {
-        let forward = crate::shaders::source("forward");
+        format!(
+            "enable wgpu_ray_query;\n{}",
+            Self::traced(&crate::shaders::source("forward"))
+        )
+    }
+
+    /// A forward shader (forward.wgsl and what is composed around it) with its `shadow_factor`
+    /// traced; the module must begin with `enable wgpu_ray_query;`.
+    pub fn traced(forward: &str) -> String {
         assert_eq!(
             forward.matches("fn shadow_factor(").count(),
             1,
             "forward.wgsl defines shadow_factor once"
         );
         format!(
-            "enable wgpu_ray_query;\n{}\n{}",
+            "{}\n{}",
             forward.replacen("fn shadow_factor(", "fn csm_shadow_factor(", 1),
             include_str!("../shaders/rt_shadows.wgsl")
         )

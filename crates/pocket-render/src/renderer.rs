@@ -24,16 +24,18 @@ use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Quat, Vec3};
 use pocket_assets::frame::{LightKindView, Look, RenderFrame};
 use pocket_assets::mesh::ModelAsset;
+use pocket_assets::neural::{NeuralLayout, NeuralTexture};
 use pocket_assets::primitives::{PRIMITIVES, primitive};
 
 use crate::batches::{Batches, LATE, VIEWS};
 use crate::blit::Blitter;
 use crate::camera::{CameraState, frustum_planes};
 use crate::gpu::Gpu;
-use crate::loader::{AssetSource, NoAssets};
+use crate::loader::{AssetSource, NoAssets, is_neural_texture};
 use crate::lod::{LodMode, LodSettings};
 use crate::materials::MaterialPool;
 use crate::meshes::{MeshPool, SKINNED_GROW};
+use crate::neural::NeuralTable;
 use crate::occlusion::{LateInputs, Occlusion, OcclusionMode, OcclusionStats};
 use crate::ocean::Ocean;
 use crate::overlay::Overlays;
@@ -41,7 +43,7 @@ use crate::particles::Particles;
 use crate::picking::{PickRequest, Picking, coverage};
 use crate::post::{DEPTH, HDR, Post, SAMPLES, Targets};
 use crate::profiler::GpuProfiler;
-use crate::scene::{InstanceGpu, Part, Resolve, Scene, VARIANTS};
+use crate::scene::{InstanceGpu, NEURAL_VARIANT, Part, Resolve, Scene, VARIANTS};
 use crate::shaders;
 use crate::shadows::{self, CASCADES, SHADOW_SIZE};
 use crate::skinning::Skinning;
@@ -212,6 +214,14 @@ impl Resolve for Pools<'_> {
     }
 
     fn parts(&mut self, entity: u64, look: &Look) -> Option<Vec<Part>> {
+        // A neural texture material (`materials/brick.ntex`) loads like a model; until it has, the
+        // entity waits (a failed load registers the default material under its path).
+        if is_neural_texture(&look.material) && !self.materials.has_asset(&look.material) {
+            if self.requested.insert(look.material.clone()) {
+                self.loader.request_neural_texture(&look.material);
+            }
+            return None;
+        }
         if let Some(mesh) = self
             .meshes
             .get(&look.mesh)
@@ -339,6 +349,15 @@ pub struct Renderer {
     cull_pipeline: wgpu::ComputePipeline,
     cluster_pipeline: wgpu::ComputePipeline,
     forward: [wgpu::RenderPipeline; 4],
+    /// The neural-texture variants' pipelines (variants 4..8), built when the first neural texture
+    /// loads, for its network's shape (neural.rs).
+    neural_forward: Option<[wgpu::RenderPipeline; 4]>,
+    forward_layout: wgpu::PipelineLayout,
+    /// Loaded neural textures: their latents and networks (neural.rs).
+    neural: NeuralTable,
+    /// Whether neural textures decode in half precision (shader-f16 and not
+    /// `POCKET_NEURAL_PRECISION=f32`).
+    neural_f16: bool,
     shadow: [wgpu::RenderPipeline; 2],
     empty_group: wgpu::BindGroup,
     ocean: Ocean,
@@ -372,7 +391,7 @@ pub struct Renderer {
     tex_sampler: wgpu::Sampler,
 
     bind: Option<Binds>,
-    bind_key: (u64, u64, u64),
+    bind_key: (u64, u64, u64, u64),
     view_stride: u32,
     draw_meshes: u32,
     /// How levels of detail are picked (lod.rs); whether levels were asked for when the batches'
@@ -574,6 +593,19 @@ impl Renderer {
                     frag,
                     wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                 ),
+                // Neural textures (forward_neural.wgsl): latents, then the data uniform twice (the
+                // second view is the half-precision decoder's).
+                entry(
+                    3,
+                    frag,
+                    wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Uint,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                ),
+                entry(4, frag, uni_ty()),
+                entry(5, frag, uni_ty()),
             ],
         });
         let fwd_module = shaders::module(device, "forward");
@@ -593,45 +625,9 @@ impl Renderer {
             ],
             immediate_size: 0,
         });
-        let vertex_layout = wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<pocket_assets::Vertex>() as u64,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x4],
-        };
+        let vertex_layout = vertex_layout();
         let forward_pipe = |cull: Option<wgpu::Face>, fs: &str, label: &str| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some(label),
-                layout: Some(&layout),
-                vertex: wgpu::VertexState {
-                    module: lit_module,
-                    entry_point: Some("vs"),
-                    compilation_options: Default::default(),
-                    buffers: &[Some(vertex_layout.clone())],
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: lit_module,
-                    entry_point: Some(fs),
-                    compilation_options: Default::default(),
-                    targets: &[Some(HDR.into())],
-                }),
-                primitive: wgpu::PrimitiveState {
-                    cull_mode: cull,
-                    ..Default::default()
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: DEPTH,
-                    depth_write_enabled: Some(true),
-                    depth_compare: Some(wgpu::CompareFunction::Greater),
-                    stencil: Default::default(),
-                    bias: Default::default(),
-                }),
-                multisample: wgpu::MultisampleState {
-                    count: SAMPLES,
-                    ..Default::default()
-                },
-                multiview_mask: None,
-                cache: None,
-            })
+            forward_pipeline(device, &layout, lit_module, cull, fs, label)
         };
         // Variants: 0 opaque, 1 alpha-masked, 2 double-sided, 3 both.
         let forward = [
@@ -845,6 +841,11 @@ impl Renderer {
             cull_pipeline: compute("cull", "main"),
             cluster_pipeline: compute("cluster", "assign"),
             forward,
+            neural_forward: None,
+            forward_layout: layout,
+            neural: NeuralTable::new(device),
+            neural_f16: gpu.caps.shader_f16
+                && std::env::var("POCKET_NEURAL_PRECISION").map_or(true, |v| v.trim() != "f32"),
             shadow,
             ocean,
             picking,
@@ -887,7 +888,7 @@ impl Renderer {
                 ..Default::default()
             }),
             bind: None,
-            bind_key: (u64::MAX, 0, 0),
+            bind_key: (u64::MAX, 0, 0, 0),
             view_stride: 1,
             draw_meshes: 0,
             lod: LodSettings::from_env(),
@@ -1053,6 +1054,72 @@ impl Renderer {
         self.scene.apply(frame, &mut pools);
     }
 
+    /// Registers a neural texture as the material `path` (natively the loader does this when a
+    /// look names a `.ntex`; tools and the browser may call it directly). The first one fixes the
+    /// network shape the neural pipelines are compiled for; another shape is refused.
+    pub fn add_neural_texture(
+        &mut self,
+        path: &str,
+        texture: &NeuralTexture,
+    ) -> Result<(), String> {
+        let descriptor = self
+            .neural
+            .add(&self.gpu.device, &self.gpu.queue, texture)?;
+        if self.neural_forward.is_none() {
+            self.neural_forward = Some(self.neural_pipelines(&texture.layout));
+        }
+        self.materials.add_neural(path, descriptor, &texture.layout);
+        log::info!(
+            "neural texture {path}: {}x{}, {} ({} precision)",
+            texture.width,
+            texture.height,
+            crate::neural::describe(&texture.layout),
+            if self.neural_f16 { "half" } else { "single" }
+        );
+        Ok(())
+    }
+
+    /// Decode neural textures in half precision (when the device has shader-f16) or single;
+    /// rebuilds their pipelines. Returns the precision in use.
+    pub fn set_neural_half_precision(&mut self, f16: bool) -> bool {
+        self.neural_f16 = f16 && self.gpu.caps.shader_f16;
+        if let Some(layout) = self.neural.profile.clone() {
+            self.neural_forward = Some(self.neural_pipelines(&layout));
+        }
+        self.neural_f16
+    }
+
+    /// Whether neural textures decode in half precision.
+    pub fn neural_half_precision(&self) -> bool {
+        self.neural_f16
+    }
+
+    fn neural_pipelines(&self, layout: &NeuralLayout) -> [wgpu::RenderPipeline; 4] {
+        let device = &self.gpu.device;
+        let source = shaders::forward_neural(layout, self.neural_f16, self.rt_shadows.is_some());
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("forward (neural textures)"),
+            source: wgpu::ShaderSource::Wgsl(source.into()),
+        });
+        let pipe = |cull: Option<wgpu::Face>, label: &str| {
+            forward_pipeline(
+                device,
+                &self.forward_layout,
+                &module,
+                cull,
+                "fs_neural",
+                label,
+            )
+        };
+        // Neural materials are never alpha-masked: variants 5 and 7 hold no instances.
+        [
+            pipe(Some(wgpu::Face::Back), "forward (neural)"),
+            pipe(Some(wgpu::Face::Back), "forward (neural, unused masked)"),
+            pipe(None, "forward (neural, double sided)"),
+            pipe(None, "forward (neural, unused masked double sided)"),
+        ]
+    }
+
     /// Registers a loaded model under `path` (natively the loader does this; the browser calls it
     /// with fetched assets).
     pub fn add_model(&mut self, path: &str, asset: &ModelAsset) {
@@ -1110,6 +1177,12 @@ impl Renderer {
                     log::warn!("{path}: {e}");
                     self.failed.insert(path);
                 }
+            }
+        }
+        for (path, r) in self.loader.poll_neural_textures() {
+            if let Err(e) = r.and_then(|t| self.add_neural_texture(&path, &t)) {
+                log::error!("neural texture {path}: {e}; drawn with the default material");
+                self.materials.add_fallback(&path);
             }
         }
         let mut pools = Pools {
@@ -1377,6 +1450,7 @@ impl Renderer {
             self.meshes.generation,
             self.materials.generation,
             self.gi.generation,
+            self.neural.generation,
         );
         if grown || self.bind.is_none() || key != self.bind_key {
             self.bind_key = key;
@@ -1478,6 +1552,12 @@ impl Renderer {
                     binding: 2,
                     resource: wgpu::BindingResource::Sampler(&self.tex_sampler),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(&self.neural.latents_view),
+                },
+                b(4, &self.neural.data),
+                b(5, &self.neural.data),
             ],
         });
         let sky = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -1768,7 +1848,10 @@ impl Renderer {
             pass.set_vertex_buffer(0, self.meshes.vertices.slice(..));
             pass.set_index_buffer(self.meshes.indices.slice(..), wgpu::IndexFormat::Uint32);
             for variant in 0..VARIANTS {
-                pass.set_pipeline(&self.forward[variant as usize]);
+                let Some(p) = forward_for(&self.forward, &self.neural_forward, variant) else {
+                    continue;
+                };
+                pass.set_pipeline(p);
                 draw_calls += self.batches.draw(&mut pass, 0, variant);
             }
             if !occl {
@@ -1831,7 +1914,10 @@ impl Renderer {
             pass.set_vertex_buffer(0, self.meshes.vertices.slice(..));
             pass.set_index_buffer(self.meshes.indices.slice(..), wgpu::IndexFormat::Uint32);
             for variant in 0..VARIANTS {
-                pass.set_pipeline(&self.forward[variant as usize]);
+                let Some(p) = forward_for(&self.forward, &self.neural_forward, variant) else {
+                    continue;
+                };
+                pass.set_pipeline(p);
                 draw_calls += self.batches.draw(&mut pass, LATE, variant);
             }
             self.draw_after_opaque(&device, &mut pass, binds);
@@ -2308,5 +2394,75 @@ pub fn web_time() -> f64 {
     #[cfg(target_arch = "wasm32")]
     {
         0.0
+    }
+}
+
+/// The forward pass's vertex buffer: the shared mesh vertices.
+fn vertex_layout() -> wgpu::VertexBufferLayout<'static> {
+    const ATTRIBUTES: [wgpu::VertexAttribute; 4] =
+        wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x4];
+    wgpu::VertexBufferLayout {
+        array_stride: std::mem::size_of::<pocket_assets::Vertex>() as u64,
+        step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: &ATTRIBUTES,
+    }
+}
+
+/// A forward pipeline: `vs` and fragment entry `fs` of `module` into the multisampled HDR target.
+fn forward_pipeline(
+    device: &wgpu::Device,
+    layout: &wgpu::PipelineLayout,
+    module: &wgpu::ShaderModule,
+    cull: Option<wgpu::Face>,
+    fs: &str,
+    label: &str,
+) -> wgpu::RenderPipeline {
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some(label),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module,
+            entry_point: Some("vs"),
+            compilation_options: Default::default(),
+            buffers: &[Some(vertex_layout())],
+        },
+        fragment: Some(wgpu::FragmentState {
+            module,
+            entry_point: Some(fs),
+            compilation_options: Default::default(),
+            targets: &[Some(HDR.into())],
+        }),
+        primitive: wgpu::PrimitiveState {
+            cull_mode: cull,
+            ..Default::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: DEPTH,
+            depth_write_enabled: Some(true),
+            depth_compare: Some(wgpu::CompareFunction::Greater),
+            stencil: Default::default(),
+            bias: Default::default(),
+        }),
+        multisample: wgpu::MultisampleState {
+            count: SAMPLES,
+            ..Default::default()
+        },
+        multiview_mask: None,
+        cache: None,
+    })
+}
+
+/// The forward pipeline of `variant`: the neural ones only once a neural texture has loaded.
+fn forward_for<'a>(
+    forward: &'a [wgpu::RenderPipeline; 4],
+    neural: &'a Option<[wgpu::RenderPipeline; 4]>,
+    variant: u32,
+) -> Option<&'a wgpu::RenderPipeline> {
+    if variant < NEURAL_VARIANT {
+        Some(&forward[variant as usize])
+    } else {
+        neural
+            .as_ref()
+            .map(|n| &n[(variant - NEURAL_VARIANT) as usize])
     }
 }

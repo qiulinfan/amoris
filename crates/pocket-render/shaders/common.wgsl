@@ -5,10 +5,12 @@ const MAX_VIEWS: u32 = 5u;          // the camera and four shadow cascades
 const FLAG_ALIVE: u32 = 1u;
 const FLAG_VISIBLE: u32 = 2u;
 const FLAG_SHADOW: u32 = 4u;
-// Bits 3-4: the pipeline variant (1 alpha-masked, 2 double-sided), so opaque pixels never run a
-// shader containing `discard` (which turns off hidden-surface removal on tile-based GPUs).
+// Bits 3-5: the pipeline variant (1 alpha-masked, 2 double-sided, 4 neural texture), so opaque
+// pixels never run a shader containing `discard` (which turns off hidden-surface removal on
+// tile-based GPUs) and only neural materials run the neural decoder.
 const VARIANT_SHIFT: u32 = 3u;
-const VARIANTS: u32 = 4u;
+const VARIANT_MASK: u32 = 7u;
+const VARIANTS: u32 = 8u;
 const NO_TEXTURE: u32 = 0xffffffffu;
 
 // Per frame. Reversed-Z, infinite far plane: depth 1 at the near plane, 0 at infinity.
@@ -73,8 +75,8 @@ struct Material {
     metallic: f32,
     roughness: f32,
     alpha_cutoff: f32,
-    flags: u32,              // 1: alpha mask, 2: double sided, 4: unlit
-    _pad: u32,
+    flags: u32,              // 1: alpha mask, 2: double sided, 4: unlit, 8: neural texture
+    neural: u32,             // the neural texture's descriptor word (neural.rs)
     // Layers in the texture arrays; NO_TEXTURE when absent.
     base_color_tex: u32,
     normal_tex: u32,

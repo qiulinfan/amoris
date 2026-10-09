@@ -56,14 +56,23 @@ pub fn profile_constants(layout: &NeuralLayout) -> String {
     s
 }
 
-/// The decoder for `layout` in half or single precision, followed by `body` (the shader that
-/// declares `nt_latents` and `nt_data`). With `f16` the result begins with `enable f16;`, so a
-/// shader that composes it must put nothing before it.
-pub fn decoder_source(layout: &NeuralLayout, f16: bool, body: &str) -> String {
+/// The decoder for `layout` in half or single precision (without the `enable f16;` the module
+/// must then begin with), followed by `body`, the shader that declares `nt_latents` and `nt_data`.
+pub fn decoder_library(layout: &NeuralLayout, f16: bool, body: &str) -> String {
     format!(
         "{}\n{}\n{DECODER}\n{body}",
         if f16 { PRECISION_F16 } else { PRECISION_F32 },
         profile_constants(layout)
+    )
+}
+
+/// A whole module: the decoder for `layout` followed by `body`, `enable f16;` first in half
+/// precision.
+pub fn decoder_source(layout: &NeuralLayout, f16: bool, body: &str) -> String {
+    format!(
+        "{}{}",
+        if f16 { "enable f16;\n" } else { "" },
+        decoder_library(layout, f16, body)
     )
 }
 
@@ -524,5 +533,49 @@ mod tests {
         assert_eq!(a >> 8 & 0xff, ABSENT);
         assert_eq!(a >> 24, 3);
         assert_eq!(b & 0xff, ABSENT);
+    }
+
+    fn validate(what: &str, source: &str) {
+        let module = wgpu::naga::front::wgsl::parse_str(source)
+            .unwrap_or_else(|e| panic!("{what}: {}", e.emit_to_string(source)));
+        wgpu::naga::valid::Validator::new(
+            wgpu::naga::valid::ValidationFlags::all(),
+            wgpu::naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .unwrap_or_else(|e| panic!("{what}: {e:?}"));
+    }
+
+    /// Every composition of the neural shaders parses and validates: both samplings and grid
+    /// widths, half and single precision, with and without traced shadows.
+    #[test]
+    fn neural_shaders_validate() {
+        let mut layouts = vec![layout()];
+        let mut taps = layout();
+        taps.sampling = Sampling::Taps4;
+        taps.fine = GridSpec {
+            features: 16,
+            bits: 4,
+        };
+        taps.hidden = [12, 20];
+        layouts.push(taps);
+        for l in &layouts {
+            validate(
+                "train",
+                &format!(
+                    "{}\n{}",
+                    profile_constants(l),
+                    include_str!("../../shaders/neural_train.wgsl")
+                ),
+            );
+            for f16 in [false, true] {
+                validate("eval", &decoder_source(l, f16, EVAL));
+                for traced in [false, true] {
+                    let source = crate::shaders::forward_neural(l, f16, traced);
+                    assert!(source.contains("fn fs_neural("));
+                    validate("forward", &source);
+                }
+            }
+        }
     }
 }

@@ -58,6 +58,36 @@ pub fn source(name: &str) -> String {
     format!("{COMMON}\n{body}")
 }
 
+/// The forward shader of the neural-texture variants: forward.wgsl with the decoder for `layout`
+/// (half precision when `f16`) and forward_neural.wgsl's `fs_neural`, its sun shadows traced when
+/// `traced` (rt_shadows.rs). The other variants keep `source("forward")`, which has no decoder.
+pub fn forward_neural(
+    layout: &pocket_assets::neural::NeuralLayout,
+    f16: bool,
+    traced: bool,
+) -> String {
+    let forward = format!(
+        "{}\n{}",
+        source("forward"),
+        include_str!("../shaders/forward_neural.wgsl")
+    );
+    let body = crate::neural::decoder_library(layout, f16, &forward);
+    let body = if traced {
+        crate::rt_shadows::RtShadows::traced(&body)
+    } else {
+        body
+    };
+    format!(
+        "{}{}{body}",
+        if f16 { "enable f16;\n" } else { "" },
+        if traced {
+            "enable wgpu_ray_query;\n"
+        } else {
+            ""
+        }
+    )
+}
+
 pub fn module(device: &wgpu::Device, name: &str) -> wgpu::ShaderModule {
     device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some(name),

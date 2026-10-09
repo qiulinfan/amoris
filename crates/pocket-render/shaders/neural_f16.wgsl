@@ -1,9 +1,7 @@
-enable f16;
 // Neural texture decoding in half precision (shader-f16): the network's arithmetic runs on halves,
-// read as halves through a second view of the data uniform, `nt_blocks` (WGSL cannot bitcast a
-// u32 to two halves, and naga has no 32-to-16-bit vector bitcast), bound at the includer's
-// `NT_GROUP` and `NT_BLOCKS`. Composed first in its module (`enable` must lead), then the profile
-// constants and neural_texture.wgsl (neural.rs).
+// read as halves through a second view of the data uniform, `nt_blocks` (naga cannot bitcast a u32
+// to two halves), bound at the includer's `NT_GROUP` and `NT_BLOCKS`. The module must begin with
+// `enable f16;` (neural.rs composes it); then come the profile constants and neural_texture.wgsl.
 alias nt_t = f16;
 
 // Two data words: a 4x4 weight block, or (c0 or c2) a word of four biases.

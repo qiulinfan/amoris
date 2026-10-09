@@ -852,3 +852,76 @@ pub fn bent_columns(n: u32, at: Vec3, spacing: f32, first_id: u64) -> Vec<Instan
         })
         .collect()
 }
+
+/// The path the neural texture scene's ground is registered under (`Renderer::add_model`).
+pub const NEURAL_GROUND: &str = "demo/neural-ground.glb";
+
+/// A square ground of side `side` metres whose texture coordinates repeat `tiles` times (the
+/// neural texture scene's mesh: a tiling material over a large floor).
+pub fn neural_ground_model(side: f32, tiles: f32) -> ModelAsset {
+    let n = [0.0, 1.0, 0.0];
+    let h = side * 0.5;
+    let v = |x: f32, z: f32, u: f32, w: f32| pocket_assets::Vertex {
+        position: [x, 0.0, z],
+        normal: n,
+        uv: [u, w],
+        tangent: [1.0, 0.0, 0.0, 1.0],
+    };
+    let vertices = vec![
+        v(-h, h, 0.0, tiles),
+        v(h, h, tiles, tiles),
+        v(h, -h, tiles, 0.0),
+        v(-h, -h, 0.0, 0.0),
+    ];
+    ModelAsset {
+        meshes: vec![pocket_assets::MeshData::new(
+            "ground",
+            vertices,
+            vec![0, 1, 2, 0, 2, 3],
+        )],
+        materials: vec![],
+        images: vec![],
+        nodes: vec![NodeData {
+            name: "ground".into(),
+            mesh: 0,
+            transform: glam::Mat4::IDENTITY.to_cols_array(),
+            skin: None,
+        }],
+        skeleton: vec![],
+        skins: vec![],
+        animations: vec![],
+    }
+}
+
+/// The neural texture scene: [`neural_ground_model`] (registered under [`NEURAL_GROUND`]) drawn
+/// with `material` (a `.ntex` path, or empty for the inline material `color`), under a sun.
+pub fn neural_scene(material: &str, color: [f32; 4], roughness: f32) -> RenderFrame {
+    let instances = vec![InstanceUpdate {
+        id: 1,
+        pose: Some(Pose::default()),
+        look: Some(Look {
+            mesh: NEURAL_GROUND.into(),
+            material: material.into(),
+            color,
+            metallic: 0.0,
+            roughness,
+            transmission: None,
+            ior: None,
+            emissive: [0.0; 3],
+            cast_shadows: false,
+            visible: true,
+        }),
+        anim: None,
+    }];
+    sunlit(instances, Vec3::new(-0.3, -1.0, -0.4), false)
+}
+
+/// The neural texture scene's cameras: `0` looking straight down at the ground so it fills the
+/// view (every pixel decodes, at about one level of detail), `1` a walker's view across it (the
+/// level of detail grows with distance; the sky fills the top).
+pub fn neural_camera(view: u32) -> crate::CameraState {
+    match view {
+        0 => crate::CameraState::look_at_up(Vec3::new(0.0, 4.0, 0.0), Vec3::ZERO, -Vec3::Z),
+        _ => crate::CameraState::look_at(Vec3::new(0.0, 1.7, 6.0), Vec3::new(0.0, 0.0, -8.0)),
+    }
+}

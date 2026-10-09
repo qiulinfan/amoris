@@ -150,7 +150,44 @@ struct Surface {
     roughness: f32,
     n: vec3f,
     emissive: vec3f,
+    // Ambient occlusion of the sky's light (1 for materials without it; neural textures carry it).
+    occlusion: f32,
 };
+
+// The shading normal: the interpolated normal facing the viewer, perturbed by the tangent-space
+// normal `tn` when `mapped` (a malformed or inward map is ignored, as in the path tracer).
+fn shading_normal(in: VsOut, facing: bool, tn: vec3f, mapped: bool) -> vec3f {
+    var n = normalize(in.normal);
+    let view_direction = normalize(view.camera_pos.xyz - in.world);
+    var geometric = cross(dpdx(in.world), dpdy(in.world));
+    if dot(geometric, geometric) > 1e-12 {
+        geometric = normalize(geometric);
+        if dot(geometric, view_direction) < 0.0 { geometric = -geometric; }
+    } else {
+        geometric = select(-n, n, facing);
+    }
+    if (!facing) { n = -n; }
+    if dot(n, geometric) < 0.0 { n = -n; }
+    if dot(n, view_direction) <= 0.001 { n = geometric; }
+    if (mapped) {
+        let t = normalize(in.tangent.xyz - n * dot(n, in.tangent.xyz));
+        let b = cross(n, t) * in.tangent.w;
+        let candidate = t * tn.x + b * tn.y + n * tn.z;
+        if dot(candidate, candidate) > 1e-12 {
+            let mapped_n = normalize(candidate);
+            if dot(mapped_n, geometric) > 0.001 && dot(mapped_n, view_direction) > 0.001 { n = mapped_n; }
+        }
+    }
+    return n;
+}
+
+// Specular anti-aliasing (Kaplanyan-Hoffman): widen roughness where the normal varies fast.
+fn antialiased_roughness(n: vec3f, roughness: f32) -> f32 {
+    let dn = fwidth(n);
+    let variance = 0.25 * dot(dn, dn);
+    let a2 = roughness * roughness;
+    return clamp(sqrt(sqrt(clamp(a2 * a2 + min(2.0 * variance, 0.18), 0.0, 1.0))), 0.045, 1.0);
+}
 
 fn surface(in: VsOut, facing: bool) -> Surface {
     let m = materials[in.material];
@@ -172,40 +209,19 @@ fn surface(in: VsOut, facing: bool) -> Surface {
         s.roughness *= mr.g;
         s.metallic *= mr.b;
     }
-    var n = normalize(in.normal);
-    let view_direction = normalize(view.camera_pos.xyz - in.world);
-    var geometric = cross(dpdx(in.world), dpdy(in.world));
-    if dot(geometric, geometric) > 1e-12 {
-        geometric = normalize(geometric);
-        if dot(geometric, view_direction) < 0.0 { geometric = -geometric; }
-    } else {
-        geometric = select(-n, n, facing);
+    var tn = vec3f(0.0);
+    let mapped = m.normal_tex != NO_TEXTURE;
+    if (mapped) {
+        tn = textureSampleGrad(tex_linear, tex_sampler, in.uv, m.normal_tex, du, dv).xyz * 2.0 - 1.0;
     }
-    if (!facing) { n = -n; }
-    if dot(n, geometric) < 0.0 { n = -n; }
-    if dot(n, view_direction) <= 0.001 { n = geometric; }
-    if (m.normal_tex != NO_TEXTURE) {
-        let t = normalize(in.tangent.xyz - n * dot(n, in.tangent.xyz));
-        let b = cross(n, t) * in.tangent.w;
-        let tn = textureSampleGrad(tex_linear, tex_sampler, in.uv, m.normal_tex, du, dv).xyz * 2.0 - 1.0;
-        let candidate = t * tn.x + b * tn.y + n * tn.z;
-        if dot(candidate, candidate) > 1e-12 {
-            let mapped = normalize(candidate);
-            // Match the path tracer: a malformed/inward normal map must not invert transport.
-            if dot(mapped, geometric) > 0.001 && dot(mapped, view_direction) > 0.001 { n = mapped; }
-        }
-    }
+    let n = shading_normal(in, facing, tn, mapped);
     s.n = n;
     s.emissive = m.emissive;
     if (m.emissive_tex != NO_TEXTURE) {
         s.emissive *= textureSampleGrad(tex_srgb, tex_sampler, in.uv, m.emissive_tex, du, dv).rgb;
     }
-    // Specular anti-aliasing (Kaplanyan-Hoffman): widen roughness where the normal varies fast.
-    let dn = fwidth(n);
-    let variance = 0.25 * dot(dn, dn);
-    let a2 = s.roughness * s.roughness;
-    s.roughness = sqrt(sqrt(clamp(a2 * a2 + min(2.0 * variance, 0.18), 0.0, 1.0)));
-    s.roughness = clamp(s.roughness, 0.045, 1.0);
+    s.roughness = antialiased_roughness(n, s.roughness);
+    s.occlusion = 1.0;
     return s;
 }
 
@@ -305,7 +321,8 @@ fn shade(in: VsOut, s: Surface) -> vec4f {
     let baked = baked_diffuse(in.world, n);
     // sh_irradiance returns E; both diffuse inputs need E / PI before multiplying albedo.
     let diffuse_light = select(sh_irradiance(n) * (ambient / PI), baked.xyz, baked.w > 0.0);
-    color += diffuse_color * diffuse_light + prefiltered * brdf * horizon * horizon * ambient;
+    color += (diffuse_color * diffuse_light + prefiltered * brdf * horizon * horizon * ambient)
+        * s.occlusion;
 
     color += s.emissive;
     color = apply_fog(color, in.world);

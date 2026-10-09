@@ -9,10 +9,13 @@ use std::collections::HashMap;
 use bytemuck::{Pod, Zeroable};
 use pocket_assets::frame::Look;
 use pocket_assets::mesh::{AlphaMode, ImageData, MaterialData};
+use pocket_assets::neural::{Channel, NeuralLayout};
 
 use crate::blit::Blitter;
 
 pub const NO_TEXTURE: u32 = u32::MAX;
+/// Material flag: the channels come from a neural texture (`MaterialGpu::neural`).
+pub const FLAG_NEURAL: u32 = 8;
 /// The size of every texture layer.
 pub const TEX_SIZE: u32 = 1024;
 
@@ -26,7 +29,8 @@ pub struct MaterialGpu {
     pub roughness: f32,
     pub alpha_cutoff: f32,
     pub flags: u32,
-    pub _pad: u32,
+    /// The neural texture's descriptor word in the neural table (flag 8), else [`NO_TEXTURE`].
+    pub neural: u32,
     pub base_color_tex: u32,
     pub normal_tex: u32,
     pub metal_rough_tex: u32,
@@ -42,7 +46,7 @@ impl Default for MaterialGpu {
             roughness: 0.5,
             alpha_cutoff: 0.5,
             flags: 0,
-            _pad: 0,
+            neural: NO_TEXTURE,
             base_color_tex: NO_TEXTURE,
             normal_tex: NO_TEXTURE,
             metal_rough_tex: NO_TEXTURE,
@@ -210,9 +214,16 @@ impl MaterialPool {
         self.rows.is_empty()
     }
 
-    /// The pipeline variant a row needs: 1 alpha-masked, 2 double-sided.
+    /// The pipeline variant a row needs: 1 alpha-masked, 2 double-sided, 4 neural texture.
     pub fn variant(&self, id: u32) -> u32 {
-        self.rows.get(id as usize).map_or(0, |r| r.flags & 3)
+        self.rows.get(id as usize).map_or(0, |r| {
+            (r.flags & 3)
+                | if r.flags & FLAG_NEURAL != 0 {
+                    crate::scene::NEURAL_VARIANT
+                } else {
+                    0
+                }
+        })
     }
 
     /// Whether an asset material is known.
@@ -333,6 +344,31 @@ impl MaterialPool {
                 self.assets.insert(format!("{prefix}#{}", m.name), row);
             }
         }
+    }
+
+    /// Registers the material a neural texture decodes, under its path (`materials/brick.ntex`):
+    /// opaque and single-sided, its factors 1 for the channels it has (the look's color and
+    /// emissive apply on top as for any asset material), the glTF defaults for those it lacks.
+    pub fn add_neural(&mut self, path: &str, descriptor: u32, layout: &NeuralLayout) {
+        let has = |c: Channel| layout.output_of(c).is_some();
+        let row = MaterialGpu {
+            emissive: if has(Channel::EmissiveR) {
+                [1.0; 3]
+            } else {
+                [0.0; 3]
+            },
+            metallic: if has(Channel::Metallic) { 1.0 } else { 0.0 },
+            roughness: if has(Channel::Roughness) { 1.0 } else { 0.5 },
+            flags: FLAG_NEURAL,
+            neural: descriptor,
+            ..MaterialGpu::default()
+        };
+        self.assets.insert(path.to_owned(), row);
+    }
+
+    /// Registers `path` as the default material (an asset that failed to load still draws).
+    pub fn add_fallback(&mut self, path: &str) {
+        self.assets.insert(path.to_owned(), MaterialGpu::default());
     }
 
     /// Writes the rows if they changed; returns whether the buffer was replaced.

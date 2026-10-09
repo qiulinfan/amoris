@@ -4,6 +4,12 @@
 
 use pocket_assets::gi::{BakedGi, NeuralGi};
 use pocket_assets::mesh::ModelAsset;
+use pocket_assets::neural::NeuralTexture;
+
+/// Whether a material path names a neural texture (`materials/brick.ntex`).
+pub fn is_neural_texture(path: &str) -> bool {
+    path.len() > 5 && path[path.len() - 5..].eq_ignore_ascii_case(".ntex")
+}
 
 /// A source of model assets by project-relative path.
 pub trait AssetSource {
@@ -21,6 +27,13 @@ pub trait AssetSource {
         log::warn!("this asset source cannot load neural GI: {path}");
     }
     fn poll_neural_gi(&mut self) -> Vec<(String, Result<NeuralGi, String>)> {
+        Vec::new()
+    }
+    /// Starts loading a neural texture material (`.ntex`, docs/spec/neural-textures.md).
+    fn request_neural_texture(&mut self, path: &str) {
+        log::warn!("this asset source cannot load neural textures: {path}");
+    }
+    fn poll_neural_textures(&mut self) -> Vec<(String, Result<NeuralTexture, String>)> {
         Vec::new()
     }
 }
@@ -46,6 +59,7 @@ pub struct FileAssets {
     models_done: Vec<(String, Result<ModelAsset, String>)>,
     gi_done: Vec<(String, Result<BakedGi, String>)>,
     neural_done: Vec<(String, Result<NeuralGi, String>)>,
+    textures_done: Vec<(String, Result<NeuralTexture, String>)>,
 }
 
 #[cfg(all(not(target_arch = "wasm32"), feature = "import"))]
@@ -53,12 +67,14 @@ enum Job {
     Model(String),
     Gi(String),
     Neural(String),
+    Texture(String),
 }
 #[cfg(all(not(target_arch = "wasm32"), feature = "import"))]
 enum Loaded {
     Model(String, Result<ModelAsset, String>),
     Gi(String, Result<BakedGi, String>),
     Neural(String, Result<NeuralGi, String>),
+    Texture(String, Result<NeuralTexture, String>),
 }
 
 #[cfg(all(not(target_arch = "wasm32"), feature = "import"))]
@@ -71,6 +87,13 @@ impl FileAssets {
             .spawn(move || {
                 for job in jobs {
                     let path = match job {
+                        Job::Texture(path) => {
+                            let result = NeuralTexture::load(&root.join(&path));
+                            if done.send(Loaded::Texture(path, result)).is_err() {
+                                break;
+                            }
+                            continue;
+                        }
                         Job::Neural(path) => {
                             let result = NeuralGi::load(&root.join(&path));
                             if done.send(Loaded::Neural(path, result)).is_err() {
@@ -111,6 +134,7 @@ impl FileAssets {
             models_done: Vec::new(),
             gi_done: Vec::new(),
             neural_done: Vec::new(),
+            textures_done: Vec::new(),
         }
     }
 
@@ -120,6 +144,7 @@ impl FileAssets {
                 Loaded::Model(path, result) => self.models_done.push((path, result)),
                 Loaded::Gi(path, result) => self.gi_done.push((path, result)),
                 Loaded::Neural(path, result) => self.neural_done.push((path, result)),
+                Loaded::Texture(path, result) => self.textures_done.push((path, result)),
             }
         }
     }
@@ -147,5 +172,12 @@ impl AssetSource for FileAssets {
     fn poll_neural_gi(&mut self) -> Vec<(String, Result<NeuralGi, String>)> {
         self.collect();
         std::mem::take(&mut self.neural_done)
+    }
+    fn request_neural_texture(&mut self, path: &str) {
+        let _ = self.tx.send(Job::Texture(path.to_owned()));
+    }
+    fn poll_neural_textures(&mut self) -> Vec<(String, Result<NeuralTexture, String>)> {
+        self.collect();
+        std::mem::take(&mut self.textures_done)
     }
 }

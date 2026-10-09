@@ -111,7 +111,7 @@ fn group_first(wid: vec3u, nwg: vec3u) -> u32 {
 fn first_batch(first: u32) -> u32 {
     if (first < cull.instance_count) {
         let f = instances[first];
-        return ((f.flags >> VARIANT_SHIFT) & 3u) * cull.mesh_count + f.mesh;
+        return ((f.flags >> VARIANT_SHIFT) & VARIANT_MASK) * cull.mesh_count + f.mesh;
     }
     return NONE;
 }
@@ -170,7 +170,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u, @builtin(local_invocation_ind
         if ((inst.flags & need) == need && inst.mesh < cull.mesh_count) {
             live = true;
             mesh = inst.mesh;
-            variant = (inst.flags >> VARIANT_SHIFT) & 3u;
+            variant = (inst.flags >> VARIANT_SHIFT) & VARIANT_MASK;
             key = variant * cull.mesh_count + mesh;
             let m = meshes[mesh];
             lods = m.lods;
@@ -357,7 +357,7 @@ fn late(@builtin(global_invocation_id) gid: vec3u, @builtin(local_invocation_ind
             // drawn at the level the early pass chose for the camera.
             let inst = instances[idx];
             let m = meshes[inst.mesh];
-            let variant = (inst.flags >> VARIANT_SHIFT) & 3u;
+            let variant = (inst.flags >> VARIANT_SHIFT) & VARIANT_MASK;
             key = variant * cull.mesh_count + inst.mesh;
             level = (st & LOD_MASK) >> LOD_SHIFT;
             let row = level_row(inst.mesh, m.lods, level);

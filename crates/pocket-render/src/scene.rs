@@ -15,9 +15,12 @@ use pocket_assets::frame::{
 pub const FLAG_ALIVE: u32 = 1;
 pub const FLAG_VISIBLE: u32 = 2;
 pub const FLAG_SHADOW: u32 = 4;
-/// Bits 3-4 of the flags: the pipeline variant (1 alpha-masked, 2 double-sided).
+/// Bits 3-5 of the flags: the pipeline variant (1 alpha-masked, 2 double-sided, 4 neural texture).
 pub const VARIANT_SHIFT: u32 = 3;
-pub const VARIANTS: u32 = 4;
+pub const VARIANT_MASK: u32 = 7;
+pub const VARIANTS: u32 = 8;
+/// The variant bit of materials decoded from a neural texture (their own forward pipelines).
+pub const NEURAL_VARIANT: u32 = 4;
 
 /// One instance slot (matches `Instance` in common.wgsl, 80 bytes).
 #[repr(C)]
@@ -189,7 +192,7 @@ impl Scene {
         for s in entry_slots {
             let slot = self.slots[s as usize];
             if slot.flags & FLAG_ALIVE != 0 {
-                let variant = (slot.flags >> VARIANT_SHIFT) & 3;
+                let variant = (slot.flags >> VARIANT_SHIFT) & VARIANT_MASK;
                 self.count(slot.mesh * VARIANTS + variant, -1);
             }
             self.slots[s as usize] = InstanceGpu::default();
