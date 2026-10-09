@@ -39,18 +39,20 @@ fn surface_neural(in: VsOut, facing: bool) -> Surface {
     let level = clamp(lod, 0.0, top);
     let m0 = u32(floor(level));
     let t = clamp((level - f32(m0) - (0.5 - 0.5 * NT_BLEND_BAND)) / NT_BLEND_BAND, 0.0, 1.0);
+    // One decode, or two blended in the band: a loop around a single call, so the shader holds
+    // one copy of the unrolled network (four inlined copies, one per branch, overflowed the
+    // instruction caches where neighbouring pixels took different branches).
+    let last = extent.z - 1u;
+    let first_mip = select(m0, m0 + 1u, t >= 1.0 && m0 < last);
+    let count = select(1u, 2u, t > 0.0 && t < 1.0 && m0 < last);
     var y: array<vec4<nt_t>, NT_OUT4>;
-    if t <= 0.0 || m0 + 1u > extent.z - 1u {
-        y = nt_decode(base, m0, in.uv);
-    } else if t >= 1.0 {
-        y = nt_decode(base, m0 + 1u, in.uv);
-    } else {
-        let a = nt_decode(base, m0, in.uv);
-        let b = nt_decode(base, m0 + 1u, in.uv);
-        let w = nt_t(t);
-        for (var i = 0u; i < NT_OUT4; i++) {
-            y[i] = mix(a[i], b[i], vec4<nt_t>(w));
-        }
+    for (var i = 0u; i < count; i++) {
+        let d = nt_decode(base, first_mip + i, in.uv);
+        let w = select(nt_t(1.0), select(nt_t(1.0 - t), nt_t(t), i == 1u), count == 2u);
+        y[0] += d[0] * w;
+        if NT_OUT4 > 1u { y[min(1u, NT_OUT4 - 1u)] += d[min(1u, NT_OUT4 - 1u)] * w; }
+        if NT_OUT4 > 2u { y[min(2u, NT_OUT4 - 1u)] += d[min(2u, NT_OUT4 - 1u)] * w; }
+        if NT_OUT4 > 3u { y[min(3u, NT_OUT4 - 1u)] += d[min(3u, NT_OUT4 - 1u)] * w; }
     }
     // Where each channel group is (descriptor word 1, a byte each; 0xff absent).
     let at = nt_data[base + 1u];

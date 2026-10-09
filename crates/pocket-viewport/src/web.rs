@@ -423,6 +423,28 @@ impl Viewport {
         self.renderer.set_camera_override(Some(front));
     }
 
+    /// Loads the neural texture scene (docs/spec/neural-textures.md): a tiled ground drawn with
+    /// the `.ntex` at `path` (the page fetches it like any asset), seen from camera `view` (0
+    /// straight down, filling the view; 1 across it).
+    pub fn demo_neural(&mut self, path: &str, view: u32, now_ms: f64) {
+        self.renderer.add_model(
+            pocket_render::demo::NEURAL_GROUND,
+            &pocket_render::demo::neural_ground_model(40.0, 8.0),
+        );
+        self.renderer.apply(
+            pocket_render::demo::neural_scene(path, [1.0; 4], 1.0),
+            now_ms / 1000.0,
+        );
+        self.renderer
+            .set_camera_override(Some(pocket_render::demo::neural_camera(view)));
+    }
+
+    /// Decode neural textures in half precision (when the device has shader-f16) or single;
+    /// returns whether half precision is in use.
+    pub fn set_neural_half_precision(&mut self, f16: bool) -> bool {
+        self.renderer.set_neural_half_precision(f16)
+    }
+
     /// Loads the many_cubes benchmark scene (Bevy's layouts) for in-browser measurement.
     pub fn demo_cubes(&mut self, count: u32, dense: bool, now_ms: f64) {
         let f = pocket_render::demo::many_cubes(count as usize, dense, false);

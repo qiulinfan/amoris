@@ -149,12 +149,12 @@ pub struct TrainConfig {
 impl Default for TrainConfig {
     fn default() -> TrainConfig {
         TrainConfig {
-            steps: 6000,
+            steps: 10000,
             batch: 65536,
             seed: 1,
             lr_mlp: 0.005,
-            lr_latent: 0.01,
-            center_fraction: 0.5,
+            lr_latent: 0.03,
+            center_fraction: 0.75,
             round_from: 0.6,
             freeze_from: 0.85,
             final_lr: 0.05,

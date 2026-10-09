@@ -105,6 +105,8 @@ export async function createViewport(canvas, options = {}) {
     demoMixed(n) { vp.demo_mixed(n, performance.now()); },
     demoCubesCamera(frame, dense) { vp.demo_cubes_camera(frame, dense); },
     demoOccluders() { vp.demo_occluders(performance.now()); },
+    demoNeural(path, view = 0) { vp.demo_neural(path, view, performance.now()); },
+    setNeuralHalfPrecision(f16) { return vp.set_neural_half_precision(f16); },
     setOcclusion(mode) { vp.set_occlusion(mode); },
     demoLod(n, spacing, detail, t) { vp.demo_lod(n, spacing, detail, t, performance.now()); },
     demoLodCamera(n, spacing, t) { vp.demo_lod_camera(n, spacing, t); },
