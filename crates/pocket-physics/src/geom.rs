@@ -13,6 +13,10 @@ pub type Q4 = [f64; 4];
 pub const ZERO: V3 = [0.0; 3];
 pub const IDENTITY: Q4 = [0.0, 0.0, 0.0, 1.0];
 
+/// The largest magnitude the solver's `f32` holds (3.4028234663852886e38), as an `f64`: a query's
+/// argument beyond it is refused rather than rounded into something else (numeric.md 3.1 and 7).
+pub const SOLVER_MAX: f64 = f32::MAX as f64;
+
 #[inline]
 pub fn add(a: V3, b: V3) -> V3 {
     [a[0] + b[0], a[1] + b[1], a[2] + b[2]]

@@ -4,12 +4,20 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
-description = "Perception, actions and time modes; in slice 1 the time model's pacing"
+description = "Perception, actions and time modes: the player layer (shared/contract/)"
 
 [dependencies]
 pocket-contract.workspace = true
 pocket-sim.workspace = true
 pocket-physics.workspace = true
+# Intent instances, controls and seats are world state (`Resource`, `Component`) and the
+# `interface.intents` and `interface.perception` systems run over the World (architecture.md 6,
+# the bevy_ecs row).
+bevy_ecs.workspace = true
+# Perception's persisted components hold enums below their top level (a memory entry's detail and
+# fact values, a perceived event's sense), which their Persisted::trace traces first
+# (architecture.md 6, the serde-reflection row).
+serde-reflection.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 schemars.workspace = true

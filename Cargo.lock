@@ -3345,11 +3345,13 @@ dependencies = [
 name = "pocket-interface"
 version = "0.1.0"
 dependencies = [
+ "bevy_ecs",
  "pocket-contract",
  "pocket-physics",
  "pocket-sim",
  "schemars",
  "serde",
+ "serde-reflection",
  "serde_json",
 ]
 
