@@ -388,7 +388,8 @@ fn shade(in: VsOut, s: Surface) -> SceneOut {
     let baked = baked_diffuse(in.world, n);
     // sh_irradiance returns E; both diffuse inputs need E / PI before multiplying albedo.
     let diffuse_light = select(sh_irradiance(n) * (ambient / PI), baked.xyz, baked.w > 0.0);
-    let indirect = (diffuse_color * diffuse_light + prefiltered * brdf * horizon * horizon * ambient) * s.occlusion;
+    let indirect = (diffuse_color * diffuse_light + prefiltered * brdf * horizon * horizon * ambient)
+        * s.occlusion;
     color += indirect;
 
     color += s.emissive;
@@ -439,6 +440,45 @@ fn fs_shadow_masked(in: MaskedShadowOut) {
     var a = m.base_color.a;
     if (m.base_color_tex != NO_TEXTURE) {
         a *= textureSampleLevel(tex_srgb, tex_sampler, in.uv, m.base_color_tex, 0.0).a;
+    }
+    if (a < m.alpha_cutoff) {
+        discard;
+    }
+}
+
+// --- Depth without TAA's jitter ------------------------------------------------------------------
+// With TAA and splats the renderer draws the opaque instances' depth again from the unjittered frame
+// group (renderer.rs `UnjitteredDepth`): splats are drawn after TAA without the jitter and test
+// against it. The same positions as `vs`, the same alpha test as `fs_masked`.
+
+@vertex
+fn vs_depth(v: VsIn, @builtin(instance_index) ii: u32) -> @builtin(position) vec4f {
+    let d = drawn[ii + batch.x];
+    let world = d.pos + quat_rotate(d.rot, v.position * d.scale);
+    return view.view_proj * vec4f(world, 1.0);
+}
+
+@vertex
+fn vs_depth_masked(v: VsIn, @builtin(instance_index) ii: u32) -> MaskedShadowOut {
+    let d = drawn[ii + batch.x];
+    let world = d.pos + quat_rotate(d.rot, v.position * d.scale);
+    var o: MaskedShadowOut;
+    o.clip = view.view_proj * vec4f(world, 1.0);
+    o.uv = v.uv;
+    o.material = d.material;
+    return o;
+}
+
+// `fs_masked`'s alpha test (`surface`: the mip level of the uv's gradients, so distant alpha-tested
+// surfaces open up as they do in the opaque pass).
+@fragment
+fn fs_depth_masked(in: MaskedShadowOut) {
+    let m = materials[in.material];
+    let du = dpdx(in.uv);
+    let dv = dpdy(in.uv);
+    var a = m.base_color.a;
+    if (m.base_color_tex != NO_TEXTURE) {
+        a *= textureSampleGrad(tex_srgb, tex_sampler, in.uv, m.base_color_tex, du, dv).a;
     }
     if (a < m.alpha_cutoff) {
         discard;

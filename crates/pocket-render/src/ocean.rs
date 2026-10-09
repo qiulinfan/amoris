@@ -25,6 +25,8 @@ struct OceanUniform {
 
 pub struct Ocean {
     pub pipeline: wgpu::RenderPipeline,
+    /// Depth only, one sample (`draw_depth`): the unjittered depth splats test against with TAA.
+    depth_pipeline: wgpu::RenderPipeline,
     layout: wgpu::PipelineLayout,
     vertices: wgpu::Buffer,
     indices: wgpu::Buffer,
@@ -106,6 +108,40 @@ fn pipeline(
     })
 }
 
+/// The sea's depth alone, at one sample (renderer.rs `UnjitteredDepth`).
+fn depth_pipeline(
+    device: &wgpu::Device,
+    module: &wgpu::ShaderModule,
+    layout: &wgpu::PipelineLayout,
+) -> wgpu::RenderPipeline {
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("ocean (depth)"),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module,
+            entry_point: Some("vs_ocean"),
+            compilation_options: Default::default(),
+            buffers: &[Some(wgpu::VertexBufferLayout {
+                array_stride: 8,
+                step_mode: wgpu::VertexStepMode::Vertex,
+                attributes: &wgpu::vertex_attr_array![0 => Float32x2],
+            })],
+        },
+        fragment: None,
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: DEPTH,
+            depth_write_enabled: Some(true),
+            depth_compare: Some(wgpu::CompareFunction::Greater),
+            stencil: Default::default(),
+            bias: Default::default(),
+        }),
+        multisample: Default::default(),
+        multiview_mask: None,
+        cache: None,
+    })
+}
+
 impl Ocean {
     /// Rebuilds the pipeline for an opaque pass of `format` (`module`: the lit forward module).
     pub fn set_format(
@@ -147,6 +183,7 @@ impl Ocean {
             immediate_size: 0,
         });
         let pipeline = pipeline(device, module, &layout, format);
+        let depth_pipeline = depth_pipeline(device, module, &layout);
         let (v, i) = ring_grid();
         let vertices = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("ocean grid"),
@@ -188,6 +225,7 @@ impl Ocean {
         });
         Ocean {
             pipeline,
+            depth_pipeline,
             layout,
             vertices,
             indices,
@@ -220,6 +258,17 @@ impl Ocean {
 
     pub fn draw(&self, pass: &mut wgpu::RenderPass<'_>) {
         pass.set_pipeline(&self.pipeline);
+        self.draw_grid(pass);
+    }
+
+    /// Draws the sea's depth alone into a one-sample depth pass (groups 0 to 2 bound as for
+    /// [`Ocean::draw`]).
+    pub fn draw_depth(&self, pass: &mut wgpu::RenderPass<'_>) {
+        pass.set_pipeline(&self.depth_pipeline);
+        self.draw_grid(pass);
+    }
+
+    fn draw_grid(&self, pass: &mut wgpu::RenderPass<'_>) {
         pass.set_bind_group(3, &self.group, &[]);
         pass.set_vertex_buffer(0, self.vertices.slice(..));
         pass.set_index_buffer(self.indices.slice(..), wgpu::IndexFormat::Uint32);

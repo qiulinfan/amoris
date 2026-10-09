@@ -583,3 +583,65 @@ fn material_names_that_are_not_ascii_do_not_crash_the_renderer() {
         r.capture_rgba(1.0 / 60.0);
     }
 }
+
+/// A neural material under TAA with splats in view: the unjittered depth the splats test against
+/// draws every pipeline variant, the neural ones with their base variant's culling and alpha test
+/// (an out-of-range index there panicked once the neural variants doubled the count), and the
+/// neural ground still draws like the inline material with the same values, splats and all.
+#[test]
+fn a_neural_material_draws_under_taa_with_splats() {
+    use pocket_assets::frame::{Pose, SplatView};
+    use pocket_render::splat::{RawSplat, SplatCloud};
+    let Ok(gpu) = Gpu::headless(BackendChoice::from_env()) else {
+        eprintln!("skipped: no GPU");
+        return;
+    };
+    let base = [0.8, 0.35, 0.1];
+    let texture = constant(&orm(base, 0.6));
+    let linear = base.map(srgb_to_linear);
+    let wall: Vec<RawSplat> = (0..400)
+        .map(|i| RawSplat {
+            position: [
+                -1.0 + 0.1 * (i % 20) as f32,
+                0.4 + 0.1 * (i / 20) as f32,
+                -3.0,
+            ],
+            scale: [0.05, 0.05, 0.01],
+            rotation: [0.0, 0.0, 0.0, 1.0],
+            color: [0.1, 0.9, 0.1],
+            opacity: 0.9,
+        })
+        .collect();
+    let run = |material: &str, color: [f32; 4]| {
+        let mut r = Renderer::new(&gpu, wgpu::TextureFormat::Rgba8UnormSrgb, 160, 90);
+        r.set_antialiasing(pocket_render::Antialiasing::Taa);
+        r.add_model(demo::NEURAL_GROUND, &demo::neural_ground_model(40.0, 8.0));
+        r.add_neural_texture("materials/constant.ntex", &texture)
+            .expect("the texture loads");
+        r.splats
+            .insert("wall", &SplatCloud::from_raw(&wall, 0, &[]));
+        let mut frame = demo::neural_scene(material, color, 0.6);
+        frame.splats = Some(vec![SplatView {
+            id: 7,
+            asset: "wall".into(),
+            pose: Pose::default(),
+            visible: true,
+        }]);
+        r.apply(frame, 0.0);
+        r.set_camera_override(Some(demo::neural_camera(1)));
+        let mut rgba = Vec::new();
+        for k in 1..=8 {
+            rgba = r.capture_rgba(f64::from(k) / 60.0).2;
+        }
+        assert!(r.splats.active(), "the splats draw this frame");
+        rgba
+    };
+    let inline = run("", [linear[0], linear[1], linear[2], 1.0]);
+    let neural = run("materials/constant.ntex", [1.0; 4]);
+    let (d, over) = worst(&inline, &neural);
+    eprintln!("TAA with splats: worst difference {d}, {over} pixels over 2");
+    assert!(
+        over * 100 <= 160 * 90,
+        "the neural ground differs from the inline one in {over} pixels"
+    );
+}

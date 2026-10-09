@@ -32,7 +32,7 @@ before it was merged and nothing of it survives. This is a new implementation.
    reprojected history into the new history, which is the image the rest of the frame reads.
 5. **Splats** over that image, drawn with the camera's unjittered matrices (they have no motion
    vectors and are smooth already); with splats TAA also writes a copy for them to draw into, so
-   they never enter the history.
+   they never enter the history. They test against an unjittered depth (1.1).
 6. Bloom, the display transform with the optional sharpening (6), the editor's overlays (gizmo,
    selection outline) and the game UI.
 
@@ -40,6 +40,27 @@ The entity-id pass, the overlays, the selection mask and the ground grid read a 
 view uniform without the jitter (`view_stable`); the UI is drawn from the unjittered matrices. The
 grid is drawn inside the opaque pass, so with TAA it is accumulated like the scene, but from
 unjittered positions.
+
+### 1.1 The depth splats test against
+
+Without TAA the quads copy the first sample of the opaque pass's depth to one sample and test
+against it, and the tile raster reads that sample directly (docs/spec/splats.md). With TAA that
+depth is jittered while the splats are not, and they never enter the history: the edge where a mesh
+covers them would jump with the jitter every frame, and one jittered frame holds no unjittered edge
+to recover. So with TAA and splats the renderer draws the depth again (`UnjitteredDepth` in
+renderer.rs): the opaque instances from the unjittered frame group (`vs_depth`; the forward
+variants' culling and their alpha test, `fs_depth_masked`, at the forward pass's mip level so
+distant alpha-tested surfaces open up alike) and the sea, depth only at one sample, after each
+opaque phase (the early set, then the late one with occlusion culling), into the single-sample depth
+the quads would otherwise copy into (`Splats::unjittered_depth`). The tile raster reads it there
+(its one-sample variant). The edges where meshes cover splats are then as stable as with
+multisampling, and as aliased (one test per pixel). On a still frame at 256x144 with a cube, the
+chain-link panel and a sea before a splat wall, 214 of about 2,480 splat pixels changed by more
+than 0.05 from one frame to the next against the jittered depth, none against this one
+(`tests/taa.rs`). It replaces the copy, which with light geometry costs more (the splats example's
+garden at 1600x900: 0.005 against 0.031 ms on the RTX 5060, 0.015 against 0.14 ms on the Radeon
+780M); with many_cubes' 1.6M cubes it costs 0.78 to 0.89 ms where the copy took 0.07 to 0.33
+(docs/bench/taa-gtao.md 3.1).
 
 ## 2. Options and formats
 
@@ -213,19 +234,41 @@ the options from its URL (`?aa=`, `?gtao=`, `?sharpen=`) and draws the check sce
 
 ## 8. Checks
 
-- `crates/pocket-render/tests/taa.rs`: an orthographic camera panning whole pixels a frame
-  reprojects exactly (TAA's image matches a still camera's at the pan's end); a board sliding whole
-  pixels a frame does too through the object motion, and does not without it; a still camera's
-  history stays near the mean of the jittered frames; the id pass's coverage is the same with TAA;
-  GTAO leaves a scene lit only directly untouched and never brightens a pixel; cuts, resizes and
-  option changes drop the history; a sea over the ground, the walled corner and a sunk cube sliding
-  under it is left untouched by GTAO and by the cube's object motion; a still capture under TAA
-  lands above multisampling where TAA's first frame lands below it, and repeats exactly. Each check
-  failed with its
-  defect put back (a one-pixel reprojection offset, camera motion ignored, object motion reversed,
-  the jittered view in the id pass, GTAO on all light, no cut detection, the sea writing the color
-  only: GTAO changed 15,935 of its 16,330 inside pixels and the hidden cube's motion 457; a still
-  capture of one frame: 31.3 dB). `post::tests::defaults_by_adapter` tables the defaults.
+`crates/pocket-render/tests/taa.rs`, at 256x144. Each check failed with its defect put back (in
+brackets); all pass on the RTX 5060 and the Radeon 780M with Vulkan and Direct3D 12, and with
+WebGPU's default limits emulated.
+
+- An orthographic camera panning whole pixels a frame reprojects exactly: TAA's image matches a
+  still camera's at the pan's end, with one sample and with four (a one-pixel reprojection offset,
+  camera motion ignored). The still camera's history stays within 39 dB of the mean of 64 jittered
+  one-sample frames (42.6 dB with one sample, 45.2 with four).
+- A board of cubes sliding whole pixels a frame reprojects through the object motion, with one
+  sample and with four (object motion reversed; with four samples the motion target left
+  unresolved: 21.0 dB against 53.4). A board slid by its bone, its entity still, reprojects through
+  last frame's skinned vertices: 45 to 47 dB, 23 to 24 without (the skinned history ignored).
+- Multisampling with TAA ends closer to that reference than multisampling alone on the check
+  scene's still view (no jitter with four samples: 38.4 dB against 40.8, multisampling 36.6).
+- The id pass's coverage is the same with TAA (the jittered view in the id pass).
+- GTAO leaves a scene lit only directly untouched and never brightens a pixel (GTAO on all light);
+  its normal target darkens where and as much as normals from the depth do, seen from the front and
+  from the side (the target in world space: 312% apart from the side; not written: 696%).
+- A sea over the ground, the walled corner and a sunk cube sliding under it is left untouched by
+  GTAO and by the cube's object motion (the sea writing the color only: GTAO changed 15,935 of its
+  16,330 inside pixels, the hidden cube's motion 457).
+- Splats behind a cube, the chain link and a sea do not flicker on a still frame under TAA or
+  MSAA+TAA, with quads and with tiles, and show as much as with MSAA; away from them TAA's image
+  with splats is its image without, the copy they draw into being the history (the jittered depth:
+  214 flickering pixels; the alpha test without its discard: 1,291 splat pixels against 2,012; at
+  mip 0: 1,767; the sea left out: 2,538; the copy 1% brighter: 34,239 pixels changed).
+- A still capture under TAA lands above multisampling where TAA's first frame lands below it, and
+  repeats exactly (one frame: 31.3 dB against MSAA's 36.5).
+- Cuts, resizes and option changes drop the history (no cut detection).
+
+`post::tests::defaults_by_adapter` tables the defaults (Apple's GPUs and MoltenVK given the kind
+rule's TAA or GTAO).
+
+Elsewhere:
+
 - `examples/aa_eval.rs`: PSNR against supersampled references while converging, under motion, with
   skinning, with ablations; GTAO images; per-option costs. `tools/aa_bench.py` and
   `tools/aa_web_bench.py` run the cost matrix natively and in Chrome.
@@ -246,3 +289,7 @@ the options from its URL (`?aa=`, `?gtao=`, `?sharpen=`) and draws the check sce
   gives Chrome no usable timestamps).
 - Upscaling (rendering below the output resolution and reconstructing with the TAA history) is not
   done.
+- Splats are not anti-aliased against the meshes in front of them: one depth test per pixel, as with
+  multisampling's first sample (1.1). Drawing them jittered before TAA would let it smooth those
+  edges, but TAA would reproject them by the depth behind them (they write none), which for a scene
+  made of splats alone is the sky's.

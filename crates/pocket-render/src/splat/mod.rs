@@ -171,6 +171,8 @@ enum Readback {
     Ready,
 }
 
+/// The single-sample depth the quads test against: a copy of the opaque pass's depth (`group` reads
+/// `source`), or with TAA the unjittered depth the renderer draws into `target` itself.
 struct DepthCopy {
     source: wgpu::TextureView,
     target: wgpu::TextureView,
@@ -1162,24 +1164,16 @@ impl Splats {
         self.active && self.draw_enabled
     }
 
-    /// After the opaque pass (which kept its depth when [`Splats::active`]): copies the depth to a
-    /// single sample and draws the sorted splats into the resolved HDR image.
-    pub fn draw(
-        &mut self,
-        enc: &mut wgpu::CommandEncoder,
-        profiler: &mut GpuProfiler,
-        targets: &Targets,
-    ) {
-        if !self.active() || self.binds.is_none() {
-            return;
-        }
-        if self.drawn_with == SplatRaster::Tiles {
-            self.tiles.draw(enc, profiler, targets, &self.params_buf);
-            if std::mem::take(&mut self.copy_visits) {
-                enc.copy_buffer_to_buffer(&self.tiles.visits, 0, &self.readback, 32, 8);
-            }
-            return;
-        }
+    /// With TAA (charter 4.4, Pioneer 2026-10-09): the single-sample depth target the renderer
+    /// draws the opaque scene's depth into without the jitter, for [`Splats::draw`] with
+    /// `unjittered`. The splats are drawn after TAA with the unjittered camera; against the opaque
+    /// pass's jittered depth, the edges where meshes cover them would move with the jitter.
+    pub fn unjittered_depth(&mut self, targets: &Targets) -> wgpu::TextureView {
+        self.depth_target(targets).target.clone()
+    }
+
+    /// The quads' single-sample depth for `targets`, made when missing or stale.
+    fn depth_target(&mut self, targets: &Targets) -> &DepthCopy {
         if self.depth_samples != targets.format.samples {
             self.depth_pipeline = depth_copy_pipeline(&self.gpu.device, targets.format.samples);
             self.depth_samples = targets.format.samples;
@@ -1203,7 +1197,9 @@ impl Splats {
                     sample_count: 1,
                     dimension: wgpu::TextureDimension::D2,
                     format: DEPTH,
-                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                    // Sampled by the tile raster when the renderer draws it (TAA).
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                        | wgpu::TextureUsages::TEXTURE_BINDING,
                     view_formats: &[],
                 })
                 .create_view(&Default::default());
@@ -1221,10 +1217,41 @@ impl Splats {
                 group,
             });
         }
+        self.depth.as_ref().unwrap_or_else(|| unreachable!())
+    }
+
+    /// After the opaque pass (which kept its depth when [`Splats::active`]) and TAA: draws the
+    /// sorted splats into the resolved HDR image, tested against a single-sample depth. That is the
+    /// renderer's unjittered depth when `unjittered` ([`Splats::unjittered_depth`], drawn this
+    /// frame), otherwise the opaque pass's depth (the quads copy its first sample).
+    pub fn draw(
+        &mut self,
+        enc: &mut wgpu::CommandEncoder,
+        profiler: &mut GpuProfiler,
+        targets: &Targets,
+        unjittered: bool,
+    ) {
+        if !self.active() || self.binds.is_none() {
+            return;
+        }
+        if self.drawn_with == SplatRaster::Tiles {
+            let (depth, samples) = if unjittered {
+                (self.depth_target(targets).target.clone(), 1)
+            } else {
+                (targets.depth.clone(), targets.format.samples)
+            };
+            self.tiles
+                .draw(enc, profiler, targets, &self.params_buf, &depth, samples);
+            if std::mem::take(&mut self.copy_visits) {
+                enc.copy_buffer_to_buffer(&self.tiles.visits, 0, &self.readback, 32, 8);
+            }
+            return;
+        }
+        self.depth_target(targets);
         let (Some(depth), Some(binds)) = (self.depth.as_ref(), self.binds.as_ref()) else {
             return;
         };
-        {
+        if !unjittered {
             let ts = profiler.render_scope("splat depth");
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("splat depth"),

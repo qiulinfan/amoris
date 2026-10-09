@@ -374,6 +374,9 @@ pub struct Renderer {
     /// `POCKET_NEURAL_PRECISION=f32`).
     neural_f16: bool,
     shadow: [wgpu::RenderPipeline; 2],
+    /// Depth only, one sample, by forward variant: the unjittered depth splats test against with
+    /// TAA ([`UnjitteredDepth`]).
+    depth_only: [wgpu::RenderPipeline; 4],
     empty_group: wgpu::BindGroup,
     ocean: Ocean,
     picking: Picking,
@@ -448,7 +451,7 @@ struct Binds {
     cull: wgpu::BindGroup,
     cluster: wgpu::BindGroup,
     frame: wgpu::BindGroup,
-    /// `frame` with the unjittered view (the entity-id pass).
+    /// `frame` with the unjittered view (the entity-id pass, the unjittered depth).
     frame_stable: wgpu::BindGroup,
     lighting: wgpu::BindGroup,
     textures: wgpu::BindGroup,
@@ -857,6 +860,46 @@ impl Renderer {
             })
         };
         let shadow = [shadow_pipe(false), shadow_pipe(true)];
+        // The unjittered depth (TAA with splats): the forward variants' geometry, culling and alpha
+        // test; reversed-Z like the opaque pass.
+        let depth_pipe = |variant: u32| {
+            let masked = variant & 1 != 0;
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("unjittered depth"),
+                layout: Some(&shadow_layout),
+                vertex: wgpu::VertexState {
+                    module: &fwd_module,
+                    entry_point: Some(if masked {
+                        "vs_depth_masked"
+                    } else {
+                        "vs_depth"
+                    }),
+                    compilation_options: Default::default(),
+                    buffers: &[Some(vertex_layout.clone())],
+                },
+                fragment: masked.then(|| wgpu::FragmentState {
+                    module: &fwd_module,
+                    entry_point: Some("fs_depth_masked"),
+                    compilation_options: Default::default(),
+                    targets: &[],
+                }),
+                primitive: wgpu::PrimitiveState {
+                    cull_mode: (variant & 2 == 0).then_some(wgpu::Face::Back),
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: DEPTH,
+                    depth_write_enabled: Some(true),
+                    depth_compare: Some(wgpu::CompareFunction::Greater),
+                    stencil: Default::default(),
+                    bias: Default::default(),
+                }),
+                multisample: Default::default(),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+        let depth_only = [0, 1, 2, 3].map(depth_pipe);
         let picking = Picking::new(
             device,
             &fwd_module,
@@ -978,6 +1021,7 @@ impl Renderer {
             neural_f16: gpu.caps.shader_f16
                 && std::env::var("POCKET_NEURAL_PRECISION").map_or(true, |v| v.trim() != "f32"),
             shadow,
+            depth_only,
             ocean,
             picking,
             skinning: Skinning::new(device),
@@ -2123,6 +2167,16 @@ impl Renderer {
         let picking = self.picking.begin(&device, (w, h));
         // Splats, GTAO and TAA read the depth after the opaque pass.
         let keep_depth = self.splats.active() || self.gtao_mode.on() || taa_on;
+        // With TAA, splats test against a depth drawn without the jitter.
+        let unjittered = (taa_on && self.splats.active()).then(|| UnjitteredDepth {
+            target: self.splats.unjittered_depth(&self.targets),
+            pipelines: &self.depth_only,
+            binds,
+            empty: &self.empty_group,
+            batches: &self.batches,
+            meshes: &self.meshes,
+            ocean: self.scene.sea.is_some().then_some(&self.ocean),
+        });
         // The opaque pass, or with occlusion culling its early half: what the camera saw last frame.
         {
             let ts = self
@@ -2161,6 +2215,9 @@ impl Renderer {
                 true,
                 !occl,
             );
+        }
+        if let Some(d) = &unjittered {
+            draw_calls += d.draw(&mut self.profiler, &mut enc, 0, true, !occl);
         }
         if occl {
             self.occlusion.encode_pyramid(
@@ -2212,6 +2269,9 @@ impl Renderer {
                     true,
                 );
             }
+            if let Some(d) = &unjittered {
+                draw_calls += d.draw(&mut self.profiler, &mut enc, LATE, false, true);
+            }
         }
         if picking {
             self.picking.finish(&device, &mut enc);
@@ -2252,9 +2312,10 @@ impl Renderer {
             _ => self.targets.hdr_view.clone(),
         };
         // Gaussian splats (splat/): drawn over the resolved image (after TAA, unjittered), tested
-        // against the depth.
+        // against the depth (with TAA, the unjittered one).
+        let unjittered = unjittered.is_some();
         self.splats
-            .draw(&mut enc, &mut self.profiler, &self.targets);
+            .draw(&mut enc, &mut self.profiler, &self.targets, unjittered);
         let bloom = env.as_ref().map_or(0.15, |e| e.bloom);
         self.post.run(
             &device,
@@ -2764,6 +2825,70 @@ impl IdPass<'_> {
     }
 }
 
+/// With TAA and splats (charter 4.4, Pioneer 2026-10-09): the opaque instances' depth and the sea's
+/// drawn again from the unjittered view into the single-sample depth the splats test against
+/// (`Splats::unjittered_depth`). Splats are drawn after TAA without the jitter; against the opaque
+/// pass's jittered depth the edges where meshes cover them would jump every frame. Drawn in the
+/// same sets as the opaque pass: the early one, then with occlusion culling the late one.
+struct UnjitteredDepth<'a> {
+    target: wgpu::TextureView,
+    pipelines: &'a [wgpu::RenderPipeline; 4],
+    binds: &'a Binds,
+    empty: &'a wgpu::BindGroup,
+    batches: &'a Batches,
+    meshes: &'a MeshPool,
+    ocean: Option<&'a Ocean>,
+}
+
+impl UnjitteredDepth<'_> {
+    /// Draws batch set `set`: `first` clears the depth, `last` adds the sea. Returns the draw calls.
+    fn draw(
+        &self,
+        profiler: &mut GpuProfiler,
+        enc: &mut wgpu::CommandEncoder,
+        set: u32,
+        first: bool,
+        last: bool,
+    ) -> u32 {
+        let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("unjittered depth"),
+            color_attachments: &[],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &self.target,
+                depth_ops: Some(wgpu::Operations {
+                    load: if first {
+                        wgpu::LoadOp::Clear(0.0)
+                    } else {
+                        wgpu::LoadOp::Load
+                    },
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            timestamp_writes: profiler.render_scope("unjittered depth"),
+            ..Default::default()
+        });
+        pass.set_bind_group(0, &self.binds.frame_stable, &[]);
+        pass.set_bind_group(1, self.empty, &[]);
+        pass.set_bind_group(2, &self.binds.textures, &[]);
+        pass.set_vertex_buffer(0, self.meshes.vertices.slice(..));
+        pass.set_index_buffer(self.meshes.indices.slice(..), wgpu::IndexFormat::Uint32);
+        let mut calls = 0;
+        for variant in 0..VARIANTS {
+            // A neural variant (NEURAL_VARIANT + v) has variant v's culling and alpha test.
+            pass.set_pipeline(&self.pipelines[(variant % NEURAL_VARIANT) as usize]);
+            calls += self.batches.draw(&mut pass, set, variant);
+        }
+        if let Some(ocean) = self.ocean.filter(|_| last) {
+            // The sea's layout is the lit pipelines' (the lighting group at 1).
+            pass.set_bind_group(1, &self.binds.lighting, &[]);
+            ocean.draw_depth(&mut pass);
+            calls += 1;
+        }
+        calls
+    }
+}
+
 /// A pass into the opaque pass's targets (post.rs `Targets::attachments`) and its depth: `first`
 /// clears them (else they are loaded), `last` resolves the multisampled ones; the depth is kept
 /// unless it is the last pass and nothing reads it afterwards (`keep_depth`: the splats, GTAO,
@@ -2817,20 +2942,6 @@ pub fn web_time() -> f64 {
         0.0
     }
 }
-
-/// The forward pass's vertex buffer: the shared mesh vertices.
-fn vertex_layout() -> wgpu::VertexBufferLayout<'static> {
-    const ATTRIBUTES: [wgpu::VertexAttribute; 4] =
-        wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x4];
-    wgpu::VertexBufferLayout {
-        array_stride: std::mem::size_of::<pocket_assets::Vertex>() as u64,
-        step_mode: wgpu::VertexStepMode::Vertex,
-        attributes: &ATTRIBUTES,
-    }
-}
-
-/// A forward pipeline: `vs` and fragment entry `fs` of `module` into the multisampled HDR target.
-
 
 /// The forward pipeline of `variant`: the neural ones only once a neural texture has loaded.
 fn forward_for<'a>(

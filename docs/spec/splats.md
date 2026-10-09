@@ -163,7 +163,9 @@ With the quads ([`SplatRaster::Quads`], the default):
 
 6. **`splat depth`**: a full-screen pass writes each pixel's first depth sample into a single-sample
    `Depth32Float` target (`textureLoad` of `texture_depth_multisampled_2d`, written through
-   `frag_depth`).
+   `frag_depth`). With TAA the opaque pass's depth is jittered and the splats are not: the renderer
+   draws an unjittered depth into that target instead and this pass is skipped
+   ([TAA and GTAO](taa-gtao.md) 1.1).
 7. **`splat draw`**: one `draw_indexed_indirect` into the resolved single-sample HDR image, depth
    test `Greater` (reversed-Z) against the copied depth, depth writes off, blending premultiplied
    (`One, OneMinusSrcAlpha`). An instance is a batch of 16,383 quads from a fixed 16-bit index
@@ -237,7 +239,8 @@ and the depth sort are shared; after the sort, still before the opaque pass:
 After the opaque pass:
 
 5. **`splat raster`**: one workgroup of 256 invocations per tile. Each pixel reads the scene's depth
-   (sample 0 of the multisampled depth, as the quads' depth copy does). The tile's splats are
+   (sample 0 of the multisampled depth, as the quads' depth copy does; with TAA the unjittered
+   single-sample depth, [TAA and GTAO](taa-gtao.md) 1.1). The tile's splats are
    processed in batches of 256: each invocation loads one record into workgroup memory (center, z,
    k; axes; color: 12 KiB) and tests the quad against the tile's eight 8x4-pixel sub-tiles, setting
    its bit in each overlapped sub-tile's 256-bit list (`atomicOr` in workgroup memory). A pixel then

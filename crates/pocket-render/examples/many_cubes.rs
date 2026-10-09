@@ -6,7 +6,10 @@
 //!  [--bench FRAMES] [--shadows] [--vsync] [--occlusion off|on|auto]`
 //!
 //! `--orbit` lays the cubes out densely and circles them from outside (occlusion culling's
-//! benchmark, docs/bench/occlusion.md); `--occlusion` overrides `POCKET_OCCLUSION`.
+//! benchmark, docs/bench/occlusion.md); `--occlusion` overrides `POCKET_OCCLUSION`. With
+//! `--headless-bench`, `--splats N` adds a cloud of N Gaussian splats on a sphere just behind the
+//! cubes' (with TAA the renderer then draws the unjittered depth they test against:
+//! docs/bench/taa-gtao.md).
 
 use glam::{Quat, Vec3};
 use pocket_assets::frame::RenderFrame;
@@ -111,18 +114,24 @@ fn main() {
                     .and_then(|(w, h)| Some((w.parse().ok()?, h.parse().ok()?)))
             })
             .unwrap_or((1280u32, 720u32));
-        headless_bench(
-            Cubes {
-                frame: Some(frame),
-                rot: Quat::IDENTITY,
-                dense,
-                orbit: orbit.then_some(0),
-                count,
-                occlusion,
-            },
-            size,
-            frames,
-        );
+        let splats = arg("--splats").and_then(|s| s.parse::<usize>().ok());
+        let mut host = Cubes {
+            frame: Some(frame),
+            rot: Quat::IDENTITY,
+            dense,
+            orbit: orbit.then_some(0),
+            count,
+            occlusion,
+        };
+        if let (Some(_), Some(f)) = (splats, &mut host.frame) {
+            f.splats = Some(vec![pocket_assets::frame::SplatView {
+                id: count as u64 + 2,
+                asset: "shell".into(),
+                pose: Default::default(),
+                visible: true,
+            }]);
+        }
+        headless_bench(host, size, frames, splats.map(shell));
         return;
     }
     let options = RunOptions {
@@ -161,10 +170,42 @@ fn main() {
     }
 }
 
+/// `n` splats 1 to 3 m wide scattered on a sphere of radius 520 m (just behind the cubes' sphere
+/// of 500 m, before the box around them), deterministic.
+fn shell(n: usize) -> pocket_render::splat::SplatCloud {
+    let mut x = 0x2545_f491u32;
+    let mut f = move || {
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        (x >> 8) as f32 / (1u32 << 24) as f32
+    };
+    let raw: Vec<pocket_render::splat::RawSplat> = (0..n)
+        .map(|_| {
+            let d = Vec3::new(f() - 0.5, f() - 0.5, f() - 0.5).normalize_or(Vec3::Z);
+            let s = 0.5 + f();
+            pocket_render::splat::RawSplat {
+                position: (d * 520.0).to_array(),
+                scale: [s, s, s * 0.2],
+                rotation: Quat::from_rotation_arc(Vec3::Z, d).to_array(),
+                color: [f(), f(), f()],
+                opacity: 0.3 + 0.7 * f(),
+            }
+        })
+        .collect();
+    pocket_render::splat::SplatCloud::from_raw(&raw, 0, &[])
+}
+
 /// Offscreen at `size`, no presentation: 60 warm-up frames, then `frames` measured ones, each
 /// submitted and waited for (submit to GPU idle). Prints one JSON object: start-up costs, frame
 /// wall time, CPU encoding time, timestamped GPU time and its passes (docs/bench/dx12.md).
-fn headless_bench(mut host: Cubes, size: (u32, u32), frames: u32) {
+/// `splats`: a cloud registered as `shell` (the host's frame draws it).
+fn headless_bench(
+    mut host: Cubes,
+    size: (u32, u32),
+    frames: u32,
+    splats: Option<pocket_render::splat::SplatCloud>,
+) {
     let t = std::time::Instant::now();
     let gpu = pocket_render::Gpu::headless(BackendChoice::from_env()).expect("gpu");
     let device_ms = t.elapsed().as_secs_f64() * 1000.0;
@@ -172,6 +213,10 @@ fn headless_bench(mut host: Cubes, size: (u32, u32), frames: u32) {
     let format = wgpu::TextureFormat::Rgba8UnormSrgb;
     let mut r = Renderer::new(&gpu, format, size.0, size.1);
     let renderer_ms = t.elapsed().as_secs_f64() * 1000.0;
+    let splat_count = splats.as_ref().map_or(0, |c| c.splats.len());
+    if let Some(c) = &splats {
+        r.splats.insert("shell", c);
+    }
     let tex = gpu.device.create_texture(&wgpu::TextureDescriptor {
         label: Some("bench target"),
         size: wgpu::Extent3d {
@@ -272,6 +317,9 @@ fn headless_bench(mut host: Cubes, size: (u32, u32), frames: u32) {
         "adapter": gpu.info.name,
         "driver": format!("{} {}", gpu.info.driver, gpu.info.driver_info),
         "size": [size.0, size.1],
+        "antialiasing": r.antialiasing().name(),
+        "gtao": r.gtao().name(),
+        "splats": splat_count,
         "instances": r.last.instances,
         "frames": frames,
         "device_ms": (device_ms * 10.0).round() / 10.0,

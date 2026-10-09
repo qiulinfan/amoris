@@ -55,7 +55,7 @@ struct Binds {
 
 struct Image {
     view: wgpu::TextureView,
-    /// The multisampled depth it was made for.
+    /// The scene depth it tests against (`scene_depth`), which it was made for.
     depth: wgpu::TextureView,
     size: (u32, u32),
     composite: wgpu::BindGroup,
@@ -470,20 +470,23 @@ impl TileRaster {
         pass.dispatch_workgroups_indirect(&self.control, sort::DISPATCH_OFFSET);
     }
 
-    /// After the opaque pass: rasterizes the tiles against the scene's depth and composites the
-    /// result over the HDR image.
+    /// After the opaque pass: rasterizes the tiles against the scene's depth (`depth`, of
+    /// `samples` samples: the opaque pass's, or with TAA the renderer's unjittered one) and
+    /// composites the result over the HDR image.
     pub(crate) fn draw(
         &mut self,
         enc: &mut wgpu::CommandEncoder,
         profiler: &mut GpuProfiler,
         targets: &Targets,
         params: &wgpu::Buffer,
+        depth: &wgpu::TextureView,
+        samples: u32,
     ) {
         let device = self.gpu.device.clone();
         let size = (targets.width.max(1), targets.height.max(1));
         let parity = (self.sort_passes() % 2) as usize;
-        if self.raster_samples != targets.format.samples {
-            let m = shaders::depth_module(&device, "splat_tile", targets.format.samples);
+        if self.raster_samples != samples {
+            let m = shaders::depth_module(&device, "splat_tile", samples);
             self.raster = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some("tile_raster"),
                 layout: None,
@@ -492,13 +495,13 @@ impl TileRaster {
                 compilation_options: shaders::compute_options(),
                 cache: None,
             });
-            self.raster_samples = targets.format.samples;
+            self.raster_samples = samples;
             self.image = None;
         }
         if self
             .image
             .as_ref()
-            .is_none_or(|i| i.size != size || i.depth != targets.depth)
+            .is_none_or(|i| i.size != size || i.depth != *depth)
         {
             let tex = device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("splat tile image"),
@@ -525,7 +528,7 @@ impl TileRaster {
             });
             self.image = Some(Image {
                 view,
-                depth: targets.depth.clone(),
+                depth: depth.clone(),
                 size,
                 composite,
                 raster: None,
