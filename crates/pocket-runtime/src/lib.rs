@@ -38,12 +38,15 @@ pub mod skipper;
 pub mod thread;
 pub mod types;
 mod values;
+pub mod version;
 
 pub use catalog::{CATALOG, Command, CommandDef, CommandFn, NoParams, catalog_json};
 pub use control::{RestoreBundle, Sample, SnapshotsRestoreParams, StepParams};
 pub use edit::{Edit, EditOp, WorldEditOps, WorldEditParams, WorldGetParams, label_of};
 pub use engine::{engine_component, merge};
 pub use game::{Extras, Game, GameBuilder, PlayerRun, PlayerStart, SystemFn, registry, run_config};
+/// The engine version replays, snapshots and saves record (versions.md 3.1).
+pub use pocket_persist::EngineVersion;
 /// Presenter-side static walking queries; authoritative gameplay remains in the game world.
 pub use pocket_physics::walk;
 pub use present::Extractor;
@@ -51,6 +54,7 @@ pub use project::{GameSetup, Manifest, Project, read_file, toml_value};
 pub use scene::{Prefab, SCENE_FORMAT, Scene, SceneEntity, prefab_components};
 pub use scripts::{ENTRY, ScriptsApplyParams, bundle_record, compiled_from_record};
 pub use values::{EntityRef, named, resolve};
+pub use version::{BuiltEngine, install_engine};
 
 #[cfg(feature = "transpile")]
 pub use project::lint;

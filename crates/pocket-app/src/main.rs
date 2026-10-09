@@ -5,6 +5,8 @@
 //! - `pocket replay --verify <file> [--json]` (checks.md 8.4)
 //! - `pocket hashes <project> [--seed S] [--ticks N] [--inputs FILE]`: the hash after every tick
 //!   as JSON, which the web build compares against
+//! - `pocket version`: the engine version every replay, snapshot and save records, as JSON
+//!   (versions.md 3.1; computed by the build script, `build/engine_version.rs`)
 //!
 //! - `pocket play <project>`: the game in a native window (window.rs)
 //! - `pocket serve <project> [--port 7878]`: the project's game (real time, paused) with the host's
@@ -30,6 +32,7 @@ const SUBCOMMANDS: &[&str] = &[
     "check",
     "replay",
     "hashes",
+    "version",
     "serve",
     "mcp",
     "call",
@@ -54,6 +57,7 @@ fn dispatch(args: Vec<String>) -> Outcome {
         Some("check") => check::check(&rest),
         Some("replay") => check::replay(&rest),
         Some("hashes") => check::hashes(&rest),
+        Some("version") => version(),
         Some("serve") => serve::serve(&rest),
         Some("mcp") => serve::mcp(&rest),
         Some(cmd) if client::is_client(cmd) => client::run(cmd, &rest),
@@ -75,7 +79,30 @@ fn dispatch(args: Vec<String>) -> Outcome {
     }
 }
 
+/// `pocket version`: the installed `EngineVersion`, its source as 64 hex digits.
+fn version() -> Outcome {
+    let v = pocket_runtime::EngineVersion::current();
+    let json = serde_json::json!({
+        "semver": v.semver,
+        "commit": v.commit,
+        "source": v.source.to_hex(),
+        "target": v.target,
+        "profile": v.profile,
+        "contract": v.contract,
+        "c_compiler": v.c_compiler,
+    });
+    Outcome {
+        stdout: serde_json::to_string_pretty(&json).unwrap_or_default(),
+        code: 0,
+    }
+}
+
 fn main() {
+    // Before anything records: replays carry this source, and `Verify` and the reuse of a
+    // recorded bundle's compiled modules compare it (versions.md 3.1, replay.md 2.4).
+    if let Err(v) = pocket_runtime::install_engine_version!() {
+        eprintln!("warning: the engine version was not installed; {v:?} is in place");
+    }
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     if args.is_empty()
         && let Some(game) = std::env::current_exe()

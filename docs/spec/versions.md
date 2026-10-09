@@ -622,7 +622,17 @@ Beside persistence.md's P1 to P7, run in the check command (charter 3.7; checks.
    `pocket-app` exists every build reports `EngineVersion::unbuilt()`: `source` the derivation over
    no files, `commit` "unknown", `target` the architecture and operating system, `profile` "debug"
    or "release", `contract` "unsynced". `version::source_hash` and `version::bundle_hash` compute
-   3.1's and 3.2's hashes from `(path, content)` pairs.
+   3.1's and 3.2's hashes from `(path, content)` pairs. 2026-10-09 (Pioneer): `pocket-app` and
+   `pocket-web` install it (architecture.md 4.13 and choice 10). `contract` is the version in
+   `shared/contract/README.md` and the reference commit of `shared/SYNC.toml`, `0.1+unsynced`
+   while it records none; `profile` is the cargo profile's directory (`release`, `debug`, `web`);
+   `target` the full triple. Tests and examples install nothing and stay `unbuilt()`, so a replay
+   a test records is refused by `pocket replay --verify` (`version.mismatch`, engine source):
+   `pocket-app`'s test `engine_version` proves it, and that `pocket version`'s source is
+   `source_hash` over the files 3.1 lists. A recorded bundle's compiled modules are reused only
+   when their `engine_source` is the running engine's; otherwise its TypeScript is compiled again,
+   or, without `transpile`, `replay.bundle_unavailable {reason: "needs transpile"}` (replay.md
+   2.4).
 7. **Slice 1: `load_save` takes the world it will restore into**, whose component registry gives the
    project components' current schemas (the registry alone does not know them), and reports the
    caches to rebuild; `save::rebuild_caches` runs their `rebuild` after the restore. A section kept

@@ -41,15 +41,15 @@ impl EngineVersion {
     }
 
     /// Sets the running engine's version, once, before anything records (the top crate, whose
-    /// build script computes `source`; architecture.md 4.13). Refused with the version already in
-    /// place after the first call or after `current` has been read.
+    /// build script computes `source`; architecture.md 4.13: `pocket-app` and `pocket-web` through
+    /// `pocket_runtime::install_engine_version!`). Refused, handing `v` back, after the first call
+    /// or after `current` has been read.
     pub fn install(v: EngineVersion) -> Result<(), Box<EngineVersion>> {
         CURRENT.set(v).map_err(Box::new)
     }
 
-    /// The version of a build whose top crate computed no source hash (tests, and every crate
-    /// until `pocket-app` exists): `source` is the derivation over no files, `commit` "unknown"
-    /// (open choice 6).
+    /// The version of a build whose top crate computed no source hash (tests and examples, which
+    /// install none): `source` is the derivation over no files, `commit` "unknown" (open choice 6).
     pub fn unbuilt() -> EngineVersion {
         EngineVersion {
             semver: env!("CARGO_PKG_VERSION").to_owned(),

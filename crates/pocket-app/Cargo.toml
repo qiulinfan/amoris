@@ -31,3 +31,7 @@ ureq.workspace = true
 # The script debugger (docs/spec/debugger.md): pocket serve's DebugHub and CDP endpoint.
 pocket-debug.workspace = true
 pocket-audio.workspace = true
+
+# The engine source hash of build/engine_version.rs (versions.md 3.1).
+[build-dependencies]
+blake3.workspace = true

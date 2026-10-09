@@ -3254,6 +3254,7 @@ name = "pocket-app"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "blake3",
  "glam 0.33.12",
  "image",
  "pocket-assets",
@@ -3520,6 +3521,7 @@ dependencies = [
 name = "pocket-web"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "pocket-assets",
  "pocket-check",
  "pocket-contract",

@@ -67,6 +67,10 @@ impl GameWorker {
     /// problem as JSON text.
     #[wasm_bindgen(constructor)]
     pub fn new(package: &[u8], options_json: &str) -> Result<GameWorker, JsValue> {
+        // The source the native build of this tree reports too (versions.md V9), so the worker
+        // reuses the compiled modules a native recording embeds (replay.md 2.4). A second game in
+        // the same worker installs the same version again, which is a no-op.
+        let _ = pocket_runtime::install_engine_version!();
         let build = || -> Result<WorkerCore, Problem> {
             let (seed, pacing) = options(options_json)?;
             let package = Package::from_bytes(package)?;

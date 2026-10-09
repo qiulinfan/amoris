@@ -1815,7 +1815,7 @@ fn help(args: &Args) -> String {
             let _ = writeln!(out, "  {u}");
         }
         out.push_str("\nHost commands: pocket serve <project> [--port 7878], pocket mcp <project>; \
-                      also pocket run|check|replay|hashes.\nMethods (pocket call <method> '<json>'; \
+                      also pocket run|check|replay|hashes|version.\nMethods (pocket call <method> '<json>'; \
                       pocket help <method>):\n");
         for c in catalog(args).as_array().into_iter().flatten() {
             let _ = writeln!(out, "  {:<18} {}", opt(&c["name"]), opt(&c["doc"]));

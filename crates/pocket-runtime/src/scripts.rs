@@ -63,24 +63,52 @@ pub fn bundle_record(set: &CompiledSet) -> BundleRecord {
     )
 }
 
-/// A compiled set from a replay's bundle: its embedded modules, which run exactly as they did when
-/// recorded. Systems' source sites (used only to locate errors) are not embedded and stay empty.
+/// A compiled set from a replay's bundle (replay.md 2.4): its embedded modules when the engine that
+/// compiled them has this engine's source (`EngineVersion.source`), which run exactly as they did
+/// when recorded; otherwise its TypeScript compiled again, which needs `transpile`, and without it
+/// `replay.bundle_unavailable {hash, reason: "needs transpile"}`. Embedded modules carry no
+/// systems' source sites (used only to locate errors), so those stay empty.
 pub fn compiled_from_record(b: &BundleRecord) -> Result<CompiledSet, Problem> {
-    let unavailable = |why: &str| {
-        Problem::new(
-            "replay.bundle_unavailable",
-            format!("The bundle {} cannot be loaded: {why}.", b.hash.to_hex()),
-            detail([("bundle", json!(b.hash.to_hex()))]),
-        )
-    };
-    let compiled = b
-        .compiled
-        .as_ref()
-        .ok_or_else(|| unavailable("the replay embeds no compiled modules"))?;
     let bundle = Bundle::new(b.files.clone());
     if bundle.hash != b.hash {
-        return Err(unavailable("its sources do not give its hash"));
+        return Err(pocket_persist::error::bundle_unavailable(
+            &b.hash.to_hex(),
+            "its sources do not give its hash",
+        ));
     }
+    match &b.compiled {
+        Some(c) if c.engine_source == EngineVersion::current().source => Ok(embedded(b, c, bundle)),
+        _ => recompiled(b),
+    }
+}
+
+/// The record's TypeScript compiled by this engine. The bundle ran when it was recorded, so the
+/// stateless lint, which decides what may be applied, is not asked again.
+#[cfg(feature = "transpile")]
+fn recompiled(b: &BundleRecord) -> Result<CompiledSet, Problem> {
+    let source = pocket_script::ScriptSource {
+        files: b.files.iter().cloned().collect(),
+        entry: ENTRY.to_owned(),
+    };
+    let set = compile(&source, true)?;
+    if set.bundle.hash != b.hash {
+        return Err(pocket_persist::error::bundle_unavailable(
+            &b.hash.to_hex(),
+            "its sources compile to another bundle",
+        ));
+    }
+    Ok(set)
+}
+
+#[cfg(not(feature = "transpile"))]
+fn recompiled(b: &BundleRecord) -> Result<CompiledSet, Problem> {
+    Err(pocket_persist::error::bundle_unavailable(
+        &b.hash.to_hex(),
+        "needs transpile",
+    ))
+}
+
+fn embedded(b: &BundleRecord, compiled: &CompiledRecord, bundle: Bundle) -> CompiledSet {
     let sources: BTreeMap<&str, &[u8]> = b
         .files
         .iter()
@@ -101,12 +129,12 @@ pub fn compiled_from_record(b: &BundleRecord) -> Result<CompiledSet, Problem> {
         })
         .collect();
     modules.sort_by(|a, b| a.path.cmp(&b.path));
-    Ok(CompiledSet {
+    CompiledSet {
         entry: ENTRY.to_owned(),
         modules,
         bundle,
         compiler: "embedded in a replay".to_owned(),
-    })
+    }
 }
 
 /// `scripts.apply`'s parameters (hot-update.md 4.1, the slice 1 subset).
@@ -135,4 +163,51 @@ pub struct ScriptsApplyParams {
 pub struct ScriptsSwapParams {
     /// The bundle's hash, 64 hex digits.
     pub bundle: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn record() -> BundleRecord {
+        let source = pocket_script::ScriptSource::new().with(
+            ENTRY,
+            "export function speed(x: number): number { return x * 2; }\n",
+        );
+        let options = pocket_script::CompileOptions { lint_off: true };
+        let set = pocket_script::compile(&source, &options).unwrap_or_else(|e| panic!("{e:?}"));
+        bundle_record(&set)
+    }
+
+    /// replay.md 2.4: modules this engine's source compiled are reused as they were recorded.
+    #[test]
+    fn modules_of_this_engine_are_reused() {
+        let r = record();
+        let set = compiled_from_record(&r).unwrap();
+        assert_eq!(set.compiler, "embedded in a replay");
+        assert_eq!(set.bundle.hash, r.hash);
+    }
+
+    /// Modules another engine's source compiled are not run: the TypeScript is compiled again, or
+    /// the bundle is unavailable in a build without the transpiler (the web worker).
+    #[test]
+    fn modules_of_another_engine_are_not_reused() {
+        let mut r = record();
+        if let Some(c) = r.compiled.as_mut() {
+            c.engine_source = ContentHash([7; 32]);
+        }
+        let got = compiled_from_record(&r);
+        #[cfg(feature = "transpile")]
+        {
+            let set = got.unwrap();
+            assert_ne!(set.compiler, "embedded in a replay");
+            assert_eq!(set.bundle.hash, r.hash);
+        }
+        #[cfg(not(feature = "transpile"))]
+        {
+            let e = got.unwrap_err();
+            assert_eq!(e.code, "replay.bundle_unavailable");
+            assert_eq!(e.detail["reason"], json!("needs transpile"));
+        }
+    }
 }

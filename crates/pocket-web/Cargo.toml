@@ -27,3 +27,7 @@ wasm-bindgen.workspace = true
 # build projects from disk; the shipped module never links oxc (architecture.md 8.3).
 pocket-runtime = { workspace = true, features = ["transpile"] }
 pocket-check = { workspace = true, features = ["native"] }
+
+# The engine source hash, through pocket-app's build/engine_version.rs (versions.md 3.1, V9).
+[build-dependencies]
+blake3.workspace = true
