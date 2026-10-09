@@ -122,7 +122,8 @@ impl Picking {
     }
 
     /// Draws the id pass (the camera view's batches through `draw`) and copies the requested region
-    /// for reading back.
+    /// for reading back; `timestamps` times the pass.
+    #[allow(clippy::too_many_arguments)]
     pub fn encode(
         &mut self,
         device: &wgpu::Device,
@@ -132,6 +133,7 @@ impl Picking {
         vertices: &wgpu::Buffer,
         indices: &wgpu::Buffer,
         draw: &dyn Fn(&mut wgpu::RenderPass<'_>),
+        timestamps: Option<wgpu::RenderPassTimestampWrites<'_>>,
     ) {
         let Some(req) = self.want.take() else {
             return;
@@ -183,6 +185,7 @@ impl Picking {
                     }),
                     stencil_ops: None,
                 }),
+                timestamp_writes: timestamps,
                 ..Default::default()
             });
             if let PickRequest::Pixel(x, y) = req {

@@ -548,7 +548,7 @@ impl TileRaster {
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use glam::{Quat, Vec3};
-    use pocket_assets::frame::{Pose, RenderFrame, SplatView};
+    use pocket_assets::frame::{InstanceUpdate, Look, Pose, RenderFrame, SplatView};
 
     use crate::gpu::{BackendChoice, Gpu};
     use crate::splat::{RawSplat, SplatCloud, SplatRaster};
@@ -731,6 +731,84 @@ mod tests {
             eprintln!("{raster:?}: {changed} channel values changed over 4 redraws");
             assert_eq!(changed, 0, "{raster:?}");
         }
+    }
+
+    /// Splats are in the entity-id pass: a pixel pick and the view's coverage name the splat cloud's
+    /// entity where it shows, and a mesh in front of it where the mesh does. Skipped without a GPU.
+    #[test]
+    fn picking_sees_splats() {
+        let Ok(gpu) = Gpu::headless(BackendChoice::from_env()) else {
+            eprintln!("no GPU: skipped");
+            return;
+        };
+        let mut r = renderer_with(&gpu, &wall(30_000));
+        r.apply(
+            RenderFrame {
+                tick: 2,
+                instances: vec![InstanceUpdate {
+                    id: 3,
+                    pose: Some(Pose {
+                        position: [0.0, 0.0, -1.0],
+                        rotation: [0.0, 0.0, 0.0, 1.0],
+                        scale: [0.5; 3],
+                    }),
+                    look: Some(Look {
+                        mesh: "cube".into(),
+                        material: String::new(),
+                        color: [0.8, 0.2, 0.2, 1.0],
+                        metallic: 0.0,
+                        roughness: 0.5,
+                        transmission: None,
+                        ior: None,
+                        emissive: [0.0; 3],
+                        cast_shadows: false,
+                        visible: true,
+                    }),
+                    anim: None,
+                }],
+                ..RenderFrame::default()
+            },
+            0.0,
+        );
+        r.set_camera_override(Some(CameraState::look_at(
+            Vec3::new(0.0, 0.0, 3.0),
+            Vec3::new(0.0, 0.0, -2.0),
+        )));
+        // The wall spans about 30 pixels either side of the center, the cube about 6.
+        let pick = |r: &mut Renderer, x: u32, y: u32| {
+            r.request_pick(x, y);
+            for i in 0..10 {
+                let _ = r.capture_rgba(f64::from(i) / 60.0);
+                if let Some(p) = r.take_pick() {
+                    return p;
+                }
+            }
+            panic!("no pick answer");
+        };
+        for raster in [SplatRaster::Quads, SplatRaster::Tiles] {
+            r.splats.raster = raster;
+            assert_eq!(
+                pick(&mut r, 100, 60),
+                Some(3),
+                "the cube in front ({raster:?})"
+            );
+            assert_eq!(pick(&mut r, 80, 60), Some(7), "the splat wall ({raster:?})");
+            assert_eq!(pick(&mut r, 5, 5), None, "the sky ({raster:?})");
+        }
+        r.request_visible();
+        let mut seen = None;
+        for i in 0..10 {
+            let _ = r.capture_rgba(f64::from(i) / 60.0);
+            if let Some(v) = r.take_visible() {
+                seen = Some(v);
+                break;
+            }
+        }
+        let seen = seen.expect("coverage answer");
+        eprintln!("coverage: {seen:?}");
+        let share = |e: u64| seen.iter().find(|v| v.0 == e).map_or(0.0, |v| v.1);
+        assert!(share(7) > 0.08, "{seen:?}");
+        assert!(share(3) > 0.001 && share(3) < share(7), "{seen:?}");
     }
 
     /// With fewer pair slots than the frame wants, the overflow is counted, not silent, and the

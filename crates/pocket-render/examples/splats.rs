@@ -7,11 +7,14 @@
 //! `cargo run --release -p pocket-render --example splats -- [--count N] [--ply PATH [--flip]
 //!  [--scale S]] [--save PATH.ply] [--capture OUT.png [--angle DEG] [--distance F] [--look X,Y,Z]]
 //!  [--bench FRAMES] [--headless-bench FRAMES] [--size WxH] [--key-bits 16|24|32] [--radiance R]
-//!  [--raster quad|tile] [--antialias] [--compare PREFIX] [--no-meshes] [--orbit] [--vsync]`
+//!  [--raster quad|tile] [--antialias] [--compare PREFIX] [--visible] [--no-meshes] [--orbit]
+//!  [--vsync]`
 //!
 //! `--raster` picks the quad draw or the compute tile rasterizer (default: `POCKET_SPLAT_RASTER`,
 //! else quads). `--compare PREFIX` captures the same view with both and writes `PREFIX_quad.png`,
 //! `PREFIX_tile.png`, `PREFIX_diff.png` (the absolute difference, x8) and prints the difference.
+//! `--visible` (with `--capture`) also prints the entity-id pass's coverage: the garden is entity
+//! 100, the orbs 101 and 102, the meshes 1 to 21.
 //!
 //! Without `--capture` or a benchmark it opens a window with a fly camera (right mouse to look,
 //! WASD/QE to move); `--orbit` turns the camera around the scene instead.
@@ -1003,6 +1006,33 @@ fn main() {
             let (w, h, px) = shoot(&mut host, &mut r);
             image::save_buffer(&path, &px, w, h, image::ColorType::Rgba8).expect("png");
             println!("saved {path} ({w}x{h}); {:?}; {:?}", r.last, r.splats.stats);
+            if flag("--visible") {
+                // What an agent's `render.visible` sees: the entity-id pass's coverage.
+                r.request_visible();
+                for i in 0..10 {
+                    let _ = r.capture_rgba(f64::from(i) / 60.0);
+                    if let Some(v) = r.take_visible() {
+                        println!("visible (entity, share of the view): {v:?}");
+                        break;
+                    }
+                }
+                // Its GPU cost: the id pass timed over repeated requests.
+                let mut times = Vec::new();
+                for i in 0..40 {
+                    r.request_visible();
+                    let _ = r.capture_rgba(f64::from(i) / 60.0);
+                    let _ = r.take_visible();
+                    let t = r.last.passes.iter().find(|p| p.0 == "entity ids");
+                    times.extend(t.map(|p| p.1));
+                }
+                times.sort_by(f32::total_cmp);
+                if let Some(t) = times.get(times.len() / 2) {
+                    println!(
+                        "entity ids pass: median {t:.3} ms over {} timed frames",
+                        times.len()
+                    );
+                }
+            }
             return;
         }
         host.raster = SplatRaster::Quads;

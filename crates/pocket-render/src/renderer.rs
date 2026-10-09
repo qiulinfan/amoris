@@ -322,6 +322,9 @@ pub struct Renderer {
     last_pick: Option<Option<u64>>,
     /// The last finished coverage read: (entity, share of the view's pixels), largest first.
     last_visible: Option<Vec<(u64, f32)>>,
+    /// The splat clouds' entities when the pending id pass was drawn (its `SPLAT_PICK` ids index
+    /// them).
+    pick_splats: Vec<u64>,
     batch_offsets: wgpu::Buffer,
     sky_pipeline: wgpu::RenderPipeline,
     layouts: Layouts,
@@ -758,6 +761,7 @@ impl Renderer {
             overlays: Overlays::new(device, output),
             last_pick: None,
             last_visible: None,
+            pick_splats: Vec::new(),
             empty_group,
             batch_offsets: storage(device, "batch offsets", 64 * 4, wgpu::BufferUsages::empty()),
             sky_pipeline,
@@ -1539,6 +1543,7 @@ impl Renderer {
         if self.picking.wanted() {
             let batches = &self.batches;
             let empty = &self.empty_group;
+            let splats = &self.splats;
             // The camera view's batches, every variant through the one id pipeline.
             let id_draw = |pass: &mut wgpu::RenderPass<'_>| {
                 pass.set_bind_group(1, empty, &[]);
@@ -1546,6 +1551,8 @@ impl Renderer {
                 for variant in 0..VARIANTS {
                     batches.draw(pass, 0, variant);
                 }
+                // Gaussian splats (splat/): after the meshes, against their depth.
+                splats.draw_ids(pass);
             };
             self.picking.encode(
                 &device,
@@ -1555,7 +1562,9 @@ impl Renderer {
                 &self.meshes.vertices,
                 &self.meshes.indices,
                 &id_draw,
+                self.profiler.render_scope("entity ids"),
             );
+            self.pick_splats = self.splats.drawn_entities().to_vec();
         }
         // Gaussian splats (splat/): drawn over the resolved image, tested against the depth.
         self.splats
@@ -1727,17 +1736,13 @@ impl Renderer {
         match r.request {
             PickRequest::Pixel(..) => {
                 let id = r.ids.first().copied().unwrap_or(0);
-                self.last_pick = Some(if id == 0 {
-                    None
-                } else {
-                    self.scene.entity_of_slot(id - 1)
-                });
+                self.last_pick = Some(self.entity_of_id(id));
             }
             PickRequest::Full => {
                 let total = r.ids.len().max(1) as f32;
                 let mut by_entity: HashMap<u64, u32> = HashMap::new();
                 for (slot, n) in coverage(&r.ids) {
-                    if let Some(e) = self.scene.entity_of_slot(slot) {
+                    if let Some(e) = self.entity_of_id(slot + 1) {
                         *by_entity.entry(e).or_insert(0) += n;
                     }
                 }
@@ -1748,6 +1753,20 @@ impl Renderer {
                 v.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
                 self.last_visible = Some(v);
             }
+        }
+    }
+
+    /// The entity an id of the entity-id pass names: a mesh slot + 1, or a splat cloud
+    /// (`SPLAT_PICK` and its index among the clouds drawn with that pass); 0 is nothing.
+    fn entity_of_id(&self, id: u32) -> Option<u64> {
+        if id == 0 {
+            None
+        } else if id & crate::splat::SPLAT_PICK != 0 {
+            self.pick_splats
+                .get((id & !crate::splat::SPLAT_PICK) as usize)
+                .copied()
+        } else {
+            self.scene.entity_of_slot(id - 1)
         }
     }
 

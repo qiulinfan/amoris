@@ -17,20 +17,6 @@ struct Splat {
     color: vec2u,
 };
 
-// A drawn cloud (splat/mod.rs CloudGpu), 112 bytes.
-struct Cloud {
-    model_view: mat4x4f,
-    camera_local: vec4f,   // the camera's position in the cloud's frame
-    first: u32,            // its first thread
-    offset: u32,           // its first splat in `splats`
-    count: u32,
-    sh_degree: u32,
-    sh_offset: u32,        // its first word in `sh`
-    sh_words: u32,         // words per splat
-    _p0: u32,
-    _p1: u32,
-};
-
 @group(0) @binding(0) var<uniform> params: SplatParams;
 @group(0) @binding(1) var<storage, read> splats: array<Splat>;
 @group(0) @binding(2) var<storage, read> sh: array<u32>;

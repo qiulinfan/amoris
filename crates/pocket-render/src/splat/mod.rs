@@ -55,6 +55,10 @@ pub(crate) const BATCH: u32 = 16383;
 const PROJECTED_BYTES: u64 = 24;
 /// `SPLAT_ANTIALIAS` in splat_common.wgsl: the params' flag for [`Splats::antialias`].
 const ANTIALIAS: u32 = 1;
+/// The entity-id pass's ids of splats: this bit and the drawn cloud's index in
+/// [`Splats::drawn_entities`] (mesh ids are slot + 1, far below it). `SPLAT_PICK` in
+/// splat_draw.wgsl.
+pub const SPLAT_PICK: u32 = 0x8000_0000;
 
 /// How the sorted splats are drawn.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -160,6 +164,7 @@ struct Binds {
     sort: sort::SortBinding,
     /// Reading the keys and values from buffer A (an even number of sort passes) or B.
     draw: [wgpu::BindGroup; 2],
+    ids: [wgpu::BindGroup; 2],
 }
 
 pub struct Splats {
@@ -170,8 +175,10 @@ pub struct Splats {
     requested: HashSet<String>,
     /// Names no file root serves, for the page to fetch ([`Splats::take_requests`]).
     fetches: Vec<String>,
-    /// The drawn clouds from the render feed: (asset, model matrix).
-    views: Vec<(String, Mat4)>,
+    /// The drawn clouds from the render feed: (entity, asset, model matrix).
+    views: Vec<(u64, String, Mat4)>,
+    /// The entities of this frame's drawn clouds, in the clouds table's order.
+    drawn: Vec<u64>,
 
     splat_buf: wgpu::Buffer,
     splat_len: u64,
@@ -199,6 +206,7 @@ pub struct Splats {
     compact: wgpu::ComputePipeline,
     finish: wgpu::ComputePipeline,
     draw_pipeline: wgpu::RenderPipeline,
+    id_pipeline: wgpu::RenderPipeline,
     depth_pipeline: wgpu::RenderPipeline,
     /// The single-sample depth target and the bind group reading the multisampled depth it copies.
     depth: Option<DepthCopy>,
@@ -335,6 +343,37 @@ impl Splats {
             multiview_mask: None,
             cache: None,
         });
+        let id_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("splat ids"),
+            layout: None,
+            vertex: wgpu::VertexState {
+                module: &draw_module,
+                entry_point: Some("vs_splat_id"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &draw_module,
+                entry_point: Some("fs_splat_id"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::TextureFormat::R32Uint.into())],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Greater),
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: Default::default(),
+            multiview_mask: None,
+            cache: None,
+        });
         let depth_module = shaders::module(device, "splat_depth");
         let depth_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("splat depth"),
@@ -386,6 +425,7 @@ impl Splats {
             requested: HashSet::new(),
             fetches: Vec::new(),
             views: Vec::new(),
+            drawn: Vec::new(),
             splat_buf: buffer(device, "splats", 64, su),
             splat_len: 0,
             sh_buf: buffer(device, "splat sh", 64, su),
@@ -427,6 +467,7 @@ impl Splats {
             compact: compute("compact"),
             finish: compute("finish"),
             draw_pipeline,
+            id_pipeline,
             depth_pipeline,
             depth: None,
             sort: RadixSort::new(device),
@@ -711,6 +752,20 @@ impl Splats {
                 ],
             })
         };
+        let ids = |i: usize| {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("splat ids"),
+                layout: &self.id_pipeline.get_bind_group_layout(0),
+                entries: &[
+                    e(0, &self.params_buf),
+                    e(1, &self.projected),
+                    e(2, &self.keys[i]),
+                    e(3, &self.vals[i]),
+                    e(4, &self.control),
+                    e(5, &self.clouds_buf),
+                ],
+            })
+        };
         let sort = self.sort.bind(
             device,
             &self.control,
@@ -725,6 +780,7 @@ impl Splats {
             finish,
             sort,
             draw: [draw(0), draw(1)],
+            ids: [ids(0), ids(1)],
         });
         self.generation += 1;
         let bytes: u64 = [
@@ -778,15 +834,15 @@ impl Splats {
                         Quat::from_array(p.rotation).normalize(),
                         Vec3::from(p.position),
                     );
-                    (s.asset.clone(), model)
+                    (s.id, s.asset.clone(), model)
                 })
                 .collect();
         }
         let missing: Vec<String> = self
             .views
             .iter()
-            .filter(|(n, _)| !self.assets.contains_key(n) && !self.requested.contains(n))
-            .map(|(n, _)| n.clone())
+            .filter(|(_, n, _)| !self.assets.contains_key(n) && !self.requested.contains(n))
+            .map(|(_, n, _)| n.clone())
             .collect();
         for n in missing {
             self.request(&n);
@@ -798,9 +854,10 @@ impl Splats {
         let planes = frustum_planes(proj * view, true);
         let near = cam.near.max(1e-4);
         let mut clouds = Vec::with_capacity(self.views.len());
+        self.drawn.clear();
         let mut total = 0u64;
         let (mut dmin, mut dmax) = (f32::INFINITY, 0.0f32);
-        for (name, model) in &self.views {
+        for (entity, name, model) in &self.views {
             let Some(a) = self.assets.get(name) else {
                 continue;
             };
@@ -843,6 +900,7 @@ impl Splats {
                 _p: [0; 2],
             });
             total += u64::from(a.count);
+            self.drawn.push(*entity);
         }
         self.stats.clouds = clouds.len();
         self.stats.submitted = total;
@@ -994,6 +1052,25 @@ impl Splats {
         }
         drop(st);
         self.active = true;
+    }
+
+    /// The entities of the clouds drawn this frame, indexed by the low bits of a [`SPLAT_PICK`] id
+    /// from the entity-id pass.
+    pub fn drawn_entities(&self) -> &[u64] {
+        &self.drawn
+    }
+
+    /// Draws this frame's sorted splats into the entity-id pass (picking.rs: an `R32Uint` target
+    /// with its own depth, after the meshes): a pixel gets `SPLAT_PICK | cloud` from the nearest
+    /// splat whose Gaussian reaches half opacity there and that no mesh hides.
+    pub fn draw_ids(&self, pass: &mut wgpu::RenderPass<'_>) {
+        let Some(binds) = self.binds.as_ref().filter(|_| self.active) else {
+            return;
+        };
+        pass.set_pipeline(&self.id_pipeline);
+        pass.set_bind_group(0, &binds.ids[(self.sort_passes() % 2) as usize], &[]);
+        pass.set_index_buffer(self.quads.slice(..), wgpu::IndexFormat::Uint16);
+        pass.draw_indexed_indirect(&self.control, DRAW_OFFSET);
     }
 
     /// Whether splats draw this frame: the opaque pass must then keep its depth.
