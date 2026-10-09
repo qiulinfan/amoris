@@ -321,7 +321,9 @@ the Radeon 780M, 2 to 6 times slower, the crossover fell between the same cube c
 - The bounding box is per mesh. A skinned part's is the cube around its grown sphere, larger than
   most poses need; bounds from the joints' positions each frame would be tighter, and would also
   remove the assumption that animations stay in the sphere.
-- Mesh LOD (charter 4.4's meshopt; `MeshData.lods` is never filled and `Cull.lod_scale` is unused)
+- Mesh LOD, since done in [lod.md](lod.md) (the late pass draws the level the early pass chose and
+  counts its triangles, lod.md 4), took route (2)'s first form below. The note as written before:
+  mesh LOD (charter 4.4's meshopt; `MeshData.lods` is never filled and `Cull.lod_scale` is unused)
   was not attempted. What it needs: (1) generating levels: meshopt is C++ built through `cc`, and
   the browser imports glTF in wasm (`pocket-assets` `import` on `wasm32`), so meshopt must build for
   `wasm32-unknown-unknown` with the pinned clang and a libc sysroot as QuickJS-ng does, or levels

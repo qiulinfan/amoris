@@ -49,7 +49,10 @@ specified under [docs/spec/](docs/spec/README.md); their measured spikes are und
 - Rust 1.98.1 (`rust-toolchain.toml`); `source ~/.cargo/env` if cargo is not on PATH.
 - `cargo build --release` builds the workspace; `cargo xtask check` runs the full local check.
 - `wasm32-unknown-unknown` builds of QuickJS-ng need a clang with the wasm backend: the build script
-  finds Homebrew's LLVM (`brew install llvm lld wasi-libc`) or `POCKET_LLVM`.
+  finds Homebrew's LLVM (`brew install llvm lld wasi-libc`) or `POCKET_LLVM`. The viewport's
+  meshoptimizer (levels of detail, [docs/spec/lod.md](docs/spec/lod.md)) needs it too, through
+  `CC_wasm32_unknown_unknown` and, on Windows, `llvm-ar` on PATH: `cargo xtask` and
+  `tools/build_viewport.sh` set both.
 - Vulkan on macOS runs through MoltenVK (`brew install molten-vk vulkan-loader`); select it with
   `POCKET_BACKEND=vulkan` and launch with `DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib` so the
   loader is found. Metal is the default on macOS. `MVK_CONFIG_LOG_LEVEL=3` prints MoltenVK's shader

@@ -353,8 +353,10 @@ pub struct Renderer {
     last_pick: Option<Option<u64>>,
     /// The last finished coverage read: (entity, share of the view's pixels), largest first.
     last_visible: Option<Vec<(u64, f32)>>,
-    /// That read's slot ids per pixel (`slot + 1`, 0 for nothing), row by row.
+    /// That read's slot ids per pixel (`slot + 1`, 0 for nothing), row by row, when
+    /// `request_id_image` asked to keep them.
     last_ids: Option<Vec<u32>>,
+    keep_ids: bool,
     /// The splat clouds' entities when the pending id pass was drawn (its `SPLAT_PICK` ids index
     /// them).
     pick_splats: Vec<u64>,
@@ -819,6 +821,7 @@ impl Renderer {
             last_pick: None,
             last_visible: None,
             last_ids: None,
+            keep_ids: false,
             pick_splats: Vec::new(),
             empty_group,
             batch_offsets: storage(device, "batch offsets", 64 * 4, wgpu::BufferUsages::empty()),
@@ -1964,9 +1967,15 @@ impl Renderer {
         self.picking.request(PickRequest::Full);
     }
 
-    /// The answer to the last `request_visible`: (entity, share of pixels), largest first.
+    /// [`Renderer::request_visible`], also keeping the read's id at every pixel for
+    /// [`Renderer::take_id_image`] (checks compare whole id images).
+    pub fn request_id_image(&mut self) {
+        self.keep_ids = true;
+        self.request_visible();
+    }
+
     /// The entity at every pixel (0 for none), row by row, from the read that gave the last
-    /// [`Renderer::take_visible`] answer (checks compare whole id images).
+    /// [`Renderer::take_visible`] answer after [`Renderer::request_id_image`].
     pub fn take_id_image(&mut self) -> Option<Vec<u64>> {
         let ids = self.last_ids.take()?;
         Some(
@@ -1976,6 +1985,7 @@ impl Renderer {
         )
     }
 
+    /// The answer to the last `request_visible`: (entity, share of pixels), largest first.
     pub fn take_visible(&mut self) -> Option<Vec<(u64, f32)>> {
         self.collect_pick();
         self.last_visible.take()
@@ -2005,7 +2015,9 @@ impl Renderer {
                     .collect();
                 v.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
                 self.last_visible = Some(v);
-                self.last_ids = Some(r.ids);
+                if std::mem::take(&mut self.keep_ids) {
+                    self.last_ids = Some(r.ids);
+                }
             }
         }
     }

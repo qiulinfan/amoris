@@ -52,6 +52,10 @@ where `offsets` are prefix sums of the instance counts per batch (`Scene::batch_
 entry `instance_index + batch.x`; the shadow stages also derive the cascade as
 `(instance_index + batch.x) / stride - 1`.
 
+A mesh's levels of detail are rows of the mesh table, so each level is a batch of its own with a
+region sized by its mesh's instances ([lod.md](lod.md) 5): on the per-batch paths a mesh with
+levels costs a draw per level that holds instances.
+
 `Batches` (batches.rs) keeps the arguments' template (one set per batch, instance counts 0), copies
 it over the live arguments at the start of each frame, and issues the draws. It is rebuilt when the
 meshes or the per-batch instance counts change, never per instance.

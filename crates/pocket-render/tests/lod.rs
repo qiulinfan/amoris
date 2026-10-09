@@ -32,7 +32,7 @@ struct Shot {
 
 /// The next frame, drawn at `now`: its pixels, its id image and what it drew.
 fn shoot(r: &mut Renderer, now: f64) -> Shot {
-    r.request_visible();
+    r.request_id_image();
     let (_, _, rgba) = r.capture_rgba(now);
     // The arguments still hold that frame's counts; its id image arrives a frame or two later.
     let counts = r.draw_counts();
@@ -352,7 +352,8 @@ fn hysteresis_holds_a_level_until_the_margin() {
         for (d, want, what) in steps {
             let got = level_at(d);
             eprintln!(
-                "occlusion {}, scale {scale}: at {d:.2} m ({:.3} of level 1's distance): level                  {got}",
+                "occlusion {}, scale {scale}: at {d:.2} m ({:.3} of level 1's distance): level \
+                 {got}",
                 occlusion.name(),
                 d / one
             );

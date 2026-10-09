@@ -46,7 +46,12 @@ try {
   if (q.get("demo") === "cubes") vp.demoCubes(Number(q.get("count") || 1600000), dense);
   if (q.get("demo") === "mixed") vp.demoMixed(Number(q.get("n") || 8));
   if (q.get("demo") === "occluders") vp.demoOccluders();
-  if (q.get("demo") === "lod") vp.demoLod(lodField[0], lodField[1], Number(q.get("detail") || 6), Number(q.get("t") || 0));
+  if (q.get("demo") === "lod") {
+    // Making the meshes and their levels (pocket_assets::lod) runs here, on the page's thread.
+    const t0 = performance.now();
+    vp.demoLod(lodField[0], lodField[1], Number(q.get("detail") || 6), Number(q.get("t") || 0));
+    console.info(`demo=lod: meshes, levels and field in ${(performance.now() - t0).toFixed(1)} ms`);
+  }
   if (q.get("occlusion")) vp.setOcclusion(q.get("occlusion"));
   if (q.has("in_flight")) vp.raw.set_max_frames_in_flight(Number(q.get("in_flight")));
   if (q.get("lod")) vp.setLod(q.get("lod"));

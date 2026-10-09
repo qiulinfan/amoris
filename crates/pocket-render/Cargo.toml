@@ -29,6 +29,7 @@ default = ["window", "import"]
 window = ["dep:winit"]
 
 [dev-dependencies]
+# examples/meshlet_spike.rs builds meshlets (docs/bench/lod.md 7).
 pollster.workspace = true
 wgpu.workspace = true
 image.workspace = true
