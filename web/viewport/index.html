@@ -16,7 +16,11 @@
 <div id="hud">loading…</div>
 <script type="module">
 // Modes: ?demo=cubes[&count=N][&dense] draws Bevy's many_cubes layouts in the browser;
+// ?demo=mixed[&n=8] a grid of every mesh kind and pipeline variant under cascaded shadows;
 // ?render=ws://127.0.0.1:7878/render[&assets=http://127.0.0.1:7878/assets/] shows a host's world.
+// ?gpu_minimal=first-instance (or features,limits) leaves device features out as
+// POCKET_GPU_MINIMAL does natively: without indirect-first-instance the renderer takes WebGPU's
+// baseline draw path.
 import { createViewport } from "./viewport.js";
 const q = new URLSearchParams(location.search);
 const hud = document.getElementById("hud");
@@ -26,9 +30,11 @@ try {
   const vp = await createViewport(canvas, {
     renderUrl: q.get("render") || undefined,
     assetsUrl: q.get("assets") || "/assets/",
+    gpuMinimal: q.get("gpu_minimal") || undefined,
     beforeFrame: (api, frame) => { if (q.get("demo") === "cubes") api.demoCubesCamera(frame, dense); },
   });
   if (q.get("demo") === "cubes") vp.demoCubes(Number(q.get("count") || 1600000), dense);
+  if (q.get("demo") === "mixed") vp.demoMixed(Number(q.get("n") || 8));
   if (q.has("grid") || q.has("axes")) vp.raw.set_overlays(q.has("grid"), q.has("axes"));
   if (q.get("eye")) {
     const e = q.get("eye").split(",").map(Number), t = (q.get("target") || "0,0,0").split(",").map(Number);
@@ -40,7 +46,7 @@ try {
     samples.push(s);
     if (samples.length > 600) samples.shift();
     window.pocketStats = s;
-    hud.textContent = `${s.backend}  ${canvas.width}x${canvas.height}\nframe ${s.frame_ms.toFixed(2)} ms   gpu ${s.gpu_ms.toFixed(2)} ms\ninstances ${s.instances}  tick ${s.tick}\n` +
+    hud.textContent = `${s.backend}  ${canvas.width}x${canvas.height}  draws: ${s.draw_path} (${s.draw_calls})\nframe ${s.frame_ms.toFixed(2)} ms   gpu ${s.gpu_ms.toFixed(2)} ms\ninstances ${s.instances}  tick ${s.tick}\n` +
       (s.passes || []).map((p) => `  ${p.pass.padEnd(12)} ${p.ms.toFixed(2)} ms`).join("\n");
   });
   window.pocketSamples = samples;

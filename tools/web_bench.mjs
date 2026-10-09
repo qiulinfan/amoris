@@ -1,20 +1,37 @@
 // Measures a page's frame times in Google Chrome (headless, WebGPU on), driven over the Chrome
 // DevTools Protocol with Node's built-in WebSocket: node tools/web_bench.mjs <url> [seconds]
 // [width] [height]. The page publishes `window.pocketSamples` ({frame_ms, gpu_ms, backend}).
-// A temporary profile is used; the user's Chrome profile is never touched.
+// A temporary profile is used; the user's Chrome profile is never touched. Chrome is found at its
+// default install path on macOS, Windows and Linux, or at `CHROME=<path>`. `CHROME_FLAGS="..."`
+// adds switches (e.g. `--force_high_performance_gpu`).
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const [url, seconds = "10", width = "1280", height = "720"] = process.argv.slice(2);
-const chrome = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+const candidates = {
+  darwin: ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"],
+  win32: [
+    join(process.env.PROGRAMFILES || "C:\\Program Files", "Google\\Chrome\\Application\\chrome.exe"),
+    join(process.env["PROGRAMFILES(X86)"] || "C:\\Program Files (x86)", "Google\\Chrome\\Application\\chrome.exe"),
+    join(process.env.LOCALAPPDATA || "", "Google\\Chrome\\Application\\chrome.exe"),
+  ],
+  linux: ["/usr/bin/google-chrome", "/usr/bin/google-chrome-stable", "/usr/bin/chromium"],
+}[process.platform] || [];
+const chrome = process.env.CHROME || candidates.find((p) => existsSync(p));
+if (!chrome) throw new Error(`no Chrome found (tried ${candidates.join(", ")}); set CHROME=<path>`);
 const profile = mkdtempSync(join(tmpdir(), "pocket-bench-"));
 const port = 9300 + Math.floor(Math.random() * 600);
+// Chrome's WebGPU runs on Metal (macOS), D3D12 (Windows) or Vulkan (Linux). The Vulkan feature
+// switch (kept from the macOS runs) is left out on Windows, where it would move Chrome's own
+// compositing to Vulkan beside Dawn's D3D12.
+const platformFlags = process.platform === "win32" ? [] : ["--enable-features=Vulkan"];
 const proc = spawn(chrome, [
   "--headless=new", `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`,
-  "--enable-unsafe-webgpu", "--enable-features=Vulkan", "--disable-frame-rate-limit",
-  "--disable-gpu-vsync", `--window-size=${width},${height}`, "--no-first-run", "--no-default-browser-check", "about:blank",
+  "--enable-unsafe-webgpu", ...platformFlags, "--disable-frame-rate-limit",
+  "--disable-gpu-vsync", `--window-size=${width},${height}`, "--no-first-run", "--no-default-browser-check",
+  ...(process.env.CHROME_FLAGS || "").split(" ").filter(Boolean), "about:blank",
 ], { stdio: "ignore" });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let target;
@@ -58,7 +75,10 @@ const r = await send("Runtime.evaluate", { returnByValue: true, expression: `(()
   const mean = (a) => a.reduce((x, y) => x + y, 0) / Math.max(a.length, 1);
   return { url: location.href, frames: s.length, frame_ms_mean: mean(ft), frame_ms_p50: ft[Math.floor(ft.length / 2)],
     frame_ms_p95: ft[Math.floor(ft.length * 0.95)], gpu_ms_mean: mean(s.map((x) => x.gpu_ms || 0)),
+    render_ms_mean: mean(s.map((x) => x.render_ms || 0)),
     backend: s.length ? s[0].backend : null, passes: s.length ? s[s.length - 1].passes : null,
+    draw_path: s.length ? s[s.length - 1].draw_path : null, draw_calls: s.length ? s[s.length - 1].draw_calls : null,
+    instances: s.length ? s[s.length - 1].instances : null,
     canvas: (() => { const c = document.querySelector("canvas"); return c ? [c.width, c.height] : null; })(),
     gpu: navigator.gpu ? "yes" : "no" };
 })()` });

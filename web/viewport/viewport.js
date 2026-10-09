@@ -1,9 +1,11 @@
 // The engine's renderer in a page (crates/pocket-viewport compiled to WebAssembly, drawing with
 // WebGPU). The editor's viewport and spectator pages use it through createViewport:
 //
-//   const vp = await createViewport(canvas, { renderUrl: "ws://127.0.0.1:7878/render", assetsUrl: "/assets/" });
+//   const vp = await createViewport(canvas, { renderUrl: "ws://127.0.0.1:7878/render", assetsUrl: "/assets/",
+//                                             gpuMinimal: "first-instance" /* optional */ });
 //   vp.setCamera([x, y, z], [qx, qy, qz, qw], fovDeg);   // or vp.useSceneCamera()
-//   vp.onStats((s) => ...);                               // {gpu_ms, instances, tick, passes, frame_ms}
+//   vp.onStats((s) => ...);                               // {gpu_ms, instances, tick, passes, frame_ms,
+//                                                         //  render_ms, draw_path, draw_calls}
 //   vp.pushFrame(bytes);                                  // a render-feed frame from elsewhere (a game worker)
 //   vp.dispose();
 //
@@ -22,7 +24,9 @@ export async function createViewport(canvas, options = {}) {
   const dpr = window.devicePixelRatio || 1;
   const size = () => [Math.max(1, Math.round(canvas.clientWidth * dpr)), Math.max(1, Math.round(canvas.clientHeight * dpr))];
   [canvas.width, canvas.height] = size();
-  const vp = await Viewport.create(canvas);
+  // gpuMinimal: device features to leave out, as POCKET_GPU_MINIMAL natively ("first-instance"
+  // forces WebGPU's baseline draw path).
+  const vp = await Viewport.create(canvas, options.gpuMinimal || undefined);
   const assetsUrl = options.assetsUrl || "/assets/";
   const listeners = [];
   let socket = null;
@@ -66,7 +70,10 @@ export async function createViewport(canvas, options = {}) {
     if (disposed) return;
     if (options.beforeFrame) options.beforeFrame(api, frames);
     fetchAssets();
+    const t0 = performance.now();
     const stats = JSON.parse(vp.render(now));
+    // The CPU time of the render call (the renderer's own cpu_ms has no clock in wasm).
+    stats.render_ms = performance.now() - t0;
     const dt = now - last;
     last = now;
     frameTimes.push(dt);
@@ -89,6 +96,7 @@ export async function createViewport(canvas, options = {}) {
     pushFrame(bytes) { return vp.push_frame(bytes, performance.now()); },
     resize(w, h) { vp.resize(w, h); },
     demoCubes(count, dense) { vp.demo_cubes(count, dense, performance.now()); },
+    demoMixed(n) { vp.demo_mixed(n, performance.now()); },
     demoCubesCamera(frame, dense) { vp.demo_cubes_camera(frame, dense); },
     dispose() {
       disposed = true;

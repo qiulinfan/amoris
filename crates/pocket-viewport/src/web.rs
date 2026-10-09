@@ -44,14 +44,21 @@ pub struct Viewport {
 
 #[wasm_bindgen]
 impl Viewport {
-    /// A viewport on `canvas` (its current pixel size). Fails without WebGPU.
-    pub async fn create(canvas: web_sys::HtmlCanvasElement) -> Result<Viewport, JsValue> {
+    /// A viewport on `canvas` (its current pixel size). Fails without WebGPU. `gpu_minimal` leaves
+    /// optional device features out as `POCKET_GPU_MINIMAL` does natively (e.g. `first-instance`
+    /// forces the WebGPU baseline draw path).
+    pub async fn create(
+        canvas: web_sys::HtmlCanvasElement,
+        gpu_minimal: Option<String>,
+    ) -> Result<Viewport, JsValue> {
         let (w, h) = (canvas.width().max(1), canvas.height().max(1));
-        let instance = pocket_render::gpu::instance(pocket_render::BackendChoice::Auto);
+        let minimal = pocket_render::gpu::Minimal::parse(gpu_minimal.as_deref().unwrap_or(""));
+        let instance =
+            pocket_render::gpu::instance_with(pocket_render::BackendChoice::Auto, minimal);
         let surface = instance
             .create_surface(wgpu::SurfaceTarget::Canvas(canvas))
             .map_err(|e| JsValue::from_str(&format!("no WebGPU surface: {e}")))?;
-        let gpu = Gpu::new(instance, Some(&surface))
+        let gpu = Gpu::new_with(instance, Some(&surface), minimal)
             .await
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
         let caps = surface.get_capabilities(&gpu.adapter);
@@ -291,7 +298,7 @@ impl Viewport {
             .map(|(l, ms)| format!("{{\"pass\":\"{l}\",\"ms\":{ms:.3}}}"))
             .collect();
         format!(
-            "{{\"gpu_ms\":{:.3},\"instances\":{},\"entities\":{},\"meshes\":{},\"pending_assets\":{},\"tick\":{},\"backend\":\"{}\",\"passes\":[{}]}}",
+            "{{\"gpu_ms\":{:.3},\"instances\":{},\"entities\":{},\"meshes\":{},\"pending_assets\":{},\"tick\":{},\"backend\":\"{}\",\"draw_path\":\"{}\",\"draw_calls\":{},\"passes\":[{}]}}",
             s.gpu_ms,
             s.instances,
             s.entities,
@@ -299,8 +306,22 @@ impl Viewport {
             s.pending_assets,
             s.tick,
             s.backend,
+            s.draw_path,
+            s.draw_calls,
             passes.join(",")
         )
+    }
+
+    /// Loads the mixed scene (every pipeline variant in every view; the draw paths' check).
+    pub fn demo_mixed(&mut self, n: u32, now_ms: f64) {
+        self.renderer.add_model(
+            pocket_render::demo::MIXED_MODEL,
+            &pocket_render::demo::mixed_model(),
+        );
+        self.renderer
+            .apply(pocket_render::demo::mixed(n), now_ms / 1000.0);
+        self.renderer
+            .set_camera_override(Some(pocket_render::demo::mixed_camera(n)));
     }
 
     /// Loads the many_cubes benchmark scene (Bevy's layouts) for in-browser measurement.
