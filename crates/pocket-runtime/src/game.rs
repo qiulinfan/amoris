@@ -1198,10 +1198,19 @@ impl Game {
     /// recording's segment (replay.md 2.3); a step on a poisoned world is refused with
     /// `sim.world_poisoned` and records nothing, so one fault is one `Fault` record.
     pub fn step(&mut self) -> Result<StepReport, Problem> {
+        self.step_with(&mut NoHooks)
+    }
+
+    /// [`Game::step`] with the simulation's step hooks (a profiler timing its systems; the
+    /// hooks stand outside the tick and change nothing in it).
+    pub fn step_with(
+        &mut self,
+        hooks: &mut dyn pocket_sim::StepHooks,
+    ) -> Result<StepReport, Problem> {
         if let Some(p) = self.sim.poisoned() {
             return Err(pocket_sim::sim::world_poisoned(p.tick));
         }
-        let stepped = self.sim.step(&mut NoHooks);
+        let stepped = self.sim.step(hooks);
         // A script debugger that evaluated inside the tick taints the run (script-host.md 13).
         if let Some((tick, why)) = pocket_script::debug::take_taint(self.sim.world_mut()) {
             self.tainted.get_or_insert(tick);

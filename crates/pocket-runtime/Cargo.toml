@@ -33,3 +33,9 @@ toml.workspace = true
 
 [dev-dependencies]
 pocket-script = { workspace = true, features = ["transpile"] }
+
+# The player bench (docs/bench/player.md): the reference skipper through the player tools, and
+# decision models in the tick, native and scripted.
+[[example]]
+name = "player_bench"
+required-features = ["transpile"]

@@ -13,7 +13,13 @@
       "chart": true,
       "positions": true,
       "instruments": ["heading_deg", "course_deg", "speed_mps", "wind_from_deg", "wind_mps", "twa_deg", "awa_deg", "aws_mps", "point_of_sail", "tack", "hoist", "sheet", "trim", "drive", "rudder", "heel_deg", "pos_m", "afloat", "next_mark", "taken", "left"],
-      "budget_tokens": 400
+      "budget_tokens": 400,
+      "tensor": {"blocks": [
+        {"block": "instruments", "name": "self", "instruments": ["heading_deg", "speed_mps", "wind_from_deg", "point_of_sail", "afloat"]},
+        {"block": "nearest", "name": "crates", "kinds": ["crate"], "count": 4, "facts": ["alongside"]},
+        {"block": "nearest", "name": "marks", "kinds": ["mark", "island"], "count": 4, "facts": ["radius_m", "next"]},
+        {"block": "rays", "name": "rays", "count": 8, "fov_deg": 360, "range_m": 500, "kinds": ["island", "boat", "crate"]}
+      ]}
     }
   ],
   "instruments": [

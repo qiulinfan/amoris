@@ -33,6 +33,7 @@ pub mod present;
 mod project;
 mod scene;
 mod scripts;
+pub mod skipper;
 #[cfg(feature = "thread")]
 pub mod thread;
 pub mod types;

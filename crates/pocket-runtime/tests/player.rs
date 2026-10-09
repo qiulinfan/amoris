@@ -10,6 +10,7 @@ use std::sync::{Arc, OnceLock};
 
 use pocket_link::Source;
 use pocket_persist::replay::{MemorySink, RecordOptions, Replay};
+use pocket_runtime::skipper::Skipper;
 use pocket_runtime::{Command, Game, GameSetup, Project};
 use serde_json::{Value, json};
 
@@ -101,6 +102,10 @@ fn a_player_is_its_seat_and_sees_through_its_own_perception() {
             .call("player.describe", json!({"entity": "Crate4"}))
             .unwrap_err();
         assert_eq!(e.code, "perception.unknown_entity", "{e:#?}");
+        // An RL policy reads the same perception as tensors (projection.md, Tensor projection).
+        let t = p.ok("player.observe", json!({"projection": "tensor"}));
+        let t: Value = serde_json::from_str(t.as_str().unwrap()).unwrap();
+        assert!(t.to_string().contains("rays"), "{t}");
         // The omniscient view is not a player's, nor another seat.
         let e = p
             .call("player.observe", json!({"omniscient": true}))
@@ -163,73 +168,11 @@ fn a_call_with_one_bad_action_applies_nothing() {
     });
 }
 
-/// A percept as the agent reads it from a JSON observation.
-struct Seen {
-    id: u64,
-    kind: String,
-    visibility: String,
-    range_m: f64,
-    bearing_deg: f64,
-    can: Vec<String>,
-}
-
-fn percepts(obs: &Value) -> Vec<Seen> {
-    obs["entities"]
-        .as_array()
-        .map(|a| {
-            a.iter()
-                .map(|p| Seen {
-                    id: p["id"].as_u64().unwrap_or(0),
-                    kind: p["kind"].as_str().unwrap_or_default().to_owned(),
-                    visibility: p["visibility"].as_str().unwrap_or_default().to_owned(),
-                    range_m: p["range_m"].as_f64().unwrap_or(f64::MAX),
-                    bearing_deg: p["bearing_deg"].as_f64().unwrap_or(0.0),
-                    can: p["can"]
-                        .as_array()
-                        .map(|c| {
-                            c.iter()
-                                .filter_map(|v| v.as_str().map(str::to_owned))
-                                .collect()
-                        })
-                        .unwrap_or_default(),
-                })
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-fn instrument<'a>(obs: &'a Value, name: &str) -> &'a Value {
-    obs["instruments"]
-        .as_array()
-        .and_then(|a| a.iter().find(|r| r["name"] == json!(name)))
-        .map_or(&Value::Null, |r| &r["value"])
-}
-
-/// The target of the seat's live `sail_to`: its id and the name the seat knows it by.
-fn sailing_to(obs: &Value) -> Option<(u64, String)> {
-    obs["intents"].as_array()?.iter().find_map(|i| {
-        (i["intent"] == json!("sail_to")).then(|| {
-            let t = &i["target"];
-            Some((
-                t["id"].as_u64()?,
-                t["name"].as_str().unwrap_or_default().to_owned(),
-            ))
-        })?
-    })
-}
-
-fn off_angle(a: f64, b: f64) -> f64 {
-    let d = (a - b).rem_euclid(360.0);
-    if d > 180.0 { 360.0 - d } else { d }
-}
-
-/// The scripted agent: a decision model outside the tick that plays through the player tools
-/// only. At each decision it observes, then: takes aboard a crate it can; else sails to the
-/// nearest crate it sees within 45 m that is not upwind (twice at most per crate); else sails to
-/// the course's next mark; then waits for its next decision point.
+/// The scripted agent: the reference skipper (`pocket_runtime::skipper`), a decision model outside
+/// the tick that plays through the player tools only, and what the test counts of its run.
 #[derive(Default)]
 struct Agent {
-    tries: std::collections::BTreeMap<u64, u32>,
+    skipper: Skipper,
     decisions: u32,
     acts: u32,
     observed_bytes: Vec<usize>,
@@ -237,41 +180,7 @@ struct Agent {
 
 impl Agent {
     fn decide(&mut self, obs: &Value) -> Option<Value> {
-        let seen = percepts(obs);
-        if let Some(c) = seen
-            .iter()
-            .find(|p| p.kind == "crate" && p.can.iter().any(|v| v == "take_aboard"))
-        {
-            return Some(
-                json!({"actions": [{"do": "use", "entity": c.id, "verb": "take_aboard"}]}),
-            );
-        }
-        let wind_from = instrument(obs, "wind_from_deg").as_f64().unwrap_or(270.0);
-        let target = sailing_to(obs);
-        let target_id = target.as_ref().map(|t| t.0);
-        let crate_ = seen
-            .iter()
-            .filter(|p| p.kind == "crate" && p.visibility == "seen" && p.range_m < 45.0)
-            .filter(|p| off_angle(p.bearing_deg, wind_from) > 70.0)
-            .filter(|p| self.tries.get(&p.id).copied().unwrap_or(0) < 2 || target_id == Some(p.id))
-            .min_by(|a, b| a.range_m.total_cmp(&b.range_m));
-        if let Some(c) = crate_ {
-            if target_id == Some(c.id) {
-                return None;
-            }
-            *self.tries.entry(c.id).or_default() += 1;
-            return Some(json!({"actions": [{"do": "start", "intent": "sail_to",
-                "target": c.id, "params": {"arrive_m": 2}, "tag": "crate"}]}));
-        }
-        // The next mark is on the chart, so it can be named before it is in sight.
-        let next = instrument(obs, "next_mark").as_str().unwrap_or("none");
-        if next == "none" || target.as_ref().is_some_and(|t| t.1 == next) {
-            return None;
-        }
-        Some(
-            json!({"actions": [{"do": "start", "intent": "sail_to", "target": next,
-            "params": {"arrive_m": 8}, "tag": "mark"}]}),
-        )
+        self.skipper.decide(obs)
     }
 }
 
