@@ -22,7 +22,8 @@ a row of the renderer's mesh table, so a level is drawn exactly like a mesh. Per
 view, the culling pass takes the coarsest level whose error, scaled by the instance, stays under
 one pixel at the distance of the instance's bounding sphere's nearest point (the camera; a level
 gets coarser only past a 20% margin) or under one texel (a shadow cascade). Levels are on by
-default; `POCKET_LOD=off` draws every instance's full mesh.
+default; `POCKET_LOD=off` draws every instance's full mesh, and so does a scene whose lists would
+pass the device's binding limit with levels (5).
 
 ## 2. Making levels
 
@@ -144,10 +145,21 @@ That is the price of this layout: an instance of a mesh with `L` levels has `L` 
 view's list, so the camera's `drawn` (48 bytes per entry) and the cascades' `visible` (4 bytes per
 entry and view) grow by the levels: 68 bytes per instance and level (`Renderer::list_bytes`). With
 levels off the level rows get no regions (the owner of a level row becomes none), and the lists
-are as before. On WebGPU's default limits `drawn` binds at most 128 MiB: about 350,000 instances of
-8-level meshes, against 2.8 million without levels. On the per-batch paths (the browser) every
-level that holds instances is a draw call per view and variant, whether the culling kept any
-instance at that level or not.
+are as before. On the per-batch paths (the browser) every level that holds instances is a draw call
+per view and variant, whether the culling kept any instance at that level or not; a skinned copy's
+levels hold its one instance each, so every skinned part with `L` levels adds `L - 1` draw calls
+per view there (docs/bench/lod.md 6).
+
+**The binding limit.** Each list is bound whole, so it must fit the device's
+`max_storage_buffer_binding_size` (and `max_buffer_size`); the lists grow by doubling up to that
+limit, never past it. When the regions with levels would not fit, `sync` lays them out with levels
+off instead and logs a warning: the scene draws full meshes, `FrameStats::lod` reads `off-limit`,
+and the regions are laid out again (levels back on, if they fit) whenever the scene's counts
+change. On WebGPU's default limits (128 MiB) that happens past about 350,000 instances of 8-level
+meshes, or 400,000 of the 7-level primitive sphere. Before this fallback such a scene drew nothing:
+the bind group failed validation, which wgpu only logs. Without levels the instance buffer (80
+bytes per instance) reaches the limit first, at 1.68 million instances; nothing falls back there,
+and an error is logged when the lists themselves do not fit.
 
 The alternative removes the multiplication: count per (view, batch, level) in a first pass, place
 each level's run with a small prefix sum, and write the entries in a second pass, the vertex stage
@@ -164,9 +176,10 @@ dispatches per phase; it is left until scenes need it (9).
 | hysteresis | `LodSettings::hysteresis` (0.2) | — | the margin a coarser level needs |
 
 `Renderer::set_lod` and `set_lod_settings` change them at any time (from the next frame);
-`FrameStats::lod` says whether the frame picked levels. `Renderer::draw_counts` reads back, per
-argument set and level, the instances and triangles the last submitted frame drew (natively; it
-waits for the GPU).
+`FrameStats::lod` says whether the frame picked levels (`on`, `off`, or `off-limit` past the binding
+limit, 5). `Renderer::draw_counts` reads back, per argument set and level, the instances and
+triangles the last submitted frame drew (natively; it waits for the GPU), and
+`Renderer::cascade_texels` gives the cascades' texels for a camera.
 
 ## 7. Interactions
 
@@ -187,8 +200,9 @@ waits for the GPU).
   where texels are coarser than pixels.
 - **The id pass** draws the camera's batches, levels included, so picking and `render.visible` see
   what is drawn.
-- **Skinned meshes** get levels made from the bind pose; an animated pose can stray further from
-  the full mesh than the bind pose's error says.
+- **Skinned meshes** get levels made from the bind pose, drawn over the skinned vertices like the
+  full mesh (3, checked in 8); an animated pose can stray further from the full mesh than the bind
+  pose's error says.
 
 ## 8. Checks
 
@@ -217,6 +231,19 @@ waits for the GPU).
   - `hysteresis_holds_a_level_until_the_margin`: one rock seen from 0.9, 1.1 (inside the margin),
     1.4, 1.1 and 0.9 times the distance where its level 1 becomes acceptable draws levels 0, 0, 1,
     1, 0; with occlusion culling off and on, and at scale 2.
+  - `cascades_pick_levels_by_their_texels`: one shadow-casting rock seen from six distances (5 to
+    130 m) that put it in every cascade, at scales 1 and 2 and with `shadow_texels` 1 and 2: every
+    cascade that draws it draws the level computed on the CPU from `Renderer::cascade_texels` (54
+    checks). The test also requires that its placements tell a cascade's level from the camera's
+    and from a bound four times as loose.
+  - `skinned_levels_follow_the_pose`: `demo::bent_model`, a skinned column of 5,120 triangles whose
+    clip bends its upper half 90 degrees, seen far enough away that its copy draws level 2, with
+    levels off and on: no pixel whose entity differs lies more than two pixels from an edge of the
+    full mesh's id image. On the baseline path it pins the draw calls a skinned copy's levels add
+    (5).
+  - `levels_give_way_at_the_binding_limit`: on WebGPU's default limits, 419,429 spheres out of
+    every view and 64 in it, just past the limit with levels: the frame draws exactly what levels
+    off draws (`off-limit`), and levels come back once the hidden spheres are removed.
 - The existing checks run with levels on: `draw_paths.rs` and `occlusion.rs` draw the primitives
   and the mixed model, whose spheres, capsules and tori have levels.
 - `python tools/lod_mutations.py [--out file.json]` puts known bugs into the code one at a time,
@@ -225,7 +252,13 @@ waits for the GPU).
 
 ## 9. Open
 
-- The lists' multiplication by the levels (5): a two-pass placement would remove it.
+- The lists' multiplication by the levels (5): past the binding limit the whole scene falls back to
+  full meshes. A cap per mesh would keep the levels of the meshes that fit; a two-pass placement
+  would remove the multiplication.
+- A skinned crowd on the per-batch paths: each copy's levels are draw calls of their own in every
+  view, 8,165 calls instead of 1,025 for 200 skinned columns of 8 levels on the baseline path, 3.4
+  ms more CPU encoding natively (docs/bench/lod.md 6). Fewer levels for skinned copies, or none on
+  the per-batch paths, would trade their triangles for draw calls.
 - Shading: a coarse level interpolates the full mesh's vertex normals over larger triangles, so
   its shading differs inside the silhouette (most of the field's differing pixels, docs/bench/lod.md
   3). `meshopt::simplify_with_attributes` weighing normals, or normal maps baked from the full mesh,

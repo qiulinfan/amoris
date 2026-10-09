@@ -1257,6 +1257,9 @@ impl Renderer {
             || self.regions_want != Some(want_lod)
         {
             self.scene.counts_changed = false;
+            // Whether the last layout already gave levels up at the limit (warn once, not at every
+            // layout of a scene that keeps changing).
+            let was_limited = self.regions_want == Some(true) && self.regions_lod == Some(false);
             self.regions_want = Some(want_lod);
             // A level row draws its mesh's instances while levels are on, none while they are off.
             let owners_with = |lod_on: bool| -> Vec<u32> {
@@ -1289,11 +1292,15 @@ impl Renderer {
                 lod_on = false;
                 owners = owners_with(false);
                 (offsets, stride) = self.scene.batch_offsets(&owners);
-                log::warn!(
-                    "levels of detail off: with them a view list would take {with} bytes, over \
-                     this device's {limit}-byte binding limit ({} without them)",
-                    largest(stride)
-                );
+                if !was_limited {
+                    log::warn!(
+                        "levels of detail off: with them a view list would take {with} bytes, \
+                         over this device's {limit}-byte binding limit ({} without them)",
+                        largest(stride)
+                    );
+                }
+            } else if lod_on && was_limited {
+                log::info!("levels of detail back on: the views' lists fit the binding limit");
             }
             if largest(stride) > limit {
                 log::error!(
