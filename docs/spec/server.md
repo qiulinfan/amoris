@@ -420,6 +420,7 @@ error exits 2. Every call waits 60 s at most (`--timeout <s>`, `POCKET_TIMEOUT`)
 | `events.not_found` | `events.why` for a stream number the ring no longer holds |
 | `host.forbidden`, `host.not_found`, `host.unreachable`, `host.bind_failed` | the guard; no file; the CLI finds no host; the port is taken |
 | `host.timeout` | the CLI waited its timeout (60 s by default) for an answer |
+| `host.no_players`, `seat.not_playable` | a call made as a seat to a host that opens no player clients; as a seat the game declares for no player (shared/contract/errors.md) |
 | `debug.paused` | the call needs the game thread, which the debugger holds (3.4); `queued: true` when it was sent before the stop (or is a `time.control` sent while held) and runs at the boundary after the held tick |
 | `debug.not_available`, `capture.not_available`, `render.not_available` | plug-in not installed |
 

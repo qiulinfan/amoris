@@ -72,6 +72,7 @@ pub mod names {
     pub const SEAT_UNKNOWN: &str = "seat.unknown";
     pub const SEAT_NOT_YOURS: &str = "seat.not_yours";
     pub const SEAT_NOT_ALLOWED: &str = "seat.not_allowed";
+    pub const SEAT_NOT_PLAYABLE: &str = "seat.not_playable";
     pub const PERMISSION_DENIED: &str = "permission.denied";
     pub const PERCEPTION_UNKNOWN_ENTITY: &str = "perception.unknown_entity";
     pub const PERCEPTION_NOT_PERCEIVABLE: &str = "perception.not_perceivable";
@@ -111,7 +112,7 @@ pub mod names {
 }
 
 /// The engine's families and their owners (errors.md, Codes). A game may not declare a code in one.
-pub const ENGINE_FAMILIES: [&str; 40] = [
+pub const ENGINE_FAMILIES: [&str; 42] = [
     "request",
     "seat",
     "permission",
@@ -152,6 +153,8 @@ pub const ENGINE_FAMILIES: [&str; 40] = [
     "check",
     "contract",
     "session",
+    "player",
+    "host",
 ];
 
 /// `true` for a family the engine owns.
@@ -197,6 +200,7 @@ mod tests {
         assert_eq!(num(-0.0), serde_json::json!(0));
         assert!(is_engine_family("sim"));
         assert!(is_engine_family("game"));
+        assert!(is_engine_family("player") && is_engine_family("host"));
         assert!(!is_engine_family("sail"));
     }
 }

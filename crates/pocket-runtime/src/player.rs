@@ -961,6 +961,10 @@ pub struct WaitParams {
 /// The most ticks one `wait` runs (time.md, `StepRequest.ticks`).
 pub const WAIT_TICKS: u64 = 36_000;
 
+/// A `wait`'s wall limit when it names none, and the largest it may name, in milliseconds: what a
+/// client waiting for the answer must allow (`max_wall_ms`).
+pub use pocket_interface::time::session::{MAX_WALL_MS, WALL_MS};
+
 /// `player.wait`'s parameters checked, and the `step` request it runs in stepped pacing.
 pub fn wait_as_step(raw: &Value) -> Result<Value, Problem> {
     let p: WaitParams = pocket_contract::decode(raw, &CheckOptions::new("the wait request"))?.value;

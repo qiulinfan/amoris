@@ -45,6 +45,17 @@ pub fn seat_not_allowed(seat: &str, seats: &[&str]) -> Problem {
     problem(names::SEAT_NOT_ALLOWED, "Only {seats} may do this.", d)
 }
 
+/// A call made as a seat the game declares for no player (it has no player index).
+pub fn seat_not_playable(seat: &str) -> Problem {
+    let mut d = Detail::new();
+    d.insert("seat".into(), Value::from(seat));
+    problem(
+        names::SEAT_NOT_PLAYABLE,
+        "The seat '{seat}' is not one the game declares for players.",
+        d,
+    )
+}
+
 /// The caller's role may not make this request.
 pub fn permission_denied(request: &str, role: &str, needs: &str) -> Problem {
     let mut d = Detail::new();
@@ -214,6 +225,11 @@ mod tests {
         assert_eq!(p.message, "The episode ended at tick 3600.");
         let p = seat_not_yours(&Pointer::parse("/seat"), "rival", "skipper");
         assert_eq!(p.message, "You play seat 'skipper', not 'rival'.");
+        let p = seat_not_playable("lookout");
+        assert_eq!(
+            p.message,
+            "The seat 'lookout' is not one the game declares for players."
+        );
         let p = internal_error("act", "log 7");
         assert_eq!(
             p.message,

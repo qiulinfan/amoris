@@ -164,8 +164,10 @@ fn timed_out(url: &str, method: &str, waited: Duration) -> Problem {
 }
 
 /// How long to wait for `method`: `given` seconds (`--timeout`), else `POCKET_TIMEOUT`, else
-/// [`DEFAULT_TIMEOUT_S`]; at least 10 s past a `timeout_ms` the call itself asks to wait.
-pub fn timeout_for(given: Option<f64>, params: &Value) -> Duration {
+/// [`DEFAULT_TIMEOUT_S`]; at least 10 s past the wall time the call itself asks to wait: its
+/// `timeout_ms` (`debug.wait`, `scripts.check`), or its `max_wall_ms`, which `player.wait` takes
+/// as 30 s when it names none (docs/spec/player.md 7).
+pub fn timeout_for(given: Option<f64>, method: &str, params: &Value) -> Duration {
     let base = given
         .or_else(|| {
             std::env::var("POCKET_TIMEOUT")
@@ -174,15 +176,20 @@ pub fn timeout_for(given: Option<f64>, params: &Value) -> Duration {
         })
         .filter(|t: &f64| t.is_finite() && *t > 0.0)
         .unwrap_or(DEFAULT_TIMEOUT_S);
-    let asked = params["timeout_ms"]
+    let wall = params["max_wall_ms"]
         .as_f64()
-        .map_or(0.0, |ms| ms / 1000.0 + 10.0);
+        .or_else(|| (method == "player.wait").then(|| f64::from(pocket_runtime::player::WALL_MS)));
+    let asked = [params["timeout_ms"].as_f64(), wall]
+        .into_iter()
+        .flatten()
+        .filter(|ms| ms.is_finite())
+        .fold(0.0, |most: f64, ms| most.max(ms / 1000.0 + 10.0));
     Duration::from_secs_f64(base.max(asked))
 }
 
 /// Calls `method` on the host at `url` (`POST /api/call`), waiting as [`timeout_for`] says.
 pub fn call_url(url: &str, method: &str, params: Value) -> Result<Value, Problem> {
-    let timeout = timeout_for(None, &params);
+    let timeout = timeout_for(None, method, &params);
     call_url_within(url, method, params, timeout)
 }
 
@@ -1923,7 +1930,7 @@ pub fn run(cmd: &str, raw: &[String]) -> Outcome {
         Ok(t) => t,
         Err(p) => return failed(&p, 2),
     };
-    let timeout = timeout_for(given, &params);
+    let timeout = timeout_for(given, &method, &params);
     let seat = args.value("seat");
     // A seat's player sends the player tools alone; the host and the game refuse the rest too.
     if seat.is_some()
@@ -2175,9 +2182,25 @@ mod tests {
             r#"{"points":[0,1,2,"... 67 more"]}"#
         );
         assert_eq!(
-            timeout_for(Some(5.0), &json!({"timeout_ms": 30000})),
+            timeout_for(Some(5.0), "debug.wait", &json!({"timeout_ms": 30000})),
             Duration::from_secs(40)
         );
-        assert_eq!(timeout_for(Some(5.0), &json!({})), Duration::from_secs(5));
+        assert_eq!(
+            timeout_for(Some(5.0), "status", &json!({})),
+            Duration::from_secs(5)
+        );
+        // A player's wait answers at its wall limit: 30 s unless it names one, up to 10 minutes.
+        assert_eq!(
+            timeout_for(Some(5.0), "player.wait", &json!({})),
+            Duration::from_secs(40)
+        );
+        assert_eq!(
+            timeout_for(None, "player.wait", &json!({"max_wall_ms": 600_000})),
+            Duration::from_secs(610)
+        );
+        assert_eq!(
+            timeout_for(Some(5.0), "player.wait", &json!({"max_wall_ms": 1000})),
+            Duration::from_secs(11)
+        );
     }
 }

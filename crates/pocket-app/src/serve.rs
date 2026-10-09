@@ -234,7 +234,7 @@ impl Caller for Remote {
         let seat = self.seat.clone();
         Box::pin(async move {
             tokio::task::spawn_blocking(move || {
-                let timeout = crate::client::timeout_for(None, &params);
+                let timeout = crate::client::timeout_for(None, &method, &params);
                 crate::client::call_url_as(&url, &method, params, seat.as_deref(), timeout)
             })
             .await

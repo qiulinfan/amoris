@@ -220,7 +220,9 @@ The commands are projected like every catalog command:
 - **HTTP**: `/api/call {method, params, seat}` makes the call from the seat's player source (the
   host asks the game for the seat's index once and keeps one client per seat).
 - **CLI**: `pocket player <action> ['<json>'] [--seat s]`; `act` also takes the actions alone;
-  observations print as text, other answers as one line of JSON.
+  observations print as text, other answers as one line of JSON. A client of a running host (the
+  CLI, `pocket mcp` against a host) waits for a `wait` at least 10 s past its wall limit,
+  `max_wall_ms` or the default 30 s, whatever `--timeout` says (`client::timeout_for`).
 
 Not built from mcp.md: grants with tokens over HTTP MCP, branches (`fork`, `discard`), snapshots and
 `replay` for players, `world` in answers, statistics across sessions (section 10).

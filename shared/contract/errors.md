@@ -116,6 +116,8 @@ an engine family (`game` among them: it is spec-arch's game thread).
 | `queue`, `source`, `command`, `game` | spec-arch | The command queue and the game thread (`docs/spec/threads.md`, 5.4). |
 | `lines`, `deps`, `fmt`, `clippy`, `build`, `gen`, `test`, `wasm`, `determinism`, `fork`, `reload`, `web`, `perf`, `check` | spec-arch | The local check command's findings (`docs/spec/checks.md`, 10.3); its `replay.*` and `types.*` codes belong to the families above, and its `contract.*` names are this contract's conformance checks (README). |
 | `session` | spec-mcp | Sessions, tools, worlds and branches, the benchmark (`shared/contract/mcp.md`, 7.1). |
+| `player` | spec-player | Whether the game declares a player layer at all (`docs/spec/player.md`, 7; the table below). |
+| `host` | spec-server | The host serving a project: its guard, its file, its clients (`docs/spec/server.md`, 9); `host.no_players` is in the table below. |
 
 Every slice 0 specification spells its codes in this form; the integration of slice 0 settled the
 early drafts' other spellings (upper-case `sim` codes, and spec-mcp's unprefixed ones:
@@ -169,13 +171,16 @@ parameters, `the act request`, `actions[0]` for an action. `{suggestions}` rende
 `'a' or 'b'`, or `'a', 'b' or 'c'`; with no suggestion the clause becomes `it takes {allowed}` (or
 `see {see}`).
 
-### `seat` and `permission`
+### `seat`, `permission`, and the runtime's `player` and `host` codes
 
 | Code | Use | When | Detail | Message template |
 |---|---|---|---|---|
 | `seat.unknown` | refuse | No seat of that id. | `path`, `seat`, `suggestions`, `allowed` | `There is no seat '{seat}'; did you mean {suggestions}?` |
 | `seat.not_yours` | refuse | A player names a seat other than its own. | `path`, `seat`, `yours` | `You play seat '{yours}', not '{seat}'.` |
 | `seat.not_allowed` | refuse (as an unmet requirement) | An affordance limited to other seats. | `seat`, `seats` | `Only {seats} may do this.` |
+| `seat.not_playable` | refuse | A call made as a seat the game declares for no player (it has no player index). | `seat` | `The seat '{seat}' is not one the game declares for players.` |
+| `player.not_declared` | refuse | A `player.*` request to a game that declares no player layer; answered before any of the request is read. | `command` | `{command} needs a game with players; this project declares none ([player] in project.toml with a perception file).` |
+| `host.no_players` | refuse | A call made as a seat to a host that opens no player clients. | | `This host opens no player clients; calls are a developer's.` |
 | `permission.denied` | refuse | The caller's role may not make this request. | `request`, `role`, `needs` | `{request} needs the {needs} role; this caller is a {role}.` |
 
 ### `perception`

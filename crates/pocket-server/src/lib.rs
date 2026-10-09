@@ -159,11 +159,7 @@ impl Host {
             .as_u64()
             .and_then(|i| u32::try_from(i).ok())
         else {
-            return Err(Problem::new(
-                "seat.not_playable",
-                format!("The seat '{seat}' is not one the game declares for players."),
-                detail([("seat", json!(seat))]),
-            ));
+            return Err(pocket_contract::codes::seat_not_playable(seat));
         };
         let open = self
             .0
