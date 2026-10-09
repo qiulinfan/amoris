@@ -417,21 +417,27 @@ impl Game {
         src: &dyn ReplaySource,
         replaying: bool,
     ) -> Result<Value, Problem> {
-        let (name, kind) = match catalog::find(&cmd.name) {
-            Some(def) => {
-                if def.host_only && cmd.source != Source::Host && !replaying {
-                    return Err(catalog::host_only(def.name, cmd.source));
-                }
-                if def.thread {
-                    return Err(catalog::thread_only(def.name));
-                }
-                (def.name, def.kind)
-            }
+        let def = catalog::find(&cmd.name);
+        let (name, kind) = match def {
+            Some(def) => (def.name, def.kind),
             None => match self.extras.commands.iter().find(|(n, _, _)| *n == cmd.name) {
                 Some((_, kind, _)) => ("", *kind),
                 None => return Err(catalog::unknown(&cmd.name, &self.extras.commands)),
             },
         };
+        if !replaying {
+            // A player sends the player tools alone (`crate::player::permitted`).
+            let named = if name.is_empty() { &cmd.name } else { name };
+            crate::player::permitted(self.sim.world(), named, cmd.source)?;
+        }
+        if let Some(def) = def {
+            if def.host_only && cmd.source != Source::Host && !replaying {
+                return Err(catalog::host_only(def.name, cmd.source));
+            }
+            if def.thread {
+                return Err(catalog::thread_only(def.name));
+            }
+        }
         if name.starts_with("player.") && !crate::player::declared(self.sim.world()) {
             return Err(crate::player::no_layer(name));
         }

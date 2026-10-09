@@ -134,6 +134,78 @@ fn a_player_is_its_seat_and_sees_through_its_own_perception() {
     });
 }
 
+/// A player sends the player tools alone (docs/spec/player.md 7; charter 3, principle 2): reading
+/// the world as it is, editing it, running time and the game's own Reads are a developer's, refused
+/// with `permission.denied` whatever name or alias reaches them, and nothing changes. A developer
+/// is answered the same calls. A game without players keeps slice 1's player source, whose world
+/// edits apply (the web form's human player, the `sailing` sample's checks).
+#[test]
+fn a_player_sends_the_player_tools_alone() {
+    common::big_stack(|| {
+        let mut g = Game::new(course(), 1).unwrap_or_else(|e| panic!("{e:#?}"));
+        g.run(1).unwrap();
+        let before = g.world_hash().unwrap();
+        let edit = json!({"ops": [{"set": {"entity": "Crate4", "component": "Cargo",
+                                            "value": {"value": 99}}}]});
+        let calls = [
+            ("world.get", json!({"entity": "Crate4"})),
+            ("world_get", json!({"entity": "Crate4"})),
+            ("world.query", json!({"with": ["Perceivable"]})),
+            ("world.tree", json!({})),
+            ("world.schema", json!({"component": "Cargo"})),
+            ("world.edit", edit.clone()),
+            (
+                "world_edit",
+                json!({"edits": [{"op": "set", "entity": "Sloop", "component": "Boat",
+                                  "value": {"rudder": 0.5}}]}),
+            ),
+            ("history.undo", json!({})),
+            ("time.step", json!({"ticks": 5})),
+            ("step", json!({"ticks": 5})),
+            ("time.control", json!({"pause": false})),
+            ("snapshots.restore", json!({"tick": 0})),
+            ("status", json!({})),
+            ("snapshot", json!({})),
+            ("catalog.list", json!({})),
+            ("scripts.apply", json!({})),
+            ("scripts.swap", json!({"bundle": g.bundle().to_hex()})),
+        ];
+        let mut p = Player {
+            game: &mut g,
+            seq: 0,
+        };
+        for (name, params) in &calls {
+            let e = p.call(name, params.clone()).unwrap_err();
+            assert_eq!(e.code, "permission.denied", "{name}: {e:#?}");
+            assert_eq!(e.detail["role"], json!("player"), "{name}: {e:#?}");
+            assert_eq!(e.detail["needs"], json!("developer"), "{name}: {e:#?}");
+        }
+        assert_eq!(g.world_hash().unwrap(), before);
+        assert_eq!(g.tick().0, 1);
+        assert_eq!(g.writes(), 0);
+        // A developer is answered: Crate4, which the skipper cannot see, and the edit.
+        let mut dev = |name: &str, params: Value| {
+            g.apply(&Command::new(Source::Developer(0), 1, name, params))
+                .unwrap_or_else(|e| panic!("{name}: {e:#?}"))
+        };
+        let c = dev("world.get", json!({"entity": "Crate4"}));
+        assert!(c["components"]["Cargo"].is_object(), "{c:#}");
+        dev("world.edit", edit);
+        assert_ne!(g.world_hash().unwrap(), before);
+        // Without players, the player source is slice 1's input source.
+        let mut s = Game::new(common::sailing(), 1).unwrap_or_else(|e| panic!("{e:#?}"));
+        s.apply(&Command::new(
+            Source::Player(0),
+            1,
+            "world_edit",
+            json!({"edits": [{"op": "set", "entity": "Sloop", "component": "Boat",
+                              "value": {"rudder": 0.5}}]}),
+        ))
+        .unwrap_or_else(|e| panic!("{e:#?}"));
+        assert_eq!(s.writes(), 1);
+    });
+}
+
 /// A game without `[player]` answers the player commands with `player.not_declared`, and its
 /// world carries none of the player layer's state.
 #[test]

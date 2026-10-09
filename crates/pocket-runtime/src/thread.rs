@@ -1098,8 +1098,18 @@ impl Loop {
 
     /// Applies one command; `true` when it asks the loop to quit.
     fn handle(&mut self, e: Envelope) -> bool {
-        let name = catalog::find(&e.name).map_or(e.name.as_str(), |d| d.name);
+        let def = catalog::find(&e.name);
+        let name = def.map_or(e.name.as_str(), |d| d.name);
         let json = |r: Result<Value, Problem>| r.map(ReplyValue::Json);
+        // A player sends the player tools alone (`crate::player::permitted`): the commands the
+        // loop answers itself (time, Play, the kept snapshots, the status) are refused here, the
+        // others again by the game.
+        if def.is_some()
+            && let Err(p) = crate::player::permitted(self.game.sim().world(), name, e.source)
+        {
+            e.reply.send(Err(p));
+            return false;
+        }
         match name {
             "shutdown" if e.source == Source::Host => {
                 self.model.quit();

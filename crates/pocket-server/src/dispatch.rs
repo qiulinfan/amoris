@@ -34,6 +34,26 @@ pub enum Via {
     Api,
     /// An MCP session's own developer client, and the session's name for `agent` events.
     Session(Arc<Mutex<GameClient>>, String),
+    /// A seat's player client (`Source::Player`) and the seat (docs/spec/player.md): calls made
+    /// as that seat, which send the player tools alone ([`seat_permits`]).
+    Player(Arc<Mutex<GameClient>>, String),
+}
+
+/// Whether a call made as `seat`'s player may name `method`: the player tools alone. Every other
+/// method is a developer's, whether the game answers it (and refuses it too, pocket-runtime's
+/// `player::permitted`) or the server does (`events.since` lists every world event, a read
+/// while the debugger holds the game answers from the last publication): refused with
+/// `permission.denied` before anything runs.
+pub fn seat_permits(method: &str) -> Result<(), Problem> {
+    if method.starts_with("player.") {
+        Ok(())
+    } else {
+        Err(pocket_contract::codes::permission_denied(
+            method,
+            "player",
+            "developer",
+        ))
+    }
 }
 
 /// Methods after which the history may have changed.
@@ -66,7 +86,7 @@ impl Host {
         match via {
             Via::Editor => self.0.editor.clone(),
             Via::Api => self.0.api.clone(),
-            Via::Session(c, _) => c.clone(),
+            Via::Session(c, _) | Via::Player(c, _) => c.clone(),
         }
     }
 
@@ -169,13 +189,42 @@ impl Host {
 
     /// One catalog call: answered here or by the game, with the pushes it causes.
     pub async fn call(&self, via: &Via, method: &str, params: Value) -> Result<Value, Problem> {
-        if let Via::Session(_, session) = via {
+        let session = match via {
+            Via::Session(_, name) => Some(name.clone()),
+            Via::Player(_, seat) => Some(format!("player:{seat}")),
+            _ => None,
+        };
+        if let Some(session) = &session {
             self.push(
                 "agent",
                 json!({"session": session, "kind": "call", "method": method,
                        "summary": summary(&params)}),
             );
         }
+        let permitted = match via {
+            Via::Player(..) => seat_permits(method),
+            _ => Ok(()),
+        };
+        let r = match permitted {
+            Err(p) => Err(p),
+            Ok(()) => self.respond(via, method, params).await,
+        };
+        if let Some(session) = &session {
+            let (ok, text) = match &r {
+                Ok(v) => (true, summary(v)),
+                Err(p) => (false, format!("{}: {}", p.code, p.message)),
+            };
+            self.push(
+                "agent",
+                json!({"session": session, "kind": "result", "method": method, "ok": ok,
+                       "summary": text}),
+            );
+        }
+        r
+    }
+
+    /// A call answered here or by the game, and the history pushed after one that changed it.
+    async fn respond(&self, via: &Via, method: &str, params: Value) -> Result<Value, Problem> {
         let r = match self.local(via, method, params.clone()).await {
             Some(r) => r,
             None => match self.paused_read(method, &params) {
@@ -188,17 +237,6 @@ impl Host {
             && let Ok(h) = self.game(&Via::Api, "history.list", json!({})).await
         {
             self.push("history", h);
-        }
-        if let Via::Session(_, session) = via {
-            let (ok, text) = match &r {
-                Ok(v) => (true, summary(v)),
-                Err(p) => (false, format!("{}: {}", p.code, p.message)),
-            };
-            self.push(
-                "agent",
-                json!({"session": session, "kind": "result", "method": method, "ok": ok,
-                       "summary": text}),
-            );
         }
         r
     }

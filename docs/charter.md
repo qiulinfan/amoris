@@ -306,11 +306,21 @@ Python：`tools/neural/`（神经资源训练）、`tools/eval/`（评测）。
 与事件环仍然独立，位置与方位从各自的身体算起）。理由：契约的“一个座位一个身体”让合作的座位无从
 共享视野，而队伍视野是即时战略类游戏的常见需要。其三，玩家工具是命令目录里的 `player.*` 命令
 （`session`、`describe`、`observe`、`nearby`、`events`、`affordances`、`intents`、`act`、`wait`、
-`continue`），MCP 的 `player` 工具与 CLI 的 `pocket player` 只是它们的投影；以 `Source::Player`
-发出的调用由引擎按玩家角色限制；步进节奏下由玩家持有时钟时，`wait` 即“运行到本座位的下一个决策点”。
-理由：Amoris 的 Python 网关（`tools/eval/agent_gameplay.py`）给 agent 五个工具，其中四个是
-observe、动作与 wait；一个 `wait` 同时覆盖步进与实时（暂停于决策）两种节奏，agent 不必学两套推进
-时间的方法。实现与测量见 [spec/player.md](spec/player.md) 与 [bench/player.md](bench/player.md)。
+`continue`），MCP 的 `player` 工具与 CLI 的 `pocket player` 只是它们的投影；步进节奏下由玩家持有
+时钟时，`wait` 即“运行到本座位的下一个决策点”。理由：Amoris 的 Python 网关
+（`tools/eval/agent_gameplay.py`）给 agent 五个工具，其中四个是 observe、动作与 wait；一个 `wait`
+同时覆盖步进与实时（暂停于决策）两种节奏，agent 不必学两套推进时间的方法。实现与测量见
+[spec/player.md](spec/player.md) 与 [bench/player.md](bench/player.md)。
+
+2026-10-09（Pioneer，审查后补充）：玩家角色由引擎强制，而不只由 MCP 会话的工具列表约束。在声明了
+`[player]` 的游戏里，以 `Source::Player` 发出的调用只能是 `player.*` 命令：游戏（`Game` 与游戏线程
+自己回答的时间、Play、保留快照与状态命令）和主机（`/api/call` 带 `seat`、绑定座位的 MCP 会话、
+CLI 的 `--seat`，包括主机自己回答的 `events.since`、`log.since` 与调试器方法）都以
+`permission.denied` 拒绝其余命令。没有声明玩家的游戏里，`Source::Player` 保持 slice 1 的含义：一个
+排在开发者之后的输入来源（网页表单的人类玩家、`samples/sailing` 检查里的输入），它没有座位，也没有
+需要守住的感知。理由：原则 2 要求玩家只经由本座位的感知了解世界；审查发现绑定座位的 HTTP 调用能读到
+全知的世界、编辑世界并推进时间，只有 MCP 层拒绝了开发者工具。replay 不受此限制：它按记录应用当时
+已被接受的写入。
 
 ### 5.2 线程（原生）
 

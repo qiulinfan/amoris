@@ -123,12 +123,8 @@ impl ServerHandler for PocketMcp {
         request: CallToolRequestParams,
         _context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
-        if let Some(seat) = self.caller.seat()
-            && request.name != "player"
-        {
-            let mut p =
-                pocket_contract::codes::permission_denied(&request.name, "player", "developer");
-            p.detail.insert("seat".into(), json!(seat));
+        if self.caller.seat().is_some() && request.name != "player" {
+            let p = pocket_contract::codes::permission_denied(&request.name, "player", "developer");
             return Ok(CallToolResult::error(vec![ContentBlock::text(problem_text(&p))]).into());
         }
         let args = request.arguments.unwrap_or_default();

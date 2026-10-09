@@ -29,7 +29,7 @@ use pocket_link::{GameClient, SnapshotReader};
 use serde_json::{Value, json};
 use tokio::sync::broadcast;
 
-pub use dispatch::Via;
+pub use dispatch::{Via, seat_permits};
 pub use http::{find_editor_dist, router};
 pub use local::{RewindParams, debug_catalog, server_catalog};
 pub use mcp::McpBackend;
@@ -194,7 +194,7 @@ impl Host {
                 c
             }
         };
-        Ok(Via::Session(client, format!("player:{seat}")))
+        Ok(Via::Player(client, seat.to_owned()))
     }
 
     pub fn reader(&self) -> &SnapshotReader {

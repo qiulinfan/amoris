@@ -91,11 +91,34 @@ async fn call(State(host): State<Host>, body: String) -> Response {
             return problem_response(StatusCode::BAD_REQUEST, &p);
         }
     };
-    if let Some(seat) = req.get("seat").and_then(Value::as_str) {
-        return match host.player_via(seat).await {
-            Ok(via) => json_response(&crate::ws::answer(&host, &via, req).await),
-            Err(p) => json_response(&json!({"id": req.get("id"), "error": p})),
-        };
+    let refused = |p: Problem| json_response(&json!({"id": req.get("id"), "error": p}));
+    match req.get("seat") {
+        None | Some(Value::Null) => {}
+        Some(Value::String(seat)) => {
+            // A seat's player sends the player tools alone: anything else is refused before the
+            // seat is looked up or a client opened (`seat_permits`; the game refuses it too).
+            let method = req.get("method").and_then(Value::as_str);
+            if let Some(Err(p)) = method.map(crate::seat_permits) {
+                return refused(p);
+            }
+            return match host.player_via(seat).await {
+                Ok(via) => json_response(&crate::ws::answer(&host, &via, req.clone()).await),
+                Err(p) => refused(p),
+            };
+        }
+        Some(other) => {
+            let got = match other {
+                Value::Bool(_) => "boolean",
+                Value::Number(_) => "number",
+                Value::Array(_) => "array",
+                _ => "object",
+            };
+            return refused(pocket_contract::codes::wrong_type(
+                &pocket_contract::Pointer::root().key("seat"),
+                "string",
+                got,
+            ));
+        }
     }
     json_response(&crate::ws::answer(&host, &Via::Api, req).await)
 }

@@ -1925,6 +1925,12 @@ pub fn run(cmd: &str, raw: &[String]) -> Outcome {
     };
     let timeout = timeout_for(given, &params);
     let seat = args.value("seat");
+    // A seat's player sends the player tools alone; the host and the game refuse the rest too.
+    if seat.is_some()
+        && let Err(p) = pocket_server::seat_permits(&method)
+    {
+        return failed(&p, 2);
+    }
     match call_url_as(&url, &method, params, seat, timeout) {
         Ok(v) => {
             if json_out {

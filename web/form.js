@@ -1,6 +1,8 @@
 // The browser-local run form (charter 5.1; docs/spec/threads.md 7): the sailing game in a Web
 // Worker at real time, this page drawing each snapshot it rebuilds from above, and the helm sending
-// `world_edit`s as the local human player, on the same path an agent's commands take. With WebGPU
+// commands as the local human player, on the same path an agent's commands take: in a game that
+// declares players the seat's controls through `player.act` (a player sends the player tools
+// alone, docs/spec/player.md 7), otherwise the Boat's fields as `world_edit`s. With WebGPU
 // the engine's renderer (web/viewport) draws the worker's render feed; otherwise, or with
 // `?render=2d`, the page draws each rebuilt snapshot as a map from above.
 import { loadModule, start } from "./pocket.js";
@@ -157,8 +159,12 @@ export async function runForm(params) {
   $("speed").value = String(speed);
   let paused = false;
   let hoisted = true;
-  const helm = (value) => pocket.command("world_edit", { edits: [{ op: "set", entity: "Sloop", component: "Boat", value }] },
-    { source: "player" }).catch((e) => console.warn(e));
+  const asPlayer = { source: "player" };
+  const players = await pocket.command("player.session", {}, asPlayer).then(() => true, () => false);
+  const helm = (value) => (players
+    ? pocket.command("player.act", { actions: [{ do: "set", controls: value }] }, asPlayer)
+    : pocket.command("world_edit", { edits: [{ op: "set", entity: "Sloop", component: "Boat", value }] }, asPlayer))
+    .catch((e) => console.warn(e));
   $("play").onclick = async () => {
     paused = !paused;
     await pocket.command("time_control", { pause: paused });
