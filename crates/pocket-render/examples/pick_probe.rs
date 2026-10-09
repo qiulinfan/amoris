@@ -21,7 +21,11 @@ fn main() {
     for i in 0..20 {
         let _ = r.capture_rgba(i as f64 / 60.0);
         if let Some(v) = r.take_visible() {
-            println!("visible: {} entities, top {:?}", v.len(), &v[..v.len().min(3)]);
+            println!(
+                "visible: {} entities, top {:?}",
+                v.len(),
+                &v[..v.len().min(3)]
+            );
             break;
         }
     }

@@ -2,8 +2,8 @@
 //! root, so a large model never freezes a frame (Amoris Pioneer's OBJ import froze for 14-27 s); in the
 //! browser the page fetches them and hands the bytes in.
 
-use pocket_assets::mesh::ModelAsset;
 use pocket_assets::gi::{BakedGi, NeuralGi};
+use pocket_assets::mesh::ModelAsset;
 
 /// A source of model assets by project-relative path.
 pub trait AssetSource {
@@ -14,9 +14,15 @@ pub trait AssetSource {
     fn request_baked_gi(&mut self, path: &str) {
         log::warn!("this asset source cannot load baked GI: {path}");
     }
-    fn poll_baked_gi(&mut self) -> Vec<(String, Result<BakedGi, String>)> { Vec::new() }
-    fn request_neural_gi(&mut self, path: &str) { log::warn!("this asset source cannot load neural GI: {path}"); }
-    fn poll_neural_gi(&mut self) -> Vec<(String, Result<NeuralGi, String>)> { Vec::new() }
+    fn poll_baked_gi(&mut self) -> Vec<(String, Result<BakedGi, String>)> {
+        Vec::new()
+    }
+    fn request_neural_gi(&mut self, path: &str) {
+        log::warn!("this asset source cannot load neural GI: {path}");
+    }
+    fn poll_neural_gi(&mut self) -> Vec<(String, Result<NeuralGi, String>)> {
+        Vec::new()
+    }
 }
 
 /// No assets: only primitives draw.
@@ -43,9 +49,17 @@ pub struct FileAssets {
 }
 
 #[cfg(all(not(target_arch = "wasm32"), feature = "import"))]
-enum Job { Model(String), Gi(String), Neural(String) }
+enum Job {
+    Model(String),
+    Gi(String),
+    Neural(String),
+}
 #[cfg(all(not(target_arch = "wasm32"), feature = "import"))]
-enum Loaded { Model(String, Result<ModelAsset, String>), Gi(String, Result<BakedGi, String>), Neural(String, Result<NeuralGi, String>) }
+enum Loaded {
+    Model(String, Result<ModelAsset, String>),
+    Gi(String, Result<BakedGi, String>),
+    Neural(String, Result<NeuralGi, String>),
+}
 
 #[cfg(all(not(target_arch = "wasm32"), feature = "import"))]
 impl FileAssets {
@@ -59,12 +73,16 @@ impl FileAssets {
                     let path = match job {
                         Job::Neural(path) => {
                             let result = NeuralGi::load(&root.join(&path));
-                            if done.send(Loaded::Neural(path, result)).is_err() { break; }
+                            if done.send(Loaded::Neural(path, result)).is_err() {
+                                break;
+                            }
                             continue;
                         }
                         Job::Gi(path) => {
                             let result = BakedGi::load(&root.join(&path));
-                            if done.send(Loaded::Gi(path, result)).is_err() { break; }
+                            if done.send(Loaded::Gi(path, result)).is_err() {
+                                break;
+                            }
                             continue;
                         }
                         Job::Model(path) => path,
@@ -87,7 +105,13 @@ impl FileAssets {
                 }
             })
             .ok();
-        FileAssets { tx, rx, models_done: Vec::new(), gi_done: Vec::new(), neural_done: Vec::new() }
+        FileAssets {
+            tx,
+            rx,
+            models_done: Vec::new(),
+            gi_done: Vec::new(),
+            neural_done: Vec::new(),
+        }
     }
 
     fn collect(&mut self) {
@@ -110,12 +134,16 @@ impl AssetSource for FileAssets {
         self.collect();
         std::mem::take(&mut self.models_done)
     }
-    fn request_baked_gi(&mut self, path: &str) { let _ = self.tx.send(Job::Gi(path.to_owned())); }
+    fn request_baked_gi(&mut self, path: &str) {
+        let _ = self.tx.send(Job::Gi(path.to_owned()));
+    }
     fn poll_baked_gi(&mut self) -> Vec<(String, Result<BakedGi, String>)> {
         self.collect();
         std::mem::take(&mut self.gi_done)
     }
-    fn request_neural_gi(&mut self, path: &str) { let _ = self.tx.send(Job::Neural(path.to_owned())); }
+    fn request_neural_gi(&mut self, path: &str) {
+        let _ = self.tx.send(Job::Neural(path.to_owned()));
+    }
     fn poll_neural_gi(&mut self) -> Vec<(String, Result<NeuralGi, String>)> {
         self.collect();
         std::mem::take(&mut self.neural_done)

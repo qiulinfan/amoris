@@ -28,7 +28,13 @@ fn main() {
             mapped_at_creation: false,
         });
     });
-    for (name, entry) in [("cull", "main"), ("cluster", "assign"), ("ibl", "project_sh"), ("ibl", "prefilter"), ("sky_bake", "bake")] {
+    for (name, entry) in [
+        ("cull", "main"),
+        ("cluster", "assign"),
+        ("ibl", "project_sh"),
+        ("ibl", "prefilter"),
+        ("sky_bake", "bake"),
+    ] {
         if std::env::var("PROBE_ONLY").is_ok_and(|o| o != entry) {
             continue;
         }
@@ -49,11 +55,24 @@ fn main() {
     }
     let lost = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let l2 = lost.clone();
-    d.set_device_lost_callback(move |_, m| { eprintln!("LOST: {m}"); l2.store(true, std::sync::atomic::Ordering::SeqCst); });
-    let tex = |label: &str, w: u32, layers: u32, mips: u32, samples: u32, format: wgpu::TextureFormat, usage: wgpu::TextureUsages| {
+    d.set_device_lost_callback(move |_, m| {
+        eprintln!("LOST: {m}");
+        l2.store(true, std::sync::atomic::Ordering::SeqCst);
+    });
+    let tex = |label: &str,
+               w: u32,
+               layers: u32,
+               mips: u32,
+               samples: u32,
+               format: wgpu::TextureFormat,
+               usage: wgpu::TextureUsages| {
         let t = d.create_texture(&wgpu::TextureDescriptor {
             label: Some(label),
-            size: wgpu::Extent3d { width: w, height: w, depth_or_array_layers: layers },
+            size: wgpu::Extent3d {
+                width: w,
+                height: w,
+                depth_or_array_layers: layers,
+            },
             mip_level_count: mips,
             sample_count: samples,
             dimension: wgpu::TextureDimension::D2,
@@ -62,20 +81,72 @@ fn main() {
             view_formats: &[],
         });
         let _ = gpu.device.poll(wgpu::PollType::wait_indefinitely());
-        println!("texture {label}: lost={}", lost.load(std::sync::atomic::Ordering::SeqCst));
+        println!(
+            "texture {label}: lost={}",
+            lost.load(std::sync::atomic::Ordering::SeqCst)
+        );
         t
     };
-    use wgpu::TextureUsages as U;
     use wgpu::TextureFormat as F;
-    let _a = tex("msaa hdr", 1600, 1, 1, 4, F::Rgba16Float, U::RENDER_ATTACHMENT);
-    let _b = tex("msaa depth", 1600, 1, 1, 4, F::Depth32Float, U::RENDER_ATTACHMENT);
-    let _c = tex("tex array", 1024, 2, 11, 1, F::Rgba8UnormSrgb, U::TEXTURE_BINDING | U::RENDER_ATTACHMENT | U::COPY_DST | U::COPY_SRC);
-    let _d = tex("shadow", 2048, 4, 1, 1, F::Depth32Float, U::RENDER_ATTACHMENT | U::TEXTURE_BINDING);
-    let _e = tex("sky cube", 128, 6, 6, 1, F::Rgba16Float, U::TEXTURE_BINDING | U::STORAGE_BINDING);
-    let _q = d.create_query_set(&wgpu::QuerySetDescriptor { label: Some("q"), ty: wgpu::QueryType::Timestamp, count: 64 });
+    use wgpu::TextureUsages as U;
+    let _a = tex(
+        "msaa hdr",
+        1600,
+        1,
+        1,
+        4,
+        F::Rgba16Float,
+        U::RENDER_ATTACHMENT,
+    );
+    let _b = tex(
+        "msaa depth",
+        1600,
+        1,
+        1,
+        4,
+        F::Depth32Float,
+        U::RENDER_ATTACHMENT,
+    );
+    let _c = tex(
+        "tex array",
+        1024,
+        2,
+        11,
+        1,
+        F::Rgba8UnormSrgb,
+        U::TEXTURE_BINDING | U::RENDER_ATTACHMENT | U::COPY_DST | U::COPY_SRC,
+    );
+    let _d = tex(
+        "shadow",
+        2048,
+        4,
+        1,
+        1,
+        F::Depth32Float,
+        U::RENDER_ATTACHMENT | U::TEXTURE_BINDING,
+    );
+    let _e = tex(
+        "sky cube",
+        128,
+        6,
+        6,
+        1,
+        F::Rgba16Float,
+        U::TEXTURE_BINDING | U::STORAGE_BINDING,
+    );
+    let _q = d.create_query_set(&wgpu::QuerySetDescriptor {
+        label: Some("q"),
+        ty: wgpu::QueryType::Timestamp,
+        count: 64,
+    });
     let _ = gpu.device.poll(wgpu::PollType::wait_indefinitely());
-    println!("query set: lost={}", lost.load(std::sync::atomic::Ordering::SeqCst));
-    for name in ["cull", "cluster", "ibl", "sky_bake", "forward", "sky", "post"] {
+    println!(
+        "query set: lost={}",
+        lost.load(std::sync::atomic::Ordering::SeqCst)
+    );
+    for name in [
+        "cull", "cluster", "ibl", "sky_bake", "forward", "sky", "post",
+    ] {
         check(&format!("shader {name}"), &|| {
             let src = pocket_render::shader_source(name);
             let _ = d.create_shader_module(wgpu::ShaderModuleDescriptor {

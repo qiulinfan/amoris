@@ -14,15 +14,18 @@ pub mod mesh;
 pub mod primitives;
 pub mod visual;
 
-use pocket_contract::Problem;
 use bevy_ecs::prelude::{Query, Res};
-use pocket_sim::{ComponentRegistry, Persisted, RegisterPersisted, RunCondition, Sim, SimClock, TickPhase};
+use pocket_contract::Problem;
+use pocket_sim::{
+    ComponentRegistry, Persisted, RegisterPersisted, RunCondition, Sim, SimClock, TickPhase,
+};
 use serde_reflection::{Samples, Tracer};
 
 pub use frame::{Feed, Mailbox, RenderFrame};
 pub use mesh::{MeshData, ModelAsset, Vertex};
 pub use visual::{
-    Animator, AudioSource, Camera, Environment, Light, LightKind, Model, ParticleEmitter, SkyKind, Splat, UiAnchor, UiBar, UiText,
+    Animator, AudioSource, Camera, Environment, Light, LightKind, Model, ParticleEmitter, SkyKind,
+    Splat, UiAnchor, UiBar, UiText,
 };
 
 impl Persisted for Model {
@@ -120,7 +123,12 @@ pub fn plugin(sim: &mut Sim) -> Result<(), Problem> {
     ComponentRegistry::register::<UiBar>(w, None)?;
     ComponentRegistry::register::<AudioSource>(w, None)?;
     ComponentRegistry::register::<ParticleEmitter>(w, None)?;
-    sim.add_system("assets.animate", TickPhase::Finish, RunCondition::Always, animate)?;
+    sim.add_system(
+        "assets.animate",
+        TickPhase::Finish,
+        RunCondition::Always,
+        animate,
+    )?;
     Ok(())
 }
 

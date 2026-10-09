@@ -53,7 +53,11 @@ pub struct GameWorker {
     /// The snapshots' bytes of the `snap`s [`GameWorker::messages`] returned, in order.
     bytes: std::collections::VecDeque<Vec<u8>>,
     /// The render feed this worker publishes to its page's viewport.
-    render: (pocket_runtime::Extractor, pocket_assets::Feed, std::sync::Arc<pocket_assets::Mailbox>),
+    render: (
+        pocket_runtime::Extractor,
+        pocket_assets::Feed,
+        std::sync::Arc<pocket_assets::Mailbox>,
+    ),
 }
 
 #[wasm_bindgen]

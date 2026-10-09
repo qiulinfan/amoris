@@ -147,7 +147,10 @@ impl Skinning {
             b
         };
         if self.dirty {
-            self.rest_buf = Some(storage("skin rest vertices", bytemuck::cast_slice(&self.rest)));
+            self.rest_buf = Some(storage(
+                "skin rest vertices",
+                bytemuck::cast_slice(&self.rest),
+            ));
             self.weight_buf = Some(storage("skin weights", bytemuck::cast_slice(&self.weights)));
             self.dirty = false;
         }
@@ -164,7 +167,9 @@ impl Skinning {
             };
             let pose = poses.entry(p.entity).or_insert_with(|| {
                 let a = anims.get(&p.entity);
-                let clip = a.and_then(|a| find_clip(&p.asset, &a.clip)).or_else(|| p.asset.animations.first());
+                let clip = a
+                    .and_then(|a| find_clip(&p.asset, &a.clip))
+                    .or_else(|| p.asset.animations.first());
                 let t = match (a, clip) {
                     (Some(a), Some(c)) => clip_time(c, a.time + a.rate * since_tick_s, a.looped),
                     _ => 0.0,
@@ -189,7 +194,11 @@ impl Skinning {
             return;
         }
         let pal_bytes = bytemuck::cast_slice::<[f32; 16], u8>(&palette);
-        if self.palette.as_ref().is_none_or(|b| b.size() < pal_bytes.len() as u64) {
+        if self
+            .palette
+            .as_ref()
+            .is_none_or(|b| b.size() < pal_bytes.len() as u64)
+        {
             self.palette = Some(device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("joint matrices"),
                 size: (pal_bytes.len() as u64).next_power_of_two(),
@@ -231,10 +240,22 @@ impl Skinning {
                             size: wgpu::BufferSize::new(16),
                         }),
                     },
-                    wgpu::BindGroupEntry { binding: 1, resource: rest.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 2, resource: weights.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 3, resource: pal.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 4, resource: vertices.as_entire_binding() },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: rest.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: weights.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: pal.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: vertices.as_entire_binding(),
+                    },
                 ],
             });
             pass.set_bind_group(0, &bg, &[]);

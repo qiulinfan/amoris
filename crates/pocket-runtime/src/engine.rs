@@ -13,7 +13,9 @@
 use bevy_ecs::component::{Component, Mutable};
 use bevy_ecs::prelude::World;
 use bevy_ecs::world::{EntityRef, EntityWorldMut};
-use pocket_assets::{Animator, AudioSource, Camera, Environment, Light, Model, ParticleEmitter, Splat, UiBar, UiText};
+use pocket_assets::{
+    Animator, AudioSource, Camera, Environment, Light, Model, ParticleEmitter, Splat, UiBar, UiText,
+};
 use pocket_contract::{CheckOptions, Problem, Shape, detail};
 use pocket_physics::{
     Boat, Collider, ExternalForce, Floater, Hull, RigidBody, Sail, Sea, Transform, Trim, Velocity,

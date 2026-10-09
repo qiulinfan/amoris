@@ -12,7 +12,9 @@ pub fn start() {
     struct ConsoleLog;
     impl log::Log for ConsoleLog {
         fn enabled(&self, m: &log::Metadata<'_>) -> bool {
-            m.level() <= log::Level::Info && !m.target().starts_with("wgpu") && !m.target().starts_with("naga")
+            m.level() <= log::Level::Info
+                && !m.target().starts_with("wgpu")
+                && !m.target().starts_with("naga")
         }
         fn log(&self, r: &log::Record<'_>) {
             if self.enabled(r.metadata()) {
@@ -124,7 +126,17 @@ impl Viewport {
 
     /// Draws from this camera: position, rotation quaternion (x, y, z, w), vertical fov degrees.
     #[allow(clippy::too_many_arguments)]
-    pub fn set_camera(&mut self, px: f32, py: f32, pz: f32, qx: f32, qy: f32, qz: f32, qw: f32, fov_deg: f32) {
+    pub fn set_camera(
+        &mut self,
+        px: f32,
+        py: f32,
+        pz: f32,
+        qx: f32,
+        qy: f32,
+        qz: f32,
+        qw: f32,
+        fov_deg: f32,
+    ) {
         self.renderer.set_camera_override(Some(CameraState {
             position: Vec3::new(px, py, pz),
             rotation: Quat::from_xyzw(qx, qy, qz, qw).normalize(),
@@ -140,12 +152,24 @@ impl Viewport {
     #[allow(clippy::too_many_arguments)]
     pub fn set_camera_look(
         &mut self,
-        ex: f32, ey: f32, ez: f32,
-        tx: f32, ty: f32, tz: f32,
-        ux: f32, uy: f32, uz: f32,
-        fov_deg: f32, near: f32, ortho_height: f32,
+        ex: f32,
+        ey: f32,
+        ez: f32,
+        tx: f32,
+        ty: f32,
+        tz: f32,
+        ux: f32,
+        uy: f32,
+        uz: f32,
+        fov_deg: f32,
+        near: f32,
+        ortho_height: f32,
     ) {
-        let mut c = CameraState::look_at_up(Vec3::new(ex, ey, ez), Vec3::new(tx, ty, tz), Vec3::new(ux, uy, uz));
+        let mut c = CameraState::look_at_up(
+            Vec3::new(ex, ey, ez),
+            Vec3::new(tx, ty, tz),
+            Vec3::new(ux, uy, uz),
+        );
         c.fov_y = fov_deg.to_radians();
         c.near = near.max(0.001);
         c.ortho_height = (ortho_height > 0.0).then_some(ortho_height);
@@ -185,9 +209,11 @@ impl Viewport {
     }
 
     pub fn take_visible(&mut self) -> Option<Vec<f64>> {
-        self.renderer
-            .take_visible()
-            .map(|v| v.into_iter().flat_map(|(e, s)| [e as f64, f64::from(s)]).collect())
+        self.renderer.take_visible().map(|v| {
+            v.into_iter()
+                .flat_map(|(e, s)| [e as f64, f64::from(s)])
+                .collect()
+        })
     }
 
     pub fn set_overlays(&mut self, grid: bool, axes: bool) {
@@ -197,7 +223,11 @@ impl Viewport {
 
     /// Selected entities (outlined) and the hovered one (0 for none).
     pub fn set_selection(&mut self, ids: Vec<f64>, hovered: f64) {
-        self.renderer.overlays.selection = ids.into_iter().filter(|x| *x > 0.0).map(|x| x as u64).collect();
+        self.renderer.overlays.selection = ids
+            .into_iter()
+            .filter(|x| *x > 0.0)
+            .map(|x| x as u64)
+            .collect();
         self.renderer.overlays.hovered = (hovered > 0.0).then_some(hovered as u64);
     }
 
@@ -234,20 +264,25 @@ impl Viewport {
         }
         self.config.width = width;
         self.config.height = height;
-        self.surface.configure(&self.renderer.gpu().device, &self.config);
+        self.surface
+            .configure(&self.renderer.gpu().device, &self.config);
         self.renderer.resize(width, height);
     }
 
     /// Draws a frame; returns its stats as JSON.
     pub fn render(&mut self, now_ms: f64) -> String {
         let tex = match self.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
+            wgpu::CurrentSurfaceTexture::Success(t)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
             _ => {
-                self.surface.configure(&self.renderer.gpu().device, &self.config);
+                self.surface
+                    .configure(&self.renderer.gpu().device, &self.config);
                 return "{}".into();
             }
         };
-        let view = tex.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let view = tex
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
         let s = self.renderer.render(&view, now_ms / 1000.0);
         self.renderer.gpu().queue.present(tex);
         let passes: Vec<String> = s

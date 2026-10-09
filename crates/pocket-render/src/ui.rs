@@ -152,7 +152,12 @@ impl Ui {
             self.pending.push((x, y, w, h, bitmap));
             let a = ATLAS as f32;
             let g = Glyph {
-                uv: [x as f32 / a, y as f32 / a, (x + w) as f32 / a, (y + h) as f32 / a],
+                uv: [
+                    x as f32 / a,
+                    y as f32 / a,
+                    (x + w) as f32 / a,
+                    (y + h) as f32 / a,
+                ],
                 w: w as f32,
                 h: h as f32,
                 xmin: m.xmin as f32,
@@ -188,8 +193,18 @@ impl Ui {
         let (w, h) = (size.0 as f32, size.1 as f32);
         let s = self.scale;
         let mut verts: Vec<Vertex> = Vec::new();
-        let quad = |verts: &mut Vec<Vertex>, x0: f32, y0: f32, x1: f32, y1: f32, uv: [f32; 4], c: [f32; 4]| {
-            let v = |x, y, u, vv| Vertex { pos: [x, y], uv: [u, vv], color: c };
+        let quad = |verts: &mut Vec<Vertex>,
+                    x0: f32,
+                    y0: f32,
+                    x1: f32,
+                    y1: f32,
+                    uv: [f32; 4],
+                    c: [f32; 4]| {
+            let v = |x, y, u, vv| Vertex {
+                pos: [x, y],
+                uv: [u, vv],
+                color: c,
+            };
             verts.extend_from_slice(&[
                 v(x0, y0, uv[0], uv[1]),
                 v(x1, y0, uv[2], uv[1]),
@@ -199,7 +214,12 @@ impl Ui {
                 v(x0, y1, uv[0], uv[3]),
             ]);
         };
-        let white = [0.5 / ATLAS as f32, 0.5 / ATLAS as f32, 3.5 / ATLAS as f32, 3.5 / ATLAS as f32];
+        let white = [
+            0.5 / ATLAS as f32,
+            0.5 / ATLAS as f32,
+            3.5 / ATLAS as f32,
+            3.5 / ATLAS as f32,
+        ];
         let items = std::mem::take(&mut self.items);
         for it in &items {
             let px = (it.size[1] * s).round().max(4.0) as u32;
@@ -223,20 +243,34 @@ impl Ui {
                 let (ax, ay) = ((it.anchor % 3) as f32 * 0.5, (it.anchor / 3) as f32 * 0.5);
                 let sx = if ax == 1.0 { -1.0 } else { 1.0 };
                 let sy = if ay == 1.0 { -1.0 } else { 1.0 };
-                (ax * (w - bw) + it.offset[0] * s * sx, ay * (h - bh) + it.offset[1] * s * sy)
+                (
+                    ax * (w - bw) + it.offset[0] * s * sx,
+                    ay * (h - bh) + it.offset[1] * s * sy,
+                )
             };
             if it.bar {
                 quad(&mut verts, bx, by, bx + bw, by + bh, white, it.back);
                 let inset = s.max(1.0);
                 let fw = (bw - 2.0 * inset) * it.fill.clamp(0.0, 1.0);
                 if fw > 0.0 {
-                    quad(&mut verts, bx + inset, by + inset, bx + inset + fw, by + bh - inset, white, it.color);
+                    quad(
+                        &mut verts,
+                        bx + inset,
+                        by + inset,
+                        bx + inset + fw,
+                        by + bh - inset,
+                        white,
+                        it.color,
+                    );
                 }
                 continue;
             }
             // A one-pixel shadow under the text, then the text.
             let baseline = by + px as f32 * 0.8;
-            for (dx, dy, col) in [(s, s, [0.0, 0.0, 0.0, it.color[3] * 0.65]), (0.0, 0.0, it.color)] {
+            for (dx, dy, col) in [
+                (s, s, [0.0, 0.0, 0.0, it.color[3] * 0.65]),
+                (0.0, 0.0, it.color),
+            ] {
                 let mut x = bx + dx;
                 for c in it.text.chars() {
                     let g = self.glyph(c, px);
@@ -275,7 +309,11 @@ impl Ui {
             return;
         }
         let bytes = bytemuck::cast_slice::<Vertex, u8>(&verts);
-        if self.vbuf.as_ref().is_none_or(|b| b.size() < bytes.len() as u64) {
+        if self
+            .vbuf
+            .as_ref()
+            .is_none_or(|b| b.size() < bytes.len() as u64)
+        {
             self.vbuf = Some(device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("ui vertices"),
                 size: (bytes.len() as u64).next_power_of_two(),
@@ -294,9 +332,18 @@ impl Ui {
             label: Some("ui"),
             layout: &self.pipeline.get_bind_group_layout(0),
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: self.params.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&self.view) },
-                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(&self.sampler) },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.params.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&self.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
             ],
         });
         let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {

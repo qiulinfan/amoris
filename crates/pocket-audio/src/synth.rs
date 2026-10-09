@@ -9,7 +9,17 @@ pub const RATE: u32 = 44_100;
 
 /// The presets an `sfx:` clip may name.
 pub const PRESETS: [&str; 11] = [
-    "coin", "jump", "hit", "explosion", "laser", "powerup", "blip", "click", "wind", "surf", "chime",
+    "coin",
+    "jump",
+    "hit",
+    "explosion",
+    "laser",
+    "powerup",
+    "blip",
+    "click",
+    "wind",
+    "surf",
+    "chime",
 ];
 
 #[derive(Clone, Copy)]
@@ -52,17 +62,48 @@ fn program(preset: &str) -> Option<Program> {
         vibrato: (0.0, 0.0),
     };
     Some(match preset {
-        "coin" => Program { jump: 1.5, jump_at: 0.07, ..p(Wave::Square(0.5), 990.0, 1.0, 0.0, 0.07, 0.25) },
+        "coin" => Program {
+            jump: 1.5,
+            jump_at: 0.07,
+            ..p(Wave::Square(0.5), 990.0, 1.0, 0.0, 0.07, 0.25)
+        },
         "jump" => p(Wave::Square(0.4), 330.0, 3.2, 0.0, 0.08, 0.18),
-        "hit" => Program { lowpass: 0.4, ..p(Wave::Noise, 180.0, 0.3, 0.0, 0.02, 0.16) },
-        "explosion" => Program { lowpass: 0.85, volume: 0.8, ..p(Wave::Noise, 90.0, 0.4, 0.0, 0.12, 0.9) },
+        "hit" => Program {
+            lowpass: 0.4,
+            ..p(Wave::Noise, 180.0, 0.3, 0.0, 0.02, 0.16)
+        },
+        "explosion" => Program {
+            lowpass: 0.85,
+            volume: 0.8,
+            ..p(Wave::Noise, 90.0, 0.4, 0.0, 0.12, 0.9)
+        },
         "laser" => p(Wave::Saw, 1300.0, 0.08, 0.0, 0.05, 0.2),
-        "powerup" => Program { vibrato: (12.0, 0.08), ..p(Wave::Square(0.3), 300.0, 5.0, 0.0, 0.25, 0.3) },
+        "powerup" => Program {
+            vibrato: (12.0, 0.08),
+            ..p(Wave::Square(0.3), 300.0, 5.0, 0.0, 0.25, 0.3)
+        },
         "blip" => p(Wave::Square(0.5), 660.0, 1.0, 0.0, 0.03, 0.05),
-        "click" => Program { lowpass: 0.2, volume: 0.35, ..p(Wave::Noise, 2000.0, 1.0, 0.0, 0.004, 0.02) },
-        "wind" => Program { lowpass: 0.97, volume: 0.6, ..p(Wave::Noise, 60.0, 1.0, 0.6, 2.0, 1.2) },
-        "surf" => Program { lowpass: 0.93, volume: 0.6, vibrato: (0.25, 0.6), ..p(Wave::Noise, 80.0, 1.0, 0.9, 1.6, 1.8) },
-        "chime" => Program { jump: 1.5, jump_at: 0.12, ..p(Wave::Sine, 880.0, 1.0, 0.005, 0.1, 0.7) },
+        "click" => Program {
+            lowpass: 0.2,
+            volume: 0.35,
+            ..p(Wave::Noise, 2000.0, 1.0, 0.0, 0.004, 0.02)
+        },
+        "wind" => Program {
+            lowpass: 0.97,
+            volume: 0.6,
+            ..p(Wave::Noise, 60.0, 1.0, 0.6, 2.0, 1.2)
+        },
+        "surf" => Program {
+            lowpass: 0.93,
+            volume: 0.6,
+            vibrato: (0.25, 0.6),
+            ..p(Wave::Noise, 80.0, 1.0, 0.9, 1.6, 1.8)
+        },
+        "chime" => Program {
+            jump: 1.5,
+            jump_at: 0.12,
+            ..p(Wave::Sine, 880.0, 1.0, 0.005, 0.1, 0.7)
+        },
         _ => return None,
     })
 }
@@ -126,7 +167,9 @@ pub fn synth(spec: &str) -> Option<Vec<f32>> {
         } else if t < pr.attack + pr.sustain {
             1.0
         } else {
-            (1.0 - (t - pr.attack - pr.sustain) / pr.decay.max(1e-5)).max(0.0).powi(2)
+            (1.0 - (t - pr.attack - pr.sustain) / pr.decay.max(1e-5))
+                .max(0.0)
+                .powi(2)
         };
         out.push(smooth * env * pr.volume);
     }

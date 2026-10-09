@@ -13,7 +13,11 @@ pub fn find_clip<'a>(asset: &'a ModelAsset, name: &str) -> Option<&'a AnimationC
         .animations
         .iter()
         .find(|c| c.name == name)
-        .or_else(|| name.parse::<usize>().ok().and_then(|i| asset.animations.get(i)))
+        .or_else(|| {
+            name.parse::<usize>()
+                .ok()
+                .and_then(|i| asset.animations.get(i))
+        })
         .or_else(|| name.is_empty().then(|| asset.animations.first()).flatten())
 }
 
@@ -35,7 +39,11 @@ fn sample(ch: &Channel, t: f32) -> Vec4 {
         return Vec4::ZERO;
     }
     let value = |i: usize| -> Vec4 {
-        let k = if ch.interpolation == Interpolation::Cubic { i * 3 + 1 } else { i };
+        let k = if ch.interpolation == Interpolation::Cubic {
+            i * 3 + 1
+        } else {
+            i
+        };
         Vec4::from(ch.values.get(k).copied().unwrap_or([0.0; 4]))
     };
     if t <= ch.times[0] {
@@ -44,7 +52,11 @@ fn sample(ch: &Channel, t: f32) -> Vec4 {
     if t >= ch.times[n - 1] {
         return value(n - 1);
     }
-    let i = ch.times.partition_point(|&x| x <= t).saturating_sub(1).min(n - 2);
+    let i = ch
+        .times
+        .partition_point(|&x| x <= t)
+        .saturating_sub(1)
+        .min(n - 2);
     let (t0, t1) = (ch.times[i], ch.times[i + 1]);
     let u = if t1 > t0 { (t - t0) / (t1 - t0) } else { 0.0 };
     match ch.interpolation {
@@ -82,7 +94,11 @@ fn sample(ch: &Channel, t: f32) -> Vec4 {
 
 /// Global matrices of every skeleton node with `clip` at `time` (the rest pose without a clip).
 pub fn global_pose(asset: &ModelAsset, clip: Option<&AnimationClip>, time: f32) -> Vec<Mat4> {
-    let mut t: Vec<Vec3> = asset.skeleton.iter().map(|n| Vec3::from(n.translation)).collect();
+    let mut t: Vec<Vec3> = asset
+        .skeleton
+        .iter()
+        .map(|n| Vec3::from(n.translation))
+        .collect();
     let mut r: Vec<Quat> = asset
         .skeleton
         .iter()
@@ -128,7 +144,12 @@ pub fn global_pose(asset: &ModelAsset, clip: Option<&AnimationClip>, time: f32) 
 /// The joint matrices of skin `skin` for a pose (`global_pose`), relative to the mesh's node
 /// (`mesh_global`, the node the skinned mesh hangs from: its inverse cancels the node's own
 /// transform, as glTF requires).
-pub fn joint_matrices(asset: &ModelAsset, skin: usize, pose: &[Mat4], mesh_global: Mat4) -> Vec<Mat4> {
+pub fn joint_matrices(
+    asset: &ModelAsset,
+    skin: usize,
+    pose: &[Mat4],
+    mesh_global: Mat4,
+) -> Vec<Mat4> {
     let Some(sk) = asset.skins.get(skin) else {
         return Vec::new();
     };

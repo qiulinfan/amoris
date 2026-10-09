@@ -158,7 +158,11 @@ async fn asset(
 async fn wasm(axum::extract::Path(rel): axum::extract::Path<String>) -> Response {
     match find_web_viewport() {
         Some(dir) => file(&dir, &rel).await,
-        None => (StatusCode::NOT_FOUND, "web/viewport is not built (tools/build_viewport.sh)").into_response(),
+        None => (
+            StatusCode::NOT_FOUND,
+            "web/viewport is not built (tools/build_viewport.sh)",
+        )
+            .into_response(),
     }
 }
 

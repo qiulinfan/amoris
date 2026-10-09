@@ -44,7 +44,8 @@ fn gain_db(volume: f32) -> Decibels {
 impl Audio {
     /// Opens the default output device; `None` without one.
     pub fn new(root: Option<PathBuf>) -> Option<Audio> {
-        let mut manager = match AudioManager::<DefaultBackend>::new(AudioManagerSettings::default()) {
+        let mut manager = match AudioManager::<DefaultBackend>::new(AudioManagerSettings::default())
+        {
             Ok(m) => m,
             Err(e) => {
                 log::warn!("no audio output: {e}");
@@ -77,7 +78,10 @@ impl Audio {
                 }
             })
         } else {
-            let path = self.root.as_ref().map_or_else(|| PathBuf::from(name), |r| r.join(name));
+            let path = self
+                .root
+                .as_ref()
+                .map_or_else(|| PathBuf::from(name), |r| r.join(name));
             match StaticSoundData::from_file(&path) {
                 Ok(d) => Some(d),
                 Err(e) => {
@@ -104,7 +108,10 @@ impl Audio {
         looped: bool,
         at: Option<Vec3>,
     ) -> Option<(StaticSoundHandle, Option<SpatialTrackHandle>)> {
-        let mut data = self.clip(clip)?.volume(gain_db(volume)).playback_rate(f64::from(pitch.max(0.01)));
+        let mut data = self
+            .clip(clip)?
+            .volume(gain_db(volume))
+            .playback_rate(f64::from(pitch.max(0.01)));
         if looped {
             data = data.loop_region(..);
         }
@@ -140,11 +147,18 @@ impl Audio {
 
     /// Brings the playing sources in line with the world's.
     pub fn sync(&mut self, sources: &[AudioView]) {
-        let live: HashMap<u64, &AudioView> = sources.iter().filter(|s| s.playing).map(|s| (s.id, s)).collect();
+        let live: HashMap<u64, &AudioView> = sources
+            .iter()
+            .filter(|s| s.playing)
+            .map(|s| (s.id, s))
+            .collect();
         let gone: Vec<u64> = self
             .sources
             .iter()
-            .filter(|(id, p)| live.get(id).is_none_or(|s| s.clip != p.clip || s.looped != p.looped))
+            .filter(|(id, p)| {
+                live.get(id)
+                    .is_none_or(|s| s.clip != p.clip || s.looped != p.looped)
+            })
             .map(|(id, _)| *id)
             .collect();
         for id in gone {
@@ -155,7 +169,8 @@ impl Audio {
         for (id, s) in live {
             if let Some(p) = self.sources.get_mut(&id) {
                 p.sound.set_volume(gain_db(s.volume), Tween::default());
-                p.sound.set_playback_rate(f64::from(s.pitch.max(0.01)), Tween::default());
+                p.sound
+                    .set_playback_rate(f64::from(s.pitch.max(0.01)), Tween::default());
                 if let Some(t) = p.track.as_mut() {
                     t.set_position(Vec3::from(s.position), Tween::default());
                 }

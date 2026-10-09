@@ -11,7 +11,9 @@ use pocket_runtime::{Game, Project};
 
 fn check(sample: &str) {
     let dir = common::repo().join("samples").join(sample);
-    let golden = common::repo().join(format!("crates/pocket-runtime/tests/golden/schedule-{sample}.txt"));
+    let golden = common::repo().join(format!(
+        "crates/pocket-runtime/tests/golden/schedule-{sample}.txt"
+    ));
     let listing = common::big_stack(move || {
         let p = Project::load(&dir).unwrap_or_else(|e| panic!("{e:#?}"));
         let setup = Arc::new(p.setup(false).unwrap_or_else(|e| panic!("{e:#?}")));
@@ -24,7 +26,10 @@ fn check(sample: &str) {
     }
     let want = std::fs::read_to_string(&golden)
         .unwrap_or_else(|_| panic!("{} is missing: run with POCKET_BLESS=1", golden.display()));
-    assert_eq!(listing, want, "the {sample} schedule changed: review, then POCKET_BLESS=1");
+    assert_eq!(
+        listing, want,
+        "the {sample} schedule changed: review, then POCKET_BLESS=1"
+    );
 }
 
 #[test]

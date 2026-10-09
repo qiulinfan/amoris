@@ -30,7 +30,13 @@ struct Pending {
 
 pub struct Picking {
     pipeline: wgpu::RenderPipeline,
-    target: Option<(wgpu::Texture, wgpu::TextureView, wgpu::TextureView, u32, u32)>,
+    target: Option<(
+        wgpu::Texture,
+        wgpu::TextureView,
+        wgpu::TextureView,
+        u32,
+        u32,
+    )>,
     readback: Option<wgpu::Buffer>,
     want: Option<PickRequest>,
     pending: Arc<Mutex<Pending>>,
@@ -277,7 +283,10 @@ impl Picking {
             // Mapped memory in the browser carries no alignment guarantee: decode, do not cast.
             for y in 0..ch {
                 let row = &data[(y * pitch * 4) as usize..((y * pitch + cw) * 4) as usize];
-                ids.extend(row.chunks_exact(4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]])));
+                ids.extend(
+                    row.chunks_exact(4)
+                        .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]])),
+                );
             }
         }
         buf.unmap();

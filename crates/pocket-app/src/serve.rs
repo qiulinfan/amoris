@@ -82,7 +82,9 @@ fn start(root: &Path, seed: Option<u64>, editor: Option<PathBuf>) -> Result<Serv
     let cdp = match hub.serve_cdp(pocket_debug::CdpOptions::default()) {
         Ok(c) => Some(c),
         Err(e) => {
-            eprintln!("pocket: the debugger's CDP endpoint did not start ({e}); debug.* still works");
+            eprintln!(
+                "pocket: the debugger's CDP endpoint did not start ({e}); debug.* still works"
+            );
             None
         }
     };
@@ -104,14 +106,22 @@ fn start(root: &Path, seed: Option<u64>, editor: Option<PathBuf>) -> Result<Serv
         developer: Arc::new(move || clients.developer()),
     };
     let host = Host::new(access, root.to_path_buf(), editor);
-    host.set_capture(Arc::new(crate::present::CaptureServer::start(&feed, root.to_path_buf())));
+    host.set_capture(Arc::new(crate::present::CaptureServer::start(
+        &feed,
+        root.to_path_buf(),
+    )));
     host.set_render(Arc::new(crate::present::FeedServer { feed }));
     host.set_debug(Arc::new(crate::present::DebugBridge {
         hub: hub.clone(),
         host: host.clone(),
     }));
     crate::present::forward_debug_events(&hub, host.clone());
-    Ok(Served { handle, host, hub, cdp })
+    Ok(Served {
+        handle,
+        host,
+        hub,
+        cdp,
+    })
 }
 
 fn runtime() -> Result<tokio::runtime::Runtime, Problem> {

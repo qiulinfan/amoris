@@ -15,12 +15,12 @@ use bevy_ecs::entity::Entity;
 use bevy_ecs::prelude::World;
 use bevy_ecs::world::{Ref, WorldId};
 use pocket_assets::frame::{
-    AnimView, CameraView, EnvironmentView, InstanceUpdate, LightKindView, LightView, Look, Pose,
-    AudioView, EmitterView, RenderFrame, SeaView, SplatView, UiView, WaveView,
+    AnimView, AudioView, CameraView, EmitterView, EnvironmentView, InstanceUpdate, LightKindView,
+    LightView, Look, Pose, RenderFrame, SeaView, SplatView, UiView, WaveView,
 };
 use pocket_assets::{
-    Animator, AudioSource, Camera, Environment, Feed, Light, LightKind, Model, ParticleEmitter, SkyKind, Splat, UiAnchor, UiBar,
-    UiText,
+    Animator, AudioSource, Camera, Environment, Feed, Light, LightKind, Model, ParticleEmitter,
+    SkyKind, Splat, UiAnchor, UiBar, UiText,
 };
 use pocket_physics::{Sea, Transform};
 use pocket_sim::{EntityId, SimClock};
@@ -211,7 +211,13 @@ impl Extractor {
                 frame.removed.push(id);
             }
         }
-        let mut q = world.query::<(Entity, &EntityId, Ref<Transform>, Ref<Model>, Option<Ref<Animator>>)>();
+        let mut q = world.query::<(
+            Entity,
+            &EntityId,
+            Ref<Transform>,
+            Ref<Model>,
+            Option<Ref<Animator>>,
+        )>();
         for (e, id, t, m, a) in q.iter(world) {
             let new = !self.drawn.contains_key(&e);
             let look_changed = new || m.is_changed();
@@ -224,7 +230,11 @@ impl Extractor {
                     id: id.get(),
                     pose: Some(pose(&t, m.scale)),
                     look: look_changed.then(|| look(&m)),
-                    anim: if anim_changed { a.map(|a| anim(&a)) } else { None },
+                    anim: if anim_changed {
+                        a.map(|a| anim(&a))
+                    } else {
+                        None
+                    },
                 });
             }
         }
@@ -275,15 +285,18 @@ impl Extractor {
             frame.audio = Some(Self::audio(world));
         }
         if changed(world, &mut |w| {
-            w.query::<(Option<Ref<Transform>>, Option<Ref<UiText>>, Option<Ref<UiBar>>)>()
-                .iter(w)
-                .any(|(t, a, b)| {
-                    (a.is_some() || b.is_some())
-                        && (t.is_some_and(|t| t.is_changed())
-                            || a.is_some_and(|a| a.is_changed())
-                            || b.is_some_and(|b| b.is_changed()))
-                })
-                || w.removed::<UiText>().next().is_some()
+            w.query::<(
+                Option<Ref<Transform>>,
+                Option<Ref<UiText>>,
+                Option<Ref<UiBar>>,
+            )>()
+            .iter(w)
+            .any(|(t, a, b)| {
+                (a.is_some() || b.is_some())
+                    && (t.is_some_and(|t| t.is_changed())
+                        || a.is_some_and(|a| a.is_changed())
+                        || b.is_some_and(|b| b.is_changed()))
+            }) || w.removed::<UiText>().next().is_some()
                 || w.removed::<UiBar>().next().is_some()
         }) {
             frame.ui = Some(Self::ui(world));
@@ -417,7 +430,11 @@ impl Extractor {
                     let q = t.rotation;
                     // The entity's +y: the rotation applied to (0, 1, 0).
                     let (x, y, z, w) = (q[0], q[1], q[2], q[3]);
-                    f3([2.0 * (x * y - w * z), 1.0 - 2.0 * (x * x + z * z), 2.0 * (y * z + w * x)])
+                    f3([
+                        2.0 * (x * y - w * z),
+                        1.0 - 2.0 * (x * x + z * z),
+                        2.0 * (y * z + w * x),
+                    ])
                 });
                 EmitterView {
                     id: id.get(),
@@ -433,8 +450,18 @@ impl Extractor {
                     acceleration: f3(e.acceleration),
                     drag: f(e.drag),
                     size: [f(e.size[0]), f(e.size[1])],
-                    color_start: [f(e.color_start[0]), f(e.color_start[1]), f(e.color_start[2]), f(e.color_start[3])],
-                    color_end: [f(e.color_end[0]), f(e.color_end[1]), f(e.color_end[2]), f(e.color_end[3])],
+                    color_start: [
+                        f(e.color_start[0]),
+                        f(e.color_start[1]),
+                        f(e.color_start[2]),
+                        f(e.color_start[3]),
+                    ],
+                    color_end: [
+                        f(e.color_end[0]),
+                        f(e.color_end[1]),
+                        f(e.color_end[2]),
+                        f(e.color_end[3]),
+                    ],
                     radius: f(e.radius),
                 }
             })
@@ -464,12 +491,21 @@ impl Extractor {
 
     fn ui(world: &mut World) -> Vec<UiView> {
         let mut v: Vec<UiView> = Vec::new();
-        let mut q = world.query::<(&EntityId, Option<&Transform>, Option<&UiText>, Option<&UiBar>)>();
+        let mut q = world.query::<(
+            &EntityId,
+            Option<&Transform>,
+            Option<&UiText>,
+            Option<&UiBar>,
+        )>();
         for (id, t, text, bar) in q.iter(world) {
             let base = t.map_or([0.0; 3], |t| f3(t.position));
             let at = |o: [f64; 3]| [base[0] + f(o[0]), base[1] + f(o[1]), base[2] + f(o[2])];
             if let Some(b) = bar.filter(|b| b.visible) {
-                let fill = if b.max > 0.0 { (b.value / b.max).clamp(0.0, 1.0) } else { 0.0 };
+                let fill = if b.max > 0.0 {
+                    (b.value / b.max).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
                 v.push(UiView {
                     id: id.get(),
                     text: String::new(),

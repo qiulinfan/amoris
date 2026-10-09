@@ -137,7 +137,9 @@ impl Scene {
 
     /// The instance slots an entity is drawn with (one per part).
     pub fn slots_of(&self, entity: u64) -> &[u32] {
-        self.entities.get(&entity).map_or(&[], |e| e.slots.as_slice())
+        self.entities
+            .get(&entity)
+            .map_or(&[], |e| e.slots.as_slice())
     }
 
     /// The entity drawn in `slot`.

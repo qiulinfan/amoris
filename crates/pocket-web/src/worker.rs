@@ -221,7 +221,11 @@ impl WorkerCore {
     }
 
     /// Extracts the render feed's changes since the last call (presentation only).
-    pub fn present(&mut self, extractor: &mut pocket_runtime::Extractor, feed: &pocket_assets::Feed) {
+    pub fn present(
+        &mut self,
+        extractor: &mut pocket_runtime::Extractor,
+        feed: &pocket_assets::Feed,
+    ) {
         self.game.present(extractor, feed);
     }
 

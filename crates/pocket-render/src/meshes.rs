@@ -223,9 +223,16 @@ impl MeshPool {
             ..src
         });
         let (lo, hi) = src_box;
-        let c = [(lo[0] + hi[0]) * 0.5, (lo[1] + hi[1]) * 0.5, (lo[2] + hi[2]) * 0.5];
+        let c = [
+            (lo[0] + hi[0]) * 0.5,
+            (lo[1] + hi[1]) * 0.5,
+            (lo[2] + hi[2]) * 0.5,
+        ];
         let g = |i: usize, v: [f32; 3]| c[i] + (v[i] - c[i]) * grow;
-        self.boxes.push(([g(0, lo), g(1, lo), g(2, lo)], [g(0, hi), g(1, hi), g(2, hi)]));
+        self.boxes.push((
+            [g(0, lo), g(1, lo), g(2, lo)],
+            [g(0, hi), g(1, hi), g(2, hi)],
+        ));
         self.names.push(key.to_owned());
         self.by_key.insert(key.to_owned(), id);
         self.info_dirty = true;

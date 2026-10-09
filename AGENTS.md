@@ -34,8 +34,8 @@ specified under [docs/spec/](docs/spec/README.md); their measured spikes are und
    recorded (docs/bench/), never a pass condition.
 4. Testing is light and targeted: run the tests of the crate you touch; run the workspace before a
    commit that touches shared code. Research, reach and performance come first.
-5. Material brought from another repository (such as Amoris Pioneer) names its source repository
-   and commit in the commit message.
+5. Material brought from another repository (such as Amoris Pioneer) names its source
+   repository and commit in the commit message.
 6. Owner-facing explanations are Chinese; code, identifiers, commit messages and specs are English.
    The charter and schedule are Chinese.
 

@@ -60,7 +60,9 @@ impl CameraState {
         if let Some(h) = self.ortho_height {
             // Reversed-Z orthographic: depth 1 at the near plane, 0 at 10 km (near and far swapped).
             let (hw, hh) = (h * 0.5 * aspect, h * 0.5);
-            return glam::camera::rh::proj::directx::orthographic(-hw, hw, -hh, hh, 10_000.0, self.near);
+            return glam::camera::rh::proj::directx::orthographic(
+                -hw, hw, -hh, hh, 10_000.0, self.near,
+            );
         }
         glam::camera::rh::proj::directx::perspective_infinite_reverse(self.fov_y, aspect, self.near)
     }

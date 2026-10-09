@@ -9,8 +9,8 @@ mod web;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use pocket_assets::mesh::ModelAsset;
 use pocket_assets::gi::{BakedGi, NeuralGi};
+use pocket_assets::mesh::ModelAsset;
 use pocket_render::AssetSource;
 
 /// Asset requests queued for the page, and loads it completed.
@@ -52,11 +52,15 @@ impl PageAssets {
     /// Imports a fetched `.glb` (or reports the fetch's failure).
     pub fn deliver(&self, path: &str, bytes: Result<&[u8], String>) {
         if self.neural_requests.borrow_mut().remove(path) {
-            self.neural_done.borrow_mut().push((path.to_owned(), bytes.and_then(NeuralGi::from_json)));
+            self.neural_done
+                .borrow_mut()
+                .push((path.to_owned(), bytes.and_then(NeuralGi::from_json)));
             return;
         }
         if self.gi_requests.borrow_mut().remove(path) {
-            self.gi_done.borrow_mut().push((path.to_owned(), bytes.and_then(BakedGi::from_json)));
+            self.gi_done
+                .borrow_mut()
+                .push((path.to_owned(), bytes.and_then(BakedGi::from_json)));
             return;
         }
         let r = bytes.and_then(|b| {

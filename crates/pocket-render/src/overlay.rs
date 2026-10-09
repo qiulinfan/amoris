@@ -127,7 +127,16 @@ impl Overlays {
             None,
             1,
         );
-        let outline = pipe("selection outline", "vs_full", "fs_outline", &[], output, alpha, None, 1);
+        let outline = pipe(
+            "selection outline",
+            "vs_full",
+            "fs_outline",
+            &[],
+            output,
+            alpha,
+            None,
+            1,
+        );
         let mask_pipe = pipe(
             "selection mask",
             "vs_mask",
@@ -184,7 +193,10 @@ impl Overlays {
     }
 
     pub fn any(&self) -> bool {
-        !self.lines.is_empty() || !self.polys.is_empty() || !self.selection.is_empty() || self.hovered.is_some()
+        !self.lines.is_empty()
+            || !self.polys.is_empty()
+            || !self.selection.is_empty()
+            || self.hovered.is_some()
     }
 
     pub fn write_params(&self, queue: &wgpu::Queue) {
@@ -202,7 +214,12 @@ impl Overlays {
     }
 
     /// The ground grid inside the HDR pass (call after the opaque geometry).
-    pub fn draw_grid(&self, device: &wgpu::Device, pass: &mut wgpu::RenderPass<'_>, view: &wgpu::Buffer) {
+    pub fn draw_grid(
+        &self,
+        device: &wgpu::Device,
+        pass: &mut wgpu::RenderPass<'_>,
+        view: &wgpu::Buffer,
+    ) {
         if !self.grid {
             return;
         }
@@ -258,7 +275,8 @@ impl Overlays {
                     sample_count: 1,
                     dimension: wgpu::TextureDimension::D2,
                     format: wgpu::TextureFormat::R8Uint,
-                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                        | wgpu::TextureUsages::TEXTURE_BINDING,
                     view_formats: &[],
                 });
                 let v = t.create_view(&Default::default());
@@ -304,7 +322,12 @@ impl Overlays {
             }
         }
         let line_bytes = bytemuck::cast_slice::<OverlayLine, u8>(&self.lines);
-        if !line_bytes.is_empty() && self.line_buf.as_ref().is_none_or(|b| b.size() < line_bytes.len() as u64) {
+        if !line_bytes.is_empty()
+            && self
+                .line_buf
+                .as_ref()
+                .is_none_or(|b| b.size() < line_bytes.len() as u64)
+        {
             self.line_buf = Some(device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("overlay lines"),
                 size: (line_bytes.len() as u64).next_power_of_two().max(256),
@@ -313,7 +336,12 @@ impl Overlays {
             }));
         }
         let poly_bytes = bytemuck::cast_slice::<OverlayVertex, u8>(&self.polys);
-        if !poly_bytes.is_empty() && self.poly_buf.as_ref().is_none_or(|b| b.size() < poly_bytes.len() as u64) {
+        if !poly_bytes.is_empty()
+            && self
+                .poly_buf
+                .as_ref()
+                .is_none_or(|b| b.size() < poly_bytes.len() as u64)
+        {
             self.poly_buf = Some(device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("overlay polygons"),
                 size: (poly_bytes.len() as u64).next_power_of_two().max(256),
@@ -343,22 +371,26 @@ impl Overlays {
                 ],
             })
         };
-        let outline_bg = self.mask.as_ref().filter(|_| !selected.is_empty()).map(|(_, mv, _, _)| {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("selection outline"),
-                layout: &self.outline.get_bind_group_layout(0),
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: self.params.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: wgpu::BindingResource::TextureView(mv),
-                    },
-                ],
-            })
-        });
+        let outline_bg =
+            self.mask
+                .as_ref()
+                .filter(|_| !selected.is_empty())
+                .map(|(_, mv, _, _)| {
+                    device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("selection outline"),
+                        layout: &self.outline.get_bind_group_layout(0),
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: self.params.as_entire_binding(),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 2,
+                                resource: wgpu::BindingResource::TextureView(mv),
+                            },
+                        ],
+                    })
+                });
         let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("overlays"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {

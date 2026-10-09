@@ -123,7 +123,11 @@ impl Particles {
             spawn: compute("spawn"),
             simulate: compute("simulate"),
             draw,
-            pool: buf("particle pool", u64::from(POOL) * 48, wgpu::BufferUsages::STORAGE),
+            pool: buf(
+                "particle pool",
+                u64::from(POOL) * 48,
+                wgpu::BufferUsages::STORAGE,
+            ),
             emitters: buf("emitters", 256 * 96, wgpu::BufferUsages::STORAGE),
             spawns: buf("spawns", 256 * 16, wgpu::BufferUsages::STORAGE),
             params: buf("particle params", 16, wgpu::BufferUsages::UNIFORM),
@@ -154,7 +158,12 @@ impl Particles {
             gpu.push(EmitterGpu {
                 pos: [e.position[0], e.position[1], e.position[2], e.radius],
                 up: [e.up[0], e.up[1], e.up[2], e.spread_deg.to_radians().cos()],
-                accel: [e.acceleration[0], e.acceleration[1], e.acceleration[2], e.drag],
+                accel: [
+                    e.acceleration[0],
+                    e.acceleration[1],
+                    e.acceleration[2],
+                    e.drag,
+                ],
                 size: [e.size[0], e.size[1], e.speed, e.lifetime.max(0.01)],
                 color_start: e.color_start,
                 color_end: e.color_end,
@@ -176,7 +185,8 @@ impl Particles {
                     first: self.head,
                     count: n,
                     emitter: i as u32,
-                    seed: (self.frame.wrapping_mul(0x9e37_79b9)) ^ (e.id as u32).wrapping_mul(0x85eb_ca6b),
+                    seed: (self.frame.wrapping_mul(0x9e37_79b9))
+                        ^ (e.id as u32).wrapping_mul(0x85eb_ca6b),
                 });
                 self.head = (self.head + n) % POOL;
             }
@@ -206,10 +216,22 @@ impl Particles {
                 label: Some("particles"),
                 layout: &p.get_bind_group_layout(0),
                 entries: &[
-                    wgpu::BindGroupEntry { binding: 0, resource: self.params.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 1, resource: self.pool.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 2, resource: self.emitters.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 3, resource: self.spawns.as_entire_binding() },
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: self.params.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: self.pool.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: self.emitters.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: self.spawns.as_entire_binding(),
+                    },
                 ],
             })
         };
@@ -219,9 +241,18 @@ impl Particles {
                 label: Some("particles"),
                 layout: &self.simulate.get_bind_group_layout(0),
                 entries: &[
-                    wgpu::BindGroupEntry { binding: 0, resource: self.params.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 1, resource: self.pool.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 2, resource: self.emitters.as_entire_binding() },
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: self.params.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: self.pool.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: self.emitters.as_entire_binding(),
+                    },
                 ],
             })
         };
@@ -240,7 +271,12 @@ impl Particles {
     }
 
     /// Draws the live particles (inside the HDR pass, after opaque geometry).
-    pub fn draw(&self, device: &wgpu::Device, pass: &mut wgpu::RenderPass<'_>, view: &wgpu::Buffer) {
+    pub fn draw(
+        &self,
+        device: &wgpu::Device,
+        pass: &mut wgpu::RenderPass<'_>,
+        view: &wgpu::Buffer,
+    ) {
         if !self.active {
             return;
         }
@@ -248,9 +284,18 @@ impl Particles {
             label: Some("particles draw"),
             layout: &self.draw.get_bind_group_layout(0),
             entries: &[
-                wgpu::BindGroupEntry { binding: 4, resource: view.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 5, resource: self.pool.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 6, resource: self.emitters.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: view.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: self.pool.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: self.emitters.as_entire_binding(),
+                },
             ],
         });
         pass.set_pipeline(&self.draw);

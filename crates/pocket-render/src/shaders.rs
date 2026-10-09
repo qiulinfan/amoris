@@ -11,7 +11,11 @@ pub fn source(name: &str) -> String {
     let body = match name {
         "cull" => include_str!("../shaders/cull.wgsl"),
         "forward" => {
-            return format!("{COMMON}\n{}\n{}", include_str!("../shaders/probe_gi.wgsl"), include_str!("../shaders/forward.wgsl"));
+            return format!(
+                "{COMMON}\n{}\n{}",
+                include_str!("../shaders/probe_gi.wgsl"),
+                include_str!("../shaders/forward.wgsl")
+            );
         }
         "sky" => include_str!("../shaders/sky.wgsl"),
         "sky_bake" => {

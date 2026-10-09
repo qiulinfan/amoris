@@ -117,8 +117,18 @@ fn capture_thread(rx: mpsc::Receiver<CaptureJob>, mailbox: Arc<Mailbox>, root: P
     let mut n = 0u32;
     for job in rx {
         let now = start.elapsed().as_secs_f64();
-        let w = job.params.get("width").and_then(Value::as_u64).unwrap_or(1280).clamp(16, 4096) as u32;
-        let h = job.params.get("height").and_then(Value::as_u64).unwrap_or(720).clamp(16, 4096) as u32;
+        let w = job
+            .params
+            .get("width")
+            .and_then(Value::as_u64)
+            .unwrap_or(1280)
+            .clamp(16, 4096) as u32;
+        let h = job
+            .params
+            .get("height")
+            .and_then(Value::as_u64)
+            .unwrap_or(720)
+            .clamp(16, 4096) as u32;
         if renderer.is_none() {
             match Gpu::headless(BackendChoice::from_env()) {
                 Ok(gpu) => {
@@ -127,7 +137,11 @@ fn capture_thread(rx: mpsc::Receiver<CaptureJob>, mailbox: Arc<Mailbox>, root: P
                     renderer = Some(r);
                 }
                 Err(e) => {
-                    let _ = job.reply.send(Err(Problem::new("capture.no_gpu", e.to_string(), detail([]))));
+                    let _ = job.reply.send(Err(Problem::new(
+                        "capture.no_gpu",
+                        e.to_string(),
+                        detail([]),
+                    )));
                     continue;
                 }
             }
@@ -169,10 +183,18 @@ impl CaptureHub for CaptureServer {
         let sent = self.jobs.send(CaptureJob { params, reply }).is_ok();
         Box::pin(async move {
             if !sent {
-                return Err(Problem::new("capture.unavailable", "The capture thread stopped.", detail([])));
+                return Err(Problem::new(
+                    "capture.unavailable",
+                    "The capture thread stopped.",
+                    detail([]),
+                ));
             }
             rx.await.unwrap_or_else(|_| {
-                Err(Problem::new("capture.unavailable", "The capture thread stopped.", detail([])))
+                Err(Problem::new(
+                    "capture.unavailable",
+                    "The capture thread stopped.",
+                    detail([]),
+                ))
             })
         })
     }
@@ -201,11 +223,15 @@ impl pocket_server::DebugHub for DebugBridge {
                     )
                 })?;
                 let via = pocket_server::Via::Api;
-                let restored = host.call(&via, "snapshots.restore", json!({"tick": tick})).await?;
+                let restored = host
+                    .call(&via, "snapshots.restore", json!({"tick": tick}))
+                    .await?;
                 let at = restored.get("tick").and_then(Value::as_u64).unwrap_or(tick);
                 let mut out = json!({"restored": at, "tick": at});
                 if tick > at {
-                    let stepped = host.call(&via, "time.step", json!({"ticks": tick - at})).await?;
+                    let stepped = host
+                        .call(&via, "time.step", json!({"ticks": tick - at}))
+                        .await?;
                     out["tick"] = stepped.get("tick").cloned().unwrap_or(json!(tick));
                 }
                 return Ok(out);
@@ -226,7 +252,11 @@ pub fn forward_debug_events(hub: &pocket_debug::DebugHub, host: pocket_server::H
         .spawn(move || {
             for ev in rx {
                 if let Some(j) = ev.json() {
-                    let topic = if j["event"] == "debug" { "debug" } else { "log" };
+                    let topic = if j["event"] == "debug" {
+                        "debug"
+                    } else {
+                        "log"
+                    };
                     host.push(topic, j["data"].clone());
                 }
             }

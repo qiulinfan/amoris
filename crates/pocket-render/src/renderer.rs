@@ -25,16 +25,16 @@ use crate::materials::MaterialPool;
 use crate::meshes::MeshPool;
 use crate::ocean::Ocean;
 use crate::overlay::Overlays;
+use crate::particles::Particles;
 use crate::picking::{PickRequest, Picking, coverage};
 use crate::post::{DEPTH, HDR, Post, SAMPLES, Targets};
 use crate::profiler::GpuProfiler;
 use crate::scene::{InstanceGpu, Part, Resolve, Scene, VARIANTS};
-use crate::skinning::Skinning;
-use crate::ui::Ui;
-use crate::particles::Particles;
 use crate::shaders;
 use crate::shadows::{self, CASCADES, SHADOW_SIZE};
+use crate::skinning::Skinning;
 use crate::sky::{Sky, SkyParams};
+use crate::ui::Ui;
 
 const VIEWS: u32 = 1 + CASCADES as u32;
 const CLUSTER_X: u32 = 16;
@@ -148,7 +148,15 @@ struct Pools<'a> {
 impl Pools<'_> {
     /// The mesh an entity draws for node `mi` of `path`: the shared mesh, or for a skinned mesh
     /// the entity's own skinned copy.
-    fn mesh_for(&mut self, entity: u64, path: &str, model: &Model, mi: usize, skin: Option<usize>, local: (Vec3, Quat, Vec3)) -> u32 {
+    fn mesh_for(
+        &mut self,
+        entity: u64,
+        path: &str,
+        model: &Model,
+        mi: usize,
+        skin: Option<usize>,
+        local: (Vec3, Quat, Vec3),
+    ) -> u32 {
         let (mesh, _) = model.meshes[mi];
         let (Some(skin), Some(asset)) = (skin, &model.skinned) else {
             return mesh;
@@ -157,7 +165,10 @@ impl Pools<'_> {
             return mesh;
         };
         let key = format!("{path}#{mi}@{entity}");
-        let Some(dynamic) = self.meshes.add_dynamic(self.device, self.queue, &key, mesh, count, 2.0) else {
+        let Some(dynamic) =
+            self.meshes
+                .add_dynamic(self.device, self.queue, &key, mesh, count, 2.0)
+        else {
             return mesh;
         };
         let dst = self.meshes.infos[dynamic as usize].base_vertex as u32;
@@ -246,7 +257,14 @@ impl Resolve for Pools<'_> {
                 let (_, key) = &model.meshes[i];
                 let material = material_for(self.materials, key)?;
                 let skin = model.nodes.iter().find(|n| n.0 == i).and_then(|n| n.2);
-                let mesh = self.mesh_for(entity, path, model, i, skin, (Vec3::ZERO, Quat::IDENTITY, Vec3::ONE));
+                let mesh = self.mesh_for(
+                    entity,
+                    path,
+                    model,
+                    i,
+                    skin,
+                    (Vec3::ZERO, Quat::IDENTITY, Vec3::ONE),
+                );
                 Some(vec![Part {
                     mesh,
                     material,
@@ -882,7 +900,11 @@ impl Renderer {
             .iter()
             .map(|n| {
                 let (s, r, t) = Mat4::from_cols_array(&n.transform).to_scale_rotation_translation();
-                (n.mesh, (t, r, s), n.skin.filter(|_| !asset.skins.is_empty()))
+                (
+                    n.mesh,
+                    (t, r, s),
+                    n.skin.filter(|_| !asset.skins.is_empty()),
+                )
             })
             .collect();
         let skinned = (!asset.skins.is_empty()).then(|| std::sync::Arc::new(asset.clone()));
@@ -922,10 +944,26 @@ impl Renderer {
     }
 
     fn poll_gi(&mut self) {
-        let neural_path = self.scene.environment.as_ref().map_or("", |e| e.neural_gi.as_str());
+        let neural_path = self
+            .scene
+            .environment
+            .as_ref()
+            .map_or("", |e| e.neural_gi.as_str());
         let is_neural = !neural_path.is_empty();
-        let path = if is_neural { neural_path } else { self.scene.environment.as_ref().map_or("", |e| e.baked_gi.as_str()) }.to_owned();
-        let intensity = self.scene.environment.as_ref().map_or(1.0, |e| e.gi_intensity);
+        let path = if is_neural {
+            neural_path
+        } else {
+            self.scene
+                .environment
+                .as_ref()
+                .map_or("", |e| e.baked_gi.as_str())
+        }
+        .to_owned();
+        let intensity = self
+            .scene
+            .environment
+            .as_ref()
+            .map_or(1.0, |e| e.gi_intensity);
         self.gi.set_intensity(&self.gpu.queue, intensity);
         if path != self.gi.asset || is_neural != self.gi.requested_neural {
             self.gi.asset = path.clone();
@@ -933,11 +971,17 @@ impl Renderer {
             self.gi.clear(&self.gpu.queue);
             self.gi.loading = !path.is_empty();
             if !path.is_empty() {
-                if is_neural { self.loader.request_neural_gi(&path); } else { self.loader.request_baked_gi(&path); }
+                if is_neural {
+                    self.loader.request_neural_gi(&path);
+                } else {
+                    self.loader.request_baked_gi(&path);
+                }
             }
         }
         for (loaded_path, result) in self.loader.poll_baked_gi() {
-            if loaded_path != self.gi.asset || is_neural { continue; }
+            if loaded_path != self.gi.asset || is_neural {
+                continue;
+            }
             self.gi.loading = false;
             match result.and_then(|data| self.gi.upload(&self.gpu.device, &self.gpu.queue, data)) {
                 Ok(()) => log::info!("loaded baked GI: {loaded_path}"),
@@ -948,9 +992,14 @@ impl Renderer {
             }
         }
         for (loaded_path, result) in self.loader.poll_neural_gi() {
-            if loaded_path != self.gi.asset || !is_neural { continue; }
+            if loaded_path != self.gi.asset || !is_neural {
+                continue;
+            }
             self.gi.loading = false;
-            match result.and_then(|data| self.gi.upload_neural(&self.gpu.device, &self.gpu.queue, data)) {
+            match result.and_then(|data| {
+                self.gi
+                    .upload_neural(&self.gpu.device, &self.gpu.queue, data)
+            }) {
                 Ok(()) => log::info!("loaded neural GI: {loaded_path}"),
                 Err(error) => {
                     log::error!("neural GI {loaded_path}: {error}");
@@ -966,7 +1015,9 @@ impl Renderer {
     }
 
     /// A failed GI asset must not be mistaken for a successfully measured lighting mode.
-    pub fn gi_error(&self) -> Option<&str> { self.gi.error.as_deref() }
+    pub fn gi_error(&self) -> Option<&str> {
+        self.gi.error.as_deref()
+    }
 
     /// Whether a validated lighting field is resident and its asynchronous load succeeded.
     pub fn gi_loaded(&self) -> bool {
@@ -1108,7 +1159,11 @@ impl Renderer {
             }
             self.light_count = lights.len() as u32;
         }
-        let key = (self.meshes.generation, self.materials.generation, self.gi.generation);
+        let key = (
+            self.meshes.generation,
+            self.materials.generation,
+            self.gi.generation,
+        );
         if grown || self.bind.is_none() || key != self.bind_key {
             self.bind_key = key;
             self.rebind();
@@ -1381,7 +1436,9 @@ impl Renderer {
         if draw_bytes > 0 {
             enc.copy_buffer_to_buffer(&self.draw_template, 0, &self.draws, 0, draw_bytes);
         }
-        let frame_dt = self.last_frame_s.map_or(1.0 / 60.0, |t| (now_s - t).clamp(0.0, 0.1)) as f32;
+        let frame_dt = self
+            .last_frame_s
+            .map_or(1.0 / 60.0, |t| (now_s - t).clamp(0.0, 0.1)) as f32;
         self.last_frame_s = Some(now_s);
         self.particles
             .update(&device, &queue, &mut enc, &self.scene.emitters, frame_dt);
@@ -1634,7 +1691,9 @@ impl Renderer {
         }
         let mut best: Option<(u64, f32)> = None;
         for (slot, inst) in self.scene.slots.iter().enumerate() {
-            if inst.flags & crate::scene::FLAG_ALIVE == 0 || inst.flags & crate::scene::FLAG_VISIBLE == 0 {
+            if inst.flags & crate::scene::FLAG_ALIVE == 0
+                || inst.flags & crate::scene::FLAG_VISIBLE == 0
+            {
                 continue;
             }
             let Some(&(lo, hi)) = self.meshes.boxes.get(inst.mesh as usize) else {
@@ -1643,7 +1702,13 @@ impl Renderer {
             let rot = Quat::from_array(inst.rot);
             let inv_rot = rot.inverse();
             let scale = Vec3::from(inst.scale);
-            let safe = |v: f32| if v.abs() < 1e-6 { 1e-6f32.copysign(v) } else { v };
+            let safe = |v: f32| {
+                if v.abs() < 1e-6 {
+                    1e-6f32.copysign(v)
+                } else {
+                    v
+                }
+            };
             let s = Vec3::new(safe(scale.x), safe(scale.y), safe(scale.z));
             // The ray in the part's unscaled local frame.
             let o = inv_rot * (origin - Vec3::from(inst.pos)) / s;

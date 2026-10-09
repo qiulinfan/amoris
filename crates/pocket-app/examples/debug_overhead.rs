@@ -49,6 +49,31 @@ fn cpu_us() -> f64 {
     t.sec as f64 * 1e6 + t.nsec as f64 / 1e3
 }
 
+/// This thread's CPU time in microseconds (user plus kernel, in 100 ns ticks on Windows).
+#[cfg(windows)]
+fn cpu_us() -> f64 {
+    #[repr(C)]
+    #[derive(Default)]
+    struct FileTime {
+        low: u32,
+        high: u32,
+    }
+    unsafe extern "system" {
+        fn GetCurrentThread() -> *mut std::ffi::c_void;
+        fn GetThreadTimes(
+            thread: *mut std::ffi::c_void,
+            creation: *mut FileTime,
+            exit: *mut FileTime,
+            kernel: *mut FileTime,
+            user: *mut FileTime,
+        ) -> i32;
+    }
+    let ticks = |t: &FileTime| (u64::from(t.high) << 32 | u64::from(t.low)) as f64;
+    let (mut c, mut e, mut k, mut u) = Default::default();
+    unsafe { GetThreadTimes(GetCurrentThread(), &mut c, &mut e, &mut k, &mut u) };
+    (ticks(&k) + ticks(&u)) / 10.0
+}
+
 /// The workload as a project: its scripts, an empty scene.
 fn project(dir: &Path) -> Project {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
