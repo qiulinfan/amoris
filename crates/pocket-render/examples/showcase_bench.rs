@@ -1,8 +1,10 @@
 //! Static project rendering, including full glTF scenes, without a window or simulation.
 //! `cargo run --release -p pocket-render --example showcase_bench -- PROJECT
-//!  [--width 1920] [--height 1080] [--frames 300] [--warm 60]`
+//!  [--width 1920] [--height 1080] [--frames 300] [--warm 60] [--capture OUT.png]`
 //! Reports submit-to-GPU-idle wall time, CPU encoding time, timestamp pass timings and source
 //! geometry counts. This deliberately excludes game ticks, presentation and PNG readback.
+//! `--capture` saves, after the measurement, a frame drawn at a fixed time (0 s), so captures of
+//! the same project on two backends or adapters compare pixel for pixel (docs/bench/dx12.md).
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -378,6 +380,21 @@ fn run() -> Result<(), String> {
                     .push(f64::from(milliseconds));
             }
         }
+    }
+    // A fixed-time frame for cross-backend comparison: time-driven state (interpolation, particles,
+    // the sea) is the same at the same time, so only the backend and the adapter differ.
+    if let Some(index) = arguments.iter().position(|value| value == "--capture") {
+        let path = PathBuf::from(arguments.get(index + 1).ok_or("missing --capture path")?);
+        for _ in 0..8 {
+            renderer.render(&view, 0.0);
+            gpu.device
+                .poll(wgpu::PollType::wait_indefinitely())
+                .map_err(|e| e.to_string())?;
+        }
+        let (w, h, pixels) = renderer.capture_rgba(0.0);
+        image::save_buffer(&path, &pixels, w, h, image::ColorType::Rgba8)
+            .map_err(|e| e.to_string())?;
+        eprintln!("saved {} ({w}x{h})", path.display());
     }
     // A same-camera GI comparison is untimed and reuses the resident model and probe field.
     if let Some(index) = arguments.iter().position(|value| value == "--gi-compare") {

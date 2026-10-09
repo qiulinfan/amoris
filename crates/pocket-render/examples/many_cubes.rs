@@ -84,6 +84,24 @@ fn main() {
         println!("saved {path} ({w}x{h}); {:?}", r.last);
         return;
     }
+    if let Some(frames) = arg("--headless-bench").and_then(|s| s.parse::<u32>().ok()) {
+        let size = arg("--size")
+            .and_then(|s| {
+                s.split_once('x')
+                    .and_then(|(w, h)| Some((w.parse().ok()?, h.parse().ok()?)))
+            })
+            .unwrap_or((1280u32, 720u32));
+        headless_bench(
+            Cubes {
+                frame: Some(frame),
+                rot: Quat::IDENTITY,
+                dense,
+            },
+            size,
+            frames,
+        );
+        return;
+    }
     let options = RunOptions {
         title: format!("many_cubes ({count}{})", if dense { ", dense" } else { "" }),
         width: 1280,
@@ -106,6 +124,98 @@ fn main() {
         Ok(None) => {}
         Err(e) => eprintln!("error: {e}"),
     }
+}
+
+/// Offscreen at `size`, no presentation: 60 warm-up frames, then `frames` measured ones, each
+/// submitted and waited for (submit to GPU idle). Prints one JSON object: start-up costs, frame
+/// wall time, CPU encoding time, timestamped GPU time and its passes (docs/bench/dx12.md).
+fn headless_bench(mut host: Cubes, size: (u32, u32), frames: u32) {
+    let t = std::time::Instant::now();
+    let gpu = pocket_render::Gpu::headless(BackendChoice::from_env()).expect("gpu");
+    let device_ms = t.elapsed().as_secs_f64() * 1000.0;
+    let t = std::time::Instant::now();
+    let format = wgpu::TextureFormat::Rgba8UnormSrgb;
+    let mut r = Renderer::new(&gpu, format, size.0, size.1);
+    let renderer_ms = t.elapsed().as_secs_f64() * 1000.0;
+    let tex = gpu.device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("bench target"),
+        size: wgpu::Extent3d {
+            width: size.0,
+            height: size.1,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    });
+    let view = tex.create_view(&Default::default());
+    let mut first_frame_ms = 0.0;
+    let mut wall = Vec::new();
+    let mut cpu = Vec::new();
+    let mut gpu_ms = Vec::new();
+    let mut passes: Vec<(&'static str, f64, u32)> = Vec::new();
+    let warm = 60;
+    for i in 0..warm + frames {
+        let now = f64::from(i) / 60.0;
+        let t = std::time::Instant::now();
+        host.update(&mut r, now);
+        let stats = r.render(&view, now);
+        let _ = gpu.device.poll(wgpu::PollType::wait_indefinitely());
+        let ms = t.elapsed().as_secs_f64() * 1000.0;
+        if i == 0 {
+            first_frame_ms = ms;
+        }
+        if i < warm {
+            continue;
+        }
+        wall.push(ms);
+        cpu.push(f64::from(stats.cpu_ms));
+        if !stats.passes.is_empty() {
+            gpu_ms.push(f64::from(stats.gpu_ms));
+        }
+        for (l, ms) in &stats.passes {
+            match passes.iter_mut().find(|(k, _, _)| k == l) {
+                Some(e) => {
+                    e.1 += f64::from(*ms);
+                    e.2 += 1;
+                }
+                None => passes.push((l, f64::from(*ms), 1)),
+            }
+        }
+    }
+    let summary = |v: &mut Vec<f64>| {
+        v.sort_by(f64::total_cmp);
+        let n = v.len().max(1);
+        let round = |x: f64| (x * 1000.0).round() / 1000.0;
+        serde_json::json!({
+            "mean": round(v.iter().sum::<f64>() / n as f64),
+            "p50": round(v.get(v.len() / 2).copied().unwrap_or(0.0)),
+            "p95": round(v.get((v.len() * 95 / 100).min(v.len().saturating_sub(1))).copied().unwrap_or(0.0)),
+        })
+    };
+    let report = serde_json::json!({
+        "bench": if host.dense { "many_cubes dense" } else { "many_cubes sphere" },
+        "backend": gpu.backend_name(),
+        "adapter": gpu.info.name,
+        "driver": format!("{} {}", gpu.info.driver, gpu.info.driver_info),
+        "size": [size.0, size.1],
+        "instances": r.last.instances,
+        "frames": frames,
+        "device_ms": (device_ms * 10.0).round() / 10.0,
+        "renderer_new_ms": (renderer_ms * 10.0).round() / 10.0,
+        "first_frame_ms": (first_frame_ms * 10.0).round() / 10.0,
+        "submit_to_idle_ms": summary(&mut wall),
+        "cpu_encode_ms": summary(&mut cpu),
+        "gpu_ms": summary(&mut gpu_ms),
+        "passes_ms": passes
+            .iter()
+            .map(|(l, s, n)| ((*l).to_owned(), serde_json::json!((s / f64::from(*n) * 1000.0).round() / 1000.0)))
+            .collect::<serde_json::Map<_, _>>(),
+    });
+    println!("{report}");
 }
 
 fn env_logger_init() {

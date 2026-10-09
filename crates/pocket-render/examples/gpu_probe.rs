@@ -1,9 +1,53 @@
 //! Creates the renderer's kinds of resources one by one inside error scopes and prints the first
-//! failure of each: a quick check of a backend (`POCKET_BACKEND=vulkan`).
+//! failure of each, then builds the whole renderer (every pipeline, so every shader goes through
+//! the backend's compiler) and draws one empty frame: a quick check of a backend
+//! (`POCKET_BACKEND=vulkan`, `POCKET_BACKEND=dx12`, `POCKET_ADAPTER=780m`).
 
 fn main() {
-    let gpu = pocket_render::Gpu::headless(pocket_render::BackendChoice::from_env()).expect("gpu");
+    let choice = pocket_render::BackendChoice::from_env();
+    if choice.backends().contains(wgpu::Backends::DX12) {
+        println!("shader compiler: {}", pocket_render::gpu::dx12_compiler().1);
+    }
+    let gpu = pocket_render::Gpu::headless(choice).expect("gpu");
+    println!(
+        "{} on {} ({:?}), driver {} {}",
+        gpu.backend_name(),
+        gpu.info.name,
+        gpu.info.device_type,
+        gpu.info.driver,
+        gpu.info.driver_info
+    );
+    println!("capabilities: {:?}", gpu.caps);
     let d = &gpu.device;
+    {
+        // Shader compilation failures (HLSL through DXC or FXC, MSL, SPIR-V) are internal errors.
+        let internal = d.push_error_scope(wgpu::ErrorFilter::Internal);
+        let validation = d.push_error_scope(wgpu::ErrorFilter::Validation);
+        let t = std::time::Instant::now();
+        let mut r =
+            pocket_render::Renderer::new(&gpu, wgpu::TextureFormat::Rgba8UnormSrgb, 640, 360);
+        let built = t.elapsed();
+        let (w, h, px) = r.capture_rgba(0.0);
+        let errors = [
+            pollster::block_on(validation.pop()),
+            pollster::block_on(internal.pop()),
+        ];
+        let errors: Vec<String> = errors
+            .into_iter()
+            .flatten()
+            .map(|e| e.to_string())
+            .collect();
+        println!(
+            "renderer: {} (built in {:.0} ms, frame {w}x{h}, {} bytes)",
+            if errors.is_empty() {
+                "ok".to_owned()
+            } else {
+                errors.join("; ")
+            },
+            built.as_secs_f64() * 1000.0,
+            px.len()
+        );
+    }
     let check = |what: &str, f: &dyn Fn()| {
         let scope = d.push_error_scope(wgpu::ErrorFilter::Validation);
         f();
