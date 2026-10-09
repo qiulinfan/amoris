@@ -251,6 +251,11 @@ Amoris 是一个 **agent-native** 的 3D 游戏引擎。agent 在三个角色上
     共用同一套 WGSL 约定，编码器在 Metal、Vulkan、Direct3D 12 上都能跑，不再需要另一套语言与
     运行环境；网络很小，手写反向传播可行（在线 NRC 已验证这种做法）。BCn 对照用 crates.io 的
     CPU 编码器（只作工具层的开发依赖）。规格见 [神经纹理](spec/neural-textures.md)。
+    暂定测量（2026-10-09，机器上同时有其他工作）：8 至 12 通道的材质 5.37 bit/texel（含全部
+    mip，为 BC1/BC5/BC4 的 1/4 至 1/6）；四种程序材质的 mip 0 为 40 至 52 dB，七种材质中六种的
+    每个通道组都高于半分辨率的 BCn，mip 2 低 5 至 11 dB；2560x1440 全屏解码在 RTX 5060 上 f16
+    约 3 ms，Radeon 780M（Direct3D 12）上约 10 ms，Chrome 中与原生相当。见
+    [测量记录](bench/neural-textures.md)。
 - 浏览器 WebGPU 与原生 Metal/Vulkan/Direct3D 12 走同一份代码；只使用 WebGPU 默认可用的特性作为基线，
   原生可选特性（如 multi-draw indirect、时间戳查询）作为加速路径。
 

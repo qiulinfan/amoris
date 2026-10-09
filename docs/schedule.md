@@ -103,7 +103,8 @@ Direct3D 12 已于 2026-10-09 作为 Pioneer 的探索方向重新纳入（纲�
 浏览器完整游戏；splat 合并；物理对照、类型 SDK、编辑器调试、agent 调试评测合并。
 `feat/play`、`feat/neural`、`feat/art`、`feat/hzb`、`feat/gtao` 已实现、已评审，修复阶段被中止。
 （2026-10-09 Pioneer 更正：`feat/hzb` 在合并前遗失，任何仓库里都没有它的代码；遮挡剔除已由
-`explore/hiz` 重新实现，见 3.1。）
+`explore/hiz` 重新实现，见 3.1。`feat/neural` 同样遗失；神经纹理压缩已由 `explore/neural`
+重新实现，见 `docs/bench/neural-textures.md`。）
 
 ### 第 3 天（10-05）：收尾合并
 

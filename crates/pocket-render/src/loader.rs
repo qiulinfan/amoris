@@ -6,9 +6,13 @@ use pocket_assets::gi::{BakedGi, NeuralGi};
 use pocket_assets::mesh::ModelAsset;
 use pocket_assets::neural::NeuralTexture;
 
-/// Whether a material path names a neural texture (`materials/brick.ntex`).
+/// Whether a material path names a neural texture (`materials/brick.ntex`). Every look's material
+/// passes through here, and material names are any UTF-8 a script or a glTF file sets (`金属`,
+/// `models/x.glb#屋顶`): the suffix is compared as bytes, never by slicing the string at a byte
+/// offset that may fall inside a character.
 pub fn is_neural_texture(path: &str) -> bool {
-    path.len() > 5 && path[path.len() - 5..].eq_ignore_ascii_case(".ntex")
+    let b = path.as_bytes();
+    b.len() > 5 && b[b.len() - 5..].eq_ignore_ascii_case(b".ntex")
 }
 
 /// A source of model assets by project-relative path.
@@ -179,5 +183,35 @@ impl AssetSource for FileAssets {
     fn poll_neural_textures(&mut self) -> Vec<(String, Result<NeuralTexture, String>)> {
         self.collect();
         std::mem::take(&mut self.textures_done)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_neural_texture;
+
+    #[test]
+    fn neural_texture_paths_are_recognized_in_any_script() {
+        for yes in [
+            "materials/brick.ntex",
+            "materials/BRICK.NTEX",
+            "材质/砖.ntex",
+            "a.Ntex",
+        ] {
+            assert!(is_neural_texture(yes), "{yes}");
+        }
+        // Material names whose fifth byte from the end falls inside a character must not panic.
+        for no in [
+            "",
+            ".ntex",
+            "金属",
+            "materials/红砖",
+            "models/x.glb#屋顶",
+            "砖ntex",
+            "materials/brick.png",
+            "materials/brick.ntex.png",
+        ] {
+            assert!(!is_neural_texture(no), "{no}");
+        }
     }
 }

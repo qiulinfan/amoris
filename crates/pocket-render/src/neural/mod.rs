@@ -31,6 +31,7 @@ const DECODER: &str = concat!(
     "\n",
     include_str!("../../shaders/neural_mlp.wgsl")
 );
+#[cfg(not(target_arch = "wasm32"))]
 const EVAL: &str = include_str!("../../shaders/neural_eval.wgsl");
 
 /// The `NT_*` constants that compile a layout's shape into the shaders.
