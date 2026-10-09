@@ -28,6 +28,8 @@ const URL_ = opt("--url", "http://127.0.0.1:7878/");
 const OUT = resolve(opt("--out", resolve(import.meta.dir, "../../docs/evidence/editor")));
 const LINE = Number(opt("--line", "27"));
 const W = 1600;
+// The editor's Mod: Cmd (CDP modifier 4) on macOS, Ctrl (2) elsewhere (src/commands/keys.ts).
+const MOD = process.platform === "darwin" ? 4 : 2;
 const H = 1000;
 mkdirSync(OUT, { recursive: true });
 
@@ -422,7 +424,7 @@ try {
   await type("const knots = speed * 1.944;");
   await key("Escape", "Escape", 27);
   await sleep(300);
-  await key("s", "KeyS", 83, 4); // Mod+S: scripts.write, then scripts.apply (a hot swap)
+  await key("s", "KeyS", 83, MOD); // Mod+S: scripts.write, then scripts.apply (a hot swap)
   note("typed a new line after rules.ts:" + LINE + " and pressed Mod+S");
   await waitFor("the scripts applied", `return [...document.querySelectorAll('.toast')].some((t) => t.textContent.includes('Scripts applied'));`, 30000);
   const toast = await text(".toast");

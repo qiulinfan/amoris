@@ -91,7 +91,7 @@ Each method is a command of the catalog (`GET /api/catalog` is authoritative). K
 | `history.undo` / `history.redo` | `{}` | as `world.edit`, with the entry's `label` |
 | `history.list` | `{}` | `{undo, redo}` |
 | `time.control` | `{pause?, speed?, pacing?}` | status |
-| `time.step` | `{ticks?, until?: {event?, subject?, tick?}, watch?: {entity, component, field, op?, value?}, sample?: {fields: ["E.C.f"], every?}}` | `{tick, world_hash, errors, stopped_by?, samples?}`; a debugger stop ends the step and answers at once with `paused: true` (server.md 3.2, 3.4) |
+| `time.step` | `{ticks?, until?: {event?, subject?, tick?}, watch?: {entity, component, field, op?, value?}, sample?: {fields: ["E.C.f"], every?}}` | `{tick, world_hash, errors, stopped_by?, samples?}`; a debugger stop ends the step and answers at once with `paused: true` (server.md 3.2, 3.4); a step queued behind it answers `debug.paused {queued: true}` and runs after the resume |
 | `play.start` / `play.stop` | `{speed?, paused?}` / `{}` | status (Play runs a fork of the edit world; Stop discards it) |
 | `scripts.list` | `{}` | `[{path, bytes, diagnostics}]` |
 | `scripts.read` / `scripts.write` | `{path, lines?, numbered?}` / `{path, text}` | `{path, text, first?, last?, total?}` / `{path, bytes, diagnostics}` |
@@ -107,9 +107,12 @@ Each method is a command of the catalog (`GET /api/catalog` is authoritative). K
 | `docs.search` | `{query, limit?}` | matching commands and components |
 | `debug.*` | section 6 | `debug.not_available` until pocket-debug's hub is installed; one catalog entry per method |
 
-While the debugger holds the game, `status`, `world.get/tree/query/schema` and
-`scripts.list/read/status` answer from the last publication (marked `paused_at`) and every other
-call that needs the game thread is refused at once with `debug.paused` (server.md 3.4).
+While the debugger holds the game, `status`, `time.control {}`, `world.get/tree/query/schema` and
+`scripts.list/read/status` answer from the last publication (marked `paused_at`); `play.stop` in
+Play ends Play wherever it stands (the debugger passes over every pause until the Stop lands);
+`time.control` with changes is queued for the boundary after the held tick (`debug.paused {queued:
+true}`); every other call that needs the game thread is refused at once with `debug.paused`
+(server.md 3.4).
 | `profile.frame` | `{}` | the last frame's CPU and GPU timings (not built yet) |
 | `agent.*` | MCP tool calls mirrored (section 7) | |
 

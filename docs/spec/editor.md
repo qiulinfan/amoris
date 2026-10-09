@@ -191,9 +191,12 @@ implements the same interface. The status bar and the viewport badge say which r
 
 Every change is a `world.edit`: one transaction, one labelled entry in the host's undo history,
 shared with agents (whose labels start `agent:`). The editor never changes its copy of the world
-itself; it refetches what `world.changed` names (coalesced, a few requests at a time), with one
+itself; it refetches what `world.changed` names (coalesced, a few requests at a time), and the tree
+and every entity on a `{reset: true}` push (Play, Stop or a restore replaced the world), with one
 exception: while a drag (gizmo, scrubbed number) is in flight it shows the dragged values as a local
-preview.
+preview. (Until 2026-10-09 resets were ignored, and the old world's values stayed shown until a
+later diff named them: after a Stop that came 0.1 s after the click, the inspector kept the Play
+world's Log.)
 
 Drags stream: each pointer move sends a `world.edit` with the same `group` (at most every 60 ms),
 the host merges consecutive edits of one group into one undo entry, and release sends the final
@@ -306,15 +309,22 @@ wire shapes (`HostDebugState`, `HostFrame`, `HostVariable`, `HostBreakpoint`, `H
 - Play and Step debug the Play world: the host's game thread hands the script debugger to Play's
   fork and back on Stop, so breakpoints set in Edit hit in Play; `time.step` in Edit runs the edit
   world's scripts under the debugger too.
-- Stop while paused: the game thread answers `play.stop` only between ticks (debugger.md 8), so Stop
-  continues the pause first, and any pause later in that tick, until `play.stop` answers. The
-  timeline does not poll `snapshots.list` while paused.
+- Stop while paused: the game thread answers `play.stop` only between ticks (debugger.md 8), and the
+  host ends Play wherever the debugger holds it: it has the debugger pass over the held tick's pause
+  and any later one until the Stop lands (server.md 3.4, 2026-10-09). The editor sends `play.stop`
+  and nothing else; until then it continued each pause itself, which stopped working when the host
+  began refusing calls made while held. The timeline does not poll `snapshots.list` while paused.
+- While paused, the host answers reads from the last publication and refuses calls that need the
+  game thread at once with `debug.paused` (server.md 3.4): an inspector edit, a snapshot restore,
+  Step, a script apply or a project save shows the refusal as an error toast, which says where the
+  game stands. Pause (`time.control {pause: true}`) is queued instead, shown as an information toast:
+  after Continue, Play rests at the end of the held tick, where every call works.
 - Stop and scripts: Stop returns to the edit world exactly as it was (server.md 3.3), with the
   bundle it ran, while scripts saved during Play are on disk. Stop reads the Play world's bundle
-  (`time.control {}`) before `play.stop`; when it differs from the edit world's, the editor runs
-  `scripts.apply` again, so the edit world and the next Play run the text the editor shows and
-  breakpoints bind to its lines. Other clients that apply scripts during Play apply them again
-  after Stop themselves.
+  (`time.control {}`, answered while paused too) before `play.stop`; when it differs from the edit
+  world's, the editor runs `scripts.apply` again, so the edit world and the next Play run the text
+  the editor shows and breakpoints bind to its lines. Other clients that apply scripts during Play
+  apply them again after Stop themselves.
 - Debug > Copy Chrome DevTools URL copies `debug.state.cdp.devtools`, the host's CDP endpoint
   (pocket-debug's own port, 9229 by default; absent when the port was taken). The host does not
   serve `/devtools` or `/json` on its own port, so the Vite dev server does not proxy them.
@@ -346,7 +356,12 @@ events with a cause chain, timeline, profiler, console, agent, debug, scripts, h
 The debugger against the real host: `pocket serve` on a copy of `samples/sailing` serving the built
 editor, driven by `tools/debug-host.ts` in headless Chrome with real input only (clicks, keys,
 typing; the exceptions select excepted, step 7), 2026-10-04; `debug-host-*.png` and the driver's
-log `debug-host.txt` (exit 0, every step):
+log `debug-host.txt` (exit 0, every step). Run again on 2026-10-09 on Windows against the host whose
+Stop crosses a pause (server.md 3.4), with the editor built by Vite under Node and the driver run by
+Node 25 (`--experimental-transform-types`, a preload defining `Bun.sleep`, `Bun.write` and
+`Bun.spawn`; no Bun on that machine): exit 0, every step, Edit mode 0.1 s after Stop and the edit
+world on the edited bundle; the log and steps 9 and 10 downscaled are in `docs/evidence/agentdebug/`.
+The driver pressed Cmd+S for Mod+S everywhere; it now presses Ctrl+S off macOS.
 
 | Screenshot | Shows |
 |---|---|
@@ -380,9 +395,11 @@ completes the Boat's fields.
 - Values deeper than the host's preview (three levels, 48 entries) cannot be expanded further: the
   agents' API hands out no object ids. A string that reads `"undefined"` or `"[Object]"` below the top
   level shows as that marker.
-- While paused, the game thread answers no command (debugger.md 8): an inspector edit (or a
-  snapshot restore) waits for Continue; a value is set in the paused frame instead, and Stop
-  continues the pause itself (section 8.1).
+- While paused, the game thread answers no command (debugger.md 8): an inspector edit, a snapshot
+  restore or a save is refused at once (server.md 3.4) and is not retried after Continue; a value
+  is set in the paused frame instead, and Stop and Pause cross the pause (section 8.1). A breakpoint
+  that every tick hits holds Play again right after Continue, so an edit made then is usually
+  refused too: Pause, then Continue, or remove the breakpoint first.
 - `debug.set` sets the first variable of that name a function declares: two block scopes declaring
   one name (`for (let r ...)` twice) cannot be told apart at run time.
 - Agent sessions cannot be started from the editor yet (no `agent.session.*`); the form is a

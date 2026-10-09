@@ -627,10 +627,11 @@ impl Loop {
     fn tick(&mut self) {
         self.publisher
             .set_state(LoopState::Ticking, self.next_tick());
-        // A stop of the script debugger inside this tick ends the `time.step` it belongs to.
-        let stops = self.publisher.debug_stops();
+        // A stop of the script debugger inside this tick answers the `time.step` it belongs to
+        // and ends it with the tick (pocket-link's `StateHandle::stopped`).
+        let held = self.hold_step_reply();
         let r = self.game.step();
-        let debugged = self.publisher.debug_stops() != stops;
+        let stopped = held && !self.release_step_reply();
         let now = self.now();
         self.model.ran_tick(now);
         self.pushed = 0;
@@ -653,7 +654,7 @@ impl Loop {
                     }
                     self.publish_snapshot(snap);
                 }
-                self.after_tick_steps(debugged);
+                self.after_tick_steps(stopped);
             }
             Err(p) => {
                 self.model.cancel_steps();
@@ -673,31 +674,55 @@ impl Loop {
         }
     }
 
-    /// Counts the tick against the front `time.step` and answers it when it is done, its stop
-    /// condition holds or the script debugger stopped the game inside the tick (`debugged`: the
-    /// step ends with that tick, `stopped_by` the stop's summary); an early stop gives back the
-    /// ticks the time model still owes it.
-    fn after_tick_steps(&mut self, debugged: bool) {
+    /// Before a tick of a `time.step` with a script debugger attached: hands the step's reply to
+    /// the loop state, where a stop of the debugger inside the tick answers it at once.
+    fn hold_step_reply(&mut self) -> bool {
+        if self.game.script_debugger().is_none() {
+            return false;
+        }
+        let Some(job) = self.steps.front_mut() else {
+            return false;
+        };
+        let reply = mem::replace(&mut job.reply, ReplyTo::none());
+        self.publisher.hold_step_reply(reply);
+        true
+    }
+
+    /// After that tick: the reply back to its step, or false when a stop answered it.
+    fn release_step_reply(&mut self) -> bool {
+        let Some(reply) = self.publisher.take_step_reply() else {
+            return false;
+        };
+        if let Some(job) = self.steps.front_mut() {
+            job.reply = reply;
+        }
+        true
+    }
+
+    /// Counts the tick against the front `time.step` and answers it when it is done or its stop
+    /// condition holds; an early stop gives back the ticks the time model still owes it.
+    /// `stopped`: the script debugger stopped the game inside the tick and answered the step there
+    /// (`stopped_by` the stop's summary), so the step ends with the tick and its rest is dropped.
+    fn after_tick_steps(&mut self, stopped: bool) {
         let Some(job) = self.steps.front_mut() else {
             return;
         };
         job.left = job.left.saturating_sub(1);
+        if stopped {
+            self.errors.clear();
+            self.end_front_step();
+            return;
+        }
         if let Some(s) = &mut job.sample {
             s.after_tick(&self.game);
         }
-        let debugger = debugged.then(|| self.publisher.last_debug_stop()).flatten();
-        let why = debugger.or_else(|| job.stop.as_mut().and_then(|s| s.after_tick(&self.game)));
+        let why = job.stop.as_mut().and_then(|s| s.after_tick(&self.game));
         if job.left > 0 && why.is_none() {
             return;
         }
-        let Some(job) = self.steps.pop_front() else {
+        let Some(job) = self.end_front_step() else {
             return;
         };
-        if job.left > 0 {
-            let owed: u64 = self.steps.iter().map(|j| j.left).sum();
-            self.model.cancel_steps();
-            self.model.step(owed);
-        }
         let why = why.or_else(|| job.stop.as_ref().map(|_| json!({"reason": "limit"})));
         let mut answer = self.answer_step();
         if let Ok(ReplyValue::Json(v)) = &mut answer {
@@ -709,6 +734,18 @@ impl Loop {
             }
         }
         job.reply.send(answer);
+    }
+
+    /// Takes the front `time.step` off the queue; ticks it had left are no longer owed (the time
+    /// model keeps owing the steps behind it theirs).
+    fn end_front_step(&mut self) -> Option<StepJob> {
+        let job = self.steps.pop_front()?;
+        if job.left > 0 {
+            let owed: u64 = self.steps.iter().map(|j| j.left).sum();
+            self.model.cancel_steps();
+            self.model.step(owed);
+        }
+        Some(job)
     }
 
     /// A finished `step`: the tick, the hash and the failed invocations of its ticks.

@@ -256,7 +256,10 @@ export class Session {
     if (!this.playWorld) return;
     const play = this.playWorld;
     this.playWorld = null;
+    // As the host's play.stop: the debugger lets go of a held tick (server.md 3.4).
+    const held = this.debugger.paused;
     this.debugger.resume();
+    if (held) this.broadcast("debug", { state: "running" });
     this.debugger.stopAtNextSystem = false;
     this.inTick = false;
     this.paused = true;

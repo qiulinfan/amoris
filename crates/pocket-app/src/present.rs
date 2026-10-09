@@ -231,6 +231,10 @@ impl pocket_server::DebugHub for DebugBridge {
     fn methods(&self) -> Vec<Value> {
         debug_methods()
     }
+
+    fn pass(&self, on: bool) {
+        self.hub.pass(on);
+    }
 }
 
 /// Forwards the debugger's pauses, resumes, console lines and exceptions to editors (`debug` and

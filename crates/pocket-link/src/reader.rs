@@ -10,6 +10,7 @@ use std::time::Duration;
 use arc_swap::ArcSwap;
 use pocket_sim::Tick;
 
+use crate::command::{ReplyTo, ReplyValue};
 use crate::events::{EventBatch, EventCursor, EventRing};
 use crate::logs::{LogRecord, LogRing};
 use crate::snapshot::WorldSnapshot;
@@ -95,9 +96,12 @@ struct Shared {
     epoch: AtomicU64,
     stopped: Mutex<Option<pocket_contract::Problem>>,
     /// The script debugger's stops so far, and the last one's summary (threads.md 3.5): what
-    /// presenters show while the game thread is held, and what ends a `time.step` early.
+    /// presenters show while the game thread is held.
     debug_stops: AtomicU64,
     debug_stop: Mutex<Option<serde_json::Value>>,
+    /// The reply of the `time.step` whose tick is running, which a stop of the script debugger
+    /// inside the tick answers (server.md 3.2): the step ends with that tick.
+    held_step: Mutex<Option<ReplyTo>>,
 }
 
 /// The game thread's side: publishes snapshots, events and status.
@@ -135,6 +139,7 @@ pub fn publication(
         stopped: Mutex::new(None),
         debug_stops: AtomicU64::new(0),
         debug_stop: Mutex::new(None),
+        held_step: Mutex::new(None),
     });
     (
         Publisher {
@@ -219,15 +224,19 @@ impl Publisher {
         self.shared.events.lock().map_or(0, |r| r.last())
     }
 
-    /// How many times the script debugger has stopped the game thread ([`StateHandle::stopped`]):
-    /// the loop compares it around a tick to end a `time.step` the debugger stopped.
-    pub fn debug_stops(&self) -> u64 {
-        self.shared.debug_stops.load(Ordering::Acquire)
+    /// Before a tick that a `time.step` runs: holds the step's reply, which
+    /// [`StateHandle::stopped`] answers if the script debugger stops the game inside the tick, so
+    /// the step's caller hears where it stopped at the stop, not at the resume (server.md 3.2).
+    pub fn hold_step_reply(&self, reply: ReplyTo) {
+        if let Ok(mut h) = self.shared.held_step.lock() {
+            *h = Some(reply);
+        }
     }
 
-    /// The last stop's summary, whether or not the game is still held there.
-    pub fn last_debug_stop(&self) -> Option<serde_json::Value> {
-        self.shared.debug_stop.lock().ok().and_then(|s| s.clone())
+    /// After that tick: the step's reply back, or `None` when a stop answered it (the step ends
+    /// with the tick).
+    pub fn take_step_reply(&self) -> Option<ReplyTo> {
+        self.shared.held_step.lock().ok().and_then(|mut h| h.take())
     }
 
     /// The game stopped: the status says so and readers waiting for a newer snapshot wake.
@@ -258,15 +267,28 @@ impl StateHandle {
     }
 
     /// The script debugger holds the game thread inside tick `tick`: records the stop's summary
-    /// (`{reason, tick, system, location, ...}`, pocket-debug's `Pause::summary`), counts it and
-    /// sets the state to `Breakpoint`. Leaving it is `set_state(Ticking)`.
+    /// (`{reason, tick, system, location, ...}`, pocket-debug's `Pause::summary`), sets the state
+    /// to `Breakpoint`, answers the `time.step` the tick belongs to (`{tick, world_hash: null,
+    /// errors: [], paused: true, stopped_by}`, [`Publisher::hold_step_reply`]) and then counts the
+    /// stop, so a presenter that sees the count change finds that step already answered. Leaving
+    /// it is `set_state(Ticking)`.
     pub fn stopped(&self, tick: Tick, summary: serde_json::Value) {
         let s = &self.shared;
         if let Ok(mut d) = s.debug_stop.lock() {
-            *d = Some(summary);
+            *d = Some(summary.clone());
+        }
+        self.set_state(LoopState::Breakpoint, tick);
+        let step = s.held_step.lock().ok().and_then(|mut h| h.take());
+        if let Some(reply) = step {
+            reply.send(Ok(ReplyValue::Json(serde_json::json!({
+                "tick": summary["tick"],
+                "world_hash": null,
+                "errors": [],
+                "paused": true,
+                "stopped_by": summary,
+            }))));
         }
         s.debug_stops.fetch_add(1, Ordering::AcqRel);
-        self.set_state(LoopState::Breakpoint, tick);
     }
 }
 

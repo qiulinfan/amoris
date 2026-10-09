@@ -173,8 +173,9 @@ pub fn tools() -> Vec<ToolDef> {
                 continue; pause; wait {timeout_ms}; watch {entity, component, field}: pause when \
                 a script's write changes it; unwatch {id}; exceptions {mode: \
                 none|uncaught|all}; rewind {tick, bundle}; attach; detach. A time step that \
-                hits a breakpoint returns at once (stopped_by); while held, reads still answer \
-                and other calls are refused with debug.paused.",
+                hits a breakpoint returns at once (stopped_by); while held, reads still answer, \
+                play stop ends Play, a time pause is queued for the tick's end, and other calls \
+                are refused with debug.paused.",
             schema: obj(
                 json!({
                     "action": action(DEBUG_ACTIONS),

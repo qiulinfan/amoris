@@ -33,7 +33,10 @@ pocket snapshots restore 0                             # keeps the applied scrip
 ```
 
 While the debugger holds the game, reads answer from the last tick's end and other calls are refused
-with `debug.paused` until `pocket debug continue`.
+with `debug.paused` until `pocket debug continue`. A breakpoint that every tick hits holds the game
+again right after the continue: clear it (`pocket debug clear`), or `pocket time pause` while held
+(queued for the end of the tick) and then continue, to act between ticks; `pocket play stop` ends
+Play wherever it stands.
 
 ## A game
 

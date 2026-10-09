@@ -15,7 +15,7 @@ import { useScripts } from "../state/scripts";
 import { useSelection } from "../state/selection";
 import { useSession } from "../state/session";
 import { useWorld } from "../state/world";
-import { continueIfStopping, onPaused, refreshWatches } from "../actions/debug";
+import { onPaused, refreshWatches } from "../actions/debug";
 
 let started = false;
 
@@ -151,12 +151,21 @@ export async function refreshSnapshots() {
 // ---- world.changed, coalesced -------------------------------------------------------------------
 
 let treeDirty = false;
+/** A reset came: the tree and every entity are read again. */
+let everything = false;
 const dirty = new Set<EntityId>();
 const gone = new Set<EntityId>();
 let flushing: Promise<void> | null = null;
 let again = false;
 
 function onWorldChanged(c: WorldChanged) {
+  if (c.reset) {
+    // Play, Stop or a restore replaced the world: no diff says what changed.
+    everything = true;
+    treeDirty = true;
+    void flush();
+    return;
+  }
   const nodes = useWorld.getState().nodes;
   if (c.spawned.length || c.despawned.length) treeDirty = true;
   c.spawned.forEach((id) => dirty.add(id));
@@ -179,15 +188,18 @@ export function flush(): Promise<void> {
     await Promise.resolve();
     do {
       again = false;
+      const all = everything;
       const ids = [...dirty];
       const removed = [...gone];
       const tree = treeDirty;
+      everything = false;
       dirty.clear();
       gone.clear();
       treeDirty = false;
       if (removed.length) useWorld.getState().removeEntities(removed);
       if (tree) await refreshTree().catch(() => undefined);
-      if (ids.length) await refreshEntities(ids);
+      const refetch = all ? useWorld.getState().order : ids;
+      if (refetch.length) await refreshEntities(refetch);
       // Components added or removed change the tree's component lists.
       if (!tree && ids.some((id) => componentsDiffer(id))) await refreshTree().catch(() => undefined);
     } while (again);
@@ -216,7 +228,6 @@ function componentsDiffer(id: EntityId): boolean {
 }
 
 async function onDebug(d: DebugState) {
-  if (continueIfStopping(d)) return;
   let state = d;
   if (d.state === "paused" && !d.frames) {
     try {

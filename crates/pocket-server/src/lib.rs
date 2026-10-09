@@ -50,6 +50,11 @@ pub trait DebugHub: Send + Sync {
     fn methods(&self) -> Vec<Value> {
         Vec::new()
     }
+
+    /// Passes over every pause while on (pocket-debug's `DebugHub::pass`; calls come in pairs):
+    /// a current pause resumes and nothing stops the game thread until it is off again. The host's
+    /// `play.stop` turns it on while the debugger holds Play (server.md 3.4).
+    fn pass(&self, _on: bool) {}
 }
 
 /// Renders a camera view for `capture` (an image or the id buffer's summary).

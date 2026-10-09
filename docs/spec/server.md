@@ -152,10 +152,15 @@ thread other sources' commands still land between the ticks of a long step (thre
 The script debugger ends a step too: when it stops the game inside a tick of the step (a
 breakpoint, a data watch, a `debugger;` statement, an exception it pauses on, a debugger step), the
 step ends with that tick and the rest is dropped, so `debug.continue` finishes the tick and the
-world stands at its end. `stopped_by` is then the stop's summary, `{reason: "breakpoint" |
-"data_breakpoint" | "debugger_statement" | "exception" | "step" | "pause", tick, system, location:
-{file, line, column}, breakpoint?, watch?: {id, entity, component, field, before, after,
-written_at}, exception?}`. The host answers the step at the stop, not at the resume (3.4).
+world stands at its end. The game thread answers that step at the stop, not at the resume: before
+each tick of a step the loop hands the step's reply to the loop state, and the stop's record
+(pocket-link `StateHandle::stopped`) answers it `{tick, world_hash: null, errors: [], paused: true,
+stopped_by}`. `stopped_by` is then the stop's summary, `{reason: "breakpoint" | "data_breakpoint" |
+"debugger_statement" | "exception" | "step" | "pause", tick, system, location: {file, line,
+column}, breakpoint?, watch?: {id, entity, component, field, before, after, written_at},
+exception?}`. Only the step the stopped tick belongs to is answered and ended; a step queued
+behind it (another client's, or a second call) has run none of its ticks, runs all of them when the
+game goes on, and its caller hears `debug.paused {queued: true}` (3.4).
 
 `sample: {fields: ["Sloop.Boat.rudder", "3.Transform.position.y"], every? = 1}` reads each
 `Entity.Component.field` (entity by name, id or `Name#id`; a path after the field) after every
@@ -201,27 +206,56 @@ read`, and the CLI had no read timeout, so 28 calls in 11 runs hung until the ag
 - The debugger records each stop in the loop state with its summary (pocket-link
   `StateHandle::stopped`; `SnapshotReader::debug_stop`, `debug_stops`), so the server knows where
   the game stands without asking the hub.
-- **A step answers at the stop.** A call waiting on the game looks for a new stop every 5 ms; a
-  `time.step` then answers `{tick, world_hash: null, errors: [], paused: true, stopped_by}` with
-  the stop's summary (3.2), and the loop ends that step with the stopped tick. Measured
-  (provisional, a loaded Windows machine; agent-debug.md): 3.7 ms from the call to the answer in
-  `paused_host.rs`, 18 ms over HTTP on the sailing sample (the 5 ms look meets Windows' 15.6 ms
-  timer), tens of milliseconds through the CLI, most of it the process's start.
+- **A step answers at the stop.** The game thread answers the `time.step` whose tick stopped,
+  from inside the stop (3.2), and the loop ends that step with the stopped tick. Measured
+  (provisional, a loaded Windows machine; agent-debug.md): 0.4 ms from the call to the answer over a
+  kept-alive HTTP connection on the sailing sample (`tools/held_host_review.py`), tens of
+  milliseconds through the CLI, most of it the process's start. (Until the review of 2026-10-09 the
+  server looked for a stop every 5 ms and answered every waiting `time.step` at it; a second step
+  queued behind the stopped one was told it had stopped and then ran all its ticks after the
+  resume.)
 - **Reads answer from the last publication**, the world at the boundary before the tick the game
-  stands in: `status` (with `state: "breakpoint"` and `paused_at`), `world.get`, `world.tree`,
-  `world.query`, `world.schema`, `scripts.status` (the bundle in the snapshot's header) and
-  `snapshot`, each marked `paused_at` (`world.get`, `scripts.status`, `snapshot`: the stop's
-  summary with `snapshot_tick`; each row of `world.tree` and `world.query`: the stopped tick), and
-  `scripts.list` and `scripts.read` from the project's files (`diagnostics` empty). The snapshot's
-  JSON is the registry's format of each section, which equals what the game's own reads answer
-  (`paused_host.rs` compares them call by call). `catalog.list` (fetched before serving),
-  `docs.search` (component schemas from the publication's registry), `events.*`, `log.since`,
-  `assets.list`, `scripts.guide` and `debug.*` never need the game.
+  stands in: `status` (with `state: "breakpoint"` and `paused_at`) and `time.control {}` (which
+  changes nothing and is the status), `world.get`, `world.tree`, `world.query`, `world.schema`,
+  `scripts.status` (the bundle in the snapshot's header) and `snapshot`, each marked `paused_at`
+  (`world.get`, `scripts.status`, `snapshot`: the stop's summary with `snapshot_tick`; each row of
+  `world.tree` and `world.query`: the stopped tick), and `scripts.list` and `scripts.read` from the
+  project's files (`diagnostics` empty). The snapshot's JSON is the registry's format of each
+  section, which equals what the game's own reads answer (`paused_host.rs` compares them call by
+  call). `catalog.list` (fetched before serving), `docs.search` (component schemas from the
+  publication's registry), `events.*`, `log.since`, `assets.list`, `scripts.guide` and `debug.*`
+  never need the game.
+- **`play.stop` in Play ends Play wherever the debugger holds it.** Stop drops the fork, held tick
+  and all, so the server has the debugger pass over every pause (pocket-debug `DebugHub::pass`,
+  the server's `DebugHub::pass`) from the moment it sees one until the Stop lands: the held tick
+  runs to its end with no further stop (a breakpoint in a loop, a data watch, a `debugger;`), the
+  boundary applies `play.stop`, and the pass ends, also when the caller goes away first.
+  Breakpoints and watches stay set and stop the next Play. This is the editor's Stop and an agent's
+  `pocket play stop` at a breakpoint; measured (provisional) 2 to 12 ms after a one-second pause.
+  In the edit world (a held `time.step`) there is no Play to end and `play.stop` is refused like
+  any other call.
+- **`time.control` is queued, not refused.** Sent while held, it goes to the game thread and is
+  answered at once `debug.paused {queued: true}`: it runs at the boundary after the held tick,
+  before any other tick (a boundary applies every command waiting). `time.control {pause: true}`
+  then `debug.continue` leaves the game resting at that boundary, where every call works again and
+  a `time.step` stops at the breakpoint again: the way out of a breakpoint the next tick hits again,
+  short of clearing it. Its own answer is not delivered (nor a refusal of bad parameters).
 - **Everything else is refused at once** with `debug.paused {method, location, reason, tick,
   system, queued: false, stop, answers}`: "The game stands at scripts/rules.ts:27 (breakpoint, tick
-  58); scripts.apply needs the game thread, which waits for debug.continue (or debug.step)." A call
-  sent before the stop and still waiting when it comes answers `debug.paused {queued: true}`: it
-  stays queued and runs when the game goes on.
+  58); scripts.apply needs the game thread, which waits for debug.continue (or debug.step). [...] A
+  breakpoint the next tick hits holds the game again right after a continue: to act between ticks,
+  clear it (debug.breakpoints.clear) first; play.stop ends Play wherever it stands." A call sent
+  before a stop and still waiting when it comes answers `debug.paused {queued: true}`: it stays
+  queued and runs at the boundary after the held tick.
+- **"Continue, then act" is a race.** `debug.continue` answers once the game has left the pause; in
+  real-time Play a breakpoint that every tick hits holds it again within milliseconds (the time
+  model catches up after a pause). A call sent after the continue lands at the boundary only if it
+  reaches the game thread before the next tick starts: measured on sailing (provisional), a
+  `world.edit` over a kept-alive connection did in 60 of 60 rounds, over a new connection per call
+  in 15 of 60 (39 refused at once, 6 answered `queued: true` and applied after the next continue);
+  the CLI starts a process per call and almost never does. Before 2026-10-09 such calls waited for
+  the next resume instead, which is what hung 28 agent calls. To act between ticks: clear or
+  condition the breakpoint, or queue `time.control {pause: true}` and continue, or `play.stop`.
 - The CLI waits 60 s at most (`--timeout <s>`, `POCKET_TIMEOUT`; 10 s past a debugger call's
   `timeout_ms`) and answers `host.timeout` after it; the MCP stdio bridge to a running host uses
   the same client.
@@ -320,7 +354,7 @@ Results are the method's JSON as text; refusals are tool results with `isError` 
 methods take (`file, line, condition, log, id, brief, expr, frame, name, value, kind, timeout_ms,
 entity, component, field, mode, tick, bundle`; pocket-app's `paused_host.rs` checks it against
 `pocket_debug::methods()`); `world` takes `fields`, `scripts` `lines` and `numbered`, `time`
-`sample` and `bundle`. `tools/list` is 6.6 KB (6,580 bytes, about 1,650 tokens at four bytes a
+`sample` and `bundle`. `tools/list` is 6.6 KB (6,645 bytes, about 1,660 tokens at four bytes a
 token; 2026-10-09, Windows; it was 4.4 KB, 1,236 cl100k tokens, on 2026-10-04). Player tools
 (`observe`, `act`, ...; shared/contract/mcp.md) are not projected yet.
 Served on `POST /mcp` (one developer client per session, every call pushed as `agent`) and by
@@ -382,7 +416,7 @@ error exits 2. Every call waits 60 s at most (`--timeout <s>`, `POCKET_TIMEOUT`)
 | `events.not_found` | `events.why` for a stream number the ring no longer holds |
 | `host.forbidden`, `host.not_found`, `host.unreachable`, `host.bind_failed` | the guard; no file; the CLI finds no host; the port is taken |
 | `host.timeout` | the CLI waited its timeout (60 s by default) for an answer |
-| `debug.paused` | the call needs the game thread, which the debugger holds (3.4); `queued: true` when it was sent before the stop and runs after it |
+| `debug.paused` | the call needs the game thread, which the debugger holds (3.4); `queued: true` when it was sent before the stop (or is a `time.control` sent while held) and runs at the boundary after the held tick |
 | `debug.not_available`, `capture.not_available`, `render.not_available` | plug-in not installed |
 
 ## 10. Verification

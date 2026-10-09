@@ -7,13 +7,23 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use pocket_contract::{Problem, detail};
-use pocket_link::{GameClient, game_stopped};
+use pocket_link::{GameClient, Reply, WorldMode, game_stopped};
 use serde_json::{Value, json};
 
-use crate::{Host, paused};
+use crate::{DebugHub, Host, paused};
 
 /// How often a call waiting on the game looks for a stop of the script debugger.
 const PAUSE_POLL: Duration = Duration::from_millis(5);
+
+/// While a `play.stop` waits on a game the debugger holds: the debugger passes over every pause
+/// (`DebugHub::pass`) until this drops, also when the caller goes away first.
+struct Passing(Arc<dyn DebugHub>);
+
+impl Drop for Passing {
+    fn drop(&mut self) {
+        self.0.pass(false);
+    }
+}
 
 /// Whose client a call goes through.
 #[derive(Clone)]
@@ -61,10 +71,15 @@ impl Host {
     }
 
     /// Sends a command to the game thread and awaits its reply, never behind the script
-    /// debugger (server.md 3.4): a game held at a breakpoint refuses the call at once with
-    /// `debug.paused`; a stop that comes while the call waits answers a `time.step` with where it
-    /// stopped (`{tick, stopped_by, paused: true}`; the loop ends the step with that tick) and
-    /// any other call with `debug.paused {queued: true}` (it runs when the game goes on).
+    /// debugger (server.md 3.4). A game held at a breakpoint refuses the call at once with
+    /// `debug.paused {queued: false}`, with two exceptions: `play.stop` in Play crosses the hold
+    /// (Stop drops the fork, held tick and all, so the debugger passes over every pause until the
+    /// Stop lands), and `time.control` is queued for the boundary after the held tick and answered
+    /// `debug.paused {queued: true}` at once (how real time stops at a breakpoint the next tick
+    /// hits again). A stop that comes while the call waits: the `time.step` the stopped tick
+    /// belongs to has been answered at the stop by the game thread (`{tick, stopped_by, paused:
+    /// true}`, pocket-link's `StateHandle::stopped`); any other call answers `debug.paused
+    /// {queued: true}` (it stays queued and runs when the game goes on).
     pub(crate) async fn game(
         &self,
         via: &Via,
@@ -72,11 +87,18 @@ impl Host {
         params: Value,
     ) -> Result<Value, Problem> {
         let reader = &self.0.reader;
-        if let Some(stop) = reader.debug_stop() {
-            return Err(paused::refusal(method, &stop, false));
+        let hub = (method == "play.stop" && reader.world().mode == WorldMode::Play)
+            .then(|| self.0.debug.read().ok().and_then(|h| h.clone()))
+            .flatten();
+        let held = reader.debug_stop().filter(|_| hub.is_none());
+        let queue = matches!(method, "time.control" | "time_control");
+        if let Some(stop) = &held
+            && !queue
+        {
+            return Err(paused::refusal(method, stop, false));
         }
         let stops = reader.debug_stops();
-        let (tx, mut rx) = tokio::sync::oneshot::channel();
+        let (tx, mut rx) = tokio::sync::oneshot::channel::<Reply>();
         {
             let client = self.client(via);
             let mut c = client.lock().map_err(|_| {
@@ -90,28 +112,41 @@ impl Host {
                 let _ = tx.send(r);
             })?;
         }
+        if let Some(stop) = held {
+            return Err(paused::refusal(method, &stop, true));
+        }
+        let answer = |r: Option<Reply>| match r {
+            Some(r) => r.map(pocket_link::ReplyValue::into_json),
+            None => Err(reader
+                .stop_reason()
+                .unwrap_or_else(|| game_stopped("the game ended before it answered", None))),
+        };
+        let mut passing: Option<Passing> = None;
         let mut poll = tokio::time::interval(PAUSE_POLL);
         poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             tokio::select! {
-                r = &mut rx => {
-                    return match r {
-                        Ok(r) => r.map(pocket_link::ReplyValue::into_json),
-                        Err(_) => Err(reader.stop_reason().unwrap_or_else(|| {
-                            game_stopped("the game ended before it answered", None)
-                        })),
-                    };
-                }
+                biased;
+                r = &mut rx => return answer(r.ok()),
                 _ = poll.tick() => {
-                    if reader.debug_stops() == stops {
-                        continue;
-                    }
                     let Some(stop) = reader.debug_stop() else {
                         continue;
                     };
-                    if matches!(method, "time.step" | "step") {
-                        return Ok(json!({"tick": stop["tick"], "world_hash": null, "errors": [],
-                                         "paused": true, "stopped_by": stop}));
+                    if let Some(hub) = &hub {
+                        if passing.is_none() {
+                            hub.pass(true);
+                            passing = Some(Passing(hub.clone()));
+                        } else {
+                            // A pause that began before the debugger heard of the pass.
+                            let _ = hub.call("debug.continue", json!({})).await;
+                        }
+                        continue;
+                    }
+                    if reader.debug_stops() == stops {
+                        continue;
+                    }
+                    if let Ok(r) = rx.try_recv() {
+                        return answer(Some(r));
                     }
                     return Err(paused::refusal(method, &stop, true));
                 }

@@ -5,6 +5,13 @@ import { logLocal } from "../state/logs";
 import { useUi } from "../state/ui";
 
 export function reportError(e: unknown, context?: string) {
+  if (e instanceof HostError && e.code === "debug.paused" && e.detail.queued === true) {
+    // Queued behind the script debugger's stop: it runs at the boundary after the held tick
+    // (server.md 3.4), e.g. Pause while paused at a breakpoint.
+    useUi.getState().toast({ kind: "info", title: `${context ? `${context}: ` : ""}queued`, body: e.message });
+    logLocal("info", `${e.method} queued: ${e.message}`);
+    return;
+  }
   if (e instanceof HostError) {
     const did = e.suggestions;
     useUi.getState().toast({

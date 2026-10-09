@@ -148,6 +148,9 @@ pub(crate) struct Inner {
     pub generation: AtomicU64,
     pub pause_requested: AtomicBool,
     pub paused: AtomicBool,
+    /// How many callers want every pause passed over ([`DebugHub::pass`]): while above zero the
+    /// game thread does not stop.
+    pub passing: AtomicUsize,
     /// Subscribers: without any, console lines are not even located.
     pub listeners: AtomicUsize,
     /// Statements the hook has looked at while attached.
@@ -207,6 +210,7 @@ impl DebugHub {
                 generation: AtomicU64::new(1),
                 pause_requested: AtomicBool::new(false),
                 paused: AtomicBool::new(false),
+                passing: AtomicUsize::new(0),
                 listeners: AtomicUsize::new(0),
                 traced: AtomicU64::new(0),
                 state: Mutex::new(State {
@@ -306,6 +310,30 @@ impl DebugHub {
     pub fn release(&self) {
         *lock(&self.inner.gate) = false;
         self.inner.gate_cv.notify_all();
+    }
+
+    /// Passes over every pause while on (`pass(true)` and `pass(false)` come in pairs; callers
+    /// count): a current pause resumes, and breakpoints, data breakpoints, `debugger;` statements,
+    /// exceptions, steps and pause requests do not stop the game thread until every caller has
+    /// turned it off. Breakpoints and watches stay set. The host's `play.stop` while the debugger
+    /// holds Play (docs/spec/server.md 3.4): Stop drops the held tick's world, so the rest of the
+    /// tick runs to the boundary where the Stop lands.
+    pub fn pass(&self, on: bool) {
+        if on {
+            self.inner.passing.fetch_add(1, Ordering::AcqRel);
+            self.inner.pause_requested.store(false, Ordering::Release);
+            let _ = self.send(Command::Resume);
+        } else {
+            let _ = self
+                .inner
+                .passing
+                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| n.checked_sub(1));
+        }
+    }
+
+    /// Whether some caller has the debugger pass over every pause ([`DebugHub::pass`]).
+    pub fn is_passing(&self) -> bool {
+        self.inner.passing.load(Ordering::Acquire) > 0
     }
 
     /// Detaches every frontend: breakpoints and watches go, a pause resumes, the next tick runs

@@ -2,9 +2,11 @@
 //! of docs/bench/debug-eval.md): no call waits on a paused game. What presenters can answer is
 //! answered here, from the last published snapshot (the world at the boundary before the tick the
 //! game stands in) and from the project's files: `status`, `world.get/tree/query/schema`,
-//! `scripts.list/read/status` and `snapshot`, each marked `paused_at`. Every other call that needs
-//! the game thread is refused at once with `debug.paused`, which says where the game stands and how
-//! to go on. A `time.step` the debugger stops answers at the stop (`stopped_by`, `dispatch.rs`).
+//! `scripts.list/read/status`, `snapshot` and `time.control {}` (the status), each marked
+//! `paused_at`. Every other call that needs the game thread is refused at once with
+//! `debug.paused`, which says where the game stands and how to go on, except `play.stop` in Play,
+//! which the debugger lets through (`dispatch.rs`). A `time.step` the debugger stops answers at the
+//! stop (`stopped_by`, pocket-link's `StateHandle::stopped`).
 //!
 //! The snapshot's JSON is the registry's format of each section, which is what the game's own
 //! `world.get` answers (the paused-reads test compares them); the parameters are checked as
@@ -120,21 +122,26 @@ pub(crate) fn place(stop: &Value) -> String {
 }
 
 /// `debug.paused`: `method` needs the game thread, which the debugger holds; or, `queued`, the call
-/// was sent before the stop and runs when the game goes on.
+/// was sent (before the stop, or a `time.control` while held) and runs at the boundary after the
+/// held tick.
 pub(crate) fn refusal(method: &str, stop: &Value, queued: bool) -> Problem {
     let at = place(stop);
     let reason = stop["reason"].as_str().unwrap_or("pause");
     let tick = &stop["tick"];
     let message = if queued {
         format!(
-            "The game stopped at {at} ({reason}, tick {tick}) before {method} ran; it stays \
-             queued and runs when the game goes on (debug.continue or debug.step)."
+            "The game stands at {at} ({reason}, tick {tick}); {method} is queued and runs at the \
+             boundary after this tick, before any other tick, once debug.continue (or \
+             debug.step) lets the tick finish."
         )
     } else {
         format!(
             "The game stands at {at} ({reason}, tick {tick}); {method} needs the game thread, \
              which waits for debug.continue (or debug.step). Meanwhile status, world \
-             get/tree/query/schema, scripts list/read/status, events, logs and debug.* answer."
+             get/tree/query/schema, scripts list/read/status, events, logs and debug.* answer. \
+             A breakpoint the next tick hits holds the game again right after a continue: to act \
+             between ticks, clear it (debug.breakpoints.clear) first; play.stop ends Play \
+             wherever it stands."
         )
     };
     Problem::new(
@@ -566,10 +573,13 @@ impl Host {
         params: &Value,
     ) -> Option<Result<Value, Problem>> {
         let stop = self.0.reader.debug_stop()?;
-        let method = if method == "world_get" {
-            "world.get"
-        } else {
-            method
+        let unchanged = params.is_null() || params.as_object().is_some_and(|m| m.is_empty());
+        let method = match method {
+            "world_get" => "world.get",
+            // `time.control {}` changes nothing and answers the status (the editor's Stop reads
+            // the Play world's bundle with it).
+            "time.control" | "time_control" if unchanged => "status",
+            m => m,
         };
         if !PAUSED_READS.contains(&method) {
             return None;

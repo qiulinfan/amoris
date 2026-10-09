@@ -394,6 +394,14 @@ impl GameHook {
         hits: Vec<String>,
         data: Option<WatchHit>,
     ) {
+        if self.inner.passing.load(Ordering::Acquire) > 0 {
+            // A caller passes over every pause (`DebugHub::pass`): no stop, and no step left
+            // pending for after it.
+            if let Ok(mut local) = self.local.try_borrow_mut() {
+                local.step = Step::None;
+            }
+            return;
+        }
         unsafe { set_tracing(ctx, false) };
         while self.rx.try_recv().is_ok() {} // requests from before this pause
         let scripts: Vec<Arc<Script>> = self.local.borrow().scripts.clone();

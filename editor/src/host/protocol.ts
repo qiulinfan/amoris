@@ -65,12 +65,23 @@ export interface DebugStop {
   snapshot_tick?: number;
 }
 
-export interface WorldChanged {
+/** What changed between two publications of the same world. */
+export interface WorldDiff {
   tick: number;
   spawned: EntityId[];
   despawned: EntityId[];
   changed: [EntityId, string][];
+  reset?: undefined;
 }
+
+/** The world shown was replaced (Play, Stop, a restore; server.md 4): everything is read again. */
+export interface WorldReset {
+  tick: number;
+  reset: true;
+  epoch: number;
+}
+
+export type WorldChanged = WorldDiff | WorldReset;
 
 export interface GameEvent {
   seq: number;

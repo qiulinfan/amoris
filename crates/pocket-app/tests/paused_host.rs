@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use pocket_contract::Problem;
 use pocket_debug::{DebugHub, HubOptions};
-use pocket_link::Source;
+use pocket_link::{LoopState, Source};
 use pocket_runtime::thread::{GameThread, Pacing, ThreadOptions};
 use pocket_runtime::{GameBuilder, Project};
 use pocket_server::{BoxFuture, GameAccess, Host, Via};
@@ -54,6 +54,10 @@ impl pocket_server::DebugHub for Bridge {
             .map(pocket_debug::Method::entry)
             .collect()
     }
+
+    fn pass(&self, on: bool) {
+        self.0.pass(on);
+    }
 }
 
 /// Every key named `paused_at` taken out.
@@ -75,44 +79,100 @@ fn unmarked(mut v: Value) -> Value {
     v
 }
 
-#[test]
-fn a_held_host_never_blocks_its_callers() {
-    let project = Project::load(&fixture()).unwrap();
-    let setup = Arc::new(project.setup(false).unwrap());
-    let hub = DebugHub::new(HubOptions::default());
-    let start = Instant::now();
-    let clock: pocket_runtime::thread::Clock =
-        Arc::new(move || start.elapsed().as_secs_f64() * 1000.0);
-    let h = hub.clone();
-    let dir = fixture();
-    // As pocket serve: real time at speed 1, paused (the edit world).
-    let handle = GameThread::spawn(
-        move || {
-            let mut g = GameBuilder::new(setup).project(dir).build()?;
-            g.set_script_debugger(Some(h.hook()));
-            Ok(g)
-        },
-        ThreadOptions {
-            pacing: Pacing::RealTime { speed: 1.0 },
-            paused: true,
-            ..ThreadOptions::new(clock)
-        },
-    )
-    .unwrap();
-    hub.set_loop_state(handle.loop_state());
-    let clients = handle.clients();
-    let access = GameAccess {
-        reader: handle.reader(),
-        editor: clients.client(Source::Editor).unwrap(),
-        api: clients.developer(),
-        developer: Arc::new(move || clients.developer()),
-    };
-    let host = Host::new(access, fixture(), None);
-    host.set_debug(Arc::new(Bridge(hub.clone())));
-    let rt = tokio::runtime::Builder::new_multi_thread()
+/// The debugger's test project on a game thread started as `pocket serve` starts it (real time at
+/// speed 1, paused: the edit world), behind a host with the debugger installed.
+struct Served {
+    handle: pocket_runtime::thread::GameHandle,
+    hub: DebugHub,
+    host: Host,
+}
+
+impl Served {
+    fn start() -> Served {
+        let project = Project::load(&fixture()).unwrap();
+        let setup = Arc::new(project.setup(false).unwrap());
+        let hub = DebugHub::new(HubOptions::default());
+        let start = Instant::now();
+        let clock: pocket_runtime::thread::Clock =
+            Arc::new(move || start.elapsed().as_secs_f64() * 1000.0);
+        let h = hub.clone();
+        let dir = fixture();
+        let handle = GameThread::spawn(
+            move || {
+                let mut g = GameBuilder::new(setup).project(dir).build()?;
+                g.set_script_debugger(Some(h.hook()));
+                Ok(g)
+            },
+            ThreadOptions {
+                pacing: Pacing::RealTime { speed: 1.0 },
+                paused: true,
+                ..ThreadOptions::new(clock)
+            },
+        )
+        .unwrap();
+        hub.set_loop_state(handle.loop_state());
+        let clients = handle.clients();
+        let access = GameAccess {
+            reader: handle.reader(),
+            editor: clients.client(Source::Editor).unwrap(),
+            api: clients.developer(),
+            developer: Arc::new(move || clients.developer()),
+        };
+        let host = Host::new(access, fixture(), None);
+        host.set_debug(Arc::new(Bridge(hub.clone())));
+        Served { handle, hub, host }
+    }
+
+    fn stop(self) {
+        self.hub.shutdown();
+        drop(self.host);
+        self.handle.shutdown(5000).unwrap();
+    }
+}
+
+fn runtime() -> tokio::runtime::Runtime {
+    tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
-        .unwrap();
+        .unwrap()
+}
+
+/// A call through the HTTP API's client that must succeed.
+async fn ok(host: &Host, m: &str, p: Value) -> Value {
+    host.call(&Via::Api, m, p)
+        .await
+        .unwrap_or_else(|e| panic!("{m}: {} {}", e.code, e.message))
+}
+
+/// Waits until the debugger holds the game (true) or `within` passes (false).
+async fn held(host: &Host, within: Duration) -> bool {
+    let end = Instant::now() + within;
+    while host.debug_stop().is_none() {
+        if Instant::now() > end {
+            return false;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    true
+}
+
+/// Waits until the game thread has no step left and waits for a command; its status then.
+async fn settled(host: &Host) -> Value {
+    let end = Instant::now() + Duration::from_secs(10);
+    loop {
+        let s = ok(host, "status", json!({})).await;
+        let waiting = host.reader().status().state == LoopState::Waiting;
+        if (s["steps_due"] == 0 && waiting) || Instant::now() > end {
+            return s;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+#[test]
+fn a_held_host_never_blocks_its_callers() {
+    let Served { handle, hub, host } = Served::start();
+    let rt = runtime();
     rt.block_on(async {
         let via = Via::Api;
         let call = |m: &'static str, p: Value| {
@@ -369,6 +429,181 @@ fn a_held_host_never_blocks_its_callers() {
     hub.shutdown();
     drop(host);
     handle.shutdown(5000).unwrap();
+}
+
+/// Two steps queued when the debugger stops the first (the second finding of the review of
+/// server.md 3.4): the step whose tick stopped answers at the stop and ends with that tick; the
+/// one behind it, which has run none of its ticks, answers `debug.paused {queued: true}` and runs
+/// all of them when the game goes on, as it says.
+#[test]
+fn a_stop_answers_only_the_step_it_ends() {
+    let served = Served::start();
+    let rt = runtime();
+    rt.block_on(async {
+        let host = &served.host;
+        // Past the fixture's `debugger;` statement (tick 8) before anything listens.
+        ok(host, "time.step", json!({"ticks": 20})).await;
+        ok(
+            host,
+            "debug.breakpoints.set",
+            json!({"file": "rules.ts", "line": mark("next"), "condition": "ctx.tick === 3000"}),
+        )
+        .await;
+        let a = {
+            let host = host.clone();
+            tokio::spawn(async move {
+                host.call(&Via::Api, "time.step", json!({"ticks": 4000}))
+                    .await
+            })
+        };
+        tokio::time::sleep(Duration::from_millis(1)).await;
+        let b = {
+            let host = host.clone();
+            tokio::spawn(async move {
+                host.call(&Via::Api, "time.step", json!({"ticks": 50}))
+                    .await
+            })
+        };
+        let a = a.await.unwrap().expect("the first step answers");
+        assert_eq!(a["paused"], true, "{a:#}");
+        assert_eq!(a["stopped_by"]["reason"], "breakpoint", "{a:#}");
+        assert_eq!(a["stopped_by"]["tick"], 3000, "{a:#}");
+        assert_eq!(a["tick"], 3000, "{a:#}");
+        let b = b
+            .await
+            .unwrap()
+            .expect_err("the second step is not the one stopped");
+        assert_eq!(b.code, "debug.paused", "{b:#?}");
+        assert_eq!(b.detail["queued"], true, "{b:#?}");
+        assert_eq!(b.detail["method"], "time.step", "{b:#?}");
+        let at = ok(host, "status", json!({})).await;
+        assert_eq!(
+            at["tick"], 2999,
+            "the boundary before the held tick: {at:#}"
+        );
+
+        ok(host, "debug.breakpoints.clear", json!({})).await;
+        ok(host, "debug.continue", json!({})).await;
+        let after = settled(host).await;
+        assert_eq!(
+            after["tick"], 3050,
+            "the first step ended with tick 3000 and the second ran its 50: {after:#}"
+        );
+        assert_eq!(after["steps_due"], 0, "{after:#}");
+    });
+    served.stop();
+}
+
+/// Stop while the debugger holds Play (the first finding of that review): `play.stop` lets the
+/// held tick, and every stop later in it, run to the boundary where it lands, so the editor's Stop
+/// and an agent's `pocket play stop` work at a breakpoint the next tick hits again;
+/// `time.control {}` answers the status while held; `time.control {pause: true}` is queued for the
+/// boundary after the held tick, so a continue leaves Play resting there; the breakpoints stay and
+/// stop the next Play.
+#[test]
+fn play_stop_ends_play_wherever_the_debugger_holds_it() {
+    let served = Served::start();
+    let rt = runtime();
+    rt.block_on(async {
+        let host = &served.host;
+        // Three gauges: the breakpoint in the loop over them stops three times in every tick.
+        let spawn = |name: &str| json!({"spawn": {"name": name, "components": {"Gauge": {}}}});
+        ok(
+            host,
+            "world.edit",
+            json!({"ops": [spawn("Gauge2"), spawn("Gauge3")]}),
+        )
+        .await;
+        let bp = ok(
+            host,
+            "debug.breakpoints.set",
+            json!({"file": "rules.ts", "line": mark("next")}),
+        )
+        .await;
+        let edit = ok(host, "status", json!({})).await;
+        for round in 0..2 {
+            ok(host, "play.start", json!({})).await;
+            assert!(
+                held(host, Duration::from_secs(5)).await,
+                "round {round}: the breakpoint holds Play"
+            );
+            let st = ok(host, "time.control", json!({})).await;
+            assert_eq!(
+                (st["mode"].as_str(), st["state"].as_str()),
+                (Some("play"), Some("breakpoint")),
+                "{st:#}"
+            );
+            assert_eq!(st["bundle"], edit["bundle"], "{st:#}");
+            let e = host
+                .call(
+                    &Via::Api,
+                    "world.edit",
+                    json!({"ops": [{"destroy": {"entity": "Gauge"}}]}),
+                )
+                .await
+                .unwrap_err();
+            assert_eq!(e.code, "debug.paused", "{e:#?}");
+            assert_eq!(e.detail["queued"], false, "{e:#?}");
+            if round == 1 {
+                // Pause real time at the breakpoint: queued for the boundary after the held tick.
+                let stop = host.debug_stop().unwrap();
+                let e = host
+                    .call(&Via::Api, "time.control", json!({"pause": true}))
+                    .await
+                    .unwrap_err();
+                assert_eq!(e.code, "debug.paused", "{e:#?}");
+                assert_eq!(e.detail["queued"], true, "{e:#?}");
+                ok(host, "debug.continue", json!({})).await;
+                // The other two gauges' stops in the same tick.
+                for _ in 0..2 {
+                    assert!(held(host, Duration::from_secs(5)).await);
+                    ok(host, "debug.continue", json!({})).await;
+                }
+                let rest = settled(host).await;
+                assert_eq!(rest["paused"], true, "{rest:#}");
+                assert_eq!(rest["mode"], "play", "{rest:#}");
+                assert_eq!(rest["tick"], stop["tick"], "Play rests after the held tick");
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                let still = ok(host, "status", json!({})).await;
+                assert_eq!(still["tick"], stop["tick"], "{still:#}");
+                assert!(host.debug_stop().is_none());
+                // Between ticks every call works; a step stops at the breakpoint again.
+                ok(host, "world.edit", json!({"ops": [spawn("Gauge4")]})).await;
+                let s = ok(host, "time.step", json!({"ticks": 5})).await;
+                assert_eq!(s["paused"], true, "{s:#}");
+            }
+            let t = Instant::now();
+            let s = ok(host, "play.stop", json!({})).await;
+            let took = t.elapsed();
+            assert_eq!(s["mode"], "edit", "{s:#}");
+            assert_eq!(s["world_hash"], edit["world_hash"], "{s:#}");
+            assert!(took < Duration::from_secs(2), "play.stop took {took:?}");
+            eprintln!("round {round}: play.stop at a breakpoint answered in {took:?}");
+            assert!(host.debug_stop().is_none());
+            assert!(!served.hub.is_passing(), "the pass ends with the Stop");
+            let listed = ok(host, "debug.breakpoints.list", json!({})).await;
+            assert!(
+                listed.to_string().contains(bp["id"].as_str().unwrap()),
+                "{listed:#}"
+            );
+        }
+        // In the edit world, a step the breakpoint stops is held, and play.stop has no Play to
+        // end: it is refused like any other call.
+        let s = ok(host, "time.step", json!({"ticks": 2})).await;
+        assert_eq!(s["paused"], true, "{s:#}");
+        let e = host
+            .call(&Via::Api, "play.stop", json!({}))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            (e.code.as_str(), &e.detail["queued"]),
+            ("debug.paused", &json!(false)),
+            "{e:#?}"
+        );
+        ok(host, "debug.breakpoints.clear", json!({})).await;
+        ok(host, "debug.continue", json!({})).await;
+    });
+    served.stop();
 }
 
 /// The MCP `debug` tool takes every debugger method as an action and lists every parameter they

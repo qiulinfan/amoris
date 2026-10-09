@@ -29,19 +29,6 @@ export function onPaused(state: DebugState) {
   void refreshBreakpoints(true);
 }
 
-/** Set while Stop waits for the game thread (time.ts): every pause is continued, not shown. */
-let continuing = false;
-export function continueEveryPause(on: boolean) {
-  continuing = on;
-}
-
-/** Continues a pause that comes while Stop waits; true when it did. */
-export function continueIfStopping(state: DebugState): boolean {
-  if (!continuing || state.state !== "paused") return false;
-  void api.debug.resume().catch(() => undefined);
-  return true;
-}
-
 /** The breakpoints as the host has them (every frontend's). `quiet`: a failure is not reported. */
 export async function refreshBreakpoints(quiet = false) {
   try {
