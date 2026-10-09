@@ -437,6 +437,7 @@ fn a_body_without_a_boat_takes_no_sailing_control() {
                 profile: "skipper".into(),
                 seat: Some("deck".into()),
                 omniscient: false,
+                team: None,
             },
         ))
         .unwrap();

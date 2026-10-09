@@ -65,6 +65,7 @@ pub fn world() -> Result<Sim, pocket_contract::Problem> {
             profile: "skipper".into(),
             seat: Some("skipper".into()),
             omniscient: false,
+            team: None,
         },
         Perceivable {
             kind: "boat".into(),

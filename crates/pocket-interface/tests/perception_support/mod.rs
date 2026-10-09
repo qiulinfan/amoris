@@ -85,6 +85,7 @@ pub fn watcher(sim: &mut Sim, at: [f64; 3], heading: f64) -> EntityId {
             profile: "watch".into(),
             seat: Some("watch".into()),
             omniscient: false,
+            team: None,
         },
     ))
     .expect("spawns")

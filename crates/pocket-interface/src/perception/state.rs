@@ -31,6 +31,12 @@ pub struct Observer {
     /// (perception.md, The omniscient view; docs/spec/perception-slice2.md 2).
     #[serde(default)]
     pub omniscient: bool,
+    /// The observer's team: observers of one team share what they see (charter 5.1, Pioneer
+    /// 2026-10-09; docs/spec/player.md). Each keeps its own memory, events and ranges; an entity a
+    /// teammate sees at the end of a tick is seen by every member of the team, at the detail the
+    /// best-placed member sees it. `None`: alone.
+    #[serde(default)]
+    pub team: Option<String>,
 }
 
 /// An entity some observer can perceive; everything else is invisible to every observer but the

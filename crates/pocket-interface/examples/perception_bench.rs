@@ -107,6 +107,7 @@ fn npc_world() -> Sim {
             profile: "guard".into(),
             seat: None,
             omniscient: false,
+            team: None,
         };
         b.spawn((Transform::at_yaw(p, yaw), o)).expect("spawns");
     }

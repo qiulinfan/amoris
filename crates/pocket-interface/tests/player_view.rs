@@ -32,6 +32,7 @@ fn scene() -> (Sim, u64, u64) {
         profile: "skipper".into(),
         seat: Some("rival".into()),
         omniscient: false,
+        team: None,
     });
     for _ in 0..2 {
         sim.step(&mut pocket_sim::NoHooks).unwrap();
@@ -175,6 +176,7 @@ fn player_indices_name_declared_seats_only() {
             profile: "skipper".into(),
             seat: Some(seat.into()),
             omniscient: false,
+            team: None,
         });
         bodies.push(id);
     }

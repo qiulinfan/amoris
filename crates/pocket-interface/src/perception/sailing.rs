@@ -30,6 +30,7 @@ pub fn skipper() -> Observer {
         profile: SKIPPER.to_owned(),
         seat: Some(SKIPPER.to_owned()),
         omniscient: false,
+        team: None,
     }
 }
 

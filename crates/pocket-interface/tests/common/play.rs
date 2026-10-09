@@ -96,6 +96,7 @@ pub fn world_in(
             profile: "skipper".into(),
             seat: Some("skipper".into()),
             omniscient: false,
+            team: None,
         },
         boat_kind(),
     ));

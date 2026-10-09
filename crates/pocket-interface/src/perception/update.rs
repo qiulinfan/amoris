@@ -78,7 +78,9 @@ pub fn compute(world: &World) -> Vec<(Entity, ObserverMemory, ObserverEvents)> {
         events: appended,
         candidates,
     };
-    let mut out = Vec::new();
+    // Steps 1 to 5 for every observer, then what its team sees (Observer.team): an entity a
+    // teammate sees is seen, at the best detail any member sees it.
+    let mut own = Vec::new();
     for (id, e) in index.iter() {
         let Some(observer) = world.get::<Observer>(e) else {
             continue;
@@ -93,10 +95,52 @@ pub fn compute(world: &World) -> Vec<(Entity, ObserverMemory, ObserverEvents)> {
             entity: e,
             position: tf.position,
         };
-        let (m, ev) = cx.one(body, tf, observer, profile);
-        out.push((e, m, ev));
+        let eye = profile.sight.as_ref().map(|s| (Eye::of(tf, s), s));
+        let visible = cx.visible(body, eye, profile, observer.omniscient);
+        own.push((body, tf, observer, profile, visible));
+    }
+    let mut out = Vec::new();
+    for (i, (body, tf, observer, profile, visible)) in own.iter().enumerate() {
+        let visible = match &observer.team {
+            Some(team) if !observer.omniscient => {
+                let mates = own
+                    .iter()
+                    .enumerate()
+                    .filter(|(j, o)| *j != i && o.2.team.as_ref() == Some(team) && !o.2.omniscient)
+                    .map(|(_, o)| o.4.as_slice());
+                shared(body.id, visible, mates)
+            }
+            _ => visible.clone(),
+        };
+        let (m, ev) = cx.one(*body, tf, observer, profile, visible);
+        out.push((body.entity, m, ev));
     }
     out
+}
+
+/// An observer's visible set with its teammates': every entity any of them sees (its own body
+/// left out), at the best detail one of them sees it, in `EntityId` order.
+fn shared<'w, 'a>(
+    me: EntityId,
+    own: &[Seen<'w>],
+    mates: impl Iterator<Item = &'a [Seen<'w>]>,
+) -> Vec<Seen<'w>>
+where
+    'w: 'a,
+{
+    let mut all: BTreeMap<EntityId, Seen<'w>> = own.iter().map(|s| (s.id, *s)).collect();
+    for list in mates {
+        for s in list.iter().filter(|s| s.id != me) {
+            all.entry(s.id)
+                .and_modify(|m| {
+                    if s.detail > m.detail {
+                        m.detail = s.detail;
+                    }
+                })
+                .or_insert(*s);
+        }
+    }
+    all.into_values().collect()
 }
 
 struct Cx<'w> {
@@ -110,6 +154,7 @@ struct Cx<'w> {
 }
 
 /// One visible candidate.
+#[derive(Clone, Copy)]
 struct Seen<'w> {
     id: EntityId,
     entity: Entity,
@@ -127,12 +172,14 @@ fn stored_measures(from: V3, to: V3) -> (f64, f64) {
 }
 
 impl<'w> Cx<'w> {
+    /// Steps 6 and 7 for one observer, given what it sees (its own and its team's).
     fn one(
         &self,
         body: Body,
         tf: &Transform,
         observer: &Observer,
         profile: &ObserverProfile,
+        visible: Vec<Seen<'w>>,
     ) -> (ObserverMemory, ObserverEvents) {
         let w = self.world;
         let omni = observer.omniscient;
@@ -145,7 +192,6 @@ impl<'w> Cx<'w> {
             .cloned()
             .unwrap_or_default();
         let eye = profile.sight.as_ref().map(|s| (Eye::of(tf, s), s));
-        let visible = self.visible(body, eye, profile, omni);
         // Memory: every visible entity, then what is forgotten, then the capacity.
         let mut entries = if omni {
             BTreeMap::new()
