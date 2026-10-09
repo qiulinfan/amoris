@@ -46,6 +46,7 @@ their code is under `spikes/`.
 | [shared/benchmark/tasks.md](../../shared/benchmark/tasks.md) | spec-mcp | 9 (developer and player tasks, fixtures, reference policies) |
 | [splats.md](splats.md) | render | 4.4 (3D Gaussian Splatting: files, GPU layout, preprocess, radix sort, hybrid draw, WebGPU constraints) |
 | [webgpu-baseline.md](webgpu-baseline.md) | render | 4.4 (the optional GPU features and what the renderer does without each; the indirect draw paths on WebGPU's defaults; emulating a browser natively) |
+| [occlusion.md](occlusion.md) | render | 4.4 (two-phase Hi-Z occlusion culling of the camera view: the depth pyramid, the late test, drawing both phases on every draw path, why no visible instance is dropped, the auto mode) |
 
 The shared contract and benchmark are maintained in this repository's `shared/`.
 `shared/SYNC.toml` records each shared file's hash and an optional reference commit (checks.md 5.4).

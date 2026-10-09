@@ -14,8 +14,11 @@
 //! phase's cost (a fixed part and a part per instance in the frustum, both counted in triangles)
 //! the renderer goes back to one culling pass and one opaque pass, and probes again
 //! [`PROBE_EVERY`] frames later, waiting twice as long after each probe that finds it still does
-//! not pay (up to [`PROBE_MAX`]): a reading takes a few frames natively but up to a second in a
-//! browser, and a probe stays on until its first reading arrives.
+//! not pay (up to [`PROBE_MAX`]). Such a probe runs two phases for two frames only (the second is
+//! the one measured) and decides when that frame's reading arrives: a few frames later natively,
+//! up to a second later in a browser. The first probe (at start, or when the mode is set) is
+//! optimistic instead: it keeps two phases until its reading arrives, so a scene that needs
+//! occlusion culling never waits a browser's readback without it.
 //!
 //! [`LATE`]: crate::batches::LATE
 
@@ -40,6 +43,8 @@ const TRIANGLES_PER_INSTANCE: f64 = 0.5;
 /// do not.
 const PROBE_MARGIN: f64 = 1.5;
 const MISSES: u32 = 3;
+/// Frames a probe waits for its reading before it counts as failed (a lost readback).
+const PROBE_TIMEOUT: u64 = 600;
 /// Readback buffers for the late pass's counters.
 const RING: usize = 4;
 
@@ -127,48 +132,93 @@ impl OcclusionStats {
 /// The auto mode's state.
 #[derive(Clone, Copy, Debug, Default)]
 struct Auto {
-    active: bool,
-    /// The frame the current activation began (its readings count from the next frame on, once
-    /// the early pass draws a visible set this activation computed).
+    /// On (not probing): two phases every frame.
+    on: bool,
+    /// When on: the frame it went on. That frame's early pass draws a stale set, so readings
+    /// count from the next.
     since: u64,
-    /// The activation is a probe: it stays on only if it clears the higher bar.
-    probing: bool,
+    /// A probe's first frame `p`: frames `p` and `p + 1` run two phases, and the reading of
+    /// `p + 1` decides.
+    probe: Option<u64>,
     misses: u32,
     next_probe: u64,
     /// The wait after the next probe that does not pay (0: [`PROBE_EVERY`]).
     backoff: u64,
+    /// Probes run two frames only; until a probe has failed they run until their reading.
+    brief: bool,
 }
 
 impl Auto {
+    /// Whether frame `frame` runs two phases. A frame without instances runs none, and moves a
+    /// probe or an activation that would have started there to the next frame.
+    fn runs(&mut self, frame: u64, instances: bool) -> bool {
+        if self.probe.is_some_and(|p| frame > p + 1 + PROBE_TIMEOUT) {
+            self.probe = None;
+            self.fail(frame, true);
+        }
+        if !self.on && self.probe.is_none() && frame >= self.next_probe {
+            self.probe = Some(frame);
+        }
+        if !instances {
+            if let Some(p) = self.probe.filter(|&p| frame <= p + 1) {
+                self.probe = Some(p.max(frame + 1));
+            }
+            if self.on {
+                self.since = frame;
+            }
+            return false;
+        }
+        self.on || self.probe.is_some_and(|p| frame <= p + 1 || !self.brief)
+    }
+
+    /// Whether the second phase paid for itself in reading `s`, against the cost times `margin`.
+    fn pays(s: &OcclusionStats, margin: f64) -> bool {
+        let cost = FIXED_TRIANGLES + TRIANGLES_PER_INSTANCE * f64::from(s.frustum);
+        s.occluded_triangles as f64 >= cost * margin
+    }
+
     fn reading(&mut self, s: &OcclusionStats, now: u64) {
-        if !self.active || s.frame <= self.since {
+        if let Some(p) = self.probe {
+            if s.frame <= p {
+                return;
+            }
+            self.probe = None;
+            if Auto::pays(s, PROBE_MARGIN) {
+                self.on = true;
+                self.since = now;
+                self.misses = 0;
+                self.backoff = PROBE_EVERY;
+            } else {
+                self.fail(now, true);
+            }
             return;
         }
-        let cost = FIXED_TRIANGLES + TRIANGLES_PER_INSTANCE * f64::from(s.frustum);
-        let bar = if self.probing {
-            cost * PROBE_MARGIN
-        } else {
-            cost
-        };
-        if s.occluded_triangles as f64 >= bar {
-            self.probing = false;
+        if !self.on || s.frame <= self.since {
+            return;
+        }
+        if Auto::pays(s, 1.0) {
             self.misses = 0;
-            self.backoff = PROBE_EVERY;
             return;
         }
         self.misses += 1;
-        if self.probing || self.misses >= MISSES {
-            // A failed probe waits longer each time; culling that stopped paying probes soon.
-            let wait = if self.probing {
-                self.backoff.max(PROBE_EVERY)
-            } else {
-                PROBE_EVERY
-            };
-            self.backoff = (wait * 2).min(PROBE_MAX);
-            self.active = false;
-            self.misses = 0;
-            self.next_probe = now + wait;
+        if self.misses >= MISSES {
+            self.on = false;
+            self.fail(now, false);
         }
+    }
+
+    /// Schedules the next probe: a failed probe waits longer each time; culling that stopped
+    /// paying probes again soon.
+    fn fail(&mut self, now: u64, probe: bool) {
+        let wait = if probe {
+            self.backoff.max(PROBE_EVERY)
+        } else {
+            PROBE_EVERY
+        };
+        self.backoff = (wait * 2).min(PROBE_MAX);
+        self.brief = true;
+        self.misses = 0;
+        self.next_probe = now + wait;
     }
 }
 
@@ -290,25 +340,17 @@ impl Occlusion {
         }
     }
 
-    /// Starts a frame: collects finished readings and decides whether this frame runs two phases.
-    pub fn begin_frame(&mut self) -> bool {
+    /// Starts a frame: collects finished readings and decides whether this frame runs two phases
+    /// (never without instances: an auto activation then starts counting at the first frame that
+    /// has some, whose early set is the first one it computed).
+    pub fn begin_frame(&mut self, instances: bool) -> bool {
         self.collect();
         self.frame += 1;
         self.active = match self.mode {
             OcclusionMode::Off => false,
             OcclusionMode::On => true,
-            OcclusionMode::Auto => {
-                if !self.auto.active && self.frame >= self.auto.next_probe {
-                    self.auto = Auto {
-                        active: true,
-                        since: self.frame,
-                        probing: true,
-                        ..self.auto
-                    };
-                }
-                self.auto.active
-            }
-        };
+            OcclusionMode::Auto => self.auto.runs(self.frame, instances),
+        } && instances;
         self.active
     }
 
@@ -574,37 +616,40 @@ mod tests {
 
     #[test]
     fn auto_keeps_what_pays_and_drops_what_does_not() {
-        let mut a = Auto {
-            active: true,
-            probing: true,
-            ..Auto::default()
-        };
-        // The activation's own frame does not count.
-        a.reading(&stats(0, 0, 0), 1);
-        assert!(a.active && a.probing);
-        a.reading(&stats(1, 400_000, 9_000_000), 3);
-        assert!(a.active && !a.probing);
-        // Once on, 300,000 triangles cover the cost of 200,000 instances (200,000 + 100,000)...
-        a.reading(&stats(2, 200_000, 300_000), 4);
-        assert!(a.active && a.misses == 0);
-        // ...and less three times in a row turns it off, to be probed again later.
-        for f in 3..5 {
+        // The first frame probes, and keeps two phases until frame 2's reading arrives.
+        let mut a = Auto::default();
+        assert!(a.runs(1, true) && a.runs(2, true));
+        assert!(a.runs(3, true) && a.runs(4, true));
+        // The probe's first frame drew a stale early set: its reading does not count.
+        a.reading(&stats(1, 400_000, 0), 4);
+        assert!(a.probe.is_some());
+        a.reading(&stats(2, 400_000, 9_000_000), 5);
+        assert!(a.on && a.since == 5);
+        assert!(a.runs(6, true));
+        // Readings up to the activation do not count; then 300,000 triangles cover the cost of
+        // 200,000 instances (200,000 + 100,000)...
+        a.reading(&stats(5, 200_000, 0), 7);
+        assert!(a.on && a.misses == 0);
+        a.reading(&stats(6, 200_000, 300_000), 8);
+        assert!(a.on && a.misses == 0);
+        // ...and less three times in a row turns it off, to be probed again 120 frames later.
+        for f in 7..9 {
             a.reading(&stats(f, 200_000, 299_000), f + 2);
-            assert!(a.active);
+            assert!(a.on);
         }
-        a.reading(&stats(5, 200_000, 299_000), 7);
-        assert!(!a.active);
-        assert_eq!(a.next_probe, 7 + PROBE_EVERY);
+        a.reading(&stats(9, 200_000, 299_000), 11);
+        assert!(!a.on && a.next_probe == 11 + PROBE_EVERY);
+        assert!(!a.runs(12, true));
+        // Once a probe has failed, probes are brief: two frames, then off until the reading.
+        assert!(a.brief && a.runs(131, true) && a.runs(132, true) && !a.runs(133, true));
         // A probe must clear the cost by half again: 400,000 triangles do not pay for it there.
         let probe = |instances, occluded| {
             let mut p = Auto {
-                active: true,
-                since: 10,
-                probing: true,
+                probe: Some(10),
                 ..Auto::default()
             };
             p.reading(&stats(11, instances, occluded), 13);
-            p.active
+            p.on
         };
         assert!(!probe(200_000, 400_000));
         assert!(probe(200_000, 450_000));
@@ -614,25 +659,30 @@ mod tests {
         assert!(!probe(100, 1000));
         // Probes that keep failing wait 120, 240, 480, 960, 960... frames.
         let mut b = Auto::default();
-        let mut now = 0;
+        let mut now = 1;
         let mut waits = Vec::new();
         for _ in 0..5 {
-            b.active = true;
-            b.probing = true;
-            b.since = now;
-            now += 3;
-            b.reading(&stats(now - 2, 1000, 0), now);
-            assert!(!b.active);
-            waits.push(b.next_probe - now);
+            assert!(b.runs(now, true) && b.runs(now + 1, true));
+            b.reading(&stats(now + 1, 1000, 0), now + 3);
+            assert!(!b.on && b.probe.is_none());
+            waits.push(b.next_probe - (now + 3));
             now = b.next_probe;
         }
         assert_eq!(waits, [120, 240, 480, 960, 960]);
         // A probe that pays resets the wait.
-        b.active = true;
-        b.probing = true;
-        b.since = now;
+        assert!(b.runs(now, true) && b.runs(now + 1, true));
         b.reading(&stats(now + 1, 1000, 9_000_000), now + 3);
-        assert!(b.active && b.backoff == PROBE_EVERY);
+        assert!(b.on && b.backoff == PROBE_EVERY);
+        // Frames without instances run nothing and push the probe back; a lost reading times out.
+        let mut c = Auto {
+            brief: true,
+            ..Auto::default()
+        };
+        assert!(!c.runs(1, false) && !c.runs(2, false));
+        assert!(c.runs(3, true) && c.runs(4, true) && !c.runs(5, true));
+        assert_eq!(c.probe, Some(3));
+        assert!(!c.runs(4 + PROBE_TIMEOUT + 1, true));
+        assert!(c.probe.is_none() && c.next_probe == 4 + PROBE_TIMEOUT + 1 + PROBE_EVERY);
     }
 
     #[test]

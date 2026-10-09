@@ -7,6 +7,7 @@ and passes) for every layout (sphere: nothing occluded; dense: Bevy's camera ins
 orbit: circling the dense grid from outside), occlusion mode (off, on, auto) and configuration
 (backend and adapter). The runs of one configuration are interleaved by repeat, so a load spike
 from another process lands on every mode alike; the table keeps each cell's best repeat.
+`--counts 1000,8000,...` repeats the runs with fewer cubes (the auto mode's crossover).
 
 Build first: `cargo build --release -p pocket-render --example many_cubes`. Then:
 
@@ -50,38 +51,43 @@ def main():
     ap.add_argument("--frames", type=int, default=300)
     ap.add_argument("--repeats", type=int, default=1)
     ap.add_argument("--size", default="1280x720")
-    ap.add_argument("--count", type=int, default=0, help="cubes (default: many_cubes' 1,600,000)")
+    ap.add_argument("--counts", default="0",
+                    help="cube counts, comma separated (0: many_cubes' 1,600,000)")
     ap.add_argument("--out", help="write every run's JSON here")
     args = ap.parse_args()
     runs = []
     for config in args.configs.split(","):
         backend, _, adapter = config.partition(":")
         for rep in range(args.repeats):
-            for layout in args.layouts.split(","):
-                for mode in args.modes.split(","):
-                    r = run(layout, mode, backend, adapter, args.frames, args.size, args.count)
-                    r.update({"layout": layout, "mode": mode, "config": config, "repeat": rep})
-                    runs.append(r)
-                    if "error" in r:
-                        print(f"{config} {layout} {mode}: {r['error']}", file=sys.stderr)
-                    else:
-                        print(f"{config:14} {layout:6} {mode:4} gpu {r['gpu_ms']['mean']:7.3f} "
-                              f"wall {r['submit_to_idle_ms']['mean']:7.3f} {r['occlusion_frames']}",
-                              file=sys.stderr)
+            for count in [int(c) for c in args.counts.split(",")]:
+                for layout in args.layouts.split(","):
+                    for mode in args.modes.split(","):
+                        r = run(layout, mode, backend, adapter, args.frames, args.size, count)
+                        r.update({"layout": layout, "mode": mode, "config": config,
+                                  "repeat": rep, "count": count or 1_600_000})
+                        runs.append(r)
+                        if "error" in r:
+                            print(f"{config} {layout} {mode}: {r['error']}", file=sys.stderr)
+                        else:
+                            print(f"{config:14} {count or 1_600_000:>9} {layout:6} {mode:4} gpu "
+                                  f"{r['gpu_ms']['mean']:7.3f} wall "
+                                  f"{r['submit_to_idle_ms']['mean']:7.3f} {r['occlusion_frames']}",
+                                  file=sys.stderr)
     best = {}
     for r in runs:
         if "error" in r:
             continue
-        key = (r["config"], r["layout"], r["mode"])
+        key = (r["config"], r.get("count", 1_600_000), r["layout"], r["mode"])
         if key not in best or r["submit_to_idle_ms"]["mean"] < best[key]["submit_to_idle_ms"]["mean"]:
             best[key] = r
-    print("| config | layout | mode | GPU ms (mean) | wall ms (mean / p95) | passes (ms) | frames on |")
-    print("|---|---|---|---|---|---|---|")
-    for (config, layout, mode), r in sorted(best.items()):
+    print("| config | cubes | layout | mode | GPU ms (mean) | wall ms (mean / p95) | passes (ms) "
+          "| frames on |")
+    print("|---|---|---|---|---|---|---|---|")
+    for (config, count, layout, mode), r in sorted(best.items()):
         passes = ", ".join(f"{k} {v:.2f}" for k, v in r["passes_ms"].items() if v >= 0.01)
         frames = r["occlusion_frames"]
         on = sum(n for m, n in frames.items() if m in ("on", "auto-on"))
-        print(f"| {config} | {layout} | {mode} | {r['gpu_ms']['mean']:.2f} | "
+        print(f"| {config} | {count:,} | {layout} | {mode} | {r['gpu_ms']['mean']:.2f} | "
               f"{r['submit_to_idle_ms']['mean']:.2f} / {r['submit_to_idle_ms']['p95']:.2f} | "
               f"{passes} | {on}/{sum(frames.values())} |")
     if args.out:

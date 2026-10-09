@@ -1471,7 +1471,7 @@ impl Renderer {
         let views = if cascades { VIEWS } else { 1 };
         let n = self.scene.instance_count() as u32;
         // Two phases this frame (occlusion.rs)?
-        let occl = self.occlusion.begin_frame() && n > 0;
+        let occl = self.occlusion.begin_frame(n > 0);
         let cu = CullUniform {
             planes,
             view_proj: mat(vp),

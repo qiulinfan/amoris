@@ -43,7 +43,7 @@ Direct3D 12 已于 2026-10-09 作为 Pioneer 的探索方向重新纳入（纲�
 | 项 | 结果 | 位置 |
 |---|---|---|
 | 渲染，原生 | many_cubes 160 万立方体：sphere 8.35 ms/帧（被 120 Hz 封顶），dense 11.7 ms；Bevy 0.19 同机 10.4 / 13.0 ms | main，`docs/bench/bevy-baseline.md` |
-| 遮挡剔除（Hi-Z 两阶段） | dense 13.4 → 6.3 ms，镜头环绕 13.7 → 8.3 ms；无遮挡时 auto 模式几乎不付代价 | 分支 `feat/hzb`，已实现、已评审，修复未完 |
+| 遮挡剔除（Hi-Z 两阶段） | many_cubes 160 万、1280x720、GPU 时间（暂定，机器有负载）：RTX 5060（Vulkan）dense 16.0 → 0.9 ms，镜头环绕 21.8 → 2.8 ms；Radeon 780M dense 91.6 → 5.1 ms，环绕 40.9 → 8.0 ms；无遮挡的 sphere 强制开启多 0.2–0.4 ms（780M 多 1.2–1.4 ms），auto 模式关掉它、与关闭持平；开关前后画面与 id 覆盖一致（原生四种配置与 Chrome） | 分支 `explore/hiz`，`docs/spec/occlusion.md`、`docs/bench/occlusion.md`。2026-10-09 Pioneer 更正：原记的 `feat/hzb`（M5 上 dense 13.4 → 6.3 ms、环绕 13.7 → 8.3 ms）已遗失，数字无从复核 |
 | 渲染，浏览器 | 与 three.js r186 同场景，GPU 时间快 1.5–3.4 倍 | main，`docs/bench/web.md` |
 | 物理 | Rapier 对 Jolt 同场景：箱堆 Rapier 快 1.5–2.4 倍；网格地形上的凸体 Jolt 快 1.6 倍，布娃娃 2.4 倍（4 线程 2.2 / 4.6 倍）；浏览器默认构建 Jolt 全部更快；两者原生与 wasm 哈希一致 | main，`docs/bench/physics.md` |
 
@@ -102,6 +102,8 @@ Direct3D 12 已于 2026-10-09 作为 Pioneer 的探索方向重新纳入（纲�
 渲染器做到超过 Bevy；浏览器视口与 three.js 对照；宿主、CLI、MCP、编辑器连真宿主；调试器；
 浏览器完整游戏；splat 合并；物理对照、类型 SDK、编辑器调试、agent 调试评测合并。
 `feat/play`、`feat/neural`、`feat/art`、`feat/hzb`、`feat/gtao` 已实现、已评审，修复阶段被中止。
+（2026-10-09 Pioneer 更正：`feat/hzb` 在合并前遗失，任何仓库里都没有它的代码；遮挡剔除已由
+`explore/hiz` 重新实现，见 3.1。）
 
 ### 第 3 天（10-05）：收尾合并
 

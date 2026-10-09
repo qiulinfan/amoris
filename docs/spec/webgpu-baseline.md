@@ -41,6 +41,8 @@ cascades). A batch is one (view, pipeline variant, mesh); the variants are opaqu
 double-sided and both (`scene.rs`, `VARIANTS`). The culling pass counts a batch's visible instances
 into its indexed indirect arguments and writes each one to the batch's region of the view's list:
 the camera view's interpolated poses to `drawn`, the cascades' instance indices to `visible`.
+With occlusion culling the camera view has a sixth set of arguments, the late one, whose batches
+use the camera's bases on every path ([occlusion.md](occlusion.md) 6).
 Instance `k` of a batch is entry `base + k`, with
 
     base = view * stride + offsets[variant * meshes + mesh]
@@ -97,6 +99,9 @@ The renderer's pipelines fit WebGPU's default limits (checked natively by
   GI probe buffers). One more storage buffer in either group fails pipeline creation on the
   defaults;
 - bind groups: 4 of 4 in the forward, shadow, id and ocean pipelines.
+- the culling passes bind 7 storage buffers each (with occlusion culling's per-instance state;
+  the late pass also its counters), within the 8 a compute stage may use
+  ([occlusion.md](occlusion.md) 8).
 
 ## 4. Emulating a browser natively
 
