@@ -47,6 +47,11 @@ const MISSES: u32 = 3;
 const PROBE_TIMEOUT: u64 = 600;
 /// Readback buffers for the late pass's counters.
 const RING: usize = 4;
+// hiz.wgsl's first level reads the depth target as `texture_depth_multisampled_2d`.
+const _: () = assert!(
+    crate::post::SAMPLES > 1,
+    "the depth pyramid reads a multisampled target"
+);
 
 /// Whether the camera view is occlusion culled.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

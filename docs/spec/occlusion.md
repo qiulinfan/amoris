@@ -136,7 +136,7 @@ What this relies on:
   2 (the same assumption frustum culling makes with the sphere); an animation reaching further
   would be culled wrongly by both;
 - the early phase's depth is real geometry: alpha-masked instances write depth only where they
-  are opaque, so their holes do not occlude (the check's masked cylinder, section 8). The ocean,
+  are opaque, so their holes do not occlude (the check's masked cylinder, section 9). The ocean,
   particles, splats and the sky are drawn after the pyramid and never occlude;
 - the visibility state is a hint. A wrong `VIS_VISIBLE` (first frame, a resize, a camera cut, a
   slot reused, the mode just switched on, an occluder that moved) only changes which phase draws an
@@ -170,9 +170,9 @@ late opaque pass, loading both; the splats' ids and the readback copy come after
 A pixel request's scissor applies to both.
 
 **MSAA.** The early pass stores the multisampled color and depth instead of discarding them, and
-the late pass loads them and resolves. On the RTX 5060 with Vulkan the split costs nothing
-measurable; in Chrome on Direct3D 12 the sphere's early pass took 0.4 ms longer than the single
-pass (docs/bench/occlusion.md).
+the late pass loads them and resolves. Natively with Vulkan the split costs nothing measurable on
+the RTX 5060 or the Radeon 780M; in Chrome on Direct3D 12 the sphere's two passes took 0.1 to
+0.4 ms longer than its single pass (docs/bench/occlusion.md 3 and 5).
 
 **Interpolation.** Both passes compute the drawn pose with `instance_pose(inst, alpha)`; the late
 test uses the pose the instance is drawn at.
@@ -253,13 +253,22 @@ the Radeon 780M, 2 to 6 times slower, the crossover fell between the same cube c
 
 ## 10. Open
 
-- Phase 1 draws last frame's visible set without testing it; the common refinement tests it
-  against last frame's pyramid reprojected, which helps when much of last frame's set got hidden.
-  Not needed for the scenes here (section 5 holds either way).
+- Phase 1 draws last frame's visible set untested. Testing it against last frame's pyramid, the
+  usual refinement, would add nothing here: the set is the result of that test. What phase 1 wastes
+  is instances this frame's camera or motion hides (about 7% of its draws in the orbit benchmark),
+  and only this frame's depth shows those.
 - Shadow cascades are frustum culled only.
 - Instances are the unit: a large mesh partly hidden is drawn whole. Meshlet (cluster) culling would
   need mesh splitting and a cluster pass.
-- The auto mode's constants were calibrated on one GPU under load from other processes; the browser's
-  readback latency makes probes long there.
+- The auto mode's constants were fit on two GPUs while other processes loaded the machine.
 - The bounding box is per mesh; a skinned part's box is the bind pose's grown by 2.
-- `Cull.lod_scale` is still unused (mesh LOD, charter 4.4's meshopt).
+- Mesh LOD (charter 4.4's meshopt; `MeshData.lods` is never filled and `Cull.lod_scale` is unused)
+  was not attempted. What it needs: (1) generating levels: meshopt is C++ built through `cc`, and
+  the browser imports glTF in wasm (`pocket-assets` `import` on `wasm32`), so meshopt must build for
+  `wasm32-unknown-unknown` with the pinned clang and a libc sysroot as QuickJS-ng does, or levels
+  must be made when a game is packaged and shipped with it; (2) drawing: a level chosen per
+  instance on the GPU makes a batch per (variant, mesh, level) whose region in each view's list
+  must hold every instance of the mesh (multiplying `drawn` and `visible` by the levels), unless a
+  GPU prefix sum packs them and the vertex stage reads its base from storage (it has room: 5 of 8
+  storage buffers), because the baseline path's bases are uniforms the CPU writes; (3) a benchmark
+  of dense meshes at a distance: many_cubes' 12-triangle cubes have nothing to simplify.
