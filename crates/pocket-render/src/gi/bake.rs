@@ -300,19 +300,19 @@ impl RayScene {
                     ));
                 }
             }
-            if let Some(value) = components.get("Environment") {
-                if !environment_found {
-                    let env: Environment = component(value)?;
-                    validate_numbers(&[env.ambient], "environment ambient", 0.0, 2.0)?;
-                    validate_numbers(&env.sky_color, "environment sky color", 0.0, 1e6)?;
-                    if !path_tracing && env.sky != SkyKind::Color {
-                        return Err("static GI bake supports sky: color; atmosphere needs a matching sky-radiance export".into());
-                    }
-                    result.environment =
-                        Vec3::from(env.sky_color.map(|n| n as f32)) * env.ambient as f32;
-                    result.environment_settings = env;
-                    environment_found = true;
+            if let Some(value) = components.get("Environment")
+                && !environment_found
+            {
+                let env: Environment = component(value)?;
+                validate_numbers(&[env.ambient], "environment ambient", 0.0, 2.0)?;
+                validate_numbers(&env.sky_color, "environment sky color", 0.0, 1e6)?;
+                if !path_tracing && env.sky != SkyKind::Color {
+                    return Err("static GI bake supports sky: color; atmosphere needs a matching sky-radiance export".into());
                 }
+                result.environment =
+                    Vec3::from(env.sky_color.map(|n| n as f32)) * env.ambient as f32;
+                result.environment_settings = env;
+                environment_found = true;
             }
             if let Some(value) = components.get("Light") {
                 let light: Light = component(value)?;
@@ -585,7 +585,7 @@ impl RayScene {
         if !transform.is_finite() || transform.determinant().abs() < 1e-12 {
             return Err(format!("{}: singular or invalid transform", mesh.name));
         }
-        if mesh.indices.len() % 3 != 0 {
+        if !mesh.indices.len().is_multiple_of(3) {
             return Err("mesh indices must form triangles".into());
         }
         let sid = self.surfaces.len();
@@ -594,7 +594,7 @@ impl RayScene {
         if transform.determinant() < 0.0 {
             return Err("mirrored glTF transforms need a frozen geometry export".into());
         }
-        for indices in mesh.indices.chunks_exact(3) {
+        for indices in mesh.indices.as_chunks::<3>().0 {
             let mut triangle = Triangle {
                 p: [Vec3::ZERO; 3],
                 n: [Vec3::ZERO; 3],
@@ -602,10 +602,10 @@ impl RayScene {
                 tangent: [Vec4::ZERO; 3],
                 surface: sid,
             };
-            for k in 0..3 {
+            for (k, &index) in indices.iter().enumerate() {
                 let vertex = mesh
                     .vertices
-                    .get(indices[k] as usize)
+                    .get(index as usize)
                     .ok_or("mesh index out of bounds")?;
                 triangle.p[k] = transform.transform_point3(Vec3::from(vertex.position));
                 triangle.n[k] = (normal_matrix * Vec3::from(vertex.normal)).normalize_or_zero();

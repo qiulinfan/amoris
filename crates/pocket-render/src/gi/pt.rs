@@ -455,7 +455,9 @@ fn resize_texture(
 fn mean_emission(image: &ImageData) -> f32 {
     image
         .rgba8
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .map(|p| luminance([srgb(p[0]), srgb(p[1]), srgb(p[2])]))
         .sum::<f32>()
         / (image.width as f32 * image.height as f32)
@@ -1187,7 +1189,7 @@ impl PathTracer {
     pub fn render(&mut self, camera: &RayCamera, options: &PtOptions) -> Result<PtOutput, String> {
         let mut params = self.parameters(camera, options)?;
         let image_size = u64::from(options.width) * u64::from(options.height) * 16;
-        if image_size > u64::from(self.device.limits().max_storage_buffer_binding_size) {
+        if image_size > self.device.limits().max_storage_buffer_binding_size {
             return Err("PT image exceeds storage binding limit".into());
         }
         let scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
@@ -1353,23 +1355,23 @@ impl PathTracer {
                     nrc_stride - 32,
                 );
             }
-            if options.light_change_frame == Some(frame + 1) {
-                if let (Some(weights), Some(records)) = (&adaptation_weights, &adaptation_records) {
-                    encoder.copy_buffer_to_buffer(
-                        &self.online_nrc.weights,
-                        0,
-                        weights,
-                        0,
-                        weight_bytes,
-                    );
-                    encoder.copy_buffer_to_buffer(
-                        &self.online_nrc.records,
-                        0,
-                        records,
-                        0,
-                        records.size(),
-                    );
-                }
+            if options.light_change_frame == Some(frame + 1)
+                && let (Some(weights), Some(records)) = (&adaptation_weights, &adaptation_records)
+            {
+                encoder.copy_buffer_to_buffer(
+                    &self.online_nrc.weights,
+                    0,
+                    weights,
+                    0,
+                    weight_bytes,
+                );
+                encoder.copy_buffer_to_buffer(
+                    &self.online_nrc.records,
+                    0,
+                    records,
+                    0,
+                    records.size(),
+                );
             }
             encoder.copy_buffer_to_buffer(
                 &counters,
@@ -1491,7 +1493,9 @@ impl PathTracer {
             .get_mapped_range()
             .map_err(|e| e.to_string())?;
         let radiance: Vec<[f32; 4]> = data
-            .chunks_exact(16)
+            .as_chunks::<16>()
+            .0
+            .iter()
             .map(|b| {
                 let c: [f32; 4] = bytemuck::pod_read_unaligned(b);
                 [
@@ -1516,8 +1520,10 @@ impl PathTracer {
             .get_mapped_range()
             .map_err(|e| e.to_string())?;
         let counts: Vec<[u32; 16]> = data
-            .chunks_exact(64)
-            .map(bytemuck::pod_read_unaligned)
+            .as_chunks::<64>()
+            .0
+            .iter()
+            .map(|b| bytemuck::pod_read_unaligned(b.as_slice()))
             .collect();
         drop(data);
         statistics_read.unmap();
@@ -1527,8 +1533,10 @@ impl PathTracer {
                 .get_mapped_range()
                 .map_err(|e| e.to_string())?;
             let t: Vec<u64> = data
-                .chunks_exact(8)
-                .map(|b| u64::from_le_bytes(b.try_into().unwrap()))
+                .as_chunks::<8>()
+                .0
+                .iter()
+                .map(|b| u64::from_le_bytes(*b))
                 .collect();
             drop(data);
             read.unmap();
@@ -1548,9 +1556,11 @@ impl PathTracer {
                     let c: [u32; 8] = bytemuck::pod_read_unaligned(&chunk[..32]);
                     let count = c[5].min(self.online_nrc.config.batch_size);
                     let loss = chunk[32..]
-                        .chunks_exact(4)
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
                         .take(count as usize)
-                        .map(|b| f32::from_le_bytes(b.try_into().unwrap()) as f64)
+                        .map(|b| f32::from_le_bytes(*b) as f64)
                         .sum::<f64>()
                         / f64::from(count.max(1));
                     NrcFrameStats {
@@ -1583,8 +1593,10 @@ impl PathTracer {
                 .get_mapped_range()
                 .map_err(|e| e.to_string())?;
             let w: Vec<f32> = weight_view
-                .chunks_exact(4)
-                .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|b| f32::from_le_bytes(*b))
                 .collect();
             drop(weight_view);
             let r = records
@@ -1594,7 +1606,7 @@ impl PathTracer {
             let count = frames[change as usize - 1].trained_records as usize;
             let mut before = [0.0; 3];
             let mut after = [0.0; 3];
-            for chunk in r.chunks_exact(80).take(count) {
+            for chunk in r.as_chunks::<80>().0.iter().take(count) {
                 let record: super::nrc::NrcRecord = bytemuck::pod_read_unaligned(chunk);
                 let (_, _, a) =
                     super::nrc::reference_forward(&w[..super::nrc::PARAMETER_COUNT], &record);
@@ -1728,8 +1740,10 @@ mod tests {
 
     #[test]
     fn texture_size_is_explicit_and_checked_against_layers_and_upload_bytes() {
-        let mut limits = wgpu::Limits::default();
-        limits.max_texture_array_layers = 2048;
+        let mut limits = wgpu::Limits {
+            max_texture_array_layers: 2048,
+            ..wgpu::Limits::default()
+        };
         let options = PtSceneOptions { texture_size: 512 };
         assert_eq!(
             texture_shape(2048, 4096, 405, &options, &limits).unwrap(),
@@ -1752,8 +1766,10 @@ mod tests {
         assert_eq!(std::mem::size_of::<LightGpu>(), 64);
         assert_eq!(std::mem::size_of::<Parameters>(), 176);
         assert!(PtOptions::default().validate().is_ok());
-        let mut opts = PtOptions::default();
-        opts.bounces = 0;
+        let mut opts = PtOptions {
+            bounces: 0,
+            ..PtOptions::default()
+        };
         assert!(opts.validate().is_err());
         opts = PtOptions::default();
         opts.frames = 2049;

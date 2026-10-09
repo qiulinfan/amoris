@@ -60,8 +60,8 @@ impl SkyRadianceCube {
         {
             return Err("sky texels must be finite nonnegative rgba16float radiance".into());
         }
-        if let Some(source) = &self.source {
-            if source
+        if let Some(source) = &self.source
+            && (source
                 .sun
                 .iter()
                 .chain(source.color.iter())
@@ -69,10 +69,9 @@ impl SkyRadianceCube {
                 .any(|n| !n.is_finite() || n.abs() > 1e6)
                 || source.sun[3] < 0.0
                 || source.color.iter().any(|n| *n < 0.0)
-                || source.flat_color.iter().any(|n| *n < 0.0)
-            {
-                return Err("invalid sky source parameters".into());
-            }
+                || source.flat_color.iter().any(|n| *n < 0.0))
+        {
+            return Err("invalid sky source parameters".into());
         }
         Ok(())
     }
@@ -323,9 +322,9 @@ mod tests {
         let directions = [Vec3::X, -Vec3::X, Vec3::Y, -Vec3::Y, Vec3::Z, -Vec3::Z];
         let mut cube = constant([0.0; 3]);
         cube.ambient = 1.0;
-        for face in 0..6 {
+        for (face, direction) in directions.into_iter().enumerate() {
             cube.texels[face * 4..face * 4 + 4].fill([face as f32, 0.0, 0.0]);
-            assert_eq!(cube.sample(directions[face]).x, face as f32);
+            assert_eq!(cube.sample(direction).x, face as f32);
         }
         for face in 0..6 {
             for uv in [Vec2::new(0.2, 0.7), Vec2::new(0.8, 0.3)] {

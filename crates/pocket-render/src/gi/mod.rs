@@ -173,7 +173,7 @@ impl ProbeVolume {
             .collect();
         let sh_bytes = bytemuck::cast_slice(&sh);
         let distance_bytes = bytemuck::cast_slice(&distances);
-        let limit = u64::from(device.limits().max_storage_buffer_binding_size);
+        let limit = device.limits().max_storage_buffer_binding_size;
         if sh_bytes.len() as u64 > limit || distance_bytes.len() as u64 > limit {
             return Err(format!(
                 "GI volume exceeds this adapter's storage binding limit ({limit} bytes)"

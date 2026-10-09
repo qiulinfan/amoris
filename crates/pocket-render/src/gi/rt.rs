@@ -948,7 +948,7 @@ impl RayLighting {
         } else {
             80
         };
-        if reservoir_size > u64::from(self.device.limits().max_storage_buffer_binding_size) {
+        if reservoir_size > self.device.limits().max_storage_buffer_binding_size {
             return Err(
                 "ReSTIR receiver/reservoir exceeds storage binding limit; reduce resolution".into(),
             );
@@ -1235,7 +1235,9 @@ impl RayLighting {
             .get_mapped_range()
             .map_err(|e| e.to_string())?;
         let radiance: Vec<[f32; 4]> = colors
-            .chunks_exact(16)
+            .as_chunks::<16>()
+            .0
+            .iter()
             .map(|bytes| {
                 let value: [f32; 4] = bytemuck::pod_read_unaligned(bytes);
                 [
@@ -1260,8 +1262,10 @@ impl RayLighting {
             .get_mapped_range()
             .map_err(|e| e.to_string())?;
         let counters: Vec<u32> = data
-            .chunks_exact(4)
-            .map(|v| u32::from_le_bytes(v.try_into().unwrap()))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|v| u32::from_le_bytes(*v))
             .collect();
         drop(data);
         statistics_read.unmap();
@@ -1271,8 +1275,10 @@ impl RayLighting {
                 .get_mapped_range()
                 .map_err(|e| e.to_string())?;
             let values: Vec<u64> = data
-                .chunks_exact(8)
-                .map(|v| u64::from_le_bytes(v.try_into().unwrap()))
+                .as_chunks::<8>()
+                .0
+                .iter()
+                .map(|v| u64::from_le_bytes(*v))
                 .collect();
             drop(data);
             read.unmap();
@@ -1282,7 +1288,9 @@ impl RayLighting {
         };
         let period = f64::from(self.queue.get_timestamp_period()) / 1e6;
         let frames: Vec<TraceFrameStats> = counters
-            .chunks_exact(COUNTER_COUNT as usize)
+            .as_chunks::<{ COUNTER_COUNT as usize }>()
+            .0
+            .iter()
             .enumerate()
             .map(|(index, c)| {
                 let timing = |pass: usize| {

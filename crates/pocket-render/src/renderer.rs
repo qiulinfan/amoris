@@ -131,13 +131,16 @@ pub struct FrameStats {
     pub occlusion_stats: Option<OcclusionStats>,
 }
 
+/// A drawn node: (mesh index, local TRS, skin).
+type DrawnNode = (usize, (Vec3, Quat, Vec3), Option<usize>);
+
 /// A loaded model: its meshes by name and index, and its scene's nodes.
 struct Model {
     /// (mesh id, material key or empty) per mesh index.
     meshes: Vec<(u32, String)>,
     names: HashMap<String, usize>,
     /// (mesh index, local TRS, skin) per drawn node.
-    nodes: Vec<(usize, (Vec3, Quat, Vec3), Option<usize>)>,
+    nodes: Vec<DrawnNode>,
     /// The asset itself when it has skins (poses are evaluated from it every frame).
     skinned: Option<std::sync::Arc<ModelAsset>>,
 }
@@ -1831,10 +1834,10 @@ impl Renderer {
             let tmax = t1.max(t2).min_element();
             if tmax >= tmin.max(0.0) {
                 let t = tmin.max(0.0);
-                if best.is_none_or(|(_, bt)| t < bt) {
-                    if let Some(e) = self.scene.entity_of_slot(slot as u32) {
-                        best = Some((e, t));
-                    }
+                if best.is_none_or(|(_, bt)| t < bt)
+                    && let Some(e) = self.scene.entity_of_slot(slot as u32)
+                {
+                    best = Some((e, t));
                 }
             }
         }
@@ -1977,21 +1980,21 @@ impl Renderer {
         });
         let _ = device.poll(wgpu::PollType::wait_indefinitely());
         let mut out = Vec::with_capacity((w * h * 4) as usize);
-        if let Ok(Ok(())) = rx.recv() {
-            if let Ok(data) = slice.get_mapped_range() {
-                let bgra = matches!(
-                    self.output,
-                    wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
-                );
-                for y in 0..h {
-                    let r = &data[(y * row) as usize..(y * row + w * 4) as usize];
-                    if bgra {
-                        for px in r.chunks_exact(4) {
-                            out.extend_from_slice(&[px[2], px[1], px[0], 255]);
-                        }
-                    } else {
-                        out.extend_from_slice(r);
+        if let Ok(Ok(())) = rx.recv()
+            && let Ok(data) = slice.get_mapped_range()
+        {
+            let bgra = matches!(
+                self.output,
+                wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
+            );
+            for y in 0..h {
+                let r = &data[(y * row) as usize..(y * row + w * 4) as usize];
+                if bgra {
+                    for &[blue, green, red, _] in r.as_chunks::<4>().0 {
+                        out.extend_from_slice(&[red, green, blue, 255]);
                     }
+                } else {
+                    out.extend_from_slice(r);
                 }
             }
         }

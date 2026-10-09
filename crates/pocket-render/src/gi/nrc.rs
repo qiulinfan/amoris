@@ -178,7 +178,7 @@ impl OnlineNrc {
     ) -> Result<Self, String> {
         config.validate()?;
         let gradient_bytes = u64::from(config.batch_size) * PARAMETER_COUNT as u64 * 4;
-        if gradient_bytes > u64::from(device.limits().max_storage_buffer_binding_size) {
+        if gradient_bytes > device.limits().max_storage_buffer_binding_size {
             return Err("online NRC batch exceeds storage binding limit".into());
         }
         let weights = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
