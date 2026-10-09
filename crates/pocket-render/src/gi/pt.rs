@@ -78,6 +78,11 @@ pub struct PtOptions {
     /// two checks cost a quarter of the trace and most of Direct3D 12's NRC time
     /// (docs/bench/path-tracing-nrc.md, Windows). Off by default, as the M5 numbers were taken.
     pub lean_shaders: bool,
+    /// Count committed hits whose hardware front face disagrees with their triangle's winding
+    /// (`PtFrameStats::facing_mismatches`): the convention the sidedness test relies on. Rendering
+    /// is the same either way; the check costs 2% to 3% of the trace with Vulkan and 7% to 8% with
+    /// Direct3D 12 on the RTX 5060, so it is off by default and on in the GPU test.
+    pub check_facing: bool,
 }
 impl Default for PtOptions {
     fn default() -> Self {
@@ -101,6 +106,7 @@ impl Default for PtOptions {
             light_change_factor: 1.0,
             specialize_nrc: true,
             lean_shaders: false,
+            check_facing: false,
         }
     }
 }
@@ -233,6 +239,10 @@ pub struct PtFrameStats {
     pub transmission_samples: u32,
     pub metallic_samples: u32,
     pub textured_vertices: u32,
+    /// Committed hits whose hardware front face disagrees with their triangle's winding (away from
+    /// grazing incidence): the convention the candidate loop's sidedness test relies on. Zero;
+    /// counted only with `PtOptions::check_facing`.
+    pub facing_mismatches: u32,
     pub counters: [u32; 16],
 }
 #[derive(Debug, Serialize)]
@@ -458,6 +468,7 @@ fn trace_pipeline(
     workgroup: u32,
     nrc_enabled: bool,
     lean_shaders: bool,
+    check_facing: bool,
 ) -> wgpu::ComputePipeline {
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("PT and online NRC layout"),
@@ -490,6 +501,7 @@ fn trace_pipeline(
     let constants = [
         ("PT_WORKGROUP", f64::from(workgroup)),
         ("NRC_ENABLED", f64::from(nrc_enabled)),
+        ("PT_CHECK_FACING", f64::from(check_facing)),
     ];
     device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
         label: Some("PT camera paths"),
@@ -984,7 +996,15 @@ impl PathTracer {
                 ..Default::default()
             },
         )?;
-        let pipeline = trace_pipeline(&device, &layout, &online_nrc.layout, 64, false, false);
+        let pipeline = trace_pipeline(
+            &device,
+            &layout,
+            &online_nrc.layout,
+            64,
+            false,
+            false,
+            false,
+        );
         if let Some(e) = pollster::block_on(scope.pop()) {
             return Err(format!("PT setup: {e}"));
         }
@@ -1188,6 +1208,7 @@ impl PathTracer {
             options.workgroup,
             options.online_nrc.is_some() || !options.specialize_nrc,
             options.lean_shaders,
+            options.check_facing,
         );
         let nrc_enabled = options.online_nrc.is_some();
         let training = nrc_enabled && self.online_nrc.config.training;
@@ -1631,6 +1652,7 @@ impl PathTracer {
                 nee_samples: c[8],
                 alpha_rejections: c[9],
                 transparent_candidates: c[10],
+                facing_mismatches: c[11],
                 nonfinite_paths: c[12],
                 transmission_samples: c[13],
                 metallic_samples: c[14],
@@ -1768,6 +1790,11 @@ mod tests {
         }
     }
 
+    fn mean_rgb(output: &PtOutput) -> [f64; 3] {
+        let n = output.radiance.len().max(1) as f64;
+        [0, 1, 2].map(|c| output.radiance.iter().map(|p| f64::from(p[c])).sum::<f64>() / n)
+    }
+
     fn pt_transport_training_and_accumulation(gpu: &Gpu, scene: &RayScene) {
         let backend = gpu.backend_name();
         let mut tracer = PathTracer::new(gpu, scene).unwrap();
@@ -1781,10 +1808,36 @@ mod tests {
             width: 64,
             height: 48,
             frames: 4,
+            check_facing: true,
             ..Default::default()
         };
         let raw = tracer.render(&camera, &options).unwrap();
         let frames = &raw.stats.frames;
+        let mean = mean_rgb(&raw);
+        eprintln!(
+            "{backend} on {}: pt-lab mean radiance {mean:?}",
+            gpu.info.name
+        );
+        assert!(
+            frames.iter().all(|f| f.facing_mismatches == 0),
+            "{backend}: hardware front faces follow the triangles' counterclockwise winding: {:?}",
+            frames
+                .iter()
+                .map(|f| f.facing_mismatches)
+                .collect::<Vec<_>>()
+        );
+        // pt-lab from this camera, 64x48, 4 frames, the default seed: the RTX 5060 and the Radeon
+        // 780M give this mean to 1e-5 with Vulkan and Direct3D 12, and so does the sidedness test
+        // on candidate.front_face that the winding test replaced (Metal's references). Eight other
+        // seeds move the channel sum by 2% (standard deviation); culling front instead of back
+        // faces drops it to 0.10, AMD's Direct3D 12 miscompile of the old test to 0.26.
+        const PT_LAB_SUM: f64 = 0.6945;
+        let sum: f64 = mean.iter().sum();
+        assert!(
+            (sum / PT_LAB_SUM - 1.0).abs() < 0.1,
+            "{backend}: pt-lab's mean radiance {mean:?} (sum {sum:.4}) is that of single-sided \
+             surfaces seen from their front (sum {PT_LAB_SUM})"
+        );
         assert!(
             frames.iter().any(|f| f.transmission_samples > 0),
             "{backend}: no transmission samples"
@@ -1817,6 +1870,14 @@ mod tests {
                 .flat_map(|(a, b)| (0..3).map(move |c| (a[c] - b[c]).abs() / (1.0 + a[c])))
                 .fold(0.0, f32::max)
         };
+        options.check_facing = false;
+        let unchecked = tracer.render(&camera, &options).unwrap();
+        let unchecked_error = max_relative(&raw, &unchecked);
+        assert!(
+            unchecked_error < 1e-3,
+            "{backend}: the facing check changes no path: {unchecked_error}"
+        );
+        options.check_facing = true;
         options.lean_shaders = true;
         let lean = tracer.render(&camera, &options).unwrap();
         // Compiled differently, so rounding may differ (2e-4 on the Radeon 780M with Vulkan);

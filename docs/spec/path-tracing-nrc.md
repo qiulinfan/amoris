@@ -110,6 +110,18 @@ DXIL is correct and the same shader works on Vulkan on that GPU and on both back
 5060 ([measurements](../bench/path-tracing-nrc.md#windows-vulkan-and-direct3d-12-pioneer-2026-10-09)).
 The committed hit's `front_face` (emission sidedness, entering or leaving glass) is unaffected.
 
+Two checks keep the winding test honest, in the PT GPU test on every ray-query backend. With
+`PtOptions::check_facing` (`--check-facing true`; the override constant `PT_CHECK_FACING`) `pt_trace`
+compares each committed hit's `front_face` with its triangle's winding after the traversal and
+counts disagreements away from grazing incidence (counter 11, `facing_mismatches`); the test turns
+it on and requires zero, so a backend whose hardware convention differed, Metal included, fails it.
+It changes no path but costs 2% to 3% of the trace with Vulkan and 7% to 8% with Direct3D 12 on the
+RTX 5060 (gi-room and pt-lab, 320x240), so it is off by default, where it costs nothing measurable.
+And the test's pt-lab render must have a known mean radiance (channel sum 0.6945 within 10%):
+culling front faces instead of back faces gives 0.105, the AMD miscompile 0.262. Both were checked
+by putting the defects back. The counters and sample checks alone had passed with the culling
+inverted.
+
 Two naga 30 limitations shape the shaders: its SPIR-V and HLSL writers panic (rather than report
 an error) when a `ptr<function, ray_query>` is passed to another function, so queries stay local
 to the function that traces; and every module gets loop bounds and a ray-query initialization

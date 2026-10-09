@@ -4,6 +4,8 @@
 // References: https://pbr-book.org/4ed/Light_Transport_I_Surface_Reflection/A_Better_Path_Tracer
 // Nonopaque acceleration geometry is required: candidate intersections apply alpha and sidedness.
 override NRC_ENABLED: bool = false;
+// Count facing-convention mismatches of committed hits (PtOptions::check_facing).
+override PT_CHECK_FACING: bool = false;
 const PT_INVALID: u32 = 0xffffffffu;
 struct PtParameters {
     image: vec4<u32>, limits: vec4<u32>,
@@ -106,6 +108,19 @@ fn pt_trace(origin: vec3<f32>, direction: vec3<f32>, maximum: f32, shadow: bool,
     }
     let hit = rayQueryGetCommittedIntersection(&query);
     if hit.kind != RAY_QUERY_INTERSECTION_TRIANGLE { return PtHit(0u, 0u, 0u, 0.0, vec2<f32>(0.0)); }
+    // The convention the winding test above relies on, checked on every committed hit: the
+    // hardware's front face is the side from which the vertices run counterclockwise. Counted
+    // (counter 11, PtFrameStats::facing_mismatches) where the two disagree, except at grazing
+    // incidence, where rounding decides; the PT GPU test requires zero on every backend. Off unless
+    // PtOptions::check_facing: it costs 2% to 8% of the trace (Vulkan, Direct3D 12).
+    if PT_CHECK_FACING {
+        let p0 = pt_triangles[hit.primitive_index].p[0].xyz;
+        let winding = cross(pt_triangles[hit.primitive_index].p[1].xyz - p0, pt_triangles[hit.primitive_index].p[2].xyz - p0);
+        let facing = dot(winding, direction);
+        if (facing < 0.0) != hit.front_face && facing*facing > 1e-6*dot(winding, winding)*dot(direction, direction) {
+            atomicAdd(&pt_counters[11], 1u);
+        }
+    }
     return PtHit(1u, hit.primitive_index, select(0u, 1u, hit.front_face), hit.t, hit.barycentrics);
 }
 fn pt_surface(hit: PtHit, origin: vec3<f32>, direction: vec3<f32>) -> PtSurface {

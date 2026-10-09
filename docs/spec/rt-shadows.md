@@ -76,9 +76,20 @@ shaded fragment (overdraw included), where the cascades cost four depth passes.
 `Renderer::rt_shadow_stats()` (instances, masked instances, bottom levels, whether this frame
 rebuilt); the `rt_shadows` example (both paths on one scene: timings and captures, `--heroes N`
 skinned characters, `--moving` to force a rebuild per frame); the integration test
-`tests/rt_shadows.rs` (on every native backend with ray queries the pixels the two paths darken in
-the mixed demo scene with three skinned characters overlap with an intersection over union above
-0.85; 0.897 measured); `many_cubes --headless-bench` reports the stats.
+`tests/rt_shadows.rs`; `many_cubes --headless-bench` reports the stats.
+
+The integration test runs on every native backend with ray queries and follows one renderer per
+path (no shadows, cascades, ray traced) through four ticks: the mixed demo scene static, every cell
+moved 1 m (drawn halfway through the interpolation and at its end), three skinned characters added,
+and their arms raised by a clip the test adds to hero.glb. In each state the pixels the two paths
+darken must overlap (intersection over union above 0.9 without characters, 0.85 with them), and from
+one state to the next the pixels whose shadowing changed must overlap above 0.8. Three more
+renderers draw the static scene with the masked meshes made opaque: the ground that turns dark
+there is the light the checker cut-outs let through, and the ray-traced count of it must be within a
+factor of two of the cascaded one. Each check was confirmed to fail with its defect put back
+(masked candidates confirmed without the alpha test, no rebuild while interpolating or for moved
+slots, the top level at the tick's end pose, skinned bottom levels built only once); numbers in the
+[measurements](../bench/rt-shadows.md#correctness).
 
 ## Next
 

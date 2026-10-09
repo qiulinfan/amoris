@@ -62,7 +62,7 @@ fn main() {
 }
 fn run() -> Result<(), String> {
     let mut args = std::env::args().skip(1);
-    let root = PathBuf::from(args.next().ok_or("usage: path_trace PROJECT [--scene scene.json --output PNG --texture-size N --exposure-ev EV --width W --height H --samples N --frames N --bounces N --rr-start N --nee true|false --rr true|false --readback-every-frame true|false --synchronize true|false --lean-shaders true|false --seed N --emission-scale N --punctual-scale N --environment-scale N]")?);
+    let root = PathBuf::from(args.next().ok_or("usage: path_trace PROJECT [--scene scene.json --output PNG --texture-size N --exposure-ev EV --width W --height H --samples N --frames N --bounces N --rr-start N --nee true|false --rr true|false --readback-every-frame true|false --synchronize true|false --lean-shaders true|false --check-facing true|false --seed N --emission-scale N --punctual-scale N --environment-scale N]")?);
     let mut options = PtOptions::default();
     let mut scene_options = PtSceneOptions::default();
     let mut nrc = NrcConfig::default();
@@ -112,6 +112,7 @@ fn run() -> Result<(), String> {
             "--nrc-rate" => nrc.learning_rate = number()?,
             "--specialize-nrc" => options.specialize_nrc = boolean()?,
             "--lean-shaders" => options.lean_shaders = boolean()?,
+            "--check-facing" => options.check_facing = boolean()?,
             "--light-change-frame" => options.light_change_frame = Some(integer()?),
             "--light-change-factor" => options.light_change_factor = number()?,
             "--nee" => options.nee = boolean()?,
