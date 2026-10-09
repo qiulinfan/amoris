@@ -80,7 +80,15 @@ fn pt_trace(origin: vec3<f32>, direction: vec3<f32>, maximum: f32, shadow: bool,
         let material = pt_materials[u32(triangle.n[0].w)];
         if shadow && material.flags.w == 0u { continue; }
         // Transmission is a solid air/material interface and needs both entering and exit faces.
-        if !shadow && !candidate.front_face && material.emission.w < 0.5 && material.surface.z <= 0.0 { continue; }
+        // Facing comes from the triangle's own winding: a front face is seen from the side where
+        // its vertices run counterclockwise, the convention ray_query_probe verifies for
+        // candidate.front_face on every backend. Testing candidate.front_face together with these
+        // material loads made AMD's Direct3D 12 driver (Radeon 780M, 32.0.13062.3005) cull front
+        // faces as well, so every camera ray missed; its DXIL is correct, and Vulkan on the same GPU
+        // and both NVIDIA backends were unaffected (docs/bench/path-tracing-nrc.md, Windows).
+        let back_face = dot(cross(triangle.p[1].xyz - triangle.p[0].xyz,
+            triangle.p[2].xyz - triangle.p[0].xyz), direction) > 0.0;
+        if !shadow && back_face && material.emission.w < 0.5 && material.surface.z <= 0.0 { continue; }
         let alpha = clamp(material.base_color.a * pt_texture(material.tex.x, pt_uv(triangle, candidate.barycentrics)).a, 0.0, 1.0);
         if material.flags.x == 1u && alpha < material.extra.x {
             atomicAdd(&pt_counters[9], 1u); continue;
