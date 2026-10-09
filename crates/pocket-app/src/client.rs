@@ -70,12 +70,12 @@ pub const COMMANDS: &[(&str, &str, &str)] = &[
     (
         "world",
         "world.tree",
-        "pocket world tree [filter] [--with C,..] | get <entity> [C..] | query <C,..> [--fields C.f,..] [--name n] [--limit n] | schema [C] | edit '<ops json>' [--label l] | set <entity> <C> f=v.. | spawn [name] [--prefab json] [--components json] | remove <entity> <C> | destroy <entity>..",
+        "pocket world tree [filter] [--with C,..] | get <entity> [C.. | C.f,C.g..] | query <C,..> [--fields C.f,..] [--name n] [--limit n] | schema [C] | edit '<ops json>' [--label l] | set <entity> <C> f=v.. | spawn [name] [--prefab json] [--components json] | remove <entity> <C> | destroy <entity>..",
     ),
     (
         "step",
         "time.step",
-        "pocket step [ticks] [--until event:<name>|tick:<n>|<entity>.<C>.<field><op><value>] [--watch <entity>.<C>.<field>[~value]]",
+        "pocket step [ticks] [--until event:<name>|tick:<n>|<entity>.<C>.<field><op><value>] [--watch <entity>.<C>.<field>[~value]] [--sample <entity>.<C>.<field>,.. [--every k]]",
     ),
     (
         "time",
@@ -93,7 +93,7 @@ pub const COMMANDS: &[(&str, &str, &str)] = &[
     (
         "scripts",
         "scripts.list",
-        "pocket scripts list | read <path> | write <path> [<file>|-] | apply [--force] | check | types | guide",
+        "pocket scripts list | read <path> [--lines a-b] [--numbers] | write <path> [<file>|-] | apply [--force] | check | types | guide | status",
     ),
     (
         "events",
@@ -104,7 +104,7 @@ pub const COMMANDS: &[(&str, &str, &str)] = &[
     (
         "snapshots",
         "snapshots.list",
-        "pocket snapshots [list] | restore <tick>",
+        "pocket snapshots [list] | restore <tick> [--bundle snapshot]",
     ),
     ("assets", "assets.list", "pocket assets [dir]"),
     ("catalog", "catalog.list", "pocket catalog"),
@@ -1740,7 +1740,7 @@ fn help(args: &Args) -> String {
     if topic.is_empty() {
         out.push_str(
             "pocket: a client of a running host (pocket serve <project>), found through \
-             --host, POCKET_HOST or .pocket/host.json. --json prints exact JSON.\n\n",
+             --host, POCKET_HOST or .pocket/host.json. --json prints exact JSON; --timeout <s> (default 60, POCKET_TIMEOUT) bounds the wait.\n\n",
         );
         for (_, _, u) in COMMANDS {
             let _ = writeln!(out, "  {u}");

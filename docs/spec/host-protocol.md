@@ -84,17 +84,18 @@ Each method is a command of the catalog (`GET /api/catalog` is authoritative). K
 | `project.info` | `{}` | `{name, root, rate, scenes, scripts, assets}` |
 | `project.save` | `{}` | `{files, entities}` (the edit world, even during Play) |
 | `world.tree` | `{root?, depth?, filter?, with?, limit?}` | `[{id, name, components: [name], children: [...]}]` |
-| `world.get` | `{entity, components?}` | `{id, name, components: {Name: value}}` |
+| `world.get` | `{entity, components?, fields?: ["C.f.path"]}` | `{id, name, components: {Name: value}, fields?: {"C.f.path": value}}` |
 | `world.query` | `{with: [component], fields?: ["C.f"], name?, limit?}` | rows `{id, name, "C.f": value}` |
 | `world.schema` | `{component?}` | component JSON Schemas with docs, from the registry |
 | `world.edit` | `{ops: [op], label?}` | `{tick, applied, spawned: [id], results, label}`; all or nothing |
 | `history.undo` / `history.redo` | `{}` | as `world.edit`, with the entry's `label` |
 | `history.list` | `{}` | `{undo, redo}` |
 | `time.control` | `{pause?, speed?, pacing?}` | status |
-| `time.step` | `{ticks?, until?: {event?, subject?, tick?}, watch?: {entity, component, field, op?, value?}}` | `{tick, world_hash, errors, stopped_by?}` |
+| `time.step` | `{ticks?, until?: {event?, subject?, tick?}, watch?: {entity, component, field, op?, value?}, sample?: {fields: ["E.C.f"], every?}}` | `{tick, world_hash, errors, stopped_by?, samples?}`; a debugger stop ends the step and answers at once with `paused: true` (server.md 3.2, 3.4) |
 | `play.start` / `play.stop` | `{speed?, paused?}` / `{}` | status (Play runs a fork of the edit world; Stop discards it) |
 | `scripts.list` | `{}` | `[{path, bytes, diagnostics}]` |
-| `scripts.read` / `scripts.write` | `{path}` / `{path, text}` | `{path, text}` / `{path, bytes, diagnostics}` |
+| `scripts.read` / `scripts.write` | `{path, lines?, numbered?}` / `{path, text}` | `{path, text, first?, last?, total?}` / `{path, bytes, diagnostics}` |
+| `scripts.status` | `{}` | `{bundle, ran_last_tick}`: the bundle the world runs |
 | `scripts.apply` | `{files?, force?, dry_run?}` | `{outcome, bundle, diagnostics, typecheck, ...}` (type check if `tsc` is installed, compile, hot swap at a boundary) |
 | `scripts.check` | `{}` | `{outcome, diagnostics, typecheck}` (no swap) |
 | `assets.list` | `{dir?}` | `[{path, kind, bytes}]` |
@@ -102,9 +103,13 @@ Each method is a command of the catalog (`GET /api/catalog` is authoritative). K
 | `events.since` | `{seq?, limit?, name?}` | `{events, last, missed}` |
 | `events.why` | `{seq}` | `{event, causes, complete}`: the cause chain |
 | `log.since` | `{seq?, limit?}` | `{lines, last}` |
-| `snapshots.list` / `snapshots.restore` | `{}` / `{tick}` | `{every, keep, snapshots: [{tick, world_hash}]}` / status with `restored` |
+| `snapshots.list` / `snapshots.restore` | `{}` / `{tick, bundle?: "applied"\|"snapshot"}` | `{every, keep, snapshots: [{tick, world_hash}]}` / status with `restored` and `scripts` (the applied scripts are kept by default, server.md 3.3) |
 | `docs.search` | `{query, limit?}` | matching commands and components |
-| `debug.*` | section 6 | `debug.not_available` until pocket-debug's hub is installed |
+| `debug.*` | section 6 | `debug.not_available` until pocket-debug's hub is installed; one catalog entry per method |
+
+While the debugger holds the game, `status`, `world.get/tree/query/schema` and
+`scripts.list/read/status` answer from the last publication (marked `paused_at`) and every other
+call that needs the game thread is refused at once with `debug.paused` (server.md 3.4).
 | `profile.frame` | `{}` | the last frame's CPU and GPU timings (not built yet) |
 | `agent.*` | MCP tool calls mirrored (section 7) | |
 
@@ -164,18 +169,19 @@ is the specification of what is built):
   configuration on the port (`editors/vscode/launch.json`). `debug.state` names the endpoint while it
   runs (`cdp: {ws, devtools}`, `devtools` being that URL); it is the authority on the port.
 - The same core is exposed as JSON methods for agents, with TypeScript positions, 1-based
-  (debugger.md 7 has the parameters and results; MCP's `debug` tool takes some of them as actions,
-  section 7):
+  (debugger.md 7 has the parameters and results, the catalog an entry with the schema of each; MCP's
+  `debug` tool takes every one as an action and lists their parameters, section 7):
   `debug.attach`, `debug.detach`, `debug.breakpoints.set {file, line, condition?, log?}`,
   `debug.breakpoints.clear {id?}`, `debug.breakpoints.list`, `debug.pause {timeout_ms?}`,
-  `debug.continue`, `debug.step {kind: over|into|out, timeout_ms?}`, `debug.state` (frames with
-  TypeScript locations, scopes with locals, the tick and the system), `debug.eval {expr, frame?}`,
-  `debug.set {name, value, frame?}` (a frame's variable to an expression's value),
+  `debug.continue`, `debug.step {kind: over|into|out, timeout_ms?}`, `debug.state {brief?}` (frames
+  with TypeScript locations, scopes with locals, the tick and the system), `debug.eval {expr,
+  frame?}`, `debug.set {name, value, frame?}` (a frame's variable to an expression's value),
   `debug.watch {entity, component, field?}` (a data breakpoint: pause when a system's staged write
-  changes it, naming the statement that wrote), `debug.unwatch {id?}`,
-  `debug.exceptions {mode: none|uncaught|all}`, `debug.wait {timeout_ms?}`, and `debug.rewind {tick}`
-  (restore the kept snapshot at or before `tick` and step to it; served by `pocket serve`'s bridge,
-  server.md 3.3). Pauses and resumes are pushed as `debug` events, console lines as `log`.
+  changes it, naming the statement that wrote; the entity by id or name), `debug.unwatch {id?}`,
+  `debug.exceptions {mode: none|uncaught|all}`, `debug.wait {timeout_ms?}`, and `debug.rewind {tick,
+  bundle?}` (restore the kept snapshot at or before `tick` under the applied scripts and step to it;
+  served by the host's server, server.md 3.3). Pauses and resumes are pushed as `debug` events,
+  console lines as `log`.
 - The editor uses these JSON methods over `/ws` (editor.md 8.1), not CDP.
 
 ## 7. MCP tools

@@ -217,8 +217,12 @@ doubled the cost of every statement while installed (2.04 times with no client) 
 measurable while compiled in and not installed, so scripts are instrumented only while a debugger is
 attached, re-instrumented at the start of the next tick (debugger.md 2); with P9 an attached
 debugger costs 1.05 times (debugger.md 10). `pocket-debug` sets the state `Breakpoint` through the
-handle `GameHandle::loop_state` gives it and `Ticking` when it resumes. An evaluation inside a
-paused tick taints the run (script-host.md 13).
+handle `GameHandle::loop_state` gives it (`StateHandle::stopped`, with the stop's summary, which
+readers get from `SnapshotReader::debug_stop` and the loop from `Publisher::last_debug_stop`) and
+`Ticking` when it resumes. An evaluation inside a paused tick taints the run (script-host.md 13).
+A `time.step` ends with a tick the debugger stopped in (`stopped_by` the summary), and the host's
+server lets no caller wait on a held game: reads answer from the last publication, other calls are
+refused at once (server.md 3.4).
 
 ### 3.6 Worlds: main and branches
 

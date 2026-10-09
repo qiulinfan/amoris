@@ -18,6 +18,23 @@ pocket check <project> --only types   # the check, no host running
 `check && apply`. `tsc`: `cd sdk && bun install`, or `POCKET_TSC`. MCP: the `scripts` tool (`guide`
 is this page).
 
+Finding and checking a fix in a running host:
+
+```sh
+pocket scripts read scripts/rules.ts --lines 20-40     # numbered, as breakpoints count lines
+pocket debug break scripts/rules.ts:27 --if "r > 0"   # then: pocket step 60 returns at the stop
+pocket debug state                                     # where, why, the frame's locals
+pocket debug eval "speed * 2" ; pocket debug continue
+pocket debug watch Sloop.Log.distance                  # stop at the statement that writes it
+pocket world get Sloop Boat.speed,Log.distance         # fields alone
+pocket step 300 --sample Sloop.Boat.speed --every 30   # a table instead of step-and-get loops
+pocket scripts status                                  # the bundle the world runs
+pocket snapshots restore 0                             # keeps the applied scripts (--bundle snapshot: not)
+```
+
+While the debugger holds the game, reads answer from the last tick's end and other calls are refused
+with `debug.paused` until `pocket debug continue`.
+
 ## A game
 
 ```ts

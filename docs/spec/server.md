@@ -1,6 +1,9 @@
 # The host's server, CLI and MCP: the host protocol as built
 
-Status: Draft 1, implemented (2026-10-04). Wire forms: [host-protocol.md](host-protocol.md).
+Status: Draft 2, implemented (2026-10-04; 2026-10-09, Pioneer: a host the debugger holds answers
+at once, restores keep the applied scripts, the debugger in the catalog, field-level reads, from
+[the debug evaluation](../bench/debug-eval.md) and measured in
+[agent-debug.md](../bench/agent-debug.md)). Wire forms: [host-protocol.md](host-protocol.md).
 Charter: 3.1 (one interface), 4.3 (debugging), 4.5 (editor). Crates: `pocket-runtime` (commands,
 history, the game thread's Play and kept snapshots), `pocket-link` (the event and log streams),
 `pocket-server`, `pocket-mcp`, `pocket-app` (`pocket serve`, `pocket mcp`, the CLI client).
@@ -54,7 +57,8 @@ pocket mcp samples/sailing     # MCP over stdio (uses the running host if there 
   applies the editor's commands before developers' (threads.md 5.2).
 - Threads: the game thread; tokio's worker threads (`pocket-server`) for HTTP, WebSocket, MCP and
   the pushers. A game stuck in a tick (a breakpoint) leaves the server answering and pushing the
-  last snapshot; calls that need the game wait for it.
+  last snapshot, and no call waits on it (3.4): reads answer from the last publication, others are
+  refused at once with `debug.paused`. A game busy in a long tick or a long step is waited for.
 
 ## 3. Methods
 
@@ -68,11 +72,11 @@ files).
 | Method | Kind | Params | Result |
 |---|---|---|---|
 | `catalog.list` | read | `{}` | the catalog |
-| `status` | read | `{}` | `{tick, t_s, pacing, paused, halted, behind_ms, mode, epoch, world_hash, entities, bundle, writes, poisoned, steps_due, kept}` |
+| `status` | read | `{}` | `{tick, t_s, pacing, paused, halted, behind_ms, mode, epoch, world_hash, entities, bundle, writes, poisoned, steps_due, kept, tainted}`; while the debugger holds the game, from the last publication with `state: "breakpoint"` and `paused_at` (3.4) |
 | `project.info` | read | `{}` | `{name, root, rate, scenes, scripts, assets}` |
 | `project.save` | request | `{}` | `{files: ["scene.json"], entities}`: the edit world, one entity per line, every component whole |
 | `world.tree` | read | `{root?, depth?, filter?, with?, limit?}` | `[{id, name, components: [name], children: []}]` (no hierarchy yet; `depth` is accepted) |
-| `world.get` (`world_get`) | read | `{entity, components?}` | `{id, name, components: {Name: value}}` |
+| `world.get` (`world_get`) | read | `{entity, components?, fields?}` | `{id, name, components: {Name: value}, fields?: {"C.f.path": value}}`; `fields` (or a dotted entry of `components`) reads `Component.field` or a path into it alone, `null` where the entity lacks the component; a path the component lacks is refused with its fields and a suggestion |
 | `world.query` | read | `{with: [C], fields?: ["C.f.path"], name?, limit? = 100}` | `[{id, name, "C.f": value}]` |
 | `world.schema` | read | `{component?}` | `[{name, origin, version, doc, schema}]`, or one |
 | `world.edit` | write | `{ops: [op], label?}` | `{tick, applied, spawned: [id], results, label}`; all or nothing |
@@ -80,14 +84,14 @@ files).
 | `history.list` | read | `{}` | `{undo: [label], redo: [label]}`, most recent last |
 | `history.undo` / `history.redo` | write | `{}` | as `world.edit`, with the entry's `label` |
 | `time.control` (`time_control`) | control | `{pause?, speed?, pacing?}` | `status` |
-| `time.step` (`step`) | control | `{ticks?, until?, watch?}` | `{tick, world_hash, errors, stopped_by?}` |
+| `time.step` (`step`) | control | `{ticks?, until?, watch?, sample?}` | `{tick, world_hash, errors, stopped_by?, samples?}`; at a debugger stop `{tick, world_hash: null, errors: [], paused: true, stopped_by}` (3.2, 3.4) |
 | `play.start` | control | `{speed? = 1, paused?}` | `status` (mode `play`) |
 | `play.stop` | control | `{}` | `status` (mode `edit`) |
 | `snapshots.list` | read | `{}` | `{every, keep, snapshots: [{tick, world_hash}]}` |
-| `snapshots.restore` | control | `{tick}` | `status` with `restored`: the kept tick at or before `tick` |
+| `snapshots.restore` | control | `{tick, bundle? = "applied"}` | `status` with `restored` (the kept tick at or before `tick`) and `scripts: {bundle, kept: "applied"\|"snapshot", snapshot_bundle, swapped?, swap_refused?}` (3.3) |
 | `snapshot` | read | `{}` | `{tick, writes, world_hash}` |
 | `scripts.list` | read | `{}` | `[{path, bytes, diagnostics}]` |
-| `scripts.read` | read | `{path}` | `{path, text}` |
+| `scripts.read` | read | `{path, lines?, numbered?}` | `{path, text}`; with `lines` (`50-80`, `50-`, `-20`, `67`; 1-based, inclusive) or `numbered`, the text of those lines (each `67\| ` prefixed when numbered) and `{first, last, total}` |
 | `scripts.write` | request | `{path, text}` | `{path, bytes, diagnostics}` (compiled, not swapped) |
 | `scripts.apply` | request | `{files?, force?, dry_run?}` (the server adds `types`) | `{outcome, bundle, previous, systems, components, applied_at, diagnostics, typecheck, tsc_ms, tsc_version, types}` |
 | `scripts.check` | read (server) | `{}` | `{outcome, bundle, diagnostics, typecheck, tsc_ms, tsc_version, reason?, types}`; `refused` when the scripts compile but would not load |
@@ -99,7 +103,7 @@ files).
 | `log.since` | read (server) | `{seq?, limit? = 100}` | `{lines: [log line], last}` |
 | `assets.list` | read (server) | `{dir?}` | `[{path, kind, bytes}]`, served at `/assets/<path>` |
 | `docs.search` | read (server) | `{query, limit? = 10}` | `[{command, doc}`, `{component, doc, fields}` or `{guide, read}]` (a matching section of `scripts.guide`) |
-| `debug.*` | (server) | per pocket-debug | `debug.not_available` until a `DebugHub` is installed |
+| `debug.*` | (server) | per pocket-debug (debugger.md 7), one catalog entry each with its schema | `debug.not_available` until a `DebugHub` is installed; `debug.rewind {tick, bundle?}` is the server's own |
 | `capture` | (server) | `{camera?, kind?}` | `capture.not_available` until a `CaptureHub` is installed |
 | `subscribe` / `unsubscribe` | `/ws` only | `{topics: [topic]}` | `{topics}` |
 
@@ -145,6 +149,20 @@ are checked after each tick on the world it left:
 `gone: true`), `{reason: "tick"}`, or `{reason: "limit"}` when a condition never held. On the game
 thread other sources' commands still land between the ticks of a long step (threads.md 5.4).
 
+The script debugger ends a step too: when it stops the game inside a tick of the step (a
+breakpoint, a data watch, a `debugger;` statement, an exception it pauses on, a debugger step), the
+step ends with that tick and the rest is dropped, so `debug.continue` finishes the tick and the
+world stands at its end. `stopped_by` is then the stop's summary, `{reason: "breakpoint" |
+"data_breakpoint" | "debugger_statement" | "exception" | "step" | "pause", tick, system, location:
+{file, line, column}, breakpoint?, watch?: {id, entity, component, field, before, after,
+written_at}, exception?}`. The host answers the step at the stop, not at the resume (3.4).
+
+`sample: {fields: ["Sloop.Boat.rudder", "3.Transform.position.y"], every? = 1}` reads each
+`Entity.Component.field` (entity by name, id or `Name#id`; a path after the field) after every
+`every`-th tick of the step and after its last, and answers `samples: {columns: ["tick", ...],
+rows: [[tick, value, ...]], every}`; at most 10,000 rows (`ticks / every`), a field whose entity is
+gone `null`. A step stopped by the debugger and answered at the stop has none.
+
 ### 3.3 Play, Stop, kept snapshots
 
 - `play.start` forks the edit world (`Game::fork`, an on-demand fork, charter 3.4) and runs the fork
@@ -154,11 +172,61 @@ thread other sources' commands still land between the ticks of a long step (thre
   switches is answered `play.started` / `play.stopped`.
 - The loop keeps a snapshot of the world shown every 60 ticks, the last 120, plus its first state
   (`ThreadOptions::keep_every`, `keep`). `snapshots.restore {tick}` restores the latest kept one at
-  or before `tick` (switching bundles if a hot update came since), drops the later ones and clears
-  the history; it does not replay forward (that is `debug.rewind`, pocket-debug's).
+  or before `tick`, drops the later ones and clears the history; it does not replay forward (that
+  is `debug.rewind`, the host's).
+- A restore keeps the scripts applied since the snapshot (2026-10-09, Pioneer; the debug
+  evaluation's second finding: the natural loop, fix, `scripts apply`, restore, replay, silently
+  replayed the old code, and three agents reported a fix live on a host running the bug).
+  Programs hold no state (charter 3.2), so the snapshot's world runs under the bundle applied now:
+  it is restored under the bundle it was kept with and swapped to the applied one by the hot
+  update's Host write, `scripts.swap` (`Game::swap_bundle`), which migrates components a newer
+  bundle changed; a recording holds the restore's rebase and then the swap, as they ran, and
+  replays identically (pocket-runtime `tests/agent_reads.rs`). `{bundle: "snapshot"}` keeps the
+  snapshot's own bundle (the old behaviour). The answer's `scripts` names the bundle that runs,
+  `kept`, the snapshot's bundle and `swapped`; when the applied scripts do not load on the restored
+  world it runs the snapshot's and says so (`swap_refused`). The status line prints
+  `restored tick 0; scripts 4381c2… (applied)`, and `status` always has the running `bundle`.
 - Each replacement of the world shown (Play, Stop, restore) bumps the reader's **epoch**
   (`SnapshotReader::world()`: `{mode, epoch}`); presenters reset what they derived (the render
   feed's `reset: true`, `world.changed {reset}`).
+
+### 3.4 A host the debugger holds
+
+Pioneer, 2026-10-09: the debug evaluation's first finding. A breakpoint holds the game thread
+inside a tick (threads.md 3.5), and every call that went to the game thread waited for the resume:
+`pocket step 1` with a breakpoint set did not return, nor did `status`, `world get` or `scripts
+read`, and the CLI had no read timeout, so 28 calls in 11 runs hung until the agent's tool gave up,
+21 % of all agent time. Now no call waits on a held game:
+
+- The debugger records each stop in the loop state with its summary (pocket-link
+  `StateHandle::stopped`; `SnapshotReader::debug_stop`, `debug_stops`), so the server knows where
+  the game stands without asking the hub.
+- **A step answers at the stop.** A call waiting on the game looks for a new stop every 5 ms; a
+  `time.step` then answers `{tick, world_hash: null, errors: [], paused: true, stopped_by}` with
+  the stop's summary (3.2), and the loop ends that step with the stopped tick. Measured: 3.7 ms from
+  the call to the answer in `paused_host.rs`, 33 to 44 ms for `pocket step 60` through the CLI
+  including its process start (agent-debug.md; provisional).
+- **Reads answer from the last publication**, the world at the boundary before the tick the game
+  stands in: `status` (with `state: "breakpoint"` and `paused_at`), `world.get`, `world.tree`,
+  `world.query`, `world.schema`, `scripts.status` (the bundle in the snapshot's header) and
+  `snapshot`, each marked `paused_at` (`world.get`, `scripts.status`, `snapshot`: the stop's
+  summary with `snapshot_tick`; each row of `world.tree` and `world.query`: the stopped tick), and
+  `scripts.list` and `scripts.read` from the project's files (`diagnostics` empty). The snapshot's
+  JSON is the registry's format of each section, which equals what the game's own reads answer
+  (`paused_host.rs` compares them call by call). `catalog.list` (fetched before serving),
+  `docs.search` (component schemas from the publication's registry), `events.*`, `log.since`,
+  `assets.list`, `scripts.guide` and `debug.*` never need the game.
+- **Everything else is refused at once** with `debug.paused {method, location, reason, tick,
+  system, queued: false, stop, answers}`: "The game stands at scripts/rules.ts:27 (breakpoint, tick
+  58); scripts.apply needs the game thread, which waits for debug.continue (or debug.step)." A call
+  sent before the stop and still waiting when it comes answers `debug.paused {queued: true}`: it
+  stays queued and runs when the game goes on.
+- The CLI waits 60 s at most (`--timeout <s>`, `POCKET_TIMEOUT`; 10 s past a debugger call's
+  `timeout_ms`) and answers `host.timeout` after it; the MCP stdio bridge to a running host uses
+  the same client.
+
+Not done: the edit world's kept snapshots (`snapshots.list`), the history and `project.info` stay
+on the game thread and are refused while held.
 
 ## 4. Pushes on `/ws`
 
@@ -206,6 +274,7 @@ pub trait RenderFeed: Send + Sync {
 }
 pub trait DebugHub: Send + Sync {   // methods by name: "debug.state", "debug.breakpoints.set", ...
     fn call(&self, method: &str, params: Value) -> BoxFuture<Result<Value, Problem>>;
+    fn methods(&self) -> Vec<Value>;   // catalog entries {name, kind, doc, aliases, params}
 }
 pub trait CaptureHub: Send + Sync {
     fn capture(&self, params: Value) -> BoxFuture<Result<Value, Problem>>;
@@ -219,9 +288,13 @@ impl Host {
 ```
 
 `pocket-app`'s `serve.rs` builds the `Host` (`start`), so the integrator installs these there. The
-render feed reads `host.reader()` (snapshots, `world().epoch` for `reset`). The MCP `debug` tool and
-`pocket debug <action>` already route to `debug.<action>`; the catalog lists `debug.state` as the
-group's entry until the hub contributes its own entries.
+render feed reads `host.reader()` (snapshots, `world().epoch` for `reset`). The installed hub's
+`methods()` (pocket-debug's `methods()`, each with its kind, aliases and JSON Schema) are catalog
+entries like every other command, so `pocket help debug.watch`, `docs.search` and the MCP `debug`
+tool describe them (the debug evaluation's fourth finding: 34 refusals of guessed parameters); the
+server adds `debug.rewind {tick, bundle?}`, which it serves itself (restore, then step to `tick`),
+and resolves `debug.watch`'s entity names (`Sloop`, `Sloop#3`) in the last publication before the
+hub sees an id. Without a hub, one `debug.state` entry says the debugger is not installed.
 
 ## 7. MCP
 
@@ -231,19 +304,24 @@ parameters loosely and the runtime's decoder refuses unknown ones with suggestio
 | Tool | Actions -> methods |
 |---|---|
 | `world` | tree, get, query, schema, edit -> `world.*` |
-| `scripts` | guide, list, read, write, apply, check, types -> `scripts.*` |
+| `scripts` | guide, list, read, write, apply, check, status, types -> `scripts.*` |
 | `time` | status -> `status`; pause, resume, speed -> `time.control`; step -> `time.step`; snapshots -> `snapshots.list`; rewind -> `snapshots.restore` |
 | `play` | start, stop |
 | `history` | undo, redo, list |
 | `assets` | list |
 | `events` | since, why -> `events.*`; log -> `log.since` |
-| `debug` | breakpoints.set, breakpoints.clear, pause, continue, step, state, eval, watch, rewind -> `debug.*` |
+| `debug` | attach, detach, breakpoints.set, breakpoints.clear, breakpoints.list, pause, continue, step, state, eval, set, watch, unwatch, exceptions, wait, rewind -> `debug.*` |
 | `capture` | -> `capture` |
 | `docs` | -> `docs.search` |
 
 Results are the method's JSON as text; refusals are tool results with `isError` and the text
-`{"error": {code, message, detail}}`. `tools/list` is 4.4 KB, 1,236 tokens (cl100k), measured
-2026-10-04. Player tools (`observe`, `act`, ...; shared/contract/mcp.md) are not projected yet.
+`{"error": {code, message, detail}}`. The `debug` tool's input schema lists every parameter its
+methods take (`file, line, condition, log, id, brief, expr, frame, name, value, kind, timeout_ms,
+entity, component, field, mode, tick, bundle`; pocket-app's `paused_host.rs` checks it against
+`pocket_debug::methods()`); `world` takes `fields`, `scripts` `lines` and `numbered`, `time`
+`sample` and `bundle`. `tools/list` is 6.6 KB (6,580 bytes, about 1,650 tokens at four bytes a
+token; 2026-10-09, Windows; it was 4.4 KB, 1,236 cl100k tokens, on 2026-10-04). Player tools
+(`observe`, `act`, ...; shared/contract/mcp.md) are not projected yet.
 Served on `POST /mcp` (one developer client per session, every call pushed as `agent`) and by
 `pocket mcp` over stdio.
 
@@ -256,25 +334,38 @@ Schema, so help never drifts from what the host takes.
 | Command | Method |
 |---|---|
 | `pocket call <method> ['<json>'|-]` | any |
-| `pocket status`, `info`, `save`, `catalog` | `status`, `project.info`, `project.save`, `catalog.list` |
+| `pocket status`, `info`, `save`, `catalog`, `docs <words..>` | `status`, `project.info`, `project.save`, `catalog.list`, `docs.search` |
 | `pocket world tree [filter] [--with C,..]` | `world.tree` |
-| `pocket world get <entity> [C..]`, `query <C,..> [--fields C.f,..]`, `schema [C]` | `world.get`, `world.query`, `world.schema` |
+| `pocket world get <entity> [C.. \| C.f,C.g..]`, `query <C,..> [--fields C.f,..]`, `schema [C]` | `world.get` (dotted names are `fields`), `world.query`, `world.schema` |
 | `pocket world edit '<ops>'`, `set <entity> <C> f=v..`, `spawn [name] [--prefab j]`, `remove <e> <C>`, `destroy <e>..` | `world.edit` |
-| `pocket step [ticks] [--until event:<name>|tick:<n>|<e>.<C>.<f><op><v>] [--watch <e>.<C>.<f>[~v]]` | `time.step` |
+| `pocket step [ticks] [--until event:<name>|tick:<n>|<e>.<C>.<f><op><v>] [--watch <e>.<C>.<f>[~v]] [--sample <e>.<C>.<f>,.. [--every k]]` | `time.step` |
 | `pocket time pause|resume|speed <x>|stepped` | `time.control` |
 | `pocket play start [--speed x] [--paused]|stop` | `play.*` |
 | `pocket undo`, `redo`, `history` | `history.*` |
-| `pocket scripts list|read <p>|write <p> [file|-]|apply [--force]|check|types|guide` | `scripts.*` |
+| `pocket scripts list|read <p> [--lines a-b] [--numbers]|write <p> [file|-]|apply [--force]|check|types|guide|status` | `scripts.*` (`--lines` numbers the lines) |
 | `pocket events [--since n] [--name n.*] [--limit n]`, `--why <seq>` | `events.*` |
-| `pocket logs [--since n]`, `snapshots [list]|restore <tick>`, `assets [dir]` | `log.since`, `snapshots.*`, `assets.list` |
-| `pocket debug <action> ['<json>']` | `debug.<action>` |
+| `pocket logs [--since n]`, `snapshots [list]|restore <tick> [--bundle snapshot]`, `assets [dir]` | `log.since`, `snapshots.*`, `assets.list` |
+| `pocket debug break <file>:<line> [--if <expr>] [--log <text>]`, `clear [id]`, `list` | `debug.breakpoints.*` (`file` may be the module's end, `helm.ts`) |
+| `pocket debug state [--full]`, `eval <expr> [--frame n]`, `set <name> <expr> [--frame n]` | `debug.state`, `debug.eval`, `debug.set` |
+| `pocket debug watch <e>.<C>[.<f>]`, `unwatch [id]` | `debug.watch` (entity by name or id), `debug.unwatch` |
+| `pocket debug continue`, `step [over|into|out]`, `pause [ms]`, `wait [ms]`, `exceptions <mode>`, `rewind <tick> [--bundle snapshot]`, `attach`, `detach` | `debug.*` |
+| `pocket debug <action> ['<json>']` | `debug.<action>` with exact parameters |
 
 Output is compact text, one line per entity, row, event, edit or diagnostic, with defaults left out
 (`#3 Sloop  Boat Collider Crew ...`;
-`tick 17 hash 5eb7f9e28e7c | stopped: Boat.speed 0.96 -> 1.03`); `--json` prints the exact result. A
-refusal prints `code: message` (with its suggestions and diagnostics) to stderr and exits 1, as does
-a `scripts check` with an error diagnostic (compile, load or `tsc`) or a `tsc` past its time limit;
-a usage error exits 2.
+`tick 17 hash 5eb7f9e28e7c | stopped: Boat.speed 0.96 -> 1.03`); arrays longer than 8 items show
+their first 3 and a count; `--json` prints the exact result. The status line names the running
+scripts (`| scripts 3ae1a99021d4`) and, while the debugger holds the game, where (`| HELD at
+scripts/rules.ts:27 (breakpoint bp1 in log, tick 58)`); a step the debugger stopped prints
+`tick 58 hash - | stopped at scripts/rules.ts:27 (breakpoint bp1 in log, tick 58): pocket debug
+state | pocket debug continue`; a sampled step prints its table; reads made while held start with
+`(paused at …: the world as of tick 57's end)`. `debug state` prints the place, the innermost
+frame's locals one per line (`bearing = 1.344`; `ctx` left out), one line per other frame, the
+breakpoints and watches (`--full`: every frame's locals and closures). A refusal prints
+`code: message` (with its suggestions and diagnostics) to stderr and exits 1, as does a `scripts
+check` with an error diagnostic (compile, load or `tsc`) or a `tsc` past its time limit; a usage
+error exits 2. Every call waits 60 s at most (`--timeout <s>`, `POCKET_TIMEOUT`), then exits 1 with
+`host.timeout`.
 
 ## 9. Error codes added
 
@@ -289,6 +380,8 @@ a usage error exits 2.
 | `project.no_root` | a file command on a game built from data |
 | `events.not_found` | `events.why` for a stream number the ring no longer holds |
 | `host.forbidden`, `host.not_found`, `host.unreachable`, `host.bind_failed` | the guard; no file; the CLI finds no host; the port is taken |
+| `host.timeout` | the CLI waited its timeout (60 s by default) for an answer |
+| `debug.paused` | the call needs the game thread, which the debugger holds (3.4); `queued: true` when it was sent before the stop and runs after it |
 | `debug.not_available`, `capture.not_available`, `render.not_available` | plug-in not installed |
 
 ## 10. Verification
@@ -298,17 +391,23 @@ and checks the CLI (status, tree, set, undo, step with an event and a field cond
 typo with its suggestion, Play and Stop, help), `/api/call` and `/api/catalog` (a destroy undone
 revives the entity under its id), `/ws` (status on connect, subscribe, an edit with its `history`
 and `world.changed` pushes, undo, steps, Play's reset), `events.since`/`why`, and MCP over HTTP
-(initialize, `tools/list` with its size, calls and refusals), then that `.pocket/host.json` is gone
-after SIGTERM. The Python `mcp` client package (2.3.0, `uv run --with mcp`) drove both transports
-(`pocket mcp --own` over stdio and `/mcp`). `crates/pocket-runtime/tests/host.rs` tests undo and
-redo of a spawn, a set and a destroy, the readers, the stop conditions, Play and Stop, and the kept
-snapshots.
+(initialize, `tools/list` with its size, calls and refusals), a host the debugger holds (3.4: the
+step that returns at the breakpoint, reads while held, `scripts apply` refused at once, the
+debugger's short forms, restores with and without the applied scripts), then that
+`.pocket/host.json` is gone after SIGTERM (Ctrl-Break on Windows, where it now runs:
+[smoke-server.txt](../evidence/agentdebug/smoke-server.txt), 0 failures, 2026-10-09). The Python
+`mcp` client package (2.3.0, `uv run --with mcp`) drove both transports (`pocket mcp --own` over
+stdio and `/mcp`). `crates/pocket-runtime/tests/host.rs` tests undo and redo of a spawn, a set and a
+destroy, the readers, the stop conditions, Play and Stop, and the kept snapshots;
+`tests/agent_reads.rs` the field reads, line ranges, samples and restores under the applied
+scripts (with a recording that replays); pocket-app's `tests/paused_host.rs` a held host through
+`Host::call`.
 
 ## 11. Open
 
 1. A hierarchy component (`Parent`) for `world.tree`'s `children` and `depth`.
 2. `debug.rewind`'s replay forward from a kept snapshot needs the recorded inputs between them (a
-   recorder on the edit world).
+   recorder on the edit world). It replays under the applied scripts by default (3.3).
 3. The type check runs `tsc` (TypeScript 7) only when installed: `POCKET_TSC`, else the first
    TypeScript 7 (`tsc --version`, asked once per path) in a `node_modules` or `sdk/node_modules` at
    or above the project (`cd sdk && bun install`), the repository the binary was built from, or

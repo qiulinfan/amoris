@@ -171,9 +171,13 @@ Watches are agent-native; a CDP client attached at the same time sees the pause 
 ## 7. The agents' API
 
 `DebugHub::call(method, &params) -> Result<serde_json::Value, pocket_contract::Problem>`;
-`pocket_debug::methods()` lists each method with its doc and parameters' JSON Schema, for the
-command catalog. Unknown parameters are refused (`request.unknown_field` with suggestions), unknown
-methods with `request.unknown_method`.
+`pocket_debug::methods()` lists each method with its catalog kind (`read`, `control`, `write`),
+aliases, doc and parameters' JSON Schema; `pocket serve` puts them in the command catalog
+(server.md 6), so `pocket help debug.eval` and the MCP `debug` tool's input schema name every
+parameter. Unknown parameters are refused (`request.unknown_field` with suggestions), unknown
+methods with `request.unknown_method`. Aliases: `debug.break` (`debug.breakpoints.set`),
+`debug.watch.clear` (`debug.unwatch`). A `file` may be the module's path, an absolute path ending
+with it, or its end when only one module ends so (`helm.ts`).
 
 | Method | Params | Result |
 |---|---|---|
@@ -185,14 +189,14 @@ methods with `request.unknown_method`.
 | `debug.pause` | `{timeout_ms?}` | state, after waiting up to `timeout_ms` for the stop |
 | `debug.continue` | `{}` | `{state: "running"}` once the thread left the pause; also releases a game held for a debugger |
 | `debug.step` | `{kind: "over"\|"into"\|"out", timeout_ms?}` | state at the stop (default wait 5 s) |
-| `debug.state` | `{}` | `{state, reason, tick, system, location, frames: [{frame, function, location, locals, closure, returned}], hit_breakpoints, exception?, data?, attached, instrumented, exceptions, breakpoints, watches, waiting_for_debugger, cdp}`; a local is `{name, type, value, description?}` (`value` a JSON preview, `description` an object's, such as `Float64Array(1)`); `cdp` is `{ws, devtools}` while the hub serves CDP, else `null` |
+| `debug.state` | `{brief?}` | `{state, reason, tick, system, location, frames: [{frame, function, location, locals, closure, returned}], hit_breakpoints, exception?, data?, attached, instrumented, exceptions, breakpoints, watches, waiting_for_debugger, cdp}`; a local is `{name, type, value, description?}` (`value` a JSON preview, `description` an object's, such as `Float64Array(1)`); `cdp` is `{ws, devtools}` while the hub serves CDP, else `null`. `brief`: the innermost frame's locals without `ctx`, the other frames as `{frame, function, location}`, breakpoints as `{id, at, condition, log}`, no closures and no CDP (660 bytes where the full state is several kilobytes) |
 | `debug.eval` | `{expr, frame?}` | `{type, value, description}` (`value` JSON, integers as integers). An assignment to a variable (`r = 7`) stays in the evaluation: QuickJS-ng hands an evaluation a copy of each local no closure captured. One through an object (`g.level[r] = 7`, a query column) writes the object |
 | `debug.set` | `{name, value, frame?}` | `{type, value, description}`: `value` (an expression) evaluated in the frame and assigned to its argument, local or closure variable `name` (`JS_SetVariableAtLevel`, as CDP's `Debugger.setVariableValue`); a `const` refuses, and a name declared in two block scopes of one function sets the first declaration |
-| `debug.watch` | `{entity, component, field?}` | `{id, ...}` |
+| `debug.watch` | `{entity, component, field?}` | `{id, entity, component, field}`; `entity` an id, or a name or `Name#id` that the host resolves in the last publication (the hub alone refuses a name) |
 | `debug.unwatch` | `{id?}` | `{cleared}` |
 | `debug.exceptions` | `{mode: "none"\|"uncaught"\|"all"}` | `{mode}` |
 | `debug.wait` | `{timeout_ms?}` | state, once stopped or after the wait |
-| `debug.rewind` | `{tick}` | `{restored, tick}`: served by the host, not the hub (pocket-app's `DebugBridge`, `present.rs`): `snapshots.restore` at or before `tick`, then `time.step` to it (server.md 3.3); the hub alone answers `debug.unsupported` |
+| `debug.rewind` | `{tick, bundle?}` | `{restored, tick, scripts, stopped_by?}`: served by the host's server, not the hub: `snapshots.restore` at or before `tick` (under the applied scripts unless `bundle: "snapshot"`), then `time.step` to it (server.md 3.3); the hub alone answers `debug.unsupported` |
 
 Problems: `debug.not_paused`, `debug.no_frame`, `debug.eval_failed {error}`, `debug.set_failed
 {name}` (a constant, no such variable, the expression threw, a returned frame), `debug.unknown_file
@@ -242,16 +246,21 @@ cdp.stop();
 - `hub.wait_for_debugger(timeout)` holds the caller until a client sends
   `Runtime.runIfWaitingForDebugger` or an agent `debug.continue` (the `--inspect-brk` model); call
   it before starting real time.
-- While paused, the game thread answers no command (threads.md 3.5): every command it serves waits
-  for the resume, `status`, `time.control`, `snapshots.list`, `world.query`, `world.edit` and
-  `play.stop` included (the loop answers `status` itself, on the blocked thread). The hub's `debug.*`
-  answers, and what presenters read from the snapshot reader stays current: the pushed `status`
-  (`state: "breakpoint"`), the render feed, events and logs. A client that stops Play while paused
-  continues the pause first (the editor does, editor.md 8.1).
+- While paused, the game thread answers no command (threads.md 3.5). The hub's `debug.*` answers,
+  and what presenters read from the snapshot reader stays current: the pushed `status`
+  (`state: "breakpoint"`), the render feed, events and logs. A pause records its summary in the
+  loop state (`StateHandle::stopped`, `Pause::summary`: `{reason, tick, system, location,
+  breakpoint?, watch?, exception?}`), and the host's server uses it so that no caller waits
+  (server.md 3.4, 2026-10-09): a `time.step` the pause interrupts answers at once with it as
+  `stopped_by` and ends with the stopped tick; `status`, `world.get/tree/query/schema` and
+  `scripts.list/read/status` answer from the last publication and the files; every other call
+  that needs the game thread is refused at once with `debug.paused`. A client that stops Play while
+  paused continues the pause first (the editor does, editor.md 8.1).
 - `pocket serve` (pocket-app `serve.rs`) does the above for every served project: one hub, CDP on
   127.0.0.1:9229 when the port is free (otherwise a line on stderr, and `debug.*` still works), the
-  hook on the game thread, the loop state, `DebugBridge` as the server's `debug.*` plug-in (which
-  adds `debug.rewind`), and a thread forwarding `DebugEvent::json()` to the `debug` and `log` topics.
+  hook on the game thread, the loop state, `DebugBridge` as the server's `debug.*` plug-in (its
+  calls and its methods; the server adds `debug.rewind`), and a thread forwarding
+  `DebugEvent::json()` to the `debug` and `log` topics.
   There is no `--inspect-brk` wait. The editor's Debug panel drives the hub through `debug.*` over
   the host's `/ws` (editor.md 8.1); CDP stays on its own port.
 
@@ -310,6 +319,7 @@ over round trip 5 ms.
 |---|---|---|---|
 | `cargo test -p pocket-app --test debug_agent` | The agents' API on a real game thread, real time, the test project `crates/pocket-debug/tests/fixtures/debugme`: `debugger;`, uncaught and caught exceptions with the prediction, a conditional TypeScript breakpoint with locals and evaluation, read-only evaluations, `debug.set` on a `let` local (the loop's `r`, seen by the caller's frame of the next pause and set back there with `frame: 1`) and on an argument (`twice`'s `x`, whose call then returns twice the new value), a `const` refused, step into/out/over, a data breakpoint with `written_at`, the taint, a hot update while attached (new script announced, its breakpoint stops), pause, detach (uninstrumented), events, problems, the `Breakpoint` loop state | pass | [agent-api-test.txt](../evidence/debug/agent-api-test.txt) |
 | `cargo test -p pocket-app --test debug_agent` (`play_takes_the_debugger_to_its_fork`, `debug_state_names_the_cdp_endpoint`) | `play.start` on a game thread started paused (as `pocket serve` starts it): a breakpoint set in Edit stops Play's fork at its first tick, an evaluation that assigns a query column (`g.level[r] = 100`) is committed, `play.stop` hands the hook back and a `time.step` of the edit world stops at a new breakpoint; `debug.state`'s `cdp` names an endpoint served on port 0 and is `null` once it stopped | pass (3 of 3 with the test above; `--release`) | the test's output |
+| `cargo test -p pocket-app --test paused_host` (2026-10-09, Windows) | **A held host** through `pocket_server::Host::call` over the test project on a game thread started as `pocket serve` starts it: the catalog's entry of every method (kind, schema), a breakpoint by the module's short name, a `time.step {ticks: 5}` answered at the stop (`stopped_by` breakpoint, tick 4, `paused: true`) and ended with that tick, `status` and seven reads equal to the game's own reads of the same world, `scripts.apply`, `time.step`, `snapshots.list`, `history.list` and `world.edit` refused with `debug.paused` within 500 ms, `debug.watch` by name (a misspelt name refused with the suggestion), `debug.state {brief}`, a data watch stopping a step, `debug.rewind` under the applied scripts; and the MCP `debug` tool naming every method and parameter | pass | the test's output; [smoke-server.txt](../evidence/agentdebug/smoke-server.txt) does the same through the CLI and MCP |
 | `editor/tools/debug-host.ts` | **The editor** (built, served by `pocket serve` on a copy of the sailing sample) in headless Chrome, real input only: a gutter breakpoint, Play, the pause with the call stack, scopes and watches, step over, a column value set in the Variables tree and committed, an argument set with `debug.set` and a `const` refused, a data breakpoint from the inspector, pause on exceptions, a script edited and hot-swapped while running and a breakpoint in the new code, Stop while paused (the edit world takes the edited scripts) and Play again into the new code (editor.md 10) | every step (12 views) | [debug-host.txt](../evidence/editor/debug-host.txt), `debug-host-*.png` |
 | `node crates/pocket-debug/tests/cdp_e2e.mjs` | A CDP client as clients behave: discovery as js-debug does it, Origin refusal, `scriptParsed` and the data-URL map, a breakpoint on a TypeScript line mapped through the map, the pause at that line with the caller `run`, locals, closure, `evaluateOnCallFrame` on two frames, `getProperties`, step over, a conditional breakpoint, a logpoint (`consoleAPICalled` located in rules.js, no pause), `Debugger.pause`, leaving while paused resumes | 20/20 | [cdp-e2e.txt](../evidence/debug/cdp-e2e.txt), [messages](../evidence/debug/cdp-e2e-messages.log) |
 | `node crates/pocket-debug/tests/jsdebug_dap.mjs` | **VS Code's js-debug 1.140.0** as installed in `/Applications/Visual Studio Code.app` (its extension bundle loaded under a stand-in for the `vscode` module, since the app ships no standalone DAP server), resolving `editors/vscode/launch.json` through its own configuration provider and spoken to over DAP as VS Code does (root session, then the child session it starts for the target): a breakpoint set by the `.ts` path verifies, `stopped` at rules.ts:27 on disk, the caller `run` at 26, Local `r = 0`, `e`, Closure `b`, `l`, `ctx` and `ctx` expanded, a REPL evaluation, a hover (`Float64Array(1) [0.0]`), `next` to line 28, disconnect leaves the game running | 13/13 | [jsdebug-dap.txt](../evidence/debug/jsdebug-dap.txt), [DAP](../evidence/debug/jsdebug-dap-messages.log), [CDP it sent](../evidence/debug/jsdebug-cdp.log) |

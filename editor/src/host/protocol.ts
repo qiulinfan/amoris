@@ -45,6 +45,24 @@ export interface Status {
   speed?: number;
   /** The scripts' bundle hash the world runs (the game thread's status: `time.control`, `play.*`). */
   bundle?: string;
+  /** `"breakpoint"` while the debugger holds the game (the `status` method answers from the last publication then). */
+  state?: string;
+  /** Where the debugger holds the game, on `status` while it does (server.md 3.4). */
+  paused_at?: DebugStop;
+}
+
+/** A stop of the script debugger as the host summarizes it: a `time.step`'s `stopped_by`, the
+ * `paused_at` of reads made while it holds the game, `debug.paused`'s `stop` (server.md 3.4). */
+export interface DebugStop {
+  reason: "breakpoint" | "data_breakpoint" | "debugger_statement" | "exception" | "step" | "pause";
+  tick: number;
+  system: string | null;
+  location: { file: string; line: number; column: number; generated?: boolean } | null;
+  breakpoint?: string;
+  watch?: { id: string; entity: EntityId; component: string; field: string | null; before: unknown; after: unknown; written_at: unknown };
+  exception?: string;
+  /** On reads: the tick of the publication they answer from (the stopped tick's boundary). */
+  snapshot_tick?: number;
 }
 
 export interface WorldChanged {
@@ -281,12 +299,18 @@ export interface TreeNode {
   name: string;
   components: string[];
   children: TreeNode[];
+  /** Read while the debugger holds the game in this tick: the world as of the tick before's end. */
+  paused_at?: number;
 }
 
 export interface EntityData {
   id: EntityId;
   name: string | null;
   components: Record<string, unknown>;
+  /** `world.get {fields}`: each `Component.field.path` asked for, `null` where the entity lacks the component. */
+  fields?: Record<string, unknown>;
+  /** Read while the debugger holds the game (server.md 3.4). */
+  paused_at?: DebugStop;
 }
 
 export interface ComponentInfo {
@@ -380,12 +404,24 @@ export interface DataWatch {
   field?: string;
 }
 
+/** Which scripts a restored world runs: those applied now (default) or the snapshot's. */
+export type RestoreBundle = "applied" | "snapshot";
+
+/** What a restore says of the scripts it left running (server.md 3.3). */
+export interface RestoredScripts {
+  bundle: string;
+  kept: RestoreBundle;
+  snapshot_bundle: string;
+  swapped?: boolean;
+  swap_refused?: WireError;
+}
+
 export interface Methods {
   "catalog.list": [Record<string, never>, CatalogCommand[]];
   "project.info": [Record<string, never>, ProjectInfo];
   "project.save": [Record<string, never>, { files: string[] }];
   "world.tree": [{ root?: EntityRef; depth?: number; filter?: string }, TreeNode[]];
-  "world.get": [{ entity: EntityRef; components?: string[] }, EntityData];
+  "world.get": [{ entity: EntityRef; components?: string[]; fields?: string[] }, EntityData];
   "world.query": [{ with: string[]; fields?: string[]; limit?: number }, Record<string, unknown>[]];
   "world.schema": [{ component?: string }, ComponentInfo[]];
   "world.edit": [WorldEditParams, WorldEditResult];
@@ -393,11 +429,25 @@ export interface Methods {
   "history.redo": [Record<string, never>, { label: string | null }];
   "history.list": [Record<string, never>, HistoryState];
   "time.control": [{ pause?: boolean; speed?: number; pacing?: string }, Status];
-  "time.step": [{ ticks?: number; until?: string; watch?: unknown }, { tick: number; stopped_by?: unknown }];
+  "time.step": [
+    { ticks?: number; until?: string; watch?: unknown; sample?: { fields: string[]; every?: number } },
+    {
+      tick: number;
+      world_hash?: string | null;
+      /** A step the debugger stopped, answered at the stop (`stopped_by` is then a DebugStop). */
+      paused?: boolean;
+      stopped_by?: unknown;
+      samples?: { columns: string[]; rows: unknown[][]; every: number };
+    },
+  ];
   "play.start": [Record<string, never>, Status];
   "play.stop": [Record<string, never>, Status];
   "scripts.list": [Record<string, never>, ScriptInfo[]];
-  "scripts.read": [{ path: string }, string | { text: string }];
+  "scripts.read": [
+    { path: string; lines?: string; numbered?: boolean },
+    string | { text: string; first?: number; last?: number; total?: number },
+  ];
+  "scripts.status": [Record<string, never>, { bundle: string; ran_last_tick: string[] | null; paused_at?: DebugStop }];
   "scripts.write": [{ path: string; text: string }, { diagnostics: Diagnostic[] }];
   "scripts.apply": [{ paths?: string[] }, { bundle: string | null; diagnostics: Diagnostic[] }];
   "scripts.types": [{ text?: boolean; tsconfig?: boolean }, ScriptTypes];
@@ -406,7 +456,8 @@ export interface Methods {
   "events.since": [{ seq: number; limit?: number }, GameEvent[]];
   "events.why": [{ seq: number }, GameEvent[]];
   "snapshots.list": [Record<string, never>, SnapshotInfo[]];
-  "snapshots.restore": [{ tick: number }, Status];
+  /** Keeps the applied scripts unless `bundle: "snapshot"` (server.md 3.3). */
+  "snapshots.restore": [{ tick: number; bundle?: RestoreBundle }, Status & { restored?: number; scripts?: RestoredScripts }];
   "debug.attach": [Record<string, never>, HostDebugState];
   "debug.detach": [Record<string, never>, HostDebugState];
   "debug.breakpoints.set": [{ file: string; line: number; condition?: string; log?: string }, { id: string; file: string; line: number; verified: boolean; locations: SourceLocation[] }];
@@ -415,14 +466,17 @@ export interface Methods {
   "debug.pause": [{ timeout_ms?: number }, HostDebugState];
   "debug.continue": [Record<string, never>, { state: "running" }];
   "debug.step": [{ kind: "over" | "into" | "out"; timeout_ms?: number }, HostDebugState];
-  "debug.state": [Record<string, never>, HostDebugState];
+  "debug.state": [{ brief?: boolean }, HostDebugState];
   "debug.eval": [{ expr: string; frame?: number }, HostEvalResult];
   "debug.set": [{ name: string; value: string; frame?: number }, HostEvalResult];
-  "debug.watch": [{ entity: EntityId; component: string; field?: string }, HostDataWatch];
+  "debug.watch": [{ entity: EntityRef; component: string; field?: string }, HostDataWatch];
   "debug.unwatch": [{ id?: string }, { cleared: number }];
   "debug.exceptions": [{ mode: ExceptionMode }, { mode: ExceptionMode }];
   "debug.wait": [{ timeout_ms?: number }, HostDebugState];
-  "debug.rewind": [{ tick: number }, { restored: number; tick: number }];
+  "debug.rewind": [
+    { tick: number; bundle?: RestoreBundle },
+    { restored: number; tick: number; scripts?: RestoredScripts; stopped_by?: DebugStop },
+  ];
   "profile.frame": [Record<string, never>, ProfileSample];
   subscribe: [{ topics: string[] }, { topics: string[] }];
 }

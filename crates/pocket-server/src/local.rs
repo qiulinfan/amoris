@@ -372,6 +372,9 @@ impl Host {
                     let mut params = params;
                     params["types"] = json!(true);
                     let r = self.game(via, method, params).await;
+                    if held(&r) {
+                        return Some(r);
+                    }
                     let tc = self.typecheck(&r).await;
                     merge_typecheck(r, tc)
                 }
@@ -381,6 +384,9 @@ impl Host {
                 Ok(_) => {
                     let dry = json!({"dry_run": true, "types": true});
                     let r = self.game(via, "scripts.apply", dry).await;
+                    if held(&r) {
+                        return Some(r);
+                    }
                     let tc = self.typecheck(&r).await;
                     let r = match r {
                         Ok(v) => Ok(v),
@@ -526,6 +532,11 @@ impl Host {
             hits.into_iter().take(limit).map(|(_, v)| v).collect(),
         ))
     }
+}
+
+/// A compile the debugger kept from running (`debug.paused`): nothing to type check.
+fn held(r: &Result<Value, Problem>) -> bool {
+    matches!(r, Err(p) if p.code == "debug.paused")
 }
 
 /// Adds the type check's outcome to a compile's result.
