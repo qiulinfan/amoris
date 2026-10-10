@@ -2,7 +2,8 @@
 
 Status: Draft, implemented on branch `feat/splat` (2026-10-04); the compute tile rasterizer, the
 anti-aliased mode, splats in the entity-id pass and stable ties on `explore/splats` (2026-10-09,
-Amoris Pioneer)
+Amoris Pioneer); the quads stay the default rasterizer on every adapter (2026-10-10, after the quiet
+re-measurement, `explore/quiet2`)
 
 Charter: 4.4 (neural rendering: 3D Gaussian Splatting with a preprocess compute shader for
 projection, culling and spherical harmonics, a GPU radix sort and instanced quad blending composited
@@ -252,7 +253,9 @@ After the opaque pass:
    2)), 0.99), skip below 1/255, accumulate color times alpha times transmittance, and stop once the
    transmittance is below 1/255. The workgroup stops when all its pixels have (a count in workgroup
    memory, read uniformly before each batch). It writes (premultiplied color, transmittance) to an
-   `rgba16float` storage texture.
+   `rgba16float` storage texture. The walk ends through its loop conditions, without `break` or
+   `continue`: with them NVIDIA's Direct3D 12 driver ran it 8x slower (same pixels; bench, quiet
+   re-measurement).
 6. **`splat composite`**: a full-screen pass blends the image over the resolved HDR image with
    `One, SrcAlpha`: splats + transmittance x scene (transmittance is stored rather than coverage, so
    `f16` keeps small values exact).
@@ -292,12 +295,16 @@ of 256 per pair (0.18 measured, 1.0 without them). The test exists because a lef
 (`if (true)` in place of the sub-tile test) shipped in the first commit of the rasterizer and
 went unnoticed: it changes no pixel, only the cost (26-48% of the raster on the RTX 5060).
 
-Cost and comparison with the quads: [docs/bench/splats.md](../bench/splats.md). On the RTX 5060 the
-tiles win at 2560x1440 with 3M splats and on close-ups (0.80-0.88 of the quads' time), tie at 3M
-and 1600x900 and at 1M and 2560x1440 (0.87-1.00), lose at 1M and 1600x900 (1.10-1.12) and lose
-clearly where pixels do not saturate (anti-aliased 1.21-1.28, the distant view 1.48, both 1.89;
-section 8). The default stays the quads until the reference machine (Apple M5, where the quads'
-blending cost is highest) has measured both.
+Cost and comparison with the quads: [docs/bench/splats.md](../bench/splats.md). On a quiet machine
+(2026-10-10), on the RTX 5060 and the Radeon 780M with Direct3D 12 and Vulkan, the tiles take 1.09
+to 1.47 times the quads' GPU time at the garden's default view (1M, 1600x900) and 1.24 to 2.06
+times where pixels do not saturate (anti-aliased, the distant view, both; section 8); they win only
+with 3M splats or at 2560x1440 and in close-ups (0.79 to 0.97, mostly on the discrete GPU with
+Vulkan). On the integrated GPU the binning and the second sort cost about as much as the quads'
+whole draw. **The quads are the default on every adapter** (`SplatRaster::DEFAULT`, charter 4.4,
+Pioneer 2026-10-10); the tiles stay available (`POCKET_SPLAT_RASTER=tile`, `Splats::raster`).
+Apple GPUs, where the quads' blending costs most, are unmeasured: should the M5 measure the tiles
+clearly faster, Apple would get its own default.
 
 ### 4.3 Anti-aliased mode
 

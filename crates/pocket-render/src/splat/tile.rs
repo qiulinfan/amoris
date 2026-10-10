@@ -758,6 +758,32 @@ mod tests {
         s as f64 / a.len() as f64
     }
 
+    /// A renderer draws splats with the quads unless told otherwise, whatever the adapter
+    /// ([`SplatRaster::DEFAULT`]; charter 4.4, docs/bench/splats.md, quiet re-measurement). Run with
+    /// `POCKET_ADAPTER` and `POCKET_BACKEND` for the other adapters. Skipped without a GPU or with
+    /// `POCKET_SPLAT_RASTER` set.
+    #[test]
+    fn quads_are_the_default_rasterizer() {
+        assert_eq!(SplatRaster::DEFAULT, SplatRaster::Quads);
+        if std::env::var_os("POCKET_SPLAT_RASTER").is_some() {
+            eprintln!("POCKET_SPLAT_RASTER set: skipped");
+            return;
+        }
+        let Ok(gpu) = Gpu::headless(BackendChoice::from_env()) else {
+            eprintln!("no GPU: skipped");
+            return;
+        };
+        let r = Renderer::new(&gpu, wgpu::TextureFormat::Rgba8UnormSrgb, 64, 64);
+        assert_eq!(
+            r.splats.raster,
+            SplatRaster::Quads,
+            "{} ({:?}, {:?})",
+            gpu.info.name,
+            gpu.info.device_type,
+            gpu.info.backend
+        );
+    }
+
     /// The tile rasterizer draws what the quads draw (they blend the same Gaussians; the quads round
     /// to f16 at every blend, the tiles once). Skipped without a GPU.
     #[test]

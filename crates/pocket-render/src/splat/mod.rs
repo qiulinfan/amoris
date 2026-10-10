@@ -77,6 +77,16 @@ pub enum SplatRaster {
 }
 
 impl SplatRaster {
+    /// The rasterizer splats are drawn with unless `POCKET_SPLAT_RASTER` or [`Splats::raster`] says
+    /// otherwise: the quads, on every adapter (charter 4.4, Pioneer 2026-10-10). Measured on the
+    /// RTX 5060 and the Radeon 780M with Direct3D 12 and Vulkan (docs/bench/splats.md, quiet
+    /// re-measurement): at the garden's default view (1M splats, 1600x900) the tiles take 1.09 to
+    /// 1.47 times the quads' GPU time on every adapter and backend, 1.24 to 2.06 times in the
+    /// anti-aliased mode and from 2.5 times the distance, and win only with 3M splats or at
+    /// 2560x1440 and in close-ups (0.79 to 0.97, mostly on the discrete GPU with Vulkan). Apple
+    /// GPUs, whose blending costs the quads most, are unmeasured.
+    pub const DEFAULT: SplatRaster = SplatRaster::Quads;
+
     /// From `POCKET_SPLAT_RASTER` (`tile`, `tiles`, `quad`, `quads`); `default` otherwise.
     pub fn from_env(default: SplatRaster) -> SplatRaster {
         match std::env::var("POCKET_SPLAT_RASTER").as_deref() {
@@ -525,7 +535,7 @@ impl Splats {
             key_bits: 24,
             radiance: 1.0,
             draw_enabled: true,
-            raster: SplatRaster::from_env(SplatRaster::Quads),
+            raster: SplatRaster::from_env(SplatRaster::DEFAULT),
             antialias: std::env::var("POCKET_SPLAT_AA").is_ok_and(|v| v == "1"),
             count_tests: false,
             stats: SplatStats::default(),

@@ -965,7 +965,7 @@ fn main() {
     let raster = match arg("--raster").as_deref() {
         Some("tile") | Some("tiles") => SplatRaster::Tiles,
         Some("quad") | Some("quads") => SplatRaster::Quads,
-        _ => SplatRaster::from_env(SplatRaster::Quads),
+        _ => SplatRaster::from_env(SplatRaster::DEFAULT),
     };
     let mut host = Garden {
         frame: Some(scene_frame(meshes, ply)),

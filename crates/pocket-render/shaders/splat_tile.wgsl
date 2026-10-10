@@ -361,37 +361,34 @@ fn tile_raster(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_inde
         }
         workgroupBarrier();
         if (!done) {
-            for (var w = 0u; w < 8u; w++) {
+            // The walk ends through its loop conditions, with no `break` or `continue`: written
+            // with them (the same arithmetic, the same pixels), the raster took 8x as long on the
+            // RTX 5060 with Direct3D 12 (11.4 against 1.45 ms at 1M splats and 1600x900) and 6%
+            // longer with Vulkan (docs/bench/splats.md, quiet re-measurement).
+            for (var w = 0u; w < 8u && !done; w++) {
                 var bits = atomicLoad(&s_bits[sub * 8u + w]);
-                while (bits != 0u) {
+                while (bits != 0u && !done) {
                     let j = w * 32u + firstTrailingBit(bits);
                     bits &= bits - 1u;
                     tested += 1u;
                     let a = s_pos[j];
                     if (a.z <= zo) {
                         done = true;   // behind the scene's surface, as is every later splat
-                        break;
+                    } else {
+                        let d = pix - a.xy;
+                        let ia = s_axes[j];
+                        let uv = vec2f(dot(d, ia.xy), dot(d, ia.zw));
+                        // Inside the quad the quad path would draw.
+                        if (max(abs(uv.x), abs(uv.y)) <= a.w) {
+                            let c = s_color[j];
+                            let alpha = min(c.a * exp2(-0.72134752 * dot(uv, uv)), 0.99);
+                            if (alpha >= 1.0 / 255.0) {
+                                color += c.rgb * (alpha * trans);
+                                trans *= 1.0 - alpha;
+                                done = trans < 1.0 / 255.0;
+                            }
+                        }
                     }
-                    let d = pix - a.xy;
-                    let ia = s_axes[j];
-                    let uv = vec2f(dot(d, ia.xy), dot(d, ia.zw));
-                    if (max(abs(uv.x), abs(uv.y)) > a.w) {
-                        continue;      // outside the quad the quad path would draw
-                    }
-                    let c = s_color[j];
-                    let alpha = min(c.a * exp2(-0.72134752 * dot(uv, uv)), 0.99);
-                    if (alpha < 1.0 / 255.0) {
-                        continue;
-                    }
-                    color += c.rgb * (alpha * trans);
-                    trans *= 1.0 - alpha;
-                    if (trans < 1.0 / 255.0) {
-                        done = true;
-                        break;
-                    }
-                }
-                if (done) {
-                    break;
                 }
             }
             if (done) {
