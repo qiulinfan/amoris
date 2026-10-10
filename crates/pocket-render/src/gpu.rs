@@ -225,9 +225,29 @@ pub fn instance_flags(backends: wgpu::Backends, debug: bool) -> wgpu::InstanceFl
 /// `first_instance` is nonzero into a no-op, as browsers do, where a native driver would draw it
 /// anyway and hide a missing baseline path (docs/spec/webgpu-baseline.md).
 pub fn instance_flags_with(backends: wgpu::Backends, minimal: Minimal) -> wgpu::InstanceFlags {
-    let mut flags = instance_flags(backends, cfg!(debug_assertions)).with_env();
+    let flags = instance_flags(backends, cfg!(debug_assertions)).with_env();
+    debug_keeps_labels(
+        flags,
+        std::env::var_os("WGPU_DISCARD_HAL_LABELS").is_some(),
+        minimal,
+    )
+}
+
+/// `flags` after wgpu's environment, adjusted: with `WGPU_VALIDATION=1` or `WGPU_DEBUG=1` in a
+/// release build the debug layer's messages need object names, so labels stay unless
+/// `WGPU_DISCARD_HAL_LABELS` was set explicitly (`label_override`); and the browser emulation's
+/// indirect validation is always on.
+fn debug_keeps_labels(
+    mut flags: wgpu::InstanceFlags,
+    label_override: bool,
+    minimal: Minimal,
+) -> wgpu::InstanceFlags {
+    use wgpu::InstanceFlags as F;
+    if flags.intersects(F::VALIDATION | F::DEBUG) && !label_override {
+        flags.remove(F::DISCARD_HAL_LABELS);
+    }
     if minimal.drops_first_instance() {
-        flags |= wgpu::InstanceFlags::VALIDATION_INDIRECT_CALL;
+        flags |= F::VALIDATION_INDIRECT_CALL;
     }
     flags
 }
@@ -635,6 +655,26 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Validation or debugging asked for in a release build keeps object labels for the debug
+    /// layer's messages, unless `WGPU_DISCARD_HAL_LABELS` says otherwise.
+    #[test]
+    fn validation_keeps_labels() {
+        use wgpu::InstanceFlags as F;
+        let release = F::VALIDATION_INDIRECT_CALL | F::DISCARD_HAL_LABELS;
+        let none = Minimal::default();
+        assert_eq!(debug_keeps_labels(release, false, none), release);
+        assert!(
+            !debug_keeps_labels(release | F::VALIDATION, false, none)
+                .contains(F::DISCARD_HAL_LABELS)
+        );
+        assert!(
+            !debug_keeps_labels(release | F::DEBUG, false, none).contains(F::DISCARD_HAL_LABELS)
+        );
+        assert!(
+            debug_keeps_labels(release | F::VALIDATION, true, none).contains(F::DISCARD_HAL_LABELS)
+        );
     }
 
     /// Leaving out `indirect-first-instance` keeps indirect validation on for every backend, so the
