@@ -4,7 +4,7 @@
 //!
 //! `cargo run --release -p pocket-render --example lod_field -- [--n 48] [--spacing 6]
 //!  [--detail 6] [--size 1280x720] [--t 0] [--fly] [--frames 120] [--warm 30] [--lod on|off]
-//!  [--pixels 1] [--occlusion off|on|auto] [--crowd 0] [--capture OUT.png]`
+//!  [--pixels 1] [--occlusion off|on|auto] [--crowd 0] [--capture OUT.png] [--settle S]`
 //!
 //! Prints one JSON object: how long making the meshes and their levels took, the levels, frame wall
 //! time (submit to GPU idle), CPU encoding and timestamped GPU time with its passes, and what the
@@ -142,6 +142,10 @@ fn main() {
     let mut gpu_ms = Vec::new();
     let mut passes: Vec<(&'static str, f64, u32)> = Vec::new();
     let mut first_frame_ms = 0.0;
+    // `--settle S`: wait before the first frame, as many_cubes' option does.
+    if let Some(s) = arg("--settle").and_then(|s| s.parse::<f64>().ok()) {
+        std::thread::sleep(std::time::Duration::from_secs_f64(s.max(0.0)));
+    }
     // The same moment every frame (no interpolation in flight): only the camera moves.
     let now = 1.0;
     for i in 0..warm + frames {

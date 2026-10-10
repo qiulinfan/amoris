@@ -86,13 +86,16 @@ fn vs(v: VsIn, @builtin(instance_index) ii: u32, @builtin(vertex_index) vi: u32)
     o.tangent = vec4f(t, v.tangent.w);
     o.material = d.material;
     o.prev_world = world;
-    let word = d.slot >> 5u;
-    let moved = word < arrayLength(&moving) && ((moving[word] >> (d.slot & 31u)) & 1u) != 0u;
-    if (view.motion.y > 0.5 && moved) {
-        // Last frame's pose: the instance's two tick poses at last frame's alpha.
-        let inst = instances[d.slot];
-        let pose = instance_pose(inst, view.motion.x);
-        o.prev_world = pose.pos + quat_rotate(pose.rot, prev_local(v.position, vi, inst.mesh) * d.scale);
+    // Only a pipeline with the motion target reads last frame's pose (`SCENE_MOTION`, below).
+    if (SCENE_MOTION) {
+        let word = d.slot >> 5u;
+        let moved = word < arrayLength(&moving) && ((moving[word] >> (d.slot & 31u)) & 1u) != 0u;
+        if (view.motion.y > 0.5 && moved) {
+            // Last frame's pose: the instance's two tick poses at last frame's alpha.
+            let inst = instances[d.slot];
+            let pose = instance_pose(inst, view.motion.x);
+            o.prev_world = pose.pos + quat_rotate(pose.rot, prev_local(v.position, vi, inst.mesh) * d.scale);
+        }
     }
     return o;
 }
@@ -290,17 +293,31 @@ struct SceneOut {
     @location(3) normal: vec4f,
 };
 
+// Whether the pipeline has the motion and the normal target (pipeline-overridable constants set
+// from post.rs `SceneFormat::constants`; on when a pipeline sets none). The outputs of a missing
+// target are left zero instead of computed: not every driver drops that work itself (NVIDIA's
+// Direct3D 12 and AMD's Vulkan do not; docs/bench/dx12.md 10). The indirect share is computed with
+// or without its target: without it NVIDIA's Direct3D 12 compiler rounds the color itself
+// differently, and the images would differ from those before by a level here and there
+// (docs/bench/dx12.md 10.5).
+override SCENE_MOTION: bool = true;
+override SCENE_NORMALS: bool = true;
+
 fn scene_out(in: VsOut, n: vec3f, color: vec3f, indirect: vec3f) -> SceneOut {
     var o: SceneOut;
     o.color = vec4f(color, 1.0);
     o.share = vec4f(clamp(indirect / max(color, vec3f(1e-6)), vec3f(0.0), vec3f(1.0)), 1.0);
-    let moved = view.prev_view_proj * vec4f(in.prev_world, 1.0);
-    let still = view.prev_view_proj * vec4f(in.world, 1.0);
-    if (moved.w > 1e-6 && still.w > 1e-6) {
-        o.motion = vec4f(moved.xy / moved.w - still.xy / still.w, 0.0, 0.0);
+    if (SCENE_MOTION) {
+        let moved = view.prev_view_proj * vec4f(in.prev_world, 1.0);
+        let still = view.prev_view_proj * vec4f(in.world, 1.0);
+        if (moved.w > 1e-6 && still.w > 1e-6) {
+            o.motion = vec4f(moved.xy / moved.w - still.xy / still.w, 0.0, 0.0);
+        }
     }
-    let vn = (view.view * vec4f(n, 0.0)).xyz;
-    o.normal = vec4f(vn * 0.5 + 0.5, 1.0);
+    if (SCENE_NORMALS) {
+        let vn = (view.view * vec4f(n, 0.0)).xyz;
+        o.normal = vec4f(vn * 0.5 + 0.5, 1.0);
+    }
     return o;
 }
 
@@ -631,6 +648,8 @@ fn fs_ocean(in: OceanOut) -> SceneOut {
     o.color = vec4f(c, 1.0);
     o.share = vec4f(0.0);
     o.motion = vec4f(0.0);
-    o.normal = vec4f((view.view * vec4f(n, 0.0)).xyz * 0.5 + 0.5, 1.0);
+    if (SCENE_NORMALS) {
+        o.normal = vec4f((view.view * vec4f(n, 0.0)).xyz * 0.5 + 0.5, 1.0);
+    }
     return o;
 }

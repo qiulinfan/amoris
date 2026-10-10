@@ -99,10 +99,12 @@ impl RadixSort {
             m.copy_from_slice(&shifts);
         }
         passes.unmap();
+        let [histogram, scan, scatter] =
+            crate::par::map(["histogram", "scan_bins", "scatter"], pipe);
         RadixSort {
-            histogram: pipe("histogram"),
-            scan: pipe("scan_bins"),
-            scatter: pipe("scatter"),
+            histogram,
+            scan,
+            scatter,
             layout,
             passes,
         }

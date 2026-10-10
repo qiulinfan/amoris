@@ -213,6 +213,18 @@ impl SceneFormat {
         t
     }
 
+    /// The forward shader's pipeline-overridable constants for a pipeline that writes
+    /// [`targets`](Self::targets) with extras: whether to compute the object motion and the view
+    /// normal (forward.wgsl `scene_out`; the indirect share is computed always, for images equal
+    /// to those before on NVIDIA's Direct3D 12).
+    pub fn constants(&self) -> [(&'static str, f64); 2] {
+        let on = |b: bool| if b { 1.0 } else { 0.0 };
+        [
+            ("SCENE_MOTION", on(self.motion)),
+            ("SCENE_NORMALS", on(self.normals)),
+        ]
+    }
+
     pub fn multisample(&self) -> wgpu::MultisampleState {
         wgpu::MultisampleState {
             count: self.samples,
@@ -414,6 +426,12 @@ pub struct Post {
     sampler: wgpu::Sampler,
     params: wgpu::Buffer,
     output_srgb: bool,
+    /// The parameters as last written (a 256-byte slot per pass), written again only when they
+    /// change: each `write_buffer` stages through a buffer of its own, which costs more on
+    /// Direct3D 12 (docs/bench/dx12.md 10).
+    written: Vec<u8>,
+    /// The passes' bind groups and the source image and bloom chain they hold.
+    groups: Option<(wgpu::TextureView, wgpu::Texture, Vec<wgpu::BindGroup>)>,
 }
 
 impl Post {
@@ -473,22 +491,20 @@ impl Post {
                 mapped_at_creation: false,
             }),
             output_srgb: output.is_srgb(),
+            written: Vec::new(),
+            groups: None,
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn pass(
+    /// The bind group of the pass in parameter slot `slot`: `pipeline` reading `src` (and `bloom`).
+    fn group(
         &self,
         device: &wgpu::Device,
-        enc: &mut wgpu::CommandEncoder,
         pipeline: &wgpu::RenderPipeline,
         slot: u64,
         src: &wgpu::TextureView,
         bloom: Option<&wgpu::TextureView>,
-        dst: &wgpu::TextureView,
-        clear: bool,
-        label: &str,
-    ) {
+    ) -> wgpu::BindGroup {
         let mut entries = vec![
             wgpu::BindGroupEntry {
                 binding: 0,
@@ -513,11 +529,21 @@ impl Post {
                 resource: wgpu::BindingResource::TextureView(b),
             });
         }
-        let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some(label),
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("post"),
             layout: &pipeline.get_bind_group_layout(0),
             entries: &entries,
-        });
+        })
+    }
+
+    fn pass(
+        enc: &mut wgpu::CommandEncoder,
+        pipeline: &wgpu::RenderPipeline,
+        bg: &wgpu::BindGroup,
+        dst: &wgpu::TextureView,
+        clear: bool,
+        label: &str,
+    ) {
         let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some(label),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -536,7 +562,7 @@ impl Post {
             ..Default::default()
         });
         pass.set_pipeline(pipeline);
-        pass.set_bind_group(0, &bg, &[]);
+        pass.set_bind_group(0, bg, &[]);
         pass.draw(0..3, 0..1);
     }
 
@@ -545,7 +571,7 @@ impl Post {
     /// (docs/spec/taa-gtao.md).
     #[allow(clippy::too_many_arguments)]
     pub fn run(
-        &self,
+        &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         enc: &mut wgpu::CommandEncoder,
@@ -597,19 +623,42 @@ impl Post {
                 0.0,
             ],
         });
+        let mut bytes = vec![0u8; slots.len() * 256];
         for (k, s) in slots.iter().enumerate() {
-            queue.write_buffer(&self.params, k as u64 * 256, bytemuck::bytes_of(s));
+            bytes[k * 256..k * 256 + 32].copy_from_slice(bytemuck::bytes_of(s));
         }
-        let mut slot = 0u64;
+        if bytes != self.written {
+            queue.write_buffer(&self.params, 0, &bytes);
+            self.written = bytes;
+        }
+        // Slots: the downsamples, the upsamples, then the display transform.
+        let fresh = self
+            .groups
+            .as_ref()
+            .is_none_or(|(view, bloom, _)| view != src || *bloom != t.bloom);
+        if fresh {
+            let mut groups = Vec::with_capacity(2 * mips);
+            for i in 0..mips {
+                let from = if i == 0 { src } else { &t.bloom_mips[i - 1] };
+                groups.push(self.group(device, &self.down, groups.len() as u64, from, None));
+            }
+            for i in (0..mips.saturating_sub(1)).rev() {
+                let from = &t.bloom_mips[i + 1];
+                groups.push(self.group(device, &self.up, groups.len() as u64, from, None));
+            }
+            let last = groups.len() as u64;
+            groups.push(self.group(device, &self.tonemap, last, src, Some(&t.bloom_mips[0])));
+            self.groups = Some((src.clone(), t.bloom.clone(), groups));
+        }
+        let Some((_, _, groups)) = &self.groups else {
+            return;
+        };
+        let mut slot = 0;
         for i in 0..mips {
-            let src = if i == 0 { src } else { &t.bloom_mips[i - 1] };
-            self.pass(
-                device,
+            Self::pass(
                 enc,
                 &self.down,
-                slot,
-                src,
-                None,
+                &groups[slot],
                 &t.bloom_mips[i],
                 true,
                 "bloom down",
@@ -617,26 +666,20 @@ impl Post {
             slot += 1;
         }
         for i in (0..mips.saturating_sub(1)).rev() {
-            self.pass(
-                device,
+            Self::pass(
                 enc,
                 &self.up,
-                slot,
-                &t.bloom_mips[i + 1],
-                None,
+                &groups[slot],
                 &t.bloom_mips[i],
                 false,
                 "bloom up",
             );
             slot += 1;
         }
-        self.pass(
-            device,
+        Self::pass(
             enc,
             &self.tonemap,
-            slot,
-            src,
-            Some(&t.bloom_mips[0]),
+            &groups[slot],
             output,
             true,
             "display transform",

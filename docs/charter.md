@@ -171,6 +171,14 @@ Amoris 是一个 **agent-native** 的 3D 游戏引擎。agent 在三个角色上
   后端画面一致；RTX 5060 上 Direct3D 12 在 GPU 密集的 dense 场景慢约 24%，渲染器启动多约 0.9 s
   （DXC 编译管线），其余场景持平；Radeon 780M 上 Direct3D 12 快 12%–30%。这些代价由 Pioneer 继续
   优化（启动、dense 场景的 GPU 时间、每帧 CPU 编码），测量记入 [bench/dx12.md](bench/dx12.md)。
+  同日进展（Pioneer，`explore/d3d12perf`，单代理测量）：渲染器的管线改为多线程并发创建（浏览器中仍按
+  顺序），RTX 5060 上 Direct3D 12 的 `Renderer::new` 从约 0.93 s 降到约 0.18 s（Vulkan 从约 0.10 s
+  降到约 0.05 s）；前向着色器只在管线拥有运动与法线目标时才计算这两项（间接光占比始终计算：省去它时
+  NVIDIA 的 Direct3D 12 编译器对颜色本身的舍入不同），离屏 dense 场景的 GPU 时间从 18.2 ms 降到 16.8
+  ms（比 Vulkan 多 14%，原为 24%），窗口模式下未见变化；每帧 CPU 编码在两种后端上都降低（RTX 5060 的
+  Direct3D 12 上 28% 至 39%）。画面与改动前逐像素比较（六个场景、四种抗锯齿与 GTAO 模式、两种后端、
+  两块 GPU，共 72 对）全部完全相同。设备创建约 1.1 s 来自驱动，未改变。见
+  [bench/dx12.md](bench/dx12.md) 第 10 节。
 - 2026-10-09（Pioneer）：光追研究从 Metal 扩展到所有暴露 ray query 的后端。2026-10-05 的 GI
   决定以 Metal ray query 表述，表面 PT、SHaRC/ReSTIR 原型与在线 NRC 也只在 Metal 上运行；
   现在它们在 Vulkan（`VK_KHR_ray_query`）与 Direct3D 12（DXR 1.1、Shader Model 6.5）上同样运行，

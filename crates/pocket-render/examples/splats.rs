@@ -8,7 +8,10 @@
 //!  [--scale S]] [--save PATH.ply] [--capture OUT.png [--angle DEG] [--distance F] [--look X,Y,Z]]
 //!  [--bench FRAMES] [--headless-bench FRAMES] [--size WxH] [--key-bits 16|24|32] [--radiance R]
 //!  [--raster quad|tile] [--antialias] [--compare PREFIX] [--visible] [--no-meshes] [--orbit]
-//!  [--vsync]`
+//!  [--vsync] [--settle S]`
+//!
+//! `--settle S` (with `--headless-bench`) waits S seconds after start-up before the first frame,
+//! as many_cubes' does.
 //!
 //! `--raster` picks the quad draw or the compute tile rasterizer (default: `POCKET_SPLAT_RASTER`,
 //! else quads). `--compare PREFIX` captures the same view with both and writes `PREFIX_quad.png`,
@@ -1129,6 +1132,9 @@ fn headless_bench(mut host: Garden, size: (u32, u32), frames: u32) {
         host.key_bits,
         host.raster
     );
+    if let Some(s) = arg("--settle").and_then(|s| s.parse::<f64>().ok()) {
+        std::thread::sleep(std::time::Duration::from_secs_f64(s.max(0.0)));
+    }
     for draw in [true, false] {
         r.splats.draw_enabled = draw;
         let mut sums: Vec<(&'static str, f64)> = Vec::new();

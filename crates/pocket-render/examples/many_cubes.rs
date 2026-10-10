@@ -9,7 +9,9 @@
 //! benchmark, docs/bench/occlusion.md); `--occlusion` overrides `POCKET_OCCLUSION`. With
 //! `--headless-bench`, `--splats N` adds a cloud of N Gaussian splats on a sphere just behind the
 //! cubes' (with TAA the renderer then draws the unjittered depth they test against:
-//! docs/bench/taa-gtao.md).
+//! docs/bench/taa-gtao.md). `--settle S` (with `--headless-bench`) waits S seconds after start-up
+//! before the first frame: on the R1 laptop the start-up's burst on every core lowers the GPU's
+//! clocks for a few seconds, which a short benchmark would count (docs/bench/dx12.md 10).
 
 use glam::{Quat, Vec3};
 use pocket_assets::frame::RenderFrame;
@@ -31,6 +33,13 @@ fn arg(name: &str) -> Option<String> {
     args.iter()
         .position(|a| a == name)
         .and_then(|i| args.get(i + 1).cloned())
+}
+
+/// `--settle S`: waits S seconds (see the module's documentation).
+fn settle() {
+    if let Some(s) = arg("--settle").and_then(|s| s.parse::<f64>().ok()) {
+        std::thread::sleep(std::time::Duration::from_secs_f64(s.max(0.0)));
+    }
 }
 
 fn flag(name: &str) -> bool {
@@ -232,6 +241,7 @@ fn headless_bench(
         view_formats: &[],
     });
     let view = tex.create_view(&Default::default());
+    settle();
     let mut first_frame_ms = 0.0;
     let mut wall = Vec::new();
     let mut cpu = Vec::new();

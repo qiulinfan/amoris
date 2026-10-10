@@ -45,6 +45,15 @@ fn main() {
     let d = &gpu.device;
     {
         // Shader compilation failures (HLSL through DXC or FXC, MSL, SPIR-V) are internal errors.
+        // The renderer creates its pipelines on threads of their own and error scopes are
+        // per thread, so their errors reach the device's uncaptured-error handler: collect those.
+        let uncaptured = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let sink = uncaptured.clone();
+        d.on_uncaptured_error(std::sync::Arc::new(move |e: wgpu::Error| {
+            if let Ok(mut v) = sink.lock() {
+                v.push(e.to_string());
+            }
+        }));
         let internal = d.push_error_scope(wgpu::ErrorFilter::Internal);
         let validation = d.push_error_scope(wgpu::ErrorFilter::Validation);
         let t = std::time::Instant::now();
@@ -60,11 +69,15 @@ fn main() {
             pollster::block_on(validation.pop()),
             pollster::block_on(internal.pop()),
         ];
-        let errors: Vec<String> = errors
+        let mut errors: Vec<String> = errors
             .into_iter()
             .flatten()
             .map(|e| e.to_string())
             .collect();
+        errors.extend(uncaptured.lock().map(|v| v.clone()).unwrap_or_default());
+        d.on_uncaptured_error(std::sync::Arc::new(|e: wgpu::Error| {
+            println!("[uncaptured] {e}");
+        }));
         println!(
             "renderer: {} (built in {:.0} ms, frame {w}x{h}, {} bytes)",
             if errors.is_empty() {

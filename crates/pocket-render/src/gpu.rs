@@ -197,7 +197,11 @@ pub fn instance_with(choice: BackendChoice, minimal: Minimal) -> wgpu::Instance 
 /// instance; wgpu feeds it to the shader through root constants only when it rewrites indirect
 /// arguments, which is part of indirect validation. The renderer's multi-draws rely on
 /// `first_instance` (docs/bench/dx12.md 2.1): without the flag every batch but the first draws the
-/// wrong instances (the test `indirect_draws_keep_their_first_instance` catches it).
+/// wrong instances (the test `indirect_draws_keep_their_first_instance` catches it). A release
+/// build on Direct3D 12 also keeps labels away from the command lists (`DISCARD_HAL_LABELS`): each
+/// pass's label became a `BeginEvent` marker, about 8% of the frame's command recording there and
+/// nothing measurable on Vulkan (docs/bench/dx12.md 10); `WGPU_DISCARD_HAL_LABELS=0` brings them
+/// back for a PIX capture.
 pub fn instance_flags(backends: wgpu::Backends, debug: bool) -> wgpu::InstanceFlags {
     let mut flags = if debug {
         wgpu::InstanceFlags::debugging()
@@ -206,6 +210,9 @@ pub fn instance_flags(backends: wgpu::Backends, debug: bool) -> wgpu::InstanceFl
     };
     if backends.contains(wgpu::Backends::DX12) {
         flags |= wgpu::InstanceFlags::VALIDATION_INDIRECT_CALL;
+        if !debug {
+            flags |= wgpu::InstanceFlags::DISCARD_HAL_LABELS;
+        }
     }
     flags
 }
@@ -529,7 +536,11 @@ mod tests {
     fn direct3d_12_keeps_indirect_validation() {
         use wgpu::{Backends, InstanceFlags};
         let indirect = InstanceFlags::VALIDATION_INDIRECT_CALL;
-        assert_eq!(instance_flags(Backends::DX12, false), indirect);
+        // Release builds also discard the command lists' labels there.
+        assert_eq!(
+            instance_flags(Backends::DX12, false),
+            indirect | InstanceFlags::DISCARD_HAL_LABELS
+        );
         assert_eq!(
             instance_flags(Backends::VULKAN, false),
             InstanceFlags::empty()

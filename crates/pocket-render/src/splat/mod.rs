@@ -345,73 +345,97 @@ impl Splats {
             immediate_size: 0,
         });
         let draw_module = shaders::module(device, "splat_draw");
-        let draw_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("splats"),
-            layout: Some(&draw_pl),
-            vertex: wgpu::VertexState {
-                module: &draw_module,
-                entry_point: Some("vs_splat"),
-                compilation_options: Default::default(),
-                buffers: &[],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &draw_module,
-                entry_point: Some("fs_splat"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: HDR,
-                    blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                cull_mode: None,
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: DEPTH,
-                depth_write_enabled: Some(false),
-                depth_compare: Some(wgpu::CompareFunction::Greater),
-                stencil: Default::default(),
-                bias: Default::default(),
-            }),
-            multisample: Default::default(),
-            multiview_mask: None,
-            cache: None,
-        });
-        let id_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("splat ids"),
-            layout: None,
-            vertex: wgpu::VertexState {
-                module: &draw_module,
-                entry_point: Some("vs_splat_id"),
-                compilation_options: Default::default(),
-                buffers: &[],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &draw_module,
-                entry_point: Some("fs_splat_id"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::TextureFormat::R32Uint.into())],
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                cull_mode: None,
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: DEPTH,
-                depth_write_enabled: Some(true),
-                depth_compare: Some(wgpu::CompareFunction::Greater),
-                stencil: Default::default(),
-                bias: Default::default(),
-            }),
-            multisample: Default::default(),
-            multiview_mask: None,
-            cache: None,
-        });
-        let depth_pipeline = depth_copy_pipeline(device, 4);
+        let draw_pipeline = || {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("splats"),
+                layout: Some(&draw_pl),
+                vertex: wgpu::VertexState {
+                    module: &draw_module,
+                    entry_point: Some("vs_splat"),
+                    compilation_options: Default::default(),
+                    buffers: &[],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &draw_module,
+                    entry_point: Some("fs_splat"),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: HDR,
+                        blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: DEPTH,
+                    depth_write_enabled: Some(false),
+                    depth_compare: Some(wgpu::CompareFunction::Greater),
+                    stencil: Default::default(),
+                    bias: Default::default(),
+                }),
+                multisample: Default::default(),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+        let id_pipeline = || {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("splat ids"),
+                layout: None,
+                vertex: wgpu::VertexState {
+                    module: &draw_module,
+                    entry_point: Some("vs_splat_id"),
+                    compilation_options: Default::default(),
+                    buffers: &[],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &draw_module,
+                    entry_point: Some("fs_splat_id"),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::TextureFormat::R32Uint.into())],
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: DEPTH,
+                    depth_write_enabled: Some(true),
+                    depth_compare: Some(wgpu::CompareFunction::Greater),
+                    stencil: Default::default(),
+                    bias: Default::default(),
+                }),
+                multisample: Default::default(),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+        // The pipelines compile concurrently (par.rs; Direct3D 12 compiles shaders here).
+        let (pre, draw_pipeline, id_pipeline, depth_pipeline, sort, tiles) =
+            crate::par::scope(|s| {
+                let tiles = s.spawn(|| tile::TileRaster::new(gpu));
+                let pre = s.spawn(|| {
+                    crate::par::map(["preprocess", "scan", "compact", "finish"], compute)
+                });
+                let sort = s.spawn(|| RadixSort::new(device));
+                let ids = s.spawn(id_pipeline);
+                let draw = s.spawn(draw_pipeline);
+                let depth = s.spawn(|| depth_copy_pipeline(device, 4));
+                (
+                    pre.join(),
+                    draw.join(),
+                    ids.join(),
+                    depth.join(),
+                    sort.join(),
+                    tiles.join(),
+                )
+            });
+        let [preprocess, scan, compact, finish] = pre;
         let su = storage_usage();
         let indices: Vec<u16> = (0..BATCH as u16)
             .flat_map(|q| {
@@ -480,20 +504,20 @@ impl Splats {
             readback_tiles: false,
             readback_tests: false,
             copy_visits: false,
-            preprocess: compute("preprocess"),
-            scan: compute("scan"),
-            compact: compute("compact"),
-            finish: compute("finish"),
+            preprocess,
+            scan,
+            compact,
+            finish,
             draw_pipeline,
             id_pipeline,
             depth_pipeline,
             depth_samples: 4,
             depth: None,
-            sort: RadixSort::new(device),
+            sort,
             draw_layout,
             binds: None,
             generation: 0,
-            tiles: tile::TileRaster::new(gpu),
+            tiles,
             drawn_with: SplatRaster::Quads,
             overflow_logged: false,
             skip_logged: false,

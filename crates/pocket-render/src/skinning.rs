@@ -65,10 +65,16 @@ pub struct History {
     pub generation: u64,
     /// The parts skinned last frame: (entity, mesh, first vertex).
     last: HashSet<(u64, u32, u32)>,
+    /// The table as last written, written again only when it changes.
+    written: Vec<u32>,
 }
+
+/// Bytes between two jobs in the jobs buffer (WebGPU's minimum uniform offset alignment, at most).
+const JOB_STRIDE: u64 = 256;
 
 pub struct Skinning {
     pipeline: wgpu::ComputePipeline,
+    layout: wgpu::BindGroupLayout,
     rest: Vec<f32>,
     weights: Vec<SkinVert>,
     rest_buf: Option<wgpu::Buffer>,
@@ -78,16 +84,58 @@ pub struct Skinning {
     pub parts: Vec<Part>,
     palette: Option<wgpu::Buffer>,
     jobs: Option<wgpu::Buffer>,
+    /// The jobs as last written, written again only when they change.
+    jobs_written: Vec<u8>,
+    /// One bind group for every job (the job is a dynamic offset into the jobs buffer) and the
+    /// buffers it holds: rebuilt when one is replaced, not every frame. Creating bind groups and
+    /// staging writes per job cost about 0.9 ms a frame on Direct3D 12 for 40 skinned parts
+    /// (docs/bench/dx12.md 10).
+    group: Option<([wgpu::Buffer; 5], wgpu::BindGroup)>,
     pub history: History,
 }
 
 impl Skinning {
     pub fn new(device: &wgpu::Device) -> Skinning {
         let m = shaders::module(device, "skin");
+        let cs = wgpu::ShaderStages::COMPUTE;
+        let storage = |binding: u32, read_only: bool| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: cs,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        };
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("skinning"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: cs,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: true,
+                        min_binding_size: wgpu::BufferSize::new(std::mem::size_of::<Job>() as u64),
+                    },
+                    count: None,
+                },
+                storage(1, true),
+                storage(2, true),
+                storage(3, true),
+                storage(4, false),
+            ],
+        });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("skinning"),
+            bind_group_layouts: &[Some(&layout)],
+            immediate_size: 0,
+        });
         Skinning {
             pipeline: device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some("skinning"),
-                layout: None,
+                layout: Some(&pipeline_layout),
                 module: &m,
                 entry_point: Some("main"),
                 compilation_options: shaders::compute_options(),
@@ -102,10 +150,14 @@ impl Skinning {
             parts: Vec::new(),
             palette: None,
             jobs: None,
+            jobs_written: Vec::new(),
+            group: None,
+            layout,
             history: History {
                 buffer: history_buffer(device, 64),
                 generation: 0,
                 last: HashSet::new(),
+                written: Vec::new(),
             },
         }
     }
@@ -188,8 +240,12 @@ impl Skinning {
         if bytes > h.buffer.size() {
             h.buffer = history_buffer(device, bytes.next_power_of_two());
             h.generation += 1;
+            h.written.clear();
         }
-        queue.write_buffer(&h.buffer, 0, bytemuck::cast_slice(&table));
+        if table != h.written {
+            queue.write_buffer(&h.buffer, 0, bytemuck::cast_slice(&table));
+            h.written = table;
+        }
         for (from, to, size) in copies {
             if from + size <= vertices.size() {
                 enc.copy_buffer_to_buffer(vertices, from, &h.buffer, to, size);
@@ -288,36 +344,47 @@ impl Skinning {
         }
         let Some(pal) = &self.palette else { return };
         queue.write_buffer(pal, 0, pal_bytes);
-        let job_bytes = (jobs.len() * 256) as u64;
-        if self.jobs.as_ref().is_none_or(|b| b.size() < job_bytes) {
+        let mut job_bytes = vec![0u8; jobs.len() * JOB_STRIDE as usize];
+        for (k, (j, _)) in jobs.iter().enumerate() {
+            let at = k * JOB_STRIDE as usize;
+            job_bytes[at..at + std::mem::size_of::<Job>()].copy_from_slice(bytemuck::bytes_of(j));
+        }
+        if self
+            .jobs
+            .as_ref()
+            .is_none_or(|b| b.size() < job_bytes.len() as u64)
+        {
             self.jobs = Some(device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("skinning jobs"),
-                size: job_bytes.next_power_of_two(),
+                size: (job_bytes.len() as u64).next_power_of_two(),
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             }));
+            self.jobs_written.clear();
         }
         let Some(job_buf) = &self.jobs else { return };
-        for (k, (j, _)) in jobs.iter().enumerate() {
-            queue.write_buffer(job_buf, k as u64 * 256, bytemuck::bytes_of(j));
+        if job_bytes != self.jobs_written {
+            queue.write_buffer(job_buf, 0, &job_bytes);
+            self.jobs_written = job_bytes;
         }
-        let layout = self.pipeline.get_bind_group_layout(0);
-        let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
-            label: Some("skinning"),
-            timestamp_writes: None,
-        });
-        pass.set_pipeline(&self.pipeline);
-        for (k, (_, count)) in jobs.iter().enumerate() {
+        let buffers = [
+            job_buf.clone(),
+            rest.clone(),
+            weights.clone(),
+            pal.clone(),
+            vertices.clone(),
+        ];
+        if self.group.as_ref().is_none_or(|(held, _)| *held != buffers) {
             let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("skinning job"),
-                layout: &layout,
+                label: Some("skinning"),
+                layout: &self.layout,
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 0,
                         resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                             buffer: job_buf,
-                            offset: k as u64 * 256,
-                            size: wgpu::BufferSize::new(16),
+                            offset: 0,
+                            size: wgpu::BufferSize::new(std::mem::size_of::<Job>() as u64),
                         }),
                     },
                     wgpu::BindGroupEntry {
@@ -338,7 +405,16 @@ impl Skinning {
                     },
                 ],
             });
-            pass.set_bind_group(0, &bg, &[]);
+            self.group = Some((buffers, bg));
+        }
+        let Some((_, bg)) = &self.group else { return };
+        let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("skinning"),
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(&self.pipeline);
+        for (k, (_, count)) in jobs.iter().enumerate() {
+            pass.set_bind_group(0, bg, &[(k as u64 * JOB_STRIDE) as u32]);
             pass.dispatch_workgroups(count.div_ceil(64), 1, 1);
         }
     }

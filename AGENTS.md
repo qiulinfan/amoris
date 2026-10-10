@@ -67,6 +67,17 @@ specified under [docs/spec/](docs/spec/README.md); their measured spikes are und
   Vulkan and D3D12 (`indirect_draws_keep_their_first_instance`), `tools/backend_compare.py` compares
   frames across backends and `tools/backend_bench.py` times them
   ([docs/bench/dx12.md](docs/bench/dx12.md)).
+- The renderer creates its pipelines on threads (`crates/pocket-render/src/par.rs`; in order in
+  the browser): wgpu compiles shaders when a pipeline is created, DXC on every D3D12 start. wgpu's
+  error scopes are per thread, so a pipeline error in `Renderer::new` reaches the device's
+  uncaptured-error log, not a scope the caller pushed. Pipelines on the forward shader set its
+  `SCENE_*` override constants from `SceneFormat::constants` (the motion and the view normal are
+  computed only for a pipeline with their targets; the indirect share always, since NVIDIA's D3D12
+  compiler rounds the color differently without it). `tools/build_compare.py` compares another
+  build's frames with this one's, pixel for pixel. Release D3D12 builds discard wgpu's HAL labels;
+  `WGPU_DISCARD_HAL_LABELS=0` brings the pass markers back for PIX. On the R1 laptop a start-up's
+  all-core burst lowers the GPU's clocks for a few seconds: short headless benchmarks take
+  `--settle 5` (many_cubes, splats, lod_field, `tools/backend_bench.py`; docs/bench/dx12.md 10).
 - Shader hashes are integer (`pcg_hash` in common.wgsl): `fract(sin(x) * k)` differs per vendor
   and API.
 - Ray queries: the research tracers (`path_trace`, `gi_trace`, `ray_query_probe`;

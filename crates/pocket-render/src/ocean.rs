@@ -91,7 +91,10 @@ fn pipeline(
         fragment: Some(wgpu::FragmentState {
             module,
             entry_point: Some("fs_ocean"),
-            compilation_options: Default::default(),
+            compilation_options: wgpu::PipelineCompilationOptions {
+                constants: &format.constants(),
+                ..Default::default()
+            },
             targets: &format.targets(None, true),
         }),
         primitive: wgpu::PrimitiveState::default(),

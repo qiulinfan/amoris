@@ -52,6 +52,8 @@ pub struct Overlays {
     mask: Option<(wgpu::Texture, wgpu::TextureView, u32, u32)>,
     output_srgb: bool,
     module: wgpu::ShaderModule,
+    /// The parameters last written (none yet): written again only when they change.
+    written: Option<[f32; 4]>,
 }
 
 /// The ground grid's pipeline in the opaque pass (alpha blended, depth tested, not written; the
@@ -221,6 +223,7 @@ impl Overlays {
             mask: None,
             output_srgb: output.is_srgb(),
             module: m,
+            written: None,
         }
     }
 
@@ -231,14 +234,20 @@ impl Overlays {
             || self.hovered.is_some()
     }
 
-    pub fn write_params(&self, queue: &wgpu::Queue) {
+    /// Writes the parameters when they changed (renderer.rs `Uniform` says why).
+    pub fn write_params(&mut self, queue: &wgpu::Queue) {
+        let params = [
+            if self.output_srgb { 1.0 } else { 0.0 },
+            2.0,
+            if self.axes { 1.0 } else { 0.0 },
+            0.0,
+        ];
+        if self.written == Some(params) {
+            return;
+        }
+        self.written = Some(params);
         let p = Params {
-            params: [
-                if self.output_srgb { 1.0 } else { 0.0 },
-                2.0,
-                if self.axes { 1.0 } else { 0.0 },
-                0.0,
-            ],
+            params,
             select: [1.0, 0.62, 0.12, 1.0],
             hover: [0.55, 0.78, 1.0, 0.9],
         };

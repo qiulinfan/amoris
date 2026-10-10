@@ -172,13 +172,24 @@ impl TileRaster {
         let su = super::storage_usage();
         let device_pair_limit = (max / 4).min(u64::from(u32::MAX - sort::TILE)) as u32;
         let device_splat_limit = (max / TILE_SPLAT_BYTES).min(u64::from(u32::MAX)) as u32;
+        let [setup, count, scan, emit, ranges, raster] = crate::par::map(
+            [
+                "tile_setup",
+                "tile_count",
+                "tile_scan",
+                "tile_emit",
+                "tile_ranges",
+                "tile_raster",
+            ],
+            compute,
+        );
         TileRaster {
-            setup: compute("tile_setup"),
-            count: compute("tile_count"),
-            scan: compute("tile_scan"),
-            emit: compute("tile_emit"),
-            ranges: compute("tile_ranges"),
-            raster: compute("tile_raster"),
+            setup,
+            count,
+            scan,
+            emit,
+            ranges,
+            raster,
             raster_samples: 4,
             composite,
             control: super::buffer(

@@ -6,15 +6,20 @@ Runs many_cubes (the sphere and the dense grid of 1.6M cubes) and the 1M-splat g
 wall time between presented frames, no vsync), for every backend on every adapter, `--rounds`
 times in turn so that a disturbance from other work spreads over all configurations instead of
 landing on one. Variants time the D3D12-specific costs: wgpu's indirect validation
-(WGPU_VALIDATION_INDIRECT_CALL) and FXC instead of DXC (POCKET_DXC=fxc).
+(WGPU_VALIDATION_INDIRECT_CALL) and FXC instead of DXC (POCKET_DXC=fxc). `crowd-headless` is
+lod_field with 40 skinned columns, the per-frame CPU work that grows with skinned parts and
+batches (docs/bench/dx12.md 10).
 
 Build first: `cargo build --release -p pocket-render --examples`. Then, from the repository root:
 
     python tools/backend_bench.py --adapters nvidia,780m --rounds 2 \
         --summary docs/evidence/dx12/bench.json
 
-The summary keeps every run's numbers; the table printed at the end gives the median over the
-rounds of each configuration's medians (p50) and means.
+`--build NAME=DIR` (repeatable) times the examples of other checkouts too, each built with its
+own `target/` (for example master's next to a branch's), interleaved with the rest; without it the
+one build is this checkout's. The summary keeps every run's numbers; the table printed at the end
+gives the median over the rounds of each configuration's medians (p50) and means, and the CPU's
+encoding time where the benchmark reports it.
 """
 import argparse
 import json
@@ -30,16 +35,19 @@ ROOT = Path(__file__).resolve().parent.parent
 EXE = ".exe" if os.name == "nt" else ""
 
 
-def example(name):
-    return str(ROOT / "target" / "release" / "examples" / f"{name}{EXE}")
+def cases(frames, splat_frames, root=ROOT, settle=0.0):
+    def example(name):
+        return str(Path(root) / "target" / "release" / "examples" / f"{name}{EXE}")
 
-
-def cases(frames, splat_frames):
     f, s = str(frames), str(splat_frames)
+    # Headless runs wait before their first frame (`--settle`): a start-up that loads every core
+    # lowers the laptop GPU's clocks for a few seconds (docs/bench/dx12.md 10).
+    w = ["--settle", str(settle)] if settle else []
     return {
-        "cubes-sphere-headless": ("cubes", [example("many_cubes"), "--headless-bench", f]),
-        "cubes-dense-headless": ("cubes", [example("many_cubes"), "--dense", "--headless-bench", f]),
-        "splats-headless": ("splats", [example("splats"), "--headless-bench", s]),
+        "cubes-sphere-headless": ("cubes", [example("many_cubes"), "--headless-bench", f, *w]),
+        "cubes-dense-headless": ("cubes", [example("many_cubes"), "--dense", "--headless-bench", f, *w]),
+        "splats-headless": ("splats", [example("splats"), "--headless-bench", s, *w]),
+        "crowd-headless": ("lod", [example("lod_field"), "--crowd", "40", "--frames", f, "--warm", "30", *w]),
         "cubes-sphere-window": ("window", [example("many_cubes"), "--bench", f]),
         "cubes-dense-window": ("window", [example("many_cubes"), "--dense", "--bench", f]),
         "splats-window": ("window", [example("splats"), "--bench", f]),
@@ -63,6 +71,11 @@ NUM = r"([-+0-9.eE]+)"
 
 def parse_cubes(out):
     return json.loads(out.strip().splitlines()[-1])
+
+
+def parse_lod(out):
+    """lod_field prints one indented JSON object."""
+    return json.loads(out if out.startswith("{") else out[out.index("\n{") + 1:])
 
 
 def parse_window(out):
@@ -100,16 +113,19 @@ def parse_splats(out):
     return r
 
 
-PARSERS = {"cubes": parse_cubes, "window": parse_window, "splats": parse_splats}
+PARSERS = {"cubes": parse_cubes, "window": parse_window, "splats": parse_splats,
+           "lod": parse_lod}
 
 
 def headline(kind, r):
-    """(frame p50 ms, GPU ms) for the table."""
+    """(frame p50 ms, GPU ms, CPU encoding ms or None) for the table."""
     if kind == "cubes":
-        return r["submit_to_idle_ms"]["p50"], r["gpu_ms"]["mean"]
+        return r["submit_to_idle_ms"]["p50"], r["gpu_ms"]["mean"], r["cpu_encode_ms"]["p50"]
+    if kind == "lod":
+        return r["wall_ms"]["p50"], r["gpu_ms"]["mean"], r["cpu_ms"]["p50"]
     if kind == "window":
-        return r["frame_ms_p50"], r["gpu_ms_mean"]
-    return r["draw_on"]["submit_to_idle_p50"], r["draw_on"]["gpu_ms"]
+        return r["frame_ms_p50"], r["gpu_ms_mean"], r["cpu_ms_mean"]
+    return r["draw_on"]["submit_to_idle_p50"], r["draw_on"]["gpu_ms"], None
 
 
 def main():
@@ -120,50 +136,66 @@ def main():
     ap.add_argument("--rounds", type=int, default=2)
     ap.add_argument("--frames", type=int, default=300)
     ap.add_argument("--splat-frames", type=int, default=100)
+    ap.add_argument("--settle", type=float, default=0.0,
+                    help="seconds the headless runs wait after start-up before their first frame")
+    ap.add_argument("--build", action="append", default=[], metavar="NAME=DIR",
+                    help="also time the examples built in DIR/target (repeatable)")
     ap.add_argument("--summary")
+    ap.add_argument("--note", default="measured while other agents built and ran GPU work on the machine",
+                    help="the conditions, kept in the summary's `provisional` field")
     args = ap.parse_args()
-    all_cases = cases(args.frames, args.splat_frames)
-    chosen = [c for c in (args.cases.split(",") if args.cases else all_cases)]
+    builds = [tuple(b.split("=", 1)) for b in args.build] or [("this", str(ROOT))]
+    all_cases = {name: cases(args.frames, args.splat_frames, Path(d), args.settle) for name, d in builds}
+    chosen = [c for c in (args.cases.split(",") if args.cases else all_cases[builds[0][0]])]
     adapters = [a for a in args.adapters.split(",") if a] or [None]
     runs = []
     for rnd in range(args.rounds):
         for case in chosen:
-            kind, cmd = all_cases[case]
             for adapter in adapters:
                 for variant in args.variants.split(","):
                     backend, extra, only = VARIANTS[variant]
                     if only and case not in only:
                         continue
-                    env = dict(os.environ, POCKET_BACKEND=backend, **extra)
-                    if adapter:
-                        env["POCKET_ADAPTER"] = adapter
-                    t = time.time()
-                    p = subprocess.run(cmd, cwd=ROOT, env=env, capture_output=True, text=True, timeout=900)
-                    run = {"round": rnd, "case": case, "adapter": adapter, "variant": variant,
-                           "seconds": round(time.time() - t, 1)}
-                    try:
-                        run["result"] = PARSERS[kind](p.stdout)
-                        run["headline"] = headline(kind, run["result"])
-                    except (ValueError, KeyError, IndexError) as e:
-                        run["error"] = f"{e}; exit {p.returncode}; {p.stderr[-500:]}"
-                    runs.append(run)
-                    hl = run.get("headline")
-                    print(f"  r{rnd} {case:22} {adapter or '-':7} {variant:28} "
-                          + (f"frame p50 {hl[0]:7.2f} ms  GPU {hl[1]:7.2f} ms" if hl else run["error"][:160]),
-                          file=sys.stderr)
+                    for build, _ in builds:
+                        kind, cmd = all_cases[build][case]
+                        env = dict(os.environ, POCKET_BACKEND=backend, **extra)
+                        if adapter:
+                            env["POCKET_ADAPTER"] = adapter
+                        t = time.time()
+                        p = subprocess.run(cmd, cwd=ROOT, env=env, capture_output=True, text=True,
+                                           timeout=900)
+                        run = {"round": rnd, "case": case, "adapter": adapter, "variant": variant,
+                               "seconds": round(time.time() - t, 1)}
+                        if len(builds) > 1:
+                            run["build"] = build
+                        try:
+                            run["result"] = PARSERS[kind](p.stdout)
+                            run["headline"] = headline(kind, run["result"])
+                        except (ValueError, KeyError, IndexError, TypeError) as e:
+                            run["error"] = f"{e}; exit {p.returncode}; {p.stderr[-500:]}"
+                        runs.append(run)
+                        hl = run.get("headline")
+                        print(f"  r{rnd} {case:22} {adapter or '-':7} {variant:28} {run.get('build', ''):8} "
+                              + (f"frame p50 {hl[0]:7.2f} ms  GPU {hl[1]:7.2f} ms" if hl
+                                 else run["error"][:160]),
+                              file=sys.stderr)
     table = {}
     for run in runs:
         if "headline" in run:
-            table.setdefault((run["case"], run["adapter"], run["variant"]), []).append(run["headline"])
-    print(f"{'case':22} {'adapter':8} {'variant':28} {'frame p50':>10} {'GPU':>8}  (median of rounds)")
-    for (case, adapter, variant), hls in table.items():
-        print(f"{case:22} {adapter or '-':8} {variant:28} {statistics.median(h[0] for h in hls):10.2f} "
-              f"{statistics.median(h[1] for h in hls):8.2f}")
+            key = (run["case"], run["adapter"], run["variant"], run.get("build", ""))
+            table.setdefault(key, []).append(run["headline"])
+    print(f"{'case':22} {'adapter':8} {'variant':28} {'build':8} {'frame p50':>10} {'GPU':>8} {'CPU':>7}"
+          "  (median of rounds)")
+    for (case, adapter, variant, build), hls in table.items():
+        cpu = [h[2] for h in hls if h[2] is not None]
+        print(f"{case:22} {adapter or '-':8} {variant:28} {build:8} "
+              f"{statistics.median(h[0] for h in hls):10.2f} {statistics.median(h[1] for h in hls):8.2f} "
+              + (f"{statistics.median(cpu):7.3f}" if cpu else f"{'-':>7}"))
     if args.summary:
         out = ROOT / args.summary
         out.parent.mkdir(parents=True, exist_ok=True)
         summary = {"tool": "tools/backend_bench.py", "date": time.strftime("%Y-%m-%d %H:%M"),
-                   "provisional": "measured while other agents built and ran GPU work on the machine",
+                   "provisional": args.note, "builds": dict(builds), "settle_s": args.settle,
                    "frames": args.frames, "splat_frames": args.splat_frames, "runs": runs}
         out.write_text(json.dumps(summary, indent=1) + "\n", newline="\n")
 

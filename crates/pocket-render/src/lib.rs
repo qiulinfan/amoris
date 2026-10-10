@@ -21,6 +21,7 @@ pub mod neural;
 pub mod occlusion;
 mod ocean;
 pub mod overlay;
+mod par;
 mod particles;
 pub mod picking;
 mod post;
