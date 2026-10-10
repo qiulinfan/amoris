@@ -493,7 +493,7 @@ QuickJS-ng 0.16.2 (script-native, script-web, debugger), `oxc_* =0.152.0` and `o
 | `axum`, `mime_guess` | server | `axum =0.8.9` with `ws`: the host's HTTP and WebSocket endpoints; `mime_guess =2.0.5`: content types of served files (docs/spec/server.md) |
 | `ureq` | app | `ureq =3.4.2` without default features (no TLS): the CLI's calls to a host on 127.0.0.1 |
 | `tungstenite`, `regex` | debug, xtask | the CDP endpoint and the web checker |
-| `toml`, `sha2` | xtask; `toml` also runtime and check | Slice 1: `toml =1.1.6` reads the check's configuration (`tools/*.toml`, every `check.toml`, `shared/SYNC.toml`) with line numbers for `check.config_invalid`, and `sha2 =0.11.0` gives `shared/SYNC.toml`'s SHA-256 (checks.md 5.4); `xtask` links no engine crate, so it cannot borrow a parser from one. Slice 1: `toml` also reads a project's `project.toml` in `pocket-runtime` and its `check.toml` in `pocket-check` (checks.md 8.1), both pure Rust and built for `wasm32` |
+| `toml` | xtask, runtime and check | `toml =1.1.6` reads the check's configuration (`tools/*.toml`, every `check.toml`, the optional source commit in `shared/SYNC.toml`) with line numbers for `check.config_invalid`; `xtask` links no engine crate, so it cannot borrow a parser from one. It also reads a project's `project.toml` in `pocket-runtime` and its `check.toml` in `pocket-check` (checks.md 8.1), both pure Rust and built for `wasm32` |
 | `wasm-bindgen`, `web-sys`, `js-sys` | render (web backend glue), web | `web` alone supplies the injected clock (threads.md 3.1) |
 | `tracing` | any | spans per system and pass; `tracing-tracy` in app and web behind `profile` |
 | `arc-swap` | link | the snapshot slot (`threads.md`, 4.3) |
@@ -601,13 +601,15 @@ own features) and compares hash chains (`checks.md`, web).
 PR #1421 and the script host's patches P1 to P7 (script-sandbox.md 4.2) reach the build through
 `[patch.crates-io]` in `.cargo/config.toml`, pointing at a patched `rquickjs-sys`. The patched crate
 is committed as `third_party/rquickjs-sys-0.14.0/`, beside `third_party/patches/` holding the PR's
-diff (head `0e7a5e08`, SHA-256 `b97233ca42edcd180f50df5a0b53bd33cc1264fa9aaf3b3680c42545fae8df66`)
+diff (head `0e7a5e08`)
 and P1 to P7, so a fresh checkout builds with `--locked` and `EngineVersion.source` covers the
 patched sources (git ignores nothing there). `cargo xtask vendor` rebuilds the directory in Rust
 from the pinned crate (`rquickjs-sys-0.14.0.crate`, SHA-256
 `cee271d0eeba64f0915b846cb7ae02e16faf3dfdffdca91731101d9d30fe3423`) and the diffs, replacing the
 debugger spike's `vendor.py`; `--check` rebuilds it into a temporary directory and fails with
 `deps.vendor_stale` on any byte difference, which the `deps` step runs.
+Local patches have no separate checksum records; the dependency crate keeps its upstream
+integrity pin (owner, 2026-10-10; charter 3.9).
 
 ## 8. The `wasm32` builds
 

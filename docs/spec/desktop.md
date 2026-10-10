@@ -71,15 +71,17 @@ Run from source on Windows 11 with Electron 44.5.1 (`npm ci` in `desktop/`), the
 `editor/`, a debug `pocket.exe` (`AMORIS_POCKET_BINARY`) and the SDK's `tsc.exe` (`AMORIS_TSC`):
 `npm test` passes (18, the packaged-runtime test skipped without `AMORIS_TEST_RESOURCES`); that test
 passes too with the resources assembled by hand; and `tools/desktop_smoke.mjs` passes every step on
-samples/sailing ([evidence/polish/desktop/](../evidence/polish/desktop/)). Electron chose the Radeon
-780M (`amd rdna-3`), as Chrome does without `--force_high_performance_gpu`.
+samples/sailing
+([evidence/polish/desktop/](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/polish/desktop)).
+Electron chose the Radeon 780M (`amd rdna-3`), as Chrome does without
+`--force_high_performance_gpu`.
 
 Until then the app could not open any project on Windows: `pocket serve` canonicalized the project
-to a verbatim path (`\\?\C:\...`) and reported it in its readiness line, which `host.cjs` compares
-with `fs.realpath` (`C:\...`), so every start ended in "Engine returned an invalid readiness
+to a verbatim path (`//?/C:/...`) and reported it in its readiness line, which `host.cjs` compares
+with `fs.realpath` (`C:/...`), so every start ended in "Engine returned an invalid readiness
 response". The host now reports the plain form (server.md 1, `hostfile::project_root`); master's
 `pocket.exe` still fails the packaged-runtime test, this one passes it
-([evidence/polish/desktop-node-tests.txt](../evidence/polish/desktop-node-tests.txt)).
+([evidence/polish/desktop-node-tests.txt](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/polish/desktop-node-tests.txt)).
 
 Not verified on Windows: `npm run package` and a packaged app (the run used the checkout's files),
 editing and applying a script through Monaco, and switching projects. On Windows the app stops its

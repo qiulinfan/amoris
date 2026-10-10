@@ -68,7 +68,7 @@ unique triangles and 2,363,720 vertices in 66 meshes and 68 primitives, 100 node
 - three perspective cameras: `closeup` (9 m from a yacht's side), `harbour` (5.5 m above the water
   behind the fleet, looking at the island) and `overview` (650 m up).
 
-The generator is a pure function of its arguments: two runs wrote the same SHA-256 (`746c31f6...`).
+The generator is a pure function of its arguments: two runs wrote identical bytes.
 
 **Import** (`src/import.rs`, `src/loader.rs`). The `gltf` crate parses the `.glb` in place
 (`gltf::Glb::from_slice`, then `Document::from_json`: the binary chunk is not copied) and reads each

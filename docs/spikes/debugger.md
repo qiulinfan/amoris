@@ -1,6 +1,8 @@
 # Spike: native breakpoint debugging (quickjs-ng PR #1421)
 
-- Date: 2026-10-03. Slice 0. Code: [spikes/debugger/](../../spikes/debugger/README.md).
+- Date: 2026-10-03. Slice 0. The historical code path was `spikes/debugger/`; that directory is
+  absent from the source snapshot and this import. The current debugger is specified in
+  [debugger.md](../spec/debugger.md).
 - Charter: 4.2.6 (native breakpoint debugging), 4.2.7 (risks), 12 open question 5 (maintain the PR
   #1421 patch or wait for upstream).
 
@@ -57,7 +59,7 @@ All under `spikes/debugger/` (its README says how to build and run each part).
 
 - **The patched engine.** `vendor.py` extracts `rquickjs-sys` 0.14.0 from the cargo cache or
   crates.io (pinned by SHA-256), applies `patches/quickjs-ng-pr1421.diff` (the PR's diff at head
-  `0e7a5e08`, pinned by SHA-256) with `git apply`, and leaves the result in `rquickjs-sys/` (not
+  `0e7a5e08`) with `git apply`, and leaves the result in `rquickjs-sys/` (not
   committed), which `Cargo.toml` substitutes through `[patch.crates-io]`. `rquickjs` itself is
   unchanged. The patch adds six functions; the five the spike calls and their struct are declared by
   hand in `src/ffi.rs`, because the crate ships pregenerated bindings and regenerating them needs
@@ -196,7 +198,7 @@ sum (59) and the script returned 45 in both.
 
 | Item | Version | Where |
 |---|---|---|
-| quickjs-ng PR #1421 "Add Debugging Interface" | head `0e7a5e08` (2026-08-13), base `82626eac`; open, last maintainer comment 2026-07-31 | https://github.com/quickjs-ng/quickjs/pull/1421; diff https://patch-diff.githubusercontent.com/raw/quickjs-ng/quickjs/pull/1421.diff, SHA-256 `b97233ca42edcd180f50df5a0b53bd33cc1264fa9aaf3b3680c42545fae8df66` |
+| quickjs-ng PR #1421 "Add Debugging Interface" | head `0e7a5e08` (2026-08-13), base `82626eac`; open, last maintainer comment 2026-07-31 | https://github.com/quickjs-ng/quickjs/pull/1421; diff https://patch-diff.githubusercontent.com/raw/quickjs-ng/quickjs/pull/1421.diff |
 | G-Yong/QuickJS-Debugger | master (pushed 2026-08-13), MIT; read, not built | https://github.com/G-Yong/QuickJS-Debugger |
 | rquickjs, rquickjs-core, rquickjs-sys | 0.14.0 (2026-09-18); vendors QuickJS-ng 0.16.2 | crates.io; `rquickjs-sys-0.14.0.crate` SHA-256 `cee271d0eeba64f0915b846cb7ae02e16faf3dfdffdca91731101d9d30fe3423` |
 | QuickJS-ng | 0.16.2 (vendored); 0.17.0 and master `90c3922da0` for the merge check | https://github.com/quickjs-ng/quickjs |

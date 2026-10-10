@@ -352,7 +352,7 @@ world (4.3).
 
 1. **Slice 1: the vendoring script.** `third_party/vendor.py` (standard library, with git as a plain
    patch tool) builds `third_party/rquickjs-sys-0.14.0/` from the pinned crate (SHA-256
-   `cee271d0...`) and the diffs in `third_party/patches/`, each pinned by its SHA-256 in the script:
+   `cee271d0...`) and the diffs in `third_party/patches/`, without local patch checksum records:
    quickjs-ng PR #1421 unmodified, then `p1-interrupt-counter.diff`, `p2-uncatchable-faults.diff`,
    `p3-constant-seeds.diff`, `p5-call-depth.diff`, `p6-canonical-nan.diff`, `p4-p7-build.diff` (P4
    and P7 both change the build script, so they are one diff), `p8-discard-jobs.diff` (choice 14),

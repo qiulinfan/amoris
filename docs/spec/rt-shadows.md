@@ -97,3 +97,19 @@ Soft shadows from the sun's angular size (a cone of directions with temporal acc
 ray-traced ambient occlusion, refitting skinned meshes' bottom levels instead of rebuilding them,
 compacting bottom levels, and a top level of only the casters near the view. Each is measured
 against this baseline.
+
+## Amoris integration: Metal (2026-10-10)
+
+The pinned wgpu 30.0.1 Metal backend has a no-op acceleration-structure barrier
+([upstream issue #9215](https://github.com/gfx-rs/wgpu/issues/9215)). The Amoris integration
+orders dependent builds with completed submissions on this path; this is a bounded workaround
+for the engine's build sequence, not a replacement for general HAL synchronization. Remove it
+only after an upstream fix passes repeated cold-start, moving and skinned shadow tests locally.
+
+On Apple M5 the fragment ray-query shader with four samples repeatedly returned an all-zero
+frame, including a scene with shadows disabled. This was measured separately from the build
+synchronization defect. Metal ray-traced sun shadows therefore use one sample: requested
+`msaa` becomes `off`, and `msaa+taa` becomes `taa`, with the effective mode reported. Ordinary
+Metal rendering and the Vulkan/D3D12 paths keep their configured modes. Recheck this constraint
+with a fixed driver/backend before restoring multisampling. The shadow comparison uses the same
+single-sample, non-temporal protocol for all paths and keeps its original quality thresholds.

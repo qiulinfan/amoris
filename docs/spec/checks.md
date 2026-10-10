@@ -205,12 +205,11 @@ the projects' locks (versions.md 5).
 |---|---|
 | `gen.stale` `{path}` | a generated file differs from what its generator writes now |
 | `gen.orphan` `{path}` | a file carries `@generated` but no generator writes it |
-| `gen.shared_modified` `{path}` | a file under `shared/` differs from the hash recorded in `shared/SYNC.toml` (the contract record is updated with the change) |
 
-`shared/SYNC.toml` holds an optional reference `commit` and a `[files]` table of each shared file's
-SHA-256. `commit = ""` means no reference commit is recorded. `gen.shared_modified` compares the
-files with the recorded hashes either way, so an edit to `shared/` without updating the record fails
-whether or not a reference commit is recorded. The record is committed with the shared files.
+`shared/SYNC.toml` holds only an optional reference `commit`. `commit = ""` means no reference
+commit is recorded. Shared files carry no checksum baseline (owner, 2026-10-10; charter 3.9).
+The `gen` step validates this metadata and compares generated outputs directly with their
+generators' current bytes; it does not record or compare shared file hashes.
 
 ## 6. Build, tests, the web target, types
 
@@ -473,7 +472,8 @@ under exactly that name, as a `StepResult` measurement row per check, and report
 problem code the contract gives it. `contract.sync` is a planned comparison of `shared/` with the
 optional reference commit recorded in `shared/SYNC.toml`. While `commit` is `""` (no reference
 commit) or the comparison is unavailable, it is `Skipped` with that reason, never passed and never
-inconclusive, while `gen.shared_modified` (5.4) still holds the files to their recorded hashes.
+inconclusive. A comparison, when implemented, reads the reference's content from Git directly;
+it creates no persistent file checksum baseline (5.4).
 
 The same step runs the benchmark harness's self-test (shared/benchmark/README.md, 8: a fake engine,
 the proxy, the reports), which needs loopback sockets; its duration is reported as `bench.selftest`
@@ -589,8 +589,8 @@ All codes of this specification, by step: `deps.crate_unlisted`, `deps.crate_mis
 `deps.edge_not_allowed`, `deps.external_not_allowed`, `deps.feature_not_allowed`,
 `deps.feature_missing`, `deps.cflags_missing`, `deps.rustflags_not_allowed`, `deps.vendor_stale`,
 the warning `deps.vendor_unchecked`;
-`fmt.unformatted`; `clippy.warning`; `build.failed`; `gen.stale`, `gen.orphan`,
-`gen.shared_modified`; `test.failed`; `wasm.check_failed`; `types.error`, `types.timeout`;
+`fmt.unformatted`; `clippy.warning`; `build.failed`; `gen.stale`, `gen.orphan`;
+`test.failed`; `wasm.check_failed`; `types.error`, `types.timeout`;
 `determinism.diverged`; `fork.not_identical`, `fork.branch_differs`, `fork.original_changed`,
 `fork.branch_inputs_ineffective`; `replay.diverged`, `replay.divergence_too_early`;
 `reload.diverged`, `reload.not_performed`; `web.test_failed`, `web.cross_target_diverged`,

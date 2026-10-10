@@ -263,7 +263,7 @@ After the opaque pass:
 The two rasterizers draw the same Gaussians with the same cut, depth test and alpha, and their
 images agree to a PSNR of 57-58.6 dB (mean difference 0.09-0.13 of 255, at most 8-9; the garden at
 1M and 3M, the SH orb close-up, the anti-aliased mode, 16-bit keys, WebGPU's default limits:
-`docs/evidence/splats/tile-vs-quad.png`). The remaining difference has two sources: the quads blend
+`out/bench-runs/splats/tile-vs-quad.png`). The remaining difference has two sources: the quads blend
 into an `f16` render target and round at every one of up to dozens of layers, the tiles accumulate
 in `f32` and round once; and the tiles stop below 1/255 transmittance, dropping what lies behind (at
 most 1/255 of it). The residue concentrates where many semi-transparent layers overlap (the tree
@@ -322,7 +322,7 @@ Against the same view rendered at 4x the resolution (6400x3600, box-downsampled 
 the garden's region scores 25.0 dB without and 32.8 dB with compensation seen from 2.5x the default
 distance, and 27.3 against 33.1 dB from the default distance (the grass blades are below a pixel
 there too); the two references, with and without compensation, agree with each other at 37-41 dB, so
-the choice of reference does not decide it (`docs/evidence/splats/aa-crops.png`, `aa-distance.png`,
+the choice of reference does not decide it (`out/bench-runs/splats/aa-crops.png`, `aa-distance.png`,
 `summary-2026-10-09.json`).
 
 ### 4.4 Entity ids
@@ -415,7 +415,7 @@ optional features) the 1M and 3M gardens render; the crate builds for `wasm32-un
 the web player draws a 300k-splat cloud in Chrome's WebGPU (section 8). 2026-10-09, Windows with the
 RTX 5060 (Vulkan): both rasterizers at the default and at WebGPU's default limits; Chrome 155's
 WebGPU (Tint, D3D12) compiles every splat module and creates all 17 splat pipelines at its default
-limits (`tools/splats/wgsl_check`, `docs/evidence/splats/chrome-wgsl-check.json`), and the renderer
+limits (`tools/splats/wgsl_check`, `out/bench-runs/splats/chrome-wgsl-check.json`), and the renderer
 built for `wasm32` draws 200,000 splats with both rasterizers in it, whose images agree to 55.4 dB
 (at most 3 of 255; `tools/splats/web_harness`, `browser-tiles.png`).
 
@@ -430,13 +430,13 @@ plus a 40k-splat orb with degree-3 spherical harmonics (view-dependent color) dr
 different poses, lit primitive meshes in and around them (pedestal, crates, a pillar through the
 ring, a sphere) and the procedural sky. `--count N` sets the garden's size, `--ply PATH` draws a
 file instead, `--save PATH` writes the garden as a 3DGS `.ply`. Screenshots:
-`docs/evidence/render/splat_garden.png` (1M), `splat_garden_3m.png` (3M at WebGPU's default limits),
-`splat_closeup.png` (meshes and splats occluding each other), `splat_sh.png` (the orb from opposite
-sides), `splat_play.png` (a `Splat` component in the sailing sample loaded from a `.ply` through the
-runtime's feed, cut by the ocean's depth). `--raster quad|tile` picks the rasterizer, `--antialias`
-the compensated low-pass, `--compare PREFIX` captures one view with both rasterizers and reports
-their difference, `--visible` (with `--capture`) prints the entity-id pass's coverage and its cost;
-`--distance F` and `--look X,Y,Z` apply to the benchmarks too.
+`out/bench-runs/render/splat_garden.png` (1M), `splat_garden_3m.png` (3M at WebGPU's default
+limits), `splat_closeup.png` (meshes and splats occluding each other), `splat_sh.png` (the orb from
+opposite sides), `splat_play.png` (a `Splat` component in the sailing sample loaded from a `.ply`
+through the runtime's feed, cut by the ocean's depth). `--raster quad|tile` picks the rasterizer,
+`--antialias` the compensated low-pass, `--compare PREFIX` captures one view with both rasterizers
+and reports their difference, `--visible` (with `--capture`) prints the entity-id pass's coverage
+and its cost; `--distance F` and `--look X,Y,Z` apply to the benchmarks too.
 
 ### 7.1 Fitting splats to the renderer's own images
 
@@ -462,7 +462,7 @@ closes the loop from meshes to splats and back:
 Status: works end to end at a small scale. With 30,000 Gaussians, 160x160 images, 42 training views
 and 2,500 steps (17 minutes on the M5's GPU through MPS, shared with other work), the engine's
 renders of the fitted `.ply` reach a mean PSNR of 34.7 dB on the 6 held-out views and 36.7 dB on the
-training views (the fitter's own renders: 31.5 and 33.7 dB). `docs/evidence/render/splat_fit.png`
+training views (the fitter's own renders: 31.5 and 33.7 dB). `out/bench-runs/render/splat_fit.png`
 shows held-out references above the engine's renders. Floaters remain where few views see (below the
 ground plane's near edge). What it is not: a 3DGS trainer for real captures. There is no
 structure-from-motion initialization, no adaptive density control beyond relocation, no SSIM term,
@@ -516,4 +516,4 @@ layers that the engine then draws shows up as colored noise.
 - **Browser**: verified in headless Chrome (WebGPU) through the web player (`web/`, the game in a
   Worker): a 300k-splat garden `.ply` fetched by the page, drawn with the anim sample's skinned
   characters, UI and particles; GPU 4.1 ms per frame at 1280x900 window size of which splat draw 2.5
-  ms, preprocess 0.16 ms, sort 0.27 ms (`docs/evidence/render/web-player-splats.png`).
+  ms, preprocess 0.16 ms, sort 0.27 ms (`out/bench-runs/render/web-player-splats.png`).

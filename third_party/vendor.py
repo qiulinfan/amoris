@@ -6,7 +6,8 @@ result, which is committed, so a fresh checkout builds without running this.
     python third_party/vendor.py           # rebuild the directory from the pins
     python third_party/vendor.py --check   # rebuild into a temporary directory and compare
 
-The crate comes from cargo's cache or crates.io and the upstream dependency is pinned by SHA-256 below; a
+The dependency crate comes from cargo's cache or crates.io and is pinned by its upstream SHA-256
+checksum. Local patches come from the checkout without separate checksum records. A crate
 mismatch, a patch that does not apply cleanly or (with --check) any byte that differs from the
 committed directory fails with exit 1. With --offline the crate comes from cargo's cache only, and
 its absence exits 3: `cargo xtask check`'s `deps` step runs `--check --offline` (checks-slice1.md

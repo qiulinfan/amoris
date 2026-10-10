@@ -9,7 +9,7 @@
 #   (jolt-ffi in the web profile and through wasm-opt, run_jolt_wasm.mjs).
 # Scenes: Pyramid, ConvexVsMesh, Ragdoll and RagdollNoSleep (sleeping off in both engines, the fair
 # ragdoll comparison). Writes one tagged JSON line per run to $RAW/wasm.jsonl (RAW defaults to
-# $T/raw; the committed results are docs/bench/physics/).
+# $T/raw; results stay in ignored local output).
 REPO=$(cd "$(dirname "$0")/../../.." && pwd)
 T=${T:-${CARGO_TARGET_DIR:-$REPO/target}/physics-bench}
 RAW=${RAW:-$T/raw}

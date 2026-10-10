@@ -286,17 +286,18 @@ every tick, and its player scenario passes the four checks.
   next step.
 - **`sail_to` does not steer round land** (actions.md, open choice 3).
 - **The web build**: the package carries `PlayerSpec`. One browser run of a player game was made
-  (headless Chrome, the 2D map, [evidence/player/web-form.json](../evidence/player/web-form.json)):
+  (headless Chrome, the 2D map,
+  [evidence/player/web-form.json](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/player/web-form.json)):
   the form's helm sets the skipper's controls through `player.act`, and the same player's
   `world_edit` and `world.get` are refused in the worker as natively; `samples/sailing`, without
-  players, still takes the helm as `world_edit`. No agent played in the browser.
-  Until 2026-10-09 the worker never fed the players' session: a `player.wait` ran inline through
-  `Game::apply`, up to 36,000 ticks in one task, with no publication and no tick hashes for those
-  ticks; `player.pacing` real time set the session's pacing but not the worker's model, so no tick
-  ran and every wait was refused (`command.thread_only`); and decision points never followed the
-  worker's own ticks. The worker now drives the loop core the thread does (section 6); its tests
-  run the course's package natively (`pocket-web/tests/worker_players.rs`). A browser run of an
-  agent through the worker is still to be made.
+  players, still takes the helm as `world_edit`. No agent played in the browser. Until 2026-10-09
+  the worker never fed the players' session: a `player.wait` ran inline through `Game::apply`, up to
+  36,000 ticks in one task, with no publication and no tick hashes for those ticks; `player.pacing`
+  real time set the session's pacing but not the worker's model, so no tick ran and every wait was
+  refused (`command.thread_only`); and decision points never followed the worker's own ticks. The
+  worker now drives the loop core the thread does (section 6); its tests run the course's package
+  natively (`pocket-web/tests/worker_players.rs`). A browser run of an agent through the worker is
+  still to be made.
 - **A default budget cuts what a policy needs.** The first run of the reference skipper read the
   observation at the profile's 400 tokens, in which Mark2 was among the omitted percepts; it found
   no next mark, never acted again and waited through heartbeats for 2.3 million ticks before the
@@ -339,7 +340,7 @@ every tick, and its player scenario passes the four checks.
 | A developer naming a seat leaves its push cursor | `pocket-runtime/tests/player.rs` |
 | A player's developer calls refused by the game and the thread; a throwing rule halts the players until a hot update, a developer's resume or a restore; a restore rebases the seat's decisions and push cursor | `pocket-runtime/tests/player.rs`, `pocket-runtime/tests/player_session.rs`, `pocket-interface/src/time/control.rs` (tests) |
 | A seat over HTTP and a seat-bound MCP session (in process, newline JSON-RPC over a pipe) play through the player tools alone; the host refuses the game's and its own developer methods; an unknown seat says `seat.unknown` | `pocket-app/tests/player_host.rs` |
-| The review's three findings replayed against the release `pocket serve` over HTTP | `tools/player_http_probe.py`, [evidence/player/seat-http.txt](../evidence/player/seat-http.txt) |
+| The review's three findings replayed against the release `pocket serve` over HTTP | `tools/player_http_probe.py`, [evidence/player/seat-http.txt](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/player/seat-http.txt) |
 | The course's schedule | `pocket-runtime/tests/schedule.rs` |
 | The player scenario passes the four checks | `pocket-check/tests/checks.rs`, `samples/sailing-course/check.toml` |
 | The `player` tool's routing; `pocket player`'s forms | `pocket-mcp/src/tools.rs`, `pocket-app/src/client.rs` |

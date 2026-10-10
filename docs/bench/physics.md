@@ -3,7 +3,7 @@
 - Date: 2026-10-04. Charter 4.1 (physics row) and 4.7 (physics performance and backend).
 - Machine: Apple M5, 10 cores (4 performance, 6 efficiency), 32 GB, macOS 27.0.1; Apple clang 21,
   Homebrew LLVM 23.1.2 for WebAssembly, Rust 1.98.1, Node 24.18
-  ([physics/machine.txt](physics/machine.txt)).
+  ([physics/machine.txt](https://github.com/qiulinfan/amoris-pioneer/blob/9a3e4b0814959629202629845b85205c42086505/docs/bench/physics/machine.txt)).
 - **Contention.** The machine was shared with other agents' builds, Blender and benchmarks the whole
   time: the 1-minute load average was 6 to 70 during the native runs the tables use (00:45 to 02:30;
   6 to 55 for the fastest repetitions the tables keep). A second native session at 11:40 was stopped
@@ -96,7 +96,8 @@ Rapier until the port passes them** (section "Recommendation").
   files), `run_wasi.mjs` (runs a WASI module under Node), `run_jolt_wasm.mjs` (runs the Rust
   `wasm32-unknown-unknown` module with Jolt inside, with no WASI runtime). `focus.sh` adds
   repetitions of the configurations the recommendation rests on. The scripts write their raw output
-  under the target directory (`$T/raw`); `RAW=docs/bench/physics` replaces the committed files.
+  under the target directory (`$T/raw`); `RAW=out/physics` selects another ignored local output
+  directory.
 
 ### Configurations
 
@@ -166,18 +167,20 @@ Differences that remain:
   Rapier counterpart. These are impulse joints. Rapier's multibody joints (reduced coordinates,
   which its documentation suggests for articulations) were tried with the same frames, limits and
   motors (`--multibody`; `scripts/multibody.sh`, 60 steps of four variants side by side at load
-  about 30, raw output in [physics/multibody.txt](physics/multibody.txt)). With the angular limits
-  they fail: limits alone leave body positions non-finite after 24 steps (the highest body at 4,352
-  m), and limits with motors end in a panic inside Rapier in the 44th step (a `clamp` on a NaN joint
-  coordinate in its motor constraint). With motors only, or with neither, they run the 60 steps, at
-  a median of 0.6 s a step (0.3 to 2.9 s), roughly ten times or more the 35 to 85 ms the impulse
-  joints took on the same busy machine that day. The failure follows from what the emulation asks:
-  for a joint with three free angular axes, Rapier 0.36 integrates each component of the relative
-  angular velocity into its own coordinate and applies the per-axis limits and motors to those
-  coordinates (`dynamics/joint/multibody_joint/multibody_joint.rs`, which marks multi-axis limits
-  and motors as a TODO); they are not angles of the joint's rotation once it turns about more than
-  one axis. So Rapier has no articulation joint that holds a ragdoll's three-axis limits. Why its
-  multibody ragdolls are slow was not investigated, and no multibody timings enter the tables.
+  about 30, raw output in
+  [physics/multibody.txt](https://github.com/qiulinfan/amoris-pioneer/blob/9a3e4b0814959629202629845b85205c42086505/docs/bench/physics/multibody.txt)).
+  With the angular limits they fail: limits alone leave body positions non-finite after 24 steps
+  (the highest body at 4,352 m), and limits with motors end in a panic inside Rapier in the 44th
+  step (a `clamp` on a NaN joint coordinate in its motor constraint). With motors only, or with
+  neither, they run the 60 steps, at a median of 0.6 s a step (0.3 to 2.9 s), roughly ten times or
+  more the 35 to 85 ms the impulse joints took on the same busy machine that day. The failure
+  follows from what the emulation asks: for a joint with three free angular axes, Rapier 0.36
+  integrates each component of the relative angular velocity into its own coordinate and applies the
+  per-axis limits and motors to those coordinates
+  (`dynamics/joint/multibody_joint/multibody_joint.rs`, which marks multi-axis limits and motors as
+  a TODO); they are not angles of the joint's rotation once it turns about more than one axis. So
+  Rapier has no articulation joint that holds a ragdoll's three-axis limits. Why its multibody
+  ragdolls are slow was not investigated, and no multibody timings enter the tables.
 - **Ragdoll terrain.** Jolt holds its terrain as 457 static bodies, compounds of scaled meshes;
   Rapier gets one fixed collider per leaf (5,786), since its compounds take no trimeshes.
 - **Convex radius.** Jolt rounds the ConvexVsMesh box and hull by 0.05 m inside the same outline;
@@ -392,9 +395,11 @@ quiet repetitions (load 6 to 8) are the readable part; raw runs in
 
 ## Determinism
 
-Raw output: [physics/determinism.txt](physics/determinism.txt) (`scripts/determinism.sh`). Rapier
-runs compare per-step hash chains (FNV-1a over every body's position and rotation bits after each
-step, 300 steps for Pyramid and ConvexVsMesh, 100 for Ragdoll); Jolt runs compare end hashes.
+Raw output:
+[physics/determinism.txt](https://github.com/qiulinfan/amoris-pioneer/blob/9a3e4b0814959629202629845b85205c42086505/docs/bench/physics/determinism.txt)
+(`scripts/determinism.sh`). Rapier runs compare per-step hash chains (FNV-1a over every body's
+position and rotation bits after each step, 300 steps for Pyramid and ConvexVsMesh, 100 for
+Ragdoll); Jolt runs compare end hashes.
 
 | Check | Pyramid | ConvexVsMesh | Ragdoll |
 |---|---|---|---|
@@ -571,10 +576,11 @@ not build for `wasm32-unknown-unknown` out of the box either: it recognizes WebA
   under "Recommendation", untested here.
 - **Not shown: wasm SIMD.** Jolt's WebAssembly SIMD path is SSE intrinsics that only Emscripten's
   headers translate (`USE_WASM_SIMD` adds `-msimd128 -msse4.2`); clang's own `immintrin.h` refuses
-  wasm32 ([physics/jolt-wasm-simd-build.txt](physics/jolt-wasm-simd-build.txt)), so these builds run
-  Jolt's scalar path. Emscripten's MIT-licensed SSE compatibility headers on the include path of a
-  plain clang build are the obvious next attempt; untried, and its determinism would need the same
-  check. Nor were browsers other than V8 (Node) tried.
+  wasm32
+  ([physics/jolt-wasm-simd-build.txt](https://github.com/qiulinfan/amoris-pioneer/blob/9a3e4b0814959629202629845b85205c42086505/docs/bench/physics/jolt-wasm-simd-build.txt)),
+  so these builds run Jolt's scalar path. Emscripten's MIT-licensed SSE compatibility headers on the
+  include path of a plain clang build are the obvious next attempt; untried, and its determinism
+  would need the same check. Nor were browsers other than V8 (Node) tried.
 
 ### What adopting Jolt would cost
 

@@ -31,7 +31,7 @@ POCKET_HOST=http://127.0.0.1:7900 bun run dev
 bun run build                     # type check (tsc 7) + vite build -> editor/dist
 bun run typecheck                 # the editor and the mock/tools
 bun run mock -- --port 7879 --no-agent --dist   # the mock alone; --dist serves editor/dist at /
-bun run evidence -- --url http://127.0.0.1:5173/ # screenshots into docs/evidence/editor (needs Chrome)
+bun run evidence -- --url http://127.0.0.1:5173/ # screenshots into out/bench-runs/editor (needs Chrome)
 ```
 
 URL parameters: `?host=127.0.0.1:7879` connects to a host directly instead of the serving origin;
@@ -349,7 +349,7 @@ the wire shapes (`HostDebugState`, `HostFrame`, `HostVariable`, `HostBreakpoint`
 
 ## 10. Evidence
 
-`docs/evidence/editor/` holds screenshots of an edit, play and debug session against the mock,
+`out/bench-runs/editor/` holds screenshots of an edit, play and debug session against the mock,
 taken by `tools/capture.ts` (headless Chrome, 1600×1000 at 2×): the full window in Edit, Play and
 paused in the debugger, and each panel (viewport with a live gizmo drag and the rotate gizmo,
 inspector, Add Component, hierarchy context menu, Edit menu, palette and a host method call, assets,
@@ -363,7 +363,7 @@ Stop crosses a pause (server.md 3.4), with the editor built by Vite under Node a
 Node 25 (`--experimental-transform-types`, a preload defining `Bun.sleep`, `Bun.write` and
 `Bun.spawn`; no Bun on that machine): exit 0, every step, Edit mode 0.1 s after Stop and the edit
 world on the edited bundle; the log and steps 9 and 10 downscaled are in
-`docs/evidence/agentdebug/`. The driver pressed Cmd+S for Mod+S everywhere; it now presses Ctrl+S
+`out/bench-runs/agentdebug/`. The driver pressed Cmd+S for Mod+S everywhere; it now presses Ctrl+S
 off macOS.
 
 | Screenshot | Shows |
@@ -385,7 +385,7 @@ off macOS.
 (`tools/capture.ts`) after the mock moved to the real shapes and frames (the callback and `run`, the
 closure's columns); the console evaluates on the paused frame.
 
-`docs/evidence/sdk/` shows the script editor against a real host (`pocket serve samples/sailing`),
+`out/bench-runs/sdk/` shows the script editor against a real host (`pocket serve samples/sailing`),
 taken by `tools/sdk_check.ts`: with the host's declarations loaded (4 engine and 4 game components),
 a misspelt column (`b.sped`, "Did you mean 'speed'?") and a column the query's `fields` leaves out
 (`NotInFields<"Boat.heel_deg">`) are the worker's 2 errors in the status bar, and `boats.cols.Boat.`

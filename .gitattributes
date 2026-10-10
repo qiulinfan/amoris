@@ -7,3 +7,8 @@
 
 # Preserve third-party license notices exactly, including their original whitespace.
 site/licenses/** -text -whitespace
+
+# Unified patches encode a blank context line with a single-space prefix.
+# Keep this pinned source artifact byte-identical to its vendor reproduction.
+third_party/patches/p4-p7-build.diff -whitespace
+third_party/patches/p11-debug-eval-scope.diff -whitespace

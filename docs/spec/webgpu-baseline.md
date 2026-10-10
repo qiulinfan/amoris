@@ -12,7 +12,7 @@ how its GPU-driven indirect draws work on WebGPU's defaults, how a native run em
 and how the paths are checked. The code is `crates/pocket-render/src/gpu.rs` (capabilities and the
 switches), `crates/pocket-render/src/batches.rs` (the indirect draws) and the vertex stages of
 `crates/pocket-render/shaders/forward.wgsl`. Measurements: [docs/bench/web.md](../bench/web.md);
-evidence: `docs/evidence/webgpu/`.
+evidence: `out/bench-runs/webgpu/`.
 
 ## 1. Feature tiers
 
@@ -126,7 +126,7 @@ indirect draw with a nonzero `first_instance` into a no-op as the WebGPU specifi
 Without it the NVIDIA Vulkan driver drew such draws correctly although the device lacked the
 feature, and a native run could not show the browser's failure. The emulation is exact: before the
 fix, the mixed scene showed the same 6 of 59 entities natively on Vulkan and in Chrome on D3D12
-(`docs/evidence/webgpu/native-prefix`, `browser-prefix`).
+(`out/bench-runs/webgpu/native-prefix`, `browser-prefix`).
 
 ## 5. Checks
 

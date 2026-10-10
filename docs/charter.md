@@ -3,9 +3,9 @@
 状态：Accepted（本轮方向与技术栈）<br>
 版本：1.0<br>
 日期：2026-10-04<br>
-仓库：私有仓库 `qiulinfan/amoris`（本地 `~/Desktop/amoris`）<br>
-来源：所有者 2026-10-03/04 的指示；Amoris 前序 `rebuild` 分支纲领 v0.11；`Amoris Pioneer` 的 `rebuild`
-线（纲领 0.4，提交 `e9e53545`）与 `master` 线；Amoris 前序 `feature/rust-core` 与
+仓库：公开仓库 `qiulinfan/amoris`（本地 `~/Desktop/amoris`）<br>
+来源：所有者 2026-10-03/04 的指示；Amoris 前序 `rebuild` 分支纲领 v0.11；`Amoris Pioneer` 的
+`rebuild` 线（纲领 0.4，提交 `e9e53545`）与 `master` 线；Amoris 前序 `feature/rust-core` 与
 `feature/agent-native-rust` 原型
 
 ## 1. 这份文档是什么
@@ -65,7 +65,6 @@ Amoris 是一个 **agent-native** 的 3D 游戏引擎。agent 在三个角色上
 7. **数据导向的性能**。脚本按列批量处理（typed array），重活在 Rust 系统里；渲染以 GPU 驱动为
    目标，没有静默容量上限。性能测量随提交记录，用来发现退化与指导优化，不作为通过门槛。
 8. **结构整洁**。按职责划分模块与 crate，依赖单向并由检查命令核对；不设文件行数上限。
-
 9. **不维护文件核对哈希清单**。2026-10-10，所有者要求移除共享文档、素材、展示与评测的
    文件哈希记录，减少重复维护。来源保留仓库、提交、日期与授权信息；`shared/SYNC.toml`
    只记录可选来源提交。生成文件和 vendored 源码仍可重建后逐字节比较，不另存核对基线。
@@ -95,7 +94,7 @@ Amoris 是一个 **agent-native** 的 3D 游戏引擎。agent 在三个角色上
 | 原生图形后端 | **Metal**（macOS）、**Vulkan**（Linux/Windows；macOS 上经 MoltenVK 验证）、**Direct3D 12**（Windows，Pioneer 2026-10-09） | — | 所有者 2026-10-04 指定只做 Metal 与 Vulkan；Pioneer 2026-10-09 应所有者的探索要求加入 Direct3D 12；所有者 2026-10-09 指定 Windows 默认后端为 Direct3D 12（见 4.4） |
 | Web 图形 | WebGPU（wgpu 的浏览器后端，同一份代码） | — | 证明 web 渲染；不做 WebGL 回退 |
 | 窗口与输入 | winit；gilrs（手柄） | 0.30 | 事实标准 |
-| 资源 | glTF 2.0（`gltf`）、PNG/JPEG（`image`）、网格处理（`meshopt`：LOD、顶点缓存、meshlet）；导入在工作线程异步进行；内容哈希作为 ID | gltf 1.4、meshopt 0.6 | Amoris Pioneer 的 OBJ 导入冻结 14–27 秒，本线只走 glTF 且异步 |
+| 资源 | glTF 2.0（`gltf`）、PNG/JPEG（`image`）、网格处理（`meshopt`：LOD、顶点缓存）；导入在工作线程异步进行；内容哈希作为 ID | gltf 1.4、meshopt 0.6 | Amoris Pioneer 的 OBJ 导入冻结 14–27 秒，本线只走 glTF 且异步 |
 | 神经渲染 | 3D Gaussian Splatting（GPU 排序、与网格深度混合）；神经纹理压缩（潜变量网格 + 小型 MLP，在片元着色器里解码） | 自研 | 见 4.4 |
 | 音频 | kira（cpal；web 上为 WebAudio） | 0.12 | 混音、空间音频、补间 |
 | agent 接口 | **CLI 优先**：一张命令目录 → `pocket` CLI（连接运行中的宿主，紧凑文本输出，`--json` 精确输出，帮助文本来自目录）、编辑器 WebSocket、脚本 API、测试；MCP（`rmcp`）是同一目录的薄投影 | rmcp 3.5 | agent 在 shell 里最顺手、最省 token；目录唯一，所有前端不漂移 |
@@ -117,10 +116,9 @@ Amoris 是一个 **agent-native** 的 3D 游戏引擎。agent 在三个角色上
     每上下文调用深度上限、typed array 的规范 NaN、构建修正、失败调用丢弃挂起的 promise 任务。
   - **P9–P10**（调试器，2026-10-04）：被跟踪函数的语句位置缓存（插桩后每条语句的开销从约 16 ns
     降到约 4 ns）；异常进入 trace 回调并附带是否会被捕获的预测，以及任意栈帧的位置查询。
-  - **P11**（调试器，2026-10-09，Pioneer 决定）：帧上求值按暂停语句所在的块作用域解析名字
-    （编译器用临时操作码记录每条插桩语句的作用域，不改动任何保留到字节码里的操作码编号）。
-    理由：agent 调试评测（`docs/bench/debug-eval.md` 第 3 项）里，求值看不到同一块里后声明的
-    `let`/`const`，7 次运行共 37 次求值失败。
+  - **P11**（2026-10-10，采用 Amoris Pioneer 的调试修复）：帧上求值按暂停语句所在的
+    lexical scope 解析名字。编译器记录插桩语句的作用域，不改变保留在字节码中的操作码编号；
+    解决块内后声明的 `let`/`const` 无法求值以及 sibling block 局部变量外露的问题。
 - 预算：每系统 100 万步、每 tick 200 万步、64 MiB 内存；步数不进入世界哈希。
 - 性能定位：解释执行比同等 Rust 规则慢 21–27 倍（Amoris Pioneer 的 script-native spike）。对策是让脚
   本做编排、让引擎做重活：物理、动画、寻路、感知、渲染都在 Rust 里，脚本经批量列接口调用。与 Godot
@@ -145,6 +143,11 @@ Amoris 是一个 **agent-native** 的 3D 游戏引擎。agent 在三个角色上
   因果链、tick 环形快照与**时间回溯**（恢复到任意 tick 重放到断点）、两次运行的**首个分叉 tick**。
 
 ### 4.4 渲染
+
+2026-10-10，所有者授权 Amoris 采用以下 Pioneer 最终实现与测量后的默认值，源版本为
+`9a3e4b0814959629202629845b85205c42086505`。历史 Windows 数字保持原平台与日期标注；
+当前 Amoris 在 Mac/Metal 上单独验证。mesh-shader 独立原型未导入；源码和结果的来源索引随整合保存。
+
 
 - 2026-10-05，所有者接受 Metal 分支的 GI 实施顺序：先交付世界空间探针烘焙，再实现
   SHaRC 辐亮度缓存并测量优化，随后探索光追与 ReSTIR GI/PT，最后训练小网络验证神经光照缓存。
@@ -365,9 +368,36 @@ Rapier（确定性配置、SIMD+并行配置）与 Jolt（原生 C++ 构建，�
 - Jolt 显著更快：`pocket-physics` 抽象出后端接口，原生默认 Jolt（经 C 封装），web 与确定性检查
   继续用 Rapier，或以 Jolt 的 wasm 构建统一。
 
+### 4.8 2026-10-10 的 Amoris 平台复核
+
+本次整合保留 Pioneer 的 Windows 测量及其原时间，但在 Amoris 的 M5/Metal 上重新验证实现。
+LOD 的径向距离不能保证离轴透视投影的像素误差；整合时改为包围球的最近轴向深度与投影导数
+上界，保持 1 像素设定与 20% 误差迟滞，不放宽轮廓测试。splat tile 的共享向量分量写入存在
+数据竞争，改为同布局的独立标量字段，消除 Metal 上的闪烁。当前 wgpu 30.0.1 的 Metal
+加速结构 barrier 没有实现（[wgpu #9215](https://github.com/gfx-rs/wgpu/issues/9215)），
+光追阴影在该后端按已完成的构建提交排序；光追片元着色器与 4 倍 MSAA 的组合在 M5 上持续
+黑帧，因此该路径使用单采样，可保留 TAA。普通 Metal 渲染仍使用原采样设定。仅在修复后的
+wgpu 通过本机冷启动、移动、蒙皮与多采样回归后移除这些约束。平台修复和实际验证另记于导入说明。
+
 ## 5. 架构
 
 ### 5.1 crate
+
+2026-10-10，Amoris 采用 Pioneer 的 CPU/runtime 先行成果（源快照
+`qiulinfan/amoris-pioneer` 的 `9a3e4b0814959629202629845b85205c42086505`）：
+
+- 原生玩家层由 `pocket-interface` 执行感知、投影、意图与时间控制，`pocket-runtime` 用
+  `PlayerSpec` 把声明作为 persisted world state 保存，恢复后重建派生定义。观察者的 team vision
+  分享当前可见集，每个 observer 的记忆、事件和测量仍独立；executor 只看该 seat 的感知，
+  只写自己的控制 channel。session 的决策点、pacing 和 thinking clocks 不进入世界 hash。
+- `Source::Player` 在声明玩家的游戏中只允许 `player.*`，由 runtime、thread、worker 和 host
+  一同检查。CLI、MCP 与 HTTP 都可绑定 seat；这是可信本地客户端的角色限制，尚不包含 HTTP
+  token grants 或远程身份鉴权。新原生玩家层尚无 LLM course 实测；旧 Python gateway 的模型
+  结果不作为原生 seat 层的成绩。规格见 [player.md](spec/player.md)。
+- 调试器暂停时的读取来自上一个已发布边界并标明 `paused_at`；step 在断点答复，Stop 可结束
+  被断点暂停的 Play；snapshot restore 默认保留 applied scripts，并将 restore/swap 记录进
+  replay。构建注入 source-based EngineVersion；Windows host 的启动、compiler 与 check 工具
+  修复一同采用。此阶段不改变图形后端、渲染算法或 LOD/neural assets；采用后的检查独立记录。
 
 游戏侧（无头、可编译到 `wasm32`，禁止依赖 wgpu、winit、tokio、rmcp）：
 
@@ -397,32 +427,6 @@ presenter 与工具侧：
 
 TypeScript：`sdk/`（脚本的 `pocket` 模块与生成的类型）、`editor/`（React 编辑器）。
 Python：`tools/neural/`（神经资源训练）、`tools/eval/`（评测）。
-
-2026-10-09（Pioneer）：玩家层（第 2 节的证明目标 2）以 rebuild 线 `57ed4ea1` 的感知、投影、动作与
-时间实现为基础导入 `pocket-interface`，并在共享契约之外做三个取舍。其一，游戏在 `project.toml` 的
-`[player]` 里声明感知文件、引擎提供的动作目录、默认决策过滤与回合结束事件；这份声明作为世界状态
-（`PlayerSpec`）进入快照、哈希、fork 与 replay，恢复后由它重建感知定义与执行器，三个接口系统
-（`interface.intents`、`interface.perception`、`interface.turns`）在每个游戏里都安装，没有声明时
-不做任何事。理由：replay 只携带快照与脚本 bundle，若声明只在项目文件里，回放就无法重建玩家层，
-世界哈希链也无从验证。其二，`Observer` 增加可选的 `team`：同队观察者共享“看见”的实体（各自的记忆
-与事件环仍然独立，位置与方位从各自的身体算起）。理由：契约的“一个座位一个身体”让合作的座位无从
-共享视野，而队伍视野是即时战略类游戏的常见需要。其三，玩家工具是命令目录里的 `player.*` 命令
-（`session`、`describe`、`observe`、`nearby`、`events`、`affordances`、`intents`、`act`、`wait`、
-`continue`），MCP 的 `player` 工具与 CLI 的 `pocket player` 只是它们的投影；步进节奏下由玩家持有
-时钟时，`wait` 即“运行到本座位的下一个决策点”。理由：Amoris 的 Python 网关
-（`tools/eval/agent_gameplay.py`）给 agent 五个工具，其中四个是 observe、动作与 wait；一个 `wait`
-同时覆盖步进与实时（暂停于决策）两种节奏，agent 不必学两套推进时间的方法。实现与测量见
-[spec/player.md](spec/player.md) 与 [bench/player.md](bench/player.md)。
-
-2026-10-09（Pioneer，审查后补充）：玩家角色由引擎强制，而不只由 MCP 会话的工具列表约束。在声明了
-`[player]` 的游戏里，以 `Source::Player` 发出的调用只能是 `player.*` 命令：游戏（`Game` 与游戏线程
-自己回答的时间、Play、保留快照与状态命令）和主机（`/api/call` 带 `seat`、绑定座位的 MCP 会话、
-CLI 的 `--seat`，包括主机自己回答的 `events.since`、`log.since` 与调试器方法）都以
-`permission.denied` 拒绝其余命令。没有声明玩家的游戏里，`Source::Player` 保持 slice 1 的含义：一个
-排在开发者之后的输入来源（网页表单的人类玩家、`samples/sailing` 检查里的输入），它没有座位，也没有
-需要守住的感知。理由：原则 2 要求玩家只经由本座位的感知了解世界；审查发现绑定座位的 HTTP 调用能读到
-全知的世界、编辑世界并推进时间，只有 MCP 层拒绝了开发者工具。replay 不受此限制：它按记录应用当时
-已被接受的写入。
 
 ### 5.2 线程（原生）
 

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Tables for docs/bench/physics.md from docs/bench/physics/bench.jsonl (scripts/bench.sh).
+"""Tables for docs/bench/physics.md from ignored local out/physics/bench.jsonl (scripts/bench.sh).
 
 For every (run, scene) the repetition with the lowest mean step time is kept (the machine is shared,
 so the fastest repetition is the least disturbed one); the spread of the means across repetitions is
 printed beside it.
 
-    python3 bench/physics/scripts/summarize.py docs/bench/physics/bench.jsonl > docs/bench/physics/summary.md
+    python3 bench/physics/scripts/summarize.py out/physics/bench.jsonl > out/physics/summary.md
 """
 
 import json

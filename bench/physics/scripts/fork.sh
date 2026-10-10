@@ -6,7 +6,7 @@
 # Cache. Jolt: PhysicsSystem::SaveState / RestoreState into a fresh PhysicsSystem with the scene
 # built again. REPS repetitions (default 5), since save and restore times vary with the machine's
 # load; scripts/summarize.py gives their median and range. Writes tagged JSON lines to
-# $RAW/fork.jsonl (RAW defaults to $T/raw; the committed results are docs/bench/physics/).
+# $RAW/fork.jsonl (RAW defaults to $T/raw; results stay in ignored local output).
 REPO=$(cd "$(dirname "$0")/../../.." && pwd)
 T=${T:-${CARGO_TARGET_DIR:-$REPO/target}/physics-bench}
 RAW=${RAW:-$T/raw}

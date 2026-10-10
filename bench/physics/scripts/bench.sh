@@ -4,7 +4,7 @@
 # REPS repetitions (default 3) of every configuration, interleaved so that background load affects
 # all configurations alike; scripts/summarize.py keeps the fastest repetition of each. APPEND=1 adds
 # repetitions FIRST_REP.. to an existing bench.jsonl instead of starting it anew. RAW defaults to
-# $T/raw; the committed results are docs/bench/physics/ (RAW=docs/bench/physics replaces them).
+# $T/raw; results stay in ignored local output (set RAW to choose another local directory).
 REPO=$(cd "$(dirname "$0")/../../.." && pwd)
 T=${T:-${CARGO_TARGET_DIR:-$REPO/target}/physics-bench}
 J=${J:-$HOME/Reference/JoltPhysics-v5.6.0}

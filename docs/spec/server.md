@@ -435,13 +435,13 @@ and `world.changed` pushes, undo, steps, Play's reset), `events.since`/`why`, an
 step that returns at the breakpoint, reads while held, `scripts apply` refused at once, the
 debugger's short forms, restores with and without the applied scripts), then that
 `.pocket/host.json` is gone after SIGTERM (Ctrl-Break on Windows, where it now runs:
-[smoke-server.txt](../evidence/agentdebug/smoke-server.txt), 0 failures, 2026-10-09). The Python
-`mcp` client package (2.3.0, `uv run --with mcp`) drove both transports (`pocket mcp --own` over
-stdio and `/mcp`). `crates/pocket-runtime/tests/host.rs` tests undo and redo of a spawn, a set and a
-destroy, the readers, the stop conditions, Play and Stop, and the kept snapshots;
-`tests/agent_reads.rs` the field reads, line ranges, samples and restores under the applied
-scripts (with a recording that replays); pocket-app's `tests/paused_host.rs` a held host through
-`Host::call`.
+[smoke-server.txt](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/agentdebug/smoke-server.txt),
+0 failures, 2026-10-09). The Python `mcp` client package (2.3.0, `uv run --with mcp`) drove both
+transports (`pocket mcp --own` over stdio and `/mcp`). `crates/pocket-runtime/tests/host.rs` tests
+undo and redo of a spawn, a set and a destroy, the readers, the stop conditions, Play and Stop, and
+the kept snapshots; `tests/agent_reads.rs` the field reads, line ranges, samples and restores under
+the applied scripts (with a recording that replays); pocket-app's `tests/paused_host.rs` a held host
+through `Host::call`.
 
 ## 11. Open
 

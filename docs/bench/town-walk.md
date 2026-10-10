@@ -5,9 +5,8 @@ the complete ORCA Bistro exterior and baked diffuse GI. No editor, Node, Bun or 
 checker is required at playback. The original asset license and attribution travel with it.
 
 The derived model keeps all geometry, materials and node transforms, caps embedded textures at
-1024 pixels and reconstructs positive Z for 132 legacy RG-only normal maps. Its SHA-256 is
-`a67e148efc15c76c4b855ff1c5b4f1d6901e6a05312271f15a13794e544a079f`.
-The original source hash remains `b6930eb95fb6b38f5136b6de0895425076f752d12d5ec51b8db9c85229eae41d`.
+1024 pixels and reconstructs positive Z for 132 legacy RG-only normal maps. Source URLs,
+licenses and conversion parameters are retained with the model.
 
 ## Walking
 
@@ -48,8 +47,7 @@ The diffuse bake omits 13 transparent primitives (68 valid triangles); the visib
 them. This remains static mesh diffuse GI; the standalone full PT is a separate rendering mode.
 
 The completed field traced 71,845,047 rays in 182.55 s, plus 27.55 s loading, during an ordinary
-development session. These are workflow timings, not an isolated benchmark. Asset SHA-256:
-`1c55acefabfa9fdc288a624d539976a40d1bf5e32844bb739fcfd7ede8ff66c9`.
+development session. These are workflow timings, not an isolated benchmark.
 
 `showcase_bench --gi-compare DIRECTORY` reuses the same loaded model and field, locks the camera,
 light, exposure and capture time, settles 32 frames per mode and captures on/off/on-repeat.

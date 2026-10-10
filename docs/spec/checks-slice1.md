@@ -56,9 +56,9 @@ a paragraph or list item that has a line wider than 100 display columns (East As
 count two), breaks Chinese between two CJK characters (never before closing or after opening
 punctuation) and joins such a break back without a space, keeps hard line breaks and link
 definitions, and has a `--selftest`. The purpose is unchanged: a search returns a line, not a
-paragraph. The step reads `docs/` only, without `docs/evidence/`, whose transcripts are kept as
-recorded; `shared/` is the contract's text, which changes only through its record
-(`gen.shared_modified`), so this step does not reformat it. A paragraph with an unbreakable token
+paragraph. The step reads `docs/` only, without `out/bench-runs/`, whose transcripts are kept as
+recorded; `shared/` is the contract's text, reviewed with its version, so this step does not
+reformat it. A paragraph with an unbreakable token
 wider than the limit (a long command in a code span) passes once it is refilled.
 
 ## 10. `gen` without the build
@@ -66,11 +66,11 @@ wider than the limit (a long command in a code span) passes once it is refilled.
 The generators that need no engine build run even when `build` failed: every `clippy.toml` from
 `tools/clippy-determinism.toml` (whose `crates` list names the six crates of 5.3 and the lint
 fixture; the copies are identical, `pocket-runtime` included, its loop clock and game thread taking
-`#[allow]` with their reasons), the `gen.orphan` scan (`Cargo.lock` files are cargo's own) and
-`gen.shared_modified`, which also names a file added under `shared/` or removed from it
-(`{path, recorded, actual}`). `cargo xtask gen` writes the outputs, `--check` compares them, and
-`--shared` alone rewrites the hashes of `shared/SYNC.toml`, keeping its comment and `commit`, since
-a change to the shared contract is deliberate (charter 6.2). clippy 1.98.1 ignores a listed path
+`#[allow]` with their reasons) and the `gen.orphan` scan (`Cargo.lock` files are cargo's own).
+`cargo xtask gen` writes the outputs and `--check` compares their bytes with the generators' output.
+`shared/SYNC.toml` carries only an optional source commit; shared edits need no checksum record
+(owner, 2026-10-10; charter 3.9). The former `--shared` checksum-refresh flag is removed.
+clippy 1.98.1 ignores a listed path
 that does not resolve in a crate, without a warning (checked with a scratch crate on 2026-10-03), so
 one file serves crates that do not link `bevy_ecs`.
 
@@ -278,7 +278,7 @@ hash changed, reported that one `caught` and the other not, which the step's jud
 With every tool of 6.3, 6.4 and 22 installed on R1 (the pinned LLVM, wasm-bindgen 0.2.129, wasm-opt
 132, Chrome 155, Python with websocket-client, TypeScript 7.0.2 through `POCKET_TSC`), every step
 but `contract` and `perf` runs, and the check passed in full for the first time since the old
-rebuild branch once `docs/evidence/xtask/render-gi-lint.diff`, applied in the working tree, cleared
+rebuild branch once `out/bench-runs/xtask/render-gi-lint.diff`, applied in the working tree, cleared
 the clippy findings of the files other tracks own this wave and compiled their Metal test on macOS
 only (docs/bench/xtask.md, with both runs' reports beside the diff). What it took: the `docs`
 step's width rule (9); clippy 1.98.1's findings, with `pocket_sim::math::min_f32` and `max_f32` for

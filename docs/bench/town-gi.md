@@ -2,8 +2,7 @@
 
 2026-10-05, `feature/metal`, Apple M5. The owner requested a town scene after the Harbor
 comparison. The existing ORCA Bistro exterior was restored from a verified local conversion,
-not downloaded or replaced by generated art. Packed SHA-256:
-`b6930eb95fb6b38f5136b6de0895425076f752d12d5ec51b8db9c85229eae41d`.
+with its original source and license attribution retained.
 Attribution: Amazon Lumberyard Bistro, Open Research Content Archive (ORCA), Amazon Lumberyard,
 July 2017, CC-BY-4.0. The original provenance and conversion records remain authoritative.
 

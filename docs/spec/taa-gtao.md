@@ -13,7 +13,7 @@ are switched, and how they are checked. The code is `crates/pocket-render/src/po
 the opaque pass's format and targets), `taa.rs` and `shaders/taa.wgsl`, `gtao.rs` and
 `shaders/gtao.wgsl`, the forward shader's extra outputs (`shaders/forward.wgsl`, `SceneOut`),
 `skinning.rs` (last frame's skinned vertices) and `renderer.rs` (`render`). Measurements and the
-defaults: [docs/bench/taa-gtao.md](../bench/taa-gtao.md); evidence: `docs/evidence/aa/`.
+defaults: [docs/bench/taa-gtao.md](../bench/taa-gtao.md); evidence: `out/bench-runs/aa/`.
 
 The schedule (3.3) listed a branch `feat/gtao` with measurements on an M5; that branch was lost
 before it was merged and nothing of it survives. This is a new implementation.

@@ -13,7 +13,7 @@ drops a visible instance, when the auto mode turns it off, and how it is checked
 `crates/pocket-render/shaders/cull.wgsl` (`main`, the early pass, and `late`),
 `crates/pocket-render/shaders/hiz.wgsl` (the pyramid), `batches.rs` (the late argument set) and
 `renderer.rs` (`render`). Measurements: [docs/bench/occlusion.md](../bench/occlusion.md); evidence:
-`docs/evidence/hiz/`.
+`out/bench-runs/hiz/`.
 
 The schedule (3.1) listed a branch `feat/hzb` with measurements on an M5; that branch was lost
 before it was merged and nothing of it survives. This is a new implementation.
@@ -277,7 +277,7 @@ the Radeon 780M, 2 to 6 times slower, the crossover fell between the same cube c
 - `python tools/occlusion_mutations.py [--out file.json]` puts known bugs into the code one at a
   time, runs `hiz.rs` and `occlusion.rs` against each and restores the file; it fails if any
   mutation survives. Every one makes at least one check fail, identically on the RTX 5060 with
-  Vulkan and the Radeon 780M with Direct3D 12 (`docs/evidence/hiz/mutations-*.json`; box counts
+  Vulkan and the Radeon 780M with Direct3D 12 (`out/bench-runs/hiz/mutations-*.json`; box counts
   from the RTX run):
 
   | Mutation | hiz.rs pyramid | hiz.rs test | occlusion.rs scene |

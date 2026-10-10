@@ -3,7 +3,7 @@
 # "Differences that remain"): 60 steps of the deterministic build in four variants of the emulated
 # swing-twist joint (limits and motors, limits only, motors only, neither), run side by side. Each
 # variant's per-step times (stderr), its JSON line or its panic go to $RAW/multibody.txt (RAW
-# defaults to $T/raw; the committed result is docs/bench/physics/multibody.txt).
+# defaults to $T/raw; results stay in ignored local output).
 REPO=$(cd "$(dirname "$0")/../../.." && pwd)
 T=${T:-${CARGO_TARGET_DIR:-$REPO/target}/physics-bench}
 RAW=${RAW:-$T/raw}

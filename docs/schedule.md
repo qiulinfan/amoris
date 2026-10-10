@@ -17,8 +17,6 @@
 4. 展示场景（`samples/harbor` 帆船港湾、`samples/arena` 对战）原生与浏览器都能跑。
 
 不在本周范围：Windows 与 Direct3D 12、桌面编辑器外壳（Tauri）。本轮实现已迁入 Amoris。
-Direct3D 12 已于 2026-10-09 作为 Pioneer 的探索方向重新纳入（纲领 4.1 与 4.4，测量见
-`docs/bench/dx12.md`），不改变本周的交付定义。
 
 ## 2. 技术栈（定稿摘要）
 
@@ -28,7 +26,7 @@ Direct3D 12 已于 2026-10-09 作为 Pioneer 的探索方向重新纳入（纲�
 | 世界 | bevy_ecs 0.19（只用 ECS），确定性 tick，PCE 规范编码，snapshot / fork / replay |
 | 游戏逻辑 | TypeScript：oxc 转译，QuickJS-ng 执行（vendored，补丁 P1–P11），TypeScript 7 做类型检查 |
 | 物理 | 现为 Rapier 0.36（确定性配置）；按 `docs/bench/physics.md` 的建议迁往 Jolt（第 4 天） |
-| 渲染 | wgpu 30，WGSL；原生 Metal、Vulkan（macOS 上经 MoltenVK）、Direct3D 12（Windows，Pioneer 2026-10-09），浏览器 WebGPU；GPU 驱动 |
+| 渲染 | wgpu 30，WGSL；原生 Metal、Vulkan（macOS 上经 MoltenVK），浏览器 WebGPU；GPU 驱动 |
 | 浏览器 | 游戏在 Web Worker 里跑同一份 wasm，页面用同一个渲染器（`pocket-viewport`）绘制 |
 | agent 接口 | 一张命令目录投影出 CLI（第一位）、HTTP/WebSocket、MCP（薄投影）与 `.d.ts` |
 | 调试 | CDP 端点（Chrome DevTools、VS Code）、`debug.*` 命令（agent 与编辑器共用） |
@@ -43,7 +41,7 @@ Direct3D 12 已于 2026-10-09 作为 Pioneer 的探索方向重新纳入（纲�
 | 项 | 结果 | 位置 |
 |---|---|---|
 | 渲染，原生 | many_cubes 160 万立方体：sphere 8.35 ms/帧（被 120 Hz 封顶），dense 11.7 ms；Bevy 0.19 同机 10.4 / 13.0 ms | main，`docs/bench/bevy-baseline.md` |
-| 遮挡剔除（Hi-Z 两阶段） | many_cubes 160 万、1280x720、GPU 时间（暂定，机器有负载）：RTX 5060（Vulkan）dense 16.0 → 0.9 ms，镜头环绕 21.8 → 2.8 ms；Radeon 780M dense 91.6 → 5.1 ms，环绕 40.9 → 8.0 ms；无遮挡的 sphere 强制开启多 0.2–0.4 ms（780M 多 1.2–1.4 ms），auto 模式关掉它、与关闭持平；开关前后画面与 id 覆盖一致（原生四种配置与 Chrome） | 分支 `explore/hiz`，`docs/spec/occlusion.md`、`docs/bench/occlusion.md`。2026-10-09 Pioneer 更正：原记的 `feat/hzb`（M5 上 dense 13.4 → 6.3 ms、环绕 13.7 → 8.3 ms）已遗失，数字无从复核 |
+| 遮挡剔除（Hi-Z 两阶段） | dense 13.4 → 6.3 ms，镜头环绕 13.7 → 8.3 ms；无遮挡时 auto 模式几乎不付代价 | 分支 `feat/hzb`，已实现、已评审，修复未完 |
 | 渲染，浏览器 | 与 three.js r186 同场景，GPU 时间快 1.5–3.4 倍 | main，`docs/bench/web.md` |
 | 物理 | Rapier 对 Jolt 同场景：箱堆 Rapier 快 1.5–2.4 倍；网格地形上的凸体 Jolt 快 1.6 倍，布娃娃 2.4 倍（4 线程 2.2 / 4.6 倍）；浏览器默认构建 Jolt 全部更快；两者原生与 wasm 哈希一致 | main，`docs/bench/physics.md` |
 
@@ -102,9 +100,6 @@ Direct3D 12 已于 2026-10-09 作为 Pioneer 的探索方向重新纳入（纲�
 渲染器做到超过 Bevy；浏览器视口与 three.js 对照；宿主、CLI、MCP、编辑器连真宿主；调试器；
 浏览器完整游戏；splat 合并；物理对照、类型 SDK、编辑器调试、agent 调试评测合并。
 `feat/play`、`feat/neural`、`feat/art`、`feat/hzb`、`feat/gtao` 已实现、已评审，修复阶段被中止。
-（2026-10-09 Pioneer 更正：`feat/hzb` 在合并前遗失，任何仓库里都没有它的代码；遮挡剔除已由
-`explore/hiz` 重新实现，见 3.1。`feat/neural` 同样遗失；神经纹理压缩已由 `explore/neural`
-重新实现，见 `docs/bench/neural-textures.md`。）
 
 ### 第 3 天（10-05）：收尾合并
 
@@ -175,6 +170,12 @@ Direct3D 12 已于 2026-10-09 作为 Pioneer 的探索方向重新纳入（纲�
 
 ## 6. 第 7 天之后
 
-Windows 与 Direct3D 12（Pioneer 2026-10-09 已开始：`docs/bench/dx12.md`）；Tauri 桌面外壳；地形
-细节贴图与 splatting；时间性抗锯齿与超分；资源导入管线与压缩纹理；把引擎按第 4 节的顺序拆分迁入
-所有者的引擎（由所有者主导）。
+Windows 与 Direct3D 12；Tauri 桌面外壳；地形细节贴图与 splatting；时间性抗锯齿与超分；资源导入
+管线与压缩纹理；把引擎按第 4 节的顺序拆分迁入所有者的引擎（由所有者主导）。
+
+## 2026-10-10：CPU/runtime 先行成果采用
+
+采用 Pioneer 的原生 player、P11 调试 scope、暂停 host、source-based engine version 和 Windows
+host/check 工具修复；候选按 Amoris 的工具链独立验证。来源快照为
+`9a3e4b0814959629202629845b85205c42086505`，图形算法、LOD 与神经资产另行整合。
+玩家层的 native/transport 测试不代表 LLM course 实测；旧 Python gateway 成绩保持原有归属。

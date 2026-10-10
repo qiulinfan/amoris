@@ -159,7 +159,7 @@ compare like with like. A workload is deterministic by the same checks as any pr
 | `bodies` | 200 floating rigid bodies under buoyancy and wind (chosen: the physics spike ran 7 and left hundreds unmeasured) | Physics scale |
 | `churn` | persistence.md 12's fixture: 10,000 entities spawned and despawned | Snapshot and fork at crowd scale |
 | `scene` | The rendering benchmark: the sea, 1 island (64 terrain tiles) and 32 high-poly boats as the render spike's generated asset holds them, and vegetation instances (not in that asset yet), with a camera that turns a full circle over 300 frames after 30 of warm-up (the spike's `harbour-turn`: static cameras miss the culling and level churn; master measured static and turning separately, the assessment's import table) | Frame time at scale (charter 3.10, 4.4) |
-| `import` | The render spike's `scene.glb`: 122,428,588 bytes, 4,681,602 unique triangles (48,230,402 over its instances), written by its deterministic `gen` (SHA-256 `d45b29fd...` on R1; the generator uses the platform's `sin`, so bytes on another OS are not guaranteed), imported while `sail` runs in real time | Import never freezes the runtime (charter 4.4) |
+| `import` | The render spike's `scene.glb`: 122,428,588 bytes, 4,681,602 unique triangles (48,230,402 over its instances), written by its deterministic `gen` (the generator uses the platform's `sin`, so bytes on another OS are not guaranteed), imported while `sail` runs in real time | Import never freezes the runtime (charter 4.4) |
 | `stall` | The two stall tests of `threads.md`, 11 | The thread split's promise (charter 5.1) |
 
 Large assets for `scene` and `import` follow the charter's open question on where they live (12,
