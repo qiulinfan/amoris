@@ -89,6 +89,22 @@ credential cleanup. File-verification records remain local, including in that ar
   `WGPU_DISCARD_HAL_LABELS=0` brings the pass markers back for PIX. On the R1 laptop a start-up's
   all-core burst lowers the GPU's clocks for a few seconds: short headless benchmarks take
   `--settle 5` (many_cubes, splats, lod_field, `tools/backend_bench.py`; docs/bench/dx12.md 10).
+- Per-frame profiling ([docs/bench/dx12.md](docs/bench/dx12.md), "Per-frame profiling"):
+  `POCKET_TRACE=frames=300,skip=60,out=PATH` (any renderer; `many_cubes --trace SPEC`) writes the
+  render thread's CPU spans and every timestamped GPU pass of every frame as Chrome Trace Event
+  JSON for ui.perfetto.dev or chrome://tracing, GPU time placed on the CPU timeline by a measured
+  clock calibration (`crates/pocket-render/src/trace.rs`); `python tools/frame_trace.py stats
+  TRACE` and `diff A B` give per-pass medians, p95 and spreads. Writing a trace holds the render
+  thread 45 to 95 ms: a host that brackets frames (`trace_end_frame` says when the trace is
+  complete) calls `finish_trace` outside its measured frames. RenderDoc (`RENDERDOC_DIR`, or
+  scoop's `renderdoc`): `python tools/renderdoc_frame.py capture --backend dx12|vulkan --frame N
+  --name NAME -- many_cubes --dense --bench 120` captures the renderer's N-th frame through the
+  in-application API (`POCKET_RENDERDOC_FRAME=N`; headless runs too) with RenderDoc's Vulkan layer
+  loaded for that process only, and `analyze out/profiler/rdc/NAME.rdc` replays it in `qrenderdoc
+  --python` (per-event GPU durations, the largest draw's shaders as DXIL or SPIR-V with their
+  statistics and NVIDIA's Vulkan register count). RenderDoc's D3D12 counters need Windows'
+  Developer Mode (`--d3d12-counters`); a first qrenderdoc start's analytics prompt blocks scripts
+  until answered. Traces and captures stay under `out/profiler/`.
 - Shader hashes are integer (`pcg_hash` in common.wgsl): `fract(sin(x) * k)` differs per vendor
   and API.
 - Ray queries: the research tracers (`path_trace`, `gi_trace`, `ray_query_probe`;

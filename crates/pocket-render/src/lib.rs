@@ -27,6 +27,8 @@ pub mod picking;
 mod post;
 pub mod prepass;
 pub mod profiler;
+#[cfg(not(target_arch = "wasm32"))]
+mod renderdoc;
 pub mod renderer;
 pub mod rt_shadows;
 pub mod scene;
@@ -36,6 +38,7 @@ mod skinning;
 mod sky;
 pub mod splat;
 pub mod taa;
+pub mod trace;
 mod ui;
 
 pub use camera::CameraState;

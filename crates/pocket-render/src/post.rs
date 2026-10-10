@@ -5,6 +5,7 @@
 
 use bytemuck::{Pod, Zeroable};
 
+use crate::profiler::GpuProfiler;
 use crate::shaders;
 
 pub const HDR: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
@@ -543,6 +544,7 @@ impl Post {
         dst: &wgpu::TextureView,
         clear: bool,
         label: &str,
+        timestamp_writes: Option<wgpu::RenderPassTimestampWrites<'_>>,
     ) {
         let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some(label),
@@ -559,6 +561,7 @@ impl Post {
                     store: wgpu::StoreOp::Store,
                 },
             })],
+            timestamp_writes,
             ..Default::default()
         });
         pass.set_pipeline(pipeline);
@@ -568,13 +571,16 @@ impl Post {
 
     /// Bloom, then the display transform from `src` (the frame's HDR image, the size of `t`) into
     /// `output`; `sharpen` (0: off) sharpens the image before the display transform
-    /// (docs/spec/taa-gtao.md).
+    /// (docs/spec/taa-gtao.md). While a frame trace records (trace.rs) the bloom chain and the
+    /// display transform are timed as one pass, "post"; otherwise they are not, so the frame's GPU
+    /// time stays the scene passes' that the benchmarks recorded.
     #[allow(clippy::too_many_arguments)]
     pub fn run(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         enc: &mut wgpu::CommandEncoder,
+        profiler: &mut GpuProfiler,
         t: &Targets,
         src: &wgpu::TextureView,
         output: &wgpu::TextureView,
@@ -653,6 +659,14 @@ impl Post {
         let Some((_, _, groups)) = &self.groups else {
             return;
         };
+        let span = if profiler.tracing() {
+            profiler.span("post")
+        } else {
+            None
+        };
+        // The slots are the passes in order; the last is the display transform.
+        let last = groups.len() - 1;
+        let ts = |slot: usize| profiler.span_writes(span, slot == 0, slot == last);
         let mut slot = 0;
         for i in 0..mips {
             Self::pass(
@@ -662,6 +676,7 @@ impl Post {
                 &t.bloom_mips[i],
                 true,
                 "bloom down",
+                ts(slot),
             );
             slot += 1;
         }
@@ -673,6 +688,7 @@ impl Post {
                 &t.bloom_mips[i],
                 false,
                 "bloom up",
+                ts(slot),
             );
             slot += 1;
         }
@@ -683,6 +699,7 @@ impl Post {
             output,
             true,
             "display transform",
+            ts(slot),
         );
     }
 }

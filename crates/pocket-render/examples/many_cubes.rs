@@ -13,10 +13,16 @@
 //! docs/bench/taa-gtao.md). `--settle S` (with `--headless-bench`) waits S seconds after start-up
 //! before the first frame: on the R1 laptop the start-up's burst on every core lowers the GPU's
 //! clocks for a few seconds, which a short benchmark would count (docs/bench/dx12.md 10).
+//! `--trace SPEC` records a per-frame trace as `POCKET_TRACE=SPEC` does (`frames=300,skip=60,
+//! out=PATH`; crates/pocket-render/src/trace.rs, docs/bench/dx12.md "Per-frame profiling"), in the
+//! window or headless; the headless loop adds its wait for the GPU as a span ("wait idle"). With
+//! `--bench` or `--headless-bench` the trace is written after the measured frames (writing it
+//! stalls the render thread).
 
 use glam::{Quat, Vec3};
 use pocket_assets::frame::RenderFrame;
 use pocket_render::app::{Host, RunOptions, run};
+use pocket_render::trace::TraceSpec;
 use pocket_render::{BackendChoice, OcclusionMode, PrepassMode, Renderer};
 
 struct Cubes {
@@ -28,6 +34,8 @@ struct Cubes {
     count: usize,
     occlusion: Option<OcclusionMode>,
     prepass: Option<PrepassMode>,
+    /// `--trace`: started on the first update.
+    trace: Option<TraceSpec>,
 }
 
 fn arg(name: &str) -> Option<String> {
@@ -50,6 +58,9 @@ fn flag(name: &str) -> bool {
 
 impl Host for Cubes {
     fn update(&mut self, r: &mut Renderer, now: f64) {
+        if let Some(spec) = self.trace.take() {
+            r.start_trace(spec);
+        }
         if let Some(f) = self.frame.take() {
             r.apply(f, now);
             if let Some(m) = self.occlusion {
@@ -94,6 +105,13 @@ fn main() {
     let prepass = arg("--prepass").and_then(|s| PrepassMode::parse(&s));
     let shadows = flag("--shadows");
     let bench: Option<u32> = arg("--bench").and_then(|s| s.parse().ok());
+    let trace = arg("--trace").map(|s| match TraceSpec::parse(&s) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("--trace {s}: {e}");
+            std::process::exit(2);
+        }
+    });
     let t = std::time::Instant::now();
     let frame = pocket_render::demo::many_cubes(count, dense, shadows);
     println!(
@@ -113,6 +131,7 @@ fn main() {
             count,
             occlusion,
             prepass,
+            trace: trace.clone(),
         };
         for i in 0..5 {
             host.update(&mut r, i as f64 / 60.0);
@@ -139,6 +158,7 @@ fn main() {
             count,
             occlusion,
             prepass,
+            trace: trace.clone(),
         };
         if let (Some(_), Some(f)) = (splats, &mut host.frame) {
             f.splats = Some(vec![pocket_assets::frame::SplatView {
@@ -179,6 +199,7 @@ fn main() {
             count,
             occlusion,
             prepass,
+            trace,
         },
         options,
     ) {
@@ -267,9 +288,16 @@ fn headless_bench(
     for i in 0..warm + frames {
         let now = f64::from(i) / 60.0;
         let t = std::time::Instant::now();
+        r.trace_begin_frame();
+        let ts = r.trace_mark();
         host.update(&mut r, now);
+        r.trace_span("update", ts);
         let stats = r.render(&view, now);
+        let ts = r.trace_mark();
         let _ = gpu.device.poll(wgpu::PollType::wait_indefinitely());
+        r.trace_span("wait idle", ts);
+        // A complete trace is written after the loop, outside the measured frames.
+        r.trace_end_frame();
         let ms = t.elapsed().as_secs_f64() * 1000.0;
         if i == 0 {
             first_frame_ms = ms;
@@ -304,6 +332,7 @@ fn headless_bench(
             }
         }
     }
+    r.finish_trace();
     let summary = |v: &mut Vec<f64>| {
         v.sort_by(f64::total_cmp);
         let n = v.len().max(1);

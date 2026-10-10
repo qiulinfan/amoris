@@ -21,6 +21,10 @@ winit = { workspace = true, optional = true }
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 pollster.workspace = true
 image.workspace = true
+# RenderDoc's in-application API for one-frame captures (renderdoc.rs); both already come with
+# wgpu-hal.
+libloading = "0.8"
+renderdoc-sys = "1"
 
 [features]
 import = ["pocket-assets/import"]

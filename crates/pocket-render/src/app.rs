@@ -314,6 +314,9 @@ impl<H: Host> App<H> {
         let now = web_time();
         let dt = (now - st.last_frame) as f32;
         st.last_frame = now;
+        // A frame trace's frame (trace.rs): the update, the acquire, the render and the present.
+        st.renderer.trace_begin_frame();
+        let ts = st.renderer.trace_mark();
         if let Some(fly) = st.fly.as_mut() {
             fly.step(dt.min(0.1));
             st.renderer.set_camera_override(Some(fly.cam));
@@ -322,21 +325,35 @@ impl<H: Host> App<H> {
             self.host.walk_input(walk.input(dt));
         }
         self.host.update(&mut st.renderer, now);
+        st.renderer.trace_span("update", ts);
+        let ts = st.renderer.trace_mark();
         let tex = match st.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t)
             | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
                 st.surface.configure(&st.renderer.gpu().device, &st.config);
+                st.renderer.trace_end_frame();
                 return;
             }
-            _ => return,
+            _ => {
+                st.renderer.trace_end_frame();
+                return;
+            }
         };
+        st.renderer.trace_span("acquire", ts);
         let view = tex
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
         let stats = st.renderer.render(&view, now);
+        let ts = st.renderer.trace_mark();
         st.window.pre_present_notify();
         st.renderer.gpu().queue.present(tex);
+        st.renderer.trace_span("present", ts);
+        // A complete trace is written now, one long frame, or during a benchmark once the window
+        // closes (`run`), after the measured frames.
+        if st.renderer.trace_end_frame() && self.options.bench.is_none() {
+            st.renderer.finish_trace();
+        }
         self.host.after_frame(&stats);
         if self.host.wants_capture() {
             let (w, h, px) = st.renderer.capture_rgba(now);
@@ -558,6 +575,11 @@ pub fn run<H: Host>(host: H, options: RunOptions) -> Result<Option<BenchReport>,
         error: None,
     };
     el.run_app(&mut app).map_err(|e| e.to_string())?;
+    // A trace not yet written when the window closed (a benchmark's, or one still recording) is
+    // written with the frames it has.
+    if let Some(st) = app.state.as_mut() {
+        st.renderer.finish_trace();
+    }
     if let Some(e) = app.error {
         return Err(e);
     }

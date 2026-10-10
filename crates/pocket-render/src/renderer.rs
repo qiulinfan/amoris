@@ -55,6 +55,7 @@ use crate::shaders;
 use crate::shadows::{self, CASCADES, SHADOW_SIZE};
 use crate::skinning::Skinning;
 use crate::sky::{Sky, SkyParams};
+use crate::trace::{self, FrameTracer, TraceSpec};
 use crate::ui::Ui;
 
 const CLUSTER_X: u32 = 16;
@@ -455,6 +456,11 @@ pub struct Renderer {
     camera_override: Option<CameraState>,
     tick_arrived: f64,
     pub last: FrameStats,
+    /// A per-frame trace in progress (trace.rs; `POCKET_TRACE`, [`Renderer::start_trace`]).
+    trace: Option<FrameTracer>,
+    /// `POCKET_RENDERDOC_FRAME`: a one-frame RenderDoc capture (renderdoc.rs).
+    #[cfg(not(target_arch = "wasm32"))]
+    renderdoc: Option<crate::renderdoc::FrameCapture>,
 }
 
 struct Layouts {
@@ -1333,12 +1339,152 @@ impl Renderer {
             camera_override: None,
             tick_arrived: 0.0,
             last: FrameStats::default(),
+            trace: TraceSpec::from_env().map(FrameTracer::new),
+            #[cfg(not(target_arch = "wasm32"))]
+            renderdoc: crate::renderdoc::FrameCapture::from_env(),
             gpu: gpu.clone(),
         }
     }
 
     pub fn gpu(&self) -> &Gpu {
         &self.gpu
+    }
+
+    /// Starts a per-frame trace (trace.rs), replacing one in progress.
+    pub fn start_trace(&mut self, spec: TraceSpec) {
+        self.trace = Some(FrameTracer::new(spec));
+    }
+
+    /// Whether a trace is armed, recording, or complete and not yet written.
+    pub fn tracing(&self) -> bool {
+        self.trace.is_some()
+    }
+
+    /// The host's frame begins (before it updates the scene and acquires a surface texture):
+    /// frames the host brackets include its own spans. Without it each `render` is a frame.
+    pub fn trace_begin_frame(&mut self) {
+        self.trace_begin(true);
+    }
+
+    fn trace_begin(&mut self, explicit: bool) {
+        let Some(t) = &mut self.trace else {
+            return;
+        };
+        if t.wants_clock() {
+            // Outside the recorded frames: calibrating waits for the GPU.
+            #[cfg(not(target_arch = "wasm32"))]
+            let clock = self.profiler.enabled().then(|| {
+                trace::calibrate(&self.gpu.device, &self.gpu.queue, self.profiler.period_ns())
+            });
+            #[cfg(target_arch = "wasm32")]
+            let clock: Option<Option<trace::Calibration>> = None;
+            t.start_clock = Some(clock.flatten());
+            self.profiler.set_tracing(&self.gpu.device, true);
+            self.profiler.dropped = 0;
+        }
+        t.begin_frame(web_time(), explicit);
+    }
+
+    /// The host's frame ends (after presenting). Returns whether the trace has every frame: the
+    /// host then writes it with [`Renderer::finish_trace`] when the stall that costs does not
+    /// matter, a benchmark after its measured frames (until then the profiler keeps every frame's
+    /// timestamps). A trace of frames `render` brackets itself is written by the last of them.
+    pub fn trace_end_frame(&mut self) -> bool {
+        let Some(t) = &mut self.trace else {
+            return false;
+        };
+        t.end_frame(web_time());
+        t.complete()
+    }
+
+    /// The CPU time now when the current frame is recorded: the start of a host span.
+    pub fn trace_mark(&self) -> Option<f64> {
+        trace::mark(&self.trace)
+    }
+
+    /// Records the host's span `name` from `start` (a [`Renderer::trace_mark`]) to now.
+    pub fn trace_span(&mut self, name: &'static str, start: Option<f64>) {
+        trace::span(&mut self.trace, name, start);
+    }
+
+    /// Writes the trace with the frames recorded so far and stops tracing (also when it is
+    /// complete); returns where it was written. It stalls the render thread once: it waits for
+    /// the GPU, calibrates the clocks again (eight round trips) and exports and writes the JSON,
+    /// tens of milliseconds for 300 frames (logged with the path).
+    pub fn finish_trace(&mut self) -> Option<std::path::PathBuf> {
+        let mut t = self.trace.take()?;
+        let started = web_time();
+        t.end_frame(started);
+        self.profiler.drain(&self.gpu.device);
+        let gpu = self.profiler.take_raw();
+        self.profiler.set_tracing(&self.gpu.device, false);
+        if t.frames.is_empty() {
+            eprintln!("trace: no frame was recorded; nothing written");
+            return None;
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        let end_clock = self
+            .profiler
+            .enabled()
+            .then(|| trace::calibrate(&self.gpu.device, &self.gpu.queue, self.profiler.period_ns()))
+            .flatten();
+        #[cfg(target_arch = "wasm32")]
+        let end_clock = None;
+        let info = &self.gpu.info;
+        let mut meta = serde_json::Map::new();
+        for (k, v) in [
+            ("backend", serde_json::json!(self.gpu.backend_name())),
+            ("adapter", serde_json::json!(info.name)),
+            (
+                "driver",
+                serde_json::json!(format!("{} {}", info.driver, info.driver_info)),
+            ),
+            (
+                "size",
+                serde_json::json!([self.targets.width, self.targets.height]),
+            ),
+            ("antialiasing", serde_json::json!(self.aa.name())),
+            ("gtao", serde_json::json!(self.gtao_mode.name())),
+            ("occlusion", serde_json::json!(self.occlusion().name())),
+            ("prepass", serde_json::json!(self.prepass().name())),
+            ("draw_path", serde_json::json!(self.batches.path.name())),
+            ("instances", serde_json::json!(self.scene.instance_count())),
+            ("gpu_timestamps", serde_json::json!(self.profiler.enabled())),
+        ] {
+            meta.insert(k.into(), v);
+        }
+        let json = t.export(trace::ExportInput {
+            gpu: &gpu,
+            period_ns: f64::from(self.profiler.period_ns()),
+            start_clock: t.start_clock.flatten(),
+            end_clock,
+            dropped: self.profiler.dropped,
+            meta,
+        });
+        let path = t.spec.out.clone().unwrap_or_else(|| {
+            std::path::PathBuf::from(format!(
+                "out/profiler/trace-{}.json",
+                self.gpu.backend_name().to_lowercase().replace(' ', "")
+            ))
+        });
+        if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        match std::fs::write(&path, json.to_string()) {
+            Ok(()) => {
+                eprintln!(
+                    "trace: {} frames written to {} ({:.1} ms on the render thread)",
+                    t.frames.len(),
+                    path.display(),
+                    (web_time() - started) * 1000.0
+                );
+                Some(path)
+            }
+            Err(e) => {
+                eprintln!("trace: could not write {}: {e}", path.display());
+                None
+            }
+        }
     }
 
     /// How the GPU-driven passes issue their indirect draws (`multi-draw`, `first-instance` or
@@ -2183,10 +2329,28 @@ impl Renderer {
     /// Draws a frame into `output` (a texture view of the renderer's output format).
     pub fn render(&mut self, output: &wgpu::TextureView, now_s: f64) -> FrameStats {
         let cpu = web_time();
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(rd) = &mut self.renderdoc {
+            rd.before_frame();
+        }
+        // A trace's frame (trace.rs): the host's, or else this render.
+        let implicit = self.trace.as_ref().is_some_and(|t| !t.host_frame_open());
+        if implicit {
+            self.trace_begin(false);
+        }
+        if let Some(t) = &mut self.trace {
+            t.gpu_frame(self.profiler.frame());
+        }
+        let rendering = trace::mark(&self.trace);
+        let ts = rendering;
         self.collect_pick();
         self.poll_assets();
         self.poll_gi();
+        trace::span(&mut self.trace, "assets", ts);
+        let ts = trace::mark(&self.trace);
         self.sync();
+        trace::span(&mut self.trace, "scene sync", ts);
+        let ts = trace::mark(&self.trace);
         let device = self.gpu.device.clone();
         let queue = self.gpu.queue.clone();
         let (w, h) = (self.targets.width, self.targets.height);
@@ -2380,6 +2544,8 @@ impl Renderer {
                 ],
             }),
         );
+        trace::span(&mut self.trace, "uniforms", ts);
+        let ts = trace::mark(&self.trace);
 
         let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("frame"),
@@ -2407,6 +2573,8 @@ impl Renderer {
             self.bind_key.4 = self.skinning.history.generation;
             self.rebind();
         }
+        trace::span(&mut self.trace, "encode particles, skinning", ts);
+        let ts = trace::mark(&self.trace);
         let binds = self.bind.as_ref().unwrap_or_else(|| unreachable!());
         if n > 0 {
             let groups = n.div_ceil(256);
@@ -2434,6 +2602,8 @@ impl Renderer {
             pass.set_bind_group(0, &binds.cluster, &[]);
             pass.dispatch_workgroups((CLUSTER_X * CLUSTER_Y * CLUSTER_Z).div_ceil(64), 1, 1);
         }
+        trace::span(&mut self.trace, "encode cull, lights", ts);
+        let ts = trace::mark(&self.trace);
         if let Some(rt) = &mut self.rt_shadows {
             rt.encode(&mut enc, &queue, &self.meshes, &self.scene, alpha);
         }
@@ -2465,9 +2635,13 @@ impl Renderer {
                 draw_calls += self.batches.draw(&mut pass, c as u32 + 1, variant);
             }
         }
+        trace::span(&mut self.trace, "encode shadows", ts);
+        let ts = trace::mark(&self.trace);
         // Gaussian splats (splat/): preprocess and sort; the opaque pass keeps its depth for them.
         self.splats
             .prepare(&mut enc, &mut self.profiler, &mut self.scene, &cam, (w, h));
+        trace::span(&mut self.trace, "encode splat sort", ts);
+        let ts = trace::mark(&self.trace);
         let picking = self.picking.begin(&device, (w, h));
         // Splats, GTAO and TAA read the depth after the opaque pass.
         let keep_depth = self.splats.active() || self.gtao_mode.on() || taa_on;
@@ -2544,6 +2718,8 @@ impl Renderer {
         if let Some(d) = &unjittered {
             draw_calls += d.draw(&mut self.profiler, &mut enc, 0, true, !occl);
         }
+        trace::span(&mut self.trace, "encode opaque", ts);
+        let ts = trace::mark(&self.trace);
         if occl {
             self.occlusion.encode_pyramid(
                 &device,
@@ -2614,6 +2790,8 @@ impl Renderer {
             self.picking.finish(&device, &mut enc);
             self.pick_splats = self.splats.drawn_entities().to_vec();
         }
+        trace::span(&mut self.trace, "encode occlusion, late opaque", ts);
+        let ts = trace::mark(&self.trace);
         // GTAO darkens the indirect light, then TAA blends the frame with its history into the image
         // the rest of the frame reads (gtao.rs, taa.rs).
         if self.gtao_mode.on() {
@@ -2648,16 +2826,21 @@ impl Renderer {
             (true, Some((_, v))) => v.clone(),
             _ => self.targets.hdr_view.clone(),
         };
+        trace::span(&mut self.trace, "encode gtao, taa", ts);
+        let ts = trace::mark(&self.trace);
         // Gaussian splats (splat/): drawn over the resolved image (after TAA, unjittered), tested
         // against the depth (with TAA, the unjittered one).
         let unjittered = unjittered.is_some();
         self.splats
             .draw(&mut enc, &mut self.profiler, &self.targets, unjittered);
+        trace::span(&mut self.trace, "encode splats", ts);
+        let ts = trace::mark(&self.trace);
         let bloom = env.as_ref().map_or(0.15, |e| e.bloom);
         self.post.run(
             &device,
             &queue,
             &mut enc,
+            &mut self.profiler,
             &self.targets,
             &image,
             output,
@@ -2665,6 +2848,8 @@ impl Renderer {
             bloom,
             if taa_on { self.sharpen } else { 0.0 },
         );
+        trace::span(&mut self.trace, "encode post", ts);
+        let ts = trace::mark(&self.trace);
         if self.overlays.any() {
             let mut selected = Vec::new();
             let hovered = self.overlays.hovered;
@@ -2704,11 +2889,18 @@ impl Renderer {
             self.ui.items = self.scene.ui.clone();
             self.ui.draw(&device, &queue, &mut enc, output, (w, h), vp);
         }
+        trace::span(&mut self.trace, "encode overlays, ui", ts);
+        let ts = trace::mark(&self.trace);
         self.profiler.resolve(&mut enc);
         queue.submit([enc.finish()]);
         self.profiler.after_submit();
         self.picking.after_submit();
         self.occlusion.after_submit();
+        trace::span(&mut self.trace, "submit", ts);
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(rd) = &mut self.renderdoc {
+            rd.after_frame();
+        }
         self.last = FrameStats {
             cpu_ms: (web_time() - cpu) as f32 * 1000.0,
             gpu_ms: self.profiler.total_ms(),
@@ -2734,6 +2926,12 @@ impl Renderer {
             antialiasing: self.aa.name(),
             gtao: self.gtao_mode.name(),
         };
+        trace::span(&mut self.trace, "render", rendering);
+        // A host that does not bracket its frames does not finish the trace either: the last
+        // frame writes it.
+        if implicit && self.trace_end_frame() {
+            self.finish_trace();
+        }
         self.last.clone()
     }
 
