@@ -5,13 +5,17 @@
 //! capture of each, for `image_diff`.
 //!
 //! `cargo run --release -p pocket-render --example rt_shadows -- [--scene mixed|cubes] [--n 6]
-//!  [--heroes 0] [--count 10000] [--size 1920x1080] [--frames 240] [--moving] [--capture PREFIX]`
+//!  [--heroes 0] [--count 10000] [--size 1920x1080] [--frames 240] [--moving] [--capture PREFIX]
+//!  [--settle S] [--rt-first]`
 //!
 //! `mixed`: the mixed demo scene (every pipeline variant on a ground, n x n cells) under a slanted
 //! sun, with `--heroes` skinned characters of samples/anim in a row in front (their bottom levels
 //! are rebuilt every frame); `cubes`: many_cubes' sphere of `count` cubes with shadows. `--moving`
 //! sends every frame a new tick that turns every instance, so the ray-traced path rebuilds its top
-//! level each frame. `POCKET_BACKEND` and `POCKET_ADAPTER` choose the GPU.
+//! level each frame. `POCKET_BACKEND` and `POCKET_ADAPTER` choose the GPU. `--settle S` waits S
+//! seconds after each path's start-up before its first frame (a start-up that loads every core
+//! lowers the laptop GPU's clocks for a few seconds, docs/bench/dx12.md 10.6); `--rt-first` runs the
+//! ray-traced path before the cascaded one.
 
 use glam::Quat;
 use pocket_assets::frame::{AnimView, InstanceUpdate, Look, Pose, RenderFrame};
@@ -133,6 +137,9 @@ fn run(ray_traced: bool, size: (u32, u32), frames: u32, moving: bool) -> serde_j
     }
     r.apply(s.first.clone(), 0.0);
     r.set_camera_override(Some(s.camera));
+    if let Some(secs) = arg("--settle").and_then(|s| s.parse::<f64>().ok()) {
+        std::thread::sleep(std::time::Duration::from_secs_f64(secs.max(0.0)));
+    }
     let tex = gpu.device.create_texture(&wgpu::TextureDescriptor {
         label: Some("rt_shadows target"),
         size: wgpu::Extent3d {
@@ -222,14 +229,24 @@ fn main() {
         .unwrap_or((1920, 1080));
     let frames = arg("--frames").and_then(|s| s.parse().ok()).unwrap_or(240);
     let moving = flag("--moving");
+    let rt_first = flag("--rt-first");
+    let (ray_traced, cascaded) = if rt_first {
+        let rt = run(true, size, frames, moving);
+        (rt, run(false, size, frames, moving))
+    } else {
+        let csm = run(false, size, frames, moving);
+        (run(true, size, frames, moving), csm)
+    };
     let report = json!({
         "scene": arg("--scene").unwrap_or_else(|| "mixed".into()),
         "heroes": arg("--heroes").and_then(|s| s.parse::<u32>().ok()).unwrap_or(0),
         "size": [size.0, size.1],
         "frames": frames,
         "moving": moving,
-        "cascaded": run(false, size, frames, moving),
-        "ray_traced": run(true, size, frames, moving),
+        "rt_first": rt_first,
+        "settle_s": arg("--settle").and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0),
+        "cascaded": cascaded,
+        "ray_traced": ray_traced,
     });
     println!("{}", serde_json::to_string_pretty(&report).unwrap());
 }

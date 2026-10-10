@@ -114,6 +114,30 @@ def hiz(paths):
         if g["occluded_tri"]:
             extra = f" | occluded triangles {statistics.median(g['occluded_tri']):,.0f}, frustum instances {statistics.median(g['frustum']):,.0f}"
         print(f"  {config} {count} {layout} {mode}: " + ", ".join(f"{k} {v:.2f}" for k, v in ps.items() if v >= 0.01) + extra)
+    # Check 1 of occlusion.md 7: on the sphere (nothing occluded) the second phase's whole cost is
+    # on - off, converted to triangles at the configuration's opaque rate with occlusion off, and
+    # compared with the auto mode's 1.5x probe bar. The proxy sums the second phase's own passes
+    # (late culling, Hi-Z, late opaque pass).
+    sphere = 2_250_132
+    bar = 1.5 * (200_000 + 0.5 * 187_511)
+    rows = [(c, g) for (c, n, layout, m), g in groups.items() if layout == "sphere" and m == "off"]
+    if rows:
+        print(f"\nCheck 1 (sphere): triangles = cost / opaque off ms x {sphere:,}; bar {bar:,.0f}")
+    for config, off in sorted(rows):
+        on = groups.get((config, 1_600_000, "sphere", "on"))
+        if not on:
+            continue
+        opaque = statistics.median(off["pass:opaque+sky"])
+        cost = statistics.median(on["gpu"]) - statistics.median(off["gpu"])
+        proxy = sum(statistics.median(on["pass:" + p]) for p in ("cull late", "hi-z", "opaque+sky"))
+        pairs = [b - a for a, b in zip(off["gpu"], on["gpu"])]
+        tri = lambda ms: ms / opaque * sphere
+        runs = ", ".join(f"{x:.2f}" for x in off["pass:opaque+sky"])
+        print(f"  {config}: off {statistics.median(off['gpu']):.3f}, "
+              f"on {statistics.median(on['gpu']):.3f}, opaque off {opaque:.3f} (runs {runs}); "
+              f"on - off {cost:.3f} ms = {tri(cost):,.0f} ({tri(cost) / bar:.2f} of the bar); "
+              f"per repeat {', '.join(f'{tri(x):,.0f}' for x in pairs)}; "
+              f"second-phase passes {proxy:.3f} ms = {tri(proxy):,.0f}")
 
 
 def splats(paths):
@@ -252,7 +276,8 @@ def rt(paths):
 def rts(paths):
     for doc in load(paths):
         groups = defaultdict(lambda: defaultdict(list))
-        for name, r in doc.items():
+        # rt_shadows_bench.py --all-rounds wraps the runs; earlier summaries are the bare runs.
+        for name, r in (doc["runs"] if "tool" in doc else doc).items():
             g = groups[re.sub(r"-r\d+$", "", name)]
             for path in ("cascaded", "ray_traced"):
                 g[path].append(r[path]["gpu_ms"]["p50"])

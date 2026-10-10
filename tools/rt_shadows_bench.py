@@ -4,9 +4,17 @@
 Every configuration runs the `rt_shadows` example, which draws the same scene offscreen by a renderer
 without ray queries (cascades) and by one with them (ray traced) and prints both paths' frame timings
 as one JSON object, saving a capture of each. The mixed scene is measured `--rounds` times per
-backend and adapter, alternating the backends' order; the rest once, on the first adapter. Then the captures are compared with the `image_diff` example (cascaded against ray
-traced, and the ray-traced image across backends and adapters), and `samples/anim` is captured
-through the app (`pocket serve`, stepped to tick 90) with and without `POCKET_RT_SHADOWS=1`.
+backend and adapter, the rest once on the first adapter (`--all-rounds`: every configuration
+`--rounds` times, all of them in every round); the rounds alternate the backends' order. Then the
+captures are compared with the `image_diff` example (cascaded against ray traced, and the
+ray-traced image across backends and adapters), and `samples/anim` is captured through the app
+(`pocket serve`, stepped to tick 90) with and without `POCKET_RT_SHADOWS=1`.
+
+`--settle S` passes the example's `--settle S` (each path waits after its start-up before its first
+frame, dx12.md 10.6); `--alternate` (with `--all-rounds`) also alternates by round which path the
+example runs first (`--rt-first`); `--cool C` (with `--all-rounds`) waits before every round until
+the NVIDIA GPU is at C degrees or below (nvidia-smi). With `--all-rounds` the summary is
+`{"rounds", "settle_s", "alternate", "cooling", "runs": {name: run}}` instead of the bare runs.
 
 Build first: `cargo build --release -p pocket-render --examples` and `cargo build --release -p
 pocket-app`. Then, from the repository root:
@@ -56,6 +64,23 @@ def tag(adapter):
     return adapter.lower().replace(" ", "")
 
 
+def gpu_temp():
+    try:
+        p = subprocess.run(["nvidia-smi", "--query-gpu=temperature.gpu", "--format=csv,noheader"],
+                           capture_output=True, text=True, timeout=30)
+        return int(p.stdout.strip().splitlines()[0])
+    except (OSError, ValueError, IndexError, subprocess.TimeoutExpired):
+        return None
+
+
+def cool(limit):
+    """Waits (at most 15 minutes) until the NVIDIA GPU is at `limit` degrees C or below."""
+    t0 = time.time()
+    while (t := gpu_temp()) is not None and t > limit and time.time() - t0 < 900:
+        time.sleep(5)
+    return {"temp_c": gpu_temp(), "waited_s": round(time.time() - t0, 1)}
+
+
 def run(name, arguments, backend, adapter, out):
     prefix = out / name
     env = dict(os.environ, POCKET_BACKEND=backend, POCKET_ADAPTER=adapter)
@@ -103,15 +128,37 @@ def main():
     parser.add_argument("--summary")
     parser.add_argument("--evidence")
     parser.add_argument("--port", type=int, default=47613)
+    parser.add_argument("--all-rounds", action="store_true",
+                        help="measure every configuration --rounds times, not only the mixed scene")
+    parser.add_argument("--settle", type=float, default=0.0)
+    parser.add_argument("--alternate", action="store_true")
+    parser.add_argument("--cool", type=float, default=0.0)
     args = parser.parse_args()
     adapters = args.adapters.split(",")
     backends = args.backends.split(",")
     out = (ROOT / args.out).resolve()
     out.mkdir(parents=True, exist_ok=True)
     evidence = (ROOT / args.evidence) if args.evidence else None
-    runs = {}
+    runs, cooling = {}, []
     first = tag(adapters[0])
-    for config in args.configs.split(","):
+    extra = ["--settle", str(args.settle)] if args.settle else []
+    for r in (range(1, args.rounds + 1) if args.all_rounds else []):
+        # Every configuration in every round, so that changing load and clock states spread over
+        # all of them: the mixed scene on every adapter, the rest on the first.
+        if args.cool:
+            cooling.append(dict(cool(args.cool), round=r))
+            print(f"round {r}: {cooling[-1]}", file=sys.stderr)
+        order = backends if r % 2 else backends[::-1]
+        swap = ["--rt-first"] if args.alternate and r % 2 == 0 else []
+        for config in args.configs.split(","):
+            arguments, which = CONFIGS[config]
+            for adapter in adapters if which == "both" else adapters[:1]:
+                for backend in order:
+                    if which == "first-vulkan" and backend != backends[0]:
+                        continue
+                    name = f"shadows-{config}-{backend}-{tag(adapter)}-r{r}"
+                    runs[name] = run(name, arguments + extra + swap, backend, adapter, out)
+    for config in ([] if args.all_rounds else args.configs.split(",")):
         arguments, which = CONFIGS[config]
         if which == "both":
             # Rounds alternate the backends' order and the adapters, so that changing load and
@@ -121,14 +168,19 @@ def main():
                     order = backends if r % 2 else backends[::-1]
                     for backend in order:
                         name = f"shadows-{config}-{backend}-{tag(adapter)}-r{r}"
-                        runs[name] = run(name, arguments, backend, adapter, out)
+                        runs[name] = run(name, arguments + extra, backend, adapter, out)
         else:
             chosen = backends[:1] if which == "first-vulkan" else backends
             for backend in chosen:
                 name = f"shadows-{config}-{backend}-{first}"
-                runs[name] = run(name, arguments, backend, adapters[0], out)
+                runs[name] = run(name, arguments + extra, backend, adapters[0], out)
     if args.summary:
-        Path(args.summary).write_text(json.dumps(runs, indent=1, sort_keys=True) + "\n",
+        doc = runs
+        if args.all_rounds:
+            doc = {"tool": "tools/rt_shadows_bench.py", "date": time.strftime("%Y-%m-%d %H:%M"),
+                   "rounds": args.rounds, "settle_s": args.settle, "alternate": args.alternate,
+                   "cooling": cooling, "runs": runs}
+        Path(args.summary).write_text(json.dumps(doc, indent=1, sort_keys=True) + "\n",
                                       newline="\n")
 
     def png(name, path):
@@ -148,7 +200,7 @@ def main():
             other = f"shadows-mixed-{v}-{tag(adapters[1])}-r1"
             diff(png(mixed, "rt"), png(other, "rt"),
                  keep("mixed-rt-5060-780m")[0], None)
-    cubes = f"shadows-cubes200k-{v}-{first}"
+    cubes = f"shadows-cubes200k-{v}-{first}" + ("-r1" if args.all_rounds else "")
     if cubes in runs:
         diff(png(cubes, "csm"), png(cubes, "rt"), *keep("cubes200k-csm-rt"))
 

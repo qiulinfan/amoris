@@ -6,6 +6,11 @@ quads and with the tiles and prints their difference (mean, maximum, PSNR, pixel
 for each rasterizer. Writes every figure as JSON; the captures stay in `--images` (not evidence:
 about 3 MB each), and `--strips` keeps a small strip (A, B, difference x8) per comparison.
 
+With two `--build NAME=EXE` it compares builds instead: for every adapter, backend and scene it
+captures `--raster` (default tile) with each build, the first build first on even scenes and the
+second first on odd ones, and image_diff compares the two (`build_vs_build`); `--env NAME=K=V`
+(repeatable) sets an environment variable for build NAME, so one executable can be two builds.
+
 Build first: `cargo build --release -p pocket-render --example splats --example image_diff`.
 
     python tools/splats/compare_matrix.py --adapters nvidia,780m --backends dx12,vulkan \
@@ -36,7 +41,13 @@ def main():
     ap.add_argument("--images", required=True)
     ap.add_argument("--strips", help="keep a strip per comparison here")
     ap.add_argument("--out", required=True)
+    ap.add_argument("--build", action="append", default=[], metavar="NAME=EXE",
+                    help="two builds: compare their captures instead of quads against tiles")
+    ap.add_argument("--env", action="append", default=[], metavar="NAME=K=V")
+    ap.add_argument("--raster", default="tile")
     a = ap.parse_args()
+    if a.build:
+        return compare_builds(a)
     images = Path(a.images)
     images.mkdir(parents=True, exist_ok=True)
     scenes = [s.split("=", 1) for s in a.scene]
@@ -79,6 +90,51 @@ def main():
                               "a": backends[0], "b": backends[1]})
                     doc["dx12_vs_vulkan"].append(r)
                     print(r, file=sys.stderr, flush=True)
+    out = Path(a.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(doc, indent=1) + "\n", encoding="utf-8", newline="\n")
+
+
+def compare_builds(a):
+    builds = [b.split("=", 1) for b in a.build]
+    if len(builds) != 2:
+        sys.exit("--build: give exactly two")
+    build_env = {}
+    for e in a.env:
+        name, kv = e.split("=", 1)
+        k, v = kv.split("=", 1)
+        build_env.setdefault(name, {})[k] = v
+    images = Path(a.images)
+    images.mkdir(parents=True, exist_ok=True)
+    scenes = [s.split("=", 1) for s in a.scene]
+    slug = lambda s: re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")
+    doc = {"tool": "tools/splats/compare_matrix.py", "date": time.strftime("%Y-%m-%d %H:%M"),
+           "scenes": dict(scenes), "raster": a.raster,
+           "builds": {n: os.path.abspath(e) for n, e in builds}, "build_env": build_env,
+           "build_vs_build": []}
+    for adapter in a.adapters.split(","):
+        for backend in a.backends.split(","):
+            for i, (name, args) in enumerate(scenes):
+                shots = {}
+                for build, exe in (builds if i % 2 == 0 else builds[::-1]):
+                    env = dict(os.environ, POCKET_BACKEND=backend, POCKET_ADAPTER=adapter,
+                               **build_env.get(build, {}))
+                    shot = images / f"{adapter}-{backend}-{slug(name)}-{slug(build)}.png"
+                    subprocess.run([os.path.abspath(exe), *args.split(), "--raster", a.raster,
+                                    "--capture", str(shot)], env=env, capture_output=True)
+                    shots[build] = shot
+                pa, pb = (shots[n] for n, _ in builds)
+                p = subprocess.run([str(EXAMPLES / f"image_diff{EXE}"), str(pa), str(pb)],
+                                   capture_output=True, text=True)
+                try:
+                    r = json.loads(p.stdout)
+                except json.JSONDecodeError:
+                    r = {"error": (p.stdout + p.stderr)[-500:]}
+                r.update({"adapter": adapter, "backend": backend, "scene": name, "args": args,
+                          "a": builds[0][0], "b": builds[1][0],
+                          "first": builds[0][0] if i % 2 == 0 else builds[1][0]})
+                doc["build_vs_build"].append(r)
+                print(r, file=sys.stderr, flush=True)
     out = Path(a.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(doc, indent=1) + "\n", encoding="utf-8", newline="\n")

@@ -15,8 +15,10 @@ Build first: `cargo build --release -p pocket-render --example splats`. From the
         --out docs/evidence/quiet/splats/matrix.json
 
 `--build NAME=EXE` (repeatable) times other builds of the example too, interleaved within each
-round (for example a copy of an earlier build's `splats.exe`), and `--rasters tile` times one
-rasterizer only. `python tools/quiet_tables.py splatm FILE` tabulates the result.
+round (for example a copy of an earlier build's `splats.exe`), `--env NAME=K=V` (repeatable) sets an
+environment variable for the runs of build NAME (so one executable can appear as several builds),
+and `--rasters tile` times one rasterizer only. `python tools/quiet_tables.py splatm FILE` tabulates
+the result.
 """
 import argparse
 import json
@@ -54,6 +56,8 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--build", action="append", default=[], metavar="NAME=EXE",
                     help="time this build of the example (repeatable; default: this checkout's)")
+    ap.add_argument("--env", action="append", default=[], metavar="NAME=K=V",
+                    help="set K=V in the environment of build NAME's runs (repeatable)")
     ap.add_argument("--rasters", default="quad,tile")
     ap.add_argument("--adapters", default="nvidia,780m")
     ap.add_argument("--backends", default="dx12,vulkan")
@@ -68,13 +72,19 @@ def main():
     builds = [tuple(b.split("=", 1)) for b in a.build] or [
         ("this", str(ROOT / "target" / "release" / "examples" / f"splats{EXE}"))]
     builds = [(name, os.path.abspath(exe)) for name, exe in builds]
+    build_env = {}
+    for e in a.env:
+        name, kv = e.split("=", 1)
+        k, v = kv.split("=", 1)
+        build_env.setdefault(name, {})[k] = v
     rasters = a.rasters.split(",")
     scenes = [s.split("=", 1) for s in a.scene]
     out = Path(a.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     doc = {"tool": "tools/splats/matrix.py", "date": time.strftime("%Y-%m-%d %H:%M"),
            "note": a.note, "frames": a.frames, "settle_s": a.settle, "scenes": dict(scenes),
-           "rounds": a.rounds, "builds": dict(builds), "cooling": [], "runs": []}
+           "rounds": a.rounds, "builds": dict(builds), "build_env": build_env, "cooling": [],
+           "runs": []}
     for rnd in range(a.rounds):
         if a.cool:
             temp, waited = cool(a.cool)
@@ -90,7 +100,8 @@ def main():
                     for raster, (build, exe) in order:
                         t = time.time()
                         extra = f" --settle {a.settle}" if a.settle else ""
-                        r = ab.run(exe, args + extra, raster, a.frames, env)
+                        r = ab.run(exe, args + extra, raster, a.frames,
+                                   dict(env, **build_env.get(build, {})))
                         if len(builds) > 1:
                             r["build"] = build
                         r.update({"round": rnd, "requested_adapter": adapter,

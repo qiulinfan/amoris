@@ -165,20 +165,26 @@ Amoris 是一个 **agent-native** 的 3D 游戏引擎。agent 在三个角色上
   （`docs/spikes/render.md`）在 Radeon 780M 上测得 Vulkan 比 Direct3D 12 慢 25–53%。Windows 的
   `Auto` 后端由测量决定：Direct3D 12 至少同样快且画面一致才取代 Vulkan。测量与结论见
   [bench/dx12.md](bench/dx12.md)。光线追踪与浏览器不在此决定内。
-- 2026-10-09（所有者决定，取代上一条"由测量决定"的规则）：Windows 的 `Auto` 后端改为
-  Direct3D 12，Vulkan 仍可用 `POCKET_BACKEND=vulkan` 选择，macOS 仍为 Metal，其他平台仍为
-  Vulkan。决定前的安静环境重测（分支 `explore/quiet`，`docs/bench/quiet-2026-10-09.md`）：两种
-  后端画面一致；RTX 5060 上 Direct3D 12 在 GPU 密集的 dense 场景慢约 24%，渲染器启动多约 0.9 s
-  （DXC 编译管线），其余场景持平；Radeon 780M 上 Direct3D 12 快 12%–30%。这些代价由 Pioneer 继续
-  优化（启动、dense 场景的 GPU 时间、每帧 CPU 编码），测量记入 [bench/dx12.md](bench/dx12.md)。
-  同日进展（Pioneer，`explore/d3d12perf`，单代理测量）：渲染器的管线改为多线程并发创建（浏览器中仍按
-  顺序），RTX 5060 上 Direct3D 12 的 `Renderer::new` 从约 0.93 s 降到约 0.18 s（Vulkan 从约 0.10 s
-  降到约 0.05 s）；前向着色器只在管线拥有运动与法线目标时才计算这两项（间接光占比始终计算：省去它时
+- 2026-10-09（所有者决定，取代上一条"由测量决定"的规则）：Windows 的 `Auto` 后端改为 Direct3D
+  12，Vulkan 仍可用 `POCKET_BACKEND=vulkan` 选择，macOS 仍为 Metal，其他平台仍为 Vulkan。决定前的安
+  静环境重测（分支 `explore/quiet`，`docs/bench/quiet-2026-10-09.md`）：两种后端画面一致；RTX 5060
+  上 Direct3D 12 在 GPU 密集的 dense 场景慢约 24%，渲染器启动多约 0.9 s （DXC 编译管线），其余场景持
+  平；Radeon 780M 上 Direct3D 12 快 12%–30%。这些代价由 Pioneer 继续优化（启动、dense 场景的 GPU 时
+  间、每帧 CPU 编码），测量记入 [bench/dx12.md](bench/dx12.md)。同日进展
+  （Pioneer，`explore/d3d12perf`，单代理测量）：渲染器的管线改为多线程并发创建（浏览器中仍按顺
+  序），RTX 5060 上 Direct3D 12 的 `Renderer::new` 从约 0.93 s 降到约 0.18 s（Vulkan 从约 0.10 s 降
+  到约 0.05 s）；前向着色器只在管线拥有运动与法线目标时才计算这两项（间接光占比始终计算：省去它时
   NVIDIA 的 Direct3D 12 编译器对颜色本身的舍入不同），离屏 dense 场景的 GPU 时间从 18.2 ms 降到 16.8
   ms（比 Vulkan 多 14%，原为 24%），窗口模式下未见变化；每帧 CPU 编码在两种后端上都降低（RTX 5060 的
   Direct3D 12 上 28% 至 39%）。画面与改动前逐像素比较（六个场景、四种抗锯齿与 GTAO 模式、两种后端、
   两块 GPU，共 72 对）全部完全相同。设备创建约 1.1 s 来自驱动，未改变。见
-  [bench/dx12.md](bench/dx12.md) 第 10 节。
+  [bench/dx12.md](bench/dx12.md) 第 10 节。2026-10-10 安静环境在最终构建上重测（Pioneer，只记录，不
+  改变所有者的决定）：RTX 5060 上 Direct3D 12 在离屏轻场景的 GPU 时间比 Vulkan 多 2%–16%（球体 2%，
+  点云花园 9%，蒙皮人群 16%，人群的帧时间多 45%），窗口模式下球体的帧时间少 10%；离屏 dense 场景 GPU
+  时间多 14%，窗口模式多 44%（Vulkan 的窗口帧在最终构建上便宜了 11%，Direct3D 12 的没有变化），每帧
+  CPU 编码是 Vulkan 的 1.6–2.3 倍，`Renderer::new` 约 0.18 s；Radeon 780M 上 Direct3D 12 在
+  many_cubes 与点云花园上快 4%–30%，蒙皮人群则慢（GPU 时间多 9%，离屏帧时间多 19%）。见
+  [bench/dx12.md](bench/dx12.md) 第 11 节。
 - 2026-10-09（Pioneer）：光追研究从 Metal 扩展到所有暴露 ray query 的后端。2026-10-05 的 GI
   决定以 Metal ray query 表述，表面 PT、SHaRC/ReSTIR 原型与在线 NRC 也只在 Metal 上运行；
   现在它们在 Vulkan（`VK_KHR_ray_query`）与 Direct3D 12（DXR 1.1、Shader Model 6.5）上同样运行，
@@ -191,19 +197,26 @@ Amoris 是一个 **agent-native** 的 3D 游戏引擎。agent 在三个角色上
   [GI 实现](spec/metal-gi.md) 及其测量记录的 Windows 章节。
 - 2026-10-09（Pioneer）：交互渲染器加入第一个光追效果，默认关闭：光追太阳阴影，
   `POCKET_RT_SHADOWS=1` 开启。只有开启且原生适配器暴露 ray query 时，主设备才请求
-  `EXPERIMENTAL_RAY_QUERY`；渲染器为网格建 BLAS（蒙皮网格每帧重建），按插值后的位姿重建
-  TLAS，前向通道的片元着色器向太阳发一条 inline ray query 阴影射线，代替级联阴影贴图
-  （开启时不再渲染级联）。
-  WebGPU、基线绘制路径与默认的原生路径不变。理由：前向渲染器没有 G-buffer 与深度预通道，
-  计算通道无法在着色之前给出可见性，inline ray query 是改动最小的接入方式；先测量它相对
-  级联阴影的开销与画面差异，再决定是否扩展到软阴影、AO 或 GI。规格见
-  [光追阴影](spec/rt-shadows.md)。暂定测量（2026-10-09 用提交的构建重测；最初的数字来自掩码投影体
-  尚未单独建 BLAS 的中间构建，已作废）：小场景里与四个级联通道的开销相当，Vulkan 上差别在
-  轮次波动之内（RTX 5060 −5% 至 +12%，Radeon 780M −7% 至 +7%），Direct3D 12 上两块 GPU 都
-  便宜 14% 至 20%；可见实例多时更贵（1 万立方体 +22% 至 +37%，20 万立方体 +50% 至 +57%；wgpu
-  每次提交逐实例校验 TLAS 依赖，静态场景也要约 2.8 ms CPU）；与级联阴影的阴影区域交并比
-  0.91 至 0.94，差别在边缘，集成测试另外核对掩码镂空透光、移动实例与蒙皮姿态变化后阴影随之
-  变化。见 [测量记录](bench/rt-shadows.md)。
+  `EXPERIMENTAL_RAY_QUERY`；渲染器为网格建 BLAS（蒙皮网格每帧重建），按插值后的位姿重建 TLAS，前向通
+  道的片元着色器向太阳发一条 inline ray query 阴影射线，代替级联阴影贴图（开启时不再渲染级联）。
+  WebGPU、基线绘制路径与默认的原生路径不变。理由：前向渲染器没有 G-buffer 与深度预通道，计算通道无法
+  在着色之前给出可见性，inline ray query 是改动最小的接入方式；先测量它相对级联阴影的开销与画面差
+  异，再决定是否扩展到软阴影、AO 或 GI。规格见 [光追阴影](spec/rt-shadows.md)。暂定测量（2026-10-09
+  用提交的构建重测；最初的数字来自掩码投影体尚未单独建 BLAS 的中间构建，已作废）：小场景里与四个级联
+  通道的开销相当，Vulkan 上差别在轮次波动之内（RTX 5060 −5% 至 +12%，Radeon 780M −7% 至
+  +7%），Direct3D 12 上两块 GPU 都便宜 14% 至 20%；可见实例多时更贵（1 万立方体 +22% 至 +37%，20 万
+  立方体 +50% 至 +57%；wgpu 每次提交逐实例校验 TLAS 依赖，静态场景也要约 2.8 ms CPU）；与级联阴影的
+  阴影区域交并比 0.91 至 0.94，差别在边缘，集成测试另外核对掩码镂空透光、移动实例与蒙皮姿态变化后阴
+  影随之变化。见 [测量记录](bench/rt-shadows.md)。2026-10-09 安静环境重测（`ef35e1af`，各适配器的默
+  认设置，即 GTAO 与遮挡剔除的自动模式都已开启；只有 mixed 场景跑了三轮，其余配置各只有一次）：
+  Direct3D 12 上小场景里光追阴影仍便宜（RTX 5060 7%–9%，780M 18%），实例多时贵 13%–35%；780M 的
+  Vulkan 上便宜 22%–26%；RTX 5060 的 Vulkan 上则贵 33%–72%（20 万个移动立方体的单次运行贵 155%），部
+  分来自不追踪光线的通道（GTAO、Hi-Z）在带 ray query 的设备上变慢。2026-10-10 在最终构建
+  `0871920d` 上每种配置各测五轮（启动后等待 5 秒，每轮前 RTX 5060 冷却到 70 C 以下），取代上述数字：
+  Direct3D 12 上小场景便宜 8%–10%（RTX 5060）与 19%（780M），1 万与 20 万立方体贵 15% 与 43%；
+  RTX 5060 的 Vulkan 上小场景只贵 3%–6%，1 万与 20 万立方体贵 22% 与 46%，20 万个移动立方体贵 18%；
+  780M 的 Vulkan 上便宜 25%；不追踪光线的通道不再变慢。RTX 5060 Vulkan 上的变化来自两个构建之间的差
+  别（最终构建按第一次的方式不等待启动时也是 −5% 至 +4%），具体是哪项改动未查。默认仍关闭。
 
 - 一套 wgpu 渲染器，WGSL 着色器放在独立的 `.wgsl` 文件里（不放进 Rust 字符串），按通道组织模块。
 - **渲染图**：每帧由通道组成的有向无环图，资源（瞬态纹理与缓冲）由图分配与复用。
@@ -295,8 +308,9 @@ Amoris 是一个 **agent-native** 的 3D 游戏引擎。agent 在三个角色上
     （1M 时约 7.6 ms），除 Direct3D 12 上 3M、2560x1440 一处（0.95）外处处更慢。没有一种适配器类别上
     分块明显占优，故不按适配器区分。测量中还发现分块的逐像素遍历在 NVIDIA 的 Direct3D 12 上慢 8 倍
     （循环里的 break/continue；1M 时 11.4 对 1.45 ms），改为由循环条件结束后与 Vulkan 相当，画面逐字
-    节不变。 Apple GPU（四边形的混合在其上最贵）未测量；若 M5 上分块明显更快，再为 Apple 另定默认
-    值。见 [bench/splats.md](bench/splats.md) 的安静环境重测一节。
+    节不变（Radeon 780M 上这一改动使 Direct3D 12 快 1.5 倍、Vulkan 慢 7%；同日复核的证据见
+    `docs/evidence/quiet/splats/walk/`）。 Apple GPU（四边形的混合在其上最贵）未测量；若 M5 上分块明
+    显更快，再为 Apple 另定默认值。见 [bench/splats.md](bench/splats.md) 的安静环境重测一节。
   - 神经纹理压缩：材质的多通道纹理压缩为低分辨率潜变量网格加一个小 MLP（Python/PyTorch 训练），
     在片元着色器里逐像素推理解码；对比未压缩与传统压缩的体积和质量。
     2026-10-09（Pioneer）：神经纹理的训练改在引擎自己的 wgpu 计算着色器里进行，不用 Python/PyTorch：

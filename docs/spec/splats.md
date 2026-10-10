@@ -254,8 +254,8 @@ After the opaque pass:
    transmittance is below 1/255. The workgroup stops when all its pixels have (a count in workgroup
    memory, read uniformly before each batch). It writes (premultiplied color, transmittance) to an
    `rgba16float` storage texture. The walk ends through its loop conditions, without `break` or
-   `continue`: with them NVIDIA's Direct3D 12 driver ran it 8x slower (same pixels; bench, quiet
-   re-measurement).
+   `continue`: with them NVIDIA's Direct3D 12 driver ran it 8x slower and AMD's 1.5x (same pixels;
+   bench, quiet re-measurement); AMD's Vulkan driver runs this form 7% slower.
 6. **`splat composite`**: a full-screen pass blends the image over the resolved HDR image with
    `One, SrcAlpha`: splats + transmittance x scene (transmittance is stored rather than coverage, so
    `f16` keeps small values exact).
