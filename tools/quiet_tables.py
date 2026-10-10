@@ -6,6 +6,7 @@ docs/evidence/quiet/: per configuration the minimum, the median and the spread o
     python tools/quiet_tables.py dx12 docs/evidence/quiet/dx12/bench-headless.json [more.json ...]
     python tools/quiet_tables.py hiz docs/evidence/quiet/hiz/bench-1280x720.json
     python tools/quiet_tables.py splats docs/evidence/quiet/splats/ab-*.json
+    python tools/quiet_tables.py splatm docs/evidence/quiet/splats/matrix-*.json
     python tools/quiet_tables.py lod docs/evidence/quiet/lod/bench-t0.json
     python tools/quiet_tables.py aa docs/evidence/quiet/aa/bench-native.json
     python tools/quiet_tables.py rt docs/evidence/quiet/rt/timing-5060.json
@@ -132,6 +133,57 @@ def splats(paths):
                 med = {k[6:]: statistics.median(r["passes"].get(k, 0.0) for r in best[raster]["runs"])
                        for k in keys}
                 print(f"  {Path(path).stem} {scene} {raster}: " + ", ".join(f"{k} {v:.2f}" for k, v in med.items()))
+
+
+def splatm(paths):
+    """tools/splats/matrix.py: per adapter, backend, scene (and build), both rasterizers over the
+    rounds; with one rasterizer, its time per build."""
+    groups = defaultdict(lambda: defaultdict(list))
+    for doc in load(paths):
+        for r in doc["runs"]:
+            if not r.get("passes"):
+                print("no passes:", r.get("requested_adapter"), r.get("requested_backend"),
+                      r.get("scene"), r.get("raster"), r.get("build", ""))
+                continue
+            scene = r["scene"] + (f" [{r['build']}]" if r.get("build") else "")
+            g = groups[(r["requested_adapter"], r["requested_backend"], scene)]
+            g[r["raster"]].append(r["splat_total"])
+            g[r["raster"] + ":gpu"].append(r["gpu_total"])
+            g[r["raster"] + ":round"].append(r["round"])
+            for p, ms in r["passes"].items():
+                g[r["raster"] + ":pass:" + p].append(ms)
+            if r["raster"] == "tile":
+                g["pairs"].append(r.get("pairs"))
+            else:
+                g["quad_mpixels"].append(r.get("quad_mpixels"))
+                g["visible"].append(r.get("visible"))
+    print("| adapter | backend | scene | n | quads ms min / median (spread) | tiles ms min / median (spread) "
+          "| tiles / quads (medians) | per-round ratios | frame GPU quads / tiles (medians) |")
+    print("|---|---|---|---|---|---|---|---|---|")
+    for (adapter, backend, scene), g in groups.items():
+        sq, st = stats(g["quad"]), stats(g["tile"])
+        by_round = lambda r: dict(zip(g[r + ":round"], g[r]))
+        q, t = by_round("quad"), by_round("tile")
+        ratios = ", ".join(f"{t[k] / q[k]:.2f}" for k in sorted(q) if k in t) or "-"
+        ratio = f"{st['median'] / sq['median']:.2f}" if sq and st else "-"
+        gq, gt = stats(g["quad:gpu"]), stats(g["tile:gpu"])
+        med = lambda s: f"{s['median']:.2f}" if s else "-"
+        print(f"| {adapter} | {backend} | {scene} | {max(len(g['quad']), len(g['tile']))} | {fmt(sq)} | "
+              f"{fmt(st)} | {ratio} | {ratios} | {med(gq)} / {med(gt)} |")
+    print("\nPasses (median ms):")
+    for (adapter, backend, scene), g in groups.items():
+        for raster in ("quad", "tile"):
+            pre = raster + ":pass:"
+            med = {k[len(pre) + 6:]: statistics.median(v) for k, v in g.items() if k.startswith(pre)}
+            if not med:
+                continue
+            extra = (f"; pairs {statistics.median(x for x in g['pairs'] if x):,.0f}" if raster == "tile"
+                     and any(g["pairs"]) else
+                     f"; visible {statistics.median(g['visible']):,.0f}, quad pixels "
+                     f"{statistics.median(g['quad_mpixels']):.1f} M" if raster == "quad" and
+                     any(g["visible"]) else "")
+            print(f"  {adapter} {backend} {scene} {raster}: "
+                  + ", ".join(f"{k} {v:.2f}" for k, v in med.items()) + extra)
 
 
 def lod(paths):
@@ -267,5 +319,5 @@ def conditions(paths):
 
 
 if __name__ == "__main__":
-    {"conditions": conditions, "dx12": dx12, "hiz": hiz, "splats": splats, "lod": lod, "aa": aa, "rt": rt, "rts": rts,
+    {"conditions": conditions, "dx12": dx12, "hiz": hiz, "splats": splats, "splatm": splatm, "lod": lod, "aa": aa, "rt": rt, "rts": rts,
      "neural": neural, "web": web}[sys.argv[1]](sys.argv[2:])

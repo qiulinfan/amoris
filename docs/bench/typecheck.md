@@ -44,6 +44,33 @@ throwaway host); now each compiles once and instantiates once.
 A CLI round trip is dominated by starting the `pocket` process and its HTTP call: `scripts types`
 and `status` cost the same within noise, so the game-thread table above is the measure of the work.
 
+## Windows R1 on a quiet machine (2026-10-10)
+
+The cheap parts again, on the Windows laptop (budgets.md R1: Ryzen 9 270, 15 GB) with no other agent
+running ([quiet-2026-10-09.md](quiet-2026-10-09.md), session 2), master `0871920d`'s release build
+and TypeScript 7.0.2 from `sdk/node_modules`. Another machine than the M5 above, so these do not
+supersede its figures; they are this machine's
+([script-types-cost.txt](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/quiet/typecheck/script-types-cost.txt),
+[cli.json](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/quiet/typecheck/cli.json)).
+
+| What | sailing | generated |
+|---|---|---|
+| `scripts.types`, scripts unchanged (game thread, median of 15) | 0.72 ms (0.65-10.21) | 2.02 ms (1.92-9.95) |
+| `scripts.apply {dry_run, types}`, scripts changed (game thread, median of 15) | 12.68 ms (12.07-15.65) | 18.72 ms (16.85-20.95) |
+| `tsc --noEmit -p`, the native binary (median of 15) | 53.4 ms (50.9-58.0) | |
+| `pocket check <project> --only types`, with the native binary | 114.1 ms (109.0-119.8) | |
+| `tsc --noEmit -p` through `node_modules/.bin/tsc.exe` | 134.1 ms (130.6-142.4) | |
+| `pocket check <project> --only types` with `POCKET_TSC` at that `.bin/tsc.exe` | 278.6 ms (271.9-295.2) | |
+
+- The dry run with declarations costs the game thread 2.3 to 3.4 times the M5's (12.7 against 3.8 ms
+  on sailing, 18.7 against 8.3 generated) while the compile alone is close (0.72 against 0.59 ms);
+  the difference is in the instantiation or the writes under `.pocket/types/`. Not investigated.
+- `node_modules/.bin/tsc.exe` is bun's shim, which starts `node` and the package's launcher before
+  the native compiler: about 80 ms per `tsc` run, and 165 ms per `pocket check` (which runs it
+  twice, `--version` first). `pocket` prefers the native binary of the platform package when it
+  finds `sdk/node_modules` itself (typecheck.rs); a `POCKET_TSC` should name that binary,
+  `sdk/node_modules/@typescript/typescript-win32-x64/lib/tsc.exe`, not the shim.
+
 ## The editor's worker
 
 `editor/tools/sdk_check.ts` against `pocket serve` of a sailing copy: Monaco's TypeScript worker

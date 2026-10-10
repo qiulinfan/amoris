@@ -17,7 +17,8 @@ Build first: `cargo build --release -p pocket-render --examples`. Then, from the
 
 `--build NAME=DIR` (repeatable) times the examples of other checkouts too, each built with its
 own `target/` (for example master's next to a branch's), interleaved with the rest; without it the
-one build is this checkout's. The summary keeps every run's numbers; the table printed at the end
+one build is this checkout's. `--cool C` waits before every round until the NVIDIA GPU is at C
+degrees or below (nvidia-smi). The summary keeps every run's numbers; the table printed at the end
 gives the median over the rounds of each configuration's medians (p50) and means, and the CPU's
 encoding time where the benchmark reports it.
 """
@@ -128,6 +129,23 @@ def headline(kind, r):
     return r["draw_on"]["submit_to_idle_p50"], r["draw_on"]["gpu_ms"], None
 
 
+def gpu_temp():
+    try:
+        p = subprocess.run(["nvidia-smi", "--query-gpu=temperature.gpu", "--format=csv,noheader"],
+                           capture_output=True, text=True, timeout=30)
+        return int(p.stdout.strip().splitlines()[0])
+    except (OSError, ValueError, IndexError, subprocess.TimeoutExpired):
+        return None
+
+
+def cool(limit):
+    """Waits (at most 15 minutes) until the NVIDIA GPU is at `limit` degrees C or below."""
+    t0 = time.time()
+    while (t := gpu_temp()) is not None and t > limit and time.time() - t0 < 900:
+        time.sleep(5)
+    return {"temp_c": gpu_temp(), "waited_s": round(time.time() - t0, 1)}
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--adapters", default="", help="POCKET_ADAPTER values, comma separated")
@@ -140,6 +158,8 @@ def main():
                     help="seconds the headless runs wait after start-up before their first frame")
     ap.add_argument("--build", action="append", default=[], metavar="NAME=DIR",
                     help="also time the examples built in DIR/target (repeatable)")
+    ap.add_argument("--cool", type=float, default=0.0,
+                    help="before every round, wait until the NVIDIA GPU is at this many degrees C or below")
     ap.add_argument("--summary")
     ap.add_argument("--note", default="measured while other agents built and ran GPU work on the machine",
                     help="the conditions, kept in the summary's `provisional` field")
@@ -149,7 +169,11 @@ def main():
     chosen = [c for c in (args.cases.split(",") if args.cases else all_cases[builds[0][0]])]
     adapters = [a for a in args.adapters.split(",") if a] or [None]
     runs = []
+    cooling = []
     for rnd in range(args.rounds):
+        if args.cool:
+            cooling.append(dict(cool(args.cool), round=rnd))
+            print(f"  round {rnd}: {cooling[-1]}", file=sys.stderr)
         for case in chosen:
             for adapter in adapters:
                 for variant in args.variants.split(","):
@@ -196,7 +220,8 @@ def main():
         out.parent.mkdir(parents=True, exist_ok=True)
         summary = {"tool": "tools/backend_bench.py", "date": time.strftime("%Y-%m-%d %H:%M"),
                    "provisional": args.note, "builds": dict(builds), "settle_s": args.settle,
-                   "frames": args.frames, "splat_frames": args.splat_frames, "runs": runs}
+                   "frames": args.frames, "splat_frames": args.splat_frames, "cooling": cooling,
+                   "runs": runs}
         out.write_text(json.dumps(summary, indent=1) + "\n", newline="\n")
 
 
