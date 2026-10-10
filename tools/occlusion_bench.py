@@ -54,6 +54,8 @@ def main():
     ap.add_argument("--counts", default="0",
                     help="cube counts, comma separated (0: many_cubes' 1,600,000)")
     ap.add_argument("--out", help="write every run's JSON here")
+    ap.add_argument("--note", default="other agents shared the machine",
+                    help="the conditions, kept in the output's `provisional` field")
     args = ap.parse_args()
     runs = []
     for config in args.configs.split(","):
@@ -94,7 +96,7 @@ def main():
         out = ROOT / args.out
         out.parent.mkdir(parents=True, exist_ok=True)
         doc = {"tool": "tools/occlusion_bench.py", "date": time.strftime("%Y-%m-%d %H:%M"),
-               "frames": args.frames, "size": args.size, "provisional": True, "runs": runs}
+               "frames": args.frames, "size": args.size, "provisional": args.note, "runs": runs}
         out.write_text(json.dumps(doc, indent=1) + "\n", newline="\n")
 
 

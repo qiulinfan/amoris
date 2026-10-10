@@ -78,6 +78,10 @@ const r = await send("Runtime.evaluate", { returnByValue: true, expression: `(()
   const mean = (a) => a.reduce((x, y) => x + y, 0) / Math.max(a.length, 1);
   return { url: location.href, frames: s.length, frame_ms_mean: mean(ft), frame_ms_p50: ft[Math.floor(ft.length / 2)],
     frame_ms_p95: ft[Math.floor(ft.length * 0.95)], gpu_ms_mean: mean(s.map((x) => x.gpu_ms || 0)),
+    // Frames whose timestamps had arrived (gpu_ms > 0) only: the mean above counts the others as 0.
+    gpu_ms_timed_mean: mean(s.filter((x) => x.gpu_ms > 0).map((x) => x.gpu_ms)),
+    gpu_timed_frames: s.filter((x) => x.gpu_ms > 0).length,
+    antialiasing: s.length ? s[s.length - 1].antialiasing : null,
     render_ms_mean: mean(s.map((x) => x.render_ms || 0)),
     backend: s.length ? s[0].backend : null, passes: s.length ? s[s.length - 1].passes : null,
     draw_path: s.length ? s[s.length - 1].draw_path : null, draw_calls: s.length ? s[s.length - 1].draw_calls : null,

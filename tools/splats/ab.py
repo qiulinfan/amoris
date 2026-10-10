@@ -4,14 +4,17 @@ python ab.py EXE RUNS FRAMES OUT.json "ARGS" ["ARGS" ...]
 
 For each argument set, runs the example's headless bench alternately with --raster quad and
 --raster tile, RUNS times each, and keeps per pass the best (minimum) mean over the runs and the
-best total of the splat passes. Prints a table and writes the raw numbers as JSON.
+best total of the splat passes. Prints a table and writes the raw numbers as JSON (every run under
+`runs`). POCKET_BACKEND and POCKET_ADAPTER in the environment choose the GPU.
 """
 import json
+import os
 import re
 import subprocess
 import sys
 
-exe, runs, frames, out = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4]
+# An absolute path: Windows' CreateProcess does not start `target/release/examples/splats.exe`.
+exe, runs, frames, out = os.path.abspath(sys.argv[1]), int(sys.argv[2]), sys.argv[3], sys.argv[4]
 configs = sys.argv[5:]
 
 
@@ -50,6 +53,7 @@ for c in configs:
             'visible': rs[0]['visible'],
             'quad_mpixels': rs[0]['quad_mpixels'],
             'pairs': rs[0]['pairs'],
+            'runs': rs,
         }
     results[c] = best
     q, t = best['quad']['splat_total_best'], best['tile']['splat_total_best']

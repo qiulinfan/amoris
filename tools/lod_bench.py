@@ -3,10 +3,12 @@ and off on each backend and adapter given, and writes one JSON summary (docs/ben
 
     python tools/lod_bench.py [--out docs/evidence/lod/bench-native.json] [--adapters nvidia,amd]
         [--backends vulkan,dx12] [--n 48] [--detail 6] [--size 1280x720] [--frames 60]
-        [--occlusion off] [--t 0]
+        [--occlusion off] [--t 0] [--rounds 1] [--note "conditions"]
 
 The example must be built (`cargo build --release -p pocket-render --example lod_field`). Each run
-is its own process: levels off draws every instance's full mesh, so it gets fewer frames.
+is its own process: levels off draws every instance's full mesh, so it gets fewer frames. With
+`--rounds N` every configuration runs N times, round by round, so that a disturbance lands on all
+of them alike; every run is kept with its round.
 """
 
 import argparse
@@ -55,26 +57,32 @@ def main():
     ap.add_argument("--frames", type=int, default=60)
     ap.add_argument("--occlusion", default="off")
     ap.add_argument("--t", type=float, default=0.0)
+    ap.add_argument("--rounds", type=int, default=1)
+    ap.add_argument("--note", default="other agents shared the machine and its GPUs",
+                    help="the conditions, kept in the output's `provisional` field")
     a = ap.parse_args()
     if not os.path.exists(EXE):
         sys.exit(f"{EXE} is missing: cargo build --release -p pocket-render --example lod_field")
     head = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT,
                           capture_output=True, text=True).stdout.strip()
-    results = {"commit": head, "provisional": "other agents shared the machine and its GPUs",
+    results = {"commit": head, "provisional": a.note, "rounds": a.rounds,
                "scene": {"n": a.n, "detail": a.detail, "size": a.size, "t": a.t,
                          "occlusion": a.occlusion}, "runs": []}
-    for adapter in a.adapters.split(","):
-        for backend in a.backends.split(","):
-            for lod in ("on", "off"):
-                res = run(backend, adapter, lod, a)
-                results["runs"].append(res)
-                if "error" in res:
-                    print(f"{backend} {adapter} lod {lod}: error", flush=True)
-                    continue
-                print(f"{res['backend']} {res['adapter']} lod {lod}: gpu p50 "
-                      f"{res['gpu_ms']['p50']} ms, wall p50 {res['wall_ms']['p50']} ms, "
-                      f"camera triangles {res['camera_triangles']}, shadows "
-                      f"{res['shadow_triangles']}", flush=True)
+    configs = [(adapter, backend, lod) for adapter in a.adapters.split(",")
+               for backend in a.backends.split(",") for lod in ("on", "off")]
+    for rnd in range(a.rounds):
+        for adapter, backend, lod in configs:
+            res = run(backend, adapter, lod, a)
+            res["round"] = rnd
+            res["requested"] = {"backend": backend, "adapter": adapter}
+            results["runs"].append(res)
+            if "error" in res:
+                print(f"{backend} {adapter} lod {lod}: error", flush=True)
+                continue
+            print(f"r{rnd} {res['backend']} {res['adapter']} lod {lod}: gpu p50 "
+                  f"{res['gpu_ms']['p50']} ms, wall p50 {res['wall_ms']['p50']} ms, "
+                  f"camera triangles {res['camera_triangles']}, shadows "
+                  f"{res['shadow_triangles']}", flush=True)
     if a.out:
         with open(os.path.join(ROOT, a.out), "w", encoding="utf-8", newline="\n") as fh:
             fh.write(json.dumps(results, indent=1) + "\n")

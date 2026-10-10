@@ -446,7 +446,7 @@ def timing(args):
               f"[{row['gpu_ms_min']:.4f}, {row['gpu_ms_max']:.4f}] "
               f"wall {row['trace_wall_ms_median']:.1f} ms")
     return {"suite": "timing", "rounds": args.rounds, "adapter_filter": args.adapter,
-            "provisional": "other agents used the CPU and both GPUs during these runs",
+            "provisional": args.note,
             "summary": table, "runs": runs}
 
 
@@ -460,6 +460,8 @@ def main():
     parser.add_argument("--rounds", type=int, default=3)
     parser.add_argument("--out", default=str(ROOT / "out" / "rt"))
     parser.add_argument("--summary", default=None)
+    parser.add_argument("--note", default="other agents used the CPU and both GPUs during these runs",
+                        help="the conditions, kept in the timing summary's `provisional` field")
     args = parser.parse_args()
     summary = correctness(args) if args.suite == "correctness" else timing(args)
     if args.summary:
