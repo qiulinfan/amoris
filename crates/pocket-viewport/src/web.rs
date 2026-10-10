@@ -345,7 +345,7 @@ impl Viewport {
             .map(|(l, ms)| format!("{{\"pass\":\"{l}\",\"ms\":{ms:.3}}}"))
             .collect();
         self.last_stats = format!(
-            "{{\"gpu_ms\":{:.3},\"instances\":{},\"entities\":{},\"meshes\":{},\"pending_assets\":{},\"tick\":{},\"backend\":\"{}\",\"draw_path\":\"{}\",\"draw_calls\":{},\"occlusion\":\"{}\",\"occluded\":{},\"lod\":\"{}\",\"antialiasing\":\"{}\",\"gtao\":\"{}\",\"passes\":[{}]}}",
+            "{{\"gpu_ms\":{:.3},\"instances\":{},\"entities\":{},\"meshes\":{},\"pending_assets\":{},\"tick\":{},\"backend\":\"{}\",\"draw_path\":\"{}\",\"draw_calls\":{},\"occlusion\":\"{}\",\"occluded\":{},\"prepass\":\"{}\",\"lod\":\"{}\",\"antialiasing\":\"{}\",\"gtao\":\"{}\",\"passes\":[{}]}}",
             s.gpu_ms,
             s.instances,
             s.entities,
@@ -357,6 +357,7 @@ impl Viewport {
             s.draw_calls,
             s.occlusion,
             s.occlusion_stats.map_or(0, |o| o.occluded),
+            s.prepass,
             s.lod,
             s.antialiasing,
             s.gtao,
@@ -409,6 +410,14 @@ impl Viewport {
     pub fn set_occlusion(&mut self, mode: &str) {
         if let Some(m) = pocket_render::OcclusionMode::parse(mode) {
             self.renderer.set_occlusion(m);
+        }
+    }
+
+    /// The depth prepass before the opaque pass: `off`, `on` or `auto` (the default; anything else
+    /// leaves it as it is; docs/spec/prepass.md).
+    pub fn set_prepass(&mut self, mode: &str) {
+        if let Some(m) = pocket_render::PrepassMode::parse(mode) {
+            self.renderer.set_prepass(m);
         }
     }
 

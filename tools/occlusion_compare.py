@@ -35,33 +35,36 @@ bc.CASES["cubes-orbit"] = [bc.example("many_cubes"), "--orbit", "--capture", "{o
 SCENES = "mixed,cubes,samples/anim,samples/sailing,samples/gi-room,samples/pt-lab"
 
 
-def captures(cases, backend, adapter, out, evidence):
+def captures(cases, backend, adapter, out, evidence, feature="occlusion"):
+    """`feature`: what is switched off and on, `occlusion` (POCKET_OCCLUSION) or `prepass`
+    (POCKET_PREPASS, tools/prepass_compare.py)."""
+    var = f"POCKET_{feature.upper()}"
     port = 7990
     results = {}
     for case in cases:
         shots = {}
         for mode in ("off", "on"):
-            os.environ["POCKET_OCCLUSION"] = mode
+            os.environ[var] = mode
             port += 1
             png = out / f"{case}-{mode}.png"
             shots[mode] = bc.capture(case, backend, adapter, png, port)
-            shots[mode]["occlusion"] = mode
+            shots[mode][feature] = mode
         entry = {"captures": [shots["off"], shots["on"]]}
         if shots["off"]["ok"] and shots["on"]["ok"]:
             strip = evidence / f"{case}.png" if evidence else None
             entry["on_vs_off"] = bc.diff(shots["off"]["png"], shots["on"]["png"], strip)
         results[case] = entry
         print(f"{case:16} {json.dumps(entry.get('on_vs_off'))}", file=sys.stderr)
-    os.environ.pop("POCKET_OCCLUSION", None)
+    os.environ.pop(var, None)
     return results
 
 
-def scenes(names, backend, adapter, out):
+def scenes(names, backend, adapter, out, feature="occlusion"):
     env = dict(os.environ, POCKET_BACKEND=backend)
     if adapter:
         env["POCKET_ADAPTER"] = adapter
     paths_out = out / "scenes"
-    cmd = [bc.example("draw_paths"), "--compare", "occlusion", "--out", str(paths_out), *names]
+    cmd = [bc.example("draw_paths"), "--compare", feature, "--out", str(paths_out), *names]
     p, _ = bc.run(cmd, env, 1800)
     if p.returncode:
         return {"error": p.stderr[-600:]}

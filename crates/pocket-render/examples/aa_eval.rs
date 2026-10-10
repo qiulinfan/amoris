@@ -33,7 +33,8 @@ use pocket_assets::frame::{AnimView, InstanceUpdate, Look, Pose, RenderFrame};
 use pocket_render::demo::{AA_MODEL, aa_camera, aa_cube_position, aa_model, aa_scene};
 use pocket_render::taa::{TaaMode, TaaTuning};
 use pocket_render::{
-    Antialiasing, AoNormals, BackendChoice, CameraState, Gpu, Gtao, OcclusionMode, Renderer,
+    Antialiasing, AoNormals, BackendChoice, CameraState, Gpu, Gtao, OcclusionMode, PrepassMode,
+    Renderer,
 };
 use serde_json::{Value, json};
 
@@ -305,6 +306,8 @@ impl Setup<'_> {
             self.h,
         );
         r.set_occlusion(OcclusionMode::Off);
+        // The opaque pass timed as before the depth prepass (docs/spec/prepass.md).
+        r.set_prepass(PrepassMode::Off);
         r.set_antialiasing(aa);
         r.set_gtao(gtao);
         r.add_model(AA_MODEL, &aa_model());

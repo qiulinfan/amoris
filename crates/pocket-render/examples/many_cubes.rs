@@ -3,10 +3,11 @@
 //! material, a directional light, a camera turning at a fixed rate per frame.
 //!
 //! `cargo run --release -p pocket-render --example many_cubes -- [--dense] [--orbit] [--count N]
-//!  [--bench FRAMES] [--shadows] [--vsync] [--occlusion off|on|auto]`
+//!  [--bench FRAMES] [--shadows] [--vsync] [--occlusion off|on|auto] [--prepass off|on|auto]`
 //!
 //! `--orbit` lays the cubes out densely and circles them from outside (occlusion culling's
-//! benchmark, docs/bench/occlusion.md); `--occlusion` overrides `POCKET_OCCLUSION`. With
+//! benchmark, docs/bench/occlusion.md); `--occlusion` overrides `POCKET_OCCLUSION`, `--prepass`
+//! `POCKET_PREPASS` (the depth prepass, docs/bench/prepass.md). With
 //! `--headless-bench`, `--splats N` adds a cloud of N Gaussian splats on a sphere just behind the
 //! cubes' (with TAA the renderer then draws the unjittered depth they test against:
 //! docs/bench/taa-gtao.md). `--settle S` (with `--headless-bench`) waits S seconds after start-up
@@ -16,7 +17,7 @@
 use glam::{Quat, Vec3};
 use pocket_assets::frame::RenderFrame;
 use pocket_render::app::{Host, RunOptions, run};
-use pocket_render::{BackendChoice, OcclusionMode, Renderer};
+use pocket_render::{BackendChoice, OcclusionMode, PrepassMode, Renderer};
 
 struct Cubes {
     frame: Option<RenderFrame>,
@@ -26,6 +27,7 @@ struct Cubes {
     orbit: Option<u32>,
     count: usize,
     occlusion: Option<OcclusionMode>,
+    prepass: Option<PrepassMode>,
 }
 
 fn arg(name: &str) -> Option<String> {
@@ -52,6 +54,9 @@ impl Host for Cubes {
             r.apply(f, now);
             if let Some(m) = self.occlusion {
                 r.set_occlusion(m);
+            }
+            if let Some(m) = self.prepass {
+                r.set_prepass(m);
             }
         }
         if let Some(frame) = &mut self.orbit {
@@ -86,6 +91,7 @@ fn main() {
     let orbit = flag("--orbit");
     let dense = flag("--dense") || orbit;
     let occlusion = arg("--occlusion").and_then(|s| OcclusionMode::parse(&s));
+    let prepass = arg("--prepass").and_then(|s| PrepassMode::parse(&s));
     let shadows = flag("--shadows");
     let bench: Option<u32> = arg("--bench").and_then(|s| s.parse().ok());
     let t = std::time::Instant::now();
@@ -106,6 +112,7 @@ fn main() {
             orbit: orbit.then_some(0),
             count,
             occlusion,
+            prepass,
         };
         for i in 0..5 {
             host.update(&mut r, i as f64 / 60.0);
@@ -131,6 +138,7 @@ fn main() {
             orbit: orbit.then_some(0),
             count,
             occlusion,
+            prepass,
         };
         if let (Some(_), Some(f)) = (splats, &mut host.frame) {
             f.splats = Some(vec![pocket_assets::frame::SplatView {
@@ -170,6 +178,7 @@ fn main() {
             orbit: orbit.then_some(0),
             count,
             occlusion,
+            prepass,
         },
         options,
     ) {
@@ -250,6 +259,9 @@ fn headless_bench(
     // Ray-traced shadows (POCKET_RT_SHADOWS=1): measured frames that rebuilt the casters' TLAS.
     let mut rt_rebuilds = 0;
     let mut modes: Vec<(&'static str, u32)> = Vec::new();
+    // Each measured frame's wall time by what the depth prepass did (`FrameStats::prepass`): the
+    // auto mode's probes are the frames drawn the other way.
+    let mut prepass_wall: Vec<(&'static str, Vec<f64>)> = Vec::new();
     let mut occluded_share = Vec::new();
     let warm = 60;
     for i in 0..warm + frames {
@@ -272,6 +284,10 @@ fn headless_bench(
             Some(e) => e.1 += 1,
             None => modes.push((stats.occlusion, 1)),
         }
+        match prepass_wall.iter_mut().find(|(m, _)| *m == stats.prepass) {
+            Some(e) => e.1.push(ms),
+            None => prepass_wall.push((stats.prepass, vec![ms])),
+        }
         if let Some(o) = &stats.occlusion_stats {
             occluded_share.push(o.occluded_share());
         }
@@ -292,10 +308,19 @@ fn headless_bench(
         v.sort_by(f64::total_cmp);
         let n = v.len().max(1);
         let round = |x: f64| (x * 1000.0).round() / 1000.0;
+        let at = |p: usize| {
+            round(
+                v.get((v.len() * p / 100).min(v.len().saturating_sub(1)))
+                    .copied()
+                    .unwrap_or(0.0),
+            )
+        };
         serde_json::json!({
             "mean": round(v.iter().sum::<f64>() / n as f64),
-            "p50": round(v.get(v.len() / 2).copied().unwrap_or(0.0)),
-            "p95": round(v.get((v.len() * 95 / 100).min(v.len().saturating_sub(1))).copied().unwrap_or(0.0)),
+            "p50": at(50),
+            "p95": at(95),
+            "p99": at(99),
+            "max": round(v.last().copied().unwrap_or(0.0)),
         })
     };
     let occlusion = r.last.occlusion_stats.map(|o| {
@@ -322,6 +347,15 @@ fn headless_bench(
             .map(|(m, n)| ((*m).to_owned(), serde_json::json!(n)))
             .collect::<serde_json::Map<_, _>>(),
         "occluded_triangle_share": summary(&mut occluded_share),
+        "prepass_mode": r.prepass().name(),
+        "prepass_frames": prepass_wall
+            .iter()
+            .map(|(m, v)| ((*m).to_owned(), serde_json::json!(v.len())))
+            .collect::<serde_json::Map<_, _>>(),
+        "prepass_frame_ms": prepass_wall
+            .iter_mut()
+            .map(|(m, v)| ((*m).to_owned(), summary(v)))
+            .collect::<serde_json::Map<_, _>>(),
         "occlusion_last": occlusion,
         "backend": gpu.backend_name(),
         "adapter": gpu.info.name,

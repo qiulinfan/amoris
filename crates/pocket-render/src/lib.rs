@@ -25,6 +25,7 @@ mod par;
 mod particles;
 pub mod picking;
 mod post;
+pub mod prepass;
 pub mod profiler;
 pub mod renderer;
 pub mod rt_shadows;
@@ -43,6 +44,7 @@ pub use loader::AssetSource;
 pub use lod::{DrawCounts, LodMode, LodSettings};
 pub use occlusion::{OcclusionMode, OcclusionStats};
 pub use post::{Antialiasing, AoNormals, Gtao, defaults_for};
+pub use prepass::PrepassMode;
 pub use renderer::{FrameStats, Renderer, web_time};
 
 /// A renderer shader's composed WGSL (tools and backend probes).

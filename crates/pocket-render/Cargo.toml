@@ -29,6 +29,9 @@ default = ["window", "import"]
 window = ["dep:winit"]
 
 [dev-dependencies]
+# What naga writes for each backend (shaders.rs tests: the forward shader's invariant positions);
+# the version wgpu 30.0.1 resolves, with every backend's output.
+naga = { version = "=30.0.1", features = ["wgsl-in", "hlsl-out", "spv-out", "msl-out"] }
 pollster.workspace = true
 intel_tex_2.workspace = true
 texture2ddecoder.workspace = true

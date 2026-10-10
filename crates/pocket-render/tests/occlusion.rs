@@ -9,7 +9,9 @@
 //! against the slit and an orthographic camera. At each step the entity-id pass must show the
 //! same entities with the same pixel coverage and the images must be identical; the forced-on
 //! renderer must also have culled something. Each step's id pass is drawn in the first frame
-//! after the change, when last frame's visible set is the most wrong. Runs on the device
+//! after the change, when last frame's visible set is the most wrong. Runs with the depth prepass
+//! off and on (both renderers alike: in its auto mode each would decide by its own timings, and a
+//! sample where two surfaces tie in depth shows another one with the prepass), on the device
 //! `POCKET_BACKEND` and `POCKET_GPU_MINIMAL` describe, then on the two other draw paths
 //! (batches.rs); skips without a GPU. tests/hiz.rs checks the pyramid and the test itself
 //! against brute force.
@@ -17,7 +19,9 @@
 use glam::{Quat, Vec3};
 use pocket_assets::frame::{InstanceUpdate, Pose, RenderFrame};
 use pocket_render::gpu::Minimal;
-use pocket_render::{BackendChoice, Gpu, OcclusionMode, OcclusionStats, Renderer, demo};
+use pocket_render::{
+    BackendChoice, Gpu, OcclusionMode, OcclusionStats, PrepassMode, Renderer, demo,
+};
 
 /// The check's own instances (`scene`).
 const BEAM: u64 = 300;
@@ -116,10 +120,11 @@ fn frames(r: &mut Renderer, n: u32, t: &mut f64) {
     }
 }
 
-fn run(gpu: &Gpu, mode: OcclusionMode) -> Vec<Shot> {
+fn run(gpu: &Gpu, mode: OcclusionMode, prepass: PrepassMode) -> Vec<Shot> {
     let [front, side] = demo::occluders_cameras();
     let mut r = Renderer::new(gpu, wgpu::TextureFormat::Rgba8UnormSrgb, 480, 270);
     r.set_occlusion(mode);
+    r.set_prepass(prepass);
     r.add_model(demo::MIXED_MODEL, &demo::mixed_model());
     let mut t = 0.0;
     r.apply(scene(1.0), t);
@@ -201,9 +206,16 @@ fn agree(off: &Shot, on: &Shot, path: &str) {
 }
 
 fn check(gpu: &Gpu, label: &str) {
+    for prepass in [PrepassMode::Off, PrepassMode::On] {
+        let label = format!("{label}, prepass {}", prepass.name());
+        check_with(gpu, &label, prepass);
+    }
+}
+
+fn check_with(gpu: &Gpu, label: &str, prepass: PrepassMode) {
     let path = format!("{label} ({}, {})", gpu.backend_name(), gpu.info.name);
-    let off = run(gpu, OcclusionMode::Off);
-    let on = run(gpu, OcclusionMode::On);
+    let off = run(gpu, OcclusionMode::Off, prepass);
+    let on = run(gpu, OcclusionMode::On, prepass);
     for (a, b) in off.iter().zip(&on) {
         eprintln!(
             "{path}, {}: {} entities visible; {} {:?}",

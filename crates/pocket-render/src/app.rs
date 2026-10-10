@@ -152,10 +152,17 @@ pub struct BenchReport {
     pub frame_ms_mean: f64,
     pub frame_ms_p50: f64,
     pub frame_ms_p95: f64,
+    pub frame_ms_p99: f64,
+    pub frame_ms_max: f64,
     pub gpu_ms_mean: f64,
     pub cpu_ms_mean: f64,
     pub passes: Vec<(String, f64)>,
     pub instances: usize,
+    /// The last frame's occlusion culling and depth prepass (`FrameStats::occlusion`, `prepass`).
+    pub occlusion: String,
+    pub prepass: String,
+    /// Measured frames that drew the depth prepass.
+    pub prepass_frames: u32,
 }
 
 struct Fly {
@@ -222,6 +229,7 @@ struct State {
     frame_times: Vec<f64>,
     gpu_times: Vec<f64>,
     cpu_times: Vec<f64>,
+    prepass_frames: u32,
     frames: u32,
     title_at: f64,
 }
@@ -292,6 +300,7 @@ impl<H: Host> App<H> {
             frame_times: Vec::new(),
             gpu_times: Vec::new(),
             cpu_times: Vec::new(),
+            prepass_frames: 0,
             frames: 0,
             title_at: 0.0,
         });
@@ -341,6 +350,7 @@ impl<H: Host> App<H> {
                 st.frame_times.push(f64::from(dt) * 1000.0);
                 st.gpu_times.push(f64::from(stats.gpu_ms));
                 st.cpu_times.push(f64::from(stats.cpu_ms));
+                st.prepass_frames += u32::from(stats.prepass.ends_with("on"));
             }
             if st.frames >= skip + measure {
                 let mut ft = st.frame_times.clone();
@@ -356,6 +366,8 @@ impl<H: Host> App<H> {
                     frame_ms_mean: mean(&st.frame_times),
                     frame_ms_p50: ft[ft.len() / 2],
                     frame_ms_p95: ft[(ft.len() * 95 / 100).min(ft.len() - 1)],
+                    frame_ms_p99: ft[(ft.len() * 99 / 100).min(ft.len() - 1)],
+                    frame_ms_max: ft[ft.len() - 1],
                     gpu_ms_mean: mean(&st.gpu_times),
                     cpu_ms_mean: mean(&st.cpu_times),
                     passes: stats
@@ -364,6 +376,9 @@ impl<H: Host> App<H> {
                         .map(|(l, m)| ((*l).to_owned(), f64::from(*m)))
                         .collect(),
                     instances: stats.instances,
+                    occlusion: stats.occlusion.into(),
+                    prepass: stats.prepass.into(),
+                    prepass_frames: st.prepass_frames,
                 });
                 el.exit();
             }

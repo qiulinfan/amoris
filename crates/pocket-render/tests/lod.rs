@@ -24,7 +24,8 @@ use pocket_assets::frame::{InstanceUpdate, Look, Pose, RenderFrame};
 use pocket_render::gpu::Minimal;
 use pocket_render::lod::DrawCounts;
 use pocket_render::{
-    BackendChoice, CameraState, Gpu, LodMode, LodSettings, OcclusionMode, Renderer, demo,
+    BackendChoice, CameraState, Gpu, LodMode, LodSettings, OcclusionMode, PrepassMode, Renderer,
+    demo,
 };
 
 const W: u32 = 640;
@@ -506,6 +507,8 @@ fn skinned_levels_follow_the_pose() {
         let mut r = Renderer::new(gpu, wgpu::TextureFormat::Rgba8UnormSrgb, W, H);
         r.set_lod(mode);
         r.set_occlusion(OcclusionMode::Off);
+        // The draw calls counted below are the views' own (the prepass draws the camera's again).
+        r.set_prepass(PrepassMode::Off);
         r.add_model(demo::BENT_MODEL, &model);
         r.apply(columns(n), 0.0);
         r.set_camera_override(Some(cam));

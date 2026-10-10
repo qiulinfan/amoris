@@ -14,6 +14,10 @@
 //! step 4 is two passes: those instances, then a depth pyramid and a late culling pass, then the
 //! instances it finds newly visible with the sky and the rest.
 //!
+//! With the depth prepass (prepass.rs, docs/spec/prepass.md) each of those opaque passes is
+//! preceded by a pass drawing the same instances depth only, and draws them with an equal-depth
+//! test: each visible sample is shaded once.
+//!
 //! Step 1 also picks each instance's level of detail per view (lod.rs, docs/spec/lod.md); a level
 //! is a row of the mesh table, so the passes draw levels as they draw meshes.
 //!
@@ -44,6 +48,7 @@ use crate::overlay::Overlays;
 use crate::particles::Particles;
 use crate::picking::{PickRequest, Picking, coverage};
 use crate::post::{Antialiasing, DEPTH, Gtao, Post, SceneFormat, Targets};
+use crate::prepass::{Prepass, PrepassMode};
 use crate::profiler::GpuProfiler;
 use crate::scene::{InstanceGpu, NEURAL_VARIANT, Part, Resolve, Scene, VARIANTS};
 use crate::shaders;
@@ -142,6 +147,8 @@ pub struct FrameStats {
     pub draw_calls: u32,
     /// Occlusion culling this frame: `off`, `on`, `auto-on` or `auto-off` (occlusion.rs).
     pub occlusion: &'static str,
+    /// The depth prepass this frame: `off`, `on`, `auto-on` or `auto-off` (prepass.rs).
+    pub prepass: &'static str,
     /// The latest reading of the late culling pass's counters (a few frames old).
     pub occlusion_stats: Option<OcclusionStats>,
     /// Levels of detail this frame: `on`, `off`, or `off-limit` (asked for, but the views' lists
@@ -364,10 +371,18 @@ pub struct Renderer {
 
     cull_pipeline: wgpu::ComputePipeline,
     cluster_pipeline: wgpu::ComputePipeline,
-    forward: [wgpu::RenderPipeline; 4],
+    forward: Forward,
     /// The neural-texture variants' pipelines (variants 4..8), built when the first neural texture
     /// loads, for its network's shape (neural.rs).
-    neural_forward: Option<[wgpu::RenderPipeline; 4]>,
+    neural_forward: Option<Forward>,
+    /// Whether frames draw the depth prepass (prepass.rs; `POCKET_PREPASS` sets the mode).
+    prepass: Prepass,
+    /// The depth prepass's pipelines when the opaque pass is multisampled (`format.samples`
+    /// samples; with one sample it draws with `depth_only`).
+    depth_msaa: Option<[wgpu::RenderPipeline; 4]>,
+    /// What the depth-only pipelines are built from (rebuilt when the samples change).
+    depth_layout: wgpu::PipelineLayout,
+    fwd_module: wgpu::ShaderModule,
     /// Loaded neural textures: their latents and networks (neural.rs).
     neural: NeuralTable,
     /// Whether neural textures decode in half precision (shader-f16 and not
@@ -375,7 +390,8 @@ pub struct Renderer {
     neural_f16: bool,
     shadow: [wgpu::RenderPipeline; 2],
     /// Depth only, one sample, by forward variant: the unjittered depth splats test against with
-    /// TAA ([`UnjitteredDepth`]).
+    /// TAA ([`UnjitteredDepth`]), and the depth prepass of a single-sampled opaque pass
+    /// ([`DepthPrepass`]).
     depth_only: [wgpu::RenderPipeline; 4],
     empty_group: wgpu::BindGroup,
     ocean: Ocean,
@@ -460,7 +476,7 @@ struct Binds {
 
 /// What [`Renderer::new`] creates concurrently (par.rs).
 struct Built {
-    forward: [wgpu::RenderPipeline; 4],
+    forward: Forward,
     splats: crate::splat::Splats,
     taa: crate::taa::Taa,
     gtao: crate::gtao::Gtao,
@@ -473,6 +489,7 @@ struct Built {
     cull: wgpu::ComputePipeline,
     shadow: [wgpu::RenderPipeline; 2],
     depth_only: [wgpu::RenderPipeline; 4],
+    depth_msaa: Option<[wgpu::RenderPipeline; 4]>,
     skinning: Skinning,
     sky_pipeline: (wgpu::ShaderModule, wgpu::RenderPipeline),
     cluster: wgpu::ComputePipeline,
@@ -616,6 +633,42 @@ const FORWARD_LABELS: [&str; 4] = [
     "forward (double sided)",
     "forward (masked, double sided)",
 ];
+/// After the depth prepass the alpha-masked variants do not discard: the prepass's alpha test
+/// decided where they are, and the equal-depth test shades exactly there (docs/spec/prepass.md 3).
+const FORWARD_EQUAL_ENTRIES: [&str; 4] = ["fs"; 4];
+const FORWARD_EQUAL_LABELS: [&str; 4] = [
+    "forward (equal depth)",
+    "forward (masked, equal depth)",
+    "forward (double sided, equal depth)",
+    "forward (masked, double sided, equal depth)",
+];
+
+/// The forward pipelines of one opaque pass format, by variant: drawn alone (depth test
+/// `Greater`, depth written) and after the depth prepass (`Equal`, depth kept; prepass.rs).
+struct Forward {
+    test: [wgpu::RenderPipeline; 4],
+    equal: [wgpu::RenderPipeline; 4],
+}
+
+/// The fragment entry points and labels of a set of forward pipelines, by variant: drawn alone,
+/// and after the depth prepass.
+#[derive(Clone, Copy)]
+struct ForwardEntries {
+    test: [&'static str; 4],
+    labels: [&'static str; 4],
+    equal: [&'static str; 4],
+    equal_labels: [&'static str; 4],
+}
+
+const FORWARD: ForwardEntries = ForwardEntries {
+    test: FORWARD_ENTRIES,
+    labels: FORWARD_LABELS,
+    equal: FORWARD_EQUAL_ENTRIES,
+    equal_labels: FORWARD_EQUAL_LABELS,
+};
+
+/// A pair of forward variants (see [`forward_pair`]): drawn alone, and after the prepass.
+type ForwardPair = ([wgpu::RenderPipeline; 2], [wgpu::RenderPipeline; 2]);
 
 /// The forward pipelines for an opaque pass of `format` (variants as [`FORWARD_ENTRIES`]), the two
 /// fragment shaders compiled on two threads (par.rs).
@@ -624,17 +677,9 @@ fn forward_pipelines(
     module: &wgpu::ShaderModule,
     layout: &wgpu::PipelineLayout,
     format: SceneFormat,
-) -> [wgpu::RenderPipeline; 4] {
-    forward_variants(crate::par::map([0, 1], |i| {
-        forward_pair(
-            device,
-            module,
-            layout,
-            format,
-            FORWARD_ENTRIES,
-            FORWARD_LABELS,
-            i,
-        )
+) -> Forward {
+    forward_set(crate::par::map([0, 1], |i| {
+        forward_pair(device, module, layout, format, FORWARD, i)
     }))
 }
 
@@ -646,12 +691,17 @@ fn forward_pipelines_with(
     module: &wgpu::ShaderModule,
     layout: &wgpu::PipelineLayout,
     format: SceneFormat,
-    entries: [&str; 4],
-    labels: [&str; 4],
-) -> [wgpu::RenderPipeline; 4] {
-    forward_variants(
-        [0, 1].map(|i| forward_pair(device, module, layout, format, entries, labels, i)),
-    )
+    entries: ForwardEntries,
+) -> Forward {
+    forward_set([0, 1].map(|i| forward_pair(device, module, layout, format, entries, i)))
+}
+
+/// The forward set from the two pairs [`forward_pair`] builds.
+fn forward_set([(t0, e0), (t1, e1)]: [ForwardPair; 2]) -> Forward {
+    Forward {
+        test: forward_variants([t0, t1]),
+        equal: forward_variants([e0, e1]),
+    }
 }
 
 /// The four forward variants in variant order from the two pairs [`forward_pair`] builds (pair `i`
@@ -662,23 +712,28 @@ fn forward_variants<T>([[a, c], [b, d]]: [[T; 2]; 2]) -> [T; 4] {
 }
 
 /// Forward variants `i` (back-face culled) and `i + 2` (double-sided) of `module` for an opaque
-/// pass of `format`, with fragment entry points and labels from `entries` and `labels`. The second
-/// reuses the shaders the first compiled (wgpu keeps them per device), so a pair costs one
-/// compilation and two pairs can compile on two threads.
+/// pass of `format`, with fragment entry points and labels from `entries`: drawn alone, then after
+/// the depth prepass. The later pipelines reuse the shaders the first compiled (wgpu keeps them per
+/// device), so a pair costs one compilation (the masked variants' equal-depth twins take the other
+/// pair's `fs`, usually compiled by then) and two pairs can compile on two threads.
 fn forward_pair(
     device: &wgpu::Device,
     module: &wgpu::ShaderModule,
     layout: &wgpu::PipelineLayout,
     format: SceneFormat,
-    entries: [&str; 4],
-    labels: [&str; 4],
+    entries: ForwardEntries,
     i: usize,
-) -> [wgpu::RenderPipeline; 2] {
+) -> ForwardPair {
     let targets = format.targets(None, true);
     let constants = format.constants();
-    let pipe = |cull: Option<wgpu::Face>, variant: usize| {
+    let pipe = |cull: Option<wgpu::Face>, variant: usize, equal: bool| {
+        let (entry, label) = if equal {
+            (entries.equal[variant], entries.equal_labels[variant])
+        } else {
+            (entries.test[variant], entries.labels[variant])
+        };
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some(labels[variant]),
+            label: Some(label),
             layout: Some(layout),
             vertex: wgpu::VertexState {
                 module,
@@ -691,7 +746,7 @@ fn forward_pair(
             },
             fragment: Some(wgpu::FragmentState {
                 module,
-                entry_point: Some(entries[variant]),
+                entry_point: Some(entry),
                 compilation_options: wgpu::PipelineCompilationOptions {
                     constants: &constants,
                     ..Default::default()
@@ -702,10 +757,16 @@ fn forward_pair(
                 cull_mode: cull,
                 ..Default::default()
             },
+            // After the prepass the depth holds every sample's nearest surface: shade only the
+            // fragments of that surface (`@invariant` makes their depth equal to the bit).
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: DEPTH,
-                depth_write_enabled: Some(true),
-                depth_compare: Some(wgpu::CompareFunction::Greater),
+                depth_write_enabled: Some(!equal),
+                depth_compare: Some(if equal {
+                    wgpu::CompareFunction::Equal
+                } else {
+                    wgpu::CompareFunction::Greater
+                }),
                 stencil: Default::default(),
                 bias: Default::default(),
             }),
@@ -714,7 +775,70 @@ fn forward_pair(
             cache: None,
         })
     };
-    [pipe(Some(wgpu::Face::Back), i), pipe(None, i + 2)]
+    let pair = |equal: bool| {
+        [
+            pipe(Some(wgpu::Face::Back), i, equal),
+            pipe(None, i + 2, equal),
+        ]
+    };
+    (pair(false), pair(true))
+}
+
+/// Depth-only pipelines by forward variant for a depth target of `samples` samples: the forward
+/// variants' geometry (`@invariant`, forward.wgsl), culling and alpha test; reversed-Z like the
+/// opaque pass, depth written. The depth prepass draws with them ([`DepthPrepass`]) and, with one
+/// sample, the unjittered depth ([`UnjitteredDepth`]).
+fn depth_pipelines(
+    device: &wgpu::Device,
+    module: &wgpu::ShaderModule,
+    layout: &wgpu::PipelineLayout,
+    samples: u32,
+) -> [wgpu::RenderPipeline; 4] {
+    let pipe = |variant: u32| {
+        let masked = variant & 1 != 0;
+        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some(if samples > 1 {
+                "depth only (multisampled)"
+            } else {
+                "depth only"
+            }),
+            layout: Some(layout),
+            vertex: wgpu::VertexState {
+                module,
+                entry_point: Some(if masked {
+                    "vs_depth_masked"
+                } else {
+                    "vs_depth"
+                }),
+                compilation_options: Default::default(),
+                buffers: &[Some(vertex_layout())],
+            },
+            fragment: masked.then(|| wgpu::FragmentState {
+                module,
+                entry_point: Some("fs_depth_masked"),
+                compilation_options: Default::default(),
+                targets: &[],
+            }),
+            primitive: wgpu::PrimitiveState {
+                cull_mode: (variant & 2 == 0).then_some(wgpu::Face::Back),
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Greater),
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: wgpu::MultisampleState {
+                count: samples,
+                ..Default::default()
+            },
+            multiview_mask: None,
+            cache: None,
+        })
+    };
+    [0, 1, 2, 3].map(pipe)
 }
 
 /// The sky behind the scene, for an opaque pass of `format` (it writes the color only: no occlusion
@@ -944,45 +1068,6 @@ impl Renderer {
                 cache: None,
             })
         };
-        // The unjittered depth (TAA with splats): the forward variants' geometry, culling and alpha
-        // test; reversed-Z like the opaque pass.
-        let depth_pipe = |variant: u32| {
-            let masked = variant & 1 != 0;
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("unjittered depth"),
-                layout: Some(&shadow_layout),
-                vertex: wgpu::VertexState {
-                    module: &fwd_module,
-                    entry_point: Some(if masked {
-                        "vs_depth_masked"
-                    } else {
-                        "vs_depth"
-                    }),
-                    compilation_options: Default::default(),
-                    buffers: &[Some(vertex_layout.clone())],
-                },
-                fragment: masked.then(|| wgpu::FragmentState {
-                    module: &fwd_module,
-                    entry_point: Some("fs_depth_masked"),
-                    compilation_options: Default::default(),
-                    targets: &[],
-                }),
-                primitive: wgpu::PrimitiveState {
-                    cull_mode: (variant & 2 == 0).then_some(wgpu::Face::Back),
-                    ..Default::default()
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: DEPTH,
-                    depth_write_enabled: Some(true),
-                    depth_compare: Some(wgpu::CompareFunction::Greater),
-                    stencil: Default::default(),
-                    bias: Default::default(),
-                }),
-                multisample: Default::default(),
-                multiview_mask: None,
-                cache: None,
-            })
-        };
         // Every pipeline the renderer starts with, created concurrently (par.rs): on Direct3D 12
         // each compiles its shaders with DXC here (docs/bench/dx12.md 10). The longest first.
         let compute = |name: &str, entry: &str| {
@@ -1000,17 +1085,7 @@ impl Renderer {
             // The forward shader's two fragment entry points, the longest compilations of all.
             let forward = [0, 1].map(|i| {
                 let layout = &layout;
-                s.spawn(move || {
-                    forward_pair(
-                        device,
-                        lit_module,
-                        layout,
-                        format,
-                        FORWARD_ENTRIES,
-                        FORWARD_LABELS,
-                        i,
-                    )
-                })
+                s.spawn(move || forward_pair(device, lit_module, layout, format, FORWARD, i))
             });
             let splats = s.spawn(|| crate::splat::Splats::new(gpu));
             let taa = s.spawn(|| crate::taa::Taa::new(device, format.samples));
@@ -1039,7 +1114,14 @@ impl Renderer {
             let post = s.spawn(|| Post::new(device, output));
             let cull = s.spawn(|| compute("cull", "main"));
             let shadow = s.spawn(|| [shadow_pipe(false), shadow_pipe(true)]);
-            let depth_only = s.spawn(|| [0, 1, 2, 3].map(depth_pipe));
+            // One sample (the unjittered depth, a single-sampled prepass), then the prepass's
+            // multisampled ones (the same shaders, compiled once).
+            let depth_only = s.spawn(|| {
+                let one = depth_pipelines(device, &fwd_module, &shadow_layout, 1);
+                let msaa = (format.samples > 1)
+                    .then(|| depth_pipelines(device, &fwd_module, &shadow_layout, format.samples));
+                (one, msaa)
+            });
             let skinning = s.spawn(|| Skinning::new(device));
             let sky_pipeline = s.spawn(|| {
                 let sky_module = shaders::module(device, "sky");
@@ -1070,8 +1152,9 @@ impl Renderer {
                 }
                 meshes
             });
+            let (depth_only, depth_msaa) = depth_only.join();
             Built {
-                forward: forward_variants(forward.map(crate::par::Task::join)),
+                forward: forward_set(forward.map(crate::par::Task::join)),
                 splats: splats.join(),
                 taa: taa.join(),
                 gtao: gtao.join(),
@@ -1083,7 +1166,8 @@ impl Renderer {
                 post: post.join(),
                 cull: cull.join(),
                 shadow: shadow.join(),
-                depth_only: depth_only.join(),
+                depth_only,
+                depth_msaa,
                 skinning: skinning.join(),
                 sky_pipeline: sky_pipeline.join(),
                 cluster: cluster.join(),
@@ -1178,6 +1262,10 @@ impl Renderer {
             cluster_pipeline: built.cluster,
             forward: built.forward,
             neural_forward: None,
+            prepass: Prepass::new(PrepassMode::from_env(), gpu.caps.timestamps),
+            depth_msaa: built.depth_msaa,
+            depth_layout: shadow_layout,
+            fwd_module: fwd_module.clone(),
             neural: NeuralTable::new(device),
             neural_f16: gpu.caps.shader_f16
                 && std::env::var("POCKET_NEURAL_PRECISION").map_or(true, |v| v.trim() != "f32"),
@@ -1279,12 +1367,24 @@ impl Renderer {
         self.targets = Targets::new(&self.gpu.device, width, height, self.format);
         // The pyramid's first level reads the old depth target.
         self.occlusion.invalidate(true);
+        // What the prepass costs and saves changes with the pixels: the auto mode measures again.
+        self.prepass.restart();
     }
 
     /// Whether the camera view is occlusion culled (occlusion.rs; `POCKET_OCCLUSION` sets the
     /// starting mode).
     pub fn set_occlusion(&mut self, mode: OcclusionMode) {
         self.occlusion.set_mode(mode);
+    }
+
+    /// Whether the opaque pass draws the depth prepass (prepass.rs; `POCKET_PREPASS` sets the
+    /// starting mode). The image is the same either way (docs/spec/prepass.md).
+    pub fn set_prepass(&mut self, mode: PrepassMode) {
+        self.prepass.set_mode(mode);
+    }
+
+    pub fn prepass(&self) -> PrepassMode {
+        self.prepass.mode
     }
 
     /// Anti-aliasing: samples per pixel and TAA (post.rs; `POCKET_AA` sets the starting mode).
@@ -1346,13 +1446,24 @@ impl Renderer {
             let ocean = s.spawn(|| self.ocean.set_format(device, &self.lit_module, format));
             let particles = s.spawn(|| self.particles.set_format(device, format));
             let overlays = s.spawn(|| self.overlays.set_format(device, format));
-            // The passes that read the opaque pass's depth follow its samples.
+            // The passes that read the opaque pass's depth, and the prepass that draws it, follow
+            // its samples.
             let rebuilt = samples_changed.then(|| {
                 let occlusion = s.spawn(|| self.occlusion.set_samples(device, format.samples));
                 let taa = s.spawn(|| crate::taa::Taa::new(device, format.samples));
                 let gtao = s.spawn(|| crate::gtao::Gtao::new(device, format.samples, normals));
+                let depth = s.spawn(|| {
+                    (format.samples > 1).then(|| {
+                        depth_pipelines(
+                            device,
+                            &self.fwd_module,
+                            &self.depth_layout,
+                            format.samples,
+                        )
+                    })
+                });
                 occlusion.join();
-                (taa.join(), gtao.join())
+                (taa.join(), gtao.join(), depth.join())
             });
             ocean.join();
             particles.join();
@@ -1361,7 +1472,9 @@ impl Renderer {
         });
         self.forward = forward;
         self.sky_pipeline = sky;
-        if let Some((taa, mut gtao)) = rebuilt {
+        self.prepass.restart();
+        if let Some((taa, mut gtao, depth)) = rebuilt {
+            self.depth_msaa = depth;
             self.taa = taa;
             gtao.radius = self.gtao.radius;
             self.gtao = gtao;
@@ -1531,7 +1644,7 @@ impl Renderer {
         self.neural_f16
     }
 
-    fn neural_pipelines(&self, layout: &NeuralLayout) -> [wgpu::RenderPipeline; 4] {
+    fn neural_pipelines(&self, layout: &NeuralLayout) -> Forward {
         let device = &self.gpu.device;
         let source = shaders::forward_neural(layout, self.neural_f16, self.rt_shadows.is_some());
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -1544,13 +1657,22 @@ impl Renderer {
             &module,
             &self.forward_layout,
             self.format,
-            ["fs_neural"; 4],
-            [
-                "forward (neural)",
-                "forward (neural, unused masked)",
-                "forward (neural, double sided)",
-                "forward (neural, unused masked double sided)",
-            ],
+            ForwardEntries {
+                test: ["fs_neural"; 4],
+                labels: [
+                    "forward (neural)",
+                    "forward (neural, unused masked)",
+                    "forward (neural, double sided)",
+                    "forward (neural, unused masked double sided)",
+                ],
+                equal: ["fs_neural"; 4],
+                equal_labels: [
+                    "forward (neural, equal depth)",
+                    "forward (neural, unused masked, equal depth)",
+                    "forward (neural, double sided, equal depth)",
+                    "forward (neural, unused masked double sided, equal depth)",
+                ],
+            },
         )
     }
 
@@ -2209,8 +2331,16 @@ impl Renderer {
         let cascades = shadows && self.rt_shadows.is_none();
         let views = if cascades { VIEWS } else { 1 };
         let n = self.scene.instance_count() as u32;
-        // Two phases this frame (occlusion.rs)?
+        // Two phases this frame (occlusion.rs)? A depth prepass before each (prepass.rs; its auto
+        // mode takes the pass timings that arrived, each naming its frame)?
         let occl = self.occlusion.begin_frame(n > 0);
+        let prepass = self.prepass.begin_frame(
+            self.profiler.frame(),
+            &self.profiler.arrived,
+            self.profiler.times_frame(),
+            occl,
+            n > 0,
+        );
         // Levels of detail: the regions were sized for this mode in `sync` (lod.rs).
         let lod_on = self.regions_lod == Some(true);
         let (eye, ortho) = self.lod.camera_terms(&cam, h);
@@ -2351,19 +2481,40 @@ impl Renderer {
             meshes: &self.meshes,
             ocean: self.scene.sea.is_some().then_some(&self.ocean),
         });
+        // The depth prepass: before each opaque pass, the same batches depth only.
+        let depth_prepass = prepass.then(|| DepthPrepass {
+            pipelines: self.depth_msaa.as_ref().unwrap_or(&self.depth_only),
+            depth: &self.targets.depth,
+            binds,
+            empty: &self.empty_group,
+            batches: &self.batches,
+            meshes: &self.meshes,
+            neural: self.neural_forward.is_some(),
+        });
+        if let Some(d) = &depth_prepass {
+            draw_calls += d.draw(&mut self.profiler, &mut enc, 0, true);
+        }
         // The opaque pass, or with occlusion culling its early half: what the camera saw last frame.
         {
             let ts = self
                 .profiler
                 .render_scope(if occl { "opaque early" } else { "opaque+sky" });
-            let mut pass = opaque_pass(&mut enc, &self.targets, ts, true, !occl, keep_depth);
+            let mut pass = opaque_pass(
+                &mut enc,
+                &self.targets,
+                ts,
+                (true, !occl),
+                keep_depth,
+                prepass,
+            );
             pass.set_bind_group(0, &binds.frame, &[]);
             pass.set_bind_group(1, &binds.lighting, &[]);
             pass.set_bind_group(2, &binds.textures, &[]);
             pass.set_vertex_buffer(0, self.meshes.vertices.slice(..));
             pass.set_index_buffer(self.meshes.indices.slice(..), wgpu::IndexFormat::Uint32);
             for variant in 0..VARIANTS {
-                let Some(p) = forward_for(&self.forward, &self.neural_forward, variant) else {
+                let Some(p) = forward_for(&self.forward, &self.neural_forward, variant, prepass)
+                else {
                     continue;
                 };
                 pass.set_pipeline(p);
@@ -2416,16 +2567,28 @@ impl Renderer {
                 },
                 n,
             );
-            // The late half: the newly visible instances, then the sky and the rest.
+            // The late half: the newly visible instances (depth first, with the prepass), then the
+            // sky and the rest.
+            if let Some(d) = &depth_prepass {
+                draw_calls += d.draw(&mut self.profiler, &mut enc, LATE, false);
+            }
             let ts = self.profiler.render_scope("opaque+sky");
-            let mut pass = opaque_pass(&mut enc, &self.targets, ts, false, true, keep_depth);
+            let mut pass = opaque_pass(
+                &mut enc,
+                &self.targets,
+                ts,
+                (false, true),
+                keep_depth,
+                prepass,
+            );
             pass.set_bind_group(0, &binds.frame, &[]);
             pass.set_bind_group(1, &binds.lighting, &[]);
             pass.set_bind_group(2, &binds.textures, &[]);
             pass.set_vertex_buffer(0, self.meshes.vertices.slice(..));
             pass.set_index_buffer(self.meshes.indices.slice(..), wgpu::IndexFormat::Uint32);
             for variant in 0..VARIANTS {
-                let Some(p) = forward_for(&self.forward, &self.neural_forward, variant) else {
+                let Some(p) = forward_for(&self.forward, &self.neural_forward, variant, prepass)
+                else {
                     continue;
                 };
                 pass.set_pipeline(p);
@@ -2561,6 +2724,7 @@ impl Renderer {
             draw_path: self.batches.path.name(),
             draw_calls,
             occlusion: self.occlusion.label(),
+            prepass: self.prepass.label(),
             occlusion_stats: self.occlusion.last,
             lod: match (lod_on, self.regions_want) {
                 (true, _) => "on",
@@ -3063,17 +3227,79 @@ impl UnjitteredDepth<'_> {
     }
 }
 
-/// A pass into the opaque pass's targets (post.rs `Targets::attachments`) and its depth: `first`
-/// clears them (else they are loaded), `last` resolves the multisampled ones; the depth is kept
-/// unless it is the last pass and nothing reads it afterwards (`keep_depth`: the splats, GTAO,
-/// TAA).
+/// The depth prepass (charter 4.4, Pioneer 2026-10-10; prepass.rs, docs/spec/prepass.md): one
+/// argument set of the camera's batches drawn depth only into the opaque pass's depth, with the
+/// frame group the forward pipelines then draw with (TAA's jitter included), each variant through
+/// its depth-only pipeline and a neural variant through its base variant's. The variants the
+/// opaque pass skips (the neural ones before their pipelines exist) are skipped here too: their
+/// depth without their color would show the cleared target.
+struct DepthPrepass<'a> {
+    /// By base variant, for the depth target's samples.
+    pipelines: &'a [wgpu::RenderPipeline; 4],
+    depth: &'a wgpu::TextureView,
+    binds: &'a Binds,
+    empty: &'a wgpu::BindGroup,
+    batches: &'a Batches,
+    meshes: &'a MeshPool,
+    /// Whether the neural variants are drawn (their pipelines exist).
+    neural: bool,
+}
+
+impl DepthPrepass<'_> {
+    /// Draws batch set `set` (`first` clears the depth); returns the draw calls.
+    fn draw(
+        &self,
+        profiler: &mut GpuProfiler,
+        enc: &mut wgpu::CommandEncoder,
+        set: u32,
+        first: bool,
+    ) -> u32 {
+        let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some(crate::prepass::SCOPE),
+            color_attachments: &[],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: self.depth,
+                depth_ops: Some(wgpu::Operations {
+                    load: if first {
+                        wgpu::LoadOp::Clear(0.0)
+                    } else {
+                        wgpu::LoadOp::Load
+                    },
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            timestamp_writes: profiler.render_scope(crate::prepass::SCOPE),
+            ..Default::default()
+        });
+        pass.set_bind_group(0, &self.binds.frame, &[]);
+        pass.set_bind_group(1, self.empty, &[]);
+        pass.set_bind_group(2, &self.binds.textures, &[]);
+        pass.set_vertex_buffer(0, self.meshes.vertices.slice(..));
+        pass.set_index_buffer(self.meshes.indices.slice(..), wgpu::IndexFormat::Uint32);
+        let mut calls = 0;
+        for variant in 0..VARIANTS {
+            if variant >= NEURAL_VARIANT && !self.neural {
+                continue;
+            }
+            pass.set_pipeline(&self.pipelines[(variant % NEURAL_VARIANT) as usize]);
+            calls += self.batches.draw(&mut pass, set, variant);
+        }
+        calls
+    }
+}
+
+/// A pass into the opaque pass's targets (post.rs `Targets::attachments`) and its depth: the first
+/// of `(first, last)` clears them (else they are loaded), the last resolves the multisampled ones;
+/// the depth is kept unless it is the last pass and nothing reads it afterwards (`keep_depth`: the
+/// splats, GTAO, TAA). After the depth prepass (`depth_drawn`) the depth is loaded, never cleared.
 fn opaque_pass<'e>(
     enc: &'e mut wgpu::CommandEncoder,
     t: &Targets,
     timestamps: Option<wgpu::RenderPassTimestampWrites<'_>>,
-    first: bool,
-    last: bool,
+    (first, last): (bool, bool),
     keep_depth: bool,
+    depth_drawn: bool,
 ) -> wgpu::RenderPass<'e> {
     let color = t.attachments(first, last);
     enc.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -3082,7 +3308,7 @@ fn opaque_pass<'e>(
         depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
             view: &t.depth,
             depth_ops: Some(wgpu::Operations {
-                load: if first {
+                load: if first && !depth_drawn {
                     wgpu::LoadOp::Clear(0.0)
                 } else {
                     wgpu::LoadOp::Load
@@ -3117,17 +3343,20 @@ pub fn web_time() -> f64 {
     }
 }
 
-/// The forward pipeline of `variant`: the neural ones only once a neural texture has loaded.
+/// The forward pipeline of `variant`, drawn alone or after the depth prepass (`equal`): the neural
+/// ones only once a neural texture has loaded.
 fn forward_for<'a>(
-    forward: &'a [wgpu::RenderPipeline; 4],
-    neural: &'a Option<[wgpu::RenderPipeline; 4]>,
+    forward: &'a Forward,
+    neural: &'a Option<Forward>,
     variant: u32,
+    equal: bool,
 ) -> Option<&'a wgpu::RenderPipeline> {
+    let set = |f: &'a Forward| if equal { &f.equal } else { &f.test };
     if variant < NEURAL_VARIANT {
-        Some(&forward[variant as usize])
+        Some(&set(forward)[variant as usize])
     } else {
         neural
             .as_ref()
-            .map(|n| &n[(variant - NEURAL_VARIANT) as usize])
+            .map(|n| &set(n)[(variant - NEURAL_VARIANT) as usize])
     }
 }

@@ -23,7 +23,7 @@ mod procedural;
 use pocket_assets::mesh::{ImageData, MaterialData, ModelAsset};
 use pocket_assets::neural::{Channel, NeuralTexture};
 use pocket_render::occlusion::OcclusionMode;
-use pocket_render::{BackendChoice, Gpu, Renderer, demo};
+use pocket_render::{BackendChoice, Gpu, PrepassMode, Renderer, demo};
 use serde_json::{Value, json};
 
 const TEXTURED: &str = "demo/textured-ground.glb";
@@ -163,6 +163,8 @@ fn main() {
         for &variant in &variants {
             let mut r = Renderer::new(&gpu, wgpu::TextureFormat::Rgba8UnormSrgb, w, h);
             r.set_occlusion(OcclusionMode::Off);
+            // The decode timed in the opaque pass alone, as before the depth prepass.
+            r.set_prepass(PrepassMode::Off);
             r.add_model(demo::NEURAL_GROUND, &demo::neural_ground_model(40.0, 8.0));
             r.add_model(TEXTURED, &textured);
             let frame = match variant {

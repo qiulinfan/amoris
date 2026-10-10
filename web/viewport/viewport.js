@@ -108,6 +108,8 @@ export async function createViewport(canvas, options = {}) {
     demoNeural(path, view = 0) { vp.demo_neural(path, view, performance.now()); },
     setNeuralHalfPrecision(f16) { return vp.set_neural_half_precision(f16); },
     setOcclusion(mode) { vp.set_occlusion(mode); },
+    // A viewport package built before the depth prepass has no set_prepass: nothing to set there.
+    setPrepass(mode) { if (vp.set_prepass) vp.set_prepass(mode); },
     demoLod(n, spacing, detail, t) { vp.demo_lod(n, spacing, detail, t, performance.now()); },
     demoLodCamera(n, spacing, t) { vp.demo_lod_camera(n, spacing, t); },
     setLod(mode) { vp.set_lod(mode); },

@@ -3477,6 +3477,7 @@ dependencies = [
  "image",
  "intel_tex_2",
  "log",
+ "naga",
  "pocket-assets",
  "pollster",
  "serde",

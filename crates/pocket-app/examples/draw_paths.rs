@@ -18,6 +18,8 @@
 //! `--compare occlusion` compares occlusion culling instead (docs/bench/occlusion.md): both shots
 //! on the full device, one with occlusion culling off and one with it forced on (`<scene>-off.png`,
 //! `<scene>-on.png`). Both draw the same fixed moment, so animated scenes compare exactly.
+//! `--compare prepass` does the same with the depth prepass off and forced on (docs/spec/prepass.md;
+//! occlusion culling as `POCKET_OCCLUSION` says).
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -26,7 +28,7 @@ use pocket_assets::Feed;
 use pocket_assets::frame::RenderFrame;
 use pocket_render::gpu::Minimal;
 use pocket_render::loader::FileAssets;
-use pocket_render::{BackendChoice, CameraState, Gpu, OcclusionMode, Renderer, demo};
+use pocket_render::{BackendChoice, CameraState, Gpu, OcclusionMode, PrepassMode, Renderer, demo};
 use pocket_runtime::{Extractor, Game, Project};
 use serde_json::{Value, json};
 
@@ -96,10 +98,12 @@ fn draw(
     minimal: Minimal,
     size: (u32, u32),
     occlusion: OcclusionMode,
+    prepass: PrepassMode,
 ) -> Result<Shot, String> {
     let gpu = Gpu::headless_with(BackendChoice::from_env(), minimal).map_err(|e| e.to_string())?;
     let mut r = Renderer::new(&gpu, wgpu::TextureFormat::Rgba8UnormSrgb, size.0, size.1);
     r.set_occlusion(occlusion);
+    r.set_prepass(prepass);
     if let Some(root) = &src.root {
         r.splats.set_root(root.clone());
         r.set_asset_source(Box::new(FileAssets::new(root.clone())));
@@ -141,6 +145,7 @@ fn draw(
             "timestamps": gpu.caps.timestamps,
             "draw_path": r.draw_path(),
             "occlusion": s.occlusion,
+            "prepass": s.prepass,
             "instances": s.instances,
             "meshes": s.meshes,
             "materials": s.materials,
@@ -167,8 +172,8 @@ fn run() -> Result<(), String> {
     let minimal = Minimal::parse(
         &value(&args, "--minimal").unwrap_or_else(|| "features,limits,timestamps".into()),
     );
-    let occlusion = value(&args, "--compare").as_deref() == Some("occlusion");
-    let labels = if occlusion {
+    let comparing = value(&args, "--compare");
+    let labels = if comparing.is_some() {
         ["off", "on"]
     } else {
         ["full", "baseline"]
@@ -191,17 +196,22 @@ fn run() -> Result<(), String> {
     let mut report = Vec::new();
     for scene in &scenes {
         let src = source(scene, ticks)?;
-        let (full, base) = if occlusion {
-            (
-                draw(&src, Minimal::default(), (w, h), OcclusionMode::Off)?,
-                draw(&src, Minimal::default(), (w, h), OcclusionMode::On)?,
-            )
-        } else {
-            let mode = OcclusionMode::from_env();
-            (
-                draw(&src, Minimal::default(), (w, h), mode)?,
-                draw(&src, minimal, (w, h), mode)?,
-            )
+        let full_device = Minimal::default();
+        let (occlusion, prepass) = (OcclusionMode::from_env(), PrepassMode::from_env());
+        let (full, base) = match comparing.as_deref() {
+            Some("occlusion") => (
+                draw(&src, full_device, (w, h), OcclusionMode::Off, prepass)?,
+                draw(&src, full_device, (w, h), OcclusionMode::On, prepass)?,
+            ),
+            Some("prepass") => (
+                draw(&src, full_device, (w, h), occlusion, PrepassMode::Off)?,
+                draw(&src, full_device, (w, h), occlusion, PrepassMode::On)?,
+            ),
+            Some(other) => return Err(format!("--compare {other}: occlusion or prepass")),
+            None => (
+                draw(&src, full_device, (w, h), occlusion, prepass)?,
+                draw(&src, minimal, (w, h), occlusion, prepass)?,
+            ),
         };
         let name = Path::new(scene)
             .file_name()

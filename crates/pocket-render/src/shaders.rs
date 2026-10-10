@@ -127,3 +127,99 @@ pub fn compute_options() -> wgpu::PipelineCompilationOptions<'static> {
         ..Default::default()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use naga::back::{hlsl, msl, spv};
+    use naga::valid::{Capabilities, ValidationFlags, Validator};
+
+    /// The vertex stages whose clip position the depth prepass and the forward pass must agree on
+    /// (forward.wgsl; docs/spec/prepass.md 2).
+    const STAGES: [&str; 3] = ["vs", "vs_depth", "vs_depth_masked"];
+
+    /// What naga writes for each backend keeps the forward shader's clip positions invariant:
+    /// HLSL's `precise` on `SV_Position` (Direct3D 12), SPIR-V's `Invariant` decoration on the
+    /// `Position` built-in (Vulkan), MSL's `[[position, invariant]]` (Metal, which wgpu compiles
+    /// with `preserveInvariance`). Without the WGSL attribute none of them appears.
+    #[test]
+    fn forward_clip_positions_are_invariant_in_every_backend() {
+        let source = super::source("forward");
+        let module = naga::front::wgsl::parse_str(&source).expect("forward.wgsl parses");
+        let info = Validator::new(ValidationFlags::all(), Capabilities::all())
+            .validate(&module)
+            .expect("forward.wgsl validates");
+        for entry in STAGES {
+            let stage = (naga::ShaderStage::Vertex, entry);
+            let (module, info) = naga::back::pipeline_constants::process_overrides(
+                &module,
+                &info,
+                Some(stage),
+                &Default::default(),
+            )
+            .expect("the overrides resolve");
+            let mut hlsl_out = String::new();
+            let options = hlsl::Options::default();
+            let pipeline = hlsl::PipelineOptions {
+                entry_point: Some((stage.0, entry.into())),
+            };
+            hlsl::Writer::new(&mut hlsl_out, &options, &pipeline)
+                .write(&module, &info, None)
+                .expect("HLSL");
+            assert!(
+                hlsl_out.contains("precise float4"),
+                "{entry}: no precise position in the HLSL"
+            );
+            let (msl_out, _) = msl::write_string(
+                &module,
+                &info,
+                &msl::Options {
+                    lang_version: (2, 1),
+                    ..Default::default()
+                },
+                &msl::PipelineOptions {
+                    entry_point: Some((stage.0, entry.into())),
+                    ..Default::default()
+                },
+            )
+            .expect("MSL");
+            assert!(
+                msl_out.contains("[[position, invariant]]"),
+                "{entry}: no invariant position in the MSL"
+            );
+            let words = spv::write_vec(
+                &module,
+                &info,
+                &spv::Options::default(),
+                Some(&spv::PipelineOptions {
+                    shader_stage: stage.0,
+                    entry_point: entry.into(),
+                }),
+            )
+            .expect("SPIR-V");
+            assert!(
+                invariant_position(&words),
+                "{entry}: no Invariant Position in the SPIR-V"
+            );
+        }
+    }
+
+    /// Whether a SPIR-V module decorates a `Position` built-in `Invariant`: OpDecorate (71) of one
+    /// id with BuiltIn (11) Position (0), and of the same id with Invariant (18).
+    fn invariant_position(words: &[u32]) -> bool {
+        let mut position = Vec::new();
+        let mut invariant = Vec::new();
+        let mut i = 5;
+        while i < words.len() {
+            let (count, op) = ((words[i] >> 16) as usize, words[i] & 0xffff);
+            if op == 71 && count >= 3 {
+                match words[i + 2] {
+                    11 if count >= 4 && words[i + 3] == 0 => position.push(words[i + 1]),
+                    18 => invariant.push(words[i + 1]),
+                    _ => {}
+                }
+            }
+            i += count.max(1);
+        }
+        position.iter().any(|p| invariant.contains(p))
+    }
+}

@@ -21,6 +21,7 @@
 // ?demo=neural&ntex=neural/bricks.ntex[&view=0|1][&precision=f32] a ground drawn with a neural
 // texture fetched from the assets URL (docs/spec/neural-textures.md);
 // ?occlusion=off|on|auto sets occlusion culling (auto by default);
+// ?prepass=off|on|auto sets the depth prepass (auto by default; docs/spec/prepass.md);
 // ?in_flight=N lets at most N frames be on the GPU (no limit by default; docs/bench/polish.md 3);
 // ?demo=lod[&n=48][&spacing=6][&detail=6][&t=0][&fly] the levels-of-detail field (docs/spec/lod.md),
 // its camera at t (0..1) or, with fly, walking from the corner to the middle over 600 frames;
@@ -64,6 +65,7 @@ try {
     vp.demoNeural(q.get("ntex") || "neural/material.ntex", Number(q.get("view") || 0));
   }
   if (q.get("occlusion")) vp.setOcclusion(q.get("occlusion"));
+  if (q.get("prepass")) vp.setPrepass(q.get("prepass"));
   if (q.has("in_flight")) vp.raw.set_max_frames_in_flight(Number(q.get("in_flight")));
   if (q.get("lod")) vp.setLod(q.get("lod"));
   if (q.get("demo") === "aa") vp.demoAa();
@@ -81,7 +83,7 @@ try {
     samples.push(s);
     if (samples.length > 600) samples.shift();
     window.pocketStats = s;
-    hud.textContent = `${s.backend}  ${canvas.width}x${canvas.height}  draws: ${s.draw_path} (${s.draw_calls})  occlusion: ${s.occlusion}  lod: ${s.lod}  aa: ${s.antialiasing}  gtao: ${s.gtao}\nframe ${s.frame_ms.toFixed(2)} ms   gpu ${s.gpu_ms.toFixed(2)} ms\ninstances ${s.instances}  tick ${s.tick}\n` +
+    hud.textContent = `${s.backend}  ${canvas.width}x${canvas.height}  draws: ${s.draw_path} (${s.draw_calls})  occlusion: ${s.occlusion}  prepass: ${s.prepass}  lod: ${s.lod}  aa: ${s.antialiasing}  gtao: ${s.gtao}\nframe ${s.frame_ms.toFixed(2)} ms   gpu ${s.gpu_ms.toFixed(2)} ms\ninstances ${s.instances}  tick ${s.tick}\n` +
       (s.passes || []).map((p) => `  ${p.pass.padEnd(12)} ${p.ms.toFixed(2)} ms`).join("\n");
   });
   window.pocketSamples = samples;

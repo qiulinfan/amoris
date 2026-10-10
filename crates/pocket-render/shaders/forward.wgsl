@@ -43,8 +43,13 @@ struct VsIn {
     @location(3) tangent: vec4f,
 };
 
+// The clip position is `@invariant` here and in the depth-only stages below (`DepthOut`): the depth
+// prepass draws a depth that the forward pipelines then test for equality (renderer.rs
+// `DepthPrepass`, docs/spec/prepass.md), so both must compute it identically. naga writes it as
+// HLSL's `precise`, SPIR-V's `Invariant` decoration and MSL's `[[invariant]]`; the expression must
+// stay the same in every one of them (the instance's `Drawn` pose, then `view.view_proj`).
 struct VsOut {
-    @builtin(position) clip: vec4f,
+    @builtin(position) @invariant clip: vec4f,
     @location(0) world: vec3f,
     @location(1) normal: vec3f,
     @location(2) uv: vec2f,
@@ -463,23 +468,31 @@ fn fs_shadow_masked(in: MaskedShadowOut) {
     }
 }
 
-// --- Depth without TAA's jitter ------------------------------------------------------------------
-// With TAA and splats the renderer draws the opaque instances' depth again from the unjittered frame
-// group (renderer.rs `UnjitteredDepth`): splats are drawn after TAA without the jitter and test
-// against it. The same positions as `vs`, the same alpha test as `fs_masked`.
+// --- Depth only: the depth prepass, and the depth without TAA's jitter ---------------------------
+// The depth prepass (renderer.rs `DepthPrepass`, docs/spec/prepass.md) draws the opaque instances'
+// depth with the frame group the forward pipelines then draw with; with TAA and splats the renderer
+// also draws it from the unjittered frame group (renderer.rs `UnjitteredDepth`): splats are drawn
+// after TAA without the jitter and test against it. The same positions as `vs` (`@invariant`, as
+// there), the same alpha test as `fs_masked`.
+
+struct DepthOut {
+    @builtin(position) @invariant clip: vec4f,
+    @location(0) uv: vec2f,
+    @location(1) @interpolate(flat) material: u32,
+};
 
 @vertex
-fn vs_depth(v: VsIn, @builtin(instance_index) ii: u32) -> @builtin(position) vec4f {
+fn vs_depth(v: VsIn, @builtin(instance_index) ii: u32) -> @builtin(position) @invariant vec4f {
     let d = drawn[ii + batch.x];
     let world = d.pos + quat_rotate(d.rot, v.position * d.scale);
     return view.view_proj * vec4f(world, 1.0);
 }
 
 @vertex
-fn vs_depth_masked(v: VsIn, @builtin(instance_index) ii: u32) -> MaskedShadowOut {
+fn vs_depth_masked(v: VsIn, @builtin(instance_index) ii: u32) -> DepthOut {
     let d = drawn[ii + batch.x];
     let world = d.pos + quat_rotate(d.rot, v.position * d.scale);
-    var o: MaskedShadowOut;
+    var o: DepthOut;
     o.clip = view.view_proj * vec4f(world, 1.0);
     o.uv = v.uv;
     o.material = d.material;
@@ -489,7 +502,7 @@ fn vs_depth_masked(v: VsIn, @builtin(instance_index) ii: u32) -> MaskedShadowOut
 // `fs_masked`'s alpha test (`surface`: the mip level of the uv's gradients, so distant alpha-tested
 // surfaces open up as they do in the opaque pass).
 @fragment
-fn fs_depth_masked(in: MaskedShadowOut) {
+fn fs_depth_masked(in: DepthOut) {
     let m = materials[in.material];
     let du = dpdx(in.uv);
     let dv = dpdy(in.uv);

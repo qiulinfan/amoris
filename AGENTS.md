@@ -108,6 +108,15 @@ credential cleanup. File-verification records remain local, including in that ar
   it. A change to culling or the opaque passes runs `cargo test -p pocket-render --test occlusion
   --test hiz` and `tools/occlusion_compare.py`: it must not change a single entity's coverage. A
   change to the pyramid or the late test also runs `tools/occlusion_mutations.py`.
+- The depth prepass ([docs/spec/prepass.md](docs/spec/prepass.md)) runs in `auto` mode by default
+  (GPU timestamps decide; off without them); `POCKET_PREPASS=off|on|auto` (the viewport page:
+  `?prepass=`) sets it. The forward and depth-only vertex stages must compute the clip position
+  with the same expression, `@invariant`: a change to either, to the opaque passes or to the alpha
+  test runs `cargo test -p pocket-render --test prepass` and the crate's `shaders` unit test, and
+  `tools/prepass_compare.py` must not change an image. The auto mode's probes count only their
+  own frames (each profiler reading names its frame): a change to them runs
+  `cargo test -p pocket-render --lib prepass`, and `tools/prepass_bench.py --table <runs> --tails`
+  shows the frames they draw the slower way and the frame time's tail.
 - The browser: `tools/build_viewport.sh` builds the WebGPU viewport into `web/viewport/pkg`
   (committed; the editor's `/wasm/` serves it), `tools/build_web.sh` also builds the game module
   into `web/pkg` and packs samples into `web/projects/` (both ignored). Serve `web/`
