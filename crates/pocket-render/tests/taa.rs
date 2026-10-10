@@ -568,8 +568,9 @@ fn a_still_capture_settles_taa() {
 }
 
 /// A wall of splats behind a cube and the alpha-tested chain-link panel, its foot under a calm sea,
-/// the sky behind, from the still camera: the HDR images of frames 1 to `n`, the splats drawn or
-/// not (TAA's history is the same either way: splats are drawn over it and never enter it).
+/// the sky behind, from the still camera: the HDR images of frames 1 to `n`, with visible or
+/// transparent splats. Both controls use TAA's copy pipeline, isolating the splat contribution
+/// from differences between separately compiled resolve entry points.
 fn splat_frames(
     gpu: &Gpu,
     aa: Antialiasing,
@@ -585,7 +586,7 @@ fn splat_frames(
                 scale: [0.025, 0.02, 0.004],
                 rotation: [0.0, 0.0, 0.0, 1.0],
                 color: [0.1, 0.9, 0.1],
-                opacity: 0.95,
+                opacity: if draw { 0.95 } else { 0.0 },
             });
         }
     }
@@ -593,7 +594,6 @@ fn splat_frames(
     r.splats
         .insert("wall", &SplatCloud::from_raw(&wall, 0, &[]));
     r.splats.raster = raster;
-    r.splats.draw_enabled = draw;
     let mut f = still_scene(1.0);
     let mut cube = f
         .instances
