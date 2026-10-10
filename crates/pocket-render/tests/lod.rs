@@ -102,6 +102,13 @@ fn id_mismatch(a: &[u64], b: &[u64], reach: i32) -> (usize, usize) {
     (differ, far)
 }
 
+/// Nearest axial depth giving `projected` effective metres when the largest transverse
+/// distance is `side`: invert d^2 / sqrt(d^2 + side^2) = projected.
+fn axial_distance(projected: f32, side: f32) -> f32 {
+    let square = projected * projected;
+    ((square + (square * square + 4.0 * square * side * side).sqrt()) * 0.5).sqrt()
+}
+
 fn levels_used(c: &pocket_render::lod::SetCounts) -> usize {
     c.instances[1..].iter().filter(|&&n| n > 0).count()
 }
@@ -326,14 +333,18 @@ fn hysteresis_holds_a_level_until_the_margin() {
         r.add_model(demo::LOD_MODEL, &model);
         r.apply(rock_alone(scale, false), 0.0);
         let settings = r.lod();
-        // The culling pass measures from the bounding sphere's nearest point; level 1 is
+        // The culling pass bounds the sphere's perspective projection; level 1 is
         // acceptable from distance e1 / w there, and taken (coarsening) from (1 + hysteresis) e1 /
         // w.
         let probe = CameraState::look_at(glam::Vec3::Z, glam::Vec3::ZERO);
         let w = settings.camera_terms(&probe, H).0[3];
         let centre = glam::Vec3::from(rock.bounds.center) * scale;
-        let at = |d: f32| {
-            let eye = centre + glam::Vec3::new(0.0, 0.0, d + rock.bounds.radius * scale);
+        let at = |projected_distance: f32| {
+            // Invert d / sqrt(1 + (r / d)^2) for an on-axis sphere. These probes
+            // straddle the same projected error thresholds and hysteresis margins.
+            let radius = rock.bounds.radius * scale;
+            let d = axial_distance(projected_distance, radius);
+            let eye = centre + glam::Vec3::new(0.0, 0.0, d + radius);
             CameraState::look_at(eye, centre)
         };
         let one = e1 * scale / w;
@@ -478,13 +489,15 @@ fn skinned_levels_follow_the_pose() {
     let column = &model.meshes[0];
     assert!(column.lods.len() >= 3, "{} levels", column.lods.len());
     // Far enough that the copy's level 2 is taken on the first frame: the culling pass measures
-    // from the nearest point of the copy's grown sphere and coarsens past the hysteresis margin.
+    // the perspective projection of the copy's grown sphere and coarsens past the hysteresis margin.
     let settings = LodSettings::default();
     let probe = CameraState::look_at(glam::Vec3::Z, glam::Vec3::ZERO);
     let w = settings.camera_terms(&probe, H).0[3];
     let centre = glam::Vec3::from(column.bounds.center);
     let radius = column.bounds.radius * pocket_render::meshes::SKINNED_GROW;
-    let d = 1.25 * column.lods[1].error * (1.0 + settings.hysteresis) / w + radius;
+    let projected_distance = 1.25 * column.lods[1].error * (1.0 + settings.hysteresis) / w;
+    // Include the camera's sideways offset in the projection bound, as cull.wgsl does.
+    let d = axial_distance(projected_distance, radius + 1.0) + radius;
     let cam = CameraState::look_at(
         centre + glam::Vec3::new(-0.8, 0.0, d),
         glam::Vec3::new(-0.8, 1.6, 0.0),

@@ -12,7 +12,7 @@ occlusion culling, the id pass and the shadow cascades, what that costs, and how
 code is `crates/pocket-assets/src/lod.rs` (making levels), `crates/pocket-render/src/meshes.rs`
 (the rows), `crates/pocket-render/shaders/cull.wgsl` (picking), `crates/pocket-render/src/lod.rs`
 (the switch, the bounds, the read-back counts) and `renderer.rs` (`sync`, `render`). Measurements:
-[docs/bench/lod.md](../bench/lod.md); evidence: `docs/evidence/lod/`.
+[docs/bench/lod.md](../bench/lod.md); evidence: `out/bench-runs/lod/`.
 
 ## 1. In one paragraph
 
@@ -20,7 +20,7 @@ A mesh of 64 triangles or more gets up to seven coarser levels when it is import
 each an index list over the mesh's own vertices with the geometric error it reached. Every level is
 a row of the renderer's mesh table, so a level is drawn exactly like a mesh. Per instance and per
 view, the culling pass takes the coarsest level whose error, scaled by the instance, stays under
-one pixel at the distance of the instance's bounding sphere's nearest point (the camera; a level
+one pixel under the instance's bounding sphere's perspective projection bound (the camera; a level
 gets coarser only past a 20% margin) or under one texel (a shadow cascade). Levels are on by
 default; `POCKET_LOD=off` draws every instance's full mesh, and so does a scene whose lists would
 pass the device's binding limit with levels (5).
@@ -106,10 +106,13 @@ For an instance with `count > 1` levels (and levels on), with `s` its largest ab
 and `r` its bounding sphere's centre and radius in the world, and `e_k` level `k`'s error
 (`e_0 = 0`), level `k` is **acceptable** in a view when `s * e_k <= B`, where `B` is:
 
-- the camera, perspective: `max(|c - eye| - r, 1e-4) * w`, with
-  `w = pixels * 2 tan(fov_y / 2) / height`, the world size of `pixels` output pixels one metre away
-  (`LodSettings::camera_terms`). The distance is to the sphere's nearest point, so every point of
-  the instance is at least that far and its error projects to at most `pixels` pixels;
+- the camera, perspective: `d / sqrt(1 + (q / d)^2) * w`, with
+  `w = pixels * 2 tan(fov_y / 2) / height` (`LodSettings::camera_terms`),
+  `z = dot(c - eye, camera_forward)`, `d = max(z - r, 1e-4)`, and
+  `q = length(c - eye - z * camera_forward) + r`. Axial depth sets perspective scale; the
+  second factor bounds the extra screen displacement caused by a depth change off axis.
+  Radial distance alone overestimates the permissible error near the edges of the view
+  (found by the M5 integration test on 2026-10-10);
 - the camera, orthographic: `pixels * view_height / height`;
 - shadow cascade `i`: `shadow_texels * texel_i`, with `texel_i = 2 radius_i / 2048` the cascade's
   texel in metres (`shadows::Cascades::texel`). A cascade cannot show detail finer than its texels,
@@ -119,9 +122,9 @@ and `r` its bounding sphere's centre and radius in the world, and `e_k` level `k
 `coarsest(bound)` is the coarsest acceptable level. The camera's level is
 `clamp(last, coarsest(B / (1 + h)), coarsest(B))`, `last` being the level the instance drew the
 previous frame and `h` the hysteresis (0.2): a level gets coarser only once the coarser one would
-still be acceptable 20% closer, and finer as soon as the current one is not acceptable. The bound
-holds in every frame: the level drawn is always acceptable. A camera cut, a resize or a slot reused
-by another entity can only change which acceptable level is drawn.
+fit the error bound divided by 1.2, and finer as soon as the current one is not acceptable. The
+bound holds in every frame: the level drawn is always acceptable. A camera cut, a resize or a slot
+reused by another entity can only change which acceptable level is drawn.
 
 The camera's level is kept in bits 4 to 7 of the instance's state word (`state`, binding 7 of the
 culling passes, occlusion.md 2). `main` writes it every frame levels are on (keeping `VIS_VISIBLE`

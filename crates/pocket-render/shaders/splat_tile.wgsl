@@ -35,6 +35,15 @@ struct TileSplat {
     k: f32,              // the quad's half extent in standard deviations
 };
 
+// The first and last pair of one tile are written by different invocations. They must be
+// distinct scalar memory locations: a vector-component store may access the whole vector
+// (WGSL, Component Reference), so concurrent writes to vec2u.x/y race on Metal.
+// Two scalar members keep the existing eight-byte range-buffer stride without overlapping stores.
+struct TileRange {
+    first: u32,
+    end: u32,
+};
+
 @group(0) @binding(0) var<uniform> params: SplatParams;
 // [0]: visible splats (written by the preprocess).
 @group(0) @binding(1) var<storage, read> control: array<u32>;
@@ -55,8 +64,8 @@ struct TileSplat {
 @group(0) @binding(11) var<storage, read> tile_control_ro: array<u32>;
 @group(0) @binding(12) var<storage, read> sorted_keys: array<u32>;
 @group(0) @binding(13) var<storage, read> sorted_vals: array<u32>;
-@group(0) @binding(14) var<storage, read_write> ranges: array<vec2u>;
-@group(0) @binding(15) var<storage, read> ranges_ro: array<vec2u>;
+@group(0) @binding(14) var<storage, read_write> ranges: array<TileRange>;
+@group(0) @binding(15) var<storage, read> ranges_ro: array<TileRange>;
 @group(0) @binding(16) var<storage, read> tsplats_ro: array<TileSplat>;
 @group(0) @binding(17) var scene_depth: texture_depth_multisampled_2d;
 @group(0) @binding(18) var out_image: texture_storage_2d<rgba16float, write>;
@@ -274,10 +283,10 @@ fn tile_ranges(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_inde
             let t = sorted_keys[q];
             if (t < tiles) {
                 if (q == 0u || sorted_keys[q - 1u] != t) {
-                    ranges[t].x = q;
+                    ranges[t].first = q;
                 }
                 if (q + 1u == m || sorted_keys[q + 1u] != t) {
-                    ranges[t].y = q + 1u;
+                    ranges[t].end = q + 1u;
                 }
             }
         }
@@ -324,7 +333,8 @@ fn tile_raster(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_inde
         atomicStore(&wg_done, 0u);
         atomicStore(&wg_visits[0], 0u);
         atomicStore(&wg_visits[1], 0u);
-        wg_range = ranges_ro[wid.y * params.tiles.x + wid.x];
+        let bounds = ranges_ro[wid.y * params.tiles.x + wid.x];
+        wg_range = vec2u(bounds.first, bounds.end);
     }
     workgroupBarrier();
     if (done) {

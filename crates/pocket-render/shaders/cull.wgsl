@@ -6,7 +6,7 @@
 //
 // Levels of detail (docs/spec/lod.md): an instance of a mesh with coarser levels draws, in each
 // view, the coarsest level whose geometric error is small enough there: on screen, at most
-// `lod_pixels` pixels at the distance of its bounding sphere's nearest point, with hysteresis
+// `lod_pixels` pixels using its sphere's nearest axial depth and off-axis scale, with hysteresis
 // against its last level (kept in `state`); in a shadow cascade, at most one shadow texel. Each
 // level is a row of the mesh table with its own batches, whose regions hold every instance of the
 // mesh, so the level is just another row index here.
@@ -189,11 +189,20 @@ fn main(@builtin(global_invocation_id) gid: vec3u, @builtin(local_invocation_ind
             let count = select(1u, levels, cull.lod_on != 0u && levels > 1u);
             let first = lods & 0xffffffu;
             if (count > 1u) {
-                // On screen: the error's projection at the sphere's nearest point stays within
+                // On screen: the error's projection over the sphere stays within
                 // the bound; coarser only past the hysteresis margin, finer at once.
                 var dist = 1.0;
                 if (cull.lod.x == 0.0) {
-                    dist = max(length(c - cull.eye.xyz) - r, 1e-4);
+                    // Perspective scale depends on axial depth, not radial distance. Near the
+                    // edge of the view, depth displacement also moves a point sideways in
+                    // screen space; bound the projection Jacobian over the whole sphere.
+                    let delta = c - cull.eye.xyz;
+                    let forward = normalize(vec3f(cull.view_proj[0].w,
+                        cull.view_proj[1].w, cull.view_proj[2].w));
+                    let depth = dot(delta, forward);
+                    let near_depth = max(depth - r, 1e-4);
+                    let side = length(delta - forward * depth) + r;
+                    dist = near_depth / sqrt(1.0 + (side / near_depth) * (side / near_depth));
                 }
                 let bound = dist * cull.eye.w;
                 let fine = coarsest(first, count, smax, bound);

@@ -5,8 +5,8 @@
 //! A mesh's coarser levels come from `pocket_assets::lod` (made when a glTF is imported or a
 //! primitive generated) and are rows of the mesh table (meshes.rs). Per instance and view the
 //! culling pass draws the coarsest level whose geometric error, scaled by the instance, stays
-//! within a bound: on screen, `pixels` pixels at the distance of the instance's bounding sphere's
-//! nearest point, with hysteresis; in a shadow cascade, `shadow_texels` of its texels.
+//! within a bound: on screen, `pixels` pixels using the sphere's nearest axial depth and the
+//! off-axis projection scale, with hysteresis; in a shadow cascade, `shadow_texels` of its texels.
 
 use glam::Vec3;
 
@@ -167,8 +167,8 @@ impl DrawCounts {
     }
 }
 
-/// The distance at which an error of `error` world units projects to the bound (for the spec's
-/// examples and the tests): the camera draws a level of that error from this distance on.
+/// The axial distance at which a point's error of `error` world units projects to the bound
+/// (for the spec's examples). A sphere also accounts for its radius and off-axis projection.
 pub fn switch_distance(settings: &LodSettings, cam: &CameraState, height: u32, error: f32) -> f32 {
     let (eye, ortho) = settings.camera_terms(cam, height);
     if ortho {
@@ -177,7 +177,8 @@ pub fn switch_distance(settings: &LodSettings, cam: &CameraState, height: u32, e
     error / eye[3]
 }
 
-/// The nearest point of a sphere's distance from `eye` (the distance cull.wgsl measures).
+/// The nearest point of a sphere's radial distance from `eye` (a geometric helper).
+/// Perspective LOD selection uses axial depth and off-axis scale instead (cull.wgsl).
 pub fn sphere_distance(eye: Vec3, center: Vec3, radius: f32) -> f32 {
     (eye.distance(center) - radius).max(1e-4)
 }
