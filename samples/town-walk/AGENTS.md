@@ -12,11 +12,11 @@ snapshot/replay input, or a player gateway. The game scene stays static while th
   become solid navigation walls. `pocket-runtime::walk` re-exports the existing Rapier controller.
 - The authored geometry and materials remain intact. Embedded textures are capped at 1024 pixels
   by `tools/prepare_walk_model.py`, which also reconstructs positive Z for the 132 legacy RG-only
-  normal maps without flipping green again; its source/derivative hashes and attribution are in
+  normal maps without flipping green again; its source/derivative metadata and attribution are in
   `models/source.json`. The large GLB is ignored and packaged locally, not committed.
 - `tools/bake_town_walk.py` exports the matching atmosphere and bakes 43,725 world probes (512 rays, eight bounces). The
   diffuse bake explicitly excludes 13 transparent primitives (68 valid triangles); visible glass
-  remains in the render model. Settings and the asset hash are in `lighting/bake-report.json`.
+  remains in the render model. Bake parameters are defined in `tools/bake_town_walk.py`; run reports stay in ignored `out/town-walk/bake/`.
 - `tools/package_game.py samples/town-walk --name 'Amoris Town' --output out/town-walk/playable`
   creates a self-contained macOS app from `target/release/pocket`; no-argument bundle startup
   resolves `Contents/Resources/game`. The app uses real-time forward shading with baked diffuse

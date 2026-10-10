@@ -2,7 +2,6 @@
 """Film a hash-verified replay of real DeepSeek-selected player intentions."""
 from pathlib import Path
 import argparse
-import hashlib
 from html import escape
 import json
 import shutil
@@ -89,11 +88,8 @@ def main():
                     "-frames:v", "1", "-q:v", "3", "-update", "1", str(media/f"{args.name}-poster.jpg")], check=True)
     (media/f"{args.name}.vtt").write_text("WEBVTT\n\n00:00.000 --> 00:12.000\nReal DeepSeek Flash decisions through a range-limited player gateway, reproduced in the native renderer.\n\n00:12.000 --> 01:00.000\nEvery action and final world hash match the recorded model run. Native sailing physics and cargo rules remain unchanged.\n")
     receipt = {"name": args.name, "frames": len(trace), "fps": 30, "dimensions": [1280,720],
-               "sha256": hashlib.sha256(video.read_bytes()).hexdigest(), "model": summary["response_models"],
+               "model": summary["response_models"],
                "kind": "hash_verified_native_replay_of_actual_model_calls", "judge": parity["judge"],
-               "actions_sha256": hashlib.sha256((episode/"actions.json").read_bytes()).hexdigest(),
-               "summary_sha256": hashlib.sha256((episode/"agent/summary.json").read_bytes()).hexdigest(),
-               "script_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
                "replay_passed": True, "note": "Fixed 2-tick sampling at 60Hz, encoded at 30fps; not measured game FPS."}
     (out/"receipt.json").write_text(json.dumps(receipt, indent=2)+"\n")
     (out/"frames.json").write_text(json.dumps(trace, indent=2)+"\n")

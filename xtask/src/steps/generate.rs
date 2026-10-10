@@ -1,15 +1,14 @@
 //! `gen` and `cargo xtask gen`: generated files are what their generators write now
-//! (docs/spec/checks.md 5.4). Slice 1 registers the generators that need no engine build: each
-//! tick-code crate's `clippy.toml` from `tools/clippy-determinism.toml` (checks.md 5.3), and the
-//! record of `shared/SYNC.toml`, which `--shared` refreshes deliberately (charter 6.2).
+//! (docs/spec/checks.md 5.4). The build-free generator writes each tick-code crate's `clippy.toml`
+//! from `tools/clippy-determinism.toml` (checks.md 5.3). `shared/SYNC.toml` carries only an optional
+//! source commit; shared files have no persistent checksum baseline (charter 3.9).
 
 use crate::config;
 use crate::files;
 use crate::report::{Problem, StepResult};
 use serde::Deserialize;
 use serde_json::json;
-use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::path::Path;
 
 pub const CLIPPY_SOURCE: &str = "tools/clippy-determinism.toml";
@@ -37,7 +36,6 @@ pub struct Entry {
 #[serde(deny_unknown_fields)]
 pub struct Sync {
     pub commit: String,
-    pub files: BTreeMap<String, String>,
 }
 
 /// A generated file: its path and the bytes its generator writes now.
@@ -78,69 +76,6 @@ pub fn clippy_outputs(source: &ClippySource) -> Vec<Output> {
             text: text.clone(),
         })
         .collect()
-}
-
-pub fn sha256(bytes: &[u8]) -> String {
-    Sha256::digest(bytes)
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
-}
-
-/// The files under `shared/` the record covers (all but the record itself), by their path relative
-/// to `shared/`, with their hashes now.
-pub fn shared_hashes(root: &Path, listed: &[String]) -> BTreeMap<String, String> {
-    listed
-        .iter()
-        .filter_map(|p| p.strip_prefix("shared/"))
-        .filter(|p| *p != "SYNC.toml")
-        .filter_map(|p| {
-            std::fs::read(root.join("shared").join(p))
-                .ok()
-                .map(|b| (p.to_string(), sha256(&b)))
-        })
-        .collect()
-}
-
-/// `gen.shared_modified` for every file whose hash differs from the record, appeared or is gone.
-pub fn shared_problems(sync: &Sync, now: &BTreeMap<String, String>) -> Vec<Problem> {
-    let names: BTreeSet<&String> = sync.files.keys().chain(now.keys()).collect();
-    let mut out = Vec::new();
-    for name in names {
-        let (recorded, actual) = (sync.files.get(name), now.get(name));
-        if recorded == actual {
-            continue;
-        }
-        let what = match (recorded, actual) {
-            (None, _) => "is not in the record",
-            (_, None) => "is recorded but gone",
-            _ => "differs from its recorded hash",
-        };
-        out.push(Problem::new(
-            "gen.shared_modified",
-            format!(
-                "shared/{name} {what} in {SYNC}; the shared contract changes on both lines first (charter 6.2), then `cargo xtask gen --shared` records it"
-            ),
-            json!({"path": format!("shared/{name}"), "recorded": recorded, "actual": actual}),
-        ));
-    }
-    out
-}
-
-/// The record rewritten with new hashes, keeping its leading comment and its commit.
-pub fn sync_text(old: &str, commit: &str, hashes: &BTreeMap<String, String>) -> String {
-    let mut out: String = old
-        .lines()
-        .take_while(|l| l.starts_with('#'))
-        .map(|l| format!("{l}\n"))
-        .collect();
-    out.push_str(&format!("commit = {}\n\n[files]\n", quoted(commit)));
-    let mut names: Vec<&String> = hashes.keys().collect();
-    names.sort_by_key(|n| (n.to_lowercase(), n.to_string()));
-    for n in names {
-        out.push_str(&format!("{} = {}\n", quoted(n), quoted(&hashes[n])));
-    }
-    out
 }
 
 /// Everything the build-free generators write now.
@@ -192,28 +127,18 @@ pub fn check(root: &Path, listed: &[String]) -> StepResult {
             json!({"path": path}),
         ));
     }
-    let mut shared = 0;
-    match config::load::<Sync>(root, SYNC) {
-        Ok(sync) => {
-            let now = shared_hashes(root, listed);
-            shared = now.len();
-            for p in shared_problems(&sync, &now) {
-                step.error(p);
-            }
-        }
-        Err(p) => step.error(p),
+    if let Err(p) = config::load::<Sync>(root, SYNC) {
+        step.error(p);
     }
     step.measure("gen.outputs", outs.len() as f64, "count");
-    step.measure("gen.shared_files", shared as f64, "count");
     step.summary = format!(
-        "{} clippy.toml copies, {generated} @generated files, {shared} shared files against {SYNC}; the engine's generators (pocket gen) are not built yet",
+        "{} clippy.toml copies, {generated} @generated files; the engine's generators (pocket gen) are not built yet",
         outs.len()
     );
     step
 }
 
-/// `cargo xtask gen [--check] [--shared]`: writes (or with `--check` compares) the generated
-/// files; `--shared` also records the hashes of `shared/` in `shared/SYNC.toml`.
+/// `cargo xtask gen [--check]`: writes (or with `--check` compares) the generated files.
 pub fn main(root: &Path, opts: &crate::cli::GenOptions) -> Result<Vec<Problem>, Problem> {
     let listed = || {
         files::list(root).map_err(|m| Problem::new("check.tool_missing", m, json!({"tool": "git"})))
@@ -227,16 +152,6 @@ pub fn main(root: &Path, opts: &crate::cli::GenOptions) -> Result<Vec<Problem>, 
             std::fs::write(&path, &o.text)
                 .map_err(|e| config::invalid(&o.path, None, &e.to_string()))?;
             eprintln!("wrote {}", o.path);
-        }
-    }
-    if opts.shared {
-        let old = std::fs::read_to_string(root.join(SYNC)).unwrap_or_default();
-        let sync: Sync = config::parse(SYNC, &old)?;
-        let text = sync_text(&old, &sync.commit, &shared_hashes(root, &listed()?));
-        if text != old {
-            std::fs::write(root.join(SYNC), text)
-                .map_err(|e| config::invalid(SYNC, None, &e.to_string()))?;
-            eprintln!("wrote {SYNC}");
         }
     }
     Ok(Vec::new())

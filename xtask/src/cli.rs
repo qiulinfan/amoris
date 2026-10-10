@@ -56,13 +56,12 @@ impl CheckOptions {
 #[derive(Clone, Debug, PartialEq)]
 pub struct GenOptions {
     pub check: bool,
-    pub shared: bool,
 }
 
 const CHECK_FLAGS: &[&str] = &[
     "--json", "--quick", "--only", "--skip", "--jobs", "--record",
 ];
-const GEN_FLAGS: &[&str] = &["--check", "--shared"];
+const GEN_FLAGS: &[&str] = &["--check"];
 
 pub fn parse_check(args: &[String]) -> Result<CheckOptions, Problem> {
     let mut o = CheckOptions {
@@ -119,14 +118,10 @@ pub fn parse_check(args: &[String]) -> Result<CheckOptions, Problem> {
 }
 
 pub fn parse_gen(args: &[String]) -> Result<GenOptions, Problem> {
-    let mut o = GenOptions {
-        check: false,
-        shared: false,
-    };
+    let mut o = GenOptions { check: false };
     for a in args {
         match a.as_str() {
             "--check" => o.check = true,
-            "--shared" => o.shared = true,
             _ => return Err(unknown("flag", a, GEN_FLAGS)),
         }
     }
@@ -216,6 +211,12 @@ mod tests {
         assert_eq!(o.skip, vec!["perf".to_string(), "web".to_string()]);
         assert_eq!(o.wants("web"), Some("--skip"));
         assert_eq!(o.wants("deps"), None);
+        assert!(parse_gen(&args("--check")).unwrap().check);
+        assert!(!parse_gen(&args("")).unwrap().check);
+        assert_eq!(
+            parse_gen(&args("--shared")).unwrap_err().code,
+            "check.usage"
+        );
     }
 
     #[test]

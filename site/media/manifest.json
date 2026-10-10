@@ -11,10 +11,7 @@
       "frames": 360,
       "fps": 30,
       "duration_seconds": 12.0,
-      "sha256": "515c55fd4098fb048a2eb4322a97f2daaa614635fa7d1a497bb5ecdb3bc3f3d1",
       "capture": "actual native renderer frames",
-      "camera_path_sha256": "176aeaea9252330e0ba803b67427a1ef9d381162998d642a408b888cf08498f4",
-      "recording_script_sha256": "39f2b85a9f2b436bb3203bffdca784229c93a4dd166f6bae61c79cf837e2cf3b",
       "timing": "Static scene camera-keyframe capture; encoded playback rate is not measured runtime FPS."
     },
     {
@@ -26,7 +23,6 @@
       "frames": 360,
       "fps": 30,
       "duration_seconds": 12.0,
-      "sha256": "a46d9c5f983ba443e4edc7257ae9f406b6f2c5c2d4158c67190419c66c9fbd89",
       "capture": "actual native renderer frames",
       "pilot": "scripted MCP, developer access",
       "cargo_taken": 2,
@@ -42,10 +38,7 @@
       "frames": 240,
       "fps": 30,
       "duration_seconds": 8.0,
-      "sha256": "4fe37fd92fd3a138fdc38bcf2fd02207509b9cc9c18217c726b954203d6c64e3",
       "capture": "actual native renderer frames",
-      "camera_path_sha256": "a628838edbc4271b0ab0b5a3203c7669c9fe0330441ca3f3a5d3409a1de85b51",
-      "recording_script_sha256": "39f2b85a9f2b436bb3203bffdca784229c93a4dd166f6bae61c79cf837e2cf3b",
       "timing": "Static scene camera-keyframe capture; encoded playback rate is not measured runtime FPS."
     },
     {
@@ -57,7 +50,6 @@
       "frames": 538,
       "fps": 30,
       "duration_seconds": 17.933333,
-      "sha256": "aec7a2351116505bca3051970c2c70743ae3226565a2afc2458b37d28772105a",
       "capture": "actual browser WebGPU editor screencast"
     },
     {
@@ -69,7 +61,6 @@
       "frames": 849,
       "fps": 30,
       "duration_seconds": 28.3,
-      "sha256": "9d4aed5bc4f2df09f0311c46cd6750c523ec79ae98fbfea48eb9303f5f780408",
       "capture": "hash-verified native replay of real DeepSeek tool-selected intentions",
       "cargo_taken": 4,
       "selected_condition": "gameplay-v2/episode-2 (first successful low-effort trial)",
@@ -80,25 +71,18 @@
   "models": [
     {
       "file": "BistroExterior.glb",
-      "sha256": "b6930eb95fb6b38f5136b6de0895425076f752d12d5ec51b8db9c85229eae41d",
-      "project": "bistro",
-      "scene_sha256": "d35f4f0c909840dcf47cc1ba78bc57d87ae7f479fdedee545761fe6880e7f754"
+      "project": "bistro"
     },
     {
       "file": "FlightHelmet.glb",
-      "sha256": "74a4b22953a5b24fe158899b166e20f77184b29cec2c6ea35e30e63d01a467c9",
-      "project": "detail",
-      "scene_sha256": "5923c7d3c11da22103560bcd5808807ad4bc6fe6209844bd0a77d6dfabbf8785"
+      "project": "detail"
     },
     {
       "file": "DutchShip.glb",
-      "sha256": "ba6cbf3a1be5a8539387c41cdb1a53b661e7ce86fee3238a518329b1093e43cf",
-      "project": "harbor",
-      "scene_sha256": "c795b2f7ff86cccc4e5a2f292a21e6002c56bf35a0b27700f4e13660ee22e657"
+      "project": "harbor"
     }
   ],
   "notes": "Native frames are captured offscreen along declared cameras. Playback FPS is separate from measured stress workload timing. The editor is the real WebGPU frontend connected to the Rust host.",
-  "engine_binary_sha256": "6a5ecebb6bc201bda5cd23d7e2194d526b16d305dffecd98f55294fd2196d5fb",
   "stills": [
     {
       "file": "scene-poster.jpg",
@@ -106,18 +90,15 @@
         1024,
         768
       ],
-      "sha256": "c19d04e8149187407959742f0554acda2b4454472321afe56d9305ca5dae2d60",
       "captured_on": "2026-10-05",
       "capture": "actual engine render",
       "renderer": "Metal surface PT",
       "scene": "lighting/scene-scene.json",
-      "scene_sha256": "06d220751282b10eba09815f9860ad8cb941dd513f19a090584519e265b61617",
       "report": "lighting/scene-pt-report.json",
       "samples_per_pixel": 512,
       "bounce_limit": 12,
       "texture_size": 512,
       "online_nrc": false,
-      "source_capture_sha256": "0a35f727aaa6424e60e148008d54d16e23846dfa1331a4963ccfc95796b6f7ba",
       "engine_commit": "dfc93213c474ade1da06d62cd5fbcba91542d545"
     },
     {
@@ -126,13 +107,10 @@
         1280,
         720
       ],
-      "sha256": "bfa375d4ce0ef953fcc0ccc739b922f3def9c9f40d4dd0e9ccef32d365010146",
       "captured_on": "2026-10-05",
       "capture": "actual engine render",
       "renderer": "native Metal forward with baked diffuse GI",
       "scene": "lighting/harbor-scene.json",
-      "scene_sha256": "1ef6bcf668f0641b9c0ab963ea4cc404f3dfbfc8ff00d26a277f9e2918bfa83f",
-      "probe_asset_sha256": "f2b8128fa729e4d236eacd351fd49c08402c9b029a0af62b07f4773d3669dcc9",
       "probe_count": 2940,
       "capture_tick": 60,
       "camera": {
@@ -149,9 +127,7 @@
         "fov_deg": 44
       },
       "scope": "Fixed-pose ship and cargo mesh diffuse GI. Ocean retains its existing sky/sun/reflection lighting.",
-      "source_capture_sha256": "e8c9d7d2cdb66608207a39f75918aab0e18304eb0798d4400cdf21d6f9001ff4",
       "engine_commit": "dfc93213c474ade1da06d62cd5fbcba91542d545",
-      "source_project_scene_sha256": "c795b2f7ff86cccc4e5a2f292a21e6002c56bf35a0b27700f4e13660ee22e657",
       "scene_kind": "Frozen tick-60 mesh/light/environment snapshot; procedural ocean and sailing systems remain in the source project."
     },
     {
@@ -160,18 +136,15 @@
         1280,
         960
       ],
-      "sha256": "24a5ba3f061c88d8dca768e36a467db826a2472fbaeedf3ad26c8a8f09353a65",
       "captured_on": "2026-10-05",
       "capture": "actual engine render",
       "renderer": "Metal surface PT",
       "scene": "lighting/detail-scene.json",
-      "scene_sha256": "46c551578652c74fa4625bc62cd0c196e825fc6fde5904d50ba80e801623f202",
       "report": "lighting/detail-pt-report.json",
       "samples_per_pixel": 512,
       "bounce_limit": 12,
       "texture_size": 2048,
       "online_nrc": false,
-      "source_capture_sha256": "0ccd8561646490658896cb30e2ce408ff74706ca3426e9d26a4d1c2ea3167b78",
       "engine_commit": "dfc93213c474ade1da06d62cd5fbcba91542d545"
     },
     {
@@ -180,15 +153,12 @@
         1280,
         720
       ],
-      "sha256": "7decc7b6ccc67df9a752bb96ef953b8c7ef673533a16554441d324fb6b7d3f5f",
       "captured_on": "2026-10-05",
       "capture": "actual engine render",
       "renderer": "real browser WebGPU editor with baked diffuse GI",
       "capture_tick": 60,
       "project": "Harbor",
-      "probe_asset_sha256": "f2b8128fa729e4d236eacd351fd49c08402c9b029a0af62b07f4773d3669dcc9",
       "scope": "Real Rust host; Sky selected to show the loaded baked_gi asset and gi_intensity.",
-      "source_capture_sha256": "1bde3e47bfce40d7cd17e60f58612e1e448b1b79372874d07a9251b96097eff6",
       "engine_commit": "dfc93213c474ade1da06d62cd5fbcba91542d545"
     }
   ],

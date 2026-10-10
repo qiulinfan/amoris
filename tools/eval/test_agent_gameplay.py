@@ -8,8 +8,10 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
-from agent_gameplay import Gameplay, TOOL_NAMES, tools
+from agent_gameplay import Gameplay, TOOL_NAMES, COURSE_VERSION, tools, replay_actions
 
 
 POCKET = os.environ.get("AMORIS_TEST_POCKET")
@@ -24,6 +26,46 @@ class SchemaTests(unittest.TestCase):
                       for t in schemas if t["function"]["name"] == "navigate"))
 
 
+class OfflineReceiptTests(unittest.TestCase):
+    def test_judge_identifies_course_and_preserves_world_hash(self):
+        game = Gameplay.__new__(Gameplay)
+        game.fixture_path = "site/demos/agent-sailing"
+        game.host = SimpleNamespace(state=lambda: {"tick": 12, "world_hash": "native-world"})
+        game._boat = lambda: {"Tally": {"taken": 2, "total": 4, "worth": 3}}
+        verdict = game.judge()
+        self.assertEqual(verdict["world_hash"], "native-world")
+        self.assertEqual(verdict["course_version"], COURSE_VERSION)
+        self.assertNotIn("fixture_sha256", verdict)
+        self.assertFalse(verdict["success"])
+
+    def test_replay_still_checks_per_action_world_hash_parity(self):
+        expected = {"sequence": 0, "tool": "wait", "arguments": {"ticks": 1},
+                    "before": {"tick": 0, "world_hash": "before"},
+                    "after": {"tick": 1, "world_hash": "after"},
+                    "result": {}, "native_intents": []}
+
+        class StubReplay:
+            divergent = False
+            def __init__(self, *args, **kwargs): self.actions = []
+            def __enter__(self): return self
+            def __exit__(self, *args): pass
+            def dispatch(self, *args):
+                action = json.loads(json.dumps(expected))
+                if self.divergent: action["after"]["world_hash"] = "different"
+                self.actions.append(action)
+                return action["result"]
+            def judge(self): return {"success": False, "world_hash": "after"}
+
+        with patch("agent_gameplay.Gameplay", StubReplay):
+            result = replay_actions([expected], pocket="unused")
+            self.assertTrue(result["passed"])
+            self.assertEqual(result["parity"][0]["expected_hash"], "after")
+            self.assertEqual(result["parity"][0]["actual_hash"], "after")
+            StubReplay.divergent = True
+            with self.assertRaisesRegex(RuntimeError, "diverged"):
+                replay_actions([expected], pocket="unused")
+
+
 @unittest.skipUnless(POCKET, "Set AMORIS_TEST_POCKET to a verified existing native pocket binary.")
 class NativeBoundaryTests(unittest.TestCase):
     def setUp(self):
@@ -36,7 +78,7 @@ class NativeBoundaryTests(unittest.TestCase):
 
     def assert_projection(self, value):
         forbidden = {"world_hash", "hash", "url", "project", "path", "entity", "_entity",
-                     "components", "fixture_sha256", "score", "judge", "grader", "scripts", "debug"}
+                     "components", "fixture_path", "score", "judge", "grader", "scripts", "debug"}
         def visit(x):
             if isinstance(x, dict):
                 self.assertFalse(set(x) & forbidden)

@@ -17,9 +17,9 @@ bugs and four implement gameplay features.
 | `milestone-event` | `scripts/progress.ts` | One score-ten milestone per courier, stable across recrossing and reload |
 | `damage-and-defeat` | `scripts/damage.ts` | Consume armored damage, clamp health, and persist one defeat event |
 
-`manifest.json` freezes the task prompts and fixture hash before provider trials. Each grade
-receipt also records the Python grader's SHA-256. Do not alter prompts, fixtures or checks
-mid-run. A later protocol change requires a new version and new independent trials.
+`manifest.json` freezes the task prompts and fixture version before provider trials. Each grade
+records the task, grader version and actual behavior checks. Do not alter prompts, fixtures or
+checks mid-run. A later protocol change requires a new version and new independent trials.
 
 ## Candidate boundary
 

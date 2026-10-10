@@ -1,8 +1,0 @@
-$ cargo test --release -p pocket-app --test debug_agent   # 2026-10-04T17:10Z
-
-running 3 tests
-test debug_state_names_the_cdp_endpoint ... ok
-test play_takes_the_debugger_to_its_fork ... ok
-test an_agent_debugs_the_test_game ... ok
-
-test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.67s

@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Curate completed native agent runs into portable public JSON and Markdown.
+"""Summarize completed native agent runs into portable public JSON and Markdown.
 
 Read-only inputs; no provider calls, credentials, grader execution or candidate
 mutation. Generation is a snapshot: unstarted or incomplete trials are not invented.
+Detailed traces and patches require an explicit local-output option.
 """
 from __future__ import annotations
 
 import argparse
 import ast
 import difflib
-import hashlib
 import json
 import re
 import statistics
@@ -18,8 +18,10 @@ from decimal import Decimal
 from pathlib import Path
 
 
-def sha_bytes(value: bytes) -> str:
-    return hashlib.sha256(value).hexdigest()
+FILE_DIGEST_FIELDS = {"sha256", "file_sha256", "source_sha256", "fixture_sha256", "grader_sha256",
+    "candidate_script_sha256", "candidate_file_sha256", "mutated_file_sha256", "diff_sha256",
+    "public_diff_sha256", "gateway_sha256", "gateway_sha256_at_run", "protocol_sha256", "protocol_hash",
+    "video_sha256", "actions_sha256", "summary_sha256", "script_sha256", "filehashes", "file_hashes"}
 
 
 class Curator:
@@ -37,7 +39,8 @@ class Curator:
                        "credentials", "credential_path", "credential_file", "key_path", "api_key_path",
                        "access_token", "secret", "private_host", "host_url"}
             return {self.sanitize(str(k), project): self.sanitize(v, project)
-                    for k, v in value.items() if str(k).casefold() not in private}
+                    for k, v in value.items()
+                    if str(k).casefold() not in private | FILE_DIGEST_FIELDS}
         if isinstance(value, list):
             return [self.sanitize(v, project) for v in value]
         if not isinstance(value, str):
@@ -66,15 +69,28 @@ class Curator:
         except (OSError, ValueError):
             self.warnings.append(f"Skipped unreadable or incomplete JSON: {self.sanitize(str(path))}")
             return None
-        self.bindings.append({"path": self.sanitize(str(path)), "sha256": sha_bytes(raw)})
+        self.bindings.append({"path": self.sanitize(str(path))})
         return value
 
     def trace(self, path: Path, project: Path):
         if not path.is_file():
             return [], None
         raw = path.read_bytes()
-        digest = sha_bytes(raw)
-        self.bindings.append({"path": self.sanitize(str(path)), "sha256": digest})
+        if not self.traces:
+            # Public summaries need only the frozen run conditions, never transcript text.
+            metadata = {"reasoning_effort": None, "max_output_tokens": None}
+            for line in raw.splitlines():
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                if event.get("type") == "start":
+                    metadata["reasoning_effort"] = event.get("reasoning_effort")
+                if event.get("type") == "request":
+                    metadata["max_output_tokens"] = event.get("reserved_output_tokens")
+                    break
+            return [], metadata
+        self.bindings.append({"path": self.sanitize(str(path))})
         events = []
         for line in raw.splitlines():
             try:
@@ -103,7 +119,7 @@ class Curator:
                 public.append(curated)
         last = next((e.get("assistant", {}).get("content") for e in reversed(events)
                      if e.get("type") == "response" and e.get("assistant", {}).get("content")), None)
-        metadata = {"source_sha256": digest, "source_events": len(events),
+        metadata = {"source_path": self.sanitize(str(path)), "source_events": len(events),
                     "eligible_tool_error_events": len(eligible), "included_events": len(public),
                     "byte_limit": self.trace_limit, "recording": "curated bounded excerpt" if self.traces else "omitted",
                     "reasoning_effort": start.get("reasoning_effort"),
@@ -114,38 +130,46 @@ class Curator:
         return public, metadata
 
     def mutations(self, protocol):
-        """Static parse of the hash-bound frozen grader; never import or execute it."""
+        """Read the versioned task declarations without importing or executing the grader."""
         grader = self.repo / "tools/eval/agent_dev_bench.py"
         if not grader.is_file():
             self.warnings.append("Frozen grader unavailable; patch baselines omitted")
             return {}
         raw = grader.read_bytes()
-        if sha_bytes(raw) != protocol.get("grader_sha256"):
-            self.warnings.append("Current grader hash differs from frozen protocol; patch baselines omitted")
+        try:
+            tree = ast.parse(raw)
+        except SyntaxError:
+            self.warnings.append("Grader task declarations cannot be parsed; patch baselines omitted")
             return {}
-        fixture = hashlib.sha256()
-        template = self.repo / "bench/agent-dev/template"
-        for file in sorted(template.rglob("*")):
-            if file.is_file() and ".pocket" not in file.parts:
-                fixture.update(file.relative_to(template).as_posix().encode() + b"\0" + file.read_bytes() + b"\0")
-        fixture.update(json.dumps(protocol["tasks"], sort_keys=True).encode())
-        if fixture.hexdigest() != protocol.get("fixture_sha256"):
-            self.warnings.append("Current fixture differs from frozen protocol; patch baselines omitted")
+        version_node = next((node for node in tree.body if isinstance(node, ast.Assign)
+            and any(isinstance(name, ast.Name) and name.id == "VERSION" for name in node.targets)), None)
+        try:
+            version = ast.literal_eval(version_node.value) if version_node else None
+        except (ValueError, TypeError):
+            version = None
+        if version is None or version != (protocol.get("suite_version") or protocol.get("protocol")):
+            self.warnings.append("Grader suite version differs from the protocol; patch baselines omitted")
             return {}
-        self.bindings.append({"kind": "fixture_set", "path": "$REPO/bench/agent-dev/template",
-                              "sha256": fixture.hexdigest()})
-        self.bindings.append({"path": "$REPO/tools/eval/agent_dev_bench.py", "sha256": sha_bytes(raw)})
-        tree = ast.parse(raw)
+        self.bindings.append({"kind": "versioned_fixture", "path": "$REPO/bench/agent-dev/template",
+                              "suite_version": version})
+        self.bindings.append({"path": "$REPO/tools/eval/agent_dev_bench.py", "suite_version": version})
         assignment = next((node for node in tree.body if isinstance(node, ast.Assign)
             and any(isinstance(name, ast.Name) and name.id == "TASKS" for name in node.targets)), None)
         if not assignment or not isinstance(assignment.value, (ast.Tuple, ast.List)):
             return {}
         result = {}
+        declared = {task["id"]: task for task in protocol["tasks"]}
         for node in assignment.value.elts:
             if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name) or node.func.id != "Task":
                 continue
             values = [ast.literal_eval(arg) for arg in node.args]
-            result[values[0]] = {"file": values[3], "old": values[5], "new": values[6]}
+            task = declared.get(values[0])
+            if task is None:
+                continue
+            if task.get("allowed_files") != [values[3]] or task.get("kind") != values[2]:
+                self.warnings.append(f"Task declaration differs for {values[0]}; patch baseline omitted")
+                continue
+            result[values[0]] = {"file": values[3], "old": values[5], "new": values[6], "version": version}
         return result
 
     def patch(self, task, project: Path, mutations: dict):
@@ -162,15 +186,15 @@ class Curator:
             return {"status": "unavailable", "reason": "Candidate or fixture file missing"}
         golden, final = baseline.read_text(), target.read_text()
         if golden.count(mutation["old"]) != 1:
+            self.warnings.append(f"Fixture mutation anchor is not unique for {task['id']}; patch baseline omitted")
             return {"status": "unavailable", "reason": "Frozen mutation anchor is not unique"}
         before = golden.replace(mutation["old"], mutation["new"])
         patch = "".join(difflib.unified_diff(before.splitlines(True), final.splitlines(True),
                 fromfile="mutated-fixture/" + relative, tofile="agent-candidate/" + relative))
-        digest = sha_bytes(patch.encode())
         public = self.sanitize(patch, project)
         return {"status": "recorded", "file": relative, "baseline": "mutated fixture, not golden solution",
-                "mutated_file_sha256": sha_bytes(before.encode()), "candidate_file_sha256": sha_bytes(final.encode()),
-                "diff_sha256": digest, "public_diff_sha256": sha_bytes(public[:14000].encode()),
+                "suite_version": mutation["version"], "task_id": task["id"],
+                "baseline_scope": "Reconstructed from the matching version/task declaration and current template",
                 "diff_original_chars": len(public),
                 "diff_truncated": len(public) > 14000, "diff": public[:14000]}
 
@@ -226,6 +250,59 @@ def reservation_for(ledger, run_id):
                     and "cost_upper_usd" not in item), Decimal(0)))
 
 
+def public_summary(report):
+    """Keep measured outcomes and method fields; never publish raw run records or source copies."""
+    def select(value, fields):
+        return {key: value[key] for key in fields if key in value}
+
+    def protocol(value):
+        return select(value, ["protocol", "suite_version", "course", "repeats_planned", "seed",
+                              "max_ticks", "reasoning_effort", "max_output_tokens", "method",
+                              "budget_usd_shared"])
+
+    def trial(value):
+        row = select(value, ["id", "task", "kind", "phase", "repetition", "agent_finish",
+            "behavior_pass", "grade_state", "metrics", "requested_model", "response_models",
+            "reasoning_effort", "max_output_tokens", "known_peak_cost_upper_usd",
+            "unknown_reserved_usd", "billing_cost_usd", "has_unsettled_request",
+            "replay_passed", "native_actions"])
+        if "grade" in value:
+            row["grade"] = select(value["grade"], ["passed", "feature_passed", "types_passed",
+                "integrity_passed", "regressions_passed", "scope_passed", "suite_version"])
+        if "judge" in value:
+            row["judge"] = select(value["judge"], ["collected", "total", "worth", "score",
+                                                   "success", "tick", "course_version"])
+        return row
+
+    development = report["development"]
+    suites = []
+    for value in development["suites"]:
+        suite = select(value, ["id", "planned_trials", "observed_trials", "statistics"])
+        suite["protocol"] = protocol(value["protocol"])
+        suite["tasks"] = [select(task, ["id", "title", "kind", "suite_version", "trial_ids",
+                                        "statistics"]) for task in value["tasks"]]
+        suite["trials"] = [trial(row) for row in value["trials"]]
+        suites.append(suite)
+    gameplay = report["gameplay"]
+    game_suites = []
+    for value in gameplay["suites"]:
+        suite = select(value, ["id", "phase", "planned_trials", "observed_trials", "trial_ids",
+                               "statistics"])
+        suite["protocol"] = protocol(value["protocol"])
+        game_suites.append(suite)
+    result = select(report, ["schema_version", "generated_at", "snapshot", "provider", "budget",
+                             "warnings", "limitations"])
+    result["publication"] = "summary"
+    result["limitations"] = [
+        "Public summaries contain outcomes and method fields; detailed transcripts and patches are local-only."
+        if item.startswith("Tool traces") else item for item in result.get("limitations", [])]
+    result["development"] = {"suites": suites, "statistics": development["statistics"]}
+    result["gameplay"] = select(gameplay, ["statistics_scope", "statistics_by_protocol",
+                                          "all_recorded_n", "showcase_selection"])
+    result["gameplay"].update(suites=game_suites, trials=[trial(row) for row in gameplay["trials"]])
+    return result
+
+
 def curate(input_root: Path, repo: Path, *, include_tool_trace=False, gameplay_repeats=3):
     c = Curator(input_root, repo, traces=include_tool_trace)
     ledger = c.read(c.root / "shared-ledger.json") or {}
@@ -235,7 +312,7 @@ def curate(input_root: Path, repo: Path, *, include_tool_trace=False, gameplay_r
         protocol = c.read(protocol_path)
         if not protocol or not isinstance(protocol.get("tasks"), list):
             continue
-        mutations = c.mutations(protocol)
+        mutations = c.mutations(protocol) if include_tool_trace else {}
         rows = []
         for task in protocol["tasks"]:
             for trial_path in sorted(protocol_path.parent.glob(task["id"] + "-*")):
@@ -251,7 +328,7 @@ def curate(input_root: Path, repo: Path, *, include_tool_trace=False, gameplay_r
                 tools, trace_meta = c.trace(trial_path / "agent/trace.jsonl", project)
                 selected_grade = {key: grade.get(key) for key in ["passed", "feature_passed", "types_passed",
                     "integrity_passed", "regressions_passed", "scope_passed", "changed_files", "out_of_scope_files",
-                    "fixture_sha256", "grader_sha256", "suite_version"]} if grade else {}
+                    "fixture_path", "grader_path", "suite_version"]} if grade else {}
                 checks = grade.get("checks", {}) if grade else {}
                 selected_grade["checks"] = {name: {"passed": check.get("passed"),
                     "case_count": len(check.get("cases", [])),
@@ -260,7 +337,6 @@ def curate(input_root: Path, repo: Path, *, include_tool_trace=False, gameplay_r
                 selected_grade = c.sanitize(selected_grade, project)
                 row = {"id": protocol_path.parent.name + "/" + trial_path.name, "task": task["id"],
                     "kind": task.get("kind"), "repetition": repetition,
-                    "prompt": c.sanitize(task.get("prompt"), project),
                     "agent_finish": summary.get("stop_reason", "unknown"),
                     "behavior_pass": grade.get("passed") if grade else None,
                     "grade_state": "complete" if grade else "not available in snapshot",
@@ -271,9 +347,11 @@ def curate(input_root: Path, repo: Path, *, include_tool_trace=False, gameplay_r
                     "max_output_tokens": (trace_meta or {}).get("max_output_tokens"),
                     "known_peak_cost_upper_usd": summary.get("metered_cost_upper_usd", "0"),
                     "unknown_reserved_usd": reservation_for(ledger, summary.get("run_id")),
-                    "billing_cost_usd": None, "has_unsettled_request": summary.get("has_unsettled_request"),
-                    "patch": c.patch(task, project, mutations), "trace_metadata": trace_meta,
-                    "tool_trace": tools}
+                    "billing_cost_usd": None, "has_unsettled_request": summary.get("has_unsettled_request")}
+                if include_tool_trace:
+                    row.update(prompt=c.sanitize(task.get("prompt"), project),
+                               patch=c.patch(task, project, mutations), trace_metadata=trace_meta,
+                               tool_trace=tools)
                 rows.append(row)
         tasks = [{**c.sanitize(task), "trial_ids": [r["id"] for r in rows if r["task"] == task["id"]],
                   "statistics": aggregate([r for r in rows if r["task"] == task["id"]])}
@@ -287,10 +365,8 @@ def curate(input_root: Path, repo: Path, *, include_tool_trace=False, gameplay_r
     gameplay_rows, gameplay_sets = [], []
     gateway = c.repo / "tools/eval/agent_gameplay.py"
     gateway_snapshot = {"path": "$REPO/tools/eval/agent_gameplay.py",
-        "sha256": sha_bytes(gateway.read_bytes()) if gateway.is_file() else None,
-        "identity_scope": "File at report generation; not a substitute for a pre-run implementation hash"}
-    if gateway_snapshot["sha256"]:
-        c.bindings.append({"kind": "post_run_source_snapshot", **gateway_snapshot})
+        "available": gateway.is_file(),
+        "identity_scope": "Version and task identifiers come from the recorded protocol"}
     for protocol_path in sorted(c.root.glob("gameplay*/protocol.json")):
         protocol = c.read(protocol_path)
         if not protocol:
@@ -312,29 +388,28 @@ def curate(input_root: Path, repo: Path, *, include_tool_trace=False, gameplay_r
             project = trial / "project"
             tools, trace_meta = c.trace(trial / "agent/trace.jsonl", project)
             judge_public = {key: judge.get(key) for key in ["collected", "total", "worth", "score", "success",
-                "tick", "world_hash", "fixture_sha256"]} if isinstance(judge, dict) else {}
+                "tick", "world_hash", "course_version", "fixture_path"]} if isinstance(judge, dict) else {}
             action_file = trial / "actions.json"
             if action_file.is_file():
-                raw = action_file.read_bytes()
-                c.bindings.append({"path": c.sanitize(str(action_file)), "sha256": sha_bytes(raw)})
+                c.bindings.append({"path": c.sanitize(str(action_file))})
             row = {"id": trial.relative_to(c.root).as_posix(), "phase": phase, "repetition": repetition,
                    "agent_finish": summary.get("stop_reason", "unknown"),
                    "behavior_pass": judge_public.get("success"), "grade": {"passed": judge_public.get("success")},
                    "judge": judge_public, "replay_passed": replay.get("passed") if replay else source_row.get("replay_passed"),
                    "native_actions": replay.get("actions") if replay else source_row.get("actions"),
-                   "prompt": (trace_meta or {}).get("prompt") or protocol.get("prompt"),
                    "metrics": run_metrics(summary), "requested_model": summary.get("requested_model"),
                    "response_models": summary.get("response_models", []),
                    "reasoning_effort": (trace_meta or {}).get("reasoning_effort") or protocol.get("reasoning_effort"),
                    "max_output_tokens": (trace_meta or {}).get("max_output_tokens"),
                    "known_peak_cost_upper_usd": summary.get("metered_cost_upper_usd", "0"),
                    "unknown_reserved_usd": reservation_for(ledger, summary.get("run_id")),
-                   "billing_cost_usd": None, "has_unsettled_request": summary.get("has_unsettled_request"),
-                   "trace_metadata": trace_meta, "tool_trace": tools}
+                   "billing_cost_usd": None, "has_unsettled_request": summary.get("has_unsettled_request")}
+            if include_tool_trace:
+                row.update(prompt=(trace_meta or {}).get("prompt") or protocol.get("prompt"),
+                           trace_metadata=trace_meta, tool_trace=tools)
             rows.append(c.sanitize(row, project))
         gameplay_sets.append({"id": protocol_path.parent.name, "phase": phase, "protocol": c.sanitize(protocol),
             "planned_trials": protocol.get("repeats_planned"), "observed_trials": len(rows),
-            "gateway_sha256_at_run": protocol.get("gateway_sha256") or protocol.get("grader_sha256"),
             "trial_ids": [r["id"] for r in rows], "statistics": aggregate(rows)})
         gameplay_rows.extend(rows)
     formal_rows = [r for r in gameplay_rows if r["phase"] == "formal"]
@@ -357,8 +432,7 @@ def curate(input_root: Path, repo: Path, *, include_tool_trace=False, gameplay_r
     unknown_ledger = sum((Decimal(item["reserved_usd"]) for item in uncertain), Decimal(0))
     known_models = sorted({model for row in all_development + gameplay_rows for model in row["response_models"]})
     output = {"schema_version": 1, "generated_at": datetime.now(timezone.utc).isoformat(),
-        "generator": {"file": "tools/eval/report_agent_showcase.py",
-                      "sha256": sha_bytes(Path(__file__).read_bytes())},
+        "generator": {"file": "tools/eval/report_agent_showcase.py"},
         "snapshot": {"planned_developer_trials": sum(s["planned_trials"] for s in developer_sets),
             "observed_developer_trials": len(all_development),
             "graded_developer_trials": sum(r["grade_state"] == "complete" for r in all_development),
@@ -386,15 +460,15 @@ def curate(input_root: Path, repo: Path, *, include_tool_trace=False, gameplay_r
                 for r in all_development + gameplay_rows), Decimal(0))),
             "pricing_url": ledger.get("pricing_url"), "peak_usd_per_million": ledger.get("peak_usd_per_million"),
             "policy": "Exact reported tokens at peak rates are an upper bound, not an invoice. Unknown reservations are not measured spend."},
-        "evidence_bindings": c.bindings, "warnings": c.warnings,
+        "evidence_paths": sorted({binding["path"] for binding in c.bindings}), "warnings": c.warnings,
         "limitations": ["Six fixed development tasks and three planned sailing runs are a small, engine-specific study.",
             "Behavior is graded independently from model finish status; a transport interruption can leave a passing patch.",
             "Gameplay uses a project-level restricted gateway and a disclosed native Helm executor; this is not global player authorization.",
             "The model never receives the grader, golden files, private native state or shared budget ledger.",
-            "Tool traces are optional bounded excerpts; their omission or truncation does not remove trials from statistics.",
+            "Tool traces are omitted by default; optional local excerpts do not affect trial statistics.",
             "The 2048-token gameplay-v1 pretests, low-thinking 8192-token gameplay-v2 runs and non-thinking 4096-token gameplay-v3 runs are separate frozen conditions; their success rates and performance averages are not pooled.",
             "Any highest-score media selection is disclosed and does not replace the complete trial table."]}
-    return c.sanitize(output)
+    return c.sanitize(output if include_tool_trace else public_summary(output))
 
 
 def markdown(report):
@@ -465,16 +539,12 @@ def markdown(report):
     lines += ["", "## Frozen protocol", ""]
     for suite in report["development"]["suites"]:
         p = suite["protocol"]
-        lines += [f"- {suite['id']}: `{p.get('protocol')}`; effort `{p.get('reasoning_effort')}`.",
-                  f"- Fixture SHA-256: `{p.get('fixture_sha256')}`.",
-                  f"- Grader SHA-256: `{p.get('grader_sha256')}`."]
+        lines += [f"- {suite['id']}: `{p.get('suite_version') or p.get('protocol')}`; "
+                  f"task IDs `{', '.join(t['id'] for t in suite['tasks'])}`; "
+                  f"effort `{p.get('reasoning_effort')}`."]
     for suite in report["gameplay"]["suites"]:
         p = suite["protocol"]
-        lines += [f"- {suite['id']}: fixture `{p.get('fixture_sha256')}`; "
-                  f"gateway hash recorded at run: `{suite.get('gateway_sha256_at_run') or 'not recorded'}`."]
-    source = report["gameplay"]["gateway_source_snapshot"]
-    if source["sha256"]:
-        lines += [f"- Gateway source snapshot SHA-256: `{source['sha256']}`. {source['identity_scope']}."]
+        lines += [f"- {suite['id']}: course `{p.get('course')}`; effort `{p.get('reasoning_effort')}`."]
     lines += ["", "Actual response model aliases: " + ", ".join(f"`{m}`" for m in report["provider"]["actual_response_models"]),
               "", *["- " + limitation for limitation in report["limitations"]], ""]
     return "\n".join(lines)
@@ -489,6 +559,9 @@ def main():
     p.add_argument("--gameplay-repeats", type=int, default=3)
     args = p.parse_args()
     output = args.output_root.resolve()
+    if args.include_tool_trace and output.is_relative_to(args.repo.resolve()) and not output.is_relative_to(
+            args.repo.resolve() / "out"):
+        raise ValueError("Detailed tool transcripts belong in ignored out/ or outside the repository")
     if output.is_relative_to(args.input_root.resolve()):
         raise ValueError("Write reports outside the read-only input evidence directory")
     if output.exists() and any(output.iterdir()):

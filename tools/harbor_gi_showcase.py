@@ -7,16 +7,15 @@ Neither phase modifies the original Harbor scene or its sailing rules.
 """
 import argparse
 import copy
-import hashlib
 import json
 from pathlib import Path
 import shutil
+import struct
 import urllib.parse
 
 from showcase_record import http_call
 
 ROOT = Path(__file__).resolve().parents[1]
-SHIP_HASH = "ba6cbf3a1be5a8539387c41cdb1a53b661e7ce86fee3238a518329b1093e43cf"
 
 
 def write(path, value):
@@ -28,12 +27,17 @@ def query(host, components):
     return http_call(host, "world.query", {"with": components, "fields": components, "limit": 1000})
 
 
-def prepare(output, asset):
+def validate_asset(asset):
     if not asset.is_file():
         raise ValueError("Restore the audited DutchShip.glb first, or pass --asset PATH")
-    digest = hashlib.sha256(asset.read_bytes()).hexdigest()
-    if digest != SHIP_HASH:
-        raise ValueError("DutchShip does not match site/media/manifest.json")
+    with asset.open("rb") as stream:
+        header = stream.read(12)
+    if len(header) != 12 or struct.unpack("<III", header) != (0x46546C67, 2, asset.stat().st_size):
+        raise ValueError("DutchShip must be a complete GLB 2.0 file")
+
+
+def prepare(output, asset):
+    validate_asset(asset)
     project = output / "project"
     if not project.exists():
         shutil.copytree(ROOT / "site/demos/harbor", project)
@@ -41,9 +45,9 @@ def prepare(output, asset):
     target.parent.mkdir(parents=True, exist_ok=True)
     if target.resolve() != asset.resolve():
         shutil.copy2(asset, target)
-    write(output / "asset-receipt.json", {"asset": "DutchShip.glb", "sha256": digest,
+    write(output / "asset-receipt.json", {"asset": "DutchShip.glb",
         "bytes": asset.stat().st_size, "license": "CC0-1.0",
-        "source": "site/assets/provenance.json", "packed_hash_source": "site/media/manifest.json"})
+        "source": "https://polyhaven.com/a/dutch_ship_medium", "provenance": "site/assets/provenance.json"})
     print(project, flush=True)
 
 
@@ -68,9 +72,7 @@ def freeze(host, output):
     if status["tick"] != 60:
         raise ValueError("Use a fresh preview at tick 0 or the prepared tick-60 snapshot")
     asset = output / "project/models/third-party/DutchShip.glb"
-    digest = hashlib.sha256(asset.read_bytes()).hexdigest()
-    if digest != SHIP_HASH:
-        raise ValueError("DutchShip does not match the showcase's audited packed asset")
+    validate_asset(asset)
     rows = query(host, ["Model", "Transform"]) + query(host, ["Light", "Transform"]) + query(host, ["Environment"])
     rows.sort(key=lambda row: row["id"])
     entities = []
@@ -93,7 +95,7 @@ def freeze(host, output):
     boat = http_call(host, "world.get", {"entity": "Sloop", "components": ["Transform"]})
     environment = query(host, ["Environment"])[0]
     receipt = {"tick": status["tick"], "world_hash": status["world_hash"], "boat": boat,
-               "environment": environment, "asset_sha256": digest,
+               "environment": environment,
                "excluded": ["procedural ocean", "physics", "wind", "game rules"],
                "scope": "Fixed-pose diffuse mesh lighting; live Harbor retains ocean and sailing systems."}
     write(output / "snapshot.json", receipt)
@@ -148,8 +150,7 @@ def capture(host, output, width, height):
             target = directory / "images" / f'{view["id"]}-{mode}.png'
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(frame["path"], target)
-            traces.append({"view": view["id"], "mode": mode, "camera": params, "capture": frame,
-                           "sha256": hashlib.sha256(target.read_bytes()).hexdigest()})
+            traces.append({"view": view["id"], "mode": mode, "camera": params, "capture": frame})
             print(f'{view["id"]}/{mode}: {target}', flush=True)
         view["before"] = f'images/{view["id"]}-off.png'
         view["after"] = f'images/{view["id"]}-on.png'

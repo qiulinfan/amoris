@@ -1,6 +1,0 @@
-# Jolt v5.6.0 with wasm SIMD (USE_WASM_SIMD: -msimd128 -msse4.2) outside Emscripten: Homebrew clang 23, wasi-sysroot, 2026-10-04
-# clang++ --target=wasm32-wasip1 ... -D__EMSCRIPTEN__ -msimd128 -msse4.2 -c (a file including <Jolt/Jolt.h>); first errors:
-/opt/homebrew/Cellar/wasi-runtimes/23.1.2/share/wasi-runtimes/include/immintrin.h:14:2: error: "This header is only meant to be used on x86 and x64 architecture"
-   14 | #error "This header is only meant to be used on x86 and x64 architecture"
-/opt/homebrew/Cellar/wasi-runtimes/23.1.2/share/wasi-runtimes/include/hresetintrin.h:42:27: error: invalid input constraint 'a' in asm
-/opt/homebrew/Cellar/wasi-runtimes/23.1.2/share/wasi-runtimes/include/crc32intrin.h:38:10: error: use of undeclared identifier '__builtin_ia32_crc32qi'

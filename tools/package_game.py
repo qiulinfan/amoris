@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Package an already-built native Amoris game as a self-contained macOS app."""
 import argparse
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -12,14 +11,6 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-
-
-def digest(path):
-    h = hashlib.sha256()
-    with path.open("rb") as f:
-        for block in iter(lambda: f.read(1024 * 1024), b""):
-            h.update(block)
-    return h.hexdigest()
 
 
 def package(project, binary, output, name):
@@ -82,10 +73,9 @@ def package(project, binary, output, name):
     files = []
     for path in sorted(bundled_project.rglob("*")):
         if path.is_file():
-            files.append(dict(file=str(path.relative_to(resources)), bytes=path.stat().st_size,
-                              sha256=digest(path)))
+            files.append(dict(file=str(path.relative_to(resources)), bytes=path.stat().st_size))
     receipt = dict(application=str(destination), platform=sys.platform,
-                   executable_sha256=digest(executable), project_files=files,
+                   project_files=files,
                    launch="Double-click; bundled native runtime starts the game in walk mode.")
     (output / "package-receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
     print(json.dumps(receipt, indent=2))

@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Bake the static town's diffuse GI with the renderer's matching atmosphere."""
 import argparse
-import hashlib
 import json
 from pathlib import Path
 import shutil
@@ -91,7 +90,6 @@ def main():
     report = json.loads(result.stdout)
     report["diffuse_bake_excluded_transparent_primitives"] = excluded
     report["visible_model_unchanged"] = True
-    report["asset_sha256"] = hashlib.sha256(output.read_bytes()).hexdigest()
     (work / "bake-report.json").write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps(report), flush=True)
 

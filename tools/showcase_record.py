@@ -7,7 +7,6 @@ The pilot runs outside the simulation and has developer privileges, not player M
 """
 from pathlib import Path
 import argparse
-import hashlib
 import json
 import math
 import shutil
@@ -155,8 +154,7 @@ def main():
     receipt = {"file": args.name + ".mp4", "kind": "actual_native_capture", "transport": "scripted MCP developer client",
                "frames": args.frames, "fps": args.fps, "size": [1280, 720], "seed": 1,
                "engine_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
-               "cargo_taken": trace[-1]["tally"]["taken"], "mcp_calls": pilot.calls,
-               "sha256": hashlib.sha256(video.read_bytes()).hexdigest()}
+               "cargo_taken": trace[-1]["tally"]["taken"], "mcp_calls": pilot.calls}
     (ROOT / "out/showcase" / (args.name + "-receipt.json")).write_text(json.dumps(receipt, indent=2) + "\n")
     print(json.dumps(receipt), flush=True)
 

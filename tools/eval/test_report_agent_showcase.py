@@ -1,9 +1,12 @@
-"""Offline curation fixtures, not benchmark results or provider usage."""
-import hashlib
+"""Offline curation and public-summary checks; no provider usage."""
+import contextlib
+import io
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import report_agent_showcase as report
 
@@ -23,19 +26,15 @@ class ReportTests(unittest.TestCase):
         self.root.mkdir()
         source = self.repo / "tools/eval/agent_dev_bench.py"
         source.parent.mkdir(parents=True)
-        source.write_text('TASKS=(Task("repair","Repair","bugfix","scripts/rules.ts",'
+        source.write_text('VERSION="offline-fixture"\nTASKS=(Task("repair","Repair","bugfix","scripts/rules.ts",'
                           '"requirement","return 1;","return 0;"),)\n')
         template = self.repo / "bench/agent-dev/template/scripts/rules.ts"
         template.parent.mkdir(parents=True)
         template.write_text("export function rule(){return 1;}\n")
         self.task = {"id": "repair", "title": "Repair", "kind": "bugfix",
                      "allowed_files": ["scripts/rules.ts"], "prompt": "Fix the fixture"}
-        digest = hashlib.sha256()
-        digest.update(b"scripts/rules.ts\0" + template.read_bytes() + b"\0")
-        digest.update(json.dumps([self.task], sort_keys=True).encode())
         self.protocol = {"protocol": "offline-fixture", "tasks": [self.task], "repeats_planned": 2,
-                         "reasoning_effort": "high", "fixture_sha256": digest.hexdigest(),
-                         "grader_sha256": hashlib.sha256(source.read_bytes()).hexdigest()}
+                         "reasoning_effort": "high"}
         dump(self.root / "development-v1/protocol.json", self.protocol)
         self.trial = self.root / "development-v1/repair-1"
         dump(self.trial / "agent/summary.json", self.summary("run-a", "transport_or_tool_error"))
@@ -76,7 +75,7 @@ class ReportTests(unittest.TestCase):
         self.assertIsNone(value["budget"]["billing_cost_usd"])
 
     def test_diff_uses_mutated_fixture_not_golden(self):
-        value = report.curate(self.root, self.repo)
+        value = report.curate(self.root, self.repo, include_tool_trace=True)
         patch = value["development"]["suites"][0]["trials"][0]["patch"]
         self.assertEqual(patch["status"], "recorded")
         self.assertIn("-export function rule(){return 0;}", patch["diff"])
@@ -103,10 +102,86 @@ class ReportTests(unittest.TestCase):
 
     def test_changed_fixture_disables_baseline_patch(self):
         (self.repo / "bench/agent-dev/template/scripts/rules.ts").write_text("different\n")
-        value = report.curate(self.root, self.repo)
+        value = report.curate(self.root, self.repo, include_tool_trace=True)
         patch = value["development"]["suites"][0]["trials"][0]["patch"]
         self.assertEqual(patch["status"], "unavailable")
         self.assertTrue(value["warnings"])
+
+    def test_legacy_file_digests_do_not_disable_baselines_or_change_success(self):
+        self.protocol.update(fixture_sha256="obsolete", grader_sha256="obsolete")
+        dump(self.root / "development-v1/protocol.json", self.protocol)
+        value = report.curate(self.root, self.repo, include_tool_trace=True)
+        self.assertEqual(value["development"]["suites"][0]["trials"][0]["patch"]["status"], "recorded")
+        self.assertEqual(value["development"]["statistics"]["behavior"]["pass"], 1)
+        self.assertNotIn("sha256", json.dumps(value))
+        self.assertNotIn("SHA-256", report.markdown(value))
+
+    def test_version_mismatch_only_changes_patch_availability(self):
+        self.protocol["protocol"] = "another-version"
+        dump(self.root / "development-v1/protocol.json", self.protocol)
+        value = report.curate(self.root, self.repo, include_tool_trace=True)
+        self.assertEqual(value["development"]["suites"][0]["trials"][0]["patch"]["status"], "unavailable")
+        self.assertEqual(value["development"]["statistics"]["behavior"]["pass"], 1)
+        self.assertTrue(value["warnings"])
+
+    def test_missing_trace_does_not_remove_behavior_or_usage(self):
+        (self.trial / "agent/trace.jsonl").unlink()
+        value = report.curate(self.root, self.repo)
+        self.assertEqual(value["development"]["statistics"]["behavior"]["pass"], 1)
+        self.assertEqual(value["development"]["suites"][0]["trials"][0]["metrics"]["prompt_tokens"], 100)
+
+    def test_default_report_omits_call_events_but_keeps_state_digests(self):
+        value = report.curate(self.root, self.repo)
+        self.assertNotIn("tool_trace", value["development"]["suites"][0]["trials"][0])
+        c = report.Curator(self.root, self.repo)
+        self.assertEqual(c.sanitize({"world_hash": "world", "coverage_sha1": "coverage",
+                                    "candidate_file_sha256": "old", "sha256": "old"}),
+                         {"world_hash": "world", "coverage_sha1": "coverage"})
+
+    def test_public_summary_contains_no_transcripts_patches_or_source_receipts(self):
+        value = report.curate(self.root, self.repo)
+        forbidden = {"prompt", "final_public_answer", "final_response", "tool_trace", "trace_metadata",
+                     "patch", "diff", "source_bindings", "evidence_bindings", "evidence_paths",
+                     "gateway_source_snapshot", "fixture_path", "grader_path", "checks", "failed_cases"}
+        def check(obj):
+            if isinstance(obj, dict):
+                self.assertFalse(forbidden.intersection(obj))
+                for child in obj.values():
+                    check(child)
+            elif isinstance(obj, list):
+                for child in obj:
+                    check(child)
+        check(value)
+        encoded = json.dumps(value)
+        for raw in ["Fix the fixture", "Fix fixture", "Finished", "export function rule"]:
+            self.assertNotIn(raw, encoded)
+        self.assertEqual(value["publication"], "summary")
+        self.assertEqual(value["development"]["statistics"]["behavior"]["pass"], 1)
+        self.assertIn("| Repair |", report.markdown(value))
+
+    def test_default_summary_needs_no_grader_or_candidate_source(self):
+        (self.repo / "tools/eval/agent_dev_bench.py").unlink()
+        (self.trial / "candidate/scripts/rules.ts").unlink()
+        value = report.curate(self.root, self.repo)
+        self.assertEqual(value["development"]["statistics"]["behavior"]["pass"], 1)
+        self.assertFalse(value["warnings"])
+
+    def test_detailed_mode_cannot_write_to_public_repo_content(self):
+        output = self.repo / "site/details"
+        argv = ["report", "--input-root", str(self.root), "--repo", str(self.repo),
+                "--output-root", str(output), "--include-tool-trace"]
+        with patch.object(sys, "argv", argv), self.assertRaises(ValueError):
+            report.main()
+        self.assertFalse(output.exists())
+
+    def test_detailed_mode_can_write_to_ignored_local_output(self):
+        output = self.repo / "out/details"
+        argv = ["report", "--input-root", str(self.root), "--repo", str(self.repo),
+                "--output-root", str(output), "--include-tool-trace"]
+        with patch.object(sys, "argv", argv), contextlib.redirect_stdout(io.StringIO()):
+            report.main()
+        value = json.loads((output / "result.json").read_text())
+        self.assertTrue(value["development"]["suites"][0]["trials"][0]["tool_trace"])
 
     def test_pretest_and_formal_statistics_are_separate(self):
         for group, success, limit in [("gameplay-v1", False, 2048), ("gameplay-v2", True, 8192),

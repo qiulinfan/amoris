@@ -1,29 +1,3 @@
-# Optional reference commit for the contract and benchmark maintained in this repository.
-# Empty means no reference commit is recorded; file hashes always apply (docs/spec/checks.md 5.4).
+# Optional source commit for the contract and benchmark maintained in this repository.
+# Empty means no reference commit is recorded (docs/spec/checks.md 5.4).
 commit = ""
-
-[files]
-"benchmark/README.md" = "3a7783eabdd043b12f1f90b94368fcb804973083c716b15446d27a1fa88ebd94"
-"benchmark/tasks.md" = "1786c441c5fd58eba72a4a7f0404cc1a8af7d988d44af2b78f07fd104726d103"
-"contract/actions.md" = "8d5ac5147140d505ec8e53657b10adb53314df12a36c3d7bace093921764847c"
-"contract/errors.md" = "41ebe78d81f61d4f9af67f70f33ce4da03d2f042e6cd4549f69917d602d96666"
-"contract/mcp.md" = "ef753d0fa6d31783cdcefaa0db49d215eb8e482dbb6b146e96fdc700d2106b5a"
-"contract/perception.md" = "766c2484332c6de5ea571257c2fd7c961a408366744ea2b98fcef39cc1148a01"
-"contract/projection.md" = "8e18a71cfce9b331914b82f09d3db9dec618d08df6a952aedfe5b4c63cb89b39"
-"contract/README.md" = "2be00b0cc72f1511ad45df45731ab4a1e6fda099f4dd025d4feb0f339cc22537"
-"contract/rust/Cargo.toml" = "8ed27168a3f8171619eb214121d1dda24fb2f1742c6ad546362ca5e8c6327a9a"
-"contract/rust/src/codes/mod.rs" = "c5a32f7bd777ed4c73819ebfbdd49aa2bf107e40991f6f8ed36dd6ddc7814270"
-"contract/rust/src/codes/play.rs" = "b2b20f339a69556fda67b1e9e390268fa511e3eb39eaa94defb946edc0bb2810"
-"contract/rust/src/codes/request.rs" = "22f0aaa49b3dc1d9b3a40194f9805fe72bc7f61708f2b90dc5bdf676ef05ec2a"
-"contract/rust/src/codes/session.rs" = "1e19b507fd65038639fd17c345bbf452e04a73ca4aa149b5da4367780f02863a"
-"contract/rust/src/lib.rs" = "faafa2c638a5bb3a74297fb4a172d113a23b6e3c98ad9812758a6603006c5c6a"
-"contract/rust/src/pointer.rs" = "093faefbe1833ecebef301f725730463c8313de811e48318c121679c6f969b65"
-"contract/rust/src/problem.rs" = "6e79b1d88dcfcbf54d83b8e7e2d7d782984ae49cb87591cd66429fb9cbce0940"
-"contract/rust/src/render.rs" = "9f5362e17aeb612dfd4a04ac3a7ccc68a44ee6aced2bb1f1694de34299b7a1af"
-"contract/rust/src/shape/mod.rs" = "3a63e818b761504013e3b5ad6d00b9b4ebb048ea8416b54195fbf624f7b5b3b1"
-"contract/rust/src/shape/object.rs" = "33c333b3aa8c938be39fd965dd4adf4325397bf546397f4eb83f2f0fa073b680"
-"contract/rust/src/shape/union.rs" = "079b19fcc5a7e87a8beb0d9d14d1332e74ebf33e9bcbe9d590e2abcc667c7879"
-"contract/rust/src/suggest.rs" = "e74b8a78368a55cb810346f00d085e35eff75eae9e5666eb8d1cf0a1da1e81aa"
-"contract/rust/tests/shape.rs" = "3c9e4d674e903e395aee9b62eb1c1fec8fa90b2c582441447aa57c751c50c636"
-"contract/sailing.md" = "d30cdbfbf577632a90f2f610b816c19d1a926b37250b467d495bc7605e0f9d22"
-"contract/time.md" = "9192d9b6f24f747a51b35e33b120a82f3164bcf9d8718d217b230bf6acf90a52"

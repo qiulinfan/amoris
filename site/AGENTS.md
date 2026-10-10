@@ -8,8 +8,8 @@
   artifact, not a second source tree. Serve it with
   `python3 -m http.server 8890 --bind 127.0.0.1 --directory out/site`.
 - The owner requested the root README refresh for this showcase. Keep unrelated work untouched.
-- Branding uses the owner-approved Morandi A/sandbox icon; canonical files and source hashes are in `assets/branding`.
-- External scene assets require exact license, source, and file-hash records. Never claim download sizes or model counts as measured renderer throughput.
+- Branding uses the owner-approved Morandi A/sandbox icon; canonical files and source details are in `assets/branding`.
+- External scene assets require exact license and source records. Keep file-verification hashes out of source and capture records; download-integrity locks remain in use. Never claim download sizes or model counts as measured renderer throughput.
 - `demos/` are standalone samples used for capture: Bistro exterior, Flight Helmet detail/stress,
   and the original sailing rules dressed with a CC0 Dutch ship and stateless `ShipPart` system.
   Imported GLBs are ignored under `models/third-party/`; fetch/pack with `tools/showcase_assets.py`.

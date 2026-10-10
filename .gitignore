@@ -26,3 +26,28 @@ site/demos/stress-*/
 # Large audited town-world model is packaged locally.
 samples/town-walk/models/third-party/
 samples/town-walk/lighting/town-probes.json
+
+# Personal environment files (at every depth)
+.DS_Store
+.obsidian/
+.idea/
+*.code-workspace
+.claude/
+.codex/
+.opencode/
+.omp/
+.pi/
+
+# Generated runs and local verification material stay in out/ or CI artifacts.
+logs/
+*.log
+*.tlog
+/docs/evidence/
+/docs/imports/files.json
+/docs/imports/commits.json
+/docs/bench/physics/*.txt
+/docs/bench/physics/*.jsonl
+/bench/agent-dev/control-results.json
+/site/content/evidence/bench/
+/site/media/lighting/*-pt-report.json
+/samples/town-walk/lighting/bake-report.json

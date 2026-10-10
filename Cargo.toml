@@ -60,7 +60,6 @@ web-sys = "=0.3.106"
 regex = "=1.13.1"
 tungstenite = "=0.30.0"
 toml = "=1.1.6"               # xtask: the check's configuration files (architecture.md 6)
-sha2 = "=0.11.0"              # xtask: shared/SYNC.toml's SHA-256 hashes (architecture.md 6)
 # The host's server side (docs/spec/server.md; architecture.md 6: presenters and tools only).
 tokio = { version = "=1.53.1", features = ["rt-multi-thread", "macros", "net", "sync", "time", "signal", "fs", "io-std", "process"] }
 axum = { version = "=0.8.9", features = ["ws"] }

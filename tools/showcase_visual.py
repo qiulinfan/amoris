@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Record actual native renderer frames along a declared camera path, not a real-time FPS benchmark."""
 import argparse
-import hashlib
 import json
 import math
 from pathlib import Path
@@ -42,7 +41,7 @@ def main():
         if index%60==0:print(f"{args.name}: {index}/{args.frames}",flush=True)
     video=media/f"{args.name}.mp4";encode(frames,video,30)
     subprocess.run(["ffmpeg","-hide_banner","-loglevel","error","-y","-i",str(video),"-frames:v","1","-q:v","2","-update","1",str(media/f"{args.name}-poster.jpg")],check=True)
-    receipt={"name":args.name,"kind":"actual_native_capture","fps":30,"frames":args.frames,"dimensions":[args.width,args.height],"duration_seconds":args.frames/30,"sha256":hashlib.sha256(video.read_bytes()).hexdigest(),"camera_path_sha256":hashlib.sha256(args.path.read_bytes()).hexdigest(),"recording_script_sha256":hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),"timing":"Fixed 2-tick simulation steps; encoded playback rate is not measured rendering FPS."}
+    receipt={"name":args.name,"kind":"actual_native_capture","fps":30,"frames":args.frames,"dimensions":[args.width,args.height],"duration_seconds":args.frames/30,"camera_path":str(args.path),"timing":"Fixed 2-tick simulation steps; encoded playback rate is not measured rendering FPS."}
     (ROOT/"out/showcase"/f"{args.name}-receipt.json").write_text(json.dumps(receipt,indent=2)+"\n")
     (ROOT/"out/showcase"/f"{args.name}-trace.json").write_text(json.dumps(trace,indent=2)+"\n")
     print(json.dumps(receipt),flush=True)

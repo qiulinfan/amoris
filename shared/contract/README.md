@@ -2,7 +2,7 @@
 
 - Status: Draft, slice 0. Maintained in this repository's `shared/contract/`.
 - Charter: 2.2, 3.1, 3.4, 3.5, 3.6, 3.7, 6.1, 6.2, 7 (items 8, 9, 10 and 12).
-- Contract version: 0.1 (draft).
+- Contract version: 0.2 (draft).
 
 ## What the contract is
 
@@ -72,23 +72,25 @@ engine's own version applies.
 | Version | Change |
 |---|---|
 | 0.1 | First draft (2026-10-03), integrated the same day with the slice 0 specifications and spikes: names settled (`Problem`, `EventSeq`, `ActOrigin`, applied writes by `tick`), halts after a script failure (time.md), `describe` taking `entity` or `part` (mcp.md 5.2). Revised the same day after review: world state separated from wire forms; projections and the sailing declarations in files of their own; the `intents` tool; entity references in the projections' forms; the text grammar for every perception answer; undeclared events hidden; declared requested decisions and episodes; `omniscient_player`; one seat per body. |
+| 0.2 | As built on Pioneer (2026-10-09, `docs/spec/player.md`; charter 5.1, Pioneer): `Observer.team` and team vision (perception.md, The perception update, step 5a); `wait` in stepped pacing, for the seat holding the clock, is a `step` until its next decision point (time.md, Requests); the player tools are the runtime's `player.*` commands, carried by one MCP tool `player` with an `action`, and a session is bound to a seat by the process that serves it (mcp.md 14); a game declares its players in `project.toml`'s `[player]`, and the declaration is world state (The game definition). |
 
 ## Contract record
 
 The authoritative contract and benchmark live in this repository under `shared/contract/` and
-`shared/benchmark/`. `shared/SYNC.toml` records each shared file's SHA-256 and an optional reference
-`commit` (`docs/spec/checks.md`, 5.4). An empty `commit` means no reference commit is recorded; the
-file hashes still apply.
+`shared/benchmark/`. `shared/SYNC.toml` records only an optional reference `commit`
+(`docs/spec/checks.md`, 5.4). An empty `commit` means no reference commit is recorded. Shared files
+have no checksum baseline (owner, 2026-10-10; charter 3.9).
 
 The procedure:
 
 1. Edit the contract here, with the version bumped and the version table updated when the contract
    changes as described above.
-2. Refresh the changed files' hashes in `shared/SYNC.toml` in the same change. The local check fails
-   with `gen.shared_modified` when a file differs from its recorded hash.
+2. Review shared changes with the contract's version and Git diff. Do not create file checksum
+   records. Generated outputs are compared directly with what their generator writes now.
 3. `contract.sync` is a planned comparison with the optional reference commit. It reports
    `Skipped` when no reference commit is recorded or the comparison is unavailable, never
-   `Passed`. It does not make another checkout the authority for this contract.
+   `Passed`. An implemented comparison reads the reference content from Git directly; it does
+   not make another checkout the authority or add a persistent file checksum baseline.
 4. Generated JSON Schemas belong under `shared/contract/schema/` (one file per request, response
    and declaration type, never edited by hand); the generation check reports `gen.stale` when
    they differ from what the generator writes now.
@@ -305,6 +307,12 @@ whose syntax is spec-script's (project components and their declarations). Eithe
 assembles one `GameDefinition`, validates it at load (every name referenced exists, names are
 unique, units match suffixes) and refuses to start a game whose definition fails, with the problems
 as `{code, message, detail}` objects (errors.md, code `definition.invalid`).
+
+As built on Pioneer (0.2): a project declares its players with `[player]` in `project.toml`, naming
+its perception file (profiles, instruments, kinds with their facts and affordances, events) and an
+engine action catalog. That declaration is world state (`PlayerSpec`), so a snapshot, a fork and a
+replay carry it and rebuild the definition from it (`docs/spec/player.md` 2 and 3). Intents a
+project declares in its scripts are not built there yet.
 
 `describe` (with `part`, or nothing; with `entity` it describes one entity, perception.md, Queries;
 its parameters are mcp.md 5.2's `DescribeParams`) answers the definition filtered for the caller: a

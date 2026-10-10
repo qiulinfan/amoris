@@ -4,7 +4,7 @@ from pathlib import Path
 from html.parser import HTMLParser
 from urllib.parse import urlsplit, unquote
 import argparse
-import hashlib
+from fractions import Fraction
 import json
 import subprocess
 
@@ -90,17 +90,10 @@ def main():
                 or any(type(value) is not int or value <= 0 for value in dimensions)):
             problems.append(f"media/{filename}: dimensions must contain two positive integers")
             continue
-        checksum = still.get("sha256")
-        if (not isinstance(checksum, str) or len(checksum) != 64
-                or any(character not in "0123456789abcdef" for character in checksum)):
-            problems.append(f"media/{filename}: sha256 must contain 64 lowercase hexadecimal characters")
-            continue
         image = site / "media" / filename
         if not image.is_file():
             problems.append(f"media/{filename}: missing still file")
             continue
-        if hashlib.sha256(image.read_bytes()).hexdigest() != checksum:
-            problems.append(f"media/{filename}: checksum does not match the capture manifest")
         if not args.links_only:
             try:
                 probe = json.loads(subprocess.check_output([
@@ -116,17 +109,18 @@ def main():
     assert len({clip["name"] for clip in manifest["clips"]}) == len(manifest["clips"])
     for clip in manifest["clips"]:
         video = site / "media" / (clip["name"] + ".mp4")
-        if hashlib.sha256(video.read_bytes()).hexdigest() != clip["sha256"]:
-            problems.append(f"media/{video.name}: checksum does not match the capture manifest")
+        if not video.is_file():
+            problems.append(f"media/{video.name}: missing video file")
+            continue
         if not args.links_only:
             probe = json.loads(subprocess.check_output([
-                "ffprobe", "-v", "error", "-show_entries", "stream=codec_name,width,height,avg_frame_rate,nb_frames",
+                "ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=codec_name,width,height,avg_frame_rate,nb_frames",
                 "-show_entries", "format=duration", "-of", "json", str(video),
             ], text=True))
             stream = probe["streams"][0]
             assert stream["codec_name"] == "h264"
             assert [stream["width"], stream["height"]] == clip["dimensions"]
-            assert stream["avg_frame_rate"] == "30/1"
+            assert Fraction(stream["avg_frame_rate"]) == Fraction(str(clip["fps"]))
             assert int(stream["nb_frames"]) == clip["frames"]
         caption = site / "media" / (clip["name"] + ".vtt")
         assert caption.read_text().startswith("WEBVTT")

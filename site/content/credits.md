@@ -13,7 +13,7 @@ third-party artwork; importing and filming it does not transfer that authorship.
 
 Source assets were acquired on **5 October 2026**. The machine-readable provenance
 record distributed with the site preserves exact source URLs, acquisition times,
-licenses and SHA-256 hashes. Flight Helmet is pinned to Khronos commit
+licenses and source file references. Flight Helmet is pinned to Khronos commit
 `edc7c9e67c639d230715049ee31f9a96a6babbbe`.
 
 ## Capture and conversion scope
@@ -32,8 +32,8 @@ geometry. Clean GLB import retained **1,296 mesh objects and 2,829,226 triangles
 (the source webpage reports a slightly different count). Its **132 materials** use
 **405 embedded PNG images**. Author-provided `_Specular` maps already encode occlusion,
 roughness and metalness in R/G/B. These maps preserve those channels; DirectX normal
-maps had only their green channel inverted for glTF. Image payload hashes and geometry
-counts were checked after export. Source images retain their full size in the GLB;
+maps had only their green channel inverted for glTF. Image payloads and geometry
+counts were checked locally after export. Source images retain their full size in the GLB;
 the renderer's 1K array conversion happens at runtime.
 
 The videos verify the pictured camera route in the real native renderer. This remains

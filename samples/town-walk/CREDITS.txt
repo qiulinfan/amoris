@@ -1,7 +1,6 @@
 Amazon Lumberyard Bistro, Open Research Content Archive (ORCA).
 Amazon Lumberyard, July 2017. Creative Commons Attribution 4.0 International.
 Source: https://developer.nvidia.com/orca/amazon-lumberyard-bistro
-Original converted GLB SHA256: b6930eb95fb6b38f5136b6de0895425076f752d12d5ec51b8db9c85229eae41d
 Changes: imported as a standalone sunny town, embedded textures capped at 1024px,
 positive Z reconstructed for legacy RG-only normal textures, static collision exploration,
 and baked diffuse GI. Geometry and material definitions retained.

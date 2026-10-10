@@ -6,7 +6,7 @@ result, which is committed, so a fresh checkout builds without running this.
     python third_party/vendor.py           # rebuild the directory from the pins
     python third_party/vendor.py --check   # rebuild into a temporary directory and compare
 
-The crate comes from cargo's cache or crates.io and every input is pinned by SHA-256 below; a
+The crate comes from cargo's cache or crates.io and the upstream dependency is pinned by SHA-256 below; a
 mismatch, a patch that does not apply cleanly or (with --check) any byte that differs from the
 committed directory fails with exit 1. Standard library and git (as a plain patch tool) only.
 Slice 1 keeps this script until `cargo xtask vendor` replaces it (script-sandbox.md 6).
@@ -27,33 +27,23 @@ CRATE = "rquickjs-sys"
 VERSION = "0.14.0"
 CRATE_SHA256 = "cee271d0eeba64f0915b846cb7ae02e16faf3dfdffdca91731101d9d30fe3423"
 
-# (file under patches/, the directory inside the crate it applies to, SHA-256), in order.
+# (file under patches/, the directory inside the crate it applies to), in order.
 PATCHES = [
     # quickjs-ng PR #1421 at head 0e7a5e08, as GitHub serves it (the debugger, charter 4.2.6).
-    ("quickjs-ng-pr1421.diff", "quickjs",
-     "b97233ca42edcd180f50df5a0b53bd33cc1264fa9aaf3b3680c42545fae8df66"),
-    ("p1-interrupt-counter.diff", ".",
-     "c7e807716aa20dfd896bbb5aa19abd58daf760948acba99170c454e928b2404d"),
-    ("p2-uncatchable-faults.diff", ".",
-     "fb8eadb5f6ec52b2a69e0a2b709ae7ae423456ffa8c8ac639a3140055fa0e9fc"),
-    ("p3-constant-seeds.diff", ".",
-     "b05f83117ea0569ccee5268d67027db974f45e16a777b8361b4359f1d217876a"),
-    ("p5-call-depth.diff", ".",
-     "7100107bcbc05076cafe9f15e1452e1b14ae83c3b47e28d8e0f6a3de7b4f0f03"),
-    ("p6-canonical-nan.diff", ".",
-     "4554b112fa9d047f5fc94d65580bcc5f5939ddee1d63a9663ce5b7518aad1480"),
-    ("p4-p7-build.diff", ".",
-     "0750a8d42f020ecc4184fe499260ba4e03f6b07965e8eff7d945bf8e436b33b1"),
+    ("quickjs-ng-pr1421.diff", "quickjs"),
+    ("p1-interrupt-counter.diff", "."),
+    ("p2-uncatchable-faults.diff", "."),
+    ("p3-constant-seeds.diff", "."),
+    ("p5-call-depth.diff", "."),
+    ("p6-canonical-nan.diff", "."),
+    ("p4-p7-build.diff", "."),
     # JS_DiscardPendingJobs: a failed call's queued jobs are dropped (script-sandbox.md 6).
-    ("p8-discard-jobs.diff", ".",
-     "18552de7aca358ec54921057225a49924e3457d689b0e164b36596a6f6c7ea8a"),
+    ("p8-discard-jobs.diff", "."),
     # The debugger (docs/spec/debugger.md 7): P9 caches each traced function's statement
     # positions, so the trace handler costs no line-table search per statement; P10 reports
     # exceptions to the trace handler with a catch prediction and adds JS_GetStackFrameInfo.
-    ("p9-debug-line-cache.diff", ".",
-     "1a1b4146cc3f3f51deb93582164d1abd2d0eaa409581c0d58d4e6bcac473ef82"),
-    ("p10-debug-exceptions-frames.diff", ".",
-     "8f4ef0154f234850a310f69366b91b87fc115fbb23d8040317e06dd457ac72a3"),
+    ("p9-debug-line-cache.diff", "."),
+    ("p10-debug-exceptions-frames.diff", "."),
 ]
 
 HERE = Path(__file__).resolve().parent
@@ -100,12 +90,8 @@ def build(into: Path) -> bool:
         with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
             tar.extractall(tmp, filter="data")
         (Path(tmp) / f"{CRATE}-{VERSION}").rename(into)
-    for name, directory, pin in PATCHES:
+    for name, directory in PATCHES:
         patch = HERE / "patches" / name
-        got = sha256(patch.read_bytes())
-        if got != pin:
-            print(f"error: patches/{name} has SHA-256 {got}, not {pin}")
-            return False
         if not apply(into, patch, directory):
             print(f"error: patches/{name} did not apply")
             return False

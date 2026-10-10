@@ -1,11 +1,8 @@
 {
   "format": "amoris-walk-model-v1",
-  "source_sha256": "b6930eb95fb6b38f5136b6de0895425076f752d12d5ec51b8db9c85229eae41d",
-  "sha256": "a67e148efc15c76c4b855ff1c5b4f1d6901e6a05312271f15a13794e544a079f",
   "source_bytes": 893590804,
   "bytes": 450728264,
   "maximum_texture_dimension": 1024,
-  "preserved_nonimage_buffer_views_sha256": "ebda067a22225a8e3d59f10237dcab60a4b54ff88d5044f184533b01d22935c6",
   "preserved": "All nonimage buffer-view bytes, accessors, meshes, node transforms, materials, extensions and scene instances.",
   "image_count": 405,
   "normal_z_reconstructed_images": 132,

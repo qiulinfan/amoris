@@ -1,8 +1,0 @@
-# 2026-10-04 02:31 load { 24.79 29.74 27.31 }
-Single precision ARM 64-bit with instructions: NEON FMADD (16-bit ObjectLayer) (ObjectStream) 
-Running scene: ConvexVsMesh
-Motion Quality, Thread Count, Steps / Second, Hash
-Discrete, 1, 181.597472, 0xc2458b95ed34d42b
-Discrete, 2, 252.692830, 0xc2458b95ed34d42b
-Discrete, 3, 505.155763, 0xc2458b95ed34d42b
-Discrete, 4, 624.350349, 0xc2458b95ed34d42b

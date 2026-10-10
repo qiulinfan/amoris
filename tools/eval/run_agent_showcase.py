@@ -2,7 +2,6 @@
 """Run real DeepSeek agents against isolated native Amoris projects and one shared budget."""
 from __future__ import annotations
 import argparse
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -13,7 +12,7 @@ import time
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
 from smoke_server import MCP
-from agent_dev_bench import Host, TASKS, prepare, grade, suite_fingerprint
+from agent_dev_bench import Host, TASKS, VERSION, prepare, grade
 from deepseek_agent import Ledger, Limits, run_agent
 
 
@@ -69,11 +68,19 @@ class DeveloperTools:
         return {"isError": True, "error": parsed} if result.get("isError") else parsed
 
 
+def private_output(path: Path) -> Path:
+    """Detailed episode receipts stay in ignored out/ or an external evidence directory."""
+    path = path.resolve()
+    if path.is_relative_to(ROOT) and not path.is_relative_to(ROOT / "out"):
+        raise ValueError("Detailed run receipts belong in ignored out/ or outside the repository")
+    return path
+
+
 def developer_runs(args, key, ledger):
-    output = args.output.resolve()
+    output = private_output(args.output)
     output.mkdir(parents=True, exist_ok=True)
-    metadata = {"protocol": "courier-v1", "fixture_sha256": suite_fingerprint(),
-                "grader_sha256": hashlib.sha256((ROOT / "tools/eval/agent_dev_bench.py").read_bytes()).hexdigest(),
+    metadata = {"protocol": VERSION, "suite_version": VERSION,
+                "fixture_path": "bench/agent-dev/template", "grader_path": "tools/eval/agent_dev_bench.py",
                 "tasks": [t.metadata() for t in TASKS], "repeats_planned": args.repeats,
                 "method": "native MCP tools; direct DeepSeek Chat Completions loop; no shell or evaluator access",
                 "reasoning_effort": "high", "budget_usd_shared": "5"}
@@ -99,8 +106,7 @@ def developer_runs(args, key, ledger):
                 # Avoid keeping a paused debugger host alive after a trial.
             verdict = grade(task.id, candidate, args.pocket.resolve(), trial / "grade")
             row = {"task": task.id, "kind": task.kind, "repetition": repetition,
-                   "agent": summary, "grade": verdict,
-                   "candidate_script_sha256": hashlib.sha256((candidate / task.file).read_bytes()).hexdigest()}
+                   "agent": summary, "grade": verdict, "candidate_script": task.file}
             rows.append(row)
             (output / "results.json").write_text(json.dumps({"protocol": metadata, "trials": rows}, indent=2)+"\n")
             print(json.dumps({"task": task.id, "repetition": repetition, "passed": verdict["passed"],
@@ -112,8 +118,8 @@ def developer_runs(args, key, ledger):
 
 
 def gameplay_runs(args, key, ledger):
-    from agent_gameplay import Gameplay, fixture_fingerprint, replay_actions
-    output = args.output.resolve()
+    from agent_gameplay import Gameplay, COURSE_VERSION, replay_actions
+    output = private_output(args.output)
     output.mkdir(parents=True, exist_ok=True)
     prompt = ("Collect all four cargo crates in this sailing course, using only the player tools. "
               "Your radar observes cargo within 30 metres. Navigation uses the game's disclosed helmsman "
@@ -122,7 +128,8 @@ def gameplay_runs(args, key, ledger):
               "At 60 ticks/second the boat can overshoot nearby cargo, so use short waits near a target and "
               "adjust sail or heading as needed. Complete within 3600 simulation ticks. "
               "When progress.collected equals progress.total, finish with a short result.")
-    protocol = {"course": "agent-sailing-downwind-v1", "fixture_sha256": fixture_fingerprint(),
+    protocol = {"course": COURSE_VERSION, "fixture_path": "site/demos/agent-sailing",
+                "gateway_path": "tools/eval/agent_gameplay.py",
                 "repeats_planned": args.repeats, "seed": 1, "max_ticks": 3600,
                 "reasoning_effort": args.game_effort, "max_output_tokens": args.game_output_tokens, "prompt": prompt,
                 "method": "project-level range-limited player gateway; native physics; no developer tools"}
@@ -170,6 +177,7 @@ def main():
     args = parser.parse_args()
     if not 1 <= args.repeats <= 3:
         raise ValueError("This first public protocol has at most three repetitions")
+    args.output = private_output(args.output)
     (gameplay_runs if args.mode == "gameplay" else developer_runs)(
         args, credential(args.credential_file), Ledger(args.ledger, "5"))
 

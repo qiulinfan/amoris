@@ -19,7 +19,7 @@ fresh host: every feature's behavioural check (the bug's own and the others', so
 something else fails) and that the rules' constants are unchanged (together: fixed), and whether a
 scenario's world hash chain is identical to the clean game's.
 
-Each run is recorded under docs/evidence/debug-eval/<bug>/<run>/: the prompt, the agent's raw event
+Each run is recorded under ignored out/debug-eval/<bug>/<run>/: the prompt, the agent's raw event
 stream (transcript.jsonl) and a readable transcript (transcript.md), the planted and the agent's
 diffs, the host's stderr, and result.json (success, wall time, tool and CLI calls, tokens). A run
 never replaces a recorded one: it takes the next free trial number.
@@ -56,7 +56,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent.parent
 OVERLAY = Path(__file__).resolve().parent / "debug_eval" / "scripts"
-EVIDENCE = REPO / "docs" / "evidence" / "debug-eval"
+EVIDENCE = REPO / "out" / "debug-eval"
 DOC = REPO / "docs" / "bench" / "debug-eval.md"
 DEFAULT_MODEL = "zai-coding-plan/glm-5.3-flash"
 TMP_PREFIX = "pocket-eval-"          # says nothing about the bug: the agent sees its working directory
@@ -1194,7 +1194,7 @@ def main():
     ap.add_argument("--max-time", type=int, default=900, help="seconds the agent may take")
     ap.add_argument("--max-calls", type=int, default=60, help="tool calls the agent may make")
     ap.add_argument("--evidence", default=str(EVIDENCE),
-                    help="where runs are recorded (default docs/evidence/debug-eval)")
+                    help="where runs are recorded (default ignored out/debug-eval)")
     ap.add_argument("--selftest", action="store_true")
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--recheck", action="store_true",

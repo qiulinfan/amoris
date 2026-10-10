@@ -11,7 +11,6 @@ RGBA8 before the renderer's 1K conversion. The imported runtime has 1,591 primit
 instances and 133 material slots including its default material. At the recorded
 street-side camera, the same 1080p render-and-wait method measured **12.02 ms mean**,
 **11.94 ms p50**, **13.00 ms p95**, and **1.827 ms CPU encode mean** over 300 frames.
-[Raw Bistro result](evidence/bench/bistro-1080p.json).
 
 Recorded **5 October 2026**, **Apple M5 / Metal**, **1920 × 1080**. Each CC0
 Flight Helmet contributes 94,722 triangles and six materials. Geometry and textures
@@ -32,10 +31,7 @@ It is not an interactive game's FPS. The scene triangle counts exclude shadow-pa
 multiplication and precede culling. An untimed ID pass confirmed visible pixels from all
 64 and 256 helmets, and 1,021 of 1,024 helmets (others were occluded), plus the ground.
 
-[64-instance JSON](evidence/bench/helmet-64-1080p.json),
-[256-instance JSON](evidence/bench/helmet-256-1080p.json),
-[1,024-instance JSON](evidence/bench/helmet-1024-1080p.json).
-These raw reports also include pass timings, material counts and source-image dimensions.
+Raw frame measurements stay in ignored local output; the table retains the completed-frame summary.
 The existing GPU profiler covers selected passes and omits postprocessing; Metal pass
 boundaries can omit tile work. Its sum is **not** a whole-frame GPU time and is not used
 for the chart above. The renderer currently downsamples maps into **1024 × 1024** layers.

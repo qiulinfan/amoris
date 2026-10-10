@@ -172,7 +172,7 @@ def convert_in_blender(args) -> None:
             node = nodes.new("ShaderNodeTexImage")
             node.image = image
             record["maps"][suffix] = {
-                "file": entry["converted"], "sha256": entry["sha256"],
+                "file": entry["converted"],
                 "color_space": color_space, "dimensions": list(image.size),
             }
             return node, entry
@@ -281,8 +281,7 @@ def main(args) -> None:
                 str(args.magick), str(source) + "[0]", "-alpha", "extract",
                 "-format", "%[fx:minima]", "info:"], text=True, timeout=120))
         records.append({
-            "source": str(source), "source_sha256": item["sha256"],
-            "converted": str(destination), "sha256": sha(destination),
+            "source": str(source), "converted": str(destination),
             "conversion": "DDS level 0 to lossless 8-bit PNG" +
                           ("; green inverted: DirectX to OpenGL normal" if source.stem.endswith("_Normal") else "") +
                           (f"; {bc5} positive normal Z reconstructed from RG after green inversion" if bc5 else ""),
@@ -308,7 +307,6 @@ def main(args) -> None:
     report = {
         "created_at": datetime.now(timezone.utc).isoformat(),
         "delivery": str(args.output_root / "BistroExterior.glb"),
-        "sha256": sha(args.output_root / "BistroExterior.glb"),
         "normal_z_reconstructed_textures": sum(record["normal_z_reconstructed"] for record in records),
         "normal_conversion": "Existing DirectX-to-glTF green inversion, then positive Z reconstructed for header-identified BC5 normal textures only.",
         "source_meshes": source["mesh_objects"], "imported_meshes": imported["mesh_objects"],

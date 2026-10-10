@@ -8,7 +8,6 @@ No API keys, provider requests or source-string success tests are used here.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import queue
@@ -135,16 +134,8 @@ def prepare(task: str | Task, dest: str | Path) -> dict:
     if source.count(t.old) != 1:
         raise RuntimeError(f"frozen task {t.id}: mutation anchor is not unique")
     f.write_text(source.replace(t.old, t.new))
-    return {**t.metadata(), "project_path": str(dest), "fixture_sha256": suite_fingerprint()}
-
-
-def suite_fingerprint() -> str:
-    h = hashlib.sha256()
-    for p in sorted(TEMPLATE.rglob("*")):
-        if p.is_file() and ".pocket" not in p.parts:
-            h.update(p.relative_to(TEMPLATE).as_posix().encode() + b"\0" + p.read_bytes() + b"\0")
-    h.update(json.dumps([t.metadata() for t in TASKS], sort_keys=True).encode())
-    return h.hexdigest()
+    return {**t.metadata(), "project_path": str(dest),
+            "fixture_path": "bench/agent-dev/template"}
 
 
 class Host:
@@ -439,8 +430,8 @@ def grade(task: str | Task, project: str | Path, pocketbin: str | Path,
             checks["host"] = {"passed": False, "error": str(e), "cases": []}
     focus = checks.get(t.id, {}).get("passed", False)
     regression = len(checks) == len(CHECKS) and all(v["passed"] for n, v in checks.items() if n != t.id)
-    receipt = {"format": 1, "suite_version": VERSION, "fixture_sha256": suite_fingerprint(),
-               "grader_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+    receipt = {"format": 1, "suite_version": VERSION, "fixture_path": "bench/agent-dev/template",
+               "grader_path": "tools/eval/agent_dev_bench.py",
                "task": t.id, "kind": t.kind, "passed": bool(type_ok and integrity_ok and focus and regression and not violations),
                "feature_passed": focus, "regressions_passed": regression, "types_passed": type_ok, "integrity_passed": integrity_ok,
                "scope_passed": not violations, "out_of_scope_files": violations,
@@ -467,7 +458,8 @@ def selftest(pocketbin: str | Path, output: str | Path) -> dict:
                         "initial_regressions_pass": bad["regressions_passed"],
                         "initial_types_pass": bad["types_passed"], "initial_integrity_pass": bad["integrity_passed"], "golden_passes": good["passed"]})
         print(json.dumps(results[-1]), flush=True)
-    receipt = {"format": 1, "suite_version": VERSION, "fixture_sha256": suite_fingerprint(),
+    receipt = {"format": 1, "suite_version": VERSION, "fixture_path": "bench/agent-dev/template",
+               "grader_path": "tools/eval/agent_dev_bench.py",
                "passed": all(r["initial_focus_fails"] and r["initial_regressions_pass"]
                              and r["initial_types_pass"] and r["initial_integrity_pass"] and r["golden_passes"] for r in results),
                "tasks": results}
@@ -485,7 +477,7 @@ def main():
                    default=Path(os.environ.get("CARGO_TARGET_DIR", REPO / "target")) / "release" / "pocket")
     a = p.parse_args()
     if a.command == "list":
-        print(json.dumps({"suite_version": VERSION, "fixture_sha256": suite_fingerprint(),
+        print(json.dumps({"suite_version": VERSION, "fixture_path": "bench/agent-dev/template",
                           "tasks": [t.metadata() for t in TASKS]}, indent=2))
     elif a.command == "prepare":
         if not a.task or not a.project:

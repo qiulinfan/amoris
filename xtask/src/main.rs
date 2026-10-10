@@ -48,7 +48,7 @@ fn main() -> ExitCode {
             eprintln!(
                 "cargo xtask check [--json] [--quick] [--only STEP,...] [--skip STEP,...] [--jobs N] [--record]"
             );
-            eprintln!("cargo xtask gen [--check] [--shared]");
+            eprintln!("cargo xtask gen [--check]");
             eprintln!("cargo xtask webcheck <page> --serve DIR [--isolation on|off] [--timeout S]");
             ExitCode::from(2)
         }

@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import argparse
 import copy
-import hashlib
 import json
 import math
 import os
@@ -25,6 +24,7 @@ import urllib.request
 
 REPO = Path(__file__).resolve().parents[2]
 FIXTURE = REPO / "site/demos/agent-sailing"
+COURSE_VERSION = "agent-sailing-downwind-v1"
 OBSERVE_RADIUS = 30.0
 TOOL_NAMES = {"observe", "helm", "navigate", "take", "wait"}
 
@@ -57,17 +57,6 @@ def tools() -> list[dict]:
              "Your current helm/navigation intent persists. Returns a new observation.",
              {"ticks": {"type": "integer", "minimum": 1, "maximum": 120}}, ("ticks",)),
     ]
-
-
-def fixture_fingerprint(project: Path = FIXTURE) -> str:
-    h = hashlib.sha256()
-    for p in sorted(project.rglob("*")):
-        if p.is_file() and ".pocket" not in p.parts and "__pycache__" not in p.parts:
-            h.update(p.relative_to(project).as_posix().encode() + b"\0")
-            with p.open("rb") as f:
-                for chunk in iter(lambda: f.read(1024 * 1024), b""): h.update(chunk)
-            h.update(b"\0")
-    return h.hexdigest()
 
 
 class NativeHost:
@@ -134,7 +123,8 @@ class Gameplay:
     def __init__(self, pocket: str | Path, project: str | Path | None = None,
                  run_dir: str | Path | None = None, *, on_step=None, step_stride: int = 2):
         self.source_project = Path(project or FIXTURE).resolve()
-        self.fixture_sha256 = fixture_fingerprint(self.source_project)
+        self.fixture_path = (self.source_project.relative_to(REPO).as_posix()
+                             if self.source_project.is_relative_to(REPO) else "external-fixture")
         self.run_dir = Path(run_dir or tempfile.mkdtemp(prefix="amoris-player-")).resolve()
         self.run_dir.mkdir(parents=True, exist_ok=True)
         self.project = self.run_dir / "project"
@@ -280,7 +270,8 @@ class Gameplay:
         tally = self._boat()["Tally"]
         return {"collected": tally["taken"], "total": tally["total"], "worth": tally["worth"],
                 "score": tally["taken"] / max(1, tally["total"]), "success": tally["taken"] == tally["total"] > 0,
-                "tick": state["tick"], "world_hash": state["world_hash"], "fixture_sha256": self.fixture_sha256}
+                "tick": state["tick"], "world_hash": state["world_hash"],
+                "course_version": COURSE_VERSION, "fixture_path": self.fixture_path}
 
 
 def replay_actions(actions: list[dict], *, pocket: str | Path, project=None, run_dir=None,

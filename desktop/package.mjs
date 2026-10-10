@@ -2,7 +2,6 @@
 import { packager } from '@electron/packager';
 import { createRequire } from 'node:module';
 import { execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -79,13 +78,8 @@ const apps = await packager({
   asar: false, prune: false, overwrite: true,
   extraResource: Object.values(destinations),
 });
-const hashes = {};
-for (const [name, filename] of Object.entries({
-  pocket: source.pocket, editor: path.join(source.editor, 'index.html'),
-  viewport: path.join(source.viewport, 'pkg/pocket_viewport_bg.wasm'), tsc: source.tsc,
-})) hashes[name] = createHash('sha256').update(await fs.readFile(filename)).digest('hex');
 const receipt = { applications: apps, platform: process.platform, arch: process.arch,
-  electron: packageInfo.devDependencies.electron, typescript: compilerVersion, hashes,
+  electron: packageInfo.devDependencies.electron, typescript: compilerVersion,
   distributionSigned: false, notarized: false };
 await fs.writeFile(path.join(output, 'package-receipt.json'), JSON.stringify(receipt, null, 2) + '\n');
 console.log(JSON.stringify(receipt, null, 2));

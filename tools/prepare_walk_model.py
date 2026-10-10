@@ -11,7 +11,6 @@ Pillow and NumPy installations; installs nothing.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import io
 import json
 import struct
@@ -57,14 +56,6 @@ def reconstruct_normal_z(image):
     z = np.sqrt(np.maximum(1.0 - x * x - y * y, 0.0))
     rgba[:, :, 2] = np.clip(np.floor((z * 0.5 + 0.5) * 255.0 + 0.5), 0, 255).astype(np.uint8)
     return Image.fromarray(rgba)
-
-
-def sha(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for block in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
 
 
 def read_glb(path: Path):
@@ -165,9 +156,7 @@ def prepare(source: Path, output: Path, maximum: int, report: Path):
         replacements[view_index] = replacement
         image_report.append({"index": index, "name": image.get("name", ""), "mime_type": mime,
                              "source_dimensions": original_size, "dimensions": resized_size,
-                             "roles": sorted(roles.get(index, set())), "normal_z_reconstructed": bool(blue_zero),
-                             "source_sha256": hashlib.sha256(original).hexdigest(),
-                             "sha256": hashlib.sha256(replacement).hexdigest()})
+                             "roles": sorted(roles.get(index, set())), "normal_z_reconstructed": bool(blue_zero)})
         print(json.dumps({"image": index + 1, "images": len(images), "source": original_size,
                           "output": resized_size}), flush=True)
     # No accessor may share the buffer view of an image: preserve every geometry byte exactly.
@@ -178,7 +167,6 @@ def prepare(source: Path, output: Path, maximum: int, report: Path):
         if any(value in replacements for value in referenced if value is not None):
             raise ValueError("an image buffer view is also referenced by a mesh accessor")
     packed = bytearray()
-    geometry_digest = hashlib.sha256()
     for index, view in enumerate(views):
         if view.get("buffer", 0) != 0:
             raise ValueError("external buffer views are unsupported")
@@ -193,8 +181,6 @@ def prepare(source: Path, output: Path, maximum: int, report: Path):
         payload = replacements.get(index)
         if payload is None:
             payload = binary[begin:end]
-            geometry_digest.update(struct.pack("<I", index))
-            geometry_digest.update(payload)
         view["byteOffset"] = len(packed)
         view["byteLength"] = len(payload)
         packed.extend(payload)
@@ -215,10 +201,9 @@ def prepare(source: Path, output: Path, maximum: int, report: Path):
         stream.write(struct.pack("<II", len(packed), 0x004E4942))
         stream.write(packed)
     temporary.replace(output)
-    receipt = {"format": "amoris-walk-model-v1", "source": str(source), "source_sha256": sha(source),
-               "output": str(output), "sha256": sha(output), "source_bytes": source.stat().st_size,
+    receipt = {"format": "amoris-walk-model-v1", "source": str(source),
+               "output": str(output), "source_bytes": source.stat().st_size,
                "bytes": output.stat().st_size, "maximum_texture_dimension": maximum,
-               "preserved_nonimage_buffer_views_sha256": geometry_digest.hexdigest(),
                "preserved": "All nonimage buffer-view bytes, accessors, meshes, node transforms, materials, extensions and scene instances.",
                "image_count": len(images), "images": image_report,
                "normal_z_reconstructed_images": reconstructed,
@@ -239,12 +224,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", type=Path, default=DEFAULT_INPUT)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--report", type=Path)
+    parser.add_argument("--report", type=Path, help="Defaults to ignored out/town-walk/<output-name>.receipt.json")
     parser.add_argument("--max-texture", type=int, default=1024)
     args = parser.parse_args()
     try:
         prepare(args.input, args.output, args.max_texture,
-                args.report or args.output.with_suffix(".receipt.json"))
+                args.report or ROOT / "out/town-walk" / (args.output.stem + ".receipt.json"))
     except (OSError, ValueError, KeyError, IndexError, json.JSONDecodeError) as error:
         parser.exit(1, f"Walk-model preparation failed: {error}\n")
 

@@ -75,13 +75,10 @@ Media candidate: **gameplay-v2/episode-2**. Highest recorded native collection s
 
 ## Frozen protocol
 
-- development-v1: `courier-v1`; effort `high`.
-- Fixture SHA-256: `126bf315b27a4bc1f6bc6282988606c48ab946dd5d9a343a75064a98d0ef7456`.
-- Grader SHA-256: `9f95bc39e540208b50d5cdd7a59913a9e77d5ce889712c0a0748ff8bc6e094e8`.
-- gameplay-v1: fixture `0d48ff5eaff3fbfa5a23b71e5883c811b176bf938f2a9726a4e6b583629ccfd0`; gateway hash recorded at run: `not recorded`.
-- gameplay-v2: fixture `0d48ff5eaff3fbfa5a23b71e5883c811b176bf938f2a9726a4e6b583629ccfd0`; gateway hash recorded at run: `not recorded`.
-- gameplay-v3: fixture `0d48ff5eaff3fbfa5a23b71e5883c811b176bf938f2a9726a4e6b583629ccfd0`; gateway hash recorded at run: `not recorded`.
-- Gateway source snapshot SHA-256: `61c728abb00e500c2af60fc3bcdb5bcad7527b10a11e8e3c2416c81ddde10e1e`. File at report generation; not a substitute for a pre-run implementation hash.
+- development-v1: `courier-v1`; task IDs `collection-range, score-values, objective-victory, dash-cooldown, milestone-event, damage-and-defeat`; effort `high`.
+- gameplay-v1: course `agent-sailing-downwind-v1`; effort `low`.
+- gameplay-v2: course `agent-sailing-downwind-v1`; effort `low`.
+- gameplay-v3: course `agent-sailing-downwind-v1`; effort `none`.
 
 Actual response model aliases: `deepseek-flash`
 
@@ -89,6 +86,6 @@ Actual response model aliases: `deepseek-flash`
 - Behavior is graded independently from model finish status; a transport interruption can leave a passing patch.
 - Gameplay uses a project-level restricted gateway and a disclosed native Helm executor; this is not global player authorization.
 - The model never receives the grader, golden files, private native state or shared budget ledger.
-- Tool traces are optional bounded excerpts; their omission or truncation does not remove trials from statistics.
+- Public summaries contain outcomes and method fields; detailed transcripts and patches are local-only.
 - The 2048-token gameplay-v1 pretests, low-thinking 8192-token gameplay-v2 runs and non-thinking 4096-token gameplay-v3 runs are separate frozen conditions; their success rates and performance averages are not pooled.
 - Any highest-score media selection is disclosed and does not replace the complete trial table.

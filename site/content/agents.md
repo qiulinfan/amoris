@@ -66,7 +66,7 @@ Median agent wall time: **86.95 s**. Median native tool calls:
 **97.29%**. Recorded developer calls cost at most
 **$0.416942** at the published peak rates, plus unsettled requests.
 
-[Every trial, final patch and tool trace](evidence/agents/result.json) ·
+[Benchmark summary and trial scores](evidence/agents/result.json) ·
 [Readable result tables](evidence/agents/result.md).
 
 A trial passes only if its feature, all five unrelated feature suites, TypeScript checking,
@@ -120,7 +120,7 @@ these unknown charges.
 ## Reproduce and inspect
 
 The [frozen protocol](https://github.com/qiulinfan/amoris/blob/main/bench/agent-dev/protocol.md),
-[task prompts and hashes](https://github.com/qiulinfan/amoris/blob/main/bench/agent-dev/manifest.json),
+[task prompts and source references](https://github.com/qiulinfan/amoris/blob/main/bench/agent-dev/manifest.json),
 [control results](https://github.com/qiulinfan/amoris/blob/main/bench/agent-dev/control-results.json)
 and [native grader](https://github.com/qiulinfan/amoris/blob/main/tools/eval/agent_dev_bench.py)
 define the development experiment independently of the provider runner.

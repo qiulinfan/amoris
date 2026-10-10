@@ -1,8 +1,6 @@
 {
   "format": 1,
   "suite_version": "courier-v1",
-  "fixture_sha256": "126bf315b27a4bc1f6bc6282988606c48ab946dd5d9a343a75064a98d0ef7456",
-  "grader_sha256": "9f95bc39e540208b50d5cdd7a59913a9e77d5ce889712c0a0748ff8bc6e094e8",
   "tasks": [
     {
       "id": "collection-range",
