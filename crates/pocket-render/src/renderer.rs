@@ -875,6 +875,7 @@ impl Renderer {
         // The measured defaults for this adapter, unless POCKET_AA or POCKET_GTAO say otherwise.
         let (default_aa, default_gtao) = crate::post::defaults_for(&gpu.info);
         let aa = Antialiasing::from_env(default_aa);
+        let aa = rt_shadows.as_ref().map_or(aa, |rt| rt.antialiasing(aa));
         let gtao_mode = Gtao::from_env(default_gtao);
         let format = SceneFormat::new(aa, gtao_mode);
         let vertex_layout = vertex_layout();
@@ -1288,8 +1289,12 @@ impl Renderer {
 
     /// Anti-aliasing: samples per pixel and TAA (post.rs; `POCKET_AA` sets the starting mode).
     /// A change rebuilds the opaque pass's targets and pipelines and drops TAA's history.
+    /// Metal ray-traced sun shadows use one sample; requesting MSAA retains only TAA, if any.
     pub fn set_antialiasing(&mut self, aa: Antialiasing) {
-        self.aa = aa;
+        self.aa = self
+            .rt_shadows
+            .as_ref()
+            .map_or(aa, |rt| rt.antialiasing(aa));
         self.reformat();
     }
 

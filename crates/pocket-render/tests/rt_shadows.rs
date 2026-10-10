@@ -20,7 +20,8 @@ use pocket_assets::ModelAsset;
 use pocket_assets::frame::{AnimView, InstanceUpdate, Look, Pose, RenderFrame};
 use pocket_assets::mesh::{AlphaMode, AnimationClip, Channel, ChannelPath, Interpolation};
 use pocket_render::rt_shadows::RtShadowStats;
-use pocket_render::{BackendChoice, Gpu, Renderer, demo};
+use pocket_render::{Antialiasing, BackendChoice, Gpu, Renderer, demo};
+use std::sync::{Arc, Mutex};
 
 const N: u32 = 4;
 const W: u32 = 480;
@@ -169,6 +170,9 @@ fn raised() -> RenderFrame {
 
 fn renderer(gpu: &Gpu, hero: &ModelAsset) -> Renderer {
     let mut r = Renderer::new(gpu, wgpu::TextureFormat::Rgba8UnormSrgb, W, H);
+    // Compare shadow paths with the same single-sample, non-temporal rasterization. Metal's
+    // ray-query shader cannot use MSAA; adapter defaults would otherwise give different edges.
+    r.set_antialiasing(Antialiasing::Off);
     r.add_model(demo::MIXED_MODEL, &demo::mixed_model());
     r.add_model(OPAQUE_MODEL, &opaque_model());
     r.add_model(HERO, hero);
@@ -346,6 +350,51 @@ fn cut_outs(name: &str, devices: &Devices, hero: &ModelAsset, still: &State) {
     );
 }
 
+/// The production constructor uses the same ray-query capability as POCKET_RT_SHADOWS=1,
+/// without the comparison helper's explicit AA override. Its default and later MSAA requests
+/// must draw real frames, and report the effective mode instead of labelling one sample MSAA.
+fn metal_antialiasing(name: &str, devices: &Devices, still: &State) {
+    if devices.traced.info.backend != wgpu::Backend::Metal {
+        return;
+    }
+    let mut r = Renderer::new(&devices.traced, wgpu::TextureFormat::Rgba8UnormSrgb, W, H);
+    assert_eq!(r.antialiasing().samples(), 1, "{name}: ray-query default");
+    r.add_model(demo::MIXED_MODEL, &demo::mixed_model());
+    r.set_camera_override(Some(demo::mixed_camera(N)));
+    r.set_lod(pocket_render::LodMode::Off);
+    r.apply(first(false), 0.0);
+    let visible_shadow = |shot: &[f32]| {
+        let mean = shot.iter().sum::<f32>() / shot.len() as f32;
+        let shadowed = count(&dark(shot, &still.lit));
+        assert!(
+            mean > 100.0,
+            "{name}: the ray-query frame is not black ({mean})"
+        );
+        assert!(
+            shadowed > (W * H) as usize / 100 && shadowed < (W * H) as usize / 10,
+            "{name}: the ray-query frame casts visible, localized shadows ({shadowed})"
+        );
+    };
+    visible_shadow(&shoot(&mut r, 1.0));
+    assert_eq!(r.last.antialiasing, r.antialiasing().name());
+
+    r.set_antialiasing(Antialiasing::Msaa);
+    assert_eq!(r.antialiasing(), Antialiasing::Off);
+    let msaa = shoot(&mut r, 1.0);
+    visible_shadow(&msaa);
+    assert!(iou(&dark(&msaa, &still.lit), &still.rt) > 0.99);
+    assert_eq!(r.last.antialiasing, "off");
+
+    r.set_antialiasing(Antialiasing::MsaaTaa);
+    assert_eq!(r.antialiasing(), Antialiasing::Taa);
+    visible_shadow(&shoot(&mut r, 1.0));
+    assert_eq!(r.last.antialiasing, "taa");
+    r.set_antialiasing(Antialiasing::Off);
+    assert_eq!(r.antialiasing(), Antialiasing::Off);
+    r.set_antialiasing(Antialiasing::Taa);
+    assert_eq!(r.antialiasing(), Antialiasing::Taa);
+}
+
 #[test]
 fn ray_traced_shadows_fall_where_cascades_do() {
     let backends: &[BackendChoice] = if cfg!(windows) {
@@ -371,6 +420,18 @@ fn ray_traced_shadows_fall_where_cascades_do() {
         let cascaded = Gpu::headless_ray_query(choice, false).expect("the same GPU without them");
         assert!(!cascaded.caps.ray_query);
         let name = format!("{} on {}", traced.backend_name(), traced.info.name);
+        // Pipeline creation runs on worker threads, whose validation errors are outside an
+        // error scope pushed on this thread. A failed pass must not look like a shadowed frame.
+        let gpu_errors = Arc::new(Mutex::new(Vec::<String>::new()));
+        for gpu in [&cascaded, &traced] {
+            let errors = gpu_errors.clone();
+            gpu.device
+                .on_uncaptured_error(Arc::new(move |error: wgpu::Error| {
+                    let message = error.to_string();
+                    eprintln!("ray-traced shadow test GPU error: {message}");
+                    errors.lock().expect("GPU error log").push(message);
+                }));
+        }
         let devices = Devices { cascaded, traced };
         let mut paths = Paths::new(&devices, &hero);
 
@@ -378,6 +439,11 @@ fn ray_traced_shadows_fall_where_cascades_do() {
         let scene = first(false);
         paths.apply(&scene, 0.0);
         let still = paths.shoot(1.0);
+        assert!(
+            gpu_errors.lock().expect("GPU error log").is_empty(),
+            "{name}: the passes must render without GPU errors: {:?}",
+            gpu_errors.lock().expect("GPU error log")
+        );
         agree(&name, "static", &still, 0.9);
         assert!(
             still.stats.instances == N * N + 1 && still.stats.masked > 0,
@@ -390,6 +456,7 @@ fn ray_traced_shadows_fall_where_cascades_do() {
             still.stats
         );
         cut_outs(&name, &devices, &hero, &still);
+        metal_antialiasing(&name, &devices, &still);
 
         // 2. Every cell moves 1 m during tick 2: halfway, then there.
         paths.apply(&moved(&scene), 2.0);
@@ -420,5 +487,10 @@ fn ray_traced_shadows_fall_where_cascades_do() {
         let up = paths.shoot(7.0);
         agree(&name, "arms raised", &up, 0.85);
         follow(&name, "arms raised", &down, &up, 500);
+        assert!(
+            gpu_errors.lock().expect("GPU error log").is_empty(),
+            "{name}: the passes must render without GPU errors: {:?}",
+            gpu_errors.lock().expect("GPU error log")
+        );
     }
 }

@@ -10,8 +10,11 @@
 //! alpha-masked material's instances use a non-opaque copy of their mesh's bottom level, and the
 //! shadow ray tests each of their candidate hits against the material's alpha cutoff as the masked
 //! shadow pass does (rt_shadows.wgsl). Skinned meshes, whose vertices the skinning pass writes each
-//! frame, get their bottom levels rebuilt in the frame's encoder after that pass, with the top
-//! level, every frame they cast.
+//! frame, get their bottom levels rebuilt after that pass, every frame they cast. On Metal, wgpu
+//! 30 lacks BLAS-to-TLAS barriers (gfx-rs/wgpu#9215): bottom-level builds are completed before
+//! building the top level. This introduces a CPU wait for each skinned frame until that upstream
+//! fix is released and verified. The Metal ray-query forward shader also uses one sample: its
+//! multisampled variant currently produces black frames on Apple M5.
 
 use std::collections::HashMap;
 
@@ -55,6 +58,10 @@ struct CasterGpu {
 }
 
 pub struct RtShadows {
+    device: wgpu::Device,
+    /// wgpu 30's Metal backend does not insert acceleration-structure barriers (#9215).
+    /// Complete bottom-level builds before the top-level build consumes them.
+    metal: bool,
     /// Opaque bottom levels by mesh id (skinned meshes' too, rebuilt every frame they cast).
     /// Per mesh row; none for the rows of coarser levels of detail (shadow rays always meet an
     /// instance's full mesh).
@@ -181,6 +188,7 @@ fn build_blas(
     meshes: &MeshPool,
     ids: &[u32],
     opaque: bool,
+    metal: bool,
 ) -> Vec<wgpu::Blas> {
     let sizes: Vec<_> = ids
         .iter()
@@ -201,10 +209,30 @@ fn build_blas(
             label: Some("shadow caster meshes"),
         });
         enc.build_acceleration_structures(&entries, std::iter::empty());
-        queue.submit([enc.finish()]);
+        let submission = queue.submit([enc.finish()]);
+        if metal {
+            wait_for_build(device, submission);
+        }
     }
     drop(entries);
     blas
+}
+
+fn wait_for_build(device: &wgpu::Device, submission: wgpu::SubmissionIndex) {
+    device
+        .poll(wgpu::PollType::Wait {
+            submission_index: Some(submission),
+            timeout: Some(std::time::Duration::from_secs(30)),
+        })
+        .expect("Metal shadow acceleration-structure build completes");
+}
+
+fn complete_build(device: &wgpu::Device, queue: &wgpu::Queue, enc: &mut wgpu::CommandEncoder) {
+    let next = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("frame after shadow acceleration-structure build"),
+    });
+    let built = std::mem::replace(enc, next);
+    wait_for_build(device, queue.submit([built.finish()]));
 }
 
 impl RtShadows {
@@ -216,6 +244,8 @@ impl RtShadows {
         }
         log::info!("ray-traced sun shadows: on (POCKET_RT_SHADOWS=1)");
         Some(RtShadows {
+            device: gpu.device.clone(),
+            metal: gpu.info.backend == wgpu::Backend::Metal,
             blas: Vec::new(),
             skinned: HashMap::new(),
             skinned_casters: false,
@@ -229,6 +259,25 @@ impl RtShadows {
             stale: true,
             stats: RtShadowStats::default(),
         })
+    }
+
+    /// The effective AA mode for this shader. Preserve TAA while avoiding the broken Metal
+    /// multisampled ray-query variant; the ordinary forward shader keeps the adapter's defaults.
+    pub(crate) fn antialiasing(&self, requested: crate::Antialiasing) -> crate::Antialiasing {
+        use crate::Antialiasing;
+        let effective = match (self.metal, requested) {
+            (true, Antialiasing::Msaa) => Antialiasing::Off,
+            (true, Antialiasing::MsaaTaa) => Antialiasing::Taa,
+            _ => requested,
+        };
+        if effective != requested {
+            log::warn!(
+                "Metal ray-traced sun shadows: {} produces black frames; using {} (one sample)",
+                requested.name(),
+                effective.name()
+            );
+        }
+        effective
     }
 
     /// The lighting layout's entries for the top level, the casters' table and the mesh pool.
@@ -328,7 +377,7 @@ impl RtShadows {
             let ids: Vec<u32> = (first..meshes.len() as u32)
                 .filter(|&id| !meshes.dynamic[id as usize] && !meshes.is_level(id))
                 .collect();
-            let mut built = build_blas(device, queue, meshes, &ids, true).into_iter();
+            let mut built = build_blas(device, queue, meshes, &ids, true, self.metal).into_iter();
             for id in first..meshes.len() as u32 {
                 if meshes.is_level(id) {
                     self.blas.push(None);
@@ -355,7 +404,7 @@ impl RtShadows {
             ids.retain(|id| !self.masked.contains_key(id));
             for (id, blas) in ids
                 .iter()
-                .zip(build_blas(device, queue, meshes, &ids, false))
+                .zip(build_blas(device, queue, meshes, &ids, false, self.metal))
             {
                 self.masked.insert(*id, blas);
             }
@@ -458,7 +507,15 @@ impl RtShadows {
                 Some(build_entry(blas, &self.skinned[&id], meshes, id))
             })
             .collect();
-        enc.build_acceleration_structures(&entries, [&self.tlas]);
+        if self.metal && !entries.is_empty() {
+            // The prefix also contains this frame's skinning writes. The top-level build must
+            // see completed bottom levels; two builds in one Metal encoder have no barrier.
+            enc.build_acceleration_structures(&entries, std::iter::empty());
+            complete_build(&self.device, queue, enc);
+            enc.build_acceleration_structures(std::iter::empty(), [&self.tlas]);
+        } else {
+            enc.build_acceleration_structures(&entries, [&self.tlas]);
+        }
         self.built = table.len();
     }
 }

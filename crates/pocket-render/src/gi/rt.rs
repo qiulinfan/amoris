@@ -688,7 +688,19 @@ impl RayLighting {
             }]),
         };
         let build_start = Instant::now();
-        encoder.build_acceleration_structures([&build], [&tlas]);
+        if gpu.info.backend == wgpu::Backend::Metal {
+            // wgpu-hal 30.0.1's Metal AS barrier is empty (#9215): finishing both builds in
+            // one submission does not order the BLAS producer before the TLAS consumer.
+            // This immutable upload pays one bounded completion wait until the HAL fixes it.
+            encoder.build_acceleration_structures([&build], std::iter::empty());
+            wait(&device, queue.submit([encoder.finish()]))?;
+            encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("GI TLAS build after completed BLAS"),
+            });
+            encoder.build_acceleration_structures(std::iter::empty(), [&tlas]);
+        } else {
+            encoder.build_acceleration_structures([&build], [&tlas]);
+        }
         wait(&device, queue.submit([encoder.finish()]))?;
         let build_wall_ms = build_start.elapsed().as_secs_f64() * 1000.0;
         let storage_usage = wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST;

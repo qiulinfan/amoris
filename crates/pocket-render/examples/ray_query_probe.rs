@@ -317,7 +317,26 @@ async fn probe() -> ProbeResult<Value> {
             }]),
         })
         .collect();
-    encoder.build_acceleration_structures(&builds, structures.iter().map(|(_, tlas)| tlas));
+    if info.backend == wgpu::Backend::Metal {
+        // wgpu-hal 30.0.1 does not implement its Metal BLAS-to-TLAS barrier (#9215).
+        // Complete the producers before encoding their consumers; preserve this probe's
+        // candidate/committed-hit checks instead of relying on an unordered combined build.
+        encoder.build_acceleration_structures(&builds, std::iter::empty());
+        let blas_submission = queue.submit([encoder.finish()]);
+        device.poll(wgpu::PollType::Wait {
+            submission_index: Some(blas_submission),
+            timeout: Some(Duration::from_secs(30)),
+        })?;
+        encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("trace probe after completed BLAS builds"),
+        });
+        encoder.build_acceleration_structures(
+            std::iter::empty(),
+            structures.iter().map(|(_, tlas)| tlas),
+        );
+    } else {
+        encoder.build_acceleration_structures(&builds, structures.iter().map(|(_, tlas)| tlas));
+    }
     for (pipeline, bindings) in [
         (&committed, &opaque_bindings),
         (&confirmed, &candidate_bindings),

@@ -914,7 +914,18 @@ impl PathTracer {
             }]),
         };
         let start = Instant::now();
-        encoder.build_acceleration_structures([&build], [&tlas]);
+        if gpu.info.backend == wgpu::Backend::Metal {
+            // wgpu-hal 30.0.1 leaves the Metal BLAS-to-TLAS barrier empty (#9215).
+            // Complete this immutable BLAS before encoding the dependent TLAS build.
+            encoder.build_acceleration_structures([&build], std::iter::empty());
+            wait(&device, queue.submit([encoder.finish()]))?;
+            encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("PT TLAS build after completed BLAS"),
+            });
+            encoder.build_acceleration_structures(std::iter::empty(), [&tlas]);
+        } else {
+            encoder.build_acceleration_structures([&build], [&tlas]);
+        }
         wait(&device, queue.submit([encoder.finish()]))?;
         let build_ms = start.elapsed().as_secs_f64() * 1000.0;
         let mut sky = Sky::new(&device);
