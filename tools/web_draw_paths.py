@@ -8,7 +8,7 @@ path, crates/pocket-render/src/batches.rs). Each run reports frame and GPU times
 hidden; the two runs' coverage and pixels are compared (pixels need Pillow).
 
     python3 tools/web_draw_paths.py "http://127.0.0.1:8090/viewport/?demo=mixed" --name mixed \
-        --out docs/evidence/webgpu/browser [--seconds 6] [--size 960x540] [--chrome-flags ...]
+        --out out/bench-runs/webgpu/browser [--seconds 6] [--size 960x540] [--chrome-flags ...]
 
 Writes <name>-<path>.json per run, <name>.json (the comparison) and the screenshots (one when
 both are identical; downscaled to --keep-width) to --out.
@@ -121,6 +121,8 @@ def main():
     for label, url in variants:
         shot = out / f"{a.name}-{label}.png"
         stats, evaluated, logs = run(url, shot, a.seconds, a.size, a.chrome_flags)
+        if not isinstance(evaluated, dict):
+            evaluated = {"error": "coverage evaluation returned an invalid result"}
         kept = dict(evaluated)
         cov = kept.get("coverage", [])
         if len(cov) > 100:
@@ -131,6 +133,15 @@ def main():
         (out / f"{a.name}-{label}.json").write_text(json.dumps(record, indent=1))
         runs[label] = (shot, stats, evaluated)
     (sa, ta, ea), (sb, tb, eb) = runs[la], runs[lb]
+    errors = {label: e.get("error") or "coverage data missing"
+              for label, e in ((la, ea), (lb, eb))
+              if "error" in e or not isinstance(e.get("coverage"), list)}
+    if errors:
+        summary = {"name": a.name, "compare": [la, lb], "error": "coverage readback failed",
+                   "coverage_errors": errors}
+        (out / f"{a.name}.json").write_text(json.dumps(summary, indent=1))
+        print(json.dumps(summary))
+        return 1
     ca = dict((e, s) for e, s in ea.get("coverage", []))
     cb = dict((e, s) for e, s in eb.get("coverage", []))
     ids = sorted(set(ca) | set(cb))

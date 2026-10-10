@@ -2,23 +2,18 @@
 """Records the machine's conditions before or between measurements (docs/bench/quiet-2026-10-09.md).
 
 Windows only (the R1 laptop): power source and plan, the NVIDIA GPU's temperature, clocks, power
-and throttle reasons (nvidia-smi), the CPU load over a few seconds (typeperf), which processes use
-a GPU engine (the GPU Engine performance counters, both adapters), the busiest processes, and the
-processes that would disturb a benchmark (compilers, browsers, other agents, the engine itself)
-with their command lines. Prints a one-line summary and writes everything as JSON.
+and throttle reasons (nvidia-smi), the CPU load over a few seconds (typeperf), and GPU-engine use
+(both adapters). The JSON is safe to publish: numeric conditions and generic process basenames,
+without PIDs, engine identifiers, process command lines or complete process inventories.
 
-    python tools/machine_conditions.py docs/evidence/quiet/conditions-start.json [--label before-dx12]
+    python tools/machine_conditions.py out/bench-runs/quiet/conditions-start.json [--label before-dx12]
 """
 import argparse
 import json
 import subprocess
 import sys
 import time
-from pathlib import Path
-
-WATCH = ("cargo", "rustc", "chrome", "node", "python", "pocket", "bun", "codex", "claude",
-         "CodeSetup", "many_cubes", "splats", "lod_field", "aa_eval", "neural", "rt_shadows",
-         "path_trace", "gi_trace", "link", "cl", "clang", "msedgewebview2", "Code")
+from pathlib import Path, PureWindowsPath
 
 
 def ps(script):
@@ -34,7 +29,7 @@ def ps_json(script):
     try:
         return json.loads(out)
     except json.JSONDecodeError:
-        return {"unparsed": out[:2000]}
+        return None
 
 
 def nvidia():
@@ -44,9 +39,14 @@ def nvidia():
                        capture_output=True, text=True, timeout=60)
     keys = fields.split(",")
     values = [v.strip() for v in p.stdout.strip().split(",")]
-    full = subprocess.run(["nvidia-smi"], capture_output=True, text=True, timeout=60).stdout
-    procs = full[full.find("Processes:"):] if "Processes:" in full else ""
-    return {"query": dict(zip(keys, values)), "processes_table": procs}
+    return {"query": dict(zip(keys, values))}
+
+
+def gpu_users(samples):
+    """Normalize PowerShell's singleton/list JSON to the public process-name/percentage schema."""
+    samples = samples if isinstance(samples, list) else [samples] if samples else []
+    return [{"process": PureWindowsPath(str(s.get("process") or "unknown")).name,
+             "pct": s.get("pct")} for s in samples if isinstance(s, dict)]
 
 
 def cpu_load(samples):
@@ -72,44 +72,31 @@ def main():
     ap.add_argument("--cpu-seconds", type=int, default=5)
     a = ap.parse_args()
     result = {"label": a.label, "time": time.strftime("%Y-%m-%d %H:%M:%S")}
-    result["battery"] = ps_json("Get-CimInstance Win32_Battery | Select-Object Name, BatteryStatus,"
-                                " EstimatedChargeRemaining")
+    battery = ps_json("Get-CimInstance Win32_Battery | Select-Object BatteryStatus")
     # BatteryStatus 2: on AC power (not discharging); 1: discharging (on battery).
-    status = (result["battery"] or {}).get("BatteryStatus") if isinstance(result["battery"], dict) else None
+    status = battery.get("BatteryStatus") if isinstance(battery, dict) else None
     result["on_ac_power"] = status == 2 if status is not None else None
     result["power_plan"] = ps("powercfg /getactivescheme")
     result["adapters"] = ps_json("Get-CimInstance Win32_VideoController | Select-Object Name,"
                                  " DriverVersion")
     result["nvidia"] = nvidia()
     result["cpu_load"] = cpu_load(a.cpu_seconds)
-    result["gpu_engine_users"] = ps_json(
+    result["gpu_engine_users"] = gpu_users(ps_json(
         "(Get-Counter '\\GPU Engine(*)\\Utilization Percentage' -ErrorAction SilentlyContinue)."
         "CounterSamples | Where-Object { $_.CookedValue -gt 0.5 } | ForEach-Object { $p = "
-        "[int]($_.InstanceName -replace '^pid_(\\d+)_.*','$1'); [pscustomobject]@{ pid = $p; "
-        "process = (Get-Process -Id $p -ErrorAction SilentlyContinue).ProcessName; engine = "
-        "$_.InstanceName; pct = [math]::Round($_.CookedValue, 1) } }")
-    result["busiest_processes"] = ps_json(
-        "(Get-Counter '\\Process(*)\\% Processor Time' -ErrorAction SilentlyContinue)."
-        "CounterSamples | Where-Object { $_.InstanceName -notin @('_total','idle') } | "
-        "Sort-Object CookedValue -Descending | Select-Object -First 10 | ForEach-Object { "
-        "[pscustomobject]@{ process = $_.InstanceName; pct_of_one_core = "
-        "[math]::Round($_.CookedValue, 1) } }")
-    pattern = "^(" + "|".join(WATCH) + ")"
-    result["watched_processes"] = ps_json(
-        "Get-CimInstance Win32_Process | Where-Object { $_.Name -match '" + pattern + "' } | "
-        "ForEach-Object { [pscustomobject]@{ pid = $_.ProcessId; name = $_.Name; cmd = if "
-        "($_.CommandLine) { $_.CommandLine.Substring(0, [Math]::Min(200, $_.CommandLine.Length)) }"
-        " } }")
+        "[int]($_.InstanceName -replace '^pid_(\\d+)_.*','$1'); [pscustomobject]@{ "
+        "process = (Get-Process -Id $p -ErrorAction SilentlyContinue).ProcessName; "
+        "pct = [math]::Round($_.CookedValue, 1) } }"))
     out = Path(a.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(result, indent=1) + "\n", encoding="utf-8", newline="\n")
     q = result["nvidia"]["query"]
-    names = sorted({p["name"] for p in (result["watched_processes"] or []) if isinstance(p, dict)})
+    names = sorted({p["process"] for p in result["gpu_engine_users"]})
     print(f"{result['time']} {a.label}: AC {result['on_ac_power']}, CPU "
           f"{result['cpu_load']['mean_pct']}%, RTX {q.get('temperature.gpu')} C "
           f"{q.get('clocks.sm')}/{q.get('clocks.max.sm')} MHz {q.get('power.draw')} W "
           f"{q.get('pstate')} util {q.get('utilization.gpu')}% reasons "
-          f"{q.get('clocks_event_reasons.active')}; watched: {', '.join(names)}", file=sys.stderr)
+          f"{q.get('clocks_event_reasons.active')}; GPU users: {', '.join(names)}", file=sys.stderr)
 
 
 if __name__ == "__main__":

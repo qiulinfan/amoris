@@ -13,7 +13,7 @@ batches (docs/bench/dx12.md 10).
 Build first: `cargo build --release -p pocket-render --examples`. Then, from the repository root:
 
     python tools/backend_bench.py --adapters nvidia,780m --rounds 2 \
-        --summary docs/evidence/dx12/bench.json
+        --summary out/bench-runs/dx12/bench.json
 
 `--build NAME=DIR` (repeatable) times the examples of other checkouts too, each built with its
 own `target/` (for example master's next to a branch's), interleaved with the rest; without it the

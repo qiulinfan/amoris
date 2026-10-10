@@ -18,8 +18,8 @@ Build first: `cargo build --release -p pocket-render --examples`, `cargo build -
 pocket-app` and `cargo build --release -p pocket-app --example draw_paths`. Then, from the
 repository's root:
 
-    python tools/occlusion_compare.py --backend vulkan --adapter nvidia --out target/hiz-compare \
-        --evidence docs/evidence/hiz/compare --summary docs/evidence/hiz/compare-vulkan.json
+    python tools/occlusion_compare.py --backend vulkan --adapter nvidia --out out/bench-runs/hiz/compare-captures \
+        --evidence out/bench-runs/hiz/compare --summary out/bench-runs/hiz/compare-vulkan.json
 """
 import argparse
 import json
@@ -83,7 +83,7 @@ def main():
     ap.add_argument("--adapter", default="", help="POCKET_ADAPTER value")
     ap.add_argument("--cases", default=",".join(bc.CASES), help="capture cases ('' for none)")
     ap.add_argument("--scenes", default=SCENES, help="draw_paths scenes ('' for none)")
-    ap.add_argument("--out", default="target/hiz-compare")
+    ap.add_argument("--out", default="out/bench-runs/hiz/compare-captures")
     ap.add_argument("--evidence", help="directory for the downscaled comparison strips")
     ap.add_argument("--summary", help="write the JSON summary here too")
     args = ap.parse_args()

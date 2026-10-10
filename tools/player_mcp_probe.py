@@ -2,7 +2,7 @@
 `pocket mcp <project> --seat <seat>` (which attaches to a running `pocket serve` of the project, or
 runs the game in process), lists its tools, and plays a few calls: session, observe, act, wait, an
 unavailable affordance, a developer tool and the omniscient view (both refused), describe.
-docs/evidence/player/mcp-session.txt is its output against samples/sailing-course.
+out/bench-runs/player/mcp-session.txt is its output against samples/sailing-course.
 
 Usage: python tools/player_mcp_probe.py <path to pocket(.exe)> <project> <seat>"""
 import json

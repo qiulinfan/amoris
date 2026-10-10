@@ -12,7 +12,7 @@ offers `indirect-first-instance`) and with `gpu_minimal=first-instance` appended
 
     python tools/web_paths_bench.py --base http://127.0.0.1:8090/viewport/ \
         --pages "cubes-100k=demo=cubes&count=100000&occlusion=off" --gpus nvidia,default \
-        --rounds 3 --out docs/evidence/quiet/web/cubes.json
+        --rounds 3 --out out/bench-runs/quiet/web/cubes.json
 """
 import argparse
 import json

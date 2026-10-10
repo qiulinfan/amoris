@@ -16,7 +16,7 @@ the wait; `--alternate` reverses the order of the modes on odd repeats.
 Build first: `cargo build --release -p pocket-render --example many_cubes`. Then:
 
     python tools/occlusion_bench.py --configs vulkan:nvidia,dx12:nvidia,vulkan:780m \
-        --frames 300 --repeats 2 --out docs/evidence/hiz/bench.json
+        --frames 300 --repeats 2 --out out/bench-runs/hiz/bench.json
 """
 import argparse
 import json

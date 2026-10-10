@@ -6,7 +6,7 @@ Serve `web/` first (`python -m http.server 8197 -d web`) with a viewport package
 tree (`tools/build_viewport.sh`). Then, from the repository root:
 
     python tools/aa_web_bench.py --url http://127.0.0.1:8197 --gpu nvidia --rounds 2 \
-        --out docs/evidence/aa/web-nvidia.json
+        --out out/bench-runs/aa/web-nvidia.json
 
 `--gpu nvidia` passes `--force_high_performance_gpu` (the RTX 5060); `--gpu default` leaves
 Chrome's choice (the Radeon 780M on this machine). Each row is the median of the timestamped

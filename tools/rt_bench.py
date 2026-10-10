@@ -3,11 +3,12 @@
 
 Two suites (docs/bench/path-tracing-nrc.md and docs/bench/metal-gi.md, Windows sections):
 
-- `correctness`: each configuration whose Apple M5 report is committed under docs/evidence/pt and
-  docs/evidence/gi is rendered once per backend at the same settings. Every run is compared with the
+- `correctness`: each configuration whose Apple M5 reference report is restored locally under
+  out/bench-runs/pt and out/bench-runs/gi is rendered once per backend at the same settings. Missing
+  required reference reports fail before a GPU run. Every run is compared with the
   M5 report (scene signature, per-frame counters, mean HDR radiance) and its preview PNG (8-bit
   differences, and an approximate HDR error after inverting the preview's Reinhard/sRGB encoding,
-  since the M5 runs committed no linear HDR), with this backend's own finite reference in linear HDR
+  since the historical M5 runs retained no linear HDR), with this backend's own finite reference in linear HDR
   next to the RMSE the M5 recorded against its reference, and the backends with each other.
 - `timing`: the documented timing settings (PT optimization variants, SHaRC raw/cached, PT vs NRC),
   each also with `--lean-shaders` (no naga loop bounding or ray-query tracking), `--rounds` times
@@ -17,11 +18,13 @@ Two suites (docs/bench/path-tracing-nrc.md and docs/bench/metal-gi.md, Windows s
 Build first: `cargo build --release -p pocket-render --examples`. Then, from the repository root:
 
     python tools/rt_bench.py correctness --backends vulkan,dx12 --adapter 5060 \
-        --summary docs/evidence/rt/correctness-5060.json
+        --summary out/bench-runs/rt/correctness-5060.json
     python tools/rt_bench.py timing --backends vulkan,dx12 --adapter 5060 --rounds 3 \
-        --summary docs/evidence/rt/timing-5060.json
+        --summary out/bench-runs/rt/timing-5060.json
 
-Linear HDR sidecars, previews and full reports go to `--out` (default `out/rt`, ignored by git).
+Linear HDR sidecars, previews and full reports go to `--out` (default `out/bench-runs/rt`, ignored
+by git). `--reference-root` selects local M5 artifacts (default `out/bench-runs`); raw reference
+reports are not distributed in Git. Table tools still accept any explicitly supplied input file.
 Standard library only; PNG decoding is the minimal 8-bit RGB(A) subset the engine's tools write.
 """
 import argparse
@@ -38,7 +41,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 EXE = ".exe" if os.name == "nt" else ""
-EVIDENCE = ROOT / "docs" / "evidence"
+REFERENCE_ROOT = ROOT / "out" / "bench-runs"
 
 
 def example(name):
@@ -50,7 +53,7 @@ RESTIR = ["--width", "160", "--height", "120", "--frames", "32"]
 
 
 def config(tool, project, arguments, metal=None, reference=None, metal_rmse=None):
-    """One correctness configuration: `metal` is the committed M5 report (without extension),
+    """One correctness configuration: `metal` is a local M5 reference report (without extension),
     `reference` an earlier configuration of this suite to compute the HDR RMSE against, and
     `metal_rmse` (file, key, field) where the M5 RMSE against its own reference is recorded."""
     return {"tool": tool, "project": project, "arguments": arguments, "metal": metal,
@@ -297,20 +300,20 @@ def mean_rgb(linear):
     return [math.fsum(linear[c::3]) / (len(linear) // 3) for c in range(3)]
 
 
-def metal_rmse(spec):
-    """The M5 HDR RMSE against its own finite reference, from a committed comparison file."""
+def metal_rmse(spec, reference_root=REFERENCE_ROOT):
+    """The M5 HDR RMSE against its own finite reference, from a local comparison file."""
     if not spec:
         return None
     file, key, field = spec
-    value = json.loads((EVIDENCE / file).read_text())
+    value = json.loads((reference_root / file).read_text())
     for part in key.split("/"):
         value = value[part]
     return {"rmse": value[field], "rmse_reinhard": value.get("rmse_reinhard_linear")}
 
 
-def compare_with_metal(metal, report, hdr, output):
-    """A run against the committed M5 report and preview of the same configuration."""
-    metal_report = json.loads((EVIDENCE / f"{metal}.json").read_text())
+def compare_with_metal(metal, report, hdr, output, reference_root=REFERENCE_ROOT):
+    """A run against a local M5 report and any available preview of the same configuration."""
+    metal_report = json.loads((reference_root / f"{metal}.json").read_text())
     row = {
         "scene_signature_matches_metal":
             report.get("scene_signature") == metal_report.get("scene_signature"),
@@ -322,7 +325,7 @@ def compare_with_metal(metal, report, hdr, output):
         row["metal_mean_rgb"] = metal_report["mean_radiance"]
         row["mean_relative_difference_vs_metal"] = [
             (m - r) / r for m, r in zip(mean, metal_report["mean_radiance"])]
-    metal_png = EVIDENCE / f"{metal}.png"
+    metal_png = reference_root / f"{metal}.png"
     if metal_png.exists():
         row["preview_vs_metal_png"] = png_compare(metal_png, output)
         exposure = (report.get("preview") or {}).get("exposure_ev", 0.0)
@@ -341,13 +344,26 @@ def compare_with_metal(metal, report, hdr, output):
 def correctness(args):
     out = Path(args.out)
     names = args.only.split(",") if args.only else list(CORRECTNESS)
+    reference_root = Path(args.reference_root)
+    required = set()
+    for name in names:
+        c = CORRECTNESS[name]
+        if c["metal"]:
+            required.add(f"{c['metal']}.json")
+        if c["metal_rmse"]:
+            required.add(c["metal_rmse"][0])
+    missing = sorted(file for file in required if not (reference_root / file).is_file())
+    if missing:
+        raise FileNotFoundError(
+            f"Missing local Metal reference artifacts under {reference_root}: {', '.join(missing)}. "
+            "Restore them there or pass --reference-root DIR; no GPU run was started.")
     summary = {"suite": "correctness", "adapter_filter": args.adapter, "configurations": {}}
     linear = {}  # (configuration, backend) -> HDR, for references and backend comparisons
     for name in names:
         c = CORRECTNESS[name]
         entry = {"tool": c["tool"], "project": c["project"], "arguments": c["arguments"],
-                 "metal_report": c["metal"] and f"docs/evidence/{c['metal']}.json",
-                 "reference": c["reference"], "metal_rmse_vs_reference": metal_rmse(c["metal_rmse"]),
+                 "metal_report": c["metal"] and str(reference_root / f"{c['metal']}.json"),
+                 "reference": c["reference"], "metal_rmse_vs_reference": metal_rmse(c["metal_rmse"], reference_root),
                  "runs": {}}
         backends = args.backends.split(",")
         for backend in backends:
@@ -358,7 +374,7 @@ def correctness(args):
             row = {"adapter": report.get("adapter"), "backend": report.get("backend"),
                    "mean_rgb": mean_rgb(hdr), "gpu_errors": report.get("gpu_errors")}
             if c["metal"]:
-                row.update(compare_with_metal(c["metal"], report, hdr, output))
+                row.update(compare_with_metal(c["metal"], report, hdr, output, reference_root))
             if (c["reference"], backend) in linear:
                 row["hdr_vs_reference"] = hdr_compare(linear[(c["reference"], backend)], hdr)
             entry["runs"][backend] = row
@@ -458,12 +474,17 @@ def main():
     parser.add_argument("--adapter", default=None, help="POCKET_ADAPTER (index or name part)")
     parser.add_argument("--only", default=None, help="comma-separated configuration names")
     parser.add_argument("--rounds", type=int, default=3)
-    parser.add_argument("--out", default=str(ROOT / "out" / "rt"))
+    parser.add_argument("--out", default=str(ROOT / "out" / "bench-runs" / "rt"))
+    parser.add_argument("--reference-root", default=str(REFERENCE_ROOT),
+                        help="local M5 reference reports; missing required artifacts fail before GPU work")
     parser.add_argument("--summary", default=None)
     parser.add_argument("--note", default="other agents used the CPU and both GPUs during these runs",
                         help="the conditions, kept in the timing summary's `provisional` field")
     args = parser.parse_args()
-    summary = correctness(args) if args.suite == "correctness" else timing(args)
+    try:
+        summary = correctness(args) if args.suite == "correctness" else timing(args)
+    except FileNotFoundError as error:
+        parser.error(str(error))
     if args.summary:
         Path(args.summary).parent.mkdir(parents=True, exist_ok=True)
         text = json.dumps(summary, indent=1, allow_nan=False) + "\n"

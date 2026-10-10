@@ -2,7 +2,7 @@
 """Markdown tables from tools/aa_bench.py's summary (docs/bench/taa-gtao.md 3): per configuration
 the better of the rounds (the lesser total GPU time p50, and each pass's lesser time).
 
-    python tools/aa_tables.py docs/evidence/aa/bench-native.json
+    python tools/aa_tables.py out/bench-runs/aa/bench-native.json
 """
 import json
 import sys

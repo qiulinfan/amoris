@@ -1,7 +1,7 @@
 """Runs the levels-of-detail benchmark (crates/pocket-render/examples/lod_field.rs) with levels on
 and off on each backend and adapter given, and writes one JSON summary (docs/bench/lod.md).
 
-    python tools/lod_bench.py [--out docs/evidence/lod/bench-native.json] [--adapters nvidia,amd]
+    python tools/lod_bench.py [--out out/bench-runs/lod/bench-native.json] [--adapters nvidia,amd]
         [--backends vulkan,dx12] [--n 48] [--detail 6] [--size 1280x720] [--frames 60]
         [--occlusion off] [--t 0] [--rounds 1] [--note "conditions"]
 

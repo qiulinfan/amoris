@@ -109,10 +109,13 @@ def main():
                                   "raster": raster, "temp_after_c": gpu_temp(),
                                   "seconds": round(time.time() - t, 1)})
                         doc["runs"].append(r)
-                        print(f"r{rnd} {adapter:6} {backend:6} {name:16} {raster} {r.get('build', '')} splats "
-                              f"{r['splat_total']:7.3f} ms GPU {r['gpu_total'] or 0:7.3f} ms "
-                              f"({r['seconds']} s, {r['temp_after_c']} C)", file=sys.stderr,
-                              flush=True)
+                        label = f"r{rnd} {adapter:6} {backend:6} {name:16} {raster} {r.get('build', '')}"
+                        if "error" in r:
+                            print(f"{label}: {r['error']}", file=sys.stderr, flush=True)
+                        else:
+                            print(f"{label} splats {r['splat_total']:7.3f} ms GPU "
+                                  f"{r['gpu_total']:7.3f} ms ({r['seconds']} s, "
+                                  f"{r['temp_after_c']} C)", file=sys.stderr, flush=True)
                         # Written after every run: an interrupted suite keeps what it measured.
                         out.write_text(json.dumps(doc, indent=1) + "\n", encoding="utf-8",
                                        newline="\n")

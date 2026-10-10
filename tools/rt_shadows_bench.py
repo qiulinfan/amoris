@@ -19,10 +19,10 @@ the NVIDIA GPU is at C degrees or below (nvidia-smi). With `--all-rounds` the su
 Build first: `cargo build --release -p pocket-render --examples` and `cargo build --release -p
 pocket-app`. Then, from the repository root:
 
-    python tools/rt_shadows_bench.py --adapters 5060,780m --summary docs/evidence/rt/shadows-runs.json \
-        --evidence docs/evidence/rt
+    python tools/rt_shadows_bench.py --adapters 5060,780m --summary out/bench-runs/rt/shadows-runs.json \
+        --evidence out/bench-runs/rt
 
-Captures and logs go to `--out` (default `out/rts`, ignored by git). With `--evidence` the diff
+Captures and logs go to `--out` (default `out/bench-runs/rts`, ignored by git). With `--evidence` the diff
 summaries and strips (A, B, heat map, 480 pixels wide each) are written there as
 `shadows-diff-*.json` and `shadows-strip-*.png`. Every timing is provisional unless the machine is
 otherwise idle. Standard library only.
@@ -124,7 +124,7 @@ def main():
     parser.add_argument("--backends", default="vulkan,dx12")
     parser.add_argument("--rounds", type=int, default=3)
     parser.add_argument("--configs", default=",".join(CONFIGS))
-    parser.add_argument("--out", default="out/rts")
+    parser.add_argument("--out", default="out/bench-runs/rts")
     parser.add_argument("--summary")
     parser.add_argument("--evidence")
     parser.add_argument("--port", type=int, default=47613)

@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """Tables of the quiet-machine re-measurement (docs/bench/quiet-2026-10-09.md) from the raw JSON in
-docs/evidence/quiet/: per configuration the minimum, the median and the spread over the rounds
+out/bench-runs/quiet/: per configuration the minimum, the median and the spread over the rounds
 ((max - min) / median), never a single chosen run.
 
-    python tools/quiet_tables.py dx12 docs/evidence/quiet/dx12/bench-headless.json [more.json ...]
-    python tools/quiet_tables.py hiz docs/evidence/quiet/hiz/bench-1280x720.json
-    python tools/quiet_tables.py splats docs/evidence/quiet/splats/ab-*.json
-    python tools/quiet_tables.py splatm docs/evidence/quiet/splats/matrix-*.json
-    python tools/quiet_tables.py lod docs/evidence/quiet/lod/bench-t0.json
-    python tools/quiet_tables.py aa docs/evidence/quiet/aa/bench-native.json
-    python tools/quiet_tables.py rt docs/evidence/quiet/rt/timing-5060.json
-    python tools/quiet_tables.py rts docs/evidence/quiet/rt/shadows-runs.json
-    python tools/quiet_tables.py neural docs/evidence/quiet/neural/*.json
-    python tools/quiet_tables.py web docs/evidence/quiet/web/*.json
+    python tools/quiet_tables.py dx12 out/bench-runs/quiet/dx12/bench-headless.json [more.json ...]
+    python tools/quiet_tables.py hiz out/bench-runs/quiet/hiz/bench-1280x720.json
+    python tools/quiet_tables.py splats out/bench-runs/quiet/splats/ab-*.json
+    python tools/quiet_tables.py splatm out/bench-runs/quiet/splats/matrix-*.json
+    python tools/quiet_tables.py lod out/bench-runs/quiet/lod/bench-t0.json
+    python tools/quiet_tables.py aa out/bench-runs/quiet/aa/bench-native.json
+    python tools/quiet_tables.py rt out/bench-runs/quiet/rt/timing-5060.json
+    python tools/quiet_tables.py rts out/bench-runs/quiet/rt/shadows-runs.json
+    python tools/quiet_tables.py neural out/bench-runs/quiet/neural/*.json
+    python tools/quiet_tables.py web out/bench-runs/quiet/web/*.json
 
 Standard library only.
 """

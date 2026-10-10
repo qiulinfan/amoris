@@ -14,7 +14,6 @@ linear, with max(RGB, 0) at shader inference. All teacher and network arithmetic
 from __future__ import annotations
 
 import argparse
-import hashlib
 import itertools
 import json
 import math
@@ -81,7 +80,6 @@ class Teacher:
     sh: np.ndarray
     moments: np.ndarray
     resolution: int
-    source_hash: str
     scene_signature: str
 
     @property
@@ -225,8 +223,7 @@ def load_teacher(path: pathlib.Path):
     if ((mean < 0) | (second < 0) | (mean > distance)
         | (second > maximum_squared + tolerance) | (second + tolerance < square)).any():
         raise ValueError("invalid distance moments")
-    teacher = Teacher(origin, spacing, dimensions, sh, moments, resolution,
-                      hashlib.sha256(data).hexdigest(), signature)
+    teacher = Teacher(origin, spacing, dimensions, sh, moments, resolution, signature)
     if not np.isfinite(teacher.input_min).all() or not np.isfinite(teacher.input_extent).all() or not (teacher.input_extent > 0).all():
         raise ValueError("half-cell input AABB must be finite and have positive extent")
     return teacher
@@ -314,9 +311,8 @@ def train(teacher, steps, samples, seed, device):
     psnr = 10 * math.log10(peak * peak / mse) if peak > 0 and mse > 0 else None
     report = {"teacher": "baked_diffuse probe field, not unbiased ground-truth paths",
               "teacher_sampling": "trilinear SH probes with bilinear octahedral distance moments",
-              "teacher_code_sha256": hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest(),
               "dataset": "uniform random half-cell AABB positions and uniform sphere normals",
-              "input_sha256": teacher.source_hash, "scene_signature": teacher.scene_signature,
+              "scene_signature": teacher.scene_signature,
               "seed": seed, "device": device, "dtype": "float32", "torch": torch.__version__,
               "steps": steps, "samples": samples, "train_samples": split,
               "heldout_samples": samples - split, "train_loss": train_loss,

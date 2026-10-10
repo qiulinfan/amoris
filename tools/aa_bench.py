@@ -12,7 +12,7 @@ Rounds interleave every configuration so that other work on the machine spreads 
 Build first: `cargo build --release -p pocket-render --examples`. Then, from the repository root:
 
     python tools/aa_bench.py --adapters nvidia,780m --backends vulkan,dx12 --rounds 2 \
-        --out docs/evidence/aa/bench-native.json
+        --out out/bench-runs/aa/bench-native.json
 
 The summary keeps every run; the table printed at the end is the median over rounds of each
 configuration's 10th-percentile pass times (the least disturbed frames) and of its median total.

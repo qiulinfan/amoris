@@ -1,7 +1,7 @@
 """Puts known level-of-detail bugs into the code one at a time and runs the checks against each
 (docs/spec/lod.md 8): every mutation must make at least one check fail.
 
-    python tools/lod_mutations.py [--out docs/evidence/lod/mutations.json] [filter ...]
+    python tools/lod_mutations.py [--out out/bench-runs/lod/mutations.json] [filter ...]
 
 Each mutation edits cull.wgsl, meshes.rs, renderer.rs, lod.rs or pocket-assets' lod.rs, runs
 `cargo test --release -p pocket-render --test lod --test draw_paths --test occlusion` (and

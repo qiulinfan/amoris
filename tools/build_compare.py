@@ -63,6 +63,7 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
     builds = [("before", Path(args.before).resolve()), ("after", ROOT)]
     results = []
+    failures = 0
     for adapter in [a for a in args.adapters.split(",") if a] or [None]:
         for backend in args.backends.split(","):
             for mode in args.modes.split(","):
@@ -71,6 +72,7 @@ def main():
                         continue
                     cmd = CASES[case]
                     pngs = []
+                    errors = []
                     for name, root in builds:
                         png = out_dir / f"{case}-{mode}-{backend}-{adapter or 'default'}-{name}.png"
                         png.unlink(missing_ok=True)
@@ -79,29 +81,47 @@ def main():
                             env["POCKET_ADAPTER"] = adapter
                         argv = [example(root, cmd[0])] + [a.replace("{out}", str(png)) for a in cmd[1:]]
                         p = subprocess.run(argv, cwd=ROOT, env=env, capture_output=True, text=True, timeout=900)
-                        if not png.exists():
+                        if p.returncode or not png.exists():
                             print(f"{case} {mode} {backend} {adapter} {name}: no capture; {p.stderr[-300:]}",
                                   file=sys.stderr)
+                            errors.append({"build": name, "returncode": p.returncode,
+                                           "error": "capture process failed or produced no image"})
                         pngs.append(png)
-                    if not all(p.exists() for p in pngs):
+                    if errors:
+                        failures += 1
+                        results.append({"adapter": adapter, "backend": backend, "mode": mode,
+                                        "case": case, "error": "capture failed",
+                                        "capture_errors": errors})
                         continue
                     d = subprocess.run([example(ROOT, "image_diff"), *map(str, pngs)], capture_output=True,
                                        text=True)
-                    j = json.loads(d.stdout[d.stdout.index("{"):])
-                    r = {"adapter": adapter, "backend": backend, "mode": mode, "case": case,
-                         "rmse_8bit": j["rmse_8bit"], "max_diff_8bit": j["max_diff_8bit"],
-                         "pixels_over_1_percent": j["pixels_over_percent"][">1"]}
+                    r = {"adapter": adapter, "backend": backend, "mode": mode, "case": case}
+                    try:
+                        if d.returncode:
+                            raise ValueError("comparison process failed")
+                        j = json.loads(d.stdout[d.stdout.index("{"):])
+                        r.update(rmse_8bit=j["rmse_8bit"], max_diff_8bit=j["max_diff_8bit"],
+                                 pixels_over_1_percent=j["pixels_over_percent"][">1"])
+                    except (ValueError, KeyError, TypeError):
+                        failures += 1
+                        r["error"] = "comparison process failed or returned an invalid result"
                     results.append(r)
+                    if "error" in r:
+                        print(f"{case} {mode} {backend} {adapter}: {r['error']}", file=sys.stderr)
+                        continue
                     print(f"{case:14} {mode:17} {backend:7} {adapter or '-':7} rmse {r['rmse_8bit']:.3f} "
                           f"max {r['max_diff_8bit']:3} >1 {r['pixels_over_1_percent']}%", file=sys.stderr)
-    differ = [r for r in results if r["max_diff_8bit"]]
-    print(f"{len(results)} pairs, {len(differ)} differ")
+    successful = [r for r in results if "error" not in r]
+    differ = [r for r in successful if r["max_diff_8bit"]]
+    print(f"{len(successful)} successful pairs, {failures} failed, {len(differ)} differ")
     if args.summary:
         out = ROOT / args.summary
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps({"tool": "tools/build_compare.py", "before": str(args.before),
+                                   "successful_pairs": len(successful), "failed_pairs": failures,
                                    "results": results}, indent=1) + "\n", newline="\n")
+    return 1 if failures or not successful else 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
