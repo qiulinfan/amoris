@@ -18,6 +18,7 @@ nav:
   - Script API: sdk.md
   - CLI and MCP: api.md
   - Agents and development benchmark: agents.md
+  - Profiling: profiling.md
   - Data and validation: data.md
   - Asset credits: credits.md
 extra_css:

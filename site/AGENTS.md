@@ -23,7 +23,11 @@
 - Browser editor recordings use CUA/CDP on the real host; screenshots from the mock are
   not interchangeable evidence. `tools/showcase_editor_video.py` encodes the captured
   frame files. `tools/showcase_annotate.py` overlays only actual trace values.
-- Keep data tied to its workload, date, hardware, and limitations. The 383-test result
-  does not mean the full xtask gate is green. Do not present skipped checks as passed.
+- Keep data tied to its workload, date, hardware, and limitations. The 2026-10-10 result is
+  713 workspace tests passed, with all implemented xtask stages passing across the full run
+  and a subsequent formatting/docs/native+wasm Clippy rerun; do not call it one all-green full
+  run. Contract and performance-budget stages remain unimplemented and skipped. Historical
+  showcase wall times and browser comparisons keep their original dates and configurations.
+  Metal's 2,700-frame trace validation establishes correct attribution, not a stable speedup.
 - Validate the built site's local links, media streams, captions, documentation navigation,
   and desktop/mobile layout. Renderer or simulation changes require their owning checks.

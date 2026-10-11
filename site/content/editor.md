@@ -34,6 +34,8 @@ Type `call world.get` to inspect the selected entity through the catalog.
 
 The Timeline shows retained snapshots. Events can be inspected together with their cause
 chains. The Profiler shows simulation and presentation measurements reported by the host.
+For bounded CPU/GPU captures with frame IDs, use the native
+[profiling workflow](profiling.md) and open the exported trace in Perfetto.
 
 ## Write and check a script
 
@@ -53,6 +55,9 @@ run `scripts check` before `scripts apply`: type diagnostics do not themselves p
 Set a breakpoint in the gutter or press **F9**. Start Play, then inspect the paused stack,
 locals, and watches. Continue with **F5**; use **F10** to step over and **F11** to step into.
 The debugger also exposes data breakpoints and `debug.*` commands through the shared API.
+While stopped at a breakpoint, ordinary world reads show the last published tick boundary;
+use `debug.eval` to inspect the currently paused script frame. **Stop** can leave a breakpoint
+and return to the edit world directly.
 
 The Agent panel can display sessions and calls reported by the host. Its New session form
 is not a bundled LLM service: starting an autonomous model session still needs host support.

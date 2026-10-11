@@ -38,11 +38,13 @@ the page submits; GPU time is what the frames cost).
 Module sizes: `pocket_viewport_bg.wasm` 1.08 MB (0.38 MB gzipped) after `wasm-opt -O3`, plus 81 KB
 of JS glue; three.js r186's `three.webgpu.js` + `three.core.js` are about 1.9 MB unminified.
 
-Open item: Amoris's GPU time in the browser at 1.6M cubes (14.7 ms at 1280x577) is far above
-native Metal (2.3-3.4 ms at 2560x1440); the culling pass alone takes 3.4 ms against 1.2 ms. The
-suspects are the browser's robustness bounds checks on storage-buffer reads in the per-vertex
-pose interpolation and the cull pass; moving the interpolated transform into the cull pass (one
-48-byte matrix per visible instance) is the planned fix.
+Historical observation: this study compared the browser's 14.7 ms at 1.6M cubes (1280x577)
+with native Metal readings of 2.3–3.4 ms (2560x1440). The native readings predate the
+[Metal frame-attribution fix](metal-profiling.md), so they do not establish a current native/web
+GPU-time gap. The browser used its own WebGPU query path. Moving interpolated transforms into
+the cull pass (one 48-byte matrix per visible instance) was the study's proposed experiment;
+`110cffaf` implemented it just after these runs. A current comparison needs both builds
+remeasured with matching workloads and validated timestamp coverage.
 
 ## Windows, Chrome 155 on D3D12 (2026-10-09, provisional)
 

@@ -1,14 +1,15 @@
 # <img src="assets/branding/amoris-icon-morandi.png" alt="Amoris icon" width="64" valign="middle"> Amoris
 
-Amoris is a 3D game engine with a Rust host, TypeScript gameplay, and desktop and web editors.
+Amoris is an agent-native 3D game engine with a Rust host, TypeScript gameplay, and desktop and web editors.
 The editor, CLI, and agents share one command API. A wgpu renderer runs natively
-on Metal and Vulkan, and in the browser on WebGPU.
+on Metal, Vulkan, and Direct3D 12, and in the browser on WebGPU.
 
 [Showcase](https://qiulinfan.github.io/amoris/) ·
 [Editor guide](https://qiulinfan.github.io/amoris/documentation/editor/) ·
 [Script API](https://qiulinfan.github.io/amoris/documentation/sdk/) ·
 [CLI and MCP](https://qiulinfan.github.io/amoris/documentation/api/) ·
-[Measurements](https://qiulinfan.github.io/amoris/documentation/data/)
+[Measurements](https://qiulinfan.github.io/amoris/documentation/data/) ·
+[Profiling guide](https://qiulinfan.github.io/amoris/documentation/profiling/)
 
 [![Bistro with global illumination rendered by Amoris](site/media/scene-poster.jpg)](https://qiulinfan.github.io/amoris/#showcase)
 
@@ -24,6 +25,7 @@ CC BY 4.0. [Asset credits](site/content/credits.md).
 - Run Play in a fork, pause or step the simulation, and return to the edit world.
 - Debug TypeScript with breakpoints, locals, watches, and source-level stepping.
 - Record snapshots, replay inputs, and check deterministic runs.
+- Capture CPU spans and GPU passes with frame IDs in a Perfetto trace.
 
 The editor combines a WebGPU viewport with a Hierarchy, Inspector, asset browser,
 Monaco script editor, debugger, History, Timeline, and Profiler. Its edits and agent
@@ -94,7 +96,7 @@ For a native game window:
 | Host and entities | Rust · Bevy ECS |
 | Gameplay | TypeScript 7 · oxc · QuickJS-ng |
 | Physics | Rapier 3D with enhanced determinism |
-| Rendering | wgpu · WGSL · Metal / Vulkan / WebGPU |
+| Rendering | wgpu · WGSL · Metal / Vulkan / Direct3D 12 / WebGPU |
 | Editor | React · dockview · Monaco · Electron (desktop) |
 | Automation | CLI · HTTP / WebSocket · MCP |
 
@@ -114,11 +116,48 @@ Discover commands and inspect a running game:
 
 Use `./target/release/pocket mcp samples/sailing` as a stdio MCP server, or connect to
 the running host at `http://127.0.0.1:7878/mcp`. These tools expose the developer
-command surface. Player-specific `observe` / `act` MCP tools are still pending.
+command surface. Games that declare player seats also expose engine-enforced perception
+and intention commands. For example, `pocket mcp samples/sailing-course --seat skipper`
+exposes only the player tool; developer edits and debugger commands are refused.
+See the [player workflow](site/content/api.md#play-through-a-restricted-seat).
 
 - [Script API](site/content/sdk.md): components, queries, systems, events, and types.
 - [CLI and MCP](site/content/api.md): discovery, world edits, time, capture, and debugging.
 - [Host protocol](docs/spec/host-protocol.md): HTTP calls, WebSocket feeds, and schemas.
+
+## Rendering and profiling
+
+The interactive renderer includes GPU culling, an adaptive depth prepass, clustered PBR,
+shadows, animation, and 3D Gaussian splats. Metal is the macOS default, Direct3D 12 the
+Windows default; Vulkan remains selectable with `POCKET_BACKEND=vulkan`.
+Separate path-tracing and neural-lighting research tools require supported native hardware.
+
+The **10 October 2026** Windows study measured a dense 1.6-million-cube workload at
+2560 × 1440, 4× MSAA, with occlusion culling and GTAO disabled. Forcing the depth prepass
+on reduced the median of run-mean GPU pass sums as follows:
+
+| GPU and backend | Prepass off | Prepass on |
+| --- | --- | --- |
+| RTX 5060 Laptop · Direct3D 12 | 51.33 ms | 16.22 ms |
+| RTX 5060 Laptop · Vulkan | 42.51 ms | 16.59 ms |
+| Radeon 780M · Direct3D 12 | 297.57 ms | 96.26 ms |
+
+These provisional, three-round measurements describe heavy overdraw. The sphere layout
+got slower with a forced prepass; auto mode probes both paths and retains the cheaper one.
+[Workloads, default-culling results, and limitations](docs/bench/prepass.md).
+
+On **Apple M5 / Metal**, the profiling follow-up fixes stale-frame timestamps and clock
+calibration, and adds asynchronous counter readback. All **2,700 captured GPU frames**
+fit their own CPU submission/completion bounds within calibration tolerance, with no missing
+or dropped records.
+Six prepass comparison scenes retain identical pixels and entity coverage. The timing
+runs vary too much to establish a stable Metal speedup.
+[Metal method and measurements](docs/bench/metal-profiling.md).
+
+Use the [profiling guide](https://qiulinfan.github.io/amoris/documentation/profiling/)
+to capture traces and distinguish CPU wall time, GPU frame spans, and pass sums.
+Sanitized run data and logs live in
+[amoris-benchmarks-results](https://github.com/qiulinfan/amoris-benchmarks-results).
 
 ## Samples and measurements
 
@@ -126,6 +165,7 @@ command surface. Player-specific `observe` / `act` MCP tools are still pending.
 | --- | --- |
 | [Sailing](samples/sailing) | Wind, buoyancy, boat controls, and cargo collection |
 | [Animation](samples/anim) | Animation, particles, and in-game UI |
+| [Sailing course](samples/sailing-course) | Restricted player perception, intentions, and decision points |
 
 Rendering measurements report their scene, hardware, resolution, and timing method.
 Recorded demonstration videos use fixed simulation steps; playback frame rate is
@@ -143,17 +183,19 @@ python3 tools/showcase_assets.py --projects
 ./target/release/pocket serve site/demos/harbor --editor editor/dist
 ```
 
-At 1920 × 1080 on Apple M5 / Metal, 1,024 complete Flight Helmets contribute
+In the **5 October 2026** forward-renderer study at 1920 × 1080 on Apple M5 / Metal,
+1,024 complete Flight Helmets contribute
 96,995,330 scene triangles before culling. The static render-and-wait workload took
 82.43 ms mean and 83.66 ms p95 over 300 completed frames. This excludes game simulation
-and window presentation. [Method and raw data](site/content/data.md).
+and window presentation. [Method and p95](site/content/data.md).
 
 Large third-party models stay outside Git; the website serves compact videos and
 posters. Source authors and licenses are preserved in the [credits](site/content/credits.md).
 
 ### Real agent gameplay and development
 
-DeepSeek Flash plays the detailed sailing course through a project-level player gateway.
+The **5 October 2026** DeepSeek Flash experiment plays the detailed sailing course through
+a project-level player gateway.
 Its native replay matches every recorded action and final world hash. The selected clip
 collects 4/4 cargo; all trials and limitations are retained in the
 [agent report](site/content/agents.md).

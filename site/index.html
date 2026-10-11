@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="description" content="Amoris: a Rust and TypeScript 3D runtime, web editor, and a shared API for people and agents.">
+  <meta name="description" content="Amoris: an agent-native 3D engine with Rust and TypeScript, desktop and web editors, and Metal, Vulkan, Direct3D 12 and WebGPU rendering.">
   <meta name="theme-color" content="#17191d">
   <title>Amoris — runtime, editor, agents</title>
   <link rel="icon" href="assets/icon.svg">
@@ -16,7 +16,7 @@
     <header class="topbar">
       <a class="brand" href="./"><img src="assets/icon.svg" alt="" width="36" height="36"><span>Amoris</span></a>
       <nav aria-label="Main navigation">
-        <a href="#showcase">Showcase</a><a href="#editor">Editor</a><a href="#data">Data</a>
+        <a href="#showcase">Showcase</a><a href="#editor">Editor</a><a href="#data">Benchmarks</a>
         <a href="documentation/">Documentation <span aria-hidden="true">↗</span></a>
       </nav>
     </header>
@@ -26,8 +26,8 @@
           <img class="hero-logo" src="assets/icon.svg" alt="Amoris A and sandbox emblem" width="132" height="132">
           <span class="eyebrow">Runtime · editor · agents</span>
           <h1 id="hero-title">Amoris</h1>
-          <p class="intro">A 3D engine with a Rust core and TypeScript game systems.</p>
-          <p>Build in a docked web editor. Inspect, edit, and automate through the same command catalog. Run the simulation natively or in a Web Worker.</p>
+          <p class="intro">An agent-native 3D engine with a Rust core and TypeScript game systems.</p>
+          <p>Build in desktop and web editors. People and agents share a command catalog for development, play, and debugging. Run the simulation natively or in a Web Worker.</p>
           <div class="hero-actions">
             <a class="button button-primary" href="documentation/">Get started <span aria-hidden="true">→</span></a>
             <a class="button button-secondary" href="https://github.com/qiulinfan/amoris">Repository <span aria-hidden="true">↗</span></a>
@@ -42,7 +42,7 @@
 
       <section class="summary-strip" aria-label="Project at a glance">
         <div><strong>Rust + TypeScript</strong><span>stateless systems · state in components</span></div>
-        <div><strong>Metal · Vulkan · WebGPU</strong><span>one renderer · WGSL shaders</span></div>
+        <div><strong>Metal · Vulkan · D3D12 · WebGPU</strong><span>one renderer · WGSL shaders</span></div>
         <div><strong>CLI · editor · MCP</strong><span>one discoverable command catalog</span></div>
       </section>
 
@@ -71,15 +71,15 @@
           <figcaption><span>Harbor with baked probe GI. Connected to the real Rust host; the viewport is the engine's WebGPU renderer.</span><a class="recording-link" href="media/editor.mp4">Earlier recording <span aria-hidden="true">↗</span></a></figcaption>
         </figure>
         <div class="section-grid editor-points">
-          <article class="section-card"><span class="small-icon" aria-hidden="true">↔</span><h3>A docked editor</h3><p>Viewport, hierarchy, inspector, assets, history, and a command palette in one window.</p></article>
+          <article class="section-card"><span class="small-icon" aria-hidden="true">↔</span><h3>Desktop and browser</h3><p>The same docked panels in a native desktop window or a browser. Viewport, hierarchy, inspector, assets, history, and a command palette.</p></article>
           <article class="section-card"><span class="small-icon" aria-hidden="true">{ }</span><h3>Typed game scripts</h3><p>Monaco loads declarations from the live component registry. Check TypeScript, then apply at a tick boundary.</p></article>
           <article class="section-card"><span class="small-icon" aria-hidden="true">⏸</span><h3>Pause at the source</h3><p>Set a TypeScript breakpoint, inspect variables, step the script, and follow an event back to its cause.</p></article>
         </div>
       </section>
 
       <section id="agents" class="page-section" aria-labelledby="agents-title">
-        <div class="section-heading"><div><span class="eyebrow">Agents developing games</span><h2 id="agents-title">A native development benchmark.</h2></div><a class="text-link" href="documentation/agents/">Protocol and every trial →</a></div>
-        <article class="section-card benchmark-card"><h3>DeepSeek at the helm.</h3><p>DeepSeek Flash reads a 30 m radar and sends game intentions. The earlier native replay matches a real model run, including every action and final world hash.</p><div class="tags"><span>Real model calls</span><span>Player gateway</span><span>Hash-verified replay</span></div><p class="fineprint">4/4 cargo in the first successful low-effort run. <a href="media/deepseek-gameplay.mp4">Watch the earlier forward-rendered replay.</a> <a href="documentation/agents/">All trials, tools and limitations.</a></p></article>
+        <div class="section-heading"><div><span class="eyebrow">Agent experiments · 5 October 2026</span><h2 id="agents-title">Play and develop through the API.</h2></div><a class="text-link" href="documentation/agents/">Protocol and every trial →</a></div>
+        <article class="section-card benchmark-card"><h3>DeepSeek at the helm.</h3><p>DeepSeek Flash reads a 30 m radar and sends game intentions. This recorded experiment uses a player gateway; the native replay reproduces the model’s actions and final world state.</p><div class="tags"><span>Real model calls</span><span>Player gateway</span><span>Deterministic replay</span></div><p class="fineprint">4/4 cargo in the first successful low-effort run. <a href="media/deepseek-gameplay.mp4">Watch the earlier forward-rendered replay.</a> <a href="documentation/agents/">All trials, tools and limitations.</a></p></article>
         <div class="metric-grid">
           <article class="section-card metric"><span class="metric-value">18/18</span><h3>Patches passed strict grading</h3><p>Six frozen microtasks, three fresh trials each. Two repairs and four gameplay features.</p></article>
           <article class="section-card metric"><span class="metric-value">63</span><h3>Native behavioral assertions</h3><p>Positive, negative and boundary cases, plus types, determinism, fork, replay and reload.</p></article>
@@ -89,20 +89,38 @@
       </section>
 
       <section id="data" class="page-section" aria-labelledby="data-title">
-        <div class="section-heading"><div><span class="eyebrow">Forward rendering · 5 October 2026</span><h2 id="data-title">Detail, at scale.</h2></div><a class="text-link" href="documentation/data/">Method and evidence <span aria-hidden="true">→</span></a></div>
-        <p class="data-context">These historical forward-renderer measurements use a separate workload. They do not measure the path-traced stills or baked GI shown above.</p>
+        <div class="section-heading"><div><span class="eyebrow">Rendering &amp; profiling · 10 October 2026</span><h2 id="data-title">Measured, frame by frame.</h2></div><a class="text-link" href="documentation/data/">Benchmarks and methods <span aria-hidden="true">→</span></a></div>
+        <p class="data-context">A depth prepass reduces overdraw in the Windows dense-grid workload. Metal now records each GPU frame on its own CPU timeline, with asynchronous readback.</p>
         <div class="metric-grid">
-          <article class="section-card metric"><span class="metric-value">2.83M</span><h3>Triangles in the Bistro exterior</h3><p>132 authored materials. 12.02 ms mean render-and-wait at 1080p on Apple M5.</p></article>
-          <article class="section-card metric"><span class="metric-value">97.0M</span><h3>Scene triangles at 1,024 copies</h3><p>6,145 primitive instances before GPU culling. 1,021 helmets contribute visible pixels.</p></article>
-          <article class="section-card metric"><span class="metric-value">1080p</span><h3>Native stress sweep</h3><p>Apple M5 · Metal · 300 measured frames after 60 fully loaded warm-up frames.</p></article>
+          <article class="section-card metric"><span class="metric-value">1.6M</span><h3>Cubes in the Windows workload</h3><p>Dense grid · 1440p · 4× MSAA. Direct3D 12 and Vulkan, with RTX 5060 Laptop and Radeon 780M results below.</p></article>
+          <article class="section-card metric"><span class="metric-value">2,700</span><h3>Metal frames accounted for</h3><p>All captured GPU frames fit their own CPU submit/wait bounds within calibration tolerance. No missing or dropped records across nine M5 runs.</p></article>
+          <article class="section-card metric"><span class="metric-value">6/6</span><h3>Metal prepass scenes match</h3><p>Prepass off versus on: identical pixels and entity coverage in six fixed-scene comparisons.</p></article>
         </div>
         <article class="section-card benchmark-card">
-          <div class="benchmark-heading"><h3>High-detail mesh stress</h3><span class="muted">Render and wait for GPU idle — lower is better</span></div>
+          <div class="benchmark-heading"><h3>Windows dense grid: depth prepass off → on</h3><span class="muted">GPU time in ms — lower is better</span></div>
+          <div class="benchmark-table-wrap"><table class="benchmark-table">
+            <thead><tr><th scope="col">Adapter / backend</th><th scope="col">Off</th><th scope="col">On</th></tr></thead>
+            <tbody>
+              <tr><th scope="row">RTX 5060 Laptop / D3D12</th><td>51.330</td><td>16.216</td></tr>
+              <tr><th scope="row">RTX 5060 Laptop / Vulkan</th><td>42.505</td><td>16.591</td></tr>
+              <tr><th scope="row">Radeon 780M / D3D12</th><td>297.574</td><td>96.256</td></tr>
+            </tbody>
+          </table></div>
+          <p class="fineprint">Provisional · Windows 11 · 1.6M cubes · headless 2560 × 1440 · 4× MSAA · GTAO and occlusion culling off. Median of three runs’ mean summed GPU pass times; 60 warm-up frames, then 200 measured on RTX or 100 on Radeon. The machine was shared and clocks were not locked. Low-overdraw scenes can be slower with the prepass; the default auto mode probes both choices. <a href="documentation/data/">Conditions, auto-mode results and source data.</a></p>
+        </article>
+        <article class="section-card benchmark-card">
+          <div class="benchmark-heading"><h3>Metal: validate the measurement first</h3><a class="text-link" href="documentation/profiling/">Capture a frame trace →</a></div>
+          <p>On Apple M5, 200,000 cubes at 1280 × 720, three cases × three rounds produce 2,700 captured frames. Per-slot timestamp ownership and deferred resolve keep GPU spans attached to the frame that submitted them, including through MoltenVK.</p>
+          <p class="fineprint">10 October 2026 · 4× MSAA · 60 warm-up + 300 measured frames per run. Clock-placement uncertainty: 53.5–79.9 µs. Run medians vary widely, so these captures establish profiling correctness; they do not establish a stable speedup. <a href="documentation/data/">Every case and its spread.</a> <a href="https://github.com/qiulinfan/amoris-benchmarks-results/tree/main/sources/amoris-metal-profiling-20261010">Raw traces and results.</a></p>
+        </article>
+        <article class="section-card benchmark-card">
+          <div class="benchmark-heading"><h3>Earlier high-detail mesh stress · 5 October</h3><span class="muted">Render and wait for GPU idle — lower is better</span></div>
+          <p class="data-context">A separate historical workload: 94,722 triangles per Flight Helmet. The 2.83M-triangle Bistro exterior took 12.02 ms mean render-and-wait at 1080p on Apple M5.</p>
           <div class="benchmark-legend"><span><i class="amoris-swatch"></i> Mean wall time per completed frame</span></div>
           <div class="bar-row"><span class="bar-label">64 helmets<br><small>6.06M triangles</small></span><div class="bar-pair"><div class="bar amoris-bar" style="--bar-width:12.8%"><span>10.52 ms</span></div></div></div>
           <div class="bar-row"><span class="bar-label">256 helmets<br><small>24.25M triangles</small></span><div class="bar-pair"><div class="bar amoris-bar" style="--bar-width:35%"><span>28.81 ms</span></div></div></div>
           <div class="bar-row"><span class="bar-label">1,024 helmets<br><small>97.00M triangles</small></span><div class="bar-pair"><div class="bar amoris-bar" style="--bar-width:100%"><span>82.43 ms</span></div></div></div>
-          <p class="fineprint">5 October 2026 · forward renderer · 1920 × 1080 · authored PBR maps, directional shadows and postprocessing enabled. Static rendering without simulation, presentation or PNG encoding. Geometry counts precede culling; this is not a full-game FPS claim or a PT measurement. <a href="documentation/data/">Method, p95 and raw results.</a></p>
+          <p class="fineprint">5 October 2026 · forward renderer · 1920 × 1080 · authored PBR maps, directional shadows and postprocessing enabled. Static rendering without simulation, presentation or PNG encoding. Geometry counts precede culling; this is not a full-game FPS claim or a PT measurement. <a href="documentation/data/">Method and p95.</a></p>
         </article>
       </section>
 
@@ -110,8 +128,8 @@
         <div class="section-heading"><div><span class="eyebrow">The short version</span><h2 id="stack-title">A small technology map.</h2></div></div>
         <div class="section-grid">
           <article class="section-card stack-card"><h3>Simulation</h3><dl><dt>Host</dt><dd>Rust · Bevy ECS</dd><dt>Rules</dt><dd>TypeScript · QuickJS-ng · oxc</dd><dt>Physics</dt><dd>Rapier · enhanced determinism</dd></dl></article>
-          <article class="section-card stack-card"><h3>Presentation</h3><dl><dt>Renderer</dt><dd>wgpu · WGSL</dd><dt>Targets</dt><dd>Metal · Vulkan · WebGPU</dd><dt>Editor</dt><dd>React · dockview · Monaco</dd></dl></article>
-          <article class="section-card stack-card"><h3>Interfaces</h3><dl><dt>People</dt><dd>Web editor · CLI</dd><dt>Agents</dt><dd>CLI · MCP</dd><dt>Tools</dt><dd>HTTP · WebSocket · JSON Schema</dd></dl></article>
+          <article class="section-card stack-card"><h3>Presentation</h3><dl><dt>Renderer</dt><dd>wgpu · WGSL</dd><dt>Targets</dt><dd>Metal · Vulkan · Direct3D 12 · WebGPU</dd><dt>Editor</dt><dd>React · dockview · Monaco · Electron</dd></dl></article>
+          <article class="section-card stack-card"><h3>Interfaces</h3><dl><dt>People</dt><dd>Desktop / web editor · CLI</dd><dt>Agents</dt><dd>CLI · MCP</dd><dt>Tools</dt><dd>HTTP · WebSocket · JSON Schema</dd></dl></article>
         </div>
       </section>
 

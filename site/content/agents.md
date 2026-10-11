@@ -1,7 +1,8 @@
 # Agents playing and developing games
 
-DeepSeek Flash uses tools to play a native Amoris sailing game and modify TypeScript gameplay
-systems. The model makes decisions between simulation steps; the Rust host runs the game.
+This **5 October 2026** experiment uses DeepSeek Flash tools to play a native Amoris sailing
+game and modify TypeScript gameplay systems. The model makes decisions between simulation
+steps; the Rust host runs the game.
 The gameplay demonstration and development benchmark measure different tasks.
 
 ## Native gameplay
@@ -22,8 +23,10 @@ keel and rudder; tool calls submit intentions and advance fixed ticks.
 `navigate` delegates continuous steering to the disclosed game-side **Helm executor**.
 DeepSeek chooses destinations and other actions; it does not compute every rudder update.
 This demonstration uses structured observations, rather than a vision model playing from
-rendered pixels. The range filter is implemented by the sample's tool projection. Engine-wide
-player authorization and pixel-based occlusion are still pending.
+rendered pixels. The range filter was implemented by the sample's tool projection. This
+experiment did not exercise the later engine-enforced player seats and geometric occlusion
+described in [CLI and MCP](api.md#play-through-a-restricted-seat); pixel-based perception
+was not measured. The published model trials have not been rerun on that interface.
 
 The three 2,048-token pretests collected **1/4, 1/4 and 2/4**; every response limit
 was recorded. With low effort and an 8,192-token cap, the three formal trials collected
@@ -89,8 +92,8 @@ models.
 
 ## Model, tools and cost accounting
 
-The requested alias is `deepseek-flash`; DeepSeek currently maps it to
-**DeepSeek-V4.1-Flash**. Model aliases can change, so each run records the request name and
+The requested alias was `deepseek-flash`, mapped to **DeepSeek-V4.1-Flash** at the time of
+the experiment. Model aliases can change, so each run records the request name and
 provider response metadata. See DeepSeek's [model and pricing documentation](https://api-docs.deepseek.com/quick_start/pricing/).
 
 The runner uses a direct Chat Completions tool loop, following DeepSeek's

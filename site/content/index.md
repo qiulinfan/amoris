@@ -1,6 +1,7 @@
 # Start with a running sample
 
-Amoris is a Rust 3D host with TypeScript game systems, a web editor, and a shared command API.
+Amoris is an agent-native 3D engine with a Rust host, TypeScript game systems, desktop and web
+editors, and a shared command API.
 The executable is currently named `pocket`.
 
 ## Build and open the editor
@@ -33,6 +34,10 @@ its separately audited FBX conversion; see [asset credits](credits.md).
 
 The host binds to loopback. The editor, CLI, and MCP all reach the same command catalog.
 
+For an independent desktop window with a project picker, recent projects, and host lifecycle
+management, follow the [desktop editor guide](editor.md#desktop-application). It uses the same
+panels and WebGPU viewport as the browser editor.
+
 ## Open a native window
 
 ```sh
@@ -40,7 +45,8 @@ The host binds to loopback. The editor, CLI, and MCP all reach the same command 
 ./target/release/pocket play samples/anim
 ```
 
-The native renderer uses Metal on macOS and Vulkan on supported native platforms.
+The native renderer defaults to Metal on macOS, Direct3D 12 on Windows, and Vulkan on other
+supported native platforms. Select a backend with `POCKET_BACKEND=metal|vulkan|dx12`.
 The browser renderer uses WebGPU; this version has no WebGL fallback.
 
 ## The small technology map
@@ -50,8 +56,8 @@ The browser renderer uses WebGPU; this version has no WebGL fallback.
 | Host and entities | Rust · Bevy ECS |
 | Game systems | TypeScript 7 · oxc · QuickJS-ng |
 | Physics | Rapier 3D with enhanced determinism |
-| Rendering | wgpu · WGSL · Metal / Vulkan / WebGPU |
-| Editor | React · dockview · Monaco |
+| Rendering | wgpu · WGSL · Metal / Vulkan / Direct3D 12 / WebGPU |
+| Editor | React · dockview · Monaco · Electron desktop shell |
 | Interfaces | CLI · HTTP / WebSocket · MCP |
 
 All game state lives in components. TypeScript systems hold no mutable module state.
@@ -63,6 +69,7 @@ Snapshots, replay, and explicit forks operate on the simulation; rendering reads
 - [Script API](sdk.md): components, queries, systems, events, and generated types.
 - [CLI and MCP](api.md): discover commands and automate a running host.
 - [Data and validation](data.md): what the published numbers actually measured.
+- [Profiling](profiling.md): capture CPU/GPU frame traces and inspect individual passes.
 
 For browser builds, QuickJS-ng's C code also needs a wasm-capable clang, LLVM tools,
 and wasi-libc. On macOS the build scripts find Homebrew LLVM; `POCKET_LLVM` can point

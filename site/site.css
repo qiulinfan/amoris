@@ -539,6 +539,38 @@ p {
   font-size:11px
 }
 
+.benchmark-table-wrap {
+  overflow-x:auto
+}
+
+.benchmark-table {
+  width:100%;
+  border-collapse:collapse;
+  margin:14px 0 0;
+  font-size:13px;
+  font-variant-numeric:tabular-nums
+}
+
+.benchmark-table th,.benchmark-table td {
+  padding:12px 8px;
+  border-bottom:1px solid var(--border);
+  text-align:right
+}
+
+.benchmark-table th {
+  color:var(--muted);
+  font-weight:500
+}
+
+.benchmark-table th:first-child {
+  text-align:left;
+  padding-left:0
+}
+
+.benchmark-table td:last-child {
+  color:var(--accent-2)
+}
+
 .benchmark-legend {
   display:flex;
   gap:24px;
@@ -950,6 +982,10 @@ body:not(.showcase) footer {
   .section-heading h2 {
     font-size:25px
   }
+  #data .section-heading {
+    flex-wrap:wrap;
+    gap:12px
+  }
   .section-heading .text-link {
     font-size:11px;
     padding-top:7px
@@ -982,22 +1018,26 @@ body:not(.showcase) footer {
     margin-top:9px
   }
   .metric-grid {
-    grid-template-columns:repeat(3,minmax(0,1fr));
+    grid-template-columns:1fr;
     gap:9px
   }
   .metric {
-    padding:17px 12px
+    display:grid;
+    grid-template-columns:90px minmax(0,1fr);
+    column-gap:14px;
+    padding:20px
   }
   .metric-value {
+    grid-row:span 2;
     font-size:32px;
-    margin-bottom:15px
+    margin-bottom:0
   }
   .metric h3 {
-    font-size:12px;
+    font-size:14px;
     line-height:1.4
   }
   .metric p {
-    font-size:10px;
+    font-size:12px;
     line-height:1.5
   }
   .benchmark-card {

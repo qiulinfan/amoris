@@ -26,11 +26,43 @@ the project's `.pocket/host.json`.
 ./target/release/pocket play stop --host http://127.0.0.1:7878
 ```
 
-These are developer-mode commands. The core includes player perception and intention
-types, but player-specific `observe` / `act` MCP projections are not exposed in this build.
-The showcase's sailing controller is a scripted MCP client over the developer command
+These are developer-mode commands. The showcase's earlier scripted sailing controller
+is an MCP client over the developer command
 surface. It evaluates four temporary Play forks, checks that Stop restores the edit
 world's hash, chooses a rudder value, and advances the real world with fixed ticks.
+
+## Play through a restricted seat
+
+Games with declared player seats expose `player.*` commands through CLI, HTTP, and MCP.
+The engine limits observations to the seat's perception and refuses developer commands
+when a call is made as that player. Start the sailing course host in one terminal:
+
+```sh
+./target/release/pocket serve samples/sailing-course --editor editor/dist
+```
+
+In another terminal, inspect the skipper's view and available intentions:
+
+```sh
+./target/release/pocket player observe --seat skipper --host http://127.0.0.1:7878
+./target/release/pocket player intents --seat skipper --host http://127.0.0.1:7878
+```
+
+For a seat-bound stdio MCP session:
+
+```sh
+./target/release/pocket mcp samples/sailing-course --seat skipper
+```
+
+This session lists only the `player` tool, with actions including `observe`, `nearby`,
+`affordances`, `intents`, `act`, and `wait`. HTTP callers pass `seat` alongside `method`
+and `params` to `/api/call`. The seat parameter selects a player role; it is not a remote
+authentication token. Token grants over HTTP MCP, player forks/replay, and script-defined
+intent executors remain unfinished. See the
+[player specification](https://github.com/qiulinfan/amoris/blob/main/docs/spec/player.md).
+
+The [DeepSeek recording](agents.md) used an earlier project-level gateway. Its results
+have not been rerun through these newer native player interfaces.
 
 ## Important command families
 
@@ -44,6 +76,7 @@ world's hash, chooses a rudder value, and advances the real world with fixed tic
 | Snapshots | `snapshots.list`, `snapshots.restore` |
 | Debugger | `debug.state`, `debug.pause`, `debug.continue`, `debug.step`, `debug.eval`, `debug.watch` |
 | Presentation | `assets.list`, `capture` |
+| Players | `player.session`, `player.observe`, `player.nearby`, `player.intents`, `player.act`, `player.wait` |
 
 `world.edit` validates the whole batch before applying it and records an undoable edit.
 Play operates on an explicit fork; Stop returns to the edit world.
