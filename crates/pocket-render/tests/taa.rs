@@ -496,9 +496,14 @@ fn the_sea_hides_what_lies_under_it() {
     eprintln!("GTAO changed {darkened} of them");
     assert_eq!(darkened, 0, "GTAO changed {darkened} pixels of the sea");
     // A cube sliding under the water moves nothing on it.
-    let taa = |object_motion: bool| {
-        let mut r = renderer(&gpu, Antialiasing::Taa, Gtao::Off);
+    let mut r = renderer(&gpu, Antialiasing::Taa, Gtao::Off);
+    // Compare only the motion switch, with the same renderer, draw policy and jitter sequence.
+    // Separate Auto policies can choose different prepass paths and perturb the sea's history.
+    r.set_prepass(pocket_render::PrepassMode::Off);
+    r.set_occlusion(pocket_render::OcclusionMode::Off);
+    let mut taa = |object_motion: bool| {
         r.taa_mut().tuning.object_motion = object_motion;
+        r.taa_mut().restart();
         sunk_run(&mut r, true, true, 40)
     };
     let moved = changed(&taa(true), &taa(false));
@@ -569,15 +574,15 @@ fn a_still_capture_settles_taa() {
 
 /// A wall of splats behind a cube and the alpha-tested chain-link panel, its foot under a calm sea,
 /// the sky behind, from the still camera: the HDR images of frames 1 to `n`, with visible or
-/// transparent splats. Both controls use TAA's copy pipeline, isolating the splat contribution
-/// from differences between separately compiled resolve entry points.
+/// transparent splats, plus each frame's own TAA history when TAA is active. The history is the
+/// opaque image before compositing: splats draw into a separate copy, never into this texture.
 fn splat_frames(
     gpu: &Gpu,
     aa: Antialiasing,
     raster: SplatRaster,
     draw: bool,
     n: u32,
-) -> Vec<Vec<f32>> {
+) -> (Vec<Vec<f32>>, Vec<Vec<f32>>) {
     let mut wall = Vec::new();
     for j in 0..100 {
         for i in 0..100 {
@@ -631,9 +636,77 @@ fn splat_frames(
     }]);
     r.apply(f, 0.0);
     r.set_camera_override(Some(pocket_render::demo::aa_camera(0, false)));
-    (1..=n)
-        .map(|k| r.capture_hdr(f64::from(k) * DT).2)
-        .collect()
+    let mut history = Vec::new();
+    let images = (1..=n)
+        .map(|k| {
+            let image = r.capture_hdr(f64::from(k) * DT).2;
+            if aa != Antialiasing::Msaa {
+                history.push(splat_history(gpu, &mut r));
+            }
+            image
+        })
+        .collect();
+    (images, history)
+}
+
+/// Reads the opaque TAA history after the frame. Comparing it with the composited image also
+/// catches writing splats into the history itself: their measured contribution would disappear.
+fn splat_history(gpu: &Gpu, r: &mut Renderer) -> Vec<f32> {
+    let texture = r.taa_mut().output().expect("the frame ran TAA").0.clone();
+    let row = (W * 8).div_ceil(256) * 256;
+    let buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("TAA history readback"),
+        size: u64::from(row * H),
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let mut encoder = gpu.device.create_command_encoder(&Default::default());
+    encoder.copy_texture_to_buffer(
+        wgpu::TexelCopyTextureInfo {
+            texture: &texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::TexelCopyBufferInfo {
+            buffer: &buffer,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(row),
+                rows_per_image: Some(H),
+            },
+        },
+        wgpu::Extent3d {
+            width: W,
+            height: H,
+            depth_or_array_layers: 1,
+        },
+    );
+    gpu.queue.submit([encoder.finish()]);
+    let slice = buffer.slice(..);
+    let (tx, rx) = std::sync::mpsc::channel();
+    slice.map_async(wgpu::MapMode::Read, move |result| {
+        let _ = tx.send(result);
+    });
+    gpu.device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .expect("the history readback completes");
+    rx.recv()
+        .expect("the mapping callback answers")
+        .expect("history maps");
+    let data = slice.get_mapped_range().expect("the mapped history");
+    let image = (0..H)
+        .flat_map(|y| {
+            data[(y * row) as usize..(y * row + W * 8) as usize]
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|p| pocket_assets::neural::f16_to_f32(u16::from_le_bytes([p[0], p[1]])))
+        })
+        .collect();
+    drop(data);
+    buffer.unmap();
+    image
 }
 
 /// Splats are drawn after TAA with the unjittered camera, so they must be tested against an
@@ -648,8 +721,16 @@ fn splats_behind_meshes_are_stable_under_taa() {
         let mut msaa_covered = 0;
         let mut near_splats = vec![false; (W * H) as usize];
         for aa in [Antialiasing::Msaa, Antialiasing::Taa, Antialiasing::MsaaTaa] {
-            let with = splat_frames(&gpu, aa, raster, true, n);
-            let without = splat_frames(&gpu, aa, raster, false, n);
+            let (with, history) = splat_frames(&gpu, aa, raster, true, n);
+            // Independently rendered TAA histories can diverge by a half-float step on Metal,
+            // even with the original profiler. Measure compositing against the same frame's
+            // opaque history, so that unrelated background drift cannot look like splat output.
+            // MSAA has no history and retains its separately rendered transparent-splat control.
+            let without = if aa == Antialiasing::Msaa {
+                splat_frames(&gpu, aa, raster, false, n).0
+            } else {
+                history
+            };
             // The splats' contribution to each frame.
             let c: Vec<Vec<f32>> = with
                 .iter()

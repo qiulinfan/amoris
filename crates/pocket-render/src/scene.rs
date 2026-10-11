@@ -97,6 +97,8 @@ pub struct Scene {
     /// Everything must be rewritten to the GPU (a reset, or a buffer that grew).
     pub full_upload: bool,
     pending: usize,
+    /// Live, resolved mesh slots whose look is visible, before GPU frustum/occlusion culling.
+    visible_instances: usize,
 }
 
 fn compose(pose: &Pose, local: Option<(Vec3, Quat, Vec3)>) -> ([f32; 3], [f32; 4], [f32; 3]) {
@@ -132,8 +134,16 @@ impl Scene {
         &self.moving
     }
 
+    /// Slot high-water mark, including holes: the GPU scans this whole range.
     pub fn instance_count(&self) -> usize {
         self.slots.len()
+    }
+
+    /// Whether the opaque passes have any resolved, visible mesh instances to consider.
+    /// Unlike the slot high-water mark, this becomes false when all instances are removed,
+    /// hidden or waiting for assets. Actual frustum/occlusion visibility remains GPU work.
+    pub fn has_visible_instances(&self) -> bool {
+        self.visible_instances != 0
     }
 
     pub fn entity_count(&self) -> usize {
@@ -197,6 +207,9 @@ impl Scene {
         for s in entry_slots {
             let slot = self.slots[s as usize];
             if slot.flags & FLAG_ALIVE != 0 {
+                if slot.flags & FLAG_VISIBLE != 0 {
+                    self.visible_instances -= 1;
+                }
                 let variant = (slot.flags >> VARIANT_SHIFT) & VARIANT_MASK;
                 self.count(slot.mesh * VARIANTS + variant, -1);
             }
@@ -410,6 +423,7 @@ impl Scene {
                 prev_rot: r,
             };
             let _ = k;
+            self.visible_instances += usize::from(flags & FLAG_VISIBLE != 0);
             self.count(part.mesh * VARIANTS + part.variant, 1);
             self.mark(s);
             slots.push(s);
@@ -497,5 +511,205 @@ impl Scene {
             }
         }
         (offsets, at.max(1))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Assets {
+        ready: bool,
+    }
+
+    impl Resolve for Assets {
+        fn parts(&mut self, _: u64, look: &Look) -> Option<Vec<Part>> {
+            if look.mesh == "pending" && !self.ready {
+                return None;
+            }
+            Some(if look.mesh == "empty" {
+                Vec::new()
+            } else {
+                // Every raster mesh variant can contribute to the opaque passes. Models may
+                // expand one entity into several slots, each released or rebuilt together.
+                (0..VARIANTS)
+                    .map(|variant| Part {
+                        mesh: 0,
+                        material: variant,
+                        variant,
+                        local: None,
+                    })
+                    .collect()
+            })
+        }
+    }
+
+    fn instance(id: u64, mesh: &str, visible: bool) -> InstanceUpdate {
+        InstanceUpdate {
+            id,
+            pose: Some(Pose::default()),
+            look: Some(Look {
+                mesh: mesh.into(),
+                material: String::new(),
+                color: [1.0; 4],
+                metallic: 0.0,
+                roughness: 0.6,
+                transmission: None,
+                ior: None,
+                emissive: [0.0; 3],
+                cast_shadows: true,
+                visible,
+            }),
+            anim: None,
+        }
+    }
+
+    fn update(
+        scene: &mut Scene,
+        assets: &mut Assets,
+        instances: Vec<InstanceUpdate>,
+        removed: Vec<u64>,
+    ) {
+        scene.apply(
+            RenderFrame {
+                instances,
+                removed,
+                ..RenderFrame::default()
+            },
+            assets,
+        );
+    }
+
+    #[test]
+    fn visible_instances_follow_hide_remove_reuse_and_reset_without_shrinking_slots() {
+        let mut scene = Scene::new();
+        let mut assets = Assets { ready: true };
+        assert!(!scene.has_visible_instances());
+        update(
+            &mut scene,
+            &mut assets,
+            vec![instance(1, "model", true), instance(2, "model", true)],
+            vec![],
+        );
+        let capacity = scene.instance_count();
+        assert_eq!(capacity, 2 * VARIANTS as usize);
+        assert!(scene.has_visible_instances());
+
+        update(
+            &mut scene,
+            &mut assets,
+            vec![instance(1, "model", false)],
+            vec![],
+        );
+        assert!(scene.has_visible_instances(), "entity 2 remains visible");
+        update(
+            &mut scene,
+            &mut assets,
+            vec![instance(2, "model", false)],
+            vec![],
+        );
+        assert!(
+            !scene.has_visible_instances(),
+            "hidden slots do not enable prepass probes"
+        );
+        assert_eq!(scene.instance_count(), capacity);
+
+        update(
+            &mut scene,
+            &mut assets,
+            vec![instance(1, "model", true)],
+            vec![],
+        );
+        assert!(
+            scene.has_visible_instances(),
+            "a hidden entity becomes visible again"
+        );
+        update(&mut scene, &mut assets, vec![], vec![1, 2]);
+        assert!(
+            !scene.has_visible_instances(),
+            "the last live parts were removed"
+        );
+        assert_eq!(
+            scene.instance_count(),
+            capacity,
+            "GPU slot scan length stays unchanged"
+        );
+
+        update(
+            &mut scene,
+            &mut assets,
+            vec![instance(3, "model", true)],
+            vec![],
+        );
+        assert!(
+            scene.has_visible_instances(),
+            "released slots can be reused"
+        );
+        assert_eq!(scene.instance_count(), capacity);
+        scene.apply(
+            RenderFrame {
+                reset: true,
+                ..RenderFrame::default()
+            },
+            &mut assets,
+        );
+        assert!(
+            !scene.has_visible_instances(),
+            "reset clears the live count too"
+        );
+        assert_eq!(scene.instance_count(), 0);
+    }
+
+    #[test]
+    fn pending_or_empty_assets_do_not_enable_prepass_probes() {
+        let mut scene = Scene::new();
+        let mut assets = Assets { ready: false };
+        update(
+            &mut scene,
+            &mut assets,
+            vec![instance(1, "pending", true)],
+            vec![],
+        );
+        scene.retry_pending(&mut assets);
+        assert_eq!(scene.entity_count(), 1);
+        assert_eq!(scene.pending(), 1);
+        assert!(
+            !scene.has_visible_instances(),
+            "an entity waiting for geometry has no drawable slots"
+        );
+        assets.ready = true;
+        scene.retry_pending(&mut assets);
+        assert!(
+            scene.has_visible_instances(),
+            "arriving geometry is eligible"
+        );
+        assert_eq!(scene.pending(), 0);
+        let capacity = scene.instance_count();
+
+        assets.ready = false;
+        update(
+            &mut scene,
+            &mut assets,
+            vec![instance(1, "pending", true)],
+            vec![],
+        );
+        assert!(
+            !scene.has_visible_instances(),
+            "replacing a model releases its old geometry while loading"
+        );
+        assert_eq!(scene.instance_count(), capacity);
+        update(&mut scene, &mut assets, vec![], vec![1]);
+        assert_eq!(scene.pending(), 0);
+        assert!(!scene.has_visible_instances());
+        update(
+            &mut scene,
+            &mut assets,
+            vec![instance(2, "empty", true)],
+            vec![],
+        );
+        assert!(
+            !scene.has_visible_instances(),
+            "a loaded model without parts is still empty"
+        );
     }
 }

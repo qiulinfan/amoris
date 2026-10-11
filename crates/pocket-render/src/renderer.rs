@@ -639,9 +639,9 @@ const FORWARD_LABELS: [&str; 4] = [
     "forward (double sided)",
     "forward (masked, double sided)",
 ];
-/// After the depth prepass the alpha-masked variants do not discard: the prepass's alpha test
-/// decided where they are, and the equal-depth test shades exactly there (docs/spec/prepass.md 3).
-const FORWARD_EQUAL_ENTRIES: [&str; 4] = ["fs"; 4];
+/// Equal depth can come from another coplanar surface, including inside a cut-out hole.
+/// Masked variants must repeat their alpha test before shading that depth.
+const FORWARD_EQUAL_ENTRIES: [&str; 4] = FORWARD_ENTRIES;
 const FORWARD_EQUAL_LABELS: [&str; 4] = [
     "forward (equal depth)",
     "forward (masked, equal depth)",
@@ -720,8 +720,7 @@ fn forward_variants<T>([[a, c], [b, d]]: [[T; 2]; 2]) -> [T; 4] {
 /// Forward variants `i` (back-face culled) and `i + 2` (double-sided) of `module` for an opaque
 /// pass of `format`, with fragment entry points and labels from `entries`: drawn alone, then after
 /// the depth prepass. The later pipelines reuse the shaders the first compiled (wgpu keeps them per
-/// device), so a pair costs one compilation (the masked variants' equal-depth twins take the other
-/// pair's `fs`, usually compiled by then) and two pairs can compile on two threads.
+/// device), so a pair costs one compilation and two pairs can compile on two threads.
 fn forward_pair(
     device: &wgpu::Device,
     module: &wgpu::ShaderModule,
@@ -1228,7 +1227,7 @@ impl Renderer {
             sky: built.sky,
             gi: crate::gi::ProbeVolume::new(device, &gpu.queue),
             rt_shadows,
-            profiler: GpuProfiler::new(device, &gpu.queue, gpu.caps.timestamps),
+            profiler: GpuProfiler::new(device, &gpu.queue, gpu.caps.timestamps, &gpu.info),
             splats: built.splats,
             view_buf: Uniform::new(device, "view", std::mem::size_of::<ViewUniform>() as u64),
             view_stable: Uniform::new(
@@ -1352,6 +1351,7 @@ impl Renderer {
 
     /// Starts a per-frame trace (trace.rs), replacing one in progress.
     pub fn start_trace(&mut self, spec: TraceSpec) {
+        self.profiler.set_tracing(&self.gpu.device, false);
         self.trace = Some(FrameTracer::new(spec));
     }
 
@@ -1371,10 +1371,18 @@ impl Renderer {
             return;
         };
         if t.wants_clock() {
+            // Drain old slots before enlarging the ring or recording its first frame.
+            #[cfg(not(target_arch = "wasm32"))]
+            self.profiler.drain(&self.gpu.device);
             // Outside the recorded frames: calibrating waits for the GPU.
             #[cfg(not(target_arch = "wasm32"))]
             let clock = self.profiler.enabled().then(|| {
-                trace::calibrate(&self.gpu.device, &self.gpu.queue, self.profiler.period_ns())
+                trace::calibrate(
+                    &self.gpu.device,
+                    &self.gpu.queue,
+                    self.profiler.period_ns(),
+                    &self.gpu.info,
+                )
             });
             #[cfg(target_arch = "wasm32")]
             let clock: Option<Option<trace::Calibration>> = None;
@@ -1383,18 +1391,23 @@ impl Renderer {
             self.profiler.dropped = 0;
         }
         t.begin_frame(web_time(), explicit);
+        self.profiler.record_frame(t.recording());
     }
 
     /// The host's frame ends (after presenting). Returns whether the trace has every frame: the
     /// host then writes it with [`Renderer::finish_trace`] when the stall that costs does not
-    /// matter, a benchmark after its measured frames (until then the profiler keeps every frame's
-    /// timestamps). A trace of frames `render` brackets itself is written by the last of them.
+    /// matter, a benchmark after its measured frames. Only recorded frames retain timestamps,
+    /// including their late readbacks. A trace of frames `render` brackets itself is written by the last of them.
     pub fn trace_end_frame(&mut self) -> bool {
         let Some(t) = &mut self.trace else {
             return false;
         };
         t.end_frame(web_time());
-        t.complete()
+        let complete = t.complete();
+        if complete {
+            self.profiler.stop_recording();
+        }
+        complete
     }
 
     /// The CPU time now when the current frame is recorded: the start of a host span.
@@ -1426,7 +1439,14 @@ impl Renderer {
         let end_clock = self
             .profiler
             .enabled()
-            .then(|| trace::calibrate(&self.gpu.device, &self.gpu.queue, self.profiler.period_ns()))
+            .then(|| {
+                trace::calibrate(
+                    &self.gpu.device,
+                    &self.gpu.queue,
+                    self.profiler.period_ns(),
+                    &self.gpu.info,
+                )
+            })
             .flatten();
         #[cfg(target_arch = "wasm32")]
         let end_clock = None;
@@ -1450,6 +1470,7 @@ impl Renderer {
             ("draw_path", serde_json::json!(self.batches.path.name())),
             ("instances", serde_json::json!(self.scene.instance_count())),
             ("gpu_timestamps", serde_json::json!(self.profiler.enabled())),
+            ("gpu_frames_retained", serde_json::json!(gpu.len())),
         ] {
             meta.insert(k.into(), v);
         }
@@ -2329,6 +2350,7 @@ impl Renderer {
     /// Draws a frame into `output` (a texture view of the renderer's output format).
     pub fn render(&mut self, output: &wgpu::TextureView, now_s: f64) -> FrameStats {
         let cpu = web_time();
+        self.profiler.poll();
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(rd) = &mut self.renderdoc {
             rd.before_frame();
@@ -2503,7 +2525,7 @@ impl Renderer {
             &self.profiler.arrived,
             self.profiler.times_frame(),
             occl,
-            n > 0,
+            self.scene.has_visible_instances(),
         );
         // Levels of detail: the regions were sized for this mode in `sync` (lod.rs).
         let lod_on = self.regions_lod == Some(true);

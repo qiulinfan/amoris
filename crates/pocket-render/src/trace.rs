@@ -22,12 +22,14 @@
 //!   (profiler.rs) with the frame it belongs to; while tracing the post chain is timed too
 //!   ("post"). A frame whose queries found no free readback buffer has no GPU spans (counted).
 //! - Placing GPU time on the CPU timeline: wgpu 30 offers no CPU/GPU clock calibration, so the
-//!   trace measures one. Before the first recorded frame and after the last it submits an empty
-//!   compute pass with timestamps to an idle GPU, eight times: its first timestamp lies between
+//!   trace measures one. Before the first recorded frame and after the last it submits a
+//!   timestamped compute pass to an idle GPU, eight times: its first timestamp lies between
 //!   the CPU time just before the submit and the CPU time when the wait for the GPU returned.
 //!   The intersection of those brackets bounds the clocks' offset; GPU spans are placed with its
 //!   midpoint, interpolated linearly between the two calibrations (drift), and the half-widths are
-//!   recorded as the placement's uncertainty.
+//!   recorded as the placement's uncertainty. Metal (including MoltenVK) uses real work, and its counters
+//!   are resolved only after the timestamp submission completes; the other backends retain their
+//!   single-submission empty-pass calibration.
 
 use std::path::PathBuf;
 
@@ -134,11 +136,77 @@ pub fn calibrate(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     period_ns: f32,
+    info: &wgpu::AdapterInfo,
 ) -> Option<Calibration> {
+    if !period_ns.is_finite() || period_ns <= 0.0 {
+        return None;
+    }
+    let samples = calibration_samples(device, queue, info)?;
+    intersect(
+        &samples
+            .iter()
+            .map(|s| {
+                (
+                    s.before,
+                    s.after,
+                    s.begin as f64 * f64::from(period_ns) * 1e-9,
+                )
+            })
+            .collect::<Vec<_>>(),
+    )
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+struct CalibrationSample {
+    before: f64,
+    after: f64,
+    begin: u64,
+    end: u64,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn calibration_samples(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    info: &wgpu::AdapterInfo,
+) -> Option<Vec<CalibrationSample>> {
     const ROUNDS: usize = 8;
     if !device.features().contains(wgpu::Features::TIMESTAMP_QUERY) {
         return None;
     }
+    let metal = crate::profiler::deferred_timestamps(info);
+    // An empty Metal compute pass returns zero counter samples on Apple M5. Give it a real
+    // storage write so the timestamps bracket a dispatch. MoltenVK also needs deferred
+    // resolve; keep other Vulkan drivers and D3D12 on the successful Windows path.
+    let dispatch = metal.then(|| {
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("trace clock"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/trace_clock.wgsl").into()),
+        });
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("trace clock"),
+            layout: None,
+            module: &module,
+            entry_point: Some("main"),
+            compilation_options: crate::shaders::compute_options(),
+            cache: None,
+        });
+        let storage = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("trace clock (work)"),
+            size: 4,
+            usage: wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
+        let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("trace clock"),
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: storage.as_entire_binding(),
+            }],
+        });
+        (pipeline, bind)
+    });
     let queries = device.create_query_set(&wgpu::QuerySetDescriptor {
         label: Some("trace clock"),
         ty: wgpu::QueryType::Timestamp,
@@ -160,43 +228,76 @@ pub fn calibrate(
         wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         "trace clock (readback)",
     );
-    let mut samples = Vec::with_capacity(ROUNDS);
+    let mut samples: Vec<CalibrationSample> = Vec::with_capacity(ROUNDS);
     for _ in 0..ROUNDS {
         let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("trace clock"),
         });
-        drop(enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
-            label: Some("trace clock"),
-            timestamp_writes: Some(wgpu::ComputePassTimestampWrites {
-                query_set: &queries,
-                beginning_of_pass_write_index: Some(0),
-                end_of_pass_write_index: Some(1),
-            }),
-        }));
-        enc.resolve_query_set(&queries, 0..2, &resolve, 0);
-        enc.copy_buffer_to_buffer(&resolve, 0, &readback, 0, 16);
+        {
+            let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("trace clock"),
+                timestamp_writes: Some(wgpu::ComputePassTimestampWrites {
+                    query_set: &queries,
+                    beginning_of_pass_write_index: Some(0),
+                    end_of_pass_write_index: Some(1),
+                }),
+            });
+            if let Some((pipeline, bind)) = &dispatch {
+                pass.set_pipeline(pipeline);
+                pass.set_bind_group(0, bind, &[]);
+                pass.dispatch_workgroups(1, 1, 1);
+            }
+        }
+        let encode_readback = |enc: &mut wgpu::CommandEncoder| {
+            enc.resolve_query_set(&queries, 0..2, &resolve, 0);
+            enc.copy_buffer_to_buffer(&resolve, 0, &readback, 0, 16);
+        };
+        if !metal {
+            encode_readback(&mut enc);
+        }
         let commands = enc.finish();
-        let _ = device.poll(wgpu::PollType::wait_indefinitely());
+        device.poll(wgpu::PollType::wait_indefinitely()).ok()?;
         let before = crate::web_time();
         queue.submit([commands]);
-        let _ = device.poll(wgpu::PollType::wait_indefinitely());
+        device.poll(wgpu::PollType::wait_indefinitely()).ok()?;
         let after = crate::web_time();
+        if metal {
+            // wgpu 30's Metal counter resolve can expose the previous sample if encoded in the
+            // same submission as the timestamps. Finish the sampled work first. This second
+            // submit must stay OUTSIDE the CPU bracket that bounds the sampled timestamp.
+            let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("trace clock (readback)"),
+            });
+            encode_readback(&mut enc);
+            queue.submit([enc.finish()]);
+        }
         let (tx, rx) = std::sync::mpsc::channel();
         readback.slice(..).map_async(wgpu::MapMode::Read, move |r| {
             let _ = tx.send(r.is_ok());
         });
-        let _ = device.poll(wgpu::PollType::wait_indefinitely());
+        device.poll(wgpu::PollType::wait_indefinitely()).ok()?;
         if rx.recv() != Ok(true) {
             return None;
         }
-        let ticks = {
+        let (begin, end) = {
             let data = readback.slice(..).get_mapped_range().ok()?;
-            u64::from_le_bytes(data[..8].try_into().ok()?)
+            (
+                u64::from_le_bytes(data[..8].try_into().ok()?),
+                u64::from_le_bytes(data[8..16].try_into().ok()?),
+            )
         };
         readback.unmap();
-        samples.push((before, after, ticks as f64 * f64::from(period_ns) * 1e-9));
+        if begin == 0 || end < begin || samples.last().is_some_and(|last| begin <= last.end) {
+            return None;
+        }
+        samples.push(CalibrationSample {
+            before,
+            after,
+            begin,
+            end,
+        });
     }
-    intersect(&samples)
+    Some(samples)
 }
 
 /// A CPU span: a name and its start and end (CPU seconds).
@@ -646,7 +747,7 @@ impl FrameTracer {
         other.insert(
             "gpu_placement".into(),
             json!(if calibrated {
-                "calibrated: bracketed timestamps of an empty compute pass, start and end"
+                "calibrated: bracketed compute timestamps, start and end"
             } else {
                 "uncalibrated: each frame's GPU work drawn from the end of its submit"
             }),
@@ -666,6 +767,51 @@ impl FrameTracer {
 mod tests {
     use super::*;
     use crate::profiler::RawScope;
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn gpu_clock_samples_are_current_and_bound_by_the_cpu_brackets() {
+        let Ok(gpu) = crate::Gpu::headless(crate::BackendChoice::from_env()) else {
+            eprintln!("no GPU: skipped");
+            return;
+        };
+        if !gpu
+            .device
+            .features()
+            .contains(wgpu::Features::TIMESTAMP_QUERY)
+        {
+            eprintln!("no GPU timestamps: skipped");
+            return;
+        }
+        let samples = calibration_samples(&gpu.device, &gpu.queue, &gpu.info)
+            .expect("positive, ordered clock samples");
+        let period_s = f64::from(gpu.queue.get_timestamp_period()) * 1e-9;
+        let brackets: Vec<_> = samples
+            .iter()
+            .map(|s| (s.before, s.after, s.begin as f64 * period_s))
+            .collect();
+        let clock = intersect(&brackets).expect("clock samples agree within their CPU brackets");
+        assert_eq!(samples.len(), 8);
+        assert!(clock.offset_s.is_finite());
+        assert!(clock.half_width_s.is_finite() && clock.half_width_s >= 0.0);
+        for (i, sample) in samples.iter().enumerate() {
+            assert!(sample.begin > 0 && sample.end >= sample.begin);
+            assert!(sample.after >= sample.before);
+            if i > 0 {
+                assert!(sample.begin > samples[i - 1].end, "stale sample {i}");
+                assert!(sample.before >= samples[i - 1].after);
+            }
+            let begin = sample.begin as f64 * period_s + clock.offset_s;
+            let end = sample.end as f64 * period_s + clock.offset_s;
+            let slack = clock.half_width_s + 1e-9;
+            assert!(
+                begin >= sample.before - slack && end <= sample.after + slack,
+                "sample {i}: GPU {begin}..{end} outside CPU {}..{} (slack {slack})",
+                sample.before,
+                sample.after,
+            );
+        }
+    }
 
     #[test]
     fn specs_parse_and_refuse() {

@@ -42,7 +42,9 @@ The late culling pass overwrites the early records in `drawn` (occlusion.md 6), 
 cannot share one opaque pass after both prepasses without doubling `drawn`; the early opaque pass
 shades samples a late instance may cover, as it does without the prepass.
 
-A frame without instances never draws the prepass.
+A frame without resolved, visible mesh instances never draws the prepass. Scene keeps an
+incremental visible-slot count: removed, hidden or still-loading instances do not participate,
+even when the GPU's slot scan range retains holes from earlier frames.
 
 ## 2. The same depth in both passes
 
@@ -82,11 +84,11 @@ without the attribute: they are not tested for equality.
   against with TAA (taa-gtao.md); a multisampled opaque pass's prepass uses a set built for its
   samples (`depth_msaa`, rebuilt when the samples change).
 - **Equal depth** (`Forward::equal`, beside `Forward::test`): the forward pipelines with depth test
-  `Equal` and depth writes off. The alpha-masked variants use `fs`, not `fs_masked`: where the
-  prepass's alpha test kept a surface its depth is stored and the forward pass shades it; where it
-  discarded, the forward fragment's depth differs from the stored one. A second alpha test could
-  only disagree with the first (holes, or a surface shown where the depth says another is), so the
-  prepass's decides alone. The neural variants' twins use `fs_neural`.
+  `Equal` and depth writes off. Alpha-masked variants retain `fs_masked` and repeat the same
+  alpha test as the prepass. Depth alone does not identify the surface that wrote it: another
+  coplanar surface can write matching depth inside a mask's holes. Shading those fragments
+  without their alpha test would fill fully transparent holes. The neural variants' twins use
+  `fs_neural`.
 - Variants: a neural variant (`NEURAL_VARIANT + v`) draws its depth through base variant `v`'s
   depth-only pipeline; the neural variants are skipped in the prepass exactly when the opaque pass
   skips them (before their pipelines exist), so no depth is drawn without its color. Levels of
@@ -100,7 +102,7 @@ without the attribute: they are not tested for equality.
 
 Each forward pair (two threads at start-up, par.rs) builds its two test pipelines and then their
 two equal-depth twins, whose shaders wgpu has compiled by then (Direct3D 12 caches DXC's output
-per device); the masked twins take `fs`, which the other thread compiles.
+per device); each twin retains its pair's fragment entry point.
 
 ## 4. Fit with the rest of the frame
 
@@ -122,9 +124,14 @@ per device); the masked twins take `fs`, which the other thread compiles.
 - **MSAA**: the depth test runs per sample, so the forward pass shades a pixel's covered samples
   whose depth matches and the resolve is unchanged.
 - **Ties**: two surfaces at exactly the same depth at a sample both pass the equal test, so the one
-  drawn last shows; without the prepass the first drawn one shows. The comparisons found such a
-  difference only in many_cubes' sphere (a few pixels, one level apart: section 6), as occlusion
-  culling's change of draw order did in the same scene (occlusion.md 5).
+  drawn last shows; without the prepass the first drawn one shows. This applies only to valid
+  fragments: masked fragments below the alpha cutoff are discarded in both modes. The
+  occluder demo's cylinder bottom cap and ground are also coplanar (both y=0), so they can
+  show different winners even with the alpha test retained. Image-invariance fixtures lift
+  that cylinder by 0.01, while a separate regression checks both valid tie winners and
+  transparent holes with each mesh order. The demo itself remains unchanged. The many_cubes
+  sphere also has tied samples (section 6), as when occlusion culling changes its draw order
+  (occlusion.md 5).
 
 ## 5. Modes
 
@@ -183,8 +190,9 @@ much slower way, or up to four of a way within 50% (bench/prepass.md 3 gives the
 
 - `crates/pocket-render/tests/prepass.rs` draws, with two renderers on one device (the prepass off
   and forced on) through the same frames: the mixed scene (every variant in the camera and four
-  shadow cascades) with three skinned characters, with 4x MSAA; the occluder scene with occlusion
-  culling forced on (cold, warm, a camera cut); the anti-aliasing scene with TAA and with MSAA+TAA,
+  shadow cascades) with three skinned characters, with 4x MSAA; the occluder scene with its
+  cylinder lifted off the ground and occlusion culling forced on (cold, warm, a camera cut);
+  the anti-aliasing scene with TAA and with MSAA+TAA,
   its instances moving and its camera panning (frames 1, 5 and 12); the LOD field; a constant
   neural material on a ground under four primitives. Every frame's pixels must be identical and
   every entity's id-pass coverage equal; the mixed and occluder scenes run again on the two other
@@ -192,6 +200,13 @@ much slower way, or up to four of a way within 50% (bench/prepass.md 3 gives the
   (`view_proj * pos + view_proj * rotated`) makes 20,695 pixels of the mixed scene differ (16%),
   and the test fails. It passes on the RTX 5060 and the Radeon 780M with Direct3D 12 and Vulkan, and
   with `POCKET_GPU_MINIMAL=features,limits,timestamps`.
+- The coplanar regression draws a fully transparent masked quad over a blue quad at the exact
+  same depth. Every pixel must match the blue quad drawn alone, with prepass off and on, single-
+  and double-sided masks, one sample and 4x MSAA, opaque and masked blue materials, and both
+  mesh orders. When both materials are masked, reversing mesh rows also reverses actual draw
+  order. A fully opaque alpha texture then checks the documented tie rule: the first drawn
+  surface wins without the prepass and the last wins with it. These are valid surfaces, unlike
+  the transparent fragments that must never win a depth tie.
 - `shaders.rs`' test checks what naga writes for the invariant positions (section 2).
 - `prepass.rs`' unit tests drive the auto mode through a simulated renderer and profiler (a readback
   lag, the ring of three readback buffers, lost readbacks, frames without instances): the readings;

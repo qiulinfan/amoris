@@ -117,7 +117,13 @@ def run_one(build_dir, case, backend, adapter, prepass, occlusion, args):
     p = subprocess.run(cmd, cwd=ROOT, env=env, capture_output=True, text=True, timeout=900)
     run = {"case": case, "backend": backend, "adapter": adapter, "prepass": prepass,
            "occlusion": occlusion, "seconds": round(time.time() - t, 1),
-           "gpu_before": before, "gpu_after": gpu_state()}
+           "gpu_before": before, "gpu_after": gpu_state(), "returncode": p.returncode}
+    if p.returncode:
+        # A child may print a valid report and still fail during GPU teardown. Keep its output
+        # in the ignored run archive, but do not admit its metrics to either summary table.
+        run.update(error=f"exit {p.returncode}; {p.stderr[-400:]}",
+                   stdout=p.stdout, stderr=p.stderr)
+        return run
     try:
         if window:
             run["result"] = parse_window(p.stdout)

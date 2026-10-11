@@ -298,6 +298,15 @@ Amoris 是一个 **agent-native** 的 3D 游戏引擎。agent 在三个角色上
   间与常开预通道相差约 0.1 ms（Direct3D 12 与 780M 按中位数，Vulkan 按最小值；修正前 Direct3D 12 上
   1.1 ms，780M 上 3.6 ms）；球体场景的复测一帧一帧地画预通道，至多 4 帧，每帧约多 2 ms。见
   [bench/prepass.md](bench/prepass.md) 3.1。
+
+  2026-10-10（Amoris，Metal 复审）：Equal 颜色通道仍须对 masked 材质执行 alpha discard，因为其他共面
+  表面也可能写入相同深度，深度相等不能代表当前片元通过了 alpha 测试。有效表面的等深度竞争单独测试；
+  顶点位置一致性测试使用非共面几何，不放宽像素与实体覆盖断言。 M5 上 GPU counter 在同一提交内
+  resolve 可能读到前一帧的值：Metal 的计时查询按在途帧独占，在采样完成后异步 resolve，读回完成前不复
+  用；正常渲染帧不等待 GPU。MoltenVK 经 Metal 执行，也使用这一流程；Windows 的 Direct3D 12 和原生
+  Vulkan 驱动保留已验证的同提交 resolve 路径。Metal（含 MoltenVK）的 CPU/GPU 时钟校准在计时窗口外提
+  交实际工作，等采样完成后再 resolve，保留真实采样提交的 CPU 时间边界。逐帧归属、校准与非阻塞读回必
+  须有回归验证。
 - **光照与画质**：reversed-Z、PBR（GGX）、聚簇前向光照、级联阴影、程序天空与 IBL、HDR、bloom、
   TAA、AgX 色调映射、实体 ID 缓冲（拾取与 agent 的"画面上是什么"）。 2026-10-09（Pioneer）：TAA 与
   GTAO 在帧内的位置。开启 TAA 时不透明通道用逐帧亚像素抖动的投影绘制；前向着色器另写两张附加目标：间

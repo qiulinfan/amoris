@@ -258,7 +258,7 @@ impl<'a> Probe<'a> {
     fn pyramid(&self, depth: &wgpu::TextureView, w: u32, h: u32) -> Occlusion {
         let device = &self.gpu.device;
         let mut occlusion = Occlusion::new(device, OcclusionMode::On);
-        let mut profiler = GpuProfiler::new(device, &self.gpu.queue, false);
+        let mut profiler = GpuProfiler::new(device, &self.gpu.queue, false, &self.gpu.info);
         let mut enc = device.create_command_encoder(&Default::default());
         occlusion.encode_pyramid(device, &mut enc, &mut profiler, depth, (w, h));
         self.gpu.queue.submit([enc.finish()]);

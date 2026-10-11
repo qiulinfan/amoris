@@ -105,6 +105,13 @@ credential cleanup. File-verification records remain local, including in that ar
   statistics and NVIDIA's Vulkan register count). RenderDoc's D3D12 counters need Windows'
   Developer Mode (`--d3d12-counters`); a first qrenderdoc start's analytics prompt blocks scripts
   until answered. Traces and captures stay under `out/profiler/`.
+- Metal timestamp queries (also through MoltenVK) belong to a readback slot until sampling, deferred resolve and mapping
+  finish. A completion callback only marks the sampling submission ready; the render thread then
+  batches resolves without waiting for the GPU. Never move Metal resolve into its sampling
+  encoder: it can return another frame's counters. Clock calibration alone waits outside the
+  measured window and dispatches real work. Run `frame_trace` and `gpu_profiler` integration tests
+  on Metal and a non-Metal backend after changing this lifecycle; see
+  [docs/bench/metal-profiling.md](docs/bench/metal-profiling.md).
 - Shader hashes are integer (`pcg_hash` in common.wgsl): `fract(sin(x) * k)` differs per vendor
   and API.
 - Ray queries: the research tracers (`path_trace`, `gi_trace`, `ray_query_probe`;
