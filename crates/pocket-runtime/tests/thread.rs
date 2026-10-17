@@ -493,6 +493,72 @@ fn ticks_are_profiled_while_a_host_serves_the_profile() {
     h.shutdown(2000).unwrap();
 }
 
+/// threads.md 4.3, the wake-up: the game thread calls `on_publish` once per publication point, with
+/// the render feed's frames already in the mailboxes, as `pocket serve`'s `/render` sockets read
+/// them when woken: a full frame for a subscriber that came while the world waits, the moved
+/// instance after a write while paused, and a frame after each tick.
+#[test]
+fn on_publish_wakes_with_the_frames_in_the_mailbox() {
+    use pocket_assets::{Feed, Mailbox, RenderFrame};
+    use std::sync::Mutex;
+    let feed = Feed::new();
+    let slot: Arc<Mutex<Option<Arc<Mailbox>>>> = Arc::new(Mutex::new(None));
+    let frames: Arc<Mutex<Vec<RenderFrame>>> = Arc::new(Mutex::new(Vec::new()));
+    let (s, f) = (slot.clone(), frames.clone());
+    // What a socket does when woken: take the mailbox's frame.
+    let on_publish = Arc::new(move || {
+        if let Some(m) = s.lock().unwrap().as_ref() {
+            let frame = m.take();
+            if !(frame.is_empty() && !frame.reset && frame.tick == 0) {
+                f.lock().unwrap().push(frame);
+            }
+        }
+    });
+    let h = GameThread::spawn(
+        || Game::new(common::sailing(), 1),
+        ThreadOptions {
+            feed: Some(feed.clone()),
+            paused: true,
+            pacing: pocket_runtime::thread::Pacing::RealTime { speed: 1.0 },
+            on_publish,
+            ..ThreadOptions::new(clock())
+        },
+    )
+    .unwrap_or_else(|e| panic!("{e:#?}"));
+    let wait = |what: &str, ok: &dyn Fn(&[RenderFrame]) -> bool| {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !ok(&frames.lock().unwrap()) {
+            assert!(Instant::now() < deadline, "no wake-up with {what}");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        frames.lock().unwrap().clear();
+    };
+    // Paused, nothing ticks: the loop extracts the new subscriber's full frame and wakes.
+    *slot.lock().unwrap() = Some(feed.subscribe());
+    wait("a full frame", &|fs| {
+        fs.iter().any(|f| f.reset && f.instances.len() > 3)
+    });
+    let mut dev = h.developer();
+    dev.call(
+        "world_edit",
+        json!({"edits": [{"op": "set", "entity": "Crate1", "component": "Transform",
+                          "value": {"position": [1.0, 2.0, 3.0]}}]}),
+    )
+    .unwrap();
+    wait("the moved crate", &|fs| {
+        fs.iter().any(|f| {
+            f.instances
+                .iter()
+                .any(|u| u.pose.is_some_and(|p| p.position == [1.0, 2.0, 3.0]))
+        })
+    });
+    let tick = h.reader().latest().state().0;
+    dev.call("step", json!({"ticks": 5})).unwrap();
+    wait("five ticks", &|fs| fs.iter().any(|f| f.tick == tick + 5));
+    drop(dev);
+    h.shutdown(2000).unwrap();
+}
+
 fn panics_at_ten(sim: &mut pocket_sim::Sim) -> Result<(), pocket_contract::Problem> {
     sim.add_system(
         "test.panic",

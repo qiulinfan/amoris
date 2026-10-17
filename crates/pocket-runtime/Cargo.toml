@@ -48,3 +48,15 @@ required-features = ["transpile"]
 [[example]]
 name = "profile_bench"
 required-features = ["transpile"]
+
+[[test]]
+name = "snapshot_cache"
+required-features = ["transpile"]
+
+[[test]]
+name = "present"
+required-features = ["transpile"]
+
+[[example]]
+name = "publish_bench"
+required-features = ["transpile"]
