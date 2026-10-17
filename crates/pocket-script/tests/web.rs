@@ -1,6 +1,7 @@
 //! The web report natively (script-host.md 12, tests 1, 2, 3 and 9; the cross-target check of the
 //! script host): it must have no failure, its values are pinned, and the WebAssembly build must
-//! print the same bytes, which `the_wasm_report_is_the_native_one` checks under Node. By hand:
+//! print the same bytes, which `the_wasm_report_is_the_native_one` checks under Node; the step
+//! profiler's line (docs/spec/debugger.md 14) is one of them. By hand:
 //!
 //!   cargo build -p pocket-script --example web_workload --target wasm32-unknown-unknown --release
 //!   node crates/pocket-script/tests/web/run.mjs <target>/wasm32-unknown-unknown/release/examples/web_workload.wasm \
@@ -74,8 +75,21 @@ fn web_report() {
             .all(|l| l.ends_with("errors 0")),
         "{report}"
     );
+    // The step profiler over ticks 301 to 360: the tick lines and the final digest and steps are
+    // those pinned without it; the profile is the same bytes in WebAssembly (below).
+    let profile = report
+        .lines()
+        .find(|l| l.starts_with("profile "))
+        .unwrap_or_else(|| panic!("{report}"));
+    assert!(
+        profile.starts_with("profile ticks 301-360 interval 97 "),
+        "{profile}"
+    );
     let last = lines.last().unwrap();
-    println!("{}\n{}\n{}\n{last}", lines[0], lines[1], lines[3]);
+    println!(
+        "{}\n{}\n{}\n{profile}\n{last}",
+        lines[0], lines[1], lines[3]
+    );
     assert_eq!(*last, FINAL);
 }
 

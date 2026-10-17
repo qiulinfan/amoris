@@ -95,8 +95,22 @@ impl Bench {
     /// A world with the script host and `set` swapped in; `measured` names the script system
     /// `Sample::system` times (`damage`, `idle`, `scan`).
     pub fn script(set: &CompiledSet, measured: &str, clock: Clock) -> Result<Bench, String> {
+        Bench::script_timing_natives(set, measured, clock, None)
+    }
+
+    /// [`Bench::script`] whose program, with `natives` given, gets natives timed on that clock
+    /// (`ScriptHost::time_natives`): `Sample::phases.native` is the part of `run` spent in them.
+    pub fn script_timing_natives(
+        set: &CompiledSet,
+        measured: &str,
+        clock: Clock,
+        natives: Option<Clock>,
+    ) -> Result<Bench, String> {
         let mut sim = sim()?;
         install(&mut sim, ScriptLimits::default()).map_err(|p| p.message)?;
+        if let Some(s) = sim.world().get_non_send::<Scripts>() {
+            s.host.time_natives(natives);
+        }
         swap(sim.world_mut(), set, false).map_err(|e| format!("swap: {}", e[0].message))?;
         if let Some(s) = sim.world().get_non_send::<Scripts>() {
             s.host.time_phases(Some(clock));
@@ -111,6 +125,17 @@ impl Bench {
             script: true,
             measured: format!("script:{measured}"),
         })
+    }
+
+    /// Starts the step profiler of the script world (docs/spec/debugger.md 14).
+    pub fn start_profile(&self, interval: u32) {
+        pocket_script::scripts::profile_start(self.sim.world(), interval)
+            .unwrap_or_else(|e| panic!("{e}"));
+    }
+
+    /// Stops the step profiler and returns its profile.
+    pub fn take_profile(&self) -> Option<pocket_script::ScriptProfile> {
+        pocket_script::scripts::profile_take(self.sim.world())
     }
 
     /// The twin: the same rule as two Rust systems over Rust components, no script host.

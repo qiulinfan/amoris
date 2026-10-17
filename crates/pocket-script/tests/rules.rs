@@ -1,6 +1,7 @@
 //! The rule workload of `bench/rules` (docs/bench/script.md): the script world and its Rust twin
 //! build the same world tick after tick (the bench's equality check, kept honest as the host
-//! changes), and the phase clock a benchmark installs times each successful call once per phase.
+//! changes), and the phase clock a benchmark installs times each successful call once per phase;
+//! timed natives change nothing and count every native call of `run`.
 #![cfg(feature = "transpile")]
 
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -12,6 +13,14 @@ mod workload;
 
 /// A clock that advances one unit per reading, so each phase of a call reads exactly 1.
 fn counter() -> f64 {
+    static N: AtomicU64 = AtomicU64::new(0);
+    #[allow(clippy::cast_precision_loss)] // far below 2^53 readings
+    let n = N.fetch_add(1, Ordering::Relaxed) as f64;
+    n
+}
+
+/// Another such clock, for a test that runs beside the one that reads `counter`.
+fn counter2() -> f64 {
     static N: AtomicU64 = AtomicU64::new(0);
     #[allow(clippy::cast_precision_loss)] // far below 2^53 readings
     let n = N.fetch_add(1, Ordering::Relaxed) as f64;
@@ -65,5 +74,37 @@ fn the_rule_and_its_twin_build_the_same_world() {
         assert_eq!(combat[0], 80, "{combat:?}");
         assert!(combat[1] > 19_000, "{combat:?}");
         assert!(combat[2] > 0, "{combat:?}");
+    });
+}
+
+/// With its natives timed (`ScriptHost::time_natives`), the rule builds the same world; each
+/// native call of `run` reads the clock twice with nothing between, so on a clock that advances one
+/// unit per reading their time is their count: the `Math` calls of every living fighter (`wobble`,
+/// `driftX`, `driftY`), the five events and the one `rng.fill`.
+#[test]
+fn timed_natives_change_nothing_and_count_every_native_call_of_run() {
+    on_script_thread(|| {
+        let set = rules();
+        let mut timed =
+            workload::Bench::script_timing_natives(&set, "damage", counter2, Some(counter2))
+                .unwrap();
+        let mut twin = workload::Bench::twin(counter2).unwrap();
+        for t in 1..=10 {
+            timed.tick().unwrap();
+            twin.tick().unwrap();
+            assert_eq!(timed.digest(), twin.digest(), "tick {t}");
+            let p = timed.sample().phases;
+            #[allow(clippy::cast_precision_loss)] // a few thousand
+            let calls = p.native_calls as f64;
+            assert_eq!(p.native, calls, "tick {t}");
+            if t > 1 {
+                // 1,000 `driftX` and `driftY` calls and one `wobble` per living hitter; four
+                // `combat.damaged` events and one `combat.died`; one `rng.fill`.
+                let [math, events, rng, world, other] = p.natives.map(|n| n.calls);
+                assert!((2_000..=3_000).contains(&math), "tick {t}: {p:?}");
+                assert_eq!((events, rng, world, other), (5, 1, 0, 0), "tick {t}");
+                assert_eq!(p.native_calls, math + 6);
+            }
+        }
     });
 }

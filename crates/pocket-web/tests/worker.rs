@@ -806,3 +806,43 @@ fn a_write_trace_is_refused_by_the_browser_loop() {
         );
     });
 }
+
+/// `scripts.profile` (docs/spec/debugger.md 14) through the browser's loop: the packaged game
+/// (compiled scripts and their maps, no transpiler) profiles the next ticks on a fork, in
+/// TypeScript positions, and the world does not move.
+#[test]
+fn the_browser_loop_answers_a_script_profile() {
+    on_stack(|| {
+        let subject = Subject::load(&sailing()).unwrap();
+        let (_, now) = clock();
+        let mut w = WorkerCore::new(packaged(&subject, 1), Pacing::Stepped, now).unwrap();
+        let mut page = Page::default();
+        let dev = json!({"developer": 0});
+        w.push(&cmd(
+            dev,
+            1,
+            None,
+            "scripts.profile",
+            json!({"ticks": 20, "interval": 1}),
+        ));
+        drive(&mut w, &mut page, true, |p| !p.replies.is_empty());
+        let r = &page.replies[0]["ok"];
+        assert_eq!(
+            (&r["from_tick"], &r["to_tick"]),
+            (&json!(0), &json!(20)),
+            "{r}"
+        );
+        let systems = r["systems"].as_array().unwrap();
+        assert!(!systems.is_empty(), "{r}");
+        assert_eq!(r["samples"], r["steps"], "every step sampled: {r}");
+        // Positions in TypeScript: the project's modules by path, the prelude as `pocket`.
+        let lines: Vec<&str> = systems
+            .iter()
+            .flat_map(|s| s["lines"].as_array().unwrap())
+            .map(|l| l["at"].as_str().unwrap())
+            .collect();
+        assert!(lines.iter().any(|at| at.starts_with("scripts/")), "{r}");
+        assert!(lines.iter().any(|at| at.starts_with("pocket:")), "{r}");
+        assert_eq!(w.game().tick().0, 0);
+    });
+}
