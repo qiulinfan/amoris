@@ -37,30 +37,15 @@ pub fn require_ray_query(gpu: &crate::Gpu) -> Result<(), String> {
     ))
 }
 
-/// One GPU per native backend of this platform whose adapter exposes ray queries (Vulkan and
-/// Direct3D 12 on Windows, Metal on Apple, Vulkan elsewhere). A backend without an adapter or
-/// without ray queries is skipped with a note, so the GPU tests pass cleanly on machines that
-/// cannot run them. `POCKET_ADAPTER` picks the adapter as everywhere else.
+/// One GPU per backend under test ([`crate::BackendChoice::under_test`]: every native backend of
+/// this platform, or the one `POCKET_BACKEND` names) whose adapter exposes ray queries. A backend
+/// without an adapter or without ray queries is skipped with a note, so the GPU tests pass cleanly
+/// on machines that cannot run them. `POCKET_ADAPTER` picks the adapter as everywhere else.
 #[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) fn ray_query_gpus() -> Vec<crate::Gpu> {
-    use crate::BackendChoice;
-    let backends: &[BackendChoice] = if cfg!(windows) {
-        &[BackendChoice::Vulkan, BackendChoice::Dx12]
-    } else if cfg!(any(target_os = "macos", target_os = "ios")) {
-        &[BackendChoice::Metal]
-    } else {
-        &[BackendChoice::Vulkan]
-    };
-    // Tests run in parallel; Vulkan instance creation and adapter enumeration from several threads
-    // at once sometimes find no adapter at all here (Windows, two GPUs), so one at a time.
-    static OPEN: std::sync::Mutex<()> = std::sync::Mutex::new(());
     let mut gpus = Vec::new();
-    for &choice in backends {
-        let opened = {
-            let _one = OPEN.lock().unwrap_or_else(|e| e.into_inner());
-            crate::Gpu::headless(choice)
-        };
-        match opened {
+    for choice in crate::BackendChoice::under_test() {
+        match crate::Gpu::headless(choice) {
             Ok(gpu) => match require_ray_query(&gpu) {
                 Ok(()) => {
                     eprintln!("{} on {}: ray queries", gpu.backend_name(), gpu.info.name);

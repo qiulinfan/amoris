@@ -48,6 +48,39 @@ impl BackendChoice {
         }
     }
 
+    /// The backends a GPU test that guards a difference between backends runs on: the one
+    /// `POCKET_BACKEND` names, or else every native backend of this platform (Vulkan and Direct3D
+    /// 12 on Windows, Metal on Apple platforms, Vulkan elsewhere). `tools/gpu_matrix.py` names a
+    /// backend per configuration, so a failure shows in its own backend's column; its `auto`
+    /// configurations leave `POCKET_BACKEND` unset, as `cargo xtask check` does. Each native
+    /// backend left out is named on stderr, so a run with `POCKET_BACKEND` set says what it did not
+    /// check.
+    pub fn under_test() -> Vec<BackendChoice> {
+        let native = BackendChoice::native();
+        match BackendChoice::from_env() {
+            BackendChoice::Auto => native.to_vec(),
+            named => {
+                for other in native.iter().filter(|&&b| b != named) {
+                    eprintln!("{other:?}: not under test (POCKET_BACKEND names {named:?})");
+                }
+                vec![named]
+            }
+        }
+    }
+
+    /// This platform's native backends: Vulkan and Direct3D 12 on Windows, Metal on Apple
+    /// platforms, Vulkan elsewhere.
+    pub fn native() -> &'static [BackendChoice] {
+        use BackendChoice::{Dx12, Metal, Vulkan};
+        if cfg!(windows) {
+            &[Vulkan, Dx12]
+        } else if cfg!(any(target_os = "macos", target_os = "ios")) {
+            &[Metal]
+        } else {
+            &[Vulkan]
+        }
+    }
+
     pub fn backends(self) -> wgpu::Backends {
         #[cfg(target_arch = "wasm32")]
         {
@@ -201,7 +234,12 @@ pub fn instance_with(choice: BackendChoice, minimal: Minimal) -> wgpu::Instance 
 /// build on Direct3D 12 also keeps labels away from the command lists (`DISCARD_HAL_LABELS`): each
 /// pass's label became a `BeginEvent` marker, about 8% of the frame's command recording there and
 /// nothing measurable on Vulkan (docs/bench/dx12.md 10); `WGPU_DISCARD_HAL_LABELS=0` brings them
-/// back for a PIX capture.
+/// back for a PIX capture. Debug builds on Direct3D 12 leave out `DEBUG`, whose one effect there is
+/// compiling shaders unoptimized with debug information (DXC `-Od -Zi`): they run the DXIL release
+/// builds run, which the GPU tests check. On the Radeon 780M (AMD's Direct3D 12 driver
+/// 32.0.13062.3005) the path tracer's unoptimized DXIL traced wrongly, every camera ray missing,
+/// and the optimized one rightly; the RTX 5060 traces both rightly (docs/bench/gpu-matrix.md 3 d).
+/// `WGPU_DEBUG=1` brings the unoptimized shaders back for PIX.
 pub fn instance_flags(backends: wgpu::Backends, debug: bool) -> wgpu::InstanceFlags {
     let mut flags = if debug {
         wgpu::InstanceFlags::debugging()
@@ -210,6 +248,7 @@ pub fn instance_flags(backends: wgpu::Backends, debug: bool) -> wgpu::InstanceFl
     };
     if backends.contains(wgpu::Backends::DX12) {
         flags |= wgpu::InstanceFlags::VALIDATION_INDIRECT_CALL;
+        flags.remove(wgpu::InstanceFlags::DEBUG);
         if !debug {
             flags |= wgpu::InstanceFlags::DISCARD_HAL_LABELS;
         }
@@ -433,6 +472,7 @@ impl Gpu {
     /// process).
     #[cfg(not(target_arch = "wasm32"))]
     pub fn headless_with(choice: BackendChoice, minimal: Minimal) -> Result<Gpu, GpuError> {
+        let _one = open_one_at_a_time();
         pollster::block_on(Gpu::new_with(instance_with(choice, minimal), None, minimal))
     }
 
@@ -442,6 +482,7 @@ impl Gpu {
     #[cfg(not(target_arch = "wasm32"))]
     pub fn headless_ray_query(choice: BackendChoice, ray_query: bool) -> Result<Gpu, GpuError> {
         let minimal = Minimal::from_env();
+        let _one = open_one_at_a_time();
         pollster::block_on(Gpu::create(
             instance_with(choice, minimal),
             None,
@@ -460,6 +501,19 @@ impl Gpu {
             _ => "other",
         }
     }
+}
+
+/// Holds the process's headless device creation to one thread at a time. Vulkan instance creation
+/// and adapter enumeration on several threads at once sometimes find no adapter at all on the R1
+/// laptop (Windows, NVIDIA and AMD Vulkan drivers): in rounds of 12 parallel opens, one or two came
+/// back with "vulkan drivers/libraries could not be loaded" or an empty adapter list, and parallel
+/// tests skipped as if the machine had no GPU (docs/bench/gpu-matrix.md); with the lock none did.
+/// Direct3D 12 showed no such failure. Parallel tests now wait for each other's device creation
+/// only; an engine process opens one device.
+#[cfg(not(target_arch = "wasm32"))]
+fn open_one_at_a_time() -> std::sync::MutexGuard<'static, ()> {
+    static OPEN: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    OPEN.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 /// `POCKET_ADAPTER`: which adapter to use instead of the high-performance one.
@@ -570,14 +624,79 @@ mod tests {
             InstanceFlags::empty()
         );
         assert!(instance_flags(Backends::VULKAN | Backends::DX12, false).contains(indirect));
+        // Debug builds validate, but compile the optimized DXIL of release builds.
         assert_eq!(
             instance_flags(Backends::DX12, true),
-            InstanceFlags::debugging() | indirect
+            (InstanceFlags::debugging() - InstanceFlags::DEBUG) | indirect
         );
         assert_eq!(
             instance_flags(Backends::VULKAN, true),
             InstanceFlags::debugging()
         );
+    }
+
+    /// Names the adapter, backend, driver and capabilities this process's GPU tests open
+    /// (`POCKET_BACKEND`, `POCKET_ADAPTER`, `POCKET_GPU_MINIMAL`): `tools/gpu_matrix.py` reads the
+    /// line to record what each configuration ran on.
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn the_adapter_under_test_is_named() {
+        let Ok(gpu) = Gpu::headless(BackendChoice::from_env()) else {
+            eprintln!("no GPU: skipped");
+            return;
+        };
+        eprintln!(
+            "adapter under test: {} on {} ({:?}), driver {} {}; timestamp period {} ns; {:?}",
+            gpu.backend_name(),
+            gpu.info.name,
+            gpu.info.device_type,
+            gpu.info.driver,
+            gpu.info.driver_info,
+            gpu.queue.get_timestamp_period(),
+            gpu.caps
+        );
+    }
+
+    /// Lists every adapter of each native backend, with the index `POCKET_ADAPTER` takes for it
+    /// there, and the adapter each backend opens without `POCKET_ADAPTER` (the high-performance
+    /// one, as [`Gpu::new_with`] asks): `tools/gpu_matrix.py --configs machine`, which `cargo xtask
+    /// check`'s `gpus` step runs, builds its configurations from these lines.
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn the_machine_adapters_are_listed() {
+        let _one = open_one_at_a_time();
+        for &choice in BackendChoice::native() {
+            let name = match choice {
+                BackendChoice::Dx12 => "dx12",
+                BackendChoice::Metal => "metal",
+                _ => "vulkan",
+            };
+            let instance = instance_with(choice, Minimal::default());
+            let adapters = pollster::block_on(instance.enumerate_adapters(choice.backends()));
+            if adapters.is_empty() {
+                eprintln!("machine adapters on {name}: none");
+            }
+            for (i, adapter) in adapters.iter().enumerate() {
+                let info = adapter.get_info();
+                eprintln!(
+                    "machine adapter: {name} {i} {:?} {}",
+                    info.device_type, info.name
+                );
+            }
+            let preferred =
+                pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::HighPerformance,
+                    compatible_surface: None,
+                    force_fallback_adapter: false,
+                    apply_limit_buckets: false,
+                }));
+            if let Ok(adapter) = preferred {
+                eprintln!(
+                    "machine default adapter: {name} {}",
+                    adapter.get_info().name
+                );
+            }
+        }
     }
 
     #[test]
@@ -602,18 +721,6 @@ mod tests {
         assert_eq!(match_adapter(&[], "0"), None);
     }
 
-    /// The native backends of this platform. A GPU test that guards a difference between backends
-    /// runs on each (Vulkan and Direct3D 12 on Windows), skipping any without an adapter.
-    fn native_backends() -> &'static [BackendChoice] {
-        if cfg!(windows) {
-            &[BackendChoice::Vulkan, BackendChoice::Dx12]
-        } else if cfg!(any(target_os = "macos", target_os = "ios")) {
-            &[BackendChoice::Metal]
-        } else {
-            &[BackendChoice::Vulkan]
-        }
-    }
-
     /// Indirect draws at a non-zero first instance, as the renderer's multi-draws make them (each
     /// batch at `view * stride + offset`), reach `instance_index` with the first instance included,
     /// on every native backend. Direct3D 12 does so only through wgpu's indirect validation
@@ -623,7 +730,8 @@ mod tests {
     fn indirect_draws_keep_their_first_instance() {
         // Draw A: one instance at 0, column 0; draw B: two instances at 3, columns 3 and 4.
         let expected = [1, 0, 0, 4, 5, 0, 0, 0];
-        for &choice in native_backends() {
+        // Every native backend, or the one POCKET_BACKEND names; one without an adapter is skipped.
+        for choice in BackendChoice::under_test() {
             let Ok(gpu) = Gpu::headless(choice) else {
                 eprintln!("{choice:?}: no GPU, skipped");
                 continue;

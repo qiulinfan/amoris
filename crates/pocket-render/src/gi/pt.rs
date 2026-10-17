@@ -1857,7 +1857,9 @@ mod tests {
         // 780M give this mean to 1e-5 with Vulkan and Direct3D 12, and so does the sidedness test
         // on candidate.front_face that the winding test replaced (Metal's references). Eight other
         // seeds move the channel sum by 2% (standard deviation); culling front instead of back
-        // faces drops it to 0.10, AMD's Direct3D 12 miscompile of the old test to 0.26.
+        // faces drops it to 0.10, AMD's Direct3D 12 miscompile of the old test to 0.26 (every
+        // camera ray misses: the sky), and so does that driver with this shader's unoptimized DXIL
+        // (`WGPU_DEBUG=1`, which debug builds no longer imply there: gpu::instance_flags).
         const PT_LAB_SUM: f64 = 0.6945;
         let sum: f64 = mean.iter().sum();
         assert!(
