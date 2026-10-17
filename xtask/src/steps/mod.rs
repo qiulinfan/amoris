@@ -9,6 +9,7 @@ pub mod diag;
 pub mod docs;
 pub mod fixture;
 pub mod generate;
+pub mod gpus;
 pub mod metadata;
 pub mod projects;
 pub mod test;
@@ -53,7 +54,9 @@ pub fn prepare(env: &Env) -> Result<Prepared, Problem> {
 /// The steps a step needs: it is skipped when one of them failed (checks.md 4).
 fn needs(step: &str) -> &'static [&'static str] {
     match step {
-        "test" | "types" | "determinism" | "fork" | "replay" | "reload" | "contract" => &["build"],
+        "test" | "gpus" | "types" | "determinism" | "fork" | "replay" | "reload" | "contract" => {
+            &["build"]
+        }
         "web" => &["build", "wasm", "determinism", "replay"],
         "perf" => &["build", "web"],
         _ => &[],
@@ -147,6 +150,23 @@ impl Run<'_> {
             "build" => cargo::build(env),
             "gen" => generate::check(&env.root, &prep.listed),
             "test" => test::run(env, opts.quick),
+            "gpus" => {
+                // `test` runs the default adapter's `auto` configuration, unless it was left out
+                // or the environment chose another device for it.
+                let test_ran = self
+                    .results
+                    .iter()
+                    .any(|r| r.name == "test" && r.verdict != Verdict::Skipped);
+                let set: Vec<&str> = gpus::DEVICE_VARS
+                    .into_iter()
+                    .filter(|k| std::env::var_os(k).is_some())
+                    .collect();
+                gpus::run(
+                    env,
+                    crate::run::python(),
+                    gpus::default_auto(test_ran, &set),
+                )
+            }
             "wasm" => {
                 let (members, web) = self.members();
                 cargo::wasm(env, &prep.graph.web_crates(&members, Some("game")), web)

@@ -13,6 +13,7 @@ pub const STEPS: &[&str] = &[
     "build",
     "gen",
     "test",
+    "gpus",
     "wasm",
     "types",
     "determinism",
@@ -36,7 +37,7 @@ pub struct CheckOptions {
 
 impl CheckOptions {
     /// Whether a step runs at all: `--only` and `--skip` by request, and `--quick`, which leaves
-    /// out `web` and `perf` (checks.md 3).
+    /// out `gpus`, `web` and `perf` (checks.md 3).
     pub fn wants(&self, step: &str) -> Option<&'static str> {
         if let Some(only) = &self.only
             && !only.iter().any(|s| s == step)
@@ -46,7 +47,7 @@ impl CheckOptions {
         if self.skip.iter().any(|s| s == step) {
             return Some("--skip");
         }
-        if self.quick && (step == "web" || step == "perf") {
+        if self.quick && matches!(step, "gpus" | "web" | "perf") {
             return Some("--quick");
         }
         None
@@ -231,8 +232,9 @@ mod tests {
     }
 
     #[test]
-    fn quick_leaves_out_web_and_perf() {
+    fn quick_leaves_out_gpus_web_and_perf() {
         let o = parse_check(&args("--quick")).unwrap();
+        assert_eq!(o.wants("gpus"), Some("--quick"));
         assert_eq!(o.wants("web"), Some("--quick"));
         assert_eq!(o.wants("perf"), Some("--quick"));
         assert_eq!(o.wants("test"), None);
