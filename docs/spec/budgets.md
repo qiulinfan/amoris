@@ -186,9 +186,9 @@ instead. None of these figures is a pass condition (charter 3.10).
 | `tick.rules.p99` | rules, tick time, p99 | **6.5 ms** (script-native spike, clang-cl: 4,678 and 5,172 µs; MSVC 3,922 to 4,510 µs). In the engine, quiet re-measurement (2026-10-15): 3.9 to 4.2 ms in every round of both runs; the provisional run's 5.9 and 7.5 ms rounds were the shared machine's load (../bench/script.md) | 8.3 ms; the script engine's garbage collection shows here |
 | `tick.bodies` | bodies, tick time, median | Not measured at 200 bodies; the physics spike's Rapier step for 7 bodies took 8.0 to 8.5 µs | 8.3 ms |
 | `hash.sail` | sail, world hash per tick, median | Not measured (proxy: the physics spike's whole-state hash of its scene, bincode and FNV-1a over 23.7 KB, 20.5 to 21.0 µs; the PCE and XXH3-128 hash of persistence.md 5 was not measured, and the sail workload's other components were not in that scene) | a tenth of `tick.sail`: every recorded run hashes every tick |
-| `fork.sail` | sail at tick 300, `persistence::fork` alone, median of 100 | Not measured (proxy: the physics spike's serialize 3.8 to 4.9 µs and restore 15.9 to 23.4 µs natively, through bincode; a `Clone` fork took 5.3 to 5.7 µs) | no more than `tick.sail`: the game thread's share of opening a branch costs no more than a tick |
-| `branch.sail` | sail at tick 300, a fork made ready to step: `fork.sail` plus instantiating the bundle in a new host, or reusing the game thread's host when the branch steps there (threads.md 3.6), median of 20 | Not measured (nearest: the script-native spike instantiated its five modules with the freeze in 4.2 to 5.8 ms, about 100 times the proxy of `fork.sail`) | 16.7 ms: a branch or a trial is ready within a frame, so fork-based lookahead (charter 9.2) is bounded by the ticks it simulates |
-| `fork.sail.memory` | sail, bytes allocated per fork | Not measured; the physics spike's snapshot was 23,764 bytes at tick 400 | small enough for 16 forks (shared/contract/mcp.md's branch limit) in the 4 GB this machine has free |
+| `fork.sail` | sail at tick 300, `persistence::fork` alone, median of 100 | Not set: no calibrated run (proxy: the physics spike's serialize 3.8 to 4.9 µs and restore 15.9 to 23.4 µs natively, through bincode; a `Clone` fork took 5.3 to 5.7 µs). First measurement, Pioneer (2026-10-15, [../bench/player.md](../bench/player.md) 5.2; the `sail` workload is not built, so the sailing course at tick 300 with the reference skipper: 14 entities, a 66,405-byte snapshot), by a quiet re-measurement that is not a calibrated run (2026-10-16, no other work on the machine, CPU load 7 to 10%): a fork into a kept branch (`Game::fork_into`: snapshot, restore, the players' session copied) 0.25 ms, median of 100 in each of three runs (249.8 to 250.1 µs); a snapshot alone 0.08 ms and a restore alone 0.18 ms. That is within this ceiling's figure (`tick.sail`, 4.2 ms) but 2.3 of the course's ticks measured in the same runs (107 µs, 13 item 6). The provisional runs of 2026-10-15, beside other tracks' builds, gave 0.25 to 0.77 ms (2.3 to 3.5 ticks; 0.41 ms at commit `00b7dd3e`). It was 19.9 ms (provisional) before the player declarations were kept across a restore of the same spec (2026-10-15) | no more than `tick.sail`: the game thread's share of opening a branch costs no more than a tick |
+| `branch.sail` | sail at tick 300, a fork made ready to step: `fork.sail` plus instantiating the bundle in a new host, or reusing the game thread's host when the branch steps there (threads.md 3.6), median of 20 | Not set: no calibrated run (nearest before: the script-native spike instantiated its five modules with the freeze in 4.2 to 5.8 ms, about 100 times the proxy of `fork.sail`). First measurement, Pioneer, by the quiet re-measurement of `fork.sail`: a fresh branch with its own script host (`Game::fork`) 21.0 ms, median of 20 in each of three runs (20.9 to 21.3 ms), its teardown (0.8 ms) not included. The provisional runs gave 21.1 ms at 8 to 14% CPU load and 36.6 ms under 56 to 76%; the first of them, which timed the teardown with it, 36.8 ms, and 44.8 ms before the declarations were kept. Above this ceiling (13, item 6): the new world still derives the player declarations once when it is built (about 18 ms of the course's restore before) and instantiates the bundle; a kept branch whose host is reused, the lookahead's case, costs `fork.sail` | 16.7 ms: a branch or a trial is ready within a frame, so fork-based lookahead (charter 9.2) is bounded by the ticks it simulates |
+| `fork.sail.memory` | sail, bytes allocated per fork | Not set: no calibrated run; the physics spike's snapshot was 23,764 bytes at tick 400. First measurement, Pioneer (as `fork.sail`, the same in the quiet re-measurement and the provisional runs; a counting global allocator in the bench binary, 7.2): a fork into a kept branch allocates 576,977 bytes and leaves none of them allocated after the call (17,210,641 allocated before the declarations were kept); a fresh branch allocates 19.9 MB and holds 1.74 MB of Rust heap and 0.31 MB of QuickJS-ng heap while it lives (QuickJS allocates through the C runtime, read from its own count), about 33 MB for 16 | small enough for 16 forks (shared/contract/mcp.md's branch limit) in the 4 GB this machine has free |
 | `fork.rules` | rules, fork, median of 100 | Not measured | no more than `tick.rules` |
 | `fork.churn` | churn (10,000 entities spawned and despawned, persistence.md 12's fixture), fork, median of 20 | Not measured; the threads spike encoded and hashed 10,000 entities of 20 bytes (200,064 bytes) in 29.7 µs p50 | 16.7 ms: a crowd-scale world still forks within a frame |
 | `restore.sail` | sail, `restore` with `verify` from a snapshot, median of 20 | Not measured (proxy: the physics spike's restore 15.9 to 23.4 µs plus its whole-state hash 20.5 to 21.0 µs) | twice `fork.sail`: seeking in a replay restores a keyframe |
@@ -470,7 +470,8 @@ measurement.
 | `docs/spikes/render.md` (wgpu, glTF, LOD) | Direct3D 12, 1920 by 1080 and 1280 by 720, the `scene` and `import` workloads, `pass.opaque.gpu`, `pass.opaque.cpu`, `web.pass.opaque`, `frame.draws`, `frame.triangles`, the two floors, `import.highpoly`, `import.frame_max` | `frame.gpu`, `frame.cpu`, `web.frame` (no sea, shadows or post-processing), `start.window` |
 | `docs/spikes/threads.md` (the two threads, natively and in a worker) | `rtt.paused`, `rtt.running`, `stall.frame`, `stall.drift`, `publish.churn`, `web.snapshot`, and `threads.md`, 12 | `publish.rules` on the rules world |
 | `docs/spikes/debugger.md` (PR #1421 through `rquickjs`) | `debug.idle`, unconfirmed (finding 1) | |
-| None | | the web sizes and start-up times, `web.swap`, `branch.sail`, `branch.main_lateness`, `start.headless`, `check.quick`, `check.full`, `check.perf`, `build.web.memory`, `bench.selftest`, `replay.size.sail`, `import.tick_max`, the calibration values, every row of 5.6 |
+| `docs/bench/player.md` 5.2 (Pioneer: the fork lookahead's fork costs on the sailing course at tick 300, 2026-10-15, quiet re-measurement 2026-10-16) | none: not calibrated runs (7.5), on the course since the `sail` workload is not built. They are the first measurements of `fork.sail`, `branch.sail` and `fork.sail.memory`, whose figures a calibrated run sets by 8.1 | `branch.main_lateness` (no branch steps on the game thread yet) |
+| None | | the web sizes and start-up times, `web.swap`, `branch.main_lateness`, `start.headless`, `check.quick`, `check.full`, `check.perf`, `build.web.memory`, `bench.selftest`, `replay.size.sail`, `import.tick_max`, the calibration values, every row of 5.6 |
 
 A spike's toy world is smaller than the real workload; where a budget was set from a part of the
 workload (the threads spike's 20-byte entities for `publish.churn`), the row says so, and the first
@@ -505,7 +506,9 @@ numbers section 5 cites.
 ## 13. Findings for the owner
 
 One slice 0 measurement exceeded its recommended ceiling, within the noise of the machine it was
-taken on: the verification of `debug.idle` (item 1). These are the gaps 8.1 asks to record:
+taken on: the verification of `debug.idle` (item 1); so did one of Pioneer's measurements,
+`branch.sail` (item 6), in its quiet re-measurement as in its provisional runs. These are the gaps
+8.1 asks to record:
 
 1. **`debug.idle` exceeded its ceiling, within the machine's resolution.** The debugger spike
    measured the debug-capable engine at 0.98 to 1.00 times stock, and its verification at 1.008 to
@@ -531,3 +534,16 @@ taken on: the verification of `debug.idle` (item 1). These are the gaps 8.1 asks
    ms (3.6 ms through the engine's host in Pioneer's quiet re-measurement, a fifth of it the batch
    interface: ../bench/script.md), which leaves `tick.sail.script` (a third of `tick.sail`) room for
    the showcase's rules only if hot logic moves into Rust primitives, as charter 4.2.4 says.
+6. **`branch.sail` exceeded its ceiling (Pioneer, 2026-10-15; quiet re-measurement 2026-10-16).** A
+   fresh branch of the sailing course (the `sail` workload is not built) took 21.0 ms at the median
+   in three runs of the quiet re-measurement (no other work on the machine, CPU load 7 to 10%; the
+   provisional runs beside other tracks' builds gave 21.1 ms at 8 to 14% and 36.6 ms under 56 to
+   76%), its teardown (0.8 ms) apart, against the 16.7 ms ceiling
+   ([../bench/player.md](../bench/player.md) 5.2). The new world derives the player declarations
+   again when it is built (about 18 ms of a restore before the declarations were kept across one)
+   and instantiates the bundle in a new QuickJS-ng host. Caching the derived declarations with the
+   game's setup, or stepping branches on a kept host (`Game::fork_into`, the fork lookahead's way)
+   would close it. `fork.sail` by `fork_into` (0.25 ms quiet; 0.25 to 0.77 ms in the provisional
+   runs) is within its ceiling's figure (`tick.sail`, 4.2 ms) but costs 2.3 of the course's ticks
+   measured in the same runs (107 µs; 2.3 to 3.5 in the provisional runs), which the ceiling would
+   not allow if it were read as the measured tick.

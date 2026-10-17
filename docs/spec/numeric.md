@@ -562,7 +562,9 @@ wrap (hashes, PCG32) says so with `wrapping_*`. In scripts, integers are doubles
     Chrome worker through `tools/webcheck.py` (`tests/web/index.html`), 2026-10-03. The hash is a
     stand-in, FNV-1a over the declared sections in bincode (`pocket_physics::probe`), because
     `pocket-physics` cannot link `pocket-persist`; the check command's `web` step compares the real
-    `TickHash` chains.
+    `TickHash` chains. Pioneer, 2026-10-15: `physics.level_fork` and `physics.shape_builds`
+    (persistence.md 8) joined them; the second pins the digest of the shapes `pocket-physics`
+    builds, so the native and WebAssembly builds compare them byte for byte.
 15. **Slice 1: physics values are judged in `f32`** (3.1, 7). The components are `f64` and the
     solver `f32`, so a value `f64` holds can reach the solver as 0 or infinity: a ball of radius
     1e39 never moved, a ground of half extents 1e39 let a ball fall through it, a radius of 1e-50 or

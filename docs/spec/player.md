@@ -28,6 +28,7 @@
 | The declaration as world state, the three interface systems in every game, the `player.*` commands, the session beside the world | `pocket-runtime/src/player.rs`, `game.rs` |
 | Players' waits on a loop, decision points after every tick, pace from the players' session: one core the game thread and the browser worker share | `pocket-runtime/src/boundary.rs` (`PlayerWaits`), `thread.rs`, `pocket-web/src/worker.rs` |
 | The reference skipper (a decision model outside the tick) | `pocket-runtime/src/skipper.rs` |
+| Fork lookahead for the skipper, the course's seeded variants, `Game::fork_into` | `pocket-runtime/src/lookahead.rs`, `game.rs` |
 | The `player` MCP tool, seat-bound MCP sessions | `pocket-mcp`, `pocket-server/src/mcp.rs` |
 | Calls made as a seat over HTTP, `pocket player`, `pocket mcp --seat` | `pocket-server`, `pocket-app` |
 | The sailing course | `samples/sailing-course/` |
@@ -67,13 +68,16 @@ A project without `[player]` is unchanged: the interface systems find nothing to
 persisted resource: hashed, snapshotted, forked and restored with the world. A rebuild registered
 with the persistence registry (`player.declarations`) installs, after every restore, what the spec
 declares: `PerceptionDefs`, the `ActionCatalog` with its field writer, and the `TimeRules` (Ignored
-classes, game data). `interface.intents` (Control), `interface.perception` and `interface.turns`
-(Finish) are installed in every game, so a replay built from a recording alone (`Game::for_replay`,
-an empty scene) gets the player layer back from its start snapshot. Charter 5.1 (Pioneer) records
-the reason: a replay carries snapshots and script bundles, nothing else; a declaration that lived
-only in the project's files would leave the replay without perception and executors, and the hash
-chain unverifiable. The schedules of `samples/anim` and `samples/sailing` gained the three rows and
-their world hashes did not change (nothing inserted without a spec).
+classes, game data). Since 2026-10-15 it keeps those already derived from the same spec (the world
+remembers which, `DerivedFrom`): deriving them is a pure function of the spec, and doing it again
+took 18 ms of the course's restore, a fork's whole cost (bench/player.md 5.2). `interface.intents`
+(Control), `interface.perception` and `interface.turns` (Finish) are installed in every game, so a
+replay built from a recording alone (`Game::for_replay`, an empty scene) gets the player layer back
+from its start snapshot. Charter 5.1 (Pioneer) records the reason: a replay carries snapshots and
+script bundles, nothing else; a declaration that lived only in the project's files would leave the
+replay without perception and executors, and the hash chain unverifiable. The schedules of
+`samples/anim` and `samples/sailing` gained the three rows and their world hashes did not change
+(nothing inserted without a spec).
 
 ## 4. Perception as built
 
@@ -242,7 +246,8 @@ The commands are projected like every catalog command:
   `max_wall_ms` or the default 30 s, whatever `--timeout` says (`client::timeout_for`).
 
 Not built from mcp.md: grants with tokens over HTTP MCP, branches (`fork`, `discard`), snapshots and
-`replay` for players, `world` in answers, statistics across sessions (section 10).
+`replay` for players, `world` in answers, statistics across sessions (section 10). A decision model
+in process forks a game directly instead (section 8.1).
 
 ## 8. The sailing course
 
@@ -260,6 +265,79 @@ sails to the nearest crate it sees within 45 m that is not upwind (twice at most
 sails to the course's next mark (named from the chart before it is in sight), and waits. It finishes
 the course at every seat seed in 12 decisions, 9 acts and 5148 ticks (86 s of game time), with two
 crates aboard; [bench/player.md](../bench/player.md) has its costs and token sizes.
+
+### 8.1 Fork lookahead
+
+`pocket_runtime::lookahead::Lookahead` (Pioneer, 2026-10-15) is the reference skipper with exact
+lookahead (mcp.md 5.5) under the benchmark's fork condition (shared/benchmark/tasks.md 6.1: at most
+4 live branches and 600 branch ticks between two decision points answered on main; `Limits`). At
+each decision point on main it reads the seat's observation (JSON, budget 1500) and:
+
+1. **Builds candidates from main's observation alone**, each leaving the boat sailing somewhere
+   else, at most one per branch: the greedy skipper's own act first, then sailing to the next mark
+   (skipping crates), then each crate in sight within 120 m, nearest first, that the boat has set
+   out for fewer than twice (the greedy skipper's limit). A crate alongside is taken aboard and a
+   single candidate is acted on, without branches; so is the greedy act while the boat is aground,
+   when every `sail_to` fails at once and no branch could tell the plans apart.
+2. **Plays each candidate in a branch of main for an equal share of the 600 ticks** (300, 200 or
+   150), as the seat: the candidate's act, then a rollout policy at the branch's decision points
+   (the greedy skipper for its candidate; for a crate, sail to it, twice at most, take it aboard,
+   then the mark; for the mark, take aboard only a crate that comes alongside), with `player.wait
+   {ticks, observe}` up to the share. Branch games are kept between decisions and forked into
+   again (`Game::fork_into`: main's snapshot restored into the branch and the players' session
+   copied, the branch's script host kept), the first of each slot forked fresh (`Game::fork`).
+3. **Scores each branch's last observation** in metres of course: 58.3 m a crate aboard (1000
+   ticks of course time at 3.5 m/s, the reference skipper's mean speed along the legs), less the
+   charted course still to sail (to the next mark, then the legs after it), less 1000 m aground. An
+   act whose answer in the branch warns that its course crosses land before its target
+   (`sail.land_on_course`: `sail_to` does not steer round land) is charged as aground: a branch
+   shows the warning before main commits to the act. A chase under way at the end is credited with
+   its crate when the closing speed measured in the branch would bring the crate alongside within
+   two minutes, less that time and the course from the crate on, if that beats sailing on; a
+   finished course adds the time left in the branch.
+4. **Chooses** the best branch if it beats the greedy candidate's by 15 m (branches of a few
+   seconds from a standing start differ by centimetres; the margin was chosen between 5 and 15 m on
+   variants the comparison does not use), else the greedy act, and returns the act; the caller
+   sends it on main (`lookahead::play` is the loop: observe, decide, act, wait). A candidate whose
+   first act its branch refused is never chosen: main would refuse it too.
+
+**Fork off** (`Lookahead::without_forks`) is the control that measures what forking adds: the
+same candidates, rules and margin, each candidate valued from main's observation and the chart
+alone, in the same metres: a crate in sight is worth its 58.3 m less the straight course to it, on
+to the next mark and the legs after it; any other candidate the straight course on. It knows
+neither the wind nor the land nor how fast the boat closes on a crate, which is what a branch
+measures, and it never forks. Fork on minus fork off is the benchmark's own difference
+(tasks.md 6.4).
+
+**Perception stays honest by construction.** `decide` borrows main immutably and only forks it,
+so a branch cannot reach main (the test compares main's hash, tick and session around every
+decision). The model reaches a branch through `Seat`, which sends `player.*` commands alone as the
+seat's `Source::Player`; the runtime refuses a player any other command and the omniscient view
+(section 7), so every answer a branch gives is what the seat would observe in that future through
+its own profile. Candidates come from main's observation, so something a branch revealed (a crate
+behind the Isle) ranks candidates but never becomes a target on main; a rollout may still chase it
+inside its branch, as the seat would. Hidden state is simulated: a branch runs the true world,
+which the contract calls exact lookahead, bounded by the 600 ticks per decision so a branch cannot
+scout the course. The bounds are counted, not trusted: the model's statistics carry its forks,
+branch ticks and the most branch ticks of one decision, and the test holds them to 4 and 600.
+
+**The course's seeded variants** (the bench's `examples/lookahead_bench/course.rs`, which
+`tests/lookahead.rs` includes) are Pioneer's own, not the shared benchmark's seeds: a developer's
+`world.edit` at tick 0 (not the benchmark's `new --params` and setup step, tasks.md 6.1) sets the
+wind from `270 + 40 (r - 0.5)` degrees at `5 + 2 r` m/s (tasks.md 6.2's formula, but SplitMix64
+draws from the seed rather than Python's `random.Random`) and places each crate, by this bench's own
+rule, at a point a fraction `r` of the course's length from the start through the marks,
+`80 (r - 0.5)` metres to its side, drawn again when within 25 m of the Isle's centre or 30 m of the
+start (the start, marks and Isle read from the loaded course). Seed 0 is the course as shipped; the
+omniscient condition sets the Sloop's `Observer.omniscient` in the same edit, which binds the seat
+to the reserved `omniscient_player` profile. [bench/player.md](../bench/player.md) section 5
+compares the three models on the variants 0 to 30. Fork on minus fork off, the benefit of the forks
+themselves, is negative on the bench's score: with the same candidates, the lookahead took 73 crates
+under perception to fork off's 98 and scored worse on 21 variants and better on 6, though it was
+faster on 16 and slower on 11 by time alone; branches of 150 to 300 ticks rarely see a chase pay
+that the chart shows. Against the reference skipper the lookahead took 73 crates to 58, better on 22
+variants and worse on 3, a gain fork off makes larger without forking (better on 29); its paired
+median time is 83 ticks better under perception and level omniscient.
 
 ## 9. Determinism
 
@@ -279,7 +357,28 @@ every tick, and its player scenario passes the four checks.
   of tests) against a script host this line has since changed (the debugger, types, the prelude);
   porting them is the next step. A game's own intents are therefore engine catalogs in Rust for now.
 - **Lockstep for players, branches, snapshots and `replay` for players, grants over HTTP MCP**:
-  pocket-interface has lockstep's `commit`; nothing carries it, nor mcp.md's fork tools.
+  pocket-interface has lockstep's `commit`; nothing carries it, nor mcp.md's fork tools. The fork
+  lookahead (8.1) forks a game in process (`Game::fork`, `Game::fork_into`); an agent outside the
+  process still has no `fork` or `discard` (mcp.md 5.5), no `world` in answers to address a branch
+  by, and the game thread runs no branch beside main (threads.md 3.6, `branch.main_lateness`).
+  Those are the next step for an LLM's lookahead, with the session counting `branch_ticks` against
+  the policy as the lookahead's own statistics do now.
+- **A grounded boat decides every other tick.** `sail_to` does not steer round land; once the
+  Sloop runs aground on the Isle every `sail_to` fails at once (`sail.aground`), the failure is a
+  decision point, and the reference skipper starts its mark again two ticks later until the boat
+  drifts free, if it does: 1,997 decisions and 24,633 ticks on the course's variant 18, 1,105 and
+  15,799 on variant 28 (bench/player.md 5.1); on variant 107 of the tuning seeds the reference
+  skipper had not finished at 36,000 ticks, Mark2 still to round, after 799 decisions (whether it
+  stayed aground was not recorded). The fork lookahead lets the greedy act stand while aground and
+  charges a branch whose act is warned that its course crosses land (`sail.land_on_course`) as if
+  aground, but a chase can still leave the boat where every course crosses the Isle (omniscient
+  variant 18). A skipper that steered round land, or `sail_to` doing so (actions.md, open choice
+  3), would remove the failure.
+- **An omniscient seat has fewer decision points.** Bound to `omniscient_player`, the seat knows
+  every crate from the first tick, so the sailing filter's `sighted` points never come; the
+  reference skipper, which only turns for a crate at a decision point, sails past crates it would
+  have chased under perception (the shipped course: no crate aboard against two). The benchmark's
+  omniscient condition measures this filter as much as the information (bench/player.md 5).
 - **Perception cost grows with observers times candidates**: two rays per candidate in range, even
   where no occluder lies between. With 32 observing boats the update took about 5 ms a tick
   (provisional, bench/player.md); testing the ray against the occluders' bounds first is the obvious
@@ -341,6 +440,9 @@ every tick, and its player scenario passes the four checks.
 | A player's developer calls refused by the game and the thread; a throwing rule halts the players until a hot update, a developer's resume or a restore; a restore rebases the seat's decisions and push cursor | `pocket-runtime/tests/player.rs`, `pocket-runtime/tests/player_session.rs`, `pocket-interface/src/time/control.rs` (tests) |
 | A seat over HTTP and a seat-bound MCP session (in process, newline JSON-RPC over a pipe) play through the player tools alone; the host refuses the game's and its own developer methods; an unknown seat says `seat.unknown` | `pocket-app/tests/player_host.rs` |
 | The review's three findings replayed against the release `pocket serve` over HTTP | `tools/player_http_probe.py`, [evidence/player/seat-http.txt](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/player/seat-http.txt) |
+| Fork lookahead: a decision leaves main's hash, tick and session untouched and keeps to 4 branches and 600 ticks; the same variant decides the same twice, with kept branches as with fresh forks; a branch is reached as the seat alone; a kept branch forked into again matches a fresh fork; `fork_into` refuses a game that is not a branch of main; with forks off the model never forks; the variants follow their seed | `pocket-runtime/tests/lookahead.rs` |
+| The lookahead's choice needs the margin and never takes a branch that refused its first act; the fork-off estimate reads the chart alone | `pocket-runtime/src/lookahead.rs` (tests) |
+| A restore keeps the declarations only for the spec they came from: another spec's snapshot derives its own, one without a spec removes them | `pocket-runtime/tests/player.rs` |
 | The course's schedule | `pocket-runtime/tests/schedule.rs` |
 | The player scenario passes the four checks | `pocket-check/tests/checks.rs`, `samples/sailing-course/check.toml` |
 | The `player` tool's routing; `pocket player`'s forms | `pocket-mcp/src/tools.rs`, `pocket-app/src/client.rs` |

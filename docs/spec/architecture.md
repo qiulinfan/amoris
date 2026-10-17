@@ -484,6 +484,7 @@ QuickJS-ng 0.16.2 (script-native, script-web, debugger), `oxc_* =0.152.0` and `o
 | `serde-reflection`, `xxhash-rust`, `blake3` | persist (and `blake3` in sim for `ContentHash`; `serde-reflection` in sim too) | persistence.md 1, 5. Slice 1: `serde-reflection =0.6.0` is also in `pocket-sim`, because `Persisted::trace`, which persistence.md 6.2 declares there, takes its `Tracer` and `Samples` (persistence.md 14, choice 8); it is pure Rust and builds for `wasm32`. Slice 1: also in `pocket-physics`, whose persisted components hold enums below their top level (a body's kind, a collider's shape, a boat's trim), which their `Persisted::trace` traces first (persistence.md 14, choice 9) |
 | `rapier3d` | physics | `enhanced-determinism` and `serde-serialize` on; `parallel` and `simd8` off (persistence.md 8) |
 | `bincode` | physics | Slice 1: `bincode =1.3.3` writes the physics cache's bytes (Rapier's `PhysicsWorld` through its own `serde` output, fixed-width integers, trailing bytes refused on decode), the encoding the physics spike wrote and restored natively and in the browser to the same bytes; `pocket-physics` cannot link `pocket-persist`'s PCE (5) and a cache section is opaque (persistence.md 4.1), so the cache's identity names it (11, choice 8) |
+| `typeid` | physics | Pioneer, 2026-10-15: `typeid =1.0.3` (dtolnay's, `no_std`, already locked through `erased-serde`): layout 2 of the physics cache hands a shape built elsewhere to Rapier's derived `Deserialize`, where the field's type is a generic parameter, and `typeid::of` shows it is `SharedShape` before the value is moved in (persistence.md 8) |
 | `rquickjs` | script | QuickJS-ng; `std`/`os` modules never loaded (spec-script); `parallel` never enabled (it implements `Send` for the runtime by pulling `tokio/rt-multi-thread`) |
 | `oxc_*` | script | feature `transpile` only |
 | `gltf`, `meshopt` | assets | `gltf`: feature `import`; `meshopt`: feature `lod`, which `import` and `pocket-render` (its primitives' levels) enable, natively and on wasm32 (Pioneer 2026-10-09, docs/spec/lod.md) |
@@ -738,11 +739,16 @@ step can confirm it or change the layout.
    list yet.
 8. **Slice 1: the physics cache is written by bincode.** `PersistedCache::encode` writes Rapier's
    `PhysicsWorld` with `bincode =1.3.3` (6), and its identity (versions.md 3.6) is
-   `"rapier3d 0.36.0 parry3d 0.31.1 dim3 f32 serde-serialize enhanced-determinism bincode 1.3.3 layout 1"`,
+   `"rapier3d 0.36.0 parry3d 0.31.1 dim3 f32 serde-serialize enhanced-determinism bincode 1.3.3 layout 2 shapes 1"`,
    versions.md's string with the encoding named, checked against `Cargo.lock` by a test. The
    alternative, the PCE serializer moved down into `pocket-sim` so physics writes its cache with it,
    is worth it if a second cache appears; one cache does not justify moving spec-persist's encoder
-   below its crate.
+   below its crate. Layout 2 (Pioneer, 2026-10-15; persistence.md 8 and 14, choice 3) writes each
+   collider's shape in a slot, a fixed collider's by reference while it is the shape its unchanged
+   components built, through wrappers around bincode's serializer and deserializer that follow only
+   the colliders' containers; the reference's key is the BLAKE3 digest of the components
+   (pocket-sim's `ContentHash`, no new dependency), and `shapes 1` names the shape builds it stands
+   for.
 9. **Slice 1: the runtime gives scripts the engine components they need.** `pocket-physics`
    registers its components with no script schema (choice 7), so `pocket-runtime`, which links
    physics and the script host, rebuilds each world's component registry after the physics plugin

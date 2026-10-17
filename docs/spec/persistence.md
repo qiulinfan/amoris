@@ -512,13 +512,14 @@ the table; P2 and P3 prove it through bytes.
 
 The physics spike settles Rapier (`docs/spikes/physics.md`; charter 4.3, proposed in
 [README.md](README.md)). Any integration MUST: keep its whole cross-tick state in one Cache section,
-written by the PCE serializer from the library's deterministic `serde` output; continue after
-encode, decode and restore exactly as without them (P3); find each body's entity through an
-`EntityId` kept in the library's own serialized state (the reverse map is Derived); and be
-rebuildable, inexactly, from the Component sections, so a save survives a library upgrade
-(versions.md 6.3). simulation.md 8.5 explains why the solver's state is carried and not rebuilt: its
-internal order depends on a history of insertions and removals that a rebuild in id order does not
-reproduce.
+written by the PCE serializer from the library's deterministic `serde` output, except what the
+Component sections already determine exactly (Pioneer, 2026-10-15: a fixed collider's shape,
+below); continue after encode, decode and restore exactly as without them (P3); find each body's
+entity through an `EntityId` kept in the library's own serialized state (the reverse map is
+Derived); and be rebuildable, inexactly, from the Component sections, so a save survives a library
+upgrade (versions.md 6.3). simulation.md 8.5 explains why the solver's state is carried and not
+rebuilt: its internal order depends on a history of insertions and removals that a rebuild in id
+order does not reproduce.
 
 For `rapier3d` 0.36.0 with `parry3d` 0.31.1, read from their sources:
 
@@ -542,9 +543,63 @@ For `rapier3d` 0.36.0 with `parry3d` 0.31.1, read from their sources:
   snapshot taken right after a step, as boundary snapshots are; P3's physics fixture still owes it.
 - `EntityId` goes into `RigidBody::user_data` and `Collider::user_data` (`u128`), which Rapier
   serializes. Shapes serialize by value (`SharedShape` writes its typed shape, parry3d
-  `src/shape/shared_shape.rs`), so an island's heightfield or a hull's triangle mesh is copied into
-  every snapshot, keyframe and fork (section 13: colliders with their shapes were 9,950 of the
-  physics spike's 23,764 bytes). Open choice 3 covers the case where shapes dominate fork time.
+  `src/shape/shared_shape.rs`), so layout 1 copied an island's heightfield or a level's triangle
+  mesh into every snapshot, keyframe, tick hash and fork (section 13: colliders with their shapes
+  were 9,950 of the physics spike's 23,764 bytes; a terrain of 999,698 triangles made a 102.3 MB
+  cache, docs/bench/physics.md, "Static geometry and the cache").
+- Layout 2 (Pioneer, 2026-10-15; open choice 3) writes each collider's `shape` field as a slot:
+  `Inline(shape)` (bincode: the variant index 0, then the shape as layout 1 wrote it) or
+  `ByRef(spec, key)` (the index 1, then a `u64` and 32 bytes). A collider is written by reference
+  when its body is fixed, its shape is one `physics.step` built from that body's components and
+  registered (next item), and its entity's `RigidBody` and `Collider` still hash to the spec the
+  body carries in its `user_data` (choice 11): those components then build exactly the solver's
+  shape. `spec` is that hash; `key` is the BLAKE3 digest (`derive_key`, context
+  `"Amoris 2026-10-15 pocket-physics fixed shape v1"`) of the same bincode bytes of the two
+  components. Any other collider is written inline: a fixed one whose `Collider` a boundary write
+  changed before the next step rebuilt it, and one whose shape came into the solver another way
+  (decoded inline from a snapshot this engine did not write, say). So the bytes stay a function of
+  the world's state, and a world restored from them encodes them again. Decoding refuses a slot by
+  reference on a collider that is not its fixed body's own, or that names another spec, or whose key
+  the table holds for components of another spec. The slots are written and read by wrapping
+  bincode's serializer and deserializer around Rapier's derived `serde` in two layers that follow
+  only the colliders' containers (the `ColliderSet`, its arena and the arena's entries) and act only
+  at the field `shape` of the struct `Collider` (Rapier keeps the collider's fields private); the
+  `PhysicsWorld` around them is written field by field as its derived `serde` writes it, and a unit
+  test shows that with no slots the wrappers write Rapier's own bytes. Wrapping only the containers
+  keeps the code small: a wrapper is compiled again for every type it passes through. A shape read
+  by reference reaches Rapier's derived `Deserialize` through `typeid`, which shows that the field's
+  generic type is `SharedShape` first. Putting a shape in through `Collider::set_shape` instead
+  would flag it changed, and the next step would drop the contact workspaces of its pairs: the fork
+  would not continue exactly.
+- A slot by reference means "the shape `solver::shared_shape` builds from these components", so the
+  cache's meaning depends on that builder and on parry's builders under it. The identity names them
+  with a token, `shapes 1`, bumped by any change to either (versions.md 3.6). The web test
+  `physics.shape_builds` pins the digest of the built shapes of every kind (a triangle mesh with its
+  BVH, convex hulls, a compound with rotated parts, the primitives) and fails natively or in
+  WebAssembly when a build changes; the web report prints the digest, so the native and WebAssembly
+  builds compare the builds byte for byte. parry 0.31.1 builds these shapes with arithmetic and
+  square roots only (its other floating-point functions are the per-step `log2` of numeric.md 5 and
+  a `sin_cos` in a query of `convex_polyhedron.rs`), which is why the builds can agree across
+  platforms; the web test checks that they do.
+- Shapes by reference are shared by `Arc` through a process-wide table (`pocket_physics::shapes`),
+  keyed by `key` and held weakly. `physics.step` builds every fixed body's shape through it, so a
+  body built from components whose shape some world holds shares that shape; only shapes built there
+  are registered, so an entry is always the shape its components build (barring a BLAKE3 collision),
+  and a shape that came in another way never reaches another world. Decoding takes a by-reference
+  shape from the table while a world still holds it, so a fork, a rewind or a replay seek in a
+  running host shares its level instead of building it again. When no world holds it (a save loaded
+  in a fresh process), the staged apply checks that the restored components, which persistence
+  applies before the Cache section (4.1: sections in kind order), have the slot's spec hash and key,
+  builds the shape from them and reads the bytes again with it, which costs what building the shape
+  costs at a first step. A snapshot whose components do not build the shapes it refers to (one this
+  engine did not write) gets the inexact rebuild of versions.md 6.3 instead: the next `physics.step`
+  reports each entity named, as `sim.system_failed` caused by `persist.noncanonical`, and a verified
+  restore names the section. Such a restore has already replaced the target world, as any failed
+  verification has; refusing it before anything changes would need the Cache's `decode` to see the
+  staged Component sections, which `PersistedCache` does not offer (choice 3). The table holds no
+  game state, and a hit and a miss give the same shape. Rapier never changes a shared shape in place
+  (`Collider::shape_mut` copies it first), so independence (7) holds. Whether this sharing fits
+  charter 4.1's "no hidden sharing between forks" is the owner's decision (charter 8).
 - Rapier computes some mass properties with the platform's math natively; numeric.md 5's rules keep
   that out of the cache.
 - The section is opaque to `diff`; the `Transform` and velocity components written back show where
@@ -649,10 +704,17 @@ or chosen here. They feed the budgets `hash.sail`, `publish.sail`, `fork.*` and 
    which the physics spike measured at 5.3 to 5.7 µs against about 20 µs through serde) MAY follow
    if `fork.sail` measures above its reference figure, checked by
    `snapshot(clone_fork(w)) == snapshot(w)`.
-3. **Shapes by reference.** Immutable heightfields and meshes in a content-addressed table shared
-   between forks by `Arc`, the cache holding their hashes. Only if the physics section's size makes
-   forks exceed their reference figures (colliders with their shapes were 9,950 of the physics
-   spike's 23,764 bytes); it needs a serializer around Rapier's colliders.
+3. **Shapes by reference.** Settled (Pioneer, 2026-10-15), with the shared table awaiting the owner
+   (charter 8): layout 2 of the physics cache (8) writes a fixed collider's shape by reference while
+   it is the shape the body's unchanged components built, and shares the shapes between worlds
+   through a weak table keyed by the BLAKE3 digest of those components, as this choice proposed when
+   a level's meshes dominate forks. On a terrain of 999,698 triangles under 1,764 bodies the cache
+   falls from 102.3 MB to 3.35 MB, and the whole stand-in snapshot from 126.9 MB to 27.95 MB, the
+   terrain now only in its `Collider` component; times are in docs/bench/physics.md, "Static
+   geometry and the cache". Encoding still hashes each fixed body's components once (the step does
+   the same every tick), and a cold restore builds the shape instead of decoding it. Open: a cold
+   restore whose components do not build the shapes is found only after the target world is
+   replaced; refusing it in staging needs a Cache `decode` that sees the staged Component sections.
 4. **Reusing section digests** of sections that cannot have changed: only if the per-tick hash
    measures too slow, with a full recomputation every N ticks as its check.
 5. **Compression.** None in slice 1; `lz4_flex` (pure Rust, builds for `wasm32`) per keyframe and
@@ -689,17 +751,19 @@ or chosen here. They feed the budgets `hash.sail`, `publish.sail`, `fork.*` and 
     holds the resource `Physics` (Rapier's `PhysicsWorld`) in bincode (architecture.md 11, choice
     8). With no solver in the world it writes nothing, and an empty section decodes to no solver.
     Decoding refuses trailing bytes and a body or collider whose `user_data` names no entity
-    (`persist.noncanonical`). A body's `user_data` holds its `EntityId` in the low 64 bits and an
-    FNV-1a hash of its `RigidBody` and `Collider` in the high 64, so the reverse map (`BodyIndex`)
-    is Derived, rebuilt by `physics.index`, and the step sees a changed component without change
-    detection. `rebuild` leaves an empty solver whose bodies the next `physics.step` builds from the
-    components in id order. `pocket_physics::declare` persists the components `Transform`,
-    `Velocity`, `RigidBody`, `Collider`, `ExternalForce`, `Floater`, `Boat`, `Sail`, `Hull`, `Sea`
-    and `Wind`, the cache, the cache's state `Physics` as Derived (choice 15), and the Derived
-    `BodyIndex` and `ContactLog`. Its tests prove, for the sailing scene, a fork at every tick of
-    600, restores at ticks 0, 1, 60 and 600 continuing 600 ticks in lockstep, and the storage
-    shuffle, through a stand-in of this specification's operations over the same declarations
-    (`pocket_physics::probe`).
+    (`persist.noncanonical`). Since layout 2 (8) a fixed collider's shape is written by reference
+    while it is the shape the body's unchanged components built. A body's `user_data` holds its
+    `EntityId` in the low 64 bits and an FNV-1a hash of its `RigidBody` and `Collider` in the high
+    64, so the reverse map (`BodyIndex`) is Derived, rebuilt by `physics.index`, and the step sees a
+    changed component without change detection. `rebuild` leaves an empty solver whose bodies the
+    next `physics.step` builds from the components in id order. `pocket_physics::declare` persists
+    the components `Transform`, `Velocity`, `RigidBody`, `Collider`, `ExternalForce`, `Floater`,
+    `Boat`, `Sail`, `Hull`, `Sea` and `Wind`, the cache, the cache's state `Physics` as Derived
+    (choice 15), and the Derived `BodyIndex` and `ContactLog`, and ignores `RebuiltSolver`, the
+    report of a restore whose cache referred to shapes its components do not build (8). Its tests
+    prove, for the sailing scene, a fork at every tick of 600, restores at ticks 0, 1, 60 and 600
+    continuing 600 ticks in lockstep, and the storage shuffle, through a stand-in of this
+    specification's operations over the same declarations (`pocket_physics::probe`).
 12. **Slice 1: `pocket-persist` as built.** Everything of sections 3 to 7 and 11 and the checks P1
     to P4 and P6 are implemented and tested with the crate's own test game (moving bodies, spawns
     and despawns, a component that comes and goes, a resource, events, a cache that holds an

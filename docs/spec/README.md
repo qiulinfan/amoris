@@ -81,7 +81,7 @@ every check has a verdict."
 | Item | State |
 |---|---|
 | The core specifications and the shared contract | Drafted and integrated (section 1); Draft until the owner accepts them |
-| Performance measurements | Partly recorded: frame time (`frame.gpu`, `frame.cpu`, `web.frame`), the sail tick (`tick.sail`) and fork time (`fork.sail` and `branch.sail`, which rest on proxies or nothing) are unmeasured, with most rows of `budgets.md` 5 "not measured"; reference figures are set where a spike measured them, and slice 1's first calibrated run records the rest with `cargo xtask perf --set-unset` (`budgets.md` 8.1); findings in `budgets.md`, 13 |
+| Performance measurements | Partly recorded: frame time (`frame.gpu`, `frame.cpu`, `web.frame`) and the sail tick (`tick.sail`) are unmeasured, fork time (`fork.sail` and `branch.sail`) has only a first provisional measurement on the sailing course (`../bench/player.md` 5.2), and most rows of `budgets.md` 5 are "not measured"; reference figures are set where a spike measured them, and slice 1's first calibrated run records the rest with `cargo xtask perf --set-unset` (`budgets.md` 8.1); findings in `budgets.md`, 13 |
 | The two-thread model, native and web | Works (threads) |
 | Physics and buoyancy determinism | Works with caveats (physics) |
 | PR #1421 breakpoints through `rquickjs` in VS Code | No verdict: the patch and a CDP endpoint work, VS Code itself was not run; script-host.md 13 gives the headless run through VS Code's own debug adapter that will give one |

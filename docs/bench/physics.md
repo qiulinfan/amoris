@@ -62,7 +62,9 @@ and a backend decision from it:
    world through serde, static geometry included: 408 MB for the ragdoll scene's 2.7 million terrain
    triangles, about 0.1 to 0.2 s each way at moderate load and several times that under heavy load.
    Jolt saves only the simulation state (3 MB there) and restores it into a world rebuilt from its
-   components.
+   components. 2026-10-15 (Pioneer): pocket-physics' cache now leaves fixed colliders' shapes out
+   too (section "Static geometry and the cache"; measured with a stand-in snapshot on a terrain of a
+   million triangles, the ragdoll scene not re-measured).
 5. **Jolt from Rust costs nothing per call.** Its costs are the C++ build, a C wrapper to own (the
    best one, joltc, lacks state save and restore), and a change to the physics Cache's design.
 
@@ -498,11 +500,131 @@ Times in ms: median over 5 runs (fastest–slowest), 1-minute load 5 to 18.
   times that on the busier machine of the first runs and the review (0.15 to 0.8 s each way). The
   size is the robust number; the times follow the machine. It comes from pocket-physics' Cache
   holding Rapier's whole `PhysicsWorld`, not from Rapier as such (see the end of "Recommendation").
+  2026-10-15 (Pioneer): layout 2 of the cache writes a fixed collider's shape by reference; a
+  999,698-triangle terrain's cache fell from 102.3 MB to 3.35 MB (section "Static geometry and the
+  cache"; the ragdoll scene was not re-measured).
 - **A Jolt Cache would be different** (persistence.md 8): each body's `BodyID` and `SaveState`'s
   bytes, restored by rebuilding the bodies from their components with
   `BodyInterface::CreateBodyWithID` (which Jolt's documentation gives for rollback) and calling
   `RestoreState`. The rule that a save can be rebuilt, inexactly, from the components after a
   library upgrade holds as it does now.
+
+## Static geometry and the cache
+
+2026-10-15 (Pioneer). **Quiet re-measurement, 2026-10-16** (01:59 to 02:05 local), on the R1 laptop
+(Ryzen 9 270, Windows 11, Node 25.8.1, on AC power, Balanced plan) with no other agent's work
+running: mean CPU load 7.3% at the start of the run and 3.9% at its end
+(`tools/machine_conditions.py`). It replaces the provisional numbers of 2026-10-15, taken while
+other agents shared the machine (17% and 8%). The quiet run lowers layout 1's native times more than
+layout 2's (fork 188 to 164 ms, encode 57.9 to 50.2 ms), so the native gains are smaller than first
+quoted (fork 3.0 times rather than 3.4, the stand-in snapshot 1.6 rather than 1.8), and a cold
+restore's extra cost in WebAssembly is 0.36 s rather than 0.41; no conclusion below changes.
+
+The "Recommendation" below names keeping static geometry out of the physics Cache as the first
+Rapier-side item. Layout 2 of pocket-physics' cache does it (persistence.md 8): a fixed body's
+collider shape that `physics.step` built from the body's `RigidBody` and `Collider` is written as a
+reference (the body's spec hash and the BLAKE3 digest of those components) while the components are
+unchanged, and decoding puts back the shape those components build. A process-wide weak table keyed
+by that digest shares the built shapes between worlds by `Arc`, so a fork or restore made while some
+world holds the terrain does not build it again; whether that sharing is acceptable is the owner's
+decision (charter 8). Trajectories are unchanged: the test `the_trajectories_are_layout_1s`
+(`probe::layout`) folds the per-tick hashes of every section but the cache and asserts layout 1's
+folds for the sailing scene (1,200 ticks, and 600 ticks forked before every tick) and for a level
+scene of 196 bodies on the 20,000-triangle terrain (`level_world(100, 3)`: 300 ticks, forked before
+every tick or not); a layout-1 build of the same code gives the same folds
+(`physics_bench trajectory`, run by `tools/physcache_bench.py --trajectory`). The golden chain
+covers the cache's bytes, so it was re-blessed.
+
+**Scene and method.** `probe::level`: ConvexVsMesh's 1,764 bodies (a box, a ball, a capsule and a
+square pyramid; section "Scenes") dropped on a fixed sine terrain of 100 x 100 cells (20,000
+triangles, ConvexVsMesh's size and wave) or 707 x 707 (999,698), all through pocket-physics'
+components. The terrain is built as pocket-physics builds every mesh, without the
+`FIX_INTERNAL_EDGES` flag the ConvexVsMesh and Ragdoll scenes above use, and its `Collider` is 24.2
+MB in the stand-in snapshot's bincode. After 150 ticks, five rounds of: the terrain's spec hash
+(what `physics.step` computes for every body every tick, and layout 2's encode for every fixed
+body); the cache's encode into a new buffer, as a snapshot's, and its decode alone (layout 2 takes
+the terrain from the table, the source world holding it); the probe's stand-in snapshot (bincode per
+section, not pocket-persist's PCE and XXH3) and its restore into a fresh world; a fork (both; its
+intermediate snapshot is freed inside it, as any fork's). Every other result is freed after its
+timer stops. Then a fork stepped 30 ticks beside its source, which must keep its hashes, and a cold
+restore after the source is dropped, which must give the snapshot's bytes. Natively
+`physics_bench level CELLS`; in WebAssembly `examples/level_web.rs` under Node, timed by
+`tests/web/level.mjs`. `tools/physcache_bench.py` ran both layouts, sizes and engines interleaved,
+five rounds, the order of the layouts and of the engines turning by one each round. Each cell is the
+median over the five runs of each run's own statistic: the median of its five rounds, except the
+cold restore and the first tick (one sample per run) and the tick (the median of the 149 warm
+ticks). Raw output is in ignored `out/physcache/quiet/`. Layout 1 is the same code with
+`crates/pocket-physics/src/cache.rs` of `c05f49a6` (the commit that added the scene) in place of
+`src/cache/`.
+
+Times in ms. Every fork continued with its source's hashes and every cold restore gave the
+snapshot's bytes; within each layout the native and WebAssembly hashes after 150 ticks agree
+(999,698 triangles: `fefe994c7d713982` on layout 1, `10f5d1ff0445fa6e` on layout 2).
+
+| Triangles | Layout | Engine | Cache MB | Snapshot MB | Spec hash | Encode | Decode | Snapshot | Restore | Fork | Cold restore | Tick | First tick |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 20,000 | 1 | native | 5.26 | 6.32 | 0.5 | 3.9 | 5.4 | 4.4 | 7.9 | 12.5 | 8.6 | 1.7 | 8.9 |
+| 20,000 | 2 | native | 3.29 | 4.34 | 0.5 | 3.2 | 3.8 | 3.8 | 6.1 | 10.1 | 17.4 | 1.6 | 8.9 |
+| 20,000 | 1 | wasm | 5.26 | 6.32 | 0.5 | 3.0 | 3.9 | 3.5 | 6.2 | 9.9 | 6.2 | 2.4 | 35.9 |
+| 20,000 | 2 | wasm | 3.29 | 4.34 | 0.5 | 2.9 | 2.7 | 3.4 | 5.3 | 8.8 | 16.1 | 2.3 | 36.4 |
+| 999,698 | 1 | native | 102.3 | 126.9 | 26.0 | 50.2 | 88.9 | 55.6 | 105.2 | 163.6 | 105.9 | 27.3 | 265 |
+| 999,698 | 2 | native | 3.35 | 27.95 | 25.5 | 28.7 | 3.8 | 34.1 | 19.6 | 54.6 | 287 | 27.3 | 263 |
+| 999,698 | 1 | wasm | 102.3 | 126.9 | 23.5 | 29.4 | 92.3 | 32.9 | 104.6 | 146.0 | 70.0 | 25.3 | 488 |
+| 999,698 | 2 | wasm | 3.35 | 27.95 | 23.4 | 25.9 | 2.8 | 29.7 | 15.7 | 46.1 | 427 | 25.1 | 491 |
+
+The spread over the five runs at 999,698 triangles (fastest–slowest): fork 161–165 ms on layout 1
+and 54–55 on layout 2 natively, 143–158 and 45–47 in WebAssembly; cold restore 104–106 and 283–287
+natively, 70–71 and 424–428 in WebAssembly; encode 50–52 and 28.6–29.2 natively.
+
+- **The level is stored once.** With 999,698 triangles the cache falls from 102.3 MB to 3.35 MB and
+  the snapshot from 126.9 MB to 27.95 MB, of which the terrain's `Collider` component is 24.2 MB:
+  Rapier's own copy (its triangle mesh with its BVH, 99 MB, four times the component) is gone. With
+  20,000 triangles the 1,764 bodies dominate: 5.26 to 3.29 MB.
+- **Forks and restores of a running world get 3 to 6.7 times faster** at 999,698 triangles: fork 164
+  to 55 ms natively (3.0 times) and 146 to 46 ms in WebAssembly (3.2 times), restore 105 to 20 ms
+  (5.4 times) and 105 to 16 ms (6.7 times), the cache's decode 89 to 3.8 and 92 to 2.8 ms. What
+  remains of a fork is the `Collider` component's own bytes and the spec hash.
+- **Snapshots get 1.1 to 1.6 times faster.** The cache's encode, into a new buffer as a snapshot
+  writes it, falls from 50.2 to 28.7 ms natively and from 29.4 to 25.9 ms in WebAssembly, and the
+  stand-in snapshot from 55.6 to 34.1 and from 32.9 to 29.7 ms. Layout 1's encode was mostly writing
+  102 MB into a growing buffer, which costs less in WebAssembly (not examined further);
+  almost all of layout 2's is the check that the terrain's components still build its shape, a spec
+  hash of 25.5 ms natively and 23.4 in WebAssembly (bincode of the 24 MB component, then FNV-1a over
+  it). The first runs of this section measured the encode into a reused buffer already grown to 102
+  MB, which hid most of layout 1's cost (19.6 ms natively, on the loaded machine).
+- **That hash is also the tick's cost at this size.** `physics.step` computes every body's spec hash
+  every tick to see a changed component without change detection: 27 ms per tick natively with
+  999,698 triangles against 1.6 ms with 20,000, nearly all of it the terrain's hash. A level-sized
+  mesh in a `Collider` component is unusable at 60 Hz for that reason, independent of the cache. The
+  next level-scale item: a cheaper spec hash (streamed into a faster hash instead of an allocated
+  buffer and byte-wise FNV-1a) or, better, a mesh the component names by its content hash, which the
+  spec hash then covers in 32 bytes; either would also take most of what remains of the snapshot.
+- **A cold restore is slower**: 106 to 287 ms natively and 70 to 427 ms in WebAssembly (one sample
+  per run; spread above). With no world holding the terrain, the restore checks the components' spec
+  hash and key and builds the triangle mesh and BVH from them, as the first tick does (263 and 491
+  ms), where layout 1 decoded them. Loading a save in a fresh process pays this once; forks, rewinds
+  and replay seeks in a running host share the shape.
+- **Code size.** The slot wrappers wrap only the colliders' containers (persistence.md 8). The
+  `level_web` module's code section grows from 3,665,944 bytes on layout 1 to 3,703,175 (+1.0%) and
+  `physics_bench.exe` from 4,908,544 to 4,949,504 bytes (+0.8%), each against layout 1 built from
+  the same code. The first layout 2, whose wrappers passed the whole `PhysicsWorld` and the shapes
+  through a second copy of their `serde` code, cost +911 KB (+25%) of code in WebAssembly.
+  pocket-web was not measured; it carries the same physics code.
+- **On the sailing scene**, which has no fixed body, the cache grows by a 4-byte slot tag per
+  collider (16,525 to 16,553 bytes at tick 300). Nine runs of `physics_bench` per layout,
+  interleaved, resolve no difference in time: the stand-in snapshot with its hash takes 52.8 µs
+  (47.4–58.3) on layout 1 and 49.3 µs (48.3–49.8) on layout 2, a fork, mostly the fresh world's
+  making, 483 and 485 µs, a tick 41.0 and 40.7 µs (40.7–41.6 and 40.1–41.3).
+- **For the Jolt recommendation** this narrows the snapshot argument, but it does not settle it. The
+  stand-in snapshot of a million-triangle level forks in about 50 ms on layout 2, and
+  pocket-physics' cache now leaves static geometry out as Jolt's state does (section "Snapshots and
+  forks": 3 MB on the ragdoll scene, a different scene). Not measured: pocket-persist's PCE and
+  `Game::fork` on this scene (its verified restore re-encodes the components and the cache, so it
+  repeats the spec hash and adds the PCE of the 24 MB `Collider`), a terrain with
+  `FIX_INTERNAL_EDGES`, whose built mesh and cold restore are larger, and the ragdoll scene behind
+  the 408 MB figure. The remaining arguments (step speed on meshes and ragdolls, CI-tested
+  determinism, the features Jolt already has) are unchanged. How much the snapshot argument still
+  weighs is the owner's call (charter 8).
 
 ## Integration: Jolt from Rust
 
@@ -664,7 +786,10 @@ pocket-web itself, through wasm-bindgen and beside QuickJS-ng's libc, is check 1
   2.7-million-triangle level, and forks are a first-class operation (charter 3, principle 4), so a
   world with a large level pays that on every byte-based fork. Jolt's state is 3 MB there. A Rapier
   Cache without the static geometry would narrow this (last paragraph); the size is a design cost,
-  not a limit of Rapier.
+  not a limit of Rapier. 2026-10-15 (Pioneer): that Cache exists now (section "Static geometry and
+  the cache"). Its gains were measured with the probe's stand-in snapshot on a terrain built
+  without `FIX_INTERNAL_EDGES`, not with pocket-persist's PCE or `Game::fork`, and the ragdoll
+  scene was not re-measured, so how much of this argument remains is the owner's call (charter 8).
 - Switching is cheapest now: about 1,100 lines of pocket-physics touch Rapier, and there are no
   joints and no continuous collision yet. Every feature built on Rapier raises the price.
 - Jolt has, and joltc already exposes, what the engine will need next: a character controller,
@@ -699,4 +824,6 @@ geometry out of the physics Cache's bytes (re-attached from components on restor
 persistence.md 8's exact-continuation rule would have to be re-checked against), build ragdoll
 joints knowing they cost about 2.4 times Jolt's here, and decide whether `parallel` may run under
 threads.md 3.4's helper rule (it was deterministic across 1, 4 and 10 threads here, and gives 1.5 to
-2.4 times on 4 threads).
+2.4 times on 4 threads). 2026-10-15 (Pioneer): the first item is done (section "Static geometry and
+the cache"); exact continuation held (a tracked test asserts layout 1's trajectories), and the next
+level-scale cost it shows is the per-tick spec hash of a large `Collider`.
