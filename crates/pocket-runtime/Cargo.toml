@@ -64,3 +64,7 @@ required-features = ["transpile"]
 [[example]]
 name = "write_trace_bench"
 required-features = ["transpile"]
+
+[[example]]
+name = "lookahead_bench"
+required-features = ["transpile"]
