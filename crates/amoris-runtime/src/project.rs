@@ -116,7 +116,8 @@ impl Project {
         let manifest: Manifest =
             crate::decode(&toml_value(&manifest_path, &text)?, "project.toml")?;
         TickRate::new(manifest.rate)?;
-        let scene = Scene::from_json(&read_file(&root.join("scene.json"))?)?;
+        let mut scene = Scene::from_json(&read_file(&root.join("scene.json"))?)?;
+        crate::voxel_file::resolve_under(&mut scene, root)?;
         let source = ScriptSource::read_dir(root).map_err(|e| {
             Problem::new(
                 "project.unreadable",

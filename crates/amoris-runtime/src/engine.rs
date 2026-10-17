@@ -16,12 +16,13 @@ use amoris_assets::{
 use amoris_contract::{CheckOptions, Problem, Shape, detail};
 use amoris_physics::{
     Boat, Collider, ExternalForce, Floater, Hull, RigidBody, Sail, Sea, Transform, Trim, Velocity,
-    Wind,
+    Walker, Wind,
 };
 use amoris_script::{EngineFns, register_engine};
 use amoris_sim::registry::{
     ComponentOrigin, ComponentSchema, FieldType, FieldValue, ProjectValues,
 };
+use amoris_sim::voxels::Voxels;
 use amoris_sim::{ComponentRegistry, Name, Persisted};
 use bevy_ecs::component::{Component, Mutable};
 use bevy_ecs::prelude::World;
@@ -86,7 +87,7 @@ where
 /// Every engine component a scene or `world_edit` can name (`Name` is the entity's own `name`);
 /// the first three are the player layer's (perception.md: who observes, what can be perceived,
 /// what blocks sight).
-pub fn engine_components() -> [EngineComponent; 24] {
+pub fn engine_components() -> [EngineComponent; 26] {
     [
         entry::<amoris_interface::perception::Observer>(),
         entry::<amoris_interface::perception::Perceivable>(),
@@ -111,8 +112,29 @@ pub fn engine_components() -> [EngineComponent; 24] {
         entry::<Sea>(),
         entry::<Transform>(),
         entry::<Velocity>(),
+        entry::<Walker>(),
         entry::<Wind>(),
+        voxels_entry(),
     ]
+}
+
+/// `Voxels`, decoded strictly and then validated (voxels.md 2.2).
+fn voxels_entry() -> EngineComponent {
+    fn decode_voxels(v: &Value, owner: &str) -> Result<Inserter, Problem> {
+        let c: Voxels = Shape::of::<Voxels>()
+            .decode::<Voxels>(v, &CheckOptions::new(owner))?
+            .value;
+        c.validate()?;
+        Ok(Inserter(Box::new(move |e: &mut EntityWorldMut<'_>| {
+            e.insert(c);
+        })))
+    }
+    EngineComponent {
+        name: Voxels::NAME,
+        get: get::<Voxels>,
+        decode: decode_voxels,
+        remove: remove::<Voxels>,
+    }
 }
 
 /// The engine component named `name`.
@@ -364,6 +386,94 @@ fn boat_fns() -> EngineFns<Boat> {
     }
 }
 
+fn walker_schema() -> Result<ComponentSchema, Problem> {
+    let d = Walker::default();
+    let n = |name, value, doc| (name, FieldType::F64, FieldValue::F64(value), doc);
+    let b = |name, doc| (name, FieldType::Bool, FieldValue::Bool(false), doc);
+    schema(
+        "Walker",
+        Walker::VERSION,
+        "A first-person body (voxels.md 5.2); its entity's Transform is the eye.",
+        vec![
+            n("eye_m", d.eye_m, "The eye above the feet, metres."),
+            n("height_m", d.height_m, "The body's height, metres."),
+            n(
+                "half_width_m",
+                d.half_width_m,
+                "Half the body's width, metres.",
+            ),
+            n("speed_mps", d.speed_mps, "Walking speed, m/s."),
+            n("run_mps", d.run_mps, "Running speed, m/s."),
+            n("jump_mps", d.jump_mps, "Take-off speed of a jump, m/s."),
+            n("gravity_mps2", d.gravity_mps2, "Gravity, m/s2."),
+            n("forward", 0.0, "Forward input, -1 to 1."),
+            n("strafe", 0.0, "Rightward input, -1 to 1."),
+            n(
+                "yaw",
+                0.0,
+                "The look's turn about +y, radians; 0 looks along -z.",
+            ),
+            n("pitch", 0.0, "The look's tilt, radians, positive up."),
+            b("run", "Running."),
+            b("jump", "A one-tick pulse: jump if grounded."),
+            b("primary", "A one-tick pulse for the game's rules."),
+            b("secondary", "A one-tick pulse for the game's rules."),
+            (
+                "slot",
+                FieldType::U32,
+                FieldValue::U32(0),
+                "The selected hotbar slot, 0 to 8.",
+            ),
+            n("vertical_mps", 0.0, "Vertical speed, m/s, positive up."),
+            b("grounded", "Standing on a solid cell."),
+        ],
+    )
+}
+
+fn walker_fns() -> EngineFns<Walker> {
+    fn read(w: &Walker) -> ProjectValues {
+        nums(&[
+            w.eye_m,
+            w.height_m,
+            w.half_width_m,
+            w.speed_mps,
+            w.run_mps,
+            w.jump_mps,
+            w.gravity_mps2,
+            w.forward,
+            w.strafe,
+            w.yaw,
+            w.pitch,
+            bit(w.run),
+            bit(w.jump),
+            bit(w.primary),
+            bit(w.secondary),
+            f64::from(w.slot),
+            w.vertical_mps,
+            bit(w.grounded),
+        ])
+    }
+    fn write(w: &mut Walker, v: &ProjectValues) {
+        let n = &v.nums;
+        (w.eye_m, w.height_m, w.half_width_m) = (n[0], n[1], n[2]);
+        (w.speed_mps, w.run_mps, w.jump_mps, w.gravity_mps2) = (n[3], n[4], n[5], n[6]);
+        (w.forward, w.strafe, w.yaw, w.pitch) = (n[7], n[8], n[9], n[10]);
+        (w.run, w.jump, w.primary, w.secondary) =
+            (n[11] != 0.0, n[12] != 0.0, n[13] != 0.0, n[14] != 0.0);
+        w.slot = amoris_sim::num::to_u32(n[15]).unwrap_or(0);
+        (w.vertical_mps, w.grounded) = (n[16], n[17] != 0.0);
+    }
+    EngineFns {
+        read,
+        write,
+        make: |v| {
+            let mut w = Walker::default();
+            write(&mut w, v);
+            w
+        },
+    }
+}
+
 fn wind_schema() -> Result<ComponentSchema, Problem> {
     schema(
         "Wind",
@@ -424,6 +534,8 @@ pub fn install_script_components(world: &mut World) -> Result<(), Problem> {
     ComponentRegistry::register::<Velocity>(world, Some(velocity_schema()?))?;
     ComponentRegistry::register::<Boat>(world, Some(boat_schema()?))?;
     ComponentRegistry::register::<Wind>(world, Some(wind_schema()?))?;
+    ComponentRegistry::register::<Walker>(world, Some(walker_schema()?))?;
+    ComponentRegistry::register::<Voxels>(world, None)?;
     ComponentRegistry::register::<RigidBody>(world, None)?;
     ComponentRegistry::register::<Collider>(world, None)?;
     ComponentRegistry::register::<ExternalForce>(world, None)?;
@@ -456,6 +568,7 @@ pub fn install_script_components(world: &mut World) -> Result<(), Problem> {
     register_engine::<Velocity>(world, velocity_fns())?;
     register_engine::<Boat>(world, boat_fns())?;
     register_engine::<Wind>(world, wind_fns())?;
+    register_engine::<Walker>(world, walker_fns())?;
     Ok(())
 }
 

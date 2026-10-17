@@ -35,6 +35,7 @@ pub mod sea;
 mod shapes;
 pub mod solver;
 pub mod walk;
+pub mod walker;
 
 pub use boat::{Boat, BuoyPoint, Floater, Hull, Sail, Trim, best_sheet};
 pub use body::{
@@ -45,6 +46,7 @@ pub use cache::{IDENTITY, PhysicsCache, declare};
 pub use forces::start_time;
 pub use sea::{GRAVITY, Sea, Water, Wave, WaveField, Wind};
 pub use solver::{BodyIndex, ContactLog, Physics, RebuiltSolver};
+pub use walker::Walker;
 
 use amoris_contract::Problem;
 use amoris_sim::registry::ComponentRegistry;
@@ -71,6 +73,8 @@ pub fn plugin(sim: &mut Sim) -> Result<(), Problem> {
     ComponentRegistry::register::<Hull>(w, None)?;
     ComponentRegistry::register::<Sea>(w, None)?;
     ComponentRegistry::register::<Wind>(w, None)?;
+    ComponentRegistry::register::<Walker>(w, None)?;
+    ComponentRegistry::register::<amoris_sim::voxels::Voxels>(w, None)?;
     let always = RunCondition::Always;
     sim.add_system("physics.wind", TickPhase::Forces, always, forces::wind)?;
     sim.add_system(
@@ -81,12 +85,19 @@ pub fn plugin(sim: &mut Sim) -> Result<(), Problem> {
     )?;
     sim.add_system("physics.sail", TickPhase::Forces, always, forces::sail)?;
     sim.add_system("physics.hull", TickPhase::Forces, always, forces::hull)?;
+    sim.add_system("physics.walk", TickPhase::Physics, always, walker::walk)?;
     sim.add_system("physics.step", TickPhase::Physics, always, solver::step)?;
     sim.add_system(
         "physics.contacts",
         TickPhase::Physics,
         always,
         solver::contacts,
+    )?;
+    sim.add_system(
+        "physics.walk.clear",
+        TickPhase::Finish,
+        always,
+        walker::clear,
     )?;
     Ok(())
 }

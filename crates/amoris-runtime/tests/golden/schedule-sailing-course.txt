@@ -7,7 +7,9 @@ Forces physics.sail always
 Forces physics.hull always
 Physics physics.step always
 Physics physics.contacts always
+Physics physics.walk always
 Finish interface.perception always
 Finish interface.turns always
+Finish physics.walk.clear always
 Finish assets.animate always
 Finish sim.finish always

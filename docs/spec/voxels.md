@@ -176,14 +176,14 @@ pub struct Walker {
 
 - The entity's `Transform` is the eye: position the eye, rotation `yaw` about +y then `pitch` about
   +x, so a `Camera` on the same entity looks where the walker looks.
-- `physics.walk` runs in the `Physics` phase before `physics.step`, after the `Update` phase's
-  rules. Per walker, in `EntityId` order, it turns the inputs into a velocity (the horizontal one
-  from `forward` and `strafe` turned by `yaw`, at most unit length, times the speed; the vertical
-  one under gravity, set to `jump_mps` by a jump while grounded), then moves the box by
-  `velocity * dt` along y, then x, then z, each move shortened to stop at the first solid cell of
-  any volume its box would enter (5.1). A stop going down grounds the walker; a stop on y zeroes
-  `vertical_mps`. Without step-up, one cell takes a jump, as in the block game. It writes the eye's
-  `Transform`, `vertical_mps` and `grounded`.
+- `physics.walk` runs in the `Physics` phase after `physics.contacts` (simulation.md 4.4, row 9a),
+  after the `Update` phase's rules. Per walker, in `EntityId` order, it turns the inputs into a
+  velocity (the horizontal one from `forward` and `strafe` turned by `yaw`, at most unit length,
+  times the speed; the vertical one under gravity, set to `jump_mps` by a jump while grounded), then
+  moves the box by `velocity * dt` along y, then x, then z, each move shortened to stop at the first
+  solid cell of any volume its box would enter (5.1). A stop going down grounds the walker; a stop
+  on y zeroes `vertical_mps`. Without step-up, one cell takes a jump, as in the block game. It
+  writes the eye's `Transform`, `vertical_mps` and `grounded`.
 - The presenter-side `WalkController` and `StaticWalkWorld` stay, unchanged, for games without
   walkers (`samples/town-walk`).
 - `primary`, `secondary` and `jump` are cleared by `physics.walk.clear` in the `Finish` phase of

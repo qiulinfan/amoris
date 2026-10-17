@@ -43,6 +43,7 @@ pub mod thread;
 pub mod types;
 mod values;
 pub mod version;
+pub mod voxel_file;
 pub mod writes;
 
 /// The time model every loop paces with (threads.md 3.3), on every target: the game thread's and

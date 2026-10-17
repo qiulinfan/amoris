@@ -39,6 +39,7 @@ use crate::shapes::{self, ShapeKey};
 use crate::solver::{
     BodyIndex, ContactLog, Physics, RebuiltSolver, entity_of, rebuild_index, spec_hash, spec_of,
 };
+use crate::walker::Walker;
 use slots::{ByRef, Reading, WorldIn, WorldOut, Writing};
 
 /// The cache's identity (versions.md 3.6): the library, its exact versions, the features that
@@ -66,6 +67,8 @@ pub fn declare<R: RegisterPersisted>(r: &mut R) {
         .component::<Hull>()
         .component::<Sea>()
         .component::<Wind>()
+        .component::<Walker>()
+        .component::<amoris_sim::voxels::Voxels>()
         .cache::<PhysicsCache>()
         .derived::<Physics>("the state of cache physics.rapier, put back by its section")
         .derived::<BodyIndex>("rebuilt from the bodies' user_data, which name their entities")
@@ -330,6 +333,7 @@ persisted! {
     Hull => "Hull",
     Sea => "Sea",
     Wind => "Wind",
+    Walker => "Walker",
 }
 
 impl Persisted for RigidBody {
