@@ -1,9 +1,9 @@
-// The profiler's timeline chart: per sample, the tick's CPU time stacked by system (bars, left
-// scale) and the frame time (line, right scale, 0–33 ms with the 60 Hz budget marked). Hover for
-// the numbers of one sample.
+// The profiler's timeline chart: per sample, the host's CPU time per tick stacked by system (bars,
+// left scale) and the viewport's frame time (line, right scale, 0–33 ms with the 60 Hz budget
+// marked; broken where the viewport drew nothing). Hover for the numbers of one sample.
 
 import { useState } from "react";
-import type { ProfileSample } from "../../host/protocol";
+import type { ProfileSample } from "../../state/profile";
 import { hue, ms } from "../../ui/format";
 
 const FRAME_MAX = 1000 / 30;
@@ -13,11 +13,26 @@ export function ProfileChart({ samples, width, height }: { samples: ProfileSampl
   const n = Math.max(60, samples.length);
   const bw = width / n;
   const totals = samples.map((s) => s.systems.reduce((a, x) => a + x.ms, 0));
-  const cpuMax = Math.max(0.05, ...totals) * 1.25;
-  const yCpu = (v: number) => height - (v / cpuMax) * height;
+  // The scale follows the 90th percentile, so one slow quarter second (Play's first tick, a hot
+  // swap) does not flatten the rest; taller bars are clipped and marked.
+  const ticked = totals.filter((_, i) => samples[i]!.ticks > 0).sort((a, b) => a - b);
+  const p90 = ticked.length ? ticked[Math.min(ticked.length - 1, Math.floor(ticked.length * 0.9))]! : 0;
+  const peak = Math.max(0, ...totals);
+  const cpuMax = Math.max(0.05, p90) * 1.5;
+  const yCpu = (v: number) => height - (Math.min(v, cpuMax) / cpuMax) * height;
   const yFrame = (v: number) => height - (Math.min(v, FRAME_MAX) / FRAME_MAX) * height;
   const x0 = width - samples.length * bw;
-  const line = samples.map((s, i) => `${(x0 + (i + 0.5) * bw).toFixed(1)},${yFrame(s.frame_ms).toFixed(1)}`).join(" ");
+  const lines: string[] = [];
+  let run: string[] = [];
+  samples.forEach((s, i) => {
+    if (s.frame_ms == null) {
+      if (run.length > 1) lines.push(run.join(" "));
+      run = [];
+      return;
+    }
+    run.push(`${(x0 + (i + 0.5) * bw).toFixed(1)},${yFrame(s.frame_ms).toFixed(1)}`);
+  });
+  if (run.length > 1) lines.push(run.join(" "));
   const h = hover !== null ? samples[hover] : undefined;
   return (
     <div className="prof-chart">
@@ -47,25 +62,37 @@ export function ProfileChart({ samples, width, height }: { samples: ProfileSampl
                   const y2 = yCpu(acc);
                   return <rect key={x.name} x={x0 + i * bw + 0.5} y={y2} width={Math.max(1, bw - 1)} height={Math.max(0, y1 - y2)} fill={`hsl(${hue(x.name)} 55% 58%)`} />;
                 })}
+              {totals[i]! > cpuMax && <rect x={x0 + i * bw + 0.5} y={0} width={Math.max(1, bw - 1)} height={2} className="prof-clip" />}
             </g>
           );
         })}
-        {samples.length > 1 && <polyline points={line} className="prof-frame-line" />}
+        {lines.map((points, i) => (
+          <polyline key={i} points={points} className="prof-frame-line" />
+        ))}
         {h && <line x1={x0 + (hover! + 0.5) * bw} x2={x0 + (hover! + 0.5) * bw} y1={0} y2={height} className="prof-hover" />}
       </svg>
       <div className="prof-legend">
         <span>
-          <i className="sw sw-bars" /> CPU per tick, by system (max {ms(cpuMax / 1.25)})
+          <i className="sw sw-bars" /> host CPU per tick, by system (scale {ms(cpuMax)}, peak {ms(peak)})
         </span>
         <span>
-          <i className="sw sw-line" /> frame time
+          <i className="sw sw-line" /> viewport frame time
         </span>
       </div>
       {h && (
         <div className="prof-tip" style={{ left: Math.min(width - 210, Math.max(0, x0 + hover! * bw + 12)) }}>
-          <div className="mono">tick {h.tick}</div>
+          <div className="mono">
+            tick {h.tick} · {h.ticks} tick{h.ticks === 1 ? "" : "s"}
+            {h.held ? ` (${h.held} held)` : ""}
+          </div>
           <div>
-            frame <b className="mono">{ms(h.frame_ms)}</b> · CPU <b className="mono">{ms(totals[hover!] ?? 0)}</b>
+            frame <b className="mono">{h.frame_ms != null ? ms(h.frame_ms) : "–"}</b> · CPU <b className="mono">{ms(totals[hover!] ?? 0)}</b>
+            {h.gpu_ms != null && (
+              <>
+                {" "}
+                · GPU <b className="mono">{ms(h.gpu_ms)}</b>
+              </>
+            )}
           </div>
           {[...h.systems]
             .sort((a, b) => b.ms - a.ms)

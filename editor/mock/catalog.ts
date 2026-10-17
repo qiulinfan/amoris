@@ -127,5 +127,10 @@ export const CATALOG: CatalogCommand[] = [
   { name: "debug.exceptions", kind: "control", doc: "Pauses on exceptions: none, uncaught (no try catches them) or all.", params: obj({ mode: { type: "string", enum: ["none", "uncaught", "all"] } }, ["mode"]) },
   { name: "debug.wait", kind: "read", doc: "Waits up to timeout_ms for the game to stop and returns the state.", params: obj({ timeout_ms: int("Wait up to this long for the game to stop (default 5000).") }) },
   { name: "debug.rewind", kind: "control", doc: "Restores the kept snapshot at or before a tick and steps the world forward to it.", params: obj({ tick: int("The tick to stand at.") }, ["tick"]) },
-  { name: "profile.frame", kind: "read", doc: "The last frame's CPU and GPU timings.", params: obj() },
+  {
+    name: "profile.frame",
+    kind: "read",
+    doc: "What the last ticks cost the game thread (default 60), in ms per tick: each system's own time, tick.other, loop.present and loop.publish, and each phase; ticks the debugger held are counted in held and left out.",
+    params: obj({ ticks: int("The last this many ticks, default 60 (the ring keeps 600).") }),
+  },
 ];

@@ -4,6 +4,7 @@ import { ChevronDown, Pause, Play, Square, StepForward } from "lucide-react";
 import { useState } from "react";
 import { setSpeed, stepTick, togglePause, togglePlay } from "../actions/time";
 import { useConnection } from "../state/connection";
+import { useProfile } from "../state/profile";
 import { useSession } from "../state/session";
 import { IconButton } from "../ui/Button";
 import { PopupMenu } from "../ui/Menu";
@@ -12,6 +13,12 @@ import { cx } from "../ui/cx";
 
 export function Transport() {
   const status = useSession((s) => s.status);
+  // The cost of a tick: the status's own, else the host profile's last quarter second.
+  const profiled = useProfile((s) => s.samples.at(-1));
+  const tickMs = status?.tick_ms ?? (profiled && profiled.ticks > 0 ? profiled.tick_ms : null);
+  // The host's simulation rate: `tps` (older hosts sent it only as `fps`). The viewport's own
+  // frame rate is the stats overlay's.
+  const tps = status?.tps ?? status?.fps;
   const online = useConnection((s) => s.info.state === "open");
   const [speedMenu, setSpeedMenu] = useState<{ x: number; y: number } | null>(null);
   const playing = status?.mode === "play";
@@ -33,7 +40,7 @@ export function Transport() {
         <IconButton icon={Pause} label={paused && playing ? "Resume" : "Pause"} keys="Mod+Alt+P" size="lg" active={playing && paused} disabled={!online} onClick={() => void togglePause()} />
         <IconButton icon={StepForward} label="Step one tick" keys="Mod+Alt+." size="lg" disabled={!online} onClick={() => void stepTick()} />
       </div>
-      <div className="transport-readout" data-tip="Tick · simulated time · frame rate · cost of the last tick">
+      <div className="transport-readout" data-tip="Tick · simulated time · ticks per second · cost of a tick">
         <span className="ro">
           <span className="ro-label">tick</span>
           <span className="ro-value">{status?.tick ?? "–"}</span>
@@ -42,11 +49,11 @@ export function Transport() {
           <span className="ro-value">{clock(status?.t_s ?? 0)}</span>
         </span>
         <span className="ro">
-          <span className="ro-value">{status?.fps != null ? status.fps.toFixed(0) : "–"}</span>
-          <span className="ro-label">fps</span>
+          <span className="ro-value">{tps != null ? tps.toFixed(0) : "–"}</span>
+          <span className="ro-label">tps</span>
         </span>
         <span className="ro">
-          <span className="ro-value">{status?.tick_ms != null ? status.tick_ms.toFixed(2) : "–"}</span>
+          <span className="ro-value">{tickMs != null ? tickMs.toFixed(2) : "–"}</span>
           <span className="ro-label">ms</span>
         </span>
       </div>

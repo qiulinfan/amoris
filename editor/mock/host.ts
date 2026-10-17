@@ -26,7 +26,7 @@ const option = (name: string, fallback: string) => {
 
 const PORT = Number(option("--port", process.env.MOCK_PORT ?? "7879"));
 const DIST = resolve(import.meta.dir, "../dist");
-const ALL_TOPICS = ["status", "world.changed", "events", "log", "history", "debug", "profile", "agent", "pick"];
+const ALL_TOPICS = ["status", "world.changed", "events", "log", "history", "debug", "profile", "agent"];
 
 interface Client {
   topics: Set<string>;
@@ -133,7 +133,19 @@ const server = Bun.serve<Client>({
         return;
       }
       if (msg.method === "subscribe") {
-        const topics = (msg.params?.topics ?? []).filter((t) => ALL_TOPICS.includes(t));
+        // All or nothing, as the host (ws.rs): a topic it does not push changes nothing.
+        const asked = msg.params?.topics ?? [];
+        const bad = asked.findIndex((t) => !ALL_TOPICS.includes(t));
+        if (bad >= 0) {
+          const error = {
+            code: "request.invalid_value",
+            message: `'${asked[bad]}' is not a topic; the topics are ${ALL_TOPICS.join(", ")}.`,
+            detail: { path: `/topics/${bad}`, value: asked[bad], valid: ALL_TOPICS },
+          };
+          ws.send(JSON.stringify({ id: msg.id, error }));
+          return;
+        }
+        const topics = asked;
         const fresh = topics.filter((t) => !ws.data.topics.has(t));
         topics.forEach((t) => ws.data.topics.add(t));
         ws.send(JSON.stringify({ id: msg.id, result: { topics: [...ws.data.topics] } }));

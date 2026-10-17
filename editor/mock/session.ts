@@ -74,6 +74,9 @@ export class Session {
     return this.playWorld ? "play" : "edit";
   }
 
+  /** The world shown, as the host counts it: Play, Stop and a restore each replace it. */
+  private epoch = 0;
+
   status() {
     return {
       tick: this.tick,
@@ -83,7 +86,10 @@ export class Session {
       speed: this.speed,
       mode: this.mode,
       world_hash: this.world.hash(),
+      epoch: this.epoch,
       entities: this.world.entities.size,
+      // As the host's status: ticks per second, repeated as fps for older editors.
+      tps: Math.round(this.fps * 10) / 10,
       fps: Math.round(this.fps * 10) / 10,
       tick_ms: Math.round(this.lastTickMs * 1000) / 1000,
     };
@@ -196,32 +202,75 @@ export class Session {
     return c;
   }
 
-  profile() {
-    const playing = this.mode === "play" && !this.paused && !this.debugger.paused;
+  /** The tick the last `profile` push summarized up to. */
+  private profiled = 0;
+
+  /**
+   * A `profile` summary in the real host's shape (pocket-link's `profile`): ms per tick of each
+   * system's own time in the order they finish, then tick.other, loop.present, loop.publish and
+   * loop.after (together busy_ms), and the phases. `last`: the last that many ticks (`profile.frame`); otherwise the
+   * ticks since the previous push. The host has no frame: the editor adds its viewport's.
+   */
+  profile(last?: number) {
+    const ticks = last ?? Math.max(0, this.tick - this.profiled);
+    if (last === undefined) this.profiled = this.tick;
     const n = () => this.noise();
-    const systems = [
-      { name: "physics.step", ms: playing ? 0.21 + n() * 0.05 : 0 },
-      { name: "physics.buoyancy", ms: playing ? 0.08 + n() * 0.02 : 0 },
-      { name: "physics.sail", ms: playing ? 0.03 + n() * 0.01 : 0 },
-      { name: "script:muster", ms: 0 },
-      { name: "script:log", ms: playing ? 0.012 + n() * 0.004 : 0 },
-      { name: "script:take_aboard", ms: playing ? 0.019 + n() * 0.008 : 0 },
-      { name: "interface.perception", ms: playing ? 0.05 + n() * 0.02 : 0 },
-      { name: "link.publish", ms: 0.02 + n() * 0.01 },
-    ];
-    const gpu = [
-      { pass: "shadow.cascades", ms: 0.42 + n() * 0.06 },
-      { pass: "depth.prepass", ms: 0.18 + n() * 0.03 },
-      { pass: "forward.opaque", ms: 0.95 + n() * 0.12 },
-      { pass: "sea.surface", ms: 0.61 + n() * 0.08 },
-      { pass: "splat.sort", ms: 0.33 + n() * 0.05 },
-      { pass: "splat.blend", ms: 0.48 + n() * 0.07 },
-      { pass: "post.bloom", ms: 0.22 + n() * 0.03 },
-      { pass: "post.tonemap", ms: 0.07 + n() * 0.01 },
-    ];
-    const cpu = systems.reduce((a, s) => a + s.ms, 0);
-    const spike = n() > 0.97 ? 6 + n() * 4 : 0;
-    return { tick: this.tick, systems, frame_ms: 1000 / this.fps + spike * 0.2 + cpu * 0.1, gpu };
+    const row = (name: string, base: number, spread: number) => {
+      const ms = ticks ? base + n() * spread : 0;
+      return { name, ms: round(ms), max_ms: round(ticks ? ms * (1.3 + n() * 0.5) : 0) };
+    };
+    const systems = ticks
+      ? [
+          row("sim.begin", 0.004, 0.001),
+          row("interface.intents", 0.006, 0.002),
+          row("script:muster", 0.0, 0.0),
+          row("script:log", 0.012, 0.004),
+          row("script:take_aboard", 0.019, 0.008),
+          row("script.update", 0.03, 0.01),
+          row("physics.wind", 0.003, 0.001),
+          row("physics.buoyancy", 0.08, 0.02),
+          row("physics.sail", 0.03, 0.01),
+          row("physics.hull", 0.02, 0.005),
+          row("physics.step", 0.21, 0.05),
+          row("physics.contacts", 0.01, 0.003),
+          row("interface.perception", 0.05, 0.02),
+          row("sim.finish", 0.02, 0.005),
+          row("tick.other", 0.04, 0.01),
+          row("loop.present", 0.05, 0.02),
+          row("loop.publish", 0.12, 0.03),
+          row("loop.after", 0.002, 0.001),
+        ]
+      : [];
+    const sum = (names: string[]) => systems.filter((r) => names.includes(r.name)).reduce((a, r) => a + r.ms, 0);
+    const loop = sum(["loop.present", "loop.publish", "loop.after"]);
+    const busy = systems.reduce((a, r) => a + r.ms, 0);
+    const tickMs = busy - loop;
+    const phase = (name: string, keys: string[]) => {
+      const ms = sum(keys);
+      return { name, ms: round(ms), max_ms: round(ms * 1.4) };
+    };
+    const phases = ticks
+      ? [
+          phase("Begin", ["sim.begin"]),
+          phase("Control", ["interface.intents"]),
+          phase("Update", ["script:muster", "script:log", "script:take_aboard", "script.update"]),
+          phase("Forces", ["physics.wind", "physics.buoyancy", "physics.sail", "physics.hull"]),
+          phase("Physics", ["physics.step", "physics.contacts"]),
+          phase("Finish", ["interface.perception", "sim.finish"]),
+        ]
+      : [];
+    return {
+      tick: this.tick,
+      epoch: this.epoch,
+      ticks,
+      held: 0,
+      ...(last === undefined ? { missed: 0 } : {}),
+      tick_ms: round(tickMs),
+      tick_max_ms: round(tickMs * 1.5),
+      busy_ms: round(busy),
+      systems,
+      phases,
+    };
   }
 
   // ---- Methods -------------------------------------------------------------------------------
@@ -256,6 +305,7 @@ export class Session {
     if (!this.playWorld) return;
     const play = this.playWorld;
     this.playWorld = null;
+    this.epoch++;
     // As the host's play.stop: the debugger lets go of a held tick (server.md 3.4).
     const held = this.debugger.paused;
     this.debugger.resume();
@@ -280,6 +330,7 @@ export class Session {
   private restoreSnapshot(s: Snapshot) {
     const before = this.world;
     this.playWorld = s.world.clone();
+    this.epoch++;
     this.tick = s.tick;
     this.t = s.t_s;
     this.started = s.started;
@@ -390,6 +441,7 @@ export class Session {
     "play.start": () => {
       if (this.playWorld) throw new MockError("play.already", "Play is already running; Stop first.");
       this.playWorld = this.editWorld.clone();
+      this.epoch++;
       this.tick = 0;
       this.t = 0;
       this.started = false;
@@ -534,7 +586,12 @@ export class Session {
       this.broadcast("debug", { state: "running" });
       return { restored: s.tick, tick: this.tick };
     },
-    "profile.frame": () => this.profile(),
+    "profile.frame": (p) => this.profile(Math.min(600, Math.max(1, Number(p.ticks ?? 60)))),
   };
 
+}
+
+/** Milliseconds to the tenth of a microsecond, as the host rounds them. */
+function round(ms: number): number {
+  return Math.round(ms * 10000) / 10000;
 }

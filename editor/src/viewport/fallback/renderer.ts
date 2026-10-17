@@ -5,7 +5,8 @@
 // waves, a fading grid, light and camera icons, and the gizmo on top.
 
 import { View, type Camera } from "../camera";
-import type { Gizmo, Overlays, PickHit, Viewport } from "../engine";
+import type { Gizmo, Overlays, PickHit, RenderStats, Viewport } from "../engine";
+import { FrameMeter } from "../meter";
 import { add, asQuat, asVec3, cross, dot, IDENTITY, length, lerp3, normalize, qslerp, rotate, scale, sub, type Quat, type Vec3 } from "../math";
 import { meshFor, primitive, sloop, type Mesh } from "./meshes";
 
@@ -128,6 +129,7 @@ class FallbackViewport implements Viewport {
   private icons: Icon[] = [];
   private shown = new Map<number, { pos: Vec3; rot: Quat }>();
   private lastFrame = performance.now();
+  private readonly meter = new FrameMeter();
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -136,9 +138,11 @@ class FallbackViewport implements Viewport {
     const ctx = canvas.getContext("2d", { alpha: false });
     if (!ctx) throw new Error("Canvas 2D is unavailable");
     this.ctx = ctx;
-    const loop = () => {
+    const loop = (now: number) => {
       if (this.disposed) return;
+      const t0 = performance.now();
       this.draw();
+      this.meter.frame(now, performance.now() - t0);
       this.raf = requestAnimationFrame(loop);
     };
     this.raf = requestAnimationFrame(loop);
@@ -189,6 +193,10 @@ class FallbackViewport implements Viewport {
       return { entity: f.entity };
     }
     return null;
+  }
+
+  stats(): RenderStats {
+    return this.meter.read();
   }
 
   dispose() {

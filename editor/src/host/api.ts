@@ -132,7 +132,7 @@ export const api = {
     rewind: (tick: number) => call("debug.rewind", { tick }, 120000),
   },
   profile: {
-    frame: () => call("profile.frame", {}),
+    frame: (ticks?: number) => call("profile.frame", ticks === undefined ? {} : { ticks }),
   },
 };
 

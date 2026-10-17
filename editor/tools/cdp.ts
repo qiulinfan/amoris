@@ -38,6 +38,11 @@ export class Cdp {
     });
   }
 
+  /** Calls `fn` with every event `method` from now on. */
+  on(method: string, fn: (p: unknown) => void) {
+    this.handlers.set(method, [...(this.handlers.get(method) ?? []), fn]);
+  }
+
   once(method: string): Promise<unknown> {
     return new Promise((resolve) => {
       const list = this.handlers.get(method) ?? [];

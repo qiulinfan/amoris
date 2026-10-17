@@ -1,6 +1,6 @@
 // The viewport's renderer interface. The engine's renderer, compiled to wasm with wasm-bindgen
-// (crates/pocket-web), implements `Viewport` and exports `createViewport`; the host serves the
-// wasm-bindgen output at `/wasm/pocket_web.js`. The renderer draws the host's world from the render
+// (crates/pocket-viewport), implements `Viewport` and exports `createViewport` (web/viewport/
+// pocket_web.js); the host serves it at `/wasm/pocket_web.js`. The renderer draws the host's world from the render
 // feed (`renderUrl`, host-protocol.md section 5) and assets (`assetsUrl`); the editor owns the camera,
 // the selection and the gizmo and only tells the renderer about them. Until the wasm exists (or when
 // it fails to load), the editor draws with its fallback (fallback/renderer.ts), which implements the
@@ -62,6 +62,24 @@ export interface Overlays {
   axes: boolean;
 }
 
+/**
+ * What the viewport drew since the last `stats()` call, measured on the page: the frames (one per
+ * `requestAnimationFrame`), their average and largest interval, and the time the page's thread
+ * spent in the renderer's draw call (encoding and submitting). The wasm renderer adds its last
+ * frame's GPU time and per-pass timestamps (none without timestamp queries) and the rest of its
+ * stats as `renderer`; every field past `frames` may be absent.
+ */
+export interface RenderStats {
+  frames: number;
+  fps?: number | null;
+  frame_ms?: number | null;
+  frame_max_ms?: number | null;
+  render_ms?: number | null;
+  gpu_ms?: number | null;
+  passes?: { pass: string; ms: number }[];
+  renderer?: Record<string, unknown>;
+}
+
 export interface Viewport {
   setCamera(camera: Camera): void;
   /** The entity under a pixel (CSS pixels from the canvas's top left), or null. */
@@ -72,6 +90,8 @@ export interface Viewport {
   /** Selected entities (outlined) and the hovered one (highlighted). */
   setSelection(entities: readonly number[], hovered: number | null): void;
   setOverlays(overlays: Overlays): void;
+  /** The frames drawn since the last call (the profiler and the stats overlay read it 4 times a second). */
+  stats?(): RenderStats | null;
   dispose(): void;
 }
 

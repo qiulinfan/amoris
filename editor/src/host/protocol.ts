@@ -40,6 +40,8 @@ export interface Status {
   mode: "edit" | "play";
   world_hash: string;
   entities: number;
+  /** Simulation ticks per second over the last second (`fps` repeats it for older editors). */
+  tps?: number;
   fps?: number;
   tick_ms?: number;
   speed?: number;
@@ -247,11 +249,35 @@ export interface DebugState {
   cdp?: { ws: string; devtools: string } | null;
 }
 
-export interface ProfileSample {
+/** A row of a profile: average milliseconds per tick counted, and the most in one tick. */
+export interface ProfileRow {
+  name: string;
+  ms: number;
+  max_ms: number;
+}
+
+/**
+ * What the host's last ticks cost its game thread (`profile` pushes, `profile.frame`;
+ * host-protocol.md 3): each system's own time in the order they finish in a tick, then
+ * `tick.other` (the step outside its systems), `loop.present` (the render feed's extraction),
+ * `loop.publish` (the snapshot and streams after it) and `loop.after` (the players' and
+ * `time.step`'s work after the tick before), which add up to `busy_ms`. Ticks the debugger held
+ * are counted in `held` and left out. The host keeps the world shown (`epoch`) only. The host has
+ * no frame: the editor adds its viewport's.
+ */
+export interface HostProfile {
   tick: number;
-  systems: { name: string; ms: number }[];
-  frame_ms: number;
-  gpu: { pass: string; ms: number }[];
+  /** The world the ticks ran in (status's `epoch`). */
+  epoch?: number;
+  ticks: number;
+  held: number;
+  /** Pushes only: ticks that left the host's ring before the push read them. */
+  missed?: number;
+  tick_ms: number;
+  tick_max_ms: number;
+  busy_ms: number;
+  systems: ProfileRow[];
+  phases: ProfileRow[];
 }
 
 export interface AgentEvent {
@@ -263,12 +289,6 @@ export interface AgentEvent {
   ts?: number;
 }
 
-export interface PickEvent {
-  x: number;
-  y: number;
-  entity: EntityId | null;
-}
-
 export interface TopicData {
   status: Status;
   "world.changed": WorldChanged;
@@ -276,13 +296,12 @@ export interface TopicData {
   log: LogEntry;
   history: HistoryState;
   debug: HostDebugState;
-  profile: ProfileSample;
+  profile: HostProfile;
   agent: AgentEvent;
-  pick: PickEvent;
 }
 
 export type Topic = keyof TopicData;
-export const ALL_TOPICS: Topic[] = ["status", "world.changed", "events", "log", "history", "debug", "profile", "agent", "pick"];
+export const ALL_TOPICS: Topic[] = ["status", "world.changed", "events", "log", "history", "debug", "profile", "agent"];
 
 // ---- Method params and results (section 4) ------------------------------------------------------
 
@@ -488,7 +507,7 @@ export interface Methods {
     { tick: number; bundle?: RestoreBundle },
     { restored: number; tick: number; scripts?: RestoredScripts; stopped_by?: DebugStop },
   ];
-  "profile.frame": [Record<string, never>, ProfileSample];
+  "profile.frame": [{ ticks?: number }, HostProfile];
   subscribe: [{ topics: string[] }, { topics: string[] }];
 }
 

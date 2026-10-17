@@ -7,6 +7,7 @@ import { host } from "../../host/api";
 import { spawnAsset } from "../../actions/world";
 import { ASSET_MIME } from "../../state/assets";
 import { useConnection } from "../../state/connection";
+import { useRender } from "../../state/render";
 import { useSelection } from "../../state/selection";
 import { useSession } from "../../state/session";
 import { useViewport } from "../../state/viewport";
@@ -70,6 +71,15 @@ export function ViewportPanel() {
       ctl.stop();
       ctl.engine?.dispose();
       ctl.engine = null;
+    };
+  }, [ctl]);
+
+  // The renderer's frame and GPU timings, four times a second (the stats overlay, the profiler).
+  useEffect(() => {
+    const id = setInterval(() => useRender.getState().set(ctl.engine?.stats?.() ?? null), 250);
+    return () => {
+      clearInterval(id);
+      useRender.getState().set(null);
     };
   }, [ctl]);
 

@@ -103,7 +103,7 @@ export class HostClient {
     this.ws = ws;
     ws.onopen = () => {
       this.setInfo({ state: "open", attempts: 0, lastError: null, retryAt: null });
-      void this.call("subscribe", { topics: this.topics }).catch(() => undefined);
+      void this.subscribe(this.topics);
     };
     ws.onmessage = (ev) => this.receive(ev.data);
     ws.onerror = () => {
@@ -115,6 +115,30 @@ export class HostClient {
       if (!this.stopped) this.scheduleRetry(this.info.lastError ?? "Connection closed");
       else this.setInfo({ state: "closed", retryAt: null });
     };
+  }
+
+  /**
+   * Subscribes to `topics`. The host takes a list all or nothing: a topic it does not push
+   * (an editor newer than its host, say) is refused with its index in `detail.path`
+   * (`/topics/<i>`), so that topic is dropped, said on the console, and the rest asked again.
+   */
+  private async subscribe(topics: Topic[]): Promise<void> {
+    let asked = [...topics];
+    while (asked.length > 0) {
+      try {
+        await this.call("subscribe", { topics: asked });
+        return;
+      } catch (e) {
+        const at = e instanceof HostError && e.code === "request.invalid_value" ? /^\/topics\/(\d+)$/.exec(String(e.detail.path ?? "")) : null;
+        if (!at) {
+          if (!(e instanceof HostError && e.code.startsWith("client."))) console.warn("subscribe failed:", e);
+          return;
+        }
+        const i = Number(at[1]);
+        console.warn(`The host does not push '${asked[i]}'; subscribing without it.`);
+        asked = asked.filter((_, j) => j !== i);
+      }
+    }
   }
 
   close() {
