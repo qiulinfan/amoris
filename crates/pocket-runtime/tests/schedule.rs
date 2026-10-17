@@ -1,7 +1,10 @@
 //! The real schedules of the samples, pinned (simulation-slice1.md 8): pocket-sim's golden fixes the
 //! order rules with test systems, this one fixes what the runtime actually registers (engine,
 //! physics, assets and the project's script systems), so a new or moved system is a reviewed diff.
-//! `POCKET_BLESS=1 cargo test -p pocket-runtime --test schedule` rewrites the goldens.
+//! `POCKET_BLESS=1 cargo test -p pocket-runtime --features transpile --test schedule` rewrites the
+//! goldens. Loading a project from disk compiles its TypeScript, so the test needs the crate's
+//! `transpile` (a workspace run has it through pocket-app).
+#![cfg(feature = "transpile")]
 
 mod common;
 

@@ -494,6 +494,78 @@ fn a_stop_answers_only_the_step_it_ends() {
     served.stop();
 }
 
+/// The profile (docs/spec/server.md, `profile`): `profile.frame` is the server's own read, so it
+/// answers while the debugger holds the game; the held tick is counted in `held` and its times,
+/// which measure the hold, are left out.
+#[test]
+fn the_profile_leaves_out_the_ticks_the_debugger_held() {
+    let served = Served::start();
+    let rt = runtime();
+    rt.block_on(async {
+        let host = &served.host;
+        ok(host, "time.step", json!({"ticks": 3})).await;
+        let p = ok(host, "profile.frame", json!({"ticks": 600})).await;
+        assert_eq!(
+            (p["ticks"].clone(), p["held"].clone()),
+            (json!(3), json!(0))
+        );
+        let names: Vec<String> = p["systems"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["name"].as_str().unwrap().to_owned())
+            .collect();
+        assert!(names.iter().any(|n| n == "script:measure"), "{p:#}");
+        ok(
+            host,
+            "debug.breakpoints.set",
+            json!({"file": "rules.ts", "line": mark("next")}),
+        )
+        .await;
+        let s = ok(host, "time.step", json!({"ticks": 5})).await;
+        assert_eq!(s["paused"], true, "{s:#}");
+        let p = ok(host, "profile.frame", json!({})).await;
+        assert_eq!(
+            (p["ticks"].clone(), p["tick"].clone()),
+            (json!(3), json!(3))
+        );
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        ok(host, "debug.breakpoints.clear", json!({})).await;
+        ok(host, "debug.continue", json!({})).await;
+        let after = settled(host).await;
+        assert_eq!(after["tick"], 4, "{after:#}");
+        let p = ok(host, "profile.frame", json!({"ticks": 600})).await;
+        assert_eq!(
+            (p["ticks"].clone(), p["held"].clone(), p["tick"].clone()),
+            (json!(3), json!(1), json!(4)),
+            "{p:#}"
+        );
+        // The 200 ms hold is nowhere in the averages.
+        assert!(p["tick_max_ms"].as_f64().unwrap() < 150.0, "{p:#}");
+        let (m, params) = pocket_mcp::tools::route(
+            "time",
+            json!({"action": "profile", "ticks": 2})
+                .as_object()
+                .unwrap()
+                .clone(),
+        )
+        .unwrap();
+        // MCP's `time` tool reads the same summary: the last two ticks, the held one among them.
+        let via_mcp = ok(host, &m, params).await;
+        assert_eq!(
+            (via_mcp["ticks"].clone(), via_mcp["held"].clone()),
+            (json!(1), json!(1)),
+            "{via_mcp:#}"
+        );
+        let e = host
+            .call(&Via::Api, "profile.frame", json!({"tick": 2}))
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, "request.unknown_field", "{e:#?}");
+    });
+    served.stop();
+}
+
 /// Stop while the debugger holds Play (the first finding of that review): `play.stop` lets the
 /// held tick, and every stop later in it, run to the boundary where it lands, so the editor's Stop
 /// and an agent's `pocket play stop` work at a breakpoint the next tick hits again;

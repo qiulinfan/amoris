@@ -411,6 +411,88 @@ fn published_snapshots_restore_and_read_back() {
     });
 }
 
+/// docs/spec/server.md 4: while a host serves the profile stream, every tick is profiled on the
+/// loop's clock, by system (the script systems out of `script.update`) and phase, with the loop's
+/// work after it; a reader alone (`pocket run`, the native window) turns nothing on. The ring
+/// holds the world shown: Play starts it again.
+#[test]
+fn ticks_are_profiled_while_a_host_serves_the_profile() {
+    let h = sailing();
+    let mut dev = h.developer();
+    dev.call("step", json!({"ticks": 5})).unwrap();
+    let reader = h.reader();
+    let mut next = 1;
+    dev.call("step", json!({"ticks": 3})).unwrap();
+    assert_eq!(
+        reader.profile_since(&mut next)["ticks"],
+        0,
+        "a reader alone profiles nothing"
+    );
+    reader.serve_profile();
+    dev.call("step", json!({"ticks": 12})).unwrap();
+    let p = reader.profile_since(&mut next);
+    assert_eq!(
+        (p["ticks"].clone(), p["held"].clone(), p["epoch"].clone()),
+        (json!(12), json!(0), json!(0))
+    );
+    assert_eq!(p["tick"], 20);
+    let rows = p["systems"].as_array().unwrap();
+    let names: Vec<&str> = rows.iter().map(|r| r["name"].as_str().unwrap()).collect();
+    for want in [
+        "sim.begin",
+        "script.update",
+        "physics.step",
+        "sim.finish",
+        "tick.other",
+        "loop.present",
+        "loop.publish",
+        "loop.after",
+    ] {
+        assert!(names.contains(&want), "{want} in {names:?}");
+    }
+    assert!(
+        names.iter().any(|n| n.starts_with("script:")),
+        "the sample's script systems by themselves: {names:?}"
+    );
+    let at = |n: &str| names.iter().position(|x| *x == n).unwrap();
+    assert!(at("sim.begin") < at("physics.step") && at("physics.step") < at("sim.finish"));
+    // The rows add up to the game thread's time per tick, which holds the tick's.
+    let ms = |v: &Value| v.as_f64().unwrap();
+    let sum: f64 = rows.iter().map(|r| ms(&r["ms"])).sum();
+    assert!((sum - ms(&p["busy_ms"])).abs() < 1e-3, "{sum} vs {p}");
+    assert!(ms(&p["tick_ms"]) > 0.0 && ms(&p["busy_ms"]) >= ms(&p["tick_ms"]));
+    let phases: Vec<&str> = p["phases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        phases,
+        ["Begin", "Control", "Update", "Forces", "Physics", "Finish"]
+    );
+    assert_eq!(reader.profile_last(3)["ticks"], 3);
+    // Play's world (a fork at tick 20): the edit world's ticks leave the ring, and a reader that
+    // was past them misses nothing.
+    dev.call("play.start", json!({"paused": true})).unwrap();
+    assert_eq!(reader.profile_last(600)["ticks"], 0, "Play has not ticked");
+    dev.call("step", json!({"ticks": 4})).unwrap();
+    let p = reader.profile_since(&mut next);
+    assert_eq!(
+        (
+            p["ticks"].clone(),
+            p["missed"].clone(),
+            p["epoch"].clone(),
+            p["tick"].clone()
+        ),
+        (json!(4), json!(0), json!(1), json!(24)),
+        "{p}"
+    );
+    assert_eq!(reader.profile_last(600)["ticks"], 4);
+    drop(dev);
+    h.shutdown(2000).unwrap();
+}
+
 fn panics_at_ten(sim: &mut pocket_sim::Sim) -> Result<(), pocket_contract::Problem> {
     sim.add_system(
         "test.panic",

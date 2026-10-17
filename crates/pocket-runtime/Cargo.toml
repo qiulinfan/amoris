@@ -32,10 +32,15 @@ schemars.workspace = true
 toml.workspace = true
 
 [dev-dependencies]
+# The compiler for unit tests of the runtime without `transpile` (the web worker's build, which
+# replays compiled modules). It does not turn on this crate's `transpile`: an integration test
+# that loads a project from disk is `#![cfg(feature = "transpile")]`, so `cargo test -p
+# pocket-runtime` builds alone and `--features thread,transpile` runs them all.
 pocket-script = { workspace = true, features = ["transpile"] }
 
-# The player bench (docs/bench/player.md): the reference skipper through the player tools, and
-# decision models in the tick, native and scripted.
+# The snapshot cache's and the render feed's byte-equality tests load the sailing game from disk:
+# named without the feature (`--test snapshot_cache`), cargo refuses them instead of running none.
+
 [[example]]
 name = "player_bench"
 required-features = ["transpile"]
