@@ -174,3 +174,153 @@ fn scripts_edit_volumes_and_a_walker_lands_on_them() {
         std::fs::remove_dir_all(root).unwrap();
     });
 }
+
+const HANDS: &str = r#"
+import { component, game, system } from "amoris";
+
+export const Land = component("Land", { version: 1, doc: "The volume.", fields: {} });
+
+export const hands = system({
+    name: "hands", phase: "update", doc: "Breaks the looked-at block, or places one against it.",
+    queries: {
+        players: {
+            with: ["Walker", "Transform"],
+            fields: ["Walker.primary", "Walker.secondary", "Walker.yaw", "Walker.pitch",
+                     "Walker.slot", "Transform.position"],
+        },
+    },
+    run(ctx, { players }) {
+        const v = ctx.single("Land");
+        const w = players.cols.Walker;
+        const p = players.cols.Transform.position;
+        for (let r = 0; r < players.len; r++) {
+            if (w.primary[r] === 0 && w.secondary[r] === 0) continue;
+            const cp = Math.cos(w.pitch[r]);
+            const dir = [-Math.sin(w.yaw[r]) * cp, Math.sin(w.pitch[r]), -Math.cos(w.yaw[r]) * cp] as const;
+            const hit = ctx.voxels.raycast(v, [p.x[r], p.y[r], p.z[r]], dir, 5, { solidOnly: true });
+            if (hit === null) continue;
+            const [x, y, z] = hit.cell;
+            if (w.primary[r] !== 0) {
+                ctx.voxels.set(v, x, y, z, 0);
+            } else {
+                const [nx, ny, nz] = hit.normal;
+                ctx.voxels.set(v, x + nx, y + ny, z + nz, w.slot[r] + 1);
+            }
+        }
+    },
+});
+
+export default game({ components: [Land], systems: [hands] });
+"#;
+
+const PERCEPTION: &str = r#"{
+  "observers": [{"name": "player", "doc": "A first-person player.",
+    "sight": {"range_m": 64, "fov_deg": 90, "eye_m": {"x": 0, "y": 0, "z": 0}, "occlusion": false},
+    "attention_m": 16, "memory_s": 60, "memory_capacity": 16, "event_capacity": 16,
+    "budget_tokens": 200, "instruments": []}],
+  "instruments": [], "kinds": [], "events": []
+}"#;
+
+fn player_project() -> PathBuf {
+    let root = std::env::temp_dir().join(format!("amoris-voxels-player-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("scripts")).unwrap();
+    std::fs::write(
+        root.join("project.toml"),
+        "name = 'hands'\nrate = 60\nseed = 1\n[player]\nactions = 'first_person'\n",
+    )
+    .unwrap();
+    std::fs::write(root.join("scripts/main.ts"), HANDS).unwrap();
+    std::fs::write(root.join("perception.json"), PERCEPTION).unwrap();
+    let mut land = Voxels::default();
+    for name in ["stone", "dirt"] {
+        land.palette.push(amoris_sim::voxels::Block {
+            name: name.into(),
+            solid: true,
+            faces: ["b#x".into(), "b#x".into(), "b#x".into()],
+            ..Default::default()
+        });
+    }
+    land.fill([-8, -1, -8], [8, 0, 8], 1, 0).unwrap();
+    let scene = json!({"format": "amoris-scene", "version": 1, "entities": [
+        {"name": "Land", "components": {"Land": {}, "Voxels": land}},
+        {"name": "Steve", "components": {
+            "Transform": {"position": [0.5, 2.62, 0.5]},
+            "Walker": {},
+            "Observer": {"profile": "player", "seat": "player"}}}
+    ]});
+    std::fs::write(root.join("scene.json"), scene.to_string()).unwrap();
+    root
+}
+
+#[test]
+fn a_player_breaks_and_places_blocks_and_the_run_replays() {
+    use amoris_persist::replay::{MemorySink, RecordOptions, Replay};
+    common::big_stack(|| {
+        let root = player_project();
+        let p = Project::load(&root).unwrap_or_else(|e| panic!("{e:#?}"));
+        let setup = Arc::new(p.setup(false).unwrap_or_else(|e| panic!("{e:#?}")));
+        let mut g = Game::new(setup, 1).unwrap_or_else(|e| panic!("{e:#?}"));
+        let sink = MemorySink::new();
+        g.record(Box::new(sink.clone()), RecordOptions::default())
+            .unwrap();
+        let mut seq = 0;
+        let mut act = |g: &mut Game, actions: Value| {
+            seq += 1;
+            g.apply(&Command::new(
+                Source::Player(0),
+                seq,
+                "player.act",
+                json!({ "actions": actions }),
+            ))
+            .unwrap_or_else(|e| panic!("{e:#?}"))
+        };
+        for _ in 0..30 {
+            g.step().unwrap();
+        }
+        // Standing at (0.5, 0.5), eye 2.62 m up: look 0.8 rad down along -z at the cell two ahead.
+        let aim = json!({"pitch": -0.8, "yaw": 0.0});
+        act(
+            &mut g,
+            json!([{"do": "set", "controls": aim}, {"do": "pulse", "control": "primary"}]),
+        );
+        g.step().unwrap();
+        let v = volume(&g);
+        assert_eq!(v.get([0, 0, -2]), 0, "broken");
+        assert_eq!(
+            (v.get([0, 0, -1]), v.get([0, 0, 0])),
+            (1, 1),
+            "only that one"
+        );
+        let w = get(&mut g, "Steve", &["Walker.primary", "Walker.pitch"]);
+        assert_eq!(w["Walker.primary"], false, "a pulse acts for one tick");
+        assert_eq!(w["Walker.pitch"], -0.8);
+        g.step().unwrap();
+        assert_eq!(
+            volume(&g).get([0, 0, -2]),
+            0,
+            "no second break without a pulse"
+        );
+        // The same aim now meets the hole's floor: dirt (slot 1) goes back on its top face.
+        act(
+            &mut g,
+            json!([{"do": "set", "controls": {"slot": "1"}}, {"do": "pulse", "control": "secondary"}]),
+        );
+        g.step().unwrap();
+        assert_eq!(volume(&g).get([0, 0, -2]), 2, "placed dirt");
+        g.finish_recording().unwrap();
+        let replay = Replay::read(&sink.bytes()).unwrap();
+        let mut fresh = Game::for_replay(&replay).unwrap();
+        let v = amoris_persist::replay::verify(
+            &replay,
+            &mut fresh,
+            amoris_persist::replay::VerifyOptions::mode(amoris_persist::replay::ReplayMode::Verify),
+        );
+        assert_eq!(
+            v.outcome,
+            amoris_persist::replay::ReplayOutcome::Identical,
+            "{v:#?}"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    });
+}

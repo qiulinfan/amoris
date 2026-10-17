@@ -44,7 +44,7 @@ use serde_json::{Map, Value, json};
 pub const CONTRACT: &str = "0.2";
 
 /// The engine's action catalogs a project can name in `[player] actions`.
-pub const CATALOGS: &[&str] = &["sailing", "none"];
+pub const CATALOGS: &[&str] = &["sailing", "first_person", "none"];
 
 /// `[player]` in `project.toml`: what the game declares for its players.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -141,6 +141,7 @@ impl PlayerSpec {
         let defs = perception::load(&self.perception)?;
         let catalog = match self.actions.as_str() {
             "sailing" => action::sailing::game_catalog(&defs)?,
+            "first_person" => action::first_person::game_catalog(&defs)?,
             "none" => ActionCatalog::none(),
             other => {
                 let valid: Vec<amoris_contract::Candidate<'_>> = CATALOGS

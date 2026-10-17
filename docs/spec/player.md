@@ -40,7 +40,7 @@ A project opts in with `[player]` in `project.toml`:
 ```toml
 [player]
 perception = "perception.json"   # default; the observer profiles, instruments, kinds, events
-actions = "sailing"              # the engine's action catalog: "sailing" or "none"
+actions = "sailing"              # the engine's action catalog: "sailing", "first_person" or "none"
 done_event = "course.finished"   # the episode ends in the tick one is emitted (optional)
 # decisions = { events = ["intent.", "sighted"], idle_s = 10, every_s = 120 }  # default: sailing's
 ```

@@ -19,6 +19,7 @@ pub mod budget;
 pub mod catalog;
 pub mod defs;
 pub mod executor;
+pub mod first_person;
 pub mod lifecycle;
 pub mod observe;
 pub mod refs;
