@@ -7,6 +7,9 @@
 //!   buffer does not), then six more (the jobs, joint matrices and vertex pool outgrow their
 //!   buffers). Each added character must be drawn, in its own pose.
 //! - The camera's exposure, then a resize that changes the bloom chain's length.
+//! - Moved instances (docs/bench/dynamic-scenes.md): every third of 400 cubes turned (more runs of
+//!   changed slots than are written one write each: scattered by a compute pass), then a block of
+//!   them turned again while the others stop, then a stop with removals and additions.
 //!
 //! Multisampled without TAA or GTAO, so a frame depends only on the scene. Skips when there is no
 //! GPU.
@@ -257,4 +260,105 @@ fn exposure_and_resizes_reach_the_display_transform() {
     let d = differing(&r.capture_rgba(t).2, &fresh(160, 90, 1.0));
     eprintln!("resize: {:.4}% of the pixels differ", d * 100.0);
     assert!(d < 0.001, "resize: {:.3}% of the pixels differ", d * 100.0);
+}
+
+/// Cube `i` of a 20 x 20 grid on the ground in front of the camera, turned by `turn` about y; with
+/// its look when `look` (a new entity), else its pose only (a move).
+fn cube(i: u64, turn: f32, look: bool) -> InstanceUpdate {
+    let (x, z) = ((i % 20) as f32, (i / 20) as f32);
+    InstanceUpdate {
+        id: 1000 + i,
+        pose: Some(Pose {
+            position: [-4.75 + x * 0.5, 0.15, -6.0 + z * 0.5],
+            rotation: glam::Quat::from_rotation_y(turn).to_array(),
+            scale: [0.3; 3],
+        }),
+        look: look.then(|| Look {
+            mesh: "cube".into(),
+            material: String::new(),
+            color: [0.8, 0.5, 0.3, 1.0],
+            metallic: 0.0,
+            roughness: 0.5,
+            transmission: None,
+            ior: None,
+            emissive: [0.0; 3],
+            cast_shadows: true,
+            visible: true,
+        }),
+        anim: None,
+    }
+}
+
+/// `kept`'s frame equals a fresh renderer's for the cubes `turns` gives (cube, turn).
+fn cubes_as_fresh(gpu: &Gpu, kept: &mut Renderer, turns: &[(u64, f32)], t: f64, what: &str) {
+    let a = kept.capture_rgba(t).2;
+    let mut fresh = renderer(gpu, W, H);
+    fresh.set_camera_override(Some(camera()));
+    fresh.apply(
+        frame(
+            1,
+            true,
+            turns.iter().map(|&(i, turn)| cube(i, turn, true)).collect(),
+            vec![],
+        ),
+        t,
+    );
+    let b = fresh.capture_rgba(t).2;
+    let d = differing(&a, &b);
+    eprintln!("{what}: {:.4}% of the pixels differ", d * 100.0);
+    assert!(d < 0.001, "{what}: {:.3}% of the pixels differ", d * 100.0);
+}
+
+#[test]
+fn moved_instances_draw_where_they_were_moved() {
+    let Some(gpu) = gpu() else { return };
+    // Ticks arrive at `t`; the frames are drawn a tick later, at the ticks' poses.
+    let t = 1.0;
+    let shot = t + 0.1;
+    let mut turns: Vec<(u64, f32)> = (0..400).map(|i| (i, 0.0)).collect();
+    let mut r = renderer(&gpu, W, H);
+    r.set_camera_override(Some(camera()));
+    r.apply(
+        frame(
+            1,
+            true,
+            turns.iter().map(|&(i, a)| cube(i, a, true)).collect(),
+            vec![],
+        ),
+        t,
+    );
+    let still = r.capture_rgba(shot).2;
+    // Every third cube: 134 runs of one slot.
+    for c in turns.iter_mut().step_by(3) {
+        c.1 = 0.5;
+    }
+    let moved = turns.iter().step_by(3).map(|&(i, a)| cube(i, a, false));
+    r.apply(frame(2, false, moved.collect(), vec![]), t);
+    let turned = r.capture_rgba(shot).2;
+    assert!(
+        differing(&still, &turned) > 0.01,
+        "the turned cubes change the frame"
+    );
+    cubes_as_fresh(&gpu, &mut r, &turns, shot, "every third turned");
+    // A block of 100 turned again (one run) while the others stop.
+    for c in &mut turns[100..200] {
+        c.1 += 0.4;
+    }
+    let moved = turns[100..200].iter().map(|&(i, a)| cube(i, a, false));
+    r.apply(frame(3, false, moved.collect(), vec![]), t);
+    cubes_as_fresh(&gpu, &mut r, &turns, shot, "a block turned");
+    // Nothing moves (every moving slot stops); every fifth cube removed, two added in free slots.
+    let removed: Vec<u64> = turns.iter().step_by(5).map(|&(i, _)| 1000 + i).collect();
+    turns.retain(|&(i, _)| i % 5 != 0);
+    turns.extend([(400, 0.3), (401, 0.6)]);
+    r.apply(
+        frame(
+            4,
+            false,
+            vec![cube(400, 0.3, true), cube(401, 0.6, true)],
+            removed,
+        ),
+        t,
+    );
+    cubes_as_fresh(&gpu, &mut r, &turns, shot, "stopped, removed and added");
 }
