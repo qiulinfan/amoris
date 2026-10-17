@@ -397,15 +397,8 @@ fn metal_antialiasing(name: &str, devices: &Devices, still: &State) {
 
 #[test]
 fn ray_traced_shadows_fall_where_cascades_do() {
-    let backends: &[BackendChoice] = if cfg!(windows) {
-        &[BackendChoice::Vulkan, BackendChoice::Dx12]
-    } else if cfg!(any(target_os = "macos", target_os = "ios")) {
-        &[BackendChoice::Metal]
-    } else {
-        &[BackendChoice::Vulkan]
-    };
     let hero = hero();
-    for &choice in backends {
+    for choice in BackendChoice::under_test() {
         let Ok(traced) = Gpu::headless_ray_query(choice, true) else {
             eprintln!("{choice:?}: no GPU, skipped");
             continue;

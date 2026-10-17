@@ -299,6 +299,15 @@ fn occlusion_culling_never_drops_a_visible_instance() {
             )
             .expect("a per-batch device");
             check(&per_batch, "first-instance path");
+        } else {
+            eprintln!(
+                "no multi-draw: the default device draws batch by batch; multi-draw not checked"
+            );
         }
+    } else {
+        eprintln!(concat!(
+            "no INDIRECT_FIRST_INSTANCE: the default device takes the baseline path; ",
+            "first-instance paths not checked"
+        ));
     }
 }

@@ -144,7 +144,10 @@ fn every_draw_path_draws_the_same_frame() {
     });
     let a = shoot(&full);
     if !a.first_instance {
-        eprintln!("the adapter has no indirect-first-instance: every shot takes the baseline path");
+        eprintln!(concat!(
+            "no INDIRECT_FIRST_INSTANCE: every shot takes the baseline path; ",
+            "first-instance paths not checked"
+        ));
     }
     // Most of the scene is on screen: the ground, the cells and the skinned characters.
     assert!(a.visible.len() >= 30, "{:?}", a.visible);

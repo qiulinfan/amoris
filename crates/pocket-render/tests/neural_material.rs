@@ -15,7 +15,7 @@ use pocket_assets::neural::{
 };
 use pocket_render::gpu::Minimal;
 use pocket_render::neural::train::srgb_to_linear;
-use pocket_render::{BackendChoice, CameraState, Gpu, Renderer, demo};
+use pocket_render::{Antialiasing, BackendChoice, CameraState, Gpu, Renderer, demo};
 
 /// Base color sRGB, a flat normal, occlusion 1, `roughness`, metallic 0.
 fn orm(base: [f32; 3], roughness: f32) -> Vec<(Channel, f32)> {
@@ -89,13 +89,27 @@ fn constant(values: &[(Channel, f32)]) -> NeuralTexture {
     }
 }
 
+/// A renderer for the walker's view of the neural ground ([`demo::neural_camera`] 1), with
+/// multisampling whatever the adapter's default. These comparisons check the decode, and the
+/// view's far edge of the ground against the sky does not settle under TAA (the default of
+/// integrated GPUs, post.rs `defaults_for`) within their few frames: there a 0.1% change of the
+/// inline material's color alone moved edge pixels by up to 29 (Radeon 780M) or 10 (RTX 5060)
+/// after three frames, while multisampling moved none by more than 1 (docs/bench/gpu-matrix.md 3 c;
+/// the defect is open in docs/spec/taa-gtao.md 9). TAA's own check is
+/// [`a_neural_material_draws_under_taa_with_splats`].
+fn walker_renderer(gpu: &Gpu) -> Renderer {
+    let mut r = Renderer::new(gpu, wgpu::TextureFormat::Rgba8UnormSrgb, 320, 180);
+    r.set_antialiasing(Antialiasing::Msaa);
+    r.add_model(demo::NEURAL_GROUND, &demo::neural_ground_model(40.0, 8.0));
+    r
+}
+
 fn shoot(
     gpu: &Gpu,
     frame: pocket_assets::RenderFrame,
     neural: Option<(&NeuralTexture, bool)>,
 ) -> Vec<u8> {
-    let mut r = Renderer::new(gpu, wgpu::TextureFormat::Rgba8UnormSrgb, 320, 180);
-    r.add_model(demo::NEURAL_GROUND, &demo::neural_ground_model(40.0, 8.0));
+    let mut r = walker_renderer(gpu);
     if let Some((texture, f16)) = neural {
         r.set_neural_half_precision(f16);
         r.add_neural_texture("materials/constant.ntex", texture)
@@ -310,6 +324,7 @@ fn a_constant_neural_material_draws_like_the_inline_one() {
     let precisions: &[bool] = if gpu.caps.shader_f16 {
         &[true, false]
     } else {
+        eprintln!("no shader-f16: f16 not checked");
         &[false]
     };
     for &f16 in precisions {
@@ -376,8 +391,7 @@ fn textures_with_other_channel_sets_share_the_pipelines() {
         (Channel::EmissiveB, 0.0),
         (Channel::Height, 0.2),
     ]);
-    let mut r = Renderer::new(&gpu, wgpu::TextureFormat::Rgba8UnormSrgb, 320, 180);
-    r.add_model(demo::NEURAL_GROUND, &demo::neural_ground_model(40.0, 8.0));
+    let mut r = walker_renderer(&gpu);
     r.add_neural_texture("materials/nine.ntex", &constant(&nine))
         .expect("nine channels load");
     r.add_neural_texture("materials/twelve.ntex", &constant(&twelve))
@@ -480,6 +494,7 @@ fn the_level_of_detail_selects_and_blends_mips_like_the_reference() {
     let precisions: &[bool] = if gpu.caps.shader_f16 {
         &[true, false]
     } else {
+        eprintln!("no shader-f16: f16 not checked");
         &[false]
     };
     let mut failed = Vec::new();
@@ -614,7 +629,7 @@ fn a_neural_material_draws_under_taa_with_splats() {
         .collect();
     let run = |material: &str, color: [f32; 4]| {
         let mut r = Renderer::new(&gpu, wgpu::TextureFormat::Rgba8UnormSrgb, 160, 90);
-        r.set_antialiasing(pocket_render::Antialiasing::Taa);
+        r.set_antialiasing(Antialiasing::Taa);
         r.add_model(demo::NEURAL_GROUND, &demo::neural_ground_model(40.0, 8.0));
         r.add_neural_texture("materials/constant.ntex", &texture)
             .expect("the texture loads");

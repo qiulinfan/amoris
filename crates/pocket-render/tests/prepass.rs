@@ -390,7 +390,16 @@ fn the_depth_prepass_leaves_the_image_alone() {
             )
             .expect("a per-batch device");
             check(&per_batch, "first-instance path", false);
+        } else {
+            eprintln!(
+                "no multi-draw: the default device draws batch by batch; multi-draw not checked"
+            );
         }
+    } else {
+        eprintln!(concat!(
+            "no INDIRECT_FIRST_INSTANCE: the default device takes the baseline path; ",
+            "first-instance paths not checked"
+        ));
     }
 }
 
