@@ -30,7 +30,8 @@
 // ?demo=aa[&moving][&pan] the anti-aliasing and occlusion check's scene (docs/spec/taa-gtao.md),
 // its instances moving (60 ticks a second) and its camera panning on request;
 // ?aa=off|msaa|taa|msaa+taa, ?gtao=off|on|target and ?sharpen=0.25 set the anti-aliasing,
-// ambient occlusion and sharpening options;
+// ambient occlusion and sharpening options; ?scale=0.67 the render scale (the opaque pass at that
+// share of the canvas's size, TAA upscaling; docs/spec/taa-gtao.md 4.1);
 // ?render=ws://127.0.0.1:7878/render[&assets=http://127.0.0.1:7878/assets/] shows a host's world.
 // ?gpu_minimal=first-instance (or features,limits) leaves device features out as
 // POCKET_GPU_MINIMAL does natively: without indirect-first-instance the renderer takes WebGPU's
@@ -74,6 +75,7 @@ try {
   if (q.get("aa")) vp.setAntialiasing(q.get("aa"));
   if (q.get("gtao")) vp.setGtao(q.get("gtao"));
   if (q.get("sharpen")) vp.setSharpen(Number(q.get("sharpen")));
+  if (q.get("scale")) vp.setRenderScale(Number(q.get("scale")));
   if (q.has("grid") || q.has("axes")) vp.raw.set_overlays(q.has("grid"), q.has("axes"));
   if (q.get("eye")) {
     const e = q.get("eye").split(",").map(Number), t = (q.get("target") || "0,0,0").split(",").map(Number);
@@ -85,7 +87,7 @@ try {
     samples.push(s);
     if (samples.length > 600) samples.shift();
     window.pocketStats = s;
-    hud.textContent = `${s.backend}  ${canvas.width}x${canvas.height}  draws: ${s.draw_path} (${s.draw_calls})  occlusion: ${s.occlusion}  prepass: ${s.prepass}  lod: ${s.lod}  aa: ${s.antialiasing}  gtao: ${s.gtao}\nframe ${s.frame_ms.toFixed(2)} ms   gpu ${s.gpu_ms.toFixed(2)} ms\ninstances ${s.instances}  tick ${s.tick}\n` +
+    hud.textContent = `${s.backend}  ${canvas.width}x${canvas.height}  draws: ${s.draw_path} (${s.draw_calls})  occlusion: ${s.occlusion}  prepass: ${s.prepass}  lod: ${s.lod}  aa: ${s.antialiasing}  gtao: ${s.gtao}${s.render_scale < 1 ? `  scale: ${s.render_scale}` : ""}\nframe ${s.frame_ms.toFixed(2)} ms   gpu ${s.gpu_ms.toFixed(2)} ms\ninstances ${s.instances}  tick ${s.tick}\n` +
       (s.passes || []).map((p) => `  ${p.pass.padEnd(12)} ${p.ms.toFixed(2)} ms`).join("\n");
   });
   window.pocketSamples = samples;

@@ -116,6 +116,7 @@ export async function createViewport(canvas, options = {}) {
     setAntialiasing(mode) { vp.set_antialiasing(mode); },
     setGtao(mode) { vp.set_gtao(mode); },
     setSharpen(amount) { vp.set_sharpen(amount); },
+    setRenderScale(scale) { vp.set_render_scale(scale); },
     demoAa() { vp.demo_aa(performance.now()); },
     demoAaTick(tick, pan) { vp.demo_aa_tick(tick, pan, performance.now()); },
     dispose() {

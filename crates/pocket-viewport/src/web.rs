@@ -345,7 +345,7 @@ impl Viewport {
             .map(|(l, ms)| format!("{{\"pass\":\"{l}\",\"ms\":{ms:.3}}}"))
             .collect();
         self.last_stats = format!(
-            "{{\"gpu_ms\":{:.3},\"instances\":{},\"entities\":{},\"meshes\":{},\"pending_assets\":{},\"tick\":{},\"backend\":\"{}\",\"draw_path\":\"{}\",\"draw_calls\":{},\"occlusion\":\"{}\",\"occluded\":{},\"prepass\":\"{}\",\"lod\":\"{}\",\"antialiasing\":\"{}\",\"gtao\":\"{}\",\"passes\":[{}]}}",
+            "{{\"gpu_ms\":{:.3},\"instances\":{},\"entities\":{},\"meshes\":{},\"pending_assets\":{},\"tick\":{},\"backend\":\"{}\",\"draw_path\":\"{}\",\"draw_calls\":{},\"occlusion\":\"{}\",\"occluded\":{},\"prepass\":\"{}\",\"lod\":\"{}\",\"antialiasing\":\"{}\",\"gtao\":\"{}\",\"render_scale\":{},\"passes\":[{}]}}",
             s.gpu_ms,
             s.instances,
             s.entities,
@@ -361,6 +361,7 @@ impl Viewport {
             s.lod,
             s.antialiasing,
             s.gtao,
+            s.render_scale,
             passes.join(",")
         );
         self.last_stats.clone()
@@ -465,6 +466,13 @@ impl Viewport {
     /// Sharpening after TAA (0: off).
     pub fn set_sharpen(&mut self, amount: f32) {
         self.renderer.sharpen = amount.max(0.0);
+    }
+
+    /// The render scale (docs/spec/taa-gtao.md 4.1): the opaque pass at this share of the canvas's
+    /// width and height, TAA upscaling to it; 0.25 to 1 (1: as without it; a value that is not a
+    /// finite positive number turns it off). Below 1 the anti-aliasing mode draws with TAA.
+    pub fn set_render_scale(&mut self, scale: f32) {
+        self.renderer.set_render_scale(scale);
     }
 
     /// Loads the anti-aliasing and occlusion check's scene (`demo::aa_scene`) at tick 0 with its
