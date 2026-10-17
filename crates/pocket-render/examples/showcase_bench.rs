@@ -5,6 +5,9 @@
 //! geometry counts. This deliberately excludes game ticks, presentation and PNG readback.
 //! `--capture` saves, after the measurement, a frame drawn at a fixed time (0 s), so captures of
 //! the same project on two backends or adapters compare pixel for pixel (docs/bench/dx12.md).
+//! `--hdr OUT.f32` saves that frame's HDR image as linear float32 RGBA and `--ids OUT.u32` its
+//! entity at every pixel (docs/bench/transparency.md: the forward renderer against the path
+//! tracer, by region).
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -395,6 +398,46 @@ fn run() -> Result<(), String> {
         image::save_buffer(&path, &pixels, w, h, image::ColorType::Rgba8)
             .map_err(|e| e.to_string())?;
         eprintln!("saved {} ({w}x{h})", path.display());
+    }
+    // The HDR image at the same fixed time, linear float32 RGBA (little-endian, row by row; before
+    // exposure, bloom and tone mapping), as the path tracer writes its radiance: tools/compare_pt.py
+    // and tools/transparency_pt.py compare the two. Without TAA (one frame is the image).
+    if let Some(index) = arguments.iter().position(|value| value == "--hdr") {
+        let path = PathBuf::from(arguments.get(index + 1).ok_or("missing --hdr path")?);
+        for _ in 0..8 {
+            renderer.render(&view, 0.0);
+            gpu.device
+                .poll(wgpu::PollType::wait_indefinitely())
+                .map_err(|e| e.to_string())?;
+        }
+        let (w, h, pixels) = renderer.capture_hdr(0.0);
+        let bytes: Vec<u8> = pixels.iter().flat_map(|v| v.to_le_bytes()).collect();
+        std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
+        eprintln!("saved {} ({w}x{h}, linear float32 RGBA)", path.display());
+    }
+    // The entity at every pixel at the same fixed time (the entity-id pass; 0 for none), little-endian
+    // u32 row by row: entity `k` is the scene file's entity `k - 1` (regions for comparisons).
+    if let Some(index) = arguments.iter().position(|value| value == "--ids") {
+        let path = PathBuf::from(arguments.get(index + 1).ok_or("missing --ids path")?);
+        renderer.request_id_image();
+        let mut ids = None;
+        for _ in 0..30 {
+            renderer.render(&view, 0.0);
+            gpu.device
+                .poll(wgpu::PollType::wait_indefinitely())
+                .map_err(|e| e.to_string())?;
+            if renderer.take_visible().is_some() {
+                ids = renderer.take_id_image();
+                break;
+            }
+        }
+        let ids = ids.ok_or("the entity-id pass did not answer")?;
+        let bytes: Vec<u8> = ids
+            .iter()
+            .flat_map(|&e| (e.min(u64::from(u32::MAX)) as u32).to_le_bytes())
+            .collect();
+        std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
+        eprintln!("saved {} ({} entity ids)", path.display(), ids.len());
     }
     // A same-camera GI comparison is untimed and reuses the resident model and probe field.
     if let Some(index) = arguments.iter().position(|value| value == "--gi-compare") {
