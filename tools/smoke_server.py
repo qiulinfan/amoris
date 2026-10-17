@@ -2,10 +2,10 @@
 """Smoke test of the host (docs/spec/server.md): starts `pocket serve` on a copy of
 samples/sailing and drives it the three ways clients do.
 
-1. The CLI (`pocket status`, `pocket world ...`, `pocket step`, `pocket undo`, `pocket play`, a
-   refused typo with its suggestion).
+1. The CLI (`pocket status`, `pocket world ...`, `pocket step`, `pocket profile`, `pocket undo`,
+   `pocket play`, a refused typo with its suggestion).
 2. `POST /api/call` and `GET /api/catalog`, and the editor's `/ws` (requests, the history, events,
-   world.changed and status pushes, Play and Stop).
+   world.changed, status and profile pushes, a refused topic, Play and Stop).
 3. MCP over Streamable HTTP (`initialize`, `tools/list` with its size, a `world` call, a refused
    call).
 4. A host the script debugger holds (docs/bench/debug-eval.md, findings 1, 2 and 4): a step that
@@ -75,6 +75,9 @@ class WS:
             head += self.s.recv(1)
         assert b" 101 " in head.split(b"\r\n")[0], head
         self.buf = b""
+        # Frames read but not consumed yet: pushes that came before a request's answer wait here
+        # for the next until() instead of being dropped.
+        self.backlog = []
 
     def send(self, obj):
         data = json.dumps(obj).encode()
@@ -89,42 +92,73 @@ class WS:
             hdr += bytes([0x80 | 127]) + struct.pack(">Q", n)
         self.s.sendall(hdr + mask + bytes(b ^ mask[i % 4] for i, b in enumerate(data)))
 
-    def _read(self, n):
-        while len(self.buf) < n:
-            chunk = self.s.recv(65536)
-            if not chunk:
-                raise EOFError
-            self.buf += chunk
-        out, self.buf = self.buf[:n], self.buf[n:]
-        return out
+    def _frame(self):
+        """Takes one whole frame off the buffer, (opcode, payload), or None while it is partial."""
+        b = self.buf
+        if len(b) < 2:
+            return None
+        n, at = b[1] & 0x7F, 2
+        if n == 126:
+            n, at = (struct.unpack(">H", b[2:4])[0], 4) if len(b) >= 4 else (None, 0)
+        elif n == 127:
+            n, at = (struct.unpack(">Q", b[2:10])[0], 10) if len(b) >= 10 else (None, 0)
+        if n is None or len(b) < at + n:
+            return None
+        self.buf = b[at + n:]
+        return b[0] & 0x0F, b[at:at + n]
 
     def recv(self, timeout=10):
-        self.s.settimeout(timeout)
-        b0, b1 = self._read(2)
-        n = b1 & 0x7F
-        if n == 126:
-            n = struct.unpack(">H", self._read(2))[0]
-        elif n == 127:
-            n = struct.unpack(">Q", self._read(8))[0]
-        payload = self._read(n)
-        if b0 & 0x0F == 0x8:
-            raise EOFError
-        return json.loads(payload)
+        """The next text frame, parsed. Raises TimeoutError when none is whole within `timeout`;
+        the bytes of a partial frame stay buffered for the next call."""
+        end = time.time() + timeout
+        while True:
+            frame = self._frame()
+            if frame is None:
+                left = end - time.time()
+                if left <= 0:
+                    raise TimeoutError("no frame")
+                self.s.settimeout(left)
+                chunk = self.s.recv(65536)
+                if not chunk:
+                    raise EOFError
+                self.buf += chunk
+                continue
+            opcode, payload = frame
+            if opcode == 0x8:
+                raise EOFError
+            if opcode in (0x9, 0xA):  # ping, pong
+                continue
+            return json.loads(payload)
+
+    def _next(self, end):
+        """The oldest frame not consumed yet (the backlog first), or None once `end` passed."""
+        if self.backlog:
+            return self.backlog.pop(0)
+        left = end - time.time()
+        if left <= 0:
+            return None
+        try:
+            return self.recv(left)
+        except TimeoutError:
+            return None
 
     def until(self, pred, timeout=10):
-        """Frames until one matches; returns (match, every frame seen)."""
+        """Consumes frames in order until one matches; returns (match, every frame consumed), the
+        match None when `timeout` passed first."""
         seen, end = [], time.time() + timeout
-        while time.time() < end:
-            f = self.recv(max(0.1, end - time.time()))
+        while (f := self._next(end)) is not None:
             seen.append(f)
             if pred(f):
                 return f, seen
         return None, seen
 
     def request(self, rid, method, params=None, timeout=10):
+        """Sends a request and returns its answer (None on timeout). Frames that came first are
+        pushes the caller has not read: they stay queued, in order, for until()."""
         self.send({"id": rid, "method": method, "params": params or {}})
         f, seen = self.until(lambda f: f.get("id") == rid, timeout)
-        return f, seen
+        self.backlog[:0] = seen[:-1] if f is not None else seen
+        return f
 
 
 # --- MCP over Streamable HTTP --------------------------------------------------------------------
@@ -210,6 +244,9 @@ def main():
         check("stopped by" in r.stdout and "sail.set" in r.stdout, f"cli step --until: {r.stdout.strip()}")
         r = cli("step", "600", "--until", "Sloop.Boat.speed>1")
         check("stopped: Boat.speed" in r.stdout, f"cli step until a field: {r.stdout.strip()}")
+        r = cli("profile", "--ticks", "60")
+        check(r.returncode == 0 and " ticks to tick " in r.stdout.splitlines()[0]
+              and "loop.publish" in r.stdout, f"cli profile: {r.stdout.splitlines()[:1]}")
         r = cli("world", "set", "Sloop", "Boat", "ruder=1", ok=False)
         check(r.returncode == 1 and "request.unknown_field" in r.stderr and "rudder" in r.stderr,
               f"cli refusal: {r.stderr.strip()}")
@@ -240,31 +277,37 @@ def main():
         ws = WS(port)
         first = ws.recv()
         check(first.get("event") == "status", "ws: status pushed on connect")
-        f, _ = ws.request(1, "subscribe", {"topics": ["world.changed", "events", "history", "log"]})
+        f = ws.request(1, "subscribe", {"topics": ["log", "pick"]})
+        check(f and f.get("error", {}).get("detail", {}).get("path") == "/topics/1",
+              "ws subscribe refuses a topic the host does not push, by its index")
+        f = ws.request(1, "subscribe", {"topics": ["world.changed", "events", "history", "log",
+                                                   "profile"]})
         check(f and "result" in f, "ws subscribe")
-        f, seen = ws.request(2, "world.edit", {"ops": [{"set": {"entity": "Crate3", "component": "Cargo", "value": {"value": 9}}}]})
+        f = ws.request(2, "world.edit", {"ops": [{"set": {"entity": "Crate3", "component": "Cargo", "value": {"value": 9}}}]})
         check(f and "result" in f, "ws world.edit")
-        # The host pushes the history before it answers; the push can arrive first.
-        h = next((p for p in seen if p.get("event") == "history"), None)
-        if h is None:
-            h, _ = ws.until(lambda f: f.get("event") == "history", 5)
+        # The host pushes the history before it answers; request() keeps it queued.
+        h, _ = ws.until(lambda f: f.get("event") == "history", 5)
         check(h is not None and h["data"]["undo"], "ws: history pushed after the edit")
         # Pushes coalesce over 100 ms: a reset (the CLI's Play and Stop just before) covers the
         # edit too.
         c, _ = ws.until(lambda f: f.get("event") == "world.changed", 5)
         check(c is not None and (c["data"].get("reset") or [6, "Cargo"] in c["data"]["changed"]),
               f"ws: world.changed pushed {c and c['data']}")
-        f, _ = ws.request(3, "history.undo")
+        f = ws.request(3, "history.undo")
         check(f and "result" in f, "ws history.undo")
-        f, seen = ws.request(4, "time.step", {"ticks": 30}, timeout=20)
+        f = ws.request(4, "time.step", {"ticks": 30}, timeout=20)
         check(f and f["result"]["tick"] > 0, "ws time.step")
-        f, _ = ws.request(5, "play.start", {"speed": 2})
+        f = ws.request(5, "play.start", {"speed": 2})
         check(f and f["result"]["mode"] == "play", "ws play.start")
+        epoch = f and f["result"]["epoch"]
         r, _ = ws.until(lambda f: f.get("event") == "world.changed" and f["data"].get("reset"), 5)
         check(r is not None, "ws: world.changed reset on Play")
         ev, _ = ws.until(lambda f: f.get("event") == "events", 2)
         print(f"info ws: events pushed during Play: {'yes' if ev else 'none in 2 s'}")
-        f, _ = ws.request(6, "play.stop")
+        p, _ = ws.until(lambda f: f.get("event") == "profile" and f["data"]["ticks"] > 0, 3)
+        check(p is not None and p["data"]["epoch"] == epoch,
+              f"ws: profile pushed in Play ({p and p['data']['ticks']} ticks, epoch {epoch})")
+        f = ws.request(6, "play.stop")
         check(f and f["result"]["mode"] == "edit", "ws play.stop")
         since = call(base, "events.since", {"limit": 3})["result"]
         check(len(since["events"]) >= 1, f"api events.since: last {since['last']}")
@@ -281,7 +324,7 @@ def main():
         tl = m.rpc("tools/list", {})
         tools = tl["result"]["tools"]
         size = len(json.dumps(tools))
-        check(len(tools) == 10, f"mcp tools/list: {len(tools)} tools, {size} bytes "
+        check(len(tools) == 11, f"mcp tools/list: {len(tools)} tools, {size} bytes "
                                  f"(~{size // 4} tokens)")
         r = m.rpc("tools/call", {"name": "world", "arguments": {"action": "tree", "filter": "Sloop"}})
         text = r["result"]["content"][0]["text"]
