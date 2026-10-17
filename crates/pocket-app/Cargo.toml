@@ -39,3 +39,5 @@ blake3.workspace = true
 # tests/engine_version.rs includes crates/engine_version.rs to check what its build script watches.
 [dev-dependencies]
 blake3.workspace = true
+# A `/render` client for the render feed's pacing test (serve.rs; host-protocol.md 5).
+tungstenite.workspace = true

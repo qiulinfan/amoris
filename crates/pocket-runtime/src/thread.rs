@@ -28,7 +28,7 @@ use pocket_link::{
     Source, TimeStatus, WorldInfo, WorldMode, WorldSnapshot, canonical_order, game_stopped,
     publication, queue, source_in_use, tick_passed,
 };
-use pocket_persist::Snapshot;
+use pocket_persist::{Snapshot, SnapshotCache};
 use pocket_sim::{ContentHash, Tick};
 use serde_json::{Value, json};
 
@@ -53,7 +53,8 @@ pub struct ThreadOptions {
     /// The thread's stack: room for the script host's limit (script-sandbox.md 4.3).
     pub stack_bytes: usize,
     pub clock: Clock,
-    /// Called after each publication (a presenter's wake-up).
+    /// Called after each publication, of a snapshot, of render frames to the feed, or both (a
+    /// presenter's wake-up; `pocket serve`'s render feed sends what was extracted then).
     pub on_publish: Arc<dyn Fn() + Send + Sync>,
     /// The pacing it starts with.
     pub pacing: Pacing,
@@ -185,6 +186,7 @@ impl GameThread {
                     pushed: 0,
                     registry,
                     extractor: crate::present::Extractor::new(),
+                    snapshots: SnapshotCache::new(),
                     profiler,
                     profile_reuse: None,
                     profile_ready: Vec::new(),
@@ -458,6 +460,9 @@ struct Loop {
     registry: Arc<RegistryInfo>,
     bundle: ContentHash,
     extractor: crate::present::Extractor,
+    /// The snapshots published, kept and answered: each the game's, encoding again only the
+    /// component sections that changed (pocket-persist's `SnapshotCache`).
+    snapshots: SnapshotCache,
     /// Times each tick while a host serves the profile stream.
     profiler: TickTimer,
     /// The oldest tick profile the ring gave back, filled again by the next tick.
@@ -614,6 +619,7 @@ impl Loop {
                                 && feed.wants_reset()
                             {
                                 self.game.present(&mut self.extractor, feed);
+                                (self.options.on_publish)();
                             }
                         }
                         Received::Closed => return Next::Quit,
@@ -643,6 +649,7 @@ impl Loop {
                 && feed.wants_reset()
             {
                 self.game.present(&mut self.extractor, feed);
+                (self.options.on_publish)();
             }
             let left = t - self.now();
             if left <= 0.0 {
@@ -688,13 +695,14 @@ impl Loop {
                 let tick = self.game.tick().0;
                 let keep = self.kept.every > 0 && tick.is_multiple_of(self.kept.every);
                 if (keep || self.attached.load(Ordering::Acquire))
-                    && let Ok(snap) = self.game.snapshot()
+                    && let Ok(snap) = self.snapshot()
                 {
                     if keep {
                         self.kept.offer(&snap, false);
                     }
                     self.publish_snapshot(snap);
                 }
+                (self.options.on_publish)();
                 let published = profiling.then(|| self.publish_profile(now, streamed, presented));
                 self.after_tick_players(&report, now);
                 self.after_tick_steps(stopped);
@@ -1170,7 +1178,7 @@ impl Loop {
                 e.reply.send(json(r));
             }
             "snapshot" => {
-                let r = self.game.snapshot().map(ReplyValue::Snapshot);
+                let r = self.snapshot().map(ReplyValue::Snapshot);
                 e.reply.send(r);
             }
             "project.save" if self.parked.is_some() => {
@@ -1266,15 +1274,21 @@ impl Loop {
     }
 
     /// Publishes the world as it is, when a reader is attached (threads.md 4.3), and the visual
-    /// changes to the render feed's subscribers.
+    /// changes to the render feed's subscribers; then wakes the presenters.
     fn publish(&mut self) {
         self.present();
-        if !self.attached.load(Ordering::Acquire) {
-            return;
-        }
-        if let Ok(snapshot) = self.game.snapshot() {
+        if self.attached.load(Ordering::Acquire)
+            && let Ok(snapshot) = self.snapshot()
+        {
             self.publish_snapshot(snapshot);
         }
+        (self.options.on_publish)();
+    }
+
+    /// The world's snapshot, the same as `Game::snapshot`, through the loop's cache.
+    fn snapshot(&mut self) -> Result<Snapshot, Problem> {
+        self.snapshots
+            .snapshot(self.game.world(), self.game.registry())
     }
 
     /// Hands the render feed's subscribers the visual changes (a switch of world, Play or Stop,
@@ -1302,7 +1316,6 @@ impl Loop {
             last_event: self.publisher.last_event(),
             published_at_ms: self.now(),
         });
-        (self.options.on_publish)();
     }
 }
 

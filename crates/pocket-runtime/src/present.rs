@@ -16,7 +16,8 @@ use std::collections::HashMap;
 
 use bevy_ecs::change_detection::DetectChanges;
 use bevy_ecs::entity::Entity;
-use bevy_ecs::prelude::World;
+use bevy_ecs::prelude::{Or, With, World};
+use bevy_ecs::query::QueryState;
 use bevy_ecs::world::{Ref, WorldId};
 use pocket_assets::frame::{
     AnimView, AudioView, CameraView, EmitterView, EnvironmentView, InstanceUpdate, LightKindView,
@@ -36,6 +37,51 @@ pub struct Extractor {
     seen: Option<(WorldId, u64)>,
     /// Entities currently drawn, so a despawn (whose id is gone with the entity) can be reported.
     drawn: HashMap<Entity, u64>,
+    /// The delta's queries, kept for the world they were made in.
+    queries: Option<Queries>,
+}
+
+type Opt<T> = Option<Ref<'static, T>>;
+type InstanceRow = (
+    Entity,
+    &'static EntityId,
+    Ref<'static, Transform>,
+    Ref<'static, Model>,
+    Opt<Animator>,
+);
+type UiRow = (Opt<Transform>, Opt<UiText>, Opt<UiBar>);
+type UiFilter = Or<(With<UiText>, With<UiBar>)>;
+
+/// What a delta reads each time: the drawn instances and whether each list changed. Kept between
+/// extractions (a query made again every tick cost about a microsecond each).
+struct Queries {
+    world: WorldId,
+    instances: QueryState<InstanceRow>,
+    lights: QueryState<(Ref<'static, Transform>, Ref<'static, Light>)>,
+    cameras: QueryState<(Ref<'static, Transform>, Ref<'static, Camera>)>,
+    environment: QueryState<Ref<'static, Environment>>,
+    sea: QueryState<Ref<'static, Sea>>,
+    emitters: QueryState<(Opt<Transform>, Ref<'static, ParticleEmitter>)>,
+    audio: QueryState<(Opt<Transform>, Ref<'static, AudioSource>)>,
+    ui: QueryState<UiRow, UiFilter>,
+    splats: QueryState<(Ref<'static, Transform>, Ref<'static, Splat>)>,
+}
+
+impl Queries {
+    fn new(world: &mut World) -> Queries {
+        Queries {
+            world: world.id(),
+            instances: QueryState::new(world),
+            lights: QueryState::new(world),
+            cameras: QueryState::new(world),
+            environment: QueryState::new(world),
+            sea: QueryState::new(world),
+            emitters: QueryState::new(world),
+            audio: QueryState::new(world),
+            ui: QueryState::new(world),
+            splats: QueryState::new(world),
+        }
+    }
 }
 
 fn f(x: f64) -> f32 {
@@ -116,8 +162,9 @@ impl Extractor {
     /// changes whenever the world's content was replaced in place (a restore).
     pub fn publish(&mut self, world: &mut World, generation: u64, feed: &Feed) {
         if !feed.has_subscribers() {
-            // Keep the trackers fresh so the first subscriber does not see a stale backlog.
+            // The first subscriber gets a full frame; the removal trackers stay bounded.
             self.seen = None;
+            world.clear_trackers();
             return;
         }
         let key = (world.id(), generation);
@@ -215,14 +262,14 @@ impl Extractor {
                 frame.removed.push(id);
             }
         }
-        let mut q = world.query::<(
-            Entity,
-            &EntityId,
-            Ref<Transform>,
-            Ref<Model>,
-            Option<Ref<Animator>>,
-        )>();
-        for (e, id, t, m, a) in q.iter(world) {
+        if self.queries.as_ref().is_none_or(|q| q.world != world.id()) {
+            self.queries = Some(Queries::new(world));
+        }
+        let Some(q) = self.queries.as_mut() else {
+            return frame;
+        };
+        let w: &World = world;
+        for (e, id, t, m, a) in q.instances.iter(w) {
             let new = !self.drawn.contains_key(&e);
             let look_changed = new || m.is_changed();
             let anim_changed = a.as_ref().is_some_and(|a| new || a.is_changed());
@@ -242,75 +289,61 @@ impl Extractor {
                 });
             }
         }
-        let changed = |world: &mut World, any: &mut dyn FnMut(&mut World) -> bool| any(world);
-        if changed(world, &mut |w| {
-            w.query::<(Ref<Transform>, Ref<Light>)>()
-                .iter(w)
-                .any(|(t, l)| t.is_changed() || l.is_changed())
-                || w.removed::<Light>().next().is_some()
-        }) {
+        let lights = q
+            .lights
+            .iter(w)
+            .any(|(t, l)| t.is_changed() || l.is_changed())
+            || w.removed::<Light>().next().is_some();
+        let cameras = q
+            .cameras
+            .iter(w)
+            .any(|(t, c)| t.is_changed() || c.is_changed())
+            || w.removed::<Camera>().next().is_some();
+        let environment = q.environment.iter(w).any(|e| e.is_changed());
+        let sea = q.sea.iter(w).any(|s| s.is_changed()) || w.removed::<Sea>().next().is_some();
+        let emitters = q
+            .emitters
+            .iter(w)
+            .any(|(t, a)| a.is_changed() || t.is_some_and(|t| t.is_changed()))
+            || w.removed::<ParticleEmitter>().next().is_some();
+        let audio = q
+            .audio
+            .iter(w)
+            .any(|(t, a)| a.is_changed() || t.is_some_and(|t| t.is_changed()))
+            || w.removed::<AudioSource>().next().is_some();
+        let ui = q.ui.iter(w).any(|(t, a, b)| {
+            t.is_some_and(|t| t.is_changed())
+                || a.is_some_and(|a| a.is_changed())
+                || b.is_some_and(|b| b.is_changed())
+        }) || w.removed::<UiText>().next().is_some()
+            || w.removed::<UiBar>().next().is_some();
+        let splats = q
+            .splats
+            .iter(w)
+            .any(|(t, s)| t.is_changed() || s.is_changed())
+            || w.removed::<Splat>().next().is_some();
+        if lights {
             frame.lights = Some(Self::lights(world));
         }
-        if changed(world, &mut |w| {
-            w.query::<(Ref<Transform>, Ref<Camera>)>()
-                .iter(w)
-                .any(|(t, c)| t.is_changed() || c.is_changed())
-                || w.removed::<Camera>().next().is_some()
-        }) {
+        if cameras {
             frame.cameras = Some(Self::cameras(world));
         }
-        if changed(world, &mut |w| {
-            w.query::<Ref<Environment>>()
-                .iter(w)
-                .any(|e| e.is_changed())
-        }) {
+        if environment {
             frame.environment = Self::environment(world);
         }
-        if changed(world, &mut |w| {
-            w.query::<Ref<Sea>>().iter(w).any(|s| s.is_changed())
-                || w.removed::<Sea>().next().is_some()
-        }) {
+        if sea {
             frame.sea = Some(Self::sea(world));
         }
-        if changed(world, &mut |w| {
-            w.query::<(Option<Ref<Transform>>, Ref<ParticleEmitter>)>()
-                .iter(w)
-                .any(|(t, a)| a.is_changed() || t.is_some_and(|t| t.is_changed()))
-                || w.removed::<ParticleEmitter>().next().is_some()
-        }) {
+        if emitters {
             frame.emitters = Some(Self::emitters(world));
         }
-        if changed(world, &mut |w| {
-            w.query::<(Option<Ref<Transform>>, Ref<AudioSource>)>()
-                .iter(w)
-                .any(|(t, a)| a.is_changed() || t.is_some_and(|t| t.is_changed()))
-                || w.removed::<AudioSource>().next().is_some()
-        }) {
+        if audio {
             frame.audio = Some(Self::audio(world));
         }
-        if changed(world, &mut |w| {
-            w.query::<(
-                Option<Ref<Transform>>,
-                Option<Ref<UiText>>,
-                Option<Ref<UiBar>>,
-            )>()
-            .iter(w)
-            .any(|(t, a, b)| {
-                (a.is_some() || b.is_some())
-                    && (t.is_some_and(|t| t.is_changed())
-                        || a.is_some_and(|a| a.is_changed())
-                        || b.is_some_and(|b| b.is_changed()))
-            }) || w.removed::<UiText>().next().is_some()
-                || w.removed::<UiBar>().next().is_some()
-        }) {
+        if ui {
             frame.ui = Some(Self::ui(world));
         }
-        if changed(world, &mut |w| {
-            w.query::<(Ref<Transform>, Ref<Splat>)>()
-                .iter(w)
-                .any(|(t, s)| t.is_changed() || s.is_changed())
-                || w.removed::<Splat>().next().is_some()
-        }) {
+        if splats {
             frame.splats = Some(Self::splats(world));
         }
         frame

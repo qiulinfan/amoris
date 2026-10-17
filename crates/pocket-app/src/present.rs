@@ -1,11 +1,12 @@
 //! The host's presentation services (host-protocol.md 5 and 7): the render feed on `/render` for
-//! editor viewports, and `capture` for agents, which renders a camera view offscreen on the native
-//! GPU and saves it as a PNG under the project's `.pocket/captures/`.
+//! editor viewports, sent as the game thread publishes, and `capture` for agents, which renders a
+//! camera view offscreen on the native GPU and saves it as a PNG under the project's
+//! `.pocket/captures/`.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::extract::ws::{Message, WebSocket};
 use glam::{Quat, Vec3};
@@ -16,20 +17,51 @@ use pocket_render::{BackendChoice, CameraState, Gpu, Renderer};
 use pocket_server::{BoxFuture, CaptureHub, RenderFeed};
 use serde_json::{Value, json};
 
-/// Serves `/render`: each socket subscribes to the feed and receives the merged frames at up to
-/// 60 per second (a reset first).
+/// The least time between two frames on one `/render` socket: publications closer together merge
+/// into one frame (a game stepped faster than real time publishes thousands a second).
+pub const FEED_GAP: Duration = Duration::from_millis(8);
+
+/// The game thread's wake-up for the render feed: `ThreadOptions::on_publish` counts publications
+/// here, and each `/render` socket waits for the count to change.
+pub fn feed_wake() -> (
+    Arc<dyn Fn() + Send + Sync>,
+    tokio::sync::watch::Receiver<u64>,
+) {
+    let (tx, rx) = tokio::sync::watch::channel(0u64);
+    let wake = move || tx.send_modify(|n| *n = n.wrapping_add(1));
+    (Arc::new(wake), rx)
+}
+
+/// Serves `/render`: each socket subscribes to the feed and receives the merged frame (a reset
+/// first) when the game thread publishes, at most one every [`FEED_GAP`].
 pub struct FeedServer {
     pub feed: Feed,
+    /// Publications so far ([`feed_wake`]).
+    pub wake: tokio::sync::watch::Receiver<u64>,
 }
 
 impl RenderFeed for FeedServer {
     fn serve(&self, mut socket: WebSocket) -> BoxFuture<()> {
         let mailbox = self.feed.subscribe();
+        // Cloned after subscribing and never marked seen first: a publication made since this
+        // receiver's last look (the reset frame for this subscriber among them) wakes it at once.
+        let mut wake = self.wake.clone();
         Box::pin(async move {
-            let mut tick = tokio::time::interval(Duration::from_millis(16));
+            let mut last: Option<Instant> = None;
+            // The game thread is gone: nothing more will come, but the socket stays until closed.
+            let mut ended = false;
             loop {
                 tokio::select! {
-                    _ = tick.tick() => {
+                    changed = wake.changed(), if !ended => {
+                        if changed.is_err() {
+                            ended = true;
+                            continue;
+                        }
+                        if let Some(due) = last.map(|t| t + FEED_GAP)
+                            && Instant::now() < due
+                        {
+                            tokio::time::sleep_until(due.into()).await;
+                        }
                         let frame = mailbox.take();
                         if frame.is_empty() && !frame.reset && frame.tick == 0 {
                             continue;
@@ -37,6 +69,7 @@ impl RenderFeed for FeedServer {
                         if socket.send(Message::Binary(frame.encode().into())).await.is_err() {
                             break;
                         }
+                        last = Some(Instant::now());
                     }
                     msg = socket.recv() => {
                         match msg {

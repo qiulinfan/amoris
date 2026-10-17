@@ -72,10 +72,13 @@ fn start(root: &Path, seed: Option<u64>, editor: Option<PathBuf>) -> Result<Serv
     let start = Instant::now();
     let clock: pocket_runtime::thread::Clock =
         Arc::new(move || start.elapsed().as_secs_f64() * 1000.0);
+    // `/render` sends a frame when the game thread publishes (host-protocol.md 5).
+    let (on_publish, wake) = crate::present::feed_wake();
     let options = ThreadOptions {
         pacing: Pacing::RealTime { speed: 1.0 },
         paused: true,
         feed: Some(feed.clone()),
+        on_publish,
         ..ThreadOptions::new(clock)
     };
     let dir = root.to_path_buf();
@@ -118,7 +121,7 @@ fn start(root: &Path, seed: Option<u64>, editor: Option<PathBuf>) -> Result<Serv
         &feed,
         root.to_path_buf(),
     )));
-    host.set_render(Arc::new(crate::present::FeedServer { feed }));
+    host.set_render(Arc::new(crate::present::FeedServer { feed, wake }));
     host.set_debug(Arc::new(crate::present::DebugBridge { hub: hub.clone() }));
     crate::present::forward_debug_events(&hub, host.clone());
     Ok(Served {
@@ -300,4 +303,82 @@ fn mcp_session(args: &Args) -> Result<(), Problem> {
     rt.shutdown_timeout(std::time::Duration::from_secs(2));
     served.shutdown();
     r
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::SocketAddr;
+    use std::path::PathBuf;
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
+
+    use pocket_assets::RenderFrame;
+    use pocket_server::{ServeOptions, Via};
+    use serde_json::json;
+
+    use super::{runtime, start};
+    use crate::present::FEED_GAP;
+
+    /// Each frame `/render` sends, with the time it was read and its tick.
+    fn read_frames(addr: SocketAddr) -> mpsc::Receiver<(Instant, u64)> {
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let (mut ws, _) = tungstenite::connect(format!("ws://{addr}/render")).unwrap();
+            while let Ok(msg) = ws.read() {
+                if let tungstenite::Message::Binary(b) = msg {
+                    let frame = RenderFrame::decode(&b).unwrap();
+                    if tx.send((Instant::now(), frame.tick)).is_err() {
+                        return;
+                    }
+                }
+            }
+        });
+        rx
+    }
+
+    /// A game stepped faster than real time publishes after every tick; a `/render` socket sends
+    /// at most one frame every `FEED_GAP`, each merging what was published since the one before,
+    /// so the last frame describes the last tick (host-protocol.md 5).
+    #[test]
+    fn render_merges_publications_closer_than_the_gap() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../samples/sailing");
+        let served = start(&root, None, None).unwrap();
+        let host = served.host.clone();
+        let rt = runtime().unwrap();
+        let (addr, _task) = rt
+            .block_on(host.serve(&ServeOptions { port: 0 }, std::future::pending()))
+            .unwrap();
+        let frames = read_frames(addr);
+        // The new subscriber's reset frame, sent while the edit world waits.
+        let (_, first) = frames.recv_timeout(Duration::from_secs(20)).unwrap();
+        let ticks = 240;
+        let from = Instant::now();
+        let stepped = rt
+            .block_on(host.call(&Via::Api, "time.step", json!({"ticks": ticks})))
+            .unwrap();
+        let last_tick = stepped["tick"].as_u64().unwrap();
+        assert_eq!(last_tick, first + ticks);
+        let mut got = Vec::new();
+        while got.last().is_none_or(|&(_, tick)| tick < last_tick) {
+            got.push(frames.recv_timeout(Duration::from_secs(5)).unwrap());
+        }
+        let (read, tick) = *got.last().unwrap();
+        assert_eq!(tick, last_tick, "the merged frame ends on the last tick");
+        // Frames were sent from `from` on, each at least FEED_GAP after the one before, and the
+        // last was read at `read`: no more than this many fit, whatever the reader's delays.
+        let span = read.duration_since(from).as_secs_f64();
+        let most = (span / FEED_GAP.as_secs_f64()).floor() as usize + 1;
+        assert!(
+            got.len() <= most,
+            "{} frames in {:.1} ms for {ticks} publications: at most {most} fit",
+            got.len(),
+            span * 1000.0
+        );
+        assert!(
+            got.windows(2).all(|w| w[0].1 < w[1].1),
+            "ticks only go forward"
+        );
+        drop(rt);
+        served.shutdown();
+    }
 }
