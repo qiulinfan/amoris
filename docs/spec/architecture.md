@@ -204,7 +204,8 @@ written as that specification names them.
   run script rules inside the schedule. It exposes perception (for non-player characters, charter
   3.1) and physics queries to scripts, hence its edges to `pocket-interface` and `pocket-physics`.
 - **Must not**: keep state outside the world (charter 3.2); read the wall clock (the execution
-  budget counts work, charter 4.2.1).
+  budget counts work, charter 4.2.1). A benchmark may inject a clock that times each script call's
+  phases (`ScriptHost::time_phases`, script-host.md 9); its readings are never world state.
 - **wasm32**: QuickJS-ng is C. The script-web spike (`docs/spikes/script-web.md`, Verdict and
   Recipe) built it for `wasm32-unknown-unknown` through `rquickjs` 0.14.0 with clang 23 and the
   wasi-libc subset `rquickjs-sys` vendors, defining the shim's one import (`__rquickjs_host_now_us`)

@@ -368,7 +368,11 @@ A script's call into `math` costs a host call on top: the script-native spike me
 93 to 131 and 146 to 171 ns), against 740 to 1,100 ns for the same algorithm interpreted in
 TypeScript (`docs/spikes/script-native.md`, Math per call); that spike bound its own Rust port of
 `repro`, not `libm`, so slice 1's bench measures the binding of this library. The library's cost in
-the web build was not measured in slice 0; the web check's `perf` step measures it.
+the web build was not measured in slice 0; the web check's `perf` step measures it. Since 2026-10-15
+(Pioneer) every engine `Math` function but `hypot` is bound as a QuickJS-ng C function rather than
+an rquickjs closure, and a `Math.sin` call costs 33 to 36 ns over its loop natively (88 to 89 as a
+closure in the same bench), `atan2` 33 to 34 and `pow` 73 to 75 (quiet re-measurement, 2026-10-15;
+docs/bench/script.md 7).
 
 ## 7. Non-finite values and signed zero
 

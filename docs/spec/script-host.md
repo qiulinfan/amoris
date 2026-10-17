@@ -626,11 +626,14 @@ pub struct SystemStats { pub steps: u64, pub host_calls: u32, pub rows: u32, pub
 
 [sim]'s `script.update` system resets `TickBudget` (steps left in the tick) and calls `run_system`
 for each script system and executor due this tick in order, wrapping each call in
-`hooks.system(&SystemKey("script:<name>"), begin)` (simulation.md 6). The host reads no clock: a
-system's wall time is measured by the `StepHooks` implementation, whose clock the caller injects
-(threads.md 3.1; budgets.md 7.1), which is how `tick.sail.script` is timed. Natives reach the world
-through a call state installed for the call (else `script.no_system`) and run under `catch_unwind`
-(script-sandbox.md 4.3).
+`hooks.system(&SystemKey("script:<name>"), begin)` (simulation.md 6). The host reads no clock of its
+own: a system's wall time is measured by the `StepHooks` implementation, whose clock the caller
+injects (threads.md 3.1; budgets.md 7.1), which is how `tick.sail.script` is timed. A benchmark may
+also inject a clock into the host (`ScriptHost::time_phases`), which then splits every successful
+call into its phases (`PhaseTimes`: prepare, run, diff, apply; `take_phases` reads and clears them);
+the readings are never world state ([../bench/script.md](../bench/script.md)). Natives reach the
+world through a call state installed for the call (else `script.no_system`) and run under
+`catch_unwind` (script-sandbox.md 4.3).
 
 `ScriptHost` and `Program`s hold no game state. Each thread that runs scripts builds its own host
 from a `CompiledSet`: the game thread (threads.md 3.1, whose `GameThread::spawn` takes a function
@@ -662,7 +665,7 @@ reference hardware (script-native spike, unless said; "not measured" where slice
 | Measure | Value |
 |---|---|
 | Preparing columns and writing back, per 1,000 rows of 10 slots | Not measured per slot; the rule workload's eight batch calls over 1,000 rows took 103 to 149 µs a tick |
-| One host call (`world.get` of a 4-field component); a `Math` call; an RNG draw | Not measured; 120 to 140 ns (`Math.sin`, 159 to 214 for `atan2`); not measured |
+| One host call (`world.get` of a 4-field component); a `Math` call; an RNG draw | Not measured; 120 to 140 ns (`Math.sin`, 159 to 214 for `atan2`); since they are QuickJS-ng C functions (2026-10-15, quiet re-measurement; docs/bench/script.md 7), measured over the same loop in the hardened context before and after: `sin` 88 to 89 ns as a closure, 33 to 36 as a C function, `atan2` 108 to 112 and 33 to 34; not measured |
 | Steps of the sailboat scene's scripts per tick (exact) and steps per millisecond | Not measured (no sailboat scripts yet); 18,000 to 30,000 (60,000 polls in 2.0 to 3.3 ms) |
 | Compile (parse, lint, transform, codegen) per 1,000 lines; context creation with lockdown | Not measured per 1,000 lines (oxc took 59 to 76 µs for a 59-line module); a whole load of five modules with the freeze 4.2 to 5.8 ms |
 

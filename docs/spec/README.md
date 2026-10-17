@@ -86,7 +86,7 @@ every check has a verdict."
 | Physics and buoyancy determinism | Works with caveats (physics) |
 | PR #1421 breakpoints through `rquickjs` in VS Code | No verdict: the patch and a CDP endpoint work, VS Code itself was not run; script-host.md 13 gives the headless run through VS Code's own debug adapter that will give one |
 | The `rquickjs` `wasm32` build | Works with caveats (script-web) |
-| Rule-workload time per tick | Measured: `tick.rules`, reference figure 4.0 ms (script-native) |
+| Rule-workload time per tick | Measured: `tick.rules`, reference figure 4.0 ms (script-native); through the engine's host 3.6 ms natively and 3.1 to 3.3 ms in Chrome's worker, 27 and 20 to 21 times a Rust twin (Pioneer, quiet re-measurement 2026-10-15, [../bench/script.md](../bench/script.md)) |
 | High-poly glTF import | Works with caveats (render) |
 | Benchmark harness skeleton | Specified (shared/benchmark/README.md, 8), not built |
 | The local check command, which reports performance measurements | Specified (checks.md), not built |

@@ -105,7 +105,9 @@ Nothing in a tick reads the wall clock, the date, the environment, files, the ne
 identity. The tick-code crates hold this by the disallowed-methods list of section 10, scripts by
 spec-script's sandbox (`Date` and `performance` absent, `script-sandbox.md`, 2.2). Timing a tick for
 the performance budgets is done by the caller through `StepHooks` (section 6), outside the
-simulation's code.
+simulation's code. A benchmark may also inject a clock into the script host, which then times each
+script call's phases (`ScriptHost::time_phases`, script-host.md 9); its readings are never world
+state, and the host reads no clock of its own.
 
 ### 3.3 Pacing is not simulation
 

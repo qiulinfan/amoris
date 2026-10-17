@@ -91,6 +91,14 @@ measurements:
 | clang-cl 23.1.2 | release | 368,468 B | 1 MiB | Pass |
 | MSVC cl 19.50 | release | 1,170,892 B | 2 MiB | All seven depth tests pass |
 | MSVC cl 19.50 | debug | 3,479,908 B | 6 MiB | Pass |
+| clang-cl 23.1.2, P12, `Math.hypot` probe (2026-10-15) | release | 470,818 B | 1 MiB | All seven pass |
+| clang-cl 23.1.2, P12, `Math.hypot` probe (2026-10-15) | debug | 3,508,566 B | 6 MiB | All seven pass |
+| MSVC cl 19.50, `Math.hypot` probe (2026-10-15) | release | 1,187,268 B | 2 MiB | All seven pass |
+
+2026-10-15 (Pioneer): P12 (computed `goto`, clang-cl only) enlarged the interpreter's frame, and the
+engine's `Math` functions other than `hypot` became QuickJS-ng C functions, whose level takes less
+stack than a closure's, so the test now recurses through `Math.hypot`, the remaining closure
+(docs/bench/script.md 7.4 has the steps between the rows).
 
 The cl fallback emits a build warning naming the actual compiler. Validate both the sandbox's
 script-depth limit and the host thread's native stack when changing compilers or optimization.
