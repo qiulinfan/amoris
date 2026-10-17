@@ -50,7 +50,7 @@ use crate::picking::{PickRequest, Picking, coverage};
 use crate::post::{Antialiasing, DEPTH, Gtao, Post, SceneFormat, Targets};
 use crate::prepass::{Prepass, PrepassMode};
 use crate::profiler::GpuProfiler;
-use crate::scene::{InstanceGpu, NEURAL_VARIANT, Part, Resolve, Scene, VARIANTS};
+use crate::scene::{NEURAL_VARIANT, Part, Resolve, Scene, VARIANTS};
 use crate::shaders;
 use crate::shadows::{self, CASCADES, SHADOW_SIZE};
 use crate::skinning::Skinning;
@@ -356,6 +356,8 @@ pub struct Renderer {
     moving_cpu: Vec<u32>,
     cull_buf: Uniform,
     instances: wgpu::Buffer,
+    /// Writes the changed instance slots (upload.rs).
+    upload: crate::upload::InstanceUpload,
     visible: wgpu::Buffer,
     /// The camera view's visible instances with interpolated poses (48 bytes each).
     drawn: wgpu::Buffer,
@@ -1239,6 +1241,7 @@ impl Renderer {
             moving_cpu: Vec::new(),
             cull_buf: Uniform::new(device, "cull", std::mem::size_of::<CullUniform>() as u64),
             instances: storage(device, "instances", 1024 * 80, wgpu::BufferUsages::empty()),
+            upload: crate::upload::InstanceUpload::new(device),
             visible: storage(
                 device,
                 "visible",
@@ -2036,14 +2039,8 @@ impl Renderer {
         if let Some(rt) = &mut self.rt_shadows {
             rt.slots_changed(full_upload || !runs.is_empty());
         }
-        for run in runs {
-            let slots: &[InstanceGpu] = &self.scene.slots[run.start as usize..run.end as usize];
-            queue.write_buffer(
-                &self.instances,
-                u64::from(run.start) * 80,
-                bytemuck::cast_slice(slots),
-            );
-        }
+        self.upload
+            .write(device, queue, &self.instances, &self.scene.slots, &runs);
         let mesh_count = self.meshes.len() as u32;
         // Ray-traced shadows meet the full meshes: a receiver drawn coarser than the mesh its rays
         // start from shadows itself (docs/spec/lod.md 7), so they draw full meshes.
@@ -2573,6 +2570,11 @@ impl Renderer {
             label: Some("frame"),
         });
         self.batches.reset(&mut enc);
+        // The instance slots `sync` staged for scattering, before any pass reads them.
+        if self.upload.pending() {
+            let ts = self.profiler.compute_scope("scatter instances");
+            self.upload.encode(&mut enc, ts);
+        }
         let frame_dt = self
             .last_frame_s
             .map_or(1.0 / 60.0, |t| (now_s - t).clamp(0.0, 0.1)) as f32;

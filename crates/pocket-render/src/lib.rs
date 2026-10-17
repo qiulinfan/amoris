@@ -40,6 +40,7 @@ pub mod splat;
 pub mod taa;
 pub mod trace;
 mod ui;
+mod upload;
 
 pub use camera::CameraState;
 pub use gpu::{BackendChoice, Gpu, GpuError};
