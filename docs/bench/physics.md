@@ -17,6 +17,9 @@
   Rapier's WebAssembly modules.
 - Code: [bench/physics/](../../bench/physics/). Raw outputs: [physics/](physics/); the tables of
   "Speed" are `scripts/summarize.py`'s output over them ([physics/summary.md](physics/summary.md)).
+- **2026-10-14, R1 (Windows x86-64):** the Rapier side re-measured on the Ryzen 9 270 laptop and the
+  attempted Unity PhysX comparison, blocked on Unity's license, are in
+  [physics-r1.md](physics-r1.md).
 
 ## The question
 
@@ -615,9 +618,10 @@ not build for `wasm32-unknown-unknown` out of the box either: it recognizes WebA
 **One backend on every target, never Rapier natively and Jolt in the browser or the reverse; move
 that one backend to Jolt with `CROSS_PLATFORM_DETERMINISTIC`, now, as a port with explicit checks,
 and keep Rapier until the port passes them.** This is charter 4.7's second branch ("Jolt
-significantly faster") in its "unify on Jolt's wasm build" form. PhysX and Chaos were not measured;
-Jolt, which Godot made its default 3D physics and Horizon Forbidden West and Death Stranding 2 ship,
-stands in for them.
+significantly faster") in its "unify on Jolt's wasm build" form. PhysX and Chaos were not measured
+(an untested Unity PhysX harness for the R1 laptop waits for a Unity license,
+[physics-r1.md](physics-r1.md)); Jolt, which Godot made its default 3D physics and Horizon
+Forbidden West and Death Stranding 2 ship, stands in for them.
 
 **Where charter 4.7's condition holds, and how firm the case is.** Jolt is significantly faster on
 convex bodies against a mesh terrain (paired medians 1.6 times on one thread, 2.2 on four) and on
