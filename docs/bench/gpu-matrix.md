@@ -297,7 +297,12 @@ run only (logs in `out/gpu780m/quiet/probes/`).
 - Whether the 780M's unoptimized-DXIL tracing (3 d) is a driver fault: no reproduction outside the
   engine. The Vulkan timestamp readings (3 a) are one (section 8).
 - What made the driver compile the wrong compute pipeline binary of section 9, and which of the
-  renderer's compute pipelines it is.
+  renderer's compute pipelines it is. Answered in part by section 12 (2026-10-16): the skinning
+  pipeline, compiled for system SGPRs three registers later than its metadata puts them, as four
+  other compute pipelines were (three of them the splat sort's passes). What inside the driver does
+  it is not known, nor whether CPU load or the renderer's other compiles beside it matter: all 4
+  wrong compiles of the stress runs had both, and the other conditions' compiles are too few to tell
+  (section 12, "Rate").
 - Whether the profiler on AMD's Vulkan should copy its readback in a second encoder of the sampling
   submission (section 8: correct there) instead of resolving after the submission completed.
 - The one-off splat (3 e) and `taa` (3 f) failures on the 780M: they did not recur in the quiet
@@ -623,7 +628,9 @@ archives came out wrong. Load makes the archive depend on timing: two idle popul
 were identical (337 keys, equal payloads once an 8-byte field of the non-ELF entries is masked),
 while each of 8 populations under 16 busy loops differed from the idle one in 20 to 37 of the 337
 entries. Whether those are other compiles of the same pipelines or the same binaries under other
-keys was not checked (the vertex shaders above); all 8 passed.
+keys was not checked (the vertex shaders above); all 8 passed. Section 12 found the same wrong
+program again, in a check, and reproduced such compiles under load: the pipeline is the skinning
+pass's, and the wrong program reads its workgroup id from registers the hardware does not set.
 
 Validation: the test under the Khronos layer with synchronization validation logged, on either GPU,
 only `VUID-StandaloneSpirv-None-10684` (343 times on the 780M, 371 on the RTX 5060: spirv-val's rule
@@ -724,8 +731,8 @@ the same machine (NVIDIA 617.14) is correct in every variant. Reproduction:
 `vk_timestamps --adapter 780m --rounds 200`, which runs every variant and counts each one's wrong
 readings against `vkGetQueryPoolResults`; section 8 has the table.
 
-**B. A compute pipeline compiled once into a wrong binary, which the pipeline archive then served to
-every later run.**
+**B. Compute pipelines compiled, now and then, for system SGPRs three registers later than their
+metadata puts them.**
 
 A test binary of our engine (wgpu 30 on Vulkan) rendered wrongly in its first run after a rebuild
 and in every later run from that path; from any other path, or with `AMD_VK_PIPELINE_CACHE_PATH` set
@@ -738,11 +745,32 @@ PAL metadata as the ELF the driver writes for the same key from scratch, but 59 
 dwords differ. The same pipeline's entry in the archive's other file, written in the same run, holds
 the clean binary, as do 171 other entries for that pipeline in 97 other archives on the machine. The
 archive's order shows the wrong entry was written in the run that first failed, the first run of
-that build from that path; an earlier build's run had created the archive and passed. Runs from
-scratch on an idle machine produce identical archives; under CPU load 20 to 37 of 337 entries differ
-from run to run. We could not produce that binary again. Validation (Khronos layer, synchronization
-validation) reports only `VUID-StandaloneSpirv-None-10684` for every run, failing or not. We can
-provide the archive, both ELFs and the test binary. Section 9 has the measurements.
+that build from that path; an earlier build's run had created the archive and passed.
+
+The two programs differ in register numbers only (370 instructions each in the same order, one
+`s_mov_b32` an `s_nop` in the wrong one). Both ELFs declare 2 user SGPRs with the workgroup id's x
+and y enabled (`.user_sgprs`, `.tgid_x_en`, `.tgid_y_en`), so the hardware puts the id in s2 and s3,
+where the clean program reads it. The wrong program begins with `s_getpc_b64 s[2:3]` and takes the
+id from s5 and s6, as for 5 user SGPRs: its workgroups read registers the dispatch did not set, and
+it writes none of its output (all 672 vertices of our test stay zero). The same program, byte for
+byte, failed a run with an empty archive ten hours later: the driver compiled it again. That run's
+archive holds the pipeline's two programs under one key, one in each of two files. Changing the key
+of the wrong entry only, the test passes; of the clean entry only, it fails; either way every
+pipeline comes from the archive (the run leaves the archive's files as they were, byte for byte), so
+the two runs do the same work and differ only in the program. In the archives on the machine we
+found five compute pipelines compiled this way (the skinning pass and the three passes of our radix
+sort among them), each with its system SGPRs three registers late (s5 for s2 with 2 user SGPRs, s9
+for s6 with 6), each wrong program identical wherever it occurs; of the 22,670 compute programs in
+those archives, the only ones that read a register the hardware did not set before their first
+branch are such wrong programs. Our renderer creates its pipelines on threads at once. While 16 busy
+loops ran on the 16-thread CPU, 4 of 1,560 compiles of that pipeline in processes creating the
+renderer's pipelines came out wrong, with one device as with three. We saw none in 600 compiles of
+the pipeline alone under the same load, 948 alone on an idle machine (up to 8 devices and 32
+threads) and 180 with the renderer's pipelines on an idle machine; at the loaded rate about 1.5, 2.4
+and 0.5 wrong ones would be expected there, so these counts do not show that the load or the other
+compiles matter. Validation (Khronos layer, synchronization validation) reports only
+`VUID-StandaloneSpirv-None-10684` for every run, failing or not. We can provide the archives, the
+ELFs and the test binary. Sections 9 and 12 have the measurements.
 
 ## 11. In `cargo xtask check` (2026-10-16, the owner's decision)
 
@@ -839,3 +867,186 @@ hold times the tests only). The report is `out/check/report.json`, the tool's ou
 `out/check/gpus.log`, its JSON `out/check/gpus.json`, each binary's log
 `out/check/gpus/<config>/<binary>.log`; `python tools/gpu_matrix.py --merge out/check/gpus.json
 --markdown --all` tables the run again.
+
+## 12. Compute programs compiled for unset registers (2026-10-16, `explore/skinflake`)
+
+Branch `explore/skinflake`, from master `34772266`; the machine and drivers of section 8. The `gpus`
+step of a `cargo xtask check` at `34772266` (2026-10-16, from 14:56) failed one cell:
+`scene_changes skinned_characters_added_later_draw_in_their_own_poses` on `780m-vulkan`, "one
+replaced: character 1 covers 0.0008 of the view (fresh renderer 0.0000)". Neither renderer drew the
+character fully: the one that had replaced another character covered 0.0008 of the view, the fresh
+one built for the same scene on the same device nothing (0.0069 on every other configuration). The
+binary ran with an empty archive of its own (section 9's guard), and 43 reruns of it with fresh
+archives passed (12 alone, 16 alone under 16 busy loops, 15 of the whole binary under load).
+
+**It follows one archive entry.** The archive that run wrote was still in
+`target/release/gpu-matrix-vkcache/780m-vulkan/scene_changes/`; a read-only copy is in the R1
+laptop's ignored `out/skinflake/archives/failing/`. Master's binary at its own path on
+`780m-vulkan`, each run with a fresh copy of the archive named (bench lock; the scripts are in
+`out/skinflake/scripts/`):
+
+| Archive | Result |
+|---|---|
+| the failing run's | FAIL 3 of 3, both renderers 0.0000 |
+| a passing rerun's (`whole-1`); an empty directory | pass 2 of 2 each, 0.0069 |
+| the failing run's, the 14 keys whose entries differ from `whole-1`'s made to miss | pass 2 of 2 |
+| 7 of those 14 made to miss; the other 7 | FAIL 2 of 2; pass 2 of 2 |
+| 3, 2 and 2 of the 7 that passed | FAIL; pass; FAIL |
+| of the 2 that passed, key `9f6240ef` alone; key `c378cf50` alone | FAIL 2 of 2; pass 2 of 2 |
+| `c378cf50`'s entry in `.parc` alone (the wrong program, below) | pass 3 of 3, 0.0069 |
+| `c378cf50`'s entry in `_1.parc` alone (the clean program) | FAIL 3 of 3, 0.0000 |
+
+Every run that could find `c378cf50`'s entry in `.parc` failed (18 of 18, a copy of the test binary
+under master's file name included), every run that could not passed (17 of 17). In the last two rows
+the driver still finds the key's other entry and writes nothing (each run leaves the archive's three
+files byte for byte as they were), so every pipeline comes from the archive, and the runs take the
+same time (1.8 to 2.5 s, the very first 4.5 s). The work is the same and only the program differs
+(`out/skinflake/surgical-only-*.txt`). The key holds two entries in the failing archive, one in
+`.parc` and one in `_1.parc`: ELFs with the same PAL metadata (API shader hash 8274715335060202825,
+the same 128-bit cache hash, `.user_sgprs` 2, `.tgid_x_en`, `.tgid_y_en`, `.tg_size_en`) and 1664
+bytes of code each, of which 59 of 416 dwords differ. A probe that creates only `skin.wgsl`'s
+compute pipeline in a fresh archive gets that API shader hash and, byte for byte, the `_1.parc`
+entry: the skinning pipeline, of which the `.parc` entry is the wrong program. It is byte for byte
+section 9's wrong binary (`f297-stale.elf`), compiled 10 hours earlier for another test binary of
+another build.
+
+**What the wrong program does.** No disassembler for gfx11 is on the machine (the pinned LLVM has no
+AMDGPU target), so the programs were walked by encoding class and the scalar registers each reads
+before writing them listed: 370 instructions each, in the same order but for one `s_mov_b32` that is
+an `s_nop` in the wrong one; the rest of the difference is register numbers. A compute wave starts
+with its user SGPRs, then the system values its registers enable, so with 2 user SGPRs the hardware
+puts the workgroup id's x in s2, its y in s3 and the group size in s4. The clean program reads s1,
+s2 and s3: `s_getpc_b64 s[4:5]`, `s_mul_i32 s3, s3, 0xffff`, `s_add_i32 s2, s3, s2` (the WGSL's
+`wg.x + wg.y * ROW`). The wrong program reads s1, s5 and s6: `s_getpc_b64 s[2:3]` overwrites both
+ids, then `s_mul_i32 s2, s6, 0xffff`, `s_add_i32 s2, s2, s5`. It was compiled as if the pipeline had
+5 user SGPRs, while its metadata, which sets up the hardware, says 2: every workgroup takes for its
+id registers the dispatch did not set. A readback of the fresh renderer's skinned vertices after its
+frames (throwaway, `out/skinflake/zz-diagnostics.diff`, run from a copy of the test binary under
+master's file name with the archive renamed to that path's prefix, as in section 9): with the wrong
+entry, all 672 vertices of the two characters' 8 parts still hold the zeros of fresh memory and the
+id pass sees only the ground; with that entry made to miss, every vertex is written, within 1.2e-7
+of the RTX 5060's (Vulkan) in every component, and both characters are seen (0.0069 and 0.0062).
+The check's 0.0008 for the kept renderer is consistent with the same program if the unset registers
+happened to put a few workgroups on a job; that was not verified (every replay gave 0.0000 for both
+renderers). An ordering fault of the engine's own (a pass reading the vertices before the skinning
+pass wrote them, a reused slot or a scattered instance drawn stale, skinned bounds, an occlusion or
+prepass decision that depends on readback timing) would not survive the frames each renderer draws
+of an unchanging pose, and would not follow one archive entry: with every pipeline served from the
+same archive, the clean program passes and the wrong one fails (the bisection table's last two
+rows).
+
+**Other pipelines.** Two checks of an archive, `tools/amd_vkcache.py unset` (the compute programs
+whose start reads SGPRs past those the metadata has the hardware set) and `twins` (the pipelines
+with the same metadata and more than one program, the padding after `s_endpgm` left out: the stages
+of a graphics pipeline are laid out differently from compile to compile with the same code), read
+the machine's archives: `VkCache`, the `target/` of the main checkout and of every worktree, and the
+`out/` directories of matrix runs, checks and this track's stress runs below, the copies of known
+archives left out. `unset` read 21,517 compute programs in 681 archive sets and flagged 9, each a
+wrong program and none a clean one: 4 in the stress runs and 5 in the sets below. `twins` (678 sets
+read, a 679th deleted by a running stress run while it was read; 32,571 pipelines counted once per
+set) found 8 sets outside the stress runs, and in each the two programs differ in where they take
+the workgroup id: four compute pipelines, each wrong program 3 registers late. The skinning pipeline
+in 3 sets (section 9's, `VkCache`'s `36B1A6FD…` of 2026-10-14 21:59 from an earlier `skin.wgsl` with
+another API shader hash and the same two programs, and this run's); two pipelines with 2 user SGPRs
+and only the x id (`VkCache`'s `41FE3F29…` of 2026-10-15 19:27 and `F4AD108A…` of 2026-10-15 08:08),
+whose wrong programs read s5 where the hardware puts the id in s2; and one with 6 user SGPRs in 3
+sets (2026-10-15 to 16), whose wrong program takes its id from s9 in the instruction where the clean
+one takes s6 (past its first branch, which `unset` does not look beyond). A probe that creates each
+of the renderer's compute pipelines alone with the layout the renderer gives it names two of them
+(`out/skinflake/probe3-*.txt`; with an automatic layout the sort's `histogram` and `scan_bins` get
+other API shader hashes): the one with 6 user SGPRs is the splat sort's `scatter` pass
+(`splat_sort.wgsl`), and `41FE3F29…`'s is its `scan_bins` pass (API shader hash
+9939785109558926183); `F4AD108A…`'s (6023053652977152983) matches no current shader. A wrong pass
+of the sort would leave the sorted list wrong or unwritten, which would fit section 3 e's frames
+without splats on this configuration, once; which archive that run used is not known. Each wrong
+program is the same, byte for byte, in every set that holds it, and each of these sets holds the
+pipeline's clean program in another file.
+
+A rescan at 18:16 (the same roots; `out/skinflake/twins-rescan.txt`, `unset-rescan.txt` and
+`rescan/`) read 22,670 compute programs in 724 sets, none unreadable, and `unset` flagged 11, all
+wrong programs: the 9 above and two in the archives that the `explore/rename` track's check wrote
+from 17:50 to 17:58 in its worktree. In `780m-vulkan/draw_paths` the sort's `scan_bins` reads s5
+where its clean twin in the next file reads s2. In `780m-auto/rt_shadows` (its tests run on every
+backend with ray queries, Vulkan included) the sort's `histogram`, with 6 user SGPRs, reads s9 where
+the clean program reads s6; that pair also differs in its metadata (`.sgpr_count` 20 against 16)
+and sits under two keys, so `twins` does not pair it and only `unset` finds it. Both binaries passed
+every test: neither test draws splats, so the wrong programs never ran. Five compute pipelines have
+now been seen compiled this way, four of them the skinning pass and the splat sort's three passes,
+each wrong program 3 registers late. The day's two checks left 37 archive sets each (1,142 and
+1,112 compute programs); three of those 74 binaries' archives held a wrong program, and only the
+skinning one failed a test. The fault is the compiler's, not the skinning shader's; it surfaced in
+the skinning pass because every renderer builds it and tests that draw skinned characters check
+what it writes.
+
+**Rate.** Fresh archives, one per process. Each process creates pipelines as below (a throwaway
+probe, `zz_pipeline_probe.rs`, not committed: the skinning pipeline from the renderer's source and
+compile options, which gives the clean program byte for byte, or `Renderer::new`, which creates the
+renderer's pipelines on threads), and the archive is then searched for the skinning pipeline's two
+programs (`stress.py`; each row one or two bench-lock holds, 2026-10-16 15:44 to 17:18, on AC power,
+Balanced plan; the busy loops are Python processes spinning for the whole hold; of the last four
+holds three began with the CPU 10 to 21% busy before their loops started, the last with 71%, other
+tracks building; each run's summary line is in `out/skinflake/stress-rows.txt`):
+
+| What each process does | Busy loops | Processes | Skinning compiles | Wrong |
+|---|---:|---:|---:|---:|
+| 3 devices, each creates the skinning pipeline on 2 threads at once | 0 | 20 | 60 | 0 |
+| 8 devices, 4 threads each (39 processes failed for want of device memory) | 0 | 150 | 888 | 0 |
+| 3 devices, a renderer on each, created at once | 0 | 60 | 180 | 0 |
+| 4 devices, 4 threads each, the skinning pipeline only | 16 | 150 | 600 | 0 |
+| 3 devices, a renderer on each, created at once | 16 | 180 | 540 | 2 |
+| 3 devices, the renderers created one after another | 16 | 120 | 360 | 1 |
+| 1 device, a renderer | 16 | 660 | 660 | 1 |
+
+With the renderer's pipelines under load, 4 of 1,560 compiles of the skinning pipeline came out
+wrong (about 1 in 400), the same program each time, with one device as with three, the devices'
+renderers created at once or in turn: one device is enough. The other rows gave none, but too few
+compiles to tell them apart from that: at that rate, 600 compiles alone under load would give about
+1.5 wrong ones (none with a chance of about 0.2), 948 alone on the idle machine about 2.4 (0.09) and
+180 with the renderer on the idle machine about 0.5 (0.6). Fisher's exact test (one-sided) gives
+p = 0.27 for alone against beside the renderer's pipelines under load, and p = 0.19 for idle against
+loaded. So neither CPU load nor the other compiles is shown to matter, and what inside the driver
+does it is not known. With the wrong program in one device's archive alone, `twins` has nothing to
+compare, which is why `unset` exists: it found each of the four.
+
+**Validation.** The failing replay under the Khronos layer with synchronization validation
+(`tools/vk_validate.py`; core checks and synchronization enabled, as the layer's own message says)
+failed as without it and logged only section 9's messages: 186 `VUID-StandaloneSpirv-None-10684`
+and 72 `Undefined-Value-ShaderOutputNotConsumed` warnings; with the entry made to miss it passed
+(279 and 108 of the same: that run draws the second half of the test). No synchronization hazard.
+
+**What changes.** The engine is unchanged: validation reports only section 9's known messages and no
+hazard, and with every pipeline from one archive the engine renders correctly with the clean program
+and wrongly with the wrong one, so the fault is in what the driver compiled. Report B of section 10
+gains the registers and the replays of the bisection table's last two rows. The tools:
+
+- `python tools/amd_vkcache.py unset DIR_OR_FILES...` lists the compute programs whose straight-line
+  start reads SGPRs past those the hardware sets for them (user SGPRs, then the enabled workgroup id
+  and group size, by the PAL metadata), and `twins` the pipelines compiled to more than one program;
+  both exit with status 1 when they find any, and every command exits with 2 when a path is missing
+  or an archive cannot be read, so a scan does not count those as findings.
+  `tools/tests/test_amd_vkcache.py` checks them on archives the test writes in the driver's layout,
+  with the skinning pipeline's metadata and the start of both its programs.
+- `tools/gpu_matrix.py`: when a test of a binary failed, hung or crashed and that binary's archive
+  holds either, the binary's JSON record has `driver` and each such test's message ends with "[this
+  run's driver archive of the binary holds 1 compute program(s) compiled for registers the hardware
+  does not set (python tools/amd_vkcache.py unset DIR) ...; whether the failing test uses them is
+  not checked; docs/bench/gpu-matrix.md 12]", which the `gpus` step's error repeats
+  (`tools/tests/test_gpu_matrix.py`, a mocked run whose binaries' archives hold a wrong program
+  alone, a pipeline with two programs, and clean programs). The note is context, not a cause. A
+  binary runs all its tests in one process with one archive, so nothing links a failing test to the
+  pipeline the driver got wrong; and in the day's two checks three binaries' archives held a wrong
+  program while only one of those binaries failed (above). A failing test that does not use that
+  pipeline needs a cause of its own. This run's failure would have carried the note in the check's
+  report; the step's verdict is unchanged.
+
+**Reproduce** (the R1 laptop; scripts and logs in its ignored `out/skinflake/`):
+
+```sh
+python tools/amd_vkcache.py unset out/skinflake/archives/failing   # exit 1: .parc 52, s6 and s5
+python tools/amd_vkcache.py seed out/skinflake/archives/failing out/skinflake/x 1E6AF6FF4C2B44AD
+AMD_VK_PIPELINE_CACHE_PATH=out/skinflake/x AMORIS_BACKEND=vulkan AMORIS_ADAPTER=780m \
+  target/release/deps/scene_changes-bc92338d6f208201.exe   # master's binary: FAILED
+# the same from a new directory seeded with c378cf50 as a last argument: passes
+python out/skinflake/scripts/surgical.py only-wrong .parc:52 3   # the wrong entry only: passes
+python -m unittest tools/tests/test_amd_vkcache.py tools/tests/test_gpu_matrix.py
+```
