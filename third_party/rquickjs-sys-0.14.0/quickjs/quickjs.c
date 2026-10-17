@@ -48,7 +48,9 @@
 #include "libregexp.h"
 #include "dtoa.h"
 
-#if defined(EMSCRIPTEN) || defined(_MSC_VER)
+/* Amoris P12: clang-cl defines _MSC_VER but supports labels as values, so it dispatches with a
+   computed goto as clang and GCC do elsewhere; MSVC's cl and WebAssembly keep the switch. */
+#if defined(EMSCRIPTEN) || (defined(_MSC_VER) && !defined(__clang__))
 #define DIRECT_DISPATCH  0
 #else
 #define DIRECT_DISPATCH  1

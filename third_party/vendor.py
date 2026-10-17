@@ -1,5 +1,5 @@
 """Builds third_party/rquickjs-sys-0.14.0/: rquickjs-sys 0.14.0 from crates.io with quickjs-ng PR
-#1421 and the script host's patches P1 to P11 applied (docs/spec/architecture.md 7.5,
+#1421 and the script host's patches P1 to P12 applied (docs/spec/architecture.md 7.5,
 docs/spec/script-sandbox.md 4.2). `.cargo/config.toml`'s [patch.crates-io] points rquickjs at the
 result, which is committed, so a fresh checkout builds without running this.
 
@@ -55,6 +55,10 @@ PATCHES = [
     # JS_EvalInStackFrame resolves names from that scope: an evaluation sees the block-scoped
     # locals in scope, not the deepest block's from its first variable.
     ("p11-debug-eval-scope.diff", "."),
+    # P12 (Pioneer, 2026-10-15; docs/bench/script.md, section 7): computed-goto dispatch under
+    # clang-cl, which defines _MSC_VER (that turned it off) but supports labels as values. MSVC's
+    # cl and wasm32 (EMSCRIPTEN, set by build.rs) keep the switch.
+    ("p12-direct-dispatch.diff", "."),
 ]
 
 HERE = Path(__file__).resolve().parent
