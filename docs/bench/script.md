@@ -229,19 +229,21 @@ The phases of the second run are within 6 % of the first's (native `prepare`, `r
 6. **For charter 8, item 1 (a JIT backend).** Four fifths, the `run` share, is an upper bound on
    what a JIT could win back, not the interpreter's share: `run` also holds the natives of item 2.
    By the spike's per-call cost of the engine's `Math.sin` (120 to 134 ns with clang-cl,
-   script-native.md, "Math per call"), the 3,000 `sin` and `cos` calls take about 0.4 ms, which
-   puts interpretation nearer two thirds of the tick, less what `emit` and `fill` take. Section
-   7.2 later measured that closure in this hardened context at 88 to 89 ns a call over its loop
-   (quietly; 88 to 91 under load), which makes the calls about 0.27 ms and leaves interpretation,
-   `emit` and `fill` together about 70 % of the tick (2.8 ms of `run` less 0.27, of 3.6); since
-   the `Math` change the calls cost 33 to 36 ns, about 0.10 ms. Nor is the
-   boundary's fifth independent of the engine: `prepare` runs the prelude's JavaScript (`__context`,
-   `__query`) and builds the engine's typed arrays, and it already differs by more than a third
-   between this engine's two builds. Splitting `run` (the time inside natives, or a probe making the
-   rule's native calls without its arithmetic) would measure the interpreter's share before a JIT is
-   tried. The browser's own JavaScript engine cannot be tried with this module (QuickJS-ng is
-   compiled into it): that needs the same rule and the same `pocket` batch API on V8 itself, timed
-   against the same twin, the next measurement this baseline makes comparable.
+   script-native.md, "Math per call"), the 3,000 `sin` and `cos` calls take about 0.4 ms, which puts
+   interpretation nearer two thirds of the tick, less what `emit` and `fill` take. Section 7.2 later
+   measured that closure in this hardened context at 88 to 89 ns a call over its loop (quietly; 88
+   to 91 under load), which makes the calls about 0.27 ms and leaves interpretation, `emit` and
+   `fill` together about 70 % of the tick (2.8 ms of `run` less 0.27, of 3.6); since the `Math`
+   change the calls cost 33 to 36 ns, about 0.10 ms. Nor is the boundary's fifth independent of the
+   engine: `prepare` runs the prelude's JavaScript (`__context`, `__query`) and builds the engine's
+   typed arrays, and it already differs by more than a third between this engine's two builds.
+   Splitting `run` (the time inside natives, or a probe making the rule's native calls without its
+   arithmetic) would measure the interpreter's share before a JIT is tried; section 8 measures it
+   (quiet re-measurement, 2026-10-16): interpretation is 67 to 68 % of `run` and 51 to 52 % of the
+   tick, and the natives' 0.83 to 0.85 ms is nearly all the events' conversion. The browser's own
+   JavaScript engine cannot be tried with this module (QuickJS-ng is compiled into it): that needs
+   the same rule and the same `pocket` batch API on V8 itself, timed against the same twin, the next
+   measurement this baseline makes comparable.
 
 Candidates this baseline can measure next (none is done here; section 7 has since done the
 first two):
@@ -513,7 +515,7 @@ which its `web` module ran first right after Node's runs (section 4, item 4).
    4.02 ms; section 3's quiet figures were 3.6 ms and 3.9 to 4.2. In WebAssembly it is 2.93 to
    3.02 ms (Chrome's worker 2.93 and 2.95), its p99 3.3 to 3.6 ms. All are inside `tick.rules`
    (4.2 ms), `tick.rules.p99` (6.5 ms) and `web.tick.rules` (8.3 ms). budgets.md keeps section 3's
-   figures, the baseline before these changes, unless the owner takes this run as the new one.
+   figures, the baseline before these changes: the owner kept them on 2026-10-16 (charter 4.2).
 
 ### 7.4 What changed in the engine
 
@@ -642,3 +644,195 @@ run), then the first `qjs_bench.py run` once more into `out/qjs/quiet-repeat` (q
 the `explore/qjs` worktree with `--out` (and the run directories) in the main checkout's `out/qjs`.
 Its output replaced 7.2's tables and the numbers of 7.3; section 3's tables and budgets.md's figures
 change only if the owner takes the web run as the new baseline.
+
+## 8. The split of `run`: interpretation, the natives and the step profiler (quiet re-measurement)
+
+- Date: 2026-10-15 (the provisional run); timings re-measured on a quiet machine 2026-10-16. Branch
+  `explore/scriptprof`. Charter 8, item 1 (a JIT backend), 4.2 and 4.3 (the step profiler and P13,
+  dated 2026-10-16). Section 4, item 6 asked for this split: `run`, four fifths of the call, held
+  the rule's native calls as well as interpretation.
+- **The timings are a quiet re-measurement** (2026-10-16 03:08 to 03:10, 8.5's protocol): the other
+  tracks had finished, no build, browser or other timing ran, and the run held the machine-wide
+  bench lock throughout (taken without a wait). Before the run, before each round and after it
+  (`tools/machine_conditions.py`): on AC power, Balanced plan; CPU load 3.3 to 7.9 % (round 1's 7.9,
+  the rest 3.3 to 4.1); the RTX 5060 idle (the workload is CPU only), 55 to 62 C. They replace the
+  provisional run of 2026-10-15 19:19 to 19:21, taken while other agents built and timed (CPU load
+  3.9 to 9.6 % before the rounds, except round 2's 34.9 %; raw files `out/scriptprof/split-wave/`).
+  Against it no conclusion changed: at the medians every share moved by at most 0.1 point and the
+  tick by -0.5 % (3,359 against 3,375 us), `run` not at all (2,574 us); the loaded round 2 (a 3,662
+  us tick, p99 5.0 ms) does not recur; the profiler's cost a sample came out narrower
+  (0.18 to 0.25 us against 0.16 to 0.63, 8.3 item 5), and timing the natives cost less in place (4.3
+  ns a reading against 5.3). The quiet run is not a calibrated run (budgets.md 7.5). Steps, call
+  counts and digests are exact; the profile is sampled (every 100 steps on average), so its shares
+  are estimates, and deterministic: the same in every round of both runs.
+
+### 8.1 Method
+
+- **natives** (new, `rules_bench --variants rules,natives,profiled`): `rules` with the host's
+  natives timed (`ScriptHost::time_natives`, before the swap). A program instantiated while a host
+  times natives gets timed copies of them: the engine's `Math` C functions, `Math.hypot`, every
+  `pocket:host` native and the console. Each outermost native call reads the clock before and after
+  its body and adds the difference to a per-thread sum by kind (`math`; `events` for `emit`,
+  `events` and `intent`; `rng`; `world`; `other`); `run_system` adds what `run` spent inside them to
+  `PhaseTimes.natives`. Untimed programs run the untimed natives. The clock is the processor's
+  time-stamp counter (`RDTSC`), scaled to milliseconds against the wall clock over 200 ms, since a
+  native call takes tens of nanoseconds and the wall clock (`QueryPerformanceCounter`) has a 100 ns
+  tick on Windows. A timed window holds part of a clock reading besides the body. Each round
+  measures a reading back to back (a million, five times), and the tables give the natives raw and
+  less one such reading a call, as bounds: the second over-subtracts when a reading costs less in
+  place, as `run`'s growth with timed natives says it does (8.2). With timed natives the world is
+  the same: every round's final digest is `e13690add0b3a196` in all three variants, and
+  `tests/rules.rs` checks the twin's digest at every tick and that a clock advancing one unit per
+  reading counts each native call of `run` once (2,992 `Math` calls, five events and one `rng.fill`
+  a tick in this workload).
+- **What counts as what.** "Natives" is the time inside the bodies of the host's natives.
+  "Interpretation" is the rest of `run` (the untimed `rules` variant's, same round; a range, from
+  the natives' two bounds): the bytecode interpreter, QuickJS-ng's own builtins
+  (`Array.prototype.push`, about 4,000 calls a tick; `Math.sqrt` and `Math.min`, about 1,000 each;
+  typed array reads and writes), and the calls into the natives on the script's side (QuickJS-ng's
+  call of a C function, rquickjs's trampoline for the five events and the fill), which a JIT would
+  replace by its own calls into the same natives.
+- **profiled**: `rules` under the step profiler (docs/spec/debugger.md 14) from the round's first
+  tick, a sample every 100 steps on average; its cost is the tick against `rules` in the same
+  round.
+- Per round (five, the order rotating): `rules`, `natives` and `profiled`, each a fresh world, 120
+  warm-up ticks and 600 timed ones, as section 2; the medians are of the 600 ticks. Machine
+  conditions (`tools/machine_conditions.py`) before the run, each round and after it. A share quoted
+  for the run is the median of the rounds' own shares; a time, the median of the rounds' times,
+  interpretation being the median `run` less the median natives, so the parts add up.
+
+### 8.2 Results
+
+`python tools/rules_bench.py split out/scriptprof/quiet/split --rounds 5` inside
+`bench_lock.py run --label quiet-scriptprof`, 2026-10-16 03:08 to 03:10; the release `rules_bench`
+rebuilt from this branch at 4a82640c. Per round, us (the medians of 600 ticks):
+
+| Round | First | `rules` tick | `rules` `run` | `natives` `run` | Natives, raw | Native calls | Reading, ns | Natives, less readings | Interpretation | Of `run` | Of the tick |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | rules | 3,332 | 2,549 | 2,600 | 843 | 2,998 | 7.2 | 822 | 1,706 to 1,728 | 66.9 to 67.8 % | 51.2 to 51.9 % |
+| 2 | natives | 3,416 | 2,588 | 2,579 | 846 | 2,998 | 7.2 | 824 | 1,742 to 1,763 | 67.3 to 68.1 % | 51.0 to 51.6 % |
+| 3 | profiled | 3,370 | 2,574 | 2,593 | 854 | 2,998 | 7.2 | 832 | 1,720 to 1,742 | 66.8 to 67.7 % | 51.1 to 51.7 % |
+| 4 | rules | 3,359 | 2,553 | 2,610 | 854 | 2,998 | 7.3 | 832 | 1,699 to 1,721 | 66.5 to 67.4 % | 50.6 to 51.2 % |
+| 5 | natives | 3,354 | 2,576 | 2,625 | 869 | 2,998 | 7.2 | 847 | 1,708 to 1,729 | 66.3 to 67.1 % | 50.9 to 51.6 % |
+
+Medians of the rounds: `run` 2,574 us of a 3,359 us tick; the natives 832 to 854 us; interpretation,
+the rest of `run`, 1,720 to 1,742 us. The medians of the rounds' shares: interpretation 66.8 to
+67.7 % of `run` and 51.0 to 51.6 % of the tick.
+
+The natives by kind, us a tick less one reading a call to raw (calls a tick); `world` and `other`
+had none:
+
+| Round | `math` | `events` | `rng` |
+|---|---|---|---|
+| 1 | 25.3 to 46.8 (2,992) | 793 (5) | 3.2 (1) |
+| 2 | 23.0 to 44.5 (2,992) | 798 (5) | 3.5 (1) |
+| 3 | 25.1 to 46.6 (2,992) | 803 (5) | 3.3 (1) |
+| 4 | 24.9 to 46.7 (2,992) | 804 (5) | 3.5 (1) |
+| 5 | 24.5 to 46.0 (2,992) | 819 (5) | 3.3 (1) |
+
+The `rules` phases (medians of the rounds, us): `prepare` 263, `run` 2,574, `diff` 140, `apply` 333;
+the tick's p99 3.7 to 4.0 ms by round. Timing the natives made `run` 26 us slower at the median of
+the rounds (1.0 %; by round +51, -9, +18, +56 and +49 us, a spread as wide as the effect): at that
+median, two readings a call and their bookkeeping cost at most 4.3 ns a reading in place, against
+7.2 ns back to back, so the lower bound of the natives over-subtracts (by at least 8 us of `math`'s
+2,992 calls).
+
+The step profiler at 625 samples a tick (interval 100):
+
+| Round | `rules` tick | `profiled` tick | Cost a sample, us |
+|---|---|---|---|
+| 1 | 3,332 | 3,482 | 0.24 |
+| 2 | 3,416 | 3,530 | 0.18 |
+| 3 | 3,370 | 3,523 | 0.25 |
+| 4 | 3,359 | 3,499 | 0.22 |
+| 5 | 3,354 | 3,508 | 0.25 |
+
+Its profile was the same in every round, and the same as the provisional run's, a deterministic
+estimate from 450,061 samples of `damage` over the 720 ticks (one every 100 steps on average), by
+function self (and total) samples: the prelude's `row` (`rows.row`, its binary search) 53.5 %
+(53.5), `run` 41.7 % (100), `driftY`, `driftX` and `wobble` 1.6 % each; by line, `row`'s four loop
+lines (pocket.ts 319, 322, 323, 324) 53.5 % together, then `rules.ts:60` (the `amount` line: four
+calls and a conditional) 8.1 % and `rules.ts:78` (the regeneration line: a conditional and
+`Math.min`) 4.8 %.
+
+### 8.3 What the figures say
+
+1. **Interpretation is about two thirds of `run` and half of the tick.** Of the untimed rule's
+   `run` (2.57 ms at the median of the rounds, in a 3.36 ms tick), 0.83 to 0.85 ms is inside the
+   natives and 1.72 to 1.74 ms is the rest: by the medians of the rounds' shares, 67 to 68 % of
+   `run` (66.3 to 68.1 % by round) and 51 to 52 % of the tick (50.6 to 51.9 %). Section 4, item
+   6's estimate (interpretation, `emit` and `fill` together about 70 % of the tick, made on an older
+   build with `Math` as closures) is low: they take 75 to 76 % here; apart, interpretation is half
+   of the tick.
+2. **The natives' time is the events, not `Math`.** The five `ctx.emit` calls take 0.79 to 0.82 ms
+   a tick: four `combat.damaged` events, which carry the tick's hits (up to 250 each, in four
+   number arrays), about 0.2 ms each, and one small `combat.died` (two arrays of about 15 ids). The
+   time is the conversion of each event's data: a property lookup through QuickJS-ng's API, by the
+   index as a string, for every element, then a JSON serialization to check its size. The 2,992
+   `Math.sin` and `Math.cos` calls take 25 to 47 us inside their bodies (8 to 16 ns a call, the
+   clock reading's correction being as large as the result; their whole cost over an empty loop is
+   33 to 36 ns, section 7.2, the rest being QuickJS-ng's call), and `rng.fill`'s 1,000 numbers 3.3
+   us. So the events' conversion is nearly a quarter of the tick, more than the boundary around the
+   call (`prepare`, `diff`, `apply`: 0.74 ms), and in this engine it can be cut without a JIT, by
+   reading the elements without a lookup by name each and sizing the data without serializing it.
+3. **For charter 8, item 1.** In this engine, what a faster interpreter could win back is at most
+   the interpretation: 1.72 to 1.74 ms of 3.36, half of the tick, so even an interpreter that cost
+   nothing would leave 1.62 to 1.64 ms (about 2.1 times faster). That bound is QuickJS-ng's own.
+   The rest, the host's natives (0.83 to 0.85 ms, nearly all the events' conversion) and the
+   boundary (0.74 ms), is not engine-independent: `prepare` runs the prelude's JavaScript and builds
+   QuickJS-ng's typed arrays (section 4, item 6), and the conversion reads the scripts' arrays
+   through QuickJS-ng's object API. Under V8 or the browser's engine, the candidates of charter 8,
+   item 1, both would be other code at a cost this split does not measure, so 2.1 times is not
+   their bound. The `Math` natives are negligible either way. The browser's own JavaScript engine
+   still needs the same rule on V8 itself (section 4, item 6).
+4. **Steps are not time.** The profile says where the budget's steps go: half of them are
+   `rows.row`'s binary search (about 33 steps a lookup on 1,000 rows, from the sampled profile),
+   since a step is a call or a jump and arithmetic costs none. Time is spread differently (the
+   events take a quarter of the tick in five steps). A system near its step budget is cut down by
+   its profile; a slow tick is found with the phases and this split.
+5. **The profiler's cost.** At 625 samples a tick it added 0.11 to 0.15 ms to a 3.33 to 3.42 ms tick
+   (3.3 to 4.6 %), 0.18 to 0.25 us a sample; a stack here is one to three frames deep.
+   `scripts.profile` aims at 20,000 samples per run, so its sampling costs about 4 to 5 ms a run
+   here. The provisional run's wider 0.16 to 0.63 us a sample (up to 11 % of the tick, about 13 ms a
+   run) was the shared machine's load. Its steps, digests and profile do not depend on the load.
+
+### 8.4 What changed in the engine
+
+- third_party: P13 (`patches/p13-branch-poll-pc.diff`; script-sandbox.md 4.2): a jump's interrupt
+  poll stores the frame's PC before the handler runs. pocket-script's tests, the web report natively
+  and in WebAssembly (pinned digests and steps) included, pass unchanged; with master's `quickjs.c`
+  (no P13) all of `tests/profile.rs` passes but `jumps_land_on_their_own_lines`. Stack
+  (tests/depth.rs at `max_call_depth`, release, through `Math.hypot`; 2026-10-15): 466,724 bytes
+  with P13 and the same without it on this branch's build (`out/scriptprof/depth-release.txt` and
+  `depth-release-no-p13.txt`); 7.4's 470,818 is another build's, one step of the bisection's 4 KiB
+  resolution away. The 1 MiB `stack_bytes` holds it with the 1.5 times margin (700,086). The
+  debugger runs on it: pocket-debug's tests (3 of 3) and pocket-app's `debug_agent` (4 of 4) and
+  `paused_host` (6 of 6) pass on a debug build of this branch.
+- pocket-script: the step profiler (`crate::profile`, debugger.md 14; it arms the counter with at
+  most 9,999 steps, so libregexp's direct call to the interrupt handler stops a call as without it,
+  script-sandbox.md 4.1) and the timed natives (`natives::timing`, `ScriptHost::time_natives`,
+  `PhaseTimes::native`, `native_calls` and `natives` by `NativeKind`). Without a recording profile
+  or timed natives a call does what it did, plus two thread-local reads per system call.
+- `rules_bench`: the `natives` and `profiled` variants (named in `--variants` only, so section 6's
+  protocol is unchanged); `tools/rules_bench.py split` and `split-table`.
+
+### 8.5 Re-measuring on a quiet machine
+
+From the worktree or checkout, with nothing else building (the output directory is the main
+checkout's ignored `out/`; about 2 minutes once the lock is free):
+
+```sh
+cargo build --release -p pocket-script --features transpile --example rules_bench
+python <bench_lock.py> run --label quiet-scriptprof -- python tools/rules_bench.py split \
+    <main checkout>/out/scriptprof/quiet/split --rounds 5
+python tools/rules_bench.py split-table <main checkout>/out/scriptprof/quiet/split
+```
+
+`split` verifies the script world against the twin in its first round, records the machine
+conditions before the run, each round and after it, and prints 8.2's tables (`split-table` prints
+them again). The 2026-10-16 re-measurement ran it from the `explore/scriptprof` worktree at
+4a82640c, the binary rebuilt first, into the main checkout's `out/scriptprof/quiet/split/` (its
+console output `out/scriptprof/quiet/split-run.txt`); round 1's check against the twin passed
+(`identical`, final digest `e13690add0b3a196`). Its output replaced 8.2's tables, the numbers of
+8.3, section 4 item 6's and those of charter 4.2's note of 2026-10-16. The provisional run's raw
+files are `out/scriptprof/split-wave/` and `out/scriptprof/split-wave.log`.
