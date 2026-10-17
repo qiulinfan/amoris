@@ -35,3 +35,7 @@ libm.workspace = true
 [[example]]
 name = "web_physics"
 crate-type = ["cdylib"]
+
+[[example]]
+name = "level_web"
+crate-type = ["cdylib"]
