@@ -702,6 +702,9 @@ impl Occlusion {
             }
             *st = Slot::Mapping;
             let state = slot.state.clone();
+            // wgpu invokes the callback synchronously when mapping is refused. It takes this
+            // mutex too, so no slot guard may span the map request (as in Picking::after_submit).
+            drop(st);
             slot.buffer
                 .slice(..)
                 .map_async(wgpu::MapMode::Read, move |r| {
@@ -738,6 +741,25 @@ impl Occlusion {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// wgpu reports a destroyed readback synchronously through both the map callback and its
+    /// validation scope. The callback must free its slot without waiting on the caller's mutex.
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn a_refused_readback_does_not_deadlock_its_slot() {
+        let Ok(gpu) = crate::gpu::Gpu::headless(crate::gpu::BackendChoice::from_env()) else {
+            eprintln!("no GPU: skipped");
+            return;
+        };
+        let mut occlusion = Occlusion::new(&gpu.device, OcclusionMode::Auto);
+        let state = occlusion.ring[0].state.clone();
+        occlusion.ring[0].buffer.destroy();
+        *state.lock().unwrap() = Slot::Copied;
+        let errors = gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
+        occlusion.after_submit();
+        assert_eq!(*state.lock().unwrap(), Slot::Free);
+        assert!(pollster::block_on(errors.pop()).is_some());
+    }
 
     fn stats(frame: u64, instances: u32, occluded: u64) -> OcclusionStats {
         OcclusionStats {
