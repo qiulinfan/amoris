@@ -46,6 +46,8 @@ export const build = system({
             loaded: ctx.voxels.get(v, 0, 0, 0),
             stone,
         });
+        const hud = ctx.single("UiText");
+        ctx.world.set(hud, "UiText", { text: `stone is ${stone}`, color: { x: 1, y: 0.5, z: 0, w: 1 } });
     },
 });
 
@@ -92,6 +94,7 @@ fn project() -> PathBuf {
                 {"name": "stone", "solid": true, "faces": ["b#stone", "b#stone", "b#stone"]},
                 {"name": "dirt", "solid": true, "faces": ["b#dirt", "b#dirt", "b#dirt"]}]}}},
         {"name": "Probe", "components": {"Probe": {}}},
+        {"name": "Hud", "components": {"UiText": {"text": "", "anchor": "bottom_left"}}},
         {"name": "Steve", "components": {
             "Transform": {"position": [3.5, 9.0, 3.5]},
             "Walker": {}}}
@@ -172,6 +175,9 @@ fn scripts_edit_volumes_and_a_walker_lands_on_them() {
         );
         assert_eq!(probe["Probe.hit_normal_y"], 1);
         assert_eq!(probe["Probe.loaded"], 2, "the cells file's block");
+        let hud = get(&mut g, "Hud", &["UiText.text", "UiText.color"]);
+        assert_eq!(hud["UiText.text"], "stone is 1", "scripts write UiText");
+        assert_eq!(hud["UiText.color"], json!([1.0, 0.5, 0.0, 1.0]), "{hud}");
         let v = volume(&g);
         assert_eq!(v.get([7, 4, 7]), 1);
         assert_eq!(

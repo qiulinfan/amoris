@@ -81,8 +81,9 @@ export default game({ components: [Crew, Tally, Log, Cargo], systems: [muster, l
 | `vec3({ x: 0, y: 0, z: 0 }, doc)`, `vec2`, `vec4`, `quat` | `{x, y, z}` | `Float64Array` each |
 | `str` | `string` | none |
 
-`components.d.ts` lists the engine components scripts can use (`Transform`, `Boat`, ...); `Model`,
-`Light`, ... are scene data only.
+`components.d.ts` lists the engine components scripts can use (`Transform`, `Boat`, `Walker`,
+`UiText`'s text, size, colour, offset and visibility, ...); `Model`, `Light`, ... are scene data
+only.
 
 ## Systems and queries
 
@@ -121,6 +122,26 @@ const r = ctx.rngFor(e).range(0, 1);                   // also ctx.rng, ctx.rngN
 Writes apply when `run` returns (none if it throws); `get`/`has`/`exists` see them, queries do not.
 `ctx.tick`, `ctx.dt`, `ctx.time`; `Math.random()` is the system's stream. Events: declare
 `events: ["crate."]`, read `ctx.events`.
+
+## Block volumes
+
+A `Voxels` entity holds a world of blocks in 16 x 16 x 16 chunks with a palette (index 0 is air);
+a scene loads its cells from a cells file (`"Voxels": {"source": "world.cells", "palette": [...]}`).
+The renderer meshes it and a `Walker` collides with its solid blocks
+([spec/voxels.md](spec/voxels.md)). Scripts read, edit and ray-cast it through `ctx.voxels`; edits
+apply when `run` returns, and the call's later reads see them:
+
+```ts
+const land = ctx.single("Land");                        // a project component on the volume
+const stone = ctx.voxels.block(land, "stone");          // palette index by name
+ctx.voxels.set(land, x, y, z, stone);                   // also fill(land, lo, hi, block)
+const hit = ctx.voxels.raycast(land, eye, dir, 5);      // {cell, normal, block, distanceM} | null
+```
+
+A first-person game declares `actions = "first_person"` under `[player]`: its seat `player` drives
+the `Walker` (`forward`, `strafe`, `yaw`, `pitch`, `run`, `slot`, and the one-tick pulses `jump`,
+`primary`, `secondary`), which rules read like any component; `amoris play <project> --walk` plays
+it from the keyboard and mouse. Example: `amoris-samples/blockcraft`.
 
 ## Players, intents and executors
 

@@ -495,6 +495,86 @@ fn wind_schema() -> Result<ComponentSchema, Problem> {
     )
 }
 
+fn ui_text_schema() -> Result<ComponentSchema, Problem> {
+    let d = UiText::default();
+    schema(
+        "UiText",
+        UiText::VERSION,
+        "Text on the screen (its anchor and world offset stay as the scene sets them).",
+        vec![
+            (
+                "text",
+                FieldType::Str,
+                FieldValue::Str("".into()),
+                "The text.",
+            ),
+            (
+                "size",
+                FieldType::F64,
+                FieldValue::F64(d.size),
+                "Height of a line, logical pixels.",
+            ),
+            (
+                "color",
+                FieldType::Vec4,
+                FieldValue::Vec4(d.color),
+                "sRGB colour with alpha.",
+            ),
+            (
+                "offset",
+                FieldType::Vec2,
+                FieldValue::Vec2(d.offset),
+                "Logical pixels from the anchor (+x right, +y down).",
+            ),
+            (
+                "visible",
+                FieldType::Bool,
+                FieldValue::Bool(true),
+                "Whether it is drawn.",
+            ),
+        ],
+    )
+}
+
+fn ui_text_fns() -> EngineFns<UiText> {
+    fn read(u: &UiText) -> ProjectValues {
+        let c = u.color;
+        ProjectValues {
+            nums: [
+                u.size,
+                c[0],
+                c[1],
+                c[2],
+                c[3],
+                u.offset[0],
+                u.offset[1],
+                bit(u.visible),
+            ]
+            .into(),
+            strs: Box::new([u.text.as_str().into()]),
+        }
+    }
+    fn write(u: &mut UiText, v: &ProjectValues) {
+        let n = &v.nums;
+        u.size = n[0];
+        u.color = [n[1], n[2], n[3], n[4]];
+        u.offset = [n[5], n[6]];
+        u.visible = n[7] != 0.0;
+        if let Some(t) = v.strs.first() {
+            u.text = t.to_string();
+        }
+    }
+    EngineFns {
+        read,
+        write,
+        make: |v| {
+            let mut u = UiText::default();
+            write(&mut u, v);
+            u
+        },
+    }
+}
+
 fn wind_fns() -> EngineFns<Wind> {
     EngineFns {
         read: |w| nums(&[w.from_deg, w.speed, w.gust, w.gust_period, w.gust_length]),
@@ -549,7 +629,7 @@ pub fn install_script_components(world: &mut World) -> Result<(), Problem> {
     ComponentRegistry::register::<Environment>(world, None)?;
     ComponentRegistry::register::<Splat>(world, None)?;
     ComponentRegistry::register::<Animator>(world, None)?;
-    ComponentRegistry::register::<UiText>(world, None)?;
+    ComponentRegistry::register::<UiText>(world, Some(ui_text_schema()?))?;
     ComponentRegistry::register::<UiBar>(world, None)?;
     ComponentRegistry::register::<AudioSource>(world, None)?;
     ComponentRegistry::register::<ParticleEmitter>(world, None)?;
@@ -569,6 +649,7 @@ pub fn install_script_components(world: &mut World) -> Result<(), Problem> {
     register_engine::<Boat>(world, boat_fns())?;
     register_engine::<Wind>(world, wind_fns())?;
     register_engine::<Walker>(world, walker_fns())?;
+    register_engine::<UiText>(world, ui_text_fns())?;
     Ok(())
 }
 
