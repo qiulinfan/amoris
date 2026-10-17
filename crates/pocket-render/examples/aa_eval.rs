@@ -3,7 +3,8 @@
 //! check scene (`demo::aa_scene`) and samples/anim's skinned hero.
 //!
 //! `cargo run --release -p pocket-render --example aa_eval -- OUT [--size 960x540]
-//!  [--only converge,motion,skinned,gtao,bench] [--bench-sizes 1600x900,2560x1440] [--frames 200]`
+//!  [--only converge,motion,skinned,gtao,bench,upscale,upscale-tune]
+//!  [--bench-sizes 1600x900,2560x1440] [--frames 200] [--settle S] [--scale 0.5,0.67,0.77,1.0]`
 //!
 //! Quality is measured on the HDR image the display transform reads (`Renderer::capture_hdr`),
 //! tone mapped here exactly as post.wgsl does (exposure, AgX; bloom is off in the scene; no
@@ -20,7 +21,15 @@
 //! - `skinned`: the hero's clip at twice its speed, the camera still; TAA with and without the
 //!   skinned vertices' own motion, around the hero.
 //! - `gtao`: images with and without GTAO, and the visibility it applied.
-//! - `bench`: GPU pass times (timestamps) and submit-to-idle wall time per option, provisional.
+//! - `bench`: GPU pass times (timestamps) and submit-to-idle wall time per option, provisional;
+//!   with `--scale`, one-sample TAA and MSAA with TAA at each render scale too. `--settle S` waits
+//!   S seconds after each configuration's renderer is created, before its warm-up frames.
+//! - `upscale` (docs/bench/taau.md): TAA at each render scale of `--scale` (the opaque pass at that
+//!   share of the output's width and height, TAA upscaling): the still scene's convergence over 128
+//!   frames, its regions, and the motion checks, all against the output-resolution references;
+//!   `upscale-tune` varies the upscaling's options one at a time: the clip box, the wider box where
+//!   nothing moved (on by default, off here), the reconstruction kernel's sharpness, the share's
+//!   weighting and the filtering for the output's pixel.
 //!
 //! Writes `OUT/aa_eval.json` and small PNG strips.
 
@@ -31,7 +40,7 @@ use std::time::Instant;
 use glam::{Mat4, Vec3, Vec4};
 use pocket_assets::frame::{AnimView, InstanceUpdate, Look, Pose, RenderFrame};
 use pocket_render::demo::{AA_MODEL, aa_camera, aa_cube_position, aa_model, aa_scene};
-use pocket_render::taa::{TaaMode, TaaTuning};
+use pocket_render::taa::{TaaMode, TaaTuning, jitter_phases};
 use pocket_render::{
     Antialiasing, AoNormals, BackendChoice, CameraState, Gpu, Gtao, OcclusionMode, PrepassMode,
     Renderer,
@@ -299,6 +308,11 @@ fn hero_frame(tick: u64, clip: &str, full: bool) -> InstanceUpdate {
 
 impl Setup<'_> {
     fn renderer(&self, aa: Antialiasing, gtao: Gtao) -> Renderer {
+        self.renderer_at(aa, gtao, 1.0)
+    }
+
+    /// A renderer at render scale `scale` (below 1 the opaque pass draws smaller and TAA upscales).
+    fn renderer_at(&self, aa: Antialiasing, gtao: Gtao, scale: f32) -> Renderer {
         let mut r = Renderer::new(
             self.gpu,
             wgpu::TextureFormat::Rgba8UnormSrgb,
@@ -310,6 +324,7 @@ impl Setup<'_> {
         r.set_prepass(PrepassMode::Off);
         r.set_antialiasing(aa);
         r.set_gtao(gtao);
+        r.set_render_scale(scale);
         r.add_model(AA_MODEL, &aa_model());
         if let Some(hero) = self.hero {
             r.add_model(HERO, hero);
@@ -450,8 +465,35 @@ fn converge(s: &Setup, out: &Path) -> Value {
         results.insert(name.clone(), entry);
         finals.insert(name.clone(), display(&last, s.w, s.h, 0.0));
     }
-    // Crops: the fence and wires, the chrome spheres, the slab against the sky.
-    let regions = [
+    let mut by_region = BTreeMap::new();
+    for (label, rect) in regions(s) {
+        let mut tiles = Vec::new();
+        let mut row = BTreeMap::new();
+        for m in MODES {
+            tiles.push(crop(&finals[m.name()], s.w, rect, 2));
+            row.insert(
+                m.name(),
+                psnr(&finals[m.name()], &ref_disp, s.w, Some(rect)),
+            );
+        }
+        tiles.push(crop(&ref_disp, s.w, rect, 2));
+        strip(&out.join(format!("converge-{label}.png")), &tiles);
+        by_region.insert(
+            label,
+            json!({"rect": [rect.0, rect.1, rect.2, rect.3], "psnr_frame64": row}),
+        );
+    }
+    json!({
+        "reference": format!("{REFERENCE_FRAMES} frames, 1 sample, Halton (2,3) jitter over the pixel"),
+        "strip_order": ["off", "msaa", "taa", "msaa+taa", "reference"],
+        "modes": results,
+        "regions": by_region,
+    })
+}
+
+/// Crops: the fence and wires, the chrome spheres, the slab against the sky.
+fn regions(s: &Setup) -> [(&'static str, Rect); 3] {
+    [
         ("fence", fence_rect(s)),
         (
             "spheres",
@@ -475,30 +517,205 @@ fn converge(s: &Setup, out: &Path) -> Value {
                 0,
             ),
         ),
-    ];
+    ]
+}
+
+/// The name of TAA at render scale `scale`.
+fn scaled(scale: f32) -> String {
+    format!("taa x{scale}")
+}
+
+/// Upscaling (docs/bench/taau.md): TAA at each render scale of `scales` (the opaque pass at that
+/// share of the output's width and height) against the output-resolution references, with MSAA at
+/// the output's size for comparison. The still scene's convergence over 128 frames, its regions at
+/// frame 128, and both averaged over the last jitter cycle up to frame 128; then the motion checks
+/// of [`motion`]. With `tune`, at each scale below 1 the upscaling's options are varied one at a
+/// time (the clip box, the wider box where nothing moved, the kernel's sharpness, the share's
+/// weighting, the filtering for the output's pixel), and MSAA with TAA runs at that scale.
+fn upscale(s: &Setup, out: &Path, scales: &[f32], tune: bool) -> Value {
+    let reference = s.reference(0, false, Pan::Still, None);
+    let ref_disp = display(&reference, s.w, s.h, 0.0);
+    let checkpoints = [1u32, 2, 4, 8, 16, 24, 32, 48, 64, 96, 128];
+    let t = TaaTuning::default;
+    let mut variants: Vec<(String, Antialiasing, TaaTuning, f32)> =
+        vec![("msaa".into(), Antialiasing::Msaa, t(), 1.0)];
+    for &scale in scales {
+        variants.push((scaled(scale), Antialiasing::Taa, t(), scale));
+    }
+    if tune {
+        let sweep: [(&str, TaaTuning); 8] = [
+            (
+                "sharpness 2.29",
+                TaaTuning {
+                    upscale_sharpness: 2.29,
+                    ..t()
+                },
+            ),
+            (
+                "sharpness 6",
+                TaaTuning {
+                    upscale_sharpness: 6.0,
+                    ..t()
+                },
+            ),
+            (
+                "sharpness 8",
+                TaaTuning {
+                    upscale_sharpness: 8.0,
+                    ..t()
+                },
+            ),
+            (
+                "gamma 1.25",
+                TaaTuning {
+                    upscale_gamma: 1.25,
+                    ..t()
+                },
+            ),
+            (
+                "gamma 2",
+                TaaTuning {
+                    upscale_gamma: 2.0,
+                    ..t()
+                },
+            ),
+            (
+                "no still gamma",
+                TaaTuning {
+                    upscale_still_gamma: 0.0,
+                    ..t()
+                },
+            ),
+            (
+                "share not weighted",
+                TaaTuning {
+                    upscale_weight: false,
+                    ..t()
+                },
+            ),
+            (
+                "no texture lod",
+                TaaTuning {
+                    texture_lod: false,
+                    ..t()
+                },
+            ),
+        ];
+        for &scale in scales.iter().filter(|s| **s < 1.0) {
+            for (label, tuning) in sweep {
+                variants.push((
+                    format!("{} ({label})", scaled(scale)),
+                    Antialiasing::Taa,
+                    tuning,
+                    scale,
+                ));
+            }
+            variants.push((
+                format!("msaa+{}", scaled(scale)),
+                Antialiasing::MsaaTaa,
+                t(),
+                scale,
+            ));
+        }
+    }
+    let mut results = BTreeMap::new();
+    let mut finals = BTreeMap::new();
+    // The still image's PSNR, whole and per region, averaged over the last full jitter cycle
+    // before the last frame (a single frame lands wherever in its cycle it happens to).
+    let mut cycle_means: BTreeMap<String, (f64, BTreeMap<&str, f64>)> = BTreeMap::new();
+    let rects = regions(s);
+    let frames = *checkpoints.last().unwrap_or(&128);
+    for (name, aa, tuning, scale) in &variants {
+        let mut r = s.renderer_at(*aa, Gtao::Off, *scale);
+        r.taa_mut().tuning = *tuning;
+        s.apply(&mut r, 0, false, None);
+        let scene = r.scene_size();
+        let cycle = jitter_phases((s.w, s.h), scene).min(frames);
+        let mut curve = Vec::new();
+        let mut last = Vec::new();
+        let mut image = 0.0;
+        let mut by_rect: BTreeMap<&str, f64> = BTreeMap::new();
+        for f in 1..=frames {
+            let hdr = s.draw(&mut r, 0, Pan::Still);
+            let in_cycle = f > frames - cycle;
+            if checkpoints.contains(&f) || in_cycle {
+                let d = display(&hdr, s.w, s.h, 0.0);
+                let p = psnr(&d, &ref_disp, s.w, None);
+                if checkpoints.contains(&f) {
+                    curve.push(json!([f, p]));
+                    eprintln!("upscale {name} frame {f}: {:?}", curve.last());
+                }
+                if in_cycle {
+                    image += p / f64::from(cycle);
+                    for (label, rect) in rects {
+                        *by_rect.entry(label).or_default() +=
+                            psnr(&d, &ref_disp, s.w, Some(rect)) / f64::from(cycle);
+                    }
+                }
+            }
+            last = hdr;
+        }
+        eprintln!(
+            "upscale {name} last cycle (frames {}..={frames}): {image:.2} {by_rect:?}",
+            frames - cycle + 1
+        );
+        results.insert(
+            name.clone(),
+            json!({
+                "render_scale": scale,
+                "scene_size": format!("{}x{}", scene.0, scene.1),
+                "antialiasing": r.antialiasing().name(),
+                "psnr_by_frame": curve,
+                "jitter_cycle": cycle,
+                "psnr_last_cycle": image,
+            }),
+        );
+        cycle_means.insert(name.clone(), (image, by_rect));
+        finals.insert(name.clone(), display(&last, s.w, s.h, 0.0));
+    }
+    let shown: Vec<String> = ["msaa".to_owned()]
+        .into_iter()
+        .chain(scales.iter().map(|s| scaled(*s)))
+        .collect();
     let mut by_region = BTreeMap::new();
-    for (label, rect) in regions {
+    for (label, rect) in rects {
         let mut tiles = Vec::new();
         let mut row = BTreeMap::new();
-        for m in MODES {
-            tiles.push(crop(&finals[m.name()], s.w, rect, 2));
-            row.insert(
-                m.name(),
-                psnr(&finals[m.name()], &ref_disp, s.w, Some(rect)),
-            );
+        for (name, img) in &finals {
+            row.insert(name.clone(), psnr(img, &ref_disp, s.w, Some(rect)));
+        }
+        let cycle_row: BTreeMap<&String, f64> = cycle_means
+            .iter()
+            .map(|(name, (_, by_rect))| (name, by_rect.get(label).copied().unwrap_or(0.0)))
+            .collect();
+        for name in &shown {
+            if let Some(img) = finals.get(name) {
+                tiles.push(crop(img, s.w, rect, 2));
+            }
         }
         tiles.push(crop(&ref_disp, s.w, rect, 2));
-        strip(&out.join(format!("converge-{label}.png")), &tiles);
+        strip(&out.join(format!("upscale-{label}.png")), &tiles);
         by_region.insert(
             label,
-            json!({"rect": [rect.0, rect.1, rect.2, rect.3], "psnr_frame64": row}),
+            json!({"rect": [rect.0, rect.1, rect.2, rect.3], "psnr_frame128": row,
+                "psnr_last_cycle": cycle_row}),
         );
     }
+    // Every variant moves too when tuning (ghosting and stability decide as much as the still
+    // image).
+    let motion_variants: Vec<(String, Antialiasing, TaaTuning, f32)> = variants
+        .iter()
+        .filter(|v| tune || shown.contains(&v.0))
+        .cloned()
+        .collect();
+    let order: Vec<&str> = shown.iter().map(String::as_str).collect();
     json!({
-        "reference": format!("{REFERENCE_FRAMES} frames, 1 sample, Halton (2,3) jitter over the pixel"),
-        "strip_order": ["off", "msaa", "taa", "msaa+taa", "reference"],
-        "modes": results,
+        "reference": format!("{REFERENCE_FRAMES} frames at the output's size, 1 sample, Halton (2,3) jitter over the pixel"),
+        "strip_order": order.iter().chain(["reference"].iter()).collect::<Vec<_>>(),
+        "still": results,
         "regions": by_region,
+        "motion_pan": motion_of(s, out, Pan::Sideways, motion_variants.clone(), &order, "-upscale"),
+        "motion_still": motion_of(s, out, Pan::Still, motion_variants, &order, "-upscale"),
     })
 }
 
@@ -585,6 +802,29 @@ fn motion_variants() -> Vec<(String, Antialiasing, TaaTuning)> {
 /// and the last 12 frames' positions: ghosting), and the temporal PSNR of the step from the frame
 /// before.
 fn motion(s: &Setup, out: &Path, pan: Pan) -> Value {
+    let variants = motion_variants()
+        .into_iter()
+        .map(|(n, aa, t)| (n, aa, t, 1.0))
+        .collect();
+    let order = [
+        "msaa",
+        "taa",
+        "taa without object motion",
+        "taa (still gamma 3)",
+    ];
+    motion_of(s, out, pan, variants, &order, "")
+}
+
+/// [`motion`] for `variants` (name, mode, tuning, render scale); the strip at frame 60 shows the
+/// variants of `order` and is named for `tag`.
+fn motion_of(
+    s: &Setup,
+    out: &Path,
+    pan: Pan,
+    variants: Vec<(String, Antialiasing, TaaTuning, f32)>,
+    order: &[&str],
+    tag: &str,
+) -> Value {
     let label = if pan == Pan::Still { "still" } else { "pan" };
     let checkpoints = [30u64, 60, 90];
     let refs: Vec<(Vec<f32>, Vec<f32>)> = checkpoints
@@ -617,8 +857,8 @@ fn motion(s: &Setup, out: &Path, pan: Pan) -> Value {
     };
     let mut results = BTreeMap::new();
     let mut tiles_at_60 = BTreeMap::new();
-    for (name, aa, tuning) in motion_variants() {
-        let mut r = s.renderer(aa, Gtao::Off);
+    for (name, aa, tuning, scale) in variants {
+        let mut r = s.renderer_at(aa, Gtao::Off, scale);
         r.taa_mut().tuning = tuning;
         let mut rows = Vec::new();
         let mut before = Vec::new();
@@ -656,18 +896,12 @@ fn motion(s: &Setup, out: &Path, pan: Pan) -> Value {
         }
         results.insert(name.clone(), json!(rows));
     }
-    let order = [
-        "msaa",
-        "taa",
-        "taa without object motion",
-        "taa (still gamma 3)",
-    ];
     let mut tiles: Vec<_> = order
         .iter()
         .filter_map(|n| tiles_at_60.get(*n).cloned())
         .collect();
     tiles.push(crop(&refs[1].1, s.w, roi(60), 2));
-    strip(&out.join(format!("motion-{label}.png")), &tiles);
+    strip(&out.join(format!("motion{tag}-{label}.png")), &tiles);
     json!({
         "camera": if pan == Pan::Still { "still" } else { "pans 0.6 m/s sideways" },
         "objects": "cube 2.4 m/s sideways, torus spinning",
@@ -861,7 +1095,14 @@ fn gtao(s: &Setup, out: &Path) -> Value {
     })
 }
 
-fn bench(gpu: &Gpu, sizes: &[(u32, u32)], frames: u32, filter: &[String]) -> Value {
+fn bench(
+    gpu: &Gpu,
+    sizes: &[(u32, u32)],
+    frames: u32,
+    filter: &[String],
+    scales: &[f32],
+    settle: f64,
+) -> Value {
     let mut rows = Vec::new();
     for &(w, h) in sizes {
         let setup = Setup {
@@ -870,23 +1111,36 @@ fn bench(gpu: &Gpu, sizes: &[(u32, u32)], frames: u32, filter: &[String]) -> Val
             h,
             hero: None,
         };
-        for aa in MODES {
+        // Each mode at the output's size, then (with `--scale`) the TAA modes at each scale below 1.
+        let mut configs: Vec<(Antialiasing, f32)> = MODES.iter().map(|m| (*m, 1.0)).collect();
+        for &scale in scales.iter().filter(|s| **s < 1.0) {
+            configs.push((Antialiasing::Taa, scale));
+            configs.push((Antialiasing::MsaaTaa, scale));
+        }
+        for (aa, scale) in configs {
             for g in [
                 Gtao::Off,
                 Gtao::On(AoNormals::Depth),
                 Gtao::On(AoNormals::Target),
             ] {
                 if g == Gtao::On(AoNormals::Target)
-                    && aa != Antialiasing::Msaa
-                    && aa != Antialiasing::Taa
+                    && (scale < 1.0 || (aa != Antialiasing::Msaa && aa != Antialiasing::Taa))
                 {
                     continue;
                 }
-                let key = format!("{}:{}", aa.name(), g.name());
+                // `aa:gtao`, and `aa:gtao:scale` below a scale of 1 (`--bench-configs`).
+                let key = if scale < 1.0 {
+                    format!("{}:{}:{scale}", aa.name(), g.name())
+                } else {
+                    format!("{}:{}", aa.name(), g.name())
+                };
                 if !filter.is_empty() && !filter.contains(&key) {
                     continue;
                 }
-                let mut r = setup.renderer(aa, g);
+                let mut r = setup.renderer_at(aa, g, scale);
+                // A new renderer compiles its pipelines on every core; on R1 that burst lowers the
+                // GPU's clocks for a few seconds (AGENTS.md, `--settle`).
+                std::thread::sleep(std::time::Duration::from_secs_f64(settle));
                 setup.apply(&mut r, 0, false, None);
                 r.set_camera_override(Some(aa_camera(0, false)));
                 let target = gpu.device.create_texture(&wgpu::TextureDescriptor {
@@ -936,6 +1190,7 @@ fn bench(gpu: &Gpu, sizes: &[(u32, u32)], frames: u32, filter: &[String]) -> Val
                     "size": format!("{w}x{h}"),
                     "aa": aa.name(),
                     "gtao": g.name(),
+                    "render_scale": scale,
                     "wall_p50_ms": p50(&mut wall),
                     "profiled_gpu_p50_ms": p50(&mut total),
                     "passes_p50_ms": passes.iter_mut().map(|(k, v)| (*k, p50(v))).collect::<BTreeMap<_, _>>(),
@@ -1008,6 +1263,22 @@ fn main() {
     if only.iter().any(|o| o == "gtao") {
         report["gtao"] = gtao(&setup, &out);
     }
+    let scales: Vec<f32> = arg("--scale")
+        .map(|v| {
+            v.split(',')
+                .map(|x| x.trim().parse().expect("a render scale"))
+                .collect()
+        })
+        .unwrap_or_default();
+    if only.iter().any(|o| o == "upscale" || o == "upscale-tune") {
+        let scales = if scales.is_empty() {
+            vec![0.5, 0.67, 0.77, 1.0]
+        } else {
+            scales.clone()
+        };
+        let tune = only.iter().any(|o| o == "upscale-tune");
+        report["upscale"] = upscale(&setup, &out, &scales, tune);
+    }
     if only.iter().any(|o| o == "bench") {
         let sizes: Vec<(u32, u32)> = arg("--bench-sizes")
             .unwrap_or_else(|| "1600x900,2560x1440".into())
@@ -1018,7 +1289,11 @@ fn main() {
         let filter: Vec<String> = arg("--bench-configs")
             .map(|f| f.split(',').map(str::to_owned).collect())
             .unwrap_or_default();
-        report["bench"] = bench(&gpu, &sizes, frames, &filter);
+        let settle = arg("--settle")
+            .and_then(|s| s.parse::<f64>().ok())
+            .unwrap_or(0.0)
+            .max(0.0);
+        report["bench"] = bench(&gpu, &sizes, frames, &filter, &scales, settle);
     }
     report["seconds"] = json!(started.elapsed().as_secs_f64());
     report["validation_errors"] = json!(errors.lock().expect("errors").clone());
