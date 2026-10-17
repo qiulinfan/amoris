@@ -29,6 +29,7 @@ pub mod files;
 mod game;
 pub mod history;
 pub mod inspect;
+pub mod lookahead;
 pub mod player;
 pub mod present;
 pub mod profile;

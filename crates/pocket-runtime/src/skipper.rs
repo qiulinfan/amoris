@@ -21,16 +21,16 @@ pub const UPWIND_DEG: f64 = 70.0;
 pub const CRATE_TRIES: u32 = 2;
 
 /// A percept as the skipper reads it from a JSON observation.
-struct Seen {
-    id: u64,
-    kind: String,
-    visibility: String,
+pub(crate) struct Seen {
+    pub(crate) id: u64,
+    pub(crate) kind: String,
+    pub(crate) visibility: String,
     range_m: f64,
     bearing_deg: f64,
-    can: Vec<String>,
+    pub(crate) can: Vec<String>,
 }
 
-fn percepts(obs: &Value) -> Vec<Seen> {
+pub(crate) fn percepts(obs: &Value) -> Vec<Seen> {
     let Some(list) = obs["entities"].as_array() else {
         return Vec::new();
     };
@@ -62,7 +62,7 @@ pub fn instrument<'a>(obs: &'a Value, name: &str) -> &'a Value {
 }
 
 /// The target of the seat's live `sail_to`: its id and the name the seat knows it by.
-fn sailing_to(obs: &Value) -> Option<(u64, String)> {
+pub(crate) fn sailing_to(obs: &Value) -> Option<(u64, String)> {
     obs["intents"].as_array()?.iter().find_map(|i| {
         if i["intent"] != json!("sail_to") {
             return None;
@@ -90,6 +90,16 @@ pub struct Skipper {
 impl Skipper {
     pub fn new() -> Skipper {
         Skipper::default()
+    }
+
+    /// How often the boat set out for this crate (by this skipper's acts or ones it was told of).
+    pub fn tries(&self, crate_id: u64) -> u32 {
+        self.tries.get(&crate_id).copied().unwrap_or(0)
+    }
+
+    /// Counts a start for this crate that another model made (the lookahead's plan).
+    pub fn started(&mut self, crate_id: u64) {
+        *self.tries.entry(crate_id).or_default() += 1;
     }
 
     /// The act (`player.act` parameters) for this JSON observation, or `None` to let time pass.
