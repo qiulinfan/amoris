@@ -6,7 +6,7 @@
 //!
 //! `cargo run --release -p pocket-render --example rt_shadows -- [--scene mixed|cubes] [--n 6]
 //!  [--heroes 0] [--count 10000] [--size 1920x1080] [--frames 240] [--moving] [--capture PREFIX]
-//!  [--settle S] [--rt-first]`
+//!  [--settle S] [--rt-first] [--stall MS]`
 //!
 //! `mixed`: the mixed demo scene (every pipeline variant on a ground, n x n cells) under a slanted
 //! sun, with `--heroes` skinned characters of samples/anim in a row in front (their bottom levels
@@ -15,7 +15,9 @@
 //! level each frame. `POCKET_BACKEND` and `POCKET_ADAPTER` choose the GPU. `--settle S` waits S
 //! seconds after each path's start-up before its first frame (a start-up that loads every core
 //! lowers the laptop GPU's clocks for a few seconds, docs/bench/dx12.md 10.6); `--rt-first` runs the
-//! ray-traced path before the cascaded one.
+//! ray-traced path before the cascaded one. `--stall MS` busy-waits MS before every frame, outside
+//! its measured time: a control that leaves the GPU idle between frames as a slow CPU frame does
+//! (docs/bench/dynamic-scenes.md).
 
 use glam::Quat;
 use pocket_assets::frame::{AnimView, InstanceUpdate, Look, Pose, RenderFrame};
@@ -159,7 +161,14 @@ fn run(ray_traced: bool, size: (u32, u32), frames: u32, moving: bool) -> serde_j
     let (mut wall, mut cpu, mut gpu_ms) = (Vec::new(), Vec::new(), Vec::new());
     let mut passes: Vec<(&'static str, f64, u32)> = Vec::new();
     let mut rebuilds = 0;
+    let stall = arg("--stall").and_then(|s| s.parse::<f64>().ok());
     for i in 0..warm + frames {
+        if let Some(ms) = stall {
+            let t = std::time::Instant::now();
+            while t.elapsed().as_secs_f64() * 1000.0 < ms {
+                std::hint::spin_loop();
+            }
+        }
         let now = f64::from(i) / 60.0;
         let t = std::time::Instant::now();
         if moving && i > 0 {
@@ -245,6 +254,7 @@ fn main() {
         "moving": moving,
         "rt_first": rt_first,
         "settle_s": arg("--settle").and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0),
+        "stall_ms": arg("--stall").and_then(|s| s.parse::<f64>().ok()),
         "cascaded": cascaded,
         "ray_traced": ray_traced,
     });

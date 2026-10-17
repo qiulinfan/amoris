@@ -5,7 +5,8 @@ docs/bench/dx12.md 10.5: a change meant to leave the images alone (a cheaper sha
 draw path) is checked by capturing deterministic frames with the build before it and the build
 after it, on the same backend and adapter, and comparing each pair with the `image_diff` example.
 Cases: many_cubes (200k cubes with shadows, the dense grid), the 1M-splat garden, gi-room and
-pt-lab drawn statically (`showcase_bench --capture`) and lod_field with 40 skinned columns; modes:
+pt-lab drawn statically (`showcase_bench --capture`), lod_field with 40 skinned columns and
+many_cubes with cubes turned every frame (`--moving`, docs/bench/dynamic-scenes.md); modes:
 MSAA, MSAA with GTAO, TAA, TAA with GTAO's normal target (the static scenes with MSAA only);
 occlusion culling off.
 
@@ -35,6 +36,14 @@ CASES = {
     "gi-room": ["showcase_bench", "samples/gi-room", *STATIC],
     "pt-lab": ["showcase_bench", "samples/pt-lab", *STATIC],
     "crowd": ["lod_field", "--crowd", "40", "--frames", "5", "--warm", "5", "--capture", "{out}"],
+    # A tick every frame moving every cube, every tenth, every fifth of the dense grid
+    # (docs/bench/dynamic-scenes.md: one write, scattered writes).
+    "cubes-moving": ["many_cubes", "--count", "200000", "--shadows", "--moving", "200000",
+                     "--capture", "{out}"],
+    "cubes-moving-sparse": ["many_cubes", "--count", "200000", "--shadows", "--moving", "20000",
+                            "--sparse", "10", "--capture", "{out}"],
+    "cubes-dense-moving": ["many_cubes", "--dense", "--moving", "320000", "--sparse", "5",
+                           "--capture", "{out}"],
 }
 STATIC_CASES = {"gi-room", "pt-lab"}
 MODES = {

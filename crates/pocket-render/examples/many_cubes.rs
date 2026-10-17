@@ -18,9 +18,17 @@
 //! window or headless; the headless loop adds its wait for the GPU as a span ("wait idle"). With
 //! `--bench` or `--headless-bench` the trace is written after the measured frames (writing it
 //! stalls the render thread).
+//!
+//! `--moving N [--sparse K]` turns N cubes a little every frame, each frame a new tick of the feed
+//! (docs/bench/dynamic-scenes.md): the cubes with ids 1, 1 + K, 1 + 2K, ... (K = 1, every cube,
+//! by default), so K spreads the moved instance slots apart. The headless benchmark reports how
+//! long `Renderer::apply` took (`apply_ms`) apart from building the feed's frame (`feed_ms`), and
+//! a trace records both as spans ("feed", "apply"). `--stall MS` (with `--headless-bench`)
+//! busy-waits MS before every frame, outside its measured time: a control that leaves the GPU idle
+//! between frames as a slow CPU frame does (docs/bench/dynamic-scenes.md).
 
 use glam::{Quat, Vec3};
-use pocket_assets::frame::RenderFrame;
+use pocket_assets::frame::{InstanceUpdate, Pose, RenderFrame};
 use pocket_render::app::{Host, RunOptions, run};
 use pocket_render::trace::TraceSpec;
 use pocket_render::{BackendChoice, OcclusionMode, PrepassMode, Renderer};
@@ -36,6 +44,69 @@ struct Cubes {
     prepass: Option<PrepassMode>,
     /// `--trace`: started on the first update.
     trace: Option<TraceSpec>,
+    /// `--moving`: the cubes turned every frame.
+    moving: Option<Moving>,
+}
+
+/// Cubes turned every frame, a tick of the feed each (`--moving N [--sparse K]`).
+struct Moving {
+    /// The moved cubes' ids and first poses.
+    first: Vec<(u64, Pose)>,
+    tick: u64,
+    /// Per frame: building the tick's frame, and `Renderer::apply` (ms).
+    feed_ms: Vec<f64>,
+    apply_ms: Vec<f64>,
+}
+
+impl Moving {
+    /// `--moving N [--sparse K]` over the first frame's cubes (ids 1 to `count`).
+    fn new(frame: &RenderFrame, count: usize) -> Option<Moving> {
+        let n: usize = arg("--moving")?.parse().ok()?;
+        let sparse = arg("--sparse")
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(1)
+            .max(1);
+        let first = frame
+            .instances
+            .iter()
+            .filter(|u| u.id >= 1 && u.id <= count as u64 && (u.id - 1) % sparse == 0)
+            .take(n)
+            .filter_map(|u| Some((u.id, u.pose?)))
+            .collect();
+        Some(Moving {
+            first,
+            tick: frame.tick,
+            feed_ms: Vec::new(),
+            apply_ms: Vec::new(),
+        })
+    }
+
+    /// The next tick: every moved cube turned about its own y axis, 0.02 rad a tick.
+    fn next(&mut self) -> RenderFrame {
+        self.tick += 1;
+        let turn = Quat::from_rotation_y(self.tick as f32 * 0.02);
+        RenderFrame {
+            tick: self.tick,
+            t_s: self.tick as f64 / 60.0,
+            dt_s: 1.0 / 60.0,
+            instances: self
+                .first
+                .iter()
+                .map(|&(id, pose)| InstanceUpdate {
+                    id,
+                    pose: Some(Pose {
+                        rotation: (Quat::from_array(pose.rotation) * turn)
+                            .normalize()
+                            .to_array(),
+                        ..pose
+                    }),
+                    look: None,
+                    anim: None,
+                })
+                .collect(),
+            ..RenderFrame::default()
+        }
+    }
 }
 
 fn arg(name: &str) -> Option<String> {
@@ -69,6 +140,17 @@ impl Host for Cubes {
             if let Some(m) = self.prepass {
                 r.set_prepass(m);
             }
+        } else if let Some(m) = &mut self.moving {
+            let t = std::time::Instant::now();
+            let ts = r.trace_mark();
+            let frame = m.next();
+            r.trace_span("feed", ts);
+            m.feed_ms.push(t.elapsed().as_secs_f64() * 1000.0);
+            let t = std::time::Instant::now();
+            let ts = r.trace_mark();
+            r.apply(frame, now);
+            r.trace_span("apply", ts);
+            m.apply_ms.push(t.elapsed().as_secs_f64() * 1000.0);
         }
         if let Some(frame) = &mut self.orbit {
             r.set_camera_override(Some(pocket_render::demo::orbit_camera(*frame, self.count)));
@@ -119,6 +201,7 @@ fn main() {
         count,
         t.elapsed().as_secs_f64() * 1000.0
     );
+    let moving = Moving::new(&frame, count);
     if let Some(path) = arg("--capture") {
         // Headless: draw a few frames offscreen and save the last.
         let gpu = pocket_render::Gpu::headless(BackendChoice::from_env()).expect("gpu");
@@ -132,6 +215,7 @@ fn main() {
             occlusion,
             prepass,
             trace: trace.clone(),
+            moving,
         };
         for i in 0..5 {
             host.update(&mut r, i as f64 / 60.0);
@@ -159,6 +243,7 @@ fn main() {
             occlusion,
             prepass,
             trace: trace.clone(),
+            moving,
         };
         if let (Some(_), Some(f)) = (splats, &mut host.frame) {
             f.splats = Some(vec![pocket_assets::frame::SplatView {
@@ -200,6 +285,7 @@ fn main() {
             occlusion,
             prepass,
             trace,
+            moving,
         },
         options,
     ) {
@@ -235,9 +321,10 @@ fn shell(n: usize) -> pocket_render::splat::SplatCloud {
     pocket_render::splat::SplatCloud::from_raw(&raw, 0, &[])
 }
 
-/// Offscreen at `size`, no presentation: 60 warm-up frames, then `frames` measured ones, each
-/// submitted and waited for (submit to GPU idle). Prints one JSON object: start-up costs, frame
-/// wall time, CPU encoding time, timestamped GPU time and its passes (docs/bench/dx12.md).
+/// Offscreen at `size`, no presentation: 60 warm-up frames (`--warm W`), then `frames` measured
+/// ones, each submitted and waited for (submit to GPU idle). Prints one JSON object: start-up
+/// costs, frame wall time, CPU encoding time, timestamped GPU time and its passes
+/// (docs/bench/dx12.md).
 /// `splats`: a cloud registered as `shell` (the host's frame draws it).
 fn headless_bench(
     mut host: Cubes,
@@ -284,8 +371,15 @@ fn headless_bench(
     // auto mode's probes are the frames drawn the other way.
     let mut prepass_wall: Vec<(&'static str, Vec<f64>)> = Vec::new();
     let mut occluded_share = Vec::new();
-    let warm = 60;
+    let warm: u32 = arg("--warm").and_then(|s| s.parse().ok()).unwrap_or(60);
+    let stall = arg("--stall").and_then(|s| s.parse::<f64>().ok());
     for i in 0..warm + frames {
+        if let Some(ms) = stall {
+            let t = std::time::Instant::now();
+            while t.elapsed().as_secs_f64() * 1000.0 < ms {
+                std::hint::spin_loop();
+            }
+        }
         let now = f64::from(i) / 60.0;
         let t = std::time::Instant::now();
         r.trace_begin_frame();
@@ -395,6 +489,7 @@ fn headless_bench(
         "splats": splat_count,
         "instances": r.last.instances,
         "frames": frames,
+        "stall_ms": stall,
         "device_ms": (device_ms * 10.0).round() / 10.0,
         "renderer_new_ms": (renderer_ms * 10.0).round() / 10.0,
         "first_frame_ms": (first_frame_ms * 10.0).round() / 10.0,
@@ -409,6 +504,17 @@ fn headless_bench(
             .map(|(l, s, n)| ((*l).to_owned(), serde_json::json!((s / f64::from(*n) * 1000.0).round() / 1000.0)))
             .collect::<serde_json::Map<_, _>>(),
     });
+    let mut report = report;
+    if let Some(m) = &mut host.moving {
+        // The measured frames' ticks only (the first frame is the scene, not a tick).
+        let skip = m.apply_ms.len().saturating_sub(frames as usize);
+        report["moving"] = serde_json::json!({
+            "instances": m.first.len(),
+            "sparse": arg("--sparse").and_then(|s| s.parse::<u64>().ok()).unwrap_or(1),
+            "feed_ms": summary(&mut m.feed_ms.split_off(skip)),
+            "apply_ms": summary(&mut m.apply_ms.split_off(skip)),
+        });
+    }
     println!("{report}");
 }
 
