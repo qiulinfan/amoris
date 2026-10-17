@@ -27,6 +27,7 @@ pub mod rng;
 pub mod schedule;
 pub mod sim;
 pub mod time;
+pub mod voxels;
 
 pub use data::PlainData;
 pub use entity::{EntityAllocator, EntityId, EntityIndex, MAX_ENTITY_ID, Name, SimCommands};
@@ -39,6 +40,7 @@ pub use rng::{KeyPart, Pcg32, RngTable, WorldSeed};
 pub use schedule::{NoHooks, StepHooks, SystemCtx, SystemKey, TickPhase};
 pub use sim::{Boundary, DecisionRequest, Sim, SimConfig, StepReport, TickOutput};
 pub use time::{RunCondition, SimClock, Tick, TickRate};
+pub use voxels::{Block, BlockShape, VoxelHit, Voxels};
 
 /// A web test: its name and the function that runs it.
 pub type WebTest = (&'static str, fn() -> Result<(), String>);
