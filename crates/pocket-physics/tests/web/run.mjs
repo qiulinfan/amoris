@@ -1,6 +1,6 @@
 // Runs the web tests of pocket-physics in WebAssembly (docs/spec/numeric.md 3.1 and 5; checks.md
 // 7.2): the sailing scene's hash chain against the golden one, forks at every tick, parry's BVH
-// log2, then the scene's hash at every tick.
+// log2, the level scene's forks, then the sailing and level scenes' hashes at every tick.
 //
 //   cargo build -p pocket-physics --example web_physics --target wasm32-unknown-unknown --release
 //   node crates/pocket-physics/tests/web/run.mjs <target>/wasm32-unknown-unknown/release/examples/web_physics.wasm [expected.txt]
@@ -24,7 +24,7 @@ const ms = performance.now() - started;
 const ptr = exports.report_ptr();
 const report = new TextDecoder().decode(new Uint8Array(exports.memory.buffer, ptr, len));
 const lines = report.split("\n");
-process.stdout.write(lines.filter((l) => !/^\d+ /.test(l)).join("\n") + "\n");
+process.stdout.write(lines.filter((l) => !/^(level )?\d+ /.test(l)).join("\n") + "\n");
 console.error(`${lines.length - 1} lines in ${ms.toFixed(0)} ms; last hash: ${lines[lines.length - 2]}`);
 let failed = lines.some((l) => l.startsWith("FAIL"));
 if (expectedPath) {

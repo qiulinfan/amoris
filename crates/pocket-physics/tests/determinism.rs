@@ -4,9 +4,9 @@
 //! original, storage order changes nothing, and the cache survives its own bytes.
 
 use pocket_physics::probe::{
-    self, Ledger, Snap, chain, check_forks, fork, fresh, ledger, sailing_world,
+    self, Ledger, Snap, chain, check_forks, fork, fresh, ledger, level, sailing_world,
 };
-use pocket_physics::{Physics, PhysicsCache};
+use pocket_physics::{Physics, PhysicsCache, RebuiltSolver};
 use pocket_sim::persisted::PersistedCache;
 use pocket_sim::{NoHooks, Sim};
 
@@ -127,6 +127,7 @@ fn the_declarations_name_every_section() {
         "Derived pocket_physics::solver::Physics",
         "Derived pocket_physics::solver::BodyIndex",
         "Derived pocket_physics::solver::ContactLog",
+        "Ignored pocket_physics::solver::RebuiltSolver",
     ] {
         assert!(
             classes.iter().any(|c| c == want),
@@ -235,4 +236,202 @@ fn the_cache_rebuilds_from_the_components() {
     let after = probe::boat_position(&sim);
     let d = pocket_physics::geom::length(pocket_physics::geom::sub(after, before));
     assert!(d < 0.2, "the rebuilt boat moved {d}");
+}
+
+/// persistence.md 8, layout 2: a fixed collider's shape is in the cache only while its components
+/// no longer build it. A boundary write to the terrain's `Collider` leaves the solver's collider as
+/// it was until the next step, so a snapshot then writes the shape inline and a fork continues with
+/// its source's hashes; after the step, which rebuilds the terrain, it is by reference again.
+#[test]
+fn a_stale_fixed_collider_is_written_inline() {
+    let l = ledger();
+    let mut sim = level::level_world(19, 0);
+    step(&mut sim);
+    step(&mut sim);
+    let (by_ref, terrain) = level::cache_and_terrain_bytes(&sim).unwrap();
+    assert!(
+        by_ref < terrain,
+        "{by_ref} bytes with a {terrain}-byte terrain"
+    );
+    let e = pocket_sim::entity::require(sim.world(), level::terrain_id()).unwrap();
+    sim.boundary()
+        .world_mut()
+        .get_mut::<pocket_physics::Collider>(e)
+        .unwrap()
+        .friction = 0.8;
+    let (stale, _) = level::cache_and_terrain_bytes(&sim).unwrap();
+    assert!(
+        stale > terrain,
+        "{stale} bytes with a {terrain}-byte terrain"
+    );
+    let mut f = fork(&l, &sim, fresh).unwrap();
+    assert_eq!(
+        l.snapshot(f.world()).unwrap(),
+        l.snapshot(sim.world()).unwrap()
+    );
+    for k in 1..=30 {
+        step(&mut sim);
+        step(&mut f);
+        assert_eq!(hash(&l, &f), hash(&l, &sim), "tick 2 + {k}");
+    }
+    let (again, _) = level::cache_and_terrain_bytes(&sim).unwrap();
+    assert!(
+        again < terrain,
+        "{again} bytes with a {terrain}-byte terrain"
+    );
+}
+
+/// A snapshot whose shapes by reference no world holds any more restores by building them from the
+/// restored components (no other test uses this scene, so nothing else holds its terrain), and
+/// continues in lockstep with an unbroken run; decoded where those components are missing, the
+/// cache falls back to a solver rebuilt from the components at the next step, and says so.
+#[test]
+fn a_cold_restore_builds_the_shapes_from_the_components() {
+    let l = ledger();
+    let reference: Vec<u64> = {
+        let mut sim = level::level_world(18, 0);
+        (0..40)
+            .map(|_| {
+                step(&mut sim);
+                hash(&l, &sim)
+            })
+            .collect()
+    };
+    let mut sim = level::level_world(18, 0);
+    for _ in 0..10 {
+        step(&mut sim);
+    }
+    let snap = l.snapshot(sim.world()).unwrap();
+    drop(sim);
+    let mut cold = fresh();
+    l.restore(&mut cold, &snap).unwrap();
+    assert_eq!(l.snapshot(cold.world()).unwrap(), snap);
+    for (t, want) in reference.iter().enumerate().skip(10) {
+        step(&mut cold);
+        assert_eq!(hash(&l, &cold), *want, "tick {}", t + 1);
+    }
+    drop(cold);
+
+    let mut bare = fresh();
+    PhysicsCache::decode(snap.section("physics.rapier").unwrap())
+        .unwrap()
+        .apply(bare.world_mut());
+    assert_eq!(bare.world().resource::<Physics>().world.bodies.len(), 0);
+    assert!(bare.world().get_resource::<RebuiltSolver>().is_some());
+}
+
+/// A cold restore whose components do not build the shape its cache refers to (a snapshot this
+/// engine did not write: here the terrain's `Collider` section of a world whose terrain has
+/// another friction) rebuilds the solver from the components, and the next step reports the
+/// terrain once, as a failed invocation of `physics.step` caused by `persist.noncanonical`.
+#[test]
+fn a_restore_whose_components_do_not_build_its_shapes_is_reported() {
+    let l = ledger();
+    let snapshot_at_tick_5 = |friction: f64| {
+        let mut sim = level::level_world(17, 0);
+        let e = pocket_sim::entity::require(sim.world(), level::terrain_id()).unwrap();
+        sim.boundary()
+            .world_mut()
+            .get_mut::<pocket_physics::Collider>(e)
+            .unwrap()
+            .friction = friction;
+        for _ in 0..5 {
+            step(&mut sim);
+        }
+        l.snapshot(sim.world()).unwrap()
+    };
+    let mut snap = snapshot_at_tick_5(0.5);
+    let other = snapshot_at_tick_5(0.8);
+    let i = snap
+        .sections
+        .iter()
+        .position(|s| s.0 == "Collider")
+        .unwrap();
+    snap.sections[i].1 = other.section("Collider").unwrap().to_vec();
+
+    let mut cold = fresh();
+    l.restore(&mut cold, &snap).unwrap();
+    assert_eq!(cold.world().resource::<Physics>().world.bodies.len(), 0);
+    let r = cold.step(&mut NoHooks).unwrap();
+    let errors: Vec<_> = r
+        .errors
+        .iter()
+        .map(|e| serde_json::to_string(e).unwrap())
+        .collect();
+    assert_eq!(r.errors.len(), 1, "{errors:?}");
+    let e = &r.errors[0];
+    assert_eq!(e.code, "sim.system_failed");
+    assert!(
+        errors[0].contains("persist.noncanonical") && errors[0].contains("physics.step"),
+        "{errors:?}"
+    );
+    assert_eq!(cold.world().resource::<Physics>().world.bodies.len(), 5);
+    step(&mut cold);
+}
+
+/// A fixed collider's shape that its components do not build (here put into the solver directly,
+/// as a snapshot this engine did not write could) is written inline, and so restores as it was,
+/// although the components still hash to the body's spec; it never reaches another world, whose
+/// terrain of the same components is by reference and built from them.
+#[test]
+fn a_shape_its_components_do_not_build_stays_in_its_world() {
+    let l = ledger();
+    let terrain_shape = |sim: &Sim| {
+        let p = &sim.world().resource::<Physics>().world;
+        let (_, co) = p
+            .colliders
+            .iter()
+            .find(|(_, c)| p.bodies.get(c.parent().unwrap()).unwrap().is_fixed())
+            .unwrap();
+        co.shape().shape_type()
+    };
+    let mut odd = level::level_world(16, 0);
+    step(&mut odd);
+    let (by_ref, terrain) = level::cache_and_terrain_bytes(&odd).unwrap();
+    assert!(by_ref < terrain);
+    {
+        let mut p = odd.world_mut().resource_mut::<Physics>();
+        let w = &mut p.world;
+        let h = w
+            .colliders
+            .iter()
+            .find(|(_, c)| w.bodies.get(c.parent().unwrap()).unwrap().is_fixed())
+            .map(|(h, _)| h)
+            .unwrap();
+        w.colliders
+            .get_mut(h)
+            .unwrap()
+            .set_shape(rapier3d::prelude::SharedShape::ball(2.0));
+    }
+    assert_eq!(terrain_shape(&odd), rapier3d::prelude::ShapeType::Ball);
+    // No world holds the terrain's built mesh any more, so a slot by reference would build it
+    // again: the fork's ball shows the shape was written inline.
+    let f = fork(&l, &odd, fresh).unwrap();
+    assert_eq!(terrain_shape(&f), rapier3d::prelude::ShapeType::Ball);
+    assert_eq!(
+        l.snapshot(f.world()).unwrap(),
+        l.snapshot(odd.world()).unwrap()
+    );
+
+    let mut plain = level::level_world(16, 0);
+    step(&mut plain);
+    let (by_ref, _) = level::cache_and_terrain_bytes(&plain).unwrap();
+    assert!(by_ref < terrain);
+    let f = fork(&l, &plain, fresh).unwrap();
+    assert_eq!(terrain_shape(&f), rapier3d::prelude::ShapeType::TriMesh);
+}
+
+/// docs/bench/physics.md, "Static geometry and the cache": layout 2 changed the cache's bytes and
+/// nothing else. The per-tick hashes of every other section, folded, are layout 1's for the
+/// sailing scene, forked or not, and for a level scene whose terrain is by reference, forked or
+/// not (`probe::layout`). About 50 s in a debug build, so `#[ignore]`d there; the local check's
+/// test step runs it (`cargo test --release --workspace -- --include-ignored`), as does `cargo test
+/// --release -p pocket-physics --test determinism -- --include-ignored`.
+#[test]
+#[ignore = "about 50 s in a debug build; the check's test step runs it in release"]
+fn the_trajectories_are_layout_1s() {
+    let got = probe::layout::trajectories().unwrap();
+    for ((name, want), got) in probe::layout::LAYOUT1_TRAJECTORIES.iter().zip(got) {
+        assert_eq!(got, *want, "{name}: {got:016x}, layout 1 {want:016x}");
+    }
 }
