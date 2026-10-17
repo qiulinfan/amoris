@@ -52,6 +52,9 @@ const FLAGS: &[Flag] = &[
     ("every", true),
     ("seat", true),
     ("trace", true),
+    ("interval", true),
+    ("top", true),
+    ("folded", true),
 ];
 
 /// How long the CLI waits for an answer unless `--timeout <s>` or `POCKET_TIMEOUT` says otherwise
@@ -95,7 +98,7 @@ pub const COMMANDS: &[(&str, &str, &str)] = &[
     (
         "scripts",
         "scripts.list",
-        "pocket scripts list | read <path> [--lines a-b] [--numbers] | write <path> [<file>|-] | apply [--force] | check | types | guide | status",
+        "pocket scripts list | read <path> [--lines a-b] [--numbers] | write <path> [<file>|-] | apply [--force] | check | types | guide | status | profile [--ticks n] [--interval steps] [--top n] [--folded <file>]   (profile: where the steps go, on a fork)",
     ),
     (
         "events",
@@ -674,12 +677,23 @@ fn request(cmd: &str, args: &Args) -> Result<(String, Value), Problem> {
             "types" => "scripts.types",
             "guide" => "scripts.guide",
             "status" => "scripts.status",
+            "profile" => {
+                put(&mut p, "ticks", num("ticks")?);
+                put(&mut p, "interval", num("interval")?);
+                put(&mut p, "top", num("top")?);
+                // The folded stacks go to the file `--folded` names (`run` writes it).
+                if args.value("folded").is_some() {
+                    p.insert("folded".into(), json!(true));
+                }
+                "scripts.profile"
+            }
             other => {
                 return Err(usage(
                     format!("pocket scripts has no '{other}'"),
                     other,
                     &[
                         "list", "read", "write", "apply", "check", "types", "guide", "status",
+                        "profile",
                     ],
                 ));
             }
@@ -1479,6 +1493,73 @@ fn profile_text(v: &Value, out: &mut String) {
     let _ = writeln!(out, "  phases (ms): {}", phases.join(", "));
 }
 
+/// `scripts.profile` as text: the run, then per system its steps and its top functions, lines
+/// and stacks, self and total in steps.
+fn script_profile_text(v: &Value, out: &mut String) {
+    let n = |k: &Value| k.as_u64().unwrap_or(0);
+    let _ = writeln!(
+        out,
+        "ticks {} to {} on a fork: {} steps, {} samples, one every {} steps{}",
+        n(&v["from_tick"]) + 1,
+        opt(&v["to_tick"]),
+        opt(&v["steps"]),
+        opt(&v["samples"]),
+        opt(&v["interval"]),
+        if v["estimated"] == json!(true) {
+            " on average (self and total are estimates)"
+        } else {
+            " (exact)"
+        }
+    );
+    if let Some(p) = v.get("stopped_by") {
+        let _ = writeln!(out, "stopped early: {}", compact(p));
+    }
+    for s in v["systems"].as_array().into_iter().flatten() {
+        let _ = writeln!(
+            out,
+            "\n{}: {} steps in {} calls",
+            opt(&s["system"]),
+            opt(&s["steps"]),
+            opt(&s["calls"])
+        );
+        let _ = writeln!(out, "  {:>10} {:>10}  function", "self", "total");
+        for f in s["functions"].as_array().into_iter().flatten() {
+            let _ = writeln!(
+                out,
+                "  {:>10} {:>10}  {} ({})",
+                n(&f["self"]),
+                n(&f["total"]),
+                opt(&f["function"]),
+                opt(&f["file"])
+            );
+        }
+        let _ = writeln!(out, "  {:>10} {:>10}  line", "self", "total");
+        for l in s["lines"].as_array().into_iter().flatten() {
+            let _ = writeln!(
+                out,
+                "  {:>10} {:>10}  {} {}",
+                n(&l["self"]),
+                n(&l["total"]),
+                opt(&l["at"]),
+                opt(&l["function"])
+            );
+        }
+        let _ = writeln!(out, "  {:>10}  stack, root first", "steps");
+        for st in s["stacks"].as_array().into_iter().flatten() {
+            let _ = writeln!(out, "  {:>10}  {}", n(&st["steps"]), opt(&st["stack"]));
+        }
+        if let Some(m) = s.get("more") {
+            let _ = writeln!(
+                out,
+                "  (not shown: {} functions, {} lines, {} stacks; --top n shows more)",
+                opt(&m["functions"]),
+                opt(&m["lines"]),
+                opt(&m["stacks"])
+            );
+        }
+    }
+}
+
 /// The text form of a method's result; `full`: every frame of a debugger state.
 fn text(method: &str, v: &Value, full: bool) -> String {
     let mut out = String::new();
@@ -1731,6 +1812,7 @@ fn text(method: &str, v: &Value, full: bool) -> String {
             });
         }
         "profile.frame" => profile_text(v, &mut out),
+        "scripts.profile" => script_profile_text(v, &mut out),
         "scripts.list" => lines(&mut out, v, &|f| {
             let n = f["diagnostics"].as_array().map_or(0, Vec::len);
             let mut s = format!("{} {} B", opt(&f["path"]), opt(&f["bytes"]));
@@ -2148,6 +2230,19 @@ pub fn run(cmd: &str, raw: &[String]) -> Outcome {
     }
     match call_url_as(&url, &method, params, seat, timeout) {
         Ok(v) => {
+            // `pocket scripts profile --folded <file>`: the folded stacks go to the file.
+            if method == "scripts.profile"
+                && let Some(path) = args.value("folded")
+            {
+                let folded = v["folded"].as_str().unwrap_or("");
+                if let Err(e) = std::fs::write(path, folded) {
+                    return failed(&bad(format!("{path} cannot be written: {e}")), 1);
+                }
+                eprintln!(
+                    "wrote {path}: {} stacks in the folded format (speedscope opens it)",
+                    folded.lines().count()
+                );
+            }
             if json_out {
                 println!("{v}");
             } else if let Value::String(s) = &v {
@@ -2359,6 +2454,52 @@ mod tests {
         assert!(t.contains("1 held by the debugger"), "{t}");
         assert!(t.contains("physics.step") && t.contains("25.0%"), "{t}");
         assert!(t.contains("phases (ms): Physics 0.300"), "{t}");
+    }
+
+    /// `pocket scripts profile`: its flags, and the answer as text by system.
+    #[test]
+    fn a_script_profile_reads_by_system() {
+        assert_eq!(
+            req(
+                "scripts",
+                &[
+                    "profile",
+                    "--ticks",
+                    "30",
+                    "--interval",
+                    "7",
+                    "--folded",
+                    "x.txt"
+                ]
+            ),
+            (
+                "scripts.profile".into(),
+                json!({"ticks": 30, "interval": 7, "folded": true})
+            )
+        );
+        assert_eq!(
+            req("scripts", &["profile"]),
+            ("scripts.profile".into(), json!({}))
+        );
+        let v = json!({"from_tick": 10, "to_tick": 40, "ticks": 30, "interval": 50,
+            "steps": 4200, "samples": 84, "estimated": true,
+            "systems": [{"system": "log", "calls": 30, "steps": 750, "samples": 15,
+                "functions": [{"function": "run", "file": "scripts/rules.ts", "self": 150,
+                               "total": 250}],
+                "lines": [{"at": "scripts/rules.ts:28", "function": "(anonymous)", "self": 100,
+                           "total": 100}],
+                "stacks": [{"stack": "run (scripts/rules.ts:26);each (pocket:333)",
+                            "steps": 50}],
+                "more": {"functions": 2, "lines": 3, "stacks": 1}}]});
+        let t = text("scripts.profile", &v, false);
+        assert!(
+            t.starts_with("ticks 11 to 40 on a fork: 4200 steps, 84 samples, one every 50"),
+            "{t}"
+        );
+        assert!(t.contains("log: 750 steps in 30 calls"), "{t}");
+        assert!(t.contains("150        250  run (scripts/rules.ts)"), "{t}");
+        assert!(t.contains("scripts/rules.ts:28 (anonymous)"), "{t}");
+        assert!(t.contains("not shown: 2 functions"), "{t}");
     }
 
     /// A paused state as text: the place, the innermost frame's locals without `ctx`, one line

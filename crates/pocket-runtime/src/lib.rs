@@ -35,6 +35,7 @@ pub mod present;
 pub mod profile;
 mod project;
 mod scene;
+pub mod script_profile;
 mod scripts;
 pub mod skipper;
 #[cfg(feature = "thread")]
@@ -60,6 +61,7 @@ pub use pocket_physics::walk;
 pub use present::Extractor;
 pub use project::{GameSetup, Manifest, Project, read_file, toml_value};
 pub use scene::{Prefab, SCENE_FORMAT, Scene, SceneEntity, prefab_components};
+pub use script_profile::ScriptsProfileParams;
 pub use scripts::{ENTRY, ScriptsApplyParams, bundle_record, compiled_from_record};
 pub use values::{EntityRef, named, resolve};
 pub use version::{BuiltEngine, install_engine};

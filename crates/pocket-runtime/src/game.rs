@@ -734,6 +734,10 @@ impl Game {
                 let p: ScriptsTypesParams = decode(p, name)?;
                 self.script_types(&p)
             }
+            "scripts.profile" => crate::script_profile::profile(
+                self,
+                &decode::<crate::ScriptsProfileParams>(p, name)?,
+            ),
             "status" => {
                 decode::<NoParams>(p, name)?;
                 let hash = self.world_hash().ok().map(|h| h.to_string());

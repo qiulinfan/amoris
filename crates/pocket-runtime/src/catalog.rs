@@ -259,6 +259,12 @@ pub const CATALOG: &[CommandDef] = &[
         "The current bundle hash and the systems that ran last tick.",
         schema::<NoParams>,
     ),
+    def(
+        "scripts.profile",
+        Kind::Read,
+        "Where the scripts' steps go (steps are the budget's unit): runs ticks (default 60) on a fork of the world, which itself does not move, sampling the script stack every interval steps (1: every step; by default about 20,000 samples over the run, from a first run that counts its steps); answers per system its exact steps and calls and the functions, TypeScript lines (self, and total with what they call) and stacks with the most steps; folded: true adds every stack as folded text for flame graphs (speedscope). The same state gives the same profile.",
+        schema::<crate::ScriptsProfileParams>,
+    ),
     // The player tools (docs/spec/player.md; shared/contract/mcp.md 5): a command sent as
     // `Source::Player(i)` is a player at seat i, restricted to its own perception.
     def(

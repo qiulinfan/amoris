@@ -80,11 +80,14 @@ pub fn tools() -> Vec<ToolDef> {
                 text} (diagnostics, no swap); apply: compile, hot-swap, type check with tsc \
                 (diagnostics with TS locations); check: the same, nothing swapped; status: the \
                 bundle running; types: write .pocket/types (pocket.d.ts, components.d.ts: every \
-                component and field scripts can name) and list the components.",
+                component and field scripts can name) and list the components; profile {ticks, \
+                interval, top, folded}: where the steps go, deterministically: runs ticks \
+                (default 60) on a fork (the world does not move) and answers per system its \
+                exact steps and the TS functions, lines and stacks with the most steps.",
             schema: obj(
                 json!({
                     "action": action(&["guide", "list", "read", "write", "apply", "check",
-                                       "status", "types"]),
+                                       "status", "types", "profile"]),
                     "path": {"type": "string"},
                     "text": {"type": ["string", "boolean"],
                              "description": "write: the file's text; types: true to return the \
@@ -94,6 +97,12 @@ pub fn tools() -> Vec<ToolDef> {
                     "numbered": {"type": "boolean", "description": "read: prefix each line \
                         with its number"},
                     "force": {"type": "boolean"},
+                    "ticks": {"type": "integer", "description": "profile: ticks to run (60)"},
+                    "interval": {"type": "integer", "description": "profile: mean steps \
+                        between samples (1: every step; default: about 20,000 samples)"},
+                    "top": {"type": "integer", "description": "profile: rows per list (10)"},
+                    "folded": {"type": "boolean", "description": "profile: also every stack \
+                        as folded text (speedscope)"},
                 }),
                 &["action"],
             ),
@@ -367,6 +376,21 @@ mod tests {
             Value::Object(m) => m,
             _ => Map::new(),
         }
+    }
+
+    /// The scripts tool's profile action is `scripts.profile` with its parameters.
+    #[test]
+    fn the_scripts_tool_profiles() {
+        let (m, p) = route(
+            "scripts",
+            args(json!({"action": "profile", "ticks": 30, "interval": 7, "folded": true})),
+        )
+        .unwrap();
+        assert_eq!(m, "scripts.profile");
+        assert_eq!(p, json!({"ticks": 30, "interval": 7, "folded": true}));
+        let scripts = tools().into_iter().find(|t| t.name == "scripts").unwrap();
+        let actions = &scripts.schema["properties"]["action"]["enum"];
+        assert!(actions.as_array().unwrap().contains(&json!("profile")));
     }
 
     /// The player tool reaches the `player.*` methods; what an LLM reads comes as text unless it
