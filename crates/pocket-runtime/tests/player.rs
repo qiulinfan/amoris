@@ -413,3 +413,53 @@ fn a_scripted_agent_sails_the_course_through_player_tools_and_the_run_replays() 
         );
     });
 }
+
+/// What the declarations of a world's player layer say, read from its world: the episode's rule
+/// and whether the perception declarations and the action catalog are installed.
+fn declared(g: &Game) -> (Option<String>, bool, bool) {
+    let w = g.world();
+    (
+        w.get_resource::<pocket_interface::time::turns::TimeRules>()
+            .map(|t| t.doc.clone()),
+        w.contains_resource::<pocket_interface::perception::PerceptionDefs>(),
+        w.contains_resource::<pocket_interface::action::ActionCatalog>(),
+    )
+}
+
+/// A restore keeps the declarations only when it brings back the spec they were derived from
+/// (spec/player.md 3): a snapshot of another spec derives that spec's, one without a spec removes
+/// them, and the world's own snapshot afterwards derives them again.
+#[test]
+fn a_restore_of_another_spec_derives_its_declarations() {
+    common::big_stack(|| {
+        let ends = |doc: &Option<String>| {
+            doc.as_deref()
+                .is_some_and(|d| d.contains("course.finished"))
+        };
+        let mut a = Game::new(course(), 1).unwrap();
+        a.run(5).unwrap();
+        let snap_a = a.snapshot().unwrap();
+        assert!(ends(&declared(&a).0), "{:?}", declared(&a));
+        // Another spec: the same course whose episode does not end by itself.
+        let mut open = (*course()).clone();
+        open.player.as_mut().unwrap().done_event = None;
+        let mut b = Game::new(Arc::new(open), 1).unwrap();
+        let snap_b = b.snapshot().unwrap();
+        let (doc, defs, catalog) = declared(&b);
+        assert!(!ends(&doc) && defs && catalog, "{doc:?}");
+        b.restore(&snap_a).unwrap();
+        let (doc, defs, catalog) = declared(&b);
+        assert!(ends(&doc) && defs && catalog, "{doc:?}");
+        b.restore(&snap_b).unwrap();
+        assert!(!ends(&declared(&b).0), "{:?}", declared(&b));
+        // No spec: the declarations go, and come back with the spec.
+        let mut none = (*course()).clone();
+        none.player = None;
+        let snap_none = Game::new(Arc::new(none), 1).unwrap().snapshot().unwrap();
+        a.restore(&snap_none).unwrap();
+        assert_eq!(declared(&a), (None, false, false));
+        a.restore(&snap_a).unwrap();
+        let (doc, defs, catalog) = declared(&a);
+        assert!(ends(&doc) && defs && catalog, "{doc:?}");
+    });
+}

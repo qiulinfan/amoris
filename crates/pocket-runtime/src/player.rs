@@ -166,8 +166,16 @@ pub fn declare<R: RegisterPersisted>(r: &mut R) {
     action::declare(r);
     turns::declare(r);
     r.resource::<PlayerSpec>()
+        .ignore::<DerivedFrom>("the spec the declarations were derived from, beside them")
         .rebuild("player.declarations", rebuild);
 }
+
+/// The spec the world's declarations were derived from. A restore that brings back the same spec
+/// (a fork into a kept branch, a rewind, a fresh fork whose world was built from it) keeps them
+/// rather than parsing the perception declarations again, which took 18 ms and 17 MB of
+/// allocations on the sailing course, nearly all of a restore (docs/bench/player.md 5).
+#[derive(Resource)]
+struct DerivedFrom(PlayerSpec);
 
 /// Installs the player layer into a new world: its components in the component registry, the
 /// three interface systems at their rows (simulation.md 4.4), and, with a spec, the spec and the
@@ -215,6 +223,7 @@ pub fn install(sim: &mut Sim, spec: Option<&PlayerSpec>) -> Result<(), Problem> 
 /// Installs what the world's spec declares: the perception declarations, the action catalog with
 /// its field writer, and the time rules. Game data, rebuilt from the spec rather than persisted.
 fn derive(world: &mut World) -> Result<(), Problem> {
+    world.remove_resource::<DerivedFrom>();
     let Some(spec) = world.get_resource::<PlayerSpec>().cloned() else {
         world.remove_resource::<PerceptionDefs>();
         world.remove_resource::<ActionCatalog>();
@@ -238,11 +247,27 @@ fn derive(world: &mut World) -> Result<(), Problem> {
             None => "The episode does not end by itself.".to_owned(),
         },
     });
+    world.insert_resource(DerivedFrom(spec));
     Ok(())
 }
 
-/// After a restore: the declarations of the restored world's spec, or none.
+/// After a restore: the declarations of the restored world's spec, or none. Those already derived
+/// from the same spec stay (`DerivedFrom`): deriving is a pure function of the spec.
 fn rebuild(world: &mut World) {
+    let same = match (
+        world.get_resource::<PlayerSpec>(),
+        world.get_resource::<DerivedFrom>(),
+    ) {
+        (Some(spec), Some(from)) => *spec == from.0,
+        _ => false,
+    };
+    if same
+        && world.contains_resource::<PerceptionDefs>()
+        && world.contains_resource::<ActionCatalog>()
+        && world.contains_resource::<TimeRules>()
+    {
+        return;
+    }
     // The spec was checked when the world was made; a refusal here leaves the layer inert.
     if derive(world).is_err() {
         world.remove_resource::<PerceptionDefs>();

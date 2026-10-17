@@ -52,6 +52,24 @@ pub struct Extras {
     commands: Vec<(String, Kind, CommandFn)>,
 }
 
+impl Extras {
+    /// Whether `other` adds the same systems and commands: the same functions, in the same order.
+    fn same(&self, other: &Extras) -> bool {
+        self.systems.len() == other.systems.len()
+            && self
+                .systems
+                .iter()
+                .zip(&other.systems)
+                .all(|(a, b)| Arc::ptr_eq(a, b))
+            && self.commands.len() == other.commands.len()
+            && self
+                .commands
+                .iter()
+                .zip(&other.commands)
+                .all(|(a, b)| a.0 == b.0 && a.1 == b.1 && Arc::ptr_eq(&a.2, &b.2))
+    }
+}
+
 /// Builds a [`Game`].
 pub struct GameBuilder {
     setup: Arc<GameSetup>,
@@ -1371,6 +1389,46 @@ impl Game {
         g.player = self.player.clone();
         g.wall = self.wall.clone();
         Ok(g)
+    }
+
+    /// Makes `branch`, a game forked from this one before, a fork of this game's state again:
+    /// this world restored into it and the players' session copied, as [`Game::fork`] does, with
+    /// the branch's script host kept rather than a new one instantiated (threads.md 3.6: a branch
+    /// stepped on the host that already runs the bundle). Before anything changes, the branch must
+    /// run the bundle this game runs (`replay.bundle_unavailable`), be built from the same setup
+    /// and the same added systems and commands, and record nothing (`request.invalid_value`): what
+    /// a fork of this game is. Like a fork, it is not tainted by a debugger's evaluations.
+    pub fn fork_into(&self, branch: &mut Game) -> Result<(), Problem> {
+        if branch.current != self.current {
+            return Err(pocket_persist::error::bundle_unavailable(
+                &self.current.to_hex(),
+                "the branch runs another bundle",
+            ));
+        }
+        let not_a_branch = if !Arc::ptr_eq(&self.setup, &branch.setup) {
+            Some("it was built from another setup")
+        } else if !self.extras.same(&branch.extras) {
+            Some("it runs other added systems or commands")
+        } else if branch.recorder.is_some() {
+            Some("it records")
+        } else {
+            None
+        };
+        if let Some(reason) = not_a_branch {
+            return Err(Problem::new(
+                "request.invalid_value",
+                format!("The game is not a branch of this one: {reason}."),
+                detail([("reason", json!(reason))]),
+            ));
+        }
+        let snap = self.snapshot()?;
+        branch.restore(&snap)?;
+        branch.host_seq = self.host_seq;
+        branch.project = self.project.clone();
+        branch.tainted = None;
+        branch.player = self.player.clone();
+        branch.wall = self.wall.clone();
+        Ok(())
     }
 
     /// Replaces the world with the snapshot's, keeping the scripts (the snapshot must name the
