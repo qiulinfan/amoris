@@ -39,6 +39,7 @@ use crate::scripts::{
     self, ScriptsApplyParams, ScriptsSwapParams, bundle_record, compiled_from_record,
 };
 use crate::types::{self, ScriptsTypesParams};
+use crate::writes::WriteTrace;
 use crate::{decode, engine};
 
 /// A system a game or a test adds to the schedule.
@@ -132,6 +133,9 @@ pub fn registry() -> Arc<Registry> {
     .unwrap_or_else(|p| panic!("the engine's persistence registry does not build: {p:?}"))
 }
 
+/// The most writes of one boundary the game keeps for a write trace (`Game::boundary_writes`).
+const MAX_BOUNDARY_LOG: usize = 64;
+
 /// The game.
 pub struct Game {
     sim: Sim,
@@ -144,6 +148,10 @@ pub struct Game {
     recorder: Option<Recorder>,
     /// Writes applied at the current boundary.
     writes: u32,
+    /// Those writes as recorded (the first [`MAX_BOUNDARY_LOG`]) and how many more: what a write
+    /// trace lists for the boundary (docs/spec/debugger.md 13). Never persisted or hashed.
+    boundary_log: Vec<Applied>,
+    boundary_beyond: u64,
     host_seq: u64,
     /// Bumped whenever the world's content is replaced in place (a restore): presenters redraw all.
     generation: u64,
@@ -264,6 +272,8 @@ impl Game {
             bundles,
             recorder: None,
             writes: 0,
+            boundary_log: Vec::new(),
+            boundary_beyond: 0,
             host_seq: 0,
             generation: 0,
             project: None,
@@ -332,6 +342,45 @@ impl Game {
     /// Writes applied at the current boundary.
     pub fn writes(&self) -> u32 {
         self.writes
+    }
+
+    /// The writes applied at the current boundary as recorded (at most 64), and how many more
+    /// were: what a write trace lists before a tick (docs/spec/debugger.md 13).
+    pub fn boundary_writes(&self) -> (&[Applied], u64) {
+        (&self.boundary_log, self.boundary_beyond)
+    }
+
+    fn log_write(&mut self, a: &Applied) {
+        if self.boundary_log.len() < MAX_BOUNDARY_LOG {
+            self.boundary_log.push(a.clone());
+        } else {
+            self.boundary_beyond += 1;
+        }
+    }
+
+    fn clear_boundary_log(&mut self) {
+        self.boundary_log.clear();
+        self.boundary_beyond = 0;
+    }
+
+    /// Starts recording, in the script host, the statements whose staged writes change `watch`'s
+    /// field (or stops with `None`): a write trace's script side (`pocket_script::debug::
+    /// record_writes`). The program runs instrumented while it records.
+    pub fn record_script_writes(
+        &mut self,
+        watch: Option<pocket_script::debug::FieldWatch>,
+    ) -> bool {
+        pocket_script::debug::record_writes(self.sim.world_mut(), watch)
+    }
+
+    /// Whether the script host's write recorder is armed (`record_script_writes`).
+    pub fn recording_script_writes(&self) -> bool {
+        pocket_script::debug::recording(self.sim.world())
+    }
+
+    /// The statements recorded since the last call, and how many were dropped past the cap.
+    pub fn take_script_writes(&mut self) -> (Vec<pocket_script::debug::StatementWrite>, u64) {
+        pocket_script::debug::take_writes(self.sim.world_mut())
     }
 
     /// Attaches a script debugger to this game's script host, or detaches it (`None`), on the
@@ -483,6 +532,7 @@ impl Game {
             Ok((answer, canonical)) => {
                 let a = applied(canonical, self.writes);
                 self.writes += 1;
+                self.log_write(&a);
                 self.sync_context();
                 if let Some(rec) = &mut self.recorder {
                     rec.applied(&a);
@@ -889,6 +939,7 @@ impl Game {
                 };
                 let a = applied(recorded, w.canonical, self.writes);
                 self.writes += 1;
+                self.log_write(&a);
                 self.sync_context();
                 if let Some(r) = &mut self.recorder {
                     r.applied(&a);
@@ -1119,9 +1170,23 @@ impl Game {
                 let limit = p.limit()?;
                 let mut stop = StepStop::new(self, &p)?;
                 let mut sample = Sampler::new(self, &p, limit)?;
+                let mut trace = p
+                    .trace
+                    .as_ref()
+                    .map(|t| WriteTrace::new(self, t))
+                    .transpose()?;
                 let mut stopped_by = None;
                 for _ in 0..limit {
-                    self.step()?;
+                    let stepped = match &mut trace {
+                        Some(t) => t.step(self, &mut NoHooks),
+                        None => self.step(),
+                    };
+                    if let Err(p) = stepped {
+                        if let Some(t) = trace {
+                            t.cancel(self);
+                        }
+                        return Err(p);
+                    }
                     if let Some(s) = &mut sample {
                         s.after_tick(self);
                     }
@@ -1135,6 +1200,8 @@ impl Game {
                 if stop.is_some() && stopped_by.is_none() {
                     stopped_by = Some(json!({"reason": "limit", "ticks": limit}));
                 }
+                // Before anything that can fail: the recorder stops with the trace.
+                let writes = trace.map(|t| t.finish(self));
                 let mut out =
                     json!({"tick": self.tick().0, "world_hash": self.world_hash()?.to_string()});
                 if let Some(why) = stopped_by {
@@ -1142,6 +1209,9 @@ impl Game {
                 }
                 if let Some(s) = sample {
                     out["samples"] = s.finish(self);
+                }
+                if let Some(w) = writes {
+                    out["writes"] = w;
                 }
                 Ok(out)
             }
@@ -1256,6 +1326,7 @@ impl Game {
         match stepped {
             Ok(r) => {
                 self.writes = 0;
+                self.clear_boundary_log();
                 self.sync_context();
                 if let Some(rec) = &mut self.recorder {
                     rec.end_tick(self.sim.world())?;
@@ -1327,6 +1398,7 @@ impl Game {
         );
         if r.is_ok() {
             self.writes = snap.header().writes;
+            self.clear_boundary_log();
             self.sync_context();
             self.history.clear();
             // The players' session follows the restored timeline (decision points, push cursors).

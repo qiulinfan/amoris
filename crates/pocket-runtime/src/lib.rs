@@ -41,6 +41,7 @@ pub mod thread;
 pub mod types;
 mod values;
 pub mod version;
+pub mod writes;
 
 pub use boundary::take_held;
 pub use catalog::{CATALOG, Command, CommandDef, CommandFn, NoParams, catalog_json};

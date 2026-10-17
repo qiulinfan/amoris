@@ -40,6 +40,7 @@ use crate::control::{
 };
 use crate::game::Game;
 use crate::profile::TickTimer;
+use crate::writes::WriteTrace;
 
 pub use crate::GAME_STACK_BYTES;
 pub use pocket_interface::{MAX_SPEED, Pacing};
@@ -423,12 +424,14 @@ struct Parked {
     kept: Kept,
 }
 
-/// A `time.step` being run: ticks left, where the answer goes, its stop conditions and sampler.
+/// A `time.step` being run: ticks left, where the answer goes, its stop conditions, sampler and
+/// write trace.
 struct StepJob {
     left: u64,
     reply: ReplyTo,
     stop: Option<StepStop>,
     sample: Option<Sampler>,
+    trace: Option<WriteTrace>,
 }
 
 struct Loop {
@@ -533,6 +536,9 @@ impl Loop {
             answer(e);
         }
         for j in self.steps.drain(..) {
+            if let Some(t) = j.trace {
+                t.cancel(&mut self.game);
+            }
             j.reply.send(Err(why.clone()));
         }
         self.drop_player_runs(&why);
@@ -669,11 +675,22 @@ impl Loop {
         let held = self.hold_step_reply();
         // Profiled while a host serves the profile stream (docs/spec/server.md 4).
         let profiling = self.publisher.profiling();
+        // The front step's write trace reads the field around every system of the tick.
+        let mut trace = self.steps.front_mut().and_then(|j| j.trace.take());
         let r = if profiling {
-            self.profiled_step()
+            self.profiled_step(trace.as_mut())
         } else {
-            self.game.step()
+            match trace.as_mut() {
+                Some(t) => t.step(&mut self.game, &mut pocket_sim::NoHooks),
+                None => self.game.step(),
+            }
         };
+        if let Some(t) = trace {
+            match self.steps.front_mut() {
+                Some(j) => j.trace = Some(t),
+                None => t.cancel(&mut self.game),
+            }
+        }
         let stopped = held && !self.release_step_reply();
         let now = self.now();
         // The tick counts against the model and the front step at once, before the players' hooks
@@ -721,6 +738,9 @@ impl Loop {
                 self.model.cancel_steps();
                 self.errors.clear();
                 for j in self.steps.drain(..) {
+                    if let Some(t) = j.trace {
+                        t.cancel(&mut self.game);
+                    }
                     j.reply.send(Err(p.clone()));
                 }
                 self.drop_player_runs(&p);
@@ -755,11 +775,17 @@ impl Loop {
     /// The tick under the profiler: its systems and phases, the whole step, and whether the
     /// script debugger stopped the game thread inside it (its times then measure the hold; the
     /// summaries leave them out).
-    fn profiled_step(&mut self) -> Result<pocket_sim::StepReport, Problem> {
+    fn profiled_step(
+        &mut self,
+        trace: Option<&mut WriteTrace>,
+    ) -> Result<pocket_sim::StepReport, Problem> {
         let stops = self.publisher.debug_stops();
         self.profiler.begin(self.profile_reuse.take());
         let began = self.profiler.now();
-        let r = self.game.step_with(&mut self.profiler);
+        let r = match trace {
+            Some(t) => t.step(&mut self.game, &mut self.profiler),
+            None => self.game.step_with(&mut self.profiler),
+        };
         let ended = self.profiler.now();
         let held = self.publisher.debug_stops() != stops;
         let tick = self.game.tick().0;
@@ -807,7 +833,10 @@ impl Loop {
         };
         if stopped {
             self.errors.clear();
-            self.end_front_step();
+            // Answered at the stop, without the trace (the tick did not end yet).
+            if let Some(t) = self.end_front_step().and_then(|j| j.trace) {
+                t.cancel(&mut self.game);
+            }
             return;
         }
         if let Some(s) = &mut job.sample {
@@ -821,6 +850,7 @@ impl Loop {
             return;
         };
         let why = why.or_else(|| job.stop.as_ref().map(|_| json!({"reason": "limit"})));
+        let writes = job.trace.map(|t| t.finish(&mut self.game));
         let mut answer = self.answer_step();
         if let Ok(ReplyValue::Json(v)) = &mut answer {
             if let Some(why) = why {
@@ -828,6 +858,9 @@ impl Loop {
             }
             if let Some(s) = job.sample {
                 v["samples"] = s.finish(&self.game);
+            }
+            if let Some(w) = writes {
+                v["writes"] = w;
             }
         }
         job.reply.send(answer);
@@ -939,6 +972,9 @@ impl Loop {
         self.model.cancel_steps();
         self.errors.clear();
         for j in self.steps.drain(..) {
+            if let Some(t) = j.trace {
+                t.cancel(&mut self.game);
+            }
             j.reply.send(Err(why.clone()));
         }
         self.drop_player_runs(why);
@@ -1113,15 +1149,23 @@ impl Loop {
                 .reply
                 .send(Err(pocket_sim::sim::world_poisoned(poison.tick)));
         }
-        let checked = StepStop::new(&self.game, &p)
-            .and_then(|stop| Ok((stop, Sampler::new(&self.game, &p, limit)?)));
+        let checked = StepStop::new(&self.game, &p).and_then(|stop| {
+            let sample = Sampler::new(&self.game, &p, limit)?;
+            let trace = p
+                .trace
+                .as_ref()
+                .map(|t| WriteTrace::new(&self.game, t))
+                .transpose()?;
+            Ok((stop, sample, trace))
+        });
         match checked {
-            Ok((stop, sample)) => {
+            Ok((stop, sample, trace)) => {
                 self.steps.push_back(StepJob {
                     left: limit,
                     reply: e.reply,
                     stop,
                     sample,
+                    trace,
                 });
                 self.reowe();
             }

@@ -55,6 +55,11 @@ pub struct StepParams {
     /// Read fields every few ticks and answer them as a table (`samples`).
     #[serde(default)]
     pub sample: Option<Sample>,
+    /// Name every write that changes a field in each tick (`writes`): the boundary's recorded
+    /// writes and each system, engine or script, with the values before and after
+    /// (docs/spec/debugger.md 13).
+    #[serde(default)]
+    pub trace: Option<crate::writes::Trace>,
 }
 
 /// A `time.step`'s sampler: fields read after every `every`-th tick of the step and after its last.
