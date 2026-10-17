@@ -55,6 +55,13 @@ pub struct WalkInput {
     pub gi_toggle: bool,
     pub captured: bool,
     pub dt_s: f32,
+    /// Press edges of the left and right buttons while the mouse is captured.
+    pub primary: bool,
+    pub secondary: bool,
+    /// A hotbar slot chosen by a number key (0 for `1`), or none.
+    pub slot: Option<u8>,
+    /// Hotbar steps from the wheel while captured: positive moves right.
+    pub slot_steps: i32,
 }
 
 #[derive(Clone, Debug)]
@@ -95,6 +102,11 @@ struct WalkControls {
     reset: bool,
     gi_toggle: bool,
     captured: bool,
+    primary: bool,
+    secondary: bool,
+    slot: Option<u8>,
+    slot_steps: i32,
+    wheel: f32,
 }
 
 impl WalkControls {
@@ -107,6 +119,11 @@ impl WalkControls {
         self.reset = false;
         self.gi_toggle = false;
         self.captured = false;
+        self.primary = false;
+        self.secondary = false;
+        self.slot = None;
+        self.slot_steps = 0;
+        self.wheel = 0.0;
     }
 
     fn capture(&mut self, window: &Window) {
@@ -136,6 +153,10 @@ impl WalkControls {
             gi_toggle: std::mem::take(&mut self.gi_toggle),
             captured: self.captured,
             dt_s: dt_s.clamp(0.0, 0.1),
+            primary: std::mem::take(&mut self.primary),
+            secondary: std::mem::take(&mut self.secondary),
+            slot: self.slot.take(),
+            slot_steps: std::mem::take(&mut self.slot_steps),
         }
     }
 }
@@ -477,6 +498,20 @@ impl<H: Host> ApplicationHandler for App<H> {
                             if code == KeyCode::KeyR && !event.repeat {
                                 walk.reset = true;
                             }
+                            let digits = [
+                                KeyCode::Digit1,
+                                KeyCode::Digit2,
+                                KeyCode::Digit3,
+                                KeyCode::Digit4,
+                                KeyCode::Digit5,
+                                KeyCode::Digit6,
+                                KeyCode::Digit7,
+                                KeyCode::Digit8,
+                                KeyCode::Digit9,
+                            ];
+                            if let Some(i) = digits.iter().position(|&d| d == code) {
+                                walk.slot = u8::try_from(i).ok();
+                            }
                         } else {
                             walk.keys.remove(&code);
                         }
@@ -492,12 +527,17 @@ impl<H: Host> ApplicationHandler for App<H> {
                 }
             }
             WindowEvent::MouseInput { state, button, .. } => {
-                if button == MouseButton::Left
-                    && state == ElementState::Pressed
+                if state == ElementState::Pressed
                     && let Some(st) = self.state.as_mut()
                     && let Some(walk) = st.walk.as_mut()
                 {
-                    walk.capture(&st.window);
+                    match button {
+                        // The first click captures the mouse; later ones act.
+                        MouseButton::Left if !walk.captured => walk.capture(&st.window),
+                        MouseButton::Left => walk.primary = true,
+                        MouseButton::Right if walk.captured => walk.secondary = true,
+                        _ => {}
+                    }
                 }
                 if button == MouseButton::Right
                     && let Some(fly) = self.state.as_mut().and_then(|s| s.fly.as_mut())
@@ -531,6 +571,22 @@ impl<H: Host> ApplicationHandler for App<H> {
                 }
             }
             WindowEvent::MouseWheel { delta, .. } => {
+                if let Some(walk) = self.state.as_mut().and_then(|s| s.walk.as_mut())
+                    && walk.captured
+                {
+                    walk.wheel += match delta {
+                        MouseScrollDelta::LineDelta(_, y) => -y,
+                        MouseScrollDelta::PixelDelta(p) => -(p.y as f32) / 40.0,
+                    };
+                    while walk.wheel >= 1.0 {
+                        walk.wheel -= 1.0;
+                        walk.slot_steps += 1;
+                    }
+                    while walk.wheel <= -1.0 {
+                        walk.wheel += 1.0;
+                        walk.slot_steps -= 1;
+                    }
+                }
                 if let Some(fly) = self.state.as_mut().and_then(|s| s.fly.as_mut()) {
                     let d = match delta {
                         MouseScrollDelta::LineDelta(_, y) => y,
@@ -599,14 +655,22 @@ mod tests {
             reset: true,
             gi_toggle: true,
             captured: true,
+            primary: true,
+            secondary: false,
+            slot: Some(3),
+            slot_steps: -1,
+            wheel: 0.0,
         };
         let input = controls.input(1.0);
+        assert!(input.primary && !input.secondary);
+        assert_eq!((input.slot, input.slot_steps), (Some(3), -1));
         assert!((input.motion[0].hypot(input.motion[1]) - 1.0).abs() < 1e-6);
         assert!(input.fast && input.captured && input.jump && input.reset);
         assert!(input.gi_toggle);
         assert_eq!(input.look, [10.0, -3.0]);
         assert_eq!(input.dt_s, 0.1);
         let next = controls.input(1.0 / 60.0);
+        assert!(!next.primary && next.slot.is_none() && next.slot_steps == 0);
         assert!(!next.jump && !next.reset);
         assert!(!next.gi_toggle);
         assert_eq!(next.look, [0.0; 2]);

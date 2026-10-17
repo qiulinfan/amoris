@@ -51,6 +51,8 @@ struct Play {
     capture: Option<(PathBuf, u32)>,
     frames: u32,
     walk: Option<WalkSession>,
+    /// `--walk` on a game whose catalog is `first_person`: the window is seat `player`.
+    seat: Option<SeatWalk>,
 }
 
 impl Host for Play {
@@ -62,6 +64,9 @@ impl Host for Play {
         r.apply(self.mailbox.take(), now_s);
         if let Some(walk) = self.walk.as_mut() {
             walk.update(r);
+        }
+        if let Some(seat) = self.seat.as_mut() {
+            seat.update(r);
         }
         if let Some(audio) = self.audio.as_mut() {
             let cam = r.camera();
@@ -106,10 +111,16 @@ impl Host for Play {
         if let Some(walk) = self.walk.as_mut() {
             walk.input = input;
         }
+        if let Some(seat) = self.seat.as_mut() {
+            seat.take(input);
+        }
     }
 
     fn status(&self) -> Option<&str> {
-        self.walk.as_ref().map(|w| w.status.as_str())
+        self.walk
+            .as_ref()
+            .map(|w| w.status.as_str())
+            .or_else(|| self.seat.as_ref().map(|s| s.status.as_str()))
     }
 
     fn wants_capture(&mut self) -> bool {
@@ -163,7 +174,14 @@ fn play_inner(raw: &[String]) -> Result<Outcome, Problem> {
         )
     })?;
     let project = Project::load(&dir)?;
-    let walk = if args.has("walk") {
+    // A first-person game is walked as its player seat (voxels.md 8); any other through the
+    // presenter's own collision camera.
+    let first_person = project
+        .manifest
+        .player
+        .as_ref()
+        .is_some_and(|p| p.actions == "first_person");
+    let walk = if args.has("walk") && !first_person {
         Some(WalkSession::new(project.clone())?)
     } else {
         None
@@ -180,6 +198,11 @@ fn play_inner(raw: &[String]) -> Result<Outcome, Problem> {
     options.pacing = Pacing::RealTime { speed };
     options.feed = Some(feed);
     let game = GameThread::spawn(move || Game::new(setup, seed), options)?;
+    let seat = if args.has("walk") && first_person {
+        Some(SeatWalk::new(game.client(amoris_link::Source::Player(0))?))
+    } else {
+        None
+    };
     let fly = args
         .has("fly")
         .then(|| CameraState::look_at(Vec3::new(-14.0, 7.0, 16.0), Vec3::new(8.0, 0.0, 0.0)));
@@ -206,6 +229,7 @@ fn play_inner(raw: &[String]) -> Result<Outcome, Problem> {
             }),
             frames: 0,
             walk,
+            seat,
         },
         RunOptions {
             title: format!("Amoris — {}", project.manifest.name),
@@ -223,6 +247,182 @@ fn play_inner(raw: &[String]) -> Result<Outcome, Problem> {
         stdout: report.map(|r| format!("{r:#?}")).unwrap_or_default(),
         code: 0,
     })
+}
+
+/// The window as a first-person game's seat `player` (voxels.md 8): keys, the mouse and the wheel
+/// become `player.act` controls and pulses of the walker in the world; the camera is the walker's,
+/// turned at once by the window's own latest look so looking never waits on a tick.
+struct SeatWalk {
+    client: amoris_link::GameClient,
+    input: WalkInput,
+    /// Edges and steps gathered since the last update.
+    pending: WalkInput,
+    look: Option<(f32, f32)>,
+    slot: u8,
+    sent: Option<(f32, f32, bool, f32, f32)>,
+    status: String,
+}
+
+impl SeatWalk {
+    fn new(client: amoris_link::GameClient) -> SeatWalk {
+        SeatWalk {
+            client,
+            input: WalkInput::default(),
+            pending: WalkInput::default(),
+            look: None,
+            slot: 0,
+            sent: None,
+            status: "Click to play — Esc exits".into(),
+        }
+    }
+
+    /// Keeps the frame's input; edges are kept until an update sends them.
+    fn take(&mut self, input: WalkInput) {
+        let p = &mut self.pending;
+        p.primary |= input.primary;
+        p.secondary |= input.secondary;
+        p.jump |= input.jump;
+        p.slot = input.slot.or(p.slot);
+        p.slot_steps += input.slot_steps;
+        p.look[0] += input.look[0];
+        p.look[1] += input.look[1];
+        self.input = input;
+    }
+
+    fn update(&mut self, r: &mut Renderer) {
+        let input = std::mem::take(&mut self.pending);
+        // The walker's camera as the world last published it.
+        r.set_camera_override(None);
+        if !r.scene.cameras.iter().any(|c| c.active) {
+            self.status = "Waiting for the player's camera…".into();
+            return;
+        }
+        let mut camera = r.camera();
+        let (mut yaw, mut pitch) = self.look.unwrap_or_else(|| {
+            let f = camera.rotation * Vec3::NEG_Z;
+            ((-f.x).atan2(-f.z), f.y.clamp(-1.0, 1.0).asin())
+        });
+        let captured = self.input.captured;
+        if captured {
+            yaw -= input.look[0] * 0.003;
+            pitch = (pitch - input.look[1] * 0.003).clamp(-1.55, 1.55);
+        }
+        yaw = (yaw + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+        self.look = Some((yaw, pitch));
+        let motion = if captured {
+            self.input.motion
+        } else {
+            [0.0; 2]
+        };
+        let run = captured && self.input.fast;
+        let mut actions = Vec::new();
+        let now = (motion[1], motion[0], run, yaw, pitch);
+        if self.sent != Some(now) {
+            actions.push(serde_json::json!({"do": "set", "controls": {
+                "forward": motion[1], "strafe": motion[0], "run": run,
+                "yaw": yaw, "pitch": pitch}}));
+            self.sent = Some(now);
+        }
+        let slot = match (input.slot, input.slot_steps) {
+            (Some(s), _) => s,
+            (None, 0) => self.slot,
+            (None, n) => u8::try_from((i32::from(self.slot) + n).rem_euclid(9)).unwrap_or(0),
+        };
+        if slot != self.slot {
+            self.slot = slot;
+            actions.push(serde_json::json!({"do": "set", "controls": {"slot": slot.to_string()}}));
+        }
+        for (on, control) in [
+            (input.jump, "jump"),
+            (input.primary, "primary"),
+            (input.secondary, "secondary"),
+        ] {
+            if on && captured {
+                actions.push(serde_json::json!({"do": "pulse", "control": control}));
+            }
+        }
+        if !actions.is_empty() {
+            let sent = self.client.send(
+                "player.act",
+                serde_json::json!({ "actions": actions }),
+                None,
+                |reply| {
+                    if let Err(p) = reply {
+                        eprintln!("player.act refused: {}", p.message);
+                    }
+                },
+            );
+            if let Err(p) = sent {
+                eprintln!("player.act not sent: {}", p.message);
+            }
+        }
+        camera.rotation = Quat::from_rotation_y(yaw) * Quat::from_rotation_x(pitch);
+        r.set_camera_override(Some(camera));
+        // The targeted block's outline, from the renderer's own copy of the volumes.
+        r.overlays.lines.clear();
+        let dir = camera.rotation * Vec3::NEG_Z;
+        if captured
+            && let Some((corner, edge)) = r.voxel_target(camera.position.into(), dir.into(), 5.0)
+        {
+            let c = Vec3::from(corner) - Vec3::splat(0.002);
+            let e = edge + 0.004;
+            let p = |x: f32, y: f32, z: f32| (c + Vec3::new(x, y, z) * e).to_array();
+            let corners = [
+                p(0., 0., 0.),
+                p(1., 0., 0.),
+                p(1., 0., 1.),
+                p(0., 0., 1.),
+                p(0., 1., 0.),
+                p(1., 1., 0.),
+                p(1., 1., 1.),
+                p(0., 1., 1.),
+            ];
+            for (a, b) in [
+                (0, 1),
+                (1, 2),
+                (2, 3),
+                (3, 0),
+                (4, 5),
+                (5, 6),
+                (6, 7),
+                (7, 4),
+                (0, 4),
+                (1, 5),
+                (2, 6),
+                (3, 7),
+            ] {
+                r.overlays.lines.push(amoris_render::overlay::OverlayLine {
+                    a: corners[a],
+                    b: corners[b],
+                    color: [0.05, 0.05, 0.05, 0.85],
+                    width: 2.0,
+                });
+            }
+        }
+        self.status = if captured {
+            "Playing — Esc releases mouse"
+        } else {
+            "Click to play — Esc exits"
+        }
+        .into();
+        const STATUS_ID: u64 = u64::MAX - 1;
+        const CROSSHAIR_ID: u64 = u64::MAX - 2;
+        r.scene
+            .ui
+            .retain(|u| u.id != STATUS_ID && u.id != CROSSHAIR_ID);
+        r.scene.ui.push(walk_text(
+            STATUS_ID,
+            self.status.clone(),
+            18.0,
+            7,
+            [0.0, 24.0],
+        ));
+        if captured {
+            r.scene
+                .ui
+                .push(walk_text(CROSSHAIR_ID, "+".into(), 24.0, 4, [0.0, 0.0]));
+        }
+    }
 }
 
 /// A camera derived from the static scene, separate from the game's authoritative ECS state.
