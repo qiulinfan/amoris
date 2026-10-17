@@ -1,5 +1,7 @@
 //! The three draw paths of batches.rs draw the same frame. The mixed demo scene (every pipeline
-//! variant, the camera and four shadow cascades) plus skinned characters is rendered headless on
+//! variant, the camera and four shadow cascades) plus skinned characters and transparent instances
+//! (the transparent stage's direct draws with their base in `first_instance`, which WebGPU's core
+//! allows on every path) is rendered headless on
 //! a device with every feature the adapter offers (natively: one multi-draw per view and variant),
 //! on one drawing batch by batch with the base in `first_instance` (the browser with
 //! `indirect-first-instance`), and on one without `indirect-first-instance` (WebGPU's baseline),
@@ -46,6 +48,8 @@ fn scene() -> RenderFrame {
             }),
         });
     }
+    // Transparent instances (the transparent stage's direct draws, docs/spec/transparency.md).
+    frame.instances.extend(demo::transparent_instances(2000));
     frame
 }
 
