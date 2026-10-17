@@ -32,6 +32,7 @@ pub mod query;
 mod readings;
 pub mod sailing;
 pub mod sea;
+mod shapes;
 pub mod solver;
 pub mod walk;
 
@@ -43,7 +44,7 @@ pub use body::{
 pub use cache::{IDENTITY, PhysicsCache, declare};
 pub use forces::start_time;
 pub use sea::{GRAVITY, Sea, Water, Wave, WaveField, Wind};
-pub use solver::{BodyIndex, ContactLog, Physics};
+pub use solver::{BodyIndex, ContactLog, Physics, RebuiltSolver};
 
 use pocket_contract::Problem;
 use pocket_sim::registry::ComponentRegistry;

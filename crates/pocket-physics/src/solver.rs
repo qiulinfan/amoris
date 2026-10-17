@@ -32,6 +32,7 @@ use crate::body::{
 use crate::geom::{self, V3};
 use crate::readings;
 use crate::sea::{GRAVITY, Sea};
+use crate::shapes;
 
 /// The solver's whole cross-tick state: bodies, colliders, broad and narrow phase with contact
 /// manifolds and warm-start impulses, islands and sleep counters, joints, integration parameters.
@@ -80,17 +81,43 @@ pub struct ContactLog {
     pub(crate) events: Vec<(EntityId, EntityId, bool)>,
 }
 
+/// Present after a restore whose physics cache referred to shapes that the restored components do
+/// not build (a snapshot this engine did not write): the solver was rebuilt from the components
+/// instead (versions.md 6.3), inexactly, and the next `physics.step` reports each entity named,
+/// once. A report for the next tick, not game state: declared ignored.
+#[derive(Resource, Debug, Default)]
+pub struct RebuiltSolver {
+    pub(crate) entities: Vec<EntityId>,
+}
+
+fn rebuilt_problem(entity: EntityId) -> Problem {
+    let reason = "the snapshot's physics cache refers to a shape this entity's RigidBody and \
+                  Collider do not build";
+    Problem::new(
+        "persist.noncanonical",
+        format!(
+            "Entity {entity}: {reason}; the solver was rebuilt from the components and continues \
+             inexactly (versions.md 6.3)."
+        ),
+        detail([
+            ("offset", json!(0)),
+            ("entity", json!(entity.get())),
+            ("reason", json!(reason)),
+        ]),
+    )
+}
+
 /// The entity in a body's or collider's `user_data`.
 pub fn entity_of(user_data: u128) -> Option<EntityId> {
     EntityId::new(u64::try_from(user_data & u128::from(u64::MAX)).unwrap_or(0))
 }
 
-fn spec_of(user_data: u128) -> u64 {
+pub(crate) fn spec_of(user_data: u128) -> u64 {
     u64::try_from(user_data >> 64).unwrap_or(0)
 }
 
 /// A hash of what the body is made from, kept in its `user_data` to see a change.
-fn spec_hash(body: Option<&RigidBody>, collider: &Collider) -> u64 {
+pub(crate) fn spec_hash(body: Option<&RigidBody>, collider: &Collider) -> u64 {
     let bytes = bincode::serialize(&(body, collider)).unwrap_or_default();
     pocket_sim::rng::fnv1a64_extend(0xcbf2_9ce4_8422_2325, &bytes)
 }
@@ -139,7 +166,16 @@ fn part_shape(entity: EntityId, s: &PartShape) -> Result<SharedShape, Problem> {
     })
 }
 
-fn shared_shape(entity: EntityId, shape: &Shape) -> Result<SharedShape, Problem> {
+/// The solver's shape for a `Shape`.
+///
+/// A by-reference slot of the physics cache (layout 2, persistence.md 8) means "the shape this
+/// function builds from the body's components", so a change to what it builds (another mesh flag,
+/// another hull or compound handling) or to parry's builders under it (a parry upgrade, a patch
+/// under `[patch.crates-io]`) changes what old snapshots mean: bump the `shapes` token of the
+/// cache's identity (`crate::IDENTITY`; versions.md 3.6). `probe::layout::SHAPE_BUILDS` pins the
+/// digest of what it builds, checked by the web test `physics.shape_builds` natively and in
+/// WebAssembly, so such a change fails there until the token is bumped and the digest re-blessed.
+pub(crate) fn shared_shape(entity: EntityId, shape: &Shape) -> Result<SharedShape, Problem> {
     Ok(match shape {
         Shape::Ball { radius } => part_shape(entity, &PartShape::Ball { radius: *radius })?,
         Shape::Cuboid { half_extents } => part_shape(
@@ -225,9 +261,18 @@ fn insert(
 ) -> Result<RigidBodyHandle, Problem> {
     crate::body::validate(entity, body, collider)?;
     let pose = pose_of(entity, tf)?;
-    let shape = shared_shape(entity, &collider.shape)?;
-    let hash = spec_hash(body, collider);
     let dynamic = body.is_some_and(|b| b.kind == BodyKind::Dynamic);
+    // A fixed body's shape comes from the process's table of built shapes (`shapes`), which the
+    // physics cache writes by reference.
+    let (hash, shape) = if dynamic {
+        (
+            spec_hash(body, collider),
+            shared_shape(entity, &collider.shape)?,
+        )
+    } else {
+        let (spec, key) = shapes::spec_and_key(body, collider);
+        (spec, shapes::fixed(entity, collider, spec, key)?)
+    };
     let mut rb = if dynamic {
         RigidBodyBuilder::dynamic()
     } else {
@@ -381,6 +426,7 @@ pub(crate) fn step(
     seas: Query<(&EntityId, &Sea)>,
     mut bodies: Query<BodyItem<'static>>,
     mut loose: Query<(&EntityId, &mut ExternalForce), Without<Collider>>,
+    rebuilt: Option<ResMut<RebuiltSolver>>,
 ) {
     let key = SystemKey::new("physics.step").ok();
     let mut report = |entity: EntityId, p: Problem| {
@@ -394,6 +440,11 @@ pub(crate) fn step(
             ));
         }
     };
+    if let Some(mut r) = rebuilt {
+        for id in std::mem::take(&mut r.entities) {
+            report(id, rebuilt_problem(id));
+        }
+    }
     let world = &mut physics.world;
     let mut items: Vec<_> = by_id_mut(&mut bodies).collect();
 
