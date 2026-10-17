@@ -106,7 +106,7 @@ Each method is a command of the catalog (`GET /api/catalog` is authoritative). K
 | `history.undo` / `history.redo` | `{group?}` / `{}` | as `world.edit`, with the entry's `label`; an undo with `group` only when the next entry is the whole of that group (server.md 3.1) |
 | `history.list` | `{}` | `{undo, redo, entries}`: each stack most recent last, each entry `{label, source, group?, session?}` (server.md 3.1) |
 | `time.control` | `{pause?, speed?, pacing?}` | status |
-| `time.step` | `{ticks?, until?: {event?, subject?, tick?}, watch?: {entity, component, field, op?, value?}, sample?: {fields: ["E.C.f"], every?}}` | `{tick, world_hash, errors, stopped_by?, samples?}`; a debugger stop ends the step and answers at once with `paused: true` (server.md 3.2, 3.4); a step queued behind it answers `debug.paused {queued: true}` and runs after the resume |
+| `time.step` | `{ticks?, until?: {event?, subject?, tick?}, watch?: {entity, component, field, op?, value?}, sample?: {fields: ["E.C.f"], every?}, trace?: {entity, component, field?}}` | `{tick, world_hash, errors, stopped_by?, samples?, writes?}` (`writes`: every write that changed the traced field, tick by tick, debugger.md 13); a debugger stop ends the step and answers at once with `paused: true` (server.md 3.2, 3.4); a step queued behind it answers `debug.paused {queued: true}` and runs after the resume |
 | `play.start` / `play.stop` | `{speed?, paused?}` / `{}` | status (Play runs a fork of the edit world; Stop discards it) |
 | `scripts.list` | `{}` | `[{path, bytes, diagnostics}]` |
 | `scripts.read` / `scripts.write` | `{path, lines?, numbered?}` / `{path, text}` | `{path, text, first?, last?, total?}` / `{path, bytes, diagnostics}` |
@@ -204,8 +204,9 @@ bytes to the page's viewport.
   changes it, naming the statement that wrote; the entity by id or name), `debug.unwatch {id?}`,
   `debug.exceptions {mode: none|uncaught|all}`, `debug.wait {timeout_ms?}`, and `debug.rewind {tick,
   bundle?}` (restore the kept snapshot at or before `tick` under the applied scripts and step to it;
-  served by the host's server, server.md 3.3). Pauses and resumes are pushed as `debug` events,
-  console lines as `log`.
+  served by the host's server, server.md 3.3) and `debug.writes {entity, component, field?, ticks?}`
+  (who changed the field: `time.step {trace}` answered as its trace, debugger.md 13; the server's
+  too). Pauses and resumes are pushed as `debug` events, console lines as `log`.
 - The editor uses these JSON methods over `/ws` (editor.md 8.1), not CDP.
 
 ## 7. MCP tools

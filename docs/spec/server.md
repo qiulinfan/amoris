@@ -88,7 +88,7 @@ files).
 | `history.list` | read | `{}` | `{undo: [label], redo: [label], entries: {undo: [entry], redo: [entry]}}`: each stack most recent last (the next to undo or redo last), `entries` the same entries in the same order as `{label, source, group?, session?}` (3.1) |
 | `history.undo` / `history.redo` | write | `{group?}` / `{}` | as `world.edit`, with the entry's `label`; an undo with `group` only when the next entry is the whole of that group, else `history.group` (3.1) |
 | `time.control` (`time_control`) | control | `{pause?, speed?, pacing?}` | `status` |
-| `time.step` (`step`) | control | `{ticks?, until?, watch?, sample?}` | `{tick, world_hash, errors, stopped_by?, samples?}`; at a debugger stop `{tick, world_hash: null, errors: [], paused: true, stopped_by}` (3.2, 3.4) |
+| `time.step` (`step`) | control | `{ticks?, until?, watch?, sample?, trace?}` | `{tick, world_hash, errors, stopped_by?, samples?, writes?}` (`writes`: the write trace, debugger.md 13); at a debugger stop `{tick, world_hash: null, errors: [], paused: true, stopped_by}` (3.2, 3.4) |
 | `play.start` | control | `{speed? = 1, paused?}` | `status` (mode `play`) |
 | `play.stop` | control | `{}` | `status` (mode `edit`) |
 | `snapshots.list` | read | `{}` | `{every, keep, snapshots: [{tick, world_hash}]}` |
@@ -108,7 +108,7 @@ files).
 | `profile.frame` | read (server) | `{ticks? = 60}` (at most 600) | the `profile` summary (4) of the last `ticks` ticks profiled |
 | `assets.list` | read (server) | `{dir?}` | `[{path, kind, bytes}]`, served at `/assets/<path>` |
 | `docs.search` | read (server) | `{query, limit? = 10}` | `[{command, doc}`, `{component, doc, fields}` or `{guide, read}]` (a matching section of `scripts.guide`) |
-| `debug.*` | (server) | per pocket-debug (debugger.md 7), one catalog entry each with its schema | `debug.not_available` until a `DebugHub` is installed; `debug.rewind {tick, bundle?}` is the server's own |
+| `debug.*` | (server) | per pocket-debug (debugger.md 7), one catalog entry each with its schema | `debug.not_available` until a `DebugHub` is installed; `debug.rewind {tick, bundle?}` and `debug.writes {entity, component, field?, ticks?}` (debugger.md 13) are the server's own |
 | `capture` | (server) | `{camera?, kind?}` | `capture.not_available` until a `CaptureHub` is installed |
 | `subscribe` / `unsubscribe` | `/ws` only | `{topics: [topic]}` | `{topics}` |
 
@@ -396,8 +396,10 @@ frame when the game thread's `on_publish` says it published, at most one every 8
 entries like every other command, so `pocket help debug.watch`, `docs.search` and the MCP `debug`
 tool describe them (the debug evaluation's fourth finding: 34 refusals of guessed parameters); the
 server adds `debug.rewind {tick, bundle?}`, which it serves itself (restore, then step to `tick`),
-and resolves `debug.watch`'s entity names (`Sloop`, `Sloop#3`) in the last publication before the
-hub sees an id. Without a hub, one `debug.state` entry says the debugger is not installed.
+and `debug.writes {entity, component, field?, ticks?}` (a `time.step {ticks, trace}` answered as its
+write trace, debugger.md 13), and resolves `debug.watch`'s entity names (`Sloop`, `Sloop#3`) in the
+last publication before the hub sees an id. Without a hub, one `debug.state` entry says the debugger
+is not installed.
 
 ## 7. MCP
 
@@ -413,7 +415,7 @@ parameters loosely and the runtime's decoder refuses unknown ones with suggestio
 | `history` | undo, redo, list |
 | `assets` | list |
 | `events` | since, why -> `events.*`; log -> `log.since` |
-| `debug` | attach, detach, breakpoints.set, breakpoints.clear, breakpoints.list, pause, continue, step, state, eval, set, watch, unwatch, exceptions, wait, rewind -> `debug.*` |
+| `debug` | attach, detach, breakpoints.set, breakpoints.clear, breakpoints.list, pause, continue, step, state, eval, set, watch, unwatch, exceptions, wait, rewind, writes -> `debug.*` |
 | `capture` | -> `capture` |
 | `docs` | -> `docs.search` |
 | `player` | session, describe, observe, nearby, events, affordances, intents, act, wait, continue, pacing -> `player.*` (player.md; a developer names the seat) |
@@ -443,7 +445,7 @@ Schema, so help never drifts from what the host takes.
 | `pocket world tree [filter] [--with C,..]` | `world.tree` |
 | `pocket world get <entity> [C.. \| C.f,C.g..]`, `query <C,..> [--fields C.f,..]`, `schema [C]` | `world.get` (dotted names are `fields`), `world.query`, `world.schema` |
 | `pocket world edit '<ops>'`, `set <entity> <C> f=v..`, `spawn [name] [--prefab j]`, `remove <e> <C>`, `destroy <e>..` | `world.edit` |
-| `pocket step [ticks] [--until event:<name>|tick:<n>|<e>.<C>.<f><op><v>] [--watch <e>.<C>.<f>[~v]] [--sample <e>.<C>.<f>,.. [--every k]]` | `time.step` |
+| `pocket step [ticks] [--until event:<name>|tick:<n>|<e>.<C>.<f><op><v>] [--watch <e>.<C>.<f>[~v]] [--sample <e>.<C>.<f>,.. [--every k]] [--trace <e>.<C>[.<f>]]` | `time.step` (`--trace`: the write trace's table after the status line) |
 | `pocket time pause|resume|speed <x>|stepped` | `time.control` |
 | `pocket play start [--speed x] [--paused]|stop` | `play.*` |
 | `pocket undo`, `redo`, `history` | `history.*` |
@@ -454,6 +456,7 @@ Schema, so help never drifts from what the host takes.
 | `pocket debug break <file>:<line> [--if <expr>] [--log <text>]`, `clear [id]`, `list` | `debug.breakpoints.*` (`file` may be the module's end, `helm.ts`) |
 | `pocket debug state [--full]`, `eval <expr> [--frame n]`, `set <name> <expr> [--frame n]` | `debug.state`, `debug.eval`, `debug.set` |
 | `pocket debug watch <e>.<C>[.<f>]`, `unwatch [id]` | `debug.watch` (entity by name or id), `debug.unwatch` |
+| `pocket debug writes <e>.<C>[.<f>] [--ticks n]` | `debug.writes` (a table: tick, writer, phase, before, after, the statement or the boundary's write) |
 | `pocket debug continue`, `step [over|into|out]`, `pause [ms]`, `wait [ms]`, `exceptions <mode>`, `rewind <tick> [--bundle snapshot]`, `attach`, `detach` | `debug.*` |
 | `pocket debug <action> ['<json>']` | `debug.<action>` with exact parameters |
 
@@ -532,4 +535,5 @@ stops the game thread.
    answers `typecheck: "unavailable"` and exits 0 on the CLI; `pocket check` calls that
    inconclusive.
 4. The web worker's loop (`pocket-web`) runs plain step counts; stop conditions, Play and kept
-   snapshots are native only.
+   snapshots are native only, and it refuses a write trace (`time.trace_unavailable`, debugger.md
+   13).

@@ -26,6 +26,7 @@ pocket debug break scripts/rules.ts:27 --if "r > 0"   # then: pocket step 60 ret
 pocket debug state                                     # where, why, the frame's locals
 pocket debug eval "speed * 2" ; pocket debug continue
 pocket debug watch Sloop.Log.distance                  # stop at the statement that writes it
+pocket debug writes Sloop.Boat.rudder --ticks 120      # who changed it each tick, engine or script
 pocket world get Sloop Boat.speed,Log.distance         # fields alone
 pocket step 300 --sample Sloop.Boat.speed --every 30   # a table instead of step-and-get loops
 pocket scripts status                                  # the bundle the world runs

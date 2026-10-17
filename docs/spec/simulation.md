@@ -380,6 +380,9 @@ pub struct DecisionRequest { pub observer: EntityId, pub reason: String, pub eve
 pub trait StepHooks {
     fn phase(&mut self, phase: TickPhase, begin: bool) {}
     fn system(&mut self, key: &SystemKey, begin: bool) {}
+    /// A read-only view of the world before each system and after it returned (not after a
+    /// panic), outside the `system` pair: the write trace's (debugger.md 13).
+    fn world(&mut self, key: &SystemKey, phase: TickPhase, begin: bool, world: &World) {}
 }
 ```
 
@@ -396,6 +399,9 @@ pub trait StepHooks {
   boundary write (`threads.md`, 5.2). Requests are tick output, deterministic like events. A time
   mode that must remember an outstanding request across a snapshot keeps it in its persisted state
   (3.3).
+- **Hooks read, never write.** `world` hands a hook `&World` between systems (2026-10-15, Pioneer,
+  for the write trace): what a hook reads there changes nothing the tick computes, so the world
+  hash with and without hooks is the same.
 - **Turns and lockstep** need nothing more: a turn is a run of `step` calls between boundaries where
   writes are accepted; lockstep applies every peer's writes for tick n at the boundary before tick n
   in the canonical order, then steps.

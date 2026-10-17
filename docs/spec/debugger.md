@@ -24,6 +24,7 @@ One core, three frontends:
 | The hook the host calls (`GameHook`): stops, steps, serves requests while stopped | `pocket_debug::game`, `inspect` | game |
 | Chrome DevTools Protocol endpoint, `ws://127.0.0.1:9229/devtools/game` | `pocket_debug::cdp` | one listener, one per session |
 | The agents' JSON API: `DebugHub::call("debug.*", params)` | `pocket_debug::agent` | the caller's |
+| The write trace (13): the step hooks' world view, the script host's write recorder, `time.step {trace}` | `pocket_sim::StepHooks::world`, `pocket_script::debug::record_writes`, `pocket_runtime::writes` | game |
 
 ```mermaid
 flowchart LR
@@ -58,7 +59,8 @@ handler is set on the context, and calls the handler at each one while it is set
   that loaded once does not fail to load again, and if it did the old one stays.
 - `instrument()` is true while any frontend is attached: a CDP session that sent `Debugger.enable`,
   or agents after `debug.attach`, a breakpoint, a watch or a pause request. The last one leaving
-  (a closed socket, `debug.detach`) resumes a pause and drops its breakpoints and watches.
+  (a closed socket, `debug.detach`) resumes a pause and drops its breakpoints and watches. A
+  program is also instrumented while a write trace's recorder is armed (13), with no frontend.
 - Uninstrumented, a program is the stock engine's bytecode and the debugger costs nothing (10).
 
 The vendored QuickJS-ng carries two more patches for the debugger:
@@ -214,6 +216,7 @@ with it, or its end when only one module ends so (`helm.ts`).
 | `debug.exceptions` | `{mode: "none"\|"uncaught"\|"all"}` | `{mode}` |
 | `debug.wait` | `{timeout_ms?}` | state, once stopped or after the wait |
 | `debug.rewind` | `{tick, bundle?}` | `{restored, tick, scripts, stopped_by?}`: served by the host's server, not the hub: `snapshots.restore` at or before `tick` (under the applied scripts unless `bundle: "snapshot"`), then `time.step` to it (server.md 3.3); the hub alone answers `debug.unsupported` |
+| `debug.writes` | `{entity, component, field?, ticks?}` | the write trace (13) of `ticks` (default 60) stepped ticks, with the step's `tick`, `world_hash`, `errors`, `stopped_by?`; `{dropped: "debugger stop", tick, paused, stopped_by}` when a breakpoint answered the step: served by the host's server as `time.step {ticks, trace}`; the hub alone answers `debug.unsupported` |
 
 Problems: `debug.not_paused`, `debug.no_frame`, `debug.eval_failed {error}`, `debug.set_failed
 {name}` (a constant, no such variable, the expression threw, a returned frame), `debug.unknown_file
@@ -345,6 +348,7 @@ over round trip 5 ms.
 | `cargo test -p pocket-app --test debug_agent` (`play_takes_the_debugger_to_its_fork`, `debug_state_names_the_cdp_endpoint`) | `play.start` on a game thread started paused (as `pocket serve` starts it): a breakpoint set in Edit stops Play's fork at its first tick, an evaluation that assigns a query column (`g.level[r] = 100`) is committed, `play.stop` hands the hook back and a `time.step` of the edit world stops at a new breakpoint; `debug.state`'s `cdp` names an endpoint served on port 0 and is `null` once it stopped | pass (3 of 3 with the test above; `--release`) | the test's output |
 | `cargo test -p pocket-app --test debug_agent` (`eval_sees_the_block_scoped_locals_in_scope`, 2026-10-09, Windows) | **P11** on the test project `crates/pocket-debug/tests/fixtures/scopes`: in a called function its local and arguments, in the caller's frame the block's locals declared before the call and not one declared after it; after a sibling block, the block's `dx`, `dz`, `bearing` and the module's `GAIN`, not the sibling's `hidden`; the debug evaluation's helm.ts:67 shape (three consts in the deepest block) with all three. Without P11's lookup the run fails at `hidden` (the control was run) | pass; `node crates/pocket-debug/tests/cdp_e2e.mjs` 20/20 on the same build ([cdp-e2e-p11.txt](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/agentdebug/cdp-e2e-p11.txt)) | the test's output |
 | `cargo test -p pocket-app --test paused_host` (2026-10-09, Windows) | **A held host** through `pocket_server::Host::call` over the test project on a game thread started as `pocket serve` starts it: the catalog's entry of every method (kind, schema), a breakpoint by the module's short name, a `time.step {ticks: 5}` answered at the stop (`stopped_by` breakpoint, tick 4, `paused: true`) and ended with that tick, `status` and seven reads equal to the game's own reads of the same world, `scripts.apply`, `time.step`, `snapshots.list`, `history.list` and `world.edit` refused with `debug.paused` within 500 ms, `debug.watch` by name (a misspelt name refused with the suggestion), `debug.state {brief}`, a data watch stopping a step, `debug.rewind` under the applied scripts; and the MCP `debug` tool naming every method and parameter. Since the review of the same day: two steps queued at a conditional breakpoint (`ctx.tick === 3000`): the first answers at the stop with tick 3000, the second `debug.paused {queued: true}`, and after the continue the world stands at 3050 (the second ran its 50 ticks); `play.stop` at a breakpoint the next tick hits again, three times a tick (three gauges), twice: Edit mode within 2 s, the edit world's hash, the pass over, the breakpoint kept; `time.control {}` answering while held; `time.control {pause: true}` queued, continued through the tick's three stops, Play resting at the held tick's end where an edit works and a step stops again; `play.stop` refused in the edit world | pass | the test's output; [smoke-server.txt](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/agentdebug/smoke-server.txt) does the same through the CLI and MCP; [held-host-review.json](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/agentdebug/held-host-review.json) (`tools/held_host_review.py`) through `pocket serve` |
+| `cargo test -p pocket-runtime --features transpile,thread --test write_trace`; `cargo test -p pocket-app --test paused_host` (`debug_writes_names_the_writers_through_the_host`); `cargo test -p pocket-web --test worker` (`a_write_trace_is_refused_by_the_browser_loop`) (2026-10-15, Windows) | **The write trace** (13): the test project's gauge, written each tick by `script:measure` at the `write-level` line; the sailing course with a script helm and `sail_to`: `interface.intents` in Control every tick (no statement), the helm at ticks 20 and 40 at its statement, the swap and `player.act` at the first boundary and nothing else; a helper's stored result named at the storing statement with the helper's `return` as `via`, a helper writing as its last statement named itself, eleven statements of one call listed as the first seven and the last (`statements_more`: 3); the recorder off for `Model` and on for the rudder and the log's distance, for the trace's ticks only; a held edit landing inside a traced step on the game thread as that tick's boundary change; on the game thread with the profile served, a script and an engine writer, all 80 ticks profiled and the plain run's hash; the world hash equal with the trace on and off (traced steps, then untraced ones, on both projects); a misspelt entity, component, field (also on an entity without the component) or parameter refused with suggestions, `debug.writes`'s at its own parameters' paths; through `Host::call` and MCP's `debug` tool with the debugger attached and not; the hub alone answers `debug.unsupported`; a seat is denied it (`player_host.rs`); the browser loop refuses a trace | pass | the tests' output; a `pocket serve` smoke run of the CLI (13) |
 | `editor/tools/debug-host.ts` | **The editor** (built, served by `pocket serve` on a copy of the sailing sample) in headless Chrome, real input only: a gutter breakpoint, Play, the pause with the call stack, scopes and watches, step over, a column value set in the Variables tree and committed, an argument set with `debug.set` and a `const` refused, a data breakpoint from the inspector, pause on exceptions, a script edited and hot-swapped while running and a breakpoint in the new code, Stop while paused (the edit world takes the edited scripts) and Play again into the new code (editor.md 10) | every step (12 views); again on 2026-10-09 on Windows after the host's Stop changed (server.md 3.4), the driver run by Node with a shim for its three Bun calls: every step, Edit mode 0.1 s after Stop | [debug-host.txt](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/editor/debug-host.txt), `debug-host-*.png`; the Windows run: [agentdebug/debug-host.txt](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/agentdebug/debug-host.txt), `debug-host-9-*.png`, `debug-host-10-*.png` |
 | `node crates/pocket-debug/tests/cdp_e2e.mjs` | A CDP client as clients behave: discovery as js-debug does it, Origin refusal, `scriptParsed` and the data-URL map, a breakpoint on a TypeScript line mapped through the map, the pause at that line with the caller `run`, locals, closure, `evaluateOnCallFrame` on two frames, `getProperties`, step over, a conditional breakpoint, a logpoint (`consoleAPICalled` located in rules.js, no pause), `Debugger.pause`, leaving while paused resumes | 20/20 | [cdp-e2e.txt](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/debug/cdp-e2e.txt), [messages](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/debug/cdp-e2e-messages.log) |
 | `node crates/pocket-debug/tests/jsdebug_dap.mjs` | **VS Code's js-debug 1.140.0** as installed in `/Applications/Visual Studio Code.app` (its extension bundle loaded under a stand-in for the `vscode` module, since the app ships no standalone DAP server), resolving `editors/vscode/launch.json` through its own configuration provider and spoken to over DAP as VS Code does (root session, then the child session it starts for the target): a breakpoint set by the `.ts` path verifies, `stopped` at rules.ts:27 on disk, the caller `run` at 26, Local `r = 0`, `e`, Closure `b`, `l`, `ctx` and `ctx` expanded, a REPL evaluation, a hover (`Float64Array(1) [0.0]`), `next` to line 28, disconnect leaves the game running | 13/13 | [jsdebug-dap.txt](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/debug/jsdebug-dap.txt), [DAP](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/debug/jsdebug-dap-messages.log), [CDP it sent](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/debug/jsdebug-cdp.log) |
@@ -374,5 +378,111 @@ The harnesses start `debug_sailing` (default `$CARGO_TARGET_DIR/debug/examples/d
 - **js-debug's attach-time evaluations** (process and WebAssembly probes) are answered `undefined`
   while the game runs: the game thread evaluates nothing outside a pause.
 - **Data breakpoints** watch one entity's component field; strings compare by text; the cost is
-  4.4 times while set (10). A probe that keeps column pointers could cut it.
+  4.4 times while set (10). A probe that keeps column pointers could cut it. They see script
+  systems only; the write trace (13) names engine systems too, without stopping.
 - **One game per hub**; several CDP clients may attach at once and share one pause.
+
+## 13. The write trace (Pioneer, 2026-10-15)
+
+Data breakpoints (6) stop when a script system's staged write changes a field: they cannot see an
+engine system (Rust, with no frame to stop in), and they stop. The write trace answers "who changed
+this field over these ticks" without stopping, for every system (charter 4.3's dated note; the
+fifth finding of [../bench/agent-debug.md](../bench/agent-debug.md) asked for it).
+
+- **Calls.** `time.step {ticks, trace: {entity, component, field?}}` answers `writes` beside its
+  other results (host-protocol.md 4). The host's `debug.writes {entity, component, field?, ticks?
+  = 60}` is that step answered as its trace, with the step's `tick`, `world_hash`, `errors` and
+  `stopped_by`: the server serves it and lists it in the catalog beside `debug.rewind` (server.md
+  6), so MCP's `debug` tool has it as `writes`; the hub alone answers `debug.unsupported`. CLI:
+  `pocket debug writes Sloop.Boat.rudder --ticks 120` (a table), `pocket step 120 --trace
+  Sloop.Boat.rudder`; `--json` prints the exact answer. A misspelt entity, component or field is
+  refused before any tick with the names it could be (`world.get {fields}`'s refusal): the whole
+  path when the entity has the component, otherwise the field's first name against the
+  component's fields (its JSON Schema's properties). `time.step`'s refusals point into `trace`
+  (`/trace/field`); `debug.writes`'s at its own parameters (`/field`).
+- **Engine systems.** The step hooks' world view (`StepHooks::world`, simulation.md 6): `Sim::step`
+  calls it with `&World` before each system and after the system returned with its writes applied,
+  outside the `system` pair and never after a panic; `script.update` calls it around each script
+  system. After each system the trace compares the field with the value it read last, and a
+  difference is that system's write, with its phase. For a field (or one element of a vector
+  field) of a component scripts can read, it first reads the path's slots through the scripts'
+  accessor and builds the component's JSON (as `world.get {fields}` reads it) only when those
+  slots changed; the whole component, and a component scripts cannot read, are read through the
+  JSON after every system. A script system's change is its own row, not `script.update`'s.
+- **Script statements.** The script host's recorder (`pocket_script::debug::record_writes`) is
+  `FieldWatch`'s probe (6) in a recording mode, armed only while scripts can read the field (the
+  component, and the field's first name among the fields they see; checked before each tick, as a
+  hot update may change it): a component such as `Model` is traced through the world alone. While
+  the recorder is armed the program runs instrumented (the boundary reload of 2), and at each
+  traced statement of each system call it reads the field's staged value; a change since the
+  previous statement is recorded with the statement that wrote, as the module path and the
+  TypeScript line and column (the call's source maps), and the value after it. The call's return
+  is probed too (`returned`). A call that fails drops its records: its writes never land.
+- **Which statement.** A write is seen at the next statement boundary, so the writer is the
+  statement traced before the change was seen, except after a `return`: when that statement was a
+  `return` (its JavaScript) and its function had returned to a shallower frame before the change
+  was seen, the change stored the returned value (`col[r] = helper(...)`), and the writer is the
+  statement that called the function (through a chain of returns); `via` names the `return`. A
+  helper that writes as its last statement is the writer itself. A write inside a `return`
+  expression (`return (col[r] = 1)`) whose caller stores nothing is named at the caller.
+- **Rows.** The trace attaches the statements to that tick's row of the same system: `at` is the
+  last statement that changed the field (with its `via`), `statements` lists them when several
+  did, at most 8: the first seven and the last, the rest counted in `statements_more`.
+- **The boundary.** The game keeps the writes applied at the current boundary as the replay recorder
+  records them (`Applied`: name, source, seq and canonical parameters; at most 64, the rest
+  counted), cleared when a tick runs or a restore lands. Before each traced tick the trace lists
+  them and reads the field: a change since the last tick's end is the boundary's (`by:
+  "boundary"`, with the writes). Writes applied at the first tick's boundary before the trace was
+  asked are listed without values, since `start` is read after them.
+- **Answer.** `{trace: "Sloop.Boat.rudder", entity, name, component, field, ticks: [first, last],
+  traced, start, end, changes, rows, omitted?, statements_dropped?}`; a row is `{tick, by, phase?,
+  before?, after?, writes?, at?, via?, statements?, statements_more?}`. Only ticks with a change or
+  a boundary write have rows, at most 2,000 (the rest are counted in `omitted`). Without `field`
+  the whole component is compared, and `before` and `after` are its values. The CLI's table
+  rounds numbers to six decimals, and prints both values exactly where they round alike.
+- **Determinism.** The trace only reads: the world view is `&World`, the probe reads the call's
+  overlay and query columns and runs no JavaScript and draws nothing, and the instrumentation reload
+  is the debugger's (programs hold no state). The world hash after traced steps, and after untraced
+  ones that follow them, equals the untraced run's (`pocket-runtime/tests/write_trace.rs`, on the
+  debugger's test project and on the sailing course; on the game thread under the profiler, on the
+  sailing sample).
+- **The game thread.** The front `time.step`'s trace is armed at its first tick (a step queued
+  behind another starts its trace there) and runs inside the profiler when the host profiles (the
+  profiler's system times leave the trace's reads out; `script.update`'s own time includes those
+  around its script systems). A step that ends otherwise (a fault, Play or Stop, a restore, the
+  shutdown) disarms the recorder. A debugger stop inside a traced tick answers the step at the stop,
+  as `time.step` is answered there (server.md 3.4), without the trace: `debug.writes` then answers
+  `dropped: "debugger stop"` with the step's tick, and the CLI says so.
+- **The browser.** The worker's loop runs plain step counts: it refuses a step with `trace`
+  (`time.trace_unavailable`, path `/trace`) rather than answering it without `writes` (`until`,
+  `watch` and `sample` are still ignored there).
+
+A copy of the sailing course with the script helm of `tests/write_trace.rs` (it puts the rudder
+over every 20th tick) under `pocket serve`, the skipper sailing to Mark1 (rows cut at `...`):
+
+```text
+$ pocket player act '[{"do":"start","intent":"sail_to","target":"Mark1","params":{"arrive_m":8}}]' --seat skipper
+$ pocket debug writes Sloop.Boat.rudder --ticks 40
+Sloop.Boat.rudder, ticks 1..40: 0 -> -0.25, 42 changes
+tick  by                 phase    before     after      at
+1     boundary                                          player.act (player:0) {"actions":[{"do":"start","intent":"sail_to","params":{"arrive_m":8,"...
+1     interface.intents  Control  0          1
+2     interface.intents  Control  1          -1
+3     interface.intents  Control  -1         -0.671825
+...
+19    interface.intents  Control  -0.522489  -0.50196
+20    interface.intents  Control  -0.50196   -0.45226
+20    script:helm        Update   -0.45226   -0.25      scripts/helm.ts:10:13
+21    interface.intents  Control  -0.25      -0.464928
+...
+40    interface.intents  Control  -0.212794  -0.205425
+40    script:helm        Update   -0.205425  -0.25      scripts/helm.ts:10:13
+```
+
+What it costs is measured in [../bench/write-trace.md](../bench/write-trace.md): the probe's cost
+grows with the script statements a tick runs, as the data breakpoint's does (10). Limits: one field
+per trace; a system that changes the field and back within itself is no change (its statements are
+dropped); an engine system is one row, without a line of Rust; values compare as JSON (-0 equals 0);
+a statement is named by the rule above, from positions and the JavaScript of the statement before
+the change, not from the bytecode that stored it; the pausing engine-level data breakpoint is not
+built.
