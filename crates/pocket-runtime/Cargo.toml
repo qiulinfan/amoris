@@ -60,3 +60,7 @@ required-features = ["transpile"]
 [[example]]
 name = "publish_bench"
 required-features = ["transpile"]
+
+[[example]]
+name = "write_trace_bench"
+required-features = ["transpile"]
