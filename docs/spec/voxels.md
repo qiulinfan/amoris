@@ -18,9 +18,9 @@ In this slice:
 
 - `Voxels`, an engine component: a volume of cells in chunks, with a palette of blocks (2).
 - A binary cells file a scene's volume loads from (2.3).
+- (Amended: collision with volumes is the walker's own, 5.1.)
 - Persistence and hashing of the volume (3).
 - Script natives: get, set, fill, ray-cast (4).
-- Collision: the volume as a Rapier voxel collider kept in step with edits (5.1).
 - `Walker`, an engine component, and the `physics.walk` system: a first-person character in the
   tick (5.2).
 - `first_person`, an engine action catalog: the seat `player`, its controls and pulses (6).
@@ -136,18 +136,19 @@ ctx.voxels.raycast(volume, origin, dir, maxM, { solidOnly? }): VoxelHit | null
 
 ## 5. Physics
 
-### 5.1 The voxel collider
+### 5.1 Collision with volumes
 
-- For each entity with `Voxels`, `amoris-physics` (`voxels.rs`) keeps a fixed Rapier body with a
-  parry `Voxels` shape of the solid cells, positioned at the volume's origin with `cell_m` voxels.
-- It is not a `Collider` component and pays no per-tick spec hash: each tick, `physics.step`
-  compares each chunk's `edited` with the tick it last applied and calls `set_voxel` for the cells
-  of the chunks that changed (diffing its own copy of their cells). A volume added, removed or
-  re-palettized rebuilds its shape.
-- The shape is derived state: a restore rebuilds it from the component, so the world hash and replay
-  never depend on it. parry's voxel shape answers ray casts, contacts and shape casts, so dynamic
-  bodies and the walker collide with it without trimesh internal edges.
-- `amoris_physics::query::cast_ray` hits volumes like any collider (entity: the volume).
+- In this slice the walker (5.2) collides with volumes by the block game's own method: its box
+  against the boxes of solid cells, swept one axis at a time. It is exact on the grid, in `f64`,
+  deterministic by construction, needs no Rapier state and costs only the cells the box crosses.
+- Rapier bodies do not collide with volumes yet, and `amoris_physics::query::cast_ray` does not
+  hit them; `ctx.voxels.raycast` (4) is the ray cast against blocks.
+- Amended 2026-10-17, during implementation: the slice first proposed a parry `Voxels` shape in the
+  Rapier world. The solver is persisted as a Cache section of Rapier's own bytes (persistence.md 8),
+  so a voxel shape there is written into every snapshot (blockcraft: 1.3 MB) unless the cache
+  writes it by reference, as it writes a fixed `Collider`'s shape (`cache/slots.rs`) and rebuilds
+  it from the `Voxels` component on restore. That extension is the next step for dynamic bodies
+  and physics ray casts against volumes; nothing the walker or the scripts do depends on it.
 
 ### 5.2 `Walker` and `physics.walk`
 
@@ -156,8 +157,8 @@ ctx.voxels.raycast(volume, origin, dir, maxM, { solidOnly? }): VoxelHit | null
 ```rust
 pub struct Walker {
     pub eye_m: f64,          // eye above the feet (1.62)
-    pub height_m: f64,       // capsule height (1.8)
-    pub radius_m: f64,       // capsule radius (0.3)
+    pub height_m: f64,       // box height (1.8)
+    pub half_width_m: f64,   // half the box's width and depth (0.3)
     pub speed_mps: f64,      // walking speed (4.3)
     pub run_mps: f64,        // running speed (5.6)
     pub jump_mps: f64,       // take-off speed: 8.9 under 32 m/s2 rises 1.24 m, one cell
@@ -176,13 +177,15 @@ pub struct Walker {
 - The entity's `Transform` is the eye: position the eye, rotation `yaw` about +y then `pitch` about
   +x, so a `Camera` on the same entity looks where the walker looks.
 - `physics.walk` runs in the `Physics` phase before `physics.step`, after the `Update` phase's
-  rules. Per walker, in `EntityId` order, it
-  moves a capsule with Rapier's `KinematicCharacterController` (autostep off: one cell takes a jump,
-  as in the block game; slide on; snap to ground 0.2 m) against the physics world's colliders,
-  volumes included, with the existing substeps of `walk.rs` (at most 1/120 s), and writes the eye's
+  rules. Per walker, in `EntityId` order, it turns the inputs into a velocity (the horizontal one
+  from `forward` and `strafe` turned by `yaw`, at most unit length, times the speed; the vertical
+  one under gravity, set to `jump_mps` by a jump while grounded), then moves the box by
+  `velocity * dt` along y, then x, then z, each move shortened to stop at the first solid cell of
+  any volume its box would enter (5.1). A stop going down grounds the walker; a stop on y zeroes
+  `vertical_mps`. Without step-up, one cell takes a jump, as in the block game. It writes the eye's
   `Transform`, `vertical_mps` and `grounded`.
-- The presenter-side `WalkController` and `StaticWalkWorld` stay for games without walkers
-  (`samples/town-walk`): they share the controller code with `physics.walk`.
+- The presenter-side `WalkController` and `StaticWalkWorld` stay, unchanged, for games without
+  walkers (`samples/town-walk`).
 - `primary`, `secondary` and `jump` are cleared by `physics.walk.clear` in the `Finish` phase of
   the tick they act in, so a rule in the `Update` phase sees each pulse exactly once.
 - `Walker` is script-usable (`EngineFns`, as `Boat`): rules read its look, pulses and slot and the
@@ -272,8 +275,7 @@ draw paths are checked under the WebGPU baseline with the existing draw-path too
 | PCE round trip; `SnapshotCache` reuses the section without edits; hash changes with one cell | `amoris-persist` tests |
 | The cells file: write, read, refusals | `amoris-runtime` tests |
 | Natives: staging, throw discards, budgets of `fill`, `components.d.ts` | `amoris-script` tests |
-| Collider kept in step with edits; restore rebuilds it; dynamic body lands on a volume | `amoris-physics` tests |
-| Walker: walks, cannot step up a cell, jumps onto one, falls, determinism across a fork | `amoris-physics` tests |
+| Walker: walks, stops at walls, cannot step up a cell, jumps onto one, falls, hits its head, determinism across a fork | `amoris-physics` tests |
 | `first_person`: controls write `Walker`, pulses act one tick, replay of a break and a place | `amoris-runtime --features transpile` tests |
 | Mesher: culling, chunk borders, cross, liquid, material groups | `amoris-assets` tests |
 | `MeshPool::remove` reuse and coalescing; a remeshed chunk draws the new cells | `amoris-render` tests (GPU) |

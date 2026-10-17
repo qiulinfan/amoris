@@ -825,18 +825,19 @@ wgpu 通过本机冷启动、移动、蒙皮与多采样回归后移除这些约
   MB）。
 - **脚本经 `ctx.voxels` 读、改、发射线**：get、set、fill、block 与精确的网格射线（DDA）。写入在系统
   返回时生效，与 `world.set` 一样。
-- **碰撞用 parry 的 `Voxels` 形状**。体积不经 `Collider` 组件，因此不付每 tick 的规格哈希（4.7 记录
-  的百万三角形关卡瓶颈）。物理按区块的编辑 tick 增量调用 `set_voxel`；碰撞形状是派生状态，恢复时重
-  建。
-- **第一人称身体在世界里**。新增持久组件 `Walker` 与 `physics.walk` 系统：角色控制器在 tick 内移动胶
-  囊，实体的 `Transform` 即眼睛。新增引擎动作目录 `first_person`：一个 seat `player`，控制移动、视
+- **第一人称身体与方块的碰撞按方块游戏自己的做法**：身体是轴对齐的盒子，按 y、x、z 依次与固体格子扫
+  掠裁剪，精确、确定、不需要 Rapier 状态。实现时修订（2026-10-17）：原提议在 Rapier 世界里放 parry
+  的 `Voxels` 形状，但求解器以 Rapier 自身字节作为 Cache 节持久化，体素形状会写进每个快照
+  （blockcraft 约 1.3 MB），除非缓存像固定 `Collider` 那样按引用写形状、恢复时从组件重建。这项扩展留
+  作下一步，届时动态刚体与物理射线才与方块体积碰撞；本切片的身体与脚本不依赖它。
+- **第一人称身体在世界里**。新增持久组件 `Walker` 与 `physics.walk` 系统：在 tick 内移动身体，实体的
+  `Transform` 即眼睛。新增引擎动作目录 `first_person`：一个 seat `player`，控制移动、视
   角、奔跑、快捷栏，并以无目标的 pulse 表示跳跃、主键和副键。按原则 1，窗口前的人与经 MCP 的 agent
   使用同一套 `player.act`；这些输入都被记录，挖放方块可以逐 tick 重放。
 - **渲染器自己生成区块网格**。渲染输入流只传变化的区块（`FORMAT` 随之改变，viewport 重建入库）。渲
   染器剔除隐藏面、按材质分组，把区块作为普通网格与实例交给场景，所以剔除、阴影、TAA、拾取、透明与
   镂空都照常工作。`MeshPool` 增加带空闲链表的 `remove`，因为重建的区块要释放旧网格。
-- presenter 一侧的 `WalkController` 保留给没有 `Walker` 的游戏（如 town-walk），与 `physics.walk`
-  共用控制器代码。
+- presenter 一侧的 `WalkController` 原样保留给没有 `Walker` 的游戏（如 town-walk）。
 
 不在本切片内：agent 对方块世界的感知、带状态的方块、光照传播与平滑光照（顶点格式没有顶点色）、
 流动的液体、旋转或缩放的体积、glTF `NEAREST` 采样（blockcraft 暂以最近邻放大到 1024 的贴图代替，
@@ -898,7 +899,7 @@ BLAKE3 上下文 `Amoris 2026-10-15 pocket-physics fixed shape v1`（带日期�
 | `amoris-sim` | ECS 世界、tick、调度、EntityId、事件、RNG、确定性数学、组件注册表、`Transform`、方块体积 `Voxels` |
 | `amoris-assets` | 资源 ID、可视组件（模型、材质、灯光、相机、环境、splat）、glTF 导入与网格烘焙 |
 | `amoris-persist` | 规范编码、哈希、snapshot/fork/replay、分叉定位、版本迁移 |
-| `amoris-physics` | Rapier、浮力、风与帆、水动力、体素碰撞、第一人称角色 `Walker` |
+| `amoris-physics` | Rapier、浮力、风与帆、水动力、第一人称身体 `Walker` |
 | `amoris-interface` | 感知、动作与意图、affordance、时间模型；动作目录 `sailing`、`first_person` |
 | `amoris-script` | TypeScript on QuickJS-ng、沙箱、预算、热更新、调试钩子 |
 | `amoris-link` | 游戏与 presenter 之间：命令信封、队列、发布的快照、事件环 |
