@@ -4,7 +4,13 @@
 // A temporary profile is used; the user's Chrome profile is never touched. Chrome is found at its
 // default install path on macOS, Windows and Linux, or at `CHROME=<path>`. `CHROME_FLAGS="..."`
 // adds switches (e.g. `--force_high_performance_gpu`); `VSYNC=1` keeps Chrome's vsync and frame-rate
-// limit, which the page otherwise runs without.
+// limit, which the page otherwise runs without; `UNSAFE_WEBGPU=0` leaves out
+// `--enable-unsafe-webgpu` (Chrome's defaults: quantized timestamps, docs/bench/prepass.md 6).
+// `POLL=<ms>` with `POLL_EXPR=<expression>` evaluates the expression every POLL ms while the page
+// runs and writes the values, as a JSON array, to `POLL_OUT=<path>`. `VIEWPORT=<w>x<h>` holds the
+// page's viewport at that size in CSS pixels whatever Chrome's window keeps for itself (without
+// `--enable-unsafe-webgpu` the same window gives the page 56 pixels more height). The last line
+// printed names Chrome's version (`browser: ...`).
 import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -32,7 +38,7 @@ const platformFlags = process.platform === "win32" ? [] : ["--enable-features=Vu
 const uncapped = process.env.VSYNC === "1" ? [] : ["--disable-frame-rate-limit", "--disable-gpu-vsync"];
 const proc = spawn(chrome, [
   "--headless=new", `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`,
-  "--enable-unsafe-webgpu", ...platformFlags, ...uncapped,
+  ...(process.env.UNSAFE_WEBGPU === "0" ? [] : ["--enable-unsafe-webgpu"]), ...platformFlags, ...uncapped,
   `--window-size=${width},${height}`, "--no-first-run", "--no-default-browser-check",
   ...(process.env.CHROME_FLAGS || "").split(" ").filter(Boolean), "about:blank",
 ], { stdio: "ignore" });
@@ -45,6 +51,10 @@ for (let i = 0; i < 50 && !target; i++) {
     target = list.find((t) => t.type === "page");
   } catch {}
 }
+let browser = null;
+try {
+  browser = (await (await fetch(`http://127.0.0.1:${port}/json/version`)).json()).Browser;
+} catch {}
 const ws = new WebSocket(target.webSocketDebuggerUrl);
 await new Promise((r) => (ws.onopen = r));
 let id = 0;
@@ -61,8 +71,23 @@ await send("Page.enable");
 await send("Runtime.enable");
 // INIT prepares a reproducible temporary-profile state before application modules read it.
 if (process.env.INIT) await send("Page.addScriptToEvaluateOnNewDocument", { source: process.env.INIT });
+if (process.env.VIEWPORT) {
+  const [w, h] = process.env.VIEWPORT.split("x").map(Number);
+  await send("Emulation.setDeviceMetricsOverride", { width: w, height: h, deviceScaleFactor: 1, mobile: false });
+}
 await send("Page.navigate", { url });
-await sleep(Number(seconds) * 1000);
+if (process.env.POLL) {
+  const polls = [];
+  const end = Date.now() + Number(seconds) * 1000;
+  while (Date.now() < end) {
+    await sleep(Math.min(Number(process.env.POLL), Math.max(0, end - Date.now())));
+    const p = await send("Runtime.evaluate", { expression: process.env.POLL_EXPR, returnByValue: true });
+    polls.push(p.result?.result?.value ?? null);
+  }
+  (await import("node:fs")).writeFileSync(process.env.POLL_OUT, JSON.stringify(polls));
+} else {
+  await sleep(Number(seconds) * 1000);
+}
 // CLICK="x,y[;x,y...]": mouse clicks (CSS pixels) before measuring and the screenshot.
 for (const c of (process.env.CLICK || "").split(";").filter(Boolean)) {
   const [x, y] = c.split(",").map(Number);
@@ -101,6 +126,7 @@ if (process.env.SHOT) {
   console.log("screenshot:", process.env.SHOT);
 }
 if (process.env.LOGS) for (const l of logs.slice(-40)) console.log(l.slice(0, 400));
+console.log("browser:", browser);
 ws.close();
 proc.kill();
 if (proc.exitCode === null && proc.signalCode === null) {

@@ -25,6 +25,18 @@ if [ -z "${CC_wasm32_unknown_unknown:-}" ]; then
     fi
   done
 fi
+# The package is committed and public: keep the builder's directories out of its panic and source
+# paths (Amoris 9b908177 remapped them by hand). rustc sees native paths, so Windows hosts remap
+# the Windows form of the Cargo home and the checkout.
+cargo_home="${CARGO_HOME:-$HOME/.cargo}"
+checkout="$(pwd)"
+if command -v cygpath >/dev/null; then
+  cargo_home="$(cygpath -w "$cargo_home")"
+  checkout="$(cygpath -w "$checkout")"
+fi
+export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$cargo_home/registry/src=registry --remap-path-prefix=$cargo_home\\registry\\src=registry --remap-path-prefix=$checkout=."
+export CFLAGS_wasm32_unknown_unknown="${CFLAGS_wasm32_unknown_unknown:--ffp-contract=off} -ffile-prefix-map=$cargo_home=cargo -ffile-prefix-map=$checkout=."
+export CXXFLAGS_wasm32_unknown_unknown="${CXXFLAGS_wasm32_unknown_unknown:-} -ffile-prefix-map=$cargo_home=cargo -ffile-prefix-map=$checkout=."
 cargo build --profile web --target wasm32-unknown-unknown -p pocket-viewport
 OUT=web/viewport/pkg
 mkdir -p "$OUT"
