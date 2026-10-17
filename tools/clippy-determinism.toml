@@ -1,4 +1,5 @@
-# The determinism lists of docs/spec/simulation.md 10 and numeric.md 5: the one source from which
+# The determinism lists of docs/spec/simulation.md 10 and numeric.md 5, and the change-tick list of
+# persistence.md 4.3 (repeated snapshots trust change ticks): the one source from which
 # `cargo xtask gen` writes the `clippy.toml` of every crate below (docs/spec/checks.md 5.3), so a
 # copy that drifts fails the check as `gen.stale`. spec-sim owns the lists; edit them here only.
 #
@@ -37,6 +38,12 @@ disallowed-methods = [
     { path = "bevy_ecs::change_detection::DetectChanges::is_changed", reason = "no change detection (simulation.md, 4.5)" },
     { path = "bevy_ecs::change_detection::DetectChanges::is_added", reason = "no change detection (simulation.md, 4.5)" },
     { path = "bevy_ecs::world::World::add_observer", reason = "no observers in simulation logic (simulation.md, 4.5)" },
+    # persistence.md 4.3
+    { path = "bevy_ecs::change_detection::DetectChangesMut::bypass_change_detection", reason = "a write past change detection leaves a stale section in repeated snapshots (persistence.md, 4.3)" },
+    { path = "bevy_ecs::change_detection::DetectChangesMut::set_last_changed", reason = "a write past change detection leaves a stale section in repeated snapshots (persistence.md, 4.3)" },
+    { path = "bevy_ecs::change_detection::DetectChangesMut::set_last_added", reason = "a write past change detection leaves a stale section in repeated snapshots (persistence.md, 4.3)" },
+    { path = "bevy_ecs::change_detection::ContiguousMut::bypass_change_detection", reason = "a write past change detection leaves a stale section in repeated snapshots (persistence.md, 4.3)" },
+    { path = "bevy_ecs::change_detection::ContiguousMut::bypass_change_detection_split", reason = "a write past change detection leaves a stale section in repeated snapshots (persistence.md, 4.3)" },
     # numeric.md 5
     { path = "f64::sin", reason = "use pocket_sim::math::sin (numeric.md, 6)" },
     { path = "f64::cos", reason = "use pocket_sim::math::cos (numeric.md, 6)" },

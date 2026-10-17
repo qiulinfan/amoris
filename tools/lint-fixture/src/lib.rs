@@ -1,6 +1,7 @@
 //! One use of every entry of tools/clippy-determinism.toml, each of which clippy must report
 //! (docs/spec/checks.md 5.3 and 8.6). Nothing here runs; it only has to compile and be linted.
 
+use bevy_ecs::change_detection::{ContiguousMut, Tick};
 use bevy_ecs::lifecycle::{Add, RemovedComponents};
 use bevy_ecs::prelude::*;
 use bevy_ecs::query::QueryState;
@@ -40,6 +41,14 @@ pub fn change_detection(
 ) -> bool {
     let _ = (added, changed, removed);
     p.is_changed() || p.is_added()
+}
+
+pub fn change_ticks(mut p: Mut<P>, mut c: ContiguousMut<P>, tick: Tick) {
+    p.bypass_change_detection().0 = 1.0;
+    p.set_last_changed(tick);
+    p.set_last_added(tick);
+    c.bypass_change_detection()[0].0 = 1.0;
+    let _ = ContiguousMut::bypass_change_detection_split(c);
 }
 
 pub fn local_state(mut n: Local<u32>) -> u32 {
