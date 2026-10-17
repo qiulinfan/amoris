@@ -97,6 +97,9 @@ pub struct GpuProfiler {
     /// Recorded frames missed because their slot was busy or mapping failed. Frames outside
     /// the trace window do not change this count (the trace resets it when it starts).
     pub dropped: u64,
+    /// The greatest common divisor of every timestamp read (0 before the first): the timestamps'
+    /// resolution in ticks, one tick unless the implementation quantizes them (a browser).
+    resolution: u64,
 }
 
 fn new_slot(device: &wgpu::Device, enabled: bool) -> Slot {
@@ -163,7 +166,16 @@ impl GpuProfiler {
             arrived: Vec::new(),
             raw: None,
             dropped: 0,
+            resolution: 0,
         }
+    }
+
+    /// The timestamps' resolution in nanoseconds (the greatest common divisor of every timestamp
+    /// read, in ticks, times [`GpuProfiler::period_ns`]); `None` before the first reading. Chrome
+    /// quantizes WebGPU's timestamps to 65.536 us without `--enable-unsafe-webgpu`
+    /// (docs/bench/prepass.md 6).
+    pub fn resolution_ns(&self) -> Option<f32> {
+        (self.resolution > 0).then_some(self.resolution as f32 * self.period_ns)
     }
 
     pub fn enabled(&self) -> bool {
@@ -450,6 +462,9 @@ impl GpuProfiler {
                     .iter()
                     .map(|b| u64::from_le_bytes(*b))
                     .collect();
+                for &t in &ticks {
+                    self.resolution = gcd(self.resolution, t);
+                }
                 self.arrived.push(Timings {
                     frame: slot.frame,
                     passes: slot
@@ -494,4 +509,12 @@ impl GpuProfiler {
     pub fn total_ms(&self) -> f32 {
         self.last.iter().map(|(_, ms)| ms).sum()
     }
+}
+
+/// Euclid's greatest common divisor (`gcd(0, t) == t`).
+fn gcd(mut a: u64, mut b: u64) -> u64 {
+    while b != 0 {
+        (a, b) = (b, a % b);
+    }
+    a
 }

@@ -146,6 +146,63 @@ struct Auto {
     backoff: u64,
     /// Probes run two frames only; until a probe has failed they run until their reading.
     brief: bool,
+    /// Diagnostics ([`AutoState`]).
+    probes: u32,
+    paid: u32,
+    failed: u32,
+    timeouts: u32,
+    offs: u32,
+    first_decision: Option<u64>,
+    first_on: Option<u64>,
+}
+
+/// The auto mode's state ([`Occlusion::state`]), for diagnostics (the viewport's `auto_stats`,
+/// many_cubes' report); nothing decides by it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct AutoState {
+    /// Frames begun.
+    pub frame: u64,
+    /// On (not probing), and the running probe's first frame.
+    pub on: bool,
+    pub probe: Option<u64>,
+    /// Whether probes are brief (two frames) since one failed.
+    pub brief: bool,
+    pub next_probe: u64,
+    /// Probes started; probes that paid, failed on their reading or timed out; times culling that
+    /// was on stopped paying.
+    pub probes: u32,
+    pub paid: u32,
+    pub failed: u32,
+    pub timeouts: u32,
+    pub offs: u32,
+    /// The frame the first probe decided at, and the frame occlusion culling first went on.
+    pub first_decision: Option<u64>,
+    pub first_on: Option<u64>,
+    /// The counters' readback lag: frames between the latest reading's frame and the frame it
+    /// arrived at, and the largest seen.
+    pub lag: Option<u64>,
+    pub max_lag: u64,
+}
+
+impl AutoState {
+    pub fn json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "frame": self.frame,
+            "on": self.on,
+            "probe": self.probe,
+            "brief": self.brief,
+            "next_probe": self.next_probe,
+            "probes": self.probes,
+            "paid": self.paid,
+            "failed": self.failed,
+            "timeouts": self.timeouts,
+            "offs": self.offs,
+            "first_decision": self.first_decision,
+            "first_on": self.first_on,
+            "lag": self.lag,
+            "max_lag": self.max_lag,
+        })
+    }
 }
 
 /// Begins the frame after `*frame` and says whether it runs two phases (never without instances).
@@ -179,10 +236,12 @@ impl Auto {
     fn runs(&mut self, frame: u64, instances: bool) -> bool {
         if self.probe.is_some_and(|p| frame > p + 1 + PROBE_TIMEOUT) {
             self.probe = None;
+            self.timeouts += 1;
             self.fail(frame, true);
         }
         if !self.on && self.probe.is_none() && frame >= self.next_probe {
             self.probe = Some(frame);
+            self.probes += 1;
         }
         if !instances {
             if let Some(p) = self.probe.filter(|&p| frame <= p + 1) {
@@ -209,12 +268,16 @@ impl Auto {
                 return;
             }
             self.probe = None;
+            self.first_decision.get_or_insert(now);
             if Auto::pays(s, PROBE_MARGIN) {
                 self.on = true;
                 self.since = now;
                 self.misses = 0;
                 self.backoff = PROBE_EVERY;
+                self.paid += 1;
+                self.first_on.get_or_insert(now);
             } else {
+                self.failed += 1;
                 self.fail(now, true);
             }
             return;
@@ -229,6 +292,7 @@ impl Auto {
         self.misses += 1;
         if self.misses >= MISSES {
             self.on = false;
+            self.offs += 1;
             self.fail(now, false);
         }
     }
@@ -310,6 +374,9 @@ pub struct Occlusion {
     ring: Vec<Readback>,
     /// The latest reading of the late pass's counters.
     pub last: Option<OcclusionStats>,
+    /// The counters' readback lag ([`AutoState`]).
+    lag: Option<u64>,
+    max_lag: u64,
 }
 
 /// The pyramid's levels for a `w` x `h` depth target.
@@ -364,6 +431,29 @@ impl Occlusion {
             }),
             ring,
             last: None,
+            lag: None,
+            max_lag: 0,
+        }
+    }
+
+    /// The auto mode's state, for diagnostics.
+    pub fn state(&self) -> AutoState {
+        let a = &self.auto;
+        AutoState {
+            frame: self.frame,
+            on: a.on,
+            probe: a.probe,
+            brief: a.brief,
+            next_probe: a.next_probe,
+            probes: a.probes,
+            paid: a.paid,
+            failed: a.failed,
+            timeouts: a.timeouts,
+            offs: a.offs,
+            first_decision: a.first_decision,
+            first_on: a.first_on,
+            lag: self.lag,
+            max_lag: self.max_lag,
         }
     }
 
@@ -373,6 +463,12 @@ impl Occlusion {
     pub fn begin_frame(&mut self, instances: bool) -> bool {
         let readings = self.collect();
         self.last = readings.last().copied().or(self.last);
+        if let Some(s) = readings.last() {
+            // The frame about to begin is `self.frame + 1` (`begin` counts it).
+            let lag = (self.frame + 1).saturating_sub(s.frame);
+            self.lag = Some(lag);
+            self.max_lag = self.max_lag.max(lag);
+        }
         self.active = begin(
             self.mode,
             &mut self.auto,
