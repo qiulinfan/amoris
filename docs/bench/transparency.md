@@ -372,11 +372,11 @@ to 01:42):
   (`out/transparency/quiet/{prepass,occlusion}-compare/`): pt-lab unchanged by either feature on
   the four configurations; which configurations show the sphere's one-level pixels changes from run
   to run (this time the RTX 5060's Direct3D 12 and both of the 780M's with the prepass, both
-  Direct3D 12 configurations with occlusion culling). The `pocket serve` captures and the pocket-app
-  `draw_paths` scenes were not run (pocket-app was not built on this branch).
+  Direct3D 12 configurations with occlusion culling). The `amoris serve` captures and the amoris-app
+  `draw_paths` scenes were not run (amoris-app was not built on this branch).
 - **GPU tests** (`tools/gpu_matrix.py --configs
   5060-dx12,5060-vulkan,780m-dx12,780m-vulkan,5060-dx12-minimal,780m-vulkan-minimal`, every
-  `pocket-render` test binary): 189 passed on each of the four full configurations; 178 passed and
+  `amoris-render` test binary): 189 passed on each of the four full configurations; 178 passed and
   11 skipped for missing features on each WebGPU-baseline device (no timestamps, no
   `indirect-first-instance`, no shader-f16, no ray queries)
   (`out/transparency/gpu-matrix/review.json`, commit `47114c146d3b`, no `-dirty`). The ray-traced
@@ -421,7 +421,7 @@ below are the main checkout's `out/`, seen from a worktree under `.claude/worktr
 `export PATH="$HOME/.cargo/bin:$HOME/scoop/shims:$PATH"` first):
 
 ```sh
-cargo build --release -p pocket-render --example transparency --example showcase_bench --example path_trace
+cargo build --release -p amoris-render --example transparency --example showcase_bench --example path_trace
 L=../../../out/locks/bench_lock.py
 T=../../../out/transparency
 Q=$T/quiet
@@ -452,10 +452,15 @@ script in `$T/scripts/`, writing into `$Q/`); and `$Q/determinism.py` (section 4
 `transparency bench --frames 3 --warm 0` and takes the median of each one's `cpu_encode_ms.max`. The
 two earlier builds' sources are exported (`git archive`) to `$T/src-440dd7f8` and `$T/src-b9eea658`
 with the first round's `transparency` example and bench script; build each there with
-`cargo build --release -p pocket-render --example transparency` into its own `target/` (the two
+`cargo build --release -p amoris-render --example transparency` into its own `target/` (the two
 trees sharing one target directory is not enough: cargo takes the second tree's crates for fresh,
-since their fingerprints do not depend on the tree's path; removing the `pocket-*` fingerprints
-between the two builds also works). Section 1 alone:
+since their fingerprints do not depend on the tree's path; removing the `amoris-*` fingerprints
+between the two builds also works). All of these builds come from before the 2026-10-16 rename: each
+exported tree (`$T/src-*`, `src-before` included) is renamed with
+`python tools/amoris_rename.py --tree <dir>` before it is built, so its examples and its own bench
+script use the `AMORIS_*` variables, and the saved binaries in `$T/before` and `$T/build-05716664`,
+which read the old names and ignore the variables this checkout's tools set, are built again that
+way for a re-run (from `src-before` and from `05716664`). Section 1 alone:
 `python tools/transparency_pt.py --build before=$T/before --build after=. --out $Q/pt-lab --adapter 5060`
 (with and without `--pt-args "--emission-scale 0"`, and with `--build prefix=$T/build-05716664` and
 `--gtao depth`) reproduces its figures; another `--out` without the references traces them again.

@@ -1,5 +1,5 @@
 [project]
-name = "pocket-splatfit"
+name = "amoris-splatfit"
 version = "0.1.0"
 description = "Fits 3D Gaussian splats to multi-view images rendered by Amoris's renderer (docs/spec/splats.md 7.1)"
 requires-python = ">=3.12"

@@ -53,7 +53,7 @@ struct Span {
     is_primary: bool,
 }
 
-/// The package's name from a cargo package id: `path+file:///…/crates/pocket-sim#0.1.0`,
+/// The package's name from a cargo package id: `path+file:///…/crates/amoris-sim#0.1.0`,
 /// `registry+https://…#serde@1.0.229`, or the older `name version (source)`.
 pub fn package_name(id: &str) -> String {
     match id.split_once('#') {
@@ -118,8 +118,8 @@ mod tests {
     #[test]
     fn package_ids() {
         assert_eq!(
-            package_name("path+file:///C:/r/crates/pocket-sim#0.1.0"),
-            "pocket-sim"
+            package_name("path+file:///C:/r/crates/amoris-sim#0.1.0"),
+            "amoris-sim"
         );
         assert_eq!(package_name("path+file:///C:/r/xtask#xtask@0.1.0"), "xtask");
         assert_eq!(
@@ -131,11 +131,11 @@ mod tests {
 
     #[test]
     fn a_clippy_message_becomes_a_diagnostic() {
-        let line = r#"{"reason":"compiler-message","package_id":"path+file:///C:/r/crates/pocket-sim#0.1.0","manifest_path":"x","target":{},"message":{"rendered":"r","$message_type":"diagnostic","children":[],"level":"error","message":"use of a disallowed method `f64::sin`","spans":[{"byte_end":1,"byte_start":0,"column_end":1,"column_start":1,"expansion":null,"file_name":"crates\\pocket-sim\\src\\lib.rs","is_primary":true,"label":null,"line_end":4,"line_start":4,"suggested_replacement":null,"suggestion_applicability":null,"text":[]}],"code":{"code":"clippy::disallowed_methods","explanation":null}}}"#;
+        let line = r#"{"reason":"compiler-message","package_id":"path+file:///C:/r/crates/amoris-sim#0.1.0","manifest_path":"x","target":{},"message":{"rendered":"r","$message_type":"diagnostic","children":[],"level":"error","message":"use of a disallowed method `f64::sin`","spans":[{"byte_end":1,"byte_start":0,"column_end":1,"column_start":1,"expansion":null,"file_name":"crates\\amoris-sim\\src\\lib.rs","is_primary":true,"label":null,"line_end":4,"line_start":4,"suggested_replacement":null,"suggestion_applicability":null,"text":[]}],"code":{"code":"clippy::disallowed_methods","explanation":null}}}"#;
         let d = parse(line).unwrap();
-        assert_eq!(d.package, "pocket-sim");
+        assert_eq!(d.package, "amoris-sim");
         assert_eq!(d.lint.as_deref(), Some("clippy::disallowed_methods"));
-        assert_eq!(d.at(), "crates/pocket-sim/src/lib.rs:4");
+        assert_eq!(d.at(), "crates/amoris-sim/src/lib.rs:4");
         let summary = r#"{"reason":"compiler-message","package_id":"p#a@1","message":{"level":"error","message":"aborting due to 1 previous error","spans":[],"code":null}}"#;
         assert!(parse(summary).is_none());
         assert!(parse("   Compiling x").is_none());

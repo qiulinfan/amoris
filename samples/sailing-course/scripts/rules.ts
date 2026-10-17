@@ -1,8 +1,8 @@
 // The sailing course's rules: stateless systems over the world (charter 3.2). The boat is the
-// engine's Boat, which the player's controls and intents drive (pocket-interface); these rules
+// engine's Boat, which the player's controls and intents drive (amoris-interface); these rules
 // count the crates and the marks, take a crate aboard when the crew is told to (the interact
 // pulse writes Crew.take), and round the marks in order.
-import { system } from "pocket";
+import { system } from "amoris";
 
 /** How near a crate must float, across the water, to be taken aboard (master's REACH). */
 const REACH = 3;

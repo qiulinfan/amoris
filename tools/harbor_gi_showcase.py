@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Freeze Harbor geometry and capture honest, same-tick native probe-GI comparisons.
 
-Run `pocket serve out/harbor-gi/project --port 8794` on a copy of site/demos/harbor.
+Run `amoris serve out/harbor-gi/project --port 8794` on a copy of site/demos/harbor.
 `freeze` exports only render meshes/lights for baking; `capture` leaves GI enabled.
 Neither phase modifies the original Harbor scene or its sailing rules.
 """
@@ -79,7 +79,7 @@ def freeze(host, output):
     for row in rows:
         components = {key: value for key, value in row.items() if key not in {"id", "name"}}
         entities.append({"name": row.get("name", str(row["id"])), "components": components})
-    sky_scene = {"format": "pocket-scene", "version": 1, "entities": entities}
+    sky_scene = {"format": "amoris-scene", "version": 1, "entities": entities}
     bake_scene = copy.deepcopy(sky_scene)
     for entity in bake_scene["entities"]:
         if "Environment" in entity["components"]:

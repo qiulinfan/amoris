@@ -8,7 +8,7 @@ engine library), 4.2.7 (numbers are doubles; conversion and range checks into in
 
 This specification fixes which simulation state may be floating point and at what precision, the
 floating-point environment the simulation assumes, which operations simulation code may use, the
-deterministic math library (module `math` of `pocket-sim`, [architecture.md](architecture.md), 4.1)
+deterministic math library (module `math` of `amoris-sim`, [architecture.md](architecture.md), 4.1)
 with its functions and measured accuracy, how NaN, infinities and signed zeros are treated, and how
 values enter integer fields. It is the numeric half of [simulation.md](simulation.md); random
 numbers are in [rng.md](rng.md).
@@ -152,7 +152,7 @@ Allowed, because IEEE 754 or Rust defines their results exactly:
   not to be NaN, or on the result of `math::canonical(x)`, which maps every NaN to
   `0x7FF8000000000000` (`f32`: `0x7FC00000`) and returns any other value unchanged (section 2: a
   NaN's sign and payload differ between targets).
-- The functions of `pocket_sim::math` (section 6) and the `libm` crate it wraps.
+- The functions of `amoris_sim::math` (section 6) and the `libm` crate it wraps.
 
 Disallowed in the tick-code crates, by clippy's `disallowed-methods` (simulation.md, 10; every path
 below resolves in clippy 1.98.1, checked with a scratch crate on 2026-10-03 for `f64::sin`,
@@ -160,11 +160,11 @@ below resolves in clippy 1.98.1, checked with a scratch crate on 2026-10-03 for 
 
 ```toml
 # f64 and f32 alike; the f32 entries repeat these paths with f32.
-{ path = "f64::sin", reason = "use pocket_sim::math::sin (numeric.md, 6)" },
+{ path = "f64::sin", reason = "use amoris_sim::math::sin (numeric.md, 6)" },
 # likewise: f64::cos, tan, sin_cos, asin, acos, atan, atan2, sinh, cosh, tanh, asinh, acosh,
 # atanh, exp, exp2, exp_m1, ln, log, log2, log10, ln_1p, powf, powi, cbrt, hypot
-{ path = "f64::min", reason = "signed zeros differ between builds; use pocket_sim::math::min (numeric.md, 5)" },
-{ path = "f64::max", reason = "signed zeros differ between builds; use pocket_sim::math::max (numeric.md, 5)" },
+{ path = "f64::min", reason = "signed zeros differ between builds; use amoris_sim::math::min (numeric.md, 5)" },
+{ path = "f64::max", reason = "signed zeros differ between builds; use amoris_sim::math::max (numeric.md, 5)" },
 { path = "f64::mul_add", reason = "one rounding model: no fused multiply-add in tick code (numeric.md, 5)" },
 ```
 
@@ -227,7 +227,7 @@ and parry patch lands the fixture is a negative control: its `check.toml` says
 
 ### 6.1 Implementation
 
-`pocket_sim::math` is a set of Rust functions over `f64`. The transcendental functions wrap the
+`amoris_sim::math` is a set of Rust functions over `f64`. The transcendental functions wrap the
 `libm` crate, pinned exactly (`libm = "=0.2.16"`), a Rust port of musl's libm (with newer algorithms
 from ARM's optimized-routines and CORE-MATH in places); the rest are defined in section 6.2.
 
@@ -484,7 +484,7 @@ wrap (hashes, PCG32) says so with `wrapping_*`. In scripts, integers are doubles
    comparison per write and hides nothing that determinism needs.
 5. **Strict integer conversion.** Recommendation: strict (8), as `script-host.md` (6) also
    recommends. Rounding on write would hide bugs that the structured error names at the line.
-6. **Slice 1: the golden sweeps.** `pocket_sim::math::sweep` defines 38 sweeps of 100,000 inputs:
+6. **Slice 1: the golden sweeps.** `amoris_sim::math::sweep` defines 38 sweeps of 100,000 inputs:
    the 26 of 6.4 (each function of 6.2 over its sampled range, `sin` also over ±1e5 and ±1e9) and
    twelve of the allowed operations of 10, item 1 (`%`, `floor`, `ceil`, `trunc` and `sqrt` over
    finite doubles of every exponent with signed zeros, `min` and `max` over signed zeros and NaNs,
@@ -494,34 +494,34 @@ wrap (hashes, PCG32) says so with `wrapping_*`. In scripts, integers are doubles
    targets (2); they were added on 2026-10-09 (Pioneer) without changing the other 36. Inputs come
    from PCG32 seeded by the sweep's name, built by integer bit construction and exact arithmetic;
    each result's bits are folded into FNV-1a 64. The hashes are committed as
-   `crates/pocket-sim/src/math/golden.txt` (rewritten only by
-   `POCKET_BLESS=1 cargo test -p pocket-sim --test math golden_sweep`, with a `libm` change); native
+   `crates/amoris-sim/src/math/golden.txt` (rewritten only by
+   `AMORIS_BLESS=1 cargo test -p amoris-sim --test math golden_sweep`, with a `libm` change); native
    debug, native release and the `wasm32-unknown-unknown` build reproduce them (the web tests
    below).
 7. **Slice 1: the accuracy table holds 120 inputs per function**, not 3,000: 3,000 lines over the 25
-   functions and ranges of 6.2 (`crates/pocket-sim/tests/golden/accuracy.txt`, 120 KB, written by
+   functions and ranges of 6.2 (`crates/amoris-sim/tests/golden/accuracy.txt`, 120 KB, written by
    `accuracy.py` beside it with mpmath 1.3.0 at 200 bits), enough to catch an update that makes
    accuracy worse without a large committed file. Against the correctly rounded doubles every result
    is within 1 ulp (0 for `atan`, `exp2`, `log2`, `log10`, `cbrt` and `sqrt` on these inputs); the
    test's bound is 2.
-8. **Slice 1: the web tests run in a module with no imports.** `pocket_sim::WEB_TESTS` lists
+8. **Slice 1: the web tests run in a module with no imports.** `amoris_sim::WEB_TESTS` lists
    `math.golden`, `rng.vectors` and `number.convert` as checks.md 7.2's registry asks; the example
    `web_vectors` builds them for `wasm32-unknown-unknown` as a module that imports nothing, and
-   `crates/pocket-sim/tests/web/run.mjs` runs it under Node and compares its report byte for byte
-   with the native one (`pocket_sim::web_report`, written by the `web_report` test). Node runs
+   `crates/amoris-sim/tests/web/run.mjs` runs it under Node and compares its report byte for byte
+   with the native one (`amoris_sim::web_report`, written by the `web_report` test). Node runs
    WebAssembly on V8, Chrome's engine; the same module also gave the native report in headless
    Chrome through `tools/webcheck.py` (2026-10-03). The check page's worker runs the same list once
    it exists.
 9. **Slice 1: the float environment** is read at the start of every `Sim::step` (`stmxcsr` on
    `x86_64`, `mrs fpcr` on `aarch64`, nothing on `wasm32`); a mismatch poisons the world, and a unit
    test sets flush-to-zero on the test thread to prove it. Integer overflow checks are on in release
-   and in `web` for `pocket-sim` through per-package profile overrides in the workspace `Cargo.toml`
+   and in `web` for `amoris-sim` through per-package profile overrides in the workspace `Cargo.toml`
    (8); each other tick-code crate adds its own.
 10. **Slice 1: non-finite values in a `number.*` detail** are written as the strings `"NaN"`,
     `"Infinity"` and `"-Infinity"`, since JSON has no such numbers; integral doubles below 2^53 are
     written as JSON integers.
 
-11. **Slice 1: the mass rule as `pocket-physics` builds it** (5). A convex hull, triangle mesh or
+11. **Slice 1: the mass rule as `amoris-physics` builds it** (5). A convex hull, triangle mesh or
     compound collider takes no density on any body, fixed ones included, since Rapier recomputes
     every body's mass properties from its colliders whatever its kind (rapier3d 0.36.0
     `src/pipeline/user_changes.rs`), so a fixed island's hull with a density would put mass
@@ -534,7 +534,7 @@ wrap (hashes, PCG32) says so with `wrapping_*`. In scripts, integers are doubles
     density 0, which skips the shape's mass computation entirely
     (`ColliderMassProps::mass_properties`), and stated mass properties enter as
     `MassProperties::new`, along the body's axes, with no eigen decomposition. One collider per
-    body; a compound carries several shapes. `pocket_physics::validate` makes these refusals, for a
+    body; a compound carries several shapes. `amoris_physics::validate` makes these refusals, for a
     boundary write to refuse a spawn at load; `physics.step` makes them again when it would build
     the body, reporting `sim.system_failed` with the cause each tick and building nothing.
 12. **Slice 1: non-finite solver state** (7). A body that Rapier quarantines, or whose pose or
@@ -548,28 +548,28 @@ wrap (hashes, PCG32) says so with `wrapping_*`. In scripts, integers are doubles
     the centre of mass) and rounded to `f32` once per body per tick in `physics.step`. A tick of the
     sailing scene (the Sloop's 74 buoyancy points, six crates of 27, four waves) took 41 us
     natively, the forces 26 and the step 14
-    (`cargo run -p pocket-physics --example physics_bench --release`, R1 shared with other builds,
+    (`cargo run -p amoris-physics --example physics_bench --release`, R1 shared with other builds,
     2026-10-03); the spike's `f32` forces took 19. Most of it is buoyancy's 1,888 sine and cosine
     pairs a tick; one pair per wave and body with the angle-addition formulas for the points'
     offsets is the next step if `tick.sail` needs it.
-14. **Slice 1: the cross-target check of physics** (10, items 7 and 8). `pocket_physics::WEB_TESTS`
+14. **Slice 1: the cross-target check of physics** (10, items 7 and 8). `amoris_physics::WEB_TESTS`
     holds `physics.chain` (the sailing scene's hash at every tick of 1,200, folded into a chain that
-    must equal `crates/pocket-physics/src/probe/golden.txt`), `physics.fork` (a fork at every tick
+    must equal `crates/amoris-physics/src/probe/golden.txt`), `physics.fork` (a fork at every tick
     of the first 600 continues 10 ticks with the original's hashes) and `physics.bvh_log2` (item 8).
     They pass natively in debug and release, and the example `web_physics`, a
     `wasm32-unknown-unknown` module with no imports, gives the native report byte for byte (the
-    1,201 hash lines included) under Node (`crates/pocket-physics/tests/web/run.mjs`) and in a
+    1,201 hash lines included) under Node (`crates/amoris-physics/tests/web/run.mjs`) and in a
     Chrome worker through `tools/webcheck.py` (`tests/web/index.html`), 2026-10-03. The hash is a
-    stand-in, FNV-1a over the declared sections in bincode (`pocket_physics::probe`), because
-    `pocket-physics` cannot link `pocket-persist`; the check command's `web` step compares the real
+    stand-in, FNV-1a over the declared sections in bincode (`amoris_physics::probe`), because
+    `amoris-physics` cannot link `amoris-persist`; the check command's `web` step compares the real
     `TickHash` chains. Pioneer, 2026-10-15: `physics.level_fork` and `physics.shape_builds`
-    (persistence.md 8) joined them; the second pins the digest of the shapes `pocket-physics`
+    (persistence.md 8) joined them; the second pins the digest of the shapes `amoris-physics`
     builds, so the native and WebAssembly builds compare them byte for byte.
 15. **Slice 1: physics values are judged in `f32`** (3.1, 7). The components are `f64` and the
     solver `f32`, so a value `f64` holds can reach the solver as 0 or infinity: a ball of radius
     1e39 never moved, a ground of half extents 1e39 let a ball fall through it, a radius of 1e-50 or
     stated mass and inertia of 1e-300 made a body of zero mass, and a position of 1e39 came back as
-    `number.not_finite` every tick, all with nothing refused. `pocket_physics::validate` and
+    `number.not_finite` every tick, all with nothing refused. `amoris_physics::validate` and
     `physics.step` therefore judge each value as `f32` rounds it: sizes, masses, inertias and
     densities positive and normal there (at least 1.2e-38), everything else finite there (points,
     part positions, the mass centre, friction, restitution, damping, the gravity scale and a

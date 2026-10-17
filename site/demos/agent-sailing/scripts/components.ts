@@ -1,7 +1,7 @@
 // The sailing game's own components (script-host.md 7.3). Master's island script kept its tally,
 // its sail state and its last controls in module-level variables; here every bit of game state is
 // a component, so a reload, a fork or a replay carries it (charter 3.2).
-import { component, field } from "pocket";
+import { component, field } from "amoris";
 
 export const Crew = component("Crew", {
     version: 1, doc: "The boat's crew and what they are told to do.",

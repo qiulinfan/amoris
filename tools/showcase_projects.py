@@ -28,7 +28,7 @@ def static_project(name, model, count=1):
     assets.mkdir(parents=True,exist_ok=True)
     shutil.copy2(model,assets/model.name)
     (dest/"scripts").mkdir(exist_ok=True)
-    (dest/"scripts/main.ts").write_text('import { game } from "pocket";\nexport default game({ components: [], systems: [] });\n')
+    (dest/"scripts/main.ts").write_text('import { game } from "amoris";\nexport default game({ components: [], systems: [] });\n')
     (dest/"project.toml").write_text(f'name = "{name}"\nrate = 60\nseed = 7\n')
     shutil.copy2(ROOT/"samples/anim/tsconfig.json",dest/"tsconfig.json")
     side = math.ceil(math.sqrt(count))
@@ -44,7 +44,7 @@ def static_project(name, model, count=1):
     ]
     for i in range(count):
         entities.append(entity(f"Helmet{i+1:04d}",{"Transform":{"position":[(i%side-(side-1)/2)*.7,0,(i//side-(side-1)/2)*.72]},"Model":{"mesh":f"models/third-party/{model.name}"}}))
-    (dest/"scene.json").write_text(json.dumps({"format":"pocket-scene","version":1,"entities":entities},indent=2)+"\n")
+    (dest/"scene.json").write_text(json.dumps({"format":"amoris-scene","version":1,"entities":entities},indent=2)+"\n")
     return dest
 
 
@@ -73,11 +73,11 @@ def bistro_project(model):
     assets=dest/"models/third-party";assets.mkdir(parents=True,exist_ok=True)
     shutil.copy2(model,assets/model.name)
     (dest/"scripts").mkdir(exist_ok=True)
-    (dest/"scripts/main.ts").write_text('import { game } from "pocket";\nexport default game({ components: [], systems: [] });\n')
+    (dest/"scripts/main.ts").write_text('import { game } from "amoris";\nexport default game({ components: [], systems: [] });\n')
     (dest/"project.toml").write_text('name = "Bistro Exterior"\nrate = 60\nseed = 7\n')
     shutil.copy2(ROOT/"site/demos/detail/tsconfig.json",dest/"tsconfig.json")
     position,target=[12,5,18],[0,5,0]
-    scene={"format":"pocket-scene","version":1,"entities":[
+    scene={"format":"amoris-scene","version":1,"entities":[
         entity("Camera",{"Transform":{"position":position,"rotation":rotation(position,target)},"Camera":{"fov_deg":55}}),
         entity("Sun",{"Transform":{"rotation":rotation([5,9,4],[0,0,0])},"Light":{"kind":"directional","intensity":5,"shadows":True}}),
         entity("Environment",{"Environment":{"ambient":1.0,"exposure_ev":.55,"bloom":.05}}),

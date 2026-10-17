@@ -57,8 +57,8 @@ def sh(cmd, **kw):
 
 def build(_args):
     env = dict(os.environ, CARGO_BUILD_JOBS=os.environ.get("CARGO_BUILD_JOBS", "6"))
-    sh(["cargo", "build", "--release", "-p", "pocket-script", "--features", "transpile", "--example", "rules_bench"], cwd=REPO, env=env)
-    sh(["cargo", "build", "-p", "pocket-script", "--example", "rules_web", "--target", "wasm32-unknown-unknown", "--profile", "web"], cwd=REPO, env=env)
+    sh(["cargo", "build", "--release", "-p", "amoris-script", "--features", "transpile", "--example", "rules_bench"], cwd=REPO, env=env)
+    sh(["cargo", "build", "-p", "amoris-script", "--example", "rules_web", "--target", "wasm32-unknown-unknown", "--profile", "web"], cwd=REPO, env=env)
     if shutil.which("wasm-opt"):
         sh(["wasm-opt", "-O3", "--enable-bulk-memory", "--enable-nontrapping-float-to-int", "--enable-sign-ext",
             "--enable-mutable-globals", WASM, "-o", WASM_OPT])

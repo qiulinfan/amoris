@@ -1,4 +1,4 @@
-import { system } from "pocket";
+import { system } from "amoris";
 
 export const updateProgress = system({
     name: "update_progress", phase: "update", doc: "Persist and emit each objective and score milestone once.",

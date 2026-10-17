@@ -21,8 +21,8 @@ crate-type = ["cdylib"]
 [workspace]
 
 [dependencies]
-pocket-render = { path = "../../../crates/pocket-render" }
-pocket-assets = { path = "../../../crates/pocket-assets" }
+amoris-render = { path = "../../../crates/amoris-render" }
+amoris-assets = { path = "../../../crates/amoris-assets" }
 wgpu = { version = "=30.0.1", default-features = false, features = ["std", "parking_lot", "wgsl", "webgpu"] }
 glam = { version = "0.33", features = ["bytemuck"] }
 wasm-bindgen = "=0.2.129"

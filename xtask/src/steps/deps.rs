@@ -359,7 +359,7 @@ fn vendor(env: &Env, step: &mut StepResult, log: &std::path::Path) {
     let Some(python) = run::python() else {
         step.inconclusive(Problem::new(
             "check.tool_missing",
-            "no Python 3 to run third_party/vendor.py --check (python or python3, or POCKET_PYTHON)",
+            "no Python 3 to run third_party/vendor.py --check (python or python3, or AMORIS_PYTHON)",
             json!({"tool": "python"}),
         ));
         return;

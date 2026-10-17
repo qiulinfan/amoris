@@ -1,6 +1,6 @@
 // One system that uses every API of the prelude (script-host.md 5.1), with the types it expects.
-import { system } from "pocket";
-import type { BoolColumn, Entity, EntityColumn, EnumColumn, GameEvent, NotInFields, Rng, Vec3Columns, Vec4Columns } from "pocket";
+import { system } from "amoris";
+import type { BoolColumn, Entity, EntityColumn, EnumColumn, GameEvent, NotInFields, Rng, Vec3Columns, Vec4Columns } from "amoris";
 
 export const all = system({
     name: "every_api", phase: "update", doc: "Uses every API of the prelude.",

@@ -12,7 +12,7 @@ pub struct P(pub f64);
 pub fn clock_environment_threads() {
     let _ = std::time::Instant::now();
     let _ = std::time::SystemTime::now();
-    let _ = std::env::var("POCKET");
+    let _ = std::env::var("AMORIS");
     let _ = std::thread::spawn(|| {}).join();
 }
 

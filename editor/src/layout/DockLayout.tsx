@@ -12,8 +12,8 @@ import { logLocal } from "../state/logs";
 const LAYOUT_KEY = "amoris.editor.layout.v1";
 
 const theme: DockviewTheme = {
-  name: "pocket",
-  className: "dockview-theme-pocket",
+  name: "amoris",
+  className: "dockview-theme-amoris",
   colorScheme: "dark",
   gap: 4,
   dndOverlayMounting: "absolute",

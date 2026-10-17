@@ -2,7 +2,7 @@
 
 Amoris is an agent-native 3D engine with a Rust host, TypeScript game systems, desktop and web
 editors, and a shared command API.
-The executable is currently named `pocket`.
+The executable is `amoris`.
 
 ## Build and open the editor
 
@@ -19,7 +19,7 @@ cd ../sdk
 bun install --frozen-lockfile
 cd ..
 cargo build --release
-./target/release/pocket serve samples/sailing --editor editor/dist
+./target/release/amoris serve samples/sailing --editor editor/dist
 ```
 
 Open **http://127.0.0.1:7878/**. The host starts paused. Press **Play** in the editor
@@ -41,12 +41,12 @@ panels and WebGPU viewport as the browser editor.
 ## Open a native window
 
 ```sh
-./target/release/pocket play samples/sailing
-./target/release/pocket play samples/anim
+./target/release/amoris play samples/sailing
+./target/release/amoris play samples/anim
 ```
 
 The native renderer defaults to Metal on macOS, Direct3D 12 on Windows, and Vulkan on other
-supported native platforms. Select a backend with `POCKET_BACKEND=metal|vulkan|dx12`.
+supported native platforms. Select a backend with `AMORIS_BACKEND=metal|vulkan|dx12`.
 The browser renderer uses WebGPU; this version has no WebGL fallback.
 
 ## The small technology map
@@ -72,5 +72,5 @@ Snapshots, replay, and explicit forks operate on the simulation; rendering reads
 - [Profiling](profiling.md): capture CPU/GPU frame traces and inspect individual passes.
 
 For browser builds, QuickJS-ng's C code also needs a wasm-capable clang, LLVM tools,
-and wasi-libc. On macOS the build scripts find Homebrew LLVM; `POCKET_LLVM` can point
+and wasi-libc. On macOS the build scripts find Homebrew LLVM; `AMORIS_LLVM` can point
 to another installed LLVM. Node is used by the wasm validation probes.

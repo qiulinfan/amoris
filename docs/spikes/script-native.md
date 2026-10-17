@@ -60,7 +60,7 @@ The caveats:
 | Transpiler | `src/transpile.rs` | oxc per module: parse, semantic, transformer (TypeScript stripped, `**` lowered to `Math.pow`), codegen with a source map |
 | Script host | `src/host.rs` | One rquickjs `Runtime` and `Context`, a custom `Resolver` and `Loader`, the interrupt handler, systems called per tick, exceptions made structured |
 | Determinism setup | `src/prelude.rs`, `ScriptHost::load` | The context's intrinsics, Math replaced, the global graph frozen |
-| Host API | `src/hostapi.rs`, `sdk/pocket.ts` | The native module `pocket:host` (only the SDK may import it) and the SDK `pocket` that scripts import |
+| Host API | `src/hostapi.rs`, `sdk/amoris.ts` | The native module `amoris:host` (only the SDK may import it) and the SDK `amoris` that scripts import |
 | Engine math | `src/math.rs`, `math-sweep/` | sin, cos, tan, asin, acos, atan, atan2, exp, log, pow, cbrt, hypot from `+ - * /`, `sqrt`, `floor` and bits |
 | RNG | `src/rng.rs` | PCG32 (XSH RR 64/32) as a world resource |
 | World | `src/world.rs`, `src/game.rs` | `bevy_ecs` components, a registry scripts reach by name, a single-threaded `Schedule`, the canonical hash |
@@ -134,7 +134,7 @@ answers the spike; the canonical serialization of charter 7.5 replaces it.
 
 | Requirement | How | Test |
 |---|---|---|
-| No `std` or `os` | rquickjs never compiles `quickjs-libc.c`; the resolver accepts only `"pocket"` and relative paths | `no_std_or_os_modules`: `import * as std from "std"` is `script.module-not-found`; `std`, `os`, `console`, `print`, `scriptArgs`, `setTimeout` are undefined; importing `pocket:host` outside the SDK is `script.forbidden-import` |
+| No `std` or `os` | rquickjs never compiles `quickjs-libc.c`; the resolver accepts only `"amoris"` and relative paths | `no_std_or_os_modules`: `import * as std from "std"` is `script.module-not-found`; `std`, `os`, `console`, `print`, `scriptArgs`, `setTimeout` are undefined; importing `amoris:host` outside the SDK is `script.forbidden-import` |
 | `Math.random` from a seeded PCG32 | `Math.random` and the SDK's `randomFill` draw from the world's `Rng` resource | `pcg32_matches_the_reference_implementation` (seed 42, stream 54: `0xa15c02b7 0x7b47f409 ...`); `math_random_draws_from_the_world_rng` (one stream, and its state is the world's) |
 | No `Date` | The context is built without the Date intrinsic | `date_weakref_finalization_registry_and_performance_removed` |
 | No `WeakRef`, `FinalizationRegistry` | Built without the WeakRef intrinsic (it holds both); also without `performance` | same test |
@@ -244,7 +244,7 @@ Command: `script-native bench`.
 
 - Loading the project (create the runtime and context, the setup and the freeze, then resolve, lint,
   transpile, compile and evaluate `main.ts`, `rules/damage.ts`, `rules/combat.ts`, the SDK and
-  `pocket:host`): 4.2 to 5.8 ms.
+  `amoris:host`): 4.2 to 5.8 ms.
 - Reloading it mid-run (drop the runtime, load again from disk): 5.0 to 5.5 ms;
   `script-native check-reload` reported 4.3 ms.
 - oxc per module (parse, semantic, transform, codegen with map): 6 to 7 µs for `main.ts` (4 lines),
@@ -324,8 +324,8 @@ shim can load it as WebAssembly.
    `env.es2016.exponentiation_operator = true`, `Codegen` with `source_map_path`; keep each map as
    `SourceMap::into_owned()` by module name.
 5. **Load one by one** (`src/host.rs`): one type implementing rquickjs's `Resolver` and `Loader`;
-   module names are paths relative to the project; `"pocket"` is the SDK (TypeScript, transpiled
-   like the rest), `"pocket:host"` a native `ModuleDef` that only the SDK may import, whose
+   module names are paths relative to the project; `"amoris"` is the SDK (TypeScript, transpiled
+   like the rest), `"amoris:host"` a native `ModuleDef` that only the SDK may import, whose
    functions find the host's state through `Ctx::userdata`. Lint, then transpile, inside
    `catch_unwind`: a panic in a loader callback aborts the process. A failure is stored as a
    structured error and the load returns `Error::new_loading_message`; the host reports the stored

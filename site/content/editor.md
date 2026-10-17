@@ -39,15 +39,15 @@ For bounded CPU/GPU captures with frame IDs, use the native
 
 ## Write and check a script
 
-Open `scripts/rules.ts` in the Scripts panel. Monaco receives the `pocket` SDK and the
+Open `scripts/rules.ts` in the Scripts panel. Monaco receives the `amoris` SDK and the
 project's component declarations from the live registry.
 
 **Cmd/Ctrl+S** writes and applies a script at a tick boundary. For a checked CLI workflow,
 run `scripts check` before `scripts apply`: type diagnostics do not themselves prevent a swap.
 
 ```sh
-./target/release/pocket scripts check --host http://127.0.0.1:7878
-./target/release/pocket scripts apply --host http://127.0.0.1:7878
+./target/release/amoris scripts check --host http://127.0.0.1:7878
+./target/release/amoris scripts apply --host http://127.0.0.1:7878
 ```
 
 ## Debug at the TypeScript source
@@ -66,7 +66,7 @@ is not a bundled LLM service: starting an autonomous model session still needs h
 
 ```sh
 cd editor
-POCKET_HOST=http://127.0.0.1:7878 bun run dev
+AMORIS_HOST=http://127.0.0.1:7878 bun run dev
 bun run typecheck
 bun run build
 ```

@@ -1,4 +1,4 @@
-import { game } from "pocket";
+import { game } from "amoris";
 import { Every } from "./every";
 import { all } from "./rules";
 

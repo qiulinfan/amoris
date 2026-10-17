@@ -62,7 +62,7 @@ export class Cdp {
 
 export async function launchChrome(port: number): Promise<{ proc: Subprocess; pageWs: string }> {
   const chrome = process.env.CHROME ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
-  const profile = `${process.env.TMPDIR ?? "/tmp"}/pocket-capture-${Date.now()}`;
+  const profile = `${process.env.TMPDIR ?? "/tmp"}/amoris-capture-${Date.now()}`;
   const proc = Bun.spawn(
     [chrome, "--headless=new", `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`, "--no-first-run", "--hide-scrollbars", "--window-size=1600,1000", "about:blank"],
     { stdout: "ignore", stderr: "ignore" },

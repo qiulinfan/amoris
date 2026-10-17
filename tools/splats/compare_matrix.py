@@ -11,7 +11,7 @@ captures `--raster` (default tile) with each build, the first build first on eve
 second first on odd ones, and image_diff compares the two (`build_vs_build`); `--env NAME=K=V`
 (repeatable) sets an environment variable for build NAME, so one executable can be two builds.
 
-Build first: `cargo build --release -p pocket-render --example splats --example image_diff`.
+Build first: `cargo build --release -p amoris-render --example splats --example image_diff`.
 
     python tools/splats/compare_matrix.py --adapters nvidia,780m --backends dx12,vulkan \
         --scene "1M=--count 1000000" --images out/splat-compare --out docs/evidence/quiet/splats/compare.json
@@ -56,7 +56,7 @@ def main():
            "scenes": dict(scenes), "quad_vs_tile": [], "dx12_vs_vulkan": []}
     for adapter in a.adapters.split(","):
         for backend in a.backends.split(","):
-            env = dict(os.environ, POCKET_BACKEND=backend, POCKET_ADAPTER=adapter)
+            env = dict(os.environ, AMORIS_BACKEND=backend, AMORIS_ADAPTER=adapter)
             for name, args in scenes:
                 prefix = images / f"{adapter}-{backend}-{slug(name)}"
                 p = subprocess.run([str(EXAMPLES / f"splats{EXE}"), *args.split(), "--compare",
@@ -117,7 +117,7 @@ def compare_builds(a):
             for i, (name, args) in enumerate(scenes):
                 shots = {}
                 for build, exe in (builds if i % 2 == 0 else builds[::-1]):
-                    env = dict(os.environ, POCKET_BACKEND=backend, POCKET_ADAPTER=adapter,
+                    env = dict(os.environ, AMORIS_BACKEND=backend, AMORIS_ADAPTER=adapter,
                                **build_env.get(build, {}))
                     shot = images / f"{adapter}-{backend}-{slug(name)}-{slug(build)}.png"
                     subprocess.run([os.path.abspath(exe), *args.split(), "--raster", a.raster,

@@ -1,7 +1,7 @@
 # Gaussian splats: rasterization, quality and defaults
 
 Quads remain the default rasterizer on every adapter. The compute tile rasterizer is available
-through `POCKET_SPLAT_RASTER=tile`, but its gains depend on pixel coverage and overlap; the final
+through `AMORIS_SPLAT_RASTER=tile`, but its gains depend on pixel coverage and overlap; the final
 Windows matrix does not support a faster default for an adapter kind or backend.
 
 Design and API: [splats](../spec/splats.md). Temporal integration:
@@ -100,14 +100,14 @@ matrix. Browser validation establishes compatibility, not native/browser perform
 ## Reproduction and limits
 
 ```sh
-cargo build --release -p pocket-render --example splats --example image_diff
+cargo build --release -p amoris-render --example splats --example image_diff
 python tools/splats/matrix.py --adapters nvidia,780m --backends dx12,vulkan \
     --rounds 5 --frames 60 --cool 70 --settle 5 \
     --scene "1M=--count 1000000" \
     --scene "3M1440p=--count 3000000 --size 2560x1440" \
     --out out/bench-runs/splats.json
 python tools/quiet_tables.py splatm out/bench-runs/splats.json
-cargo test --release -p pocket-render --lib splat
+cargo test --release -p amoris-render --lib splat
 ```
 
 Add close-up, distant and anti-aliased scenes before changing a default; compare both complete

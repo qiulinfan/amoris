@@ -14,7 +14,7 @@ from unittest.mock import patch
 from agent_gameplay import Gameplay, TOOL_NAMES, COURSE_VERSION, tools, replay_actions
 
 
-POCKET = os.environ.get("AMORIS_TEST_POCKET")
+AMORIS = os.environ.get("AMORIS_TEST_BINARY")
 
 
 class SchemaTests(unittest.TestCase):
@@ -57,20 +57,20 @@ class OfflineReceiptTests(unittest.TestCase):
             def judge(self): return {"success": False, "world_hash": "after"}
 
         with patch("agent_gameplay.Gameplay", StubReplay):
-            result = replay_actions([expected], pocket="unused")
+            result = replay_actions([expected], amoris="unused")
             self.assertTrue(result["passed"])
             self.assertEqual(result["parity"][0]["expected_hash"], "after")
             self.assertEqual(result["parity"][0]["actual_hash"], "after")
             StubReplay.divergent = True
             with self.assertRaisesRegex(RuntimeError, "diverged"):
-                replay_actions([expected], pocket="unused")
+                replay_actions([expected], amoris="unused")
 
 
-@unittest.skipUnless(POCKET, "Set AMORIS_TEST_POCKET to a verified existing native pocket binary.")
+@unittest.skipUnless(AMORIS, "Set AMORIS_TEST_BINARY to a verified existing native amoris binary.")
 class NativeBoundaryTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix="amoris-player-test-")
-        self.game = Gameplay(POCKET, run_dir=Path(self.tmp.name))
+        self.game = Gameplay(AMORIS, run_dir=Path(self.tmp.name))
 
     def tearDown(self):
         self.game.close()

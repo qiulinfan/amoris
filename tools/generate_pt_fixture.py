@@ -90,7 +90,7 @@ def scene():
         {"name": "Environment", "components": {"Environment": {"sky": "color", "sky_color": [.06, .08, .12], "ambient": 1, "bloom": 0}}},
         {"name": "Camera", "components": {"Transform": {"position": [0, 1.7, 7]}, "Camera": {"fov_deg": 42}}},
     ]
-    doc = {"format": "pocket-scene", "version": 1, "entities": entities}
+    doc = {"format": "amoris-scene", "version": 1, "entities": entities}
     (ROOT / "scene.json").write_text(json.dumps(doc, indent=2) + "\n")
     doc["entities"][-2]["components"]["Environment"].update(sky="atmosphere", ambient=.3)
     (ROOT / "scene-atmosphere.json").write_text(json.dumps(doc, indent=2) + "\n")
@@ -100,6 +100,6 @@ if __name__ == "__main__":
     ROOT.mkdir(exist_ok=True)
     (ROOT / "scripts").mkdir(exist_ok=True)
     (ROOT / "project.toml").write_text('name = "pt-lab"\nrate = 60\nseed = 1\n')
-    (ROOT / "scripts" / "main.ts").write_text('import { game } from "pocket";\nexport default game({ components: [], systems: [] });\n')
+    (ROOT / "scripts" / "main.ts").write_text('import { game } from "amoris";\nexport default game({ components: [], systems: [] });\n')
     material_card()
     scene()

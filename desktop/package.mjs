@@ -38,12 +38,12 @@ await fs.writeFile(path.join(application, 'package.json'), JSON.stringify({
 }, null, 2) + '\n');
 
 const destinations = {
-  pocket: path.join(runtime, 'pocket' + executable),
+  amoris: path.join(runtime, 'amoris' + executable),
   editor: path.join(runtime, 'editor'), viewport: path.join(runtime, 'viewport'),
   typescript: path.join(runtime, 'typescript'),
 };
-await fs.copyFile(source.pocket, destinations.pocket);
-await fs.chmod(destinations.pocket, 0o755);
+await fs.copyFile(source.amoris, destinations.amoris);
+await fs.chmod(destinations.amoris, 0o755);
 await fs.cp(source.editor, destinations.editor, { recursive: true });
 await fs.cp(source.viewport, destinations.viewport, { recursive: true });
 await fs.cp(path.dirname(source.tsc), destinations.typescript, { recursive: true });

@@ -23,13 +23,13 @@ bun install
 # Against the mock host (no Rust needed): mock on 7879, Vite on 5173 proxying to it.
 bun run dev:mock                  # open http://127.0.0.1:5173/
 
-# Against the real host: `pocket editor <project>` serves editor/dist at http://127.0.0.1:7878/.
-# For editor development against it, Vite proxies to POCKET_HOST (default http://127.0.0.1:7878).
+# Against the real host: `amoris editor <project>` serves editor/dist at http://127.0.0.1:7878/.
+# For editor development against it, Vite proxies to AMORIS_HOST (default http://127.0.0.1:7878).
 bun run dev
-POCKET_HOST=http://127.0.0.1:7900 bun run dev
+AMORIS_HOST=http://127.0.0.1:7900 bun run dev
 
 bun run build                     # type check (tsc 7) + vite build -> editor/dist
-VITE_POCKET_EXPOSE=1 bun run build   # the same with window.pocket, for tools/gizmo-drag.ts
+VITE_AMORIS_EXPOSE=1 bun run build   # the same with window.amoris, for tools/gizmo-drag.ts
 bun run typecheck                 # the editor and the mock/tools
 bun run mock -- --port 7879 --no-agent --dist   # the mock alone; --dist serves editor/dist at /
 bun run evidence -- --url http://127.0.0.1:5173/ # screenshots into out/bench-runs/editor (needs Chrome)
@@ -85,7 +85,7 @@ right.
 | Hierarchy | Virtualized tree (children by `Parent`), icons by kind (camera, light, boat, sea, wind, mesh, empty), search by name, `t:Component` or `#id`; click, Cmd/Ctrl-click toggles, Shift-click ranges; arrows move and fold; F2 or Enter renames inline; drag rows onto a row to reparent, onto empty space to unparent; drop an asset to place it (under the row); context menu (rename, duplicate, delete, frame, copy id, create child, add component, unparent, break when written); + creates an empty, primitives, lights or a camera | `world.tree`, `world.edit` (spawn, set `Name`, set/remove `Parent`, destroy) |
 | Viewport | The renderer's canvas (section 5) with: orbit (right-drag or Alt+drag), pan (middle-drag or Shift+right-drag), zoom (wheel, pinch), click to pick (Shift/Cmd toggles), drag on empty space for rectangle selection, double-click to frame; tools Select/Move/Rotate/Scale (Q/W/E/R) with 3D gizmos (arrows with cones, plane handles, a screen handle; rotation rings with a view ring; scale cubes), World/Local (X), snapping with steps (hold Cmd/Ctrl to invert while dragging), grid (G), the axis gizmo (click an axis to look along it, the center for perspective/orthographic), camera menu (views, frame, reset), stats, the wind, selection labels; drop assets on the ground plane | `world.edit` with `group` while dragging, one undo entry on release; Escape takes the drag back (section 6) |
 | Inspector | The selection's name and components, each a collapsible card generated from its JSON Schema with the doc as tooltip: numbers (drag the strip to scrub, Shift ×10, Alt ×0.1; arithmetic accepted; arrows step), vectors per axis, rotations as Euler degrees (YXZ) over the stored quaternion, colours with a picker (stored linear, shown sRGB) and alpha, enums as selects with per-variant docs, booleans as switches, entity references as pickers (searchable, or drop a hierarchy row), nullable fields, nested objects, lists, tagged unions (`{Cuboid: {...}}`), the rest as JSON. Engine-written fields are marked. Card menu: reset to defaults, copy as JSON, break when written, remove. Add Component lists the registry with docs. Several selected: edits apply to each that has the component | `world.schema`, `world.get`, `world.edit` |
-| Scripts | File list with problem counts, Monaco with tabs (one model per script so imports type-check), the `pocket` module's types (section 7), Cmd/Ctrl+S saves (`scripts.write` then `scripts.apply`), host diagnostics as markers beside the TypeScript worker's own, a breakpoint gutter (click or F9; conditional and unbound breakpoints drawn differently), the paused line, sticky scroll, minimap | `scripts.list/read/write/apply`, `debug.breakpoints.*` |
+| Scripts | File list with problem counts, Monaco with tabs (one model per script so imports type-check), the `amoris` module's types (section 7), Cmd/Ctrl+S saves (`scripts.write` then `scripts.apply`), host diagnostics as markers beside the TypeScript worker's own, a breakpoint gutter (click or F9; conditional and unbound breakpoints drawn differently), the paused line, sticky scroll, minimap | `scripts.list/read/write/apply`, `debug.breakpoints.*` |
 | Debug | Continue/Pause, Step Over/Into/Out (F5, F6, F10, F11, Shift+F11), pause on exceptions (off, uncaught, all); the pause reason, tick, system and TypeScript location, and for a data breakpoint the field, its value before and after and the statement that wrote it; call stack (click a frame to show its source and its scopes; a frame seen after `run` returned is marked), the frame's Local and Closure scopes as expandable trees whose leaf values can be set (double-click, type an expression, Enter: section 8.1), watch expressions re-evaluated on each pause and frame change, breakpoints with editable conditions (the host's list, read again on each pause: logpoints, MCP agents' and CDP clients' breakpoints shown as such), data breakpoints. Three columns when wide | `debug` events, `debug.state/continue/pause/step/eval/set/exceptions/breakpoints.*/watch/unwatch` |
 | Console | The host's log with level filters and counts, search, follow, timestamps and ticks, a link to the source line; an input line evaluating in the game (on the selected frame while paused), with history; results are expandable trees | `log` events, `debug.eval` |
 | Events | The event stream as a table (seq, tick, name, subject, data) with a filter; selecting one asks the host why: the cause chain, oldest first, then the data; subjects select their entity | `events` events, `events.since`, `events.why` |
@@ -116,12 +116,12 @@ code editor. Help > Keyboard Shortcuts (Mod+/) lists them all from the registry.
 
 ## 5. The viewport interface
 
-The engine's renderer, compiled to wasm with wasm-bindgen (`crates/pocket-viewport`, built into
+The engine's renderer, compiled to wasm with wasm-bindgen (`crates/amoris-viewport`, built into
 `web/viewport/pkg` by `tools/build_viewport.sh`), implements this behind
-`web/viewport/pocket_web.js`; `editor/src/viewport/engine.ts` is the source of truth.
+`web/viewport/amoris_web.js`; `editor/src/viewport/engine.ts` is the source of truth.
 
 ```ts
-// Served by the host at /wasm/pocket_web.js (web/viewport; the wasm-bindgen output in pkg/ beside it).
+// Served by the host at /wasm/amoris_web.js (web/viewport; the wasm-bindgen output in pkg/ beside it).
 export default function init(input?: unknown): Promise<unknown>;          // wasm-bindgen's init, run first
 export function createViewport(canvas: HTMLCanvasElement, options: ViewportOptions): Viewport | Promise<Viewport>;
 
@@ -196,18 +196,18 @@ selection, the gizmo geometry and its hit testing and drag math (`viewport/gizmo
 only draws `shapes` on top of the scene, in order (they are sorted far to near), and outlines the
 selection. `pick` should come from the entity id buffer (charter 4.4).
 
-Loading (`loadViewport`): `HEAD /wasm/pocket_web.js` (the host serves `web/viewport`, found beside
-the working directory or the executable, or `POCKET_WEB_VIEWPORT`); if it is JavaScript, import it,
+Loading (`loadViewport`): `HEAD /wasm/amoris_web.js` (the host serves `web/viewport`, found beside
+the working directory or the executable, or `AMORIS_WEB_VIEWPORT`); if it is JavaScript, import it,
 run `default`, call `createViewport`. When it is missing (the mock serves none), or on any error (no
 WebGPU), the editor uses its fallback (`viewport/fallback/renderer.ts`): a Canvas 2D view of the
 world data the editor already holds (flat-shaded stand-ins chosen from `Model.mesh`, `Boat`, the
 `Collider` shape, light and camera icons, the animated sea from `Sea.waves`, a fading grid), which
 implements the same interface. The status bar and the viewport badge say which renderer runs.
 
-One wasm instance per page (2026-10-15): `pocket_web.js` runs wasm-bindgen's init once and hands
+One wasm instance per page (2026-10-15): `amoris_web.js` runs wasm-bindgen's init once and hands
 every caller the same promise. Before, under `bun run dev` React's StrictMode mounted the viewport
 panel twice, both mounts called `default` before the first instantiation had finished, and the page
-made two instances of the module (two fetches of `pocket_viewport_bg.wasm`). The generated glue
+made two instances of the module (two fetches of `amoris_viewport_bg.wasm`). The generated glue
 keeps one instance, so the first viewport's closures and frees ran on the second's memory: almost
 every development load threw "closure invoked recursively or after being dropped", then often
 panicked in dlmalloc (`psize >= size + min_overhead`, then `RuntimeError: unreachable`), and some
@@ -218,18 +218,18 @@ viewport configures it when it is created. StrictMode's two mounts both create o
 order (the editor awaits a request and an import before `createViewport`), so the mount the editor
 disposes could configure last. The kept viewport's frames then used that device's texture, the GPU
 rejected every one (`[TextureView] ... cannot be used with [Device "pocket"]`, which the renderer
-logs through `console.log` as `[pocket ERROR]`) and the canvas stayed black, while the stats still
+logs through `console.log` as `[amoris ERROR]`) and the canvas stayed black, while the stats still
 counted frames. Disposing a viewport now has the newest viewport left on its canvas configure the
-context again (`pocket_web.js`). `dispose` frees the renderer's wasm memory at once; its GPU
+context again (`amoris_web.js`). `dispose` frees the renderer's wasm memory at once; its GPU
 objects still go with the browser's collector (wgpu's WebGPU backend destroys nothing on drop).
 
 `bun tools/viewport-loads.ts` loads the editor in headless Chrome several times, resets the layout
 (the viewport panel unmounts and mounts: a new viewport on the same instance) and hot-updates a
-source file. A phase fails on an exception, a console error or a renderer `[pocket ERROR]` line (of
+source file. A phase fails on an exception, a console error or a renderer `[amoris ERROR]` line (of
 its own document: what the replaced page logs while a load navigates does not count), and unless the
 renderer's stats count frames and entities and a screenshot of the viewport's canvas shows the world
 (at most 80% of its pixels one color: a canvas that presents nothing is black, 95 to 99% one color
-under the editor's overlays, the sailing sample 16%). Against `bun run dev` and `pocket serve`
+under the editor's overlays, the sailing sample 16%). Against `bun run dev` and `amoris serve`
 (quiet re-measurement, 2026-10-16 04:27 to 04:38: every other track finished, the bench lock held,
 CPU 6 to 8% busy, the RTX 5060 idle): master's module passed 0 of 6 phases (two wasm fetches per
 load, the closure error 0.4 to 2.2 s after each load, the allocator's panic 5 to 15 s after it in 3
@@ -247,7 +247,7 @@ not run its effects again here), so only a load or a layout reset makes a new vi
 hot-update phases check only that the page keeps drawing.
 
 Timings (2026-10-14): the viewport panel reads `stats()` four times a second into
-`state/render.ts`. The wasm module (`web/viewport/pocket_web.js`) keeps the renderer's per-frame
+`state/render.ts`. The wasm module (`web/viewport/amoris_web.js`) keeps the renderer's per-frame
 stats JSON (parsed only when read, so fields the renderer adds pass through as `renderer`) and the
 page's frame counters (`viewport/meter.ts` in the fallback); `gpu_ms` and `passes` come from the
 renderer's timestamp queries and are absent without them. The stats overlay shows the viewport's fps
@@ -296,7 +296,7 @@ it exists, else `Model.scale`.
 
 ## 7. Schema-driven fields and script types
 
-`world.schema` answers `[{name, origin, version, doc, schema}]` (pocket-sim's `ComponentInfo`).
+`world.schema` answers `[{name, origin, version, doc, schema}]` (amoris-sim's `ComponentInfo`).
 `src/host/schema.ts` reads both producers: schemars for engine components (`$ref`/`$defs`,
 fixed-size number arrays, `oneOf` of documented `const`s, externally tagged unions, `EntityId` by
 `$ref`) and the registry for project components (`{x, y, z}` objects, `enum`, nullable integers
@@ -305,14 +305,14 @@ bounded by 2^53 − 1 for entities). Colours and rotations are recognised by nam
 to nothing.
 
 Monaco's TypeScript worker loads the project's declarations from the host
-(`scripts.types {text: true, tsconfig: false}`: `pocket.d.ts` and the generated `components.d.ts`,
+(`scripts.types {text: true, tsconfig: false}`: `amoris.d.ts` and the generated `components.d.ts`,
 the files `tsc` checks in `scripts.check`, docs/sdk.md; connecting never writes a `tsconfig.json`
 into the project) on connect and after the editor's own apply. Its compiler options are fixed in
-`monaco.ts` to mirror `pocket_script::types::TSCONFIG` (strict, `es2023`, isolated modules); it does
-not read the project's `tsconfig.json`, and resolves `pocket` as `node_modules/pocket`
+`monaco.ts` to mirror `amoris_script::types::TSCONFIG` (strict, `es2023`, isolated modules); it does
+not read the project's `tsconfig.json`, and resolves `amoris` as `node_modules/amoris`
 (`moduleResolution` `NodeJs`, where the project's file says `bundler`). Until the declarations
 arrive (or against the mock, which lacks `scripts.types`) it uses the SDK the engine embeds
-(`crates/pocket-script/src/prelude/pocket.d.ts`, bundled at build time) with loosely typed
+(`crates/amoris-script/src/prelude/amoris.d.ts`, bundled at build time) with loosely typed
 components. The worker is monaco-editor 0.57's TypeScript 5.9 (JavaScript), not `tsc` 7: on the same
 declarations the two reported the same codes and places for the 15 mistakes of
 `tools/sdk_mistakes.ts.txt` (`tools/sdk_check.ts`, section 10), but they may differ in corners. The
@@ -342,7 +342,7 @@ adopt them or the editor should change:
 8. `snapshots.list` answers `[{tick, t_s?, hash?}]`; `events.why` answers the chain oldest first,
    ending with the event itself; `status` may carry `speed`.
 9. `GET /api/catalog` answers an array of commands or `{commands}`; `kind` in any case.
-10. The host serves the browser viewport (`web/viewport`, pocket-viewport's wasm-bindgen output)
+10. The host serves the browser viewport (`web/viewport`, amoris-viewport's wasm-bindgen output)
     under `/wasm/` (section 5).
 11. `profile` pushes the host's CPU time per tick by system and phase (host-protocol.md 3); the
     editor adds its viewport's frame and GPU passes. `subscribe` is all or nothing: the editor asks
@@ -355,7 +355,7 @@ adopt them or the editor should change:
 ### 8.1 The debugger
 
 The editor drives the script debugger through the host's `debug.*` methods over `/ws`: they are
-pocket-debug's agents' API ([debugger.md](debugger.md) 7), the same core Chrome DevTools and VS Code
+amoris-debug's agents' API ([debugger.md](debugger.md) 7), the same core Chrome DevTools and VS Code
 reach over CDP, and the `debug` topic pushes its pauses and resumes. `src/host/protocol.ts` types
 the wire shapes (`HostDebugState`, `HostFrame`, `HostVariable`, `HostBreakpoint`, `HostDataWatch`,
 `HostEvalResult`) and `src/host/api.ts` normalizes them, in one place, into what the panels show:
@@ -396,7 +396,7 @@ the wire shapes (`HostDebugState`, `HostFrame`, `HostVariable`, `HostBreakpoint`
   `debug.unwatch {id}`; `debug.exceptions {mode}` answers `{mode}`.
 - `debug.eval` answers `{type, value, description}` and only while paused (`debug.not_paused`
   otherwise), so watch expressions and the console evaluate on the selected frame of a pause.
-- `debug.rewind {tick}` (the timeline) answers `{restored, tick}`: pocket-app's bridge restores the
+- `debug.rewind {tick}` (the timeline) answers `{restored, tick}`: amoris-app's bridge restores the
   kept snapshot at or before `tick` and steps to it.
 - Play and Step debug the Play world: the host's game thread hands the script debugger to Play's
   fork and back on Stop, so breakpoints set in Edit hit in Play; `time.step` in Edit runs the edit
@@ -418,7 +418,7 @@ the wire shapes (`HostDebugState`, `HostFrame`, `HostVariable`, `HostBreakpoint`
   the editor shows and breakpoints bind to its lines. Other clients that apply scripts during Play
   apply them again after Stop themselves.
 - Debug > Copy Chrome DevTools URL copies `debug.state.cdp.devtools`, the host's CDP endpoint
-  (pocket-debug's own port, 9229 by default; absent when the port was taken). The host does not
+  (amoris-debug's own port, 9229 by default; absent when the port was taken). The host does not
   serve `/devtools` or `/json` on its own port, so the Vite dev server does not proxy them.
 
 ## 9. Code map
@@ -445,7 +445,7 @@ paused in the debugger, and each panel (viewport with a live gizmo drag and the 
 inspector, Add Component, hierarchy context menu, Edit menu, palette and a host method call, assets,
 events with a cause chain, timeline, profiler, console, agent, debug, scripts, history, shortcuts).
 
-The debugger against the real host: `pocket serve` on a copy of `samples/sailing` serving the built
+The debugger against the real host: `amoris serve` on a copy of `samples/sailing` serving the built
 editor, driven by `tools/debug-host.ts` in headless Chrome with real input only (clicks, keys,
 typing; the exceptions select excepted, step 7), 2026-10-04; `debug-host-*.png` and the driver's log
 `debug-host.txt` (exit 0, every step). Run again on 2026-10-09 on Windows against the host whose
@@ -475,7 +475,7 @@ off macOS.
 (`tools/capture.ts`) after the mock moved to the real shapes and frames (the callback and `run`, the
 closure's columns); the console evaluates on the paused frame.
 
-`out/bench-runs/sdk/` shows the script editor against a real host (`pocket serve samples/sailing`),
+`out/bench-runs/sdk/` shows the script editor against a real host (`amoris serve samples/sailing`),
 taken by `tools/sdk_check.ts`: with the host's declarations loaded (4 engine and 4 game components),
 a misspelt column (`b.sped`, "Did you mean 'speed'?") and a column the query's `fields` leaves out
 (`NotInFields<"Boat.heel_deg">`) are the worker's 2 errors in the status bar, and `boats.cols.Boat.`

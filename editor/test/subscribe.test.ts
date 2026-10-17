@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { HostClient } from "../src/host/client";
 import type { Topic } from "../src/host/protocol";
 
-/** A WebSocket that answers `subscribe` as the host does (pocket-server ws.rs): all or nothing,
+/** A WebSocket that answers `subscribe` as the host does (amoris-server ws.rs): all or nothing,
  * an unknown topic refused with its index. */
 class FakeHostSocket {
   static readonly OPEN = 1;

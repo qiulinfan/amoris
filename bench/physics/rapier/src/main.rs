@@ -7,7 +7,7 @@
 //!                 [--fork-at N] [--multibody] [--no-joint-motors] [--no-joint-limits]
 //!
 //! Build configurations are features: `det` (what Amoris ships), none, `simd8`, `parallel`.
-//! `--fork-at N` (feature `serde`) snapshots the world after N steps the way pocket-physics writes
+//! `--fork-at N` (feature `serde`) snapshots the world after N steps the way amoris-physics writes
 //! its Cache (serde through bincode 1.3.3, fixed-width little-endian), restores the bytes into a
 //! second world, steps both to the end and reports the fork's hash beside the original's.
 //! `--multibody` builds the Ragdoll's joints as multibody joints instead of impulse joints, prints
@@ -177,7 +177,7 @@ fn summarize(ms: &[f64]) -> Summary {
     }
 }
 
-/// The world's bytes as pocket-physics' Cache writes them (crates/pocket-physics/src/cache.rs).
+/// The world's bytes as amoris-physics' Cache writes them (crates/amoris-physics/src/cache.rs).
 #[cfg(feature = "serde")]
 fn snapshot_options() -> impl bincode::Options {
     use bincode::Options;

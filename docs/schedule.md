@@ -27,7 +27,7 @@
 | 游戏逻辑 | TypeScript：oxc 转译，QuickJS-ng 执行（vendored，补丁 P1–P13），TypeScript 7 做类型检查 |
 | 物理 | 现为 Rapier 0.36（确定性配置）；按 `docs/bench/physics.md` 的建议迁往 Jolt（第 4 天） |
 | 渲染 | wgpu 30，WGSL；原生 Metal、Vulkan（macOS 上经 MoltenVK），浏览器 WebGPU；GPU 驱动 |
-| 浏览器 | 游戏在 Web Worker 里跑同一份 wasm，页面用同一个渲染器（`pocket-viewport`）绘制 |
+| 浏览器 | 游戏在 Web Worker 里跑同一份 wasm，页面用同一个渲染器（`amoris-viewport`）绘制 |
 | agent 接口 | 一张命令目录投影出 CLI（第一位）、HTTP/WebSocket、MCP（薄投影）与 `.d.ts` |
 | 调试 | CDP 端点（Chrome DevTools、VS Code）、`debug.*` 命令（agent 与编辑器共用） |
 | 编辑器 | React 19 + dockview + Monaco，视口是编译到 wasm 的同一渲染器 |
@@ -103,7 +103,7 @@
 
 ### 第 3 天（10-05）：收尾合并
 
-1. 跑完 sdk 合并后 `pocket-script`、`pocket-check` 的测试，推送 main。
+1. 跑完 sdk 合并后 `amoris-script`、`amoris-check` 的测试，推送 main。
 2. 用保存的脚本恢复两个 workflow（已完成的 agent 从缓存回放），完成 play、neural、hzb、gtao 的修复
    与 art 的复查。
 3. 依次合并：art → hzb → gtao → neural → play。neural 与 hzb/gtao 都改 `renderer.rs`；play 与 sdk 都
@@ -111,26 +111,26 @@
    纹）。
 4. 在 M5 上完整跑一次 `cargo xtask check`，日志入库。
 
-退出条件：main 含全部分支；`pocket play samples/harbor`、`pocket match samples/arena`、浏览器播放页
+退出条件：main 含全部分支；`amoris play samples/harbor`、`amoris match samples/arena`、浏览器播放页
 都能跑； check 日志入库。
 
 ### 第 4 天（10-06）：物理迁往 Jolt
 
 按 `docs/bench/physics.md` 给出的顺序做四项检查，任何一项失败就留在 Rapier：
 
-1. joltc 分叉加 `SaveState` / `RestoreState` 与 WASI shim，原生与 pocket-web 的 wasm（wasm-bindgen，
+1. joltc 分叉加 `SaveState` / `RestoreState` 与 WASI shim，原生与 amoris-web 的 wasm（wasm-bindgen，
    与 QuickJS-ng 共用一份 wasi-libc）都能构建。
-2. `pocket-physics` 的求解器部分（约 1,100 行）换成 Jolt，组件与力（浮力、风、帆、船体）不变。
+2. `amoris-physics` 的求解器部分（约 1,100 行）换成 Jolt，组件与力（浮力、风、帆、船体）不变。
 3. 确定性：帆船场景 3,001 tick 原生与 Chrome 哈希一致；每个 tick 从字节恢复的 fork 继续一致。
 4. 测量：本仓库物理 bench 与帆船场景在安静机器上重跑。
 
 同一天并行：把帆船物理预制体改成与 9 m 模型一致（现为 3.4 m），给岛屿与码头加碰撞体。
 
-退出条件：sailing、harbor、arena 的 `pocket check` 全部通过；`physics.md` 补上迁移后的数字。
+退出条件：sailing、harbor、arena 的 `amoris check` 全部通过；`physics.md` 补上迁移后的数字。
 
 ### 第 5 天（10-07）：agent 接口与调试
 
-1. 一个生成器：命令目录（含 `pocket_debug::methods()`、player 命令）的模式生成 CLI 短式、MCP 工具与
+1. 一个生成器：命令目录（含 `amoris_debug::methods()`、player 命令）的模式生成 CLI 短式、MCP 工具与
    编辑器的命令表，取代手写的三份。
 2. 修评测暴露的问题：断点暂停时读命令照常回答，`step` 返回停止原因；快照恢复默认用当前脚本包；
    QuickJS-ng 补丁 P11 修正 `debug.eval` 的作用域；`debug writes`（谁写了这个字段）；按字段读取与

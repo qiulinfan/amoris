@@ -48,7 +48,7 @@ one stalled all: a 5M-triangle import held a `state` call for 4.7 s
 
 ```mermaid
 flowchart LR
-    subgraph G["Game thread (pocket-runtime)"]
+    subgraph G["Game thread (amoris-runtime)"]
         Q[Command queue] --> B[Boundary: apply in canonical order]
         B --> T[Tick]
         T --> P[Publish snapshot + events]
@@ -85,7 +85,7 @@ flowchart LR
 
 ### 3.1 Ownership
 
-`pocket-runtime`'s `Game` value holds the worlds (main and its branches, 3.6), the script host,
+`amoris-runtime`'s `Game` value holds the worlds (main and its branches, 3.6), the script host,
 physics, the interface state and the recorders; it is driven synchronously (`apply`, `step`,
 `snapshot`). The script host cannot cross threads: rquickjs 0.14.0 implements `Send` for its
 `Runtime` and `Context` only under its `parallel` feature (rquickjs-core 0.14.0
@@ -93,14 +93,14 @@ physics, the interface state and the recorders; it is driven synchronously (`app
 is forbidden in the game group (architecture.md 6). So the `Game` is built on its own thread:
 
 ```rust
-// pocket-runtime (native, feature `thread`)
+// amoris-runtime (native, feature `thread`)
 pub struct ThreadOptions {
     pub stack_bytes: usize,                       // script-sandbox.md 4.3: from the depth test
     pub clock: Arc<dyn Fn() -> f64 + Send + Sync>, // milliseconds, monotonic; the loop's clock
     pub on_publish: Arc<dyn Fn() + Send + Sync>,  // 4.3
 }
 impl GameThread {
-    /// Builds the Game with `make` on a new thread named `pocket-game`, whose stack is
+    /// Builds the Game with `make` on a new thread named `amoris-game`, whose stack is
     /// `options.stack_bytes`, through `std::thread::Builder::stack_size`.
     pub fn spawn(make: impl FnOnce() -> Result<Game, Problem> + Send + 'static,
                  options: ThreadOptions) -> Result<GameHandle, Problem>;
@@ -115,9 +115,9 @@ separately.
 
 The `Game` reads no clock of its own: `Instant::now` panics on `wasm32-unknown-unknown`, and the
 game-group crates may not depend on `js-sys` (architecture.md 6). The caller injects one, as
-`ThreadOptions::clock` natively (an `Instant` from the game's start) and from `pocket-web`, which
+`ThreadOptions::clock` natively (an `Instant` from the game's start) and from `amoris-web`, which
 may use `js-sys`, in the worker (`performance.now()`); `Game::new` takes the same
-`Arc<dyn Fn() -> f64 + Send + Sync>`, and so does `pocket_check::measure` (budgets.md 7.1). The
+`Arc<dyn Fn() -> f64 + Send + Sync>`, and so does `amoris_check::measure` (budgets.md 7.1). The
 loop's pacing, `published_at_ms`, `UpdateReport.timings` and the `StepHooks` that time systems all
 read it.
 
@@ -213,11 +213,11 @@ of the world. When the native debugger (the debugger spike, `docs/spikes/debugge
 boundary happens, queued commands and agents' steps wait until it resumes, and the editor stays
 responsive on its own thread with the last snapshot. The spike pauses on the game thread inside the
 trace callback and keeps its protocol server on another thread that only forwards requests, the
-split section 6 describes; that thread is `pocket-debug`'s (architecture.md 4.17). The PR's handler
+split section 6 describes; that thread is `amoris-debug`'s (architecture.md 4.17). The PR's handler
 doubled the cost of every statement while installed (2.04 times with no client) and cost nothing
 measurable while compiled in and not installed, so scripts are instrumented only while a debugger is
 attached, re-instrumented at the start of the next tick (debugger.md 2); with P9 an attached
-debugger costs 1.05 times (debugger.md 10). `pocket-debug` sets the state `Breakpoint` through the
+debugger costs 1.05 times (debugger.md 10). `amoris-debug` sets the state `Breakpoint` through the
 handle `GameHandle::loop_state` gives it (`StateHandle::stopped`, with the stop's summary, which
 readers get from `SnapshotReader::debug_stop`) and `Ticking` when it resumes. An evaluation inside
 a paused tick taints the run (script-host.md 13). Before each tick of a `time.step` the loop hands
@@ -257,7 +257,7 @@ world hash) with what a presenter needs beside it (charter 5.1: "the same canoni
 perception layer and the world hash use").
 
 ```rust
-// pocket-link
+// amoris-link
 pub struct WorldSnapshot {
     pub version: u64,                // publication counter of this run, from 1
     pub snapshot: Snapshot,          // spec-persist's: header (tick, writes, engine, bundle), sections, world hash
@@ -273,13 +273,13 @@ pub struct WorldSnapshot {
   and the world hash cover, charter 3.3): sharing an `Arc` costs nothing. The web form leaves Cache
   sections out of what it posts unless asked (7.2), since presenters do not read them.
 - `published_at_ms` is the injected clock's reading (3.1: an `Instant` from the game's start
-  natively, `performance.now()` from `pocket-web` in a worker); a number is stored rather than an
+  natively, `performance.now()` from `amoris-web` in a worker); a number is stored rather than an
   `Instant` because `Instant::now` panics on `wasm32-unknown-unknown`.
 
 ### 4.2 Reading a snapshot
 
 ```rust
-// pocket-link
+// amoris-link
 pub struct SnapshotView<'a> { /* borrows a WorldSnapshot */ }
 impl<'a> SnapshotView<'a> {
     pub fn new(snapshot: &'a WorldSnapshot) -> Self;
@@ -309,7 +309,7 @@ type (persistence.md 4.1).
   editor may pin more (a history view) and pays for them.
 
 ```rust
-// pocket-link
+// amoris-link
 pub struct SnapshotReader { /* shared slot, event stream, status */ }
 impl SnapshotReader {
     pub fn latest(&self) -> Arc<WorldSnapshot>;
@@ -323,7 +323,7 @@ impl SnapshotReader {
 - **Wake-up**: `ThreadOptions::on_publish`, a `Fn() + Send + Sync` the game thread calls once after
   each publication point, whether it swapped a snapshot, handed the render feed its frames, or both
   (a full frame extracted for a new subscriber while the world waits included; 2026-10-15,
-  Pioneer). `pocket serve` passes a counter its `/render` sockets wait on, so a frame leaves as
+  Pioneer). `amoris serve` passes a counter its `/render` sockets wait on, so a frame leaves as
   soon as it is extracted (host-protocol.md 5); a window could pass `winit`'s
   `EventLoopProxy::send_event` to request a redraw.
 - **Cost**: a publication is one call of spec-persist's `snapshot` on the game thread (encoding and
@@ -333,7 +333,7 @@ impl SnapshotReader {
   records (recording, checks), the tick's hash is taken from the same snapshot, so the publication
   costs nothing extra. Slice 1 encoded every section at each publication. Since 2026-10-15
   (Pioneer) the game thread takes its snapshots (published, kept, and the `snapshot` command's)
-  through pocket-persist's `SnapshotCache` (persistence.md 4.3), which reuses the `Arc` and digest
+  through amoris-persist's `SnapshotCache` (persistence.md 4.3), which reuses the `Arc` and digest
   of every component section none of whose rows changed since the last one (`bevy_ecs` change
   detection, which persistence.md 2 allows for publication because it changes no state); the
   types above do not change for that. On the sailing world in Play the paced snapshot took 0.55
@@ -354,7 +354,7 @@ must not be skipped: a presenter plays a sound or a splash for each, and an agen
 beside the snapshots.
 
 ```rust
-// pocket-link
+// amoris-link
 pub struct EventRecord {
     pub seq: u64,          // stream number, from 1 per run; a restore or fork does not reset it
     pub id: EventSeq,      // spec-sim's world-wide sequence number
@@ -386,7 +386,7 @@ cursor because an `EventSeq` can recur in a run that restores to an earlier tick
 ### 5.1 Envelope, sources, clients
 
 ```rust
-// pocket-link
+// amoris-link
 /// Who sent a command. The derived order is the order in which a boundary applies commands from
 /// different sources (5.2).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema)]
@@ -406,7 +406,7 @@ pub struct Envelope {
     pub source: Source,
     pub seq: u64,                   // per source, from 1, strictly increasing
     pub at: Option<Tick>,           // an input of this tick, applied at boundary at - 1; None: the next boundary
-    pub name: String,               // a command of the catalog (pocket-runtime)
+    pub name: String,               // a command of the catalog (amoris-runtime)
     pub params: serde_json::Value,
     pub reply: ReplyTo,
 }
@@ -431,7 +431,7 @@ impl GameClient {
     pub fn call(&mut self, name: &str, params: serde_json::Value) -> Reply;
 }
 
-// pocket-runtime (native)
+// amoris-runtime (native)
 impl GameHandle {
     /// One live client per source; `source.in_use` while another is held. `Source::Host` is not
     /// handed out: the runtime's own producers share one internal sender with an atomic seq.
@@ -471,7 +471,7 @@ enqueued. At boundary T-1, whose writes are the inputs of tick T, the game threa
    matched by tick the same way at every boundary: one whose `at` the world passed without stopping
    at its boundary (a world replaced at a later tick) is answered `command.tick_passed` and its
    place in the queue freed, never held for a boundary that cannot come. The worker (7.3) does the
-   same (`pocket_runtime::take_held`);
+   same (`amoris_runtime::take_held`);
 3. sorts the batch by `(source, seq)`: Host, then Editor, then Developer sessions by number, then
    players by the game's seat order (shared/contract/README.md, Seats and callers), each source's
    commands in its own order;
@@ -581,9 +581,9 @@ boundary, and returns the Request's reply, so a check exercises the same stages 
 | Asset import (glTF, LOD) | a pool of runtime worker threads | a Host Write `asset ready {hash}` at a boundary, recorded with the content hash (the recorder embeds the bytes, replay.md 2.2); a replay waits for the asset before applying that boundary |
 | A branch that steps while main runs in real time (3.6) | a runtime worker with its own `ScriptHost` | nothing: the branch is the worker's world |
 | `profile`, `eval`, `checks` and the re-simulation of replay queries (shared/contract/mcp.md 5.7 and 6) | a runtime worker with its own `ScriptHost`, on a throwaway fork or a world restored from a recording | nothing: the answer only |
-| MCP transport | `tokio` threads in `pocket-mcp` | each session's commands through its client |
+| MCP transport | `tokio` threads in `amoris-mcp` | each session's commands through its client |
 | Network transport | its own threads | remote players' commands as their Player sources; spectators receive snapshots in the wire form of 7.2 |
-| The debugger's protocol endpoint (`pocket-debug`) | its own thread | the script host's debug hooks on the game thread (debugger spike) |
+| The debugger's protocol endpoint (`amoris-debug`) | its own thread | the script host's debug hooks on the game thread (debugger spike) |
 | File watching (`--watch`) | its own thread | a Developer client's hot-update requests |
 
 Runtime workers that run scripts are spawned through `std::thread::Builder::stack_size` with the
@@ -606,13 +606,13 @@ budget `fork.sail`, `budgets.md`), and a fork made ready to step on its worker i
 ### 7.1 Roles
 
 The page's main thread runs the presenter role of the engine's wasm (renderer, editor when built in,
-input, `window.pocket`); a dedicated Web Worker runs the game role (`Game` from `pocket-runtime`).
+input, `window.amoris`); a dedicated Web Worker runs the game role (`Game` from `amoris-runtime`).
 Charter 5.1 fixes this form because WebAssembly threads need cross-origin isolation, which a shared
 link may not have. The roles share no memory; snapshots and commands cross as messages.
 
 Start-up:
 
-1. The page compiles `pocket.wasm` with `WebAssembly.compileStreaming` and instantiates the
+1. The page compiles `amoris.wasm` with `WebAssembly.compileStreaming` and instantiates the
    presenter role.
 2. It starts `new Worker("game.js", {type: "module"})` and posts `init` with the compiled
    `WebAssembly.Module` (one binary carries both roles, so the worker does not compile it again;
@@ -638,7 +638,7 @@ keys; a section in neither list was removed. Cache sections are not posted unles
 ask for them (`with_caches`), so a rebuilt snapshot without them cannot reproduce the world hash and
 carries the worker's `world_hash` as given. The same messages over a WebSocket are the spectator
 form of the server-authoritative run (charter 5.1: the network layer abstracts its transport), so
-the encoding lives in `pocket-link::wire` and is independent of `postMessage`.
+the encoding lives in `amoris-link::wire` and is independent of `postMessage`.
 
 ### 7.3 Pacing and flow control in the worker
 
@@ -656,7 +656,7 @@ the encoding lives in `pocket-link::wire` and is independent of `postMessage`.
 - The page posts `ack` after it has rebuilt the snapshot, not after it has drawn it, so a slow frame
   delays snapshots by one at most and never stalls the worker.
 - The worker paces with the game thread's time model and shares its loop core
-  (`pocket_runtime::boundary`): the held commands of 5.2, and in a game with players the players'
+  (`amoris_runtime::boundary`): the held commands of 5.2, and in a game with players the players'
   waits, their decision points after every tick and their session's pace (player.md 6). How a
   tick counts is shared too: against the model and the front step at once, before anything after
   the tick asks the model again for what is owed (`boundary::ran_tick`, `boundary::owe`).
@@ -664,11 +664,11 @@ the encoding lives in `pocket-link::wire` and is independent of `postMessage`.
 ### 7.4 The page's handle
 
 ```js
-await pocket.ready;                                  // the worker answered `ready`
-const r = await pocket.command(name, params, opts);  // resolves with the result, rejects with {code, message, detail}
-pocket.latest();                                     // {version, tick, writes, world_hash, time}
-pocket.onEvents((records, missed) => { ... });
-pocket.close();
+await amoris.ready;                                  // the worker answered `ready`
+const r = await amoris.command(name, params, opts);  // resolves with the result, rejects with {code, message, detail}
+amoris.latest();                                     // {version, tick, writes, world_hash, time}
+amoris.onEvents((records, missed) => { ... });
+amoris.close();
 ```
 
 `opts.source` defaults to the page's Developer client; `"player"` sends as the local human player.
@@ -717,7 +717,7 @@ Every command is asynchronous now, which removes master's split between `command
 |---|---|---|---|
 | Editing (native) | game thread | main thread: editor and human view | editor, MCP sessions, input, watcher |
 | Shipped game (native) | game thread | main thread: window, renderer, audio | the human player's input; MCP sessions if the game enables them |
-| Shipped game (web) | Web Worker | page main thread | input, `window.pocket` |
+| Shipped game (web) | Web Worker | page main thread | input, `window.amoris` |
 | Headless session (agent over MCP) | game thread | none (no publication until a reader attaches) | MCP sessions |
 | Server-authoritative | game thread on the server | remote presenters fed by the wire form (7.2) | network transport |
 | Headless batch, checks | the caller's thread, `Game` directly; parallel forks on several threads | none | the caller, synchronously |
@@ -742,17 +742,17 @@ agent's actions, so both follow the same rules (charter 2.1).
 
 | Test | Where | Passes when |
 |---|---|---|
-| Canonical order | `pocket-link` unit tests | every permutation of a batch of up to 7 envelopes from 4 sources sorts to one order, which keeps each source's seq order |
-| Holding and refusing by `at` | `pocket-runtime` tests | a command with `at` T applies at boundary T-1; one with a past `at` gets `command.tick_passed`; held commands count against the capacity |
-| `queue.full`, `source.in_use` | `pocket-runtime` tests | the errors come back and nothing is applied |
-| Live equals replay | `pocket-runtime` test, release | the sailing workload runs on `GameThread` in `RealTime { speed: 8 }` (pacing changes no result, and 600 ticks then take about 1.25 s) for 600 ticks while three producer threads send Writes at random wall-clock instants; replaying the recorder's `Applied` list synchronously gives the same world hash at every tick; 5 runs with different producer timings by default, and 20 in a test marked `#[ignore]` that the full check runs with `--include-ignored` (checks.md 6.2) |
-| Snapshot fidelity | `pocket-runtime` test | at 50 random publications, restoring the published snapshot into a fresh world (spec-persist's `restore` with `verify`) succeeds with the snapshot's world hash, and every engine component column read through `SnapshotView` equals the world's |
-| Events | `pocket-link` tests | a reader that falls `n` records past the ring gets exactly `missed = n` |
+| Canonical order | `amoris-link` unit tests | every permutation of a batch of up to 7 envelopes from 4 sources sorts to one order, which keeps each source's seq order |
+| Holding and refusing by `at` | `amoris-runtime` tests | a command with `at` T applies at boundary T-1; one with a past `at` gets `command.tick_passed`; held commands count against the capacity |
+| `queue.full`, `source.in_use` | `amoris-runtime` tests | the errors come back and nothing is applied |
+| Live equals replay | `amoris-runtime` test, release | the sailing workload runs on `GameThread` in `RealTime { speed: 8 }` (pacing changes no result, and 600 ticks then take about 1.25 s) for 600 ticks while three producer threads send Writes at random wall-clock instants; replaying the recorder's `Applied` list synchronously gives the same world hash at every tick; 5 runs with different producer timings by default, and 20 in a test marked `#[ignore]` that the full check runs with `--include-ignored` (checks.md 6.2) |
+| Snapshot fidelity | `amoris-runtime` test | at 50 random publications, restoring the published snapshot into a fresh world (spec-persist's `restore` with `verify`) succeeds with the snapshot's world hash, and every engine component column read through `SnapshotView` equals the world's |
+| Events | `amoris-link` tests | a reader that falls `n` records past the ring gets exactly `missed = n` |
 | Game stall | perf step of the check (timing, reported) | a test system blocks one tick for 2 s; the presenter stub's 4 ms frames are measured at p95 against the budget `stall.frame`, and the status reports `Ticking` for at least 2 s |
 | Presenter stall | perf step (reported) | a presenter stub blocks 500 ms per frame; how far the game's real-time pacing moves is measured against the budget `stall.drift` |
-| Panic | `pocket-runtime` test | a test system panics at tick 10: `step` answers `sim.world_poisoned`, the reader returns the last snapshot, the game thread answers Reads, and a restore makes `step` work again; a native called by a script panics: the same, and the process survives; a test panic outside `Sim::step` makes `call` return `game.stopped` |
-| Stacks | `pocket-runtime` test, debug and release | script-host.md 12's depth test on the game thread and on each kind of runtime worker that runs scripts reaches `script.call_depth`, never a stack overflow |
-| Branches | `pocket-runtime` test, release | a 600-tick branch step while main runs in real time gives hashes equal to the same ticks stepped with main paused; main's tick lateness meanwhile is the perf step's measurement `branch.main_lateness`, reported, not asserted |
+| Panic | `amoris-runtime` test | a test system panics at tick 10: `step` answers `sim.world_poisoned`, the reader returns the last snapshot, the game thread answers Reads, and a restore makes `step` work again; a native called by a script panics: the same, and the process survives; a test panic outside `Sim::step` makes `call` return `game.stopped` |
+| Stacks | `amoris-runtime` test, debug and release | script-host.md 12's depth test on the game thread and on each kind of runtime worker that runs scripts reaches `script.call_depth`, never a stack overflow |
+| Branches | `amoris-runtime` test, release | a 600-tick branch step while main runs in real time gives hashes equal to the same ticks stepped with main paused; main's tick lateness meanwhile is the perf step's measurement `branch.main_lateness`, reported, not asserted |
 | Web ordering and rebuild | web check page (`checks.md`, web) | the ordering test passes through messages; with `with_caches`, every rebuilt snapshot parses with `Snapshot::from_bytes` (which recomputes the trailing hash) to the worker's `world_hash` |
 | No isolation needed | web check | the page passes with and without COOP and COEP |
 | Round trip | perf step (reported) | a Read and a Write from the editor stub are answered; their p95 round trips are measured against the budgets `rtt.paused` and `rtt.running` |

@@ -13,7 +13,7 @@ that loads every core lowers the laptop GPU's clocks for a few seconds, dx12.md 
 waits before every repeat until the NVIDIA GPU is at C degrees or below (nvidia-smi) and records
 the wait; `--alternate` reverses the order of the modes on odd repeats.
 
-Build first: `cargo build --release -p pocket-render --example many_cubes`. Then:
+Build first: `cargo build --release -p amoris-render --example many_cubes`. Then:
 
     python tools/occlusion_bench.py --configs vulkan:nvidia,dx12:nvidia,vulkan:780m \
         --frames 300 --repeats 2 --out out/bench-runs/hiz/bench.json
@@ -50,9 +50,9 @@ def cool(limit):
 
 
 def run(layout, mode, backend, adapter, frames, size, count, settle):
-    env = dict(os.environ, POCKET_BACKEND=backend)
+    env = dict(os.environ, AMORIS_BACKEND=backend)
     if adapter:
-        env["POCKET_ADAPTER"] = adapter
+        env["AMORIS_ADAPTER"] = adapter
     cmd = [CUBES, *LAYOUTS[layout], "--headless-bench", str(frames), "--occlusion", mode,
            "--size", size]
     if count:

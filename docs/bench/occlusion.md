@@ -1,6 +1,6 @@
 # Hi-Z occlusion: method, default and measured limits
 
-Two-phase Hi-Z culling is enabled in `auto` mode. `POCKET_OCCLUSION=off|on|auto` overrides it;
+Two-phase Hi-Z culling is enabled in `auto` mode. `AMORIS_OCCLUSION=off|on|auto` overrides it;
 the browser uses `?occlusion=`. The decision is based on work saved, so a lightly occluded scene
 can remain on the ordinary frustum-culling path.
 
@@ -105,13 +105,13 @@ agreed. Separate-process animations are unsuitable as an exact pixel oracle beca
 can differ. Pixel picking and coverage readback must include late draws.
 
 ```sh
-cargo build --release -p pocket-render --examples
-cargo build --release -p pocket-app --example draw_paths
-POCKET_AA=msaa POCKET_GTAO=off python tools/occlusion_bench.py \
+cargo build --release -p amoris-render --examples
+cargo build --release -p amoris-app --example draw_paths
+AMORIS_AA=msaa AMORIS_GTAO=off python tools/occlusion_bench.py \
   --configs vulkan:nvidia,dx12:nvidia,vulkan:780m,dx12:780m --layouts sphere --frames 200 \
   --repeats 6 --alternate --settle 5 --cool 70 --out out/bench-runs/hiz.json
 python tools/quiet_tables.py hiz out/bench-runs/hiz.json
-cargo test --release -p pocket-render --test occlusion --test hiz
+cargo test --release -p amoris-render --test occlusion --test hiz
 ```
 
 `tools/occlusion_compare.py --backend <backend>` checks captures and in-process scenes. Run mutation

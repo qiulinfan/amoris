@@ -61,9 +61,9 @@ def tools() -> list[dict]:
 
 class NativeHost:
     """Private local host; its unrestricted call method is never a provider tool."""
-    def __init__(self, pocket: Path, project: Path, log_path: Path):
+    def __init__(self, amoris: Path, project: Path, log_path: Path):
         self.log = log_path.open("w")
-        self.proc = subprocess.Popen([str(pocket), "serve", str(project), "--port", "0"],
+        self.proc = subprocess.Popen([str(amoris), "serve", str(project), "--port", "0"],
                 stdout=subprocess.PIPE, stderr=self.log, text=True, start_new_session=True,
                 env={**os.environ, "CARGO_TARGET_DIR": str(REPO / "target")})
         q = queue.Queue()
@@ -120,7 +120,7 @@ class Rejected(ValueError):
 
 
 class Gameplay:
-    def __init__(self, pocket: str | Path, project: str | Path | None = None,
+    def __init__(self, amoris: str | Path, project: str | Path | None = None,
                  run_dir: str | Path | None = None, *, on_step=None, step_stride: int = 2):
         self.source_project = Path(project or FIXTURE).resolve()
         self.fixture_path = (self.source_project.relative_to(REPO).as_posix()
@@ -129,8 +129,8 @@ class Gameplay:
         self.run_dir.mkdir(parents=True, exist_ok=True)
         self.project = self.run_dir / "project"
         shutil.copytree(self.source_project, self.project,
-                        ignore=shutil.ignore_patterns(".pocket", "__pycache__"))
-        self.host = NativeHost(Path(pocket).resolve(), self.project, self.run_dir / "host.log")
+                        ignore=shutil.ignore_patterns(".amoris", "__pycache__"))
+        self.host = NativeHost(Path(amoris).resolve(), self.project, self.run_dir / "host.log")
         self.actions: list[dict] = []
         self.aliases: dict[int, str] = {}
         self._observed: set[str] = set()
@@ -274,7 +274,7 @@ class Gameplay:
                 "course_version": COURSE_VERSION, "fixture_path": self.fixture_path}
 
 
-def replay_actions(actions: list[dict], *, pocket: str | Path, project=None, run_dir=None,
+def replay_actions(actions: list[dict], *, amoris: str | Path, project=None, run_dir=None,
                    on_step=None, capture_stride: int = 2):
     """Fresh native replay, optionally capture after chunks of two ticks; verify every action hash.
 
@@ -283,7 +283,7 @@ def replay_actions(actions: list[dict], *, pocket: str | Path, project=None, run
     Samples align to global tick multiples; an odd final boundary gets one explicitly
     labeled final callback so the terminal collection state can also be pictured.
     """
-    with Gameplay(pocket, project, run_dir, on_step=on_step, step_stride=capture_stride) as g:
+    with Gameplay(amoris, project, run_dir, on_step=on_step, step_stride=capture_stride) as g:
         parity = []
         for expected in actions:
             result = g.dispatch(expected["tool"], expected["arguments"])
@@ -301,11 +301,11 @@ def replay_actions(actions: list[dict], *, pocket: str | Path, project=None, run
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--pocket", required=True, type=Path)
+    parser.add_argument("--amoris", required=True, type=Path)
     parser.add_argument("--out", default=REPO / "out/agent-gameplay-selftest", type=Path)
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
-    with Gameplay(args.pocket, run_dir=args.out / "probe") as g:
+    with Gameplay(args.amoris, run_dir=args.out / "probe") as g:
         print(json.dumps(g.dispatch("observe", {}), indent=2))
         print(json.dumps(g.judge()))
 

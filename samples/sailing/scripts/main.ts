@@ -1,5 +1,5 @@
 // The sailing game (charter 2.4.1): its components and rules.
-import { game } from "pocket";
+import { game } from "amoris";
 import { Cargo, Crew, Log, Tally } from "./components";
 import { log, muster, takeAboard } from "./rules";
 

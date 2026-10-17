@@ -2,10 +2,10 @@
 
 Status: implemented 2026-10-09 (Pioneer), branch `explore/rt`; charter 4.4, the decision of the
 same date. Measurements: [bench/rt-shadows.md](../bench/rt-shadows.md). Any project can use it:
-`POCKET_RT_SHADOWS=1 pocket serve samples/anim` (or `pocket play`; both read the variable when they
+`AMORIS_RT_SHADOWS=1 amoris serve samples/anim` (or `amoris play`; both read the variable when they
 open the GPU; the serve path's captures were checked).
 
-The interactive renderer's first ray-traced effect. Off by default; `POCKET_RT_SHADOWS=1` turns it
+The interactive renderer's first ray-traced effect. Off by default; `AMORIS_RT_SHADOWS=1` turns it
 on for a native adapter that exposes wgpu's `EXPERIMENTAL_RAY_QUERY` (the RTX 5060 and the Radeon
 780M on Vulkan and Direct3D 12 here; Apple GPUs on Metal). It replaces the cascaded shadow map of
 the sun (the lowest-id directional light with `shadows`) with one inline ray query per shaded pixel.
@@ -21,8 +21,8 @@ shaded fragment (overdraw included), where the cascades cost four depth passes.
 ## What changes when it is on
 
 - **Device** (gpu.rs): `Gpu::new` requests `EXPERIMENTAL_RAY_QUERY`, the acceleration-structure
-  limits and wgpu's experimental-features opt-in only when `POCKET_RT_SHADOWS=1` and the adapter
-  has the feature, never with `POCKET_GPU_MINIMAL=features` and never in the browser;
+  limits and wgpu's experimental-features opt-in only when `AMORIS_RT_SHADOWS=1` and the adapter
+  has the feature, never with `AMORIS_GPU_MINIMAL=features` and never in the browser;
   `Capabilities::ray_query` says whether it did. `Gpu::headless_ray_query(choice, on)` asks
   explicitly, so a test or example can hold both kinds of device in one process.
 - **Mesh pool** (meshes.rs): on such a device the vertex and index buffers also carry `BLAS_INPUT`

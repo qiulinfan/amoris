@@ -75,6 +75,301 @@ dependencies = [
 ]
 
 [[package]]
+name = "amoris-app"
+version = "0.1.0"
+dependencies = [
+ "amoris-assets",
+ "amoris-audio",
+ "amoris-check",
+ "amoris-contract",
+ "amoris-debug",
+ "amoris-link",
+ "amoris-mcp",
+ "amoris-render",
+ "amoris-runtime",
+ "amoris-server",
+ "amoris-sim",
+ "axum",
+ "blake3",
+ "glam 0.33.12",
+ "image",
+ "serde_json",
+ "tokio",
+ "tungstenite 0.30.0",
+ "ureq",
+ "wgpu",
+]
+
+[[package]]
+name = "amoris-assets"
+version = "0.1.0"
+dependencies = [
+ "amoris-contract",
+ "amoris-sim",
+ "bevy_ecs",
+ "bincode 2.0.1",
+ "bytemuck",
+ "glam 0.33.12",
+ "gltf",
+ "image",
+ "meshopt",
+ "schemars",
+ "serde",
+ "serde-reflection",
+ "serde_json",
+]
+
+[[package]]
+name = "amoris-audio"
+version = "0.1.0"
+dependencies = [
+ "amoris-assets",
+ "glam 0.33.12",
+ "kira",
+ "log",
+]
+
+[[package]]
+name = "amoris-check"
+version = "0.1.0"
+dependencies = [
+ "amoris-contract",
+ "amoris-link",
+ "amoris-persist",
+ "amoris-runtime",
+ "amoris-sim",
+ "schemars",
+ "serde",
+ "serde_json",
+ "toml",
+]
+
+[[package]]
+name = "amoris-contract"
+version = "0.1.0"
+dependencies = [
+ "schemars",
+ "serde",
+ "serde_json",
+ "strsim",
+]
+
+[[package]]
+name = "amoris-debug"
+version = "0.1.0"
+dependencies = [
+ "amoris-contract",
+ "amoris-link",
+ "amoris-script",
+ "regex",
+ "rquickjs",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tungstenite 0.30.0",
+]
+
+[[package]]
+name = "amoris-interface"
+version = "0.1.0"
+dependencies = [
+ "amoris-contract",
+ "amoris-physics",
+ "amoris-sim",
+ "bevy_ecs",
+ "schemars",
+ "serde",
+ "serde-reflection",
+ "serde_json",
+]
+
+[[package]]
+name = "amoris-link"
+version = "0.1.0"
+dependencies = [
+ "amoris-contract",
+ "amoris-persist",
+ "amoris-sim",
+ "arc-swap",
+ "schemars",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "amoris-mcp"
+version = "0.1.0"
+dependencies = [
+ "amoris-contract",
+ "rmcp",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "amoris-persist"
+version = "0.1.0"
+dependencies = [
+ "amoris-contract",
+ "amoris-sim",
+ "bevy_ecs",
+ "blake3",
+ "schemars",
+ "serde",
+ "serde-reflection",
+ "serde_json",
+ "xxhash-rust",
+]
+
+[[package]]
+name = "amoris-physics"
+version = "0.1.0"
+dependencies = [
+ "amoris-contract",
+ "amoris-sim",
+ "bevy_ecs",
+ "bincode 1.3.3",
+ "libm",
+ "rapier3d",
+ "schemars",
+ "serde",
+ "serde-reflection",
+ "serde_json",
+ "typeid",
+]
+
+[[package]]
+name = "amoris-render"
+version = "0.1.0"
+dependencies = [
+ "amoris-assets",
+ "ash",
+ "bytemuck",
+ "foldhash 0.2.0",
+ "fontdue",
+ "glam 0.33.12",
+ "image",
+ "intel_tex_2",
+ "libloading",
+ "log",
+ "naga",
+ "pollster",
+ "renderdoc-sys",
+ "serde",
+ "serde_json",
+ "texture2ddecoder",
+ "wgpu",
+ "winit",
+]
+
+[[package]]
+name = "amoris-runtime"
+version = "0.1.0"
+dependencies = [
+ "amoris-assets",
+ "amoris-contract",
+ "amoris-interface",
+ "amoris-link",
+ "amoris-persist",
+ "amoris-physics",
+ "amoris-script",
+ "amoris-sim",
+ "bevy_ecs",
+ "schemars",
+ "serde",
+ "serde-reflection",
+ "serde_json",
+ "toml",
+]
+
+[[package]]
+name = "amoris-script"
+version = "0.1.0"
+dependencies = [
+ "amoris-contract",
+ "amoris-sim",
+ "bevy_ecs",
+ "oxc_allocator",
+ "oxc_ast",
+ "oxc_ast_visit",
+ "oxc_codegen",
+ "oxc_diagnostics",
+ "oxc_isolated_declarations",
+ "oxc_parser",
+ "oxc_semantic",
+ "oxc_sourcemap",
+ "oxc_span",
+ "oxc_syntax",
+ "oxc_transformer",
+ "rquickjs",
+ "schemars",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "amoris-server"
+version = "0.1.0"
+dependencies = [
+ "amoris-contract",
+ "amoris-link",
+ "amoris-mcp",
+ "amoris-sim",
+ "axum",
+ "mime_guess",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "amoris-sim"
+version = "0.1.0"
+dependencies = [
+ "amoris-contract",
+ "bevy_ecs",
+ "blake3",
+ "libm",
+ "schemars",
+ "serde",
+ "serde-reflection",
+ "serde_json",
+]
+
+[[package]]
+name = "amoris-viewport"
+version = "0.1.0"
+dependencies = [
+ "amoris-assets",
+ "amoris-render",
+ "glam 0.33.12",
+ "js-sys",
+ "log",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "wgpu",
+]
+
+[[package]]
+name = "amoris-web"
+version = "0.1.0"
+dependencies = [
+ "amoris-assets",
+ "amoris-check",
+ "amoris-contract",
+ "amoris-link",
+ "amoris-runtime",
+ "amoris-sim",
+ "blake3",
+ "schemars",
+ "serde",
+ "serde_json",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "android-activity"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3303,301 +3598,6 @@ dependencies = [
  "fdeflate",
  "flate2",
  "miniz_oxide 0.8.9",
-]
-
-[[package]]
-name = "pocket-app"
-version = "0.1.0"
-dependencies = [
- "axum",
- "blake3",
- "glam 0.33.12",
- "image",
- "pocket-assets",
- "pocket-audio",
- "pocket-check",
- "pocket-contract",
- "pocket-debug",
- "pocket-link",
- "pocket-mcp",
- "pocket-render",
- "pocket-runtime",
- "pocket-server",
- "pocket-sim",
- "serde_json",
- "tokio",
- "tungstenite 0.30.0",
- "ureq",
- "wgpu",
-]
-
-[[package]]
-name = "pocket-assets"
-version = "0.1.0"
-dependencies = [
- "bevy_ecs",
- "bincode 2.0.1",
- "bytemuck",
- "glam 0.33.12",
- "gltf",
- "image",
- "meshopt",
- "pocket-contract",
- "pocket-sim",
- "schemars",
- "serde",
- "serde-reflection",
- "serde_json",
-]
-
-[[package]]
-name = "pocket-audio"
-version = "0.1.0"
-dependencies = [
- "glam 0.33.12",
- "kira",
- "log",
- "pocket-assets",
-]
-
-[[package]]
-name = "pocket-check"
-version = "0.1.0"
-dependencies = [
- "pocket-contract",
- "pocket-link",
- "pocket-persist",
- "pocket-runtime",
- "pocket-sim",
- "schemars",
- "serde",
- "serde_json",
- "toml",
-]
-
-[[package]]
-name = "pocket-contract"
-version = "0.1.0"
-dependencies = [
- "schemars",
- "serde",
- "serde_json",
- "strsim",
-]
-
-[[package]]
-name = "pocket-debug"
-version = "0.1.0"
-dependencies = [
- "pocket-contract",
- "pocket-link",
- "pocket-script",
- "regex",
- "rquickjs",
- "schemars",
- "serde",
- "serde_json",
- "tungstenite 0.30.0",
-]
-
-[[package]]
-name = "pocket-interface"
-version = "0.1.0"
-dependencies = [
- "bevy_ecs",
- "pocket-contract",
- "pocket-physics",
- "pocket-sim",
- "schemars",
- "serde",
- "serde-reflection",
- "serde_json",
-]
-
-[[package]]
-name = "pocket-link"
-version = "0.1.0"
-dependencies = [
- "arc-swap",
- "pocket-contract",
- "pocket-persist",
- "pocket-sim",
- "schemars",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "pocket-mcp"
-version = "0.1.0"
-dependencies = [
- "pocket-contract",
- "rmcp",
- "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "pocket-persist"
-version = "0.1.0"
-dependencies = [
- "bevy_ecs",
- "blake3",
- "pocket-contract",
- "pocket-sim",
- "schemars",
- "serde",
- "serde-reflection",
- "serde_json",
- "xxhash-rust",
-]
-
-[[package]]
-name = "pocket-physics"
-version = "0.1.0"
-dependencies = [
- "bevy_ecs",
- "bincode 1.3.3",
- "libm",
- "pocket-contract",
- "pocket-sim",
- "rapier3d",
- "schemars",
- "serde",
- "serde-reflection",
- "serde_json",
- "typeid",
-]
-
-[[package]]
-name = "pocket-render"
-version = "0.1.0"
-dependencies = [
- "ash",
- "bytemuck",
- "foldhash 0.2.0",
- "fontdue",
- "glam 0.33.12",
- "image",
- "intel_tex_2",
- "libloading",
- "log",
- "naga",
- "pocket-assets",
- "pollster",
- "renderdoc-sys",
- "serde",
- "serde_json",
- "texture2ddecoder",
- "wgpu",
- "winit",
-]
-
-[[package]]
-name = "pocket-runtime"
-version = "0.1.0"
-dependencies = [
- "bevy_ecs",
- "pocket-assets",
- "pocket-contract",
- "pocket-interface",
- "pocket-link",
- "pocket-persist",
- "pocket-physics",
- "pocket-script",
- "pocket-sim",
- "schemars",
- "serde",
- "serde-reflection",
- "serde_json",
- "toml",
-]
-
-[[package]]
-name = "pocket-script"
-version = "0.1.0"
-dependencies = [
- "bevy_ecs",
- "oxc_allocator",
- "oxc_ast",
- "oxc_ast_visit",
- "oxc_codegen",
- "oxc_diagnostics",
- "oxc_isolated_declarations",
- "oxc_parser",
- "oxc_semantic",
- "oxc_sourcemap",
- "oxc_span",
- "oxc_syntax",
- "oxc_transformer",
- "pocket-contract",
- "pocket-sim",
- "rquickjs",
- "schemars",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "pocket-server"
-version = "0.1.0"
-dependencies = [
- "axum",
- "mime_guess",
- "pocket-contract",
- "pocket-link",
- "pocket-mcp",
- "pocket-sim",
- "schemars",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "pocket-sim"
-version = "0.1.0"
-dependencies = [
- "bevy_ecs",
- "blake3",
- "libm",
- "pocket-contract",
- "schemars",
- "serde",
- "serde-reflection",
- "serde_json",
-]
-
-[[package]]
-name = "pocket-viewport"
-version = "0.1.0"
-dependencies = [
- "glam 0.33.12",
- "js-sys",
- "log",
- "pocket-assets",
- "pocket-render",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
- "wgpu",
-]
-
-[[package]]
-name = "pocket-web"
-version = "0.1.0"
-dependencies = [
- "blake3",
- "pocket-assets",
- "pocket-check",
- "pocket-contract",
- "pocket-link",
- "pocket-runtime",
- "pocket-sim",
- "schemars",
- "serde",
- "serde_json",
- "wasm-bindgen",
 ]
 
 [[package]]

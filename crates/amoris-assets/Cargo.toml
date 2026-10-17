@@ -1,0 +1,30 @@
+[package]
+name = "amoris-assets"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Asset identity, the visual components, CPU mesh data and glTF import, and the render feed"
+
+[dependencies]
+amoris-contract.workspace = true
+amoris-sim.workspace = true
+bevy_ecs.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+serde-reflection.workspace = true
+bincode2.workspace = true
+bytemuck.workspace = true
+glam.workspace = true
+# glTF 2.0 import (charter 4.1): meshes, materials, embedded and external images.
+gltf = { workspace = true, optional = true }
+image = { workspace = true, optional = true }
+# Levels of detail and GPU vertex order (lod.rs; docs/spec/lod.md).
+meshopt = { workspace = true, optional = true }
+
+[features]
+default = ["import"]
+import = ["dep:gltf", "dep:image", "lod"]
+# Mesh LOD chains (meshoptimizer's C++): the importer, and the renderer for its primitives.
+lod = ["dep:meshopt"]

@@ -23,7 +23,7 @@ successes:
 
 ---- a::draws stdout ----
 lod 2: worst difference 1
-Vulkan: no GPU (POCKET_ADAPTER=780m matches no adapter; have []); skipped
+Vulkan: no GPU (AMORIS_ADAPTER=780m matches no adapter; have []); skipped
 at 5 m, cascade 1: bound 0.2 on a level's error, skipped
 
 ---- a::times stdout ----
@@ -38,7 +38,7 @@ failures:
 ---- a::wrong stdout ----
 f16 true: worst difference 28
 
-thread 'a::wrong' (11172) panicked at crates\\pocket-render\\tests\\x.rs:9:5:
+thread 'a::wrong' (11172) panicked at crates\\amoris-render\\tests\\x.rs:9:5:
 f16 true: the neural material differs by up to 28
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 
@@ -56,7 +56,7 @@ class GpuMatrixTests(unittest.TestCase):
         cell = lambda n: gpu_matrix.classify(status.get(n), output.get(n, []))
         # A capability skip makes a pass a skip; a test's own "skipped" case does not.
         self.assertEqual(cell("a::draws"), (
-            "skip", ["Vulkan: no GPU (POCKET_ADAPTER=780m matches no adapter; have []); skipped"],
+            "skip", ["Vulkan: no GPU (AMORIS_ADAPTER=780m matches no adapter; have []); skipped"],
             ""))
         self.assertEqual(cell("a::times")[:2], ("skip", ["no GPU timestamps: placement not checked"]))
         self.assertEqual(cell("a::panics"), ("pass", [], ""))
@@ -68,11 +68,11 @@ class GpuMatrixTests(unittest.TestCase):
 
     def test_configurations_name_their_environment(self):
         self.assertEqual(gpu_matrix.parse_config("780m-vulkan"),
-                         {"POCKET_BACKEND": "vulkan", "POCKET_ADAPTER": "780m"})
+                         {"AMORIS_BACKEND": "vulkan", "AMORIS_ADAPTER": "780m"})
         self.assertEqual(gpu_matrix.parse_config("default-dx12-minimal"),
-                         {"POCKET_BACKEND": "dx12", "POCKET_GPU_MINIMAL": gpu_matrix.MINIMAL})
-        # `auto` leaves POCKET_BACKEND unset, as `cargo xtask check` does.
-        self.assertEqual(gpu_matrix.parse_config("780m-auto"), {"POCKET_ADAPTER": "780m"})
+                         {"AMORIS_BACKEND": "dx12", "AMORIS_GPU_MINIMAL": gpu_matrix.MINIMAL})
+        # `auto` leaves AMORIS_BACKEND unset, as `cargo xtask check` does.
+        self.assertEqual(gpu_matrix.parse_config("780m-auto"), {"AMORIS_ADAPTER": "780m"})
         for bad in ("780m", "780m-gl", "780m-dx12-full", "a-b-c-d"):
             with self.assertRaises(SystemExit):
                 gpu_matrix.parse_config(bad)
@@ -121,7 +121,7 @@ class GpuMatrixTests(unittest.TestCase):
             self.assertEqual(gpu_matrix.classify("ok", [note]), ("skip", [note], ""))
         # Naming a backend that is not under test is not a skip of this configuration's own.
         self.assertEqual(
-            gpu_matrix.classify("ok", ["Vulkan: not under test (POCKET_BACKEND names Dx12)"]),
+            gpu_matrix.classify("ok", ["Vulkan: not under test (AMORIS_BACKEND names Dx12)"]),
             ("pass", [], ""))
 
     def test_findings_say_what_failed_where(self):
@@ -167,8 +167,8 @@ machine default adapter: dx12 NVIDIA GeForce RTX 5060 Laptop GPU
             "5060 auto: cargo xtask check's test step runs it"])
         for c in configs:
             gpu_matrix.parse_config(c)
-        # A check whose test step did not run that configuration asks for it: no POCKET_ADAPTER
-        # and no POCKET_BACKEND, exactly as the test step runs.
+        # A check whose test step did not run that configuration asks for it: no AMORIS_ADAPTER
+        # and no AMORIS_BACKEND, exactly as the test step runs.
         configs, left_out = gpu_matrix.machine_configs(adapters, defaults, ["dx12", "vulkan"],
                                                        default_auto=True)
         self.assertEqual(configs, ["5060-dx12", "5060-vulkan", "780m-dx12", "780m-vulkan",
@@ -188,7 +188,7 @@ machine default adapter: dx12 NVIDIA GeForce RTX 5060 Laptop GPU
         arc, uhd = "Intel(R) Arc(TM) A770 Graphics", "Intel(R) UHD Graphics 770"
         self.assertEqual(gpu_matrix.adapter_token(arc, [uhd]), "a770")
         self.assertEqual(gpu_matrix.adapter_token(uhd, [arc]), "uhd")
-        # A word another name contains, or a number POCKET_ADAPTER reads as an index, will not do.
+        # A word another name contains, or a number AMORIS_ADAPTER reads as an index, will not do.
         self.assertEqual(gpu_matrix.adapter_token("Radeon 780", ["Radeon 7800 XT"]), None)
         self.assertEqual(gpu_matrix.adapter_token("GPU 2", ["GPU 1"]), None)
 
@@ -227,7 +227,7 @@ machine default adapter: dx12 NVIDIA GeForce RTX 5060 Laptop GPU
         with tempfile.TemporaryDirectory() as d:
             deps = Path(d) / "release" / "deps"
             deps.mkdir(parents=True)
-            bins = {"lib": str(deps / "pocket_render-1.exe"), "taa": str(deps / "taa-2.exe")}
+            bins = {"lib": str(deps / "amoris_render-1.exe"), "taa": str(deps / "taa-2.exe")}
             root = Path(d) / "release" / "gpu-matrix-vkcache"
             old = root / "780m-vulkan" / "taa"
             old.mkdir(parents=True)
@@ -269,7 +269,7 @@ machine default adapter: dx12 NVIDIA GeForce RTX 5060 Laptop GPU
                 mock.patch.object(gpu_matrix.subprocess, "run", side_effect=run):
             deps = Path(d) / "release" / "deps"
             deps.mkdir(parents=True)
-            bins = {"lib": str(deps / "pocket_render-1.exe"), "taa": str(deps / "taa-2.exe")}
+            bins = {"lib": str(deps / "amoris_render-1.exe"), "taa": str(deps / "taa-2.exe")}
             caches = gpu_matrix.driver_caches(bins, ["780m-vulkan"])
             r = gpu_matrix.run_config("780m-vulkan", bins, args, Path(d) / "logs", caches)
         self.assertEqual(r["adapter"], "A")
@@ -278,7 +278,7 @@ machine default adapter: dx12 NVIDIA GeForce RTX 5060 Laptop GPU
         for cmd, env in calls:
             b = "taa" if cmd[0] == bins["taa"] else "lib"
             self.assertEqual(env[gpu_matrix.DRIVER_CACHE], str(caches[("780m-vulkan", b)]))
-            self.assertEqual(env["POCKET_BACKEND"], "vulkan")
+            self.assertEqual(env["AMORIS_BACKEND"], "vulkan")
 
 
 if __name__ == "__main__":

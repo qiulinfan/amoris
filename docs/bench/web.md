@@ -22,7 +22,7 @@ re-measured on the M5.
 - three.js r186 (`web/bench/threejs_cubes.html`): `WebGPURenderer` with one `InstancedMesh` (its
   fastest path for copies of a mesh; frustum culling is per mesh, so every instance is drawn) and
   `MeshStandardMaterial`; GPU time from `trackTimestamp` / `resolveTimestampsAsync`.
-- Amoris (`web/viewport/?demo=cubes`): `crates/pocket-viewport` (the same renderer as native,
+- Amoris (`web/viewport/?demo=cubes`): `crates/amoris-viewport` (the same renderer as native,
   WebAssembly + WebGPU): per-instance GPU culling, indirect draws, clustered PBR, atmosphere sky
   with image-based light, bloom and AgX; GPU time from timestamp queries summed over passes.
 
@@ -35,7 +35,7 @@ re-measured on the M5.
 Frame time is the requestAnimationFrame interval without a frame-rate cap (it measures how fast
 the page submits; GPU time is what the frames cost).
 
-Module sizes: `pocket_viewport_bg.wasm` 1.08 MB (0.38 MB gzipped) after `wasm-opt -O3`, plus 81 KB
+Module sizes: `amoris_viewport_bg.wasm` 1.08 MB (0.38 MB gzipped) after `wasm-opt -O3`, plus 81 KB
 of JS glue; three.js r186's `three.webgpu.js` + `three.core.js` are about 1.9 MB unminified.
 
 Historical observation: this study compared the browser's 14.7 ms at 1.6M cubes (1280x577)
@@ -67,7 +67,7 @@ quiet-machine run will replace them.
   (2.69 MB and 0.95 MB without wasm-opt). The package committed on 2026-10-06 was 2.17 MB.
 - Paths ([docs/spec/webgpu-baseline.md](../spec/webgpu-baseline.md)): `first-instance` is the page
   as is; `baseline` adds `?gpu_minimal=first-instance`. Natively the same switch is
-  `POCKET_GPU_MINIMAL`.
+  `AMORIS_GPU_MINIMAL`.
 
 ### Both draw paths draw the same frame
 
@@ -78,7 +78,7 @@ quiet-machine run will replace them.
 | `?demo=mixed` (8x8 cells, every mesh kind and variant, shadows) | RTX 5060 | 55 | 59 and 59 | 0 | 0 |
 | `?demo=mixed` | Radeon 780M | 55 | 59 and 59 | 0 | 0 |
 | `?demo=cubes&dense&count=100000` | RTX 5060 | 1 | 6,359 and 6,359 | 0 | 0 |
-| samples/anim, streamed from `pocket serve` | RTX 5060 | 110 | 7 and 7 | 0 | 3.3%: the particle fountain and its bloom, simulated on the page's clock |
+| samples/anim, streamed from `amoris serve` | RTX 5060 | 110 | 7 and 7 | 0 | 3.3%: the particle fountain and its bloom, simulated on the page's clock |
 | samples/sailing, streamed | RTX 5060 | 10 | 3 and 3 | 0 | 0 |
 
 Draw calls are those of the shadow and opaque passes (five views times the batches holding
@@ -147,7 +147,7 @@ WebAssembly, the viewport on the page) needs a clang with the wasm32 backend for
 task brief expected none on this machine, but the pinned toolchain (`~/.pocket-tools/llvm-23.1.2`,
 with `binaryen-version_132`) appeared at 05:12 during the run (this track did not install it), and
 `rquickjs-sys`'s build script finds it by itself. `tools/build_web.sh` and `tools/build_viewport.sh`
-used to force `POCKET_LLVM=/opt/homebrew/opt/llvm`, which hid the pinned toolchain and failed on
+used to force `AMORIS_LLVM=/opt/homebrew/opt/llvm`, which hid the pinned toolchain and failed on
 Windows; they now set it only where Homebrew's LLVM exists, and no longer stop on Windows, which has
 no `~/.cargo/env`. The game module is 7.5 MB after wasm-opt. Both samples ran as browser games in
 Chrome on the RTX 5060 on both draw paths (`out/bench-runs/webgpu/browser/game-*.json`):

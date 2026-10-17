@@ -1,6 +1,6 @@
-// Development aid: the stores, the host client and the dock on `window.pocket`, for inspection
+// Development aid: the stores, the host client and the dock on `window.amoris`, for inspection
 // from DevTools and for the evidence capture (tools/capture.ts). Only in `vite` dev builds, and in
-// a production build made with VITE_POCKET_EXPOSE=1 (tools/gizmo-drag.ts times one).
+// a production build made with VITE_AMORIS_EXPOSE=1 (tools/gizmo-drag.ts times one).
 
 import { api, host } from "./host/api";
 import { openPanel, resetLayout, toggleMaximize } from "./layout/dock";
@@ -18,7 +18,7 @@ import * as debugActions from "./actions/debug";
 import * as worldActions from "./actions/world";
 
 export function expose() {
-  (window as unknown as { pocket: unknown }).pocket = {
+  (window as unknown as { amoris: unknown }).amoris = {
     api,
     host,
     openPanel,

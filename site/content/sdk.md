@@ -1,13 +1,13 @@
 # The TypeScript script API
 
-Scripts live in a project's `scripts/` directory and import from `pocket`.
+Scripts live in a project's `scripts/` directory and import from `amoris`.
 They run as **stateless systems** on QuickJS-ng. Mutable state belongs in components;
 module scope contains constants, functions, and declarations.
 
 ## Declare components
 
 ```ts
-import { component, field } from "pocket";
+import { component, field } from "amoris";
 
 export const Tally = component("Tally", {
   version: 1,
@@ -29,7 +29,7 @@ The sailing sample's `Log` component stores distance. This system is an abridged
 from that project:
 
 ```ts
-import { system } from "pocket";
+import { system } from "amoris";
 
 export const log = system({
   name: "log",
@@ -56,7 +56,7 @@ Rows are ordered by entity id. Query columns are typed arrays; changes are writt
 ## Assemble the game
 
 ```ts
-import { game } from "pocket";
+import { game } from "amoris";
 import { Crew, Tally, Log, Cargo } from "./components";
 import { muster, log, takeAboard } from "./rules";
 
@@ -88,12 +88,12 @@ write simulation state. Use the simulation clock and seeded random streams rathe
 ## Generated types and checks
 
 ```sh
-./target/release/pocket scripts types --host http://127.0.0.1:7878
-./target/release/pocket scripts check --host http://127.0.0.1:7878
-./target/release/pocket scripts apply --host http://127.0.0.1:7878
+./target/release/amoris scripts types --host http://127.0.0.1:7878
+./target/release/amoris scripts check --host http://127.0.0.1:7878
+./target/release/amoris scripts apply --host http://127.0.0.1:7878
 ```
 
-The host writes declarations to the project's `.pocket/types/`. They describe engine and
+The host writes declarations to the project's `.amoris/types/`. They describe engine and
 project components; do not maintain a second handwritten component declaration file.
 
 See the [complete SDK guide](https://github.com/qiulinfan/amoris/blob/main/docs/sdk.md)

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""The serve loop under `pocket serve`: the game thread's time per tick with clients connected,
+"""The serve loop under `amoris serve`: the game thread's time per tick with clients connected,
 and the host's CPU while the edit world idles (docs/bench/profiler.md, "The serve loop").
 
-For each build (`--pocket LABEL=path`; several take turns), one `pocket serve` on a copy of
+For each build (`--amoris LABEL=path`; several take turns), one `amoris serve` on a copy of
 samples/sailing, all started at once, then:
 
 - **play**: for each round and each client set (rotated per round), Play starts, the clients
@@ -25,12 +25,16 @@ samples/sailing, all started at once, then:
 `--host-cpus` and `--client-cpus` (e.g. `2-5` and `0-1,6-15`; Windows) pin the hosts and the
 clients (Chrome inherits bun's mask) to disjoint logical processors, so they never share a core.
 
-Build first: `cargo build --release -p pocket-app --bin pocket` and `cd editor && bun install
+Build first: `cargo build --release -p amoris-app --bin amoris` and `cd editor && bun install
 --frozen-lockfile && bun run build`. From the repository root, on the shared laptop inside the
 bench lock:
 
     python tools/serve_loop_bench.py --out out/serveloop/run1 --rounds 3 \
-        --pocket base=out/serveloop/bin/pocket-base.exe --pocket this=target/release/pocket.exe
+        --amoris base=<a base build's amoris.exe> --amoris this=target/release/amoris.exe
+
+A base from a commit before the 2026-10-16 rename is built from its exported tree after
+`tools/amoris_rename.py --tree` (AGENTS.md, Building; docs/bench/profiler.md 6.6): a build from
+before it ignores the AMORIS_* variables this script sets and refuses the renamed samples.
 
 Raw JSON goes to --out (ignored): one file per build, the conditions, and summary.md.
 """
@@ -61,9 +65,9 @@ def conditions(out: Path, label: str) -> None:
                         "--label", f"serveloop-{label}"], check=False, capture_output=True)
 
 
-def pocket_version(pocket) -> dict:
-    """`pocket version` of the build measured (commit and source hash), kept with the results."""
-    r = subprocess.run([str(pocket), "version"], capture_output=True, text=True, timeout=60)
+def amoris_version(amoris) -> dict:
+    """`amoris version` of the build measured (commit and source hash), kept with the results."""
+    r = subprocess.run([str(amoris), "version"], capture_output=True, text=True, timeout=60)
     try:
         return json.loads(r.stdout)
     except ValueError:
@@ -259,25 +263,25 @@ def idle(base: str, server: subprocess.Popen, kind: str, seconds: float, rate: f
 
 
 class Served:
-    """One build's `pocket serve` on its own copy of samples/sailing."""
+    """One build's `amoris serve` on its own copy of samples/sailing."""
 
-    def __init__(self, label: str, pocket: Path, out: Path):
+    def __init__(self, label: str, amoris: Path, out: Path):
         self.label = label
-        self.tmp = Path(tempfile.mkdtemp(prefix="pocket-serveloop-"))
+        self.tmp = Path(tempfile.mkdtemp(prefix="amoris-serveloop-"))
         proj = self.tmp / "sailing"
         shutil.copytree(REPO / "samples/sailing", proj)
-        env = dict(os.environ, POCKET_EDITOR_DIST=str(REPO / "editor/dist"),
-                   POCKET_WEB_VIEWPORT=str(REPO / "web/viewport"))
+        env = dict(os.environ, AMORIS_EDITOR_DIST=str(REPO / "editor/dist"),
+                   AMORIS_WEB_VIEWPORT=str(REPO / "web/viewport"))
         group = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if WINDOWS else {}
         self.errlog = open(out / f"serve-{label}.err", "w")
         with affinity(CPUS["host"]):
-            self.server = subprocess.Popen([str(pocket), "serve", str(proj), "--port", "0"],
+            self.server = subprocess.Popen([str(amoris), "serve", str(proj), "--port", "0"],
                                            env=env, stdout=subprocess.PIPE, stderr=self.errlog,
                                            text=True, **group)
         info = json.loads(self.server.stdout.readline())
         self.base = info["url"].rstrip("/") + "/"
-        self.result = {"label": label, "pocket": str(pocket),
-                       "version": pocket_version(pocket), "plays": [], "idle": []}
+        self.result = {"label": label, "amoris": str(amoris),
+                       "version": amoris_version(amoris), "plays": [], "idle": []}
         print(f"{label}: host at {self.base}", flush=True)
 
     def stop(self):
@@ -366,7 +370,7 @@ def summarize(results: list) -> str:
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--out", default="out/serveloop/run")
-    ap.add_argument("--pocket", action="append", default=[], metavar="LABEL=PATH")
+    ap.add_argument("--amoris", action="append", default=[], metavar="LABEL=PATH")
     ap.add_argument("--rounds", type=int, default=3)
     ap.add_argument("--settle", type=float, default=3.0)
     ap.add_argument("--window", type=float, default=10.0)
@@ -380,8 +384,8 @@ def main():
     CPUS["host"], CPUS["client"] = cpu_mask(a.host_cpus), cpu_mask(a.client_cpus)
     out = (REPO / a.out).resolve() if not Path(a.out).is_absolute() else Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
-    builds = [(x.split("=", 1)[0], Path(x.split("=", 1)[1])) for x in a.pocket] or \
-        [("this", REPO / f"target/release/pocket{'.exe' if WINDOWS else ''}")]
+    builds = [(x.split("=", 1)[0], Path(x.split("=", 1)[1])) for x in a.amoris] or \
+        [("this", REPO / f"target/release/amoris{'.exe' if WINDOWS else ''}")]
     conditions(out, "start")
     served = []
     try:

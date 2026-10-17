@@ -1,7 +1,7 @@
 // Evidence capture: drives the editor in headless Chrome (CDP) through an edit, play and debug
 // session against a running dev server, and saves crisp screenshots of the whole window and of each
 // panel. Real input (mouse drags on the gizmo, keys, typing) where it matters; the dev-only
-// `window.pocket` hooks to set up the rest.
+// `window.amoris` hooks to set up the rest.
 //
 //   bun run dev:mock            # in another terminal (mock host + Vite)
 //   bun tools/capture.ts --url http://127.0.0.1:5173/ --out ../docs/evidence/editor
@@ -92,7 +92,7 @@ async function center(selector: string): Promise<[number, number]> {
 /** Screen position of a gizmo handle (the middle of its first shape). */
 async function handlePos(handle: string): Promise<[number, number]> {
   return js<[number, number]>(`
-    const ctl = window.pocketEditorViewport;
+    const ctl = window.amorisEditorViewport;
     const v = ctl.view();
     const g = ctl.gizmo;
     const s = document.querySelector('.viewport-surface').getBoundingClientRect();
@@ -118,12 +118,12 @@ try {
   console.log(`capturing ${URL_} → ${OUT}`);
 
   // ---- Edit mode ---------------------------------------------------------------------------------
-  await js(`pocket.selection.getState().set([3]);`);
+  await js(`amoris.selection.getState().set([3]);`);
   await sleep(700);
   await shot("editor-edit");
 
   // A real gizmo drag on Crate2 along X: live preview, one undo entry on release.
-  await js(`pocket.selection.getState().set([5]); pocket.viewport.getState().set({ tool: 'translate' });`);
+  await js(`amoris.selection.getState().set([5]); amoris.viewport.getState().set({ tool: 'translate' });`);
   await sleep(400);
   const [hx, hy] = await handlePos("x");
   await mouse("mouseMoved", hx, hy, "none", 0);
@@ -139,13 +139,13 @@ try {
   await sleep(600);
 
   // Rotate tool on Crate3, local space.
-  await js(`pocket.selection.getState().set([6]); pocket.viewport.getState().set({ tool: 'rotate', space: 'local' });`);
+  await js(`amoris.selection.getState().set([6]); amoris.viewport.getState().set({ tool: 'rotate', space: 'local' });`);
   await sleep(500);
   await shot("viewport-rotate", await panelRect("viewport"));
-  await js(`pocket.viewport.getState().set({ tool: 'translate', space: 'world' });`);
+  await js(`amoris.viewport.getState().set({ tool: 'translate', space: 'world' });`);
 
   // Inspector on the sloop.
-  await js(`pocket.selection.getState().set([3]);`);
+  await js(`amoris.selection.getState().set([3]);`);
   await sleep(600);
   await shot("inspector", await panelRect("inspector"));
   // Add Component popover.
@@ -185,13 +185,13 @@ try {
   await sleep(200);
 
   // Command palette: fuzzy search, then a host method call on the selected entity.
-  await js(`pocket.selection.getState().set([3]);`);
+  await js(`amoris.selection.getState().set([3]);`);
   await key("k", "KeyK", META);
   await sleep(300);
   await type("tog");
   await sleep(300);
   await shot("palette", { x: 400, y: 60, width: 800, height: 560 });
-  await js(`pocket.ui.getState().set({ paletteOpen: false });`);
+  await js(`amoris.ui.getState().set({ paletteOpen: false });`);
   await sleep(200);
   await key("k", "KeyK", META);
   await sleep(250);
@@ -203,39 +203,39 @@ try {
   await sleep(600);
   await shot("palette-call", { x: 400, y: 60, width: 800, height: 760 });
   await key("Escape", "Escape", 0, 27);
-  await js(`pocket.ui.getState().set({ paletteOpen: false });`);
+  await js(`amoris.ui.getState().set({ paletteOpen: false });`);
 
   // Assets.
   await shot("assets", await panelRect("assets"));
 
   // ---- Play (at 4x, so the crew takes every crate) ---------------------------------------------
-  await js(`await pocket.api.time.control({ speed: 4 });`);
+  await js(`await amoris.api.time.control({ speed: 4 });`);
   await key("p", "KeyP", META);
   await sleep(9000);
-  await js(`await pocket.api.time.control({ speed: 1 }); pocket.selection.getState().set([3]);`);
-  await js(`pocket.openPanel('events'); const ev = pocket.events.getState().events; const e = ev.findLast((x) => x.name === 'crates.all') ?? ev.findLast((x) => x.name === 'crate.taken'); if (e) { pocket.events.getState().select(e.seq, await pocket.api.events.why(e.seq)); }`);
+  await js(`await amoris.api.time.control({ speed: 1 }); amoris.selection.getState().set([3]);`);
+  await js(`amoris.openPanel('events'); const ev = amoris.events.getState().events; const e = ev.findLast((x) => x.name === 'crates.all') ?? ev.findLast((x) => x.name === 'crate.taken'); if (e) { amoris.events.getState().select(e.seq, await amoris.api.events.why(e.seq)); }`);
   await sleep(700);
   await shot("editor-play");
   await shot("events", await panelRect("events"));
-  await js(`pocket.openPanel('timeline');`);
+  await js(`amoris.openPanel('timeline');`);
   await sleep(1200);
   await shot("timeline", await panelRect("timeline"));
-  await js(`pocket.openPanel('profiler');`);
+  await js(`amoris.openPanel('profiler');`);
   await sleep(1500);
   await shot("profiler", await panelRect("profiler"));
-  await js(`pocket.openPanel('agent'); pocket.toggleMaximize('agent');`);
+  await js(`amoris.openPanel('agent'); amoris.toggleMaximize('agent');`);
   await sleep(500);
   await shot("agent", { x: 0, y: 0, width: W, height: H });
-  await js(`pocket.toggleMaximize();`);
+  await js(`amoris.toggleMaximize();`);
   await sleep(300);
 
   // ---- Debug: a breakpoint in rules.ts pauses the running game ---------------------------------
   await js(`
-    const text = await pocket.api.scripts.read('scripts/rules.ts');
+    const text = await amoris.api.scripts.read('scripts/rules.ts');
     const line = text.split('\\n').findIndex((l) => l.includes('const set = b.hoist_now')) + 1;
-    await pocket.actions.debug.toggleBreakpoint('scripts/rules.ts', line);
-    pocket.actions.debug.addWatch('speed * 3.6');
-    pocket.actions.debug.addWatch('ctx.tick % 60');
+    await amoris.actions.debug.toggleBreakpoint('scripts/rules.ts', line);
+    amoris.actions.debug.addWatch('speed * 3.6');
+    amoris.actions.debug.addWatch('ctx.tick % 60');
   `);
   await sleep(2000);
   await key("F10", "F10", 0, 121);
@@ -244,7 +244,7 @@ try {
   await shot("debug", await panelRect("debug"));
   await shot("scripts", await panelRect("scripts"));
   // The console evaluates on the paused frame (the host evaluates only while the debugger holds the game).
-  await js(`pocket.openPanel('console');`);
+  await js(`amoris.openPanel('console');`);
   await sleep(300);
   const [ix, iy] = await center(".console-input input");
   await click(ix, iy);
@@ -252,16 +252,16 @@ try {
   await key("Enter", "Enter", 0, 13);
   await sleep(600);
   await shot("console", await panelRect("console"));
-  await js(`await pocket.actions.debug.clearAllBreakpoints(); await pocket.actions.debug.resume();`);
+  await js(`await amoris.actions.debug.clearAllBreakpoints(); await amoris.actions.debug.resume();`);
   await sleep(500);
 
   // ---- Back to Edit: history shows the agent's and the editor's edits ---------------------------
   await key("p", "KeyP", META);
   await sleep(1000);
-  await js(`pocket.openPanel('history');`);
+  await js(`amoris.openPanel('history');`);
   await sleep(400);
   await shot("history", await panelRect("history"));
-  await js(`pocket.ui.getState().set({ shortcutsOpen: true });`);
+  await js(`amoris.ui.getState().set({ shortcutsOpen: true });`);
   await sleep(400);
   await shot("shortcuts", { x: 360, y: 60, width: 880, height: 880 });
   console.log("done");

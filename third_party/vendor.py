@@ -40,7 +40,7 @@ PATCHES = [
     ("p5-call-depth.diff", "."),
     ("p6-canonical-nan.diff", "."),
     # P4 and P7; since 2026-10-09 (Pioneer) P7 also warns when MSVC's cl compiled QuickJS-ng and
-    # exports POCKET_QJS_MSVC, which the script host's default stack limit follows.
+    # exports AMORIS_QJS_MSVC, which the script host's default stack limit follows.
     ("p4-p7-build.diff", "."),
     # JS_DiscardPendingJobs: a failed call's queued jobs are dropped (script-sandbox.md 6).
     ("p8-discard-jobs.diff", "."),

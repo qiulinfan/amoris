@@ -1,4 +1,4 @@
-"""Replays the player layer's review findings against `pocket serve` over HTTP (docs/spec/player.md
+"""Replays the player layer's review findings against `amoris serve` over HTTP (docs/spec/player.md
 7 and 10): a seat's developer calls (refused with permission.denied, the world unchanged), a
 restore under the players' session (the next wait stops at the restored timeline's first decision
 and carries its events), and a rule that throws at tick 3 (the seat's wait halts; a developer's
@@ -6,7 +6,7 @@ resume, a restore or a hot update ends the halt). Copies samples/sailing-course 
 twice (the second with the planted throw), serves each, and prints one line per call.
 docs/evidence/player/seat-http.txt is its output.
 
-Usage: python tools/player_http_probe.py <path to pocket(.exe)> <scratch dir> [port]"""
+Usage: python tools/player_http_probe.py <path to amoris(.exe)> <scratch dir> [port]"""
 import json
 import os
 import shutil
@@ -26,7 +26,7 @@ def copy(scratch, name, planted):
     to = os.path.join(scratch, name)
     shutil.rmtree(to, ignore_errors=True)
     shutil.copytree(os.path.join(ROOT, "samples", "sailing-course"), to,
-                    ignore=shutil.ignore_patterns(".pocket"))
+                    ignore=shutil.ignore_patterns(".amoris"))
     if planted:
         rules = os.path.join(to, "scripts", "rules.ts")
         text = open(rules, encoding="utf-8").read()
@@ -44,9 +44,9 @@ def call(url, method, params, seat=None):
     return json.loads(urllib.request.urlopen(req, timeout=120).read())
 
 
-def serve(pocket, project, port):
+def serve(amoris, project, port):
     flags = subprocess.CREATE_NEW_PROCESS_GROUP if WINDOWS else 0
-    p = subprocess.Popen([pocket, "serve", project, "--port", str(port)], stdout=subprocess.DEVNULL,
+    p = subprocess.Popen([amoris, "serve", project, "--port", str(port)], stdout=subprocess.DEVNULL,
                          stderr=subprocess.DEVNULL, creationflags=flags)
     url = f"http://127.0.0.1:{port}"
     for _ in range(600):
@@ -56,7 +56,7 @@ def serve(pocket, project, port):
         except OSError:
             time.sleep(0.1)
     p.kill()
-    raise SystemExit("pocket serve did not answer")
+    raise SystemExit("amoris serve did not answer")
 
 
 def stop(p):
@@ -85,12 +85,12 @@ def kinds(answer):
 
 
 def main():
-    pocket, scratch = sys.argv[1], sys.argv[2]
+    amoris, scratch = sys.argv[1], sys.argv[2]
     port = int(sys.argv[3]) if len(sys.argv) > 3 else 8741
     os.makedirs(scratch, exist_ok=True)
 
     print("== 1. A seat's developer calls (finding 1)")
-    p, url = serve(pocket, copy(scratch, "course", False), port)
+    p, url = serve(amoris, copy(scratch, "course", False), port)
     try:
         seat = "skipper"
         crate = {"entity": "Crate4", "components": ["Cargo"]}
@@ -135,7 +135,7 @@ def main():
 
     print("== 3. A rule that throws at tick 3 (finding 2)")
     project = copy(scratch, "course-throws", True)
-    p, url = serve(pocket, project, port + 1)
+    p, url = serve(amoris, project, port + 1)
     try:
         wait = {"ticks": 10, "until": {"event": "crate.taken"}}
         keys = ["from_tick", "tick", "stopped", "halted"]

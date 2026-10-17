@@ -20,9 +20,11 @@ debugging usability; it does not compare models.
   stricter than an ordinary developer checkout.
 - Prompt, transcripts, diffs, state chains and raw results stay in ignored `out/debug-eval/` or an
   explicitly selected external output directory. They are not source files.
+- Runs from 2026-10-16 on use the `amoris` CLI and MCP tools (`amoris_*`); `--report` still reads
+  transcripts recorded with the old names.
 
 ```sh
-cargo build --release -p pocket-app
+cargo build --release -p amoris-app
 python3 tools/eval/debug_eval.py --selftest
 # A real model run uses the configured provider and incurs API usage:
 python3 tools/eval/debug_eval.py --bugs steer-sign --trials 1
@@ -55,6 +57,6 @@ removes those opportunities. The sample is small, there are only two or three tr
 and the debugger condition prompts agents to use debugging tools; success rates remain indicative.
 
 Pioneer's debugger work addressed held-loop requests, pause/stop races, and lexical-scope
-evaluation. Its integration tests are retained in `pocket-debug`, `pocket-runtime`, `pocket-app` and
+evaluation. Its integration tests are retained in `amoris-debug`, `amoris-runtime`, `amoris-app` and
 the editor. See [agent-debug.md](agent-debug.md) for the API changes and bounded response
 measurements.

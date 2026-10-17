@@ -17,7 +17,7 @@ from agent_gameplay import replay_actions
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("episode", type=Path)
-    p.add_argument("--pocket", type=Path, default=ROOT / "target/release/pocket")
+    p.add_argument("--amoris", type=Path, default=ROOT / "target/release/amoris")
     p.add_argument("--name", default="deepseek-gameplay")
     args = p.parse_args()
     episode = args.episode.resolve()
@@ -73,7 +73,7 @@ def main():
         if index % 120 == 0:
             print(f"native agent replay frame {index}, tick {tick}, cargo {tally['taken']}/{tally['total']}", flush=True)
 
-    parity = replay_actions(actions, pocket=args.pocket.resolve(), run_dir=out/"native",
+    parity = replay_actions(actions, amoris=args.amoris.resolve(), run_dir=out/"native",
                             on_step=capture, capture_stride=2)
     if not parity["passed"]:
         raise RuntimeError("Replay diverged")

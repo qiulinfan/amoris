@@ -1,22 +1,22 @@
 # The host protocol: editor, agents and tools on one command catalog
 
-Status: Draft 2 (2026-10-04): implemented by `pocket-server`, `pocket-mcp` and `pocket serve`; the
+Status: Draft 2 (2026-10-04): implemented by `amoris-server`, `amoris-mcp` and `amoris serve`; the
 method table, parameters and results as built are [server.md](server.md). Charter: 3.1 (one
 interface), 4.3 (debugging), 4.5 (editor).
 
-The native host (`pocket editor <project>` / `pocket serve <project>`) owns the one authoritative
+The native host (`amoris editor <project>` / `amoris serve <project>`) owns the one authoritative
 world. Everything else is a client: the React editor, MCP agents, the CLI, tests. They all call the
 same commands; the editor has no private channel. This file fixes the wire forms. The command
 semantics (validation, `{code, message, detail}` errors, unknown-field refusal with suggestions) are
-the runtime's (`pocket-runtime` catalog, `shared/contract/errors.md`).
+the runtime's (`amoris-runtime` catalog, `shared/contract/errors.md`).
 
 ## 1. Endpoints
 
 All bind `127.0.0.1` on one port (default 7878, `--port`; 0 for any free port), except the CDP
-endpoint, which `pocket-debug` serves on its own port (9229). A request whose `Host` is not
+endpoint, which `amoris-debug` serves on its own port (9229). A request whose `Host` is not
 `127.0.0.1`, `localhost` or `::1`, or whose `Origin` (when present) is not, is refused with
-`403 host.forbidden` (DNS rebinding). `pocket serve` writes `{url, port, pid, project}` to
-`<project>/.pocket/host.json`, where the CLI and `pocket mcp` find it.
+`403 host.forbidden` (DNS rebinding). `amoris serve` writes `{url, port, pid, project}` to
+`<project>/.amoris/host.json`, where the CLI and `amoris mcp` find it.
 
 | Path | Form | Who |
 |---|---|---|
@@ -26,14 +26,14 @@ endpoint, which `pocket-debug` serves on its own port (9229). A request whose `H
 | `GET /ws` | WebSocket, JSON text frames: requests, responses, pushed events (sections 2, 3) | editor |
 | `GET /render` | WebSocket, binary frames: the render feed (section 5); `501 render.not_available` until the integrator installs it | editor viewport |
 | `GET /assets/<path>` | the project's asset files (glTF, textures, splats, neural assets) | editor viewport |
-| `GET /wasm/<path>` | pocket-web's wasm-bindgen output, `pocket_web.js` exporting `createViewport` (editor.md 5) | editor viewport |
+| `GET /wasm/<path>` | amoris-web's wasm-bindgen output, `amoris_web.js` exporting `createViewport` (editor.md 5) | editor viewport |
 | `POST /mcp` | MCP Streamable HTTP (rmcp) | agents |
-| `GET /json/list`, `GET /json/version`, `WS /devtools/<id>` | CDP discovery and endpoint (section 6), on pocket-debug's port | Chrome DevTools, VS Code |
+| `GET /json/list`, `GET /json/version`, `WS /devtools/<id>` | CDP discovery and endpoint (section 6), on amoris-debug's port | Chrome DevTools, VS Code |
 
-| `GET /json/list`, `GET /json/version`, `WS /devtools/game` | CDP discovery and endpoint (section 6), on `pocket-debug`'s own port (default 9229, where VS Code's `node` attach looks); the host may proxy them | Chrome DevTools, VS Code, the editor |
+| `GET /json/list`, `GET /json/version`, `WS /devtools/game` | CDP discovery and endpoint (section 6), on `amoris-debug`'s own port (default 9229, where VS Code's `node` attach looks); the host may proxy them | Chrome DevTools, VS Code, the editor |
 
-`pocket mcp <project>` serves the same MCP tools over stdio instead (through the running host when
-there is one). The `pocket` CLI is a client of the same `/api/call` (server.md 8).
+`amoris mcp <project>` serves the same MCP tools over stdio instead (through the running host when
+there is one). The `amoris` CLI is a client of the same `/api/call` (server.md 8).
 
 ## 2. Requests and responses
 
@@ -121,7 +121,7 @@ Each method is a command of the catalog (`GET /api/catalog` is authoritative). K
 | `log.since` | `{seq?, limit?}` | `{lines, last}` |
 | `snapshots.list` / `snapshots.restore` | `{}` / `{tick, bundle?: "applied"\|"snapshot"}` | `{every, keep, snapshots: [{tick, world_hash}]}` / status with `restored` and `scripts` (the applied scripts are kept by default, server.md 3.3) |
 | `docs.search` | `{query, limit?}` | matching commands and components |
-| `debug.*` | section 6 | `debug.not_available` until pocket-debug's hub is installed; one catalog entry per method |
+| `debug.*` | section 6 | `debug.not_available` until amoris-debug's hub is installed; one catalog entry per method |
 
 While the debugger holds the game, `status`, `time.control {}`, `world.get/tree/query/schema` and
 `scripts.list/read/status` answer from the last publication (marked `paused_at`); `play.stop` in
@@ -147,11 +147,11 @@ entity under its id with every component (server.md 3.1).
 ## 5. The render feed (`/render`)
 
 The viewport renders the host's world with the same renderer compiled to wasm (WebGPU). On each
-socket the host subscribes a mailbox to the game's render feed (`pocket-assets`' `Feed`; the game
-thread extracts after each tick with change detection, `pocket-runtime/src/present.rs`) and sends
+socket the host subscribes a mailbox to the game's render feed (`amoris-assets`' `Feed`; the game
+thread extracts after each tick with change detection, `amoris-runtime/src/present.rs`) and sends
 the merged frame as one binary message when the game thread publishes (after a tick, or an edit
 while paused: `ThreadOptions::on_publish` wakes the socket), at most one every 8 ms; publications
-closer together merge into the next frame (pocket-app's `serve.rs` test steps the sailing game
+closer together merge into the next frame (amoris-app's `serve.rs` test steps the sailing game
 faster than real time against a socket: 240 publications in about 70 ms arrive as a handful of
 frames, the last on the last tick). (2026-10-15, Pioneer: until then each socket looked on
 a 16 ms timer, so an edit's frame left the host 13 ms after the edit at the median;
@@ -168,15 +168,15 @@ docs/bench/gizmo.md.)
 
 The viewport owns its camera, picking (a CPU ray against the drawn instances' oriented boxes) and
 overlays; the client sends nothing on this socket. The same frames reach a browser game: the
-worker (`web/game.js`) extracts them when the page subscribes (`pocket.onRender`) and transfers the
+worker (`web/game.js`) extracts them when the page subscribes (`amoris.onRender`) and transfers the
 bytes to the page's viewport.
 
 ## 6. Debugging
 
-`pocket-debug` serves the Chrome DevTools Protocol for the game's scripts
+`amoris-debug` serves the Chrome DevTools Protocol for the game's scripts
 ([debugger.md](debugger.md) is the specification of what is built):
 
-- `GET /json/list` and `/json/version` list one target, `pocket-game`, with
+- `GET /json/list` and `/json/version` list one target, `amoris-game`, with
   `webSocketDebuggerUrl: ws://127.0.0.1:<port>/devtools/game` (port 9229 by default, its own, not
   the host's; a request whose `Host` or `Origin` is not loopback is refused).
 - Domains: `Runtime` (`enable`, `evaluate`, `getProperties`, `callFunctionOn`,
@@ -184,7 +184,7 @@ bytes to the page's viewport.
   `setBreakpointsActive`, `pause`, `resume`, `stepOver`, `stepInto`, `stepOut`,
   `evaluateOnCallFrame`, `setPauseOnExceptions`, `getScriptSource`, `getPossibleBreakpoints`,
   `setBreakpoint`, `setVariableValue`, `setSkipAllPauses`), events `Debugger.scriptParsed` (url
-  `pocket:///scripts/<module>.js`, with `sourceMapURL` as a data URL whose source is the TypeScript,
+  `amoris:///scripts/<module>.js`, with `sourceMapURL` as a data URL whose source is the TypeScript,
   embedded, so clients map to it), `Debugger.paused`, `Debugger.resumed`,
   `Debugger.breakpointResolved`, `Runtime.consoleAPICalled`, `Runtime.exceptionThrown`. Positions on
   the wire are the JavaScript's.
@@ -212,7 +212,7 @@ bytes to the page's viewport.
 
 ## 7. MCP tools
 
-The MCP server (`pocket-mcp`) is a projection of the catalog, grouped so an agent's tool list stays
+The MCP server (`amoris-mcp`) is a projection of the catalog, grouped so an agent's tool list stays
 small (each tool takes a `method`-like `action` where a group is natural):
 
 - Developer (built, server.md 7): `world` (tree/get/query/schema/edit), `scripts`

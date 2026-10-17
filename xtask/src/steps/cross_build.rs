@@ -1,5 +1,5 @@
 //! The determinism check's cross-build variant (docs/spec/checks.md 8.2): the sailing workload's
-//! hash chain from a debug build of `pocket` against the release build's, which catches
+//! hash chain from a debug build of `amoris` against the release build's, which catches
 //! optimizer-dependent results and debug-only code paths. Full check only: `--quick` leaves it out,
 //! since it needs a second build. xtask links no engine crate, so a divergence names its tick and
 //! both hashes, and the commands that give each build's snapshot there for `diff` (checks.md 14).
@@ -24,8 +24,8 @@ fn failed(command: &str, status: Option<i32>, error: Value, tail: String, why: &
 }
 
 /// One build's chain: `[tick, hash]` per tick, read strictly.
-fn chain(env: &Env, pocket: &Path, seed: u64, log: &Path) -> Result<Vec<(u64, String)>, Problem> {
-    let mut cmd = Command::new(pocket);
+fn chain(env: &Env, amoris: &Path, seed: u64, log: &Path) -> Result<Vec<(u64, String)>, Problem> {
+    let mut cmd = Command::new(amoris);
     cmd.args([
         "check",
         PROJECT,
@@ -98,7 +98,7 @@ pub fn first_difference(
     })
 }
 
-/// Builds the debug `pocket`, runs the sailing chain of the first seed with both builds, and adds
+/// Builds the debug `amoris`, runs the sailing chain of the first seed with both builds, and adds
 /// the comparison to `step`: `determinism.diverged {project, seed, variant: "cross_build", ...}`
 /// or the ticks compared.
 pub fn run(
@@ -120,8 +120,8 @@ pub fn run(
     };
     let seed = project.config.run.seeds[0];
     let log = env.new_log("determinism-cross-build");
-    eprintln!("  determinism: building the debug pocket for the cross-build variant");
-    let build = env.cargo(["build", "-p", "pocket-app", "--bin", "pocket", "--locked"]);
+    eprintln!("  determinism: building the debug amoris for the cross-build variant");
+    let build = env.cargo(["build", "-p", "amoris-app", "--bin", "amoris", "--locked"]);
     let line = run::describe(&build);
     let out = match run::run_merged(build, &log, &mut |_| {}) {
         Ok(o) => o,
@@ -133,7 +133,7 @@ pub fn run(
     }
     let debug: PathBuf = target_dir
         .join("debug")
-        .join(format!("pocket{}", std::env::consts::EXE_SUFFIX));
+        .join(format!("amoris{}", std::env::consts::EXE_SUFFIX));
     eprintln!("  determinism: the sailing chain of seed {seed}, release and debug");
     let chains =
         chain(env, release, seed, &log).and_then(|r| Ok((r, chain(env, &debug, seed, &log)?)));
@@ -144,10 +144,10 @@ pub fn run(
     match first_difference(&r, &d) {
         None => step.measure("cross_build_ticks_compared", r.len() as f64, "count"),
         Some((tick, release_hash, debug_hash)) => {
-            let at = |pocket: &Path| {
+            let at = |amoris: &Path| {
                 format!(
                     "{} check {PROJECT} --chain-only --seeds {seed} --snapshot-at {tick} --json",
-                    pocket.display()
+                    amoris.display()
                 )
             };
             step.error(Problem::new(

@@ -127,15 +127,17 @@ The [frozen protocol](https://github.com/qiulinfan/amoris/blob/main/bench/agent-
 [control results](https://github.com/qiulinfan/amoris/blob/main/bench/agent-dev/control-results.json)
 and [native grader](https://github.com/qiulinfan/amoris/blob/main/tools/eval/agent_dev_bench.py)
 define the development experiment independently of the provider runner.
+The commands below run `courier-v2`, which differs from `courier-v1` only by the engine's
+2026-10-16 rename (`bench/agent-dev/protocol.md`); the recorded trials ran `courier-v1`.
 
 ```sh
 python3 tools/eval/agent_dev_bench.py list
 python3 tools/eval/agent_dev_bench.py selftest \
-  --pocket ./target/release/pocket --output out/agent-dev-controls
+  --amoris ./target/release/amoris --output out/agent-dev-controls
 python3 tools/eval/agent_dev_bench.py prepare --task dash-cooldown \
   --project /absolute/fresh/candidate
 python3 tools/eval/agent_dev_bench.py grade --task dash-cooldown \
-  --project /absolute/fresh/candidate --pocket ./target/release/pocket \
+  --project /absolute/fresh/candidate --amoris ./target/release/amoris \
   --output /absolute/fresh/grade
 ```
 

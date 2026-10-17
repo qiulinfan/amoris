@@ -58,7 +58,7 @@ def sh(cmd, **kw):
 
 def build(_args):
     env = dict(os.environ, CARGO_BUILD_JOBS=os.environ.get("CARGO_BUILD_JOBS", "5"))
-    sh(["cargo", "build", "--release", "-p", "pocket-runtime", "--features", "transpile",
+    sh(["cargo", "build", "--release", "-p", "amoris-runtime", "--features", "transpile",
         "--example", "write_trace_bench"], cwd=REPO, env=env)
 
 

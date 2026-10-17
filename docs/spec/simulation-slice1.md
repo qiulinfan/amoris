@@ -2,14 +2,14 @@
 
 Status: Draft, slice 1
 
-The decisions slice 1's implementation (the crate `pocket-sim`, and `pocket-physics` for 16) took
+The decisions slice 1's implementation (the crate `amoris-sim`, and `amoris-physics` for 16) took
 where [simulation.md](simulation.md) was ambiguous or wrong for the code. They are open choices 7 to
 16 of simulation.md 14, which lists them by title and keeps their numbers here; their measurements
 are in simulation.md 13, their error codes in simulation.md 11.
 
 ## 7. The schedule is a list `Sim` runs, not a `bevy_ecs` `Schedule`
 
-`pocket_sim::Sim` keeps its systems sorted by their row of simulation.md 4.4 and runs them one by
+`amoris_sim::Sim` keeps its systems sorted by their row of simulation.md 4.4 and runs them one by
 one with `System::run`, applying each system's deferred commands when it returns. Reason: the step
 needs a point between systems to call `StepHooks::system`, to catch a panic and name the system it
 came from (`sim.internal {tick, phase, system, message}`), and to stop and poison the world there; a
@@ -33,8 +33,8 @@ A crate registers a system under its key and phase. A key of simulation.md 4.4's
 row (in another phase it is refused, `sim.system_phase`); any other key runs after the listed
 systems of its phase, before `sim.finish` in `Finish`, in registration order.
 `Sim::schedule_listing` prints the flattened schedule (`phase key condition` per line) for the
-schedule golden; pocket-sim's own test pins it for a schedule with every row filled
-(`crates/pocket-sim/tests/golden/schedule.txt`), the runtime's pins the real one.
+schedule golden; amoris-sim's own test pins it for a schedule with every row filled
+(`crates/amoris-sim/tests/golden/schedule.txt`), the runtime's pins the real one.
 
 ## 9. The tick's bookkeeping is Derived resources
 
@@ -75,7 +75,7 @@ inbox at a boundary) or the system parameter `Emit`.
 ## 12. Sorted iteration helpers
 
 clippy reports `Query::iter` and `iter_mut` even when followed by `sort_unstable`, so
-`pocket_sim::order::by_id` and `by_id_mut` wrap the sorted form of simulation.md 8.2 with the lint
+`amoris_sim::order::by_id` and `by_id_mut` wrap the sorted form of simulation.md 8.2 with the lint
 allowed in one place; a query using them must read `&EntityId`. Choice 4's wrapper system parameter
 is not built. `order::shuffle_storage` is the storage-shuffle hook: it clones every entity in an
 order drawn from its own generator, then despawns the originals (despawning each right after its
@@ -98,7 +98,7 @@ before anything registers: names, a doc per field, no field twice, enum variants
 distinct, defaults of their field's type, finite (numeric.md 7) and in range (a tick within 2^53 -
 1, an enum index below the variant count), and at most 65,535 numeric slots, since slots are `u16`
 (`sim.component_field_invalid {component, field}`, the reason in the message). The slot accessors
-(`ComponentAccess`) and the dynamic registration of project components stay in `pocket-script`,
+(`ComponentAccess`) and the dynamic registration of project components stay in `amoris-script`,
 which then calls `ComponentRegistry::register_project`.
 
 ## 15. Decoding checks what constructors check
@@ -115,7 +115,7 @@ structs, which `EntityAllocator` and `EventCounter` are.
 
 ## 16. The physics rows as built
 
-Simulation.md 4.4 rows 4 to 9 and 8.5, as `pocket-physics` builds them. The force systems read the
+Simulation.md 4.4 rows 4 to 9 and 8.5, as `amoris-physics` builds them. The force systems read the
 state at the tick's start and evaluate the sea and the wind at `(n - 1) / rate` for tick n, computed
 from the tick as `time()` is, not as `time() - dt()`. `physics.step` removes, in id order, the
 bodies whose entity is gone or lost its `Collider` or `Transform`, or whose `RigidBody` or
@@ -136,4 +136,4 @@ section by section, and a required component would come back at its default on a
 original world that had none, so the fork would differ from its source (persistence.md, P2). A
 `Collider` without a `Transform` gets no body and is `sim.body_invalid` (`reason` "no Transform")
 each tick; a body without a `Velocity` or an `ExternalForce` moves as if both were zero, and shows
-neither. The bundles of `pocket_physics::sailing` insert every component a body uses.
+neither. The bundles of `amoris_physics::sailing` insert every component a body uses.

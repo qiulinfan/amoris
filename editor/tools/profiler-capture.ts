@@ -3,13 +3,13 @@
 // shown, and after a few seconds the window, the panel and the viewport are captured with the
 // panel's text and the viewport's stats overlay. Right after reading the panel, in the same Play
 // with the editor connected, the host's own reads: `profile.frame` over the panel's window (180
-// ticks, 3 s) and over 600 ticks, and with `--pocket` the CLI's `pocket profile` over the same
+// ticks, 3 s) and over 600 ticks, and with `--amoris` the CLI's `amoris profile` over the same
 // windows (compare.json lines them up). `play-early.json` is `profile.frame` 3 s into Play, its first
 // tick included.
 //
-//   pocket serve samples/sailing --port 7878     # editor/dist built (bun run build)
+//   amoris serve samples/sailing --port 7878     # editor/dist built (bun run build)
 //   bun tools/profiler-capture.ts --url http://127.0.0.1:7878/ --out ../out/liveprof/capture \
-//     [--pocket ../target/release/pocket.exe --project ../samples/sailing] [--seconds 15]
+//     [--amoris ../target/release/amoris.exe --project ../samples/sailing] [--seconds 15]
 //
 // CHROME=<path> picks the browser (default: Chrome's install path on Windows, macOS or Linux);
 // CHROME_FLAGS adds switches (e.g. --force_high_performance_gpu on a two-GPU laptop).
@@ -27,7 +27,7 @@ const opt = (name: string, fallback: string) => {
 const URL_ = opt("--url", "http://127.0.0.1:7878/");
 const OUT = resolve(opt("--out", "../out/liveprof/capture"));
 const SECONDS = Number(opt("--seconds", "15"));
-const POCKET = opt("--pocket", "");
+const AMORIS = opt("--amoris", "");
 const PROJECT = opt("--project", "");
 const W = 1600;
 const H = 1000;
@@ -51,7 +51,7 @@ function chromePath(): string {
 }
 
 const port = 9400 + Math.floor(Math.random() * 400);
-const profile = join(tmpdir(), `pocket-profiler-${Date.now()}`);
+const profile = join(tmpdir(), `amoris-profiler-${Date.now()}`);
 const proc = Bun.spawn(
   [
     chromePath(),
@@ -123,9 +123,9 @@ async function click(x: number, y: number) {
   }
 }
 
-/** `pocket <args>` in the project (the CLI finds the host there): its output. */
+/** `amoris <args>` in the project (the CLI finds the host there): its output. */
 async function cli(...rest: string[]): Promise<string> {
-  const p = Bun.spawn([POCKET, ...rest], { cwd: PROJECT, stdout: "pipe", stderr: "pipe" });
+  const p = Bun.spawn([AMORIS, ...rest], { cwd: PROJECT, stdout: "pipe", stderr: "pipe" });
   const [out, err] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text()]);
   await p.exited;
   return out + err;
@@ -193,10 +193,10 @@ try {
   const text = await js<string>(`return document.querySelector('.profiler')?.innerText ?? '';`);
   const at = Date.now();
   const frame180 = (await call("profile.frame", { ticks: 180 })) as Summary;
-  const cli180 = POCKET ? (JSON.parse(await cli("profile", "--ticks", "180", "--json")) as Summary) : null;
+  const cli180 = AMORIS ? (JSON.parse(await cli("profile", "--ticks", "180", "--json")) as Summary) : null;
   const cliMs = Date.now() - at;
   const frame = (await call("profile.frame", { ticks: 600 })) as Summary;
-  const table = POCKET ? await cli("profile", "--ticks", "600") : "";
+  const table = AMORIS ? await cli("profile", "--ticks", "600") : "";
   const overlay = await js<string>(`return document.querySelector('.vp-stats')?.innerText ?? '';`);
   await shot("editor-profiler");
   await shot("profiler-panel", await panelRect("profiler"));
@@ -216,7 +216,7 @@ try {
   await Bun.write(join(OUT, "viewport-stats.txt"), `${overlay}\n`);
   await Bun.write(join(OUT, "profile-frame.json"), `${JSON.stringify(frame, null, 2)}\n`);
   await Bun.write(join(OUT, "compare.json"), `${JSON.stringify(compare, null, 2)}\n`);
-  if (table) await Bun.write(join(OUT, "pocket-profile.txt"), table);
+  if (table) await Bun.write(join(OUT, "amoris-profile.txt"), table);
   await Bun.write(join(OUT, "console.txt"), `${logs.join("\n")}\n`);
   console.log(overlay.replace(/\s+/g, " "));
   console.log(JSON.stringify(compare));

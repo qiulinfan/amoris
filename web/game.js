@@ -1,11 +1,11 @@
 // The game role of the browser-local run form (docs/spec/threads.md 7): a module Web Worker that
 // instantiates the module the page compiled (it does not compile it again), builds the game of the
-// web package and runs its loop (pocket-web's GameWorker). Each task is a tick boundary: a `cmd`
+// web package and runs its loop (amoris-web's GameWorker). Each task is a tick boundary: a `cmd`
 // queues a command and wakes the loop, an `ack` lets a skipped publication go, and the loop runs
 // boundaries and ticks until its time model says wait or 8 ms of work is spent. It re-schedules
 // itself through a MessageChannel when more work is due now (nested setTimeout is clamped to 4 ms),
 // through setTimeout until a real-time tick is due, and not at all when only a message can help.
-import init, { GameWorker } from "./pkg/pocket_web.js";
+import init, { GameWorker } from "./pkg/amoris_web.js";
 
 let game = null;
 let early = [];

@@ -10,11 +10,16 @@ many_cubes with cubes turned every frame (`--moving`, docs/bench/dynamic-scenes.
 MSAA, MSAA with GTAO, TAA, TAA with GTAO's normal target (the static scenes with MSAA only);
 occlusion culling off.
 
-Build first, in both checkouts: `cargo build --release -p pocket-render --examples`. Then, from
+Build first, in both checkouts: `cargo build --release -p amoris-render --examples`. Then, from
 this repository's root:
 
     python tools/build_compare.py --before ../master --adapters nvidia,780m \\
         --summary docs/evidence/d3d12perf/old-vs-new.json
+
+A build from before the 2026-10-16 rename reads the old names and silently ignores the AMORIS_*
+variables set here (backend, adapter, AA, GTAO, occlusion), so its frames would come from its
+defaults: build such a `--before` from its exported tree after `tools/amoris_rename.py --tree`
+(AGENTS.md, Building).
 
 The summary lists every pair's RMSE and maximum difference (8-bit units) and the share of pixels
 off by more than 1; the captures stay under `--out`.
@@ -47,10 +52,10 @@ CASES = {
 }
 STATIC_CASES = {"gi-room", "pt-lab"}
 MODES = {
-    "msaa": {"POCKET_AA": "msaa", "POCKET_GTAO": "off"},
-    "msaa-gtao": {"POCKET_AA": "msaa", "POCKET_GTAO": "depth"},
-    "taa": {"POCKET_AA": "taa", "POCKET_GTAO": "off"},
-    "taa-gtao-normals": {"POCKET_AA": "taa", "POCKET_GTAO": "target"},
+    "msaa": {"AMORIS_AA": "msaa", "AMORIS_GTAO": "off"},
+    "msaa-gtao": {"AMORIS_AA": "msaa", "AMORIS_GTAO": "depth"},
+    "taa": {"AMORIS_AA": "taa", "AMORIS_GTAO": "off"},
+    "taa-gtao-normals": {"AMORIS_AA": "taa", "AMORIS_GTAO": "target"},
 }
 
 
@@ -61,7 +66,7 @@ def example(root, name):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--before", required=True, help="the other checkout (its own target/)")
-    ap.add_argument("--adapters", default="", help="POCKET_ADAPTER values, comma separated")
+    ap.add_argument("--adapters", default="", help="AMORIS_ADAPTER values, comma separated")
     ap.add_argument("--backends", default="dx12,vulkan")
     ap.add_argument("--cases", default=",".join(CASES))
     ap.add_argument("--modes", default=",".join(MODES))
@@ -85,9 +90,9 @@ def main():
                     for name, root in builds:
                         png = out_dir / f"{case}-{mode}-{backend}-{adapter or 'default'}-{name}.png"
                         png.unlink(missing_ok=True)
-                        env = dict(os.environ, POCKET_BACKEND=backend, POCKET_OCCLUSION="off", **MODES[mode])
+                        env = dict(os.environ, AMORIS_BACKEND=backend, AMORIS_OCCLUSION="off", **MODES[mode])
                         if adapter:
-                            env["POCKET_ADAPTER"] = adapter
+                            env["AMORIS_ADAPTER"] = adapter
                         argv = [example(root, cmd[0])] + [a.replace("{out}", str(png)) for a in cmd[1:]]
                         p = subprocess.run(argv, cwd=ROOT, env=env, capture_output=True, text=True, timeout=900)
                         if p.returncode or not png.exists():

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Smoke test of the host (docs/spec/server.md): starts `pocket serve` on a copy of
+"""Smoke test of the host (docs/spec/server.md): starts `amoris serve` on a copy of
 samples/sailing and drives it the three ways clients do.
 
-1. The CLI (`pocket status`, `pocket world ...`, `pocket step`, `pocket profile`, `pocket undo`,
-   `pocket play`, a refused typo with its suggestion).
+1. The CLI (`amoris status`, `amoris world ...`, `amoris step`, `amoris profile`, `amoris undo`,
+   `amoris play`, a refused typo with its suggestion).
 2. `POST /api/call` and `GET /api/catalog`, and the editor's `/ws` (requests, the history, events,
    world.changed, status and profile pushes, a refused topic, Play and Stop).
 3. MCP over Streamable HTTP (`initialize`, `tools/list` with its size, a `world` call, a refused
@@ -15,7 +15,7 @@ samples/sailing and drives it the three ways clients do.
 
 Standard library only; macOS, Linux and Windows (where the host is stopped with Ctrl-Break, the
 console event a process group can be sent, instead of SIGTERM).
-Usage: python3 tools/smoke_server.py [--pocket target/debug/pocket]
+Usage: python3 tools/smoke_server.py [--amoris target/debug/amoris]
 """
 
 import argparse
@@ -198,20 +198,20 @@ class MCP:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--pocket", default=str(REPO / f"target/debug/pocket{EXE}"))
+    ap.add_argument("--amoris", default=str(REPO / f"target/debug/amoris{EXE}"))
     ap.add_argument("--keep", action="store_true", help="keep the project copy")
     a = ap.parse_args()
     # Absolute: the CLI runs in the project's copy.
-    pocket = str(Path(a.pocket).resolve())
-    if not Path(pocket).exists():
-        sys.exit(f"{pocket} is not built (cargo build -p pocket-app, or --pocket PATH)")
-    tmp = Path(tempfile.mkdtemp(prefix="pocket-smoke-"))
+    amoris = str(Path(a.amoris).resolve())
+    if not Path(amoris).exists():
+        sys.exit(f"{amoris} is not built (cargo build -p amoris-app, or --amoris PATH)")
+    tmp = Path(tempfile.mkdtemp(prefix="amoris-smoke-"))
     proj = tmp / "sailing"
     shutil.copytree(REPO / "samples/sailing", proj)
     errlog = open(tmp / "serve.err", "w")
     # On Windows the host gets its own process group, so Ctrl-Break reaches it alone.
     group = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if WINDOWS else {}
-    server = subprocess.Popen([pocket, "serve", str(proj), "--port", "0"],
+    server = subprocess.Popen([amoris, "serve", str(proj), "--port", "0"],
                               stdout=subprocess.PIPE, stderr=errlog, text=True, **group)
     try:
         line = server.stdout.readline()
@@ -220,7 +220,7 @@ def main():
         print(f"host at {base}")
 
         def cli(*args, ok=True):
-            r = subprocess.run([pocket, *args], cwd=proj, capture_output=True, text=True,
+            r = subprocess.run([amoris, *args], cwd=proj, capture_output=True, text=True,
                                timeout=60)
             if ok and r.returncode != 0:
                 print(r.stdout, r.stderr)
@@ -319,7 +319,7 @@ def main():
         m = MCP(base)
         init = m.rpc("initialize", {"protocolVersion": "2025-06-18", "capabilities": {},
                                     "clientInfo": {"name": "smoke", "version": "1"}})
-        check(init["result"]["serverInfo"]["name"] == "pocket", "mcp initialize")
+        check(init["result"]["serverInfo"]["name"] == "amoris", "mcp initialize")
         m.rpc("notifications/initialized", notify=True)
         tl = m.rpc("tools/list", {})
         tools = tl["result"]["tools"]
@@ -409,7 +409,7 @@ def main():
             server.wait(10)
         except subprocess.TimeoutExpired:
             server.kill()
-        check(not (proj / ".pocket/host.json").exists(), "host.json removed on shutdown")
+        check(not (proj / ".amoris/host.json").exists(), "host.json removed on shutdown")
         errlog.close()
         if a.keep:
             print(f"kept {tmp}")

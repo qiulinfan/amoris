@@ -74,6 +74,14 @@ engine's own version applies.
 | 0.1 | First draft (2026-10-03), integrated the same day with the slice 0 specifications and spikes: names settled (`Problem`, `EventSeq`, `ActOrigin`, applied writes by `tick`), halts after a script failure (time.md), `describe` taking `entity` or `part` (mcp.md 5.2). Revised the same day after review: world state separated from wire forms; projections and the sailing declarations in files of their own; the `intents` tool; entity references in the projections' forms; the text grammar for every perception answer; undeclared events hidden; declared requested decisions and episodes; `omniscient_player`; one seat per body. |
 | 0.2 | As built on Pioneer (2026-10-09, `docs/spec/player.md`; charter 5.1, Pioneer): `Observer.team` and team vision (perception.md, The perception update, step 5a); `wait` in stepped pacing, for the seat holding the clock, is a `step` until its next decision point (time.md, Requests); the player tools are the runtime's `player.*` commands, carried by one MCP tool `player` with an `action`, and a session is bound to a seat by the process that serves it (mcp.md 14); a game declares its players in `project.toml`'s `[player]`, and the declaration is world state (The game definition). |
 
+On 2026-10-16 the owner's rename of the engine's identifier (`pocket` to `amoris`, charter 5.1)
+changed the engine's own names in these files and in `shared/benchmark/`: the types crate
+`amoris-contract` and the other crates, the browser's `window.amoris`, the CLI `amoris`
+(`amoris player`, `amoris mcp --seat`) and the name `amoris` under which the benchmark's external
+runner registers the MCP server (its tools `mcp__amoris__*`). Requests, answers, their semantics,
+the text projection and the error codes did not change, so the contract stays 0.2 and the runner
+protocol version 1: like the crate layout, these names are the engine's, not the contract's.
+
 ## Contract record
 
 The authoritative contract and benchmark live in this repository under `shared/contract/` and
@@ -95,7 +103,7 @@ The procedure:
    and declaration type, never edited by hand); the generation check reports `gen.stale` when
    they differ from what the generator writes now.
 
-The contract's types-only crate, `pocket-contract`, lives under `shared/contract/rust/` and is used
+The contract's types-only crate, `amoris-contract`, lives under `shared/contract/rust/` and is used
 by Amoris's workspace crates. One source of types keeps request and response schemas consistent.
 
 ## Conventions every file uses
@@ -390,7 +398,7 @@ order).
 
 ## Open choices
 
-1. **One shared types crate.** `pocket-contract` under `shared/contract/rust/` is the workspace
+1. **One shared types crate.** `amoris-contract` under `shared/contract/rust/` is the workspace
    source for contract types and their generated schemas (above).
 2. **The text projection shared byte for byte.** Recommended, since it is what the LLM reads
    (perception.md). A stable projection keeps benchmark comparisons from changing the prompt.

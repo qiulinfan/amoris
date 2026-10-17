@@ -1,4 +1,4 @@
-// The engine's renderer in a page (crates/pocket-viewport compiled to WebAssembly, drawing with
+// The engine's renderer in a page (crates/amoris-viewport compiled to WebAssembly, drawing with
 // WebGPU). The editor's viewport and spectator pages use it through createViewport:
 //
 //   const vp = await createViewport(canvas, { renderUrl: "ws://127.0.0.1:7878/render", assetsUrl: "/assets/",
@@ -10,11 +10,11 @@
 //   vp.dispose();
 //
 // The page owns the WebSocket of the host's render feed, the asset fetches and the frame loop.
-import init, { Viewport } from "./pkg/pocket_viewport.js";
+import init, { Viewport } from "./pkg/amoris_viewport.js";
 
 let ready = null;
 function load() {
-  if (!ready) ready = init({ module_or_path: new URL("./pkg/pocket_viewport_bg.wasm", import.meta.url) });
+  if (!ready) ready = init({ module_or_path: new URL("./pkg/amoris_viewport_bg.wasm", import.meta.url) });
   return ready;
 }
 
@@ -24,7 +24,7 @@ export async function createViewport(canvas, options = {}) {
   const dpr = window.devicePixelRatio || 1;
   const size = () => [Math.max(1, Math.round(canvas.clientWidth * dpr)), Math.max(1, Math.round(canvas.clientHeight * dpr))];
   [canvas.width, canvas.height] = size();
-  // gpuMinimal: device features to leave out, as POCKET_GPU_MINIMAL natively ("first-instance"
+  // gpuMinimal: device features to leave out, as AMORIS_GPU_MINIMAL natively ("first-instance"
   // forces WebGPU's baseline draw path).
   const vp = await Viewport.create(canvas, options.gpuMinimal || undefined);
   const assetsUrl = options.assetsUrl || "/assets/";

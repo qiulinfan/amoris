@@ -20,7 +20,7 @@ inference and total cost; do not require a production-quality performance thresh
 Keep the previous baked/probe and bounded SHaRC/ReSTIR experiments runnable. Shader sources stay
 in WGSL files. GPU caches and network optimizer state remain outside simulation authority.
 
-`pocket_render::gi::pt::PathTracer` and the native `path_trace` example own this integrator. It is
+`amoris_render::gi::pt::PathTracer` and the native `path_trace` example own this integrator. It is
 a separate ray-query research renderer (Metal, Vulkan, Direct3D 12), not a replacement of the
 interactive forward/WebGPU renderer.
 Static BLAS/TLAS, shading triangles and texture resources survive the progressive frames. Camera
@@ -71,12 +71,12 @@ measurement and does not supply training labels or predictions to rendering.
 Reproduce the full material scene and online experiment:
 
 ```sh
-cargo run --release -p pocket-render --example path_trace -- samples/pt-lab \
+cargo run --release -p amoris-render --example path_trace -- samples/pt-lab \
   --width 320 --height 240 --frames 256 --samples 4 --output out/pt/lab.png
-cargo run --release -p pocket-render --example path_trace -- samples/gi-room \
+cargo run --release -p amoris-render --example path_trace -- samples/gi-room \
   --width 128 --height 128 --frames 512 --nrc true --nrc-warmup 64 \
   --light-change-frame 256 --light-change-factor 2.5 --output out/pt/nrc.png
-# Windows: the same with POCKET_BACKEND=vulkan or dx12 (and POCKET_ADAPTER=5060 or 780m).
+# Windows: the same with AMORIS_BACKEND=vulkan or dx12 (and AMORIS_ADAPTER=5060 or 780m).
 ```
 
 Controls include `--nee`, `--rr`, `--bounces`, `--rr-start`, `--workgroup 32|64|128`,
@@ -93,7 +93,7 @@ that exposes wgpu's `EXPERIMENTAL_RAY_QUERY` and names the backend and adapter o
 offers it on Metal, on Vulkan with `VK_KHR_ray_query`, and on Direct3D 12 with DXR tier 1.1 and
 Shader Model 6.5 (DXC from the Windows SDK, `gpu::dx12_compiler`; FXC cannot compile it). The
 browser never has it. `path_trace`, `gi_trace`, `pt_bsdf_probe` and `nrc_online_probe` take
-`POCKET_BACKEND` and `POCKET_ADAPTER` like the renderer; reports name the backend. On the
+`AMORIS_BACKEND` and `AMORIS_ADAPTER` like the renderer; reports name the backend. On the
 Windows test machine both the RTX 5060 and the Radeon 780M expose ray queries on both backends.
 
 `ray_query_probe` (formerly `metal_ray_query`) checks a backend before anything else: hits, misses,
@@ -141,8 +141,8 @@ how the M5 numbers were taken; the GPU tests check that both variants trace the 
 
 The GPU tests (`ray_query_*` in `gi::pt` and `gi::rt`) run by default on every native backend of
 the platform whose adapter has ray queries (Vulkan and Direct3D 12 on Windows, Metal on Apple,
-Vulkan elsewhere), or only on the one `POCKET_BACKEND` names (`BackendChoice::under_test`), and
-skip with a note otherwise; `POCKET_ADAPTER=780m` runs them on the Radeon.
+Vulkan elsewhere), or only on the one `AMORIS_BACKEND` names (`BackendChoice::under_test`), and
+skip with a note otherwise; `AMORIS_ADAPTER=780m` runs them on the Radeon.
 `tools/rt_bench.py` renders every configuration whose M5 report is committed and compares the
 result with it, and times the documented settings per backend.
 

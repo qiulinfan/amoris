@@ -2,7 +2,7 @@
 
 A render scale below 1 draws the opaque pass, its depth prepass, Hi-Z and occlusion culling and
 GTAO at that share of the output's width and height, and TAA reconstructs the output
-(`POCKET_RENDER_SCALE`, `Renderer::set_render_scale`, the viewport's `?scale=`; charter 4.4,
+(`AMORIS_RENDER_SCALE`, `Renderer::set_render_scale`, the viewport's `?scale=`; charter 4.4,
 Pioneer 2026-10-15). Design: [TAA and GTAO](../spec/taa-gtao.md) 4.1. Related: the TAA and GTAO
 measurements ([taa-gtao.md](taa-gtao.md)), the UE 5.7 comparison on branch `explore/ue5`
 (`docs/bench/ue5-dense.md` there).
@@ -389,7 +389,7 @@ and 10.08 ms on the 780M) is not the mode upscaling would replace there.
 
 ## 5. Re-measuring on a quiet machine
 
-From the worktree (or master after the merge), with `cargo build --release -p pocket-render
+From the worktree (or master after the merge), with `cargo build --release -p amoris-render
 --example aa_eval --example many_cubes --example splats --example lod_field --example
 showcase_bench --example image_diff` done and nothing else running. Each line is one lock hold of
 at most about 10 minutes (`python out/locks/bench_lock.py run --label NAME -- ...` on the shared
@@ -415,14 +415,17 @@ an invocation, 42 minutes in all, the RTX 5060 below 70 C before each; raw outpu
    nvidia --rounds 3 --seconds 8 --size 1600x900 --scales 1,0.67,0.5 --configs
    msaa:off,taa:off,taa:off:0.67,taa:off:0.5 --out out/taau/quiet/web-nvidia.json`; restore
    `web/viewport/pkg` afterwards (`git checkout web/viewport/pkg`).
-3. Quality does not depend on the load (section 2): `POCKET_BACKEND=vulkan POCKET_ADAPTER=nvidia
+3. Quality does not depend on the load (section 2): `AMORIS_BACKEND=vulkan AMORIS_ADAPTER=nvidia
    target/release/examples/aa_eval out/taau/quiet/quality --only upscale-tune --scale
-   0.5,0.67,0.77,1.0` repeats it (`POCKET_BACKEND=dx12 POCKET_ADAPTER=780m ... --only upscale` the
+   0.5,0.67,0.77,1.0` repeats it (`AMORIS_BACKEND=dx12 AMORIS_ADAPTER=780m ... --only upscale` the
    780M's).
 4. Scale 1 against a master build: `python tools/build_compare.py --before <checkout with master's
-   release examples> --adapters nvidia,780m --backends dx12,vulkan` (120 pairs, 9 minutes).
-5. The depth prepass below scale 1, for each adapter and API: `POCKET_AA=msaa+taa
-   POCKET_RENDER_SCALE=0.5 python tools/prepass_compare.py --backend <dx12|vulkan> --adapter
+   release examples> --adapters nvidia,780m --backends dx12,vulkan` (120 pairs, 9 minutes). A master
+   from before the 2026-10-16 rename, as `b7be59a2` was, is built from its exported tree after
+   `python tools/amoris_rename.py --tree <dir>` (AGENTS.md), or its examples ignore the `AMORIS_*`
+   variables the tool sets.
+5. The depth prepass below scale 1, for each adapter and API: `AMORIS_AA=msaa+taa
+   AMORIS_RENDER_SCALE=0.5 python tools/prepass_compare.py --backend <dx12|vulkan> --adapter
    <nvidia|780m> --cases cubes-sphere,cubes-dense,cubes-shadows,splats,gi-room-static,pt-lab-static
    --scenes ""` (only the ties of section 6 may differ).
 
@@ -460,6 +463,6 @@ an invocation, 42 minutes in all, the RTX 5060 below 70 C before each; raw outpu
   gi-room (the walls under the ceiling) on the 780M by up to 4 levels, and none once the touching
   box is lifted by 1 cm (docs/spec/prepass.md 4, ties). The idle machine's run at c8128f1c (section
   5, step 5) found the same pixels and nothing else beyond the many_cubes sphere. With the wider box
-  where nothing moved (2026-10-16, `POCKET_AA=msaa+taa` and `taa` at 0.5 and 0.67 on both GPUs and
+  where nothing moved (2026-10-16, `AMORIS_AA=msaa+taa` and `taa` at 0.5 and 0.67 on both GPUs and
   APIs) the tool finds the same 2 pixels of pt-lab, 1 of gi-room's 3, and the sphere's 1 to 37
   pixels by up to 17 levels (1 to 52 by up to 15 before; it differs at scale 1 too), nothing else.

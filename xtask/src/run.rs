@@ -39,9 +39,9 @@ impl Env {
     pub fn new(root: &Path) -> Env {
         let cargo = std::env::var_os("CARGO").map_or_else(|| PathBuf::from("cargo"), PathBuf::from);
         let host = host_triple().unwrap_or_else(|| "unknown".into());
-        let llvm = std::env::var_os("POCKET_LLVM")
+        let llvm = std::env::var_os("AMORIS_LLVM")
             .map(PathBuf::from)
-            .unwrap_or_else(|| home().join(".pocket-tools").join("llvm-23.1.2"));
+            .unwrap_or_else(|| home().join(".amoris-tools").join("llvm-23.1.2"));
         Env {
             root: root.to_path_buf(),
             out: root.join("out").join("check"),
@@ -85,7 +85,7 @@ impl Env {
                 env.push((format!("{var}_wasm32_unknown_unknown"), p));
             }
         }
-        // meshoptimizer's build script (pocket-assets' `lod`, docs/spec/lod.md 2) names its
+        // meshoptimizer's build script (amoris-assets' `lod`, docs/spec/lod.md 2) names its
         // wasm32 archiver `llvm-ar` on a Windows host and finds it on PATH: the pinned LLVM's
         // tools go first there.
         let bin = self.llvm.join("bin");
@@ -274,10 +274,10 @@ pub fn capture(program: &str, args: &[&str], dir: &Path) -> Option<String> {
         .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
-/// The Python that runs `tools/*.py`: `POCKET_PYTHON`, else `python`, else `python3` (on Windows
+/// The Python that runs `tools/*.py`: `AMORIS_PYTHON`, else `python`, else `python3` (on Windows
 /// `python3` may be the Store's stub, which the version probe rejects).
 pub fn python() -> Option<String> {
-    let mut candidates: Vec<String> = std::env::var("POCKET_PYTHON").ok().into_iter().collect();
+    let mut candidates: Vec<String> = std::env::var("AMORIS_PYTHON").ok().into_iter().collect();
     candidates.extend(["python".to_string(), "python3".to_string()]);
     candidates.into_iter().find(|p| {
         Command::new(p)

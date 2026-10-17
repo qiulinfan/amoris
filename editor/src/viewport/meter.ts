@@ -1,6 +1,6 @@
 // Frame timing on the page, for a renderer's `stats()` (engine.ts `RenderStats`): the interval
 // between animation frames and the time spent drawing, summed since the last read.
-// web/viewport/pocket_web.js keeps the same counters for the wasm renderer.
+// web/viewport/amoris_web.js keeps the same counters for the wasm renderer.
 
 import type { RenderStats } from "./engine";
 

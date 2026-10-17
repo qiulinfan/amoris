@@ -24,7 +24,7 @@ from typing import Callable
 REPO = Path(__file__).resolve().parents[2]
 BENCH = REPO / "bench" / "agent-dev"
 TEMPLATE = BENCH / "template"
-VERSION = "courier-v1"
+VERSION = "courier-v2"
 
 
 @dataclass(frozen=True)
@@ -122,13 +122,13 @@ def prompt(task: str | Task) -> str:
 
 def files_of(project: Path) -> dict[str, str]:
     return {p.relative_to(project).as_posix(): p.read_text() for p in sorted(project.rglob("*"))
-            if p.is_file() and ".pocket" not in p.parts}
+            if p.is_file() and ".amoris" not in p.parts}
 
 
 def prepare(task: str | Task, dest: str | Path) -> dict:
     """Create a fresh candidate project exactly at dest; refuse an existing destination."""
     t, dest = task_by_id(task), Path(dest).resolve()
-    shutil.copytree(TEMPLATE, dest, ignore=shutil.ignore_patterns(".pocket", "__pycache__"))
+    shutil.copytree(TEMPLATE, dest, ignore=shutil.ignore_patterns(".amoris", "__pycache__"))
     f = dest / t.file
     source = f.read_text()
     if source.count(t.old) != 1:
@@ -140,10 +140,10 @@ def prepare(task: str | Task, dest: str | Path) -> dict:
 
 class Host:
     """Own one native host, with bounded startup/calls and unconditional cleanup."""
-    def __init__(self, pocket: str | Path, project: Path, stderr: Path):
+    def __init__(self, amoris: str | Path, project: Path, stderr: Path):
         self.log = stderr.open("w")
         env = {**os.environ, "CARGO_TARGET_DIR": str(REPO / "target")}
-        self.proc = subprocess.Popen([str(pocket), "serve", str(project), "--port", "0"],
+        self.proc = subprocess.Popen([str(amoris), "serve", str(project), "--port", "0"],
                                      stdout=subprocess.PIPE, stderr=self.log, text=True,
                                      start_new_session=True, env=env)
         q = queue.Queue()
@@ -396,10 +396,10 @@ CHECKS: dict[str, Callable[[Host], dict]] = {
 }
 
 
-def grade(task: str | Task, project: str | Path, pocketbin: str | Path,
+def grade(task: str | Task, project: str | Path, amorisbin: str | Path,
           output: str | Path | None = None) -> dict:
     """Grade a frozen candidate through actual native engine execution, never source matching."""
-    t, project, pocketbin = task_by_id(task), Path(project).resolve(), Path(pocketbin).resolve()
+    t, project, amorisbin = task_by_id(task), Path(project).resolve(), Path(amorisbin).resolve()
     started = time.monotonic()
     output = Path(output).resolve() if output else project.parent / (project.name + "-grade")
     output.mkdir(parents=True, exist_ok=True)
@@ -408,7 +408,7 @@ def grade(task: str | Task, project: str | Path, pocketbin: str | Path,
     final = files_of(project)
     changed = sorted(k for k in set(baseline) | set(final) if baseline.get(k) != final.get(k))
     violations = [k for k in changed if k != t.file]
-    types = subprocess.run([str(pocketbin), "check", str(project), "--json"],
+    types = subprocess.run([str(amorisbin), "check", str(project), "--json"],
                            capture_output=True, text=True, timeout=90, cwd=REPO)
     (output / "native-check.json").write_text(types.stdout or "{}")
     try:
@@ -420,7 +420,7 @@ def grade(task: str | Task, project: str | Path, pocketbin: str | Path,
     checks = {}
     if type_ok:
         try:
-            with Host(pocketbin, project, output / "host.stderr") as h:
+            with Host(amorisbin, project, output / "host.stderr") as h:
                 for name, fn in CHECKS.items():
                     try:
                         checks[name] = fn(h)
@@ -443,7 +443,7 @@ def grade(task: str | Task, project: str | Path, pocketbin: str | Path,
     return receipt
 
 
-def selftest(pocketbin: str | Path, output: str | Path) -> dict:
+def selftest(amorisbin: str | Path, output: str | Path) -> dict:
     """Prove each planted fixture fails its focus and restored golden source passes the entire suite."""
     output = Path(output).resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -451,9 +451,9 @@ def selftest(pocketbin: str | Path, output: str | Path) -> dict:
     for task in TASKS:
         candidate = output / task.id / "candidate"
         prepare(task, candidate)
-        bad = grade(task, candidate, pocketbin, output / task.id / "before")
+        bad = grade(task, candidate, amorisbin, output / task.id / "before")
         shutil.copyfile(TEMPLATE / task.file, candidate / task.file)
-        good = grade(task, candidate, pocketbin, output / task.id / "after")
+        good = grade(task, candidate, amorisbin, output / task.id / "after")
         results.append({"task": task.id, "initial_focus_fails": not bad["feature_passed"],
                         "initial_regressions_pass": bad["regressions_passed"],
                         "initial_types_pass": bad["types_passed"], "initial_integrity_pass": bad["integrity_passed"], "golden_passes": good["passed"]})
@@ -473,8 +473,8 @@ def main():
     p.add_argument("--task", choices=TASK_BY_ID)
     p.add_argument("--project", type=Path)
     p.add_argument("--output", type=Path)
-    p.add_argument("--pocket", type=Path,
-                   default=Path(os.environ.get("CARGO_TARGET_DIR", REPO / "target")) / "release" / "pocket")
+    p.add_argument("--amoris", type=Path,
+                   default=Path(os.environ.get("CARGO_TARGET_DIR", REPO / "target")) / "release" / "amoris")
     a = p.parse_args()
     if a.command == "list":
         print(json.dumps({"suite_version": VERSION, "fixture_path": "bench/agent-dev/template",
@@ -486,13 +486,13 @@ def main():
     elif a.command == "grade":
         if not a.task or not a.project:
             p.error("grade requires --task and --project")
-        r = grade(a.task, a.project, a.pocket, a.output)
+        r = grade(a.task, a.project, a.amoris, a.output)
         print(json.dumps(r, indent=2))
         raise SystemExit(0 if r["passed"] else 1)
     else:
         if not a.output:
             p.error("selftest requires --output (fresh case paths)")
-        r = selftest(a.pocket, a.output)
+        r = selftest(a.amoris, a.output)
         print(json.dumps(r, indent=2))
         raise SystemExit(0 if r["passed"] else 1)
 

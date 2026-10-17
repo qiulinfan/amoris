@@ -1,8 +1,8 @@
 //! What the web step puts beside the page before loading it (docs/spec/checks.md 7.1): the module,
 //! built once for wasm32 with the `web` profile and bound by `wasm-bindgen --target web`, and once
 //! more through `wasm-opt -O3`, with their sizes raw and gzipped; and for every project marked
-//! `[web] workload = true`, its web package (written by `pocket-web`'s `pack` example, the stand-in
-//! for `pocket pack --web`), its inputs, the native `pocket hashes` chain of every seed and the
+//! `[web] workload = true`, its web package (written by `amoris-web`'s `pack` example, the stand-in
+//! for `amoris pack --web`), its inputs, the native `amoris hashes` chain of every seed and the
 //! replays the `replay` step recorded, listed in `expected.json` for the check page. A negative
 //! control of the web page (`[expect] fail = "web.cross_target_diverged"`, checks.md 8.6) is listed
 //! with its `expect`; the page reports its outcome apart and `web` judges it.
@@ -27,7 +27,7 @@ pub struct Workload {
     pub expect: Option<String>,
 }
 
-/// `samples/sailing` to `samples-sailing`, as `pocket check` names its replays.
+/// `samples/sailing` to `samples-sailing`, as `amoris check` names its replays.
 pub fn slug(dir: &str) -> String {
     dir.chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
@@ -153,7 +153,7 @@ pub fn module(
     let cargo_bin = run::home()
         .join(".cargo/bin")
         .join(format!("wasm-bindgen{}", std::env::consts::EXE_SUFFIX));
-    let Some(bindgen) = tool("POCKET_WASM_BINDGEN", cargo_bin, "wasm-bindgen") else {
+    let Some(bindgen) = tool("AMORIS_WASM_BINDGEN", cargo_bin, "wasm-bindgen") else {
         step.inconclusive(Problem::new(
             "check.tool_missing",
             "wasm-bindgen 0.2.129 is not installed",
@@ -164,7 +164,7 @@ pub fn module(
     let build = env.cargo([
         "build",
         "-p",
-        "pocket-web",
+        "amoris-web",
         "--target",
         WEB_TARGET,
         "--profile",
@@ -172,13 +172,13 @@ pub fn module(
         "--locked",
         "--message-format=json",
     ]);
-    if !command(step, build, log, "the web build of pocket-web") {
+    if !command(step, build, log, "the web build of amoris-web") {
         return None;
     }
     let wasm = target_dir
         .join(WEB_TARGET)
         .join("web")
-        .join("pocket_web.wasm");
+        .join("amoris_web.wasm");
     let mut bind = Command::new(&bindgen);
     bind.args(["--target", "web", "--no-typescript", "--out-dir"])
         .arg(page.join("pkg"))
@@ -186,14 +186,14 @@ pub fn module(
     if !command(step, bind, log, "wasm-bindgen") {
         return None;
     }
-    let bound = page.join("pkg").join("pocket_web_bg.wasm");
+    let bound = page.join("pkg").join("amoris_web_bg.wasm");
     sizes(step, &bound, "");
-    let glue = std::fs::metadata(page.join("pkg/pocket_web.js")).map_or(0, |m| m.len());
+    let glue = std::fs::metadata(page.join("pkg/amoris_web.js")).map_or(0, |m| m.len());
     step.measure("web.size.glue", glue as f64 / 1024.0, "KiB");
     let emsdk = run::home()
-        .join(".pocket-tools/emsdk/upstream/bin")
+        .join(".amoris-tools/emsdk/upstream/bin")
         .join(format!("wasm-opt{}", std::env::consts::EXE_SUFFIX));
-    let Some(wasm_opt) = tool("POCKET_WASM_OPT", emsdk, "wasm-opt") else {
+    let Some(wasm_opt) = tool("AMORIS_WASM_OPT", emsdk, "wasm-opt") else {
         step.warn(Problem::new(
             "check.tool_missing",
             "no wasm-opt: the -O3 variant was not built",
@@ -222,11 +222,11 @@ pub fn module(
         ])
         .arg(&bound)
         .arg("-o")
-        .arg(opt.join("pkg").join("pocket_web_bg.wasm"));
+        .arg(opt.join("pkg").join("amoris_web_bg.wasm"));
     if !command(step, o, log, "wasm-opt -O3") {
         return Some(false);
     }
-    sizes(step, &opt.join("pkg/pocket_web_bg.wasm"), ".O3");
+    sizes(step, &opt.join("pkg/amoris_web_bg.wasm"), ".O3");
     Some(true)
 }
 
@@ -235,7 +235,7 @@ pub fn module(
 pub fn workload_files(
     env: &Env,
     step: &mut StepResult,
-    pocket: &Path,
+    amoris: &Path,
     workloads: &[Workload],
     page: &Path,
     log: &Path,
@@ -248,7 +248,7 @@ pub fn workload_files(
         let pack = env.cargo([
             "run",
             "-p",
-            "pocket-web",
+            "amoris-web",
             "--example",
             "pack",
             "--release",
@@ -278,7 +278,7 @@ pub fn workload_files(
         }
         let mut runs = Vec::new();
         for seed in &w.seeds {
-            let mut cmd = Command::new(pocket);
+            let mut cmd = Command::new(amoris);
             cmd.current_dir(&env.root).args([
                 "hashes",
                 &w.dir,
@@ -336,7 +336,7 @@ pub fn workload_files(
             "expect": w.expect,
         }));
     }
-    let expected = json!({"format": "pocket-web-expected", "projects": projects});
+    let expected = json!({"format": "amoris-web-expected", "projects": projects});
     if let Err(e) = std::fs::write(page.join("expected.json"), expected.to_string()) {
         step.error(Problem::new(
             "check.command_failed",
@@ -353,7 +353,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn slugs_name_replays_as_pocket_check_does() {
+    fn slugs_name_replays_as_amoris_check_does() {
         assert_eq!(slug("samples/sailing"), "samples-sailing");
         assert_eq!(
             slug("tests/fixtures/controls/x_y"),

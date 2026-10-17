@@ -4,9 +4,9 @@
     python tools/occlusion_mutations.py [--out out/bench-runs/hiz/mutations.json] [filter ...]
 
 Each mutation edits hiz.wgsl, cull.wgsl or renderer.rs, runs
-`cargo test --release -p pocket-render --test hiz --test occlusion`, and restores the file with
-`git checkout`; it refuses to start while those files have uncommitted changes. POCKET_BACKEND,
-POCKET_ADAPTER and POCKET_GPU_MINIMAL pass through. A filter keeps the mutations whose name
+`cargo test --release -p amoris-render --test hiz --test occlusion`, and restores the file with
+`git checkout`; it refuses to start while those files have uncommitted changes. AMORIS_BACKEND,
+AMORIS_ADAPTER and AMORIS_GPU_MINIMAL pass through. A filter keeps the mutations whose name
 contains it.
 """
 
@@ -18,9 +18,9 @@ import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-HIZ = "crates/pocket-render/shaders/hiz.wgsl"
-CULL = "crates/pocket-render/shaders/cull.wgsl"
-RENDERER = "crates/pocket-render/src/renderer.rs"
+HIZ = "crates/amoris-render/shaders/hiz.wgsl"
+CULL = "crates/amoris-render/shaders/cull.wgsl"
+RENDERER = "crates/amoris-render/src/renderer.rs"
 
 # (name, [(file, text, replacement)]): each text must occur exactly once.
 MUTATIONS = [
@@ -84,7 +84,7 @@ def run(name, edits):
             with open(path, "w", encoding="utf-8", newline="\n") as fh:
                 fh.write(source.replace(text, replacement))
         r = subprocess.run(
-            ["cargo", "test", "--release", "-p", "pocket-render", "--no-fail-fast",
+            ["cargo", "test", "--release", "-p", "amoris-render", "--no-fail-fast",
              "--test", "hiz", "--test", "occlusion"],
             cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace")
     finally:
@@ -111,7 +111,7 @@ def main():
         sys.exit(f"uncommitted changes in {files}: commit or stash them first")
     head = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT,
                           capture_output=True, text=True).stdout.strip()
-    env = {k: os.environ[k] for k in ("POCKET_BACKEND", "POCKET_ADAPTER", "POCKET_GPU_MINIMAL")
+    env = {k: os.environ[k] for k in ("AMORIS_BACKEND", "AMORIS_ADAPTER", "AMORIS_GPU_MINIMAL")
            if k in os.environ}
     results = {"commit": head, "env": env, "mutations": {}}
     survived = []

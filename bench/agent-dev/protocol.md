@@ -1,6 +1,6 @@
 # Courier Arena development benchmark
 
-Version: `courier-v1`. The provider runner owns model selection, independent repetitions,
+Version: `courier-v2`. The provider runner owns model selection, independent repetitions,
 API call budgets, token accounting, transcript retention and measured costs. This suite makes
 no provider requests and reads no credentials.
 
@@ -20,6 +20,10 @@ bugs and four implement gameplay features.
 `manifest.json` freezes the task prompts and fixture version before provider trials. Each grade
 records the task, grader version and actual behavior checks. Do not alter prompts, fixtures or
 checks mid-run. A later protocol change requires a new version and new independent trials.
+
+`courier-v2` (2026-10-16) differs from `courier-v1` only by the engine's rename (charter 5.1): the
+template imports `amoris`, its scene's format is `amoris-scene`, and agents use the `amoris` CLI and
+MCP tools. `courier-v1`'s recorded trials ran on the engine before the rename.
 
 ## Candidate boundary
 
@@ -46,7 +50,7 @@ A task passes only when all of these pass:
 - Native determinism, fork, replay and reload checks on a real collection/dash/damage scenario.
 - File scope: only the allowed module differs from the task's initial fixture.
 
-Behavioral assertions use `/api/call` on an owned `pocket serve` process. They inspect component
+Behavioral assertions use `/api/call` on an owned `amoris serve` process. They inspect component
 state and emitted events, not source patterns. The dash check force-reloads during cooldown,
 uses Play's explicit fork, then proves the edit world is unchanged after stopping Play. Other
 checks force-reload once-only flags and test independent couriers. Every host has bounded
@@ -65,14 +69,14 @@ software-engineering ability or a model comparison without matched independent b
 python3 tools/eval/agent_dev_bench.py list
 python3 tools/eval/agent_dev_bench.py prepare --task dash-cooldown --project /absolute/fresh/game
 python3 tools/eval/agent_dev_bench.py grade --task dash-cooldown \
-  --project /absolute/fresh/game --pocket /absolute/path/to/pocket \
+  --project /absolute/fresh/game --amoris /absolute/path/to/amoris \
   --output /absolute/fresh/grade
-python3 tools/eval/agent_dev_bench.py selftest --pocket /absolute/path/to/pocket \
+python3 tools/eval/agent_dev_bench.py selftest --amoris /absolute/path/to/amoris \
   --output /absolute/fresh/selftest
 ```
 
 The Python API exposes `TASKS`, `prepare(task, dest)` and
-`grade(task, project, pocketbin, output=None)`. The CLI exits nonzero for a failed grade or
+`grade(task, project, amorisbin, output=None)`. The CLI exits nonzero for a failed grade or
 self-test. Preparation refuses an existing candidate directory.
 
 ## Validation evidence

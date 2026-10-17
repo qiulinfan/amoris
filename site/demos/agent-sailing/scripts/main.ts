@@ -1,4 +1,4 @@
-import { game } from "pocket";
+import { game } from "amoris";
 import { Helm, helm } from "./helm";
 import { Crew, Tally, Log, Cargo } from "./components";
 import { muster, log, takeAboard } from "./rules";

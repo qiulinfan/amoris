@@ -8,10 +8,10 @@ Workloads, offscreen, each frame submitted and waited for, timestamped passes:
   mode with GTAO off and on (normals from the depth), and the normal target for msaa and taa;
   with `--scales`, TAA and MSAA with TAA at each scale below 1;
 - `cubes`: many_cubes' sphere of 1.6M cubes (`--headless-bench`, geometry-bound) at 1600x900,
-  every anti-aliasing mode with GTAO off and on, through POCKET_AA and POCKET_GTAO;
+  every anti-aliasing mode with GTAO off and on, through AMORIS_AA and AMORIS_GTAO;
 - `dense`: many_cubes' dense grid (`--dense --headless-bench --settle 5`, the UE5 comparison's
   scene) at `--sizes`, with occlusion culling `--occlusion` (off, auto), MSAA at the output's
-  size and TAA at each of `--scales` (POCKET_RENDER_SCALE), GTAO off; `--prepass on` pins the
+  size and TAA at each of `--scales` (AMORIS_RENDER_SCALE), GTAO off; `--prepass on` pins the
   depth prepass, whose auto mode may otherwise decide differently from one configuration to the
   next.
 
@@ -19,7 +19,7 @@ Workloads, offscreen, each frame submitted and waited for, timestamped passes:
 (PREFIX-start.json, PREFIX-end.json). `--configs` keeps the check scene's configurations it names
 (aa_eval's `--bench-configs`: `aa:gtao`, and `aa:gtao:scale` below a scale of 1). Rounds interleave every configuration so that
 other work on the machine spreads over all of them. Build first: `cargo build --release -p
-pocket-render --example aa_eval --example many_cubes`. Then, from the repository root:
+amoris-render --example aa_eval --example many_cubes`. Then, from the repository root:
 
     python tools/aa_bench.py --adapters nvidia,780m --backends vulkan,dx12 --rounds 2 \\
         --out out/bench-runs/aa/bench-native.json
@@ -74,7 +74,7 @@ def aa_eval(env, sizes, frames, scratch, scales, configs):
 
 def cubes(env, aa, gtao, frames, size="1600x900", dense=False, occlusion=None, scale=1.0,
           prepass=None):
-    e = dict(env, POCKET_AA=aa, POCKET_GTAO=gtao, POCKET_RENDER_SCALE=str(scale))
+    e = dict(env, AMORIS_AA=aa, AMORIS_GTAO=gtao, AMORIS_RENDER_SCALE=str(scale))
     argv = [example("many_cubes"), "--headless-bench", str(frames), "--size", size]
     if dense:
         argv += ["--dense", "--settle", "5"]
@@ -141,7 +141,7 @@ def main():
     for r in range(a.first_round, a.first_round + a.rounds):
         for adapter in a.adapters.split(","):
             for backend in a.backends.split(","):
-                env = dict(os.environ, POCKET_BACKEND=backend, POCKET_ADAPTER=adapter)
+                env = dict(os.environ, AMORIS_BACKEND=backend, AMORIS_ADAPTER=adapter)
                 if "check" in workloads:
                     for row in aa_eval(env, a.sizes, a.frames, scratch, a.scales, a.configs):
                         keep(row, r, adapter, backend)

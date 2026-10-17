@@ -55,7 +55,7 @@ class MetadataTests(unittest.TestCase):
         agent_summary = {"stop_reason": "stop", "provider_calls": 0, "tool_calls": 0,
                          "metered_cost_upper_usd": "0"}
         with tempfile.TemporaryDirectory() as temp:
-            args = SimpleNamespace(output=Path(temp), pocket=Path("unused"), repeats=1,
+            args = SimpleNamespace(output=Path(temp), amoris=Path("unused"), repeats=1,
                                    tasks=["collection-range"])
             with patch.object(runner, "Host", return_value=host), \
                     patch.object(runner, "DeveloperTools", return_value=native), \

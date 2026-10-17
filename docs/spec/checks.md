@@ -44,9 +44,9 @@ correctness does not depend on discipline (charter 3.7).
   the established `cargo xtask` convention (matklad's xtask pattern, used by rust-analyzer): a
   workspace crate `xtask` run through the alias `[alias] xtask = "run --package xtask --"` in
   `.cargo/config.toml`, built by the pinned toolchain, nothing to install. `xtask` links no engine
-  crate (`architecture.md`, 4.15); it drives `cargo`, the built `pocket` binary and Chrome as
+  crate (`architecture.md`, 4.15); it drives `cargo`, the built `amoris` binary and Chrome as
   processes, so a compile error is a result it reports, not a crash.
-- **`pocket check <project>`**: one project's checks (8) plus its type check and lint (6.4), in
+- **`amoris check <project>`**: one project's checks (8) plus its type check and lint (6.4), in
   process, on the release build. It is what an agent runs after editing a game (the apply loop of
   charter 4.2.5); the developer-facing MCP tool `checks` returns its report (shared/contract/mcp.md,
   6). `cargo xtask check` runs it for every project that has a `check.toml`.
@@ -57,7 +57,7 @@ Both print the same report shape (10) and use the same exit codes (11).
 
 ```text
 cargo xtask check [--json] [--quick] [--only STEP,...] [--skip STEP,...] [--jobs N] [--record]
-pocket check <project> [--json] [--seeds N,...] [--only CHECK,...]
+amoris check <project> [--json] [--seeds N,...] [--only CHECK,...]
 ```
 
 | Flag | Meaning |
@@ -123,12 +123,12 @@ and once for `wasm32-unknown-unknown` (features resolve per target), and `tools/
 which mirrors `architecture.md`, 5:
 
 ```toml
-[crate.pocket-physics]
+[crate.amoris-physics]
 group = "game"
-deps = ["pocket-sim", "pocket-assets"]
+deps = ["amoris-sim", "amoris-assets"]
 web = true
 
-[crate.pocket-contract]
+[crate.amoris-contract]
 group = "contract"
 deps = []
 web = true
@@ -179,8 +179,8 @@ cross-target hashes, `docs/design/networking.md`, Determinism).
   for every crate with `web = true`, so `#[cfg(target_arch = "wasm32")]` code (the worker loop, web
   pacing, the injected clock) is linted too; each diagnostic:
   `clippy.warning {path, line, lint, message}`.
-- The crates that hold tick code (`pocket-sim`, `pocket-persist`, `pocket-physics`,
-  `pocket-interface`, `pocket-script`) and `pocket-runtime` each carry a `clippy.toml` (clippy reads
+- The crates that hold tick code (`amoris-sim`, `amoris-persist`, `amoris-physics`,
+  `amoris-interface`, `amoris-script`) and `amoris-runtime` each carry a `clippy.toml` (clippy reads
   the one in the crate's directory) with the `disallowed-methods` and `disallowed-types` lists of
   simulation.md 10 and numeric.md 5: the wall clock, the environment, thread spawning, storage-order
   queries, hash map types, and the platform's transcendental functions. spec-sim owns the lists and
@@ -190,7 +190,7 @@ cross-target hashes, `docs/design/networking.md`, Determinism).
   `gen.stale`.
 - A use whose order provably never reaches the world (a lookup-only cache) carries
   `#[allow(clippy::disallowed_types)]` with a comment saying why; reviews look for those.
-  `pocket-runtime` applies the boundary writes, so it takes the hash-map and query-order lists; its
+  `amoris-runtime` applies the boundary writes, so it takes the hash-map and query-order lists; its
   loop-clock module alone reads `Instant::now`, under `#[allow(clippy::disallowed_methods)]` with
   its reason (`threads.md`, 3.2).
 - A list that stops resolving after a dependency update would pass silently, so a fixture crate that
@@ -200,7 +200,7 @@ cross-target hashes, `docs/design/networking.md`, Determinism).
 ### 5.4 `gen`: generated files
 
 `cargo xtask gen --check` runs every registered generator into a temporary directory and compares
-byte for byte. Generators that need engine types run the built binary (`pocket gen --out <dir>`):
+byte for byte. Generators that need engine types run the built binary (`amoris gen --out <dir>`):
 the `.d.ts` files (spec-script), the JSON Schemas of the command catalog and the shared contract
 (spec-contract, spec-mcp), the budgets table in `budgets.md` from `bench/budgets/` (`budgets.md`,
 8.2), every `clippy.toml` from `tools/clippy-determinism.toml` (5.3), and `schema.lock.json` with
@@ -224,8 +224,8 @@ generators' current bytes; it does not record or compare shared file hashes.
 `build.failed {crate, errors}` with the first ten as `path:line: message`. Release because every
 timing and the agents' runs use it (`architecture.md`, 7.2; master's debug build was 25 to 31 times
 slower, `docs/decisions/0006-agent-runs-release.md`), and one profile keeps the build time and the
-disk within this machine's means; only the full check's cross-build variant (8.2) builds `pocket` in
-debug as well, with `pocket-sim`'s feature `invariants` (simulation.md 4.1), which the test builds
+disk within this machine's means; only the full check's cross-build variant (8.2) builds `amoris` in
+debug as well, with `amoris-sim`'s feature `invariants` (simulation.md 4.1), which the test builds
 also enable through a dev-dependency.
 
 ### 6.2 `test`
@@ -247,15 +247,15 @@ a Rust-side defect (8.6).
 ### 6.3 `wasm`
 
 `cargo check --target wasm32-unknown-unknown --profile web --locked --no-default-features -p <crate>`
-for every game crate with `web = true` in the graph file, then `-p pocket-web` with the shipped
+for every game crate with `web = true` in the graph file, then `-p amoris-web` with the shipped
 feature set (none) and with `editor`. Features are off by default everywhere (architecture.md 7.4),
 so this is what the shipped page links. A failure is `wasm.check_failed {crate, errors}`. This is
 the charter's "`wasm32` build in the local checks from day one" (4.1) at the cost of a type check;
 the full web build is step 11. QuickJS-ng's C needs clang for this target: `xtask` sets
 `CC_wasm32_unknown_unknown`, `CXX_wasm32_unknown_unknown` (meshoptimizer's C++ when `import` is on;
 the render spike's `build_web.sh` set it to `clang++`) and `AR_wasm32_unknown_unknown` to the
-`clang`, `clang++` and `llvm-ar` of an LLVM directory named by the environment (`POCKET_LLVM`), else
-`~/.pocket-tools/llvm-23.1.2`, and reports a missing clang as `check.tool_missing`. The vendored
+`clang`, `clang++` and `llvm-ar` of an LLVM directory named by the environment (`AMORIS_LLVM`), else
+`~/.amoris-tools/llvm-23.1.2`, and reports a missing clang as `check.tool_missing`. The vendored
 crate's P7 removes the Windows include workaround (architecture.md 8.1). Machine paths stay out of
 committed files.
 
@@ -265,32 +265,32 @@ For every project: the TypeScript type check and the stateless-script lint, thro
 spec-script names (charter 4.2.4: `tsc` in CI and the apply command; 4.2.5: the lint in the local
 checks). Each finding is `types.error {project, path, line, column, code, message}` or the lint's
 own code (spec-script). When the lint passes, the step writes the project's declarations under
-`.pocket/types/` (with the `tsconfig.json` `tsc` uses when the project has none; it never writes
+`.amoris/types/` (with the `tsconfig.json` `tsc` uses when the project has none; it never writes
 into the source tree: `scripts.types`, script-host.md 7.4) from the project loaded into a game with
 no entities, then runs TypeScript 7's `tsc --noEmit -p` over them as `scripts.check` does
-(`pocket-app` hands `pocket-server`'s runner to `pocket-check`, which spawns no process itself),
+(`amoris-app` hands `amoris-server`'s runner to `amoris-check`, which spawns no process itself),
 with its time as the `tsc` measurement and its version in the summary; a run past 60 s is
-`types.timeout`. `tsc` is found as the server finds it (`POCKET_TSC`, else the first TypeScript 7 in
+`types.timeout`. `tsc` is found as the server finds it (`AMORIS_TSC`, else the first TypeScript 7 in
 `sdk/node_modules` after `cd sdk && bun install`, ...; server.md); `sdk/bun.lock` pins 7.0.2 by
 version and integrity hash, so `bun install` replaces master's pinned download and nothing is
 fetched by the check itself. Without a TypeScript 7 `tsc`, or when the declarations cannot be
 written (`project.unwritable`), the step is inconclusive with `check.tool_missing {tool: "tsc"}`
-(the lint alone is no verdict), and `pocket-app`'s test 7 fails unless `POCKET_NO_TSC=1`.
+(the lint alone is no verdict), and `amoris-app`'s test 7 fails unless `AMORIS_NO_TSC=1`.
 
 ## 7. `web`: the web build in headless Chrome
 
 ### 7.1 Build and package
 
 1. One web module, built once:
-   `cargo build -p pocket-web --target wasm32-unknown-unknown --profile web --locked` with no
+   `cargo build -p amoris-web --target wasm32-unknown-unknown --profile web --locked` with no
    optional feature, then `wasm-bindgen --target web` (the CLI version equal to the crate's pin,
    `=0.2.129`), once as it comes and once through `wasm-opt -O3`, since the spikes disagreed on what
    `-O3` does to speed (`architecture.md`, 8.1). The check page's entry and the game crates' web
    tests are compiled into this shipped module behind a runtime flag the check page sets, so the
    check needs no second fat-LTO build; their bytes count in `web.size.*`. Sizes, and the build's
    peak memory (`build.web.memory`), go to the `perf` step (`budgets.md`, 5.4 and 5.5).
-2. The check page: the module, beside the page (`crates/pocket-web/check/`), in `out/check/web/`,
-   with the packaged projects marked `[web] workload = true` (`pocket pack <project> --web`:
+2. The check page: the module, beside the page (`crates/amoris-web/check/`), in `out/check/web/`,
+   with the packaged projects marked `[web] workload = true` (`amoris pack <project> --web`:
    transpiled scripts, scene, cooked assets), the native hash chains of those projects
    (`expected.json`) and the replay files, both written by the `projects` step, which `web` needs
    (4).
@@ -307,7 +307,7 @@ these steps in order, and sets `document.title` to `DONE <json>` or `FAIL <json>
 | `determinism` | for each web workload and seed, the worker's per-tick `TickHash` chain equals the native chain; the first differing tick is named (charter 3.3). The workloads include `bodies` (200 bodies, numeric.md 5) and, as a negative control until the glamx and parry patch lands, the physics fixture with a hull given a density, a joint and a CCD body, which must fail with `web.cross_target_diverged` (8.6) | `web.cross_target_diverged {project, seed, tick, native, web}` |
 | `replay` | each replay recorded natively replays in the worker, which has no transpiler, from its embedded compiled modules and data with the recorded hashes (replay.md 2.4; the browser-local form watches agents' replays, charter 5.1) | `web.replay_diverged {project, tick}` |
 | `threads` | the ordering and snapshot-rebuild tests through messages (`threads.md`, 11) | `web.threads_failed {test, message}` |
-| `shaders` | every WGSL module of `pocket-render` compiles under Tint (`createShaderModule`, `getCompilationInfo`) and every pipeline is created inside `pushErrorScope("validation")` without an error | `web.shader_rejected {module, messages}` |
+| `shaders` | every WGSL module of `amoris-render` compiles under Tint (`createShaderModule`, `getCompilationInfo`) and every pipeline is created inside `pushErrorScope("validation")` without an error | `web.shader_rejected {module, messages}` |
 | `frame` | the reference scene draws one 1280 by 720 frame offscreen whose pixels are not all the clear colour, with no validation error | `web.frame_empty {stats}` |
 | `perf` | only when the `perf` step asks: web tick, fork, frame and start-up measurements (`budgets.md`) | |
 
@@ -392,8 +392,8 @@ The runs use `Game` synchronously, with no thread, and hash every tick (spec-per
 | Variant | How | Catches |
 |---|---|---|
 | same process | two `Game`s from the same project and seed, stepped alternately on one thread with the same inputs; hashes compared after every tick | state shared between instances through process globals, which would also break parallel forks |
-| cross process | `pocket check` runs itself again as a child process (`--chain-only`) per seed and compares the child's hash chain with its own | per-process variation: hash-map seeds (`RandomState`), addresses, thread identities |
-| cross build | the sailing workload run by a debug build of `pocket` and compared with the release build's chain; full check only, since it needs a second build (simulation.md 12, item 10) | optimizer-dependent results, debug-only code paths |
+| cross process | `amoris check` runs itself again as a child process (`--chain-only`) per seed and compares the child's hash chain with its own | per-process variation: hash-map seeds (`RandomState`), addresses, thread identities |
+| cross build | the sailing workload run by a debug build of `amoris` and compared with the release build's chain; full check only, since it needs a second build (simulation.md 12, item 10) | optimizer-dependent results, debug-only code paths |
 | cross target | the web page (7.2) | compiler, target and engine differences |
 
 The same-process variant is spec-persist's `lockstep` over two `Stepper`s (replay.md 3.3); the
@@ -423,7 +423,7 @@ For each seed and each fork point F, with K = `[fork] ticks` (charter 3.7):
 
 1. **Record**: a run with spec-persist's recorder on writes a replay file (the inputs as applied,
    per-tick hashes, the script bundle hash and the engine version, charter 7 item 13).
-2. **Verify in a fresh process**: `pocket replay --verify <file> --json`, which is spec-persist's
+2. **Verify in a fresh process**: `amoris replay --verify <file> --json`, which is spec-persist's
    `verify` (replay.md 3.4), replays it; every tick's hash equals the recorded one, else
    `replay.diverged {divergence}`, which names the first diverging tick (charter 3.3).
 3. **Localization**: the check writes a copy of the recording without the first recorded write at or
@@ -456,17 +456,17 @@ step.
 |---|---|---|---|
 | `module-state` | a script keeps a module-level counter that feeds a component; the lint is off for this fixture | `reload.diverged` | project `tests/fixtures/controls/module-state` |
 | `module-state-lint` | the same script with the lint on | spec-script's lint code | project |
-| `process-random` | a test-only Rust system writes a value derived from `RandomState` | `determinism.diverged` (cross process) | `pocket-check` integration test |
-| `shared-static` | a test-only system increments a process-global atomic and writes it | `determinism.diverged` (same process) and `fork.original_changed` | `pocket-check` integration test |
-| `unrecorded-write` | a test-only path changes the world outside the command queue at one tick of the recording run | `replay.diverged` | `pocket-check` integration test |
+| `process-random` | a test-only Rust system writes a value derived from `RandomState` | `determinism.diverged` (cross process) | `amoris-check` integration test |
+| `shared-static` | a test-only system increments a process-global atomic and writes it | `determinism.diverged` (same process) and `fork.original_changed` | `amoris-check` integration test |
+| `unrecorded-write` | a test-only path changes the world outside the command queue at one tick of the recording run | `replay.diverged` | `amoris-check` integration test |
 | `tint-only` | a WGSL module naga accepts and Tint rejects (a `textureSample` under non-uniform control flow) | `web.shader_rejected` | web page, fixture module |
 | `lint-fixture` | a fixture crate using every item of the disallowed lists (simulation.md 12, item 8) | `clippy.warning` for each item | `clippy` step: `tests/fixtures/lint-fixture` is outside the workspace (`[workspace] exclude`) and linted on its own with the same generated lists |
 | `physics-platform-math` | the physics fixture of numeric.md 5: a dynamic hull with a density, a joint and a CCD body, whose mass properties, joint and CCD math call the platform's library natively | `web.cross_target_diverged` | web page, `tests/fixtures/controls/physics-platform-math` with `[expect] fail = "web.cross_target_diverged"`; when it reports `check.control_passed`, the glamx and parry patch is proved and the fixture becomes a positive workload (numeric.md 5) |
 | `bad-edge`, `bad-feature` | an edge not allowed; `rapier3d` with `parallel` | `deps.edge_not_allowed`, `deps.feature_not_allowed` | `xtask` unit tests over fixture trees |
 
-Controls that need a defect in Rust are integration tests of `pocket-check` that build a `Game` with
+Controls that need a defect in Rust are integration tests of `amoris-check` that build a `Game` with
 the extra system and run the same check functions (the cross-process one re-runs the test binary as
-its child), so no fixture code ships in the `pocket` binary.
+its child), so no fixture code ships in the `amoris` binary.
 
 ### 8.7 Contract conformance and the benchmark self-test
 
@@ -500,7 +500,7 @@ missing). Everything it finds about the numbers is a warning:
    `perf.not_reference`;
 2. on R1, check that QuickJS-ng was built by clang-cl (`EngineVersion.c_compiler`), else the warning
    `perf.wrong_compiler` (architecture.md 7.3), and calibrate the CPU and the GPU (`budgets.md`, 7);
-3. run every budget's measurement: `pocket bench <workload> --json` natively, the page's `perf` step
+3. run every budget's measurement: `amoris bench <workload> --json` natively, the page's `perf` step
    in the browser, and the sizes of 7.1. Each is reported as a `Measurement` (10.1) with its
    reference figure, and compared with the machine's accepted baseline for drift (`budgets.md`,
    8.3);
@@ -532,7 +532,7 @@ cannot become a baseline.
 ### 10.1 The report
 
 ```rust
-// xtask/src/report.rs, the same shape printed by `pocket check --json`
+// xtask/src/report.rs, the same shape printed by `amoris check --json`
 pub struct Report {
     pub format: u32,                  // 1
     pub command: String,              // the command line as run
@@ -673,7 +673,7 @@ file to keep in sync. The full report stays in `out/check/report.json` on the ma
    `fmt`; 10, `gen` without the build; 11, the lint fixture lives in `tools/lint-fixture/`; 12,
    codes added; 13, what `deps` reads; 14, running `xtask` while a manifest is broken; 15, the web
    check's pieces; 16, `check.toml` as built; 17, how the four checks run; 18, codes added; 19, the
-   Rust-side controls; 20, the cross-build variant as built; 21, what `pocket check` refuses and
+   Rust-side controls; 20, the cross-build variant as built; 21, what `amoris check` refuses and
    what its children may answer; 22, the web step as built; 23, a full run on Windows (Pioneer,
    2026-10-09: what it fixed, and what `contract` and `perf` still need); 24, the `gpus` step
    (Pioneer, the owner's decision of 2026-10-16).

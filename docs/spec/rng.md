@@ -11,7 +11,7 @@ the world seed, the tick and a key naming who draws. Between ticks the only rand
 world seed. This specification fixes the generator, the derivation, the keys, the draw operations,
 what scripts get, what is hashed, and the checks. It builds on [simulation.md](simulation.md)
 (ticks, boundaries, invocations) and [numeric.md](numeric.md) (the math library some draws use). The
-code lives in `pocket-sim` ([architecture.md](architecture.md), 4.1).
+code lives in `amoris-sim` ([architecture.md](architecture.md), 4.1).
 
 ## 1. Related specifications
 
@@ -284,7 +284,7 @@ Every operation is written with exactly rounded operations and the deterministic
 ## 8. Outside the simulation
 
 Presenters (particle effects, visual jitter, audio variation), the benchmark harness, and scenario
-bots that act from outside the world use their own generators and never `pocket-sim`'s streams;
+bots that act from outside the world use their own generators and never `amoris-sim`'s streams;
 nothing outside a tick can draw from them (5.3). A bot affects the world only through boundary
 writes, which the replay records, so its own randomness never needs to be in the world.
 
@@ -364,7 +364,7 @@ The probe ran on the reference laptop under the conditions of simulation.md, 13.
    `below_u64`.
 9. **Slice 1: not run.** The derivation-quality test (10, item 6) needs PractRand and 2^34 bytes per
    stream kind; it is not part of this slice's tests. The fork part of item 4 needs
-   `pocket-persist`; pocket-sim's tests run two worlds from the same seed and writes instead, and
+   `amoris-persist`; amoris-sim's tests run two worlds from the same seed and writes instead, and
    show a reseed changing every stream from the next tick on.
 
 ## 13. References

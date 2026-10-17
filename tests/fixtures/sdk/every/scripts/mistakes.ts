@@ -1,7 +1,7 @@
 // Mistakes the SDK's types must refuse (script-host.md 12, test 7): every line after a
 // `@ts-expect-error` is a type error, and `tsc` fails on one that is not. Never called.
-import { system } from "pocket";
-import type { SystemContext } from "pocket";
+import { system } from "amoris";
+import type { SystemContext } from "amoris";
 
 export function mistakes(ctx: SystemContext): void {
     const none = ctx.query({ with: ["Every"], fields: [] });

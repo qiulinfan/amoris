@@ -88,7 +88,7 @@ Each configuration provides three commands, named in `engines/<line>.toml`:
 name = "amoris"
 script_language = "typescript"      # what the configuration's agents write
 entry = "scripts/main.ts"           # the entry script a brief calls {entry}
-binary = "{root}/target/release/pocket{exe}"   # frozen per run: copied before the run starts
+binary = "{root}/target/release/amoris{exe}"   # frozen per run: copied before the run starts
 # A fresh project from a fixture (tasks.md, Fixtures) or empty, in a directory of its own; the
 # fixture's world parameters for this seed (tasks.md 6.1) go in with --params.
 new = ["{binary}", "new", "{dir}", "--from", "{fixture}", "--params", "{params_file}"]
@@ -215,7 +215,7 @@ leaves as the last JSON line on stdout.
 
 ```json
 {"protocol": 1, "suite": "play", "name": "beat_to_windward", "line": "amoris",
- "task": "...", "answer": "null", "project_dir": "/tmp/pocket-bench-x/game-412-07",
+ "task": "...", "answer": "null", "project_dir": "/tmp/amoris-bench-x/game-412-07",
  "mcp": {"command": ["python", ".../proxy.py", "--log", "...", "--", "..."], "env": {}},
  "docs": [".../docs/INDEX.md"], "limits": {"wall_s": 900, "calls": 300}}
 ```
@@ -226,11 +226,11 @@ leaves as the last JSON line on stdout.
  "cost_usd": 0.0, "turns": 0, "tool_calls": 0, "tools": {}, "mcp_protocol": "2025-11-25"}}
 ```
 
-- The runner registers `mcp.command` as an MCP server named `pocket` with its agent, starts the
+- The runner registers `mcp.command` as an MCP server named `amoris` with its agent, starts the
   agent in `project_dir` (developer suite) or an empty directory (player suite), gives it the task
   text and the docs (developer suite only), and reports the agent's own token counts. In the player
   suite the agent gets the MCP tools and nothing else: Claude Code runs with
-  `--allowedTools "mcp__pocket__*"` and its file, shell and web tools disallowed, and the Codex,
+  `--allowedTools "mcp__amoris__*"` and its file, shell and web tools disallowed, and the Codex,
   opencode and omp runners use their equivalents, since an agent that can read files could read
   tasks.md's seed formulas and recompute where the crates are. A trace that shows any call other
   than an MCP tool fails the row as `peeked`. Cache reads are reported apart: over nine tenths of

@@ -1,5 +1,5 @@
 // The sailing game (charter 2.4.1) with the debugging evaluation's helm (tools/eval/debug_eval.py).
-import { game } from "pocket";
+import { game } from "amoris";
 import { Cargo, Crew, Log, Tally } from "./components";
 import { Helm, helm } from "./helm";
 import { log, muster, takeAboard } from "./rules";

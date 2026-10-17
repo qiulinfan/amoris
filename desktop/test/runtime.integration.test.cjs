@@ -10,7 +10,7 @@ test('packaged runtime edits, type-checks, loads viewport assets, and stops an e
 }, async () => {
   const resourcesDir = process.env.AMORIS_TEST_RESOURCES;
   const resources = {
-    pocket: path.join(resourcesDir, 'pocket'), editor: path.join(resourcesDir, 'editor'),
+    amoris: path.join(resourcesDir, 'amoris'), editor: path.join(resourcesDir, 'editor'),
     viewport: path.join(resourcesDir, 'viewport'), tsc: path.join(resourcesDir, 'typescript/tsc'),
   };
   const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'amoris-desktop-runtime-'));
@@ -31,10 +31,10 @@ test('packaged runtime edits, type-checks, loads viewport assets, and stops an e
     };
     assert.equal((await call('project.info')).root, await fs.realpath(project));
     await assert.rejects(new HostProcess(resources).start(project), /already open/);
-    const module = await fetch(ready.origin + '/wasm/pocket_web.js');
+    const module = await fetch(ready.origin + '/wasm/amoris_web.js');
     assert.equal(module.status, 200);
     assert.match(await module.text(), /createViewport/);
-    const wasm = await fetch(ready.origin + '/wasm/pkg/pocket_viewport_bg.wasm');
+    const wasm = await fetch(ready.origin + '/wasm/pkg/amoris_viewport_bg.wasm');
     assert.equal(wasm.status, 200);
     assert.deepEqual([...new Uint8Array(await wasm.arrayBuffer()).slice(0, 4)], [0, 97, 115, 109]);
     await call('scripts.types', { tsconfig: true });
@@ -57,7 +57,7 @@ test('packaged runtime edits, type-checks, loads viewport assets, and stops an e
     assert.equal(stopped.world_hash, edit.world_hash);
     await host.stop();
     assert.ok(host.exitResult);
-    assert.equal(await fs.stat(path.join(project, '.pocket/host.json')).catch(() => null), null);
+    assert.equal(await fs.stat(path.join(project, '.amoris/host.json')).catch(() => null), null);
   } finally {
     await host.stop();
     await fs.rm(temporary, { recursive: true, force: true });

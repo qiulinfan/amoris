@@ -22,8 +22,8 @@ pub struct Failure {
     pub message: String,
 }
 
-/// The crate a suite belongs to, from cargo's `Running unittests src/lib.rs (…/deps/pocket_sim-0a1b…)`
-/// or `Doc-tests pocket_sim` line.
+/// The crate a suite belongs to, from cargo's `Running unittests src/lib.rs (…/deps/amoris_sim-0a1b…)`
+/// or `Doc-tests amoris_sim` line.
 fn suite_name(line: &str) -> Option<String> {
     let t = line.trim();
     if let Some(rest) = t.strip_prefix("Doc-tests ") {
@@ -201,7 +201,7 @@ mod tests {
 
     const OUTPUT: &str = "\
 {\"reason\":\"compiler-artifact\"}
-     Running unittests src\\lib.rs (C:\\t\\release\\deps\\pocket_sim-0a1b2c3d.exe)
+     Running unittests src\\lib.rs (C:\\t\\release\\deps\\amoris_sim-0a1b2c3d.exe)
 
 running 3 tests
 test tests::a ... ok
@@ -212,7 +212,7 @@ failures:
 
 ---- tests::b stdout ----
 
-thread 'tests::b' panicked at crates\\pocket-sim\\src\\lib.rs:9:5:
+thread 'tests::b' panicked at crates\\amoris-sim\\src\\lib.rs:9:5:
 assertion `left == right` failed
   left: 1
  right: 2
@@ -231,7 +231,7 @@ test forks_match ... ok
 
 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
 
-   Doc-tests pocket_sim
+   Doc-tests amoris_sim
 
 running 0 tests
 
@@ -248,7 +248,7 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
         let f = &r.failed[0];
         assert_eq!(
             (f.krate.as_str(), f.test.as_str()),
-            ("pocket_sim", "tests::b")
+            ("amoris_sim", "tests::b")
         );
         assert!(
             f.message.starts_with("thread 'tests::b' panicked at"),
@@ -267,8 +267,8 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
             "xtask"
         );
         assert_eq!(
-            suite_name("   Doc-tests pocket_link").unwrap(),
-            "pocket_link"
+            suite_name("   Doc-tests amoris_link").unwrap(),
+            "amoris_link"
         );
         assert!(suite_name("running 3 tests").is_none());
     }

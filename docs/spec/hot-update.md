@@ -362,14 +362,14 @@ after it.
 4. **Trials on the web.** Recommended: refused in slice 1 (4.2); later, trial ticks in 8 ms slices
    interleaved with main's ticks in the game worker, or a second worker with its own host, measured
    against `web.swap` and the web tick budgets.
-5. **Slice 1: the swap without the request path.** `pocket_script::swap(world, set, force)` is stage
+5. **Slice 1: the swap without the request path.** `amoris_script::swap(world, set, force)` is stage
    5 and 9 of 4.2 on one thread: it instantiates the candidate in the world's host, plans its
    project components (6), registers the added ones and installs the program, keeping the previous
    bundle for `scripts.revert`; any failure leaves the installed program and the world as they were,
    and an unchanged bundle is `Unchanged` unless `force`. It answers a `SwapReport` (`Applied` or
    `Unchanged`, the bundle and the previous one, the systems added, removed and kept, the components
    `Added` or `Unchanged`). The commands of 4.1, the worker stages, trials and recording are
-   `pocket-runtime`'s.
+   `amoris-runtime`'s.
 6. **Slice 1: schema changes.** Same version with the same field names, types and order is
    `Unchanged` (docs and defaults are not compared); a component the world never registered is
    `Added`; the same version with other fields is `version.unbumped`, a lower one
@@ -379,9 +379,9 @@ after it.
    `Unchanged` component takes the candidate's schema, docs and defaults, in the `ScriptAccess`
    resource beside its accessor (its `ComponentId` stays), which every script call resolves first,
    so components inserted after the swap get the new defaults (6; tests/hot_update.rs). The
-   registry's entry keeps the first registration's doc and JSON Schema: `pocket-sim`'s
+   registry's entry keeps the first registration's doc and JSON Schema: `amoris-sim`'s
    `ComponentRegistry` has no way to replace an entry yet, and that crate is not the script host's.
-7. **Slice 1: reload equivalence in the crate's tests.** `crates/pocket-script/tests/reload.rs` runs
+7. **Slice 1: reload equivalence in the crate's tests.** `crates/amoris-script/tests/reload.rs` runs
    the regatta workload with forced reloads at ticks 30, 31 and 77 and with a new host on the same
    thread at tick 50, and compares every tick's digest (choice 14 of script-host.md) with a run
    without them; a fork is a fresh `Sim` on another thread with the same compiled set
@@ -398,5 +398,5 @@ after it.
    `scripts.swap {bundle}`, which always instantiates the named bundle: it is produced only when a
    swap is wanted, so replaying a forced reload reloads too. A swap names its bundle by hash; a game
    finds it among the bundles it prepared, or builds it from the compiled modules a replay embeds
-   (`pocket_runtime::compiled_from_record`), whose systems carry no source sites (only error
+   (`amoris_runtime::compiled_from_record`), whose systems carry no source sites (only error
    locations use them).

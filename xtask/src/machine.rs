@@ -1,6 +1,6 @@
 //! The machine fingerprint every report carries (docs/spec/budgets.md 3), from what the system
 //! answers quickly without administrator rights. The GPUs' backends come from `wgpu`, which xtask
-//! does not link: they stay empty until `pocket` reports them.
+//! does not link: they stay empty until `amoris` reports them.
 
 use crate::report::{GpuInfo, Machine};
 use crate::run::capture;

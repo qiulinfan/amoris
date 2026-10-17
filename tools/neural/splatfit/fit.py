@@ -2,9 +2,9 @@
 
 The closed loop of docs/spec/splats.md 7.1, with no downloaded data:
 
-    cargo run --release -p pocket-render --example splats -- --dataset DIR --views 48
+    cargo run --release -p amoris-render --example splats -- --dataset DIR --views 48
     uv run fit.py DIR --out DIR/fitted.ply
-    cargo run --release -p pocket-render --example splats -- --replay DIR --ply DIR/fitted.ply
+    cargo run --release -p amoris-render --example splats -- --replay DIR --ply DIR/fitted.ply
     uv run fit.py DIR --score        # PSNR of the engine's renders against the references
 
 The differentiable rasterizer is plain PyTorch (runs on Apple MPS, CUDA or the CPU): the same

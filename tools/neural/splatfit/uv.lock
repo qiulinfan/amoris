@@ -535,7 +535,7 @@ wheels = [
 ]
 
 [[package]]
-name = "pocket-splatfit"
+name = "amoris-splatfit"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [

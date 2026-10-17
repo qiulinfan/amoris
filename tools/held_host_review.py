@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The review of the held host (docs/spec/server.md 3.4), re-run against `pocket serve`.
+"""The review of the held host (docs/spec/server.md 3.4), re-run against `amoris serve`.
 
 Two findings of the adversarial review of 2026-10-09, reproduced through `POST /api/call` as the
 reviewer did with the CLI, and what the fixes make of them (docs/bench/agent-debug.md):
@@ -14,7 +14,7 @@ reviewer did with the CLI, and what the fixes make of them (docs/bench/agent-deb
    breakpoint whose condition holds at tick 3000, and a step of 50 ticks sent once it runs.
 
 Standard library only; macOS, Linux and Windows. Usage:
-  python3 tools/held_host_review.py [--pocket target/release/pocket] [--out FILE.json]
+  python3 tools/held_host_review.py [--amoris target/release/amoris] [--out FILE.json]
 """
 
 import argparse
@@ -32,23 +32,23 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 WINDOWS = os.name == "nt"
 EXE = ".exe" if WINDOWS else ""
-DEBUGME = REPO / "crates/pocket-debug/tests/fixtures/debugme"
+DEBUGME = REPO / "crates/amoris-debug/tests/fixtures/debugme"
 SAILING = REPO / "samples/sailing"
 NEXT_LINE = 22  # rules.ts of debugme: `const next = g.level[r] + 1; // MARK next`
 LOG_LINE = 27  # rules.ts of sailing: `const speed = Math.abs(b.speed[r]);`
 
 
 class Served:
-    """`pocket serve` on a fresh copy of a project, and calls to it."""
+    """`amoris serve` on a fresh copy of a project, and calls to it."""
 
-    def __init__(self, pocket, src, tmp, port):
+    def __init__(self, amoris, src, tmp, port):
         self.dir = tmp / f"{src.name}-{port}-{time.monotonic_ns()}"
         shutil.copytree(src, self.dir)
-        shutil.rmtree(self.dir / ".pocket", ignore_errors=True)
+        shutil.rmtree(self.dir / ".amoris", ignore_errors=True)
         self.port = port
         flags = subprocess.CREATE_NEW_PROCESS_GROUP if WINDOWS else 0
         self.proc = subprocess.Popen(
-            [pocket, "serve", str(self.dir), "--port", str(port)],
+            [amoris, "serve", str(self.dir), "--port", str(port)],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             creationflags=flags,
@@ -95,8 +95,8 @@ def outcome(r):
     return f'{e["code"]} queued={e.get("detail", {}).get("queued")}'
 
 
-def stop_after_continue(pocket, tmp, gauges):
-    s = Served(pocket, DEBUGME, tmp, 7931)
+def stop_after_continue(amoris, tmp, gauges):
+    s = Served(amoris, DEBUGME, tmp, 7931)
     try:
         if gauges > 1:
             spawn = [{"spawn": {"name": f"G{k}", "components": {"Gauge": {}}}} for k in range(2, gauges + 1)]
@@ -120,8 +120,8 @@ def stop_after_continue(pocket, tmp, gauges):
         s.close()
 
 
-def continue_then_act(pocket, tmp, rounds):
-    s = Served(pocket, SAILING, tmp, 7932)
+def continue_then_act(amoris, tmp, rounds):
+    s = Served(amoris, SAILING, tmp, 7932)
     edit = {"ops": [{"set": {"entity": "Sloop", "component": "Log", "value": {"distance": 5}}}]}
     try:
         s.call("debug.breakpoints.set", {"file": "rules.ts", "line": LOG_LINE})
@@ -162,10 +162,10 @@ def continue_then_act(pocket, tmp, rounds):
         s.close()
 
 
-def step_latency(pocket, tmp, rounds):
+def step_latency(amoris, tmp, rounds):
     """A `time.step` into a breakpoint, answered by the game thread at the stop, and reads while
     held (sailing, a breakpoint in the log system), medians in milliseconds."""
-    s = Served(pocket, SAILING, tmp, 7934)
+    s = Served(amoris, SAILING, tmp, 7934)
     ms = {"time_step_to_breakpoint": [], "status_held": [], "world_get_held": [], "apply_refused": []}
 
     def timed(name, method, params=None):
@@ -188,8 +188,8 @@ def step_latency(pocket, tmp, rounds):
         s.close()
 
 
-def two_steps(pocket, tmp):
-    s = Served(pocket, DEBUGME, tmp, 7933)
+def two_steps(amoris, tmp):
+    s = Served(amoris, DEBUGME, tmp, 7933)
     try:
         s.call("time.step", {"ticks": 20})  # past the fixture's `debugger;` statement at tick 8
         s.call("debug.breakpoints.set", {"file": "rules.ts", "line": NEXT_LINE, "condition": "ctx.tick === 3000"})
@@ -231,18 +231,18 @@ def two_steps(pocket, tmp):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--pocket", default=str(REPO / f"target/release/pocket{EXE}"))
+    ap.add_argument("--amoris", default=str(REPO / f"target/release/amoris{EXE}"))
     ap.add_argument("--out", default=None)
     ap.add_argument("--rounds", type=int, default=60)
     a = ap.parse_args()
-    pocket = str(Path(a.pocket).resolve())
-    tmp = Path(tempfile.mkdtemp(prefix="pocket-review-"))
+    amoris = str(Path(a.amoris).resolve())
+    tmp = Path(tempfile.mkdtemp(prefix="amoris-review-"))
     try:
         report = {
-            "stop_after_continue": [stop_after_continue(pocket, tmp, g) for g in (1, 1, 1, 3, 3, 3)],
-            **continue_then_act(pocket, tmp, a.rounds),
-            "two_steps_at_a_stop": two_steps(pocket, tmp),
-            "held_ms_median_keepalive": step_latency(pocket, tmp, 20),
+            "stop_after_continue": [stop_after_continue(amoris, tmp, g) for g in (1, 1, 1, 3, 3, 3)],
+            **continue_then_act(amoris, tmp, a.rounds),
+            "two_steps_at_a_stop": two_steps(amoris, tmp),
+            "held_ms_median_keepalive": step_latency(amoris, tmp, 20),
         }
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

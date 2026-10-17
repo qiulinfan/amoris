@@ -2,9 +2,9 @@
 // once per tick (falloff by distance, armor, a critical roll from the engine RNG), `combat.damaged`
 // events carry every hit (250 to an event, as event data holds at most 16 KiB) and one
 // `combat.died` event every kill; then the dead respawn, the living regenerate and everyone
-// drifts. The Rust twin (crates/pocket-script/examples/rules_bench/workload.rs) must build the
+// drifts. The Rust twin (crates/amoris-script/examples/rules_bench/workload.rs) must build the
 // same world at every tick.
-import { type Entity, system } from "pocket";
+import { type Entity, system } from "amoris";
 import { COUNT, CRIT_CHANCE, HITS_PER_EVENT, REGEN, driftX, driftY, falloff, mitigation, wobble } from "./combat";
 
 export const populate = system({

@@ -1,6 +1,6 @@
 // Measures a page's frame times in Google Chrome (headless, WebGPU on), driven over the Chrome
 // DevTools Protocol with Node's built-in WebSocket: node tools/web_bench.mjs <url> [seconds]
-// [width] [height]. The page publishes `window.pocketSamples` ({frame_ms, gpu_ms, backend}).
+// [width] [height]. The page publishes `window.amorisSamples` ({frame_ms, gpu_ms, backend}).
 // A temporary profile is used; the user's Chrome profile is never touched. Chrome is found at its
 // default install path on macOS, Windows and Linux, or at `CHROME=<path>`. `CHROME_FLAGS="..."`
 // adds switches (e.g. `--force_high_performance_gpu`); `VSYNC=1` keeps Chrome's vsync and frame-rate
@@ -28,7 +28,7 @@ const candidates = {
 }[process.platform] || [];
 const chrome = process.env.CHROME || candidates.find((p) => existsSync(p));
 if (!chrome) throw new Error(`no Chrome found (tried ${candidates.join(", ")}); set CHROME=<path>`);
-const profile = mkdtempSync(join(tmpdir(), "pocket-bench-"));
+const profile = mkdtempSync(join(tmpdir(), "amoris-bench-"));
 const port = 9300 + Math.floor(Math.random() * 600);
 // Chrome's WebGPU runs on Metal (macOS), D3D12 (Windows) or Vulkan (Linux). The Vulkan feature
 // switch (kept from the macOS runs) is left out on Windows, where it would move Chrome's own
@@ -98,7 +98,7 @@ for (const c of (process.env.CLICK || "").split(";").filter(Boolean)) {
   await sleep(800);
 }
 const r = await send("Runtime.evaluate", { returnByValue: true, expression: `(() => {
-  const s = (window.pocketSamples || []).slice(-300);
+  const s = (window.amorisSamples || []).slice(-300);
   const ft = s.map((x) => x.frame_ms).sort((a, b) => a - b);
   const mean = (a) => a.reduce((x, y) => x + y, 0) / Math.max(a.length, 1);
   return { url: location.href, frames: s.length, frame_ms_mean: mean(ft), frame_ms_p50: ft[Math.floor(ft.length / 2)],

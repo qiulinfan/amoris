@@ -6,11 +6,11 @@ Runs many_cubes (the sphere and the dense grid of 1.6M cubes) and the 1M-splat g
 wall time between presented frames, no vsync), for every backend on every adapter, `--rounds`
 times in turn so that a disturbance from other work spreads over all configurations instead of
 landing on one. Variants time the D3D12-specific costs: wgpu's indirect validation
-(WGPU_VALIDATION_INDIRECT_CALL) and FXC instead of DXC (POCKET_DXC=fxc). `crowd-headless` is
+(WGPU_VALIDATION_INDIRECT_CALL) and FXC instead of DXC (AMORIS_DXC=fxc). `crowd-headless` is
 lod_field with 40 skinned columns, the per-frame CPU work that grows with skinned parts and
 batches (docs/bench/dx12.md 10).
 
-Build first: `cargo build --release -p pocket-render --examples`. Then, from the repository root:
+Build first: `cargo build --release -p amoris-render --examples`. Then, from the repository root:
 
     python tools/backend_bench.py --adapters nvidia,780m --rounds 2 \
         --summary out/bench-runs/dx12/bench.json
@@ -64,7 +64,7 @@ VARIANTS = {
                                     ["cubes-sphere-headless", "cubes-sphere-window"]),
     "vulkan-indirect-validation": ("vulkan", {"WGPU_VALIDATION_INDIRECT_CALL": "1"},
                                    ["cubes-sphere-headless", "cubes-sphere-window"]),
-    "dx12-fxc": ("dx12", {"POCKET_DXC": "fxc"}, ["cubes-sphere-headless"]),
+    "dx12-fxc": ("dx12", {"AMORIS_DXC": "fxc"}, ["cubes-sphere-headless"]),
 }
 
 NUM = r"([-+0-9.eE]+)"
@@ -148,7 +148,7 @@ def cool(limit):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--adapters", default="", help="POCKET_ADAPTER values, comma separated")
+    ap.add_argument("--adapters", default="", help="AMORIS_ADAPTER values, comma separated")
     ap.add_argument("--variants", default=",".join(VARIANTS))
     ap.add_argument("--cases", default="")
     ap.add_argument("--rounds", type=int, default=2)
@@ -182,9 +182,9 @@ def main():
                         continue
                     for build, _ in builds:
                         kind, cmd = all_cases[build][case]
-                        env = dict(os.environ, POCKET_BACKEND=backend, **extra)
+                        env = dict(os.environ, AMORIS_BACKEND=backend, **extra)
                         if adapter:
-                            env["POCKET_ADAPTER"] = adapter
+                            env["AMORIS_ADAPTER"] = adapter
                         t = time.time()
                         p = subprocess.run(cmd, cwd=ROOT, env=env, capture_output=True, text=True,
                                            timeout=900)

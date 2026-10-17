@@ -1,5 +1,5 @@
 // Monaco, bundled (no CDN): the editor core with its features, TypeScript's syntax and language
-// service in a worker, the `pocket` module's declarations, and a theme matching the editor.
+// service in a worker, the `amoris` module's declarations, and a theme matching the editor.
 // Loaded lazily with the Scripts panel.
 
 import * as monaco from "monaco-editor/editor";
@@ -8,9 +8,9 @@ import "monaco-editor/languages/definitions/typescript/register";
 import * as ts from "monaco-editor/languages/features/typescript/register";
 import EditorWorker from "monaco-editor/editor/editor.worker?worker";
 import TsWorker from "monaco-editor/languages/features/typescript/ts.worker?worker";
-// The SDK as the engine embeds it (generated from the prelude by crates/pocket-script/tests/prelude.rs),
+// The SDK as the engine embeds it (generated from the prelude by crates/amoris-script/tests/prelude.rs),
 // for when the host has not sent the project's declarations yet.
-import bundledSdk from "../../../../crates/pocket-script/src/prelude/pocket.d.ts?raw";
+import bundledSdk from "../../../../crates/amoris-script/src/prelude/amoris.d.ts?raw";
 import type { ScriptTypes } from "../../host/protocol";
 import { useScripts } from "../../state/scripts";
 
@@ -20,7 +20,7 @@ self.MonacoEnvironment = {
   },
 };
 
-// The options of the tsconfig.json the engine writes into a project (pocket-script's types::TSCONFIG),
+// The options of the tsconfig.json the engine writes into a project (amoris-script's types::TSCONFIG),
 // so the worker reports what `tsc` reports in scripts.check.
 ts.typescriptDefaults.setCompilerOptions({
   target: ts.ScriptTarget.ESNext,
@@ -38,7 +38,7 @@ ts.typescriptDefaults.setEagerModelSync(true);
 
 /** Until the host's declarations arrive: any component name, loosely typed. */
 const LOOSE_COMPONENTS = `export {};
-declare module "pocket" {
+declare module "amoris" {
   interface Components { [name: string]: any }
   interface ComponentColumns { [name: string]: any }
 }
@@ -46,27 +46,27 @@ declare module "pocket" {
 
 let loaded: { dispose(): void }[] = [];
 
-/** Loads `pocket`'s declarations into the TypeScript worker as `node_modules/pocket`. */
-function loadSdk(pocket: string, components: string) {
+/** Loads `amoris`'s declarations into the TypeScript worker as `node_modules/amoris`. */
+function loadSdk(amoris: string, components: string) {
   for (const lib of loaded) lib.dispose();
   loaded = [
-    ts.typescriptDefaults.addExtraLib(pocket, "file:///node_modules/pocket/index.d.ts"),
-    ts.typescriptDefaults.addExtraLib(components, "file:///node_modules/pocket/components.d.ts"),
+    ts.typescriptDefaults.addExtraLib(amoris, "file:///node_modules/amoris/index.d.ts"),
+    ts.typescriptDefaults.addExtraLib(components, "file:///node_modules/amoris/components.d.ts"),
   ];
 }
 
-/** Where the `pocket` module's types come from, for the status bar. */
+/** Where the `amoris` module's types come from, for the status bar. */
 export function sdkLabel(types: ScriptTypes | null): string {
   if (!types?.text) return "bundled (components untyped until the host answers scripts.types)";
   const c = types.components;
-  return `.pocket/types (${c.engine.length} engine + ${c.project.length} game components)`;
+  return `.amoris/types (${c.engine.length} engine + ${c.project.length} game components)`;
 }
 
 function apply() {
   const text = useScripts.getState().types?.text;
-  const pocket = text?.["pocket.d.ts"];
+  const amoris = text?.["amoris.d.ts"];
   const components = text?.["components.d.ts"];
-  if (pocket && components) loadSdk(pocket, components);
+  if (amoris && components) loadSdk(amoris, components);
   else loadSdk(bundledSdk, LOOSE_COMPONENTS);
 }
 
@@ -75,7 +75,7 @@ useScripts.subscribe((s, prev) => {
   if (s.types !== prev.types) apply();
 });
 
-monaco.editor.defineTheme("pocket-dark", {
+monaco.editor.defineTheme("amoris-dark", {
   base: "vs-dark",
   inherit: true,
   rules: [

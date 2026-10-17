@@ -7,7 +7,7 @@
 
 What this track closed, each with a test that fails when the defect is put back (the commits say
 which): the worker's held commands whose tick passed (threads.md 5.2), the engine-version build file
-moved out of `pocket-app` and its watch list (architecture.md 4.13), the spec fixes (threads.md 5.2,
+moved out of `amoris-app` and its watch list (architecture.md 4.13), the spec fixes (threads.md 5.2,
 numeric.md's `min_f32`/`max_f32` and their golden sweeps), the occlusion auto mode's activation
 frame (occlusion.md 7), the player layer on the web (player.md 6 and 10), the desktop app on
 Windows (desktop.md), the entity-id readback in Chrome (section 3 here), and, after review, a
@@ -17,7 +17,7 @@ under way a stopping loop dropped unanswered (player.md 6).
 ## 1. The desktop app on Windows
 
 docs/spec/desktop.md, Windows, has the result: the app could not open a project on Windows until
-`pocket serve` reported a plain path; with that fixed, `npm test`, the packaged-runtime test and
+`amoris serve` reported a plain path; with that fixed, `npm test`, the packaged-runtime test and
 `tools/desktop_smoke.mjs` (editor, WebGPU (wasm) viewport, Play, Stop, closing the window, the host
 gone and its file removed) pass. Evidence:
 [evidence/polish/desktop/](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/polish/desktop),
@@ -29,7 +29,7 @@ The agent evaluations were written on macOS. What stops or misbehaves on Windows
 
 | Script | Where | What happens on Windows |
 |---|---|---|
-| `debug_eval.py` | `Host`: `start_new_session=True`, `send_signal(SIGTERM)`, `os.killpg` | `SIGTERM` is `TerminateProcess` there, so `pocket serve` is killed and leaves `.pocket/host.json`; `os.killpg` does not exist (an `AttributeError` if the host outlives 10 s). `tools/smoke_server.py` and `held_host_bench.py` show the Windows form: `CREATE_NEW_PROCESS_GROUP` and `CTRL_BREAK_EVENT` |
+| `debug_eval.py` | `Host`: `start_new_session=True`, `send_signal(SIGTERM)`, `os.killpg` | `SIGTERM` is `TerminateProcess` there, so `amoris serve` is killed and leaves `.amoris/host.json`; `os.killpg` does not exist (an `AttributeError` if the host outlives 10 s). `tools/smoke_server.py` and `held_host_bench.py` show the Windows form: `CREATE_NEW_PROCESS_GROUP` and `CTRL_BREAK_EVENT` |
 | `debug_eval.py` | `run_opencode`: `start_new_session=True`, `os.killpg(proc.pid, SIGKILL)` on the call or time limit | the limit cannot kill the agent: `os.killpg` raises `AttributeError` (only `ProcessLookupError` is caught) |
 | `debug_eval.py` | `kill_strays`: `pgrep -f` | no `pgrep`: `FileNotFoundError` at the end of every run |
 | `agent_dev_bench.py`, `agent_gameplay.py` | the host's stop, as `debug_eval.py`'s | as above |

@@ -13,13 +13,13 @@
   second were 10.7 to 12.0 in one run and 20.0 to 21.3 in the next, the one below). Token sizes and
   tick counts do not depend on the machine: they are exact.
 - Commands:
-  `cargo run --release -p pocket-runtime --features transpile --example player_bench out/bench-runs/player/bench.json`
-  (the run below, in full) and `cargo run --release -p pocket-interface --example perception_bench`
+  `cargo run --release -p amoris-runtime --features transpile --example player_bench out/bench-runs/player/bench.json`
+  (the run below, in full) and `cargo run --release -p amoris-interface --example perception_bench`
   (out/bench-runs/player/perception-bench.txt).
 
 ## 1. The reference skipper through the player tools
 
-The reference skipper (`pocket_runtime::skipper`, spec/player.md 8) plays `samples/sailing-course`
+The reference skipper (`amoris_runtime::skipper`, spec/player.md 8) plays `samples/sailing-course`
 as `Source::Player(0)` through `player.describe`, `player.observe`, `player.act` and `player.wait`
 alone, on a game driven directly (no server, no MCP transport: the cost of the engine's side). Each
 decision cycle observes three times (text at the default budget, for the token count; JSON at the
@@ -112,7 +112,7 @@ while the world runs well above real time (a 60 Hz tick has 16.7 ms). What they 
 ## 3. What was not measured
 
 - An LLM playing through MCP: the transport and the seat-bound session were checked live (a stdio
-  `pocket mcp --seat skipper` session observed, acted, waited and was refused an unavailable
+  `amoris mcp --seat skipper` session observed, acted, waited and was refused an unavailable
   affordance, `world` and the omniscient view: `tools/player_mcp_probe.py`, transcript in
   out/bench-runs/player/mcp-session.txt), but no model was run, so there is no tokens-per-course or
   success rate for an LLM yet.

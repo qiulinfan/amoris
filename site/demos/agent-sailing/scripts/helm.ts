@@ -1,7 +1,7 @@
 // The helm: what the player asks of the boat (the Helm component) turned into the Boat's controls
 // every tick. The wheel steers, `goto` hands the wheel to the helmsman who steers for an entity,
 // the crew trims the sheet to the apparent wind, and at anchor the sail comes down.
-import { component, field, system } from "pocket";
+import { component, field, system } from "amoris";
 
 export const Helm = component("Helm", {
     version: 1, doc: "The player's helm: the wheel, the sail wanted, the anchor and a mark to steer for.",

@@ -1,16 +1,16 @@
 """A minimal MCP stdio client for a seat-bound player session (docs/spec/player.md 7): starts
-`pocket mcp <project> --seat <seat>` (which attaches to a running `pocket serve` of the project, or
+`amoris mcp <project> --seat <seat>` (which attaches to a running `amoris serve` of the project, or
 runs the game in process), lists its tools, and plays a few calls: session, observe, act, wait, an
 unavailable affordance, a developer tool and the omniscient view (both refused), describe.
 out/bench-runs/player/mcp-session.txt is its output against samples/sailing-course.
 
-Usage: python tools/player_mcp_probe.py <path to pocket(.exe)> <project> <seat>"""
+Usage: python tools/player_mcp_probe.py <path to amoris(.exe)> <project> <seat>"""
 import json
 import subprocess
 import sys
 
-pocket, project, seat = sys.argv[1:4]
-p = subprocess.Popen([pocket, "mcp", project, "--seat", seat], stdin=subprocess.PIPE,
+amoris, project, seat = sys.argv[1:4]
+p = subprocess.Popen([amoris, "mcp", project, "--seat", seat], stdin=subprocess.PIPE,
                      stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8")
 n = 0
 

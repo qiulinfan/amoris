@@ -132,7 +132,7 @@ pub fn check(root: &Path, listed: &[String]) -> StepResult {
     }
     step.measure("gen.outputs", outs.len() as f64, "count");
     step.summary = format!(
-        "{} clippy.toml copies, {generated} @generated files; the engine's generators (pocket gen) are not built yet",
+        "{} clippy.toml copies, {generated} @generated files; the engine's generators (amoris gen) are not built yet",
         outs.len()
     );
     step

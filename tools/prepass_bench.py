@@ -4,8 +4,8 @@ auto (docs/bench/prepass.md).
 
 Each run is one process: `many_cubes [--dense] --headless-bench FRAMES --size WxH --settle S`
 (offscreen, submit to GPU idle per frame, timestamped passes) or `--bench FRAMES` (a window, no
-vsync, wall time between presented frames), with POCKET_PREPASS and POCKET_OCCLUSION set and the
-anti-aliasing fixed (POCKET_AA=msaa, POCKET_GTAO=off: the UE5 comparison's settings,
+vsync, wall time between presented frames), with AMORIS_PREPASS and AMORIS_OCCLUSION set and the
+anti-aliasing fixed (AMORIS_AA=msaa, AMORIS_GTAO=off: the UE5 comparison's settings,
 docs/bench/ue5-dense.md on branch explore/ue5). A round runs every configuration once, in reverse
 order every other round, so drift spreads over all of them; nvidia-smi's temperature, clocks and
 power are recorded before and after every run. Every run is appended as one JSON line to `--out`
@@ -14,7 +14,7 @@ rounds per configuration, `--table FILE... --tails` the frame time's tail (p99, 
 auto mode's probe frames: the frames it drew the way it drew less often, and (headless) their own
 frame time.
 
-Build first: `cargo build --release -p pocket-render --examples`. Then, from the repository root:
+Build first: `cargo build --release -p amoris-render --examples`. Then, from the repository root:
 
     python tools/prepass_bench.py --round 0 --adapters nvidia --backends dx12,vulkan \\
         --cases dense-headless,sphere-headless --out out/prepass/bench/headless.jsonl
@@ -22,7 +22,7 @@ Build first: `cargo build --release -p pocket-render --examples`. Then, from the
 
 `--build NAME=DIR` adds another checkout's examples (built in DIR/target) as a configuration
 whose prepass is whatever that build does (for example master's, before the prepass existed), or
-with `--modes` the modes it names (POCKET_PREPASS set as for this build).
+with `--modes` the modes it names (AMORIS_PREPASS set as for this build).
 """
 import argparse
 import json
@@ -106,12 +106,12 @@ def run_one(build_dir, case, backend, adapter, prepass, occlusion, args):
     cmd = [exe, *CASES[case], str(args.frames)]
     if not window:
         cmd += ["--size", args.size, "--settle", str(args.settle)]
-    env = dict(os.environ, POCKET_BACKEND=backend, POCKET_AA="msaa", POCKET_GTAO="off",
-               POCKET_OCCLUSION=occlusion)
+    env = dict(os.environ, AMORIS_BACKEND=backend, AMORIS_AA="msaa", AMORIS_GTAO="off",
+               AMORIS_OCCLUSION=occlusion)
     if prepass:
-        env["POCKET_PREPASS"] = prepass
+        env["AMORIS_PREPASS"] = prepass
     if adapter:
-        env["POCKET_ADAPTER"] = adapter
+        env["AMORIS_ADAPTER"] = adapter
     before = gpu_state()
     t = time.time()
     p = subprocess.run(cmd, cwd=ROOT, env=env, capture_output=True, text=True, timeout=900)
@@ -248,7 +248,7 @@ def main():
                     help="with --table: frame p99 and max, and the frames without the prepass")
     ap.add_argument("--round", type=int, default=0, help="this round's number (odd: reversed order)")
     ap.add_argument("--cases", default="dense-headless,sphere-headless")
-    ap.add_argument("--adapters", default="nvidia", help="POCKET_ADAPTER values, comma separated")
+    ap.add_argument("--adapters", default="nvidia", help="AMORIS_ADAPTER values, comma separated")
     ap.add_argument("--backends", default="dx12,vulkan")
     ap.add_argument("--modes", default="", help="prepass/occlusion pairs to run, e.g. on/off,off/off")
     ap.add_argument("--frames", type=int, default=200)

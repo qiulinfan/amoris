@@ -1,0 +1,27 @@
+[package]
+name = "amoris-check"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "In-process checks: determinism, fork consistency, replay and reload equivalence"
+
+[features]
+# Projects read and compiled from disk (amoris-runtime's transpile), as `amoris check` runs them;
+# the web check page gives the checks compiled setups instead.
+native = ["amoris-runtime/transpile"]
+
+[dependencies]
+amoris-contract.workspace = true
+amoris-sim.workspace = true
+amoris-persist.workspace = true
+amoris-runtime.workspace = true
+amoris-link.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+# check.toml (checks.md 8.1; architecture.md 6, toml: the reason recorded there).
+toml.workspace = true
+
+[dev-dependencies]
+amoris-runtime = { workspace = true, features = ["transpile"] }

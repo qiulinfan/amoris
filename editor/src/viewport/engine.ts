@@ -1,6 +1,6 @@
 // The viewport's renderer interface. The engine's renderer, compiled to wasm with wasm-bindgen
-// (crates/pocket-viewport), implements `Viewport` and exports `createViewport` (web/viewport/
-// pocket_web.js); the host serves it at `/wasm/pocket_web.js`. The renderer draws the host's world from the render
+// (crates/amoris-viewport), implements `Viewport` and exports `createViewport` (web/viewport/
+// amoris_web.js); the host serves it at `/wasm/amoris_web.js`. The renderer draws the host's world from the render
 // feed (`renderUrl`, host-protocol.md section 5) and assets (`assetsUrl`); the editor owns the camera,
 // the selection and the gizmo and only tells the renderer about them. Until the wasm exists (or when
 // it fails to load), the editor draws with its fallback (fallback/renderer.ts), which implements the
@@ -95,13 +95,13 @@ export interface Viewport {
   dispose(): void;
 }
 
-/** What `/wasm/pocket_web.js` exports. `default` is wasm-bindgen's init and runs first when present. */
+/** What `/wasm/amoris_web.js` exports. `default` is wasm-bindgen's init and runs first when present. */
 export interface ViewportModule {
   default?: (input?: unknown) => Promise<unknown>;
   createViewport(canvas: HTMLCanvasElement, options: ViewportOptions): Viewport | Promise<Viewport>;
 }
 
-export const WASM_MODULE_URL = "/wasm/pocket_web.js";
+export const WASM_MODULE_URL = "/wasm/amoris_web.js";
 
 export type ViewportKind = "wasm" | "fallback";
 

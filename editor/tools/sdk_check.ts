@@ -4,8 +4,8 @@
 // TypeScript markers and the completions of a query's columns, saves two screenshots, and prints
 // the worker's findings on the mistakes of sdk_mistakes.ts.txt (docs/sdk.md's list).
 //
-//   pocket serve samples/sailing --port 7911
-//   EDITOR_PORT=5191 POCKET_HOST=http://127.0.0.1:7911 bun run dev
+//   amoris serve samples/sailing --port 7911
+//   EDITOR_PORT=5191 AMORIS_HOST=http://127.0.0.1:7911 bun run dev
 //   bun tools/sdk_check.ts ../docs/evidence/sdk http://127.0.0.1:5191/
 import { Cdp, launchChrome } from "./cdp";
 const OUT = process.argv[2]!;
@@ -36,12 +36,12 @@ try {
   await cdp.send("Page.navigate", { url: URL_ });
   for (let i = 0; i < 100; i++) {
     await Bun.sleep(200);
-    const ok = await js<boolean>(`return !!window.pocket && !!window.pocket.scripts.getState().types?.text`).catch(() => false);
+    const ok = await js<boolean>(`return !!window.amoris && !!window.amoris.scripts.getState().types?.text`).catch(() => false);
     if (ok) break;
   }
-  const info = await js(`const t = window.pocket.scripts.getState().types; return { components: t.components, from: t.project_from, files: Object.keys(t.text) };`);
+  const info = await js(`const t = window.amoris.scripts.getState().types; return { components: t.components, from: t.project_from, files: Object.keys(t.text) };`);
   console.log("types:", JSON.stringify(info));
-  await js(`window.pocket.openPanel("scripts"); window.pocket.scripts.getState().openFile("scripts/rules.ts", 27); return 1;`);
+  await js(`window.amoris.openPanel("scripts"); window.amoris.scripts.getState().openFile("scripts/rules.ts", 27); return 1;`);
   // Wait for the file's model (Monaco loads lazily with the panel; a loaded machine takes longer).
   const opened = await js<boolean>(`
     const m = await import("/src/panels/scripts/monaco.ts");

@@ -20,7 +20,7 @@ cross-device or cross-backend reproducibility is not established.
 
 At runtime the network is generated unrolled. Mip transitions blend two decodes only within a
 quarter-level band; other pixels evaluate once. `shader-f16` selects f16 where available, with
-f32 otherwise. `POCKET_NEURAL_PRECISION=f32` or
+f32 otherwise. `AMORIS_NEURAL_PRECISION=f32` or
 `Renderer::set_neural_half_precision(false)` forces f32. The Radeon 780M is faster in f32 on
 D3D12 and f16 on Vulkan, so the capability default is not a universal performance optimum.
 

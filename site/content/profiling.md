@@ -11,8 +11,8 @@ From the repository root, build the example and capture 300 frames after 60 warm
 frames. This shell example selects native Metal on macOS:
 
 ```sh
-cargo build --release -p pocket-render --example many_cubes
-POCKET_BACKEND=metal POCKET_AA=msaa POCKET_GTAO=off \
+cargo build --release -p amoris-render --example many_cubes
+AMORIS_BACKEND=metal AMORIS_AA=msaa AMORIS_GTAO=off \
   target/release/examples/many_cubes --dense --count 200000 --size 1280x720 \
   --headless-bench 300 --occlusion off --prepass auto --settle 2 \
   --trace frames=300,skip=60,out=out/profiler/dense-auto.json
@@ -23,9 +23,9 @@ On Windows, use PowerShell environment assignments and the `.exe` binary; choose
 `dx12` or `vulkan`. For example, after the same Cargo build:
 
 ```powershell
-$env:POCKET_BACKEND = 'dx12'
-$env:POCKET_AA = 'msaa'
-$env:POCKET_GTAO = 'off'
+$env:AMORIS_BACKEND = 'dx12'
+$env:AMORIS_AA = 'msaa'
+$env:AMORIS_GTAO = 'off'
 .\target\release\examples\many_cubes.exe --dense --count 200000 --size 1280x720 --headless-bench 300 --occlusion off --prepass auto --settle 5 --trace frames=300,skip=60,out=out/profiler/dense-auto.json
 python tools/frame_trace.py stats out/profiler/dense-auto.json
 ```
@@ -34,13 +34,13 @@ python tools/frame_trace.py stats out/profiler/dense-auto.json
 controlled render workload, not game FPS: it excludes window presentation. `--bench`
 instead runs a native window. Keep resolution, antialiasing, GTAO, occlusion, prepass,
 scene, build and adapter fixed when comparing runs. On multi-GPU machines,
-`POCKET_ADAPTER` accepts an index or a name fragment such as `nvidia` or `780m`.
+`AMORIS_ADAPTER` accepts an index or a name fragment such as `nvidia` or `780m`.
 
-To inspect a game in a native window, set `POCKET_TRACE` before launching a built host:
+To inspect a game in a native window, set `AMORIS_TRACE` before launching a built host:
 
 ```sh
-POCKET_TRACE=frames=300,skip=60,out=out/profiler/sailing.json \
-  target/release/pocket play samples/sailing
+AMORIS_TRACE=frames=300,skip=60,out=out/profiler/sailing.json \
+  target/release/amoris play samples/sailing
 ```
 
 The default trace specification is 300 frames after 60 skipped frames, written to

@@ -57,7 +57,7 @@ all three viewpoints, display modes and keyboard slider updates work.
 
 ```sh
 python3 tools/harbor_gi_showcase.py prepare
-target/release/pocket serve out/harbor-gi/project --port 8794
+target/release/amoris serve out/harbor-gi/project --port 8794
 # In another terminal, with the edit world paused:
 python3 tools/harbor_gi_showcase.py freeze
 target/release/examples/sky_radiance_cube out/harbor-gi/bake \

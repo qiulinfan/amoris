@@ -1,6 +1,6 @@
 // Real gizmo drags against a real host (docs/bench/gizmo.md; tools/gizmo_bench.py runs it):
 // headless Chrome (WebGPU on) opens the editor at --url (the host serving the editor's production
-// build made with VITE_POCKET_EXPOSE=1, or the Vite dev server proxying to the host), selects an
+// build made with VITE_AMORIS_EXPOSE=1, or the Vite dev server proxying to the host), selects an
 // entity and drags the translate gizmo's x handle with CDP mouse events. The page is instrumented
 // before it loads: pointer moves, the `world.edit`s the editor sends and their replies on /ws, the
 // render feed's messages on /render, the first requestAnimationFrame callback of every frame (the
@@ -21,7 +21,7 @@
 // client) and the History panel marking it. The entity is fetched before it is framed, and the
 // camera's orbit is recorded, so every run drags at the same framing.
 //
-//   pocket serve samples/sailing --port 7890          # POCKET_EDITOR_DIST=editor/dist to serve it
+//   amoris serve samples/sailing --port 7890          # AMORIS_EDITOR_DIST=editor/dist to serve it
 //   bun tools/gizmo-drag.ts --url http://127.0.0.1:7890/ --out ../out/gizmo/drag \
 //     [--host 127.0.0.1:7890] [--entity Crate1] [--moves 90] [--hz 60] [--px 3] [--paced]
 //     [--profile]
@@ -124,7 +124,7 @@ const INSTRUMENT = `(() => {
 })();`;
 
 const port = 9400 + Math.floor(Math.random() * 400);
-const profile = join(tmpdir(), `pocket-gizmo-${Date.now()}`);
+const profile = join(tmpdir(), `amoris-gizmo-${Date.now()}`);
 const proc = Bun.spawn(
   [
     chromePath(),
@@ -195,7 +195,7 @@ const position = async (): Promise<number[]> =>
  * 70% of its length inwards and outwards, away from the plane handles near the centre). */
 async function handle(): Promise<{ x: number; y: number; ok: boolean }> {
   const line = await js<[number, number, number, number]>(`
-    const ctl = window.pocketEditorViewport;
+    const ctl = window.amorisEditorViewport;
     const pts = ctl.gizmo.shapes.filter((s) => s.handle === "x").flatMap((s) => s.points);
     const view = ctl.view();
     const c = view.project(ctl.gizmo.position);
@@ -210,7 +210,7 @@ async function handle(): Promise<{ x: number; y: number; ok: boolean }> {
     last = at;
     await mouse("mouseMoved", at.x, at.y, false);
     await Bun.sleep(60);
-    if ((await js<string | null>(`return window.pocketEditorViewport.hoverHandle;`)) === "x") return { ...at, ok: true };
+    if ((await js<string | null>(`return window.amorisEditorViewport.hoverHandle;`)) === "x") return { ...at, ok: true };
   }
   return { ...last, ok: false };
 }
@@ -358,18 +358,18 @@ try {
   for (let i = 0; i < 360 && !ready; i++) {
     await Bun.sleep(250);
     ready = await js<boolean>(`
-      const p = window.pocket;
-      if (!p || !window.pocketEditorViewport?.engine) return false;
+      const p = window.amoris;
+      if (!p || !window.amorisEditorViewport?.engine) return false;
       const c = p.connection.getState();
       return c.info.state === "open" && c.viewport === "wasm" && p.world.getState().order.length > 0;
     `);
   }
   if (!ready) {
     const state = await js(`
-      const p = window.pocket;
-      if (!p) return { pocket: false, title: document.title };
+      const p = window.amoris;
+      if (!p) return { amoris: false, title: document.title };
       const c = p.connection.getState();
-      return { info: c.info, viewport: c.viewport, engine: !!window.pocketEditorViewport?.engine, entities: p.world.getState().order.length };
+      return { info: c.info, viewport: c.viewport, engine: !!window.amorisEditorViewport?.engine, entities: p.world.getState().order.length };
     `);
     throw new Error(`the editor did not connect with the wasm viewport: ${JSON.stringify(state)}`);
   }
@@ -379,13 +379,13 @@ try {
   await mouse("mouseMoved", 8, H - 8, false);
   const drawing = await js<boolean>(`return await Promise.race([new Promise((r) => requestAnimationFrame(() => r(true))), new Promise((r) => setTimeout(() => r(false), 2000))]);`);
   if (!drawing) throw new Error("the page runs no animation frames");
-  result.edit_groups = await js<boolean>(`return window.pocket.connection.getState().editGroups;`);
+  result.edit_groups = await js<boolean>(`return window.amoris.connection.getState().editGroups;`);
   if (!result.edit_groups) throw new Error("the host's world.edit has no group: drags would not stream");
   // Select the entity with its components fetched (framing reads its Transform; a selection the
   // editor has not fetched yet would leave the camera where it was), frame it, translate tool in
   // world space without snapping.
   await js(`
-    const p = window.pocket;
+    const p = window.amoris;
     const w = p.world.getState();
     const id = w.order.find((i) => w.entities[i]?.name === ${JSON.stringify(ENTITY)});
     p.world.getState().setEntity(await p.api.world.get(id));
@@ -393,16 +393,16 @@ try {
     p.selection.getState().set([id]);
     p.viewport.getState().set({ tool: "translate", space: "world" });
     p.viewport.getState().setSnap({ enabled: false });
-    window.pocketEditorViewport.frameSelection();
+    window.amorisEditorViewport.frameSelection();
     return id;
   `);
   await Bun.sleep(800);
   // From the front, a little above: the x handle runs across the screen.
-  await js(`window.pocketEditorViewport.setOrbit({ yaw: 0, pitch: 0.45 }); return 0;`);
+  await js(`window.amorisEditorViewport.setOrbit({ yaw: 0, pitch: 0.45 }); return 0;`);
   await Bun.sleep(700);
   result.orbit = await js(`
-    const o = window.pocketEditorViewport.orbit;
-    const w = window.pocket.world.getState();
+    const o = window.amorisEditorViewport.orbit;
+    const w = window.amoris.world.getState();
     const id = w.order.find((i) => w.entities[i]?.name === ${JSON.stringify(ENTITY)});
     return { target: o.target, distance: o.distance, yaw: o.yaw, pitch: o.pitch, entity: w.entities[id].components.Transform.position };
   `);
@@ -410,9 +410,9 @@ try {
     const o = result.orbit as { target: number[]; entity: number[] };
     if (Math.hypot(...o.target.map((v, i) => v - o.entity[i]!)) > 0.01) throw new Error(`the camera is not framed on ${ENTITY}: ${JSON.stringify(o)}`);
   }
-  result.renderer = await js(`return window.pocketEditorViewport.engine.stats?.().renderer ?? null;`);
+  result.renderer = await js(`return window.amorisEditorViewport.engine.stats?.().renderer ?? null;`);
   // Which GPU Chrome's WebGPU picks for the request the viewport makes (high performance, as
-  // pocket-render's gpu.rs asks for it).
+  // amoris-render's gpu.rs asks for it).
   result.browser = await js(`
     const a = await navigator.gpu?.requestAdapter({ powerPreference: "high-performance" });
     const i = a?.info ?? {};
@@ -463,10 +463,10 @@ try {
 
   // 2. The same drag back, timed, as an editor without `group` does it: previewed locally and sent
   // once on release (the gizmo moves, the object does not until the release).
-  await js(`window.pocket.connection.getState().set({ editGroups: false }); return 0;`);
+  await js(`window.amoris.connection.getState().set({ editGroups: false }); return 0;`);
   const before = (await history()).undo.length;
   const local = await drag(-1);
-  await js(`window.pocket.connection.getState().set({ editGroups: true }); return 0;`);
+  await js(`window.amoris.connection.getState().set({ editGroups: true }); return 0;`);
   const firstFeed = local.g.feeds[0]?.t ?? null;
   const firstMove = local.g.moves.find((m) => m.buttons === 1)?.t ?? null;
   result.on_release = {
@@ -484,12 +484,12 @@ try {
     await Bun.sleep(200);
     await shot("03-mid-drag-streamed");
   });
-  await js(`window.pocket.connection.getState().set({ editGroups: false }); return 0;`);
+  await js(`window.amoris.connection.getState().set({ editGroups: false }); return 0;`);
   await drag(-1, async () => {
     await Bun.sleep(200);
     await shot("04-mid-drag-on-release");
   });
-  await js(`window.pocket.connection.getState().set({ editGroups: true }); return 0;`);
+  await js(`window.amoris.connection.getState().set({ editGroups: true }); return 0;`);
 
   // 3. Escape during a streamed drag: the whole drag undone, nothing left in the history.
   const h2 = await history();
@@ -515,7 +515,7 @@ try {
   // 4. Another client's edit: the HTTP API's (the CLI's), marked in the History panel.
   await call("world.edit", { ops: [{ set: { entity: "Crate2", component: "Cargo", value: { value: 5 } } }], label: "raise Crate2's cargo" });
   await Bun.sleep(300);
-  await js(`window.pocket.openPanel("history"); return 0;`);
+  await js(`window.amoris.openPanel("history"); return 0;`);
   await Bun.sleep(400);
   result.history_panel = await js<string>(`return document.querySelector(".history-panel")?.innerText ?? "";`);
   result.history = await history();

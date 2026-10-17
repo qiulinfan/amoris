@@ -8,7 +8,7 @@ process (20 warm-up frames, then FRAMES timed, per-pass GPU timestamps averaged)
 `--settle S` passes the example's `--settle S` (wait after start-up before the first frame: a
 start-up that loads every core lowers the laptop GPU's clocks for a few seconds, dx12.md 10.6).
 
-Build first: `cargo build --release -p pocket-render --example splats`. From the repository root:
+Build first: `cargo build --release -p amoris-render --example splats`. From the repository root:
 
     python tools/splats/matrix.py --adapters nvidia,780m --backends dx12,vulkan --rounds 5 \
         --frames 60 --scene "1M=--count 1000000" --scene "3M 1440p=--count 3000000 --size 2560x1440" \
@@ -95,7 +95,7 @@ def main():
             order.reverse()
         for adapter in a.adapters.split(","):
             for backend in a.backends.split(","):
-                env = dict(os.environ, POCKET_BACKEND=backend, POCKET_ADAPTER=adapter)
+                env = dict(os.environ, AMORIS_BACKEND=backend, AMORIS_ADAPTER=adapter)
                 for name, args in scenes:
                     for raster, (build, exe) in order:
                         t = time.time()

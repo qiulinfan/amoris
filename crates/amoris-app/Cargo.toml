@@ -1,0 +1,43 @@
+[package]
+name = "amoris-app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "The native binary `amoris`"
+
+[[bin]]
+name = "amoris"
+path = "src/main.rs"
+
+[dependencies]
+amoris-contract.workspace = true
+amoris-sim.workspace = true
+amoris-link.workspace = true
+amoris-runtime = { workspace = true, features = ["thread", "transpile"] }
+amoris-check = { workspace = true, features = ["native"] }
+serde_json.workspace = true
+amoris-assets.workspace = true
+amoris-render = { workspace = true, features = ["window", "import"] }
+glam.workspace = true
+image.workspace = true
+axum.workspace = true
+wgpu.workspace = true
+# amoris serve, amoris mcp and the CLI client of a running host (docs/spec/server.md).
+amoris-server.workspace = true
+amoris-mcp.workspace = true
+tokio.workspace = true
+ureq.workspace = true
+# The script debugger (docs/spec/debugger.md): amoris serve's DebugHub and CDP endpoint.
+amoris-debug.workspace = true
+amoris-audio.workspace = true
+
+# The engine source hash of crates/engine_version.rs (versions.md 3.1).
+[build-dependencies]
+blake3.workspace = true
+
+# tests/engine_version.rs includes crates/engine_version.rs to check what its build script watches.
+[dev-dependencies]
+blake3.workspace = true
+# A `/render` client for the render feed's pacing test (serve.rs; host-protocol.md 5).
+tungstenite.workspace = true

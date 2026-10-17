@@ -1,6 +1,6 @@
 # GPU tests on both GPUs and both backends (Pioneer, 2026-10-15)
 
-`cargo xtask check` runs `pocket-render`'s GPU tests once, on the default adapter and backend (the
+`cargo xtask check` runs `amoris-render`'s GPU tests once, on the default adapter and backend (the
 RTX 5060 with Direct3D 12 on the R1 laptop), and a test that skips for want of a GPU or a capability
 passes there silently. Wave 4 found tests that failed on master on the Radeon 780M. This page
 records the whole matrix before and after this branch, the cause of each failure as far as it was
@@ -16,8 +16,8 @@ Ryzen 9 270, 16 threads, 15 GiB, Windows 11 Pro 10.0.26200), on AC power, Balanc
 | `5060-vulkan` | RTX 5060 Laptop, Vulkan, NVIDIA 617.14 | 1 ns |
 | `780m-dx12` | Radeon 780M, Direct3D 12, 32.0.13062.3005 | 10 ns |
 | `780m-vulkan` | Radeon 780M, Vulkan, AMD proprietary driver 24.30.62.03 (LLPC) | 10 ns |
-| `5060-dx12-minimal` | RTX 5060, Direct3D 12, `POCKET_GPU_MINIMAL=features,limits,timestamps` | none |
-| `5060-auto`, `780m-auto` | `POCKET_BACKEND` unset as in `cargo xtask check`: Direct3D 12, Vulkan as well where tests compare backends | as above |
+| `5060-dx12-minimal` | RTX 5060, Direct3D 12, `AMORIS_GPU_MINIMAL=features,limits,timestamps` | none |
+| `5060-auto`, `780m-auto` | `AMORIS_BACKEND` unset as in `cargo xtask check`: Direct3D 12, Vulkan as well where tests compare backends | as above |
 
 The results are correctness results: a test passes or fails regardless of load. The first runs
 were made while up to five other agents built and ran GPU work on the machine. The durations of
@@ -34,10 +34,10 @@ the lock and none of which kept their output, are not quoted.
 ## 1. The tool
 
 `python tools/gpu_matrix.py --configs 5060-dx12,5060-vulkan,780m-dx12,780m-vulkan,5060-dx12-minimal`
-builds the test binaries of `cargo test -p pocket-render` (release, as `cargo xtask check` does;
+builds the test binaries of `cargo test -p amoris-render` (release, as `cargo xtask check` does;
 `--debug` for the debug profile) and runs every binary once per configuration with that
-configuration's `POCKET_ADAPTER`, `POCKET_BACKEND` and `POCKET_GPU_MINIMAL` (inherited values
-cleared; backend `auto` leaves `POCKET_BACKEND` unset), ignored tests included as in
+configuration's `AMORIS_ADAPTER`, `AMORIS_BACKEND` and `AMORIS_GPU_MINIMAL` (inherited values
+cleared; backend `auto` leaves `AMORIS_BACKEND` unset), ignored tests included as in
 `cargo xtask check`. Each binary runs with libtest's `--show-output`, so the output of passing tests
 is kept: a passing test that printed it skipped all or part of its checks for something the device
 lacks (no GPU, timestamps, ray queries, shader-f16, `indirect-first-instance`, multi-draw) is `skip`
@@ -47,7 +47,7 @@ per configuration and the adapter each configuration opened
 (`gpu::tests::the_adapter_under_test_is_named` prints it). The exit status is 1 when a test failed,
 hung or crashed, and when a configuration opened no adapter or one of its tests found no GPU (a
 mistyped adapter would otherwise pass as a column of skips). `--json` keeps the results with the
-commit (`-dirty` when the tree had changes), the binaries' build times and inherited `POCKET_*` and
+commit (`-dirty` when the tree had changes), the binaries' build times and inherited `AMORIS_*` and
 `WGPU_*` variables; `--merge A.json B.json` tables runs made separately, for instance one
 configuration per bench-lock hold, naming a configuration that occurs in several files `CONFIG#N`.
 `tools/tests/test_gpu_matrix.py` checks the parser, the error rules, the merge and the table on
@@ -56,11 +56,11 @@ directory for AMD's Vulkan driver, which once kept a wrongly compiled pipeline a
 every later run of one binary path (section 9). `--configs machine` and `--workspace`, which
 `cargo xtask check` runs, are section 11's.
 
-When `POCKET_BACKEND` names a backend, the tests that compare backends (`BackendChoice::under_test`)
+When `AMORIS_BACKEND` names a backend, the tests that compare backends (`BackendChoice::under_test`)
 run on that one and print the others as not under test; the `auto` configurations run them on every
 native backend in one process, as `cargo xtask check` does.
 
-`pocket-render` holds every GPU test of the workspace; the other crates open no device in their
+`amoris-render` holds every GPU test of the workspace; the other crates open no device in their
 tests. One configuration took 24 to 79 s (release, quiet re-measurement; section 4).
 
 ## 2. Before (master `b7be59a2`, release)
@@ -131,7 +131,7 @@ Vulkan SDK was not installed), and there was no reproduction without wgpu. Secti
 establishes it: the driver, and the counts above are lower bounds (a wrong reading that repeats a
 pair no round had read passes the rule). Deferring is correct on any adapter, at the cost of
 readings arriving later, so it covers all AMD Vulkan drivers as a precaution. Before the fix,
-`POCKET_TRACE` on that pair had no calibration, and the profiler's pass times there, which the
+`AMORIS_TRACE` on that pair had no calibration, and the profiler's pass times there, which the
 editor's profile and the prepass `auto` mode read, could be zeros or another frame's. Earlier 780M
 Vulkan GPU timings were taken that way and now say so, not measured again: the GPU columns of
 [dx12.md](dx12.md) and [splats.md](splats.md), [lod.md](lod.md)'s 8 ms cull pass, the
@@ -153,12 +153,12 @@ first, loaded run in parentheses:
 | Radeon 780M Vulkan | 1 of 144 (1 of 144) | 0 of 144 (0) |
 | either GPU, Direct3D 12 | 0 of 144 each (0 each) | 0 of 144 each (0 each) |
 
-Each of the three failures was an empty adapter list ("`POCKET_ADAPTER=780m` matches no adapter;
+Each of the three failures was an empty adapter list ("`AMORIS_ADAPTER=780m` matches no adapter;
 have []", or `5060`). At about one open in 144 or fewer the probe alone cannot show the lock's
 effect; the lock removes parallel enumeration by construction, and no matrix run since has had a "no
 GPU" skip. The path tracer's tests had a lock of their own for this since 2026-10-09; it is now the
 headless constructors'. Tests that compare backends (`BackendChoice::under_test`) also run on the
-one backend `POCKET_BACKEND` names when it is set, instead of every native backend, so each column
+one backend `AMORIS_BACKEND` names when it is set, instead of every native backend, so each column
 shows its own backend; the `auto` configurations run them on both.
 
 **(c) The neural constant-material tests ran under TAA on the 780M.** The differing pixels (25 to 29
@@ -287,7 +287,7 @@ short. That quiet run, made with these commands (logs and JSON under `--out` and
 sentence on one configuration's time in section 1; the `WGPU_DEBUG=1` run failed as expected, with
 exit status 1, and the tool's 6 unit tests passed. The probes of 3 a to 3 c were throwaway tests,
 not committed; their source is kept with their logs in the R1 laptop's ignored
-`out/gpu780m/probes/`, and the quiet re-run copied it into `crates/pocket-render/tests/` for the
+`out/gpu780m/probes/`, and the quiet re-run copied it into `crates/amoris-render/tests/` for the
 run only (logs in `out/gpu780m/quiet/probes/`).
 
 ## 6. Open
@@ -313,7 +313,7 @@ After the fix of 3 a, the clock calibration test
 on `780m-vulkan` while another process loaded the CPU, and passed 10 of 10 alone (wave 5,
 `out/gpu-matrix/780m-vulkan/lib.log`: the whole lib binary, its tests in parallel, the ray-query
 tests on the same adapter among them): the eight rounds' brackets had no common offset. Either a
-timestamp could lie outside its CPU bracket under preemption (GPU work misplaced in `POCKET_TRACE`),
+timestamp could lie outside its CPU bracket under preemption (GPU work misplaced in `AMORIS_TRACE`),
 or the test's assumption was wrong. In the probe below no timestamp ever left its bracket, and every
 calibration without a common offset broke the calibration's own assumption, which the test shares:
 one offset for all eight rounds, which the 780M's clock rate breaks once the rounds spread out. The
@@ -390,7 +390,7 @@ spread the first runs' Vulkan rounds over hundreds of milliseconds, the other tr
 their GPU work, was not measured; inferred from the bracket widths, the thread waiting for each
 round is likely woken late. Wave 5's failure, 1 in 17, also came with other work on the machine.
 
-**What it did to `POCKET_TRACE`.** A refused calibration left the trace with its other calibration
+**What it did to `AMORIS_TRACE`.** A refused calibration left the trace with its other calibration
 alone, a single offset for every frame, which on the 780M drifts 1.8 ms from the truth per second of
 distance from it (the start and end calibrations' interpolation corrects the drift only when both
 exist), or with none; and a calibration that still intersected stated a half-width that left out up
@@ -413,10 +413,10 @@ Reproduce (the R1 laptop; probe source and scripts in its ignored `out/robust/pr
 runs' output in `out/robust/quiet/`): build the old test's binary from
 `git show 3fdc5b83:crates/pocket-render/src/trace.rs` and this track's, copying each out of
 `target/` (they share its file name), then paste `probe_test.rs.txt` into the tests module of
-`crates/pocket-render/src/trace.rs` and build the probe's; from the worktree's root:
+`crates/amoris-render/src/trace.rs` and build the probe's; from the worktree's root:
 
 ```sh
-cargo test -p pocket-render --release --lib --no-run      # outside the lock; copy out the binary
+cargo test -p amoris-render --release --lib --no-run      # outside the lock; copy out the binary
 P=C:/Users/rynne/Desktop/amoris-pioneer/out
 python $P/locks/bench_lock.py run --label calib -- python $P/robust/probes/calib_runs.py $PROBE \
   $P/robust/calib --label idle-780m-vulkan --procs 30 --tests 30
@@ -431,7 +431,7 @@ python $P/locks/bench_lock.py run --label calib -- python $P/robust/probes/lib_r
 
 Each calibration hold takes 1 to 5 minutes and each whole-binary hold of 15 runs per build about 5
 (9 while the other tracks ran); the loaded ones keep 16 busy loops running, so make them while no
-other work is timed. Then remove the probe again (`git checkout crates/pocket-render/src/trace.rs`).
+other work is timed. Then remove the probe again (`git checkout crates/amoris-render/src/trace.rs`).
 
 ## 8. The 780M's Vulkan timestamps: a driver fault (2026-10-16, `explore/vkvalid`)
 
@@ -468,7 +468,7 @@ For queries an earlier submission wrote, wgpu-core records the query copy in a c
 own ("Deferred query set resolve") and the barrier and the buffer copy in the next one; that round
 read correct values.
 
-**A reproduction without wgpu.** `crates/pocket-render/examples/vk_timestamps.rs` records the same
+**A reproduction without wgpu.** `crates/amoris-render/examples/vk_timestamps.rs` records the same
 sequence through ash (0.38, already in the lock file through wgpu-hal; a dev-dependency for non-wasm
 targets) with a fresh query pool per round, a device-local resolve buffer kept from round to round
 (a copy that misses the query results reads the previous round's pair) and a host-visible, coherent
@@ -671,7 +671,7 @@ the failing run from the archive copy logged the same. The pipelines are otherwi
 **Reproduce** (the R1 laptop):
 
 ```sh
-cargo build --release -p pocket-render --example vk_timestamps
+cargo build --release -p amoris-render --example vk_timestamps
 target/release/examples/vk_timestamps --adapter 780m --rounds 200     # section 8's table
 python tools/vk_validate.py --log out/vkvalid/same.vvl.txt -- \
   target/release/examples/vk_timestamps --adapter 780m --rounds 100   # validated
@@ -682,7 +682,7 @@ python tools/vk_validate.py --log out/vkvalid/ctl.vvl.txt -- \
 # rt_shadows-f3765e88bb0aa974.exe in a directory D: a first run with AMD_VK_PIPELINE_CACHE_PATH at
 # an empty directory shows D's prefix (the new archive's first 16 hex digits). Then
 python tools/amd_vkcache.py seed out/vkvalid/drvcache/stale-master out/vkvalid/drvcache/s PREFIX
-AMD_VK_PIPELINE_CACHE_PATH=out/vkvalid/drvcache/s POCKET_BACKEND=vulkan POCKET_ADAPTER=780m \
+AMD_VK_PIPELINE_CACHE_PATH=out/vkvalid/drvcache/s AMORIS_BACKEND=vulkan AMORIS_ADAPTER=780m \
   D/rt_shadows-f3765e88bb0aa974.exe ray_traced_shadows_fall_where_cascades_do --exact  # FAILED
 python tools/amd_vkcache.py seed out/vkvalid/drvcache/stale-master out/vkvalid/drvcache/m \
   PREFIX f297407b                       # the wrong entry made to miss: the same run passes
@@ -720,7 +720,7 @@ of the query copy with the same barrier. Still wrong with the timestamps in an e
 submission (530 of 600), with a global `ALL_COMMANDS` barrier before the query copy (593 of 600) and
 with a global `TRANSFER` memory barrier in place of the buffer barrier (100 of 600). The RTX 5060 in
 the same machine (NVIDIA 617.14) is correct in every variant. Reproduction:
-`crates/pocket-render/examples/vk_timestamps.rs` (one file, ash), run as
+`crates/amoris-render/examples/vk_timestamps.rs` (one file, ash), run as
 `vk_timestamps --adapter 780m --rounds 200`, which runs every variant and counts each one's wrong
 readings against `vkGetQueryPoolResults`; section 8 has the table.
 
@@ -752,7 +752,7 @@ runs `python tools/gpu_matrix.py --configs machine --workspace` and judges its J
 `explore/decisions`, from master `6af291db`.
 
 **`--configs machine`.** The lib binary's `gpu::tests::the_machine_adapters_are_listed` prints every
-adapter of every native backend with the index `POCKET_ADAPTER` takes for it there, and the adapter
+adapter of every native backend with the index `AMORIS_ADAPTER` takes for it there, and the adapter
 each backend opens without it. On the R1 laptop:
 
 ```text
@@ -774,13 +774,13 @@ every adapter but the default one, whose `auto` configuration is what `test` run
 device on the default adapter with the platform's default backend. Software adapters (device type
 `Cpu`) are left out; with none left the tool prints so and exits with status 3, which the step
 reports as skipped. On R1 that is the seven configurations of section 4 but `5060-auto`. When `test`
-did not run that configuration in the same check (`--only gpus`, `--skip test`, or `POCKET_ADAPTER`,
-`POCKET_BACKEND` or `POCKET_GPU_MINIMAL` set in the environment `test` inherits), the step passes
-`--default-auto` and the tool runs it as `default-auto`, with no `POCKET_ADAPTER` and no
-`POCKET_BACKEND`, as `test` would (after review, 2026-10-16).
+did not run that configuration in the same check (`--only gpus`, `--skip test`, or `AMORIS_ADAPTER`,
+`AMORIS_BACKEND` or `AMORIS_GPU_MINIMAL` set in the environment `test` inherits), the step passes
+`--default-auto` and the tool runs it as `default-auto`, with no `AMORIS_ADAPTER` and no
+`AMORIS_BACKEND`, as `test` would (after review, 2026-10-16).
 
-**`--workspace`.** `cargo test -p pocket-render` and `cargo test --workspace` build different
-binaries: with the workspace's other members, 29 of the 175 crates below pocket-render get features
+**`--workspace`.** `cargo test -p amoris-render` and `cargo test --workspace` build different
+binaries: with the workspace's other members, 29 of the 175 crates below amoris-render get features
 `-p` leaves out (serde's `rc`, glam's `serde`, `libm` and `scalar-math`, among others; `cargo tree
 -e features` both ways), so `-p` builds the renderer's tree again. `--workspace` builds what `test`
 built and, after it, builds nothing. It runs the binaries `test` ran, too, which matters: the TAA
@@ -803,7 +803,7 @@ the report.
 | `780m-dx12` | Radeon 780M, Direct3D 12 | 191 pass | 121 |
 | `780m-vulkan` | Radeon 780M, Vulkan | 191 pass | 79 |
 | `780m-auto` | Radeon 780M, Direct3D 12, and Vulkan where tests compare backends | 191 pass | 96 |
-| `5060-dx12-minimal` | RTX 5060, Direct3D 12, `POCKET_GPU_MINIMAL=features,limits,timestamps` | 180 pass, 11 skip | 80 |
+| `5060-dx12-minimal` | RTX 5060, Direct3D 12, `AMORIS_GPU_MINIMAL=features,limits,timestamps` | 180 pass, 11 skip | 80 |
 
 The minimal device's skips: no timestamps (`frame_trace`'s two tests, `gpu_profiler`, the clock
 calibration), no `indirect-first-instance` (the first-instance test and the occlusion and prepass
@@ -816,9 +816,9 @@ none of its tests explains or that lists no tests (`gpus.binary_failed`), counts
 report's 20 warnings in a last `gpus.more_skipped`, and runs `default-auto` when `test` did not run
 it (above). `cargo xtask check --only gpus` at `107cf4a7` (the lib binary has 139 tests now: the
 TAA clip box's unit test), the workspace's tests built beforehand, in one bench-lock hold, 07:15 to
-07:25: PASS in 10 min 4 s. The first 88 s went to the tool's build and the listing: pocket-app's
+07:25: PASS in 10 min 4 s. The first 88 s went to the tool's build and the listing: amoris-app's
 test binaries were relinked, since its engine version follows the commit, made after the tests were
-built (pocket-render's binaries were up to date); after `test` in a full check nothing is relinked.
+built (amoris-render's binaries were up to date); after `test` in a full check nothing is relinked.
 The binaries ran 498 s in all. 192 tests per configuration, 1,344 cells: 1,333 pass, 11 skip (the
 same eleven on the minimal device), no binary failed; the summary ends "default-auto because the
 test step did not run in this check". Not a quiet measurement either (other tracks' state unknown).

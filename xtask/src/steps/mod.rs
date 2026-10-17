@@ -69,7 +69,7 @@ struct Run<'a> {
     prep: &'a Prepared,
     results: Vec<StepResult>,
     metadata: Option<Metadata>,
-    pocket: Option<Result<PathBuf, Problem>>,
+    amoris: Option<Result<PathBuf, Problem>>,
 }
 
 impl Run<'_> {
@@ -111,20 +111,20 @@ impl Run<'_> {
         let web = m
             .members()
             .into_iter()
-            .find(|p| p.name == "pocket-web")
+            .find(|p| p.name == "amoris-web")
             .map(|p| p.features.contains_key("editor"));
         (members, web)
     }
 
-    /// The `pocket` binary with its `check` subcommand, or `check.command_failed` saying why
+    /// The `amoris` binary with its `check` subcommand, or `check.command_failed` saying why
     /// there is none (no binary, or one that gave no report).
-    fn pocket(&mut self) -> Result<PathBuf, Problem> {
-        if self.pocket.is_none() {
-            let found = projects::pocket_binary(&self.target_dir())
+    fn amoris(&mut self) -> Result<PathBuf, Problem> {
+        if self.amoris.is_none() {
+            let found = projects::amoris_binary(&self.target_dir())
                 .and_then(|p| projects::probe(&p, &self.env.root).map(|()| p));
-            self.pocket = Some(found);
+            self.amoris = Some(found);
         }
-        self.pocket.clone().expect("probed")
+        self.amoris.clone().expect("probed")
     }
 
     fn step(&mut self, name: &str) -> StepResult {
@@ -172,17 +172,17 @@ impl Run<'_> {
                 cargo::wasm(env, &prep.graph.web_crates(&members, Some("game")), web)
             }
             "types" | "determinism" | "fork" | "replay" | "reload" => {
-                let pocket = self.pocket();
+                let amoris = self.amoris();
                 let mut step =
-                    projects::run(env, &pocket, &prep.projects, name, opts.quick, opts.jobs);
+                    projects::run(env, &amoris, &prep.projects, name, opts.quick, opts.jobs);
                 // The cross-build variant (checks.md 8.2), outside --quick.
                 if name == "determinism"
                     && !opts.quick
-                    && let Ok(release) = &pocket
+                    && let Ok(release) = &amoris
                 {
                     cross_build::run(env, release, &prep.projects, &self.target_dir(), &mut step);
                     step.summary
-                        .push_str("; cross build against a debug pocket");
+                        .push_str("; cross build against a debug amoris");
                 }
                 step
             }
@@ -200,14 +200,14 @@ impl Run<'_> {
                 )
             }
             "web" => {
-                let pocket = self.pocket();
-                web::run(env, &self.target_dir(), &pocket, &prep.projects)
+                let amoris = self.amoris();
+                web::run(env, &self.target_dir(), &amoris, &prep.projects)
             }
-            "perf" => match self.pocket() {
+            "perf" => match self.amoris() {
                 Err(why) => StepResult::skipped(
                     "perf",
                     format!(
-                        "pocket-check not built yet: {}; `pocket bench` and bench/budgets/ come with it (budgets.md 7, 8)",
+                        "amoris-check not built yet: {}; `amoris bench` and bench/budgets/ come with it (budgets.md 7, 8)",
                         why.message
                     ),
                 ),
@@ -229,7 +229,7 @@ pub fn run(env: &Env, opts: &CheckOptions, prep: &Prepared) -> Vec<StepResult> {
         prep,
         results: Vec::new(),
         metadata: None,
-        pocket: None,
+        amoris: None,
     };
     for (i, name) in STEPS.iter().enumerate() {
         let result = if let Some(why) = opts.wants(name) {

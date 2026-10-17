@@ -9,8 +9,8 @@ picked and drawn, the switch), 4.1 (meshopt for LOD, vertex cache and meshlets),
 This specification says how a mesh's coarser levels are made, where they live on the GPU, how the
 culling pass picks one per instance and view, how they are drawn on the three draw paths with
 occlusion culling, the id pass and the shadow cascades, what that costs, and how it is checked. The
-code is `crates/pocket-assets/src/lod.rs` (making levels), `crates/pocket-render/src/meshes.rs`
-(the rows), `crates/pocket-render/shaders/cull.wgsl` (picking), `crates/pocket-render/src/lod.rs`
+code is `crates/amoris-assets/src/lod.rs` (making levels), `crates/amoris-render/src/meshes.rs`
+(the rows), `crates/amoris-render/shaders/cull.wgsl` (picking), `crates/amoris-render/src/lod.rs`
 (the switch, the bounds, the read-back counts) and `renderer.rs` (`sync`, `render`). Measurements:
 [docs/bench/lod.md](../bench/lod.md); evidence: `out/bench-runs/lod/`.
 
@@ -22,12 +22,12 @@ a row of the renderer's mesh table, so a level is drawn exactly like a mesh. Per
 view, the culling pass takes the coarsest level whose error, scaled by the instance, stays under
 one pixel under the instance's bounding sphere's perspective projection bound (the camera; a level
 gets coarser only past a 20% margin) or under one texel (a shadow cascade). Levels are on by
-default; `POCKET_LOD=off` draws every instance's full mesh, and so does a scene whose lists would
+default; `AMORIS_LOD=off` draws every instance's full mesh, and so does a scene whose lists would
 pass the device's binding limit with levels (5).
 
 ## 2. Making levels
 
-`pocket_assets::lod::build(&mut MeshData, &LodOptions)`:
+`amoris_assets::lod::build(&mut MeshData, &LodOptions)`:
 
 1. The full mesh's indices are ordered for the post-transform vertex cache
    (`meshopt::optimize_vertex_cache`). A mesh under `min_triangles` (64) gets no levels, only this
@@ -58,10 +58,10 @@ proven bound (9).
 **Where it runs.** On every mesh a glTF import produces (`import.rs`; natively on the asset
 loader's worker thread, in the browser in the viewport's import of a fetched `.glb`), on the
 renderer's seven primitives at `Renderer::new`, and on the demo models (`demo::mixed_model`,
-`demo::lod_model`). The game module (`pocket-web`) and the game-side crates do not link it.
+`demo::lod_model`). The game module (`amoris-web`) and the game-side crates do not link it.
 
 **Building it.** `meshopt =0.6.2` bundles meshoptimizer's C++ and compiles it with `cc`
-(`pocket-assets` feature `lod`, which `import` enables and `pocket-render` enables for its
+(`amoris-assets` feature `lod`, which `import` enables and `amoris-render` enables for its
 primitives):
 
 - natively with clang-cl when `cargo xtask` runs the build (`CC_x86_64_pc_windows_msvc`, as for
@@ -71,12 +71,12 @@ primitives):
   `limits.h`, `math.h` and `string.h` the crate ships (`include_wasm32`, mapping `sqrtf`, `memcpy`
   and the like to compiler builtins), so no C or C++ library is linked. meshoptimizer's default
   allocator names `operator new(size_t)` and `operator delete(void*)` (`_Znwm`, `_ZdlPv`), which no
-  library provides there: `pocket_assets::lod` defines both on wasm32 over Rust's allocator, each
+  library provides there: `amoris_assets::lod` defines both on wasm32 over Rust's allocator, each
   block carrying its size in a 16-byte header. Without them the link fails
   (`rust-lld: undefined symbol: _Znwm`); with them meshoptimizer adds no import to the module. On a
   Windows host the crate's build script runs its archiver as `llvm-ar` from `PATH`: `cargo xtask`
   puts the pinned LLVM's `bin` first on `PATH` there, and `tools/build_viewport.sh` finds the pinned
-  LLVM (or `POCKET_LLVM`, or Homebrew's) and sets the compilers and `PATH`.
+  LLVM (or `AMORIS_LLVM`, or Homebrew's) and sets the compilers and `PATH`.
 
 Levels made natively and in the browser can differ where the two compilers round meshoptimizer's
 floats differently; they are render data and never reach the world or its hash.
@@ -173,9 +173,9 @@ dispatches per phase; it is left until scenes need it (9).
 
 | Setting | Natively | In the browser | Effect |
 |---|---|---|---|
-| mode | `POCKET_LOD=off` / `on` (default on) | `?lod=off` (viewport page) | off: every instance draws its full mesh; the level rows lose their regions |
-| pixels | `POCKET_LOD_PIXELS` (default 1) | — | the camera's bound in output pixels; 0 draws full meshes on screen |
-| shadow texels | `POCKET_LOD_SHADOW_TEXELS` (default 1) | — | the cascades' bound in their texels; 0 draws full meshes into them |
+| mode | `AMORIS_LOD=off` / `on` (default on) | `?lod=off` (viewport page) | off: every instance draws its full mesh; the level rows lose their regions |
+| pixels | `AMORIS_LOD_PIXELS` (default 1) | — | the camera's bound in output pixels; 0 draws full meshes on screen |
+| shadow texels | `AMORIS_LOD_SHADOW_TEXELS` (default 1) | — | the cascades' bound in their texels; 0 draws full meshes into them |
 | hysteresis | `LodSettings::hysteresis` (0.2) | — | the margin a coarser level needs |
 
 `Renderer::set_lod` and `set_lod_settings` change them at any time (from the next frame);
@@ -188,7 +188,7 @@ triangles the last submitted frame drew (natively; it waits for the GPU), and
 
 - **Occlusion culling**: the early pass picks and stores the camera's level, the late pass draws it
   (4). Images are identical with occlusion culling off and forced on, cold and warm (8).
-- **Ray-traced shadows** (`POCKET_RT_SHADOWS=1`) turn levels off. Their rays start a few millimetres
+- **Ray-traced shadows** (`AMORIS_RT_SHADOWS=1`) turn levels off. Their rays start a few millimetres
   off the drawn surface and meet the full meshes' bottom levels; a receiver drawn at a coarser level
   lies partly inside its full mesh and shadows itself. In `tests/rt_shadows.rs`'s static state the
   shadowed pixels' intersection over union with the cascades fell from 0.935 to 0.764 with levels on
@@ -209,12 +209,12 @@ triangles the last submitted frame drew (natively; it waits for the GPU), and
 
 ## 8. Checks
 
-- `pocket-assets` `lod::tests`: a chain halves (each level at most 85% and at least a quarter of the
+- `amoris-assets` `lod::tests`: a chain halves (each level at most 85% and at least a quarter of the
   previous), its errors grow and stay within the bound, and indices stay in range; the coarsest
   level reads a prefix of the vertices and the full mesh uses every vertex; reordering keeps every
   triangle (by positions) and each vertex's skin weights; a cube gets no levels and the primitive
   sphere does.
-- `crates/pocket-render/tests/lod.rs` (skips without a GPU):
+- `crates/amoris-render/tests/lod.rs` (skips without a GPU):
   - `levels_cut_triangles_and_stay_within_a_pixel`: the LOD field (10 x 10 cells, rocks of 20,480
     triangles and knots of 12,288, 640x360) from two camera positions with levels off and on,
     through the same frames: with levels on the camera draws at most an eighth of the triangles over

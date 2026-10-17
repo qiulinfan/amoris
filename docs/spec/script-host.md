@@ -21,7 +21,7 @@ TypeScript line are in [script-sandbox.md](script-sandbox.md); hot update is in
 | [persist] | spec-persist: [persistence.md](persistence.md), [replay.md](replay.md), [versions.md](versions.md) | canonical encoding, the world hash, snapshot, restore, fork, `lockstep`, first divergence, `Bundle` and its hash, schema versions, fingerprints and the schema lock, migrations, run configuration |
 | [contract] | spec-contract: [shared/contract/](../../shared/contract/README.md) ([actions.md](../../shared/contract/actions.md), [perception.md](../../shared/contract/perception.md), [time.md](../../shared/contract/time.md), [errors.md](../../shared/contract/errors.md)) | perception, actions, intents and their executors, affordances, game codes, time modes and halts, the error protocol `{code, message, detail}` (`Problem`) |
 | [mcp] | spec-mcp: [shared/contract/mcp.md](../../shared/contract/mcp.md) | the MCP tools, among them the apply tool that submits scripts |
-| [arch] | spec-arch: [architecture.md](architecture.md), [threads.md](threads.md), [checks.md](checks.md), [budgets.md](budgets.md) | the `pocket-script` crate and its `transpile` feature, the component registry in `pocket-sim`, the game thread and Host writes, the check command, the budgets, the web build |
+| [arch] | spec-arch: [architecture.md](architecture.md), [threads.md](threads.md), [checks.md](checks.md), [budgets.md](budgets.md) | the `amoris-script` crate and its `transpile` feature, the component registry in `amoris-sim`, the game thread and Host writes, the check command, the budgets, the web build |
 
 Measured facts come from the spikes [script-native.md](../spikes/script-native.md),
 [script-web.md](../spikes/script-web.md) and [debugger.md](../spikes/debugger.md).
@@ -41,7 +41,7 @@ Master's TypeScript SDK (master `docs/sdk.md`) ran a bundle on JavaScriptCore wi
 | `await wait(2)`, timers and tweens kept pending work inside the VM (master `docs/sdk.md`, Time) | No promises, timers or async functions; waiting is a component field counted down by a system (script-sandbox.md 2.2, 3) |
 | `script.profile` timed handlers in milliseconds, which vary run to run (master `docs/sdk.md`, Errors and cost) | Each system reports its work in deterministic steps; its wall time is measured outside the host (script-sandbox.md 4.1; 9) |
 | Three benchmark failures came from a reload that half-reset the run (master `docs/agent-eval.md`: `frozen_coins`, `dodge`, `coin_chime`) | Hot update and restart are separate operations ([hot-update.md](hot-update.md), 3) |
-| A missing import surfaced as `Can't find variable: onStart`; the message later said where the name comes from (master `docs/agent-eval.md`) | Errors carry hints for removed globals, frozen values and `pocket` names not imported (script-sandbox.md 5.3) |
+| A missing import surfaced as `Can't find variable: onStart`; the message later said where the name comes from (master `docs/agent-eval.md`) | Errors carry hints for removed globals, frozen values and `amoris` names not imported (script-sandbox.md 5.3) |
 
 ## 3. Overview
 
@@ -62,19 +62,19 @@ unless the project manifest names another (`[scripts] entry`). A `ScriptSource` 
 of those files as bytes, keyed by `ModulePath`: relative to the project root, `/`-separated,
 normalized, case-sensitive on every platform. The loader never reads the file system: whoever
 submits scripts (session start, the editor's watcher, the apply tool, a replay) builds the whole set
-first, and the shipped web build receives it already compiled (`pocket pack --web`, [arch]).
+first, and the shipped web build receives it already compiled (`amoris pack --web`, [arch]).
 
 ### 4.2 Builders
 
 The entry module's default export is a `game(...)`. A project declares everything through pure
-builders from `pocket` that return frozen values and touch nothing; the host reads the result after
+builders from `amoris` that return frozen values and touch nothing; the host reads the result after
 the modules have evaluated. Here is the crate rule of master's island sample, which kept the count
 in a signal and the boat's id in a module `let` (master `samples/island/scripts/main.tsx`),
 rewritten with both on entities:
 
 ```ts
 // scripts/components.ts
-import { component, field } from "pocket";
+import { component, field } from "amoris";
 export const Crate = component("Crate", {
     version: 1, doc: "A crate adrift that a boat can take aboard.",
     fields: { value: field.u32(1, "Points the crate is worth.") },
@@ -85,7 +85,7 @@ export const Tally = component("Tally", {
 });
 
 // scripts/crates.ts
-import { system } from "pocket";
+import { system } from "amoris";
 const REACH = 3; // how near a crate must float to be taken aboard, in metres
 export const takeCrates = system({
     name: "take_crates", phase: "update",
@@ -108,7 +108,7 @@ export const takeCrates = system({
 });
 
 // scripts/main.ts, the entry module
-import { game } from "pocket";
+import { game } from "amoris";
 import { Crate, Tally } from "./components";
 import { takeCrates } from "./crates";
 export default game({ components: [Crate, Tally], systems: [takeCrates] });
@@ -129,7 +129,7 @@ solve. Two systems with one name are refused (`script.system_duplicate`).
 
 ### 5.1 Types
 
-The `pocket` module as scripts see it (the prelude, 8.3). `Components` and `ComponentColumns` map
+The `amoris` module as scripts see it (the prelude, 8.3). `Components` and `ComponentColumns` map
 component names to value and column types and are generated (7.4).
 
 ```ts
@@ -410,7 +410,7 @@ exact number; the host converts with [sim]'s `EntityId::from_f64` and reports it
 ### 7.1 Rust types
 
 Every component a script can name, engine or project, has one `ComponentSchema` in the component
-registry, which lives in `pocket-sim` ([arch]) and is specified here. It drives columns, write
+registry, which lives in `amoris-sim` ([arch]) and is specified here. It drives columns, write
 validation and the `.d.ts` files; canonical encoding and fingerprints read through it [persist].
 
 ```rust
@@ -474,22 +474,22 @@ those out of typed-array packing (its Decision, item 5); slots remove the limit.
 
 ### 7.4 Type declarations and the check
 
-`scripts.types` writes these files into `<project>/.pocket/types/`, the engine's generated directory
+`scripts.types` writes these files into `<project>/.amoris/types/`, the engine's generated directory
 (never edited, not committed); docs/sdk.md is the agent's guide to them:
 
 | File | Content | Source |
 |---|---|---|
-| `pocket.d.ts` | The prelude's API (5.1), with a reference to `components.d.ts` | `src/prelude/pocket.d.ts`, emitted from the prelude's TypeScript by `oxc_isolated_declarations` in `tests/prelude.rs` (committed, as `pocket.js` is), embedded in the engine |
-| `components.d.ts` | `declare module "pocket" { interface Components {...}; interface ComponentColumns {...} }`: every component scripts can use, engine and project, a value type and a column type each, with field docs naming the declared type and default | Engine `ComponentSchema`s from the live registry; project ones from the scripts on disk: the running program's when they are the running bundle, else compiled and instantiated in a throwaway host (so they are current before a swap), else (they do not load) the registry's |
-| `tsconfig.json` | `TSCONFIG`'s options, its paths from `.pocket/types/` (`include: ["../../scripts"]`) | `pocket_script::types::TYPES_TSCONFIG`: what `tsc` runs with when the project has no `tsconfig.json` |
+| `amoris.d.ts` | The prelude's API (5.1), with a reference to `components.d.ts` | `src/prelude/amoris.d.ts`, emitted from the prelude's TypeScript by `oxc_isolated_declarations` in `tests/prelude.rs` (committed, as `amoris.js` is), embedded in the engine |
+| `components.d.ts` | `declare module "amoris" { interface Components {...}; interface ComponentColumns {...} }`: every component scripts can use, engine and project, a value type and a column type each, with field docs naming the declared type and default | Engine `ComponentSchema`s from the live registry; project ones from the scripts on disk: the running program's when they are the running bundle, else compiled and instantiated in a throwaway host (so they are current before a swap), else (they do not load) the registry's |
+| `tsconfig.json` | `TSCONFIG`'s options, its paths from `.amoris/types/` (`include: ["../../scripts"]`) | `amoris_script::types::TYPES_TSCONFIG`: what `tsc` runs with when the project has no `tsconfig.json` |
 
 An explicit `scripts.types` (its `tsconfig` parameter, true by default) also gives a project without
-a `tsconfig.json` one (`pocket_script::types::TSCONFIG`), for editors and `tsc -p .`: `strict`,
+a `tsconfig.json` one (`amoris_script::types::TSCONFIG`), for editors and `tsc -p .`: `strict`,
 `noEmit`, `isolatedModules`, `allowImportingTsExtensions`, `target` and `lib` `es2023`, `module`
-`esnext`, `moduleResolution` `bundler`, no `types`, `pocket` mapped to `.pocket/types/pocket.d.ts`;
+`esnext`, `moduleResolution` `bundler`, no `types`, `amoris` mapped to `.amoris/types/amoris.d.ts`;
 `lib` still declares `Date` and `Promise`, so the lint (script-sandbox.md 3), not `tsc`, refuses
 them. Nothing else writes into the source tree: the checks, `scripts.apply` and the editor pass
-`tsconfig: false`. One emitter (`pocket_script::types`) writes engine and project components alike:
+`tsconfig: false`. One emitter (`amoris_script::types`) writes engine and project components alike:
 per field `/** Throttle, -1 astern to 1 ahead. (f64, default 0) */`, a column per numeric field
 (`Float64Array`; `BoolColumn` 0 or 1, `EntityColumn` an id or 0, an enum's column documents its
 variant indices, `{x, y, z, w}` of them per vector, none for strings). The prelude types the rest
@@ -514,12 +514,12 @@ reads an error's `code` untyped (14.17).
 `types` (and, for the check, `dry_run`): one compile, then the swap or, for a dry run, an
 instantiation in a throwaway host (a dry run whose scripts compile but would not load is refused
 with the load's diagnostics, as the swap would be), then the declarations of that program written
-under `.pocket/types/`. The server then runs `tsc --noEmit -p` over the project's `tsconfig.json`,
-else `.pocket/types/tsconfig.json` (TypeScript 7, the native compiler; `sdk/package.json` and
+under `.amoris/types/`. The server then runs `tsc --noEmit -p` over the project's `tsconfig.json`,
+else `.amoris/types/tsconfig.json` (TypeScript 7, the native compiler; `sdk/package.json` and
 `sdk/bun.lock` pin 7.0.2 with its integrity hash; a `tsc` older than 7 is passed over), as a child
 process off the game thread, each diagnostic becoming
 `{file, line, column, code, message, severity, source: "tsc"}`, its elaborations
-(`Did you mean ...?`) appended to the message. `pocket check`'s `types` step (checks.md 6.4) does
+(`Did you mean ...?`) appended to the message. `amoris check`'s `types` step (checks.md 6.4) does
 the same without a host: the lint, the declarations from the project loaded into a game with no
 entities, then `tsc`, each diagnostic a `types.error`. `tsc` never runs at run time or in the web
 build (charter 4.2). The web editor loads the same two declaration files into Monaco's TypeScript
@@ -535,8 +535,8 @@ The host installs an rquickjs `Resolver` and `Loader` (`Runtime::set_loader`) ov
 
 | Specifier | Resolves to | Refused with |
 |---|---|---|
-| `pocket` | The prelude (8.3) | |
-| `pocket:host` | The native module, for the prelude and the harden epilogue only | `lint.private_module` in project source |
+| `amoris` | The prelude (8.3) | |
+| `amoris:host` | The native module, for the prelude and the harden epilogue only | `lint.private_module` in project source |
 | `./x`, `../x` | `x` if it ends in `.ts`, else `x.ts`, else `x/index.ts`, relative to the importer | `script.module_not_found` (with the nearest paths); `script.module_outside_root` outside `scripts/` |
 | a path differing only in case | | `script.module_case`, naming the existing path |
 | other bare names, `node:` names | | `script.module_not_found`, with the hint that npm packages and Node modules are not available (14, choice 1) |
@@ -582,9 +582,9 @@ entry's default export is a `game(...)` value (`script.entry_not_game`), validat
 resolves the component names in queries and registers project components (7.3). Any failure drops
 the new context; nothing reaches the world.
 
-The `pocket` module (the prelude) is TypeScript built into the engine binary through the same
+The `amoris` module (the prelude) is TypeScript built into the engine binary through the same
 pipeline and held to the same lint. It implements the builders, `ctx`, `World`, `QueryResult`, `Rng`
-and `field` over the natives of `pocket:host`, each of which validates its arguments
+and `field` over the natives of `amoris:host`, each of which validates its arguments
 (script-sandbox.md 5.1) and runs under `catch_unwind` (script-sandbox.md 4.3), and freezes what it
 returns; its declaration file is emitted from its own source (7.4), so docs and types cannot drift.
 
@@ -690,7 +690,7 @@ All run in the local check command [arch]; those marked web also run in the wasm
 ## 13. Debugging hooks
 
 The breakpoint debugger (charter 4.2.6) is built: [debugger.md](debugger.md) is its specification.
-The host's side is `pocket_script::debug` (a `DebugHook` attached per world with
+The host's side is `amoris_script::debug` (a `DebugHook` attached per world with
 `Game::set_script_debugger`): scripts are instrumented only while a frontend is attached, since the
 PR's handler ran the debugger spike's workload at 2.04 times the stock time while installed and
 costs nothing while not; `script.update` instantiates the installed bundle again at the start of the
@@ -699,10 +699,10 @@ this section asked for. Carried with the PR: P9, a per-function cache of stateme
 spike's operand form of `OP_debug` renumbers opcodes and breaks QuickJS-ng's precompiled builtins),
 and P10, exceptions in the trace handler and `JS_GetStackFrameInfo` (script-sandbox.md 4.2). With
 both, a traced statement costs 4.3 ns more (1.05 times the workload; debugger.md 10). The CDP
-endpoint (`pocket-debug`, architecture.md 4.17) announces each module's JavaScript with a data-URL
+endpoint (`amoris-debug`, architecture.md 4.17) announces each module's JavaScript with a data-URL
 source map whose source is the TypeScript, so clients map locations themselves; agents speak
-TypeScript positions. The spike's CDP checks became `crates/pocket-debug/tests/cdp_e2e.mjs` and
-`crates/pocket-app/tests/debug_agent.rs` (debugger.md 11).
+TypeScript positions. The spike's CDP checks became `crates/amoris-debug/tests/cdp_e2e.mjs` and
+`crates/amoris-app/tests/debug_agent.rs` (debugger.md 11).
 
 A paused tick changes nothing, as no simulation reads a clock. A debugger evaluation and a
 breakpoint condition run with the write natives refusing (`script.debug_read_only`) and the
@@ -715,7 +715,7 @@ recorder writes a `Tainted { tick, reason }` record (replay.md 2.2), `verify` st
 breakpoints, stepping and reading variables do not taint.
 
 **VS Code.** The charter's check (a breakpoint on a `.ts` line in VS Code) runs headless, with no
-UI and nothing downloaded: `crates/pocket-debug/tests/jsdebug_dap.mjs` loads the js-debug that
+UI and nothing downloaded: `crates/amoris-debug/tests/jsdebug_dap.mjs` loads the js-debug that
 the installed VS Code ships (1.140.0, its extension bundle under a stand-in for the `vscode` module;
 the app has no standalone `dapDebugServer.js`), resolves `editors/vscode/launch.json` through
 js-debug's own configuration provider, and speaks the Debug Adapter Protocol to its adapter as VS
@@ -723,7 +723,7 @@ Code does: `setBreakpoints` on a `.ts` path, `stopped`, `stackTrace`, `scopes`, 
 `evaluate`, `next`, `continue`, `disconnect`; 13 of 13 checks on 2026-10-04. Chrome DevTools is
 checked the same way (`devtools_chrome.mjs`, 8 of 8). Debugger.md 11 records both.
 
-The Node fallback works because a system touches only its `ctx` and `pocket`: a prelude shim builds
+The Node fallback works because a system touches only its `ctx` and `amoris`: a prelude shim builds
 a `ctx` over a snapshot exported as JSON [persist] (not in slice 1).
 
 ## 14. Open choices
@@ -738,35 +738,35 @@ a `ctx` over a snapshot exported as JSON [persist] (not in slice 1).
    [README.md](README.md)).
 4. **Committing declaration files.** Recommended: generated, not committed; committing helps tools
    that open a project without the engine but lets them go stale.
-5. **Slice 1: what `pocket-sim` holds of 7.1.** The registry and the data types of 7.1
+5. **Slice 1: what `amoris-sim` holds of 7.1.** The registry and the data types of 7.1
    (`ComponentSchema`, `FieldSchema`, `FieldType`, `FieldValue`, `ComponentOrigin`) and 7.3's
-   `ProjectValues` are in `pocket_sim::registry`; names and docs are checked there
+   `ProjectValues` are in `amoris_sim::registry`; names and docs are checked there
    (`sim.component_name_invalid`, `sim.component_field_invalid`). `ComponentAccess` and the dynamic
    registration of project components (the `ComponentDescriptor` with `ProjectValues`' layout and
    drop) are the script host's: it registers the component with the world, then calls
    `ComponentRegistry::register_project` with the schema and the `ComponentId`. `FieldValue::Enum`
    holds a variant index (simulation.md 14, choice 14).
-6. **Slice 1: the prelude's JavaScript is committed.** `crates/pocket-script/src/prelude/pocket.ts`
-   is the source; it goes through `compile`'s pipeline and lint (allowed to import `pocket:host`)
-   into `src/prelude/pocket.js` and its map, which are committed because the web build has no
-   transpiler. `tests/prelude.rs` fails when they are stale and `POCKET_BLESS=1` rewrites them; it
-   writes `src/prelude/pocket.d.ts` the same way (7.4). `tsc` runs outside this crate (the server,
-   and `pocket check` through `pocket-app`), so there is no `typecheck` feature. Test 7 is
-   `crates/pocket-app/tests/sdk_types.rs` over `tests/fixtures/sdk/every` (every field type and API,
+6. **Slice 1: the prelude's JavaScript is committed.** `crates/amoris-script/src/prelude/amoris.ts`
+   is the source; it goes through `compile`'s pipeline and lint (allowed to import `amoris:host`)
+   into `src/prelude/amoris.js` and its map, which are committed because the web build has no
+   transpiler. `tests/prelude.rs` fails when they are stale and `AMORIS_BLESS=1` rewrites them; it
+   writes `src/prelude/amoris.d.ts` the same way (7.4). `tsc` runs outside this crate (the server,
+   and `amoris check` through `amoris-app`), so there is no `typecheck` feature. Test 7 is
+   `crates/amoris-app/tests/sdk_types.rs` over `tests/fixtures/sdk/every` (every field type and API,
    the builder's and the emitted value types proved mutually assignable, `scripts/mistakes.ts`'s
    refused names and columns under `@ts-expect-error`, a misspelt field's `types.error`); it passes
-   with TypeScript 7.0.2 and fails when no TypeScript 7 `tsc` is found, unless `POCKET_NO_TSC=1`.
+   with TypeScript 7.0.2 and fails when no TypeScript 7 `tsc` is found, unless `AMORIS_NO_TSC=1`.
 7. **Slice 1: scripts in the schedule.** `ScriptHost` is not `Send` and `Sim::add_exclusive` takes
    `Send + Sync` systems, so the host and the program live in the world as non-send data
-   (`pocket_script::Scripts`), which `script.update` takes out and puts back every tick, timing each
+   (`amoris_script::Scripts`), which `script.update` takes out and puts back every tick, timing each
    script system between the step's hooks; persistence declares them and the accessors ignored
-   (`pocket_script::scripts::declare`). `pocket_script::install(sim, limits)` adds the host and
-   `script.update`; `pocket_script::swap(world, set, force)` installs a program (hot-update.md 15,
+   (`amoris_script::scripts::declare`). `amoris_script::install(sim, limits)` adds the host and
+   `script.update`; `amoris_script::swap(world, set, force)` installs a program (hot-update.md 15,
    choice 5). bevy_ecs 0.19.1 panics on any access to non-send data from a thread other than the one
    that inserted it, and persistence leaves `Scripts` out of a snapshot, so a world forked or
    restored onto another thread is a fresh `Sim` on that thread with `install` and `swap` of the
    same compiled set (tests/reload.rs runs one and compares every tick's digest);
-   `pocket_script::scripts::rehost(world, limits)` gives a world a new host on its own thread, the
+   `amoris_script::scripts::rehost(world, limits)` gives a world a new host on its own thread, the
    check that nothing of the old host carries over. A panic in the host while a system runs outside
    any native (an accessor reached while a declared query is prepared) is caught by `script.update`,
    faults that system with `sim.internal` and leaves `Scripts` in the world.
@@ -792,15 +792,15 @@ a `ctx` over a snapshot exported as JSON [persist] (not in slice 1).
     system's `run` is written.
 12. **Slice 1: queries and key parts.** A declared query or `ctx.query` refuses any key but `with`,
     `without` and `fields` (`script.unknown_key`) and a query without `with`
-    (`script.bad_definition`). `ctx.part.entity(e)` is a frozen `{__pocketEntityPart: e}`; a forged
+    (`script.bad_definition`). `ctx.part.entity(e)` is a frozen `{__amorisEntityPart: e}`; a forged
     one names the same stream, which is harmless. The reserved event prefixes are `entity.`,
     `component.`, `script.`, `scripts.`, `sim.`, `intent.`, `contact.`, `physics.`, `interface.`,
     `time.`, `decision.` and `perception.`.
-13. **Slice 1: crate edges.** `pocket-script` links `pocket-sim`, `pocket-contract`, `bevy_ecs`
+13. **Slice 1: crate edges.** `amoris-script` links `amoris-sim`, `amoris-contract`, `bevy_ecs`
     (architecture.md 6), `rquickjs`, `serde` and `serde_json`, and oxc under `transpile`; its edges
-    to `pocket-physics` and `pocket-interface` stay unused until physics queries and perception for
+    to `amoris-physics` and `amoris-interface` stay unused until physics queries and perception for
     non-player characters reach scripts.
-14. **Slice 1: the cross-target check.** `pocket_script::web::report` instantiates a compiled
+14. **Slice 1: the cross-target check.** `amoris_script::web::report` instantiates a compiled
     workload (the regatta under `tests/web/workload/`), runs the lockdown's verification walk (test
     1: no problem, and the counts of setters, objects and roots), checks the replaced `Math`
     functions against the Rust library over a sweep, the canonical NaN of P6, the depth limit

@@ -10,7 +10,7 @@ from), 4.1 (one renderer for Metal, Vulkan, Direct3D 12 and WebGPU).
 This specification says how the renderer anti-aliases over time (TAA) and how it darkens indirect
 light with ground-truth ambient occlusion (GTAO), where both sit in the frame, how they interact
 with multisampling, splats, particles, bloom, the entity-id pass and the editor's overlays, how they
-are switched, and how they are checked. The code is `crates/pocket-render/src/post.rs` (the options,
+are switched, and how they are checked. The code is `crates/amoris-render/src/post.rs` (the options,
 the opaque pass's format and targets), `taa.rs` and `shaders/taa.wgsl`, `gtao.rs` and
 `shaders/gtao.wgsl`, the forward shader's extra outputs (`shaders/forward.wgsl`, `SceneOut`),
 `skinning.rs` (last frame's skinned vertices) and `renderer.rs` (`render`). Measurements and the
@@ -72,10 +72,10 @@ garden at 1600x900: 0.005 against 0.031 ms on the RTX 5060, 0.015 against 0.14 m
 
 | Option | Values | Environment | Renderer | Browser viewport |
 |---|---|---|---|---|
-| Anti-aliasing | `off` (1 sample), `msaa` (4 samples), `taa` (1 sample + TAA), `msaa+taa` | `POCKET_AA` | `set_antialiasing(Antialiasing)` | `set_antialiasing("…")`, `?aa=` |
-| GTAO | `off`, `on`/`depth` (normals from the depth), `target` (the normal target) | `POCKET_GTAO` | `set_gtao(Gtao)`, `set_gtao_radius(m)` | `set_gtao("…")`, `?gtao=` |
+| Anti-aliasing | `off` (1 sample), `msaa` (4 samples), `taa` (1 sample + TAA), `msaa+taa` | `AMORIS_AA` | `set_antialiasing(Antialiasing)` | `set_antialiasing("…")`, `?aa=` |
+| GTAO | `off`, `on`/`depth` (normals from the depth), `target` (the normal target) | `AMORIS_GTAO` | `set_gtao(Gtao)`, `set_gtao_radius(m)` | `set_gtao("…")`, `?gtao=` |
 | Sharpening | an amount, 0 off; applied only with TAA | — | `sharpen` | `set_sharpen(a)`, `?sharpen=` |
-| Render scale | 0.25 to 1 (1: off); below 1 the anti-aliasing mode draws with TAA (4.1) | `POCKET_RENDER_SCALE` | `set_render_scale(s)`, `render_scale()`, `scene_size()` | `set_render_scale(s)`, `?scale=` |
+| Render scale | 0.25 to 1 (1: off); below 1 the anti-aliasing mode draws with TAA (4.1) | `AMORIS_RENDER_SCALE` | `set_render_scale(s)`, `render_scale()`, `scene_size()` | `set_render_scale(s)`, `?scale=` |
 | TAA tuning | object motion, skinned motion, disocclusion, speed weight, `alpha`, `gamma`, jitter amplitude; upscaling's kernel sharpness, share weighting and texture mip bias; `TaaMode::Jittered` (references); `reset()` | — | `taa_mut()` | — |
 
 `FrameStats` reports `antialiasing`, `gtao` and `render_scale`; the viewport's stats JSON carries
@@ -93,11 +93,11 @@ without GTAO.
 multisampling against a supersampled reference. `Renderer::capture_still` restarts the history and
 the jitter sequence and draws one jitter cycle (`STILL_FRAMES`, 16; below a render scale of 1 the
 longer cycle of 4.1) at the same moment before reading back; without TAA it draws one frame. The
-capture server behind the MCP and CLI `capture` (pocket-app `present.rs`) takes it once the scene's
+capture server behind the MCP and CLI `capture` (amoris-app `present.rs`) takes it once the scene's
 assets have arrived, as do `showcase_bench --capture` and `sky_gi_units`. On the check scene at
 256x144 a still capture reaches 40.2 dB against the mean of 64 jittered frames, against 36.5 for
 multisampling and 31.3 for TAA's first frame (RTX 5060, Vulkan); a 640x360 capture of
-samples/sailing took 88 ms through `pocket call capture` on the Radeon 780M (provisional). The
+samples/sailing took 88 ms through `amoris call capture` on the Radeon 780M (provisional). The
 windowed app's capture reads the running history.
 
 A change of anti-aliasing or GTAO rebuilds what depends on the opaque pass's format: its targets,
@@ -200,7 +200,7 @@ bloom and the display transform ignore.
 
 ### 4.1 Upscaling (a render scale below 1)
 
-Charter 4.4, Pioneer 2026-10-15. The render scale `s` (`POCKET_RENDER_SCALE`,
+Charter 4.4, Pioneer 2026-10-15. The render scale `s` (`AMORIS_RENDER_SCALE`,
 `Renderer::set_render_scale`, the viewport's `?scale=`; 0.25 to 1, default 1; every way in clamps a
 value beyond that range and takes one that is not a finite positive number as 1,
 `post::clamp_render_scale`) draws the opaque pass at `round(s * width) x round(s * height)` and
@@ -329,7 +329,7 @@ the options from its URL (`?aa=`, `?gtao=`, `?sharpen=`) and draws the check sce
 
 ## 8. Checks
 
-`crates/pocket-render/tests/taa.rs`, at 256x144. Each check failed with its defect put back (in
+`crates/amoris-render/tests/taa.rs`, at 256x144. Each check failed with its defect put back (in
 brackets); all pass on the RTX 5060 and the Radeon 780M with Vulkan and Direct3D 12, and with
 WebGPU's default limits emulated.
 
@@ -376,8 +376,8 @@ WebGPU's default limits emulated.
   depth drawn with the jittered frame group: 572 flickering pixels at 1, 787 at 0.5). The defects
   were put back on the RTX 5060 with Vulkan and the 780M with Direct3D 12; the logs stay in
   `out/taau/mutations/`.
-- Below a render scale of 1 `tools/prepass_compare.py` (`POCKET_AA=msaa+taa` and `taa`,
-  `POCKET_RENDER_SCALE=0.5` and `0.67`; the many_cubes, splat and static showcase cases, both GPUs
+- Below a render scale of 1 `tools/prepass_compare.py` (`AMORIS_AA=msaa+taa` and `taa`,
+  `AMORIS_RENDER_SCALE=0.5` and `0.67`; the many_cubes, splat and static showcase cases, both GPUs
   and APIs) finds the prepass's documented ties only: many_cubes' sphere, whose cubes touch and
   which differs at scale 1 too (up to 22 levels with TAA there), and at 0.5 with MSAA and TAA 2 or 3
   pixels where a wall meets the floor (pt-lab, RTX 5060) or the ceiling (gi-room, 780M), which agree

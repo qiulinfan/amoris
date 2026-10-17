@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Runs the `shadow_cull` example (crates/pocket-render/examples/shadow_cull.rs) across backends and
+"""Runs the `shadow_cull` example (crates/amoris-render/examples/shadow_cull.rs) across backends and
 adapters and turns its output into the tables of docs/bench/shadows.md.
 
 - `compare`: per configuration, `shadow_cull compare` (every scene drawn with slice culling off and
@@ -7,15 +7,15 @@ adapters and turns its output into the tables of docs/bench/shadows.md.
 - `bench`: per configuration and scene, `shadow_cull bench SCENE` (one renderer, off and on in
   interleaved blocks of frames), after recording the machine's conditions
   (tools/machine_conditions.py).
-- `games`: per configuration, the pocket-app example `draw_paths --compare shadow_cull` on game
+- `games`: per configuration, the amoris-app example `draw_paths --compare shadow_cull` on game
   projects (each run headless for its ticks, its merged render frame drawn twice in one process at
   one moment, off and on; pixels and the id pass's coverage compared), with occlusion culling and
-  the depth prepass off. Needs `cargo build --release -p pocket-app --example draw_paths`.
+  the depth prepass off. Needs `cargo build --release -p amoris-app --example draw_paths`.
 - `table DIR...`: the Markdown tables from what those wrote.
 
-A configuration is `BACKEND:ADAPTER` (POCKET_BACKEND, POCKET_ADAPTER), optionally `+minimal` for
-WebGPU's baseline device (POCKET_GPU_MINIMAL=features,limits,timestamps; `compare` only, the
-baseline device has no timestamps). Build first: `cargo build --release -p pocket-render --example
+A configuration is `BACKEND:ADAPTER` (AMORIS_BACKEND, AMORIS_ADAPTER), optionally `+minimal` for
+WebGPU's baseline device (AMORIS_GPU_MINIMAL=features,limits,timestamps; `compare` only, the
+baseline device has no timestamps). Build first: `cargo build --release -p amoris-render --example
 shadow_cull`. Then, from the repository root (timing runs under the machine's bench lock):
 
     python tools/shadow_cull_bench.py compare --configs dx12:nvidia,vulkan:nvidia,dx12:780m
@@ -45,12 +45,12 @@ BENCH_SCENES = "lod-off-0,lod-off-0.5,lod-0,lod-0.5,cubes-dense,mixed"
 def config_env(config):
     backend, _, rest = config.partition(":")
     adapter, _, extra = rest.partition("+")
-    env = dict(os.environ, POCKET_BACKEND=backend)
-    env.pop("POCKET_GPU_MINIMAL", None)
+    env = dict(os.environ, AMORIS_BACKEND=backend)
+    env.pop("AMORIS_GPU_MINIMAL", None)
     if adapter:
-        env["POCKET_ADAPTER"] = adapter
+        env["AMORIS_ADAPTER"] = adapter
     if extra == "minimal":
-        env["POCKET_GPU_MINIMAL"] = MINIMAL
+        env["AMORIS_GPU_MINIMAL"] = MINIMAL
     return env
 
 
@@ -94,8 +94,8 @@ def games(args):
     for config in args.configs.split(","):
         d = out / label(config)
         env = config_env(config)
-        env.setdefault("POCKET_OCCLUSION", "off")
-        env.setdefault("POCKET_PREPASS", "off")
+        env.setdefault("AMORIS_OCCLUSION", "off")
+        env.setdefault("AMORIS_PREPASS", "off")
         cmd = [str(exe), "--compare", "shadow_cull", "--out", str(d), "--ticks", str(args.ticks),
                *args.scenes.split(",")]
         p = subprocess.run(cmd, cwd=ROOT, env=env, capture_output=True, text=True)

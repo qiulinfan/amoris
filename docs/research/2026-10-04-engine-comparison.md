@@ -21,17 +21,17 @@
 | # | 教训 | 来源 | Amoris 的计划要改什么 | 优先级 |
 |---|---|---|---|---|
 | 1 | 浏览器 WebGPU 的基线装不下 Bevy 式 GPU 剔除。multi-draw indirect 仍要开实验 flag；`indirect-first-instance` 是可选特性；immediates 2026 年才在 Chrome 进入发货流程；默认每个着色阶段只有 8 个 storage buffer、4 个 storage texture。Bevy 的 GPU 剔除要求 `INDIRECT_FIRST_INSTANCE \| IMMEDIATES` 以及 12/10 的限额，meshlet 只支持 Vulkan 与 Metal | Bevy、WebGPU 规范 [10][11][12] | 渲染规格拆成 web 层与原生层：web 层每批一次 `draw_indexed_indirect`，`first_instance` 置 0，实例基址经动态偏移 uniform 传入，Hi-Z 每趟最多写 4 个 mip；原生层再启用 MDI 与 immediates。能力检测结果写进 `RenderStats` | P0 |
-| 2 | 所有 127.0.0.1 端点都要校验令牌和 `Origin`。UE 5.8 的 MCP 只靠回环、没有认证；Unity 要求人工批准新连接；Chrome 111 起 DevTools 端点拒绝未知 Origin | UE [1]、Unity [4]、Chrome [17] | host 启动时生成会话令牌（写入项目的 `.pocket/session`），`/ws`、`/render`、MCP HTTP、CDP 都校验令牌与 `Origin`，CLI 自动读取令牌 | P0 |
-| 3 | 资源身份分两层。Godot 的 `uid://` 与内容无关（存在 `.import`、`.uid` 旁文件和 `.tscn` 头里），派生物按源 md5 与 importer 版本失效 | Godot、UE DDC | 场景引用稳定的资源 UID；replay 与快照头记录 UID→`ContentHash` 锁表，继续保证"replay 指明确切字节"。写进 `pocket-assets` 规格 | P0 |
+| 2 | 所有 127.0.0.1 端点都要校验令牌和 `Origin`。UE 5.8 的 MCP 只靠回环、没有认证；Unity 要求人工批准新连接；Chrome 111 起 DevTools 端点拒绝未知 Origin | UE [1]、Unity [4]、Chrome [17] | host 启动时生成会话令牌（写入项目的 `.amoris/session`），`/ws`、`/render`、MCP HTTP、CDP 都校验令牌与 `Origin`，CLI 自动读取令牌 | P0 |
+| 3 | 资源身份分两层。Godot 的 `uid://` 与内容无关（存在 `.import`、`.uid` 旁文件和 `.tscn` 头里），派生物按源 md5 与 importer 版本失效 | Godot、UE DDC | 场景引用稳定的资源 UID；replay 与快照头记录 UID→`ContentHash` 锁表，继续保证"replay 指明确切字节"。写进 `amoris-assets` 规格 | P0 |
 | 4 | 脚本出错就进调试器。GDScript 的运行时错误调用 `debug_break(err, false)`，停在出错行；暂停期间调试循环仍处理其他消息 | Godot | 把"异常时暂停"从 debugger spike 记下的缺口提升为切片必做项；`debug.state` 带出当前系统已暂存、尚未提交的写入 | P0 |
-| 5 | Unity 在 2026 年弃用编辑器内 MCP，改由 CLI 的 `unity command`、`unity eval` 驱动编辑器（官方说法是更快、更省 token），MCP 只留给不能跑 shell 的 agent，并提供 `unity skill install` | Unity [5] | 印证纲领的"CLI 优先"。补 `pocket eval`（在运行中的世界里只读求值 TS），并从命令目录生成随引擎版本分发的 agent skill | P1 |
+| 5 | Unity 在 2026 年弃用编辑器内 MCP，改由 CLI 的 `unity command`、`unity eval` 驱动编辑器（官方说法是更快、更省 token），MCP 只留给不能跑 shell 的 agent，并提供 `unity skill install` | Unity [5] | 印证纲领的"CLI 优先"。补 `amoris eval`（在运行中的世界里只读求值 TS），并从命令目录生成随引擎版本分发的 agent skill | P1 |
 | 6 | 渲染图三种做法：UE RDG 声明式、可剔除、帧内别名；Godot 从即时调用自动建图并重排；Bevy 0.19 删掉了节点式 RenderGraph，改用 ECS 调度 | UE、Godot、Bevy | wgpu 自动插屏障、没有放置资源，做不了别名。采用"声明式通道表 + 按描述符复用的纹理池 + 每通道 GPU 时间戳 + 图可导出为 JSON" | P1 |
 | 7 | 持久 GPU 槽位加脏数据散写：UE `FGPUScene::AddPrimitiveToUpdate` 配 `FRDGAsyncScatterUploadBuffer`；Bevy `sparse_buffer_update.wgsl` | UE、Bevy | 渲染器按 `EntityId` 分配稳定实例槽，`/render` 差量只散写变动的槽；插值用的上一帧变换留在 GPU 上 | P1 |
 | 8 | 管线编译不能卡帧。UE 预收集 PSO，未就绪时用回退材质；Godot 用 ubershader 顶上；three.js 用 `compileAsync` 和 `createRenderPipelineAsync`；Bevy 在 wasm 与 macOS 上同步编译。wgpu 30 的 web 后端只调同步的 `createRenderPipeline`，`PIPELINE_CACHE` 只实现了 Vulkan | 四家与 wgpu | 渲染器提供 `prepare(scene)`，载入时枚举管线键并预建；新材质未就绪时画回退材质；逐管线测量创建耗时；web 上的异步建管线作为 wgpu 贡献或本地补丁评估 | P1 |
 | 9 | 材质以文本为一等。Godot 着色语言是带固定入口的受限 GLSL，被注入引擎模板；UE 新增 MaterialIR，把材质图先译成 IR 再出 HLSL；three.js TSL 记录 JS 调用栈，把着色器错误指回源码 | Godot、UE、three.js | 材质是遵守固定契约的 WGSL 函数，插进引擎模板；参数反射为 JSON Schema；材质实例只换参数、不换管线；naga/Tint 的错误映射回材质文件行号；节点图编辑器以后作为文本的投影 | P1 |
 | 10 | 浏览器线程。Godot 4.3 起默认单线程导出，因为 SharedArrayBuffer 需要的跨源隔离挡住了发布平台；web 包约 40 MB，brotli 后约 5 MB | Godot [7][8] | 默认 web 构建不依赖 SAB；渲染器放进 Worker 的 OffscreenCanvas，不与 React 编辑器争主线程；wasm 体积进性能记录 | P1 |
 | 11 | 撤销。UE `FTransaction` 存对象序列化后的前后状态做差；Godot `UndoRedo` 存 do/undo 方法对，用 `MERGE_ENDS` 合并拖动；`EditorUndoRedoManager` 分全局、每场景、远程三类历史 | UE、Godot | 事务记录被触及组件的 PCE 前后字节，不手写逆操作；Gizmo 拖动合并成一步；编辑世界与 Play 分支各有一条历史 | P1 |
-| 12 | 检视器靠提示驱动，而不只靠类型。Godot `PropertyInfo{type, hint, hint_string, usage}` 有 50 种 hint、34 种 usage 标志；UE 用 `meta=(ClampMin, EditCondition)` 与 `IPropertyTypeCustomization` | Godot、UE | JSON Schema 加 `x-pocket` 扩展：范围、步长、单位、枚举标签、编辑条件、对玩家 agent 是否可见；React 端按类型名注册自定义编辑器 | P1 |
+| 12 | 检视器靠提示驱动，而不只靠类型。Godot `PropertyInfo{type, hint, hint_string, usage}` 有 50 种 hint、34 种 usage 标志；UE 用 `meta=(ClampMin, EditCondition)` 与 `IPropertyTypeCustomization` | Godot、UE | JSON Schema 加 `x-amoris` 扩展：范围、步长、单位、枚举标签、编辑条件、对玩家 agent 是否可见；React 端按类型名注册自定义编辑器 | P1 |
 | 13 | 一份机读 API 描述生成所有绑定，并做跨版本差异检查。Godot 的 `extension_api.json` 加 `misc/extension_api_validation/`；UE 5.8 的 MCP 工具也从反射（`meta=(AICallable)`）生成 | Godot、UE | `cargo xtask api` 输出 `engine-api.json`（命令目录、组件 schema、事件），从它生成 `.d.ts`、CLI 帮助、MCP 工具表和文档；与上一个标签做差，报告破坏性变更 | P1 |
 | 14 | 资源烘焙是带版本的纯函数。UE DDC 的 build function 要求无状态，版本代表代码；Godot 用 `importer_version` 与 `source_md5`/`dest_md5` 判定是否重导入 | UE、Godot | 导入与烘焙函数带版本号，缓存键 = (函数, 版本, 参数, 源哈希)；LOD 与 meshlet 在导入时生成一次（render spike 每次加载都重建 LOD，约 3 s）；导入参数写在源文件旁的 sidecar 里并入库 | P1 |
 | 15 | 物理确定性要在编译期打开，后端不能混用。Godot 集成了 Jolt，却没有定义 `JPH_CROSS_PLATFORM_DETERMINISTIC`；UE Chaos 的重模拟靠服务器状态纠错，不追求逐位一致 | Godot、UE | 对照后若选 Jolt，就打开跨平台确定性并编译到 wasm，只留一个后端；否则 replay 头与世界哈希要带后端标识，原生 Jolt 的录制不能拿到 web Rapier 上验证 | P1 |
@@ -309,7 +309,7 @@ Amoris 已经确定：CDP 端点，编辑器使用同一个 CDP，agent 用 MCP 
    可以再转成 WebSocket 给 DevTools。LSP 不自研：Monaco 自带 TS 语言服务，加上生成的 `.d.ts`；组件注
    册表变化时 host 推送新的 `.d.ts`（Godot 的 LSP 离不开活的 ClassDB，原因相同）。
 5. **启动前即可下断点**。Godot 用 `--breakpoints`；CDP 的对应做法是"等待调试器"，协议里已有
-   `Runtime.runIfWaitingForDebugger`。补一个 `pocket run --wait-debugger`，让第一个 tick 之前设置的
+   `Runtime.runIfWaitingForDebugger`。补一个 `amoris run --wait-debugger`，让第一个 tick 之前设置的
    断点也能命中。
 
 ## 4. 编辑器架构
@@ -418,7 +418,7 @@ cargo 内部完成。教训：
    `.tscn`：文本、稳定 ID、只写非默认值（新增字段时不会让所有场景文件都变）、外部资源用 UID 引用。预
    制件的覆盖用补丁表达（Bevy BSN、Godot 继承场景）。
 4. **迁移函数必须覆盖每次 schema 变化**。UE 的标签化序列化可以跳过未知属性；Amoris 的严格解码会拒绝
-   未知字段，这对 agent 是对的，但也意味着每次改 schema 都要有迁移，并在 `pocket-check` 里用旧版本快
+   未知字段，这对 agent 是对的，但也意味着每次改 schema 都要有迁移，并在 `amoris-check` 里用旧版本快
    照做回归。
 
 ## 6. 资源管线
@@ -455,7 +455,7 @@ cargo 内部完成。教训：
 1. **两层身份**（要点 3）。按 `architecture.md` 4.2，世界用内容哈希引用资源，那么改一次贴图就要改所
    有引用。Godot 的 UID 把"它是谁"与"它的字节"分开；replay 的精确性改由锁表保证。
 2. **烘焙函数带版本**（要点 14）。产物放在被忽略目录下的内容寻址缓存里，键为 (烘焙函数名, 版本, 参数
-   哈希, 源哈希)；导入参数写在源文件旁的 sidecar（如 `boat.glb.pocket`）并入库。render spike 每次加
+   哈希, 源哈希)；导入参数写在源文件旁的 sidecar（如 `boat.glb.amoris`）并入库。render spike 每次加
    载都重建 LOD，约 3 s；Godot 和 UE 都只在输入或导入器版本变化时才重做。
 3. **烘焙确定性检查**。同一输入烘焙两次、比较产物哈希（UE `CookDeterminismManager`，Bevy 原则
    4）。web 只加载原生烘焙的资源，产物不确定会让 `rendering-spec` 里原生与 web 的网格哈希比对失真。
@@ -565,7 +565,7 @@ Pioneer master 的第二套构建工具也已被否决。可借鉴的是周边�
 replay、数据断点、因果链，在它们那里都没有对应物。补充教训：
 
 1. **CLI 为主，MCP 是投影**（要点 5），"在运行中的世界里求值"做成一等命令。Unity 提供 `unity eval`，
-   说明 agent 需要用一行表达式直接问世界。`pocket eval` 在 tick 边界以只读方式执行 TS（沙箱与脚本相
+   说明 agent 需要用一行表达式直接问世界。`amoris eval` 在 tick 边界以只读方式执行 TS（沙箱与脚本相
    同）；需要写操作时在 fork 里执行。
 2. **安全**（要点 2）。UE 回环加无认证的做法在浏览器环境里有现实风险：网页可以向 127.0.0.1 发起
    WebSocket，Chrome 111 正是为此给 DevTools 加了 Origin 限制。Amoris 同时开着 MCP HTTP、编辑器

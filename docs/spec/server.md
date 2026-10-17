@@ -4,9 +4,9 @@ Status: Draft 2, implemented (2026-10-04; 2026-10-09, Pioneer: a host the debugg
 at once, restores keep the applied scripts, the debugger in the catalog, field-level reads, from
 [the debug evaluation](../bench/debug-eval.md) and measured in
 [agent-debug.md](../bench/agent-debug.md)). Wire forms: [host-protocol.md](host-protocol.md).
-Charter: 3.1 (one interface), 4.3 (debugging), 4.5 (editor). Crates: `pocket-runtime` (commands,
-history, the game thread's Play and kept snapshots), `pocket-link` (the event and log streams),
-`pocket-server`, `pocket-mcp`, `pocket-app` (`pocket serve`, `pocket mcp`, the CLI client).
+Charter: 3.1 (one interface), 4.3 (debugging), 4.5 (editor). Crates: `amoris-runtime` (commands,
+history, the game thread's Play and kept snapshots), `amoris-link` (the event and log streams),
+`amoris-server`, `amoris-mcp`, `amoris-app` (`amoris serve`, `amoris mcp`, the CLI client).
 
 This file says what the host serves today: how to start it, every method with its parameters and
 result, what the server answers itself, the pushes, the CLI, the MCP tools, and the three places the
@@ -16,50 +16,50 @@ where they differ, this file is what runs and host-protocol.md has been updated.
 ## 1. Starting it
 
 ```sh
-pocket serve samples/sailing [--port 7878] [--editor DIR] [--seed S]
-pocket status                  # any client command, from the project's directory
-pocket mcp samples/sailing     # MCP over stdio (uses the running host if there is one)
+amoris serve samples/sailing [--port 7878] [--editor DIR] [--seed S]
+amoris status                  # any client command, from the project's directory
+amoris mcp samples/sailing     # MCP over stdio (uses the running host if there is one)
 ```
 
-- `pocket serve` loads the project, builds its game on the game thread (threads.md 3) in real time
+- `amoris serve` loads the project, builds its game on the game thread (threads.md 3) in real time
   at speed 1, **paused** (the edit world), and serves 127.0.0.1:`port` (0: any free port). It prints
   one JSON line to stdout, `{url, port, pid, project, mcp, editor}`, and writes the same to
-  `<project>/.pocket/host.json`, which it removes on Ctrl-C or SIGTERM. `project` (and
+  `<project>/.amoris/host.json`, which it removes on Ctrl-C or SIGTERM. `project` (and
   `project.info`'s `root`) is the canonical directory in its plain form: on Windows without the
   verbatim `\\?\` prefix `canonicalize` adds, unless only the verbatim form can name the path
-  (`pocket_server::hostfile::project_root`), so it equals what other programs resolve the directory
+  (`amoris_server::hostfile::project_root`), so it equals what other programs resolve the directory
   to (the desktop compares it with Node's `fs.realpath`). The editor's files come from
-  `--editor`, `POCKET_EDITOR_DIST`, or the first `editor/dist` with an `index.html` above the
+  `--editor`, `AMORIS_EDITOR_DIST`, or the first `editor/dist` with an `index.html` above the
   working directory or the executable; without one, `GET /` is a page listing the endpoints.
-- `pocket mcp <project>` serves one MCP session over stdio. When `.pocket/host.json` names a host
+- `amoris mcp <project>` serves one MCP session over stdio. When `.amoris/host.json` names a host
   that answers, the session calls it over HTTP (agents and the editor then share one world);
   otherwise, or with `--own`, it runs the game in its own process. Nothing but MCP goes to stdout.
-- Client commands (section 8) find the host through `--host <url|port>`, `POCKET_HOST`, or the
-  nearest `.pocket/host.json` at or above `--project <dir>` or the working directory.
+- Client commands (section 8) find the host through `--host <url|port>`, `AMORIS_HOST`, or the
+  nearest `.amoris/host.json` at or above `--project <dir>` or the working directory.
 
 ## 2. Architecture
 
 ```text
  editor (/ws)   CLI, tests (/api/call)   MCP clients (/mcp, stdio)
         \              |                    /
-         pocket-server: Host::call(via, method, params)
+         amoris-server: Host::call(via, method, params)
            |  answered here: catalog, events.*, log.since, profile.frame, assets.list,
            |  docs.search, scripts.guide, the type check stage, debug.* and capture (plug-ins)
            v
-   pocket-link: GameClient per source (Editor; one Developer for the API; one per MCP session)
+   amoris-link: GameClient per source (Editor; one Developer for the API; one per MCP session)
            |                         ^ SnapshotReader: snapshots, event ring, log ring,
            v                         | status, world mode and epoch
-   game thread (pocket-runtime thread::Loop): Game::apply, time model, Play, kept snapshots
+   game thread (amoris-runtime thread::Loop): Game::apply, time model, Play, kept snapshots
 ```
 
-- The server holds no game. It reaches the game thread only through `pocket-link`
+- The server holds no game. It reaches the game thread only through `amoris-link`
   ([architecture.md](architecture.md) 5): commands go through a `GameClient` with a reply closure
   that completes a tokio oneshot, so no server thread blocks on the game; everything it pushes is
   read from the `SnapshotReader`.
 - Sources (threads.md 5.1): every editor socket shares `Source::Editor`; `/api/call` (the CLI,
   tests) shares one `Developer(n)`; each MCP session opens its own `Developer(n)`. A boundary
   applies the editor's commands before developers' (threads.md 5.2).
-- Threads: the game thread; tokio's worker threads (`pocket-server`) for HTTP, WebSocket, MCP and
+- Threads: the game thread; tokio's worker threads (`amoris-server`) for HTTP, WebSocket, MCP and
   the pushers. A game stuck in a tick (a breakpoint) leaves the server answering and pushing the
   last snapshot, and no call waits on it (3.4): reads answer from the last publication, others are
   refused at once with `debug.paused`. A game busy in a long tick or a long step is waited for.
@@ -99,7 +99,7 @@ files).
 | `scripts.write` | request | `{path, text}` | `{path, bytes, diagnostics}` (compiled, not swapped) |
 | `scripts.apply` | request | `{files?, force?, dry_run?}` (the server adds `types`) | `{outcome, bundle, previous, systems, components, applied_at, diagnostics, typecheck, tsc_ms, tsc_version, types}` |
 | `scripts.check` | read (server) | `{}` | `{outcome, bundle, diagnostics, typecheck, tsc_ms, tsc_version, reason?, types}`; `refused` when the scripts compile but would not load |
-| `scripts.types` | read | `{text?, tsconfig? = true}` | `{dir, files, tsconfig, components: {engine, project, unavailable}, project_from, diagnostics, text?}` (docs/sdk.md); `tsconfig: false` writes under `.pocket/types/` only |
+| `scripts.types` | read | `{text?, tsconfig? = true}` | `{dir, files, tsconfig, components: {engine, project, unavailable}, project_from, diagnostics, text?}` (docs/sdk.md); `tsconfig: false` writes under `.amoris/types/` only |
 | `scripts.guide` | read (server) | `{}` | `{path: "docs/sdk.md", text}`: the agent's guide to scripts, embedded in the server |
 | `scripts.status` | read | `{}` | `{bundle, ran_last_tick}` |
 | `scripts.profile` | read | `{ticks? = 60, interval?, top? = 10, folded? = false}` (`ticks` at most 3,600; `interval` 1 to 1,000,000, by default the run's steps over 20,000) | `{from_tick, to_tick, ticks, interval, steps, samples, estimated, systems: [{system, calls, steps, samples, functions, lines, stacks, more?}], stopped_by?, folded?}`: the step profiler over the next ticks, run on a fork; the world does not move (debugger.md 14) |
@@ -109,7 +109,7 @@ files).
 | `profile.frame` | read (server) | `{ticks? = 60}` (at most 600) | the `profile` summary (4) of the last `ticks` ticks profiled |
 | `assets.list` | read (server) | `{dir?}` | `[{path, kind, bytes}]`, served at `/assets/<path>` |
 | `docs.search` | read (server) | `{query, limit? = 10}` | `[{command, doc}`, `{component, doc, fields}` or `{guide, read}]` (a matching section of `scripts.guide`) |
-| `debug.*` | (server) | per pocket-debug (debugger.md 7), one catalog entry each with its schema | `debug.not_available` until a `DebugHub` is installed; `debug.rewind {tick, bundle?}` and `debug.writes {entity, component, field?, ticks?}` (debugger.md 13) are the server's own |
+| `debug.*` | (server) | per amoris-debug (debugger.md 7), one catalog entry each with its schema | `debug.not_available` until a `DebugHub` is installed; `debug.rewind {tick, bundle?}` and `debug.writes {entity, component, field?, ticks?}` (debugger.md 13) are the server's own |
 | `capture` | (server) | `{camera?, kind?}` | `capture.not_available` until a `CaptureHub` is installed |
 | `subscribe` / `unsubscribe` | `/ws` only | `{topics: [topic]}` | `{topics}` |
 
@@ -128,11 +128,11 @@ leave it, then applied at one boundary; a refusal names the op as written (`/ops
 Every edit is recorded as `world_edit {edits}` with entity names resolved to ids (threads.md 5.3),
 the same write for `world.edit`, undo and redo, so a recording replays without the history.
 
-The history (`pocket-runtime` `history.rs`) holds, for each edit from the editor or an agent, the
+The history (`amoris-runtime` `history.rs`) holds, for each edit from the editor or an agent, the
 edits that undo it, computed at the boundary from the call's **net effect** on each entity it
 touched: entities it spawned (or revived) are destroyed; entities it destroyed are **revived under
 their ids** with their name and every component (`{op: "revive"}` in `world_edit`, which calls the
-new `pocket_sim::entity::revive`; `sim.entity_alive` when the id is live); components it set or
+new `amoris_sim::entity::revive`; `sim.entity_alive` when the id is live); components it set or
 removed on the other entities get their values from before the call back (`set` with `replace`, or
 `remove`). Undo applies that list as an edit and keeps the list's own inverse for redo; a new edit
 empties redo. 500 entries per stack. An entry whose edits no longer apply (a tick destroyed what it
@@ -153,7 +153,7 @@ group is applied, published and recorded on its own (`group` is not in the canon
 recording replays the same with or without groups.
 
 Sources (2026-10-15, editor.md 8 item 5): every entry keeps the source of the edit that made it (an
-undo or redo keeps it), as pocket-link's `source_json` writes it: `"editor"`, `{"developer": n}`,
+undo or redo keeps it), as amoris-link's `source_json` writes it: `"editor"`, `{"developer": n}`,
 `{"player": n}`. The server adds `session` to an entry whose source is a developer client it handed
 out: `mcp-<n>` for an MCP session (as the `agent` events name it) and `api` for the HTTP API's
 client (the CLI's), in `history.list`'s answer and the `history` push alike. The editor marks every
@@ -166,7 +166,7 @@ and nothing else, in one call: when another source's edit came after the drag or
 undo is refused with `history.group` (`detail.entries` counts the group's undo entries) and
 nothing changes; the editor then writes the dragged fields back instead (editor.md 6).
 
-The server pushes `history` only when it differs from the last one it pushed (pocket-server
+The server pushes `history` only when it differs from the last one it pushed (amoris-server
 `push_history`): the steps of a streamed drag merge into its entry and leave the list as it was,
 so a drag pushes it once, when its entry appears.
 
@@ -191,7 +191,7 @@ breakpoint, a data watch, a `debugger;` statement, an exception it pauses on, a 
 step ends with that tick and the rest is dropped, so `debug.continue` finishes the tick and the
 world stands at its end. The game thread answers that step at the stop, not at the resume: before
 each tick of a step the loop hands the step's reply to the loop state, and the stop's record
-(pocket-link `StateHandle::stopped`) answers it `{tick, world_hash: null, errors: [], paused: true,
+(amoris-link `StateHandle::stopped`) answers it `{tick, world_hash: null, errors: [], paused: true,
 stopped_by}`. `stopped_by` is then the stop's summary, `{reason: "breakpoint" | "data_breakpoint" |
 "debugger_statement" | "exception" | "step" | "pause", tick, system, location: {file, line,
 column}, breakpoint?, watch?: {id, entity, component, field, before, after, written_at},
@@ -223,7 +223,7 @@ gone `null`. A step stopped by the debugger and answered at the stop has none.
   it is restored under the bundle it was kept with and swapped to the applied one by the hot
   update's Host write, `scripts.swap` (`Game::swap_bundle`), which migrates components a newer
   bundle changed; a recording holds the restore's rebase and then the swap, as they ran, and
-  replays identically (pocket-runtime `tests/agent_reads.rs`). `{bundle: "snapshot"}` keeps the
+  replays identically (amoris-runtime `tests/agent_reads.rs`). `{bundle: "snapshot"}` keeps the
   snapshot's own bundle (the old behaviour). The answer's `scripts` names the bundle that runs,
   `kept`, the snapshot's bundle and `swapped`; when the applied scripts do not load on the restored
   world it runs the snapshot's and says so (`swap_refused`). The status line prints
@@ -236,11 +236,11 @@ gone `null`. A step stopped by the debugger and answered at the stop has none.
 
 Pioneer, 2026-10-09: the debug evaluation's first finding. A breakpoint holds the game thread
 inside a tick (threads.md 3.5), and every call that went to the game thread waited for the resume:
-`pocket step 1` with a breakpoint set did not return, nor did `status`, `world get` or `scripts
+`amoris step 1` with a breakpoint set did not return, nor did `status`, `world get` or `scripts
 read`, and the CLI had no read timeout, so 28 calls in 11 runs hung until the agent's tool gave up,
 21 % of all agent time. Now no call waits on a held game:
 
-- The debugger records each stop in the loop state with its summary (pocket-link
+- The debugger records each stop in the loop state with its summary (amoris-link
   `StateHandle::stopped`; `SnapshotReader::debug_stop`, `debug_stops`), so the server knows where
   the game stands without asking the hub.
 - **A step answers at the stop.** The game thread answers the `time.step` whose tick stopped,
@@ -263,12 +263,12 @@ read`, and the CLI had no read timeout, so 28 calls in 11 runs hung until the ag
   publication's registry), `events.*`, `log.since`, `profile.frame`, `assets.list`,
   `scripts.guide` and `debug.*` never need the game.
 - **`play.stop` in Play ends Play wherever the debugger holds it.** Stop drops the fork, held tick
-  and all, so the server has the debugger pass over every pause (pocket-debug `DebugHub::pass`,
+  and all, so the server has the debugger pass over every pause (amoris-debug `DebugHub::pass`,
   the server's `DebugHub::pass`) from the moment it sees one until the Stop lands: the held tick
   runs to its end with no further stop (a breakpoint in a loop, a data watch, a `debugger;`), the
   boundary applies `play.stop`, and the pass ends, also when the caller goes away first.
   Breakpoints and watches stay set and stop the next Play. This is the editor's Stop and an agent's
-  `pocket play stop` at a breakpoint; measured (provisional) 2 to 12 ms after a one-second pause.
+  `amoris play stop` at a breakpoint; measured (provisional) 2 to 12 ms after a one-second pause.
   In the edit world (a held `time.step`) there is no Play to end and `play.stop` is refused like
   any other call.
 - **`time.control` is queued, not refused.** Sent while held, it goes to the game thread and is
@@ -293,7 +293,7 @@ read`, and the CLI had no read timeout, so 28 calls in 11 runs hung until the ag
   the CLI starts a process per call and almost never does. Before 2026-10-09 such calls waited for
   the next resume instead, which is what hung 28 agent calls. To act between ticks: clear or
   condition the breakpoint, or queue `time.control {pause: true}` and continue, or `play.stop`.
-- The CLI waits 60 s at most (`--timeout <s>`, `POCKET_TIMEOUT`; 10 s past a debugger call's
+- The CLI waits 60 s at most (`--timeout <s>`, `AMORIS_TIMEOUT`; 10 s past a debugger call's
   `timeout_ms`) and answers `host.timeout` after it; the MCP stdio bridge to a running host uses
   the same client.
 
@@ -314,39 +314,39 @@ always). A socket that falls more than 1,024 pushes behind gets
 | `log` | `{seq, level, source, message, file?, line?, tick?}` | one per line: script `console.*`, failed system runs |
 | `history` | `{undo, redo, entries}` (`history.list`'s answer, with sessions) | after `world.edit`, undo, redo, restore, Play, Stop, when it changed (3.1) |
 | `agent` | `{session, kind: "call"/"result", method, ok?, summary}` | each MCP call and its result |
-| `debug` | debugger.md 7's state on a pause, `{state: "running"}` on a resume | pushed by `pocket serve`'s debugger (pocket-app `forward_debug_events`); script console lines and failed calls the debugger saw go to `log` |
+| `debug` | debugger.md 7's state on a pause, `{state: "running"}` on a resume | pushed by `amoris serve`'s debugger (amoris-app `forward_debug_events`); script console lines and failed calls the debugger saw go to `log` |
 | `profile` | `{tick, epoch, ticks, held, missed, tick_ms, tick_max_ms, busy_ms, systems: [{name, ms, max_ms}], phases: [{name, ms, max_ms}]}` | every 250 ms: the ticks profiled since the last push, summarized (below) |
 
-`seq` in events is the stream number (`pocket-link` ring, threads.md 4.4), `id` and `cause` the
+`seq` in events is the stream number (`amoris-link` ring, threads.md 4.4), `id` and `cause` the
 world's event sequence numbers. `world.changed` compares section digests, then rows of the changed
 component sections (at most 2,000 pairs). Subscribing is all or nothing: a list naming a topic not
 listed here is refused and changes nothing.
 
 The profile (2026-10-14; charter 4.1, the built-in profiler). A host that serves the profile stream
-turns it on: pocket-server's `Host::new` calls pocket-link's `SnapshotReader::serve_profile`, so
-under `pocket serve` every tick is profiled from start-up, editor or not, and a game no host serves
-(`pocket run`, the native `pocket play` window) is never profiled. The game thread then runs each
-tick with the step hooks of pocket-runtime's `profile::TickTimer`, which time every system on the
+turns it on: amoris-server's `Host::new` calls amoris-link's `SnapshotReader::serve_profile`, so
+under `amoris serve` every tick is profiled from start-up, editor or not, and a game no host serves
+(`amoris run`, the native `amoris play` window) is never profiled. The game thread then runs each
+tick with the step hooks of amoris-runtime's `profile::TickTimer`, which time every system on the
 loop's injected clock outside the simulation (two readings per system; a phase's time is its
 systems'); a system that runs others inside it (`script.update`) keeps only its own time. After the
 tick the loop adds the whole step (`tick_ms`), the render feed's extraction (`loop.present`), the
 snapshot and streams it publishes (`loop.publish`) and its work after the tick before
 (`loop.after`: the players' decision points, `time.step`'s stop conditions and samples; carried
 into the next tick's profile, so a reply that work sends never overtakes the profile of the tick it
-answers), and pushes the tick into pocket-link's profile ring (600 ticks) beside the event and log
+answers), and pushes the tick into amoris-link's profile ring (600 ticks) beside the event and log
 rings. The push never waits: while a reader holds the ring the profile waits for the next tick's
 push; the ring hands back the oldest tick's buffers, so a full ring allocates nothing. The ring
 keeps one world's ticks: a tick of another epoch (Play, Stop, a restore) empties it, and a read for
 the world shown before it has ticked finds nothing. A tick during which the script debugger stopped
 the thread (its stop count changed) is marked held: its times measure the hold, so summaries count
-it in `held` and leave it out. pocket-link's `profile::summary` gives the push and `profile.frame`
+it in `held` and leave it out. amoris-link's `profile::summary` gives the push and `profile.frame`
 one shape: per tick counted, `ms` the average and `max_ms` the most in one tick; `systems` in the
 order they finish in a tick (a script system before `script.update`, which runs it), then
 `tick.other` (the step outside its systems), `loop.present`, `loop.publish` and `loop.after`, which
 add up to `busy_ms`, the game thread's time per tick apart from the commands it applies between
 ticks; `epoch` the world's. The push reads the ticks since its last push (`missed`: ticks of this
 world that left the ring first) and goes out every 250 ms, with `ticks: 0` when none ran;
-`profile.frame` reads the last `ticks`. The CLI's `pocket profile [--ticks n]` prints it as a table
+`profile.frame` reads the last `ticks`. The CLI's `amoris profile [--ticks n]` prints it as a table
 and MCP's `time` tool has a `profile` action, so the editor, the CLI and agents read the same
 numbers. The host draws no frame: the editor's profiler adds its own viewport's frame and GPU passes
 (editor.md 5). docs/bench/profiler.md measures the profiler's cost.
@@ -365,12 +365,12 @@ numbers. The host draws no frame: the editor's profiler adds its own viewport's 
 
 Every request whose `Host` is not `127.0.0.1`, `localhost` or `::1` (any port), or whose `Origin`
 (when present) is not one of them, gets `403 host.forbidden` (DNS rebinding). The CDP endpoint is
-pocket-debug's own port (9229), not this one.
+amoris-debug's own port (9229), not this one.
 
 ## 6. The integrator's plug-ins
 
 ```rust
-// pocket-server
+// amoris-server
 pub trait RenderFeed: Send + Sync {
     fn serve(&self, socket: axum::extract::ws::WebSocket) -> BoxFuture<()>;
 }
@@ -389,12 +389,12 @@ impl Host {
 }
 ```
 
-`pocket-app`'s `serve.rs` builds the `Host` (`start`), so the integrator installs these there. The
-render feed (`pocket-app`'s `present.rs`) subscribes each socket to the game's `Feed` and sends a
+`amoris-app`'s `serve.rs` builds the `Host` (`start`), so the integrator installs these there. The
+render feed (`amoris-app`'s `present.rs`) subscribes each socket to the game's `Feed` and sends a
 frame when the game thread's `on_publish` says it published, at most one every 8 ms
 (host-protocol.md 5). The installed hub's
-`methods()` (pocket-debug's `methods()`, each with its kind, aliases and JSON Schema) are catalog
-entries like every other command, so `pocket help debug.watch`, `docs.search` and the MCP `debug`
+`methods()` (amoris-debug's `methods()`, each with its kind, aliases and JSON Schema) are catalog
+entries like every other command, so `amoris help debug.watch`, `docs.search` and the MCP `debug`
 tool describe them (the debug evaluation's fourth finding: 34 refusals of guessed parameters); the
 server adds `debug.rewind {tick, bundle?}`, which it serves itself (restore, then step to `tick`),
 and `debug.writes {entity, component, field?, ticks?}` (a `time.step {ticks, trace}` answered as its
@@ -404,7 +404,7 @@ is not installed.
 
 ## 7. MCP
 
-`pocket-mcp` projects the catalog into eleven tools, each an `action` over methods; schemas name the
+`amoris-mcp` projects the catalog into eleven tools, each an `action` over methods; schemas name the
 parameters loosely and the runtime's decoder refuses unknown ones with suggestions:
 
 | Tool | Actions -> methods |
@@ -424,43 +424,43 @@ parameters loosely and the runtime's decoder refuses unknown ones with suggestio
 Results are the method's JSON as text; refusals are tool results with `isError` and the text
 `{"error": {code, message, detail}}`. The `debug` tool's input schema lists every parameter its
 methods take (`file, line, condition, log, id, brief, expr, frame, name, value, kind, timeout_ms,
-entity, component, field, mode, tick, bundle`; pocket-app's `paused_host.rs` checks it against
-`pocket_debug::methods()`); `world` takes `fields`, `scripts` `lines` and `numbered`, `time`
+entity, component, field, mode, tick, bundle`; amoris-app's `paused_host.rs` checks it against
+`amoris_debug::methods()`); `world` takes `fields`, `scripts` `lines` and `numbered`, `time`
 `sample` and `bundle`. `tools/list` is 8.6 KB (8,613 bytes of `tools`, about 2,150 tokens at four
 bytes a token, as `tools/smoke_server.py` counts it; 2026-10-14, Windows; the `time` tool's
 `profile` action is 87 of them); it was 6.6 KB (6,645 bytes, ten tools) on 2026-10-09, before the
 `player` tool, and 4.4 KB, 1,236 cl100k tokens, on 2026-10-04.
 Served on `POST /mcp` (one developer client per session, every call pushed as `agent`) and by
-`pocket mcp` over stdio.
+`amoris mcp` over stdio.
 
 ## 8. The CLI
 
-`pocket <command>` talks to the running host over `/api/call`; `pocket help` lists the commands and
-the catalog, `pocket help <command|method>` prints the method's doc and parameters from its JSON
+`amoris <command>` talks to the running host over `/api/call`; `amoris help` lists the commands and
+the catalog, `amoris help <command|method>` prints the method's doc and parameters from its JSON
 Schema, so help never drifts from what the host takes.
 
 | Command | Method |
 |---|---|
-| `pocket call <method> ['<json>'|-]` | any |
-| `pocket status`, `info`, `save`, `catalog`, `docs <words..>` | `status`, `project.info`, `project.save`, `catalog.list`, `docs.search` |
-| `pocket world tree [filter] [--with C,..]` | `world.tree` |
-| `pocket world get <entity> [C.. \| C.f,C.g..]`, `query <C,..> [--fields C.f,..]`, `schema [C]` | `world.get` (dotted names are `fields`), `world.query`, `world.schema` |
-| `pocket world edit '<ops>'`, `set <entity> <C> f=v..`, `spawn [name] [--prefab j]`, `remove <e> <C>`, `destroy <e>..` | `world.edit` |
-| `pocket step [ticks] [--until event:<name>|tick:<n>|<e>.<C>.<f><op><v>] [--watch <e>.<C>.<f>[~v]] [--sample <e>.<C>.<f>,.. [--every k]] [--trace <e>.<C>[.<f>]]` | `time.step` (`--trace`: the write trace's table after the status line) |
-| `pocket time pause|resume|speed <x>|stepped` | `time.control` |
-| `pocket play start [--speed x] [--paused]|stop` | `play.*` |
-| `pocket undo`, `redo`, `history` | `history.*` |
-| `pocket scripts list|read <p> [--lines a-b] [--numbers]|write <p> [file|-]|apply [--force]|check|types|guide|status` | `scripts.*` (`--lines` numbers the lines) |
-| `pocket events [--since n] [--name n.*] [--limit n]`, `--why <seq>` | `events.*` |
-| `pocket logs [--since n]`, `snapshots [list]|restore <tick> [--bundle snapshot]`, `assets [dir]` | `log.since`, `snapshots.*`, `assets.list` |
-| `pocket profile [--ticks n]` | `profile.frame` (a table: ms per tick, max, share of the game thread) |
-| `pocket scripts profile [--ticks n] [--interval steps] [--top n] [--folded <file>]` | `scripts.profile` (by system: its steps, then its functions, lines and stacks with self and total steps; `--folded` writes the folded stacks to the file) |
-| `pocket debug break <file>:<line> [--if <expr>] [--log <text>]`, `clear [id]`, `list` | `debug.breakpoints.*` (`file` may be the module's end, `helm.ts`) |
-| `pocket debug state [--full]`, `eval <expr> [--frame n]`, `set <name> <expr> [--frame n]` | `debug.state`, `debug.eval`, `debug.set` |
-| `pocket debug watch <e>.<C>[.<f>]`, `unwatch [id]` | `debug.watch` (entity by name or id), `debug.unwatch` |
-| `pocket debug writes <e>.<C>[.<f>] [--ticks n]` | `debug.writes` (a table: tick, writer, phase, before, after, the statement or the boundary's write) |
-| `pocket debug continue`, `step [over|into|out]`, `pause [ms]`, `wait [ms]`, `exceptions <mode>`, `rewind <tick> [--bundle snapshot]`, `attach`, `detach` | `debug.*` |
-| `pocket debug <action> ['<json>']` | `debug.<action>` with exact parameters |
+| `amoris call <method> ['<json>'|-]` | any |
+| `amoris status`, `info`, `save`, `catalog`, `docs <words..>` | `status`, `project.info`, `project.save`, `catalog.list`, `docs.search` |
+| `amoris world tree [filter] [--with C,..]` | `world.tree` |
+| `amoris world get <entity> [C.. \| C.f,C.g..]`, `query <C,..> [--fields C.f,..]`, `schema [C]` | `world.get` (dotted names are `fields`), `world.query`, `world.schema` |
+| `amoris world edit '<ops>'`, `set <entity> <C> f=v..`, `spawn [name] [--prefab j]`, `remove <e> <C>`, `destroy <e>..` | `world.edit` |
+| `amoris step [ticks] [--until event:<name>|tick:<n>|<e>.<C>.<f><op><v>] [--watch <e>.<C>.<f>[~v]] [--sample <e>.<C>.<f>,.. [--every k]] [--trace <e>.<C>[.<f>]]` | `time.step` (`--trace`: the write trace's table after the status line) |
+| `amoris time pause|resume|speed <x>|stepped` | `time.control` |
+| `amoris play start [--speed x] [--paused]|stop` | `play.*` |
+| `amoris undo`, `redo`, `history` | `history.*` |
+| `amoris scripts list|read <p> [--lines a-b] [--numbers]|write <p> [file|-]|apply [--force]|check|types|guide|status` | `scripts.*` (`--lines` numbers the lines) |
+| `amoris events [--since n] [--name n.*] [--limit n]`, `--why <seq>` | `events.*` |
+| `amoris logs [--since n]`, `snapshots [list]|restore <tick> [--bundle snapshot]`, `assets [dir]` | `log.since`, `snapshots.*`, `assets.list` |
+| `amoris profile [--ticks n]` | `profile.frame` (a table: ms per tick, max, share of the game thread) |
+| `amoris scripts profile [--ticks n] [--interval steps] [--top n] [--folded <file>]` | `scripts.profile` (by system: its steps, then its functions, lines and stacks with self and total steps; `--folded` writes the folded stacks to the file) |
+| `amoris debug break <file>:<line> [--if <expr>] [--log <text>]`, `clear [id]`, `list` | `debug.breakpoints.*` (`file` may be the module's end, `helm.ts`) |
+| `amoris debug state [--full]`, `eval <expr> [--frame n]`, `set <name> <expr> [--frame n]` | `debug.state`, `debug.eval`, `debug.set` |
+| `amoris debug watch <e>.<C>[.<f>]`, `unwatch [id]` | `debug.watch` (entity by name or id), `debug.unwatch` |
+| `amoris debug writes <e>.<C>[.<f>] [--ticks n]` | `debug.writes` (a table: tick, writer, phase, before, after, the statement or the boundary's write) |
+| `amoris debug continue`, `step [over|into|out]`, `pause [ms]`, `wait [ms]`, `exceptions <mode>`, `rewind <tick> [--bundle snapshot]`, `attach`, `detach` | `debug.*` |
+| `amoris debug <action> ['<json>']` | `debug.<action>` with exact parameters |
 
 Output is compact text, one line per entity, row, event, edit or diagnostic, with defaults left out
 (`#3 Sloop  Boat Collider Crew ...`;
@@ -468,14 +468,14 @@ Output is compact text, one line per entity, row, event, edit or diagnostic, wit
 their first 3 and a count; `--json` prints the exact result. The status line names the running
 scripts (`| scripts 3ae1a99021d4`) and, while the debugger holds the game, where (`| HELD at
 scripts/rules.ts:27 (breakpoint bp1 in log, tick 58)`); a step the debugger stopped prints
-`tick 58 hash - | stopped at scripts/rules.ts:27 (breakpoint bp1 in log, tick 58): pocket debug
-state | pocket debug continue`; a sampled step prints its table; reads made while held start with
+`tick 58 hash - | stopped at scripts/rules.ts:27 (breakpoint bp1 in log, tick 58): amoris debug
+state | amoris debug continue`; a sampled step prints its table; reads made while held start with
 `(paused at …: the world as of tick 57's end)`. `debug state` prints the place, the innermost
 frame's locals one per line (`bearing = 1.344`; `ctx` left out), one line per other frame, the
 breakpoints and watches (`--full`: every frame's locals and closures). A refusal prints
 `code: message` (with its suggestions and diagnostics) to stderr and exits 1, as does a `scripts
 check` with an error diagnostic (compile, load or `tsc`) or a `tsc` past its time limit; a usage
-error exits 2. Every call waits 60 s at most (`--timeout <s>`, `POCKET_TIMEOUT`), then exits 1 with
+error exits 2. Every call waits 60 s at most (`--timeout <s>`, `AMORIS_TIMEOUT`), then exits 1 with
 `host.timeout`.
 
 ## 9. Error codes added
@@ -499,7 +499,7 @@ error exits 2. Every call waits 60 s at most (`--timeout <s>`, `POCKET_TIMEOUT`)
 
 ## 10. Verification
 
-`tools/smoke_server.py` (standard library only) starts `pocket serve` on a copy of `samples/sailing`
+`tools/smoke_server.py` (standard library only) starts `amoris serve` on a copy of `samples/sailing`
 and checks the CLI (status, tree, set, undo, step with an event and a field condition, a refused
 typo with its suggestion, Play and Stop, help), `/api/call` and `/api/catalog` (a destroy undone
 revives the entity under its id), `/ws` (status on connect, subscribe, an edit with its `history`
@@ -507,18 +507,18 @@ and `world.changed` pushes, undo, steps, Play's reset), `events.since`/`why`, an
 (initialize, `tools/list` with its size, calls and refusals), a host the debugger holds (3.4: the
 step that returns at the breakpoint, reads while held, `scripts apply` refused at once, the
 debugger's short forms, restores with and without the applied scripts), then that
-`.pocket/host.json` is gone after SIGTERM (Ctrl-Break on Windows, where it now runs:
+`.amoris/host.json` is gone after SIGTERM (Ctrl-Break on Windows, where it now runs:
 [smoke-server.txt](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/agentdebug/smoke-server.txt),
 0 failures, 2026-10-09). Its WebSocket client keeps the pushes that arrive before a request's answer
 for the next wait (Play's reset can come first), which `tools/tests/test_smoke_server.py` checks
 against a scripted server. The Python `mcp` client package (2.3.0, `uv run --with mcp`) drove both
-transports (`pocket mcp --own` over stdio and `/mcp`). `crates/pocket-runtime/tests/host.rs` tests
+transports (`amoris mcp --own` over stdio and `/mcp`). `crates/amoris-runtime/tests/host.rs` tests
 undo and redo of a spawn, a set and a destroy, the readers, the stop conditions, Play and Stop, and
 the kept snapshots; `tests/agent_reads.rs` the field reads, line ranges, samples and restores under
-the applied scripts (with a recording that replays); pocket-app's `tests/paused_host.rs` a held host
+the applied scripts (with a recording that replays); amoris-app's `tests/paused_host.rs` a held host
 through `Host::call` (also that `profile.frame` answers while held and leaves the held tick out);
 `tests/thread.rs` that ticks are profiled by system and phase once a host serves the profile (a
-reader alone turns nothing on) and that Play starts the ring again; pocket-link's `profile` tests
+reader alone turns nothing on) and that Play starts the ring again; amoris-link's `profile` tests
 the summaries, the rows' order, the world's ticks only, and that a reader holding the ring never
 stops the game thread.
 
@@ -527,15 +527,15 @@ stops the game thread.
 1. A hierarchy component (`Parent`) for `world.tree`'s `children` and `depth`.
 2. `debug.rewind`'s replay forward from a kept snapshot needs the recorded inputs between them (a
    recorder on the edit world). It replays under the applied scripts by default (3.3).
-3. The type check runs `tsc` (TypeScript 7) only when installed: `POCKET_TSC`, else the first
+3. The type check runs `tsc` (TypeScript 7) only when installed: `AMORIS_TSC`, else the first
    TypeScript 7 (`tsc --version`, asked once per path) in a `node_modules` or `sdk/node_modules` at
    or above the project (`cd sdk && bun install`), the repository the binary was built from, or
-   `PATH` (`pocket check`'s `types` step finds it the same way); an older one is passed over and
+   `PATH` (`amoris check`'s `types` step finds it the same way); an older one is passed over and
    named in `reason`. Its findings never block or delay a swap: the game compiles, swaps (or, for
    `scripts.check`, loads in a throwaway host) and writes the declarations in one
    `scripts.apply {types}`, and `tsc` starts after it answers. `scripts.check` with no TypeScript 7
-   answers `typecheck: "unavailable"` and exits 0 on the CLI; `pocket check` calls that
+   answers `typecheck: "unavailable"` and exits 0 on the CLI; `amoris check` calls that
    inconclusive.
-4. The web worker's loop (`pocket-web`) runs plain step counts; stop conditions, Play and kept
+4. The web worker's loop (`amoris-web`) runs plain step counts; stop conditions, Play and kept
    snapshots are native only, and it refuses a write trace (`time.trace_unavailable`, debugger.md
    13).

@@ -24,7 +24,7 @@
 ## Method
 
 `python tools/write_trace_bench.py run OUT --runs 5 --lock <bench_lock.py>` runs the example
-`write_trace_bench` (pocket-runtime, release) five times on each of two projects, one process
+`write_trace_bench` (amoris-runtime, release) five times on each of two projects, one process
 each, stepping the game directly. Each process warms up, counts the script statements a tick runs
 (a debugger hook that only counts, untimed), then times modes in blocks, each tick alone, the
 blocks of a round in rotating order on one world:

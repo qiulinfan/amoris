@@ -2,8 +2,8 @@
 
 Status: Draft, slice 2
 
-The decisions slice 2's implementation of the time model (the module `time` of `pocket-interface`,
-the time requests of `pocket-runtime`'s `play` module) took where
+The decisions slice 2's implementation of the time model (the module `time` of `amoris-interface`,
+the time requests of `amoris-runtime`'s `play` module) took where
 [time.md](../../shared/contract/time.md) and [sailing.md](../../shared/contract/sailing.md) (Time)
 were ambiguous or wrong for the code. The contract is hashed in `shared/SYNC.toml`, so they are
 recorded here, as [actions-slice2.md](actions-slice2.md) records the actions'.
@@ -22,7 +22,7 @@ Slice 2 drives the controller from the synchronous `Game` (`time::session`): `st
 `continue`, `act` with `resume`, and `time.status`. On the game thread a `step` that is time.md's
 request (a player's, or one with any member beside slice 1's `ticks`: `until`, `seat`, `observe`,
 ...) runs through the session one tick per boundary (`time::stepping`, driven by the loop through
-`pocket_runtime::play::LoopStep`), so the queue is served between its ticks as time.md, Threads and
+`amoris_runtime::play::LoopStep`), so the queue is served between its ticks as time.md, Threads and
 the web, asks: the loop runs each tick as it runs every tick (published, its events streamed), and
 after it the run computes the decision points and stops where a session's `step` stops, in the same
 order (`session::Progress` is shared by both). While it runs, another `step` is refused with
@@ -30,10 +30,10 @@ order (`session::Progress` is shared by both). While it runs, another `step` is 
 keeps slice 1's form there (its answer lists the failed invocations of its ticks), and the session's
 decision points are computed after those ticks too, so none is lost between requests. `act`,
 `continue`, `pause`, `resume` and `time.status` reach the game through `Game::apply` as elsewhere.
-The web worker still decodes slice 1's `step {ticks}` (pocket-web is outside this work); real time
+The web worker still decodes slice 1's `step {ticks}` (amoris-web is outside this work); real time
 with pause-on-decision on the game thread waits for the loop to take the controller's `pace` (left
 for the MCP and real-time play work). The controller's logic is tested with its clock injected, as
-the loop injects its own; `pocket-runtime`'s `tests/thread_play.rs` steps a player to each decision
+the loop injects its own; `amoris-runtime`'s `tests/thread_play.rs` steps a player to each decision
 on the game thread, serves a developer's `status` while a step runs and refuses a second step
 meanwhile.
 

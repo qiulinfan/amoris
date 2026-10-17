@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Summarizes and compares per-frame traces (crates/pocket-render/src/trace.rs; docs/bench/dx12.md,
+"""Summarizes and compares per-frame traces (crates/amoris-render/src/trace.rs; docs/bench/dx12.md,
 "Per-frame profiling").
 
     python tools/frame_trace.py stats out/profiler/trace-direct3d12.json

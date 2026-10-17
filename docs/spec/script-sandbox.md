@@ -114,9 +114,9 @@ computed keys and destructuring defaults.
 | `lint.removed_global` | No reference to a removed global (2.2), `require`, `process`, `window`, `document` or `fetch`; no assignment to `globalThis`; no use of `RegExp.prototype.compile` |
 | `lint.decorator` | No decorators (they run at load time) |
 | `lint.namespace` | No value `namespace` (it compiles to load-time code); modules replace it |
-| `lint.private_module` | No import of `pocket:host` |
+| `lint.private_module` | No import of `amoris:host` |
 
-The pure functions callable at load time are the `pocket` exports tagged `@pure` in their
+The pure functions callable at load time are the `amoris` exports tagged `@pure` in their
 declaration (`game`, `system`, `component`, the `field` builders, `freeze`), the `Math` functions
 except `random`, the static functions of `Number`, `String.fromCharCode`, `String.fromCodePoint`,
 `Object.freeze`, `Object.keys`, `Object.values`, `Object.entries`, `Array.isArray` and `Array.of`.
@@ -210,12 +210,12 @@ The script host needs these further changes, carried the same way and proposed u
 | P4 | Compile QuickJS-ng's C with `-ffp-contract=off` on clang and GCC | No fused multiply-add on one platform and not another (master `docs/design/networking.md`, Determinism) |
 | P5 | A per-context call-depth counter, incremented on entry to `JS_CallInternal` for every function kind (bytecode, C functions, bound functions, generators) and per nesting level in QuickJS-ng's C-recursive builtins (`JSON.parse` and `JSON.stringify`, `Array.prototype.flat`, `join` and `toString` over nested arrays, regular expression compilation), decremented on exit; past `max_call_depth` it throws an uncatchable `InternalError` that the host reports as `script.call_depth`, with `JS_SetCallDepthLimit(JSContext *, uint32_t)` to set it | Where the stack runs out depends on the target and the build profile: the script-native spike's verification measured 50 nested calls under 256 KiB with MSVC-built QuickJS-ng, 228 with clang-cl and 907 in Chrome, and Rust's frames above a call are larger in debug. A depth counted in calls is the same everywhere (4.3) |
 | P6 | Every float store into a typed array or a `DataView` (`Float16`, `Float32`, `Float64`) writes the canonical NaN for any NaN (`0x7FF8000000000000` for f64, `0x7FC00000` for f32, `0x7E00` for f16), and a float16 or float32 element read as a number canonicalizes a NaN | QuickJS-ng NaN-boxes values only on 32-bit targets (`JS_NAN_BOXING` when `INTPTR_MAX < INT64_MAX`, quickjs.h), where every NaN becomes `0x7FF8000000000000`; 64-bit native builds keep the payload, and 0/0 is `0xFFF8000000000000` on x86. Without P6, `f[0] = 0/0; new Uint8Array(f.buffer)[7]` reads 0xFF natively and 0x7F on the web, and a script that hashes floats through an aliased typed array diverges |
-| P7 | `rquickjs-sys`'s build script makes the wasi-libc include path absolute with `std::path::absolute` instead of `canonicalize`, and emits `cargo:rustc-env=POCKET_QJS_CC=<compiler id>`; since 2026-10-09 (Pioneer) also `POCKET_QJS_MSVC` and a `cargo:warning` when MSVC's `cl` compiled QuickJS-ng (choice 2) | `canonicalize` gives a verbatim `\\?\` path on Windows that hides nested wasi-libc headers (script-web spike, Problems 1), which the spikes worked around with a copied header directory; the compiler id lets `EngineVersion` and the perf step see which C compiler built QuickJS-ng (architecture.md 7.3) |
+| P7 | `rquickjs-sys`'s build script makes the wasi-libc include path absolute with `std::path::absolute` instead of `canonicalize`, and emits `cargo:rustc-env=AMORIS_QJS_CC=<compiler id>`; since 2026-10-09 (Pioneer) also `AMORIS_QJS_MSVC` and a `cargo:warning` when MSVC's `cl` compiled QuickJS-ng (choice 2) | `canonicalize` gives a verbatim `\\?\` path on Windows that hides nested wasi-libc headers (script-web spike, Problems 1), which the spikes worked around with a copied header directory; the compiler id lets `EngineVersion` and the perf step see which C compiler built QuickJS-ng (architecture.md 7.3) |
 | P8 (slice 1) | `JS_DiscardPendingJobs(JSRuntime *)` frees every queued job without running it; the host calls it when a system call fails or faults, when an instantiation fails, after every `eval_json` and when a panic abandons a call | The job queue is the runtime's: a failed call's jobs ran in the next call, under its state and transaction, or crossed the tick boundary, and a fork had none of them (6, item 14) |
 | P9 | Each function the debugger traces builds a table of its statement positions on its first trace; `OP_debug` reads it instead of searching the line table from the start | The PR's search was about 90 percent of the instrumented cost (debugger spike); the spike's alternative, line and column as `OP_debug` operands with the opcodes moved before the temporary block, renumbers the short opcodes and breaks the precompiled builtin bytecode QuickJS-ng embeds (debugger.md 2) |
 | P10 | The trace handler also hears catchable exceptions, once per throw, with a catch prediction from the catch offsets on the value stacks (`OP_debug` records each frame's stack pointer); `JS_GetDebugTraceException`; `JS_GetStackFrameInfo(level)` | Pause on uncaught exceptions at the throw, and callers' positions without parsing `Error().stack` (debugger.md 2, 3) |
 | P11 (Pioneer, 2026-10-09) | While a trace handler is set, the compiler emits a temporary `OP_debug_scope` (the last lexical variable declared in the statement's scope chain) before each `OP_debug` and `OP_debugger_stmt`, which phase 3 moves into a per-function table of (offset, scope), adjusted when jumps shrink; `OP_debug` records the frame's statement PC (`JSStackFrame.debug_pc`); `JS_EvalInStackFrame` resolves names from that statement's scope, falling back to PR #1421's choice (the deepest block's first variable) where none is recorded | The debug evaluation's third finding: evaluations at helm.ts:67 saw `dx` and not `dz` or `bearing`, declared after it in the same block (37 failed evaluations in 7 runs). A temporary opcode renumbers no opcode bytecode keeps, so the precompiled builtins still load (P9's lesson); uninstrumented bytecode is unchanged (debugger.md 2) |
-| P12 (Pioneer, 2026-10-15) | QuickJS-ng's computed-`goto` dispatch (`DIRECT_DISPATCH`: a table of label addresses, one indirect jump at the end of each opcode) when `_MSC_VER` and `__clang__` are both defined, that is under clang-cl, which defines `_MSC_VER` and so got the `switch`; MSVC's `cl` and wasm32 (`EMSCRIPTEN`, which the build script defines) keep the `switch` | The interpreter's dispatch as QuickJS-ng has it under clang and GCC elsewhere. Steps and depth are counted outside the dispatch (the interrupt poll and P5's counter run on a call's entry, before its class dispatch, and in the jump opcodes' bodies), so steps, results and hashes do not change. It enlarges the interpreter's optimized frame (tests/depth.rs at `max_call_depth`, release: docs/bench/script.md 7.4), inside the 1 MiB `stack_bytes` (4.3). The debugger's instrumented paths (PR #1421's `OP_debug`, P9 to P11) run under it, and pass on a debug P12 build: pocket-app's `debug_agent` (4 of 4, P11's test included) and `paused_host` (5 of 5), `node crates/pocket-debug/tests/cdp_e2e.mjs` (20 of 20) and pocket-debug's own tests (2026-10-15). What it gains: docs/bench/script.md, section 7 |
+| P12 (Pioneer, 2026-10-15) | QuickJS-ng's computed-`goto` dispatch (`DIRECT_DISPATCH`: a table of label addresses, one indirect jump at the end of each opcode) when `_MSC_VER` and `__clang__` are both defined, that is under clang-cl, which defines `_MSC_VER` and so got the `switch`; MSVC's `cl` and wasm32 (`EMSCRIPTEN`, which the build script defines) keep the `switch` | The interpreter's dispatch as QuickJS-ng has it under clang and GCC elsewhere. Steps and depth are counted outside the dispatch (the interrupt poll and P5's counter run on a call's entry, before its class dispatch, and in the jump opcodes' bodies), so steps, results and hashes do not change. It enlarges the interpreter's optimized frame (tests/depth.rs at `max_call_depth`, release: docs/bench/script.md 7.4), inside the 1 MiB `stack_bytes` (4.3). The debugger's instrumented paths (PR #1421's `OP_debug`, P9 to P11) run under it, and pass on a debug P12 build: amoris-app's `debug_agent` (4 of 4, P11's test included) and `paused_host` (5 of 5), `node crates/amoris-debug/tests/cdp_e2e.mjs` (20 of 20) and amoris-debug's own tests (2026-10-15). What it gains: docs/bench/script.md, section 7 |
 | P13 (Pioneer, 2026-10-16) | The interrupt poll of the jump opcodes (`OP_goto`, `OP_if_true`, `OP_if_false` and their short forms), when the counter runs out, first stores the frame's PC (`JSStackFrame.cur_pc`) at the jump, then takes the jump and calls the handler as before; the fast path does the same work (count, compare, jump) in another order | The step profiler (debugger.md 14) reads the stack inside the interrupt handler with P10's `JS_GetStackFrameInfo`. Upstream saves a frame's PC only at calls and on throwing slow paths, so at a jump's poll the current frame named its last call's position, or none in a loop without calls, and most of a loop's steps went to the wrong line. An interrupt still unwinds from the jump's target, which the exception path stores as before, so budget errors keep their positions; steps, results and hashes do not change |
 
 A call's steps must not change while the debugger instruments it (script-host.md 12, test 3).
@@ -258,7 +258,7 @@ only after those values pass their checks (the script-native spike's host grew b
 refused write naming entity 100,000,000). Garbage collection is otherwise unobservable: no `WeakRef`
 or `FinalizationRegistry`, and host finalizers never touch the world.
 
-**Panics stay in Rust.** Every native of `pocket:host` runs under `std::panic::catch_unwind`: a
+**Panics stay in Rust.** Every native of `amoris:host` runs under `std::panic::catch_unwind`: a
 panic becomes an uncatchable JavaScript error, `sim.internal` in the step report and a poisoned
 world (simulation.md 4.6), so nothing unwinds through QuickJS-ng's C frames, which would abort the
 process, editor included (the script-native spike's verification hit this). A native reads its
@@ -267,7 +267,7 @@ panicking on a detached buffer. 2026-10-15 (Pioneer), one exception: the engine'
 other than `hypot` (2.2) are `extern "C"` functions that QuickJS-ng calls with doubles and no
 context, so they run without `catch_unwind` and have no way to throw; a panic in one would abort
 the process at the `extern "C"` edge (Rust aborts there rather than unwind through C), editor
-included. What they run is `pocket_sim::math`, `libm`'s ports of musl over doubles: no allocation,
+included. What they run is `amoris_sim::math`, `libm`'s ports of musl over doubles: no allocation,
 no I/O, no world. The panicking paths found in `libm`'s source are its debug-build checks: in a
 debug build its table indexing is checked (`get().unwrap()`, unchecked in release), with
 `debug_assert!`s, overflow checks and an `unreachable!` in `rem_pio2_large` (the large-argument
@@ -337,7 +337,7 @@ several problems reports is the same in every build.
 QuickJS-ng calls `Error.prepareStackTrace` (2.3) with V8-style call sites (`getFileName`,
 `getLineNumber`, `getColumnNumber`, `getFunctionName`); the host's mapper looks each position up in
 its module's source map, so `error.stack`, the structured `stack` and the debugger show TypeScript
-lines. Prelude frames are kept and marked `pocket`; compile and lint errors take their location from
+lines. Prelude frames are kept and marked `amoris`; compile and lint errors take their location from
 the oxc span. Modules a release precompiles to bytecode keep their line tables (script-host.md 8.2),
 so locations are the same in every build.
 
@@ -364,7 +364,7 @@ so locations are the same in every build.
 
 Hints come from a fixed table keyed by the JavaScript error and its context, covering the mistakes
 master's agents made and those this design invites: a `ReferenceError` for a removed global
-(`Date is not available in game scripts: use ctx.time or ctx.tick`) or for a `pocket` export used
+(`Date is not available in game scripts: use ctx.time or ctx.tick`) or for an `amoris` export used
 without importing it; a `TypeError` from writing a frozen module value (copy it first, or keep the
 state in a component) or a `world.get` copy (use `ctx.world.set`).
 
@@ -398,19 +398,19 @@ world (4.3).
    `cargo xtask vendor --check` will (architecture.md 7.5); the script stays until xtask's Rust
    version replaces it.
 2. **Slice 1: P7 picks the pinned compiler.** When a build names no C compiler for the target
-   (`CC_<target>`, `TARGET_CC`, `CC`), the vendored build script uses `$POCKET_LLVM`, else
-   `~/.pocket-tools/llvm-23.1.2`: `clang-cl` for `x86_64-pc-windows-msvc` and
+   (`CC_<target>`, `TARGET_CC`, `CC`), the vendored build script uses `$AMORIS_LLVM`, else
+   `~/.amoris-tools/llvm-23.1.2`: `clang-cl` for `x86_64-pc-windows-msvc` and
    `aarch64-pc-windows-msvc`, `clang` and `llvm-ar` for `wasm32-unknown-unknown`. Every build of a
    checkout then compiles QuickJS-ng the same way whether `cargo xtask` started it or not, the
    shared target directory does not rebuild QuickJS-ng each time a different caller builds, and
-   `cargo build --target wasm32-unknown-unknown -p pocket-script` works with no variable set.
-   `rquickjs_sys::POCKET_QJS_CC` (`pocket_script::QJS_CC`) reports the compiler, such as
+   `cargo build --target wasm32-unknown-unknown -p amoris-script` works with no variable set.
+   `rquickjs_sys::AMORIS_QJS_CC` (`amoris_script::QJS_CC`) reports the compiler, such as
    `clang-cl: clang version 23.1.2 (...)`. 2026-10-09 (Pioneer): without the pinned LLVM the build
    fell back to MSVC's `cl` silently, and `cl`'s optimized frames take 3.2 times clang-cl's stack
    (1,170,892 bytes at `max_call_depth` against 368,468 the same day), so the 1 MiB release
    `stack_bytes` let `down(1000)` overflow the stack before the depth limit fired. P7 now prints a
-   `cargo:warning` whenever `cl` compiles QuickJS-ng and sets `rquickjs_sys::POCKET_QJS_MSVC`
-   (`pocket_script::QJS_MSVC`), and the release `stack_bytes` is 2 MiB under `cl` (1.5 times its
+   `cargo:warning` whenever `cl` compiles QuickJS-ng and sets `rquickjs_sys::AMORIS_QJS_MSVC`
+   (`amoris_script::QJS_MSVC`), and the release `stack_bytes` is 2 MiB under `cl` (1.5 times its
    use, rounded up); unoptimized, both compilers' frames are alike (3,479,908 bytes with `cl`,
    3,467,626 with clang-cl), so the debug limit is one (docs/bench/xtask.md).
 3. **Slice 1: P4 in the build script.** On the MSVC target rquickjs-sys's build script replaces
@@ -474,7 +474,7 @@ world (4.3).
    uses at `max_call_depth` 200: 356,186 bytes in a release build and 3,467,626 in a debug build, on
    `x86_64-pc-windows-msvc` with clang-cl. `stack_bytes` defaults to 1 MiB in release and 6 MiB in
    debug (at least 1.5 times the use), 256 KiB on `wasm32`, where the web report shows the depth
-   limit firing first; `pocket_script::host::THREAD_STACK_BYTES` is `stack_bytes` plus 2 MiB for the
+   limit firing first; `amoris_script::host::THREAD_STACK_BYTES` is `stack_bytes` plus 2 MiB for the
    Rust frames below the first call, the stack the game thread must have (threads.md 3.1).
    2026-10-15 (Pioneer): `Math.sin` is now a QuickJS-ng C function, which uses less stack per level
    than an rquickjs closure (368,468 bytes through `Math.sin` against 470,818 through `Math.hypot`
@@ -516,7 +516,7 @@ world (4.3).
     refusal's message; the host keeps that error object for the call (a `Persistent` beside the
     `ScriptError`, cleared when the next call begins) and `error_from_value` recognises it by
     identity, so a script rethrowing a caught refusal keeps its code and detail, while an object
-    with copied properties (or `{__pocketCode: "sim.internal"}`) is a `script.exception`. Faults
+    with copied properties (or `{__amorisCode: "sim.internal"}`) is a `script.exception`. Faults
     come only from the host's own state: an uncatchable error, the out-of-memory count, a native's
     panic; `sim.internal` is never read from a script value.
 16. **Slice 1: host buffers are charged before they are made.** `ScriptLimits` has
@@ -536,7 +536,7 @@ world (4.3).
     tree is built and serialized. tests/limits.rs covers each.
 17. **Slice 1: the epilogue's keys and names.** The harden epilogue passes bindings under computed
     keys (`{ ["__proto__"]: __proto__ }`): a plain `__proto__: __proto__` set the object's prototype
-    and left the binding unhardened. Its own bindings start with `__pocket_` (`__pocket_harden`,
-    `__pocket_self`), and `lint.reserved_name` refuses any binding or reference with that prefix in
+    and left the binding unhardened. Its own bindings start with `__amoris_` (`__amoris_harden`,
+    `__amoris_self`), and `lint.reserved_name` refuses any binding or reference with that prefix in
     project code, since a top-level one collides with the epilogue's imports and a reference would
     reach the private native.

@@ -14,7 +14,7 @@ Reproduce: `~/Reference/bevy/target/release/examples/many_cubes --benchmark [--l
 
 ## Amoris on the same machine and scenes
 
-`cargo run --release -p pocket-render --example many_cubes -- --bench 400 [--dense]`: the same
+`cargo run --release -p amoris-render --example many_cubes -- --bench 400 [--dense]`: the same
 layouts as Bevy's (sphere: Fibonacci spiral of radius 500 facing the centre plus the inside-out box,
 camera at the origin turning 0.15/60 rad about z and x per frame; dense: cbrt(n) wrap, gap 1.25,
 fixed camera), 1,600,000 cubes, one mesh, one material, a directional light without shadows, 4x

@@ -1,6 +1,6 @@
 // The rule workload's components: the script-native spike's Attack, Position, Health, Armor and
 // Stats (spikes/script-native/src/world.rs), as project components.
-import { component, field } from "pocket";
+import { component, field } from "amoris";
 
 export const Attack = component("Attack", {
     version: 1, doc: "Whom an entity hits each tick, and how hard.",

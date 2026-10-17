@@ -2,7 +2,7 @@
 // the sailing sample, and the course with its marks. Every bit of game state is a component, so a
 // reload, a fork or a replay carries it (charter 3.2). The perception declarations
 // (perception.json) read Mark.color, Mark.round_to, Mark.order, Course.next and Tally.taken.
-import { component, field } from "pocket";
+import { component, field } from "amoris";
 
 export const Crew = component("Crew", {
     version: 1, doc: "The boat's crew and what they are told to do.",

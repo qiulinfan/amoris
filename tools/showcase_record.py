@@ -33,7 +33,7 @@ class Pilot:
             "protocolVersion": "2025-06-18", "capabilities": {},
             "clientInfo": {"name": "Amoris scripted showcase pilot", "version": "1"},
         })
-        assert response["result"]["serverInfo"]["name"] == "pocket"
+        assert response["result"]["serverInfo"]["name"] == "amoris"
         self.client.rpc("notifications/initialized", notify=True)
         self.calls = 0
         self.remaining = ["Crate1", "Crate2", "Crate3", "Crate4"]

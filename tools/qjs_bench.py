@@ -49,7 +49,7 @@ def now():
 def build(args):
     out = Path(args.out).resolve()
     env = dict(os.environ, CARGO_BUILD_JOBS=os.environ.get("CARGO_BUILD_JOBS", "5"))
-    cmd = ["cargo", "build", "--release", "-p", "pocket-script", "--features", "transpile"]
+    cmd = ["cargo", "build", "--release", "-p", "amoris-script", "--features", "transpile"]
     for e in EXAMPLES:
         cmd += ["--example", e]
     if args.rev:
@@ -61,6 +61,10 @@ def build(args):
                              capture_output=True).stdout
         with tarfile.open(fileobj=io.BytesIO(tar)) as t:
             t.extractall(src, filter="data")
+        # A revision from before the 2026-10-16 rename uses the old names: rename its tree as this
+        # checkout was renamed (a no-op on a later revision).
+        subprocess.run([sys.executable, str(REPO / "tools" / "amoris_rename.py"), "--tree", str(src)],
+                       check=True)
         # git archive dates every file at its commit, earlier than the last build into the shared
         # target directory: cargo would take another revision's sources as unchanged and keep the
         # previous build's binaries. Every exported file is dated now instead.

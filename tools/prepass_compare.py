@@ -2,26 +2,26 @@
 """Draws the same frames with the depth prepass off and forced on and compares them.
 
 docs/spec/prepass.md: the prepass must never change the image. tools/occlusion_compare.py's two
-kinds of comparison on one backend and adapter, switching POCKET_PREPASS instead of
-POCKET_OCCLUSION (occlusion culling stays as the environment says, auto by default):
+kinds of comparison on one backend and adapter, switching AMORIS_PREPASS instead of
+AMORIS_OCCLUSION (occlusion culling stays as the environment says, auto by default):
 
 - captures: every case of tools/backend_compare.py (many_cubes sphere, dense and with shadows,
-  splats, gi-room and pt-lab drawn statically, `pocket serve` captures of sailing, anim and
-  gi-room) plus the many_cubes orbit, each captured by its own process with POCKET_PREPASS=off and
+  splats, gi-room and pt-lab drawn statically, `amoris serve` captures of sailing, anim and
+  gi-room) plus the many_cubes orbit, each captured by its own process with AMORIS_PREPASS=off and
   on and compared by the `image_diff` example. Separate processes do not draw animated scenes at
   exactly the same moment (`anim` differs between two runs with the same settings);
-- scenes: the pocket-app example `draw_paths --compare prepass` draws each scene twice in one
+- scenes: the amoris-app example `draw_paths --compare prepass` draws each scene twice in one
   process at one fixed moment (prepass off, forced on) and compares the pixels and the entity-id
   pass's coverage, so animated scenes compare exactly.
 
-Build first: `cargo build --release -p pocket-render --examples`, `cargo build --release -p
-pocket-app` and `cargo build --release -p pocket-app --example draw_paths`. Then, from the
+Build first: `cargo build --release -p amoris-render --examples`, `cargo build --release -p
+amoris-app` and `cargo build --release -p amoris-app --example draw_paths`. Then, from the
 repository's root:
 
     python tools/prepass_compare.py --backend dx12 --adapter nvidia --out out/prepass/compare/dx12-nvidia \\
         --summary out/prepass/compare/dx12-nvidia.json
 
-With POCKET_GPU_MINIMAL=features,limits,timestamps in the environment every capture runs on
+With AMORIS_GPU_MINIMAL=features,limits,timestamps in the environment every capture runs on
 WebGPU's baseline device.
 """
 import argparse
@@ -38,7 +38,7 @@ import occlusion_compare as oc  # noqa: E402
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--backend", default="dx12")
-    ap.add_argument("--adapter", default="", help="POCKET_ADAPTER value")
+    ap.add_argument("--adapter", default="", help="AMORIS_ADAPTER value")
     ap.add_argument("--cases", default=",".join(bc.CASES), help="capture cases ('' for none)")
     ap.add_argument("--scenes", default=oc.SCENES, help="draw_paths scenes ('' for none)")
     ap.add_argument("--out", default="out/prepass/compare")

@@ -1,5 +1,5 @@
 //! The report every check prints (docs/spec/checks.md 10): the same shape for `cargo xtask check`
-//! and `pocket check`, its human form, the exit codes (11) and the commit trailer (12).
+//! and `amoris check`, its human form, the exit codes (11) and the commit trailer (12).
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -7,7 +7,7 @@ use serde_json::{Map, Value};
 /// At most this many errors and warnings per step; the rest are counted (checks.md 10.1).
 pub const MAX_PROBLEMS: usize = 20;
 
-/// What `pocket check --json` prints as well (checks.md 2). Reading one, the fields a minimal
+/// What `amoris check --json` prints as well (checks.md 2). Reading one, the fields a minimal
 /// implementation may leave out (the fingerprint, the timings, empty lists) take their defaults.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Report {
@@ -26,7 +26,7 @@ pub struct Report {
     pub steps: Vec<StepResult>,
 }
 
-/// The fingerprint of budgets.md 3. `gpus` stays empty until `pocket` reports what wgpu sees.
+/// The fingerprint of budgets.md 3. `gpus` stays empty until `amoris` reports what wgpu sees.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Machine {
@@ -68,7 +68,7 @@ impl Verdict {
 }
 
 /// The error protocol's `{code, message, detail}` (shared/contract/errors.md). xtask keeps its own
-/// copy of the shape instead of linking `pocket-contract`, so a compile error there is a finding of
+/// copy of the shape instead of linking `amoris-contract`, so a compile error there is a finding of
 /// the check rather than a checker that does not build (checks.md 2).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Problem {
@@ -351,11 +351,11 @@ mod tests {
 
     #[test]
     fn a_problem_serializes_in_the_error_protocol_shape() {
-        let p = Problem::new("deps.crate_missing", "m", json!({"crate": "pocket-x"}));
+        let p = Problem::new("deps.crate_missing", "m", json!({"crate": "amoris-x"}));
         let v = serde_json::to_value(&p).unwrap();
         assert_eq!(
             v,
-            json!({"code": "deps.crate_missing", "message": "m", "detail": {"crate": "pocket-x"}})
+            json!({"code": "deps.crate_missing", "message": "m", "detail": {"crate": "amoris-x"}})
         );
     }
 

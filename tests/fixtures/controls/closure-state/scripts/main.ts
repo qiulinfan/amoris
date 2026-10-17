@@ -1,6 +1,6 @@
 // A rule that keeps state outside the world: `next` closes over a counter made when the module
 // loads, so a reload starts it again from zero and the count it writes jumps back.
-import { component, field, game, system } from "pocket";
+import { component, field, game, system } from "amoris";
 
 const next = (() => {
     let n = 0;

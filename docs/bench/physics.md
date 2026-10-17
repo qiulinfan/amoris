@@ -53,16 +53,16 @@ and a backend decision from it:
    already uses for QuickJS-ng and linked into a Rust `wasm32-unknown-unknown` module (web profile,
    `wasm-opt`), Jolt's Pyramid computes the same hash as native Jolt and as Jolt's CI. That module
    is a prototype with plain exports and six WASI imports stubbed from JavaScript; linking Jolt into
-   pocket-web itself, through wasm-bindgen and beside QuickJS-ng's own libc, is untested. Without
+   amoris-web itself, through wasm-bindgen and beside QuickJS-ng's own libc, is untested. Without
    wasm SIMD (only Emscripten provides Jolt's), Jolt in WebAssembly runs 1.3 to 1.7 times slower
    than natively and still steps all four scenes faster than Rapier's deterministic build in the
    configuration Amoris ships (web profile, no `simd128`), least clearly on the pyramid. With
    `simd128`, which is not shipped, Rapier wins the pyramid.
-4. **Snapshots differ in kind.** Rapier's snapshot, as pocket-physics' Cache takes it, is the whole
+4. **Snapshots differ in kind.** Rapier's snapshot, as amoris-physics' Cache takes it, is the whole
    world through serde, static geometry included: 408 MB for the ragdoll scene's 2.7 million terrain
    triangles, about 0.1 to 0.2 s each way at moderate load and several times that under heavy load.
    Jolt saves only the simulation state (3 MB there) and restores it into a world rebuilt from its
-   components. 2026-10-15 (Pioneer): pocket-physics' cache now leaves fixed colliders' shapes out
+   components. 2026-10-15 (Pioneer): amoris-physics' cache now leaves fixed colliders' shapes out
    too (section "Static geometry and the cache"; measured with a stand-in snapshot on a terrain of a
    million triangles, the ragdoll scene not re-measured).
 5. **Jolt from Rust costs nothing per call.** Its costs are the C++ build, a C wrapper to own (the
@@ -84,11 +84,11 @@ Rapier until the port passes them** (section "Recommendation").
   Rapier side; with `--fork-at N` it saves the state after N steps, restores it into a freshly built
   second system and steps both (section "Snapshots and forks").
 - **`bench/physics/rapier/`**: the Rapier side, a standalone Cargo package (not a workspace member,
-  so its feature sets do not unify with `pocket-physics`), pinned to the engine's `rapier3d =0.36.0`
+  so its feature sets do not unify with `amoris-physics`), pinned to the engine's `rapier3d =0.36.0`
   and its resolved versions (parry3d 0.31.1, glam 0.33.12, simba 0.10.2, wide 1.7.1). Features
   select the configuration: `det` (`enhanced-determinism`, what Amoris ships), none (Rapier's
   default), `simd8`, `parallel`; `serde` adds `--fork-at N`, a snapshot through serde and bincode
-  1.3.3 exactly as pocket-physics writes its Cache. Builds natively and for `wasm32-wasip1`.
+  1.3.3 exactly as amoris-physics writes its Cache. Builds natively and for `wasm32-wasip1`.
 - **`bench/physics/jolt-ffi/`**: the Rust-calls-Jolt prototype through the C wrapper joltc (below,
   "Integration"): `src/lib.rs` holds the C declarations and the Pyramid scene and builds both as a
   native binary (`src/main.rs`) and as a Rust `wasm32-unknown-unknown` module, Amoris's browser
@@ -461,7 +461,7 @@ What this says:
   counts even without the option (its simulation is deterministic on one binary, its docs say), so
   the option only buys cross-binary agreement.
 - **What a Jolt backend would have to do for it**: sort contact events and query results by body
-  before handing them to systems (pocket-physics already sorts its contact events by entity pair,
+  before handing them to systems (amoris-physics already sorts its contact events by entity pair,
   simulation.md 8.4), never use broad-phase queries for game logic, and keep the engine's own math
   rule for the forces it adds (numeric.md), which is unchanged by the backend.
 
@@ -498,7 +498,7 @@ Times in ms: median over 5 runs (fastest–slowest), 1-minute load 5 to 18.
   again). With Rapier, every byte-based fork of a world with a large level writes and reads its
   level: here 0.10 to 0.19 s to save and 0.13 to 0.24 s to restore at load 5 to 18, and several
   times that on the busier machine of the first runs and the review (0.15 to 0.8 s each way). The
-  size is the robust number; the times follow the machine. It comes from pocket-physics' Cache
+  size is the robust number; the times follow the machine. It comes from amoris-physics' Cache
   holding Rapier's whole `PhysicsWorld`, not from Rapier as such (see the end of "Recommendation").
   2026-10-15 (Pioneer): layout 2 of the cache writes a fixed collider's shape by reference; a
   999,698-triangle terrain's cache fell from 102.3 MB to 3.35 MB (section "Static geometry and the
@@ -521,7 +521,7 @@ quoted (fork 3.0 times rather than 3.4, the stand-in snapshot 1.6 rather than 1.
 restore's extra cost in WebAssembly is 0.36 s rather than 0.41; no conclusion below changes.
 
 The "Recommendation" below names keeping static geometry out of the physics Cache as the first
-Rapier-side item. Layout 2 of pocket-physics' cache does it (persistence.md 8): a fixed body's
+Rapier-side item. Layout 2 of amoris-physics' cache does it (persistence.md 8): a fixed body's
 collider shape that `physics.step` built from the body's `RigidBody` and `Collider` is written as a
 reference (the body's spec hash and the BLAKE3 digest of those components) while the components are
 unchanged, and decoding puts back the shape those components build. A process-wide weak table keyed
@@ -537,14 +537,14 @@ covers the cache's bytes, so it was re-blessed.
 
 **Scene and method.** `probe::level`: ConvexVsMesh's 1,764 bodies (a box, a ball, a capsule and a
 square pyramid; section "Scenes") dropped on a fixed sine terrain of 100 x 100 cells (20,000
-triangles, ConvexVsMesh's size and wave) or 707 x 707 (999,698), all through pocket-physics'
-components. The terrain is built as pocket-physics builds every mesh, without the
+triangles, ConvexVsMesh's size and wave) or 707 x 707 (999,698), all through amoris-physics'
+components. The terrain is built as amoris-physics builds every mesh, without the
 `FIX_INTERNAL_EDGES` flag the ConvexVsMesh and Ragdoll scenes above use, and its `Collider` is 24.2
 MB in the stand-in snapshot's bincode. After 150 ticks, five rounds of: the terrain's spec hash
 (what `physics.step` computes for every body every tick, and layout 2's encode for every fixed
 body); the cache's encode into a new buffer, as a snapshot's, and its decode alone (layout 2 takes
 the terrain from the table, the source world holding it); the probe's stand-in snapshot (bincode per
-section, not pocket-persist's PCE and XXH3) and its restore into a fresh world; a fork (both; its
+section, not amoris-persist's PCE and XXH3) and its restore into a fresh world; a fork (both; its
 intermediate snapshot is freed inside it, as any fork's). Every other result is freed after its
 timer stops. Then a fork stepped 30 ticks beside its source, which must keep its hashes, and a cold
 restore after the source is dropped, which must give the snapshot's bytes. Natively
@@ -554,7 +554,7 @@ five rounds, the order of the layouts and of the engines turning by one each rou
 median over the five runs of each run's own statistic: the median of its five rounds, except the
 cold restore and the first tick (one sample per run) and the tick (the median of the 149 warm
 ticks). Raw output is in ignored `out/physcache/quiet/`. Layout 1 is the same code with
-`crates/pocket-physics/src/cache.rs` of `c05f49a6` (the commit that added the scene) in place of
+`crates/amoris-physics/src/cache.rs` of `c05f49a6` (the commit that added the scene) in place of
 `src/cache/`.
 
 Times in ms. Every fork continued with its source's hashes and every cold restore gave the
@@ -609,7 +609,7 @@ natively, 70–71 and 424–428 in WebAssembly; encode 50–52 and 28.6–29.2 n
   `physics_bench.exe` from 4,908,544 to 4,949,504 bytes (+0.8%), each against layout 1 built from
   the same code. The first layout 2, whose wrappers passed the whole `PhysicsWorld` and the shapes
   through a second copy of their `serde` code, cost +911 KB (+25%) of code in WebAssembly.
-  pocket-web was not measured; it carries the same physics code.
+  amoris-web was not measured; it carries the same physics code.
 - **On the sailing scene**, which has no fixed body, the cache grows by a 4-byte slot tag per
   collider (16,525 to 16,553 bytes at tick 300). Nine runs of `physics_bench` per layout,
   interleaved, resolve no difference in time: the stand-in snapshot with its hash takes 52.8 µs
@@ -617,8 +617,8 @@ natively, 70–71 and 424–428 in WebAssembly; encode 50–52 and 28.6–29.2 n
   making, 483 and 485 µs, a tick 41.0 and 40.7 µs (40.7–41.6 and 40.1–41.3).
 - **For the Jolt recommendation** this narrows the snapshot argument, but it does not settle it. The
   stand-in snapshot of a million-triangle level forks in about 50 ms on layout 2, and
-  pocket-physics' cache now leaves static geometry out as Jolt's state does (section "Snapshots and
-  forks": 3 MB on the ragdoll scene, a different scene). Not measured: pocket-persist's PCE and
+  amoris-physics' cache now leaves static geometry out as Jolt's state does (section "Snapshots and
+  forks": 3 MB on the ragdoll scene, a different scene). Not measured: amoris-persist's PCE and
   `Game::fork` on this scene (its verified restore re-encodes the components and the cache, so it
   repeats the spec hash and adds the PCE of the 24 MB `Collider`), a terrain with
   `FIX_INTERNAL_EDGES`, whose built mesh and cold restore are larger, and the ragdoll scene behind
@@ -641,7 +641,7 @@ natively, 70–71 and 424–428 in WebAssembly; encode 50–52 and 28.6–29.2 n
 No Rust crate is current, complete and deterministic at once. joltc is the usable base: current,
 MIT, broad, with `BodyInterface_CreateBodyWithID` and a contact listener. None of the C wrappers
 exposes Jolt's `StateRecorder` (`PhysicsSystem::SaveState` / `RestoreState`), which Amoris's
-snapshot, fork and replay would need from a Jolt backend (charter 3.3; pocket-physics serializes
+snapshot, fork and replay would need from a Jolt backend (charter 3.3; amoris-physics serializes
 Rapier's whole `PhysicsWorld` through serde today). joltc HEAD does not compile against Jolt master
 (it still sets the removed `PhysicsSettings::mDeterministicSimulation` and reads removed
 `CollisionEstimationResult` fields), so a wrapper pins Jolt to its release.
@@ -692,7 +692,7 @@ not build for `wasm32-unknown-unknown` out of the box either: it recognizes WebA
   (table "WebAssembly"). It is 1.10 MB (419 KB gzipped), Jolt's type registry and the parts the
   pyramid uses.
 - **What that does not show.** The module is a prototype: plain C exports, not wasm-bindgen; the
-  Pyramid scene only; the WASI imports stubbed from JavaScript. Jolt was not linked into pocket-web,
+  Pyramid scene only; the WASI imports stubbed from JavaScript. Jolt was not linked into amoris-web,
   whose QuickJS-ng already brings a libc: wasi-sdk 24's `libc.a`
   (`third_party/rquickjs-sys-0.14.0/vendor/wasi-libc`) with a shim (`wasm-shim/shim.c`) that defines
   the clock, stdio and `abort` functions so the module needs no WASI imports. One module holds one
@@ -711,7 +711,7 @@ not build for `wasm32-unknown-unknown` out of the box either: it recognizes WebA
 
 - **C++ in every build.** Jolt (153 source files) and joltc, through CMake from `build.rs` as the
   prototype does: about 25 s natively and 14 to 20 s for wasm32 with 3 jobs, with the LLVM 23 that
-  `POCKET_LLVM` already names for QuickJS-ng. The defines of library and wrapper must agree
+  `AMORIS_LLVM` already names for QuickJS-ng. The defines of library and wrapper must agree
   (`JPH_CROSS_PLATFORM_DETERMINISTIC`, `JPH_OBJECT_LAYER_BITS`, debug renderer, profiler), or
   `RegisterTypes` rejects the mismatch (it checks a version ID built from them). architecture.md 4.4
   ("wasm32: pure Rust") and its crate-graph and feature checks change, the Windows MSVC target needs
@@ -724,8 +724,8 @@ not build for `wasm32-unknown-unknown` out of the box either: it recognizes WebA
   joltc lacks: `SaveState` and `RestoreState` over a byte buffer (a handful of functions around
   `StateRecorderImpl`) and the six WASI imports defined in a shim. joltc's 1,270 functions already
   cover the shapes, ray and shape queries, contact listener, mass properties, constraints, ragdolls,
-  character controller and vehicles pocket-physics would grow into.
-- **The solver half of pocket-physics rewritten**: `solver.rs`, `cache.rs`, `query.rs` and part of
+  character controller and vehicles amoris-physics would grow into.
+- **The solver half of amoris-physics rewritten**: `solver.rs`, `cache.rs`, `query.rs` and part of
   `geom.rs`, about 1,100 of its 3,000 lines. The components, the forces (buoyancy, wind, sail, hull)
   and their math rule stay, since they are engine code that hands the solver forces. The engine has
   no joints and no continuous collision yet, so nothing else depends on Rapier.
@@ -757,7 +757,7 @@ vehicles on level geometry), on Jolt's CI-tested determinism, and on the cost of
 with every feature built on Rapier. Two parts of the evidence are provisional: the ragdoll scene
 sets Jolt's swing-twist constraint against an emulation (a spherical joint with box limits and three
 motors), part of whose cost may be the emulation's own; and the snapshot sizes measure
-pocket-physics' Cache design, which stores Rapier's static geometry and could leave it out. Both are
+amoris-physics' Cache design, which stores Rapier's static geometry and could leave it out. Both are
 settled like for like only by the port's checks below.
 
 **Why one backend.** Charter 3, principle 4: the same seed and inputs give the same hash every tick,
@@ -765,8 +765,8 @@ and forks and replays move between the native editor and the browser. Jolt nativ
 the browser would be two simulations of one game: different trajectories (ConvexVsMesh's highest
 body ends at 9.79 m in Jolt and at 10.35 m in Rapier from the same start), replays and forks that do
 not carry across, and two backends to keep. Nor should it be needed: Jolt reproduced its native and
-CI hashes inside a Rust `wasm32-unknown-unknown` module built like pocket-web's. Linking it into
-pocket-web itself, through wasm-bindgen and beside QuickJS-ng's libc, is check 1 below.
+CI hashes inside a Rust `wasm32-unknown-unknown` module built like amoris-web's. Linking it into
+amoris-web itself, through wasm-bindgen and beside QuickJS-ng's libc, is check 1 below.
 
 **Why Jolt.**
 
@@ -781,16 +781,16 @@ pocket-web itself, through wasm-bindgen and beside QuickJS-ng's libc, is check 1
   configurations, where Rapier's rests on Amoris's own rules and tests and still has a known hole
   (numeric.md 5: Rapier computes mass properties with the platform's libm, so dynamic hulls, meshes
   and compounds may not be given a density).
-- Snapshots, with the Cache as pocket-physics designs it today: Rapier's carry all static geometry,
+- Snapshots, with the Cache as amoris-physics designs it today: Rapier's carry all static geometry,
   408 MB and 0.1 to 0.2 s each way at moderate load (several times that under heavy load) for a
   2.7-million-triangle level, and forks are a first-class operation (charter 3, principle 4), so a
   world with a large level pays that on every byte-based fork. Jolt's state is 3 MB there. A Rapier
   Cache without the static geometry would narrow this (last paragraph); the size is a design cost,
   not a limit of Rapier. 2026-10-15 (Pioneer): that Cache exists now (section "Static geometry and
   the cache"). Its gains were measured with the probe's stand-in snapshot on a terrain built
-  without `FIX_INTERNAL_EDGES`, not with pocket-persist's PCE or `Game::fork`, and the ragdoll
+  without `FIX_INTERNAL_EDGES`, not with amoris-persist's PCE or `Game::fork`, and the ragdoll
   scene was not re-measured, so how much of this argument remains is the owner's call (charter 8).
-- Switching is cheapest now: about 1,100 lines of pocket-physics touch Rapier, and there are no
+- Switching is cheapest now: about 1,100 lines of amoris-physics touch Rapier, and there are no
   joints and no continuous collision yet. Every feature built on Rapier raises the price.
 - Jolt has, and joltc already exposes, what the engine will need next: a character controller,
   vehicles, swing-twist ragdolls with motors, soft bodies. Rapier has no swing-twist joint, and its
@@ -802,11 +802,11 @@ times slower; the build gains C++, and the wasm module stops being pure Rust.
 **The checks, in order; if one fails, stay on Rapier:**
 
 1. A joltc fork with `SaveState` / `RestoreState` and the WASI shim, building on macOS (aarch64),
-   Windows (x86-64, clang-cl) and inside pocket-web's module through wasm-bindgen, beside
+   Windows (x86-64, clang-cl) and inside amoris-web's module through wasm-bindgen, beside
    QuickJS-ng: one wasi-libc (QuickJS-ng's vendored wasi-sdk 24 `libc.a`) with libc++ built against
    it, and one shim. The prototype used plain exports, not wasm-bindgen, Homebrew's wasi-libc 34,
    and no QuickJS-ng, so none of this is shown yet.
-2. pocket-physics' solver on Jolt behind the same components and systems: the Cache holds each
+2. amoris-physics' solver on Jolt behind the same components and systems: the Cache holds each
    body's `BodyID` and `SaveState`'s bytes; restore rebuilds the bodies from their components with
    `CreateBodyWithID` and restores the state into them (what Jolt documents for rollback, and what
    `--fork-at` did here with a full rebuild).

@@ -1,7 +1,7 @@
 # The script debugger
 
-Status: Built, slice 1 (2026-10-04); served by `pocket serve` and driven by the editor (8, 11).
-Code: `crates/pocket-debug`, `crates/pocket-script/src/debug.rs`, `third_party/patches/p9-*.diff`,
+Status: Built, slice 1 (2026-10-04); served by `amoris serve` and driven by the editor (8, 11).
+Code: `crates/amoris-debug`, `crates/amoris-script/src/debug.rs`, `third_party/patches/p9-*.diff`,
 `p10-*.diff` and `p11-*.diff`.
 
 Charter: 2 (agent as debugger), 4.2 (QuickJS-ng with PR #1421), 4.3 (one debugging core, three
@@ -19,18 +19,18 @@ One core, three frontends:
 
 | Part | Where | Thread |
 |---|---|---|
-| The hooks: instrumentation on and off, trace calls, system calls, console lines, evaluation guard, data-breakpoint probe | `pocket_script::debug` | game |
-| The core: `DebugHub` (clients, breakpoints, watches, scripts, the pause, events) | `pocket_debug::hub` | any (`Send + Sync`) |
-| The hook the host calls (`GameHook`): stops, steps, serves requests while stopped | `pocket_debug::game`, `inspect` | game |
-| Chrome DevTools Protocol endpoint, `ws://127.0.0.1:9229/devtools/game` | `pocket_debug::cdp` | one listener, one per session |
-| The agents' JSON API: `DebugHub::call("debug.*", params)` | `pocket_debug::agent` | the caller's |
-| The write trace (13): the step hooks' world view, the script host's write recorder, `time.step {trace}` | `pocket_sim::StepHooks::world`, `pocket_script::debug::record_writes`, `pocket_runtime::writes` | game |
+| The hooks: instrumentation on and off, trace calls, system calls, console lines, evaluation guard, data-breakpoint probe | `amoris_script::debug` | game |
+| The core: `DebugHub` (clients, breakpoints, watches, scripts, the pause, events) | `amoris_debug::hub` | any (`Send + Sync`) |
+| The hook the host calls (`GameHook`): stops, steps, serves requests while stopped | `amoris_debug::game`, `inspect` | game |
+| Chrome DevTools Protocol endpoint, `ws://127.0.0.1:9229/devtools/game` | `amoris_debug::cdp` | one listener, one per session |
+| The agents' JSON API: `DebugHub::call("debug.*", params)` | `amoris_debug::agent` | the caller's |
+| The write trace (13): the step hooks' world view, the script host's write recorder, `time.step {trace}` | `amoris_sim::StepHooks::world`, `amoris_script::debug::record_writes`, `amoris_runtime::writes` | game |
 
 ```mermaid
 flowchart LR
     devtools[Chrome DevTools] -- CDP --> cdp
     vscode[VS Code js-debug] -- CDP --> cdp
-    agent[pocket-server / pocket-mcp] -- "DebugHub::call" --> hub
+    agent[amoris-server / amoris-mcp] -- "DebugHub::call" --> hub
     cdp[CDP sessions] --> hub[DebugHub]
     hub -- "settings (generation), commands" --> hook[GameHook on the game thread]
     hook -- "pause, events" --> hub
@@ -51,7 +51,7 @@ quickjs-ng PR #1421 emits `OP_debug` at statement boundaries only in code compil
 handler is set on the context, and calls the handler at each one while it is set. So:
 
 - `ScriptHost::instantiate` asks the attached hook `instrument()`; if yes it installs the handler
-  after the lockdown and before the modules compile, and leaves it installed. The prelude (`pocket`)
+  after the lockdown and before the modules compile, and leaves it installed. The prelude (`amoris`)
   is compiled without it: the debugger stops and steps in project code only.
 - `script.update` asks again at the start of every tick and, when the answer differs from the
   installed program's, instantiates the same compiled set again. Programs hold no state and no
@@ -122,10 +122,10 @@ watch and no step it returns after two (10).
 QuickJS-ng runs each module's JavaScript under its module path (`scripts/rules.ts`). A CDP client
 sees it as:
 
-- `Debugger.scriptParsed` with `url: "pocket:///scripts/rules.js"`, a stable `scriptId` per module
+- `Debugger.scriptParsed` with `url: "amoris:///scripts/rules.js"`, a stable `scriptId` per module
   and JavaScript (a hot update that changes the module announces a new one with the same URL), and
   `sourceMapURL`: a `data:application/json;base64,...` URL of oxc's map rewritten so that its one
-  source is `rules.ts` (beside the script, so `pocket:///scripts/rules.ts`) with the TypeScript text
+  source is `rules.ts` (beside the script, so `amoris:///scripts/rules.ts`) with the TypeScript text
   in `sourcesContent`. `HubOptions::source_root = SourceRoot::Project(dir)` writes absolute
   `file://` sources instead, for editors that should open the files without a path override.
 - `Debugger.getScriptSource` returns the JavaScript, and every position on the wire is the
@@ -157,7 +157,7 @@ Evaluation (`evaluateOnCallFrame`, `debug.eval`, conditions, logpoint messages) 
 system's `ctx` included); with P11, the block-scoped locals are those in scope at the frame's
 statement (every `let` and `const` declared before it in its block and the enclosing ones), in the
 stopped frame and in callers', and not a sibling block's. It runs under
-`pocket_script::debug::guarded`: its own budget of `steps_per_call`, the stopped call's budget,
+`amoris_script::debug::guarded`: its own budget of `steps_per_call`, the stopped call's budget,
 overrun flag and out-of-memory baseline put back after it, and the natives that write (world edits,
 events, intents, random draws, `Math.random`) refusing with `script.debug_read_only`. It can still
 change the call's locals and its query columns, which are written back, so an evaluation, a
@@ -176,7 +176,7 @@ stepping walks through the tick.
 
 `debug.watch {entity, component, field?}` stops when a script system's *staged* write changes the
 field: the value the entity's component would get if the call committed now, read at every
-statement by `pocket_script::debug::FieldWatch`: the world as the call began, the query columns the
+statement by `amoris_script::debug::FieldWatch`: the world as the call began, the query columns the
 call changed (their typed arrays, compared bit for bit), then its own commands (`world.set`,
 `insert`, `remove`, `despawn`), as the commit applies them. The pause names the watch, the values
 before and after (each slot of a vector field), and `written_at`, the statement traced before the
@@ -185,14 +185,14 @@ by the system's last statement is seen when `run` returns: the pause then has on
 `returned`, at `written_at`, and nothing to evaluate in (`after_return: true`).
 
 Watches are agent-native; a CDP client attached at the same time sees the pause (reason `other`,
-`data.pocket = "data_breakpoint"`). While one is set every statement pays its probe (10).
+`data.amoris = "data_breakpoint"`). While one is set every statement pays its probe (10).
 
 ## 7. The agents' API
 
-`DebugHub::call(method, &params) -> Result<serde_json::Value, pocket_contract::Problem>`;
-`pocket_debug::methods()` lists each method with its catalog kind (`read`, `control`, `write`),
-aliases, doc and parameters' JSON Schema; `pocket serve` puts them in the command catalog
-(server.md 6), so `pocket help debug.eval` and the MCP `debug` tool's input schema name every
+`DebugHub::call(method, &params) -> Result<serde_json::Value, amoris_contract::Problem>`;
+`amoris_debug::methods()` lists each method with its catalog kind (`read`, `control`, `write`),
+aliases, doc and parameters' JSON Schema; `amoris serve` puts them in the command catalog
+(server.md 6), so `amoris help debug.eval` and the MCP `debug` tool's input schema name every
 parameter. Unknown parameters are refused (`request.unknown_field` with suggestions), unknown
 methods with `request.unknown_method`. Aliases: `debug.break` (`debug.breakpoints.set`),
 `debug.watch.clear` (`debug.unwatch`). A `file` may be the module's path, an absolute path ending
@@ -234,13 +234,13 @@ for a console line or a logpoint, and the same with `code` for a system that fai
 ## 8. Wiring a game
 
 ```rust
-use pocket_debug::{CdpOptions, DebugHub, HubOptions};
+use amoris_debug::{CdpOptions, DebugHub, HubOptions};
 
 // Once per game, on any thread.
 let hub = DebugHub::new(HubOptions { title: "Amoris: sailing".into(), ..HubOptions::default() });
 let cdp = hub.serve_cdp(CdpOptions::default())?;          // 127.0.0.1:9229, its own threads
 
-// The game thread's setup (pocket_runtime::thread::GameThread::spawn's closure).
+// The game thread's setup (amoris_runtime::thread::GameThread::spawn's closure).
 let h = hub.clone();
 let handle = GameThread::spawn(move || {
     let mut game = Game::new(setup, seed)?;
@@ -260,7 +260,7 @@ cdp.stop();
 ```
 
 - One hub per game. `hook()` replaces the previous hook's command channel; `Game::fork` and a replay
-  do not carry the hook. The game thread's Play is the exception (`pocket_runtime::thread`,
+  do not carry the hook. The game thread's Play is the exception (`amoris_runtime::thread`,
   `play.start`): the edit world's hook moves to Play's fork, which instruments its program from its
   first tick, and back to the edit world on Stop, so breakpoints set in Edit hit in Play.
 - `hub.wait_for_debugger(timeout)` holds the caller until a client sends
@@ -283,7 +283,7 @@ cdp.stop();
   (breakpoints, data breakpoints, `debugger;`, exceptions, steps and pause requests) until a
   matching `hub.pass(false)`; calls are counted, breakpoints and watches stay set, and a debugger
   step pending at the time is dropped. The host's `play.stop` uses it (`DebugBridge`).
-- `pocket serve` (pocket-app `serve.rs`) does the above for every served project: one hub, CDP on
+- `amoris serve` (amoris-app `serve.rs`) does the above for every served project: one hub, CDP on
   127.0.0.1:9229 when the port is free (otherwise a line on stderr, and `debug.*` still works), the
   hook on the game thread, the loop state, `DebugBridge` as the server's `debug.*` plug-in (its
   calls and its methods; the server adds `debug.rewind`), and a thread forwarding
@@ -296,7 +296,7 @@ cdp.stop();
 Run the sailing sample in real time with the endpoint on:
 
 ```sh
-cargo run -p pocket-app --example debug_sailing -- [--port 9229] [--wait] [--speed 1] [--file-sources]
+cargo run -p amoris-app --example debug_sailing -- [--port 9229] [--wait] [--speed 1] [--file-sources]
 ```
 
 It prints `{"ws": "ws://127.0.0.1:9229/devtools/game", "devtools": "devtools://devtools/...", ...}`
@@ -304,16 +304,16 @@ and then a status line a second (`tick`, `paused_in_debugger`, `loop_state`).
 
 - **Chrome DevTools**: open the printed
   `devtools://devtools/bundled/js_app.html?...&ws=127.0.0.1:9229/devtools/game` in Chrome (or
-  `chrome://inspect`, Configure, add `127.0.0.1:9229`, then inspect the `pocket-game` target; this
+  `chrome://inspect`, Configure, add `127.0.0.1:9229`, then inspect the `amoris-game` target; this
   route was not exercised by the harness of 11, which opens the same frontend page directly).
-  Sources shows `pocket://scripts/*.ts` from the source maps; click a line number to break.
+  Sources shows `amoris://scripts/*.ts` from the source maps; click a line number to break.
 - **VS Code**: copy `editors/vscode/launch.json` to `.vscode/launch.json` and run "Attach to Amoris
   (sailing)". It is a `node` attach on 9229 with `sourceMaps`, `resolveSourceMapLocations: null`
   (the scripts are not files) and
-  `sourceMapPathOverrides: {"pocket:///*": "${workspaceFolder}/samples/sailing/*"}`, so breakpoints
+  `sourceMapPathOverrides: {"amoris:///*": "${workspaceFolder}/samples/sailing/*"}`, so breakpoints
   set in `samples/sailing/scripts/*.ts` bind. See `editors/vscode/README.md`.
-- **Agents**: through pocket-server or pocket-mcp, the methods of 7.
-- **The editor**: `pocket serve <project>` serves it; its Debug panel and the Scripts panel's gutter
+- **Agents**: through amoris-server or amoris-mcp, the methods of 7.
+- **The editor**: `amoris serve <project>` serves it; its Debug panel and the Scripts panel's gutter
   use the methods of 7 over `/ws` (editor.md 8.1, evidence in editor.md 10).
 
 ## 10. Cost
@@ -321,7 +321,7 @@ and then a status line a second (`tick`, `paused_in_debugger`, `loop_state`).
 The script host's web workload (40 boats, 160 crates, 7 systems; 10,713 traced statements a tick) as
 a game; every mode's game stepped in turn, tick by tick, on one thread asking for a performance
 core, timing the thread's CPU; three processes per build, alternating builds; medians.
-`cargo run --release -p pocket-app --example debug_overhead`; raw figures in
+`cargo run --release -p amoris-app --example debug_overhead`; raw figures in
 [../evidence/debug/overhead.txt](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/debug/overhead.txt).
 Apple M5 (Mac17,2), macOS 27.0.1, 2026-10-04, other agents' builds running (load average 13 to 23).
 
@@ -344,18 +344,18 @@ over round trip 5 ms.
 
 | Check | What | Result (2026-10-04) | Evidence |
 |---|---|---|---|
-| `cargo test -p pocket-app --test debug_agent` | The agents' API on a real game thread, real time, the test project `crates/pocket-debug/tests/fixtures/debugme`: `debugger;`, uncaught and caught exceptions with the prediction, a conditional TypeScript breakpoint with locals and evaluation, read-only evaluations, `debug.set` on a `let` local (the loop's `r`, seen by the caller's frame of the next pause and set back there with `frame: 1`) and on an argument (`twice`'s `x`, whose call then returns twice the new value), a `const` refused, step into/out/over, a data breakpoint with `written_at`, the taint, a hot update while attached (new script announced, its breakpoint stops), pause, detach (uninstrumented), events, problems, the `Breakpoint` loop state | pass | [agent-api-test.txt](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/debug/agent-api-test.txt) |
-| `cargo test -p pocket-app --test debug_agent` (`play_takes_the_debugger_to_its_fork`, `debug_state_names_the_cdp_endpoint`) | `play.start` on a game thread started paused (as `pocket serve` starts it): a breakpoint set in Edit stops Play's fork at its first tick, an evaluation that assigns a query column (`g.level[r] = 100`) is committed, `play.stop` hands the hook back and a `time.step` of the edit world stops at a new breakpoint; `debug.state`'s `cdp` names an endpoint served on port 0 and is `null` once it stopped | pass (3 of 3 with the test above; `--release`) | the test's output |
-| `cargo test -p pocket-app --test debug_agent` (`eval_sees_the_block_scoped_locals_in_scope`, 2026-10-09, Windows) | **P11** on the test project `crates/pocket-debug/tests/fixtures/scopes`: in a called function its local and arguments, in the caller's frame the block's locals declared before the call and not one declared after it; after a sibling block, the block's `dx`, `dz`, `bearing` and the module's `GAIN`, not the sibling's `hidden`; the debug evaluation's helm.ts:67 shape (three consts in the deepest block) with all three. Without P11's lookup the run fails at `hidden` (the control was run) | pass; `node crates/pocket-debug/tests/cdp_e2e.mjs` 20/20 on the same build ([cdp-e2e-p11.txt](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/agentdebug/cdp-e2e-p11.txt)) | the test's output |
-| `cargo test -p pocket-app --test paused_host` (2026-10-09, Windows) | **A held host** through `pocket_server::Host::call` over the test project on a game thread started as `pocket serve` starts it: the catalog's entry of every method (kind, schema), a breakpoint by the module's short name, a `time.step {ticks: 5}` answered at the stop (`stopped_by` breakpoint, tick 4, `paused: true`) and ended with that tick, `status` and seven reads equal to the game's own reads of the same world, `scripts.apply`, `time.step`, `snapshots.list`, `history.list` and `world.edit` refused with `debug.paused` within 500 ms, `debug.watch` by name (a misspelt name refused with the suggestion), `debug.state {brief}`, a data watch stopping a step, `debug.rewind` under the applied scripts; and the MCP `debug` tool naming every method and parameter. Since the review of the same day: two steps queued at a conditional breakpoint (`ctx.tick === 3000`): the first answers at the stop with tick 3000, the second `debug.paused {queued: true}`, and after the continue the world stands at 3050 (the second ran its 50 ticks); `play.stop` at a breakpoint the next tick hits again, three times a tick (three gauges), twice: Edit mode within 2 s, the edit world's hash, the pass over, the breakpoint kept; `time.control {}` answering while held; `time.control {pause: true}` queued, continued through the tick's three stops, Play resting at the held tick's end where an edit works and a step stops again; `play.stop` refused in the edit world | pass | the test's output; [smoke-server.txt](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/agentdebug/smoke-server.txt) does the same through the CLI and MCP; [held-host-review.json](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/agentdebug/held-host-review.json) (`tools/held_host_review.py`) through `pocket serve` |
-| `cargo test -p pocket-runtime --features transpile,thread --test write_trace`; `cargo test -p pocket-app --test paused_host` (`debug_writes_names_the_writers_through_the_host`); `cargo test -p pocket-web --test worker` (`a_write_trace_is_refused_by_the_browser_loop`) (2026-10-15, Windows) | **The write trace** (13): the test project's gauge, written each tick by `script:measure` at the `write-level` line; the sailing course with a script helm and `sail_to`: `interface.intents` in Control every tick (no statement), the helm at ticks 20 and 40 at its statement, the swap and `player.act` at the first boundary and nothing else; a helper's stored result named at the storing statement with the helper's `return` as `via`, a helper writing as its last statement named itself, eleven statements of one call listed as the first seven and the last (`statements_more`: 3); the recorder off for `Model` and on for the rudder and the log's distance, for the trace's ticks only; a held edit landing inside a traced step on the game thread as that tick's boundary change; on the game thread with the profile served, a script and an engine writer, all 80 ticks profiled and the plain run's hash; the world hash equal with the trace on and off (traced steps, then untraced ones, on both projects); a misspelt entity, component, field (also on an entity without the component) or parameter refused with suggestions, `debug.writes`'s at its own parameters' paths; through `Host::call` and MCP's `debug` tool with the debugger attached and not; the hub alone answers `debug.unsupported`; a seat is denied it (`player_host.rs`); the browser loop refuses a trace | pass | the tests' output; a `pocket serve` smoke run of the CLI (13) |
-| `editor/tools/debug-host.ts` | **The editor** (built, served by `pocket serve` on a copy of the sailing sample) in headless Chrome, real input only: a gutter breakpoint, Play, the pause with the call stack, scopes and watches, step over, a column value set in the Variables tree and committed, an argument set with `debug.set` and a `const` refused, a data breakpoint from the inspector, pause on exceptions, a script edited and hot-swapped while running and a breakpoint in the new code, Stop while paused (the edit world takes the edited scripts) and Play again into the new code (editor.md 10) | every step (12 views); again on 2026-10-09 on Windows after the host's Stop changed (server.md 3.4), the driver run by Node with a shim for its three Bun calls: every step, Edit mode 0.1 s after Stop | [debug-host.txt](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/editor/debug-host.txt), `debug-host-*.png`; the Windows run: [agentdebug/debug-host.txt](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/agentdebug/debug-host.txt), `debug-host-9-*.png`, `debug-host-10-*.png` |
-| `node crates/pocket-debug/tests/cdp_e2e.mjs` | A CDP client as clients behave: discovery as js-debug does it, Origin refusal, `scriptParsed` and the data-URL map, a breakpoint on a TypeScript line mapped through the map, the pause at that line with the caller `run`, locals, closure, `evaluateOnCallFrame` on two frames, `getProperties`, step over, a conditional breakpoint, a logpoint (`consoleAPICalled` located in rules.js, no pause), `Debugger.pause`, leaving while paused resumes | 20/20 | [cdp-e2e.txt](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/debug/cdp-e2e.txt), [messages](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/debug/cdp-e2e-messages.log) |
-| `node crates/pocket-debug/tests/jsdebug_dap.mjs` | **VS Code's js-debug 1.140.0** as installed in `/Applications/Visual Studio Code.app` (its extension bundle loaded under a stand-in for the `vscode` module, since the app ships no standalone DAP server), resolving `editors/vscode/launch.json` through its own configuration provider and spoken to over DAP as VS Code does (root session, then the child session it starts for the target): a breakpoint set by the `.ts` path verifies, `stopped` at rules.ts:27 on disk, the caller `run` at 26, Local `r = 0`, `e`, Closure `b`, `l`, `ctx` and `ctx` expanded, a REPL evaluation, a hover (`Float64Array(1) [0.0]`), `next` to line 28, disconnect leaves the game running | 13/13 | [jsdebug-dap.txt](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/debug/jsdebug-dap.txt), [DAP](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/debug/jsdebug-dap-messages.log), [CDP it sent](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/debug/jsdebug-cdp.log) |
-| `node crates/pocket-debug/tests/devtools_chrome.mjs` | **Chrome DevTools** (the frontend Google Chrome 154 serves at `/devtools/js_app.html`, the page `chrome://inspect` opens for a Node target) in a headless Chrome against the endpoint, worked through its own modules: the workspace holds `pocket:///scripts/{main,components,rules}.ts` with the TypeScript text, `BreakpointManager.setBreakpoint` on rules.ts:27 pauses there with the call stack and the Scope pane, console evaluation, step over to 28, resume | 8/8 | [devtools-chrome.txt](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/debug/devtools-chrome.txt), [screenshot paused](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/debug/devtools-paused.png), [stepped](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/debug/devtools-stepped.png), [CDP it sent](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/debug/devtools-cdp.log) |
+| `cargo test -p amoris-app --test debug_agent` | The agents' API on a real game thread, real time, the test project `crates/amoris-debug/tests/fixtures/debugme`: `debugger;`, uncaught and caught exceptions with the prediction, a conditional TypeScript breakpoint with locals and evaluation, read-only evaluations, `debug.set` on a `let` local (the loop's `r`, seen by the caller's frame of the next pause and set back there with `frame: 1`) and on an argument (`twice`'s `x`, whose call then returns twice the new value), a `const` refused, step into/out/over, a data breakpoint with `written_at`, the taint, a hot update while attached (new script announced, its breakpoint stops), pause, detach (uninstrumented), events, problems, the `Breakpoint` loop state | pass | [agent-api-test.txt](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/debug/agent-api-test.txt) |
+| `cargo test -p amoris-app --test debug_agent` (`play_takes_the_debugger_to_its_fork`, `debug_state_names_the_cdp_endpoint`) | `play.start` on a game thread started paused (as `amoris serve` starts it): a breakpoint set in Edit stops Play's fork at its first tick, an evaluation that assigns a query column (`g.level[r] = 100`) is committed, `play.stop` hands the hook back and a `time.step` of the edit world stops at a new breakpoint; `debug.state`'s `cdp` names an endpoint served on port 0 and is `null` once it stopped | pass (3 of 3 with the test above; `--release`) | the test's output |
+| `cargo test -p amoris-app --test debug_agent` (`eval_sees_the_block_scoped_locals_in_scope`, 2026-10-09, Windows) | **P11** on the test project `crates/amoris-debug/tests/fixtures/scopes`: in a called function its local and arguments, in the caller's frame the block's locals declared before the call and not one declared after it; after a sibling block, the block's `dx`, `dz`, `bearing` and the module's `GAIN`, not the sibling's `hidden`; the debug evaluation's helm.ts:67 shape (three consts in the deepest block) with all three. Without P11's lookup the run fails at `hidden` (the control was run) | pass; `node crates/amoris-debug/tests/cdp_e2e.mjs` 20/20 on the same build ([cdp-e2e-p11.txt](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/agentdebug/cdp-e2e-p11.txt)) | the test's output |
+| `cargo test -p amoris-app --test paused_host` (2026-10-09, Windows) | **A held host** through `amoris_server::Host::call` over the test project on a game thread started as `amoris serve` starts it: the catalog's entry of every method (kind, schema), a breakpoint by the module's short name, a `time.step {ticks: 5}` answered at the stop (`stopped_by` breakpoint, tick 4, `paused: true`) and ended with that tick, `status` and seven reads equal to the game's own reads of the same world, `scripts.apply`, `time.step`, `snapshots.list`, `history.list` and `world.edit` refused with `debug.paused` within 500 ms, `debug.watch` by name (a misspelt name refused with the suggestion), `debug.state {brief}`, a data watch stopping a step, `debug.rewind` under the applied scripts; and the MCP `debug` tool naming every method and parameter. Since the review of the same day: two steps queued at a conditional breakpoint (`ctx.tick === 3000`): the first answers at the stop with tick 3000, the second `debug.paused {queued: true}`, and after the continue the world stands at 3050 (the second ran its 50 ticks); `play.stop` at a breakpoint the next tick hits again, three times a tick (three gauges), twice: Edit mode within 2 s, the edit world's hash, the pass over, the breakpoint kept; `time.control {}` answering while held; `time.control {pause: true}` queued, continued through the tick's three stops, Play resting at the held tick's end where an edit works and a step stops again; `play.stop` refused in the edit world | pass | the test's output; [smoke-server.txt](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/agentdebug/smoke-server.txt) does the same through the CLI and MCP; [held-host-review.json](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/agentdebug/held-host-review.json) (`tools/held_host_review.py`) through `amoris serve` |
+| `cargo test -p amoris-runtime --features transpile,thread --test write_trace`; `cargo test -p amoris-app --test paused_host` (`debug_writes_names_the_writers_through_the_host`); `cargo test -p amoris-web --test worker` (`a_write_trace_is_refused_by_the_browser_loop`) (2026-10-15, Windows) | **The write trace** (13): the test project's gauge, written each tick by `script:measure` at the `write-level` line; the sailing course with a script helm and `sail_to`: `interface.intents` in Control every tick (no statement), the helm at ticks 20 and 40 at its statement, the swap and `player.act` at the first boundary and nothing else; a helper's stored result named at the storing statement with the helper's `return` as `via`, a helper writing as its last statement named itself, eleven statements of one call listed as the first seven and the last (`statements_more`: 3); the recorder off for `Model` and on for the rudder and the log's distance, for the trace's ticks only; a held edit landing inside a traced step on the game thread as that tick's boundary change; on the game thread with the profile served, a script and an engine writer, all 80 ticks profiled and the plain run's hash; the world hash equal with the trace on and off (traced steps, then untraced ones, on both projects); a misspelt entity, component, field (also on an entity without the component) or parameter refused with suggestions, `debug.writes`'s at its own parameters' paths; through `Host::call` and MCP's `debug` tool with the debugger attached and not; the hub alone answers `debug.unsupported`; a seat is denied it (`player_host.rs`); the browser loop refuses a trace | pass | the tests' output; an `amoris serve` smoke run of the CLI (13) |
+| `editor/tools/debug-host.ts` | **The editor** (built, served by `amoris serve` on a copy of the sailing sample) in headless Chrome, real input only: a gutter breakpoint, Play, the pause with the call stack, scopes and watches, step over, a column value set in the Variables tree and committed, an argument set with `debug.set` and a `const` refused, a data breakpoint from the inspector, pause on exceptions, a script edited and hot-swapped while running and a breakpoint in the new code, Stop while paused (the edit world takes the edited scripts) and Play again into the new code (editor.md 10) | every step (12 views); again on 2026-10-09 on Windows after the host's Stop changed (server.md 3.4), the driver run by Node with a shim for its three Bun calls: every step, Edit mode 0.1 s after Stop | [debug-host.txt](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/editor/debug-host.txt), `debug-host-*.png`; the Windows run: [agentdebug/debug-host.txt](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/agentdebug/debug-host.txt), `debug-host-9-*.png`, `debug-host-10-*.png` |
+| `node crates/amoris-debug/tests/cdp_e2e.mjs` | A CDP client as clients behave: discovery as js-debug does it, Origin refusal, `scriptParsed` and the data-URL map, a breakpoint on a TypeScript line mapped through the map, the pause at that line with the caller `run`, locals, closure, `evaluateOnCallFrame` on two frames, `getProperties`, step over, a conditional breakpoint, a logpoint (`consoleAPICalled` located in rules.js, no pause), `Debugger.pause`, leaving while paused resumes | 20/20 | [cdp-e2e.txt](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/debug/cdp-e2e.txt), [messages](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/debug/cdp-e2e-messages.log) |
+| `node crates/amoris-debug/tests/jsdebug_dap.mjs` | **VS Code's js-debug 1.140.0** as installed in `/Applications/Visual Studio Code.app` (its extension bundle loaded under a stand-in for the `vscode` module, since the app ships no standalone DAP server), resolving `editors/vscode/launch.json` through its own configuration provider and spoken to over DAP as VS Code does (root session, then the child session it starts for the target): a breakpoint set by the `.ts` path verifies, `stopped` at rules.ts:27 on disk, the caller `run` at 26, Local `r = 0`, `e`, Closure `b`, `l`, `ctx` and `ctx` expanded, a REPL evaluation, a hover (`Float64Array(1) [0.0]`), `next` to line 28, disconnect leaves the game running | 13/13 | [jsdebug-dap.txt](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/debug/jsdebug-dap.txt), [DAP](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/debug/jsdebug-dap-messages.log), [CDP it sent](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/debug/jsdebug-cdp.log) |
+| `node crates/amoris-debug/tests/devtools_chrome.mjs` | **Chrome DevTools** (the frontend Google Chrome 154 serves at `/devtools/js_app.html`, the page `chrome://inspect` opens for a Node target) in a headless Chrome against the endpoint, worked through its own modules: the workspace holds `amoris:///scripts/{main,components,rules}.ts` with the TypeScript text, `BreakpointManager.setBreakpoint` on rules.ts:27 pauses there with the call stack and the Scope pane, console evaluation, step over to 28, resume | 8/8 | [devtools-chrome.txt](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/debug/devtools-chrome.txt), [screenshot paused](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/debug/devtools-paused.png), [stepped](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/debug/devtools-stepped.png), [CDP it sent](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/debug/devtools-cdp.log) |
 
 The harnesses start `debug_sailing` (default `$CARGO_TARGET_DIR/debug/examples/debug_sailing`,
-`--exe` to change) and stop it; `POCKET_CDP_LOG=1` logs every CDP message on its stderr
+`--exe` to change) and stop it; `AMORIS_CDP_LOG=1` logs every CDP message on its stderr
 (`--game-log FILE`).
 
 ## 12. Limits and open items
@@ -394,7 +394,7 @@ fifth finding of [../bench/agent-debug.md](../bench/agent-debug.md) asked for it
   = 60}` is that step answered as its trace, with the step's `tick`, `world_hash`, `errors` and
   `stopped_by`: the server serves it and lists it in the catalog beside `debug.rewind` (server.md
   6), so MCP's `debug` tool has it as `writes`; the hub alone answers `debug.unsupported`. CLI:
-  `pocket debug writes Sloop.Boat.rudder --ticks 120` (a table), `pocket step 120 --trace
+  `amoris debug writes Sloop.Boat.rudder --ticks 120` (a table), `amoris step 120 --trace
   Sloop.Boat.rudder`; `--json` prints the exact answer. A misspelt entity, component or field is
   refused before any tick with the names it could be (`world.get {fields}`'s refusal): the whole
   path when the entity has the component, otherwise the field's first name against the
@@ -409,7 +409,7 @@ fifth finding of [../bench/agent-debug.md](../bench/agent-debug.md) asked for it
   accessor and builds the component's JSON (as `world.get {fields}` reads it) only when those
   slots changed; the whole component, and a component scripts cannot read, are read through the
   JSON after every system. A script system's change is its own row, not `script.update`'s.
-- **Script statements.** The script host's recorder (`pocket_script::debug::record_writes`) is
+- **Script statements.** The script host's recorder (`amoris_script::debug::record_writes`) is
   `FieldWatch`'s probe (6) in a recording mode, armed only while scripts can read the field (the
   component, and the field's first name among the fields they see; checked before each tick, as a
   hot update may change it): a component such as `Model` is traced through the world alone. While
@@ -443,7 +443,7 @@ fifth finding of [../bench/agent-debug.md](../bench/agent-debug.md) asked for it
 - **Determinism.** The trace only reads: the world view is `&World`, the probe reads the call's
   overlay and query columns and runs no JavaScript and draws nothing, and the instrumentation reload
   is the debugger's (programs hold no state). The world hash after traced steps, and after untraced
-  ones that follow them, equals the untraced run's (`pocket-runtime/tests/write_trace.rs`, on the
+  ones that follow them, equals the untraced run's (`amoris-runtime/tests/write_trace.rs`, on the
   debugger's test project and on the sailing course; on the game thread under the profiler, on the
   sailing sample).
 - **The game thread.** The front `time.step`'s trace is armed at its first tick (a step queued
@@ -458,11 +458,11 @@ fifth finding of [../bench/agent-debug.md](../bench/agent-debug.md) asked for it
   `watch` and `sample` are still ignored there).
 
 A copy of the sailing course with the script helm of `tests/write_trace.rs` (it puts the rudder
-over every 20th tick) under `pocket serve`, the skipper sailing to Mark1 (rows cut at `...`):
+over every 20th tick) under `amoris serve`, the skipper sailing to Mark1 (rows cut at `...`):
 
 ```text
-$ pocket player act '[{"do":"start","intent":"sail_to","target":"Mark1","params":{"arrive_m":8}}]' --seat skipper
-$ pocket debug writes Sloop.Boat.rudder --ticks 40
+$ amoris player act '[{"do":"start","intent":"sail_to","target":"Mark1","params":{"arrive_m":8}}]' --seat skipper
+$ amoris debug writes Sloop.Boat.rudder --ticks 40
 Sloop.Boat.rudder, ticks 1..40: 0 -> -0.25, 42 changes
 tick  by                 phase    before     after      at
 1     boundary                                          player.act (player:0) {"actions":[{"do":"start","intent":"sail_to","params":{"arrive_m":8,"...
@@ -508,7 +508,7 @@ profile is as deterministic as the steps it counts (charter 4.3's dated note).
   would run next without new commands, and the same state gives the same answer, byte for byte.
   A fault stops the fork (`stopped_by`). Without `interval`, a first run of the same ticks on
   another fork counts their steps, and the interval is that count over 20,000, at least 1 (a light
-  game is sampled at every step, exactly). CLI: `pocket scripts profile [--ticks n] [--interval
+  game is sampled at every step, exactly). CLI: `amoris scripts profile [--ticks n] [--interval
   steps] [--top n] [--folded <file>]` (a table by system; the file gets the folded stacks); MCP:
   the `scripts` tool's `profile` action. The game thread and the browser's worker answer it
   through `Game::apply`, as any read they do not answer themselves.
@@ -533,7 +533,7 @@ profile is as deterministic as the steps it counts (charter 4.3's dated note).
   before its frame exists, so a call's step is the caller's, at the line of the call; at a jump,
   P13 stores the jump's position in the frame first (without it the frame named its last call, and
   a loop without calls had no position at all). Positions go through the program's source maps to
-  TypeScript; the prelude's frames are under `pocket`, natives (builtins that poll, such as
+  TypeScript; the prelude's frames are under `amoris`, natives (builtins that poll, such as
   `Array.prototype.map`'s loop, or a native that called back) are `(native)`, and the one step
   the host's own call into the script takes before any frame exists (a system's `run`, the
   prelude's `__context`, a job) is `(host)`. Which line a jump counts on is QuickJS-ng's line table
@@ -550,7 +550,7 @@ profile is as deterministic as the steps it counts (charter 4.3's dated note).
   each atom a frame names, and names become text, and positions TypeScript, when the profile is
   taken, outside any call. (A function whose `name` was redefined at run time to a string no atom
   holds would make QuickJS-ng intern it inside the handler: P10's frame name reads it.)
-- **Verification.** `crates/pocket-script/tests/profile.rs`: steps, outcomes and digests are those
+- **Verification.** `crates/amoris-script/tests/profile.rs`: steps, outcomes and digests are those
   of the run without the profiler for intervals 1 to 4,096; an overrun stops at the same step and
   line for budgets just below and above a call's steps, whatever the interval; a regular expression
   that overruns libregexp's polls stops at the same place, and one that finishes leaves the same
@@ -560,9 +560,9 @@ profile is as deterministic as the steps it counts (charter 4.3's dated note).
   jumps (`jumps_land_on_their_own_lines`, the one test that needs P13). The web report profiles
   ticks 301 to 360 of its workload: its pinned digests and steps do not change, and the WebAssembly
   report, the profile's line included, is the native one byte for byte (`tests/web.rs`).
-  `crates/pocket-runtime/tests/script_profile.rs`: the world does not move, each system's steps are
+  `crates/amoris-runtime/tests/script_profile.rs`: the world does not move, each system's steps are
   those the world then takes, the same state gives the same bytes;
-  `crates/pocket-web/tests/worker.rs` answers it through the browser's loop.
+  `crates/amoris-web/tests/worker.rs` answers it through the browser's loop.
 
 What it costs and what it shows of the rule workload: [../bench/script.md](../bench/script.md),
 section 8.

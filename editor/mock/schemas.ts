@@ -1,6 +1,6 @@
 // The mock's component registry: what `world.schema` answers. Engine components are written in the
-// shape `schemars` gives the Rust types (crates/pocket-physics: Transform, Velocity, RigidBody,
-// Collider, Boat, Sail, Sea, Wind; pocket-assets' visual components as the charter lists them),
+// shape `schemars` gives the Rust types (crates/amoris-physics: Transform, Velocity, RigidBody,
+// Collider, Boat, Sail, Sea, Wind; amoris-assets' visual components as the charter lists them),
 // project components in the shape `ComponentSchema::json_schema` gives TypeScript components
 // (samples/sailing/scripts/components.ts). The editor builds its inspector from these alone.
 
@@ -356,7 +356,7 @@ export const COMPONENTS: ComponentInfo[] = [
   }),
 ];
 
-/** `Name` is a component whose value is a plain string (pocket-sim's `Name`). */
+/** `Name` is a component whose value is a plain string (amoris-sim's `Name`). */
 export const NAME_INFO: ComponentInfo = {
   name: "Name",
   origin: "Engine",

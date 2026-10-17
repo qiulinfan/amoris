@@ -1,0 +1,55 @@
+[package]
+name = "amoris-render"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "The wgpu renderer: GPU-driven, clustered PBR, shadows, sky, ocean, post; Metal, Vulkan and WebGPU"
+
+[dependencies]
+# `lod`: the primitives' levels of detail (docs/spec/lod.md).
+amoris-assets = { workspace = true, features = ["lod"] }
+wgpu.workspace = true
+glam.workspace = true
+bytemuck.workspace = true
+log = "0.4"
+fontdue = "0.9"
+# The scene's entity map (scene.rs): looking entities up ahead of applying their moves overlaps the
+# lookups' cache misses only with a hasher cheaper than the standard library's SipHash
+# (docs/bench/dynamic-scenes.md). hashbrown's own default; no dependencies (architecture.md 6).
+foldhash.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+winit = { workspace = true, optional = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+pollster.workspace = true
+image.workspace = true
+# RenderDoc's in-application API for one-frame captures (renderdoc.rs); both already come with
+# wgpu-hal.
+libloading = "0.8"
+renderdoc-sys = "1"
+
+[features]
+import = ["amoris-assets/import"]
+default = ["window", "import"]
+# A native window runner (winit) for examples and the `amoris` binary.
+window = ["dep:winit"]
+
+[dev-dependencies]
+# What naga writes for each backend (shaders.rs tests: the forward shader's invariant positions);
+# the version wgpu 30.0.1 resolves, with every backend's output.
+naga = { version = "=30.0.1", features = ["wgsl-in", "hlsl-out", "spv-out", "msl-out"] }
+pollster.workspace = true
+intel_tex_2.workspace = true
+texture2ddecoder.workspace = true
+wgpu.workspace = true
+image.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+log = "0.4"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+# Raw Vulkan for the timestamp reproduction without wgpu (examples/vk_timestamps.rs,
+# docs/bench/gpu-matrix.md 8); the version and features wgpu-hal 30.0.1 already builds.
+ash = "0.38"

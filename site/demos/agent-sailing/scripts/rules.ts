@@ -1,7 +1,7 @@
 // The sailing game's rules: stateless systems over the world (charter 3.2). The boat itself is the
-// engine's Boat component, which wind, sail, keel and rudder drive (pocket-physics); these rules
+// engine's Boat component, which wind, sail, keel and rudder drive (amoris-physics); these rules
 // keep the score and the log.
-import { system } from "pocket";
+import { system } from "amoris";
 
 /** How near a crate must float, across the water, to be taken aboard (master's REACH). */
 const REACH = 3;

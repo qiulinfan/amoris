@@ -11,21 +11,21 @@ rust-version = "1.98"
 publish = false
 
 [workspace.dependencies]
-pocket-contract = { path = "shared/contract/rust" }
-pocket-sim = { path = "crates/pocket-sim" }
-pocket-persist = { path = "crates/pocket-persist" }
-pocket-physics = { path = "crates/pocket-physics" }
-pocket-interface = { path = "crates/pocket-interface" }
-pocket-script = { path = "crates/pocket-script" }
-pocket-link = { path = "crates/pocket-link" }
-pocket-runtime = { path = "crates/pocket-runtime" }
-pocket-check = { path = "crates/pocket-check" }
-pocket-assets = { path = "crates/pocket-assets", default-features = false }
-pocket-render = { path = "crates/pocket-render", default-features = false }
-pocket-mcp = { path = "crates/pocket-mcp" }
-pocket-server = { path = "crates/pocket-server" }
-pocket-audio = { path = "crates/pocket-audio" }
-pocket-debug = { path = "crates/pocket-debug" }
+amoris-contract = { path = "shared/contract/rust" }
+amoris-sim = { path = "crates/amoris-sim" }
+amoris-persist = { path = "crates/amoris-persist" }
+amoris-physics = { path = "crates/amoris-physics" }
+amoris-interface = { path = "crates/amoris-interface" }
+amoris-script = { path = "crates/amoris-script" }
+amoris-link = { path = "crates/amoris-link" }
+amoris-runtime = { path = "crates/amoris-runtime" }
+amoris-check = { path = "crates/amoris-check" }
+amoris-assets = { path = "crates/amoris-assets", default-features = false }
+amoris-render = { path = "crates/amoris-render", default-features = false }
+amoris-mcp = { path = "crates/amoris-mcp" }
+amoris-server = { path = "crates/amoris-server" }
+amoris-audio = { path = "crates/amoris-audio" }
+amoris-debug = { path = "crates/amoris-debug" }
 
 bevy_ecs = { version = "=0.19.1", default-features = false, features = ["std"] }
 libm = "=0.2.16"
@@ -37,8 +37,8 @@ serde-reflection = "=0.6.0"
 xxhash-rust = { version = "=0.8.19", features = ["xxh3"] }
 blake3 = "=1.8.7"
 rapier3d = { version = "=0.36.0", features = ["enhanced-determinism", "serde-serialize"] }
-bincode = "=1.3.3"            # pocket-physics: the physics cache's bytes (architecture.md 6)
-typeid = "=1.0.3"             # pocket-physics: the cache's shapes by reference (architecture.md 6)
+bincode = "=1.3.3"            # amoris-physics: the physics cache's bytes (architecture.md 6)
+typeid = "=1.0.3"             # amoris-physics: the cache's shapes by reference (architecture.md 6)
 rquickjs = { version = "=0.14.0", default-features = false }
 oxc_allocator = "=0.152.0"
 oxc_ast = "=0.152.0"
@@ -50,7 +50,7 @@ oxc_semantic = "=0.152.0"
 oxc_span = "=0.152.0"
 oxc_syntax = "=0.152.0"
 oxc_transformer = "=0.152.0"
-oxc_isolated_declarations = "=0.152.0" # pocket-script tests: the prelude's pocket.d.ts
+oxc_isolated_declarations = "=0.152.0" # amoris-script tests: the prelude's amoris.d.ts
 oxc_sourcemap = "=9.0.0"
 ts-rs = "=12.0.1"
 arc-swap = "=1.9.2"
@@ -79,12 +79,12 @@ meshopt = "=0.6.2"
 # `static-dxc`), WebGPU in the browser; no GL (charter 4.1).
 wgpu = { version = "=30.0.1", default-features = false, features = ["std", "parking_lot", "wgsl", "metal", "vulkan", "vulkan-portability", "dx12", "webgpu"] }
 winit = "0.30"
-# pocket-render's entity map (scene.rs; architecture.md 6, docs/bench/dynamic-scenes.md).
+# amoris-render's entity map (scene.rs; architecture.md 6, docs/bench/dynamic-scenes.md).
 foldhash = "=0.2.0"
 glam = { version = "0.33", features = ["bytemuck"] }
 bytemuck = { version = "1.25", features = ["derive"] }
 pollster = "0.4"
-# The neural texture encoder's BCn baseline (pocket-render's example only; architecture.md 6):
+# The neural texture encoder's BCn baseline (amoris-render's example only; architecture.md 6):
 # Intel's ISPC texture compressor with its prebuilt kernels, and a pure-Rust BCn decoder.
 intel_tex_2 = "=0.5.0"
 texture2ddecoder = "=0.1.2"
@@ -107,32 +107,32 @@ debug = false
 
 # numeric.md 8: the tick-code crates check integer overflow in release builds too, so debug and
 # release behave alike and an overflow is an internal error, never a silent wrap.
-[profile.release.package.pocket-sim]
+[profile.release.package.amoris-sim]
 overflow-checks = true
 
-[profile.web.package.pocket-sim]
+[profile.web.package.amoris-sim]
 overflow-checks = true
 
-[profile.release.package.pocket-physics]
+[profile.release.package.amoris-physics]
 overflow-checks = true
 
-[profile.web.package.pocket-physics]
+[profile.web.package.amoris-physics]
 overflow-checks = true
 
-[profile.release.package.pocket-script]
+[profile.release.package.amoris-script]
 overflow-checks = true
 
-[profile.web.package.pocket-script]
+[profile.web.package.amoris-script]
 overflow-checks = true
 
-[profile.release.package.pocket-interface]
+[profile.release.package.amoris-interface]
 overflow-checks = true
 
-[profile.web.package.pocket-interface]
+[profile.web.package.amoris-interface]
 overflow-checks = true
 
-[profile.release.package.pocket-runtime]
+[profile.release.package.amoris-runtime]
 overflow-checks = true
 
-[profile.web.package.pocket-runtime]
+[profile.web.package.amoris-runtime]
 overflow-checks = true

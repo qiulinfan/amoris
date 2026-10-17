@@ -94,7 +94,7 @@ def developer_runs(args, key, ledger):
             trial.mkdir()
             candidate = trial / "candidate"
             prepared = prepare(task.id, candidate)
-            with Host(args.pocket.resolve(), candidate, trial / "host.log") as host:
+            with Host(args.amoris.resolve(), candidate, trial / "host.log") as host:
                 native = DeveloperTools(host.url, prepared["allowed_files"])
                 summary = run_agent(
                     "You are a game developer using the native Amoris MCP API. Use the provided tools. "
@@ -104,7 +104,7 @@ def developer_runs(args, key, ledger):
                     Limits(max_requests=60, max_tool_calls=180, max_seconds=600,
                            max_output_tokens=4096, reasoning_effort="high"), key, ledger)
                 # Avoid keeping a paused debugger host alive after a trial.
-            verdict = grade(task.id, candidate, args.pocket.resolve(), trial / "grade")
+            verdict = grade(task.id, candidate, args.amoris.resolve(), trial / "grade")
             row = {"task": task.id, "kind": task.kind, "repetition": repetition,
                    "agent": summary, "grade": verdict, "candidate_script": task.file}
             rows.append(row)
@@ -137,7 +137,7 @@ def gameplay_runs(args, key, ledger):
     trials = []
     for repetition in range(1, args.repeats + 1):
         trial = output / f"episode-{repetition}"
-        with Gameplay(args.pocket.resolve(), run_dir=trial / "native") as game:
+        with Gameplay(args.amoris.resolve(), run_dir=trial / "native") as game:
             def dispatch(name, arguments):
                 if name != "observe" and game.judge()["tick"] >= 3600:
                     return {"error": {"code": "episode_time_limit", "message": "The course's time budget is exhausted"}}
@@ -150,7 +150,7 @@ def gameplay_runs(args, key, ledger):
                                        max_output_tokens=args.game_output_tokens, reasoning_effort=args.game_effort), key, ledger)
             verdict, actions = game.judge(), game.actions
             (trial / "actions.json").write_text(json.dumps(actions, indent=2)+"\n")
-        parity = replay_actions(actions, pocket=args.pocket.resolve(), run_dir=trial / "replay")
+        parity = replay_actions(actions, amoris=args.amoris.resolve(), run_dir=trial / "replay")
         (trial / "replay.json").write_text(json.dumps(parity, indent=2)+"\n")
         row = {"repetition": repetition, "agent": summary, "grade": verdict,
                "replay_passed": parity["passed"], "actions": len(actions)}
@@ -169,7 +169,7 @@ def main():
     parser.add_argument("--mode", choices=["development", "gameplay"], default="development")
     parser.add_argument("--ledger", type=Path, default=ROOT / "out/agent-showcase/shared-ledger.json")
     parser.add_argument("--credential-file", type=Path)
-    parser.add_argument("--pocket", type=Path, default=ROOT / "target/release/pocket")
+    parser.add_argument("--amoris", type=Path, default=ROOT / "target/release/amoris")
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--tasks", nargs="*")
     parser.add_argument("--game-output-tokens", type=int, default=8192)

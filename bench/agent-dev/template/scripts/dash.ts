@@ -1,4 +1,4 @@
-import { system } from "pocket";
+import { system } from "amoris";
 
 export const moveCourier = system({
     name: "move_courier", phase: "update", doc: "Move by clamped intent, with a four-times dash and five-tick cooldown.",

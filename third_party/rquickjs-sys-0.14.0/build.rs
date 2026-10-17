@@ -121,7 +121,7 @@ fn main() {
         println!("cargo:rerun-if-env-changed={}", feature_to_cargo(feature));
     }
     println!("cargo:rerun-if-env-changed=CARGO_CFG_SANITIZE");
-    println!("cargo:rerun-if-env-changed=POCKET_LLVM");
+    println!("cargo:rerun-if-env-changed=AMORIS_LLVM");
 
     let src_dir = Path::new("quickjs");
 
@@ -156,8 +156,8 @@ fn main() {
     let target_env = env::var("CARGO_CFG_TARGET_ENV").unwrap();
 
     let mut builder = cc::Build::new();
-    // Amoris P7: the pinned clang when no compiler is named for the target (pocket_compiler).
-    let clang_cl = pocket_compiler(&mut builder);
+    // Amoris P7: the pinned clang when no compiler is named for the target (amoris_compiler).
+    let clang_cl = amoris_compiler(&mut builder);
     builder
         .extra_warnings(false)
         .flag_if_supported("-Wno-implicit-const-int-float-conversion")
@@ -287,17 +287,17 @@ fn main() {
 
     // Amoris P7: which C compiler built QuickJS-ng, for EngineVersion and the perf step.
     let tool = builder.get_compiler();
-    println!("cargo:rustc-env=POCKET_QJS_CC={}", compiler_id(&tool));
+    println!("cargo:rustc-env=AMORIS_QJS_CC={}", compiler_id(&tool));
     // Amoris P7: MSVC's cl, the fallback when the pinned clang-cl is missing, lays out frames that
-    // take over three times clang-cl's stack per call, so `POCKET_QJS_MSVC` lets the script host's
+    // take over three times clang-cl's stack per call, so `AMORIS_QJS_MSVC` lets the script host's
     // default stack limit follow it, and its timings are not the reference figures': every build
     // says so.
-    println!("cargo:rustc-check-cfg=cfg(pocket_qjs_msvc)");
+    println!("cargo:rustc-check-cfg=cfg(amoris_qjs_msvc)");
     if tool.is_like_msvc() && !tool.is_like_clang_cl() {
-        println!("cargo:rustc-cfg=pocket_qjs_msvc");
+        println!("cargo:rustc-cfg=amoris_qjs_msvc");
         println!(
             "cargo:warning=QuickJS-ng is compiled by MSVC's cl ({}), not clang-cl: the pinned LLVM \
-             (POCKET_LLVM, else ~/.pocket-tools/llvm-23.1.2) has no clang-cl, or the build named \
+             (AMORIS_LLVM, else ~/.amoris-tools/llvm-23.1.2) has no clang-cl, or the build named \
              cl. Scripts get a larger stack limit and run slower than with clang-cl \
              (docs/spec/architecture.md 7.3).",
             tool.path().display()
@@ -319,11 +319,11 @@ fn main() {
 /// Amoris P7: QuickJS-ng is compiled by clang-cl on the Windows MSVC target and by clang for
 /// wasm32-unknown-unknown (docs/spec/architecture.md 7.3 and 8.1). When the build names no
 /// compiler for the target (`CC_<target>`, `TARGET_CC`, `CC`), the pinned LLVM is used if it is
-/// installed: `$POCKET_LLVM`, else `~/.pocket-tools/llvm-23.1.2`. Every build of a checkout then
+/// installed: `$AMORIS_LLVM`, else `~/.amoris-tools/llvm-23.1.2`. Every build of a checkout then
 /// compiles QuickJS-ng the same way, whether or not `cargo xtask` started it. Returns whether the
 /// compiler is clang-cl (decided from its name: asking cc would cache CFLAGS before the MSVC
 /// branch below sets them).
-fn pocket_compiler(builder: &mut cc::Build) -> bool {
+fn amoris_compiler(builder: &mut cc::Build) -> bool {
     let target = env::var("TARGET").unwrap();
     let named = [
         format!("CC_{target}"),
@@ -341,15 +341,15 @@ fn pocket_compiler(builder: &mut cc::Build) -> bool {
     };
     let home = env::var_os("USERPROFILE").or_else(|| env::var_os("HOME"));
     // amoris: Homebrew's LLVM (which has the wasm32 backend Apple's clang lacks) when neither
-    // POCKET_LLVM nor the pinned toolchain is there.
+    // AMORIS_LLVM nor the pinned toolchain is there.
     let homebrew = ["/opt/homebrew/opt/llvm", "/usr/local/opt/llvm"]
         .into_iter()
         .map(PathBuf::from)
         .find(|p| p.join("bin").join("clang").is_file());
-    let llvm = env::var_os("POCKET_LLVM")
+    let llvm = env::var_os("AMORIS_LLVM")
         .map(PathBuf::from)
         .or_else(|| {
-            home.map(|h| PathBuf::from(h).join(".pocket-tools").join("llvm-23.1.2"))
+            home.map(|h| PathBuf::from(h).join(".amoris-tools").join("llvm-23.1.2"))
                 .filter(|p| p.is_dir())
         })
         .or(homebrew);

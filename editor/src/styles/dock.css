@@ -4,7 +4,7 @@
   height: 100%;
 }
 
-.dockview-theme-pocket {
+.dockview-theme-amoris {
   --dv-paneview-active-outline-color: var(--accent);
   --dv-tabs-and-actions-container-font-size: 12px;
   --dv-tabs-and-actions-container-height: 32px;
@@ -66,21 +66,21 @@
   background: var(--bg-0);
 }
 
-.dockview-theme-pocket .dv-groupview {
+.dockview-theme-amoris .dv-groupview {
   border-radius: 8px;
   overflow: hidden;
   border: 1px solid var(--line);
 }
 
-.dockview-theme-pocket .dv-groupview.dv-active-group {
+.dockview-theme-amoris .dv-groupview.dv-active-group {
   border-color: #2c3340;
 }
 
-.dockview-theme-pocket .dv-tabs-and-actions-container {
+.dockview-theme-amoris .dv-tabs-and-actions-container {
   border-bottom: 1px solid var(--line);
 }
 
-.dockview-theme-pocket .dv-tab {
+.dockview-theme-amoris .dv-tab {
   padding: 0 !important;
 }
 
@@ -146,7 +146,7 @@
   overflow: hidden;
 }
 
-.dockview-theme-pocket .dv-watermark {
+.dockview-theme-amoris .dv-watermark {
   display: grid;
   place-items: center;
   color: var(--text-3);

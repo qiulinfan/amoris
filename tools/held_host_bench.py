@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """What an agent pays at a host the script debugger holds (docs/bench/agent-debug.md).
 
-Starts `pocket serve` on a copy of samples/sailing, sets a breakpoint in the log system and, ten
+Starts `amoris serve` on a copy of samples/sailing, sets a breakpoint in the log system and, ten
 times, steps into it and measures the step that returns at the breakpoint, `status` and a field read
 while held, and a `scripts apply` the host refuses with `debug.paused`: through the CLI (its process
 start included), through `POST /api/call` on a new connection per call (urllib), and through
@@ -11,7 +11,7 @@ debug evaluation found too big: `world get Sloop` whole, as text and JSON, and t
 under `*_ms_all`.
 
 Standard library only; macOS, Linux and Windows. Usage:
-  python3 tools/held_host_bench.py [--pocket target/release/pocket] [--out FILE.json]
+  python3 tools/held_host_bench.py [--amoris target/release/amoris] [--out FILE.json]
 """
 
 import argparse
@@ -34,23 +34,23 @@ EXE = ".exe" if WINDOWS else ""
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--pocket", default=str(REPO / f"target/release/pocket{EXE}"))
+    ap.add_argument("--amoris", default=str(REPO / f"target/release/amoris{EXE}"))
     ap.add_argument("--out", default=None)
     ap.add_argument("--runs", type=int, default=10)
     a = ap.parse_args()
-    pocket = str(Path(a.pocket).resolve())
-    tmp = Path(tempfile.mkdtemp(prefix="pocket-held-"))
+    amoris = str(Path(a.amoris).resolve())
+    tmp = Path(tempfile.mkdtemp(prefix="amoris-held-"))
     proj = tmp / "sailing"
     shutil.copytree(REPO / "samples/sailing", proj)
     err = open(tmp / "serve.err", "w")
     group = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if WINDOWS else {}
-    server = subprocess.Popen([pocket, "serve", str(proj), "--port", "0"],
+    server = subprocess.Popen([amoris, "serve", str(proj), "--port", "0"],
                               stdout=subprocess.PIPE, stderr=err, text=True, **group)
     result = {"date": time.strftime("%Y-%m-%d"), "runs": a.runs}
 
     def cli(*args):
         t = time.perf_counter()
-        r = subprocess.run([pocket, *args], cwd=proj, capture_output=True, text=True, timeout=90)
+        r = subprocess.run([amoris, *args], cwd=proj, capture_output=True, text=True, timeout=90)
         return r, (time.perf_counter() - t) * 1000
 
     def api(base, method, params=None):

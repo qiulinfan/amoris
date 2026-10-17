@@ -305,10 +305,10 @@ Online NRC, gi-room 128x128, 512 frames; trace or query + training, last 64 fram
 ### Reproduce (Windows)
 
 ```sh
-cargo build --release -p pocket-render --examples
-POCKET_BACKEND=vulkan cargo run --release -p pocket-render --example ray_query_probe
-POCKET_BACKEND=dx12 POCKET_ADAPTER=780m cargo run --release -p pocket-render --example pt_bsdf_probe
-cargo test --release -p pocket-render --lib ray_query        # both backends; POCKET_ADAPTER=780m too
+cargo build --release -p amoris-render --examples
+AMORIS_BACKEND=vulkan cargo run --release -p amoris-render --example ray_query_probe
+AMORIS_BACKEND=dx12 AMORIS_ADAPTER=780m cargo run --release -p amoris-render --example pt_bsdf_probe
+cargo test --release -p amoris-render --lib ray_query        # both backends; AMORIS_ADAPTER=780m too
 python tools/rt_bench.py correctness --adapter 5060 --summary out/bench-runs/rt/correctness-5060.json
 python tools/rt_bench.py timing --adapter 5060 --rounds 5 --summary out/bench-runs/rt/timing-5060.json
 ```

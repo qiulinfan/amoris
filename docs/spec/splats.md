@@ -14,22 +14,22 @@ baseline), 3 item 7 (GPU-driven, no silent capacity limits).
 This specification describes how the renderer draws 3D Gaussian Splatting (3DGS) clouds next to
 meshes: the files it reads, the GPU data layout, the passes, the sort, the WebGPU constraints the
 design keeps, what it costs and what it does not do yet. The code is
-`crates/pocket-render/src/splat/` (`mod.rs` the passes, `cloud.rs` the packing, `loader.rs` the
+`crates/amoris-render/src/splat/` (`mod.rs` the passes, `cloud.rs` the packing, `loader.rs` the
 files, `sort.rs` the radix sort, `tile.rs` the tile rasterizer) and
-`crates/pocket-render/shaders/splat_*.wgsl`. The measurements are in
+`crates/amoris-render/shaders/splat_*.wgsl`. The measurements are in
 [docs/bench/splats.md](../bench/splats.md).
 
 ## 1. Data flow
 
-1. A world entity has a `Splat` component (`pocket-assets/src/visual.rs`: `asset`, uniform `scale`,
+1. A world entity has a `Splat` component (`amoris-assets/src/visual.rs`: `asset`, uniform `scale`,
    `visible`) and a `Transform`.
-2. The render feed (`pocket-runtime/src/present.rs`) sends the full list of `SplatView`s (id, asset,
+2. The render feed (`amoris-runtime/src/present.rs`) sends the full list of `SplatView`s (id, asset,
    pose with the scale, visible) in `RenderFrame.splats` whenever any splat changed.
 3. The renderer's `Scene` keeps the list; `Splats::prepare` turns it into the drawn clouds (asset
    name and model matrix) when it changed.
 4. Clouds are assets by name in `Renderer::splats`:
    - natively, `Splats::set_root(dir)` starts a worker thread that reads and decodes `.ply` and
-     `.splat` files under `dir` when the feed first names them (`pocket play` sets the project
+     `.splat` files under `dir` when the feed first names them (`amoris play` sets the project
      directory), so a large file never stalls a frame;
    - in the browser, `Splats::take_requests` hands the names to the page with the model paths
      (`Viewport::take_asset_requests`), and the page's fetch comes back through `deliver_asset`,
@@ -187,7 +187,7 @@ With the tile rasterizer ([`SplatRaster::Tiles`]): section 4.2.
 
 ### 4.1 Hook points in the renderer
 
-`crates/pocket-render/src/renderer.rs`:
+`crates/amoris-render/src/renderer.rs`:
 
 - the field `pub splats: crate::splat::Splats` and `splats: crate::splat::Splats::new(gpu)` in
   `new`;
@@ -202,11 +202,11 @@ With the tile rasterizer ([`SplatRaster::Tiles`]): section 4.2.
 
 `post.rs` gives the multisampled depth `TEXTURE_BINDING` usage; `shaders.rs` composes the splat
 shaders (`splat_common.wgsl` is prepended to the preprocess, the draw and the tile rasterizer);
-`pocket-app`'s play window calls `splats.set_root(project_dir)`.
+`amoris-app`'s play window calls `splats.set_root(project_dir)`.
 
 ### 4.2 The compute tile rasterizer
 
-`Splats::raster = SplatRaster::Tiles` (or `POCKET_SPLAT_RASTER=tile`; the example's `--raster tile`)
+`Splats::raster = SplatRaster::Tiles` (or `AMORIS_SPLAT_RASTER=tile`; the example's `--raster tile`)
 replaces steps 6 and 7 with the design of the reference CUDA rasterizer, Brush and gsplat, kept to
 WebGPU core (`tile.rs`, `splat_tile.wgsl`, `splat_composite.wgsl`). The preprocess, the compaction
 and the depth sort are shared; after the sort, still before the opaque pass:
@@ -283,7 +283,7 @@ counted in `tile_splats_dropped` (only at the limit: below it the buffers hold e
 splat). `limit_tile_pairs` and `limit_tile_splats` lower the limits to test these paths; GPU tests
 cover the transient drop (40k large splats against the 1M-pair start), both limits, and growth past
 WebGPU's default binding size (`growth_respects_binding_limit`, ignored by default: run it with
-`POCKET_GPU_MINIMAL=limits`).
+`AMORIS_GPU_MINIMAL=limits`).
 
 Work counter: with `Splats::count_tests` (params flag `SPLAT_COUNT_TESTS`) the raster adds the
 (pixel, splat) pairs its pixels tested to a 64-bit counter (a workgroup sum, then one global atomic
@@ -302,13 +302,13 @@ times where pixels do not saturate (anti-aliased, the distant view, both; sectio
 with 3M splats or at 2560x1440 and in close-ups (0.79 to 0.97, mostly on the discrete GPU with
 Vulkan). On the integrated GPU the binning and the second sort cost about as much as the quads'
 whole draw. **The quads are the default on every adapter** (`SplatRaster::DEFAULT`, charter 4.4,
-Pioneer 2026-10-10); the tiles stay available (`POCKET_SPLAT_RASTER=tile`, `Splats::raster`).
+Pioneer 2026-10-10); the tiles stay available (`AMORIS_SPLAT_RASTER=tile`, `Splats::raster`).
 Apple GPUs, where the quads' blending costs most, are unmeasured: should the M5 measure the tiles
 clearly faster, Apple would get its own default.
 
 ### 4.3 Anti-aliased mode
 
-`Splats::antialias` (`POCKET_SPLAT_AA=1`; the example's `--antialias`) is gsplat's `antialiased`
+`Splats::antialias` (`AMORIS_SPLAT_AA=1`; the example's `--antialias`) is gsplat's `antialiased`
 rasterization mode, the 2D filter of Mip-Splatting: when the 0.3 px^2 low-pass is added, the opacity
 is multiplied by sqrt(det Sigma / det (Sigma + 0.3 I)), so a splat keeps its integral. Without it a
 splat smaller than a pixel grows to the low-pass's size at full opacity: thin and distant content
@@ -410,7 +410,7 @@ look-back.
 | workgroup memory zeroing | off natively (`shaders::compute_options`, it breaks MoltenVK); every shader initializes what it reads |
 
 Verified: Metal and Vulkan (MoltenVK) on the Apple M5 render the same image (mean absolute
-difference 0.0003 of 255); with `POCKET_GPU_MINIMAL=limits,features` (WebGPU's default limits, no
+difference 0.0003 of 255); with `AMORIS_GPU_MINIMAL=limits,features` (WebGPU's default limits, no
 optional features) the 1M and 3M gardens render; the crate builds for `wasm32-unknown-unknown`, and
 the web player draws a 300k-splat cloud in Chrome's WebGPU (section 8). 2026-10-09, Windows with the
 RTX 5060 (Vulkan): both rasterizers at the default and at WebGPU's default limits; Chrome 155's
@@ -422,7 +422,7 @@ built for `wasm32` draws 200,000 splats with both rasterizers in it, whose image
 ## 7. Test content
 
 No captured scenes are downloaded (the owner has not approved downloads). The example
-`crates/pocket-render/examples/splats.rs` generates a garden: rolling terrain covered with grass
+`crates/amoris-render/examples/splats.rs` generates a garden: rolling terrain covered with grass
 discs and a dirt path (36% of the splats), grass blades (20%), seven flower beds of stem, petal and
 center splats (20%), three trees with bark discs and leaf crowns (10%), a beach ball (7%) and a
 standing rainbow ring (7%), all oriented flat Gaussians whose size follows the sampling density;

@@ -429,8 +429,8 @@ all runtime targets must reproduce them.
    which costs one round trip and teaches the vocabulary.
 4. **Integer `error.code` numbers for JSON-RPC.** Recommended: the two JSON-RPC codes above, with
    the contract's code in `data`; the string code is the one that matters.
-5. **Slice 1 (Amoris): how `pocket-contract` implements this file.**
-   - One constructor per code of the contract's families in `pocket_contract::codes`, each rendering
+5. **Slice 1 (Amoris): how `amoris-contract` implements this file.**
+   - One constructor per code of the contract's families in `amoris_contract::codes`, each rendering
      the template of the tables above through one renderer (`render::render`) that game codes use
      too (`Problem::from_template`); `CodeDef` waits for perception.md's `FactDef`, which the crate
      does not declare yet. Detail numbers that are integral doubles below 2^53 are written as JSON
@@ -439,7 +439,7 @@ all runtime targets must reproduce them.
      most eight names (Messages); with more, `see {see}.` when the caller names where to look, else
      `it takes one of N names, listed in the detail.`; with neither list nor `see` (an unknown
      entity, No leaks) the clause is dropped. Messages longer than 300 bytes are cut.
-   - The request checker (`pocket_contract::shape`) works from the request type's JSON Schema as
+   - The request checker (`amoris_contract::shape`) works from the request type's JSON Schema as
      schemars writes it. It refuses a key no property takes even where the schema omits
      `additionalProperties: false`; it accepts unit-stem and `x-aliases` aliases with
      `request.alias_used`; it reports `request.missing_field` for a required field only when no

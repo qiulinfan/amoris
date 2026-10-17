@@ -6,24 +6,24 @@ parameters, and JSON Schema. Commands are discoverable from the running host.
 ## Find the command you need
 
 ```sh
-./target/release/pocket help
-./target/release/pocket catalog --host http://127.0.0.1:7878 --json
-./target/release/pocket help world.edit
+./target/release/amoris help
+./target/release/amoris catalog --host http://127.0.0.1:7878 --json
+./target/release/amoris help world.edit
 ```
 
-`--host` belongs after the subcommand. Without it, the client tries `POCKET_HOST`, then
-the project's `.pocket/host.json`.
+`--host` belongs after the subcommand. Without it, the client tries `AMORIS_HOST`, then
+the project's `.amoris/host.json`.
 
 ## Inspect and control a sample
 
 ```sh
-./target/release/pocket world tree --host http://127.0.0.1:7878
-./target/release/pocket world get Sloop Boat Tally --host http://127.0.0.1:7878 --json
-./target/release/pocket play start --paused --host http://127.0.0.1:7878
-./target/release/pocket world set Sloop Boat rudder=0.15 sheet=1 --host http://127.0.0.1:7878
-./target/release/pocket step 60 --host http://127.0.0.1:7878 --json
-./target/release/pocket events --name crate.taken --host http://127.0.0.1:7878
-./target/release/pocket play stop --host http://127.0.0.1:7878
+./target/release/amoris world tree --host http://127.0.0.1:7878
+./target/release/amoris world get Sloop Boat Tally --host http://127.0.0.1:7878 --json
+./target/release/amoris play start --paused --host http://127.0.0.1:7878
+./target/release/amoris world set Sloop Boat rudder=0.15 sheet=1 --host http://127.0.0.1:7878
+./target/release/amoris step 60 --host http://127.0.0.1:7878 --json
+./target/release/amoris events --name crate.taken --host http://127.0.0.1:7878
+./target/release/amoris play stop --host http://127.0.0.1:7878
 ```
 
 These are developer-mode commands. The showcase's earlier scripted sailing controller
@@ -38,20 +38,20 @@ The engine limits observations to the seat's perception and refuses developer co
 when a call is made as that player. Start the sailing course host in one terminal:
 
 ```sh
-./target/release/pocket serve samples/sailing-course --editor editor/dist
+./target/release/amoris serve samples/sailing-course --editor editor/dist
 ```
 
 In another terminal, inspect the skipper's view and available intentions:
 
 ```sh
-./target/release/pocket player observe --seat skipper --host http://127.0.0.1:7878
-./target/release/pocket player intents --seat skipper --host http://127.0.0.1:7878
+./target/release/amoris player observe --seat skipper --host http://127.0.0.1:7878
+./target/release/amoris player intents --seat skipper --host http://127.0.0.1:7878
 ```
 
 For a seat-bound stdio MCP session:
 
 ```sh
-./target/release/pocket mcp samples/sailing-course --seat skipper
+./target/release/amoris mcp samples/sailing-course --seat skipper
 ```
 
 This session lists only the `player` tool, with actions including `observe`, `nearby`,
@@ -99,18 +99,18 @@ A successful response contains `result`; a refused call contains `error` with `c
 ## Capture an actual engine view
 
 ```sh
-./target/release/pocket call capture \
+./target/release/amoris call capture \
   '{"position":[-12,6,13],"look_at":[3,0,0],"width":1280,"height":720}' \
   --host http://127.0.0.1:7878 --json
 ```
 
-The native renderer writes a PNG under the project's `.pocket/captures/` and returns its
+The native renderer writes a PNG under the project's `.amoris/captures/` and returns its
 path, dimensions, tick, instance count, GPU time, and pending asset count.
 
 ## MCP
 
 ```sh
-./target/release/pocket mcp samples/sailing
+./target/release/amoris mcp samples/sailing
 ```
 
 Use this command as a stdio MCP server in your client. It connects to a live host for the

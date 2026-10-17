@@ -1,6 +1,6 @@
 // The project's scripts: the list with diagnostics, which files are open in the editor's tabs,
 // which have unsaved edits, requests to reveal a line (from the console, the debugger, events), and
-// the host's declarations of the `pocket` module (scripts.types) that the TypeScript worker loads.
+// the host's declarations of the `amoris` module (scripts.types) that the TypeScript worker loads.
 
 import { create } from "zustand";
 import type { Diagnostic, ScriptInfo, ScriptTypes } from "../host/protocol";
@@ -12,7 +12,7 @@ interface ScriptsState {
   dirty: Record<string, boolean>;
   diagnostics: Record<string, Diagnostic[]>;
   reveal: { path: string; line: number; nonce: number } | null;
-  /** The host's `pocket.d.ts` and `components.d.ts`, once fetched. */
+  /** The host's `amoris.d.ts` and `components.d.ts`, once fetched. */
   types: ScriptTypes | null;
   setFiles(files: ScriptInfo[]): void;
   setTypes(types: ScriptTypes): void;

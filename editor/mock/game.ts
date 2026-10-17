@@ -1,4 +1,4 @@
-// The mock's game: a few lines standing in for pocket-physics (the boat, the floating crates) and
+// The mock's game: a few lines standing in for amoris-physics (the boat, the floating crates) and
 // for the sailing sample's systems (samples/sailing/scripts/rules.ts: muster, log, take_aboard),
 // plus a helmsman that steers the sloop from crate to crate so a Play session shows something.
 // Script systems are stepped one at a time so the debugger can pause between and inside them.
@@ -83,7 +83,7 @@ export function seaHeight(world: World, x: number, z: number, t: number): number
 
 const touch = (ctx: GameCtx, e: Entity, c: string) => ctx.changes.changed.add(`${e.id}|${c}`);
 
-/** pocket-physics, much simplified: actuators, a polar of the sail, the hull, the floating crates. */
+/** amoris-physics, much simplified: actuators, a polar of the sail, the hull, the floating crates. */
 export function engineStep(ctx: GameCtx) {
   const { world, t } = ctx;
   const wind = [...world.entities.values()].find((e) => e.components.Wind)?.components.Wind as

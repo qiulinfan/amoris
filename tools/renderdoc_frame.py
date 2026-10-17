@@ -7,8 +7,8 @@
     python tools/renderdoc_frame.py analyze out/profiler/rdc/dense-dx12.rdc
 
 `capture` runs the release example (`target/release/examples/<name>`, build it first) under
-`renderdoccmd capture` with `POCKET_RENDERDOC_FRAME=N`: the renderer brackets its N-th frame with
-RenderDoc's in-application API (crates/pocket-render/src/renderdoc.rs), so headless runs are
+`renderdoccmd capture` with `AMORIS_RENDERDOC_FRAME=N`: the renderer brackets its N-th frame with
+RenderDoc's in-application API (crates/amoris-render/src/renderdoc.rs), so headless runs are
 captured as well as windowed ones. `WGPU_DISCARD_HAL_LABELS=0` keeps wgpu's pass labels as
 markers. On Vulkan, RenderDoc's layer is loaded for this process only (`VK_ADD_LAYER_PATH` and
 `VK_INSTANCE_LAYERS`), so it need not be registered system-wide. The capture is moved to
@@ -55,13 +55,13 @@ def capture(args):
     rd = renderdoc_dir()
     exe = ROOT / "target" / "release" / "examples" / f"{args.example[0]}{EXE}"
     if not exe.exists():
-        sys.exit(f"{exe} is missing: cargo build --release -p pocket-render --examples")
+        sys.exit(f"{exe} is missing: cargo build --release -p amoris-render --examples")
     OUT.mkdir(parents=True, exist_ok=True)
     stem = OUT / args.name
-    env = dict(os.environ, POCKET_BACKEND=args.backend, POCKET_RENDERDOC_FRAME=str(args.frame),
+    env = dict(os.environ, AMORIS_BACKEND=args.backend, AMORIS_RENDERDOC_FRAME=str(args.frame),
                WGPU_DISCARD_HAL_LABELS="0")
     if args.adapter:
-        env["POCKET_ADAPTER"] = args.adapter
+        env["AMORIS_ADAPTER"] = args.adapter
     if args.backend == "vulkan":
         # The layer manifest beside renderdoc.dll, enabled for this process only.
         env["VK_ADD_LAYER_PATH"] = str(rd)
@@ -206,8 +206,8 @@ def analyze(args):
     rd = renderdoc_dir()
     rdc = Path(args.capture).resolve()
     out = rdc.with_suffix(".json")
-    env = dict(os.environ, POCKET_RDC=str(rdc), POCKET_RDC_OUT=str(out), POCKET_RDC_TOP=str(args.top),
-               POCKET_RDC_D3D12_COUNTERS="1" if args.d3d12_counters else "0")
+    env = dict(os.environ, AMORIS_RDC=str(rdc), AMORIS_RDC_OUT=str(out), AMORIS_RDC_TOP=str(args.top),
+               AMORIS_RDC_D3D12_COUNTERS="1" if args.d3d12_counters else "0")
     out.unlink(missing_ok=True)
     script = ROOT / "tools" / "renderdoc_analyze.py"
     log = rdc.with_name(rdc.stem + "-qrenderdoc.log")
@@ -246,7 +246,7 @@ def main():
     sub = ap.add_subparsers(dest="cmd", required=True)
     c = sub.add_parser("capture", help="capture one frame of an example")
     c.add_argument("--backend", choices=["dx12", "vulkan"], required=True)
-    c.add_argument("--adapter", default="", help="POCKET_ADAPTER")
+    c.add_argument("--adapter", default="", help="AMORIS_ADAPTER")
     c.add_argument("--frame", type=int, default=70, help="the renderer's frame to capture, from 1")
     c.add_argument("--name", required=True, help="the capture's name under out/profiler/rdc/")
     c.add_argument("--timeout", type=float, default=600)

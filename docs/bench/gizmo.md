@@ -6,14 +6,14 @@
   3.9 % and 4.0 %, the GPU engines idle apart from about 4 % (the Claude app), the RTX 5060 idle at
   P2 (no utilization; 50 °C and 59 °C; Chrome did not use it). It replaces the provisional set taken
   earlier that day at 76 % CPU load while other tracks built; section 2 says what changed. Branch
-  `explore/gizmo`, `004b4352` (`pocket` and the exposed editor rebuilt from it before the runs).
+  `explore/gizmo`, `004b4352` (`amoris` and the exposed editor rebuilt from it before the runs).
   Charter 4.5 (every editor change is a command in the undoable history, and an agent's MCP edits
   enter the same history). Design: [spec/server.md](../spec/server.md) 3.1 (groups, sources, the
   undo of a group), [spec/editor.md](../spec/editor.md) 6 and 8 items 1 and 5.
 - Machine: the R1 laptop (Ryzen 9 270, 16 threads, 15 GiB, RTX 5060 Laptop and Radeon 780M,
-  Windows 11), on AC power, Balanced plan; `pocket` release build; Chrome 155 headless
+  Windows 11), on AC power, Balanced plan; `amoris` release build; Chrome 155 headless
   (`--headless=new --enable-unsafe-webgpu`, window 1600x1000, DPR 1). Every run records the
-  adapter Chrome's WebGPU gives a high-performance request (the viewport's, pocket-render
+  adapter Chrome's WebGPU gives a high-performance request (the viewport's, amoris-render
   `gpu.rs`): the Radeon 780M (`amd`, `rdna-3`) in all five. The viewport drew on its
   `first-instance` path, 5 entities in 40 draw calls.
 - Raw output (drag.json per run, screenshots, the page's console, the conditions, the printed
@@ -23,10 +23,10 @@
 
 ## 1. What is measured
 
-`python tools/gizmo_bench.py` starts a fresh `pocket serve samples/sailing` (the edit world,
+`python tools/gizmo_bench.py` starts a fresh `amoris serve samples/sailing` (the edit world,
 paused) for each run and drives `editor/tools/gizmo-drag.ts` in headless Chrome over CDP, on the
-editor's production build served by the host, as `pocket editor` serves it (built with
-`VITE_POCKET_EXPOSE=1`, which keeps `window.pocket` for the tool). `--dev` also drives the Vite dev
+editor's production build served by the host, as `amoris editor` serves it (built with
+`VITE_AMORIS_EXPOSE=1`, which keeps `window.amoris` for the tool). `--dev` also drives the Vite dev
 server; it is not part of the protocol (section 3).
 
 - Headless Chrome runs no animation frame for the editor's page until the page's first input event
@@ -85,7 +85,7 @@ What the numbers suggest (none of it was varied in an experiment):
   60 ms, each after the last one's answer. The 24 edits of a 1.5 s drag came about 62 ms apart, so
   the 60 ms timer set the pace and a move waited about half an interval for the next send. A shorter
   interval would cut Wait by about half the interval saved; a render feed woken by the publication
-  instead of `pocket-app` `present.rs`'s 16 ms timer could save at most the host's 13 ms. Neither
+  instead of `amoris-app` `present.rs`'s 16 ms timer could save at most the host's 13 ms. Neither
   was tried.
 - Streaming costs this page no frame time on a quiet machine: the frame interval was 8.4 ms in every
   run (p95 11.6 to 11.9) during the streamed drags and 8.4 ms (p95 11.4 to 12.1) for the same drags
@@ -130,7 +130,7 @@ Their investigation is preserved in `qiulinfan/pocket-pioneer` at `09cea71a8`.
 
 ## 4. Correctness evidence
 
-- `cargo test -p pocket-runtime --features thread,transpile`: the history unit tests (a drag merges
+- `cargo test -p amoris-runtime --features thread,transpile`: the history unit tests (a drag merges
   into one entry with its first inverse, what breaks a merge, the 64-edit bound, both stacks most
   recent last, the group on top) and `tests/history.rs` (a 20-step drag is one entry with the
   editor as source; undo and redo take it whole and restore the world hash; a redone entry merges
@@ -139,7 +139,7 @@ Their investigation is preserved in `qiulinfan/pocket-pioneer` at `09cea71a8`.
   recording holds every edit without `group` and replays identically; `history.undo {group}` is
   refused with `history.group`, changing nothing, when the drag was split or another edit came
   after it, and undoes a whole drag).
-- `cargo test --release -p pocket-app --test history_host`: through `Host::call`, the catalog
+- `cargo test --release -p amoris-app --test history_host`: through `Host::call`, the catalog
   advertises `group`; an MCP session's and the HTTP API's entries carry `session` `mcp-1` and
   `api`; an undo of the split drag's group is refused with the list unchanged; four undos restore
   the Sloop; the redo stack lists the next to redo last.
@@ -153,8 +153,8 @@ Their investigation is preserved in `qiulinfan/pocket-pioneer` at `09cea71a8`.
 
 ## 5. Re-measuring
 
-From the repository root of the branch, after `cargo build --release -p pocket-app --bin pocket`
-and `cd editor && bun install --frozen-lockfile && VITE_POCKET_EXPOSE=1 bun run build`:
+From the repository root of the branch, after `cargo build --release -p amoris-app --bin amoris`
+and `cd editor && bun install --frozen-lockfile && VITE_AMORIS_EXPOSE=1 bun run build`:
 
 ```bash
 python tools/gizmo_bench.py --runs 5 --out out/gizmo/quiet
@@ -186,14 +186,15 @@ adapter under `browser.adapter`).
     of looking every 16 ms (host-protocol.md 5; threads.md 4.3's `on_publish`);
   - the editor sends a drag's changes at once when no edit of the drag is in flight, the rest merged
     on its answer, instead of at most every 60 ms (editor.md 6, `LiveEdit`).
-- Sets (each keeps `pocket version` in `pocket-version.json`): `base` is master `3fdc5b83`'s
-  `pocket` with master's editor; `host` is this branch's `pocket` (`45f4c9fb`, the source hash of
-  the `93232970` build the provisional set used) with master's editor
-  (`tools/gizmo_bench.py --dist`); `new` is this branch's `pocket` and editor, both from `45f4c9fb`.
-  Raw output: `out/serveloop/quiet/gizmo-{base,host,new}/`; the provisional set's in
-  `out/serveloop/wave2/gizmo-*/`. The provisional set gave 59.5, 44.2 and 14.2 ms for the three
-  sets, and a first wave at 19:41 to 19:48 (`out/serveloop/wave/`, under 5 to 30 % load, with a
-  pre-commit build of the branch) 62.5, 48.5 and 13.9 ms.
+- Sets (each keeps its build's `version` output beside its results, in `pocket-version.json` for
+  these runs, before the 2026-10-16 rename; `tools/gizmo_bench.py` now writes
+  `amoris-version.json`): `base` is master `3fdc5b83`'s `amoris` with master's editor; `host` is
+  this branch's `amoris` (`45f4c9fb`, the source hash of the `93232970` build the provisional set
+  used) with master's editor (`tools/gizmo_bench.py --dist`); `new` is this branch's `amoris` and
+  editor, both from `45f4c9fb`. Raw output: `out/serveloop/quiet/gizmo-{base,host,new}/`; the
+  provisional set's in `out/serveloop/wave2/gizmo-*/`. The provisional set gave 59.5, 44.2 and 14.2
+  ms for the three sets, and a first wave at 19:41 to 19:48 (`out/serveloop/wave/`, under 5 to 30 %
+  load, with a pre-commit build of the branch) 62.5, 48.5 and 13.9 ms.
 
 | Set | Runs | Input to frame, median (p95) ms | Listener | Wait | Send to feed | Feed to frame | Edit reply | Edits / feeds / moves | Host's floor: reply, feed (p95) ms | Frame interval |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -229,18 +230,22 @@ drag left one undo entry and Escape restored the position.
   about 0.1 ms of the game thread after profiler.md 6).
 
 Re-running: as section 5, three sets each under
-`bench_lock.py run --label quiet-serveloop --max-hold-min 25` on an idle machine, with master's
-`pocket` built from `3fdc5b83` (`out/serveloop/bin/pocket-base.exe`) and master's editor built with
-`VITE_POCKET_EXPOSE=1` copied to `out/serveloop/editor-base/dist` before this branch's editor is
-built, and this branch's `pocket` (profiler.md 6.6 builds it and copies it to
-`out/serveloop/bin/pocket-new.exe`):
+`bench_lock.py run --label quiet-serveloop --max-hold-min 25` on an idle machine. The recorded runs
+used builds made before the 2026-10-16 rename: master `3fdc5b83`'s
+`out/serveloop/bin/pocket-base.exe` and its editor in `out/serveloop/editor-base/dist`, and this
+branch's `out/serveloop/bin/pocket-new.exe`. Those read the old names, while the tools now set
+`AMORIS_*` variables and the samples' scenes say `amoris-scene`, so a re-run builds its own:
+profiler.md 6.6 builds master `3fdc5b83` and this branch's `45f4c9fb`, binary and editor, each from
+its exported tree after `python tools/amoris_rename.py --tree`, into `out/serveloop/rerun/base` and
+`out/serveloop/rerun/new`.
 
 ```bash
+R=out/serveloop/rerun; A=target/release/amoris.exe
 python tools/gizmo_bench.py --runs 5 --out out/serveloop/quiet/gizmo-base \
-    --pocket out/serveloop/bin/pocket-base.exe --dist out/serveloop/editor-base/dist
+    --amoris $R/base/$A --dist $R/base/editor/dist
 python tools/gizmo_bench.py --runs 5 --out out/serveloop/quiet/gizmo-host \
-    --pocket out/serveloop/bin/pocket-new.exe --dist out/serveloop/editor-base/dist
+    --amoris $R/new/$A --dist $R/base/editor/dist
 python tools/gizmo_bench.py --runs 5 --out out/serveloop/quiet/gizmo-new \
-    --pocket out/serveloop/bin/pocket-new.exe --dist editor/dist
+    --amoris $R/new/$A --dist $R/new/editor/dist
 for X in base host new; do python tools/gizmo_bench.py --table out/serveloop/quiet/gizmo-$X; done
 ```

@@ -2,7 +2,7 @@
 
 Each shadow cascade culls its casters by its box and by the extruded camera slice it shades (charter
 4.4, Pioneer note of 2026-10-15; [occlusion spec](../spec/occlusion.md) 11).
-`POCKET_SHADOW_CULL=off|on` (default on), `Renderer::set_shadow_cull` and the viewport page's
+`AMORIS_SHADOW_CULL=off|on` (default on), `Renderer::set_shadow_cull` and the viewport page's
 `?shadow_cull=off|on` switch it. Related: [levels of detail](lod.md) (where the cascades' geometry
 was first counted), [occlusion](occlusion.md).
 
@@ -20,7 +20,7 @@ machine, they gave the same frames and the same counts in every configuration as
 
 - Machine: R1 (Ryzen 9 270, 16 threads, 15 GB; RTX 5060 Laptop 8 GB, driver 617.14 / 32.0.16.1714;
   Radeon 780M, 32.0.13062.3005), Windows 11, AC power. Release build of `explore/shadowcull`.
-- `cargo run --release -p pocket-render --example shadow_cull -- compare` draws ten scenes at
+- `cargo run --release -p amoris-render --example shadow_cull -- compare` draws ten scenes at
   1280x720, each with two renderers on one device through the same frames at the same moments,
   slice culling off and on, and compares every frame to the bit; after each frame it reads back
   what every argument set drew (`Renderer::draw_counts`). Occlusion culling and the depth prepass
@@ -34,8 +34,8 @@ machine, they gave the same frames and the same counts in every configuration as
   `lod-fly` and `lod-off-fly` (its camera walking from `t` 0 to 1, the middle of the field, over 24
   frames).
 - `python tools/shadow_cull_bench.py compare --configs ...` runs it per backend and adapter, and
-  with `+minimal` on WebGPU's baseline device (`POCKET_GPU_MINIMAL=features,limits,timestamps`:
-  no optional features, default limits, the per-batch draw path); `games` runs the pocket-app
+  with `+minimal` on WebGPU's baseline device (`AMORIS_GPU_MINIMAL=features,limits,timestamps`:
+  no optional features, default limits, the per-batch draw path); `games` runs the amoris-app
   example `draw_paths --compare shadow_cull` on four sample projects (with what each cascade drew,
   off and on); `table` prints the tables below.
 - `shadow_cull -- bench SCENE` times one scene with one renderer offscreen, switching slice culling
@@ -276,9 +276,9 @@ Vulkan within the spread. What both runs support is that the up to nine plane te
 in a cascade's box cost at most about 0.01 ms (2%) at 1.6 million cubes; which backend shows it
 consistently differed between the runs (the cause is presumed, not measured apart).
 
-**Cross-check with a per-frame trace** (quiet, `POCKET_TRACE=frames=60,skip=20`, the `lod_field`
+**Cross-check with a per-frame trace** (quiet, `AMORIS_TRACE=frames=60,skip=20`, the `lod_field`
 example `--lod off --t 0 --frames 90 --warm 10 --settle 5`, occlusion culling in its default auto
-mode, RTX 5060 with Direct3D 12, one process with `POCKET_SHADOW_CULL=off` and one with `on`;
+mode, RTX 5060 with Direct3D 12, one process with `AMORIS_SHADOW_CULL=off` and one with `on`;
 `python tools/frame_trace.py diff`): the `shadows` passes' median fell from 33.36 to 18.47 ms
 (0.554x), the frame interval from 65.96 to 51.20 ms; the culling pass stayed at 0.015 ms; the CPU's
 `uniforms` span, which now computes the planes, went from 11 to 15 microseconds. (Provisionally:
@@ -290,8 +290,8 @@ microseconds.)
 From the worktree, release build:
 
 ```sh
-cargo build --release -p pocket-render --example shadow_cull --example lod_field
-cargo build --release -p pocket-app --example draw_paths
+cargo build --release -p amoris-render --example shadow_cull --example lod_field
+cargo build --release -p amoris-app --example draw_paths
 ```
 
 Then each line below under the bench lock while other agents still share the machine. `bench`'s
@@ -311,7 +311,7 @@ cross-check, once with `M=off` and once with `M=on`, then the diff (through the 
 on Windows, name the example with its `.exe`):
 
 ```sh
-POCKET_BACKEND=dx12 POCKET_ADAPTER=nvidia POCKET_SHADOW_CULL=$M POCKET_TRACE=frames=60,skip=20,out=out/shadowcull/quiet/trace-$M.json target/release/examples/lod_field --lod off --t 0 --frames 90 --warm 10 --settle 5
+AMORIS_BACKEND=dx12 AMORIS_ADAPTER=nvidia AMORIS_SHADOW_CULL=$M AMORIS_TRACE=frames=60,skip=20,out=out/shadowcull/quiet/trace-$M.json target/release/examples/lod_field --lod off --t 0 --frames 90 --warm 10 --settle 5
 python tools/frame_trace.py diff out/shadowcull/quiet/trace-off.json out/shadowcull/quiet/trace-on.json
 ```
 

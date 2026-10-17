@@ -28,7 +28,7 @@
 
 ## 1. What the profiler costs
 
-`cargo run --release -p pocket-runtime --features transpile --example profile_bench`: a project's
+`cargo run --release -p amoris-runtime --features transpile --example profile_bench`: a project's
 game stepped directly, 120 ticks of warm-up, then ticks without the profiler (`Game::step`) and
 with it as the game thread runs it (`profile::TickTimer` on an `Instant`-based millisecond clock
 behind the `Arc<dyn Fn>` the loop injects, the loop's four readings after the step and the
@@ -63,7 +63,7 @@ found the paced overhead inside its runs' spread and bounded it at about 3 % (ab
 course the quiet cost passes that bound. In microseconds the paced cost is 2.5 (sailing) and 7.7
 times (course) the back-to-back difference: the profiler's own work, like the rest of the tick, is
 slower after a 16 ms sleep. That is the estimate for a real-time tick; the profiler's cost on
-`pocket serve`'s own game thread is not measured (nothing turns the hooks off there). The same
+`amoris serve`'s own game thread is not measured (nothing turns the hooks off there). The same
 microseconds would be 0.6 to 2.2 % of that thread's whole time per tick (section 2: 0.50 to 0.69
 ms).
 
@@ -95,8 +95,8 @@ to 273.3 us). The paced bench reproduces the live tick without an editor (below:
 machine pacing alone accounts for most of the gap between batch ticks and live ticks without an
 editor.
 
-The same sailing world on the game thread of `pocket serve`, in Play at 60 ticks a second, read
-with `pocket profile --ticks 600` (ms per tick and share of the game thread's time): first in the
+The same sailing world on the game thread of `amoris serve`, in Play at 60 ticks a second, read
+with `amoris profile --ticks 600` (ms per tick and share of the game thread's time): first in the
 capture's Play with the editor connected (600 ticks to tick 902, read before Stop), then in a
 second Play after the editor's browser had closed (600 ticks to tick 901):
 
@@ -112,7 +112,7 @@ second Play after the editor's browser had closed (600 ticks to tick 901):
 | tick (`Game::step`) / game thread (`busy_ms`) | 0.412 / 0.689 | | 0.292 / 0.495 | |
 | largest tick | 0.815 | | 0.508 | |
 
-Publishing and the render feed's extraction take 40 % of the game thread under `pocket serve`, with
+Publishing and the render feed's extraction take 40 % of the game thread under `amoris serve`, with
 the editor (40.0 %) or without (40.9 %): the host publishes a snapshot every tick for its reader and
 extracts the feed for its capture server whoever is connected. It is the next place to look for the
 game thread's cost. With the editor connected (headless Chrome drawing the viewport at 119 fps on
@@ -126,11 +126,11 @@ run 3 or in either quiet attempt (the after-build one: 1.05 and 0.51 ms), and it
 
 ## 3. The editor against the real host
 
-`tools/profiler_bench.py --capture` starts `pocket serve` on a copy of `samples/sailing` with the
+`tools/profiler_bench.py --capture` starts `amoris serve` on a copy of `samples/sailing` with the
 worktree's `editor/dist` and `web/viewport`, and `editor/tools/profiler-capture.ts` drives headless
 Chrome (WebGPU on): the editor connects, Play starts through `/api/call`, the Profiler panel is
 shown and given room, and 15 s into Play the panel's text is read, then at once `profile.frame` and
-`pocket profile` over the panel's own window and over 600 ticks, the overlay and the screenshots
+`amoris profile` over the panel's own window and over 600 ticks, the overlay and the screenshots
 (`out/liveprof/quiet/capture/`):
 
 - The Profiler showed the host's 19 rows per tick from `sim.begin` to `loop.after` (`script:log`
@@ -141,7 +141,7 @@ shown and given room, and 15 s into Play the panel's text is read, then at once 
   fps: headless Chrome without vsync).
 - The same window three ways: the panel (tick-weighted over its last 12 pushes, to tick 893) tick
   0.38 ms and thread 0.64 ms; `profile.frame {ticks: 180}` (to tick 900) 0.385 and 0.641 ms; the
-  CLI's `pocket profile --ticks 180 --json` (to tick 901, 25 ms after the panel was read) 0.385 and
+  CLI's `amoris profile --ticks 180 --json` (to tick 901, 25 ms after the panel was read) 0.385 and
   0.641 ms. They agree to the panel's rounding.
 - The viewport's overlay read `WebGPU 119 fps · GPU 1.03 ms · 61 tps · tick 902 · 9 entities`: the
   page's frame rate and GPU time beside the host's ticks per second, which the transport now also
@@ -176,8 +176,8 @@ a few percent of CPU: right after these builds the first paced runs are slower, 
 after-build attempt above):
 
 ```bash
-cargo build --release -p pocket-runtime --features transpile --example profile_bench
-cargo build --release -p pocket-app
+cargo build --release -p amoris-runtime --features transpile --example profile_bench
+cargo build --release -p amoris-app
 (cd editor && bun install && bun run build)
 python tools/profiler_bench.py --out out/liveprof/quiet --runs 5 --capture
 ```
@@ -185,8 +185,8 @@ python tools/profiler_bench.py --out out/liveprof/quiet --runs 5 --capture
 It records the machine's conditions before and after and writes `out/liveprof/quiet/summary.md`:
 section 1's table (back to back and paced, with the clock's cost per reading and the readings per
 tick), section 2's batch profile and the paced-against-back-to-back rows. The capture writes
-`capture/compare.json`, `capture/pocket-profile.txt` (section 2's live table, editor connected),
-`pocket-profile-no-editor.txt` (no editor), `capture/play-early.json` and
+`capture/compare.json`, `capture/amoris-profile.txt` (section 2's live table, editor connected),
+`amoris-profile-no-editor.txt` (no editor), `capture/play-early.json` and
 `play-early-no-editor.json` (the first ticks), and the panel's and overlay's text and screenshots
 (section 3). `CHROME_FLAGS=--force_high_performance_gpu` puts Chrome's WebGPU on the RTX 5060. On
 the shared laptop wrap the command in `python out/locks/bench_lock.py run --label liveprof -- ...`;
@@ -204,10 +204,10 @@ build in turn.
   while other tracks built and timed on the laptop). Two of their findings did not hold: the tick
   that was 5 % longer on this branch (6.3) and the CPU spinner's 1.26 (6.4). 6.1's per-section
   timings are the first wave's and were not repeated.
-- What was measured: section 2 left `loop.publish` (33 % of the game thread under `pocket serve` on
+- What was measured: section 2 left `loop.publish` (33 % of the game thread under `amoris serve` on
   sailing) and `loop.present` (8 %) as the next place to look, and every row 1.39 times slower with
   the editor connected.
-- Builds (each set keeps `pocket version`, commit and source hash, beside its results): `base` is
+- Builds (each set keeps `amoris version`, commit and source hash, beside its results): `base` is
   master `3fdc5b83`; `new` is this branch at `45f4c9fb` (the snapshot cache, the extractor's kept
   queries, the feed woken on publication, the editor's drag sending), whose source hash
   (`966bac6c...`) is that of `93232970`, the build the provisional second wave measured: the commits
@@ -219,14 +219,14 @@ build in turn.
 
 ### 6.1 Where the time went
 
-`publish_bench` (a pocket-runtime example; `tools/publish_bench.py`) runs the loop's work after each
-tick part by part on a project's game, paced every 16.67 ms like the real-time thread. On sailing in
-Play, `loop.publish` is almost all the snapshot: the event and log streams take under 1 us and the
-swap into the slot 4 to 5 us (with the drop of the publication before it). The snapshot encoded all
-43 section sources each time (39 registered, 4 project components; 26 present, 26.3 KB). Timed one
-by one, back to back, with an instrumented build that was not kept (`probe-sections.json`; first
-wave, provisional, not repeated): `Floater` 9.8 us (7.4 KB), the physics cache 4.9 us (14.3 KB),
-`Collider` 4.0, `Model` 3.2 us, and the other registered component sections 1.2 to 2.7 us each
+`publish_bench` (an amoris-runtime example; `tools/publish_bench.py`) runs the loop's work after
+each tick part by part on a project's game, paced every 16.67 ms like the real-time thread. On
+sailing in Play, `loop.publish` is almost all the snapshot: the event and log streams take under 1
+us and the swap into the slot 4 to 5 us (with the drop of the publication before it). The snapshot
+encoded all 43 section sources each time (39 registered, 4 project components; 26 present, 26.3 KB).
+Timed one by one, back to back, with an instrumented build that was not kept (`probe-sections.json`;
+first wave, provisional, not repeated): `Floater` 9.8 us (7.4 KB), the physics cache 4.9 us (14.3
+KB), `Collider` 4.0, `Model` 3.2 us, and the other registered component sections 1.2 to 2.7 us each
 (`Name` 2.7, `Perceivable` 2.3, the empty ones 1.2 to 1.3) although most hold one row or none: each
 made its query again (`world.try_query`). The four project components took 0.2 to 0.7 us. The list
 of sources took 4.5 us, hashing every section 1.0 to 1.8 us, the registry's checks 0.5 to 0.9 us;
@@ -239,9 +239,9 @@ extraction likewise made its nine queries again every tick.
 ### 6.2 What changed, part by part
 
 Three changes, each committed and tested on its own: the game thread takes its snapshots through
-pocket-persist's `SnapshotCache` (persistence.md 4.3: a component section whose rows did not change
+amoris-persist's `SnapshotCache` (persistence.md 4.3: a component section whose rows did not change
 is taken over with its digest, and each component's query is kept; the same bytes, checked after
-every tick and edit by pocket-persist's `tests/repeated.rs` and pocket-runtime's
+every tick and edit by amoris-persist's `tests/repeated.rs` and amoris-runtime's
 `tests/snapshot_cache.rs`); the extractor keeps its queries (`tests/present.rs`: a viewport that
 applies every delta holds the full frame's scene after every tick and edit); and `/render` sends on
 publication (6.5 and gizmo.md 6). `tools/publish_bench.py --runs 5` (`quiet/publish/`), paced, 1,800
@@ -268,7 +268,7 @@ work after the step 171.0, 157.2 and 88.2 against 156.6, 143.8 and 79.7 us), so 
 moved (0.52 against 0.51; the extraction 0.31 against 0.28); section 2 found sailing's paced tick
 slower on its quiet machine too (not separated).
 
-### 6.3 Under `pocket serve`
+### 6.3 Under `amoris serve`
 
 `tools/serve_loop_bench.py` (`quiet/live/`): both builds serve a copy of sailing at once; five
 rounds, each Play read with `profile.frame` over its 600 ticks after 3 s of settling, with no
@@ -358,32 +358,47 @@ these differences. Edits reach the feed at once: gizmo.md 6.
 
 ### 6.6 Re-running
 
+The recorded runs used builds made before the 2026-10-16 rename, which read the old names:
+`out/serveloop/bin/pocket-base.exe` (master `3fdc5b83`) and `out/serveloop/bin/pocket-new.exe`
+(this branch at `45f4c9fb`). A re-run builds its own, each commit from its exported tree after
+`python tools/amoris_rename.py --tree <dir>`, so that it reads the `AMORIS_*` variables the tools
+set and the samples' renamed scene format (`tools/publish_bench.py --build-base` does this itself).
 From the branch's root, build
-`cargo build --release -p pocket-runtime --features transpile --example publish_bench`,
-`cargo build --release -p pocket-app --bin pocket` (copied to `out/serveloop/bin/pocket-new.exe`),
+`cargo build --release -p amoris-runtime --features transpile --example publish_bench`,
 the base harness
 `python tools/publish_bench.py --build-base 3fdc5b83 --into out/serveloop/base-build` (master's
-runtime, its own target directory, about 4 minutes) and
-`cd editor && bun install --frozen-lockfile && VITE_POCKET_EXPOSE=1 bun run build`.
-`out/serveloop/bin/pocket-base.exe` is master `3fdc5b83`'s `pocket`. Each command under
+runtime, its own target directory, about 4 minutes),
+`cd editor && bun install --frozen-lockfile && VITE_AMORIS_EXPOSE=1 bun run build`, and both
+commits' `amoris` and editor, each in its own directory and target (gizmo.md 6 uses them too):
+
+```bash
+R=out/serveloop/rerun
+build() {  # NAME COMMIT: the commit's amoris and editor, renamed, in $R/NAME
+  mkdir -p $R/$1 && git archive $2 | tar -x -C $R/$1 && python tools/amoris_rename.py --tree $R/$1
+  (cd $R/$1 && cargo build --release -p amoris-app --bin amoris)
+  (cd $R/$1/editor && bun install --frozen-lockfile && VITE_AMORIS_EXPOSE=1 bun run build)
+}
+build base 3fdc5b83; build new 45f4c9fb
+```
+
+Each command under
 `python out/locks/bench_lock.py run --label quiet-serveloop --max-hold-min 25 -- ...` on an idle
 machine (about 8, 15, 8, 6 and 4 minutes; `out/serveloop/run-quiet.sh` ran them with gizmo.md 6's
 three sets):
 
 ```bash
+R=out/serveloop/rerun; B=$R/base/target/release/amoris.exe; N=$R/new/target/release/amoris.exe
 python tools/publish_bench.py --out out/serveloop/quiet/publish --runs 5 \
     --also base=out/serveloop/base-build/publish_bench-3fdc5b83.exe
 python tools/serve_loop_bench.py --out out/serveloop/quiet/live --rounds 5 --idle 30 \
-    --idle-rounds 3 --clients none sockets editor \
-    --pocket base=out/serveloop/bin/pocket-base.exe --pocket new=out/serveloop/bin/pocket-new.exe
+    --idle-rounds 3 --clients none sockets editor --amoris base=$B --amoris new=$N
 python tools/serve_loop_bench.py --out out/serveloop/quiet/diag --rounds 5 --idle 0 \
-    --clients none sockets-reads editor editor-dgpu busy1 busy3 \
-    --pocket base=out/serveloop/bin/pocket-base.exe
+    --clients none sockets-reads editor editor-dgpu busy1 busy3 --amoris base=$B
 python tools/serve_loop_bench.py --out out/serveloop/quiet/speed8 --rounds 5 --idle 0 --speed 8 \
-    --clients none editor editor-dgpu busy1 --pocket base=out/serveloop/bin/pocket-base.exe
+    --clients none editor editor-dgpu busy1 --amoris base=$B
 python tools/serve_loop_bench.py --out out/serveloop/quiet/pinned --rounds 3 --idle 0 \
     --host-cpus 2-5 --client-cpus 0-1,6-15 --clients none sockets editor editor-dgpu \
-    --pocket base=out/serveloop/bin/pocket-base.exe
+    --amoris base=$B
 ```
 
 Each writes `summary.md` beside its raw JSON and the machine's conditions: the first 6.2's table

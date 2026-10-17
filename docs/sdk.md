@@ -1,4 +1,4 @@
-# Writing game scripts: the `pocket` SDK
+# Writing game scripts: the `amoris` SDK
 
 Game rules are TypeScript in `<project>/scripts/`, run on QuickJS-ng as **stateless systems**: all
 state lives in components; a module holds only constants, functions and builder calls (top-level
@@ -7,31 +7,31 @@ state lives in components; a module holds only constants, functions and builder 
 ## Workflow
 
 ```sh
-pocket scripts check   # compile, load, tsc (TypeScript 7); no swap; exit 1 on an error
-pocket scripts apply   # compile, hot-swap at the next tick, then tsc
-pocket scripts types   # .pocket/types/*.d.ts, and a tsconfig.json for editors
-pocket check <project> --only types   # the check, no host running
+amoris scripts check   # compile, load, tsc (TypeScript 7); no swap; exit 1 on an error
+amoris scripts apply   # compile, hot-swap at the next tick, then tsc
+amoris scripts types   # .amoris/types/*.d.ts, and a tsconfig.json for editors
+amoris check <project> --only types   # the check, no host running
 ```
 
-`check` and `apply` regenerate `.pocket/types/components.d.ts` from the registry and your
+`check` and `apply` regenerate `.amoris/types/components.d.ts` from the registry and your
 `component(...)` calls, so `tsc` knows every component and field. Type errors never stop a swap: run
-`check && apply`. `tsc`: `cd sdk && bun install`, or `POCKET_TSC`. MCP: the `scripts` tool (`guide`
+`check && apply`. `tsc`: `cd sdk && bun install`, or `AMORIS_TSC`. MCP: the `scripts` tool (`guide`
 is this page).
 
 Finding and checking a fix in a running host:
 
 ```sh
-pocket scripts read scripts/rules.ts --lines 20-40     # numbered, as breakpoints count lines
-pocket debug break scripts/rules.ts:27 --if "r > 0"   # then: pocket step 60 returns at the stop
-pocket debug state                                     # where, why, the frame's locals
-pocket debug eval "speed * 2" ; pocket debug continue
-pocket debug watch Sloop.Log.distance                  # stop at the statement that writes it
-pocket debug writes Sloop.Boat.rudder --ticks 120      # who changed it each tick, engine or script
-pocket world get Sloop Boat.speed,Log.distance         # fields alone
-pocket step 300 --sample Sloop.Boat.speed --every 30   # a table instead of step-and-get loops
-pocket scripts status                                  # the bundle the world runs
-pocket snapshots restore 0                             # keeps the applied scripts (--bundle snapshot: not)
-pocket scripts profile --ticks 60                      # where the steps go, by TS function and line
+amoris scripts read scripts/rules.ts --lines 20-40     # numbered, as breakpoints count lines
+amoris debug break scripts/rules.ts:27 --if "r > 0"   # then: amoris step 60 returns at the stop
+amoris debug state                                     # where, why, the frame's locals
+amoris debug eval "speed * 2" ; amoris debug continue
+amoris debug watch Sloop.Log.distance                  # stop at the statement that writes it
+amoris debug writes Sloop.Boat.rudder --ticks 120      # who changed it each tick, engine or script
+amoris world get Sloop Boat.speed,Log.distance         # fields alone
+amoris step 300 --sample Sloop.Boat.speed --every 30   # a table instead of step-and-get loops
+amoris scripts status                                  # the bundle the world runs
+amoris snapshots restore 0                             # keeps the applied scripts (--bundle snapshot: not)
+amoris scripts profile --ticks 60                      # where the steps go, by TS function and line
 ```
 
 Steps are what the budgets count (1,000,000 a system, 2,000,000 a tick): every call and every jump
@@ -40,24 +40,24 @@ Steps are what the budgets count (1,000,000 a system, 2,000,000 a tick): every c
 besides their callback's call; arithmetic and property reads and writes are none
 ([script-sandbox.md](spec/script-sandbox.md) 4.1). A regular expression takes no steps, but one
 match that loops or backtracks more than 10,000 times stops the system as over its budget, however
-many steps it has left. `pocket scripts profile` runs the next ticks on a fork (the world does not
+many steps it has left. `amoris scripts profile` runs the next ticks on a fork (the world does not
 move) and lists, per system, its exact steps and the functions, lines and stacks with the most of
 them, estimated from a sample every `--interval` steps (every step for a light game); the same state
 always gives the same profile. `--folded out.txt` writes the stacks for a flame graph (speedscope).
-The prelude's code shows as `pocket:<line>`: `rows.row(e)` is a binary search there, about 33 steps
+The prelude's code shows as `amoris:<line>`: `rows.row(e)` is a binary search there, about 33 steps
 on 1,000 rows, and in `bench/rules` those lookups are half of the rule's steps.
 
 While the debugger holds the game, reads answer from the last tick's end and other calls are refused
-with `debug.paused` until `pocket debug continue`. A breakpoint that every tick hits holds the game
-again right after the continue: clear it (`pocket debug clear`), or `pocket time pause` while held
-(queued for the end of the tick) and then continue, to act between ticks; `pocket play stop` ends
+with `debug.paused` until `amoris debug continue`. A breakpoint that every tick hits holds the game
+again right after the continue: clear it (`amoris debug clear`), or `amoris time pause` while held
+(queued for the end of the tick) and then continue, to act between ticks; `amoris play stop` ends
 Play wherever it stands.
 
 ## A game
 
 ```ts
 // scripts/components.ts: the game's own components
-import { component, field } from "pocket";
+import { component, field } from "amoris";
 export const Tally = component("Tally", {
     version: 1, doc: "Crates aboard.", // bump version when fields change
     fields: {
@@ -87,7 +87,7 @@ export default game({ components: [Crew, Tally, Log, Cargo], systems: [muster, l
 ## Systems and queries
 
 ```ts
-import { system } from "pocket";
+import { system } from "amoris";
 export const log = system({
     name: "log", phase: "update", doc: "Logs the distance sailed.", // name: ^[a-z][a-z0-9_]*$
     queries: { boats: { with: ["Boat", "Log"], fields: ["Boat.speed", "Log.distance"] } },
@@ -151,10 +151,10 @@ done_event = "course.finished"   # emitting it ends the episode; its data are th
   `ctx.intent` throws `script.restricted`; a game's own intents are engine catalogs for now
   (spec/player.md 10). A decision model can still run in the tick as an ordinary system that writes
   controls, as the player bench's `pilot` does (docs/bench/player.md 2).
-- Playing it: `pocket player observe --seat skipper`,
-  `pocket player act '[{"do": "start", "intent": "sail_to", "target": "Mark1"}]' --seat skipper`,
-  `pocket player wait --seat skipper` (runs to the seat's next decision point),
-  `pocket player describe '{"part": "intents"}'`; MCP: `pocket mcp <project> --seat skipper` lists
+- Playing it: `amoris player observe --seat skipper`,
+  `amoris player act '[{"do": "start", "intent": "sail_to", "target": "Mark1"}]' --seat skipper`,
+  `amoris player wait --seat skipper` (runs to the seat's next decision point),
+  `amoris player describe '{"part": "intents"}'`; MCP: `amoris mcp <project> --seat skipper` lists
   the `player` tool alone.
 
 ## Common mistakes and what `scripts check` says
@@ -174,4 +174,4 @@ done_event = "course.finished"   # emitting it ends the episode; its data are th
 | `tally.taken[r] = n / 2` | at run time: `script.write_not_integer` |
 | a component not in `game({components})` | `'"Cargo"' is not assignable to parameter of type 'ComponentName'.` |
 
-Runtime errors name the TypeScript file and line (`pocket logs`).
+Runtime errors name the TypeScript file and line (`amoris logs`).

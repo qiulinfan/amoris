@@ -34,7 +34,7 @@
 // share of the canvas's size, TAA upscaling; docs/spec/taa-gtao.md 4.1);
 // ?render=ws://127.0.0.1:7878/render[&assets=http://127.0.0.1:7878/assets/] shows a host's world.
 // ?gpu_minimal=first-instance (or features,limits) leaves device features out as
-// POCKET_GPU_MINIMAL does natively: without indirect-first-instance the renderer takes WebGPU's
+// AMORIS_GPU_MINIMAL does natively: without indirect-first-instance the renderer takes WebGPU's
 // baseline draw path.
 import { createViewport } from "./viewport.js";
 const q = new URLSearchParams(location.search);
@@ -58,7 +58,7 @@ try {
   if (q.get("demo") === "transparent") vp.demoTransparent(Number(q.get("n") || 8));
   if (q.get("demo") === "occluders") vp.demoOccluders();
   if (q.get("demo") === "lod") {
-    // Making the meshes and their levels (pocket_assets::lod) runs here, on the page's thread.
+    // Making the meshes and their levels (amoris_assets::lod) runs here, on the page's thread.
     const t0 = performance.now();
     vp.demoLod(lodField[0], lodField[1], Number(q.get("detail") || 6), Number(q.get("t") || 0));
     console.info(`demo=lod: meshes, levels and field in ${(performance.now() - t0).toFixed(1)} ms`);
@@ -82,16 +82,16 @@ try {
     const e = q.get("eye").split(",").map(Number), t = (q.get("target") || "0,0,0").split(",").map(Number);
     vp.raw.set_camera_look(e[0], e[1], e[2], t[0], t[1], t[2], 0, 1, 0, 50, 0.1, 0);
   }
-  window.pocketViewport = vp;
+  window.amorisViewport = vp;
   const samples = [];
   vp.onStats((s) => {
     samples.push(s);
     if (samples.length > 600) samples.shift();
-    window.pocketStats = s;
+    window.amorisStats = s;
     hud.textContent = `${s.backend}  ${canvas.width}x${canvas.height}  draws: ${s.draw_path} (${s.draw_calls})  occlusion: ${s.occlusion}  prepass: ${s.prepass}  lod: ${s.lod}  aa: ${s.antialiasing}  gtao: ${s.gtao}${s.render_scale < 1 ? `  scale: ${s.render_scale}` : ""}\nframe ${s.frame_ms.toFixed(2)} ms   gpu ${s.gpu_ms.toFixed(2)} ms\ninstances ${s.instances}  tick ${s.tick}\n` +
       (s.passes || []).map((p) => `  ${p.pass.padEnd(12)} ${p.ms.toFixed(2)} ms`).join("\n");
   });
-  window.pocketSamples = samples;
+  window.amorisSamples = samples;
 } catch (e) {
   hud.textContent = "error: " + e.message;
   console.error(e);

@@ -1,6 +1,6 @@
 //! `cargo xtask`: the local check command, the definition of done (charter 3.7; docs/spec/checks.md),
 //! code generation (`gen`) and the web checker (`webcheck`). It links no engine crate: it drives
-//! cargo, the built `pocket` binary and Chrome as processes (architecture.md 4.15).
+//! cargo, the built `amoris` binary and Chrome as processes (architecture.md 4.15).
 
 mod cli;
 mod config;

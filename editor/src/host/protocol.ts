@@ -105,7 +105,7 @@ export interface LogEntry {
   tick?: number;
 }
 
-/** Who made an edit (pocket-link's `source_json`): the editor, a developer client (the HTTP API's,
+/** Who made an edit (amoris-link's `source_json`): the editor, a developer client (the HTTP API's,
  * or an MCP session's), a player seat, or the host itself. */
 export type HistorySource = "editor" | "host" | { developer: number } | { player: number };
 
@@ -128,7 +128,7 @@ export interface HistoryState {
 }
 
 // ---- The debugger ---------------------------------------------------------------------------------
-// The host's `debug.*` methods are pocket-debug's agents' API (docs/spec/debugger.md 7), and its
+// The host's `debug.*` methods are amoris-debug's agents' API (docs/spec/debugger.md 7), and its
 // `debug` events carry the same state. `Host*` types are those wire shapes; `api.ts` normalizes them
 // into the editor's view below (frames with scopes, variables as expandable trees).
 
@@ -408,7 +408,7 @@ export interface ScriptTypes {
   components: { engine: string[]; project: string[]; unavailable: string[] };
   project_from: "scripts" | "registry";
   diagnostics: Diagnostic[];
-  /** With `text: true`: `pocket.d.ts` and `components.d.ts`. */
+  /** With `text: true`: `amoris.d.ts` and `components.d.ts`. */
   text?: Record<string, string>;
 }
 

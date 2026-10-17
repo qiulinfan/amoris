@@ -1,20 +1,20 @@
 """The live profiler's measurements (docs/bench/profiler.md), one re-runnable protocol.
 
 1. The machine's conditions (tools/machine_conditions.py) before and after.
-2. The profiler's overhead and per-system timings: pocket-runtime's `profile_bench` example on
+2. The profiler's overhead and per-system timings: amoris-runtime's `profile_bench` example on
    each project, `--runs` times, back to back (3,000 ticks with and 3,000 without the profiler,
    alternating blocks of 250) and paced like the real-time game thread (`--paced-ticks` each, a
    tick every `--pace-ms`, blocks of 100), the runs of each build taking turns.
-3. With `--capture`: `pocket serve` on a copy of samples/sailing, headless Chrome on the editor it
+3. With `--capture`: `amoris serve` on a copy of samples/sailing, headless Chrome on the editor it
    serves (editor/tools/profiler-capture.ts: Play, the Profiler panel, screenshots, the panel's
    text, the viewport's stats, and while the editor is still connected in the same Play,
-   `profile.frame` and `pocket profile` over the panel's window and over 600 ticks); then a second
-   Play with no editor connected, read the same way (`pocket-profile-no-editor.txt`).
+   `profile.frame` and `amoris profile` over the panel's window and over 600 ticks); then a second
+   Play with no editor connected, read the same way (`amoris-profile-no-editor.txt`).
 
 Build first (release; the editor's dist for --capture):
 
-    cargo build --release -p pocket-runtime --features transpile --example profile_bench
-    cargo build --release -p pocket-app
+    cargo build --release -p amoris-runtime --features transpile --example profile_bench
+    cargo build --release -p amoris-app
     cd editor && bun run build
 
 Run (on the shared laptop inside the bench lock; alone on a quiet machine):
@@ -172,21 +172,21 @@ def post(base: str, method: str, params=None) -> dict:
 
 
 def capture(out: Path, seconds: int) -> None:
-    pocket = REPO / f"target/release/pocket{EXE}"
+    amoris = REPO / f"target/release/amoris{EXE}"
     dist = REPO / "editor/dist"
-    if not pocket.exists() or not (dist / "index.html").exists():
-        sys.exit("--capture needs target/release/pocket and editor/dist (see the docstring)")
+    if not amoris.exists() or not (dist / "index.html").exists():
+        sys.exit("--capture needs target/release/amoris and editor/dist (see the docstring)")
     bun = shutil.which("bun")
     if not bun:
         sys.exit("--capture needs bun on PATH")
-    tmp = Path(tempfile.mkdtemp(prefix="pocket-profiler-"))
+    tmp = Path(tempfile.mkdtemp(prefix="amoris-profiler-"))
     proj = tmp / "sailing"
     shutil.copytree(REPO / "samples/sailing", proj)
-    env = dict(os.environ, POCKET_EDITOR_DIST=str(dist),
-               POCKET_WEB_VIEWPORT=str(REPO / "web/viewport"))
+    env = dict(os.environ, AMORIS_EDITOR_DIST=str(dist),
+               AMORIS_WEB_VIEWPORT=str(REPO / "web/viewport"))
     group = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if WINDOWS else {}
     errlog = open(out / "serve.err", "w")
-    server = subprocess.Popen([str(pocket), "serve", str(proj), "--port", "0"], env=env,
+    server = subprocess.Popen([str(amoris), "serve", str(proj), "--port", "0"], env=env,
                               stdout=subprocess.PIPE, stderr=errlog, text=True, **group)
     try:
         info = json.loads(server.stdout.readline())
@@ -194,7 +194,7 @@ def capture(out: Path, seconds: int) -> None:
         print(f"host at {base}")
         shot = out / "capture"
         subprocess.run([bun, "tools/profiler-capture.ts", "--url", base, "--out", str(shot),
-                        "--seconds", str(seconds), "--pocket", str(pocket), "--project",
+                        "--seconds", str(seconds), "--amoris", str(amoris), "--project",
                         str(proj)], cwd=REPO / "editor", check=True, env=env)
         # The editor is gone (its Chrome closed): a second Play with nothing connected but the
         # CLI, read the same way.
@@ -203,9 +203,9 @@ def capture(out: Path, seconds: int) -> None:
         early = post(base, "profile.frame", {"ticks": 600})
         (out / "play-early-no-editor.json").write_text(json.dumps(early, indent=2) + "\n")
         time.sleep(max(0, seconds - 3))
-        r = subprocess.run([str(pocket), "profile", "--ticks", "600"], cwd=proj,
+        r = subprocess.run([str(amoris), "profile", "--ticks", "600"], cwd=proj,
                            capture_output=True, text=True, timeout=60)
-        (out / "pocket-profile-no-editor.txt").write_text(r.stdout + r.stderr)
+        (out / "amoris-profile-no-editor.txt").write_text(r.stdout + r.stderr)
         print(r.stdout)
         post(base, "play.stop")
     finally:

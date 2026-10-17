@@ -1,0 +1,70 @@
+[package]
+name = "amoris-runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "The game: composition, command application at tick boundaries, the game thread"
+
+[features]
+# TypeScript compiled in process (amoris-script's oxc), for loading projects from disk and hot
+# updates; the shipped web build receives compiled scripts (architecture.md 7.4).
+transpile = ["amoris-script/transpile"]
+# GameThread: the game on its own std thread (native; threads.md 3).
+thread = []
+
+[dependencies]
+amoris-contract.workspace = true
+amoris-sim.workspace = true
+amoris-persist.workspace = true
+amoris-physics.workspace = true
+amoris-assets.workspace = true
+amoris-interface.workspace = true
+amoris-script.workspace = true
+amoris-link.workspace = true
+bevy_ecs.workspace = true
+# PlayerSpec's Persisted::trace (the player declarations as world state; docs/spec/player.md).
+serde-reflection.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+# project.toml (architecture.md 6, toml: the reason recorded there).
+toml.workspace = true
+
+[dev-dependencies]
+# The compiler for unit tests of the runtime without `transpile` (the web worker's build, which
+# replays compiled modules). It does not turn on this crate's `transpile`: an integration test
+# that loads a project from disk is `#![cfg(feature = "transpile")]`, so `cargo test -p
+# amoris-runtime` builds alone and `--features thread,transpile` runs them all.
+amoris-script = { workspace = true, features = ["transpile"] }
+
+# The snapshot cache's and the render feed's byte-equality tests load the sailing game from disk:
+# named without the feature (`--test snapshot_cache`), cargo refuses them instead of running none.
+
+[[example]]
+name = "player_bench"
+required-features = ["transpile"]
+
+[[example]]
+name = "profile_bench"
+required-features = ["transpile"]
+
+[[test]]
+name = "snapshot_cache"
+required-features = ["transpile"]
+
+[[test]]
+name = "present"
+required-features = ["transpile"]
+
+[[example]]
+name = "publish_bench"
+required-features = ["transpile"]
+
+[[example]]
+name = "write_trace_bench"
+required-features = ["transpile"]
+
+[[example]]
+name = "lookahead_bench"
+required-features = ["transpile"]

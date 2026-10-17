@@ -33,12 +33,12 @@ late activation and completion with export deferred until later.
 ## Reproduce
 
 ```sh
-POCKET_BACKEND=metal cargo test --release -p pocket-render --test frame_trace \
+AMORIS_BACKEND=metal cargo test --release -p amoris-render --test frame_trace \
   --test gpu_profiler --test prepass -- --test-threads=1
-POCKET_BACKEND=metal cargo test --release -p pocket-render --lib \
+AMORIS_BACKEND=metal cargo test --release -p amoris-render --lib \
   gpu_clock_samples_are_current_and_bound_by_the_cpu_brackets -- --test-threads=1
-cargo build --release -p pocket-render --example many_cubes
-POCKET_BACKEND=metal POCKET_AA=msaa POCKET_GTAO=off \
+cargo build --release -p amoris-render --example many_cubes
+AMORIS_BACKEND=metal AMORIS_AA=msaa AMORIS_GTAO=off \
   target/release/examples/many_cubes --dense --count 200000 --size 1280x720 \
   --headless-bench 300 --occlusion off --prepass auto --settle 2 \
   --trace frames=300,skip=60,out=out/profiler/metal-dense.json

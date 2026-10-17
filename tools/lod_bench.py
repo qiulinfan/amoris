@@ -1,11 +1,11 @@
-"""Runs the levels-of-detail benchmark (crates/pocket-render/examples/lod_field.rs) with levels on
+"""Runs the levels-of-detail benchmark (crates/amoris-render/examples/lod_field.rs) with levels on
 and off on each backend and adapter given, and writes one JSON summary (docs/bench/lod.md).
 
     python tools/lod_bench.py [--out out/bench-runs/lod/bench-native.json] [--adapters nvidia,amd]
         [--backends vulkan,dx12] [--n 48] [--detail 6] [--size 1280x720] [--frames 60]
         [--occlusion off] [--t 0] [--rounds 1] [--note "conditions"]
 
-The example must be built (`cargo build --release -p pocket-render --example lod_field`). Each run
+The example must be built (`cargo build --release -p amoris-render --example lod_field`). Each run
 is its own process: levels off draws every instance's full mesh, so it gets fewer frames. With
 `--rounds N` every configuration runs N times, round by round, so that a disturbance lands on all
 of them alike; every run is kept with its round.
@@ -23,7 +23,7 @@ EXE = os.path.join(ROOT, "target", "release", "examples",
 
 
 def run(backend, adapter, lod, a):
-    env = dict(os.environ, POCKET_BACKEND=backend, POCKET_ADAPTER=adapter)
+    env = dict(os.environ, AMORIS_BACKEND=backend, AMORIS_ADAPTER=adapter)
     frames = a.frames if lod == "on" else max(10, a.frames // 4)
     cmd = [EXE, "--n", str(a.n), "--detail", str(a.detail), "--size", a.size, "--frames",
            str(frames), "--warm", "10", "--lod", lod, "--occlusion", a.occlusion, "--t", str(a.t)]
@@ -62,7 +62,7 @@ def main():
                     help="the conditions, kept in the output's `provisional` field")
     a = ap.parse_args()
     if not os.path.exists(EXE):
-        sys.exit(f"{EXE} is missing: cargo build --release -p pocket-render --example lod_field")
+        sys.exit(f"{EXE} is missing: cargo build --release -p amoris-render --example lod_field")
     head = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT,
                           capture_output=True, text=True).stdout.strip()
     results = {"commit": head, "provisional": a.note, "rounds": a.rounds,

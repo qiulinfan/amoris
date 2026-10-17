@@ -4,11 +4,11 @@
 docs/bench/dx12.md: Direct3D 12 against Vulkan on each adapter of a two-GPU laptop. Every case is
 a deterministic frame: the renderer examples' offscreen captures (many_cubes, splats), static
 project scenes drawn at a fixed time (showcase_bench --capture) and, for projects that need the
-game runtime, `pocket serve` paused, stepped to a tick and captured through the host's `capture`
+game runtime, `amoris serve` paused, stepped to a tick and captured through the host's `capture`
 method (captured twice; the second frame is the one compared, drawn at the tick's own poses).
 
-Build first: `cargo build --release -p pocket-render --examples` and `cargo build --release -p
-pocket-app`. Then, from the repository's root:
+Build first: `cargo build --release -p amoris-render --examples` and `cargo build --release -p
+amoris-app`. Then, from the repository's root:
 
     python tools/backend_compare.py --adapters nvidia,780m --out out/bench-runs/backend-compare \
         --evidence out/bench-runs/dx12/compare --summary out/bench-runs/dx12/compare.json
@@ -37,7 +37,7 @@ def example(name):
     return str(ROOT / "target" / "release" / "examples" / f"{name}{EXE}")
 
 
-POCKET = str(ROOT / "target" / "release" / f"pocket{EXE}")
+AMORIS = str(ROOT / "target" / "release" / f"amoris{EXE}")
 STATIC = ["--width", "1280", "--height", "720", "--frames", "5", "--warm", "5", "--capture"]
 
 # name -> command with {out}, or ("serve", project, ticks)
@@ -83,7 +83,7 @@ def refuse_busy_port(port):
 def ensure_alive(proc):
     code = proc.poll()
     if code is not None:
-        raise RuntimeError(f"owned pocket serve exited {code}")
+        raise RuntimeError(f"owned amoris serve exited {code}")
 
 
 def wait_ready(proc, log_path, project, port):
@@ -111,14 +111,14 @@ def wait_ready(proc, log_path, project, port):
             ensure_alive(proc)
             return actual_port
         time.sleep(0.1)
-    raise RuntimeError("owned pocket serve readiness timed out")
+    raise RuntimeError("owned amoris serve readiness timed out")
 
 
 def serve_capture(project, ticks, out, env, port):
     refuse_busy_port(port)
     log_path = out.with_suffix(".serve.log")
     with open(log_path, "w", encoding="utf-8") as log:
-        proc = subprocess.Popen([POCKET, "serve", project, "--port", str(port)], cwd=ROOT, env=env,
+        proc = subprocess.Popen([AMORIS, "serve", project, "--port", str(port)], cwd=ROOT, env=env,
                                 stdout=log, stderr=subprocess.STDOUT)
         try:
             host = ["--host", str(wait_ready(proc, log_path, project, port))]
@@ -135,12 +135,12 @@ def serve_capture(project, ticks, out, env, port):
 
 def capture_owned_host(proc, host, ticks, out):
     ensure_alive(proc)
-    step = subprocess.run([POCKET, "step", str(ticks), *host], cwd=ROOT, capture_output=True,
+    step = subprocess.run([AMORIS, "step", str(ticks), *host], cwd=ROOT, capture_output=True,
                           text=True, timeout=120)
     if step.returncode:
         raise RuntimeError(f"step failed: {step.stdout[-400:]}{step.stderr[-400:]}")
     ensure_alive(proc)
-    status = subprocess.run([POCKET, "status", "--json", *host], cwd=ROOT, capture_output=True,
+    status = subprocess.run([AMORIS, "status", "--json", *host], cwd=ROOT, capture_output=True,
                             text=True, timeout=60)
     try:
         world_tick = json.loads(status.stdout).get("tick")
@@ -150,7 +150,7 @@ def capture_owned_host(proc, host, ticks, out):
     result = None
     for _ in range(2):
         ensure_alive(proc)
-        c = subprocess.run([POCKET, "call", "capture", params, "--json", *host], cwd=ROOT,
+        c = subprocess.run([AMORIS, "call", "capture", params, "--json", *host], cwd=ROOT,
                            capture_output=True, text=True, timeout=300)
         if c.returncode:
             raise RuntimeError(f"capture failed: {c.stdout[-400:]}{c.stderr[-400:]}")
@@ -162,13 +162,13 @@ def capture_owned_host(proc, host, ticks, out):
 
 
 def capture(case, backend, adapter, out, port):
-    env = dict(os.environ, POCKET_BACKEND=backend, RUST_LOG="info")
+    env = dict(os.environ, AMORIS_BACKEND=backend, RUST_LOG="info")
     if adapter:
-        env["POCKET_ADAPTER"] = adapter
+        env["AMORIS_ADAPTER"] = adapter
     # The renderer's anti-aliasing and GTAO defaults depend on the adapter's kind
     # (docs/spec/taa-gtao.md); captures compared across adapters pin them unless asked otherwise.
-    env.setdefault("POCKET_AA", "msaa")
-    env.setdefault("POCKET_GTAO", "off")
+    env.setdefault("AMORIS_AA", "msaa")
+    env.setdefault("AMORIS_GTAO", "off")
     spec = CASES[case]
     png = out.relative_to(ROOT).as_posix() if out.is_relative_to(ROOT) else str(out)
     record = {"backend": backend, "adapter": adapter, "png": png}
@@ -208,7 +208,7 @@ def diff(a, b, strip):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--backends", default="vulkan,dx12", help="first is the reference")
-    ap.add_argument("--adapters", default="", help="POCKET_ADAPTER values, comma separated")
+    ap.add_argument("--adapters", default="", help="AMORIS_ADAPTER values, comma separated")
     ap.add_argument("--cases", default=",".join(CASES))
     ap.add_argument("--out", default="out/bench-runs/backend-compare")
     ap.add_argument("--evidence", help="directory for the downscaled comparison strips")

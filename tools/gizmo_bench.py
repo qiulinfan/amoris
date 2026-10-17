@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Live gizmo drags on the real host, timed in the browser (docs/bench/gizmo.md).
 
-Each run starts a fresh `pocket serve samples/sailing` (the edit world, paused) and runs
+Each run starts a fresh `amoris serve samples/sailing` (the edit world, paused) and runs
 `editor/tools/gizmo-drag.ts` in headless Chrome on `built`, the editor's production build served by
-the host (as `pocket editor` serves it; built with VITE_POCKET_EXPOSE=1 so the tool can reach the
+the host (as `amoris editor` serves it; built with VITE_AMORIS_EXPOSE=1 so the tool can reach the
 editor's stores). `--dev` additionally checks the Vite development server proxying to the host;
 the published timing protocol uses the production build. Development viewport remounts and hot
 updates have their own check, editor/tools/viewport-loads.ts. Mouse moves go at 60 Hz without
@@ -14,8 +14,8 @@ to `<out>/<run>/<mode>/`, the machine's conditions before the first run and afte
 the bench lock when the script runs under it) to `<out>/conditions-{start,end}.json`; `--table`
 prints the medians over the valid runs (a page that logged a panic or an exception is left out).
 
-Build first: `cargo build --release -p pocket-app --bin pocket`, then `cd editor && bun install
---frozen-lockfile && VITE_POCKET_EXPOSE=1 bun run build` (editor/dist is ignored; a normal
+Build first: `cargo build --release -p amoris-app --bin amoris`, then `cd editor && bun install
+--frozen-lockfile && VITE_AMORIS_EXPOSE=1 bun run build` (editor/dist is ignored; a normal
 `bun run build` afterwards drops the hooks again). With `--dev` the script starts and stops Vite
 itself. From the repository root:
 
@@ -46,9 +46,9 @@ def conditions(out, label):
     print(f"conditions {label}: exit {r.returncode}")
 
 
-def pocket_version(pocket) -> dict:
-    """`pocket version` of the build measured (commit and source hash), kept with the results."""
-    r = subprocess.run([str(pocket), "version"], capture_output=True, text=True, timeout=60)
+def amoris_version(amoris) -> dict:
+    """`amoris version` of the build measured (commit and source hash), kept with the results."""
+    r = subprocess.run([str(amoris), "version"], capture_output=True, text=True, timeout=60)
     try:
         return json.loads(r.stdout)
     except ValueError:
@@ -68,9 +68,9 @@ def wait_http(url, seconds=30.0, method="GET", body=None):
     raise RuntimeError(f"{url} did not answer in {seconds} s")
 
 
-def start_host(pocket, port, log, dist):
-    env = dict(os.environ, POCKET_EDITOR_DIST=str(dist))
-    p = subprocess.Popen([str(pocket), "serve", "samples/sailing", "--port", str(port)], cwd=ROOT,
+def start_host(amoris, port, log, dist):
+    env = dict(os.environ, AMORIS_EDITOR_DIST=str(dist))
+    p = subprocess.Popen([str(amoris), "serve", "samples/sailing", "--port", str(port)], cwd=ROOT,
                          env=env, stdout=log, stderr=subprocess.STDOUT)
     wait_http(f"http://127.0.0.1:{port}/api/call", method="POST",
               body=json.dumps({"method": "status", "params": {}}).encode())
@@ -81,7 +81,7 @@ def start_vite(host_port, editor_port, log):
     bun = shutil.which("bun")
     if not bun:
         raise RuntimeError("bun is not on PATH")
-    env = dict(os.environ, POCKET_HOST=f"http://127.0.0.1:{host_port}", EDITOR_PORT=str(editor_port))
+    env = dict(os.environ, AMORIS_HOST=f"http://127.0.0.1:{host_port}", EDITOR_PORT=str(editor_port))
     p = subprocess.Popen([bun, "run", "dev"], cwd=ROOT / "editor", env=env, stdout=log,
                          stderr=subprocess.STDOUT)
     wait_http(f"http://127.0.0.1:{editor_port}/", seconds=60)
@@ -103,16 +103,16 @@ def stop(p):
 def run(args):
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    pocket = Path(args.pocket) if args.pocket else ROOT / "target" / "release" / f"pocket{EXE}"
+    amoris = Path(args.amoris) if args.amoris else ROOT / "target" / "release" / f"amoris{EXE}"
     built = Path(args.dist) if args.dist else ROOT / "editor" / "dist"
     dist = built / "_app"
-    if not any("pocketEditorViewport" in f.read_text(errors="ignore") for f in dist.glob("*.js")):
-        raise SystemExit("editor/dist lacks the hooks: cd editor && VITE_POCKET_EXPOSE=1 bun run build")
+    if not any("amorisEditorViewport" in f.read_text(errors="ignore") for f in dist.glob("*.js")):
+        raise SystemExit("editor/dist lacks the hooks: cd editor && VITE_AMORIS_EXPOSE=1 bun run build")
     bun = shutil.which("bun")
     modes = MODES if args.dev else ("built",)
     conditions(out, "start")
-    (out / "pocket-version.json").write_text(json.dumps(
-        {"pocket": str(pocket), "dist": str(built), "version": pocket_version(pocket)},
+    (out / "amoris-version.json").write_text(json.dumps(
+        {"amoris": str(amoris), "dist": str(built), "version": amoris_version(amoris)},
         indent=2) + "\n")
     with open(out / "vite.log", "a") as vlog:
         # Vite proxies to whichever host listens on host-port; each run restarts the host there.
@@ -127,7 +127,7 @@ def run(args):
                     # tried once more with a fresh host and browser.
                     for attempt in (1, 2):
                         with open(dest / "serve.log", "w") as hlog:
-                            host = start_host(pocket, args.host_port, hlog, built)
+                            host = start_host(amoris, args.host_port, hlog, built)
                             try:
                                 cmd = [bun, "tools/gizmo-drag.ts", "--url", f"http://127.0.0.1:{port}/",
                                        "--out", str(dest.resolve()), "--moves", str(args.moves),
@@ -220,7 +220,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--out", default="out/gizmo/runs")
     ap.add_argument("--runs", type=int, default=3)
-    ap.add_argument("--pocket", default="")
+    ap.add_argument("--amoris", default="")
     ap.add_argument("--dist", default="", help="the editor build the host serves (default editor/dist)")
     ap.add_argument("--host-port", type=int, default=7890)
     ap.add_argument("--editor-port", type=int, default=5190)

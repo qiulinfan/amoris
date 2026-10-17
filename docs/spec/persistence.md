@@ -8,7 +8,7 @@ serialization), 7.6 (world hash). Versions, migrations and saves: [versions.md](
 
 ## 1. Scope and related specifications
 
-This specification fixes the byte format in which the world is written (the Pocket Canonical
+This specification fixes the byte format in which the world is written (the Portable Canonical
 Encoding, PCE), the world hash defined over it, snapshot, restore and in-memory fork, the replay
 file, and how two runs are compared to name the first tick where they diverge and the component that
 diverged, with the Rust API of each and the checks that prove them. Concepts owned elsewhere are
@@ -19,10 +19,10 @@ used by name:
 | spec-sim | `Tick` (ticks completed), boundaries and boundary writes, `SimClock`, `EntityId`, `EntityAllocator`, `EntityIndex`, iteration order, events, `EventCounter`, `EventInbox` and the tick's event record, the world seed, numeric rules | [simulation.md](simulation.md), [rng.md](rng.md), [numeric.md](numeric.md) |
 | spec-script | `ComponentSchema` and project components, bundles and the reachable module set, run configuration (budgets), hot update | [script-host.md](script-host.md), [script-sandbox.md](script-sandbox.md), [hot-update.md](hot-update.md) |
 | spec-contract | the error protocol `{code, message, detail}` and its type `Problem`, seats (`SeatId`) | [errors.md](../../shared/contract/errors.md), [README.md](../../shared/contract/README.md) |
-| spec-arch | crates and per-type hooks in `pocket-sim`, the command queue and `Applied`, `WorldSnapshot` publication, the check command's procedures, budgets, the web build | [architecture.md](architecture.md), [threads.md](threads.md), [checks.md](checks.md), [budgets.md](budgets.md) |
+| spec-arch | crates and per-type hooks in `amoris-sim`, the command queue and `Applied`, `WorldSnapshot` publication, the check command's procedures, budgets, the web build | [architecture.md](architecture.md), [threads.md](threads.md), [checks.md](checks.md), [budgets.md](budgets.md) |
 | spec-mcp | MCP tools for fork, restore and replay queries, built on section 6 and [replay.md](replay.md) | [mcp.md](../../shared/contract/mcp.md) |
 
-The code is `pocket-persist` (architecture.md 4.3); the traits of 6.2 are declared in `pocket-sim`
+The code is `amoris-persist` (architecture.md 4.3); the traits of 6.2 are declared in `amoris-sim`
 (architecture.md 4.1), so physics and scripts register state without depending on it. Its external
 crates, pins and features are in architecture.md 6.
 
@@ -174,7 +174,7 @@ persists that content in its own form (the contract shares no byte formats); thi
 | `IntentInstance`, `MemoryEntry`, `PerceivedEvent`, `Reading` and every type inside the contract's world state | Every `Option` encoded, every enum externally tagged, free-form data as `PlainData` (3.4) |
 
 Conversion to the contract's JSON shapes happens only at the interface, when an answer or a tool
-shows the value (`pocket-interface`'s projection), never inside a tick. P1 covers each type of this
+shows the value (`amoris-interface`'s projection), never inside a tick. P1 covers each type of this
 table.
 
 ### 3.6 Decoding is strict, and why not an existing format
@@ -269,8 +269,8 @@ disallowed-methods = [
 Their reason is "a write past change detection leaves a stale section in repeated snapshots
 (persistence.md, 4.3)". `tools/lint-fixture` uses each once; clippy 1.98.1 with `bevy_ecs` 0.19.1
 reported all five on 2026-10-15. The lint cannot see a persisted component with interior mutability
-(none has one) or a write through a raw pointer; `pocket-persist`'s `repeated` tests and
-`pocket-runtime`'s `snapshot_cache` test compare the cache with a full snapshot after every tick.
+(none has one) or a write through a raw pointer; `amoris-persist`'s `repeated` tests and
+`amoris-runtime`'s `snapshot_cache` test compare the cache with a full snapshot after every tick.
 
 `docs/bench/profiler.md` 6 (the serve loop) measures it on an idle machine (2026-10-16): on the
 sailing world in Play 7 of the 26 present sections change every tick and 2 more now and then, and
@@ -368,7 +368,7 @@ pub struct SnapshotHeader {
     pub engine: EngineVersion,      // versions.md 3.1
     pub bundle: ContentHash,        // the bundle loaded at the boundary (versions.md 3.2)
 }
-/// Kept current by pocket-runtime, read into the header; class Ignored ("header metadata").
+/// Kept current by amoris-runtime, read into the header; class Ignored ("header metadata").
 pub struct SnapshotContext { pub bundle: ContentHash, pub writes: u32 }   // a Resource
 
 /// Immutable, cheap to clone, Send + Sync. Each section's bytes are an Arc<[u8]>, so the
@@ -393,7 +393,7 @@ impl Snapshot {
 ### 6.2 Registration
 
 ```rust
-// Declared in pocket-sim (architecture.md 4.1); contracts defined here.
+// Declared in amoris-sim (architecture.md 4.1); contracts defined here.
 pub trait Persisted: Serialize + DeserializeOwned + Send + Sync + 'static {
     const NAME: &'static str;   // stable section name (4.1)
     const VERSION: u32;         // schema version from 1 (versions.md 3.5)
@@ -581,7 +581,7 @@ For `rapier3d` 0.36.0 with `parry3d` 0.31.1, read from their sources:
   square roots only (its other floating-point functions are the per-step `log2` of numeric.md 5 and
   a `sin_cos` in a query of `convex_polyhedron.rs`), which is why the builds can agree across
   platforms; the web test checks that they do.
-- Shapes by reference are shared by `Arc` through a process-wide table (`pocket_physics::shapes`),
+- Shapes by reference are shared by `Arc` through a process-wide table (`amoris_physics::shapes`),
   keyed by `key` and held weakly. `physics.step` builds every fixed body's shape through it, so a
   body built from components whose shape some world holds shares that shape; only shapes built there
   are registered, so an entry is always the shape its components build (barring a BLAKE3 collision),
@@ -724,30 +724,30 @@ or chosen here. They feed the budgets `hash.sail`, `publish.sail`, `fork.*` and 
    record `World` only.
 7. **A point inside a boundary.** Settled: `(tick, writes)`, as simulation.md 2 defines it, in
    `SnapshotHeader` and in `threads.md`'s `WorldSnapshot` alike.
-8. **Slice 1: the hooks as `pocket-sim` declares them.** `Persisted` (with `trace` defaulting to
+8. **Slice 1: the hooks as `amoris-sim` declares them.** `Persisted` (with `trace` defaulting to
    `trace_type::<Self>` over the given samples), `PersistedCache`, `Staged` and `ContentHash`
-   (`derive(context, bytes)` and an incremental `hasher(context)`) are in `pocket_sim::persisted` as
-   6.1 and 6.2 give them, which puts `serde-reflection` in `pocket-sim` (architecture.md 6). Crates
+   (`derive(context, bytes)` and an incremental `hasher(context)`) are in `amoris_sim::persisted` as
+   6.1 and 6.2 give them, which puts `serde-reflection` in `amoris-sim` (architecture.md 6). Crates
    below persistence declare their types' classes through the trait `RegisterPersisted`, whose
    generic methods mirror `RegistryBuilder`'s (`entities`, `resource`, `component`, `cache`,
    `derived`, `ignore`, `rebuild`) and which `RegistryBuilder` implements;
-   `pocket_sim::persisted::declare` is pocket-sim's declaration (the clock, the seed, the event
+   `amoris_sim::persisted::declare` is amoris-sim's declaration (the clock, the seed, the event
    counter and inbox and `Name` persisted; the index, RNG table, outbox, tick state, tick output,
    reserved ids and poison mark Derived, rebuilt by `rebuild_derived`; the component registry
    Ignored). `dynamic` is not in the trait: project components' rows are
-   `pocket_sim::registry::ProjectValues` described by the registry's `ComponentSchema`, which
+   `amoris_sim::registry::ProjectValues` described by the registry's `ComponentSchema`, which
    persistence reads without the script host.
 9. **Slice 1: tracing needs samples.** `EntityId`'s `Deserialize` refuses 0, the value the tracer
    offers, and so do the other types whose decoding checks their values (simulation-slice1.md, 15),
    so a tracer made with `persisted::tracer_config()` (samples for structs on) takes
    `persisted::record_samples(tracer, samples)` first; a type holding an enum below its top level
    traces that enum in its `trace` (`EventInbox` traces `PlainData`, which is recursive through
-   `Array` and `Object` and terminates through `Null`, its variant 0). pocket-sim's test traces
+   `Array` and `Object` and terminates through `Null`, its variant 0). amoris-sim's test traces
    every persisted type it declares and resolves the registry.
-10. **Slice 1: `PlainData` lives in `pocket-sim`** (`pocket_sim::data`), because events carry it
+10. **Slice 1: `PlainData` lives in `amoris-sim`** (`amoris_sim::data`), because events carry it
     below persistence; it checks its canonical form (`validate`: finite numbers, keys strictly
     ascending by bytes) and converts to and from JSON.
-11. **Slice 1: the physics cache** (8). `pocket_physics::PhysicsCache`, section `physics.rapier`,
+11. **Slice 1: the physics cache** (8). `amoris_physics::PhysicsCache`, section `physics.rapier`,
     holds the resource `Physics` (Rapier's `PhysicsWorld`) in bincode (architecture.md 11, choice
     8). With no solver in the world it writes nothing, and an empty section decodes to no solver.
     Decoding refuses trailing bytes and a body or collider whose `user_data` names no entity
@@ -756,23 +756,23 @@ or chosen here. They feed the budgets `hash.sail`, `publish.sail`, `fork.*` and 
     `EntityId` in the low 64 bits and an FNV-1a hash of its `RigidBody` and `Collider` in the high
     64, so the reverse map (`BodyIndex`) is Derived, rebuilt by `physics.index`, and the step sees a
     changed component without change detection. `rebuild` leaves an empty solver whose bodies the
-    next `physics.step` builds from the components in id order. `pocket_physics::declare` persists
+    next `physics.step` builds from the components in id order. `amoris_physics::declare` persists
     the components `Transform`, `Velocity`, `RigidBody`, `Collider`, `ExternalForce`, `Floater`,
     `Boat`, `Sail`, `Hull`, `Sea` and `Wind`, the cache, the cache's state `Physics` as Derived
     (choice 15), and the Derived `BodyIndex` and `ContactLog`, and ignores `RebuiltSolver`, the
     report of a restore whose cache referred to shapes its components do not build (8). Its tests
     prove, for the sailing scene, a fork at every tick of 600, restores at ticks 0, 1, 60 and 600
     continuing 600 ticks in lockstep, and the storage shuffle, through a stand-in of this
-    specification's operations over the same declarations (`pocket_physics::probe`).
-12. **Slice 1: `pocket-persist` as built.** Everything of sections 3 to 7 and 11 and the checks P1
+    specification's operations over the same declarations (`amoris_physics::probe`).
+12. **Slice 1: `amoris-persist` as built.** Everything of sections 3 to 7 and 11 and the checks P1
     to P4 and P6 are implemented and tested with the crate's own test game (moving bodies, spawns
     and despawns, a component that comes and goes, a resource, events, a cache that holds an
-    infinity) over `pocket-sim` alone: `cargo test -p pocket-persist`, debug and release. A fork
+    infinity) over `amoris-sim` alone: `cargo test -p amoris-persist`, debug and release. A fork
     made at every one of 300 ticks continues with the reference's hash at every later tick
     (`tests/fork.rs`). P5 (golden replays) and P7 (budgets) wait for the sailing scene and the
     check's harness; `examples/persist_bench.rs` gives the first figures (13). `sim_registry()` is a
-    `RegistryBuilder` with `pocket_sim::persisted::declare` applied.
-13. **Slice 1: P1 without `proptest`.** The property tests draw their values from `pocket-sim`'s
+    `RegistryBuilder` with `amoris_sim::persisted::declare` applied.
+13. **Slice 1: P1 without `proptest`.** The property tests draw their values from `amoris-sim`'s
     PCG32 (2,000 values of a type covering every case of the serde data model, NaN payloads and
     signed zeros included, and 6,000 single-bit mutations of their bytes), so no crate the
     architecture's table does not list is added for one test.
@@ -799,9 +799,9 @@ or chosen here. They feed the budgets `hash.sail`, `publish.sail`, `fork.*` and 
     snapshot without the cache section (whose `decode` is never called with empty bytes, choice 16)
     and the restore's own check would then fail with `persist.restore_mismatch` after the world had
     changed (the review of slice 1 found this; `tests/snapshot.rs` proves the Derived declaration
-    with a cache whose state is a resource of its own). `pocket-physics` keeps `Physics` beside
+    with a cache whose state is a resource of its own). `amoris-physics` keeps `Physics` beside
     `PhysicsCache` (choice 11) and declares it so, `.derived::<Physics>(...)` in
-    `pocket_physics::declare` (added when slice 1's wave 2 was committed: without it a registry with
+    `amoris_physics::declare` (added when slice 1's wave 2 was committed: without it a registry with
     physics refused a world holding `Physics` with `persist.unclassified`).
 16. **Slice 1: caches.** A cache section is written when `encode` writes at least one byte; a
     snapshot without it makes restore remove the cache's own type, and `decode` is not called with
@@ -828,12 +828,12 @@ or chosen here. They feed the budgets `hash.sail`, `publish.sail`, `fork.*` and 
     resource and every cache's own type, applies the sections (entities with `spawn_batch`,
     component rows with `insert_batch`), rebuilds the entity index, then runs the rebuild functions
     in registration order.
-20. **Slice 1: the pinned vectors (P4)** are `pocket_persist::vectors`: XXH3-128 and BLAKE3 test
+20. **Slice 1: the pinned vectors (P4)** are `amoris_persist::vectors`: XXH3-128 and BLAKE3 test
     vectors of their references, the world hash of a fixed tiny world and the BLAKE3 of its snapshot
     under a fixed header (the header names the build's target and profile, which the hash leaves
     out), and the hash after 120 ticks with a fork at tick 60 checked on the way. The native test
     writes the report and `examples/web_vectors.rs` built for `wasm32-unknown-unknown` prints the
-    same bytes under Node (`node crates/pocket-persist/tests/web/run.mjs`), as `pocket-sim`'s web
+    same bytes under Node (`node crates/amoris-persist/tests/web/run.mjs`), as `amoris-sim`'s web
     tests do.
 21. **Slice 1: a bound on nesting.** A value nested more than `pce::MAX_DEPTH` (128) compound values
     deep is refused: by the encoder with `persist.encode` and by the decoder with
@@ -859,5 +859,5 @@ or chosen here. They feed the budgets `hash.sail`, `publish.sail`, `fork.*` and 
     on an entity without an `EntityId`: its row would be in no section and no hash, and restore,
     which despawns the entities that carry an `EntityId`, would leave it, so a fork of such a world
     would differ from its source (2: state is never skipped silently). Snapshot, the world hash and
-    restore all run it; entities are spawned through `pocket_sim::entity` or a `Boundary`, which
+    restore all run it; entities are spawned through `amoris_sim::entity` or a `Boundary`, which
     give them their id.

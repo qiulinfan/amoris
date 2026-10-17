@@ -12,8 +12,8 @@ of them instead of landing on one.
 
 Build first, in each checkout to compare:
 
-    cargo build -p pocket-physics --example physics_bench --release
-    cargo build -p pocket-physics --example level_web --target wasm32-unknown-unknown --release
+    cargo build -p amoris-physics --example physics_bench --release
+    cargo build -p amoris-physics --example level_web --target wasm32-unknown-unknown --release
 
 Then, from the repository root:
 
@@ -135,7 +135,7 @@ def main():
                         if engine == "native":
                             cmd = [str(native), "level", cells, *common]
                         else:
-                            cmd = [args.node, str(ROOT / "crates/pocket-physics/tests/web/level.mjs"), str(wasm),
+                            cmd = [args.node, str(ROOT / "crates/amoris-physics/tests/web/level.mjs"), str(wasm),
                                    cells, *common]
                         res = run(cmd)
                         record(res, build=name, engine_kind=engine, round=r, kind="level")

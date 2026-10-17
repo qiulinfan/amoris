@@ -23,15 +23,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 EVAL = """(() => {
-  const s = (window.pocketSamples || []).filter((x) => x.passes && x.passes.length);
+  const s = (window.amorisSamples || []).filter((x) => x.passes && x.passes.length);
   const med = (a) => { a = a.slice().sort((x, y) => x - y); return a.length ? a[Math.floor(a.length / 2)] : null; };
   const by = {};
   for (const x of s) for (const p of x.passes) (by[p.pass] ||= []).push(p.ms);
   const passes = {};
   for (const k in by) passes[k] = med(by[k]);
-  const last = s.length ? s[s.length - 1] : (window.pocketSamples || []).slice(-1)[0] || {};
+  const last = s.length ? s[s.length - 1] : (window.amorisSamples || []).slice(-1)[0] || {};
   return { timed_frames: s.length, gpu_ms: med(s.map((x) => x.gpu_ms)), passes,
-           frame_ms: med((window.pocketSamples || []).map((x) => x.frame_ms)),
+           frame_ms: med((window.amorisSamples || []).map((x) => x.frame_ms)),
            aa: last.antialiasing, gtao: last.gtao, scale: last.render_scale,
            canvas: (() => { const c = document.querySelector("canvas"); return [c.width, c.height]; })() };
 })()"""

@@ -2,7 +2,7 @@
 
 The opaque pass draws a depth prepass in `auto` mode by default: GPU timestamps compare the opaque
 passes with and without it and the cheaper way is kept (docs/spec/prepass.md 5).
-`POCKET_PREPASS=off|on|auto` overrides it; the browser uses `?prepass=`. Design and correctness
+`AMORIS_PREPASS=off|on|auto` overrides it; the browser uses `?prepass=`. Design and correctness
 contract: [prepass](../spec/prepass.md). Related: [occlusion](occlusion.md), [backend
 cost](dx12.md), the UE5 comparison on branch `explore/ue5` (`docs/bench/ue5-dense.md` there).
 
@@ -18,7 +18,7 @@ builds and tests could load the CPU and the GPU between and during runs.
   way (before the prepass and before `@invariant`).
 - `python tools/prepass_bench.py` (one round per call, every configuration once, the order
   reversed every other round; each round held the GPU lock for its whole duration):
-  `many_cubes --dense` and the sphere (1.6M cubes), `POCKET_AA=msaa POCKET_GTAO=off` as in the UE5
+  `many_cubes --dense` and the sphere (1.6M cubes), `AMORIS_AA=msaa AMORIS_GTAO=off` as in the UE5
   comparison, the prepass `off`, `on` and `auto` against occlusion culling `off` and `auto`.
   Headless: `--headless-bench 200 --size 2560x1440 --settle 5` (60 warm-up frames, then 200
   measured, each submitted and waited for; 100 measured on the 780M); the frame is submit to GPU
@@ -37,7 +37,7 @@ builds and tests could load the CPU and the GPU between and during runs.
 and forced on, each its own process; `draw_paths --compare prepass` over the mixed scene, the
 many_cubes sphere and four samples, both shots in one process at one moment), on the RTX 5060 with
 Direct3D 12 and Vulkan, on the Radeon 780M with Direct3D 12, and with
-`POCKET_GPU_MINIMAL=features,limits,timestamps` (WebGPU's baseline device; Direct3D 12 on the RTX
+`AMORIS_GPU_MINIMAL=features,limits,timestamps` (WebGPU's baseline device; Direct3D 12 on the RTX
 5060; the `draw_paths` scenes run on the full device either way):
 
 | Pairs | RTX 5060, D3D12 | RTX 5060, Vulkan | 780M, D3D12 | Baseline device |
@@ -51,13 +51,13 @@ apart: a hole (a depth the forward pass misses) would show the cleared target, f
 read as ties, samples where two cubes' faces store the same depth, where the prepass's equal test
 shows the last drawn and the test without it the first (docs/spec/prepass.md 4); occlusion
 culling's change of draw order showed the same kind of difference in this scene (occlusion.md).
-Not checked sample by sample. The `pocket serve` captures (sailing, anim and gi-room run
+Not checked sample by sample. The `amoris serve` captures (sailing, anim and gi-room run
 by the host) did not start in this session (`backend_compare.py` refused the ports it could not
 probe); `draw_paths` covers the same samples at a fixed moment.
 
-`cargo test -p pocket-render --test prepass` (identical images and coverage in every scene, three
+`cargo test -p amoris-render --test prepass` (identical images and coverage in every scene, three
 draw paths) passes on both GPUs with both backends and on the baseline device. The whole crate's
-tests pass in the default auto mode and with `POCKET_PREPASS=on` (Direct3D 12; on Vulkan the
+tests pass in the default auto mode and with `AMORIS_PREPASS=on` (Direct3D 12; on Vulkan the
 occlusion, hiz, prepass, forward_variants, draw_paths, taa, lod and neural_material tests).
 tests/occlusion.rs, tests/hiz.rs and the occlusion comparison's scenes pass with the prepass on:
 culling is unchanged.
@@ -140,7 +140,7 @@ way, which shows in the frame times:
 
 - A/B in the same rounds: `before` is commit `82a6ab10` (the probes section 3 measured, with these
   frame time tails), `after` this build; the dense grid and the sphere, occlusion culling off,
-  `POCKET_AA=msaa POCKET_GTAO=off`, 200 measured frames after 60, so each run holds the first
+  `AMORIS_AA=msaa AMORIS_GTAO=off`, 200 measured frames after 60, so each run holds the first
   re-probe (240 frames after the first decision, which falls in the warm-up). Headless 2560x1440
   with `--settle 5`; the window gave 1600x900 pixels this time (the display's scaling had changed
   since section 3's runs), so its numbers compare only with each other.
@@ -207,7 +207,7 @@ Sphere, headless (the prepass about a third dearer, so auto keeps it off and its
 The UE5 comparison (branch `explore/ue5`, `docs/bench/ue5-dense.md` 5.1 and 5.2) ran the same dense
 grid in a 2560x1440 window on the same RTX 5060, forward shading with 4x MSAA. Frame and GPU time,
 medians of three rounds; Unreal's GPU time includes its post chain, as ours did on that branch
-(`POCKET_TIME_POST=1`, 0.3 to 0.4 ms); this build's (section 3, window) does not:
+(`AMORIS_TIME_POST=1`, 0.3 to 0.4 ms); this build's (section 3, window) does not:
 
 | Configuration | Unreal 5.7 | Amoris on explore/ue5 | This build, prepass auto | This build, prepass on |
 |---|---|---|---|---|
@@ -260,7 +260,7 @@ display's). Chrome: `unsafe` (`--enable-unsafe-webgpu`, as every earlier browser
 Chrome, 20 s each), the opaque passes' GPU time (prepass included; the latest reading every 200 ms,
 median); for occlusion culling `?occlusion=on` and `off` with the prepass fixed as the auto mode
 decides each page (on for the dense grid, off elsewhere), the GPU frame time. The native reference
-is `many_cubes --headless-bench 600` at 1254x564 with `POCKET_AA=msaa POCKET_GTAO=off` on Direct3D
+is `many_cubes --headless-bench 600` at 1254x564 with `AMORIS_AA=msaa AMORIS_GTAO=off` on Direct3D
 12 (`web_auto.py native`). Raw polls, summaries and machine conditions: `out/webauto/quiet/` (the
 provisional rounds' beside it in `out/webauto/`; not committed).
 
@@ -421,7 +421,7 @@ build `0ec2dfc0` for unsafe Chrome (the first round); `after` this branch (quiet
 **Checks.** The change is in the auto mode only; the fixed modes draw as before:
 `tools/prepass_compare.py` over the many_cubes captures (Direct3D 12, RTX 5060; first round) finds
 the dense grid and the shadowed cubes identical and the sphere's tie pixels one level apart, as in
-section 2; `cargo test -p pocket-render --test prepass --test occlusion --test hiz` passes on
+section 2; `cargo test -p amoris-render --test prepass --test occlusion --test hiz` passes on
 Direct3D 12 and Vulkan (RTX 5060) and Direct3D 12 (780M) (first round; the second round changes
 the decision rules only), and the crate's unit tests pass (spec/prepass.md 7).
 
@@ -449,4 +449,8 @@ held the GPU lock for 1 to 10 minutes, and `table` prints the tables above:
         --after out/webauto/quiet/quiet.jsonl --truth out/webauto/quiet/quiet-truth.jsonl \
         --native out/webauto/quiet/quiet-native.jsonl
 
-`before` serves master's viewport package (`bfdef38e`) beside this branch's tools.
+`before` serves master's viewport package (`bfdef38e`) beside this branch's tools. A `before` from
+a commit before the 2026-10-16 rename, as `bfdef38e` is, takes its whole exported tree, renamed with
+`python tools/amoris_rename.py --tree <dir>` and its viewport rebuilt there
+(`tools/build_viewport.sh`): only then does its page publish the `window.amorisSamples` that
+`tools/web_auto.py` reads.

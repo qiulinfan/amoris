@@ -27,7 +27,7 @@ async function validateProject(project) {
 
 async function alreadyServed(project, timeoutMs = 1500) {
   let metadata;
-  try { metadata = JSON.parse(await fs.readFile(path.join(project, '.pocket/host.json'), 'utf8')); }
+  try { metadata = JSON.parse(await fs.readFile(path.join(project, '.amoris/host.json'), 'utf8')); }
   catch { return false; }
   const origin = loopbackOrigin(metadata.url);
   if (!origin || Number(new URL(origin).port) !== metadata.port) return false;
@@ -88,10 +88,10 @@ class HostProcess extends EventEmitter {
     if (await alreadyServed(this.project)) {
       throw new Error('Project already open in another host. Close that host before opening it here.');
     }
-    this.child = this.spawnChild(this.resources.pocket,
+    this.child = this.spawnChild(this.resources.amoris,
       ['serve', this.project, '--port', '0', '--editor', this.resources.editor], {
         cwd: this.project, windowsHide: true, detached: process.platform !== 'win32',
-        env: { ...process.env, POCKET_WEB_VIEWPORT: this.resources.viewport, POCKET_TSC: this.resources.tsc },
+        env: { ...process.env, AMORIS_WEB_VIEWPORT: this.resources.viewport, AMORIS_TSC: this.resources.tsc },
         stdio: ['ignore', 'pipe', 'pipe'],
       });
     const child = this.child;
@@ -165,7 +165,7 @@ class HostProcess extends EventEmitter {
         if (!this.exitResult) await this.exited;
       }
       try {
-        const file = path.join(this.project, '.pocket/host.json');
+        const file = path.join(this.project, '.amoris/host.json');
         const metadata = JSON.parse(await fs.readFile(file, 'utf8'));
         if (metadata.pid === child.pid) await fs.unlink(file);
       } catch {}

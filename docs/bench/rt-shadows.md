@@ -1,6 +1,6 @@
 # Ray-traced sun shadows: quality and measured cost
 
-Cascaded shadows remain the default. `POCKET_RT_SHADOWS=1` enables ray-traced sun shadows when
+Cascaded shadows remain the default. `AMORIS_RT_SHADOWS=1` enables ray-traced sun shadows when
 the device exposes ray queries; unsupported devices keep cascades. The choice is opt-in because
 scene size, traversal and acceleration-structure maintenance can outweigh the saved cascade work.
 
@@ -118,13 +118,13 @@ that time yet (the top level's rebuild and wgpu's per-instance validation are th
 ## Reproduce
 
 ```sh
-cargo build --release -p pocket-render --examples
-cargo build --release -p pocket-app
+cargo build --release -p amoris-render --examples
+cargo build --release -p amoris-app
 python tools/rt_shadows_bench.py --adapters 5060,780m --backends vulkan,dx12 \
   --rounds 5 --all-rounds --alternate --settle 5 --cool 70 \
   --out out/rt-shadows --summary out/bench-runs/rt-shadows.json
 python tools/quiet_tables.py rts out/bench-runs/rt-shadows.json
-cargo test --release -p pocket-render --test rt_shadows
+cargo test --release -p amoris-render --test rt_shadows
 ```
 
 Keep captures and detailed receipts in ignored `out/`. The [fixed historical

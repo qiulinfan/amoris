@@ -32,7 +32,7 @@ average over 720 ticks).
 The variants, each in a fresh world of seed 1 at 60 Hz with the default `ScriptLimits`:
 
 - **rules**: the bundle through the real host: `install`, `swap`, then `Sim::step`.
-- **twin**: the same two systems in Rust (`crates/pocket-script/examples/rules_bench/workload.rs`)
+- **twin**: the same two systems in Rust (`crates/amoris-script/examples/rules_bench/workload.rs`)
   over Rust components, with no script host: the rows in id order into columns, the same two loops
   (the same draws from the same streams, the engine's `math::sin`, `cos`, `sqrt` and `min`), the
   columns back into the components, the same events with the same data. It is the same rule written
@@ -44,7 +44,7 @@ The variants, each in a fresh world of seed 1 at 60 Hz with the default `ScriptL
 
 Before timing, the script world and the twin run side by side for 720 ticks and their digests (every
 entity's eight fields as bits in id order, the event inbox as JSON, the event counter, the allocator
-and the clock) must agree at every tick; `crates/pocket-script/tests/rules.rs` keeps that check (20
+and the clock) must agree at every tick; `crates/amoris-script/tests/rules.rs` keeps that check (20
 ticks) in the crate's tests. The WebAssembly module runs the same comparison in Node and in Chrome
 and must end on the native final digest.
 
@@ -242,7 +242,7 @@ The phases of the second run are within 6 % of the first's (native `prepare`, `r
    (quiet re-measurement, 2026-10-16): interpretation is 67 to 68 % of `run` and 51 to 52 % of the
    tick, and the natives' 0.83 to 0.85 ms is nearly all the events' conversion. The browser's own
    JavaScript engine cannot be tried with this module (QuickJS-ng is compiled into it): that needs
-   the same rule and the same `pocket` batch API on V8 itself, timed against the same twin, the next
+   the same rule and the same `amoris` batch API on V8 itself, timed against the same twin, the next
    measurement this baseline makes comparable.
 
 Candidates this baseline can measure next (none is done here; section 7 has since done the
@@ -341,7 +341,7 @@ calibrated run sets `web.tick.rules` by budgets.md 8.1 (the largest run's median
      quietly.
   3. **natives** (40e6f948, on P12): the engine's `Math` functions as QuickJS-ng C functions over
      doubles (`JS_NewCFunction2` with `JS_CFUNC_f_f` and `JS_CFUNC_f_f_f`, as QuickJS-ng registers
-     its own `Math.sin`), `extern "C"` wrappers around `pocket_sim::math`, in place of rquickjs
+     its own `Math.sin`), `extern "C"` wrappers around `amoris_sim::math`, in place of rquickjs
      closures with `Coerced<f64>` parameters; `hypot` (variadic) stays a closure. This applies to
      wasm32 too (sandbox.rs is shared).
 
@@ -521,18 +521,18 @@ which its `web` module ran first right after Node's runs (section 4, item 4).
 
 - third_party: P12 (`patches/p12-direct-dispatch.diff`, pinned in `vendor.py`; `vendor.py --check`
   reproduces the tree). The vendored build script is unchanged. The debugger's instrumented
-  dispatch runs under P12 too; on a debug build of the final state, pocket-app's `debug_agent` (4
-  of 4) and `paused_host` (5 of 5), `cdp_e2e.mjs` (20 of 20) and pocket-debug's unit tests pass
+  dispatch runs under P12 too; on a debug build of the final state, amoris-app's `debug_agent` (4
+  of 4) and `paused_host` (5 of 5), `cdp_e2e.mjs` (20 of 20) and amoris-debug's unit tests pass
   (`out/qjs/test-*.log`), and `cargo xtask check --only determinism,reload` passes (a release
-  `pocket` against a debug one; `out/qjs/xtask-determinism-reload.log`).
-- pocket-script: `sandbox.rs` registers the engine's `Math` functions through `c_math!`
+  `amoris` against a debug one; `out/qjs/xtask-determinism-reload.log`).
+- amoris-script: `sandbox.rs` registers the engine's `Math` functions through `c_math!`
   (`JS_NewCFunction2`). A script can see two changes, both toward QuickJS-ng's own builtins: a
   missing argument is NaN, as ECMAScript says (`Math.sin()` threw rquickjs's missing-argument
   error), and an error thrown inside one of them (a `BigInt` argument, a throwing `valueOf`) has an
   `at sin (native)` frame in `e.stack`, which QuickJS-ng pushes for every C function and rquickjs's
   closures did not. The host's error locations skip native frames (`caught.rs`), and so does the
   debugger's capture. Names, lengths and the prototype are as before; tests/lockdown.rs pins them
-  and the frame. The results are `pocket_sim::math`'s bits: the web report's sweep keeps its pinned
+  and the frame. The results are `amoris_sim::math`'s bits: the web report's sweep keeps its pinned
   hash natively and in wasm32. A panic in one of them would abort the process at the `extern "C"`
   edge instead of becoming `sim.internal`: script-sandbox.md 4.3 records that exception and what it
   rests on.
@@ -553,7 +553,7 @@ which its `web` module ran first right after Node's runs (section 4, item 4).
 ### 7.5 Conditions
 
 - Machine as section 1; QuickJS-ng compiled by clang-cl 23.1.2 in every build (each result file
-  records `POCKET_QJS_CC`); release profile as section 2. The quiet binaries were built from 15:57
+  records `AMORIS_QJS_CC`); release profile as section 2. The quiet binaries were built from 15:57
   to 16:01 (7.6): base, p12 and natives with `build --rev`, three distinct binaries, so the export
   fix held; flags5 from the checkout at ef2c92e9 with 7.6's lines, reverted after; the web run's
   `rules_bench` and both web modules by `rules_bench.py build` at ef2c92e9. Timing began two
@@ -671,7 +671,7 @@ change only if the owner takes the web run as the new baseline.
 - **natives** (new, `rules_bench --variants rules,natives,profiled`): `rules` with the host's
   natives timed (`ScriptHost::time_natives`, before the swap). A program instantiated while a host
   times natives gets timed copies of them: the engine's `Math` C functions, `Math.hypot`, every
-  `pocket:host` native and the console. Each outermost native call reads the clock before and after
+  `amoris:host` native and the console. Each outermost native call reads the clock before and after
   its body and adds the difference to a per-thread sum by kind (`math`; `events` for `emit`,
   `events` and `intent`; `rng`; `world`; `other`); `run_system` adds what `run` spent inside them to
   `PhaseTimes.natives`. Untimed programs run the untimed natives. The clock is the processor's
@@ -751,7 +751,7 @@ Its profile was the same in every round, and the same as the provisional run's, 
 estimate from 450,061 samples of `damage` over the 720 ticks (one every 100 steps on average), by
 function self (and total) samples: the prelude's `row` (`rows.row`, its binary search) 53.5 %
 (53.5), `run` 41.7 % (100), `driftY`, `driftX` and `wobble` 1.6 % each; by line, `row`'s four loop
-lines (pocket.ts 319, 322, 323, 324) 53.5 % together, then `rules.ts:60` (the `amount` line: four
+lines (amoris.ts 319, 322, 323, 324) 53.5 % together, then `rules.ts:60` (the `amount` line: four
 calls and a conditional) 8.1 % and `rules.ts:78` (the regeneration line: a conditional and
 `Math.min`) 4.8 %.
 
@@ -799,16 +799,16 @@ calls and a conditional) 8.1 % and `rules.ts:78` (the regeneration line: a condi
 ### 8.4 What changed in the engine
 
 - third_party: P13 (`patches/p13-branch-poll-pc.diff`; script-sandbox.md 4.2): a jump's interrupt
-  poll stores the frame's PC before the handler runs. pocket-script's tests, the web report natively
+  poll stores the frame's PC before the handler runs. amoris-script's tests, the web report natively
   and in WebAssembly (pinned digests and steps) included, pass unchanged; with master's `quickjs.c`
   (no P13) all of `tests/profile.rs` passes but `jumps_land_on_their_own_lines`. Stack
   (tests/depth.rs at `max_call_depth`, release, through `Math.hypot`; 2026-10-15): 466,724 bytes
   with P13 and the same without it on this branch's build (`out/scriptprof/depth-release.txt` and
   `depth-release-no-p13.txt`); 7.4's 470,818 is another build's, one step of the bisection's 4 KiB
   resolution away. The 1 MiB `stack_bytes` holds it with the 1.5 times margin (700,086). The
-  debugger runs on it: pocket-debug's tests (3 of 3) and pocket-app's `debug_agent` (4 of 4) and
+  debugger runs on it: amoris-debug's tests (3 of 3) and amoris-app's `debug_agent` (4 of 4) and
   `paused_host` (6 of 6) pass on a debug build of this branch.
-- pocket-script: the step profiler (`crate::profile`, debugger.md 14; it arms the counter with at
+- amoris-script: the step profiler (`crate::profile`, debugger.md 14; it arms the counter with at
   most 9,999 steps, so libregexp's direct call to the interrupt handler stops a call as without it,
   script-sandbox.md 4.1) and the timed natives (`natives::timing`, `ScriptHost::time_natives`,
   `PhaseTimes::native`, `native_calls` and `natives` by `NativeKind`). Without a recording profile
@@ -822,7 +822,7 @@ From the worktree or checkout, with nothing else building (the output directory 
 checkout's ignored `out/`; about 2 minutes once the lock is free):
 
 ```sh
-cargo build --release -p pocket-script --features transpile --example rules_bench
+cargo build --release -p amoris-script --features transpile --example rules_bench
 python <bench_lock.py> run --label quiet-scriptprof -- python tools/rules_bench.py split \
     <main checkout>/out/scriptprof/quiet/split --rounds 5
 python tools/rules_bench.py split-table <main checkout>/out/scriptprof/quiet/split

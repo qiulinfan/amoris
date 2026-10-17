@@ -1,7 +1,7 @@
 //! `gpus`: the renderer's GPU tests on every GPU adapter and native backend of this machine (charter
 //! 4.6, the owner's decision of 2026-10-16; docs/spec/checks.md 4, docs/spec/checks-slice1.md 24,
 //! docs/bench/gpu-matrix.md 11). `tools/gpu_matrix.py --configs machine --workspace` lists the
-//! adapters, runs pocket-render's test binaries, built as `test` built them, once per configuration
+//! adapters, runs amoris-render's test binaries, built as `test` built them, once per configuration
 //! (each adapter on each native backend, `auto` on every adapter but the default one, whose run is
 //! `test`'s, and WebGPU's baseline device on the default adapter) and writes `out/check/gpus.json`,
 //! which this step reads: a test that failed, hung or crashed, a test binary that exited with an
@@ -20,7 +20,7 @@ use std::process::Command;
 const NOTHING_TO_RUN: i32 = 3;
 
 /// The variables that choose the device a test opens. `test` inherits them; the tool sets its own.
-pub const DEVICE_VARS: [&str; 3] = ["POCKET_ADAPTER", "POCKET_BACKEND", "POCKET_GPU_MINIMAL"];
+pub const DEVICE_VARS: [&str; 3] = ["AMORIS_ADAPTER", "AMORIS_BACKEND", "AMORIS_GPU_MINIMAL"];
 
 /// Why the step must run the default adapter's `auto` configuration itself, the one `test` runs:
 /// `test` did not run in this check (`--only gpus`, `--skip test`), or `set` (the [`DEVICE_VARS`]
@@ -43,7 +43,7 @@ pub fn run(env: &Env, python: Option<String>, default_auto: Option<String>) -> S
     let Some(python) = python else {
         return StepResult::skipped(
             "gpus",
-            "no Python 3 to run tools/gpu_matrix.py (POCKET_PYTHON, python or python3)",
+            "no Python 3 to run tools/gpu_matrix.py (AMORIS_PYTHON, python or python3)",
         );
     };
     let mut step = StepResult::new("gpus");
@@ -350,7 +350,7 @@ mod tests {
                     "lib a": cell("skip", &["no GPU timestamps: skipped"], ""),
                     "taa b": cell("hang", &[], "no result after a minute or more"),
                 }},
-                "780n-vulkan": {"adapter": null, "env": {"POCKET_ADAPTER": "780n"}, "tests": {
+                "780n-vulkan": {"adapter": null, "env": {"AMORIS_ADAPTER": "780n"}, "tests": {
                     "lib a": cell("skip", &["no GPU: skipped"], ""),
                 }},
             },
@@ -548,7 +548,7 @@ mod tests {
         assert_eq!(s.verdict, Verdict::Skipped);
         assert_eq!(
             s.skipped_because.as_deref(),
-            Some("no Python 3 to run tools/gpu_matrix.py (POCKET_PYTHON, python or python3)")
+            Some("no Python 3 to run tools/gpu_matrix.py (AMORIS_PYTHON, python or python3)")
         );
     }
 
@@ -560,8 +560,8 @@ mod tests {
             Some("the test step did not run in this check")
         );
         assert_eq!(
-            default_auto(true, &["POCKET_ADAPTER", "POCKET_BACKEND"]).as_deref(),
-            Some("POCKET_ADAPTER and POCKET_BACKEND set, so the test step ran another device")
+            default_auto(true, &["AMORIS_ADAPTER", "AMORIS_BACKEND"]).as_deref(),
+            Some("AMORIS_ADAPTER and AMORIS_BACKEND set, so the test step ran another device")
         );
     }
 

@@ -8,7 +8,7 @@
 </head>
 <body>
 <script type="module">
-// The many_cubes scene of Bevy (and of crates/pocket-render's demo) in three.js r186 with its
+// The many_cubes scene of Bevy (and of crates/amoris-render's demo) in three.js r186 with its
 // WebGPURenderer: one InstancedMesh (three.js's fastest path for many copies of one mesh), a
 // MeshStandardMaterial, a directional light plus hemisphere light, 4x MSAA, the same sphere
 // layout and the same per-frame camera rotation. ?count=N, ?dense.
@@ -56,7 +56,7 @@ scene.add(mesh);
 const step = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), 0.15 / 60)
   .multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), 0.15 / 60));
 const samples = [];
-window.pocketSamples = samples;
+window.amorisSamples = samples;
 let last = performance.now();
 let gpu = 0;
 function frame(now) {

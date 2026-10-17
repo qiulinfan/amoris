@@ -1,4 +1,4 @@
-import { system } from "pocket";
+import { system } from "amoris";
 
 export const countParcels = system({
     name: "count_parcels", phase: "update", when: "start",

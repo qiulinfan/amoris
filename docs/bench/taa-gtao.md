@@ -26,7 +26,7 @@ at 960×540; Radeon 780M D3D12 checks showed the same ordering, with different a
 TAA uses camera and object motion, last-frame skinned vertices, depth-based disocclusion,
 variance clipping and a 16-frame jitter cycle. GTAO runs at half resolution, darkens only indirect
 light and reconstructs normals from depth. Native modes are `off`, `msaa` (4×), `taa` (one sample)
-and `msaa+taa`; `POCKET_AA` and `POCKET_GTAO` override defaults. Browser overrides are `?aa=` and
+and `msaa+taa`; `AMORIS_AA` and `AMORIS_GTAO` override defaults. Browser overrides are `?aa=` and
 `?gtao=`. Sharpening remains off.
 
 ## Quality comparisons

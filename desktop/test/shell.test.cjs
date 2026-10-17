@@ -19,8 +19,8 @@ async function project(t) {
 }
 
 async function metadata(root, port, pid = 99999) {
-  await fs.mkdir(path.join(root, '.pocket'), { recursive: true });
-  await fs.writeFile(path.join(root, '.pocket/host.json'), JSON.stringify({
+  await fs.mkdir(path.join(root, '.amoris'), { recursive: true });
+  await fs.writeFile(path.join(root, '.amoris/host.json'), JSON.stringify({
     project: root, port, pid, url: `http://127.0.0.1:${port}`,
   }));
 }
@@ -51,7 +51,7 @@ function fakeChild(root, behavior = 'ready') {
 function supervisor(root, behavior, { ignoreTerm = false } = {}) {
   const child = fakeChild(root, behavior);
   const signals = [];
-  const host = new HostProcess({ pocket: '/fixture/pocket', editor: '/fixture/editor',
+  const host = new HostProcess({ amoris: '/fixture/amoris', editor: '/fixture/editor',
     viewport: '/fixture/viewport', tsc: '/fixture/tsc' }, {
     startupMs: 20, shutdownMs: 10, spawnChild: () => { child.begin(); return child; },
     terminate: (_owned, signal) => { signals.push(signal);
@@ -103,7 +103,7 @@ test('duplicate native authority is refused without spawning or killing it', asy
   await assert.rejects(host.start(root), /already open/);
   await host.stop();
   assert.equal(spawned, false);
-  assert.equal(JSON.parse(await fs.readFile(path.join(root, '.pocket/host.json'))).pid, 99999);
+  assert.equal(JSON.parse(await fs.readFile(path.join(root, '.amoris/host.json'))).pid, 99999);
 });
 
 test('queued breakpoint or unreadable reachable authority is occupied after bounded deadline', async t => {
@@ -150,7 +150,7 @@ test('owned stop is idempotent, forced when needed, and leaves foreign metadata 
   await metadata(root, 31337, 77777);
   await Promise.all([host.stop(), host.stop()]);
   assert.deepEqual(signals, ['SIGTERM', 'SIGKILL']);
-  assert.equal(JSON.parse(await fs.readFile(path.join(root, '.pocket/host.json'))).pid, 77777);
+  assert.equal(JSON.parse(await fs.readFile(path.join(root, '.amoris/host.json'))).pid, 77777);
 });
 
 test('owned metadata is cleaned and an unexpected exit is reported', async t => {
@@ -163,18 +163,18 @@ test('owned metadata is cleaned and an unexpected exit is reported', async t => 
   child.emit('exit', 1, null);
   await host.stop();
   assert.deepEqual(crash, { code: 1, signal: null });
-  await assert.rejects(fs.stat(path.join(root, '.pocket/host.json')), { code: 'ENOENT' });
+  await assert.rejects(fs.stat(path.join(root, '.amoris/host.json')), { code: 'ENOENT' });
 });
 
 test('packaged resource paths never depend on the checkout; viewport wrapper and TS libs required', async t => {
   const root = await project(t);
   const resources = runtimePaths({ packaged: true, resourcesPath: root, repo: '/absent/checkout', env: {} });
-  const files = [resources.pocket, path.join(resources.editor, 'index.html'),
-    path.join(resources.viewport, 'pkg/pocket_viewport.js'), path.join(resources.viewport, 'pkg/pocket_viewport_bg.wasm'),
+  const files = [resources.amoris, path.join(resources.editor, 'index.html'),
+    path.join(resources.viewport, 'pkg/amoris_viewport.js'), path.join(resources.viewport, 'pkg/amoris_viewport_bg.wasm'),
     resources.tsc, path.join(path.dirname(resources.tsc), 'lib.esnext.d.ts')];
   for (const file of files) { await fs.mkdir(path.dirname(file), { recursive: true }); await fs.writeFile(file, 'fixture'); }
-  await assert.rejects(validateResources(resources), /pocket_web.js/);
-  await fs.writeFile(path.join(resources.viewport, 'pocket_web.js'), 'fixture');
+  await assert.rejects(validateResources(resources), /amoris_web.js/);
+  await fs.writeFile(path.join(resources.viewport, 'amoris_web.js'), 'fixture');
   await validateResources(resources);
   assert.ok(Object.values(resources).every(p => p.startsWith(root)));
 });

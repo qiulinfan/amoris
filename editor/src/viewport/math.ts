@@ -1,5 +1,5 @@
 // Small vector and quaternion math for the viewport and the inspector. Conventions match the engine
-// (crates/pocket-physics geom): right-handed, +y up, quaternions `[x, y, z, w]`. Euler angles shown
+// (crates/amoris-physics geom): right-handed, +y up, quaternions `[x, y, z, w]`. Euler angles shown
 // in the inspector are degrees in YXZ order (yaw about Y, then pitch about X, then roll about Z),
 // the order editors for y-up engines use.
 

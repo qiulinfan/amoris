@@ -99,7 +99,7 @@ tick and not at this one drawn still, every slot drawn between two poses listed 
 moving list exactly the slots holding the tick's mark, and a GPU copy kept by the dirty runs equal
 to the slots. `a_tick_moving_every_instance_lists_each_once_by_its_mark` turns 200,000 instances for
 four ticks and stops them, checking the same by structure, not by time. The timed comparison is an
-ignored test, run with `cargo test -p pocket-render --lib scene:: -- --ignored`: a tick moving every
+ignored test, run with `cargo test -p amoris-render --lib scene:: -- --ignored`: a tick moving every
 instance costs less than twice making them (91 ms against 417 ms in a debug build); with the search
 restored it took 121 s against 0.68 s. In upload.rs, `written_slots_reach_the_instance_buffer` (GPU)
 writes slots directly, in one scatter batch and in batches of 37 and of 1, and reads the instance
@@ -355,9 +355,9 @@ both GPUs, and under Vulkan its frame equals `before`'s. Every other pair is ide
 difference 0), as in the provisional session.
 
 Tests of `after` (this checkout, 2026-10-15 04:21 to 04:35;
-`cargo test -p pocket-render --no-fail-fast` under the bench lock for each GPU and backend, logs in
-`out/dynscene/quiet/tests-*.log`). `cargo test -p pocket-render --lib scene::` passes its four (the
-timed one ignored). On the RTX 5060 every test of `cargo test -p pocket-render` passes with Direct3D
+`cargo test -p amoris-render --no-fail-fast` under the bench lock for each GPU and backend, logs in
+`out/dynscene/quiet/tests-*.log`). `cargo test -p amoris-render --lib scene::` passes its four (the
+timed one ignored). On the RTX 5060 every test of `cargo test -p amoris-render` passes with Direct3D
 12 and with Vulkan: the library's 118 (two ignored, the timed scene test and one of master's), among
 them the scene tests and upload's GPU test, and the 43 of the 16 integration binaries, among them
 `scene_changes`'s `moved_instances_draw_where_they_were_moved` (every third of 400 cubes turned, 134
@@ -379,13 +379,17 @@ from `git archive` of its commit into ignored `target/`, extracted with `tar -m`
 mtimes: cargo hashes a workspace member by its path inside the workspace, so the trees share one
 target directory, and an archive's commit-time mtimes would let a later tree's build reuse an
 earlier one's), and its examples are copied to `out/dynscene/<name>`. `after` is the merged
-commit; replace `HEAD` with it.
+commit; replace `HEAD` with it. Every one of these commits is from before the 2026-10-16 rename:
+`python tools/amoris_rename.py --tree` renames each extracted tree first (a no-op on a later
+commit), so its examples read the `AMORIS_*` variables the tools set, and cargo then sorts its lock
+again, so the builds go without `--locked`. The recorded runs built the trees as they were.
 
 ```sh
 build() {  # NAME COMMIT: the commit's examples into out/dynscene/NAME
   rm -rf target/src-$1 && mkdir -p target/src-$1 && git archive $2 | tar -x -m -C target/src-$1
-  (cd target/src-$1 && CARGO_TARGET_DIR=../archive cargo build --release --locked \
-      -p pocket-render --example many_cubes --example rt_shadows --example lod_field \
+  python tools/amoris_rename.py --tree target/src-$1
+  (cd target/src-$1 && CARGO_TARGET_DIR=../archive cargo build --release \
+      -p amoris-render --example many_cubes --example rt_shadows --example lod_field \
       --example splats --example showcase_bench --example image_diff)
   mkdir -p out/dynscene/$1/target/release/examples
   for e in many_cubes rt_shadows lod_field splats showcase_bench image_diff; do
@@ -429,13 +433,13 @@ python tools/dynamic_scenes_bench.py --build before=$B/before --build after=$B/a
 python tools/dynamic_scenes_bench.py --build after=$B/after $T --stall 275 \
     --cases moving-100k --backends dx12,vulkan --summary $B/quiet-ctl-stall.json
 # 6: images (with this checkout's own build of the examples) and tests.
-cargo build --release -p pocket-render --example many_cubes --example lod_field --example splats \
+cargo build --release -p amoris-render --example many_cubes --example lod_field --example splats \
     --example showcase_bench --example image_diff
 python tools/build_compare.py --before $B/before --backends dx12,vulkan
 python tools/build_compare.py --before $B/before --backends dx12,vulkan --adapters 780m \
     --modes msaa,taa
-cargo test -p pocket-render --lib scene::
-POCKET_BACKEND=dx12 cargo test -p pocket-render   # and vulkan; POCKET_ADAPTER=780m for each
+cargo test -p amoris-render --lib scene::
+AMORIS_BACKEND=dx12 cargo test -p amoris-render   # and vulkan; AMORIS_ADAPTER=780m for each
 ```
 
 Each bench prints its table rows, one per round: take the median of the rounds. The durations are
@@ -458,7 +462,7 @@ the scripts are in `out/dynscene/quiet/scripts/`.
 - **The scatter pass on the 780M** takes 0.8 to 0.9 ms for 100,000 slots (0.08 ms on the
   RTX): it moves one 32-bit word per invocation; 16-byte copies might halve it.
 - **The feed.** many_cubes builds its tick's frame directly; the runtime's presenter
-  (pocket-runtime present.rs) builds it from an ECS query, not measured here.
+  (amoris-runtime present.rs) builds it from an ECS query, not measured here.
 - **Ray-traced shadows' per-frame work** with 200,000 moving casters: 39 to 60 ms of render CPU a
   frame, not split by a trace (5.5).
 - **Vulkan's low-power state** in the moving 200,000-cube case of rt_shadows (5.5): the RTX keeps

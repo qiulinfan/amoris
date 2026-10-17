@@ -1,7 +1,7 @@
 //! Rust stepping Jolt through joltc: Jolt's Pyramid scene (1,240 boxes) built and stepped across the
 //! C ABI, timed like bench/physics/jolt/jolt_bench.cpp so the two can be compared, plus the two
 //! per-step costs an engine adds on top of the step: reading every body's pose back (`--sync`, as
-//! pocket-physics writes Transforms after each step) and 10,000 single-ray queries (`--rays`).
+//! amoris-physics writes Transforms after each step) and 10,000 single-ray queries (`--rays`).
 //!
 //!   jolt-ffi-proto [--steps N] [--threads N] [--height H] [--sync] [--rays]
 //!

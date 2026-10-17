@@ -23,7 +23,7 @@ export function ViewportStats() {
     <>
       {show && (
         <div className="vp-stats">
-          <span className={`vp-renderer ${kind === "wasm" ? "is-wasm" : ""}`} data-tip={kind === "wasm" ? "The engine's renderer (wasm, WebGPU)" : "Fallback view (Canvas 2D) until the host serves /wasm/pocket_web.js"}>
+          <span className={`vp-renderer ${kind === "wasm" ? "is-wasm" : ""}`} data-tip={kind === "wasm" ? "The engine's renderer (wasm, WebGPU)" : "Fallback view (Canvas 2D) until the host serves /wasm/amoris_web.js"}>
             {kind === "wasm" ? "WebGPU" : kind === "fallback" ? "Fallback" : "…"}
           </span>
           {render && (

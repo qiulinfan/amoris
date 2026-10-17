@@ -56,7 +56,7 @@ names of section 5 (section 11).
 
 ```rust
 // bench/budgets/*.toml hold these, one file per area of section 5 (sim, threads, render, web,
-// start, contract); xtask and `pocket bench` read the directory
+// start, contract); xtask and `amoris bench` read the directory
 pub struct Budget {
     pub name: String,          // "tick.sail"
     pub workload: String,      // a workload of section 4: "sail", "rules", "bodies", "scene", ...
@@ -257,7 +257,7 @@ In Chrome on the integrated GPU, the shipped page (no editor, no transpiler, `ar
 | `check.quick` | `cargo xtask check --quick` after a one-file change | Not measured: the command does not exist yet | 180 s: an agent's inner loop |
 | `check.full` | `cargo xtask check --skip perf` after a one-file change | Not measured. 2026-10-16 (Pioneer, not a calibrated run): the full check at master `6af291db`, its builds after the wave-6 merges included, took 15 min 16 s on R1 without the `gpus` step, which adds 9 to 10 minutes there (charter 4.6; docs/bench/gpu-matrix.md 11). Whether 900 s moves is the owner's call (8.3) | 900 s: master's whole suite took 8 to 12 minutes (`docs/development.md`, Tests) |
 | `check.perf` | the `perf` step alone, which must run alone anyway (`checks.md`, 9) | Not measured | 600 s |
-| `build.web.memory` | the peak resident memory of the fat-LTO web-profile build of `pocket-web` (`checks.md`, 7.1), MiB | Not measured | 3,000 MiB: it must fit beside other work in the about 4 GB this machine has free |
+| `build.web.memory` | the peak resident memory of the fat-LTO web-profile build of `amoris-web` (`checks.md`, 7.1), MiB | Not measured | 3,000 MiB: it must fit beside other work in the about 4 GB this machine has free |
 | `bench.selftest` | the benchmark harness's self-test (`checks.md`, 8.7) | Not measured: the harness is not built yet | 60 s, as shared/benchmark/README.md, 8 proposes |
 
 ### 5.6 Budgets the shared contract defines
@@ -303,13 +303,13 @@ every fixed-size structure in the engine (GPU buffers, pools, rings, queues):
 ### 7.1 The harness
 
 ```text
-pocket bench <workload> [--samples N] [--warmup N] [--breakdown] [--json]
+amoris bench <workload> [--samples N] [--warmup N] [--breakdown] [--json]
 ```
 
-`pocket-check`'s harness runs a workload's metric `warmup` times, discards those samples, runs it
+`amoris-check`'s harness runs a workload's metric `warmup` times, discards those samples, runs it
 `samples` times, and reports `Measurement`s (`checks.md`, 10.1) with min, median, p95, p99 and max.
 The clock is injected into the harness (`measure(name, warmup, samples, clock, f)`): an `Instant`
-natively and `performance.now()` from `pocket-web` in the browser, since `pocket-check` may depend
+natively and `performance.now()` from `amoris-web` in the browser, since `amoris-check` may depend
 on neither `js-sys` nor a clock of its own (threads.md 3.1); it is read outside the tick. The
 measured run has profiling spans off; `--breakdown` is a separate run with spans on (section 9), so
 instrumentation never changes a reported number.
@@ -451,10 +451,10 @@ measurement.
 
 - Every crate instruments with `tracing` spans: `tick`, `tick/<system>` (spec-sim's system names),
   `boundary`, `publish`, `hash`, `fork`, `frame`, `frame/<pass>`, `import`.
-- `tracing-tracy` is compiled in behind the `profile` feature of `pocket-app` and `pocket-web`
+- `tracing-tracy` is compiled in behind the `profile` feature of `amoris-app` and `amoris-web`
   (`architecture.md`, 7.4); release builds keep line tables (`debug = "line-tables-only"`) so Tracy
   and stack traces name lines.
-- `pocket bench --breakdown` runs the workload again with a light subscriber that sums each span's
+- `amoris bench --breakdown` runs the workload again with a light subscriber that sums each span's
   time and reports per-span medians beside the measured numbers, so a measurement past its reference
   figure or a drift arrives with where the time went, as master's `perf` command split a frame into
   script, physics, world, state and render (master AGENTS.md).

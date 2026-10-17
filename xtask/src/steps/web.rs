@@ -20,7 +20,7 @@ use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// The page: the shipped page and its worker (`index.html`, `pocket.js`, `game.js`, `form.js`)
+/// The page: the shipped page and its worker (`index.html`, `amoris.js`, `game.js`, `form.js`)
 /// and the check's driver (`check.js`), which the query `?check` turns on (checks.md 7.1;
 /// checks-slice1.md 22).
 pub const PAGE_DIR: &str = "web";
@@ -220,11 +220,11 @@ fn loads(out: &Path, opt: Option<&Path>) -> Vec<(PathBuf, bool, &'static str)> {
 fn page_size(dir: &Path) -> u64 {
     [
         "index.html",
-        "pocket.js",
+        "amoris.js",
         "game.js",
         "form.js",
-        "pkg/pocket_web.js",
-        "pkg/pocket_web_bg.wasm",
+        "pkg/amoris_web.js",
+        "pkg/amoris_web_bg.wasm",
     ]
     .iter()
     .map(|f| std::fs::metadata(dir.join(f)).map_or(0, |m| m.len()))
@@ -234,14 +234,14 @@ fn page_size(dir: &Path) -> u64 {
 pub fn run(
     env: &Env,
     target_dir: &Path,
-    pocket: &Result<PathBuf, Problem>,
+    amoris: &Result<PathBuf, Problem>,
     projects: &[Project],
 ) -> StepResult {
     let page = env.root.join(PAGE_DIR);
     if !page.join("index.html").is_file() {
         return StepResult::skipped(
             "web",
-            format!("pocket-web has no page yet ({PAGE_DIR}/index.html, checks.md 7)"),
+            format!("amoris-web has no page yet ({PAGE_DIR}/index.html, checks.md 7)"),
         );
     }
     let workloads = web_pack::workloads(projects);
@@ -254,7 +254,7 @@ pub fn run(
     let mut step = StepResult::new("web");
     let log = env.new_log("web");
     step.log = Some(env.rel(&log));
-    let pocket = match pocket {
+    let amoris = match amoris {
         Ok(p) => p,
         Err(p) => {
             step.error(p.clone());
@@ -278,7 +278,7 @@ pub fn run(
             return step;
         }
     }
-    if !web_pack::workload_files(env, &mut step, pocket, &workloads, &out, &log) {
+    if !web_pack::workload_files(env, &mut step, amoris, &workloads, &out, &log) {
         return step;
     }
     if let Some(o) = opt {
@@ -369,7 +369,7 @@ pub fn run(
         })
         .collect();
     step.summary = format!(
-        "{} against native pocket hashes in headless Chrome, isolated and not{}: {passed:?}",
+        "{} against native amoris hashes in headless Chrome, isolated and not{}: {passed:?}",
         names.join(", "),
         if opt.is_some() {
             ", and with wasm-opt -O3"

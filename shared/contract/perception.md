@@ -650,7 +650,7 @@ fixture world from slice 1, and the projection golden cases in all runtime targe
 - **Team vision** (0.2): an observer behind an occluder sees what its teammate sees past it, at the
   teammate's detail and with its own sighting; an observer of another team, or of none, does not;
   the observer remembers it by its own memory rule once the teammate looks away
-  (`crates/pocket-interface/tests/perception_team.rs`).
+  (`crates/amoris-interface/tests/perception_team.rs`).
 
 ## Performance
 
@@ -682,7 +682,7 @@ fails costs no ray; an observer without occlusion costs none.
 5. **Two occlusion sample points.** Recommended (origin and top). More (the bounds' corners) catch a
    hull half behind a rock; slice 2 measures their cost first.
 6. **Queries off the game thread.** Not in slice 2: every query is answered on the game thread. They
-   may return later together with an allowed `pocket-mcp -> pocket-interface` edge and a budget for
+   may return later together with an allowed `amoris-mcp -> amoris-interface` edge and a budget for
    decoding a snapshot into a query world (Rapier's query pipeline rebuilt from the cache), when
    byte-identical answers can be proved.
 7. **Defaults of the skipper profile** (ranges, attention, budget). Slice 2's player benchmark sets

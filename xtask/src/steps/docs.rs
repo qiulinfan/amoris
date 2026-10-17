@@ -34,7 +34,7 @@ pub fn run(env: &Env, listed: &[String]) -> StepResult {
     let Some(python) = run::python() else {
         step.inconclusive(Problem::new(
             "check.tool_missing",
-            "no Python 3 to run tools/wrap_docs.py (python or python3 on PATH, or POCKET_PYTHON)",
+            "no Python 3 to run tools/wrap_docs.py (python or python3 on PATH, or AMORIS_PYTHON)",
             json!({"tool": "python"}),
         ));
         step.summary = "python missing".into();

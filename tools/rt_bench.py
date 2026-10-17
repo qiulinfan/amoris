@@ -15,7 +15,7 @@ Two suites (docs/bench/path-tracing-nrc.md and docs/bench/metal-gi.md, Windows s
   with the order reversed every other round, so that load from other work on the machine spreads
   over all configurations.
 
-Build first: `cargo build --release -p pocket-render --examples`. Then, from the repository root:
+Build first: `cargo build --release -p amoris-render --examples`. Then, from the repository root:
 
     python tools/rt_bench.py correctness --backends vulkan,dx12 --adapter 5060 \
         --summary out/bench-runs/rt/correctness-5060.json
@@ -285,9 +285,9 @@ def counter_compare(reference, candidate):
 
 
 def run(tool, project, arguments, output, backend, adapter):
-    env = dict(os.environ, POCKET_BACKEND=backend)
+    env = dict(os.environ, AMORIS_BACKEND=backend)
     if adapter:
-        env["POCKET_ADAPTER"] = adapter
+        env["AMORIS_ADAPTER"] = adapter
     output.parent.mkdir(parents=True, exist_ok=True)
     command = [example(tool), str(ROOT / project)] + arguments + ["--output", str(output)]
     result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=1800)
@@ -471,7 +471,7 @@ def main():
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("suite", choices=["correctness", "timing"])
     parser.add_argument("--backends", default="vulkan,dx12")
-    parser.add_argument("--adapter", default=None, help="POCKET_ADAPTER (index or name part)")
+    parser.add_argument("--adapter", default=None, help="AMORIS_ADAPTER (index or name part)")
     parser.add_argument("--only", default=None, help="comma-separated configuration names")
     parser.add_argument("--rounds", type=int, default=3)
     parser.add_argument("--out", default=str(ROOT / "out" / "bench-runs" / "rt"))

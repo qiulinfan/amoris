@@ -2,7 +2,7 @@
 # Snapshot-and-fork checks behind docs/bench/physics.md ("Snapshots and forks"), deterministic
 # builds, single thread: after FORK_AT steps each engine's whole simulation state is saved, restored
 # into a second world, and both step on to STEPS; the fork must end with the original's hash.
-# Rapier: serde through bincode 1.3.3 into a new PhysicsWorld, the way pocket-physics writes its
+# Rapier: serde through bincode 1.3.3 into a new PhysicsWorld, the way amoris-physics writes its
 # Cache. Jolt: PhysicsSystem::SaveState / RestoreState into a fresh PhysicsSystem with the scene
 # built again. REPS repetitions (default 5), since save and restore times vary with the machine's
 # load; scripts/summarize.py gives their median and range. Writes tagged JSON lines to

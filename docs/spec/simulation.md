@@ -12,7 +12,7 @@ between ticks and what may happen there, the phases of a tick and the order of i
 events are delivered, the hooks through which the time modes pause and step the world, entity
 identity and its allocation, and the order in which systems visit entities. Its companions are
 [numeric.md](numeric.md) (which state may be floating point, and the deterministic math library) and
-[rng.md](rng.md) (random numbers). The code lives in the crate `pocket-sim`
+[rng.md](rng.md) (random numbers). The code lives in the crate `amoris-sim`
 ([architecture.md](architecture.md), 4.1).
 
 The goal throughout is the charter's: the same seed and the same inputs give the same world hash at
@@ -127,7 +127,7 @@ decision is awaited) is world state, owned by spec-contract and persisted like a
 At every boundary the following hold, and `Sim::step` asserts them at its start and end in every
 build: the constant-time checks (an empty outbox, an empty RNG table, no staged structural change,
 no invocation running) always, and the walk of the entity index against the world's `EntityId`s only
-with `pocket-sim`'s feature `invariants` (architecture.md 7.4), which the test builds and the
+with `amoris-sim`'s feature `invariants` (architecture.md 7.4), which the test builds and the
 check's debug cross-build turn on, since it costs time proportional to the entities:
 
 1. No invocation is running and no structural change (spawn, despawn, component insertion or
@@ -147,7 +147,7 @@ update.
 
 ### 4.2 Writes at a boundary
 
-Boundary writes are applied by the runtime (`pocket-runtime`, [architecture.md](architecture.md),
+Boundary writes are applied by the runtime (`amoris-runtime`, [architecture.md](architecture.md),
 4.8) one at a time, in the canonical order of `threads.md`, 5.2 (sorted by source and sequence). For
 the simulation the order is the order of application: each write sees the world as the writes before
 it left it.
@@ -184,11 +184,11 @@ pub enum TickPhase { Begin, Control, Update, Forces, Physics, Finish }
 | # | Phase | What runs there |
 |---|---|---|
 | 1 | `Begin` | `sim.begin`: advances the clock to tick n |
-| 2 | `Control` | intent controllers and control processing (spec-contract, implemented in `pocket-interface`): every intent's deadline checked, then the Rust executors, turning the controls and intents that boundary writes set into this tick's low-level controls |
+| 2 | `Control` | intent controllers and control processing (spec-contract, implemented in `amoris-interface`): every intent's deadline checked, then the Rust executors, turning the controls and intents that boundary writes set into this tick's low-level controls |
 | 3 | `Update` | the project's TypeScript systems and script intent executors, the `ScriptPhase` `"update"` (`script-host.md`, 4.2 and 5.5), in the order of the project's `systems` array, run by `script.update` |
-| 4 | `Forces` | environment and force systems: wind, buoyancy, sail, hull and keel (`pocket-physics`) |
+| 4 | `Forces` | environment and force systems: wind, buoyancy, sail, hull and keel (`amoris-physics`) |
 | 5 | `Physics` | the rigid-body step of `dt`, its write-back, contact events |
-| 6 | `Finish` | the perception update and the turn rule (spec-contract, `pocket-interface`), which read the tick's state and event record and write components only, emitting no event; then `sim.finish`: moves the outbox to the inbox (section 5.2), clears the RNG table, compacts the entity index, asserts the boundary invariants, collects decision requests |
+| 6 | `Finish` | the perception update and the turn rule (spec-contract, `amoris-interface`), which read the tick's state and event record and write components only, emitting no event; then `sim.finish`: moves the outbox to the inbox (section 5.2), clears the RNG table, compacts the entity index, asserts the boundary invariants, collects decision requests |
 
 Scripts run before physics, as Unity's `FixedUpdate` scripts run before its physics step and Avian
 (a Bevy physics integration) steps in `FixedPostUpdate` after the user's `FixedUpdate`. Scripts see
@@ -208,18 +208,18 @@ this table and the schedule golden of section 12 together.
 
 | Order | Phase | System key | Crate | Work |
 |---|---|---|---|---|
-| 1 | Begin | `sim.begin` | pocket-sim | clock to tick n |
-| 2 | Control | `interface.intents` | pocket-interface | check every intent's deadline, Rust and script intents alike, in `IntentId` order; run the Rust executors (come to a heading, trim the sail, sail to a waypoint) into helm and sail controls |
-| 3 | Update | `script.update` | pocket-script | the project's systems and script executors, `script:<name>` each, in `systems` order |
-| 4 | Forces | `physics.wind` | pocket-physics | wind velocity at each body, gusts from position and time |
-| 5 | Forces | `physics.buoyancy` | pocket-physics | buoyancy and water drag per hull cell, waves at `time() - dt()` |
-| 6 | Forces | `physics.sail` | pocket-physics | sail force from the apparent wind and the trim |
-| 7 | Forces | `physics.hull` | pocket-physics | keel, rudder and hull drag |
-| 8 | Physics | `physics.step` | pocket-physics | sync changed bodies in, one step of `dt`, write back positions, velocities and readouts |
-| 9 | Physics | `physics.contacts` | pocket-physics | contact begin and end events, in pair order (section 8.4) |
-| 10 | Finish | `interface.perception` | pocket-interface | every observer's memory and perceived events from the events appended since its last run: the boundary writes' (the inbox from `boundary_from`, 5.1) and the tick's own (still in the outbox), in `EventSeq` order (shared/contract/perception.md, The perception update) |
-| 11 | Finish | `interface.turns` | pocket-interface | ends a turn's resolving phase when its rule holds (shared/contract/time.md, Turn structure) and evaluates the episode's `done` predicate (time.md, Episodes); writes the turn and episode state only |
-| 12 | Finish | `sim.finish` | pocket-sim | events, RNG table, index, invariants, decisions |
+| 1 | Begin | `sim.begin` | amoris-sim | clock to tick n |
+| 2 | Control | `interface.intents` | amoris-interface | check every intent's deadline, Rust and script intents alike, in `IntentId` order; run the Rust executors (come to a heading, trim the sail, sail to a waypoint) into helm and sail controls |
+| 3 | Update | `script.update` | amoris-script | the project's systems and script executors, `script:<name>` each, in `systems` order |
+| 4 | Forces | `physics.wind` | amoris-physics | wind velocity at each body, gusts from position and time |
+| 5 | Forces | `physics.buoyancy` | amoris-physics | buoyancy and water drag per hull cell, waves at `time() - dt()` |
+| 6 | Forces | `physics.sail` | amoris-physics | sail force from the apparent wind and the trim |
+| 7 | Forces | `physics.hull` | amoris-physics | keel, rudder and hull drag |
+| 8 | Physics | `physics.step` | amoris-physics | sync changed bodies in, one step of `dt`, write back positions, velocities and readouts |
+| 9 | Physics | `physics.contacts` | amoris-physics | contact begin and end events, in pair order (section 8.4) |
+| 10 | Finish | `interface.perception` | amoris-interface | every observer's memory and perceived events from the events appended since its last run: the boundary writes' (the inbox from `boundary_from`, 5.1) and the tick's own (still in the outbox), in `EventSeq` order (shared/contract/perception.md, The perception update) |
+| 11 | Finish | `interface.turns` | amoris-interface | ends a turn's resolving phase when its rule holds (shared/contract/time.md, Turn structure) and evaluates the episode's `done` predicate (time.md, Episodes); writes the turn and episode state only |
+| 12 | Finish | `sim.finish` | amoris-sim | events, RNG table, index, invariants, decisions |
 
 Rows 4 to 9 follow the physics spike (`docs/spikes/physics.md`, Recipe 3): forces are computed from
 the state at the tick's start and applied as user forces after Rapier's `reset_forces` and
@@ -342,7 +342,7 @@ event history agents read" is not covered by the hash).
 ## 6. Hooks for the time modes
 
 The time modes (turns, lockstep, pausable real time, stepping, pause-on-decision; spec-contract) and
-the game thread's loop (`threads.md`) drive the simulation through these functions of `pocket-sim`,
+the game thread's loop (`threads.md`) drive the simulation through these functions of `amoris-sim`,
 which the runtime's `Game` ([architecture.md](architecture.md), 4.8) composes:
 
 ```rust
@@ -405,7 +405,7 @@ pub trait StepHooks {
 - **Turns and lockstep** need nothing more: a turn is a run of `step` calls between boundaries where
   writes are accepted; lockstep applies every peer's writes for tick n at the boundary before tick n
   in the canonical order, then steps.
-- `Problem` is spec-contract's error type, declared in the leaf crate `pocket-contract`
+- `Problem` is spec-contract's error type, declared in the leaf crate `amoris-contract`
   ([architecture.md](architecture.md), 4.16). `SystemKey` is the system's stable key string.
   `TickPhase` is not `threads.md`'s `LoopState` (the game thread's status), which is presentation
   data.
@@ -436,7 +436,7 @@ impl EntityId {
 - Components refer to other entities by `EntityId`, never by `bevy_ecs::Entity` (charter 3.2).
   `Option<EntityId>` costs eight bytes (the niche of `NonZeroU64`); scripts see `null`, or 0 in a
   column (`script-host.md`, 6).
-- `bevy_ecs::Entity` never leaves `pocket-sim` and the systems that run inside the world: it is not
+- `bevy_ecs::Entity` never leaves `amoris-sim` and the systems that run inside the world: it is not
   in components, events, snapshots, hashes, the shared contract, or anything a script sees. Its
   index and generation depend on the history of the storage, which a restored or forked world does
   not share.
@@ -601,12 +601,12 @@ solver's state is therefore a Cache that snapshot and fork carry as it is (chart
 
 ## 10. Enforcement
 
-The tick-code crates (`pocket-sim`, `pocket-persist`, `pocket-physics`, `pocket-interface`,
-`pocket-script`) and `pocket-runtime`, which applies the boundary writes whose order reaches the
+The tick-code crates (`amoris-sim`, `amoris-persist`, `amoris-physics`, `amoris-interface`,
+`amoris-script`) and `amoris-runtime`, which applies the boundary writes whose order reaches the
 world (4.2), carry a `clippy.toml`, and the local check runs clippy with warnings as errors, for the
 host target and again for `wasm32-unknown-unknown` (`checks.md`, 5.3). Every copy is generated from
 one source, `tools/clippy-determinism.toml`, by `cargo xtask gen`, so a copy that drifts fails as
-`gen.stale`. `pocket-runtime` takes the lists without the wall-clock entries except in its
+`gen.stale`. `amoris-runtime` takes the lists without the wall-clock entries except in its
 loop-clock module, which reads `Instant::now` under `#[allow(clippy::disallowed_methods)]` with its
 reason (`threads.md`, 3.2). This specification's entries follow; numeric.md, 5 lists the numeric
 ones and persistence.md, 4.3 the methods that write past change ticks, which repeated snapshots
@@ -671,8 +671,8 @@ order of 4.4 is total by construction, so there is no ambiguity to detect (14, c
 | `sim.internal` | a system panicked | `{tick, phase, system, message}` |
 | `sim.world_poisoned` | `step` on a world whose last tick panicked | `{tick}` |
 | `sim.collider_density` | a dynamic convex hull, trimesh or compound collider declares a density, whose mass properties Rapier computes with the platform's math natively (numeric.md, 5); slice 1 refuses it on a fixed body too (numeric.md 11, choice 11) | `{entity, collider}` |
-| `sim.collider_invalid` | a collider whose shape Rapier cannot build (a size that is not positive and finite in the solver's `f32`, a hull of fewer than four points or spanning no volume, a mesh index out of range, an empty compound) or whose friction, restitution or density is out of range, or whose density gives a mass or inertia of 0 or infinity in `f32` (slice 1, pocket-physics; numeric.md 11, choices 11 and 15) | `{entity, reason}` |
-| `sim.body_invalid` | a dynamic body with no mass, or with mass both stated and from a density; stated mass properties not positive and finite in `f32`; damping or gravity scale out of range; a `Collider` without a `Transform`, or a `Transform` whose position is not finite in `f32` or whose rotation is zero (numeric.md 11, choices 11 and 15; slice 1, pocket-physics) | `{entity, reason}` |
+| `sim.collider_invalid` | a collider whose shape Rapier cannot build (a size that is not positive and finite in the solver's `f32`, a hull of fewer than four points or spanning no volume, a mesh index out of range, an empty compound) or whose friction, restitution or density is out of range, or whose density gives a mass or inertia of 0 or infinity in `f32` (slice 1, amoris-physics; numeric.md 11, choices 11 and 15) | `{entity, reason}` |
+| `sim.body_invalid` | a dynamic body with no mass, or with mass both stated and from a density; stated mass properties not positive and finite in `f32`; damping or gravity scale out of range; a `Collider` without a `Transform`, or a `Transform` whose position is not finite in `f32` or whose rotation is zero (numeric.md 11, choices 11 and 15; slice 1, amoris-physics) | `{entity, reason}` |
 | `sim.name_too_long` | a `Name` of more than 64 bytes (7.1; slice 1) | `{bytes, max}` |
 | `sim.event_kind_invalid` | an event kind that is not dotted snake_case with at least one dot (5.1; slice 1) | `{kind}` |
 | `sim.system_key_invalid` | a system key that is not 1 to 64 bytes of lowercase letters, digits and `_ . : -` (slice 1) | `{system}` |
@@ -749,7 +749,7 @@ The probe (2026-10-03): `bevy_ecs` 0.19.1, Rust 1.98.1, release, Windows 11 on t
 world held the given number of entities with `EntityId` and three-double position and velocity, half
 with a marker component, fragmented by despawning a tenth, spawning as many, and toggling the marker
 on a tenth. The probe's source is scratch code kept outside the repository. Slice 1's bench is
-`cargo run -p pocket-sim --example sim_bench --release` (the same laptop and sharing, the median of
+`cargo run -p amoris-sim --example sim_bench --release` (the same laptop and sharing, the median of
 five runs, two runs on 2026-10-03 agreeing within 2%).
 
 At the showcase's scale the sorted order costs microseconds per system. At 10,000 entities one

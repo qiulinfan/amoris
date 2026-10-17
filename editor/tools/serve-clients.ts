@@ -98,7 +98,7 @@ async function sockets() {
 
 async function editor() {
   const port = 9400 + Math.floor(Math.random() * 400);
-  const profile = join(tmpdir(), `pocket-serve-clients-${Date.now()}`);
+  const profile = join(tmpdir(), `amoris-serve-clients-${Date.now()}`);
   const proc = Bun.spawn(
     [
       chromePath(),

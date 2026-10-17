@@ -93,7 +93,7 @@ export const CATALOG: CatalogCommand[] = [
   { name: "events.why", kind: "read", doc: "The cause chain of an event, oldest first.", params: obj({ seq: int("The event.") }, ["seq"]) },
   { name: "snapshots.list", kind: "read", doc: "The ring of kept snapshots.", params: obj() },
   { name: "snapshots.restore", kind: "control", doc: "Restores the kept snapshot at a tick.", params: obj({ tick: int("A kept snapshot's tick.") }, ["tick"]) },
-  // The debugger: pocket-debug's agents' API as the real host serves it (docs/spec/debugger.md 7).
+  // The debugger: amoris-debug's agents' API as the real host serves it (docs/spec/debugger.md 7).
   { name: "debug.attach", kind: "control", doc: "Starts debugging: the scripts are instrumented from the next tick (breakpoints, pauses and watches attach implicitly).", params: obj() },
   { name: "debug.detach", kind: "control", doc: "Stops debugging: the agents' breakpoints and watches go, a pause resumes, scripts run uninstrumented from the next tick.", params: obj() },
   {

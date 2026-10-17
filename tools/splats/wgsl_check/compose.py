@@ -1,8 +1,8 @@
-"""Composes the splat WGSL modules as crates/pocket-render/src/shaders.rs does, into shaders.js."""
+"""Composes the splat WGSL modules as crates/amoris-render/src/shaders.rs does, into shaders.js."""
 import json
 import sys
 
-root = sys.argv[1] + '/crates/pocket-render/shaders/'
+root = sys.argv[1] + '/crates/amoris-render/shaders/'
 out = sys.argv[2]
 
 

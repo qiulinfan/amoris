@@ -29,7 +29,7 @@ export class Scripts {
         if (f.endsWith(".ts")) this.files.set(`scripts/${f}`, readFileSync(join(SAMPLE, f), "utf8"));
       }
     } catch {
-      this.files.set("scripts/main.ts", 'import { game } from "pocket";\n\nexport default game({ components: [], systems: [] });\n');
+      this.files.set("scripts/main.ts", 'import { game } from "amoris";\n\nexport default game({ components: [], systems: [] });\n');
     }
   }
 

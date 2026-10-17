@@ -1,4 +1,4 @@
-//! Tests of project discovery, the rows `pocket check` reports and the negative controls' verdicts.
+//! Tests of project discovery, the rows `amoris check` reports and the negative controls' verdicts.
 
 use super::*;
 use std::fs;
@@ -135,27 +135,27 @@ fn families() {
 
 #[test]
 fn a_binary_without_check_is_a_command_failure_with_its_status() {
-    // Any program that prints no report stands in for the stub `pocket` (rustc refuses `--json`).
+    // Any program that prints no report stands in for the stub `amoris` (rustc refuses `--json`).
     let p = probe(Path::new("rustc"), Path::new(".")).unwrap_err();
     assert_eq!(p.code, "check.command_failed");
     assert_ne!(p.detail["status"], json!(0));
     assert!(p.detail["status"].is_i64(), "{p:?}");
     assert!(!p.detail["tail"].as_str().unwrap().is_empty(), "{p:?}");
-    let p = probe(Path::new("no-such-pocket-binary"), Path::new(".")).unwrap_err();
+    let p = probe(Path::new("no-such-amoris-binary"), Path::new(".")).unwrap_err();
     assert_eq!(p.code, "check.command_failed");
-    let p = pocket_binary(Path::new("no-such-target-dir")).unwrap_err();
+    let p = amoris_binary(Path::new("no-such-target-dir")).unwrap_err();
     assert_eq!(p.code, "check.command_failed");
-    assert!(p.message.contains("no pocket binary"), "{}", p.message);
+    assert!(p.message.contains("no amoris binary"), "{}", p.message);
 }
 
-/// Without `pocket check`, a step is Skipped only while no project takes part in it; a project
+/// Without `amoris check`, a step is Skipped only while no project takes part in it; a project
 /// with a check.toml, or a control of that step, makes it a failure (checks.md 14.8).
 #[test]
-fn without_pocket_check_projects_fail_and_no_projects_skip() {
+fn without_amoris_check_projects_fail_and_no_projects_skip() {
     let why = Problem::new(
         "check.command_failed",
-        "pocket.exe check --json gave no report (exit Some(101))",
-        json!({"command": "pocket.exe check --json", "status": 101, "tail": "panicked"}),
+        "amoris.exe check --json gave no report (exit Some(101))",
+        json!({"command": "amoris.exe check --json", "status": 101, "tail": "panicked"}),
     );
     let projects = [
         project("samples/sail", SAIL),
@@ -172,7 +172,7 @@ fn without_pocket_check_projects_fail_and_no_projects_skip() {
             .skipped_because
             .as_deref()
             .unwrap()
-            .starts_with("pocket-check not built yet: "),
+            .starts_with("amoris-check not built yet: "),
         "{skipped:?}"
     );
     let failed = unchecked("reload", &participants(&projects, "reload"), why.clone());
@@ -201,9 +201,9 @@ fn least(check: &str, verdict: &str) -> String {
     )
 }
 
-/// The least `pocket check --json` may print: the format, the verdict and the check's step.
+/// The least `amoris check --json` may print: the format, the verdict and the check's step.
 #[test]
-fn a_minimal_report_from_pocket_check_is_read() {
+fn a_minimal_report_from_amoris_check_is_read() {
     let text = r#"{"format": 1, "verdict": "Fail", "steps": [{"name": "determinism", "verdict": "Fail",
         "errors": [{"code": "determinism.diverged", "message": "m", "detail": {"tick": 377}}]}]}"#;
     let row = read_row(text, Some(1), "determinism").unwrap();

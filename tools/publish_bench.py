@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """The serve loop's work after each tick, part by part (docs/bench/profiler.md, "The serve loop"):
-pocket-runtime's `publish_bench` example, `--runs` times in turn with every section encoded
+amoris-runtime's `publish_bench` example, `--runs` times in turn with every section encoded
 (`--full`, `Game::snapshot`) and through the game thread's snapshot cache, paced like the real-time
 game thread; then the median over the runs of each part's median, and of the snapshot's anatomy.
 
-Build first: `cargo build --release -p pocket-runtime --features transpile --example
+Build first: `cargo build --release -p amoris-runtime --features transpile --example
 publish_bench`. From the repository root, on the shared laptop inside the bench lock:
 
     python tools/publish_bench.py --out out/serveloop/publish --runs 5
@@ -42,10 +42,10 @@ def conditions(out: Path, label: str) -> None:
                         "--label", f"publish-{label}"], check=False, capture_output=True)
 
 
-EXAMPLE = "crates/pocket-runtime/examples/publish_bench.rs"
+EXAMPLE = "crates/amoris-runtime/examples/publish_bench.rs"
 # The harness's only uses of the cache, and what a runtime without one runs instead.
 BASE_SWAPS = [
-    ("    let mut cache = pocket_persist::SnapshotCache::new();\n", ""),
+    ("    let mut cache = amoris_persist::SnapshotCache::new();\n", ""),
     ("cache.snapshot(g.world(), g.registry())", "g.snapshot()"),
     ('{ "full" } else { "cached" }', '{ "full" } else { "uncached" }'),
 ]
@@ -68,19 +68,23 @@ def build_base(rev: str, into: Path) -> Path:
                          capture_output=True).stdout
     with tarfile.open(fileobj=io.BytesIO(tar)) as t:
         t.extractall(src, filter="data")
+    # A revision from before the 2026-10-16 rename uses the old names: rename its tree as this
+    # checkout was renamed (a no-op on a later revision).
+    subprocess.run([sys.executable, str(REPO / "tools" / "amoris_rename.py"), "--tree", str(src)],
+                   check=True)
     text = (REPO / EXAMPLE).read_text(encoding="utf-8")
     for old, new in BASE_SWAPS:
         if text.count(old) != 1:
             sys.exit(f"{EXAMPLE} no longer has exactly one {old.strip()!r}: update BASE_SWAPS")
         text = text.replace(old, new)
     (src / EXAMPLE).write_text(text, encoding="utf-8", newline="\n")
-    manifest = src / "crates/pocket-runtime/Cargo.toml"
+    manifest = src / "crates/amoris-runtime/Cargo.toml"
     if 'name = "publish_bench"' not in manifest.read_text(encoding="utf-8"):
         with manifest.open("a", encoding="utf-8", newline="\n") as f:
             f.write(STANZA)
     env = dict(os.environ, CARGO_BUILD_JOBS=os.environ.get("CARGO_BUILD_JOBS", "5"))
     env.pop("CARGO_TARGET_DIR", None)
-    subprocess.run(["cargo", "build", "--release", "-p", "pocket-runtime", "--features",
+    subprocess.run(["cargo", "build", "--release", "-p", "amoris-runtime", "--features",
                     "transpile", "--example", "publish_bench", "--target-dir",
                     str(into / "target")], cwd=src, env=env, check=True)
     exe = into / f"publish_bench-{sha}{EXE}"

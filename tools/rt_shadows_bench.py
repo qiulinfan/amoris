@@ -8,7 +8,7 @@ backend and adapter, the rest once on the first adapter (`--all-rounds`: every c
 `--rounds` times, all of them in every round); the rounds alternate the backends' order. Then the
 captures are compared with the `image_diff` example (cascaded against ray traced, and the
 ray-traced image across backends and adapters), and `samples/anim` is captured through the app
-(`pocket serve`, stepped to tick 90) with and without `POCKET_RT_SHADOWS=1`.
+(`amoris serve`, stepped to tick 90) with and without `AMORIS_RT_SHADOWS=1`.
 
 `--settle S` passes the example's `--settle S` (each path waits after its start-up before its first
 frame, dx12.md 10.6); `--alternate` (with `--all-rounds`) also alternates by round which path the
@@ -16,8 +16,8 @@ example runs first (`--rt-first`); `--cool C` (with `--all-rounds`) waits before
 the NVIDIA GPU is at C degrees or below (nvidia-smi). With `--all-rounds` the summary is
 `{"rounds", "settle_s", "alternate", "cooling", "runs": {name: run}}` instead of the bare runs.
 
-Build first: `cargo build --release -p pocket-render --examples` and `cargo build --release -p
-pocket-app`. Then, from the repository root:
+Build first: `cargo build --release -p amoris-render --examples` and `cargo build --release -p
+amoris-app`. Then, from the repository root:
 
     python tools/rt_shadows_bench.py --adapters 5060,780m --summary out/bench-runs/rt/shadows-runs.json \
         --evidence out/bench-runs/rt
@@ -83,7 +83,7 @@ def cool(limit):
 
 def run(name, arguments, backend, adapter, out):
     prefix = out / name
-    env = dict(os.environ, POCKET_BACKEND=backend, POCKET_ADAPTER=adapter)
+    env = dict(os.environ, AMORIS_BACKEND=backend, AMORIS_ADAPTER=adapter)
     cmd = [example("rt_shadows"), *arguments, "--capture", str(prefix)]
     t = time.time()
     p = subprocess.run(cmd, cwd=ROOT, env=env, capture_output=True, text=True, timeout=1800)
@@ -91,7 +91,7 @@ def run(name, arguments, backend, adapter, out):
     if p.returncode:
         raise RuntimeError(f"{name}: exit {p.returncode}: {p.stderr[-600:]}")
     report = json.loads(p.stdout)
-    report["env"] = {"POCKET_BACKEND": backend, "POCKET_ADAPTER": adapter}
+    report["env"] = {"AMORIS_BACKEND": backend, "AMORIS_ADAPTER": adapter}
     seconds = time.time() - t
     gpu = [report[k]["gpu_ms"]["p50"] for k in ("cascaded", "ray_traced")]
     print(f"  {name:34} {seconds:6.1f} s  GPU p50 cascaded {gpu[0]:.3f} ms, ray traced "
@@ -120,7 +120,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--adapters", default="5060,780m",
-                        help="POCKET_ADAPTER values: the first gets every configuration")
+                        help="AMORIS_ADAPTER values: the first gets every configuration")
     parser.add_argument("--backends", default="vulkan,dx12")
     parser.add_argument("--rounds", type=int, default=3)
     parser.add_argument("--configs", default=",".join(CONFIGS))
@@ -207,10 +207,10 @@ def main():
     # The app: samples/anim's five skinned characters at tick 90, cascaded against ray traced.
     shots = {}
     for traced in (False, True):
-        env = dict(os.environ, POCKET_BACKEND=v, POCKET_ADAPTER=adapters[0], RUST_LOG="info")
-        env.pop("POCKET_RT_SHADOWS", None)
+        env = dict(os.environ, AMORIS_BACKEND=v, AMORIS_ADAPTER=adapters[0], RUST_LOG="info")
+        env.pop("AMORIS_RT_SHADOWS", None)
         if traced:
-            env["POCKET_RT_SHADOWS"] = "1"
+            env["AMORIS_RT_SHADOWS"] = "1"
         shot = out / f"shadows-anim-app-{'rt' if traced else 'csm'}.png"
         serve_capture("samples/anim", 90, shot, env, args.port)
         shots[traced] = shot

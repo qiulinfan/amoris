@@ -206,7 +206,7 @@ export class Session {
   private profiled = 0;
 
   /**
-   * A `profile` summary in the real host's shape (pocket-link's `profile`): ms per tick of each
+   * A `profile` summary in the real host's shape (amoris-link's `profile`): ms per tick of each
    * system's own time in the order they finish, then tick.other, loop.present, loop.publish and
    * loop.after (together busy_ms), and the phases. `last`: the last that many ticks (`profile.frame`); otherwise the
    * ticks since the previous push. The host has no frame: the editor adds its viewport's.

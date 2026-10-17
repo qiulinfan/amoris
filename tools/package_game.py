@@ -20,7 +20,7 @@ def package(project, binary, output, name):
     if not (project / "project.toml").is_file() or not (project / "scene.json").is_file():
         raise ValueError("The game project needs project.toml and scene.json")
     if not binary.is_file() or not os.access(binary, os.X_OK):
-        raise ValueError("Build the native pocket executable before packaging")
+        raise ValueError("Build the native amoris executable before packaging")
     if not re.fullmatch(r"[A-Za-z][A-Za-z0-9 -]{0,63}", name):
         raise ValueError("Use a short application name containing letters, digits, spaces or hyphens")
     if output == project or output.is_relative_to(project):
@@ -47,7 +47,7 @@ def package(project, binary, output, name):
     executable.chmod(0o755)
     bundled_project = resources / "game"
     shutil.copytree(project, bundled_project, ignore=shutil.ignore_patterns(
-        ".pocket", ".git", ".vscode", "node_modules", "target", "__pycache__"))
+        ".amoris", ".git", ".vscode", "node_modules", "target", "__pycache__"))
     shutil.copy2(ROOT / "LICENSE", resources / "ENGINE-LICENSE")
     if mac:
         iconset = output / (name + ".iconset")
@@ -84,7 +84,7 @@ def package(project, binary, output, name):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("project", type=Path)
-    parser.add_argument("--binary", type=Path, default=ROOT / "target/release/pocket")
+    parser.add_argument("--binary", type=Path, default=ROOT / "target/release/amoris")
     parser.add_argument("--output", type=Path, default=ROOT / "out/game")
     parser.add_argument("--name", default="Amoris Town")
     args = parser.parse_args()

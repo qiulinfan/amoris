@@ -2,15 +2,15 @@
 """Runs the renderer's GPU tests on several adapters and backends and prints a test x configuration
 table in which skips show (docs/bench/gpu-matrix.md).
 
-`cargo xtask check` runs `pocket-render`'s tests once, on the default adapter and backend. This runs
-the same test binaries (`cargo test -p pocket-render`, release by default, ignored tests included as
+`cargo xtask check` runs `amoris-render`'s tests once, on the default adapter and backend. This runs
+the same test binaries (`cargo test -p amoris-render`, release by default, ignored tests included as
 in `cargo xtask check`) once per configuration, each named `ADAPTER-BACKEND[-minimal]`:
 
-- ADAPTER is `POCKET_ADAPTER` (an index or part of a name, `default` for none),
-- BACKEND is `POCKET_BACKEND` (`dx12`, `vulkan`, `metal`), or `auto` to leave it unset as `cargo
+- ADAPTER is `AMORIS_ADAPTER` (an index or part of a name, `default` for none),
+- BACKEND is `AMORIS_BACKEND` (`dx12`, `vulkan`, `metal`), or `auto` to leave it unset as `cargo
   xtask check` does (the platform's default backend; tests that compare backends then run on every
   native backend, `BackendChoice::under_test`),
-- `-minimal` adds `POCKET_GPU_MINIMAL=features,limits,timestamps` (WebGPU's baseline,
+- `-minimal` adds `AMORIS_GPU_MINIMAL=features,limits,timestamps` (WebGPU's baseline,
   docs/spec/webgpu-baseline.md).
 
 A passing test that printed that it skipped all or part of its checks for something the device
@@ -30,13 +30,13 @@ xtask check`'s `test` step runs that configuration; `--default-auto` adds it as 
 a check whose `test` did not run it), and the minimal device on the default adapter with the
 platform's default backend. `--workspace` builds the binaries as `cargo test --workspace`
 does, so the run reuses the binaries of `cargo xtask check`'s `test` step (the workspace's other
-crates add features to the renderer's dependencies, and `-p pocket-render` alone builds them again
+crates add features to the renderer's dependencies, and `-p amoris-render` alone builds them again
 without). `--bins lib,neural_material` limits the binaries, `--filter` passes a test-name filter to
 each, `--debug` uses the debug profile. A binary still running after `--timeout` seconds is killed;
 its tests that libtest reported running for over a minute are `hang`, others without a result
 `crash`. Logs go to `out/gpu-matrix/<config>/<binary>.log`. `--json` records the commit with
 `-dirty` when the working tree had changes, the test binaries' build times, the inherited
-`POCKET_*` and `WGPU_*` variables (`WGPU_DEBUG=1`, for instance), what made the run fail
+`AMORIS_*` and `WGPU_*` variables (`WGPU_DEBUG=1`, for instance), what made the run fail
 (`problems`) and, with `--configs machine`, the adapters found. `--merge` names a configuration
 that occurs in several files `CONFIG#N`, N the file's position. The exit status is 1 when a test
 failed, hung or crashed, or a configuration found no GPU; 3 when `--configs machine` found no
@@ -62,7 +62,7 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-CRATE = ROOT / "crates" / "pocket-render"
+CRATE = ROOT / "crates" / "amoris-render"
 MINIMAL = "features,limits,timestamps"
 # The test that names the adapter a configuration opened (gpu.rs).
 ADAPTER_TEST = "gpu::tests::the_adapter_under_test_is_named"
@@ -77,7 +77,7 @@ SOFTWARE = {"Cpu"}
 # Lines of a passing test that say it left out work for want of a device capability.
 SKIP_REASONS = re.compile(
     r"no GPU|timestamps|ray quer|EXPERIMENTAL_RAY_QUERY|INDIRECT_FIRST_INSTANCE|multi-draw|"
-    r"POCKET_SPLAT_RASTER|shader-f16"
+    r"AMORIS_SPLAT_RASTER|shader-f16"
 )
 # A note that says the test found no device at all (not "no GPU timestamps").
 NO_GPU = re.compile(r"no GPU\b(?! timestamps)")
@@ -85,7 +85,7 @@ SKIP_WORDS = re.compile(r"\bskipped\b|\bnot checked\b")
 RESULT = re.compile(r"^test (\S+)(?: - should panic)? \.\.\. (ok|FAILED|ignored)(?:, .*)?$")
 SLOW = re.compile(r"^test (\S+) has been running for over \d+ seconds$")
 BLOCK = re.compile(r"^---- (\S+) std(out|err) ----$")
-ENV_KEYS = ("POCKET_BACKEND", "POCKET_ADAPTER", "POCKET_GPU_MINIMAL")
+ENV_KEYS = ("AMORIS_BACKEND", "AMORIS_ADAPTER", "AMORIS_GPU_MINIMAL")
 # Where AMD's Vulkan driver keeps its pipeline archive (docs/bench/gpu-matrix.md 9), and the
 # directory beside the profile's `deps/` that holds one per configuration and binary.
 DRIVER_CACHE = "AMD_VK_PIPELINE_CACHE_PATH"
@@ -102,7 +102,7 @@ def native_backends():
 
 
 def parse_config(name):
-    """`ADAPTER-BACKEND[-minimal]` -> the environment it sets (`auto`: no `POCKET_BACKEND`)."""
+    """`ADAPTER-BACKEND[-minimal]` -> the environment it sets (`auto`: no `AMORIS_BACKEND`)."""
     parts = name.split("-")
     if len(parts) not in (2, 3) or (len(parts) == 3 and parts[2] != "minimal"):
         raise SystemExit(f"configuration '{name}': expected ADAPTER-BACKEND[-minimal]")
@@ -110,18 +110,18 @@ def parse_config(name):
     if backend not in ("dx12", "vulkan", "metal", "auto"):
         raise SystemExit(
             f"configuration '{name}': backend '{backend}' is not dx12, vulkan, metal or auto")
-    env = {} if backend == "auto" else {"POCKET_BACKEND": backend}
+    env = {} if backend == "auto" else {"AMORIS_BACKEND": backend}
     if adapter != "default":
-        env["POCKET_ADAPTER"] = adapter
+        env["AMORIS_ADAPTER"] = adapter
     if len(parts) == 3:
-        env["POCKET_GPU_MINIMAL"] = MINIMAL
+        env["AMORIS_GPU_MINIMAL"] = MINIMAL
     return env
 
 
 def build(debug, workspace=False):
     """Builds the test binaries (with `workspace`, every crate's, as `cargo test --workspace` does);
-    returns {binary name: executable} for pocket-render's."""
-    cmd = ["cargo", "test", *(["--workspace"] if workspace else ["-p", "pocket-render"]), "--locked",
+    returns {binary name: executable} for amoris-render's."""
+    cmd = ["cargo", "test", *(["--workspace"] if workspace else ["-p", "amoris-render"]), "--locked",
            "--no-run", "--message-format=json"]
     if not debug:
         cmd.insert(2, "--release")
@@ -137,7 +137,7 @@ def build(debug, workspace=False):
         m = json.loads(line)
         if m.get("reason") != "compiler-artifact" or not m.get("executable"):
             continue
-        if m["package_id"].find("pocket-render") < 0 or not m["profile"]["test"]:
+        if m["package_id"].find("amoris-render") < 0 or not m["profile"]["test"]:
             continue
         target = m["target"]
         name = "lib" if "lib" in target["kind"] else target["name"]
@@ -171,7 +171,7 @@ def driver_caches(bins, configs):
 
 def parse_adapters(text):
     """The adapter-listing test's output -> ([{backend, index, type, name}], {backend: the name of
-    the adapter it opens without POCKET_ADAPTER})."""
+    the adapter it opens without AMORIS_ADAPTER})."""
     adapters, defaults = [], {}
     for raw in text.splitlines():
         line = raw.strip()
@@ -187,7 +187,7 @@ def parse_adapters(text):
 
 
 def adapter_token(name, others):
-    """A short `POCKET_ADAPTER` value for the adapter `name`: a word of it (a model number first)
+    """A short `AMORIS_ADAPTER` value for the adapter `name`: a word of it (a model number first)
     that is part of none of the `others` (the machine's other adapters' names), in lower case, so
     it picks this adapter on every backend; None when there is no such word."""
     def unique(word):
@@ -208,7 +208,7 @@ def machine_configs(adapters, defaults, backends, default_auto=False):
     why). Adapters are told apart by name (an adapter on two backends is one adapter); one without
     a word of its own is named by its index on each backend and has no `auto` configuration. The
     default adapter's `auto` is `cargo xtask check`'s `test` run, left out unless `default_auto`,
-    which adds it as `default-auto` (no `POCKET_ADAPTER` either, exactly as `test` runs)."""
+    which adds it as `default-auto` (no `AMORIS_ADAPTER` either, exactly as `test` runs)."""
     auto = backends[0]
     hardware = [a for a in adapters if a["type"] not in SOFTWARE and a["backend"] in backends]
     left_out = [f"{a['name']} ({a['backend']}): a software adapter" for a in adapters
@@ -251,7 +251,7 @@ def machine_configs(adapters, defaults, backends, default_auto=False):
 
 
 def list_adapters(bins, timeout):
-    """Runs the adapter-listing test with no `POCKET_*` device variable set."""
+    """Runs the adapter-listing test with no `AMORIS_*` device variable set."""
     if "lib" not in bins:
         raise SystemExit("--configs machine: no lib test binary to list the adapters with")
     env = {k: v for k, v in os.environ.items() if k not in ENV_KEYS}
@@ -553,7 +553,7 @@ def main():
     out_dir = Path(args.out)
     started = time.strftime("%Y-%m-%d %H:%M:%S")
     inherited = {k: v for k, v in sorted(os.environ.items())
-                 if k.startswith(("POCKET_", "WGPU_")) and k not in ENV_KEYS}
+                 if k.startswith(("AMORIS_", "WGPU_")) and k not in ENV_KEYS}
 
     def write(results):
         if not args.json:

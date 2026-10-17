@@ -5,7 +5,7 @@
 // alone, docs/spec/player.md 7), otherwise the Boat's fields as `world_edit`s. With WebGPU
 // the engine's renderer (web/viewport) draws the worker's render feed; otherwise, or with
 // `?render=2d`, the page draws each rebuilt snapshot as a map from above.
-import { loadModule, start } from "./pocket.js";
+import { loadModule, start } from "./amoris.js";
 
 const $ = (id) => document.getElementById(id);
 const fmt = (x, d = 2) => (typeof x === "number" ? x.toFixed(d) : "-");
@@ -117,7 +117,7 @@ function showBoat(view) {
 }
 
 /** The engine's renderer on the page, fed by the worker; `null` without WebGPU or with `?render=2d`. */
-async function openViewport(pocket, params) {
+async function openViewport(amoris, params) {
   if (!navigator.gpu || params.get("render") === "2d") return null;
   try {
     const { createViewport } = await import("./viewport/viewport.js");
@@ -128,14 +128,14 @@ async function openViewport(pocket, params) {
     // ?gpu_minimal=first-instance draws on WebGPU's baseline path (docs/spec/webgpu-baseline.md).
     const vp = await createViewport(canvas, { assetsUrl, gpuMinimal: params.get("gpu_minimal") || undefined });
     window.viewport = vp;
-    window.pocketViewport = vp;
-    pocket.onRender((bytes) => vp.pushFrame(bytes));
+    window.amorisViewport = vp;
+    amoris.onRender((bytes) => vp.pushFrame(bytes));
     // The recent frames' stats, for tools/web_bench.mjs.
-    const samples = (window.pocketSamples = []);
+    const samples = (window.amorisSamples = []);
     vp.onStats((s) => {
       samples.push(s);
       if (samples.length > 600) samples.shift();
-      window.pocketStats = s;
+      window.amorisStats = s;
       $("gpu").textContent = `${fmt(1000 / s.frame_ms, 0)} fps, GPU ${fmt(s.gpu_ms)} ms, ${s.instances} instances, ${s.draw_path} draws`;
     });
     return vp;
@@ -151,28 +151,28 @@ export async function runForm(params) {
   const speed = Number(params.get("speed") || 1);
   const { module } = await loadModule();
   const pkg = new Uint8Array(await (await fetch(await packageUrl(params), { cache: "no-store" })).arrayBuffer());
-  const pocket = start(module, pkg, { seed: params.get("seed") ? Number(params.get("seed")) : undefined,
+  const amoris = start(module, pkg, { seed: params.get("seed") ? Number(params.get("seed")) : undefined,
     pacing: { real_time: { speed } } });
-  window.pocket = pocket;
-  const viewport = await openViewport(pocket, params);
-  await pocket.ready;
+  window.amoris = amoris;
+  const viewport = await openViewport(amoris, params);
+  await amoris.ready;
   $("speed").value = String(speed);
   let paused = false;
   let hoisted = true;
   const asPlayer = { source: "player" };
-  const players = await pocket.command("player.session", {}, asPlayer).then(() => true, () => false);
+  const players = await amoris.command("player.session", {}, asPlayer).then(() => true, () => false);
   const helm = (value) => (players
-    ? pocket.command("player.act", { actions: [{ do: "set", controls: value }] }, asPlayer)
-    : pocket.command("world_edit", { edits: [{ op: "set", entity: "Sloop", component: "Boat", value }] }, asPlayer))
+    ? amoris.command("player.act", { actions: [{ do: "set", controls: value }] }, asPlayer)
+    : amoris.command("world_edit", { edits: [{ op: "set", entity: "Sloop", component: "Boat", value }] }, asPlayer))
     .catch((e) => console.warn(e));
   $("play").onclick = async () => {
     paused = !paused;
-    await pocket.command("time_control", { pause: paused });
+    await amoris.command("time_control", { pause: paused });
     $("play").textContent = paused ? "Play" : "Pause";
   };
-  $("speed").onchange = () => pocket.command("time_control", { pacing: { real_time: { speed: Number($("speed").value) } } });
-  $("step1").onclick = () => pocket.command("step", { ticks: 1 });
-  $("step60").onclick = () => pocket.command("step", { ticks: 60 });
+  $("speed").onchange = () => amoris.command("time_control", { pacing: { real_time: { speed: Number($("speed").value) } } });
+  $("step1").onclick = () => amoris.command("step", { ticks: 1 });
+  $("step60").onclick = () => amoris.command("step", { ticks: 60 });
   $("rudder").oninput = () => helm({ rudder: Number($("rudder").value) });
   $("sheet").oninput = () => helm({ sheet: Number($("sheet").value) });
   $("hoist").onclick = () => {
@@ -198,8 +198,8 @@ export async function runForm(params) {
     e.preventDefault();
   });
   let lastHash = "-";
-  pocket.onTicks((hashes) => { lastHash = hashes[hashes.length - 1][1]; });
-  pocket.onEvents((records) => {
+  amoris.onTicks((hashes) => { lastHash = hashes[hashes.length - 1][1]; });
+  amoris.onEvents((records) => {
     const list = $("events");
     for (const r of records) {
       const li = document.createElement("li");
@@ -212,9 +212,9 @@ export async function runForm(params) {
   const canvas = $("sea");
   const fit = {};
   const frame = () => {
-    const info = pocket.latest();
+    const info = amoris.latest();
     if (info) {
-      const view = pocket.view();
+      const view = amoris.view();
       if (!view.error) {
         if (!viewport) draw(canvas, view, fit);
         showBoat(view);
@@ -222,10 +222,10 @@ export async function runForm(params) {
       $("tick").textContent = info.tick;
       $("time").textContent = `${fmt(info.time.t_s, 1)} s${info.time.paused ? " (paused)" : ""}`;
       $("hash").textContent = lastHash;
-      $("snaps").textContent = `${pocket.presenter.received()} rebuilt`;
+      $("snaps").textContent = `${amoris.presenter.received()} rebuilt`;
     }
-    if (!pocket.stopped) requestAnimationFrame(frame);
-    else $("where").textContent = `The game stopped: ${pocket.stopped.message}`;
+    if (!amoris.stopped) requestAnimationFrame(frame);
+    else $("where").textContent = `The game stopped: ${amoris.stopped.message}`;
   };
   requestAnimationFrame(frame);
 }

@@ -3,13 +3,13 @@
 // and through the DevTools protocol checks that the editor loads with the WebAssembly/WebGPU
 // viewport, that Play forks the world and runs ticks and Stop returns to the edit world, then closes
 // the window as a person would (WM_CLOSE on Windows, SIGTERM elsewhere) and checks that the host
-// process exited and removed its .pocket/host.json. Prints one JSON summary; with --out, writes it
+// process exited and removed its .amoris/host.json. Prints one JSON summary; with --out, writes it
 // and half-size screenshots of the edit and play views there.
 //
 //   node tools/desktop_smoke.mjs [--sample samples/sailing] [--out docs/evidence/polish/desktop]
 //
-// Needs desktop/'s dependencies (cd desktop && npm ci), a built editor (editor/dist) and pocket;
-// AMORIS_POCKET_BINARY, AMORIS_EDITOR_DIST, AMORIS_WEB_VIEWPORT and AMORIS_TSC pick other builds,
+// Needs desktop/'s dependencies (cd desktop && npm ci), a built editor (editor/dist) and amoris;
+// AMORIS_BINARY, AMORIS_EDITOR_DIST, AMORIS_WEB_VIEWPORT and AMORIS_TSC pick other builds,
 // as for the app itself.
 
 import { spawn, execFileSync } from 'node:child_process';
@@ -52,7 +52,7 @@ const step = (name, ok, detail = {}) => {
 const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'amoris-desktop-smoke-'));
 const project = path.join(temp, path.basename(sample));
 await fs.cp(sample, project, { recursive: true });
-await fs.rm(path.join(project, '.pocket'), { recursive: true, force: true });
+await fs.rm(path.join(project, '.amoris'), { recursive: true, force: true });
 const electron = createRequire(path.join(repo, 'desktop/package.json'))('electron');
 const app = spawn(electron, [path.join(repo, 'desktop'), `--remote-debugging-port=${port}`,
   `--user-data-dir=${path.join(temp, 'user-data')}`, '--project', project],
@@ -100,7 +100,7 @@ try {
     pending.delete(d.id);
     d.error ? p.reject(new Error(d.error.message)) : p.resolve(d.result);
   };
-  const hostFile = JSON.parse(await fs.readFile(path.join(project, '.pocket/host.json'), 'utf8'));
+  const hostFile = JSON.parse(await fs.readFile(path.join(project, '.amoris/host.json'), 'utf8'));
   step('host.json names the project as fs.realpath does', hostFile.project === await fs.realpath(project),
     { project: hostFile.project, pid: hostFile.pid });
   const call = async (method, params = {}) => {
@@ -154,7 +154,7 @@ try {
   const alive = pid => { try { process.kill(pid, 0); return true; } catch { return false; } };
   await until('the host to exit', 10000, async () => !alive(hostFile.pid));
   step('the host process exited', !alive(hostFile.pid), { pid: hostFile.pid });
-  const left = await fs.stat(path.join(project, '.pocket/host.json')).catch(() => null);
+  const left = await fs.stat(path.join(project, '.amoris/host.json')).catch(() => null);
   step('host.json was removed', !left);
   report.ok = true;
 } catch (e) {

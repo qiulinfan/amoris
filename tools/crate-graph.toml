@@ -5,100 +5,100 @@
 # deps:    the workspace crates a crate may depend on, for normal, dev and build dependencies alike
 #          (a test may use a crate below its own, never one above).
 # web:     the crate builds for wasm32-unknown-unknown (clippy and the wasm step check it there).
-# any:     every crate may depend on it (pocket-contract, architecture.md 4.16).
+# any:     every crate may depend on it (amoris-contract, architecture.md 4.16).
 # planned: in architecture.md 5 but not created yet, so its absence is not deps.crate_missing.
 
-[crate.pocket-contract]
+[crate.amoris-contract]
 group = "contract"
 deps = []
 web = true
 any = true
 
-[crate.pocket-sim]
+[crate.amoris-sim]
 group = "game"
 deps = []
 web = true
 
-[crate.pocket-assets]
+[crate.amoris-assets]
 group = "game"
-deps = ["pocket-sim"]
+deps = ["amoris-sim"]
 web = true
 
-[crate.pocket-persist]
+[crate.amoris-persist]
 group = "game"
-deps = ["pocket-sim"]
+deps = ["amoris-sim"]
 web = true
 
-[crate.pocket-physics]
+[crate.amoris-physics]
 group = "game"
-deps = ["pocket-sim", "pocket-assets"]
+deps = ["amoris-sim", "amoris-assets"]
 web = true
 
-[crate.pocket-interface]
+[crate.amoris-interface]
 group = "game"
-deps = ["pocket-sim", "pocket-physics"]
+deps = ["amoris-sim", "amoris-physics"]
 web = true
 
-[crate.pocket-script]
+[crate.amoris-script]
 group = "game"
-deps = ["pocket-sim", "pocket-physics", "pocket-interface"]
+deps = ["amoris-sim", "amoris-physics", "amoris-interface"]
 web = true
 
-[crate.pocket-link]
+[crate.amoris-link]
 group = "link"
-deps = ["pocket-sim", "pocket-persist"]
+deps = ["amoris-sim", "amoris-persist"]
 web = true
 
-[crate.pocket-runtime]
+[crate.amoris-runtime]
 group = "game"
-deps = ["pocket-sim", "pocket-assets", "pocket-persist", "pocket-physics", "pocket-interface",
-        "pocket-script", "pocket-link"]
+deps = ["amoris-sim", "amoris-assets", "amoris-persist", "amoris-physics", "amoris-interface",
+        "amoris-script", "amoris-link"]
 web = true
 
-[crate.pocket-check]
+[crate.amoris-check]
 group = "game"
-deps = ["pocket-sim", "pocket-persist", "pocket-runtime", "pocket-link"]
+deps = ["amoris-sim", "amoris-persist", "amoris-runtime", "amoris-link"]
 web = true
 
-[crate.pocket-render]
+[crate.amoris-render]
 group = "presenter"
-deps = ["pocket-assets"]
+deps = ["amoris-assets"]
 web = true
 
-[crate.pocket-audio]
+[crate.amoris-audio]
 group = "presenter"
-deps = ["pocket-assets"]
+deps = ["amoris-assets"]
 web = false
 
-[crate.pocket-viewport]
+[crate.amoris-viewport]
 group = "presenter"
-deps = ["pocket-assets", "pocket-render"]
+deps = ["amoris-assets", "amoris-render"]
 web = true
 
-[crate.pocket-mcp]
+[crate.amoris-mcp]
 group = "tool"
-deps = ["pocket-sim", "pocket-link"]
+deps = ["amoris-sim", "amoris-link"]
 web = false
 
-[crate.pocket-server]
+[crate.amoris-server]
 group = "tool"
-deps = ["pocket-sim", "pocket-link", "pocket-mcp"]
+deps = ["amoris-sim", "amoris-link", "amoris-mcp"]
 web = false
 
-[crate.pocket-debug]
+[crate.amoris-debug]
 group = "tool"
-deps = ["pocket-script", "pocket-link"]
+deps = ["amoris-script", "amoris-link"]
 web = false
 
-[crate.pocket-app]
+[crate.amoris-app]
 group = "app"
-deps = ["pocket-sim", "pocket-link", "pocket-runtime", "pocket-check", "pocket-render", "pocket-assets",
-        "pocket-mcp", "pocket-server", "pocket-debug", "pocket-audio"]
+deps = ["amoris-sim", "amoris-link", "amoris-runtime", "amoris-check", "amoris-render", "amoris-assets",
+        "amoris-mcp", "amoris-server", "amoris-debug", "amoris-audio"]
 web = false
 
-[crate.pocket-web]
+[crate.amoris-web]
 group = "app"
-deps = ["pocket-sim", "pocket-link", "pocket-runtime", "pocket-check", "pocket-render", "pocket-assets"]
+deps = ["amoris-sim", "amoris-link", "amoris-runtime", "amoris-check", "amoris-render", "amoris-assets"]
 web = true
 
 [crate.xtask]
@@ -107,7 +107,7 @@ deps = []
 web = false
 
 # Forbidden anywhere in the transitive normal dependencies of the group's crates, on any target
-# (architecture.md 2.1 and 6). wasm-bindgen and js-sys appear below pocket-sim on wasm32 through
+# (architecture.md 2.1 and 6). wasm-bindgen and js-sys appear below amoris-sim on wasm32 through
 # bevy_ecs's bevy_tasks, so they are forbidden only as direct dependencies.
 [group.game]
 forbid = ["wgpu", "winit", "egui", "egui-wgpu", "egui-winit", "tokio", "rmcp", "rayon", "web-sys"]

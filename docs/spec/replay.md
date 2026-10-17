@@ -25,7 +25,7 @@ and migrations are [versions.md](versions.md).
 | spec-contract | `Problem`; the session-level checks a replay skips | [shared/contract/](../../shared/contract/README.md) |
 | spec-mcp | the `replay`, `restore` and `reset` tools and branches | [mcp.md](../../shared/contract/mcp.md) |
 
-The code is `pocket-persist` (architecture.md 4.3).
+The code is `amoris-persist` (architecture.md 4.3).
 
 ## 2. Replays
 
@@ -196,7 +196,7 @@ impl Replay {
     pub fn tainted(&self) -> Option<TickRef>;
 }
 
-/// The game loop as replay code drives it; implemented by pocket-runtime, which owns the world,
+/// The game loop as replay code drives it; implemented by amoris-runtime, which owns the world,
 /// the script host and the command application (architecture.md 4.8, 9 item 2).
 pub trait Stepper {
     fn world(&self) -> &World;
@@ -365,7 +365,7 @@ A `Fault` record stops the run at its tick with the fault's code (`script.out_of
 platform and the allocation history, so whether the replaying engine faults there too says nothing
 about determinism, and a fault is reported as what it is rather than as an unexplained hash
 divergence. A `Tainted` record stops the run at its tick with `replay.tainted`: from there the
-recording does not reproduce its world (script-host.md 13). `pocket replay --verify` (checks.md 8.4)
+recording does not reproduce its world (script-host.md 13). `amoris replay --verify` (checks.md 8.4)
 is this function.
 
 ## 4. Errors
@@ -410,14 +410,14 @@ over this specification:
 
 ## 6. Open choices
 
-1. **Slice 1: `Source` and `Applied` are declared in `pocket-persist`** (`pocket_persist::replay`),
-   as threads.md 5.1 and 5.3 give them: `pocket-link`, which threads.md names as their home, depends
-   on `pocket-persist` (architecture.md 5), so the recorder could not name them otherwise;
-   `pocket-link` re-exports them.
+1. **Slice 1: `Source` and `Applied` are declared in `amoris-persist`** (`amoris_persist::replay`),
+   as threads.md 5.1 and 5.3 give them: `amoris-link`, which threads.md names as their home, depends
+   on `amoris-persist` (architecture.md 5), so the recorder could not name them otherwise;
+   `amoris-link` re-exports them.
 2. **Slice 1: `Stepper::run_config`.** `Verify` refuses another run configuration (versions.md 7.2),
    and only the stepper knows the one it runs, so the trait gives it as canonical JSON.
 3. **Slice 1: substitutes are `BundleRecord`s.** `VerifyOptions::substitute` maps a recorded bundle
-   hash to persistence's own `BundleRecord`, since `pocket-persist` cannot name the script host's
+   hash to persistence's own `BundleRecord`, since `amoris-persist` cannot name the script host's
    `Bundle`; the stepper's `ReplaySource` finds a substitute before the recording's bundle of that
    hash.
 4. **Slice 1: the recorder's calls.** `Recorder::start` takes an `Arc<Registry>`, since
@@ -457,7 +457,7 @@ over this specification:
    the recording has section digests and fields when it has a keyframe on that tick
    (`keyframe_every: 1` gives both). `version.data_mismatch` is not checked here: comparing a data
    file with its `DataRead` needs the project's current files, which the runtime's stepper reads
-   (`pocket-runtime`, next wave). A bundle is looked up as a substitute, then in the recording, then
+   (`amoris-runtime`, next wave). A bundle is looked up as a substitute, then in the recording, then
    by `Stepper::find_bundle(hash)` (versions.md 7.4: the project's current scripts when their hash
    matches, or the content store; none by default), in that order both when a snapshot is restored
    and when the versions are compared: `BundleUse::Available` means the stepper found it, and passes

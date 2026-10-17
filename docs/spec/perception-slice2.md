@@ -3,7 +3,7 @@
 Status: Draft, slice 2
 
 The decisions slice 2's implementation of perception and its projections (the modules `perception`
-and `projection` of `pocket-interface`, and the skipper's declarations in
+and `projection` of `amoris-interface`, and the skipper's declarations in
 `samples/sailing-course/perception.json`) took where
 [perception.md](../../shared/contract/perception.md),
 [projection.md](../../shared/contract/projection.md) and
@@ -43,7 +43,7 @@ read as remembered, so a rule asking whether it sees the player never did. Throu
 inside a tick an observer therefore sees what the last update saw, at the end of the previous tick.
 
 These components derive `Component` and `Resource`, and the memory and the ring hold enums below
-their top level that `Persisted::trace` traces first, so `pocket-interface` takes `bevy_ecs` and
+their top level that `Persisted::trace` traces first, so `amoris-interface` takes `bevy_ecs` and
 `serde-reflection` (architecture.md 6, both rows). `perception::declare` names them for persistence;
 the declarations (`PerceptionDefs`) are ignored game data, installed with the game.
 
@@ -64,12 +64,12 @@ the declarations (`PerceptionDefs`) are ignored game data, installed with the ga
   a data field declared `owner` reached every observer that perceived the event, and a `full` one
   observers beyond their attention.
 - Derived facts and instruments are Rust functions registered by name (`PerceptionDefs::derive`);
-  the sailing ones are `perception::sailing`. Script functions (`pocket_script::call_named`, which
+  the sailing ones are `perception::sailing`. Script functions (`amoris_script::call_named`, which
   takes `{entity, observer}`) are not wired: a relative fact of a remembered or charted entity must
   be computed from the position the observer knows and the facts it remembers, which such a call
   does not carry, so it could read the live entity. They wait for a call that carries `at_m` and the
-  known facts, and for `pocket-runtime` to hand perception a hook (perception cannot link
-  `pocket-script`, architecture.md 5).
+  known facts, and for `amoris-runtime` to hand perception a hook (perception cannot link
+  `amoris-script`, architecture.md 5).
 
 ## 4. The perception update
 
@@ -140,7 +140,7 @@ the declarations (`PerceptionDefs`) are ignored game data, installed with the ga
 ## 6. The golden cases
 
 projection.md's `shared/contract/conformance/projection.jsonl` does not exist and cannot be added
-here (1). The cases are Rust tests (`crates/pocket-interface/tests/perception_golden.rs`) built from
+here (1). The cases are Rust tests (`crates/amoris-interface/tests/perception_golden.rs`) built from
 the sailing sample's declarations. A case cannot be a JSON answer alone, as projection.md proposes:
 the JSON drops the precision the text needs (`"hoist": 1.0` is `hoist=1.00` in text), so a shared
 case must carry its declarations too. sailing.md's example observation is reproduced byte for byte:
@@ -151,8 +151,8 @@ case must carry its declarations too. sailing.md's example observation is reprod
 - `contract.perception.read_only`, `deterministic`, `budget` and the visibility unit tests run on
   the sailing probe (`perception::probe`: the skipper, an island hiding a crate, charted islets and
   marks, crates near and far, a second boat) and on a small watcher world, with world hashes, forks
-  and restores through `pocket_physics::probe`'s ledger with perception's types added, since
-  `pocket-interface` cannot link `pocket-persist` (architecture.md 5).
+  and restores through `amoris_physics::probe`'s ledger with perception's types added, since
+  `amoris-interface` cannot link `amoris-persist` (architecture.md 5).
 - `contract.perception.noninterference` covers perception's part: its queries in every projection
   (refusals among them) and six mutation classes (a hidden fact, an entity outside every range moved
   within that region, a crate behind an island respawned behind it, a hidden-scope event, an
@@ -203,7 +203,7 @@ case must carry its declarations too. sailing.md's example observation is reprod
 
 ## 9. First measurements
 
-`cargo run -p pocket-interface --example perception_bench --release` on the development machine,
+`cargo run -p amoris-interface --example perception_bench --release` on the development machine,
 with the owner's other jobs running beside it (so for reading, not for the reference figures, which
 `cargo xtask perf --set-unset` sets from a calibrated run by budgets.md's rule):
 `interface.perception` on the sailing probe 22 to 26 µs a tick (`perception.tick`); with 100 NPC

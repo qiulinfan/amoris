@@ -20,7 +20,7 @@ the diagonal; at `t = 0.5` halfway from there to the middle of the field (`demo:
 reaches the middle at `t = 1`). With levels off it is 170 million
 triangles for the camera (97 million at `t = 0.5`) and 177 to 204 million for the cascades.
 These cascade counts are from before the cascades culled by their slices (2026-10-15,
-[shadows.md](shadows.md) 3: 96 and 104 million; `POCKET_SHADOW_CULL=off` reproduces them).
+[shadows.md](shadows.md) 3: 96 and 104 million; `AMORIS_SHADOW_CULL=off` reproduces them).
 
 The meshes' chains (`lod_field` example output, `meshes`): every mesh gets the full 8 levels.
 
@@ -30,7 +30,7 @@ The meshes' chains (`lod_field` example output, `meshes`): every mesh gets the f
 | knot | 49,152 · 24,576 · 12,288 · 6,144 · 3,072 · 1,536 · 768 · 384 | 0.0007 · 0.0016 · 0.0043 · 0.0064 · 0.013 · 0.025 · 0.049 |
 
 `python tools/lod_bench.py --t 0 | --t 0.5 [--occlusion auto]` runs
-`cargo run --release -p pocket-render --example lod_field` per backend, adapter and mode: 10 warm
+`cargo run --release -p amoris-render --example lod_field` per backend, adapter and mode: 10 warm
 frames, then 60 measured frames with levels on and 15 with levels off, each submitted and waited
 for; GPU time from pass timestamps; the last frame's draws read back per level
 (`Renderer::draw_counts`). Occlusion culling off unless noted, so that levels are measured alone.
@@ -163,7 +163,7 @@ draw paths, hysteresis, cascades, skinned, limit for its six tests.
 | meshes: a skinned copy's levels read the bind pose | lod.rs: skinned |
 | renderer: level rows get no regions | lod.rs: silhouettes, skinned, limit; draw_paths.rs; occlusion.rs |
 | renderer: levels kept past the binding limit | lod.rs: limit |
-| generate: vertices left in their first order | pocket-assets `coarse_levels_read_a_prefix_of_the_vertices` |
+| generate: vertices left in their first order | amoris-assets `coarse_levels_read_a_prefix_of_the_vertices` |
 
 - A review of the branch found three gaps the first eleven mutations did not reach: drawing the
   camera's level into the cascades left every check passing (127,528 shadow triangles became
@@ -182,8 +182,8 @@ draw paths, hysteresis, cascades, skinned, limit for its six tests.
   silhouette check's two pixels of slack hid a factor of 1.5.
 
 `cargo xtask check --only deps,fmt,docs,clippy,build,gen,test,wasm,web` passed at `4b48eab8` (626
-tests with the ignored ones, 9 more than master's 617: four in pocket-assets' `lod`, two in
-pocket-render's `lod`, three in `tests/lod.rs`; 41 min 53 s with other agents building), and again
+tests with the ignored ones, 9 more than master's 617: four in amoris-assets' `lod`, two in
+amoris-render's `lod`, three in `tests/lod.rs`; 41 min 53 s with other agents building), and again
 at `f12f0d73` after the review's fixes (629 tests: the cascades, skinned and limit tests; 11 min 49
 s on a warm target). Its clippy run for wasm32 builds meshoptimizer's C++ there; without the pinned
 LLVM on `PATH` that build stops at `failed to find tool "llvm-ar"` even with
@@ -220,7 +220,7 @@ frames, medians, provisional:
 |---|---|---|---|---|---|
 | multi-draw | 0 | off / on | 20 / 20 | 0.80 / 0.71 | 73.0 / 0.78 |
 | multi-draw | 200 | off / on | 20 / 20 | 1.98 / 2.03 | 75.0 / 0.84 |
-| baseline (`POCKET_GPU_MINIMAL=first-instance`) | 0 | off / on | 25 / 165 | 1.21 / 1.17 | 70.6 / 0.72 |
+| baseline (`AMORIS_GPU_MINIMAL=first-instance`) | 0 | off / on | 25 / 165 | 1.21 / 1.17 | 70.6 / 0.72 |
 | baseline | 200 | off / on | 1,025 / 8,165 | 3.28 / 6.71 | 74.4 / 0.86 |
 
 - On the baseline path the crowd's 200 skinned copies cost 1,000 draw calls with levels off (one
@@ -319,7 +319,7 @@ larger, 177 of 576 instances in the frustum, many partly.)
 
 Same machine and drivers, no other agent running, on AC power (conditions:
 [quiet-2026-10-09.md](quiet-2026-10-09.md)), master `ef35e1af`.
-`POCKET_AA=msaa POCKET_GTAO=off python tools/lod_bench.py --adapters nvidia,780m --backends vulkan,dx12 --t 0 --rounds 3`
+`AMORIS_AA=msaa AMORIS_GTAO=off python tools/lod_bench.py --adapters nvidia,780m --backends vulkan,dx12 --t 0 --rounds 3`
 and the same at `--t 0.5` (the tool now takes `--rounds`: each round runs every adapter, backend and
 level mode in turn); raw runs in
 [bench-t0.json](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/quiet/lod/bench-t0.json)

@@ -2,8 +2,8 @@
 
 Status: Draft, slice 1
 
-The decisions slice 1's implementation (the crates `pocket-runtime` and `pocket-link`,
-`pocket-interface`'s time model and `pocket-web`'s worker) took where [threads.md](threads.md) was
+The decisions slice 1's implementation (the crates `amoris-runtime` and `amoris-link`,
+`amoris-interface`'s time model and `amoris-web`'s worker) took where [threads.md](threads.md) was
 ambiguous or wrong for the code. They are open choices 8 to 15 of threads.md 13, which lists them by
 title and keeps their numbers here. They moved here because threads.md would otherwise have passed
 the 800-line limit that charter 3.9 set before version 0.4, as simulation.md's did.
@@ -11,7 +11,7 @@ the 800-line limit that charter 3.9 set before version 0.4, as simulation.md's d
 ## 8. The game thread as built
 
 `GameThread::spawn` takes `ThreadOptions {stack_bytes, clock, on_publish, pacing}`. The time model
-is `pocket_interface::TimeModel`: `Stepped` and `RealTime {speed}` with pauses (lockstep, turns and
+is `amoris_interface::TimeModel`: `Stepped` and `RealTime {speed}` with pauses (lockstep, turns and
 decisions come in slice 2). The loop's Controls are `step {ticks}`, answered after its last tick
 with `{tick, world_hash, errors}` (the ticks' failed invocations, at most 20) and refused while the
 world is poisoned, and `time_control {pause?, pacing?}`; `status` and `snapshot` are Reads.
@@ -61,16 +61,16 @@ it) and opens the next with `Rebase {cause: Restore}` (replay.md 2.5); a refused
 onto the world it left as it was, so the recording goes on either way. `time_control`'s and
 `ThreadOptions`' real-time speed must be finite, above 0 and at most `MAX_SPEED`, 1,000 (chosen, not
 measured: a 60 Hz game asks for a tick every 17 microseconds there), else
-`request.out_of_range {path: "/pacing/real_time/speed", got}` and nothing changes; `pocket run`
+`request.out_of_range {path: "/pacing/real_time/speed", got}` and nothing changes; `amoris run`
 refuses such a `--realtime`, and a `--seconds` that is not finite and at least 0, with exit code 2
 before the game starts.
 
 ## 13. The worker as built (slice 1, the web task)
 
-`pocket-web` runs the game role in a module Web Worker (`web/game.js`) over `WorkerCore`
-(`crates/pocket-web/src/worker.rs`), the loop of 7.3 written once for every target so native tests
+`amoris-web` runs the game role in a module Web Worker (`web/game.js`) over `WorkerCore`
+(`crates/amoris-web/src/worker.rs`), the loop of 7.3 written once for every target so native tests
 drive it with their own clock. A task drains the commands that arrived since the last one as the
-batch of its first boundary, sorted by `pocket_link::canonical_order` (5.2; the commands are
+batch of its first boundary, sorted by `amoris_link::canonical_order` (5.2; the commands are
 `Envelope`s whose `ReplyTo` is none, since each is answered by a `reply` message keyed by its source
 and seq), holds those whose `at` is later and answers `command.tick_passed` to those whose `at`
 passed; it then runs boundaries and ticks until the pacing says wait or 8 ms are spent, and answers
@@ -108,12 +108,12 @@ none: it is refused, halts and pauses again. The event stream takes the inbox's 
 that poisons never replaces the inbox (the outbox becomes the inbox only in `sim.finish`) and an
 index reset would send the last tick's events again.
 
-The pacing is a copy of `pocket_interface::TimeModel`'s slice 1 subset
-(`crates/pocket-web/src/pace.rs`, with the same constants), because architecture.md 5 gives
-`pocket-web` no edge to `pocket-interface` and `pocket-runtime` re-exports the time model only under
-its native feature `thread`. The copy is a bounded stopgap: it goes when `pocket-runtime` exports
+The pacing is a copy of `amoris_interface::TimeModel`'s slice 1 subset
+(`crates/amoris-web/src/pace.rs`, with the same constants), because architecture.md 5 gives
+`amoris-web` no edge to `amoris-interface` and `amoris-runtime` re-exports the time model only under
+its native feature `thread`. The copy is a bounded stopgap: it goes when `amoris-runtime` exports
 the time model (or a loop core both the game thread and the worker drive) on every target.
-2026-10-09 (Pioneer): gone. `pocket-runtime` exports `TimeModel`, `Pace` and `Pacing` on every
+2026-10-09 (Pioneer): gone. `amoris-runtime` exports `TimeModel`, `Pace` and `Pacing` on every
 target and the loop core `boundary` (held commands, the players' waits and pace) that both loops
 drive; the worker's catch-up is now threads.md 3.3's (at most `MAX_CATCH_UP` ticks back to back,
 then the next waits its interval) rather than the copy's (drop the excess when more than
@@ -121,16 +121,16 @@ then the next waits its interval) rather than the copy's (drop the excess when m
 
 ## 14. The web messages as built (slice 1, the web task)
 
-7.2's messages with these departures, each because `pocket-link`'s wire module (9) is not built:
+7.2's messages with these departures, each because `amoris-link`'s wire module (9) is not built:
 
-- `init`'s `project` is the **web package**: one JSON file (`pocket_web::package`, format
-  `pocket-web-package` version 1) holding the manifest's name, rate and seed, the scene and the
+- `init`'s `project` is the **web package**: one JSON file (`amoris_web::package`, format
+  `amoris-web-package` version 1) holding the manifest's name, rate and seed, the scene and the
   scripts compiled natively as `CompiledSet` JSON, transferred as one buffer. The shipped module has
-  no transpiler (architecture.md 8.3), and `pocket pack <project> --web` (architecture.md 4.13) is
-  not built, so `pocket-web`'s native example `pack` writes it
-  (`cargo run -p pocket-web --example pack --release -- <project> <out.json>`), compiling through
-  `pocket-runtime`'s `transpile` as a dev-dependency, which never reaches the wasm build. It goes
-  when `pocket pack --web` exists. A package whose scripts are not what the native build compiled
+  no transpiler (architecture.md 8.3), and `amoris pack <project> --web` (architecture.md 4.13) is
+  not built, so `amoris-web`'s native example `pack` writes it
+  (`cargo run -p amoris-web --example pack --release -- <project> <out.json>`), compiling through
+  `amoris-runtime`'s `transpile` as a dev-dependency, which never reaches the wasm build. It goes
+  when `amoris pack --web` exists. A package whose scripts are not what the native build compiled
   shows as a different world hash in the cross-target comparison.
 - `snap` carries the **whole snapshot's canonical bytes** (`Snapshot::to_bytes`, every section,
   caches included, as if `init` always asked `with_caches`) in one transferred buffer, instead of
@@ -150,12 +150,12 @@ then the next waits its interval) rather than the copy's (drop the excess when m
   refused with suggestions) and its `source` by `source_from_json`.
 - The worker also posts `started {instantiate_ms, build_ms, time_origin}` before `ready`, for the
   start-up measurements; and the check page alone sends `perf` (the kept tick timings) and `verify`
-  (a replay replayed in the worker, `pocket-check`'s `verify_bytes`), answered `perf` and
+  (a replay replayed in the worker, `amoris-check`'s `verify_bytes`), answered `perf` and
   `verified`.
 
 ## 15. The page's handle and what was measured (slice 1, the web task)
 
-`web/pocket.js` is 7.4's handle (`start(module, packageBytes, {seed, pacing})`, `ready`,
+`web/amoris.js` is 7.4's handle (`start(module, packageBytes, {seed, pacing})`, `ready`,
 `command(name, params, {source, at})`, `latest()`, `onEvents`, `close()`) with `onTicks` (the hash
 stream), `onSnapshot`, `onStatus`, `view()` (the named bodies of the latest snapshot, through
 `SnapshotView`) and the check's `perf()` and `verify(bytes)`. Each source's seq counts from 1 in the
@@ -170,7 +170,7 @@ and 2,608,557 gzipped at level 9, of which 1,259,928 are the name section; after
 which drops it, 6,530,080 and 2,415,874. Rust is 5.65 MB of the 6.58 MB of code (Rapier and parry
 the largest part), QuickJS-ng and wasi-libc 0.91 MB. A tick in the worker took 0.205 to 0.375 ms at
 the median (p95 0.38 to 1.38 ms, 1,200 ticks a load) and its world hash 0.10 to 0.17 ms more, where
-the native `pocket hashes` takes about 0.30 ms a tick with its hash (3,000 ticks, minus a run of 0);
+the native `amoris hashes` takes about 0.30 ms a tick with its hash (3,000 ticks, minus a run of 0);
 a publication took 0.14 to 0.26 ms and a snapshot's rebuild on the page 0.145 to 0.19 ms. Start-up
 from navigation on a local server: the module compiled on the page in 69 to 112 ms (its fetch
 included) and was ready 690 to 820 ms after navigation, building the game in the worker took 184 to

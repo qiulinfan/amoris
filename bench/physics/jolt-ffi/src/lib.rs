@@ -291,7 +291,7 @@ impl Pyramid {
         assert_eq!(err, 0, "physics update error");
     }
 
-    /// Every body's pose, as pocket-physics would read them to write Transforms.
+    /// Every body's pose, as amoris-physics would read them to write Transforms.
     pub fn read_poses(&self, out: &mut [(Vec3, Quat)]) {
         for (id, pose) in self.ids.iter().zip(out.iter_mut()) {
             // SAFETY: the body ids came from this system; the out pointers are valid.

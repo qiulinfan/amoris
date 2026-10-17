@@ -2,8 +2,8 @@
 `python tools/renderdoc_frame.py analyze CAPTURE` launches it (RenderDoc's embedded Python 3.8 and
 its `renderdoc` module; not runnable with the system Python).
 
-Inputs from the environment: POCKET_RDC (the capture), POCKET_RDC_OUT (the JSON to write),
-POCKET_RDC_TOP (how many actions to list) and POCKET_RDC_D3D12_COUNTERS=1 (Windows' Developer Mode
+Inputs from the environment: AMORIS_RDC (the capture), AMORIS_RDC_OUT (the JSON to write),
+AMORIS_RDC_TOP (how many actions to list) and AMORIS_RDC_D3D12_COUNTERS=1 (Windows' Developer Mode
 is on, so RenderDoc's D3D12 counters work). Replays the capture; for the draw with the most
 vertices (instances times indices) writes its vertex and fragment shaders in every disassembly
 target the replay offers, their raw bytes (DXIL or SPIR-V) and their reflection; then measures
@@ -16,9 +16,9 @@ import traceback
 
 import renderdoc as rd
 
-RDC = os.environ.get("POCKET_RDC", "")
-OUT = os.environ.get("POCKET_RDC_OUT", "")
-TOP = int(os.environ.get("POCKET_RDC_TOP", "15"))
+RDC = os.environ.get("AMORIS_RDC", "")
+OUT = os.environ.get("AMORIS_RDC_OUT", "")
+TOP = int(os.environ.get("AMORIS_RDC_TOP", "15"))
 
 
 def ok(result):
@@ -130,7 +130,7 @@ def analyze():
     # Per-event GPU durations, measured on replay. RenderDoc's D3D12 counters need Windows'
     # Developer Mode (they set a stable power state); without it the fetch loses the device.
     counters = controller.EnumerateCounters()
-    if d3d12 and os.environ.get("POCKET_RDC_D3D12_COUNTERS") != "1":
+    if d3d12 and os.environ.get("AMORIS_RDC_D3D12_COUNTERS") != "1":
         out["gpu_counter"] = ("skipped: D3D12 counters need Windows Developer Mode "
                               "(--d3d12-counters once it is on)")
     elif rd.GPUCounter.EventGPUDuration not in counters:

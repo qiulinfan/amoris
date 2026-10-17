@@ -1,4 +1,4 @@
-import { component, field } from "pocket";
+import { component, field } from "amoris";
 
 export const Command = component("Command", {
     version: 1, doc: "The courier's next collection attempt.",

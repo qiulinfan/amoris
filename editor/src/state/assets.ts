@@ -13,5 +13,5 @@ export const useAssets = create<AssetsState>((set) => ({
   set: (assets) => set({ assets }),
 }));
 
-export const ASSET_MIME = "application/x-pocket-asset";
-export const ENTITY_MIME = "application/x-pocket-entities";
+export const ASSET_MIME = "application/x-amoris-asset";
+export const ENTITY_MIME = "application/x-amoris-entities";

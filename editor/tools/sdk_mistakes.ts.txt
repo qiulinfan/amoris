@@ -1,4 +1,4 @@
-import { component, field, system } from "pocket";
+import { component, field, system } from "amoris";
 
 export const m1 = system({ name: "m1", phase: "update", doc: "d",
     queries: { boats: { with: ["Boa"] } }, run() {} });

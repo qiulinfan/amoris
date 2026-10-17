@@ -9,7 +9,7 @@ and TAA notes of 2026-10-09), 4.1 (one renderer for Metal, Vulkan, Direct3D 12 a
 This specification says how the opaque forward pass draws depth first and then shades only the
 visible samples: the passes, why both compute the same depth, how it fits occlusion culling's two
 phases, TAA and the three draw paths, the modes and the auto mode, and how it is checked. The code
-is `crates/pocket-render/src/prepass.rs` (the modes, the auto mode), `renderer.rs` (`render`,
+is `crates/amoris-render/src/prepass.rs` (the modes, the auto mode), `renderer.rs` (`render`,
 `DepthPrepass`, `forward_pair`, `depth_pipelines`) and `shaders/forward.wgsl` (`@invariant`,
 `vs_depth`, `vs_depth_masked`, `fs_depth_masked`). Measurements:
 [bench/prepass.md](../bench/prepass.md).
@@ -137,7 +137,7 @@ per device); each twin retains its pair's fragment entry point.
 ## 5. Modes
 
 `PrepassMode` (`prepass.rs`): `Off`, `On` (every frame with instances) and `Auto`, the default.
-`POCKET_PREPASS=off|on|auto` sets the starting mode natively, `Renderer::set_prepass` at any time,
+`AMORIS_PREPASS=off|on|auto` sets the starting mode natively, `Renderer::set_prepass` at any time,
 the viewport page `?prepass=off|on|auto`. `FrameStats::prepass` says what the frame did (`off`,
 `on`, `auto-on`, `auto-off`); the windowed benchmark reports it and the frames that drew it.
 
@@ -219,7 +219,7 @@ between them. Where two-phase frames come only with occlusion culling's probes (
 to 960 frames), a prepass probe of that kind may not finish within 600 frames; it gives up and the
 kind keeps its choice. A resize or a change of the opaque pass's format (anti-aliasing, GTAO) drops
 the running probes and probes again at the next frame of each kind, which draws as decided before
-until its probe decides. Without timestamps (WebGPU without `timestamp-query`, `POCKET_GPU_MINIMAL`
+until its probe decides. Without timestamps (WebGPU without `timestamp-query`, `AMORIS_GPU_MINIMAL`
 with `timestamps`) the auto mode never draws the prepass; `On` still does.
 
 The default mode is auto, chosen by measurement (bench/prepass.md 3): neither fixed mode is best
@@ -231,7 +231,7 @@ much slower way, or up to four of a way within 50% (bench/prepass.md 3 gives the
 
 ## 6. Checks
 
-- `crates/pocket-render/tests/prepass.rs` draws, with two renderers on one device (the prepass off
+- `crates/amoris-render/tests/prepass.rs` draws, with two renderers on one device (the prepass off
   and forced on) through the same frames: the mixed scene (every variant in the camera and four
   shadow cascades) with three skinned characters, with 4x MSAA; the occluder scene with its
   cylinder lifted off the ground and occlusion culling forced on (cold, warm, a camera cut);
@@ -242,7 +242,7 @@ much slower way, or up to four of a way within 50% (bench/prepass.md 3 gives the
   draw paths. A prepass vertex stage computing the same position in another order
   (`view_proj * pos + view_proj * rotated`) makes 20,695 pixels of the mixed scene differ (16%),
   and the test fails. It passes on the RTX 5060 and the Radeon 780M with Direct3D 12 and Vulkan, and
-  with `POCKET_GPU_MINIMAL=features,limits,timestamps`.
+  with `AMORIS_GPU_MINIMAL=features,limits,timestamps`.
 - The coplanar regression draws a fully transparent masked quad over a blue quad at the exact
   same depth. Every pixel must match the blue quad drawn alone, with prepass off and on, single-
   and double-sided masks, one sample and 4x MSAA, opaque and masked blue materials, and both
@@ -276,10 +276,10 @@ much slower way, or up to four of a way within 50% (bench/prepass.md 3 gives the
   timeout counted in frames of the kind, both ways drawn by turns as before (runs of frames without
   the prepass at each re-probe of the dense grid), no bail-out, several frames of the other way in
   flight, no cap on them.
-- `cargo run --release -p pocket-app --example draw_paths -- --compare prepass <scenes>` draws a
+- `cargo run --release -p amoris-app --example draw_paths -- --compare prepass <scenes>` draws a
   scene twice at one moment (off, forced on) and compares pixels and coverage;
   `python tools/prepass_compare.py` runs that over the samples and every capture of
-  tools/backend_compare.py with `POCKET_PREPASS=off` and `on`. Results in bench/prepass.md 2.
+  tools/backend_compare.py with `AMORIS_PREPASS=off` and `on`. Results in bench/prepass.md 2.
 
 ## 7. Limits and open questions
 

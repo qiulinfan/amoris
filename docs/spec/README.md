@@ -52,7 +52,7 @@ their code is under `spikes/`.
 | [taa-gtao.md](taa-gtao.md) | aa | 4.4 (Pioneer 2026-10-09: TAA and GTAO in the frame: the anti-aliasing and occlusion options, the opaque pass's extra targets, motion vectors with skinning, the TAA resolve, GTAO on indirect light only, the browser path), measured in docs/bench/taa-gtao.md |
 | [transparency.md](transparency.md) | transparency | 4.4 (Pioneer 2026-10-16: blended and transmissive materials leave the opaque batches and draw sorted back to front after the sky: which instances, the CPU sort and direct draws on every draw path, the shading with a see-through tint, the masked shadows, GTAO before the stage, TAA, MSAA, picking), measured in docs/bench/transparency.md |
 | [player.md](player.md) | player | Charter 2 (proof target 2), 3 (principles 2, 5, 6), 5.1 (Pioneer): the player layer as built: declaring players, the declaration as world state, team vision, the `player.*` commands over MCP and the CLI, stepped and pause-on-decision time, the sailing course and the reference skipper; measurements in [../bench/player.md](../bench/player.md) |
-| [perception-slice2.md](perception-slice2.md), [actions-slice2.md](actions-slice2.md), [time-slice2.md](time-slice2.md) | player | The decisions the rebuild line's perception, actions and time took where shared/contract was open (brought with pocket-interface from `57ed4ea1`) |
+| [perception-slice2.md](perception-slice2.md), [actions-slice2.md](actions-slice2.md), [time-slice2.md](time-slice2.md) | player | The decisions the rebuild line's perception, actions and time took where shared/contract was open (brought with amoris-interface from `57ed4ea1`) |
 
 The shared contract and benchmark are maintained in this repository's `shared/`.
 `shared/SYNC.toml` retains an optional source reference commit (checks.md 5.4). Shared definitions
@@ -156,7 +156,7 @@ spikes:
 
 1. **The error type.** `PocketError` (simulation.md, persistence.md, versions.md) and
    `ContractError` (an mcp.md draft) became `Problem`, spec-contract's, declared in
-   `pocket-contract`.
+   `amoris-contract`.
 2. **Event identity.** `EventId {tick, index}` (threads.md, perception.md, the contract README)
    became spec-sim's `EventSeq`, a world-wide sequence number.
 3. **Events and the hash.** persistence.md said events were not world state and hashed an events

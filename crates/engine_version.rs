@@ -1,7 +1,7 @@
-//! The engine's identity, computed by `pocket-app`'s and `pocket-web`'s build scripts with this one
+//! The engine's identity, computed by `amoris-app`'s and `amoris-web`'s build scripts with this one
 //! file, so the native and the web build of one tree report one `EngineVersion.source`
-//! (docs/spec/versions.md 3.1 and V9; architecture.md 4.13). It is emitted as `POCKET_ENGINE_*`
-//! variables, which `pocket_runtime::install_engine_version!` reads where the binary starts.
+//! (docs/spec/versions.md 3.1 and V9; architecture.md 4.13). It is emitted as `AMORIS_ENGINE_*`
+//! variables, which `amoris_runtime::install_engine_version!` reads where the binary starts.
 //!
 //! It sits beside the crates and belongs to none: each build script includes it with `#[path]`, so
 //! neither reaches into another crate's directory, and `tools/crate-graph.toml` has no edge to draw
@@ -10,13 +10,13 @@
 //! `source` is `BLAKE3-derive_key("Amoris 2026-10-03 engine source v1", per file in path order:
 //! ULEB128(len path) || path || BLAKE3(content))` over the files git lists (tracked, and untracked
 //! but not ignored) under the paths compiled into the engine, the definition
-//! `pocket_persist::version::source_hash` implements; `pocket-app`'s test `engine_version` holds the
+//! `amoris_persist::version::source_hash` implements; `amoris-app`'s test `engine_version` holds the
 //! two equal.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// `pocket_persist::version::SOURCE_CONTEXT`.
+/// `amoris_persist::version::SOURCE_CONTEXT`.
 const SOURCE_CONTEXT: &str = "Amoris 2026-10-03 engine source v1";
 /// The directories compiled into the engine (architecture.md 4.13): all of `third_party/`, not
 /// only the vendored crate and its patches, so whatever is vendored there next is covered too.
@@ -196,7 +196,7 @@ fn watch(root: &Path) {
     }
 }
 
-/// Emits `POCKET_ENGINE_SOURCE`, `_COMMIT`, `_TARGET`, `_PROFILE` and `_CONTRACT`.
+/// Emits `AMORIS_ENGINE_SOURCE`, `_COMMIT`, `_TARGET`, `_PROFILE` and `_CONTRACT`.
 pub fn emit() {
     let manifest = PathBuf::from(var("CARGO_MANIFEST_DIR"));
     let root = manifest
@@ -222,9 +222,9 @@ pub fn emit() {
             (source_hash(&root, &[]), "unknown".to_owned())
         }
     };
-    println!("cargo:rustc-env=POCKET_ENGINE_SOURCE={source}");
-    println!("cargo:rustc-env=POCKET_ENGINE_COMMIT={commit}");
-    println!("cargo:rustc-env=POCKET_ENGINE_TARGET={}", var("TARGET"));
-    println!("cargo:rustc-env=POCKET_ENGINE_PROFILE={}", profile());
-    println!("cargo:rustc-env=POCKET_ENGINE_CONTRACT={}", contract(&root));
+    println!("cargo:rustc-env=AMORIS_ENGINE_SOURCE={source}");
+    println!("cargo:rustc-env=AMORIS_ENGINE_COMMIT={commit}");
+    println!("cargo:rustc-env=AMORIS_ENGINE_TARGET={}", var("TARGET"));
+    println!("cargo:rustc-env=AMORIS_ENGINE_PROFILE={}", profile());
+    println!("cargo:rustc-env=AMORIS_ENGINE_CONTRACT={}", contract(&root));
 }

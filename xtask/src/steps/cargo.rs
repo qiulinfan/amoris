@@ -196,7 +196,7 @@ pub fn build(env: &Env) -> StepResult {
     step
 }
 
-/// `cargo check` for the web target of every game crate marked `web`, then of `pocket-web` with
+/// `cargo check` for the web target of every game crate marked `web`, then of `amoris-web` with
 /// the shipped feature set and with `editor` when it has that feature (checks.md 6.3).
 pub fn wasm(env: &Env, game_crates: &[String], web_has_editor: Option<bool>) -> StepResult {
     let mut step = StepResult::new("wasm");
@@ -206,7 +206,7 @@ pub fn wasm(env: &Env, game_crates: &[String], web_has_editor: Option<bool>) -> 
         step.inconclusive(Problem::new(
             "check.tool_missing",
             format!(
-                "no clang in {} for the web target's C code; set POCKET_LLVM",
+                "no clang in {} for the web target's C code; set AMORIS_LLVM",
                 env.llvm.display()
             ),
             json!({"tool": "clang"}),
@@ -235,11 +235,11 @@ pub fn wasm(env: &Env, game_crates: &[String], web_has_editor: Option<bool>) -> 
     }
     if let Some(editor) = web_has_editor {
         let mut args: Vec<String> = base.map(String::from).into();
-        args.extend(["-p".into(), "pocket-web".into()]);
-        runs.push(("pocket-web".into(), args.clone()));
+        args.extend(["-p".into(), "amoris-web".into()]);
+        runs.push(("amoris-web".into(), args.clone()));
         if editor {
             args.extend(["--features".into(), "editor".into()]);
-            runs.push(("pocket-web with editor".into(), args));
+            runs.push(("amoris-web with editor".into(), args));
         }
     }
     let mut checked = Vec::new();

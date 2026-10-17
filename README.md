@@ -44,7 +44,7 @@ then build from the repository:
 cd sdk && bun install --frozen-lockfile
 cd ../editor && bun install --frozen-lockfile && bun run build
 cd ..
-cargo build --release -p pocket-app
+cargo build --release -p amoris-app
 cd desktop && npm ci
 npm start -- ../samples/sailing
 ```
@@ -70,12 +70,12 @@ bun install --frozen-lockfile
 bun run build
 cd ..
 
-cargo build --release -p pocket-app
-./target/release/pocket serve samples/sailing --editor editor/dist
+cargo build --release -p amoris-app
+./target/release/amoris serve samples/sailing --editor editor/dist
 ```
 
 Open **http://127.0.0.1:7878/** and press **Play**. The executable is currently named
-`pocket`. The browser viewport requires WebGPU.
+`amoris`. The browser viewport requires WebGPU.
 
 Select **Sloop** in the Hierarchy to edit its components. Open `scripts/rules.ts` to
 change its gameplay; **Cmd/Ctrl+S** applies the script. Set a breakpoint in the gutter,
@@ -85,8 +85,8 @@ returns to the original edit world. See the [editor guide](site/content/editor.m
 For a native game window:
 
 ```sh
-./target/release/pocket play samples/sailing
-./target/release/pocket play samples/anim
+./target/release/amoris play samples/sailing
+./target/release/amoris play samples/anim
 ```
 
 ## The small technology map
@@ -109,15 +109,15 @@ same self-contained world.
 Discover commands and inspect a running game:
 
 ```sh
-./target/release/pocket help
-./target/release/pocket catalog --host http://127.0.0.1:7878 --json
-./target/release/pocket world get Sloop Boat Tally --host http://127.0.0.1:7878 --json
+./target/release/amoris help
+./target/release/amoris catalog --host http://127.0.0.1:7878 --json
+./target/release/amoris world get Sloop Boat Tally --host http://127.0.0.1:7878 --json
 ```
 
-Use `./target/release/pocket mcp samples/sailing` as a stdio MCP server, or connect to
+Use `./target/release/amoris mcp samples/sailing` as a stdio MCP server, or connect to
 the running host at `http://127.0.0.1:7878/mcp`. These tools expose the developer
 command surface. Games that declare player seats also expose engine-enforced perception
-and intention commands. For example, `pocket mcp samples/sailing-course --seat skipper`
+and intention commands. For example, `amoris mcp samples/sailing-course --seat skipper`
 exposes only the player tool; developer edits and debugger commands are refused.
 See the [player workflow](site/content/api.md#play-through-a-restricted-seat).
 
@@ -129,7 +129,7 @@ See the [player workflow](site/content/api.md#play-through-a-restricted-seat).
 
 The interactive renderer includes GPU culling, an adaptive depth prepass, clustered PBR,
 shadows, animation, and 3D Gaussian splats. Metal is the macOS default, Direct3D 12 the
-Windows default; Vulkan remains selectable with `POCKET_BACKEND=vulkan`.
+Windows default; Vulkan remains selectable with `AMORIS_BACKEND=vulkan`.
 Separate path-tracing and neural-lighting research tools require supported native hardware.
 
 The **10 October 2026** Windows study measured a dense 1.6-million-cube workload at
@@ -180,7 +180,7 @@ locally to open the detailed sailing sample:
 
 ```sh
 python3 tools/showcase_assets.py --projects
-./target/release/pocket serve site/demos/harbor --editor editor/dist
+./target/release/amoris serve site/demos/harbor --editor editor/dist
 ```
 
 In the **5 October 2026** forward-renderer study at 1920 × 1080 on Apple M5 / Metal,

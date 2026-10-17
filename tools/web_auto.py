@@ -2,12 +2,12 @@
 """Whether the depth prepass's and occlusion culling's auto modes decide right in Chrome
 (docs/bench/prepass.md 6): runs viewport pages in headless Chrome through tools/web_bench.mjs,
 polls them every 200 ms (each frame's stats, and the auto modes' state from the viewport's
-`auto_stats`, crates/pocket-viewport/src/web.rs), and records every frame's prepass and occlusion
+`auto_stats`, crates/amoris-viewport/src/web.rs), and records every frame's prepass and occlusion
 choice, the decisions, the frames they took, the readbacks' lag and the timestamps' resolution;
 `native` runs many_cubes headless on the same scenes for comparison.
 
 Build the viewport package from this tree first (`tools/build_viewport.sh`) and
-`cargo build --release -p pocket-render --example many_cubes`. From the repository root:
+`cargo build --release -p amoris-render --example many_cubes`. From the repository root:
 
     python tools/web_auto.py run --out out/webauto/runs.jsonl \\
         [--pages dense,sphere,occluders] [--gpus nvidia,780m] [--loops uncapped,vsync] \\
@@ -57,7 +57,7 @@ OPAQUE = ("depth prepass", "opaque early", "opaque+sky")
 # 600 frames' stats, each marked once taken), the latest frame's stats and the auto modes' state
 # (`auto_stats`; a build from before it carried the state in every frame's stats).
 POLL_EXPR = r"""(() => {
-  const s = window.pocketSamples || [];
+  const s = window.amorisSamples || [];
   const code = (l) => (l === "auto-on" || l === "on" ? 1 : 0);
   const frames = [];
   for (const x of s) {
@@ -65,8 +65,8 @@ POLL_EXPR = r"""(() => {
     x.__taken = 1;
     frames.push([code(x.prepass), code(x.occlusion), +(x.frame_ms || 0).toFixed(3)]);
   }
-  const vp = window.pocketViewport;
-  const st = window.pocketStats;
+  const vp = window.amorisViewport;
+  const st = window.amorisStats;
   const auto = vp && vp.raw.auto_stats ? JSON.parse(vp.raw.auto_stats()) : st || {};
   return { t: Math.round(performance.now()), frames, window: s.length,
     stats: st ? { prepass_auto: auto.prepass_auto, occlusion_auto: auto.occlusion_auto,
@@ -260,11 +260,11 @@ def native(args):
             conditions(out.parent / f"native-conditions-{gpu}-{backend}-{int(time.time())}.json",
                        f"web_auto native {gpu} {backend}")
             for page in ("dense", "sphere"):
-                env = dict(os.environ, POCKET_AA="msaa", POCKET_GTAO="off",
-                           POCKET_BACKEND=backend)
-                env.pop("POCKET_ADAPTER", None)
+                env = dict(os.environ, AMORIS_AA="msaa", AMORIS_GTAO="off",
+                           AMORIS_BACKEND=backend)
+                env.pop("AMORIS_ADAPTER", None)
                 if gpu == "780m":
-                    env["POCKET_ADAPTER"] = "780m"
+                    env["AMORIS_ADAPTER"] = "780m"
                 cmd = [str(exe), "--headless-bench", str(args.frames), "--size", args.size,
                        "--settle", "5"] + (["--dense"] if page == "dense" else [])
                 p = subprocess.run(cmd, cwd=ROOT, env=env, capture_output=True, text=True,

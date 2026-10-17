@@ -1,5 +1,5 @@
 // Evidence of the editor's script debugger against the real host (docs/spec/editor.md 10): drives
-// the built editor that `pocket serve` serves, in headless Chrome over CDP, with real input only
+// the built editor that `amoris serve` serves, in headless Chrome over CDP, with real input only
 // (clicks, keys, typing; nothing through dev hooks), through one edit-run-debug loop:
 //
 //   open rules.ts, click the gutter of a line in the `log` system, Play, the pause at that line,
@@ -9,7 +9,7 @@
 //   inspector, remove the breakpoints and Continue, edit the script while it runs, then Stop while
 //   paused (the edit world takes the edited scripts) and Play again into the edited code.
 //
-//   pocket serve <copy of samples/sailing> --port 7911 --editor editor/dist
+//   amoris serve <copy of samples/sailing> --port 7911 --editor editor/dist
 //   bun tools/debug-host.ts --url http://127.0.0.1:7911/ [--out ../docs/evidence/editor] [--line 27]
 //
 // Screenshots go to <out>/debug-host-*.png; what each step saw is printed (and kept beside them as

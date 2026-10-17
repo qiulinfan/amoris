@@ -17,7 +17,7 @@
 - Media is actual engine capture. Do not use generated mockups as engine screenshots.
   `tools/showcase_record.py` reuses the tested MCP client in `tools/smoke_server.py`, and
   controls a real host at 8768; `tools/showcase_visual.py` captures detail at 8769 and Bistro at 8770.
-  Source frames and detailed traces live under ignored `out/showcase` / `.pocket`.
+  Source frames and detailed traces live under ignored `out/showcase` / `.amoris`.
 - The MCP pilot is scripted and uses developer access. Do not label it an autonomous
   LLM player or claim the player-specific MCP projection is complete.
 - Browser editor recordings use CUA/CDP on the real host; screenshots from the mock are

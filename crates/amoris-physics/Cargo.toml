@@ -1,0 +1,41 @@
+[package]
+name = "amoris-physics"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Rigid bodies on Rapier, buoyancy on waves, wind on a sail, keel, rudder and hull drag"
+
+[dependencies]
+amoris-contract.workspace = true
+amoris-sim.workspace = true
+bevy_ecs.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+# Persisted::trace takes its Tracer: the components hold enums below their top level, which their
+# trace explores first (persistence.md 14, choice 9; architecture.md 6).
+serde-reflection.workspace = true
+# The solver: enhanced-determinism and serde-serialize, never parallel or simd8 (architecture.md
+# 4.4 and 6; the physics spike).
+rapier3d.workspace = true
+# The physics cache's bytes: Rapier's PhysicsWorld through serde, as the physics spike wrote and
+# restored them natively and in the browser (architecture.md 6, the reason recorded there).
+bincode.workspace = true
+# Layout 2 of the physics cache hands a shape built elsewhere to Rapier's derived deserializer, where
+# the field's type is generic; `typeid::of` shows it is `SharedShape` first (architecture.md 6).
+typeid.workspace = true
+# parry's BVH rounds a log2 the platform computes natively; a test compares it with libm's
+# (numeric.md 10, item 8). The forces use amoris_sim::math, not libm directly.
+libm.workspace = true
+
+# The web tests (amoris_physics::WEB_TESTS: the sailing scene's hash chain, forks, the BVH log2)
+# as a WebAssembly module with no imports, run under Node by tests/web/run.mjs.
+
+[[example]]
+name = "web_physics"
+crate-type = ["cdylib"]
+
+[[example]]
+name = "level_web"
+crate-type = ["cdylib"]

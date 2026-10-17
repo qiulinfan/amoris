@@ -238,7 +238,7 @@ export function registerBuiltinCommands() {
       icon: ClipboardCopy,
       keywords: "cdp inspector vscode attach",
       run: async () => {
-        // The host's CDP endpoint is pocket-debug's own port (9229 by default), not the host's.
+        // The host's CDP endpoint is amoris-debug's own port (9229 by default), not the host's.
         const cdp = (await api.debug.state().catch(() => null))?.cdp ?? useDebug.getState().cdp;
         if (!cdp) {
           useUi.getState().toast({ kind: "error", title: "No CDP endpoint", body: "This host does not serve the Chrome DevTools Protocol (its port was taken, or it is the mock)." });

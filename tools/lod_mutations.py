@@ -3,11 +3,11 @@
 
     python tools/lod_mutations.py [--out out/bench-runs/lod/mutations.json] [filter ...]
 
-Each mutation edits cull.wgsl, meshes.rs, renderer.rs, lod.rs or pocket-assets' lod.rs, runs
-`cargo test --release -p pocket-render --test lod --test draw_paths --test occlusion` (and
-pocket-assets' own tests for the generator's mutations), and restores the file with `git checkout`;
-it refuses to start while those files have uncommitted changes. POCKET_BACKEND, POCKET_ADAPTER and
-POCKET_GPU_MINIMAL pass through. A filter keeps the mutations whose name contains it.
+Each mutation edits cull.wgsl, meshes.rs, renderer.rs, lod.rs or amoris-assets' lod.rs, runs
+`cargo test --release -p amoris-render --test lod --test draw_paths --test occlusion` (and
+amoris-assets' own tests for the generator's mutations), and restores the file with `git checkout`;
+it refuses to start while those files have uncommitted changes. AMORIS_BACKEND, AMORIS_ADAPTER and
+AMORIS_GPU_MINIMAL pass through. A filter keeps the mutations whose name contains it.
 
 Not here: the generator's guard that keeps errors increasing (`error = error.max(reached)`). On
 every chain tried (the demo rocks and knot at five sizes) the simplifier's own errors already
@@ -23,14 +23,14 @@ import sys
 import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CULL = "crates/pocket-render/shaders/cull.wgsl"
-MESHES = "crates/pocket-render/src/meshes.rs"
-RENDERER = "crates/pocket-render/src/renderer.rs"
-SELECT = "crates/pocket-render/src/lod.rs"
-GENERATE = "crates/pocket-assets/src/lod.rs"
-RENDER_TESTS = ["-p", "pocket-render", "--test", "lod", "--test", "draw_paths", "--test",
+CULL = "crates/amoris-render/shaders/cull.wgsl"
+MESHES = "crates/amoris-render/src/meshes.rs"
+RENDERER = "crates/amoris-render/src/renderer.rs"
+SELECT = "crates/amoris-render/src/lod.rs"
+GENERATE = "crates/amoris-assets/src/lod.rs"
+RENDER_TESTS = ["-p", "amoris-render", "--test", "lod", "--test", "draw_paths", "--test",
                 "occlusion"]
-ASSET_TESTS = ["-p", "pocket-assets", "--lib"]
+ASSET_TESTS = ["-p", "amoris-assets", "--lib"]
 
 # (name, tests, [(file, text, replacement)]): each text must occur exactly once.
 MUTATIONS = [
@@ -171,7 +171,7 @@ def main():
         sys.exit(f"uncommitted changes in {files}: commit or stash them first")
     head = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT,
                           capture_output=True, text=True).stdout.strip()
-    env = {k: os.environ[k] for k in ("POCKET_BACKEND", "POCKET_ADAPTER", "POCKET_GPU_MINIMAL")
+    env = {k: os.environ[k] for k in ("AMORIS_BACKEND", "AMORIS_ADAPTER", "AMORIS_GPU_MINIMAL")
            if k in os.environ}
     results = {"commit": head, "env": env, "mutations": {}}
     survived = []

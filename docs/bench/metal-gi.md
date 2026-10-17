@@ -15,11 +15,11 @@ Assets load asynchronously in native and WebGPU renderers. Interior probes are e
 Reproduce:
 
 ```sh
-cargo run --release -p pocket-render --example bake_gi -- samples/gi-room \
+cargo run --release -p amoris-render --example bake_gi -- samples/gi-room \
   --output samples/gi-room/lighting/probes.json \
   --origin -1.65,0.35,-1.65 --spacing 0.825,0.825,0.825 --dims 5,5,5 \
   --rays 1024 --bounces 4 --seed 1 --distance-resolution 8 --max-distance 24
-cargo run --release -p pocket-app -- play samples/gi-room --mute
+cargo run --release -p amoris-app -- play samples/gi-room --mute
 ```
 
 Recorded bake: 125 probes, 96 triangles, 445,927 rays, 5 rejected interior probes, 0.158 s release
@@ -46,12 +46,12 @@ alpha, explicit lights and unsupported transport. It does not claim NVIDIA SDK p
 radiance-cache estimator. Sampling clipping, dropped deposits and hash collisions are reported.
 
 ```sh
-cargo run --release -p pocket-render --example ray_query_probe   # formerly metal_ray_query
-cargo run --release -p pocket-render --example gi_trace -- samples/gi-room \
+cargo run --release -p amoris-render --example ray_query_probe   # formerly metal_ray_query
+cargo run --release -p amoris-render --example gi_trace -- samples/gi-room \
   --mode raw --output out/gi/raw.png --width 320 --height 240 --frames 128 --samples 1
-cargo run --release -p pocket-render --example gi_trace -- samples/gi-room \
+cargo run --release -p amoris-render --example gi_trace -- samples/gi-room \
   --mode sharc --output out/gi/sharc.png --width 320 --height 240 --frames 128 --samples 1
-cargo test -p pocket-render --lib ray_query   # formerly `metal_ -- --ignored`
+cargo test -p amoris-render --lib ray_query   # formerly `metal_ -- --ignored`
 ```
 
 Three interleaved runs, 320x240, 128 frames, same camera/seed, six bounces, 0.25 m cells and
@@ -79,7 +79,7 @@ and secondary emission are accounted separately from reflected-tail radiance. Mi
 proposals count toward M; history is bounded/reset. It never substitutes color-history averaging.
 
 ```sh
-cargo run --release -p pocket-render --example gi_trace -- samples/gi-room \
+cargo run --release -p amoris-render --example gi_trace -- samples/gi-room \
   --mode restir --reuse none --candidates 1 --output out/gi/ris.png \
   --width 160 --height 120 --frames 32 --samples 1
 ```
@@ -117,7 +117,7 @@ uv sync --project tools/neural/gi --python 3.14
 tools/neural/gi/.venv/bin/python tools/neural/gi/train.py \
   --input samples/gi-room/lighting/probes.json --output samples/gi-room/lighting/network.json \
   --steps 4000 --samples 32768 --seed 7 --device mps
-cargo run --release -p pocket-render --example neural_gi_probe -- samples/gi-room/lighting/network.json
+cargo run --release -p amoris-render --example neural_gi_probe -- samples/gi-room/lighting/network.json
 ```
 
 MPS training took 8.19 s. Held-out MSE 0.01463 and PSNR 34.51 dB use the report's stated linear
@@ -142,7 +142,7 @@ The native workspace tests pass, including the CPU baker/reservoir/asset checks.
 Metal hardware tests were also executed explicitly and passed. Neural teacher tests, trained-model
 GPU/CPU parity, native captures, native release build, rebuilt wasm viewport, real WebGPU asset
 loading/rendering and the scoped dependency/generation checks were verified. The browser helper's
-editor page does not publish `pocketSamples`; its zero sample count is not a measured FPS.
+editor page does not publish `amorisSamples`; its zero sample count is not a measured FPS.
 
 No full `cargo xtask check` pass, complete ReSTIR PT, online dynamic NRC, arbitrary production
 material/animation coverage or engine-wide performance gain is claimed by these experiments.
@@ -239,9 +239,9 @@ resolve + render), median (minimum; spread); the provisional RTX 5060 medians fo
 ### Reproduce (Windows)
 
 ```sh
-POCKET_BACKEND=vulkan cargo run --release -p pocket-render --example gi_trace -- samples/gi-room \
+AMORIS_BACKEND=vulkan cargo run --release -p amoris-render --example gi_trace -- samples/gi-room \
   --mode sharc --output out/gi/sharc.png --width 320 --height 240 --frames 128 --samples 1
-cargo test --release -p pocket-render --lib ray_query
+cargo test --release -p amoris-render --lib ray_query
 python tools/rt_bench.py correctness --adapter 5060 --only sharc-reference,sharc-raw,sharc
 python tools/rt_bench.py timing --adapter 5060 --only sharc-raw,sharc-cached,sharc-raw-lean,sharc-cached-lean
 ```

@@ -111,7 +111,7 @@ Reproduce the workload:
 
 ```sh
 python3 tools/showcase_assets.py --projects
-cargo run --release -p pocket-render --example showcase_bench -- \
+cargo run --release -p amoris-render --example showcase_bench -- \
   site/demos/stress-1024 --width 1920 --height 1080 --frames 300 --warm 60
 ```
 
@@ -175,10 +175,10 @@ for native, wasm, SIMD, and deterministic configurations.
 
 ```sh
 cargo xtask check --json
-./target/release/pocket check samples/sailing --json
+./target/release/amoris check samples/sailing --json
 cd editor && bun run typecheck && bun run build
 ```
 
-Keep `CARGO_TARGET_DIR` inside the checkout. Never set `POCKET_BLESS` while validating.
+Keep `CARGO_TARGET_DIR` inside the checkout. Never set `AMORIS_BLESS` while validating.
 Media capture is separate from these performance measurements: the demonstration clips
 use recorded frames and fixed simulation steps.

@@ -1,10 +1,10 @@
 // The editor's dev server and build. In development every host endpoint (docs/spec/host-protocol.md
-// section 1) is proxied to the host named by POCKET_HOST: the real `pocket editor` at 127.0.0.1:7878
+// section 1) is proxied to the host named by AMORIS_HOST: the real `amoris editor` at 127.0.0.1:7878
 // by default, or the mock (`bun run dev:mock` sets it to the mock's port).
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-const host = process.env.POCKET_HOST ?? "http://127.0.0.1:7878";
+const host = process.env.AMORIS_HOST ?? "http://127.0.0.1:7878";
 const port = Number(process.env.EDITOR_PORT ?? 5173);
 
 const http = { target: host, changeOrigin: true };
@@ -22,10 +22,10 @@ export default defineConfig({
       "/assets": http,
       "/wasm": http,
       "/mcp": http,
-      // No /devtools or /json: the host's CDP endpoint is pocket-debug's own port (9229), and the
+      // No /devtools or /json: the host's CDP endpoint is amoris-debug's own port (9229), and the
       // editor debugs through `debug.*` over /ws (docs/spec/editor.md 8.1).
     },
-    // The SDK's declarations (../crates/pocket-script/src/prelude/pocket.d.ts) are read at build
+    // The SDK's declarations (../crates/amoris-script/src/prelude/amoris.d.ts) are read at build
     // time for Monaco, the fallback until the host sends the project's.
     fs: { allow: [".."] },
   },

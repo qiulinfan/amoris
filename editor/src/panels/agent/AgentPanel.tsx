@@ -109,8 +109,8 @@ function NewSession() {
           icon={ClipboardCopy}
           data-tip="Copy a Claude Code command that connects to this host's MCP endpoint"
           onClick={() => {
-            void navigator.clipboard?.writeText(`claude mcp add --transport http pocket ${mcpUrl()}`);
-            useUi.getState().toast({ kind: "success", title: "Copied", body: `claude mcp add --transport http pocket ${mcpUrl()}` });
+            void navigator.clipboard?.writeText(`claude mcp add --transport http amoris ${mcpUrl()}`);
+            useUi.getState().toast({ kind: "success", title: "Copied", body: `claude mcp add --transport http amoris ${mcpUrl()}` });
           }}
         >
           MCP endpoint

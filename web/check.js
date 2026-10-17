@@ -1,6 +1,6 @@
 // The web check (docs/spec/checks.md 7.2), run when the page is loaded with `?check`: the shipped
 // page's own module and worker, driven as a page drives them, with what `cargo xtask check`'s web
-// step put beside it (expected.json: the native `pocket hashes` of every workload and seed, the
+// step put beside it (expected.json: the native `amoris hashes` of every workload and seed, the
 // packages and inputs, the replays the native replay check recorded). It sets document.title to
 // `DONE <json>` or `FAIL <json>` (tools/webcheck.py's protocol) with `errors`, `warnings` and
 // `measurements` in the shapes xtask reads.
@@ -20,7 +20,7 @@
 //   its problems are not the page's errors: they go to `controls` as `{project, expected, got,
 //   caught, errors}`, which xtask judges (`check.control_passed`, `check.control_wrong_failure`);
 //   a control that is not caught fails the page.
-import { loadModule, start } from "./pocket.js";
+import { loadModule, start } from "./amoris.js";
 
 const REAL_TIME_SPEED = 8;
 const LATE_ACK_MS = 25;

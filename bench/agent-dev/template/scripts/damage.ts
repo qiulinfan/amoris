@@ -1,4 +1,4 @@
-import { system } from "pocket";
+import { system } from "amoris";
 
 export const applyDamage = system({
     name: "apply_damage", phase: "update", doc: "Consume armored damage and emit defeat once.",

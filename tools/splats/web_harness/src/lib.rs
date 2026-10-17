@@ -2,10 +2,10 @@
 //! random splat cloud with either rasterizer, so the tile rasterizer can be checked end to end in
 //! Chrome's WebGPU.
 
+use amoris_assets::frame::{EnvironmentView, Pose, RenderFrame, SplatView};
+use amoris_render::splat::{RawSplat, SplatCloud, SplatRaster};
+use amoris_render::{CameraState, Gpu, Renderer};
 use glam::{Quat, Vec3};
-use pocket_assets::frame::{EnvironmentView, Pose, RenderFrame, SplatView};
-use pocket_render::splat::{RawSplat, SplatCloud, SplatRaster};
-use pocket_render::{CameraState, Gpu, Renderer};
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen(start)]
@@ -17,7 +17,7 @@ pub fn start() {
         }
         fn log(&self, r: &log::Record<'_>) {
             if self.enabled(r.metadata()) {
-                web_sys::console::log_1(&format!("[pocket {}] {}", r.level(), r.args()).into());
+                web_sys::console::log_1(&format!("[amoris {}] {}", r.level(), r.args()).into());
             }
         }
         fn flush(&self) {}
@@ -26,7 +26,7 @@ pub fn start() {
     let _ = log::set_logger(&LOGGER);
     log::set_max_level(log::LevelFilter::Info);
     std::panic::set_hook(Box::new(|info| {
-        web_sys::console::error_1(&format!("pocket panicked: {info}").into());
+        web_sys::console::error_1(&format!("amoris panicked: {info}").into());
     }));
 }
 
@@ -76,7 +76,7 @@ pub struct App {
 impl App {
     pub async fn create(canvas: web_sys::HtmlCanvasElement, count: u32) -> Result<App, JsValue> {
         let (w, h) = (canvas.width().max(1), canvas.height().max(1));
-        let instance = pocket_render::gpu::instance(pocket_render::BackendChoice::Auto);
+        let instance = amoris_render::gpu::instance(amoris_render::BackendChoice::Auto);
         let surface = instance
             .create_surface(wgpu::SurfaceTarget::Canvas(canvas))
             .map_err(|e| JsValue::from_str(&format!("no WebGPU surface: {e}")))?;

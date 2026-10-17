@@ -20,13 +20,13 @@ cost the agents. This page says what Pioneer built of that list on 2026-10-09 (b
 
 | Finding (debug-eval.md) | What it cost the agents | Built | Checked by |
 |---|---|---|---|
-| 1. A breakpoint stalls the agent's own tools | 28 calls in 11 runs hung until the agent's tool gave up, 2,238 s, 21 % of all agent time | (a) `time.step` returns when a breakpoint, data watch, `debugger;`, exception or debugger step stops the game, with `stopped_by: {reason, tick, system, location, breakpoint?, watch?}`; the step ends with the stopped tick. (b) While held, `status`, `world.get/tree/query/schema`, `scripts.list/read/status` and `snapshot` answer from the last publication (marked `paused_at`), `catalog.list`, `docs.search`, events, logs and `debug.*` as always. (c) Every other call that needs the game thread is refused at once with `debug.paused {location, reason, tick, system}`; the CLI waits 60 s at most (`--timeout`, `POCKET_TIMEOUT`) and says `host.timeout` | pocket-app `tests/paused_host.rs`; the smoke test's section 4; server.md 3.4 |
-| 2. A restore silently reverts the scripts | 11 runs; 3 reported a fix live on a host running the bug | `snapshots.restore` and `debug.rewind` keep the applied scripts unless `{bundle: "snapshot"}`: the world is restored under its own bundle and swapped to the applied one by the hot update's recorded Host write; the answer and the status line name the bundle (`restored tick 0; scripts dd3ac0de7414 (applied)`, `... | scripts dd3ac0de7414`) | pocket-runtime `tests/agent_reads.rs` (restore on the thread, a recording through restore and swap replays identically); smoke test; server.md 3.3 |
-| 3. `debug.eval` cannot see most block-scoped locals | 7 runs, 37 failed evaluations | P11, a QuickJS-ng patch (`third_party/patches/p11-debug-eval-scope.diff`, applied by `vendor.py`): an evaluation resolves names in the lexical scope of the statement its frame stands at, in the stopped frame and in callers' (below) | pocket-app `debug_agent.rs` `eval_sees_the_block_scoped_locals_in_scope` (fails without P11's lookup); CDP end to end 20/20 ([cdp-e2e-p11.txt](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/agentdebug/cdp-e2e-p11.txt)); pocket-script's tests, the wasm build's included |
-| 4. The debugger is not described where agents look | 34 refusals of guessed parameters in 9 runs | a catalog entry with kind, aliases and JSON Schema for every `debug.*` method (`pocket help debug.watch` lists `entity, component, field`); the MCP `debug` tool takes all 16 methods as actions and lists their 18 parameters; `debug.watch` takes entity names; aliases `debug.break`, `debug.watch.clear`; a module's short path (`helm.ts`); CLI short forms (`pocket debug break scripts/helm.ts:67 --if <expr>`, `debug eval <expr>`, `debug watch Sloop.Boat.hoist`, `debug set`, `step`, `clear`, `unwatch`, `rewind`, ...); `debug state` as text (the place, the innermost frame's locals one per line, the other frames' places) and `debug.state {brief}` as JSON | `paused_host.rs` (catalog entries equal `pocket_debug::methods()`; the MCP tool covers every method and parameter); unit tests of the short forms and text forms in `client.rs` |
-| 5. A write trace ("why did this field change") | | Built 2026-10-15 (branch `explore/writes`, debugger.md 13): `debug.writes {entity, component, field?, ticks?}` (`pocket debug writes Sloop.Boat.rudder --ticks 120`, MCP `debug` `writes`; `time.step {trace}` underneath) steps the ticks and names, tick by tick, every system that changed the field, engine or script, with phase and values, a script's statement (`scripts/helm.ts:10:13`), and the boundary's recorded writes (`world.edit`, `player.act`); nothing stops, and the world hash is the same. `debug.watch` saw script systems only: on the sailing course `interface.intents` (sail_to's steering) writes `Boat.rudder` every tick. A write of a helper's result names the storing statement (`via` the helper's `return`) | pocket-runtime `tests/write_trace.rs`, pocket-app `paused_host.rs`; cost in [write-trace.md](write-trace.md) (quiet re-measurement, 2026-10-15): +11 to +17 % a tick on the sailing sample's 15 script statements, three times the tick on the rule workload's 22,947, since the script side probes every statement |
+| 1. A breakpoint stalls the agent's own tools | 28 calls in 11 runs hung until the agent's tool gave up, 2,238 s, 21 % of all agent time | (a) `time.step` returns when a breakpoint, data watch, `debugger;`, exception or debugger step stops the game, with `stopped_by: {reason, tick, system, location, breakpoint?, watch?}`; the step ends with the stopped tick. (b) While held, `status`, `world.get/tree/query/schema`, `scripts.list/read/status` and `snapshot` answer from the last publication (marked `paused_at`), `catalog.list`, `docs.search`, events, logs and `debug.*` as always. (c) Every other call that needs the game thread is refused at once with `debug.paused {location, reason, tick, system}`; the CLI waits 60 s at most (`--timeout`, `AMORIS_TIMEOUT`) and says `host.timeout` | amoris-app `tests/paused_host.rs`; the smoke test's section 4; server.md 3.4 |
+| 2. A restore silently reverts the scripts | 11 runs; 3 reported a fix live on a host running the bug | `snapshots.restore` and `debug.rewind` keep the applied scripts unless `{bundle: "snapshot"}`: the world is restored under its own bundle and swapped to the applied one by the hot update's recorded Host write; the answer and the status line name the bundle (`restored tick 0; scripts dd3ac0de7414 (applied)`, `... | scripts dd3ac0de7414`) | amoris-runtime `tests/agent_reads.rs` (restore on the thread, a recording through restore and swap replays identically); smoke test; server.md 3.3 |
+| 3. `debug.eval` cannot see most block-scoped locals | 7 runs, 37 failed evaluations | P11, a QuickJS-ng patch (`third_party/patches/p11-debug-eval-scope.diff`, applied by `vendor.py`): an evaluation resolves names in the lexical scope of the statement its frame stands at, in the stopped frame and in callers' (below) | amoris-app `debug_agent.rs` `eval_sees_the_block_scoped_locals_in_scope` (fails without P11's lookup); CDP end to end 20/20 ([cdp-e2e-p11.txt](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/agentdebug/cdp-e2e-p11.txt)); amoris-script's tests, the wasm build's included |
+| 4. The debugger is not described where agents look | 34 refusals of guessed parameters in 9 runs | a catalog entry with kind, aliases and JSON Schema for every `debug.*` method (`amoris help debug.watch` lists `entity, component, field`); the MCP `debug` tool takes all 16 methods as actions and lists their 18 parameters; `debug.watch` takes entity names; aliases `debug.break`, `debug.watch.clear`; a module's short path (`helm.ts`); CLI short forms (`amoris debug break scripts/helm.ts:67 --if <expr>`, `debug eval <expr>`, `debug watch Sloop.Boat.hoist`, `debug set`, `step`, `clear`, `unwatch`, `rewind`, ...); `debug state` as text (the place, the innermost frame's locals one per line, the other frames' places) and `debug.state {brief}` as JSON | `paused_host.rs` (catalog entries equal `amoris_debug::methods()`; the MCP tool covers every method and parameter); unit tests of the short forms and text forms in `client.rs` |
+| 5. A write trace ("why did this field change") | | Built 2026-10-15 (branch `explore/writes`, debugger.md 13): `debug.writes {entity, component, field?, ticks?}` (`amoris debug writes Sloop.Boat.rudder --ticks 120`, MCP `debug` `writes`; `time.step {trace}` underneath) steps the ticks and names, tick by tick, every system that changed the field, engine or script, with phase and values, a script's statement (`scripts/helm.ts:10:13`), and the boundary's recorded writes (`world.edit`, `player.act`); nothing stops, and the world hash is the same. `debug.watch` saw script systems only: on the sailing course `interface.intents` (sail_to's steering) writes `Boat.rudder` every tick. A write of a helper's result names the storing statement (`via` the helper's `return`) | amoris-runtime `tests/write_trace.rs`, amoris-app `paused_host.rs`; cost in [write-trace.md](write-trace.md) (quiet re-measurement, 2026-10-15): +11 to +17 % a tick on the sailing sample's 15 script statements, three times the tick on the rule workload's 22,947, since the script side probes every statement |
 | 6. Reads come whole | 12 refusals of field reads; median 29 k characters of tool output per run | `world get Sloop Boat.heading_deg,Boat.rudder` (`world.get {fields}`, paths, `null` where the entity lacks the component, a wrong field refused with the component's fields and a suggestion); `scripts read <p> --lines 50-80` (numbered); `step 300 --sample Sloop.Boat.heading_deg,Sloop.Boat.rudder --every 30` (a table); arrays past 8 items cut in the CLI's text | `agent_reads.rs`; smoke test |
-| 7. Smaller fixes | | `pocket scripts status`, `pocket docs <words>` | |
+| 7. Smaller fixes | | `amoris scripts status`, `amoris docs <words>` | |
 
 ## Measurements (provisional, superseded by the quiet re-measurement)
 
@@ -40,7 +40,7 @@ From
 | `status` while held | waited for the resume | 3.0 ms |
 | `world.get {fields}` while held | waited | 2.5 ms |
 | `scripts.apply` while held | waited (one agent's waited behind a breakpoint that re-fired each tick) | refused in 1.8 ms |
-| The same four through the CLI, process start included | the agent's tool timed out (15 to 120 s) | 62 to 75 ms (`pocket status` while running: 48.5 ms in the same session) |
+| The same four through the CLI, process start included | the agent's tool timed out (15 to 120 s) | 62 to 75 ms (`amoris status` while running: 48.5 ms in the same session) |
 | `world get Sloop`, text / exact JSON | 11 KB | 3,143 B / 11,091 B; two fields alone 54 B |
 | `debug.state` at `rules.ts:27` | 9.5 KB over 412 lines in the evaluation's `helm.ts` frames | full JSON 3,629 B, `{brief}` 677 B, CLI text 306 B |
 | MCP `tools/list` | 4.4 KB, 1,236 tokens (cl100k) | 6,645 B, about 1,660 tokens at four bytes a token: the debugger's description costs about 400 tokens a session |
@@ -57,14 +57,14 @@ not always). HTTP figures from new connections are not comparable across runs he
 ## The review of the held host (2026-10-09)
 
 An adversarial review of this branch confirmed two defects in server.md 3.4 as first built; both are
-fixed, and `tools/held_host_review.py` runs the reviewer's reproductions against `pocket serve`
+fixed, and `tools/held_host_review.py` runs the reviewer's reproductions against `amoris serve`
 ([held-host-review.json](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/agentdebug/held-host-review.json),
 provisional).
 
 | Finding | Reproduction before the fix | Fix | Now |
 |---|---|---|---|
 | **The editor's Stop while paused was refused**, and Play kept running. The editor continued the pause, read `time.control {}` and sent `play.stop`; in real-time Play the next tick's breakpoint held the game again within milliseconds of the continue, so `time.control` and `play.stop` met a held game and were refused at once (`queued: false`); `played` was undefined, so Stop also skipped applying the edited scripts to the edit world. The same for any "continue, then act" call: 59 of 60 `world.edit`s after a continue refused | debugme copy, breakpoint in the gauge loop, Play, `debug.wait`, 1 s, `debug.continue`, `play.stop`: `debug.paused`, 3 of 3 runs, also with three gauges | `play.stop` in Play crosses the hold: the server has the hub pass over every pause (`DebugHub::pass`, counted, ended by a guard also when the caller goes away) until the Stop lands. `time.control {}` answers while held (the status). `time.control` with changes is queued for the boundary after the held tick (`debug.paused {queued: true}`): Pause, then Continue leaves Play resting at the tick's end. The editor's Stop sends `time.control {}` and `play.stop` and continues nothing itself; a queued call shows as an information toast | `play.stop` answers Edit mode in 6 of 6 runs (one and three gauges), 1.6 to 9.8 ms; the editor's end-to-end run passes every step on Windows, Edit mode 0.1 s after Stop, the edited bundle on the edit world ([debug-host.txt](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/agentdebug/debug-host.txt)); Pause while held, Continue: Play rests at the held tick (61), an edit works, a step stops at the breakpoint again in 0.7 ms |
-| **A queued `time.step` was told it had stopped, then ran its ticks.** The server answered every waiting `time.step` at a stop, but the loop ended only the front step | step A of 4000 ticks (breakpoint at `g.level[r] === 3000`), step B of 50 ticks 10 ms later: both answered `paused: true, tick: 3001`; after the continue the world stood at 3051 | The game thread answers the step whose tick stopped, from inside the stop: before each tick of a step the loop hands the step's reply to the loop state (`Publisher::hold_step_reply`), `StateHandle::stopped` answers it and then counts the stop, and the loop takes the reply back after the tick (`take_step_reply`; gone: the step ends with the tick). A step queued behind it answers `debug.paused {queued: true}` and runs all its ticks after the resume, as that says | A answers `paused: true, tick: 3000`, B `debug.paused {queued: true}`; held at 2999; after the continue 3050 (`paused_host.rs` `a_stop_answers_only_the_step_it_ends`, and through `pocket serve`) |
+| **A queued `time.step` was told it had stopped, then ran its ticks.** The server answered every waiting `time.step` at a stop, but the loop ended only the front step | step A of 4000 ticks (breakpoint at `g.level[r] === 3000`), step B of 50 ticks 10 ms later: both answered `paused: true, tick: 3001`; after the continue the world stood at 3051 | The game thread answers the step whose tick stopped, from inside the stop: before each tick of a step the loop hands the step's reply to the loop state (`Publisher::hold_step_reply`), `StateHandle::stopped` answers it and then counts the stop, and the loop takes the reply back after the tick (`take_step_reply`; gone: the step ends with the tick). A step queued behind it answers `debug.paused {queued: true}` and runs all its ticks after the resume, as that says | A answers `paused: true, tick: 3000`, B `debug.paused {queued: true}`; held at 2999; after the continue 3050 (`paused_host.rs` `a_stop_answers_only_the_step_it_ends`, and through `amoris serve`) |
 
 What the review called "any continue, then act flow" stays a race by design: a call made while the
 game is held is refused at once, which is what keeps agents from hanging (28 calls in the
@@ -76,20 +76,20 @@ connection per call 15 times, 39 were refused at once and 6 answered `debug.paus
 starts a process per call and almost always loses. The refusal now says how to act between ticks:
 clear the breakpoint first, or Stop; the queued Pause is the third way.
 
-Checked by: `cargo test -p pocket-app --test paused_host` (4 tests, 15 repeated runs without a
-failure), pocket-runtime's and pocket-server's tests, the editor's end-to-end driver on the real
+Checked by: `cargo test -p amoris-app --test paused_host` (4 tests, 15 repeated runs without a
+failure), amoris-runtime's and amoris-server's tests, the editor's end-to-end driver on the real
 host, and the review tool above.
 
 ## How it works
 
-- pocket-debug records each stop in the loop state with a summary (`Pause::summary`, pocket-link
+- amoris-debug records each stop in the loop state with a summary (`Pause::summary`, amoris-link
   `StateHandle::stopped`), so both the game loop and the server see where the game stands without
   asking the hub (threads.md 3.5).
 - Before each tick of a `time.step` the game loop hands the step's reply to the loop state; a stop
   inside the tick answers it with the summary as `stopped_by` and the loop ends that step with the
   tick (server.md 3.2), so `debug continue` finishes the tick and the world stands at its end.
 - The server's `Host::call` (server.md 3.4): a held game's reads are answered from the latest
-  `WorldSnapshot` through pocket-link's `SnapshotView`. The registry's format of each section
+  `WorldSnapshot` through amoris-link's `SnapshotView`. The registry's format of each section
   decodes to exactly the JSON the game's own `world.get` builds (checked on all 61 components of
   the sailing scene, and call by call in `paused_host.rs`). A call waiting on the game looks for a
   new stop every 5 ms and answers `debug.paused {queued: true}` at it, unless the game thread
@@ -140,20 +140,20 @@ host, and the review tool above.
 - `tools/smoke_server.py` waited for the edit's `history` push after reading the edit's answer, but
   the host pushes the history before it answers, so a fast push was consumed with the answer's
   frames and the wait timed out (seen once in five runs here). It now looks among those frames too.
-- `pocket serve` on Windows had no way to be stopped gracefully by another process (SIGTERM is
+- `amoris serve` on Windows had no way to be stopped gracefully by another process (SIGTERM is
   POSIX): it now stops on Ctrl-Break, which a parent can send a child started in its own process
   group, and the smoke test runs on Windows.
-- `cargo clippy -D warnings` failed on master in pocket-runtime's render-feed extractor (the tick
-  code's determinism lists applied to presentation code) and in pocket-app's `main`; both fixed.
+- `cargo clippy -D warnings` failed on master in amoris-runtime's render-feed extractor (the tick
+  code's determinism lists applied to presentation code) and in amoris-app's `main`; both fixed.
 - A refused compile (`scripts.apply` while held) first ran the type check's `tsc` lookup, 17 ms of
   nothing; a held refusal now skips it.
 - **`debug.wait` waited out its timeout after a `debug.continue` whose next stop came at once.** The
   hook raised the hub's pause count when a stop began and published the pause only after
   capturing its frames, so a wait that came in between read the new count, waited for a later pause
   and answered at its timeout (10 s by default) with the right state. The count now rises with the
-  publication; pocket-app's `debug_agent` tests went from 10 s to 0.7 s. The evaluation's agents
+  publication; amoris-app's `debug_agent` tests went from 10 s to 0.7 s. The evaluation's agents
   called `debug wait` in one run.
-- On this machine pocket-script's `depth.rs` and `web.rs`, expected to fail without a clang that
+- On this machine amoris-script's `depth.rs` and `web.rs`, expected to fail without a clang that
   has a wasm32 backend, passed (7 and 3 tests): a clang-cl was found by the build script.
 - **The editor ignored `world.changed {reset: true}`.** Play, Stop and restores replace the world
   and the host pushes a reset with no lists; the editor's handler read the lists and did nothing,
@@ -167,7 +167,7 @@ host, and the review tool above.
 
 ## Quiet re-measurement (2026-10-10)
 
-`python tools/held_host_bench.py` three times (three `pocket serve` sessions of ten rounds each),
+`python tools/held_host_bench.py` three times (three `amoris serve` sessions of ten rounds each),
 with no other agent running, on AC power ([quiet-2026-10-09.md](quiet-2026-10-09.md), session 2),
 master `0871920d`'s release build ([held-host-r1.json to
 held-host-r3.json](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/quiet/agentdebug)).
@@ -188,7 +188,7 @@ Median of the 30 calls (minimum to maximum), ms:
   the rest in 6 to 24 ms, most of them near the system timer's 15.6 ms quantum, which the
   connection's set-up takes, as the section above suspected. Its medians say which mode won, not
   what the host costs.
-- **Through the CLI every call costs 23 to 25 ms** (`pocket status` while running: 23.8 to 24.9),
+- **Through the CLI every call costs 23 to 25 ms** (`amoris status` while running: 23.8 to 24.9),
   against 62 to 75 ms on the loaded machine: the process start, not the host.
 - Sizes are unchanged: `world get Sloop` 3,143 B as text and 11,091 B as JSON, two fields 54 B;
   `debug.state` 3,629 B, `{brief}` 677 B, the CLI's text 306 B.

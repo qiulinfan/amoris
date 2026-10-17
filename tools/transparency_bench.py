@@ -10,12 +10,12 @@ bench lock; one adapter and backend per invocation keeps the hold short:
     python ../../../out/locks/bench_lock.py run --label transparency -- python tools/transparency_bench.py \\
         --adapter 5060 --backend dx12 --out ../../../out/transparency/bench
 
-Build first: `cargo build --release -p pocket-render --example transparency`. Each run's JSON is
+Build first: `cargo build --release -p amoris-render --example transparency`. Each run's JSON is
 kept under `--out`; `summary-ADAPTER-BACKEND.json` holds the medians over the rounds of each kind's
 GPU time (timestamped passes), its opaque pass (which the stage draws in, or with GTAO on the
 `transparent` pass after GTAO), GTAO, the shadow cascades, its CPU encoding time and the stage's
 own CPU time, and the differences from `hidden`. `--extra '--orbit'` turns the camera (the order and
-the list change every frame), `--env POCKET_GTAO=off` sets the renderer's options through its
+the list change every frame), `--env AMORIS_GTAO=off` sets the renderer's options through its
 environment (both name the summary), and `--exe` runs another build's example (an A/B).
 """
 import argparse
@@ -42,7 +42,7 @@ def main():
     ap.add_argument("--kinds", default=",".join(KINDS))
     ap.add_argument("--extra", default="", help="more bench options, e.g. '--orbit'")
     ap.add_argument("--env", action="append", default=[], metavar="KEY=VALUE",
-                    help="an environment variable for the runs, e.g. POCKET_GTAO=off (repeatable)")
+                    help="an environment variable for the runs, e.g. AMORIS_GTAO=off (repeatable)")
     ap.add_argument("--exe", help="the transparency example to run (default: this checkout's)")
     ap.add_argument("--ghost", action="store_true",
                     help="instead: TAA's ghosting (the example's `ghost`) for each kind and motion")
@@ -50,10 +50,10 @@ def main():
     out = (ROOT / args.out).resolve()
     out.mkdir(parents=True, exist_ok=True)
     name = f"{args.adapter}-{args.backend}{'-' + args.extra.strip('-').replace(' ', '-') if args.extra else ''}"
-    name += "".join(f"-{e.split('=', 1)[0].removeprefix('POCKET_').lower()}-{e.split('=', 1)[1]}" for e in args.env)
+    name += "".join(f"-{e.split('=', 1)[0].removeprefix('AMORIS_').lower()}-{e.split('=', 1)[1]}" for e in args.env)
     subprocess.run([sys.executable, str(ROOT / "tools" / "machine_conditions.py"),
                     str(out / f"conditions-{name}.json"), "--label", f"transparency {name}"], check=False)
-    env = dict(os.environ, POCKET_ADAPTER=args.adapter, POCKET_BACKEND=args.backend)
+    env = dict(os.environ, AMORIS_ADAPTER=args.adapter, AMORIS_BACKEND=args.backend)
     env.update(e.split("=", 1) for e in args.env)
     exe = args.exe or str(ROOT / "target" / "release" / "examples" / f"transparency{EXE}")
     if args.ghost:

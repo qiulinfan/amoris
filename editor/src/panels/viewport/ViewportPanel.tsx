@@ -53,8 +53,8 @@ export function ViewportPanel() {
     const el = canvas.current!;
     let disposed = false;
     ctl.start();
-    if (import.meta.env.DEV || import.meta.env.VITE_POCKET_EXPOSE === "1") {
-      (window as unknown as { pocketEditorViewport: ViewportController }).pocketEditorViewport = ctl;
+    if (import.meta.env.DEV || import.meta.env.VITE_AMORIS_EXPOSE === "1") {
+      (window as unknown as { amorisEditorViewport: ViewportController }).amorisEditorViewport = ctl;
     }
     void loadViewport(el, viewportOptions(host.endpoints.http, host.endpoints.ws), () => createFallbackViewport(el, source)).then(
       ({ viewport, kind, note }) => {

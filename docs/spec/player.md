@@ -10,7 +10,7 @@
   [perception-slice2.md](perception-slice2.md), [actions-slice2.md](actions-slice2.md) and
   [time-slice2.md](time-slice2.md); this file says what this line built on top of them and how a
   game, an agent and a test reach it.
-- Sources: `pocket-interface` is the rebuild line's (qiulinfan/amoris-pioneer `origin/rebuild`,
+- Sources: `amoris-interface` is the rebuild line's (qiulinfan/amoris-pioneer `origin/rebuild`,
   commit `57ed4ea1`, Slice 2 wave A), brought over whole; its runtime glue was rewritten for this
   runtime. Amoris's Python gateway (`tools/eval/agent_gameplay.py` with
   `site/demos/agent-sailing/scripts/helm.ts`) showed what agents needed: an observation of their own
@@ -21,16 +21,16 @@
 
 | Piece | Where |
 |---|---|
-| Perception: observers and profiles, perceivables, occluders, the `interface.perception` update (range, field of view, occlusion by physics ray casts, fog, attention, memory and forgetting, sightings, event scopes), **team vision**, `PerceptionView`, pull queries with token budgets, push deltas, the marked omniscient view | `pocket-interface/src/perception/` |
-| Projections: rounding, JSON, text (the LLM's), tensors (an RL observer's) | `pocket-interface/src/projection/` |
-| Actions: controls, intents with lifecycle, channels and supersession, the Rust executors `come_to_heading`, `trim_sail`, `sail_to`, affordances (`take_aboard`), the `act` request validated in three phases | `pocket-interface/src/action/` |
-| Time: turns and episodes, decision points and filters, `until`, the session controller (stepped, lockstep, real time with pause-on-decision and thinking clocks), `step`, `commit`, `continue`, the real-time `wait` | `pocket-interface/src/time/` |
-| The declaration as world state, the three interface systems in every game, the `player.*` commands, the session beside the world | `pocket-runtime/src/player.rs`, `game.rs` |
-| Players' waits on a loop, decision points after every tick, pace from the players' session: one core the game thread and the browser worker share | `pocket-runtime/src/boundary.rs` (`PlayerWaits`), `thread.rs`, `pocket-web/src/worker.rs` |
-| The reference skipper (a decision model outside the tick) | `pocket-runtime/src/skipper.rs` |
-| Fork lookahead for the skipper, the course's seeded variants, `Game::fork_into` | `pocket-runtime/src/lookahead.rs`, `game.rs` |
-| The `player` MCP tool, seat-bound MCP sessions | `pocket-mcp`, `pocket-server/src/mcp.rs` |
-| Calls made as a seat over HTTP, `pocket player`, `pocket mcp --seat` | `pocket-server`, `pocket-app` |
+| Perception: observers and profiles, perceivables, occluders, the `interface.perception` update (range, field of view, occlusion by physics ray casts, fog, attention, memory and forgetting, sightings, event scopes), **team vision**, `PerceptionView`, pull queries with token budgets, push deltas, the marked omniscient view | `amoris-interface/src/perception/` |
+| Projections: rounding, JSON, text (the LLM's), tensors (an RL observer's) | `amoris-interface/src/projection/` |
+| Actions: controls, intents with lifecycle, channels and supersession, the Rust executors `come_to_heading`, `trim_sail`, `sail_to`, affordances (`take_aboard`), the `act` request validated in three phases | `amoris-interface/src/action/` |
+| Time: turns and episodes, decision points and filters, `until`, the session controller (stepped, lockstep, real time with pause-on-decision and thinking clocks), `step`, `commit`, `continue`, the real-time `wait` | `amoris-interface/src/time/` |
+| The declaration as world state, the three interface systems in every game, the `player.*` commands, the session beside the world | `amoris-runtime/src/player.rs`, `game.rs` |
+| Players' waits on a loop, decision points after every tick, pace from the players' session: one core the game thread and the browser worker share | `amoris-runtime/src/boundary.rs` (`PlayerWaits`), `thread.rs`, `amoris-web/src/worker.rs` |
+| The reference skipper (a decision model outside the tick) | `amoris-runtime/src/skipper.rs` |
+| Fork lookahead for the skipper, the course's seeded variants, `Game::fork_into` | `amoris-runtime/src/lookahead.rs`, `game.rs` |
+| The `player` MCP tool, seat-bound MCP sessions | `amoris-mcp`, `amoris-server/src/mcp.rs` |
+| Calls made as a seat over HTTP, `amoris player`, `amoris mcp --seat` | `amoris-server`, `amoris-app` |
 | The sailing course | `samples/sailing-course/` |
 
 ## 2. Declaring players
@@ -84,7 +84,7 @@ replay without perception and executors, and the hash chain unverifiable. The sc
 The rebuild line's update, as perception.md and perception-slice2.md describe it: per observer in
 `EntityId` order, candidates in range (`min(sight.range_m, detect_m) * visibility_scale`), in the
 field of view, and visible past occluders by one of two rays (to the origin and the top) cast with
-`pocket_physics::query::cast_ray_among` against the colliders of `Occluder` entities other than the
+`amoris_physics::query::cast_ray_among` against the colliders of `Occluder` entities other than the
 observer and the target; `Full` detail within `attention_m`, `Coarse` beyond; memory with forgetting
 by sight of the empty place, by `memory_s` and by capacity; `sighted` events for watched kinds;
 world events pushed by scope (private, sight, sound, global, hidden).
@@ -122,7 +122,7 @@ executors are not built here (section 10).
 
 ## 6. Time
 
-The players' session is pocket-interface's `Controller`, kept by `Game` beside the world (session
+The players' session is amoris-interface's `Controller`, kept by `Game` beside the world (session
 state: never hashed, cloned into a fork such as Play's): the pacing, every seat's decision state
 (filter, pending point, idle and heartbeat counters, push cursor), thinking clocks, the halt after a
 script failure. Every seat of a built game starts with the episode's `start` decision point.
@@ -144,7 +144,7 @@ script failure. Every seat of a built game starts with the episode's `start` dec
   ended. When a loop stops (the thread's shutdown or panic, the worker's `close` or failure), the
   waits under way are answered `game.stopped` with the steps. Until 2026-10-09 the thread dropped
   them, its callers seeing a closed channel, and so did the worker once it held waits;
-  `web/pocket.js` fails its own pending calls on `close` and `fatal`, so the page never hung on it.
+  `web/amoris.js` fails its own pending calls on `close` and `fatal`, so the page never hung on it.
 - **Real time with pause-on-decision** (game thread and worker):
   `player.pacing {"pacing": {"pacing": "real_time", "speed": 4, "pause_on_decision": true, "clock": {...}}}`
   from a developer. The boundary's pace then comes from the players' session: a pending decision
@@ -153,7 +153,7 @@ script failure. Every seat of a built game starts with the episode's `start` dec
   that answers when the seat's decision comes (at once when one is pending), at its wall limit, or
   at the episode's end. Decision points are computed once after every tick, whatever ran it. The
   browser's worker does all of this as the game thread does: both drive
-  `pocket_runtime::boundary::PlayerWaits` (waits under way, their stop and wall limits, the decision
+  `amoris_runtime::boundary::PlayerWaits` (waits under way, their stop and wall limits, the decision
   points after each tick, the pace) and `boundary::player_pacing`, with the runtime's `TimeModel`
   (the worker's copy of it is gone, threads-slice1.md 13), and the worker refuses a player the
   controls it answers itself (`step`, `time_control`, `snapshot`), as the thread does for its own.
@@ -163,12 +163,12 @@ script failure. Every seat of a built game starts with the episode's `start` dec
 
 - **Halts** (time.md, Halts). A rule that throws reaches the tick's report as `sim.system_failed`
   whose `cause` is the script's problem (`script.exception`, a step limit, ...); the session halts
-  on it as on any `script.*` problem (`pocket_interface::time::control::script_failure`). A
+  on it as on any `script.*` problem (`amoris_interface::time::control::script_failure`). A
   player's wait then answers `stopped: "halted"` with the generic `time.halted`, a developer's with
   the failure itself, and real time holds. The halt ends when a hot update lands (every successful
   `scripts.swap`, so `scripts.apply`), when a developer resumes (`time.control {pause: false}` on
   the game thread, the runtime's `resume`), or with a restore (mcp.md 7.1). A developer's
-  `time.step` is never held by it. Under `pocket serve`, whose edit world is real time paused,
+  `time.step` is never held by it. Under `amoris serve`, whose edit world is real time paused,
   `{pause: false}` also starts real time; `{pause: true}` after it holds the world again with the
   halt ended.
 - **The world replaced** (`snapshots.restore`, `debug.rewind`, which restores; every
@@ -179,7 +179,7 @@ script failure. Every seat of a built game starts with the episode's `start` dec
   latest, and at tick 0 every seat has the episode's `start` point again. A wait after a restore
   to tick 0 therefore stops at the sightings of tick 1 and carries them, as on a fresh world.
 
-Lockstep pacing exists in pocket-interface (`commit`) but `player.pacing` refuses it: no command
+Lockstep pacing exists in amoris-interface (`commit`) but `player.pacing` refuses it: no command
 carries `commit` yet (section 10).
 
 ## 7. The player tools
@@ -204,24 +204,24 @@ The push cursor is the seat's own (perception.md, Push). The answers of `player.
 and `player.continue` carry the seat's events delta since it, and only the seat's player moves it:
 a developer who names the seat reads the same delta and leaves the cursor where the seat's calls
 put it, so watching or driving a seat never takes events from the player who plays it
-(`pocket_interface::time::session::push_delta`; before 2026-10-09 a developer's call consumed them).
+(`amoris_interface::time::session::push_delta`; before 2026-10-09 a developer's call consumed them).
 
 **The role is enforced by the engine** (charter 5.1, the Pioneer note after review). In a game that
 declares players, a player source sends the `player.*` commands alone; every other command is a
 developer's and is refused with `permission.denied` (`{request, role: "player", needs:
 "developer"}`) before anything runs, in three places:
 
-- the game (`pocket_runtime::player::permitted`, in `Game::apply` before the host-only and
+- the game (`amoris_runtime::player::permitted`, in `Game::apply` before the host-only and
   thread-only checks), for every catalog command by its name or an alias and for a game's own
   commands;
 - the game thread, for the commands its loop answers itself (`time.step`, `time.control`,
   `play.*`, `snapshots.*`, `status`, `snapshot`), and the browser's worker for its own (`step`,
   `time_control`, `snapshot`);
-- the host (`pocket_server::seat_permits`), for every call made as a seat (`Via::Player`): those
+- the host (`amoris_server::seat_permits`), for every call made as a seat (`Via::Player`): those
   the host answers without the game see no source at all (`events.since` lists every world event,
   `log.since`, `assets.list`, the debugger's methods, a read answered from the last publication
   while the debugger holds the game). `/api/call` refuses such a method before it looks the seat
-  up, and a `seat` that is not a string with `request.wrong_type`; `pocket call --seat` refuses it
+  up, and a `seat` that is not a string with `request.wrong_type`; `amoris call --seat` refuses it
   before sending.
 
 A replay applies what was recorded and is not asked. In a game without players, `Source::Player`
@@ -235,14 +235,14 @@ The commands are projected like every catalog command:
   `{action: session|describe|observe|nearby|events|affordances|intents|act|wait|continue|pacing, ...}`.
   Reads an LLM reads (observe, nearby, events, an entity described) come as the text projection
   unless the call asks for JSON, sent as the text itself. A session made with
-  `pocket mcp <project> --seat skipper` (against a running host or in process) calls as the seat's
+  `amoris mcp <project> --seat skipper` (against a running host or in process) calls as the seat's
   player, lists the `player` tool alone, refuses the others with `permission.denied`, and gets
   player instructions.
 - **HTTP**: `/api/call {method, params, seat}` makes the call from the seat's player source (the
   host asks the game for the seat's index once and keeps one client per seat).
-- **CLI**: `pocket player <action> ['<json>'] [--seat s]`; `act` also takes the actions alone;
+- **CLI**: `amoris player <action> ['<json>'] [--seat s]`; `act` also takes the actions alone;
   observations print as text, other answers as one line of JSON. A client of a running host (the
-  CLI, `pocket mcp` against a host) waits for a `wait` at least 10 s past its wall limit,
+  CLI, `amoris mcp` against a host) waits for a `wait` at least 10 s past its wall limit,
   `max_wall_ms` or the default 30 s, whatever `--timeout` says (`client::timeout_for`).
 
 Not built from mcp.md: grants with tokens over HTTP MCP, branches (`fork`, `discard`), snapshots and
@@ -259,7 +259,7 @@ aboard through the interact pulse (`take_aboard`, within 3 m). Its `check.toml` 
 fork, replay and reload equivalence with a player scenario: the skipper's acts as players' Writes
 beside a developer's edit of the wind.
 
-The **reference skipper** (`pocket_runtime::skipper::Skipper`) plays it through the player tools
+The **reference skipper** (`amoris_runtime::skipper::Skipper`) plays it through the player tools
 alone: at each decision point it observes (JSON, budget 1500), takes aboard a crate it can, else
 sails to the nearest crate it sees within 45 m that is not upwind (twice at most per crate), else
 sails to the course's next mark (named from the chart before it is in sight), and waits. It finishes
@@ -268,7 +268,7 @@ crates aboard; [bench/player.md](../bench/player.md) has its costs and token siz
 
 ### 8.1 Fork lookahead
 
-`pocket_runtime::lookahead::Lookahead` (Pioneer, 2026-10-15) is the reference skipper with exact
+`amoris_runtime::lookahead::Lookahead` (Pioneer, 2026-10-15) is the reference skipper with exact
 lookahead (mcp.md 5.5) under the benchmark's fork condition (shared/benchmark/tasks.md 6.1: at most
 4 live branches and 600 branch ticks between two decision points answered on main; `Limits`). At
 each decision point on main it reads the seat's observation (JSON, budget 1500) and:
@@ -353,11 +353,11 @@ every tick, and its player scenario passes the four checks.
 
 - **Script executors and `ctx.intent`**: `executor()` is still refused by the script host
   (`define.rs`) and `ctx.intent` throws `script.restricted`. The rebuild line had them (`57ed4ea1`:
-  `pocket-script` natives, an interface bridge and executors, about 3,000 lines of source and 2,500
+  `amoris-script` natives, an interface bridge and executors, about 3,000 lines of source and 2,500
   of tests) against a script host this line has since changed (the debugger, types, the prelude);
   porting them is the next step. A game's own intents are therefore engine catalogs in Rust for now.
 - **Lockstep for players, branches, snapshots and `replay` for players, grants over HTTP MCP**:
-  pocket-interface has lockstep's `commit`; nothing carries it, nor mcp.md's fork tools. The fork
+  amoris-interface has lockstep's `commit`; nothing carries it, nor mcp.md's fork tools. The fork
   lookahead (8.1) forks a game in process (`Game::fork`, `Game::fork_into`); an agent outside the
   process still has no `fork` or `discard` (mcp.md 5.5), no `world` in answers to address a branch
   by, and the game thread runs no branch beside main (threads.md 3.6, `branch.main_lateness`).
@@ -395,7 +395,7 @@ every tick, and its player scenario passes the four checks.
   real time set the session's pacing but not the worker's model, so no tick ran and every wait was
   refused (`command.thread_only`); and decision points never followed the worker's own ticks. The
   worker now drives the loop core the thread does (section 6); its tests run the course's package
-  natively (`pocket-web/tests/worker_players.rs`). A browser run of an agent through the worker is
+  natively (`amoris-web/tests/worker_players.rs`). A browser run of an agent through the worker is
   still to be made.
 - **A default budget cuts what a policy needs.** The first run of the reference skipper read the
   observation at the profile's 400 tokens, in which Mark2 was among the omitted percepts; it found
@@ -430,19 +430,19 @@ every tick, and its player scenario passes the four checks.
 
 | What | Where |
 |---|---|
-| The rebuild line's interface tests: visibility edges, noninterference (proptest), budgets, golden projections, actions, lifecycle, transparency, pacing, time | `crates/pocket-interface/tests/` |
-| Team vision | `pocket-interface/tests/perception_team.rs` |
-| A player is its seat; a game without players says so; one bad action applies nothing; the scripted agent plays the course through the player tools and the run replays | `pocket-runtime/tests/player.rs` |
-| A stepped wait on the thread; real time paused on each decision; the skipper finishes through a player client of the thread, after which waits are refused and a developer still steps; a wait ending inside a developer's step leaves no tick owed; a shutdown answers a wait under way `game.stopped` | `pocket-runtime/tests/thread_player.rs` |
-| The same in the browser's worker, natively: a stepped wait runs its ticks through the loop (every tick's hash, snapshots and a developer's read meanwhile); decision points after a developer's step; real time paused on each decision, the long poll and its wall limit; a player refused the loop's controls; a wait ending inside a developer's step leaves no tick owed; `close` answers a wait under way `game.stopped` | `pocket-web/tests/worker_players.rs` |
-| A tick counts against the model and the front step before the model is asked again | `pocket-runtime/src/boundary.rs` (tests) |
-| A developer naming a seat leaves its push cursor | `pocket-runtime/tests/player.rs` |
-| A player's developer calls refused by the game and the thread; a throwing rule halts the players until a hot update, a developer's resume or a restore; a restore rebases the seat's decisions and push cursor | `pocket-runtime/tests/player.rs`, `pocket-runtime/tests/player_session.rs`, `pocket-interface/src/time/control.rs` (tests) |
-| A seat over HTTP and a seat-bound MCP session (in process, newline JSON-RPC over a pipe) play through the player tools alone; the host refuses the game's and its own developer methods; an unknown seat says `seat.unknown` | `pocket-app/tests/player_host.rs` |
-| The review's three findings replayed against the release `pocket serve` over HTTP | `tools/player_http_probe.py`, [evidence/player/seat-http.txt](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/player/seat-http.txt) |
-| Fork lookahead: a decision leaves main's hash, tick and session untouched and keeps to 4 branches and 600 ticks; the same variant decides the same twice, with kept branches as with fresh forks; a branch is reached as the seat alone; a kept branch forked into again matches a fresh fork; `fork_into` refuses a game that is not a branch of main; with forks off the model never forks; the variants follow their seed | `pocket-runtime/tests/lookahead.rs` |
-| The lookahead's choice needs the margin and never takes a branch that refused its first act; the fork-off estimate reads the chart alone | `pocket-runtime/src/lookahead.rs` (tests) |
-| A restore keeps the declarations only for the spec they came from: another spec's snapshot derives its own, one without a spec removes them | `pocket-runtime/tests/player.rs` |
-| The course's schedule | `pocket-runtime/tests/schedule.rs` |
-| The player scenario passes the four checks | `pocket-check/tests/checks.rs`, `samples/sailing-course/check.toml` |
-| The `player` tool's routing; `pocket player`'s forms | `pocket-mcp/src/tools.rs`, `pocket-app/src/client.rs` |
+| The rebuild line's interface tests: visibility edges, noninterference (proptest), budgets, golden projections, actions, lifecycle, transparency, pacing, time | `crates/amoris-interface/tests/` |
+| Team vision | `amoris-interface/tests/perception_team.rs` |
+| A player is its seat; a game without players says so; one bad action applies nothing; the scripted agent plays the course through the player tools and the run replays | `amoris-runtime/tests/player.rs` |
+| A stepped wait on the thread; real time paused on each decision; the skipper finishes through a player client of the thread, after which waits are refused and a developer still steps; a wait ending inside a developer's step leaves no tick owed; a shutdown answers a wait under way `game.stopped` | `amoris-runtime/tests/thread_player.rs` |
+| The same in the browser's worker, natively: a stepped wait runs its ticks through the loop (every tick's hash, snapshots and a developer's read meanwhile); decision points after a developer's step; real time paused on each decision, the long poll and its wall limit; a player refused the loop's controls; a wait ending inside a developer's step leaves no tick owed; `close` answers a wait under way `game.stopped` | `amoris-web/tests/worker_players.rs` |
+| A tick counts against the model and the front step before the model is asked again | `amoris-runtime/src/boundary.rs` (tests) |
+| A developer naming a seat leaves its push cursor | `amoris-runtime/tests/player.rs` |
+| A player's developer calls refused by the game and the thread; a throwing rule halts the players until a hot update, a developer's resume or a restore; a restore rebases the seat's decisions and push cursor | `amoris-runtime/tests/player.rs`, `amoris-runtime/tests/player_session.rs`, `amoris-interface/src/time/control.rs` (tests) |
+| A seat over HTTP and a seat-bound MCP session (in process, newline JSON-RPC over a pipe) play through the player tools alone; the host refuses the game's and its own developer methods; an unknown seat says `seat.unknown` | `amoris-app/tests/player_host.rs` |
+| The review's three findings replayed against the release `amoris serve` over HTTP | `tools/player_http_probe.py`, [evidence/player/seat-http.txt](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/player/seat-http.txt) |
+| Fork lookahead: a decision leaves main's hash, tick and session untouched and keeps to 4 branches and 600 ticks; the same variant decides the same twice, with kept branches as with fresh forks; a branch is reached as the seat alone; a kept branch forked into again matches a fresh fork; `fork_into` refuses a game that is not a branch of main; with forks off the model never forks; the variants follow their seed | `amoris-runtime/tests/lookahead.rs` |
+| The lookahead's choice needs the margin and never takes a branch that refused its first act; the fork-off estimate reads the chart alone | `amoris-runtime/src/lookahead.rs` (tests) |
+| A restore keeps the declarations only for the spec they came from: another spec's snapshot derives its own, one without a spec removes them | `amoris-runtime/tests/player.rs` |
+| The course's schedule | `amoris-runtime/tests/schedule.rs` |
+| The player scenario passes the four checks | `amoris-check/tests/checks.rs`, `samples/sailing-course/check.toml` |
+| The `player` tool's routing; `amoris player`'s forms | `amoris-mcp/src/tools.rs`, `amoris-app/src/client.rs` |

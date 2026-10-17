@@ -1,7 +1,7 @@
 //! The shape checker against the request cases of shared/contract/errors.md (Checks) that need no
 //! world: a request type shaped like the contract's `act`, checked through its schemars schema.
 
-use pocket_contract::{CheckOptions, Pointer, Shape, decode};
+use amoris_contract::{CheckOptions, Pointer, Shape, decode};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -92,7 +92,7 @@ fn act(params: Value) -> Value {
     json!({"actions": [{"do": "start", "intent": "come_to_heading", "params": params}]})
 }
 
-fn refuse(v: Value) -> pocket_contract::Problem {
+fn refuse(v: Value) -> amoris_contract::Problem {
     Shape::of::<Act>().check(&v, &opts()).expect_err("refused")
 }
 

@@ -6,11 +6,11 @@ frame, each frame a new tick of the feed (`--moving N`, contiguous slots, or `--
 K-th cube), the ray-traced shadows' moving case (`rt_shadows --scene cubes --count 200000
 --moving`) and the skinned crowd (`lod_field --crowd 40`, one skinning pass over 40 characters),
 on every backend and adapter asked for. Every many_cubes run records a per-frame trace
-(POCKET_TRACE's spans: "apply", "scene sync", ...; crates/pocket-render/src/trace.rs) and reads it
+(AMORIS_TRACE's spans: "apply", "scene sync", ...; crates/amoris-render/src/trace.rs) and reads it
 with tools/frame_trace.py; every run samples the NVIDIA GPU's clocks with nvidia-smi while it runs
 (a GPU idling between slow frames lowers its clocks, which raises its timestamped pass times).
 
-Build first: `cargo build --release -p pocket-render --example many_cubes --example rt_shadows
+Build first: `cargo build --release -p amoris-render --example many_cubes --example rt_shadows
 --example lod_field`.
 Then, from the repository root:
 
@@ -126,9 +126,9 @@ class Clocks:
 
 def run_case(case, root, backend, adapter, args, out_dir, tag):
     spec = CASES[case]
-    env = dict(os.environ, POCKET_BACKEND=backend)
+    env = dict(os.environ, AMORIS_BACKEND=backend)
     if adapter:
-        env["POCKET_ADAPTER"] = adapter
+        env["AMORIS_ADAPTER"] = adapter
     trace = None
     if isinstance(spec, tuple) and spec[0] == "rt":
         kind = "rt"
@@ -221,7 +221,7 @@ def main():
     ap.add_argument("--cases", default="static,moving-1k,moving-10k,moving-100k,moving-1.6m,"
                                        "sparse-1k,sparse-10k,sparse-100k")
     ap.add_argument("--backends", default="dx12,vulkan")
-    ap.add_argument("--adapters", default="", help="POCKET_ADAPTER values, comma separated")
+    ap.add_argument("--adapters", default="", help="AMORIS_ADAPTER values, comma separated")
     ap.add_argument("--build", action="append", default=[], metavar="NAME=DIR",
                     help="time the examples built in DIR/target (repeatable)")
     ap.add_argument("--rounds", type=int, default=1)

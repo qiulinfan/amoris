@@ -1,5 +1,5 @@
 // A module-level `let` that feeds a component: state outside the world.
-import { component, field, game, system } from "pocket";
+import { component, field, game, system } from "amoris";
 
 let calls = 0;
 

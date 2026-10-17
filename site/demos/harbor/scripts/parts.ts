@@ -1,4 +1,4 @@
-import { component, field, system } from "pocket";
+import { component, field, system } from "amoris";
 
 export const ShipPart = component("ShipPart", {
     version: 1, doc: "A visual part following the boat's simulation pose.",

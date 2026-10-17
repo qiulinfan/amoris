@@ -134,7 +134,7 @@ export async function refreshScripts() {
   useScripts.getState().setFiles(files);
 }
 
-/** The host's declarations of `pocket` for the project (its components included), which the
+/** The host's declarations of `amoris` for the project (its components included), which the
  * script editor's TypeScript worker loads: the same files `tsc` checks in scripts.check. */
 export async function refreshTypes() {
   useScripts.getState().setTypes(await api.scripts.types());

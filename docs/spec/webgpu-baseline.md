@@ -9,9 +9,9 @@ queries are acceleration paths"), 4.1 (one renderer for Metal, Vulkan and WebGPU
 
 This specification says which optional GPU features the renderer uses, what it does without each,
 how its GPU-driven indirect draws work on WebGPU's defaults, how a native run emulates a browser,
-and how the paths are checked. The code is `crates/pocket-render/src/gpu.rs` (capabilities and the
-switches), `crates/pocket-render/src/batches.rs` (the indirect draws) and the vertex stages of
-`crates/pocket-render/shaders/forward.wgsl`. Measurements: [docs/bench/web.md](../bench/web.md);
+and how the paths are checked. The code is `crates/amoris-render/src/gpu.rs` (capabilities and the
+switches), `crates/amoris-render/src/batches.rs` (the indirect draws) and the vertex stages of
+`crates/amoris-render/shaders/forward.wgsl`. Measurements: [docs/bench/web.md](../bench/web.md);
 evidence: `out/bench-runs/webgpu/`.
 
 ## 1. Feature tiers
@@ -96,7 +96,7 @@ already (docs/spec/splats.md).
 ## 3. Default limits
 
 The renderer's pipelines fit WebGPU's default limits (checked natively by
-`POCKET_GPU_MINIMAL=limits`, 4), with little headroom in two places:
+`AMORIS_GPU_MINIMAL=limits`, 4), with little headroom in two places:
 
 - storage buffers per shader stage: the forward pipeline's fragment stage sees 8 of 8 (the frame
   group's four, visible to both stages, and the lighting group's lights, cluster lists and the two
@@ -109,7 +109,7 @@ The renderer's pipelines fit WebGPU's default limits (checked natively by
 
 ## 4. Emulating a browser natively
 
-`POCKET_GPU_MINIMAL` (natively) and the viewport page's `?gpu_minimal=` (in the browser) take a
+`AMORIS_GPU_MINIMAL` (natively) and the viewport page's `?gpu_minimal=` (in the browser) take a
 comma-separated list (`gpu::Minimal`):
 
 | Token | Effect |
@@ -130,12 +130,12 @@ fix, the mixed scene showed the same 6 of 59 entities natively on Vulkan and in 
 
 ## 5. Checks
 
-- `crates/pocket-render/tests/draw_paths.rs` renders the mixed demo scene (`demo::mixed`: the seven
+- `crates/amoris-render/tests/draw_paths.rs` renders the mixed demo scene (`demo::mixed`: the seven
   primitives and a procedural model with one material per variant under a shadow-casting sun) plus
   three skinned characters on the three paths and requires the same entities with the same id-pass
   coverage and nearly the same pixels; it skips without a GPU. Putting the base back into
   `first_instance` on the baseline path makes it fail (0 of 36 entities).
-- `cargo run --release -p pocket-app --example draw_paths -- [--minimal ...] mixed cubes
+- `cargo run --release -p amoris-app --example draw_paths -- [--minimal ...] mixed cubes
   samples/anim samples/sailing` compares a full-feature device with an emulated one on any scene or
   project and writes images and `draw_paths.json`.
 - `python3 tools/web_draw_paths.py <viewport url> --name <n> --out <dir>` runs a viewport page in

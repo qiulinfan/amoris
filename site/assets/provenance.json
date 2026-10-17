@@ -1991,7 +1991,7 @@
     }
   ],
   "capture_claims": {
-    "renderer": "Amoris pocket-render, wgpu",
+    "renderer": "Amoris amoris-render, wgpu",
     "third_party_render_previews_used_as_engine_evidence": false,
     "source_triangle_counts_are_not_frame_triangle_counts": true,
     "current_texture_array_layer_dimension": 1024,

@@ -1,0 +1,20 @@
+[package]
+name = "amoris-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "The host's server: the editor's WebSocket, the HTTP command API, assets and MCP over HTTP"
+
+[dependencies]
+amoris-contract.workspace = true
+amoris-sim.workspace = true
+amoris-link.workspace = true
+amoris-mcp.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+# The server side (architecture.md 6: tokio and axum in presenter, tool and app crates only).
+tokio.workspace = true
+axum.workspace = true
+mime_guess.workspace = true

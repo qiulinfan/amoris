@@ -9,9 +9,9 @@ occlusion"; the Pioneer note of 2026-10-09 fixes the two-phase form, the auto mo
 This specification says how the renderer culls the camera view against occlusion: the two phases,
 the depth pyramid, the test, how the phases draw on the three draw paths, why the result never
 drops a visible instance, when the auto mode turns it off, and how it is checked. The code is
-`crates/pocket-render/src/occlusion.rs` (the pyramid, the late pass, the auto mode),
-`crates/pocket-render/shaders/cull.wgsl` (`main`, the early pass, and `late`),
-`crates/pocket-render/shaders/hiz.wgsl` (the pyramid), `batches.rs` (the late argument set) and
+`crates/amoris-render/src/occlusion.rs` (the pyramid, the late pass, the auto mode),
+`crates/amoris-render/shaders/cull.wgsl` (`main`, the early pass, and `late`),
+`crates/amoris-render/shaders/hiz.wgsl` (the pyramid), `batches.rs` (the late argument set) and
 `renderer.rs` (`render`). Measurements: [docs/bench/occlusion.md](../bench/occlusion.md); evidence:
 `out/bench-runs/hiz/`.
 
@@ -189,7 +189,7 @@ test uses the pose the instance is drawn at.
 ## 7. Modes
 
 `OcclusionMode` (`occlusion.rs`): `Off` (one culling pass, one opaque pass, the state untouched),
-`On` (two phases every frame) and `Auto`, the default. `POCKET_OCCLUSION=off|on|auto` sets the
+`On` (two phases every frame) and `Auto`, the default. `AMORIS_OCCLUSION=off|on|auto` sets the
 starting mode natively, `Renderer::set_occlusion` at any time, the viewport page
 `?occlusion=off|on|auto`. `FrameStats::occlusion` says what the frame did (`off`, `on`, `auto-on`,
 `auto-off`). A frame with no instances never runs the second phase.
@@ -250,7 +250,7 @@ the Radeon 780M, 2 to 6 times slower, the crossover fell between the same cube c
 
 ## 9. Checks
 
-- `crates/pocket-render/tests/hiz.rs` checks the two parts the scene below exercises only by
+- `crates/amoris-render/tests/hiz.rs` checks the two parts the scene below exercises only by
   chance against brute force, with the renderer's own code: `Occlusion::encode_pyramid` reduces a
   multisampled depth target that `tests/hiz_probe.wgsl` fills with one depth per sample, and the
   probe calls cull.wgsl's `occluded` (which takes the camera as arguments for this).
@@ -264,7 +264,7 @@ the Radeon 780M, 2 to 6 times slower, the crossover fell between the same cube c
     corners' rectangle touches, and boxes reaching behind the camera or past the near plane must
     never be hidden. It must hide at least 30% of the boxes brute force could hide (it hides 1,723
     of 3,999; 16,508 boxes are on screen).
-- `crates/pocket-render/tests/occlusion.rs` draws `demo::occluders` (a wall with a 0.5 m slit, an
+- `crates/amoris-render/tests/occlusion.rs` draws `demo::occluders` (a wall with a 0.5 m slit, an
   alpha-masked double-sided cylinder with holes, a picket fence past the wall's end, 24 small
   spheres peeking over the wall's top by a few centimetres, and 144 primitives behind) with two
   instances of its own: a 4 m beam through the right wall pointing at the front camera, seen end-on
@@ -279,7 +279,7 @@ the Radeon 780M, 2 to 6 times slower, the crossover fell between the same cube c
   surfaces at equal depth; off and on have been bit-identical at every step in every configuration
   run, docs/bench/occlusion.md 2); the forced-on renderer must have occluded at least 20 instances
   by the warm step, the beam must show, and the cube must be hidden before it rises and show halfway
-  up. It runs on the device `POCKET_BACKEND` and `POCKET_GPU_MINIMAL` describe, then on the other
+  up. It runs on the device `AMORIS_BACKEND` and `AMORIS_GPU_MINIMAL` describe, then on the other
   two draw paths; it skips without a GPU.
 - `python tools/occlusion_mutations.py [--out file.json]` puts known bugs into the code one at a
   time, runs `hiz.rs` and `occlusion.rs` against each and restores the file; it fails if any
@@ -308,10 +308,10 @@ the Radeon 780M, 2 to 6 times slower, the crossover fell between the same cube c
   stays in the grown sphere to be inside the occlusion box; with the per-axis box it fails (the
   left arm swung forward), as does `meshes.rs`' unit test, which checks the box against the sphere
   directly.
-- `cargo run --release -p pocket-app --example draw_paths -- --compare occlusion <scenes>` draws a
+- `cargo run --release -p amoris-app --example draw_paths -- --compare occlusion <scenes>` draws a
   scene twice in one process at one moment, off and forced on, and compares pixels and coverage.
 - `python tools/occlusion_compare.py` runs that and every capture of `tools/backend_compare.py`
-  (plus the many_cubes orbit) with `POCKET_OCCLUSION=off` and `on` on one backend and adapter.
+  (plus the many_cubes orbit) with `AMORIS_OCCLUSION=off` and `on` on one backend and adapter.
 - `python tools/web_draw_paths.py <page> --compare occlusion` does the same in headless Chrome
   (`?demo=occluders`, `?demo=cubes`, and with `gpu_minimal=first-instance` for the baseline path).
 
@@ -333,7 +333,7 @@ the Radeon 780M, 2 to 6 times slower, the crossover fell between the same cube c
   counts its triangles, lod.md 4), took route (2)'s first form below. The note as written before:
   mesh LOD (charter 4.4's meshopt; `MeshData.lods` is never filled and `Cull.lod_scale` is unused)
   was not attempted. What it needs: (1) generating levels: meshopt is C++ built through `cc`, and
-  the browser imports glTF in wasm (`pocket-assets` `import` on `wasm32`), so meshopt must build for
+  the browser imports glTF in wasm (`amoris-assets` `import` on `wasm32`), so meshopt must build for
   `wasm32-unknown-unknown` with the pinned clang and a libc sysroot as QuickJS-ng does, or levels
   must be made when a game is packaged and shipped with it; (2) drawing: a level chosen per
   instance on the GPU makes a batch per (variant, mesh, level) whose region in each view's list
@@ -394,7 +394,7 @@ off every slot does, and the pass culls as before.
 up to nine more plane tests; the test runs only after the box test passes. The CPU's work is a few
 microseconds per frame and does not grow with the scene.
 
-**Switch.** `POCKET_SHADOW_CULL=off|on` (natively; default on) and `Renderer::set_shadow_cull`.
+**Switch.** `AMORIS_SHADOW_CULL=off|on` (natively; default on) and `Renderer::set_shadow_cull`.
 The image is the same either way; only the cascades' draws and their cost change.
 
 **What it assumes**, each a reason to rerun the checks below when it changes: `shadow_factor`'s
@@ -428,7 +428,7 @@ use the grown sphere, section 9's `skinned_bounds.rs`); and receivers' normals o
   circling it, a 16 x 16 LOD field walked into with levels on and off, and the many_cubes sphere
   turning. Every frame must be identical to the bit, the camera's draws equal, no cascade may draw
   more instances or triangles with the slices, and in the field every cascade must cull something.
-- `cargo run --release -p pocket-render --example shadow_cull -- compare` does the same on the
+- `cargo run --release -p amoris-render --example shadow_cull -- compare` does the same on the
   benchmark scenes at 1280x720 (the mixed scene and its orbit, the many_cubes sphere and dense
   layouts with shadows, the LOD field at `t` 0 and 0.5 with levels on and off and walking) and
   reports each cascade's instances and triangles off and on; `-- bench SCENE` times both modes in

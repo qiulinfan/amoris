@@ -3,13 +3,13 @@
 
 For each planted bug: copy samples/sailing with the evaluation's helm layer
 (tools/eval/debug_eval/scripts: a Helm component the player steers with, and the `helm` system that
-turns it into the Boat's controls), plant one small TypeScript mistake, start `pocket serve`, hand
+turns it into the Boat's controls), plant one small TypeScript mistake, start `amoris serve`, hand
 an LLM agent (opencode, by default GLM 5.3 Flash) a player's description of the SYMPTOM only, and
-let it work through the host's CLI alone. opencode's permissions let its shell run `pocket ...` and
+let it work through the host's CLI alone. opencode's permissions let its shell run `amoris ...` and
 a few text filters and its file tools reach only an empty scratch directory; the shell itself runs
 under sandbox-exec, which lets it read and write only that scratch directory (no home directory, no
 repository, no other temporary directory, no network but the local host). The game's scripts are
-therefore reachable only through `pocket scripts read/write/apply`. opencode runs with its own
+therefore reachable only through `amoris scripts read/write/apply`. opencode runs with its own
 configuration only (XDG_CONFIG_HOME in the run directory, Claude Code compatibility off): the
 user's global rules, skills and MCP servers are not loaded; only their settings for the model's
 provider (the API key file) are copied. The run directory's name says nothing about the bug.
@@ -33,7 +33,7 @@ never replaces a recorded one: it takes the next free trial number.
     python3 tools/eval/debug_eval.py --report     # re-reads the transcripts, writes the results table
     python3 tools/eval/debug_eval.py --list
 
-The pocket binary defaults to $CARGO_TARGET_DIR/release/pocket (--pocket to change). Standard
+The amoris binary defaults to $CARGO_TARGET_DIR/release/amoris (--amoris to change). Standard
 library only. macOS has no `timeout`; the time and call budgets are enforced here, and every host a
 run starts is stopped.
 """
@@ -59,7 +59,7 @@ OVERLAY = Path(__file__).resolve().parent / "debug_eval" / "scripts"
 EVIDENCE = REPO / "out" / "debug-eval"
 DOC = REPO / "docs" / "bench" / "debug-eval.md"
 DEFAULT_MODEL = "zai-coding-plan/glm-5.3-flash"
-TMP_PREFIX = "pocket-eval-"          # says nothing about the bug: the agent sees its working directory
+TMP_PREFIX = "amoris-eval-"          # says nothing about the bug: the agent sees its working directory
 
 
 # --- The planted bugs ----------------------------------------------------------------------------
@@ -270,25 +270,25 @@ def diff(a: dict, b: dict, la: str, lb: str) -> str:
 # --- The host ------------------------------------------------------------------------------------
 
 class Host:
-    """`pocket serve <proj> --port 0`, stopped on exit."""
+    """`amoris serve <proj> --port 0`, stopped on exit."""
 
-    def __init__(self, pocket: str, proj: Path, errlog: Path):
-        self.pocket, self.proj = pocket, proj
+    def __init__(self, amoris: str, proj: Path, errlog: Path):
+        self.amoris, self.proj = amoris, proj
         self.err = open(errlog, "w")
-        self.proc = subprocess.Popen([pocket, "serve", str(proj), "--port", "0"], stdout=subprocess.PIPE,
+        self.proc = subprocess.Popen([amoris, "serve", str(proj), "--port", "0"], stdout=subprocess.PIPE,
                                      stderr=self.err, text=True, start_new_session=True)
         line = self.proc.stdout.readline()
         if not line:
-            raise RuntimeError(f"pocket serve did not start; see {errlog}")
+            raise RuntimeError(f"amoris serve did not start; see {errlog}")
         self.info = json.loads(line)
         self.url = self.info["url"]
 
     def env(self):
-        return {**os.environ, "POCKET_HOST": self.url}
+        return {**os.environ, "AMORIS_HOST": self.url}
 
     def call(self, method, params=None):
-        """A method through the CLI (`pocket call <method> '<json>' --json`)."""
-        r = subprocess.run([self.pocket, "call", method, json.dumps(params or {}), "--json"],
+        """A method through the CLI (`amoris call <method> '<json>' --json`)."""
+        r = subprocess.run([self.amoris, "call", method, json.dumps(params or {}), "--json"],
                            capture_output=True, text=True, env=self.env(), timeout=300)
         v = json.loads(r.stdout) if r.stdout.strip() else {"error": {"code": "cli", "message": r.stderr}}
         if isinstance(v, dict) and "error" in v and len(v) == 1:
@@ -447,7 +447,7 @@ def op_set(entity, component, value):
 
 
 # A scenario exercising every feature, compared with the clean game by its world hash chain (every
-# tick, `pocket hashes --inputs`). The world hash covers the components and the persisted resources,
+# tick, `amoris hashes --inputs`). The world hash covers the components and the persisted resources,
 # among them the event inbox (each tick's events), so an event's field (`left`) counts too. The
 # Sloop starts at the origin, heading 90: the four crates are brought alongside and taken first,
 # Crate1 at 2.5 m (inside REACH, outside the squared-distance bug's 1.7 m), so every `left` and
@@ -469,22 +469,22 @@ SCENARIO = [
 SCENARIO_TICKS = 720
 
 
-def scenario_hashes(pocket: str, proj: Path, inputs: Path, ticks=SCENARIO_TICKS):
+def scenario_hashes(amoris: str, proj: Path, inputs: Path, ticks=SCENARIO_TICKS):
     with open(inputs, "w") as f:
         for tick, edits in SCENARIO:
             f.write(json.dumps({"tick": tick, "source": {"player": 0}, "name": "world_edit",
                                 "params": {"edits": edits}}) + "\n")
-    r = subprocess.run([pocket, "hashes", str(proj), "--ticks", str(ticks), "--inputs", str(inputs)],
+    r = subprocess.run([amoris, "hashes", str(proj), "--ticks", str(ticks), "--inputs", str(inputs)],
                        capture_output=True, text=True, timeout=600)
     if r.returncode != 0:
         return None, r.stdout + r.stderr
     return json.loads(r.stdout)["hashes"], ""
 
 
-def run_checks(pocket: str, proj: Path, errlog: Path):
+def run_checks(amoris: str, proj: Path, errlog: Path):
     """Every behavioural check on a fresh host of `proj`: {name: [ok, detail]}."""
     out = {}
-    with Host(pocket, proj, errlog) as h:
+    with Host(amoris, proj, errlog) as h:
         for name, fn in CHECKS.items():
             try:
                 out[name] = list(fn(h))
@@ -493,12 +493,12 @@ def run_checks(pocket: str, proj: Path, errlog: Path):
     return out
 
 
-def clean_reference(pocket: str) -> dict:
+def clean_reference(amoris: str) -> dict:
     """The clean game's scripts and scenario hash chain."""
     clean = scripts_with(None)
     tmp = Path(tempfile.mkdtemp(prefix=TMP_PREFIX))
     try:
-        hashes, herr = scenario_hashes(pocket, project_with(tmp, clean), tmp / "scenario.jsonl")
+        hashes, herr = scenario_hashes(amoris, project_with(tmp, clean), tmp / "scenario.jsonl")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     if hashes is None:
@@ -506,14 +506,14 @@ def clean_reference(pocket: str) -> dict:
     return {"scripts": clean, "hashes": hashes}
 
 
-def evaluate(pocket: str, scripts: dict, reference: dict, errlog: Path) -> dict:
+def evaluate(amoris: str, scripts: dict, reference: dict, errlog: Path) -> dict:
     """Checks a game's final scripts on a fresh host: the behavioural checks, the rules' constants,
     and the scenario's hash chain against the clean game's. `success` is the first two."""
     tmp = Path(tempfile.mkdtemp(prefix=TMP_PREFIX))
     try:
         proj = project_with(tmp, scripts)
-        checks = run_checks(pocket, proj, errlog)
-        hashes, herr = scenario_hashes(pocket, proj, tmp / "scenario.jsonl")
+        checks = run_checks(amoris, proj, errlog)
+        hashes, herr = scenario_hashes(amoris, proj, tmp / "scenario.jsonl")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     changed = rules_changed(reference["scripts"], scripts)
@@ -533,15 +533,15 @@ def evaluate(pocket: str, scripts: dict, reference: dict, errlog: Path) -> dict:
 
 PROMPT = """You are helping the player of a small sailing game made with the Amoris engine.
 
-The game is running in a host that you reach only through the `pocket` command-line client, which
-is on your PATH and already connected to it (POCKET_HOST is set). The game is paused at tick 0 in
-its edit world; `pocket step <ticks>` advances it.
+The game is running in a host that you reach only through the `amoris` command-line client, which
+is on your PATH and already connected to it (AMORIS_HOST is set). The game is paused at tick 0 in
+its edit world; `amoris step <ticks>` advances it.
 
 The game: a sloop (the entity `Sloop`) sails on a sea in a steady breeze, with crates (`Crate1` to
 `Crate4`) adrift. The player plays by setting the Sloop's controls, for example
-`pocket world set Sloop Helm steer=-1` (the wheel), `pocket world set Sloop Helm goto=Crate2` (the
-helmsman steers for a crate), `pocket world set Sloop Helm anchor=true`, or
-`pocket world set Sloop Crew take=Crate1` (the crew takes a crate aboard if it is within reach).
+`amoris world set Sloop Helm steer=-1` (the wheel), `amoris world set Sloop Helm goto=Crate2` (the
+helmsman steers for a crate), `amoris world set Sloop Helm anchor=true`, or
+`amoris world set Sloop Crew take=Crate1` (the crew takes a crate aboard if it is within reach).
 
 The player reports:
   "{symptom}"
@@ -550,13 +550,13 @@ Your job: find the cause of this in the game's scripts, fix it, and confirm the 
 game.
 
 Rules:
-- Use only `pocket` commands (plus grep/head/tail/wc/sort/jq on their output). Start with
-  `pocket help`; `pocket help <command>` explains one. The host has commands to inspect the world,
+- Use only `amoris` commands (plus grep/head/tail/wc/sort/jq on their output). Start with
+  `amoris help`; `amoris help <command>` explains one. The host has commands to inspect the world,
   step time with stop conditions, read events and logs, debug the scripts (breakpoints, watches,
   evaluation) and read, write and apply scripts.
-{mcp}- Read the scripts with `pocket scripts read <path>`. Change one by writing its whole new text with
-  `pocket scripts write <path> - <<'EOF' ... EOF` (or from a file you create in your working
-  directory), then load it into the game with `pocket scripts apply`.
+{mcp}- Read the scripts with `amoris scripts read <path>`. Change one by writing its whole new text with
+  `amoris scripts write <path> - <<'EOF' ... EOF` (or from a file you create in your working
+  directory), then load it into the game with `amoris scripts apply`.
 {debugger}- Fix the code; do not hide the symptom by changing the scene, the player's controls or constants
   that set the game's rules.
 - Budget: at most {max_calls} tool calls and {max_minutes} minutes.
@@ -566,12 +566,12 @@ When you are done, end your final message with one line of JSON:
 """
 
 
-MCP_RULE = """- The same host is also attached to you as MCP tools (`pocket_world`, `pocket_scripts`,
-  `pocket_time`, `pocket_events`, `pocket_debug`, ...): use them or the CLI, as you prefer.
+MCP_RULE = """- The same host is also attached to you as MCP tools (`amoris_world`, `amoris_scripts`,
+  `amoris_time`, `amoris_events`, `amoris_debug`, ...): use them or the CLI, as you prefer.
 """
 DEBUGGER_RULE = """- Before you change any code, confirm the cause in the running game with the script debugger
-  (`pocket debug <action> '<json>'`): stop the game inside the system you suspect with a breakpoint
-  or a data watch, and look at the values there (`pocket debug state`, `pocket debug eval`). Say in
+  (`amoris debug <action> '<json>'`): stop the game inside the system you suspect with a breakpoint
+  or a data watch, and look at the values there (`amoris debug state`, `amoris debug eval`). Say in
   your final message what the debugger showed.
 """
 
@@ -590,7 +590,7 @@ def user_provider(model: str) -> dict:
 
 
 def opencode_config(path: Path, via: str, host_url: str, model: str, shell: Path):
-    allow = ["pocket", "pocket *", "grep *", "head *", "tail *", "wc *", "sort *", "jq *", "echo *",
+    allow = ["amoris", "amoris *", "grep *", "head *", "tail *", "wc *", "sort *", "jq *", "echo *",
              "cat *", "sleep *"]
     bash = {"*": "deny", **{p: "allow" for p in allow}}
     cfg = {"$schema": "https://opencode.ai/config.json", "shell": str(shell),
@@ -600,16 +600,16 @@ def opencode_config(path: Path, via: str, host_url: str, model: str, shell: Path
     if provider:
         cfg["provider"] = provider
     if via == "mcp":
-        cfg["mcp"] = {"pocket": {"type": "remote", "url": host_url + "/mcp", "enabled": True}}
-        cfg["permission"]["pocket_*"] = "allow"
+        cfg["mcp"] = {"amoris": {"type": "remote", "url": host_url + "/mcp", "enabled": True}}
+        cfg["permission"]["amoris_*"] = "allow"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(cfg, indent=2) + "\n")
 
 
 # The agent's shell runs under sandbox-exec. opencode's bash permissions match command words, not
-# paths: `grep x ../game/scripts/helm.ts` or `pocket step 1 > /tmp/x` pass them. The sandbox reads
+# paths: `grep x ../game/scripts/helm.ts` or `amoris step 1 > /tmp/x` pass them. The sandbox reads
 # and writes only the scratch directory (and the shell's own temporary directory, for heredocs),
-# reads the directory holding `pocket`, and talks only to the local host. Under SBPL a later rule
+# reads the directory holding `amoris`, and talks only to the local host. Under SBPL a later rule
 # overrides an earlier one only for the operation it names: the allows name file-read-data, as the
 # deny does (an allow of file-read* does not lift it).
 SANDBOX = """(version 1)
@@ -632,14 +632,14 @@ def denied_roots():
     return " ".join(f'(subpath "{r}")' for r in sorted(roots))
 
 
-def agent_layout(tmp: Path, pocket: str, via: str, host_url: str, model: str):
+def agent_layout(tmp: Path, amoris: str, via: str, host_url: str, model: str):
     """The agent's scratch directory and environment under `tmp` (which also holds the game): the
-    `pocket` on its PATH, the sandboxed shell, and opencode's own configuration directory."""
+    `amoris` on its PATH, the sandboxed shell, and opencode's own configuration directory."""
     tmp = tmp.resolve()
     workdir, bindir, shtmp, cfgdir = tmp / "agent", tmp / "bin", tmp / "shtmp", tmp / "config"
     for d in (workdir, bindir, shtmp, cfgdir):
         d.mkdir()
-    os.symlink(os.path.abspath(pocket), bindir / "pocket")
+    os.symlink(os.path.abspath(amoris), bindir / "amoris")
     profile = tmp / "shell.sb"
     profile.write_text(SANDBOX.format(denied=denied_roots(), work=workdir, shtmp=shtmp, bin=bindir))
     shell = tmp / "shell" / "sh"     # opencode runs a shell named `sh` as `sh -c <command>`
@@ -647,7 +647,7 @@ def agent_layout(tmp: Path, pocket: str, via: str, host_url: str, model: str):
     shell.write_text(f"#!/bin/sh\nTMPDIR={shtmp}/ exec /usr/bin/sandbox-exec -f {profile} /bin/bash \"$@\"\n")
     shell.chmod(0o755)
     opencode_config(cfgdir / "opencode" / "opencode.json", via, host_url, model, shell)
-    env = {**os.environ, "POCKET_HOST": host_url, "PATH": f"{bindir}:{os.environ['PATH']}",
+    env = {**os.environ, "AMORIS_HOST": host_url, "PATH": f"{bindir}:{os.environ['PATH']}",
            "XDG_CONFIG_HOME": str(cfgdir), "OPENCODE_DISABLE_CLAUDE_CODE": "1",
            "OPENCODE_DISABLE_EXTERNAL_SKILLS": "1"}
     return workdir, shell, env
@@ -715,12 +715,14 @@ def run_opencode(prompt, workdir: Path, env, model, max_time, max_calls, raw_pat
 # A refusal as the CLI prints it: `code: message` at the start of a line.
 REFUSAL = re.compile(r"(?m)^((?:request|debug|script|scripts|sim|host|history|play|snapshots|events|command|project)"
                      r"\.[a-z_.]+): ")
-APPLY = re.compile(r"pocket\s+scripts\s+apply|scripts\.apply")
-RESTORE = re.compile(r"pocket\s+snapshots\s+restore|snapshots\.restore|debug\.rewind|\"action\": \"rewind\"")
+# Transcripts of runs recorded before 2026-10-16 call the CLI and the MCP tools by the old name,
+# and `--report` re-reads them: the patterns take both names until no such run is re-reported.
+APPLY = re.compile(r"(?:pocket|amoris)\s+scripts\s+apply|scripts\.apply")
+RESTORE = re.compile(r"(?:pocket|amoris)\s+snapshots\s+restore|snapshots\.restore|debug\.rewind|\"action\": \"rewind\"")
 # The first time the agent did each of these (seconds from its first event).
-FIRSTS = {"scripts_read": r"pocket\s+scripts\s+read", "debug": r"pocket\s+debug\s+(?!state\b)",
-          "scripts_write": r"pocket\s+scripts\s+(write|apply)"}
-POCKET_CMD = re.compile(r"(?:^|[;&|(]\s*|\n)\s*pocket\s+([a-z.]+)(?:\s+([a-z][a-z._]*))?")
+FIRSTS = {"scripts_read": r"(?:pocket|amoris)\s+scripts\s+read", "debug": r"(?:pocket|amoris)\s+debug\s+(?!state\b)",
+          "scripts_write": r"(?:pocket|amoris)\s+scripts\s+(write|apply)"}
+AMORIS_CMD = re.compile(r"(?:^|[;&|(]\s*|\n)\s*(?:pocket|amoris)\s+([a-z.]+)(?:\s+([a-z][a-z._]*))?")
 
 
 def summarize(events):
@@ -744,13 +746,13 @@ def summarize(events):
             inp = st.get("input") or {}
             if name == "bash":
                 command = inp.get("command", "")
-                for m in POCKET_CMD.finditer(command):
+                for m in AMORIS_CMD.finditer(command):
                     sub, act = m.group(1), m.group(2)
                     key = f"{sub} {act}" if act and sub in ("debug", "world", "scripts", "time", "play",
                                                            "snapshots", "call", "help") else sub
                     cli[key] = cli.get(key, 0) + 1
                 shown = command
-            elif name.startswith("pocket_"):
+            elif name.startswith(("pocket_", "amoris_")):
                 key = f"mcp {name[7:]} {inp.get('action', '')}".strip()
                 cli[key] = cli.get(key, 0) + 1
                 shown = json.dumps(inp)
@@ -777,7 +779,7 @@ def summarize(events):
             for m in APPLY.finditer(command):
                 if ok:
                     applies.append(e["_t"] + m.start() * 1e-6)
-            if name == "pocket_scripts" and inp.get("action") == "apply" and ok:
+            if name in ("pocket_scripts", "amoris_scripts") and inp.get("action") == "apply" and ok:
                 applies.append(e["_t"])
             restored = "restored tick" in output or '"restored"' in output
             for m in RESTORE.finditer(command):
@@ -829,7 +831,7 @@ def summarize(events):
             except json.JSONDecodeError:
                 continue
     return {"tools": tools, "tool_calls": sum(tools.values()), "tool_errors": errors, "cli": cli,
-            "pocket_calls": sum(cli.values()), "turns": turns, "tokens": usage, "cost_usd": round(cost, 6),
+            "amoris_calls": sum(cli.values()), "turns": turns, "tokens": usage, "cost_usd": round(cost, 6),
             "refusals": refusals, "output_chars": out_bytes, "largest_output_chars": biggest,
             "bash_timeouts": timeouts, "blocked_s": round(blocked_s, 1), "eval_unseen_locals": eval_unseen,
             "stale_bundle_after_restore": stale, "first_s": firsts, "answer": answer}, "\n".join(md)
@@ -883,8 +885,8 @@ def one_run(a, bug: Bug, trial: int, reference):
                                debugger=DEBUGGER_RULE if a.variant == "debugger" else "",
                                mcp=MCP_RULE if a.via == "mcp" else "")
         (out / "prompt.txt").write_text(prompt)
-        with Host(a.pocket, proj, out / "serve.err") as host:
-            workdir, _, env = agent_layout(tmp, a.pocket, a.via, host.url, a.model)
+        with Host(a.amoris, proj, out / "serve.err") as host:
+            workdir, _, env = agent_layout(tmp, a.amoris, a.via, host.url, a.model)
             print(f"  {bug.name} #{trial}: host {host.url}, agent {a.model} via {a.via} ...", flush=True)
             events, stopped, agent_s, stderr, code = run_opencode(
                 prompt, workdir, env, a.model, a.max_time, a.max_calls, out / "transcript.jsonl")
@@ -898,7 +900,7 @@ def one_run(a, bug: Bug, trial: int, reference):
         final = scripts_of(proj)
         (out / "fix.diff").write_text(diff(planted, final, "planted", "agent"))
         # The checks run on a fresh copy of the game whose scripts are the agent's.
-        verdict = evaluate(a.pocket, final, reference, out / "check-serve.err")
+        verdict = evaluate(a.amoris, final, reference, out / "check-serve.err")
         ans = stats.pop("answer")
         result = {
             "bug": bug.name, "kind": bug.kind, "trial": trial, "model": a.model, "via": a.via,
@@ -913,7 +915,7 @@ def one_run(a, bug: Bug, trial: int, reference):
         }
         (out / "result.json").write_text(json.dumps(result, indent=2) + "\n")
         print(f"  {bug.name} #{trial}: success={result['success']} (own check {result['bug_check']}), "
-              f"located={result['located']}, {stats['tool_calls']} tool calls ({stats['pocket_calls']} pocket), "
+              f"located={result['located']}, {stats['tool_calls']} tool calls ({stats['amoris_calls']} amoris), "
               f"{agent_s} s, {stats['tokens']['total']} tokens, stopped_by={stopped}", flush=True)
         return result
     finally:
@@ -943,7 +945,7 @@ def recheck(a):
     """Re-checks every recorded run's final scripts (its planted game plus its fix.diff) with this
     file's checks, rules, scenario and `located`, and updates result.json. The verdicts it was
     recorded with stay under `as_run`."""
-    reference = clean_reference(a.pocket)
+    reference = clean_reference(a.amoris)
     scratch = Path(tempfile.mkdtemp(prefix=TMP_PREFIX))
     try:
         for res in sorted(a.evidence.glob("*/*/result.json")):
@@ -956,7 +958,7 @@ def recheck(a):
                                                           "hash_chain_identical_to_clean",
                                                           "hash_first_divergence_tick")})
             r.setdefault("isolation", "permissions")
-            verdict = evaluate(a.pocket, final, reference, scratch / "serve.err")
+            verdict = evaluate(a.amoris, final, reference, scratch / "serve.err")
             r.update(verdict)
             r["bug_check"] = verdict["checks"][bug.check][0]
             r["located"] = is_located(bug, r.get("answer"), defect)
@@ -1003,7 +1005,7 @@ def report(a):
     (a.evidence / "summary.json").write_text(json.dumps(
         [{k: r.get(k) for k in ("dir", "bug", "variant", "via", "trial", "isolation", "success", "bug_check",
                                 "rules_kept", "located", "hash_chain_identical_to_clean", "as_run",
-                                "tool_calls", "pocket_calls",
+                                "tool_calls", "amoris_calls",
                                 "tool_errors", "agent_s", "wall_s", "tokens", "debug_used", "stopped_by", "cli",
                                 "refusals", "output_chars", "largest_output_chars", "first_s", "bash_timeouts",
                                 "blocked_s", "eval_unseen_locals", "stale_bundle_after_restore")} for r in runs],
@@ -1012,7 +1014,7 @@ def report(a):
     def yes(v):
         return "yes" if v else "no"
     base = os.path.relpath(a.evidence, DOC.parent)
-    table = ["| Run | Bug | Fixed | Located | Hash = clean | Tool calls | `pocket` calls | "
+    table = ["| Run | Bug | Fixed | Located | Hash = clean | Tool calls | `amoris` calls | "
              "Agent s | Tokens k (cached) | Debugger | Stopped by |",
              "|---|---|---|---|---|---|---|---|---|---|---|"]
     for r in runs:
@@ -1020,7 +1022,7 @@ def report(a):
         table.append(
             f"| [{r['dir']}]({base}/{r['dir']}/transcript.md) | {r['bug']} | {'yes' if r['success'] else 'NO'} | "
             f"{yes(r['located'])} | {yes(r.get('hash_chain_identical_to_clean'))} | "
-            f"{r['tool_calls']} | {r['pocket_calls']} | "
+            f"{r['tool_calls']} | {r['amoris_calls']} | "
             f"{r['agent_s']:.0f} | {t['total'] / 1000:.0f} ({t['cache_read'] / 1000:.0f}) | "
             f"{'yes' if r['debug_used'] else '-'} | {(r['stopped_by'] or '-').replace('_', ' ')} |")
     if a.evidence.resolve() == EVIDENCE.resolve() and TABLE_BEGIN in DOC.read_text():
@@ -1069,27 +1071,27 @@ def report(a):
 # Commands run through the agent's sandboxed shell by --selftest, as opencode runs them (`sh -c`):
 # (command, whether it must work, text its output must contain).
 PROBES = [
-    ("pocket status", True, "tick 0"),
-    ("pocket scripts read scripts/helm.ts | grep -c atan2", True, "1"),
+    ("amoris status", True, "tick 0"),
+    ("amoris scripts read scripts/helm.ts | grep -c atan2", True, "1"),
     ("echo note > notes.txt && cat notes.txt", True, "note"),
     ("cat <<'EOF' | wc -l\na\nb\nEOF", True, "2"),
     ("head -3 ../sailing/scripts/helm.ts", False, "Operation not permitted"),
     ("grep -rn REACH {repo}/samples/sailing/scripts", False, "Operation not permitted"),
     ("grep -c . {home}/.config/opencode/opencode.json", False, "Operation not permitted"),
-    ("pocket step 1 > {tmpdir}/pocket-eval-probe.out", False, "Operation not permitted"),
-    ("pocket hashes ../sailing --ticks 1", False, "Operation not permitted"),
+    ("amoris step 1 > {tmpdir}/amoris-eval-probe.out", False, "Operation not permitted"),
+    ("amoris hashes ../sailing --ticks 1", False, "Operation not permitted"),
 ]
 
 
-def sandbox_probe(pocket: str, model: str) -> bool:
+def sandbox_probe(amoris: str, model: str) -> bool:
     """The agent's layout around a running host: what its shell can and cannot reach, and what
     opencode resolves with the run's configuration (when opencode is installed)."""
     ok = True
     tmp = Path(tempfile.mkdtemp(prefix=TMP_PREFIX))
     try:
         proj = build_project(tmp, None)
-        with Host(pocket, proj, tmp / "serve.err") as host:
-            workdir, shell, env = agent_layout(tmp, pocket, "cli", host.url, model)
+        with Host(amoris, proj, tmp / "serve.err") as host:
+            workdir, shell, env = agent_layout(tmp, amoris, "cli", host.url, model)
             # Printed with the machine's paths as placeholders.
             places = {"{repo}": str(REPO), "{home}": str(Path.home()), "{tmpdir}": tempfile.gettempdir().rstrip("/")}
             for template, must_work, want in PROBES:
@@ -1138,7 +1140,7 @@ def selftest(a):
     its own check and changes the scenario's hash chain; hiding a symptom by changing a rule's
     constant passes the behavioural checks but is not a fix; the agent's sandbox holds."""
     ok = True
-    reference = clean_reference(a.pocket)
+    reference = clean_reference(a.amoris)
     print(f"clean reference: hash chain of {len(reference['hashes'])} ticks")
     cases = [("clean", None, reference["scripts"])] + [(n, BUG[n], scripts_with(BUG[n])) for n in a.bugs]
     # Forbidden by the prompt, and invisible to the behavioural checks and the scenario.
@@ -1152,7 +1154,7 @@ def selftest(a):
     tmp = Path(tempfile.mkdtemp(prefix=TMP_PREFIX))
     try:
         for name, bug, scripts in cases:
-            v = evaluate(a.pocket, scripts, reference, tmp / "serve.err")
+            v = evaluate(a.amoris, scripts, reference, tmp / "serve.err")
             for c, (passed, detail) in v["checks"].items():
                 print(f"  {name:22} {c:12} {'pass' if passed else 'FAIL'}  {detail}")
             same = ("hash chain identical" if v["hash_chain_identical_to_clean"] else
@@ -1172,22 +1174,22 @@ def selftest(a):
             ok &= good
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-    ok &= sandbox_probe(a.pocket, a.model)
+    ok &= sandbox_probe(a.amoris, a.model)
     return ok
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     target = Path(os.environ.get("CARGO_TARGET_DIR") or REPO / "target")
-    ap.add_argument("--pocket", default=str(target / "release" / "pocket"),
-                    help="the pocket binary (default $CARGO_TARGET_DIR/release/pocket)")
+    ap.add_argument("--amoris", default=str(target / "release" / "amoris"),
+                    help="the amoris binary (default $CARGO_TARGET_DIR/release/amoris)")
     ap.add_argument("--bugs", default=",".join(b.name for b in BUGS))
     ap.add_argument("--trials", type=int, default=1)
     ap.add_argument("--first-trial", type=int, default=1,
                     help="the first trial number (a recorded one is skipped to the next free number)")
     ap.add_argument("--model", default=DEFAULT_MODEL)
     ap.add_argument("--via", default="cli", choices=["cli", "mcp"],
-                    help="cli: the shell's `pocket` only; mcp: also the host's MCP tools")
+                    help="cli: the shell's `amoris` only; mcp: also the host's MCP tools")
     ap.add_argument("--variant", default="free", choices=["free", "debugger"],
                     help="free: the agent picks its tools; debugger: it must confirm the cause with the "
                          "script debugger before changing code")
@@ -1214,15 +1216,15 @@ def main():
         for b in BUGS:
             print(f"{b.name:17} {b.file:17} {b.kind}\n{'':17} symptom: {b.symptom}")
         return 0
-    if not Path(a.pocket).exists():
-        raise SystemExit(f"{a.pocket} is not built (cargo build --release -p pocket-app, or --pocket PATH)")
+    if not Path(a.amoris).exists():
+        raise SystemExit(f"{a.amoris} is not built (cargo build --release -p amoris-app, or --amoris PATH)")
     if not Path("/usr/bin/sandbox-exec").exists():
         raise SystemExit("the agent's shell runs under /usr/bin/sandbox-exec (macOS)")
     if a.selftest:
         return 0 if selftest(a) else 1
     if a.recheck:
         return recheck(a)
-    reference = clean_reference(a.pocket)
+    reference = clean_reference(a.amoris)
     results = []
     for trial in range(a.first_trial, a.first_trial + a.trials):
         for n in a.bugs:

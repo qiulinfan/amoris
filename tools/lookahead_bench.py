@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Fork lookahead for the skipper and the cost of a fork (docs/bench/player.md, section 5): runs the
-`lookahead_bench` example of pocket-runtime and prints its tables.
+`lookahead_bench` example of amoris-runtime and prints its tables.
 
     python tools/lookahead_bench.py build
         builds the example (release)
@@ -59,7 +59,7 @@ def locked(args, cmd):
 
 def build(_args):
     env = dict(os.environ, CARGO_BUILD_JOBS=os.environ.get("CARGO_BUILD_JOBS", "5"))
-    sh(["cargo", "build", "--release", "-p", "pocket-runtime", "--features", "transpile",
+    sh(["cargo", "build", "--release", "-p", "amoris-runtime", "--features", "transpile",
         "--example", "lookahead_bench"], cwd=REPO, env=env)
 
 

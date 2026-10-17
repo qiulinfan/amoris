@@ -5,17 +5,17 @@ docs/bench/occlusion.md: occlusion culling must never change the image. Two kind
 on one backend and adapter:
 
 - captures: every case of tools/backend_compare.py (many_cubes, splats, static project scenes, and
-  `pocket serve` captures of the sailing, anim and gi-room samples) plus the many_cubes orbit, each
-  captured by its own process with POCKET_OCCLUSION=off and with POCKET_OCCLUSION=on, compared by
+  `amoris serve` captures of the sailing, anim and gi-room samples) plus the many_cubes orbit, each
+  captured by its own process with AMORIS_OCCLUSION=off and with AMORIS_OCCLUSION=on, compared by
   the `image_diff` example (with --evidence a strip: off, on, heat map). Separate processes do not
   draw animated scenes at exactly the same moment: `anim` differs between two runs with occlusion
   off as much as between off and on;
-- scenes: the pocket-app example `draw_paths --compare occlusion` draws each scene twice in one
+- scenes: the amoris-app example `draw_paths --compare occlusion` draws each scene twice in one
   process at one fixed moment (occlusion off, forced on) and compares the pixels and the entity-id
   pass's coverage, so animated scenes compare exactly.
 
-Build first: `cargo build --release -p pocket-render --examples`, `cargo build --release -p
-pocket-app` and `cargo build --release -p pocket-app --example draw_paths`. Then, from the
+Build first: `cargo build --release -p amoris-render --examples`, `cargo build --release -p
+amoris-app` and `cargo build --release -p amoris-app --example draw_paths`. Then, from the
 repository's root:
 
     python tools/occlusion_compare.py --backend vulkan --adapter nvidia --out out/bench-runs/hiz/compare-captures \
@@ -36,9 +36,9 @@ SCENES = "mixed,cubes,samples/anim,samples/sailing,samples/gi-room,samples/pt-la
 
 
 def captures(cases, backend, adapter, out, evidence, feature="occlusion"):
-    """`feature`: what is switched off and on, `occlusion` (POCKET_OCCLUSION) or `prepass`
-    (POCKET_PREPASS, tools/prepass_compare.py)."""
-    var = f"POCKET_{feature.upper()}"
+    """`feature`: what is switched off and on, `occlusion` (AMORIS_OCCLUSION) or `prepass`
+    (AMORIS_PREPASS, tools/prepass_compare.py)."""
+    var = f"AMORIS_{feature.upper()}"
     port = 7990
     results = {}
     for case in cases:
@@ -60,9 +60,9 @@ def captures(cases, backend, adapter, out, evidence, feature="occlusion"):
 
 
 def scenes(names, backend, adapter, out, feature="occlusion"):
-    env = dict(os.environ, POCKET_BACKEND=backend)
+    env = dict(os.environ, AMORIS_BACKEND=backend)
     if adapter:
-        env["POCKET_ADAPTER"] = adapter
+        env["AMORIS_ADAPTER"] = adapter
     paths_out = out / "scenes"
     cmd = [bc.example("draw_paths"), "--compare", feature, "--out", str(paths_out), *names]
     p, _ = bc.run(cmd, env, 1800)
@@ -83,7 +83,7 @@ def scenes(names, backend, adapter, out, feature="occlusion"):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--backend", default="vulkan")
-    ap.add_argument("--adapter", default="", help="POCKET_ADAPTER value")
+    ap.add_argument("--adapter", default="", help="AMORIS_ADAPTER value")
     ap.add_argument("--cases", default=",".join(bc.CASES), help="capture cases ('' for none)")
     ap.add_argument("--scenes", default=SCENES, help="draw_paths scenes ('' for none)")
     ap.add_argument("--out", default="out/bench-runs/hiz/compare-captures")

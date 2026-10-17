@@ -5,7 +5,7 @@ python ab.py EXE RUNS FRAMES OUT.json "ARGS" ["ARGS" ...]
 For each argument set, runs the example's headless bench alternately with --raster quad and
 --raster tile, RUNS times each, and keeps per pass the best (minimum) mean over the runs and the
 best total of the splat passes. Prints a table and writes the raw numbers as JSON (every run under
-`runs`). POCKET_BACKEND and POCKET_ADAPTER in the environment choose the GPU. `matrix.py` runs the
+`runs`). AMORIS_BACKEND and AMORIS_ADAPTER in the environment choose the GPU. `matrix.py` runs the
 same measurement over rounds, backends and adapters.
 """
 import json

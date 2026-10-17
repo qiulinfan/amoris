@@ -2,8 +2,8 @@
 
 Status: Draft, slice 2
 
-The decisions slice 2's implementation of actions (the module `action` of `pocket-interface`, the
-act requests of `pocket-runtime`'s `play` module) took where
+The decisions slice 2's implementation of actions (the module `action` of `amoris-interface`, the
+act requests of `amoris-runtime`'s `play` module) took where
 [actions.md](../../shared/contract/actions.md) and [sailing.md](../../shared/contract/sailing.md)
 (Actions, Codes, Checks) were ambiguous or wrong for the code. Those files are the shared contract,
 hashed in `shared/SYNC.toml` (charter 6.2; checks.md 5.4: a changed file fails
@@ -81,7 +81,7 @@ Every game the runtime builds installs the sailing showcase's interface after th
 components are registered: perception with the declarations of
 `samples/sailing-course/perception.json` (compiled in, so a replay and the web build have them), the
 sailing action catalog, the continuous time rules, the script host's bridge
-(`pocket_script::interface::InterfaceBridge`, script-host-slice2.md), the `FieldWriter` and a
+(`amoris_script::interface::InterfaceBridge`, script-host-slice2.md), the `FieldWriter` and a
 stepped session. A world with no observer naming a seat has it inert. A game's own interface
 declarations wait for the project definition that declares them (shared/contract/README.md, The game
 definition).
@@ -94,7 +94,7 @@ field takes the target's id live or not, so a crate destroyed at the boundary it
 at reaches the rule, which emits `interact.ignored` with `sail.crate_gone`, instead of faulting the
 tick on a dead reference. So `use Crate1 take_aboard` in the sample sets `Crew.take`, the sample's
 `take_aboard` rule takes the crate in that tick and emits `crate.taken`, and the recording replays
-tick for tick (`pocket-runtime`'s `tests/play.rs`). The sample's scene does not seat the skipper
+tick for tick (`amoris-runtime`'s `tests/play.rs`). The sample's scene does not seat the skipper
 yet: scenes name only the engine's slice 1 components and project components, not perception's
 `Observer` and `Perceivable`, so the runtime's tests seat it in code (the scene format's extension
 is the scene's owner's).
@@ -172,8 +172,8 @@ validated and applied in the sailing scene, 1.52 ms at the median; `intent.tick`
 `action::web` carries out the three sailing intents with physics and perception for 3,600 ticks and
 reports each intent's end and the hash of every persisted section at every tick;
 `examples/web_actions.rs` is the same as a WebAssembly module with no imports, which
-`crates/pocket-interface/tests/web/run.mjs` runs under Node against the native report (the
-`web_actions` test writes it to `<target>/tmp/pocket-interface-web-actions.txt`). In a browser, the
+`crates/amoris-interface/tests/web/run.mjs` runs under Node against the native report (the
+`web_actions` test writes it to `<target>/tmp/amoris-interface-web-actions.txt`). In a browser, the
 same page and worker as perception's web test (`tests/web/index.html` and `worker.js`, with the
 module's name changed to `web_actions.wasm` and the native report as `expected.txt`) load through
 `tools/webcheck.py --serve`. The local check runs the browser form in its web step
@@ -186,7 +186,7 @@ build's under Node (442 ms) and in headless Chrome (569 ms in a Web Worker).
 
 ## 11. A control's value is latched as recorded
 
-The canonical record writes a control's value as the wire does (`pocket_contract::codes::num`),
+The canonical record writes a control's value as the wire does (`amoris_contract::codes::num`),
 where an integral number is a JSON integer, so `-0.0` is recorded as `0`. A `set` therefore latches
 `x + 0.0` (`refs::wire_value`), which turns `-0.0` into `+0.0` and leaves every other value as it
 is: the value applied live and the one a replay applies from the record carry the same bits

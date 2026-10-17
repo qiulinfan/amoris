@@ -10,14 +10,14 @@ and WebGPU).
 This specification says which instances the forward renderer draws as transparent, how they leave
 the GPU-driven opaque passes, how the transparent stage sorts and draws them, how they are shaded,
 what they cast into the shadow cascades, and how they meet TAA, the render scale, MSAA, the
-entity-id pass, splats and particles. The code is `crates/pocket-render/src/transparent.rs` (the
+entity-id pass, splats and particles. The code is `crates/amoris-render/src/transparent.rs` (the
 stage), `materials.rs` (which rows are transparent), `scene.rs` (`FLAG_TRANSPARENT`, the slots),
 `renderer.rs` (`render`, `draw_after_opaque`, `draw_transparent_layer`, `IdPass`), `post.rs` (the
 passes' attachments), `gtao.rs` (GTAO into the samples), `shaders/cull.wgsl` (the camera's list) and
 `shaders/forward.wgsl` (`fs_transparent`, `fs_shadow_masked`). Measurements:
 [bench/transparency.md](../bench/transparency.md).
 
-Why: glTF BLEND materials and KHR_materials_transmission glass were imported (pocket-assets
+Why: glTF BLEND materials and KHR_materials_transmission glass were imported (amoris-assets
 `MaterialData::alpha_mode`, `transmission`, `ior`) and the path tracer renders them
 ([path-tracing-nrc.md](path-tracing-nrc.md)), but the forward renderer drew them opaque: pt-lab's
 glass sphere was a white ball, the Bistro's windows hid the rooms behind them
@@ -240,7 +240,7 @@ would need another shadow representation (section 8).
 
 ## 9. Checks
 
-- `cargo test -p pocket-render --test transparency`: overlapping half-transparent quads compose
+- `cargo test -p amoris-render --test transparency`: overlapping half-transparent quads compose
   back to front whatever the feed's order (to the bit), double-sided and single-sided BLEND quads
   seen from behind, a look's alpha on the inline material; a transparent pane over a field of
   opaque cubes leaves the image identical with the prepass and occlusion culling forced on, every
@@ -250,10 +250,10 @@ would need another shadow representation (section 8).
   times what it takes without the pane; the panes converge under TAA at render scale 0.67;
   transparent casters shadow by their opacity under the cascades and, with ray queries, the
   ray-traced shadows (clear glass and alpha 0.35 are no casters). With 4x MSAA and one sample.
-- `cargo test -p pocket-render --lib`: `materials::` (which rows are transparent and which cast),
+- `cargo test -p amoris-render --lib`: `materials::` (which rows are transparent and which cast),
   `scene::` (the transparent slot set through rebuild, hiding, removal and reset), `transparent::`
   (the order, the draws, the two-sided lists' placement under a small limit, the reversal shader).
-- `cargo test -p pocket-render --test draw_paths`: the stage on the three draw paths.
+- `cargo test -p amoris-render --test draw_paths`: the stage on the three draw paths.
 - `tools/build_compare.py` (no transparent material: identical to the build before), and
   `tools/prepass_compare.py` and `tools/occlusion_compare.py` (pt-lab included: identical with
   either feature forced on).

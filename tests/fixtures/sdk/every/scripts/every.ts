@@ -1,7 +1,7 @@
 // A project component with one field of every type, and a compile-time proof that the value type
 // its builder calls imply and the one the engine emits into components.d.ts are the same type.
-import { component, field } from "pocket";
-import type { Components, Entity, FieldDef } from "pocket";
+import { component, field } from "amoris";
+import type { Components, Entity, FieldDef } from "amoris";
 
 export const Every = component("Every", {
     version: 1, doc: "One field of every type.",

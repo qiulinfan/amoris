@@ -1,5 +1,5 @@
 // The mock host: enough of docs/spec/host-protocol.md for the editor to be fully usable before the
-// real pocket-server lands. `bun mock/host.ts [--port 7879] [--no-agent] [--dist]`
+// real amoris-server lands. `bun mock/host.ts [--port 7879] [--no-agent] [--dist]`
 //
 //   GET  /api/catalog   the command catalog
 //   POST /api/call      {id?, method, params} -> {id, result} | {id, error}
@@ -52,7 +52,7 @@ function broadcast(topic: string, data: unknown) {
 const session = new Session(broadcast);
 const agent = new MockAgent(session, broadcast);
 
-/** The HTTP API's client, as the host names it (`pocket serve`'s CLI client); the socket is the
+/** The HTTP API's client, as the host names it (`amoris serve`'s CLI client); the socket is the
  * editor's. */
 const API: Caller = { source: { developer: 0 }, session: "api" };
 
@@ -185,7 +185,7 @@ setInterval(() => broadcast("profile", session.profile()), 250);
 
 session.log({ level: "info", source: "host", message: `Opened project sailing (${session.world.entities.size} entities, ${session.scripts.files.size} scripts) — mock host` });
 session.log({ level: "info", source: "host", message: `Editor WebSocket at ws://127.0.0.1:${PORT}/ws; catalog of ${CATALOG.length} commands` });
-session.log({ level: "warn", source: "render", message: "No wasm viewport is served by the mock (/wasm/pocket_web.js); the editor draws its fallback view" });
+session.log({ level: "warn", source: "render", message: "No wasm viewport is served by the mock (/wasm/amoris_web.js); the editor draws its fallback view" });
 session.log({ level: "debug", source: "scripts", message: "Type-checked 3 scripts: 0 errors (mock diagnostics)" });
 
 if (!flag("--no-agent")) agent.start();

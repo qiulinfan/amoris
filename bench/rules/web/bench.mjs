@@ -1,4 +1,4 @@
-// The rule workload's WebAssembly module (crates/pocket-script/examples/rules_web.rs) timed per
+// The rule workload's WebAssembly module (crates/amoris-script/examples/rules_web.rs) timed per
 // tick, as the native bench (rules_bench) times Sim::step: performance.now() around each tick()
 // call. Shared by node.mjs (Node) and worker.js (a browser's Web Worker); docs/bench/script.md.
 

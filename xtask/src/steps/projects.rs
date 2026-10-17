@@ -1,6 +1,6 @@
 //! The per-project checks (docs/spec/checks.md 6.4 and 8): `types`, `determinism`, `fork`,
 //! `replay` and `reload`, each run through the built binary as
-//! `pocket check <project> --json --only <check> [--seeds <first>]`, whose stdout is a `Report`
+//! `amoris check <project> --json --only <check> [--seeds <first>]`, whose stdout is a `Report`
 //! (checks.md 10.1) with one step named after the check. xtask merges the projects' rows into its
 //! own step of that name and judges the negative controls (`[expect] fail`, checks.md 8.6).
 
@@ -15,7 +15,7 @@ use std::process::Command;
 use std::sync::Mutex;
 
 // The shape of `check.toml` (checks.md 8.1). xtask parses it only to refuse a malformed or
-// misspelt file before any step runs (exit code 2); `pocket check` reads the values.
+// misspelt file before any step runs (exit code 2); `amoris check` reads the values.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 #[allow(dead_code)]
@@ -125,16 +125,16 @@ pub fn discover(root: &Path, listed: &[String]) -> Result<Vec<Project>, Problem>
     Ok(projects)
 }
 
-/// The built `pocket` binary, or `check.command_failed` naming where the release build left none.
-pub fn pocket_binary(target_dir: &Path) -> Result<PathBuf, Problem> {
+/// The built `amoris` binary, or `check.command_failed` naming where the release build left none.
+pub fn amoris_binary(target_dir: &Path) -> Result<PathBuf, Problem> {
     let release = target_dir.join("release");
-    let p = release.join(format!("pocket{}", std::env::consts::EXE_SUFFIX));
+    let p = release.join(format!("amoris{}", std::env::consts::EXE_SUFFIX));
     if p.is_file() {
         return Ok(p);
     }
     Err(Problem::new(
         "check.command_failed",
-        format!("no pocket binary in {}", release.display()),
+        format!("no amoris binary in {}", release.display()),
         json!({"command": format!("{} check --json", p.display()), "status": null, "tail": ""}),
     ))
 }
@@ -146,12 +146,12 @@ fn tail(bytes: &[u8], n: usize) -> String {
     lines[lines.len().saturating_sub(n)..].join("\n")
 }
 
-/// Whether the binary has `pocket check`: asked for a report with no project, it must answer
+/// Whether the binary has `amoris check`: asked for a report with no project, it must answer
 /// with one (a `check.usage` report), since both commands print the same shape (checks.md 2). When
 /// it does not, `check.command_failed {command, status, tail}` with its exit status and the end of
 /// its stderr.
-pub fn probe(pocket: &Path, root: &Path) -> Result<(), Problem> {
-    let mut cmd = Command::new(pocket);
+pub fn probe(amoris: &Path, root: &Path) -> Result<(), Problem> {
+    let mut cmd = Command::new(amoris);
     cmd.args(["check", "--json"])
         .current_dir(root)
         .stdin(std::process::Stdio::null());
@@ -184,19 +184,19 @@ fn participants<'a>(projects: &'a [Project], check: &str) -> Vec<&'a Project> {
         .collect()
 }
 
-/// The step when `pocket check` cannot run. While no project takes part, `Skipped` (the slice 1
+/// The step when `amoris check` cannot run. While no project takes part, `Skipped` (the slice 1
 /// state, checks.md 14.8); once one does, the probe's failure fails the step, so a check or a
 /// control that must never pass cannot vanish with exit 0.
 pub fn unchecked(check: &str, mine: &[&Project], mut problem: Problem) -> StepResult {
     if mine.is_empty() {
         return StepResult::skipped(
             check,
-            format!("pocket-check not built yet: {}", problem.message),
+            format!("amoris-check not built yet: {}", problem.message),
         );
     }
     let dirs: Vec<&str> = mine.iter().map(|p| p.dir.as_str()).collect();
     problem.message = format!(
-        "{} projects take part in {check}, but `pocket check` cannot run: {}",
+        "{} projects take part in {check}, but `amoris check` cannot run: {}",
         dirs.len(),
         problem.message
     );
@@ -252,7 +252,7 @@ pub fn merge(step: &mut StepResult, project: &Project, check: &str, row: &StepRe
         let p = tag(Problem::new(
             "check.command_failed",
             format!(
-                "pocket check reported {check} as {verdict} for {} without a problem",
+                "amoris check reported {check} as {verdict} for {} without a problem",
                 project.dir
             ),
             json!({"verdict": verdict}),
@@ -272,18 +272,18 @@ pub fn merge(step: &mut StepResult, project: &Project, check: &str, row: &StepRe
     }
 }
 
-/// Runs one check over every project that takes part in it, `jobs` processes at a time; `pocket`
+/// Runs one check over every project that takes part in it, `jobs` processes at a time; `amoris`
 /// is the probed binary or why it cannot run.
 pub fn run(
     env: &Env,
-    pocket: &Result<PathBuf, Problem>,
+    amoris: &Result<PathBuf, Problem>,
     projects: &[Project],
     check: &str,
     quick: bool,
     jobs: usize,
 ) -> StepResult {
     let mine = participants(projects, check);
-    let pocket = match pocket {
+    let amoris = match amoris {
         Ok(p) => p,
         Err(p) => return unchecked(check, &mine, p.clone()),
     };
@@ -303,7 +303,7 @@ pub fn run(
                     let Some((i, project)) = queue.lock().expect("queue").pop() else {
                         break;
                     };
-                    let r = run_one(env, pocket, project, check, quick);
+                    let r = run_one(env, amoris, project, check, quick);
                     results.lock().expect("results").push((i, r));
                 }
             });
@@ -325,7 +325,7 @@ pub fn run(
     step
 }
 
-/// The row for `check` in what `pocket check` printed, or why there is none: no report, no step
+/// The row for `check` in what `amoris check` printed, or why there is none: no report, no step
 /// of that name, or an exit status other than the one checks.md 11 gives the row's verdict (a
 /// failing row that exits 0, a passing one that exits 1).
 pub fn read_row(stdout: &str, status: Option<i32>, check: &str) -> Result<StepResult, String> {
@@ -348,12 +348,12 @@ pub fn read_row(stdout: &str, status: Option<i32>, check: &str) -> Result<StepRe
 
 fn run_one(
     env: &Env,
-    pocket: &Path,
+    amoris: &Path,
     project: &Project,
     check: &str,
     quick: bool,
 ) -> Result<StepResult, Problem> {
-    let mut cmd = Command::new(pocket);
+    let mut cmd = Command::new(amoris);
     cmd.args(["check", &project.dir, "--json", "--only", check])
         .current_dir(&env.root);
     if quick {

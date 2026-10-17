@@ -6,7 +6,7 @@
 #         [-DCROSS_PLATFORM_DETERMINISTIC=ON]
 #   cmake --build <dir> -j 3
 cmake_minimum_required(VERSION 3.20)
-project(PocketJoltBench CXX)
+project(AmorisJoltBench CXX)
 
 set(JOLT_ROOT "$ENV{HOME}/Reference/JoltPhysics-v5.6.0" CACHE PATH "JoltPhysics checkout (release v5.6.0)")
 

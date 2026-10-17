@@ -1,8 +1,8 @@
 // The wasm viewport across page loads, remounts and hot updates (docs/spec/editor.md 5):
 // headless Chrome (WebGPU on) opens the editor at --url --loads times, each time as a new
 // document, normally the Vite dev server (`bun run dev`, where React's StrictMode mounts every
-// effect twice) proxying to a real host that serves the viewport (`pocket serve`). Then it resets
-// the dock's layout (`window.pocket.resetLayout()`: the viewport panel unmounts and mounts again,
+// effect twice) proxying to a real host that serves the viewport (`amoris serve`). Then it resets
+// the dock's layout (`window.amoris.resetLayout()`: the viewport panel unmounts and mounts again,
 // its viewport disposed and a new one created on the same wasm instance) and, with --touch FILE,
 // appends a comment to that editor source file and restores it: two hot updates, which must leave
 // the page working (Fast Refresh keeps the viewport panel mounted: its effects do not run again).
@@ -11,12 +11,12 @@
 // phase only when the page throws no exception and logs no error for --seconds. Drawing needs the
 // renderer's stats (frames, entities) and a screenshot of the viewport's canvas that is not one
 // flat color: the stats count frames whose command buffers the GPU rejected, which present
-// nothing. An error is a console error or the renderer's own "[pocket ERROR]" line, which the wasm
-// logger writes with console.log (wgpu's validation errors among them); "[pocket WARN]" lines are
+// nothing. An error is a console error or the renderer's own "[amoris ERROR]" line, which the wasm
+// logger writes with console.log (wgpu's validation errors among them); "[amoris WARN]" lines are
 // kept with the warnings, which do not fail a phase.
 //
-//   pocket serve samples/sailing --port 7890
-//   POCKET_HOST=http://127.0.0.1:7890 EDITOR_PORT=5190 bun run dev
+//   amoris serve samples/sailing --port 7890
+//   AMORIS_HOST=http://127.0.0.1:7890 EDITOR_PORT=5190 bun run dev
 //   bun tools/viewport-loads.ts --url http://127.0.0.1:5190/ [--loads 3] [--seconds 10] \
 //     [--touch src/panels/viewport/ViewportPanel.tsx] [--out ../out/viewport-loads]
 //
@@ -62,7 +62,7 @@ function chromePath(): string {
 }
 
 const port = 9400 + Math.floor(Math.random() * 400);
-const profile = join(tmpdir(), `pocket-viewport-loads-${Date.now()}`);
+const profile = join(tmpdir(), `amoris-viewport-loads-${Date.now()}`);
 const proc = Bun.spawn(
   [
     chromePath(),
@@ -111,7 +111,7 @@ async function js<T = unknown>(expression: string): Promise<T> {
 // while it went counts as "previous-page", which does not fail the load.
 type Message = { t: number; kind: string; text: string };
 const MESSAGES = 60;
-const FAILING = new Set(["exception", "error", "pocket-error"]);
+const FAILING = new Set(["exception", "error", "amoris-error"]);
 let messages: Message[] = [];
 let counts: Record<string, number> = {};
 let contexts = new Set<number>();
@@ -135,14 +135,14 @@ cdp.on("Runtime.consoleAPICalled", (p) => {
   const text = e.args.map((a) => String(a.value ?? a.description ?? "")).join(" ").slice(0, 600);
   if (text.startsWith("[vite] hot updated")) hotUpdates++;
   if (e.type === "error" || e.type === "warning") note(e.type, text, e.executionContextId);
-  else if (text.startsWith("[pocket ERROR]")) note("pocket-error", text, e.executionContextId);
-  else if (text.startsWith("[pocket WARN]")) note("pocket-warn", text, e.executionContextId);
+  else if (text.startsWith("[amoris ERROR]")) note("amoris-error", text, e.executionContextId);
+  else if (text.startsWith("[amoris WARN]")) note("amoris-warn", text, e.executionContextId);
 });
 await cdp.send("Page.enable");
 await cdp.send("Runtime.enable");
 
 type State = {
-  pocket: boolean;
+  amoris: boolean;
   viewport: string | null;
   engine: boolean;
   generation: number;
@@ -155,14 +155,14 @@ type State = {
 // fetches it once per instantiation, so more than one is a second instance.
 const readState = () =>
   js<State>(`
-    const p = window.pocket;
-    const ctl = window.pocketEditorViewport;
+    const p = window.amoris;
+    const ctl = window.amorisEditorViewport;
     const e = ctl?.engine ?? null;
     if (e && !e.__loadsGeneration) e.__loadsGeneration = (window.__loadsGenerations = (window.__loadsGenerations ?? 0) + 1);
     const s = e?.stats?.() ?? null;
-    return { pocket: !!p, viewport: p ? p.connection.getState().viewport : null, engine: !!e, generation: e?.__loadsGeneration ?? 0,
+    return { amoris: !!p, viewport: p ? p.connection.getState().viewport : null, engine: !!e, generation: e?.__loadsGeneration ?? 0,
       frames: s?.frames ?? 0, renderer: s?.renderer ?? null,
-      wasm_fetches: performance.getEntriesByType("resource").filter((r) => r.name.includes("pocket_viewport_bg.wasm")).length };
+      wasm_fetches: performance.getEntriesByType("resource").filter((r) => r.name.includes("amoris_viewport_bg.wasm")).length };
   `);
 
 /** The RGBA pixels of a PNG as Chrome's screenshots write it (8 bits, RGB or RGBA, not interlaced). */
@@ -341,7 +341,7 @@ try {
     });
   }
   gen = await phase("layout reset (the viewport panel remounted)", gen, false, async () => {
-    await js("window.pocket.resetLayout();");
+    await js("window.amoris.resetLayout();");
   });
   if (source) {
     gen = await phase(`hot update 1 (${TOUCH})`, gen, true, async () => {

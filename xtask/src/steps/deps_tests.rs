@@ -53,25 +53,25 @@ fn graph() -> Graph {
     crate::config::parse(
         CONFIG,
         r#"
-[crate.pocket-contract]
+[crate.amoris-contract]
 group = "contract"
 deps = []
 web = true
 any = true
 
-[crate.pocket-sim]
+[crate.amoris-sim]
 group = "game"
 deps = []
 web = true
 
-[crate.pocket-physics]
+[crate.amoris-physics]
 group = "game"
-deps = ["pocket-sim"]
+deps = ["amoris-sim"]
 web = true
 
-[crate.pocket-render]
+[crate.amoris-render]
 group = "presenter"
-deps = ["pocket-sim"]
+deps = ["amoris-sim"]
 web = true
 planned = true
 
@@ -105,24 +105,24 @@ fn codes(step: &StepResult) -> Vec<String> {
     step.errors.iter().map(|p| p.code.clone()).collect()
 }
 
-const MEMBERS: &[&str] = &["pocket-contract", "pocket-sim", "pocket-physics"];
+const MEMBERS: &[&str] = &["amoris-contract", "amoris-sim", "amoris-physics"];
 
 #[test]
 fn a_graph_that_follows_the_table_passes() {
     let m = meta(
         &[
-            ("pocket-contract", &[], &[]),
+            ("amoris-contract", &[], &[]),
             (
-                "pocket-sim",
-                &[("pocket-contract", None), ("bevy_ecs", None)],
+                "amoris-sim",
+                &[("amoris-contract", None), ("bevy_ecs", None)],
                 &[],
             ),
             (
-                "pocket-physics",
+                "amoris-physics",
                 &[
-                    ("pocket-sim", None),
+                    ("amoris-sim", None),
                     ("rapier3d", None),
-                    ("pocket-contract", Some("dev")),
+                    ("amoris-contract", Some("dev")),
                 ],
                 &[],
             ),
@@ -145,16 +145,16 @@ fn a_graph_that_follows_the_table_passes() {
 fn bad_edge_control() {
     let m = meta(
         &[
-            ("pocket-contract", &[], &[]),
-            ("pocket-sim", &[("pocket-physics", Some("dev"))], &[]),
-            ("pocket-physics", &[("pocket-sim", None)], &[]),
+            ("amoris-contract", &[], &[]),
+            ("amoris-sim", &[("amoris-physics", Some("dev"))], &[]),
+            ("amoris-physics", &[("amoris-sim", None)], &[]),
         ],
         MEMBERS,
     );
     let step = check(&graph(), &[("host".into(), m)], &good_flags());
     assert_eq!(codes(&step), ["deps.edge_not_allowed"]);
-    assert_eq!(step.errors[0].detail["from"], json!("pocket-sim"));
-    assert_eq!(step.errors[0].detail["to"], json!("pocket-physics"));
+    assert_eq!(step.errors[0].detail["from"], json!("amoris-sim"));
+    assert_eq!(step.errors[0].detail["to"], json!("amoris-physics"));
     assert_eq!(step.errors[0].detail["kind"], json!("dev"));
 }
 
@@ -163,11 +163,11 @@ fn bad_edge_control() {
 fn bad_feature_control() {
     let m = meta(
         &[
-            ("pocket-contract", &[], &[]),
-            ("pocket-sim", &[], &[]),
+            ("amoris-contract", &[], &[]),
+            ("amoris-sim", &[], &[]),
             (
-                "pocket-physics",
-                &[("pocket-sim", None), ("rapier3d", None)],
+                "amoris-physics",
+                &[("amoris-sim", None), ("rapier3d", None)],
                 &[],
             ),
             ("rapier3d", &[], &["parallel"]),
@@ -198,9 +198,9 @@ fn bad_feature_control() {
 fn a_forbidden_crate_below_the_game_group_is_named_with_its_chain() {
     let m = meta(
         &[
-            ("pocket-contract", &[], &[]),
-            ("pocket-sim", &[("helper", None), ("js-sys", None)], &[]),
-            ("pocket-physics", &[("pocket-sim", None)], &[]),
+            ("amoris-contract", &[], &[]),
+            ("amoris-sim", &[("helper", None), ("js-sys", None)], &[]),
+            ("amoris-physics", &[("amoris-sim", None)], &[]),
             ("helper", &[("wgpu", None)], &[]),
             ("wgpu", &[], &[]),
             ("js-sys", &[], &[]),
@@ -221,19 +221,19 @@ fn a_forbidden_crate_below_the_game_group_is_named_with_its_chain() {
         .collect();
     assert!(found.contains(&(
         "deps.external_not_allowed".into(),
-        "pocket-sim".into(),
-        json!(["pocket-sim", "helper", "wgpu"])
+        "amoris-sim".into(),
+        json!(["amoris-sim", "helper", "wgpu"])
     )));
     assert!(found.contains(&(
         "deps.external_not_allowed".into(),
-        "pocket-sim".into(),
-        json!(["pocket-sim", "js-sys"])
+        "amoris-sim".into(),
+        json!(["amoris-sim", "js-sys"])
     )));
-    // pocket-physics reaches wgpu through pocket-sim: reported with its own chain.
+    // amoris-physics reaches wgpu through amoris-sim: reported with its own chain.
     assert!(found.contains(&(
         "deps.external_not_allowed".into(),
-        "pocket-physics".into(),
-        json!(["pocket-physics", "pocket-sim", "helper", "wgpu"])
+        "amoris-physics".into(),
+        json!(["amoris-physics", "amoris-sim", "helper", "wgpu"])
     )));
 }
 
@@ -241,26 +241,26 @@ fn a_forbidden_crate_below_the_game_group_is_named_with_its_chain() {
 fn unlisted_and_missing_crates() {
     let m = meta(
         &[
-            ("pocket-contract", &[], &[]),
-            ("pocket-sim", &[], &[]),
-            ("pocket-new", &[], &[]),
+            ("amoris-contract", &[], &[]),
+            ("amoris-sim", &[], &[]),
+            ("amoris-new", &[], &[]),
         ],
-        &["pocket-contract", "pocket-sim", "pocket-new"],
+        &["amoris-contract", "amoris-sim", "amoris-new"],
     );
     let step = check(&graph(), &[("host".into(), m)], &good_flags());
-    // pocket-physics is listed and not a member; pocket-render is planned, so it may be absent.
+    // amoris-physics is listed and not a member; amoris-render is planned, so it may be absent.
     assert_eq!(codes(&step), ["deps.crate_unlisted", "deps.crate_missing"]);
-    assert_eq!(step.errors[0].detail["crate"], json!("pocket-new"));
-    assert_eq!(step.errors[1].detail["crate"], json!("pocket-physics"));
+    assert_eq!(step.errors[0].detail["crate"], json!("amoris-new"));
+    assert_eq!(step.errors[1].detail["crate"], json!("amoris-physics"));
 }
 
 #[test]
 fn build_flags() {
     let m = meta(
         &[
-            ("pocket-contract", &[], &[]),
-            ("pocket-sim", &[], &[]),
-            ("pocket-physics", &[("pocket-sim", None)], &[]),
+            ("amoris-contract", &[], &[]),
+            ("amoris-sim", &[], &[]),
+            ("amoris-physics", &[("amoris-sim", None)], &[]),
         ],
         MEMBERS,
     );
@@ -292,15 +292,15 @@ fn the_committed_graph_file_parses_and_mirrors_architecture_md() {
     let root = std::path::Path::new(&manifest).parent().unwrap();
     let g = load(root).unwrap();
     for name in [
-        "pocket-sim",
-        "pocket-runtime",
-        "pocket-web",
+        "amoris-sim",
+        "amoris-runtime",
+        "amoris-web",
         "xtask",
-        "pocket-contract",
+        "amoris-contract",
     ] {
         assert!(g.crates.contains_key(name), "{name}");
     }
-    assert!(g.crates["pocket-contract"].any);
+    assert!(g.crates["amoris-contract"].any);
     assert!(g.group["game"].forbid.contains(&"wgpu".to_string()));
     assert_eq!(g.build.cflags_must_contain, "-ffp-contract=off");
 }
@@ -312,9 +312,9 @@ fn optional_dependencies_count_only_when_a_feature_turns_them_on() {
     let metadata = |ecs_features: Value| -> Metadata {
         serde_json::from_value(json!({
             "packages": [
-                {"id": "sim", "name": "pocket-sim", "dependencies": [{"name": "bevy_ecs", "kind": null}]},
-                {"id": "contract", "name": "pocket-contract"},
-                {"id": "physics", "name": "pocket-physics"},
+                {"id": "sim", "name": "amoris-sim", "dependencies": [{"name": "bevy_ecs", "kind": null}]},
+                {"id": "contract", "name": "amoris-contract"},
+                {"id": "physics", "name": "amoris-physics"},
                 {"id": "ecs", "name": "bevy_ecs",
                  "dependencies": [{"name": "bevy_reflect", "kind": null, "optional": true}],
                  "features": {"bevy_reflect": ["dep:bevy_reflect"], "std": ["bevy_reflect?/std"]}},
@@ -361,7 +361,7 @@ fn optional_dependencies_count_only_when_a_feature_turns_them_on() {
         .detail["chain"];
     assert_eq!(
         chain,
-        &json!(["pocket-sim", "bevy_ecs", "bevy_reflect", "wgpu"])
+        &json!(["amoris-sim", "bevy_ecs", "bevy_reflect", "wgpu"])
     );
 }
 

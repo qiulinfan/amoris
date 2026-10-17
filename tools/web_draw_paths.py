@@ -3,7 +3,7 @@
 
 The page runs once as is (with `indirect-first-instance` when the adapter has it: the renderer's
 `first-instance` path) and once with `gpu_minimal=first-instance` appended (WebGPU's `baseline`
-path, crates/pocket-render/src/batches.rs). Each run reports frame and GPU times
+path, crates/amoris-render/src/batches.rs). Each run reports frame and GPU times
 (tools/web_bench.mjs), the entity-id pass's coverage per entity, and a screenshot with the HUD
 hidden; the two runs' coverage and pixels are compared (pixels need Pillow).
 
@@ -30,10 +30,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 COVERAGE = r"""(async () => {
-  const vp = window.pocketViewport;
+  const vp = window.amorisViewport;
   const hud = document.getElementById("hud");
   if (hud) hud.style.display = "none";
-  const s = window.pocketStats || {};
+  const s = window.amorisStats || {};
   const a = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
   const t0 = performance.now();
   vp.raw.request_visible();

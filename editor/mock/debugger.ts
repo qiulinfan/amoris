@@ -1,4 +1,4 @@
-// The mock's debugger, answering in the real host's shapes (pocket-debug's agents' API,
+// The mock's debugger, answering in the real host's shapes (amoris-debug's agents' API,
 // docs/spec/debugger.md 7): breakpoints on TypeScript lines (ids `bp<n>`, moved to the next line
 // with code) with conditions and logpoints, pausing between and "inside" script systems, stepping,
 // the frames the host shows (the `each` callback with its locals and closure, and `run` that called

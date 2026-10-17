@@ -1,4 +1,4 @@
-import { game } from "pocket";
+import { game } from "amoris";
 import { Cargo, Command, DamageInput, DashInput, DashState, Progress, Vitals, Wallet } from "./components";
 import { collect, countParcels } from "./collect";
 import { moveCourier } from "./dash";

@@ -62,7 +62,7 @@ export default function CodeEditor() {
     overflow.className = "monaco-editor";
     document.body.appendChild(overflow);
     const editor = monaco.editor.create(host.current!, {
-      theme: "pocket-dark",
+      theme: "amoris-dark",
       fontFamily: "'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, Menlo, monospace",
       fontSize: 13,
       lineHeight: 20,
@@ -207,12 +207,12 @@ export default function CodeEditor() {
       if (!model) continue;
       monaco.editor.setModelMarkers(
         model,
-        "pocket",
+        "amoris",
         list.filter((d) => !(live && d.source === "tsc")).map((d) => ({
           severity: severity(d.severity),
           message: d.message,
           code: d.code !== undefined ? String(d.code) : undefined,
-          source: "pocket",
+          source: "amoris",
           // A finding with no place (a broken tsconfig.json) marks the first line.
           startLineNumber: d.line || 1,
           startColumn: d.column || 1,
@@ -297,7 +297,7 @@ export default function CodeEditor() {
           Ln {cursor.line}, Col {cursor.column}
         </span>
         <span>TypeScript</span>
-        <span data-tip="Where the `pocket` module's types come from (scripts.types)">SDK: {sdkLabel(types)}</span>
+        <span data-tip="Where the `amoris` module's types come from (scripts.types)">SDK: {sdkLabel(types)}</span>
         <span className={cx(errors > 0 && "err")}>{errors} errors</span>
         <span className={cx(warnings > 0 && "warn")}>{warnings} warnings</span>
         {active && dirty[active] && <span className="warn">unsaved</span>}

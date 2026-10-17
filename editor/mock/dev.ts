@@ -11,7 +11,7 @@ const mock = Bun.spawn(["bun", "mock/host.ts", "--port", MOCK_PORT, ...process.a
 });
 const vite = Bun.spawn(["bun", "x", "vite"], {
   cwd: root,
-  env: { ...process.env, POCKET_HOST: `http://127.0.0.1:${MOCK_PORT}` },
+  env: { ...process.env, AMORIS_HOST: `http://127.0.0.1:${MOCK_PORT}` },
   stdout: "inherit",
   stderr: "inherit",
 });

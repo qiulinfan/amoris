@@ -1,0 +1,59 @@
+//! The renderer (charter 4.4): wgpu with WGSL, Metal and Vulkan natively and WebGPU in the browser,
+//! one code path for all three. GPU-driven (every instance culled on the GPU, indirect draws: one
+//! multi-draw per pass and variant natively, one draw per batch on WebGPU's baseline), physically based clustered forward shading with cascaded shadows, a baked
+//! atmosphere with image-based light, HDR bloom and AgX. It reads the world only through the render
+//! feed (`amoris_assets::frame`), so it can never change the simulation.
+
+#[cfg(all(feature = "window", not(target_arch = "wasm32")))]
+pub mod app;
+pub mod batches;
+mod blit;
+pub mod camera;
+pub mod demo;
+pub mod gi;
+pub mod gpu;
+mod gtao;
+pub mod loader;
+pub mod lod;
+pub mod materials;
+pub mod meshes;
+pub mod neural;
+pub mod occlusion;
+mod ocean;
+pub mod overlay;
+mod par;
+mod particles;
+pub mod picking;
+mod post;
+pub mod prepass;
+pub mod profiler;
+#[cfg(not(target_arch = "wasm32"))]
+mod renderdoc;
+pub mod renderer;
+pub mod rt_shadows;
+pub mod scene;
+mod shaders;
+mod shadows;
+mod skinning;
+mod sky;
+pub mod splat;
+pub mod taa;
+pub mod trace;
+mod transparent;
+mod ui;
+mod upload;
+
+pub use camera::CameraState;
+pub use gpu::{BackendChoice, Gpu, GpuError};
+pub use loader::AssetSource;
+pub use lod::{DrawCounts, LodMode, LodSettings};
+pub use occlusion::{OcclusionMode, OcclusionStats};
+pub use post::{Antialiasing, AoNormals, Gtao, defaults_for};
+pub use prepass::PrepassMode;
+pub use renderer::{FrameStats, Renderer, web_time};
+pub use shadows::ShadowCull;
+
+/// A renderer shader's composed WGSL (tools and backend probes).
+pub fn shader_source(name: &str) -> String {
+    shaders::source(name)
+}

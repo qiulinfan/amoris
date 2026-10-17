@@ -213,11 +213,11 @@ mod tests {
     const WORKSPACE: &str = r#"
 version = 4
 [[package]]
-name = "pocket-sim"
+name = "amoris-sim"
 version = "0.1.0"
 dependencies = ["bevy_ecs", "indexmap"]
 [[package]]
-name = "pocket-render"
+name = "amoris-render"
 version = "0.1.0"
 dependencies = ["wgpu"]
 [[package]]
@@ -275,7 +275,7 @@ version = "0.17.1"
 "#;
 
     fn tick() -> BTreeSet<String> {
-        BTreeSet::from(["pocket-sim".to_string(), "pocket-physics".to_string()])
+        BTreeSet::from(["amoris-sim".to_string(), "amoris-physics".to_string()])
     }
 
     #[test]

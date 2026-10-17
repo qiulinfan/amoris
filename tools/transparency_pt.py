@@ -11,7 +11,7 @@ one path-traced reference, over the whole image and over each named entity's pix
 image of the first build (`--ids`; that build's silhouettes, so every build is compared on the same
 pixels).
 
-Build the examples first (`cargo build --release -p pocket-render --example showcase_bench --example
+Build the examples first (`cargo build --release -p amoris-render --example showcase_bench --example
 path_trace`; `path_trace` needs ray queries). Then, from the repository's root:
 
     python tools/transparency_pt.py --build before=out/transparency/before --build after=. \\
@@ -89,7 +89,7 @@ def main():
     ap.add_argument("--frames", type=int, default=256)
     ap.add_argument("--samples", type=int, default=4)
     ap.add_argument("--gtao", default="off",
-                    help="the forward images' GTAO (POCKET_GTAO: off, depth, target); not off adds "
+                    help="the forward images' GTAO (AMORIS_GTAO: off, depth, target); not off adds "
                          "-gtao-MODE to the names of the summary and of the forward images")
     ap.add_argument("--pt-args", default="",
                     help="more path_trace options, e.g. '--emission-scale 0' (the forward renderer is "
@@ -98,10 +98,10 @@ def main():
     out = (ROOT / args.out).resolve()
     out.mkdir(parents=True, exist_ok=True)
     builds = [b.split("=", 1) for b in args.build]
-    env = dict(os.environ, POCKET_BACKEND=args.backend, POCKET_AA="msaa", POCKET_GTAO=args.gtao,
-               POCKET_OCCLUSION="off")
+    env = dict(os.environ, AMORIS_BACKEND=args.backend, AMORIS_AA="msaa", AMORIS_GTAO=args.gtao,
+               AMORIS_OCCLUSION="off")
     if args.adapter:
-        env["POCKET_ADAPTER"] = args.adapter
+        env["AMORIS_ADAPTER"] = args.adapter
     size = ["--width", str(args.width), "--height", str(args.height)]
     tag = "".join(c if c.isalnum() else "-" for c in args.pt_args.strip()).strip("-")
     tag = f"-{tag}" if tag else ""

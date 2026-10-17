@@ -31,7 +31,7 @@ Used by name and not defined here. Names in `code` are the owners'.
 | `ActRequest`, `ActResult`, affordances and their listing, intents, `IntentId`, `IntentsRequest` and `IntentView` | spec-contract | [actions.md](actions.md) |
 | `Pacing`, the clock holder, `StepRequest`, `CommitRequest`, `WaitRequest`, `ContinueRequest`, `Until`, `TimeResult`, `DecisionPoint`, `DecisionFilter`, episodes | spec-contract | [time.md](time.md) |
 | The error object `{code, message, detail}` (`Problem`), code families, strict decoding with suggestions, aliases; halts after a script error | spec-contract | [errors.md](errors.md), [time.md](time.md) (Halts) |
-| Crates (`pocket-mcp`), `GameClient`, `Source`, the command catalog and queue, `WorldSnapshot`, the local check command and `pocket check`, budgets | spec-arch | `docs/spec/architecture.md`, `docs/spec/threads.md`, `docs/spec/checks.md` |
+| Crates (`amoris-mcp`), `GameClient`, `Source`, the command catalog and queue, `WorldSnapshot`, the local check command and `amoris check`, budgets | spec-arch | `docs/spec/architecture.md`, `docs/spec/threads.md`, `docs/spec/checks.md` |
 
 ## 2. Decisions
 
@@ -456,7 +456,7 @@ The tools of charter 2.2's agent as developer; the editor's panels call the same
 | `apply` | 6.2 | 6.2 | Loads changed project files into the running world. |
 | `time_control` | `pause?`, `pacing?` | `time.status` | time.md's `pause`, `resume` and `time.set_pacing`. |
 | `reset` | `seed?`, `tick_limit?` | `{tick, world, hash}` | A new episode (time.md, Episodes): a fresh world from the scene and the loaded scripts with the seed; branches and snapshots of the old main are dropped, cursors restart. Recorded as the end of main's segment and a `Rebase` (5.6). |
-| `checks` | `only?`, `seeds?` | `pocket check`'s report | The project's determinism, fork, replay and reload checks (`checks.md`, 2 and 8), run in throwaway worlds; a failure carries its code and divergence. |
+| `checks` | `only?`, `seeds?` | `amoris check`'s report | The project's determinism, fork, replay and reload checks (`checks.md`, 2 and 8), run in throwaway worlds; a failure carries its code and divergence. |
 | `profile` | `world`, `ticks` (default 120) | `{tick, ticks, systems, scripts, timing}` | Runs `ticks` in a fork and reports time per system and per script handler with file and line, against the budget `tick.sail` (`docs/spec/budgets.md`). Main is untouched. |
 | `eval` | `world`, `code`, `at_tick?`, `budget_tokens` | `{tick, world, value, logs}` | Evaluates code in TypeScript in a throwaway fork of `world` (at `at_tick`, re-simulated, when given), compiled through the script host's loader and lint as a module, since the sandbox has no `eval` (`docs/spec/script-sandbox.md`, 2.2); a script error comes back source-mapped (charter 4.2.6: restore to any tick, inspect and evaluate). |
 | `assets`, `asset_import` | `prefix?`, `kind?`; `path` or `job`, `wait_ms?` | the asset list; `{job, status, progress, result?}` | Slice 3. Import runs off the game thread (charter 4.4); the call returns after `wait_ms` (default 0) with the job's state. |
@@ -610,7 +610,7 @@ and `eval` (they work in throwaway worlds); `destructiveHint` on `restore`, `dis
 `world_edit` and `apply`.
 
 The tool names, descriptions and annotations are not the handlers' doc comments in each transport's
-server: they are a table in `pocket-contract` beside the types (`tools::TOOLS`, one entry per tool:
+server: they are a table in `amoris-contract` beside the types (`tools::TOOLS`, one entry per tool:
 name, description, annotations, parameter and result types), which the servers read, so the
 whole `tools/list` an agent reads every turn is shared. The `initialize` result carries no
 `instructions` string on either transport.
@@ -663,7 +663,7 @@ cut was 24,000 bytes, about 6,000 tokens, and its agents asked for less when tol
 ### 8.4 The tool list
 
 Every listed tool's name, description and schema reach the model in every turn. Descriptions come
-from `pocket-contract`'s tool table (7.2), at most 300 bytes; field descriptions at most 120 bytes.
+from `amoris-contract`'s tool table (7.2), at most 300 bytes; field descriptions at most 120 bytes.
 A stepped player's list must fit 3,000 tokens and a developer's 9,000, both proposed and not
 measured (no tool list exists yet); slice 2 measures them and test M9 holds them.
 
@@ -692,18 +692,18 @@ measured (no tool list exists yet); slice 2 measures them and test M9 holds them
 
 - **Transports**: stdio, one session, for an agent that starts a runtime or attaches to one; and
   Streamable HTTP on 127.0.0.1, several sessions on one runtime (the benchmark, the editor), which
-  this file asks `pocket-mcp` to export beside `serve_stdio` (`architecture.md`, 4.12). Both are
+  this file asks `amoris-mcp` to export beside `serve_stdio` (`architecture.md`, 4.12). Both are
   `rmcp`'s (`transport-io`, `transport-streamable-http-server`). The handshake targets MCP
   2025-11-25 (`rmcp`'s `LATEST_WITH_INITIALIZE`); clients on 2026-07-28 are served as `rmcp`
   negotiates (open choice 3).
-- **Attaching**: `pocket mcp --attach <url> --grant-token <token>` serves one stdio session bound to
+- **Attaching**: `amoris mcp --attach <url> --grant-token <token>` serves one stdio session bound to
   a grant of a running runtime; the benchmark harness gives agents exactly this command
   (`../benchmark/README.md`, The engine adapter).
-- **Threads** (spec-arch's): the transport runs on `tokio` threads in `pocket-mcp`, which never
+- **Threads** (spec-arch's): the transport runs on `tokio` threads in `amoris-mcp`, which never
   links the runtime and never touches a world. A tool call becomes catalog commands sent through the
   session's `GameClient`; every Read is answered on the game thread (perception.md, open choice 6:
-  not from a published snapshot in slice 2, since perception's queries need `pocket-interface` and
-  physics' ray casts, which `pocket-mcp` does not link); Writes and Controls apply at boundaries in
+  not from a published snapshot in slice 2, since perception's queries need `amoris-interface` and
+  physics' ray casts, which `amoris-mcp` does not link); Writes and Controls apply at boundaries in
   the queue's order (`threads.md`, 5.2). A slow agent never stalls a tick, and a long `step` keeps
   the queue served for other sessions (time.md, Threads and the web).
 - **Branches** live in the `Game` beside main (`docs/spec/threads.md`, 3.6): stepped on the game
@@ -711,14 +711,14 @@ measured (no tool list exists yet); slice 2 measures them and test M9 holds them
   worker with its own script host when a step is long. A branch made ready to step costs the budget
   `branch.sail`, the fork alone `fork.sail`, and main's lateness while a branch steps
   `branch.main_lateness` (`docs/spec/budgets.md`).
-- **The web**: `pocket-mcp` is native only; in a browser the page's `window.pocket` is the same
+- **The web**: `amoris-mcp` is native only; in a browser the page's `window.amoris` is the same
   command surface (`threads.md`, 7.4). The tool layer's types and budget code have no transport
   dependency, so a relay can serve these tools for a browser-local game later (open choice 7).
 
 ## 11. Tests and checks
 
 These run in the local check command (spec-arch) for Amoris, natively and, where marked, against
-the `wasm32` build through `window.pocket`. Fixtures live in `shared/contract/conformance/mcp/` and
+the `wasm32` build through `window.amoris`. Fixtures live in `shared/contract/conformance/mcp/` and
 are recorded like the prose, so runtime targets run the same ones. Perception, action, time and error
 behaviour is held by the contract's own conformance checks (README, Conformance); these hold the MCP
 layer.
@@ -729,7 +729,7 @@ layer.
 | M2 | Unknown fields are refused, nothing applied. | For every tool, generated calls with an unknown key at each nesting depth, beside a flattened request included: `isError`, `request.unknown_field` with every unknown key (the rest in `detail.also`) at its JSON Pointer with its suggestions, the world hash and the recording unchanged. |
 | M3 | Reads are pure. | On a seeded sailing fixture, every tool a checker may call, with fixture parameters: the hash, the recording and every random stream equal before and after. |
 | M4 | Developer budgets hold. | Each budgeted developer tool at budgets from its minimum to 16,000: the tokens of the text blocks at most the budget, the text parses, shown items plus `omitted` equal the total, and a larger budget shows a superset. |
-| M5 | Answers are deterministic. | The fixture session `session-*.jsonl` (a list of calls, its time requests with `max_wall_ms: 600000` so no step stops on the wall clock) twice on fresh runtimes with the same seed: answers byte-identical outside `timing`, with no `wall_limit` stop. The same calls through `window.pocket` in the browser: the same bytes for every projection tool (web). |
+| M5 | Answers are deterministic. | The fixture session `session-*.jsonl` (a list of calls, its time requests with `max_wall_ms: 600000` so no step stops on the wall clock) twice on fresh runtimes with the same seed: answers byte-identical outside `timing`, with no `wall_limit` stop. The same calls through `window.amoris` in the browser: the same bytes for every projection tool (web). |
 | M6 | MCP sessions replay. | M5's recording replayed, segment by segment: the per-tick world hashes equal the live run's, across a `restore` of a snapshot, a branch adopted as main and a `reset` in the session (each a `Rebase`). |
 | M7 | Forks through MCP are consistent. | Charter 3.7's fork check driven only through `fork`, `act`, `step` and `world_get`: the same actions on main and branch give the same hashes; acting only on the branch leaves main's hash unchanged; the branch's push cursor starts at its parent's. |
 | M8 | Roles hold. | Each role lists exactly the tools of 3.3 for each pacing and policy; every unlisted tool and every restricted parameter is refused with the code of 7.1 that says why (`permission.denied`, `time.wrong_mode`, `session.policy_denies`, `perception.omniscient_forbidden`, `seat.not_yours`); a checker's calls send only Read commands; a player with `fork` and no `rewind` restores its own branch from its own snapshot and is refused restoring main; with `rewind` it restores main; a player's `intents` shows only its seat's. |
@@ -748,7 +748,7 @@ layer.
 
 ## 13. Open choices
 
-1. **One shared types crate.** As README's open choice 1 recommends: `pocket-contract` under
+1. **One shared types crate.** As README's open choice 1 recommends: `amoris-contract` under
    `shared/contract/rust/` holds this file's types with the contract's, which makes M1 hold by
    construction. Recommended.
 2. **Developer tools before slice 5.** The developer benchmark
@@ -770,7 +770,7 @@ layer.
    benchmark), their effect measured and reported as "exact lookahead"; branches with reseeded
    streams (spec-persist would define them) only if the oracle makes tasks trivial.
 7. **MCP for the browser-local form.** Recommended: none in slice 2; a relay over a WebSocket later,
-   serving the same tools through `window.pocket`.
+   serving the same tools through `window.amoris`.
 8. **Idempotent retries.** A client that retries a timed-out `act` would apply it twice. Not in
    slice 2; if traces show it, an optional client `request_id` remembered per session.
 
@@ -789,10 +789,10 @@ request (decision 1 above). The player-facing requests arrived on that design
 - **One MCP tool `player`** carries them: `{action, ...the request's fields}`. Reads an LLM reads
   (`observe`, `nearby`, `events`, `describe {entity}`) default to the text projection and are sent
   as the text itself (4.3); a call may still ask for `"projection": "json"`. The CLI's
-  `pocket player <action>` and the HTTP API carry the same commands.
+  `amoris player <action>` and the HTTP API carry the same commands.
 - **Roles by source, sessions by seat.** A command sent as `Source::Player(i)` is a player at the
   declared seat of index `i` (3.1, Sources); every other source is a developer. A session is bound
-  to a seat by the process that serves it, not by a token grant: `pocket mcp <project> --seat
+  to a seat by the process that serves it, not by a token grant: `amoris mcp <project> --seat
   <seat>` over stdio (in process or against a running host) and `/api/call {..., "seat"}` over
   HTTP make every call the seat's player's. A seat-bound MCP session lists the `player` tool alone
   and refuses the others with `permission.denied` (3.3). The engine enforces the role beneath any

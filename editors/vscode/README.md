@@ -7,7 +7,7 @@ TypeScript under `samples/<game>/scripts/`.
 1. Start a game with the debugger's endpoint, here the sailing sample:
 
    ```sh
-   cargo run -p pocket-app --example debug_sailing            # or add --wait to hold the first tick
+   cargo run -p amoris-app --example debug_sailing            # or add --wait to hold the first tick
    ```
 
    It listens on `127.0.0.1:9229` (`--port` to change; update `port` below to match).
@@ -18,14 +18,14 @@ TypeScript under `samples/<game>/scripts/`.
 What the configuration does:
 
 - `"type": "node", "request": "attach", "port": 9229`: the endpoint answers like a Node inspector
-  (`/json/list`, one target, `pocket-game`).
-- `"resolveSourceMapLocations": null`: the scripts are `pocket:///scripts/*.js`, not files, and
+  (`/json/list`, one target, `amoris-game`).
+- `"resolveSourceMapLocations": null`: the scripts are `amoris:///scripts/*.js`, not files, and
   js-debug only reads source maps of files under the workspace unless this is null.
-- `"sourceMapPathOverrides": {"pocket:///*": "${workspaceFolder}/samples/sailing/*"}`: the source maps
-  name `pocket:///scripts/<module>.ts`; this maps them to the project's files. For another project
+- `"sourceMapPathOverrides": {"amoris:///*": "${workspaceFolder}/samples/sailing/*"}`: the source maps
+  name `amoris:///scripts/<module>.ts`; this maps them to the project's files. For another project
   change the path, or start the game with `--file-sources` (absolute `file://` sources, no override
   needed).
 - `"continueOnAttach": true`: a game started with `--wait` starts when VS Code has attached.
 
-The same attach was checked headless with VS Code's own js-debug (crates/pocket-debug/tests/
+The same attach was checked headless with VS Code's own js-debug (crates/amoris-debug/tests/
 jsdebug_dap.mjs, docs/evidence/debug/jsdebug-dap.txt).

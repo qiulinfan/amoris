@@ -23,11 +23,11 @@ or running competing builds during the gate.
 ```sh
 cargo xtask check
 cargo xtask check --only types
-cargo test --release -p pocket-script --features transpile --test depth
+cargo test --release -p amoris-script --features transpile --test depth
 ```
 
 Use a worktree-local cargo target for parallel development. Windows builds require the native
-TypeScript 7 executable through `POCKET_TSC`; a launcher shim is not an equivalent timing path.
+TypeScript 7 executable through `AMORIS_TSC`; a launcher shim is not an equivalent timing path.
 QuickJS-ng's wasm build needs a clang with the wasm backend and its configured toolchain.
 
 ## Latest source-side Windows result
@@ -101,7 +101,7 @@ out. The rules are [checks-slice1.md](../spec/checks-slice1.md) 24, the configur
 |---|---|---|
 | Configurations | `5060-dx12`, `5060-vulkan`, `780m-dx12`, `780m-vulkan`, `780m-auto`, `5060-dx12-minimal` | the same and `default-auto` (`test` did not run) |
 | Tests | 191 per configuration: 1,135 pass, 11 skip (all on the minimal device), 0 failed | 192 per configuration: 1,333 pass, 11 skip (the same), 0 failed, no binary failed |
-| Duration | 8 min 58 s, 11 s of it building nothing and listing | 10 min 4 s, 88 s of it relinking pocket-app's tests (the commit changed its engine version) and listing; 498 s running binaries |
+| Duration | 8 min 58 s, 11 s of it building nothing and listing | 10 min 4 s, 88 s of it relinking amoris-app's tests (the commit changed its engine version) and listing; 498 s running binaries |
 
 Neither duration is a quiet measurement (other tracks built during the first). The step builds its
 binaries as `test` does (`cargo test --workspace`, with the same C compilers), so after `test` it
