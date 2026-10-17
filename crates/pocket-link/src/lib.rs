@@ -11,6 +11,7 @@ pub mod client;
 pub mod command;
 pub mod events;
 pub mod logs;
+pub mod profile;
 pub mod reader;
 pub mod snapshot;
 
@@ -25,6 +26,7 @@ pub use events::{
 pub use logs::{LOG_RECORDS, LogRecord, LogRing};
 /// The tick a status names (for crates that see the game only through this one).
 pub use pocket_sim::Tick;
+pub use profile::{PROFILE_TICKS, ProfileRing, TickProfile};
 pub use reader::{
     GameStatus, LoopState, Publisher, SnapshotReader, StateHandle, WorldInfo, WorldMode,
     publication,

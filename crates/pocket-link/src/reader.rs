@@ -3,7 +3,7 @@
 //! status in atomics; a reader takes the latest snapshot, waits for a newer one, reads its own
 //! cursor of the stream and the status.
 
-use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
@@ -13,6 +13,7 @@ use pocket_sim::Tick;
 use crate::command::{ReplyTo, ReplyValue};
 use crate::events::{EventBatch, EventCursor, EventRing};
 use crate::logs::{LogRecord, LogRing};
+use crate::profile::{ProfileRing, TickProfile};
 use crate::snapshot::WorldSnapshot;
 
 /// What the game thread is doing (threads.md 3.5; not spec-sim's `TickPhase`).
@@ -92,6 +93,9 @@ struct Shared {
     clock: Arc<dyn Fn() -> f64 + Send + Sync>,
     events: Mutex<EventRing>,
     logs: Mutex<LogRing>,
+    profile: Mutex<ProfileRing>,
+    /// A host serves the profile stream: the game thread times its ticks.
+    profiling: AtomicBool,
     play: AtomicU8,
     epoch: AtomicU64,
     stopped: Mutex<Option<pocket_contract::Problem>>,
@@ -134,6 +138,8 @@ pub fn publication(
         clock,
         events: Mutex::new(EventRing::default()),
         logs: Mutex::new(LogRing::default()),
+        profile: Mutex::new(ProfileRing::default()),
+        profiling: AtomicBool::new(false),
         play: AtomicU8::new(0),
         epoch: AtomicU64::new(0),
         stopped: Mutex::new(None),
@@ -209,6 +215,25 @@ impl Publisher {
                 ring.push(r);
             }
         }
+    }
+
+    /// Whether a host serves the profile stream ([`SnapshotReader::serve_profile`]): the game
+    /// thread times its ticks only then.
+    pub fn profiling(&self) -> bool {
+        self.shared.profiling.load(Ordering::Acquire)
+    }
+
+    /// Appends the tick profiles in `ready` (oldest first) to the ring, emptying it, unless a
+    /// reader holds the ring: the game thread never waits for one, and the profiles stay in
+    /// `ready` for the next tick. Returns the oldest profile the ring let go, to be filled again.
+    pub fn profile(&self, ready: &mut Vec<TickProfile>) -> Option<TickProfile> {
+        crate::profile::push_ready(&self.shared.profile, ready)
+    }
+
+    /// How many times the script debugger has stopped the game thread so far (a tick during which
+    /// this changed was held).
+    pub fn debug_stops(&self) -> u64 {
+        self.shared.debug_stops.load(Ordering::Acquire)
     }
 
     /// Says which world the next publications show.
@@ -343,6 +368,40 @@ impl SnapshotReader {
             .lock()
             .map(|r| r.read(next, max))
             .unwrap_or_default()
+    }
+
+    /// Serves the profile stream (pocket-server does, for `profile` and `profile.frame`): from now
+    /// on the game thread times every tick (docs/spec/server.md 4). Nothing else turns it on, so a
+    /// game no host serves (`pocket run`, the native window) pays nothing for it.
+    pub fn serve_profile(&self) {
+        self.shared.profiling.store(true, Ordering::Release);
+    }
+
+    /// The summary of the world shown's ticks profiled from stream number `*next` on
+    /// (`ProfileRing::since`); `*next` moves past them.
+    pub fn profile_since(&self, next: &mut u64) -> serde_json::Value {
+        let epoch = self.shared.epoch.load(Ordering::Acquire);
+        self.shared
+            .profile
+            .lock()
+            .map(|r| r.since(next, epoch))
+            .unwrap_or_default()
+    }
+
+    /// The summary of the world shown's last `n` ticks profiled.
+    pub fn profile_last(&self, n: usize) -> serde_json::Value {
+        let epoch = self.shared.epoch.load(Ordering::Acquire);
+        self.shared
+            .profile
+            .lock()
+            .map(|r| r.last(n, epoch))
+            .unwrap_or_default()
+    }
+
+    /// The stream number the next profiled tick gets (a reader that wants only what comes next
+    /// starts there).
+    pub fn profile_next(&self) -> u64 {
+        self.shared.profile.lock().map_or(1, |r| r.next_seq())
     }
 
     /// Which world the publications show.
