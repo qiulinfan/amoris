@@ -1,0 +1,103 @@
+diff --git a/quickjs/quickjs.c b/quickjs/quickjs.c
+index 0abf6536..86b94fad 100644
+--- a/quickjs/quickjs.c
++++ b/quickjs/quickjs.c
+@@ -9232,6 +9232,23 @@ static inline __exception int js_poll_interrupts(JSContext *ctx)
+     }
+ }
+ 
++/* Amoris P13: a jump's poll in JS_CallInternal. When the counter runs out, the frame's PC is first
++   set to the jump (cur_pc - 1 lies inside the jump instruction), so JS_GetStackFrameInfo(0) in the
++   interrupt handler reports the jump, not the frame's last call; then `jump` moves the PC as
++   before, so an interrupt unwinds from the jump's target as it did without the patch. The fast
++   path is the same work (count, compare, jump) in another order. */
++#define BRANCH_POLL(jump)                                       \
++    do {                                                        \
++        if (unlikely(--ctx->interrupt_counter <= 0)) {          \
++            sf->cur_pc = pc;                                    \
++            jump;                                               \
++            if (__js_poll_interrupts(ctx))                      \
++                goto exception;                                 \
++        } else {                                                \
++            jump;                                               \
++        }                                                       \
++    } while (0)
++
+ /* return -1 (exception) or true/false */
+ static int JS_SetPrototypeInternal(JSContext *ctx, JSValueConst obj,
+                                    JSValueConst proto_val, bool throw_flag)
+@@ -19872,19 +19889,13 @@ static JSValue JS_CallInternalBody(JSContext *caller_ctx, JSValueConst func_obj,
+             BREAK;
+ 
+         CASE(OP_goto):
+-            pc += (int32_t)get_u32(pc);
+-            if (unlikely(js_poll_interrupts(ctx)))
+-                goto exception;
++            BRANCH_POLL(pc += (int32_t)get_u32(pc));
+             BREAK;
+         CASE(OP_goto16):
+-            pc += (int16_t)get_u16(pc);
+-            if (unlikely(js_poll_interrupts(ctx)))
+-                goto exception;
++            BRANCH_POLL(pc += (int16_t)get_u16(pc));
+             BREAK;
+         CASE(OP_goto8):
+-            pc += (int8_t)pc[0];
+-            if (unlikely(js_poll_interrupts(ctx)))
+-                goto exception;
++            BRANCH_POLL(pc += (int8_t)pc[0]);
+             BREAK;
+         CASE(OP_if_true):
+             {
+@@ -19899,11 +19910,7 @@ static JSValue JS_CallInternalBody(JSContext *caller_ctx, JSValueConst func_obj,
+                     res = JS_ToBoolFree(ctx, op1);
+                 }
+                 sp--;
+-                if (res) {
+-                    pc += (int32_t)get_u32(pc - 4) - 4;
+-                }
+-                if (unlikely(js_poll_interrupts(ctx)))
+-                    goto exception;
++                BRANCH_POLL(if (res) pc += (int32_t)get_u32(pc - 4) - 4);
+             }
+             BREAK;
+         CASE(OP_if_false):
+@@ -19919,11 +19926,7 @@ static JSValue JS_CallInternalBody(JSContext *caller_ctx, JSValueConst func_obj,
+                     res = JS_ToBoolFree(ctx, op1);
+                 }
+                 sp--;
+-                if (!res) {
+-                    pc += (int32_t)get_u32(pc - 4) - 4;
+-                }
+-                if (unlikely(js_poll_interrupts(ctx)))
+-                    goto exception;
++                BRANCH_POLL(if (!res) pc += (int32_t)get_u32(pc - 4) - 4);
+             }
+             BREAK;
+         CASE(OP_if_true8):
+@@ -19939,11 +19942,7 @@ static JSValue JS_CallInternalBody(JSContext *caller_ctx, JSValueConst func_obj,
+                     res = JS_ToBoolFree(ctx, op1);
+                 }
+                 sp--;
+-                if (res) {
+-                    pc += (int8_t)pc[-1] - 1;
+-                }
+-                if (unlikely(js_poll_interrupts(ctx)))
+-                    goto exception;
++                BRANCH_POLL(if (res) pc += (int8_t)pc[-1] - 1);
+             }
+             BREAK;
+         CASE(OP_if_false8):
+@@ -19959,11 +19958,7 @@ static JSValue JS_CallInternalBody(JSContext *caller_ctx, JSValueConst func_obj,
+                     res = JS_ToBoolFree(ctx, op1);
+                 }
+                 sp--;
+-                if (!res) {
+-                    pc += (int8_t)pc[-1] - 1;
+-                }
+-                if (unlikely(js_poll_interrupts(ctx)))
+-                    goto exception;
++                BRANCH_POLL(if (!res) pc += (int8_t)pc[-1] - 1);
+             }
+             BREAK;
+         CASE(OP_catch):

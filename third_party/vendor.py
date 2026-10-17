@@ -1,5 +1,5 @@
 """Builds third_party/rquickjs-sys-0.14.0/: rquickjs-sys 0.14.0 from crates.io with quickjs-ng PR
-#1421 and the script host's patches P1 to P12 applied (docs/spec/architecture.md 7.5,
+#1421 and the script host's patches P1 to P13 applied (docs/spec/architecture.md 7.5,
 docs/spec/script-sandbox.md 4.2). `.cargo/config.toml`'s [patch.crates-io] points rquickjs at the
 result, which is committed, so a fresh checkout builds without running this.
 
@@ -59,6 +59,10 @@ PATCHES = [
     # clang-cl, which defines _MSC_VER (that turned it off) but supports labels as values. MSVC's
     # cl and wasm32 (EMSCRIPTEN, set by build.rs) keep the switch.
     ("p12-direct-dispatch.diff", "."),
+    # P13 (Pioneer, 2026-10-16; docs/spec/debugger.md 14): a jump's interrupt poll stores the
+    # frame's PC before the handler runs, so JS_GetStackFrameInfo(0) in the handler names the jump
+    # (the step profiler) rather than the frame's last call; the fast path is unchanged.
+    ("p13-branch-poll-pc.diff", "."),
 ]
 
 HERE = Path(__file__).resolve().parent
