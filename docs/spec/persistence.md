@@ -704,17 +704,18 @@ or chosen here. They feed the budgets `hash.sail`, `publish.sail`, `fork.*` and 
    which the physics spike measured at 5.3 to 5.7 µs against about 20 µs through serde) MAY follow
    if `fork.sail` measures above its reference figure, checked by
    `snapshot(clone_fork(w)) == snapshot(w)`.
-3. **Shapes by reference.** Settled (Pioneer, 2026-10-15), with the shared table awaiting the owner
-   (charter 8): layout 2 of the physics cache (8) writes a fixed collider's shape by reference while
-   it is the shape the body's unchanged components built, and shares the shapes between worlds
-   through a weak table keyed by the BLAKE3 digest of those components, as this choice proposed when
-   a level's meshes dominate forks. On a terrain of 999,698 triangles under 1,764 bodies the cache
-   falls from 102.3 MB to 3.35 MB, and the whole stand-in snapshot from 126.9 MB to 27.95 MB, the
-   terrain now only in its `Collider` component; times are in docs/bench/physics.md, "Static
-   geometry and the cache". Encoding still hashes each fixed body's components once (the step does
-   the same every tick), and a cold restore builds the shape instead of decoding it. Open: a cold
-   restore whose components do not build the shapes is found only after the target world is
-   replaced; refusing it in staging needs a Cache `decode` that sees the staged Component sections.
+3. **Shapes by reference.** Adopted in Amoris (2026-10-16, charter 4.7), including the immutable
+   shared geometry table: layout 2 of the physics cache (8) writes a fixed
+   collider's shape by reference while it is the shape the body's unchanged components built, and
+   shares the shapes between worlds through a weak table keyed by the BLAKE3 digest of those
+   components, as this choice proposed when a level's meshes dominate forks. On a terrain of 999,698
+   triangles under 1,764 bodies the cache falls from 102.3 MB to 3.35 MB, and the whole stand-in
+   snapshot from 126.9 MB to 27.95 MB, the terrain now only in its `Collider` component; times are
+   in docs/bench/physics.md, "Static geometry and the cache". Encoding still hashes each fixed
+   body's components once (the step does the same every tick), and a cold restore builds the shape
+   instead of decoding it. Open: a cold restore whose components do not build the shapes is found
+   only after the target world is replaced; refusing it in staging needs a Cache `decode` that sees
+   the staged Component sections.
 4. **Reusing section digests** of sections that cannot have changed: only if the per-tick hash
    measures too slow, with a full recomputation every N ticks as its check.
 5. **Compression.** None in slice 1; `lz4_flex` (pure Rust, builds for `wasm32`) per keyframe and

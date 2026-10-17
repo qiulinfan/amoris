@@ -61,14 +61,19 @@ oxc_span.workspace = true
 name = "web_workload"
 crate-type = ["cdylib"]
 
+# The script cost baseline (docs/bench/script.md): the rule workload of bench/rules through the
+# host, beside its Rust twin and two probes, timed per tick.
 [[example]]
 name = "rules_bench"
 required-features = ["transpile"]
 
-[[example]]
-name = "rules_web"
-crate-type = ["cdylib"]
-
+# QuickJS-ng microloops and the cost of a `Math` call in the hardened context
+# (docs/bench/script.md, section 7).
 [[example]]
 name = "qjs_micro"
 required-features = ["transpile"]
+
+# The same worlds in WebAssembly, timed per tick by a JavaScript host (bench/rules/web/).
+[[example]]
+name = "rules_web"
+crate-type = ["cdylib"]

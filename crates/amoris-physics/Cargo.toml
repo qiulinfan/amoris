@@ -31,11 +31,12 @@ libm.workspace = true
 
 # The web tests (amoris_physics::WEB_TESTS: the sailing scene's hash chain, forks, the BVH log2)
 # as a WebAssembly module with no imports, run under Node by tests/web/run.mjs.
-
 [[example]]
 name = "web_physics"
 crate-type = ["cdylib"]
 
+# The level-scale scene of `physics_bench level` as a WebAssembly module with no imports, whose
+# cache operations tests/web/level.mjs times under Node (docs/bench/physics.md).
 [[example]]
 name = "level_web"
 crate-type = ["cdylib"]

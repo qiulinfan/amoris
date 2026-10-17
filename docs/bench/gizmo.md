@@ -126,7 +126,7 @@ against a real host. A phase must draw a non-flat canvas through the wasm render
 exception or renderer error; frame counters alone do not establish that anything was drawn.
 
 The superseded measurements on broken development pages are not retained as performance evidence.
-Their investigation is preserved in `qiulinfan/pocket-pioneer` at `09cea71a8`.
+Their investigation is preserved in `qiulinfan/amoris-pioneer` at `09cea71a8`.
 
 ## 4. Correctness evidence
 

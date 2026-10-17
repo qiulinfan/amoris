@@ -40,15 +40,6 @@ amoris-script = { workspace = true, features = ["transpile"] }
 
 # The snapshot cache's and the render feed's byte-equality tests load the sailing game from disk:
 # named without the feature (`--test snapshot_cache`), cargo refuses them instead of running none.
-
-[[example]]
-name = "player_bench"
-required-features = ["transpile"]
-
-[[example]]
-name = "profile_bench"
-required-features = ["transpile"]
-
 [[test]]
 name = "snapshot_cache"
 required-features = ["transpile"]
@@ -57,14 +48,30 @@ required-features = ["transpile"]
 name = "present"
 required-features = ["transpile"]
 
+# The player bench (docs/bench/player.md): the reference skipper through the player tools, and
+# decision models in the tick, native and scripted.
 [[example]]
-name = "publish_bench"
+name = "player_bench"
 required-features = ["transpile"]
 
+# The tick profiler's overhead and per-system timings (docs/bench/profiler.md).
+[[example]]
+name = "profile_bench"
+required-features = ["transpile"]
+
+# Fork lookahead for the skipper against the greedy skipper and against itself with forks off on
+# the course's seeded variants, and the cost of a fork and a branch (docs/bench/player.md, Fork
+# lookahead; budgets.md 5.1).
+[[example]]
+name = "lookahead_bench"
+required-features = ["transpile"]
+
+# The write trace's cost per tick: off, the script probe alone, the whole trace (docs/bench/write-trace.md).
 [[example]]
 name = "write_trace_bench"
 required-features = ["transpile"]
 
+# The serve loop's work after each tick, part by part, and the snapshot's anatomy (docs/bench/profiler.md).
 [[example]]
-name = "lookahead_bench"
+name = "publish_bench"
 required-features = ["transpile"]

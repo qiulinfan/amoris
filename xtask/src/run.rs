@@ -39,9 +39,19 @@ impl Env {
     pub fn new(root: &Path) -> Env {
         let cargo = std::env::var_os("CARGO").map_or_else(|| PathBuf::from("cargo"), PathBuf::from);
         let host = host_triple().unwrap_or_else(|| "unknown".into());
+        let pinned = home().join(".amoris-tools").join("llvm-23.1.2");
+        // Match the vendored QuickJS and viewport build: Apple's clang has no wasm backend,
+        // while Homebrew's LLVM does. An explicit override still wins, even when it is invalid.
         let llvm = std::env::var_os("AMORIS_LLVM")
             .map(PathBuf::from)
-            .unwrap_or_else(|| home().join(".amoris-tools").join("llvm-23.1.2"));
+            .or_else(|| pinned.is_dir().then(|| pinned.clone()))
+            .or_else(|| {
+                ["/opt/homebrew/opt/llvm", "/usr/local/opt/llvm"]
+                    .into_iter()
+                    .map(PathBuf::from)
+                    .find(|p| p.join("bin/clang").is_file())
+            })
+            .unwrap_or(pinned);
         Env {
             root: root.to_path_buf(),
             out: root.join("out").join("check"),

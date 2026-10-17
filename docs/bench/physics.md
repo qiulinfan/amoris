@@ -17,8 +17,8 @@
   Rapier's WebAssembly modules.
 - Code: [bench/physics/](../../bench/physics/). Raw outputs: [physics/](physics/); the tables of
   "Speed" are `scripts/summarize.py`'s output over them ([physics/summary.md](physics/summary.md)).
-- **2026-10-14, R1 (Windows x86-64):** the Rapier side re-measured on the Ryzen 9 270 laptop and the
-  attempted Unity PhysX comparison, blocked on Unity's license, are in
+- **2026-10-14, R1 (Windows x86-64):** the same-machine comparison tools and the public
+  method, without restricted PhysX results, are in
   [physics-r1.md](physics-r1.md).
 
 ## The question
@@ -526,14 +526,15 @@ collider shape that `physics.step` built from the body's `RigidBody` and `Collid
 reference (the body's spec hash and the BLAKE3 digest of those components) while the components are
 unchanged, and decoding puts back the shape those components build. A process-wide weak table keyed
 by that digest shares the built shapes between worlds by `Arc`, so a fork or restore made while some
-world holds the terrain does not build it again; whether that sharing is acceptable is the owner's
-decision (charter 8). Trajectories are unchanged: the test `the_trajectories_are_layout_1s`
-(`probe::layout`) folds the per-tick hashes of every section but the cache and asserts layout 1's
-folds for the sailing scene (1,200 ticks, and 600 ticks forked before every tick) and for a level
-scene of 196 bodies on the 20,000-triangle terrain (`level_world(100, 3)`: 300 ticks, forked before
-every tick or not); a layout-1 build of the same code gives the same folds
-(`physics_bench trajectory`, run by `tools/physcache_bench.py --trajectory`). The golden chain
-covers the cache's bytes, so it was re-blessed.
+world holds the terrain does not build it again. Amoris adopted this immutable, derived cache with
+the isolation and cold-restore trade-offs in charter 4.7 on 2026-10-16. Trajectories are unchanged:
+the test `the_trajectories_are_layout_1s` (`probe::layout`) folds the per-tick hashes of every
+section but the cache and asserts layout 1's folds for the sailing scene (1,200 ticks, and 600 ticks
+forked before every tick) and for a level scene of 196 bodies on the 20,000-triangle terrain
+(`level_world(100, 3)`: 300 ticks, forked before every tick or not); a layout-1 build of the same
+code gives the same folds (`physics_bench trajectory`, run by
+`tools/physcache_bench.py --trajectory`). The golden chain covers the cache's bytes, so it was
+re-blessed.
 
 **Scene and method.** `probe::level`: ConvexVsMesh's 1,764 bodies (a box, a ball, a capsule and a
 square pyramid; section "Scenes") dropped on a fixed sine terrain of 100 x 100 cells (20,000
@@ -740,10 +741,10 @@ not build for `wasm32-unknown-unknown` out of the box either: it recognizes WebA
 **One backend on every target, never Rapier natively and Jolt in the browser or the reverse; move
 that one backend to Jolt with `CROSS_PLATFORM_DETERMINISTIC`, now, as a port with explicit checks,
 and keep Rapier until the port passes them.** This is charter 4.7's second branch ("Jolt
-significantly faster") in its "unify on Jolt's wasm build" form. PhysX and Chaos were not measured
-(an untested Unity PhysX harness for the R1 laptop waits for a Unity license,
-[physics-r1.md](physics-r1.md)); Jolt, which Godot made its default 3D physics and Horizon
-Forbidden West and Death Stranding 2 ship, stands in for them.
+significantly faster") in its "unify on Jolt's wasm build" form. This remains the source
+study's recommendation, not an adopted migration. PhysX results are not published here
+([physics-r1.md](physics-r1.md)); Chaos was not measured. Amoris keeps Rapier until a full-engine
+port passes the stated checks.
 
 **Where charter 4.7's condition holds, and how firm the case is.** Jolt is significantly faster on
 convex bodies against a mesh terrain (paired medians 1.6 times on one thread, 2.2 on four) and on
