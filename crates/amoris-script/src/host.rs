@@ -265,6 +265,7 @@ impl NativeKind {
             n if n.starts_with("rng") => NativeKind::Rng,
             "query" | "single" | "exists" | "has" | "get" | "set" | "insert" | "remove"
             | "despawn" | "spawn" => NativeKind::World,
+            n if n.starts_with("voxels") => NativeKind::World,
             _ => NativeKind::Other,
         }
     }

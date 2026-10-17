@@ -10,6 +10,7 @@ pub mod harden;
 pub mod query;
 pub mod rng;
 pub mod timing;
+pub mod voxels;
 pub mod world;
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -80,6 +81,11 @@ const NATIVES: &[(&str, Native, bool)] = &[
     ("rngWeighted", rng::weighted, true),
     ("rngNormal", rng::normal, true),
     ("rngFill", rng::fill, true),
+    ("voxelsGet", voxels::get, false),
+    ("voxelsBlock", voxels::block_named, false),
+    ("voxelsSet", voxels::set, true),
+    ("voxelsFill", voxels::fill, true),
+    ("voxelsRaycast", voxels::raycast, false),
 ];
 
 /// The native module `amoris:host`.

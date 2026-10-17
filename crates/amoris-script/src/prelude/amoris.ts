@@ -340,6 +340,44 @@ export class Query<W extends ComponentName = ComponentName, F extends string = s
     }
 }
 
+/** Three cell coordinates, or a point or direction in metres. */
+export type Triple = readonly [number, number, number];
+
+/** Where a ray met a block (docs/spec/voxels.md 4). */
+export interface VoxelHit {
+    /** The cell hit, in the volume's grid. */
+    readonly cell: Triple;
+    /** The face entered, as an axis direction; [0, 0, 0] when the ray started inside the cell. */
+    readonly normal: Triple;
+    /** The block's palette index. */
+    readonly block: number;
+    /** How far along the ray, metres. */
+    readonly distanceM: number;
+}
+
+/** Block volumes (`Voxels`): reads, staged edits and exact ray casts. Cells are whole numbers in the
+ * volume's grid; a block is a palette index, 0 for air. Edits apply when the system returns, and
+ * this call's later reads see them. */
+export interface VoxelAccess {
+    /** The block at a cell; 0 for air. */
+    get(volume: Entity, x: number, y: number, z: number): number;
+    /** Sets one cell. */
+    set(volume: Entity, x: number, y: number, z: number, block: number): void;
+    /** Sets every cell of the inclusive box; returns the cells that changed. */
+    fill(volume: Entity, lo: Triple, hi: Triple, block: number): number;
+    /** A block's palette index by name (throws `voxels.range` if the palette has none). */
+    block(volume: Entity, name: string): number;
+    /** The first non-air cell (with `solidOnly`, the first solid one) a ray from `from` along `dir`
+     * (world metres) enters within `maxM`, or null. */
+    raycast(
+        volume: Entity,
+        from: Triple,
+        dir: Triple,
+        maxM: number,
+        options?: { readonly solidOnly?: boolean },
+    ): VoxelHit | null;
+}
+
 /** The context of one system call, frozen; nothing in it outlives the call. */
 export interface SystemContext {
     /** The tick being run. */
@@ -374,6 +412,8 @@ export interface SystemContext {
     emit<const K extends string>(kind: EventKind<K>, data?: Data, options?: EmitOptions): void;
     /** Queues an act for an entity, carried out by an executor. */
     intent(actor: Entity, kind: string, params?: Data): void;
+    /** Block volumes. */
+    readonly voxels: VoxelAccess;
 }
 
 function annotate(err: unknown, entity: number): unknown {
@@ -394,6 +434,23 @@ const world: World = Object.freeze({
     remove: host.remove,
     despawn: host.despawn,
     spawn: host.spawn,
+});
+
+const voxels: VoxelAccess = Object.freeze({
+    get: (volume: Entity, x: number, y: number, z: number): number => host.voxelsGet(volume, x, y, z),
+    set: (volume: Entity, x: number, y: number, z: number, block: number): void => {
+        host.voxelsSet(volume, x, y, z, block);
+    },
+    fill: (volume: Entity, lo: Triple, hi: Triple, block: number): number =>
+        host.voxelsFill(volume, lo, hi, block),
+    block: (volume: Entity, name: string): number => host.voxelsBlock(volume, name),
+    raycast: (
+        volume: Entity,
+        from: Triple,
+        dir: Triple,
+        maxM: number,
+        options?: { readonly solidOnly?: boolean },
+    ): VoxelHit | null => host.voxelsRaycast(volume, from, dir, maxM, options?.solidOnly === true),
 });
 
 const part = Object.freeze({
@@ -441,6 +498,7 @@ export function __context(info: CallInfo): SystemContext {
         emit: (kind: string, data?: Data, options?: EmitOptions): void =>
             host.emit(kind, data, options),
         intent: (actor: Entity, kind: string, params?: Data): void => host.intent(actor, kind, params),
+        voxels,
     }) as SystemContext;
 }
 

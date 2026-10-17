@@ -126,9 +126,11 @@ ctx.voxels.raycast(volume, origin, dir, maxM, { solidOnly? }): VoxelHit | null
   world metres) and returns the first non-air cell (`solidOnly`: the first solid one), the face it
   entered by, and the distance. It reads the volume as the system sees it: staged edits of the same
   run included, as `world.get` sees them.
-- `set` and `fill` stage `Command::Voxels` edits that apply in call order when `run` returns, like
-  `world.set`; a throw discards them. A `fill` larger than 65,536 cells costs one step per 4,096
-  cells besides the call (script-sandbox.md 4.1), so generation scripts stay within budgets.
+- `set` and `fill` edit a copy of the volume that the call's later reads and ray casts see; the
+  copy replaces the volume when `run` returns (`Command::Voxels`, in call order with the others),
+  and a throw discards it. A `fill` covers at most 16,777,216 cells (`voxels.range`); natives charge
+  no steps beyond the call (amended during implementation: natives can charge memory but not steps,
+  so the bound, not a step price, keeps a fill finite).
 - Reads and ray-casts take no steps beyond the call. The natives refuse a volume entity without
   `Voxels` (`voxels.missing`) and cells or blocks out of range (`voxels.range`).
 - `components.d.ts` lists `Voxels` as not script-usable through `world.get` (its cells are not a
@@ -274,7 +276,7 @@ draw paths are checked under the WebGPU baseline with the existing draw-path too
 | Ray casts: axis-aligned, diagonal, from inside a cell, negative cells, max distance | `amoris-sim` unit tests |
 | PCE round trip; `SnapshotCache` reuses the section without edits; hash changes with one cell | `amoris-persist` tests |
 | The cells file: write, read, refusals | `amoris-runtime` tests |
-| Natives: staging, throw discards, budgets of `fill`, `components.d.ts` | `amoris-script` tests |
+| Natives: a call's reads see its edits, a throw discards them, ray casts, a cells file | `amoris-runtime --features transpile --test voxels` |
 | Walker: walks, stops at walls, cannot step up a cell, jumps onto one, falls, hits its head, determinism across a fork | `amoris-physics` tests |
 | `first_person`: controls write `Walker`, pulses act one tick, replay of a break and a place | `amoris-runtime --features transpile` tests |
 | Mesher: culling, chunk borders, cross, liquid, material groups | `amoris-assets` tests |

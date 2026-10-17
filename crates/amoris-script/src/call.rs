@@ -154,6 +154,11 @@ pub(crate) enum Command {
         comps: Vec<(Comp, ProjectValues)>,
     },
     Emit(NewEvent),
+    /// A volume's staged copy (voxels.md 4), replacing the volume at commit.
+    Voxels {
+        id: EntityId,
+        volume: Box<amoris_sim::voxels::Voxels>,
+    },
 }
 
 /// A column handed to the script, kept to compare after the call.
@@ -203,6 +208,8 @@ pub(crate) struct CallState {
     pub commands: Vec<Command>,
     pub queries: Vec<QueryRecord>,
     pub counts: CallCounts,
+    /// Each staged volume's command, by its index in `commands`.
+    pub voxels: BTreeMap<EntityId, usize>,
 }
 
 impl CallState {
@@ -218,6 +225,7 @@ impl CallState {
             commands: Vec::new(),
             queries: Vec::new(),
             counts: CallCounts::default(),
+            voxels: BTreeMap::new(),
         }
     }
 }
@@ -291,6 +299,13 @@ pub(crate) fn apply(
             }
             Command::Emit(ev) => {
                 event::emit(world, ev);
+            }
+            Command::Voxels { id, volume } => {
+                if let Some(e) = entity::entity(world, id)
+                    && let Some(mut v) = world.get_mut::<amoris_sim::voxels::Voxels>(e)
+                {
+                    *v = *volume;
+                }
             }
         }
     }
