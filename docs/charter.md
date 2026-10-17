@@ -809,6 +809,41 @@ LOD 的径向距离不能保证离轴透视投影的像素误差；整合时改�
 黑帧，因此该路径使用单采样，可保留 TAA。普通 Metal 渲染仍使用原采样设定。仅在修复后的
 wgpu 通过本机冷启动、移动、蒙皮与多采样回归后移除这些约束。平台修复和实际验证另记于导入说明。
 
+### 4.9 方块体积与第一人称身体（2026-10-17）
+
+2026-10-17，所有者决定引擎与游戏一起开发：游戏放在独立的公开仓库
+[amoris-samples](https://github.com/qiulinfan/amoris-samples)，开发游戏时发现的需求由引擎原生支持，
+不在游戏里绕开。第一个这样的需求来自其中的 blockcraft（方块沙盒）：玩家能在静态世界里走，却不能挖
+方块、放方块。原因有四个：行走相机是 presenter 一侧的状态，不在世界里；脚本收不到指针输入；脚本既
+不能改几何，也不能发射线；行走碰撞只在加载时从场景文件建一次。
+
+决定（所有者 2026-10-17 接受，规格见 [voxels.md](spec/voxels.md)）：
+
+- **方块体积是世界状态**。新增引擎组件 `Voxels`，放在 `amoris-sim`：16³ 的区块、至多 256 种方块的调
+  色板、可选的初始格子文件；按原则 3 和原则 4，编辑都经由组件，进入快照、世界哈希与 replay。区块按字
+  节编码；未编辑的 tick 由 `SnapshotCache` 复用整节，编辑的 tick 重新编码整节（blockcraft 约 1.3
+  MB）。
+- **脚本经 `ctx.voxels` 读、改、发射线**：get、set、fill、block 与精确的网格射线（DDA）。写入在系统
+  返回时生效，与 `world.set` 一样。
+- **碰撞用 parry 的 `Voxels` 形状**。体积不经 `Collider` 组件，因此不付每 tick 的规格哈希（4.7 记录
+  的百万三角形关卡瓶颈）。物理按区块的编辑 tick 增量调用 `set_voxel`；碰撞形状是派生状态，恢复时重
+  建。
+- **第一人称身体在世界里**。新增持久组件 `Walker` 与 `physics.walk` 系统：角色控制器在 tick 内移动胶
+  囊，实体的 `Transform` 即眼睛。新增引擎动作目录 `first_person`：一个 seat `player`，控制移动、视
+  角、奔跑、快捷栏，并以无目标的 pulse 表示跳跃、主键和副键。按原则 1，窗口前的人与经 MCP 的 agent
+  使用同一套 `player.act`；这些输入都被记录，挖放方块可以逐 tick 重放。
+- **渲染器自己生成区块网格**。渲染输入流只传变化的区块（`FORMAT` 随之改变，viewport 重建入库）。渲
+  染器剔除隐藏面、按材质分组，把区块作为普通网格与实例交给场景，所以剔除、阴影、TAA、拾取、透明与
+  镂空都照常工作。`MeshPool` 增加带空闲链表的 `remove`，因为重建的区块要释放旧网格。
+- presenter 一侧的 `WalkController` 保留给没有 `Walker` 的游戏（如 town-walk），与 `physics.walk`
+  共用控制器代码。
+
+不在本切片内：agent 对方块世界的感知、带状态的方块、光照传播与平滑光照（顶点格式没有顶点色）、
+流动的液体、旋转或缩放的体积、glTF `NEAREST` 采样（blockcraft 暂以最近邻放大到 1024 的贴图代替，
+引擎支持该采样后去掉）。浏览器 worker 每 tick 不经缓存做快照，大体积会增加这部分开销；本切片先测量，
+结果并入第 8 节第 3 项。
+
+
 ## 5. 架构
 
 ### 5.1 crate
@@ -860,11 +895,11 @@ BLAKE3 上下文 `Amoris 2026-10-15 pocket-physics fixed shape v1`（带日期�
 | crate | 职责 |
 |---|---|
 | `amoris-contract` | 错误协议 `Problem`、严格解码与"是不是想写"建议 |
-| `amoris-sim` | ECS 世界、tick、调度、EntityId、事件、RNG、确定性数学、组件注册表、`Transform` |
+| `amoris-sim` | ECS 世界、tick、调度、EntityId、事件、RNG、确定性数学、组件注册表、`Transform`、方块体积 `Voxels` |
 | `amoris-assets` | 资源 ID、可视组件（模型、材质、灯光、相机、环境、splat）、glTF 导入与网格烘焙 |
 | `amoris-persist` | 规范编码、哈希、snapshot/fork/replay、分叉定位、版本迁移 |
-| `amoris-physics` | Rapier、浮力、风与帆、水动力 |
-| `amoris-interface` | 感知、动作与意图、affordance、时间模型 |
+| `amoris-physics` | Rapier、浮力、风与帆、水动力、体素碰撞、第一人称角色 `Walker` |
+| `amoris-interface` | 感知、动作与意图、affordance、时间模型；动作目录 `sailing`、`first_person` |
 | `amoris-script` | TypeScript on QuickJS-ng、沙箱、预算、热更新、调试钩子 |
 | `amoris-link` | 游戏与 presenter 之间：命令信封、队列、发布的快照、事件环 |
 | `amoris-runtime` | 游戏组合、命令目录、场景、游戏线程 |
@@ -932,4 +967,6 @@ Python：`tools/neural/`（神经资源训练）、`tools/eval/`（评测）。
    注记（安静复测）。
 2. 真实拍摄的 splat 场景与 CC0 材质集的来源（需要所有者同意下载）。
 3. 大地形每 tick 的规格哈希与关卡几何的资源化；物理缓存的不可变形状共享与冷恢复取舍已在 4.7
-   接受，后端迁移仍需以完整引擎的相同场景验证。
+   接受，后端迁移仍需以完整引擎的相同场景验证。方块体积（4.9）在原生一侧避开了组件规格哈希；浏览器
+   worker 每 tick 的完整快照仍会编码整个体积，以 docs/bench/voxels.md 的测量决定是否让 worker 使用
+   `SnapshotCache`。
