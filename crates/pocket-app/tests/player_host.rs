@@ -141,6 +141,10 @@ fn a_seat_over_http_plays_through_the_player_tools_alone() {
         ("log.since", json!({})),
         ("catalog.list", json!({})),
         ("debug.rewind", json!({"tick": 0})),
+        (
+            "debug.writes",
+            json!({"entity": "Sloop", "component": "Boat", "field": "rudder"}),
+        ),
     ] {
         let e = error(&url, &seat(method, params));
         assert_eq!(e["code"], json!("permission.denied"), "{method}: {e:#}");

@@ -711,3 +711,113 @@ fn the_mcp_debug_tool_lists_every_parameter() {
     }
     assert_eq!(actions.len(), methods.len(), "{actions:?}");
 }
+
+/// `debug.writes` through the host (docs/spec/debugger.md 13): the catalog describes it, it steps
+/// the game and names the script system and statement that changed the gauge each tick, with the
+/// debugger attached or not, through the HTTP API's client and MCP's `debug` tool alike; a
+/// misspelt field or parameter is refused with a suggestion; the hub alone does not serve it.
+#[test]
+fn debug_writes_names_the_writers_through_the_host() {
+    let served = Served::start();
+    let rt = runtime();
+    rt.block_on(async {
+        let host = &served.host;
+        let catalog = ok(host, "catalog.list", json!({})).await;
+        let entry = catalog
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["name"] == "debug.writes")
+            .cloned()
+            .expect("a catalog entry for debug.writes");
+        assert_eq!(entry["kind"], "control", "{entry:#}");
+        for p in ["entity", "component", "field", "ticks"] {
+            assert!(entry["params"]["properties"].get(p).is_some(), "{entry:#}");
+        }
+        let line = mark("write-level");
+        let check = |w: &Value, from: u64, to: u64| {
+            assert_eq!(w["trace"], "Gauge.Gauge.level", "{w:#}");
+            assert_eq!(w["ticks"], json!([from, to]), "{w:#}");
+            assert_eq!(w["tick"], to, "{w:#}");
+            assert!(w["world_hash"].is_string(), "{w:#}");
+            let rows = w["rows"].as_array().unwrap();
+            assert_eq!(rows.len() as u64, to - from + 1, "{w:#}");
+            for r in rows {
+                assert_eq!(r["by"], "script:measure", "{r:#}");
+                let at = r["at"].as_str().unwrap();
+                assert!(at.starts_with(&format!("scripts/rules.ts:{line}:")), "{at}");
+            }
+        };
+        let w = ok(
+            host,
+            "debug.writes",
+            json!({"entity": "Gauge", "component": "Gauge", "field": "level", "ticks": 3}),
+        )
+        .await;
+        check(&w, 1, 3);
+        // With the debugger attached (its own instrumentation and hook) the same.
+        ok(host, "debug.attach", json!({})).await;
+        let (m, params) = pocket_mcp::tools::route(
+            "debug",
+            json!({"action": "writes", "entity": "Gauge", "component": "Gauge",
+                   "field": "level", "ticks": 3})
+            .as_object()
+            .unwrap()
+            .clone(),
+        )
+        .unwrap();
+        assert_eq!(m, "debug.writes");
+        let w = ok(host, &m, params).await;
+        check(&w, 4, 6);
+        ok(host, "debug.detach", json!({})).await;
+        let e = host
+            .call(
+                &Via::Api,
+                "debug.writes",
+                json!({"entity": "Gauge", "component": "Gauge", "field": "levle"}),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, "request.invalid_value", "{e:#?}");
+        assert_eq!(e.detail["suggestions"], json!(["level"]), "{e:#?}");
+        // At the method's own parameter, not inside the step's `trace`.
+        assert_eq!(e.detail["path"], "/field", "{e:#?}");
+        let e = host
+            .call(
+                &Via::Api,
+                "debug.writes",
+                json!({"entity": "Gauge", "component": "Gauge", "tick": 3}),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, "request.unknown_field", "{e:#?}");
+        assert!(format!("{e:?}").contains("ticks"), "{e:#?}");
+        let e = served
+            .hub
+            .call("debug.writes", &json!({"entity": 1, "component": "Gauge"}))
+            .unwrap_err();
+        assert_eq!(e.code, "debug.unsupported", "{e:#?}");
+        // The tick did not move for the refusals.
+        assert_eq!(ok(host, "status", json!({})).await["tick"], 6);
+        // A breakpoint inside the traced ticks answers the step there: the trace is dropped, and
+        // the answer says so.
+        ok(
+            host,
+            "debug.breakpoints.set",
+            json!({"file": "rules.ts", "line": mark("next")}),
+        )
+        .await;
+        let w = ok(
+            host,
+            "debug.writes",
+            json!({"entity": "Gauge", "component": "Gauge", "field": "level", "ticks": 3}),
+        )
+        .await;
+        assert_eq!(w["dropped"], "debugger stop", "{w:#}");
+        assert_eq!(w["paused"], true, "{w:#}");
+        assert!(w.get("rows").is_none(), "{w:#}");
+        ok(host, "debug.breakpoints.clear", json!({})).await;
+        ok(host, "debug.continue", json!({})).await;
+    });
+    served.stop();
+}

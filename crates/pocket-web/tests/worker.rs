@@ -774,3 +774,35 @@ fn the_render_feed_carries_the_packaged_scene() {
         assert_eq!(decoded.instances.len(), 5);
     });
 }
+
+/// The browser's loop runs plain steps: a write trace (`time.step {trace}`, docs/spec/debugger.md
+/// 13) is refused with `time.trace_unavailable` before any tick, not answered as a plain step.
+#[test]
+fn a_write_trace_is_refused_by_the_browser_loop() {
+    on_stack(|| {
+        let subject = Subject::load(&sailing()).unwrap();
+        let (_, now) = clock();
+        let mut w = WorkerCore::new(packaged(&subject, 1), Pacing::Stepped, now).unwrap();
+        let mut page = Page::default();
+        let trace = json!({"entity": "Sloop", "component": "Boat", "field": "rudder"});
+        let dev = json!({"developer": 0});
+        w.push(&cmd(
+            dev.clone(),
+            1,
+            None,
+            "time.step",
+            json!({"ticks": 5, "trace": trace}),
+        ));
+        w.push(&cmd(dev, 2, None, "step", json!({"ticks": 2})));
+        drive(&mut w, &mut page, true, |p| p.replies.len() == 2);
+        let e = &page.replies[0]["error"];
+        assert_eq!(e["code"], "time.trace_unavailable", "{:?}", page.replies);
+        assert_eq!(e["detail"]["path"], "/trace", "{e}");
+        assert_eq!(
+            page.replies[1]["ok"]["tick"],
+            json!(2),
+            "{:?}",
+            page.replies
+        );
+    });
+}
