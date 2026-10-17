@@ -41,13 +41,16 @@ pub async fn answer(host: &Host, via: &Via, req: Value) -> Value {
     }
 }
 
+/// `subscribe` / `unsubscribe`: all or nothing, so a list naming a topic the host does not push
+/// changes nothing and says which.
 fn subscribe(topics: &mut BTreeSet<String>, params: &Value, on: bool) -> Result<Value, Problem> {
     let list = params
         .get("topics")
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
-    for t in &list {
+    let mut names = Vec::with_capacity(list.len());
+    for (i, t) in list.iter().enumerate() {
         let name = t.as_str().unwrap_or("");
         if !TOPICS.contains(&name) {
             let valid: Vec<pocket_contract::Candidate<'_>> = TOPICS
@@ -55,11 +58,14 @@ fn subscribe(topics: &mut BTreeSet<String>, params: &Value, on: bool) -> Result<
                 .map(|t| pocket_contract::Candidate::new(t))
                 .collect();
             return Err(pocket_contract::codes::invalid_value(
-                &pocket_contract::Pointer::root().key("topics"),
+                &pocket_contract::Pointer::root().key("topics").index(i),
                 name,
                 &valid,
             ));
         }
+        names.push(name);
+    }
+    for name in names {
         if on {
             topics.insert(name.to_owned());
         } else if name != "status" {
@@ -138,5 +144,36 @@ pub async fn serve(host: Host, mut socket: WebSocket) {
                 Err(broadcast::error::RecvError::Closed) => break,
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A list naming a topic the host does not push changes nothing (the editor once asked for a
+    /// `pick` topic after the others and got the others anyway).
+    #[test]
+    fn subscriptions_are_all_or_nothing() {
+        let mut topics = BTreeSet::from(["status".to_owned()]);
+        let e = subscribe(
+            &mut topics,
+            &json!({"topics": ["log", "profile", "pick"]}),
+            true,
+        )
+        .unwrap_err();
+        assert_eq!(e.code, "request.invalid_value");
+        assert_eq!(topics, BTreeSet::from(["status".to_owned()]));
+        let r = subscribe(&mut topics, &json!({"topics": ["log", "profile"]}), true).unwrap();
+        assert_eq!(r["topics"], json!(["log", "profile", "status"]));
+        assert!(subscribe(&mut topics, &json!({"topics": ["profile", "nope"]}), false).is_err());
+        assert!(topics.contains("profile"));
+        let r = subscribe(
+            &mut topics,
+            &json!({"topics": ["status", "profile"]}),
+            false,
+        )
+        .unwrap();
+        assert_eq!(r["topics"], json!(["log", "status"]));
     }
 }

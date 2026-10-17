@@ -46,6 +46,7 @@ const SUBCOMMANDS: &[&str] = &[
     "scripts",
     "events",
     "logs",
+    "profile",
     "snapshots",
     "help",
 ];

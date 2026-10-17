@@ -105,11 +105,12 @@ pub fn tools() -> Vec<ToolDef> {
                 ['Sloop.Boat.rudder'], every}}: stops early when met or at a breakpoint \
                 (stopped_by), samples come back as a table; snapshots: kept every 60 ticks; \
                 rewind {tick, bundle}: restore the kept snapshot at or before tick under the \
-                applied scripts (bundle 'snapshot': its own).",
+                applied scripts (bundle 'snapshot': its own); profile {ticks}: what the last \
+                ticks cost, ms per tick by system and phase.",
             schema: obj(
                 json!({
                     "action": action(&["status", "pause", "resume", "speed", "step", "snapshots",
-                                       "rewind"]),
+                                       "rewind", "profile"]),
                     "ticks": {"type": "integer"},
                     "speed": {"type": "number"},
                     "until": {"type": "object"},
@@ -313,6 +314,10 @@ pub fn route(tool: &str, mut args: Map<String, Value>) -> Result<(String, Value)
             "step" => ("time.step".into(), rest(args)),
             "snapshots" => ("snapshots.list".into(), rest(args)),
             "rewind" => ("snapshots.restore".into(), rest(args)),
+            "profile" => (
+                "profile.frame".into(),
+                Value::Object(take(&mut args, &["ticks"])),
+            ),
             other => return Err(format!("time has no action '{other}'")),
         },
         "events" => match need(action)?.as_str() {

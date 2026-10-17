@@ -1,7 +1,9 @@
 //! What the server pushes to editors (docs/spec/host-protocol.md 3; docs/spec/server.md): `status`
 //! at most 10 times a second when it changed (and every second regardless), `world.changed`
-//! coalesced over the publications between two pushes, `events` as the game emits them, and `log`
-//! lines. Everything is read from `pocket-link`'s reader; nothing waits on the game thread.
+//! coalesced over the publications between two pushes, `events` as the game emits them, `log`
+//! lines, and `profile` four times a second: the ticks profiled since the last push, summarized
+//! (pocket-link's `profile`). Everything is read from `pocket-link`'s reader; nothing waits on the
+//! game thread.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -112,13 +114,26 @@ pub(crate) fn changes(old: &WorldSnapshot, new: &WorldSnapshot) -> Option<Value>
     Some(v)
 }
 
-/// The pushers' loop: events and log every 50 ms, status and world changes every 100 ms.
+/// A profile summary as `profile` pushes it and `profile.frame` answers it: when no tick was
+/// profiled, `tick` and `epoch` are the world's shown.
+pub(crate) fn profile_of(host: &Host, summary: Value) -> Value {
+    let mut p = summary;
+    if p["tick"].is_null() {
+        p["tick"] = json!(host.reader().latest().state().0);
+        p["epoch"] = json!(host.reader().world().epoch);
+    }
+    p
+}
+
+/// The pushers' loop: events and log every 50 ms, status and world changes every 100 ms, the
+/// profile every 250 ms.
 pub(crate) async fn run(host: Host) {
     let reader = host.reader().clone();
     let mut events = EventCursor {
         next: reader.latest().last_event + 1,
     };
     let mut log_next = 1u64;
+    let mut profile_next = reader.profile_next();
     let mut last: Arc<WorldSnapshot> = reader.latest();
     let mut last_epoch = reader.world().epoch;
     let mut last_status = Value::Null;
@@ -142,6 +157,12 @@ pub(crate) async fn run(host: Host) {
         }
         for line in reader.logs(&mut log_next, 200) {
             host.push("log", serde_json::to_value(line).unwrap_or(Value::Null));
+        }
+        if n.is_multiple_of(5) {
+            let summary = reader.profile_since(&mut profile_next);
+            if host.0.push.receiver_count() > 0 {
+                host.push("profile", profile_of(&host, summary));
+            }
         }
         if !n.is_multiple_of(2) {
             continue;

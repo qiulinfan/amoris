@@ -1,5 +1,5 @@
-//! Methods the server answers itself (docs/spec/server.md, methods): the merged catalog, the event
-//! and log streams `pocket-link` keeps for presenters, the project's asset files, the type check
+//! Methods the server answers itself (docs/spec/server.md, methods): the merged catalog, the event,
+//! log and profile streams `pocket-link` keeps for presenters, the project's asset files, the type check
 //! stage of `scripts.apply` and `scripts.check`, the script guide (`scripts.guide`), and the
 //! plug-ins (`debug.*`, `capture`), which answer `*.not_available` until the integrator installs
 //! them.
@@ -55,6 +55,15 @@ struct LogSince {
     /// At most this many, default 100.
     #[serde(default)]
     limit: Option<u32>,
+}
+
+/// `profile.frame`'s parameters.
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct ProfileFrame {
+    /// The last this many ticks, default 60 (the ring keeps 600).
+    #[serde(default)]
+    ticks: Option<u32>,
 }
 
 /// `assets.list`'s parameters.
@@ -118,6 +127,16 @@ pub fn server_catalog() -> Vec<Value> {
             "read",
             "Script console lines, failed system runs and host messages.",
             schema::<LogSince>(),
+        ),
+        e(
+            "profile.frame",
+            "read",
+            "What the last ticks cost the game thread (default 60), in ms per tick: each system's \
+             own time in the order they ran (a script system's out of script.update), the step's \
+             time outside its systems (tick.other), the render feed's extraction (loop.present) \
+             and the snapshot and streams published after it (loop.publish), and each phase; \
+             ticks the debugger held are counted in held and left out.",
+            schema::<ProfileFrame>(),
         ),
         e(
             "assets.list",
@@ -362,6 +381,10 @@ impl Host {
                 }
                 let last = lines.last().map_or(next.saturating_sub(1), |l| l.seq);
                 json!({"lines": lines, "last": last})
+            }),
+            "profile.frame" => decode::<ProfileFrame>(&params, method).map(|p| {
+                let n = usize_of(p.ticks, 60).clamp(1, pocket_link::PROFILE_TICKS);
+                crate::push::profile_of(self, reader.profile_last(n))
             }),
             "assets.list" => decode::<AssetsList>(&params, method).and_then(|p| self.assets(p)),
             "scripts.apply" => match decode::<ScriptsApply>(&params, method) {

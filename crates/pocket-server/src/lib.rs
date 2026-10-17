@@ -119,8 +119,10 @@ pub struct ServeOptions {
 }
 
 impl Host {
-    /// A host over `game` for the project at `project`; `editor_dist` holds the built editor.
+    /// A host over `game` for the project at `project`; `editor_dist` holds the built editor. It
+    /// serves the profile stream, so from now on the game thread times its ticks (server.md 4).
     pub fn new(game: GameAccess, project: PathBuf, editor_dist: Option<PathBuf>) -> Host {
+        game.reader.serve_profile();
         let (push, _) = broadcast::channel(1024);
         Host(Arc::new(Inner {
             reader: game.reader,
@@ -238,7 +240,8 @@ impl Host {
         self.0.push.subscribe()
     }
 
-    /// Starts the background pushers (status, world.changed, events, log) on the current runtime.
+    /// Starts the background pushers (status, world.changed, events, log, profile) on the current
+    /// runtime.
     pub fn start_pushers(&self) {
         tokio::spawn(push::run(self.clone()));
     }

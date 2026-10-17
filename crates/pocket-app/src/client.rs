@@ -103,6 +103,11 @@ pub const COMMANDS: &[(&str, &str, &str)] = &[
     ),
     ("logs", "log.since", "pocket logs [--since seq] [--limit n]"),
     (
+        "profile",
+        "profile.frame",
+        "pocket profile [--ticks n]   (what the last ticks cost the game thread, by system)",
+    ),
+    (
         "snapshots",
         "snapshots.list",
         "pocket snapshots [list] | restore <tick> [--bundle snapshot]",
@@ -683,6 +688,10 @@ fn request(cmd: &str, args: &Args) -> Result<(String, Value), Problem> {
             put(&mut p, "seq", num("since")?);
             put(&mut p, "limit", num("limit")?);
             "log.since"
+        }
+        "profile" => {
+            put(&mut p, "ticks", num("ticks")?);
+            "profile.frame"
         }
         "snapshots" => match pos(args, 0).unwrap_or("list") {
             "list" => "snapshots.list",
@@ -1281,6 +1290,57 @@ fn paused_rows_note(v: &Value, out: &mut String) {
     }
 }
 
+/// `profile.frame` as a table: the tick's and the game thread's time, then each system's and
+/// phase's average and largest milliseconds per tick with its share of the game thread's time.
+fn profile_text(v: &Value, out: &mut String) {
+    let f = |k: &Value| k.as_f64().unwrap_or(0.0);
+    let busy = f(&v["busy_ms"]);
+    let _ = write!(
+        out,
+        "{} ticks to tick {} (epoch {}): tick {:.3} ms (max {:.3}), game thread {:.3} ms per tick",
+        opt(&v["ticks"]),
+        opt(&v["tick"]),
+        opt(&v["epoch"]),
+        f(&v["tick_ms"]),
+        f(&v["tick_max_ms"]),
+        busy
+    );
+    if v["held"].as_u64().unwrap_or(0) > 0 {
+        let _ = write!(out, "; {} held by the debugger, left out", opt(&v["held"]));
+    }
+    out.push('\n');
+    if v["ticks"] == json!(0) {
+        out.push_str(
+            "(no tick profiled in this world yet: time is paused; pocket step runs some)\n",
+        );
+        return;
+    }
+    let _ = writeln!(
+        out,
+        "  {:<28} {:>9} {:>9} {:>6}",
+        "system", "ms", "max", "share"
+    );
+    for r in v["systems"].as_array().into_iter().flatten() {
+        let ms = f(&r["ms"]);
+        let share = if busy > 0.0 { ms / busy * 100.0 } else { 0.0 };
+        let _ = writeln!(
+            out,
+            "  {:<28} {:>9.4} {:>9.4} {:>5.1}%",
+            opt(&r["name"]),
+            ms,
+            f(&r["max_ms"]),
+            share
+        );
+    }
+    let phases: Vec<String> = v["phases"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|p| format!("{} {:.3}", opt(&p["name"]), f(&p["ms"])))
+        .collect();
+    let _ = writeln!(out, "  phases (ms): {}", phases.join(", "));
+}
+
 /// The text form of a method's result; `full`: every frame of a debugger state.
 fn text(method: &str, v: &Value, full: bool) -> String {
     let mut out = String::new();
@@ -1523,6 +1583,7 @@ fn text(method: &str, v: &Value, full: bool) -> String {
                 s
             });
         }
+        "profile.frame" => profile_text(v, &mut out),
         "scripts.list" => lines(&mut out, v, &|f| {
             let n = f["diagnostics"].as_array().map_or(0, Vec::len);
             let mut s = format!("{} {} B", opt(&f["path"]), opt(&f["bytes"]));
@@ -2114,6 +2175,28 @@ mod tests {
             req("docs", &["data", "breakpoint"]),
             ("docs.search".into(), json!({"query": "data breakpoint"}))
         );
+        assert_eq!(
+            req("profile", &["--ticks", "120"]),
+            ("profile.frame".into(), json!({"ticks": 120}))
+        );
+    }
+
+    /// `pocket profile` reads as a table with each system's share of the game thread's time.
+    #[test]
+    fn profile_reads_as_a_table() {
+        let v = json!({"tick": 300, "epoch": 1, "ticks": 60, "held": 1, "tick_ms": 0.5,
+            "tick_max_ms": 0.9,
+            "busy_ms": 1.0, "systems": [{"name": "physics.step", "ms": 0.25, "max_ms": 0.4},
+            {"name": "loop.publish", "ms": 0.5, "max_ms": 0.6}],
+            "phases": [{"name": "Physics", "ms": 0.3, "max_ms": 0.4}]});
+        let t = text("profile.frame", &v, false);
+        assert!(
+            t.starts_with("60 ticks to tick 300 (epoch 1): tick 0.500 ms"),
+            "{t}"
+        );
+        assert!(t.contains("1 held by the debugger"), "{t}");
+        assert!(t.contains("physics.step") && t.contains("25.0%"), "{t}");
+        assert!(t.contains("phases (ms): Physics 0.300"), "{t}");
     }
 
     /// A paused state as text: the place, the innermost frame's locals without `ctx`, one line
