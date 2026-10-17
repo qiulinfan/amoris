@@ -73,11 +73,31 @@ the medians, followed by the observed round range.
 |  many_cubes, 10,000  |  RTX 5060, Direct3D 12  |  0.546 (0%)  |  0.626 (0%)  |  +15% (+14 to +15)  |
 |  many_cubes, 200,000  |  RTX 5060, Vulkan  |  0.759 (5%)  |  1.111 (4%)  |  +46% (+40 to +49)  |
 |  many_cubes, 200,000  |  RTX 5060, Direct3D 12  |  0.811 (1%)  |  1.162 (4%)  |  +43% (+38 to +44)  |
-|  many_cubes, 200,000 moving  |  RTX 5060, Vulkan  |  12.313 (2%)  |  14.521 (0%)  |  +18% (+17 to +20)  |
+|  many_cubes, 200,000 moving (idle GPU; the correction below)  |  RTX 5060, Vulkan  |  12.313 (2%)  |  14.521 (0%)  |  +18% (+17 to +20)  |
+|  many_cubes, 200,000 moving, fixed `apply` (2026-10-15, three rounds)  |  RTX 5060, Direct3D 12  |  0.853 (1%)  |  1.202 (1%)  |  +41% (+40 to +41)  |
+|  many_cubes, 200,000 moving, fixed `apply` (2026-10-15, three rounds)  |  RTX 5060, Vulkan  |  6.125 (1%)  |  7.348 (86%)  |  low-power state, no ratio  |
 
 Small mixed scenes cost 3–6% more ray traced on RTX 5060 Vulkan, 8–10% less on RTX D3D12, and
 19–25% less on the 780M. With 10,000 or 200,000 cubes, the RTX's ray-traced passes instead cost
-15–46% more. The moving 200,000-cube case costs 18% more with Vulkan. The default remains off.
+15–46% more. The moving 200,000-cube case cost 18% more with Vulkan on the 2026-10-10 build, a
+measurement of an idle GPU (the correction below). The default remains off.
+
+Correction (2026-10-14, quiet re-measurement 2026-10-15; [dynamic scenes](dynamic-scenes.md) 5.5):
+the moving 200,000-cube row of 2026-10-10 does not measure the shadow passes. Its frames took about
+a second of CPU (`Scene::apply` searched a list for every moving slot, n² comparisons), and the GPU
+idled between them. On an idle machine (three rounds, the cascaded path run last) the build before
+the fix takes 12.1 to 12.6 ms of cascaded and 14.1 to 14.5 ms of ray-traced GPU time, the RTX's
+graphics clock at a median of 180 MHz over the cascaded frames (nvidia-smi, 100 ms samples), and a
+control reproduces that from the idle alone: the fixed build, made to busy-wait 900 ms before every
+frame (`--stall 900`), takes 12.1 to 12.7 and 14.1 ms again at 180 MHz. Without the wait the fixed
+build measures the passes on Direct3D 12: 0.853 ms cascaded (1,755 MHz, P2) against 1.202 ray
+traced, 41% more, as with the 200,000 still cubes. Under Vulkan it does not: the RTX stays in P5 and
+P8 (memory clock 810 MHz) over the cascaded path's frames of 41 ms in all three rounds, which take
+6.1 ms of GPU time, and the ray-traced path took 7.35 to 7.51 ms in two rounds and 1.23 in one, so
+this case gives no Vulkan ratio; the provisional measurement's Vulkan spread (0.86 to 6.4 ms) was
+not the shared machine's doing. The ray-traced path spends 39 to 49 ms of render CPU a frame (59 to
+60 with the stall or before the fix), 32 to 42 ms more than the cascaded one; no trace has split
+that time yet (the top level's rebuild and wgpu's per-instance validation are the candidates).
 
 ## Limits that affect the decision
 
@@ -86,8 +106,10 @@ Small mixed scenes cost 3–6% more ray traced on RTX 5060 Vulkan, 8–10% less 
   matter more than the ray shader itself.
 - Skinned geometry requires per-frame bottom/top-level rebuilds. With 20 characters, frame wall
   time grows by about 0.1–0.35 ms on the measured RTX workload although pass totals move little.
-- The moving 200,000-instance example also spends about one second updating poses in either path;
-  it is a scaling stress test, not a representative playable frame.
+- The moving 200,000-instance example spent about one second updating poses in either path (a
+  quadratic search in `Scene::apply`, fixed on 2026-10-14; [dynamic scenes](dynamic-scenes.md)),
+  which also left the GPU idle between frames; its row above is not a measurement of the passes
+  (the correction above). The ray-traced path's own render CPU is now most of its frame.
 - The small-scene Vulkan costs depend on the forward-shader/encoding build. These final figures
   cannot be mixed with timings from another build or applied to a different scene without a check.
 - Apple comparative timings are not established by this Windows dataset. Feature availability,
