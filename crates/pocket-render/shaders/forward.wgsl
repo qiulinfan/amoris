@@ -425,6 +425,122 @@ fn shade(in: VsOut, s: Surface) -> SceneOut {
     return scene_out(in, n, color, indirect * (1.0 - fog));
 }
 
+// --- Transparent surfaces -------------------------------------------------------------------------
+// The transparent stage (transparent.rs, docs/spec/transparency.md): alpha-blended (glTF BLEND, a
+// look's alpha below 1) and transmissive (KHR_materials_transmission) surfaces, drawn back to front
+// after the opaque pass and the sky (with GTAO on, after GTAO), premultiplied, depth tested and not
+// written; the extra targets are left as they are (what is behind keeps them). Lit as `shade`
+// lights an opaque surface; the dielectric's transmission takes the place of its diffuse light and
+// lets what is behind through, less what the surface reflects, without refraction. The blend
+// multiplies everything behind by one factor (no dual-source blending, an optional WebGPU feature),
+// so the base color's luminance tints what shows through and its hue only the light the surface
+// reflects and emits. A double-sided surface draws a two-sided index list (transparent.rs), its
+// back faces first as reversed triangles: they face the camera, so the one pipeline, which culls
+// back faces, draws them, and `surface` turns their normal toward the viewer.
+
+// The output is the light the surface adds (premultiplied by its coverage) and, in alpha, 1 minus
+// the share of the light behind that passes through (the blend multiplies the target by that share).
+@fragment
+fn fs_transparent(in: VsOut, @builtin(front_facing) facing: bool) -> @location(0) vec4f {
+    // Gradients and the surface before anything depends on the material (uniform control flow).
+    let du = dpdx(in.uv) * view.texture_lod.x;
+    let dv = dpdy(in.uv) * view.texture_lod.y;
+    return transparent(in, surface(in, facing), du, dv);
+}
+
+// A transparent surface's light and coverage (`fs_transparent`), from its `surface` and its uv's
+// gradients.
+fn transparent(in: VsOut, s: Surface, du: vec2f, dv: vec2f) -> vec4f {
+    let m = materials[in.material];
+    var coverage = clamp(s.alpha, 0.0, 1.0);
+    if ((m.flags & 1u) != 0u) {
+        // Alpha-masked and transmissive: the alpha cuts, it does not blend.
+        if (s.alpha < m.alpha_cutoff) {
+            discard;
+        }
+        coverage = 1.0;
+    }
+    var transmission = m.transmission;
+    if (m.transmission_tex != NO_TEXTURE) {
+        transmission *= textureSampleGrad(tex_linear, tex_sampler, in.uv, m.transmission_tex, du,
+            dv).r;
+    }
+    let dielectric = 1.0 - s.metallic;
+    var color = s.albedo + s.emissive;
+    var through = 0.0;
+    if ((m.flags & 4u) == 0u) {
+        let v = normalize(view.camera_pos.xyz - in.world);
+        let n = s.n;
+        let nv = max(dot(n, v), 1e-4);
+        let a = s.roughness * s.roughness;
+        let r0 = (max(m.ior, 1.0) - 1.0) / (max(m.ior, 1.0) + 1.0);
+        let f0 = mix(vec3f(r0 * r0), s.albedo, s.metallic);
+        // What the dielectric does not transmit it diffuses.
+        let diffuse_color = s.albedo * dielectric * (1.0 - transmission);
+        color = vec3f(0.0);
+        // Sun.
+        if (view.sun_dir.w > 0.0) {
+            let l = view.sun_dir.xyz;
+            let nl = dot(n, l);
+            if (nl > 0.0) {
+                let h = normalize(l + v);
+                let f = f_schlick(f0, max(dot(v, h), 0.0));
+                let spec = d_ggx(max(dot(n, h), 0.0), a) * v_smith(nv, nl, a) * f;
+                let diff = (1.0 - f) * diffuse_color / PI;
+                let depth = dot(in.world - view.camera_pos.xyz,
+                    -vec3f(view.view[0].z, view.view[1].z, view.view[2].z));
+                let sh = shadow_factor(in.world, n, depth);
+                color += (diff + spec) * view.sun_color.rgb * view.sun_dir.w * nl * sh;
+            }
+        }
+        // Punctual lights of this pixel's cluster.
+        let cell = cluster_of(in.clip);
+        let per = clusters.grid.w;
+        let count = min(cluster_lights[cell * (per + 1u)], per);
+        for (var i = 0u; i < count; i++) {
+            let li = lights[cluster_lights[cell * (per + 1u) + 1u + i]];
+            let to = li.pos - in.world;
+            let d2 = dot(to, to);
+            let l = to * inverseSqrt(max(d2, 1e-8));
+            let nl = dot(n, l);
+            if (nl <= 0.0) {
+                continue;
+            }
+            let x = d2 / (li.range * li.range);
+            let window = clamp(1.0 - x * x, 0.0, 1.0);
+            var att = window * window / max(d2, 0.01);
+            if (li.kind == 2u) {
+                att *= smoothstep(li.cos_outer, li.cos_inner, dot(-l, li.dir));
+            }
+            let h = normalize(l + v);
+            let f = f_schlick(f0, max(dot(v, h), 0.0));
+            let spec = d_ggx(max(dot(n, h), 0.0), a) * v_smith(nv, nl, a) * f;
+            color += ((1.0 - f) * diffuse_color / PI + spec) * li.color * att * nl;
+        }
+        // Image-based light from the sky.
+        let ambient = view.sun_color.w;
+        let r = reflect(-v, n);
+        let levels = f32(textureNumLevels(env_cube) - 1);
+        let prefiltered = textureSampleLevel(env_cube, env_sampler, r, s.roughness * levels).rgb;
+        let horizon = clamp(1.0 + dot(r, normalize(in.normal)), 0.0, 1.0);
+        let baked = baked_diffuse(in.world, n);
+        let diffuse_light = select(sh_irradiance(n) * (ambient / PI), baked.xyz, baked.w > 0.0);
+        color += diffuse_color * diffuse_light
+            + prefiltered * env_brdf(f0, s.roughness, nv) * horizon * horizon * ambient;
+        color += s.emissive;
+        // The light behind passes the dielectric's transmitting share, less what its specular
+        // lobe reflects (the lobe's directional albedo), tinted by the base color's luminance.
+        let reflected = env_brdf(vec3f(r0 * r0), s.roughness, nv).x;
+        through = dielectric * transmission * (1.0 - reflected) * luminance(s.albedo);
+    }
+    let behind = clamp(1.0 - coverage + coverage * through, 0.0, 1.0);
+    // Fogged as an opaque surface where it hides what is behind; what shows through was fogged
+    // at its own depth.
+    let fog = fog_amount(in.world);
+    let lit = mix(coverage * color, view.fog.rgb * view.sun_color.w * (1.0 - behind), fog);
+    return vec4f(lit, 1.0 - behind);
+}
+
 // --- Shadow casters ----------------------------------------------------------------------------
 
 struct ShadowOut {
@@ -468,6 +584,9 @@ fn fs_shadow_masked(in: MaskedShadowOut) {
     if (m.base_color_tex != NO_TEXTURE) {
         a *= textureSampleLevel(tex_srgb, tex_sampler, in.uv, m.base_color_tex, 0.0).a;
     }
+    // A transparent material casts as alpha-masked (materials.rs `variant`): what transmits is
+    // not opaque. 0 for every other material.
+    a *= 1.0 - m.transmission;
     if (a < m.alpha_cutoff) {
         discard;
     }

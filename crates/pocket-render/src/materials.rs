@@ -16,6 +16,9 @@ use crate::blit::Blitter;
 pub const NO_TEXTURE: u32 = u32::MAX;
 /// Material flag: the channels come from a neural texture (`MaterialGpu::neural`).
 pub const FLAG_NEURAL: u32 = 8;
+/// Material flag: alpha-blended (glTF BLEND, or a look whose alpha is below 1): drawn by the
+/// transparent stage (transparent.rs).
+pub const FLAG_BLEND: u32 = 16;
 /// The size of every texture layer.
 pub const TEX_SIZE: u32 = 1024;
 
@@ -35,6 +38,12 @@ pub struct MaterialGpu {
     pub normal_tex: u32,
     pub metal_rough_tex: u32,
     pub emissive_tex: u32,
+    /// KHR_materials_transmission's factor (0: none) and its texture's layer (red channel).
+    pub transmission: f32,
+    /// KHR_materials_ior.
+    pub ior: f32,
+    pub transmission_tex: u32,
+    pub _pad: u32,
 }
 
 impl Default for MaterialGpu {
@@ -51,6 +60,10 @@ impl Default for MaterialGpu {
             normal_tex: NO_TEXTURE,
             metal_rough_tex: NO_TEXTURE,
             emissive_tex: NO_TEXTURE,
+            transmission: 0.0,
+            ior: 1.5,
+            transmission_tex: NO_TEXTURE,
+            _pad: 0,
         }
     }
 }
@@ -59,6 +72,9 @@ impl Default for MaterialGpu {
 struct Key {
     material: String,
     bits: [u32; 9],
+    /// The look's transmission and IOR overrides.
+    transmission: Option<u32>,
+    ior: Option<u32>,
 }
 
 fn key(look: &Look) -> Key {
@@ -75,7 +91,79 @@ fn key(look: &Look) -> Key {
             look.emissive[1].to_bits(),
             look.emissive[2].to_bits(),
         ],
+        transmission: look.transmission.map(f32::to_bits),
+        ior: look.ior.map(f32::to_bits),
     }
+}
+
+/// Whether a row is drawn by the transparent stage ([`MaterialPool::transparent`]).
+fn transparent(r: &MaterialGpu) -> bool {
+    r.flags & FLAG_NEURAL == 0 && (r.flags & FLAG_BLEND != 0 || r.transmission > 0.0)
+}
+
+/// Whether a row can cast a shadow ([`MaterialPool::casts`]): a transparent row casts as
+/// alpha-masked, its opacity `alpha * (1 - transmission)` tested against its cutoff, and that
+/// opacity is at most the alpha factor times `1 - transmission` (a texture's alpha is at most 1).
+fn casts(r: &MaterialGpu) -> bool {
+    !transparent(r) || r.base_color[3] * (1.0 - r.transmission) >= r.alpha_cutoff
+}
+
+/// An asset material's row, its textures not placed yet.
+fn asset_row(m: &MaterialData) -> MaterialGpu {
+    let mut row = MaterialGpu {
+        base_color: m.base_color,
+        emissive: m.emissive,
+        metallic: m.metallic,
+        roughness: m.roughness,
+        alpha_cutoff: m.alpha_cutoff,
+        flags: match m.alpha_mode {
+            AlphaMode::Mask => 1,
+            AlphaMode::Blend => FLAG_BLEND,
+            AlphaMode::Opaque => 0,
+        } | if m.double_sided { 2 } else { 0 },
+        transmission: m.transmission.clamp(0.0, 1.0),
+        ior: m.ior,
+        ..MaterialGpu::default()
+    };
+    if m.alpha_mode == AlphaMode::Opaque {
+        // glTF: an opaque material's alpha is ignored (a look's alpha may still blend it).
+        row.base_color[3] = 1.0;
+    }
+    row
+}
+
+/// The row for `look` over `row`: the inline material's default, or the asset material it names.
+fn look_row(mut row: MaterialGpu, look: &Look) -> MaterialGpu {
+    let base = row.base_color;
+    row.base_color = [
+        base[0] * look.color[0],
+        base[1] * look.color[1],
+        base[2] * look.color[2],
+        base[3] * look.color[3],
+    ];
+    // A look whose alpha is below 1 blends, unless its material cuts by alpha (the look's alpha
+    // then scales what is tested) or is a neural texture's.
+    if look.color[3] < 1.0 && row.flags & (1 | FLAG_NEURAL) == 0 {
+        row.flags |= FLAG_BLEND;
+    }
+    if let Some(t) = look.transmission {
+        row.transmission = t.clamp(0.0, 1.0);
+    }
+    if let Some(ior) = look.ior {
+        row.ior = ior;
+    }
+    if look.material.is_empty() {
+        row.metallic = look.metallic;
+        row.roughness = look.roughness;
+        row.emissive = look.emissive;
+    } else {
+        row.emissive = [
+            row.emissive[0] + look.emissive[0],
+            row.emissive[1] + look.emissive[1],
+            row.emissive[2] + look.emissive[2],
+        ];
+    }
+    row
 }
 
 /// A texture array that grows by doubling its layers.
@@ -214,7 +302,10 @@ impl MaterialPool {
         self.rows.is_empty()
     }
 
-    /// The pipeline variant a row needs: 1 alpha-masked, 2 double-sided, 4 neural texture.
+    /// The pipeline variant a row needs: 1 alpha-masked, 2 double-sided, 4 neural texture. A
+    /// transparent row is drawn by the transparent stage, so its variant only says how it casts
+    /// shadows: alpha-masked, its opacity `alpha * (1 - transmission)` tested against its cutoff
+    /// (forward.wgsl `fs_shadow_masked`).
     pub fn variant(&self, id: u32) -> u32 {
         self.rows.get(id as usize).map_or(0, |r| {
             (r.flags & 3)
@@ -223,7 +314,21 @@ impl MaterialPool {
                 } else {
                     0
                 }
+                | u32::from(transparent(r))
         })
+    }
+
+    /// Whether a row is drawn by the transparent stage (transparent.rs): it blends, or it
+    /// transmits; never a neural texture's (no transparent pipeline decodes one).
+    pub fn transparent(&self, id: u32) -> bool {
+        self.rows.get(id as usize).is_some_and(transparent)
+    }
+
+    /// Whether a row can cast a shadow: every row but a transparent one whose opacity can never
+    /// reach its cutoff (clear glass, a look's alpha below the cutoff), which the shadow passes
+    /// would draw only to discard every fragment.
+    pub fn casts(&self, id: u32) -> bool {
+        self.rows.get(id as usize).is_none_or(casts)
     }
 
     /// Whether an asset material is known.
@@ -237,29 +342,14 @@ impl MaterialPool {
         if let Some(&id) = self.by_key.get(&k) {
             return Some(id);
         }
-        let mut row = if look.material.is_empty() {
-            MaterialGpu::default()
-        } else {
-            *self.assets.get(&look.material)?
-        };
-        let base = row.base_color;
-        row.base_color = [
-            base[0] * look.color[0],
-            base[1] * look.color[1],
-            base[2] * look.color[2],
-            base[3] * look.color[3],
-        ];
-        if look.material.is_empty() {
-            row.metallic = look.metallic;
-            row.roughness = look.roughness;
-            row.emissive = look.emissive;
-        } else {
-            row.emissive = [
-                row.emissive[0] + look.emissive[0],
-                row.emissive[1] + look.emissive[1],
-                row.emissive[2] + look.emissive[2],
-            ];
-        }
+        let row = look_row(
+            if look.material.is_empty() {
+                MaterialGpu::default()
+            } else {
+                *self.assets.get(&look.material)?
+            },
+            look,
+        );
         let id = self.rows.len() as u32;
         self.rows.push(row);
         self.by_key.insert(k, id);
@@ -315,18 +405,7 @@ impl MaterialPool {
             l
         };
         for (i, m) in materials.iter().enumerate() {
-            let mut row = MaterialGpu {
-                base_color: m.base_color,
-                emissive: m.emissive,
-                metallic: m.metallic,
-                roughness: m.roughness,
-                alpha_cutoff: m.alpha_cutoff,
-                flags: match m.alpha_mode {
-                    AlphaMode::Mask => 1,
-                    _ => 0,
-                } | if m.double_sided { 2 } else { 0 },
-                ..MaterialGpu::default()
-            };
+            let mut row = asset_row(m);
             if let Some(t) = m.base_color_texture {
                 row.base_color_tex = layer(self, t, true);
             }
@@ -338,6 +417,9 @@ impl MaterialPool {
             }
             if let Some(t) = m.metallic_roughness_texture {
                 row.metal_rough_tex = layer(self, t, false);
+            }
+            if let Some(t) = m.transmission_texture.filter(|_| m.transmission > 0.0) {
+                row.transmission_tex = layer(self, t, false);
             }
             self.assets.insert(format!("{prefix}#{i}"), row);
             if !m.name.is_empty() {
@@ -391,5 +473,86 @@ impl MaterialPool {
         }
         queue.write_buffer(&self.buffer, 0, bytemuck::cast_slice(&self.rows));
         replaced
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn look(material: &str, alpha: f32) -> Look {
+        Look {
+            mesh: "sphere".into(),
+            material: material.into(),
+            color: [1.0, 1.0, 1.0, alpha],
+            metallic: 0.0,
+            roughness: 0.5,
+            transmission: None,
+            ior: None,
+            emissive: [0.0; 3],
+            cast_shadows: true,
+            visible: true,
+        }
+    }
+
+    fn asset(mode: AlphaMode, alpha: f32, transmission: f32) -> MaterialGpu {
+        asset_row(&MaterialData {
+            base_color: [1.0, 1.0, 1.0, alpha],
+            alpha_mode: mode,
+            transmission,
+            ..MaterialData::default()
+        })
+    }
+
+    #[test]
+    fn which_rows_are_transparent_and_which_cast() {
+        let inline = |alpha| look_row(MaterialGpu::default(), &look("", alpha));
+        let over = |row, alpha| look_row(row, &look("m.glb#0", alpha));
+        // The inline material: opaque at alpha 1, blended below.
+        assert!(!transparent(&inline(1.0)) && casts(&inline(1.0)));
+        assert!(transparent(&inline(0.5)) && casts(&inline(0.5)));
+        assert!(transparent(&inline(0.35)) && !casts(&inline(0.35)));
+        // glTF BLEND: transparent, casting where its alpha may reach the cutoff (0.5).
+        let blend = |alpha| over(asset(AlphaMode::Blend, alpha, 0.0), 1.0);
+        assert!(transparent(&blend(0.6)) && casts(&blend(0.6)));
+        assert!(transparent(&blend(0.45)) && !casts(&blend(0.45)));
+        // MASK keeps cutting by the alpha the look scales: never blended, always casting.
+        let mask = over(asset(AlphaMode::Mask, 1.0, 0.0), 0.5);
+        assert!(!transparent(&mask) && casts(&mask));
+        assert_eq!(mask.flags & (1 | FLAG_BLEND), 1);
+        // OPAQUE ignores its own alpha; a look's alpha still blends it.
+        let opaque = asset(AlphaMode::Opaque, 0.3, 0.0);
+        assert_eq!(opaque.base_color[3], 1.0);
+        assert!(!transparent(&over(opaque, 1.0)));
+        assert!(transparent(&over(opaque, 0.5)));
+        // Transmission: imported, or the look's override either way.
+        let glass = asset(AlphaMode::Opaque, 1.0, 1.0);
+        assert!(transparent(&over(glass, 1.0)) && !casts(&over(glass, 1.0)));
+        let cleared = look_row(
+            glass,
+            &Look {
+                transmission: Some(0.0),
+                ..look("m.glb#0", 1.0)
+            },
+        );
+        assert!(!transparent(&cleared) && casts(&cleared));
+        let tinted = look_row(
+            MaterialGpu::default(),
+            &Look {
+                transmission: Some(0.4),
+                ior: Some(1.33),
+                ..look("", 1.0)
+            },
+        );
+        assert!(transparent(&tinted) && casts(&tinted));
+        assert_eq!((tinted.transmission, tinted.ior), (0.4, 1.33));
+        // A neural texture's row never blends or transmits through the stage.
+        let neural = MaterialGpu {
+            flags: FLAG_NEURAL,
+            transmission: 1.0,
+            ..MaterialGpu::default()
+        };
+        let neural = over(neural, 0.5);
+        assert!(neural.flags & FLAG_BLEND == 0 && !transparent(&neural) && casts(&neural));
     }
 }

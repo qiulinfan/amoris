@@ -11,6 +11,9 @@ const FLAG_SHADOW: u32 = 4u;
 const VARIANT_SHIFT: u32 = 3u;
 const VARIANT_MASK: u32 = 7u;
 const VARIANTS: u32 = 8u;
+// Drawn by the transparent stage (transparent.rs, docs/spec/transparency.md), sorted on the CPU:
+// the culling pass keeps it out of the camera's list (the shadow cascades still draw it).
+const FLAG_TRANSPARENT: u32 = 64u;
 const NO_TEXTURE: u32 = 0xffffffffu;
 
 // Per frame. Reversed-Z, infinite far plane: depth 1 at the near plane, 0 at infinity.
@@ -85,13 +88,22 @@ struct Material {
     metallic: f32,
     roughness: f32,
     alpha_cutoff: f32,
-    flags: u32,              // 1: alpha mask, 2: double sided, 4: unlit, 8: neural texture
+    flags: u32,              // 1: alpha mask, 2: double sided, 4: unlit, 8: neural texture,
+                             // 16: alpha-blended (glTF BLEND, or a look's alpha below 1)
     neural: u32,             // the neural texture's descriptor word (neural.rs)
     // Layers in the texture arrays; NO_TEXTURE when absent.
     base_color_tex: u32,
     normal_tex: u32,
     metal_rough_tex: u32,
     emissive_tex: u32,
+    // KHR_materials_transmission: the share of the dielectric's light that passes through instead
+    // of being diffused (its texture's red channel multiplies it), and KHR_materials_ior. Only the
+    // transparent stage shades with them (forward.wgsl `fs_transparent`); the shadow passes treat
+    // alpha * (1 - transmission) as the opacity they test.
+    transmission: f32,
+    ior: f32,
+    transmission_tex: u32,
+    _pad: u32,
 };
 
 // A point or spot light (64 bytes).
