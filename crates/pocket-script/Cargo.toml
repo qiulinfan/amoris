@@ -64,3 +64,7 @@ crate-type = ["cdylib"]
 [[example]]
 name = "rules_bench"
 required-features = ["transpile"]
+
+[[example]]
+name = "rules_web"
+crate-type = ["cdylib"]

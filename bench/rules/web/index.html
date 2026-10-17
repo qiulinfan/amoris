@@ -1,0 +1,33 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>rules bench</title>
+<!--
+  The rule workload's WebAssembly module timed per tick in a Web Worker (docs/bench/script.md):
+  serve a directory holding this page, worker.js, bench.mjs, the module and the sets of
+  `rules_bench --emit` (tools/rules_bench.py does), with the headers of cross-origin isolation so
+  performance.now() is fine-grained, then
+  `python tools/webcheck.py "http://127.0.0.1:<port>/index.html?wasm=rules_web.wasm" --serve <dir>`.
+  Query: wasm, rounds, offset, warmup, ticks, variants. The title becomes DONE or FAIL with the
+  results as JSON.
+-->
+<pre id="out">running</pre>
+<script type="module">
+const q = new URLSearchParams(location.search);
+const p = {
+  wasm: q.get("wasm") || "rules_web.wasm",
+  rounds: Number(q.get("rounds") || 1),
+  offset: Number(q.get("offset") || 0),
+  warmup: Number(q.get("warmup") || 120),
+  ticks: Number(q.get("ticks") || 600),
+  variants: (q.get("variants") || "rules,twin,idle,scan").split(",").filter(Boolean),
+};
+const worker = new Worker("worker.js", { type: "module" });
+worker.onmessage = ({ data }) => {
+  const result = { target: "chrome", userAgent: navigator.userAgent, wasm: p.wasm, warmup: p.warmup, ticks: p.ticks, rounds: p.rounds, ...data };
+  document.getElementById("out").textContent = JSON.stringify(result, null, 1);
+  const ok = !data.error && data.verify && data.verify.same_as_native && data.crossOriginIsolated;
+  document.title = (ok ? "DONE " : "FAIL ") + JSON.stringify(result);
+};
+worker.onerror = (e) => { document.title = "FAIL " + JSON.stringify({ error: String(e.message) }); };
+worker.postMessage(p);
+</script>
