@@ -3,7 +3,7 @@
 //! frame on the CPU. Each slot keeps the last two ticks' poses so drawing interpolates between
 //! them at the display's rate.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, hash_map};
 
 use bytemuck::{Pod, Zeroable};
 use glam::{Quat, Vec3};
@@ -53,14 +53,95 @@ pub trait Resolve {
     fn released(&mut self, _entity: u64) {}
 }
 
+/// An entity as drawn. Kept small (72 bytes): moving an entity reads its entry and nothing else
+/// of the entity, and a scene of a million entities holds a million entries
+/// (docs/bench/dynamic-scenes.md).
 struct Entry {
     pose: Pose,
-    look: Option<Look>,
-    slots: Vec<u32>,
-    /// Each slot's placement in the entity (asset nodes).
-    locals: Vec<Option<(Vec3, Quat, Vec3)>>,
+    look: Option<Box<Look>>,
+    slots: Slots,
     /// Waiting for an asset.
     pending: bool,
+}
+
+const _: () = assert!(std::mem::size_of::<Entry>() <= 72);
+
+/// An entity's instance slots, one per part, with each part's placement in the entity (asset
+/// nodes).
+#[derive(Default)]
+enum Slots {
+    #[default]
+    None,
+    /// One part, placed at the entity's pose.
+    One(u32),
+    Placed(Box<Placed>),
+}
+
+struct Placed {
+    slots: Vec<u32>,
+    locals: Vec<Option<(Vec3, Quat, Vec3)>>,
+}
+
+impl Slots {
+    fn new(slots: Vec<u32>, parts: &[Part]) -> Slots {
+        match slots.len() {
+            0 => Slots::None,
+            1 if parts.len() == 1 && parts[0].local.is_none() => Slots::One(slots[0]),
+            _ => Slots::Placed(Box::new(Placed {
+                slots,
+                locals: parts.iter().map(|p| p.local).collect(),
+            })),
+        }
+    }
+
+    fn as_slice(&self) -> &[u32] {
+        match self {
+            Slots::None => &[],
+            Slots::One(s) => std::slice::from_ref(s),
+            Slots::Placed(p) => &p.slots,
+        }
+    }
+
+    /// The placement in the entity of its `k`-th part (`None`: at the entity's pose).
+    fn local(&self, k: usize) -> Option<(Vec3, Quat, Vec3)> {
+        match self {
+            Slots::Placed(p) => p.locals.get(k).copied().flatten(),
+            _ => None,
+        }
+    }
+}
+
+/// The slots to write to the GPU, each listed once.
+#[derive(Default)]
+struct Dirty {
+    slots: Vec<u32>,
+    /// A bit per slot: listed (a bit, so that the marks of a million slots stay in cache).
+    marked: Vec<u64>,
+}
+
+impl Dirty {
+    /// Makes room for the marks of `slots` slots.
+    fn grow(&mut self, slots: usize) {
+        self.marked.resize(slots.div_ceil(64), 0);
+    }
+
+    fn mark(&mut self, slot: u32) {
+        let (w, bit) = ((slot >> 6) as usize, 1u64 << (slot & 63));
+        let m = &mut self.marked[w];
+        if *m & bit == 0 {
+            *m |= bit;
+            self.slots.push(slot);
+        }
+    }
+
+    /// The listed slots, in the order they were marked; empties the list.
+    fn take(&mut self) -> Vec<u32> {
+        let d = std::mem::take(&mut self.slots);
+        for &s in &d {
+            self.marked[(s >> 6) as usize] &= !(1u64 << (s & 63));
+        }
+        d
+    }
 }
 
 #[derive(Default)]
@@ -68,11 +149,22 @@ pub struct Scene {
     pub slots: Vec<InstanceGpu>,
     slot_entity: Vec<u64>,
     free: Vec<u32>,
-    entities: HashMap<u64, Entry>,
-    dirty: Vec<u32>,
-    dirty_mark: Vec<bool>,
-    /// Slots whose previous pose differs from the current one (moved at the last tick).
+    /// By entity id, hashed with foldhash: with the standard library's SipHash, hashing limits how
+    /// many lookups the CPU overlaps, and `apply`'s lookups ahead gain nothing
+    /// (docs/bench/dynamic-scenes.md).
+    entities: HashMap<u64, Entry, foldhash::fast::RandomState>,
+    dirty: Dirty,
+    /// Slots whose previous pose differs from the current one (re-placed at the last tick), each
+    /// listed once.
     moving: Vec<u32>,
+    /// Per slot: the tick, counted by `tick_mark`, at which it was last re-placed. A slot is in
+    /// this tick's `moving` list exactly when it holds the current mark, so keeping the list costs
+    /// one step per re-placed slot (docs/bench/dynamic-scenes.md).
+    moved_at: Vec<u32>,
+    /// Counts the ticks applied, from 1 (a mark of 0: not re-placed since a reset).
+    tick_mark: u32,
+    /// The allocation of the list `moving` replaced, reused for the next tick's.
+    spare: Vec<u32>,
     pub mesh_counts: Vec<u32>,
     pub counts_changed: bool,
     pub lights: Vec<LightView>,
@@ -100,6 +192,10 @@ pub struct Scene {
     /// Live, resolved mesh slots whose look is visible, before GPU frustum/occlusion culling.
     visible_instances: usize,
 }
+
+/// Entity updates looked up ahead of applying them (`Scene::apply`): enough to overlap many cache
+/// misses, few enough that their entries stay in cache (64 to 1,024 measured alike).
+const UPDATE_CHUNK: usize = 256;
 
 fn compose(pose: &Pose, local: Option<(Vec3, Quat, Vec3)>) -> ([f32; 3], [f32; 4], [f32; 3]) {
     let p = Vec3::from(pose.position);
@@ -174,14 +270,6 @@ impl Scene {
             .filter(|&e| e != 0)
     }
 
-    fn mark(&mut self, slot: u32) {
-        let i = slot as usize;
-        if !self.dirty_mark[i] {
-            self.dirty_mark[i] = true;
-            self.dirty.push(slot);
-        }
-    }
-
     fn alloc(&mut self, entity: u64) -> u32 {
         if let Some(s) = self.free.pop() {
             self.slot_entity[s as usize] = entity;
@@ -189,8 +277,19 @@ impl Scene {
         }
         self.slots.push(InstanceGpu::default());
         self.slot_entity.push(entity);
-        self.dirty_mark.push(false);
+        self.dirty.grow(self.slots.len());
+        self.moved_at.push(0);
         (self.slots.len() - 1) as u32
+    }
+
+    /// Starts the next tick's mark (see `moved_at`).
+    fn next_tick_mark(&mut self) {
+        self.tick_mark = self.tick_mark.wrapping_add(1);
+        if self.tick_mark == 0 {
+            // After 2^32 ticks the marks start again: no slot may hold the new one.
+            self.moved_at.fill(0);
+            self.tick_mark = 1;
+        }
     }
 
     /// Counts per (mesh, variant), at `mesh * VARIANTS + variant`.
@@ -203,8 +302,8 @@ impl Scene {
         self.counts_changed = true;
     }
 
-    fn release(&mut self, entry_slots: Vec<u32>) {
-        for s in entry_slots {
+    fn release(&mut self, entry_slots: &[u32]) {
+        for &s in entry_slots {
             let slot = self.slots[s as usize];
             if slot.flags & FLAG_ALIVE != 0 {
                 if slot.flags & FLAG_VISIBLE != 0 {
@@ -215,7 +314,7 @@ impl Scene {
             }
             self.slots[s as usize] = InstanceGpu::default();
             self.slot_entity[s as usize] = 0;
-            self.mark(s);
+            self.dirty.mark(s);
             self.free.push(s);
         }
     }
@@ -244,8 +343,12 @@ impl Scene {
         if frame.dt_s > 0.0 {
             self.dt_s = frame.dt_s;
         }
+        if new_tick || self.tick_mark == 0 {
+            self.next_tick_mark();
+        }
         // Slots that moved at the previous tick and not at this one stop interpolating.
-        let mut still_moving: Vec<u32> = Vec::new();
+        let mut still_moving = std::mem::take(&mut self.spare);
+        still_moving.clear();
         let moved_before = if new_tick {
             std::mem::take(&mut self.moving)
         } else {
@@ -256,26 +359,47 @@ impl Scene {
                 if e.pending {
                     self.pending -= 1;
                 }
-                self.release(e.slots);
+                self.release(e.slots.as_slice());
                 self.anims.remove(&id);
                 resolve.released(id);
             }
         }
-        for u in frame.instances {
-            self.update(u, resolve, &mut still_moving);
+        // In chunks: a first pass looks a chunk's entities up, loads the CPU overlaps, so the second,
+        // which applies the updates, finds their entries in cache. With a million entities a lookup
+        // misses the cache, and applying one update at a time waited for each miss in turn
+        // (docs/bench/dynamic-scenes.md).
+        let mut updates = frame.instances.into_iter();
+        loop {
+            let ahead = updates.as_slice();
+            if ahead.is_empty() {
+                break;
+            }
+            for u in &ahead[..ahead.len().min(UPDATE_CHUNK)] {
+                if let Some(e) = self.entities.get(&u.id) {
+                    std::hint::black_box(e.pending);
+                }
+            }
+            for u in updates.by_ref().take(UPDATE_CHUNK) {
+                self.update(u, resolve, &mut still_moving);
+            }
         }
         if new_tick {
-            for s in moved_before {
-                if !still_moving.contains(&s) && (s as usize) < self.slots.len() {
-                    let i = &mut self.slots[s as usize];
-                    i.prev_pos = i.pos;
-                    i.prev_rot = i.rot;
-                    self.mark(s);
+            for &s in &moved_before {
+                let i = s as usize;
+                // A slot re-placed at this tick holds this tick's mark.
+                if i < self.slots.len() && self.moved_at[i] != self.tick_mark {
+                    let slot = &mut self.slots[i];
+                    slot.prev_pos = slot.pos;
+                    slot.prev_rot = slot.rot;
+                    self.dirty.mark(s);
                 }
             }
             self.moving = still_moving;
+            self.spare = moved_before;
         } else {
-            self.moving.extend(still_moving);
+            // Holds only slots not listed yet at this tick.
+            self.moving.extend_from_slice(&still_moving);
+            self.spare = still_moving;
         }
         if let Some(l) = frame.lights {
             self.lights = l;
@@ -306,67 +430,49 @@ impl Scene {
         }
     }
 
+    /// Applies one entity's update; adds the slots it re-places that are not listed at this tick
+    /// yet to `moving`.
     fn update(&mut self, u: InstanceUpdate, resolve: &mut dyn Resolve, moving: &mut Vec<u32>) {
-        if let Some(a) = u.anim.clone() {
+        if let Some(a) = u.anim {
             self.anims.insert(u.id, a);
         }
-        let exists = self.entities.contains_key(&u.id);
-        if !exists {
-            self.entities.insert(
-                u.id,
-                Entry {
+        let e = match self.entities.entry(u.id) {
+            hash_map::Entry::Vacant(v) => {
+                v.insert(Entry {
                     pose: u.pose.unwrap_or_default(),
-                    look: None,
-                    slots: Vec::new(),
-                    locals: Vec::new(),
+                    look: u.look.map(Box::new),
+                    slots: Slots::None,
                     pending: false,
-                },
-            );
-        }
-        let look_changed = u.look.is_some();
-        if let Some(look) = u.look {
-            let e = self
-                .entities
-                .get_mut(&u.id)
-                .unwrap_or_else(|| unreachable!());
-            e.look = Some(look);
-        }
+                });
+                self.rebuild(u.id, resolve);
+                return;
+            }
+            hash_map::Entry::Occupied(o) => o.into_mut(),
+        };
         if let Some(pose) = u.pose {
-            let e = self
-                .entities
-                .get_mut(&u.id)
-                .unwrap_or_else(|| unreachable!());
             e.pose = pose;
         }
-        if look_changed || !exists {
+        if let Some(look) = u.look {
+            e.look = Some(Box::new(look));
             self.rebuild(u.id, resolve);
-        } else if u.pose.is_some() {
-            self.repose(u.id, moving);
-        }
-    }
-
-    /// Re-places an entity's slots at its new pose, keeping the old one as the previous pose.
-    fn repose(&mut self, id: u64, moving: &mut Vec<u32>) {
-        let Some(e) = self.entities.get(&id) else {
-            return;
-        };
-        if e.pending {
-            return;
-        }
-        let pose = e.pose;
-        let slots = e.slots.clone();
-        let locals = e.locals.clone();
-        for (k, s) in slots.iter().enumerate() {
-            let local = locals.get(k).copied().flatten();
-            let (p, r, sc) = compose(&pose, local);
-            let i = &mut self.slots[*s as usize];
-            i.prev_pos = i.pos;
-            i.prev_rot = i.rot;
-            i.pos = p;
-            i.rot = r;
-            i.scale = sc;
-            moving.push(*s);
-            self.mark(*s);
+        } else if u.pose.is_some() && !e.pending {
+            // Re-places the entity's slots at its new pose, keeping the old one as the previous
+            // pose.
+            for (k, &s) in e.slots.as_slice().iter().enumerate() {
+                let (p, r, sc) = compose(&e.pose, e.slots.local(k));
+                let i = &mut self.slots[s as usize];
+                i.prev_pos = i.pos;
+                i.prev_rot = i.rot;
+                i.pos = p;
+                i.rot = r;
+                i.scale = sc;
+                let at = &mut self.moved_at[s as usize];
+                if *at != self.tick_mark {
+                    *at = self.tick_mark;
+                    moving.push(s);
+                }
+                self.dirty.mark(s);
+            }
         }
     }
 
@@ -379,8 +485,8 @@ impl Scene {
         let was_pending = e.pending;
         let pose = e.pose;
         let look = e.look.clone();
-        let had_parts = !old.is_empty();
-        self.release(old);
+        let had_parts = !old.as_slice().is_empty();
+        self.release(old.as_slice());
         if had_parts {
             resolve.released(id);
         }
@@ -408,7 +514,7 @@ impl Scene {
             flags |= FLAG_SHADOW;
         }
         let mut slots = Vec::with_capacity(parts.len());
-        for (k, part) in parts.iter().enumerate() {
+        for part in &parts {
             let s = self.alloc(id);
             let flags = flags | (part.variant << VARIANT_SHIFT);
             let (p, r, sc) = compose(&pose, part.local);
@@ -422,15 +528,13 @@ impl Scene {
                 flags,
                 prev_rot: r,
             };
-            let _ = k;
             self.visible_instances += usize::from(flags & FLAG_VISIBLE != 0);
             self.count(part.mesh * VARIANTS + part.variant, 1);
-            self.mark(s);
+            self.dirty.mark(s);
             slots.push(s);
         }
         if let Some(e) = self.entities.get_mut(&id) {
-            e.slots = slots;
-            e.locals = parts.iter().map(|p| p.local).collect();
+            e.slots = Slots::new(slots, &parts);
         }
     }
 
@@ -452,12 +556,7 @@ impl Scene {
 
     /// The slots to write to the GPU, as contiguous runs; clears the dirty set.
     pub fn take_dirty_runs(&mut self) -> Vec<std::ops::Range<u32>> {
-        let mut d = std::mem::take(&mut self.dirty);
-        for &s in &d {
-            if let Some(m) = self.dirty_mark.get_mut(s as usize) {
-                *m = false;
-            }
-        }
+        let mut d = self.dirty.take();
         if self.full_upload {
             self.full_upload = false;
             return if self.slots.is_empty() {
@@ -710,6 +809,357 @@ mod tests {
         assert!(
             !scene.has_visible_instances(),
             "a loaded model without parts is still empty"
+        );
+    }
+
+    /// Entities of one, two or three parts (`look.mesh` "1", "2", "3"), the parts placed apart
+    /// in the entity.
+    struct Parts;
+
+    fn locals(mesh: &str) -> Vec<Option<(Vec3, Quat, Vec3)>> {
+        let n: usize = mesh.parse().unwrap_or(1);
+        (0..n)
+            .map(|k| {
+                (k > 0).then(|| {
+                    (
+                        Vec3::new(k as f32, 0.5, -0.25 * k as f32),
+                        Quat::from_rotation_z(0.3 * k as f32),
+                        Vec3::splat(0.5 + k as f32),
+                    )
+                })
+            })
+            .collect()
+    }
+
+    impl Resolve for Parts {
+        fn parts(&mut self, _: u64, look: &Look) -> Option<Vec<Part>> {
+            Some(
+                locals(&look.mesh)
+                    .into_iter()
+                    .enumerate()
+                    .map(|(k, local)| Part {
+                        mesh: k as u32,
+                        material: 0,
+                        variant: 0,
+                        local,
+                    })
+                    .collect(),
+            )
+        }
+    }
+
+    /// A xorshift generator (deterministic, no dependency).
+    struct Rng(u64);
+
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
+        }
+
+        fn below(&mut self, n: u64) -> u64 {
+            self.next() % n.max(1)
+        }
+
+        fn pose(&mut self) -> Pose {
+            let mut f = || (self.below(2001) as f32 - 1000.0) / 100.0;
+            Pose {
+                position: [f(), f(), f()],
+                rotation: Quat::from_euler(glam::EulerRot::XYZ, f(), f(), f()).to_array(),
+                scale: [1.0 + f().abs() / 10.0; 3],
+            }
+        }
+    }
+
+    /// What an entity should be drawn with: its parts, and the poses its slots are drawn between.
+    struct Expected {
+        mesh: String,
+        prev: Pose,
+        cur: Pose,
+        /// Re-placed at the current tick.
+        moved: bool,
+    }
+
+    fn look(mesh: &str) -> Look {
+        Look {
+            mesh: mesh.into(),
+            ..instance(0, mesh, true)
+                .look
+                .unwrap_or_else(|| unreachable!())
+        }
+    }
+
+    /// Random frames (entities added, moved, given a new look, removed; ticks repeated; a reset)
+    /// against what they mean: after every frame each entity's slots are drawn from its previous
+    /// to its current pose, an entity re-placed at an earlier tick and not at this one is drawn
+    /// still, every slot drawn between two poses is listed as moving (once), and the dirty runs
+    /// carry every changed slot to a GPU copy.
+    #[test]
+    fn applied_frames_move_and_stop_slots_as_their_poses_say() {
+        let mut scene = Scene::new();
+        let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
+        let mut expected: HashMap<u64, Expected> = HashMap::new();
+        let mut gpu: Vec<InstanceGpu> = Vec::new();
+        let mut next_id = 1u64;
+        let mut tick = 1u64;
+        for frame_no in 0..400 {
+            let reset = frame_no == 200;
+            let new_tick = reset || frame_no == 0 || rng.below(4) != 0;
+            if new_tick {
+                tick += 1;
+            }
+            if reset {
+                expected.clear();
+            }
+            if new_tick {
+                for e in expected.values_mut() {
+                    e.moved = false;
+                }
+            }
+            let mut instances = Vec::new();
+            let mut removed = Vec::new();
+            let ids: Vec<u64> = {
+                let mut v: Vec<u64> = expected.keys().copied().collect();
+                v.sort_unstable();
+                v
+            };
+            for id in ids {
+                let e = expected.get_mut(&id).unwrap_or_else(|| unreachable!());
+                match rng.below(10) {
+                    0 => {
+                        removed.push(id);
+                        expected.remove(&id);
+                    }
+                    1 => {
+                        // A new look (and maybe a new pose): rebuilt, drawn still.
+                        let mesh = (1 + rng.below(3)).to_string();
+                        let pose = (rng.below(2) == 0).then(|| rng.pose());
+                        if let Some(p) = pose {
+                            e.cur = p;
+                        }
+                        e.prev = e.cur;
+                        e.moved = false;
+                        e.mesh.clone_from(&mesh);
+                        instances.push(InstanceUpdate {
+                            id,
+                            pose,
+                            look: Some(look(&mesh)),
+                            anim: None,
+                        });
+                    }
+                    2..=6 => {
+                        let pose = rng.pose();
+                        e.prev = e.cur;
+                        e.cur = pose;
+                        e.moved = true;
+                        instances.push(InstanceUpdate {
+                            id,
+                            pose: Some(pose),
+                            look: None,
+                            anim: None,
+                        });
+                    }
+                    _ => {}
+                }
+            }
+            for _ in 0..rng.below(4) {
+                let mesh = (1 + rng.below(3)).to_string();
+                let pose = rng.pose();
+                instances.push(InstanceUpdate {
+                    id: next_id,
+                    pose: Some(pose),
+                    look: Some(look(&mesh)),
+                    anim: None,
+                });
+                expected.insert(
+                    next_id,
+                    Expected {
+                        mesh,
+                        prev: pose,
+                        cur: pose,
+                        moved: false,
+                    },
+                );
+                next_id += 1;
+            }
+            // At a new tick the entities not re-placed at it are drawn still.
+            if new_tick {
+                for e in expected.values_mut() {
+                    if !e.moved {
+                        e.prev = e.cur;
+                    }
+                }
+            }
+            scene.apply(
+                RenderFrame {
+                    tick,
+                    reset,
+                    instances,
+                    removed,
+                    ..RenderFrame::default()
+                },
+                &mut Parts,
+            );
+
+            // The GPU copy.
+            gpu.resize(scene.slots.len(), InstanceGpu::default());
+            for run in scene.take_dirty_runs() {
+                let r = run.start as usize..run.end as usize;
+                gpu[r.clone()].copy_from_slice(&scene.slots[r]);
+            }
+            assert_eq!(
+                bytemuck::cast_slice::<_, u8>(&gpu),
+                bytemuck::cast_slice::<_, u8>(&scene.slots),
+                "frame {frame_no}: the dirty runs carry every change"
+            );
+
+            let moving = scene.moving_slots();
+            let mut listed = moving.to_vec();
+            listed.sort_unstable();
+            listed.dedup();
+            assert_eq!(listed.len(), moving.len(), "frame {frame_no}: listed once");
+            assert_eq!(
+                listed,
+                marked_this_tick(&scene),
+                "frame {frame_no}: the moving list is the slots holding this tick's mark"
+            );
+            for (id, e) in &expected {
+                let slots = scene.slots_of(*id);
+                let locals = locals(&e.mesh);
+                assert_eq!(slots.len(), locals.len(), "frame {frame_no}: entity {id}");
+                for (&s, &local) in slots.iter().zip(&locals) {
+                    let (p, r, sc) = compose(&e.cur, local);
+                    let (pp, pr, _) = compose(&e.prev, local);
+                    let g = &scene.slots[s as usize];
+                    assert_eq!(
+                        (g.pos, g.rot, g.scale, g.prev_pos, g.prev_rot),
+                        (p, r, sc, pp, pr),
+                        "frame {frame_no}: entity {id}, slot {s}"
+                    );
+                    if e.prev != e.cur {
+                        assert!(
+                            listed.binary_search(&s).is_ok(),
+                            "frame {frame_no}: entity {id}'s slot {s} drawn between two poses"
+                        );
+                    }
+                }
+            }
+            if expected.values().any(|e| e.prev != e.cur) {
+                assert!(scene.interpolating(), "frame {frame_no}");
+            }
+        }
+        assert!(next_id > 100, "the frames made many entities");
+    }
+
+    /// One tick's frame turning the first `n` entities a little further (pose only).
+    fn turned(n: u64, tick: u64) -> RenderFrame {
+        RenderFrame {
+            tick,
+            instances: (1..=n)
+                .map(|id| InstanceUpdate {
+                    id,
+                    pose: Some(Pose {
+                        position: [id as f32, 0.0, 0.0],
+                        rotation: Quat::from_rotation_y(tick as f32 * 0.01).to_array(),
+                        scale: [1.0; 3],
+                    }),
+                    look: None,
+                    anim: None,
+                })
+                .collect(),
+            ..RenderFrame::default()
+        }
+    }
+
+    /// The slots holding the current tick's mark (`Scene::moved_at`), in order.
+    fn marked_this_tick(scene: &Scene) -> Vec<u32> {
+        (0..scene.moved_at.len() as u32)
+            .filter(|&s| scene.moved_at[s as usize] == scene.tick_mark)
+            .collect()
+    }
+
+    /// A scene of `n` one-part entities, made at tick 1.
+    fn scene_of(n: u64) -> Scene {
+        let mut scene = Scene::new();
+        let made = RenderFrame {
+            tick: 1,
+            instances: (1..=n)
+                .map(|id| InstanceUpdate {
+                    id,
+                    pose: Some(Pose {
+                        position: [id as f32, 0.0, 0.0],
+                        ..Pose::default()
+                    }),
+                    look: Some(look("1")),
+                    anim: None,
+                })
+                .collect(),
+            ..RenderFrame::default()
+        };
+        scene.apply(made, &mut Parts);
+        scene
+    }
+
+    /// A tick moving every one of 200,000 instances lists each once and finds the slots to stop
+    /// by their marks: the moving list is exactly the slots holding the tick's mark, so stopping
+    /// a slot is one load, not a search of the list (what made a tick quadratic before
+    /// docs/bench/dynamic-scenes.md). A tick moving nothing stops them all.
+    #[test]
+    fn a_tick_moving_every_instance_lists_each_once_by_its_mark() {
+        let n = 200_000u64;
+        let mut scene = scene_of(n);
+        for tick in 2..6 {
+            scene.apply(turned(n, tick), &mut Parts);
+            assert_eq!(scene.moving_slots().len(), n as usize, "tick {tick}");
+            let mut listed = scene.moving_slots().to_vec();
+            listed.sort_unstable();
+            assert_eq!(listed, marked_this_tick(&scene), "tick {tick}");
+        }
+        scene.apply(turned(0, 6), &mut Parts);
+        assert!(!scene.interpolating());
+        assert!(marked_this_tick(&scene).is_empty());
+        assert_eq!(scene.take_dirty_runs(), vec![0..n as u32]);
+        assert!(
+            scene
+                .slots
+                .iter()
+                .all(|s| s.prev_pos == s.pos && s.prev_rot == s.rot),
+            "every slot drawn still"
+        );
+    }
+
+    /// The cost the test above pins by structure, timed (ignored: a timing is recorded, never a
+    /// pass condition; run with `cargo test -p pocket-render --release --lib scene:: --
+    /// --ignored --nocapture`). A tick moving or stopping every one of 200,000 instances costs
+    /// less than twice making them; with this tick's list searched for each slot moved at the
+    /// last one, as before docs/bench/dynamic-scenes.md, a tick took 121 s here in a debug build
+    /// against 0.68 s for making them.
+    #[test]
+    #[ignore]
+    fn a_tick_moving_every_instance_costs_about_what_making_them_does() {
+        let n = 200_000u64;
+        let t = std::time::Instant::now();
+        let mut scene = scene_of(n);
+        let make = t.elapsed();
+        // The first moving tick has nothing to stop; the next ones check every slot moved before.
+        scene.apply(turned(n, 2), &mut Parts);
+        let mut best = std::time::Duration::MAX;
+        for tick in 3..6 {
+            let f = turned(n, tick);
+            let t = std::time::Instant::now();
+            scene.apply(f, &mut Parts);
+            best = best.min(t.elapsed());
+        }
+        let t = std::time::Instant::now();
+        scene.apply(turned(0, 6), &mut Parts);
+        let stop = t.elapsed();
+        eprintln!("made {n} in {make:?}; a moving tick {best:?}, a stopping tick {stop:?}");
+        assert!(
+            best < make * 2 && stop < make * 2,
+            "a tick moving {n} instances took {best:?}, one stopping them {stop:?}: making them \
+             took {make:?}"
         );
     }
 }

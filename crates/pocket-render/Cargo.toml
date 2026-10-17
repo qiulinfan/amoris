@@ -14,6 +14,10 @@ glam.workspace = true
 bytemuck.workspace = true
 log = "0.4"
 fontdue = "0.9"
+# The scene's entity map (scene.rs): looking entities up ahead of applying their moves overlaps the
+# lookups' cache misses only with a hasher cheaper than the standard library's SipHash
+# (docs/bench/dynamic-scenes.md). hashbrown's own default; no dependencies (architecture.md 6).
+foldhash.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 winit = { workspace = true, optional = true }
