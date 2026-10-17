@@ -105,9 +105,26 @@ export interface LogEntry {
   tick?: number;
 }
 
+/** Who made an edit (pocket-link's `source_json`): the editor, a developer client (the HTTP API's,
+ * or an MCP session's), a player seat, or the host itself. */
+export type HistorySource = "editor" | "host" | { developer: number } | { player: number };
+
+export interface HistoryEntry {
+  label: string;
+  source?: HistorySource;
+  /** The `group` of the edits merged into the entry (a drag); absent once undone or redone. */
+  group?: string;
+  /** The server's name for a developer source: `mcp-<n>` (as `agent` events name the session) or
+   * `api` (the HTTP API's client, which the CLI uses). */
+  session?: string;
+}
+
+/** Each stack most recent last (the next to undo or redo last); `entries` (hosts since
+ * 2026-10-15) the same entries in the same order with their sources. */
 export interface HistoryState {
   undo: string[];
   redo: string[];
+  entries?: { undo: HistoryEntry[]; redo: HistoryEntry[] };
 }
 
 // ---- The debugger ---------------------------------------------------------------------------------
@@ -455,7 +472,7 @@ export interface Methods {
   "world.query": [{ with: string[]; fields?: string[]; limit?: number }, Record<string, unknown>[]];
   "world.schema": [{ component?: string }, ComponentInfo[]];
   "world.edit": [WorldEditParams, WorldEditResult];
-  "history.undo": [Record<string, never>, { label: string | null }];
+  "history.undo": [{ group?: string }, { label: string | null }];
   "history.redo": [Record<string, never>, { label: string | null }];
   "history.list": [Record<string, never>, HistoryState];
   "time.control": [{ pause?: boolean; speed?: number; pacing?: string }, Status];

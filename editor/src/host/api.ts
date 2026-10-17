@@ -45,7 +45,9 @@ export const api = {
     },
   },
   history: {
-    undo: () => call("history.undo", {}),
+    /** With `group`, the host undoes only when the next entry is the whole of that group, and
+     * otherwise refuses with `history.group` (a drag's Escape, server.md 3.1). */
+    undo: (group?: string) => call("history.undo", group ? { group } : {}),
     redo: () => call("history.redo", {}),
     list: () => call("history.list", {}),
   },

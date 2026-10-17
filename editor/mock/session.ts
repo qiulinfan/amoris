@@ -8,7 +8,7 @@ import { sailingWorld } from "./scene";
 import { allComponents, componentInfo } from "./schemas";
 import { Scripts, diagnose } from "./scripts";
 import { MockError, isObject, rng, suggest, unknownField } from "./util";
-import { emptyChanges, merge, unknownComponent, type Changes, type World } from "./world";
+import { EDITOR, emptyChanges, merge, unknownComponent, type Caller, type Changes, type World } from "./world";
 import { ASSETS } from "./assets";
 
 export type Broadcast = (topic: string, data: unknown) => void;
@@ -275,7 +275,10 @@ export class Session {
 
   // ---- Methods -------------------------------------------------------------------------------
 
-  call(method: string, params: unknown): unknown {
+  /** Who the method being answered came from (`world.edit` records it in the history). */
+  private caller: Caller = EDITOR;
+
+  call(method: string, params: unknown, by: Caller = EDITOR): unknown {
     const cmd = CATALOG.find((c) => c.name === method);
     if (!cmd) {
       const did = suggest(method, CATALOG.map((c) => c.name));
@@ -293,7 +296,12 @@ export class Session {
     }
     const handler = this.methods[method];
     if (!handler) throw new MockError("request.unsupported", `The mock does not implement ${method}.`, { method });
-    return handler(p);
+    this.caller = by;
+    try {
+      return handler(p);
+    } finally {
+      this.caller = EDITOR;
+    }
   }
 
   private edited(changes: Changes) {
@@ -389,13 +397,13 @@ export class Session {
     },
     "world.edit": (p) => {
       const changes = emptyChanges();
-      const r = this.world.edit(p.ops, p.label as string | undefined, p.group as string | undefined, changes);
+      const r = this.world.edit(p.ops, p.label as string | undefined, p.group as string | undefined, changes, this.caller);
       this.edited(changes);
       return { tick: this.tick, applied: r.applied, spawned: r.spawned };
     },
-    "history.undo": () => {
+    "history.undo": (p) => {
       const changes = emptyChanges();
-      const label = this.world.undo(changes);
+      const label = this.world.undo(changes, p.group as string | undefined);
       this.edited(changes);
       return { label };
     },

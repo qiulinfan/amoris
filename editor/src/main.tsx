@@ -18,8 +18,9 @@ installKeyboard();
 installDesktop();
 startSync();
 
-// The editor is driven by people and by tests: expose the stores for inspection in DevTools.
-if (import.meta.env.DEV) {
+// The editor is driven by people and by tests: expose the stores for inspection in DevTools (in
+// dev builds, and in a production build made with VITE_POCKET_EXPOSE=1 for measurements).
+if (import.meta.env.DEV || import.meta.env.VITE_POCKET_EXPOSE === "1") {
   void import("./devtools").then((m) => m.expose());
 }
 

@@ -2,6 +2,7 @@
 // changed locally except the previews a drag shows before the host answers.
 
 import { api } from "../host/api";
+import { HostError } from "../host/client";
 import { invalidate, refreshEntities } from "../host/sync";
 import { defaultComponent } from "../host/schema";
 import type { EditOp, EntityId, Vec3, WorldEditResult } from "../host/protocol";
@@ -214,16 +215,23 @@ let groupSeq = 0;
 /**
  * A drag that edits continuously (gizmo, scrubbed number): the change shows at once as a preview,
  * streams to the host as grouped `world.edit`s when the host accepts `group` (one undo entry in the
- * end), or goes once on release when it does not.
+ * end), or goes once on release when it does not. Escape takes it back (`cancel`).
+ *
+ * Streaming keeps at most one edit in flight: the changes of one input event (every target of a
+ * multi-selection) go together as soon as no edit of the drag waits for its answer, and what comes
+ * while one does goes, merged, the moment it is answered. So a drag sends about once per pointer
+ * frame on a host that answers within a frame, and no faster than the host answers.
  */
 export class LiveEdit {
   private readonly group = `drag-${Date.now().toString(36)}-${++groupSeq}`;
   private readonly latest = new Map<string, { id: EntityId; component: string; patch: Record<string, unknown> }>();
   private readonly unsent = new Set<string>();
   private readonly bases = new Map<string, Record<string, unknown>>();
-  private timer: ReturnType<typeof setTimeout> | null = null;
-  private inflight: Promise<unknown> = Promise.resolve();
-  private lastSend = 0;
+  /** The edit in flight, settled (never rejects); a follow-up starts from its settling. */
+  private inflight: Promise<void> = Promise.resolve();
+  private sending = false;
+  private queued = false;
+  private closed = false;
   private sent = false;
   private failed = false;
 
@@ -244,16 +252,14 @@ export class LiveEdit {
     this.latest.set(key, { id, component, patch: merged });
     this.unsent.add(key);
     useWorld.getState().setPreview(id, component, { ...this.bases.get(key), ...merged });
-    if (this.streams && !this.failed) this.schedule();
-  }
-
-  private schedule() {
-    if (this.timer) return;
-    const wait = Math.max(0, 60 - (performance.now() - this.lastSend));
-    this.timer = setTimeout(() => {
-      this.timer = null;
-      void this.send();
-    }, wait);
+    if (this.streams && !this.failed && !this.queued) {
+      // After the event's other updates, so they go in the same edit.
+      this.queued = true;
+      queueMicrotask(() => {
+        this.queued = false;
+        this.pump();
+      });
+    }
   }
 
   private ops(keys: Iterable<string>): EditOp[] {
@@ -263,25 +269,36 @@ export class LiveEdit {
     });
   }
 
-  private async send() {
-    if (!this.unsent.size) return;
+  /** Sends what is unsent unless an edit is in flight, the drag ended or an edit failed. */
+  private pump() {
+    if (this.sending || this.closed || this.failed || !this.unsent.size) return;
     const ops = this.ops(this.unsent);
     this.unsent.clear();
-    this.lastSend = performance.now();
     this.sent = true;
-    this.inflight = this.inflight
-      .then(() => api.world.edit(ops, this.label, this.group))
-      .catch((e) => {
-        if (!this.failed) reportError(e, this.label);
-        this.failed = true;
+    this.sending = true;
+    this.inflight = api.world
+      .edit(ops, this.label, this.group)
+      .then(
+        () => undefined,
+        (e) => {
+          if (!this.failed) reportError(e, this.label);
+          this.failed = true;
+        },
+      )
+      .finally(() => {
+        this.sending = false;
+        this.pump();
       });
+  }
+
+  /** Ends the stream: nothing more is sent, and the edit in flight is answered. */
+  private async close() {
+    this.closed = true;
     await this.inflight;
   }
 
   async commit() {
-    if (this.timer) clearTimeout(this.timer);
-    this.timer = null;
-    await this.inflight;
+    await this.close();
     const ids = [...new Set([...this.latest.values()].map((v) => v.id))];
     if (this.latest.size && !this.failed) {
       try {
@@ -295,12 +312,40 @@ export class LiveEdit {
   }
 
   async cancel() {
-    if (this.timer) clearTimeout(this.timer);
-    this.timer = null;
-    await this.inflight;
+    await this.close();
     const ids = [...new Set([...this.latest.values()].map((v) => v.id))];
-    if (this.sent && !this.failed) await attempt(api.history.undo(), "Cancel drag");
+    if (this.sent && !this.failed) await this.takeBack();
     await refreshEntities(ids);
     useWorld.getState().clearPreview(ids);
+  }
+
+  /**
+   * Takes the streamed edits back: an undo of the drag's group, which the host performs only when
+   * the next entry to undo is the whole drag (server.md 3.1), so an edit another client makes
+   * meanwhile is never the one undone. When another client's edit came after the drag or split it,
+   * the host refuses and changes nothing; then an edit writes the dragged fields back to their
+   * values from before the drag instead, and the other client's edit stays. A refusal that finds
+   * no entry of the drag (a restore cleared the history) leaves the world alone.
+   */
+  private async takeBack() {
+    try {
+      await api.history.undo(this.group);
+    } catch (e) {
+      if (!(e instanceof HostError && e.code === "history.group")) return reportError(e, "Cancel drag");
+      if (!e.detail.entries) return;
+      const ops = this.restoring();
+      if (ops.length) await attempt(api.world.edit(ops, `Cancel ${this.label}`), "Cancel drag");
+    }
+  }
+
+  /** `set`s of the dragged fields with their values from before the drag. */
+  private restoring(): EditOp[] {
+    const ops: EditOp[] = [];
+    for (const [key, v] of this.latest) {
+      const base = this.bases.get(key) ?? {};
+      const value = Object.fromEntries(Object.keys(v.patch).filter((f) => f in base).map((f) => [f, base[f]]));
+      if (Object.keys(value).length) ops.push({ set: { entity: v.id, component: v.component, value } });
+    }
+    return ops;
   }
 }

@@ -37,7 +37,8 @@ export class MockAgent {
   private call(session: string, method: string, params: Record<string, unknown>, describe: (r: unknown) => string, note: string) {
     this.emit(session, "call", note, method);
     try {
-      const r = this.session.call(method, params);
+      // Each round is one MCP session: a developer client of its own, named as its events are.
+      const r = this.session.call(method, params, { source: { developer: this.round }, session });
       this.emit(session, "result", describe(r), method);
       return r;
     } catch (e) {
@@ -76,7 +77,7 @@ export class MockAgent {
         this.call(
           session,
           "world.edit",
-          { ops: [{ set: { entity: crate.id, component: "Transform", value: { position: [26, 0, -2.5] } } }], label: "agent: move Crate4 within reach" },
+          { ops: [{ set: { entity: crate.id, component: "Transform", value: { position: [26, 0, -2.5] } } }], label: "move Crate4 within reach" },
           (r) => `applied ${(r as { applied: number }).applied} op at tick ${(r as { tick: number }).tick}; undoable from History`,
           "move Crate4 to (26, 0, -2.5)",
         );

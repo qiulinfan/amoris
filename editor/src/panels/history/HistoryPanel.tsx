@@ -1,12 +1,14 @@
-// The undo history the host keeps: every edit, the editor's and agents' alike (agents' labels start
-// with "agent:"). Click an entry to undo or redo up to it.
+// The undo history the host keeps: every edit, the editor's and agents' alike; an entry another
+// client made (an MCP session, the CLI) carries its name as a badge. Click an entry to undo or redo
+// up to it.
 
 import { Bot, CircleDot, Pencil, Redo2, Undo2 } from "lucide-react";
 import { useState } from "react";
 import { api } from "../../host/api";
 import { reportError } from "../../actions/report";
 import { redo, undo } from "../../actions/world";
-import { isAgentLabel, useHistory } from "../../state/history";
+import type { HistoryEntry } from "../../host/protocol";
+import { agentOf, useHistory } from "../../state/history";
 import { IconButton } from "../../ui/Button";
 import { cx } from "../../ui/cx";
 import { PanelShell } from "../../ui/Panel";
@@ -30,15 +32,15 @@ export function HistoryPanel() {
     }
   };
 
-  const Entry = ({ label, state, onClick }: { label: string; state: "done" | "current" | "undone"; onClick(): void }) => {
-    const agent = isAgentLabel(label);
+  const Entry = ({ entry, state, onClick }: { entry: HistoryEntry; state: "done" | "current" | "undone"; onClick(): void }) => {
+    const agent = agentOf(entry);
     const Icon = agent ? Bot : Pencil;
     return (
-      <div className={cx("hist-row", `is-${state}`, agent && "is-agent")} onClick={onClick}>
+      <div className={cx("hist-row", `is-${state}`, agent && "is-agent")} onClick={onClick} title={agent ? `Made by ${agent}` : undefined}>
         <span className="hist-rail" />
         <Icon size={13} className="hist-icon" />
-        <span className="hist-label">{agent ? label.replace(/^agent:\s*/i, "") : label}</span>
-        {agent && <span className="hist-badge">agent</span>}
+        <span className="hist-label">{agent ? entry.label.replace(/^agent:\s*/i, "") : entry.label}</span>
+        {agent && <span className="hist-badge">{agent}</span>}
       </div>
     );
   };
@@ -61,11 +63,11 @@ export function HistoryPanel() {
         <CircleDot size={13} className="hist-icon" />
         <span className="hist-label">Opened scene</span>
       </div>
-      {undos.map((label, i) => (
-        <Entry key={`u${i}`} label={label} state={i === undos.length - 1 ? "current" : "done"} onClick={() => void travel(undos.length - 1 - i, 0)} />
+      {undos.map((entry, i) => (
+        <Entry key={`u${i}`} entry={entry} state={i === undos.length - 1 ? "current" : "done"} onClick={() => void travel(undos.length - 1 - i, 0)} />
       ))}
-      {redos.map((label, j) => (
-        <Entry key={`r${j}`} label={label} state="undone" onClick={() => void travel(0, j + 1)} />
+      {redos.map((entry, j) => (
+        <Entry key={`r${j}`} entry={entry} state="undone" onClick={() => void travel(0, j + 1)} />
       ))}
     </PanelShell>
   );

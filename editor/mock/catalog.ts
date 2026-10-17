@@ -61,9 +61,14 @@ export const CATALOG: CatalogCommand[] = [
       ["ops"],
     ),
   },
-  { name: "history.undo", kind: "write", doc: "Undoes the last edit.", params: obj() },
+  {
+    name: "history.undo",
+    kind: "write",
+    doc: "Undoes the last edit; with `group`, only when that edit is the whole of the group.",
+    params: obj({ group: str("Undo only when the next entry is the whole of this group (a drag), else history.group.") }),
+  },
   { name: "history.redo", kind: "write", doc: "Redoes the last undone edit.", params: obj() },
-  { name: "history.list", kind: "read", doc: "The undo and redo labels.", params: obj() },
+  { name: "history.list", kind: "read", doc: "The undo labels and the redo labels, the next to undo or redo last, with each entry's source and group under `entries`.", params: obj() },
   {
     name: "time.control",
     kind: "control",

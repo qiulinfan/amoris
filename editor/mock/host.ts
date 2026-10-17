@@ -16,6 +16,7 @@ import { CATALOG } from "./catalog";
 import { MockAgent } from "./agent";
 import { Session } from "./session";
 import { MockError } from "./util";
+import type { Caller } from "./world";
 
 const args = process.argv.slice(2);
 const flag = (name: string) => args.includes(name);
@@ -51,9 +52,13 @@ function broadcast(topic: string, data: unknown) {
 const session = new Session(broadcast);
 const agent = new MockAgent(session, broadcast);
 
-function answer(id: unknown, method: string, params: unknown) {
+/** The HTTP API's client, as the host names it (`pocket serve`'s CLI client); the socket is the
+ * editor's. */
+const API: Caller = { source: { developer: 0 }, session: "api" };
+
+function answer(id: unknown, method: string, params: unknown, by?: Caller) {
   try {
-    return { id, result: session.call(method, params) };
+    return { id, result: session.call(method, params, by) };
   } catch (e) {
     if (e instanceof MockError) return { id, error: e.toWire() };
     console.error(e);
@@ -102,7 +107,7 @@ const server = Bun.serve<Client>({
       } catch {
         return json({ error: { code: "request.invalid_json", message: "The body is not JSON.", detail: {} } }, 400);
       }
-      return json(answer(body.id ?? null, String(body.method ?? ""), body.params));
+      return json(answer(body.id ?? null, String(body.method ?? ""), body.params, API));
     }
     if (path === "/mcp") return json({ code: "host.unsupported", message: "The mock host speaks no MCP; its agent is simulated." }, 501);
     if (path.startsWith("/assets/") || path.startsWith("/wasm/")) return new Response("Not found", { status: 404 });

@@ -1,7 +1,9 @@
 // The mock's world: entities with JSON components, `world.edit` checked whole and applied all or
-// nothing, and an undo history of labelled transactions (host-protocol.md section 4). Consecutive
-// edits that carry the same `group` merge into one history entry, which is how a gizmo drag or a
-// scrubbed field becomes a single undo step while the host still sees every intermediate value.
+// nothing, and an undo history of labelled transactions (host-protocol.md section 4), each with who
+// made it. Consecutive edits that carry the same `group` from the same caller merge into one history
+// entry, which is how a gizmo drag or a scrubbed field becomes a single undo step while the host
+// still sees every intermediate value; as the host's history.rs, an entry once undone or redone, an
+// edit that spawns or destroys and a merge past 64 components start a new entry instead.
 
 import { MockError, clone, hashJson, isObject, suggest, unknownField } from "./util";
 import { COMPONENTS, componentInfo } from "./schemas";
@@ -27,11 +29,26 @@ export type EditOp =
   | { remove: { entity: EntityId | string; component: string } }
   | { destroy: { entity: EntityId | string } };
 
+/** Who calls (the real host's `source_json`, and the server's name for a developer client). */
+export interface Caller {
+  source: "editor" | { developer: number };
+  session?: string;
+}
+
+export const EDITOR: Caller = { source: "editor" };
+
 interface HistoryEntry {
   label: string;
   group?: string;
+  by: Caller;
+  /** The `id|component` pairs it restores (the host's merged inverse holds one edit per pair). */
+  pairs: Set<string>;
   before: Map<EntityId, Entity | null>;
   after: Map<EntityId, Entity | null>;
+}
+
+function sameCaller(a: Caller, b: Caller): boolean {
+  return JSON.stringify(a.source) === JSON.stringify(b.source);
 }
 
 export interface Changes {
@@ -182,10 +199,13 @@ export class World {
     return { id: e.id, name: e.name, components: out };
   }
 
-  history(): { undo: string[]; redo: string[] } {
+  /** As the host: each stack most recent last, `entries` the same with their sources. */
+  history() {
+    const entry = (h: HistoryEntry) => ({ label: h.label, source: h.by.source, ...(h.group ? { group: h.group } : {}), ...(h.by.session ? { session: h.by.session } : {}) });
     return {
       undo: this.undoStack.map((h) => h.label),
-      redo: [...this.redoStack].reverse().map((h) => h.label),
+      redo: this.redoStack.map((h) => h.label),
+      entries: { undo: this.undoStack.map(entry), redo: this.redoStack.map(entry) },
     };
   }
 
@@ -195,7 +215,7 @@ export class World {
   }
 
   /** Checks every op against a scratch copy, then commits; returns spawned ids and the changes. */
-  edit(ops: unknown, label: string | undefined, group: string | undefined, changes: Changes): { applied: number; spawned: EntityId[]; label: string } {
+  edit(ops: unknown, label: string | undefined, group: string | undefined, changes: Changes, by: Caller = EDITOR): { applied: number; spawned: EntityId[]; label: string } {
     if (!Array.isArray(ops) || ops.length === 0) {
       throw new MockError("request.invalid_value", "world.edit takes 1 to 64 ops.", { field: "ops" });
     }
@@ -282,12 +302,16 @@ export class World {
     this.nextId = scratch.nextId;
     const finalLabel = label ?? describe(ops as EditOp[], touched, after);
     const top = this.undoStack.at(-1);
-    if (group && top && top.group === group && this.redoStack.length === 0) {
+    const pairs = new Set(local.changed);
+    const merges =
+      group && top && top.group === group && sameCaller(top.by, by) && !local.spawned.size && !local.despawned.size && new Set([...top.pairs, ...pairs]).size <= 64;
+    if (merges) {
       for (const [id, e] of touched) if (!top.before.has(id)) top.before.set(id, e);
       for (const [id, e] of after) top.after.set(id, e);
+      for (const k of pairs) top.pairs.add(k);
       top.label = finalLabel;
     } else {
-      this.undoStack.push({ label: finalLabel, group, before: touched, after });
+      this.undoStack.push({ label: finalLabel, group, by, pairs, before: touched, after });
       if (this.undoStack.length > 200) this.undoStack.shift();
     }
     this.redoStack = [];
@@ -295,11 +319,19 @@ export class World {
     return { applied: ops.length, spawned, label: finalLabel };
   }
 
-  undo(changes: Changes): string | null {
+  /** With `group`, as the host: only when the next entry is the whole of that group (a drag),
+   * else `history.group` with the group's entry count, changing nothing. */
+  undo(changes: Changes, group?: string): string | null {
+    if (group !== undefined) {
+      const entries = this.undoStack.filter((h) => h.group === group).length;
+      if (entries !== 1 || this.undoStack.at(-1)?.group !== group) {
+        throw new MockError("history.group", `The next edit to undo is not the whole of group '${group}'.`, { group, entries, on_top: this.undoStack.at(-1)?.group === group });
+      }
+    }
     const h = this.undoStack.pop();
     if (!h) return null;
     this.restore(h.before, h.after, changes);
-    this.redoStack.push(h);
+    this.redoStack.push({ ...h, group: undefined });
     return h.label;
   }
 
@@ -307,7 +339,7 @@ export class World {
     const h = this.redoStack.pop();
     if (!h) return null;
     this.restore(h.after, h.before, changes);
-    this.undoStack.push(h);
+    this.undoStack.push({ ...h, group: undefined });
     return h.label;
   }
 

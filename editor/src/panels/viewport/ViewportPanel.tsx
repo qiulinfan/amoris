@@ -53,7 +53,9 @@ export function ViewportPanel() {
     const el = canvas.current!;
     let disposed = false;
     ctl.start();
-    if (import.meta.env.DEV) (window as unknown as { pocketEditorViewport: ViewportController }).pocketEditorViewport = ctl;
+    if (import.meta.env.DEV || import.meta.env.VITE_POCKET_EXPOSE === "1") {
+      (window as unknown as { pocketEditorViewport: ViewportController }).pocketEditorViewport = ctl;
+    }
     void loadViewport(el, viewportOptions(host.endpoints.http, host.endpoints.ws), () => createFallbackViewport(el, source)).then(
       ({ viewport, kind, note }) => {
         if (disposed) {

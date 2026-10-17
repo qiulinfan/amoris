@@ -1,5 +1,6 @@
 // Development aid: the stores, the host client and the dock on `window.pocket`, for inspection
-// from DevTools and for the evidence capture (tools/capture.ts). Only in `vite` dev builds.
+// from DevTools and for the evidence capture (tools/capture.ts). Only in `vite` dev builds, and in
+// a production build made with VITE_POCKET_EXPOSE=1 (tools/gizmo-drag.ts times one).
 
 import { api, host } from "./host/api";
 import { openPanel, resetLayout, toggleMaximize } from "./layout/dock";
