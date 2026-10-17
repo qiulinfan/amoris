@@ -17,6 +17,7 @@ use pocket_assets::mesh::ModelAsset;
 
 use crate::shaders;
 
+/// A skinned part's job in the one dispatch (skin.wgsl `jobs`).
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct Job {
@@ -24,7 +25,14 @@ struct Job {
     dst: u32,
     count: u32,
     palette: u32,
+    /// Its first workgroup.
+    group: u32,
 }
+
+/// Vertices per workgroup (skin.wgsl).
+const GROUP: u32 = 64;
+/// Workgroups per dispatch row (skin.wgsl `ROW`).
+const ROW: u32 = 65535;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -69,9 +77,6 @@ pub struct History {
     written: Vec<u32>,
 }
 
-/// Bytes between two jobs in the jobs buffer (WebGPU's minimum uniform offset alignment, at most).
-const JOB_STRIDE: u64 = 256;
-
 pub struct Skinning {
     pipeline: wgpu::ComputePipeline,
     layout: wgpu::BindGroupLayout,
@@ -83,13 +88,15 @@ pub struct Skinning {
     sources: HashMap<(String, usize), Source>,
     pub parts: Vec<Part>,
     palette: Option<wgpu::Buffer>,
+    /// The job count and the jobs (skin.wgsl `jobs`).
     jobs: Option<wgpu::Buffer>,
     /// The jobs as last written, written again only when they change.
     jobs_written: Vec<u8>,
-    /// One bind group for every job (the job is a dynamic offset into the jobs buffer) and the
-    /// buffers it holds: rebuilt when one is replaced, not every frame. Creating bind groups and
-    /// staging writes per job cost about 0.9 ms a frame on Direct3D 12 for 40 skinned parts
-    /// (docs/bench/dx12.md 10).
+    /// The pass's bind group and the buffers it holds: rebuilt when one is replaced, not every
+    /// frame. Creating bind groups and staging writes per job cost about 0.9 ms a frame on Direct3D
+    /// 12 for 40 skinned parts (docs/bench/dx12.md 10). One dispatch covers every job, where a
+    /// dispatch per job bound each with a dynamic offset (docs/bench/dynamic-scenes.md: its GPU
+    /// effect is not measured).
     group: Option<([wgpu::Buffer; 5], wgpu::BindGroup)>,
     pub history: History,
 }
@@ -111,16 +118,7 @@ impl Skinning {
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("skinning"),
             entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: cs,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: true,
-                        min_binding_size: wgpu::BufferSize::new(std::mem::size_of::<Job>() as u64),
-                    },
-                    count: None,
-                },
+                storage(0, true),
                 storage(1, true),
                 storage(2, true),
                 storage(3, true),
@@ -294,7 +292,8 @@ impl Skinning {
             return;
         };
         let mut palette: Vec<[f32; 16]> = Vec::new();
-        let mut jobs: Vec<(Job, u32)> = Vec::new();
+        let mut jobs: Vec<Job> = Vec::new();
+        let mut groups = 0u32;
         // One pose per entity (its parts share the skeleton).
         let mut poses: HashMap<u64, Vec<Mat4>> = HashMap::new();
         for p in &self.parts {
@@ -316,15 +315,14 @@ impl Skinning {
             for m in joint_matrices(&p.asset, p.skin, pose, p.node_global) {
                 palette.push(m.to_cols_array());
             }
-            jobs.push((
-                Job {
-                    src: src.first,
-                    dst: p.dst,
-                    count: src.count,
-                    palette: first,
-                },
-                src.count,
-            ));
+            jobs.push(Job {
+                src: src.first,
+                dst: p.dst,
+                count: src.count,
+                palette: first,
+                group: groups,
+            });
+            groups += src.count.div_ceil(GROUP);
         }
         if jobs.is_empty() || palette.is_empty() {
             return;
@@ -344,11 +342,8 @@ impl Skinning {
         }
         let Some(pal) = &self.palette else { return };
         queue.write_buffer(pal, 0, pal_bytes);
-        let mut job_bytes = vec![0u8; jobs.len() * JOB_STRIDE as usize];
-        for (k, (j, _)) in jobs.iter().enumerate() {
-            let at = k * JOB_STRIDE as usize;
-            job_bytes[at..at + std::mem::size_of::<Job>()].copy_from_slice(bytemuck::bytes_of(j));
-        }
+        let mut job_bytes = (jobs.len() as u32).to_le_bytes().to_vec();
+        job_bytes.extend_from_slice(bytemuck::cast_slice(&jobs));
         if self
             .jobs
             .as_ref()
@@ -357,7 +352,7 @@ impl Skinning {
             self.jobs = Some(device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("skinning jobs"),
                 size: (job_bytes.len() as u64).next_power_of_two(),
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             }));
             self.jobs_written.clear();
@@ -381,11 +376,7 @@ impl Skinning {
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 0,
-                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                            buffer: job_buf,
-                            offset: 0,
-                            size: wgpu::BufferSize::new(std::mem::size_of::<Job>() as u64),
-                        }),
+                        resource: job_buf.as_entire_binding(),
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
@@ -413,10 +404,13 @@ impl Skinning {
             timestamp_writes: None,
         });
         pass.set_pipeline(&self.pipeline);
-        for (k, (_, count)) in jobs.iter().enumerate() {
-            pass.set_bind_group(0, bg, &[(k as u64 * JOB_STRIDE) as u32]);
-            pass.dispatch_workgroups(count.div_ceil(64), 1, 1);
-        }
+        pass.set_bind_group(0, bg, &[]);
+        let (x, y) = if groups > ROW {
+            (ROW, groups.div_ceil(ROW))
+        } else {
+            (groups, 1)
+        };
+        pass.dispatch_workgroups(x, y, 1);
     }
 }
 
