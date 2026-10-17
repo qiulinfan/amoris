@@ -48,3 +48,8 @@ image.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 log = "0.4"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+# Raw Vulkan for the timestamp reproduction without wgpu (examples/vk_timestamps.rs,
+# docs/bench/gpu-matrix.md 8); the version and features wgpu-hal 30.0.1 already builds.
+ash = "0.38"

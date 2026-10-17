@@ -3472,6 +3472,7 @@ dependencies = [
 name = "pocket-render"
 version = "0.1.0"
 dependencies = [
+ "ash",
  "bytemuck",
  "foldhash 0.2.0",
  "fontdue",
