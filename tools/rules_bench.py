@@ -16,6 +16,17 @@ rounds.
         file records when its command started and ended (`wall`), lock waits included
     python tools/rules_bench.py table OUT
         prints the result tables in the form docs/bench/script.md keeps them
+    python tools/rules_bench.py split OUT [--rounds 5] [--warmup 120] [--ticks 600]
+                                          [--profile-interval 100] [--lock LOCK.py]
+        natively only, the split of `run` (docs/bench/script.md, section 8): per round `rules`,
+        `natives` (the same rule with the host's natives timed on the time-stamp counter) and
+        `profiled` (under the step profiler) in an order that rotates by round, the machine
+        conditions before each round; then `split-table`
+    python tools/rules_bench.py split-table OUT
+        prints the split: `run` inside the natives and the rest, interpretation, against the
+        untimed `rules` of the same round, as bounds: the natives raw (their windows hold part of
+        a clock reading) and less one back-to-back reading a call (which over-subtracts when a
+        reading costs less in place)
 
 OUT receives one JSON per target, build and round, the compiled sets and the conditions. Needs
 Node and Chrome (webcheck.py's search) for the web targets.
@@ -220,6 +231,145 @@ def table(args):
             print(f"| {t} | {v} | {' | '.join(ph)} |")
 
 
+def split(args):
+    out = Path(args.out).resolve()
+    out.mkdir(parents=True, exist_ok=True)
+    if not NATIVE.is_file():
+        sys.exit(f"{NATIVE} is missing: python tools/rules_bench.py build")
+    conditions = [sys.executable, REPO / "tools/machine_conditions.py"]
+    sh([*conditions, out / "conditions-start.json", "--label", "split-start"])
+    for r in range(args.rounds):
+        sh([*conditions, out / f"conditions-r{r + 1}.json", "--label", f"split-r{r + 1}", "--cpu-seconds", "3"])
+        start, f = now(), out / f"split-r{r + 1}.json"
+        # The first round also verifies the script world against the twin (the timings skip it).
+        verify = [] if r == 0 else ["--no-verify"]
+        sh(locked(args, [NATIVE, "--variants", "rules,natives,profiled", "--profile-interval", args.profile_interval,
+                         "--rounds", 1, "--offset", r, "--warmup", args.warmup, "--ticks", args.ticks, *verify,
+                         "--json", f]))
+        stamp(f, start)
+    sh([*conditions, out / "conditions-end.json", "--label", "split-end"])
+    split_table(argparse.Namespace(out=str(out)))
+
+
+def split_table(args):
+    out = Path(args.out)
+    files = sorted(out.glob("split-r*.json"), key=lambda f: int(f.stem.rsplit("-r", 1)[1]))
+    rows = []
+    for f in files:
+        d = json.loads(f.read_text())
+        res = {r["variant"]: r for r in d["results"]}
+        a, b = res.get("rules"), res.get("natives")
+        if not a or not b:
+            continue
+        if a["digest"] != b["digest"]:
+            sys.exit(f"{f.name}: the timed natives changed the world ({a['digest']} against {b['digest']})")
+        n = b["natives"]
+        run_plain = a["phases_us"]["run"]["median"]
+        run_timed = b["phases_us"]["run"]["median"]
+        raw = n["native_us"]["median"]
+        calls = n["calls"]["median"]
+        reading = n["clock_reading_ns"]["median"]
+        native = raw - calls * reading / 1000
+        rows.append({
+            "round": int(f.stem.rsplit("-r", 1)[1]),
+            "first": d["results"][0]["variant"],
+            "tick": a["tick_us"]["median"],
+            "tick_timed": b["tick_us"]["median"],
+            "run": run_plain,
+            "run_timed": run_timed,
+            "raw": raw,
+            "calls": calls,
+            "reading": reading,
+            "native": native,
+            "interp": run_plain - native,
+            "interp_raw": run_plain - raw,
+            "steps": a["steps"]["median"],
+        })
+    if not rows:
+        sys.exit(f"no split rounds in {out}")
+    print("Per round, medians of the 600 ticks, us (`rules` untimed; `natives` its timed twin). "
+          "Interpretation is `run` less the natives, between the natives raw and less one reading a call:\n")
+    print("| Round | First | rules tick | rules `run` | natives `run` | native, raw | calls | reading, ns "
+          "| native, less readings | interpretation | of `run` | of the tick |")
+    print("|---|---|---|---|---|---|---|---|---|---|---|---|")
+    for r in rows:
+        print(f"| {r['round']} | {r['first']} | {fmt(r['tick'])} | {fmt(r['run'])} | {fmt(r['run_timed'])} | "
+              f"{fmt(r['raw'])} | {r['calls']:,.0f} | {r['reading']:.1f} | {fmt(r['native'])} | "
+              f"{fmt(r['interp_raw'])} to {fmt(r['interp'])} | "
+              f"{r['interp_raw'] / r['run'] * 100:.1f} to {r['interp'] / r['run'] * 100:.1f} % | "
+              f"{r['interp_raw'] / r['tick'] * 100:.1f} to {r['interp'] / r['tick'] * 100:.1f} % |")
+    med = lambda k: statistics.median(r[k] for r in rows)
+    # Shares are the medians of the rounds' own shares; absolute parts are of the rounds' medians, the
+    # interpretation the median `run` less the median natives, so the parts add up to `run`.
+    share = lambda k, of: statistics.median(r[k] / r[of] * 100 for r in rows)
+    lo, hi = med("run") - med("raw"), med("run") - med("native")
+    print(f"\nMedians of the rounds: rules `run` {fmt(med('run'))} us of a {fmt(med('tick'))} us tick; inside the "
+          f"natives {fmt(med('native'))} to {fmt(med('raw'))} us (less one {med('reading'):.1f} ns reading a call, "
+          f"and raw; {med('calls'):,.0f} calls); interpretation the rest of `run`, {fmt(lo)} to {fmt(hi)} us. "
+          f"Medians of the rounds' shares: interpretation {share('interp_raw', 'run'):.1f} to "
+          f"{share('interp', 'run'):.1f} % of `run`, {share('interp_raw', 'tick'):.1f} to "
+          f"{share('interp', 'tick'):.1f} % of the tick. Removing it would leave {fmt(med('tick') - hi)} to "
+          f"{fmt(med('tick') - lo)} us of the tick ({med('tick') / (med('tick') - lo):.2f} to "
+          f"{med('tick') / (med('tick') - hi):.2f} times faster). "
+          f"Timing the natives made `run` {(med('run_timed') - med('run')):+,.0f} us "
+          f"({(med('run_timed') / med('run') - 1) * 100:+.1f} %; per round "
+          f"{', '.join(f'{r['run_timed'] - r['run']:+,.0f}' for r in rows)}), which is "
+          f"{(med('run_timed') - med('run')) * 1000 / (2 * med('calls')):.1f} ns per reading in place, two a call. "
+          f"Steps {med('steps'):,.0f} a tick.")
+    kinds = ["math", "events", "rng", "world", "other"]
+    print("\nInside the natives by kind, per round: us a tick less one reading a call, and raw (calls a tick):\n")
+    print("| Round | " + " | ".join(kinds) + " |")
+    print("|---|" + "---|" * len(kinds))
+    for f in files:
+        d = json.loads(f.read_text())
+        b = {r["variant"]: r for r in d["results"]}.get("natives")
+        if not b or "by_kind" not in b["natives"]:
+            continue
+        reading = b["natives"]["clock_reading_ns"]["median"]
+        cells = []
+        for k in kinds:
+            v = b["natives"]["by_kind"][k]
+            calls = v["calls"]["median"]
+            us = v["us"]["median"]
+            lo, hi = fmt(us - calls * reading / 1000), fmt(us)
+            cells.append(f"{lo if lo == hi else f'{lo} to {hi}'} ({calls:,.0f})")
+        print(f"| {f.stem.rsplit('-r', 1)[1]} | " + " | ".join(cells) + " |")
+    profiled = []
+    for f in files:
+        d = json.loads(f.read_text())
+        res = {r["variant"]: r for r in d["results"]}
+        a, c = res.get("rules"), res.get("profiled")
+        if not a or not c or not c.get("profile"):
+            continue
+        if a["digest"] != c["digest"]:
+            sys.exit(f"{f.name}: the profiler changed the world ({a['digest']} against {c['digest']})")
+        p = c["profile"]
+        ticks = c["ticks"] + d["warmup"]
+        profiled.append({"round": int(f.stem.rsplit("-r", 1)[1]), "tick": a["tick_us"]["median"],
+                         "tick_profiled": c["tick_us"]["median"], "samples": p["samples"] / ticks,
+                         "interval": p["interval"], "profile": p})
+    if not profiled:
+        return
+    print("\nThe step profiler on the same rule (`profiled`; tick medians, us):\n")
+    print("| Round | rules tick | profiled tick | samples a tick | cost a sample, us |")
+    print("|---|---|---|---|---|")
+    for r in profiled:
+        cost = (r["tick_profiled"] - r["tick"]) / r["samples"]
+        print(f"| {r['round']} | {fmt(r['tick'])} | {fmt(r['tick_profiled'])} | {r['samples']:,.0f} | {cost:.2f} |")
+    p = profiled[0]["profile"]
+    same = all(json.dumps(r["profile"], sort_keys=True) == json.dumps(p, sort_keys=True) for r in profiled)
+    print(f"\nThe profile (sampled every {p['interval']} steps on average, so its shares are estimates; the same "
+          f"in every round: {same}), `damage`'s top lines by self samples of {p['damage']['samples']:,}:\n")
+    print("| Line | Function | Self samples | Share |")
+    print("|---|---|---|---|")
+    for at, fn, n in p["damage"]["lines"]:
+        print(f"| {at} | {fn} | {n:,} | {n / p['damage']['samples'] * 100:.1f} % |")
+    print("\n| Function | File | Self | Total |")
+    print("|---|---|---|---|")
+    for fn, file, own, total in p["damage"]["functions"]:
+        print(f"| {fn} | {file} | {own / p['damage']['samples'] * 100:.1f} % | {total / p['damage']['samples'] * 100:.1f} % |")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -233,8 +383,17 @@ def main():
     r.add_argument("--lock")
     t = sub.add_parser("table")
     t.add_argument("out")
+    sp = sub.add_parser("split")
+    sp.add_argument("out")
+    sp.add_argument("--rounds", type=int, default=5)
+    sp.add_argument("--warmup", type=int, default=120)
+    sp.add_argument("--ticks", type=int, default=600)
+    sp.add_argument("--profile-interval", type=int, default=100)
+    sp.add_argument("--lock")
+    st = sub.add_parser("split-table")
+    st.add_argument("out")
     a = ap.parse_args()
-    {"build": build, "run": run, "table": table}[a.cmd](a)
+    {"build": build, "run": run, "table": table, "split": split, "split-table": split_table}[a.cmd](a)
 
 
 if __name__ == "__main__":

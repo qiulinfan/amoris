@@ -8,7 +8,14 @@
 //! - **twin**: the same two systems in Rust over Rust components (`workload.rs`), which must build
 //!   the same world: `--verify` compares the digests of both at every tick first;
 //! - **idle**: `populate`, then a system with no query and an empty `run`;
-//! - **scan**: `populate`, then a system with `damage`'s query and an empty `run`.
+//! - **scan**: `populate`, then a system with `damage`'s query and an empty `run`;
+//! - **natives** (only when `--variants` names it): **rules** with the host's natives timed
+//!   (`ScriptHost::time_natives`) on the processor's time-stamp counter, which splits `run` into
+//!   the time inside the natives and the rest, interpretation (docs/bench/script.md, section 8).
+//!   Each round of it also times the clock's own reading, which every native call takes twice;
+//! - **profiled** (only when `--variants` names it): **rules** under the step profiler
+//!   (docs/spec/debugger.md 14) from the round's first tick, a sample every `--profile-interval`
+//!   steps on average (default 100): its cost, and the profile's top lines in the result.
 //!
 //! Each round builds a fresh world per variant (in an order that rotates by round, from
 //! `--offset`), steps it `--warmup` ticks, then times `--ticks` ticks one by one: the tick
@@ -18,7 +25,8 @@
 //! ```text
 //! cargo run --release -p pocket-script --features transpile --example rules_bench -- \
 //!     [--rounds 3] [--offset 0] [--warmup 120] [--ticks 600] \
-//!     [--variants rules,twin,idle,scan] [--no-verify] [--json out.json] [--emit DIR] [--types]
+//!     [--variants rules,twin,idle,scan[,natives,profiled]] [--profile-interval 100] [--no-verify]
+//!     [--json out.json] [--emit DIR] [--types]
 //! ```
 //!
 //! `--emit DIR` writes the compiled sets and the verified digests for the WebAssembly module
@@ -32,13 +40,19 @@ mod workload;
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Instant;
 
 use pocket_script::{CompiledSet, ScriptSource, compile};
 use serde_json::{Value, json};
 use workload::{Bench, Sample};
 
-const VARIANTS: [&str; 4] = ["rules", "twin", "idle", "scan"];
+const VARIANTS: [&str; 6] = ["rules", "twin", "idle", "scan", "natives", "profiled"];
+
+/// The `profiled` variant's mean steps between samples (`--profile-interval`).
+static PROFILE_INTERVAL: AtomicU32 = AtomicU32::new(100);
+/// The variants a run times unless `--variants` says otherwise.
+const DEFAULT_VARIANTS: [&str; 4] = ["rules", "twin", "idle", "scan"];
 
 /// The entry module of a probe: `populate`, then the probe in place of `damage`.
 const PROBE_MAIN: &str = r#"import { game } from "pocket";
@@ -57,6 +71,51 @@ fn now_ms() -> f64 {
     EPOCH.get_or_init(Instant::now).elapsed().as_secs_f64() * 1e3
 }
 
+/// The processor's time-stamp counter (x86_64; elsewhere the wall clock's microseconds).
+fn tsc() -> f64 {
+    #[cfg(target_arch = "x86_64")]
+    {
+        // SAFETY: RDTSC has no preconditions on x86_64.
+        unsafe { core::arch::x86_64::_rdtsc() as f64 }
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        now_ms() * 1e3
+    }
+}
+
+/// Milliseconds per count of the time-stamp counter, measured against the wall clock over 200 ms
+/// the first time it is asked for.
+fn tsc_scale() -> f64 {
+    static SCALE: OnceLock<f64> = OnceLock::new();
+    *SCALE.get_or_init(|| {
+        let (t0, c0) = (Instant::now(), tsc());
+        while t0.elapsed().as_millis() < 200 {
+            std::hint::spin_loop();
+        }
+        let (ms, counts) = (t0.elapsed().as_secs_f64() * 1e3, tsc() - c0);
+        ms / counts
+    })
+}
+
+/// The natives' clock: the time-stamp counter in milliseconds, a reading of a few nanoseconds at
+/// sub-nanosecond resolution (the wall clock's are about 20 ns and 100 ns on Windows).
+fn tsc_ms() -> f64 {
+    tsc() * tsc_scale()
+}
+
+/// What one reading of the natives' clock costs, in nanoseconds: a million back to back.
+fn tsc_reading_ns() -> f64 {
+    const N: u32 = 1_000_000;
+    let t0 = Instant::now();
+    let mut sum = 0.0;
+    for _ in 0..N {
+        sum += tsc_ms();
+    }
+    std::hint::black_box(sum);
+    t0.elapsed().as_secs_f64() * 1e9 / f64::from(N)
+}
+
 fn project() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../bench/rules")
 }
@@ -72,7 +131,7 @@ fn compiled(variant: &str) -> CompiledSet {
 
 /// The measured script system of a variant.
 fn measured(variant: &str) -> &str {
-    if variant == "rules" {
+    if variant == "rules" || variant == "natives" {
         "damage"
     } else {
         variant
@@ -80,11 +139,19 @@ fn measured(variant: &str) -> &str {
 }
 
 fn bench(variant: &str, sets: &[(String, CompiledSet)]) -> Bench {
-    let made = if variant == "twin" {
-        Bench::twin(now_ms)
-    } else {
-        let set = &sets.iter().find(|(v, _)| v == variant).expect("compiled").1;
-        Bench::script(set, measured(variant), now_ms)
+    let set = |v: &str| &sets.iter().find(|(name, _)| name == v).expect("compiled").1;
+    let made = match variant {
+        "twin" => Bench::twin(now_ms),
+        "profiled" => Bench::script(set("rules"), "damage", now_ms).inspect(|b| {
+            b.start_profile(PROFILE_INTERVAL.load(Ordering::Relaxed));
+        }),
+        "natives" => Bench::script_timing_natives(
+            set("rules"),
+            "damage",
+            now_ms,
+            Some(tsc_ms as fn() -> f64),
+        ),
+        _ => Bench::script(set(variant), measured(variant), now_ms),
     };
     made.unwrap_or_else(|e| panic!("{variant}: {e}"))
 }
@@ -159,6 +226,58 @@ fn round(variant: &str, sets: &[(String, CompiledSet)], warmup: u64, ticks: u64)
     }
     let us = |f: fn(&Sample) -> f64| samples.iter().map(|s| f(s) * 1e3).collect::<Vec<f64>>();
     let steps: Vec<f64> = samples.iter().map(|s| s.steps as f64).collect();
+    let natives = (variant == "natives").then(|| {
+        let calls: Vec<f64> = samples
+            .iter()
+            .map(|s| s.phases.native_calls as f64)
+            .collect();
+        let readings: Vec<f64> = (0..5).map(|_| tsc_reading_ns()).collect();
+        let mut by_kind = serde_json::Map::new();
+        for (i, kind) in pocket_script::NativeKind::ALL.iter().enumerate() {
+            let time: Vec<f64> = samples
+                .iter()
+                .map(|s| s.phases.natives[i].time * 1e3)
+                .collect();
+            let calls: Vec<f64> = samples
+                .iter()
+                .map(|s| s.phases.natives[i].calls as f64)
+                .collect();
+            by_kind.insert(
+                kind.name().to_owned(),
+                json!({"us": stats(&time), "calls": stats(&calls)}),
+            );
+        }
+        json!({
+            "native_us": stats(&us(|s| s.phases.native)),
+            "calls": stats(&calls),
+            "by_kind": by_kind,
+            "clock_reading_ns": stats(&readings),
+            "clock": "rdtsc",
+        })
+    });
+    let profile = (variant == "profiled").then(|| {
+        let p = b.take_profile().expect("a profile");
+        let s = &p
+            .systems
+            .iter()
+            .find(|s| s.system == "damage")
+            .expect("damage");
+        let lines: Vec<Value> = s
+            .lines
+            .iter()
+            .take(10)
+            .map(|l| json!([format!("{}:{}", l.file, l.line), l.function, l.self_samples]))
+            .collect();
+        let functions: Vec<Value> = s
+            .functions
+            .iter()
+            .take(10)
+            .map(|f| json!([f.function, f.file, f.self_samples, f.total_samples]))
+            .collect();
+        json!({"interval": p.interval, "steps": p.steps, "samples": p.samples,
+               "damage": {"steps": s.steps, "samples": s.samples, "lines": lines,
+                          "functions": functions}})
+    });
     json!({
         "variant": variant,
         "ticks": ticks,
@@ -173,6 +292,8 @@ fn round(variant: &str, sets: &[(String, CompiledSet)], warmup: u64, ticks: u64)
             "apply": stats(&us(|s| s.phases.apply)),
         },
         "steps": stats(&steps),
+        "natives": natives,
+        "profile": profile,
         "digest": format!("{:016x}", b.digest()),
         "raw_tick_us": wall.iter().map(|x| (x * 10.0).round() / 10.0).collect::<Vec<f64>>(),
     })
@@ -217,7 +338,7 @@ fn main() {
     let offset: usize = arg(&args, "--offset", 0);
     let warmup: u64 = arg(&args, "--warmup", 120);
     let ticks: u64 = arg(&args, "--ticks", 600);
-    let variants: Vec<String> = arg(&args, "--variants", VARIANTS.join(","))
+    let variants: Vec<String> = arg(&args, "--variants", DEFAULT_VARIANTS.join(","))
         .split(',')
         .filter(|v| !v.is_empty())
         .map(str::to_owned)
@@ -225,6 +346,7 @@ fn main() {
     for v in &variants {
         assert!(VARIANTS.contains(&v.as_str()), "unknown variant {v}");
     }
+    PROFILE_INTERVAL.store(arg(&args, "--profile-interval", 100), Ordering::Relaxed);
     let json_out: Option<String> = args
         .iter()
         .position(|a| a == "--json")
