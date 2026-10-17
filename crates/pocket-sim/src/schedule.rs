@@ -161,6 +161,20 @@ pub struct ScheduleEntry {
 pub trait StepHooks {
     fn phase(&mut self, _phase: TickPhase, _begin: bool) {}
     fn system(&mut self, _key: &SystemKey, _begin: bool) {}
+    /// A read-only view of the world just before a system runs (`begin`) and just after it
+    /// returned with its writes applied: the write trace reads a field here to name the system
+    /// that changed it (docs/spec/debugger.md 13). Called outside the [`StepHooks::system`] pair
+    /// (a profiler does not time it). Around a script system the world lacks the script host
+    /// (`script.update` holds it). The view cannot change the world, so nothing in the tick
+    /// depends on it.
+    fn world(
+        &mut self,
+        _key: &SystemKey,
+        _phase: TickPhase,
+        _begin: bool,
+        _world: &bevy_ecs::world::World,
+    ) {
+    }
 }
 
 /// Hooks that do nothing.

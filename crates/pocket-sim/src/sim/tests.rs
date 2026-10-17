@@ -223,3 +223,84 @@ fn flush_to_zero_on_the_game_thread_trips_the_float_check() {
     assert!(s.poisoned().is_some());
     assert!(float_env::check().is_ok());
 }
+
+/// The step hooks' world view (debugger.md 13): before and after every system, outside the
+/// `system` pair, the world as the system found it and as it left it; never after a panic.
+#[test]
+fn the_world_hook_sees_each_system_before_and_after() {
+    #[derive(bevy_ecs::prelude::Resource, Default)]
+    struct Count(u32);
+
+    #[derive(Default)]
+    struct Seen(Vec<String>);
+
+    impl StepHooks for Seen {
+        fn system(&mut self, key: &SystemKey, begin: bool) {
+            self.0.push(format!(
+                "{}:{}",
+                key.as_str(),
+                if begin { "in" } else { "out" }
+            ));
+        }
+
+        fn world(&mut self, key: &SystemKey, phase: TickPhase, begin: bool, world: &World) {
+            if key.as_str().starts_with("test.") {
+                let n = world.get_resource::<Count>().map_or(0, |c| c.0);
+                let when = if begin { "before" } else { "after" };
+                self.0
+                    .push(format!("{} {} {when} {n}", key.as_str(), phase.name()));
+            }
+        }
+    }
+
+    let mut s = sim();
+    s.world_mut().insert_resource(Count(0));
+    s.add_exclusive(
+        "test.count",
+        TickPhase::Update,
+        RunCondition::Always,
+        |world: &mut World, _ctx: &mut SystemCtx<'_>| world.resource_mut::<Count>().0 += 1,
+    )
+    .unwrap();
+    let mut seen = Seen::default();
+    s.step(&mut seen).unwrap();
+    let at = seen
+        .0
+        .iter()
+        .position(|l| l == "test.count Update before 0")
+        .unwrap_or_else(|| panic!("{:?}", seen.0));
+    assert_eq!(
+        seen.0[at..at + 4],
+        [
+            "test.count Update before 0",
+            "test.count:in",
+            "test.count:out",
+            "test.count Update after 1"
+        ],
+        "{:?}",
+        seen.0
+    );
+    // A system that panics: no view after it.
+    s.add_exclusive(
+        "test.panics",
+        TickPhase::Update,
+        RunCondition::Always,
+        |_: &mut World, _: &mut SystemCtx<'_>| panic!("on purpose"),
+    )
+    .unwrap();
+    let mut seen = Seen::default();
+    assert!(s.step(&mut seen).is_err());
+    assert!(
+        seen.0.iter().any(|l| l == "test.panics Update before 2"),
+        "{:?}",
+        seen.0
+    );
+    assert!(
+        !seen
+            .0
+            .iter()
+            .any(|l| l.starts_with("test.panics Update after")),
+        "{:?}",
+        seen.0
+    );
+}

@@ -305,6 +305,7 @@ impl Sim {
         let entry = &mut self.systems[at];
         let world = &mut self.world;
         let phase = entry.phase;
+        hooks.world(&entry.key, phase, true, world);
         hooks.system(&entry.key, true);
         let mut ctx = SystemCtx {
             hooks: &mut *hooks,
@@ -332,6 +333,10 @@ impl Sim {
         }));
         let fault = ctx.fault.take();
         hooks.system(&entry.key, false);
+        // Not after a panic: the world may stand halfway through the system.
+        if outcome.is_ok() {
+            hooks.world(&entry.key, phase, false, world);
+        }
         let key = entry.key.as_str();
         match outcome {
             Err(panic) => Err(internal(tick, phase, key, &panic_message(&*panic))),
