@@ -87,8 +87,11 @@ fn asynchronous_frames_keep_their_queries_and_only_record_the_capture_window() {
         assert_eq!(scope.label, "work");
         assert!(
             scope.begin > previous_end,
-            "stale/duplicate frame {}",
-            frame.frame
+            "stale/duplicate frame {}: begins at tick {}, ends at {}, the previous frame ended at {}",
+            frame.frame,
+            scope.begin,
+            scope.end,
+            previous_end
         );
         assert!(scope.end >= scope.begin);
         previous_end = scope.end;

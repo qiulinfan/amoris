@@ -25,10 +25,16 @@
 //!   trace measures one. Before the first recorded frame and after the last it submits a
 //!   timestamped compute pass to an idle GPU, eight times: its first timestamp lies between
 //!   the CPU time just before the submit and the CPU time when the wait for the GPU returned.
-//!   The intersection of those brackets bounds the clocks' offset; GPU spans are placed with its
-//!   midpoint, interpolated linearly between the two calibrations (drift), and the half-widths are
-//!   recorded as the placement's uncertainty. Metal (including MoltenVK) uses real work, and its counters
-//!   are resolved only after the timestamp submission completes; the other backends retain their
+//!   The intersection of those brackets bounds the clocks' offset at the narrowest one, each other
+//!   bracket widened by [`MAX_CLOCK_DRIFT`] of its distance in time from it: the clocks' rates
+//!   differ (the Radeon 780M's timestamps run 0.18 to 0.19% slower than their reported period),
+//!   and under CPU load a calibration's rounds spread over tens of milliseconds instead of a few,
+//!   on AMD's Vulkan with other work running up to hundreds.
+//!   GPU spans are placed with its midpoint, interpolated linearly between the two calibrations
+//!   (drift), and the half-widths are recorded as the placement's uncertainty. Where the profiler
+//!   defers its resolves (Metal, MoltenVK and Vulkan on AMD adapters,
+//!   `profiler::deferred_timestamps`) the pass does real work and its timestamps are resolved only
+//!   after the sampling submission completes; NVIDIA's Vulkan driver and Direct3D 12 keep the
 //!   single-submission empty-pass calibration.
 
 use std::path::PathBuf;
@@ -106,26 +112,38 @@ impl TraceSpec {
 pub struct Calibration {
     pub offset_s: f64,
     pub half_width_s: f64,
-    /// When it was measured (CPU seconds).
+    /// When the offset holds (CPU seconds): the middle of the narrowest bracket.
     pub at_s: f64,
 }
 
+/// The largest difference between the rates of the GPU's timestamps (at the period the device
+/// reports) and the CPU clock that one calibration allows: 0.5%. The Radeon 780M's timestamps run
+/// 0.18 to 0.19% slower than their reported 10 ns on Direct3D 12 and Vulkan alike, the RTX 5060's
+/// within 0.03% (docs/bench/gpu-matrix.md 7). Between the two calibrations of a trace the drift is
+/// measured instead (the offset is interpolated).
+pub const MAX_CLOCK_DRIFT: f64 = 0.005;
+
 /// Intersects bracketing samples `(cpu_before, cpu_after, gpu)`, each saying that the GPU time
-/// `gpu` happened between the two CPU times; `None` when there are none or they disagree.
-pub fn intersect(samples: &[(f64, f64, f64)]) -> Option<Calibration> {
+/// `gpu` happened between the two CPU times, into the clocks' offset at the middle of the
+/// narrowest bracket. The clocks' rates may differ by up to `max_drift`, so every bracket is
+/// widened on both sides by `max_drift` times its farthest distance in time from that moment.
+/// `None` when there are none or they still disagree.
+pub fn intersect(samples: &[(f64, f64, f64)], max_drift: f64) -> Option<Calibration> {
+    let narrowest = samples
+        .iter()
+        .min_by(|a, b| (a.1 - a.0).total_cmp(&(b.1 - b.0)))?;
+    let at = (narrowest.0 + narrowest.1) / 2.0;
     let mut lo = f64::NEG_INFINITY;
     let mut hi = f64::INFINITY;
     for &(before, after, gpu) in samples {
-        lo = lo.max(before - gpu);
-        hi = hi.min(after - gpu);
+        let drift = max_drift * (before - at).abs().max((after - at).abs());
+        lo = lo.max(before - gpu - drift);
+        hi = hi.min(after - gpu + drift);
     }
-    (lo.is_finite() && hi.is_finite() && lo <= hi).then(|| Calibration {
+    (lo.is_finite() && hi.is_finite() && lo <= hi).then_some(Calibration {
         offset_s: (lo + hi) / 2.0,
         half_width_s: (hi - lo) / 2.0,
-        at_s: samples
-            .iter()
-            .map(|s| s.1)
-            .fold(f64::NEG_INFINITY, f64::max),
+        at_s: at,
     })
 }
 
@@ -141,19 +159,28 @@ pub fn calibrate(
     if !period_ns.is_finite() || period_ns <= 0.0 {
         return None;
     }
-    let samples = calibration_samples(device, queue, info)?;
-    intersect(
-        &samples
-            .iter()
-            .map(|s| {
-                (
-                    s.before,
-                    s.after,
-                    s.begin as f64 * f64::from(period_ns) * 1e-9,
-                )
-            })
-            .collect::<Vec<_>>(),
-    )
+    let samples = match calibration_samples(device, queue, info) {
+        Ok(s) => s,
+        Err(why) => {
+            log::warn!("trace: no clock calibration: {why}");
+            return None;
+        }
+    };
+    let brackets: Vec<_> = samples
+        .iter()
+        .map(|s| {
+            (
+                s.before,
+                s.after,
+                s.begin as f64 * f64::from(period_ns) * 1e-9,
+            )
+        })
+        .collect();
+    let clock = intersect(&brackets, MAX_CLOCK_DRIFT);
+    if clock.is_none() {
+        log::warn!("trace: no clock calibration: its rounds disagree beyond the allowed drift");
+    }
+    clock
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -169,16 +196,18 @@ fn calibration_samples(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     info: &wgpu::AdapterInfo,
-) -> Option<Vec<CalibrationSample>> {
+) -> Result<Vec<CalibrationSample>, String> {
     const ROUNDS: usize = 8;
     if !device.features().contains(wgpu::Features::TIMESTAMP_QUERY) {
-        return None;
+        return Err("no timestamp queries".into());
     }
-    let metal = crate::profiler::deferred_timestamps(info);
-    // An empty Metal compute pass returns zero counter samples on Apple M5. Give it a real
-    // storage write so the timestamps bracket a dispatch. MoltenVK also needs deferred
-    // resolve; keep other Vulkan drivers and D3D12 on the successful Windows path.
-    let dispatch = metal.then(|| {
+    // Where the profiler resolves timestamps only after their submission completed (Metal,
+    // MoltenVK, Vulkan on AMD adapters), so does the calibration. An empty Metal compute pass
+    // returns zero counter samples on Apple M5: give it a real storage write so the timestamps
+    // bracket a dispatch. NVIDIA's Vulkan driver and Direct3D 12 resolve in the sampling
+    // submission.
+    let deferred = crate::profiler::deferred_timestamps(info);
+    let dispatch = deferred.then(|| {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("trace clock"),
             source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/trace_clock.wgsl").into()),
@@ -252,19 +281,30 @@ fn calibration_samples(
             enc.resolve_query_set(&queries, 0..2, &resolve, 0);
             enc.copy_buffer_to_buffer(&resolve, 0, &readback, 0, 16);
         };
-        if !metal {
+        if !deferred {
             encode_readback(&mut enc);
         }
         let commands = enc.finish();
-        device.poll(wgpu::PollType::wait_indefinitely()).ok()?;
+        let wait = || {
+            device
+                .poll(wgpu::PollType::wait_indefinitely())
+                .map(|_| ())
+                .map_err(|e| format!("waiting for the GPU: {e}"))
+        };
+        wait()?;
         let before = crate::web_time();
         queue.submit([commands]);
-        device.poll(wgpu::PollType::wait_indefinitely()).ok()?;
+        wait()?;
         let after = crate::web_time();
-        if metal {
-            // wgpu 30's Metal counter resolve can expose the previous sample if encoded in the
-            // same submission as the timestamps. Finish the sampled work first. This second
-            // submit must stay OUTSIDE the CPU bracket that bounds the sampled timestamp.
+        if deferred {
+            // A resolve encoded in the same submission as the timestamps can expose zeros or the
+            // previous sample there (wgpu 30's Metal counters; AMD's Vulkan driver, whose readback
+            // copy can miss a resolve earlier in the same command buffer). Resolving in a second
+            // submission avoids both: the sampled work has finished, and wgpu-core records the
+            // resolve of an earlier submission's queries in a command buffer of its own, which is
+            // what AMD's driver needs (profiler::deferred_timestamps, docs/bench/gpu-matrix.md 8).
+            // This second submit must stay OUTSIDE the CPU bracket that bounds the sampled
+            // timestamp.
             let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("trace clock (readback)"),
             });
@@ -275,20 +315,29 @@ fn calibration_samples(
         readback.slice(..).map_async(wgpu::MapMode::Read, move |r| {
             let _ = tx.send(r.is_ok());
         });
-        device.poll(wgpu::PollType::wait_indefinitely()).ok()?;
+        wait()?;
         if rx.recv() != Ok(true) {
-            return None;
+            return Err("the readback failed".into());
         }
         let (begin, end) = {
-            let data = readback.slice(..).get_mapped_range().ok()?;
-            (
-                u64::from_le_bytes(data[..8].try_into().ok()?),
-                u64::from_le_bytes(data[8..16].try_into().ok()?),
-            )
+            let data = readback
+                .slice(..)
+                .get_mapped_range()
+                .map_err(|e| format!("mapping the readback: {e}"))?;
+            let tick = |at: usize| {
+                let mut b = [0u8; 8];
+                b.copy_from_slice(&data[at..at + 8]);
+                u64::from_le_bytes(b)
+            };
+            (tick(0), tick(8))
         };
         readback.unmap();
-        if begin == 0 || end < begin || samples.last().is_some_and(|last| begin <= last.end) {
-            return None;
+        let previous = samples.last().map(|s| s.end);
+        if begin == 0 || end < begin || previous.is_some_and(|p| begin <= p) {
+            return Err(format!(
+                "round {}: begin {begin}, end {end}, the previous round's end {previous:?}",
+                samples.len()
+            ));
         }
         samples.push(CalibrationSample {
             before,
@@ -297,7 +346,7 @@ fn calibration_samples(
             end,
         });
     }
-    Some(samples)
+    Ok(samples)
 }
 
 /// A CPU span: a name and its start and end (CPU seconds).
@@ -784,13 +833,15 @@ mod tests {
             return;
         }
         let samples = calibration_samples(&gpu.device, &gpu.queue, &gpu.info)
-            .expect("positive, ordered clock samples");
+            .unwrap_or_else(|why| panic!("positive, ordered clock samples: {why}"));
         let period_s = f64::from(gpu.queue.get_timestamp_period()) * 1e-9;
         let brackets: Vec<_> = samples
             .iter()
             .map(|s| (s.before, s.after, s.begin as f64 * period_s))
             .collect();
-        let clock = intersect(&brackets).expect("clock samples agree within their CPU brackets");
+        let clock = intersect(&brackets, MAX_CLOCK_DRIFT).unwrap_or_else(|| {
+            panic!("clock samples agree within their CPU brackets: {brackets:?}")
+        });
         assert_eq!(samples.len(), 8);
         assert!(clock.offset_s.is_finite());
         assert!(clock.half_width_s.is_finite() && clock.half_width_s >= 0.0);
@@ -803,7 +854,12 @@ mod tests {
             }
             let begin = sample.begin as f64 * period_s + clock.offset_s;
             let end = sample.end as f64 * period_s + clock.offset_s;
-            let slack = clock.half_width_s + 1e-9;
+            // The offset holds at `at_s`; elsewhere the clocks may have drifted apart by up to
+            // MAX_CLOCK_DRIFT of the distance.
+            let far = (sample.before - clock.at_s)
+                .abs()
+                .max((sample.after - clock.at_s).abs());
+            let slack = clock.half_width_s + MAX_CLOCK_DRIFT * far + 1e-9;
             assert!(
                 begin >= sample.before - slack && end <= sample.after + slack,
                 "sample {i}: GPU {begin}..{end} outside CPU {}..{} (slack {slack})",
@@ -834,13 +890,41 @@ mod tests {
             (10.0, 10.000_200, 10.000_030 - 100.0),
             (11.0, 11.000_100, 11.000_070 - 100.0),
         ];
-        let c = intersect(&samples).unwrap();
+        let c = intersect(&samples, 0.0).unwrap();
         // Offset interval: [100.000_000 - 0.000_030, 100 + 0.000_030] = the tightest bracket.
         assert!((c.offset_s - 100.0).abs() < 1e-9, "{c:?}");
         assert!((c.half_width_s - 0.000_030).abs() < 1e-9, "{c:?}");
-        assert!(intersect(&[]).is_none());
-        // Disagreeing brackets (a clock that jumped) give no calibration.
-        assert!(intersect(&[(0.0, 1.0, 0.0), (5.0, 6.0, 0.0)]).is_none());
+        // At the middle of the narrowest bracket.
+        assert!((c.at_s - 11.000_050).abs() < 1e-9, "{c:?}");
+        assert!(intersect(&[], 0.0).is_none());
+        // Disagreeing brackets (a clock that jumped) give no calibration, with the drift allowed
+        // as well.
+        assert!(intersect(&[(0.0, 1.0, 0.0), (5.0, 6.0, 0.0)], MAX_CLOCK_DRIFT).is_none());
+    }
+
+    #[test]
+    fn a_slow_gpu_clock_still_calibrates_when_the_rounds_spread_out() {
+        // The 780M's case: GPU time advances 0.19% slower than CPU time. Eight rounds 40 ms apart
+        // (rounds spread out by CPU load), each GPU timestamp 30 us into a 100 us bracket.
+        let (rate, offset_at_5) = (1.0 - 0.0019, 100.0);
+        let gpu_at = |cpu: f64| (cpu - 5.0) * rate + 5.0 - offset_at_5;
+        let samples: Vec<_> = (0..8)
+            .map(|i| {
+                let before = 5.0 + 0.04 * f64::from(i);
+                (before, before + 0.000_100, gpu_at(before + 0.000_030))
+            })
+            .collect();
+        // Without the allowance the first and last rounds disagree (0.19% of 280 ms is 532 us).
+        assert!(intersect(&samples, 0.0).is_none());
+        let c = intersect(&samples, MAX_CLOCK_DRIFT).unwrap();
+        // The true offset at `at_s` lies within the half-width, which stays one bracket's (and
+        // that bracket's own allowance, 0.5% of its 50 us half).
+        let truth = c.at_s - gpu_at(c.at_s);
+        assert!(
+            (c.offset_s - truth).abs() <= c.half_width_s,
+            "{c:?}, truth {truth}"
+        );
+        assert!(c.half_width_s <= 0.000_050_25 + 1e-9, "{c:?}");
     }
 
     #[test]

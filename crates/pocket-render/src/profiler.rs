@@ -4,8 +4,9 @@
 //!
 //! While a frame trace records (trace.rs), every frame's raw timestamps are kept as well, with the
 //! profiler frame they belong to, instead of only the latest frame's durations. Each in-flight
-//! slot owns its queries until readback completes. Metal resolves only after the sampling
-//! submission completes: resolving in that submission can return zero or the previous values.
+//! slot owns its queries until readback completes. Metal, MoltenVK and Vulkan on AMD adapters
+//! resolve only after the sampling submission completes: resolving in that submission returned
+//! zero or earlier values there (on AMD's Vulkan a driver fault, [`deferred_timestamps`]).
 
 use std::sync::{Arc, Mutex};
 
@@ -15,11 +16,29 @@ const RING: usize = 3;
 /// window the GPU may run a few frames behind, so the usual three would drop frames.
 const TRACE_RING: usize = 8;
 
-/// Both native Metal and MoltenVK expose Metal counter samples before they are ready when
-/// resolve is encoded in the sampling submission. Other Vulkan drivers keep the immediate path.
+/// Whether timestamps are resolved only after the submission that sampled them completed (charter,
+/// 2026-10-10 and its Pioneer note of 2026-10-15). Native Metal and MoltenVK expose Metal counter
+/// samples before they are ready when resolve is encoded in the sampling submission. Through wgpu
+/// 30 on the Radeon 780M with AMD's Vulkan driver 24.30.62.03, a resolve in the sampling command
+/// buffer read zeros for a fresh query set's first submission and earlier values afterwards, while
+/// a resolve after that submission completed read none (docs/bench/gpu-matrix.md 3 a). The driver
+/// is at fault (gpu-matrix.md 8, 2026-10-16): wgpu's commands pass the Khronos validation layer
+/// with synchronization validation, and a raw Vulkan reproduction (examples/vk_timestamps.rs)
+/// shows that a buffer copy following vkCmdCopyQueryPoolResults in the same command buffer, behind
+/// the TRANSFER barrier the specification asks for, reads the destination before the query results
+/// land in most rounds. wgpu records an immediate resolve and the readback copy of one encoder into
+/// one command buffer; the resolve of queries an earlier submission wrote goes into a command
+/// buffer of its own (wgpu-core's deferred query resolve), which the driver orders correctly, as it
+/// does a readback copy in a second encoder of the same submit (measured, not used). Every Vulkan
+/// adapter with AMD's vendor id takes the deferred path (only this driver was measured; the path
+/// is correct everywhere, and readings only arrive later). NVIDIA's Vulkan driver and Direct3D 12
+/// on both GPUs read correct values in the same submission and keep the immediate path.
 pub(crate) fn deferred_timestamps(info: &wgpu::AdapterInfo) -> bool {
+    /// AMD's PCI vendor id.
+    const AMD: u32 = 0x1002;
     info.backend == wgpu::Backend::Metal
-        || (info.backend == wgpu::Backend::Vulkan && info.driver.eq_ignore_ascii_case("MoltenVK"))
+        || (info.backend == wgpu::Backend::Vulkan
+            && (info.driver.eq_ignore_ascii_case("MoltenVK") || info.vendor == AMD))
 }
 
 struct Queries {
@@ -307,8 +326,9 @@ impl GpuProfiler {
         Some(i)
     }
 
-    /// Finishes this frame's query list. Metal resolves after sampling completion; other
-    /// backends resolve in the sampling encoder. A busy slot is never overwritten.
+    /// Finishes this frame's query list. Where [`deferred_timestamps`] holds (Metal, MoltenVK,
+    /// Vulkan on AMD adapters) the queries resolve after the sampling submission completes; other
+    /// adapters resolve in the sampling encoder. A busy slot is never overwritten.
     pub fn resolve(&mut self, enc: &mut wgpu::CommandEncoder) {
         let labels = std::mem::take(&mut self.labels);
         if std::mem::take(&mut self.skipped) && self.recording {
@@ -517,4 +537,37 @@ fn gcd(mut a: u64, mut b: u64) -> u64 {
         (a, b) = (b, a % b);
     }
     a
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Which adapters resolve timestamps after their submission: Metal, MoltenVK and Vulkan on AMD
+    /// adapters (on the Radeon 780M `gpu_profiler` and the trace's clock test fail with the
+    /// immediate path); NVIDIA's Vulkan driver and Direct3D 12 keep it.
+    #[test]
+    fn timestamps_resolve_late_where_early_resolves_read_stale_values() {
+        use wgpu::{Backend, DeviceType};
+        let info = |backend, vendor: u32, driver: &str| {
+            let mut i = wgpu::AdapterInfo::new(DeviceType::IntegratedGpu, backend);
+            i.vendor = vendor;
+            i.driver = driver.into();
+            i
+        };
+        for (backend, vendor, driver, deferred) in [
+            (Backend::Metal, 0x106b, "", true),
+            (Backend::Vulkan, 0x106b, "MoltenVK", true),
+            (Backend::Vulkan, 0x1002, "AMD proprietary driver", true),
+            (Backend::Dx12, 0x1002, "", false),
+            (Backend::Vulkan, 0x10de, "NVIDIA", false),
+            (Backend::Dx12, 0x10de, "", false),
+        ] {
+            assert_eq!(
+                deferred_timestamps(&info(backend, vendor, driver)),
+                deferred,
+                "{backend:?} {vendor:#x} {driver}"
+            );
+        }
+    }
 }
