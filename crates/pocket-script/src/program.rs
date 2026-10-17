@@ -405,6 +405,10 @@ impl Program {
         let sh = &host.shared;
         let info = &self.infos[index];
         let entry = &self.entries[index];
+        // The phases' readings, when a benchmark installed a clock (host::PhaseTimes).
+        let clock = sh.phase_clock.get();
+        let started = clock.map(|c| c());
+        let (mut prepared, mut returned) = (None, None);
         let inv = begin_invocation(world, &info.key);
         let serial = sh.serial.get() + 1;
         sh.serial.set(serial);
@@ -427,7 +431,8 @@ impl Program {
             if let Some(h) = &hook {
                 h.call_begin(&call_info);
             }
-            let ran = self.call_run(&ctx, info, entry, tick);
+            let ran = self.call_run(&ctx, info, entry, tick, clock, &mut prepared);
+            returned = clock.map(|c| c());
             used = end_budget(&ctx, sh, steps);
             if let Some(h) = &hook {
                 h.call_returned(crate::js::raw(&ctx), &call_info);
@@ -481,6 +486,7 @@ impl Program {
             let cells = crate::natives::query::changed_cells(&ctx, &call, w)?;
             Ok((cells, call))
         });
+        let diffed = clock.map(|c| c());
         let mut stats = SystemStats {
             steps: used,
             ..SystemStats::default()
@@ -500,6 +506,18 @@ impl Program {
         let outcome = match result {
             Ok(()) => {
                 commit_invocation(world, inv);
+                if let (Some(c), Some(t0), Some(t1), Some(t2), Some(t3)) =
+                    (clock, started, prepared, returned, diffed)
+                {
+                    let t4 = c();
+                    let mut p = sh.phases.get();
+                    p.prepare += t1 - t0;
+                    p.run += t2 - t1;
+                    p.diff += t3 - t2;
+                    p.apply += t4 - t3;
+                    p.calls += 1;
+                    sh.phases.set(p);
+                }
                 SystemOutcome::Ok(stats)
             }
             Err(mut error) => {
@@ -530,6 +548,8 @@ impl Program {
         info: &SystemInfo,
         entry: &SystemEntry,
         tick: &TickInfo,
+        clock: Option<fn() -> f64>,
+        prepared: &mut Option<f64>,
     ) -> Result<(), Value<'js>> {
         let caught = |_| ctx.catch();
         let call_info = Object::new(ctx.clone()).map_err(caught)?;
@@ -563,6 +583,7 @@ impl Program {
         let results = crate::convert::freeze_new(ctx, results).map_err(caught)?;
         let def: Value = entry.def.clone().restore(ctx).map_err(caught)?;
         let run: Function = entry.run.clone().restore(ctx).map_err(caught)?;
+        *prepared = clock.map(|c| c());
         run.call::<_, ()>((This(def), context, results))
             .map_err(caught)?;
         drain_jobs(ctx)

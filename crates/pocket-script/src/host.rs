@@ -65,7 +65,14 @@ impl Default for ScriptLimits {
 /// [`crate::QJS_MSVC`]), the release build took 1,170,892 bytes, 3.2 times clang-cl's 368,468 on
 /// the same day, so its
 /// limit is 2 MiB; unoptimized, both compilers' frames are alike (3,479,908 bytes with cl), and
-/// the debug limit holds for either (docs/bench/xtask.md, 2026-10-09).
+/// the debug limit holds for either (docs/bench/xtask.md, 2026-10-09). P12's computed-goto
+/// dispatch (clang-cl only) enlarges the interpreter's optimized frame: through `Math.sin` as a
+/// closure the release build took 454,442 bytes against 368,468 without it, and 1 MiB still holds
+/// 1.5 times that; the debug build took 3,471,720 with it. Since the engine's `Math` functions but
+/// `hypot` are QuickJS-ng C functions, which take less stack per level (368,468 bytes through
+/// `Math.sin`), the test's host native is `Math.hypot`, still a closure through rquickjs: 470,818
+/// bytes in release and 3,508,566 in debug, inside both limits with 1.5 times the margin; with
+/// cl, 1,187,268 bytes, inside 2 MiB with the margin (2026-10-15, docs/bench/script.md 7.4).
 #[cfg(target_arch = "wasm32")]
 pub const DEFAULT_STACK_BYTES: usize = 256 * 1024;
 #[cfg(all(not(target_arch = "wasm32"), not(debug_assertions)))]
@@ -148,6 +155,28 @@ pub(crate) struct Shared {
     pub debug_read_only: Cell<bool>,
     /// The first tick a debugger evaluated in, and why, until the game takes it.
     pub taint: RefCell<Option<(u64, String)>>,
+    /// The clock that times the phases of system calls, when a benchmark installed one.
+    pub phase_clock: Cell<Option<fn() -> f64>>,
+    /// The phases timed since the last `take_phases`.
+    pub phases: Cell<PhaseTimes>,
+}
+
+/// Where the system calls' time went, by phase, on the clock [`ScriptHost::time_phases`]
+/// installed (in its unit): a benchmark's reading (docs/bench/script.md), never world state. Only
+/// calls that succeed are counted.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct PhaseTimes {
+    /// From the call's start until `run` is called: the transaction opened, the `ctx` object made,
+    /// each query's columns built and wrapped.
+    pub prepare: f64,
+    /// `run` and the jobs it queued.
+    pub run: f64,
+    /// The checks after `run` and the comparison of every handed-over column with its original.
+    pub diff: f64,
+    /// The changed cells and the commands applied, and the transaction committed.
+    pub apply: f64,
+    /// The calls timed.
+    pub calls: u32,
 }
 
 /// The source maps of a program's modules and of the prelude, by module name.
@@ -226,6 +255,8 @@ impl ScriptHost {
             instrumenting: Cell::new(false),
             debug_read_only: Cell::new(false),
             taint: RefCell::new(None),
+            phase_clock: Cell::new(None),
+            phases: Cell::new(PhaseTimes::default()),
         });
         let sh = shared.clone();
         rt.set_interrupt_handler(Some(Box::new(move || {
@@ -263,6 +294,17 @@ impl ScriptHost {
     /// The heap QuickJS-ng holds, in bytes.
     pub fn heap_bytes(&self) -> i64 {
         self.rt.memory_usage().memory_used_size
+    }
+
+    /// Times the phases of every system call with `clock` from now on (`None` stops): five
+    /// readings a call, for benchmarks; no clock costs a branch.
+    pub fn time_phases(&self, clock: Option<fn() -> f64>) {
+        self.shared.phase_clock.set(clock);
+    }
+
+    /// Takes the phases timed since the last call.
+    pub fn take_phases(&self) -> PhaseTimes {
+        self.shared.phases.take()
     }
 
     /// Forgets a call a panic cut short: its state (with the world it borrowed), its maps, its

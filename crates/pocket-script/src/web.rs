@@ -157,10 +157,11 @@ const NAN_JS: &str = r#"(function () {
             Array.from(new Uint8Array(d.buffer)), Array.from(new Uint8Array(h.buffer))];
 })()"#;
 
-/// The deepest frame shape: a JS function, a host native, a JS callback, repeated `N` times
-/// (the evaluated script and the function around it are two levels, so 65 of three calls fit).
+/// The deepest frame shape: a JS function, a host native (`Math.hypot`, a closure through rquickjs),
+/// a JS callback, repeated `N` times (the evaluated script and the function around it are two
+/// levels, so 65 of three calls fit).
 const DEPTH_JS: &str = r#"(function () {
-    function down(n) { return n <= 0 ? 0 : Math.sin({ valueOf: () => down(n - 1) }) * 0 + 1; }
+    function down(n) { return n <= 0 ? 0 : Math.hypot({ valueOf: () => down(n - 1) }) * 0 + 1; }
     return down(N);
 })()"#;
 

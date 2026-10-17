@@ -45,7 +45,7 @@ pub use call::CallCounts;
 #[cfg(feature = "transpile")]
 pub use compile::{CompileOptions, CompileReport, compile, compile_with_report};
 pub use error::{ErrorPhase, JsError, ScriptError, ScriptErrorDetail, SourceLocation, StackFrame};
-pub use host::{LogLine, ScriptHost, ScriptLimits};
+pub use host::{LogLine, PhaseTimes, ScriptHost, ScriptLimits};
 pub use loader::{PRELUDE_JS, PRELUDE_MAP};
 pub use program::{
     Program, SystemInfo, SystemKind, SystemOutcome, SystemStats, TickBudget, TickInfo,
