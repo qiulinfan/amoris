@@ -16,6 +16,7 @@ pub mod mesh;
 pub mod neural;
 pub mod primitives;
 pub mod visual;
+pub mod voxel_mesh;
 
 use amoris_contract::Problem;
 use amoris_sim::{

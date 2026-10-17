@@ -15,14 +15,16 @@
 use std::collections::HashMap;
 
 use amoris_assets::frame::{
-    AnimView, AudioView, CameraView, EmitterView, EnvironmentView, InstanceUpdate, LightKindView,
-    LightView, Look, Pose, RenderFrame, SeaView, SplatView, UiView, WaveView,
+    AnimView, AudioView, BlockLook, CameraView, ChunkUpdate, EmitterView, EnvironmentView,
+    InstanceUpdate, LightKindView, LightView, Look, Pose, RenderFrame, SeaView, SplatView, UiView,
+    VoxelUpdate, WaveView,
 };
 use amoris_assets::{
     Animator, AudioSource, Camera, Environment, Feed, Light, LightKind, Model, ParticleEmitter,
     SkyKind, Splat, UiAnchor, UiBar, UiText,
 };
 use amoris_physics::{Sea, Transform};
+use amoris_sim::voxels::{BlockShape, Voxels};
 use amoris_sim::{EntityId, SimClock};
 use bevy_ecs::change_detection::DetectChanges;
 use bevy_ecs::entity::Entity;
@@ -39,6 +41,89 @@ pub struct Extractor {
     drawn: HashMap<Entity, u64>,
     /// The delta's queries, kept for the world they were made in.
     queries: Option<Queries>,
+    /// Each block volume as last sent: what a change is compared with (voxels.md 7.1).
+    volumes: HashMap<Entity, SentVolume>,
+}
+
+/// A block volume as the subscribers last received it.
+struct SentVolume {
+    id: u64,
+    origin: [f32; 3],
+    cell_m: f32,
+    blocks: Vec<BlockLook>,
+    chunks: HashMap<[i32; 3], Box<[u8]>>,
+}
+
+fn block_looks(v: &Voxels) -> Vec<BlockLook> {
+    v.palette
+        .iter()
+        .map(|b| BlockLook {
+            shape: match b.shape {
+                BlockShape::Cube => 0,
+                BlockShape::Cross => 1,
+                BlockShape::Liquid => 2,
+            },
+            faces: b.faces.clone(),
+        })
+        .collect()
+}
+
+/// The update that brings `sent` (none: nothing sent yet) to `v` at `origin`, or `None` when
+/// nothing changed; `sent` is brought up to date.
+fn volume_update(
+    sent: &mut Option<SentVolume>,
+    id: u64,
+    v: &Voxels,
+    origin: [f32; 3],
+) -> Option<VoxelUpdate> {
+    let blocks = block_looks(v);
+    let cell_m = f(v.cell_m);
+    let s = sent.get_or_insert_with(|| SentVolume {
+        id,
+        origin,
+        cell_m,
+        blocks: Vec::new(),
+        chunks: HashMap::new(),
+    });
+    let mut update = VoxelUpdate {
+        id,
+        origin,
+        cell_m,
+        blocks: None,
+        chunks: Vec::new(),
+    };
+    let mut changed = s.origin != origin || s.cell_m != cell_m;
+    if s.blocks != blocks {
+        // New looks redraw every chunk; the renderer remeshes them all.
+        s.blocks = blocks.clone();
+        update.blocks = Some(blocks);
+        changed = true;
+    }
+    (s.origin, s.cell_m) = (origin, cell_m);
+    let mut present = std::collections::HashSet::with_capacity(v.chunks.len());
+    for c in &v.chunks {
+        present.insert(c.key);
+        if s.chunks.get(&c.key).is_some_and(|old| **old == *c.cells.0) {
+            continue;
+        }
+        s.chunks.insert(c.key, c.cells.0.clone());
+        update.chunks.push(ChunkUpdate {
+            key: c.key,
+            cells: Some(c.cells.0.to_vec()),
+        });
+    }
+    let mut gone: Vec<[i32; 3]> = s
+        .chunks
+        .keys()
+        .filter(|k| !present.contains(*k))
+        .copied()
+        .collect();
+    gone.sort_unstable();
+    for key in gone {
+        s.chunks.remove(&key);
+        update.chunks.push(ChunkUpdate { key, cells: None });
+    }
+    (changed || !update.chunks.is_empty()).then_some(update)
 }
 
 type Opt<T> = Option<Ref<'static, T>>;
@@ -65,6 +150,12 @@ struct Queries {
     audio: QueryState<(Opt<Transform>, Ref<'static, AudioSource>)>,
     ui: QueryState<UiRow, UiFilter>,
     splats: QueryState<(Ref<'static, Transform>, Ref<'static, Splat>)>,
+    voxels: QueryState<(
+        Entity,
+        &'static EntityId,
+        Ref<'static, Voxels>,
+        Opt<Transform>,
+    )>,
 }
 
 impl Queries {
@@ -80,6 +171,7 @@ impl Queries {
             audio: QueryState::new(world),
             ui: QueryState::new(world),
             splats: QueryState::new(world),
+            voxels: QueryState::new(world),
         }
     }
 }
@@ -237,6 +329,20 @@ impl Extractor {
         frame.ui = Some(Self::ui(world));
         frame.audio = Some(Self::audio(world));
         frame.emitters = Some(Self::emitters(world));
+        self.volumes.clear();
+        let mut q = world.query::<(Entity, &EntityId, &Voxels, Option<&Transform>)>();
+        let mut rows: Vec<_> = q.iter(world).collect();
+        rows.sort_unstable_by_key(|r| r.1.get());
+        for (e, id, v, t) in rows {
+            let mut sent = None;
+            let origin = t.map_or([0.0; 3], |t| f3(t.position));
+            if let Some(u) = volume_update(&mut sent, id.get(), v, origin) {
+                frame.voxels.push(u);
+            }
+            if let Some(s) = sent {
+                self.volumes.insert(e, s);
+            }
+        }
         frame
     }
 
@@ -345,6 +451,40 @@ impl Extractor {
         }
         if splats {
             frame.splats = Some(Self::splats(world));
+        }
+        // Block volumes: the chunks that changed, and the volumes gone.
+        let gone: Vec<Entity> = world.removed::<Voxels>().collect();
+        for e in gone {
+            let still = world
+                .get_entity(e)
+                .ok()
+                .is_some_and(|r| r.contains::<Voxels>());
+            if !still && let Some(s) = self.volumes.remove(&e) {
+                frame.voxels_removed.push(s.id);
+            }
+        }
+        if let Some(q) = self.queries.as_mut() {
+            let mut rows: Vec<_> = q
+                .voxels
+                .iter(&*world)
+                .filter(|(e, _, v, t)| {
+                    !self.volumes.contains_key(e)
+                        || v.is_changed()
+                        || t.as_ref().is_some_and(|t| t.is_changed())
+                })
+                .map(|(e, id, v, t)| (e, id.get(), v, t))
+                .collect();
+            rows.sort_unstable_by_key(|r| r.1);
+            for (e, id, v, t) in rows {
+                let mut sent = self.volumes.remove(&e);
+                let origin = t.map_or([0.0; 3], |t| f3(t.position));
+                if let Some(u) = volume_update(&mut sent, id, &v, origin) {
+                    frame.voxels.push(u);
+                }
+                if let Some(s) = sent {
+                    self.volumes.insert(e, s);
+                }
+            }
         }
         frame
     }

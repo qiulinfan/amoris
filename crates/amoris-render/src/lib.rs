@@ -42,6 +42,7 @@ pub mod trace;
 mod transparent;
 mod ui;
 mod upload;
+pub mod voxels;
 
 pub use camera::CameraState;
 pub use gpu::{BackendChoice, Gpu, GpuError};

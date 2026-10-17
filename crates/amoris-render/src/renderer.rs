@@ -266,6 +266,20 @@ impl Resolve for Pools<'_> {
             .get(&look.mesh)
             .filter(|_| !look.mesh.contains('.'))
         {
+            // A built-in or generated mesh with an asset's material (`blocks.gltf#stone`) loads
+            // that asset; until it has, the entity waits.
+            if !look.material.is_empty() && !self.materials.has_asset(&look.material) {
+                let path = look
+                    .material
+                    .split_once('#')
+                    .map_or(&*look.material, |p| p.0);
+                if !self.failed.contains(path) && self.requested.insert(path.to_owned()) {
+                    self.loader.request(path);
+                }
+                if !self.failed.contains(path) {
+                    return None;
+                }
+            }
             let material = self.materials.resolve(look)?;
             return Some(vec![Part {
                 mesh,
@@ -360,6 +374,8 @@ pub struct Renderer {
     output: wgpu::TextureFormat,
     pub scene: Scene,
     meshes: MeshPool,
+    /// Block volumes, meshed per chunk into `meshes` (voxels.md 7.2).
+    voxels: crate::voxels::Voxels,
     materials: MaterialPool,
     models: HashMap<String, Model>,
     loader: Box<dyn AssetSource>,
@@ -1268,6 +1284,7 @@ impl Renderer {
             output,
             scene: Scene::new(),
             meshes: built.meshes,
+            voxels: crate::voxels::Voxels::default(),
             materials: MaterialPool::new(device),
             models: HashMap::new(),
             loader: Box::new(NoAssets),
@@ -1891,7 +1908,19 @@ impl Renderer {
     }
 
     /// Applies a frame of the render feed; `now_s` is the wall clock (interpolation).
-    pub fn apply(&mut self, frame: RenderFrame, now_s: f64) {
+    pub fn apply(&mut self, mut frame: RenderFrame, now_s: f64) {
+        if frame.reset {
+            self.voxels.clear();
+        }
+        if !frame.voxels.is_empty() || !frame.voxels_removed.is_empty() {
+            let changes = self.voxels.apply(&frame.voxels, &frame.voxels_removed);
+            for (key, mesh) in &changes.meshes {
+                self.meshes
+                    .replace(&self.gpu.device, &self.gpu.queue, key, mesh);
+            }
+            frame.removed.extend(changes.removed);
+            frame.instances.extend(changes.instances);
+        }
         if frame.reset {
             self.gi.asset.clear();
             self.gi.loading = false;
@@ -2185,9 +2214,11 @@ impl Renderer {
         // Ray-traced shadows meet the full meshes: a receiver drawn coarser than the mesh its rays
         // start from shadows itself (docs/spec/lod.md 7), so they draw full meshes.
         let want_lod = self.lod.on() && self.rt_shadows.is_none();
+        let replaced = self.meshes.take_replaced();
         if self.scene.counts_changed
             || mesh_count != self.draw_meshes
             || self.regions_want != Some(want_lod)
+            || !replaced.is_empty()
         {
             self.scene.counts_changed = false;
             // Whether the last layout already gave levels up at the limit (warn once, not at every
@@ -2304,7 +2335,13 @@ impl Renderer {
             self.light_count = lights.len() as u32;
         }
         if let Some(rt) = &mut self.rt_shadows {
-            grown |= rt.prepare(device, queue, &self.meshes, self.scene.slots.len());
+            grown |= rt.prepare(
+                device,
+                queue,
+                &self.meshes,
+                self.scene.slots.len(),
+                &replaced,
+            );
         }
         if self.format.motion {
             // The slots TAA's object motion must read last frame's pose for.
@@ -3233,6 +3270,17 @@ impl Renderer {
         self.overlays.draw_grid(device, pass, &self.view_stable.buf);
     }
 
+    /// The block cell a ray from `from` along the unit `dir` meets first within `max_m`: its world
+    /// corner and edge (voxels.md 8: the targeted block's outline).
+    pub fn voxel_target(
+        &self,
+        from: [f32; 3],
+        dir: [f32; 3],
+        max_m: f32,
+    ) -> Option<([f32; 3], f32)> {
+        self.voxels.target(from, dir, max_m)
+    }
+
     /// The entity a ray through pixel (x, y) of the output hits first, with the distance and the
     /// world point: a CPU test of each drawn part's oriented bounding box, answered at once (the
     /// editor's click; the GPU id pass answers coverage questions).
@@ -3283,7 +3331,7 @@ impl Renderer {
                 if best.is_none_or(|(_, bt)| t < bt)
                     && let Some(e) = self.scene.entity_of_slot(slot as u32)
                 {
-                    best = Some((e, t));
+                    best = Some((self.voxels.owner(e), t));
                 }
             }
         }
@@ -3380,7 +3428,9 @@ impl Renderer {
                 .get((id & !crate::splat::SPLAT_PICK) as usize)
                 .copied()
         } else {
-            self.scene.entity_of_slot(id - 1)
+            self.scene
+                .entity_of_slot(id - 1)
+                .map(|e| self.voxels.owner(e))
         }
     }
 

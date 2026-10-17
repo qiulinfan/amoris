@@ -108,6 +108,46 @@ pub struct MeshPool {
     info_dirty: bool,
     /// Bumped whenever a buffer is replaced.
     pub generation: u64,
+    /// The rows [`MeshPool::replace`] rewrote since `take_replaced`: the draw arguments' template
+    /// copies their ranges, and ray-traced shadows their geometry.
+    replaced: Vec<u32>,
+    /// The vertex and index byte ranges of [`MeshPool::replace`]'s rows, by row.
+    replaceable: HashMap<u32, (Range, Range)>,
+    /// Byte ranges freed by replaced rows, sorted and coalesced: reused first-fit.
+    free_vertices: Vec<Range>,
+    free_indices: Vec<Range>,
+}
+
+/// A byte range of a buffer: start and length.
+type Range = (u64, u64);
+
+/// Returns `r` to `free`, merged with its neighbours.
+fn release(free: &mut Vec<Range>, r: Range) {
+    if r.1 == 0 {
+        return;
+    }
+    let at = free.partition_point(|f| f.0 < r.0);
+    free.insert(at, r);
+    if at + 1 < free.len() && free[at].0 + free[at].1 == free[at + 1].0 {
+        free[at].1 += free[at + 1].1;
+        free.remove(at + 1);
+    }
+    if at > 0 && free[at - 1].0 + free[at - 1].1 == free[at].0 {
+        free[at - 1].1 += free[at].1;
+        free.remove(at);
+    }
+}
+
+/// The first free range of `len` bytes, taken from `free`.
+fn take(free: &mut Vec<Range>, len: u64) -> Option<u64> {
+    let i = free.iter().position(|f| f.1 >= len)?;
+    let start = free[i].0;
+    if free[i].1 == len {
+        free.remove(i);
+    } else {
+        free[i] = (start + len, free[i].1 - len);
+    }
+    Some(start)
 }
 
 const VERTEX: u64 = std::mem::size_of::<Vertex>() as u64;
@@ -161,7 +201,131 @@ impl MeshPool {
             index_len: 0,
             info_dirty: false,
             generation: 0,
+            replaced: Vec::new(),
+            replaceable: HashMap::new(),
+            free_vertices: Vec::new(),
+            free_indices: Vec::new(),
         }
+    }
+
+    /// Bytes for `len` more vertices or indices: a freed range, else the buffer's end (growing it).
+    fn allocate(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        vertices: bool,
+        len: u64,
+    ) -> u64 {
+        if len == 0 {
+            return 0;
+        }
+        let free = if vertices {
+            &mut self.free_vertices
+        } else {
+            &mut self.free_indices
+        };
+        if let Some(start) = take(free, len) {
+            return start;
+        }
+        if vertices {
+            if self.vertex_len + len > self.vertices.size() {
+                self.vertices = Self::grow(
+                    device,
+                    queue,
+                    &self.vertices,
+                    self.vertex_len,
+                    self.vertex_len + len,
+                    "mesh vertices",
+                    wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::STORAGE,
+                );
+                self.generation += 1;
+            }
+            let start = self.vertex_len;
+            self.vertex_len += len;
+            start
+        } else {
+            if self.index_len + len > self.indices.size() {
+                self.indices = Self::grow(
+                    device,
+                    queue,
+                    &self.indices,
+                    self.index_len,
+                    self.index_len + len,
+                    "mesh indices",
+                    wgpu::BufferUsages::INDEX,
+                );
+                self.generation += 1;
+            }
+            let start = self.index_len;
+            self.index_len += len;
+            start
+        }
+    }
+
+    /// Uploads `mesh` (its first level only) under `key`, replacing what the key held: the row and
+    /// its id stay, so the instances drawing it draw the new triangles; its old bytes are freed for
+    /// later meshes (voxels.md 7.2: a remeshed chunk). An empty mesh leaves the row drawing nothing.
+    pub fn replace(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        key: &str,
+        mesh: &MeshData,
+    ) -> u32 {
+        let vbytes = mesh.vertices.len() as u64 * VERTEX;
+        let ibytes = mesh.indices.len() as u64 * 4;
+        let id = match self.by_key.get(key) {
+            Some(&id) => {
+                let (v, i) = self.replaceable.remove(&id).unwrap_or_default();
+                release(&mut self.free_vertices, v);
+                release(&mut self.free_indices, i);
+                id
+            }
+            None => {
+                let id = self.infos.len() as u32;
+                self.infos.push(MeshInfo {
+                    lods: pack_lods(1, id as usize + 1),
+                    ..MeshInfo::default()
+                });
+                self.names.push(key.to_owned());
+                self.boxes.push(([0.0; 3], [0.0; 3]));
+                self.vertex_counts.push(0);
+                self.dynamic.push(false);
+                self.owner.push(id);
+                self.by_key.insert(key.to_owned(), id);
+                id
+            }
+        };
+        let vstart = self.allocate(device, queue, true, vbytes);
+        let istart = self.allocate(device, queue, false, ibytes);
+        if vbytes > 0 {
+            queue.write_buffer(&self.vertices, vstart, bytemuck::cast_slice(&mesh.vertices));
+            queue.write_buffer(&self.indices, istart, bytemuck::cast_slice(&mesh.indices));
+        }
+        self.replaceable
+            .insert(id, ((vstart, vbytes), (istart, ibytes)));
+        let (box_center, box_half) = center_half(mesh.bounds.min, mesh.bounds.max);
+        let row = &mut self.infos[id as usize];
+        row.center = mesh.bounds.center;
+        row.radius = mesh.bounds.radius;
+        row.index_count = mesh.indices.len() as u32;
+        row.first_index = (istart / 4) as u32;
+        row.base_vertex = (vstart / VERTEX) as i32;
+        row.box_center = box_center;
+        row.box_half = box_half;
+        self.boxes[id as usize] = (mesh.bounds.min, mesh.bounds.max);
+        self.vertex_counts[id as usize] = mesh.vertices.len() as u32;
+        self.info_dirty = true;
+        self.replaced.push(id);
+        id
+    }
+
+    /// The rows replaced since the last call, sorted, each once.
+    pub fn take_replaced(&mut self) -> Vec<u32> {
+        let mut rows = std::mem::take(&mut self.replaced);
+        rows.sort_unstable();
+        rows.dedup();
+        rows
     }
 
     pub fn get(&self, key: &str) -> Option<u32> {

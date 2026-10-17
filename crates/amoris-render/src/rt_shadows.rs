@@ -362,24 +362,46 @@ impl RtShadows {
         })
     }
 
-    /// Builds the bottom levels of static meshes added since the last call and the masked copies
-    /// the last frame asked for, and grows the top level and its table to `slots` instances.
-    /// Returns whether those were replaced (bind groups hold them).
+    /// Builds the bottom levels of static meshes added since the last call, rebuilds those of the
+    /// rows `replaced` (`MeshPool::replace`: remeshed chunks), builds the masked copies the last
+    /// frame asked for, and grows the top level and its table to `slots` instances. Returns whether
+    /// those were replaced (bind groups hold them). An empty mesh gets no bottom level.
     pub fn prepare(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         meshes: &MeshPool,
         slots: usize,
+        replaced: &[u32],
     ) -> bool {
+        let empty = |id: u32| meshes.infos[id as usize].index_count == 0;
+        let old = self.blas.len() as u32;
+        let again: Vec<u32> = replaced
+            .iter()
+            .copied()
+            .filter(|&id| id < old && !meshes.dynamic[id as usize] && !meshes.is_level(id))
+            .collect();
+        if !again.is_empty() {
+            let build: Vec<u32> = again.iter().copied().filter(|&id| !empty(id)).collect();
+            let mut built = build_blas(device, queue, meshes, &build, true, self.metal).into_iter();
+            for &id in &again {
+                self.masked.remove(&id);
+                self.blas[id as usize] = if empty(id) { None } else { built.next() };
+            }
+            self.stale = true;
+        }
         if self.blas.len() < meshes.len() {
             let first = self.blas.len() as u32;
             let ids: Vec<u32> = (first..meshes.len() as u32)
-                .filter(|&id| !meshes.dynamic[id as usize] && !meshes.is_level(id))
+                .filter(|&id| !meshes.dynamic[id as usize] && !meshes.is_level(id) && !empty(id))
                 .collect();
             let mut built = build_blas(device, queue, meshes, &ids, true, self.metal).into_iter();
             for id in first..meshes.len() as u32 {
                 if meshes.is_level(id) {
+                    self.blas.push(None);
+                    continue;
+                }
+                if !meshes.dynamic[id as usize] && empty(id) {
                     self.blas.push(None);
                     continue;
                 }

@@ -124,7 +124,35 @@ fn scripts_edit_volumes_and_a_walker_lands_on_them() {
         let setup = Arc::new(p.setup(false).unwrap_or_else(|e| panic!("{e:#?}")));
         let mut g = Game::new(setup, 1).unwrap_or_else(|e| panic!("{e:#?}"));
         let before = g.world_hash().unwrap();
+        // The render feed: a full frame sends the loaded chunk, the build's tick its changes.
+        let feed = amoris_assets::Feed::new();
+        let viewport = feed.subscribe();
+        let mut x = amoris_runtime::Extractor::new();
+        g.present(&mut x, &feed);
+        let full = viewport.take();
+        assert_eq!(full.voxels.len(), 1);
+        assert_eq!(full.voxels[0].chunks.len(), 1);
+        assert_eq!(full.voxels[0].blocks.as_ref().map(Vec::len), Some(3));
         g.step().unwrap();
+        g.present(&mut x, &feed);
+        let delta = viewport.take();
+        assert_eq!(delta.voxels.len(), 1, "{:?}", delta.voxels.len());
+        assert!(
+            delta.voxels[0].blocks.is_none(),
+            "the palette did not change"
+        );
+        assert_eq!(
+            delta.voxels[0].chunks.len(),
+            1,
+            "the floor is in the loaded chunk 0"
+        );
+        assert_eq!(delta.voxels[0].chunks[0].key, [0, 0, 0]);
+        g.step().unwrap();
+        g.present(&mut x, &feed);
+        assert!(
+            viewport.take().voxels.is_empty(),
+            "a tick without edits sends no volume"
+        );
         let probe = get(
             &mut g,
             "Probe",

@@ -201,6 +201,32 @@ pub struct AudioView {
     pub position: [f32; 3],
 }
 
+/// How a block draws (voxels.md 7.1): `shape` 0 a cube (`faces`: top, side, bottom), 1 two
+/// crossed quads (`faces[0]`), 2 a liquid (`faces[0]`).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BlockLook {
+    pub shape: u8,
+    pub faces: [String; 3],
+}
+
+/// One chunk's cells (4096 palette indices, x fastest, then z, then y), or `None`: all air now.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ChunkUpdate {
+    pub key: [i32; 3],
+    pub cells: Option<Vec<u8>>,
+}
+
+/// A block volume's change (voxels.md 7.1): where it is, its palette's looks when they changed,
+/// and the chunks that changed.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct VoxelUpdate {
+    pub id: u64,
+    pub origin: [f32; 3],
+    pub cell_m: f32,
+    pub blocks: Option<Vec<BlockLook>>,
+    pub chunks: Vec<ChunkUpdate>,
+}
+
 /// What changed in the visual state since the subscriber's last frame.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct RenderFrame {
@@ -232,6 +258,12 @@ pub struct RenderFrame {
     /// The full list of particle emitters, when any changed or moved.
     #[serde(default)]
     pub emitters: Option<Vec<EmitterView>>,
+    /// Block volumes that changed (voxels.md 7.1).
+    #[serde(default)]
+    pub voxels: Vec<VoxelUpdate>,
+    /// Block volumes gone.
+    #[serde(default)]
+    pub voxels_removed: Vec<u64>,
 }
 
 impl RenderFrame {
@@ -248,6 +280,8 @@ impl RenderFrame {
             && self.ui.is_none()
             && self.audio.is_none()
             && self.emitters.is_none()
+            && self.voxels.is_empty()
+            && self.voxels_removed.is_empty()
     }
 
     /// Folds `next` (a later frame) into this one, as if both had been applied in order.
@@ -321,6 +355,29 @@ impl RenderFrame {
         }
         if next.emitters.is_some() {
             self.emitters = next.emitters;
+        }
+        if !next.voxels_removed.is_empty() {
+            self.voxels.retain(|v| !next.voxels_removed.contains(&v.id));
+            self.voxels_removed.extend(next.voxels_removed);
+        }
+        for v in next.voxels {
+            self.voxels_removed.retain(|&id| id != v.id);
+            match self.voxels.iter_mut().find(|o| o.id == v.id) {
+                Some(cur) => {
+                    cur.origin = v.origin;
+                    cur.cell_m = v.cell_m;
+                    if v.blocks.is_some() {
+                        cur.blocks = v.blocks;
+                    }
+                    for c in v.chunks {
+                        match cur.chunks.iter_mut().find(|o| o.key == c.key) {
+                            Some(o) => *o = c,
+                            None => cur.chunks.push(c),
+                        }
+                    }
+                }
+                None => self.voxels.push(v),
+            }
         }
     }
 

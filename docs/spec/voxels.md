@@ -241,13 +241,19 @@ pub struct VoxelUpdate {
   `liquid` (a different liquid's face too); faces are grouped by material; UVs repeat per cell, so a
   texture covers one block face. It is a pure function, tested headless.
 - The renderer (`amoris-render/src/voxels.rs`) keeps each volume's cells, remeshes an edited chunk
-  and those of its neighbours whose shared layer changed, and gives each chunk's material groups
-  to the scene as meshes and instances: every pass (culling, Hi-Z, prepass, shadows, TAA motion,
-  picking, transparency for liquids, cut-outs for plants) draws them as any instance.
-- `MeshPool` gains `remove(key)` with a free list of vertex and index ranges (first fit, coalescing
-  neighbours; growth as today); a remeshed chunk frees its old ranges and its instances rebuild
-  their parts. Mesh ids are not reused within a frame.
-- Each volume's chunk meshes carry the volume's entity id for picking.
+  and its six neighbours, and gives each chunk's material groups to the scene as meshes and
+  instances (ids from 2^60, above every entity id): every pass (culling, Hi-Z, prepass, shadows, TAA
+  motion, picking, transparency for liquids, cut-outs for plants) draws them as any instance. A
+  group whose material no longer appears in its chunk loses its instance.
+- `MeshPool::replace(key, mesh)` (amended during implementation; first proposed as `remove`): the
+  key keeps its row and row id, so the instances drawing it need no rebuild; its old vertex and
+  index ranges go to free lists (first fit, coalescing neighbours) that later meshes take before
+  the buffers grow; the draw arguments' template, which copies each row's ranges, is rebuilt after
+  a replace, and ray-traced shadows rebuild the replaced rows' bottom levels. An empty mesh leaves
+  its row drawing nothing.
+- A part's look names its material (`blocks.gltf#stone`); a generated or built-in mesh whose
+  material names an asset not loaded yet loads that asset, as a model's mesh path would.
+- Picking (`pick_ray`, the id pass) answers a part with its volume's entity id.
 
 ## 8. The native window
 
@@ -280,7 +286,7 @@ draw paths are checked under the WebGPU baseline with the existing draw-path too
 | Walker: walks, stops at walls, cannot step up a cell, jumps onto one, falls, hits its head, determinism across a fork | `amoris-physics` tests |
 | `first_person`: controls write `Walker`, pulses act one tick, replay of a break and a place | `amoris-runtime --features transpile` tests |
 | Mesher: culling, chunk borders, cross, liquid, material groups | `amoris-assets` tests |
-| `MeshPool::remove` reuse and coalescing; a remeshed chunk draws the new cells | `amoris-render` tests (GPU) |
+| Parts and remeshing of neighbours; after breaks and placements across chunk borders the kept renderer draws as a fresh one, also with ray-traced shadows | `amoris-render --lib voxels`, `--test voxels` (GPU) |
 | Every draw path draws volumes alike | `tests/draw_paths.rs`, `tools/web_draw_paths.py` |
 | Cost: edit-tick snapshot, worker snapshot, remesh time, frame time of blockcraft | docs/bench/voxels.md |
 
