@@ -1,0 +1,16 @@
+{
+  "//": "Written by the engine (scripts.types) for tsc and editors; pocket maps to the generated .pocket/types.",
+  "compilerOptions": {
+    "strict": true,
+    "noEmit": true,
+    "isolatedModules": true,
+    "allowImportingTsExtensions": true,
+    "target": "es2023",
+    "lib": ["es2023"],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "types": [],
+    "paths": { "pocket": ["./.pocket/types/pocket.d.ts"] }
+  },
+  "include": ["scripts"]
+}

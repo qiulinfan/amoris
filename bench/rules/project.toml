@@ -1,0 +1,8 @@
+# The rule workload of docs/spec/budgets.md 4 (charter 4.2): 1,000 entities that each tick read
+# components, compute damage, write back and emit events, through the script host's batch queries.
+# The rule is the script-native spike's (docs/spikes/script-native.md), as slice 2 ported it
+# (57ed4ea1). `pocket-script`'s example `rules_bench` runs it, its Rust twin and two probes;
+# docs/bench/script.md says how.
+name = "rules"
+rate = 60
+seed = 1
