@@ -16,8 +16,10 @@ fn body(code: &str) -> String {
         r#"import {{ game, system }} from "pocket";
 function down(n: number): number {{
     if (n <= 0) return 0;
-    // A JS function, a host native (Math.sin coerces its argument), a JS callback.
-    return Math.sin({{ valueOf: () => down(n - 1) }} as any) * 0 + 1;
+    // A JS function, a host native through rquickjs's closure trampoline (Math.hypot coerces
+    // its arguments; Math.sin is a QuickJS-ng C function, which used less stack here: 368,468
+    // bytes in release against Math.hypot's 470,818, 2026-10-15), a JS callback.
+    return Math.hypot({{ valueOf: () => down(n - 1) }} as any) * 0 + 1;
 }}
 function plain(n: number): number {{ return n <= 0 ? 0 : plain(n - 1) + 1; }}
 const probe = system({{
@@ -62,7 +64,7 @@ fn depth_fails_at_exactly_the_limit() {
     // `run` is the first level; plain(n) is n + 1 nested calls, so plain(198) is the deepest.
     assert_eq!(outcome("plain(198);", limits, BIG), "ok");
     assert_eq!(outcome("plain(199);", limits, BIG), "script.call_depth");
-    // Each `down` level is three calls (down, Math.sin, valueOf): down(n) is 3n + 1.
+    // Each `down` level is three calls (down, Math.hypot, valueOf): down(n) is 3n + 1.
     assert_eq!(outcome("down(66);", limits, BIG), "ok");
     assert_eq!(outcome("down(67);", limits, BIG), "script.call_depth");
     // A script cannot catch it.

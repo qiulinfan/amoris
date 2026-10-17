@@ -5,9 +5,10 @@
 //! any project module evaluates.
 
 use std::collections::BTreeSet;
+use std::ffi::CString;
 
 use rquickjs::function::{Opt, Rest};
-use rquickjs::{Coerced, Ctx, Function, Object, Value};
+use rquickjs::{Coerced, Ctx, Function, Object, Value, qjs};
 
 use pocket_sim::math;
 
@@ -158,10 +159,68 @@ fn refuse<'js>(ctx: Ctx<'js>, _args: Rest<Value<'js>>) -> rquickjs::Result<Value
     Err(crate::caught::throw(&ctx, &e))
 }
 
-macro_rules! unary {
-    ($obj:ident, $ctx:ident, $($js:literal => $f:path),* $(,)?) => {
-        $( $obj.set($js, Function::new($ctx.clone(), |x: Coerced<f64>| $f(x.0))?.with_name($js)?)?; )*
+/// A `Math` function QuickJS-ng calls with plain doubles, as it calls its own `Math.sin`.
+#[derive(Clone, Copy)]
+enum CMath {
+    /// `JS_CFUNC_f_f`: one argument.
+    Unary(extern "C" fn(f64) -> f64),
+    /// `JS_CFUNC_f_f_f`: two.
+    Binary(extern "C" fn(f64, f64) -> f64),
+}
+
+/// The engine's `Math` function `f` as a QuickJS-ng C function named `name` (docs/bench/script.md,
+/// section 7): QuickJS-ng converts the arguments itself (`ToNumber`, so a `valueOf` runs as for any
+/// builtin, and a missing argument is `undefined`, NaN) and the result (an integral one becomes an
+/// integer value, as rquickjs's conversion did), with no closure trampoline in between. It also
+/// pushes a native frame, so an error thrown inside one shows `at sin (native)` in `e.stack`. The
+/// functions are `pocket_sim::math`'s, `libm`'s ports of musl over doubles; they run without
+/// `catch_unwind`, and a panic in one would abort the process at the `extern "C"` edge rather than
+/// unwind through C. The panicking paths found in `libm` are its debug-build checks on paths its
+/// invariants rule out, which numeric.md 6's sweeps sample and do not prove: script-sandbox.md 4.3
+/// records the exception.
+fn c_function<'js>(ctx: &Ctx<'js>, name: &str, f: CMath) -> rquickjs::Result<Value<'js>> {
+    let cname = CString::new(name).map_err(|_| rquickjs::Error::Exception)?;
+    // SAFETY: QuickJS-ng keeps a C function in a union (`JSCFunctionType`) and calls it through the
+    // member `cproto` names: `f_f` takes and returns a double, `f_f_f` takes two. Its own `Math`
+    // functions are registered this way (`JS_CFUNC_SPECIAL_DEF`); the pointer is never called
+    // through `generic`.
+    let (func, length, cproto) = unsafe {
+        match f {
+            CMath::Unary(f) => (
+                std::mem::transmute::<extern "C" fn(f64) -> f64, qjs::JSCFunction>(f),
+                1,
+                qjs::JSCFunctionEnum_JS_CFUNC_f_f,
+            ),
+            CMath::Binary(f) => (
+                std::mem::transmute::<extern "C" fn(f64, f64) -> f64, qjs::JSCFunction>(f),
+                2,
+                qjs::JSCFunctionEnum_JS_CFUNC_f_f_f,
+            ),
+        }
     };
+    // SAFETY: a live context; QuickJS-ng copies the name into an atom.
+    let raw = unsafe {
+        qjs::JS_NewCFunction2(crate::js::raw(ctx), func, cname.as_ptr(), length, cproto, 0)
+    };
+    // SAFETY: `raw` is a new reference the value takes over.
+    let v = unsafe { Value::from_raw(ctx.clone(), raw) };
+    if v.is_exception() {
+        return Err(rquickjs::Error::Exception);
+    }
+    Ok(v)
+}
+
+macro_rules! c_math {
+    ($obj:ident, $ctx:ident, $($js:literal => |$($x:ident),+| $body:expr),* $(,)?) => {
+        $({
+            extern "C" fn f($($x: f64),+) -> f64 {
+                $body
+            }
+            $obj.set($js, c_function($ctx, $js, c_math!(@kind f, $($x),+))?)?;
+        })*
+    };
+    (@kind $f:ident, $x:ident) => { CMath::Unary($f) };
+    (@kind $f:ident, $x:ident, $y:ident) => { CMath::Binary($f) };
 }
 
 /// `Math.pow` with ECMAScript's special cases over the engine's `pow` (numeric.md 6.3): a NaN
@@ -203,27 +262,16 @@ pub fn js_hypot(args: &[f64]) -> f64 {
 
 fn math_object<'js>(ctx: &Ctx<'js>) -> rquickjs::Result<Object<'js>> {
     let m = Object::new(ctx.clone())?;
-    unary!(m, ctx,
-        "sin" => math::sin, "cos" => math::cos, "tan" => math::tan, "asin" => math::asin,
-        "acos" => math::acos, "atan" => math::atan, "sinh" => math::sinh, "cosh" => math::cosh,
-        "tanh" => math::tanh, "asinh" => math::asinh, "acosh" => math::acosh,
-        "atanh" => math::atanh, "exp" => math::exp, "expm1" => math::expm1, "log" => math::ln,
-        "log1p" => math::ln_1p, "log2" => math::log2, "log10" => math::log10, "cbrt" => math::cbrt,
+    c_math!(m, ctx,
+        "sin" => |x| math::sin(x), "cos" => |x| math::cos(x), "tan" => |x| math::tan(x),
+        "asin" => |x| math::asin(x), "acos" => |x| math::acos(x), "atan" => |x| math::atan(x),
+        "sinh" => |x| math::sinh(x), "cosh" => |x| math::cosh(x), "tanh" => |x| math::tanh(x),
+        "asinh" => |x| math::asinh(x), "acosh" => |x| math::acosh(x),
+        "atanh" => |x| math::atanh(x), "exp" => |x| math::exp(x), "expm1" => |x| math::expm1(x),
+        "log" => |x| math::ln(x), "log1p" => |x| math::ln_1p(x), "log2" => |x| math::log2(x),
+        "log10" => |x| math::log10(x), "cbrt" => |x| math::cbrt(x),
+        "atan2" => |y, x| math::atan2(y, x), "pow" => |x, y| js_pow(x, y),
     );
-    m.set(
-        "atan2",
-        Function::new(ctx.clone(), |y: Coerced<f64>, x: Coerced<f64>| {
-            math::atan2(y.0, x.0)
-        })?
-        .with_name("atan2")?,
-    )?;
-    m.set(
-        "pow",
-        Function::new(ctx.clone(), |x: Coerced<f64>, y: Coerced<f64>| {
-            js_pow(x.0, y.0)
-        })?
-        .with_name("pow")?,
-    )?;
     m.set(
         "hypot",
         Function::new(ctx.clone(), |v: Rest<Coerced<f64>>| {

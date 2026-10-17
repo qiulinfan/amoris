@@ -242,3 +242,46 @@ fn the_runtime_reads_no_clock() {
     );
     println!("QuickJS-ng compiled by {}", pocket_script::QJS_CC);
 }
+
+#[test]
+fn the_engine_math_functions_are_builtins() {
+    // They are QuickJS-ng C functions over the engine's library (sandbox.rs, `c_math!`): named and
+    // sized as ECMAScript's, coercing their arguments as builtins do (`valueOf` runs, a missing
+    // argument is NaN), not constructors, with a native frame on an error's stack as QuickJS-ng's
+    // own builtins have (rquickjs's closures had none; script-sandbox.md 2.2), and the library's
+    // bits.
+    let (host, p) = program();
+    let v = p
+        .eval_json(
+            &host,
+            r#"(() => {
+                const shape = (f) => [f.name, f.length, Object.getPrototypeOf(f) === Function.prototype];
+                let constructed;
+                try { new Math.sin(1); constructed = "yes"; } catch (e) { constructed = e.name; }
+                let frame;
+                try { Math.sin(1n); frame = "no throw"; } catch (e) {
+                    frame = [e.name, e.stack.split("\n")[1].trim()];
+                }
+                return [shape(Math.sin), shape(Math.atan2), shape(Math.pow),
+                        Number.isNaN(Math.sin()), Number.isNaN(Math.atan2(1)), constructed, frame,
+                        Math.cos({ valueOf: () => 0.5 }), Math.atan2(0.5, -2), Math.pow(1.5, 2.5)];
+            })()"#,
+        )
+        .unwrap();
+    use pocket_sim::math;
+    assert_eq!(
+        v,
+        json!([
+            ["sin", 1, true],
+            ["atan2", 2, true],
+            ["pow", 2, true],
+            true,
+            true,
+            "TypeError",
+            ["TypeError", "at sin (native)"],
+            math::cos(0.5),
+            math::atan2(0.5, -2.0),
+            math::pow(1.5, 2.5)
+        ])
+    );
+}
