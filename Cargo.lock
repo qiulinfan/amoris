@@ -3466,6 +3466,7 @@ dependencies = [
  "serde",
  "serde-reflection",
  "serde_json",
+ "typeid",
 ]
 
 [[package]]

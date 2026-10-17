@@ -10,6 +10,8 @@
 //! leave out makes a fork diverge, which is what the checks look for. It is a stand-in for the
 //! hash and fork of persistence.md (PCE, XXH3-128), not their implementation.
 
+pub mod layout;
+pub mod level;
 mod scenes;
 
 pub use scenes::{
@@ -257,5 +259,3 @@ pub fn fork(ledger: &Ledger, sim: &Sim, fresh: fn() -> Sim) -> Result<Sim, Strin
     ledger.restore(&mut out, &snap)?;
     Ok(out)
 }
-
-pub mod level;

@@ -100,11 +100,14 @@ pub const WEB_TESTS: &[WebTest] = &[
     ("physics.chain", probe::check_chain),
     ("physics.fork", probe::check_forks),
     ("physics.bvh_log2", probe::check_bvh_log2),
+    ("physics.level_fork", probe::level::check_level_forks),
+    ("physics.shape_builds", probe::layout::check_shape_builds),
 ];
 
-/// The web tests' report: one `ok name` or `FAIL name: why` line per test, then the sailing
-/// scene's hash at every tick. The WebAssembly build (`examples/web_physics.rs`) must produce the
-/// same bytes as the native builds.
+/// The web tests' report: one `ok name` or `FAIL name: why` line per test, the digest of the shape
+/// builds (`shapes digest`, `probe::layout`), then the sailing scene's hash at every tick, then the
+/// small level scene's (`level tick hash`). The WebAssembly build (`examples/web_physics.rs`) must
+/// produce the same bytes as the native builds.
 pub fn web_report() -> String {
     let mut out = String::new();
     for (name, test) in WEB_TESTS {
@@ -113,6 +116,8 @@ pub fn web_report() -> String {
             Err(e) => out.push_str(&format!("FAIL {name}: {e}\n")),
         }
     }
+    out.push_str(&probe::layout::shapes_report());
     out.push_str(&probe::chain_report());
+    out.push_str(&probe::level::level_report());
     out
 }
