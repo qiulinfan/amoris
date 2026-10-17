@@ -128,7 +128,9 @@ fn body_hash(world: &PhysicsWorld) -> u64 {
 
 /// CPU time of the calling thread in ms. With one thread the whole step runs on it, so this is the
 /// step's cost without the time the scheduler gave other processes (the benchmark machine is shared).
-#[cfg(not(target_arch = "wasm32"))]
+/// Unix only: Windows' GetThreadTimes advances in scheduler ticks (about 15.6 ms), coarser than a
+/// step, so Windows runs report wall time alone.
+#[cfg(unix)]
 fn thread_cpu_ms() -> f64 {
     let mut ts = libc::timespec {
         tv_sec: 0,
@@ -139,7 +141,7 @@ fn thread_cpu_ms() -> f64 {
     ts.tv_sec as f64 * 1e3 + ts.tv_nsec as f64 * 1e-6
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(not(unix))]
 fn thread_cpu_ms() -> f64 {
     0.0
 }
@@ -389,7 +391,7 @@ fn main() {
         mean_y,
         extra
     );
-    if a.threads == 1 && !cfg!(feature = "parallel") && !cfg!(target_arch = "wasm32") {
+    if a.threads == 1 && !cfg!(feature = "parallel") && cfg!(unix) {
         let c = summarize(&cpu_ms);
         out.push_str(&format!(
             ",\"cpu_mean_ms\":{:.4},\"cpu_p50_ms\":{:.4}",
