@@ -111,6 +111,7 @@ Each method is a command of the catalog (`GET /api/catalog` is authoritative). K
 | `scripts.list` | `{}` | `[{path, bytes, diagnostics}]` |
 | `scripts.read` / `scripts.write` | `{path, lines?, numbered?}` / `{path, text}` | `{path, text, first?, last?, total?}` / `{path, bytes, diagnostics}` |
 | `scripts.status` | `{}` | `{bundle, ran_last_tick}`: the bundle the world runs |
+| `scripts.profile` | `{ticks?, interval?, top?, folded?}` | where the scripts' steps go over the next ticks, run on a fork of the world: per system its exact steps and its top functions, TypeScript lines and stacks (debugger.md 14) |
 | `scripts.apply` | `{files?, force?, dry_run?}` | `{outcome, bundle, diagnostics, typecheck, ...}` (type check if `tsc` is installed, compile, hot swap at a boundary) |
 | `scripts.check` | `{}` | `{outcome, diagnostics, typecheck}` (no swap) |
 | `assets.list` | `{dir?}` | `[{path, kind, bytes}]` |

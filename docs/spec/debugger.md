@@ -486,3 +486,83 @@ dropped); an engine system is one row, without a line of Rust; values compare as
 a statement is named by the rule above, from positions and the JavaScript of the statement before
 the change, not from the bytecode that stored it; the pausing engine-level data breakpoint is not
 built.
+
+## 14. The step profiler (Pioneer, 2026-10-16)
+
+Agents need to know which TypeScript lines cost steps, the unit of the scripts' budgets
+(script-sandbox.md 4.1); a profiler on the wall clock would answer differently on every run and
+could not be read against a budget. The step profiler samples on the work counter instead, so a
+profile is as deterministic as the steps it counts (charter 4.3's dated note).
+
+- **Calls.** `scripts.profile {ticks? = 60, interval?, top? = 10, folded? = false}` (a Read):
+  forks the world, runs the fork's next `ticks` ticks (at most 3,600) with the script host's
+  profiler on, and answers `{from_tick, to_tick, ticks, interval, steps, samples, estimated,
+  systems, stopped_by?, folded?}`. Each system (the most steps first) is `{system, calls, steps,
+  samples, functions, lines, stacks, more?}`: its exact steps and calls, then its top `top`
+  functions (`{function, file, self, total}`), TypeScript lines (`{at: "file:line", function,
+  self, total}`) and stacks (`{stack: "root;...;leaf", steps}`), `self` and `total` in steps
+  (samples times the interval, estimates unless `interval` is 1), `more` counting the rows left
+  out. `folded: true` adds every stack as folded text, `system;frame;...;frame steps` per line,
+  which speedscope, inferno and `flamegraph.pl` read. The world does not move and nothing is
+  recorded; the fork runs the same bundle from the same state, so its ticks are those the world
+  would run next without new commands, and the same state gives the same answer, byte for byte.
+  A fault stops the fork (`stopped_by`). Without `interval`, a first run of the same ticks on
+  another fork counts their steps, and the interval is that count over 20,000, at least 1 (a light
+  game is sampled at every step, exactly). CLI: `pocket scripts profile [--ticks n] [--interval
+  steps] [--top n] [--folded <file>]` (a table by system; the file gets the folded stacks); MCP:
+  the `scripts` tool's `profile` action. The game thread and the browser's worker answer it
+  through `Game::apply`, as any read they do not answer themselves.
+- **The clock.** While a profile records, every budgeted call arms the interrupt counter (P1) at the
+  smallest of the steps to the next sample, the steps its budget has left and 9,999, instead of at
+  its budget. When the counter runs out, the interrupt handler reads the stack if a sample is due
+  and re-arms the counter; at the budget's last step it stops the call as it always does. libregexp
+  also calls the handler, directly, every 10,000 of a regular expression's own polls
+  (script-sandbox.md 4.1); the interpreter's poll sets the counter to 10,000 before it calls the
+  handler, which no arming reaches, so the profiler tells the two apart and that call stops the call
+  as it does without the profiler (charged its whole budget; its samples cover the steps it ran). A
+  call's steps are the steps spent before the last arm plus what that arm used, so every call uses
+  the steps it uses without the profiler, overruns at the same step, and nothing it computes
+  changes. Out of memory (P2 zeroes the counter) keeps the host's own reading. A debugger's
+  evaluation inside a profiled call (`guarded`) sets the profiled call aside while it runs under its
+  own budget and puts it back after; `guarded` keeps what it set aside, so evaluations nest (CDP's
+  `callFunctionOn` evaluates inside one). The gaps between samples come from a fixed-seed generator,
+  uniform in `[1, 2 * interval - 1]`, so a loop whose iterations take a fixed number of steps cannot
+  alias with a fixed period; `interval` 1 samples every step, and then the samples are the steps.
+- **Stacks.** The handler reads each frame with P10's `JS_GetStackFrameInfo`: the module, the
+  function as stack traces name it, the line and column. A step is polled at a function's entry,
+  before its frame exists, so a call's step is the caller's, at the line of the call; at a jump,
+  P13 stores the jump's position in the frame first (without it the frame named its last call, and
+  a loop without calls had no position at all). Positions go through the program's source maps to
+  TypeScript; the prelude's frames are under `pocket`, natives (builtins that poll, such as
+  `Array.prototype.map`'s loop, or a native that called back) are `(native)`, and the one step
+  the host's own call into the script takes before any frame exists (a system's `run`, the
+  prelude's `__context`, a job) is `(host)`. Which line a jump counts on is QuickJS-ng's line table
+  for that instruction: a `for` loop's test and back jump are on its header, a `while` loop's back
+  jump on the body's last line. Arithmetic, property reads and stores are no steps at all. A
+  function QuickJS-ng generates without a line table (a class's field initializer, as the
+  prelude's `Query` has) is at line 0.
+- **Totals.** A function's `self` is the samples where it is the innermost frame, its `total` the
+  samples where it is anywhere on the stack, counted once per sample; a line's likewise, so a line
+  that calls a function holds the callee's samples in its `total`. Functions are told apart by
+  module and name: two functions of one module with the same name are one row (their lines are
+  not).
+- **Allocation.** The handler allocates nothing in QuickJS-ng's heap: it keeps one reference to
+  each atom a frame names, and names become text, and positions TypeScript, when the profile is
+  taken, outside any call. (A function whose `name` was redefined at run time to a string no atom
+  holds would make QuickJS-ng intern it inside the handler: P10's frame name reads it.)
+- **Verification.** `crates/pocket-script/tests/profile.rs`: steps, outcomes and digests are those
+  of the run without the profiler for intervals 1 to 4,096; an overrun stops at the same step and
+  line for budgets just below and above a call's steps, whatever the interval; a regular expression
+  that overruns libregexp's polls stops at the same place, and one that finishes leaves the same
+  steps, at intervals 1 to 1,000,000; a debugger's nested evaluations at every statement leave the
+  profiled call's outcome and steps as they are without the profiler; two runs give the same JSON;
+  samples land on their functions, and on the TypeScript lines of the calls and, with P13, of the
+  jumps (`jumps_land_on_their_own_lines`, the one test that needs P13). The web report profiles
+  ticks 301 to 360 of its workload: its pinned digests and steps do not change, and the WebAssembly
+  report, the profile's line included, is the native one byte for byte (`tests/web.rs`).
+  `crates/pocket-runtime/tests/script_profile.rs`: the world does not move, each system's steps are
+  those the world then takes, the same state gives the same bytes;
+  `crates/pocket-web/tests/worker.rs` answers it through the browser's loop.
+
+What it costs and what it shows of the rule workload: [../bench/script.md](../bench/script.md),
+section 8.

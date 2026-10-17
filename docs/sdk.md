@@ -31,7 +31,21 @@ pocket world get Sloop Boat.speed,Log.distance         # fields alone
 pocket step 300 --sample Sloop.Boat.speed --every 30   # a table instead of step-and-get loops
 pocket scripts status                                  # the bundle the world runs
 pocket snapshots restore 0                             # keeps the applied scripts (--bundle snapshot: not)
+pocket scripts profile --ticks 60                      # where the steps go, by TS function and line
 ```
+
+Steps are what the budgets count (1,000,000 a system, 2,000,000 a tick): every call and every jump
+(a loop's test and turn, `if`, `?:`, `&&`, `||`) is one step, and the array methods that iterate
+(`forEach`, `map`, `filter`, `reduce`, `find`, `some`, `every`, ...) take one more per element
+besides their callback's call; arithmetic and property reads and writes are none
+([script-sandbox.md](spec/script-sandbox.md) 4.1). A regular expression takes no steps, but one
+match that loops or backtracks more than 10,000 times stops the system as over its budget, however
+many steps it has left. `pocket scripts profile` runs the next ticks on a fork (the world does not
+move) and lists, per system, its exact steps and the functions, lines and stacks with the most of
+them, estimated from a sample every `--interval` steps (every step for a light game); the same state
+always gives the same profile. `--folded out.txt` writes the stacks for a flame graph (speedscope).
+The prelude's code shows as `pocket:<line>`: `rows.row(e)` is a binary search there, about 33 steps
+on 1,000 rows, and in `bench/rules` those lookups are half of the rule's steps.
 
 While the debugger holds the game, reads answer from the last tick's end and other calls are refused
 with `debug.paused` until `pocket debug continue`. A breakpoint that every tick hits holds the game

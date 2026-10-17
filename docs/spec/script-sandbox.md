@@ -47,7 +47,7 @@ the shim's one clock import, `__rquickjs_host_now_us`, returns 0 (script-web spi
 | `eval`, `Function` constructors | `eval` deleted; `Function` and the `constructor` of function, generator and async function prototypes replaced by functions that throw `script.code_generation` and keep `prototype` (`instanceof Function` works) | Code must come through the loader to be linted, mapped and transpiled: the script-native spike's verification found `**` in code made by `eval` or `new Function` calling the platform's `pow`, which gave other bits than the engine's in 18,056 of 20,000 cases; SES's `lockdown()` tames these the same way |
 | `RegExp.prototype.compile` | Deleted | It replaces a regular expression's pattern and bytecode in place: on a frozen regex without `g` or `y`, QuickJS-ng's `js_regexp_compile` writes `pattern` and `bytecode` before its `lastIndex` write throws, so `try { RE.compile(String(n + 1)) } catch {}` keeps a counter that `RE.source` reads later. SES's `lockdown` removes it too |
 | `Math.random` | Host function over the system stream (script-host.md 5.6) | Seeded by the world |
-| `Math.sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, `sinh`, `cosh`, `tanh`, `asinh`, `acosh`, `atanh`, `exp`, `expm1`, `log`, `log1p`, `log2`, `log10`, `pow`, `cbrt`, `hypot` | [sim]'s `math` (numeric.md 6.3, with ECMAScript's special cases): `hypot` a host function (any number of arguments), the others since 2026-10-15 (Pioneer) QuickJS-ng C functions over doubles (`JS_CFUNC_f_f`, `JS_CFUNC_f_f_f`, through `extern "C"` wrappers), which QuickJS-ng calls as it calls its own `Math.sin`, converting the arguments and the result itself (a missing argument is NaN, as ECMAScript says; rquickjs's closures threw), and as for its own builtins puts a native frame on the stack, so an error thrown inside one (a `BigInt` argument, a throwing `valueOf`) shows `at sin (native)` in `e.stack` (the host's error locations skip native frames, and the debugger's capture skips them too), at less than half the closures' cost per call (docs/bench/script.md, section 7). They run without `catch_unwind` (4.3) | QuickJS-ng calls the platform's libm, which differs between MSVC's C runtime and the web's musl by 1 or 2 ulps in up to a quarter of results (script-web spike, numeric probe) |
+| `Math.sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, `sinh`, `cosh`, `tanh`, `asinh`, `acosh`, `atanh`, `exp`, `expm1`, `log`, `log1p`, `log2`, `log10`, `pow`, `cbrt`, `hypot` | [sim]'s `math` (numeric.md 6.3, with ECMAScript's special cases): `hypot` a host function (any number of arguments), the others since 2026-10-15 (Pioneer) QuickJS-ng C functions over doubles (`JS_CFUNC_f_f`, `JS_CFUNC_f_f_f`, through `extern "C"` wrappers), which QuickJS-ng calls as it calls its own `Math.sin`, converting the arguments and the result itself (a missing argument is NaN, as ECMAScript says, which the owner approved on 2026-10-16, charter 4.2; rquickjs's closures threw), and as for its own builtins puts a native frame on the stack, so an error thrown inside one (a `BigInt` argument, a throwing `valueOf`) shows `at sin (native)` in `e.stack` (the host's error locations skip native frames, and the debugger's capture skips them too), at less than half the closures' cost per call (docs/bench/script.md, section 7). They run without `catch_unwind` (4.3) | QuickJS-ng calls the platform's libm, which differs between MSVC's C runtime and the web's musl by 1 or 2 ulps in up to a quarter of results (script-web spike, numeric probe) |
 | `Math.abs`, `floor`, `ceil`, `round`, `trunc`, `sign`, `sqrt`, `fround`, `f16round`, `min`, `max`, `imul`, `clz32`, `sumPrecise` | Kept | Exact operations. QuickJS-ng computes some through the platform's C library (`floor`, `ceil`, `trunc` and `sqrt` directly, `min` and `max` through `fmin` and `fmax`, the `%` operator through `fmod`; UCRT natively, wasi-libc's musl on the web), exact in a correct library, which the cross-target sweeps of script-host.md 12, test 2, check |
 | `console` | Added (script-host.md 5.7) | Output only |
 
@@ -154,6 +154,14 @@ up to 35 µs a tick; that is the fallback until P1 is carried. A spent budget ab
 QuickJS-ng's uncatchable `InternalError: interrupted`, reported as `script.budget_exceeded` and
 handled as the call's kind says (4.4).
 
+Regular expressions are outside the counter. libregexp polls a counter of its own at its loops and
+backtracks, reset for every match (`lre_exec`), and every 10,000 of those polls it calls the
+interrupt handler directly (`lre_check_timeout`), without the step counter. Inside a budgeted call
+the handler stops the call there: one match that loops or backtracks more than 10,000 times ends it
+with `script.budget_exceeded`, charged its whole budget, however many steps it had left (found by
+the step profiler's review, Pioneer 2026-10-15; deterministic, since libregexp's polls depend only
+on the pattern and the input). A match takes no steps otherwise.
+
 ```rust
 pub struct ScriptLimits {
     pub steps_per_system: u32,   // 1,000,000; at most i32::MAX
@@ -176,6 +184,17 @@ with a replay (versions.md 3.7). `SystemStats.steps` goes to the perf tools ([mc
 workload's exact step count is a regression check in [arch]'s framework that machine noise cannot
 disturb.
 
+The counter is also the step profiler's clock (Pioneer, 2026-10-16; `scripts.profile`, debugger.md
+14). While a profile records, each budgeted call arms the counter at the smallest of the steps to
+the next sample, the steps its budget has left and 9,999; the handler reads the stack (P10, P13),
+re-arms the counter and returns without stopping the call, until the budget's last step, where it
+stops it as above. The steps a call used are those spent before the last arm plus what that arm
+used: a call uses the same steps and overruns at the same step with the profiler as without it,
+natively and in WebAssembly, so a profile names where a budget goes in the budget's own unit and is
+the same on every run. The interpreter's poll sets the counter to 10,000 before it calls the
+handler, which an arming never reaches, so libregexp's direct call is told apart and stops the call
+as without the profiler.
+
 ### 4.2 The QuickJS-ng patch set
 
 This line already carries quickjs-ng PR #1421 for the debugger, applied unmodified to a pinned
@@ -197,8 +216,13 @@ The script host needs these further changes, carried the same way and proposed u
 | P10 | The trace handler also hears catchable exceptions, once per throw, with a catch prediction from the catch offsets on the value stacks (`OP_debug` records each frame's stack pointer); `JS_GetDebugTraceException`; `JS_GetStackFrameInfo(level)` | Pause on uncaught exceptions at the throw, and callers' positions without parsing `Error().stack` (debugger.md 2, 3) |
 | P11 (Pioneer, 2026-10-09) | While a trace handler is set, the compiler emits a temporary `OP_debug_scope` (the last lexical variable declared in the statement's scope chain) before each `OP_debug` and `OP_debugger_stmt`, which phase 3 moves into a per-function table of (offset, scope), adjusted when jumps shrink; `OP_debug` records the frame's statement PC (`JSStackFrame.debug_pc`); `JS_EvalInStackFrame` resolves names from that statement's scope, falling back to PR #1421's choice (the deepest block's first variable) where none is recorded | The debug evaluation's third finding: evaluations at helm.ts:67 saw `dx` and not `dz` or `bearing`, declared after it in the same block (37 failed evaluations in 7 runs). A temporary opcode renumbers no opcode bytecode keeps, so the precompiled builtins still load (P9's lesson); uninstrumented bytecode is unchanged (debugger.md 2) |
 | P12 (Pioneer, 2026-10-15) | QuickJS-ng's computed-`goto` dispatch (`DIRECT_DISPATCH`: a table of label addresses, one indirect jump at the end of each opcode) when `_MSC_VER` and `__clang__` are both defined, that is under clang-cl, which defines `_MSC_VER` and so got the `switch`; MSVC's `cl` and wasm32 (`EMSCRIPTEN`, which the build script defines) keep the `switch` | The interpreter's dispatch as QuickJS-ng has it under clang and GCC elsewhere. Steps and depth are counted outside the dispatch (the interrupt poll and P5's counter run on a call's entry, before its class dispatch, and in the jump opcodes' bodies), so steps, results and hashes do not change. It enlarges the interpreter's optimized frame (tests/depth.rs at `max_call_depth`, release: docs/bench/script.md 7.4), inside the 1 MiB `stack_bytes` (4.3). The debugger's instrumented paths (PR #1421's `OP_debug`, P9 to P11) run under it, and pass on a debug P12 build: pocket-app's `debug_agent` (4 of 4, P11's test included) and `paused_host` (5 of 5), `node crates/pocket-debug/tests/cdp_e2e.mjs` (20 of 20) and pocket-debug's own tests (2026-10-15). What it gains: docs/bench/script.md, section 7 |
+| P13 (Pioneer, 2026-10-16) | The interrupt poll of the jump opcodes (`OP_goto`, `OP_if_true`, `OP_if_false` and their short forms), when the counter runs out, first stores the frame's PC (`JSStackFrame.cur_pc`) at the jump, then takes the jump and calls the handler as before; the fast path does the same work (count, compare, jump) in another order | The step profiler (debugger.md 14) reads the stack inside the interrupt handler with P10's `JS_GetStackFrameInfo`. Upstream saves a frame's PC only at calls and on throwing slow paths, so at a jump's poll the current frame named its last call's position, or none in a loop without calls, and most of a loop's steps went to the wrong line. An interrupt still unwinds from the jump's target, which the exception path stores as before, so budget errors keep their positions; steps, results and hashes do not change |
 
 A call's steps must not change while the debugger instruments it (script-host.md 12, test 3).
+
+"Proposed upstream" is the owner's to do: agents never submit a pull request upstream, the owner
+submits every pull request to an external project, and P12 and P13 stay local patches that the
+owner reviews (the owner's decision of 2026-10-16, charter 4.2).
 
 ### 4.3 Call depth, memory and stack
 

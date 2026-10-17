@@ -102,6 +102,7 @@ files).
 | `scripts.types` | read | `{text?, tsconfig? = true}` | `{dir, files, tsconfig, components: {engine, project, unavailable}, project_from, diagnostics, text?}` (docs/sdk.md); `tsconfig: false` writes under `.pocket/types/` only |
 | `scripts.guide` | read (server) | `{}` | `{path: "docs/sdk.md", text}`: the agent's guide to scripts, embedded in the server |
 | `scripts.status` | read | `{}` | `{bundle, ran_last_tick}` |
+| `scripts.profile` | read | `{ticks? = 60, interval?, top? = 10, folded? = false}` (`ticks` at most 3,600; `interval` 1 to 1,000,000, by default the run's steps over 20,000) | `{from_tick, to_tick, ticks, interval, steps, samples, estimated, systems: [{system, calls, steps, samples, functions, lines, stacks, more?}], stopped_by?, folded?}`: the step profiler over the next ticks, run on a fork; the world does not move (debugger.md 14) |
 | `events.since` | read (server) | `{seq?, limit? = 100, name?}` | `{events: [event], last, missed}` |
 | `events.why` | read (server) | `{seq}` | `{event, causes: [event], complete}` |
 | `log.since` | read (server) | `{seq?, limit? = 100}` | `{lines: [log line], last}` |
@@ -453,6 +454,7 @@ Schema, so help never drifts from what the host takes.
 | `pocket events [--since n] [--name n.*] [--limit n]`, `--why <seq>` | `events.*` |
 | `pocket logs [--since n]`, `snapshots [list]|restore <tick> [--bundle snapshot]`, `assets [dir]` | `log.since`, `snapshots.*`, `assets.list` |
 | `pocket profile [--ticks n]` | `profile.frame` (a table: ms per tick, max, share of the game thread) |
+| `pocket scripts profile [--ticks n] [--interval steps] [--top n] [--folded <file>]` | `scripts.profile` (by system: its steps, then its functions, lines and stacks with self and total steps; `--folded` writes the folded stacks to the file) |
 | `pocket debug break <file>:<line> [--if <expr>] [--log <text>]`, `clear [id]`, `list` | `debug.breakpoints.*` (`file` may be the module's end, `helm.ts`) |
 | `pocket debug state [--full]`, `eval <expr> [--frame n]`, `set <name> <expr> [--frame n]` | `debug.state`, `debug.eval`, `debug.set` |
 | `pocket debug watch <e>.<C>[.<f>]`, `unwatch [id]` | `debug.watch` (entity by name or id), `debug.unwatch` |
