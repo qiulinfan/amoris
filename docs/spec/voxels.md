@@ -103,8 +103,8 @@ scene's; a file indexing past it is refused. Generators (blockcraft's `gen_world
   `Voxels` section; a tick that edits one re-encodes and re-hashes the whole section (blockcraft:
   about 1.3 MB). That is paid per edit tick, not per tick, natively.
 - The browser's worker snapshots every tick without the cache (`after_tick`); the volume adds its
-  full encoding to each. This slice measures it (docs/bench/voxels.md) and leaves the worker as it
-  is; charter 8 item 3 keeps the question open with the measurement.
+  full encoding to each. This slice measured it (0.075 ms for blockcraft's whole world,
+  [bench/voxels.md](../bench/voxels.md)) and leaves the worker as it is.
 - Writes go through change detection (never `bypass_change_detection`), and a write bumps the
   edited chunk's `edited` to the current tick.
 
@@ -294,7 +294,9 @@ draw paths are checked under the WebGPU baseline with the existing draw-path too
 
 1. How an agent perceives a block world: an instrument listing the visible surface cells within
    range, or a projection of the column heights; the walker's own instruments come first.
-2. The worker's per-tick snapshot with a large volume (3), against charter 8 item 3.
+2. (Settled 2026-10-17.) The worker's per-tick snapshot with a large volume: 0.075 ms for
+   blockcraft's whole world on an M5 ([bench/voxels.md](../bench/voxels.md)); the worker keeps
+   snapshotting without the cache.
 3. Light: sky light and block light per cell, and smooth lighting (vertex colours, which the vertex
    format lacks), against the renderer's sun shadows and GTAO used today.
 4. Pixel-art sampling: honouring glTF's `NEAREST` filter instead of upscaling textures to 1024.

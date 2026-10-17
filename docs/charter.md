@@ -970,5 +970,5 @@ Python：`tools/neural/`（神经资源训练）、`tools/eval/`（评测）。
 2. 真实拍摄的 splat 场景与 CC0 材质集的来源（需要所有者同意下载）。
 3. 大地形每 tick 的规格哈希与关卡几何的资源化；物理缓存的不可变形状共享与冷恢复取舍已在 4.7
    接受，后端迁移仍需以完整引擎的相同场景验证。方块体积（4.9）在原生一侧避开了组件规格哈希；浏览器
-   worker 每 tick 的完整快照仍会编码整个体积，以 docs/bench/voxels.md 的测量决定是否让 worker 使用
-   `SnapshotCache`。
+   worker 每 tick 不经缓存的完整快照连同 blockcraft 的整个体积只要 0.075 ms（M5，
+   [bench/voxels.md](bench/voxels.md)），worker 维持现状。
