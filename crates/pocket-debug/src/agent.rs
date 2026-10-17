@@ -576,6 +576,11 @@ impl DebugHub {
                 "debug.rewind is the host's (pocket serve restores the kept snapshot at or before the tick and steps to it); a hub alone keeps no snapshots.",
                 json!({"method": method}),
             )),
+            "debug.writes" => Err(problem(
+                "debug.unsupported",
+                "debug.writes is the host's (pocket serve steps the game with a write trace, time.step {trace}); a hub alone runs no ticks.",
+                json!({"method": method}),
+            )),
             other => {
                 let names: Vec<&str> = methods().iter().map(|m| m.name).collect();
                 Err(problem(

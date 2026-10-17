@@ -190,8 +190,45 @@ pub struct RewindParams {
     pub bundle: Option<String>,
 }
 
+/// `debug.writes`'s parameters: the host's own debugger method (it steps the game with a write
+/// trace, docs/spec/debugger.md 13).
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WritesParams {
+    /// The entity: its id, a name or `Name#id`.
+    pub entity: EntityParam,
+    /// The component, such as `Boat`.
+    pub component: String,
+    /// A field or a path into it (`rudder`, `position.y`); the whole component when absent.
+    #[serde(default)]
+    pub field: Option<String>,
+    /// Ticks to step under the trace (default 60).
+    #[serde(default)]
+    pub ticks: Option<u64>,
+}
+
+/// An entity as the host's debugger methods take it: an id, or a name (`Sloop`, `Sloop#3`).
+#[derive(Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum EntityParam {
+    Id(u64),
+    Name(String),
+}
+
+impl EntityParam {
+    fn json(&self) -> Value {
+        match self {
+            EntityParam::Id(n) => json!(n),
+            EntityParam::Name(s) => json!(s),
+        }
+    }
+}
+
+/// The ticks `debug.writes` steps when `ticks` is not given.
+pub const DEFAULT_WRITES_TICKS: u64 = 60;
+
 /// The catalog entries of the debugger installed as `hub` (its methods, and the host's
-/// `debug.rewind`), or a placeholder that says no debugger is installed.
+/// `debug.rewind` and `debug.writes`), or a placeholder that says no debugger is installed.
 pub fn debug_catalog(hub: Option<&dyn crate::DebugHub>) -> Vec<Value> {
     let entry = |m: &Value| {
         json!({"name": m["name"], "kind": m.get("kind").cloned().unwrap_or(json!("read")),
@@ -213,6 +250,16 @@ pub fn debug_catalog(hub: Option<&dyn crate::DebugHub>) -> Vec<Value> {
                 under the applied scripts (bundle: snapshot for the snapshot's own) and steps \
                 the world to tick; a breakpoint on the way stops it.",
         "params": schema::<RewindParams>(),
+    })));
+    out.push(entry(&json!({
+        "name": "debug.writes",
+        "kind": "control",
+        "doc": "Who changed a field: steps ticks (default 60) and names, tick by tick, every \
+                write that changed entity.component.field, without pausing: the boundary's \
+                recorded writes (world.edit, player.act controls and intents) and each system, \
+                engine or script, with its phase, the values before and after and, for a \
+                script, the statement that wrote. The world hash is the same as without it.",
+        "params": schema::<WritesParams>(),
     })));
     out
 }
@@ -330,6 +377,40 @@ impl Host {
         Ok(out)
     }
 
+    /// `debug.writes {entity, component, field?, ticks?}`: a `time.step` of `ticks` under a write
+    /// trace of the field; the step's answer with the trace's (`writes`) in place of its own.
+    async fn writes(&self, via: &Via, params: Value) -> Result<Value, Problem> {
+        let p: WritesParams = decode(&params, "debug.writes")?;
+        let mut trace = json!({"entity": p.entity.json(), "component": p.component});
+        if let Some(f) = &p.field {
+            trace["field"] = json!(f);
+        }
+        let ticks = p.ticks.unwrap_or(DEFAULT_WRITES_TICKS);
+        let stepped = self
+            .game(via, "time.step", json!({"ticks": ticks, "trace": trace}))
+            .await
+            .map_err(|mut e| {
+                // The step's refusals point into its `trace`; this method takes those at the top.
+                if let Some(Value::String(path)) = e.detail.get_mut("path")
+                    && let Some(rest) = path.strip_prefix("/trace/")
+                {
+                    *path = format!("/{rest}");
+                }
+                e
+            })?;
+        let mut out = match stepped.get("writes") {
+            Some(Value::Object(w)) => Value::Object(w.clone()),
+            // A debugger stop answered the step inside a tick: the trace was dropped there.
+            _ => json!({"dropped": "debugger stop"}),
+        };
+        for k in ["tick", "world_hash", "errors", "stopped_by", "paused"] {
+            if let Some(v) = stepped.get(k).filter(|v| !v.is_null()) {
+                out[k] = v.clone();
+            }
+        }
+        Ok(out)
+    }
+
     /// The registry's components as `world.schema` lists them, from the last publication (the
     /// game's own registry, so it answers while the game is held).
     fn schemas(&self) -> Vec<Value> {
@@ -441,6 +522,7 @@ impl Host {
                 let hub = self.0.debug.read().ok().and_then(|h| h.clone());
                 match hub {
                     Some(_) if m == "debug.rewind" => self.rewind(via, params).await,
+                    Some(_) if m == "debug.writes" => self.writes(via, params).await,
                     Some(h) => {
                         let mut params = params;
                         // Entities by name, as every other command takes them.

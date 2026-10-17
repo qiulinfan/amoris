@@ -489,9 +489,17 @@ impl WorkerCore {
         }
         match e.name.as_str() {
             // The web loop runs plain step counts; stop conditions (until, watch) need the native
-            // game thread's loop (docs/spec/server.md).
+            // game thread's loop (docs/spec/server.md). A write trace is refused, not ignored: its
+            // caller asked for an answer (`writes`) this loop does not give.
             "step" | "time.step" => match pocket_runtime::decode::<StepParams>(&e.params, "step")
-                .and_then(|p| p.limit())
+                .and_then(|p| match p.trace {
+                    Some(_) => Err(Problem::new(
+                        "time.trace_unavailable",
+                        "The browser's game loop runs plain steps: a write trace                          (time.step {trace}, debug.writes) needs the native host (pocket serve).",
+                        detail([("path", json!("/trace"))]),
+                    )),
+                    None => p.limit(),
+                })
             {
                 Ok(0) => {
                     let r = self.answer_step();

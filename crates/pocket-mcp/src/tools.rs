@@ -13,7 +13,7 @@ pub struct ToolDef {
 }
 
 /// The `debug` tool's actions: every `debug.*` method (pocket-debug's `methods()` and the host's
-/// `debug.rewind`; pocket-app's tests check the two agree).
+/// `debug.rewind` and `debug.writes`; pocket-app's tests check the two agree).
 pub const DEBUG_ACTIONS: &[&str] = &[
     "attach",
     "detach",
@@ -31,6 +31,7 @@ pub const DEBUG_ACTIONS: &[&str] = &[
     "exceptions",
     "wait",
     "rewind",
+    "writes",
 ];
 
 fn action(values: &[&str]) -> Value {
@@ -102,8 +103,11 @@ pub fn tools() -> Vec<ToolDef> {
             description: "Time of the world shown. status; pause; resume; speed {speed}; step \
                 {ticks, until:{event:'crate.taken'|'crate.*', subject, tick}, watch:{entity, \
                 component, field, op:changes|crosses|>|>=|<|<=|==|!=, value}, sample:{fields \
-                ['Sloop.Boat.rudder'], every}}: stops early when met or at a breakpoint \
-                (stopped_by), samples come back as a table; snapshots: kept every 60 ticks; \
+                ['Sloop.Boat.rudder'], every}, trace:{entity, component, field}}: stops early \
+                when met or at a breakpoint (stopped_by), samples come back as a table, a trace \
+                as writes (each tick's boundary writes and systems, engine or script, that \
+                changed the field, with values and a script's statement); snapshots: kept every \
+                60 ticks; \
                 rewind {tick, bundle}: restore the kept snapshot at or before tick under the \
                 applied scripts (bundle 'snapshot': its own); profile {ticks}: what the last \
                 ticks cost, ms per tick by system and phase.",
@@ -117,6 +121,11 @@ pub fn tools() -> Vec<ToolDef> {
                     "watch": {"type": "object"},
                     "sample": {"type": "object", "properties": {
                         "fields": strings, "every": {"type": "integer"}}},
+                    "trace": {"type": "object", "properties": {
+                        "entity": {"type": ["integer", "string"]},
+                        "component": {"type": "string"},
+                        "field": {"type": "string"}},
+                        "required": ["entity", "component"]},
                     "tick": {"type": "integer"},
                     "bundle": {"type": "string", "enum": ["applied", "snapshot"]},
                 }),
@@ -172,11 +181,13 @@ pub fn tools() -> Vec<ToolDef> {
                 line, condition, log}; breakpoints.clear {id}; breakpoints.list; state {brief}; \
                 eval {expr, frame}; set {name, value, frame}; step {kind: over|into|out}; \
                 continue; pause; wait {timeout_ms}; watch {entity, component, field}: pause when \
-                a script's write changes it; unwatch {id}; exceptions {mode: \
-                none|uncaught|all}; rewind {tick, bundle}; attach; detach. A time step that \
-                hits a breakpoint returns at once (stopped_by); while held, reads still answer, \
-                play stop ends Play, a time pause is queued for the tick's end, and other calls \
-                are refused with debug.paused.",
+                a script's write changes it; unwatch {id}; writes {entity, component, field, \
+                ticks}: steps ticks and names every write that changed the field (boundary \
+                writes, engine systems, scripts with the statement), without pausing; \
+                exceptions {mode: none|uncaught|all}; rewind {tick, bundle}; attach; detach. A \
+                time step that hits a breakpoint returns at once (stopped_by); while held, reads \
+                still answer, play stop ends Play, a time pause is queued for the tick's end, and \
+                other calls are refused with debug.paused.",
             schema: obj(
                 json!({
                     "action": action(DEBUG_ACTIONS),
@@ -197,6 +208,7 @@ pub fn tools() -> Vec<ToolDef> {
                     "field": {"type": "string"},
                     "mode": action(&["none", "uncaught", "all"]),
                     "tick": {"type": "integer"},
+                    "ticks": {"type": "integer"},
                     "bundle": {"type": "string", "enum": ["applied", "snapshot"]},
                 }),
                 &["action"],

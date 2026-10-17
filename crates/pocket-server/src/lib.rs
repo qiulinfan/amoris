@@ -31,7 +31,7 @@ use tokio::sync::broadcast;
 
 pub use dispatch::{Via, seat_permits};
 pub use http::{find_editor_dist, router};
-pub use local::{RewindParams, debug_catalog, server_catalog};
+pub use local::{RewindParams, WritesParams, debug_catalog, server_catalog};
 pub use mcp::McpBackend;
 pub use paused::PAUSED_READS;
 

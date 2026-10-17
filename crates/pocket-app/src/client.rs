@@ -51,6 +51,7 @@ const FLAGS: &[Flag] = &[
     ("sample", true),
     ("every", true),
     ("seat", true),
+    ("trace", true),
 ];
 
 /// How long the CLI waits for an answer unless `--timeout <s>` or `POCKET_TIMEOUT` says otherwise
@@ -76,7 +77,7 @@ pub const COMMANDS: &[(&str, &str, &str)] = &[
     (
         "step",
         "time.step",
-        "pocket step [ticks] [--until event:<name>|tick:<n>|<entity>.<C>.<field><op><value>] [--watch <entity>.<C>.<field>[~value]] [--sample <entity>.<C>.<field>,.. [--every k]]",
+        "pocket step [ticks] [--until event:<name>|tick:<n>|<entity>.<C>.<field><op><value>] [--watch <entity>.<C>.<field>[~value]] [--sample <entity>.<C>.<field>,.. [--every k]] [--trace <entity>.<C>[.<field>]]",
     ),
     (
         "time",
@@ -118,7 +119,7 @@ pub const COMMANDS: &[(&str, &str, &str)] = &[
     (
         "debug",
         "debug.state",
-        "pocket debug state [--full] | break <file>:<line> [--if <expr>] [--log <text>] | clear [id] | list | eval <expr> [--frame n] | set <name> <expr> [--frame n] | watch <entity>.<C>[.<field>] | unwatch [id] | continue | step [over|into|out] | pause | wait [ms] | exceptions none|uncaught|all | rewind <tick> [--bundle snapshot] | attach | detach | <action> '<json params>'",
+        "pocket debug state [--full] | break <file>:<line> [--if <expr>] [--log <text>] | clear [id] | list | eval <expr> [--frame n] | set <name> <expr> [--frame n] | watch <entity>.<C>[.<field>] | unwatch [id] | writes <entity>.<C>[.<field>] [--ticks n] | continue | step [over|into|out] | pause | wait [ms] | exceptions none|uncaught|all | rewind <tick> [--bundle snapshot] | attach | detach | <action> '<json params>'",
     ),
     (
         "player",
@@ -323,6 +324,22 @@ fn loose(text: &str) -> Value {
 fn entity(text: &str) -> Value {
     text.parse::<u64>()
         .map_or_else(|_| json!(text), |n| json!(n))
+}
+
+/// `Sloop.Boat.rudder` (or `3.Boat`) as `{entity, component, field?}`, for `debug watch`,
+/// `debug writes` and `step --trace`.
+fn field_spec(spec: &str, what: &str) -> Result<Value, Problem> {
+    let mut parts = spec.splitn(3, '.');
+    let (Some(e), Some(c)) = (parts.next(), parts.next()) else {
+        return Err(bad(format!(
+            "{what}: '{spec}' is not <entity>.<Component>[.<field>] (Sloop.Boat.rudder)"
+        )));
+    };
+    let mut v = json!({"entity": entity(e), "component": c});
+    if let Some(f) = parts.next() {
+        v["field"] = json!(f);
+    }
+    Ok(v)
 }
 
 fn list(text: &str) -> Vec<String> {
@@ -557,6 +574,9 @@ fn request(cmd: &str, args: &Args) -> Result<(String, Value), Problem> {
                     sample["every"] = json!(every);
                 }
                 p.insert("sample".into(), sample);
+            }
+            if let Some(t) = args.value("trace") {
+                p.insert("trace".into(), field_spec(t, "--trace")?);
             }
             "time.step"
         }
@@ -826,20 +846,25 @@ fn debug_request(args: &Args) -> Result<(String, Value), Problem> {
             put(&mut p, "frame", frame);
             "debug.set"
         }
-        "watch" => {
-            let spec = rest
-                .first()
-                .ok_or_else(|| bad("pocket debug watch <entity>.<Component>[.<field>]"))?;
-            let mut parts = spec.splitn(3, '.');
-            let (Some(e), Some(c)) = (parts.next(), parts.next()) else {
-                return Err(bad(format!(
-                    "'{spec}' is not <entity>.<Component>[.<field>] (Sloop.Boat.hoist)"
-                )));
-            };
-            p.insert("entity".into(), entity(e));
-            p.insert("component".into(), json!(c));
-            put(&mut p, "field", parts.next().map(|f| json!(f)));
-            "debug.watch"
+        "watch" | "writes" => {
+            let spec = rest.first().ok_or_else(|| {
+                bad(format!(
+                    "pocket debug {canonical} <entity>.<Component>[.<field>]"
+                ))
+            })?;
+            if let Value::Object(m) = field_spec(spec, canonical)? {
+                p.extend(m);
+            }
+            if canonical == "writes" {
+                put(
+                    &mut p,
+                    "ticks",
+                    args.number::<u64>("ticks")?.map(|t| json!(t)),
+                );
+                "debug.writes"
+            } else {
+                "debug.watch"
+            }
         }
         "unwatch" => {
             put(&mut p, "id", rest.first().map(|i| json!(i)));
@@ -1089,6 +1114,119 @@ fn debug_state_text(v: &Value, full: bool) -> String {
         out.push_str("(pocket debug eval <expr> | step [over|into|out] | continue; --full for every frame)\n");
     }
     out
+}
+
+/// A write trace (`debug.writes`, `time.step`'s `writes`) as a table: its field, ticks and values
+/// in one line, then one row per change or boundary write: tick, writer, phase, before, after,
+/// and where (a script's statement, or the boundary's recorded write).
+fn writes_table(w: &Value, out: &mut String) {
+    if let Some(why) = w["dropped"].as_str() {
+        let _ = writeln!(
+            out,
+            "the trace was dropped at a {why} (the step was answered there, at tick {})",
+            opt(&w["tick"])
+        );
+        return;
+    }
+    let ticks = match (w["ticks"][0].as_u64(), w["ticks"][1].as_u64()) {
+        (Some(a), Some(b)) => format!("ticks {a}..{b}"),
+        _ => "no tick".to_owned(),
+    };
+    let changes = w["changes"].as_u64().unwrap_or(0);
+    let _ = writeln!(
+        out,
+        "{}, {ticks}: {} -> {}, {changes} change{}",
+        opt(&w["trace"]),
+        cell(&w["start"]),
+        cell(&w["end"]),
+        if changes == 1 { "" } else { "s" }
+    );
+    let mut rows: Vec<Vec<String>> = Vec::new();
+    for r in w["rows"].as_array().into_iter().flatten() {
+        let changed = !r["after"].is_null() || !r["before"].is_null();
+        let (mut before, mut after) = (cell(&r["before"]), cell(&r["after"]));
+        if before == after && r["before"] != r["after"] {
+            // A change below the table's rounding: the exact values.
+            (before, after) = (opt(&r["before"]), opt(&r["after"]));
+        }
+        if !changed {
+            (before, after) = (String::new(), String::new());
+        }
+        let mut row = vec![
+            opt(&r["tick"]),
+            opt(&r["by"]),
+            r["phase"].as_str().unwrap_or("").to_owned(),
+            before,
+            after,
+        ];
+        let mut at = Vec::new();
+        if let Some(a) = r["at"].as_str() {
+            at.push(match r["via"].as_str() {
+                Some(via) => format!("{a} (the value returned at {via})"),
+                None => a.to_owned(),
+            });
+        }
+        if let Some(n) = r["statements_more"].as_u64() {
+            at.push(format!("... {n} more statements of this call wrote it"));
+        }
+        for x in r["writes"].as_array().into_iter().flatten() {
+            at.push(match x["more"].as_u64() {
+                Some(n) => format!("... {n} more"),
+                None => {
+                    let params = compact(&x["params"]);
+                    let params = if params.chars().count() > 72 {
+                        let cut: String = params.chars().take(69).collect();
+                        format!("{cut}...")
+                    } else {
+                        params
+                    };
+                    format!("{} ({}) {params}", opt(&x["name"]), opt(&x["source"]))
+                }
+            });
+        }
+        let mut lines = at.into_iter();
+        row.push(lines.next().unwrap_or_default());
+        rows.push(row);
+        for more in lines {
+            let mut r = vec![String::new(); 5];
+            r.push(more);
+            rows.push(r);
+        }
+    }
+    if rows.is_empty() {
+        return;
+    }
+    let header: Vec<String> = ["tick", "by", "phase", "before", "after", "at"]
+        .iter()
+        .map(|h| (*h).to_owned())
+        .collect();
+    let widths: Vec<usize> = (0..header.len())
+        .map(|i| {
+            rows.iter()
+                .filter_map(|r| r.get(i))
+                .chain(std::iter::once(&header[i]))
+                .map(|c| c.chars().count())
+                .max()
+                .unwrap_or(0)
+        })
+        .collect();
+    let line = |cells: &[String]| -> String {
+        cells
+            .iter()
+            .zip(&widths)
+            .map(|(c, w)| format!("{c:<w$}"))
+            .collect::<Vec<_>>()
+            .join("  ")
+            .trim_end()
+            .to_owned()
+    };
+    let _ = writeln!(out, "{}", line(&header));
+    for r in &rows {
+        let _ = writeln!(out, "{}", line(r));
+    }
+    if let Some(n) = w["omitted"].as_u64() {
+        let _ = writeln!(out, "... {n} more rows (the trace keeps the first 2000)");
+    }
 }
 
 /// A `time.step`'s samples as a table: a header, one row per sample, columns aligned.
@@ -1441,6 +1579,12 @@ fn text(method: &str, v: &Value, full: bool) -> String {
         "debug.exceptions" => {
             let _ = writeln!(out, "pause on exceptions: {}", opt(&v["mode"]));
         }
+        "debug.writes" => {
+            writes_table(v, &mut out);
+            if let Some(why) = v["stopped_by"].as_object() {
+                let _ = writeln!(out, "stopped: {}", compact(&Value::Object(why.clone())));
+            }
+        }
         "debug.rewind" => {
             let sc = &v["scripts"];
             let _ = write!(
@@ -1541,6 +1685,9 @@ fn text(method: &str, v: &Value, full: bool) -> String {
             }
             if v["samples"].is_object() {
                 samples_table(&v["samples"], &mut out);
+            }
+            if v["writes"].is_object() {
+                writes_table(&v["writes"], &mut out);
             }
         }
         "snapshots.list" => {
@@ -2063,6 +2210,21 @@ mod tests {
             )
         );
         assert_eq!(
+            req("debug", &["writes", "Sloop.Boat.rudder", "--ticks", "120"]),
+            (
+                "debug.writes".into(),
+                json!({"entity": "Sloop", "component": "Boat", "field": "rudder", "ticks": 120})
+            )
+        );
+        assert_eq!(
+            req("step", &["30", "--trace", "Sloop.Transform.position.y"]),
+            (
+                "time.step".into(),
+                json!({"ticks": 30, "trace": {"entity": "Sloop", "component": "Transform",
+                                              "field": "position.y"}})
+            )
+        );
+        assert_eq!(
             req("debug", &["step"]),
             ("debug.step".into(), json!({"kind": "over"}))
         );
@@ -2247,6 +2409,53 @@ mod tests {
             text("time.step", &step, false),
             "tick 6 hash - | stopped at scripts/helm.ts:67 (breakpoint bp1 in helm, tick 6): \
              pocket debug state | pocket debug continue\n"
+        );
+    }
+
+    #[test]
+    fn a_write_trace_reads_as_a_table() {
+        let v = json!({
+            "trace": "Sloop.Boat.rudder", "ticks": [1, 40], "traced": 40, "start": 0.0,
+            "end": -0.25, "changes": 3, "tick": 40,
+            "rows": [
+                {"tick": 1, "by": "boundary", "writes": [
+                    {"name": "player.act", "source": "player:0", "seq": 2,
+                     "params": {"actions": [{"do": "start", "intent": "sail_to"}]}}]},
+                {"tick": 1, "by": "interface.intents", "phase": "Control", "before": 0.0,
+                 "after": 0.083333},
+                {"tick": 20, "by": "script:helm", "phase": "Update", "before": 0.1,
+                 "after": -0.25, "at": "scripts/helm.ts:10:13"}]});
+        assert_eq!(
+            text("debug.writes", &v, false),
+            "Sloop.Boat.rudder, ticks 1..40: 0 -> -0.25, 3 changes\n\
+             tick  by                 phase    before  after     at\n\
+             1     boundary                                      player.act (player:0) {\"actions\":[{\"do\":\"start\",\"intent\":\"sail_to\"}]}\n\
+             1     interface.intents  Control  0       0.083333\n\
+             20    script:helm        Update   0.1     -0.25     scripts/helm.ts:10:13\n"
+        );
+        // A write of a helper's result, a change below the table's rounding, and a trace a
+        // debugger stop dropped.
+        let v = json!({
+            "trace": "Sloop.Boat.rudder", "ticks": [1, 2], "traced": 2, "start": 0.0,
+            "end": 0.1000001, "changes": 2,
+            "rows": [
+                {"tick": 1, "by": "script:helm", "phase": "Update", "before": 0.0,
+                 "after": 0.1, "at": "scripts/helm.ts:15:13", "via": "scripts/helm.ts:5:5"},
+                {"tick": 2, "by": "physics.step", "phase": "Physics", "before": 0.1,
+                 "after": 0.1000001}]});
+        assert_eq!(
+            text("debug.writes", &v, false),
+            "Sloop.Boat.rudder, ticks 1..2: 0 -> 0.1, 2 changes\n\
+             tick  by            phase    before  after      at\n\
+             1     script:helm   Update   0       0.1        scripts/helm.ts:15:13 (the value returned at scripts/helm.ts:5:5)\n\
+             2     physics.step  Physics  0.1     0.1000001\n"
+        );
+        let v = json!({"dropped": "debugger stop", "tick": 7, "paused": true,
+                       "stopped_by": {"reason": "breakpoint"}});
+        assert_eq!(
+            text("debug.writes", &v, false),
+            "the trace was dropped at a debugger stop (the step was answered there, at tick 7)\n\
+             stopped: {\"reason\":\"breakpoint\"}\n"
         );
     }
 

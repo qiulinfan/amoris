@@ -179,7 +179,7 @@ pub const CATALOG: &[CommandDef] = &[
         def(
             "time.step",
             Kind::Control,
-            "Runs ticks; with until/watch, stops early when an event is emitted or a field meets a test.",
+            "Runs ticks; with until/watch, stops early when an event is emitted or a field meets a test; with sample, reads fields every few ticks as a table; with trace {entity, component, field?}, answers writes: each boundary write and system, engine or script, that changed the field, tick by tick, with the values and a script's statement.",
             schema::<StepParams>,
         ),
         &["step"],
