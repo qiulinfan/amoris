@@ -60,3 +60,7 @@ oxc_span.workspace = true
 [[example]]
 name = "web_workload"
 crate-type = ["cdylib"]
+
+[[example]]
+name = "rules_bench"
+required-features = ["transpile"]
