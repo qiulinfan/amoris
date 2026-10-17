@@ -208,9 +208,14 @@ about the probe margin below.
   early pass of `p` draws a stale set, so `p`'s reading does not count). It turns occlusion culling
   on if the occluded triangles exceed `1.5 x cost`. Meanwhile the frames run one phase.
 - The first probe (the renderer's first frame with instances, or the first after `set_occlusion`)
-  is optimistic: it keeps two phases until its reading arrives. A reading takes 2 or 3 frames
-  natively, but in Chrome under an uncapped frame loop it took over 300 frames (the queue runs
-  ahead of the GPU), and many_cubes dense spent them at 17 ms instead of 1.
+  is optimistic: it keeps two phases until its reading arrives. A reading takes a frame natively
+  (many_cubes headless decides at frame 3), but in Chrome under an uncapped frame loop it took over
+  300 frames (the queue runs ahead of the GPU), and many_cubes dense spent them at 17 ms instead of
+  1. With 357 to 373 frames of lag (and 1 to 7 with vsync) the auto mode turned occlusion culling on
+  for the dense grid and kept it off on the sphere and occluder pages, on both adapters and without
+  a timeout, which the fixed modes in Chrome confirm: on saves the dense grid 83 to 90% of its GPU
+  frame, and costs the other two pages 12 to 47% (quiet re-measurement of 2026-10-15; provisionally
+  6 to 33%; bench/prepass.md 6; `occlusion_auto` in the viewport's `auto_stats`).
 - On, it stays on while the occluded triangles cover `cost` (readings from the frame after it went
   on), and turns off after three readings in a row that do not.
 - Off, it probes again 120 frames later; after each probe that fails the wait doubles, up to 960

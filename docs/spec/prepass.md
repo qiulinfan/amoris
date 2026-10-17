@@ -1,6 +1,7 @@
 # Depth prepass
 
-Status: Draft, implemented on branch `explore/prepass` (2026-10-10)
+Status: Draft, implemented on branch `explore/prepass` (2026-10-10); the auto mode's browser
+revisions (readback lag, quantized timestamps) on branch `explore/webauto` (2026-10-14)
 
 Charter: 4.4 (the Pioneer note of 2026-10-10 on the depth prepass; the opaque pass, two-phase Hi-Z
 and TAA notes of 2026-10-09), 4.1 (one renderer for Metal, Vulkan, Direct3D 12 and WebGPU).
@@ -143,13 +144,17 @@ the viewport page `?prepass=off|on|auto`. `FrameStats::prepass` says what the fr
 **Auto** decides by measurement, not a model: the opaque passes' GPU time with and without the
 prepass, from the pass timestamps (profiler.rs; `Reading` sums the scopes `depth prepass`,
 `opaque early` and `opaque+sky`, the passes that differ between the two ways; culling, the pyramid
-and post are the same either way). Readings arrive two or three frames late natively (up to a second
-in a browser), and the profiler does not time a frame whose readback buffer is still busy, which
-`GpuProfiler::times_frame` says as the frame begins. Each reading names the frame it measured
-(`Timings::frame`, the profiler's count of submitted frames; `GpuProfiler::arrived` keeps every
-reading that arrived, oldest first), and a probe counts only its own frames: frames of its kind with
-instances, timed, begun since it started. A frame without instances (a loading screen's sky alone,
-0.1 ms), a frame from before a resize and a frame between probes never decide.
+and post are the same either way). Readings arrive a frame late natively (the lag, frames from a
+timed frame to its reading's arrival, is 1 in many_cubes headless); in Chrome 1 to 7 frames late
+with vsync and 357 to 373 frames late with an uncapped frame loop (0.3 to 2.6 s in the auto mode's
+runs, up to 9.5 s at 25 ms a frame; quiet re-measurement of 2026-10-15, bench/prepass.md 6), and the
+profiler does not time a frame whose readback buffer is still busy, which `GpuProfiler::times_frame`
+says as the frame begins: with three readback buffers that is three frames per lag. Each reading
+names the frame it measured (`Timings::frame`, the profiler's count of submitted frames;
+`GpuProfiler::arrived` keeps every reading that arrived, oldest first), and a probe counts only its
+own frames: frames of its kind with instances, timed, begun since it started. A frame without
+instances (a loading screen's sky alone, 0.1 ms), a frame from before a resize and a frame between
+probes never decide.
 
 A probe first draws the way frames draw now until it has four readings of it (`SAMPLES`; in a
 re-probe this costs nothing), at the first probe the prepass: its extra cost is bounded (a second
@@ -162,12 +167,50 @@ readings of the way drawn second can only lower its minimum, so it wins as soon 
 so; it loses after four readings, or at its first reading more than 50% above the first way's
 minimum (`BAIL`). A probe therefore draws a much slower way for one frame (on the dense grid, one
 frame without the prepass at three times the GPU time), and a way within 50% for at most four
-frames, never two in a row with a readback lag of two frames or more.
+frames, never two in a row with a readback lag of two frames or more. With quantized timestamps the
+prepass way's readings are first raised by the bias the quantization gives its minimum (below).
 
 The next probe comes 240 frames later (`PROBE_EVERY`) after a decision that changed the choice, and
 twice as long after each one that kept it, up to 1,920 frames (`PROBE_MAX`). A probe still waiting
-600 frames of any kind after it started gives up (`PROBE_TIMEOUT`: the choice stays, a later probe
-is scheduled), so every reading a probe takes measured a frame within that span.
+600 frames of any kind after it started (`PROBE_TIMEOUT`), or twelve readback lags if that is longer
+(`TIMEOUT_LAGS`; the largest lag seen since the probe started), gives up: the choice stays, a later
+probe is scheduled, and every reading a probe takes measured a frame within that span. A probe
+needs up to seven lags where the lag exceeds the ring's frames: up to one before its first timed
+frame, two for its first way's four readings (three timed frames per lag) and one for each reading
+of the other way. The simulation needs seven, with or without occlusion culling's probes taking
+timed frames; twelve is an empirical margin over it (a build with eight, whose timeout followed
+the latest lag, timed out one re-probe in 27,000 frames in Chrome). The lag falls while Chrome's
+queue settles (from 354 to 107 frames in one run): a timeout that followed the latest lag would
+drop a probe still waiting on readings timed at the longer one. Before the timeout scaled with the
+lag every probe in an uncapped Chrome gave up at 600 frames with three or four readings of its first
+way, and none decided (bench/prepass.md 6). A lag beyond 600 frames before any reading has arrived
+still costs the first probe; the next one knows the lag.
+
+**Quantized timestamps.** Before the minimums compare, the prepass way's readings are raised by
+`QUANTA_PER_PHASE` (0.5) times the timestamps' resolution per opaque phase: half a quantum in
+one-phase frames, one in two-phase frames. The resolution is the greatest common divisor of every
+timestamp the profiler has read (`GpuProfiler::resolution_ns`): 10 to 32 ns natively, where this
+changes nothing, and 65.536 us (2^16 ns) in Chrome 155 without `--enable-unsafe-webgpu` (other
+switches were not tried). Each pass is timed by its own pair of timestamps, so its quantized
+duration comes out up to a quantum short of its true one or over it; the minimum of several
+readings keeps the short side, about half a quantum per pass on average, and the prepass way times
+one pass more per phase, so its minimum comes out lower than the other way's by about half a
+quantum per phase for nothing. Without the correction the occluder page (opaque passes about 0.1 ms,
+the prepass 4% dearer) took the prepass in default Chrome on the RTX 5060 and kept it, at the same
+canvas size as unsafe Chrome, which did not (bench/prepass.md 6). The bias corrects the expected
+error; it is no bound. Differences within about a quantum still come out either way, at a cost of
+at most about that much per frame, and a later probe can undo them: with it, the occluder page took
+the prepass in default Chrome on the RTX 5060 in 2 of 21 decisions in the provisional runs, each
+undone at the next probe, and in none of 15 in the quiet re-measurement (2026-10-15).
+
+This branch first tried a slack instead: the way drawn second had to win by two quanta per phase
+beyond the margin. The occluder page stayed off, but the dense grid's two-phase frames on the RTX
+5060 in default Chrome with vsync went without the prepass, the opaque passes at twice its cost
+(0.295 against 0.147 ms), and a slack holds whatever the first probe chose, since every later probe
+must beat the incumbent by it. Simulated with the pages' measured costs and pass shares (section 7),
+the slack drew the dense grid the right way in 0.1 to 7% of the frames after the first decision, a
+slack of one quantum per phase in 91 to 95%, the bias in 99.9%; the occluder page went the right way
+in 49 to 51% without either, 99% with the bias.
 
 Frames with one opaque phase and frames with two (occlusion culling, occlusion.md 7) are timed and
 decided separately (`Choice` per kind): occlusion culling changes what the opaque passes draw, so a
@@ -215,12 +258,24 @@ much slower way, or up to four of a way within 50% (bench/prepass.md 3 gives the
   and during probes, whose old frames' readings arrive after it and never count; the timeout counted
   in frames of any kind; one frame of a much slower way per probe, either way round; at most four
   frames of a way within 50%, one at a time; lost readbacks, irregular and in step with the probe
-  (at most eight frames the other way); a browser's readback lag; the re-probe after a change, the
-  backoff, separate one- and two-phase choices, no timestamps. With a defect put back each of these
-  fails: readings counted whatever frame they measured (the review's empty-frame and resize cases),
-  the timeout counted in frames of the kind, both ways drawn by turns as before (runs of frames
-  without the prepass at each re-probe of the dense grid), no bail-out, several frames of the other
-  way in flight, no cap on them.
+  (at most eight frames the other way); a browser's readback lag, of 20 frames and of 350 to 700
+  (Chrome uncapped: decided within seven lags, then one frame at a time the other way, also with
+  occlusion culling's probes taking timed frames; beyond 600 frames one timeout first); a lag that
+  falls from 360 to 100 frames while a probe waits; timestamps quantized to 65.536 us (the occluder
+  page and the dense grid at their measured costs and pass shares, and differences well beyond the
+  quantization, each from eight phases of the quantum with the passes 2 and 30 us apart, at a lag
+  of 2 and of 360 frames: at least 98% of the frames after the first decision drawn the cheaper
+  way, 97% for the rest); the re-probe after a change, the backoff, separate one- and two-phase
+  choices, no timestamps. The simulated quantization rounds each pass's timestamps down from a
+  start that varies by frame. With a defect put back each of these fails: the timeout fixed at 600
+  frames or at six lags (the 350-frame lag never decides), the timeout following the latest lag
+  (the falling lag drops the probe), no bias (the occluder page draws the prepass in about half its
+  frames), a bias of one quantum per phase or a slack of one or two quanta per phase that the other
+  way must win by (the dense grid goes without the prepass in 5 to 99.9% of its frames),
+  readings counted whatever frame they measured (the review's empty-frame and resize cases), the
+  timeout counted in frames of the kind, both ways drawn by turns as before (runs of frames without
+  the prepass at each re-probe of the dense grid), no bail-out, several frames of the other way in
+  flight, no cap on them.
 - `cargo run --release -p pocket-app --example draw_paths -- --compare prepass <scenes>` draws a
   scene twice at one moment (off, forced on) and compares pixels and coverage;
   `python tools/prepass_compare.py` runs that over the samples and every capture of
@@ -235,5 +290,14 @@ much slower way, or up to four of a way within 50% (bench/prepass.md 3 gives the
   early one still costs the early one's shading there (section 1).
 - The auto mode needs timestamps; without them (some browsers) it stays off. An estimate from
   counters (the culling pass's projected area against the screen's) could decide there; not done.
+  With quantized timestamps (default Chrome) differences within about a quantum (0.066 ms a phase)
+  come out either way from probe to probe; means of more readings would resolve them, at the price
+  of the minimums' immunity to interference.
+- In an uncapped browser frame loop the first decision took 151 to 1,125 frames after the first
+  probe in the quiet re-measurement of 2026-10-15 (0.4 to 7.7 s, about three readback lags at most;
+  a probe may need up to seven; the provisional runs 113 to 2,507 frames, 0.3 to 17 s), and the
+  first probe draws the prepass meanwhile: the sphere drew it for 9% of a 90 s run on the 780M and
+  16% of a 30 s run on the RTX 5060 (provisionally 10 to 20% on the 780M), which a probe that drew
+  no prepass first would avoid at the risk of shading the dense grid in draw order for as long.
 - Two surfaces tied in depth resolve to the last drawn (section 4).
 - Shadow cascades have no prepass (depth only already).

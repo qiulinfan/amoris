@@ -230,3 +230,223 @@ and 0.53 (Vulkan) of Unreal's.
 overdraw pays a second geometry pass), `off` costs the dense grid three times its GPU time without
 occlusion culling and half again with it. Auto follows the better one within its probes' cost.
 Where timestamps are missing it stays off, the renderer's behaviour before the prepass.
+
+## 6. In Chrome
+
+Status: **quiet re-measurement** (2026-10-15, branch `explore/webauto`, the second round's final
+rules and committed viewport package). Nothing else ran on the machine: CPU load 3.6 to 9.1% at
+each invocation's start, no other agent's builds, tests or GPU work, only the desktop compositor
+and the agent's own app on the GPU, on AC power, the RTX 5060 at 51 to 69 C (below 70 C at every
+start); every invocation held the shared GPU lock. One run per cell (n = 1). Two provisional rounds
+came first (2026-10-14: the first, then the second after review), while other agents built and
+tested on the machine (CPU load 26 to 65% at the first round's run starts, 3 to 16% at the
+second's); the quiet runs reach the same decisions, and where their figures differ the text says
+so. The question is not how fast, but whether the auto modes reach the right decision where
+readbacks arrive hundreds of frames late and timestamps may be quantized.
+
+**Method.** `python tools/web_auto.py run` (`table` prints these tables): Chrome 155.0.8059.41
+headless (each row records the version), a 1280x720 window with the page held at 1254x564 CSS
+pixels (`--canvas`, through `Emulation.setDeviceMetricsOverride`; each row records the canvas), the
+viewport pages `?demo=cubes&dense` (many_cubes' dense grid, 1.6M cubes), `?demo=cubes` (the sphere)
+and `?demo=occluders`, the browser's defaults (MSAA, GTAO off, occlusion culling and the prepass
+auto). Runs last 30 s, 90 s for the 780M with the uncapped loop (whose lag-scaled timeout and
+re-probes take longer than 30 s there); every 200 ms the page's new frames (their choices) and the
+auto modes' state (the viewport's `auto_stats`: `prepass_auto`, `occlusion_auto`,
+`timestamp_quantum_us`) are read. Adapters: the RTX 5060 (`--force_high_performance_gpu`) and the
+Radeon 780M (Chrome's choice), both through Dawn on Direct3D 12. Frame loops: `uncapped`
+(`--disable-frame-rate-limit --disable-gpu-vsync`, the benchmarks' setup) and `vsync` (the 120 Hz
+display's). Chrome: `unsafe` (`--enable-unsafe-webgpu`, as every earlier browser measurement) and
+`default` (without it). Which way is cheaper: the same pages with `?prepass=on` and `off` (unsafe
+Chrome, 20 s each), the opaque passes' GPU time (prepass included; the latest reading every 200 ms,
+median); for occlusion culling `?occlusion=on` and `off` with the prepass fixed as the auto mode
+decides each page (on for the dense grid, off elsewhere), the GPU frame time. The native reference
+is `many_cubes --headless-bench 600` at 1254x564 with `POCKET_AA=msaa POCKET_GTAO=off` on Direct3D
+12 (`web_auto.py native`). Raw polls, summaries and machine conditions: `out/webauto/quiet/` (the
+provisional rounds' beside it in `out/webauto/`; not committed).
+
+The first round's default-Chrome runs drew a 1254x620 canvas: in the same window Chrome gives the
+page 56 pixels more height without `--enable-unsafe-webgpu`, so they did not match the fixed-mode
+runs (unsafe, 1254x564). The second round fixed the canvas and re-ran them; the tables below are
+the quiet re-measurement's, except the unsafe `before` cells (the first round's, at 1254x564; the
+quiet protocol re-ran `before` in default Chrome only).
+
+**What the browser measures.** Readings (timestamps and occlusion culling's counters alike) arrived
+357 to 373 frames late with the uncapped loop (0.3 to 2.6 s in the auto runs at 0.7 to 7 ms a frame,
+up to 9.5 s in the fixed-mode run of the 780M's dense grid without occlusion culling at 25 ms a
+frame; docs/bench/polish.md 3 found the same for the entity-id readback), 1 to 7 frames with vsync
+(the median 1 or 2, and 7 where the dense grid without occlusion culling took longer than the
+display's interval), and 1 frame natively, in the quiet runs as in the provisional ones: the lag is
+the frames from a timed frame to its reading's arrival (`prepass_auto.lag`). The timestamps'
+resolution (the greatest common divisor of every timestamp read) was 32 ns on the RTX 5060 and 10 ns
+on the 780M with `--enable-unsafe-webgpu`, and 65.536 us (2^16 ns) on both without it, which
+render.md's open question asked; other switches were not tried. `timestamp-query` was granted either
+way. The way that pays (opaque passes, ms, median):
+
+| Page, adapter | Uncapped: on, off | Vsync: on, off | Cheaper |
+|---|---|---|---|
+| dense (two phases), RTX 5060 | 0.159, 0.346 | 0.143, 0.298 | on (-52 to -54%) |
+| dense (two phases), 780M | 0.434, 0.977 | 0.714, 1.438 | on (-50 to -56%) |
+| sphere (one phase), RTX 5060 | 2.896, 2.078 | 2.754, 1.923 | off (+39 to +43%) |
+| sphere (one phase), 780M | 4.931, 3.871 | 4.700, 4.280 | off (+10 to +27%) |
+| occluders (one phase), RTX 5060 | 0.110, 0.106 | 0.109, 0.106 | off (+3 to +4%) |
+| occluders (one phase), 780M | 0.560, 0.493 | 0.855, 0.812 | off (+5 to +14%) |
+
+The provisional rounds' fixed-mode runs found the same ways cheaper by similar shares (the first
+-50 to -55%, +19 to +45%, +4 to +11%; the second -51 to -54%, +13 to +52%, +2 to +12%); the RTX
+5060's occluder page differs by less than the auto mode's 5% margin, so either choice is within it
+there.
+
+The dense grid's frames run two opaque phases (occlusion culling's auto mode turns it on, as
+natively), so its two-phase choice decides; the sphere's and the occluder scene's run one.
+
+**Decisions** of the frames' kind: the first decision and the frames from the kind's first probe to
+it, probes that gave up (timeouts), and the share of the run's frames drawn with the prepass.
+`Before` is the rules before this branch: master's viewport package for default Chrome (it reports
+no auto state, only what each frame drew; quiet runs, 30 s on every adapter), the diagnostics-only
+build `0ec2dfc0` for unsafe Chrome (the first round); `after` this branch (quiet runs):
+
+| Page | Adapter | Loop | Chrome | Lag p50 (max) | Quantum, us | Kind | Before: decision at frames; prepass frames | After |
+|---|---|---|---|---|---|---|---|---|
+| dense | RTX 5060 | uncapped | unsafe | 372 (373) | 0.032 | two | none, 9 timeouts; 31% | on at 1052; 100% |
+| sphere | RTX 5060 | uncapped | unsafe | 373 (373) | 0.032 | one | none, 5 timeouts; 39% | off at 1125; 16% |
+| occluders | RTX 5060 | uncapped | unsafe | 358 (359) | 0.032 | one | none, 15 timeouts; 29% | off at 1075; 4% |
+| dense | RTX 5060 | uncapped | default | 372 (373) | 65.536 | two | not reported; 30% | on at 1080; 100% |
+| sphere | RTX 5060 | uncapped | default | 373 (373) | 65.536 | one | not reported; 39% | off at 1123; 16% |
+| occluders | RTX 5060 | uncapped | default | 358 (358) | 65.536 | one | not reported; 28% | off at 1075; 4% |
+| dense | RTX 5060 | vsync | unsafe | 1 (5) | 0.032 | two | on at 8; 100% | on at 8; 100% |
+| sphere | RTX 5060 | vsync | unsafe | 1 (4) | 0.032 | one | off at 6; 1% | off at 5; 1% |
+| occluders | RTX 5060 | vsync | unsafe | 1 (3) | 0.032 | one | off at 5; 1% | off at 5; 1% |
+| dense | RTX 5060 | vsync | default | 1 (5) | 65.536 | two | not reported; 100% | on at 8; 100% |
+| sphere | RTX 5060 | vsync | default | 1 (4) | 65.536 | one | not reported; 1% | off at 5; 1% |
+| occluders | RTX 5060 | vsync | default | 1 (3) | 65.536 | one | not reported; 100% | off at 5; 1% |
+| dense | 780M | uncapped | unsafe | 372 (373) | 0.01 | two | none, 4 timeouts; 41% | on at 366; 100% |
+| sphere | 780M | uncapped | unsafe | 373 (373) | 0.01 | one | none, 3 timeouts; 53% | off at 1079; 9% |
+| occluders | 780M | uncapped | unsafe | 372 (373) | 0.01 | one | off at 493, 5 timeouts; 8% | off at 151; 2% |
+| dense | 780M | uncapped | default | 372 (373) | 65.536 | two | not reported; 100% | on at 400; 100% |
+| sphere | 780M | uncapped | default | 373 (373) | 65.536 | one | not reported; 55% | off at 1099; 9% |
+| occluders | 780M | uncapped | default | 372 (373) | 65.536 | one | not reported; 5% | off at 186; 2% |
+| dense | 780M | vsync | unsafe | 1 (7) | 0.01 | two | on at 11; 100% | on at 13; 100% |
+| sphere | 780M | vsync | unsafe | 2 (7) | 0.01 | one | off at 17; 1% | off at 21; 1% |
+| occluders | 780M | vsync | unsafe | 1 (3) | 0.01 | one | off at 5; 1% | off at 5; 1% |
+| dense | 780M | vsync | default | 1 (6) | 65.536 | two | not reported; 100% | on at 13; 100% |
+| sphere | 780M | vsync | default | 2 (7) | 65.536 | one | not reported; 1% | off at 19; 1% |
+| occluders | 780M | vsync | default | 1 (3) | 65.536 | one | not reported; 1% | off at 5; 1% |
+
+- **Uncapped, before: no decision.** A probe needs its first way's four readings and the other
+  way's, one per readback lag; with three readback buffers the profiler times three frames per lag,
+  so every probe gave up at its 600-frame timeout with three or four readings. Over 30 s the
+  first round's runs timed out 3 to 20 times and decided in two runs of twelve (both within their
+  first 500 frames, while Chrome's queue was still filling: lags of 120 to 290 frames). The frames
+  drew the prepass during the probes and not between them, whichever way paid: the dense grid went
+  without it for 59 to 70% of its frames (the 780M's default-Chrome run decided early in every
+  round, the quiet one included), the sphere drew it for 39 to 55% (the quiet default-Chrome runs
+  with master's package and the first round's unsafe ones; the provisional default-Chrome runs 38
+  to 57%).
+- **Uncapped, after**: the timeout grows with the largest lag seen since the probe started
+  (`TIMEOUT_LAGS`, twelve lags, about 4,500 frames here). Every quiet run decided right, 151 to
+  1,125 frames after its kind's first probe (0.4 to 7.7 s), and its re-probes kept it (3 to 11
+  decisions a run; the 780M's 90 s runs 4 to 9), with no wrong switch and no timeout of the deciding
+  kind; the two-phase kind of the sphere and occluder pages still times out, 1 to 5 times a run
+  (its frames come only with occlusion culling's brief probes). The first probe draws the prepass
+  until it has its readings, so the sphere drew it for 16% of a 30 s run on the RTX 5060 and 9% of a
+  90 s run on the 780M, all in its first probe. The provisional second round's runs decided right
+  too, but later at the extremes: 113 to 2,507 frames (0.3 to 17 s; the sphere 10 to 20% of a 780M
+  run with the prepass), 3 to 16 decisions a run, and one wrong switch on the occluder page, undone
+  at the next probe (below).
+- **Vsync** decides in 5 to 21 frames (natively 5; provisionally 5 to 23).
+- **Quantized timestamps.** Before, the occluder page took the prepass in default Chrome on the RTX
+  5060 and kept it (100% of the frames with vsync, in the quiet run as in the provisional one), at
+  the same canvas as unsafe Chrome, which did not: its two ways differ by 3 to 4% of 0.11 ms, a
+  fraction of a quantum, and the prepass way's minimum comes out low by about half a quantum more
+  (it times one more pass). After (`QUANTA_PER_PHASE`, that half quantum per phase added to the
+  prepass way) the occluder page never took the prepass in default Chrome on the RTX 5060 in the
+  quiet runs (15 decisions: 11 uncapped, 4 with vsync; 4% and 1% of the frames with it, the probes),
+  and the dense grid's two-phase frames took it at their first decision (frame 8 with vsync, 100% of
+  the frames). The provisional second round's runs had taken it on the occluder page in 2 of 21
+  decisions (at frame 19 with vsync, at 16,674 uncapped), each undone at the next probe (253 and
+  1,516 frames later, 8% and 3% of the runs' frames, 0.004 ms more each), and its dense grid had
+  gone without the prepass at the first decision with vsync (off at frame 11, on at the re-probe at
+  259, 92% of the frames with it). Both are what the rule allows: differences within about a quantum
+  come out either way from probe to probe and run to run, and the next probe can undo them; the
+  quiet runs drew none of them. The first round tried a slack instead (the way drawn second had to
+  win by two quanta per phase beyond the margin): the occluder page stayed off, but the dense grid's
+  two-phase frames on the RTX 5060 in default Chrome with vsync went without the prepass (1% of the
+  frames with it), the opaque passes at twice its cost and the quantized GPU frame 14% longer (1.049
+  against 0.918 ms, at the first round's 1254x620). Simulated (the pages' costs and pass shares,
+  eight phases of the quantum, passes 2 and 30 us apart:
+  `quantized_timestamps_decide_by_differences_beyond_their_resolution`), the share of the frames
+  after the first decision drawn the cheaper way:
+
+  | Rule | Occluder page, lag 2; 360 | Dense grid, lag 2; 360 |
+  |---|---|---|
+  | none | 0.49; 0.51 | 0.999; 1.000 |
+  | slack, two quanta per phase (first round) | 0.998; 0.999 | 0.065; 0.001 |
+  | slack, one quantum per phase | 0.998; 0.999 | 0.949; 0.913 |
+  | bias, half a quantum per phase (adopted) | 0.990; 0.989 | 0.999; 1.000 |
+  | bias, one quantum per phase | 0.999; 1.000 | 0.946; 0.791 |
+
+  Weighted by the ways' differences (0.004 ms on the occluder page, 0.15 ms on the dense grid) the
+  adopted bias loses the least per frame; differences within about a quantum still come out either
+  way, at most about that much each.
+- **Native** decisions are unchanged: both adapters decide the dense grid's two-phase frames on
+  and the sphere's one-phase frames off, 5 frames after the first probe (occlusion culling decides
+  at frame 3), with a lag of one frame and a resolution of 32 ns (RTX 5060) or 10 ns (780M), with
+  this branch's binary (the quiet re-run alike) as with the first round's diagnostics-only one; they
+  drew the prepass in 599 of 600 measured dense frames and 3 to 6 sphere frames (probes; 6 in the
+  quiet runs). Neither rule applies there: the lag keeps the timeout at 600 frames and the bias is 5
+  to 16 ns.
+- **Occlusion culling's auto mode** reads its counters, not timestamps, and is unchanged. Against
+  its fixed modes in Chrome (unsafe, the prepass fixed as the auto mode decides; GPU frame, ms,
+  median; quiet runs):
+
+  | Page, adapter | Uncapped: occlusion on, off | Vsync: on, off | Cheaper | Auto |
+  |---|---|---|---|---|
+  | dense, RTX 5060 | 0.871, 8.471 | 0.935, 8.621 | on (-89 to -90%) | on |
+  | dense, 780M | 3.312, 24.499 | 4.105, 23.981 | on (-83 to -86%) | on |
+  | sphere, RTX 5060 | 2.927, 2.618 | 2.619, 2.338 | off (+12%) | off |
+  | sphere, 780M | 6.370, 5.465 | 6.577, 5.722 | off (+15 to +17%) | off |
+  | occluders, RTX 5060 | 0.265, 0.208 | 0.268, 0.207 | off (+27 to +29%) | off |
+  | occluders, 780M | 1.323, 1.066 | 2.174, 1.478 | off (+24 to +47%) | off |
+
+  The provisional second round found the same ways cheaper (dense -83 to -90%; the others +6 to
+  +33%, the sphere's smallest at +6%). The auto mode decided that way in every run of all three
+  rounds, both Chrome configurations and both loops (in the last half of each quiet run 100% of the
+  dense grid's frames had two phases, none of the others'), without a timeout: its first probe
+  holds two phases until its reading, 22 to 362 frames uncapped in the auto runs (the 780M's dense
+  grid and sphere decided at 22 to 38, while Chrome's queue was still filling) and 5 to 9 with
+  vsync, and brief probes 120 to 960 frames apart failed.
+  Natively (many_cubes, the dense grid and the sphere; it has no occluder scene) it decides the same
+  at frame 3.
+
+**Checks.** The change is in the auto mode only; the fixed modes draw as before:
+`tools/prepass_compare.py` over the many_cubes captures (Direct3D 12, RTX 5060; first round) finds
+the dense grid and the shadowed cubes identical and the sphere's tie pixels one level apart, as in
+section 2; `cargo test -p pocket-render --test prepass --test occlusion --test hiz` passes on
+Direct3D 12 and Vulkan (RTX 5060) and Direct3D 12 (780M) (first round; the second round changes
+the decision rules only), and the crate's unit tests pass (spec/prepass.md 7).
+
+**Quiet re-measurement** (2026-10-15, conditions above), from the repository root; each command
+held the GPU lock for 1 to 10 minutes, and `table` prints the tables above:
+
+    python tools/web_auto.py run --out out/webauto/quiet/quiet.jsonl --gpus nvidia --label quiet
+    python tools/web_auto.py run --out out/webauto/quiet/quiet.jsonl --gpus 780m --loops vsync \
+        --label quiet
+    python tools/web_auto.py run --out out/webauto/quiet/quiet.jsonl --gpus 780m \
+        --loops uncapped --seconds 90 --label quiet
+    python tools/web_auto.py run --out out/webauto/quiet/quiet-truth.jsonl --chrome unsafe \
+        --modes on,off --seconds 20 --label truth
+    python tools/web_auto.py run --out out/webauto/quiet/quiet-truth.jsonl --pages dense \
+        --chrome unsafe --modes "occlusion=on&prepass=on,occlusion=off&prepass=on" \
+        --seconds 20 --label truth
+    python tools/web_auto.py run --out out/webauto/quiet/quiet-truth.jsonl \
+        --pages sphere,occluders --chrome unsafe \
+        --modes "occlusion=on&prepass=off,occlusion=off&prepass=off" --seconds 20 --label truth
+    python tools/web_auto.py native --out out/webauto/quiet/quiet-native.jsonl
+    git archive master web | tar -x -C out/webauto/quiet/web-before
+    python tools/web_auto.py run --web out/webauto/quiet/web-before/web --chrome default \
+        --out out/webauto/quiet/quiet-before.jsonl --label before
+    python tools/web_auto.py table --before out/webauto/quiet/quiet-before.jsonl \
+        --after out/webauto/quiet/quiet.jsonl --truth out/webauto/quiet/quiet-truth.jsonl \
+        --native out/webauto/quiet/quiet-native.jsonl
+
+`before` serves master's viewport package (`bfdef38e`) beside this branch's tools.

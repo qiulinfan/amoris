@@ -481,4 +481,6 @@ Nothing was downloaded or installed beyond the crates above.
   pixels here, with no textures.
 - **Chrome's flags.** `tools/webcheck.py` starts Chrome with `--enable-unsafe-webgpu`; whether a
   default Chrome grants `timestamp-query` with the same resolution (the medians here, such as 0.57
-  ms, are not multiples of 0.1 ms) was not checked.
+  ms, are not multiples of 0.1 ms) was not checked. Checked on 2026-10-14 (Chrome 155, Windows):
+  a default Chrome grants it, quantized to 65.536 us; with the switch the resolution is the GPU's
+  (32 ns on the RTX 5060, 10 ns on the 780M; bench/prepass.md 6).
