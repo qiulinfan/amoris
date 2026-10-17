@@ -1,0 +1,16 @@
+# Unity's generated and local state (docs/bench/physics-r1.md); only Assets/, Packages/ and
+# ProjectSettings/ are tracked.
+/Library/
+/Temp/
+/Logs/
+/UserSettings/
+/Builds/
+/Build/
+/obj/
+*.csproj
+*.sln
+# What PhysxBenchEditor.BuildPlayers creates for a build and deletes afterwards.
+/Assets/StreamingAssets/
+/Assets/StreamingAssets.meta
+/Assets/PhysxBench/Empty.unity
+/Assets/PhysxBench/Empty.unity.meta
