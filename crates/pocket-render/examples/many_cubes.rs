@@ -480,6 +480,11 @@ fn headless_bench(
             .map(|(m, v)| ((*m).to_owned(), summary(v)))
             .collect::<serde_json::Map<_, _>>(),
         "occlusion_last": occlusion,
+        // The auto modes' state after the last frame: decisions, the frames they were made at,
+        // the readbacks' lag (docs/bench/prepass.md 6).
+        "prepass_auto": r.prepass_state().json(),
+        "occlusion_auto": r.occlusion_state().json(),
+        "timestamp_quantum_us": r.timestamp_resolution_ns().map(|ns| f64::from(ns) / 1000.0),
         "backend": gpu.backend_name(),
         "adapter": gpu.info.name,
         "driver": format!("{} {}", gpu.info.driver, gpu.info.driver_info),

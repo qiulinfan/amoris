@@ -21,9 +21,13 @@
 //! [`MARGIN`] (the first probe's incumbent is no prepass). More readings of the way drawn second
 //! could only lower its minimum (the GPU's interference only ever adds time), so it wins as soon as
 //! the minimums say so; it loses after [`SAMPLES`] readings, or at its first reading above the
-//! first way's minimum by more than [`BAIL`]: a probe draws a much slower way for one frame. Probes
-//! repeat [`PROBE_EVERY`] frames after a decision that changed the choice, twice as long after each
-//! one that kept it, up to [`PROBE_MAX`], and give up [`PROBE_TIMEOUT`] frames after they started.
+//! first way's minimum by more than [`BAIL`]: a probe draws a much slower way for one frame. Where
+//! the timestamps are quantized (a browser) the prepass way's readings are first raised by the
+//! bias the quantization gives its minimum ([`QUANTA_PER_PHASE`]). Probes repeat [`PROBE_EVERY`]
+//! frames after a decision that changed the choice, twice as long after each one that kept it, up
+//! to [`PROBE_MAX`], and give up [`PROBE_TIMEOUT`] frames after they started, or [`TIMEOUT_LAGS`]
+//! times the largest readback lag seen since then where readings arrive hundreds of frames late (a
+//! browser's uncapped frame loop).
 //! Frames with one opaque phase and frames with two (occlusion culling, occlusion.rs) are timed and
 //! decided separately: occlusion culling changes what the opaque passes draw, so their costs do not
 //! compare. Without timestamps the auto mode never draws the prepass.
@@ -57,8 +61,33 @@ pub const BAIL: f32 = 0.5;
 pub const OTHER_FRAMES: usize = 2 * SAMPLES;
 /// Frames (of any kind) after its start at which a probe still waiting gives up (a lost readback,
 /// timestamps that stopped, a kind of frame too rare to measure): the choice stays and the next
-/// probe is scheduled. Every reading a probe takes measured a frame within this span.
+/// probe is scheduled. Every reading a probe takes measured a frame within this span, or within
+/// [`TIMEOUT_LAGS`] readback lags where that is longer.
 pub const PROBE_TIMEOUT: u64 = 600;
+/// Readback lags (the frames between a timed frame and its reading's arrival; the largest seen
+/// since the probe started) after its start at which a probe gives up, where that is later than
+/// [`PROBE_TIMEOUT`]: in Chrome with an uncapped frame loop readings arrive about 360 frames late
+/// (docs/bench/prepass.md 6), and the profiler's three readback buffers then time three frames per
+/// lag, so a probe needs up to a lag before its first timed frame, two for its first way's
+/// [`SAMPLES`] readings and one for each reading of the other way: seven, which the simulation
+/// needs (`a_browser_readback_lag_of_hundreds_of_frames_decides` fails with six, occlusion
+/// culling's probes taking timed frames or not). Twelve is an empirical margin over that: a build
+/// with eight, whose timeout followed the latest lag rather than the largest, timed out one
+/// re-probe in 27,000 frames in Chrome.
+pub const TIMEOUT_LAGS: u64 = 3 * SAMPLES as u64;
+/// Quanta of the timestamps' resolution (`GpuProfiler::resolution_ns`) per opaque phase added to
+/// the prepass way's readings before the two ways compare. Each timed pass is its own interval,
+/// whose quantized duration comes out up to a quantum short of its true one or over it; the
+/// minimum of several readings keeps the short side, on average half a quantum short per pass, and
+/// the prepass way sums one more pass per phase than the other, so its minimum comes out about half
+/// a quantum per phase lower for nothing. This adds back that expected bias; it is no bound:
+/// differences within about a quantum still come out either way, each costing at most about that
+/// much. Natively the resolution is 10 to 32 ns and this changes nothing; Chrome quantizes
+/// WebGPU's timestamps to 65.536 us without `--enable-unsafe-webgpu` (docs/bench/prepass.md 6),
+/// where without it the occluder page took a prepass 4% dearer and kept it, and a slack of two
+/// quanta per phase that the other way had to win by instead kept the dense grid's 0.15 ms gain
+/// off (`quantized_timestamps_decide_by_differences_beyond_their_resolution`).
+pub const QUANTA_PER_PHASE: f32 = 0.5;
 
 /// Whether the opaque pass draws the depth prepass.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -158,10 +187,12 @@ struct Probe {
     /// Its frames the profiler times whose readings have not arrived, oldest first, with whether
     /// each drew the prepass.
     timed: VecDeque<(u64, bool)>,
+    /// The largest readback lag seen since it started (its timeout scales with it).
+    lag: u64,
 }
 
 impl Probe {
-    fn new(start: u64, first: bool) -> Probe {
+    fn new(start: u64, first: bool, lag: u64) -> Probe {
         Probe {
             start,
             first,
@@ -169,7 +200,16 @@ impl Probe {
             b: Vec::new(),
             others: 0,
             timed: VecDeque::new(),
+            lag,
         }
+    }
+
+    /// Frames after its start at which it gives up: [`PROBE_TIMEOUT`], or [`TIMEOUT_LAGS`] of the
+    /// largest readback lag seen since it started where that is later (a lag that falls while it
+    /// runs, as it does while Chrome's queue settles, does not cut short a probe already waiting
+    /// on readings timed at the longer lag).
+    fn timeout(&self) -> u64 {
+        PROBE_TIMEOUT.max(TIMEOUT_LAGS * self.lag)
     }
 
     /// Whether frame `frame` draws the prepass (`timed`: the profiler times it, and it is
@@ -214,14 +254,17 @@ impl Probe {
     }
 
     /// Whether frames draw the prepass, once the readings decide: `incumbent` stays unless the
-    /// other way is cheaper by [`MARGIN`].
-    fn decision(&self, incumbent: bool) -> Option<bool> {
+    /// other way is cheaper by [`MARGIN`]. `bias`: what the timestamps' quantization takes off the
+    /// prepass way's minimum beyond the other way's ([`QUANTA_PER_PHASE`]), added back to its
+    /// readings before they compare.
+    fn decision(&self, incumbent: bool, bias: f32) -> Option<bool> {
         let &last = self.b.last()?;
         if self.a.len() < SAMPLES {
             return None;
         }
         let min = |v: &[f32]| v.iter().copied().fold(f32::INFINITY, f32::min);
-        let (first, other) = (min(&self.a), min(&self.b));
+        let (bias_a, bias_b) = if self.first { (bias, 0.0) } else { (0.0, bias) };
+        let (first, other, last) = (min(&self.a) + bias_a, min(&self.b) + bias_b, last + bias_b);
         // Final as soon as it holds: more readings of the other way can only lower its minimum.
         let other_wins = if self.first == incumbent {
             other < first * (1.0 - MARGIN)
@@ -238,6 +281,75 @@ impl Probe {
     }
 }
 
+/// The auto mode's state for one kind of frame, for diagnostics (the viewport's `auto_stats`,
+/// many_cubes' report); nothing decides by it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ChoiceState {
+    /// Whether these frames draw the prepass between probes.
+    pub on: bool,
+    /// Whether a probe has decided.
+    pub decided: bool,
+    /// The running probe, if any.
+    pub probe: Option<ProbeState>,
+    /// Probes that decided, and probes that gave up at their timeout.
+    pub decisions: u32,
+    pub timeouts: u32,
+    /// The first frame of the kind's first probe, and the frame its first decision was made at.
+    pub first_probe: Option<u64>,
+    pub first_decision: Option<u64>,
+}
+
+/// A running probe, for diagnostics.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ProbeState {
+    /// Its first frame.
+    pub start: u64,
+    /// The way it draws first (the prepass or not).
+    pub first: bool,
+    /// Readings of the first way and of the other, and frames drawn the other way.
+    pub a: usize,
+    pub b: usize,
+    pub others: usize,
+}
+
+/// The auto mode's state ([`Prepass::state`]), for diagnostics.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct AutoState {
+    /// The frame begun last (`GpuProfiler::frame`).
+    pub frame: u64,
+    /// Frames with one opaque phase, and with two.
+    pub kinds: [ChoiceState; 2],
+    /// The readback lag: frames between the latest reading's frame and the frame it arrived at,
+    /// and the largest seen.
+    pub lag: Option<u64>,
+    pub max_lag: u64,
+}
+
+impl AutoState {
+    pub fn json(&self) -> serde_json::Value {
+        let kind = |c: &ChoiceState| {
+            serde_json::json!({
+                "on": c.on,
+                "decided": c.decided,
+                "probe": c.probe.map(|p| serde_json::json!({
+                    "start": p.start, "first": p.first, "a": p.a, "b": p.b, "others": p.others,
+                })),
+                "decisions": c.decisions,
+                "timeouts": c.timeouts,
+                "first_probe": c.first_probe,
+                "first_decision": c.first_decision,
+            })
+        };
+        serde_json::json!({
+            "frame": self.frame,
+            "lag": self.lag,
+            "max_lag": self.max_lag,
+            "one": kind(&self.kinds[0]),
+            "two": kind(&self.kinds[1]),
+        })
+    }
+}
+
 /// The auto mode's choice for one kind of frame (one opaque phase, or two).
 #[derive(Clone, Debug, Default)]
 struct Choice {
@@ -250,22 +362,29 @@ struct Choice {
     next_probe: u64,
     /// The wait after the next probe that keeps the choice (0: [`PROBE_EVERY`]).
     backoff: u64,
+    /// Diagnostics ([`ChoiceState`]).
+    decisions: u32,
+    timeouts: u32,
+    first_probe: Option<u64>,
+    first_decision: Option<u64>,
 }
 
 impl Choice {
-    /// Begins frame `frame`, of this kind (`timed`: the profiler times it): whether it draws the
-    /// prepass.
-    fn begin(&mut self, frame: u64, timed: bool) -> bool {
+    /// Begins frame `frame`, of this kind (`timed`: the profiler times it; `lag`: the readback lag
+    /// as last measured): whether it draws the prepass.
+    fn begin(&mut self, frame: u64, timed: bool, lag: u64) -> bool {
         if self
             .probe
             .as_ref()
-            .is_some_and(|p| frame > p.start + PROBE_TIMEOUT)
+            .is_some_and(|p| frame > p.start + p.timeout())
         {
             self.probe = None;
+            self.timeouts += 1;
             self.schedule(frame, false);
         }
         if self.probe.is_none() && frame >= self.next_probe {
-            self.probe = Some(Probe::new(frame, self.on || !self.decided));
+            self.probe = Some(Probe::new(frame, self.on || !self.decided, lag));
+            self.first_probe.get_or_insert(frame);
         }
         match &mut self.probe {
             Some(p) => p.draw(frame, timed),
@@ -273,22 +392,43 @@ impl Choice {
         }
     }
 
-    /// A frame's reading arrived as frame `now` begins (a reading of another frame is ignored).
-    fn reading(&mut self, r: &Reading, now: u64) {
+    /// A frame's reading arrived as frame `now` begins (a reading of another frame is ignored);
+    /// `bias`: [`Probe::decision`]'s.
+    fn reading(&mut self, r: &Reading, now: u64, bias: f32) {
         let Some(p) = &mut self.probe else {
             return;
         };
         if !p.take(r) {
             return;
         }
-        let Some(on) = p.decision(self.decided && self.on) else {
+        let Some(on) = p.decision(self.decided && self.on, bias) else {
             return;
         };
         let changed = !self.decided || on != self.on;
         self.on = on;
         self.decided = true;
         self.probe = None;
+        self.decisions += 1;
+        self.first_decision.get_or_insert(now);
         self.schedule(now, changed);
+    }
+
+    fn state(&self) -> ChoiceState {
+        ChoiceState {
+            on: self.on,
+            decided: self.decided,
+            probe: self.probe.as_ref().map(|p| ProbeState {
+                start: p.start,
+                first: p.first,
+                a: p.a.len(),
+                b: p.b.len(),
+                others: p.others,
+            }),
+            decisions: self.decisions,
+            timeouts: self.timeouts,
+            first_probe: self.first_probe,
+            first_decision: self.first_decision,
+        }
     }
 
     /// Schedules the next probe: soon after a change, later after each probe that kept the choice.
@@ -319,6 +459,10 @@ pub struct Prepass {
     choices: [Choice; 2],
     /// Whether the current frame draws the prepass.
     active: bool,
+    /// The frame begun last, and the readback lag ([`AutoState`]).
+    frame: u64,
+    lag: Option<u64>,
+    max_lag: u64,
 }
 
 impl Prepass {
@@ -328,6 +472,19 @@ impl Prepass {
             timestamps,
             choices: Default::default(),
             active: false,
+            frame: 0,
+            lag: None,
+            max_lag: 0,
+        }
+    }
+
+    /// The auto mode's state, for diagnostics.
+    pub fn state(&self) -> AutoState {
+        AutoState {
+            frame: self.frame,
+            kinds: [self.choices[0].state(), self.choices[1].state()],
+            lag: self.lag,
+            max_lag: self.max_lag,
         }
     }
 
@@ -348,30 +505,42 @@ impl Prepass {
     }
 
     /// Starts frame `frame` (`GpuProfiler::frame`): takes the timings that arrived since the last
-    /// frame (`arrived`, oldest first: `GpuProfiler::arrived`) and says whether this frame draws
+    /// frame (`arrived`, oldest first: `GpuProfiler::arrived`; `resolution_ms`, the timestamps'
+    /// resolution, `GpuProfiler::resolution_ns`, 0 before any) and says whether this frame draws
     /// the prepass (`timed`: the profiler times this frame, `GpuProfiler::times_frame`). A frame
     /// without instances never does, and is no frame of its kind.
     pub fn begin_frame(
         &mut self,
         frame: u64,
         arrived: &[Timings],
+        resolution_ms: f32,
         timed: bool,
         two_phase: bool,
         instances: bool,
     ) -> bool {
+        self.frame = frame;
+        if let Some(t) = arrived.last() {
+            let lag = frame.saturating_sub(t.frame);
+            self.lag = Some(lag);
+            self.max_lag = self.max_lag.max(lag);
+            for p in self.choices.iter_mut().filter_map(|c| c.probe.as_mut()) {
+                p.lag = p.lag.max(lag);
+            }
+        }
         if self.mode == PrepassMode::Auto {
             for r in arrived.iter().filter_map(Reading::from_timings) {
-                for c in &mut self.choices {
-                    c.reading(&r, frame);
+                for (phases, c) in [1.0, 2.0].into_iter().zip(&mut self.choices) {
+                    c.reading(&r, frame, QUANTA_PER_PHASE * phases * resolution_ms);
                 }
             }
         }
+        let lag = self.lag.unwrap_or(0);
         self.active = instances
             && match self.mode {
                 PrepassMode::Off => false,
                 PrepassMode::On => true,
                 PrepassMode::Auto => {
-                    self.timestamps && self.choices[usize::from(two_phase)].begin(frame, timed)
+                    self.timestamps && self.choices[usize::from(two_phase)].begin(frame, timed, lag)
                 }
             };
         self.active
@@ -402,19 +571,25 @@ mod tests {
     /// The sphere's (the prepass costs about a third more).
     const SPHERE: (f32, f32) = (3.95, 3.0);
 
-    /// A frame's pass timings: `prepass` and `opaque` milliseconds, split over two phases.
-    fn passes(prepass: Option<f32>, two_phase: bool, opaque: f32) -> Vec<(&'static str, f32)> {
+    /// A frame's pass timings: `prepass` and `opaque` milliseconds, split over two phases (`late`:
+    /// the late phase's share).
+    fn passes(
+        prepass: Option<f32>,
+        two_phase: bool,
+        late: f32,
+        opaque: f32,
+    ) -> Vec<(&'static str, f32)> {
         let mut v = vec![("cull", 0.5)];
         if two_phase {
             if let Some(p) = prepass {
-                v.push((SCOPE, p / 2.0));
+                v.push((SCOPE, p * (1.0 - late)));
             }
-            v.push(("opaque early", opaque / 2.0));
+            v.push(("opaque early", opaque * (1.0 - late)));
             v.push(("hi-z", 0.1));
             if let Some(p) = prepass {
-                v.push((SCOPE, p / 2.0));
+                v.push((SCOPE, p * late));
             }
-            v.push(("opaque+sky", opaque / 2.0));
+            v.push(("opaque+sky", opaque * late));
         } else {
             if let Some(p) = prepass {
                 v.push((SCOPE, p));
@@ -431,7 +606,11 @@ mod tests {
         /// The opaque passes' cost with and without the prepass (milliseconds); `None`: no
         /// instances (the opaque pass draws the sky alone, 0.1 ms).
         cost: Option<(f32, f32)>,
+        /// The prepass's share of the cost with it.
+        share: f32,
         two_phase: bool,
+        /// With two phases, the late phase's share of each pass's work.
+        late: f32,
         /// Its readback fails (the profiler timed it, its timings never arrive).
         lost: bool,
     }
@@ -439,27 +618,35 @@ mod tests {
     fn scene(cost: (f32, f32)) -> Frame {
         Frame {
             cost: Some(cost),
-            two_phase: false,
-            lost: false,
+            ..EMPTY
         }
     }
 
     const EMPTY: Frame = Frame {
         cost: None,
+        share: 0.7,
         two_phase: false,
+        late: 0.5,
         lost: false,
     };
 
     /// A renderer and its profiler, simulated: the auto mode decides each frame, the frame's
     /// timings go to the readback buffer of the profiler's ring of three that its number names if
-    /// that one is free (or the frame is not timed), and arrive as frame `f + lag` begins
-    /// (natively `lag` is 2 headless, 2 or 3 in a window; the frame two after a reading frees its
-    /// buffer, so from 4 on some frames are not timed).
+    /// that one is free (or the frame is not timed), and arrive as frame `f + lag` begins, freeing
+    /// it (`lag` as `AutoState::lag` counts it: 1 in many_cubes headless, 1 to 7 in Chrome with
+    /// vsync, about 360 in Chrome uncapped, docs/bench/prepass.md 6; from 4 on some frames are not
+    /// timed).
     struct Sim {
         p: Prepass,
         lag: u64,
         frame: u64,
         ring: [Option<(Timings, bool)>; 3],
+        /// The timestamps' resolution in milliseconds (0: exact).
+        quantum: f32,
+        /// What varies the passes' start against the quantum from frame to frame, and the gap
+        /// between one pass's end and the next one's start (milliseconds).
+        seed: u32,
+        gap: f64,
         /// What each frame drew.
         drawn: Vec<bool>,
     }
@@ -471,7 +658,40 @@ mod tests {
                 lag,
                 frame: 0,
                 ring: Default::default(),
+                quantum: 0.0,
+                seed: 0,
+                gap: 0.002,
                 drawn: Vec::new(),
+            }
+        }
+
+        /// Timestamps quantized to `quantum` milliseconds, as Chrome's (65.536 us).
+        fn quantized(lag: u64, quantum: f32) -> Sim {
+            Sim {
+                quantum,
+                ..Sim::new(lag)
+            }
+        }
+
+        /// Frame `frame`'s passes as their quantized timestamps measure them: the passes run one
+        /// after another `gap` apart from a start that varies by frame (and `seed`), each
+        /// timestamp rounded down to the quantum.
+        fn quantize(&self, frame: u64, passes: &mut [(&'static str, f32)]) {
+            if self.quantum <= 0.0 {
+                return;
+            }
+            let mut x = (frame as u32).wrapping_mul(0x9e37_79b9)
+                ^ 0x2545_f491
+                ^ self.seed.wrapping_mul(0x85eb_ca6b);
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            let q = f64::from(self.quantum);
+            let mut t = f64::from(x) / f64::from(u32::MAX) * 1000.0;
+            for (_, ms) in passes {
+                let end = t + f64::from(*ms);
+                *ms = (((end / q).floor() - (t / q).floor()) * q) as f32;
+                t = end + self.gap;
             }
         }
 
@@ -489,19 +709,24 @@ mod tests {
                 }
             }
             arrived.sort_by_key(|t| t.frame);
-            let slot = &mut self.ring[(now % 3) as usize];
-            let timed = slot.is_none();
+            let timed = self.ring[(now % 3) as usize].is_none();
             let instances = f.cost.is_some();
-            let drew = self
-                .p
-                .begin_frame(now, &arrived, timed, f.two_phase, instances);
+            let drew =
+                self.p
+                    .begin_frame(now, &arrived, self.quantum, timed, f.two_phase, instances);
             if timed {
-                let passes = match f.cost {
-                    Some((with, _)) if drew => passes(Some(with * 0.7), f.two_phase, with * 0.3),
-                    Some((_, without)) => passes(None, f.two_phase, without),
-                    None => passes(None, false, 0.1),
+                let mut passes = match f.cost {
+                    Some((with, _)) if drew => passes(
+                        Some(with * f.share),
+                        f.two_phase,
+                        f.late,
+                        with * (1.0 - f.share),
+                    ),
+                    Some((_, without)) => passes(None, f.two_phase, f.late, without),
+                    None => passes(None, false, 0.5, 0.1),
                 };
-                *slot = Some((Timings { frame: now, passes }, f.lost));
+                self.quantize(now, &mut passes);
+                self.ring[(now % 3) as usize] = Some((Timings { frame: now, passes }, f.lost));
             }
             self.drawn.push(drew);
             self.frame += 1;
@@ -532,12 +757,12 @@ mod tests {
     #[test]
     fn readings_sum_the_opaque_passes_and_the_prepass() {
         let t = |passes| Timings { frame: 7, passes };
-        let r = Reading::from_timings(&t(passes(Some(2.0), true, 3.0))).unwrap();
+        let r = Reading::from_timings(&t(passes(Some(2.0), true, 0.5, 3.0))).unwrap();
         assert!(
             r.frame == 7 && r.prepass && r.two_phase && (r.ms - 5.0).abs() < 1e-6,
             "{r:?}"
         );
-        let r = Reading::from_timings(&t(passes(None, false, 3.0))).unwrap();
+        let r = Reading::from_timings(&t(passes(None, false, 0.5, 3.0))).unwrap();
         assert!(
             !r.prepass && !r.two_phase && (r.ms - 3.0).abs() < 1e-6,
             "{r:?}"
@@ -712,6 +937,152 @@ mod tests {
         }
     }
 
+    /// Chrome with an uncapped frame loop: readings arrive about 360 frames late
+    /// (docs/bench/prepass.md 6), and the profiler's three readback buffers time three frames per
+    /// lag. Before the timeout scaled with the lag every probe gave up 600 frames after it started,
+    /// with three or four readings of its first way, and never decided: frames drew the prepass
+    /// during the probes and not between them, whichever way was cheaper.
+    #[test]
+    fn a_browser_readback_lag_of_hundreds_of_frames_decides() {
+        for lag in [350, 372] {
+            for (cost, way) in [
+                (DENSE, true),
+                (SPHERE, false),
+                ((50.9, 15.7), false),
+                ((0.94, 1.0), true),
+            ] {
+                let mut s = Sim::new(lag);
+                s.run(30 * lag, |_| scene(cost));
+                let c = &s.p.choices[0];
+                assert!(
+                    c.decided && c.on == way && c.timeouts == 0,
+                    "lag {lag}, {cost:?}: {:?}",
+                    c.state()
+                );
+                // Two lags for the first way's readings, one for each reading of the other.
+                let first = c.first_decision.unwrap();
+                assert!(
+                    first <= (3 + SAMPLES as u64) * lag,
+                    "lag {lag}, {cost:?}: {first}"
+                );
+                // From then on only probes draw the other way, one frame at a time.
+                let other = s.runs(first as usize, !way);
+                assert!(
+                    other.iter().all(|&(_, len)| len == 1) && other.len() <= 6 * SAMPLES,
+                    "lag {lag}, {cost:?}: {other:?}"
+                );
+                // With occlusion culling's probes as in Chrome: two phases until its first reading
+                // arrives, then two frames every 600 to 1,334 (their timed frames take readback
+                // buffers from the probes of one phase).
+                for (period, offset) in [(600, 0), (1078, 250), (1334, 555)] {
+                    let mut s = Sim::new(lag);
+                    s.run(30 * lag, |f| Frame {
+                        two_phase: f < lag || (f > lag + offset && (f - lag - offset) % period < 2),
+                        ..scene(cost)
+                    });
+                    let c = s.p.choices[0].state();
+                    assert!(
+                        c.decided && c.on == way && c.timeouts == 0,
+                        "lag {lag}, {cost:?}, occlusion probes every {period}: {c:?}"
+                    );
+                }
+            }
+        }
+        // A lag longer than PROBE_TIMEOUT: the first probe gives up before any reading has
+        // arrived (the lag is not known yet); the next one decides.
+        let mut s = Sim::new(700);
+        s.run(30 * 700, |_| scene(DENSE));
+        let c = s.p.choices[0].state();
+        assert!(c.decided && c.on && c.timeouts == 1, "{c:?}");
+    }
+
+    /// The lag falls while Chrome's queue settles (from 354 to 107 frames in one run): a probe
+    /// waiting on readings timed at the longer lag keeps waiting for them. While its timeout
+    /// followed the latest lag instead of the largest since it started, the probe gave up as soon
+    /// as twelve of the shorter lags fell behind its age.
+    #[test]
+    fn a_probe_keeps_waiting_when_the_readback_lag_falls() {
+        for at in [1250, 1400, 1600] {
+            // The prepass 6% cheaper: the way drawn second (no prepass) loses only after SAMPLES
+            // readings, one a lag apart, so the first probe runs about six lags.
+            let mut s = Sim::new(360);
+            s.run(at, |_| scene((0.94, 1.0)));
+            let c = s.p.choices[0].state();
+            assert!(!c.decided && c.probe.is_some(), "at {at}: {c:?}");
+            s.lag = 100;
+            s.run(3000, |_| scene((0.94, 1.0)));
+            let c = s.p.choices[0].state();
+            assert!(c.decided && c.on && c.timeouts == 0, "at {at}: {c:?}");
+        }
+    }
+
+    /// Chrome quantizes WebGPU's timestamps to 65.536 us without `--enable-unsafe-webgpu`
+    /// (docs/bench/prepass.md 6). The minimum of quantized readings comes out up to a quantum per
+    /// timed pass short, and the prepass way times one more pass per phase: without the bias
+    /// ([`QUANTA_PER_PHASE`]) probes took the prepass on the occluder page, where it costs 4% more,
+    /// and with a slack of two quanta per phase that the other way had to win by instead, the
+    /// dense grid's two-phase frames stayed without it at twice the cost. The pages' costs and
+    /// pass shares are the RTX 5060's in Chrome; each case runs from eight phases of the quantum,
+    /// with the passes 2 and 30 us apart.
+    #[test]
+    fn quantized_timestamps_decide_by_differences_beyond_their_resolution() {
+        const Q: f32 = 0.065_536;
+        // The share of frames after each run's first decision that drew `way`.
+        let share = |lag: u64, f: Frame, way: bool| {
+            let frames = if lag == 2 { 20_000 } else { 60 * lag };
+            let (mut right, mut all) = (0, 0);
+            for gap in [0.002, 0.03] {
+                for seed in 0..8 {
+                    let mut s = Sim::quantized(lag, Q);
+                    s.seed = seed;
+                    s.gap = gap;
+                    s.run(frames, |_| f);
+                    let c = s.p.choices[usize::from(f.two_phase)].state();
+                    assert!(
+                        c.decided && c.timeouts == 0,
+                        "lag {lag}, {:?}: {c:?}",
+                        f.cost
+                    );
+                    let first = c.first_decision.unwrap() as usize;
+                    right += s.drawn[first..].iter().filter(|&&d| d == way).count();
+                    all += s.drawn.len() - first;
+                }
+            }
+            right as f64 / all as f64
+        };
+        let two = |cost| Frame {
+            two_phase: true,
+            ..scene(cost)
+        };
+        // The occluder page: one phase, the prepass a sixth of the cost with it, 4% dearer.
+        let occluders = Frame {
+            share: 0.16,
+            ..scene((0.111, 0.107))
+        };
+        // The dense grid: two phases, the late one nearly empty, the prepass a third of the cost
+        // with it; without it the opaque passes cost twice as much, 0.15 ms more.
+        let dense = Frame {
+            share: 0.34,
+            late: 0.025,
+            ..two((0.147, 0.295))
+        };
+        for lag in [2, 360] {
+            for (name, f, way, at_least) in [
+                ("occluders", occluders, false, 0.98),
+                ("dense", dense, true, 0.98),
+                // Differences well beyond the quantization decide as with exact timestamps.
+                ("dearer", scene((0.12, 0.105)), false, 0.97),
+                ("much cheaper", scene((0.9, 3.0)), true, 0.97),
+                ("much dearer", scene((2.6, 1.9)), false, 0.97),
+                ("two, cheaper", two((0.6, 1.2)), true, 0.97),
+                ("two, dearer", two((1.0, 0.5)), false, 0.97),
+            ] {
+                let right = share(lag, f, way);
+                assert!(right >= at_least, "lag {lag}, {name}: {right:.3}");
+            }
+        }
+    }
+
     #[test]
     fn auto_probes_again_and_follows_a_change_with_hysteresis() {
         // On at first; from frame 200 the prepass costs more (the scene changed).
@@ -773,14 +1144,14 @@ mod tests {
     #[test]
     fn modes_without_timings_and_without_instances() {
         let mut p = Prepass::new(PrepassMode::Auto, false);
-        assert!(!p.begin_frame(0, &[], false, false, true));
+        assert!(!p.begin_frame(0, &[], 0.0, false, false, true));
         assert_eq!(p.label(), "auto-off");
         let mut p = Prepass::new(PrepassMode::On, false);
-        assert!(p.begin_frame(0, &[], false, false, true));
-        assert!(!p.begin_frame(1, &[], false, false, false));
+        assert!(p.begin_frame(0, &[], 0.0, false, false, true));
+        assert!(!p.begin_frame(1, &[], 0.0, false, false, false));
         assert_eq!(p.label(), "on");
         let mut p = Prepass::new(PrepassMode::Off, true);
-        assert!(!p.begin_frame(0, &[], true, true, true));
+        assert!(!p.begin_frame(0, &[], 0.0, true, true, true));
         assert_eq!(PrepassMode::parse(" Auto "), Some(PrepassMode::Auto));
         assert_eq!(PrepassMode::parse("1"), Some(PrepassMode::On));
         assert_eq!(PrepassMode::parse("maybe"), None);

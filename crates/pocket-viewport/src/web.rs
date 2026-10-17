@@ -366,6 +366,23 @@ impl Viewport {
         self.last_stats.clone()
     }
 
+    /// The auto modes' state as JSON, built when asked rather than with every frame's stats
+    /// (docs/bench/prepass.md 6; tools/web_auto.py polls it): `prepass_auto`, what each kind of
+    /// frame decided, its running probe and the readbacks' lag in frames; `occlusion_auto`, the
+    /// same for occlusion culling; `timestamp_quantum_us`, the timestamps' resolution.
+    pub fn auto_stats(&self) -> String {
+        let r = &self.renderer;
+        let quantum = r
+            .timestamp_resolution_ns()
+            .map_or("null".into(), |ns| format!("{:.3}", ns / 1000.0));
+        format!(
+            "{{\"prepass_auto\":{},\"occlusion_auto\":{},\"timestamp_quantum_us\":{}}}",
+            r.prepass_state().json(),
+            r.occlusion_state().json(),
+            quantum
+        )
+    }
+
     /// Levels of detail: `off` draws every instance's full mesh, `on` (the default) picks levels
     /// per instance and view (docs/spec/lod.md); anything else leaves it as it is.
     pub fn set_lod(&mut self, mode: &str) {

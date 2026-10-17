@@ -1557,6 +1557,21 @@ impl Renderer {
         self.prepass.mode
     }
 
+    /// The depth prepass's auto mode, for diagnostics (prepass.rs).
+    pub fn prepass_state(&self) -> crate::prepass::AutoState {
+        self.prepass.state()
+    }
+
+    /// Occlusion culling's auto mode, for diagnostics (occlusion.rs).
+    pub fn occlusion_state(&self) -> crate::occlusion::AutoState {
+        self.occlusion.state()
+    }
+
+    /// The GPU timestamps' resolution in nanoseconds once a reading has arrived (profiler.rs).
+    pub fn timestamp_resolution_ns(&self) -> Option<f32> {
+        self.profiler.resolution_ns()
+    }
+
     /// Anti-aliasing: samples per pixel and TAA (post.rs; `POCKET_AA` sets the starting mode).
     /// A change rebuilds the opaque pass's targets and pipelines and drops TAA's history.
     /// Metal ray-traced sun shadows use one sample; requesting MSAA retains only TAA, if any.
@@ -2520,6 +2535,7 @@ impl Renderer {
         let prepass = self.prepass.begin_frame(
             self.profiler.frame(),
             &self.profiler.arrived,
+            self.profiler.resolution_ns().map_or(0.0, |ns| ns / 1e6),
             self.profiler.times_frame(),
             occl,
             self.scene.has_visible_instances(),
