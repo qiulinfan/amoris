@@ -68,3 +68,7 @@ required-features = ["transpile"]
 [[example]]
 name = "rules_web"
 crate-type = ["cdylib"]
+
+[[example]]
+name = "qjs_micro"
+required-features = ["transpile"]
