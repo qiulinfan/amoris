@@ -49,13 +49,20 @@ gives every configuration's every binary an empty directory of its own there,
 `gpu-matrix-vkcache/<config>/<binary>/`, through the driver's `AMD_VK_PIPELINE_CACHE_PATH` (for the
 adapter-naming run, the listing and the tests alike): no configuration or run inherits an archive.
 A directory that cannot be emptied stops the run; `--json` records the directory as
-`driver_cache`. Other drivers ignore the variable.
+`driver_cache`. Other drivers ignore the variable. When a binary's test failed, hung or crashed
+and its archive holds a compute program compiled for registers the hardware does not set, or a
+pipeline compiled to more than one program (the driver's wrong compiles, `tools/amd_vkcache.py
+unset` and `twins`, docs/bench/gpu-matrix.md 12), the binary's record says so as `driver` and every
+such test's message ends with it, as context: the archive is the whole binary's, so whether the
+failing test uses that pipeline is left to whoever reads it.
 """
 import argparse
+import importlib.util
 import json
 import os
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import time
@@ -167,6 +174,41 @@ def driver_caches(bins, configs):
         if any(d.iterdir()):
             raise SystemExit(f"{d} is not empty: the driver would inherit an archive")
     return caches
+
+
+def driver_faults(cache):
+    """What a binary's driver archive holds that may explain a failure (docs/bench/gpu-matrix.md
+    12): the compute programs the driver compiled for registers the hardware does not set
+    (`tools/amd_vkcache.py unset`), and the pipelines it compiled to more than one program in that
+    run (`twins`), as a sentence; None when there are none or no archive. The archive is the whole
+    binary's, with no link from a test to the pipelines it used, so the sentence is context, not a
+    cause: a test that fails for a reason of its own beside an unrelated wrong program must still
+    read as a failure to look into. An archive it cannot read (a process that died while writing
+    it) is reported on the console, not raised: the diagnosis must not stop the matrix."""
+    files = sorted(Path(cache).glob("*.parc"))
+    if not files:
+        return None
+    spec = importlib.util.spec_from_file_location("amd_vkcache",
+                                                  Path(__file__).with_name("amd_vkcache.py"))
+    vkcache = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(vkcache)
+    try:
+        _, unset = vkcache.unset(files)
+        _, twins = vkcache.twins(files)
+    except (OSError, ValueError, IndexError, struct.error) as e:
+        print(f"note: cannot read the driver's archive in {cache}: {e}", flush=True)
+        return None
+    found = []
+    if unset:
+        found.append(f"{len(unset)} compute program(s) compiled for registers the hardware does "
+                     f"not set (python tools/amd_vkcache.py unset {cache})")
+    if twins:
+        found.append(f"{len(twins)} pipeline(s) compiled to more than one program "
+                     f"(python tools/amd_vkcache.py twins {cache})")
+    if not found:
+        return None
+    return (f"this run's driver archive of the binary holds {'; and '.join(found)}; whether the "
+            f"failing test uses them is not checked; docs/bench/gpu-matrix.md 12")
 
 
 def parse_adapters(text):
@@ -399,6 +441,14 @@ def run_config(name, bins, args, out_dir, caches):
                   for s in ("pass", "skip", "FAIL", "hang", "ign", "crash")}
         print(f"{name} {b}: exit {code} in {seconds:.0f}s; "
               + ", ".join(f"{v} {k}" for k, v in counts.items() if v), flush=True)
+        bad = [f"{b} {n}" for n in names
+               if cells[f"{b} {n}"]["status"] in ("FAIL", "hang", "crash")]
+        faults = driver_faults(caches[(name, b)]) if bad else None
+        if faults:
+            binaries[b]["driver"] = faults
+            for t in bad:
+                cells[t]["message"] = f"{cells[t]['message']} [{faults}]".lstrip()
+            print(f"{name} {b}: {faults}", flush=True)
     return {"env": parse_config(name), "adapter": adapter, "binaries": binaries, "tests": cells}
 
 

@@ -280,6 +280,66 @@ machine default adapter: dx12 NVIDIA GeForce RTX 5060 Laptop GPU
             self.assertEqual(env[gpu_matrix.DRIVER_CACHE], str(caches[("780m-vulkan", b)]))
             self.assertEqual(env["AMORIS_BACKEND"], "vulkan")
 
+    def test_a_failure_notes_the_wrong_programs_in_its_binarys_archive(self):
+        import argparse
+        import tempfile
+        from unittest import mock
+        spec = importlib.util.spec_from_file_location(
+            "test_amd_vkcache", Path(__file__).with_name("test_amd_vkcache.py"))
+        fx = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(fx)
+        failing = ("test t::a ... FAILED\n\nfailures:\n\n---- t::a stdout ----\n\n"
+                   "thread 't::a' (1) panicked at x.rs:1:1:\ncharacter 1 is in view\n\n"
+                   "failures:\n    t::a\n")
+        # What each binary's process leaves in its archive (docs/bench/gpu-matrix.md 12): the
+        # skinning pipeline's wrong program alone (one device), a graphics pipeline compiled to
+        # two programs, and the clean program.
+        archives = {
+            "taa": [[(bytes(16), fx.elf(fx.SKINNING, fx.WRONG))]],
+            "hiz": [[(bytes(16), fx.elf(b"graphics", [1, fx.ENDPGM]))],
+                    [(bytes(16), fx.elf(b"graphics", [2, fx.ENDPGM]))]],
+            "lib": [[(bytes(16), fx.elf(fx.SKINNING, fx.RIGHT))]],
+        }
+
+        def run(cmd, **kw):
+            if cmd[-1] == "--list":
+                return mock.Mock(stdout="t::a: test\n", stderr="", returncode=0)
+            if gpu_matrix.ADAPTER_TEST in cmd:
+                return mock.Mock(stdout=gpu_matrix.ADAPTER_PREFIX + "A\n", stderr="",
+                                 returncode=0)
+            cache = Path(kw["env"][gpu_matrix.DRIVER_CACHE])
+            for n, entries in enumerate(archives[cache.name]):
+                fx.archive(cache / f"P_{n}.parc", entries)
+            return mock.Mock(stdout=failing, stderr="", returncode=101)
+
+        args = argparse.Namespace(bins=None, no_ignored=False, filter=None, test_threads=None,
+                                  timeout=10)
+        with tempfile.TemporaryDirectory() as d, \
+                mock.patch.object(gpu_matrix.subprocess, "run", side_effect=run):
+            deps = Path(d) / "release" / "deps"
+            deps.mkdir(parents=True)
+            bins = {b: str(deps / f"{b}-1.exe") for b in archives}
+            caches = gpu_matrix.driver_caches(bins, ["780m-vulkan"])
+            r = gpu_matrix.run_config("780m-vulkan", bins, args, Path(d) / "logs", caches)
+        message = lambda b: r["tests"][f"{b} t::a"]["message"]
+        self.assertEqual(r["tests"]["taa t::a"]["status"], "FAIL")
+        self.assertTrue(message("taa").startswith(
+            "character 1 is in view [this run's driver archive of the binary holds 1 compute "
+            "program(s) compiled for registers the hardware does not set (python "
+            "tools/amd_vkcache.py unset "), message("taa"))
+        # Context, not a cause: nothing links the test to the pipeline the driver got wrong.
+        self.assertTrue(message("taa").endswith(
+            "; whether the failing test uses them is not checked; docs/bench/gpu-matrix.md 12]"))
+        self.assertIn("1 pipeline(s) compiled to more than one program", message("hiz"))
+        self.assertNotIn("unset", message("hiz"))
+        self.assertEqual(r["binaries"]["taa"]["driver"], message("taa")[24:-1])
+        # A failure whose archive holds only clean programs keeps its message.
+        self.assertEqual(message("lib"), "character 1 is in view")
+        self.assertNotIn("driver", r["binaries"]["lib"])
+        # An archive cut short (a process that died writing it) does not stop the matrix.
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "P.parc").write_bytes(b"PAL")
+            self.assertIsNone(gpu_matrix.driver_faults(d))
 
 if __name__ == "__main__":
     unittest.main()
