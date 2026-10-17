@@ -324,6 +324,7 @@ def main():
         tl = m.rpc("tools/list", {})
         tools = tl["result"]["tools"]
         size = len(json.dumps(tools))
+        # Ten developer tools plus `player` (docs/spec/server.md 7).
         check(len(tools) == 11, f"mcp tools/list: {len(tools)} tools, {size} bytes "
                                  f"(~{size // 4} tokens)")
         r = m.rpc("tools/call", {"name": "world", "arguments": {"action": "tree", "filter": "Sloop"}})
