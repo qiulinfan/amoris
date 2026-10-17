@@ -9,7 +9,7 @@ snapshot/replay input, or a player gateway. The game scene stays static while th
   Escape releases the mouse; Escape again exits. G switches baked GI without moving the camera. Losing focus releases the mouse and clears keys.
 - `amoris-assets::collision` loads position/index buffers without decoding textures. It preserves
   scene-node transforms and uses opaque unskinned geometry. Mask foliage and blend glass do not
-  become solid navigation walls. `amoris-runtime::walk` re-exports the existing Rapier controller.
+  become solid navigation walls, nor does a scene Model whose color alpha is below 1. `amoris-runtime::walk` re-exports the existing Rapier controller.
 - The authored geometry and materials remain intact. Embedded textures are capped at 1024 pixels
   by `tools/prepare_walk_model.py`, which also reconstructs positive Z for the 132 legacy RG-only
   normal maps without flipping green again; its source/derivative metadata and attribution are in

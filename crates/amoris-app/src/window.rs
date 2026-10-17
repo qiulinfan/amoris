@@ -500,7 +500,8 @@ fn load_walk_world(project: &Project) -> Result<StaticWalkWorld, String> {
         };
         let model: amoris_assets::Model =
             serde_json::from_value(value.clone()).map_err(|e| e.to_string())?;
-        if !model.visible {
+        // A blended Model (alpha below 1: water, clouds) is not solid, as glTF BLEND geometry.
+        if !model.visible || model.color[3] < 1.0 {
             continue;
         }
         if !cache.contains_key(&model.mesh) {
@@ -612,7 +613,8 @@ mod tests {
                 {"components":{"Model":{"mesh":"plane","scale":[20,1,20]}, "Transform":{"position":[0,0,0]}}},
                 {"components":{"Model":{"mesh":"cube","scale":[1,2,1]}, "Transform":{"position":[0,1,0]}}},
                 {"components":{"Model":{"mesh":"cube","scale":[10,10,10]}, "RigidBody":{"kind":"Dynamic"}}},
-                {"components":{"Model":{"mesh":"cube","visible":false}}}
+                {"components":{"Model":{"mesh":"cube","visible":false}}},
+                {"components":{"Model":{"mesh":"cube","scale":[10,10,10],"color":[0,0,1,0.5]}, "Transform":{"position":[-2,1,0]}}}
             ]}).to_string()).unwrap();
         let project = Project::load(&root).unwrap();
         let world = load_walk_world(&project).unwrap();
