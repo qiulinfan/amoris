@@ -16,8 +16,11 @@ quiet-machine re-measurement is due. Triangle and instance counts are exact.
 triangles (an icosphere subdivided 6 times, displaced by twelve seeded waves) and a (2, 3) torus
 knot of 49,152, scaled 0.6 to 1.5, turned at random, under a sun with four shadow cascades, plus
 the ground; 1280x720. At `t = 0` the camera stands at head height in the first cell looking along
-the diagonal; at `t = 0.5` in the middle of the field. With levels off it is 170 million
+the diagonal; at `t = 0.5` halfway from there to the middle of the field (`demo::lod_field_camera`
+reaches the middle at `t = 1`). With levels off it is 170 million
 triangles for the camera (97 million at `t = 0.5`) and 177 to 204 million for the cascades.
+These cascade counts are from before the cascades culled by their slices (2026-10-15,
+[shadows.md](shadows.md) 3: 96 and 104 million; `POCKET_SHADOW_CULL=off` reproduces them).
 
 The meshes' chains (`lod_field` example output, `meshes`): every mesh gets the full 8 levels.
 

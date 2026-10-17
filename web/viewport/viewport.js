@@ -109,6 +109,7 @@ export async function createViewport(canvas, options = {}) {
     setNeuralHalfPrecision(f16) { return vp.set_neural_half_precision(f16); },
     setOcclusion(mode) { vp.set_occlusion(mode); },
     setPrepass(mode) { vp.set_prepass(mode); },
+    setShadowCull(mode) { vp.set_shadow_cull(mode); },
     demoLod(n, spacing, detail, t) { vp.demo_lod(n, spacing, detail, t, performance.now()); },
     demoLodCamera(n, spacing, t) { vp.demo_lod_camera(n, spacing, t); },
     setLod(mode) { vp.set_lod(mode); },

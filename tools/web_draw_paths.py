@@ -15,6 +15,8 @@ both are identical; downscaled to --keep-width) to --out.
 
 `--compare occlusion` runs the page with `occlusion=off` and with `occlusion=on` instead
 (docs/spec/occlusion.md): occlusion culling must not change the coverage or the pixels.
+`--compare shadow_cull` does the same with `shadow_cull=off` and `shadow_cull=on` (the shadow
+cascades' slice culling, docs/spec/occlusion.md 11).
 """
 
 import argparse
@@ -107,14 +109,14 @@ def main():
     ap.add_argument("--size", default="960x540")
     ap.add_argument("--chrome-flags", default="")
     ap.add_argument("--keep-width", type=int, default=480, help="downscale kept images to this width")
-    ap.add_argument("--compare", choices=["paths", "occlusion"], default="paths")
+    ap.add_argument("--compare", choices=["paths", "occlusion", "shadow_cull"], default="paths")
     a = ap.parse_args()
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     sep = "&" if "?" in a.url else "?"
     runs = {}
-    if a.compare == "occlusion":
-        variants = [("off", f"{a.url}{sep}occlusion=off"), ("on", f"{a.url}{sep}occlusion=on")]
+    if a.compare in ("occlusion", "shadow_cull"):
+        variants = [(m, f"{a.url}{sep}{a.compare}={m}") for m in ("off", "on")]
     else:
         variants = [("first-instance", a.url), ("baseline", f"{a.url}{sep}gpu_minimal=first-instance")]
     (la, _), (lb, _) = variants

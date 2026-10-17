@@ -438,6 +438,14 @@ impl Viewport {
         }
     }
 
+    /// The shadow cascades' slice culling: `off` or `on` (the default; anything else leaves it as
+    /// it is; docs/spec/occlusion.md 11). The image is the same either way.
+    pub fn set_shadow_cull(&mut self, mode: &str) {
+        if let Some(m) = pocket_render::ShadowCull::parse(mode) {
+            self.renderer.set_shadow_cull(m);
+        }
+    }
+
     /// Anti-aliasing: `off`, `msaa`, `taa` or `msaa+taa` (anything else leaves it as it is;
     /// docs/spec/taa-gtao.md).
     pub fn set_antialiasing(&mut self, mode: &str) {

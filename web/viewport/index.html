@@ -22,6 +22,7 @@
 // texture fetched from the assets URL (docs/spec/neural-textures.md);
 // ?occlusion=off|on|auto sets occlusion culling (auto by default);
 // ?prepass=off|on|auto sets the depth prepass (auto by default; docs/spec/prepass.md);
+// ?shadow_cull=off|on sets the shadow cascades' slice culling (on by default; docs/spec/occlusion.md 11);
 // ?in_flight=N lets at most N frames be on the GPU (no limit by default; docs/bench/polish.md 3);
 // ?demo=lod[&n=48][&spacing=6][&detail=6][&t=0][&fly] the levels-of-detail field (docs/spec/lod.md),
 // its camera at t (0..1) or, with fly, walking from the corner to the middle over 600 frames;
@@ -66,6 +67,7 @@ try {
   }
   if (q.get("occlusion")) vp.setOcclusion(q.get("occlusion"));
   if (q.get("prepass")) vp.setPrepass(q.get("prepass"));
+  if (q.get("shadow_cull")) vp.setShadowCull(q.get("shadow_cull"));
   if (q.has("in_flight")) vp.raw.set_max_frames_in_flight(Number(q.get("in_flight")));
   if (q.get("lod")) vp.setLod(q.get("lod"));
   if (q.get("demo") === "aa") vp.demoAa();

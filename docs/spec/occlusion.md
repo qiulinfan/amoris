@@ -37,8 +37,10 @@ one opaque pass. With it, the camera view is drawn in two phases:
    (color and depth loaded; color resolved into the HDR image; depth stored only if the splats
    read it).
 
-The shadow cascades keep frustum culling only. Light-space occlusion would need a pyramid per
-cascade and a second shadow pass each; a cascade's casters are mostly visible from the light.
+The shadow cascades are not occlusion culled. Light-space occlusion would need a pyramid per
+cascade and a second shadow pass each; a cascade's casters are mostly visible from the light. Since
+2026-10-15 each cascade culls its casters by its box and by the extruded camera slice it shades
+(section 11).
 
 Shadows, cluster assignment and the splats' preprocessing are unchanged and run between the
 early culling and the early opaque pass, as before.
@@ -319,7 +321,8 @@ the Radeon 780M, 2 to 6 times slower, the crossover fell between the same cube c
   usual refinement, would add nothing here: the set is the result of that test. What phase 1 wastes
   is instances this frame's camera or motion hides (about 7% of its draws in the orbit benchmark),
   and only this frame's depth shows those.
-- Shadow cascades are frustum culled only.
+- Shadow cascades are culled by their boxes and extruded slices (section 11), not by occlusion.
+  A cascade whose box and casters did not change since the last frame is still drawn again.
 - Instances are the unit: a large mesh partly hidden is drawn whole. Meshlet (cluster) culling would
   need mesh splitting and a cluster pass.
 - The auto mode's constants were fit on two GPUs while other processes loaded the machine.
@@ -338,3 +341,101 @@ the Radeon 780M, 2 to 6 times slower, the crossover fell between the same cube c
   GPU prefix sum packs them and the vertex stage reads its base from storage (it has room: 5 of 8
   storage buffers), because the baseline path's bases are uniforms the CPU writes; (3) a benchmark
   of dense meshes at a distance: many_cubes' 12-triangle cubes have nothing to simplify.
+
+## 11. Shadow cascades: the extruded slice
+
+Charter 4.4's Pioneer note of 2026-10-15. A cascade's box (`shadows::cascades`: the bounding
+sphere of the camera slice it shades, texel-snapped, its near plane pulled 200 m toward the sun)
+holds far more than the slice's receivers can see: the sphere around a long, thin slice is wide
+across the light, and the box keeps everything in it. With levels of detail off, the LOD field's
+cascades drew 177 to 204 million triangles, more than the camera ([lod bench](../bench/lod.md) 2).
+The culling pass (`cull.wgsl` `main`) therefore keeps a caster in cascade `c` only if its sphere is
+in the box (as before) and in `c`'s slice planes (`sphere_in_slice`), up to nine planes per cascade
+that `shadows::slice_planes` computes on the CPU each frame into `Cull.slices`.
+
+**Where a caster can matter.** `shadow_factor` (forward.wgsl; the forward and ocean shaders, the
+only readers of the cascades) picks cascade `c` for a fragment whose view depth lies in
+`(splits[c - 1], splits[c]]` (`<= splits[0]` for the first). The fragment's point lies on the ray
+through its pixel centre in the (jittered) camera projection. With MSAA a partly covered pixel
+shades at its centre, its `world` extrapolated along the triangle's plane, which can put it at any
+depth on that ray, nearer than the near plane or behind the eye; `shadow_factor` reads no cascade
+at a negative view depth (such a point is no receiver, and before this change it read cascade 0
+wherever the extrapolation landed), and the first slice starts at the eye. So every fragment that
+reads cascade `c` lies in that slice of the camera's frustum. It moves its
+sample point `q` along its unit normal by `o = 1.5 * splits[c] / 1024` metres, then compares `q`'s
+light depth less a bias with nine bilinear comparison taps (a `LessEqual` comparison sampler,
+linear filtering) one texel apart. A tap at `u` reads the texels whose centres are within one
+texel of `u` on each axis, so the nine read texel centres within two texels of `q` per axis, at
+most `2 sqrt(2)` texels from it across the light. A caster's triangles lie in its sphere and write
+the depth of the texels whose centres they cover; the depth bias is positive (constant 2, slope
+2.5), so a written depth is never nearer the sun than the triangle. Removing a caster changes only
+texels where it held the minimum. If no receiver reads such a texel, nothing changes; if a receiver
+reads it but the caster is farther from the sun there than `q` less the bias, both the caster's
+depth and whatever replaces it (the next caster's or the cleared 1.0) pass the comparison, so the
+result is the same. A caster can change a shaded pixel only if its sphere comes within
+`o + 2 sqrt(2) texels` of the slice across the light and not wholly beyond the slice's farthest
+light depth plus `o`.
+
+**The planes.** The slice is the camera frustum between `splits[c - 1]` (0, the eye, for the first
+cascade) and `splits[c]`, widened on each side by the jitter's offset in device coordinates and
+one pixel (`kx = 1 + |jitter.x| + 2 / width`, likewise `ky`; an orthographic camera's box slice the
+same way). Its eight corners are projected on a plane across the light; the convex hull (Andrew's
+monotone chain, at most eight edges) gives one plane per edge that contains the light direction,
+its inward normal the edge's, placed at the lowest corner along that normal (so a hull wrong by
+float error can only widen it). The far plane faces the sun, at the corners' largest light depth.
+Every plane moves out by the margin `o + 4 texels + 1e-5 * scale`, where `texel` is the cascade's
+own (`2 radius / 2048`), 4 is `2 sqrt(2)` rounded up with room for float error in the shader's
+test, and `scale` is the camera's largest coordinate plus `splits[c]` plus 1 m. The volume is open
+toward the sun: a caster outside the view between the slice and the sun still shadows it, up to
+the box's near plane. Unused slots hold `(0, 0, 0, 1)`, which every sphere passes; with the switch
+off every slot does, and the pass culls as before.
+
+**Cost.** 576 bytes more uniform (`Cull` is 1,216 bytes) and, for an instance in a cascade's box,
+up to nine more plane tests; the test runs only after the box test passes. The CPU's work is a few
+microseconds per frame and does not grow with the scene.
+
+**Switch.** `POCKET_SHADOW_CULL=off|on` (natively; default on) and `Renderer::set_shadow_cull`.
+The image is the same either way; only the cascades' draws and their cost change.
+
+**What it assumes**, each a reason to rerun the checks below when it changes: `shadow_factor`'s
+normal offset (1.5 times `splits[c] / 1024`), its 3x3 kernel of one-texel steps and the sampler's
+linear comparison, and its unshadowed answer for a negative view depth (MSAA's extrapolated points
+behind the eye); a non-negative caster depth bias; nothing but camera-view fragments reading the
+cascades (a reflection, a second view or a light probe sampling them would need its own slices);
+casters' spheres bounding what they draw (the camera's frustum test assumes it too; skinned parts
+use the grown sphere, section 9's `skinned_bounds.rs`); and receivers' normals of unit length.
+
+**Checks.**
+
+- `shadows.rs` unit tests: `every_caster_a_receiver_can_read_is_kept` builds 400 random cameras
+  (perspective and orthographic, 15 to 110 degree fields of view, near planes 1 cm to 1 m, five
+  output sizes down to 1x1, random jitter up to two pixels, positions up to 3 km from the origin;
+  suns random, vertical, nearly vertical and grazing) and, per cascade, 200 receivers: half anywhere
+  in the slice of the jittered view (from the eye on for the first cascade, where MSAA's
+  extrapolated points can lie nearer than the near plane), moved by the normal offset along a random
+  unit normal and then up to `2 sqrt(2)` texels across the light, with a random sphere holding the
+  point read; half the worst case for one of the planes (a corner of the slice at the jittered
+  view's edge pixel centre, the normal and the full reach pointing straight out of the plane, the
+  sphere beyond it touching the point read). Every sphere must pass the cascade's planes. Six
+  planted bugs each fail it: no normal offset in the margin, a kernel reach of 2 texels, no widening
+  for the jitter, the far plane at the nearest corner, the first slice starting at the cascades'
+  near split or at the camera's near plane instead of the eye. This test is what guards the margin:
+  the image checks below do not see it (a zero margin culls more and leaves every compared frame
+  identical). `the_slice_culls_inside_the_box` requires the planes to cull more than 30% of a grid
+  of 0.5 m spheres inside each box of the LOD field's view (68% to 77%).
+- `tests/shadow_cull.rs` draws four scenes with two renderers on one device through the same
+  frames, slice culling off and on: the mixed scene with three skinned characters and the camera
+  circling it, a 16 x 16 LOD field walked into with levels on and off, and the many_cubes sphere
+  turning. Every frame must be identical to the bit, the camera's draws equal, no cascade may draw
+  more instances or triangles with the slices, and in the field every cascade must cull something.
+- `cargo run --release -p pocket-render --example shadow_cull -- compare` does the same on the
+  benchmark scenes at 1280x720 (the mixed scene and its orbit, the many_cubes sphere and dense
+  layouts with shadows, the LOD field at `t` 0 and 0.5 with levels on and off and walking) and
+  reports each cascade's instances and triangles off and on; `-- bench SCENE` times both modes in
+  interleaved blocks; `tools/shadow_cull_bench.py` runs both across backends, adapters and WebGPU's
+  baseline device, and `games` runs `draw_paths --compare shadow_cull` on sample projects, with
+  what each cascade drew ([bench/shadows.md](../bench/shadows.md) 2 to 4: no frame differed
+  anywhere). Planted culling bugs show what these image checks catch (bench/shadows.md 2): gross
+  ones, not a margin too small.
+- `python tools/web_draw_paths.py <page> --compare shadow_cull` draws a viewport page in headless
+  Chrome with `shadow_cull=off` and `on` and compares coverage and pixels.
