@@ -8,7 +8,8 @@
 //! depending on this crate. Replays record a start snapshot and every applied write with each
 //! tick's hash ([`replay`]); `verify`, `lockstep` and `first_divergence` name the first tick where
 //! two runs differ and the sections and fields that differ ([`diff`]). Versions, saves and
-//! migrations are [`version`], [`save`] and [`migrate`].
+//! migrations are [`version`], [`save`] and [`migrate`]. [`SnapshotCache`] takes snapshot after
+//! snapshot of one world, encoding again only the component sections that changed.
 
 #![deny(
     clippy::cast_possible_truncation,
@@ -25,6 +26,7 @@ pub mod migrate;
 pub mod pce;
 mod project;
 pub mod registry;
+mod repeated;
 pub mod replay;
 pub mod save;
 mod sections;
@@ -36,6 +38,7 @@ pub use diff::{FieldDiff, SectionChange, Side, SnapshotDiff, diff};
 pub use format::{Fingerprint, ResolvedFormat, ResolvedVariant};
 pub use hash::{SectionDigest, SectionKey, SectionKind, TickHash, WorldHash};
 pub use registry::{Class, Registry, RegistryBuilder};
+pub use repeated::SnapshotCache;
 pub use replay::{
     Applied, Divergence, DivergenceKind, LockstepOptions, LockstepReport, RecordOptions,
     RecordedWrite, Recorder, Replay, ReplayMode, ReplayOutcome, ReplayReport, ReplaySource, Source,

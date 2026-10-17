@@ -2,7 +2,10 @@
 //! caches written as PCE, and decoded into staged values that restore applies only once every
 //! section has decoded (6.4, atomic for errors).
 
+use bevy_ecs::change_detection::{DetectChanges, Tick};
 use bevy_ecs::prelude::{Component, Entity, Resource, World};
+use bevy_ecs::query::QueryState;
+use bevy_ecs::world::Ref;
 use pocket_contract::Problem;
 use pocket_sim::{EntityAllocator, EntityId, Persisted, PersistedCache, Staged};
 use serde::Serialize;
@@ -33,6 +36,8 @@ pub(crate) trait StagedSection: Send {
 
 type CacheDecodeFn = fn(&[u8]) -> Result<Box<dyn Staged>, Problem>;
 type EncodeFn = fn(&World, &mut Vec<u8>, &SectionKey) -> Result<bool, Problem>;
+/// A component section's kept query, for repeated snapshots of one world.
+pub(crate) type RowsFn = fn() -> Box<dyn ComponentRows>;
 type DecodeFn = fn(&[u8], &SectionKey, &[EntityId]) -> Result<Box<dyn StagedSection>, Problem>;
 
 /// How one registered section is written and read.
@@ -43,6 +48,8 @@ pub(crate) enum Codec {
         decode: DecodeFn,
         /// Removes a persisted resource before a restore applies sections.
         remove: Option<fn(&mut World)>,
+        /// A component's rows read through a kept query (`snapshot::SnapshotCache`).
+        rows: Option<RowsFn>,
     },
     Cache {
         encode: fn(&World, &mut Vec<u8>) -> Result<(), Problem>,
@@ -151,6 +158,7 @@ pub(crate) fn resource_codec<R: Persisted + Resource>() -> Codec {
         remove: Some(|w| {
             w.remove_resource::<R>();
         }),
+        rows: None,
     }
 }
 
@@ -191,6 +199,7 @@ pub(crate) fn component_codec<C: Persisted + Component>() -> Codec {
         encode: encode_component::<C>,
         decode: decode_component::<C>,
         remove: None,
+        rows: Some(|| Box::new(KeptRows::<C> { state: None })),
     }
 }
 
@@ -224,6 +233,81 @@ fn encode_component<C: Persisted + Component>(
     write_rows(&rows, out)
         .map_err(|(id, e)| error::encode(&key.to_string(), Some(id.get()), &e.reason()))?;
     Ok(true)
+}
+
+/// A component section read again and again from one world (`snapshot::SnapshotCache`): the
+/// query is kept between reads, and a read can first ask whether the rows may have changed.
+pub(crate) trait ComponentRows: Send {
+    /// Whether any row, its value or its `EntityId`, was added or changed after the world's change
+    /// tick `since` (`now` is the world's tick, for wraparound), and if none was, the rows there
+    /// are. The scan stops at the first changed row: its count is then only the rows seen.
+    fn scan(&mut self, world: &World, since: Tick, now: Tick) -> (usize, bool);
+
+    /// Writes the section's data as `encode_component` does; returns the rows written (none: the
+    /// section is absent).
+    fn encode(
+        &mut self,
+        world: &World,
+        out: &mut Vec<u8>,
+        key: &SectionKey,
+    ) -> Result<usize, Problem>;
+}
+
+type RowsQuery<C> = QueryState<(Ref<'static, EntityId>, Ref<'static, C>)>;
+
+struct KeptRows<C: Component> {
+    /// Made once both components are registered in the world; never for another world.
+    state: Option<RowsQuery<C>>,
+}
+
+impl<C: Persisted + Component> KeptRows<C> {
+    fn query(&mut self, world: &World) -> Option<&mut RowsQuery<C>> {
+        if self.state.is_none() {
+            self.state = QueryState::try_new(world);
+        }
+        self.state.as_mut()
+    }
+}
+
+impl<C: Persisted + Component> ComponentRows for KeptRows<C> {
+    fn scan(&mut self, world: &World, since: Tick, now: Tick) -> (usize, bool) {
+        let Some(q) = self.query(world) else {
+            return (0, false);
+        };
+        let mut rows = 0;
+        // A count and a flag: the order does not matter.
+        #[allow(clippy::disallowed_methods)]
+        for (id, c) in q.iter(world) {
+            rows += 1;
+            if c.last_changed().is_newer_than(since, now)
+                || id.last_changed().is_newer_than(since, now)
+            {
+                return (rows, true);
+            }
+        }
+        (rows, false)
+    }
+
+    fn encode(
+        &mut self,
+        world: &World,
+        out: &mut Vec<u8>,
+        key: &SectionKey,
+    ) -> Result<usize, Problem> {
+        let Some(q) = self.query(world) else {
+            return Ok(0);
+        };
+        #[allow(clippy::disallowed_methods)] // sorted by EntityId below (simulation.md 8.1)
+        let mut rows: Vec<(EntityId, &C)> =
+            q.iter(world).map(|(id, c)| (*id, c.into_inner())).collect();
+        if rows.is_empty() {
+            return Ok(0);
+        }
+        rows.sort_unstable_by_key(|r| r.0);
+        write_rows(&rows, out)
+            .map_err(|(id, e)| error::encode(&key.to_string(), Some(id.get()), &e.reason()))?;
+        Ok(rows.len())
+    }
 }
 
 struct StagedRows<C>(Vec<(EntityId, C)>);

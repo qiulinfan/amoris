@@ -1,6 +1,7 @@
 //! Snapshots (docs/spec/persistence.md 4 and 6): the world as canonical sections with their
 //! digests and world hash, the byte layout, and snapshot, world hash, restore and fork.
 
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use bevy_ecs::prelude::{Entity, Resource, With, World};
@@ -257,47 +258,95 @@ pub(crate) fn at_boundary(world: &World) -> Result<(), Problem> {
     }
 }
 
-enum Source<'a> {
-    Registered(&'a Entry),
-    Project(Project),
+/// Where a section comes from: the registry's entry (and its index there) or a project component
+/// of the world.
+pub(crate) enum Source<'a> {
+    Registered(usize, &'a Entry),
+    Project(Cow<'a, Project>),
 }
 
 impl Source<'_> {
-    fn key(&self) -> &SectionKey {
+    pub(crate) fn key(&self) -> &SectionKey {
         match self {
-            Source::Registered(e) => &e.key,
+            Source::Registered(_, e) => &e.key,
             Source::Project(p) => &p.key,
         }
     }
-    fn version(&self) -> u32 {
+    pub(crate) fn version(&self) -> u32 {
         match self {
-            Source::Registered(e) => e.version,
+            Source::Registered(_, e) => e.version,
             Source::Project(p) => p.schema.version,
         }
     }
     fn fingerprint(&self) -> Fingerprint {
         match self {
-            Source::Registered(e) => e.fingerprint,
+            Source::Registered(_, e) => e.fingerprint,
             Source::Project(p) => p.fingerprint,
+        }
+    }
+
+    /// Writes the section into `buf`, cleared first (prefix, then data; 5.4: one buffer, one hash
+    /// call per section): where its data start, or `None` when the section is absent.
+    fn write(&self, world: &World, buf: &mut Vec<u8>) -> Result<Option<usize>, Problem> {
+        let key = self.key();
+        buf.clear();
+        digest_prefix(buf, key.kind, &key.name, self.version());
+        let start = buf.len();
+        let present = match self {
+            Source::Registered(_, e) => match &e.codec {
+                Codec::Entities => sections::encode_entities(world, buf).map(|()| true)?,
+                Codec::Typed { encode, .. } => encode(world, buf, key)?,
+                Codec::Cache { encode, .. } => {
+                    encode(world, buf)?;
+                    buf.len() > start
+                }
+            },
+            Source::Project(p) => project::encode(world, p, buf)?,
+        };
+        Ok(present.then_some(start))
+    }
+
+    /// The section as [`snapshot`] writes it, or `None` when it is absent.
+    pub(crate) fn encode(
+        &self,
+        world: &World,
+        buf: &mut Vec<u8>,
+    ) -> Result<Option<SectionData>, Problem> {
+        Ok(self.write(world, buf)?.map(|start| self.data(buf, start)))
+    }
+
+    /// The section of the prefixed bytes in `buf`, whose data start at `start`.
+    pub(crate) fn data(&self, buf: &[u8], start: usize) -> SectionData {
+        SectionData {
+            key: self.key().clone(),
+            version: self.version(),
+            fingerprint: self.fingerprint(),
+            digest: section_digest(buf),
+            bytes: Arc::from(&buf[start..]),
         }
     }
 }
 
 /// The registry's sections and the world's project components, in section order.
-fn sources<'a>(world: &World, reg: &'a Registry) -> Result<Vec<Source<'a>>, Problem> {
-    let mut out: Vec<Source<'a>> = reg.entries().iter().map(Source::Registered).collect();
+pub(crate) fn sources<'a>(world: &World, reg: &'a Registry) -> Result<Vec<Source<'a>>, Problem> {
+    let mut out: Vec<Source<'a>> = reg
+        .entries()
+        .iter()
+        .enumerate()
+        .map(|(i, e)| Source::Registered(i, e))
+        .collect();
     for p in project::projects(world)? {
         if reg.entry(&p.key).is_some() {
             return Err(error::duplicate_name(&p.key.name));
         }
-        out.push(Source::Project(p));
+        out.push(Source::Project(Cow::Owned(p)));
     }
     out.sort_by(|a, b| a.key().cmp(b.key()));
     Ok(out)
 }
 
-/// Encodes every present section into `buf` (prefix, then data) and hands it to `f` with the
-/// offset where the data starts (5.4: one buffer, one hash call per section).
+/// Encodes every present section into one buffer (prefix, then data) and hands it to `f` with the
+/// offset where the data starts.
 fn each_section(
     world: &World,
     reg: &Registry,
@@ -308,29 +357,14 @@ fn each_section(
     reg.check_rows(world)?;
     let mut buf = Vec::with_capacity(4096);
     for s in sources(world, reg)? {
-        let key = s.key();
-        buf.clear();
-        digest_prefix(&mut buf, key.kind, &key.name, s.version());
-        let start = buf.len();
-        let present = match &s {
-            Source::Registered(e) => match &e.codec {
-                Codec::Entities => sections::encode_entities(world, &mut buf).map(|()| true)?,
-                Codec::Typed { encode, .. } => encode(world, &mut buf, key)?,
-                Codec::Cache { encode, .. } => {
-                    encode(world, &mut buf)?;
-                    buf.len() > start
-                }
-            },
-            Source::Project(p) => project::encode(world, p, &mut buf)?,
-        };
-        if present {
-            f(key, s.version(), s.fingerprint(), &buf, start);
+        if let Some(start) = s.write(world, &mut buf)? {
+            f(s.key(), s.version(), s.fingerprint(), &buf, start);
         }
     }
     Ok(())
 }
 
-fn header_of(world: &World) -> SnapshotHeader {
+pub(crate) fn header_of(world: &World) -> SnapshotHeader {
     let ctx = world
         .get_resource::<SnapshotContext>()
         .copied()
