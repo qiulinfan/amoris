@@ -78,7 +78,10 @@ fn edits_undo_and_redo_exactly() {
         let snap = g.snapshot().unwrap();
         g.restore(&snap).unwrap();
         let h = ok(&mut g, "history.list", json!({}));
-        assert_eq!(h, json!({"undo": [], "redo": []}));
+        assert_eq!(
+            h,
+            json!({"undo": [], "redo": [], "entries": {"undo": [], "redo": []}})
+        );
     });
 }
 

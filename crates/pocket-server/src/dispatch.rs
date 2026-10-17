@@ -174,17 +174,54 @@ impl Host {
         }
     }
 
-    /// A new MCP session's client.
+    /// A new MCP session's client, its source named after the session in the history.
     pub(crate) fn open_session(&self) -> Via {
         let n = self
             .0
             .sessions
             .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
             + 1;
-        Via::Session(
-            Arc::new(Mutex::new((self.0.developer)())),
-            format!("mcp-{n}"),
-        )
+        let client = (self.0.developer)();
+        let name = format!("mcp-{n}");
+        if let Ok(mut names) = self.0.names.write() {
+            names.insert(client.source(), name.clone());
+        }
+        Via::Session(Arc::new(Mutex::new(client)), name)
+    }
+
+    /// The history (`history.list`'s answer, the `history` push) with `session` on each entry
+    /// whose source is a developer client the server named: `api` (the HTTP API's) or `mcp-<n>`
+    /// (as `agent` events name the session).
+    pub(crate) fn named_history(&self, mut h: Value) -> Value {
+        let Ok(names) = self.0.names.read() else {
+            return h;
+        };
+        for stack in ["undo", "redo"] {
+            let Some(entries) = h["entries"][stack].as_array_mut() else {
+                continue;
+            };
+            for e in entries {
+                if let Ok(source) = pocket_link::source_from_json(&e["source"])
+                    && let Some(name) = names.get(&source)
+                {
+                    e["session"] = json!(name);
+                }
+            }
+        }
+        h
+    }
+
+    /// Pushes the history (with sessions) unless it is the one pushed last: the steps of a
+    /// streamed drag merge into its entry and change nothing in the list, so a drag pushes once.
+    pub(crate) fn push_history(&self, h: Value) {
+        let h = self.named_history(h);
+        if let Ok(mut last) = self.0.last_history.lock() {
+            if last.as_ref() == Some(&h) {
+                return;
+            }
+            *last = Some(h.clone());
+        }
+        self.push("history", h);
     }
 
     /// One catalog call: answered here or by the game, with the pushes it causes.
@@ -232,11 +269,15 @@ impl Host {
                 None => self.game(via, method, params).await,
             },
         };
+        let r = match method {
+            "history.list" => r.map(|h| self.named_history(h)),
+            _ => r,
+        };
         if r.is_ok()
             && HISTORY.contains(&method)
             && let Ok(h) = self.game(&Via::Api, "history.list", json!({})).await
         {
-            self.push("history", h);
+            self.push_history(h);
         }
         r
     }

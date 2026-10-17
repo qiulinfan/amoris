@@ -102,6 +102,11 @@ struct Inner {
     capture: RwLock<Option<Arc<dyn CaptureHub>>>,
     render: RwLock<Option<Arc<dyn RenderFeed>>>,
     sessions: AtomicU64,
+    /// The names of the developer sources the server hands out (`api`, `mcp-<n>`), which the
+    /// history's entries carry as `session` (dispatch's `named_history`).
+    names: RwLock<std::collections::BTreeMap<pocket_link::Source, String>>,
+    /// The last `history` pushed (dispatch's `push_history` skips a push that changes nothing).
+    last_history: std::sync::Mutex<Option<Value>>,
     /// Opens a client of a player's source (`Source::Player(i)`), when the integrator installs it.
     players: RwLock<Option<PlayerClients>>,
     /// The player clients opened, one per seat index, shared by every call made as that seat.
@@ -124,6 +129,7 @@ impl Host {
     pub fn new(game: GameAccess, project: PathBuf, editor_dist: Option<PathBuf>) -> Host {
         game.reader.serve_profile();
         let (push, _) = broadcast::channel(1024);
+        let names = std::collections::BTreeMap::from([(game.api.source(), "api".to_owned())]);
         Host(Arc::new(Inner {
             reader: game.reader,
             editor: Arc::new(Mutex::new(game.editor)),
@@ -137,6 +143,8 @@ impl Host {
             capture: RwLock::new(None),
             render: RwLock::new(None),
             sessions: AtomicU64::new(0),
+            names: RwLock::new(names),
+            last_history: std::sync::Mutex::new(None),
             players: RwLock::new(None),
             seats: Mutex::new(std::collections::BTreeMap::new()),
         }))

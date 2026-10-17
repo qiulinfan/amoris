@@ -314,7 +314,7 @@ impl Host {
         }
         let restored = self.game(via, "snapshots.restore", restore).await?;
         if let Ok(h) = self.game(&Via::Api, "history.list", json!({})).await {
-            self.push("history", h);
+            self.push_history(h);
         }
         let at = restored["restored"].as_u64().unwrap_or(p.tick);
         let mut out = json!({"restored": at, "tick": at, "scripts": restored["scripts"]});

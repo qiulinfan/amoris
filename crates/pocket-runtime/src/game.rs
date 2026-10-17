@@ -31,7 +31,7 @@ use crate::catalog::{self, Command, CommandFn, NoParams};
 use crate::control::{Sampler, StepParams, StepStop};
 use crate::edit::{self, Edit, WorldEditOps, WorldEditParams, WorldGetParams, label_of};
 use crate::files::{self, ScriptReadParams, ScriptWriteParams};
-use crate::history::{Entry, History};
+use crate::history::{Entry, History, HistoryUndoParams};
 use crate::inspect::{self, WorldQueryParams, WorldSchemaParams, WorldTreeParams};
 use crate::project::GameSetup;
 use crate::scene::Scene;
@@ -735,8 +735,27 @@ impl Game {
     }
 
     /// `history.undo` (`undo`) or `history.redo`: applies the top entry's edits; an entry whose
-    /// edits no longer apply (a tick changed what they name) is dropped with `history.stale`.
-    fn undo_redo(&mut self, undo: bool) -> Result<Written, Problem> {
+    /// edits no longer apply (a tick changed what they name) is dropped with `history.stale`. An
+    /// undo with `group` is refused with `history.group`, changing nothing, unless the top entry
+    /// is the whole of that group (an editor cancelling a drag takes back only its own drag).
+    fn undo_redo(&mut self, undo: bool, group: Option<&str>) -> Result<Written, Problem> {
+        if let Some(g) = group {
+            let (entries, on_top) = self.history.group_on_top(g);
+            if entries != 1 || !on_top {
+                return Err(Problem::new(
+                    "history.group",
+                    format!(
+                        "The next edit to undo is not the whole of group '{g}' (the undo stack \
+                         holds {entries} entries of it)."
+                    ),
+                    detail([
+                        ("group", json!(g)),
+                        ("entries", json!(entries)),
+                        ("on_top", json!(on_top)),
+                    ]),
+                ));
+            }
+        }
         let entry = if undo {
             self.history.pop_undo()
         } else {
@@ -753,8 +772,11 @@ impl Game {
         match self.edit(entry.inverse) {
             Ok((mut result, canonical, inverse)) => {
                 result["label"] = json!(entry.label);
+                // The step keeps its source; once undone or redone it merges with nothing.
                 let back = Entry {
                     label: entry.label,
+                    source: entry.source,
+                    group: None,
                     inverse,
                 };
                 Ok(Written {
@@ -792,14 +814,16 @@ impl Game {
     ) -> Result<Value, Problem> {
         let tick = self.tick();
         let mark = self.sim.boundary().mark();
-        let new_edit = |r: Result<(Value, Value, Vec<Edit>), Problem>, label: String| {
+        let new_edit = |r: Result<(Value, Value, Vec<Edit>), Problem>,
+                        label: String,
+                        group: Option<String>| {
             r.map(|(mut result, canonical, inverse)| {
                 result["label"] = json!(label);
                 Written {
                     result,
                     canonical,
                     recorded: "world_edit",
-                    history: Some(HistoryStep::New(label, inverse)),
+                    history: Some(HistoryStep::New(label, group, inverse)),
                 }
             })
         };
@@ -807,7 +831,7 @@ impl Game {
             "world_edit" => match decode::<WorldEditParams>(&cmd.params, name) {
                 Ok(p) => {
                     let label = label_of(&p.edits);
-                    new_edit(self.edit(p.edits), label)
+                    new_edit(self.edit(p.edits), label, None)
                 }
                 Err(e) => Err(e),
             },
@@ -818,12 +842,15 @@ impl Game {
                     let r = self
                         .edit(edits.clone())
                         .map_err(|e| edit::ops_paths(e, &edits));
-                    new_edit(r, label)
+                    new_edit(r, label, p.group)
                 }
                 Err(e) => Err(e),
             },
-            "history.undo" | "history.redo" => decode::<NoParams>(&cmd.params, name)
-                .and_then(|_| self.undo_redo(name == "history.undo")),
+            "history.undo" => decode::<HistoryUndoParams>(&cmd.params, name)
+                .and_then(|p| self.undo_redo(true, p.group.as_deref())),
+            "history.redo" => {
+                decode::<NoParams>(&cmd.params, name).and_then(|_| self.undo_redo(false, None))
+            }
             "scripts.swap" => self
                 .swap(&cmd.params, src)
                 .map(|(result, canonical)| Written {
@@ -867,7 +894,9 @@ impl Game {
                     r.applied(&a);
                 }
                 match w.history {
-                    Some(HistoryStep::New(label, inverse)) => self.history.record(label, inverse),
+                    Some(HistoryStep::New(label, group, inverse)) => {
+                        self.history.record(label, cmd.source, group, inverse);
+                    }
                     Some(HistoryStep::Undone(e)) => self.history.push_redo(e),
                     Some(HistoryStep::Redone(e)) => self.history.push_undo(e),
                     None => {}
@@ -1421,7 +1450,8 @@ struct Written {
 }
 
 enum HistoryStep {
-    New(String, Vec<Edit>),
+    /// A new edit: its label, its `group` (world.edit's) and its inverse.
+    New(String, Option<String>, Vec<Edit>),
     Undone(Entry),
     Redone(Entry),
 }

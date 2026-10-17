@@ -90,6 +90,10 @@ pub struct WorldEditOps {
     /// The history's label; default: a summary of the edits.
     #[serde(default)]
     pub label: Option<String>,
+    /// Consecutive edits with the same group from one caller are one undo entry (a drag streams
+    /// its values and undoes at once); every edit is still applied and recorded on its own.
+    #[serde(default)]
+    pub group: Option<String>,
 }
 
 /// One edit in the protocol's form.

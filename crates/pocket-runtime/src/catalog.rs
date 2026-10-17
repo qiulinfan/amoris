@@ -23,6 +23,7 @@ use serde_json::{Value, json};
 use crate::control::{PlayParams, SnapshotsRestoreParams, StepParams, TimeControlParams};
 use crate::edit::{WorldEditOps, WorldEditParams, WorldGetParams};
 use crate::files::{ScriptReadParams, ScriptWriteParams};
+use crate::history::HistoryUndoParams;
 use crate::inspect::{WorldQueryParams, WorldSchemaParams, WorldTreeParams};
 use crate::scripts::{ScriptsApplyParams, ScriptsSwapParams};
 use crate::types::ScriptsTypesParams;
@@ -135,7 +136,8 @@ pub const CATALOG: &[CommandDef] = &[
     def(
         "world.edit",
         Kind::Write,
-        "Spawn, set (fields merge), remove and destroy, all or nothing at one boundary; undoable.",
+        "Spawn, set (fields merge), remove and destroy, all or nothing at one boundary; undoable \
+         (edits of one `group` in a row are one undo entry).",
         schema::<WorldEditOps>,
     ),
     def(
@@ -147,14 +149,16 @@ pub const CATALOG: &[CommandDef] = &[
     def(
         "history.list",
         Kind::Read,
-        "The undo and redo stacks' labels, most recent last.",
+        "The undo labels and the redo labels, the next to undo or redo last, with each entry's \
+         source and group under `entries`.",
         schema::<NoParams>,
     ),
     def(
         "history.undo",
         Kind::Write,
-        "Undoes the last world edit (from the editor or an agent).",
-        schema::<NoParams>,
+        "Undoes the last world edit (from the editor or an agent); with `group`, only when that \
+         edit is the whole of the group.",
+        schema::<HistoryUndoParams>,
     ),
     def(
         "history.redo",
