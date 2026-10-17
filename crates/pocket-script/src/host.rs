@@ -73,6 +73,8 @@ impl Default for ScriptLimits {
 /// `Math.sin`), the test's host native is `Math.hypot`, still a closure through rquickjs: 470,818
 /// bytes in release and 3,508,566 in debug, inside both limits with 1.5 times the margin; with
 /// cl, 1,187,268 bytes, inside 2 MiB with the margin (2026-10-15, docs/bench/script.md 7.4).
+/// With P13 the release build took 466,724 bytes, and the same without it on the same build
+/// (2026-10-15, docs/bench/script.md 8.4).
 #[cfg(target_arch = "wasm32")]
 pub const DEFAULT_STACK_BYTES: usize = 256 * 1024;
 #[cfg(all(not(target_arch = "wasm32"), not(debug_assertions)))]
@@ -161,9 +163,22 @@ pub(crate) struct Shared {
     pub phase_clock: Cell<Option<fn() -> f64>>,
     /// The phases timed since the last `take_phases`.
     pub phases: Cell<PhaseTimes>,
+    /// The clock that times the natives of programs instantiated from now on, when a benchmark
+    /// installed one (`natives::timing`).
+    pub native_clock: Cell<Option<fn() -> f64>>,
+    /// The step profiler's recording (`crate::profile`; docs/spec/debugger.md 14), if one records.
+    pub profile: RefCell<Option<crate::profile::Recorder>>,
+    /// The context of the budgeted call running: where the interrupt handler re-arms the counter
+    /// and reads the stack.
+    pub call_ctx: Cell<*mut qjs::JSContext>,
 }
 
 impl Shared {
+    /// Whether a program instantiated now gets timed natives (`ScriptHost::time_natives`).
+    pub fn times_natives(&self) -> bool {
+        self.native_clock.get().is_some()
+    }
+
     /// Whether programs are to be instrumented now: a debugger asks for it, or a write trace
     /// records (docs/spec/debugger.md 2 and 13).
     pub fn wants_instrumented(&self) -> bool {
@@ -189,8 +204,77 @@ pub struct PhaseTimes {
     pub diff: f64,
     /// The changed cells and the commands applied, and the transaction committed.
     pub apply: f64,
+    /// Of `run`, the time inside the host's natives (the engine's `Math` functions, `pocket:host`'s
+    /// natives, the console) on the clock [`ScriptHost::time_natives`] installed, when the program
+    /// was instantiated with it; else 0. The rest of `run` is the interpreter, QuickJS-ng's own
+    /// builtins and the calls into the natives included.
+    pub native: f64,
+    /// The native calls `native` counts (a native called from inside another is not counted).
+    pub native_calls: u64,
+    /// `native` and `native_calls` by [`NativeKind`], in its order.
+    pub natives: [NativeTime; NATIVE_KINDS],
     /// The calls timed.
     pub calls: u32,
+}
+
+/// The kinds of the host's natives that [`PhaseTimes::natives`] keeps apart.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NativeKind {
+    /// The engine's `Math` functions (`sin`, `cos`, ..., `hypot`; not QuickJS-ng's own `sqrt`,
+    /// `min` and the like, which are builtins).
+    Math,
+    /// `emit`, `events` and `intent`: event data converted and checked.
+    Events,
+    /// The random streams, `Math.random` included.
+    Rng,
+    /// Entity reads and writes and on-demand queries (`get`, `set`, `spawn`, `query`, ...).
+    World,
+    /// The console, `harden` and `freeze`.
+    Other,
+}
+
+/// How many [`NativeKind`]s there are.
+pub const NATIVE_KINDS: usize = 5;
+
+impl NativeKind {
+    /// Every kind, in [`PhaseTimes::natives`]'s order.
+    pub const ALL: [NativeKind; NATIVE_KINDS] = [
+        NativeKind::Math,
+        NativeKind::Events,
+        NativeKind::Rng,
+        NativeKind::World,
+        NativeKind::Other,
+    ];
+
+    /// Its name in benchmark results.
+    pub fn name(self) -> &'static str {
+        match self {
+            NativeKind::Math => "math",
+            NativeKind::Events => "events",
+            NativeKind::Rng => "rng",
+            NativeKind::World => "world",
+            NativeKind::Other => "other",
+        }
+    }
+
+    /// The kind of a `pocket:host` native, or of `Math.random`, by its name.
+    pub(crate) fn of(native: &str) -> NativeKind {
+        match native {
+            "emit" | "events" | "intent" => NativeKind::Events,
+            "random" => NativeKind::Rng,
+            n if n.starts_with("rng") => NativeKind::Rng,
+            "query" | "single" | "exists" | "has" | "get" | "set" | "insert" | "remove"
+            | "despawn" | "spawn" => NativeKind::World,
+            _ => NativeKind::Other,
+        }
+    }
+}
+
+/// The time and the calls of one kind of native.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct NativeTime {
+    pub time: f64,
+    pub calls: u64,
 }
 
 /// The source maps of a program's modules and of the prelude, by module name.
@@ -275,6 +359,9 @@ impl ScriptHost {
             writes: RefCell::new(None),
             phase_clock: Cell::new(None),
             phases: Cell::new(PhaseTimes::default()),
+            native_clock: Cell::new(None),
+            profile: RefCell::new(None),
+            call_ctx: Cell::new(std::ptr::null_mut()),
         });
         let sh = shared.clone();
         rt.set_interrupt_handler(Some(Box::new(move || {
@@ -283,9 +370,18 @@ impl ScriptHost {
             }
             // P2 zeroes the counter when memory runs out, so the call stops at its next poll
             // even if a builtin swallowed the error; that stop is a fault, not an overrun.
-            if !out_of_memory(&sh) {
-                sh.exceeded.set(true);
+            if out_of_memory(&sh) {
+                return true;
             }
+            // A profile's sample point inside the budget: the call goes on (crate::profile). Not
+            // libregexp's direct call every 10,000 of a regular expression's polls, which stops
+            // the call here, with a profile or without.
+            if let Some(counter) = crate::profile::interrupted(&sh) {
+                let counter = i32::try_from(counter).unwrap_or(i32::MAX);
+                unsafe { ffi::JS_SetInterruptCounter(sh.call_ctx.get(), counter) };
+                return false;
+            }
+            sh.exceeded.set(true);
             true
         })));
         let loader = crate::loader::SetLoader;
@@ -325,11 +421,63 @@ impl ScriptHost {
         self.shared.phases.take()
     }
 
+    /// Times every call into the host's natives with `clock` (`None` stops) in the programs
+    /// instantiated from now on, which get timed copies of the natives: what `run` spends in them
+    /// adds up in [`PhaseTimes::native`] (with [`ScriptHost::time_phases`]). For benchmarks: two
+    /// clock readings a native call, which the reading's own cost inflates (docs/bench/script.md,
+    /// section 8). Programs already instantiated keep their natives.
+    pub fn time_natives(&self, clock: Option<fn() -> f64>) {
+        self.shared.native_clock.set(clock);
+        crate::natives::timing::set_clock(clock);
+    }
+
+    /// Starts the step profiler (docs/spec/debugger.md 14): from the next budgeted call on, a
+    /// sample of the stack every `interval` steps on average (1: every step), until
+    /// [`ScriptHost::take_profile`]. A profile already recording starts over. Steps, budget stops
+    /// and results are those of a run without it. Refused for an interval of 0 or past
+    /// [`crate::profile::MAX_INTERVAL`].
+    pub fn start_profile(&self, interval: u32) -> Result<(), ScriptError> {
+        if interval == 0 || interval > crate::profile::MAX_INTERVAL {
+            return Err(ScriptError::new(
+                "request.invalid_value",
+                format!(
+                    "A profile samples every 1 to {} steps, not {interval}.",
+                    crate::profile::MAX_INTERVAL
+                ),
+                ErrorPhase::Run,
+            ));
+        }
+        crate::profile::start(&self.shared, interval);
+        Ok(())
+    }
+
+    /// Whether the step profiler records.
+    pub fn profiling(&self) -> bool {
+        crate::profile::recording(&self.shared)
+    }
+
+    /// Stops the step profiler and resolves what it recorded, names and TypeScript positions read
+    /// through `program`'s context (any program of this host); `None` when none recorded. Without
+    /// a program the recording is dropped.
+    pub fn take_profile(
+        &self,
+        program: Option<&crate::Program>,
+    ) -> Option<crate::profile::ScriptProfile> {
+        match program {
+            Some(p) => p.with_raw_ctx(|c| unsafe { crate::profile::take(&self.shared, c) }),
+            None => {
+                crate::profile::discard(&self.shared, self.shared.rt.get());
+                None
+            }
+        }
+    }
+
     /// Forgets a call a panic cut short: its state (with the world it borrowed), its maps, its
     /// errors and the jobs it queued.
     pub(crate) fn abandon_call(&self) {
         let sh = &self.shared;
         sh.budget_active.set(false);
+        crate::profile::abandon(sh);
         *sh.call.borrow_mut() = None;
         *sh.maps.borrow_mut() = None;
         *sh.panic.borrow_mut() = None;
@@ -346,6 +494,7 @@ impl Drop for ScriptHost {
     /// JavaScript values the shared state holds go before the runtime, which asserts that no object
     /// outlives it.
     fn drop(&mut self) {
+        crate::profile::discard(&self.shared, self.shared.rt.get());
         self.shared.rejections.borrow_mut().clear();
         self.shared.thrown.borrow_mut().clear();
         *self.shared.call.borrow_mut() = None;
@@ -371,15 +520,18 @@ fn track_rejection<'js>(ctx: Ctx<'js>, promise: Value<'js>, reason: Value<'js>, 
         .push(Rejection { promise, error });
 }
 
-/// Starts a budgeted call: the counter at `steps` (P1), the depth limit at `max_call_depth` (P5),
-/// the stack top at this frame. Returns the steps given.
+/// Starts a budgeted call: the counter at `steps` (P1; a recording profile arms it at its next
+/// sample instead, `crate::profile`), the depth limit at `max_call_depth` (P5), the stack top at
+/// this frame. Returns the steps given.
 pub(crate) fn begin_budget(ctx: &Ctx<'_>, sh: &Shared, steps: u32) -> u32 {
     let c = js::raw(ctx);
     let steps = steps.min(i32::MAX.unsigned_abs());
     let rt = unsafe { qjs::JS_GetRuntime(c) };
+    sh.call_ctx.set(c);
+    let counter = crate::profile::begin(sh, steps);
     unsafe {
         qjs::JS_UpdateStackTop(rt);
-        ffi::JS_SetInterruptCounter(c, i32::try_from(steps).unwrap_or(i32::MAX));
+        ffi::JS_SetInterruptCounter(c, i32::try_from(counter).unwrap_or(i32::MAX));
         ffi::JS_SetCallDepthLimit(c, sh.limits.max_call_depth);
     }
     reset_oom(ctx, sh);
@@ -433,6 +585,9 @@ pub(crate) fn charge_host_bytes(sh: &Shared, bytes: u64, what: &str) -> Result<(
 pub(crate) fn end_budget(ctx: &Ctx<'_>, sh: &Shared, steps: u32) -> u64 {
     sh.budget_active.set(false);
     let left = unsafe { ffi::JS_GetInterruptCounter(js::raw(ctx)) };
+    if let Some(used) = crate::profile::end(sh, left, sh.exceeded.get(), out_of_memory(sh)) {
+        return used;
+    }
     if sh.exceeded.get() {
         u64::from(steps)
     } else {

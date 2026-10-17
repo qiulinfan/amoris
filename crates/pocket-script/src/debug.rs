@@ -236,7 +236,9 @@ pub unsafe fn guarded<R>(ctx: *mut JSContext, guard: Guard, f: impl FnOnce() -> 
     unsafe { ffi::JS_SetInterruptCounter(ctx, steps) };
     sh.exceeded.set(false);
     sh.budget_active.set(true);
+    let profiled = crate::profile::suspend(&sh);
     let r = catch_unwind(AssertUnwindSafe(f));
+    crate::profile::resume(&sh, profiled);
     let oom_after = unsafe { ffi::JS_GetOutOfMemoryCount(rt) };
     sh.oom_base
         .set(sh.oom_base.get().wrapping_add(oom_after.wrapping_sub(oom)));

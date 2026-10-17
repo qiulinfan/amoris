@@ -12,6 +12,8 @@
 //!   a call depth counted in calls (the vendored QuickJS-ng's P1 and P5).
 //! - `scripts` puts a world's program in its schedule (`script.update`) and swaps it at a boundary,
 //!   keeping the old one on failure.
+//! - `profile` samples a running program's stack every N steps of the same work counter: which
+//!   TypeScript functions and lines cost steps, deterministically (docs/spec/debugger.md 14).
 //!
 //! The host holds no game state and never reads a clock; natives never panic across QuickJS-ng's
 //! C frames.
@@ -31,6 +33,7 @@ pub mod host;
 pub(crate) mod js;
 mod loader;
 pub(crate) mod natives;
+pub mod profile;
 pub mod program;
 pub mod resolve;
 pub(crate) mod sandbox;
@@ -45,8 +48,11 @@ pub use call::CallCounts;
 #[cfg(feature = "transpile")]
 pub use compile::{CompileOptions, CompileReport, compile, compile_with_report};
 pub use error::{ErrorPhase, JsError, ScriptError, ScriptErrorDetail, SourceLocation, StackFrame};
-pub use host::{LogLine, PhaseTimes, ScriptHost, ScriptLimits};
+pub use host::{
+    LogLine, NATIVE_KINDS, NativeKind, NativeTime, PhaseTimes, ScriptHost, ScriptLimits,
+};
 pub use loader::{PRELUDE_JS, PRELUDE_MAP};
+pub use profile::{FoldedStack, FunctionCost, LineCost, ScriptProfile, SystemProfile};
 pub use program::{
     Program, SystemInfo, SystemKind, SystemOutcome, SystemStats, TickBudget, TickInfo,
 };

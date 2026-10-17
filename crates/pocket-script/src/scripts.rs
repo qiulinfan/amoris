@@ -400,6 +400,26 @@ pub fn last_steps(world: &World) -> Vec<(String, u64)> {
         .collect()
 }
 
+/// Starts the step profiler of the world's script host (docs/spec/debugger.md 14): a sample of the
+/// stack every `interval` steps on average from the next script call on. Refused without a host
+/// or for an interval of 0 or past [`crate::profile::MAX_INTERVAL`].
+pub fn profile_start(world: &World, interval: u32) -> Result<(), ScriptError> {
+    let scripts = world.get_non_send::<Scripts>().ok_or_else(|| {
+        ScriptError::new(
+            "sim.internal",
+            "This world has no script host.",
+            ErrorPhase::Run,
+        )
+    })?;
+    scripts.host.start_profile(interval)
+}
+
+/// Stops the world's step profiler and returns what it recorded (`None` when none recorded).
+pub fn profile_take(world: &World) -> Option<crate::profile::ScriptProfile> {
+    let scripts = world.get_non_send::<Scripts>()?;
+    scripts.host.take_profile(scripts.program.as_ref())
+}
+
 /// Gives the world's scripts a new host on the same thread and instantiates the installed bundle in
 /// it: the check that nothing of the old host carries over (reload equivalence). It cannot serve a
 /// world moved to another thread, whose non-send `Scripts` bevy_ecs refuses to touch there, and a

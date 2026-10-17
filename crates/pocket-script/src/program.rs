@@ -128,6 +128,8 @@ pub struct Program {
     shared: Rc<crate::host::Shared>,
     /// Compiled with the debugger's trace handler set (docs/spec/debugger.md 2).
     instrumented: bool,
+    /// Instantiated with timed natives (`ScriptHost::time_natives`).
+    timed_natives: bool,
     // Last: the context outlives the values above.
     ctx: Context,
 }
@@ -222,6 +224,7 @@ impl ScriptHost {
         let maps = Rc::new(maps_of(&set));
         let hook = sh.debug.borrow().clone();
         let instrumented = sh.wants_instrumented();
+        let timed_natives = sh.times_natives();
         *sh.loading.borrow_mut() = Some(Rc::new((*set).clone()));
         *sh.maps.borrow_mut() = Some(maps.clone());
         *sh.load_error.borrow_mut() = None;
@@ -356,6 +359,7 @@ impl ScriptHost {
             ctx_key,
             shared: sh.clone(),
             instrumented,
+            timed_natives,
             ctx,
         })
     }
@@ -392,6 +396,12 @@ impl Program {
         self.instrumented
     }
 
+    /// Runs `f` with the program's context, outside any call (the profiler resolves its atoms
+    /// there).
+    pub(crate) fn with_raw_ctx<R>(&self, f: impl FnOnce(*mut rquickjs::qjs::JSContext) -> R) -> R {
+        self.ctx.with(|c| f(crate::js::raw(&c)))
+    }
+
     /// Runs system `index` as one invocation (script-host.md 5.4): its queries prepared, `run`
     /// called under the smaller of `steps_per_system` and the tick's steps left, the job queue
     /// drained under the same budget, then the column write-backs and commands applied together,
@@ -411,7 +421,9 @@ impl Program {
         // The phases' readings, when a benchmark installed a clock (host::PhaseTimes).
         let clock = sh.phase_clock.get();
         let started = clock.map(|c| c());
-        let (mut prepared, mut returned) = (None, None);
+        let (mut prepared, mut returned) = (RunStart::default(), None);
+        // The natives' sums when `run` returns (natives::timing; zero when untimed).
+        let mut natives_after = [(0.0, 0); crate::host::NATIVE_KINDS];
         let inv = begin_invocation(world, &info.key);
         let serial = sh.serial.get() + 1;
         sh.serial.set(serial);
@@ -437,6 +449,7 @@ impl Program {
             crate::debug::recorder_begin(sh);
             let ran = self.call_run(&ctx, info, entry, tick, clock, &mut prepared);
             returned = clock.map(|c| c());
+            natives_after = crate::natives::timing::totals();
             used = end_budget(&ctx, sh, steps);
             unsafe { crate::debug::recorder_returned(crate::js::raw(&ctx), sh) };
             if let Some(h) = &hook {
@@ -512,7 +525,7 @@ impl Program {
             Ok(()) => {
                 commit_invocation(world, inv);
                 if let (Some(c), Some(t0), Some(t1), Some(t2), Some(t3)) =
-                    (clock, started, prepared, returned, diffed)
+                    (clock, started, prepared.at, returned, diffed)
                 {
                     let t4 = c();
                     let mut p = sh.phases.get();
@@ -520,6 +533,19 @@ impl Program {
                     p.run += t2 - t1;
                     p.diff += t3 - t2;
                     p.apply += t4 - t3;
+                    if self.timed_natives {
+                        for (i, (after, before)) in natives_after
+                            .iter()
+                            .zip(prepared.natives.iter())
+                            .enumerate()
+                        {
+                            let (time, calls) = (after.0 - before.0, after.1 - before.1);
+                            p.natives[i].time += time;
+                            p.natives[i].calls += calls;
+                            p.native += time;
+                            p.native_calls += calls;
+                        }
+                    }
                     p.calls += 1;
                     sh.phases.set(p);
                 }
@@ -555,7 +581,7 @@ impl Program {
         entry: &SystemEntry,
         tick: &TickInfo,
         clock: Option<fn() -> f64>,
-        prepared: &mut Option<f64>,
+        prepared: &mut RunStart,
     ) -> Result<(), Value<'js>> {
         let caught = |_| ctx.catch();
         let call_info = Object::new(ctx.clone()).map_err(caught)?;
@@ -589,11 +615,20 @@ impl Program {
         let results = crate::convert::freeze_new(ctx, results).map_err(caught)?;
         let def: Value = entry.def.clone().restore(ctx).map_err(caught)?;
         let run: Function = entry.run.clone().restore(ctx).map_err(caught)?;
-        *prepared = clock.map(|c| c());
+        prepared.natives = crate::natives::timing::totals();
+        prepared.at = clock.map(|c| c());
         run.call::<_, ()>((This(def), context, results))
             .map_err(caught)?;
         drain_jobs(ctx)
     }
+}
+
+/// When a system's `run` started: the phase clock's reading, and the natives' sums then
+/// (`natives::timing`).
+#[derive(Default)]
+struct RunStart {
+    at: Option<f64>,
+    natives: [(f64, u64); crate::host::NATIVE_KINDS],
 }
 
 /// Reports a failed system: `sim.system_failed` in the tick's output and the hidden event

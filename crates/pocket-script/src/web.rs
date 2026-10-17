@@ -4,7 +4,9 @@
 //! holds the lockdown's verification walk, the replaced `Math` functions checked against the Rust
 //! library, the canonical NaN of P6, hashes of the kept operations that reach a C library, the
 //! depth limit through calls and through a chain of Proxies, and a script workload's digest and
-//! steps at every tick.
+//! steps at every tick, with a stretch of it under the step profiler (docs/spec/debugger.md 14):
+//! its digests and steps are those of the run without it, and its profile is one line of the
+//! report, the same bytes on both targets.
 
 use bevy_ecs::prelude::World;
 use pocket_sim::entity::EntityIndex;
@@ -221,6 +223,39 @@ pub fn world_digest(world: &World) -> u64 {
     h
 }
 
+/// The mean steps between the web report's profile samples.
+const PROFILE_INTERVAL: u32 = 97;
+/// The ticks the web report profiles at most.
+const PROFILE_TICKS: u64 = 60;
+
+/// The profile taken over ticks `from + 1` to `to`, as one line: its steps and samples, a hash of
+/// its JSON, and the line with the most self samples.
+fn profile_line(world: &World, from: u64, to: u64) -> String {
+    let Some(p) = crate::scripts::profile_take(world) else {
+        return "FAIL profile: none recorded\n".into();
+    };
+    let json = serde_json::to_vec(&p).unwrap_or_default();
+    let mut h = 0xcbf2_9ce4_8422_2325u64;
+    fnv64(&mut h, &json);
+    let top = p
+        .systems
+        .iter()
+        .flat_map(|s| {
+            s.lines
+                .first()
+                .map(|l| (l.self_samples, &s.system, &l.file, l.line))
+        })
+        .max_by(|a, b| a.0.cmp(&b.0).then_with(|| b.1.cmp(a.1)));
+    let top = top.map_or_else(String::new, |(n, s, f, l)| format!(" top {s} {f}:{l} {n}"));
+    format!(
+        "profile ticks {}-{to} interval {} steps {} samples {} json {h:016x}{top}\n",
+        from + 1,
+        p.interval,
+        p.steps,
+        p.samples
+    )
+}
+
 /// The report: identical bytes natively and in WebAssembly.
 pub fn report(set_json: &str, ticks: u64) -> String {
     let mut out = String::new();
@@ -312,7 +347,14 @@ pub fn report(set_json: &str, ticks: u64) -> String {
         }
     }
     let mut total = 0u64;
-    for _ in 0..ticks {
+    // The step profiler over the middle ticks.
+    let (profile_from, profile_to) = (ticks / 2, ticks / 2 + (ticks / 2).min(PROFILE_TICKS));
+    for t in 0..ticks {
+        if t == profile_from
+            && let Err(e) = crate::scripts::profile_start(sim.world(), PROFILE_INTERVAL)
+        {
+            out.push_str(&format!("FAIL profile: {e}\n"));
+        }
         match sim.step(&mut NoHooks) {
             Ok(r) => {
                 let steps: u64 = crate::scripts::last_steps(sim.world())
@@ -333,6 +375,9 @@ pub fn report(set_json: &str, ticks: u64) -> String {
                 out.push_str(&format!("FAIL step: {}\n", p.message));
                 break;
             }
+        }
+        if t + 1 == profile_to {
+            out.push_str(&profile_line(sim.world(), profile_from, profile_to));
         }
     }
     out.push_str(&format!(

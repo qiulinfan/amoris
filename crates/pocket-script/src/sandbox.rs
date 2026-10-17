@@ -211,12 +211,21 @@ fn c_function<'js>(ctx: &Ctx<'js>, name: &str, f: CMath) -> rquickjs::Result<Val
 }
 
 macro_rules! c_math {
-    ($obj:ident, $ctx:ident, $($js:literal => |$($x:ident),+| $body:expr),* $(,)?) => {
+    ($obj:ident, $ctx:ident, $timed:ident, $($js:literal => |$($x:ident),+| $body:expr),* $(,)?) => {
         $({
             extern "C" fn f($($x: f64),+) -> f64 {
                 $body
             }
-            $obj.set($js, c_function($ctx, $js, c_math!(@kind f, $($x),+))?)?;
+            // The copy a host that times natives installs (natives::timing).
+            extern "C" fn timed_f($($x: f64),+) -> f64 {
+                natives::timing::timed(crate::host::NativeKind::Math, || f($($x),+))
+            }
+            let kind = if $timed {
+                c_math!(@kind timed_f, $($x),+)
+            } else {
+                c_math!(@kind f, $($x),+)
+            };
+            $obj.set($js, c_function($ctx, $js, kind)?)?;
         })*
     };
     (@kind $f:ident, $x:ident) => { CMath::Unary($f) };
@@ -262,7 +271,8 @@ pub fn js_hypot(args: &[f64]) -> f64 {
 
 fn math_object<'js>(ctx: &Ctx<'js>) -> rquickjs::Result<Object<'js>> {
     let m = Object::new(ctx.clone())?;
-    c_math!(m, ctx,
+    let timed = crate::host::shared(ctx).times_natives();
+    c_math!(m, ctx, timed,
         "sin" => |x| math::sin(x), "cos" => |x| math::cos(x), "tan" => |x| math::tan(x),
         "asin" => |x| math::asin(x), "acos" => |x| math::acos(x), "atan" => |x| math::atan(x),
         "sinh" => |x| math::sinh(x), "cosh" => |x| math::cosh(x), "tanh" => |x| math::tanh(x),
@@ -272,13 +282,15 @@ fn math_object<'js>(ctx: &Ctx<'js>) -> rquickjs::Result<Object<'js>> {
         "log10" => |x| math::log10(x), "cbrt" => |x| math::cbrt(x),
         "atan2" => |y, x| math::atan2(y, x), "pow" => |x, y| js_pow(x, y),
     );
-    m.set(
-        "hypot",
-        Function::new(ctx.clone(), |v: Rest<Coerced<f64>>| {
-            js_hypot(&v.0.iter().map(|c| c.0).collect::<Vec<_>>())
+    let hypot = |v: Rest<Coerced<f64>>| js_hypot(&v.0.iter().map(|c| c.0).collect::<Vec<_>>());
+    let hypot = if timed {
+        Function::new(ctx.clone(), move |v: Rest<Coerced<f64>>| {
+            natives::timing::timed(crate::host::NativeKind::Math, || hypot(v))
         })?
-        .with_name("hypot")?,
-    )?;
+    } else {
+        Function::new(ctx.clone(), hypot)?
+    };
+    m.set("hypot", hypot.with_name("hypot")?)?;
     m.set(
         "random",
         natives::writing(ctx, "random", natives::rng::math_random)?,

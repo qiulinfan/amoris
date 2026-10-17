@@ -9,6 +9,7 @@ pub mod events;
 pub mod harden;
 pub mod query;
 pub mod rng;
+pub mod timing;
 pub mod world;
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -105,27 +106,47 @@ impl ModuleDef for HostModule {
     }
 }
 
-/// A JavaScript function running `f` under the natives' rules.
+/// A JavaScript function running `f` under the natives' rules; timed when the host times natives
+/// (`timing`).
 pub fn function<'js>(ctx: &Ctx<'js>, name: &str, f: Native) -> rquickjs::Result<Function<'js>> {
+    if shared(ctx).times_natives() {
+        let kind = crate::host::NativeKind::of(name);
+        return Function::new(ctx.clone(), move |ctx: Ctx<'js>, args: Rest<Value<'js>>| {
+            timing::timed(kind, || run(&ctx, f, &args.0))
+        })?
+        .with_name(name);
+    }
     Function::new(ctx.clone(), move |ctx: Ctx<'js>, args: Rest<Value<'js>>| {
         run(&ctx, f, &args.0)
     })?
     .with_name(name)
 }
 
-/// A native that writes: refused while a debugger's own JavaScript runs.
+/// A native that writes: refused while a debugger's own JavaScript runs; timed when the host times
+/// natives (`timing`).
 pub fn writing<'js>(ctx: &Ctx<'js>, name: &str, f: Native) -> rquickjs::Result<Function<'js>> {
     let what = name.to_owned();
+    let timed = shared(ctx)
+        .times_natives()
+        .then(|| crate::host::NativeKind::of(name));
     Function::new(ctx.clone(), move |ctx: Ctx<'js>, args: Rest<Value<'js>>| {
-        if shared(&ctx).debug_read_only.get() {
-            let e = ScriptError::new(
-                "script.debug_read_only",
-                format!("A debugger's evaluation cannot write ({what}): it would change the run."),
-                ErrorPhase::Run,
-            );
-            return Err(crate::caught::throw(&ctx, &e));
+        let body = || {
+            if shared(&ctx).debug_read_only.get() {
+                let e = ScriptError::new(
+                    "script.debug_read_only",
+                    format!(
+                        "A debugger's evaluation cannot write ({what}): it would change the run."
+                    ),
+                    ErrorPhase::Run,
+                );
+                return Err(crate::caught::throw(&ctx, &e));
+            }
+            run(&ctx, f, &args.0)
+        };
+        match timed {
+            Some(kind) => timing::timed(kind, body),
+            None => body(),
         }
-        run(&ctx, f, &args.0)
     })?
     .with_name(name)
 }
