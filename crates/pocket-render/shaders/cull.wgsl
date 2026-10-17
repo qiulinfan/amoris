@@ -16,10 +16,20 @@
 // drawn and give the depth pyramid (hiz.wgsl); `late` then tests every instance in the frustum
 // against the pyramid, draws the visible ones the early pass did not draw (through the late
 // arguments, into the same regions of `drawn`, which the early draws no longer need) and records
-// what is visible for the next frame. The shadow cascades keep frustum culling only.
+// what is visible for the next frame.
+//
+// A shadow cascade keeps a caster whose sphere is in its box and in its slice planes: the camera
+// slice the cascade shades, extruded toward the sun and widened by what a receiver's sample can
+// reach (shadows.rs `slice_planes`, docs/spec/occlusion.md 11). With POCKET_SHADOW_CULL=off every
+// slice plane is (0, 0, 0, 1), which keeps every sphere.
 
 struct Planes {
     p: array<vec4f, 6>,
+};
+
+// shadows::SLICE_PLANES: up to eight sides and the far plane.
+struct Slice {
+    p: array<vec4f, 9>,
 };
 
 struct Cull {
@@ -41,6 +51,7 @@ struct Cull {
     eye: vec4f,
     lod: vec4f,              // x: 1 for an orthographic camera; y: the hysteresis margin
     lod_cascades: vec4f,     // per cascade, the error a level may have (world units)
+    slices: array<Slice, 4>, // per cascade, the extruded slice its casters must reach
 };
 
 struct DrawArgs {
@@ -95,6 +106,17 @@ var<workgroup> wg_stats: array<atomic<u32>, 6>;
 fn sphere_in(view: u32, c: vec3f, r: f32) -> bool {
     for (var i = 0u; i < 6u; i++) {
         let pl = cull.planes[view].p[i];
+        if (dot(pl.xyz, c) + pl.w < -r) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Whether a sphere reaches cascade `cascade`'s extruded slice.
+fn sphere_in_slice(cascade: u32, c: vec3f, r: f32) -> bool {
+    for (var i = 0u; i < 9u; i++) {
+        let pl = cull.slices[cascade].p[i];
         if (dot(pl.xyz, c) + pl.w < -r) {
             return false;
         }
@@ -212,7 +234,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u, @builtin(local_invocation_ind
             }
             for (var v = 0u; v < cull.view_count; v++) {
                 let shadow_ok = v == 0u || (inst.flags & FLAG_SHADOW) != 0u;
-                var in_view = shadow_ok && sphere_in(v, c, r);
+                var in_view = shadow_ok && sphere_in(v, c, r)
+                    && (v == 0u || sphere_in_slice(v - 1u, c, r));
                 if (v == 0u && cull.occlusion != 0u) {
                     // The early pass draws what was visible at the end of the last frame.
                     let was = (before & VIS_VISIBLE) != 0u;

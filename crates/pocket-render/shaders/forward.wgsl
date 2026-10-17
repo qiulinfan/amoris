@@ -143,7 +143,10 @@ fn sh_irradiance(n: vec3f) -> vec3f {
 }
 
 fn shadow_factor(world: vec3f, n: vec3f, view_depth: f32) -> f32 {
-    if (view.sky_color.w < 0.5) {
+    // A point behind the eye is no receiver: with MSAA a partly covered pixel shades at its centre,
+    // `world` extrapolated along the triangle's plane, which can land behind the camera. The
+    // cascades' slice culling (shadows.rs `slice_planes`) covers view depths from 0 on.
+    if (view.sky_color.w < 0.5 || view_depth < 0.0) {
         return 1.0;
     }
     var c = 0u;

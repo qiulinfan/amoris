@@ -52,7 +52,7 @@ use crate::prepass::{Prepass, PrepassMode};
 use crate::profiler::GpuProfiler;
 use crate::scene::{NEURAL_VARIANT, Part, Resolve, Scene, VARIANTS};
 use crate::shaders;
-use crate::shadows::{self, CASCADES, SHADOW_SIZE};
+use crate::shadows::{self, CASCADES, SHADOW_SIZE, SLICE_PLANES, ShadowCull};
 use crate::skinning::Skinning;
 use crate::sky::{Sky, SkyParams};
 use crate::trace::{self, FrameTracer, TraceSpec};
@@ -106,6 +106,8 @@ struct CullUniform {
     eye: [f32; 4],
     lod: [f32; 4],
     lod_cascades: [f32; 4],
+    /// Per cascade, the extruded slice its casters must reach (shadows.rs `slice_planes`).
+    slices: [[[f32; 4]; SLICE_PLANES]; CASCADES],
 }
 
 #[repr(C)]
@@ -451,6 +453,8 @@ pub struct Renderer {
     /// regions were last laid out, and whether those regions hold level rows (not when the lists
     /// would pass the device's binding limit, docs/spec/lod.md 5).
     lod: LodSettings,
+    /// Whether the cascades also cull by their extruded slices (shadows.rs).
+    shadow_cull: ShadowCull,
     regions_want: Option<bool>,
     regions_lod: Option<bool>,
     light_count: u32,
@@ -1335,6 +1339,7 @@ impl Renderer {
             view_stride: 1,
             draw_meshes: 0,
             lod: LodSettings::from_env(),
+            shadow_cull: ShadowCull::from_env(),
             regions_want: None,
             regions_lod: None,
             light_count: 0,
@@ -1692,6 +1697,17 @@ impl Renderer {
 
     pub fn lod(&self) -> LodSettings {
         self.lod
+    }
+
+    /// Whether each shadow cascade also culls its casters by the extruded volume of the camera
+    /// slice it shades (shadows.rs; `POCKET_SHADOW_CULL` sets the starting mode). The image is the
+    /// same either way (docs/spec/occlusion.md 11).
+    pub fn set_shadow_cull(&mut self, mode: ShadowCull) {
+        self.shadow_cull = mode;
+    }
+
+    pub fn shadow_cull(&self) -> ShadowCull {
+        self.shadow_cull
     }
 
     /// Each shadow cascade's texel in metres when drawn from `cam` at this renderer's size: a
@@ -2528,6 +2544,12 @@ impl Renderer {
         // Ray-traced shadows replace the cascades: no cascade views to cull or draw.
         let cascades = shadows && self.rt_shadows.is_none();
         let views = if cascades { VIEWS } else { 1 };
+        // Each cascade's casters must also reach the slice it shades (docs/spec/occlusion.md 11).
+        let slices = if cascades && self.shadow_cull == ShadowCull::On {
+            shadows::slice_planes(&cam, (w, h), jitter.ndc, to_sun, &casc)
+        } else {
+            [[shadows::PASS; SLICE_PLANES]; CASCADES]
+        };
         let n = self.scene.instance_count() as u32;
         // Two phases this frame (occlusion.rs)? A depth prepass before each (prepass.rs; its auto
         // mode takes the pass timings that arrived, each naming its frame)?
@@ -2564,6 +2586,7 @@ impl Renderer {
                 0.0,
             ],
             lod_cascades: self.lod.cascade_terms(&casc.texel),
+            slices: slices.map(|s| s.map(|p| p.to_array())),
         };
         self.cull_buf.write(&queue, bytemuck::bytes_of(&cu));
         let near = cam.near.max(0.01);
