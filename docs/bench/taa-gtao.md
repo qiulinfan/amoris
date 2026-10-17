@@ -136,8 +136,9 @@ Chrome 155 RTX 5060 readings at 1574×744 were off 0.23, MSAA 0.22, TAA 0.36 and
 final quiet session. The 780M yielded no usable browser timestamps. Both effects use WebGPU
 core features.
 
-- One-sample TAA loses some sub-pixel geometry. No thin-feature lock, reactive particle mask or
-  temporal upscaling is implemented; surfaces without motion vectors rely on clipping.
+- One-sample TAA loses some sub-pixel geometry. No thin-feature lock or reactive particle mask is
+  implemented; surfaces without motion vectors rely on clipping. Temporal upscaling (a render
+  scale below 1, Pioneer 2026-10-15) is measured in [taau.md](taau.md).
 - GTAO has no measured ray-traced ground truth. Grazing flat walls lose about 2% luminance;
   combining GTAO with TAA introduces an unexplained additional dark bias of about 0.5%.
 - Splats draw after TAA and stay outside its history. Their unjittered depth prevents mesh-edge
