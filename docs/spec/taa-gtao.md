@@ -1,10 +1,11 @@
 # TAA and GTAO
 
-Status: Draft, implemented on branch `explore/aa` (2026-10-09)
+Status: Draft, implemented on branch `explore/aa` (2026-10-09); upscaling (4.1) on branch
+`explore/taau` (2026-10-15)
 
 Charter: 4.4 ("HDR, bloom, TAA, AgX"; the Pioneer note of 2026-10-09 fixes where TAA and GTAO sit
-in the frame and that the defaults are measured), 4.1 (one renderer for Metal, Vulkan, Direct3D 12
-and WebGPU).
+in the frame and that the defaults are measured; that of 2026-10-15 the render scale TAA upscales
+from), 4.1 (one renderer for Metal, Vulkan, Direct3D 12 and WebGPU).
 
 This specification says how the renderer anti-aliases over time (TAA) and how it darkens indirect
 light with ground-truth ambient occlusion (GTAO), where both sit in the frame, how they interact
@@ -13,7 +14,8 @@ are switched, and how they are checked. The code is `crates/pocket-render/src/po
 the opaque pass's format and targets), `taa.rs` and `shaders/taa.wgsl`, `gtao.rs` and
 `shaders/gtao.wgsl`, the forward shader's extra outputs (`shaders/forward.wgsl`, `SceneOut`),
 `skinning.rs` (last frame's skinned vertices) and `renderer.rs` (`render`). Measurements and the
-defaults: [docs/bench/taa-gtao.md](../bench/taa-gtao.md); evidence: `out/bench-runs/aa/`.
+defaults: [docs/bench/taa-gtao.md](../bench/taa-gtao.md), upscaling's
+[docs/bench/taau.md](../bench/taau.md); evidence: `out/bench-runs/aa/`, `out/taau/`.
 
 The schedule (3.3) listed a branch `feat/gtao` with measurements on an M5; that branch was lost
 before it was merged and nothing of it survives. This is a new implementation.
@@ -29,7 +31,9 @@ before it was merged and nothing of it survives. This is a new implementation.
 3. **GTAO** (5), when on: half-resolution passes from the depth, then a depth-aware upsample that
    multiplies each pixel's color by `1 - share * (1 - visibility)`.
 4. **TAA** (4), when on: a compute pass blends the opaque pass's (jittered) image with the
-   reprojected history into the new history, which is the image the rest of the frame reads.
+   reprojected history into the new history, which is the image the rest of the frame reads. At a
+   render scale below 1 steps 1 to 3 draw below the output's size and TAA upscales (4.1); from
+   here on everything is the output's size.
 5. **Splats** over that image, drawn with the camera's unjittered matrices (they have no motion
    vectors and are smooth already); with splats TAA also writes a copy for them to draw into, so
    they never enter the history. They test against an unjittered depth (1.1).
@@ -71,9 +75,11 @@ garden at 1600x900: 0.005 against 0.031 ms on the RTX 5060, 0.015 against 0.14 m
 | Anti-aliasing | `off` (1 sample), `msaa` (4 samples), `taa` (1 sample + TAA), `msaa+taa` | `POCKET_AA` | `set_antialiasing(Antialiasing)` | `set_antialiasing("…")`, `?aa=` |
 | GTAO | `off`, `on`/`depth` (normals from the depth), `target` (the normal target) | `POCKET_GTAO` | `set_gtao(Gtao)`, `set_gtao_radius(m)` | `set_gtao("…")`, `?gtao=` |
 | Sharpening | an amount, 0 off; applied only with TAA | — | `sharpen` | `set_sharpen(a)`, `?sharpen=` |
-| TAA tuning | object motion, skinned motion, disocclusion, speed weight, `alpha`, `gamma`, jitter amplitude; `TaaMode::Jittered` (references); `reset()` | — | `taa_mut()` | — |
+| Render scale | 0.25 to 1 (1: off); below 1 the anti-aliasing mode draws with TAA (4.1) | `POCKET_RENDER_SCALE` | `set_render_scale(s)`, `render_scale()`, `scene_size()` | `set_render_scale(s)`, `?scale=` |
+| TAA tuning | object motion, skinned motion, disocclusion, speed weight, `alpha`, `gamma`, jitter amplitude; upscaling's kernel sharpness, share weighting and texture mip bias; `TaaMode::Jittered` (references); `reset()` | — | `taa_mut()` | — |
 
-`FrameStats` reports `antialiasing` and `gtao`; the viewport's stats JSON carries both.
+`FrameStats` reports `antialiasing`, `gtao` and `render_scale`; the viewport's stats JSON carries
+them.
 
 **Defaults** (`post::defaults_for`, measured: charter 4.4 and docs/bench/taa-gtao.md 5): a discrete
 GPU on Vulkan or Direct3D 12 draws with `msaa` and GTAO on; an integrated one with `taa` and GTAO
@@ -85,13 +91,14 @@ without GTAO.
 
 **One-shot captures.** With TAA a single frame after a reset is one jittered sample, 4 to 5 dB below
 multisampling against a supersampled reference. `Renderer::capture_still` restarts the history and
-the jitter sequence and draws `STILL_FRAMES` (16, one jitter cycle) at the same moment before
-reading back; without TAA it draws one frame. The capture server behind the MCP and CLI `capture`
-(pocket-app `present.rs`) takes it once the scene's assets have arrived, as do `showcase_bench
---capture` and `sky_gi_units`. On the check scene at 256x144 a still capture reaches 40.2 dB against
-the mean of 64 jittered frames, against 36.5 for multisampling and 31.3 for TAA's first frame
-(RTX 5060, Vulkan); a 640x360 capture of samples/sailing took 88 ms through `pocket call capture`
-on the Radeon 780M (provisional). The windowed app's capture reads the running history.
+the jitter sequence and draws one jitter cycle (`STILL_FRAMES`, 16; below a render scale of 1 the
+longer cycle of 4.1) at the same moment before reading back; without TAA it draws one frame. The
+capture server behind the MCP and CLI `capture` (pocket-app `present.rs`) takes it once the scene's
+assets have arrived, as do `showcase_bench --capture` and `sky_gi_units`. On the check scene at
+256x144 a still capture reaches 40.2 dB against the mean of 64 jittered frames, against 36.5 for
+multisampling and 31.3 for TAA's first frame (RTX 5060, Vulkan); a 640x360 capture of
+samples/sailing took 88 ms through `pocket call capture` on the Radeon 780M (provisional). The
+windowed app's capture reads the running history.
 
 A change of anti-aliasing or GTAO rebuilds what depends on the opaque pass's format: its targets,
 the forward pipelines, the sky's, the ocean's, the particles' and the grid's pipelines (each takes a
@@ -159,8 +166,9 @@ starts, then the copies). A part new this frame, or skinned into another range l
 copy, and its motion reads as rigid for one frame.
 
 **History resets.** The history is dropped when there is none, at a resize, a change of the
-options, a camera that moved more than 25 m or turned more than 0.6 rad in a frame or changed its
-lens or projection, a drawn time that went back or jumped more than a second, or `Taa::reset`.
+options or the render scale (or of the opaque pass's size alone), a camera that moved more than
+25 m or turned more than 0.6 rad in a frame or changed its lens or projection, a drawn time that
+went back or jumped more than a second, or `Taa::reset`.
 
 ## 4. The TAA resolve
 
@@ -189,6 +197,93 @@ The ocean writes zero object motion and reprojects as a still surface under the 
 are not followed), as the sky does; particles and the grid move with the surface under them, and a
 moving particle relies on the clip. The output alpha is the view depth, which
 bloom and the display transform ignore.
+
+### 4.1 Upscaling (a render scale below 1)
+
+Charter 4.4, Pioneer 2026-10-15. The render scale `s` (`POCKET_RENDER_SCALE`,
+`Renderer::set_render_scale`, the viewport's `?scale=`; 0.25 to 1, default 1; every way in clamps a
+value beyond that range and takes one that is not a finite positive number as 1,
+`post::clamp_render_scale`) draws the opaque pass at `round(s * width) x round(s * height)` and
+reconstructs the output from it with TAA, as UE's TAAU and TSR do from a screen percentage. At 1
+nothing changes: the targets are the output's size and TAA runs `resolve_history`/`resolve_copy` as
+above, so frames are the same pixel for pixel (checked against master, 8). Below 1:
+
+- **What draws small**: the opaque pass and its targets (color, depth, indirect share, motion,
+  normals), the depth prepass, the depth pyramid and the late occlusion test (the culling uniform's
+  viewport and pyramid levels are the opaque pass's), GTAO (its half resolution is the opaque
+  pass's half), particles, the sky, the sea and the editor's grid inside the opaque pass. The view
+  uniform's `viewport` is the opaque pass's (the forward shader's light clusters); the unjittered
+  copy keeps the output's. The depth prepass draws with the opaque pass's jittered frame group as at
+  1, so the prepass's rule holds below 1 too, its ties included (docs/spec/prepass.md 4): surfaces
+  that touch tie in depth along the contact line, and the longer jitter cycle puts samples there
+  where scale 1 does not (8).
+- **What stays at the output's size**: TAA's history and output (`Targets::hdr`), splats and the
+  unjittered depth they test against (1.1), bloom, the display transform and sharpening, the
+  overlays, the gizmo, the game UI and the entity-id pass (its own target and depth, the unjittered
+  view: picks and coverage are the scale's own, 8). Levels of detail are picked per output pixel
+  (lod.rs takes the output's height): the geometry the output shows does not depend on the scale.
+- **Filtering for the output's pixel** (charter 4.4, the note after review): the forward shader
+  multiplies material textures' uv gradients by the scale per axis (common.wgsl `texture_lod`; the
+  alpha test of the depth-only pipelines too, and the neural textures' level), a mip bias of log2 s:
+  the opaque pass samples the level the output's size would. The other filters that read screen
+  derivatives scale them the same way, by the larger axis: the specular anti-aliasing's normal
+  variance (`antialiased_roughness`) and the sea's footprint (its wavelets' fade and its
+  roughness). Without all of it the converged image loses 4.6 to 6.1 dB; the specular term alone
+  is worth 4.4 to 8.4 dB on the chrome spheres (docs/bench/taau.md 2). The editor's grid is drawn
+  without the jitter (the unjittered uniform, whose factors are 1), so TAA cannot reconstruct finer
+  lines than the opaque pass's pixel and they stay filtered for it.
+- **Mode**: TAA must run. The anti-aliasing mode asked for is promoted to its TAA counterpart at the
+  same samples (`Antialiasing::with_taa`: off and taa become taa, msaa and msaa+taa become
+  msaa+taa); `Renderer::antialiasing` and `FrameStats::antialiasing` report the mode that draws,
+  `FrameStats::render_scale` the scale. Back at 1 the mode asked for returns.
+- **Jitter**: in the opaque pass's pixels (`FrameJitter::pixels`, the NDC offset divided by its
+  size), cycling `max(16, ceil(8 / s^2))` Halton points (`taa::jitter_phases`; s^2 the ratio of the
+  two pixel counts): 16 at 0.77, 18 at 0.67, 32 at 0.5. A frame puts a sample within an output
+  pixel `s^2` times as often as at scale 1, so a cycle gives each output pixel about 8 samples of
+  its own (FSR 2's rule: 8 at 0.5, 8.1 at 0.67, 9.5 at 0.77), where TAA at the output's size gets
+  16. A still capture draws one such cycle.
+- **History**: dropped when the scale changes (new targets) and when the opaque pass's size changes
+  without the output's (3).
+
+The resolve (`upscale_history`, `upscale_copy`) runs per output pixel, 8x8 a group; each group loads
+the opaque pass's 10x10 pixels around the ones nearest its output pixels (tone-mapped YCoCg and
+depth, as in 4). Output pixel `p`'s centre lies at `u = (p + 0.5) * scene / output` in the opaque
+pass's pixels, and its pixel `q` shows the point at `q + 0.5 - jitter`. Per output pixel:
+
+1. the 3x3 neighbourhood around the opaque pass's pixel whose sample lies nearest `u` gives the
+   clip box (mean, deviation, extremes), the nearest and farthest depth and where the object motion
+   is read;
+2. this frame at `u`: the nine samples' mean weighted by `exp(-k d^2)`, `d` their distance from `u`
+   in output pixels, `k` 4 (a standard deviation of 0.35 output pixels; 2.29, a Gaussian close to a
+   Blackman-Harris window, was blurrier, docs/bench/taau.md 2), in tone-mapped YCoCg;
+3. reprojection, disocclusion, the Catmull-Rom history read and the clip as in 4, at the output's
+   size, with a box of 1.5 standard deviations (`TaaTuning::upscale_gamma`; 1.25 at the output's
+   size): the coarser neighbourhood's box is tighter around the output's detail, and the wider one
+   gains 0.9 to 1.2 dB on the still check scene without losing under motion (2 sigmas would gain
+   another 0.3 to 0.6 dB and lose some still-camera stability, docs/bench/taau.md 2; measured before
+   the wider box that follows). Where nothing moved (the reprojection moved under 0.01 output
+   pixels) the box is 3 standard deviations and no longer intersected with the neighbourhood's
+   minimum and maximum (`TaaTuning::upscale_still_gamma`, `taa::UPSCALE_STILL_GAMMA`; the owner's
+   decision of 2026-10-16, charter 4.4): the coarser neighbourhood clips away detail finer than its
+   pixels whenever this frame's samples miss it, and the wider box keeps what earlier frames'
+   samples saw. At the output's size the same widening (`still_gamma`) stays off
+   (`TaaTuning::clip_gammas` picks the pair by whether the pass upscales, and
+   `taa::tests::the_still_box_widens_only_when_upscaling` pins the defaults); the browser's viewport
+   takes the same default (web/viewport/pkg rebuilt with it);
+4. the blend: with `alpha` the weight 4 would use, the current frame's share is
+   `W / (E * (1 / alpha - 1) + W)`, `W` the sum of the nine weights and `E` its expectation over the
+   jitter (`s^2 * pi / k`). It is `alpha` where the samples' weight is the expected one, 1 on the
+   first frame after a reset, and small where no sample of this frame fell near the pixel: each
+   output pixel accumulates the samples that landed near it, the history standing in elsewhere.
+   Without this weighting the converged still image is 1.1 to 2.4 dB lower (docs/bench/taau.md 2).
+   The speed term of 4 applies after it.
+
+A disoccluded or off-screen pixel takes this frame's reconstruction alone. The pass runs as many
+groups as TAA at the output's size and each loads as many pixels (10x10 of the opaque pass for 8x8
+output pixels), adding the nine samples' weights. It costs the same as TAA at the output's size
+with Direct3D 12 on the RTX 5060 and more elsewhere: 0.05 to 0.14 ms (34 to 38%) with Vulkan on
+the RTX 5060, 0.07 to 0.52 ms (12 to 33%) on the Radeon 780M (quiet re-measurement of 2026-10-15,
+docs/bench/taau.md 3); why is open (9).
 
 ## 5. GTAO
 
@@ -263,6 +358,33 @@ WebGPU's default limits emulated.
 - A still capture under TAA lands above multisampling where TAA's first frame lands below it, and
   repeats exactly (one frame: 31.3 dB against MSAA's 36.5).
 - Cuts, resizes and option changes drop the history (no cut detection).
+- Upscaling (4.1): at 0.5 and 0.67 a still view gains 9.6 to 10.0 and 10.4 to 10.7 dB on its first
+  upscaled frame by frame 64 and ends 3.4 to 3.7 and 1.2 to 2.0 dB below TAA at the output's size,
+  against the mean of 64 jittered output-size frames (with the wider box where nothing moved,
+  2026-10-16; before it 6.3 to 7.3 dB gained and 5.1 to 7.0 lost). The test asks for 7.5 dB gained
+  and at most 6.0 (0.5) and 4.0 dB (0.67) lost, which catch these defects (the reconstruction
+  reading the jitter with the wrong sign: 0.7 to 2.4 dB gained, 13 to 15 lost; the share not
+  weighted by the samples: 5.0 to 5.2 gained and 8.1 to 8.4 lost at 0.5). The earlier bounds, 4.5 dB
+  gained and 9.5 and 7.5 lost, let the unweighted share pass once the box widened (on all four GPU
+  and API pairs; `out/decisions/mutants/`, `mutants2/`). A scale change and a resize drop the
+  history; a return to 1 draws what was drawn before the scale; the id pass's coverage and picks are
+  those of scale 1; a still capture settles past the first frame (from 25.9 to 27.6 dB to 35.1 to
+  36.6 at 0.5; 31.9 to 33.3 before the wider box) and repeats; splats over an upscaled history do
+  not flicker. At scale 1 a flicker is any change of the splats' contribution, as before; upscaled
+  it must change the shown value too, since under splats that hide it the upscaled history moves a
+  little (3 pixels at 0.5), which changes the contribution, not the image (splats tested against a
+  depth drawn with the jittered frame group: 572 flickering pixels at 1, 787 at 0.5). The defects
+  were put back on the RTX 5060 with Vulkan and the 780M with Direct3D 12; the logs stay in
+  `out/taau/mutations/`.
+- Below a render scale of 1 `tools/prepass_compare.py` (`POCKET_AA=msaa+taa` and `taa`,
+  `POCKET_RENDER_SCALE=0.5` and `0.67`; the many_cubes, splat and static showcase cases, both GPUs
+  and APIs) finds the prepass's documented ties only: many_cubes' sphere, whose cubes touch and
+  which differs at scale 1 too (up to 22 levels with TAA there), and at 0.5 with MSAA and TAA 2 or 3
+  pixels where a wall meets the floor (pt-lab, RTX 5060) or the ceiling (gi-room, 780M), which agree
+  once the touching box is lifted by 1 cm. Measured again with the wider box where nothing moved
+  (2026-10-16, the same 16 runs on both GPUs and APIs): the same 2 pixels of pt-lab by 4 levels, 1
+  of gi-room's 3 by 1 level, and many_cubes' sphere (1 to 37 pixels by up to 17 levels; 1 to 52 by
+  up to 15 before), nothing else.
 
 `post::tests::defaults_by_adapter` tables the defaults (Apple's GPUs and MoltenVK given the kind
 rule's TAA or GTAO).
@@ -273,7 +395,9 @@ Elsewhere:
   skinning, with ablations; GTAO images; per-option costs. `tools/aa_bench.py` and
   `tools/aa_web_bench.py` run the cost matrix natively and in Chrome.
 - With the defaults unchanged, captures of samples/gi-room and samples/pt-lab match a master build
-  pixel for pixel.
+  pixel for pixel. At a render scale of 1 every case of `tools/build_compare.py` (MSAA, MSAA with
+  GTAO, TAA, TAA with GTAO's normal target) matches master `b7be59a2` pixel for pixel on both GPUs
+  with Vulkan and Direct3D 12 (120 pairs, docs/bench/taau.md 1).
 
 ## 9. Open
 
@@ -297,8 +421,18 @@ Elsewhere:
   alone makes it (averaging noisy frames in tone-mapped space biases toward dark).
 - The defaults for Apple GPUs and for integrated GPUs in the browser are unmeasured (the Radeon 780M
   gives Chrome no usable timestamps).
-- Upscaling (rendering below the output resolution and reconstructing with the TAA history) is not
-  done.
+- Upscaling (4.1) loses to MSAA under a panning camera by 2.3 to 6.1 dB on the check scene, and to
+  TAA at the output's size by 1.6 to 5.0 dB: the clip box comes from the opaque pass's coarser
+  neighbourhood, so detail finer than its pixels is clipped away whenever this frame's samples miss
+  it. Where nothing moved the wider box (on since 2026-10-16) keeps it: the still view gains 3.4 to
+  4.4 dB and ends 1.2 dB above (0.77) to 2.5 dB below (0.5) TAA at the output's size, which keeps
+  the tighter box there, and the region around a moving cube and its shadow loses up to 1.5 dB under
+  a still camera (docs/bench/taau.md 2). No locks for thin features, no reactive mask and no
+  separate history confidence (TSR's and FSR 2's tools for this) are implemented. The editor's grid,
+  drawn inside the opaque pass from unjittered positions, keeps the opaque pass's pixel and is
+  upsampled with the scene; particles and the sea are drawn small like the opaque geometry.
+- The upscaling resolve costs more than TAA at the output's size with Vulkan and on the Radeon 780M
+  for the same loads (4.1); the cause is not known (no shader profiler for the 780M here).
 - Splats are not anti-aliased against the meshes in front of them: one depth test per pixel, as with
   multisampling's first sample (1.1). Drawing them jittered before TAA would let it smooth those
   edges, but TAA would reproject them by the depth behind them (they write none), which for a scene
