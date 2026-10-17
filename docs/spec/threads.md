@@ -320,18 +320,24 @@ impl SnapshotReader {
 }
 ```
 
-- **Wake-up**: `ThreadOptions::on_publish`, a `Fn() + Send + Sync` the game thread calls after each
-  swap (the app passes `winit`'s `EventLoopProxy::send_event` to request a redraw).
+- **Wake-up**: `ThreadOptions::on_publish`, a `Fn() + Send + Sync` the game thread calls once after
+  each publication point, whether it swapped a snapshot, handed the render feed its frames, or both
+  (a full frame extracted for a new subscriber while the world waits included; 2026-10-15,
+  Pioneer). `pocket serve` passes a counter its `/render` sockets wait on, so a frame leaves as
+  soon as it is extracted (host-protocol.md 5); a window could pass `winit`'s
+  `EventLoopProxy::send_event` to request a redraw.
 - **Cost**: a publication is one call of spec-persist's `snapshot` on the game thread (encoding and
   section digests, persistence.md 5.4) and counts against the budget `publish.sail` (`budgets.md`).
   The threads spike's snapshot cost grew with its bytes, 0.17 to 0.4 ms per MB natively and 0.5 ms
   per MB in wasm, and ran 1.5 to 2.3 times its back-to-back cost when paced at 60 Hz. When the run
   records (recording, checks), the tick's hash is taken from the same snapshot, so the publication
-  costs nothing extra. Slice 1 encodes every section at each publication. If the measured cost
-  exceeds its reference figure, the publisher reuses the `Arc` and digest of every section whose
-  type did not change since the last publication (`bevy_ecs` change detection per type, which
-  persistence.md 2 allows for publication because it changes no state); the types above do not
-  change for that.
+  costs nothing extra. Slice 1 encoded every section at each publication. Since 2026-10-15
+  (Pioneer) the game thread takes its snapshots (published, kept, and the `snapshot` command's)
+  through pocket-persist's `SnapshotCache` (persistence.md 4.3), which reuses the `Arc` and digest
+  of every component section none of whose rows changed since the last one (`bevy_ecs` change
+  detection, which persistence.md 2 allows for publication because it changes no state); the
+  types above do not change for that. On the sailing world in Play the paced snapshot took 0.55
+  times as long (quiet re-measurement, 2026-10-16; docs/bench/profiler.md 6, the serve loop).
 - **The slot**: `arc_swap::ArcSwap<WorldSnapshot>`, whose readers take no lock, so a reader
   descheduled while loading can never hold up a publication (charter 5.1: nothing stalls the tick).
   Measured in the threads spike against three readers that never pause: swaps of 0.3 to 1.7 µs at

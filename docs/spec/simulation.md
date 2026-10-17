@@ -603,7 +603,8 @@ one source, `tools/clippy-determinism.toml`, by `cargo xtask gen`, so a copy tha
 `gen.stale`. `pocket-runtime` takes the lists without the wall-clock entries except in its
 loop-clock module, which reads `Instant::now` under `#[allow(clippy::disallowed_methods)]` with its
 reason (`threads.md`, 3.2). This specification's entries follow; numeric.md, 5 lists the numeric
-ones.
+ones and persistence.md, 4.3 the methods that write past change ticks, which repeated snapshots
+trust.
 
 ```toml
 disallowed-methods = [
@@ -623,6 +624,7 @@ disallowed-methods = [
     { path = "bevy_ecs::change_detection::DetectChanges::is_changed", reason = "no change detection (simulation.md, 4.5)" },
     { path = "bevy_ecs::change_detection::DetectChanges::is_added", reason = "no change detection (simulation.md, 4.5)" },
     { path = "bevy_ecs::world::World::add_observer", reason = "no observers in simulation logic (simulation.md, 4.5)" },
+    # ... the change-tick list of persistence.md, 4.3
     # ... the numeric list of numeric.md, 5
 ]
 disallowed-types = [

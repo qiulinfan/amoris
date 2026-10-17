@@ -29,9 +29,12 @@ bun run dev
 POCKET_HOST=http://127.0.0.1:7900 bun run dev
 
 bun run build                     # type check (tsc 7) + vite build -> editor/dist
+VITE_POCKET_EXPOSE=1 bun run build   # the same with window.pocket, for tools/gizmo-drag.ts
 bun run typecheck                 # the editor and the mock/tools
 bun run mock -- --port 7879 --no-agent --dist   # the mock alone; --dist serves editor/dist at /
 bun run evidence -- --url http://127.0.0.1:5173/ # screenshots into out/bench-runs/editor (needs Chrome)
+bun tools/viewport-loads.ts --url http://127.0.0.1:5173/ \
+  --touch src/panels/viewport/ViewportPanel.tsx   # the viewport: loads, a remount, hot updates (5)
 ```
 
 URL parameters: `?host=127.0.0.1:7879` connects to a host directly instead of the serving origin;
@@ -48,16 +51,16 @@ does: the catalog with params schemas (unknown fields refused with suggestions),
 as a world (Sea, Breeze, Sloop, four crates, a sun, a camera and a buoy course under a parent) with
 schemars-shaped engine schemas and registry-shaped project schemas, `world.edit` checked whole with
 an undo history and `group` merging, Play as a fork of the edit world, a 60 Hz tick with a boat,
-floating crates, a helmsman and the sample's three script systems (`muster`, `log`,
-`take_aboard`) emitting events with causes, a snapshot ring with restore and rewind, the sample's
-scripts (read from `samples/sailing/scripts`, kept in memory) with fake diagnostics, a debugger
-answering in the real host's shapes (section 8.1: `bp<n>` breakpoints moved to the next line with
-code, conditions and logpoints, stepping, the frames the host shows (inside an `each` callback,
-the callback with its `locals` and the run's columns and `ctx` as its `closure`, and the `run` that
-called it) as JSON previews, evaluation only while paused, `debug.set` lasting for the pause (a
-`const` refuses), data breakpoints on fields script systems write, which stop on the statement after
-the write and on a returned frame only when the write was the call's last, `debug.exceptions`),
-profile samples, assets with thumbnails, and a simulated MCP agent whose edits land in the same undo
+floating crates, a helmsman and the sample's three script systems (`muster`, `log`, `take_aboard`)
+emitting events with causes, a snapshot ring with restore and rewind, the sample's scripts (read
+from `samples/sailing/scripts`, kept in memory) with fake diagnostics, a debugger answering in the
+real host's shapes (section 8.1: `bp<n>` breakpoints moved to the next line with code, conditions
+and logpoints, stepping, the frames the host shows (inside an `each` callback, the callback with its
+`locals` and the run's columns and `ctx` as its `closure`, and the `run` that called it) as JSON
+previews, evaluation only while paused, `debug.set` lasting for the pause (a `const` refuses), data
+breakpoints on fields script systems write, which stop on the statement after the write and on a
+returned frame only when the write was the call's last, `debug.exceptions`), profile samples in the
+host's shape, assets with thumbnails, and a simulated MCP agent whose edits land in the same undo
 history. It binds 127.0.0.1 and refuses non-loopback `Origin`/`Host`, as the host does.
 
 ## 2. Layout
@@ -71,7 +74,7 @@ right.
 
 | Area | Contents |
 |---|---|
-| Top bar | Logo, project, menus File / Edit / View / Game / Debug / Help (built from the command registry, so every item shows its shortcut and state), the transport (Play/Stop, Pause, Step, tick, time, fps, tick cost, speed), the mode badge (EDIT, PLAY, PAUSED; Play also tints the chrome green), the palette button and the connection pill |
+| Top bar | Logo, project, menus File / Edit / View / Game / Debug / Help (built from the command registry, so every item shows its shortcut and state), the transport (Play/Stop, Pause, Step, tick, time, ticks per second, tick cost, speed), the mode badge (EDIT, PLAY, PAUSED; Play also tints the chrome green), the palette button and the connection pill |
 | Status bar | Host and connection (with retry countdown; red when offline, amber while the debugger holds the game), project, error and warning counts (click: console), the pause location, agent activity, selection, entity count, world hash, the viewport's renderer |
 | Command palette | Cmd/Ctrl+K or Ctrl/Cmd+Shift+P. Fuzzy search over every command, every panel, every entity (`@` to narrow) and every method of `GET /api/catalog` (`call` to narrow). A host method opens a runner: its doc and params from the catalog schema, a JSON params line prefilled from the required fields (and the selection), Enter calls it and shows the result or the structured error |
 
@@ -80,17 +83,17 @@ right.
 | Panel | What it does | Protocol |
 |---|---|---|
 | Hierarchy | Virtualized tree (children by `Parent`), icons by kind (camera, light, boat, sea, wind, mesh, empty), search by name, `t:Component` or `#id`; click, Cmd/Ctrl-click toggles, Shift-click ranges; arrows move and fold; F2 or Enter renames inline; drag rows onto a row to reparent, onto empty space to unparent; drop an asset to place it (under the row); context menu (rename, duplicate, delete, frame, copy id, create child, add component, unparent, break when written); + creates an empty, primitives, lights or a camera | `world.tree`, `world.edit` (spawn, set `Name`, set/remove `Parent`, destroy) |
-| Viewport | The renderer's canvas (section 5) with: orbit (right-drag or Alt+drag), pan (middle-drag or Shift+right-drag), zoom (wheel, pinch), click to pick (Shift/Cmd toggles), drag on empty space for rectangle selection, double-click to frame; tools Select/Move/Rotate/Scale (Q/W/E/R) with 3D gizmos (arrows with cones, plane handles, a screen handle; rotation rings with a view ring; scale cubes), World/Local (X), snapping with steps (hold Cmd/Ctrl to invert while dragging), grid (G), the axis gizmo (click an axis to look along it, the center for perspective/orthographic), camera menu (views, frame, reset), stats, the wind, selection labels; drop assets on the ground plane | `world.edit` with `group` while dragging, one undo entry on release; Escape cancels the drag (undoes it) |
+| Viewport | The renderer's canvas (section 5) with: orbit (right-drag or Alt+drag), pan (middle-drag or Shift+right-drag), zoom (wheel, pinch), click to pick (Shift/Cmd toggles), drag on empty space for rectangle selection, double-click to frame; tools Select/Move/Rotate/Scale (Q/W/E/R) with 3D gizmos (arrows with cones, plane handles, a screen handle; rotation rings with a view ring; scale cubes), World/Local (X), snapping with steps (hold Cmd/Ctrl to invert while dragging), grid (G), the axis gizmo (click an axis to look along it, the center for perspective/orthographic), camera menu (views, frame, reset), stats, the wind, selection labels; drop assets on the ground plane | `world.edit` with `group` while dragging, one undo entry on release; Escape takes the drag back (section 6) |
 | Inspector | The selection's name and components, each a collapsible card generated from its JSON Schema with the doc as tooltip: numbers (drag the strip to scrub, Shift ×10, Alt ×0.1; arithmetic accepted; arrows step), vectors per axis, rotations as Euler degrees (YXZ) over the stored quaternion, colours with a picker (stored linear, shown sRGB) and alpha, enums as selects with per-variant docs, booleans as switches, entity references as pickers (searchable, or drop a hierarchy row), nullable fields, nested objects, lists, tagged unions (`{Cuboid: {...}}`), the rest as JSON. Engine-written fields are marked. Card menu: reset to defaults, copy as JSON, break when written, remove. Add Component lists the registry with docs. Several selected: edits apply to each that has the component | `world.schema`, `world.get`, `world.edit` |
 | Scripts | File list with problem counts, Monaco with tabs (one model per script so imports type-check), the `pocket` module's types (section 7), Cmd/Ctrl+S saves (`scripts.write` then `scripts.apply`), host diagnostics as markers beside the TypeScript worker's own, a breakpoint gutter (click or F9; conditional and unbound breakpoints drawn differently), the paused line, sticky scroll, minimap | `scripts.list/read/write/apply`, `debug.breakpoints.*` |
 | Debug | Continue/Pause, Step Over/Into/Out (F5, F6, F10, F11, Shift+F11), pause on exceptions (off, uncaught, all); the pause reason, tick, system and TypeScript location, and for a data breakpoint the field, its value before and after and the statement that wrote it; call stack (click a frame to show its source and its scopes; a frame seen after `run` returned is marked), the frame's Local and Closure scopes as expandable trees whose leaf values can be set (double-click, type an expression, Enter: section 8.1), watch expressions re-evaluated on each pause and frame change, breakpoints with editable conditions (the host's list, read again on each pause: logpoints, MCP agents' and CDP clients' breakpoints shown as such), data breakpoints. Three columns when wide | `debug` events, `debug.state/continue/pause/step/eval/set/exceptions/breakpoints.*/watch/unwatch` |
 | Console | The host's log with level filters and counts, search, follow, timestamps and ticks, a link to the source line; an input line evaluating in the game (on the selected frame while paused), with history; results are expandable trees | `log` events, `debug.eval` |
 | Events | The event stream as a table (seq, tick, name, subject, data) with a filter; selecting one asks the host why: the cause chain, oldest first, then the data; subjects select their entity | `events` events, `events.since`, `events.why` |
 | Timeline | Kept snapshots and event lanes (the most frequent kinds, and the selection's) on a tick ruler with the playhead; drag to scrub and release to rewind there; click a snapshot to restore it; back to the previous snapshot, pause, step | `snapshots.list/restore`, `debug.rewind`, `time.*` |
-| Profiler | Per sample, the tick's CPU time stacked by system and the frame time against the 60 Hz budget (hover for one sample), then per-system CPU and per-pass GPU averages with maxima; freeze and clear | `profile` events |
+| Profiler | Per sample (4 a second), the host's CPU time per tick stacked by system and the viewport's frame time against the 60 Hz budget (hover for one sample), then over the last 3 s: the game thread's systems (each system's own time, `tick.other`, `loop.present`, `loop.publish`, `loop.after`) and the tick's phases with their largest tick, and the viewport's GPU passes; the tick and game-thread time, the frame interval, fps and GPU time; held ticks left out; freeze and clear | `profile` events, the viewport's `stats()` |
 | Assets | Grid or list with thumbnails or kind icons, kind filters with counts, search; drag into the viewport or the hierarchy (or double-click) to place a model; import by path; context menu (place, copy path, reimport) | `assets.list/import`, `world.edit` spawn with `Model.mesh` |
 | Agent | The live feed of agent activity grouped by session (call, result with success, message), sessions with their call counts and liveness, and a New session form (model, goal, tools) that waits for host support; copies the MCP endpoint command | `agent` events |
-| History | The undo history as a timeline from "Opened scene", agent edits marked; click an entry to undo or redo up to it; undo and redo buttons | `history` events, `history.undo/redo/list` |
+| History | The undo history as a timeline from "Opened scene", each edit another client made marked with its session (`mcp-1`, `api`); click an entry to undo or redo up to it; undo and redo buttons | `history` events, `history.undo/redo/list` |
 
 ## 4. Shortcuts
 
@@ -134,7 +137,19 @@ interface Viewport {
   setGizmo(gizmo: Gizmo | null): void;
   setSelection(entities: readonly number[], hovered: number | null): void;
   setOverlays(overlays: Overlays): void;
+  stats?(): RenderStats | null;   // the frames drawn since the last call (read 4 times a second)
   dispose(): void;
+}
+
+interface RenderStats {          // every field past `frames` may be absent
+  frames: number;                // animation frames since the last call
+  fps?: number | null;           // from their average interval
+  frame_ms?: number | null;      // average and largest interval between frames
+  frame_max_ms?: number | null;
+  render_ms?: number | null;     // the page's time in the draw call per frame (encode, submit)
+  gpu_ms?: number | null;        // the wasm renderer's last frame on the GPU (timestamp queries)
+  passes?: { pass: string; ms: number }[];
+  renderer?: Record<string, unknown>;   // the rest of the wasm renderer's stats (backend, draws)
 }
 
 interface Camera {
@@ -189,21 +204,86 @@ world data the editor already holds (flat-shaded stand-ins chosen from `Model.me
 `Collider` shape, light and camera icons, the animated sea from `Sea.waves`, a fading grid), which
 implements the same interface. The status bar and the viewport badge say which renderer runs.
 
+One wasm instance per page (2026-10-15): `pocket_web.js` runs wasm-bindgen's init once and hands
+every caller the same promise. Before, under `bun run dev` React's StrictMode mounted the viewport
+panel twice, both mounts called `default` before the first instantiation had finished, and the page
+made two instances of the module (two fetches of `pocket_viewport_bg.wasm`). The generated glue
+keeps one instance, so the first viewport's closures and frees ran on the second's memory: almost
+every development load threw "closure invoked recursively or after being dropped", then often
+panicked in dlmalloc (`psize >= size + min_overhead`, then `RuntimeError: unreachable`), and some
+drew nothing. A production build mounts once and was not affected.
+
+The canvas's one WebGPU context belongs to the viewport that configured it last, and every
+viewport configures it when it is created. StrictMode's two mounts both create one, in either
+order (the editor awaits a request and an import before `createViewport`), so the mount the editor
+disposes could configure last. The kept viewport's frames then used that device's texture, the GPU
+rejected every one (`[TextureView] ... cannot be used with [Device "pocket"]`, which the renderer
+logs through `console.log` as `[pocket ERROR]`) and the canvas stayed black, while the stats still
+counted frames. Disposing a viewport now has the newest viewport left on its canvas configure the
+context again (`pocket_web.js`). `dispose` frees the renderer's wasm memory at once; its GPU
+objects still go with the browser's collector (wgpu's WebGPU backend destroys nothing on drop).
+
+`bun tools/viewport-loads.ts` loads the editor in headless Chrome several times, resets the layout
+(the viewport panel unmounts and mounts: a new viewport on the same instance) and hot-updates a
+source file. A phase fails on an exception, a console error or a renderer `[pocket ERROR]` line (of
+its own document: what the replaced page logs while a load navigates does not count), and unless the
+renderer's stats count frames and entities and a screenshot of the viewport's canvas shows the world
+(at most 80% of its pixels one color: a canvas that presents nothing is black, 95 to 99% one color
+under the editor's overlays, the sailing sample 16%). Against `bun run dev` and `pocket serve`
+(quiet re-measurement, 2026-10-16 04:27 to 04:38: every other track finished, the bench lock held,
+CPU 6 to 8% busy, the RTX 5060 idle): master's module passed 0 of 6 phases (two wasm fetches per
+load, the closure error 0.4 to 2.2 s after each load, the allocator's panic 5 to 15 s after it in 3
+of 5 loads, no viewport attached in one load and after the layout reset); the single instance alone
+passed 7 of 11, its kept viewport black with 2,800 to 2,900 validation errors in 4 of 10 loads (the
+first version of this check, blind to both, had passed it 6 of 6); with the handoff, 13 of 13 (ten
+loads, a layout reset, two hot updates), 11 of 11 with a build of the module that also logged each
+creation and disposal (the disposed mount was created second in 5 of its 10 loads), and 6 of 6
+against the production build the host serves. Which mount configures last is a race, and how often
+the single instance lost it changed from run to run: 3 of 10 loads in the first runs (2026-10-15,
+other tracks running, master 0 of 6), 7 of 10 in a run while a game ran on the machine (2026-10-16
+03:33, master 1 of 6: one load threw nothing in its 12 s, the handoff 13 of 13 again), 4 of 10 here.
+A hot update of the panel's module or the dock leaves the viewport panel mounted (Fast Refresh does
+not run its effects again here), so only a load or a layout reset makes a new viewport; the
+hot-update phases check only that the page keeps drawing.
+
+Timings (2026-10-14): the viewport panel reads `stats()` four times a second into
+`state/render.ts`. The wasm module (`web/viewport/pocket_web.js`) keeps the renderer's per-frame
+stats JSON (parsed only when read, so fields the renderer adds pass through as `renderer`) and the
+page's frame counters (`viewport/meter.ts` in the fallback); `gpu_ms` and `passes` come from the
+renderer's timestamp queries and are absent without them. The stats overlay shows the viewport's fps
+and GPU time beside the host's ticks per second, and the profiler adds them to each host `profile`
+sample (`state/profile.ts`): the host has no frame, so the frame and GPU columns are this editor's
+own viewport.
+
 ## 6. Editing
 
 Every change is a `world.edit`: one transaction, one labelled entry in the host's undo history,
-shared with agents (whose labels start `agent:`). The editor never changes its copy of the world
-itself; it refetches what `world.changed` names (coalesced, a few requests at a time), and the tree
-and every entity on a `{reset: true}` push (Play, Stop or a restore replaced the world), with one
-exception: while a drag (gizmo, scrubbed number) is in flight it shows the dragged values as a local
-preview. (Until 2026-10-09 resets were ignored, and the old world's values stayed shown until a
-later diff named them: after a Stop that came 0.1 s after the click, the inspector kept the Play
-world's Log.)
+shared with agents (each entry names its source and the server its session, server.md 3.1). The
+editor never changes its copy of the world itself; it refetches what `world.changed` names
+(coalesced, a few requests at a time), and the tree and every entity on a `{reset: true}` push
+(Play, Stop or a restore replaced the world), with one exception: while a drag (gizmo, scrubbed
+number) is in flight it shows the dragged values as a local preview. (Until 2026-10-09 resets were
+ignored, and the old world's values stayed shown until a later diff named them: after a Stop that
+came 0.1 s after the click, the inspector kept the Play world's Log.)
 
-Drags stream: each pointer move sends a `world.edit` with the same `group` (at most every 60 ms),
-the host merges consecutive edits of one group into one undo entry, and release sends the final
-value; Escape undoes it. When the catalog's `world.edit` params schema has no `group`, the editor
-previews locally and sends one edit on release instead.
+Drags stream: the changes of each input event go as one `world.edit` with the drag's `group`, at
+most one in flight: an event's changes are sent at once when no edit of the drag waits for its
+answer, and what comes while one does is sent, merged, the moment it is answered (2026-10-15,
+Pioneer; before, at most one edit every 60 ms, each after the last one's answer). So a drag sends
+about once per pointer frame on a host that answers within a frame, and never faster than the host
+answers. (Measured quietly, the host answered a client without a page in 0.7 ms, and the editor page
+saw the answer 5.2 ms after sending: docs/bench/gizmo.md 6.) The host merges consecutive edits
+of one group into one undo entry, and release sends the final value after the last edit's answer.
+The viewport draws the object where the host has it, so during a drag it follows the gizmo by the
+round trip and the render feed's next frame (docs/bench/gizmo.md). Escape takes the drag back with
+`history.undo {group}`, which the host performs only when the next entry to undo is the whole drag
+(server.md 3.1): the drag then moves to the redo stack, so Redo brings it back. When another
+client's edit came after the drag or in the middle of it (which splits the drag into two entries),
+the host refuses and changes nothing, and an edit (`Cancel <label>`) writes the dragged fields back
+to their values from before the drag; the other edit stays. Asking the host in one call means an
+edit another client makes while Escape is on its way is never the one undone. When the catalog's
+`world.edit` params schema has no `group` (the real host before 2026-10-15), the editor previews
+locally and sends one edit on release instead.
 
 Mapping: rename is `set` of `Name` with a string value; reparent is `set` `Parent {parent}` (or
 `remove` it) and needs a `Parent` component in the registry; duplicate is `world.get` then `spawn`
@@ -246,13 +326,16 @@ Beyond host-protocol.md Draft 1, the editor (and the mock) assume the following;
 adopt them or the editor should change:
 
 1. `world.edit` takes `group?: string`: consecutive edits with the same group merge into one undo
-   entry (a drag). Detected from the catalog's params schema.
+   entry (a drag). Detected from the catalog's params schema. Adopted 2026-10-15.
 2. `set` of `Name` takes the name as a string `value`; `world.get` may list `Name` among components
    (the editor ignores it there).
 3. The hierarchy is the `Parent {parent: EntityId}` component, and `world.tree` nests by it.
 4. The debugger is the host's as-built `debug.*` (section 8.1), not an editor-specific form.
-5. `history.list` and the `history` event list `redo` with the next entry to redo first; agent
-   edits' labels start with `agent:`.
+5. Agent edits are marked in the history. Adopted 2026-10-15 with item 1 (server.md 3.1): each
+   entry names its `source` (and the server its `session`); a host without sources marks agent
+   edits by an `agent:` label prefix. The editor changed for the order instead: the host lists
+   `redo` most recent last, as Draft 1 has it (the editor had assumed the next to redo first), and
+   the history store reverses it.
 6. `agent` events may carry `ok` (a result's success) and `ts` (ms since the epoch).
 7. `scripts.read` answers the text (a string) or `{text}`; diagnostics are `{file?, line, column,
    end_line?, end_column?, severity: "error" | "warning" | "info" | "hint", message, code?}`.
@@ -261,6 +344,13 @@ adopt them or the editor should change:
 9. `GET /api/catalog` answers an array of commands or `{commands}`; `kind` in any case.
 10. The host serves the browser viewport (`web/viewport`, pocket-viewport's wasm-bindgen output)
     under `/wasm/` (section 5).
+11. `profile` pushes the host's CPU time per tick by system and phase (host-protocol.md 3); the
+    editor adds its viewport's frame and GPU passes. `subscribe` is all or nothing: the editor asks
+    for the topics the host pushes (an earlier `pick` topic was never pushed; picking is the
+    viewport's), and when the host refuses one (`/topics/<i>`: an editor newer than its host) the
+    client drops it, warns on the console and subscribes the rest. The transport shows the host's
+    `tps` (ticks per second; `fps` repeats it for older editors), the stats overlay the viewport's
+    own fps.
 
 ### 8.1 The debugger
 
@@ -336,16 +426,16 @@ the wire shapes (`HostDebugState`, `HostFrame`, `HostVariable`, `HostBreakpoint`
 | Path | Role |
 |---|---|
 | `src/host/` | `protocol.ts` (wire types, method params and results), `client.ts` (WebSocket with ids, events, reconnect; catalog), `api.ts` (typed wrappers, the connection), `sync.ts` (stores from host events), `schema.ts` (JSON Schema to field kinds) |
-| `src/state/` | One zustand store per domain: world, selection, session, history, logs, events, profile, agent, debug, scripts, assets, viewport settings, UI |
+| `src/state/` | One zustand store per domain: world, selection, session, history, logs, events, profile, the viewport's render timings, agent, debug, scripts, assets, viewport settings, UI |
 | `src/actions/` | Edits (`world.ts`, `LiveEdit` for drags), transport, debugger, scripts, error reporting |
 | `src/commands/` | The command registry, key handling, the built-in commands |
 | `src/layout/` | The panel registry, the dock and its default layout, a handle for other code |
 | `src/shell/` | Top bar, menus, transport, status bar, palette, dialogs |
 | `src/ui/` | Primitives: buttons, menus and context menus, tree, fields, split pane, toolbar, tooltip, toasts, variable tree, icons, formatting |
-| `src/viewport/` | The renderer interface, camera, math, gizmo, the fallback renderer |
+| `src/viewport/` | The renderer interface, camera, math, gizmo, the frame meter, the fallback renderer |
 | `src/panels/<panel>/` | One module per panel (and its CSS) |
 | `mock/` | The mock host (section 1.1) |
-| `tools/` | `capture.ts` (evidence of every panel against the mock), `debug-host.ts` (the debugger against the real host), `sdk_check.ts` (the script editor's types against the real host), all through headless Chrome over CDP (`cdp.ts`) |
+| `tools/` | `capture.ts` (evidence of every panel against the mock), `debug-host.ts` (the debugger against the real host), `sdk_check.ts` (the script editor's types against the real host), `profiler-capture.ts` (the profiler against the real host, docs/bench/profiler.md), all through headless Chrome over CDP (`cdp.ts`) |
 
 ## 10. Evidence
 

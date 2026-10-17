@@ -58,8 +58,9 @@ for a body that is not JSON).
 
 The host pushes `{"event": <topic>, "data": ...}`. A client subscribes with
 `{"id": n, "method": "subscribe", "params": {"topics": ["status", "log"]}}` (and `unsubscribe`);
-`status` is always on and is pushed once on connect. A socket more than 1,024 pushes behind gets
-`{"event": "lagged", "data": {"missed": n}}`.
+`status` is always on and is pushed once on connect. Subscribing is all or nothing: a list naming a
+topic the host does not push is refused (`request.invalid_value` at `/topics/<i>`) and changes
+nothing. A socket more than 1,024 pushes behind gets `{"event": "lagged", "data": {"missed": n}}`.
 
 | Topic | Data | When |
 |---|---|---|
@@ -67,10 +68,24 @@ The host pushes `{"event": <topic>, "data": ...}`. A client subscribes with
 | `world.changed` | `{tick, spawned: [id], despawned: [id], changed: [[id, component]], truncated?}`, or `{tick, reset: true, epoch}` when the world was replaced (restore, Play, Stop) | after a tick or write that changed something, coalesced to 10 Hz |
 | `events` | `[{seq, id, tick, name, subject, data, cause}]` (`seq` the stream number, `id` and `cause` the world's event numbers) | game events as they are emitted, every 50 ms |
 | `log` | `{seq, level, source, message, file?, line?, tick?}` | one per line: script `console.*`, failed system runs |
-| `history` | `{undo: [label], redo: [label]}` | after any edit, undo, redo, restore, Play or Stop |
+| `history` | `{undo: [label], redo: [label], entries: {undo: [entry], redo: [entry]}}` (as `history.list`) | after any edit, undo, redo, restore, Play or Stop that changed it |
 | `debug` | `{state: "paused"|"running", reason?, location?: {file, line, column}, frames?}` | debugger state changes |
-| `profile` | `{tick, systems: [{name, ms}], frame_ms, gpu: [{pass, ms}]}` | 4 Hz while subscribed |
+| `profile` | `{tick, epoch, ticks, held, missed, tick_ms, tick_max_ms, busy_ms, systems: [{name, ms, max_ms}], phases: [{name, ms, max_ms}]}`: the ticks since the last push, ms per tick (below) | 4 Hz while subscribed, also when no tick ran (`ticks: 0`) |
 | `agent` | `{session, kind: "call"|"result", method, ok?, summary}` | each MCP call by an agent and its result |
+
+`profile` (2026-10-14) is what the ticks cost the host's game thread, timed on the loop's clock by
+the step hooks of every tick while the host serves the stream (server.md 4): `ms` is the average per
+tick counted (a system that ran on one tick in four shows a quarter of its time), `max_ms` the most
+in one tick. `systems` lists each system's own time in the order they finish in a tick (a script
+system's `script:<name>` out of `script.update` and before it), then `tick.other` (the step outside
+its systems), `loop.present` (the render feed's extraction), `loop.publish` (the snapshot and the
+event and log streams after the tick) and `loop.after` (the players' decision points and
+`time.step`'s checks after the tick before); they add up to `busy_ms`. `tick_ms` is the whole step;
+a phase's time is its systems'. A tick the script debugger held is counted in `held` and its
+times, which measure the hold, are left out; `missed` counts ticks that left the host's ring (600
+ticks) before a push read them. The ticks are the world shown's (`epoch`, as `status`): Play, Stop
+and a restore start the ring again. The host draws no frame: the editor adds its own viewport's
+frame interval and GPU passes (editor.md 5), so `frame_ms` and `gpu` are no longer in the push.
 
 ## 4. Methods
 
@@ -87,9 +102,9 @@ Each method is a command of the catalog (`GET /api/catalog` is authoritative). K
 | `world.get` | `{entity, components?, fields?: ["C.f.path"]}` | `{id, name, components: {Name: value}, fields?: {"C.f.path": value}}` |
 | `world.query` | `{with: [component], fields?: ["C.f"], name?, limit?}` | rows `{id, name, "C.f": value}` |
 | `world.schema` | `{component?}` | component JSON Schemas with docs, from the registry |
-| `world.edit` | `{ops: [op], label?}` | `{tick, applied, spawned: [id], results, label}`; all or nothing |
-| `history.undo` / `history.redo` | `{}` | as `world.edit`, with the entry's `label` |
-| `history.list` | `{}` | `{undo, redo}` |
+| `world.edit` | `{ops: [op], label?, group?}` | `{tick, applied, spawned: [id], results, label}`; all or nothing; edits of one `group` in a row from one caller are one undo entry |
+| `history.undo` / `history.redo` | `{group?}` / `{}` | as `world.edit`, with the entry's `label`; an undo with `group` only when the next entry is the whole of that group (server.md 3.1) |
+| `history.list` | `{}` | `{undo, redo, entries}`: each stack most recent last, each entry `{label, source, group?, session?}` (server.md 3.1) |
 | `time.control` | `{pause?, speed?, pacing?}` | status |
 | `time.step` | `{ticks?, until?: {event?, subject?, tick?}, watch?: {entity, component, field, op?, value?}, sample?: {fields: ["E.C.f"], every?}}` | `{tick, world_hash, errors, stopped_by?, samples?}`; a debugger stop ends the step and answers at once with `paused: true` (server.md 3.2, 3.4); a step queued behind it answers `debug.paused {queued: true}` and runs after the resume |
 | `play.start` / `play.stop` | `{speed?, paused?}` / `{}` | status (Play runs a fork of the edit world; Stop discards it) |
@@ -113,7 +128,7 @@ Play ends Play wherever it stands (the debugger passes over every pause until th
 `time.control` with changes is queued for the boundary after the held tick (`debug.paused {queued:
 true}`); every other call that needs the game thread is refused at once with `debug.paused`
 (server.md 3.4).
-| `profile.frame` | `{}` | the last frame's CPU and GPU timings (not built yet) |
+| `profile.frame` | `{ticks?}` (default 60, at most 600) | `profile`'s summary of the last `ticks` ticks (no `missed`); the server's own read, so it answers while the debugger holds the game |
 | `agent.*` | MCP tool calls mirrored (section 7) | |
 
 `world.edit` ops (the runtime's `world_edit` ops, one transaction):
@@ -133,7 +148,13 @@ entity under its id with every component (server.md 3.1).
 The viewport renders the host's world with the same renderer compiled to wasm (WebGPU). On each
 socket the host subscribes a mailbox to the game's render feed (`pocket-assets`' `Feed`; the game
 thread extracts after each tick with change detection, `pocket-runtime/src/present.rs`) and sends
-the merged frame at up to 60 per second as one binary message:
+the merged frame as one binary message when the game thread publishes (after a tick, or an edit
+while paused: `ThreadOptions::on_publish` wakes the socket), at most one every 8 ms; publications
+closer together merge into the next frame (pocket-app's `serve.rs` test steps the sailing game
+faster than real time against a socket: 240 publications in about 70 ms arrive as a handful of
+frames, the last on the last tick). (2026-10-15, Pioneer: until then each socket looked on
+a 16 ms timer, so an edit's frame left the host 13 ms after the edit at the median;
+docs/bench/gizmo.md.)
 
 - the bytes are `RenderFrame::encode`: 8 bytes of `FORMAT` (little endian; a fingerprint of the
   sources of the feed's types), then the frame in `bincode` 2's standard configuration. A viewport
@@ -142,7 +163,7 @@ the merged frame at up to 60 per second as one binary message:
 - the first frame after connecting, and after a restore, a reload or Play/Stop (a new world or
   generation), has `reset: true` and carries everything; later frames carry what changed;
 - while the world is paused the game thread still wakes every 50 ms when a subscriber waits for a
-  full frame.
+  full frame, and wakes the sockets after extracting it.
 
 The viewport owns its camera, picking (a CPU ray against the drawn instances' oriented boxes) and
 overlays; the client sends nothing on this socket. The same frames reach a browser game: the
@@ -211,5 +232,8 @@ The editor ([editor.md](editor.md) 8) and its mock host settle forms this draft 
 `world.edit` takes `group` (consecutive edits of one group are one undo entry, so a drag streams
 live and undoes at once), `set` of `Name` takes a string, the hierarchy is a `Parent` component,
 `debug.step` takes `{kind}`, the shapes of the `debug.*` results, `debug.breakpoints.list` and
-`debug.unwatch`, the order of `redo` (next first) and the `agent:` prefix of agent edits' labels.
-The host adopts them, or the editor changes with this file.
+`debug.unwatch`, and the history's order (`redo` next first) and sources. The host adopts them, or
+the editor changes with this file. Adopted 2026-10-15: `group` and the history's sources (server.md
+3.1); entries carry their source instead of an `agent:` label prefix, which the editor still reads
+from a host without sources. The order stays this draft's (each stack most recent last): the editor
+reverses the redo stack itself.

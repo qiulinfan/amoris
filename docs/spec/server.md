@@ -43,8 +43,8 @@ pocket mcp samples/sailing     # MCP over stdio (uses the running host if there 
  editor (/ws)   CLI, tests (/api/call)   MCP clients (/mcp, stdio)
         \              |                    /
          pocket-server: Host::call(via, method, params)
-           |  answered here: catalog, events.*, log.since, assets.list, docs.search,
-           |  scripts.guide, the type check stage, debug.* and capture (plug-ins)
+           |  answered here: catalog, events.*, log.since, profile.frame, assets.list,
+           |  docs.search, scripts.guide, the type check stage, debug.* and capture (plug-ins)
            v
    pocket-link: GameClient per source (Editor; one Developer for the API; one per MCP session)
            |                         ^ SnapshotReader: snapshots, event ring, log ring,
@@ -83,10 +83,10 @@ files).
 | `world.get` (`world_get`) | read | `{entity, components?, fields?}` | `{id, name, components: {Name: value}, fields?: {"C.f.path": value}}`; `fields` (or a dotted entry of `components`) reads `Component.field` or a path into it alone, `null` where the entity lacks the component; a path the component lacks is refused with its fields and a suggestion |
 | `world.query` | read | `{with: [C], fields?: ["C.f.path"], name?, limit? = 100}` | `[{id, name, "C.f": value}]` |
 | `world.schema` | read | `{component?}` | `[{name, origin, version, doc, schema}]`, or one |
-| `world.edit` | write | `{ops: [op], label?}` | `{tick, applied, spawned: [id], results, label}`; all or nothing |
+| `world.edit` | write | `{ops: [op], label?, group?}` | `{tick, applied, spawned: [id], results, label}`; all or nothing; consecutive edits of one `group` from one caller are one undo entry (3.1) |
 | `world_edit` | write | `{edits: [{op: ...}]}` | the canonical recorded form (below) |
-| `history.list` | read | `{}` | `{undo: [label], redo: [label]}`, most recent last |
-| `history.undo` / `history.redo` | write | `{}` | as `world.edit`, with the entry's `label` |
+| `history.list` | read | `{}` | `{undo: [label], redo: [label], entries: {undo: [entry], redo: [entry]}}`: each stack most recent last (the next to undo or redo last), `entries` the same entries in the same order as `{label, source, group?, session?}` (3.1) |
+| `history.undo` / `history.redo` | write | `{group?}` / `{}` | as `world.edit`, with the entry's `label`; an undo with `group` only when the next entry is the whole of that group, else `history.group` (3.1) |
 | `time.control` (`time_control`) | control | `{pause?, speed?, pacing?}` | `status` |
 | `time.step` (`step`) | control | `{ticks?, until?, watch?, sample?}` | `{tick, world_hash, errors, stopped_by?, samples?}`; at a debugger stop `{tick, world_hash: null, errors: [], paused: true, stopped_by}` (3.2, 3.4) |
 | `play.start` | control | `{speed? = 1, paused?}` | `status` (mode `play`) |
@@ -105,6 +105,7 @@ files).
 | `events.since` | read (server) | `{seq?, limit? = 100, name?}` | `{events: [event], last, missed}` |
 | `events.why` | read (server) | `{seq}` | `{event, causes: [event], complete}` |
 | `log.since` | read (server) | `{seq?, limit? = 100}` | `{lines: [log line], last}` |
+| `profile.frame` | read (server) | `{ticks? = 60}` (at most 600) | the `profile` summary (4) of the last `ticks` ticks profiled |
 | `assets.list` | read (server) | `{dir?}` | `[{path, kind, bytes}]`, served at `/assets/<path>` |
 | `docs.search` | read (server) | `{query, limit? = 10}` | `[{command, doc}`, `{component, doc, fields}` or `{guide, read}]` (a matching section of `scripts.guide`) |
 | `debug.*` | (server) | per pocket-debug (debugger.md 7), one catalog entry each with its schema | `debug.not_available` until a `DebugHub` is installed; `debug.rewind {tick, bundle?}` is the server's own |
@@ -136,6 +137,37 @@ removed on the other entities get their values from before the call back (`set` 
 empties redo. 500 entries per stack. An entry whose edits no longer apply (a tick destroyed what it
 names) is dropped with `history.stale`; an empty stack answers `history.empty`. A restore (and
 Play's fork) starts with an empty history. The history is never persisted or hashed.
+
+Groups (2026-10-15, editor.md 8 item 1): `world.edit` takes `group`, a string the caller picks. An
+edit of a group right after an edit of the same group by the same source merges into that entry
+(`history.rs` `merged`): the later edit's inverse goes first, without the sets and removes of
+components the entry's inverse already restores (it writes them whole, or removes them, after), and
+the entry takes the later label. A gizmo drag streams one edit per pointer move and its later
+inverses all drop out, so its entry undoes to the value from before the drag in one call. An edit
+of another group or of none, an edit by another source (an agent's edit during a drag splits it in
+two), an undo or a redo in between (an entry undone or redone loses its group), an edit that spawns,
+destroys or revives (its inverse could not come before the entry's in one call) and a merge past
+the 64 edits of one `world_edit` each start a new entry. Only the history merges: every edit of a
+group is applied, published and recorded on its own (`group` is not in the canonical form), so a
+recording replays the same with or without groups.
+
+Sources (2026-10-15, editor.md 8 item 5): every entry keeps the source of the edit that made it (an
+undo or redo keeps it), as pocket-link's `source_json` writes it: `"editor"`, `{"developer": n}`,
+`{"player": n}`. The server adds `session` to an entry whose source is a developer client it handed
+out: `mcp-<n>` for an MCP session (as the `agent` events name it) and `api` for the HTTP API's
+client (the CLI's), in `history.list`'s answer and the `history` push alike. The editor marks every
+entry whose source is not the editor's. Both stacks list the next entry to take last, as before
+sources; the editor shows the redo stack reversed (editor.md 8 item 5).
+
+Cancelling a drag (2026-10-15): `history.undo {group}` undoes only when the next entry to undo
+carries `group` and no other undo entry does, so an editor's Escape takes back its own whole drag
+and nothing else, in one call: when another source's edit came after the drag or split it, the
+undo is refused with `history.group` (`detail.entries` counts the group's undo entries) and
+nothing changes; the editor then writes the dragged fields back instead (editor.md 6).
+
+The server pushes `history` only when it differs from the last one it pushed (pocket-server
+`push_history`): the steps of a streamed drag merge into its entry and leave the list as it was,
+so a drag pushes it once, when its entry appears.
 
 ### 3.2 `time.step` stop conditions
 
@@ -227,8 +259,8 @@ read`, and the CLI had no read timeout, so 28 calls in 11 runs hung until the ag
   project's files (`diagnostics` empty). The snapshot's JSON is the registry's format of each
   section, which equals what the game's own reads answer (`paused_host.rs` compares them call by
   call). `catalog.list` (fetched before serving), `docs.search` (component schemas from the
-  publication's registry), `events.*`, `log.since`, `assets.list`, `scripts.guide` and `debug.*`
-  never need the game.
+  publication's registry), `events.*`, `log.since`, `profile.frame`, `assets.list`,
+  `scripts.guide` and `debug.*` never need the game.
 - **`play.stop` in Play ends Play wherever the debugger holds it.** Stop drops the fork, held tick
   and all, so the server has the debugger pass over every pause (pocket-debug `DebugHub::pass`,
   the server's `DebugHub::pass`) from the moment it sees one until the Stop lands: the held tick
@@ -279,14 +311,44 @@ always). A socket that falls more than 1,024 pushes behind gets
 | `world.changed` | `{tick, spawned, despawned, changed: [[id, component]], truncated?}`, or `{tick, reset: true, epoch}` | every 100 ms when publications came, coalesced; a reset when the world was replaced (it covers changes in the same 100 ms) |
 | `events` | `[{seq, id, tick, name, subject, cause, data}]` | every 50 ms, at most 500 per push |
 | `log` | `{seq, level, source, message, file?, line?, tick?}` | one per line: script `console.*`, failed system runs |
-| `history` | `{undo, redo}` | after `world.edit`, undo, redo, restore, Play, Stop |
+| `history` | `{undo, redo, entries}` (`history.list`'s answer, with sessions) | after `world.edit`, undo, redo, restore, Play, Stop, when it changed (3.1) |
 | `agent` | `{session, kind: "call"/"result", method, ok?, summary}` | each MCP call and its result |
 | `debug` | debugger.md 7's state on a pause, `{state: "running"}` on a resume | pushed by `pocket serve`'s debugger (pocket-app `forward_debug_events`); script console lines and failed calls the debugger saw go to `log` |
-| `profile` | reserved | pushed by the plug-in when it lands |
+| `profile` | `{tick, epoch, ticks, held, missed, tick_ms, tick_max_ms, busy_ms, systems: [{name, ms, max_ms}], phases: [{name, ms, max_ms}]}` | every 250 ms: the ticks profiled since the last push, summarized (below) |
 
 `seq` in events is the stream number (`pocket-link` ring, threads.md 4.4), `id` and `cause` the
 world's event sequence numbers. `world.changed` compares section digests, then rows of the changed
-component sections (at most 2,000 pairs).
+component sections (at most 2,000 pairs). Subscribing is all or nothing: a list naming a topic not
+listed here is refused and changes nothing.
+
+The profile (2026-10-14; charter 4.1, the built-in profiler). A host that serves the profile stream
+turns it on: pocket-server's `Host::new` calls pocket-link's `SnapshotReader::serve_profile`, so
+under `pocket serve` every tick is profiled from start-up, editor or not, and a game no host serves
+(`pocket run`, the native `pocket play` window) is never profiled. The game thread then runs each
+tick with the step hooks of pocket-runtime's `profile::TickTimer`, which time every system on the
+loop's injected clock outside the simulation (two readings per system; a phase's time is its
+systems'); a system that runs others inside it (`script.update`) keeps only its own time. After the
+tick the loop adds the whole step (`tick_ms`), the render feed's extraction (`loop.present`), the
+snapshot and streams it publishes (`loop.publish`) and its work after the tick before
+(`loop.after`: the players' decision points, `time.step`'s stop conditions and samples; carried
+into the next tick's profile, so a reply that work sends never overtakes the profile of the tick it
+answers), and pushes the tick into pocket-link's profile ring (600 ticks) beside the event and log
+rings. The push never waits: while a reader holds the ring the profile waits for the next tick's
+push; the ring hands back the oldest tick's buffers, so a full ring allocates nothing. The ring
+keeps one world's ticks: a tick of another epoch (Play, Stop, a restore) empties it, and a read for
+the world shown before it has ticked finds nothing. A tick during which the script debugger stopped
+the thread (its stop count changed) is marked held: its times measure the hold, so summaries count
+it in `held` and leave it out. pocket-link's `profile::summary` gives the push and `profile.frame`
+one shape: per tick counted, `ms` the average and `max_ms` the most in one tick; `systems` in the
+order they finish in a tick (a script system before `script.update`, which runs it), then
+`tick.other` (the step outside its systems), `loop.present`, `loop.publish` and `loop.after`, which
+add up to `busy_ms`, the game thread's time per tick apart from the commands it applies between
+ticks; `epoch` the world's. The push reads the ticks since its last push (`missed`: ticks of this
+world that left the ring first) and goes out every 250 ms, with `ticks: 0` when none ran;
+`profile.frame` reads the last `ticks`. The CLI's `pocket profile [--ticks n]` prints it as a table
+and MCP's `time` tool has a `profile` action, so the editor, the CLI and agents read the same
+numbers. The host draws no frame: the editor's profiler adds its own viewport's frame and GPU passes
+(editor.md 5). docs/bench/profiler.md measures the profiler's cost.
 
 ## 5. HTTP endpoints
 
@@ -327,7 +389,9 @@ impl Host {
 ```
 
 `pocket-app`'s `serve.rs` builds the `Host` (`start`), so the integrator installs these there. The
-render feed reads `host.reader()` (snapshots, `world().epoch` for `reset`). The installed hub's
+render feed (`pocket-app`'s `present.rs`) subscribes each socket to the game's `Feed` and sends a
+frame when the game thread's `on_publish` says it published, at most one every 8 ms
+(host-protocol.md 5). The installed hub's
 `methods()` (pocket-debug's `methods()`, each with its kind, aliases and JSON Schema) are catalog
 entries like every other command, so `pocket help debug.watch`, `docs.search` and the MCP `debug`
 tool describe them (the debug evaluation's fourth finding: 34 refusals of guessed parameters); the
@@ -337,14 +401,14 @@ hub sees an id. Without a hub, one `debug.state` entry says the debugger is not 
 
 ## 7. MCP
 
-`pocket-mcp` projects the catalog into ten tools, each an `action` over methods; schemas name the
+`pocket-mcp` projects the catalog into eleven tools, each an `action` over methods; schemas name the
 parameters loosely and the runtime's decoder refuses unknown ones with suggestions:
 
 | Tool | Actions -> methods |
 |---|---|
 | `world` | tree, get, query, schema, edit -> `world.*` |
 | `scripts` | guide, list, read, write, apply, check, status, types -> `scripts.*` |
-| `time` | status -> `status`; pause, resume, speed -> `time.control`; step -> `time.step`; snapshots -> `snapshots.list`; rewind -> `snapshots.restore` |
+| `time` | status -> `status`; pause, resume, speed -> `time.control`; step -> `time.step`; snapshots -> `snapshots.list`; rewind -> `snapshots.restore`; profile -> `profile.frame` |
 | `play` | start, stop |
 | `history` | undo, redo, list |
 | `assets` | list |
@@ -352,15 +416,17 @@ parameters loosely and the runtime's decoder refuses unknown ones with suggestio
 | `debug` | attach, detach, breakpoints.set, breakpoints.clear, breakpoints.list, pause, continue, step, state, eval, set, watch, unwatch, exceptions, wait, rewind -> `debug.*` |
 | `capture` | -> `capture` |
 | `docs` | -> `docs.search` |
+| `player` | session, describe, observe, nearby, events, affordances, intents, act, wait, continue, pacing -> `player.*` (player.md; a developer names the seat) |
 
 Results are the method's JSON as text; refusals are tool results with `isError` and the text
 `{"error": {code, message, detail}}`. The `debug` tool's input schema lists every parameter its
 methods take (`file, line, condition, log, id, brief, expr, frame, name, value, kind, timeout_ms,
 entity, component, field, mode, tick, bundle`; pocket-app's `paused_host.rs` checks it against
 `pocket_debug::methods()`); `world` takes `fields`, `scripts` `lines` and `numbered`, `time`
-`sample` and `bundle`. `tools/list` is 6.6 KB (6,645 bytes, about 1,660 tokens at four bytes a
-token; 2026-10-09, Windows; it was 4.4 KB, 1,236 cl100k tokens, on 2026-10-04). Player tools
-(`observe`, `act`, ...; shared/contract/mcp.md) are not projected yet.
+`sample` and `bundle`. `tools/list` is 8.6 KB (8,613 bytes of `tools`, about 2,150 tokens at four
+bytes a token, as `tools/smoke_server.py` counts it; 2026-10-14, Windows; the `time` tool's
+`profile` action is 87 of them); it was 6.6 KB (6,645 bytes, ten tools) on 2026-10-09, before the
+`player` tool, and 4.4 KB, 1,236 cl100k tokens, on 2026-10-04.
 Served on `POST /mcp` (one developer client per session, every call pushed as `agent`) and by
 `pocket mcp` over stdio.
 
@@ -384,6 +450,7 @@ Schema, so help never drifts from what the host takes.
 | `pocket scripts list|read <p> [--lines a-b] [--numbers]|write <p> [file|-]|apply [--force]|check|types|guide|status` | `scripts.*` (`--lines` numbers the lines) |
 | `pocket events [--since n] [--name n.*] [--limit n]`, `--why <seq>` | `events.*` |
 | `pocket logs [--since n]`, `snapshots [list]|restore <tick> [--bundle snapshot]`, `assets [dir]` | `log.since`, `snapshots.*`, `assets.list` |
+| `pocket profile [--ticks n]` | `profile.frame` (a table: ms per tick, max, share of the game thread) |
 | `pocket debug break <file>:<line> [--if <expr>] [--log <text>]`, `clear [id]`, `list` | `debug.breakpoints.*` (`file` may be the module's end, `helm.ts`) |
 | `pocket debug state [--full]`, `eval <expr> [--frame n]`, `set <name> <expr> [--frame n]` | `debug.state`, `debug.eval`, `debug.set` |
 | `pocket debug watch <e>.<C>[.<f>]`, `unwatch [id]` | `debug.watch` (entity by name or id), `debug.unwatch` |
@@ -412,6 +479,7 @@ error exits 2. Every call waits 60 s at most (`--timeout <s>`, `POCKET_TIMEOUT`)
 |---|---|
 | `command.thread_only` | a thread command sent to a `Game` driven directly |
 | `history.empty`, `history.stale` | nothing to undo or redo; an entry that no longer applies (dropped) |
+| `history.group` | `history.undo {group}` when the next entry is not the whole of the group (3.1) |
 | `play.running`, `play.not_running` | `play.start` while playing; `play.stop` while editing |
 | `play.started`, `play.stopped`, `snapshots.restored` | a waiting `time.step` whose world was replaced |
 | `snapshots.none` | no kept snapshot at or before the tick |
@@ -436,12 +504,18 @@ step that returns at the breakpoint, reads while held, `scripts apply` refused a
 debugger's short forms, restores with and without the applied scripts), then that
 `.pocket/host.json` is gone after SIGTERM (Ctrl-Break on Windows, where it now runs:
 [smoke-server.txt](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/agentdebug/smoke-server.txt),
-0 failures, 2026-10-09). The Python `mcp` client package (2.3.0, `uv run --with mcp`) drove both
+0 failures, 2026-10-09). Its WebSocket client keeps the pushes that arrive before a request's answer
+for the next wait (Play's reset can come first), which `tools/tests/test_smoke_server.py` checks
+against a scripted server. The Python `mcp` client package (2.3.0, `uv run --with mcp`) drove both
 transports (`pocket mcp --own` over stdio and `/mcp`). `crates/pocket-runtime/tests/host.rs` tests
 undo and redo of a spawn, a set and a destroy, the readers, the stop conditions, Play and Stop, and
 the kept snapshots; `tests/agent_reads.rs` the field reads, line ranges, samples and restores under
 the applied scripts (with a recording that replays); pocket-app's `tests/paused_host.rs` a held host
-through `Host::call`.
+through `Host::call` (also that `profile.frame` answers while held and leaves the held tick out);
+`tests/thread.rs` that ticks are profiled by system and phase once a host serves the profile (a
+reader alone turns nothing on) and that Play starts the ring again; pocket-link's `profile` tests
+the summaries, the rows' order, the world's ticks only, and that a reader holding the ring never
+stops the game thread.
 
 ## 11. Open
 

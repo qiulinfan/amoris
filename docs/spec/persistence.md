@@ -55,8 +55,8 @@ Rules:
   resources (simulation.md 5.2). The outbox is empty at every boundary, and history beyond one tick
   is kept by its consumers, outside the world.
 - `bevy_ecs` change detection, hooks and observers MUST NOT drive simulation logic (simulation.md
-  4.5 owns the ban): restore inserts every component afresh. P3 catches a breach. Publication may
-  use change detection to reuse unchanged sections (threads.md 4.3); it changes no state.
+  4.5 owns the ban): restore inserts every component afresh. P3 catches a breach. Publication
+  uses change detection to reuse unchanged sections (4.3; threads.md 4.3); it changes no state.
 
 ## 3. The canonical encoding (PCE v1)
 
@@ -228,6 +228,55 @@ version, bundle hash) does not enter the world hash. An in-memory snapshot is re
 that wrote it, whose registry keeps the format of every version it has registered; a snapshot that
 leaves the process is written as a save, which carries its formats (versions.md 4, 6.1).
 
+### 4.3 Repeated snapshots
+
+(Pioneer, 2026-10-15.) A world snapshotted again and again, as the game thread does after every
+tick it publishes (threads.md 4.3), goes through a `SnapshotCache`, which gives the same snapshot as
+`snapshot`, byte for byte, without encoding every section each time:
+
+- It follows one world and one registry: another world (Play's fork, Stop), another registry or a
+  failed snapshot starts it over, and so does a gap longer than `bevy_ecs`'s change-tick check
+  interval.
+- A registered component's section is taken over from the last snapshot (its `Arc`'d bytes and its
+  digest) when the component has as many rows as were encoded then and no row, nor the `EntityId`
+  of its entity, was added or changed after the world's change tick of that snapshot. A row removed
+  alone changes the count; a row removed and another added brings an added row. Writes through
+  `Mut`, inserts, spawns and restores all set change ticks; nothing in the engine writes a persisted
+  component past change detection (`bypass_change_detection`), and nothing may: clippy reports the
+  methods that would in the tick-code crates (the list below).
+- After each snapshot the cache advances the world's change tick by one (`UnsafeWorldCell::
+  increment_change_tick`), so a write made later, even before any system runs, carries a newer tick
+  than every change the snapshot saw. Change ticks are not world state (section 2): the hash, a
+  replay and the simulation never see them.
+- Each component's query (`(Ref<EntityId>, Ref<C>)`) is kept between snapshots, so a section with
+  no rows costs a look at the query's matched tables. The list of sections is kept while the
+  world's `ComponentRegistry` does not change. Resources, caches, the entities section and project
+  components are encoded every time.
+
+The methods that write past change ticks are in `tools/clippy-determinism.toml`, from which
+`cargo xtask gen` writes every tick-code crate's `clippy.toml` (simulation.md 10):
+
+```toml
+disallowed-methods = [
+    { path = "bevy_ecs::change_detection::DetectChangesMut::bypass_change_detection", reason = "..." },
+    { path = "bevy_ecs::change_detection::DetectChangesMut::set_last_changed", reason = "..." },
+    { path = "bevy_ecs::change_detection::DetectChangesMut::set_last_added", reason = "..." },
+    { path = "bevy_ecs::change_detection::ContiguousMut::bypass_change_detection", reason = "..." },
+    { path = "bevy_ecs::change_detection::ContiguousMut::bypass_change_detection_split", reason = "..." },
+]
+```
+
+Their reason is "a write past change detection leaves a stale section in repeated snapshots
+(persistence.md, 4.3)". `tools/lint-fixture` uses each once; clippy 1.98.1 with `bevy_ecs` 0.19.1
+reported all five on 2026-10-15. The lint cannot see a persisted component with interior mutability
+(none has one) or a write through a raw pointer; `pocket-persist`'s `repeated` tests and
+`pocket-runtime`'s `snapshot_cache` test compare the cache with a full snapshot after every tick.
+
+`docs/bench/profiler.md` 6 (the serve loop) measures it on an idle machine (2026-10-16): on the
+sailing world in Play 7 of the 26 present sections change every tick and 2 more now and then, and
+the paced snapshot took 0.55 times as long. A world whose sections mostly change every tick gains
+less: a changed section is encoded whole, after a scan of its ticks up to the first changed row.
+
 ## 5. The world hash
 
 ### 5.1 Definition
@@ -392,6 +441,14 @@ pub fn snapshot(world: &World, reg: &Registry) -> Result<Snapshot, Problem>;
 pub fn world_hash(world: &World, reg: &Registry) -> Result<WorldHash, Problem>;
 pub fn section_digests(world: &World, reg: &Registry)
     -> Result<Vec<(SectionKey, SectionDigest)>, Problem>;
+
+pub struct SnapshotCache { /* one world's sections, 4.3 */ }
+impl SnapshotCache {
+    pub fn new() -> SnapshotCache;
+    /// `snapshot(world, reg)`, encoding again only the component sections that changed; advances
+    /// the world's change tick by one.
+    pub fn snapshot(&mut self, world: &World, reg: &Registry) -> Result<Snapshot, Problem>;
+}
 
 pub struct RestoreOptions { pub verify: bool }        // default true
 pub struct RestoreReport { pub tick: Tick, pub world_hash: WorldHash, pub entities: u64 }
