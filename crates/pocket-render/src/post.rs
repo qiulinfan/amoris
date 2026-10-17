@@ -445,49 +445,121 @@ impl Targets {
         first: bool,
         last: bool,
     ) -> Vec<Option<wgpu::RenderPassColorAttachment<'_>>> {
-        fn att(
-            t: &SceneTarget,
-            first: bool,
-            last: bool,
-        ) -> Option<wgpu::RenderPassColorAttachment<'_>> {
-            let ops = |multisampled: bool| wgpu::Operations {
-                load: if first {
-                    wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT)
-                } else {
-                    wgpu::LoadOp::Load
-                },
-                store: if last && multisampled {
-                    wgpu::StoreOp::Discard
-                } else {
-                    wgpu::StoreOp::Store
-                },
+        let u = Use {
+            clear: first,
+            resolve: last,
+            keep: !last,
+        };
+        self.with(u, u)
+    }
+
+    /// The last opaque pass when the transparent stage draws after GTAO (renderer.rs): `first`
+    /// clears them (else they are loaded); the extra targets resolve (GTAO reads the share and the
+    /// normals, TAA the motion) and discard their samples, the color keeps its samples, unresolved,
+    /// for [`transparent_attachments`](Self::transparent_attachments).
+    pub fn attachments_before_transparent(
+        &self,
+        first: bool,
+    ) -> Vec<Option<wgpu::RenderPassColorAttachment<'_>>> {
+        let color = Use {
+            clear: first,
+            resolve: false,
+            keep: true,
+        };
+        let extras = Use {
+            clear: first,
+            resolve: true,
+            keep: false,
+        };
+        self.with(color, extras)
+    }
+
+    /// The pass after GTAO that draws the transparent stage, the particles and the editor's grid
+    /// into the opaque pass's color: loaded, then resolved. Their pipelines leave the extra targets
+    /// as they are: a single-sampled one is kept, a multisampled one's samples (discarded by the
+    /// opaque pass) are cleared and dropped, its resolved view untouched.
+    pub fn transparent_attachments(&self) -> Vec<Option<wgpu::RenderPassColorAttachment<'_>>> {
+        let color = Use {
+            clear: false,
+            resolve: true,
+            keep: false,
+        };
+        fn extra(t: &SceneTarget) -> Option<wgpu::RenderPassColorAttachment<'_>> {
+            let samples = t.msaa.is_some();
+            let u = Use {
+                clear: samples,
+                resolve: false,
+                keep: false,
             };
-            Some(match &t.msaa {
-                Some(m) => wgpu::RenderPassColorAttachment {
-                    view: m,
-                    depth_slice: None,
-                    resolve_target: last.then_some(&t.view),
-                    ops: ops(true),
-                },
-                None => wgpu::RenderPassColorAttachment {
-                    view: &t.view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: ops(false),
-                },
-            })
+            attachment(t, u)
         }
         let mut v = vec![
-            att(&self.color, first, last),
-            self.share.as_ref().and_then(|t| att(t, first, last)),
-            self.motion.as_ref().and_then(|t| att(t, first, last)),
-            self.normals.as_ref().and_then(|t| att(t, first, last)),
+            attachment(&self.color, color),
+            self.share.as_ref().and_then(extra),
+            self.motion.as_ref().and_then(extra),
+            self.normals.as_ref().and_then(extra),
         ];
         while v.last().is_some_and(Option::is_none) {
             v.pop();
         }
         v
     }
+
+    /// The color attachment treated as `color` says, then the extra targets that exist as
+    /// `extras` says.
+    fn with(&self, color: Use, extras: Use) -> Vec<Option<wgpu::RenderPassColorAttachment<'_>>> {
+        let mut v = vec![
+            attachment(&self.color, color),
+            self.share.as_ref().and_then(|t| attachment(t, extras)),
+            self.motion.as_ref().and_then(|t| attachment(t, extras)),
+            self.normals.as_ref().and_then(|t| attachment(t, extras)),
+        ];
+        while v.last().is_some_and(Option::is_none) {
+            v.pop();
+        }
+        v
+    }
+}
+
+/// How a pass uses one of the opaque pass's targets: cleared (else loaded); multisampled, whether
+/// it resolves into the target's view and keeps its samples. A single-sampled target is stored.
+#[derive(Clone, Copy)]
+struct Use {
+    clear: bool,
+    resolve: bool,
+    keep: bool,
+}
+
+fn attachment(t: &SceneTarget, u: Use) -> Option<wgpu::RenderPassColorAttachment<'_>> {
+    let load = if u.clear {
+        wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT)
+    } else {
+        wgpu::LoadOp::Load
+    };
+    Some(match &t.msaa {
+        Some(m) => wgpu::RenderPassColorAttachment {
+            view: m,
+            depth_slice: None,
+            resolve_target: u.resolve.then_some(&t.view),
+            ops: wgpu::Operations {
+                load,
+                store: if u.keep {
+                    wgpu::StoreOp::Store
+                } else {
+                    wgpu::StoreOp::Discard
+                },
+            },
+        },
+        None => wgpu::RenderPassColorAttachment {
+            view: &t.view,
+            depth_slice: None,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load,
+                store: wgpu::StoreOp::Store,
+            },
+        },
+    })
 }
 
 pub struct Post {

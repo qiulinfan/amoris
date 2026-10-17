@@ -55,6 +55,7 @@ pub fn source(name: &str) -> String {
         "splat_composite" => include_str!("../shaders/splat_composite.wgsl"),
         "gtao" => include_str!("../shaders/gtao.wgsl"),
         "taa" => include_str!("../shaders/taa.wgsl"),
+        "transparent_index" => include_str!("../shaders/transparent_index.wgsl"),
         other => panic!("no shader named {other}"),
     };
     format!("{COMMON}\n{body}")

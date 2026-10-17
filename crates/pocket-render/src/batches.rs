@@ -250,7 +250,8 @@ impl Batches {
             queue.write_buffer(&self.template, 0, bytemuck::cast_slice(&template));
         }
         if baseline {
-            // Base 0 first (unused here), then view by view the live batches' bases.
+            // Base 0 first (the transparent stage's direct draws, `bind_zero_base`), then view by
+            // view the live batches' bases.
             let entries = 1 + u64::from(VIEWS) * self.live.len() as u64;
             let words = (self.align / 4) as usize;
             let mut data = vec![0u32; entries as usize * words];
@@ -311,6 +312,12 @@ impl Batches {
         }
         buf.unmap();
         out
+    }
+
+    /// Binds group 3 with a base of 0, for direct draws whose `first_instance` is their base (the
+    /// transparent stage's, transparent.rs): every draw path's first base entry is 0.
+    pub fn bind_zero_base(&self, pass: &mut wgpu::RenderPass<'_>) {
+        pass.set_bind_group(3, &self.group, &[0]);
     }
 
     /// Mesh rows per argument set and variant (the readback's layout).

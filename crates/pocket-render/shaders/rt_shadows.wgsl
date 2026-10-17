@@ -36,6 +36,8 @@ fn rt_blocks(hit: RayIntersection) -> bool {
             + rt_uv(caster.base_vertex, rt_indices[i + 2u]) * b.z;
         a *= textureSampleLevel(tex_srgb, tex_sampler, uv, m.base_color_tex, 0.0).a;
     }
+    // As fs_shadow_masked: a transparent caster's opacity leaves out what it transmits.
+    a *= 1.0 - m.transmission;
     return a >= m.alpha_cutoff;
 }
 

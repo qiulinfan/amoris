@@ -3,7 +3,7 @@
 //! frame on the CPU. Each slot keeps the last two ticks' poses so drawing interpolates between
 //! them at the display's rate.
 
-use std::collections::{HashMap, hash_map};
+use std::collections::{BTreeSet, HashMap, hash_map};
 
 use bytemuck::{Pod, Zeroable};
 use glam::{Quat, Vec3};
@@ -21,6 +21,9 @@ pub const VARIANT_MASK: u32 = 7;
 pub const VARIANTS: u32 = 8;
 /// The variant bit of materials decoded from a neural texture (their own forward pipelines).
 pub const NEURAL_VARIANT: u32 = 4;
+/// Drawn by the transparent stage (transparent.rs), sorted on the CPU: the culling pass keeps the
+/// slot out of the camera's list; the shadow cascades draw it as its variant says.
+pub const FLAG_TRANSPARENT: u32 = 64;
 
 /// One instance slot (matches `Instance` in common.wgsl, 80 bytes).
 #[repr(C)]
@@ -43,6 +46,11 @@ pub struct Part {
     pub material: u32,
     /// The pipeline variant its material needs.
     pub variant: u32,
+    /// Its material blends or transmits: the transparent stage draws it.
+    pub transparent: bool,
+    /// Its material can cast a shadow (`MaterialPool::casts`: not a transparent one whose opacity
+    /// never reaches its cutoff); else the slot casts none whatever its look says.
+    pub casts: bool,
     pub local: Option<(Vec3, Quat, Vec3)>,
 }
 
@@ -191,6 +199,8 @@ pub struct Scene {
     pending: usize,
     /// Live, resolved mesh slots whose look is visible, before GPU frustum/occlusion culling.
     visible_instances: usize,
+    /// The live slots drawn by the transparent stage (`FLAG_TRANSPARENT`), visible or not.
+    transparent: BTreeSet<u32>,
 }
 
 /// Entity updates looked up ahead of applying them (`Scene::apply`): enough to overlap many cache
@@ -262,6 +272,11 @@ impl Scene {
             .map_or(&[], |e| e.slots.as_slice())
     }
 
+    /// The live slots whose material blends or transmits (the transparent stage's; in slot order).
+    pub fn transparent_slots(&self) -> &BTreeSet<u32> {
+        &self.transparent
+    }
+
     /// The entity drawn in `slot`.
     pub fn entity_of_slot(&self, slot: u32) -> Option<u64> {
         self.slot_entity
@@ -311,6 +326,9 @@ impl Scene {
                 }
                 let variant = (slot.flags >> VARIANT_SHIFT) & VARIANT_MASK;
                 self.count(slot.mesh * VARIANTS + variant, -1);
+                if slot.flags & FLAG_TRANSPARENT != 0 {
+                    self.transparent.remove(&s);
+                }
             }
             self.slots[s as usize] = InstanceGpu::default();
             self.slot_entity[s as usize] = 0;
@@ -516,7 +534,14 @@ impl Scene {
         let mut slots = Vec::with_capacity(parts.len());
         for part in &parts {
             let s = self.alloc(id);
-            let flags = flags | (part.variant << VARIANT_SHIFT);
+            let mut flags = flags | (part.variant << VARIANT_SHIFT);
+            if part.transparent {
+                flags |= FLAG_TRANSPARENT;
+                self.transparent.insert(s);
+            }
+            if !part.casts {
+                flags &= !FLAG_SHADOW;
+            }
             let (p, r, sc) = compose(&pose, part.local);
             self.slots[s as usize] = InstanceGpu {
                 pos: p,
@@ -630,15 +655,31 @@ mod tests {
                 Vec::new()
             } else {
                 // Every raster mesh variant can contribute to the opaque passes. Models may
-                // expand one entity into several slots, each released or rebuilt together.
-                (0..VARIANTS)
+                // expand one entity into several slots, each released or rebuilt together; a
+                // "glass" model adds a transparent part that casts and one that cannot.
+                let mut parts: Vec<Part> = (0..VARIANTS)
                     .map(|variant| Part {
                         mesh: 0,
                         material: variant,
                         variant,
+                        transparent: false,
+                        casts: true,
                         local: None,
                     })
-                    .collect()
+                    .collect();
+                if look.mesh == "glass" {
+                    for casts in [true, false] {
+                        parts.push(Part {
+                            mesh: 1,
+                            material: 9,
+                            variant: 1,
+                            transparent: true,
+                            casts,
+                            local: None,
+                        });
+                    }
+                }
+                parts
             })
         }
     }
@@ -677,6 +718,77 @@ mod tests {
             },
             assets,
         );
+    }
+
+    #[test]
+    fn transparent_slots_follow_rebuild_hide_remove_and_reset() {
+        let mut scene = Scene::new();
+        let mut assets = Assets { ready: true };
+        let transparent = |scene: &Scene| {
+            scene
+                .transparent_slots()
+                .iter()
+                .copied()
+                .collect::<Vec<_>>()
+        };
+        update(
+            &mut scene,
+            &mut assets,
+            vec![instance(1, "glass", true), instance(2, "model", true)],
+            vec![],
+        );
+        let glass: Vec<u32> = scene.slots_of(1)[VARIANTS as usize..].to_vec();
+        let mut sorted = glass.clone();
+        sorted.sort_unstable();
+        assert_eq!(transparent(&scene), sorted);
+        for &s in scene.slots_of(1) {
+            let flags = scene.slots[s as usize].flags;
+            let is_glass = glass.contains(&s);
+            assert_eq!(flags & FLAG_TRANSPARENT != 0, is_glass);
+            // The part that cannot cast loses the look's shadow flag; the others keep it.
+            let casts = !is_glass || s == glass[0];
+            assert_eq!(flags & FLAG_SHADOW != 0, casts, "slot {s}");
+        }
+        // Hidden, the parts are rebuilt: still transparent (the stage skips invisible slots).
+        update(
+            &mut scene,
+            &mut assets,
+            vec![instance(1, "glass", false)],
+            vec![],
+        );
+        assert_eq!(transparent(&scene).len(), 2);
+        // A look without the transparent parts, then removal and a reset leave none.
+        update(
+            &mut scene,
+            &mut assets,
+            vec![instance(1, "model", true)],
+            vec![],
+        );
+        assert!(transparent(&scene).is_empty());
+        update(
+            &mut scene,
+            &mut assets,
+            vec![instance(3, "glass", true)],
+            vec![],
+        );
+        assert_eq!(transparent(&scene).len(), 2);
+        update(&mut scene, &mut assets, vec![], vec![3]);
+        assert!(transparent(&scene).is_empty());
+        update(
+            &mut scene,
+            &mut assets,
+            vec![instance(4, "glass", true)],
+            vec![],
+        );
+        scene.apply(
+            RenderFrame {
+                reset: true,
+                instances: vec![instance(5, "model", true)],
+                ..RenderFrame::default()
+            },
+            &mut assets,
+        );
+        assert!(transparent(&scene).is_empty());
     }
 
     #[test]
@@ -841,6 +953,8 @@ mod tests {
                         mesh: k as u32,
                         material: 0,
                         variant: 0,
+                        transparent: false,
+                        casts: true,
                         local,
                     })
                     .collect(),

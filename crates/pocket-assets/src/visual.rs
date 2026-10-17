@@ -27,15 +27,22 @@ pub struct Model {
     pub material: String,
     /// Scale along the entity's own axes.
     pub scale: [f64; 3],
-    /// Base color, linear RGBA; multiplies the material's.
+    /// Base color, linear RGBA; multiplies the material's. An alpha below 1 draws the entity
+    /// blended, sorted with the other transparent ones (docs/spec/transparency.md), unless its
+    /// material is alpha-masked (the alpha then scales what the cutoff tests); where the alpha
+    /// times the material's is below 0.5 it casts no shadow.
     pub color: [f64; 4],
     /// 0 dielectric to 1 metal.
     pub metallic: f64,
     /// 0 mirror to 1 rough.
     pub roughness: f64,
-    /// Optional transmission override for path tracing; None preserves the imported material.
+    /// Optional transmission override, 0 to 1 (KHR_materials_transmission's factor); None
+    /// preserves the imported material's. Above 0 the entity is glass: what is behind shows through
+    /// it, in the forward renderer's transparent stage and in the path tracer, and its shadow is
+    /// cut where alpha times (1 - transmission) is below 0.5.
     pub transmission: Option<f64>,
-    /// Optional index of refraction override for path tracing; None preserves the material.
+    /// Optional index of refraction override (KHR_materials_ior); None preserves the material's.
+    /// It sets how much transparent and path-traced surfaces reflect.
     pub ior: Option<f64>,
     /// Emitted light, linear RGB in nits-like units (1 = as bright as a lit white surface).
     pub emissive: [f64; 3],

@@ -39,6 +39,7 @@ mod sky;
 pub mod splat;
 pub mod taa;
 pub mod trace;
+mod transparent;
 mod ui;
 mod upload;
 

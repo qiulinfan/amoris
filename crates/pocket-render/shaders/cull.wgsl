@@ -233,8 +233,12 @@ fn main(@builtin(global_invocation_id) gid: vec3u, @builtin(local_invocation_ind
                 camera_level = clamp(last, coarse, fine);
             }
             for (var v = 0u; v < cull.view_count; v++) {
-                let shadow_ok = v == 0u || (inst.flags & FLAG_SHADOW) != 0u;
-                var in_view = shadow_ok && sphere_in(v, c, r)
+                // The camera draws every instance but the transparent stage's (transparent.rs:
+                // sorted on the CPU, so never in the prepass, the pyramid or the visible set); a
+                // cascade every shadow caster.
+                let view_ok = select((inst.flags & FLAG_SHADOW) != 0u,
+                    (inst.flags & FLAG_TRANSPARENT) == 0u, v == 0u);
+                var in_view = view_ok && sphere_in(v, c, r)
                     && (v == 0u || sphere_in_slice(v - 1u, c, r));
                 if (v == 0u && cull.occlusion != 0u) {
                     // The early pass draws what was visible at the end of the last frame.

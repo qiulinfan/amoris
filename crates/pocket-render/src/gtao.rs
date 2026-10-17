@@ -48,6 +48,8 @@ struct Images {
     raw: wgpu::TextureView,
     blurred: wgpu::TextureView,
     groups: [wgpu::BindGroup; 4],
+    /// `apply_samples`'s group (its layout is its own).
+    apply_samples: Option<wgpu::BindGroup>,
 }
 
 pub struct Gtao {
@@ -55,6 +57,8 @@ pub struct Gtao {
     main: wgpu::RenderPipeline,
     blur: wgpu::RenderPipeline,
     apply: wgpu::RenderPipeline,
+    /// With a multisampled opaque pass, `apply` drawn into its samples (`run`'s `into_samples`).
+    apply_samples: Option<wgpu::RenderPipeline>,
     params: wgpu::Buffer,
     /// A 1x1 stand-in for the normal target when normals come from the depth.
     dummy: wgpu::TextureView,
@@ -69,7 +73,10 @@ impl Gtao {
     /// For a depth target of `samples` samples.
     pub fn new(device: &wgpu::Device, samples: u32, normals: AoNormals) -> Gtao {
         let m = shaders::depth_module(device, "gtao", samples);
-        let pipe = |entry: &str, format: wgpu::TextureFormat, blend: Option<wgpu::BlendState>| {
+        let pipe = |entry: &str,
+                    format: wgpu::TextureFormat,
+                    blend: Option<wgpu::BlendState>,
+                    count: u32| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(entry),
                 layout: None,
@@ -91,7 +98,10 @@ impl Gtao {
                 }),
                 primitive: Default::default(),
                 depth_stencil: None,
-                multisample: Default::default(),
+                multisample: wgpu::MultisampleState {
+                    count,
+                    ..Default::default()
+                },
                 multiview_mask: None,
                 cache: None,
             })
@@ -121,10 +131,13 @@ impl Gtao {
         )
         .create_view(&Default::default());
         Gtao {
-            depth: pipe("fs_depth", wgpu::TextureFormat::R32Float, None),
-            main: pipe("fs_main", wgpu::TextureFormat::R8Unorm, None),
-            blur: pipe("fs_blur", wgpu::TextureFormat::R8Unorm, None),
-            apply: pipe("fs_apply", HDR, Some(multiply)),
+            depth: pipe("fs_depth", wgpu::TextureFormat::R32Float, None, 1),
+            main: pipe("fs_main", wgpu::TextureFormat::R8Unorm, None, 1),
+            blur: pipe("fs_blur", wgpu::TextureFormat::R8Unorm, None, 1),
+            apply: pipe("fs_apply", HDR, Some(multiply), 1),
+            // The same factor for every sample of a pixel: resolving gives the factor times the
+            // resolved color, as `apply` after the resolve does, to rounding.
+            apply_samples: (samples > 1).then(|| pipe("fs_apply", HDR, Some(multiply), samples)),
             params: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("gtao"),
                 size: std::mem::size_of::<Params>() as u64,
@@ -140,8 +153,9 @@ impl Gtao {
     }
 
     /// Darkens the indirect light of the opaque pass's resolved color (`t.raw` with TAA, else
-    /// `t.hdr`). `proj` is this frame's projection (with its jitter); `frame` varies the noise when
-    /// `temporal` (TAA integrates it).
+    /// `t.hdr`), or with `into_samples` of its multisampled color, whose samples a later pass
+    /// resolves (the transparent stage drawn after GTAO, renderer.rs). `proj` is this frame's
+    /// projection (with its jitter); `frame` varies the noise when `temporal` (TAA integrates it).
     #[allow(clippy::too_many_arguments)]
     pub fn run(
         &mut self,
@@ -154,6 +168,7 @@ impl Gtao {
         ortho: bool,
         frame: u32,
         temporal: bool,
+        into_samples: bool,
     ) {
         let Some(share) = &t.share else {
             return;
@@ -184,6 +199,17 @@ impl Gtao {
                     entries,
                 })
             };
+            let apply_entries = [
+                buf.clone(),
+                view(1, &t.depth),
+                view(2, &depth),
+                view(3, &blurred),
+                view(5, &share.view),
+            ];
+            let apply_samples = self
+                .apply_samples
+                .as_ref()
+                .map(|p| group(p, &apply_entries));
             let groups = [
                 group(&self.depth, &[buf.clone(), view(1, &t.depth)]),
                 group(
@@ -191,16 +217,7 @@ impl Gtao {
                     &[buf.clone(), view(2, &depth), view(4, normals)],
                 ),
                 group(&self.blur, &[buf.clone(), view(2, &depth), view(3, &raw)]),
-                group(
-                    &self.apply,
-                    &[
-                        buf,
-                        view(1, &t.depth),
-                        view(2, &depth),
-                        view(3, &blurred),
-                        view(5, &share.view),
-                    ],
-                ),
+                group(&self.apply, &apply_entries),
             ];
             self.images = Some(Images {
                 size,
@@ -208,6 +225,7 @@ impl Gtao {
                 raw,
                 blurred,
                 groups,
+                apply_samples,
             });
             self.holds = Some(t.depth.clone());
         }
@@ -245,14 +263,28 @@ impl Gtao {
             ],
         };
         queue.write_buffer(&self.params, 0, bytemuck::bytes_of(&params));
-        let color = t.raw.as_ref().unwrap_or(&t.hdr_view);
-        let passes: [(&wgpu::RenderPipeline, &wgpu::TextureView, &str); 4] = [
-            (&self.depth, &img.depth, "gtao depth"),
-            (&self.main, &img.raw, "gtao"),
-            (&self.blur, &img.blurred, "gtao blur"),
-            (&self.apply, color, "gtao apply"),
+        // The color to darken: the resolved one, or (`into_samples`) the multisampled one.
+        let samples = match (&t.color.msaa, &self.apply_samples, &img.apply_samples) {
+            (Some(target), Some(p), Some(g)) if into_samples => Some((p, target, g)),
+            _ => None,
+        };
+        let (apply, color, apply_group) = samples.unwrap_or((
+            &self.apply,
+            t.raw.as_ref().unwrap_or(&t.hdr_view),
+            &img.groups[3],
+        ));
+        let passes: [(
+            &wgpu::RenderPipeline,
+            &wgpu::TextureView,
+            &wgpu::BindGroup,
+            &str,
+        ); 4] = [
+            (&self.depth, &img.depth, &img.groups[0], "gtao depth"),
+            (&self.main, &img.raw, &img.groups[1], "gtao"),
+            (&self.blur, &img.blurred, &img.groups[2], "gtao blur"),
+            (apply, color, apply_group, "gtao apply"),
         ];
-        for (k, (pipeline, target, label)) in passes.into_iter().enumerate() {
+        for (k, (pipeline, target, group, label)) in passes.into_iter().enumerate() {
             let ts = profiler.render_scope("gtao");
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some(label),
@@ -274,7 +306,7 @@ impl Gtao {
                 ..Default::default()
             });
             pass.set_pipeline(pipeline);
-            pass.set_bind_group(0, &img.groups[k], &[]);
+            pass.set_bind_group(0, group, &[]);
             pass.draw(0..3, 0..1);
         }
     }

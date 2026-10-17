@@ -304,6 +304,65 @@ pub fn mixed(n: u32) -> RenderFrame {
     sunlit(instances, Vec3::new(-0.45, -1.0, -0.35), true)
 }
 
+/// Transparent instances for the mixed scene (the transparent stage, docs/spec/transparency.md),
+/// ids from `first`: two overlapping blended spheres, which draw as one instanced draw, a glass
+/// cube, and a blended double-sided quad of [`mixed_model`] (a two-sided index list). Register
+/// [`mixed_model`] under [`MIXED_MODEL`] first.
+pub fn transparent_instances(first: u64) -> Vec<InstanceUpdate> {
+    [
+        (
+            "sphere".to_owned(),
+            [-2.0, 1.5, 3.0],
+            [0.9, 0.3, 0.2, 0.5],
+            None,
+        ),
+        (
+            "sphere".to_owned(),
+            [-1.3, 1.7, 3.8],
+            [0.2, 0.5, 0.9, 0.4],
+            None,
+        ),
+        (
+            "cube".to_owned(),
+            [2.0, 1.2, 2.0],
+            [0.9, 0.95, 1.0, 1.0],
+            Some(1.0),
+        ),
+        (
+            format!("{MIXED_MODEL}#double"),
+            [0.5, 1.5, 5.0],
+            [0.3, 0.9, 0.4, 0.5],
+            None,
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(
+        |(k, (mesh, position, color, transmission))| InstanceUpdate {
+            id: first + k as u64,
+            pose: Some(Pose {
+                position,
+                rotation: Quat::from_rotation_y(0.4 * k as f32).to_array(),
+                scale: [1.4; 3],
+            }),
+            look: Some(Look {
+                mesh,
+                material: String::new(),
+                color,
+                metallic: 0.0,
+                roughness: 0.3,
+                transmission,
+                ior: None,
+                emissive: [0.0; 3],
+                cast_shadows: true,
+                visible: true,
+            }),
+            anim: None,
+        },
+    )
+    .collect()
+}
+
 /// The mixed scene's camera: above and in front of the grid of `n` x `n` cells.
 pub fn mixed_camera(n: u32) -> crate::CameraState {
     let d = n as f32 * 3.0;

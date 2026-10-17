@@ -18,6 +18,11 @@
 //! preceded by a pass drawing the same instances depth only, and draws them with an equal-depth
 //! test: each visible sample is shaded once.
 //!
+//! Instances whose material blends or transmits are not in the camera's batches: the transparent
+//! stage (transparent.rs, docs/spec/transparency.md) sorts them on the CPU and draws them in step 4
+//! after the sky, back to front; with GTAO on, in a pass of their own after step 5's GTAO, with the
+//! particles and the editor's grid.
+//!
 //! Step 1 also picks each instance's level of detail per view (lod.rs, docs/spec/lod.md); a level
 //! is a row of the mesh table, so the passes draw levels as they draw meshes.
 //!
@@ -56,6 +61,7 @@ use crate::shadows::{self, CASCADES, SHADOW_SIZE, SLICE_PLANES, ShadowCull};
 use crate::skinning::Skinning;
 use crate::sky::{Sky, SkyParams};
 use crate::trace::{self, FrameTracer, TraceSpec};
+use crate::transparent::Transparent;
 use crate::ui::Ui;
 
 const CLUSTER_X: u32 = 16;
@@ -152,6 +158,12 @@ pub struct FrameStats {
     pub draw_path: &'static str,
     /// Draw calls the shadow and opaque passes issued for the GPU-driven batches.
     pub draw_calls: u32,
+    /// Transparent instances drawn (those in the camera's frustum) and the draw calls the
+    /// transparent stage issued for them (transparent.rs).
+    pub transparent: u32,
+    pub transparent_draws: u32,
+    /// The CPU time of the transparent stage's culling, sorting and list write this frame.
+    pub transparent_ms: f32,
     /// Occlusion culling this frame: `off`, `on`, `auto-on` or `auto-off` (occlusion.rs).
     pub occlusion: &'static str,
     /// The depth prepass this frame: `off`, `on`, `auto-on` or `auto-off` (prepass.rs).
@@ -259,6 +271,8 @@ impl Resolve for Pools<'_> {
                 mesh,
                 material,
                 variant: self.materials.variant(material),
+                transparent: self.materials.transparent(material),
+                casts: self.materials.casts(material),
                 local: None,
             }]);
         }
@@ -298,11 +312,15 @@ impl Resolve for Pools<'_> {
                         mesh,
                         material,
                         variant: 0,
+                        transparent: false,
+                        casts: true,
                         local: Some(*local),
                     });
                 }
                 for p in &mut parts {
                     p.variant = self.materials.variant(p.material);
+                    p.transparent = self.materials.transparent(p.material);
+                    p.casts = self.materials.casts(p.material);
                 }
                 Some(parts)
             }
@@ -328,6 +346,8 @@ impl Resolve for Pools<'_> {
                     mesh,
                     material,
                     variant: self.materials.variant(material),
+                    transparent: self.materials.transparent(material),
+                    casts: self.materials.casts(material),
                     local: None,
                 }])
             }
@@ -411,6 +431,8 @@ pub struct Renderer {
     skinning: Skinning,
     ui: Ui,
     particles: Particles,
+    /// Blended and transmissive instances, sorted and drawn after the sky (transparent.rs).
+    transparent: Transparent,
     /// The wall clock of the last frame (particle steps).
     last_frame_s: Option<f64>,
     /// Editor overlays: gizmo shapes, selection outline, grid and axes.
@@ -493,6 +515,10 @@ struct Binds {
     frame: wgpu::BindGroup,
     /// `frame` with the unjittered view (the entity-id pass, the unjittered depth).
     frame_stable: wgpu::BindGroup,
+    /// `frame` and `frame_stable` over the transparent stage's list (transparent.rs) in place of
+    /// `drawn`.
+    transparent: wgpu::BindGroup,
+    transparent_stable: wgpu::BindGroup,
     lighting: wgpu::BindGroup,
     textures: wgpu::BindGroup,
     sky: wgpu::BindGroup,
@@ -501,6 +527,7 @@ struct Binds {
 /// What [`Renderer::new`] creates concurrently (par.rs).
 struct Built {
     forward: Forward,
+    transparent: wgpu::RenderPipeline,
     splats: crate::splat::Splats,
     taa: crate::taa::Taa,
     gtao: crate::gtao::Gtao,
@@ -640,7 +667,7 @@ const VERTEX_ATTRS: [wgpu::VertexAttribute; 4] =
     wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x4];
 
 /// The mesh pool's vertex layout (pocket_assets::Vertex).
-fn vertex_layout() -> wgpu::VertexBufferLayout<'static> {
+pub(crate) fn vertex_layout() -> wgpu::VertexBufferLayout<'static> {
     wgpu::VertexBufferLayout {
         array_stride: std::mem::size_of::<pocket_assets::Vertex>() as u64,
         step_mode: wgpu::VertexStepMode::Vertex,
@@ -1111,6 +1138,11 @@ impl Renderer {
                 let layout = &layout;
                 s.spawn(move || forward_pair(device, lit_module, layout, format, FORWARD, i))
             });
+            // The transparent stage's (as long: the forward shader's lighting).
+            let transparent = {
+                let layout = &layout;
+                s.spawn(move || crate::transparent::pipeline(device, lit_module, layout, format))
+            };
             let splats = s.spawn(|| crate::splat::Splats::new(gpu));
             let taa = s.spawn(|| crate::taa::Taa::new(device, format.samples));
             let gtao = s.spawn(|| {
@@ -1179,6 +1211,7 @@ impl Renderer {
             let (depth_only, depth_msaa) = depth_only.join();
             Built {
                 forward: forward_set(forward.map(crate::par::Task::join)),
+                transparent: transparent.join(),
                 splats: splats.join(),
                 taa: taa.join(),
                 gtao: gtao.join(),
@@ -1307,6 +1340,7 @@ impl Renderer {
             skinning: built.skinning,
             ui: built.ui,
             particles: built.particles,
+            transparent: Transparent::new(device, built.transparent),
             last_frame_s: None,
             overlays: built.overlays,
             last_pick: None,
@@ -1701,6 +1735,9 @@ impl Renderer {
             let forward = s.spawn(|| {
                 forward_pipelines(device, &self.lit_module, &self.forward_layout, format)
             });
+            let transparent = s.spawn(|| {
+                crate::transparent::pipeline(device, &self.lit_module, &self.forward_layout, format)
+            });
             let sky = s.spawn(|| sky_pipeline(device, &self.sky_module, format));
             let ocean = s.spawn(|| self.ocean.set_format(device, &self.lit_module, format));
             let particles = s.spawn(|| self.particles.set_format(device, format));
@@ -1727,9 +1764,11 @@ impl Renderer {
             ocean.join();
             particles.join();
             overlays.join();
-            (forward.join(), sky.join(), rebuilt)
+            ((forward.join(), transparent.join()), sky.join(), rebuilt)
         });
+        let (forward, transparent) = forward;
         self.forward = forward;
+        self.transparent.set_pipeline(transparent);
         self.sky_pipeline = sky;
         self.prepass.restart();
         if let Some((taa, mut gtao, depth)) = rebuilt {
@@ -2345,7 +2384,7 @@ impl Renderer {
                 b(4, &self.cluster_overflow),
             ],
         });
-        let frame_group = |view: &wgpu::Buffer| {
+        let frame_group = |view: &wgpu::Buffer, drawn: &wgpu::Buffer| {
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("frame"),
                 layout: &self.layouts.frame,
@@ -2354,14 +2393,16 @@ impl Renderer {
                     b(1, &self.instances),
                     b(2, &self.visible),
                     b(3, &self.materials.buffer),
-                    b(4, &self.drawn),
+                    b(4, drawn),
                     b(5, &self.skinning.history.buffer),
                     b(6, &self.moving_bits),
                 ],
             })
         };
-        let frame = frame_group(&self.view_buf.buf);
-        let frame_stable = frame_group(&self.view_stable.buf);
+        let frame = frame_group(&self.view_buf.buf, &self.drawn);
+        let frame_stable = frame_group(&self.view_stable.buf, &self.drawn);
+        let transparent = frame_group(&self.view_buf.buf, &self.transparent.drawn);
+        let transparent_stable = frame_group(&self.view_stable.buf, &self.transparent.drawn);
         let mut lighting_entries = vec![
             wgpu::BindGroupEntry {
                 binding: 0,
@@ -2439,6 +2480,8 @@ impl Renderer {
             cluster,
             frame,
             frame_stable,
+            transparent,
+            transparent_stable,
             lighting,
             textures,
             sky,
@@ -2621,7 +2664,8 @@ impl Renderer {
         }
         let mut planes = [[[0.0f32; 4]; 6]; 5];
         // The jittered frustum and matrix: the depth pyramid holds the jittered depth.
-        for (i, p) in frustum_planes(vp_j, true).iter().enumerate() {
+        let camera_planes = frustum_planes(vp_j, true);
+        for (i, p) in camera_planes.iter().enumerate() {
             planes[0][i] = p.to_array();
         }
         for c in 0..CASCADES {
@@ -2693,11 +2737,36 @@ impl Renderer {
         );
         trace::span(&mut self.trace, "uniforms", ts);
         let ts = trace::mark(&self.trace);
+        // The transparent stage: this frame's blended and transmissive instances in the frustum,
+        // back to front (transparent.rs).
+        let transparent_cpu = web_time();
+        let transparent_grown = self.transparent.prepare(
+            &device,
+            &queue,
+            &self.scene,
+            &self.meshes,
+            &crate::transparent::View {
+                planes: camera_planes,
+                eye: cam.position,
+                forward: cam.rotation * Vec3::NEG_Z,
+                alpha,
+                lod: lod_on.then_some((eye[3], ortho)),
+            },
+        );
+        let transparent_ms = (web_time() - transparent_cpu) as f32 * 1000.0;
+        // With GTAO on, the transparent stage draws after it, in a pass of its own (GTAO darkens
+        // the indirect light of the opaque image only: of what shows through a transparent surface
+        // in proportion, never the surface's own light); else in the opaque pass.
+        let split = self.transparent.any() && self.gtao_mode.on() && self.targets.share.is_some();
+        trace::span(&mut self.trace, "transparent sort", ts);
+        let ts = trace::mark(&self.trace);
 
         let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("frame"),
         });
         self.batches.reset(&mut enc);
+        // The two-sided index lists this frame's double-sided transparent draws need first.
+        self.transparent.encode(&device, &mut enc, &self.meshes);
         // The instance slots `sync` staged for scattering, before any pass reads them.
         if self.upload.pending() {
             let ts = self.profiler.compute_scope("scatter instances");
@@ -2720,8 +2789,9 @@ impl Renderer {
             since_tick as f32,
             self.format.motion && self.taa.tuning.skinned_motion,
         );
-        if self.skinning.history.generation != self.bind_key.4 {
-            // The skinned vertices' history grew: the frame groups hold the old buffer.
+        if self.skinning.history.generation != self.bind_key.4 || transparent_grown {
+            // The skinned vertices' history or the transparent stage's list grew: the frame groups
+            // hold the old buffer.
             self.bind_key.4 = self.skinning.history.generation;
             self.rebind();
         }
@@ -2832,6 +2902,7 @@ impl Renderer {
                 (true, !occl),
                 keep_depth,
                 prepass,
+                split,
             );
             pass.set_bind_group(0, &binds.frame, &[]);
             pass.set_bind_group(1, &binds.lighting, &[]);
@@ -2847,7 +2918,7 @@ impl Renderer {
                 draw_calls += self.batches.draw(&mut pass, 0, variant);
             }
             if !occl {
-                self.draw_after_opaque(&device, &mut pass, binds);
+                self.draw_after_opaque(&device, &mut pass, binds, split);
             }
         }
         let ids = IdPass {
@@ -2856,6 +2927,7 @@ impl Renderer {
             batches: &self.batches,
             meshes: &self.meshes,
             splats: &self.splats,
+            transparent: (&self.transparent, &binds.transparent_stable),
         };
         if picking {
             ids.draw(
@@ -2908,6 +2980,7 @@ impl Renderer {
                 (false, true),
                 keep_depth,
                 prepass,
+                split,
             );
             pass.set_bind_group(0, &binds.frame, &[]);
             pass.set_bind_group(1, &binds.lighting, &[]);
@@ -2922,7 +2995,7 @@ impl Renderer {
                 pass.set_pipeline(p);
                 draw_calls += self.batches.draw(&mut pass, LATE, variant);
             }
-            self.draw_after_opaque(&device, &mut pass, binds);
+            self.draw_after_opaque(&device, &mut pass, binds, split);
             drop(pass);
             if picking {
                 ids.draw(
@@ -2945,7 +3018,9 @@ impl Renderer {
         trace::span(&mut self.trace, "encode occlusion, late opaque", ts);
         let ts = trace::mark(&self.trace);
         // GTAO darkens the indirect light, then TAA blends the frame with its history into the image
-        // the rest of the frame reads (gtao.rs, taa.rs).
+        // the rest of the frame reads (gtao.rs, taa.rs). With the transparent stage after GTAO
+        // (`split`), GTAO darkens the opaque pass's samples, then the stage, the particles and the
+        // grid draw in a pass that loads them and resolves.
         if self.gtao_mode.on() {
             self.gtao.run(
                 &device,
@@ -2957,7 +3032,32 @@ impl Renderer {
                 cam.ortho_height.is_some(),
                 self.frame_count,
                 taa_on,
+                split,
             );
+        }
+        if split {
+            let ts = self.profiler.render_scope("transparent");
+            let color = self.targets.transparent_attachments();
+            let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("transparent"),
+                color_attachments: &color,
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.targets.depth,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        // TAA and the splats read it next.
+                        store: if taa_on || self.splats.active() {
+                            wgpu::StoreOp::Store
+                        } else {
+                            wgpu::StoreOp::Discard
+                        },
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: ts,
+                ..Default::default()
+            });
+            self.draw_transparent_layer(&device, &mut pass, binds);
         }
         if taa_on {
             self.taa.run(
@@ -3067,6 +3167,9 @@ impl Renderer {
             backend: self.gpu.backend_name(),
             draw_path: self.batches.path.name(),
             draw_calls,
+            transparent: self.transparent.stats.instances,
+            transparent_draws: self.transparent.stats.draws,
+            transparent_ms,
             occlusion: self.occlusion.label(),
             prepass: self.prepass.label(),
             occlusion_stats: self.occlusion.last,
@@ -3088,13 +3191,15 @@ impl Renderer {
         self.last.clone()
     }
 
-    /// What the opaque pass draws after the instances: the ocean, the sky, particles and the
-    /// editor's grid.
+    /// What the opaque pass draws after the instances: the ocean, the sky, then (unless
+    /// `layer_later`: the pass after GTAO draws them) the transparent instances back to front,
+    /// particles and the editor's grid.
     fn draw_after_opaque(
         &self,
         device: &wgpu::Device,
         pass: &mut wgpu::RenderPass<'_>,
         binds: &Binds,
+        layer_later: bool,
     ) {
         if self.scene.sea.is_some() {
             self.ocean.draw(pass);
@@ -3102,6 +3207,27 @@ impl Renderer {
         pass.set_pipeline(&self.sky_pipeline);
         pass.set_bind_group(0, &binds.sky, &[]);
         pass.draw(0..3, 0..1);
+        if !layer_later {
+            self.draw_transparent_layer(device, pass, binds);
+        }
+    }
+
+    /// The transparent instances back to front, particles and the editor's grid, over the opaque
+    /// image and tested against its depth.
+    fn draw_transparent_layer(
+        &self,
+        device: &wgpu::Device,
+        pass: &mut wgpu::RenderPass<'_>,
+        binds: &Binds,
+    ) {
+        self.transparent.draw(
+            pass,
+            &binds.transparent,
+            &binds.lighting,
+            &binds.textures,
+            &self.batches,
+            &self.meshes,
+        );
         self.particles.draw(device, pass, &self.view_buf.buf);
         // Editor overlays are never jittered.
         self.overlays.draw_grid(device, pass, &self.view_stable.buf);
@@ -3473,13 +3599,15 @@ fn merge_passes(p: &[(&'static str, f32)]) -> Vec<(&'static str, f32)> {
 }
 
 /// The entity-id pass over one argument set of the camera's batches (the camera's, or the late
-/// one), every variant through the one id pipeline; the last call adds the splats.
+/// one), every variant through the one id pipeline; the last call adds the transparent instances
+/// (with the unjittered frame group over their list) and the splats.
 struct IdPass<'a> {
     frame: &'a wgpu::BindGroup,
     empty: &'a wgpu::BindGroup,
     batches: &'a Batches,
     meshes: &'a MeshPool,
     splats: &'a crate::splat::Splats,
+    transparent: (&'a Transparent, &'a wgpu::BindGroup),
 }
 
 impl IdPass<'_> {
@@ -3498,8 +3626,12 @@ impl IdPass<'_> {
             for variant in 0..VARIANTS {
                 self.batches.draw(pass, set, variant);
             }
-            // Gaussian splats (splat/): after the meshes, against their depth.
             if last {
+                // Transparent instances are picked as the opaque ones are (front faces, depth
+                // written): what shows through them is covered.
+                let (transparent, frame) = self.transparent;
+                transparent.draw_ids(pass, frame, self.batches, self.meshes);
+                // Gaussian splats (splat/): after the meshes, against their depth.
                 self.splats.draw_ids(pass);
             }
         };
@@ -3643,9 +3775,11 @@ impl DepthPrepass<'_> {
 }
 
 /// A pass into the opaque pass's targets (post.rs `Targets::attachments`) and its depth: the first
-/// of `(first, last)` clears them (else they are loaded), the last resolves the multisampled ones;
-/// the depth is kept unless it is the last pass and nothing reads it afterwards (`keep_depth`: the
-/// splats, GTAO, TAA). After the depth prepass (`depth_drawn`) the depth is loaded, never cleared.
+/// of `(first, last)` clears them (else they are loaded), the last resolves the multisampled ones,
+/// or with `before_transparent` all but the color, which keeps its samples for the transparent
+/// stage's pass after GTAO; the depth is kept unless it is the last pass and nothing reads it
+/// afterwards (`keep_depth`: the splats, GTAO, TAA). After the depth prepass (`depth_drawn`) the
+/// depth is loaded, never cleared.
 fn opaque_pass<'e>(
     enc: &'e mut wgpu::CommandEncoder,
     t: &Targets,
@@ -3653,8 +3787,13 @@ fn opaque_pass<'e>(
     (first, last): (bool, bool),
     keep_depth: bool,
     depth_drawn: bool,
+    before_transparent: bool,
 ) -> wgpu::RenderPass<'e> {
-    let color = t.attachments(first, last);
+    let color = if last && before_transparent {
+        t.attachments_before_transparent(first)
+    } else {
+        t.attachments(first, last)
+    };
     enc.begin_render_pass(&wgpu::RenderPassDescriptor {
         label: Some(if last { "opaque" } else { "opaque (early)" }),
         color_attachments: &color,
