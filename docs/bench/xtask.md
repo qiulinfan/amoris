@@ -80,6 +80,36 @@ Document checks count display columns, including East Asian wide characters, pre
 breaks and link definitions, and wrap only overlong paragraphs. Shared contract text is governed
 by its synchronization rules; a local formatter must not rewrite it independently.
 
+## GPU tests on every adapter: the `gpus` step (2026-10-16)
+
+`test` runs the renderer's GPU tests on one adapter and backend, where a test that skips for want of
+a GPU or a capability passes silently. Since 2026-10-16 (the owner's decision, charter 4.6) the
+`gpus` step, after `test`, runs them again on every GPU adapter and native backend of the machine,
+`auto` on every adapter but the default one (whose `auto` run is `test` itself; when `test` did not
+run it in the same check, the step runs it as `default-auto`) and WebGPU's baseline device on the
+default adapter, through `tools/gpu_matrix.py --configs machine --workspace`. A test that failed,
+hung or crashed is `gpus.test_failed`, a test binary that exited with an error no test explains or
+listed no tests `gpus.binary_failed`, a configuration that found no GPU `gpus.no_gpu`, and each
+skipped test the warning `gpus.skipped`. The report lists the skips up to its 20 warnings per step,
+the last of them `gpus.more_skipped` counting the rest when there are more; `out/check/gpus.json`
+lists every one, the summary counts them per configuration, and none counts as a pass. With no
+Python, or no adapter but software ones, the step is skipped with the reason; `--quick` leaves it
+out. The rules are [checks-slice1.md](../spec/checks-slice1.md) 24, the configurations and the runs
+[gpu-matrix.md](gpu-matrix.md) 11.
+
+| `cargo xtask check --only gpus`, R1, 2026-10-16 | First run (`d7329c29` and the step) | After review (`107cf4a7`) |
+|---|---|---|
+| Configurations | `5060-dx12`, `5060-vulkan`, `780m-dx12`, `780m-vulkan`, `780m-auto`, `5060-dx12-minimal` | the same and `default-auto` (`test` did not run) |
+| Tests | 191 per configuration: 1,135 pass, 11 skip (all on the minimal device), 0 failed | 192 per configuration: 1,333 pass, 11 skip (the same), 0 failed, no binary failed |
+| Duration | 8 min 58 s, 11 s of it building nothing and listing | 10 min 4 s, 88 s of it relinking pocket-app's tests (the commit changed its engine version) and listing; 498 s running binaries |
+
+Neither duration is a quiet measurement (other tracks built during the first). The step builds its
+binaries as `test` does (`cargo test --workspace`, with the same C compilers), so after `test` it
+builds nothing; alone, it builds the workspace's tests first. Master's full check at `6af291db` took
+15 min 16 s without the step, already over `check.full`'s 900 s ([budgets.md](../spec/budgets.md)
+5.5); with it a full check would take about 24 minutes on R1 (an estimate: none has run with the
+step yet), and whether that figure moves is the owner's call ([checks.md](../spec/checks.md) 13).
+
 ## Windows script-stack limits
 
 QuickJS-ng's depth check evaluates `down(1000)` with a configured maximum call depth of 200.

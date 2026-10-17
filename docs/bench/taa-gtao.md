@@ -112,6 +112,11 @@ rest within 4–18%.
 | 780M, Vulkan | check scene 2560x1440 | 7.49 | 3.72 | -3.77 | 1.23 |
 | 780M, Vulkan | many_cubes 1.6M | 10.29 | 5.52 | -4.77 | 0.97 |
 
+Pioneer, 2026-10-15: the 780M Vulkan rows were read before the profiler deferred its resolves on
+AMD's Vulkan adapters ([gpu-matrix.md](gpu-matrix.md) 3 a: resolved in their sampling submission,
+that adapter's timestamps read zeros or an earlier submission's values in 70 of 480 probe readings
+on an idle machine, 75 under load); they are not re-measured.
+
 The RTX 5060's TAA difference is −0.15 to +0.40 ms against MSAA, so the mode better under motion
 stays default. GTAO adds 0.14 ms at 1600×900 and 0.15–0.17 ms on many_cubes. On the 780M TAA
 is 0.08–4.77 ms cheaper; D3D12 is almost tied on the light scene but TAA saves 2.24 ms on

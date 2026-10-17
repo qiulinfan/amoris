@@ -85,9 +85,12 @@ submit-to-start offset is valid.
 
 ## Backend checks and deeper captures
 
-Metal and Vulkan through MoltenVK defer query resolve until the sampling submission has
-completed. Slots retain their queries, buffers, labels and frame IDs until asynchronous
-readback finishes. Native Windows D3D12 and Vulkan retain same-submission resolve.
+Metal, Vulkan through MoltenVK and Vulkan on AMD adapters defer query resolve until the
+sampling submission has completed. Slots retain their queries, buffers, labels and frame IDs
+until asynchronous readback finishes. D3D12 and the other native Vulkan drivers retain
+same-submission resolve. On the Radeon 780M with AMD's Vulkan driver, a resolve in the
+sampling submission read zeros or earlier values, so every AMD Vulkan adapter takes the
+deferred path as a precaution.
 The [Metal method](https://github.com/qiulinfan/amoris/blob/main/docs/bench/metal-profiling.md)
 describes the regression checks, calibration and measured uncertainty.
 

@@ -72,8 +72,12 @@ median (minimum; spread), GPU ms. The cost difference is calculated before displ
 
 The 440,634-triangle probe bar exceeds the median second-phase cost by 8–26% across these four
 configurations. The 780M with D3D12 has the least margin. NVIDIA Vulkan remains bimodal: individual
-processes can select different opaque-pass timing clusters, so the median comparison is more
-useful than one pair of starts. Some 780M Vulkan timestamp sums also exceed frame wall time.
+processes can select different opaque-pass timing clusters, so the median comparison is more useful
+than one pair of starts. Some 780M Vulkan timestamp sums also exceed frame wall time. Pioneer,
+2026-10-15: the 780M Vulkan row was read before the profiler deferred its resolves on AMD's Vulkan
+adapters ([gpu-matrix.md](gpu-matrix.md) 3 a: resolved in their sampling submission, that adapter's
+timestamps read zeros or an earlier submission's values in 70 of 480 probe readings on an idle
+machine, 75 under load), which can explain those sums; it is not re-measured.
 
 ## Final threshold check
 

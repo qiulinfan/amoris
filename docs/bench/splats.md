@@ -34,9 +34,13 @@ AC power, with desktop GUI load but no other agent running. Apple tile performan
 
 Five interleaved rounds per adapter and API, each with a fresh process, a five-second startup
 settle, 20 warm-up frames and 60 measured frames. The RTX 5060 was at most 70°C before each round;
-it could warm within a round. Each adapter uses its visual defaults: RTX MSAA plus GTAO, Radeon
-TAA without GTAO. GPU time is the sum of timestamped splat passes, excluding CPU and presentation.
-Cells are the rounds' medians in ms: quads / tiles (**tiles divided by quads**).
+it could warm within a round. Each adapter uses its visual defaults: RTX MSAA plus GTAO, Radeon TAA
+without GTAO. GPU time is the sum of timestamped splat passes, excluding CPU and presentation.
+Pioneer, 2026-10-15: the 780M Vulkan columns were read before the profiler deferred its resolves on
+AMD's Vulkan adapters ([gpu-matrix.md](gpu-matrix.md) 3 a: resolved in their sampling submission,
+that adapter's timestamps read zeros or an earlier submission's values in 70 of 480 probe readings
+on an idle machine, 75 under load); they are not re-measured. Cells are the rounds' medians in ms:
+quads / tiles (**tiles divided by quads**).
 
 | Scene | RTX 5060, D3D12 | RTX 5060, Vulkan | 780M, D3D12 | 780M, Vulkan |
 |---|---|---|---|---|

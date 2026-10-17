@@ -122,6 +122,13 @@ within 10%): culling front faces instead of back faces gives 0.105, the AMD misc
 were checked by putting the defects back. The counters and sample checks alone had passed with the
 culling inverted.
 
+The Radeon 780M with Direct3D 12 traces the current shader wrongly again (0.26, every camera ray
+reaching the sky) when DXC compiles it unoptimized (`-Od -Zi`, wgpu's `DEBUG` instance flag,
+`WGPU_DEBUG=1`), and rightly with the optimized DXIL of release builds; the RTX 5060 is right with
+both (Pioneer, 2026-10-15; no reproduction outside the engine pins it on the driver). Debug builds
+therefore no longer imply that flag on Direct3D 12 (`gpu::instance_flags`): the tests check the DXIL
+that ships, and `WGPU_DEBUG=1` remains for PIX ([measurements](../bench/gpu-matrix.md) 3 d).
+
 Two naga 30 limitations shape the shaders: its SPIR-V and HLSL writers panic (rather than report
 an error) when a `ptr<function, ray_query>` is passed to another function, so queries stay local
 to the function that traces; and every module gets loop bounds and a ray-query initialization
@@ -134,7 +141,8 @@ how the M5 numbers were taken; the GPU tests check that both variants trace the 
 
 The GPU tests (`ray_query_*` in `gi::pt` and `gi::rt`) run by default on every native backend of
 the platform whose adapter has ray queries (Vulkan and Direct3D 12 on Windows, Metal on Apple,
-Vulkan elsewhere) and skip with a note otherwise; `POCKET_ADAPTER=780m` runs them on the Radeon.
+Vulkan elsewhere), or only on the one `POCKET_BACKEND` names (`BackendChoice::under_test`), and
+skip with a note otherwise; `POCKET_ADAPTER=780m` runs them on the Radeon.
 `tools/rt_bench.py` renders every configuration whose M5 report is committed and compares the
 result with it, and times the documented settings per backend.
 

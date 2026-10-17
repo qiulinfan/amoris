@@ -300,3 +300,57 @@ needs `bench/budgets/`, `pocket bench <workload> --json`, `cargo xtask perf --ca
 `--set-unset` (budgets.md 8), the page's `perf` step and `build.web.memory`; the `web` step already
 measures the module's sizes and the start-up, tick, hash, publication and transfer times it would
 report.
+
+## 24. `gpus`: the GPU test matrix (Pioneer, the owner's decision of 2026-10-16)
+
+`test` runs pocket-render's GPU tests once, on the adapter and backend a process opens by default
+(the RTX 5060 with Direct3D 12 on R1, and Vulkan too where a test compares backends), and a test
+that skips work for want of a GPU or a capability passes there silently; wave 4 found tests failing
+on the Radeon 780M while the check passed ([../bench/gpu-matrix.md](../bench/gpu-matrix.md) 2). The
+owner put the matrix of `tools/gpu_matrix.py` into the check (charter 4.6). `gpus` runs after
+`test`, needs `build`, and `--quick` leaves it out. It runs `python tools/gpu_matrix.py --configs
+machine --workspace --json out/check/gpus.json --out out/check/gpus` with the C compilers of the
+other cargo commands (6.3), then reads the JSON:
+
+- **The binaries.** `--workspace` builds them as `cargo test --workspace --release --locked` does,
+  so after `test` nothing is built again. `-p pocket-render` alone gives 29 of the renderer's 175
+  dependencies fewer features than the workspace's other members add (serde's `rc`, glam's
+  `serde`, ...), and would build the renderer's tree a second time.
+- **The configurations.** The lib binary's `gpu::tests::the_machine_adapters_are_listed` prints
+  every adapter of every native backend with its index there, and the adapter each backend opens
+  without `POCKET_ADAPTER`. The tool names an adapter by a word of its name that no other adapter's
+  name contains, a model number first (`5060`, `780m`; `POCKET_ADAPTER` matches part of a name), and
+  runs every adapter on every native backend that lists it; `auto` (no `POCKET_BACKEND`, so the
+  tests that compare backends run each native backend in one process) on every adapter but the
+  default one; and WebGPU's baseline device (`POCKET_GPU_MINIMAL=features,limits,timestamps`) on the
+  default adapter with the platform's default backend. The default adapter's `auto` is `test`'s own
+  configuration, so it is left out when `test` ran it in the same check: its failures fail `test`,
+  and its skips are those of its backends, which that adapter's own configurations show. When `test`
+  did not run (`--only gpus`, `--skip test`), or `POCKET_ADAPTER`, `POCKET_BACKEND` or
+  `POCKET_GPU_MINIMAL` is set (`test` inherits them and opens another device; the tool clears them
+  for its own configurations), the step passes `--default-auto` and the tool runs that configuration
+  as `default-auto`, with neither variable set, exactly as `test` would; the summary says why.
+  Software adapters (device type `Cpu`: WARP's Microsoft Basic Render Driver, llvmpipe) are left out
+  too. On R1 after `test`: `5060-dx12`, `5060-vulkan`, `780m-dx12`, `780m-vulkan`, `780m-auto` and
+  `5060-dx12-minimal`; with `--only gpus`, `default-auto` too.
+- **The verdict.** A test that failed, hung (still running when its binary is killed, after 300 s)
+  or crashed is `gpus.test_failed {config, adapter, test, status, message, log}`. A configuration
+  that opened no adapter, or one of whose tests printed that it found no GPU, is
+  `gpus.no_gpu {config, env, tests}`: a mistyped or vanished adapter must not pass as a column of
+  skips. A test binary that exited with an error none of its tests explains (a crash after its tests
+  reported ok, a listing that timed out), or that listed no tests in a configuration (the step
+  passes neither `--bins` nor `--filter`, so every binary the tool built runs in every
+  configuration), is `gpus.binary_failed {config, adapter, binary, exit, log}`, as `cargo test`'s
+  exit status fails `test` (6.2). A passing test that printed that it left out work for want of a
+  capability (GPU timestamps, ray queries, shader-f16, `indirect-first-instance`, multi-draw) is the
+  warning `gpus.skipped {config, adapter, test, notes}`, listed in the human form up to the report's
+  limit of 20 warnings per step (checks.md 10.1); past it the twentieth is
+  `gpus.more_skipped {count, report}`, which counts the rest, and `out/check/gpus.json` lists every
+  one. A skip is never a pass, and the summary counts the skips per configuration. The tool's exit
+  status is authoritative: a failure it gives no finding for is `check.command_failed`.
+- **Skipped, with the reason.** No Python (`POCKET_PYTHON`, `python` or `python3`), and a machine
+  with no adapter but software ones (the tool exits with 3 and lists what it left out), skip the
+  step instead of making it inconclusive as a missing tool does elsewhere (the owner's rule).
+
+The tool's output and its table are in `out/check/gpus.log`, each binary's log in
+`out/check/gpus/<config>/<binary>.log`, the results in `out/check/gpus.json`.

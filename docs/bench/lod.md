@@ -73,10 +73,14 @@ What the last frame drew, the same on every adapter:
   `levels_give_way_at_the_binding_limit` (419,429 hidden spheres, 64 shown) draws the same 64
   instances and 171,840 cascade triangles with levels asked for as with them off, from 28,525,524
   list bytes; with the fallback taken out it drew 0 instances from 199,678,668.
-- One anomaly: the Radeon 780M's Vulkan `cull` pass timed 8.0 ms with levels off at `t = 0` and
-  0.13 ms with them on, against 0.02 ms on Direct3D 12 either way and 0.01 ms on the RTX 5060; the
+- One anomaly: the Radeon 780M's Vulkan `cull` pass timed 8.0 ms with levels off at `t = 0` and 0.13
+  ms with them on, against 0.02 ms on Direct3D 12 either way and 0.01 ms on the RTX 5060; the
   culling work is the same up to the level loop, so this is probably a timestamp taken while the
-  previous frame's draws still ran. Not investigated.
+  previous frame's draws still ran. Not investigated. Pioneer, 2026-10-15: more likely the
+  profiler's same-submission resolve, since deferred on AMD's Vulkan adapters
+  ([gpu-matrix.md](gpu-matrix.md) 3 a: resolved in their sampling submission, that adapter's
+  timestamps read zeros or an earlier submission's values in 70 of 480 probe readings on an idle
+  machine, 75 under load); not re-measured.
 
 **With occlusion culling's auto mode** (historical
 [bench-native-t05-auto.json](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/lod/bench-native-t05-auto.json),

@@ -18,7 +18,9 @@ callback only marks a slot ready. The rendering
 thread batches those slots' resolves into a later submission, then maps their readbacks. Busy
 slots cannot accept new timestamp writes. Normal rendering never waits for GPU completion;
 trace export drains both sampling and resolve submissions. Other backends retain resolve in the
-sampling encoder; native Vulkan drivers and D3D12 on Windows keep that path.
+sampling encoder; native Vulkan drivers and D3D12 on Windows keep that path, except Vulkan on AMD
+adapters, where the Radeon 780M read zeros and earlier values there too and which defer like Metal
+(Pioneer, 2026-10-15, [gpu-matrix.md](gpu-matrix.md) 3 a).
 The backend-specific deferral can be removed when an upstream counter-resolve fix passes the
 same-frame regression on the supported Apple devices; query-slot ownership still applies.
 

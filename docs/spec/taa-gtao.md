@@ -281,6 +281,16 @@ Elsewhere:
   clip removes it); a wider box where nothing moved keeps it but delays moving shadows on still
   surfaces (docs/bench/taa-gtao.md). Thin-feature locks (as FSR 2 does) are not implemented.
 - No reactive mask for particles or other surfaces without motion vectors.
+- The far edge of a ground plane against the sky does not settle under TAA at one sample (Pioneer,
+  2026-10-15, [gpu-matrix.md](../bench/gpu-matrix.md) 3 c). In neural_material's walker view
+  (320×180, `demo::neural_scene`, a fixed time), raising the ground's color by 0.1% moved edge
+  pixels by up to 29/255 on the Radeon 780M and 10 on the RTX 5060 after three frames; changes of
+  0.1% to 1% moved them by up to 39, over up to 175 pixels, after twenty. Multisampling moved none
+  by more than 1. Depth and motion do not depend on the color, so some step of the resolve answers
+  it discontinuously (the neighborhood clip is the first suspect). No test catches it: the neural
+  material comparisons run under multisampling since that day. Reproduce by rendering that scene
+  with `Antialiasing::Taa` for 3 and 20 frames at colors 1 and 1.001 times the base and comparing
+  the frames.
 - GTAO has no measured ground truth here (a ray-traced AO reference on the ray-query backends would
   give one); its radius and power follow XeGTAO's defaults loosely and were judged by eye. Flat
   walls at grazing angles lose about 2%; under TAA the image comes out about 0.5% darker than GTAO

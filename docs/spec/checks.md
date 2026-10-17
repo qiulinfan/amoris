@@ -63,7 +63,7 @@ pocket check <project> [--json] [--seeds N,...] [--only CHECK,...]
 | Flag | Meaning |
 |---|---|
 | `--json` | stdout carries exactly one JSON document, the report; progress goes to stderr |
-| `--quick` | the code-health steps, build, tests (without those marked `#[ignore]`), `wasm`, `types`, and the project checks at the first seed only; no `web`, no `perf`. For an agent's inner loop |
+| `--quick` | the code-health steps, build, tests (without those marked `#[ignore]`), `wasm`, `types`, and the project checks at the first seed only; no `gpus`, no `web`, no `perf`. For an agent's inner loop |
 | `--only`, `--skip` | step names (4); an unknown name is refused with a suggestion and exit 2 (charter 3.4) |
 | `--jobs N` | project checks run at once (default 2, chosen for the about 4 GB this machine has free while other agents work; not measured) |
 | `--record` | also prints the commit trailer line (12) |
@@ -94,6 +94,11 @@ is reported before the release build. Every step that can run does run after a f
 step names the step it waited on. Steps run one after another, except that `projects` runs up to
 `--jobs` project processes at once; `perf` runs alone and last, with nothing else of the check
 running (9).
+
+2026-10-16 (Pioneer, the owner's decision; charter 4.6): `gpus` runs after `test` and needs `build`.
+It runs the renderer's GPU tests on every GPU adapter and native backend of the machine, and the
+default adapter's `auto` configuration too when `test` did not run it in the same check, and reports
+every test that skipped part of its work (checks-slice1.md 24); `--quick` leaves it out.
 
 ## 5. Code health
 
@@ -588,19 +593,19 @@ FAIL  (1 failed, 0 inconclusive, 10 passed) in 6m 12s; report: out/check/report.
 All codes of this specification, by step: `deps.crate_unlisted`, `deps.crate_missing`,
 `deps.edge_not_allowed`, `deps.external_not_allowed`, `deps.feature_not_allowed`,
 `deps.feature_missing`, `deps.cflags_missing`, `deps.rustflags_not_allowed`, `deps.vendor_stale`,
-the warning `deps.vendor_unchecked`;
-`fmt.unformatted`; `clippy.warning`; `build.failed`; `gen.stale`, `gen.orphan`;
-`test.failed`; `wasm.check_failed`; `types.error`, `types.timeout`;
-`determinism.diverged`; `fork.not_identical`, `fork.branch_differs`, `fork.original_changed`,
-`fork.branch_inputs_ineffective`; `replay.diverged`, `replay.divergence_too_early`;
-`reload.diverged`, `reload.not_performed`; `web.test_failed`, `web.cross_target_diverged`,
-`web.replay_diverged`, `web.threads_failed`, `web.shader_rejected`, `web.frame_empty`,
-`web.isolation_required`; the warnings `perf.budget_exceeded`, `perf.scale_below_floor`,
-`perf.capacity_dropped`, `perf.noisy`, `perf.not_reference`, `perf.wrong_compiler`,
-`perf.on_battery`, `perf.budget_unset` and `perf.drift` (every `perf` code is a warning, 9);
-`check.tool_missing`, `check.input_refused`, `check.control_passed`, `check.control_wrong_failure`,
-`check.usage`, `check.config_invalid`; and the `contract.*` names of 8.7. They follow the error
-protocol's dotted `<family>.<reason>` form (shared/contract/errors.md).
+the warning `deps.vendor_unchecked`; `fmt.unformatted`; `clippy.warning`; `build.failed`;
+`gen.stale`, `gen.orphan`; `test.failed`; `gpus.test_failed`, `gpus.binary_failed`, `gpus.no_gpu`,
+the warnings `gpus.skipped` and `gpus.more_skipped`; `wasm.check_failed`; `types.error`,
+`types.timeout`; `determinism.diverged`; `fork.not_identical`, `fork.branch_differs`,
+`fork.original_changed`, `fork.branch_inputs_ineffective`; `replay.diverged`,
+`replay.divergence_too_early`; `reload.diverged`, `reload.not_performed`; `web.test_failed`,
+`web.cross_target_diverged`, `web.replay_diverged`, `web.threads_failed`, `web.shader_rejected`,
+`web.frame_empty`, `web.isolation_required`; the warnings `perf.budget_exceeded`,
+`perf.scale_below_floor`, `perf.capacity_dropped`, `perf.noisy`, `perf.not_reference`,
+`perf.wrong_compiler`, `perf.on_battery`, `perf.budget_unset` and `perf.drift` (every `perf` code is
+a warning, 9); `check.tool_missing`, `check.input_refused`, `check.control_passed`,
+`check.control_wrong_failure`, `check.usage`, `check.config_invalid`; and the `contract.*` names of
+8.7. They follow the error protocol's dotted `<family>.<reason>` form (shared/contract/errors.md).
 
 ## 11. Exit codes
 
@@ -612,12 +617,12 @@ protocol's dotted `<family>.<reason>` form (shared/contract/errors.md).
 | 3 | nothing failed, but at least one step was inconclusive (a tool missing) |
 
 The codes are checked in that order: 2 before anything runs, then 1 if any step failed, then 3.
-`--quick` skips `web` and `perf` by design, and skipping by request is not inconclusive. The `perf`
-step is never `Fail` or `Inconclusive` (9), so no performance number sets the exit code, on R1 or on
-any other machine: a CI host or another developer machine reaches exit 0 when everything else
-passes, which is charter 3.7's CI form. An inconclusive check is not a pass, since a check without a
-verdict does not meet charter 10 ("every check has a verdict"); no slice is accepted or refused on a
-performance figure (charter 3.10).
+`--quick` skips `gpus`, `web` and `perf` by design, and skipping by request is not inconclusive. The
+`perf` step is never `Fail` or `Inconclusive` (9), so no performance number sets the exit code, on
+R1 or on any other machine: a CI host or another developer machine reaches exit 0 when everything
+else passes, which is charter 3.7's CI form. An inconclusive check is not a pass, since a check
+without a verdict does not meet charter 10 ("every check has a verdict"); no slice is accepted or
+refused on a performance figure (charter 3.10).
 
 ## 12. Recording with every commit
 
@@ -637,7 +642,11 @@ file to keep in sync. The full report stays in `out/check/report.json` on the ma
   `check.perf` (the `perf` step, which runs alone) on the reference machine, and `build.web.memory`,
   the peak resident memory of the web-profile build, reported against the reference figures of
   `budgets.md`, 5.5, all first measured in slice 1's first run; master's whole suite took 8 to 12
-  minutes (`docs/development.md`, Tests).
+  minutes (`docs/development.md`, Tests). 2026-10-16 (Pioneer): the full check at master `6af291db`,
+  its builds after the wave-6 merges included, took 15 min 16 s on R1, already over `check.full`'s
+  900 s, without the `gpus` step (charter 4.6), which adds 9 to 10 minutes there
+  (docs/bench/gpu-matrix.md 11); neither is a quiet measurement. Whether the figure moves is the
+  owner's call (budgets.md 8.3); `--skip gpus` leaves the step out.
 - Memory: about 4 GB of this machine's 15 GB are free while other agents work, so builds follow
   `CARGO_BUILD_JOBS`, project checks run `--jobs` at a time, and the browser runs alone.
 - Every step's command, working directory and environment are written at the top of its log, so a
@@ -666,4 +675,5 @@ file to keep in sync. The full report stays in `out/check/report.json` on the ma
    check's pieces; 16, `check.toml` as built; 17, how the four checks run; 18, codes added; 19, the
    Rust-side controls; 20, the cross-build variant as built; 21, what `pocket check` refuses and
    what its children may answer; 22, the web step as built; 23, a full run on Windows (Pioneer,
-   2026-10-09: what it fixed, and what `contract` and `perf` still need).
+   2026-10-09: what it fixed, and what `contract` and `perf` still need); 24, the `gpus` step
+   (Pioneer, the owner's decision of 2026-10-16).
