@@ -103,6 +103,7 @@ export async function createViewport(canvas, options = {}) {
     resize(w, h) { vp.resize(w, h); },
     demoCubes(count, dense) { vp.demo_cubes(count, dense, performance.now()); },
     demoMixed(n) { vp.demo_mixed(n, performance.now()); },
+    demoTransparent(n) { vp.demo_transparent(n, performance.now()); },
     demoCubesCamera(frame, dense) { vp.demo_cubes_camera(frame, dense); },
     demoOccluders() { vp.demo_occluders(performance.now()); },
     demoNeural(path, view = 0) { vp.demo_neural(path, view, performance.now()); },

@@ -423,6 +423,22 @@ impl Viewport {
             .set_camera_override(Some(pocket_render::demo::mixed_camera(n)));
     }
 
+    /// Loads the mixed scene with transparent instances (`demo::transparent_instances`: blended,
+    /// glass and double-sided; the transparent stage's check, docs/spec/transparency.md).
+    pub fn demo_transparent(&mut self, n: u32, now_ms: f64) {
+        self.renderer.add_model(
+            pocket_render::demo::MIXED_MODEL,
+            &pocket_render::demo::mixed_model(),
+        );
+        let mut frame = pocket_render::demo::mixed(n);
+        frame
+            .instances
+            .extend(pocket_render::demo::transparent_instances(2000));
+        self.renderer.apply(frame, now_ms / 1000.0);
+        self.renderer
+            .set_camera_override(Some(pocket_render::demo::mixed_camera(n)));
+    }
+
     /// Occlusion culling of the camera view: `off`, `on` or `auto` (the default; anything else
     /// leaves it as it is).
     pub fn set_occlusion(&mut self, mode: &str) {

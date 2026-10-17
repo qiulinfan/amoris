@@ -55,6 +55,7 @@ try {
   });
   if (q.get("demo") === "cubes") vp.demoCubes(Number(q.get("count") || 1600000), dense);
   if (q.get("demo") === "mixed") vp.demoMixed(Number(q.get("n") || 8));
+  if (q.get("demo") === "transparent") vp.demoTransparent(Number(q.get("n") || 8));
   if (q.get("demo") === "occluders") vp.demoOccluders();
   if (q.get("demo") === "lod") {
     // Making the meshes and their levels (pocket_assets::lod) runs here, on the page's thread.
