@@ -17,7 +17,6 @@
 //!   what the opaque pass holds (alpha-tested holes, the sea).
 //! - A one-shot capture under TAA is settled; camera cuts and resizes drop the history.
 
-use glam::{Quat, Vec3};
 use pocket_assets::frame::{AnimView, InstanceUpdate, Look, Pose, RenderFrame, SeaView, SplatView};
 use pocket_assets::mesh::{
     AnimationClip, Channel, ChannelPath, ImageData, Interpolation, MaterialData, MeshData,
@@ -26,6 +25,7 @@ use pocket_assets::mesh::{
 use pocket_render::demo::{AA_MODEL, aa_model, aa_scene};
 use pocket_render::splat::{RawSplat, SplatCloud, SplatRaster};
 use pocket_render::{Antialiasing, AoNormals, BackendChoice, CameraState, Gpu, Gtao, Renderer};
+use glam::{Quat, Vec3};
 
 const W: u32 = 256;
 const H: u32 = 144;
@@ -33,12 +33,29 @@ const DT: f64 = 1.0 / 60.0;
 /// The orthographic view's height in metres: a pixel is `ORTHO / H` metres.
 const ORTHO: f32 = 9.0;
 
-fn gpu() -> Option<Gpu> {
+// These tests each keep several renderers alive. Concurrent test devices on the M5 lose the
+// Metal device (DeviceError::Unexpected); serialize complete cases, not just device creation.
+// Keep every image assertion and revisit this isolation when parallel devices run reliably.
+fn gpu() -> Option<(std::sync::MutexGuard<'static, ()>, Gpu)> {
+    static CASE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let case = CASE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let gpu = Gpu::headless(BackendChoice::from_env()).ok();
+    if let Some(gpu) = &gpu {
+        gpu.device.set_device_lost_callback(|reason, message| {
+            if reason != wgpu::DeviceLostReason::Destroyed {
+                panic!("TAA device lost: {reason:?}: {message}");
+            }
+        });
+        gpu.device.on_uncaptured_error(std::sync::Arc::new(|error| {
+            panic!("TAA GPU validation failed: {error}");
+        }));
+    }
     if gpu.is_none() {
         eprintln!("no GPU: skipped");
     }
-    gpu
+    gpu.map(|gpu| (case, gpu))
 }
 
 fn renderer(gpu: &Gpu, aa: Antialiasing, gtao: Gtao) -> Renderer {
@@ -96,7 +113,7 @@ fn psnr(a: &[f32], b: &[f32], columns: std::ops::Range<u32>, rows: std::ops::Ran
 
 #[test]
 fn taa_reprojects_a_whole_pixel_pan_exactly() {
-    let Some(gpu) = gpu() else { return };
+    let Some((_case, gpu)) = gpu() else { return };
     // One sample, and four (the multisampled depth, motion and color resolved for TAA).
     for aa in [Antialiasing::Taa, Antialiasing::MsaaTaa] {
         whole_pixel_pan(&gpu, aa);
@@ -225,7 +242,7 @@ fn board_run(
 
 #[test]
 fn object_motion_reprojects_a_moving_board_exactly() {
-    let Some(gpu) = gpu() else { return };
+    let Some((_case, gpu)) = gpu() else { return };
     // One sample, and four (the motion target multisampled and resolved).
     for aa in [Antialiasing::Taa, Antialiasing::MsaaTaa] {
         moving_board(&gpu, aa);
@@ -267,7 +284,7 @@ fn moving_board(gpu: &Gpu, aa: Antialiasing) {
 
 #[test]
 fn the_entity_id_pass_is_not_jittered() {
-    let Some(gpu) = gpu() else { return };
+    let Some((_case, gpu)) = gpu() else { return };
     let coverage = |aa: Antialiasing| {
         let mut r = renderer(&gpu, aa, Gtao::Off);
         r.apply(still_scene(1.0), 0.0);
@@ -298,7 +315,7 @@ fn the_entity_id_pass_is_not_jittered() {
 
 #[test]
 fn gtao_darkens_only_indirect_light() {
-    let Some(gpu) = gpu() else { return };
+    let Some((_case, gpu)) = gpu() else { return };
     let image = |gtao: Gtao, ambient: f32| {
         let mut r = renderer(&gpu, Antialiasing::Msaa, gtao);
         r.apply(still_scene(ambient), 0.0);
@@ -348,7 +365,7 @@ fn gtao_darkens_only_indirect_light() {
 
 #[test]
 fn camera_cuts_and_resizes_drop_the_history() {
-    let Some(gpu) = gpu() else { return };
+    let Some((_case, gpu)) = gpu() else { return };
     let mut r = renderer(&gpu, Antialiasing::Taa, Gtao::Off);
     r.apply(still_scene(1.0), 0.0);
     r.set_camera_override(Some(pocket_render::demo::aa_camera(0, false)));
@@ -471,7 +488,7 @@ fn sunk_run(r: &mut Renderer, sea: bool, slide: bool, frames: u64) -> Vec<f32> {
 /// motion of the surface under it, GTAO darkens the water and TAA moves it with a hidden object.
 #[test]
 fn the_sea_hides_what_lies_under_it() {
-    let Some(gpu) = gpu() else { return };
+    let Some((_case, gpu)) = gpu() else { return };
     let msaa = |gtao: Gtao, sea: bool| {
         let mut r = renderer(&gpu, Antialiasing::Msaa, gtao);
         sunk_run(&mut r, sea, false, 3)
@@ -533,7 +550,7 @@ fn psnr8(a: &[u8], reference: &[f64]) -> f64 {
 /// above it, and the same capture taken twice is the same image.
 #[test]
 fn a_still_capture_settles_taa() {
-    let Some(gpu) = gpu() else { return };
+    let Some((_case, gpu)) = gpu() else { return };
     let camera = pocket_render::demo::aa_camera(0, false);
     let t = 0.5;
     let fresh = |aa: Antialiasing| {
@@ -578,7 +595,7 @@ fn a_still_capture_settles_taa() {
 /// opaque image before compositing: splats draw into a separate copy, never into this texture.
 fn splat_frames(
     gpu: &Gpu,
-    aa: Antialiasing,
+    (aa, scale): (Antialiasing, f32),
     raster: SplatRaster,
     draw: bool,
     n: u32,
@@ -596,6 +613,7 @@ fn splat_frames(
         }
     }
     let mut r = renderer(gpu, aa, Gtao::Off);
+    r.set_render_scale(scale);
     r.splats
         .insert("wall", &SplatCloud::from_raw(&wall, 0, &[]));
     r.splats.raster = raster;
@@ -715,19 +733,26 @@ fn splat_history(gpu: &Gpu, r: &mut Renderer) -> Vec<f32> {
 /// hold what the opaque pass holds: the chain link's holes, the sea.
 #[test]
 fn splats_behind_meshes_are_stable_under_taa() {
-    let Some(gpu) = gpu() else { return };
+    let Some((_case, gpu)) = gpu() else { return };
     let n = 40u32;
     for raster in [SplatRaster::Quads, SplatRaster::Tiles] {
         let mut msaa_covered = 0;
         let mut near_splats = vec![false; (W * H) as usize];
-        for aa in [Antialiasing::Msaa, Antialiasing::Taa, Antialiasing::MsaaTaa] {
-            let (with, history) = splat_frames(&gpu, aa, raster, true, n);
+        // Upscaled too (a render scale below 1): the splats and their depth stay at the output's
+        // size, drawn over the upscaled history's copy.
+        for (aa, scale) in [
+            (Antialiasing::Msaa, 1.0),
+            (Antialiasing::Taa, 1.0),
+            (Antialiasing::MsaaTaa, 1.0),
+            (Antialiasing::Taa, 0.5),
+        ] {
+            let (with, history) = splat_frames(&gpu, (aa, scale), raster, true, n);
             // Independently rendered TAA histories can diverge by a half-float step on Metal,
             // even with the original profiler. Measure compositing against the same frame's
             // opaque history, so that unrelated background drift cannot look like splat output.
             // MSAA has no history and retains its separately rendered transparent-splat control.
             let without = if aa == Antialiasing::Msaa {
-                splat_frames(&gpu, aa, raster, false, n).0
+                splat_frames(&gpu, (aa, scale), raster, false, n).0
             } else {
                 history
             };
@@ -746,22 +771,39 @@ fn splats_behind_meshes_are_stable_under_taa() {
             let covered = last.iter().filter(|v| v.abs() > 0.05).count();
             assert!(
                 covered > (W * H / 40) as usize,
-                "{raster:?} {aa:?}: the splats cover only {covered} pixels"
+                "{raster:?} {aa:?} x{scale}: the splats cover only {covered} pixels"
             );
             // Pixels whose contribution changed by more than 0.05 from one frame to the next, over
-            // the last 8 frames (TAA has long converged; nothing moves).
-            let flicker: usize = (n as usize - 8..n as usize)
-                .map(|k| {
-                    c[k].iter()
-                        .zip(&c[k - 1])
-                        .filter(|(a, b)| (*a - *b).abs() > 0.05)
-                        .count()
-                })
-                .sum();
-            eprintln!("{raster:?} {aa:?}: {covered} pixels of splats, {flicker} flickering");
+            // the last 8 frames (TAA has long converged; nothing moves). Upscaled, the shown value
+            // must change too: under splats that hide it, the upscaled history moves a little from
+            // frame to frame (its own stability: 3 pixels at 0.5), which changes the contribution,
+            // not the image. Splats tested against a jittered depth change both: 787 pixels at
+            // 0.5, 572 at 1 (docs/spec/taa-gtao.md 8).
+            let shown: Vec<Vec<f32>> = with
+                .iter()
+                .map(|f| f.chunks(4).map(lum).collect())
+                .collect();
+            let changed = |shown_too: bool| -> usize {
+                (n as usize - 8..n as usize)
+                    .map(|k| {
+                        (0..c[k].len())
+                            .filter(|&i| {
+                                (c[k][i] - c[k - 1][i]).abs() > 0.05
+                                    && (!shown_too || (shown[k][i] - shown[k - 1][i]).abs() > 0.05)
+                            })
+                            .count()
+                    })
+                    .sum()
+            };
+            let flicker = changed(scale < 1.0);
+            eprintln!(
+                "{raster:?} {aa:?} x{scale}: {covered} pixels of splats, {flicker} flickering ({} \
+                 by the contribution alone)",
+                changed(false)
+            );
             assert_eq!(
                 flicker, 0,
-                "{raster:?} {aa:?}: splats flickered on {flicker} pixels of a still frame"
+                "{raster:?} {aa:?} x{scale}: splats flickered on {flicker} pixels of a still frame"
             );
             // As much of the wall shows as with multisampling (the panel's holes, not the sea).
             if aa == Antialiasing::Msaa {
@@ -787,12 +829,12 @@ fn splats_behind_meshes_are_stable_under_taa() {
                 .count();
             assert_eq!(
                 changed, 0,
-                "{raster:?} {aa:?}: drawing splats changed {changed} pixels away from them"
+                "{raster:?} {aa:?} x{scale}: drawing splats changed {changed} pixels away from them"
             );
             let off = covered.abs_diff(msaa_covered) as f64 / msaa_covered as f64;
             assert!(
                 off < 0.03,
-                "{raster:?} {aa:?}: {covered} pixels of splats, {msaa_covered} with MSAA"
+                "{raster:?} {aa:?} x{scale}: {covered} pixels of splats, {msaa_covered} with MSAA"
             );
         }
     }
@@ -956,7 +998,7 @@ fn skinned_run(gpu: &Gpu, frames: u64, moving: bool, skinned_motion: bool) -> Ve
 /// board standing there; without the skinned motion its history comes from the wrong place.
 #[test]
 fn skinned_motion_reprojects_a_sliding_board_exactly() {
-    let Some(gpu) = gpu() else { return };
+    let Some((_case, gpu)) = gpu() else { return };
     let frames = 24u64;
     let still = skinned_run(&gpu, frames, false, true);
     let moving = skinned_run(&gpu, frames, true, true);
@@ -1004,7 +1046,7 @@ fn still_view(gpu: &Gpu, aa: Antialiasing, frames: u32) -> Vec<f32> {
 /// and the history accumulates what they miss.
 #[test]
 fn msaa_with_taa_converges_beyond_msaa() {
-    let Some(gpu) = gpu() else { return };
+    let Some((_case, gpu)) = gpu() else { return };
     // The reference: the mean of 64 jittered one-sample frames.
     let mut jittered = renderer(&gpu, Antialiasing::Taa, Gtao::Off);
     jittered.taa_mut().mode = pocket_render::taa::TaaMode::Jittered;
@@ -1035,7 +1077,7 @@ fn msaa_with_taa_converges_beyond_msaa() {
 /// front and from the side (where view space is far from world space).
 #[test]
 fn gtao_normals_from_the_target_match_the_depth() {
-    let Some(gpu) = gpu() else { return };
+    let Some((_case, gpu)) = gpu() else { return };
     let side = CameraState::look_at(Vec3::new(4.0, 2.6, 0.5), Vec3::new(-5.0, 0.8, -1.2));
     for camera in [pocket_render::demo::aa_camera(0, false), side] {
         gtao_normal_sources(&gpu, camera);
@@ -1075,5 +1117,218 @@ fn gtao_normal_sources(gpu: &Gpu, camera: CameraState) {
         (0.8..1.25).contains(&ratio) && apart < 0.5 * total,
         "the normal target darkens {ratio:.3} times as much, {:.1}% apart",
         100.0 * apart / total
+    );
+}
+
+// --- Upscaling (a render scale below 1; docs/spec/taa-gtao.md 4.1) ----------------------------
+
+/// The mean of `n` jittered one-sample frames of the check scene's still view at the output's size:
+/// a supersampled reference.
+fn jittered_mean(gpu: &Gpu, n: u32) -> Vec<f32> {
+    let mut jittered = renderer(gpu, Antialiasing::Taa, Gtao::Off);
+    jittered.taa_mut().mode = pocket_render::taa::TaaMode::Jittered;
+    jittered.apply(still_scene(1.0), 0.0);
+    jittered.set_camera_override(Some(pocket_render::demo::aa_camera(0, false)));
+    let mut mean = vec![0.0f32; (W * H * 4) as usize];
+    for f in 1..=n {
+        for (m, v) in mean
+            .iter_mut()
+            .zip(jittered.capture_hdr(f64::from(f) * DT).2)
+        {
+            *m += v / n as f32;
+        }
+    }
+    mean
+}
+
+/// The check scene's still view at render scale `scale` with `aa`: the HDR images after each of
+/// `frames` frames.
+fn scaled_view(gpu: &Gpu, aa: Antialiasing, scale: f32, frames: u32) -> Vec<Vec<f32>> {
+    let mut r = renderer(gpu, aa, Gtao::Off);
+    r.set_render_scale(scale);
+    r.apply(still_scene(1.0), 0.0);
+    r.set_camera_override(Some(pocket_render::demo::aa_camera(0, false)));
+    (1..=frames)
+        .map(|f| {
+            let (w, h, img) = r.capture_hdr(f64::from(f) * DT);
+            assert_eq!((w, h), (W, H), "the image is the output's size");
+            img
+        })
+        .collect()
+}
+
+/// Below a render scale of 1 the opaque pass draws smaller and TAA reconstructs the output: on the
+/// still check scene the history gains on its first frame (one jittered sample of the smaller
+/// image, reconstructed) as each output pixel accumulates the samples that fall near it, and ends
+/// close to TAA at the output's size.
+#[test]
+fn upscaling_converges_on_a_still_scene() {
+    let Some((_case, gpu)) = gpu() else { return };
+    let reference = jittered_mean(&gpu, 64);
+    let score = |img: &[f32]| psnr(img, &reference, 0..W, 0..H);
+    let full = score(&scaled_view(&gpu, Antialiasing::Taa, 1.0, 64)[63]);
+    let scores: Vec<(f32, f64, f64)> = [0.5f32, 0.67]
+        .into_iter()
+        .map(|scale| {
+            let frames = scaled_view(&gpu, Antialiasing::Taa, scale, 64);
+            let (first, last) = (score(&frames[0]), score(&frames[63]));
+            eprintln!(
+                "scale {scale}: first frame {first:.1} dB, frame 64 {last:.1} dB (scale 1: \
+                 {full:.1})"
+            );
+            (scale, first, last)
+        })
+        .collect();
+    for (scale, first, last) in scores {
+        assert!(
+            last > first + UPSCALE_GAIN_DB,
+            "scale {scale}: frame 64 at {last:.1} dB, its first frame {first:.1} dB"
+        );
+        assert!(
+            last > full - UPSCALE_LOSS_DB[usize::from(scale > 0.6)],
+            "scale {scale}: frame 64 at {last:.1} dB, scale 1 at {full:.1} dB"
+        );
+    }
+}
+
+/// How much the upscaled history gains over its first frame, at least; how far below TAA at the
+/// output's size it may end at 0.5 and at 0.67. Measured with the wider box where nothing moved
+/// (`TaaTuning::upscale_still_gamma`, on since 2026-10-16): 9.6 to 10.0 dB gained at 0.5 and 10.4 to
+/// 10.7 at 0.67, 3.4 to 3.7 and 1.2 to 2.0 dB lost (both GPUs and APIs). A reconstruction reading
+/// the jitter with the wrong sign gains 0.7 to 2.4 dB; a share not weighted by the samples gains 5.0
+/// to 5.2 dB at 0.5 and loses 8.1 to 8.4, which the earlier bounds (4.5 dB gained, 9.5 and 7.5
+/// lost) let pass once the box widened (docs/spec/taa-gtao.md 8).
+const UPSCALE_GAIN_DB: f64 = 7.5;
+const UPSCALE_LOSS_DB: [f64; 2] = [6.0, 4.0];
+
+/// The scale's own state: the opaque pass's size, the mode it promotes, history resets when the
+/// scale or the output's size changes, and a return to 1 that draws as an unscaled renderer with
+/// the same output-size history. Resizing can change the retained LOD through its hysteresis.
+#[test]
+fn render_scale_changes_reset_and_return() {
+    let Some((_case, gpu)) = gpu() else { return };
+    let mut r = renderer(&gpu, Antialiasing::Msaa, Gtao::Off);
+    r.apply(still_scene(1.0), 0.0);
+    r.set_camera_override(Some(pocket_render::demo::aa_camera(0, false)));
+    let _ = r.capture_rgba(DT);
+    let mut unscaled = renderer(&gpu, Antialiasing::Msaa, Gtao::Off);
+    unscaled.apply(still_scene(1.0), 0.0);
+    unscaled.set_camera_override(Some(pocket_render::demo::aa_camera(0, false)));
+    let _ = unscaled.capture_rgba(DT);
+    // Below 1: TAA at the same samples, the opaque pass at the scale's size.
+    r.set_render_scale(0.5);
+    assert_eq!(r.antialiasing(), Antialiasing::MsaaTaa);
+    assert_eq!(r.scene_size(), (W / 2, H / 2));
+    for f in 2..=6 {
+        let (w, h, _) = r.capture_rgba(f64::from(f) * DT);
+        assert_eq!((w, h), (W, H));
+    }
+    assert_eq!(r.taa_mut().frames(), 5);
+    assert_eq!(r.last.render_scale, 0.5);
+    // Another scale drops the history (the reconstruction and the jitter cycle differ).
+    r.set_render_scale(0.67);
+    assert_eq!(r.scene_size(), (172, 96));
+    let _ = r.capture_rgba(7.0 * DT);
+    assert_eq!(r.taa_mut().frames(), 1, "a scale change kept the history");
+    let _ = r.capture_rgba(8.0 * DT);
+    // A resize keeps the scale and drops the history.
+    r.resize(W / 2, H / 2);
+    unscaled.resize(W / 2, H / 2);
+    assert_eq!(r.scene_size(), (86, 48));
+    let _ = r.capture_rgba(9.0 * DT);
+    let _ = unscaled.capture_rgba(9.0 * DT);
+    assert_eq!(r.taa_mut().frames(), 1, "a resize kept the history");
+    r.resize(W, H);
+    unscaled.resize(W, H);
+    // Out of range: clamped.
+    r.set_render_scale(0.01);
+    assert_eq!(r.render_scale(), 0.25);
+    assert_eq!(r.scene_size(), (64, 36));
+    // Back at 1: the mode asked for, at the output's size, drawing what it drew before.
+    r.set_render_scale(1.0);
+    assert_eq!(r.antialiasing(), Antialiasing::Msaa);
+    assert_eq!(r.scene_size(), (W, H));
+    assert_eq!(
+        r.capture_rgba(DT).2,
+        unscaled.capture_rgba(DT).2,
+        "scale 1 differs from the unscaled resize control"
+    );
+}
+
+/// The entity-id pass stays at the output's size and unjittered below a render scale of 1: its
+/// coverage and a pick are what they are at scale 1. A still capture is the output's size, settles
+/// past TAA's first upscaled frame and repeats exactly.
+#[test]
+fn picking_and_captures_work_below_scale_one() {
+    let Some((_case, gpu)) = gpu() else { return };
+    let camera = pocket_render::demo::aa_camera(0, false);
+    let fresh = |scale: f32| {
+        let mut r = renderer(&gpu, Antialiasing::Taa, Gtao::Off);
+        r.set_render_scale(scale);
+        r.apply(still_scene(1.0), 0.0);
+        r.set_camera_override(Some(camera));
+        r
+    };
+    let ids = |r: &mut Renderer| {
+        r.request_visible();
+        for k in 0..30 {
+            let _ = r.capture_rgba(f64::from(k + 1) * DT);
+            if let Some(c) = r.take_visible() {
+                return c;
+            }
+        }
+        panic!("the id pass did not answer");
+    };
+    let pick = |r: &mut Renderer, x: u32, y: u32| {
+        r.request_pick(x, y);
+        for k in 0..30 {
+            let _ = r.capture_rgba(f64::from(k + 40) * DT);
+            if let Some(p) = r.take_pick() {
+                return p;
+            }
+        }
+        panic!("the pick did not answer");
+    };
+    let (mut full, mut half) = (fresh(1.0), fresh(0.5));
+    let a = ids(&mut full);
+    assert!(!a.is_empty());
+    assert_eq!(
+        a,
+        ids(&mut half),
+        "the id pass's coverage changed with the scale"
+    );
+    for (x, y) in [(W / 2, H / 2), (W / 4, H / 3), (3 * W / 4, 2 * H / 3)] {
+        assert_eq!(
+            pick(&mut full, x, y),
+            pick(&mut half, x, y),
+            "the pick at ({x}, {y}) changed with the scale"
+        );
+    }
+    // A still capture: the output's size, a jitter cycle of the longer sequence, repeatable.
+    let reference: Vec<f64> = {
+        let mut jittered = fresh(1.0);
+        jittered.taa_mut().mode = pocket_render::taa::TaaMode::Jittered;
+        let mut m = vec![0.0f64; (W * H * 4) as usize];
+        for _ in 0..64 {
+            for (m, v) in m.iter_mut().zip(jittered.capture_rgba(0.5).2) {
+                *m += f64::from(v) / 64.0;
+            }
+        }
+        m
+    };
+    let first = psnr8(&fresh(0.5).capture_rgba(0.5).2, &reference);
+    let mut r = fresh(0.5);
+    let (w, h, still) = r.capture_still(0.5);
+    assert_eq!((w, h), (W, H));
+    let settled = psnr8(&still, &reference);
+    eprintln!("scale 0.5: first frame {first:.2} dB, a still capture {settled:.2} dB");
+    assert!(
+        settled > first + 2.0,
+        "a still capture at scale 0.5 reached {settled:.2} dB, its first frame {first:.2} dB"
+    );
+    assert_eq!(
+        r.capture_still(0.5).2,
+        still,
+        "a second still capture differs"
     );
 }
