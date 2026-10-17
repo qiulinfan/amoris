@@ -228,9 +228,11 @@ fn shading_normal(in: VsOut, facing: bool, tn: vec3f, mapped: bool) -> vec3f {
     return n;
 }
 
-// Specular anti-aliasing (Kaplanyan-Hoffman): widen roughness where the normal varies fast.
+// Specular anti-aliasing (Kaplanyan-Hoffman): widen roughness where the normal varies fast over
+// an output pixel. Below a render scale of 1 the opaque pass's pixel spans 1 / scale of them per
+// axis, so its derivatives are scaled as the textures' are (the larger axis: one isotropic width).
 fn antialiased_roughness(n: vec3f, roughness: f32) -> f32 {
-    let dn = fwidth(n);
+    let dn = fwidth(n) * max(view.texture_lod.x, view.texture_lod.y);
     let variance = 0.25 * dot(dn, dn);
     let a2 = roughness * roughness;
     return clamp(sqrt(sqrt(clamp(a2 * a2 + min(2.0 * variance, 0.18), 0.0, 1.0))), 0.045, 1.0);
@@ -239,9 +241,9 @@ fn antialiased_roughness(n: vec3f, roughness: f32) -> f32 {
 fn surface(in: VsOut, facing: bool) -> Surface {
     let m = materials[in.material];
     // Explicit gradients: the material (and so whether a texture exists) varies per pixel, and
-    // implicit derivatives need uniform control flow.
-    let du = dpdx(in.uv);
-    let dv = dpdy(in.uv);
+    // implicit derivatives need uniform control flow. Per output pixel at a render scale below 1.
+    let du = dpdx(in.uv) * view.texture_lod.x;
+    let dv = dpdy(in.uv) * view.texture_lod.y;
     var s: Surface;
     var base = m.base_color;
     if (m.base_color_tex != NO_TEXTURE) {
@@ -507,8 +509,8 @@ fn vs_depth_masked(v: VsIn, @builtin(instance_index) ii: u32) -> DepthOut {
 @fragment
 fn fs_depth_masked(in: DepthOut) {
     let m = materials[in.material];
-    let du = dpdx(in.uv);
-    let dv = dpdy(in.uv);
+    let du = dpdx(in.uv) * view.texture_lod.x;
+    let dv = dpdy(in.uv) * view.texture_lod.y;
     var a = m.base_color.a;
     if (m.base_color_tex != NO_TEXTURE) {
         a *= textureSampleGrad(tex_srgb, tex_sampler, in.uv, m.base_color_tex, du, dv).a;
@@ -623,7 +625,10 @@ fn fs_ocean(in: OceanOut) -> SceneOut {
     let dist = length(v_world);
     let v = v_world / dist;
     let fade = clamp(1.0 - dist / 600.0, 0.0, 1.0);
-    let footprint = max(length(fwidth(in.world.xz)), 1e-3);
+    // Metres per output pixel (per the opaque pass's pixel times the render scale, as the
+    // textures' gradients are).
+    let footprint = max(length(fwidth(in.world.xz)) * max(view.texture_lod.x, view.texture_lod.y),
+        1e-3);
     let g = in.grad + wavelets(in.world.xz, ocean.time, footprint);
     let n = normalize(vec3f(-g.x, 1.0, -g.y));
     let nv = max(dot(n, v), 1e-4);

@@ -158,8 +158,9 @@ impl Gtao {
         let Some(share) = &t.share else {
             return;
         };
-        let size = (t.width, t.height);
-        let half = (t.width.div_ceil(2), t.height.div_ceil(2));
+        // The opaque pass's size (below the output's at a render scale under 1).
+        let size = t.scene;
+        let half = (size.0.div_ceil(2), size.1.div_ceil(2));
         if self.images.as_ref().is_none_or(|i| i.size != size)
             || self.holds.as_ref() != Some(&t.depth)
         {

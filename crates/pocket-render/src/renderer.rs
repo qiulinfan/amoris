@@ -47,7 +47,7 @@ use crate::ocean::Ocean;
 use crate::overlay::Overlays;
 use crate::particles::Particles;
 use crate::picking::{PickRequest, Picking, coverage};
-use crate::post::{Antialiasing, DEPTH, Gtao, Post, SceneFormat, Targets};
+use crate::post::{Antialiasing, DEPTH, Gtao, Post, SceneFormat, Targets, scene_size};
 use crate::prepass::{Prepass, PrepassMode};
 use crate::profiler::GpuProfiler;
 use crate::scene::{NEURAL_VARIANT, Part, Resolve, Scene, VARIANTS};
@@ -64,7 +64,8 @@ const CLUSTER_Z: u32 = 24;
 const CLUSTER_MAX: u32 = 64;
 const CLUSTER_FAR: f32 = 400.0;
 const SHADOW_DISTANCE: f32 = 150.0;
-/// The frames [`Renderer::capture_still`] draws with TAA: one cycle of the jitter sequence.
+/// The frames [`Renderer::capture_still`] draws with TAA: one cycle of the jitter sequence (at a
+/// render scale of 1; below it the longer cycle, `taa::jitter_phases`).
 pub const STILL_FRAMES: u32 = crate::taa::JITTER_PHASES;
 
 #[repr(C)]
@@ -86,6 +87,9 @@ struct ViewUniform {
     counts: [u32; 4],
     prev_view_proj: [[f32; 4]; 4],
     motion: [f32; 4],
+    /// Material textures' uv gradient factors, and the specular anti-aliasing's and the sea's
+    /// (common.wgsl `texture_lod`).
+    texture_lod: [f32; 4],
 }
 
 #[repr(C)]
@@ -160,6 +164,9 @@ pub struct FrameStats {
     /// Anti-aliasing (`off`, `msaa`, `taa`, `msaa+taa`) and GTAO (`off`, `depth`, `target`).
     pub antialiasing: &'static str,
     pub gtao: &'static str,
+    /// The render scale: the opaque pass's size over the output's (1: the same; below, TAA
+    /// upscales; `Renderer::set_render_scale`).
+    pub render_scale: f32,
 }
 
 /// A drawn node: (mesh index, local TRS, skin).
@@ -426,8 +433,13 @@ pub struct Renderer {
     forward_layout: wgpu::PipelineLayout,
     lit_module: wgpu::ShaderModule,
     sky_module: wgpu::ShaderModule,
-    /// Anti-aliasing and GTAO (post.rs), and the opaque pass's format they give.
+    /// Anti-aliasing and GTAO (post.rs), and the opaque pass's format they give. `aa` is what
+    /// draws: `aa_asked`, with TAA when the render scale is below 1.
     aa: Antialiasing,
+    aa_asked: Antialiasing,
+    /// The opaque pass's size over the output's, in [0.25, 1] (`POCKET_RENDER_SCALE`; charter
+    /// 4.4, Pioneer 2026-10-15): below 1, TAA upscales.
+    render_scale: f32,
     gtao_mode: Gtao,
     format: SceneFormat,
     /// Sharpening after TAA in the display transform (0: off; docs/spec/taa-gtao.md).
@@ -1009,8 +1021,9 @@ impl Renderer {
         });
         // The measured defaults for this adapter, unless POCKET_AA or POCKET_GTAO say otherwise.
         let (default_aa, default_gtao) = crate::post::defaults_for(&gpu.info);
-        let aa = Antialiasing::from_env(default_aa);
-        let aa = rt_shadows.as_ref().map_or(aa, |rt| rt.antialiasing(aa));
+        let aa_asked = Antialiasing::from_env(default_aa);
+        let render_scale = crate::post::render_scale_from_env();
+        let aa = drawn_antialiasing(aa_asked, render_scale, rt_shadows.as_ref());
         let gtao_mode = Gtao::from_env(default_gtao);
         let format = SceneFormat::new(aa, gtao_mode);
         let vertex_layout = vertex_layout();
@@ -1228,7 +1241,13 @@ impl Renderer {
             requested: HashSet::new(),
             failed: HashSet::new(),
             blitter: built.blitter,
-            targets: Targets::new(device, width, height, format),
+            targets: Targets::new(
+                device,
+                width,
+                height,
+                scene_size(width, height, render_scale),
+                format,
+            ),
             post: built.post,
             sky: built.sky,
             gi: crate::gi::ProbeVolume::new(device, &gpu.queue),
@@ -1307,6 +1326,8 @@ impl Renderer {
             lit_module: lit_module.clone(),
             sky_module,
             aa,
+            aa_asked,
+            render_scale,
             gtao_mode,
             format,
             sharpen: 0.0,
@@ -1472,6 +1493,11 @@ impl Renderer {
                 serde_json::json!([self.targets.width, self.targets.height]),
             ),
             ("antialiasing", serde_json::json!(self.aa.name())),
+            ("render_scale", serde_json::json!(self.render_scale)),
+            (
+                "scene_size",
+                serde_json::json!([self.targets.scene.0, self.targets.scene.1]),
+            ),
             ("gtao", serde_json::json!(self.gtao_mode.name())),
             ("occlusion", serde_json::json!(self.occlusion().name())),
             ("prepass", serde_json::json!(self.prepass().name())),
@@ -1539,11 +1565,54 @@ impl Renderer {
         {
             return;
         }
-        self.targets = Targets::new(&self.gpu.device, width, height, self.format);
+        self.rebuild_targets(width, height);
+    }
+
+    /// The opaque pass's targets for an output of `width` x `height` at the render scale, and what
+    /// follows them.
+    fn rebuild_targets(&mut self, width: u32, height: u32) {
+        let scene = scene_size(width, height, self.render_scale);
+        self.targets = Targets::new(&self.gpu.device, width, height, scene, self.format);
         // The pyramid's first level reads the old depth target.
         self.occlusion.invalidate(true);
         // What the prepass costs and saves changes with the pixels: the auto mode measures again.
         self.prepass.restart();
+    }
+
+    /// The render scale (charter 4.4, Pioneer 2026-10-15; docs/spec/taa-gtao.md 4.1): the opaque
+    /// pass, its depth prepass, Hi-Z and occlusion culling and GTAO draw at `scale` times the
+    /// output's width and height (rounded), and TAA reconstructs the output from them; splats,
+    /// bloom, the display transform, overlays, the UI and the entity-id pass stay at the output's
+    /// size. Clamped to [0.25, 1], and 1 for a value that is not a finite positive number
+    /// ([`crate::post::clamp_render_scale`]); 1 draws as without it. Below 1 the anti-aliasing
+    /// mode draws with TAA ([`Antialiasing::with_taa`]; [`Renderer::antialiasing`] reports it). A
+    /// change drops TAA's history. `POCKET_RENDER_SCALE` sets the starting scale.
+    pub fn set_render_scale(&mut self, scale: f32) {
+        let scale = crate::post::clamp_render_scale(scale);
+        if scale == self.render_scale {
+            return;
+        }
+        self.render_scale = scale;
+        let aa = drawn_antialiasing(self.aa_asked, scale, self.rt_shadows.as_ref());
+        if aa != self.aa {
+            // Rebuilds the targets at the new scale too.
+            self.aa = aa;
+            self.reformat();
+        }
+        let (w, h) = (self.targets.width, self.targets.height);
+        if self.targets.scene != scene_size(w, h, scale) {
+            self.rebuild_targets(w, h);
+        }
+        self.taa.reset();
+    }
+
+    pub fn render_scale(&self) -> f32 {
+        self.render_scale
+    }
+
+    /// The opaque pass's size (the output's at a render scale of 1).
+    pub fn scene_size(&self) -> (u32, u32) {
+        self.targets.scene
     }
 
     /// Whether the camera view is occlusion culled (occlusion.rs; `POCKET_OCCLUSION` sets the
@@ -1580,14 +1649,14 @@ impl Renderer {
     /// Anti-aliasing: samples per pixel and TAA (post.rs; `POCKET_AA` sets the starting mode).
     /// A change rebuilds the opaque pass's targets and pipelines and drops TAA's history.
     /// Metal ray-traced sun shadows use one sample; requesting MSAA retains only TAA, if any.
+    /// Below a render scale of 1 the mode draws with TAA ([`Renderer::set_render_scale`]).
     pub fn set_antialiasing(&mut self, aa: Antialiasing) {
-        self.aa = self
-            .rt_shadows
-            .as_ref()
-            .map_or(aa, |rt| rt.antialiasing(aa));
+        self.aa_asked = aa;
+        self.aa = drawn_antialiasing(aa, self.render_scale, self.rt_shadows.as_ref());
         self.reformat();
     }
 
+    /// The anti-aliasing mode that draws (the one asked for, with TAA below a render scale of 1).
     pub fn antialiasing(&self) -> Antialiasing {
         self.aa
     }
@@ -1673,7 +1742,8 @@ impl Renderer {
             self.neural_forward = Some(self.neural_pipelines(&layout));
         }
         let device = &self.gpu.device;
-        self.targets = Targets::new(device, self.targets.width, self.targets.height, format);
+        let (w, h) = (self.targets.width, self.targets.height);
+        self.targets = Targets::new(device, w, h, scene_size(w, h, self.render_scale), format);
         self.occlusion.invalidate(true);
         self.taa.reset();
         // The sky's bind group follows its (rebuilt) pipeline's layout.
@@ -2403,7 +2473,10 @@ impl Renderer {
         let ts = trace::mark(&self.trace);
         let device = self.gpu.device.clone();
         let queue = self.gpu.queue.clone();
+        // The output's size, and the opaque pass's (below it at a render scale under 1: TAA
+        // upscales).
         let (w, h) = (self.targets.width, self.targets.height);
+        let (sw, sh) = self.targets.scene;
         let aspect = w as f32 / h.max(1) as f32;
         let cam = self.camera();
         let view = cam.view();
@@ -2422,6 +2495,7 @@ impl Renderer {
             view,
             vp,
             (w, h),
+            (sw, sh),
             drawn_t,
             alpha,
             self.scene.dt_s,
@@ -2484,7 +2558,13 @@ impl Renderer {
                 cam.position.z,
                 self.scene.t_s as f32,
             ],
-            viewport: [w as f32, h as f32, 1.0 / w as f32, 1.0 / h.max(1) as f32],
+            // The opaque pass's (the forward shader's light clusters).
+            viewport: [
+                sw as f32,
+                sh as f32,
+                1.0 / sw as f32,
+                1.0 / sh.max(1) as f32,
+            ],
             sun_dir: [to_sun.x, to_sun.y, to_sun.z, sun_lux],
             sun_color: [
                 sun_color[0],
@@ -2517,9 +2597,17 @@ impl Renderer {
                 jitter.ndc.x,
                 jitter.ndc.y,
             ],
+            // Below a render scale of 1, the output's mip levels (a bias of log2 of the scale).
+            texture_lod: if self.taa.tuning.texture_lod {
+                [sw as f32 / w as f32, sh as f32 / h as f32, 0.0, 0.0]
+            } else {
+                [1.0, 1.0, 0.0, 0.0]
+            },
         };
         self.view_buf.write(&queue, bytemuck::bytes_of(&vu));
-        // The unjittered copy: the entity-id pass, the overlays and the grid.
+        // The unjittered copy: the entity-id pass, the overlays and the grid, at the output's size.
+        vu.viewport = [w as f32, h as f32, 1.0 / w as f32, 1.0 / h.max(1) as f32];
+        vu.texture_lod = [1.0, 1.0, 0.0, 0.0];
         vu.view_proj = mat(vp);
         vu.proj = mat(proj);
         vu.inv_view_proj = mat(vp.inverse());
@@ -2575,8 +2663,9 @@ impl Renderer {
             alpha,
             lod_on: u32::from(lod_on),
             occlusion: u32::from(occl),
-            hiz_levels: crate::occlusion::levels(w, h),
-            viewport: [w as f32, h as f32],
+            // The depth pyramid is the opaque pass's.
+            hiz_levels: crate::occlusion::levels(sw, sh),
+            viewport: [sw as f32, sh as f32],
             _pad: [0; 2],
             eye,
             lod: [
@@ -2789,7 +2878,7 @@ impl Renderer {
                 &mut enc,
                 &mut self.profiler,
                 &self.targets.depth,
-                (w, h),
+                (sw, sh),
             );
             self.occlusion.encode_late(
                 &device,
@@ -2988,6 +3077,7 @@ impl Renderer {
             },
             antialiasing: self.aa.name(),
             gtao: self.gtao_mode.name(),
+            render_scale: self.render_scale,
         };
         trace::span(&mut self.trace, "render", rendering);
         // A host that does not bracket its frames does not finish the trace either: the last
@@ -3188,7 +3278,9 @@ impl Renderer {
     pub fn capture_still(&mut self, now_s: f64) -> (u32, u32, Vec<u8>) {
         if self.aa.taa() {
             self.taa.restart();
-            self.capture_frames(now_s, STILL_FRAMES)
+            let size = (self.targets.width, self.targets.height);
+            let frames = crate::taa::jitter_phases(size, self.targets.scene);
+            self.capture_frames(now_s, frames)
         } else {
             self.capture_frames(now_s, 1)
         }
@@ -3585,6 +3677,17 @@ fn opaque_pass<'e>(
         timestamp_writes: timestamps,
         ..Default::default()
     })
+}
+
+/// The anti-aliasing that draws for `asked` at render scale `scale`: with TAA below 1 (it
+/// upscales), then as ray-traced shadows allow (one sample on Metal).
+fn drawn_antialiasing(
+    asked: Antialiasing,
+    scale: f32,
+    rt: Option<&crate::rt_shadows::RtShadows>,
+) -> Antialiasing {
+    let aa = if scale < 1.0 { asked.with_taa() } else { asked };
+    rt.map_or(aa, |rt| rt.antialiasing(aa))
 }
 
 /// Seconds from an arbitrary origin, monotonic.

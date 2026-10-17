@@ -19,6 +19,10 @@
 //     history moved by many pixels (resampling blurs it), in tone-mapped space.
 // Output: the new history (rgb, view depth), which the rest of the frame reads, and when splats
 // will be drawn over it a copy for them (`resolve_copy`), so they never enter the history.
+//
+// Upscaling (a render scale below 1: `upscale_history`, `upscale_copy`, the last section): this
+// frame was drawn below the output's size and is reconstructed at it; the history stays at the
+// output's size.
 
 struct Taa {
     inv_view_proj: mat4x4f,  // this frame, unjittered
@@ -31,6 +35,11 @@ struct Taa {
     flags: vec4f,            // x: use object motion, y: disocclusion by depth, z: weight by speed,
                              // w: clip box size in sigmas where nothing moved (0: as elsewhere)
     blend: vec4f,            // x: current weight while the history is inside the box (0: always x)
+    scene: vec4f,            // upscaling: this frame's size, width, height, 1/width, 1/height
+    jitter: vec4f,           // upscaling: xy this frame's jitter in its own pixels (y down), z
+                             // -k / ln 2 for the reconstruction kernel's sharpness k (per squared
+                             // output pixel: exp(-k d^2) = exp2(z d^2)), w its expected weight per
+                             // output pixel and frame (0: the share not weighted)
 };
 
 @group(0) @binding(0) var<uniform> taa: Taa;
@@ -234,6 +243,178 @@ fn resolve_copy(@builtin(global_invocation_id) id: vec3u,
         return;
     }
     let r = resolve(vec2i(id.xy), vec2i(local.xy));
+    textureStore(history_out, id.xy, r);
+    textureStore(image_out, id.xy, vec4f(r.rgb, 1.0));
+}
+
+// --- Upscaling ---------------------------------------------------------------------------------
+// This frame (`current`, its depth and motion) is `taa.scene` pixels, below the output's
+// `taa.size`; the history and the output are the output's size. Output pixel p's centre lies at
+// u = (p + 0.5) * scene / size in this frame's pixels, and the projection moved the scene by the
+// jitter, so this frame's pixel q shows the point at q + 0.5 - jitter there. Per output pixel:
+//   - the 3x3 neighbourhood of this frame's pixels around the one whose sample lies nearest u
+//     gives the clip box's moments and extremes, the nearest and farthest depth and the object
+//     motion, as above;
+//   - this frame's color at u is the samples' mean weighted by exp(-k d^2), d their distance from
+//     u in output pixels (a Gaussian; `k` 4, a standard deviation of 0.35 output pixels), in
+//     tone-mapped YCoCg;
+//   - the sum of those weights, against its expectation over the jitter, scales this frame's
+//     share: weight / (expected * (1 / alpha - 1) + weight) for the usual alpha (alpha itself
+//     when the weight is the expected one, 1 on the first frame), so output pixels with no sample
+//     near them this frame keep their history and each accumulates the samples that fell near it.
+
+// Scene pixels per output pixel, per axis (at most 1).
+fn up_ratio() -> vec2f {
+    return taa.scene.xy * taa.size.zw;
+}
+
+// The scene pixel whose sample lies nearest output pixel `p`'s centre.
+fn up_nearest(p: vec2f) -> vec2i {
+    return vec2i(floor((p + 0.5) * up_ratio() + taa.jitter.xy));
+}
+
+// Loads the 10x10 scene pixels from the one nearest the group's first output pixel, minus one: with
+// the scene no larger than the output, the group's 8 output pixels a side are nearest to at most 8
+// scene pixels a side, so the tile holds their 3x3 neighbourhoods. Returns the tile's origin. Every
+// invocation calls it (it ends with a barrier).
+fn load_tile_up(group: vec2i, lid: u32) -> vec2i {
+    let size = vec2i(taa.scene.xy);
+    let origin = up_nearest(vec2f(group * GROUP)) - 1;
+    for (var i = i32(lid); i < TILE * TILE; i += GROUP * GROUP) {
+        let q = clamp(origin + vec2i(i % TILE, i / TILE), vec2i(0), size - 1);
+        tile_color[i] = to_ycocg(tonemap(textureLoad(current, q, 0).rgb));
+        tile_depth[i] = textureLoad(depth, q, 0);
+    }
+    workgroupBarrier();
+    return origin;
+}
+
+// Output pixel `p`'s new history (rgb, view depth) from this frame's tile at `origin`.
+fn resolve_up(p: vec2i, origin: vec2i) -> vec4f {
+    let ratio = up_ratio();
+    // Output pixels per scene pixel.
+    let inv = taa.size.xy * taa.scene.zw;
+    let jitter = taa.jitter.xy;
+    let u = (vec2f(p) + 0.5) * ratio;
+    let k0 = vec2i(floor(u + jitter));
+    // From the pixel's centre to the sample of the neighbourhood's first pixel, in output pixels
+    // (no divisions in the loop: a precise one costs several instructions on Vulkan).
+    let corner = (vec2f(k0 - 1) + 0.5 - jitter - u) * inv;
+    var m1 = vec3f(0.0);
+    var m2 = vec3f(0.0);
+    var lo = vec3f(1e9);
+    var hi = vec3f(-1e9);
+    var nearest = -1.0;
+    var farthest = 2.0;
+    var nearest_q = k0;
+    var sum = vec3f(0.0);
+    var weight = 0.0;
+    for (var k = 0; k < 9; k++) {
+        let o = vec2i(k % 3, k / 3);
+        let q = k0 - 1 + o;
+        // Inside the tile (`load_tile_up`).
+        let t = q - origin;
+        let i = t.y * TILE + t.x;
+        let y = tile_color[i];
+        m1 += y;
+        m2 += y * y;
+        lo = min(lo, y);
+        hi = max(hi, y);
+        let d = tile_depth[i];
+        if (d > nearest) {
+            nearest = d;
+            nearest_q = q;
+        }
+        farthest = min(farthest, d);
+        let off = corner + vec2f(o) * inv;
+        let w = exp2(taa.jitter.z * dot(off, off));
+        sum += w * y;
+        weight += w;
+    }
+    weight = max(weight, 1e-20);
+    // This frame at the pixel's centre, tone-mapped.
+    let now = from_ycocg(sum / weight);
+    let uv = (vec2f(p) + 0.5) * taa.size.zw;
+    let ndc = vec2f(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
+    let world = taa.inv_view_proj * vec4f(ndc, nearest, 1.0);
+    let depth_now = view_depth(ndc, nearest, taa.view_z);
+    if (u32(taa.params.z) == 1u) {
+        return vec4f(untonemap(now), depth_now);
+    }
+    let then = taa.prev_view_proj * world;
+    var prev_ndc = then.xy / then.w;
+    if (taa.flags.x > 0.5) {
+        let q = clamp(nearest_q, vec2i(0), vec2i(taa.scene.xy) - 1);
+        prev_ndc += textureLoad(motion, q, 0).xy;
+    }
+    let prev_uv = vec2f(prev_ndc.x * 0.5 + 0.5, 0.5 - prev_ndc.y * 0.5);
+    var valid = then.w > 0.0 && all(prev_uv >= vec2f(0.0)) && all(prev_uv <= vec2f(1.0));
+    if (valid && taa.flags.y > 0.5) {
+        let expected = view_depth(ndc, nearest, taa.prev_view_z);
+        let spread = view_depth(ndc, farthest, taa.view_z) - depth_now;
+        if (expected < FAR && spread < FAR * 0.5) {
+            let seen = textureGather(3, history, linear_sampler, prev_uv);
+            let off = min(min(abs(seen.x - expected), abs(seen.y - expected)),
+                min(abs(seen.z - expected), abs(seen.w - expected)));
+            valid = off <= 0.05 * expected + spread;
+        }
+    }
+    if (!valid) {
+        return vec4f(untonemap(now), depth_now);
+    }
+    let h = history_catmull_rom(prev_uv);
+    let mean = m1 / 9.0;
+    let sigma = sqrt(max(m2 / 9.0 - mean * mean, vec3f(0.0)));
+    let speed = length((uv - prev_uv) * taa.size.xy);
+    var gamma = taa.params.y;
+    var box_lo = lo;
+    var box_hi = hi;
+    if (taa.flags.w > 0.0 && speed < 0.01) {
+        gamma = taa.flags.w;
+        box_lo = vec3f(-1e9);
+        box_hi = vec3f(1e9);
+    }
+    box_lo = max(box_lo, mean - gamma * sigma);
+    box_hi = min(box_hi, mean + gamma * sigma);
+    let hy = to_ycocg(tonemap(h));
+    let clipped = from_ycocg(clip_box(hy, box_lo, box_hi));
+    var alpha = max(1.0 / (taa.params.w + 1.0), taa.params.x);
+    if (taa.blend.x > 0.0) {
+        let e = 0.5 * (box_hi - box_lo) + 1e-5;
+        let v = abs(hy - 0.5 * (box_hi + box_lo)) / e;
+        let outside = clamp(max(v.x, max(v.y, v.z)) - 1.0, 0.0, 1.0);
+        alpha = max(1.0 / (taa.params.w + 1.0), mix(taa.blend.x, taa.params.x, outside));
+    }
+    // The samples that fell near this pixel this frame, against what falls near it on average
+    // (an expectation of 0: the weighting is off).
+    if (taa.jitter.w > 0.0) {
+        alpha = weight / (taa.jitter.w * (1.0 / alpha - 1.0) + weight);
+    }
+    if (taa.flags.z > 0.5) {
+        alpha = mix(alpha, max(alpha, 0.25), clamp(speed / 8.0, 0.0, 1.0));
+    }
+    return vec4f(untonemap(mix(clipped, now, alpha)), depth_now);
+}
+
+@compute @workgroup_size(8, 8)
+fn upscale_history(@builtin(global_invocation_id) id: vec3u,
+        @builtin(workgroup_id) group: vec3u, @builtin(local_invocation_index) lid: u32) {
+    let origin = load_tile_up(vec2i(group.xy), lid);
+    if (any(id.xy >= vec2u(taa.size.xy))) {
+        return;
+    }
+    textureStore(history_out, id.xy, resolve_up(vec2i(id.xy), origin));
+}
+
+// With splats: the history, and a copy the splats are drawn into.
+@compute @workgroup_size(8, 8)
+fn upscale_copy(@builtin(global_invocation_id) id: vec3u,
+        @builtin(workgroup_id) group: vec3u, @builtin(local_invocation_index) lid: u32) {
+    let origin = load_tile_up(vec2i(group.xy), lid);
+    if (any(id.xy >= vec2u(taa.size.xy))) {
+        return;
+    }
+    let r = resolve_up(vec2i(id.xy), origin);
     textureStore(history_out, id.xy, r);
     textureStore(image_out, id.xy, vec4f(r.rgb, 1.0));
 }

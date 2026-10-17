@@ -33,9 +33,10 @@ fn surface_neural(in: VsOut, facing: bool) -> Surface {
     let m = materials[in.material];
     let base = m.neural;
     let extent = nt_extent(base);
-    // The isotropic level of detail of hardware filtering (the longer footprint axis).
-    let du = dpdx(in.uv) * vec2f(extent.xy);
-    let dv = dpdy(in.uv) * vec2f(extent.xy);
+    // The isotropic level of detail of hardware filtering (the longer footprint axis), per output
+    // pixel at a render scale below 1.
+    let du = dpdx(in.uv) * view.texture_lod.x * vec2f(extent.xy);
+    let dv = dpdy(in.uv) * view.texture_lod.y * vec2f(extent.xy);
     let lod = 0.5 * log2(max(max(dot(du, du), dot(dv, dv)), 1e-8));
     let top = f32(extent.z - 1u);
     let level = clamp(lod, 0.0, top);

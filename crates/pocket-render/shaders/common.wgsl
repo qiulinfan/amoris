@@ -34,6 +34,11 @@ struct View {
     prev_view_proj: mat4x4f, // last frame's view-projection, unjittered
     motion: vec4f,           // x: the interpolation alpha of last frame's poses (may be < 0);
                              // y: 1 when the forward shader writes object motion; zw: jitter (NDC)
+    // Render scale (docs/spec/taa-gtao.md 4.1): material textures' uv gradients along x and y are
+    // multiplied by these (the opaque pass's size over the output's), so a pass drawn below the
+    // output's size samples the mip level the output's would; the specular anti-aliasing's and the
+    // sea's derivatives by the larger. 1 otherwise.
+    texture_lod: vec4f,
 };
 
 // One drawn thing, 80 bytes. Poses of the last two ticks; drawn at mix(prev, cur, alpha).

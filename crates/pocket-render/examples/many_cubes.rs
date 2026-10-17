@@ -491,6 +491,9 @@ fn headless_bench(
         "size": [size.0, size.1],
         "antialiasing": r.antialiasing().name(),
         "gtao": r.gtao().name(),
+        // `POCKET_RENDER_SCALE` (docs/bench/taau.md): the opaque pass's size.
+        "render_scale": r.render_scale(),
+        "scene_size": [r.scene_size().0, r.scene_size().1],
         "splats": splat_count,
         "instances": r.last.instances,
         "frames": frames,

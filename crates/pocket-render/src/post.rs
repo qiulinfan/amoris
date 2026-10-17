@@ -94,6 +94,15 @@ impl Antialiasing {
         matches!(self, Antialiasing::Taa | Antialiasing::MsaaTaa)
     }
 
+    /// This mode with TAA, at the same samples: what a render scale below 1 draws with (TAA
+    /// upscales; charter 4.4, Pioneer 2026-10-15).
+    pub fn with_taa(self) -> Antialiasing {
+        match self {
+            Antialiasing::Off | Antialiasing::Taa => Antialiasing::Taa,
+            Antialiasing::Msaa | Antialiasing::MsaaTaa => Antialiasing::MsaaTaa,
+        }
+    }
+
     pub fn name(self) -> &'static str {
         match self {
             Antialiasing::Off => "off",
@@ -101,6 +110,42 @@ impl Antialiasing {
             Antialiasing::Taa => "taa",
             Antialiasing::MsaaTaa => "msaa+taa",
         }
+    }
+}
+
+/// The least render scale ([`render_scale_from_env`], `Renderer::set_render_scale`).
+pub const MIN_RENDER_SCALE: f32 = 0.25;
+
+/// A render scale clamped to [[`MIN_RENDER_SCALE`], 1]; 1 (off) for a value that is not a
+/// finite positive number, as `POCKET_RENDER_SCALE` takes it.
+pub fn clamp_render_scale(scale: f32) -> f32 {
+    if scale.is_finite() && scale > 0.0 {
+        scale.clamp(MIN_RENDER_SCALE, 1.0)
+    } else {
+        1.0
+    }
+}
+
+/// The render scale from `POCKET_RENDER_SCALE` (natively): the opaque pass's size over the
+/// output's, which TAA upscales (charter 4.4, Pioneer 2026-10-15; docs/spec/taa-gtao.md 4.1).
+/// 1 when it is unset or not a finite positive number; clamped to [[`MIN_RENDER_SCALE`], 1]
+/// ([`clamp_render_scale`], as `Renderer::set_render_scale` takes it).
+pub fn render_scale_from_env() -> f32 {
+    match std::env::var("POCKET_RENDER_SCALE") {
+        Ok(v) => match v.trim().parse::<f32>() {
+            Ok(s) if s.is_finite() && s > 0.0 => {
+                let c = clamp_render_scale(s);
+                if c != s {
+                    log::warn!("POCKET_RENDER_SCALE: {s} is outside [0.25, 1]; using {c}");
+                }
+                c
+            }
+            _ => {
+                log::warn!("POCKET_RENDER_SCALE: {v:?} is not a number in (0, 1]; using 1");
+                1.0
+            }
+        },
+        Err(_) => 1.0,
     }
 }
 
@@ -249,8 +294,13 @@ pub struct SceneTarget {
 }
 
 pub struct Targets {
+    /// The output's size: the image the rest of the frame reads (`hdr`), bloom, splats.
     pub width: u32,
     pub height: u32,
+    /// The opaque pass's size (its color, depth and extra targets; GTAO): the output's, or below
+    /// it with a render scale under 1, which TAA upscales from (charter 4.4, Pioneer 2026-10-15;
+    /// docs/spec/taa-gtao.md 4.1).
+    pub scene: (u32, u32),
     pub format: SceneFormat,
     /// The opaque pass's color: `hdr`, or with TAA `raw`.
     pub color: SceneTarget,
@@ -297,19 +347,38 @@ pub(crate) fn tex(
     })
 }
 
+/// The opaque pass's size for an output of `width` x `height` at render scale `scale` (1: the
+/// output's): each side scaled and rounded, at least one pixel.
+pub fn scene_size(width: u32, height: u32, scale: f32) -> (u32, u32) {
+    if scale >= 1.0 {
+        return (width, height);
+    }
+    let side = |n: u32| ((n as f32 * scale).round() as u32).clamp(1, n.max(1));
+    (side(width), side(height))
+}
+
 impl Targets {
-    pub fn new(device: &wgpu::Device, width: u32, height: u32, format: SceneFormat) -> Targets {
+    /// Targets for an output of `width` x `height` whose opaque pass draws at `scene` (at most the
+    /// output; below it only with TAA, `format.motion`, which upscales).
+    pub fn new(
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+        scene: (u32, u32),
+        format: SceneFormat,
+    ) -> Targets {
+        debug_assert!(scene == (width, height) || format.motion);
         let ra = wgpu::TextureUsages::RENDER_ATTACHMENT;
         let rs = ra | wgpu::TextureUsages::TEXTURE_BINDING;
         // The HDR image is copied out for evaluation (`Renderer::capture_hdr`).
         let rsc = rs | wgpu::TextureUsages::COPY_SRC;
         let samples = format.samples;
-        let scene = |label: &str, f: wgpu::TextureFormat| {
+        let (sw, sh) = scene;
+        let scene_target = |label: &str, f: wgpu::TextureFormat| {
             let msaa = (samples > 1).then(|| {
-                tex(device, label, width, height, f, samples, 1, ra)
-                    .create_view(&Default::default())
+                tex(device, label, sw, sh, f, samples, 1, ra).create_view(&Default::default())
             });
-            let texture = tex(device, label, width, height, f, 1, 1, rsc);
+            let texture = tex(device, label, sw, sh, f, 1, 1, rsc);
             SceneTarget {
                 msaa,
                 view: texture.create_view(&Default::default()),
@@ -317,9 +386,9 @@ impl Targets {
             }
         };
         // Sampled too: the splat pass copies it to one sample (splat/mod.rs); GTAO and TAA read it.
-        let depth = tex(device, "depth", width, height, DEPTH, samples, 1, rs)
-            .create_view(&Default::default());
-        let color = scene("hdr (scene)", HDR);
+        let depth =
+            tex(device, "depth", sw, sh, DEPTH, samples, 1, rs).create_view(&Default::default());
+        let color = scene_target("hdr (scene)", HDR);
         // With TAA the opaque pass resolves into `raw` and TAA writes `hdr`.
         let (hdr, raw) = if format.motion {
             (
@@ -354,15 +423,16 @@ impl Targets {
         Targets {
             width,
             height,
+            scene,
             format,
             color,
             depth,
             hdr,
             hdr_view,
             raw,
-            share: format.share.then(|| scene("indirect share", SHARE)),
-            motion: format.motion.then(|| scene("motion", MOTION)),
-            normals: format.normals.then(|| scene("normals", NORMALS)),
+            share: format.share.then(|| scene_target("indirect share", SHARE)),
+            motion: format.motion.then(|| scene_target("motion", MOTION)),
+            normals: format.normals.then(|| scene_target("normals", NORMALS)),
             bloom,
             bloom_mips,
         }
@@ -707,6 +777,19 @@ impl Post {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// One rule for every way in (`POCKET_RENDER_SCALE`, `Renderer::set_render_scale`, the
+    /// viewport's `?scale=`): in range kept, beyond it clamped, anything else off.
+    #[test]
+    fn render_scales_clamp_or_turn_off() {
+        assert_eq!(clamp_render_scale(0.5), 0.5);
+        assert_eq!(clamp_render_scale(1.0), 1.0);
+        assert_eq!(clamp_render_scale(0.01), MIN_RENDER_SCALE);
+        assert_eq!(clamp_render_scale(2.0), 1.0);
+        for off in [0.0, -0.0, -0.5, f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            assert_eq!(clamp_render_scale(off), 1.0, "{off}");
+        }
+    }
 
     #[test]
     fn defaults_by_adapter() {
