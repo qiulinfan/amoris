@@ -44,3 +44,7 @@ pocket-script = { workspace = true, features = ["transpile"] }
 [[example]]
 name = "player_bench"
 required-features = ["transpile"]
+
+[[example]]
+name = "profile_bench"
+required-features = ["transpile"]
