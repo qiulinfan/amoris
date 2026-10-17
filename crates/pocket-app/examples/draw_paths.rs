@@ -18,8 +18,11 @@
 //! `--compare occlusion` compares occlusion culling instead (docs/bench/occlusion.md): both shots
 //! on the full device, one with occlusion culling off and one with it forced on (`<scene>-off.png`,
 //! `<scene>-on.png`). Both draw the same fixed moment, so animated scenes compare exactly.
-//! `--compare prepass` does the same with the depth prepass off and forced on (docs/spec/prepass.md;
-//! occlusion culling as `POCKET_OCCLUSION` says).
+//! `--compare prepass` does the same with the depth prepass off and forced on
+//! (docs/spec/prepass.md; occlusion culling as `POCKET_OCCLUSION` says). `--compare shadow_cull`
+//! does it with the shadow cascades' slice culling off and on (docs/spec/occlusion.md 11; occlusion
+//! culling and the prepass as the environment says). Each shot's record has what every cascade
+//! drew (`cascades`: instances and triangles).
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -28,7 +31,9 @@ use pocket_assets::Feed;
 use pocket_assets::frame::RenderFrame;
 use pocket_render::gpu::Minimal;
 use pocket_render::loader::FileAssets;
-use pocket_render::{BackendChoice, CameraState, Gpu, OcclusionMode, PrepassMode, Renderer, demo};
+use pocket_render::{
+    BackendChoice, CameraState, Gpu, OcclusionMode, PrepassMode, Renderer, ShadowCull, demo,
+};
 use pocket_runtime::{Extractor, Game, Project};
 use serde_json::{Value, json};
 
@@ -99,11 +104,13 @@ fn draw(
     size: (u32, u32),
     occlusion: OcclusionMode,
     prepass: PrepassMode,
+    shadow_cull: ShadowCull,
 ) -> Result<Shot, String> {
     let gpu = Gpu::headless_with(BackendChoice::from_env(), minimal).map_err(|e| e.to_string())?;
     let mut r = Renderer::new(&gpu, wgpu::TextureFormat::Rgba8UnormSrgb, size.0, size.1);
     r.set_occlusion(occlusion);
     r.set_prepass(prepass);
+    r.set_shadow_cull(shadow_cull);
     if let Some(root) = &src.root {
         r.splats.set_root(root.clone());
         r.set_asset_source(Box::new(FileAssets::new(root.clone())));
@@ -133,6 +140,13 @@ fn draw(
         }
     }
     let (_, _, rgba) = r.capture_rgba(t);
+    // What each shadow cascade drew in that frame (read back from its indirect arguments).
+    let cascades: Vec<Value> = r
+        .draw_counts()
+        .cascades
+        .iter()
+        .map(|c| json!({"instances": c.instances(), "triangles": c.triangles()}))
+        .collect();
     let s = &r.last;
     Ok(Shot {
         rgba,
@@ -146,6 +160,8 @@ fn draw(
             "draw_path": r.draw_path(),
             "occlusion": s.occlusion,
             "prepass": s.prepass,
+            "shadow_cull": r.shadow_cull().name(),
+            "cascades": cascades,
             "instances": s.instances,
             "meshes": s.meshes,
             "materials": s.materials,
@@ -198,19 +214,42 @@ fn run() -> Result<(), String> {
         let src = source(scene, ticks)?;
         let full_device = Minimal::default();
         let (occlusion, prepass) = (OcclusionMode::from_env(), PrepassMode::from_env());
+        let cull = ShadowCull::from_env();
         let (full, base) = match comparing.as_deref() {
             Some("occlusion") => (
-                draw(&src, full_device, (w, h), OcclusionMode::Off, prepass)?,
-                draw(&src, full_device, (w, h), OcclusionMode::On, prepass)?,
+                draw(&src, full_device, (w, h), OcclusionMode::Off, prepass, cull)?,
+                draw(&src, full_device, (w, h), OcclusionMode::On, prepass, cull)?,
             ),
             Some("prepass") => (
-                draw(&src, full_device, (w, h), occlusion, PrepassMode::Off)?,
-                draw(&src, full_device, (w, h), occlusion, PrepassMode::On)?,
+                draw(&src, full_device, (w, h), occlusion, PrepassMode::Off, cull)?,
+                draw(&src, full_device, (w, h), occlusion, PrepassMode::On, cull)?,
             ),
-            Some(other) => return Err(format!("--compare {other}: occlusion or prepass")),
+            Some("shadow_cull") => (
+                draw(
+                    &src,
+                    full_device,
+                    (w, h),
+                    occlusion,
+                    prepass,
+                    ShadowCull::Off,
+                )?,
+                draw(
+                    &src,
+                    full_device,
+                    (w, h),
+                    occlusion,
+                    prepass,
+                    ShadowCull::On,
+                )?,
+            ),
+            Some(other) => {
+                return Err(format!(
+                    "--compare {other}: occlusion, prepass or shadow_cull"
+                ));
+            }
             None => (
-                draw(&src, full_device, (w, h), occlusion, prepass)?,
-                draw(&src, minimal, (w, h), occlusion, prepass)?,
+                draw(&src, full_device, (w, h), occlusion, prepass, cull)?,
+                draw(&src, minimal, (w, h), occlusion, prepass, cull)?,
             ),
         };
         let name = Path::new(scene)
