@@ -31,6 +31,7 @@ pub mod history;
 pub mod inspect;
 pub mod player;
 pub mod present;
+pub mod profile;
 mod project;
 mod scene;
 mod scripts;

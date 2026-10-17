@@ -8,7 +8,9 @@
 //! The loop also owns what needs one (docs/spec/server.md): Play, which forks the edit world and
 //! runs the fork in real time until Stop discards it; the kept snapshots (one every 60 ticks, the
 //! last 120) that `snapshots.restore` returns to; `time.step`'s stop conditions, checked after each
-//! tick; and the log stream (script `console.*` lines and failed invocations).
+//! tick; the log stream (script `console.*` lines and failed invocations); and, while a host serves
+//! it, the profile stream: each tick's systems and phases timed on the loop's clock
+//! ([`crate::profile`]), with the loop's own work after it.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::mem;
@@ -37,6 +39,7 @@ use crate::control::{
     TimeControlParams,
 };
 use crate::game::Game;
+use crate::profile::TickTimer;
 
 pub use crate::GAME_STACK_BYTES;
 pub use pocket_interface::{MAX_SPEED, Pacing};
@@ -161,6 +164,7 @@ impl GameThread {
                     mode: WorldMode::Edit,
                     epoch: 0,
                 });
+                let profiler = TickTimer::new(options.clock.clone());
                 let mut l = Loop {
                     bundle: game.bundle(),
                     game,
@@ -181,6 +185,10 @@ impl GameThread {
                     pushed: 0,
                     registry,
                     extractor: crate::present::Extractor::new(),
+                    profiler,
+                    profile_reuse: None,
+                    profile_ready: Vec::new(),
+                    profile_after: 0.0,
                 };
                 l.run();
             })
@@ -450,6 +458,14 @@ struct Loop {
     registry: Arc<RegistryInfo>,
     bundle: ContentHash,
     extractor: crate::present::Extractor,
+    /// Times each tick while a host serves the profile stream.
+    profiler: TickTimer,
+    /// The oldest tick profile the ring gave back, filled again by the next tick.
+    profile_reuse: Option<pocket_link::TickProfile>,
+    /// Profiles not in the ring yet: a reader held it when their tick ended.
+    profile_ready: Vec<pocket_link::TickProfile>,
+    /// The loop's work after the last profiled tick, carried into the next one's profile.
+    profile_after: f64,
 }
 
 enum Next {
@@ -644,7 +660,13 @@ impl Loop {
         // A stop of the script debugger inside this tick answers the `time.step` it belongs to
         // and ends it with the tick (pocket-link's `StateHandle::stopped`).
         let held = self.hold_step_reply();
-        let r = self.game.step();
+        // Profiled while a host serves the profile stream (docs/spec/server.md 4).
+        let profiling = self.publisher.profiling();
+        let r = if profiling {
+            self.profiled_step()
+        } else {
+            self.game.step()
+        };
         let stopped = held && !self.release_step_reply();
         let now = self.now();
         // The tick counts against the model and the front step at once, before the players' hooks
@@ -660,7 +682,9 @@ impl Loop {
                     let room = 20usize.saturating_sub(self.errors.len());
                     self.errors.extend(report.errors.iter().take(room).cloned());
                 }
+                let streamed = self.now();
                 self.present();
+                let presented = self.now();
                 let tick = self.game.tick().0;
                 let keep = self.kept.every > 0 && tick.is_multiple_of(self.kept.every);
                 if (keep || self.attached.load(Ordering::Acquire))
@@ -671,10 +695,21 @@ impl Loop {
                     }
                     self.publish_snapshot(snap);
                 }
+                let published = profiling.then(|| self.publish_profile(now, streamed, presented));
                 self.after_tick_players(&report, now);
                 self.after_tick_steps(stopped);
+                if let Some(at) = published {
+                    // Counted in the next tick's profile: the replies just sent went out after
+                    // this tick's profile.
+                    self.profile_after = self.now() - at;
+                }
             }
             Err(p) => {
+                if profiling {
+                    // A tick that faulted publishes no profile.
+                    self.profile_reuse = Some(self.profiler.take());
+                    self.profile_after = 0.0;
+                }
                 self.model.cancel_steps();
                 self.errors.clear();
                 for j in self.steps.drain(..) {
@@ -691,6 +726,41 @@ impl Loop {
                 }
             }
         }
+    }
+
+    /// Publishes the profiled tick with the loop's work for it so far: the streams (from the
+    /// step's end at `now` to `streamed`), the render feed's extraction (to `presented`) and the
+    /// snapshot (to now), and the work after the tick before. Returns when it was published.
+    fn publish_profile(&mut self, now: f64, streamed: f64, presented: f64) -> f64 {
+        let published = self.now();
+        let t = self.profiler.tick_mut();
+        t.present_ms = presented - streamed;
+        t.publish_ms = (streamed - now) + (published - presented);
+        t.after_ms = mem::take(&mut self.profile_after);
+        self.profile_ready.push(self.profiler.take());
+        if let Some(old) = self.publisher.profile(&mut self.profile_ready) {
+            self.profile_reuse = Some(old);
+        }
+        published
+    }
+
+    /// The tick under the profiler: its systems and phases, the whole step, and whether the
+    /// script debugger stopped the game thread inside it (its times then measure the hold; the
+    /// summaries leave them out).
+    fn profiled_step(&mut self) -> Result<pocket_sim::StepReport, Problem> {
+        let stops = self.publisher.debug_stops();
+        self.profiler.begin(self.profile_reuse.take());
+        let began = self.profiler.now();
+        let r = self.game.step_with(&mut self.profiler);
+        let ended = self.profiler.now();
+        let held = self.publisher.debug_stops() != stops;
+        let tick = self.game.tick().0;
+        let t = self.profiler.tick_mut();
+        t.tick = tick;
+        t.epoch = self.epoch;
+        t.tick_ms = ended - began;
+        t.held = held;
+        r
     }
 
     /// Before a tick of a `time.step` with a script debugger attached: hands the step's reply to
@@ -870,6 +940,8 @@ impl Loop {
     /// presenters get a publication at once.
     fn world_replaced(&mut self) {
         self.epoch += 1;
+        // The new world's first profile carries none of the old world's work.
+        self.profile_after = 0.0;
         self.publisher.set_world(WorldInfo {
             mode: self.mode(),
             epoch: self.epoch,
