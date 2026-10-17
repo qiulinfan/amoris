@@ -1,4 +1,4 @@
-//! The debugger's hooks in the script host (docs/spec/debugger.md 3). The debugger itself
+//! The debugger's hooks in the script host (docs/spec/debugger.md 2 and 3). The debugger itself
 //! (breakpoints, stepping, the Chrome DevTools Protocol, the agents' API) is `pocket-debug`; this
 //! module is what it needs from the host, and holds no breakpoint and no protocol.
 //!
@@ -151,6 +151,16 @@ unsafe extern "C" fn trampoline(
         column: u32::try_from(col).unwrap_or(0),
         kind,
     };
+    // A write trace's recorder ([`record_writes`]) probes its field at each statement, before the
+    // debugger's hook (an exception's position is not a statement boundary).
+    if !matches!(kind, TraceKind::Exception { .. })
+        && let Ok(mut rec) = sh.writes.try_borrow_mut()
+        && let Some(r) = rec.as_mut()
+    {
+        let _ = catch_unwind(AssertUnwindSafe(|| unsafe {
+            r.statement(ctx, sh, file, trace.line, trace.column);
+        }));
+    }
     // The borrow is shared: attaching (the only mutable borrow) never happens while scripts run.
     if let Ok(hook) = sh.debug.try_borrow()
         && let Some(h) = hook.as_ref()
@@ -369,6 +379,10 @@ pub struct FieldWatch {
     serial: Cell<u64>,
     /// The component, its watched slots (`(name, Some(numeric slot) | None for a string index)`).
     resolved: std::cell::RefCell<Option<Resolved>>,
+    /// Why the watch did not resolve in the call of `serial`: a component scripts cannot name, or
+    /// no such field. Kept so a probe at every statement fails once per call, not once per
+    /// statement (the refusal's suggestions are costly).
+    failed: std::cell::RefCell<Option<String>>,
 }
 
 struct Resolved {
@@ -392,6 +406,7 @@ impl FieldWatch {
             field: field.map(str::to_owned),
             serial: Cell::new(0),
             resolved: std::cell::RefCell::new(None),
+            failed: std::cell::RefCell::new(None),
         })
     }
 
@@ -402,6 +417,61 @@ impl FieldWatch {
             .as_ref()
             .map(|r| r.slots.iter().map(|(n, _)| n.clone()).collect())
             .unwrap_or_default()
+    }
+
+    /// The component and the watched slots in `world`, or why they do not resolve.
+    fn resolve(&self, world: &World) -> Result<Resolved, String> {
+        // A component scripts cannot name fails here without the refusal's suggestions (a probe
+        // fails so once a call); the message is the refusal's.
+        let entry = world
+            .get_resource::<pocket_sim::ComponentRegistry>()
+            .and_then(|r| r.get(&self.component));
+        let named = entry.is_some_and(|e| {
+            world
+                .get_resource::<crate::ScriptAccess>()
+                .is_some_and(|a| {
+                    a.get(e.id).is_some() && (a.schema(e.id).is_some() || e.script.is_some())
+                })
+        });
+        if !named {
+            return Err(format!(
+                "There is no component named '{}' that scripts can use.",
+                self.component
+            ));
+        }
+        let comp = resolve_comp(world, &self.component).map_err(|e| e.message)?;
+        let mut slots = Vec::new();
+        let mut strings = 0usize;
+        for f in comp.schema.fields.iter() {
+            let wanted = self.field.as_deref().is_none_or(|w| w == &*f.name);
+            if f.ty == FieldType::Str {
+                if wanted {
+                    slots.push((f.name.to_string(), Slot::Str(strings)));
+                }
+                strings += 1;
+                continue;
+            }
+            if !wanted {
+                continue;
+            }
+            let n = f.ty.slots();
+            for i in 0..n {
+                let name = if n > 1 {
+                    format!("{}.{}", f.name, ["x", "y", "z", "w"][usize::from(i)])
+                } else {
+                    f.name.to_string()
+                };
+                slots.push((name, Slot::Num(f.first_slot + i)));
+            }
+        }
+        if slots.is_empty() {
+            return Err(format!(
+                "{} has no field {}",
+                self.component,
+                self.field.as_deref().unwrap_or("")
+            ));
+        }
+        Ok(Resolved { comp, slots })
     }
 
     /// The staged values in the call running in `ctx`: `Err` with a reason when no call runs, the
@@ -420,40 +490,24 @@ impl FieldWatch {
         // SAFETY: JavaScript is stopped (the caller's contract): nothing else uses the world now.
         let world: &World = unsafe { &*call.world };
         if self.serial.get() != call.serial || self.resolved.borrow().is_none() {
-            let comp = resolve_comp(world, &self.component).map_err(|e| e.message)?;
-            let mut slots = Vec::new();
-            let mut strings = 0usize;
-            for f in comp.schema.fields.iter() {
-                let wanted = self.field.as_deref().is_none_or(|w| w == &*f.name);
-                if f.ty == FieldType::Str {
-                    if wanted {
-                        slots.push((f.name.to_string(), Slot::Str(strings)));
-                    }
-                    strings += 1;
-                    continue;
-                }
-                if !wanted {
-                    continue;
-                }
-                let n = f.ty.slots();
-                for i in 0..n {
-                    let name = if n > 1 {
-                        format!("{}.{}", f.name, ["x", "y", "z", "w"][usize::from(i)])
-                    } else {
-                        f.name.to_string()
-                    };
-                    slots.push((name, Slot::Num(f.first_slot + i)));
-                }
+            if self.serial.get() == call.serial
+                && let Some(why) = self.failed.borrow().as_ref()
+            {
+                return Err(why.clone());
             }
-            if slots.is_empty() {
-                return Err(format!(
-                    "{} has no field {}",
-                    self.component,
-                    self.field.as_deref().unwrap_or("")
-                ));
-            }
-            *self.resolved.borrow_mut() = Some(Resolved { comp, slots });
+            let resolved = self.resolve(world);
             self.serial.set(call.serial);
+            match resolved {
+                Ok(r) => {
+                    *self.resolved.borrow_mut() = Some(r);
+                    *self.failed.borrow_mut() = None;
+                }
+                Err(why) => {
+                    *self.resolved.borrow_mut() = None;
+                    *self.failed.borrow_mut() = Some(why.clone());
+                    return Err(why);
+                }
+            }
         }
         let resolved = self.resolved.borrow();
         let r = resolved.as_ref().ok_or("unresolved")?;
@@ -512,4 +566,280 @@ fn column_value(ctx: &Ctx<'_>, col: &crate::call::Column, row: usize) -> Option<
     let bytes = unsafe { array.as_bytes() }?;
     let chunk = bytes.get(row * 8..row * 8 + 8)?;
     Some(f64::from_ne_bytes(chunk.try_into().ok()?))
+}
+
+/// A script statement whose write changed the field a write trace records (docs/spec/debugger.md
+/// 13): [`FieldWatch`]'s probe in a recording mode, which never stops the game.
+#[derive(Clone, Debug, PartialEq)]
+pub struct StatementWrite {
+    /// The call's tick and system key (`script:<name>`).
+    pub tick: u64,
+    pub system: String,
+    /// The statement that wrote: its module path and TypeScript line and column, 1-based. A
+    /// write is seen at the next statement boundary, so this is the statement traced before the
+    /// change was seen; when that one was a `return` whose function returned before the change was
+    /// seen, the write stored the returned value (`col[r] = helper()`) and this is the statement
+    /// that called it (`via` names the return). `None` when the change was seen before any
+    /// statement of the call was traced.
+    pub at: Option<(String, u32, u32)>,
+    /// The `return` statement traced last when the write is the calling statement's (`at`).
+    pub via: Option<(String, u32, u32)>,
+    /// The recorded values' names (`rudder`, `position.x`), as [`FieldWatch::names`] gives them.
+    pub names: Vec<String>,
+    /// The staged values before and after the statement; `None` where the entity lacked the
+    /// component.
+    pub before: Option<Vec<WatchValue>>,
+    pub after: Option<Vec<WatchValue>>,
+    /// Seen when the call's `run` returned: the write was its last statement's.
+    pub after_return: bool,
+}
+
+/// The most statements a recorder keeps between two [`take_writes`]; later ones are counted.
+const MAX_STATEMENT_WRITES: usize = 4096;
+
+/// A statement traced in a call: its frame's stack depth, its module's atom and its generated line
+/// and column (1-based).
+#[derive(Clone, Copy)]
+struct Traced {
+    depth: usize,
+    file: JSAtom,
+    line: u32,
+    column: u32,
+}
+
+/// A write trace's recorder in a script host ([`record_writes`]).
+pub(crate) struct WriteRecorder {
+    probe: FieldWatch,
+    /// The staged value at the last probe of this call (`None` before the first).
+    last: Option<Option<Vec<WatchValue>>>,
+    /// The statement traced last at each stack depth of this call, depths ascending: the last one
+    /// is the statement traced last, those below it the statements that called its function.
+    frames: Vec<Traced>,
+    /// Where this call's records begin: a call that fails drops them (its writes never land).
+    call_start: usize,
+    records: Vec<StatementWrite>,
+    dropped: u64,
+}
+
+fn same_values(a: &Option<Vec<WatchValue>>, b: &Option<Vec<WatchValue>>) -> bool {
+    match (a, b) {
+        (None, None) => true,
+        (Some(x), Some(y)) => x.len() == y.len() && x.iter().zip(y).all(|(p, q)| p.same(q)),
+        _ => false,
+    }
+}
+
+/// Whether the JavaScript of `module` at `line` and `column` (1-based) is a `return` statement.
+fn is_return(sh: &Shared, module: &str, line: u32, column: u32) -> bool {
+    let maps = sh.maps.borrow();
+    let Some(js) = maps
+        .as_ref()
+        .and_then(|m| m.set.as_ref())
+        .and_then(|set| set.module(module))
+        .map(|m| m.js.as_str())
+    else {
+        return false;
+    };
+    let Some(text) = js.lines().nth((line as usize).saturating_sub(1)) else {
+        return false;
+    };
+    let at = (column as usize).saturating_sub(1);
+    let rest = text.char_indices().nth(at).map_or("", |(i, _)| &text[i..]);
+    rest.trim_start()
+        .strip_prefix("return")
+        .is_some_and(|r| !r.starts_with(|c: char| c.is_alphanumeric() || c == '_' || c == '$'))
+}
+
+impl WriteRecorder {
+    /// Probes the staged value at a statement boundary; a change since the last probe is the
+    /// previous statement's write.
+    ///
+    /// # Safety
+    /// `ctx` must be a live context of the host `sh`, at a trace call on its thread.
+    pub(crate) unsafe fn statement(
+        &mut self,
+        ctx: *mut JSContext,
+        sh: &Shared,
+        file: JSAtom,
+        line: u32,
+        column: u32,
+    ) {
+        let depth = unsafe { stack_depth(ctx) };
+        unsafe { self.probe(ctx, sh, Some(depth)) };
+        while self.frames.last().is_some_and(|f| f.depth >= depth) {
+            self.frames.pop();
+        }
+        self.frames.push(Traced {
+            depth,
+            file,
+            line,
+            column,
+        });
+    }
+
+    /// Which of `frames` wrote a change seen at a statement of stack depth `depth` (`None`: after
+    /// the call's `run` returned), and whether that is not the statement traced last. It is the
+    /// statement traced last, unless that was a `return` whose function returned before the change
+    /// was seen: the change then stored the returned value, and the writer is the statement that
+    /// called the function (through a chain of returns, down to `depth`).
+    ///
+    /// # Safety
+    /// `ctx` must be the live context the frames' atoms belong to.
+    unsafe fn writer(
+        &self,
+        sh: &Shared,
+        ctx: *mut JSContext,
+        depth: Option<usize>,
+    ) -> (usize, bool) {
+        let Some(top) = self.frames.len().checked_sub(1) else {
+            return (0, false);
+        };
+        let mut i = top;
+        while i > 0 && depth.is_none_or(|d| d < self.frames[i].depth) {
+            let f = self.frames[i];
+            let module = unsafe { atom_text(ctx, f.file) };
+            if !is_return(sh, &module, f.line, f.column) {
+                break;
+            }
+            i -= 1;
+        }
+        (i, i != top)
+    }
+
+    /// A traced statement's module path and TypeScript line and column.
+    ///
+    /// # Safety
+    /// `ctx` must be the live context the statement's atom belongs to.
+    unsafe fn place(ctx: *mut JSContext, sh: &Shared, t: Traced) -> (String, u32, u32) {
+        let file = unsafe { atom_text(ctx, t.file) };
+        let (l, c) = sh
+            .maps
+            .borrow()
+            .as_ref()
+            .map_or((t.line, t.column), |m| m.map(&file, t.line, t.column));
+        (file, l, c)
+    }
+
+    unsafe fn probe(&mut self, ctx: *mut JSContext, sh: &Shared, depth: Option<usize>) {
+        let after_return = depth.is_none();
+        let Ok(now) = (unsafe { self.probe.read(ctx) }) else {
+            return;
+        };
+        let before = self.last.replace(now.clone());
+        let Some(before) = before else {
+            return;
+        };
+        if same_values(&before, &now) {
+            return;
+        }
+        if self.records.len() >= MAX_STATEMENT_WRITES {
+            self.dropped += 1;
+            return;
+        }
+        let (tick, system) = match sh.call.borrow().as_ref() {
+            Some(c) => (c.tick.0, c.key.clone()),
+            None => return,
+        };
+        let (at, via) = match self.frames.last() {
+            Some(&last) => {
+                let (i, moved) = unsafe { self.writer(sh, ctx, depth) };
+                let at = unsafe { Self::place(ctx, sh, self.frames[i]) };
+                let via = moved.then(|| unsafe { Self::place(ctx, sh, last) });
+                (Some(at), via)
+            }
+            None => (None, None),
+        };
+        self.records.push(StatementWrite {
+            tick,
+            system,
+            at,
+            via,
+            names: self.probe.names(),
+            before,
+            after: now,
+            after_return,
+        });
+    }
+}
+
+/// Starts a write trace's recording in the script host of `world` (or stops it with `None`, which
+/// drops what it holds), on the thread that owns the world: from the next tick's `script.update`
+/// the program is instrumented (a reload at the boundary, docs/spec/debugger.md 2) and every
+/// traced statement of every system call probes `watch`; a statement whose write changed the
+/// staged value is recorded with its TypeScript position ([`take_writes`]). Nothing stops, and
+/// nothing the scripts compute changes: the probe only reads. Returns false when the world has no
+/// script host.
+pub fn record_writes(world: &mut World, watch: Option<FieldWatch>) -> bool {
+    let Some(scripts) = world.get_non_send_mut::<Scripts>() else {
+        return false;
+    };
+    *scripts.host.shared.writes.borrow_mut() = watch.map(|probe| WriteRecorder {
+        probe,
+        last: None,
+        frames: Vec::new(),
+        call_start: 0,
+        records: Vec::new(),
+        dropped: 0,
+    });
+    true
+}
+
+/// Whether a write trace's recorder is armed in the script host of `world`.
+pub fn recording(world: &World) -> bool {
+    world
+        .get_non_send::<Scripts>()
+        .is_some_and(|s| s.host.shared.writes.borrow().is_some())
+}
+
+/// The statements recorded since the last call, in the order they ran, and how many were dropped
+/// past the recorder's cap (4096).
+pub fn take_writes(world: &mut World) -> (Vec<StatementWrite>, u64) {
+    let Some(scripts) = world.get_non_send_mut::<Scripts>() else {
+        return (Vec::new(), 0);
+    };
+    let mut rec = scripts.host.shared.writes.borrow_mut();
+    match rec.as_mut() {
+        Some(r) => {
+            r.call_start = 0;
+            (
+                std::mem::take(&mut r.records),
+                std::mem::take(&mut r.dropped),
+            )
+        }
+        None => (Vec::new(), 0),
+    }
+}
+
+/// A system call begins (its queries are prepared): the recorder's probe starts over.
+pub(crate) fn recorder_begin(sh: &Shared) {
+    if let Ok(mut rec) = sh.writes.try_borrow_mut()
+        && let Some(r) = rec.as_mut()
+    {
+        r.last = None;
+        r.frames.clear();
+        r.call_start = r.records.len();
+    }
+}
+
+/// The call's `run` returned: a write by its last statement is seen now.
+///
+/// # Safety
+/// `ctx` must be the call's live context, on its thread, with no JavaScript running.
+pub(crate) unsafe fn recorder_returned(ctx: *mut JSContext, sh: &Shared) {
+    if let Ok(mut rec) = sh.writes.try_borrow_mut()
+        && let Some(r) = rec.as_mut()
+    {
+        let _ = catch_unwind(AssertUnwindSafe(|| unsafe { r.probe(ctx, sh, None) }));
+    }
+}
+
+/// The call ended; a call that did not commit drops what it recorded.
+pub(crate) fn recorder_end(sh: &Shared, committed: bool) {
+    if let Ok(mut rec) = sh.writes.try_borrow_mut()
+        && let Some(r) = rec.as_mut()
+        && !committed
+    {
+        let start = r.call_start.min(r.records.len());
+        r.records.truncate(start);
+    }
 }

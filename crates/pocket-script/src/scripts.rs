@@ -75,10 +75,12 @@ fn update(world: &mut World, sys: &mut SystemCtx<'_>) {
         let mut budget = TickBudget {
             steps_left: scripts.host.limits().steps_per_tick,
         };
+        let phase = sys.phase();
         for (i, info) in program.systems().iter().enumerate() {
             if !info.when.runs_on(tick.tick) {
                 continue;
             }
+            sys.hooks().world(&info.key, phase, true, world);
             sys.hooks().system(&info.key, true);
             let ran = catch_unwind(AssertUnwindSafe(|| {
                 program.run_system(&scripts.host, world, i, &tick, &mut budget)
@@ -104,6 +106,9 @@ fn update(world: &mut World, sys: &mut SystemCtx<'_>) {
                 SystemOutcome::Fault { error } => Some(error.to_problem()),
                 _ => None,
             };
+            if fault.is_none() {
+                sys.hooks().world(&info.key, phase, false, world);
+            }
             scripts.last_tick.push((info.name.clone(), outcome));
             if let Some(p) = fault {
                 sys.fault(p);
@@ -114,18 +119,15 @@ fn update(world: &mut World, sys: &mut SystemCtx<'_>) {
     world.insert_non_send(scripts);
 }
 
-/// Instantiates the installed program again when the debugger wants it instrumented and it is not,
-/// or the other way round (docs/spec/debugger.md 3). No script of this tick has run yet and programs
-/// hold no state, so this is a reload at the boundary; a failure (which a program that loaded once
-/// should not meet) keeps the installed program.
+/// Instantiates the installed program again when the debugger or a write trace wants it
+/// instrumented and it is not, or the other way round (docs/spec/debugger.md 2 and 13). No script
+/// of this tick has run yet and programs hold no state, so this is a reload at the boundary; a
+/// failure (which a program that loaded once should not meet) keeps the installed program.
 fn reinstrument(world: &World, scripts: &mut Scripts) {
-    let Some(hook) = scripts.host.debugger() else {
-        return;
-    };
     let Some(program) = &scripts.program else {
         return;
     };
-    if hook.instrument() == program.instrumented() {
+    if scripts.host.shared.wants_instrumented() == program.instrumented() {
         return;
     }
     let set = program.compiled_arc().clone();

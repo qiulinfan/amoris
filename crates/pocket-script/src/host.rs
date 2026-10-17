@@ -146,7 +146,7 @@ pub(crate) struct Shared {
         RefCell<std::collections::BTreeMap<usize, Rc<std::collections::BTreeSet<usize>>>>,
     /// The class ids of generators and built-in iterators.
     pub iterators: RefCell<Vec<u32>>,
-    /// The debugger attached to this host (docs/spec/debugger.md 3), if any.
+    /// The debugger attached to this host (docs/spec/debugger.md 8), if any.
     pub debug: RefCell<Option<Rc<dyn crate::debug::DebugHook>>>,
     /// A program is being instantiated with the trace handler set: the loader compiles the prelude
     /// without it, so the debugger steps through project code only.
@@ -155,10 +155,24 @@ pub(crate) struct Shared {
     pub debug_read_only: Cell<bool>,
     /// The first tick a debugger evaluated in, and why, until the game takes it.
     pub taint: RefCell<Option<(u64, String)>>,
+    /// A write trace's recorder (`debug::record_writes`), if one records.
+    pub writes: RefCell<Option<crate::debug::WriteRecorder>>,
     /// The clock that times the phases of system calls, when a benchmark installed one.
     pub phase_clock: Cell<Option<fn() -> f64>>,
     /// The phases timed since the last `take_phases`.
     pub phases: Cell<PhaseTimes>,
+}
+
+impl Shared {
+    /// Whether programs are to be instrumented now: a debugger asks for it, or a write trace
+    /// records (docs/spec/debugger.md 2 and 13).
+    pub fn wants_instrumented(&self) -> bool {
+        if self.writes.borrow().is_some() {
+            return true;
+        }
+        let hook = self.debug.borrow().clone();
+        hook.is_some_and(|h| h.instrument())
+    }
 }
 
 /// Where the system calls' time went, by phase, on the clock [`ScriptHost::time_phases`]
@@ -183,6 +197,9 @@ pub struct PhaseTimes {
 #[derive(Default)]
 pub(crate) struct Maps {
     pub by_module: std::collections::BTreeMap<String, LineMap>,
+    /// The program's compiled set: a write trace's recorder reads a statement's JavaScript to tell
+    /// a `return` (docs/spec/debugger.md 13).
+    pub set: Option<std::sync::Arc<CompiledSet>>,
 }
 
 impl Maps {
@@ -255,6 +272,7 @@ impl ScriptHost {
             instrumenting: Cell::new(false),
             debug_read_only: Cell::new(false),
             taint: RefCell::new(None),
+            writes: RefCell::new(None),
             phase_clock: Cell::new(None),
             phases: Cell::new(PhaseTimes::default()),
         });

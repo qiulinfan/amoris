@@ -126,7 +126,7 @@ pub struct Program {
     roots: Persistent<rquickjs::Array<'static>>,
     ctx_key: usize,
     shared: Rc<crate::host::Shared>,
-    /// Compiled with the debugger's trace handler set (docs/spec/debugger.md 3).
+    /// Compiled with the debugger's trace handler set (docs/spec/debugger.md 2).
     instrumented: bool,
     // Last: the context outlives the values above.
     ctx: Context,
@@ -149,8 +149,11 @@ fn out_of_memory_error(phase: ErrorPhase) -> ScriptError {
     )
 }
 
-fn maps_of(set: &CompiledSet) -> Maps {
-    let mut maps = Maps::default();
+fn maps_of(set: &Arc<CompiledSet>) -> Maps {
+    let mut maps = Maps {
+        set: Some(set.clone()),
+        ..Maps::default()
+    };
     maps.by_module.insert(
         crate::resolve::PRELUDE.to_owned(),
         LineMap::parse(PRELUDE_MAP),
@@ -218,7 +221,7 @@ impl ScriptHost {
         let set = Arc::new(set.clone());
         let maps = Rc::new(maps_of(&set));
         let hook = sh.debug.borrow().clone();
-        let instrumented = hook.as_ref().is_some_and(|h| h.instrument());
+        let instrumented = sh.wants_instrumented();
         *sh.loading.borrow_mut() = Some(Rc::new((*set).clone()));
         *sh.maps.borrow_mut() = Some(maps.clone());
         *sh.load_error.borrow_mut() = None;
@@ -244,7 +247,7 @@ impl ScriptHost {
                 *sh.iterators.borrow_mut() = locked.iterators;
             }
             let roots = Persistent::save(&ctx, locked.roots);
-            // The debugger's instrumentation (docs/spec/debugger.md 3): modules compiled while the
+            // The debugger's instrumentation (docs/spec/debugger.md 2): modules compiled while the
             // trace handler is set get a trace call at every statement; it stays set for them.
             if instrumented {
                 unsafe { crate::debug::install(crate::js::raw(&ctx), sh, true) };
@@ -384,7 +387,7 @@ impl Program {
         &self.set
     }
 
-    /// Whether it was compiled with the debugger's trace handler (docs/spec/debugger.md 3).
+    /// Whether it was compiled with the debugger's trace handler (docs/spec/debugger.md 2).
     pub fn instrumented(&self) -> bool {
         self.instrumented
     }
@@ -431,9 +434,11 @@ impl Program {
             if let Some(h) = &hook {
                 h.call_begin(&call_info);
             }
+            crate::debug::recorder_begin(sh);
             let ran = self.call_run(&ctx, info, entry, tick, clock, &mut prepared);
             returned = clock.map(|c| c());
             used = end_budget(&ctx, sh, steps);
+            unsafe { crate::debug::recorder_returned(crate::js::raw(&ctx), sh) };
             if let Some(h) = &hook {
                 h.call_returned(crate::js::raw(&ctx), &call_info);
             }
@@ -536,6 +541,7 @@ impl Program {
                 }
             }
         };
+        crate::debug::recorder_end(sh, matches!(outcome, SystemOutcome::Ok(_)));
         if let Some(h) = &hook {
             h.call_end(&call_info, &outcome);
         }
