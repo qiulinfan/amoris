@@ -82,6 +82,7 @@ fn project() -> PathBuf {
             key: [0, 0, 0],
             cells: Cells(cells.into_boxed_slice()),
             edited: 0,
+            states: None,
         }]),
     )
     .unwrap();

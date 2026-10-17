@@ -1,6 +1,8 @@
-//! Block volumes' cells files (docs/spec/voxels.md 2.3): `"AMVX"`, a version, a chunk count, then
-//! per chunk in key order its key and 4096 palette indices, little-endian, uncompressed. A scene
-//! names one in `Voxels.source`; loading the project reads it into the volume's chunks.
+//! Block volumes' cells files (docs/spec/voxels.md 2.3, liquids.md 2): `"AMVX"`, a version, a
+//! chunk count, then per chunk in key order its key and 4096 palette indices, and from version 2 a
+//! flag byte followed, when it is 1, by the chunk's 4096 state bytes; little-endian, uncompressed.
+//! Version 1 files (no states) still read. A scene names one in `Voxels.source`; loading the
+//! project reads it into the volume's chunks.
 
 use std::path::Path;
 
@@ -11,8 +13,7 @@ use serde_json::{Value, json};
 use crate::scene::Scene;
 
 const MAGIC: &[u8; 4] = b"AMVX";
-const VERSION: u32 = 1;
-const CHUNK_BYTES: usize = 12 + CHUNK_CELLS;
+const VERSION: u32 = 2;
 
 fn refused(path: &str, why: String) -> Problem {
     Problem::new(
@@ -24,48 +25,59 @@ fn refused(path: &str, why: String) -> Problem {
 
 /// The chunks of a cells file, checked to be in strictly increasing key order.
 pub fn read_cells(path: &str, bytes: &[u8]) -> Result<Vec<Chunk>, Problem> {
-    let word = |at: usize| -> [u8; 4] {
-        let mut w = [0; 4];
-        w.copy_from_slice(&bytes[at..at + 4]);
-        w
+    let mut at = 0usize;
+    let mut take = |n: usize| -> Result<&[u8], Problem> {
+        let part = bytes
+            .get(at..at + n)
+            .ok_or_else(|| refused(path, format!("it ends after {} bytes", bytes.len())))?;
+        at += n;
+        Ok(part)
     };
-    if bytes.len() < 12 || &bytes[..4] != MAGIC {
+    let word = |b: &[u8]| u32::from_le_bytes([b[0], b[1], b[2], b[3]]);
+    if take(4)? != MAGIC {
         return Err(refused(path, "it does not start with AMVX".into()));
     }
-    let version = u32::from_le_bytes(word(4));
-    if version != VERSION {
-        return Err(refused(path, format!("version {version} is not {VERSION}")));
-    }
-    let count = usize::try_from(u32::from_le_bytes(word(8))).unwrap_or(usize::MAX);
-    if count
-        .checked_mul(CHUNK_BYTES)
-        .and_then(|n| n.checked_add(12))
-        != Some(bytes.len())
-    {
+    let version = word(take(4)?);
+    if !(1..=VERSION).contains(&version) {
         return Err(refused(
             path,
-            format!("{} bytes do not hold {count} chunks", bytes.len()),
+            format!("version {version} is not 1 or {VERSION}"),
         ));
     }
-    let mut chunks: Vec<Chunk> = Vec::with_capacity(count);
-    for i in 0..count {
-        let at = 12 + i * CHUNK_BYTES;
-        let key = [0, 1, 2].map(|a| i32::from_le_bytes(word(at + 4 * a)));
+    let count = usize::try_from(word(take(4)?)).unwrap_or(usize::MAX);
+    let mut chunks: Vec<Chunk> = Vec::with_capacity(count.min(1 << 16));
+    for _ in 0..count {
+        let k = take(12)?;
+        let key = [0, 1, 2]
+            .map(|a| i32::from_le_bytes([k[4 * a], k[4 * a + 1], k[4 * a + 2], k[4 * a + 3]]));
         if chunks.last().is_some_and(|c| c.key >= key) {
             return Err(refused(path, format!("chunk {key:?} is out of key order")));
         }
+        let cells = Cells(take(CHUNK_CELLS)?.into());
+        let states = if version >= 2 && take(1)?[0] == 1 {
+            Some(Cells(take(CHUNK_CELLS)?.into()))
+        } else {
+            None
+        };
         chunks.push(Chunk {
             key,
-            cells: Cells(bytes[at + 12..at + CHUNK_BYTES].into()),
+            cells,
             edited: 0,
+            states,
         });
+    }
+    if at != bytes.len() {
+        return Err(refused(
+            path,
+            format!("{} bytes follow its {count} chunks", bytes.len() - at),
+        ));
     }
     Ok(chunks)
 }
 
-/// The bytes of a cells file holding `chunks` (in key order).
+/// The bytes of a version 2 cells file holding `chunks` (in key order).
 pub fn write_cells(chunks: &[Chunk]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(12 + chunks.len() * CHUNK_BYTES);
+    let mut out = Vec::with_capacity(12 + chunks.len() * (13 + CHUNK_CELLS));
     out.extend_from_slice(MAGIC);
     out.extend_from_slice(&VERSION.to_le_bytes());
     let count = u32::try_from(chunks.len()).unwrap_or(u32::MAX);
@@ -75,6 +87,13 @@ pub fn write_cells(chunks: &[Chunk]) -> Vec<u8> {
             out.extend_from_slice(&k.to_le_bytes());
         }
         out.extend_from_slice(&c.cells.0);
+        match &c.states {
+            Some(s) => {
+                out.push(1);
+                out.extend_from_slice(&s.0);
+            }
+            None => out.push(0),
+        }
     }
     out
 }
@@ -101,7 +120,13 @@ pub fn resolve(
         let chunks = read_cells(&source, &read(&source)?)?;
         let json: Vec<Value> = chunks
             .iter()
-            .map(|c| json!({"key": c.key, "cells": base64_encode(&c.cells.0)}))
+            .map(|c| {
+                let mut j = json!({"key": c.key, "cells": base64_encode(&c.cells.0)});
+                if let Some(st) = &c.states {
+                    j["states"] = json!(base64_encode(&st.0));
+                }
+                j
+            })
             .collect();
         v.insert("chunks".into(), Value::Array(json));
     }
@@ -130,6 +155,7 @@ mod tests {
             key,
             cells: Cells(vec![fill; CHUNK_CELLS].into_boxed_slice()),
             edited: 0,
+            states: None,
         }
     }
 
@@ -140,8 +166,24 @@ mod tests {
         assert_eq!(read_cells("w", &bytes).unwrap(), chunks);
         assert!(read_cells("w", &bytes[..bytes.len() - 1]).is_err());
         let mut bad = bytes.clone();
-        bad[4] = 2;
+        bad[4] = 3;
         assert!(read_cells("w", &bad).is_err());
+        // States round trip; a version 1 file (no flag bytes) still reads.
+        let mut stated = chunk([2, 0, 0], 3);
+        stated.states = Some(Cells(vec![5; CHUNK_CELLS].into_boxed_slice()));
+        let with = vec![chunk([0, 0, 0], 2), stated];
+        assert_eq!(read_cells("w", &write_cells(&with)).unwrap(), with);
+        let mut v1 = write_cells(&chunks);
+        v1[4] = 1;
+        v1.retain(|_| true);
+        let mut old = v1[..12].to_vec();
+        for c in &chunks {
+            for k in c.key {
+                old.extend_from_slice(&k.to_le_bytes());
+            }
+            old.extend_from_slice(&c.cells.0);
+        }
+        assert_eq!(read_cells("w", &old).unwrap(), chunks);
         let swapped = write_cells(&[chunk([0, 0, 0], 2), chunk([-1, 0, 3], 1)]);
         assert_eq!(read_cells("w", &swapped).unwrap_err().code, "voxels.file");
     }
