@@ -432,11 +432,11 @@ M5 and R1 (both GPUs), and in Chrome.
 | Films thinner than `dry_below` dry when slow and are reported; with 0 nothing dries; a flood's moving front does not dry | same | A |
 | The same hash chain natively (release and debug), in WebAssembly under Node and in Chrome, and on R1 | `amoris-physics` web test, `tools/shallow_check.py` | A |
 | Beds from a volume at load; after a change, a block placed in the water or on the ground raises the bed, a bridge, a roof or leaves over the water leave it, a broken top block lowers it; beds persisted; `water.misaligned`, `water.uncovered` | `amoris-physics` and `amoris-runtime` tests | A |
-| `Field` liquids load as water, shared over a block's columns; `Cells` scenes unchanged; blockcraft's lake breaks and floods | `amoris-runtime` tests, `amoris-app` example `shallow_water` | A |
+| `Field` liquids load as water, shared over a block's columns; `Cells` scenes unchanged; blockcraft's lake breaks and floods | `amoris-runtime` tests, `amoris-app` example `blockcraft_water` (amended during implementation: `shallow_water` stays the spike's demo) | A |
 | The walker swims in field water and is pushed | `amoris-physics` tests | A |
-| `ctx.water` reads, adds and removes; sources and drains | `amoris-script` tests | A |
+| `ctx.water` reads, adds and removes; sources and drains | `amoris-runtime` tests (amended during implementation: they run the script host on a game with physics) | A |
 | Sleeping regions reused by the snapshot cache; a fork and a restore continue the flow | `amoris-persist` and `amoris-runtime` tests | A |
-| Smooth and Blocky drawing; shots for the owner, close and far | `amoris-render` tests, `amoris-app` example | A |
+| Smooth and Blocky drawing; shots for the owner, close and far | `amoris-render` tests, `amoris-app` example `blockcraft_water` | A |
 | Falls drawn by particles inside the splashes' regions and as steep triangles outside them | `amoris-render` tests, `amoris-app` example | B |
 | A river reaches a steady flow whose volume holds; an `Outflow` edge drains a region | `amoris-physics` tests | C |
 | Swell runs up a beach and drains back; `water.no_sea`, `water.deep_edge`; only the waves long enough are carried | `amoris-physics` tests | D |

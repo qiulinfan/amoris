@@ -75,3 +75,8 @@ required-features = ["transpile"]
 [[example]]
 name = "publish_bench"
 required-features = ["transpile"]
+
+# The water's solver, snapshot and feed costs on blockcraft's broken bank (docs/bench/liquids.md).
+[[example]]
+name = "water_bench"
+required-features = ["transpile"]

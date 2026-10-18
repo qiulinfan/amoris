@@ -5,7 +5,7 @@ Flowing liquids ([liquids.md](../spec/liquids.md)) and the splashes over them
 spike report [fluid-box.md](../spikes/fluid-box.md).
 
 The cost of flow steps (a broken bank, a drained pool) and of the feed with states, which
-liquids.md 9 names, is not measured yet.
+liquids.md 9 names, is not measured yet. The water region's costs in blockcraft are in section 3.
 
 ## 1. Splashes
 
@@ -76,3 +76,63 @@ Drawing, added GPU time (medians of 240 frames after 60):
 
 Natively R1 is 1.3 to 1.9 times slower than the M5; its RTX 5060 draws the field with 5 to 8 times
 less GPU busy time than the M5. Not measured yet: the 780M (`AMORIS_ADAPTER=780m`).
+
+## 3. The water region in blockcraft (slice A)
+
+The engine's water ([water.md](../spec/water.md) 12 and 13) in blockcraft at two columns a block:
+one region of 256 x 256 columns of 0.5 m (256 tiles) over the island, two substeps a tick at 60 Hz,
+`dry_below` 0.002. The scenario is amoris-app's `blockcraft_water/breach.rs`: a copy of the project
+whose script digs a pit 8 x 6 blocks and 6 below the sea beside the shore at tick 2 and breaks the
+bank 4 blocks wide at tick 120. The water floods the pit through the breach at about 5 m/s and fills
+it to the sea's level in about 15 s (282 m³).
+
+Machine: Apple M5 (10 GPU cores), macOS 27.0.1, Metal, release build, 2026-10-18. The machine was
+not checked for other load; one run per table.
+
+CPU, back to back (`cargo run --release -p amoris-runtime --features transpile --example
+water_bench -- --ticks 10920 ../amoris-samples/blockcraft`). After each tick: `physics.water`
+inside the tick (a step hook), the snapshot through `SnapshotCache` with the size of the
+`WaterRegion` section, and the feed's extraction for one subscriber with its frame's encoded size.
+Medians over the windows of ticks:
+
+| Window (ticks) | Tiles stepped | Solver (ms) | Snapshot (ms) | `WaterRegion` section | Feed (ms) | Frame |
+|---|---|---|---|---|---|---|
+| Every tile awake: the field liquids just converted (2 to 60) | 256 | 2.19 | 1.00 | 2.0 MiB | 0.24 | 1.0 MiB |
+| Asleep, after the dig (70 to 120) | 0 | 0.002 | 0.006 | 2.0 MiB | 0.001 | 1 KiB |
+| The flood (121 to 720) | 56 | 0.65 | 1.03 | 2.0 MiB | 0.06 | 225 KiB |
+| After it (721 to 1920) | 165 | 1.83 | 1.03 | 2.0 MiB | 0.15 | 662 KiB |
+| Later (1921 to 5520) | 165 | 1.92 | 1.02 | 2.0 MiB | 0.16 | 662 KiB |
+| Latest (5521 to 10920) | 165 | 1.91 | 1.02 | 2.0 MiB | 0.16 | 662 KiB |
+
+- Every tile awake, the solver takes 1.09 ms a substep, 16.7 ns a column (the spike's flat grid:
+  12.5 ns at 256²); the rest is the window's gather and write-back, drying and the sleep test.
+- The snapshot encodes the whole section whenever any tile changed: about 1 ms a tick natively
+  whatever the number of awake tiles, the same with 56 tiles as with 256 (water.md 15, question 5).
+- **The disturbed sea does not go back to sleep.** The flood draws 282 m³ from the sea inside the
+  region, a level drop of a few centimetres that rings between its walls. The sea there is up to
+  12 m deep, and the bed friction damps a column's velocity at `friction / depth` per second, 0.002
+  for 12 m: a time constant of about 10 minutes. 165 tiles stayed above the sleep test's 1e-4 m/s
+  for the 3 minutes measured, at 1.9 ms of solver and 1 ms of snapshot a tick. Shallow water settles
+  faster but slowly too: in a unit test, a 4 cm film over 24 m relaxed with a time constant of about
+  55 s, and a 2 m dam break was still moving at 4e-4 m/s after 380 s.
+- Not measured: the browser worker (WebAssembly) and R1.
+
+Drawing (`cargo run --release -p amoris-app --example blockcraft_water -- --project
+../amoris-samples/blockcraft --frames 1030 --bench`). Three renderers fed the same frames, one
+without the water, one drawing it Smooth and one Blocky, render in turn at 1280 x 720 with MSAA from
+the far camera (high over the sea, the shore and the pit filling about two thirds of the view).
+With no transparent instance in view the water is drawn at the end of the opaque pass, so the
+table gives that pass (`opaque early` and `opaque+sky`) and the GPU busy time, medians of 240
+frames after 60:
+
+| Ticks after the break | Opaque, no water | Opaque, Smooth | Opaque, Blocky | Busy, no water | Busy, Smooth | Busy, Blocky |
+|---|---|---|---|---|---|---|
+| -10 | 1.35 | 1.78 | 1.49 | 3.83 | 5.06 | 5.10 |
+| +15 | 1.28 | 1.83 | 1.70 | 3.90 | 4.08 | 4.16 |
+| +60 | 1.24 | 1.89 | 1.74 | 4.48 | 4.19 | 4.24 |
+| +240 | 1.28 | 1.84 | 1.72 | 3.95 | 4.20 | 5.17 |
+| +900 | 1.29 | 1.86 | 1.69 | 4.82 | 4.38 | 4.47 |
+
+The water adds about 0.55 ms to the opaque pass drawn Smooth and 0.4 ms drawn Blocky. The busy time
+varies by more than that from frame window to frame window (the shadow pass alone moves by 1 to 2
+ms), so it does not resolve the water's cost here. The feed's tiles upload is not timed apart.
