@@ -40,6 +40,7 @@ use crate::solver::{
     BodyIndex, ContactLog, Physics, RebuiltSolver, entity_of, rebuild_index, spec_hash, spec_of,
 };
 use crate::walker::Walker;
+use crate::water::{BedSource, Edge, Style, WaterRegion, WaterScratch, WaterSteps};
 use slots::{ByRef, Reading, WorldIn, WorldOut, Writing};
 
 /// The cache's identity (versions.md 3.6): the library, its exact versions, the features that
@@ -69,11 +70,14 @@ pub fn declare<R: RegisterPersisted>(r: &mut R) {
         .component::<Wind>()
         .component::<Walker>()
         .component::<amoris_sim::voxels::Voxels>()
+        .component::<WaterRegion>()
         .cache::<PhysicsCache>()
         .derived::<Physics>("the state of cache physics.rapier, put back by its section")
         .derived::<BodyIndex>("rebuilt from the bodies' user_data, which name their entities")
         .derived::<ContactLog>("filled by physics.step and emptied by physics.contacts each tick")
         .ignore::<RebuiltSolver>("a report for the next physics.step, taken by it")
+        .ignore::<WaterScratch>("the water solver's buffers, overwritten each tick before reading")
+        .ignore::<WaterSteps>("the tick each water tile was last stepped, for the feed only")
         .rebuild("physics.index", rebuild_index);
 }
 
@@ -353,6 +357,18 @@ impl Persisted for Collider {
     fn trace(t: &mut Tracer, s: &Samples) -> serde_reflection::Result<()> {
         t.trace_type::<PartShape>(s)?;
         t.trace_type::<Shape>(s)?;
+        t.trace_type::<Self>(s).map(|_| ())
+    }
+}
+
+impl Persisted for WaterRegion {
+    const NAME: &'static str = "WaterRegion";
+    const VERSION: u32 = 1;
+
+    fn trace(t: &mut Tracer, s: &Samples) -> serde_reflection::Result<()> {
+        t.trace_type::<BedSource>(s)?;
+        t.trace_type::<Edge>(s)?;
+        t.trace_type::<Style>(s)?;
         t.trace_type::<Self>(s).map(|_| ())
     }
 }

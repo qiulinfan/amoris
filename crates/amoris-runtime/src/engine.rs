@@ -16,7 +16,7 @@ use amoris_assets::{
 use amoris_contract::{CheckOptions, Problem, Shape, detail};
 use amoris_physics::{
     Boat, Collider, ExternalForce, Floater, Hull, RigidBody, Sail, Sea, Transform, Trim, Velocity,
-    Walker, Wind,
+    Walker, WaterRegion, Wind,
 };
 use amoris_script::{EngineFns, register_engine};
 use amoris_sim::registry::{
@@ -87,7 +87,7 @@ where
 /// Every engine component a scene or `world_edit` can name (`Name` is the entity's own `name`);
 /// the first three are the player layer's (perception.md: who observes, what can be perceived,
 /// what blocks sight).
-pub fn engine_components() -> [EngineComponent; 26] {
+pub fn engine_components() -> [EngineComponent; 27] {
     [
         entry::<amoris_interface::perception::Observer>(),
         entry::<amoris_interface::perception::Perceivable>(),
@@ -115,6 +115,7 @@ pub fn engine_components() -> [EngineComponent; 26] {
         entry::<Walker>(),
         entry::<Wind>(),
         voxels_entry(),
+        water_entry(),
     ]
 }
 
@@ -134,6 +135,25 @@ fn voxels_entry() -> EngineComponent {
         get: get::<Voxels>,
         decode: decode_voxels,
         remove: remove::<Voxels>,
+    }
+}
+
+/// `WaterRegion`, decoded strictly and then validated on its own (water.md 3).
+fn water_entry() -> EngineComponent {
+    fn decode_water(v: &Value, owner: &str) -> Result<Inserter, Problem> {
+        let c: WaterRegion = Shape::of::<WaterRegion>()
+            .decode::<WaterRegion>(v, &CheckOptions::new(owner))?
+            .value;
+        c.validate()?;
+        Ok(Inserter(Box::new(move |e: &mut EntityWorldMut<'_>| {
+            e.insert(c);
+        })))
+    }
+    EngineComponent {
+        name: WaterRegion::NAME,
+        get: get::<WaterRegion>,
+        decode: decode_water,
+        remove: remove::<WaterRegion>,
     }
 }
 
@@ -626,6 +646,7 @@ pub fn install_script_components(world: &mut World) -> Result<(), Problem> {
     ComponentRegistry::register::<Wind>(world, Some(wind_schema()?))?;
     ComponentRegistry::register::<Walker>(world, Some(walker_schema()?))?;
     ComponentRegistry::register::<Voxels>(world, None)?;
+    ComponentRegistry::register::<WaterRegion>(world, None)?;
     ComponentRegistry::register::<RigidBody>(world, None)?;
     ComponentRegistry::register::<Collider>(world, None)?;
     ComponentRegistry::register::<ExternalForce>(world, None)?;

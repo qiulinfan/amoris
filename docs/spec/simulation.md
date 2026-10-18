@@ -212,6 +212,7 @@ this table and the schedule golden of section 12 together.
 | 2 | Control | `interface.intents` | amoris-interface | check every intent's deadline, Rust and script intents alike, in `IntentId` order; run the Rust executors (come to a heading, trim the sail, sail to a waypoint) into helm and sail controls |
 | 3 | Update | `script.update` | amoris-script | the project's systems and script executors, `script:<name>` each, in `systems` order |
 | 4 | Forces | `physics.wind` | amoris-physics | wind velocity at each body, gusts from position and time |
+| 4a | Forces | `physics.water` | amoris-physics | each `WaterRegion`'s awake tiles and their neighbours stepped (shallow water, advected), thin slow films dried, still tiles put to sleep (water.md 4) |
 | 5 | Forces | `physics.buoyancy` | amoris-physics | buoyancy and water drag per hull cell, waves at `time() - dt()` |
 | 6 | Forces | `physics.sail` | amoris-physics | sail force from the apparent wind and the trim |
 | 7 | Forces | `physics.hull` | amoris-physics | keel, rudder and hull drag |

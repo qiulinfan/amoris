@@ -92,11 +92,12 @@ impl std::fmt::Display for SystemKey {
 /// The system order of slice 1 (simulation.md 4.4): crates register their systems into these
 /// slots by key. A system whose key is not here runs in its phase after the listed systems of that
 /// phase (before `sim.finish` in `Finish`), in registration order.
-pub const SYSTEM_ORDER: [(&str, TickPhase); 12] = [
+pub const SYSTEM_ORDER: [(&str, TickPhase); 13] = [
     ("sim.begin", TickPhase::Begin),
     ("interface.intents", TickPhase::Control),
     ("script.update", TickPhase::Update),
     ("physics.wind", TickPhase::Forces),
+    ("physics.water", TickPhase::Forces),
     ("physics.buoyancy", TickPhase::Forces),
     ("physics.sail", TickPhase::Forces),
     ("physics.hull", TickPhase::Forces),
@@ -227,10 +228,10 @@ mod tests {
     #[test]
     fn slots_follow_the_table() {
         assert_eq!(slot("sim.begin", TickPhase::Begin).unwrap(), 0);
-        assert_eq!(slot("physics.step", TickPhase::Physics).unwrap(), 14);
-        assert_eq!(slot("sim.finish", TickPhase::Finish).unwrap(), 22);
+        assert_eq!(slot("physics.step", TickPhase::Physics).unwrap(), 16);
+        assert_eq!(slot("sim.finish", TickPhase::Finish).unwrap(), 24);
         // Unlisted systems: after the listed ones of their phase, before sim.finish.
-        assert_eq!(slot("test.extra", TickPhase::Finish).unwrap(), 21);
+        assert_eq!(slot("test.extra", TickPhase::Finish).unwrap(), 23);
         assert_eq!(slot("test.extra", TickPhase::Update).unwrap(), 5);
         assert_eq!(slot("test.extra", TickPhase::Begin).unwrap(), 1);
         let e = slot("physics.step", TickPhase::Update).unwrap_err();

@@ -38,6 +38,7 @@ mod shapes;
 pub mod solver;
 pub mod walk;
 pub mod walker;
+pub mod water;
 
 pub use boat::{Boat, BuoyPoint, Floater, Hull, Sail, Trim, best_sheet};
 pub use body::{
@@ -49,6 +50,9 @@ pub use forces::start_time;
 pub use sea::{GRAVITY, Sea, Water, Wave, WaveField, Wind};
 pub use solver::{BodyIndex, ContactLog, Physics, RebuiltSolver};
 pub use walker::Walker;
+pub use water::{
+    BedSource, Edge, Style, WaterLook, WaterRegion, WaterScratch, WaterSteps, WaterTile,
+};
 
 use amoris_contract::Problem;
 use amoris_sim::registry::ComponentRegistry;
@@ -64,6 +68,8 @@ pub fn plugin(sim: &mut Sim) -> Result<(), Problem> {
     w.insert_resource(Physics::new(dt));
     w.insert_resource(BodyIndex::default());
     w.insert_resource(ContactLog::default());
+    w.insert_resource(WaterScratch::default());
+    w.insert_resource(WaterSteps::default());
     ComponentRegistry::register::<Transform>(w, None)?;
     ComponentRegistry::register::<Velocity>(w, None)?;
     ComponentRegistry::register::<RigidBody>(w, None)?;
@@ -77,8 +83,10 @@ pub fn plugin(sim: &mut Sim) -> Result<(), Problem> {
     ComponentRegistry::register::<Wind>(w, None)?;
     ComponentRegistry::register::<Walker>(w, None)?;
     ComponentRegistry::register::<amoris_sim::voxels::Voxels>(w, None)?;
+    ComponentRegistry::register::<WaterRegion>(w, None)?;
     let always = RunCondition::Always;
     sim.add_system("physics.wind", TickPhase::Forces, always, forces::wind)?;
+    sim.add_system("physics.water", TickPhase::Forces, always, water::water)?;
     sim.add_system(
         "physics.buoyancy",
         TickPhase::Forces,
