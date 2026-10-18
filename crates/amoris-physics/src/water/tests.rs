@@ -51,25 +51,7 @@ fn run(r: &mut WaterRegion, ticks: u32) -> Vec<Stepped> {
     (0..ticks).map(|_| step_region(r, DT, &mut g)).collect()
 }
 
-/// FNV-1a over every tile's bits, in tile and column order.
-pub(crate) fn hash(r: &WaterRegion) -> u64 {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    let mut eat = |x: u64| {
-        for b in x.to_le_bytes() {
-            h ^= u64::from(b);
-            h = h.wrapping_mul(0x0100_0000_01b3);
-        }
-    };
-    for t in &r.tiles {
-        for v in [&t.bed, &t.depth, &t.u, &t.w] {
-            for x in v.iter() {
-                eat(x.to_bits());
-            }
-        }
-        eat(u64::from(t.still));
-    }
-    h
-}
+pub(crate) use super::hash;
 
 /// The spike's bench scene on a region: bumps up to 0.8 m, a block of water 2 m deep in one
 /// quarter that breaks like a dam.

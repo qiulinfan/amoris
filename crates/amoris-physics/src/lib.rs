@@ -131,7 +131,8 @@ pub const WEB_TESTS: &[WebTest] = &[
 
 /// The web tests' report: one `ok name` or `FAIL name: why` line per test, the digest of the shape
 /// builds (`shapes digest`, `probe::layout`), then the sailing scene's hash at every tick, then the
-/// small level scene's (`level tick hash`). The WebAssembly build (`examples/web_physics.rs`) must
+/// small level scene's (`level tick hash`), then a water region's dam break (`water second hash
+/// substeps`, `water::water_report`). The WebAssembly build (`examples/web_physics.rs`) must
 /// produce the same bytes as the native builds.
 pub fn web_report() -> String {
     let mut out = String::new();
@@ -144,5 +145,6 @@ pub fn web_report() -> String {
     out.push_str(&probe::layout::shapes_report());
     out.push_str(&probe::chain_report());
     out.push_str(&probe::level::level_report());
+    out.push_str(&water::water_report());
     out
 }

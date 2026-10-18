@@ -492,6 +492,80 @@ fn whole(x: f64) -> Option<usize> {
     Some(i)
 }
 
+/// FNV-1a over every tile's beds, depths, velocities (their bits) and still counts, in tile and
+/// column order: equal hashes, equal states.
+pub fn hash(r: &WaterRegion) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut eat = |x: u64| {
+        for b in x.to_le_bytes() {
+            h ^= u64::from(b);
+            h = h.wrapping_mul(0x0100_0000_01b3);
+        }
+    };
+    for t in &r.tiles {
+        for v in [&t.bed, &t.depth, &t.u, &t.w] {
+            for x in v.iter() {
+                eat(x.to_bits());
+            }
+        }
+        eat(u64::from(t.still));
+    }
+    h
+}
+
+/// The spike's bench scene as a region of `tiles` x `tiles` tiles of 0.5 m columns: bumps up to
+/// 0.8 m, a block of water 2 m deep in one quarter that breaks like a dam (shallow-water.md).
+pub fn dam_scene(tiles: u32) -> WaterRegion {
+    let mut r = WaterRegion {
+        cell_m: 0.5,
+        size: [tiles * 16, tiles * 16],
+        bed: BedSource::Voxels {
+            volume: EntityId::FIRST,
+            per: 2,
+            y_lo: 0,
+            y_hi: 63,
+        },
+        edges: [Edge::Wall; 4],
+        friction: 0.02,
+        substeps: 2,
+        dry_below: 0.0,
+        look: WaterLook::default(),
+        tiles: Vec::new(),
+    };
+    for kz in 0..tiles {
+        for kx in 0..tiles {
+            r.tiles.push(WaterTile::dry([kx, kz], 0.0));
+        }
+    }
+    let n = r.columns_along()[0];
+    for k in 0..n {
+        for i in 0..n {
+            let (t, c) = r.locate(i, k);
+            let bump = f64::from(u32::try_from((i * 7 + k * 13) % 5).unwrap_or(0));
+            r.tiles[t].bed[c] = 0.2 * bump;
+            r.tiles[t].depth[c] = if i < n / 2 && k < n / 2 { 2.0 } else { 0.0 };
+        }
+    }
+    r
+}
+
+/// The web tests' water lines (`lib.rs` `web_report`): the dam break of an 8 x 8 tile region
+/// (128 x 128 columns) at 60 Hz, its hash every 60 ticks for 10 s, and the substeps it took. The
+/// WebAssembly build must print the same.
+pub fn water_report() -> String {
+    let mut r = dam_scene(8);
+    let mut g = solve::Grid::default();
+    let mut out = String::new();
+    let mut substeps = 0u64;
+    for t in 1..=600u32 {
+        substeps += u64::from(step_region(&mut r, 1.0 / 60.0, &mut g).substeps);
+        if t % 60 == 0 {
+            out.push_str(&format!("water {} {:016x} {substeps}\n", t / 60, hash(&r)));
+        }
+    }
+    out
+}
+
 /// What one region's tick did.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Stepped {
