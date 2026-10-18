@@ -669,7 +669,10 @@ pub fn knot_mesh(segments: u32, sides: u32) -> MeshData {
             let j1 = (j + 1) % sides;
             let (a, b) = (i * sides + j, i1 * sides + j);
             let (c, d) = (i1 * sides + j1, i * sides + j1);
-            indices.extend_from_slice(&[a, b, c, a, c, d]);
+            // Counter-clockwise seen from outside: around the ring (a to d), then along the curve
+            // (d to c). The other order turns the tube inside out, and back-face culling then
+            // draws its far wall.
+            indices.extend_from_slice(&[a, d, c, a, c, b]);
         }
     }
     smooth_mesh("knot", &positions, &uvs, indices)

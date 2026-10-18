@@ -124,6 +124,15 @@ with full meshes and each shrinks by a pixel, the levels show what was behind bo
 full meshes showed nowhere near. The check now measures the distance to the reference's nearest
 edge (spec 8).
 
+**The knot was inside out** until its fix of 2026-10-18 reached main on 2026-10-25
+(`demo::knot_mesh` wound its triangles clockwise seen from outside, a signed volume of -1.49):
+back-face culling drew each tube's far wall from inside. Where a tube lies along the ground that
+wall meets the ground at a grazing angle, and on the Apple M5 (Metal and MoltenVK alike, since the
+test was added) a level's few millimetres of error put one pixel of a knot 3 pixels from its edge at
+`t = 0.45`. Wound outward, the M5 draws 58,786 and 25,890 camera triangles with levels; 665 and 907
+pixels show another entity, 1 and 2 of them more than 1 pixel and none more than 2 pixels from an
+edge; 826 and 964 pixels differ by more than 32.
+
 ## 4. Making levels
 
 Native (`lod_field`, `meshes[].lod_build_ms`), on the least loaded runs: 135 to 147 ms per
