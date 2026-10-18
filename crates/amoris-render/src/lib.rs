@@ -35,6 +35,7 @@ pub mod rt_shadows;
 pub mod scene;
 mod shaders;
 mod shadows;
+pub mod shallow_water;
 mod skinning;
 mod sky;
 pub mod splash;

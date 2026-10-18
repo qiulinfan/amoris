@@ -33,6 +33,7 @@ pub mod query;
 mod readings;
 pub mod sailing;
 pub mod sea;
+pub mod shallow;
 mod shapes;
 pub mod solver;
 pub mod walk;

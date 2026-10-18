@@ -51,6 +51,8 @@ pub mod writes;
 pub use amoris_interface::{MAX_CATCH_UP, MAX_SPEED, Pace, Pacing, TimeModel};
 /// The engine version replays, snapshots and saves record (versions.md 3.1).
 pub use amoris_persist::EngineVersion;
+/// The shallow-water spike (docs/spikes/shallow-water.md): its examples reach the solver here.
+pub use amoris_physics::shallow;
 /// Presenter-side static walking queries; authoritative gameplay remains in the game world.
 pub use amoris_physics::walk;
 pub use boundary::take_held;

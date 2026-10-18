@@ -797,3 +797,144 @@ fn fs_ocean(in: OceanOut) -> SceneOut {
     }
     return o;
 }
+
+// --- Shallow water (spike, docs/spikes/shallow-water.md) -----------------------------------------
+// A height field of water columns (amoris-physics `shallow`): a vertex at each column's centre at
+// its surface, two triangles between four neighbouring centres, drawn in the transparent layer.
+// A dry column's vertex takes the mean surface of its wet neighbours, so a shore stays flat and
+// runs under the bank; water beside water lower down (a ledge over a pool) slopes down as a sheet.
+
+struct Shallow {
+    origin: vec2f,        // the grid's corner, world x and z
+    cell: f32,            // metres per column
+    time: f32,
+    count: vec4u,         // x, y: columns along x and z
+};
+
+@group(3) @binding(1) var<uniform> shallow: Shallow;
+@group(3) @binding(2) var<storage, read> columns: array<vec4f>;   // surface (world y), depth, vx, vz
+
+const SHALLOW_WET: f32 = 0.01;
+
+fn shallow_column(i: i32, k: i32) -> vec4f {
+    let n = vec2i(shallow.count.xy);
+    let c = clamp(vec2i(i, k), vec2i(0), n - 1);
+    return columns[u32(c.x) + shallow.count.x * u32(c.y)];
+}
+
+fn shallow_vertex(i: i32, k: i32) -> vec4f {
+    let c = shallow_column(i, k);
+    if (c.y > SHALLOW_WET) {
+        return c;
+    }
+    var sum = 0.0;
+    var n = 0.0;
+    for (var dk = -1; dk <= 1; dk++) {
+        for (var di = -1; di <= 1; di++) {
+            let q = shallow_column(i + di, k + dk);
+            if (q.y > SHALLOW_WET) {
+                sum += q.x;
+                n += 1.0;
+            }
+        }
+    }
+    if (n > 0.0) {
+        return vec4f(sum / n, 0.0, 0.0, 0.0);
+    }
+    return vec4f(c.x - 0.05, 0.0, 0.0, 0.0);
+}
+
+struct ShallowOut {
+    @builtin(position) clip: vec4f,
+    @location(0) world: vec3f,
+    @location(1) normal: vec3f,
+    @location(2) depth: f32,
+    @location(3) speed: f32,
+};
+
+@vertex
+fn vs_shallow(@builtin(vertex_index) vi: u32) -> ShallowOut {
+    let quads = shallow.count.x - 1u;
+    let quad = vi / 6u;
+    let corners = array<vec2i, 6>(vec2i(0, 0), vec2i(0, 1), vec2i(1, 1),
+                                  vec2i(0, 0), vec2i(1, 1), vec2i(1, 0));
+    let at = vec2i(i32(quad % quads), i32(quad / quads)) + corners[vi % 6u];
+    let c = shallow_vertex(at.x, at.y);
+    let hl = shallow_vertex(at.x - 1, at.y).x;
+    let hr = shallow_vertex(at.x + 1, at.y).x;
+    let hd = shallow_vertex(at.x, at.y - 1).x;
+    let hu = shallow_vertex(at.x, at.y + 1).x;
+    let world = vec3f(shallow.origin.x + (f32(at.x) + 0.5) * shallow.cell, c.x,
+                      shallow.origin.y + (f32(at.y) + 0.5) * shallow.cell);
+    var o: ShallowOut;
+    o.clip = view.view_proj * vec4f(world, 1.0);
+    o.world = world;
+    o.normal = vec3f(-(hr - hl), 2.0 * shallow.cell, -(hu - hd));
+    o.depth = c.y;
+    o.speed = length(c.zw);
+    return o;
+}
+
+@fragment
+fn fs_shallow(in: ShallowOut) -> @location(0) vec4f {
+    if (in.depth < 0.002) {
+        discard;
+    }
+    let v_world = view.camera_pos.xyz - in.world;
+    let v = v_world / length(v_world);
+    let footprint = max(length(fwidth(in.world.xz)), 1e-3);
+    let n0 = normalize(in.normal);
+    // Small wavelets where the water moves, none on still water.
+    let ripple = clamp(in.speed * 0.5, 0.15, 1.0);
+    let g = wavelets(in.world.xz, shallow.time, footprint) * ripple * 0.5;
+    let n = normalize(vec3f(n0.x - g.x * n0.y, n0.y, n0.z - g.y * n0.y));
+    let nv = max(dot(n, v), 1e-4);
+    let rough = clamp(0.05 + footprint * 0.04, 0.05, 0.3);
+    let a = rough * rough;
+    let f = 0.02 + 0.98 * pow(1.0 - nv, 5.0);
+    let r = reflect(-v, n);
+    let ry = vec3f(r.x, max(r.y, 0.02), r.z);
+    let levels = f32(textureNumLevels(env_cube) - 1);
+    let sky = textureSampleLevel(env_cube, env_sampler, ry, rough * levels).rgb * view.sun_color.w;
+    let sun = view.sun_dir.xyz;
+    let sun_lux = view.sun_dir.w * view.sun_color.rgb;
+    let body_light = sh_irradiance(vec3f(0.0, 1.0, 0.0)) * 0.08 + sun_lux * max(sun.y, 0.0) * 0.012;
+    // The light the water scatters back: blue-green, brighter than the deep sea's.
+    let body = vec3f(0.05, 0.2, 0.24) * body_light * 6.0;
+    let shadow = shadow_factor(in.world, n, dot(in.world - view.camera_pos.xyz,
+        -vec3f(view.view[0].z, view.view[1].z, view.view[2].z)));
+    var spec = vec3f(0.0);
+    if (view.sun_dir.w > 0.0) {
+        let h = normalize(sun + v);
+        let nl = max(dot(n, sun), 0.0);
+        spec = d_ggx(max(dot(n, h), 0.0), a) * v_smith(nv, nl, a) * f_schlick(vec3f(0.02),
+            max(dot(v, h), 0.0)) * sun_lux * nl * shadow;
+    }
+    // What lies under shows through shallow water; deep water is its body's colour.
+    let opacity = 1.0 - exp(-in.depth * 0.9);
+    // White where the water runs fast or falls steeply (rapids, the sheet over a ledge).
+    let steep = 1.0 - n0.y;
+    // Patchy: a value noise over the surface (two octaves of hashed lattice values), so fast water
+    // breaks into streaks of foam rather than turning milky.
+    let q = in.world.xz * 2.5 + vec2f(0.0, shallow.time * 0.7);
+    let cell = floor(q);
+    let t = q - cell;
+    let s2 = t * t * (3.0 - 2.0 * t);
+    let lattice = vec2u(vec2i(cell) + vec2i(4096));
+    let n00 = unit_from_hash(pcg_hash(lattice.x * 73856093u ^ lattice.y * 19349663u));
+    let n10 = unit_from_hash(pcg_hash((lattice.x + 1u) * 73856093u ^ lattice.y * 19349663u));
+    let n01 = unit_from_hash(pcg_hash(lattice.x * 73856093u ^ (lattice.y + 1u) * 19349663u));
+    let n11 = unit_from_hash(pcg_hash((lattice.x + 1u) * 73856093u ^ (lattice.y + 1u) * 19349663u));
+    let noise = mix(mix(n00, n10, s2.x), mix(n01, n11, s2.x), s2.y);
+    let churn = smoothstep(3.0, 7.0, in.speed) * smoothstep(0.35, 0.75, noise);
+    let foam = clamp(churn * 0.7 + smoothstep(0.4, 0.9, steep) * 0.85, 0.0, 1.0);
+    let white = vec3f(0.85, 0.9, 0.92) * (body_light * 6.0 + sun_lux * max(sun.y, 0.0) * 0.25 * shadow);
+    var alpha = max(opacity, f);
+    var c = body * opacity * (1.0 - f) + sky * f + spec;
+    c = mix(c, white * max(alpha, 0.5), foam);
+    alpha = mix(alpha, max(alpha, 0.8), foam);
+    // Fade out at the waterline.
+    let edge = smoothstep(0.002, 0.03, in.depth);
+    c = mix(view.fog.rgb * view.sun_color.w * alpha, c, 1.0 - fog_amount(in.world));
+    return vec4f(c, alpha) * edge;
+}

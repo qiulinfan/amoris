@@ -40,3 +40,9 @@ crate-type = ["cdylib"]
 [[example]]
 name = "level_web"
 crate-type = ["cdylib"]
+
+# The shallow-water spike's bench scene as a WebAssembly module with no imports, whose substeps and
+# hash chain tests/web/shallow.mjs times and prints under Node (docs/spikes/shallow-water.md).
+[[example]]
+name = "shallow_web"
+crate-type = ["cdylib"]
