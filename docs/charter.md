@@ -950,8 +950,12 @@ MoltenVK 从第 1 秒起分叉，所以它不能成为世界状态。所有者 2
 子，这样两层各管一件事。
 
 补测：Chrome 155 的逐位一致与 M5 上的绘制开销已经测过
-（[shallow-water.md](spikes/shallow-water.md)）； x86-64 与 R1 由 `tools/shallow_check.py` 在 R1 上
-测。
+（[shallow-water.md](spikes/shallow-water.md)）。2026-10-18 在 R1（x86-64，Windows 11）上跑了
+`tools/shallow_check.py`：两种方案在原生 release、原生 debug、Node 与 Chrome 下共 8 条哈希链，与 M5
+全部一致，所以规则层的确定性成立，切片 A 可以开始。R1 上求解每列每子步原生 18 到 26 ns，WebAssembly
+23 到 30 ns，比 M5 慢 1.3 到 1.9 倍；blockcraft 的 256² 区域两个子步一 tick 原生约 2.9 ms。RTX
+5060（Direct3D 12）上绘制增加 0.2 到 0.6 ms 的 GPU 时间；780M 尚未测（[liquids.md](bench/liquids.md)
+2）。
 
 不在本切片内：洞穴与悬垂下的水（需要分层的高度场）、物体排开水（双向耦合）、多线程求解、液体之间的
 反应、折射。
