@@ -25,6 +25,7 @@
 pub mod boat;
 pub mod body;
 mod cache;
+pub mod fluids;
 mod forces;
 pub mod geom;
 pub mod probe;
@@ -85,6 +86,7 @@ pub fn plugin(sim: &mut Sim) -> Result<(), Problem> {
     )?;
     sim.add_system("physics.sail", TickPhase::Forces, always, forces::sail)?;
     sim.add_system("physics.hull", TickPhase::Forces, always, forces::hull)?;
+    sim.add_system("physics.fluids", TickPhase::Physics, always, fluids::fluids)?;
     sim.add_system("physics.walk", TickPhase::Physics, always, walker::walk)?;
     sim.add_system("physics.step", TickPhase::Physics, always, solver::step)?;
     sim.add_system(

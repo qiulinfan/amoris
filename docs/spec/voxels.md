@@ -178,7 +178,7 @@ pub struct Walker {
 
 - The entity's `Transform` is the eye: position the eye, rotation `yaw` about +y then `pitch` about
   +x, so a `Camera` on the same entity looks where the walker looks.
-- `physics.walk` runs in the `Physics` phase after `physics.contacts` (simulation.md 4.4, row 9a),
+- `physics.walk` runs in the `Physics` phase after `physics.fluids` (simulation.md 4.4, row 9b),
   after the `Update` phase's rules. Per walker, in `EntityId` order, it turns the inputs into a
   velocity (the horizontal one from `forward` and `strafe` turned by `yaw`, at most unit length,
   times the speed; the vertical one under gravity, set to `jump_mps` by a jump while grounded), then

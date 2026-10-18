@@ -79,7 +79,9 @@ the order cells are visited in changes nothing. For a pending cell:
    source.
 5. No feeder: a liquid cell becomes air; other cells stay as they are.
 
-A cell a liquid enters must be air or a plant (`cross`; it is washed away). The cells whose state
+A cell a liquid enters must be air or a plant (`cross`; it is washed away), inside the box of
+the volume's chunks (amended during implementation: otherwise a liquid at the volume's edge would
+spread into the empty space past it and fall without end). The cells whose state
 changed, and their six neighbours, are pending for the next step; the rest leave the list. A step
 takes at most 65,536 cells in cell order; the rest wait for the next period. All of it is integer
 arithmetic over cells.

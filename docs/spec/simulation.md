@@ -217,7 +217,8 @@ this table and the schedule golden of section 12 together.
 | 7 | Forces | `physics.hull` | amoris-physics | keel, rudder and hull drag |
 | 8 | Physics | `physics.step` | amoris-physics | sync changed bodies in, one step of `dt`, write back positions, velocities and readouts |
 | 9 | Physics | `physics.contacts` | amoris-physics | contact begin and end events, in pair order (section 8.4) |
-| 9a | Physics | `physics.walk` | amoris-physics | each `Walker` moved against the volumes' solid cells and its eye written (voxels.md 5.2) |
+| 9a | Physics | `physics.fluids` | amoris-physics | each volume's flowing liquids: edits taken, a flow step on each liquid's period (liquids.md 4) |
+| 9b | Physics | `physics.walk` | amoris-physics | each `Walker` moved against the volumes' solid cells and its eye written (voxels.md 5.2) |
 | 10 | Finish | `interface.perception` | amoris-interface | every observer's memory and perceived events from the events appended since its last run: the boundary writes' (the inbox from `boundary_from`, 5.1) and the tick's own (still in the outbox), in `EventSeq` order (shared/contract/perception.md, The perception update) |
 | 11 | Finish | `interface.turns` | amoris-interface | ends a turn's resolving phase when its rule holds (shared/contract/time.md, Turn structure) and evaluates the episode's `done` predicate (time.md, Episodes); writes the turn and episode state only |
 | 11a | Finish | `physics.walk.clear` | amoris-physics | the walkers' one-tick pulses (`jump`, `primary`, `secondary`) cleared (voxels.md 5.2) |
