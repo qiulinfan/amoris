@@ -361,3 +361,74 @@ fn the_feed_carries_every_tile_first_and_then_the_tiles_stepped() {
         std::fs::remove_dir_all(root).unwrap();
     });
 }
+
+#[test]
+fn sleeping_water_is_reused_by_the_snapshot_cache_and_forks_and_restores_continue_the_flow() {
+    use amoris_persist::SnapshotCache;
+    common::big_stack(|| {
+        let mut ents = lake([0.0, 0.0, 0.0]);
+        ents[0]["components"]["Voxels"] = serde_json::to_value(pond()).unwrap();
+        let root = project("cache", MAIN, ents);
+        let mut g = game(&root).unwrap_or_else(|e| panic!("{e:#?}"));
+        let mut cache = SnapshotCache::new();
+        let section = |s: &amoris_persist::Snapshot| {
+            s.sections()
+                .iter()
+                .find(|s| s.key.name == "WaterRegion")
+                .map(|s| s.bytes.clone())
+                .expect("the region's section")
+        };
+        let mut last = None;
+        for t in 1..=75 {
+            g.step().unwrap();
+            let a = cache.snapshot(g.world(), g.registry()).unwrap();
+            assert_eq!(a.to_bytes(), g.snapshot().unwrap().to_bytes(), "tick {t}");
+            let s = section(&a);
+            if t > 62 {
+                // Asleep since tick 61: the section is the one encoded before, not encoded again.
+                assert!(
+                    std::sync::Arc::ptr_eq(last.as_ref().unwrap(), &s),
+                    "tick {t}"
+                );
+            }
+            last = Some(s);
+        }
+        assert!(region(&g).tiles.iter().all(|t| t.asleep()));
+        // A spring wakes it: the flow then goes on the same in a fork and after a restore.
+        g.apply(&amoris_runtime::Command::new(
+            amoris_link::Source::Editor,
+            1,
+            "world.edit",
+            json!({"label": "spring", "ops": [{"spawn": {"name": "Spring", "components": {
+                "WaterSource": {"region": 2, "at": [6.25, 6.25], "rate_m3s": 2.0}}}}]}),
+        ))
+        .unwrap_or_else(|e| panic!("{e:#?}"));
+        for _ in 0..20 {
+            g.step().unwrap();
+            let a = cache.snapshot(g.world(), g.registry()).unwrap();
+            assert_eq!(a.to_bytes(), g.snapshot().unwrap().to_bytes());
+        }
+        let snap = g.snapshot().unwrap();
+        let mut fork = g.fork().unwrap_or_else(|e| panic!("{e:#?}"));
+        for _ in 0..60 {
+            g.step().unwrap();
+            fork.step().unwrap();
+        }
+        let flowed = g.world_hash().unwrap();
+        assert_eq!(
+            fork.world_hash().unwrap(),
+            flowed,
+            "the fork flows the same"
+        );
+        g.restore(&snap).unwrap();
+        for _ in 0..60 {
+            g.step().unwrap();
+        }
+        assert_eq!(
+            g.world_hash().unwrap(),
+            flowed,
+            "the restore flows the same"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    });
+}
