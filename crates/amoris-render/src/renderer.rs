@@ -58,12 +58,12 @@ use crate::profiler::GpuProfiler;
 use crate::scene::{NEURAL_VARIANT, Part, Resolve, Scene, VARIANTS};
 use crate::shaders;
 use crate::shadows::{self, CASCADES, SHADOW_SIZE, SLICE_PLANES, ShadowCull};
-use crate::shallow_water::{ShallowWater, ShallowWaterView};
 use crate::skinning::Skinning;
 use crate::sky::{Sky, SkyParams};
 use crate::trace::{self, FrameTracer, TraceSpec};
 use crate::transparent::Transparent;
 use crate::ui::Ui;
+use crate::water::{ShallowWaterView, Water};
 
 const CLUSTER_X: u32 = 16;
 const CLUSTER_Y: u32 = 9;
@@ -451,9 +451,8 @@ pub struct Renderer {
     depth_only: [wgpu::RenderPipeline; 4],
     empty_group: wgpu::BindGroup,
     ocean: Ocean,
-    /// Shallow water from the host (spike, docs/spikes/shallow-water.md).
-    shallow_water: ShallowWater,
-    shallow_view: Option<ShallowWaterView>,
+    /// Water regions from the feed and the spike's field from the host (water.md 9).
+    water: Water,
     picking: Picking,
     skinning: Skinning,
     ui: Ui,
@@ -562,7 +561,7 @@ struct Built {
     occlusion: Occlusion,
     sky: Sky,
     ocean: Ocean,
-    shallow_water: ShallowWater,
+    water: Water,
     particles: Particles,
     post: Post,
     cull: wgpu::ComputePipeline,
@@ -1194,9 +1193,8 @@ impl Renderer {
             let sky = s.spawn(|| Sky::new(device));
             let ocean =
                 s.spawn(|| Ocean::new(device, lit_module, [&frame, &lighting, &textures], format));
-            let shallow_water = s.spawn(|| {
-                ShallowWater::new(device, lit_module, [&frame, &lighting, &textures], format)
-            });
+            let water =
+                s.spawn(|| Water::new(device, lit_module, [&frame, &lighting, &textures], format));
             let particles = s.spawn(|| Particles::new(device, format));
             let post = s.spawn(|| Post::new(device, output));
             let cull = s.spawn(|| compute("cull", "main"));
@@ -1250,7 +1248,7 @@ impl Renderer {
                 occlusion: occlusion.join(),
                 sky: sky.join(),
                 ocean: ocean.join(),
-                shallow_water: shallow_water.join(),
+                water: water.join(),
                 particles: particles.join(),
                 post: post.join(),
                 cull: cull.join(),
@@ -1373,8 +1371,7 @@ impl Renderer {
             shadow: built.shadow,
             depth_only: built.depth_only,
             ocean: built.ocean,
-            shallow_water: built.shallow_water,
-            shallow_view: None,
+            water: built.water,
             picking: built.picking,
             skinning: built.skinning,
             ui: built.ui,
@@ -1770,7 +1767,7 @@ impl Renderer {
     /// The shallow water to draw from the next frame on (spike, docs/spikes/shallow-water.md);
     /// `None` draws none.
     pub fn set_shallow_water(&mut self, water: Option<ShallowWaterView>) {
-        self.shallow_view = water;
+        self.water.set_spike(water.as_ref());
     }
 
     pub fn set_splashes(&mut self, on: bool) {
@@ -1858,10 +1855,7 @@ impl Renderer {
             });
             let sky = s.spawn(|| sky_pipeline(device, &self.sky_module, format));
             let ocean = s.spawn(|| self.ocean.set_format(device, &self.lit_module, format));
-            let shallow_water = s.spawn(|| {
-                self.shallow_water
-                    .set_format(device, &self.lit_module, format)
-            });
+            let water = s.spawn(|| self.water.set_format(device, &self.lit_module, format));
             let particles = s.spawn(|| self.particles.set_format(device, format));
             let overlays = s.spawn(|| self.overlays.set_format(device, format));
             // The passes that read the opaque pass's depth, and the prepass that draws it, follow
@@ -1884,7 +1878,7 @@ impl Renderer {
                 (taa.join(), gtao.join(), depth.join())
             });
             ocean.join();
-            shallow_water.join();
+            water.join();
             particles.join();
             overlays.join();
             ((forward.join(), transparent.join()), sky.join(), rebuilt)
@@ -2017,10 +2011,14 @@ impl Renderer {
     pub fn apply(&mut self, mut frame: RenderFrame, now_s: f64) {
         if frame.reset {
             self.voxels.clear();
+            self.water.clear();
             self.splash.clear();
             if let Some(f) = self.splash_fluid.as_mut() {
                 f.clear(&self.gpu.queue);
             }
+        }
+        if !frame.water.is_empty() || !frame.water_removed.is_empty() {
+            self.water.apply(&frame.water, &frame.water_removed);
         }
         if !frame.voxels.is_empty() || !frame.voxels_removed.is_empty() {
             let mut changes = self.voxels.apply(&frame.voxels, &frame.voxels_removed);
@@ -2766,7 +2764,11 @@ impl Renderer {
                 env.as_ref().map_or(1.0, |e| e.ambient),
             ],
             // Under a liquid its own fog, even and dense (a negative density; liquids.md 6).
-            fog: match self.voxels.fog_at(cam.position.to_array()) {
+            fog: match self
+                .water
+                .fog_at(cam.position.to_array())
+                .or_else(|| self.voxels.fog_at(cam.position.to_array()))
+            {
                 Some(f) => [f[0], f[1], f[2], -f[3].abs().max(1e-4)],
                 None => env.as_ref().map_or([0.0; 4], |e| {
                     [
@@ -2819,8 +2821,7 @@ impl Renderer {
         {
             let t = self.scene.t_s - self.scene.dt_s * (1.0 - f64::from(alpha));
             let device = self.gpu.device.clone();
-            self.shallow_water
-                .update(&device, &queue, self.shallow_view.as_ref(), t as f32);
+            self.water.update(&device, &queue, t as f32);
         }
         let mut planes = [[[0.0f32; 4]; 6]; 5];
         // The jittered frustum and matrix: the depth pyramid holds the jittered depth.
@@ -3402,11 +3403,11 @@ impl Renderer {
             &self.batches,
             &self.meshes,
         );
-        // Shallow water (spike): groups 0 to 2 as for the lit forward pipelines.
+        // Water regions (water.md 9): groups 0 to 2 as for the lit forward pipelines.
         pass.set_bind_group(0, &binds.frame, &[]);
         pass.set_bind_group(1, &binds.lighting, &[]);
         pass.set_bind_group(2, &binds.textures, &[]);
-        self.shallow_water.draw(pass);
+        self.water.draw(pass);
         // Liquid particles where particles and splats go (docs/spec/splashes.md 5).
         for f in [&self.fluid, &self.splash_fluid].into_iter().flatten() {
             f.draw_surface(device, pass, &self.view_buf.buf);

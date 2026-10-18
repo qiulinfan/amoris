@@ -17,13 +17,13 @@ use std::collections::HashMap;
 use amoris_assets::frame::{
     AnimView, AudioView, BlockLook, CameraView, ChunkUpdate, EmitterView, EnvironmentView,
     InstanceUpdate, LightKindView, LightView, Look, Pose, RenderFrame, SeaView, SplatView, UiView,
-    VoxelUpdate, WaveView,
+    VoxelUpdate, WaterLookView, WaterTileView, WaterUpdate, WaveView,
 };
 use amoris_assets::{
     Animator, AudioSource, Camera, Environment, Feed, Light, LightKind, Model, ParticleEmitter,
     SkyKind, Splat, UiAnchor, UiBar, UiText,
 };
-use amoris_physics::{Sea, Transform};
+use amoris_physics::{BedSource, Sea, Style, Transform, WaterRegion, WaterSteps};
 use amoris_sim::voxels::{BlockShape, Voxels};
 use amoris_sim::{EntityId, SimClock};
 use bevy_ecs::change_detection::DetectChanges;
@@ -43,6 +43,84 @@ pub struct Extractor {
     queries: Option<Queries>,
     /// Each block volume as last sent: what a change is compared with (voxels.md 7.1).
     volumes: HashMap<Entity, SentVolume>,
+    /// Each water region as last sent (water.md 9).
+    waters: HashMap<Entity, SentWater>,
+}
+
+/// A water region as the subscribers last received it: its id, the tick it was sent at (its tiles
+/// stepped later are sent next), and its look.
+struct SentWater {
+    id: u64,
+    tick: u64,
+    look: WaterLookView,
+}
+
+fn water_look(r: &WaterRegion) -> WaterLookView {
+    WaterLookView {
+        fog: r.look.fog,
+        absorb: r.look.absorb,
+        blocky: r.look.style == Style::Blocky,
+        per: match r.bed {
+            BedSource::Voxels { per, .. } => per,
+            BedSource::Colliders { .. } => 1,
+        },
+    }
+}
+
+/// Tile `n`'s columns: surface, depth, velocity.
+fn water_tile(r: &WaterRegion, n: usize) -> WaterTileView {
+    let t = &r.tiles[n];
+    let tx = r.tiles_along()[0];
+    let (bx, bz) = ((n % tx) * 16, (n / tx) * 16);
+    let columns = (0..256)
+        .map(|c| {
+            let (i, k) = (bx + c % 16, bz + c / 16);
+            let v = r.velocity_at(i, k);
+            [f(t.bed[c] + t.depth[c]), f(t.depth[c]), f(v[0]), f(v[1])]
+        })
+        .collect();
+    WaterTileView {
+        key: t.key,
+        columns,
+    }
+}
+
+/// The update that brings `sent` (none: nothing sent yet, so every tile) to `r` at `tick`, given
+/// the tick each tile was last stepped (`marks`; none: every tile); `sent` is brought up to date.
+fn water_update(
+    sent: &mut Option<SentWater>,
+    id: u64,
+    r: &WaterRegion,
+    origin: [f32; 2],
+    tick: u64,
+    marks: Option<&Vec<u64>>,
+) -> WaterUpdate {
+    let look = water_look(r);
+    let tiles: Vec<WaterTileView> = if !r.well_formed() {
+        Vec::new()
+    } else {
+        match (sent.as_ref(), marks) {
+            (Some(s), Some(m)) => (0..r.tiles.len())
+                .filter(|&n| m.get(n).is_some_and(|&t| t > s.tick))
+                .map(|n| water_tile(r, n))
+                .collect(),
+            _ => (0..r.tiles.len()).map(|n| water_tile(r, n)).collect(),
+        }
+    };
+    let new_look = sent.as_ref().is_none_or(|s| s.look != look);
+    *sent = Some(SentWater {
+        id,
+        tick,
+        look: look.clone(),
+    });
+    WaterUpdate {
+        id,
+        origin,
+        cell_m: f(r.cell_m),
+        size: r.size,
+        look: new_look.then_some(look),
+        tiles,
+    }
 }
 
 /// A block volume as the subscribers last received it.
@@ -170,6 +248,12 @@ struct Queries {
         Ref<'static, Voxels>,
         Opt<Transform>,
     )>,
+    water: QueryState<(
+        Entity,
+        &'static EntityId,
+        Ref<'static, WaterRegion>,
+        Opt<Transform>,
+    )>,
 }
 
 impl Queries {
@@ -186,6 +270,7 @@ impl Queries {
             ui: QueryState::new(world),
             splats: QueryState::new(world),
             voxels: QueryState::new(world),
+            water: QueryState::new(world),
         }
     }
 }
@@ -361,6 +446,25 @@ impl Extractor {
                 self.volumes.insert(e, s);
             }
         }
+        self.waters.clear();
+        let mut q = world.query::<(Entity, &EntityId, &WaterRegion, Option<&Transform>)>();
+        let mut rows: Vec<_> = q.iter(world).collect();
+        rows.sort_unstable_by_key(|r| r.1.get());
+        for (e, id, r, t) in rows {
+            let mut sent = None;
+            let p = t.map_or([0.0; 3], |t| t.position);
+            frame.water.push(water_update(
+                &mut sent,
+                id.get(),
+                r,
+                [f(p[0]), f(p[2])],
+                tick,
+                None,
+            ));
+            if let Some(s) = sent {
+                self.waters.insert(e, s);
+            }
+        }
         frame
     }
 
@@ -501,6 +605,41 @@ impl Extractor {
                 }
                 if let Some(s) = sent {
                     self.volumes.insert(e, s);
+                }
+            }
+        }
+        // Water regions: the tiles stepped since they were last sent, and the regions gone.
+        let gone: Vec<Entity> = world.removed::<WaterRegion>().collect();
+        for e in gone {
+            let still = world
+                .get_entity(e)
+                .ok()
+                .is_some_and(|r| r.contains::<WaterRegion>());
+            if !still && let Some(s) = self.waters.remove(&e) {
+                frame.water_removed.push(s.id);
+            }
+        }
+        if let Some(q) = self.queries.as_mut() {
+            let steps = world.get_resource::<WaterSteps>();
+            let mut rows: Vec<_> = q
+                .water
+                .iter(world)
+                .filter(|(e, _, r, t)| {
+                    !self.waters.contains_key(e)
+                        || r.is_changed()
+                        || t.as_ref().is_some_and(|t| t.is_changed())
+                })
+                .map(|(e, id, r, t)| (e, *id, r, t))
+                .collect();
+            rows.sort_unstable_by_key(|r| r.1);
+            for (e, id, r, t) in rows {
+                let mut sent = self.waters.remove(&e);
+                let p = t.map_or([0.0; 3], |t| t.position);
+                let marks = steps.and_then(|s| s.regions.get(&id));
+                let u = water_update(&mut sent, id.get(), &r, [f(p[0]), f(p[2])], tick, marks);
+                frame.water.push(u);
+                if let Some(s) = sent {
+                    self.waters.insert(e, s);
                 }
             }
         }

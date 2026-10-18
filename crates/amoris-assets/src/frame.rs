@@ -236,6 +236,38 @@ pub struct VoxelUpdate {
     pub chunks: Vec<ChunkUpdate>,
 }
 
+/// How a water region looks (water.md 9): the view from under its surface (linear colour and fog
+/// density per metre), its absorption per metre (linear rgb), and its style: `blocky` draws the
+/// surface flat over each block of `per` x `per` columns.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct WaterLookView {
+    pub fog: [f32; 4],
+    pub absorb: [f32; 3],
+    pub blocky: bool,
+    pub per: u32,
+}
+
+/// One tile of a water region (16 x 16 columns, x fastest): each column's surface (world y), depth
+/// and velocity (m/s along x and z).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct WaterTileView {
+    pub key: [u32; 2],
+    pub columns: Vec<[f32; 4]>,
+}
+
+/// A water region's change (water.md 9): its corner (world x, z), column size and column counts,
+/// its look when it changed, and its tiles: every tile in its first frame and a reset frame, then
+/// the tiles stepped since.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct WaterUpdate {
+    pub id: u64,
+    pub origin: [f32; 2],
+    pub cell_m: f32,
+    pub size: [u32; 2],
+    pub look: Option<WaterLookView>,
+    pub tiles: Vec<WaterTileView>,
+}
+
 /// What changed in the visual state since the subscriber's last frame.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct RenderFrame {
@@ -273,6 +305,12 @@ pub struct RenderFrame {
     /// Block volumes gone.
     #[serde(default)]
     pub voxels_removed: Vec<u64>,
+    /// Water regions that changed (water.md 9).
+    #[serde(default)]
+    pub water: Vec<WaterUpdate>,
+    /// Water regions gone.
+    #[serde(default)]
+    pub water_removed: Vec<u64>,
 }
 
 impl RenderFrame {
@@ -291,6 +329,8 @@ impl RenderFrame {
             && self.emitters.is_none()
             && self.voxels.is_empty()
             && self.voxels_removed.is_empty()
+            && self.water.is_empty()
+            && self.water_removed.is_empty()
     }
 
     /// Folds `next` (a later frame) into this one, as if both had been applied in order.
@@ -386,6 +426,33 @@ impl RenderFrame {
                     }
                 }
                 None => self.voxels.push(v),
+            }
+        }
+        if !next.water_removed.is_empty() {
+            self.water.retain(|w| !next.water_removed.contains(&w.id));
+            self.water_removed.extend(next.water_removed);
+        }
+        for w in next.water {
+            self.water_removed.retain(|&id| id != w.id);
+            match self.water.iter_mut().find(|o| o.id == w.id) {
+                Some(cur) => {
+                    let resized = cur.size != w.size;
+                    (cur.origin, cur.cell_m, cur.size) = (w.origin, w.cell_m, w.size);
+                    if w.look.is_some() {
+                        cur.look = w.look;
+                    }
+                    if resized {
+                        cur.tiles = w.tiles;
+                        continue;
+                    }
+                    for t in w.tiles {
+                        match cur.tiles.iter_mut().find(|o| o.key == t.key) {
+                            Some(o) => *o = t,
+                            None => cur.tiles.push(t),
+                        }
+                    }
+                }
+                None => self.water.push(w),
             }
         }
     }
@@ -572,6 +639,39 @@ mod tests {
         assert_eq!(a.instances.len(), 2);
         assert_eq!(a.instances[0].pose.unwrap().position[0], 5.0);
         assert_eq!(a.removed, vec![2]);
+    }
+
+    #[test]
+    fn merged_water_keeps_the_latest_tile_of_each_key() {
+        let tile = |key: [u32; 2], x: f32| WaterTileView {
+            key,
+            columns: vec![[x; 4]; 256],
+        };
+        let water = |tiles: Vec<WaterTileView>, look: bool| WaterUpdate {
+            id: 9,
+            origin: [0.0; 2],
+            cell_m: 0.5,
+            size: [32, 32],
+            look: look.then(WaterLookView::default),
+            tiles,
+        };
+        let mut a = RenderFrame {
+            water: vec![water(vec![tile([0, 0], 1.0), tile([1, 0], 1.0)], true)],
+            ..RenderFrame::default()
+        };
+        a.merge(RenderFrame {
+            water: vec![water(vec![tile([1, 0], 2.0), tile([1, 1], 2.0)], false)],
+            ..RenderFrame::default()
+        });
+        let w = &a.water[0];
+        assert!(w.look.is_some(), "the earlier look stays");
+        let x: Vec<([u32; 2], f32)> = w.tiles.iter().map(|t| (t.key, t.columns[0][0])).collect();
+        assert_eq!(x, vec![([0, 0], 1.0), ([1, 0], 2.0), ([1, 1], 2.0)]);
+        a.merge(RenderFrame {
+            water_removed: vec![9],
+            ..RenderFrame::default()
+        });
+        assert!(a.water.is_empty() && a.water_removed == vec![9]);
     }
 
     #[test]

@@ -35,7 +35,10 @@ pub mod rt_shadows;
 pub mod scene;
 mod shaders;
 mod shadows;
-pub mod shallow_water;
+/// The spike's host-made field (docs/spikes/shallow-water.md), drawn as a water region.
+pub mod shallow_water {
+    pub use crate::water::ShallowWaterView;
+}
 mod skinning;
 mod sky;
 pub mod splash;
@@ -46,6 +49,7 @@ mod transparent;
 mod ui;
 mod upload;
 pub mod voxels;
+pub mod water;
 
 pub use camera::CameraState;
 pub use gpu::{BackendChoice, Gpu, GpuError};

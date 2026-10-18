@@ -798,17 +798,21 @@ fn fs_ocean(in: OceanOut) -> SceneOut {
     return o;
 }
 
-// --- Shallow water (spike, docs/spikes/shallow-water.md) -----------------------------------------
-// A height field of water columns (amoris-physics `shallow`): a vertex at each column's centre at
-// its surface, two triangles between four neighbouring centres, drawn in the transparent layer.
-// A dry column's vertex takes the mean surface of its wet neighbours, so a shore stays flat and
-// runs under the bank; water beside water lower down (a ledge over a pool) slopes down as a sheet.
+// --- Water regions (docs/spec/water.md 9; the spike, docs/spikes/shallow-water.md) --------------
+// A height field of water columns (amoris-physics `water`): Smooth draws a vertex at each column's
+// centre at its surface and two triangles between four neighbouring centres; a dry column's vertex
+// takes the mean surface of its wet neighbours, so a shore stays flat and runs under the bank, and
+// water beside water lower down (a ledge over a pool) slopes down as a sheet. Blocky draws each
+// block of `per` x `per` columns flat at its columns' mean surface, with vertical sides where
+// neighbouring blocks differ. Both are drawn in the transparent layer.
 
 struct Shallow {
     origin: vec2f,        // the grid's corner, world x and z
     cell: f32,            // metres per column
     time: f32,
-    count: vec4u,         // x, y: columns along x and z
+    count: vec4u,         // x, y: columns along x and z; z: 1 when the columns are in tiles of
+                          // 16 x 16 (else rows); w: columns to a block (Blocky)
+    absorb: vec4f,        // absorption per metre, rgb
 };
 
 @group(3) @binding(1) var<uniform> shallow: Shallow;
@@ -818,8 +822,13 @@ const SHALLOW_WET: f32 = 0.01;
 
 fn shallow_column(i: i32, k: i32) -> vec4f {
     let n = vec2i(shallow.count.xy);
-    let c = clamp(vec2i(i, k), vec2i(0), n - 1);
-    return columns[u32(c.x) + shallow.count.x * u32(c.y)];
+    let c = vec2u(clamp(vec2i(i, k), vec2i(0), n - 1));
+    if (shallow.count.z == 1u) {
+        let tile = c / 16u;
+        let local = c % 16u;
+        return columns[(tile.x + (shallow.count.x / 16u) * tile.y) * 256u + local.x + 16u * local.y];
+    }
+    return columns[c.x + shallow.count.x * c.y];
 }
 
 fn shallow_vertex(i: i32, k: i32) -> vec4f {
@@ -850,6 +859,8 @@ struct ShallowOut {
     @location(1) normal: vec3f,
     @location(2) depth: f32,
     @location(3) speed: f32,
+    // How much it falls: white where the water drops steeply (a sheet over a ledge, a fall).
+    @location(4) steep: f32,
 };
 
 // One vertex per column (`vi`, x fastest); an index buffer makes the triangles, so each column is
@@ -870,6 +881,93 @@ fn vs_shallow(@builtin(vertex_index) vi: u32) -> ShallowOut {
     o.normal = vec3f(-(hr - hl), 2.0 * shallow.cell, -(hu - hd));
     o.depth = c.y;
     o.speed = length(c.zw);
+    o.steep = 1.0 - normalize(o.normal).y;
+    return o;
+}
+
+// Block (bi, bk) of `per` x `per` columns: its level (the mean surface of its wet columns, else of
+// its beds), mean depth and mean velocity; a level far below everything past the grid.
+fn shallow_block(bi: i32, bk: i32) -> vec4f {
+    let per = i32(max(shallow.count.w, 1u));
+    let nb = vec2i(shallow.count.xy) / per;
+    if (bi < 0 || bk < 0 || bi >= nb.x || bk >= nb.y) {
+        return vec4f(-1e9, 0.0, 0.0, 0.0);
+    }
+    var wet = 0.0;
+    var n_wet = 0.0;
+    var beds = 0.0;
+    var depth = 0.0;
+    var vel = vec2f(0.0);
+    for (var dk = 0; dk < per; dk++) {
+        for (var di = 0; di < per; di++) {
+            let c = shallow_column(bi * per + di, bk * per + dk);
+            beds += c.x;
+            depth += c.y;
+            vel += c.zw;
+            if (c.y > SHALLOW_WET) {
+                wet += c.x;
+                n_wet += 1.0;
+            }
+        }
+    }
+    let n = f32(per * per);
+    let level = select(beds / n, wet / max(n_wet, 1.0), n_wet > 0.0);
+    return vec4f(level, depth / n, vel / n);
+}
+
+// Eighteen vertices a block: its top (two triangles), its side toward +x and its side toward +z
+// (two triangles each, collapsed where the blocks meet level or the higher one is dry).
+@vertex
+fn vs_shallow_blocky(@builtin(vertex_index) vi: u32) -> ShallowOut {
+    let per = i32(max(shallow.count.w, 1u));
+    let nbx = max(i32(shallow.count.x) / per, 1);
+    let b = i32(vi / 18u);
+    let part = vi % 18u;
+    let bi = b % nbx;
+    let bk = b / nbx;
+    let me = shallow_block(bi, bk);
+    let size = shallow.cell * f32(per);
+    let x0 = shallow.origin.x + f32(bi) * size;
+    let z0 = shallow.origin.y + f32(bk) * size;
+    // The quad's corner: (0, 0) (1, 0) (1, 1), (0, 0) (1, 1) (0, 1).
+    let q = part % 6u;
+    let cu = select(0.0, 1.0, q == 1u || q == 2u || q == 4u);
+    let cv = select(0.0, 1.0, q == 2u || q == 4u || q == 5u);
+    var world = vec3f(x0 + cu * size, me.x, z0 + cv * size);
+    var normal = vec3f(0.0, 1.0, 0.0);
+    var depth = me.y;
+    var speed = length(me.zw);
+    var steep = 0.0;
+    if (part >= 6u) {
+        let along_x = part < 12u;
+        let other = select(shallow_block(bi, bk + 1), shallow_block(bi + 1, bk), along_x);
+        let mine = me.x >= other.x;
+        let hi = select(other, me, mine);
+        let lo = select(me, other, mine);
+        let drawn = other.x > -1e8 && hi.y > 0.002 && hi.x - lo.x > 0.001;
+        let y = mix(lo.x, hi.x, cv);
+        let toward = select(-1.0, 1.0, mine);
+        if (along_x) {
+            world = vec3f(x0 + size, y, z0 + cu * size);
+            normal = vec3f(toward, 0.0, 0.0);
+        } else {
+            world = vec3f(x0 + cu * size, y, z0 + size);
+            normal = vec3f(0.0, 0.0, toward);
+        }
+        depth = select(0.0, hi.y, drawn);
+        speed = length(hi.zw);
+        steep = smoothstep(0.25, 1.0, hi.x - lo.x);
+        if (!drawn) {
+            world = vec3f(x0, me.x, z0);
+        }
+    }
+    var o: ShallowOut;
+    o.clip = view.view_proj * vec4f(world, 1.0);
+    o.world = world;
+    o.normal = normal;
+    o.depth = depth;
+    o.speed = speed;
+    o.steep = steep;
     return o;
 }
 
@@ -908,10 +1006,15 @@ fn fs_shallow(in: ShallowOut) -> @location(0) vec4f {
         spec = d_ggx(max(dot(n, h), 0.0), a) * v_smith(nv, nl, a) * f_schlick(vec3f(0.02),
             max(dot(v, h), 0.0)) * sun_lux * nl * shadow;
     }
-    // What lies under shows through shallow water; deep water is its body's colour.
-    let opacity = 1.0 - exp(-in.depth * 0.9);
+    // What lies under shows through shallow water, each channel by its absorption; deep water is
+    // its body's colour.
+    // The light that crosses it keeps the colours it absorbs least, so deeper water tints bluer.
+    let through = exp(-shallow.absorb.rgb * in.depth);
+    let mean = (through.r + through.g + through.b) / 3.0;
+    let opacity = 1.0 - mean;
+    let tint = clamp(through / max(mean, 1e-4), vec3f(0.3), vec3f(1.6));
     // White where the water runs fast or falls steeply (rapids, the sheet over a ledge).
-    let steep = 1.0 - n0.y;
+    let steep = in.steep;
     // Patchy: a value noise over the surface (two octaves of hashed lattice values), so fast water
     // breaks into streaks of foam rather than turning milky.
     let q = in.world.xz * 2.5 + vec2f(0.0, shallow.time * 0.7);
@@ -928,7 +1031,7 @@ fn fs_shallow(in: ShallowOut) -> @location(0) vec4f {
     let foam = clamp(churn * 0.7 + smoothstep(0.4, 0.9, steep) * 0.85, 0.0, 1.0);
     let white = vec3f(0.85, 0.9, 0.92) * (body_light * 6.0 + sun_lux * max(sun.y, 0.0) * 0.25 * shadow);
     var alpha = max(opacity, f);
-    var c = body * opacity * (1.0 - f) + sky * f + spec;
+    var c = body * tint * opacity * (1.0 - f) + sky * f + spec;
     c = mix(c, white * max(alpha, 0.5), foam);
     alpha = mix(alpha, max(alpha, 0.8), foam);
     // Fade out at the waterline.

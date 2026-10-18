@@ -300,3 +300,64 @@ fn sources_pour_and_drains_take_at_most_what_is_there() {
         std::fs::remove_dir_all(root).unwrap();
     });
 }
+
+#[test]
+fn the_feed_carries_every_tile_first_and_then_the_tiles_stepped() {
+    use amoris_assets::Feed;
+    use amoris_runtime::Extractor;
+    common::big_stack(|| {
+        let mut ents = lake([0.0, 0.0, 0.0]);
+        ents[0]["components"]["Voxels"] = serde_json::to_value(pond()).unwrap();
+        let root = project("feed", MAIN, ents);
+        let mut g = game(&root).unwrap_or_else(|e| panic!("{e:#?}"));
+        let feed = Feed::new();
+        let viewport = feed.subscribe();
+        let mut x = Extractor::new();
+        g.step().unwrap();
+        g.present(&mut x, &feed);
+        let first = viewport.take();
+        assert!(first.reset);
+        assert_eq!(first.water.len(), 1);
+        let w = &first.water[0];
+        assert_eq!((w.size, w.tiles.len()), ([64, 64], 16));
+        assert!(w.look.is_some());
+        let at = |w: &amoris_assets::frame::WaterUpdate, key: [u32; 2], c: usize| {
+            w.tiles.iter().find(|t| t.key == key).unwrap().columns[c]
+        };
+        // Column (20, 20) is tile (1, 1)'s column (4, 4): the pond, 2 m deep over a bed at 2 m.
+        let c = at(w, [1, 1], 4 + 16 * 4);
+        assert!(
+            (c[1] - 1.888_889).abs() < 1e-5 && (c[0] - 3.888_889).abs() < 1e-5,
+            "{c:?}"
+        );
+        // Still water sleeps: once asleep, frames carry no tiles.
+        for _ in 0..70 {
+            g.step().unwrap();
+        }
+        g.present(&mut x, &feed);
+        let _ = viewport.take();
+        g.step().unwrap();
+        g.present(&mut x, &feed);
+        let quiet = viewport.take();
+        assert!(
+            quiet.water.iter().all(|w| w.tiles.is_empty()),
+            "{:?}",
+            quiet.water.len()
+        );
+        // A drop into tile (0, 0)'s corner wakes it: that tile and its neighbours are sent.
+        g.apply(&amoris_runtime::Command::new(
+            amoris_link::Source::Editor,
+            1,
+            "world.edit",
+            json!({"label": "spring", "ops": [{"spawn": {"name": "Spring", "components": {
+                "WaterSource": {"region": 2, "at": [0.25, 0.25], "rate_m3s": 1.0}}}}]}),
+        ))
+        .unwrap_or_else(|e| panic!("{e:#?}"));
+        g.step().unwrap();
+        g.present(&mut x, &feed);
+        let woke = viewport.take();
+        let keys: Vec<[u32; 2]> = woke.water[0].tiles.iter().map(|t| t.key).collect();
+        assert_eq!(keys, vec![[0, 0], [1, 0], [0, 1]], "{keys:?}");
+        std::fs::remove_dir_all(root).unwrap();
+    });
+}
