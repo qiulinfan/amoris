@@ -376,6 +376,8 @@ pub struct Renderer {
     meshes: MeshPool,
     /// Block volumes, meshed per chunk into `meshes` (voxels.md 7.2).
     voxels: crate::voxels::Voxels,
+    /// A liquid in a box, the fluid experiment (fluid.rs, docs/spikes/fluid-box.md).
+    pub fluid: Option<crate::fluid::Fluid>,
     materials: MaterialPool,
     models: HashMap<String, Model>,
     loader: Box<dyn AssetSource>,
@@ -1285,6 +1287,7 @@ impl Renderer {
             scene: Scene::new(),
             meshes: built.meshes,
             voxels: crate::voxels::Voxels::default(),
+            fluid: None,
             materials: MaterialPool::new(device),
             models: HashMap::new(),
             loader: Box::new(NoAssets),
@@ -1737,11 +1740,20 @@ impl Renderer {
         self.gtao.radius = radius.max(0.01);
     }
 
+    /// Starts the fluid experiment with `spec`, or ends it (docs/spikes/fluid-box.md).
+    pub fn set_fluid(&mut self, spec: Option<crate::fluid::FluidSpec>) {
+        self.fluid = spec
+            .map(|s| crate::fluid::Fluid::new(&self.gpu.device, &self.gpu.queue, s, self.format));
+    }
+
     /// Rebuilds what depends on the opaque pass's format when the options changed it.
     fn reformat(&mut self) {
         let format = SceneFormat::new(self.aa, self.gtao_mode);
         if format == self.format {
             return;
+        }
+        if let Some(f) = self.fluid.as_mut() {
+            f.set_format(&self.gpu.device, format);
         }
         let samples_changed = format.samples != self.format.samples;
         self.format = format;
@@ -2819,6 +2831,16 @@ impl Renderer {
         self.last_frame_s = Some(now_s);
         self.particles
             .update(&device, &queue, &mut enc, &self.scene.emitters, frame_dt);
+        if let Some(f) = self.fluid.as_mut() {
+            f.step(&queue, &mut enc);
+            f.prepare_surface(
+                &device,
+                &queue,
+                &mut enc,
+                &self.view_buf.buf,
+                self.targets.scene,
+            );
+        }
         // Skinned parts' vertices for the drawn moment (between the last two ticks).
         let since_tick = (f64::from(alpha) - 1.0) * self.scene.dt_s;
         self.skinning.encode(
@@ -3245,6 +3267,9 @@ impl Renderer {
         if self.scene.sea.is_some() {
             self.ocean.draw(pass);
         }
+        if let Some(f) = &self.fluid {
+            f.draw(device, pass, &self.view_buf.buf);
+        }
         pass.set_pipeline(&self.sky_pipeline);
         pass.set_bind_group(0, &binds.sky, &[]);
         pass.draw(0..3, 0..1);
@@ -3261,6 +3286,9 @@ impl Renderer {
         pass: &mut wgpu::RenderPass<'_>,
         binds: &Binds,
     ) {
+        if let Some(f) = &self.fluid {
+            f.draw_surface(device, pass, &self.view_buf.buf);
+        }
         self.transparent.draw(
             pass,
             &binds.transparent,

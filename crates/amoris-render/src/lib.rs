@@ -10,6 +10,7 @@ pub mod batches;
 mod blit;
 pub mod camera;
 pub mod demo;
+pub mod fluid;
 pub mod gi;
 pub mod gpu;
 mod gtao;
