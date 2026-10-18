@@ -2227,6 +2227,8 @@ impl Renderer {
         // start from shadows itself (docs/spec/lod.md 7), so they draw full meshes.
         let want_lod = self.lod.on() && self.rt_shadows.is_none();
         let replaced = self.meshes.take_replaced();
+        // A double-sided transparent draw of a replaced row would read its old two-sided list.
+        self.transparent.forget_rows(&replaced);
         if self.scene.counts_changed
             || mesh_count != self.draw_meshes
             || self.regions_want != Some(want_lod)

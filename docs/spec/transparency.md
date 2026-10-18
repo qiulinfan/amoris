@@ -115,7 +115,9 @@ instanced draw rasterize and blend in order, instance by instance: a run of doub
 is one draw. The lists live in an index buffer of the stage's own, made on the GPU the first time a
 row is drawn double-sided (two copies from the mesh pool's index buffer and
 `transparent_index.wgsl`, which swaps two indices of each triangle of the first copy), and kept for
-the rows drawn since (mesh rows are never replaced). The buffer is bound whole as storage by the
+the rows drawn since. A row the mesh pool replaces (a block volume's chunk mesh, voxels.md 7.2) has
+its list made again when next drawn (amended 2026-10-18: a double-sided water chunk that grew drew
+its old list, and parts of lakes vanished). The buffer is bound whole as storage by the
 reversal, so it is never larger than the device's storage binding limit (`Placement::reserve`):
 when the frame's lists do not fit, a larger buffer is made with the frame's lists only while one may
 be larger; at the limit the buffer is refilled with the frame's lists if they fit together, and

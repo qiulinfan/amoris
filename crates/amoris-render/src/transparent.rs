@@ -165,6 +165,16 @@ impl Placement {
         }
         (grown, placed)
     }
+
+    /// Forgets the lists of rows whose mesh was replaced (`MeshPool::replace`): they hold the old
+    /// indices and are made again when next drawn. Their space is reclaimed when the buffer is next
+    /// refilled.
+    fn forget(&mut self, rows: &[u32]) {
+        for row in rows {
+            self.rows.remove(row);
+            self.too_large.remove(row);
+        }
+    }
 }
 
 /// The two-sided index lists of the mesh rows double-sided transparent instances have drawn, made
@@ -388,6 +398,11 @@ impl TwoSided {
         self.pending.extend(placed);
     }
 
+    fn forget(&mut self, rows: &[u32]) {
+        self.placement.forget(rows);
+        self.pending.retain(|(r, _)| !rows.contains(r));
+    }
+
     /// Where `row`'s two-sided list starts, if it is made.
     fn start(&self, row: u32) -> Option<u32> {
         self.placement.rows.get(&row).copied()
@@ -466,6 +481,12 @@ impl TwoSided {
 }
 
 impl Transparent {
+    /// Rows whose mesh was replaced since the last frame (`MeshPool::take_replaced`): their
+    /// two-sided lists are made again.
+    pub fn forget_rows(&mut self, rows: &[u32]) {
+        self.two_sided.forget(rows);
+    }
+
     /// With its `pipeline` ([`pipeline`]) for the opaque pass's format.
     pub fn new(device: &wgpu::Device, pipeline: wgpu::RenderPipeline) -> Transparent {
         Transparent {
@@ -754,6 +775,25 @@ mod tests {
         );
         assert_eq!(reserve(&mut p, &[3, 4], &mut capacity), (None, vec![]));
         assert_eq!(capacity, 24);
+    }
+
+    #[test]
+    fn a_replaced_row_gets_its_list_made_again() {
+        let mut sizes = [0, 6, 12];
+        let mut p = Placement::default();
+        let size = |sizes: [u64; 3]| move |row: u32| sizes[row as usize];
+        assert_eq!(
+            p.reserve(&[1, 2], size(sizes), 64, 64),
+            (None, vec![(1, 0), (2, 6)])
+        );
+        // Row 1's mesh is replaced by a larger one: its old list is stale.
+        sizes[1] = 10;
+        p.forget(&[1]);
+        assert_eq!(
+            p.reserve(&[1, 2], size(sizes), 64, 64),
+            (None, vec![(1, 18)])
+        );
+        assert_eq!(p.reserve(&[1, 2], size(sizes), 64, 64), (None, vec![]));
     }
 
     #[test]
