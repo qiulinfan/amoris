@@ -76,6 +76,20 @@ pub struct Flow {
     /// The splashes' absorption per metre, linear rgb (splashes.md 2); none: no splashes.
     /// Presentation, like `fog`.
     pub splash: Option<[f64; 3]>,
+    /// The block game's cells, or the water's height field (water.md 6).
+    pub model: FlowModel,
+}
+
+/// What moves a liquid (water.md 6).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FlowModel {
+    /// The cellular automaton of liquids.md 4, `physics.fluids`.
+    #[default]
+    Cells,
+    /// A `WaterRegion`'s height field: `physics.water` turns the liquid's cells into its water and
+    /// clears them. Needs `spread: 0`.
+    Field,
 }
 
 impl Default for Flow {
@@ -87,6 +101,7 @@ impl Default for Flow {
             renews: true,
             fog: [0.05, 0.16, 0.45, 0.12],
             splash: None,
+            model: FlowModel::Cells,
         }
     }
 }
@@ -236,6 +251,7 @@ impl Persisted for Voxels {
         s: &serde_reflection::Samples,
     ) -> serde_reflection::Result<()> {
         t.trace_type::<BlockShape>(s)?;
+        t.trace_type::<FlowModel>(s)?;
         t.trace_type::<Self>(s).map(|_| ())
     }
 }
@@ -303,6 +319,15 @@ impl Voxels {
                     return Err(invalid(
                         &format!("palette.{i}.flow"),
                         format!("block {:?} flows but is not a liquid", b.name),
+                    ));
+                }
+                if f.model == FlowModel::Field && f.spread != 0 {
+                    return Err(invalid(
+                        &format!("palette.{i}.flow"),
+                        format!(
+                            "block {:?} is a field liquid: its spread is 0 (water.md 6)",
+                            b.name
+                        ),
                     ));
                 }
                 if f.spread > LEVEL || f.period_ticks == 0 {
@@ -392,6 +417,14 @@ impl Voxels {
         self.chunk(key).map_or((0, 0), |c| {
             (c.cells.0[at], c.states.as_ref().map_or(0, |s| s.0[at]))
         })
+    }
+
+    /// Whether `block` is a liquid on the water's height field (water.md 6).
+    pub fn field_liquid(&self, block: u8) -> bool {
+        self.palette
+            .get(usize::from(block))
+            .and_then(|b| b.flow)
+            .is_some_and(|f| f.model == FlowModel::Field)
     }
 
     /// The flow of `block`, if it is a liquid that flows.

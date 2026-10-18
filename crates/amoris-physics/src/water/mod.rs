@@ -9,10 +9,11 @@
 //! is read from the tick's starting state and every loop runs in a fixed order (water.md 4).
 
 pub mod bed;
+pub mod field;
 pub(crate) mod solve;
 
 use amoris_contract::{Problem, detail};
-use amoris_sim::order::by_id_mut;
+use amoris_sim::order::by_id;
 use amoris_sim::voxels::Voxels;
 use amoris_sim::{EntityId, EntityIndex, EventKind, NewEvent, PlainData, SimClock};
 use bevy_ecs::prelude::{Component, Query, Res, ResMut, Resource};
@@ -442,41 +443,51 @@ fn position(t: Option<&Transform>) -> [f64; 3] {
     t.map_or([0.0; 3], |t| t.position)
 }
 
-/// The volume a region's beds come from, and how the region lies over it.
-fn volume_of<'a>(
+/// How a region lies over the volume its beds come from: `None` for a bed that is not a volume's.
+fn map_of(
     r: &WaterRegion,
     corner: [f64; 2],
     index: &EntityIndex,
-    volumes: &'a Query<(Option<&Transform>, &Voxels)>,
-) -> Option<Result<(bed::Map, &'a Voxels), Problem>> {
+    volumes: &VolumeQuery<'_, '_>,
+) -> Option<Result<bed::Map, Problem>> {
     let BedSource::Voxels { volume, .. } = r.bed else {
         return None;
     };
     let found = index.get(volume).and_then(|e| volumes.get(e).ok());
-    let Some((t, v)) = found else {
+    let Some((_, t, v)) = found else {
         return Some(Err(Problem::new(
             "water.misaligned",
             format!("the region's bed is volume {volume}, which has no Voxels"),
             detail([("volume", json!(volume))]),
         )));
     };
-    Some(bed::map(r, corner, v, position(t))?.map(|m| (m, v)))
+    bed::map(r, corner, v, position(t))
 }
 
-/// Checks every region against the world (water.md 5): a `Voxels` bed's volume exists and the
-/// region sits on its grid (`water.misaligned`). A scene's load runs it after spawning.
+/// The volume of a region's `Voxels` bed.
+fn volume_id(r: &WaterRegion) -> Option<EntityId> {
+    match r.bed {
+        BedSource::Voxels { volume, .. } => Some(volume),
+        BedSource::Colliders { .. } => None,
+    }
+}
+
+/// Checks every region against the world when a scene loads (water.md 5 and 6): a `Voxels` bed's
+/// volume exists and the region sits on its grid (`water.misaligned`), and every field liquid cell
+/// lies under a region whose bed is its volume (`water.uncovered`).
 pub fn check_world(world: &bevy_ecs::prelude::World) -> Result<(), Problem> {
     let Some(index) = world.get_resource::<EntityIndex>() else {
         return Ok(());
     };
     let mut ids: Vec<(EntityId, bevy_ecs::entity::Entity)> = index.iter().collect();
     ids.sort_by_key(|(id, _)| *id);
+    let mut maps: Vec<(EntityId, &WaterRegion, bed::Map)> = Vec::new();
     for (id, e) in &ids {
         let Some(r) = world.get::<WaterRegion>(*e) else {
             continue;
         };
         let p = position(world.get::<Transform>(*e));
-        let BedSource::Voxels { volume, .. } = r.bed else {
+        let Some(volume) = volume_id(r) else {
             continue;
         };
         let at = index.get(volume);
@@ -488,43 +499,103 @@ pub fn check_world(world: &bevy_ecs::prelude::World) -> Result<(), Problem> {
             ));
         };
         let origin = position(at.and_then(|e| world.get::<Transform>(e)));
-        if let Some(Err(mut p)) = bed::map(r, [p[0], p[2]], v, origin) {
-            p.message = format!("region {id}: {}", p.message);
-            return Err(p);
+        match bed::map(r, [p[0], p[2]], v, origin) {
+            Some(Err(mut p)) => {
+                p.message = format!("region {id}: {}", p.message);
+                return Err(p);
+            }
+            Some(Ok(m)) => maps.push((volume, r, m)),
+            None => {}
+        }
+    }
+    for (id, e) in &ids {
+        let Some(v) = world.get::<Voxels>(*e) else {
+            continue;
+        };
+        for (c, _) in field::cells(v, 0) {
+            let covered = maps
+                .iter()
+                .any(|(vol, r, m)| vol == id && field::covers(r, m, c[0], c[2]).is_some());
+            if !covered {
+                return Err(field::uncovered(*id, c));
+            }
         }
     }
     Ok(())
 }
 
-/// `physics.water`: each region in id order (water.md 4). Its beds are read from its volume when
-/// it has no tiles yet and reread over the chunks edited since the last tick's run (any chunk
-/// edited at the previous tick or this one: the change rule gives the same beds when nothing
-/// changed); then its awake tiles are stepped.
-#[allow(clippy::too_many_arguments)]
+type VolumeQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        &'static EntityId,
+        Option<&'static Transform>,
+        &'static mut Voxels,
+    ),
+>;
+type RegionQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        bevy_ecs::entity::Entity,
+        &'static EntityId,
+        Option<&'static Transform>,
+        &'static mut WaterRegion,
+    ),
+>;
+
+/// `physics.water` (water.md 4), in three passes over the regions and volumes in id order:
+///
+/// 1. a region spawned without tiles takes its beds from its volume (or reports
+///    `water.misaligned` once and stays flat);
+/// 2. each volume's field liquid cells edited since the last tick's run become the water of the
+///    first region over them whose bed is the volume, or are reported `water.uncovered`, and are
+///    cleared;
+/// 3. each region rereads the beds over the chunks edited since the last tick's run (any chunk
+///    edited at the previous tick or this one: the change rule gives the same beds where nothing
+///    changed), then its awake tiles are stepped.
 pub(crate) fn water(
     clock: Res<SimClock>,
     index: Res<EntityIndex>,
     mut scratch: ResMut<WaterScratch>,
     mut steps: ResMut<WaterSteps>,
-    mut regions: Query<(&EntityId, Option<&Transform>, &mut WaterRegion)>,
-    volumes: Query<(Option<&Transform>, &Voxels)>,
+    mut regions: RegionQuery<'_, '_>,
+    mut volumes: VolumeQuery<'_, '_>,
     mut emit: amoris_sim::Emit,
 ) {
     let dt = clock.dt();
     let tick = clock.tick.0;
-    for (id, t, mut region) in by_id_mut(&mut regions) {
+    let since = tick.saturating_sub(1);
+    let order: Vec<(bevy_ecs::entity::Entity, EntityId)> =
+        by_id(&regions).map(|(e, id, _, _)| (e, *id)).collect();
+    if order.is_empty() {
+        return;
+    }
+    // 1. Beds at load, and each region's map over its volume.
+    let mut maps: Vec<Option<bed::Map>> = Vec::with_capacity(order.len());
+    for &(e, id) in &order {
+        let Ok((_, _, t, mut region)) = regions.get_mut(e) else {
+            maps.push(None);
+            continue;
+        };
         let p = position(t);
-        let corner = [p[0], p[2]];
-        let source = volume_of(&region, corner, &index, &volumes);
+        let source = map_of(&region, [p[0], p[2]], &index, &volumes);
         if region.tiles.is_empty() {
             match &source {
-                Some(Ok((m, v))) => bed::load(&mut region, m, v),
-                Some(Err(e)) => {
-                    // Reported once: the region takes flat dry tiles and stays without a bed.
+                Some(Ok(m)) => {
+                    let found = volume_id(&region)
+                        .and_then(|v| index.get(v))
+                        .and_then(|e| volumes.get(e).ok());
+                    if let Some((_, _, v)) = found {
+                        bed::load(&mut region, m, v);
+                    }
+                }
+                Some(Err(err)) => {
+                    // Reported once: the region takes flat dry tiles and keeps no bed.
                     if let Some(ev) = event(
                         "water.misaligned",
-                        *id,
-                        vec![("message", PlainData::String(e.message.clone()))],
+                        id,
+                        vec![("message", PlainData::String(err.message.clone()))],
                     ) {
                         emit.emit(ev);
                     }
@@ -536,22 +607,84 @@ pub(crate) fn water(
                         })
                         .collect();
                 }
-                None => continue,
+                None => {}
             }
         }
+        maps.push(source.and_then(Result::ok).filter(|_| region.well_formed()));
+    }
+    // 2. Field liquids into the regions.
+    let vols: Vec<(bevy_ecs::entity::Entity, EntityId)> = by_id(&volumes)
+        .filter_map(|(id, _, _)| index.get(*id).map(|e| (e, *id)))
+        .collect();
+    for (ve, vid) in vols {
+        let Ok((_, _, v)) = volumes.get(ve) else {
+            continue;
+        };
+        let cells = field::cells(v, since);
+        if cells.is_empty() {
+            continue;
+        }
+        for &(c, part) in &cells {
+            let mut taken = false;
+            for (n, &(e, _)) in order.iter().enumerate() {
+                let Some(m) = maps[n] else {
+                    continue;
+                };
+                let Ok((_, _, _, region)) = regions.get(e) else {
+                    continue;
+                };
+                if volume_id(region) != Some(vid) {
+                    continue;
+                }
+                if let Some(at) = field::covers(region, &m, c[0], c[2])
+                    && let Ok((_, _, _, mut region)) = regions.get_mut(e)
+                {
+                    field::pour(&mut region, &m, at, part);
+                    taken = true;
+                    break;
+                }
+            }
+            if !taken
+                && let Some(ev) = event(
+                    "water.uncovered",
+                    vid,
+                    vec![(
+                        "cell",
+                        PlainData::Array(c.map(|x| PlainData::Number(f64::from(x))).to_vec()),
+                    )],
+                )
+            {
+                emit.emit(ev);
+            }
+        }
+        if let Ok((_, _, mut v)) = volumes.get_mut(ve) {
+            for (c, _) in cells {
+                // The cell was read from the volume: clearing it cannot fail.
+                let _ = v.set(c, 0, tick);
+            }
+        }
+    }
+    // 3. Bed changes, then the substeps.
+    for (n, &(e, id)) in order.iter().enumerate() {
+        let Ok((_, _, _, mut region)) = regions.get_mut(e) else {
+            continue;
+        };
         // Read first, so a region asleep is not marked changed.
         if !region.well_formed() {
             continue;
         }
-        if let Some(Ok((m, v))) = &source {
-            let changed = bed::edited_since(v, tick.saturating_sub(1));
-            let beds = bed::rebeds(&region, m, v, &changed);
+        if let Some(m) = maps[n]
+            && let Some(ve) = volume_id(&region).and_then(|v| index.get(v))
+            && let Ok((_, _, v)) = volumes.get(ve)
+        {
+            let changed = bed::edited_since(v, since);
+            let beds = bed::rebeds(&region, &m, v, &changed);
             if !beds.is_empty() {
                 for d in bed::apply(&mut region, &beds) {
                     let column = d.column.map(|c| PlainData::Number(geom::f64_of(c)));
                     if let Some(e) = event(
                         "water.displaced",
-                        *id,
+                        id,
                         vec![
                             ("column", PlainData::Array(column.to_vec())),
                             ("m3", PlainData::Number(d.m3)),
@@ -568,7 +701,7 @@ pub(crate) fn water(
         let done = step_region(&mut region, dt, &mut scratch.0);
         let marks = steps
             .regions
-            .entry(*id)
+            .entry(id)
             .or_insert_with(|| vec![0; region.tiles.len()]);
         marks.resize(region.tiles.len(), 0);
         for &t in &done.tiles {
@@ -577,7 +710,7 @@ pub(crate) fn water(
         if done.dried_m3 > 0.0
             && let Some(e) = event(
                 "water.dried",
-                *id,
+                id,
                 vec![("m3", PlainData::Number(done.dried_m3))],
             )
         {

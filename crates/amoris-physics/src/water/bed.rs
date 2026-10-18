@@ -104,10 +104,18 @@ impl Map {
         [self.block0[0] + o(bi), self.block0[1] + o(bk)]
     }
 
-    /// The bed at load of block column `(x, z)` (water.md 5): the top of the highest solid block
-    /// within the range, or the range's bottom.
+    /// The bed at load of block column `(x, z)` (water.md 5): under a field liquid, the top of the
+    /// first solid block below its highest cell; elsewhere the top of the highest solid block
+    /// within the range; the range's bottom when there is none.
     pub fn load_bed(&self, v: &Voxels, x: i32, z: i32) -> f64 {
+        let mut from = self.y_hi;
         for y in (self.y_lo..=self.y_hi).rev() {
+            if v.field_liquid(v.get([x, y, z])) {
+                from = y - 1;
+                break;
+            }
+        }
+        for y in (self.y_lo..=from).rev() {
             if v.solid(v.get([x, y, z])) {
                 return self.top(y);
             }

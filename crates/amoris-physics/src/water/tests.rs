@@ -508,3 +508,73 @@ fn a_broken_top_block_lowers_the_bed_and_a_dug_hole_fills() {
     );
     assert!(((r.volume() - v0) / v0).abs() < 1e-9);
 }
+
+// --- Field liquids (water.md 6) -------------------------------------------------------------------
+
+use amoris_sim::voxels::{BlockShape, FALLING, Flow, FlowModel};
+
+const WATER: u8 = 3;
+
+/// `ground()` with a field water in its palette.
+fn wet_ground() -> (Voxels, WaterRegion, bed::Map) {
+    let (mut v, r, m) = ground();
+    v.palette.push(Block {
+        name: "water".into(),
+        shape: BlockShape::Liquid,
+        faces: ["w".into(), String::new(), String::new()],
+        flow: Some(Flow {
+            spread: 0,
+            model: FlowModel::Field,
+            ..Flow::default()
+        }),
+        ..Block::default()
+    });
+    v.validate().unwrap();
+    (v, r, m)
+}
+
+#[test]
+fn a_field_liquid_needs_no_spread() {
+    let (mut v, _, _) = wet_ground();
+    v.palette[3].flow.as_mut().unwrap().spread = 7;
+    assert_eq!(v.validate().unwrap_err().code, "voxels.invalid");
+}
+
+#[test]
+fn field_cells_give_their_part_and_beds_load_under_them() {
+    let (mut v, mut r, _) = wet_ground();
+    // A pond in the pit: two cells deep (y 2 and 3), a source on top; a leaf over it at y 7.
+    v.fill([8, 2, 8], [15, 3, 15], WATER, 1).unwrap();
+    v.set([12, 7, 12], LEAVES, 1).unwrap();
+    v.set_with_state([9, 3, 9], WATER, 3, 1).unwrap();
+    v.set_with_state([10, 3, 10], WATER, FALLING, 1).unwrap();
+    let cells = field::cells(&v, 0);
+    assert_eq!(cells.len(), 8 * 8 * 2);
+    let part = |c: [i32; 3]| cells.iter().find(|(x, _)| *x == c).unwrap().1;
+    assert_eq!(
+        part([12, 2, 12]),
+        1.0,
+        "under the same liquid: the whole cell"
+    );
+    assert_eq!(part([12, 3, 12]), 8.0 / 9.0, "a source");
+    assert_eq!(part([9, 3, 9]), 5.0 / 9.0, "level 3");
+    assert_eq!(part([10, 3, 10]), 1.0, "falling");
+    // Beds at load: the first solid below the highest liquid cell, not the leaf above it.
+    r.tiles.clear();
+    let m = bed::map(&r, [0.0, 0.0], &v, [0.0; 3]).unwrap().unwrap();
+    bed::load(&mut r, &m, &v);
+    assert_eq!(bed_at(&r, 24, 24), 2.0);
+    // Poured, a block's water is shared over its four columns: each rises by the cell's water.
+    let at = field::covers(&r, &m, 12, 12).unwrap();
+    assert_eq!(at, (24, 24));
+    field::pour(&mut r, &m, at, part([12, 3, 12]));
+    field::pour(&mut r, &m, at, part([12, 2, 12]));
+    for (i, k) in [(24, 24), (25, 24), (24, 25), (25, 25)] {
+        assert!((depth(&r, i, k) - (1.0 + 8.0 / 9.0)).abs() < 1e-15);
+    }
+    assert!(
+        (r.volume() - (1.0 + 8.0 / 9.0)).abs() < 1e-12,
+        "a block's water: one cell's"
+    );
+    assert_eq!(field::covers(&r, &m, 40, 0), None);
+}
