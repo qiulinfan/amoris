@@ -12,7 +12,8 @@
 use amoris_sim::math;
 
 use super::{
-    DRY_SPEED, MAX_SUBSTEPS, SLEEP_TICKS, STILL_DEPTH, STILL_SPEED, Stepped, TILE, WaterRegion,
+    CALM_RATE, CALM_SPEED, DRY_SPEED, MAX_SUBSTEPS, SLEEP_TICKS, STILL_DEPTH, STILL_SPEED, Stepped,
+    TILE, WaterRegion,
 };
 use crate::geom;
 
@@ -242,8 +243,8 @@ impl Grid {
         std::mem::swap(&mut self.u, &mut self.u_next);
         std::mem::swap(&mut self.v, &mut self.v_next);
         // 2. Gravity down the surface's slope (the higher side pushes with no more than its own
-        //    depth), bed friction, no flow into a bed above the giving surface or out of a dry
-        //    column, at most half a column a substep.
+        //    depth), bed friction and calm damping, no flow into a bed above the giving surface or
+        //    out of a dry column, at most half a column a substep.
         let limit = 0.5 * c / dt;
         let (bed, depth) = (&self.bed, &self.depth);
         let face = |v: f64, a: usize, b: usize| -> f64 {
@@ -259,7 +260,14 @@ impl Grid {
                 math::max(d, -ha)
             };
             let mut v = v - G * dt * d / c;
-            v /= 1.0 + dt * friction / math::max(math::max(ha, hb), 0.05);
+            // Bed friction, and calm damping of slow faces (water.md 4).
+            let speed = v.abs();
+            let calm = if speed > CALM_SPEED {
+                CALM_RATE * CALM_SPEED / speed
+            } else {
+                CALM_RATE
+            };
+            v /= 1.0 + dt * (friction / math::max(math::max(ha, hb), 0.05) + calm);
             if (v > 0.0 && (ha <= DRY || bed[b] >= ea)) || (v < 0.0 && (hb <= DRY || bed[a] >= eb))
             {
                 return 0.0;

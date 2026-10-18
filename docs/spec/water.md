@@ -144,7 +144,8 @@ section 11 reads.
      component averaged from the four faces around it;
   2. accelerate it by `-g dt Δη / cell_m`, where η is the surface; the higher side pushes with at
      most its own depth;
-  3. damp it by `1 / (1 + dt · friction / max(depth, 0.05))`, the deeper of the face's columns;
+  3. damp it by `1 / (1 + dt · (friction / max(depth, 0.05) + calm))`, the depth being the deeper
+     of the face's columns' and `calm` the calm damping below;
   4. zero it where it would carry water into a column whose bed is above the giving surface, or out
      of a dry column; clamp it to `0.5 · cell_m / dt`;
   5. scale each column's outflow so it gives at most what it holds, and move the water through each
@@ -158,9 +159,21 @@ section 11 reads.
   0.05 m/s. Its water leaves the world, and the region's total for the tick is reported in a
   `water.dried` event (region, m³). The default 0 never dries, and water is then conserved;
   blockcraft sets 0.002.
-- **Sleep.** A tile is **still** when no depth changed by more than 1e-6 m and no velocity exceeded
-  1e-4 m/s during the tick. Its `still` counts such ticks, and at 60 it **sleeps**: its velocities
-  are set to 0 and it is skipped. Any of these wakes it (`still` = 0):
+- **Calm damping** (owner, 2026-10-18). Bed friction damps a face at `friction / depth` a second:
+  0.002 for 10 m of water, so a disturbed sea would keep sloshing for many minutes and never sleep
+  (docs/bench/liquids.md 3). Each face is also damped at `calm` = 0.2 a second up to 0.5 m/s, and a
+  faster face at `0.1 / |v|` a second (a deceleration of at most 0.1 m/s²), so a flow that gravity
+  drives, a breach or a fall, is hardly slowed. With it, a disturbed sea goes back to sleep within
+  about 2 minutes: blockcraft's sea after a broken bank in about 112 s. Tens of seconds is not
+  reachable. After a flood draws water from one side, the sea re-levels around the island through a
+  channel 1.8 m deep at about 14 s per e-fold, and stronger damping over-damps that re-levelling and
+  makes it slower. Relaxing the stillness test by depth was tried and rejected: tiles then fell
+  asleep in the middle of a slosh with their tilt frozen, and released it when woken, so the sea
+  stayed awake longer.
+- **Sleep.** A tile is **still** when no depth changed by more than 1e-5 m and no velocity exceeded
+  1e-3 m/s during the tick (owner, 2026-10-18; first 1e-6 m and 1e-4 m/s). Its `still` counts such
+  ticks, and at 60 it **sleeps**: its velocities are set to 0 and it is skipped. Each tile sleeps on
+  its own. Any of these wakes it (`still` = 0):
   - a neighbouring awake tile's flow through their shared faces;
   - a source, a drain or a script edit in it;
   - a bed change under it.

@@ -84,41 +84,48 @@ one region of 256 x 256 columns of 0.5 m (256 tiles) over the island, two subste
 `dry_below` 0.002. The scenario is amoris-app's `blockcraft_water/breach.rs`: a copy of the project
 whose script digs a pit 8 x 6 blocks and 6 below the sea beside the shore at tick 2 and breaks the
 bank 4 blocks wide at tick 120. The water floods the pit through the breach at about 5 m/s and fills
-it to the sea's level in about 15 s (282 m³).
+it to the sea's level (280 m³): 99% of it 15.7 s after the break (14.7 s before calm damping,
+water.md 4).
 
 Machine: Apple M5 (10 GPU cores), macOS 27.0.1, Metal, release build, 2026-10-18. The machine was
 not checked for other load; one run per table.
 
 CPU, back to back (`cargo run --release -p amoris-runtime --features transpile --example
-water_bench -- --ticks 10920 ../amoris-samples/blockcraft`). After each tick: `physics.water`
-inside the tick (a step hook), the snapshot through `SnapshotCache` with the size of the
-`WaterRegion` section, and the feed's extraction for one subscriber with its frame's encoded size.
-Medians over the windows of ticks:
+water_bench -- --ticks 9000 ../amoris-samples/blockcraft`). After each tick: `physics.water` inside
+the tick (a step hook), the snapshot through `SnapshotCache` with the size of the `WaterRegion`
+section, and the feed's extraction for one subscriber with its frame's encoded size. Medians over
+the windows of ticks:
 
 | Window (ticks) | Tiles stepped | Solver (ms) | Snapshot (ms) | `WaterRegion` section | Feed (ms) | Frame |
 |---|---|---|---|---|---|---|
-| Every tile awake: the field liquids just converted (2 to 60) | 256 | 2.19 | 1.00 | 2.0 MiB | 0.24 | 1.0 MiB |
+| Every tile awake: the field liquids just converted (2 to 60) | 256 | 2.24 | 1.06 | 2.0 MiB | 0.24 | 1.0 MiB |
 | Asleep, after the dig (70 to 120) | 0 | 0.002 | 0.006 | 2.0 MiB | 0.001 | 1 KiB |
-| The flood (121 to 720) | 56 | 0.65 | 1.03 | 2.0 MiB | 0.06 | 225 KiB |
-| After it (721 to 1920) | 165 | 1.83 | 1.03 | 2.0 MiB | 0.15 | 662 KiB |
-| Later (1921 to 5520) | 165 | 1.92 | 1.02 | 2.0 MiB | 0.16 | 662 KiB |
-| Latest (5521 to 10920) | 165 | 1.91 | 1.02 | 2.0 MiB | 0.16 | 662 KiB |
+| The flood, 0 to 10 s after the break (121 to 720) | 56 | 0.64 | 1.02 | 2.0 MiB | 0.05 | 225 KiB |
+| 10 to 30 s after it (721 to 1920) | 164 | 1.82 | 1.01 | 2.0 MiB | 0.15 | 658 KiB |
+| 30 to 90 s after it (1921 to 5520) | 165 | 2.02 | 1.00 | 2.0 MiB | 0.15 | 662 KiB |
+| 90 to 148 s after it (5521 to 9000) | 0 | 0.002 | 0.006 | 2.0 MiB | 0.001 | 1 KiB |
 
-- Every tile awake, the solver takes 1.09 ms a substep, 16.7 ns a column (the spike's flat grid:
+- Every tile awake, the solver takes 1.12 ms a substep, 17 ns a column (the spike's flat grid:
   12.5 ns at 256²); the rest is the window's gather and write-back, drying and the sleep test.
 - The snapshot encodes the whole section whenever any tile changed: about 1 ms a tick natively
   whatever the number of awake tiles, the same with 56 tiles as with 256 (water.md 15, question 5).
-- **The disturbed sea does not go back to sleep.** The flood draws 282 m³ from the sea inside the
-  region, a level drop of a few centimetres that rings between its walls. The sea there is up to
-  12 m deep, and the bed friction damps a column's velocity at `friction / depth` per second, 0.002
-  for 12 m: a time constant of about 10 minutes. 165 tiles stayed above the sleep test's 1e-4 m/s
-  for the 3 minutes measured, at 1.9 ms of solver and 1 ms of snapshot a tick. Shallow water settles
-  faster but slowly too: in a unit test, a 4 cm film over 24 m relaxed with a time constant of about
-  55 s, and a 2 m dam break was still moving at 4e-4 m/s after 380 s.
+- **Sleep after the break.** The flood's pressure wave wakes every tile that holds sea: 65 tiles
+  are awake 10 s after the break, 130 at 30 s and 130 at 60 s, and every tile sleeps again 112 s
+  after it. Most of that time is the sea re-levelling around the island through a channel 1.8 m deep
+  between the island and the region's wall, about 14 s per e-fold.
+- Before calm damping (water.md 4; still test 1e-6 m and 1e-4 m/s) the disturbed sea did not sleep
+  again: 165 tiles stayed awake for the 3 minutes measured, at 1.9 ms of solver and 1 ms of snapshot
+  a tick. Bed friction damps 12 m of water at 0.002 a second, a time constant of about 10 minutes.
+  Variants measured while choosing the rule (all with the 99% fill within 15 to 19 s): calm damping
+  with no cap above 0.5 m/s, or proportional to depth, over-damped the re-levelling and slept later
+  or not within 2 minutes; a region's awake tiles sleeping only together slept in 75 to 92 s but
+  would keep every tile a continuous source disturbed awake; a still test of 1 cm/s slept in 66 s
+  but can freeze tilts of about 2 cm. The owner chose the per-tile rule.
 - Not measured: the browser worker (WebAssembly) and R1.
 
 Drawing (`cargo run --release -p amoris-app --example blockcraft_water -- --project
-../amoris-samples/blockcraft --frames 1030 --bench`). Three renderers fed the same frames, one
+../amoris-samples/blockcraft --frames 1030 --bench`, at `3e25f5b4`, before calm damping, which
+does not change the drawing's work). Three renderers fed the same frames, one
 without the water, one drawing it Smooth and one Blocky, render in turn at 1280 x 720 with MSAA from
 the far camera (high over the sea, the shore and the pit filling about two thirds of the view).
 With no transparent instance in view the water is drawn at the end of the opaque pass, so the

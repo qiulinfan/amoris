@@ -230,9 +230,13 @@ fn a_still_lake_sleeps_after_60_ticks_and_a_ripple_settles_to_sleep() {
     let before = r.clone();
     assert!(run(&mut r, 10).iter().all(|s| s.substeps == 0) && r == before);
 
-    // A 1 cm bump wakes nothing by itself (it is not a source or an edit); woken, it rings out
-    // and the lake sleeps again with its velocities zeroed.
-    set(&mut r, 5, 5, 0.0, 0.11);
+    // A 10 cm bump wakes nothing by itself (it is not a source or an edit); woken, it rings out
+    // over the lake and the lake sleeps again with its velocities zeroed.
+    for k in 4..7 {
+        for i in 4..7 {
+            set(&mut r, i, k, 0.0, 0.2);
+        }
+    }
     r.tiles[0].still = 0;
     let s = run(&mut r, 60 * 120);
     assert!(
@@ -559,4 +563,36 @@ fn field_cells_give_their_part_and_beds_load_under_them() {
         "a block's water: one cell's"
     );
     assert_eq!(field::covers(&r, &m, 40, 0), None);
+}
+
+#[test]
+fn a_disturbed_deep_basin_sleeps_again_within_two_minutes() {
+    // A basin 64 x 16 m, 10 m deep, its first quarter half a metre higher: released, it sloshes
+    // from end to end. Friction alone (0.002 a second at this depth) would keep it moving for many
+    // minutes; calm damping lets every tile sleep again within 2 minutes (water.md 4).
+    let mut r = region(8, 2, 0.5);
+    let [nx, nz] = r.columns_along();
+    for k in 0..nz {
+        for i in 0..nx {
+            set(&mut r, i, k, 0.0, if i < nx / 4 { 10.5 } else { 10.0 });
+        }
+    }
+    let v0 = r.volume();
+    let mut g = Grid::default();
+    let mut slept = None;
+    for t in 1..=60 * 120 {
+        step_region(&mut r, DT, &mut g);
+        if r.tiles.iter().all(WaterTile::asleep) {
+            slept = Some(t);
+            break;
+        }
+    }
+    let t = slept.expect("asleep within 2 minutes");
+    assert!(t > 60 * 10, "it sloshed for a while first: {t} ticks");
+    assert!(((r.volume() - v0) / v0).abs() < 1e-12);
+    let (lo, hi) = (0..nx).fold((f64::MAX, f64::MIN), |(a, b), i| {
+        let s = surface(&r, i, nz / 2);
+        (math::min(a, s), math::max(b, s))
+    });
+    assert!(hi - lo < 0.01, "level within a centimetre: {lo} to {hi}");
 }

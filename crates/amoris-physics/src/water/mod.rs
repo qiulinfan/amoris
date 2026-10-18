@@ -37,12 +37,19 @@ pub const MAX_SUBSTEPS: u32 = 8;
 pub const SLEEP_TICKS: u32 = 60;
 /// The thickest film `dry_below` may dry, metres.
 pub const MAX_DRY_BELOW: f64 = 0.05;
-/// A tile is still when no depth changed by more than this over the tick, metres.
-const STILL_DEPTH: f64 = 1e-6;
+/// A tile is still when no depth changed by more than this over the tick, metres (water.md 4).
+const STILL_DEPTH: f64 = 1e-5;
 /// ... and no face ran faster than this, m/s.
-const STILL_SPEED: f64 = 1e-4;
+const STILL_SPEED: f64 = 1e-3;
 /// A film dries only when every face of its column runs slower than this, m/s.
 const DRY_SPEED: f64 = 0.05;
+/// Calm damping (water.md 4), besides bed friction: a face is damped at `CALM_RATE` a second up
+/// to `CALM_SPEED` (m/s), and a faster one is decelerated by no more than `CALM_RATE * CALM_SPEED`
+/// (0.1 m/s^2). The sloshing and the eddies a flood leaves, which friction barely damps in deep
+/// water, die out, and the water sleeps again within about 2 minutes; a flow that gravity drives
+/// (a breach, a fall) is hardly slowed.
+const CALM_SPEED: f64 = 0.5;
+const CALM_RATE: f64 = 0.2;
 
 /// A region of water columns over a bed (water.md 3). Its corner is the entity's
 /// `Transform.position` in x and z (y unused); the rotation must be the identity.

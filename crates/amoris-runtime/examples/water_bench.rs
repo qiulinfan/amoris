@@ -7,9 +7,10 @@
 //!   `SnapshotCache`, and the size of the `WaterRegion` section;
 //! - **feed**: the render feed's extraction for one subscriber, and the frame's encoded bytes.
 //!
-//! It prints the medians over windows of ticks: every tile awake (the field liquids converted at
-//! tick 1 wake the whole region until it sleeps), asleep (before the break), and the flood after
-//! it, with the tiles stepped a tick.
+//! It prints the pit's water and when the region sleeps again after the break, then the medians
+//! over windows of ticks: every tile awake (the field liquids converted at tick 1 wake the whole
+//! region until it sleeps), asleep (before the break), the flood, the minutes after it, and asleep
+//! again, with the tiles stepped a tick.
 //!
 //! `cargo run --release -p amoris-runtime --features transpile --example water_bench -- \
 //!  [--ticks 1200] [project]` (the project defaults to ../amoris-samples/blockcraft).
@@ -56,6 +57,9 @@ impl StepHooks for Hooks {
 struct Row {
     tick: u64,
     tiles: usize,
+    /// Tiles awake after the tick, and the water in the pit, m^3.
+    awake: usize,
+    pit: f64,
     solver: f64,
     snapshot: f64,
     section: usize,
@@ -102,6 +106,21 @@ fn main() {
                 .map(|m| m.iter().filter(|&&t| t == tick).count())
                 .sum()
         });
+        let (awake, pit) = {
+            let mut q = game.world().try_query::<&WaterRegion>().expect("a region");
+            let r = q.single(game.world()).expect("one region");
+            let awake = r.tiles.iter().filter(|t| !t.asleep()).count();
+            let [cx, cz] = site.cell.map(|c| usize::try_from(c).unwrap_or(0));
+            let mut pit = 0.0;
+            if r.well_formed() {
+                for k in 2 * cz..2 * (cz + 6) {
+                    for i in 2 * (cx + 2)..2 * (cx + 10) {
+                        pit += r.depth_at(i, k) * r.cell_m * r.cell_m;
+                    }
+                }
+            }
+            (awake, pit)
+        };
         let t = Instant::now();
         let snap = cache
             .snapshot(game.world(), game.registry())
@@ -119,6 +138,8 @@ fn main() {
         rows.push(Row {
             tick,
             tiles,
+            awake,
+            pit,
             solver: hooks.ms,
             snapshot,
             section,
@@ -134,6 +155,34 @@ fn main() {
         r.cell_m,
         r.tiles.len(),
         r.volume()
+    );
+    // The flood (the pit's water) and the sleep after it.
+    let at = |dt: u64| rows.iter().find(|r| r.tick == breach::BREAK + dt);
+    let full = rows.last().map_or(0.0, |r| r.pit);
+    let filled = rows
+        .iter()
+        .find(|r| r.tick > breach::BREAK && r.pit >= 0.99 * full)
+        .map(|r| (r.tick - breach::BREAK) as f64 / 60.0);
+    let slept = rows
+        .iter()
+        .rev()
+        .take_while(|r| r.awake == 0)
+        .last()
+        .filter(|r| r.tick > breach::BREAK)
+        .map(|r| (r.tick - breach::BREAK) as f64 / 60.0);
+    println!(
+        "the pit: {:.1} m3 at 5 s, {:.1} at 10 s, {:.1} at 15 s, {full:.1} at the end; 99% at \
+         {filled:?} s after the break",
+        at(300).map_or(0.0, |r| r.pit),
+        at(600).map_or(0.0, |r| r.pit),
+        at(900).map_or(0.0, |r| r.pit),
+    );
+    println!(
+        "tiles awake: {:?} at 10 s, {:?} at 30 s, {:?} at 60 s; all asleep from {slept:?} s \
+         after the break",
+        at(600).map(|r| r.awake),
+        at(1800).map(|r| r.awake),
+        at(3600).map(|r| r.awake),
     );
     println!(
         "window | ticks | tiles stepped (median) | solver ms | snapshot ms | WaterRegion section \
