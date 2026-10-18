@@ -5,28 +5,46 @@
   (principles 3 and 4: state in the world, determinism and replay).
 - Origin: the shallow-water spike ([shallow-water.md](../spikes/shallow-water.md)). The owner judged
   the block water good as the block game's but not as physical water, and asked for one water for
-  every game. The spike solved the shallow-water equations on the CPU and got the same bits
-  natively, under Node and in Chrome. It runs at 11 to 14 ns a column and substep natively and 13
-  to 20 ns in WebAssembly, and its drawing costs 1 to 4.5 ms of GPU time on the M5 without levels
-  of detail. x86-64 and R1 are pending (`tools/shallow_check.py`); a difference there reopens 3.
-- Amends: [liquids.md](liquids.md) 5 and 6 for liquids on the field (5 below), and
-  [splashes.md](splashes.md) 3 (emissions) and 9 question 1 (spray), by 9 below. liquids.md's
+  every game. The block game's water is one application of it. Seas, rivers and waterfalls are
+  others, and each is a configuration of this one water (owner, 2026-10-18; section 1). The spike
+  solved the shallow-water equations on the CPU and got the same bits natively, under Node and in
+  Chrome. It runs at 11 to 14 ns a column and substep natively and 13 to 20 ns in WebAssembly, and
+  its drawing costs 1 to 4.5 ms of GPU time on the M5 without levels of detail. x86-64 and R1 are
+  pending (`tools/shallow_check.py`); a difference there reopens 3.
+- Amends: [liquids.md](liquids.md) 5 and 6 for liquids on the field (6 below), and
+  [splashes.md](splashes.md) 3 (emissions) and 9 question 1 (spray), by 10 below. liquids.md's
   cellular automaton stays for liquids that keep the cells model.
 
-## 1. Scope
+## 1. Applications
+
+Every water a game shows is a configuration of the same region, bed, edges and particles. These
+are the cases the slice ships, each with an example and shots for the owner (14):
+
+| Application | Bed | Edges and water | What the particles add |
+|---|---|---|---|
+| The block game's water (blockcraft) | a block volume, two columns a block (5) | `Field` liquids become depth (6); a broken bank floods | the fall over a broken edge, its foot |
+| A lake, a pool, a flood | any bed | walls; the water set at load, or by scripts and sources | a dam's breach |
+| A river | a bed sloping down its course | an `Inflow` edge or a `WaterSource` upstream, an `Outflow` or `Sea` edge downstream | rapids where it runs over a rise |
+| A waterfall | a ledge in the bed | as a river; the field carries the water to the lip | the curtain in the air and the spray at its foot (10) |
+| A sea and its shore | the sea floor and the beach | `Sea` edges driven by the sea's waves (11); past the regions, the analytic sea | spray where swell breaks on a rise |
+
+A game may give a region a blocky look (`look.style: Blocky`), whose drawn surface steps at whole
+cells. The block game's water can then look like its own while it flows like water.
+
+## 2. Scope
 
 In this slice:
 
-- The `Water` component and `physics.water`: a region of columns over a bed, stepped
-  deterministically, sleeping where still (2, 3).
-- Beds from block volumes and from static colliders (4).
-- Block liquids on the field, the cellular automaton kept as a choice; blockcraft moves (5).
-- The walker and floating bodies in the water (6).
-- Scripts, sources and drains (7).
-- The feed and the drawing, with levels of detail (8).
-- Particles fed by the field: falls, their feet, rapids, and spray as droplets (9).
-- The sea at a region's edge (10).
-- Persistence, the browser, cost and the checks (11 to 13).
+- The `WaterRegion` component and `physics.water`: a region of columns over a bed, stepped
+  deterministically, sleeping where still (3, 4).
+- Beds from block volumes and from static colliders (5).
+- Block liquids on the field, the cellular automaton kept as a choice; blockcraft moves (6).
+- The walker and floating bodies in the water (7).
+- Scripts, sources and drains (8).
+- The feed and the drawing, with levels of detail (9).
+- Particles fed by the field: falls, their feet, rapids, and spray as droplets (10).
+- The sea and the region's edges: walls, inflow, outflow, and the sea's waves entering (11).
+- Persistence, the browser, cost and the checks (12 to 14).
 
 Not in this slice:
 
@@ -34,24 +52,24 @@ Not in this slice:
 - bodies that displace the water or make waves (two-way coupling);
 - a solver on more than one thread;
 - liquids that react, and liquids other than water on the field (lava keeps the cells);
-- waves from the sea entering a region;
+- waves breaking over themselves (a height field holds one surface; the particles draw the spray);
 - refraction.
 
-## 2. The `Water` component
+## 3. The `WaterRegion` component
 
-A `Water` entity is a **region**: a grid of columns whose corner is the entity's
+A `WaterRegion` entity is a **region**: a grid of columns whose corner is the entity's
 `Transform.position` (x and z; y unused). Its rotation must be the identity and its scale one
 (`water.invalid` otherwise).
 
 ```rust
-pub struct Water {
+pub struct WaterRegion {
     pub cell_m: f64,             // a column's edge, metres (0.25 to 4)
     pub size: [u32; 2],          // columns along x and z: multiples of 16, at most 1024 each
-    pub bed: BedSource,          // where the beds come from (4)
-    pub edges: [Edge; 4],        // -x, +x, -z, +z: Wall or Sea (10)
+    pub bed: BedSource,          // where the beds come from (5)
+    pub edges: [Edge; 4],        // -x, +x, -z, +z: Wall, Sea, Inflow or Outflow (11)
     pub friction: f64,           // bed friction, m/s (0.02)
     pub substeps: u32,           // at least this many a tick (2; 1 to 8)
-    pub look: WaterLook,         // presentation, carried as palette entries carry fog (8)
+    pub look: WaterLook,         // presentation, carried as palette entries carry fog (9)
     pub tiles: Vec<WaterTile>,   // every tile, in key order (z, then x)
 }
 
@@ -60,17 +78,28 @@ pub struct WaterTile {
     pub depth: Vec<f64>,         // 256 columns, x fastest, metres, never below 0
     pub u: Vec<f64>,             // each column's -x face, m/s
     pub w: Vec<f64>,             // each column's -z face, m/s
-    pub still: u32,              // ticks it has stayed still (3)
+    pub still: u32,              // ticks it has stayed still (4)
 }
 
 pub struct WaterLook {
     pub fog: [f32; 4],           // the view from under the surface: linear colour, density per metre
     pub absorb: [f32; 3],        // absorption per metre, linear rgb (the drawing and the splashes)
+    pub style: Style,            // Smooth, or Blocky: the drawn surface steps at whole cells
+}
+
+pub enum Edge {
+    Wall,
+    Sea,                         // the sea's waves at the edge (11)
+    Inflow { m3s_per_m: f64 },   // water entering across the edge, per metre of it
+    Outflow,                     // water leaving freely (the surface's slope continues past it)
 }
 ```
 
+The name `Water` is taken: amoris-physics' `sea::Water` is the water at one point of the sea, which
+section 11 reads.
+
 - **Faces.** A column owns its -x and -z faces. The faces on a region's +x and +z sides belong to
-  no column: they are walls, or the sea's (10).
+  no column: they are walls, or what the edge gives (11).
 - **Tiles.** Every tile of the region exists, wet or dry; a tile of 256 columns is 6 KiB.
 - **State and derived data.** Depth and velocities are state (`f64`, numeric.md 3.1). The beds
   are Derived (persistence.md 8): they are rebuilt from the bed source on load and on change and
@@ -78,11 +107,11 @@ pub struct WaterLook {
 - **Validation.** `size`, `cell_m`, `substeps` and `friction` must be in range. Tiles must match
   the size in count and keys. Depths must be finite and not negative, velocities finite.
 
-## 3. `physics.water`
+## 4. `physics.water`
 
 - **Order.** It runs in the Forces phase as row 4a (simulation.md 4.4), before `physics.buoyancy`,
   so forces and the walker read this tick's water. The schedule golden changes with the table.
-- **Each tick:** sources and drains, script edits and bed changes (4, 5, 7) are applied in id order,
+- **Each tick:** sources and drains, script edits and bed changes (5, 6, 8) are applied in id order,
   then the substeps, then sleep.
 - **The substep** is the spike's advect scheme (shallow-water.md, What was built). For each awake
   tile and the tiles beside one, in key order, then column order:
@@ -108,7 +137,7 @@ pub struct WaterLook {
   `amoris_sim::math`. The active set is read from the tick's starting state, and every loop runs in
   a fixed order. Water is conserved to rounding; only sources, drains and edits add or remove it.
 
-## 4. Beds
+## 5. Beds
 
 ```rust
 pub enum BedSource {
@@ -132,7 +161,7 @@ pub enum BedSource {
   world and is reported in the tick's `water.displaced` event (region, column, m³).
 - Height maps are not in this slice: no height map component exists yet.
 
-## 5. Block liquids
+## 6. Block liquids
 
 - `Flow` (liquids.md 3) gains `model: FlowModel`, `Cells` or `Field`. `Cells` is the default, so
   every scene saved before this slice plays as it did. A `Field` liquid needs `spread: 0`: it never
@@ -144,14 +173,14 @@ pub enum BedSource {
   every such region is an error at load (`water.uncovered`), and is cleared with an event when a
   script places it.
 - **Scripts.** Setting a `Field` liquid's block adds the cell's water to its column and leaves the
-  cell air: `ctx.voxels.get` answers air there. `ctx.water` (7) answers the water.
+  cell air: `ctx.voxels.get` answers air there. `ctx.water` (8) answers the water.
 - **Springs.** A spring in a cliff is a `WaterSource`, not a falling block.
 - **The palette.** For a `Field` liquid, `fog` and `splash` describe its region's `look` when the
   region is created from the volume. They are not read afterwards.
 - **blockcraft** moves to `Field`, with one region over the island at two columns a block. Its
   `main.ts` places water through `ctx.voxels.set` as before.
 
-## 6. The walker and floating bodies
+## 7. The walker and floating bodies
 
 - **The walker.**
   - It is in a region's water when the surface over its column stands above its feet by more than
@@ -163,7 +192,7 @@ pub enum BedSource {
   water's velocity. Outside every region it reads the sea's waves as before.
 - One-way: bodies do not displace the water.
 
-## 7. Scripts, sources and drains
+## 8. Scripts, sources and drains
 
 - `ctx.water`, read at the tick's start like every query:
   - `depth(region, x, z)`, `surface(region, x, z)`: metres, at the column under world `(x, z)`;
@@ -178,7 +207,7 @@ pub enum BedSource {
 - The SDK (`crates/amoris-script/src/prelude/amoris.ts`) declares `WaterApi` and the two
   components; `scripts.types` writes them with the rest.
 
-## 8. The feed and the drawing
+## 9. The feed and the drawing
 
 - **The feed** gains:
 
@@ -214,14 +243,14 @@ pub enum BedSource {
   - Tile edges keep their finer neighbour's vertices, and a skirt 0.3 m deep hides the cracks.
   - The aim: a 256² region filling a 1280 x 720 frame in at most 1 ms of GPU time on the M5,
     against the spike's 1.97 ms at level 1 everywhere.
-- **Falls.** Where the splashes run (9), a triangle steeper than 63 degrees (a rise of 2 over 1) is
+- **Falls.** Where the splashes run (10), a triangle steeper than 63 degrees (a rise of 2 over 1) is
   not drawn: the particles draw the fall. With splashes off it is drawn.
 - **Under water.** A camera under a region's surface uses `look.fog`, as liquids.md 6 does for
   cells.
 - **The sea** is not drawn inside a region's rectangle; the ocean's uniform takes up to 8
   rectangles.
 
-## 9. Particles fed by the field
+## 10. Particles fed by the field
 
 The splashes' solver, regions, pool and drawing stay (splashes.md 4 and 5). Their emissions
 (splashes.md 3) are replaced. Emission stays on the renderer's side: a pure function of the feed's
@@ -251,38 +280,57 @@ water tiles, the camera and the frame's seed.
   - The thresholds are set from close and far shots for the owner.
 - Without a renderer nothing is emitted, as now. The per-frame cap of 2,048 and the 4 regions stay.
 
-## 10. The sea at a region's edge
+## 11. The sea and the region's edges
 
-- An edge marked `Sea` gives each outer face a column beyond the region at the `Sea`'s level over
-  the edge column's bed. Water flows out where the region is higher and in where it is lower.
-- A region with a `Sea` edge needs a `Sea` in the world (`water.no_sea`).
-- Past the regions, the sea's analytic waves stay what boats float on and what is drawn.
+Each of a region's four edges is one of:
 
-## 11. Persistence, replay and the browser
+- **`Wall`.** No water crosses it.
+- **`Inflow { m3s_per_m }`.** Water enters across it at that rate per metre, spread over the edge's
+  wet and dry columns alike; a river's upper end.
+- **`Outflow`.** Water leaves freely: each outer face sees a column beyond with the edge column's
+  depth over a bed continuing the edge's slope. A river's lower end, or a drain into the void.
+- **`Sea`.** The sea's waves drive it; the sea's shore and a river's mouth.
+  - Each outer face sees a column beyond the region whose surface is the sea's at that point and
+    time (`WaveField::at`, amoris-physics `sea`), over the edge column's bed.
+  - The face's velocity is solved as any face's. So swell enters the region, runs up a beach, and
+    drains back; water higher than the sea flows out.
+  - `WaveField::at` is built from `amoris_sim::math`, so the forcing is deterministic too.
+  - A region with a `Sea` edge needs a `Sea` in the world (`water.no_sea`).
+  - The waves must be longer than four columns (`water.short_waves`); shorter ones stay in the drawn
+    normals only, as the ocean's wavelets do.
 
-- `Water` is persisted with its tiles. The world hash covers them. A replay, a fork and a restore
-  continue the same flow on every target.
+Past the regions, the sea's analytic waves stay what boats float on and what is drawn. At a `Sea`
+edge the two surfaces agree, since the edge is the sea's. The ocean's and the field's shading are
+one function of surface, normal and depth, so the join does not show.
+
+To settle in the slice, from shots: how much of an outgoing wave a `Sea` edge reflects. An
+absorbing edge (the outgoing part let through) is the fallback if the reflection shows.
+
+## 12. Persistence, replay and the browser
+
+- `WaterRegion` is persisted with its tiles. The world hash covers them. A replay, a fork and a
+  restore continue the same flow on every target.
 - The snapshot cache reuses the section on ticks where no tile changed: all of them asleep, or no
   water at all. Otherwise the section is encoded whole, 1.5 MiB for a 256² region. The slice
   measures what that costs a tick natively and in the browser's worker (docs/bench/liquids.md).
   Encoding a section in parts would be a persistence.md change of its own.
 - The browser worker runs the same solver in WebAssembly.
 
-## 12. Cost
+## 13. Cost
 
 The figures that bound this slice come from the spike, on the M5 (shallow-water.md, Verdict):
 
 - **Solver**: 11 to 14 ns a column and substep natively, 13 to 20 in WebAssembly. A 256² region
   awake at two substeps costs 1.6 ms a tick natively and 2.4 ms in Node. Sleeping tiles take a
   still lake to nearly nothing.
-- **Drawing**: 1.07 to 4.49 ms of GPU time from 128² to 512² columns at level 1. Section 8's levels
+- **Drawing**: 1.07 to 4.49 ms of GPU time from 128² to 512² columns at level 1. Section 9's levels
   aim for at most 1 ms at 256².
 - **The feed**: at most 16 bytes a column for the tiles stepped.
 
 docs/bench/liquids.md records the slice's solver, snapshot, feed and drawing costs: natively on the
 M5 and R1 (both GPUs), and in Chrome.
 
-## 13. Checks
+## 14. Checks
 
 | What | Where |
 |---|---|
@@ -295,12 +343,14 @@ M5 and R1 (both GPUs), and in Chrome.
 | `ctx.water` reads, adds and removes; sources and drains | `amoris-script` tests |
 | Sleeping regions reused by the snapshot cache; a fork and a restore continue the flow | `amoris-persist` and `amoris-runtime` tests |
 | Tiles culled, levels joined without cracks; falls drawn by particles; shots for the owner, close and far | `amoris-render` tests, `amoris-app` example |
+| The applications of section 1, one example each with close and far shots for the owner: blockcraft's broken bank, a dam break, a river from an inflow to the sea, a waterfall, swell on a beach | `amoris-app` examples |
+| A river reaches a steady flow whose volume holds; swell runs up a beach and drains back; an `Outflow` edge drains a region | `amoris-physics` tests |
 | Solver, snapshot, feed and drawing cost, native and in Chrome, on the M5 and R1 | docs/bench/liquids.md |
 
-## 14. Open questions
+## 15. Open questions
 
 1. Layered columns for caves and overhangs, or a 3D solver for enclosed water.
 2. Two-way coupling: bodies displacing water and making waves.
 3. Whether the `Cells` model is kept for good, or retired once games have moved.
 4. A solver on several threads, by tiles in a fixed order.
-5. Encoding the `Water` section by tile, so a few awake tiles do not re-encode a whole region.
+5. Encoding the `WaterRegion` section by tile, so a few awake tiles do not re-encode a whole region.
