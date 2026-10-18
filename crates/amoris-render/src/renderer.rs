@@ -378,6 +378,11 @@ pub struct Renderer {
     voxels: crate::voxels::Voxels,
     /// A liquid in a box, the fluid experiment (fluid.rs, docs/spikes/fluid-box.md).
     pub fluid: Option<crate::fluid::Fluid>,
+    /// Splashes over block liquids (splash.rs, docs/spec/splashes.md): what emits on the CPU, and
+    /// the solver, made on the first region opened.
+    splash: crate::splash::Splashes,
+    splash_fluid: Option<crate::fluid::Fluid>,
+    splashes_on: bool,
     materials: MaterialPool,
     models: HashMap<String, Model>,
     loader: Box<dyn AssetSource>,
@@ -1288,6 +1293,9 @@ impl Renderer {
             meshes: built.meshes,
             voxels: crate::voxels::Voxels::default(),
             fluid: None,
+            splash: Default::default(),
+            splash_fluid: None,
+            splashes_on: splashes_from_env(),
             materials: MaterialPool::new(device),
             models: HashMap::new(),
             loader: Box::new(NoAssets),
@@ -1743,7 +1751,68 @@ impl Renderer {
     /// Starts the fluid experiment with `spec`, or ends it (docs/spikes/fluid-box.md).
     pub fn set_fluid(&mut self, spec: Option<crate::fluid::FluidSpec>) {
         self.fluid = spec
-            .map(|s| crate::fluid::Fluid::new(&self.gpu.device, &self.gpu.queue, s, self.format));
+            .map(|s| crate::fluid::Fluid::boxed(&self.gpu.device, &self.gpu.queue, s, self.format));
+    }
+
+    /// Splashes over block liquids on or off (docs/spec/splashes.md 6; `AMORIS_SPLASHES` sets the
+    /// start). Off, the particles there are go at once.
+    pub fn set_splashes(&mut self, on: bool) {
+        self.splashes_on = on;
+        if !on && let Some(f) = self.splash_fluid.as_mut() {
+            f.clear(&self.gpu.queue);
+        }
+    }
+
+    pub fn splashes(&self) -> bool {
+        self.splashes_on
+    }
+
+    /// The splashes' solver, once a region opened (checks read its particles).
+    pub fn splash_fluid(&self) -> Option<&crate::fluid::Fluid> {
+        self.splash_fluid.as_ref()
+    }
+
+    /// The splashes' stream feet in volume `id` (checks).
+    pub fn splash_feet(&self, id: u64) -> Vec<([i32; 3], crate::splash::Foot)> {
+        self.splash.feet(id)
+    }
+
+    /// One frame of the splashes: what emits, the regions it needs, the particles spawned.
+    fn splash_frame(&mut self, eye: [f32; 3], dt: f32) {
+        use crate::fluid::SLOTS;
+        let quiet: [bool; SLOTS] = std::array::from_fn(|s| {
+            self.splash_fluid.as_ref().is_none_or(|f| {
+                f.region(s).is_none()
+                    || f.clock() - f.last_spawn(s) > f64::from(crate::splash::LIFETIME_S) + 0.1
+            })
+        });
+        let voxels = &self.voxels;
+        let work = self
+            .splash
+            .frame(|id| voxels.cells(id), eye, dt, quiet, self.splashes_on);
+        if self.splash_fluid.is_none() && !work.open.is_empty() {
+            self.splash_fluid = Some(crate::fluid::Fluid::new(
+                &self.gpu.device,
+                crate::splash::solver(),
+                self.format,
+            ));
+        }
+        let Some(f) = self.splash_fluid.as_mut() else {
+            return;
+        };
+        let queue = &self.gpu.queue;
+        for slot in work.close {
+            f.close(queue, slot);
+        }
+        for (slot, region, mask) in work.open {
+            f.open(queue, slot, region, &mask);
+        }
+        for (slot, mask) in work.masks {
+            f.set_mask(queue, slot, &mask);
+        }
+        for (slot, particles) in work.spawn {
+            f.spawn(queue, slot, &particles);
+        }
     }
 
     /// Rebuilds what depends on the opaque pass's format when the options changed it.
@@ -1752,7 +1821,10 @@ impl Renderer {
         if format == self.format {
             return;
         }
-        if let Some(f) = self.fluid.as_mut() {
+        for f in [self.fluid.as_mut(), self.splash_fluid.as_mut()]
+            .into_iter()
+            .flatten()
+        {
             f.set_format(&self.gpu.device, format);
         }
         let samples_changed = format.samples != self.format.samples;
@@ -1923,9 +1995,14 @@ impl Renderer {
     pub fn apply(&mut self, mut frame: RenderFrame, now_s: f64) {
         if frame.reset {
             self.voxels.clear();
+            self.splash.clear();
+            if let Some(f) = self.splash_fluid.as_mut() {
+                f.clear(&self.gpu.queue);
+            }
         }
         if !frame.voxels.is_empty() || !frame.voxels_removed.is_empty() {
-            let changes = self.voxels.apply(&frame.voxels, &frame.voxels_removed);
+            let mut changes = self.voxels.apply(&frame.voxels, &frame.voxels_removed);
+            self.splash.note(std::mem::take(&mut changes.splash));
             for (key, mesh) in &changes.meshes {
                 self.meshes
                     .replace(&self.gpu.device, &self.gpu.queue, key, mesh);
@@ -2833,8 +2910,12 @@ impl Renderer {
         self.last_frame_s = Some(now_s);
         self.particles
             .update(&device, &queue, &mut enc, &self.scene.emitters, frame_dt);
-        if let Some(f) = self.fluid.as_mut() {
-            f.step(&queue, &mut enc);
+        self.splash_frame(cam.position.to_array(), frame_dt);
+        for f in [self.fluid.as_mut(), self.splash_fluid.as_mut()]
+            .into_iter()
+            .flatten()
+        {
+            f.step(&queue, &mut enc, frame_dt);
             f.prepare_surface(
                 &device,
                 &queue,
@@ -3269,9 +3350,6 @@ impl Renderer {
         if self.scene.sea.is_some() {
             self.ocean.draw(pass);
         }
-        if let Some(f) = &self.fluid {
-            f.draw(device, pass, &self.view_buf.buf);
-        }
         pass.set_pipeline(&self.sky_pipeline);
         pass.set_bind_group(0, &binds.sky, &[]);
         pass.draw(0..3, 0..1);
@@ -3280,17 +3358,14 @@ impl Renderer {
         }
     }
 
-    /// The transparent instances back to front, particles and the editor's grid, over the opaque
-    /// image and tested against its depth.
+    /// The transparent instances back to front, liquid particles, particles and the editor's grid,
+    /// over the opaque image and tested against its depth.
     fn draw_transparent_layer(
         &self,
         device: &wgpu::Device,
         pass: &mut wgpu::RenderPass<'_>,
         binds: &Binds,
     ) {
-        if let Some(f) = &self.fluid {
-            f.draw_surface(device, pass, &self.view_buf.buf);
-        }
         self.transparent.draw(
             pass,
             &binds.transparent,
@@ -3299,6 +3374,10 @@ impl Renderer {
             &self.batches,
             &self.meshes,
         );
+        // Liquid particles where particles and splats go (docs/spec/splashes.md 5).
+        for f in [&self.fluid, &self.splash_fluid].into_iter().flatten() {
+            f.draw_surface(device, pass, &self.view_buf.buf);
+        }
         self.particles.draw(device, pass, &self.view_buf.buf);
         // Editor overlays are never jittered.
         self.overlays.draw_grid(device, pass, &self.view_stable.buf);
@@ -3945,5 +4024,17 @@ fn forward_for<'a>(
         neural
             .as_ref()
             .map(|n| &set(n)[(variant - NEURAL_VARIANT) as usize])
+    }
+}
+
+/// `AMORIS_SPLASHES` (natively): off or on; on when unset, unknown, or in the browser.
+fn splashes_from_env() -> bool {
+    match std::env::var("AMORIS_SPLASHES").as_deref() {
+        Ok("off") => false,
+        Ok("on") | Err(_) => true,
+        Ok(v) => {
+            log::warn!("AMORIS_SPLASHES: {v:?} is not off or on; using on");
+            true
+        }
     }
 }

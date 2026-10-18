@@ -5,9 +5,7 @@
 //!   water (tilt the box), R starts again, right drag looks around.
 //! - `... --example fluid_box -- --shots out/fluid-box`: headless, a PNG every 30 frames for 10 s
 //!   with a slosh from 4 s, and the solver's time per frame.
-//! - `--cells N` scales the box (N cells across, 64 by default); `--substeps K` (10; 0 holds the
-//!   water still, which times the drawing alone); `--spheres` draws the particles instead of the
-//!   surface.
+//! - `--cells N` scales the box (N cells across, 64 by default); `--substeps K` (10).
 
 use amoris_assets::frame::{
     CameraView, EnvironmentView, InstanceUpdate, LightKindView, LightView, Look, Pose, RenderFrame,
@@ -218,7 +216,7 @@ impl Host for Box3 {
     }
 }
 
-fn shots(dir: &str, spec: FluidSpec, spheres: bool) {
+fn shots(dir: &str, spec: FluidSpec) {
     let gpu = Gpu::headless(BackendChoice::from_env()).expect("a GPU");
     let mut r = Renderer::new(&gpu, wgpu::TextureFormat::Rgba8UnormSrgb, 1280, 720);
     r.set_antialiasing(Antialiasing::Msaa);
@@ -229,12 +227,9 @@ fn shots(dir: &str, spec: FluidSpec, spheres: bool) {
         Vec3::new(0.0, 0.3, 0.0),
     )));
     r.set_fluid(Some(spec));
-    if let Some(f) = r.fluid.as_mut() {
-        f.spheres = spheres;
-    }
     println!(
         "{} particles, grid {:?}, {} substeps a frame",
-        r.fluid.as_ref().map_or(0, |f| f.count()),
+        r.fluid.as_ref().map_or(0, |f| f.spec().capacity),
         spec.grid,
         spec.substeps
     );
@@ -287,7 +282,7 @@ fn main() {
     let substeps: u32 = arg("--substeps").and_then(|s| s.parse().ok()).unwrap_or(10);
     let spec = spec(n, substeps);
     if let Some(dir) = arg("--shots") {
-        shots(&dir, spec, std::env::args().any(|a| a == "--spheres"));
+        shots(&dir, spec);
         return;
     }
     let host = Box3 {

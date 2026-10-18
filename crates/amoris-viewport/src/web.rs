@@ -463,6 +463,16 @@ impl Viewport {
         }
     }
 
+    /// Splashes over block liquids: `off` or `on` (the default; anything else leaves them as they
+    /// are; docs/spec/splashes.md 6).
+    pub fn set_splashes(&mut self, mode: &str) {
+        match mode {
+            "off" => self.renderer.set_splashes(false),
+            "on" => self.renderer.set_splashes(true),
+            _ => {}
+        }
+    }
+
     /// Anti-aliasing: `off`, `msaa`, `taa` or `msaa+taa` (anything else leaves it as it is;
     /// docs/spec/taa-gtao.md).
     pub fn set_antialiasing(&mut self, mode: &str) {

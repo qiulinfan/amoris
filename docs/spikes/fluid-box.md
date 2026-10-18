@@ -3,7 +3,9 @@
 - Date: 2026-10-17. Branch `water`, after the liquids slice (charter 4.10,
   [liquids.md](../spec/liquids.md)).
 - Code: `crates/amoris-render/src/fluid.rs`, `shaders/fluid_mpm.wgsl`, `shaders/fluid_surface.wgsl`,
-  `shaders/fluid_draw.wgsl`, the example `crates/amoris-render/examples/fluid_box.rs`.
+  `shaders/fluid_draw.wgsl`, the example `crates/amoris-render/examples/fluid_box.rs`, at commit
+  `4ee576b9`. The splashes slice ([splashes.md](../spec/splashes.md)) since turned the solver into
+  regions with block masks and removed the sphere drawing (2026-10-18).
 - Machine: Apple M5 (10 GPU cores), Metal; MoltenVK 1.4.2 for the cross-backend check.
 
 ## Question
@@ -21,9 +23,9 @@ into games, given that the world must stay deterministic?
 settles, then sloshes when the box is pushed to and fro. Drawn as a smoothed surface, it reads as a
 body of water rather than as particles. The figures:
 
-1. **Cost scales with particles times substeps, about 15 ns each.** The solver takes 3.05 ms per
-   substep at 205k particles and 0.85 ms at 56k, on the M5. Ten substeps a frame keep the stiff
-   equation of state stable. That is 30 ms a frame at 205k, which is not real time, and 8.5 ms at
+1. **Cost scales with particles times substeps, about 17 ns each.** The solver takes 3.4 ms per
+   substep at 205k particles and 0.94 ms at 56k, on the M5. Ten substeps a frame keep the stiff
+   equation of state stable. That is 34 ms a frame at 205k, which is not real time, and 9.4 ms at
    56k, which is. Six substeps also stayed stable at 205k over the 10 s run (checked by eye). Fewer
    substeps make the liquid softer, because the stiffness follows the substep.
 2. **The surface costs 0.7 to 2.2 ms a frame at 1280 x 720 more than drawing spheres.** That covers
@@ -82,7 +84,7 @@ sums eight particles at a few hundred cells a second well inside the range.
 - **The example.** `fluid_box` opens a window: the arrow keys push the water and R starts again.
   `--shots DIR` renders 600 frames headless at 1280 x 720, saves a PNG every 30, and sloshes the box
   from 4 s to 8 s (3 m/s2 at 0.55 Hz). It prints the median and p95 time of a frame including its
-  readback. `--cells N`, `--substeps K` (0 holds the water still) and `--spheres` vary the run.
+  readback. `--cells N`, `--substeps K` and `--spheres` vary the run.
 
 ## Measurements
 
@@ -98,7 +100,9 @@ Release build, Metal, `fluid_box --shots`, 600 frames, time of a whole frame inc
 | 56,160 | 6 | 8.5 | 7.6 |
 | 56,160 | 0 | 3.7 | 3.0 |
 
-The rows with 0 substeps time the drawing alone. Subtracting them gives the solver's time.
+The rows with 0 substeps ran one: the code took at least one (corrected 2026-10-18; the first
+version of this report read them as the drawing alone). The solver's time per substep is the 10-row
+minus the 0-row, over 9.
 Each row is a single run. The p95 is noisy: `--spheres` at 10 substeps had 70.7 ms against the
 surface's 42.2 ms, which is not explained.
 
@@ -144,7 +148,7 @@ the ways a block game could have water that moves like water, cheapest first:
    momentum and levels that slosh, cheaply, and as world state. It cannot overturn or splash.
 3. **A deterministic particle solver on the CPU.** The same MLS-MPM in fixed point in `amoris-sim`,
    for a bounded region (a tank, a lock, a fountain). It costs CPU time per particle-substep and is
-   not yet measured; at 15 ns on the GPU, the CPU is likely ten or more times slower.
+   not yet measured; at 17 ns on the GPU, the CPU is likely ten or more times slower.
 
 Any of these is a new slice. Choosing one changes charter 4.10, whose "Not in this slice" list
 already names pressure and waves.

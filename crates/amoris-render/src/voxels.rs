@@ -10,6 +10,8 @@ use amoris_assets::frame::{BlockLook, InstanceUpdate, Look, Pose, VoxelUpdate};
 use amoris_assets::mesh::MeshData;
 use amoris_assets::voxel_mesh::{CHUNK, mesh_chunk};
 
+use crate::splash;
+
 /// Instance ids from here up are chunk parts, not entities (entity ids stay below 2^53).
 pub const FIRST_ID: u64 = 1 << 60;
 
@@ -25,6 +27,9 @@ struct Volume {
     /// The instance drawing each (chunk, material).
     parts: BTreeMap<([i32; 3], String), u64>,
 }
+
+/// A replaced chunk's key and its cells before (none: all air), for its gushes.
+type Before = ([i32; 3], Option<Box<[u8]>>);
 
 fn locate(cell: [i32; 3]) -> ([i32; 3], usize) {
     let key = cell.map(|c| c.div_euclid(CHUNK));
@@ -73,13 +78,37 @@ impl Volume {
     }
 }
 
+impl splash::Cells for Volume {
+    fn origin(&self) -> [f32; 3] {
+        self.origin
+    }
+    fn cell_m(&self) -> f32 {
+        self.cell_m
+    }
+    fn looks(&self) -> &[BlockLook] {
+        &self.blocks
+    }
+    fn block(&self, c: [i32; 3]) -> u8 {
+        self.get(c)
+    }
+    fn state(&self, c: [i32; 3]) -> u8 {
+        Volume::state(self, c)
+    }
+    fn keys(&self) -> Vec<[i32; 3]> {
+        let mut k: Vec<[i32; 3]> = self.chunks.keys().copied().collect();
+        k.sort_unstable();
+        k
+    }
+}
+
 /// What the scene must do after volumes changed: meshes to upload (by key, replacing what each key
-/// held), instances to add or move, and instances to remove.
+/// held), instances to add or move, and instances to remove; and what the splashes see change.
 #[derive(Default)]
 pub struct VoxelChanges {
     pub meshes: Vec<(String, MeshData)>,
     pub instances: Vec<InstanceUpdate>,
     pub removed: Vec<u64>,
+    pub splash: splash::Changes,
 }
 
 /// The renderer's block volumes.
@@ -160,6 +189,11 @@ impl Voxels {
         ids.into_iter().find_map(|id| self.volumes[id].fog_at(p))
     }
 
+    /// Volume `id` as the splashes read it.
+    pub fn cells(&self, id: u64) -> Option<&dyn splash::Cells> {
+        self.volumes.get(&id).map(|v| v as &dyn splash::Cells)
+    }
+
     /// The volume a part instance draws, or the id itself for an entity.
     pub fn owner(&self, id: u64) -> u64 {
         self.owners.get(&id).copied().unwrap_or(id)
@@ -169,6 +203,7 @@ impl Voxels {
     pub fn apply(&mut self, updates: &[VoxelUpdate], removed: &[u64]) -> VoxelChanges {
         let mut out = VoxelChanges::default();
         for id in removed {
+            out.splash.fresh.push(*id);
             if let Some(v) = self.volumes.remove(id) {
                 for part in v.parts.values() {
                     self.owners.remove(part);
@@ -181,12 +216,23 @@ impl Voxels {
             let v = self.volumes.entry(u.id).or_default();
             let moved = known && (v.origin != u.origin || v.cell_m != u.cell_m);
             (v.origin, v.cell_m) = (u.origin, u.cell_m);
+            // A volume seen for the first time, moved or given new looks does not splash: its
+            // regions close and its streams are found again (splashes.md 3).
+            let fresh = !known || moved || u.blocks.is_some();
+            if fresh {
+                out.splash.fresh.push(u.id);
+            }
             let mut dirty: HashSet<[i32; 3]> = HashSet::new();
             if let Some(blocks) = &u.blocks {
                 v.blocks = blocks.clone();
                 dirty.extend(v.chunks.keys().copied());
             }
+            let mut before: Vec<Before> = Vec::new();
             for c in &u.chunks {
+                if !fresh {
+                    before.push((c.key, v.chunks.get(&c.key).cloned()));
+                }
+                out.splash.chunks.push((u.id, c.key));
                 match &c.cells {
                     Some(cells) if cells.len() == 16 * 16 * 16 => {
                         v.chunks.insert(c.key, cells.clone().into_boxed_slice());
@@ -217,6 +263,16 @@ impl Voxels {
                         dirty.insert(n);
                     }
                 }
+            }
+            for (key, old) in &before {
+                if !v.chunks.contains_key(key) {
+                    continue;
+                }
+                let old = |c: [i32; 3]| old.as_ref().map_or(0, |o| o[locate(c).1]);
+                let gushes = splash::gushes(*key, &v.blocks, old, |c| v.get(c), |c| v.state(c));
+                out.splash
+                    .gushes
+                    .extend(gushes.into_iter().map(|g| (u.id, g)));
             }
             let mut dirty: Vec<[i32; 3]> = dirty.into_iter().collect();
             dirty.sort_unstable();
@@ -331,6 +387,7 @@ mod tests {
                             "b.gltf#side".into(),
                         ],
                         fog: None,
+                        splash: None,
                     },
                 ]
             }),

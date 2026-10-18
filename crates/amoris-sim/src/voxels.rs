@@ -73,6 +73,9 @@ pub struct Flow {
     pub renews: bool,
     /// The view from inside: linear colour and fog density per metre.
     pub fog: [f64; 4],
+    /// The splashes' absorption per metre, linear rgb (splashes.md 2); none: no splashes.
+    /// Presentation, like `fog`.
+    pub splash: Option<[f64; 3]>,
 }
 
 impl Default for Flow {
@@ -83,6 +86,7 @@ impl Default for Flow {
             seek: 4,
             renews: true,
             fog: [0.05, 0.16, 0.45, 0.12],
+            splash: None,
         }
     }
 }

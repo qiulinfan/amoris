@@ -33,7 +33,6 @@ pub fn source(name: &str) -> String {
         "ui" => include_str!("../shaders/ui.wgsl"),
         "particles" => include_str!("../shaders/particles.wgsl"),
         "fluid_mpm" => include_str!("../shaders/fluid_mpm.wgsl"),
-        "fluid_draw" => include_str!("../shaders/fluid_draw.wgsl"),
         "fluid_surface" => include_str!("../shaders/fluid_surface.wgsl"),
         "splat_sort" => include_str!("../shaders/splat_sort.wgsl"),
         "splat_depth" => include_str!("../shaders/splat_depth.wgsl"),

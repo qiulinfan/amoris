@@ -220,6 +220,7 @@ mod tests {
             shape: CUBE,
             faces: [t.into(), s.into(), b.into()],
             fog: None,
+            splash: None,
         };
         vec![
             BlockLook::default(),
@@ -229,11 +230,13 @@ mod tests {
                 shape: CROSS,
                 faces: ["flower".into(), String::new(), String::new()],
                 fog: None,
+                splash: None,
             },
             BlockLook {
                 shape: LIQUID,
                 faces: ["water".into(), String::new(), String::new()],
                 fog: None,
+                splash: None,
             },
         ]
     }
