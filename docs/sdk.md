@@ -138,6 +138,23 @@ ctx.voxels.set(land, x, y, z, stone);                   // also fill(land, lo, h
 const hit = ctx.voxels.raycast(land, eye, dir, 5);      // {cell, normal, block, distanceM} | null
 ```
 
+## Water
+
+A `WaterRegion` entity is a grid of water columns over a bed (a block volume's, at one or two
+columns a block), stepped as shallow water by the engine ([spec/water.md](spec/water.md)). A liquid
+whose palette `flow` has `"model": "field"` (and `"spread": 0`) becomes the region's water: setting
+it adds its cell's water and leaves the cell air. Scripts read and change the water at a world point
+through `ctx.water`; changes apply when `run` returns:
+
+```ts
+const lake = ctx.single("Lake");                        // a project component on the region
+const d = ctx.water.depth(lake, x, z);                  // also surface(...) and velocity(...)
+ctx.water.add(lake, x, z, 0.5);                         // cubic metres
+const took = ctx.water.remove(lake, x, z, 2);           // at most what is there
+```
+
+Springs and sinks are the components `WaterSource` and `WaterDrain` (`region`, `at`, `rate_m3s`).
+
 A first-person game declares `actions = "first_person"` under `[player]`: its seat `player` drives
 the `Walker` (`forward`, `strafe`, `yaw`, `pitch`, `run`, `slot`, and the one-tick pulses `jump`,
 `primary`, `secondary`), which rules read like any component; `amoris play <project> --walk` plays

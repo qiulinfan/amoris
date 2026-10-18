@@ -13,6 +13,7 @@ pub mod field;
 pub(crate) mod solve;
 
 use amoris_contract::{Problem, detail};
+use amoris_sim::math;
 use amoris_sim::order::by_id;
 use amoris_sim::voxels::Voxels;
 use amoris_sim::{EntityId, EntityIndex, EventKind, NewEvent, PlainData, SimClock};
@@ -126,6 +127,45 @@ impl WaterTile {
     }
 }
 
+/// A spring or a pipe: water added at the column under world `at` (x, z) of `region`, `rate_m3s`
+/// cubic metres a second, before the substeps (water.md 8).
+#[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WaterSource {
+    /// The region it pours into; none: nowhere.
+    pub region: Option<EntityId>,
+    pub at: [f64; 2],
+    pub rate_m3s: f64,
+}
+
+/// A sink: water taken at the column under world `at` (x, z) of `region`, at most `rate_m3s` cubic
+/// metres a second and never more than is there (water.md 8).
+#[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WaterDrain {
+    /// The region it takes from; none: nowhere.
+    pub region: Option<EntityId>,
+    pub at: [f64; 2],
+    pub rate_m3s: f64,
+}
+
+/// Checks a source's or a drain's numbers: `water.invalid`.
+pub fn validate_flow(at: [f64; 2], rate_m3s: f64) -> Result<(), Problem> {
+    if !(at[0].is_finite() && at[1].is_finite()) {
+        return Err(invalid(
+            "at",
+            "a source's or drain's point must be finite".into(),
+        ));
+    }
+    if !(rate_m3s.is_finite() && rate_m3s >= 0.0) {
+        return Err(invalid(
+            "rate_m3s",
+            format!("a rate is finite and not negative, not {rate_m3s}"),
+        ));
+    }
+    Ok(())
+}
+
 /// How a region looks (water.md 9). Presentation only: the solver never reads it.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
@@ -235,6 +275,62 @@ impl WaterRegion {
                     .iter()
                     .all(|v| v.len() == TILE_COLUMNS)
             })
+    }
+
+    /// The region column under world `(x, z)` for a region whose corner is `corner`, if the region
+    /// covers it and has its tiles.
+    pub fn column_of(&self, corner: [f64; 2], x: f64, z: f64) -> Option<(usize, usize)> {
+        if !self.well_formed() {
+            return None;
+        }
+        self.column_at(x - corner[0], z - corner[1])
+    }
+
+    /// Column `(i, k)`'s depth, metres.
+    pub fn depth_at(&self, i: usize, k: usize) -> f64 {
+        let (t, c) = self.locate(i, k);
+        self.tiles[t].depth[c]
+    }
+
+    /// Column `(i, k)`'s surface, world y (a dry column's is its bed).
+    pub fn surface_at(&self, i: usize, k: usize) -> f64 {
+        let (t, c) = self.locate(i, k);
+        self.tiles[t].bed[c] + self.tiles[t].depth[c]
+    }
+
+    /// Column `(i, k)`'s velocity, m/s along x and z: the mean of its faces (water.md 8).
+    pub fn velocity_at(&self, i: usize, k: usize) -> [f64; 2] {
+        let [nx, nz] = self.columns_along();
+        let (t, c) = self.locate(i, k);
+        let (u0, w0) = (self.tiles[t].u[c], self.tiles[t].w[c]);
+        let u1 = if i + 1 < nx {
+            let (t, c) = self.locate(i + 1, k);
+            self.tiles[t].u[c]
+        } else {
+            0.0
+        };
+        let w1 = if k + 1 < nz {
+            let (t, c) = self.locate(i, k + 1);
+            self.tiles[t].w[c]
+        } else {
+            0.0
+        };
+        [(u0 + u1) * 0.5, (w0 + w1) * 0.5]
+    }
+
+    /// Changes column `(i, k)`'s water by `m3` (taking at most what it holds) and wakes its tile
+    /// when that changed it; returns the change made, m^3.
+    pub fn pour(&mut self, i: usize, k: usize, m3: f64) -> f64 {
+        let area = self.cell_m * self.cell_m;
+        let (t, c) = self.locate(i, k);
+        let tile = &mut self.tiles[t];
+        let d = tile.depth[c];
+        let new = math::max(d + m3 / area, 0.0);
+        if new != d {
+            tile.depth[c] = new;
+            tile.still = 0;
+        }
+        (new - d) * area
     }
 
     /// The water's volume, m^3.
@@ -554,6 +650,7 @@ type RegionQuery<'w, 's> = Query<
 /// 3. each region rereads the beds over the chunks edited since the last tick's run (any chunk
 ///    edited at the previous tick or this one: the change rule gives the same beds where nothing
 ///    changed), then its awake tiles are stepped.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn water(
     clock: Res<SimClock>,
     index: Res<EntityIndex>,
@@ -561,11 +658,19 @@ pub(crate) fn water(
     mut steps: ResMut<WaterSteps>,
     mut regions: RegionQuery<'_, '_>,
     mut volumes: VolumeQuery<'_, '_>,
+    sources: Query<(&EntityId, &WaterSource)>,
+    drains: Query<(&EntityId, &WaterDrain)>,
     mut emit: amoris_sim::Emit,
 ) {
     let dt = clock.dt();
     let tick = clock.tick.0;
     let since = tick.saturating_sub(1);
+    // Sources and drains, in id order: (region, point, signed rate).
+    let mut flows: Vec<(EntityId, EntityId, [f64; 2], f64)> = by_id(&sources)
+        .filter_map(|(id, s)| Some((*id, s.region?, s.at, s.rate_m3s)))
+        .collect();
+    flows.extend(by_id(&drains).filter_map(|(id, d)| Some((*id, d.region?, d.at, -d.rate_m3s))));
+    flows.sort_by_key(|f| f.0);
     let order: Vec<(bevy_ecs::entity::Entity, EntityId)> =
         by_id(&regions).map(|(e, id, _, _)| (e, *id)).collect();
     if order.is_empty() {
@@ -666,9 +771,10 @@ pub(crate) fn water(
     }
     // 3. Bed changes, then the substeps.
     for (n, &(e, id)) in order.iter().enumerate() {
-        let Ok((_, _, _, mut region)) = regions.get_mut(e) else {
+        let Ok((_, _, t, mut region)) = regions.get_mut(e) else {
             continue;
         };
+        let p = position(t);
         // Read first, so a region asleep is not marked changed.
         if !region.well_formed() {
             continue;
@@ -693,6 +799,17 @@ pub(crate) fn water(
                         emit.emit(e);
                     }
                 }
+            }
+        }
+        for &(_, rid, at, rate) in &flows {
+            if rid != id || rate == 0.0 || !rate.is_finite() {
+                continue;
+            }
+            // A drain over a dry column changes nothing: the region is not marked changed.
+            if let Some((i, k)) = region.column_of([p[0], p[2]], at[0], at[1])
+                && (rate > 0.0 || region.depth_at(i, k) > 0.0)
+            {
+                region.pour(i, k, rate * dt);
             }
         }
         if !awake(&region) {
@@ -720,4 +837,4 @@ pub(crate) fn water(
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

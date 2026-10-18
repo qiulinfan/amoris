@@ -11,6 +11,7 @@ pub mod query;
 pub mod rng;
 pub mod timing;
 pub mod voxels;
+pub mod water;
 pub mod world;
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -87,6 +88,11 @@ const NATIVES: &[(&str, Native, bool)] = &[
     ("voxelsSet", voxels::set, true),
     ("voxelsFill", voxels::fill, true),
     ("voxelsRaycast", voxels::raycast, false),
+    ("waterDepth", water::depth, false),
+    ("waterSurface", water::surface, false),
+    ("waterVelocity", water::velocity, false),
+    ("waterAdd", water::add, true),
+    ("waterRemove", water::remove, true),
 ];
 
 /// The native module `amoris:host`.

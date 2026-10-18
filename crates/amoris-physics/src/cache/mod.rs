@@ -40,7 +40,9 @@ use crate::solver::{
     BodyIndex, ContactLog, Physics, RebuiltSolver, entity_of, rebuild_index, spec_hash, spec_of,
 };
 use crate::walker::Walker;
-use crate::water::{BedSource, Edge, Style, WaterRegion, WaterScratch, WaterSteps};
+use crate::water::{
+    BedSource, Edge, Style, WaterDrain, WaterRegion, WaterScratch, WaterSource, WaterSteps,
+};
 use slots::{ByRef, Reading, WorldIn, WorldOut, Writing};
 
 /// The cache's identity (versions.md 3.6): the library, its exact versions, the features that
@@ -71,6 +73,8 @@ pub fn declare<R: RegisterPersisted>(r: &mut R) {
         .component::<Walker>()
         .component::<amoris_sim::voxels::Voxels>()
         .component::<WaterRegion>()
+        .component::<WaterSource>()
+        .component::<WaterDrain>()
         .cache::<PhysicsCache>()
         .derived::<Physics>("the state of cache physics.rapier, put back by its section")
         .derived::<BodyIndex>("rebuilt from the bodies' user_data, which name their entities")
@@ -338,6 +342,8 @@ persisted! {
     Sea => "Sea",
     Wind => "Wind",
     Walker => "Walker",
+    WaterSource => "WaterSource",
+    WaterDrain => "WaterDrain",
 }
 
 impl Persisted for RigidBody {

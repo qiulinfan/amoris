@@ -159,6 +159,12 @@ pub(crate) enum Command {
         id: EntityId,
         volume: Box<amoris_sim::voxels::Voxels>,
     },
+    /// Water added to (or, negative, taken from) a region's column (water.md 8).
+    Water {
+        id: EntityId,
+        column: (usize, usize),
+        m3: f64,
+    },
 }
 
 /// A column handed to the script, kept to compare after the call.
@@ -305,6 +311,14 @@ pub(crate) fn apply(
                     && let Some(mut v) = world.get_mut::<amoris_sim::voxels::Voxels>(e)
                 {
                     *v = *volume;
+                }
+            }
+            Command::Water { id, column, m3 } => {
+                if let Some(e) = entity::entity(world, id)
+                    && let Some(mut r) = world.get_mut::<amoris_physics::WaterRegion>(e)
+                    && r.well_formed()
+                {
+                    r.pour(column.0, column.1, m3);
                 }
             }
         }

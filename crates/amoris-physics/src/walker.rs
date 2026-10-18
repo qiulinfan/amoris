@@ -13,6 +13,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::body::Transform;
+use crate::water::WaterRegion;
 
 /// The furthest a walker's look may tilt up or down, radians.
 pub const MAX_PITCH: f64 = 1.55;
@@ -28,6 +29,10 @@ const LIQUID_GRAVITY: f64 = 0.25;
 const LIQUID_SINK_MPS: f64 = 2.0;
 const LIQUID_SPEED: f64 = 0.6;
 const CURRENT_MPS: f64 = 1.4;
+/// In a region's water (water.md 7): the surface must stand this far over the feet, metres, and the
+/// current pushes with the column's velocity, at most this fast, m/s.
+const FIELD_WADE_M: f64 = 0.05;
+const FIELD_PUSH_MPS: f64 = 2.0;
 const WALL_LIFT: f64 = 0.6;
 
 /// A first-person character (voxels.md 5.2). Its entity's `Transform` is the eye.
@@ -200,12 +205,20 @@ fn sweep(v: &Volume, lo: [f64; 3], hi: [f64; 3], axis: usize, d: f64) -> f64 {
     d
 }
 
-/// How a liquid meets a box: whether one overlaps it, whether the eye is under a surface, and the
-/// current's horizontal direction, unit or zero (liquids.md 5).
+/// A water region as the walker sees it: its corner (world x, z) and its columns.
+struct Pool<'a> {
+    corner: [f64; 2],
+    region: &'a WaterRegion,
+}
+
+/// How a liquid meets a box: whether one overlaps it, whether the eye is under a surface, the cells'
+/// current's horizontal direction, unit or zero (liquids.md 5), and a region's push, m/s (water.md
+/// 7).
 struct Contact {
     body: bool,
     eye: bool,
     current: [f64; 2],
+    push: [f64; 2],
 }
 
 /// A liquid cell's surface, as a share of the cell: a source at 8/9, level n at (8 - n) / 9, the
@@ -218,13 +231,41 @@ fn surface(v: &Voxels, c: [i32; 3], b: u8, s: u8) -> f64 {
     }
 }
 
-fn contact(w: &Walker, eye: [f64; 3], volumes: &[Volume]) -> Contact {
+fn contact(w: &Walker, eye: [f64; 3], volumes: &[Volume], pools: &[Pool]) -> Contact {
     let (lo, hi) = w.bounds(eye);
     let mut out = Contact {
         body: false,
         eye: false,
         current: [0.0; 2],
+        push: [0.0; 2],
     };
+    // A region's water: in it when the surface over the walker's column stands more than 5 cm over
+    // its feet, pushed by the column's velocity, at most 2 m/s.
+    for pool in pools {
+        let r = pool.region;
+        let Some((i, k)) = r.column_of(pool.corner, eye[0], eye[2]) else {
+            continue;
+        };
+        if r.depth_at(i, k) <= 0.0 {
+            continue;
+        }
+        let top = r.surface_at(i, k);
+        if top > lo[1] + FIELD_WADE_M {
+            out.body = true;
+            let v = r.velocity_at(i, k);
+            let speed = math::sqrt(v[0] * v[0] + v[1] * v[1]);
+            let k = if speed > FIELD_PUSH_MPS {
+                FIELD_PUSH_MPS / speed
+            } else {
+                1.0
+            };
+            out.push[0] += v[0] * k;
+            out.push[1] += v[1] * k;
+        }
+        if top > eye[1] {
+            out.eye = true;
+        }
+    }
     for vol in volumes {
         let v = vol.voxels;
         let g = |p: f64, a: usize| (p - vol.origin[a]) / v.cell_m;
@@ -286,8 +327,8 @@ fn contact(w: &Walker, eye: [f64; 3], volumes: &[Volume]) -> Contact {
 }
 
 /// Moves a walker one tick of `dt` seconds among `volumes`; returns the new eye.
-fn advance(w: &mut Walker, eye: [f64; 3], dt: f64, volumes: &[Volume]) -> [f64; 3] {
-    let wet = contact(w, eye, volumes);
+fn advance(w: &mut Walker, eye: [f64; 3], dt: f64, volumes: &[Volume], pools: &[Pool]) -> [f64; 3] {
+    let wet = contact(w, eye, volumes, pools);
     let (mut f, mut s) = (
         math::clamp(w.forward, -1.0, 1.0),
         math::clamp(w.strafe, -1.0, 1.0),
@@ -305,8 +346,8 @@ fn advance(w: &mut Walker, eye: [f64; 3], dt: f64, volumes: &[Volume]) -> [f64; 
     let mut vx = (-sy * f + cy * s) * speed;
     let mut vz = (-cy * f - sy * s) * speed;
     if wet.body {
-        vx += wet.current[0] * CURRENT_MPS;
-        vz += wet.current[1] * CURRENT_MPS;
+        vx += wet.current[0] * CURRENT_MPS + wet.push[0];
+        vz += wet.current[1] * CURRENT_MPS + wet.push[1];
     }
     if w.jump && w.grounded {
         w.vertical_mps = w.jump_mps;
@@ -356,6 +397,7 @@ pub(crate) fn walk(
     clock: Res<SimClock>,
     mut walkers: Query<(&EntityId, &mut Walker, &mut Transform)>,
     volumes: Query<(&EntityId, &Voxels, Option<&Transform>), Without<Walker>>,
+    regions: Query<(&EntityId, &WaterRegion, Option<&Transform>), Without<Walker>>,
 ) {
     let dt = clock.dt();
     let volumes: Vec<Volume> = by_id(&volumes)
@@ -364,11 +406,20 @@ pub(crate) fn walk(
             voxels,
         })
         .collect();
+    let pools: Vec<Pool> = by_id(&regions)
+        .map(|(_, region, tf)| {
+            let p = tf.map_or([0.0; 3], |t| t.position);
+            Pool {
+                corner: [p[0], p[2]],
+                region,
+            }
+        })
+        .collect();
     for (_, mut walker, mut tf) in by_id_mut(&mut walkers) {
         let mut w = *walker;
         w.yaw = math::wrap_angle(w.yaw);
         w.pitch = math::clamp(w.pitch, -MAX_PITCH, MAX_PITCH);
-        let eye = advance(&mut w, tf.position, dt, &volumes);
+        let eye = advance(&mut w, tf.position, dt, &volumes, &pools);
         let pose = Transform {
             position: eye,
             rotation: w.rotation(),
@@ -424,7 +475,7 @@ mod tests {
         }];
         let mut eye = eye;
         for _ in 0..ticks {
-            eye = advance(w, eye, 1.0 / 60.0, &vols);
+            eye = advance(w, eye, 1.0 / 60.0, &vols, &[]);
             w.jump = false;
         }
         eye
@@ -498,7 +549,7 @@ mod tests {
         let mut eye = [0.5, w.eye_m, 0.5];
         let mut top: f64 = 0.0;
         for _ in 0..30 {
-            eye = advance(&mut w, eye, 1.0 / 60.0, &vols);
+            eye = advance(&mut w, eye, 1.0 / 60.0, &vols, &[]);
             w.jump = false;
             top = math::max(top, eye[1] - w.eye_m + w.height_m);
         }
@@ -536,7 +587,7 @@ mod tests {
             voxels: &v,
         }];
         for _ in 0..60 {
-            eye = advance(&mut w, eye, 1.0 / 60.0, &vols);
+            eye = advance(&mut w, eye, 1.0 / 60.0, &vols, &[]);
         }
         assert!(w.in_liquid && w.eye_in_liquid);
         assert!(
@@ -547,12 +598,12 @@ mod tests {
         assert!(eye[1] > -3.0, "sank at most about 2 m in a second: {eye:?}");
         w.rise = true;
         for _ in 0..240 {
-            eye = advance(&mut w, eye, 1.0 / 60.0, &vols);
+            eye = advance(&mut w, eye, 1.0 / 60.0, &vols, &[]);
         }
         // At the surface it bobs: the feet just in and out of the top cell (surface at 8/9).
         let mut feet = Vec::new();
         for _ in 0..120 {
-            eye = advance(&mut w, eye, 1.0 / 60.0, &vols);
+            eye = advance(&mut w, eye, 1.0 / 60.0, &vols, &[]);
             feet.push(eye[1] - w.eye_m);
         }
         let (lo, hi) = feet.iter().fold((f64::MAX, f64::MIN), |(a, b), &f| {
@@ -581,7 +632,7 @@ mod tests {
         let mut eye = [0.5, w.eye_m, 0.5];
         let mut top = f64::MIN;
         for _ in 0..90 {
-            eye = advance(&mut w, eye, 1.0 / 60.0, &vols);
+            eye = advance(&mut w, eye, 1.0 / 60.0, &vols, &[]);
             if (3.0..7.0).contains(&eye[0]) {
                 top = math::max(top, eye[1] - w.eye_m);
             }
@@ -612,7 +663,7 @@ mod tests {
         }];
         let mut eye = [1.5, w.eye_m, 0.5];
         for _ in 0..30 {
-            eye = advance(&mut w, eye, 1.0 / 60.0, &vols);
+            eye = advance(&mut w, eye, 1.0 / 60.0, &vols, &[]);
         }
         assert!(eye[0] > 1.5 + 0.5, "carried downstream: {eye:?}");
         assert!((eye[2] - 0.5).abs() < 1e-9);
@@ -643,5 +694,53 @@ mod tests {
         for a in 0..3 {
             assert!((r[a] - l[a]).abs() < 1e-12, "{r:?} {l:?}");
         }
+    }
+
+    /// A walker in a region's water (water.md 7): over flat ground at y 0, a region of 0.5 m
+    /// columns holding water 2 m deep, moving at `u` m/s along x.
+    fn in_field_water(u: f64, eye_y: f64, ticks: usize) -> (Walker, [f64; 3]) {
+        let v = ground();
+        let mut r = crate::water::tests::region(2, 2, 0.5);
+        for t in &mut r.tiles {
+            t.depth.fill(2.0);
+            t.u.fill(u);
+        }
+        let vols = [Volume {
+            origin: [0.0; 3],
+            voxels: &v,
+        }];
+        let pools = [Pool {
+            corner: [-8.0, -8.0],
+            region: &r,
+        }];
+        let mut w = Walker::default();
+        let mut eye = [0.5, eye_y, 0.5];
+        for _ in 0..ticks {
+            eye = advance(&mut w, eye, 1.0 / 60.0, &vols, &pools);
+        }
+        (w, eye)
+    }
+
+    #[test]
+    fn a_walker_swims_in_field_water_and_its_current_pushes() {
+        // Standing on the bottom in still water 2 m deep: in it, the eye under the surface,
+        // sinking slowly and not pushed.
+        let (w, eye) = in_field_water(0.0, 1.62, 30);
+        assert!(w.in_liquid && w.eye_in_liquid, "{w:?}");
+        assert!(
+            (eye[0] - 0.5).abs() < 1e-12,
+            "a still pond does not move it"
+        );
+        // A stream of 1 m/s carries it about a metre a second; a flood of 5 m/s at most 2 m/s.
+        let (_, eye) = in_field_water(1.0, 1.62, 60);
+        assert!((eye[0] - 1.5).abs() < 0.05, "{eye:?}");
+        let (_, eye) = in_field_water(5.0, 1.62, 60);
+        assert!((eye[0] - 2.5).abs() < 0.05, "{eye:?}");
+        // Falling in from above: the fall is slowed to the swimmer's.
+        let (w, _) = in_field_water(0.0, 4.0, 20);
+        assert!(w.vertical_mps >= -2.0 - 1e-9, "{}", w.vertical_mps);
+        // Above the surface by more than the wading depth: dry.
+        let (w, _) = in_field_water(0.0, 5.0, 1);
+        assert!(!w.in_liquid && !w.eye_in_liquid);
     }
 }

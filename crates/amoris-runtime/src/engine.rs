@@ -16,7 +16,7 @@ use amoris_assets::{
 use amoris_contract::{CheckOptions, Problem, Shape, detail};
 use amoris_physics::{
     Boat, Collider, ExternalForce, Floater, Hull, RigidBody, Sail, Sea, Transform, Trim, Velocity,
-    Walker, WaterRegion, Wind,
+    Walker, WaterDrain, WaterRegion, WaterSource, Wind,
 };
 use amoris_script::{EngineFns, register_engine};
 use amoris_sim::registry::{
@@ -87,7 +87,7 @@ where
 /// Every engine component a scene or `world_edit` can name (`Name` is the entity's own `name`);
 /// the first three are the player layer's (perception.md: who observes, what can be perceived,
 /// what blocks sight).
-pub fn engine_components() -> [EngineComponent; 27] {
+pub fn engine_components() -> [EngineComponent; 29] {
     [
         entry::<amoris_interface::perception::Observer>(),
         entry::<amoris_interface::perception::Perceivable>(),
@@ -116,6 +116,8 @@ pub fn engine_components() -> [EngineComponent; 27] {
         entry::<Wind>(),
         voxels_entry(),
         water_entry(),
+        flow_entry::<WaterSource>(),
+        flow_entry::<WaterDrain>(),
     ]
 }
 
@@ -154,6 +156,55 @@ fn water_entry() -> EngineComponent {
         get: get::<WaterRegion>,
         decode: decode_water,
         remove: remove::<WaterRegion>,
+    }
+}
+
+/// A source's or a drain's point and rate, for their check (water.md 8).
+trait FlowNumbers {
+    fn numbers(&self) -> ([f64; 2], f64);
+}
+
+impl FlowNumbers for WaterSource {
+    fn numbers(&self) -> ([f64; 2], f64) {
+        (self.at, self.rate_m3s)
+    }
+}
+
+impl FlowNumbers for WaterDrain {
+    fn numbers(&self) -> ([f64; 2], f64) {
+        (self.at, self.rate_m3s)
+    }
+}
+
+fn decode_flow<C>(v: &Value, owner: &str) -> Result<Inserter, Problem>
+where
+    C: Component<Mutability = Mutable> + DeserializeOwned + JsonSchema + FlowNumbers,
+{
+    let c: C = Shape::of::<C>()
+        .decode::<C>(v, &CheckOptions::new(owner))?
+        .value;
+    let (at, rate) = c.numbers();
+    amoris_physics::water::validate_flow(at, rate)?;
+    Ok(Inserter(Box::new(move |e: &mut EntityWorldMut<'_>| {
+        e.insert(c);
+    })))
+}
+
+/// `WaterSource` and `WaterDrain`, decoded strictly and their numbers checked.
+fn flow_entry<C>() -> EngineComponent
+where
+    C: Component<Mutability = Mutable>
+        + Persisted
+        + Serialize
+        + DeserializeOwned
+        + JsonSchema
+        + FlowNumbers,
+{
+    EngineComponent {
+        name: C::NAME,
+        get: get::<C>,
+        decode: decode_flow::<C>,
+        remove: remove::<C>,
     }
 }
 
@@ -626,6 +677,59 @@ fn wind_fns() -> EngineFns<Wind> {
     }
 }
 
+fn flow_schema(name: &str, version: u32, doc: &str) -> Result<ComponentSchema, Problem> {
+    schema(
+        name,
+        version,
+        doc,
+        vec![
+            (
+                "region",
+                FieldType::Entity,
+                FieldValue::Entity(None),
+                "The water region; none: nowhere.",
+            ),
+            (
+                "at",
+                FieldType::Vec2,
+                FieldValue::Vec2([0.0; 2]),
+                "The column under this world point (x, z), metres.",
+            ),
+            f("rate_m3s", "Cubic metres a second."),
+        ],
+    )
+}
+
+/// The slot functions of a source or a drain: `region` (an id, 0 for none), `at`, `rate_m3s`.
+macro_rules! flow_fns {
+    ($t:ident) => {
+        EngineFns {
+            read: |c: &$t| {
+                nums(&[
+                    c.region.map_or(0.0, |r| r.to_f64()),
+                    c.at[0],
+                    c.at[1],
+                    c.rate_m3s,
+                ])
+            },
+            write: |c: &mut $t, v| {
+                let n = &v.nums;
+                c.region = amoris_sim::EntityId::from_f64(n[0]).ok();
+                c.at = [n[1], n[2]];
+                c.rate_m3s = n[3];
+            },
+            make: |v| {
+                let n = &v.nums;
+                $t {
+                    region: amoris_sim::EntityId::from_f64(n[0]).ok(),
+                    at: [n[1], n[2]],
+                    rate_m3s: n[3],
+                }
+            },
+        }
+    };
+}
+
 fn names(world: &World) -> Vec<String> {
     world
         .get_resource::<ComponentRegistry>()
@@ -647,6 +751,22 @@ pub fn install_script_components(world: &mut World) -> Result<(), Problem> {
     ComponentRegistry::register::<Walker>(world, Some(walker_schema()?))?;
     ComponentRegistry::register::<Voxels>(world, None)?;
     ComponentRegistry::register::<WaterRegion>(world, None)?;
+    ComponentRegistry::register::<WaterSource>(
+        world,
+        Some(flow_schema(
+            "WaterSource",
+            WaterSource::VERSION,
+            "A spring or a pipe: water added at a region's column each tick.",
+        )?),
+    )?;
+    ComponentRegistry::register::<WaterDrain>(
+        world,
+        Some(flow_schema(
+            "WaterDrain",
+            WaterDrain::VERSION,
+            "A sink: water taken at a region's column each tick, never more than is there.",
+        )?),
+    )?;
     ComponentRegistry::register::<RigidBody>(world, None)?;
     ComponentRegistry::register::<Collider>(world, None)?;
     ComponentRegistry::register::<ExternalForce>(world, None)?;
@@ -681,6 +801,8 @@ pub fn install_script_components(world: &mut World) -> Result<(), Problem> {
     register_engine::<Wind>(world, wind_fns())?;
     register_engine::<Walker>(world, walker_fns())?;
     register_engine::<UiText>(world, ui_text_fns())?;
+    register_engine::<WaterSource>(world, flow_fns!(WaterSource))?;
+    register_engine::<WaterDrain>(world, flow_fns!(WaterDrain))?;
     Ok(())
 }
 

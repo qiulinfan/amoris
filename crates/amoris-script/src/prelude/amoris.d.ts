@@ -271,6 +271,23 @@ export interface VoxelAccess {
 		readonly solidOnly?: boolean;
 	}): VoxelHit | null;
 }
+/** The water of a region (`WaterRegion`, docs/spec/water.md 8) at the column under a world point
+* `(x, z)`, metres. Reads see the world as the system started; `add` and `remove` apply when the
+* system returns, as `world.set` does, and wake the column. A point outside the region answers 0 and
+* writes nothing. Springs and sinks that run every tick are the `WaterSource` and `WaterDrain`
+* components. */
+export interface WaterAccess {
+	/** The water's depth, metres. */
+	depth(region: Entity, x: number, z: number): number;
+	/** The surface's height, world y; a dry column's is its bed. */
+	surface(region: Entity, x: number, z: number): number;
+	/** The water's velocity, `[vx, vz]` m/s: the mean of the column's faces. */
+	velocity(region: Entity, x: number, z: number): readonly [number, number];
+	/** Adds `m3` cubic metres to the column. */
+	add(region: Entity, x: number, z: number, m3: number): void;
+	/** Takes at most `m3` cubic metres from the column; returns what it took. */
+	remove(region: Entity, x: number, z: number, m3: number): number;
+}
 /** The context of one system call, frozen; nothing in it outlives the call. */
 export interface SystemContext {
 	/** The tick being run. */
@@ -310,6 +327,8 @@ export interface SystemContext {
 	intent(actor: Entity, kind: string, params?: Data): void;
 	/** Block volumes. */
 	readonly voxels: VoxelAccess;
+	/** Water regions. */
+	readonly water: WaterAccess;
 }
 /** A field's type as scripts see it (script-host.md 6). */
 export type FieldType = "f64" | "i32" | "u32" | "tick" | "bool" | "str" | "entity" | "vec2" | "vec3" | "vec4" | "quat" | "enum";

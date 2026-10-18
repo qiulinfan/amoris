@@ -166,3 +166,137 @@ fn a_field_liquid_outside_every_region_is_refused_at_load() {
         std::fs::remove_dir_all(root).unwrap();
     });
 }
+
+const SCRIPTED: &str = r#"
+import { component, field, game, system } from "amoris";
+
+export const Lake = component("Lake", { version: 1, doc: "The region.", fields: {} });
+export const Land = component("Land", { version: 1, doc: "The volume.", fields: {} });
+export const Probe = component("Probe", {
+    version: 1, doc: "What the system saw.",
+    fields: {
+        taken: field.f64(-1, "What remove took at tick 2."),
+        outside: field.f64(-1, "What remove took outside the region."),
+        depth: field.f64(-1, "The depth read at tick 3."),
+        surface: field.f64(-1, "The surface read at tick 3."),
+        speed: field.f64(-1, "The speed read at tick 3."),
+        far: field.f64(-1, "The depth outside the region."),
+        cell: field.i32(-1, "The placed water's cell at tick 3."),
+    },
+});
+
+export const pour = system({
+    name: "pour", phase: "update", doc: "Adds, takes and reads water; places field water.",
+    run(ctx) {
+        const r = ctx.single("Lake");
+        const p = ctx.single("Probe");
+        const v = ctx.single("Land");
+        if (ctx.tick === 2) {
+            ctx.water.add(r, 10.25, 10.25, 1.0);
+            const taken = ctx.water.remove(r, 10.25, 10.25, 0.25);
+            const outside = ctx.water.remove(r, 100, 100, 1.0);
+            ctx.world.set(p, "Probe", { taken, outside });
+            const water = ctx.voxels.block(v, "water");
+            ctx.voxels.set(v, 12, 2, 12, water);
+            ctx.voxels.set(v, 40, 6, 3, water);
+        }
+        if (ctx.tick === 3) {
+            const vel = ctx.water.velocity(r, 10.75, 10.25);
+            ctx.world.set(p, "Probe", {
+                depth: ctx.water.depth(r, 10.25, 10.25),
+                surface: ctx.water.surface(r, 10.25, 10.25),
+                speed: Math.abs(vel[0]) + Math.abs(vel[1]),
+                far: ctx.water.depth(r, -5, 3),
+                cell: ctx.voxels.get(v, 12, 2, 12),
+            });
+        }
+    },
+});
+
+export default game({ components: [Lake, Land, Probe], systems: [pour] });
+"#;
+
+fn probe(g: &mut Game) -> Value {
+    g.apply(&amoris_runtime::Command::new(
+        amoris_link::Source::Developer(9),
+        1,
+        "world.get",
+        json!({"entity": "Probe", "fields": [
+            "Probe.taken", "Probe.outside", "Probe.depth", "Probe.surface", "Probe.speed",
+            "Probe.far", "Probe.cell"]}),
+    ))
+    .unwrap_or_else(|e| panic!("{e:#?}"))["fields"]
+        .clone()
+}
+
+#[test]
+fn scripts_read_add_and_remove_water_and_place_field_liquids() {
+    common::big_stack(|| {
+        let mut ents = lake([0.0, 0.0, 0.0]);
+        let mut v = pond();
+        v.fill([8, 2, 8], [15, 3, 15], 0, 0).unwrap();
+        ents[0]["components"]["Voxels"] = serde_json::to_value(v).unwrap();
+        ents[0]["components"]["Land"] = json!({});
+        ents[1]["components"]["Lake"] = json!({});
+        ents.as_array_mut()
+            .unwrap()
+            .push(json!({"name": "Probe", "components": {"Probe": {}}}));
+        let root = project("scripted", SCRIPTED, ents);
+        let mut g = game(&root).unwrap_or_else(|e| panic!("{e:#?}"));
+        g.step().unwrap();
+        g.step().unwrap();
+        // Tick 2: a cubic metre in, a quarter taken back; the placed block's water (8/9 of a cell)
+        // poured, the one outside every region cleared and reported.
+        let p = probe(&mut g);
+        assert_eq!(p["Probe.taken"], 0.25);
+        assert_eq!(p["Probe.outside"], 0.0);
+        let uncovered: Vec<_> = g
+            .inbox()
+            .iter()
+            .filter(|e| e.kind.as_str() == "water.uncovered")
+            .collect();
+        assert_eq!(uncovered.len(), 1);
+        let r = region(&g);
+        assert!(
+            (r.volume() - (0.75 + 8.0 / 9.0)).abs() < 1e-9,
+            "{}",
+            r.volume()
+        );
+        assert_eq!(volume(&g).get([40, 6, 3]), 0);
+        g.step().unwrap();
+        let p = probe(&mut g);
+        let d = p["Probe.depth"].as_f64().unwrap();
+        assert!(d > 0.0 && d < 3.0, "spreading: {d}");
+        assert!((p["Probe.surface"].as_f64().unwrap() - (2.0 + d)).abs() < 1e-12);
+        assert!(p["Probe.speed"].as_f64().unwrap() > 0.0);
+        assert_eq!(p["Probe.far"], 0.0);
+        assert_eq!(p["Probe.cell"], 0, "a field liquid's cell reads as air");
+        std::fs::remove_dir_all(root).unwrap();
+    });
+}
+
+#[test]
+fn sources_pour_and_drains_take_at_most_what_is_there() {
+    common::big_stack(|| {
+        let mut ents = lake([0.0, 0.0, 0.0]);
+        ents[0]["components"]["Voxels"] = serde_json::to_value(pond()).unwrap();
+        let list = ents.as_array_mut().unwrap();
+        list.push(json!({"name": "Spring", "components": {
+            "WaterSource": {"region": 2, "at": [3.25, 3.25], "rate_m3s": 0.6}}}));
+        list.push(json!({"name": "Sink", "components": {
+            "WaterDrain": {"region": 2, "at": [12.25, 12.25], "rate_m3s": 0.5}}}));
+        list.push(json!({"name": "DrySink", "components": {
+            "WaterDrain": {"region": 2, "at": [28.25, 28.25], "rate_m3s": 5.0}}}));
+        let root = project("springs", MAIN, ents);
+        let mut g = game(&root).unwrap_or_else(|e| panic!("{e:#?}"));
+        g.step().unwrap();
+        let v0 = region(&g).volume();
+        for _ in 0..60 {
+            g.step().unwrap();
+        }
+        // A second: 0.6 in, 0.5 out of the pond; the dry sink takes nothing.
+        let v1 = region(&g).volume();
+        assert!((v1 - v0 - 0.1).abs() < 1e-9, "{v0} then {v1}");
+        std::fs::remove_dir_all(root).unwrap();
+    });
+}

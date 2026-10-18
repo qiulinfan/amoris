@@ -85,6 +85,15 @@ const voxels = Object.freeze({
 	block: (volume, name) => host.voxelsBlock(volume, name),
 	raycast: (volume, from, dir, maxM, options) => host.voxelsRaycast(volume, from, dir, maxM, options?.solidOnly === true)
 });
+const water = Object.freeze({
+	depth: (region, x, z) => host.waterDepth(region, x, z),
+	surface: (region, x, z) => host.waterSurface(region, x, z),
+	velocity: (region, x, z) => host.waterVelocity(region, x, z),
+	add: (region, x, z, m3) => {
+		host.waterAdd(region, x, z, m3);
+	},
+	remove: (region, x, z, m3) => host.waterRemove(region, x, z, m3)
+});
 const part = Object.freeze({ 
 /** An entity as a key part of a random stream. */
 entity: (e) => Object.freeze({ __amorisEntityPart: e }) });
@@ -126,7 +135,8 @@ export function __context(info) {
 		query: (spec) => new Query(host.query(spec)),
 		emit: (kind, data, options) => host.emit(kind, data, options),
 		intent: (actor, kind, params) => host.intent(actor, kind, params),
-		voxels
+		voxels,
+		water
 	});
 }
 /** @internal The host wraps a declared query's raw columns with this. */
@@ -199,4 +209,4 @@ export const field = Object.freeze({
 
 import { harden as __amoris_harden } from "amoris:host";
 import * as __amoris_self from "amoris";
-__amoris_harden("amoris", __amoris_self, { ["Query"]: Query, ["annotate"]: annotate, ["world"]: world, ["voxels"]: voxels, ["part"]: part, ["makeRng"]: makeRng, ["__context"]: __context, ["__query"]: __query, ["component"]: component, ["system"]: system, ["executor"]: executor, ["game"]: game, ["freeze"]: freeze, ["fieldOf"]: fieldOf, ["field"]: field }, { ["Query"]: 293, ["annotate"]: 422, ["world"]: 431, ["voxels"]: 442, ["part"]: 460, ["makeRng"]: 465, ["__context"]: 487, ["__query"]: 510, ["component"]: 641, ["system"]: 654, ["executor"]: 661, ["game"]: 666, ["freeze"]: 671, ["fieldOf"]: 713, ["field"]: 717 });
+__amoris_harden("amoris", __amoris_self, { ["Query"]: Query, ["annotate"]: annotate, ["world"]: world, ["voxels"]: voxels, ["water"]: water, ["part"]: part, ["makeRng"]: makeRng, ["__context"]: __context, ["__query"]: __query, ["component"]: component, ["system"]: system, ["executor"]: executor, ["game"]: game, ["freeze"]: freeze, ["fieldOf"]: fieldOf, ["field"]: field }, { ["Query"]: 293, ["annotate"]: 442, ["world"]: 451, ["voxels"]: 462, ["water"]: 480, ["part"]: 492, ["makeRng"]: 497, ["__context"]: 519, ["__query"]: 543, ["component"]: 674, ["system"]: 687, ["executor"]: 694, ["game"]: 699, ["freeze"]: 704, ["fieldOf"]: 746, ["field"]: 750 });

@@ -51,7 +51,8 @@ pub use sea::{GRAVITY, Sea, Water, Wave, WaveField, Wind};
 pub use solver::{BodyIndex, ContactLog, Physics, RebuiltSolver};
 pub use walker::Walker;
 pub use water::{
-    BedSource, Edge, Style, WaterLook, WaterRegion, WaterScratch, WaterSteps, WaterTile,
+    BedSource, Edge, Style, WaterDrain, WaterLook, WaterRegion, WaterScratch, WaterSource,
+    WaterSteps, WaterTile,
 };
 
 use amoris_contract::Problem;
@@ -84,6 +85,8 @@ pub fn plugin(sim: &mut Sim) -> Result<(), Problem> {
     ComponentRegistry::register::<Walker>(w, None)?;
     ComponentRegistry::register::<amoris_sim::voxels::Voxels>(w, None)?;
     ComponentRegistry::register::<WaterRegion>(w, None)?;
+    ComponentRegistry::register::<WaterSource>(w, None)?;
+    ComponentRegistry::register::<WaterDrain>(w, None)?;
     let always = RunCondition::Always;
     sim.add_system("physics.wind", TickPhase::Forces, always, forces::wind)?;
     sim.add_system("physics.water", TickPhase::Forces, always, water::water)?;
