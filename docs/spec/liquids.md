@@ -111,6 +111,11 @@ walker meets this tick's liquid.
   source down its flow; side faces follow the corners.
 - The feed's `ChunkUpdate` carries the chunk's states (voxels.md 7.1); `FORMAT` changes and the
   viewport is rebuilt with it. A chunk whose states change is remeshed with its neighbours.
+- A liquid draws no side face toward a cell past the box of the volume's chunks, which bounds
+  liquids (4.2): the sea at a volume's edge meets a plane past it without a wall of water
+  (amended during implementation).
+- Liquid parts cast no shadow, as the block game's water casts none (amended during
+  implementation: a falling column's shadow streaked across the sea).
 - When the camera's eye is inside a liquid cell of a volume the renderer holds, the frame's fog is
   that liquid's `fog` (presentation only).
 

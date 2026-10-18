@@ -38,6 +38,19 @@ impl Volume {
         self.chunks.get(&key).map_or(0, |c| c[at])
     }
 
+    /// The lowest and highest chunk keys, per axis.
+    fn chunk_box(&self) -> ([i32; 3], [i32; 3]) {
+        let mut lo = [i32::MAX; 3];
+        let mut hi = [i32::MIN; 3];
+        for k in self.chunks.keys() {
+            for a in 0..3 {
+                lo[a] = lo[a].min(k[a]);
+                hi[a] = hi[a].max(k[a]);
+            }
+        }
+        (lo, hi)
+    }
+
     fn state(&self, cell: [i32; 3]) -> u8 {
         let (key, at) = locate(cell);
         self.states.get(&key).map_or(0, |c| c[at])
@@ -208,8 +221,12 @@ impl Voxels {
             let mut dirty: Vec<[i32; 3]> = dirty.into_iter().collect();
             dirty.sort_unstable();
             for key in dirty {
+                let (lo, hi) = v.chunk_box();
+                let outside = |c: [i32; 3]| {
+                    (0..3).any(|a| c[a].div_euclid(CHUNK) < lo[a] || c[a].div_euclid(CHUNK) > hi[a])
+                };
                 let meshes = if v.chunks.contains_key(&key) {
-                    mesh_chunk(key, &v.blocks, |c| v.get(c), |c| v.state(c))
+                    mesh_chunk(key, &v.blocks, |c| v.get(c), |c| v.state(c), outside)
                 } else {
                     Vec::new()
                 };
@@ -239,7 +256,7 @@ impl Voxels {
                             v.parts.insert((key, material.clone()), id);
                             self.owners.insert(id, u.id);
                             out.instances
-                                .push(part_instance(id, &mkey, &material, v.origin, v.cell_m, key));
+                                .push(part_instance(id, &mkey, &material, v, key));
                         }
                     }
                     out.meshes.push((mkey, mesh));
@@ -249,7 +266,7 @@ impl Voxels {
                 for ((key, material), &id) in &v.parts {
                     let mkey = mesh_key(u.id, *key, material);
                     out.instances
-                        .push(part_instance(id, &mkey, material, v.origin, v.cell_m, *key));
+                        .push(part_instance(id, &mkey, material, v, *key));
                 }
             }
         }
@@ -257,14 +274,14 @@ impl Voxels {
     }
 }
 
-fn part_instance(
-    id: u64,
-    mesh: &str,
-    material: &str,
-    origin: [f32; 3],
-    cell_m: f32,
-    key: [i32; 3],
-) -> InstanceUpdate {
+/// A part's instance: placed at its chunk, scaled by the cell; a liquid's part casts no shadow
+/// (liquids.md 6), as the block game's water casts none.
+fn part_instance(id: u64, mesh: &str, material: &str, v: &Volume, key: [i32; 3]) -> InstanceUpdate {
+    let (origin, cell_m) = (v.origin, v.cell_m);
+    let liquid = v
+        .blocks
+        .iter()
+        .any(|b| b.shape == 2 && b.faces[0] == material);
     let edge = CHUNK as f32 * cell_m;
     InstanceUpdate {
         id,
@@ -286,7 +303,7 @@ fn part_instance(
             transmission: None,
             ior: None,
             emissive: [0.0; 3],
-            cast_shadows: true,
+            cast_shadows: !liquid,
             visible: true,
         }),
         anim: None,

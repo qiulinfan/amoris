@@ -90,13 +90,15 @@ fn add(a: [i32; 3], b: [i32; 3]) -> [i32; 3] {
 }
 
 /// The meshes of chunk `key`, by material, in material order. `get` and `state` answer any cell of
-/// the volume (this chunk's and its neighbours'): its block and its state byte; `blocks` are the
-/// palette's looks (index 0, air, is unused).
+/// the volume (this chunk's and its neighbours'): its block and its state byte; `outside` whether a
+/// cell is past the box of the volume's chunks, which bounds liquids, so a liquid draws no face
+/// toward it (liquids.md 6); `blocks` are the palette's looks (index 0, air, is unused).
 pub fn mesh_chunk(
     key: [i32; 3],
     blocks: &[BlockLook],
     get: impl Fn([i32; 3]) -> u8,
     state: impl Fn([i32; 3]) -> u8,
+    outside: impl Fn([i32; 3]) -> bool,
 ) -> Vec<(String, MeshData)> {
     let shape = |b: u8| blocks.get(usize::from(b)).map(|l| l.shape);
     let mut groups: BTreeMap<String, Builder> = BTreeMap::new();
@@ -149,7 +151,8 @@ pub fn mesh_chunk(
                         }
                         for (n, corners) in FACES {
                             let nb = get(add(cell, n));
-                            let shows = nb == 0 || (nb != b && shape(nb) != Some(CUBE));
+                            let shows = (nb == 0 || (nb != b && shape(nb) != Some(CUBE)))
+                                && (n[1] != 0 || !outside(add(cell, n)));
                             if !shows {
                                 continue;
                             }
@@ -245,7 +248,13 @@ mod tests {
     #[test]
     fn a_lone_cube_shows_six_faces_by_material() {
         let cells: HashMap<[i32; 3], u8> = [([3, 4, 5], 1)].into();
-        let m = mesh_chunk([0, 0, 0], &looks(), |c| *cells.get(&c).unwrap_or(&0), |_| 0);
+        let m = mesh_chunk(
+            [0, 0, 0],
+            &looks(),
+            |c| *cells.get(&c).unwrap_or(&0),
+            |_| 0,
+            |_| false,
+        );
         assert_eq!(quads(&m, "grass_top"), 1);
         assert_eq!(quads(&m, "grass_side"), 4);
         assert_eq!(quads(&m, "dirt"), 1);
@@ -261,16 +270,34 @@ mod tests {
     fn faces_between_cubes_are_culled_across_chunk_borders() {
         // A 2 x 1 x 1 bar straddling chunks 0 and 1 along x, meshed from chunk 0.
         let cells: HashMap<[i32; 3], u8> = [([15, 0, 0], 2), ([16, 0, 0], 2)].into();
-        let m = mesh_chunk([0, 0, 0], &looks(), |c| *cells.get(&c).unwrap_or(&0), |_| 0);
+        let m = mesh_chunk(
+            [0, 0, 0],
+            &looks(),
+            |c| *cells.get(&c).unwrap_or(&0),
+            |_| 0,
+            |_| false,
+        );
         assert_eq!(quads(&m, "stone"), 5, "the face toward x = 16 is hidden");
-        let n = mesh_chunk([1, 0, 0], &looks(), |c| *cells.get(&c).unwrap_or(&0), |_| 0);
+        let n = mesh_chunk(
+            [1, 0, 0],
+            &looks(),
+            |c| *cells.get(&c).unwrap_or(&0),
+            |_| 0,
+            |_| false,
+        );
         assert_eq!(quads(&n, "stone"), 5);
     }
 
     #[test]
     fn plants_cross_and_do_not_hide_faces() {
         let cells: HashMap<[i32; 3], u8> = [([0, 0, 0], 2), ([0, 1, 0], 3)].into();
-        let m = mesh_chunk([0, 0, 0], &looks(), |c| *cells.get(&c).unwrap_or(&0), |_| 0);
+        let m = mesh_chunk(
+            [0, 0, 0],
+            &looks(),
+            |c| *cells.get(&c).unwrap_or(&0),
+            |_| 0,
+            |_| false,
+        );
         assert_eq!(quads(&m, "flower"), 2);
         assert_eq!(
             quads(&m, "stone"),
@@ -288,7 +315,13 @@ mod tests {
             ([0, -1, 0], 2),
         ]
         .into();
-        let m = mesh_chunk([0, 0, 0], &looks(), |c| *cells.get(&c).unwrap_or(&0), |_| 0);
+        let m = mesh_chunk(
+            [0, 0, 0],
+            &looks(),
+            |c| *cells.get(&c).unwrap_or(&0),
+            |_| 0,
+            |_| false,
+        );
         let water = &m.iter().find(|(k, _)| k == "water").unwrap().1;
         // (0,0,0): no top (water above), no bottom (stone), no +x (water): 3 sides. (1,0,0): top,
         // bottom, 3 sides. (0,1,0): top and 4 sides.
@@ -302,6 +335,20 @@ mod tests {
     }
 
     #[test]
+    fn liquids_draw_no_wall_past_the_volumes_box() {
+        let cells: HashMap<[i32; 3], u8> = [([0, 0, 0], 4)].into();
+        let at = |c| *cells.get(&c).unwrap_or(&0);
+        let inside = mesh_chunk([0, 0, 0], &looks(), at, |_| 0, |_| false);
+        let edge = mesh_chunk([0, 0, 0], &looks(), at, |_| 0, |c: [i32; 3]| c[0] < 0);
+        assert_eq!(quads(&inside, "water"), 6);
+        assert_eq!(
+            quads(&edge, "water"),
+            5,
+            "no face toward x = -1, past the box"
+        );
+    }
+
+    #[test]
     fn flowing_liquids_slope_from_their_source() {
         // A source at x = 0 and flowing levels 1 and 2 along +x.
         let cells: HashMap<[i32; 3], u8> = [([0, 0, 0], 4), ([1, 0, 0], 4), ([2, 0, 0], 4)].into();
@@ -311,6 +358,7 @@ mod tests {
             &looks(),
             |c| *cells.get(&c).unwrap_or(&0),
             |c| *states.get(&c).unwrap_or(&0),
+            |_| false,
         );
         let water = &m.iter().find(|(k, _)| k == "water").unwrap().1;
         let height_at = |x: f32| {
@@ -332,6 +380,7 @@ mod tests {
             &looks(),
             |c| *fall.get(&c).unwrap_or(&0),
             |_| FALLING,
+            |_| false,
         );
         let top = m[0]
             .1
