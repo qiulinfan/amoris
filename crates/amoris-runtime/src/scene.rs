@@ -332,6 +332,8 @@ impl Scene {
         for (p, id) in prepared.into_iter().zip(&ids) {
             p.insert(b, *id)?;
         }
+        // Checks across entities: a water region sits on its volume's grid (water.md 5).
+        amoris_physics::water::check_world(b.world())?;
         Ok(ids)
     }
 }

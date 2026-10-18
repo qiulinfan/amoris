@@ -358,3 +358,153 @@ fn a_region_reads_from_json_with_its_defaults() {
     assert!(r.tiles.is_empty());
     r.validate().unwrap();
 }
+
+// --- Beds from a volume (water.md 5) ------------------------------------------------------------
+
+use amoris_sim::voxels::{Block, Voxels};
+
+const STONE: u8 = 1;
+const LEAVES: u8 = 2;
+
+/// A volume of 1 m cells: stone from y 0 to 4 under x and z 0..32, a pit 3 blocks deep at
+/// x 8..16, z 8..16 (its floor's top at 2 m); the region over it at two columns a block.
+fn ground() -> (Voxels, WaterRegion, bed::Map) {
+    let mut v = Voxels::default();
+    for name in ["stone", "leaves"] {
+        v.palette.push(Block {
+            name: name.into(),
+            solid: true,
+            faces: ["s".into(), "s".into(), "s".into()],
+            ..Block::default()
+        });
+    }
+    v.fill([0, 0, 0], [31, 4, 31], STONE, 0).unwrap();
+    v.fill([8, 2, 8], [15, 4, 15], 0, 0).unwrap();
+    let mut r = region(4, 4, 0.5);
+    r.tiles.clear();
+    r.bed = BedSource::Voxels {
+        volume: EntityId::FIRST,
+        per: 2,
+        y_lo: 0,
+        y_hi: 15,
+    };
+    let m = bed::map(&r, [0.0, 0.0], &v, [0.0; 3]).unwrap().unwrap();
+    bed::load(&mut r, &m, &v);
+    (v, r, m)
+}
+
+fn bed_at(r: &WaterRegion, i: usize, k: usize) -> f64 {
+    let (t, c) = r.locate(i, k);
+    r.tiles[t].bed[c]
+}
+
+/// The change rule over every chunk, as `physics.water` runs it after an edit.
+fn rebed(r: &mut WaterRegion, m: &bed::Map, v: &Voxels) -> Vec<bed::Displaced> {
+    let beds = bed::rebeds(r, m, v, &bed::edited_since(v, 0));
+    bed::apply(r, &beds)
+}
+
+#[test]
+fn beds_load_from_the_volume_at_two_columns_a_block() {
+    let (v, r, m) = ground();
+    assert_eq!(bed_at(&r, 0, 0), 5.0);
+    assert_eq!(bed_at(&r, 16, 16), 2.0, "the pit's floor");
+    assert_eq!(bed_at(&r, 17, 17), 2.0, "all the columns over one block");
+    assert_eq!(bed_at(&r, 15, 16), 5.0);
+    assert!(r.tiles.iter().all(|t| t.depth.iter().all(|d| *d == 0.0)));
+    r.validate().unwrap();
+    // The change rule leaves beds it just read alone.
+    assert!(bed::rebeds(&r, &m, &v, &bed::edited_since(&v, 0)).is_empty());
+}
+
+#[test]
+fn a_misaligned_region_is_refused() {
+    let (v, mut r, _) = ground();
+    assert!(bed::map(&r, [3.0, 0.0], &v, [0.0; 3]).unwrap().is_ok());
+    let e = bed::map(&r, [0.5, 0.0], &v, [0.0; 3]).unwrap().unwrap_err();
+    assert_eq!(e.code, "water.misaligned");
+    r.cell_m = 1.0;
+    let e = bed::map(&r, [0.0, 0.0], &v, [0.0; 3]).unwrap().unwrap_err();
+    assert_eq!(e.code, "water.misaligned");
+}
+
+#[test]
+fn blocks_placed_in_the_water_or_on_the_ground_raise_the_bed() {
+    let (mut v, mut r, m) = ground();
+    // The pit holds water 2 m deep (surface at 4 m).
+    for k in 16..32 {
+        for i in 16..32 {
+            set(&mut r, i, k, 2.0, 2.0);
+        }
+    }
+    // A block in the water at y 2 (2 to 3 m) takes a metre of each of its four columns.
+    v.set([9, 2, 9], STONE, 1).unwrap();
+    let d = rebed(&mut r, &m, &v);
+    assert_eq!(bed_at(&r, 18, 18), 3.0);
+    assert_eq!(depth(&r, 18, 18), 1.0);
+    assert_eq!(d.len(), 4);
+    assert!(d.iter().all(|d| d.m3 == 0.25), "{d:?}");
+    // A block on dry ground raises the bed under it.
+    v.set([2, 5, 2], STONE, 2).unwrap();
+    rebed(&mut r, &m, &v);
+    assert_eq!(bed_at(&r, 4, 4), 6.0);
+    // A tile whose bed changed wakes.
+    for t in &mut r.tiles {
+        t.still = SLEEP_TICKS;
+    }
+    v.set([2, 6, 2], STONE, 3).unwrap();
+    rebed(&mut r, &m, &v);
+    let (t, _) = r.locate(4, 4);
+    assert_eq!(r.tiles[t].still, 0);
+    assert_eq!(r.tiles.iter().filter(|t| t.asleep()).count(), 15);
+}
+
+#[test]
+fn bridges_roofs_and_leaves_over_water_or_ground_leave_the_bed() {
+    let (mut v, mut r, m) = ground();
+    for k in 16..32 {
+        for i in 16..32 {
+            set(&mut r, i, k, 2.0, 2.0);
+        }
+    }
+    let before = r.clone();
+    // A bridge over the water at y 6, a roof over dry ground at y 9, leaves over the water.
+    v.fill([8, 6, 10], [15, 6, 10], STONE, 1).unwrap();
+    v.fill([0, 9, 0], [3, 9, 3], STONE, 1).unwrap();
+    v.set([12, 5, 12], LEAVES, 1).unwrap();
+    assert!(rebed(&mut r, &m, &v).is_empty());
+    assert_eq!(r, before);
+    // A tunnel dug under the lake leaves it too.
+    v.fill([10, 0, 10], [10, 0, 14], 0, 2).unwrap();
+    rebed(&mut r, &m, &v);
+    assert_eq!(r, before);
+}
+
+#[test]
+fn a_broken_top_block_lowers_the_bed_and_a_dug_hole_fills() {
+    let (mut v, mut r, m) = ground();
+    // Dry ground: breaking the top block lowers the bed by a block.
+    v.set([2, 4, 2], 0, 1).unwrap();
+    rebed(&mut r, &m, &v);
+    assert_eq!(bed_at(&r, 4, 4), 4.0);
+    assert_eq!(bed_at(&r, 6, 4), 5.0);
+
+    // A lake in the pit and a hole dug beside it, through its bank: the water runs into it.
+    let (mut v, mut r, m) = ground();
+    for k in 16..32 {
+        for i in 16..32 {
+            set(&mut r, i, k, 2.0, 2.5);
+        }
+    }
+    v.fill([16, 2, 10], [19, 4, 12], 0, 1).unwrap();
+    rebed(&mut r, &m, &v);
+    assert_eq!(bed_at(&r, 34, 22), 2.0);
+    let v0 = r.volume();
+    run(&mut r, 60 * 20);
+    assert!(
+        depth(&r, 36, 22) > 1.0,
+        "the hole filled: {}",
+        depth(&r, 36, 22)
+    );
+    assert!(((r.volume() - v0) / v0).abs() < 1e-9);
+}

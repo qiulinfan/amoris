@@ -8,17 +8,20 @@
 //! Deterministic: `f64`, `+ - * /`, `floor`, comparisons and `amoris_sim::math` only; the active set
 //! is read from the tick's starting state and every loop runs in a fixed order (water.md 4).
 
+pub mod bed;
 pub(crate) mod solve;
 
 use amoris_contract::{Problem, detail};
 use amoris_sim::order::by_id_mut;
-use amoris_sim::{EntityId, EventKind, NewEvent, PlainData, SimClock};
+use amoris_sim::voxels::Voxels;
+use amoris_sim::{EntityId, EntityIndex, EventKind, NewEvent, PlainData, SimClock};
 use bevy_ecs::prelude::{Component, Query, Res, ResMut, Resource};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::body::Transform;
+use crate::geom;
 
 /// Columns along a tile's edge.
 pub const TILE: usize = 16;
@@ -434,19 +437,132 @@ fn event(kind: &str, subject: EntityId, data: Vec<(&str, PlainData)>) -> Option<
     Some(NewEvent::new(kind).subject(subject).data(data))
 }
 
-/// `physics.water`: each region in id order (water.md 4).
+/// The corner of a region (or the origin of a volume) of an entity with this `Transform`.
+fn position(t: Option<&Transform>) -> [f64; 3] {
+    t.map_or([0.0; 3], |t| t.position)
+}
+
+/// The volume a region's beds come from, and how the region lies over it.
+fn volume_of<'a>(
+    r: &WaterRegion,
+    corner: [f64; 2],
+    index: &EntityIndex,
+    volumes: &'a Query<(Option<&Transform>, &Voxels)>,
+) -> Option<Result<(bed::Map, &'a Voxels), Problem>> {
+    let BedSource::Voxels { volume, .. } = r.bed else {
+        return None;
+    };
+    let found = index.get(volume).and_then(|e| volumes.get(e).ok());
+    let Some((t, v)) = found else {
+        return Some(Err(Problem::new(
+            "water.misaligned",
+            format!("the region's bed is volume {volume}, which has no Voxels"),
+            detail([("volume", json!(volume))]),
+        )));
+    };
+    Some(bed::map(r, corner, v, position(t))?.map(|m| (m, v)))
+}
+
+/// Checks every region against the world (water.md 5): a `Voxels` bed's volume exists and the
+/// region sits on its grid (`water.misaligned`). A scene's load runs it after spawning.
+pub fn check_world(world: &bevy_ecs::prelude::World) -> Result<(), Problem> {
+    let Some(index) = world.get_resource::<EntityIndex>() else {
+        return Ok(());
+    };
+    let mut ids: Vec<(EntityId, bevy_ecs::entity::Entity)> = index.iter().collect();
+    ids.sort_by_key(|(id, _)| *id);
+    for (id, e) in &ids {
+        let Some(r) = world.get::<WaterRegion>(*e) else {
+            continue;
+        };
+        let p = position(world.get::<Transform>(*e));
+        let BedSource::Voxels { volume, .. } = r.bed else {
+            continue;
+        };
+        let at = index.get(volume);
+        let Some(v) = at.and_then(|e| world.get::<Voxels>(e)) else {
+            return Err(Problem::new(
+                "water.misaligned",
+                format!("region {id}'s bed is volume {volume}, which has no Voxels"),
+                detail([("region", json!(id)), ("volume", json!(volume))]),
+            ));
+        };
+        let origin = position(at.and_then(|e| world.get::<Transform>(e)));
+        if let Some(Err(mut p)) = bed::map(r, [p[0], p[2]], v, origin) {
+            p.message = format!("region {id}: {}", p.message);
+            return Err(p);
+        }
+    }
+    Ok(())
+}
+
+/// `physics.water`: each region in id order (water.md 4). Its beds are read from its volume when
+/// it has no tiles yet and reread over the chunks edited since the last tick's run (any chunk
+/// edited at the previous tick or this one: the change rule gives the same beds when nothing
+/// changed); then its awake tiles are stepped.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn water(
     clock: Res<SimClock>,
+    index: Res<EntityIndex>,
     mut scratch: ResMut<WaterScratch>,
     mut steps: ResMut<WaterSteps>,
     mut regions: Query<(&EntityId, Option<&Transform>, &mut WaterRegion)>,
+    volumes: Query<(Option<&Transform>, &Voxels)>,
     mut emit: amoris_sim::Emit,
 ) {
     let dt = clock.dt();
     let tick = clock.tick.0;
-    for (id, _, mut region) in by_id_mut(&mut regions) {
+    for (id, t, mut region) in by_id_mut(&mut regions) {
+        let p = position(t);
+        let corner = [p[0], p[2]];
+        let source = volume_of(&region, corner, &index, &volumes);
+        if region.tiles.is_empty() {
+            match &source {
+                Some(Ok((m, v))) => bed::load(&mut region, m, v),
+                Some(Err(e)) => {
+                    // Reported once: the region takes flat dry tiles and stays without a bed.
+                    if let Some(ev) = event(
+                        "water.misaligned",
+                        *id,
+                        vec![("message", PlainData::String(e.message.clone()))],
+                    ) {
+                        emit.emit(ev);
+                    }
+                    let [tx, tz] = region.tiles_along();
+                    region.tiles = (0..tx * tz)
+                        .map(|n| {
+                            let key = [n % tx, n / tx].map(|k| u32::try_from(k).unwrap_or(0));
+                            WaterTile::dry(key, 0.0)
+                        })
+                        .collect();
+                }
+                None => continue,
+            }
+        }
         // Read first, so a region asleep is not marked changed.
-        if !region.well_formed() || !awake(&region) {
+        if !region.well_formed() {
+            continue;
+        }
+        if let Some(Ok((m, v))) = &source {
+            let changed = bed::edited_since(v, tick.saturating_sub(1));
+            let beds = bed::rebeds(&region, m, v, &changed);
+            if !beds.is_empty() {
+                for d in bed::apply(&mut region, &beds) {
+                    let column = d.column.map(|c| PlainData::Number(geom::f64_of(c)));
+                    if let Some(e) = event(
+                        "water.displaced",
+                        *id,
+                        vec![
+                            ("column", PlainData::Array(column.to_vec())),
+                            ("m3", PlainData::Number(d.m3)),
+                        ],
+                    ) {
+                        emit.emit(e);
+                    }
+                }
+            }
+        }
+        if !awake(&region) {
             continue;
         }
         let done = step_region(&mut region, dt, &mut scratch.0);
