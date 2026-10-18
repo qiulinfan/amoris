@@ -21,7 +21,9 @@ In this slice:
 
 Not in this slice: Rapier bodies floating in volume liquids (they meet volumes only once the
 collider of voxels.md 5.1 lands); liquids that interact (water meeting lava); pressure, waves or
-a particle or grid solver (Eulerian, SPH): the block game's rules are the model.
+a particle or grid solver (Eulerian, SPH) in the rules: the block game's rules are the model.
+Splashes drawn by a particle solver over these liquids, as presentation, are
+[splashes.md](splashes.md) (amended 2026-10-17, after [fluid-box.md](../spikes/fluid-box.md)).
 
 ## 2. Cell states
 
