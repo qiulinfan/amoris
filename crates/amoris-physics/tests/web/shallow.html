@@ -1,0 +1,18 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>shallow water in WebAssembly</title>
+<!-- The shallow-water spike's WebAssembly run in a browser (docs/spikes/shallow-water.md). Serve
+     the checkout's root and open
+     /crates/amoris-physics/tests/web/shallow.html?wasm=/target/wasm32-unknown-unknown/release/examples/shallow_web.wasm
+     then evaluate `shallowRun()`, or drive it headless:
+     EVAL='shallowRun()' node tools/web_bench.mjs <that url> 1 -->
+<script type="module">
+import { run } from "./shallow_run.mjs";
+window.shallowRun = async () => {
+  const q = new URLSearchParams(location.search);
+  const sizes = (q.get("sizes") || "128,256,512,1024").split(",").map(Number);
+  const bytes = await (await fetch(q.get("wasm"))).arrayBuffer();
+  const lines = await run(bytes, sizes, "wasm (" + navigator.userAgent.match(/Chrome\/[\d.]+/)?.[0] + ")");
+  return lines.map((l) => JSON.stringify(l)).join("\n");
+};
+</script>

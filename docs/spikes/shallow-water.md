@@ -40,12 +40,13 @@ and they move water like water over block terrain. The figures:
 
 1. **The same bits on every target measured.** A dam break on 128 x 128 columns gave the same hash
    at all ten checkpoints over 5 s (600 substeps) natively in release, natively in debug, and in
-   WebAssembly under Node. That held for both schemes. The solver uses `f64`, `+ - * /`, `floor`
+   WebAssembly under Node and in Chrome 155 (headless, the page's main thread; added
+   2026-10-18). That held for both schemes. The solver uses `f64`, `+ - * /`, `floor`
    and `amoris_sim::math`'s `min`, `max` and `clamp`, all allowed by numeric.md 5. Across three
    runs of the demo, the water's hash and the boxes' printed positions (to the centimetre, Rapier
-   included) were the same. Not checked: x86-64 (the
-   `x86_64-apple-darwin` target is not installed here; R1's Windows build is the natural check),
-   and Chrome.
+   included) were the same. Not checked yet: x86-64. This Mac has neither Rosetta nor the
+   `x86_64-apple-darwin` target, and R1 is an x86-64 machine: `python tools/shallow_check.py` runs
+   every check there and compares each chain with the M5's.
 2. **Cost, single-threaded.** These are the medians of the bench scene's substeps:
 
    | Scheme | Columns | Native (ms a substep) | Native (ns a column) | WebAssembly (ms) | WebAssembly (ns) |
@@ -59,6 +60,9 @@ and they move water like water over block terrain. The figures:
    | Pipes | 512² | 0.92 | 3.5 | 1.11 | 4.2 |
    | Pipes | 1024² | 3.75 | 3.6 | 4.37 | 4.2 |
 
+   The WebAssembly columns are Node's. Chrome 155 on the same machine took 13.0 to 18.9 ns a column
+   with the advected scheme and 4.0 to 5.5 ns with the pipes, the smaller grids slower in both.
+
    Blockcraft's island of 128 x 128 blocks is 256² columns at two columns a block. With the
    advected scheme at two substeps a tick, that is 1.6 ms a tick natively and 2.4 ms in
    WebAssembly. At one column a block it is a quarter of that. Nothing is parallel or vectorized
@@ -68,7 +72,30 @@ and they move water like water over block terrain. The figures:
    slope pushes it away, and it creeps over a plain instead of running. With advected velocities
    the mound is gone: the water runs on from the foot of the fall, spreads over the plain as a
    front, and drains the lake through the gap.
-4. **Block terrain and bodies couple simply.** A column's bed is the top of the highest solid
+4. **Drawing is the larger cost, and it needs levels of detail.** `shallow_draw` draws a synthetic
+   field of N x N columns of 0.5 m that fills a 1280 x 720 frame with MSAA, with waves and a third
+   of it dry. Its frames are traced with the field and without it (`AMORIS_TRACE`,
+   `tools/frame_trace.py diff`, 240 frames after 60). These are the medians on the M5:
+
+   | Columns | GPU busy | GPU frame span | Opaque pass (`opaque+sky`) |
+   |---|---|---|---|
+   | 128² | +1.07 ms | +0.60 ms | +0.61 ms |
+   | 256² | +1.97 ms | +1.10 ms | +1.10 ms |
+   | 512² | +4.49 ms | +2.47 ms | +2.52 ms |
+
+   - The first drawing shaded six vertices a quad, each reading up to 45 columns. The indexed grid
+     above shades each column once; it took the opaque pass from +0.65, +1.41 and +3.55 ms to the
+     figures shown.
+   - At 512² there are about two triangles a pixel, so the cost follows the column count, not the
+     screen. A region needs coarser levels far away and per-tile culling.
+   - The post scope's time also rose with the field (by 0.56 to 1.97 ms). With the camera turned to
+     the sky, handing the same 512² field over (a 4 MiB upload a frame) added 0.04 ms of GPU busy
+     time, and the post scope fell. So that rise is how the M5's tile-based GPU attributes the
+     opaque pass's work at the pass boundary, not post-processing work.
+   - Building and handing over the columns took the host 0.04, 0.15 and 0.60 ms a frame. The feed
+     would send only the tiles that changed.
+
+5. **Block terrain and bodies couple simply.** A column's bed is the top of the highest solid
    block in it (`Shallow::from_voxels`), and blocks changed under the water are reread
    (`Shallow::rebed`). Five boxes in Rapier float on the lake, drift with it to the notch, go over
    the fall and wash into the pool. The demo's water is 207.000 m³ before and after (printed to the
@@ -96,9 +123,10 @@ and they move water like water over block terrain. The figures:
   takes buoyancy and quadratic drag toward the water's velocity at its eight octants' centres. The
   drag is capped at what stops an octant's share of the mass in one step. The coupling is one-way:
   the boxes do not move the water.
-- **The drawing** (`ShallowWater`, `vs_shallow`, `fs_shallow`). The host hands the renderer each
-  column's surface, depth and velocity every frame (`Renderer::set_shallow_water`). It draws a
-  vertex at each column's centre and two triangles between four centres, in the transparent layer.
+- **The drawing** (`ShallowWater`, `vs_shallow`, `fs_shallow`; the bench `shallow_draw`). The host
+  hands the renderer each column's surface, depth and velocity every frame
+  (`Renderer::set_shallow_water`). It draws a vertex at each column's centre (one vertex shaded per
+  column) and two triangles between four centres from an index buffer, in the transparent layer.
   - A dry column's vertex takes its wet neighbours' mean surface, so shores stay flat and run under
     the bank.
   - The shading is the ocean's (Fresnel sky, sun glints with cascaded shadows). The water is
@@ -123,8 +151,8 @@ and they move water like water over block terrain. The figures:
 - **Two-way coupling.** Bodies do not displace the water or make waves.
 - **Thin films.** A flood leaves a wide film of a few millimetres. Drawn faded, it reads as wet
   ground; a game may want it to drain or soak in.
-- **Cost of drawing** was not measured. Neither was the solver on R1, in Chrome, or with more than
-  one thread.
+- **Not measured yet**: the solver and the drawing on R1 and on x86-64 (`tools/shallow_check.py`
+  runs both there), and the solver with more than one thread.
 
 ## What it means for the engine
 
@@ -136,5 +164,6 @@ and they move water like water over block terrain. The figures:
   open question 1 as reworked: small droplets and a little white at the tips, not foam sprites.
 - The sea's analytic waves stay for open water past the simulated region.
 
-Before a specification: the owner's decision on the charter's change (the rules' water becomes the
-height field), and the open checks above (x86-64, Chrome, R1, the draw's cost, layered columns).
+The owner accepted this direction on 2026-10-18 (charter 4.10) and asked for the open checks
+before the full specification ([water.md](../spec/water.md)). Chrome and the drawing's cost are
+recorded above; x86-64 and R1 wait for a run of `tools/shallow_check.py` there.

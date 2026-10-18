@@ -852,13 +852,11 @@ struct ShallowOut {
     @location(3) speed: f32,
 };
 
+// One vertex per column (`vi`, x fastest); an index buffer makes the triangles, so each column is
+// shaded once.
 @vertex
 fn vs_shallow(@builtin(vertex_index) vi: u32) -> ShallowOut {
-    let quads = shallow.count.x - 1u;
-    let quad = vi / 6u;
-    let corners = array<vec2i, 6>(vec2i(0, 0), vec2i(0, 1), vec2i(1, 1),
-                                  vec2i(0, 0), vec2i(1, 1), vec2i(1, 0));
-    let at = vec2i(i32(quad % quads), i32(quad / quads)) + corners[vi % 6u];
+    let at = vec2i(i32(vi % shallow.count.x), i32(vi / shallow.count.x));
     let c = shallow_vertex(at.x, at.y);
     let hl = shallow_vertex(at.x - 1, at.y).x;
     let hr = shallow_vertex(at.x + 1, at.y).x;

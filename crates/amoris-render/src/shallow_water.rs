@@ -34,6 +34,8 @@ pub struct ShallowWater {
     uniform: wgpu::Buffer,
     columns: Option<wgpu::Buffer>,
     group: Option<wgpu::BindGroup>,
+    /// Two triangles between each four neighbouring columns, for the grid's `size`.
+    indices: Option<(wgpu::Buffer, [u32; 2])>,
     quads: u32,
 }
 
@@ -133,6 +135,7 @@ impl ShallowWater {
             uniform,
             columns: None,
             group: None,
+            indices: None,
             quads: 0,
         }
     }
@@ -189,6 +192,28 @@ impl ShallowWater {
         if let Some(b) = &self.columns {
             queue.write_buffer(b, 0, bytes);
         }
+        if self
+            .indices
+            .as_ref()
+            .is_none_or(|(_, size)| *size != [w.nx, w.nz])
+        {
+            let mut idx = Vec::with_capacity(((w.nx - 1) * (w.nz - 1) * 6) as usize);
+            for k in 0..w.nz - 1 {
+                for i in 0..w.nx - 1 {
+                    let a = i + w.nx * k;
+                    let (b, c, d) = (a + w.nx, a + w.nx + 1, a + 1);
+                    idx.extend_from_slice(&[a, b, c, a, c, d]);
+                }
+            }
+            let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("shallow water indices"),
+                size: (idx.len() * 4) as u64,
+                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            queue.write_buffer(&buffer, 0, bytemuck::cast_slice(&idx));
+            self.indices = Some((buffer, [w.nx, w.nz]));
+        }
         let u = Uniform {
             origin: w.origin,
             cell: w.cell_m,
@@ -201,11 +226,15 @@ impl ShallowWater {
 
     /// Draws the water, groups 0 to 2 bound as for the lit forward pipelines.
     pub fn draw(&self, pass: &mut wgpu::RenderPass<'_>) {
-        let Some(g) = self.group.as_ref().filter(|_| self.quads > 0) else {
+        let (Some(g), Some((indices, _))) = (self.group.as_ref(), self.indices.as_ref()) else {
             return;
         };
+        if self.quads == 0 {
+            return;
+        }
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(3, g, &[]);
-        pass.draw(0..self.quads * 6, 0..1);
+        pass.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint32);
+        pass.draw_indexed(0..self.quads * 6, 0, 0..1);
     }
 }
