@@ -8,6 +8,11 @@
   `crates/amoris-app/examples/shallow_water.rs` (the demo).
 - Machine: Apple M5, macOS, Metal; Node 24.18 (V8) for WebAssembly. One run per figure; the machine
   was not checked for other load.
+- R1 (added 2026-10-18): AMD Ryzen 9 270 (x86-64), Windows 11, Rust 1.98.1
+  (`x86_64-pc-windows-msvc`), Node 25.8.1 and Chrome 155 for WebAssembly, the RTX 5060 on Direct3D
+  12 (the default adapter) for the drawing. One run of `python tools/shallow_check.py` at
+  `4dea38a0`, whose solver and examples are `155a52ac`'s; the machine was not checked for other
+  load.
 
 ## Question
 
@@ -44,9 +49,9 @@ and they move water like water over block terrain. The figures:
    2026-10-18). That held for both schemes. The solver uses `f64`, `+ - * /`, `floor`
    and `amoris_sim::math`'s `min`, `max` and `clamp`, all allowed by numeric.md 5. Across three
    runs of the demo, the water's hash and the boxes' printed positions (to the centimetre, Rapier
-   included) were the same. Not checked yet: x86-64. This Mac has neither Rosetta nor the
-   `x86_64-apple-darwin` target, and R1 is an x86-64 machine: `python tools/shallow_check.py` runs
-   every check there and compares each chain with the M5's.
+   included) were the same. On R1, an x86-64 machine, `python tools/shallow_check.py` gave the
+   M5's chains at all ten checkpoints for both schemes natively in release and in debug, under
+   Node and in Chrome: 8 chains compared, none different (2026-10-18).
 2. **Cost, single-threaded.** These are the medians of the bench scene's substeps:
 
    | Scheme | Columns | Native (ms a substep) | Native (ns a column) | WebAssembly (ms) | WebAssembly (ns) |
@@ -63,10 +68,24 @@ and they move water like water over block terrain. The figures:
    The WebAssembly columns are Node's. Chrome 155 on the same machine took 13.0 to 18.9 ns a column
    with the advected scheme and 4.0 to 5.5 ns with the pipes, the smaller grids slower in both.
 
+   R1 is 1.3 to 1.9 times slower natively. These are its medians (WebAssembly under Node 25.8.1;
+   Chrome 155 there was within 3% of Node at every size):
+
+   | Scheme | Columns | Native (ms a substep) | Native (ns a column) | WebAssembly (ms) | WebAssembly (ns) |
+   |---|---|---|---|---|---|
+   | Advect | 128² | 0.43 | 26.2 | 0.48 | 29.3 |
+   | Advect | 256² | 1.45 | 22.1 | 1.74 | 26.5 |
+   | Advect | 512² | 5.16 | 19.7 | 6.13 | 23.4 |
+   | Advect | 1024² | 19.4 | 18.5 | 25.3 | 24.1 |
+   | Pipes | 128² | 0.10 | 6.3 | 0.18 | 10.9 |
+   | Pipes | 256² | 0.37 | 5.6 | 0.57 | 8.7 |
+   | Pipes | 512² | 1.63 | 6.2 | 2.36 | 9.0 |
+   | Pipes | 1024² | 6.23 | 5.9 | 9.75 | 9.3 |
+
    Blockcraft's island of 128 x 128 blocks is 256² columns at two columns a block. With the
    advected scheme at two substeps a tick, that is 1.6 ms a tick natively and 2.4 ms in
-   WebAssembly. At one column a block it is a quarter of that. Nothing is parallel or vectorized
-   yet, and a game would step only the regions that hold moving water.
+   WebAssembly (on R1, 2.9 and 3.5 ms). At one column a block it is a quarter of that. Nothing is
+   parallel or vectorized yet, and a game would step only the regions that hold moving water.
 3. **The virtual pipe model is 3 times cheaper but not physical enough.** It carries no momentum
    from column to column. Where a fall lands, water piles into a mound about 2 m high until the
    slope pushes it away, and it creeps over a plain instead of running. With advected velocities
@@ -82,6 +101,17 @@ and they move water like water over block terrain. The figures:
    | 128² | +1.07 ms | +0.60 ms | +0.61 ms |
    | 256² | +1.97 ms | +1.10 ms | +1.10 ms |
    | 512² | +4.49 ms | +2.47 ms | +2.52 ms |
+
+   On R1's RTX 5060 (Direct3D 12) the same frames cost much less, and GPU busy, frame span and the
+   opaque pass agree within 0.01 ms:
+
+   | Columns | GPU busy | GPU frame span | Opaque pass (`opaque+sky`) |
+   |---|---|---|---|
+   | 128² | +0.20 ms | +0.21 ms | +0.21 ms |
+   | 256² | +0.33 ms | +0.33 ms | +0.33 ms |
+   | 512² | +0.59 ms | +0.58 ms | +0.58 ms |
+
+   The 780M was not measured (`AMORIS_ADAPTER=780m`).
 
    - The first drawing shaded six vertices a quad, each reading up to 45 columns. The indexed grid
      above shades each column once; it took the opaque pass from +0.65, +1.41 and +3.55 ms to the
@@ -151,8 +181,7 @@ and they move water like water over block terrain. The figures:
 - **Two-way coupling.** Bodies do not displace the water or make waves.
 - **Thin films.** A flood leaves a wide film of a few millimetres. Drawn faded, it reads as wet
   ground; a game may want it to drain or soak in.
-- **Not measured yet**: the solver and the drawing on R1 and on x86-64 (`tools/shallow_check.py`
-  runs both there), and the solver with more than one thread.
+- **Not measured yet**: the drawing on R1's 780M, and the solver with more than one thread.
 
 ## What it means for the engine
 
@@ -166,4 +195,4 @@ and they move water like water over block terrain. The figures:
 
 The owner accepted this direction on 2026-10-18 (charter 4.10) and asked for the open checks
 before the full specification ([water.md](../spec/water.md)). Chrome and the drawing's cost are
-recorded above; x86-64 and R1 wait for a run of `tools/shallow_check.py` there.
+recorded above, and so is R1 (x86-64): its chains are the M5's, so slice A can start.

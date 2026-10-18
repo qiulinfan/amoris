@@ -1,18 +1,20 @@
 # Water: a deterministic height field for every game
 
-- Status: Accepted (owner, 2026-10-18), with the decisions the owner took on reviewing the draft
-  the same day (section 16). It is built in four slices (2). Slice A starts once
-  `tools/shallow_check.py` on R1 has matched the M5's hash chains. Track `liquids`. Charter 4.10
-  (its 2026-10-18 decisions: the engine's water becomes a height field), 3 (principles 3 and 4:
-  state in the world, determinism and replay).
+- Status: Accepted (owner, 2026-10-18), with the decisions the owner took on reviewing the draft the
+  same day (section 16). It is built in four slices (2). Slice A can start: `tools/shallow_check.py`
+  on R1 matched the M5's hash chains (2026-10-18). Track `liquids`. Charter 4.10 (its 2026-10-18
+  decisions: the engine's water becomes a height field), 3 (principles 3 and 4: state in the world,
+  determinism and replay).
 - Origin: the shallow-water spike ([shallow-water.md](../spikes/shallow-water.md)). The owner judged
   the block water good as the block game's but not as physical water, and asked for one water for
   every game. The block game's water is one application of it. Seas, rivers and waterfalls are
   others, and each is a configuration of this one water (owner, 2026-10-18; section 1). The spike
   solved the shallow-water equations on the CPU and got the same bits natively, under Node and in
   Chrome. It runs at 11 to 14 ns a column and substep natively and 13 to 20 ns in WebAssembly, and
-  its drawing costs 1 to 4.5 ms of GPU time on the M5 without levels of detail. x86-64 and R1 are
-  pending (`tools/shallow_check.py`). A difference there reopens 3, before slice A starts.
+  its drawing costs 1 to 4.5 ms of GPU time on the M5 without levels of detail. On R1 (x86-64,
+  Windows) `tools/shallow_check.py` gave the same chains natively in release and debug, under Node
+  and in Chrome, so 3 stands. The solver there runs at 18 to 26 ns natively and 23 to 30 ns in
+  WebAssembly, and the drawing costs 0.2 to 0.6 ms on the RTX 5060.
 - Amends: [liquids.md](liquids.md) 5 and 6 for liquids on the field (6 below), and
   [splashes.md](splashes.md) 3 (emissions) and 9 question 1 (spray), by 10 below. liquids.md's
   cellular automaton stays for liquids that keep the cells model.
@@ -424,7 +426,7 @@ M5 and R1 (both GPUs), and in Chrome.
 
 | What | Where | Slice |
 |---|---|---|
-| The spike's hash chains on R1 match the M5's | `tools/shallow_check.py` | before A |
+| The spike's hash chains on R1 match the M5's (they do, 2026-10-18) | `tools/shallow_check.py` | before A |
 | Water conserved; a dam break settles level; walls hold; a ledge drains; a dug hole fills and a placed block displaces | `amoris-physics` unit tests of `water::` | A |
 | The substep count follows the fastest wave; tiles sleep, wake from a neighbour, a source, an edit or a bed change | same | A |
 | Films thinner than `dry_below` dry when slow and are reported; with 0 nothing dries; a flood's moving front does not dry | same | A |
@@ -470,7 +472,8 @@ The owner reviewed the draft and took each of the recommendations below.
 5. **The block game's rules lose renewal and displacement** (6); scripts make endless sources with
    `WaterSource`.
 6. **Films dry** below `dry_below`, off by default, 2 mm in blockcraft (4).
-7. **R1 first**: slice A starts once `tools/shallow_check.py` on R1 matches the M5.
+7. **R1 first**: slice A starts once `tools/shallow_check.py` on R1 matches the M5. It matched on
+   2026-10-18.
 8. **`Cells` stays** through these slices (15, question 3).
 9. **`Blocky`** draws the surface flat over each block (9); slice A's shots choose blockcraft's
    style.
