@@ -203,17 +203,23 @@ pub struct AudioView {
 
 /// How a block draws (voxels.md 7.1): `shape` 0 a cube (`faces`: top, side, bottom), 1 two
 /// crossed quads (`faces[0]`), 2 a liquid (`faces[0]`).
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct BlockLook {
     pub shape: u8,
     pub faces: [String; 3],
+    /// A liquid's view from inside: linear colour and fog density per metre (liquids.md 6).
+    #[serde(default)]
+    pub fog: Option<[f32; 4]>,
 }
 
-/// One chunk's cells (4096 palette indices, x fastest, then z, then y), or `None`: all air now.
+/// One chunk's cells (4096 palette indices, x fastest, then z, then y), or `None`: all air now;
+/// and its state bytes (a liquid's level, liquids.md 2), `None` while all are 0.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ChunkUpdate {
     pub key: [i32; 3],
     pub cells: Option<Vec<u8>>,
+    #[serde(default)]
+    pub states: Option<Vec<u8>>,
 }
 
 /// A block volume's change (voxels.md 7.1): where it is, its palette's looks when they changed,

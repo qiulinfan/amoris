@@ -20,17 +20,43 @@ struct Volume {
     cell_m: f32,
     blocks: Vec<BlockLook>,
     chunks: HashMap<[i32; 3], Box<[u8]>>,
+    /// Each chunk's state bytes, where any is not 0 (liquids.md 6).
+    states: HashMap<[i32; 3], Box<[u8]>>,
     /// The instance drawing each (chunk, material).
     parts: BTreeMap<([i32; 3], String), u64>,
 }
 
+fn locate(cell: [i32; 3]) -> ([i32; 3], usize) {
+    let key = cell.map(|c| c.div_euclid(CHUNK));
+    let [x, y, z] = cell.map(|c| c.rem_euclid(CHUNK) as usize);
+    (key, x + 16 * (z + 16 * y))
+}
+
 impl Volume {
     fn get(&self, cell: [i32; 3]) -> u8 {
-        let key = cell.map(|c| c.div_euclid(CHUNK));
-        let [x, y, z] = cell.map(|c| c.rem_euclid(CHUNK) as usize);
-        self.chunks
-            .get(&key)
-            .map_or(0, |c| c[x + 16 * (z + 16 * y)])
+        let (key, at) = locate(cell);
+        self.chunks.get(&key).map_or(0, |c| c[at])
+    }
+
+    fn state(&self, cell: [i32; 3]) -> u8 {
+        let (key, at) = locate(cell);
+        self.states.get(&key).map_or(0, |c| c[at])
+    }
+
+    /// The fog of the liquid whose surface is above `p` (world metres), if any.
+    fn fog_at(&self, p: [f32; 3]) -> Option<[f32; 4]> {
+        let g = [0, 1, 2].map(|a| (p[a] - self.origin[a]) / self.cell_m);
+        let cell = g.map(|c| c.floor() as i32);
+        let b = self.get(cell);
+        let look = self.blocks.get(usize::from(b)).filter(|l| l.shape == 2)?;
+        let s = self.state(cell);
+        let under = self.get([cell[0], cell[1] + 1, cell[2]]) == b;
+        let top = if under || s & 0b1000 != 0 {
+            1.0
+        } else {
+            f32::from(8 - (s & 0b0111)) / 9.0
+        };
+        (g[1] - cell[1] as f32 <= top).then_some(look.fog?)
     }
 }
 
@@ -114,6 +140,13 @@ impl Voxels {
         best.map(|(_, corner, edge)| (corner, edge))
     }
 
+    /// The fog of a liquid whose surface is above `p` in any volume (the view from under it).
+    pub fn fog_at(&self, p: [f32; 3]) -> Option<[f32; 4]> {
+        let mut ids: Vec<&u64> = self.volumes.keys().collect();
+        ids.sort_unstable();
+        ids.into_iter().find_map(|id| self.volumes[id].fog_at(p))
+    }
+
     /// The volume a part instance draws, or the id itself for an entity.
     pub fn owner(&self, id: u64) -> u64 {
         self.owners.get(&id).copied().unwrap_or(id)
@@ -149,6 +182,14 @@ impl Voxels {
                         v.chunks.remove(&c.key);
                     }
                 }
+                match &c.states {
+                    Some(states) if states.len() == 16 * 16 * 16 && c.cells.is_some() => {
+                        v.states.insert(c.key, states.clone().into_boxed_slice());
+                    }
+                    _ => {
+                        v.states.remove(&c.key);
+                    }
+                }
                 dirty.insert(c.key);
                 for d in [
                     [1, 0, 0],
@@ -168,7 +209,7 @@ impl Voxels {
             dirty.sort_unstable();
             for key in dirty {
                 let meshes = if v.chunks.contains_key(&key) {
-                    mesh_chunk(key, &v.blocks, |c| v.get(c))
+                    mesh_chunk(key, &v.blocks, |c| v.get(c), |c| v.state(c))
                 } else {
                     Vec::new()
                 };
@@ -272,6 +313,7 @@ mod tests {
                             "b.gltf#side".into(),
                             "b.gltf#side".into(),
                         ],
+                        fog: None,
                     },
                 ]
             }),
@@ -296,10 +338,12 @@ mod tests {
                     ChunkUpdate {
                         key: [0, 0, 0],
                         cells: cells(&[15]),
+                        states: None,
                     },
                     ChunkUpdate {
                         key: [1, 0, 0],
                         cells: cells(&[0]),
+                        states: None,
                     },
                 ],
                 true,
@@ -317,6 +361,7 @@ mod tests {
                 vec![ChunkUpdate {
                     key: [1, 0, 0],
                     cells: None,
+                    states: None,
                 }],
                 false,
             )],

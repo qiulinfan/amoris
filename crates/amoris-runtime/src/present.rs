@@ -51,8 +51,11 @@ struct SentVolume {
     origin: [f32; 3],
     cell_m: f32,
     blocks: Vec<BlockLook>,
-    chunks: HashMap<[i32; 3], Box<[u8]>>,
+    chunks: HashMap<[i32; 3], SentChunk>,
 }
+
+/// A chunk's cells and states as last sent.
+type SentChunk = (Box<[u8]>, Option<Box<[u8]>>);
 
 fn block_looks(v: &Voxels) -> Vec<BlockLook> {
     v.palette
@@ -64,6 +67,7 @@ fn block_looks(v: &Voxels) -> Vec<BlockLook> {
                 BlockShape::Liquid => 2,
             },
             faces: b.faces.clone(),
+            fog: b.flow.map(|f| f.fog.map(f32_of)),
         })
         .collect()
 }
@@ -103,13 +107,18 @@ fn volume_update(
     let mut present = std::collections::HashSet::with_capacity(v.chunks.len());
     for c in &v.chunks {
         present.insert(c.key);
-        if s.chunks.get(&c.key).is_some_and(|old| **old == *c.cells.0) {
+        let states = c.states.as_ref().map(|st| &st.0);
+        let same = s.chunks.get(&c.key).is_some_and(|(cells, old)| {
+            **cells == *c.cells.0 && old.as_deref() == states.map(|b| &**b)
+        });
+        if same {
             continue;
         }
-        s.chunks.insert(c.key, c.cells.0.clone());
+        s.chunks.insert(c.key, (c.cells.0.clone(), states.cloned()));
         update.chunks.push(ChunkUpdate {
             key: c.key,
             cells: Some(c.cells.0.to_vec()),
+            states: states.map(|b| b.to_vec()),
         });
     }
     let mut gone: Vec<[i32; 3]> = s
@@ -121,7 +130,11 @@ fn volume_update(
     gone.sort_unstable();
     for key in gone {
         s.chunks.remove(&key);
-        update.chunks.push(ChunkUpdate { key, cells: None });
+        update.chunks.push(ChunkUpdate {
+            key,
+            cells: None,
+            states: None,
+        });
     }
     (changed || !update.chunks.is_empty()).then_some(update)
 }
@@ -181,6 +194,10 @@ fn f(x: f64) -> f32 {
     {
         x as f32
     }
+}
+
+fn f32_of(x: f64) -> f32 {
+    f(x)
 }
 
 fn f3(v: [f64; 3]) -> [f32; 3] {

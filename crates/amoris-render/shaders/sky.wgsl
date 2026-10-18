@@ -32,6 +32,10 @@ fn fs_sky(in: SkyOut) -> @location(0) vec4f {
             c += view.sun_color.rgb * view.sun_dir.w * 2000.0 * limb * smoothstep(-0.02, 0.02, view.sun_dir.y);
         }
     }
+    // Under a liquid the sky is lost in its fog (a negative density; docs/spec/liquids.md 6).
+    if (view.fog.w < 0.0) {
+        c = view.fog.rgb * view.sun_color.w;
+    }
     if (view.fog.w > 0.0) {
         let horizon = exp(-abs(dir.y) * 8.0);
         c = mix(c, view.fog.rgb * view.sun_color.w, clamp(horizon * min(view.fog.w * 200.0, 1.0), 0.0, 1.0));

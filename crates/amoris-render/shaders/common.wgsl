@@ -26,7 +26,7 @@ struct View {
     viewport: vec4f,         // width, height, 1/width, 1/height
     sun_dir: vec4f,          // toward the sun, normalized; w: sun illuminance (0: no sun)
     sun_color: vec4f,        // linear rgb; w: ambient (image-based light) strength
-    fog: vec4f,              // linear rgb; w: density per metre
+    fog: vec4f,              // linear rgb; w: density per metre, height fog; negative: even fog
     params: vec4f,           // x: interpolation alpha, y: exposure multiplier, z: bloom, w: sky kind
     sky_color: vec4f,        // the flat sky's color; w: shadows enabled (1/0)
     cascade_splits: vec4f,   // far distance of each cascade, metres

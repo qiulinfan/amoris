@@ -39,10 +39,12 @@ fn blocks() -> Vec<BlockLook> {
         BlockLook {
             shape: 0,
             faces: [String::new(), String::new(), String::new()],
+            fog: None,
         },
         BlockLook {
             shape: 1,
             faces: [String::new(), String::new(), String::new()],
+            fog: None,
         },
     ]
 }
@@ -80,6 +82,7 @@ fn update(cells: &Cells, keys: &[[i32; 3]], with_blocks: bool) -> VoxelUpdate {
             .map(|k| ChunkUpdate {
                 key: *k,
                 cells: cells.get(k).filter(|c| c.iter().any(|&b| b != 0)).cloned(),
+                states: None,
             })
             .collect(),
     }
@@ -206,4 +209,55 @@ fn edited_volumes_draw_as_a_fresh_renderer_draws_them() {
         d < 0.0005,
         "the kept renderer draws the edited volume as a fresh one: {d}"
     );
+}
+
+#[test]
+fn under_a_liquid_the_view_is_its_fog() {
+    let Some(gpu) = gpu() else { return };
+    let fog = [0.02, 0.10, 0.45, 0.3];
+    let mut looks = blocks();
+    looks.push(BlockLook {
+        shape: 2,
+        faces: [String::new(), String::new(), String::new()],
+        fog: Some(fog),
+    });
+    let mut cells = Cells::new();
+    for x in -8..8 {
+        for z in -8..8 {
+            set(&mut cells, [x, 0, z], 1);
+            for y in 1..6 {
+                set(&mut cells, [x, y, z], 3);
+            }
+        }
+    }
+    let keys: Vec<[i32; 3]> = cells.keys().copied().collect();
+    let mut u = update(&cells, &keys, true);
+    u.blocks = Some(looks);
+    let mut r = renderer(&gpu);
+    r.set_camera_override(Some(CameraState::look_at(
+        Vec3::new(0.5, 3.0, 0.5),
+        Vec3::new(6.0, 3.5, -6.0),
+    )));
+    r.apply(scene(1, vec![u.clone()]), 0.0);
+    let (under, _) = shoot(&mut r, 0.0);
+    // Above the water the same scene has no such fog.
+    let mut above = renderer(&gpu);
+    above.set_camera_override(Some(CameraState::look_at(
+        Vec3::new(0.5, 9.0, 0.5),
+        Vec3::new(6.0, 9.5, -6.0),
+    )));
+    above.apply(scene(1, vec![u]), 0.0);
+    let (dry, _) = shoot(&mut above, 0.0);
+    let mean = |img: &[u8]| {
+        let px = img.as_chunks::<4>().0;
+        let n = px.len() as f64;
+        [0, 1, 2].map(|c| px.iter().map(|p| f64::from(p[c])).sum::<f64>() / n)
+    };
+    let (u, d) = (mean(&under), mean(&dry));
+    eprintln!("mean colour under {u:?}, above {d:?}");
+    assert!(
+        u[2] > 1.5 * u[0] && u[2] > u[1],
+        "blue under the liquid: {u:?}"
+    );
+    assert!(differing(&under, &dry) > 0.5, "the fog changes the view");
 }

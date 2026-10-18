@@ -277,10 +277,14 @@ fn surface(in: VsOut, facing: bool) -> Surface {
 // How much of the color at `world` the fog replaces.
 fn fog_amount(world: vec3f) -> f32 {
     let density = view.fog.w;
-    if (density <= 0.0) {
+    let d = distance(world, view.camera_pos.xyz);
+    // A negative density: even fog, as under a liquid (docs/spec/liquids.md 6).
+    if (density < 0.0) {
+        return clamp(1.0 - exp(density * d), 0.0, 1.0);
+    }
+    if (density == 0.0) {
         return 0.0;
     }
-    let d = distance(world, view.camera_pos.xyz);
     // Exponential height fog: thinner with altitude.
     let h = max(world.y, 0.0);
     return clamp(1.0 - exp(-density * d * exp(-h * 0.02)), 0.0, 1.0);

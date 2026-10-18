@@ -1,8 +1,10 @@
 //! Chunk meshes of block volumes (docs/spec/voxels.md 7.2): one chunk's cells, with its neighbours'
 //! facing layers, become triangles grouped by material. A cube's face is drawn where it meets air, a
 //! plant or a liquid; a plant is two crossed quads; a liquid draws the faces it shares with air,
-//! plants or another liquid, its top an eighth lower unless the same liquid lies above. Positions
-//! are in cells from the chunk's corner; texture coordinates repeat once per cell face.
+//! plants or another liquid. A liquid's surface stands at its level (liquids.md 6): each top corner
+//! at the highest surface of the up to four cells of that liquid around it, so surfaces slope down a
+//! flow without gaps. Positions are in cells from the chunk's corner; texture coordinates repeat
+//! once per cell face.
 
 // CPU mesh data for the renderer: its floats never reach the world or its hash.
 #![allow(clippy::disallowed_methods)]
@@ -47,7 +49,19 @@ const FACES: [([i32; 3], [[f32; 3]; 4]); 6] = [
     ),
 ];
 const UV: [[f32; 2]; 4] = [[0., 0.], [0., 1.], [1., 1.], [1., 0.]];
-const LIQUID_TOP: f32 = 0.875;
+/// A liquid state's level bits and falling bit (amoris-sim's `voxels::LEVEL`, `FALLING`).
+const LEVEL: u8 = 0b0111;
+const FALLING: u8 = 0b1000;
+
+/// A liquid cell's surface as a share of the cell: a source at 8/9, level n at (8 - n) / 9, the
+/// whole cell when falling or under the same liquid.
+fn surface(state: u8, under_same: bool) -> f32 {
+    if under_same || state & FALLING != 0 {
+        1.0
+    } else {
+        f32::from(8 - (state & LEVEL)) / 9.0
+    }
+}
 
 #[derive(Default)]
 struct Builder {
@@ -75,12 +89,14 @@ fn add(a: [i32; 3], b: [i32; 3]) -> [i32; 3] {
     [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
 }
 
-/// The meshes of chunk `key`, by material, in material order. `get` answers any cell of the volume
-/// (this chunk's and its neighbours'); `blocks` are the palette's looks (index 0, air, is unused).
+/// The meshes of chunk `key`, by material, in material order. `get` and `state` answer any cell of
+/// the volume (this chunk's and its neighbours'): its block and its state byte; `blocks` are the
+/// palette's looks (index 0, air, is unused).
 pub fn mesh_chunk(
     key: [i32; 3],
     blocks: &[BlockLook],
     get: impl Fn([i32; 3]) -> u8,
+    state: impl Fn([i32; 3]) -> u8,
 ) -> Vec<(String, MeshData)> {
     let shape = |b: u8| blocks.get(usize::from(b)).map(|l| l.shape);
     let mut groups: BTreeMap<String, Builder> = BTreeMap::new();
@@ -117,8 +133,20 @@ pub fn mesh_chunk(
                         }
                     }
                     LIQUID => {
-                        let above = get(add(cell, [0, 1, 0]));
-                        let top = if above == b { 1.0 } else { LIQUID_TOP };
+                        // Each top corner's height: the highest surface of this liquid around it.
+                        let mut corner = [[0.0f32; 2]; 2];
+                        for (cx, row) in corner.iter_mut().enumerate() {
+                            for (cz, h) in row.iter_mut().enumerate() {
+                                for (i, j) in [(0, 0), (0, 1), (1, 0), (1, 1)] {
+                                    let n = add(cell, [cx as i32 - 1 + i, 0, cz as i32 - 1 + j]);
+                                    if get(n) != b {
+                                        continue;
+                                    }
+                                    let under = get(add(n, [0, 1, 0])) == b;
+                                    *h = h.max(surface(state(n), under));
+                                }
+                            }
+                        }
                         for (n, corners) in FACES {
                             let nb = get(add(cell, n));
                             let shows = nb == 0 || (nb != b && shape(nb) != Some(CUBE));
@@ -126,6 +154,7 @@ pub fn mesh_chunk(
                                 continue;
                             }
                             let corners = corners.map(|c| {
+                                let top = corner[c[0] as usize][c[2] as usize];
                                 [
                                     o[0] + c[0],
                                     o[1] + if c[1] > 0.5 { top } else { 0.0 },
@@ -187,6 +216,7 @@ mod tests {
         let cube = |t: &str, s: &str, b: &str| BlockLook {
             shape: CUBE,
             faces: [t.into(), s.into(), b.into()],
+            fog: None,
         };
         vec![
             BlockLook::default(),
@@ -195,10 +225,12 @@ mod tests {
             BlockLook {
                 shape: CROSS,
                 faces: ["flower".into(), String::new(), String::new()],
+                fog: None,
             },
             BlockLook {
                 shape: LIQUID,
                 faces: ["water".into(), String::new(), String::new()],
+                fog: None,
             },
         ]
     }
@@ -213,7 +245,7 @@ mod tests {
     #[test]
     fn a_lone_cube_shows_six_faces_by_material() {
         let cells: HashMap<[i32; 3], u8> = [([3, 4, 5], 1)].into();
-        let m = mesh_chunk([0, 0, 0], &looks(), |c| *cells.get(&c).unwrap_or(&0));
+        let m = mesh_chunk([0, 0, 0], &looks(), |c| *cells.get(&c).unwrap_or(&0), |_| 0);
         assert_eq!(quads(&m, "grass_top"), 1);
         assert_eq!(quads(&m, "grass_side"), 4);
         assert_eq!(quads(&m, "dirt"), 1);
@@ -229,16 +261,16 @@ mod tests {
     fn faces_between_cubes_are_culled_across_chunk_borders() {
         // A 2 x 1 x 1 bar straddling chunks 0 and 1 along x, meshed from chunk 0.
         let cells: HashMap<[i32; 3], u8> = [([15, 0, 0], 2), ([16, 0, 0], 2)].into();
-        let m = mesh_chunk([0, 0, 0], &looks(), |c| *cells.get(&c).unwrap_or(&0));
+        let m = mesh_chunk([0, 0, 0], &looks(), |c| *cells.get(&c).unwrap_or(&0), |_| 0);
         assert_eq!(quads(&m, "stone"), 5, "the face toward x = 16 is hidden");
-        let n = mesh_chunk([1, 0, 0], &looks(), |c| *cells.get(&c).unwrap_or(&0));
+        let n = mesh_chunk([1, 0, 0], &looks(), |c| *cells.get(&c).unwrap_or(&0), |_| 0);
         assert_eq!(quads(&n, "stone"), 5);
     }
 
     #[test]
     fn plants_cross_and_do_not_hide_faces() {
         let cells: HashMap<[i32; 3], u8> = [([0, 0, 0], 2), ([0, 1, 0], 3)].into();
-        let m = mesh_chunk([0, 0, 0], &looks(), |c| *cells.get(&c).unwrap_or(&0));
+        let m = mesh_chunk([0, 0, 0], &looks(), |c| *cells.get(&c).unwrap_or(&0), |_| 0);
         assert_eq!(quads(&m, "flower"), 2);
         assert_eq!(
             quads(&m, "stone"),
@@ -256,7 +288,7 @@ mod tests {
             ([0, -1, 0], 2),
         ]
         .into();
-        let m = mesh_chunk([0, 0, 0], &looks(), |c| *cells.get(&c).unwrap_or(&0));
+        let m = mesh_chunk([0, 0, 0], &looks(), |c| *cells.get(&c).unwrap_or(&0), |_| 0);
         let water = &m.iter().find(|(k, _)| k == "water").unwrap().1;
         // (0,0,0): no top (water above), no bottom (stone), no +x (water): 3 sides. (1,0,0): top,
         // bottom, 3 sides. (0,1,0): top and 4 sides.
@@ -266,6 +298,47 @@ mod tests {
             .iter()
             .map(|v| v.position[1])
             .fold(0.0, f32::max);
-        assert_eq!(top, 1.0 + LIQUID_TOP);
+        assert_eq!(top, 1.0 + 8.0 / 9.0);
+    }
+
+    #[test]
+    fn flowing_liquids_slope_from_their_source() {
+        // A source at x = 0 and flowing levels 1 and 2 along +x.
+        let cells: HashMap<[i32; 3], u8> = [([0, 0, 0], 4), ([1, 0, 0], 4), ([2, 0, 0], 4)].into();
+        let states: HashMap<[i32; 3], u8> = [([1, 0, 0], 1), ([2, 0, 0], 2)].into();
+        let m = mesh_chunk(
+            [0, 0, 0],
+            &looks(),
+            |c| *cells.get(&c).unwrap_or(&0),
+            |c| *states.get(&c).unwrap_or(&0),
+        );
+        let water = &m.iter().find(|(k, _)| k == "water").unwrap().1;
+        let height_at = |x: f32| {
+            water
+                .vertices
+                .iter()
+                .filter(|v| v.normal == [0.0, 1.0, 0.0] && v.position[0] == x)
+                .map(|v| v.position[1])
+                .fold(0.0, f32::max)
+        };
+        // Shared corners take the higher side: the surface steps down cell by cell.
+        assert_eq!(height_at(1.0), 8.0 / 9.0);
+        assert_eq!(height_at(2.0), 7.0 / 9.0);
+        assert_eq!(height_at(3.0), 6.0 / 9.0);
+        // Falling liquid fills its cell.
+        let fall: HashMap<[i32; 3], u8> = [([5, 5, 5], 4)].into();
+        let m = mesh_chunk(
+            [0, 0, 0],
+            &looks(),
+            |c| *fall.get(&c).unwrap_or(&0),
+            |_| FALLING,
+        );
+        let top = m[0]
+            .1
+            .vertices
+            .iter()
+            .map(|v| v.position[1])
+            .fold(0.0, f32::max);
+        assert_eq!(top, 6.0);
     }
 }

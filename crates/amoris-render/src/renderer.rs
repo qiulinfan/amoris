@@ -2652,14 +2652,18 @@ impl Renderer {
                 sun_color[2],
                 env.as_ref().map_or(1.0, |e| e.ambient),
             ],
-            fog: env.as_ref().map_or([0.0; 4], |e| {
-                [
-                    e.fog_color[0],
-                    e.fog_color[1],
-                    e.fog_color[2],
-                    e.fog_density,
-                ]
-            }),
+            // Under a liquid its own fog, even and dense (a negative density; liquids.md 6).
+            fog: match self.voxels.fog_at(cam.position.to_array()) {
+                Some(f) => [f[0], f[1], f[2], -f[3].abs().max(1e-4)],
+                None => env.as_ref().map_or([0.0; 4], |e| {
+                    [
+                        e.fog_color[0],
+                        e.fog_color[1],
+                        e.fog_color[2],
+                        e.fog_density,
+                    ]
+                }),
+            },
             params: [
                 alpha,
                 exposure,
