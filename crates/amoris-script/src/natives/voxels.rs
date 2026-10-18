@@ -134,6 +134,16 @@ pub fn get<'js>(ctx: &Ctx<'js>, args: &[Value<'js>]) -> NResult<'js> {
     Ok(Value::new_int(ctx.clone(), i32::from(b)))
 }
 
+/// `voxelsState(volume, x, y, z)`: a cell's state byte (liquids.md 7), 0 for none.
+pub fn state<'js>(ctx: &Ctx<'js>, args: &[Value<'js>]) -> NResult<'js> {
+    let at = cell(ctx, args, 1)?;
+    let v = arg(ctx, args, 0);
+    let s = with_call(ctx, "voxels.state", |call, world| {
+        Ok(volume(call, world, &v)?.1.state(at))
+    })?;
+    Ok(Value::new_int(ctx.clone(), i32::from(s)))
+}
+
 /// `voxelsBlock(volume, name)`: a block's palette index by name.
 pub fn block_named<'js>(ctx: &Ctx<'js>, args: &[Value<'js>]) -> NResult<'js> {
     let v = arg(ctx, args, 0);

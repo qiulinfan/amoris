@@ -77,6 +77,7 @@ const world = Object.freeze({
 });
 const voxels = Object.freeze({
 	get: (volume, x, y, z) => host.voxelsGet(volume, x, y, z),
+	state: (volume, x, y, z) => host.voxelsState(volume, x, y, z),
 	set: (volume, x, y, z, block) => {
 		host.voxelsSet(volume, x, y, z, block);
 	},
@@ -198,4 +199,4 @@ export const field = Object.freeze({
 
 import { harden as __amoris_harden } from "amoris:host";
 import * as __amoris_self from "amoris";
-__amoris_harden("amoris", __amoris_self, { ["Query"]: Query, ["annotate"]: annotate, ["world"]: world, ["voxels"]: voxels, ["part"]: part, ["makeRng"]: makeRng, ["__context"]: __context, ["__query"]: __query, ["component"]: component, ["system"]: system, ["executor"]: executor, ["game"]: game, ["freeze"]: freeze, ["fieldOf"]: fieldOf, ["field"]: field }, { ["Query"]: 293, ["annotate"]: 419, ["world"]: 428, ["voxels"]: 439, ["part"]: 456, ["makeRng"]: 461, ["__context"]: 483, ["__query"]: 506, ["component"]: 637, ["system"]: 650, ["executor"]: 657, ["game"]: 662, ["freeze"]: 667, ["fieldOf"]: 709, ["field"]: 713 });
+__amoris_harden("amoris", __amoris_self, { ["Query"]: Query, ["annotate"]: annotate, ["world"]: world, ["voxels"]: voxels, ["part"]: part, ["makeRng"]: makeRng, ["__context"]: __context, ["__query"]: __query, ["component"]: component, ["system"]: system, ["executor"]: executor, ["game"]: game, ["freeze"]: freeze, ["fieldOf"]: fieldOf, ["field"]: field }, { ["Query"]: 293, ["annotate"]: 422, ["world"]: 431, ["voxels"]: 442, ["part"]: 460, ["makeRng"]: 465, ["__context"]: 487, ["__query"]: 510, ["component"]: 641, ["system"]: 654, ["executor"]: 661, ["game"]: 666, ["freeze"]: 671, ["fieldOf"]: 713, ["field"]: 717 });

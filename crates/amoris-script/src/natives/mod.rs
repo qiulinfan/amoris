@@ -82,6 +82,7 @@ const NATIVES: &[(&str, Native, bool)] = &[
     ("rngNormal", rng::normal, true),
     ("rngFill", rng::fill, true),
     ("voxelsGet", voxels::get, false),
+    ("voxelsState", voxels::state, false),
     ("voxelsBlock", voxels::block_named, false),
     ("voxelsSet", voxels::set, true),
     ("voxelsFill", voxels::fill, true),
