@@ -62,6 +62,8 @@ pub struct WalkInput {
     pub slot: Option<u8>,
     /// Hotbar steps from the wheel while captured: positive moves right.
     pub slot_steps: i32,
+    /// Space held while captured (swimming up).
+    pub rise: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -157,6 +159,7 @@ impl WalkControls {
             secondary: std::mem::take(&mut self.secondary),
             slot: self.slot.take(),
             slot_steps: std::mem::take(&mut self.slot_steps),
+            rise: self.captured && key(KeyCode::Space),
         }
     }
 }

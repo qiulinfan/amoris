@@ -259,7 +259,7 @@ struct SeatWalk {
     pending: WalkInput,
     look: Option<(f32, f32)>,
     slot: u8,
-    sent: Option<(f32, f32, bool, f32, f32)>,
+    sent: Option<(f32, f32, bool, f32, f32, bool)>,
     status: String,
 }
 
@@ -315,12 +315,13 @@ impl SeatWalk {
             [0.0; 2]
         };
         let run = captured && self.input.fast;
+        let rise = captured && self.input.rise;
         let mut actions = Vec::new();
-        let now = (motion[1], motion[0], run, yaw, pitch);
+        let now = (motion[1], motion[0], run, yaw, pitch, rise);
         if self.sent != Some(now) {
             actions.push(serde_json::json!({"do": "set", "controls": {
                 "forward": motion[1], "strafe": motion[0], "run": run,
-                "yaw": yaw, "pitch": pitch}}));
+                "yaw": yaw, "pitch": pitch, "rise": rise}}));
             self.sent = Some(now);
         }
         let slot = match (input.slot, input.slot_steps) {

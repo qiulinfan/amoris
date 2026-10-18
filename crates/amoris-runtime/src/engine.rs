@@ -426,6 +426,10 @@ fn walker_schema() -> Result<ComponentSchema, Problem> {
             ),
             n("vertical_mps", 0.0, "Vertical speed, m/s, positive up."),
             b("grounded", "Standing on a solid cell."),
+            b("rise", "Held: swim up in a liquid."),
+            n("swim_mps", d.swim_mps, "Swimming speed up, m/s."),
+            b("in_liquid", "A liquid overlaps the body."),
+            b("eye_in_liquid", "The eye is under a liquid's surface."),
         ],
     )
 }
@@ -451,6 +455,10 @@ fn walker_fns() -> EngineFns<Walker> {
             f64::from(w.slot),
             w.vertical_mps,
             bit(w.grounded),
+            bit(w.rise),
+            w.swim_mps,
+            bit(w.in_liquid),
+            bit(w.eye_in_liquid),
         ])
     }
     fn write(w: &mut Walker, v: &ProjectValues) {
@@ -462,6 +470,8 @@ fn walker_fns() -> EngineFns<Walker> {
             (n[11] != 0.0, n[12] != 0.0, n[13] != 0.0, n[14] != 0.0);
         w.slot = amoris_sim::num::to_u32(n[15]).unwrap_or(0);
         (w.vertical_mps, w.grounded) = (n[16], n[17] != 0.0);
+        (w.rise, w.swim_mps) = (n[18] != 0.0, n[19]);
+        (w.in_liquid, w.eye_in_liquid) = (n[20] != 0.0, n[21] != 0.0);
     }
     EngineFns {
         read,

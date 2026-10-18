@@ -6,7 +6,7 @@
 use amoris_sim::math;
 use amoris_sim::num::to_i32;
 use amoris_sim::order::{by_id, by_id_mut};
-use amoris_sim::voxels::Voxels;
+use amoris_sim::voxels::{BlockShape, FALLING, LEVEL, Voxels};
 use amoris_sim::{EntityId, SimClock};
 use bevy_ecs::prelude::{Component, Query, Res, Without};
 use schemars::JsonSchema;
@@ -22,6 +22,13 @@ pub const TERMINAL_MPS: f64 = 60.0;
 const MAX_SWEEP_CELLS: i32 = 256;
 /// The gap, in cells, that keeps a box off the faces it rests against.
 const SKIN: f64 = 1e-7;
+/// In a liquid (liquids.md 5): the share of gravity, the fastest sinking, the share of horizontal
+/// speed, the current's speed, and the share of a jump that lifts a swimmer rising at a wall.
+const LIQUID_GRAVITY: f64 = 0.25;
+const LIQUID_SINK_MPS: f64 = 2.0;
+const LIQUID_SPEED: f64 = 0.6;
+const CURRENT_MPS: f64 = 1.4;
+const WALL_LIFT: f64 = 0.6;
 
 /// A first-person character (voxels.md 5.2). Its entity's `Transform` is the eye.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -62,6 +69,14 @@ pub struct Walker {
     pub vertical_mps: f64,
     /// Whether the last move down stopped on a solid cell.
     pub grounded: bool,
+    /// Held input: swim up in a liquid (liquids.md 5).
+    pub rise: bool,
+    /// Swimming speed up, m/s.
+    pub swim_mps: f64,
+    /// Whether a liquid overlaps the box.
+    pub in_liquid: bool,
+    /// Whether the eye is under a liquid's surface.
+    pub eye_in_liquid: bool,
 }
 
 impl Default for Walker {
@@ -85,6 +100,10 @@ impl Default for Walker {
             slot: 0,
             vertical_mps: 0.0,
             grounded: false,
+            rise: false,
+            swim_mps: 2.0,
+            in_liquid: false,
+            eye_in_liquid: false,
         }
     }
 }
@@ -181,8 +200,94 @@ fn sweep(v: &Volume, lo: [f64; 3], hi: [f64; 3], axis: usize, d: f64) -> f64 {
     d
 }
 
+/// How a liquid meets a box: whether one overlaps it, whether the eye is under a surface, and the
+/// current's horizontal direction, unit or zero (liquids.md 5).
+struct Contact {
+    body: bool,
+    eye: bool,
+    current: [f64; 2],
+}
+
+/// A liquid cell's surface, as a share of the cell: a source at 8/9, level n at (8 - n) / 9, the
+/// whole cell when falling or under the same liquid (liquids.md 6).
+fn surface(v: &Voxels, c: [i32; 3], b: u8, s: u8) -> f64 {
+    if s & FALLING != 0 || v.get([c[0], c[1] + 1, c[2]]) == b {
+        1.0
+    } else {
+        f64::from(8 - (s & LEVEL)) / 9.0
+    }
+}
+
+fn contact(w: &Walker, eye: [f64; 3], volumes: &[Volume]) -> Contact {
+    let (lo, hi) = w.bounds(eye);
+    let mut out = Contact {
+        body: false,
+        eye: false,
+        current: [0.0; 2],
+    };
+    for vol in volumes {
+        let v = vol.voxels;
+        let g = |p: f64, a: usize| (p - vol.origin[a]) / v.cell_m;
+        let span = |a: usize| (cell_of(g(lo[a], a) + SKIN), cell_of(g(hi[a], a) - SKIN));
+        let (Some(x0), Some(x1)) = span(0) else {
+            continue;
+        };
+        let (Some(y0), Some(y1)) = span(1) else {
+            continue;
+        };
+        let (Some(z0), Some(z1)) = span(2) else {
+            continue;
+        };
+        let liquid = |b: u8| b != 0 && v.shape(b) == BlockShape::Liquid;
+        for y in y0..=y1 {
+            for z in z0..=z1 {
+                for x in x0..=x1 {
+                    let c = [x, y, z];
+                    let (b, s) = v.cell(c);
+                    if !liquid(b) {
+                        continue;
+                    }
+                    let top = f64::from(y) + surface(v, c, b, s);
+                    if g(lo[1], 1) >= top {
+                        continue;
+                    }
+                    out.body = true;
+                    if v.flow(b).is_none() || s & (LEVEL | FALLING) == 0 {
+                        continue;
+                    }
+                    // The current runs toward lower neighbours, and over edges it falls from.
+                    for (dx, dz) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                        let n = [x + dx, y, z + dz];
+                        let (nb, ns) = v.cell(n);
+                        let lower = nb == b && ns & FALLING == 0 && ns & LEVEL > s & LEVEL;
+                        let drop = (nb == 0 || v.shape(nb) == BlockShape::Cross)
+                            && !v.solid(v.get([n[0], n[1] - 1, n[2]]));
+                        if lower || drop {
+                            out.current[0] += f64::from(dx);
+                            out.current[1] += f64::from(dz);
+                        }
+                    }
+                }
+            }
+        }
+        let e = [0, 1, 2].map(|a| cell_of(g(eye[a], a)));
+        if let [Some(ex), Some(ey), Some(ez)] = e {
+            let (b, s) = v.cell([ex, ey, ez]);
+            if liquid(b) && g(eye[1], 1) < f64::from(ey) + surface(v, [ex, ey, ez], b, s) {
+                out.eye = true;
+            }
+        }
+    }
+    let len = math::sqrt(out.current[0] * out.current[0] + out.current[1] * out.current[1]);
+    if len > 0.0 {
+        out.current = [out.current[0] / len, out.current[1] / len];
+    }
+    out
+}
+
 /// Moves a walker one tick of `dt` seconds among `volumes`; returns the new eye.
 fn advance(w: &mut Walker, eye: [f64; 3], dt: f64, volumes: &[Volume]) -> [f64; 3] {
+    let wet = contact(w, eye, volumes);
     let (mut f, mut s) = (
         math::clamp(w.forward, -1.0, 1.0),
         math::clamp(w.strafe, -1.0, 1.0),
@@ -192,16 +297,36 @@ fn advance(w: &mut Walker, eye: [f64; 3], dt: f64, volumes: &[Volume]) -> [f64; 
         f /= len;
         s /= len;
     }
-    let speed = if w.run { w.run_mps } else { w.speed_mps };
+    let mut speed = if w.run { w.run_mps } else { w.speed_mps };
+    if wet.body {
+        speed *= LIQUID_SPEED;
+    }
     let (sy, cy) = math::sin_cos(w.yaw);
-    let vx = (-sy * f + cy * s) * speed;
-    let vz = (-cy * f - sy * s) * speed;
+    let mut vx = (-sy * f + cy * s) * speed;
+    let mut vz = (-cy * f - sy * s) * speed;
+    if wet.body {
+        vx += wet.current[0] * CURRENT_MPS;
+        vz += wet.current[1] * CURRENT_MPS;
+    }
     if w.jump && w.grounded {
         w.vertical_mps = w.jump_mps;
     }
-    w.vertical_mps = math::max(w.vertical_mps - w.gravity_mps2 * dt, -TERMINAL_MPS);
+    if wet.body {
+        w.vertical_mps = math::max(
+            w.vertical_mps - w.gravity_mps2 * LIQUID_GRAVITY * dt,
+            -LIQUID_SINK_MPS,
+        );
+        if w.rise {
+            w.vertical_mps = math::max(w.vertical_mps, w.swim_mps);
+        }
+    } else {
+        w.vertical_mps = math::max(w.vertical_mps - w.gravity_mps2 * dt, -TERMINAL_MPS);
+    }
+    w.in_liquid = wet.body;
+    w.eye_in_liquid = wet.eye;
     let mut eye = eye;
     let wanted = [vx * dt, w.vertical_mps * dt, vz * dt];
+    let mut walled = false;
     for axis in [1, 0, 2] {
         let (lo, hi) = w.bounds(eye);
         let mut d = wanted[axis];
@@ -215,7 +340,13 @@ fn advance(w: &mut Walker, eye: [f64; 3], dt: f64, volumes: &[Volume]) -> [f64; 
             if stopped {
                 w.vertical_mps = 0.0;
             }
+        } else if d != wanted[axis] {
+            walled = true;
         }
+    }
+    // A swimmer rising against a wall is lifted, as by a jump, onto a bank one cell high.
+    if wet.body && w.rise && walled {
+        w.vertical_mps = math::max(w.vertical_mps, w.jump_mps * WALL_LIFT);
     }
     eye
 }
@@ -376,6 +507,115 @@ mod tests {
             "the head stayed under the ceiling: {top}"
         );
         assert!(top > 1.99, "{top}");
+    }
+
+    /// The ground, and a pool of still water (sources) over it from x = -6 to 2, `depth` deep, with
+    /// a bank one cell high from x = 3.
+    fn pool(depth: i32) -> Voxels {
+        let mut v = ground();
+        v.palette.push(Block {
+            name: "water".into(),
+            shape: BlockShape::Liquid,
+            faces: ["w".into(), String::new(), String::new()],
+            ..Block::default()
+        });
+        let water = 3;
+        v.fill([-6, 1 - depth, -6], [2, 0, 6], water, 0).unwrap();
+        v.fill([-7, -depth, -7], [3, -depth, 7], 1, 0).unwrap();
+        v.fill([3, 0 - depth + 1, -6], [6, 0, 6], 1, 0).unwrap();
+        v
+    }
+
+    #[test]
+    fn a_walker_sinks_slowly_and_swims_up_in_a_liquid() {
+        let v = pool(6);
+        let mut w = Walker::default();
+        let mut eye = [-2.5, -1.0, 0.5];
+        let vols = [Volume {
+            origin: [0.0; 3],
+            voxels: &v,
+        }];
+        for _ in 0..60 {
+            eye = advance(&mut w, eye, 1.0 / 60.0, &vols);
+        }
+        assert!(w.in_liquid && w.eye_in_liquid);
+        assert!(
+            w.vertical_mps >= -LIQUID_SINK_MPS - 1e-9,
+            "{}",
+            w.vertical_mps
+        );
+        assert!(eye[1] > -3.0, "sank at most about 2 m in a second: {eye:?}");
+        w.rise = true;
+        for _ in 0..240 {
+            eye = advance(&mut w, eye, 1.0 / 60.0, &vols);
+        }
+        // At the surface it bobs: the feet just in and out of the top cell (surface at 8/9).
+        let mut feet = Vec::new();
+        for _ in 0..120 {
+            eye = advance(&mut w, eye, 1.0 / 60.0, &vols);
+            feet.push(eye[1] - w.eye_m);
+        }
+        let (lo, hi) = feet.iter().fold((f64::MAX, f64::MIN), |(a, b), &f| {
+            (math::min(a, f), math::max(b, f))
+        });
+        assert!(
+            lo > 0.5 && hi < 1.3,
+            "bobs at the surface: feet {lo:.3} to {hi:.3}"
+        );
+    }
+
+    #[test]
+    fn a_swimmer_climbs_out_onto_a_bank_one_cell_high() {
+        let v = pool(1);
+        let mut w = Walker {
+            forward: 1.0,
+            yaw: -std::f64::consts::FRAC_PI_2, // looks along +x
+            rise: true,
+            ..Walker::default()
+        };
+        let vols = [Volume {
+            origin: [0.0; 3],
+            voxels: &v,
+        }];
+        // Feet on the pool's floor (y = 0) in a layer of water; the bank's top is at y = 1.
+        let mut eye = [0.5, w.eye_m, 0.5];
+        let mut top = f64::MIN;
+        for _ in 0..90 {
+            eye = advance(&mut w, eye, 1.0 / 60.0, &vols);
+            if (3.0..7.0).contains(&eye[0]) {
+                top = math::max(top, eye[1] - w.eye_m);
+            }
+        }
+        assert!(eye[0] > 4.0, "out of the water and along the bank: {eye:?}");
+        assert!(top >= 1.0 - 1e-6, "walked on the bank's top: feet {top}");
+    }
+
+    #[test]
+    fn a_current_pushes_the_walker_downstream() {
+        let mut v = ground();
+        v.palette.push(Block {
+            name: "water".into(),
+            shape: BlockShape::Liquid,
+            faces: ["w".into(), String::new(), String::new()],
+            flow: Some(amoris_sim::voxels::Flow::default()),
+            ..Block::default()
+        });
+        // A run of flowing water along +x, its level rising (its surface falling) cell by cell.
+        for x in 0..7 {
+            v.set_with_state([x, 0, 0], 3, u8::try_from(x).unwrap(), 0)
+                .unwrap();
+        }
+        let mut w = Walker::default();
+        let vols = [Volume {
+            origin: [0.0; 3],
+            voxels: &v,
+        }];
+        let mut eye = [1.5, w.eye_m, 0.5];
+        for _ in 0..30 {
+            eye = advance(&mut w, eye, 1.0 / 60.0, &vols);
+        }
+        assert!(eye[0] > 1.5 + 0.5, "carried downstream: {eye:?}");
+        assert!((eye[2] - 0.5).abs() < 1e-9);
     }
 
     #[test]

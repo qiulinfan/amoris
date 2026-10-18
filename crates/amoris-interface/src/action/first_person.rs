@@ -142,6 +142,20 @@ pub fn controls() -> Vec<ControlDef> {
             },
         },
         ControlDef {
+            name: "rise".into(),
+            doc: "Held: swim up in a liquid.".into(),
+            kind: ControlKind::Toggle { default: false },
+            channel: "body".into(),
+            binding: ControlBinding::Engine {
+                write: |w, b, v| {
+                    let x = flag(v)?;
+                    with_walker(w, b, |walker| walker.rise = x)
+                },
+                read: |w, b| read(w, b, |walker| ControlValue::Bool(walker.rise)),
+                writable: has_walker,
+            },
+        },
+        ControlDef {
             name: "slot".into(),
             doc: "The selected hotbar slot, \"0\" to \"8\".".into(),
             kind: ControlKind::Choice {

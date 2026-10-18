@@ -204,6 +204,7 @@ the entity with `Observer {seat: "player"}` and `Walker`.
 | `yaw` | Axis -pi..pi (wraps) | `Walker.yaw` |
 | `pitch` | Axis -1.55..1.55 | `Walker.pitch` |
 | `run` | Toggle | `Walker.run` |
+| `rise` | Toggle (held) | `Walker.rise`: swim up in a liquid (liquids.md 5) |
 | `slot` | Choice "0".."8" | `Walker.slot` |
 | `jump`, `primary`, `secondary` | Pulse, no target | `Walker.jump`, `.primary`, `.secondary` |
 
