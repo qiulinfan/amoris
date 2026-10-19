@@ -315,8 +315,8 @@ pub enum BedSource {
 - **Blocky.** With `look.style: Blocky`, the surface is drawn flat over each block of a `Voxels`
   bed, at the mean surface of its `per`² columns, with vertical sides where neighbouring blocks
   differ; over a `Colliders` bed, flat over each column. Only the drawing changes: the water
-  flows, and the walker and scripts read it, as with `Smooth`. Slice A's shots decide which style
-  blockcraft uses.
+  flows, and the walker and scripts read it, as with `Smooth`. Blockcraft uses `Smooth` (owner,
+  2026-10-18, from slice A's shots).
 - **Tiles and levels of detail** (slice D; slices A to C draw every column).
   - Each tile is culled by its bounds.
   - A tile draws every column (level 1) within 48 m of the camera, every second column within
@@ -488,8 +488,8 @@ The owner reviewed the draft and took each of the recommendations below.
 7. **R1 first**: slice A starts once `tools/shallow_check.py` on R1 matches the M5. It matched on
    2026-10-18.
 8. **`Cells` stays** through these slices (15, question 3).
-9. **`Blocky`** draws the surface flat over each block (9); slice A's shots choose blockcraft's
-   style.
+9. **`Blocky`** draws the surface flat over each block (9); blockcraft uses `Smooth` (owner,
+   2026-10-18, from slice A's shots).
 
 The same review corrected the draft:
 
