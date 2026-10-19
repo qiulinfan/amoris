@@ -1159,10 +1159,10 @@ fn fs_shallow(in: ShallowOut) -> @location(0) vec4f {
     let t = q - cell;
     let s2 = t * t * (3.0 - 2.0 * t);
     let lattice = vec2u(vec2i(cell) + vec2i(4096));
-    let n00 = unit_from_hash(pcg_hash(lattice.x * 73856093u ^ lattice.y * 19349663u));
-    let n10 = unit_from_hash(pcg_hash((lattice.x + 1u) * 73856093u ^ lattice.y * 19349663u));
-    let n01 = unit_from_hash(pcg_hash(lattice.x * 73856093u ^ (lattice.y + 1u) * 19349663u));
-    let n11 = unit_from_hash(pcg_hash((lattice.x + 1u) * 73856093u ^ (lattice.y + 1u) * 19349663u));
+    let n00 = unit_from_hash(pcg_hash((lattice.x * 73856093u) ^ (lattice.y * 19349663u)));
+    let n10 = unit_from_hash(pcg_hash(((lattice.x + 1u) * 73856093u) ^ (lattice.y * 19349663u)));
+    let n01 = unit_from_hash(pcg_hash((lattice.x * 73856093u) ^ ((lattice.y + 1u) * 19349663u)));
+    let n11 = unit_from_hash(pcg_hash(((lattice.x + 1u) * 73856093u) ^ ((lattice.y + 1u) * 19349663u)));
     let noise = mix(mix(n00, n10, s2.x), mix(n01, n11, s2.x), s2.y);
     let churn = smoothstep(3.0, 7.0, in.speed) * smoothstep(0.35, 0.75, noise);
     let foam = clamp(churn * 0.7 + smoothstep(0.4, 0.9, steep) * 0.85, 0.0, 1.0);

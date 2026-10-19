@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Amoris</title>
+<link rel="icon" href="data:,">
+<style>
+  :root { --ink: #f3f5f8; --muted: #b9c1cf; --veil: rgba(10, 14, 22, 0.62); --accent: #7fb6ff; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0f16; color: var(--ink);
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; outline: none; }
+  #veil { position: fixed; inset: 0; display: grid; place-items: center; background: var(--veil);
+    cursor: pointer; user-select: none; }
+  #veil[hidden] { display: none; }
+  .card { max-width: 520px; margin: 16px; text-align: center; }
+  h1 { font-size: 28px; margin: 0 0 6px; letter-spacing: .01em; }
+  #status { font-size: 17px; margin: 10px 0; }
+  #help { color: var(--muted); font-size: 14px; margin: 14px 0 0; }
+  #help kbd { font: 12px/1 ui-monospace, Consolas, monospace; border: 1px solid #5b6575; border-radius: 4px;
+    padding: 2px 5px; color: var(--ink); }
+  .bar { height: 4px; width: 260px; margin: 12px auto 0; background: #2a3240; border-radius: 2px; overflow: hidden; }
+  .bar > div { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+  #error { color: #ffb4a8; white-space: pre-wrap; text-align: left; font-size: 14px; }
+</style>
+</head>
+<body>
+<canvas id="view" tabindex="0" aria-label="The game, drawn by the Amoris renderer with WebGPU"></canvas>
+<div id="veil">
+  <div class="card">
+    <h1 id="name">Amoris</h1>
+    <div id="status">Loading…</div>
+    <div class="bar"><div id="progress"></div></div>
+    <p id="help"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · <kbd>Shift</kbd> run ·
+      <kbd>Space</kbd> jump / swim up · left click break · right click place ·
+      <kbd>1</kbd>–<kbd>9</kbd> or wheel choose · <kbd>Esc</kbd> releases the mouse</p>
+    <div id="error" hidden></div>
+  </div>
+</div>
+<script type="module">
+import { main } from "./player.js";
+main().catch((e) => {
+  const err = document.getElementById("error");
+  err.hidden = false;
+  err.textContent = String((e && (e.message || e.stack)) || JSON.stringify(e));
+  document.getElementById("status").textContent = "The game could not start.";
+});
+</script>
+</body>
+</html>

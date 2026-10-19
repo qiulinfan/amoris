@@ -49,6 +49,8 @@ pub struct Viewport {
     max_in_flight: u32,
     /// The last frame's stats, which a skipped call answers again (marked `skipped`).
     last_stats: String,
+    /// The first-person look (yaw, pitch) of `first_person`, once the walker's camera is known.
+    look: Option<(f32, f32)>,
 }
 
 #[wasm_bindgen]
@@ -97,6 +99,7 @@ impl Viewport {
             in_flight: Arc::new(AtomicU32::new(0)),
             max_in_flight: 0,
             last_stats: "{}".into(),
+            look: None,
         })
     }
 
@@ -281,6 +284,103 @@ impl Viewport {
     }
 
     /// Draws from the scene's active camera again.
+    /// A first-person game's seat in the page (web/player; the native window's `SeatWalk`,
+    /// voxels.md 8): draws from the walker's camera as the world last published it, turned at once
+    /// by the page's own look so looking never waits on a tick. `dx`, `dy` are the mouse's movement
+    /// since the last call (CSS pixels, used while `captured`); while captured the targeted block is
+    /// outlined and a crosshair drawn. Returns `[yaw, pitch]` for the page's `player.act` controls,
+    /// or nothing while the world has published no active camera.
+    pub fn first_person(&mut self, dx: f32, dy: f32, captured: bool) -> Vec<f32> {
+        const CROSSHAIR_ID: u64 = u64::MAX - 2;
+        let r = &mut self.renderer;
+        r.set_camera_override(None);
+        r.overlays.lines.clear();
+        r.scene.ui.retain(|u| u.id != CROSSHAIR_ID);
+        if !r.scene.cameras.iter().any(|c| c.active) {
+            return Vec::new();
+        }
+        let mut camera = r.camera();
+        let (mut yaw, mut pitch) = self.look.unwrap_or_else(|| {
+            let f = camera.rotation * Vec3::NEG_Z;
+            ((-f.x).atan2(-f.z), f.y.clamp(-1.0, 1.0).asin())
+        });
+        if captured {
+            yaw -= dx * 0.003;
+            pitch = (pitch - dy * 0.003).clamp(-1.55, 1.55);
+        }
+        yaw = (yaw + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+        self.look = Some((yaw, pitch));
+        camera.rotation = Quat::from_rotation_y(yaw) * Quat::from_rotation_x(pitch);
+        r.set_camera_override(Some(camera));
+        if !captured {
+            return vec![yaw, pitch];
+        }
+        let dir = camera.rotation * Vec3::NEG_Z;
+        if let Some((corner, edge)) = r.voxel_target(camera.position.into(), dir.into(), 5.0) {
+            let c = Vec3::from(corner) - Vec3::splat(0.002);
+            let e = edge + 0.004;
+            let p = |x: f32, y: f32, z: f32| (c + Vec3::new(x, y, z) * e).to_array();
+            let corners = [
+                p(0., 0., 0.),
+                p(1., 0., 0.),
+                p(1., 0., 1.),
+                p(0., 0., 1.),
+                p(0., 1., 0.),
+                p(1., 1., 0.),
+                p(1., 1., 1.),
+                p(0., 1., 1.),
+            ];
+            for (a, b) in [
+                (0, 1),
+                (1, 2),
+                (2, 3),
+                (3, 0),
+                (4, 5),
+                (5, 6),
+                (6, 7),
+                (7, 4),
+                (0, 4),
+                (1, 5),
+                (2, 6),
+                (3, 7),
+            ] {
+                r.overlays.lines.push(amoris_render::overlay::OverlayLine {
+                    a: corners[a],
+                    b: corners[b],
+                    color: [0.05, 0.05, 0.05, 0.85],
+                    width: 2.0,
+                });
+            }
+        }
+        r.scene.ui.push(amoris_assets::frame::UiView {
+            id: CROSSHAIR_ID,
+            text: "+".into(),
+            fill: 0.0,
+            bar: false,
+            size: [24.0, 24.0],
+            color: [1.0, 1.0, 1.0, 1.0],
+            back: [0.0; 4],
+            anchor: 4,
+            offset: [0.0, 0.0],
+            world: [0.0; 3],
+        });
+        vec![yaw, pitch]
+    }
+
+    /// The block cell the view's centre ray meets within `max_m`: `[x, y, z, edge]` of its world
+    /// corner, or nothing (the player page's check reads it to see a block go).
+    pub fn voxel_target(&self, max_m: f32) -> Vec<f32> {
+        let c = self.renderer.camera();
+        let dir = c.rotation * Vec3::NEG_Z;
+        match self
+            .renderer
+            .voxel_target(c.position.into(), dir.into(), max_m)
+        {
+            Some((p, e)) => vec![p[0], p[1], p[2], e],
+            None => Vec::new(),
+        }
+    }
+
     pub fn use_scene_camera(&mut self) {
         self.renderer.set_camera_override(None);
     }
