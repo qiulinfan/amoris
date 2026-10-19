@@ -140,6 +140,97 @@ mod tests {
     /// (forward.wgsl; docs/spec/prepass.md 2).
     const STAGES: [&str; 3] = ["vs", "vs_depth", "vs_depth_masked"];
 
+    /// WGSL forbids a bitwise operator (`&`, `|`, `^`) beside another binary operator without
+    /// parentheses (`a * b ^ c` must be `(a * b) ^ c`). naga accepts the mixed form, so native
+    /// builds run; Chrome's Tint refuses the whole module and the browser draws nothing (the
+    /// forward shader's water noise, found by the web export's play check, 2026-10-18). A line's
+    /// operators are compared per parenthesis level, between commas.
+    fn mixed_bitwise(line: &str) -> Option<usize> {
+        let code = line.split("//").next().unwrap_or("");
+        let b = code.as_bytes();
+        // Per open level: (a bitwise operator seen, another binary operator seen).
+        let mut levels = vec![(false, false)];
+        // Whether the previous token ends an operand (so a following `-`, `*`, `&` is binary).
+        let mut operand = false;
+        let mut i = 0;
+        while i < b.len() {
+            let c = b[i];
+            let next = b.get(i + 1).copied().unwrap_or(0);
+            let mut kind = None;
+            match c {
+                b'(' | b'[' => {
+                    levels.push((false, false));
+                    operand = false;
+                }
+                b')' | b']' => {
+                    if levels.len() > 1 {
+                        levels.pop();
+                    }
+                    operand = true;
+                }
+                b',' | b';' | b'{' | b'}' | b'=' | b'<' | b'>' | b'!'
+                    if next != b'=' || c == b',' =>
+                {
+                    *levels.last_mut().unwrap() = (false, false);
+                    operand = false;
+                }
+                b'&' | b'|' if next == c => {
+                    *levels.last_mut().unwrap() = (false, false);
+                    operand = false;
+                    i += 1;
+                }
+                b'&' | b'|' | b'^' if operand => kind = Some(true),
+                b'*' | b'/' | b'%' | b'+' | b'-' if operand && next != b'>' => kind = Some(false),
+                c if c.is_ascii_alphanumeric() || c == b'_' || c == b'.' => operand = true,
+                b' ' | b'\t' => {}
+                _ => operand = false,
+            }
+            if let Some(bitwise) = kind {
+                let level = levels.last_mut().unwrap();
+                if bitwise {
+                    level.0 = true
+                } else {
+                    level.1 = true
+                }
+                if level.0 && level.1 {
+                    return Some(i);
+                }
+                operand = false;
+            }
+            i += 1;
+        }
+        None
+    }
+
+    #[test]
+    fn bitwise_operators_are_parenthesized_for_the_browser() {
+        assert!(mixed_bitwise("pcg_hash(a.x * 7u ^ a.y * 9u)").is_some());
+        assert!(mixed_bitwise("let h = x & 255u + 1u;").is_some());
+        assert!(mixed_bitwise("pcg_hash((a.x * 7u) ^ (a.y * 9u))").is_none());
+        assert!(mixed_bitwise("let m = (x >> 3u) & 7u; let y = a * -b;").is_none());
+        assert!(mixed_bitwise("if a && b || c * 2 > 1 { f(&p, x * 2u, y ^ z); }").is_none());
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("shaders");
+        let mut found = Vec::new();
+        for entry in std::fs::read_dir(&dir).expect("the shaders directory") {
+            let path = entry.expect("a shader").path();
+            if path.extension().is_none_or(|e| e != "wgsl") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).expect("a shader's text");
+            for (n, line) in text.lines().enumerate() {
+                if mixed_bitwise(line).is_some() {
+                    let name = path.file_name().unwrap_or_default().to_string_lossy();
+                    found.push(format!("{name}:{}: {}", n + 1, line.trim()));
+                }
+            }
+        }
+        assert!(
+            found.is_empty(),
+            "parenthesize these for Tint:\n{}",
+            found.join("\n")
+        );
+    }
+
     /// What naga writes for each backend keeps the forward shader's clip positions invariant:
     /// HLSL's `precise` on `SV_Position` (Direct3D 12), SPIR-V's `Invariant` decoration on the
     /// `Position` built-in (Vulkan), MSL's `[[position, invariant]]` (Metal, which wgpu compiles
