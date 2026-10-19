@@ -15,6 +15,11 @@
 //!   ...`, `amoris step ...`, `amoris play start|stop`, `amoris undo`, ... (`amoris help`)
 //!
 //! Everything runs on a thread whose stack holds the script host's limit (script-sandbox.md 4.3).
+//!
+//! On Windows the binary is a GUI program, so a double-clicked game opens no console window; a
+//! subcommand run from a terminal writes to that terminal's console (`attach_parent_console`).
+
+#![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod check;
 mod cli;
@@ -98,7 +103,96 @@ fn version() -> Outcome {
     }
 }
 
+/// A Windows GUI program starts with no console. Run from a terminal, it takes the terminal's
+/// console for whichever standard handles are not already redirected (to a pipe or a file), so the
+/// subcommands print as before. The terminal does not wait for a GUI program: its prompt may come
+/// back before the output.
+#[cfg(windows)]
+fn attach_parent_console() {
+    use std::ffi::c_void;
+    const ATTACH_PARENT_PROCESS: u32 = u32::MAX;
+    const STD_INPUT_HANDLE: u32 = -10i32 as u32;
+    const STD_OUTPUT_HANDLE: u32 = -11i32 as u32;
+    const STD_ERROR_HANDLE: u32 = -12i32 as u32;
+    const GENERIC_READ: u32 = 0x8000_0000;
+    const GENERIC_WRITE: u32 = 0x4000_0000;
+    const FILE_SHARE_READ: u32 = 1;
+    const FILE_SHARE_WRITE: u32 = 2;
+    const OPEN_EXISTING: u32 = 3;
+    const INVALID_HANDLE_VALUE: *mut c_void = -1isize as *mut c_void;
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn AttachConsole(process: u32) -> i32;
+        fn GetStdHandle(which: u32) -> *mut c_void;
+        fn SetStdHandle(which: u32, handle: *mut c_void) -> i32;
+        fn CreateFileW(
+            name: *const u16,
+            access: u32,
+            share: u32,
+            security: *const c_void,
+            disposition: u32,
+            flags: u32,
+            template: *mut c_void,
+        ) -> *mut c_void;
+    }
+    let missing = |which: u32| {
+        // SAFETY: GetStdHandle only reads the process's standard handle table.
+        let h = unsafe { GetStdHandle(which) };
+        h.is_null() || h == INVALID_HANDLE_VALUE
+    };
+    let (input, output, error) = (
+        missing(STD_INPUT_HANDLE),
+        missing(STD_OUTPUT_HANDLE),
+        missing(STD_ERROR_HANDLE),
+    );
+    if !(input || output || error) {
+        return;
+    }
+    // SAFETY: attaching fails harmlessly when the parent has no console (a double-click).
+    if unsafe { AttachConsole(ATTACH_PARENT_PROCESS) } == 0 {
+        return;
+    }
+    let open = |name: &str, access: u32| {
+        let wide: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
+        // SAFETY: a valid NUL-terminated name; the handle stays open for the process's life.
+        unsafe {
+            CreateFileW(
+                wide.as_ptr(),
+                access,
+                FILE_SHARE_READ | FILE_SHARE_WRITE,
+                std::ptr::null(),
+                OPEN_EXISTING,
+                0,
+                std::ptr::null_mut(),
+            )
+        }
+    };
+    let set = |which: u32, handle: *mut c_void| {
+        if handle != INVALID_HANDLE_VALUE {
+            // SAFETY: installs a console handle opened above as this process's standard handle.
+            unsafe { SetStdHandle(which, handle) };
+        }
+    };
+    if output || error {
+        let out = open("CONOUT$", GENERIC_READ | GENERIC_WRITE);
+        if output {
+            set(STD_OUTPUT_HANDLE, out);
+        }
+        if error {
+            set(STD_ERROR_HANDLE, out);
+        }
+    }
+    if input {
+        set(
+            STD_INPUT_HANDLE,
+            open("CONIN$", GENERIC_READ | GENERIC_WRITE),
+        );
+    }
+}
+
 fn main() {
+    #[cfg(windows)]
+    attach_parent_console();
     // Before anything records: replays carry this source, and `Verify` and the reuse of a
     // recorded bundle's compiled modules compare it (versions.md 3.1, replay.md 2.4).
     if let Err(v) = amoris_runtime::install_engine_version!() {
