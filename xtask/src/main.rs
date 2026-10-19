@@ -1,9 +1,11 @@
 //! `cargo xtask`: the local check command, the definition of done (charter 3.7; docs/spec/checks.md),
-//! code generation (`gen`) and the web checker (`webcheck`). It links no engine crate: it drives
-//! cargo, the built `amoris` binary and Chrome as processes (architecture.md 4.15).
+//! code generation (`gen`), the web checker (`webcheck`) and the web export (`export-web`). It
+//! links no engine crate: it drives cargo, the built `amoris` binary and Chrome as processes
+//! (architecture.md 4.15).
 
 mod cli;
 mod config;
+mod export;
 mod files;
 mod machine;
 mod report;
@@ -16,7 +18,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-const COMMANDS: &[&str] = &["check", "gen", "webcheck"];
+const COMMANDS: &[&str] = &["check", "gen", "webcheck", "export-web"];
 
 /// The workspace root: the parent of xtask's manifest directory, which `cargo run` also passes at
 /// run time, so the built binary can be run directly (as `CARGO_MANIFEST_DIR=<root>/xtask xtask
@@ -43,6 +45,14 @@ fn main() -> ExitCode {
                 Err(p) => usage(&p),
             }
         }
+        Some("export-web") => {
+            let env = run::Env::new(&root);
+            match export::main(&env, &args[1..]) {
+                Ok(true) => ExitCode::SUCCESS,
+                Ok(false) => ExitCode::from(1),
+                Err(p) => usage(&p),
+            }
+        }
         Some(other) => usage(&cli::unknown("command", other, COMMANDS)),
         None => {
             eprintln!(
@@ -50,6 +60,7 @@ fn main() -> ExitCode {
             );
             eprintln!("cargo xtask gen [--check]");
             eprintln!("cargo xtask webcheck <page> --serve DIR [--isolation on|off] [--timeout S]");
+            eprintln!("cargo xtask export-web <project> [--out DIR] [--zip FILE]");
             ExitCode::from(2)
         }
     }

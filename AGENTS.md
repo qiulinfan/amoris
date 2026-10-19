@@ -241,6 +241,12 @@ credential cleanup. File-verification records remain local, including in that ar
   (`python3 -m http.server -d web 8090`) and open `/?package=projects/samples-anim/package.json`.
   Any edit to `amoris-assets/src/frame.rs` or `visual.rs` changes the render feed's `FORMAT`:
   rebuild and commit the viewport with it, or viewports refuse the host's frames.
+- `cargo xtask export-web <project> [--out DIR] [--zip FILE]` writes a game as a static WebGPU
+  folder (player page, game module, the committed viewport, the web package and assets) and its zip
+  for static hosts such as itch.io ([docs/spec/web-export.md](docs/spec/web-export.md));
+  `node tools/web_play_check.mjs <folder>` plays it in headless Chrome as the first-person seat.
+  WGSL must parenthesize a bitwise operator beside another binary one (Tint refuses what naga takes;
+  the `shaders` unit test checks it).
 - `node tools/web_bench.mjs <url> [s]` drives headless Chrome with WebGPU (`SHOT=`, `EVAL=`,
   `LOGS=1`; finds Chrome on macOS, Windows and Linux or takes `CHROME=`; on a hybrid-GPU Windows
   laptop Chrome picks the integrated GPU unless `CHROME_FLAGS=--force_high_performance_gpu`).
