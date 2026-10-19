@@ -8,14 +8,18 @@
 //! cargo run --release -p amoris-app --example blockcraft_water -- \
 //!     [--project ../amoris-samples/blockcraft] [--shots out/blockcraft-water] [--frames 1200] \
 //!     [--bench] [--views DIR]
-//! cargo run --release -p amoris-app --example blockcraft_water -- --sheet BEFORE AFTER OUT.png
+//! cargo run --release -p amoris-app --example blockcraft_water -- --sheet BEFORE AFTER OUT.png \
+//!     [VIEW...]
 //! ```
 //!
 //! `--views DIR` also writes the Smooth drawing from five fixed views 10 s after the break into DIR
 //! (`view-deep.png`: from over the ocean past the region's -z wall, the deep water inside it; `view-shallow.png`:
 //! the shore beside the breach; `view-close.png`: a metre over the water at the bank;
-//! `view-grazing.png`: along the sea from 0.7 m over it; `view-breach.png`: the fall into the pit).
-//! `--sheet` puts two such directories side by side, a row a view, before on the left.
+//! `view-grazing.png`: along the sea from 0.7 m over it; `view-breach.png`: the fall into the pit;
+//! `view-seam-far.png`, `view-seam-waterline.png` and `view-seam-above.png`: the region's edge and
+//! the sea past it from afar, from the waterline looking out and from overhead). `--sheet` puts two
+//! such directories side by side, a row a view (the views named after OUT, or all), before on the
+//! left.
 
 #![allow(clippy::disallowed_methods)] // a host reads the wall clock, outside any tick
 
@@ -98,13 +102,28 @@ fn gpu_cost(
 }
 
 /// The fixed views' names, in the sheet's order.
-const VIEWS: [&str; 5] = ["deep", "shallow", "close", "grazing", "breach"];
+const VIEWS: [&str; 8] = [
+    "deep",
+    "shallow",
+    "close",
+    "grazing",
+    "breach",
+    "seam-far",
+    "seam-waterline",
+    "seam-above",
+];
 
-/// Two directories of views side by side, a row a view, each shot at half size.
-fn sheet(before: &str, after: &str, out: &str) {
+/// Two directories of views side by side, a row a view (`names`, or every view), each shot at
+/// half size.
+fn sheet(before: &str, after: &str, out: &str, names: &[String]) {
+    let names: Vec<&str> = if names.is_empty() {
+        VIEWS.to_vec()
+    } else {
+        names.iter().map(String::as_str).collect()
+    };
     let (w, h) = (W / 2, H / 2);
-    let mut img = image::RgbaImage::new(2 * w + 8, VIEWS.len() as u32 * (h + 8));
-    for (row, name) in VIEWS.iter().enumerate() {
+    let mut img = image::RgbaImage::new(2 * w + 8, names.len() as u32 * (h + 8));
+    for (row, name) in names.iter().enumerate() {
         for (col, dir) in [before, after].iter().enumerate() {
             let path = PathBuf::from(dir).join(format!("view-{name}.png"));
             let shot = image::open(&path)
@@ -120,13 +139,13 @@ fn sheet(before: &str, after: &str, out: &str) {
         }
     }
     img.save(out).expect("the sheet");
-    println!("sheet {out}: rows {VIEWS:?}, before on the left");
+    println!("sheet {out}: rows {names:?}, before on the left");
 }
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if let Some(i) = args.iter().position(|a| a == "--sheet") {
-        sheet(&args[i + 1], &args[i + 2], &args[i + 3]);
+        sheet(&args[i + 1], &args[i + 2], &args[i + 3], &args[i + 4..]);
         return;
     }
     let views = value(&args, "--views").map(PathBuf::from);
@@ -250,6 +269,22 @@ fn main() {
                     Vec3::new(b.x - 2.0, low(site.world[1]) - 0.1, b.z + 15.0),
                 ),
                 ("breach", cameras[1].1, cameras[1].2),
+                // The region's -x edge (x = -64) by the breach, and the sea past it.
+                (
+                    "seam-far",
+                    Vec3::new(-96.0, 40.0, 26.0),
+                    Vec3::new(-60.0, 29.0, -14.0),
+                ),
+                (
+                    "seam-waterline",
+                    Vec3::new(-58.0, low(site.world[1]) + 0.35, -4.0),
+                    Vec3::new(-120.0, low(site.world[1]) - 0.4, -16.0),
+                ),
+                (
+                    "seam-above",
+                    Vec3::new(-64.0, 62.0, -10.0),
+                    Vec3::new(-64.0, 29.0, -10.01),
+                ),
             ];
             for (name, eye, at) in place {
                 smooth.set_camera_override(Some(CameraState::look_at(eye, at)));

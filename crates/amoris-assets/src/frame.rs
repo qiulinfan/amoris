@@ -237,8 +237,9 @@ pub struct VoxelUpdate {
 }
 
 /// How a water region looks (water.md 9): the view from under its surface (linear colour and fog
-/// density per metre), its absorption and scattering per metre (linear rgb), and its style:
-/// `blocky` draws the surface flat over each block of `per` x `per` columns.
+/// density per metre), its absorption and scattering per metre (linear rgb), its style: `blocky`
+/// draws the surface flat over each block of `per` x `per` columns, and the still water drawn
+/// around it, metres (0: none).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct WaterLookView {
     pub fog: [f32; 4],
@@ -246,6 +247,7 @@ pub struct WaterLookView {
     pub scatter: [f32; 3],
     pub blocky: bool,
     pub per: u32,
+    pub surround_m: f32,
 }
 
 /// One tile of a water region (16 x 16 columns, x fastest): each column's surface (world y), depth

@@ -45,6 +45,9 @@ struct Uniform {
     /// Absorption and scattering per metre (rgb); w unused.
     absorb: [f32; 4],
     scatter: [f32; 4],
+    /// The surrounding water: its level (world y), how far it reaches and how far inside the
+    /// region's rectangle it starts, metres; w unused.
+    surround: [f32; 4],
 }
 
 /// A region as the renderer holds it.
@@ -60,6 +63,8 @@ struct Region {
     dirty: Vec<u32>,
     all_dirty: bool,
     gpu: Option<RegionGpu>,
+    /// Whether the water around it is drawn this frame.
+    surround_on: bool,
 }
 
 struct RegionGpu {
@@ -82,6 +87,27 @@ impl Region {
             .get(at as usize)
             .copied()
             .unwrap_or([f32::MIN, 0.0, 0.0, 0.0])
+    }
+
+    /// The level of the water drawn around the region: the mean surface of its wet edge columns.
+    fn edge_level(&self) -> Option<f32> {
+        let [nx, nz] = self.size;
+        let (mut sum, mut n) = (0.0f64, 0u32);
+        let mut take = |c: [f32; 4]| {
+            if c[1] > WET {
+                sum += f64::from(c[0]);
+                n += 1;
+            }
+        };
+        for i in 0..nx {
+            take(self.column(i, 0));
+            take(self.column(i, nz - 1));
+        }
+        for k in 1..nz.saturating_sub(1) {
+            take(self.column(0, k));
+            take(self.column(nx - 1, k));
+        }
+        (n > 0).then(|| (sum / f64::from(n)) as f32)
     }
 
     /// The column under world `(x, z)`.
@@ -149,6 +175,7 @@ fn pipeline(
 pub struct Water {
     smooth: wgpu::RenderPipeline,
     blocky: wgpu::RenderPipeline,
+    surround: wgpu::RenderPipeline,
     layout: wgpu::PipelineLayout,
     group_layout: wgpu::BindGroupLayout,
     regions: BTreeMap<u64, Region>,
@@ -199,6 +226,7 @@ impl Water {
         Water {
             smooth: pipeline(device, module, &layout, format, "vs_shallow"),
             blocky: pipeline(device, module, &layout, format, "vs_shallow_blocky"),
+            surround: pipeline(device, module, &layout, format, "vs_shallow_surround"),
             layout,
             group_layout,
             regions: BTreeMap::new(),
@@ -214,6 +242,7 @@ impl Water {
     ) {
         self.smooth = pipeline(device, module, &self.layout, format, "vs_shallow");
         self.blocky = pipeline(device, module, &self.layout, format, "vs_shallow_blocky");
+        self.surround = pipeline(device, module, &self.layout, format, "vs_shallow_surround");
     }
 
     /// Forgets every region the feed sent (a reset frame); the spike's field stays.
@@ -235,6 +264,7 @@ impl Water {
                 dirty: Vec::new(),
                 all_dirty: true,
                 gpu: None,
+                surround_on: false,
             });
             if r.size != u.size || r.columns.len() != (tiles * TILE * TILE) as usize {
                 r.size = u.size;
@@ -279,12 +309,14 @@ impl Water {
                 scatter: [0.02; 3],
                 blocky: false,
                 per: 1,
+                surround_m: 0.0,
             },
             columns: Vec::new(),
             tiled: false,
             dirty: Vec::new(),
             all_dirty: true,
             gpu: None,
+            surround_on: false,
         });
         (r.origin, r.cell_m, r.size) = (w.origin, w.cell_m, [w.nx, w.nz]);
         r.columns.clone_from(&w.columns);
@@ -359,6 +391,14 @@ impl Water {
             r.dirty.clear();
             r.all_dirty = false;
             let (a, s) = (r.look.absorb, r.look.scatter);
+            // Smooth water ends at its edge columns' centres, Blocky at the region's edge; the
+            // surrounding water starts a quarter column inside that, so the two overlap and no
+            // crack opens between them.
+            let inset = if r.look.blocky { 0.25 } else { 0.75 } * r.cell_m;
+            let surround = match r.edge_level() {
+                Some(level) if r.look.surround_m > 0.0 => [level, r.look.surround_m, inset, 0.0],
+                _ => [0.0; 4],
+            };
             let u = Uniform {
                 origin: r.origin,
                 cell: r.cell_m,
@@ -366,7 +406,9 @@ impl Water {
                 count: [nx, nz, u32::from(r.tiled), r.look.per.max(1)],
                 absorb: [a[0], a[1], a[2], 0.0],
                 scatter: [s[0], s[1], s[2], 0.0],
+                surround,
             };
+            r.surround_on = surround[1] > 0.0;
             queue.write_buffer(&g.uniform, 0, bytemuck::bytes_of(&u));
             if !r.look.blocky && !self.indices.contains_key(&r.size) {
                 let mut idx = Vec::with_capacity(((nx - 1) * (nz - 1) * 6) as usize);
@@ -406,6 +448,10 @@ impl Water {
                 pass.set_pipeline(&self.smooth);
                 pass.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..(nx - 1) * (nz - 1) * 6, 0, 0..1);
+            }
+            if r.surround_on {
+                pass.set_pipeline(&self.surround);
+                pass.draw(0..24, 0..1);
             }
         }
     }

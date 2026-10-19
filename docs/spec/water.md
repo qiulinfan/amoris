@@ -104,6 +104,7 @@ pub struct WaterLook {
     pub absorb: [f32; 3],        // absorption per metre, linear rgb (the drawing and the splashes)
     pub scatter: [f32; 3],       // scattering per metre, linear rgb (the drawing; 9)
     pub style: Style,            // Smooth, or Blocky: flat over each block (9)
+    pub surround_m: f32,         // still water drawn around the region, metres (0: none; 9)
 }
 
 pub enum Edge {
@@ -322,6 +323,13 @@ pub enum BedSource {
     from its shots;
   - Fresnel sky reflection, sun glints with the cascaded shadows, and foam streaks where it runs
     faster than 3 m/s.
+- **Surrounding water** (owner, 2026-10-18). With `look.surround_m` above 0, the renderer draws
+  still water around the region out to that many metres: four flat bands at the mean surface of the
+  region's wet edge columns, from a quarter column inside where the region's own surface ends (so
+  the two overlap and no crack opens), shaded by the same function as deep water, opaque. It is the
+  open water a game shows past its region, the same colour, glints and fog as the region's deep
+  water and at its level as that changes. Presentation only. Blockcraft draws 5 km of it in place of
+  its own ocean plane. A `Sea` (slice D) supersedes it where the analytic sea is drawn.
 - **Blocky.** With `look.style: Blocky`, the surface is drawn flat over each block of a `Voxels`
   bed, at the mean surface of its `per`² columns, with vertical sides where neighbouring blocks
   differ; over a `Colliders` bed, flat over each column. Only the drawing changes: the water

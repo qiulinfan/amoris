@@ -186,6 +186,9 @@ pub struct WaterLook {
     /// 9). The defaults make deep water the analytic sea's deep colour.
     pub scatter: [f32; 3],
     pub style: Style,
+    /// Metres of still water drawn around the region, at its edge's level and shaded as deep
+    /// water: the open water a game shows past its region (0: none; water.md 9).
+    pub surround_m: f32,
 }
 
 impl Default for WaterLook {
@@ -195,6 +198,7 @@ impl Default for WaterLook {
             absorb: [1.98, 0.38, 0.27],
             scatter: [0.02; 3],
             style: Style::Smooth,
+            surround_m: 0.0,
         }
     }
 }
@@ -432,6 +436,12 @@ impl WaterRegion {
             }
         }
         let look = &self.look;
+        if !(look.surround_m >= 0.0 && look.surround_m <= 10_000.0) {
+            return Err(invalid(
+                "look.surround_m",
+                format!("surround_m is 0 to 10000 metres, not {}", look.surround_m),
+            ));
+        }
         if !(look.fog.iter().chain(&look.absorb).all(|x| x.is_finite())
             && look
                 .absorb

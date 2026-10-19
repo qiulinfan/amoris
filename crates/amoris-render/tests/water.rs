@@ -98,6 +98,7 @@ fn region(blocky: bool, keys: &[[u32; 2]], f: fn(u32, u32) -> [f32; 4]) -> Water
             scatter: [0.02; 3],
             blocky,
             per: 2,
+            surround_m: 0.0,
         }),
         tiles: keys.iter().map(|k| tile(*k, f)).collect(),
     }

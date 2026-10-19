@@ -814,6 +814,7 @@ struct Shallow {
                           // 16 x 16 (else rows); w: columns to a block (Blocky)
     absorb: vec4f,        // absorption per metre, rgb
     scatter: vec4f,       // scattering per metre, rgb
+    surround: vec4f,      // the water drawn around: its level, its reach, its inset (metres)
 };
 
 @group(3) @binding(1) var<uniform> shallow: Shallow;
@@ -969,6 +970,43 @@ fn vs_shallow_blocky(@builtin(vertex_index) vi: u32) -> ShallowOut {
     o.depth = depth;
     o.speed = speed;
     o.steep = steep;
+    return o;
+}
+
+// The still water drawn around a region (water.md 9): four bands from the region's rectangle, inset
+// a little past where its own surface ends (they overlap), out to `surround.y` metres, at its edge's level and as deep water
+// (so `fs_shallow` gives it the body colour, opaque), with no flow. Twenty-four vertices.
+@vertex
+fn vs_shallow_surround(@builtin(vertex_index) vi: u32) -> ShallowOut {
+    let size = vec2f(shallow.count.xy) * shallow.cell;
+    let lo = shallow.origin + vec2f(shallow.surround.z);
+    let hi = shallow.origin + size - vec2f(shallow.surround.z);
+    let far = shallow.surround.y;
+    // Bands: -z and +z across the whole width, -x and +x between them.
+    let band = vi / 6u;
+    var a = vec2f(lo.x - far, lo.y - far);
+    var b = vec2f(hi.x + far, lo.y);
+    if (band == 1u) {
+        a = vec2f(lo.x - far, hi.y);
+        b = vec2f(hi.x + far, hi.y + far);
+    } else if (band == 2u) {
+        a = vec2f(lo.x - far, lo.y);
+        b = vec2f(lo.x, hi.y);
+    } else if (band == 3u) {
+        a = vec2f(hi.x, lo.y);
+        b = vec2f(hi.x + far, hi.y);
+    }
+    let q = vi % 6u;
+    let cu = select(0.0, 1.0, q == 1u || q == 2u || q == 4u);
+    let cv = select(0.0, 1.0, q == 2u || q == 4u || q == 5u);
+    let world = vec3f(mix(a.x, b.x, cu), shallow.surround.x, mix(a.y, b.y, cv));
+    var o: ShallowOut;
+    o.clip = view.view_proj * vec4f(world, 1.0);
+    o.world = world;
+    o.normal = vec3f(0.0, 1.0, 0.0);
+    o.depth = 1000.0;
+    o.speed = 0.0;
+    o.steep = 0.0;
     return o;
 }
 
