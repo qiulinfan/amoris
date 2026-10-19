@@ -254,3 +254,55 @@ fn under_a_regions_surface_the_view_is_its_fog() {
     );
     assert!(differing(&u, &a) > 0.5, "the fog changes the view");
 }
+
+#[test]
+fn surrounding_water_meets_the_regions_edge() {
+    let Some(gpu) = gpu() else { return };
+    // A region full to the brim at 1.9 m but for its -x edge columns, 3 cm lower: the surround
+    // stands at the edges' mean level, and the stitch joins it to each edge column's surface.
+    fn full(i: u32, _k: u32) -> [f32; 4] {
+        let s = if i == 0 { 1.87 } else { 1.9 };
+        [s, s - 1.0, 0.0, 0.0]
+    }
+    // From just over the water past the -x edge, looking along the edge and inward.
+    let (eye, at) = (Vec3::new(-3.0, 1.95, -2.0), Vec3::new(6.0, 1.85, 6.0));
+    for blocky in [false, true] {
+        let mut with = region(blocky, &ALL, full);
+        with.look.as_mut().unwrap().surround_m = 200.0;
+        let mut r = renderer(&gpu, eye, at);
+        r.apply(scene(1, vec![with], false), 0.0);
+        let surrounded = shoot(&mut r);
+        let mut bare = renderer(&gpu, eye, at);
+        bare.apply(scene(1, vec![region(blocky, &ALL, full)], false), 0.0);
+        let alone = shoot(&mut bare);
+        dump(
+            if blocky {
+                "surround-blocky"
+            } else {
+                "surround-smooth"
+            },
+            &surrounded,
+        );
+        // Below the horizon nothing but water: no pixel of the lower half is the bare sky's, as a
+        // frame with no water at all draws it (water reflecting the sky is not the same pixel).
+        let mut none = renderer(&gpu, eye, at);
+        none.apply(scene(1, vec![], false), 0.0);
+        let empty = shoot(&mut none);
+        let lower = |img: &[u8]| {
+            (H as usize / 2 + 8..H as usize)
+                .flat_map(|y| (0..W as usize).map(move |x| 4 * (x + W as usize * y)))
+                .filter(|&at| (0..3).all(|c| img[at + c].abs_diff(empty[at + c]) <= 2))
+                .count()
+        };
+        let (gaps, open) = (lower(&surrounded), lower(&alone));
+        eprintln!(
+            "blocky {blocky}: bare sky below the horizon {gaps} pixels with the surround, {open} \
+             without"
+        );
+        assert!(
+            open > 1000,
+            "without the surround the sky shows past the region: {open}"
+        );
+        assert_eq!(gaps, 0, "the surround and its stitch leave no gap");
+    }
+}

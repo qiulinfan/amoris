@@ -21,6 +21,9 @@ use crate::post::{DEPTH, SceneFormat};
 const TILE: u32 = 16;
 /// A column wetter than this is wet (the shader's `SHALLOW_WET`).
 const WET: f32 = 0.01;
+/// The width of the strip that joins a region's edge to the water around it, metres: its inner rim
+/// follows each edge column's surface, its outer rim the surrounding water's level (water.md 9).
+const STITCH_M: f32 = 4.0;
 
 /// One frame's water from the host (spike, docs/spikes/shallow-water.md): the grid's corner (world
 /// x, z), its column size, its column counts, and per column (x fastest) the surface (world y), the
@@ -45,8 +48,8 @@ struct Uniform {
     /// Absorption and scattering per metre (rgb); w unused.
     absorb: [f32; 4],
     scatter: [f32; 4],
-    /// The surrounding water: its level (world y), how far it reaches and how far inside the
-    /// region's rectangle it starts, metres; w unused.
+    /// The surrounding water: its level (world y), how far it reaches and the width of the
+    /// stitch strip joining it to the region's edge, metres, and 1 for a Blocky region.
     surround: [f32; 4],
 }
 
@@ -176,6 +179,7 @@ pub struct Water {
     smooth: wgpu::RenderPipeline,
     blocky: wgpu::RenderPipeline,
     surround: wgpu::RenderPipeline,
+    stitch: wgpu::RenderPipeline,
     layout: wgpu::PipelineLayout,
     group_layout: wgpu::BindGroupLayout,
     regions: BTreeMap<u64, Region>,
@@ -227,6 +231,7 @@ impl Water {
             smooth: pipeline(device, module, &layout, format, "vs_shallow"),
             blocky: pipeline(device, module, &layout, format, "vs_shallow_blocky"),
             surround: pipeline(device, module, &layout, format, "vs_shallow_surround"),
+            stitch: pipeline(device, module, &layout, format, "vs_shallow_stitch"),
             layout,
             group_layout,
             regions: BTreeMap::new(),
@@ -243,6 +248,7 @@ impl Water {
         self.smooth = pipeline(device, module, &self.layout, format, "vs_shallow");
         self.blocky = pipeline(device, module, &self.layout, format, "vs_shallow_blocky");
         self.surround = pipeline(device, module, &self.layout, format, "vs_shallow_surround");
+        self.stitch = pipeline(device, module, &self.layout, format, "vs_shallow_stitch");
     }
 
     /// Forgets every region the feed sent (a reset frame); the spike's field stays.
@@ -391,12 +397,13 @@ impl Water {
             r.dirty.clear();
             r.all_dirty = false;
             let (a, s) = (r.look.absorb, r.look.scatter);
-            // Smooth water ends at its edge columns' centres, Blocky at the region's edge; the
-            // surrounding water starts a quarter column inside that, so the two overlap and no
-            // crack opens between them.
-            let inset = if r.look.blocky { 0.25 } else { 0.75 } * r.cell_m;
             let surround = match r.edge_level() {
-                Some(level) if r.look.surround_m > 0.0 => [level, r.look.surround_m, inset, 0.0],
+                Some(level) if r.look.surround_m > 0.0 => [
+                    level,
+                    r.look.surround_m,
+                    STITCH_M.min(r.look.surround_m),
+                    if r.look.blocky { 1.0 } else { 0.0 },
+                ],
                 _ => [0.0; 4],
             };
             let u = Uniform {
@@ -452,6 +459,10 @@ impl Water {
             if r.surround_on {
                 pass.set_pipeline(&self.surround);
                 pass.draw(0..24, 0..1);
+                // The stitch: a quad a pair of neighbouring edge columns along each edge, and two
+                // triangles at each corner.
+                pass.set_pipeline(&self.stitch);
+                pass.draw(0..6 * (2 * (nx - 1) + 2 * (nz - 1) + 4), 0..1);
             }
         }
     }

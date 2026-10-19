@@ -324,12 +324,20 @@ pub enum BedSource {
   - Fresnel sky reflection, sun glints with the cascaded shadows, and foam streaks where it runs
     faster than 3 m/s.
 - **Surrounding water** (owner, 2026-10-18). With `look.surround_m` above 0, the renderer draws
-  still water around the region out to that many metres: four flat bands at the mean surface of the
-  region's wet edge columns, from a quarter column inside where the region's own surface ends (so
-  the two overlap and no crack opens), shaded by the same function as deep water, opaque. It is the
-  open water a game shows past its region, the same colour, glints and fog as the region's deep
-  water and at its level as that changes. Presentation only. Blockcraft draws 5 km of it in place of
-  its own ocean plane. A `Sea` (slice D) supersedes it where the analytic sea is drawn.
+  still water around the region out to that many metres, shaded by the same function as deep water:
+  the open water a game shows past its region, with the region's deep colour, glints and fog.
+  - Its level is the mean surface of the region's wet edge columns, so it follows the region's
+    water as that rises or falls.
+  - A stitch strip 4 m wide joins it to the region's edge. Its inner rim follows each edge column's
+    own surface, at the vertex the region draws there (Smooth: the column's centre; Blocky: the
+    block's level at the region's edge). Its outer rim lies at the uniform level, and the corners
+    are closed by fans. The region and the water around it then meet at every point however the edge
+    moves: after a breach the edge near it stands a few centimetres below the mean, and a single
+    level would leave a gap that grazing views see through.
+  - Past the stitch, four flat bands at the uniform level reach out to `surround_m`, starting a
+    quarter metre inside the stitch's outer rim so the two overlap.
+  - Presentation only. Blockcraft draws 5 km of it in place of its own ocean plane. A `Sea`
+    (slice D) supersedes it where the analytic sea is drawn.
 - **Blocky.** With `look.style: Blocky`, the surface is drawn flat over each block of a `Voxels`
   bed, at the mean surface of its `per`² columns, with vertical sides where neighbouring blocks
   differ; over a `Colliders` bed, flat over each column. Only the drawing changes: the water

@@ -973,14 +973,31 @@ fn vs_shallow_blocky(@builtin(vertex_index) vi: u32) -> ShallowOut {
     return o;
 }
 
-// The still water drawn around a region (water.md 9): four bands from the region's rectangle, inset
-// a little past where its own surface ends (they overlap), out to `surround.y` metres, at its edge's level and as deep water
-// (so `fs_shallow` gives it the body colour, opaque), with no flow. Twenty-four vertices.
+// The still water drawn around a region (water.md 9), at `surround.x` out to `surround.y` metres,
+// as deep water (so `fs_shallow` gives it the body colour, opaque), with no flow. Two parts:
+// - the stitch (`vs_shallow_stitch`): a strip `surround.z` metres wide along each edge, from the
+//   region's last surface (each edge column's own vertex, so the two meet exactly however the edge
+//   moves) out to the level, the corners closed by fans;
+// - the bands (`vs_shallow_surround`): from a quarter metre inside the stitch's outer rim (they
+//   overlap at the same level) out to the reach; twenty-four vertices.
+
+fn shallow_out(world: vec3f, depth: f32, speed: f32) -> ShallowOut {
+    var o: ShallowOut;
+    o.clip = view.view_proj * vec4f(world, 1.0);
+    o.world = world;
+    o.normal = vec3f(0.0, 1.0, 0.0);
+    o.depth = depth;
+    o.speed = speed;
+    o.steep = 0.0;
+    return o;
+}
+
 @vertex
 fn vs_shallow_surround(@builtin(vertex_index) vi: u32) -> ShallowOut {
     let size = vec2f(shallow.count.xy) * shallow.cell;
-    let lo = shallow.origin + vec2f(shallow.surround.z);
-    let hi = shallow.origin + size - vec2f(shallow.surround.z);
+    let rim = shallow.surround.z - 0.25;
+    let lo = shallow.origin - vec2f(rim);
+    let hi = shallow.origin + size + vec2f(rim);
     let far = shallow.surround.y;
     // Bands: -z and +z across the whole width, -x and +x between them.
     let band = vi / 6u;
@@ -999,15 +1016,91 @@ fn vs_shallow_surround(@builtin(vertex_index) vi: u32) -> ShallowOut {
     let q = vi % 6u;
     let cu = select(0.0, 1.0, q == 1u || q == 2u || q == 4u);
     let cv = select(0.0, 1.0, q == 2u || q == 4u || q == 5u);
-    let world = vec3f(mix(a.x, b.x, cu), shallow.surround.x, mix(a.y, b.y, cv));
-    var o: ShallowOut;
-    o.clip = view.view_proj * vec4f(world, 1.0);
-    o.world = world;
-    o.normal = vec3f(0.0, 1.0, 0.0);
-    o.depth = 1000.0;
-    o.speed = 0.0;
-    o.steep = 0.0;
-    return o;
+    return shallow_out(vec3f(mix(a.x, b.x, cu), shallow.surround.x, mix(a.y, b.y, cv)), 1000.0, 0.0);
+}
+
+// Edge column (i, k)'s last surface as the region draws it: Smooth, its vertex at the column's
+// centre; Blocky, its block's level, at the region's edge. Returns (height, depth, speed), and
+// where across the edge it lies (`inner`, metres from the region's rectangle, inward).
+fn shallow_edge(i: i32, k: i32) -> vec4f {
+    if (shallow.surround.w > 0.5) {
+        let per = i32(max(shallow.count.w, 1u));
+        let b = shallow_block(i / per, k / per);
+        return vec4f(b.x, b.y, length(b.zw), 0.0);
+    }
+    let c = shallow_vertex(i, k);
+    return vec4f(c.x, c.y, length(c.zw), 0.5 * shallow.cell);
+}
+
+@vertex
+fn vs_shallow_stitch(@builtin(vertex_index) vi: u32) -> ShallowOut {
+    let n = vec2i(shallow.count.xy);
+    let cell = shallow.cell;
+    let o = shallow.origin;
+    let size = vec2f(n) * cell;
+    let w = shallow.surround.z;
+    let level = shallow.surround.x;
+    let quad = i32(vi / 6u);
+    let q = vi % 6u;
+    let cu = select(0, 1, q == 1u || q == 2u || q == 4u);
+    let outer = q == 2u || q == 4u || q == 5u;
+    let along_x = n.x - 1;
+    let along_z = n.y - 1;
+    // Edges: -z, +z (along x), -x, +x (along z); then the four corners.
+    if (quad < 2 * along_x) {
+        let plus = quad >= along_x;
+        let i = quad % along_x + cu;
+        let k = select(0, n.y - 1, plus);
+        let e = shallow_edge(i, k);
+        let x = o.x + (f32(i) + 0.5) * cell;
+        let side = select(-1.0, 1.0, plus);
+        let edge_z = select(o.y, o.y + size.y, plus);
+        if (outer) {
+            return shallow_out(vec3f(x, level, edge_z + side * w), 1000.0, 0.0);
+        }
+        return shallow_out(vec3f(x, e.x, edge_z - side * e.w), e.y, e.z);
+    }
+    let rest = quad - 2 * along_x;
+    if (rest < 2 * along_z) {
+        let plus = rest >= along_z;
+        let k = rest % along_z + cu;
+        let i = select(0, n.x - 1, plus);
+        let e = shallow_edge(i, k);
+        let z = o.y + (f32(k) + 0.5) * cell;
+        let side = select(-1.0, 1.0, plus);
+        let edge_x = select(o.x, o.x + size.x, plus);
+        if (outer) {
+            return shallow_out(vec3f(edge_x + side * w, level, z), 1000.0, 0.0);
+        }
+        return shallow_out(vec3f(edge_x - side * e.w, e.x, z), e.y, e.z);
+    }
+    // Corner m: the corner column's surface, fanned out to the stitch's two outer rims and the
+    // corner between them: (0, 0) the column, (1, 0) the z edge's rim, (1, 1) the corner, (0, 1)
+    // the x edge's rim.
+    let m = rest - 2 * along_z;
+    let px = (m & 1) == 1;
+    let pz = (m & 2) == 2;
+    let i = select(0, n.x - 1, px);
+    let k = select(0, n.y - 1, pz);
+    let e = shallow_edge(i, k);
+    let sx = select(-1.0, 1.0, px);
+    let sz = select(-1.0, 1.0, pz);
+    let ex = select(o.x, o.x + size.x, px);
+    let ez = select(o.y, o.y + size.y, pz);
+    let cx = o.x + (f32(i) + 0.5) * cell;
+    let cz = o.y + (f32(k) + 0.5) * cell;
+    let inner = vec3f(select(cx, ex, shallow.surround.w > 0.5), e.x, select(cz, ez, shallow.surround.w > 0.5));
+    let cv = select(0, 1, outer);
+    if (cu == 0 && cv == 0) {
+        return shallow_out(inner, e.y, e.z);
+    }
+    var p = vec2f(ex + sx * w, ez + sz * w);
+    if (cu == 1 && cv == 0) {
+        p = vec2f(inner.x, ez + sz * w);
+    } else if (cu == 0 && cv == 1) {
+        p = vec2f(ex + sx * w, inner.z);
+    }
+    return shallow_out(vec3f(p.x, level, p.y), 1000.0, 0.0);
 }
 
 @fragment
