@@ -42,8 +42,9 @@ struct Uniform {
     time: f32,
     /// Columns along x and z, 1 when the columns are in tiles (else rows), columns to a block.
     count: [u32; 4],
-    /// Absorption per metre (rgb); w unused.
+    /// Absorption and scattering per metre (rgb); w unused.
     absorb: [f32; 4],
+    scatter: [f32; 4],
 }
 
 /// A region as the renderer holds it.
@@ -274,7 +275,8 @@ impl Water {
             size: [w.nx, w.nz],
             look: WaterLookView {
                 fog: [0.05, 0.16, 0.45, 0.12],
-                absorb: [0.9, 0.9, 0.9],
+                absorb: [1.98, 0.38, 0.27],
+                scatter: [0.02; 3],
                 blocky: false,
                 per: 1,
             },
@@ -356,13 +358,14 @@ impl Water {
             }
             r.dirty.clear();
             r.all_dirty = false;
-            let a = r.look.absorb;
+            let (a, s) = (r.look.absorb, r.look.scatter);
             let u = Uniform {
                 origin: r.origin,
                 cell: r.cell_m,
                 time: t,
                 count: [nx, nz, u32::from(r.tiled), r.look.per.max(1)],
                 absorb: [a[0], a[1], a[2], 0.0],
+                scatter: [s[0], s[1], s[2], 0.0],
             };
             queue.write_buffer(&g.uniform, 0, bytemuck::bytes_of(&u));
             if !r.look.blocky && !self.indices.contains_key(&r.size) {

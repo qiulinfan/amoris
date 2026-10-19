@@ -7,8 +7,15 @@
 //! ```sh
 //! cargo run --release -p amoris-app --example blockcraft_water -- \
 //!     [--project ../amoris-samples/blockcraft] [--shots out/blockcraft-water] [--frames 1200] \
-//!     [--bench]
+//!     [--bench] [--views DIR]
+//! cargo run --release -p amoris-app --example blockcraft_water -- --sheet BEFORE AFTER OUT.png
 //! ```
+//!
+//! `--views DIR` also writes the Smooth drawing from five fixed views 10 s after the break into DIR
+//! (`view-deep.png`: from over the ocean past the region's -z wall, the deep water inside it; `view-shallow.png`:
+//! the shore beside the breach; `view-close.png`: a metre over the water at the bank;
+//! `view-grazing.png`: along the sea from 0.7 m over it; `view-breach.png`: the fall into the pit).
+//! `--sheet` puts two such directories side by side, a row a view, before on the left.
 
 #![allow(clippy::disallowed_methods)] // a host reads the wall clock, outside any tick
 
@@ -90,8 +97,39 @@ fn gpu_cost(
         .collect()
 }
 
+/// The fixed views' names, in the sheet's order.
+const VIEWS: [&str; 5] = ["deep", "shallow", "close", "grazing", "breach"];
+
+/// Two directories of views side by side, a row a view, each shot at half size.
+fn sheet(before: &str, after: &str, out: &str) {
+    let (w, h) = (W / 2, H / 2);
+    let mut img = image::RgbaImage::new(2 * w + 8, VIEWS.len() as u32 * (h + 8));
+    for (row, name) in VIEWS.iter().enumerate() {
+        for (col, dir) in [before, after].iter().enumerate() {
+            let path = PathBuf::from(dir).join(format!("view-{name}.png"));
+            let shot = image::open(&path)
+                .unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+                .resize_exact(w, h, image::imageops::FilterType::Triangle)
+                .to_rgba8();
+            image::imageops::replace(
+                &mut img,
+                &shot,
+                i64::from(col as u32 * (w + 8)),
+                i64::from(row as u32 * (h + 8)),
+            );
+        }
+    }
+    img.save(out).expect("the sheet");
+    println!("sheet {out}: rows {VIEWS:?}, before on the left");
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    if let Some(i) = args.iter().position(|a| a == "--sheet") {
+        sheet(&args[i + 1], &args[i + 2], &args[i + 3]);
+        return;
+    }
+    let views = value(&args, "--views").map(PathBuf::from);
     let src = PathBuf::from(
         value(&args, "--project").unwrap_or_else(|| "../amoris-samples/blockcraft".into()),
     );
@@ -186,6 +224,48 @@ fn main() {
         block.apply(blocky(f.clone()), now);
         if bench {
             none.apply(dry(f), now);
+        }
+        if let Some(vdir) = views.as_ref().filter(|_| tick == breach::BREAK + 600) {
+            std::fs::create_dir_all(vdir).expect("the views' directory");
+            let low = |x: f64| x as f32;
+            let place = [
+                (
+                    "deep",
+                    Vec3::new(8.0, 42.0, -84.0),
+                    Vec3::new(8.0, 28.0, -58.0),
+                ),
+                (
+                    "shallow",
+                    b + Vec3::new(-6.0, 6.0, 12.0),
+                    b + Vec3::new(2.0, -1.0, 6.0),
+                ),
+                (
+                    "close",
+                    b + Vec3::new(-1.5, 1.6, 3.0),
+                    b + Vec3::new(0.5, -1.0, 1.0),
+                ),
+                (
+                    "grazing",
+                    Vec3::new(b.x - 8.0, low(site.world[1]) + 0.55, b.z - 15.0),
+                    Vec3::new(b.x - 2.0, low(site.world[1]) - 0.1, b.z + 15.0),
+                ),
+                ("breach", cameras[1].1, cameras[1].2),
+            ];
+            for (name, eye, at) in place {
+                smooth.set_camera_override(Some(CameraState::look_at(eye, at)));
+                for _ in 0..8 {
+                    let _ = smooth.render(&view, now);
+                }
+                let (w, h, rgba) = smooth.capture_rgba(now);
+                image::save_buffer(
+                    vdir.join(format!("view-{name}.png")),
+                    &rgba,
+                    w,
+                    h,
+                    image::ColorType::Rgba8,
+                )
+                .expect("a PNG");
+            }
         }
         if shots.contains(&tick) {
             // The pit's water: its columns (two a block) over cells x + 2 ..= x + 9, z ..= z + 5.

@@ -813,6 +813,7 @@ struct Shallow {
     count: vec4u,         // x, y: columns along x and z; z: 1 when the columns are in tiles of
                           // 16 x 16 (else rows); w: columns to a block (Blocky)
     absorb: vec4f,        // absorption per metre, rgb
+    scatter: vec4f,       // scattering per metre, rgb
 };
 
 @group(3) @binding(1) var<uniform> shallow: Shallow;
@@ -995,8 +996,6 @@ fn fs_shallow(in: ShallowOut) -> @location(0) vec4f {
     let sun = view.sun_dir.xyz;
     let sun_lux = view.sun_dir.w * view.sun_color.rgb;
     let body_light = sh_irradiance(vec3f(0.0, 1.0, 0.0)) * 0.08 + sun_lux * max(sun.y, 0.0) * 0.012;
-    // The light the water scatters back: blue-green, brighter than the deep sea's.
-    let body = vec3f(0.05, 0.2, 0.24) * body_light * 6.0;
     let shadow = shadow_factor(in.world, n, dot(in.world - view.camera_pos.xyz,
         -vec3f(view.view[0].z, view.view[1].z, view.view[2].z)));
     var spec = vec3f(0.0);
@@ -1006,13 +1005,20 @@ fn fs_shallow(in: ShallowOut) -> @location(0) vec4f {
         spec = d_ggx(max(dot(n, h), 0.0), a) * v_smith(nv, nl, a) * f_schlick(vec3f(0.02),
             max(dot(v, h), 0.0)) * sun_lux * nl * shadow;
     }
-    // What lies under shows through shallow water, each channel by its absorption; deep water is
-    // its body's colour.
-    // The light that crosses it keeps the colours it absorbs least, so deeper water tints bluer.
-    let through = exp(-shallow.absorb.rgb * in.depth);
-    let mean = (through.r + through.g + through.b) / 3.0;
-    let opacity = 1.0 - mean;
-    let tint = clamp(through / max(mean, 1e-4), vec3f(0.3), vec3f(1.6));
+    // Light along the view ray through the water to the bed (no refraction is drawn, so the ray
+    // goes straight on): the column's depth over the cosine with the vertical, at most 1 / 0.15 of
+    // it at grazing angles. What lies under shows through by each channel's transmittance, the
+    // extinction being absorption plus scattering.
+    let extinction = shallow.absorb.rgb + shallow.scatter.rgb;
+    let path = in.depth / max(abs(v.y), 0.15);
+    let through = exp(-extinction * path);
+    let opacity = 1.0 - (through.r + through.g + through.b) / 3.0;
+    // The light the water scatters back (single scattering): its albedo s / (s + a) per channel
+    // times the light that reaches it, over the share of the path it does not let through. With
+    // the look's defaults (absorption (1.98, 0.38, 0.27), scattering 0.02 per metre) deep water is
+    // the sea's deep colour, (0.01, 0.05, 0.07) times the same light (fs_ocean).
+    let albedo = shallow.scatter.rgb / max(extinction, vec3f(1e-6));
+    let body = albedo * body_light * (1.0 - through);
     // White where the water runs fast or falls steeply (rapids, the sheet over a ledge).
     let steep = in.steep;
     // Patchy: a value noise over the surface (two octaves of hashed lattice values), so fast water
@@ -1031,7 +1037,7 @@ fn fs_shallow(in: ShallowOut) -> @location(0) vec4f {
     let foam = clamp(churn * 0.7 + smoothstep(0.4, 0.9, steep) * 0.85, 0.0, 1.0);
     let white = vec3f(0.85, 0.9, 0.92) * (body_light * 6.0 + sun_lux * max(sun.y, 0.0) * 0.25 * shadow);
     var alpha = max(opacity, f);
-    var c = body * tint * opacity * (1.0 - f) + sky * f + spec;
+    var c = body * (1.0 - f) + sky * f + spec;
     c = mix(c, white * max(alpha, 0.5), foam);
     alpha = mix(alpha, max(alpha, 0.8), foam);
     // Fade out at the waterline.

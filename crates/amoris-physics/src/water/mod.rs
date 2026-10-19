@@ -181,6 +181,10 @@ pub struct WaterLook {
     pub fog: [f32; 4],
     /// Absorption per metre, linear rgb (the drawing and the splashes).
     pub absorb: [f32; 3],
+    /// Scattering per metre, linear rgb: with `absorb`, the colour deep water scatters back,
+    /// `scatter / (scatter + absorb)` of the light, and its extinction, `scatter + absorb` (water.md
+    /// 9). The defaults make deep water the analytic sea's deep colour.
+    pub scatter: [f32; 3],
     pub style: Style,
 }
 
@@ -188,7 +192,8 @@ impl Default for WaterLook {
     fn default() -> Self {
         WaterLook {
             fog: [0.05, 0.16, 0.45, 0.12],
-            absorb: [0.9, 0.35, 0.2],
+            absorb: [1.98, 0.38, 0.27],
+            scatter: [0.02; 3],
             style: Style::Smooth,
         }
     }
@@ -427,8 +432,23 @@ impl WaterRegion {
             }
         }
         let look = &self.look;
-        if !(look.fog.iter().chain(&look.absorb).all(|x| x.is_finite())) {
-            return Err(invalid("look", "the look's values must be finite".into()));
+        if !(look.fog.iter().chain(&look.absorb).all(|x| x.is_finite())
+            && look
+                .absorb
+                .iter()
+                .chain(&look.scatter)
+                .all(|x| *x >= 0.0 && x.is_finite())
+            && look
+                .scatter
+                .iter()
+                .zip(&look.absorb)
+                .all(|(s, a)| s + a > 0.0))
+        {
+            return Err(invalid(
+                "look",
+                "the look's values must be finite, absorb and scatter not negative and not both 0"
+                    .into(),
+            ));
         }
         if self.tiles.is_empty() {
             return Ok(());

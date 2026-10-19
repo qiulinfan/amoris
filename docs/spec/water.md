@@ -102,6 +102,7 @@ pub struct WaterTile {
 pub struct WaterLook {
     pub fog: [f32; 4],           // the view from under the surface: linear colour, density per metre
     pub absorb: [f32; 3],        // absorption per metre, linear rgb (the drawing and the splashes)
+    pub scatter: [f32; 3],       // scattering per metre, linear rgb (the drawing; 9)
     pub style: Style,            // Smooth, or Blocky: flat over each block (9)
 }
 
@@ -309,7 +310,16 @@ pub enum BedSource {
 - **The renderer** draws a region as the spike did:
   - a vertex at each column's centre, shaded once (an index buffer);
   - dry vertices at their wet neighbours' mean surface;
-  - drawn in the transparent layer, transparent by depth through `look.absorb`;
+  - drawn in the transparent layer;
+  - its colour from absorption and scattering (owner, 2026-10-18): along the view ray, which runs
+    straight on since no refraction is drawn, the path through the water is the column's depth over
+    the cosine between the ray and the vertical (at most 1 / 0.15 of the depth at grazing angles).
+    What lies under shows through by `exp(-(absorb + scatter) · path)` per channel, and the water
+    scatters back `scatter / (absorb + scatter)` of the light reaching it, over the share of the
+    path it does not let through. So shallow water is clear and deep water takes its body colour.
+    The look's defaults (absorb 1.98, 0.38, 0.27; scatter 0.02) make deep water the analytic sea's
+    deep colour; blockcraft uses absorb 1.2, 0.3, 0.12 and scatter 0.1, 0.2, 0.4, a brighter blue
+    from its shots;
   - Fresnel sky reflection, sun glints with the cascaded shadows, and foam streaks where it runs
     faster than 3 m/s.
 - **Blocky.** With `look.style: Blocky`, the surface is drawn flat over each block of a `Voxels`

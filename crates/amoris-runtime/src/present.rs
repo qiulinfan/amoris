@@ -59,6 +59,7 @@ fn water_look(r: &WaterRegion) -> WaterLookView {
     WaterLookView {
         fog: r.look.fog,
         absorb: r.look.absorb,
+        scatter: r.look.scatter,
         blocky: r.look.style == Style::Blocky,
         per: match r.bed {
             BedSource::Voxels { per, .. } => per,
