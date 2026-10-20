@@ -35,6 +35,10 @@ pub struct Manifest {
     /// has no player layer.
     #[serde(default)]
     pub player: Option<crate::player::PlayerManifest>,
+    /// The game's icon, a square PNG in the project (`icon.png`): the packaged app's icon
+    /// (tools/package_game.py). Absent: the Amoris icon.
+    #[serde(default)]
+    pub icon: Option<String>,
 }
 
 fn default_rate() -> u32 {

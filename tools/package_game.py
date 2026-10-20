@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -23,6 +24,13 @@ def package(project, binary, output, name):
         raise ValueError("Build the native amoris executable before packaging")
     if not re.fullmatch(r"[A-Za-z][A-Za-z0-9 -]{0,63}", name):
         raise ValueError("Use a short application name containing letters, digits, spaces or hyphens")
+    # The game's own icon (project.toml `icon`), else the Amoris one.
+    manifest = tomllib.loads((project / "project.toml").read_text(encoding="utf-8"))
+    icon = ROOT / "assets/branding/amoris-icon-macos.png"
+    if manifest.get("icon"):
+        icon = (project / manifest["icon"]).resolve()
+        if not icon.is_relative_to(project) or not icon.is_file():
+            raise ValueError(f"project.toml icon {manifest['icon']!r} is not a file in the project")
     if output == project or output.is_relative_to(project):
         raise ValueError("Package output must be outside the game project")
     output.mkdir(parents=True, exist_ok=True)
@@ -52,7 +60,6 @@ def package(project, binary, output, name):
     if mac:
         iconset = output / (name + ".iconset")
         iconset.mkdir()
-        icon = ROOT / "assets/branding/amoris-icon-macos.png"
         for size in (16, 32, 128, 256, 512):
             for scale in (1, 2):
                 filename = f"icon_{size}x{size}" + ("@2x" if scale == 2 else "") + ".png"
