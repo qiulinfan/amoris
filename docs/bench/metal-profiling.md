@@ -68,6 +68,13 @@ motion-target write still fails with 458 affected pixels; the original threshold
 Raw traces, measurements and test logs belong under ignored `out/` or the separately authorized
 results archive. This document records the method and concise results only.
 
+Pass-boundary timestamps may overlap, including across consecutive render passes. The trace
+exports the sum of sampled pass intervals and their union coverage separately from the frame
+span. None of these measures hardware utilization or removes stalls inside an interval. The
+analysis tool derives sum and coverage from raw events, including older traces whose `busy_ms`
+field named the interval sum. The signed gap between frame spans can be negative when they
+overlap. Individual pass rows remain sampled interval durations, not isolated shader costs.
+
 ## Recorded runs
 
 Three interleaved rounds, 200,000 cubes, 1280x720, 4x MSAA, GTAO and occlusion off, 60 warm-up

@@ -77,7 +77,7 @@ def gpu_rows(diff):
     rows = {}
     for line in diff.splitlines():
         parts = line.split()
-        for name in ("GPU busy", "GPU frame span", "opaque+sky"):
+        for name in ("GPU pass interval sum", "GPU interval coverage", "GPU frame span", "opaque+sky"):
             words = name.split()
             if parts[: len(words)] == words and len(parts) >= len(words) + 3:
                 rows[name] = tuple(float(x) for x in parts[len(words): len(words) + 3])

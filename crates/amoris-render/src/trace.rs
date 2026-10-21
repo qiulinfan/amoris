@@ -21,6 +21,8 @@
 //! - GPU spans: every timestamped pass of every recorded frame, read back by the profiler
 //!   (profiler.rs) with the frame it belongs to; while tracing the post chain is timed too
 //!   ("post"). A frame whose queries found no free readback buffer has no GPU spans (counted).
+//!   Pass intervals can overlap. Their sum and union coverage are reported separately from the
+//!   frame span; none measures hardware utilization or excludes stalls inside an interval.
 //! - Placing GPU time on the CPU timeline: wgpu 30 offers no CPU/GPU clock calibration, so the
 //!   trace measures one. Before the first recorded frame and after the last it submits a
 //!   timestamped compute pass to an idle GPU, eight times: its first timestamp lies between
@@ -551,6 +553,18 @@ pub fn lanes(spans: &[(f64, f64)]) -> Vec<usize> {
     out
 }
 
+/// Duration covered by at least one sampled interval, without counting overlaps twice.
+fn interval_coverage(mut spans: Vec<(f64, f64)>) -> f64 {
+    spans.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut end = f64::NEG_INFINITY;
+    let mut covered = 0.0;
+    for (s, e) in spans {
+        covered += (e - s.max(end)).max(0.0);
+        end = end.max(e);
+    }
+    covered
+}
+
 fn us(seconds: f64) -> f64 {
     (seconds * 1e9).round() / 1e3
 }
@@ -653,24 +667,29 @@ impl FrameTracer {
             };
             let mut lo = f64::INFINITY;
             let mut hi = f64::NEG_INFINITY;
-            let mut busy = 0.0;
+            let mut interval_sum = 0.0;
+            let mut intervals = Vec::new();
             for r in raws {
                 for s in &r.scopes {
                     let (b, e) = (to_cpu(gpu_s(s.begin)), to_cpu(gpu_s(s.end)));
                     lo = lo.min(b);
                     hi = hi.max(e);
-                    busy += (e - b).max(0.0);
+                    interval_sum += (e - b).max(0.0);
+                    intervals.push((b, e));
                     passes.push((rel(b), rel(e), s.label, index));
                 }
             }
+            let ms = |seconds: f64| (seconds * 1e6).round() / 1e3;
+            let coverage = interval_coverage(intervals);
             gpu_frames_spans.push((
                 rel(lo),
                 rel(hi),
-                json!({"frame": index, "busy_ms": (busy * 1e6).round() / 1e3}),
+                json!({"frame": index, "pass_interval_sum_ms": ms(interval_sum),
+                    "interval_coverage_ms": ms(coverage)}),
             ));
             events.push(json!({
-                "name": "GPU busy (ms)", "ph": "C", "pid": GPU_PID, "ts": us(rel(lo)),
-                "args": {"busy": (busy * 1e6).round() / 1e3},
+                "name": "GPU intervals (ms)", "ph": "C", "pid": GPU_PID, "ts": us(rel(lo)),
+                "args": {"sum": ms(interval_sum), "coverage": ms(coverage)},
             }));
         }
         let frame_lanes = lanes(
@@ -1036,7 +1055,8 @@ mod tests {
             (frame["ts"].as_f64().unwrap() - 5_000.0).abs() < 0.01,
             "{frame}"
         );
-        assert!((frame["args"]["busy_ms"].as_f64().unwrap() - 5.0).abs() < 1e-6);
+        assert!((frame["args"]["pass_interval_sum_ms"].as_f64().unwrap() - 5.0).abs() < 1e-6);
+        assert!((frame["args"]["interval_coverage_ms"].as_f64().unwrap() - 5.0).abs() < 1e-6);
         // The skipped frame's span and the unrecorded GPU frame 99 are not in the trace.
         assert_eq!(
             events
@@ -1055,6 +1075,41 @@ mod tests {
         assert_eq!(cpu[0]["name"], "frame");
         assert_eq!(cpu[1]["name"], "render");
         assert_eq!(cpu[2]["name"], "submit");
+    }
+
+    #[test]
+    fn export_distinguishes_interval_sum_coverage_and_frame_span() {
+        let t = tracer();
+        let raw = [RawFrame {
+            frame: 10,
+            scopes: [(1, 4), (2, 3), (3, 5), (6, 7)]
+                .into_iter()
+                .map(|(begin, end)| RawScope {
+                    label: "pass",
+                    begin,
+                    end,
+                })
+                .collect(),
+        }];
+        let v = t.export(ExportInput {
+            gpu: &raw,
+            period_ns: 1e6,
+            start_clock: None,
+            end_clock: None,
+            dropped: 0,
+            meta: Map::new(),
+        });
+        let events = v["traceEvents"].as_array().unwrap();
+        let frame = events.iter().find(|e| e["name"] == "GPU frame").unwrap();
+        assert_eq!(frame["args"]["pass_interval_sum_ms"], 7.0);
+        assert_eq!(frame["args"]["interval_coverage_ms"], 5.0);
+        assert!((frame["dur"].as_f64().unwrap() - 6000.0).abs() < 1e-6);
+        assert!(frame["args"].get("busy_ms").is_none());
+        let counter = events
+            .iter()
+            .find(|e| e["name"] == "GPU intervals (ms)")
+            .unwrap();
+        assert_eq!(counter["args"], json!({"sum": 7.0, "coverage": 5.0}));
     }
 
     #[test]

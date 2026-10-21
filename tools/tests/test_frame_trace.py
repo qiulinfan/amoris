@@ -52,9 +52,29 @@ class FrameTraceTests(unittest.TestCase):
         self.assertEqual(frame["frame interval"]["max"], 20.0)
         self.assertEqual([x["frame"] for x in s["spikes"]], [2])
         # Idle gaps 5.8 (frame 0's GPU work ends at 5.7 ms, frame 1's starts at 11.5), 14.8, 3.8.
-        idle = frame["GPU idle before frame"]
+        idle = frame["GPU frame gap"]
         self.assertAlmostEqual(idle["median"], 5.8, places=6)
         self.assertAlmostEqual(idle["min"], 3.8, places=6)
+
+    def test_overlapping_scopes_have_distinct_sum_coverage_and_span(self):
+        t = {"traceEvents": [
+            x("frame", 1, 0, 8000, 0),
+            x("GPU frame", 2, 1000, 6000, 0, busy_ms=999),
+            x("first", 2, 1000, 3000, 0),
+            x("nested", 2, 2000, 1000, 0),
+            x("overlap", 2, 3000, 2000, 0),
+            x("after gap", 2, 6000, 1000, 0),
+            x("frame", 1, 8000, 8000, 1),
+            x("GPU frame", 2, 6500, 2000, 1),
+            x("next", 2, 6500, 2000, 1),
+        ]}
+        rows, _ = frame_trace.analyze(t)
+        frame = rows["frame"]
+        self.assertEqual(frame["GPU pass interval sum"], [7.0, 2.0])
+        self.assertEqual(frame["GPU interval coverage"], [5.0, 2.0])
+        self.assertEqual(frame["GPU frame span"], [6.0, 2.0])
+        self.assertEqual(frame["GPU frame gap"], [-0.5])
+        self.assertNotIn("GPU busy", frame)
 
     def test_diff_gives_delta_and_ratio_per_row(self):
         a = frame_trace.stats(trace([4.0, 4.0, 4.0]))

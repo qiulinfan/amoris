@@ -11,8 +11,10 @@ frames on process 2, every event with its frame in `args.frame`. `stats` gives, 
 frames, per GPU pass (summed per frame when a pass repeats, as the shadow cascades do) and per
 CPU span: median, p95, minimum, maximum and spread (max - min) / median, in ms; the frame
 interval (one frame's CPU start to the next's) with its spikes (over 1.5 times the median); the
-GPU's busy time (sum of passes), its frame span (first pass start to last pass end), the idle gap
-between consecutive GPU frames, and the latency from a frame's submit to its GPU start. `diff`
+sum and union coverage of sampled GPU pass intervals, the frame span (first pass start to last
+pass end), the signed gap between consecutive GPU frames, and the latency from submit to GPU
+start. Pass intervals can overlap and include stalls; these values do not measure hardware
+utilization. A negative frame gap denotes overlapping frame spans. `diff`
 puts two traces side by side per row with B - A and B / A of the medians.
 """
 import argparse
@@ -53,6 +55,7 @@ def analyze(trace):
     gpu = defaultdict(lambda: defaultdict(float))
     frames = {}
     gpu_frames = {}
+    gpu_intervals = defaultdict(list)
     submits = {}
     for e in trace["traceEvents"]:
         if e.get("ph") != "X":
@@ -70,9 +73,10 @@ def analyze(trace):
                     submits[f] = e["ts"] + e["dur"]
         elif e["pid"] == 2:
             if e["name"] == "GPU frame":
-                gpu_frames[f] = (e["ts"], e["ts"] + e["dur"], e["args"].get("busy_ms"))
+                gpu_frames[f] = (e["ts"], e["ts"] + e["dur"])
             else:
                 gpu[e["name"]][f] += dur_ms
+                gpu_intervals[f].append((e["ts"], e["ts"] + e["dur"]))
     order = sorted(frames)
     rows = {"frame": {}, "cpu": {}, "gpu": {}}
     starts = [frames[f][0] for f in order]
@@ -80,9 +84,14 @@ def analyze(trace):
     rows["frame"]["frame interval"] = intervals
     rows["frame"]["CPU frame"] = [(frames[f][1] - frames[f][0]) / 1000.0 for f in order]
     g = sorted(gpu_frames)
-    rows["frame"]["GPU busy"] = [gpu_frames[f][2] for f in g]
+    # Derive from raw events, including traces whose old busy_ms summed overlapping scopes.
+    rows["frame"]["GPU pass interval sum"] = [
+        sum(max(0, b - a) for a, b in gpu_intervals[f]) / 1000.0
+        if gpu_intervals[f] else None for f in g]
+    rows["frame"]["GPU interval coverage"] = [
+        interval_coverage(gpu_intervals[f]) / 1000.0 if gpu_intervals[f] else None for f in g]
     rows["frame"]["GPU frame span"] = [(gpu_frames[f][1] - gpu_frames[f][0]) / 1000.0 for f in g]
-    rows["frame"]["GPU idle before frame"] = [
+    rows["frame"]["GPU frame gap"] = [
         (gpu_frames[b][0] - gpu_frames[a][1]) / 1000.0 for a, b in zip(g, g[1:]) if b == a + 1]
     rows["frame"]["submit to GPU start"] = [
         (gpu_frames[f][0] - submits[f]) / 1000.0 for f in g if f in submits]
@@ -94,6 +103,15 @@ def analyze(trace):
     spikes = [{"frame": order[i + 1], "ms": round(v, 3)} for i, v in enumerate(intervals)
               if med and v > 1.5 * med]
     return rows, spikes
+
+
+def interval_coverage(spans):
+    """Length of the union of sampled intervals; gaps and overlaps count zero."""
+    end, covered = float("-inf"), 0.0
+    for start, stop in sorted(spans):
+        covered += max(0, stop - max(start, end))
+        end = max(end, stop)
+    return covered
 
 
 def stats(trace):
