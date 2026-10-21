@@ -17,6 +17,9 @@ use crate::config::{CheckToml, Inputs};
 /// How a check builds a game of the project for a seed: `Game::new` for projects, a game with a
 /// defect for the Rust-side negative controls (checks.md 8.6).
 pub type Build = Arc<dyn Fn(&Arc<GameSetup>, u64) -> Result<Game, Problem> + Send + Sync>;
+/// Fresh replay construction carries host services, never a test's injected game defects.
+pub type ReplayBuild =
+    Arc<dyn Fn(&amoris_persist::replay::Replay) -> Result<Game, Problem> + Send + Sync>;
 
 /// A hash per tick: the start (tick 0) and every tick after it.
 pub type Chain = Vec<(TickRef, WorldHash)>;
@@ -33,6 +36,7 @@ pub struct Subject {
     /// The branch's own inputs, their ticks relative to the fork point.
     pub branch: Inputs,
     pub build: Build,
+    pub replay_build: ReplayBuild,
 }
 
 impl Subject {
@@ -65,6 +69,7 @@ impl Subject {
             inputs,
             branch,
             build: Arc::new(|setup, seed| Game::new(setup.clone(), seed)),
+            replay_build: Arc::new(Game::for_replay),
         })
     }
 

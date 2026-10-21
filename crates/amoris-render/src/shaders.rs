@@ -13,7 +13,8 @@ pub fn source(name: &str) -> String {
         "hiz" => include_str!("../shaders/hiz.wgsl"),
         "forward" => {
             return format!(
-                "{COMMON}\n{}\n{}",
+                "{COMMON}\n{}\n{}\n{}",
+                include_str!("../shaders/water_field.wgsl"),
                 include_str!("../shaders/probe_gi.wgsl"),
                 include_str!("../shaders/forward.wgsl")
             );
@@ -34,6 +35,21 @@ pub fn source(name: &str) -> String {
         "particles" => include_str!("../shaders/particles.wgsl"),
         "fluid_mpm" => include_str!("../shaders/fluid_mpm.wgsl"),
         "fluid_surface" => include_str!("../shaders/fluid_surface.wgsl"),
+        "water_compact" => include_str!("../shaders/water_compact.wgsl"),
+        "water_resolve" => include_str!("../shaders/water_resolve.wgsl"),
+        "water_medium" | "water_mesh" | "water_surface" => {
+            let body = match name {
+                "water_medium" => include_str!("../shaders/water_medium.wgsl"),
+                "water_mesh" => include_str!("../shaders/water_mesh.wgsl"),
+                _ => include_str!("../shaders/water_surface.wgsl"),
+            };
+            return format!(
+                "{COMMON}\n{}\n{}",
+                include_str!("../shaders/water_field.wgsl"),
+                body
+            );
+        }
+        "water_medium_copy" => include_str!("../shaders/water_medium_copy.wgsl"),
         "splat_sort" => include_str!("../shaders/splat_sort.wgsl"),
         "splat_depth" => include_str!("../shaders/splat_depth.wgsl"),
         "splat_preprocess" => {
@@ -135,6 +151,26 @@ pub fn compute_options() -> wgpu::PipelineCompilationOptions<'static> {
 mod tests {
     use naga::back::{hlsl, msl, spv};
     use naga::valid::{Capabilities, ValidationFlags, Validator};
+
+    #[test]
+    fn water_medium_shaders_validate_for_single_and_multisample_depth() {
+        for samples in [1, 4] {
+            for name in [
+                "water_compact",
+                "water_medium",
+                "water_medium_copy",
+                "water_mesh",
+                "water_surface",
+            ] {
+                let source = super::depth_source(name, samples);
+                let module = naga::front::wgsl::parse_str(&source)
+                    .unwrap_or_else(|e| panic!("{name}/{samples}: {}", e.emit_to_string(&source)));
+                Validator::new(ValidationFlags::all(), Capabilities::all())
+                    .validate(&module)
+                    .unwrap_or_else(|e| panic!("{name}/{samples}: {e:?}"));
+            }
+        }
+    }
 
     /// The vertex stages whose clip position the depth prepass and the forward pass must agree on
     /// (forward.wgsl; docs/spec/prepass.md 2).

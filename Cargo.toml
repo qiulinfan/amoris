@@ -83,6 +83,8 @@ winit = "0.30"
 foldhash = "=0.2.0"
 glam = { version = "0.33", features = ["bytemuck"] }
 bytemuck = { version = "1.25", features = ["derive"] }
+# Lossless resident checkpoint transport; bounded blocks, including wasm32, with checked Rust APIs.
+lz4_flex = { version = "=0.14.0", default-features = false, features = ["safe-encode", "safe-decode", "checked-decode"] }
 pollster = "0.4"
 # The neural texture encoder's BCn baseline (amoris-render's example only; architecture.md 6):
 # Intel's ISPC texture compressor with its prebuilt kernels, and a pure-Rust BCn decoder.

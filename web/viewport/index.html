@@ -16,6 +16,7 @@
 <div id="hud">loading…</div>
 <script type="module">
 // Modes: ?demo=cubes[&count=N][&dense] draws Bevy's many_cubes layouts in the browser;
+// ?demo=water[&case=pool|rapids|fall][&foam=off][&t=3] the shared analytic water-rendering lab;
 // ?demo=mixed[&n=8] a grid of every mesh kind and pipeline variant under cascaded shadows;
 // ?demo=occluders the occlusion culling check's scene (docs/spec/occlusion.md);
 // ?demo=neural&ntex=neural/bricks.ntex[&view=0|1][&precision=f32] a ground drawn with a neural
@@ -23,8 +24,9 @@
 // ?occlusion=off|on|auto sets occlusion culling (auto by default);
 // ?prepass=off|on|auto sets the depth prepass (auto by default; docs/spec/prepass.md);
 // ?shadow_cull=off|on sets the shadow cascades' slice culling (on by default; docs/spec/occlusion.md 11);
+// ?water_cull=off|on compares current-field water patch masking (on by default; docs/spec/water.md 29);
 // ?splashes=off|on sets the splashes over block liquids (on by default; docs/spec/splashes.md 6);
-// ?in_flight=N lets at most N frames be on the GPU (no limit by default; docs/bench/polish.md 3);
+// ?in_flight=N lets at most N frames be on the GPU (default 2, 0 unbounded; docs/bench/polish.md 3);
 // ?demo=lod[&n=48][&spacing=6][&detail=6][&t=0][&fly] the levels-of-detail field (docs/spec/lod.md),
 // its camera at t (0..1) or, with fly, walking from the corner to the middle over 600 frames;
 // ?lod=off|on forces every instance's full mesh or picks levels (on by default);
@@ -49,12 +51,14 @@ try {
     assetsUrl: q.get("assets") || "/assets/",
     gpuMinimal: q.get("gpu_minimal") || undefined,
     beforeFrame: (api, frame) => {
+      if (q.get("demo") === "water") api.demoWaterTick(q.has("t") ? Math.min(frame, Math.round(Number(q.get("t")) * 60)) : frame);
       if (q.get("demo") === "cubes") api.demoCubesCamera(frame, dense);
       if (q.get("demo") === "lod" && q.has("fly")) api.demoLodCamera(lodField[0], lodField[1], (frame % 600) / 599);
       if (q.get("demo") === "aa" && (q.has("moving") || q.has("pan"))) api.demoAaTick(frame, q.has("pan"));
     },
   });
   if (q.get("demo") === "cubes") vp.demoCubes(Number(q.get("count") || 1600000), dense);
+  if (q.get("demo") === "water") vp.demoWater(q.get("case") || "rapids", q.get("foam") !== "off");
   if (q.get("demo") === "mixed") vp.demoMixed(Number(q.get("n") || 8));
   if (q.get("demo") === "transparent") vp.demoTransparent(Number(q.get("n") || 8));
   if (q.get("demo") === "occluders") vp.demoOccluders();
@@ -71,6 +75,7 @@ try {
   if (q.get("occlusion")) vp.setOcclusion(q.get("occlusion"));
   if (q.get("prepass")) vp.setPrepass(q.get("prepass"));
   if (q.get("shadow_cull")) vp.setShadowCull(q.get("shadow_cull"));
+  if (q.get("water_cull")) vp.setWaterCulling(q.get("water_cull") !== "off");
   if (q.get("splashes")) vp.setSplashes(q.get("splashes"));
   if (q.has("in_flight")) vp.raw.set_max_frames_in_flight(Number(q.get("in_flight")));
   if (q.get("lod")) vp.setLod(q.get("lod"));

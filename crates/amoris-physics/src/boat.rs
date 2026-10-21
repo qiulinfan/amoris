@@ -46,7 +46,7 @@ pub struct BuoyPoint {
     pub size: f64,
 }
 
-/// A body the sea holds up and drags: Archimedes at each point under the surface, and drag toward
+/// A body water holds up and drags: Archimedes at each point under the surface, and drag toward
 /// the water's own motion there (`drag` along the surface, `heave` up and down, per kilogram of
 /// water displaced and m/s of relative speed). `submerged` is the share of the points' volume
 /// under water at the start of the last tick (written by `physics.buoyancy`).

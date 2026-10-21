@@ -44,13 +44,15 @@ pub struct Viewport {
     /// A frame failed to decode (logged once).
     frame_error: bool,
     /// Frames submitted and not yet done on the GPU (counted only under a limit), and the most
-    /// allowed (0: no limit, the default; `set_max_frames_in_flight`).
+    /// allowed (2 by default; 0: no limit; `set_max_frames_in_flight`).
     in_flight: Arc<AtomicU32>,
     max_in_flight: u32,
     /// The last frame's stats, which a skipped call answers again (marked `skipped`).
     last_stats: String,
     /// The first-person look (yaw, pitch) of `first_person`, once the walker's camera is known.
     look: Option<(f32, f32)>,
+    /// Controlled compute/readback QA, separate from the browser game worker.
+    water_probe: Option<amoris_render::water_samples::WaterSamples>,
 }
 
 #[wasm_bindgen]
@@ -97,9 +99,10 @@ impl Viewport {
             assets,
             frame_error: false,
             in_flight: Arc::new(AtomicU32::new(0)),
-            max_in_flight: 0,
+            max_in_flight: 2,
             last_stats: "{}".into(),
             look: None,
+            water_probe: None,
         })
     }
 
@@ -283,7 +286,6 @@ impl Viewport {
             .collect();
     }
 
-    /// Draws from the scene's active camera again.
     /// A first-person game's seat in the page (web/player; the native window's `SeatWalk`,
     /// voxels.md 8): draws from the walker's camera as the world last published it, turned at once
     /// by the page's own look so looking never waits on a tick. `dx`, `dy` are the mouse's movement
@@ -396,16 +398,12 @@ impl Viewport {
         self.renderer.resize(width, height);
     }
 
-    /// How many frames the page may have on the GPU at once; 0 (the default) for no limit
-    /// (docs/bench/polish.md 3). A page whose frame loop is not held to the display (Chrome
-    /// without vsync or a frame-rate limit, as the benchmarks run it) otherwise submits 300 to 370
-    /// frames ahead of Chrome's GPU process, and every readback (the entity-id pass, the GPU
-    /// timestamps, occlusion culling's counters) waits behind them, up to seconds; held to the
-    /// display it answers in two or three frames, as natively, where the swap chain bounds the same
-    /// queue. With a limit of 2 to 4 an uncapped page's readbacks answered in 3 to 7 frames, but it
-    /// drew 3 to 10 times fewer frames, and in some runs nearly none for seconds (Chrome's
-    /// `onSubmittedWorkDone`, which counts the frames done, then answered after hundreds of
-    /// milliseconds), so no limit is the default.
+    /// Frames submitted but not completed: 2 by default, 0 explicitly opts into an unbounded
+    /// throughput experiment. Unbounded uncapped rendering also starves GPU physics on the worker:
+    /// the M5 water-worker check measured about 750 ms maps, versus below 2 ms with two in flight
+    /// or display pacing. Earlier Windows uncapped experiments (polish.md 3) found completion
+    /// stalls under a cap; keep those platform limits explicit and measure displayed throughput,
+    /// rather than using arbitrarily far-ahead submissions as a gameplay default.
     pub fn set_max_frames_in_flight(&mut self, n: u32) {
         self.max_in_flight = n;
     }
@@ -511,6 +509,178 @@ impl Viewport {
             .set_camera_override(Some(amoris_render::demo::lod_field_camera(n, spacing, t)));
     }
 
+    /// Optical quality controls shared with the native renderer.
+    pub fn set_water_culling(&mut self, on: bool) {
+        self.renderer.set_water_culling(on);
+    }
+    pub fn water_ledge_stats(&self) -> js_sys::Promise {
+        let future = self.renderer.water_ledge_readback();
+        wasm_bindgen_futures::future_to_promise(async move {
+            let values = future.await.map_err(|e| JsValue::from_str(&e))?;
+            let data = values
+                .into_iter()
+                .map(|(id, stats)| serde_json::json!({"id":id.to_string(),"stats":stats}))
+                .collect::<Vec<_>>();
+            serde_json::to_string(&data)
+                .map(|s| JsValue::from_str(&s))
+                .map_err(|e| JsValue::from_str(&e.to_string()))
+        })
+    }
+    pub fn water_spray_stats(&self) -> js_sys::Promise {
+        let future = self.renderer.water_spray_readback();
+        wasm_bindgen_futures::future_to_promise(async move {
+            let values = future.await.map_err(|e| JsValue::from_str(&e))?;
+            let data = values
+                .into_iter()
+                .map(|(id, stats)| serde_json::json!({"id":id.to_string(),"stats":stats}))
+                .collect::<Vec<_>>();
+            serde_json::to_string(&data)
+                .map(|s| JsValue::from_str(&s))
+                .map_err(|e| JsValue::from_str(&e.to_string()))
+        })
+    }
+    pub fn water_mesh_stats(&self) -> js_sys::Promise {
+        let future = self.renderer.water_mesh_readback();
+        wasm_bindgen_futures::future_to_promise(async move {
+            let values = future.await.map_err(|e| JsValue::from_str(&e))?;
+            let values = values
+                .into_iter()
+                .map(|(id, stats)| serde_json::json!({"id":id.to_string(),"stats":stats}))
+                .collect::<Vec<_>>();
+            serde_json::to_string(&values)
+                .map(|s| JsValue::from_str(&s))
+                .map_err(|e| JsValue::from_str(&e.to_string()))
+        })
+    }
+
+    pub fn demo_water_mesh(&mut self, side: u32, field: &str, camera: &str, now_ms: f64) {
+        self.renderer.set_lod(amoris_render::LodMode::Off);
+        self.renderer.apply(
+            amoris_render::demo::water::mesh_scene(side, field),
+            now_ms / 1000.0,
+        );
+        self.renderer
+            .set_camera_override(Some(amoris_render::demo::water::mesh_camera(side, camera)));
+        self.renderer.set_water_foam(false);
+        self.renderer.set_prepass(amoris_render::PrepassMode::Off);
+        self.renderer
+            .set_occlusion(amoris_render::OcclusionMode::Off);
+    }
+
+    pub fn set_water_optics(&mut self, refraction: bool, reflection: bool, detail: bool) {
+        self.renderer
+            .set_water_optics(refraction, reflection, detail);
+    }
+
+    /// The native water lab's analytic fields, for actual browser shader and motion checks.
+    pub fn demo_water(&mut self, case: &str, foam: bool, now_ms: f64) {
+        self.renderer
+            .apply(amoris_render::demo::water::scene(case), now_ms / 1000.0);
+        self.renderer.set_water_foam(foam);
+        self.renderer.set_prepass(amoris_render::PrepassMode::Off);
+        self.renderer
+            .set_occlusion(amoris_render::OcclusionMode::Off);
+        self.renderer.set_camera_override(Some(CameraState::look_at(
+            Vec3::new(25.0, 5.0, 24.0),
+            Vec3::new(14.0, 1.4, 16.0),
+        )));
+    }
+
+    pub fn demo_water_tick(&mut self, tick: u32, now_ms: f64) {
+        self.renderer.apply(
+            amoris_assets::frame::RenderFrame {
+                tick: u64::from(tick) + 2,
+                t_s: f64::from(tick) / 60.0,
+                dt_s: 1.0 / 60.0,
+                ..Default::default()
+            },
+            now_ms / 1000.0,
+        );
+    }
+
+    /// Exercise resident compute and sparse mapping on the actual browser device. This does not
+    /// replace the game's CPU-authoritative tick. Read asynchronous results with water_probe_take.
+    pub fn water_probe_begin(&mut self, case: &str) -> Result<(), JsValue> {
+        use amoris_render::{
+            water_compute::GpuWater,
+            water_samples::{SampleStamp, WaterSamples},
+        };
+        if !["lake", "dam"].contains(&case) {
+            return Err(JsValue::from_str("unknown water probe case"));
+        }
+        let fail = |message: String| JsValue::from_str(&message);
+        if let Some(old) = &mut self.water_probe {
+            old.clear();
+        }
+        let gpu = self.renderer.gpu();
+        let mut field = GpuWater::new(&gpu.device, &gpu.queue, [32, 24]).map_err(fail)?;
+        let columns: Vec<_> = (0..32 * 24)
+            .map(|n| {
+                if case == "lake" {
+                    let bed = (n % 9) as f32 * 0.125;
+                    [bed, 2.0 - bed, 0.0, 0.0]
+                } else {
+                    [0.0, if n % 32 < 16 { 2.0 } else { 0.0 }, 0.0, 0.0]
+                }
+            })
+            .collect();
+        field
+            .upload(&columns, &vec![1; columns.len()])
+            .map_err(fail)?;
+        let mut samples = WaterSamples::new(&gpu.device, &gpu.queue, 6).map_err(fail)?;
+        let points = [
+            [16.5, 12.5],
+            [18.25, 10.75],
+            [-8.0, -2.0],
+            [999.0, 999.0],
+            [0.5, 0.5],
+            [16.5, 12.5],
+        ];
+        for tick in 1..=60 {
+            let mut encoder = gpu.device.create_command_encoder(&Default::default());
+            field
+                .encode(&mut encoder, 0.5, 1.0 / 240.0, 2, 0.02)
+                .map_err(fail)?;
+            if [10, 20, 60].contains(&tick) {
+                let accepted = samples
+                    .request(
+                        &mut encoder,
+                        &field,
+                        &points,
+                        SampleStamp { epoch: 1, tick },
+                    )
+                    .map_err(fail)?;
+                if accepted.is_none() {
+                    return Err(JsValue::from_str(
+                        "water probe unexpectedly exhausted its slots",
+                    ));
+                }
+            }
+            gpu.queue.submit([encoder.finish()]);
+            samples.after_submit();
+        }
+        self.water_probe = Some(samples);
+        Ok(())
+    }
+
+    /// JSON batches include their sampled tick; an empty array means no callback is ready yet.
+    pub fn water_probe_take(&mut self) -> String {
+        let batches: Vec<_> = self
+            .water_probe
+            .iter_mut()
+            .flat_map(|p| p.take_ready())
+            .map(|r| match r.columns {
+                Ok(columns) => {
+                    serde_json::json!({"request_id":r.request_id,"epoch":r.stamp.epoch,"tick":r.stamp.tick,"columns":columns})
+                }
+                Err(error) => {
+                    serde_json::json!({"request_id":r.request_id,"epoch":r.stamp.epoch,"tick":r.stamp.tick,"error":error})
+                }
+            })
+            .collect();
+        serde_json::to_string(&batches).unwrap_or_else(|_| "[]".into())
+    }
+
     /// Loads the mixed scene (every pipeline variant in every view; the draw paths' check).
     pub fn demo_mixed(&mut self, n: u32, now_ms: f64) {
         self.renderer.add_model(
@@ -563,8 +733,8 @@ impl Viewport {
         }
     }
 
-    /// Splashes over block liquids: `off` or `on` (the default; anything else leaves them as they
-    /// are; docs/spec/splashes.md 6).
+    /// Block-liquid splashes and field-driven dilute spray: `off` or `on` (the default;
+    /// anything else leaves the current choice). Physical water is unchanged.
     pub fn set_splashes(&mut self, mode: &str) {
         match mode {
             "off" => self.renderer.set_splashes(false),

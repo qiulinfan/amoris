@@ -28,7 +28,7 @@
 //! - **Publication.** After every tick, and after a boundary whose Write succeeded when no tick
 //!   follows at once. At most [`MAX_IN_FLIGHT`] `snap`s are unacknowledged: past that the worker
 //!   skips publication, never a tick, and posts the latest state when an `ack` comes. Each `snap`
-//!   carries the whole snapshot's canonical bytes (transferred), the events and every tick's world
+//!   carries a lossless section-delta frame (transferred), the events and every tick's world
 //!   hash since the previous `snap`, so a page that receives only the latest snapshot still has
 //!   every `TickHash` in order (threads-slice1.md 14).
 //! - **A poisoned world** halts the game, never stops it (threads.md 8): it has no snapshot of its
@@ -73,6 +73,8 @@ pub type Clock = Arc<dyn Fn() -> f64 + Send + Sync>;
 /// When the worker runs the loop again.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Next {
+    /// A system suspended this tick for host computation. No boundary commands run until resumed.
+    External,
     /// More work is due: yield to the message queue, then run (a `MessageChannel` post, since
     /// browsers clamp nested `setTimeout` to 4 ms).
     Now,
@@ -87,6 +89,7 @@ pub enum Next {
 impl Next {
     pub fn to_json(self) -> Value {
         match self {
+            Next::External => json!({"next":"external"}),
             Next::Now => json!({"next": "now"}),
             Next::At(t) => json!({"next": "at", "at": t}),
             Next::Command => json!({"next": "command"}),
@@ -99,7 +102,7 @@ impl Next {
 #[derive(Debug)]
 pub enum Out {
     Message(Value),
-    /// A `snap` and its snapshot's bytes, which the worker transfers.
+    /// A `snap` and its section-delta wire bytes, which the worker transfers.
     Snap(Value, Vec<u8>),
 }
 
@@ -137,6 +140,14 @@ pub struct TickTiming {
     pub step_ms: f64,
     pub publish_ms: f64,
     pub posted: bool,
+    pub external_ms: f64,
+}
+
+#[derive(Default)]
+struct WaitingTick {
+    active_ms: f64,
+    external_ms: f64,
+    since: Option<f64>,
 }
 
 /// The game role.
@@ -161,8 +172,12 @@ pub struct WorkerCore {
     dirty: bool,
     /// The last snapshot posted: what a halted world republishes.
     last: Option<Snapshot>,
+    snapshots: amoris_runtime::SnapshotCache,
+    transfer: amoris_link::snapshot_transfer::SnapshotSender,
     /// Every tick's world hash since the last `snap` posted.
-    hashes: Vec<(u64, String)>,
+    hashes: Vec<(u64, u64, String)>,
+    epoch: u64,
+    kept: amoris_runtime::kept::KeptSnapshots,
     last_hash: String,
     /// Events since the last `snap` posted, and the stream's last number.
     events: Vec<Value>,
@@ -176,6 +191,7 @@ pub struct WorkerCore {
     since_ms: f64,
     timings: VecDeque<TickTiming>,
     stopped: Option<Problem>,
+    waiting_tick: WaitingTick,
 }
 
 fn reply_json(source: Source, seq: u64, r: Result<Value, Problem>) -> Value {
@@ -213,7 +229,11 @@ impl WorkerCore {
             in_flight: 0,
             dirty: false,
             last: None,
+            snapshots: Default::default(),
+            transfer: Default::default(),
             hashes: Vec::new(),
+            epoch: 0,
+            kept: amoris_runtime::kept::KeptSnapshots::new(60, 120),
             last_hash: String::new(),
             events: Vec::new(),
             stream: 0,
@@ -223,10 +243,13 @@ impl WorkerCore {
             since_ms,
             timings: VecDeque::new(),
             stopped: None,
+            waiting_tick: Default::default(),
         };
-        let snap = w.game.snapshot()?;
+        let snap = w.snapshot()?;
         w.last_hash = snap.world_hash().to_string();
-        w.hashes.push((w.game.tick().0, w.last_hash.clone()));
+        w.hashes
+            .push((w.epoch, w.game.tick().0, w.last_hash.clone()));
+        w.kept.offer(&snap, true);
         w.out.push_back(Out::Message(
             json!({"t": "ready", "tick": w.game.tick().0, "version": 1}),
         ));
@@ -351,7 +374,7 @@ impl WorkerCore {
     /// publication was skipped meanwhile (a halted republication when the world is poisoned).
     pub fn ack(&mut self, _version: u64) {
         self.in_flight = self.in_flight.saturating_sub(1);
-        if self.dirty && self.stopped.is_none() {
+        if self.dirty && self.stopped.is_none() && !self.game.waiting() {
             self.publish();
         }
     }
@@ -393,8 +416,23 @@ impl WorkerCore {
         }
         let start = self.now();
         let next = loop {
+            if self.game.waiting() {
+                self.tick();
+                if self.stopped.is_some() {
+                    break Next::Quit;
+                }
+                if self.game.waiting() {
+                    break Next::External;
+                }
+                // Let the host extract the completed boundary before another GPU tick suspends.
+                // Otherwise a continuously catching-up game could keep its render feed frozen.
+                break Next::Now;
+            }
             if let Some(next) = self.boundary() {
                 break next;
+            }
+            if self.game.waiting() {
+                break Next::External;
             }
             if self.stopped.is_some() {
                 break Next::Quit;
@@ -429,7 +467,7 @@ impl WorkerCore {
             "waiting"
         };
         self.out.push_back(Out::Message(json!({
-            "t": "status", "state": state, "tick": self.game.tick().0, "since_ms": now - since,
+            "t": "status", "state": state, "tick": self.game.tick().0.saturating_sub(u64::from(self.game.waiting())), "since_ms": now - since,
         })));
     }
 
@@ -539,9 +577,34 @@ impl WorkerCore {
                 );
                 self.reply(source, seq, r);
             }
+            "snapshots.list" => {
+                let result = amoris_runtime::decode::<amoris_runtime::NoParams>(&e.params, "snapshots.list")
+                    .map(|_| self.kept.to_json());
+                self.reply(source, seq, result);
+            }
+            "snapshots.restore" => {
+                let result = amoris_runtime::decode::<amoris_runtime::SnapshotsRestoreParams>(&e.params, "snapshots.restore")
+                    .and_then(|p| self.kept.restore(&mut self.game, &p));
+                let result = result.and_then(|mut restored| {
+                    let why = Problem::new("snapshots.restored", "The world was restored; the step was dropped.", detail([]));
+                    self.cancel_steps(&why);
+                    self.epoch += 1;
+                    self.last_hash = self.game.world_hash()?.to_string();
+                    self.streamed = self.game.inbox().last().map(|e| e.seq.0);
+                    self.sent_bundle = None;
+                    self.running = None;
+                    self.timings.clear();
+                    self.waiting_tick = Default::default();
+                    self.publish();
+                    restored["epoch"] = json!(self.epoch);
+                    restored["tick"] = json!(self.game.tick().0);
+                    restored["world_hash"] = json!(self.last_hash);
+                    Ok(restored)
+                });
+                self.reply(source, seq, result);
+            }
             "snapshot" => {
                 let r = self
-                    .game
                     .snapshot()
                     .map(|s| ReplyValue::Snapshot(s).into_json());
                 self.reply(source, seq, r);
@@ -580,15 +643,24 @@ impl WorkerCore {
             return self.halt(&p);
         }
         let t0 = self.now();
-        let r = self.game.step();
+        if let Some(since) = self.waiting_tick.since.take() {
+            self.waiting_tick.external_ms += t0 - since;
+        }
+        let r = self.game.poll_step();
         let t1 = self.now();
+        self.waiting_tick.active_ms += t1 - t0;
+        if matches!(r, Ok(std::task::Poll::Pending)) {
+            self.waiting_tick.since = Some(t1);
+            return;
+        }
+        let timing = std::mem::take(&mut self.waiting_tick);
         // The tick ran, or began and poisoned the world: it counts against the model and the front
         // step at once, before the players' hooks ask the model again for what is owed.
         let front = self.steps.front_mut().map(|(left, _, _)| left);
         amoris_runtime::boundary::ran_tick(&mut self.model, front, t1);
         self.push_events();
         match r {
-            Ok(report) => {
+            Ok(std::task::Poll::Ready(report)) => {
                 if !self.steps.is_empty() {
                     let room = STEP_ERRORS.saturating_sub(self.errors.len());
                     self.errors.extend(report.errors.iter().take(room).cloned());
@@ -603,7 +675,8 @@ impl WorkerCore {
                     self.timings.pop_front();
                 }
                 self.timings.push_back(TickTiming {
-                    step_ms: t1 - t0,
+                    step_ms: timing.active_ms,
+                    external_ms: timing.external_ms,
                     publish_ms: t2 - t1,
                     posted,
                 });
@@ -616,6 +689,7 @@ impl WorkerCore {
                     self.reply(source, seq, r);
                 }
             }
+            Ok(std::task::Poll::Pending) => unreachable!(),
             Err(p) if self.game.sim().poisoned().is_some() => self.halt(&p),
             Err(p) => {
                 self.cancel_steps(&p);
@@ -681,17 +755,28 @@ impl WorkerCore {
         self.running = Some(false);
     }
 
+    fn snapshot(&mut self) -> Result<Snapshot, Problem> {
+        self.snapshots
+            .snapshot(self.game.world(), self.game.registry())
+    }
+
     /// The tick's hash into the stream, and a publication: posted when fewer than two are in
     /// flight, else skipped (the latest state goes at the next `ack`). Whether one was posted.
     fn after_tick(&mut self) -> bool {
         let tick = self.game.tick().0;
-        if self.in_flight < MAX_IN_FLIGHT {
-            match self.game.snapshot() {
+        if self.in_flight < MAX_IN_FLIGHT || self.kept.due(tick) {
+            match self.snapshot() {
                 Ok(snap) => {
                     self.last_hash = snap.world_hash().to_string();
-                    self.hashes.push((tick, self.last_hash.clone()));
-                    self.post(snap);
-                    true
+                    self.hashes.push((self.epoch, tick, self.last_hash.clone()));
+                    self.kept.offer(&snap, false);
+                    if self.in_flight < MAX_IN_FLIGHT {
+                        self.post(snap);
+                        true
+                    } else {
+                        self.dirty = true;
+                        false
+                    }
                 }
                 Err(p) => {
                     self.fatal(&p);
@@ -699,10 +784,10 @@ impl WorkerCore {
                 }
             }
         } else {
-            match self.game.world_hash() {
+            match self.snapshot().map(|s| s.world_hash()) {
                 Ok(h) => {
                     self.last_hash = h.to_string();
-                    self.hashes.push((tick, self.last_hash.clone()));
+                    self.hashes.push((self.epoch, tick, self.last_hash.clone()));
                     self.dirty = true;
                 }
                 Err(p) => self.fatal(&p),
@@ -717,6 +802,10 @@ impl WorkerCore {
     /// with the status's `halted` set and what was gathered since; no snapshot is ever built from
     /// a poisoned world.
     fn publish(&mut self) {
+        if self.game.waiting() {
+            self.dirty = true;
+            return;
+        }
         if self.in_flight >= MAX_IN_FLIGHT {
             self.dirty = true;
             return;
@@ -728,7 +817,7 @@ impl WorkerCore {
             }
             return;
         }
-        match self.game.snapshot() {
+        match self.snapshot() {
             Ok(snap) => self.post(snap),
             Err(p) => self.fatal(&p),
         }
@@ -762,7 +851,7 @@ impl WorkerCore {
             }
             self.stream += 1;
             self.streamed = Some(ev.seq.0);
-            fresh.push(json!({"seq": self.stream, "id": ev.seq, "event": ev}));
+            fresh.push(json!({"seq": self.stream, "id": ev.seq, "event": ev, "epoch": self.epoch}));
         }
         self.events.extend(fresh);
     }
@@ -773,9 +862,11 @@ impl WorkerCore {
         self.in_flight += 1;
         self.dirty = false;
         let h = snap.header();
-        let hashes: Vec<Value> = std::mem::take(&mut self.hashes)
+        let timeline = std::mem::take(&mut self.hashes);
+        let hash_epochs: Vec<u64> = timeline.iter().map(|(epoch, _, _)| *epoch).collect();
+        let hashes: Vec<Value> = timeline
             .into_iter()
-            .map(|(t, hash)| json!([t, hash]))
+            .map(|(_, t, hash)| json!([t, hash]))
             .collect();
         let mut meta = json!({
             "t": "snap",
@@ -789,6 +880,8 @@ impl WorkerCore {
             "events": std::mem::take(&mut self.events),
             "missed": 0,
             "hashes": hashes,
+            "epoch": self.epoch,
+            "hash_epochs": hash_epochs,
         });
         if self.sent_bundle != Some(h.bundle) {
             match self.game.registry_info() {
@@ -800,7 +893,12 @@ impl WorkerCore {
                 Err(p) => return self.fatal(&p),
             }
         }
-        self.out.push_back(Out::Snap(meta, snap.to_bytes()));
+        let bytes = match self.transfer.encode(self.version, &snap) {
+            Ok(bytes) => bytes,
+            Err(p) => return self.fatal(&p),
+        };
+        meta["snapshot_encoding"] = json!("sections-v1");
+        self.out.push_back(Out::Snap(meta, bytes));
         self.last = Some(snap);
     }
 }

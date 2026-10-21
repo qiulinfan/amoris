@@ -1,0 +1,16 @@
+{
+  "format": "amoris-scene",
+  "version": 1,
+  "entities": [
+    {"name": "Bed", "components": {"Voxels": {}}},
+    {"name": "Lake", "components": {
+      "Lake": {},
+      "WaterRegion": {
+        "solver": "gpu",
+        "cell_m": 1,
+        "size": [32, 32],
+        "bed": {"Voxels": {"volume": 1, "per": 1, "y_lo": 0, "y_hi": 0}}
+      }
+    }}
+  ]
+}

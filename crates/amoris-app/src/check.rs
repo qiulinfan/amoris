@@ -9,7 +9,7 @@ use std::time::Instant;
 
 use amoris_check::{
     CHECKS, Child, ChildAnswer, ChildRequest, Options, Report, Snapshot, Subject, TickRef,
-    VerifySummary, WorldHash, check_project, runs, unknown_check, verify_bytes,
+    VerifySummary, WorldHash, check_project_with, runs, unknown_check, verify_bytes_with,
 };
 use amoris_contract::{Problem, detail};
 use serde_json::{Value, json};
@@ -294,7 +294,7 @@ pub fn check(raw: &[String]) -> Outcome {
             amoris_server::typecheck::run_blocking(dir)
         })),
     };
-    let report = check_project(&dir, &opts);
+    let report = check_project_with(&dir, &opts, crate::water_compute::configure_subject);
     let code = report.exit_code();
     report_out(&report, json_out, code)
 }
@@ -308,10 +308,11 @@ fn problem_out(p: &Problem, code: i32) -> Outcome {
 
 /// The child form: the hash chain of a run of the first seed, or its snapshot at a tick.
 fn chain_only(dir: &Path, seeds: Option<&[u64]>, args: &Args) -> Outcome {
-    let subject = match Subject::load(dir) {
+    let mut subject = match Subject::load(dir) {
         Ok(s) => s,
         Err(p) => return problem_out(&p, 1),
     };
+    crate::water_compute::configure_subject(&mut subject);
     let seed = seeds
         .and_then(|s| s.first().copied())
         .unwrap_or(subject.config.run.seeds[0]);
@@ -371,7 +372,9 @@ pub fn replay(raw: &[String]) -> Outcome {
             );
         }
     };
-    match verify_bytes(&bytes) {
+    match verify_bytes_with(&bytes, |replay| {
+        amoris_runtime::Game::for_replay_with(replay, crate::water_compute::configure)
+    }) {
         Ok(s) => {
             let code = if s.identical { 0 } else { 1 };
             let stdout = if args.has("json") {
@@ -414,7 +417,7 @@ pub fn hashes(raw: &[String]) -> Outcome {
         let seed = args.number::<u64>("seed")?.unwrap_or(project.manifest.seed);
         let ticks = args.number::<u64>("ticks")?.unwrap_or(600);
         let inputs = amoris_check::Inputs::load(&dir, args.value("inputs"))?;
-        let mut g = amoris_runtime::Game::new(setup, seed)?;
+        let mut g = crate::water_compute::builder(setup, seed).build()?;
         let mut out = vec![json!(g.world_hash()?.to_string())];
         for _ in 0..ticks {
             out.push(json!(runs::advance(&mut g, &inputs)?.to_string()));

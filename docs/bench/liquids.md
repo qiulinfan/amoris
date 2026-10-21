@@ -143,3 +143,119 @@ frames after 60:
 The water adds about 0.55 ms to the opaque pass drawn Smooth and 0.4 ms drawn Blocky. The busy time
 varies by more than that from frame window to frame window (the shadow pass alone moves by 1 to 2
 ms), so it does not resolve the water's cost here. The feed's tiles upload is not timed apart.
+
+## 4. Full-readback GPU benchmark (2026-10-19)
+
+The native GPU execution slice ([water.md](../spec/water.md) 17). Apple M5, 10 GPU cores,
+macOS 27.0.1, Metal, release, local working tree. No concurrent builds or test processes during
+these three timing runs; the machine was not otherwise isolated (load average about 13 after
+compilation). These are local measurements, not a comparison with another engine.
+
+Method:
+
+```sh
+cargo build --release -p amoris-app --example gpu_water
+target/release/examples/gpu_water --ticks 40
+```
+
+The harness builds the same game twice with `solver` set to `cpu` or `gpu`. A region of 1 m
+columns starts with 2 m depth on its left half and dry columns on the right, with the sample's
+additional pour at tick 2. Every tile is awake throughout the measured window (ticks 11 to 50,
+less than the 60 ticks needed to sleep). Two substeps per tick. The paths alternate execution
+order, with 10 warmup ticks and 40 measured ticks per run; compilation, first device/pipeline
+creation, snapshots, feed extraction and drawing are outside the timer. The `physics.water`
+hook includes gathering, GPU packing/upload/submission/wait/readback/unpacking where selected,
+drying and sleep bookkeeping.
+
+The resident measurement is separate: the same grid size and two-substep kernel, initialized as a
+2 m dam, uploaded once and stepped without per-tick CPU water-state transfer. It sums the six
+GPU pass timestamps, with the existing profiler's deferred resolve on Metal. It excludes queue
+submission, CPU bookkeeping and inter-pass gaps; it is not the full tick's cost.
+
+Each cell below is the median of the three runs' medians, with the range of those medians in
+parentheses. Times are milliseconds.
+
+| Columns | CPU `physics.water` | GPU `physics.water` including transfers | Resident GPU passes |
+|---|---|---|---|
+| 128² | 0.612 (0.610 to 0.621) | 0.558 (0.544 to 0.564) | 0.030 (0.026 to 0.036) |
+| 256² | 2.520 (2.513 to 2.578) | 1.428 (1.402 to 1.543) | 0.073 (0.073 to 0.073) |
+| 512² | 12.087 (12.026 to 12.596) | 7.759 (5.890 to 7.995) | 0.217 (0.215 to 0.226) |
+
+The complete path improves by about 1.8x at 256² and 1.6x at 512²; 128² gains little. The 512²
+range is wide. Most of the GPU path's time is outside the kernels: this slice still uploads and
+reads every column in the active window each tick, then writes the f64 components back. Resident
+state, sparse queries, asynchronous game-worker integration and direct GPU drawing are covered
+separately in section 5; the small kernel number alone does not establish their performance.
+
+Correctness checks on this machine:
+
+- Metal, MoltenVK, and the Metal device restricted to WebGPU baseline features/limits: still lake
+  over an uneven bed, dam transport, nonnegative depths, conservation within f32 tolerance,
+  inactive boundaries and repeating a restored GPU field.
+- Actual CPU/GPU games, after 60 ticks: maximum water-depth difference 9.3e-7 m; GPU total volume
+  1023.999975 m³ versus 1024 m³ initially. Two-axis advection over uneven beds at world height
+  1,000,000 m also agrees within 2e-4 m or m/s, leaving persisted bed values unchanged.
+- Same-device game forks and restores continue with equal hashes. A host without the GPU service
+  stops with `water.compute_missing` and poisons the tick, rather than changing solvers.
+- `amoris check samples/water-dam`: types, same/cross-process determinism, fork, replay and reload
+  pass on Metal. Replay perturbation localization is not checked by this sample because it records
+  no external writes. The check crate's negative-control tests still reject unrecorded writes.
+- `amoris-render` and the game/check crates build for wasm32. This verifies the compute core's
+  build, not browser worker execution; no browser GPU timing or cross-vendor comparison was run.
+
+Raw CSV files and logs stay in ignored `out/water-gpu/`. R1, Direct3D 12 and browser runtime
+measurements remain unmeasured. GPU mode does not promise cross-device bitwise replay.
+
+## 5. Resident execution and interaction checks
+
+The published resident path is specified in water.md 19--45. Native and browser gameplay share
+complete checkpoints, bounded replay programs, GPU field digests and current-tick sparse queries.
+Full field transfers occur for explicit checkpoints rather than every gameplay observation.
+The renderer reconstructs its own visual replica; its solve submissions are outside per-frame
+GPU pass totals, so those totals must not be reported as the whole game's GPU solving cost.
+
+Methods:
+
+```sh
+cargo test -p amoris-render --test water_compute --test water_resident --test water_summary
+cargo test -p amoris-render --test water_samples --test water_reactions --test water_boundaries
+cargo test -p amoris-physics --test field_buoyancy --test field_hull --test resident_swimming
+cargo test -p amoris-app --test gpu_water --test gpu_floaters --test gpu_feedback --test gpu_swimming
+cargo test -p amoris-runtime --features transpile --test water_resident_async --test water_feedback
+cargo run --release -p amoris-app --example resident_water -- --frames 180
+```
+
+Run native tests on each available backend and with WebGPU baseline features/limits, using
+AMORIS_GPU_MINIMAL=features,limits,timestamps. Apple M5 Metal and baseline MoltenVK were verified
+locally. GPU determinism is scoped to the same execution environment; no cross-vendor replay
+claim follows from these checks. Performance remains a measured result, never a pass condition.
+
+The actual-browser checks use rebuilt paired game/viewport modules and tools/water_worker_check.mjs,
+water_resident_worker_check.mjs, water_probe_script_check.mjs and water_floater_check.mjs.
+The exported swimming validation game uses tools/water_pool_check.mjs: actual keyboard/mouse input,
+entry, underwater marker, resurfacing, dry return and explicit retry. Its instrumentation sums
+active step + external GPU wait + publication at the same retained tick index. Frame-delivery
+wall intervals and viewport rolling means are separate quantities, neither isolated GPU time.
+
+The pool's sleeping-column data rebind was checked against a fresh-host CPU control: 80 actor
+states remained identical while requests dropped from 80 to two. A fixed-input native comparison
+retained all 765 actor states and complete world hashes byte for byte. One historical M5 Chrome
+route measured complete-tick p50/p95 7.2/11.3 ms before rebind and 0.6/5.1 ms after; its real-time
+routes were not paired trajectories and do not establish a portable speedup. Captures retain
+start-up outliers. Raw evidence stays in ignored local output storage.
+
+## 6. Scope of the retained foundation
+
+The native/browser integration covers bounded advection and nonnegative depth transport, complete
+MAC outside faces, actual inlet/outlet receipts, characteristic/Sea boundary controls, checked
+fixed-collider beds, exact checkpoint reconstruction, cancellation, field ownership and dry masks,
+shared observation budgets, and force/reaction delivery before body integration. Existing tests
+use independent f64 flux graphs, analytic fields and force expectations rather than self-comparison
+alone. Resource reuse cannot skip individual historical steps or bypass digest verification.
+
+Field rendering retains mesh bounds/culling/LOD/morph, scene-aware refraction, camera medium,
+surface foam and dilute visual spray checks. These do not establish final beach quality, rolling
+breakers or dense waterfall physics. Floaters, Hull and Walker contact remain one-way except for
+explicit queued horizontal reactions. Occupied volume, vertical impacts, added mass and global
+fluid/body energy conservation are not implemented by this delivery. Unadopted 3D fluid/rigid
+pressure experiments and the unfinished surfing game are excluded.

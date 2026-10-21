@@ -11,7 +11,7 @@
 //   const r = await amoris.command(name, params, opts);  // resolves with the result, rejects with {code, message, detail}
 //   amoris.latest();                                     // {version, tick, writes, world_hash, time}
 //   amoris.onEvents((records, missed) => { ... });
-//   amoris.onTicks((hashes) => { ... });                 // [[tick, world hash], ...]: every tick, in order
+//   amoris.onTicks((hashes, epochs) => { ... });                 // [[tick, world hash], ...]: every tick, in order
 //   amoris.onRender((bytes) => viewport.pushFrame(bytes)); // the render feed's frames, for a viewport
 //   amoris.close();
 import initGlue, { Presenter } from "./pkg/amoris_web.js";
@@ -54,6 +54,7 @@ class Amoris {
     this.stopped = null;
     this.rebuildMs = [];
     this.transferMs = [];
+    this.snapshotBytes = 0;
     this.timeline = { created: performance.now() };
     this.workerOrigin = 0;
     this.requests = new Map();
@@ -119,6 +120,7 @@ class Amoris {
     this.unacked++;
     this.maxUnacked = Math.max(this.maxUnacked, this.unacked);
     const bytes = new Uint8Array(m.bytes);
+    this.snapshotBytes += bytes.byteLength;
     delete m.bytes;
     const r = JSON.parse(this.presenter.receive(JSON.stringify(m), bytes));
     const rebuilt = performance.now();
@@ -129,7 +131,7 @@ class Amoris {
     if (this.timeline.first_snapshot === undefined) this.timeline.first_snapshot = rebuilt;
     if (!r.error) this.info = { ...r, time: m.time };
     const hashes = JSON.parse(this.presenter.take_hashes());
-    if (hashes.length) for (const f of this.listeners.ticks) f(hashes);
+    if (hashes.length) for (const f of this.listeners.ticks) f(hashes, r.hash_epochs || []);
     if (m.events.length || m.missed) for (const f of this.listeners.events) f(m.events, m.missed);
     for (const f of this.listeners.snapshot) f(this.info, r);
     const ack = () => {

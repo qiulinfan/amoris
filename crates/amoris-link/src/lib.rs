@@ -4,7 +4,7 @@
 //! reply. Presenters (the renderer, the editor, the MCP server) link this crate instead of the game,
 //! so they cannot mutate the world by construction.
 //!
-//! Slice 1 leaves out the wire form of the web worker and network spectators (threads.md 7.2) and
+//! Section-delta snapshot transport serves the web worker (threads.md 7.2). The API leaves out
 //! `ReplyValue::Fork`, which only the runtime's worker pool would use.
 
 pub mod client;
@@ -14,6 +14,7 @@ pub mod logs;
 pub mod profile;
 pub mod reader;
 pub mod snapshot;
+pub mod snapshot_transfer;
 
 /// The tick a status names (for crates that see the game only through this one).
 pub use amoris_sim::Tick;

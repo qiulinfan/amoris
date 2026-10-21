@@ -108,10 +108,12 @@ dependencies = [
  "amoris-sim",
  "bevy_ecs",
  "bincode 2.0.1",
+ "blake3",
  "bytemuck",
  "glam 0.33.12",
  "gltf",
  "image",
+ "lz4_flex",
  "meshopt",
  "schemars",
  "serde",
@@ -225,6 +227,7 @@ dependencies = [
 name = "amoris-physics"
 version = "0.1.0"
 dependencies = [
+ "amoris-assets",
  "amoris-contract",
  "amoris-sim",
  "bevy_ecs",
@@ -244,6 +247,7 @@ version = "0.1.0"
 dependencies = [
  "amoris-assets",
  "ash",
+ "blake3",
  "bytemuck",
  "foldhash 0.2.0",
  "fontdue",
@@ -347,6 +351,7 @@ dependencies = [
  "glam 0.33.12",
  "js-sys",
  "log",
+ "serde_json",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
@@ -361,6 +366,7 @@ dependencies = [
  "amoris-check",
  "amoris-contract",
  "amoris-link",
+ "amoris-render",
  "amoris-runtime",
  "amoris-sim",
  "blake3",
@@ -368,6 +374,8 @@ dependencies = [
  "serde",
  "serde_json",
  "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "wgpu",
 ]
 
 [[package]]
@@ -2374,6 +2382,12 @@ name = "log"
 version = "0.4.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
+
+[[package]]
+name = "lz4_flex"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ecbdfe44b1bd960b68170b417450a628c43f7cf56bb3c5317e61cb230ee7f226"
 
 [[package]]
 name = "mach2"

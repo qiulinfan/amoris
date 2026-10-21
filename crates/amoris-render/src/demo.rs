@@ -3,6 +3,8 @@
 //! mixed scene whose draw batches cover every view and pipeline variant (the WebGPU baseline
 //! path's check, batches.rs).
 
+pub mod water;
+
 use std::collections::HashMap;
 
 use amoris_assets::frame::{
@@ -133,6 +135,7 @@ fn sunlit(instances: Vec<InstanceUpdate>, dir: Vec3, shadows: bool) -> RenderFra
         voxels_removed: vec![],
         water: vec![],
         water_removed: vec![],
+        resident_water: vec![],
         lights: Some(vec![LightView {
             id: 0,
             kind: LightKindView::Directional,

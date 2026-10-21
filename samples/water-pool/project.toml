@@ -1,0 +1,13 @@
+name = "Water Pool"
+rate = 60
+seed = 1
+
+[sounds]
+"pool.entered" = "sfx:blip"
+"pool.marker" = "sfx:coin"
+"pool.surfaced" = "sfx:blip"
+"pool.finished" = "sfx:powerup"
+
+[player]
+perception = "perception.json"
+actions = "first_person"

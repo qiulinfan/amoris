@@ -78,6 +78,8 @@ pub struct Sim {
     world: World,
     systems: Vec<Entry>,
     next_seq: u32,
+    /// A suspended system, never a boundary state. A restore rebuilds TickState and invalidates it.
+    resume: Option<(Tick, usize)>,
 }
 
 impl Sim {
@@ -103,6 +105,7 @@ impl Sim {
             world,
             systems: Vec::new(),
             next_seq: 0,
+            resume: None,
         };
         sim.push(
             "sim.begin",
@@ -208,7 +211,7 @@ impl Sim {
             .collect()
     }
 
-    /// The clock: the last completed tick, and the rate.
+    /// The clock: the completed tick at a boundary, or the current tick while a system is running.
     pub fn clock(&self) -> SimClock {
         *self.world.resource::<SimClock>()
     }
@@ -243,19 +246,49 @@ impl Sim {
         problem
     }
 
-    /// Runs exactly one tick. Never blocks, never waits for input, never reads the clock.
+    /// Runs one tick without waiting for host input itself. A synchronous host service may block
+    /// inside its system; an asynchronous service returns external_pending and uses poll_step.
     ///
     /// A failed invocation never stops the tick: it is in the report's `errors`. A panic in a
     /// system, a fault a system reports, a broken boundary invariant or a changed floating-point
     /// environment stops the tick there, poisons the world and answers with its problem; a
     /// poisoned world refuses with `sim.world_poisoned` until a snapshot is restored into it.
     pub fn step(&mut self, hooks: &mut dyn StepHooks) -> Result<StepReport, Problem> {
+        match self.poll_step(hooks)? {
+            std::task::Poll::Ready(report) => Ok(report),
+            std::task::Poll::Pending => Err(Problem::new(
+                "sim.external_pending",
+                "The tick awaits host computation; poll it after completing the request.",
+                detail([]),
+            )),
+        }
+    }
+
+    pub fn waiting(&self) -> bool {
+        self.resume.is_some()
+            && self.world.resource::<TickState>().running.is_some()
+            && self.poisoned().is_none()
+    }
+
+    /// Runs until a boundary or an explicitly suspended system. Waiting keeps TickState running,
+    /// so snapshots and boundary writes remain refused. Hooks bracket active work, not host waits.
+    pub fn poll_step(
+        &mut self,
+        hooks: &mut dyn StepHooks,
+    ) -> Result<std::task::Poll<StepReport>, Problem> {
         if let Some(p) = self.poisoned() {
             return Err(world_poisoned(p.tick));
         }
         let last = self.clock().tick;
-        let tick = Tick(last.0 + 1);
-        if let Err(why) = self.check_boundary("start") {
+        // A restored world has fresh Derived TickState; no old cursor may enter its schedule.
+        let resume = self
+            .resume
+            .take()
+            .filter(|_| self.world.resource::<TickState>().running.is_some());
+        let (tick, mut i) = resume.unwrap_or((Tick(last.0 + 1), 0));
+        if resume.is_none()
+            && let Err(why) = self.check_boundary("start")
+        {
             let p = internal(tick, TickPhase::Begin, "sim.begin", &why);
             return Err(self.poison(last, p));
         }
@@ -264,8 +297,13 @@ impl Sim {
         }
         // Systems are sorted by slot, and slots ascend with the phases, so one pass visits the
         // phases in order.
-        let mut i = 0;
+        let start_phase = self.systems[i].phase;
+        let mut started = false;
         for phase in TickPhase::ALL {
+            started |= phase == start_phase;
+            if !started {
+                continue;
+            }
             hooks.phase(phase, true);
             while i < self.systems.len() && self.systems[i].phase == phase {
                 let at = i;
@@ -273,8 +311,23 @@ impl Sim {
                 if !self.systems[at].condition.runs_on(tick) {
                     continue;
                 }
-                if let Err(p) = self.run_one(at, tick, hooks) {
-                    return Err(self.poison(tick, p));
+                match self.run_one(at, tick, hooks) {
+                    Err(p) => return Err(self.poison(tick, p)),
+                    Ok(true) => {
+                        if self.world.resource::<TickState>().invocation.is_some() {
+                            let p = internal(
+                                tick,
+                                phase,
+                                self.systems[at].key.as_str(),
+                                "a suspended system left an invocation open",
+                            );
+                            return Err(self.poison(tick, p));
+                        }
+                        self.resume = Some((tick, at));
+                        hooks.phase(phase, false);
+                        return Ok(std::task::Poll::Pending);
+                    }
+                    Ok(false) => {}
                 }
             }
             hooks.phase(phase, false);
@@ -291,17 +344,22 @@ impl Sim {
         let mut out = self.world.resource_mut::<TickOutput>();
         let errors = std::mem::take(&mut out.errors);
         let decisions = std::mem::take(&mut out.decisions);
-        Ok(StepReport {
+        Ok(std::task::Poll::Ready(StepReport {
             tick,
             events: self.world.resource::<EventInbox>().events().to_vec(),
             decisions,
             errors,
-        })
+        }))
     }
 
     /// Runs system `at` of tick `tick` between its hooks; a panic, a run error or a reported
     /// fault comes back as the problem that poisons the world.
-    fn run_one(&mut self, at: usize, tick: Tick, hooks: &mut dyn StepHooks) -> Result<(), Problem> {
+    fn run_one(
+        &mut self,
+        at: usize,
+        tick: Tick,
+        hooks: &mut dyn StepHooks,
+    ) -> Result<bool, Problem> {
         let entry = &mut self.systems[at];
         let world = &mut self.world;
         let phase = entry.phase;
@@ -313,6 +371,7 @@ impl Sim {
             phase,
             tick,
             fault: None,
+            suspended: false,
         };
         let outcome = catch_unwind(AssertUnwindSafe(|| match &mut entry.run {
             Run::Begin => {
@@ -332,6 +391,7 @@ impl Sim {
             }
         }));
         let fault = ctx.fault.take();
+        let suspended = ctx.suspended;
         hooks.system(&entry.key, false);
         // Not after a panic: the world may stand halfway through the system.
         if outcome.is_ok() {
@@ -341,7 +401,7 @@ impl Sim {
         match outcome {
             Err(panic) => Err(internal(tick, phase, key, &panic_message(&*panic))),
             Ok(Err(message)) => Err(internal(tick, phase, key, &message)),
-            Ok(Ok(())) => fault.map_or(Ok(()), Err),
+            Ok(Ok(())) => fault.map_or(Ok(suspended), Err),
         }
     }
 

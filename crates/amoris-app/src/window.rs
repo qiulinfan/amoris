@@ -16,9 +16,9 @@ use amoris_contract::{Problem, detail};
 use amoris_render::app::{Host, RunOptions, WalkInput, run};
 use amoris_render::loader::FileAssets;
 use amoris_render::{BackendChoice, CameraState, FrameStats, Renderer};
+use amoris_runtime::Project;
 use amoris_runtime::thread::{GameHandle, GameThread, Pacing, ThreadOptions};
 use amoris_runtime::walk::{StaticWalkWorld, WalkController};
-use amoris_runtime::{Game, Project};
 use glam::{Mat4, Quat, Vec3};
 use serde_json::json;
 
@@ -197,7 +197,10 @@ fn play_inner(raw: &[String]) -> Result<Outcome, Problem> {
     let mut options = ThreadOptions::new(clock);
     options.pacing = Pacing::RealTime { speed };
     options.feed = Some(feed);
-    let game = GameThread::spawn(move || Game::new(setup, seed), options)?;
+    let game = GameThread::spawn(
+        move || crate::water_compute::builder(setup, seed).build(),
+        options,
+    )?;
     let seat = if args.has("walk") && first_person {
         Some(SeatWalk::new(game.client(amoris_link::Source::Player(0))?))
     } else {

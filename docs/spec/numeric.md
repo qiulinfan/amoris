@@ -94,6 +94,13 @@ coming out, so the round trip is deterministic and visible in one place. The eng
 same place; the physics spike computed them in `f32` with `libm`'s `f32` functions, which the
 cross-target check covers the same way.
 
+GPU water is an explicit exception to cross-target bitwise determinism (owner's direction,
+2026-10-19; [water.md](water.md) 17). Its component still stores f64 values, but its selected
+`gpu` backend computes substeps in f32 and widens the returned values exactly. The persisted
+`WaterRegion.solver` records this choice. The CPU path retains the deterministic contract above;
+GPU results are checked against it with tolerances. Device/driver/backend changes can change GPU
+results, and a missing GPU service is an error rather than a precision-changing fallback.
+
 ### 3.2 Integers
 
 Persisted numeric field types and the range each admits:

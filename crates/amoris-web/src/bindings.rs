@@ -50,6 +50,9 @@ fn options(text: &str) -> Result<(Option<u64>, Pacing), Problem> {
 #[wasm_bindgen]
 pub struct GameWorker {
     core: WorkerCore,
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    // Consumed by the wasm GPU host exports.
+    water: amoris_runtime::water_compute::ComputeQueue,
     /// The snapshots' bytes of the `snap`s [`GameWorker::messages`] returned, in order.
     bytes: std::collections::VecDeque<Vec<u8>>,
     /// The render feed this worker publishes to its page's viewport.
@@ -71,12 +74,18 @@ impl GameWorker {
         // reuses the compiled modules a native recording embeds (replay.md 2.4). A second game in
         // the same worker installs the same version again, which is a no-op.
         let _ = amoris_runtime::install_engine_version!();
+        let water = amoris_runtime::water_compute::ComputeQueue::default();
+        let queued = water.clone();
         let build = || -> Result<WorkerCore, Problem> {
             let (seed, pacing) = options(options_json)?;
             let package = Package::from_bytes(package)?;
             let setup = std::sync::Arc::new(package.setup()?);
             let game: Game = GameBuilder::new(setup)
                 .seed(seed.unwrap_or(package.seed))
+                .system(move |sim| {
+                    amoris_runtime::water_compute::install(sim, queued.backend());
+                    Ok(())
+                })
                 .build()?;
             WorkerCore::new(game, pacing, std::sync::Arc::new(performance_now))
         };
@@ -86,6 +95,7 @@ impl GameWorker {
                 let mailbox = feed.subscribe();
                 GameWorker {
                     core,
+                    water,
                     bytes: Default::default(),
                     render: (amoris_runtime::Extractor::new(), feed, mailbox),
                 }
@@ -157,6 +167,7 @@ impl GameWorker {
             "ticks": t.len(),
             "step_ms": t.iter().map(|x| x.step_ms).collect::<Vec<_>>(),
             "publish_ms": t.iter().map(|x| x.publish_ms).collect::<Vec<_>>(),
+            "external_ms": t.iter().map(|x| x.external_ms).collect::<Vec<_>>(),
             "posted": t.iter().map(|x| x.posted).collect::<Vec<_>>(),
         })
         .to_string()
@@ -170,6 +181,37 @@ impl GameWorker {
             Ok(s) => serde_json::to_string(&s).unwrap_or_default(),
             Err(p) => json!({"error": p}).to_string(),
         }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+impl GameWorker {
+    pub fn take_water_job(&self) -> Result<Option<crate::gpu_water::WaterJob>, JsValue> {
+        self.water
+            .take_job()
+            .map(|r| r.map(|input| crate::gpu_water::WaterJob { input }))
+            .map_err(|p| js_problem(&p))
+    }
+    pub fn complete_water_job(
+        &self,
+        result: crate::gpu_water::WaterResult,
+    ) -> Result<bool, JsValue> {
+        self.water
+            .complete_job(result.id, result.result)
+            .map_err(|p| js_problem(&p))
+    }
+    pub fn fail_water_job(&self, id: u64, message: &str) -> Result<bool, JsValue> {
+        self.water
+            .complete_job(
+                id,
+                Err(Problem::new(
+                    "water.compute_failed",
+                    message,
+                    amoris_contract::detail([]),
+                )),
+            )
+            .map_err(|p| js_problem(&p))
     }
 }
 

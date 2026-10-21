@@ -58,6 +58,8 @@ pub use water::{
 use amoris_contract::Problem;
 use amoris_sim::registry::ComponentRegistry;
 use amoris_sim::{RunCondition, Sim, TickPhase};
+use bevy_ecs::prelude::IntoSystem;
+use bevy_ecs::system::System;
 
 /// Installs physics into a world: the solver (stepping the world's `dt` under standard gravity),
 /// the derived index and contact log, the components in the registry, and the systems at their
@@ -71,6 +73,9 @@ pub fn plugin(sim: &mut Sim) -> Result<(), Problem> {
     w.insert_resource(ContactLog::default());
     w.insert_resource(WaterScratch::default());
     w.insert_resource(WaterSteps::default());
+    w.insert_resource(water::buoyancy::Samples::default());
+    w.insert_resource(water::swimming::Samples::default());
+    w.insert_resource(water::resident::WaterCheckpoints::default());
     ComponentRegistry::register::<Transform>(w, None)?;
     ComponentRegistry::register::<Velocity>(w, None)?;
     ComponentRegistry::register::<RigidBody>(w, None)?;
@@ -85,21 +90,88 @@ pub fn plugin(sim: &mut Sim) -> Result<(), Problem> {
     ComponentRegistry::register::<Walker>(w, None)?;
     ComponentRegistry::register::<amoris_sim::voxels::Voxels>(w, None)?;
     ComponentRegistry::register::<WaterRegion>(w, None)?;
+    ComponentRegistry::register::<water::WaterColliderBed>(w, None)?;
+    ComponentRegistry::register::<water::resident::WaterResident>(w, None)?;
+    ComponentRegistry::register::<water::resident::WaterOutletStage>(w, None)?;
+    ComponentRegistry::register::<water::resident::WaterProbe>(w, None)?;
+    ComponentRegistry::register::<water::feedback::WaterFeedback>(w, None)?;
     ComponentRegistry::register::<WaterSource>(w, None)?;
     ComponentRegistry::register::<WaterDrain>(w, None)?;
+    let mut water_system = IntoSystem::into_system(water::water);
+    water_system.initialize(w);
     let always = RunCondition::Always;
     sim.add_system("physics.wind", TickPhase::Forces, always, forces::wind)?;
-    sim.add_system("physics.water", TickPhase::Forces, always, water::water)?;
-    sim.add_system(
+    sim.add_exclusive(
+        "physics.water",
+        TickPhase::Forces,
+        always,
+        move |world, ctx| {
+            if let Err(error) = water::prepare_collider_beds(world) {
+                ctx.fault(error);
+                return;
+            }
+            match water_system.run((), world) {
+                Ok(Ok(false)) => {}
+                Ok(Ok(true)) => ctx.suspend(),
+                Ok(Err(problem)) => ctx.fault(problem),
+                Err(error) => ctx.fault(Problem::new(
+                    "water.compute_failed",
+                    error.to_string(),
+                    amoris_contract::detail([]),
+                )),
+            }
+        },
+    )?;
+    let mut buoyancy_system = IntoSystem::into_system(forces::buoyancy);
+    buoyancy_system.initialize(sim.world_mut());
+    sim.add_exclusive(
         "physics.buoyancy",
         TickPhase::Forces,
         always,
-        forces::buoyancy,
+        move |world, ctx| match buoyancy_system.run((), world) {
+            Ok(Ok(())) => {}
+            Ok(Err(problem)) => ctx.fault(problem),
+            Err(error) => ctx.fault(Problem::new(
+                "water.buoyancy_failed",
+                error.to_string(),
+                amoris_contract::detail([]),
+            )),
+        },
     )?;
     sim.add_system("physics.sail", TickPhase::Forces, always, forces::sail)?;
-    sim.add_system("physics.hull", TickPhase::Forces, always, forces::hull)?;
+    let mut hull_system = IntoSystem::into_system(forces::hull);
+    hull_system.initialize(sim.world_mut());
+    sim.add_exclusive(
+        "physics.hull",
+        TickPhase::Forces,
+        always,
+        move |world, ctx| match hull_system.run((), world) {
+            Ok(Ok(())) => {}
+            Ok(Err(problem)) => ctx.fault(problem),
+            Err(error) => ctx.fault(Problem::new(
+                "water.hull_failed",
+                error.to_string(),
+                amoris_contract::detail([]),
+            )),
+        },
+    )?;
     sim.add_system("physics.fluids", TickPhase::Physics, always, fluids::fluids)?;
-    sim.add_system("physics.walk", TickPhase::Physics, always, walker::walk)?;
+    let mut walk_system = IntoSystem::into_system(walker::walk);
+    walk_system.initialize(sim.world_mut());
+    sim.add_exclusive(
+        "physics.walk",
+        TickPhase::Physics,
+        always,
+        move |world, ctx| match walk_system.run((), world) {
+            Ok(Ok(())) => {}
+            Ok(Err(problem)) => ctx.fault(problem),
+            Err(error) => ctx.fault(Problem::new(
+                "water.swimming_failed",
+                error.to_string(),
+                amoris_contract::detail([]),
+            )),
+        },
+    )?;
     sim.add_system("physics.step", TickPhase::Physics, always, solver::step)?;
     sim.add_system(
         "physics.contacts",

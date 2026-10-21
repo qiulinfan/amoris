@@ -7,6 +7,8 @@
 //! sky, before the particles, with premultiplied blending, depth tested and not written
 //! (forward.wgsl `fs_transparent`): in the opaque pass, or with GTAO on in a pass of their own
 //! after GTAO has darkened the opaque image (renderer.rs).
+//! With water present, a depth mask partitions its fragments into two draws, before and after
+//! the water optical stage; both consume the same sorted list.
 //!
 //! The draws read their instances from a list of `Drawn` records this stage writes in draw order
 //! (the culling pass writes the opaque ones' into `drawn`): the frame group's `drawn` binding is
@@ -328,6 +330,16 @@ pub(crate) fn pipeline(
     layout: &wgpu::PipelineLayout,
     format: SceneFormat,
 ) -> wgpu::RenderPipeline {
+    pipeline_entry(device, module, layout, format, "fs_transparent")
+}
+
+pub(crate) fn pipeline_entry(
+    device: &wgpu::Device,
+    module: &wgpu::ShaderModule,
+    layout: &wgpu::PipelineLayout,
+    format: SceneFormat,
+    fragment: &str,
+) -> wgpu::RenderPipeline {
     // `vs` computes last frame's position only for the motion target, which this pipeline leaves
     // alone.
     let constants = [("SCENE_MOTION", 0.0)];
@@ -345,7 +357,7 @@ pub(crate) fn pipeline(
         },
         fragment: Some(wgpu::FragmentState {
             module,
-            entry_point: Some("fs_transparent"),
+            entry_point: Some(fragment),
             compilation_options: Default::default(),
             targets: &targets(format),
         }),
@@ -614,14 +626,32 @@ impl Transparent {
         batches: &Batches,
         meshes: &MeshPool,
     ) -> u32 {
+        self.draw_layer(pass, frame, lighting, textures, batches, meshes, None)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_layer(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        frame: &wgpu::BindGroup,
+        lighting: &wgpu::BindGroup,
+        textures: &wgpu::BindGroup,
+        batches: &Batches,
+        meshes: &MeshPool,
+        layer: Option<(&wgpu::RenderPipeline, &wgpu::BindGroup)>,
+    ) -> u32 {
         if !self.any() {
             return 0;
         }
-        pass.set_pipeline(&self.pipeline);
+        pass.set_pipeline(layer.map_or(&self.pipeline, |(p, _)| p));
         pass.set_bind_group(0, frame, &[]);
         pass.set_bind_group(1, lighting, &[]);
         pass.set_bind_group(2, textures, &[]);
-        batches.bind_zero_base(pass);
+        if let Some((_, group)) = layer {
+            pass.set_bind_group(3, group, &[]);
+        } else {
+            batches.bind_zero_base(pass);
+        }
         pass.set_vertex_buffer(0, meshes.vertices.slice(..));
         let mut calls = 0;
         // Whether the pass's index buffer is the two-sided lists' (else the mesh pool's).

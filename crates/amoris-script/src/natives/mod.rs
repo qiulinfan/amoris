@@ -88,6 +88,7 @@ const NATIVES: &[(&str, Native, bool)] = &[
     ("voxelsSet", voxels::set, true),
     ("voxelsFill", voxels::fill, true),
     ("voxelsRaycast", voxels::raycast, false),
+    ("waterObserve", water::observe, false),
     ("waterDepth", water::depth, false),
     ("waterSurface", water::surface, false),
     ("waterVelocity", water::velocity, false),

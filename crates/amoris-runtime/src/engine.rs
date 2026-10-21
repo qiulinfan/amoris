@@ -6,7 +6,8 @@
 //! derive that would generate their slot functions does not live in a crate it may depend on yet
 //! (architecture.md 11, choice 7). The runtime, which links both physics and the script host,
 //! therefore rebuilds the world's component registry with schemas for `Transform`, `Velocity`,
-//! `Boat` and `Wind` and registers hand-written slot functions for them (architecture.md 11, Slice
+//! `Boat`, `Wind`, `Walker`, UI and water request components, and registers
+//! hand-written slot functions for them (architecture.md 11, Slice
 //! 1). The rebuilt registry must name exactly the components the old one did, so a component
 //! physics adds later fails the game's construction instead of vanishing from it.
 
@@ -14,6 +15,8 @@ use amoris_assets::{
     Animator, AudioSource, Camera, Environment, Light, Model, ParticleEmitter, Splat, UiBar, UiText,
 };
 use amoris_contract::{CheckOptions, Problem, Shape, detail};
+use amoris_physics::water::feedback::WaterFeedback;
+use amoris_physics::water::resident::{WaterOutletStage, WaterProbe, WaterResident};
 use amoris_physics::{
     Boat, Collider, ExternalForce, Floater, Hull, RigidBody, Sail, Sea, Transform, Trim, Velocity,
     Walker, WaterDrain, WaterRegion, WaterSource, Wind,
@@ -87,7 +90,7 @@ where
 /// Every engine component a scene or `world_edit` can name (`Name` is the entity's own `name`);
 /// the first three are the player layer's (perception.md: who observes, what can be perceived,
 /// what blocks sight).
-pub fn engine_components() -> [EngineComponent; 29] {
+pub fn engine_components() -> [EngineComponent; 34] {
     [
         entry::<amoris_interface::perception::Observer>(),
         entry::<amoris_interface::perception::Perceivable>(),
@@ -116,6 +119,11 @@ pub fn engine_components() -> [EngineComponent; 29] {
         entry::<Wind>(),
         voxels_entry(),
         water_entry(),
+        entry::<WaterResident>(),
+        entry::<amoris_physics::water::WaterColliderBed>(),
+        entry::<WaterOutletStage>(),
+        probe_entry(),
+        feedback_entry(),
         flow_entry::<WaterSource>(),
         flow_entry::<WaterDrain>(),
     ]
@@ -205,6 +213,49 @@ where
         get: get::<C>,
         decode: decode_flow::<C>,
         remove: remove::<C>,
+    }
+}
+
+/// Editing a request invalidates prior output; external edits cannot forge a ready result.
+fn probe_entry() -> EngineComponent {
+    fn decode(v: &Value, owner: &str) -> Result<Inserter, Problem> {
+        let mut probe: WaterProbe = Shape::of::<WaterProbe>()
+            .decode::<WaterProbe>(v, &CheckOptions::new(owner))?
+            .value;
+        probe.ready = false;
+        Ok(Inserter(Box::new(move |e: &mut EntityWorldMut<'_>| {
+            e.insert(probe);
+        })))
+    }
+    EngineComponent {
+        name: WaterProbe::NAME,
+        get: get::<WaterProbe>,
+        decode,
+        remove: remove::<WaterProbe>,
+    }
+}
+
+/// Authoring opts in with an empty object. Queues and budgets are engine-owned, readable state.
+fn feedback_entry() -> EngineComponent {
+    fn decode(v: &Value, owner: &str) -> Result<Inserter, Problem> {
+        if !v.as_object().is_some_and(|v| v.is_empty()) {
+            return Err(Problem::new(
+                "water.feedback_readonly",
+                format!(
+                    "{owner}: WaterFeedback is created with {{}}; its queues and budgets are read-only"
+                ),
+                detail([]),
+            ));
+        }
+        Ok(Inserter(Box::new(|e: &mut EntityWorldMut<'_>| {
+            e.insert(WaterFeedback::default());
+        })))
+    }
+    EngineComponent {
+        name: WaterFeedback::NAME,
+        get: get::<WaterFeedback>,
+        decode,
+        remove: remove::<WaterFeedback>,
     }
 }
 
@@ -751,6 +802,40 @@ pub fn install_script_components(world: &mut World) -> Result<(), Problem> {
     ComponentRegistry::register::<Walker>(world, Some(walker_schema()?))?;
     ComponentRegistry::register::<Voxels>(world, None)?;
     ComponentRegistry::register::<WaterRegion>(world, None)?;
+    ComponentRegistry::register::<WaterResident>(world, None)?;
+    ComponentRegistry::register::<amoris_physics::water::WaterColliderBed>(world, None)?;
+    ComponentRegistry::register::<WaterOutletStage>(world, None)?;
+    ComponentRegistry::register::<WaterFeedback>(
+        world,
+        Some(schema(
+            "WaterFeedback",
+            WaterFeedback::VERSION,
+            "Opt-in to next-tick horizontal body reactions. Create with {}; observe engine-owned budgets through world.get.",
+            vec![],
+        )?),
+    )?;
+    ComponentRegistry::register::<WaterProbe>(
+        world,
+        Some(schema(
+            "WaterProbe",
+            WaterProbe::VERSION,
+            "A resident water query's request. Read completed results with ctx.water.observe.",
+            vec![
+                (
+                    "region",
+                    FieldType::Entity,
+                    FieldValue::Entity(None),
+                    "The resident region; none disables the request.",
+                ),
+                (
+                    "at",
+                    FieldType::Vec2,
+                    FieldValue::Vec2([0.0; 2]),
+                    "World x/z position: Vec2.x and Vec2.y, metres.",
+                ),
+            ],
+        )?),
+    )?;
     ComponentRegistry::register::<WaterSource>(
         world,
         Some(flow_schema(
@@ -803,6 +888,36 @@ pub fn install_script_components(world: &mut World) -> Result<(), Problem> {
     register_engine::<UiText>(world, ui_text_fns())?;
     register_engine::<WaterSource>(world, flow_fns!(WaterSource))?;
     register_engine::<WaterDrain>(world, flow_fns!(WaterDrain))?;
+    register_engine::<WaterProbe>(
+        world,
+        EngineFns {
+            read: |p: &WaterProbe| {
+                nums(&[p.region.map_or(0.0, |id| id.to_f64()), p.at[0], p.at[1]])
+            },
+            write: |p: &mut WaterProbe, v| {
+                let region = amoris_sim::EntityId::from_f64(v.nums[0]).ok();
+                let at = [v.nums[1], v.nums[2]];
+                if p.region != region || p.at != at {
+                    p.ready = false;
+                }
+                p.region = region;
+                p.at = at;
+            },
+            make: |v| WaterProbe {
+                region: amoris_sim::EntityId::from_f64(v.nums[0]).ok(),
+                at: [v.nums[1], v.nums[2]],
+                ..WaterProbe::default()
+            },
+        },
+    )?;
+    register_engine::<WaterFeedback>(
+        world,
+        EngineFns {
+            read: |_| nums(&[]),
+            write: |_, _| {},
+            make: |_| WaterFeedback::default(),
+        },
+    )?;
     Ok(())
 }
 

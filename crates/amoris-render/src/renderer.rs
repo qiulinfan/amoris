@@ -1146,6 +1146,13 @@ impl Renderer {
                 cache: None,
             })
         };
+        let materials = MaterialPool::new(device);
+        let view_buf = Uniform::new(device, "view", std::mem::size_of::<ViewUniform>() as u64);
+        let view_stable = Uniform::new(
+            device,
+            "view (unjittered)",
+            std::mem::size_of::<ViewUniform>() as u64,
+        );
         // Every pipeline the renderer starts with, created concurrently (par.rs): on Direct3D 12
         // each compiles its shaders with DXC here (docs/bench/dx12.md 10). The longest first.
         let compute = |name: &str, entry: &str| {
@@ -1191,8 +1198,16 @@ impl Renderer {
                 o
             });
             let sky = s.spawn(|| Sky::new(device));
-            let ocean =
-                s.spawn(|| Ocean::new(device, lit_module, [&frame, &lighting, &textures], format));
+            let ocean = s.spawn(|| {
+                Ocean::new(
+                    device,
+                    lit_module,
+                    [&frame, &lighting, &textures],
+                    format,
+                    [&view_buf.buf, &view_stable.buf],
+                    &materials.buffer,
+                )
+            });
             let water =
                 s.spawn(|| Water::new(device, lit_module, [&frame, &lighting, &textures], format));
             let particles = s.spawn(|| Particles::new(device, format));
@@ -1303,7 +1318,7 @@ impl Renderer {
             splash: Default::default(),
             splash_fluid: None,
             splashes_on: splashes_from_env(),
-            materials: MaterialPool::new(device),
+            materials,
             models: HashMap::new(),
             loader: Box::new(NoAssets),
             requested: HashSet::new(),
@@ -1322,12 +1337,8 @@ impl Renderer {
             rt_shadows,
             profiler: GpuProfiler::new(device, &gpu.queue, gpu.caps.timestamps, &gpu.info),
             splats: built.splats,
-            view_buf: Uniform::new(device, "view", std::mem::size_of::<ViewUniform>() as u64),
-            view_stable: Uniform::new(
-                device,
-                "view (unjittered)",
-                std::mem::size_of::<ViewUniform>() as u64,
-            ),
+            view_buf,
+            view_stable,
             moving_bits: storage(device, "moving slots", 64, wgpu::BufferUsages::empty()),
             moving_cpu: Vec::new(),
             cull_buf: Uniform::new(device, "cull", std::mem::size_of::<CullUniform>() as u64),
@@ -1762,14 +1773,56 @@ impl Renderer {
             .map(|s| crate::fluid::Fluid::boxed(&self.gpu.device, &self.gpu.queue, s, self.format));
     }
 
-    /// Splashes over block liquids on or off (docs/spec/splashes.md 6; `AMORIS_SPLASHES` sets the
-    /// start). Off, the particles there are go at once.
     /// The shallow water to draw from the next frame on (spike, docs/spikes/shallow-water.md);
     /// `None` draws none.
     pub fn set_shallow_water(&mut self, water: Option<ShallowWaterView>) {
         self.water.set_spike(water.as_ref());
     }
 
+    /// Surface-foam quality/debug switch. The physical water and its feed are unchanged.
+    pub fn set_water_foam(&mut self, on: bool) {
+        self.water.set_foam(on);
+    }
+
+    /// Exact current-field dry/frustum patch culling; no simulation or surface LOD change.
+    pub fn set_water_culling(&mut self, on: bool) {
+        self.water.set_culling(on);
+    }
+
+    /// Explicit diagnostic readback after rendering, outside ordinary measured frames.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn water_mesh_stats(&self) -> Result<Vec<(u64, crate::water_mesh::MeshStats)>, String> {
+        self.water.mesh_stats(&self.gpu.device, &self.gpu.queue)
+    }
+    /// Snapshot diagnostics now; the future owns its buffers and never borrows the renderer.
+    pub fn water_mesh_readback(
+        &self,
+    ) -> impl std::future::Future<Output = Result<Vec<(u64, crate::water_mesh::MeshStats)>, String>>
+    + use<> {
+        self.water.mesh_readback(&self.gpu.device, &self.gpu.queue)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn water_mesh_indices(&self) -> Result<Vec<(u64, crate::water_mesh::MeshIndices)>, String> {
+        self.water.mesh_indices(&self.gpu.device, &self.gpu.queue)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn water_probe_vertices(&self, id: u64, indices: &[u32]) -> Result<Vec<[f32; 4]>, String> {
+        self.water.probe_vertices(
+            &self.gpu.device,
+            &self.gpu.queue,
+            &self.fwd_module,
+            id,
+            (&self.view_buf.buf, indices),
+        )
+    }
+
+    /// Optical quality/debug switches; physical water state and foam history are unchanged.
+    pub fn set_water_optics(&mut self, refraction: bool, reflection: bool, detail: bool) {
+        self.water.set_optics(refraction, reflection, detail);
+    }
+
+    /// Block-liquid splashes and current-field dilute spray on/off; AMORIS_SPLASHES sets the
+    /// initial choice. Presentation pools clear when disabled; physical water is unchanged.
     pub fn set_splashes(&mut self, on: bool) {
         self.splashes_on = on;
         if !on && let Some(f) = self.splash_fluid.as_mut() {
@@ -1777,6 +1830,27 @@ impl Renderer {
         }
     }
 
+    /// Explicit diagnostic snapshot; ordinary rendering never reads these counters.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn water_spray_stats(&self) -> Result<Vec<(u64, crate::water_spray::Stats)>, String> {
+        self.water.spray_stats(&self.gpu.device, &self.gpu.queue)
+    }
+    pub fn water_ledge_readback(
+        &self,
+    ) -> impl std::future::Future<Output = Result<Vec<(u64, crate::water_ledge::Stats)>, String>> + use<>
+    {
+        self.water.ledge_readback(&self.gpu.device, &self.gpu.queue)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn water_ledge_stats(&self) -> Result<Vec<(u64, crate::water_ledge::Stats)>, String> {
+        self.water.ledge_stats(&self.gpu.device, &self.gpu.queue)
+    }
+    pub fn water_spray_readback(
+        &self,
+    ) -> impl std::future::Future<Output = Result<Vec<(u64, crate::water_spray::Stats)>, String>> + use<>
+    {
+        self.water.spray_readback(&self.gpu.device, &self.gpu.queue)
+    }
     pub fn splashes(&self) -> bool {
         self.splashes_on
     }
@@ -2020,6 +2094,9 @@ impl Renderer {
         if !frame.water.is_empty() || !frame.water_removed.is_empty() {
             self.water.apply(&frame.water, &frame.water_removed);
         }
+        self.water
+            .apply_resident(&frame.resident_water)
+            .expect("published resident water feed");
         if !frame.voxels.is_empty() || !frame.voxels_removed.is_empty() {
             let mut changes = self.voxels.apply(&frame.voxels, &frame.voxels_removed);
             self.splash.note(std::mem::take(&mut changes.splash));
@@ -2764,11 +2841,7 @@ impl Renderer {
                 env.as_ref().map_or(1.0, |e| e.ambient),
             ],
             // Under a liquid its own fog, even and dense (a negative density; liquids.md 6).
-            fog: match self
-                .water
-                .fog_at(cam.position.to_array())
-                .or_else(|| self.voxels.fog_at(cam.position.to_array()))
-            {
+            fog: match self.voxels.fog_at(cam.position.to_array()) {
                 Some(f) => [f[0], f[1], f[2], -f[3].abs().max(1e-4)],
                 None => env.as_ref().map_or([0.0; 4], |e| {
                     [
@@ -2816,12 +2889,27 @@ impl Renderer {
         if let Some(sea) = &self.scene.sea {
             // Drawn time matches the interpolated poses: between the last two ticks.
             let t = self.scene.t_s - self.scene.dt_s * (1.0 - f64::from(alpha));
-            self.ocean.update(&queue, sea, t as f32);
+            self.ocean.update(
+                &self.gpu.device,
+                &queue,
+                sea,
+                t as f32,
+                self.water.owned_rectangles(),
+                &self.materials.buffer,
+            );
         }
         {
             let t = self.scene.t_s - self.scene.dt_s * (1.0 - f64::from(alpha));
             let device = self.gpu.device.clone();
-            self.water.update(&device, &queue, t as f32);
+            self.water.set_lod(self.lod);
+            self.water.update(
+                &device,
+                &queue,
+                t,
+                &self.targets,
+                &self.fwd_module,
+                self.scene.sea.is_some(),
+            );
         }
         let mut planes = [[[0.0f32; 4]; 6]; 5];
         // The jittered frustum and matrix: the depth pyramid holds the jittered depth.
@@ -2918,13 +3006,28 @@ impl Renderer {
         // With GTAO on, the transparent stage draws after it, in a pass of its own (GTAO darkens
         // the indirect light of the opaque image only: of what shows through a transparent surface
         // in proportion, never the surface's own light); else in the opaque pass.
-        let split = self.transparent.any() && self.gtao_mode.on() && self.targets.share.is_some();
+        let water = !self.water.is_empty();
+        let split = water
+            || (self.transparent.any() && self.gtao_mode.on() && self.targets.share.is_some());
         trace::span(&mut self.trace, "transparent sort", ts);
         let ts = trace::mark(&self.trace);
 
         let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("frame"),
         });
+        let frame_dt = self
+            .last_frame_s
+            .map_or(1.0 / 60.0, |t| (now_s - t).clamp(0.0, 0.1)) as f32;
+        self.last_frame_s = Some(now_s);
+        self.water.set_spray(self.splashes_on);
+        self.water.encode(
+            &device,
+            &queue,
+            &mut enc,
+            &mut self.profiler,
+            &self.view_buf.buf,
+            frame_dt,
+        );
         self.batches.reset(&mut enc);
         // The two-sided index lists this frame's double-sided transparent draws need first.
         self.transparent.encode(&device, &mut enc, &self.meshes);
@@ -2933,10 +3036,6 @@ impl Renderer {
             let ts = self.profiler.compute_scope("scatter instances");
             self.upload.encode(&mut enc, ts);
         }
-        let frame_dt = self
-            .last_frame_s
-            .map_or(1.0 / 60.0, |t| (now_s - t).clamp(0.0, 0.1)) as f32;
-        self.last_frame_s = Some(now_s);
         self.particles
             .update(&device, &queue, &mut enc, &self.scene.emitters, frame_dt);
         self.splash_frame(cam.position.to_array(), frame_dt);
@@ -3041,7 +3140,7 @@ impl Renderer {
         let ts = trace::mark(&self.trace);
         let picking = self.picking.begin(&device, (w, h));
         // Splats, GTAO and TAA read the depth after the opaque pass.
-        let keep_depth = self.splats.active() || self.gtao_mode.on() || taa_on;
+        let keep_depth = water || self.splats.active() || self.gtao_mode.on() || taa_on;
         // With TAA, splats test against a depth drawn without the jitter.
         let unjittered = (taa_on && self.splats.active()).then(|| UnjitteredDepth {
             target: self.splats.unjittered_depth(&self.targets),
@@ -3210,7 +3309,80 @@ impl Renderer {
                 split,
             );
         }
-        if split {
+        if water {
+            self.water.depth_mask(
+                &mut enc,
+                [&binds.frame, &binds.lighting, &binds.textures],
+                &mut self.profiler,
+            );
+            {
+                let color = self.targets.layer_attachments(true);
+                let label = if self.transparent.any() {
+                    "translucents behind water"
+                } else {
+                    "water background resolve"
+                };
+                let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some(label),
+                    color_attachments: &color,
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &self.targets.depth,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: self.profiler.render_scope(label),
+                    ..Default::default()
+                });
+                self.transparent.draw_layer(
+                    &mut pass,
+                    &binds.transparent,
+                    &binds.lighting,
+                    &binds.textures,
+                    &self.batches,
+                    &self.meshes,
+                    Some(self.water.layer(false)),
+                );
+            }
+            self.water
+                .background(&mut enc, &self.targets, &mut self.profiler);
+            {
+                let color = self.targets.layer_attachments(false);
+                let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("water+foreground"),
+                    color_attachments: &color,
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &self.targets.depth,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: self.profiler.render_scope("water+foreground"),
+                    ..Default::default()
+                });
+                pass.set_bind_group(0, &binds.frame, &[]);
+                pass.set_bind_group(1, &binds.lighting, &[]);
+                pass.set_bind_group(2, &binds.textures, &[]);
+                self.water.draw(&mut pass);
+                // Foreground fragments use the independent mask and test against the just-written
+                // surface depth. Keeping them in this pass avoids another full MSAA load/resolve.
+                self.transparent.draw_layer(
+                    &mut pass,
+                    &binds.transparent,
+                    &binds.lighting,
+                    &binds.textures,
+                    &self.batches,
+                    &self.meshes,
+                    Some(self.water.layer(true)),
+                );
+                self.draw_particles_and_grid(&device, &mut pass);
+            }
+        }
+        if split && !water {
             let ts = self.profiler.render_scope("transparent");
             let color = self.targets.transparent_attachments();
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -3233,6 +3405,17 @@ impl Renderer {
                 ..Default::default()
             });
             self.draw_transparent_layer(&device, &mut pass, binds);
+        }
+        if water {
+            self.water.medium(
+                &device,
+                &queue,
+                &mut enc,
+                &mut self.profiler,
+                &self.targets,
+                &self.view_buf.buf,
+                &self.sky.sh,
+            );
         }
         if taa_on {
             self.taa.run(
@@ -3408,6 +3591,11 @@ impl Renderer {
         pass.set_bind_group(1, &binds.lighting, &[]);
         pass.set_bind_group(2, &binds.textures, &[]);
         self.water.draw(pass);
+        self.draw_particles_and_grid(device, pass);
+    }
+
+    fn draw_particles_and_grid(&self, device: &wgpu::Device, pass: &mut wgpu::RenderPass<'_>) {
+        self.water.draw_spray(pass);
         // Liquid particles where particles and splats go (docs/spec/splashes.md 5).
         for f in [&self.fluid, &self.splash_fluid].into_iter().flatten() {
             f.draw_surface(device, pass, &self.view_buf.buf);

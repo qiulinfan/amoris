@@ -29,6 +29,7 @@ pub mod files;
 mod game;
 pub mod history;
 pub mod inspect;
+pub mod kept;
 pub mod lookahead;
 pub mod player;
 pub mod present;
@@ -50,11 +51,13 @@ pub mod writes;
 /// the browser worker's.
 pub use amoris_interface::{MAX_CATCH_UP, MAX_SPEED, Pace, Pacing, TimeModel};
 /// The engine version replays, snapshots and saves record (versions.md 3.1).
-pub use amoris_persist::EngineVersion;
+pub use amoris_persist::{EngineVersion, SnapshotCache};
 /// The shallow-water spike (docs/spikes/shallow-water.md): its examples reach the solver here.
 pub use amoris_physics::shallow;
 /// Presenter-side static walking queries; authoritative gameplay remains in the game world.
 pub use amoris_physics::walk;
+/// Host-injected water computation. No graphics dependency enters the game-side crates.
+pub use amoris_physics::water::compute as water_compute;
 pub use boundary::take_held;
 pub use catalog::{CATALOG, Command, CommandDef, CommandFn, NoParams, catalog_json};
 pub use control::{RestoreBundle, Sample, SnapshotsRestoreParams, StepParams};

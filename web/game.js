@@ -5,7 +5,7 @@
 // boundaries and ticks until its time model says wait or 8 ms of work is spent. It re-schedules
 // itself through a MessageChannel when more work is due now (nested setTimeout is clamped to 4 ms),
 // through setTimeout until a real-time tick is due, and not at all when only a message can help.
-import init, { GameWorker } from "./pkg/amoris_web.js";
+import init, { GameWorker, BrowserWater } from "./pkg/amoris_web.js";
 
 let game = null;
 let early = [];
@@ -13,6 +13,8 @@ let timer = 0;
 let scheduled = false;
 let finished = false;
 let rendering = false; // the page asked for the render feed (a viewport draws it)
+let water = null;
+let computing = false;
 const wake = new MessageChannel();
 wake.port1.onmessage = () => {
   scheduled = false;
@@ -35,6 +37,7 @@ function fatal(e) {
 function finish() {
   finished = true;
   clearTimeout(timer);
+  if (water) water.abort();
   close();
 }
 
@@ -67,17 +70,44 @@ function schedule(next) {
   if (next.next === "now") soon();
   else if (next.next === "at") timer = setTimeout(loop, Math.max(0, next.at - performance.now()));
   else if (next.next === "quit") finish();
+  else if (next.next === "external") computeWater().catch(fatal);
   // "command": the next message wakes the loop.
 }
 
 function loop() {
-  if (!game || finished) return;
+  if (!game || finished || computing) return;
   try {
     const next = JSON.parse(game.run());
     flush();
     schedule(next);
   } catch (e) {
     fatal(e);
+  }
+}
+
+async function computeWater() {
+  if (computing || finished) return;
+  const job = game.take_water_job();
+  if (!job) return fatal(new Error("the suspended tick has no external water request"));
+  computing = true;
+  water ||= new BrowserWater();
+  const host = water;
+  const id = job.id;
+  let watchdog;
+  try {
+    const result = await Promise.race([
+      host.advance(job),
+      new Promise((_, reject) => { watchdog = setTimeout(() => reject(new Error("GPU water timed out after 10 seconds")), 10000); }),
+    ]);
+    if (!finished) game.complete_water_job(result);
+  } catch (e) {
+    host.abort();
+    water = null;
+    if (!finished) game.fail_water_job(id, String(e));
+  } finally {
+    clearTimeout(watchdog);
+    computing = false;
+    if (!finished) soon();
   }
 }
 

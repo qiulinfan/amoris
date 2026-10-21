@@ -17,6 +17,7 @@ glam.workspace = true
 log = "0.4"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+serde_json.workspace = true
 wasm-bindgen.workspace = true
 wasm-bindgen-futures.workspace = true
 js-sys.workspace = true

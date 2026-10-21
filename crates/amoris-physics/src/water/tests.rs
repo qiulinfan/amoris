@@ -6,6 +6,7 @@ const DT: f64 = 1.0 / 60.0;
 /// A region of `tx` by `tz` tiles of `cell_m` columns over a flat bed at 0, dry.
 pub(crate) fn region(tx: u32, tz: u32, cell_m: f64) -> WaterRegion {
     let mut r = WaterRegion {
+        solver: Solver::Cpu,
         cell_m,
         size: [tx * 16, tz * 16],
         bed: BedSource::Voxels {
@@ -294,6 +295,12 @@ fn regions_are_validated() {
     let mut empty = ok.clone();
     empty.tiles.clear();
     empty.validate().unwrap();
+    let mut colliders = empty.clone();
+    colliders.bed = BedSource::Colliders {
+        top: 10.0,
+        bottom: 0.0,
+    };
+    colliders.validate().unwrap();
     type Change = Box<dyn Fn(&mut WaterRegion)>;
     let bad: Vec<(&str, Change)> = vec![
         ("cell_m", Box::new(|r| r.cell_m = 0.1)),
@@ -304,10 +311,10 @@ fn regions_are_validated() {
         ("dry_below", Box::new(|r| r.dry_below = 0.06)),
         ("edges.1", Box::new(|r| r.edges[1] = Edge::Outflow)),
         (
-            "bed",
+            "bed.Colliders",
             Box::new(|r| {
                 r.bed = BedSource::Colliders {
-                    top: 10.0,
+                    top: 0.0,
                     bottom: 0.0,
                 }
             }),
@@ -595,4 +602,28 @@ fn a_disturbed_deep_basin_sleeps_again_within_two_minutes() {
         (math::min(a, s), math::max(b, s))
     });
     assert!(hi - lo < 0.01, "level within a centimetre: {lo} to {hi}");
+}
+
+#[test]
+fn a_reused_window_after_reshaping_matches_a_fresh_solver_bit_for_bit() {
+    let mut reused = Grid::default();
+    for (tx, tz) in [(4, 2), (2, 4), (1, 1), (4, 1), (2, 2)] {
+        let mut r = region(tx, tz, 0.5);
+        let [nx, nz] = r.columns_along();
+        for k in 0..nz {
+            for i in 0..nx {
+                set(&mut r, i, k, 0.0, if i < nx / 2 { 1.0 } else { 0.0 });
+            }
+        }
+        // Add sleeping columns so the reused active mask also has to be completely overwritten.
+        if r.tiles.len() > 2 {
+            r.tiles.last_mut().unwrap().still = SLEEP_TICKS;
+        }
+        let mut expected = r.clone();
+        for _ in 0..8 {
+            step_region(&mut r, DT, &mut reused);
+            step_region(&mut expected, DT, &mut Grid::default());
+            assert_eq!(r, expected, "window {nx} x {nz}");
+        }
+    }
 }

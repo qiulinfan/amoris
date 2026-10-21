@@ -308,6 +308,9 @@ impl Game {
         extractor: &mut crate::present::Extractor,
         feed: &amoris_assets::Feed,
     ) {
+        if self.sim.waiting() || self.sim.poisoned().is_some() {
+            return;
+        }
         let generation = self.generation;
         extractor.publish(self.sim.world_mut(), generation, feed);
     }
@@ -475,6 +478,13 @@ impl Game {
     /// changes the world and is recorded, or is refused and changes nothing, a Request runs its
     /// stages inline and applies the Write it produces (threads.md 5.5), and `step` runs ticks.
     pub fn apply(&mut self, cmd: &Command) -> Result<Value, Problem> {
+        if self.waiting() {
+            return Err(amoris_contract::Problem::new(
+                "sim.external_pending",
+                "The tick awaits host computation; complete it before accessing a boundary.",
+                amoris_contract::detail([]),
+            ));
+        }
         self.apply_from(cmd, &(), false)
     }
 
@@ -1334,10 +1344,37 @@ impl Game {
         &mut self,
         hooks: &mut dyn amoris_sim::StepHooks,
     ) -> Result<StepReport, Problem> {
+        match self.poll_step_with(hooks)? {
+            std::task::Poll::Ready(report) => Ok(report),
+            std::task::Poll::Pending => Err(Problem::new(
+                "sim.external_pending",
+                "The tick awaits host computation; poll it after completing the request.",
+                amoris_contract::detail([]),
+            )),
+        }
+    }
+
+    pub fn waiting(&self) -> bool {
+        self.sim.waiting()
+    }
+
+    /// Run/resume a tick with an asynchronous host. Pending is not a boundary: complete only the
+    /// owned host request, then poll again. Commands, snapshot and restore must wait for completion.
+    pub fn poll_step(&mut self) -> Result<std::task::Poll<StepReport>, Problem> {
+        self.poll_step_with(&mut NoHooks)
+    }
+
+    pub fn poll_step_with(
+        &mut self,
+        hooks: &mut dyn amoris_sim::StepHooks,
+    ) -> Result<std::task::Poll<StepReport>, Problem> {
         if let Some(p) = self.sim.poisoned() {
             return Err(amoris_sim::sim::world_poisoned(p.tick));
         }
-        let stepped = self.sim.step(hooks);
+        let stepped = self.sim.poll_step(hooks);
+        if matches!(stepped, Ok(std::task::Poll::Pending)) {
+            return Ok(std::task::Poll::Pending);
+        }
         // A script debugger that evaluated inside the tick taints the run (script-host.md 13).
         if let Some((tick, why)) = amoris_script::debug::take_taint(self.sim.world_mut()) {
             self.tainted.get_or_insert(tick);
@@ -1346,15 +1383,16 @@ impl Game {
             }
         }
         match stepped {
-            Ok(r) => {
+            Ok(std::task::Poll::Ready(r)) => {
                 self.writes = 0;
                 self.clear_boundary_log();
                 self.sync_context();
                 if let Some(rec) = &mut self.recorder {
                     rec.end_tick(self.sim.world())?;
                 }
-                Ok(r)
+                Ok(std::task::Poll::Ready(r))
             }
+            Ok(std::task::Poll::Pending) => unreachable!(),
             Err(p) => {
                 if let (Some(rec), Some(poison)) = (&mut self.recorder, self.sim.poisoned()) {
                     let system = p
@@ -1441,6 +1479,13 @@ impl Game {
     /// (replay.md 2.5); a refused restore rebases onto the world it left unchanged, so the
     /// recording goes on either way.
     pub fn restore(&mut self, snap: &Snapshot) -> Result<(), Problem> {
+        if self.waiting() {
+            return Err(amoris_contract::Problem::new(
+                "sim.external_pending",
+                "The tick awaits host computation; complete it before restoring a boundary.",
+                amoris_contract::detail([]),
+            ));
+        }
         let poisoned = self.sim.poisoned().is_some();
         if let Some(rec) = &mut self.recorder
             && !poisoned
@@ -1508,6 +1553,14 @@ impl Game {
     /// the bundle its first segment starts with, built from the modules the replay embeds; `verify`
     /// restores the start snapshot into it.
     pub fn for_replay(replay: &Replay) -> Result<Game, Problem> {
+        Self::for_replay_with(replay, |builder| builder)
+    }
+
+    /// A replay with host compute services, installed through the same builder as live games.
+    pub fn for_replay_with(
+        replay: &Replay,
+        configure: impl FnOnce(GameBuilder) -> GameBuilder,
+    ) -> Result<Game, Problem> {
         let start = replay.start(0).ok_or_else(|| {
             amoris_persist::error::bundle_unavailable("", "the replay has no start snapshot")
         })?;
@@ -1527,7 +1580,7 @@ impl Game {
             // The start snapshot carries the player declarations, if any (`crate::player`).
             player: None,
         };
-        GameBuilder::new(Arc::new(setup)).build_empty(&set)
+        configure(GameBuilder::new(Arc::new(setup))).build_empty(&set)
     }
 
     /// The bundle record of a bundle this game has.

@@ -628,17 +628,39 @@ Start-up:
 | page to worker | `ack` | `version` | |
 | page to worker | `close` | | |
 | worker to page | `ready` | `tick`, `version` | |
-| worker to page | `snap` | `version`, `header` (spec-persist's `SnapshotHeader`: tick, writes, engine, bundle), `world_hash`, `time`, `published_at_ms`, `last_event`, `sections` (changed: `{key, version, fingerprint, digest, bytes}`), `kept` (keys unchanged since the previous `snap`), `registry` (when changed), `events` (bytes), `missed` | every `bytes` buffer |
+| worker to page | `snap` | `version`, `header`, `world_hash`, `time`, `epoch`, `hashes`, aligned `hash_epochs`, `published_at_ms`, `last_event`, `registry` (when changed), `events`, `missed`, `snapshot_encoding: "sections-v1"`, `bytes` | one section-delta buffer |
 | worker to page | `reply` | `source`, `seq`, `ok` or `error` | |
 | worker to page | `status` | `state`, `tick`, `since_ms` (3.5) | |
 | worker to page | `fatal` | `error` | |
 
-The page rebuilds each `WorldSnapshot` from the previous one, the changed sections and the kept
-keys; a section in neither list was removed. Cache sections are not posted unless `init`'s options
-ask for them (`with_caches`), so a rebuilt snapshot without them cannot reproduce the world hash and
-carries the worker's `world_hash` as given. The same messages over a WebSocket are the spectator
-form of the server-authoritative run (charter 5.1: the network layer abstracts its transport), so
-the encoding lives in `amoris-link::wire` and is independent of `postMessage`.
+The current browser uses `amoris-link::snapshot_transfer`, independent of `postMessage`. One
+`AMORSDEL` format-1 buffer binds its base and publication versions, PCE snapshot header, current
+sections in canonical order, and the world root. Each section includes its key, schema version,
+fingerprint and digest; a changed section includes bytes, a kept section references the previous
+posted snapshot. Absence removes a section. All persisted sections, including caches, are retained
+so the presenter verifies the complete worker hash; the old `with_caches` proposal is not a weaker
+verification path. This wire buffer is not a standalone snapshot/save file.
+
+Changed bytes are hashed, kept bytes reuse previously verified immutable `Arc` data, and the
+complete world root is recomputed. Framing, order, exact base/version, digest and external header/
+registry/time validation must succeed before the receiver advances. Corrupt, reordered or missing
+base frames fail explicitly; a refused frame leaves the base intact for a valid retry. There is
+no automatic full-snapshot fallback. New streams start with a self-contained first publication.
+The browser messages remain one ordered, reliable stream; network spectator adoption is separate.
+
+The worker now implements `snapshots.list` and `snapshots.restore` through the native runtime's
+shared `KeptSnapshots` policy: initial state, then every 60 ticks, retaining 120. Kept snapshots
+are captured even when publication is backpressured. Restore preserves applied scripts by default
+and supports `bundle: "snapshot"`, cancels pending steps/player waits, prunes later history and
+invalidates suspended water transport through the normal restore hook. No restore runs inside an
+unfinished tick. The renderer receives a reset from the game's generation change.
+
+Each restore increments a presentation epoch. Every tick hash carries its epoch in `hash_epochs`,
+including an old unpublished tail delivered with a new-epoch snapshot. Events also carry epochs;
+historical inbox events are not emitted again. Publication versions and event stream sequence
+numbers remain monotonic. The presenter checks tick order within each hash epoch; the JS
+`onTicks` callback's optional second argument contains aligned epochs. Epochs and transport caches
+are presentation state, not new game state or part of the world hash.
 
 ### 7.3 Pacing and flow control in the worker
 
@@ -648,6 +670,16 @@ the encoding lives in `amoris-link::wire` and is independent of `postMessage`.
   yields. It re-schedules itself through a `MessageChannel` when more work is due now (browsers
   clamp nested `setTimeout` to at least 4 ms, HTML Living Standard, timers), through `setTimeout`
   for `WaitUntil`, and not at all for `WaitForCommand` (the next message wakes it).
+- **External GPU work (2026-10-19)**: `Next::External` lets the host await the water job before
+  polling the suspended tick. Incoming commands remain queued; acknowledgements can free an
+  in-flight slot but cannot publish the intermediate world. Resumption runs the same water system
+  with its continuation, then subsequent forces/physics/scripts see the completed result. A
+  completed asynchronous tick returns `Next::Now` at its boundary, letting the host extract the
+  render feed before the next tick can suspend. This prevents an always-catching-up GPU game from
+  freezing its feed until a whole multi-tick step ends. Failure follows section 8's last-complete
+  snapshot rule. `perf.step_ms` counts active CPU segments; `external_ms` counts the host interval,
+  including preparation, GPU/map wait and event-loop delivery; `publish_ms` is publication work.
+  Full observed tick work includes all three, not `step_ms` alone.
 - At most two `snap`s are in flight, the threads spike's flow control (without it a stalled page
   would have queued 2 MB a tick at 100,000 entities). While two are unacknowledged the worker skips
   publication, never a tick, keeps only the latest (latest-value, as natively), and posts it when

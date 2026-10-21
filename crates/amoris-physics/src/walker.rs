@@ -231,6 +231,27 @@ fn surface(v: &Voxels, c: [i32; 3], b: u8, s: u8) -> f64 {
     }
 }
 
+fn field_contact(out: &mut Contact, feet: f64, eye: f64, column: [f64; 4]) {
+    if column[1] <= 0.0 {
+        return;
+    }
+    if column[0] > feet + FIELD_WADE_M {
+        out.body = true;
+        let velocity = [column[2], column[3]];
+        let speed = math::sqrt(velocity[0] * velocity[0] + velocity[1] * velocity[1]);
+        let k = if speed > FIELD_PUSH_MPS {
+            FIELD_PUSH_MPS / speed
+        } else {
+            1.0
+        };
+        out.push[0] += velocity[0] * k;
+        out.push[1] += velocity[1] * k;
+    }
+    if column[0] > eye {
+        out.eye = true;
+    }
+}
+
 fn contact(w: &Walker, eye: [f64; 3], volumes: &[Volume], pools: &[Pool]) -> Contact {
     let (lo, hi) = w.bounds(eye);
     let mut out = Contact {
@@ -246,25 +267,18 @@ fn contact(w: &Walker, eye: [f64; 3], volumes: &[Volume], pools: &[Pool]) -> Con
         let Some((i, k)) = r.column_of(pool.corner, eye[0], eye[2]) else {
             continue;
         };
-        if r.depth_at(i, k) <= 0.0 {
-            continue;
-        }
-        let top = r.surface_at(i, k);
-        if top > lo[1] + FIELD_WADE_M {
-            out.body = true;
-            let v = r.velocity_at(i, k);
-            let speed = math::sqrt(v[0] * v[0] + v[1] * v[1]);
-            let k = if speed > FIELD_PUSH_MPS {
-                FIELD_PUSH_MPS / speed
-            } else {
-                1.0
-            };
-            out.push[0] += v[0] * k;
-            out.push[1] += v[1] * k;
-        }
-        if top > eye[1] {
-            out.eye = true;
-        }
+        let velocity = r.velocity_at(i, k);
+        field_contact(
+            &mut out,
+            lo[1],
+            eye[1],
+            [
+                r.surface_at(i, k),
+                r.depth_at(i, k),
+                velocity[0],
+                velocity[1],
+            ],
+        );
     }
     for vol in volumes {
         let v = vol.voxels;
@@ -327,8 +341,19 @@ fn contact(w: &Walker, eye: [f64; 3], volumes: &[Volume], pools: &[Pool]) -> Con
 }
 
 /// Moves a walker one tick of `dt` seconds among `volumes`; returns the new eye.
+#[cfg(test)]
 fn advance(w: &mut Walker, eye: [f64; 3], dt: f64, volumes: &[Volume], pools: &[Pool]) -> [f64; 3] {
     let wet = contact(w, eye, volumes, pools);
+    advance_contact(w, eye, dt, volumes, wet)
+}
+
+fn advance_contact(
+    w: &mut Walker,
+    eye: [f64; 3],
+    dt: f64,
+    volumes: &[Volume],
+    wet: Contact,
+) -> [f64; 3] {
     let (mut f, mut s) = (
         math::clamp(w.forward, -1.0, 1.0),
         math::clamp(w.strafe, -1.0, 1.0),
@@ -392,13 +417,21 @@ fn advance(w: &mut Walker, eye: [f64; 3], dt: f64, volumes: &[Volume], pools: &[
     eye
 }
 
+type WaterItem<'a> = (
+    &'a EntityId,
+    &'a WaterRegion,
+    Option<&'a Transform>,
+    Option<&'a crate::water::resident::WaterResident>,
+);
+
 /// `physics.walk`: moves every walker, in id order, against every volume.
 pub(crate) fn walk(
     clock: Res<SimClock>,
     mut walkers: Query<(&EntityId, &mut Walker, &mut Transform)>,
     volumes: Query<(&EntityId, &Voxels, Option<&Transform>), Without<Walker>>,
-    regions: Query<(&EntityId, &WaterRegion, Option<&Transform>), Without<Walker>>,
-) {
+    regions: Query<WaterItem<'static>, Without<Walker>>,
+    samples: Res<crate::water::swimming::Samples>,
+) -> Result<(), amoris_contract::Problem> {
     let dt = clock.dt();
     let volumes: Vec<Volume> = by_id(&volumes)
         .map(|(_, voxels, tf)| Volume {
@@ -406,20 +439,71 @@ pub(crate) fn walk(
             voxels,
         })
         .collect();
-    let pools: Vec<Pool> = by_id(&regions)
-        .map(|(_, region, tf)| {
-            let p = tf.map_or([0.0; 3], |t| t.position);
+    let regions: Vec<_> = by_id(&regions).collect();
+    // Preserve the existing additive CPU/full-readback overlap behavior. A resident centre
+    // query has one owner; only when that owner is resident does it replace these tile reads.
+    let pools: Vec<_> = regions
+        .iter()
+        .filter(|(_, region, _, _)| region.solver != crate::water::Solver::GpuResident)
+        .map(|(_, region, tf, _)| {
+            let origin = tf.map_or([0.0; 3], |t| t.position);
             Pool {
-                corner: [p[0], p[2]],
+                corner: [origin[0], origin[2]],
                 region,
             }
         })
         .collect();
-    for (_, mut walker, mut tf) in by_id_mut(&mut walkers) {
+    for (id, mut walker, mut tf) in by_id_mut(&mut walkers) {
         let mut w = *walker;
+        let mut field = None;
+        for (region_id, region, origin, state) in &regions {
+            if region.solver != crate::water::Solver::GpuResident && !region.well_formed() {
+                continue;
+            }
+            let origin = origin.map_or([0.0; 3], |t| t.position);
+            if region.solver != crate::water::Solver::GpuResident {
+                if region
+                    .column_of([origin[0], origin[2]], tf.position[0], tf.position[2])
+                    .is_some()
+                {
+                    break;
+                }
+                continue;
+            }
+            let Some(point) = crate::water::swimming::Point::new(*id, *tf, origin, region)? else {
+                continue;
+            };
+            let state = state.ok_or_else(|| {
+                crate::water::swimming::failed("resident Walker field has no completed state")
+            })?;
+            if state.completed_tick != clock.tick.0 {
+                return Err(crate::water::swimming::failed(
+                    "resident Walker field has not completed this tick",
+                ));
+            }
+            field = Some(
+                samples
+                    .get(&point, **region_id, &state.recipe, clock.tick.0)
+                    .ok_or_else(|| {
+                        crate::water::swimming::failed(
+                            "resident Walker has no current-pose field sample",
+                        )
+                    })?,
+            );
+            break;
+        }
+        let mut wet = contact(
+            &w,
+            tf.position,
+            &volumes,
+            if field.is_some() { &[] } else { &pools },
+        );
+        if let Some(column) = field {
+            field_contact(&mut wet, tf.position[1] - w.eye_m, tf.position[1], column);
+        }
         w.yaw = math::wrap_angle(w.yaw);
         w.pitch = math::clamp(w.pitch, -MAX_PITCH, MAX_PITCH);
-        let eye = advance(&mut w, tf.position, dt, &volumes, &pools);
+        let eye = advance_contact(&mut w, tf.position, dt, &volumes, wet);
         let pose = Transform {
             position: eye,
             rotation: w.rotation(),
@@ -431,6 +515,7 @@ pub(crate) fn walk(
             *walker = w;
         }
     }
+    Ok(())
 }
 
 /// `physics.walk.clear`: ends the tick's pulses, so each acts in exactly one tick.

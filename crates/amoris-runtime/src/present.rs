@@ -16,16 +16,20 @@ use std::collections::HashMap;
 
 use amoris_assets::frame::{
     AnimView, AudioView, BlockLook, CameraView, ChunkUpdate, EmitterView, EnvironmentView,
-    InstanceUpdate, LightKindView, LightView, Look, Pose, RenderFrame, SeaView, SplatView, UiView,
-    VoxelUpdate, WaterLookView, WaterTileView, WaterUpdate, WaveView,
+    InstanceUpdate, LightKindView, LightView, Look, Pose, RenderFrame, ResidentWaterUpdate,
+    SeaView, SplatView, UiView, VoxelUpdate, WaterLookView, WaterTileView, WaterUpdate, WaveView,
 };
 use amoris_assets::{
     Animator, AudioSource, Camera, Environment, Feed, Light, LightKind, Model, ParticleEmitter,
     SkyKind, Splat, UiAnchor, UiBar, UiText,
 };
+use amoris_physics::water::{
+    Solver,
+    resident::{WaterCheckpoints, WaterResident},
+};
 use amoris_physics::{BedSource, Sea, Style, Transform, WaterRegion, WaterSteps};
 use amoris_sim::voxels::{BlockShape, Voxels};
-use amoris_sim::{EntityId, SimClock};
+use amoris_sim::{ContentHash, EntityId, SimClock};
 use bevy_ecs::change_detection::DetectChanges;
 use bevy_ecs::entity::Entity;
 use bevy_ecs::prelude::{Or, With, World};
@@ -53,6 +57,10 @@ struct SentWater {
     id: u64,
     tick: u64,
     look: WaterLookView,
+    checkpoint: Option<ContentHash>,
+    program: Option<ContentHash>,
+    steps: usize,
+    environment: Option<String>,
 }
 
 fn water_look(r: &WaterRegion) -> WaterLookView {
@@ -114,6 +122,10 @@ fn water_update(
         id,
         tick,
         look: look.clone(),
+        checkpoint: None,
+        program: None,
+        steps: 0,
+        environment: None,
     });
     WaterUpdate {
         id,
@@ -122,6 +134,54 @@ fn water_update(
         size: r.size,
         look: new_look.then_some(look),
         tiles,
+    }
+}
+
+fn resident_update(
+    sent: &mut Option<SentWater>,
+    id: u64,
+    r: &WaterRegion,
+    state: &WaterResident,
+    checkpoints: &WaterCheckpoints,
+    origin: [f32; 2],
+    tick: u64,
+) -> ResidentWaterUpdate {
+    let look = water_look(r);
+    let key = state.recipe.checkpoint();
+    let previous = sent
+        .as_ref()
+        .filter(|s| {
+            s.checkpoint == Some(key) && s.environment.as_ref() == Some(&state.recipe.environment)
+        })
+        .and_then(|s| s.program.map(|p| (s.steps, p)));
+    let patch = state.recipe.patch_after(previous);
+    let checkpoint = sent
+        .as_ref()
+        .is_none_or(|s| s.checkpoint != Some(key))
+        .then(|| {
+            checkpoints
+                .fields
+                .get(&key)
+                .expect("published resident checkpoint")
+                .clone()
+        });
+    *sent = Some(SentWater {
+        id,
+        tick,
+        look: look.clone(),
+        checkpoint: Some(key),
+        program: Some(patch.program),
+        steps: patch.end(),
+        environment: Some(patch.environment.clone()),
+    });
+    ResidentWaterUpdate {
+        id,
+        origin,
+        cell_m: f(r.cell_m),
+        look,
+        checkpoint,
+        recipe: patch,
+        edge_level: (state.stats.wet_edge_count > 0).then(|| f(state.stats.wet_edge_surface)),
     }
 }
 
@@ -233,6 +293,14 @@ type UiFilter = Or<(With<UiText>, With<UiBar>)>;
 
 /// What a delta reads each time: the drawn instances and whether each list changed. Kept between
 /// extractions (a query made again every tick cost about a microsecond each).
+type WaterRow = (
+    Entity,
+    &'static EntityId,
+    Ref<'static, WaterRegion>,
+    Opt<Transform>,
+    Opt<WaterResident>,
+);
+
 struct Queries {
     world: WorldId,
     instances: QueryState<InstanceRow>,
@@ -250,12 +318,7 @@ struct Queries {
         Ref<'static, Voxels>,
         Opt<Transform>,
     )>,
-    water: QueryState<(
-        Entity,
-        &'static EntityId,
-        Ref<'static, WaterRegion>,
-        Opt<Transform>,
-    )>,
+    water: QueryState<WaterRow>,
 }
 
 impl Queries {
@@ -449,20 +512,40 @@ impl Extractor {
             }
         }
         self.waters.clear();
-        let mut q = world.query::<(Entity, &EntityId, &WaterRegion, Option<&Transform>)>();
+        let mut q = world.query::<(
+            Entity,
+            &EntityId,
+            &WaterRegion,
+            Option<&Transform>,
+            Option<&WaterResident>,
+        )>();
         let mut rows: Vec<_> = q.iter(world).collect();
         rows.sort_unstable_by_key(|r| r.1.get());
-        for (e, id, r, t) in rows {
+        for (e, id, r, t, state) in rows {
             let mut sent = None;
             let p = t.map_or([0.0; 3], |t| t.position);
-            frame.water.push(water_update(
-                &mut sent,
-                id.get(),
-                r,
-                [f(p[0]), f(p[2])],
-                tick,
-                None,
-            ));
+            if r.solver == Solver::GpuResident {
+                if let Some(state) = state {
+                    frame.resident_water.push(resident_update(
+                        &mut sent,
+                        id.get(),
+                        r,
+                        state,
+                        world.resource::<WaterCheckpoints>(),
+                        [f(p[0]), f(p[2])],
+                        tick,
+                    ));
+                }
+            } else {
+                frame.water.push(water_update(
+                    &mut sent,
+                    id.get(),
+                    r,
+                    [f(p[0]), f(p[2])],
+                    tick,
+                    None,
+                ));
+            }
             if let Some(s) = sent {
                 self.waters.insert(e, s);
             }
@@ -626,20 +709,41 @@ impl Extractor {
             let mut rows: Vec<_> = q
                 .water
                 .iter(world)
-                .filter(|(e, _, r, t)| {
+                .filter(|(e, _, r, t, state)| {
                     !self.waters.contains_key(e)
                         || r.is_changed()
+                        || state.as_ref().is_some_and(|s| s.is_changed())
                         || t.as_ref().is_some_and(|t| t.is_changed())
                 })
-                .map(|(e, id, r, t)| (e, *id, r, t))
+                .map(|(e, id, r, t, state)| (e, *id, r, t, state))
                 .collect();
             rows.sort_unstable_by_key(|r| r.1);
-            for (e, id, r, t) in rows {
+            for (e, id, r, t, state) in rows {
                 let mut sent = self.waters.remove(&e);
                 let p = t.map_or([0.0; 3], |t| t.position);
                 let marks = steps.and_then(|s| s.regions.get(&id));
-                let u = water_update(&mut sent, id.get(), &r, [f(p[0]), f(p[2])], tick, marks);
-                frame.water.push(u);
+                if r.solver == Solver::GpuResident {
+                    if let Some(state) = state {
+                        frame.resident_water.push(resident_update(
+                            &mut sent,
+                            id.get(),
+                            &r,
+                            &state,
+                            world.resource::<WaterCheckpoints>(),
+                            [f(p[0]), f(p[2])],
+                            tick,
+                        ));
+                    }
+                } else {
+                    frame.water.push(water_update(
+                        &mut sent,
+                        id.get(),
+                        &r,
+                        [f(p[0]), f(p[2])],
+                        tick,
+                        marks,
+                    ));
+                }
                 if let Some(s) = sent {
                     self.waters.insert(e, s);
                 }

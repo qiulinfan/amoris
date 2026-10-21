@@ -213,8 +213,9 @@ this table and the schedule golden of section 12 together.
 | 3 | Update | `script.update` | amoris-script | the project's systems and script executors, `script:<name>` each, in `systems` order |
 | 4 | Forces | `physics.wind` | amoris-physics | wind velocity at each body, gusts from position and time |
 | 4a | Forces | `physics.water` | amoris-physics | each `WaterRegion`'s awake tiles and their neighbours stepped (shallow water, advected), thin slow films dried, still tiles put to sleep (water.md 4) |
-| 5 | Forces | `physics.buoyancy` | amoris-physics | buoyancy and water drag per hull cell, waves at `time() - dt()` |
+| 5 | Forces | `physics.buoyancy` | amoris-physics | buoyancy and drag per volume point at the starting body pose; current completed field samples, or waves at `time() - dt()` outside fields (water.md 22) |
 | 6 | Forces | `physics.sail` | amoris-physics | sail force from the apparent wind and the trim |
+| 6a | Forces | `physics.surf` | amoris-physics | explicit rider paddle/balance work using completed Floater contact; set fin input before Hull (water.md 45) |
 | 7 | Forces | `physics.hull` | amoris-physics | keel, rudder and hull drag |
 | 8 | Physics | `physics.step` | amoris-physics | sync changed bodies in, one step of `dt`, write back positions, velocities and readouts |
 | 9 | Physics | `physics.contacts` | amoris-physics | contact begin and end events, in pair order (section 8.4) |
@@ -223,6 +224,7 @@ this table and the schedule golden of section 12 together.
 | 10 | Finish | `interface.perception` | amoris-interface | every observer's memory and perceived events from the events appended since its last run: the boundary writes' (the inbox from `boundary_from`, 5.1) and the tick's own (still in the outbox), in `EventSeq` order (shared/contract/perception.md, The perception update) |
 | 11 | Finish | `interface.turns` | amoris-interface | ends a turn's resolving phase when its rule holds (shared/contract/time.md, Turn structure) and evaluates the episode's `done` predicate (time.md, Episodes); writes the turn and episode state only |
 | 11a | Finish | `physics.walk.clear` | amoris-physics | the walkers' one-tick pulses (`jump`, `primary`, `secondary`) cleared (voxels.md 5.2) |
+| 11b | Finish | `physics.surf.clear` | amoris-physics | clear the board's one-tick retry pulse |
 | 12 | Finish | `sim.finish` | amoris-sim | events, RNG table, index, invariants, decisions |
 
 Rows 4 to 9 follow the physics spike (`docs/spikes/physics.md`, Recipe 3): forces are computed from
@@ -354,12 +356,15 @@ pub struct SimConfig { pub rate: TickRate, pub seed: u64 }
 
 impl Sim {
     pub fn new(config: SimConfig) -> Result<Sim, Problem>;
-    /// The clock: the last completed tick, and the rate.
+    /// At a boundary: the completed tick. Inside a suspended tick: the current tick.
     pub fn clock(&self) -> SimClock;
     /// Mutable access between ticks, for boundary writes (section 4.2).
     pub fn boundary(&mut self) -> Boundary<'_>;
-    /// Runs exactly one tick. Never blocks, never waits for input, never reads the clock.
+    /// Runs a tick; the scheduler itself never waits for input or reads a clock.
     pub fn step(&mut self, hooks: &mut dyn StepHooks) -> Result<StepReport, Problem>;
+    /// Runs or resumes one tick until completion or an explicit external-compute suspension.
+    pub fn poll_step(&mut self, hooks: &mut dyn StepHooks) -> Result<Poll<StepReport>, Problem>;
+    pub fn waiting(&self) -> bool;
     /// Read-only access at a boundary, for perception, hashing and snapshot publication.
     pub fn world(&self) -> &World;
 }
@@ -390,11 +395,18 @@ pub trait StepHooks {
 }
 ```
 
-- **Stepping** is `step` called once; `step {until, watch}` (spec-mcp, spec-contract) is a loop of
-  `step` calls that tests its condition at each boundary. A tick is atomic: nothing pauses inside
-  one, and the LLM is never inside it (charter 3.5); an execution budget that runs out ends the
-  invocation, not the tick. (A native debugger's breakpoint stops the game thread inside a tick,
-  `threads.md`, 3.5; the tick resumes and completes.)
+- **Stepping** is `step` called once; `step {until, watch}` tests its condition at each completed
+  boundary. A tick is atomic to commands and publication: the LLM never enters it (charter 3.5).
+  A native debugger may stop the game thread inside one (`threads.md` 3.5). A host computation may
+  suspend an exclusive system through `SystemCtx::suspend`; `poll_step` then returns `Pending`.
+  The next poll invokes that system again in the same tick, without rerunning earlier systems.
+  Continuation data belongs in world resources; no invocation may be left open at a suspension.
+  TickState remains running, so snapshots, fork and boundary access are refused. A host only
+  completes its owned numeric request while waiting. Active hook pairs close before yielding and
+  reopen on resumption, excluding host wait from CPU spans. The CPU and synchronous GPU schedule
+  order is unchanged. `step` on an asynchronous host reports `sim.external_pending`, without
+  poisoning; that host must complete requests and use `poll_step`.
+  An execution budget that runs out ends the invocation, not the tick.
 - **Pause-on-decision.** Any system may raise a `DecisionRequest` with a reason the game declares;
   the tick still completes, and the report carries the requests. The time controller delivers one to
   a player only under the contract's rule (shared/contract/time.md, Decision points), so a request's
@@ -674,6 +686,7 @@ order of 4.4 is total by construction, so there is no ambiguity to detect (14, c
 | `sim.system_failed` | an invocation failed; its effects were discarded | `{tick, phase, system, entity?, cause}`, `cause` in the error protocol's shape |
 | `sim.internal` | a system panicked | `{tick, phase, system, message}` |
 | `sim.world_poisoned` | `step` on a world whose last tick panicked | `{tick}` |
+| `sim.external_pending` | synchronous stepping or boundary access while a tick awaits host computation; not a poisoned world | `{}` |
 | `sim.collider_density` | a dynamic convex hull, trimesh or compound collider declares a density, whose mass properties Rapier computes with the platform's math natively (numeric.md, 5); slice 1 refuses it on a fixed body too (numeric.md 11, choice 11) | `{entity, collider}` |
 | `sim.collider_invalid` | a collider whose shape Rapier cannot build (a size that is not positive and finite in the solver's `f32`, a hull of fewer than four points or spanning no volume, a mesh index out of range, an empty compound) or whose friction, restitution or density is out of range, or whose density gives a mass or inertia of 0 or infinity in `f32` (slice 1, amoris-physics; numeric.md 11, choices 11 and 15) | `{entity, reason}` |
 | `sim.body_invalid` | a dynamic body with no mass, or with mass both stated and from a density; stated mass properties not positive and finite in `f32`; damping or gravity scale out of range; a `Collider` without a `Transform`, or a `Transform` whose position is not finite in `f32` or whose rotation is zero (numeric.md 11, choices 11 and 15; slice 1, amoris-physics) | `{entity, reason}` |

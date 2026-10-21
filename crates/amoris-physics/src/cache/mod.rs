@@ -73,6 +73,12 @@ pub fn declare<R: RegisterPersisted>(r: &mut R) {
         .component::<Walker>()
         .component::<amoris_sim::voxels::Voxels>()
         .component::<WaterRegion>()
+        .component::<crate::water::WaterColliderBed>()
+        .component::<crate::water::resident::WaterResident>()
+        .component::<crate::water::resident::WaterOutletStage>()
+        .component::<crate::water::resident::WaterProbe>()
+        .component::<crate::water::feedback::WaterFeedback>()
+        .resource::<crate::water::resident::WaterCheckpoints>()
         .component::<WaterSource>()
         .component::<WaterDrain>()
         .cache::<PhysicsCache>()
@@ -80,9 +86,21 @@ pub fn declare<R: RegisterPersisted>(r: &mut R) {
         .derived::<BodyIndex>("rebuilt from the bodies' user_data, which name their entities")
         .derived::<ContactLog>("filled by physics.step and emptied by physics.contacts each tick")
         .ignore::<RebuiltSolver>("a report for the next physics.step, taken by it")
-        .ignore::<WaterScratch>("the water solver's buffers, overwritten each tick before reading")
+        .ignore::<WaterScratch>(
+            "water working buffers/unfinished-tick continuation; reset on restore",
+        )
         .ignore::<WaterSteps>("the tick each water tile was last stepped, for the feed only")
-        .rebuild("physics.index", rebuild_index);
+        .ignore::<crate::water::buoyancy::Samples>(
+            "current-pose GPU buoyancy samples; rebuilt each tick and reset on restore",
+        )
+        .ignore::<crate::water::swimming::Samples>(
+            "current-pose GPU Walker samples; rebuilt each tick and reset on restore",
+        )
+        .ignore::<crate::water::compute::Backend>(
+            "host compute service; all water state is in WaterRegion",
+        )
+        .rebuild("physics.index", rebuild_index)
+        .rebuild("physics.water_compute", crate::water::compute::invalidate);
 }
 
 fn options() -> impl Options {
@@ -369,9 +387,10 @@ impl Persisted for Collider {
 
 impl Persisted for WaterRegion {
     const NAME: &'static str = "WaterRegion";
-    const VERSION: u32 = 1;
+    const VERSION: u32 = 3;
 
     fn trace(t: &mut Tracer, s: &Samples) -> serde_reflection::Result<()> {
+        t.trace_type::<crate::water::Solver>(s)?;
         t.trace_type::<BedSource>(s)?;
         t.trace_type::<Edge>(s)?;
         t.trace_type::<Style>(s)?;

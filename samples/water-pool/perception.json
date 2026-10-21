@@ -1,0 +1,169 @@
+{
+  "observers": [
+    {
+      "name": "player",
+      "doc": "A swimmer's own eyes and route instruments.",
+      "sight": {
+        "range_m": 64,
+        "fov_deg": 72,
+        "eye_m": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "occlusion": false
+      },
+      "positions": true,
+      "attention_m": 32,
+      "memory_s": 120,
+      "memory_capacity": 32,
+      "event_capacity": 64,
+      "budget_tokens": 400,
+      "instruments": [
+        "stage",
+        "elapsed_s",
+        "underwater_s",
+        "attempt",
+        "in_water",
+        "underwater",
+        "position_m"
+      ]
+    }
+  ],
+  "instruments": [
+    {
+      "name": "stage",
+      "doc": "0 deck, 1 entered, 2 marker, 3 surfaced, 4 finished.",
+      "unit": {
+        "unit": "count"
+      },
+      "precision": 0,
+      "source": {
+        "from": "field",
+        "component": "PoolRun",
+        "path": "stage"
+      }
+    },
+    {
+      "name": "elapsed_s",
+      "doc": "Time on this route.",
+      "unit": {
+        "unit": "seconds"
+      },
+      "precision": 1,
+      "source": {
+        "from": "field",
+        "component": "PoolRun",
+        "path": "elapsed_s"
+      }
+    },
+    {
+      "name": "underwater_s",
+      "doc": "Time with the real eye under water.",
+      "unit": {
+        "unit": "seconds"
+      },
+      "precision": 1,
+      "source": {
+        "from": "field",
+        "component": "PoolRun",
+        "path": "underwater_s"
+      }
+    },
+    {
+      "name": "attempt",
+      "doc": "Current attempt number.",
+      "unit": {
+        "unit": "count"
+      },
+      "precision": 0,
+      "source": {
+        "from": "field",
+        "component": "PoolRun",
+        "path": "attempt"
+      }
+    },
+    {
+      "name": "in_water",
+      "doc": "The body overlaps water.",
+      "unit": {
+        "unit": "bool"
+      },
+      "precision": 0,
+      "source": {
+        "from": "field",
+        "component": "Walker",
+        "path": "in_liquid"
+      }
+    },
+    {
+      "name": "underwater",
+      "doc": "The eye is under water.",
+      "unit": {
+        "unit": "bool"
+      },
+      "precision": 0,
+      "source": {
+        "from": "field",
+        "component": "Walker",
+        "path": "eye_in_liquid"
+      }
+    },
+    {
+      "name": "position_m",
+      "doc": "The actual eye position.",
+      "unit": {
+        "unit": "position"
+      },
+      "precision": 2,
+      "source": {
+        "from": "field",
+        "component": "Transform",
+        "path": "position"
+      }
+    }
+  ],
+  "kinds": [],
+  "events": [
+    {
+      "kind": "pool.entered",
+      "doc": "The real body entered water.",
+      "scope": {
+        "scope": "private"
+      },
+      "data": []
+    },
+    {
+      "kind": "pool.marker",
+      "doc": "The submerged eye reached the gold marker.",
+      "scope": {
+        "scope": "private"
+      },
+      "data": []
+    },
+    {
+      "kind": "pool.surfaced",
+      "doc": "The eye emerged while the body was still in water.",
+      "scope": {
+        "scope": "private"
+      },
+      "data": []
+    },
+    {
+      "kind": "pool.finished",
+      "doc": "The swim route returned to the deck pad.",
+      "scope": {
+        "scope": "private"
+      },
+      "data": []
+    },
+    {
+      "kind": "pool.retried",
+      "doc": "The route was reset on the pad.",
+      "scope": {
+        "scope": "private"
+      },
+      "data": []
+    }
+  ]
+}

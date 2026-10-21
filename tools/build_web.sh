@@ -7,8 +7,8 @@
 set -e
 cd "$(dirname "$0")/.."
 if [ -f "$HOME/.cargo/env" ]; then . "$HOME/.cargo/env"; fi
-# The C compiler is rquickjs-sys's build script's choice: AMORIS_LLVM, else the pinned
-# ~/.amoris-tools/llvm-23.1.2, else Homebrew's LLVM, so every build compiles QuickJS-ng the same way.
+# GPU water brings the renderer's meshoptimizer build into this module too; select both C/C++.
+. ./tools/wasm_toolchain.sh
 cargo build --profile web --target wasm32-unknown-unknown -p amoris-web
 wasm-bindgen --target web --no-typescript --out-dir web/pkg \
   target/wasm32-unknown-unknown/web/amoris_web.wasm

@@ -9,8 +9,9 @@ description = "Rigid bodies on Rapier, buoyancy on waves, wind on a sail, keel, 
 [dependencies]
 amoris-contract.workspace = true
 amoris-sim.workspace = true
+amoris-assets.workspace = true
 bevy_ecs.workspace = true
-serde.workspace = true
+serde = {workspace=true,features=["rc"]}
 serde_json.workspace = true
 schemars.workspace = true
 # Persisted::trace takes its Tracer: the components hold enums below their top level, which their

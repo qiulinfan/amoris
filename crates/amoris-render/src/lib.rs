@@ -28,6 +28,7 @@ pub mod picking;
 mod post;
 pub mod prepass;
 pub mod profiler;
+mod readback;
 #[cfg(not(target_arch = "wasm32"))]
 mod renderdoc;
 pub mod renderer;
@@ -50,6 +51,20 @@ mod ui;
 mod upload;
 pub mod voxels;
 pub mod water;
+mod water_compact;
+pub mod water_compute;
+mod water_edits;
+pub mod water_foam;
+mod water_medium;
+pub mod water_mesh;
+mod water_optics;
+pub mod water_reactions;
+mod water_replica;
+pub mod water_resident;
+pub mod water_samples;
+pub mod water_summary;
+mod water_surface;
+mod water_topology;
 
 pub use camera::CameraState;
 pub use gpu::{BackendChoice, Gpu, GpuError};
@@ -65,3 +80,7 @@ pub use shadows::ShadowCull;
 pub fn shader_source(name: &str) -> String {
     shaders::source(name)
 }
+
+pub mod water_spray;
+
+pub mod water_ledge;

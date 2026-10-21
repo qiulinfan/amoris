@@ -1,6 +1,6 @@
 //! The page's side of the web form (docs/spec/threads.md 7.1, 7.2 and 11): every `snap` rebuilt
-//! into a [`WorldSnapshot`] from its transferred bytes, which `Snapshot::from_bytes` parses and
-//! checks against its trailing hash, and compared with the worker's `world_hash`; the publication
+//! into a [`WorldSnapshot`] from verified section deltas, retaining unchanged immutable data and
+//! checking the complete worker hash before committing its base; the publication
 //! order (versions one apart: `publication_order`, not the commands' canonical order, which the
 //! check page's `ordering` run tests) and the hash stream (every tick once, in order) checked; the
 //! latest two kept, as a presenter interpolating between them would; and a view of the named bodies
@@ -9,7 +9,6 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
 
-use amoris_check::Snapshot;
 use amoris_contract::{Problem, detail};
 use amoris_link::{RegistryInfo, SnapshotView, TimeStatus, WorldSnapshot};
 use serde_json::{Value, json};
@@ -25,10 +24,12 @@ pub struct PresenterCore {
     version: u64,
     /// The last tick of the hash stream.
     last_tick: Option<u64>,
+    hash_epoch: Option<u64>,
     /// The stream's hashes since the last [`PresenterCore::take_hashes`].
     hashes: Vec<(u64, String)>,
     problems: Vec<Problem>,
     received: u64,
+    transfer: amoris_link::snapshot_transfer::SnapshotReceiver,
 }
 
 fn threads_failed(test: &str, message: String, more: Value) -> Problem {
@@ -78,33 +79,24 @@ impl PresenterCore {
     fn rebuild(&mut self, meta: &Value, bytes: &[u8]) -> Result<Value, Problem> {
         let version = meta["version"].as_u64().unwrap_or(0);
         if version != self.version + 1 {
-            self.problems.push(threads_failed(
+            return Err(threads_failed(
                 "publication_order",
                 format!(
                     "snapshot version {version} followed {}; publications must arrive one apart",
                     self.version
                 ),
-                json!({"version": version, "previous": self.version}),
+                json!({"version":version,"previous":self.version}),
             ));
         }
-        self.version = version;
-        for item in meta["hashes"].as_array().into_iter().flatten() {
-            let tick = item[0].as_u64().unwrap_or(u64::MAX);
-            let hash = item[1].as_str().unwrap_or("").to_owned();
-            if let Some(last) = self.last_tick
-                && tick != last + 1
-            {
-                self.problems.push(threads_failed(
-                    "hash_stream",
-                    format!("the hash of tick {tick} followed tick {last}'s"),
-                    json!({"tick": tick, "previous": last}),
-                ));
-            }
-            self.last_tick = Some(tick);
-            self.hashes.push((tick, hash));
+        if meta["snapshot_encoding"] != "sections-v1" {
+            return Err(threads_failed(
+                "rebuild",
+                "snapshot transfer encoding differs".into(),
+                json!({}),
+            ));
         }
-        if let Some(reg) = meta.get("registry") {
-            self.registry = Arc::new(RegistryInfo {
+        let registry = if let Some(reg) = meta.get("registry") {
+            Arc::new(RegistryInfo {
                 components: serde_json::from_value(reg["components"].clone()).map_err(|e| {
                     threads_failed(
                         "rebuild",
@@ -119,25 +111,10 @@ impl PresenterCore {
                         json!({}),
                     )
                 })?,
-            });
-        }
-        let snapshot = Snapshot::from_bytes(bytes)?;
-        let hash = snapshot.world_hash().to_string();
-        let header = snapshot.header();
-        let (tick, writes) = (header.tick.0, header.writes);
-        if Some(hash.as_str()) != meta["world_hash"].as_str()
-            || Some(tick) != meta["header"]["tick"].as_u64()
-            || Some(u64::from(writes)) != meta["header"]["writes"].as_u64()
-        {
-            return Err(threads_failed(
-                "rebuild",
-                format!(
-                    "snapshot {version} rebuilt to tick {tick}, writes {writes}, hash {hash}; the worker posted {}",
-                    meta["world_hash"]
-                ),
-                json!({"version": version, "rebuilt": hash, "posted": meta["world_hash"]}),
-            ));
-        }
+            })
+        } else {
+            self.registry.clone()
+        };
         let time: TimeStatus = serde_json::from_value(meta["time"].clone()).map_err(|e| {
             threads_failed(
                 "rebuild",
@@ -145,6 +122,64 @@ impl PresenterCore {
                 json!({}),
             )
         })?;
+        // Framing and external metadata must both succeed before either receiver advances its
+        // base/version. A bad packet cannot poison the cache needed by the next valid retry.
+        let snapshot = self
+            .transfer
+            .receive(version, bytes, |snapshot| {
+                let h = snapshot.header();
+                let matches = meta["world_hash"].as_str()
+                    == Some(snapshot.world_hash().to_string().as_str())
+                    && meta["header"]["tick"].as_u64() == Some(h.tick.0)
+                    && meta["header"]["writes"].as_u64() == Some(u64::from(h.writes))
+                    && meta["header"]["bundle"].as_str() == Some(h.bundle.to_hex().as_str())
+                    && serde_json::to_value(&h.engine).ok().as_ref()
+                        == Some(&meta["header"]["engine"]);
+                if !matches {
+                    return Err(threads_failed(
+                        "rebuild",
+                        "snapshot metadata differs from its verified wire body".into(),
+                        json!({"version":version}),
+                    ));
+                }
+                Ok(())
+            })
+            .map_err(|p| threads_failed("rebuild", p.message, json!({"version":version})))?;
+        self.version = version;
+        self.registry = registry;
+        let epoch = meta["epoch"].as_u64().unwrap_or(0);
+        let mut hash_epochs = Vec::new();
+        for (i, item) in meta["hashes"].as_array().into_iter().flatten().enumerate() {
+            let hash_epoch = meta["hash_epochs"][i].as_u64().unwrap_or(epoch);
+            hash_epochs.push(hash_epoch);
+            if self.hash_epoch != Some(hash_epoch) {
+                if self.hash_epoch.is_some_and(|last| hash_epoch < last) {
+                    self.problems.push(threads_failed(
+                        "hash_stream",
+                        "a hash epoch moved backwards".into(),
+                        json!({"epoch":hash_epoch}),
+                    ));
+                }
+                self.hash_epoch = Some(hash_epoch);
+                self.last_tick = None;
+            }
+            let tick = item[0].as_u64().unwrap_or(u64::MAX);
+            let hash = item[1].as_str().unwrap_or("").to_owned();
+            if let Some(last) = self.last_tick
+                && tick != last + 1
+            {
+                self.problems.push(threads_failed(
+                    "hash_stream",
+                    format!("the hash of tick {tick} followed tick {last}'s"),
+                    json!({"tick": tick, "previous": last}),
+                ));
+            }
+            self.last_tick = Some(tick);
+            self.hashes.push((tick, hash));
+        }
+
+        let hash = snapshot.world_hash().to_string();
+        let (tick, writes) = (snapshot.header().tick.0, snapshot.header().writes);
         let ws = WorldSnapshot {
             version,
             snapshot,
@@ -158,7 +193,10 @@ impl PresenterCore {
         }
         self.latest.push_back(ws);
         self.received += 1;
-        Ok(json!({"version": version, "tick": tick, "writes": writes, "world_hash": hash}))
+        Ok(
+            json!({"version":version,"tick":tick,"writes":writes,"world_hash":hash,
+            "epoch":epoch,"hash_epochs":hash_epochs}),
+        )
     }
 
     /// Every named entity of the latest snapshot with the components of [`VIEWED`] it has, as

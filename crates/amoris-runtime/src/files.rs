@@ -258,6 +258,11 @@ pub fn scene_of(world: &World) -> Value {
     let mut entities = Vec::with_capacity(live.len());
     for (_, e) in &live {
         let mut comps = components_json(world, *e);
+        // Feedback authoring is an opt-in tag. Its queued impulses/budgets belong to snapshots,
+        // not a fresh scene's clock-zero initial condition or editable component properties.
+        if let Some(v) = comps.get_mut("WaterFeedback") {
+            *v = json!({});
+        }
         for (cname, v) in comps.iter_mut() {
             let Some((schema, _)) = project_component(world, cname) else {
                 continue;

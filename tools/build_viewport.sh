@@ -8,23 +8,7 @@ cd "$(dirname "$0")/.."
 # rustup's env file exists on macOS and Linux, not on Windows; `.` of a missing file would end a
 # POSIX shell even behind `|| true`.
 if [ -f "$HOME/.cargo/env" ]; then . "$HOME/.cargo/env"; fi
-# The C and C++ compilers for wasm32, unless the caller named them: AMORIS_LLVM, else the pinned
-# ~/.amoris-tools/llvm-23.1.2, else Homebrew's LLVM (as rquickjs-sys's build script chooses for
-# QuickJS-ng). meshoptimizer's build script also runs `llvm-ar` from PATH on a Windows host.
-if [ -z "${CC_wasm32_unknown_unknown:-}" ]; then
-  for llvm in "${AMORIS_LLVM:-}" "$HOME/.amoris-tools/llvm-23.1.2" /opt/homebrew/opt/llvm /usr/local/opt/llvm; do
-    [ -n "$llvm" ] || continue
-    exe=""
-    [ -f "$llvm/bin/clang.exe" ] && exe=".exe"
-    if [ -f "$llvm/bin/clang$exe" ]; then
-      export CC_wasm32_unknown_unknown="$llvm/bin/clang$exe"
-      export CXX_wasm32_unknown_unknown="$llvm/bin/clang++$exe"
-      export AR_wasm32_unknown_unknown="$llvm/bin/llvm-ar$exe"
-      export PATH="$llvm/bin:$PATH"
-      break
-    fi
-  done
-fi
+. ./tools/wasm_toolchain.sh
 # The package is committed and public: keep the builder's directories out of its panic and source
 # paths (Amoris 9b908177 remapped them by hand). rustc sees native paths, so Windows hosts remap
 # the Windows form of the Cargo home and the checkout.

@@ -16,6 +16,9 @@ use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 
+#[path = "checkpoint_feed.rs"]
+mod checkpoint_feed;
+
 /// An entity's pose for drawing: position, unit quaternion `[x, y, z, w]`, scale.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Pose {
@@ -271,6 +274,21 @@ pub struct WaterUpdate {
     pub tiles: Vec<WaterTileView>,
 }
 
+/// A resident field's presentation program. The checkpoint travels only on first publication,
+/// reset or compaction; subsequent updates carry only a checked suffix and latest GPU digest.
+/// A viewport reconstructs its own visual cache, without reading that cache into the game.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ResidentWaterUpdate {
+    pub id: u64,
+    pub origin: [f32; 2],
+    pub cell_m: f32,
+    pub look: WaterLookView,
+    #[serde(with = "checkpoint_feed")]
+    pub checkpoint: Option<Arc<crate::water_field::CheckedCheckpoint>>,
+    pub recipe: crate::water_field::FieldPatch,
+    pub edge_level: Option<f32>,
+}
+
 /// What changed in the visual state since the subscriber's last frame.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct RenderFrame {
@@ -311,6 +329,8 @@ pub struct RenderFrame {
     /// Water regions that changed (water.md 9).
     #[serde(default)]
     pub water: Vec<WaterUpdate>,
+    #[serde(default)]
+    pub resident_water: Vec<ResidentWaterUpdate>,
     /// Water regions gone.
     #[serde(default)]
     pub water_removed: Vec<u64>,
@@ -333,17 +353,31 @@ impl RenderFrame {
             && self.voxels.is_empty()
             && self.voxels_removed.is_empty()
             && self.water.is_empty()
+            && self.resident_water.is_empty()
             && self.water_removed.is_empty()
     }
 
     /// Folds `next` (a later frame) into this one, as if both had been applied in order.
-    pub fn merge(&mut self, next: RenderFrame) {
+    pub fn merge(&mut self, next: RenderFrame) -> Result<(), String> {
+        next.validate_resident()?;
+        // Preflight every resident chain before changing any frame fields. Each source frame
+        // has at most one update per region, so the checked bases stay unchanged until append.
+        if !next.reset {
+            for w in &next.resident_water {
+                if let Some(cur) = self.resident_water.iter().find(|c| c.id == w.id) {
+                    cur.recipe.check_append(&w.recipe)?;
+                    if w.checkpoint.is_none() && cur.recipe.checkpoint != w.recipe.checkpoint {
+                        return Err("resident visual checkpoint changed without its seed".into());
+                    }
+                }
+            }
+        }
         self.tick = next.tick;
         self.t_s = next.t_s;
         self.dt_s = next.dt_s;
         if next.reset {
             *self = next;
-            return;
+            return Ok(());
         }
         if !next.removed.is_empty() {
             let gone: std::collections::HashSet<u64> = next.removed.iter().copied().collect();
@@ -433,9 +467,12 @@ impl RenderFrame {
         }
         if !next.water_removed.is_empty() {
             self.water.retain(|w| !next.water_removed.contains(&w.id));
+            self.resident_water
+                .retain(|w| !next.water_removed.contains(&w.id));
             self.water_removed.extend(next.water_removed);
         }
         for w in next.water {
+            self.resident_water.retain(|o| o.id != w.id);
             self.water_removed.retain(|&id| id != w.id);
             match self.water.iter_mut().find(|o| o.id == w.id) {
                 Some(cur) => {
@@ -458,6 +495,50 @@ impl RenderFrame {
                 None => self.water.push(w),
             }
         }
+        for mut w in next.resident_water {
+            self.water_removed.retain(|&id| id != w.id);
+            self.water.retain(|o| o.id != w.id);
+            if let Some(cur) = self.resident_water.iter_mut().find(|o| o.id == w.id) {
+                if w.checkpoint.is_none() && cur.recipe.checkpoint == w.recipe.checkpoint {
+                    w.checkpoint = cur.checkpoint.take();
+                }
+                if w.recipe.start != 0 {
+                    let mut old = std::mem::replace(cur, w);
+                    std::mem::swap(&mut cur.recipe, &mut old.recipe);
+                    cur.recipe.append_validated(old.recipe);
+                } else {
+                    *cur = w;
+                }
+            } else {
+                self.resident_water.push(w);
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_resident(&self) -> Result<(), String> {
+        let mut ids = std::collections::HashSet::new();
+        for w in &self.resident_water {
+            if !ids.insert(w.id) {
+                return Err("render frame repeats a resident region".into());
+            }
+            if self.water_removed.contains(&w.id) || self.water.iter().any(|c| c.id == w.id) {
+                return Err(
+                    "render frame conflicts over a resident region's presence or representation"
+                        .into(),
+                );
+            }
+            w.recipe.validate()?;
+            if self.reset && (w.checkpoint.is_none() || w.recipe.start != 0) {
+                return Err("resident reset frame is missing its full program/seed".into());
+            }
+            if let Some(c) = &w.checkpoint
+                && c.key() != w.recipe.checkpoint
+            {
+                return Err("resident visual checkpoint identity mismatch".into());
+            }
+        }
+        Ok(())
     }
 
     /// The bytes a viewport receives (over `/render`, host-protocol.md 5, or from a game worker):
@@ -481,17 +562,23 @@ impl RenderFrame {
                  viewport were built from different revisions of amoris-assets (rebuild the viewport)"
             ));
         }
-        bincode2::serde::decode_from_slice(body, bincode2::config::standard())
-            .map(|(f, _)| f)
-            .map_err(|e| format!("render frame: {e}"))
+        let (frame, used): (Self, usize) =
+            bincode2::serde::decode_from_slice(body, bincode2::config::standard())
+                .map_err(|e| format!("render frame: {e}"))?;
+        if used != body.len() {
+            return Err("render frame has trailing bytes".into());
+        }
+        frame.validate_resident()?;
+        Ok(frame)
     }
 }
 
-/// The feed's wire format: a fingerprint of the sources of its types (this file and visual.rs), so a
-/// viewport built from another revision refuses the bytes instead of misreading them. Any edit to
-/// either file changes it; both sides rebuild together.
-pub const FORMAT: u64 =
-    fnv1a(include_bytes!("frame.rs")) ^ fnv1a(include_bytes!("visual.rs")).rotate_left(1);
+/// The feed's wire format fingerprints its type and checkpoint-codec sources. A viewport built
+/// from another revision refuses the bytes instead of misreading them; both sides rebuild together.
+pub const FORMAT: u64 = fnv1a(include_bytes!("frame.rs"))
+    ^ fnv1a(include_bytes!("visual.rs")).rotate_left(1)
+    ^ fnv1a(include_bytes!("water_field.rs")).rotate_left(2)
+    ^ fnv1a(include_bytes!("checkpoint_feed.rs")).rotate_left(3);
 
 const fn fnv1a(bytes: &[u8]) -> u64 {
     let mut h = 0xcbf2_9ce4_8422_2325_u64;
@@ -532,9 +619,13 @@ impl Mailbox {
     fn push(&self, frame: RenderFrame) {
         let mut p = self.pending.lock().unwrap_or_else(|p| p.into_inner());
         if p.is_empty() && !p.reset {
+            frame
+                .validate_resident()
+                .expect("producer render reset/patch is valid");
             *p = frame;
         } else {
-            p.merge(frame);
+            p.merge(frame)
+                .expect("producer render updates form a continuous resident program");
         }
     }
 }
@@ -637,7 +728,8 @@ mod tests {
             instances: vec![up(1, 5.0), up(3, 3.0)],
             removed: vec![2],
             ..RenderFrame::default()
-        });
+        })
+        .unwrap();
         assert_eq!(a.tick, 2);
         assert_eq!(a.instances.len(), 2);
         assert_eq!(a.instances[0].pose.unwrap().position[0], 5.0);
@@ -665,7 +757,8 @@ mod tests {
         a.merge(RenderFrame {
             water: vec![water(vec![tile([1, 0], 2.0), tile([1, 1], 2.0)], false)],
             ..RenderFrame::default()
-        });
+        })
+        .unwrap();
         let w = &a.water[0];
         assert!(w.look.is_some(), "the earlier look stays");
         let x: Vec<([u32; 2], f32)> = w.tiles.iter().map(|t| (t.key, t.columns[0][0])).collect();
@@ -673,7 +766,8 @@ mod tests {
         a.merge(RenderFrame {
             water_removed: vec![9],
             ..RenderFrame::default()
-        });
+        })
+        .unwrap();
         assert!(a.water.is_empty() && a.water_removed == vec![9]);
     }
 

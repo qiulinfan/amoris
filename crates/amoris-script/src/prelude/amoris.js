@@ -86,6 +86,7 @@ const voxels = Object.freeze({
 	raycast: (volume, from, dir, maxM, options) => host.voxelsRaycast(volume, from, dir, maxM, options?.solidOnly === true)
 });
 const water = Object.freeze({
+	observe: (probe) => host.waterObserve(probe),
 	depth: (region, x, z) => host.waterDepth(region, x, z),
 	surface: (region, x, z) => host.waterSurface(region, x, z),
 	velocity: (region, x, z) => host.waterVelocity(region, x, z),
@@ -209,4 +210,4 @@ export const field = Object.freeze({
 
 import { harden as __amoris_harden } from "amoris:host";
 import * as __amoris_self from "amoris";
-__amoris_harden("amoris", __amoris_self, { ["Query"]: Query, ["annotate"]: annotate, ["world"]: world, ["voxels"]: voxels, ["water"]: water, ["part"]: part, ["makeRng"]: makeRng, ["__context"]: __context, ["__query"]: __query, ["component"]: component, ["system"]: system, ["executor"]: executor, ["game"]: game, ["freeze"]: freeze, ["fieldOf"]: fieldOf, ["field"]: field }, { ["Query"]: 293, ["annotate"]: 442, ["world"]: 451, ["voxels"]: 462, ["water"]: 480, ["part"]: 492, ["makeRng"]: 497, ["__context"]: 519, ["__query"]: 543, ["component"]: 674, ["system"]: 687, ["executor"]: 694, ["game"]: 699, ["freeze"]: 704, ["fieldOf"]: 746, ["field"]: 750 });
+__amoris_harden("amoris", __amoris_self, { ["Query"]: Query, ["annotate"]: annotate, ["world"]: world, ["voxels"]: voxels, ["water"]: water, ["part"]: part, ["makeRng"]: makeRng, ["__context"]: __context, ["__query"]: __query, ["component"]: component, ["system"]: system, ["executor"]: executor, ["game"]: game, ["freeze"]: freeze, ["fieldOf"]: fieldOf, ["field"]: field }, { ["Query"]: 293, ["annotate"]: 461, ["world"]: 470, ["voxels"]: 481, ["water"]: 499, ["part"]: 512, ["makeRng"]: 517, ["__context"]: 539, ["__query"]: 563, ["component"]: 694, ["system"]: 707, ["executor"]: 714, ["game"]: 719, ["freeze"]: 724, ["fieldOf"]: 766, ["field"]: 770 });

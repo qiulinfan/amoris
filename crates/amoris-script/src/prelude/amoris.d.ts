@@ -271,12 +271,30 @@ export interface VoxelAccess {
 		readonly solidOnly?: boolean;
 	}): VoxelHit | null;
 }
-/** The water of a region (`WaterRegion`, docs/spec/water.md 8) at the column under a world point
-* `(x, z)`, metres. Reads see the world as the system started; `add` and `remove` apply when the
-* system returns, as `world.set` does, and wake the column. A point outside the region answers 0 and
-* writes nothing. Springs and sinks that run every tick are the `WaterSource` and `WaterDrain`
-* components. */
+/** A completed resident-field probe observation. Every object/tuple is frozen. */
+export interface WaterObservation {
+	readonly region: Entity;
+	/** Requested world x/z position, metres. */
+	readonly at: readonly [number, number];
+	readonly tick: number;
+	/** Age in the world being read: 1 in Update, 0 at a completed boundary/debug snapshot. */
+	readonly ageTicks: number;
+	readonly surface: number;
+	readonly depth: number;
+	readonly velocity: readonly [number, number];
+	/** Hex digest of the actual GPU field behind this result. */
+	readonly stateDigest: string;
+}
+/** Water access. Resident fields use WaterProbe requests and observe(). The direct column
+* methods below serve CPU and complete-readback GPU regions: they read the system's starting
+* world; add/remove apply on return and wake the column. Those methods answer 0 outside bounds.
+* WaterSource/WaterDrain components apply recurring input before the solve. */
 export interface WaterAccess {
+	/** Latest completed result for WaterProbe's matching region/at request; at most one tick old.
+	* Undefined until ready, outside, removed or changed since sampling. Update runs before water:
+	* its changed requests are solved later in the same tick and read by the next Update.
+	* Set request fields with world.set or query columns. Never waits on a GPU. */
+	observe(probe: Entity): WaterObservation | undefined;
 	/** The water's depth, metres. */
 	depth(region: Entity, x: number, z: number): number;
 	/** The surface's height, world y; a dry column's is its bed. */

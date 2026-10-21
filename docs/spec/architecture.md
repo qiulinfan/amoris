@@ -15,6 +15,15 @@ carries them. `threads.md` specifies the game and presenter threads that run on 
 `checks.md` the local check command that enforces this layout, and `budgets.md` the performance
 measurements and their reference figures.
 
+GPU water (owner's direction, 2026-10-19; [water.md](water.md) 17) adds a host-injected compute
+service without changing the crate edges. `amoris-physics` owns the service interface and world
+state, `amoris-runtime` exposes the installation interface, `amoris-render` owns the wgpu kernels,
+and `amoris-app` adapts them at game construction. The service receives only a borrowed numeric
+grid. The browser uses the same kernels through `amoris-web::gpu_water`, on its Web Worker's own
+device, with owned requests queued by the game and async completion through `Game::poll_step`.
+The host has no access to the game world. The GPU's buffers are scratch; f64 components continue
+to carry the complete checkpoint state, with the explicit GPU mode's narrower determinism scope.
+
 ## 1. Related specifications
 
 | Owner | Concepts used here by name | File |
@@ -138,14 +147,13 @@ written as that specification names them.
   natively, so it needs neither the importer nor a C++ standard library. The render spike did import
   in Chrome (four workers, 3.8 s for its 122 MB scene), but its workers shared the file through a
   `SharedArrayBuffer`, which needs the cross-origin isolation a shared link may lack (charter 5.1),
-  and each held its own copy of the file.
-  Pioneer, 2026-10-09 (charter 4.4's note on mesh LOD): no cooked format exists yet, and the
-  browser viewport (`amoris-viewport`) imports the `.glb` files it fetches with this importer in
-  WebAssembly; the game module (`amoris-web`) still links neither. Levels of detail are made at
-  import there as natively: meshoptimizer (feature `lod`, which `import` enables) builds for
-  `wasm32-unknown-unknown` with the stripped headers the `meshopt` crate ships, and needs no C++
-  standard library, only `operator new` and `operator delete`, which `amoris_assets::lod` supplies
-  from Rust's allocator (docs/spec/lod.md 2).
+  and each held its own copy of the file. Pioneer, 2026-10-09 (charter 4.4's note on mesh LOD): no
+  cooked format exists yet, and the browser viewport (`amoris-viewport`) imports the `.glb` files it
+  fetches with this importer in WebAssembly; at that checkpoint the game module (`amoris-web`)
+  linked neither. Levels of detail are made at import there as natively: meshoptimizer (feature
+  `lod`, which `import` enables) builds for `wasm32-unknown-unknown` with the stripped headers the
+  `meshopt` crate ships, and needs no C++ standard library, only `operator new` and
+  `operator delete`, which `amoris_assets::lod` supplies from Rust's allocator (docs/spec/lod.md 2).
 
 ### 4.3 `amoris-persist`: persistence
 
@@ -349,6 +357,13 @@ written as that specification names them.
   injected clock (`performance.now()` through `js-sys`, which no game-group crate may use directly).
 - **wasm32**: `cdylib` for `wasm32-unknown-unknown`, one binary carrying both roles and the check
   entry (section 8.2), counted whole in the web size budgets.
+- **GPU water (2026-10-19)**: the app-group crate now uses its already allowed renderer edge for
+  `GpuWater` and GPU device creation, without instantiating a renderer or importing models on the
+  worker. The game-group crates still have no graphics dependency. `ComputeQueue` owns bounded
+  numeric jobs, `BrowserWater` owns wgpu resources, and the game commits only a completed output.
+  No ECS borrow, RefCell guard or state lock spans the host's GPU await. Both web builders select
+  wasm C/C++ through `tools/wasm_toolchain.sh`, because this dependency also enables the assets
+  crate's meshoptimizer build. Synchronous native hosts retain their existing injected backend.
 
 ### 4.15 `xtask`: the check command and code generation
 

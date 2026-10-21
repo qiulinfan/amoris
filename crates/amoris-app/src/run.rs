@@ -9,8 +9,8 @@ use std::time::Instant;
 
 use amoris_contract::{Problem, detail};
 use amoris_link::{EventCursor, SnapshotView, Source};
+use amoris_runtime::Project;
 use amoris_runtime::thread::{GameThread, Pacing, ThreadOptions};
-use amoris_runtime::{Game, Project};
 use serde_json::{Value, json};
 
 use crate::check::Outcome;
@@ -114,7 +114,10 @@ fn headless(args: &Args) -> Result<Value, Problem> {
         Arc::new(move || start.elapsed().as_secs_f64() * 1000.0);
     let options = ThreadOptions::new(clock);
     let realtime = args.number::<f64>("realtime")?;
-    let handle = GameThread::spawn(move || Game::new(setup, seed), options)?;
+    let handle = GameThread::spawn(
+        move || crate::water_compute::builder(setup, seed).build(),
+        options,
+    )?;
     let reader = handle.reader();
     let mut dev = handle.developer();
     let mut players: Vec<(Source, amoris_link::GameClient)> = Vec::new();

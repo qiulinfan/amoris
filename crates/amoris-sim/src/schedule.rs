@@ -192,9 +192,16 @@ pub struct SystemCtx<'a> {
     pub(crate) phase: TickPhase,
     pub(crate) tick: Tick,
     pub(crate) fault: Option<Problem>,
+    pub(crate) suspended: bool,
 }
 
 impl SystemCtx<'_> {
+    /// Yield this system to host-owned external computation. The next poll invokes this system
+    /// again in the same tick; its continuation must be in world resources. No boundary opens.
+    pub fn suspend(&mut self) {
+        self.suspended = true;
+    }
+
     pub fn hooks(&mut self) -> &mut dyn StepHooks {
         self.hooks
     }

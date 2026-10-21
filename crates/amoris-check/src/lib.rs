@@ -25,7 +25,7 @@ use serde_json::json;
 pub use amoris_persist::replay::TickRef;
 pub use amoris_persist::{Snapshot, WorldHash};
 pub use config::{CheckToml, Input, Inputs};
-pub use replay::{VerifySummary, verify_bytes};
+pub use replay::{VerifySummary, verify_bytes, verify_bytes_with};
 pub use report::{Measurement, Report, StepResult, Verdict, exit_code};
 pub use runs::{Build, Chain, Subject};
 
@@ -132,6 +132,15 @@ pub fn check_subject(subject: &Subject, opts: &Options) -> Vec<StepResult> {
 
 /// `amoris check <project>`: the project's checks as one report.
 pub fn check_project(dir: &Path, opts: &Options) -> Report {
+    check_project_with(dir, opts, |_| {})
+}
+
+/// A native host can supply its game factory without introducing graphics into this crate.
+pub fn check_project_with(
+    dir: &Path,
+    opts: &Options,
+    configure: impl FnOnce(&mut Subject),
+) -> Report {
     let t0 = opts.now();
     let name = dir.display().to_string().replace('\\', "/");
     let mut steps = Vec::new();
@@ -148,7 +157,10 @@ pub fn check_project(dir: &Path, opts: &Options) -> Report {
         .collect();
     if !rest.is_empty() {
         match load(dir) {
-            Ok(subject) => steps.extend(check_subject(&subject, opts)),
+            Ok(mut subject) => {
+                configure(&mut subject);
+                steps.extend(check_subject(&subject, opts));
+            }
             Err(p) => {
                 for c in rest {
                     let mut step = StepResult::new(c);

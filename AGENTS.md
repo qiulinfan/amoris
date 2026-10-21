@@ -281,3 +281,50 @@ credential cleanup. File-verification records remain local, including in that ar
   [docs/spec/server.md](docs/spec/server.md).
 - The source-based engine version comes from `crates/engine_version.rs`; Windows compiler and
   host lifecycle handling use the same native command API.
+
+
+## GPU water maintenance
+
+The retained scope is host-backed shallow water, not dense 3D liquid or a completed surfing/fall
+game. WaterRegion selects cpu (default), gpu (full readback) or gpu_resident. GPU errors stop and
+poison the tick; never substitute CPU work. Game-side crates never link wgpu. Native hosts and
+the browser worker install the numerical service through amoris-runtime::water_compute.
+
+Resident water persists checked complete MAC checkpoints, bounded programs and GPU field digests.
+After initialization CPU tiles are empty: never read them or omit checkpoint data when merging
+feeds. Every replay step executes and checks numerical/device compatibility; no missing base,
+changed environment or failed receipt may silently reset state. Publication uses exact-version
+section deltas. Resource snapshot reuse follows ECS change detection just like components.
+
+A suspended tick is not a boundary: do not publish it, repeat earlier systems/sources, or apply
+queued commands until completion. Restore cancels old requests and clears derived observations.
+GPU readback locks must be released before map_async; a refused map may callback synchronously.
+The worker's external_ms is separate from active step_ms; add both and publication for complete
+tick cost. Visual replica solve submissions are outside per-frame GPU pass totals.
+
+Explicit probes, Walkers, Floater and Hull points share MAX_SAMPLES=4096 per region. Queries must
+identify current positions, field owner/grid/checkpoint/digest, coupling mode and tick. Covered
+dry fields mask Sea. Hull's three typed roles never borrow Floater indices. Consume observations
+before Rapier integrates, and never relabel old values after pose, column, region or timeline
+changes. Script observations are frozen; Update normally sees the preceding completed tick.
+Sleeping Walker column data may rebind a new pose only if the column and complete field identity
+are unchanged; active/edited/restored fields query again and consumption authenticates current pose.
+
+WaterFeedback packets belong to the preceding completed boundary, apply before transport and clear
+only after a checked result. Queue each newly applied horizontal force once. Supported-face
+sampling and reaction distribution share a footprint, including rejected wall/dry shares; scalar
+MAC writes must not race through a vec4 update. Budgets do not prove occupied volume, vertical
+impact or global energy conservation. Never use old Sea readings as post-integration field data.
+
+Changes run renderer water_compute/water_resident/water_summary/water_samples/water_reactions,
+physics field_buoyancy/field_hull/resident_swimming, runtime water_resident_async/water_feedback,
+and app gpu_water/gpu_floaters/gpu_feedback/gpu_swimming. Rebuild paired web game/viewport and run
+actual Chrome worker/resident/probe/floater and water_pool_check.mjs checks. samples/water-pool
+uses real player input and only scores poses/contact; scripts never move the swimmer.
+
+Rendering uses actual GPU fields, preserves dry-region ocean ownership and WebGPU's eight fragment
+storage-buffer limit. Test water image cases, water_foam and the actual browser after visual
+changes. Keep no-water behavior unchanged. Compute pipelines use shaders::compute_options();
+initialize workgroup memory explicitly. Benchmark methods and measured scope are in
+docs/bench/liquids.md; raw logs/traces stay under ignored out/. GPU interval sums/coverage are
+not hardware utilization and can include stalls.

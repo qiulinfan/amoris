@@ -8,7 +8,7 @@ use bytemuck::{Pod, Zeroable};
 
 use crate::post::{DEPTH, SceneFormat};
 
-const MAX_WAVES: usize = 16;
+const MAX_WAVES: usize = amoris_assets::water_field::MAX_SEA_WAVES;
 const SEGMENTS: u32 = 192;
 const GRAVITY: f32 = 9.81;
 
@@ -18,20 +18,30 @@ struct OceanUniform {
     level: f32,
     count: u32,
     time: f32,
-    _p: f32,
+    region_count: u32,
     waves: [[f32; 4]; MAX_WAVES],
     phases: [[f32; 4]; MAX_WAVES],
 }
 
 pub struct Ocean {
     pub pipeline: wgpu::RenderPipeline,
+    masked_pipeline: wgpu::RenderPipeline,
     /// Depth only, one sample (`draw_depth`): the unjittered depth splats test against with TAA.
     depth_pipeline: wgpu::RenderPipeline,
+    masked_depth_pipeline: wgpu::RenderPipeline,
     layout: wgpu::PipelineLayout,
     vertices: wgpu::Buffer,
     indices: wgpu::Buffer,
     index_count: u32,
     uniform: wgpu::Buffer,
+    bind_layout: wgpu::BindGroupLayout,
+    regions: wgpu::Buffer,
+    region_capacity: usize,
+    region_values: Vec<[f32; 4]>,
+    views: [wgpu::BindGroup; 2],
+    view_layout: wgpu::BindGroupLayout,
+    view_buffers: [wgpu::Buffer; 2],
+    materials: wgpu::Buffer,
     pub group: wgpu::BindGroup,
 }
 
@@ -74,7 +84,10 @@ fn pipeline(
     module: &wgpu::ShaderModule,
     layout: &wgpu::PipelineLayout,
     format: SceneFormat,
+    masked: bool,
 ) -> wgpu::RenderPipeline {
+    let mut constants = format.constants().to_vec();
+    constants.push(("OCEAN_EXCLUDE_REGIONS", f64::from(masked)));
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("ocean"),
         layout: Some(layout),
@@ -92,7 +105,7 @@ fn pipeline(
             module,
             entry_point: Some("fs_ocean"),
             compilation_options: wgpu::PipelineCompilationOptions {
-                constants: &format.constants(),
+                constants: &constants,
                 ..Default::default()
             },
             targets: &format.targets(None, true),
@@ -116,6 +129,7 @@ fn depth_pipeline(
     device: &wgpu::Device,
     module: &wgpu::ShaderModule,
     layout: &wgpu::PipelineLayout,
+    masked: bool,
 ) -> wgpu::RenderPipeline {
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("ocean (depth)"),
@@ -130,7 +144,12 @@ fn depth_pipeline(
                 attributes: &wgpu::vertex_attr_array![0 => Float32x2],
             })],
         },
-        fragment: None,
+        fragment: masked.then_some(wgpu::FragmentState {
+            module,
+            entry_point: Some("fs_ocean_depth"),
+            compilation_options: Default::default(),
+            targets: &[],
+        }),
         primitive: wgpu::PrimitiveState::default(),
         depth_stencil: Some(wgpu::DepthStencilState {
             format: DEPTH,
@@ -153,7 +172,8 @@ impl Ocean {
         module: &wgpu::ShaderModule,
         format: SceneFormat,
     ) {
-        self.pipeline = pipeline(device, module, &self.layout, format);
+        self.pipeline = pipeline(device, module, &self.layout, format, false);
+        self.masked_pipeline = pipeline(device, module, &self.layout, format, true);
     }
 
     pub fn new(
@@ -161,32 +181,91 @@ impl Ocean {
         module: &wgpu::ShaderModule,
         groups: [&wgpu::BindGroupLayout; 3],
         format: SceneFormat,
+        view_buffers: [&wgpu::Buffer; 2],
+        materials: &wgpu::Buffer,
     ) -> Ocean {
+        // Omit instance/draw storage. Alpha-aware RT sun shadows still need materials.
+        // This leaves room for the exclusion buffer within baseline storage limits.
+        let view_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("ocean view"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+        let views = view_buffers.map(|b| {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("ocean view"),
+                layout: &view_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: b.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: materials.as_entire_binding(),
+                    },
+                ],
+            })
+        });
         let layout3 = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("ocean"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
                 },
-                count: None,
-            }],
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("ocean"),
             bind_group_layouts: &[
-                Some(groups[0]),
+                Some(&view_layout),
                 Some(groups[1]),
                 Some(groups[2]),
                 Some(&layout3),
             ],
             immediate_size: 0,
         });
-        let pipeline = pipeline(device, module, &layout, format);
-        let depth_pipeline = depth_pipeline(device, module, &layout);
+        let pipeline = pipeline(device, module, &layout, format, false);
+        let masked_pipeline = self::pipeline(device, module, &layout, format, true);
+        let depth_pipeline = depth_pipeline(device, module, &layout, false);
+        let masked_depth_pipeline = self::depth_pipeline(device, module, &layout, true);
         let (v, i) = ring_grid();
         let vertices = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("ocean grid"),
@@ -218,33 +297,111 @@ impl Ocean {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        let regions = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("ocean exclusions"),
+            size: 16,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
         let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("ocean"),
             layout: &layout3,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: uniform.as_entire_binding(),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: regions.as_entire_binding(),
+                },
+            ],
         });
         Ocean {
             pipeline,
+            masked_pipeline,
             depth_pipeline,
+            masked_depth_pipeline,
             layout,
             vertices,
             indices,
             index_count: i.len() as u32,
             uniform,
+            bind_layout: layout3,
+            regions,
+            region_capacity: 1,
+            region_values: Vec::new(),
+            views,
+            view_layout,
+            view_buffers: view_buffers.map(Clone::clone),
+            materials: materials.clone(),
             group,
         }
     }
 
     /// Writes the sea's waves at simulated time `t`.
-    pub fn update(&self, queue: &wgpu::Queue, sea: &SeaView, t: f32) {
+    pub fn update(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        sea: &SeaView,
+        t: f32,
+        regions: Vec<[f32; 4]>,
+        materials: &wgpu::Buffer,
+    ) {
+        if *materials != self.materials {
+            self.views = self.view_buffers.each_ref().map(|b| {
+                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("ocean view"),
+                    layout: &self.view_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: b.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 3,
+                            resource: materials.as_entire_binding(),
+                        },
+                    ],
+                })
+            });
+            self.materials = materials.clone();
+        }
+        if regions != self.region_values {
+            if regions.len() > self.region_capacity {
+                self.region_capacity = regions.len().next_power_of_two();
+                self.regions = device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("ocean exclusions"),
+                    size: self.region_capacity as u64 * 16,
+                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                self.group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("ocean"),
+                    layout: &self.bind_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: self.uniform.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: self.regions.as_entire_binding(),
+                        },
+                    ],
+                });
+            }
+            if !regions.is_empty() {
+                queue.write_buffer(&self.regions, 0, bytemuck::cast_slice(&regions));
+            }
+            self.region_values = regions;
+        }
         let mut u = OceanUniform {
             level: sea.level,
             count: 0,
             time: t,
-            _p: 0.0,
+            region_count: self.region_values.len() as u32,
             waves: [[0.0; 4]; MAX_WAVES],
             phases: [[0.0; 4]; MAX_WAVES],
         };
@@ -260,14 +417,24 @@ impl Ocean {
     }
 
     pub fn draw(&self, pass: &mut wgpu::RenderPass<'_>) {
-        pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(0, &self.views[0], &[]);
+        pass.set_pipeline(if self.region_values.is_empty() {
+            &self.pipeline
+        } else {
+            &self.masked_pipeline
+        });
         self.draw_grid(pass);
     }
 
     /// Draws the sea's depth alone into a one-sample depth pass (groups 0 to 2 bound as for
     /// [`Ocean::draw`]).
     pub fn draw_depth(&self, pass: &mut wgpu::RenderPass<'_>) {
-        pass.set_pipeline(&self.depth_pipeline);
+        pass.set_bind_group(0, &self.views[1], &[]);
+        pass.set_pipeline(if self.region_values.is_empty() {
+            &self.depth_pipeline
+        } else {
+            &self.masked_depth_pipeline
+        });
         self.draw_grid(pass);
     }
 

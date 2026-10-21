@@ -1,0 +1,26 @@
+{
+  "asset": {
+    "version": "2.0"
+  },
+  "materials": [
+    {
+      "name": "sand",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          0.58,
+          0.43,
+          0.23,
+          1
+        ],
+        "metallicFactor": 0,
+        "roughnessFactor": 0.9
+      }
+    }
+  ],
+  "scenes": [
+    {
+      "nodes": []
+    }
+  ],
+  "scene": 0
+}

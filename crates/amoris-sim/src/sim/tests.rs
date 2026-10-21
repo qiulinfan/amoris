@@ -19,6 +19,98 @@ fn sim() -> Sim {
 }
 
 #[test]
+fn suspended_system_resumes_the_same_tick_without_repeating_earlier_systems() {
+    #[derive(bevy_ecs::prelude::Resource, Default)]
+    struct Job {
+        before: u32,
+        polls: u32,
+        after: u32,
+        ready: bool,
+    }
+    let mut s = sim();
+    s.world_mut().insert_resource(Job::default());
+    s.add_exclusive(
+        "test.prepare",
+        TickPhase::Forces,
+        RunCondition::Always,
+        |w, _| w.resource_mut::<Job>().before += 1,
+    )
+    .unwrap();
+    s.add_exclusive(
+        "test.external",
+        TickPhase::Forces,
+        RunCondition::Always,
+        |w, ctx| {
+            let mut j = w.resource_mut::<Job>();
+            j.polls += 1;
+            if !j.ready {
+                ctx.suspend();
+            }
+        },
+    )
+    .unwrap();
+    s.add_exclusive(
+        "test.after",
+        TickPhase::Physics,
+        RunCondition::Always,
+        |w, _| w.resource_mut::<Job>().after += 1,
+    )
+    .unwrap();
+    for _ in 0..3 {
+        assert!(s.poll_step(&mut NoHooks).unwrap().is_pending());
+    }
+    assert_eq!(s.clock().tick, Tick(1));
+    assert!(s.waiting());
+    assert!(s.check_boundary("test").is_err());
+    let j = s.world().resource::<Job>();
+    assert_eq!((j.before, j.polls, j.after), (1, 3, 0));
+    s.world_mut().resource_mut::<Job>().ready = true;
+    let report = s.poll_step(&mut NoHooks).unwrap();
+    assert!(matches!(
+        report,
+        std::task::Poll::Ready(StepReport { tick: Tick(1), .. })
+    ));
+    assert!(!s.waiting());
+    assert!(s.check_boundary("test").is_ok());
+    assert_eq!(s.world().resource::<Job>().after, 1);
+    assert_eq!(s.step(&mut NoHooks).unwrap().tick, Tick(2));
+    assert_eq!(s.world().resource::<Job>().before, 2);
+}
+
+#[test]
+fn fault_after_external_wait_poisons_instead_of_advancing_the_schedule() {
+    #[derive(bevy_ecs::prelude::Resource, Default)]
+    struct Ready(bool);
+    let mut s = sim();
+    s.world_mut().insert_resource(Ready::default());
+    s.add_exclusive(
+        "test.external",
+        TickPhase::Update,
+        RunCondition::Always,
+        |w, ctx| {
+            if w.resource::<Ready>().0 {
+                ctx.fault(Problem::new(
+                    "test.compute_failed",
+                    "device lost",
+                    detail([]),
+                ));
+            } else {
+                ctx.suspend();
+            }
+        },
+    )
+    .unwrap();
+    assert!(s.poll_step(&mut NoHooks).unwrap().is_pending());
+    s.world_mut().resource_mut::<Ready>().0 = true;
+    assert_eq!(
+        s.poll_step(&mut NoHooks).unwrap_err().code,
+        "test.compute_failed"
+    );
+    assert!(!s.waiting());
+    assert_eq!(s.step(&mut NoHooks).unwrap_err().code, "sim.world_poisoned");
+}
+
+#[test]
 fn an_outbox_event_left_at_a_boundary_trips_the_invariants() {
     let mut s = sim();
     s.step(&mut NoHooks).unwrap();

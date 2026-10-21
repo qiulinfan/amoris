@@ -31,8 +31,6 @@ pub struct Grid {
     z0: usize,
     bed: Vec<f64>,
     depth: Vec<f64>,
-    /// The depths after the tick's inputs, for the stillness test.
-    start: Vec<f64>,
     /// Face velocities: `u` on the x faces (`w + 1` by `h`, face `(i, k)` the -x face of column
     /// `(i, k)`), `v` on the z faces (`w` by `h + 1`).
     u: Vec<f64>,
@@ -43,6 +41,12 @@ pub struct Grid {
     fresh: Vec<f64>,
     /// Whether each column is stepped.
     on: Vec<bool>,
+    pending: Option<Plan>,
+}
+
+struct Plan {
+    tiles: Vec<usize>,
+    count: u32,
 }
 
 fn reset(v: &mut Vec<f64>, n: usize, x: f64) {
@@ -64,57 +68,123 @@ pub(crate) fn substeps_for(speed: f64, dt: f64, cell_m: f64) -> u32 {
 
 /// One tick of `r` (water.md 4): substeps, drying, sleep.
 pub(crate) fn tick(r: &mut WaterRegion, dt: f64, g: &mut Grid) -> Stepped {
-    let [tx, tz] = r.tiles_along();
-    // The stepped tiles: awake ones and their 4-neighbours.
-    let mut stepped = vec![false; tx * tz];
-    let mut fastest: f64 = 0.0;
-    let mut deepest: f64 = 0.0;
-    for (n, t) in r.tiles.iter().enumerate() {
-        if t.asleep() {
-            continue;
-        }
-        let (kx, kz) = (n % tx, n / tx);
-        stepped[n] = true;
-        if kx > 0 {
-            stepped[n - 1] = true;
-        }
-        if kx + 1 < tx {
-            stepped[n + 1] = true;
-        }
-        if kz > 0 {
-            stepped[n - tx] = true;
-        }
-        if kz + 1 < tz {
-            stepped[n + tx] = true;
-        }
-        for c in 0..t.depth.len() {
-            fastest = math::max(fastest, math::max(t.u[c].abs(), t.w[c].abs()));
-            deepest = math::max(deepest, t.depth[c]);
-        }
-    }
-    let tiles: Vec<usize> = (0..stepped.len()).filter(|&n| stepped[n]).collect();
-    if tiles.is_empty() {
-        return Stepped::default();
-    }
-    let speed = fastest + math::sqrt(G * deepest);
-    let count = r.substeps.max(substeps_for(speed, dt, r.cell_m));
+    tick_with(r, dt, g, None).expect("CPU water step")
+}
 
-    // The window: the stepped tiles' box with a margin of one tile.
-    let (mut lo, mut hi) = ([usize::MAX; 2], [0usize; 2]);
-    for &n in &tiles {
-        let k = [n % tx, n / tx];
-        for a in 0..2 {
-            lo[a] = lo[a].min(k[a]);
-            hi[a] = hi[a].max(k[a]);
-        }
+pub(crate) fn tick_with(
+    r: &mut WaterRegion,
+    dt: f64,
+    g: &mut Grid,
+    compute: Option<&mut dyn super::compute::WaterCompute>,
+) -> Result<Stepped, amoris_contract::Problem> {
+    match poll_tick(r, dt, g, compute)? {
+        std::task::Poll::Ready(done) => Ok(done),
+        std::task::Poll::Pending => Err(amoris_contract::Problem::new(
+            "sim.external_pending",
+            "Water awaits host computation",
+            amoris_contract::detail([]),
+        )),
     }
-    let lo = [lo[0].saturating_sub(1), lo[1].saturating_sub(1)];
-    let hi = [(hi[0] + 1).min(tx - 1), (hi[1] + 1).min(tz - 1)];
-    g.gather(r, &stepped, lo, hi);
+}
+
+pub(crate) fn poll_tick(
+    r: &mut WaterRegion,
+    dt: f64,
+    g: &mut Grid,
+    compute: Option<&mut dyn super::compute::WaterCompute>,
+) -> Result<std::task::Poll<Stepped>, amoris_contract::Problem> {
+    let Plan { tiles, count } = if let Some(plan) = g.pending.take() {
+        plan
+    } else {
+        let [tx, tz] = r.tiles_along();
+        // The stepped tiles: awake ones and their 4-neighbours.
+        let mut stepped = vec![false; tx * tz];
+        let mut fastest: f64 = 0.0;
+        let mut deepest: f64 = 0.0;
+        for (n, t) in r.tiles.iter().enumerate() {
+            if t.asleep() {
+                continue;
+            }
+            let (kx, kz) = (n % tx, n / tx);
+            stepped[n] = true;
+            if kx > 0 {
+                stepped[n - 1] = true;
+            }
+            if kx + 1 < tx {
+                stepped[n + 1] = true;
+            }
+            if kz > 0 {
+                stepped[n - tx] = true;
+            }
+            if kz + 1 < tz {
+                stepped[n + tx] = true;
+            }
+            for c in 0..t.depth.len() {
+                fastest = math::max(fastest, math::max(t.u[c].abs(), t.w[c].abs()));
+                deepest = math::max(deepest, t.depth[c]);
+            }
+        }
+        let tiles: Vec<usize> = (0..stepped.len()).filter(|&n| stepped[n]).collect();
+        if tiles.is_empty() {
+            return Ok(std::task::Poll::Ready(Stepped::default()));
+        }
+        let speed = fastest + math::sqrt(G * deepest);
+        let count = r.substeps.max(substeps_for(speed, dt, r.cell_m));
+
+        // The window: the stepped tiles' box with a margin of one tile.
+        let (mut lo, mut hi) = ([usize::MAX; 2], [0usize; 2]);
+        for &n in &tiles {
+            let k = [n % tx, n / tx];
+            for a in 0..2 {
+                lo[a] = lo[a].min(k[a]);
+                hi[a] = hi[a].max(k[a]);
+            }
+        }
+        let lo = [lo[0].saturating_sub(1), lo[1].saturating_sub(1)];
+        let hi = [(hi[0] + 1).min(tx - 1), (hi[1] + 1).min(tz - 1)];
+        g.gather(r, &stepped, lo, hi);
+        Plan { tiles, count }
+    };
 
     let h = dt / f64::from(count);
-    for _ in 0..count {
-        g.substep(h, r.cell_m, r.friction);
+    match r.solver {
+        super::Solver::Cpu => {
+            for _ in 0..count {
+                g.substep(h, r.cell_m, r.friction);
+            }
+        }
+        super::Solver::Gpu => {
+            let compute = compute.ok_or_else(|| {
+                amoris_contract::Problem::new(
+                    "water.compute_missing",
+                    "GPU water needs a host compute service; this host has none",
+                    amoris_contract::detail([]),
+                )
+            })?;
+            let result = compute.poll_advance(
+                super::compute::GridView {
+                    size: [g.w, g.h],
+                    bed: &g.bed,
+                    depth: &mut g.depth,
+                    u: &mut g.u,
+                    w: &mut g.v,
+                    active: &g.on,
+                },
+                r.cell_m,
+                h,
+                count,
+                r.friction,
+            )?;
+            if result.is_pending() {
+                g.pending = Some(Plan { tiles, count });
+                return Ok(std::task::Poll::Pending);
+            }
+        }
+        super::Solver::GpuResident => {
+            return Err(super::resident::failed(
+                "resident water cannot use the CPU-grid solve path",
+            ));
+        }
     }
     let dried = if r.dry_below > 0.0 {
         g.dry(r.dry_below) * r.cell_m * r.cell_m
@@ -122,11 +192,11 @@ pub(crate) fn tick(r: &mut WaterRegion, dt: f64, g: &mut Grid) -> Stepped {
         0.0
     };
     g.scatter(r, &tiles);
-    Stepped {
+    Ok(std::task::Poll::Ready(Stepped {
         substeps: count,
         tiles,
         dried_m3: dried,
-    }
+    }))
 }
 
 impl Grid {
@@ -135,12 +205,19 @@ impl Grid {
         let (w, h) = ((hi[0] - lo[0] + 1) * TILE, (hi[1] - lo[1] + 1) * TILE);
         (self.w, self.h, self.x0, self.z0) = (w, h, lo[0] * TILE, lo[1] * TILE);
         let n = w * h;
-        reset(&mut self.bed, n, 0.0);
-        reset(&mut self.depth, n, 0.0);
-        reset(&mut self.u, (w + 1) * h, 0.0);
-        reset(&mut self.v, w * (h + 1), 0.0);
-        self.on.clear();
+        // Every column is overwritten below. Retain the allocation and existing contents rather
+        // than zero-filling the entire window before copying the same bytes again.
+        self.bed.resize(n, 0.0);
+        self.depth.resize(n, 0.0);
+        self.u.resize((w + 1) * h, 0.0);
+        self.v.resize(w * (h + 1), 0.0);
         self.on.resize(n, false);
+        // The tiles own only minus faces. Initialize the two unowned outer boundaries explicitly,
+        // including after a window reshapes while reusing a larger allocation.
+        for k in 0..h {
+            self.u[w + (w + 1) * k] = 0.0;
+        }
+        self.v[n..].fill(0.0);
         for kz in lo[1]..=hi[1] {
             for kx in lo[0]..=hi[0] {
                 let t = &r.tiles[kx + tx * kz];
@@ -180,11 +257,12 @@ impl Grid {
                 }
             }
         }
-        self.u_next.clone_from(&self.u);
-        self.v_next.clone_from(&self.v);
-        self.start.clone_from(&self.depth);
-        self.fresh.clone_from(&self.depth);
-        reset(&mut self.scale, n, 1.0);
+        if r.solver == super::Solver::Cpu {
+            self.u_next.clone_from(&self.u);
+            self.v_next.clone_from(&self.v);
+            self.fresh.clone_from(&self.depth);
+            reset(&mut self.scale, n, 1.0);
+        }
     }
 
     /// Whether the x face `(i, k)` (between columns `i - 1` and `i`) is stepped.
@@ -392,7 +470,9 @@ impl Grid {
                 for l in 0..TILE {
                     let (c, f) = (row + l, from + l);
                     let (u, v) = (self.u[urow + l], self.v[c]);
-                    if (self.depth[c] - self.start[c]).abs() > STILL_DEPTH
+                    // The region has not been written back yet: its own depth is the tick's
+                    // starting value, so a second full-size copy is unnecessary.
+                    if (self.depth[c] - t.depth[f]).abs() > STILL_DEPTH
                         || u.abs() > STILL_SPEED
                         || v.abs() > STILL_SPEED
                     {

@@ -1114,4 +1114,72 @@ mod tests {
         let diff = mean_abs_diff(&quads, &tiles);
         assert!(diff < 0.5, "mean difference {diff}");
     }
+    #[test]
+    fn ocean_ownership_masks_unjittered_depth_used_by_splats() {
+        let gpu =
+            Gpu::headless(BackendChoice::from_env()).expect("ocean depth masking requires GPU");
+        gpu.device.on_uncaptured_error(std::sync::Arc::new(|e| {
+            panic!("ocean depth validation: {e}")
+        }));
+        let cloud = SplatCloud::from_raw(
+            &[RawSplat {
+                position: [8.0, 0.5, 8.0],
+                scale: [0.8, 0.01, 0.8],
+                rotation: [0.0, 0.0, 0.0, 1.0],
+                color: [1.0, 0.0, 0.0],
+                opacity: 0.95,
+            }],
+            0,
+            &[],
+        );
+        let mut reference = renderer_with(&gpu, &cloud);
+        let mut masked = renderer_with(&gpu, &cloud);
+        let camera =
+            CameraState::look_at_up(Vec3::new(8.0, 6.0, 8.0), Vec3::new(8.0, 0.0, 8.0), Vec3::Z);
+        let mut water = crate::demo::water::mesh_scene(16, "full").water.remove(0);
+        water.id = 1;
+        water.origin = [0.0; 2];
+        water.cell_m = 1.0;
+        water.size = [16; 2];
+        water.tiles = vec![amoris_assets::frame::WaterTileView {
+            key: [0, 0],
+            columns: vec![[0.0; 4]; 256],
+        }];
+        for (renderer, sea) in [(&mut reference, false), (&mut masked, true)] {
+            renderer.set_antialiasing(crate::Antialiasing::MsaaTaa);
+            renderer.set_camera_override(Some(camera));
+            renderer.set_water_foam(false);
+            renderer.apply(
+                RenderFrame {
+                    tick: 2,
+                    water: vec![water.clone()],
+                    sea: sea.then_some(Some(amoris_assets::frame::SeaView {
+                        level: 1.0,
+                        waves: vec![],
+                    })),
+                    ..Default::default()
+                },
+                0.0,
+            );
+        }
+        let expected = shoot(&mut reference, SplatRaster::Tiles);
+        let actual = shoot(&mut masked, SplatRaster::Tiles);
+        assert_eq!(
+            actual, expected,
+            "excluded ocean still occluded splats through its unjittered depth"
+        );
+        reference.apply(
+            RenderFrame {
+                tick: 3,
+                splats: Some(vec![]),
+                ..Default::default()
+            },
+            0.0,
+        );
+        let empty = shoot(&mut reference, SplatRaster::Tiles);
+        assert!(
+            mean_abs_diff(&expected, &empty) > 0.1,
+            "splat visibility control was empty"
+        );
+    }
 }

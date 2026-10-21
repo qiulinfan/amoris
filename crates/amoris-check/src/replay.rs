@@ -32,8 +32,16 @@ pub struct VerifySummary {
 
 /// Verifies a replay's bytes against a fresh game (replay.md 3.4, `Verify`).
 pub fn verify_bytes(bytes: &[u8]) -> Result<VerifySummary, Problem> {
+    verify_bytes_with(bytes, amoris_runtime::Game::for_replay)
+}
+
+/// Verify using a host's game factory (for example one with GPU water installed).
+pub fn verify_bytes_with(
+    bytes: &[u8],
+    make: impl FnOnce(&Replay) -> Result<amoris_runtime::Game, Problem>,
+) -> Result<VerifySummary, Problem> {
     let replay = Replay::read(bytes)?;
-    let mut game = amoris_runtime::Game::for_replay(&replay)?;
+    let mut game = make(&replay)?;
     let report = verify(&replay, &mut game, VerifyOptions::mode(ReplayMode::Verify));
     Ok(match report.outcome {
         ReplayOutcome::Identical => VerifySummary {
@@ -133,7 +141,7 @@ fn verify_file(
                 detail([]),
             )),
         },
-        None => verify_bytes(bytes),
+        None => verify_bytes_with(bytes, |replay| (subject.replay_build)(replay)),
     }
 }
 

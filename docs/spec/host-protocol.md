@@ -161,6 +161,8 @@ docs/bench/gizmo.md.)
   sources of the feed's types), then the frame in `bincode` 2's standard configuration. A viewport
   built from another revision refuses the frame and logs that it must be rebuilt, instead of
   misreading it;
+- binary resident-water checkpoints use bounded independent lossless blocks (water.md 39), with
+  exact state validation after decoding; their JSON and persisted raw data keep their own formats;
 - the first frame after connecting, and after a restore, a reload or Play/Stop (a new world or
   generation), has `reset: true` and carries everything; later frames carry what changed;
 - while the world is paused the game thread still wakes every 50 ms when a subscriber waits for a

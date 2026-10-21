@@ -10,8 +10,8 @@ use std::time::Instant;
 use amoris_contract::{Problem, detail};
 use amoris_link::Source;
 use amoris_mcp::{Backend, BoxFuture, Caller};
+use amoris_runtime::Project;
 use amoris_runtime::thread::{GameHandle, GameThread, Pacing, ThreadOptions};
-use amoris_runtime::{GameBuilder, Project};
 use amoris_server::{GameAccess, Host, McpBackend, ServeOptions, hostfile};
 use serde_json::{Value, json};
 
@@ -98,7 +98,9 @@ fn start(root: &Path, seed: Option<u64>, editor: Option<PathBuf>) -> Result<Serv
     let h = hub.clone();
     let handle = GameThread::spawn(
         move || {
-            let mut game = GameBuilder::new(setup).seed(seed).project(dir).build()?;
+            let mut game = crate::water_compute::builder(setup, seed)
+                .project(dir)
+                .build()?;
             game.set_script_debugger(Some(h.hook()));
             Ok(game)
         },

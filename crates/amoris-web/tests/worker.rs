@@ -523,16 +523,20 @@ fn the_presenter_rebuilds_every_snapshot_and_reports_what_does_not_fit() {
         // A snapshot out of order, and one whose bytes are not what the worker hashed.
         let mut fresh = PresenterCore::new();
         let (meta, bytes) = &page.snaps[1];
-        fresh.receive(meta, bytes).unwrap();
+        fresh.receive(meta, bytes).unwrap_err();
         assert_eq!(
             fresh.problems()[0].detail["test"],
             json!("publication_order")
         );
+        fresh.receive(&page.snaps[0].0, &page.snaps[0].1).unwrap();
+        fresh.receive(&page.snaps[1].0, &page.snaps[1].1).unwrap();
         let (meta, _) = &page.snaps[2];
         let (_, other) = &page.snaps[3];
         let e = fresh.receive(meta, other).unwrap_err();
         assert_eq!(e.code, "web.threads_failed");
         assert_eq!(e.detail["test"], json!("rebuild"));
+        fresh.receive(&page.snaps[2].0, &page.snaps[2].1).unwrap();
+        assert_eq!(fresh.latest().unwrap().version, 3);
     });
 }
 
@@ -615,7 +619,7 @@ fn a_poisoned_world_halts_keeps_answering_and_streams_to_the_last_good_tick() {
                 .iter()
                 .position(|(m, _)| m["time"]["halted"] == true)
                 .expect("a halted republication");
-            let (good, good_bytes) = page.snaps[first_halted - 1].clone();
+            let (good, _) = page.snaps[first_halted - 1].clone();
             assert!(good["header"]["tick"].as_u64().unwrap() < FAULT_AT);
             // Later commands: a player's edit, a Read, a refused step, then a resume.
             let edit = json!({"edits": [{"op": "set", "entity": "Sloop", "component": "Boat",
@@ -663,12 +667,21 @@ fn a_poisoned_world_halts_keeps_answering_and_streams_to_the_last_good_tick() {
                 (0..FAULT_AT).collect::<Vec<_>>(),
                 "nothing after the halt"
             );
-            for (meta, bytes) in &page.snaps[first_halted..] {
+            let mut receiver = amoris_link::snapshot_transfer::SnapshotReceiver::default();
+            let mut canonical = Vec::new();
+            for (meta, bytes) in &page.snaps {
+                let snapshot = receiver
+                    .receive(meta["version"].as_u64().unwrap(), bytes, |_| Ok(()))
+                    .unwrap();
+                canonical.push(snapshot.to_bytes());
+            }
+            let good_bytes = &canonical[first_halted - 1];
+            for (index, (meta, _)) in page.snaps[first_halted..].iter().enumerate() {
                 assert_eq!(meta["time"]["halted"], json!(true), "{meta}");
                 assert_eq!(meta["world_hash"], good["world_hash"]);
                 assert_eq!(meta["header"], good["header"]);
                 assert!(
-                    *bytes == good_bytes,
+                    &canonical[first_halted + index] == good_bytes,
                     "a snapshot built from the poisoned world"
                 );
             }

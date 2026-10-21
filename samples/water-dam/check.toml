@@ -1,0 +1,10 @@
+[run]
+ticks = 60
+seeds = [1]
+
+[fork]
+at = [20, 40]
+ticks = 10
+
+[reload]
+at = [20, 40]

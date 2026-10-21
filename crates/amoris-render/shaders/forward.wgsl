@@ -452,6 +452,21 @@ fn fs_transparent(in: VsOut, @builtin(front_facing) facing: bool) -> @location(0
     return transparent(in, surface(in, facing), du, dv);
 }
 
+@group(3) @binding(4) var water_surface_depth: texture_depth_2d;
+@group(3) @binding(5) var<uniform> water_layer: vec4u;
+
+@fragment
+fn fs_transparent_water(in: VsOut, @builtin(front_facing) facing: bool) -> @location(0) vec4f {
+    let du = dpdx(in.uv) * view.texture_lod.x;
+    let dv = dpdy(in.uv) * view.texture_lod.y;
+    let s = surface(in,facing);
+    let p = clamp(vec2i(in.clip.xy),vec2i(0),vec2i(textureDimensions(water_surface_depth))-1);
+    let z = textureLoad(water_surface_depth,p,0);
+    let behind = z > 0.0 && in.clip.z < z;
+    if ((water_layer.x == 1u && !behind) || (water_layer.x == 2u && behind)) { discard; }
+    return transparent(in,s,du,dv);
+}
+
 // A transparent surface's light and coverage (`fs_transparent`), from its `surface` and its uv's
 // gradients.
 fn transparent(in: VsOut, s: Surface, du: vec2f, dv: vec2f) -> vec4f {
@@ -670,16 +685,30 @@ fn fs_id(in: IdOut) -> @location(0) u32 {
 // deep-water w = sqrt(g k)), on a camera-centred ring grid that reaches the horizon, with smaller
 // wavelets in the normals only, so the geometry boats sit on is exactly the simulation's.
 
+override OCEAN_EXCLUDE_REGIONS:bool=false;
 struct Ocean {
     level: f32,
     count: u32,
     time: f32,
-    _p: f32,
+    region_count: u32,
     waves: array<vec4f, 16>,     // dir.x, dir.z, k, amplitude
     phases: array<vec4f, 16>,    // omega, phase
 };
 
 @group(3) @binding(0) var<uniform> ocean: Ocean;
+// Entry-point-disjoint with shallow-water columns at this same binding.
+@group(3) @binding(2) var<storage,read> sea_regions:array<vec4f>;
+fn ocean_excluded(p:vec2f)->bool {
+    for(var i=0u;i<ocean.region_count;i++) {
+        let r=sea_regions[i];if(all(p>=r.xy)&&all(p<r.zw)){return true;}
+    }
+    return false;
+}
+@fragment
+fn fs_ocean_depth(in:OceanOut) {
+    if(ocean_excluded(in.world.xz)){discard;}
+}
+
 
 fn ocean_height(p: vec2f, t: f32) -> vec3f {
     // Height and its gradient (d/dx, d/dz).
@@ -744,6 +773,7 @@ fn wavelets(p: vec2f, t: f32, footprint: f32) -> vec2f {
 // under the camera), its own normal.
 @fragment
 fn fs_ocean(in: OceanOut) -> SceneOut {
+    if(OCEAN_EXCLUDE_REGIONS&&ocean_excluded(in.world.xz)){discard;}
     let v_world = view.camera_pos.xyz - in.world;
     let dist = length(v_world);
     let v = v_world / dist;
@@ -806,54 +836,13 @@ fn fs_ocean(in: OceanOut) -> SceneOut {
 // block of `per` x `per` columns flat at its columns' mean surface, with vertical sides where
 // neighbouring blocks differ. Both are drawn in the transparent layer.
 
-struct Shallow {
-    origin: vec2f,        // the grid's corner, world x and z
-    cell: f32,            // metres per column
-    time: f32,
-    count: vec4u,         // x, y: columns along x and z; z: 1 when the columns are in tiles of
-                          // 16 x 16 (else rows); w: columns to a block (Blocky)
-    absorb: vec4f,        // absorption per metre, rgb
-    scatter: vec4f,       // scattering per metre, rgb
-    surround: vec4f,      // the water drawn around: its level, its reach, its inset (metres)
-};
-
-@group(3) @binding(1) var<uniform> shallow: Shallow;
-@group(3) @binding(2) var<storage, read> columns: array<vec4f>;   // surface (world y), depth, vx, vz
-
-const SHALLOW_WET: f32 = 0.01;
-
-fn shallow_column(i: i32, k: i32) -> vec4f {
-    let n = vec2i(shallow.count.xy);
-    let c = vec2u(clamp(vec2i(i, k), vec2i(0), n - 1));
-    if (shallow.count.z == 1u) {
-        let tile = c / 16u;
-        let local = c % 16u;
-        return columns[(tile.x + (shallow.count.x / 16u) * tile.y) * 256u + local.x + 16u * local.y];
-    }
-    return columns[c.x + shallow.count.x * c.y];
-}
-
-fn shallow_vertex(i: i32, k: i32) -> vec4f {
-    let c = shallow_column(i, k);
-    if (c.y > SHALLOW_WET) {
-        return c;
-    }
-    var sum = 0.0;
-    var n = 0.0;
-    for (var dk = -1; dk <= 1; dk++) {
-        for (var di = -1; di <= 1; di++) {
-            let q = shallow_column(i + di, k + dk);
-            if (q.y > SHALLOW_WET) {
-                sum += q.x;
-                n += 1.0;
-            }
-        }
-    }
-    if (n > 0.0) {
-        return vec4f(sum / n, 0.0, 0.0, 0.0);
-    }
-    return vec4f(c.x - 0.05, 0.0, 0.0, 0.0);
-}
+@group(3) @binding(3) var surface_foam: texture_2d<f32>; // row-major presentation history
+@group(3) @binding(4) var water_scene_color: texture_2d<f32>;
+@group(3) @binding(5) var water_scene_depth: texture_2d<f32>;
+@group(3) @binding(6) var water_scene_sampler: sampler;
+@group(3) @binding(7) var water_normal_depth:texture_2d<f32>;
+@group(3) @binding(8) var water_flow_height:texture_2d<f32>;
+@group(3) @binding(9) var<storage,read> water_geometry:array<vec4u>;
 
 struct ShallowOut {
     @builtin(position) clip: vec4f,
@@ -863,12 +852,51 @@ struct ShallowOut {
     @location(3) speed: f32,
     // How much it falls: white where the water drops steeply (a sheet over a ledge, a fall).
     @location(4) steep: f32,
+    @location(5) velocity: vec2f,
+    @location(6) @interpolate(flat) field_surface:u32,
 };
+
+struct SurfaceAttributes { normal_depth:vec4f, flow:vec4f };
+fn morph_height(ids:vec3u,weights:vec3f,base:vec2u)->f32 {
+    let a=vec2i(base+vec2u(ids.x%17u,ids.x/17u));let b=vec2i(base+vec2u(ids.y%17u,ids.y/17u));let c=vec2i(base+vec2u(ids.z%17u,ids.z/17u));
+    return dot(vec3f(shallow_column(a.x,a.y).x,shallow_column(b.x,b.y).x,shallow_column(c.x,c.y).x),weights);
+}
+fn shallow_morph_vertex(vi:u32)->ShallowOut {
+    let header=water_geometry[0];let encoded=vi & 0x7fffffffu;let tile=encoded/header.x;let vertex=encoded%header.x;
+    let tiles=(shallow.count.x-2u)/16u+1u;let base=vec2u(tile%tiles,tile/tiles)*16u;
+    let row=1u+vertex*4u;let a=water_geometry[row];let b=water_geometry[row+1u];let c=water_geometry[row+2u];let d=water_geometry[row+3u];
+    let state=water_geometry[header.y+tile*2u];let t=bitcast<f32>(state.z);
+    let h_a=morph_height(vec3u(a.zw,b.x),bitcast<vec3f>(b.yzw),base);
+    let h_b=morph_height(c.xyz,bitcast<vec3f>(vec3u(c.w,d.xy)),base);
+    let local=bitcast<vec2f>(a.xy);let grid=vec2f(base)+local;var height=mix(h_a,h_b,t);
+    if(any(local==vec2f(0.0))||any(local==vec2f(16.0))){let at=vec2i(base+vec2u(local));height=shallow_column(at.x,at.y).x;}
+    let world=vec3f(shallow.origin.x+(grid.x+0.5)*shallow.cell,height,shallow.origin.y+(grid.y+0.5)*shallow.cell);
+    var o:ShallowOut;o.clip=shallow_clip(world);o.world=world;o.normal=vec3f(0.0,1.0,0.0);o.depth=1.0;o.speed=0.0;o.steep=0.0;o.velocity=vec2f(0.0);o.field_surface=1u;return o;
+}
+// Explicit native accuracy probe of the same function used by the vertex entry point.
+@group(0) @binding(7) var<storage,read> morph_probe_indices:array<u32>;
+@group(0) @binding(8) var<storage,read_write> morph_probe_positions:array<vec4f>;
+@compute @workgroup_size(64)
+fn probe_water_vertices(@builtin(global_invocation_id) id:vec3u) {
+    if(id.x>=arrayLength(&morph_probe_indices)){return;}
+    let p=shallow_morph_vertex(morph_probe_indices[id.x]);morph_probe_positions[id.x*2u]=vec4f(p.world,1.0);morph_probe_positions[id.x*2u+1u]=p.clip;
+}
+fn shallow_attributes(world:vec2f)->SurfaceAttributes {
+    let grid=clamp((world-shallow.origin)/shallow.cell-0.5,vec2f(0.0),vec2f(shallow.count.xy-vec2u(1u)));
+    let at=min(vec2u(floor(grid)),shallow.count.xy-vec2u(2u));let q=grid-vec2f(at);
+    let a=vec2i(at);var b=a+vec2i(0,1);let c=a+vec2i(1,1);
+    var weights=vec3f(1.0-q.y,q.y-q.x,q.x);
+    if(q.y<q.x){b=a+vec2i(1,0);weights=vec3f(1.0-q.x,q.x-q.y,q.y);}
+    return SurfaceAttributes(
+        textureLoad(water_normal_depth,a,0)*weights.x+textureLoad(water_normal_depth,b,0)*weights.y+textureLoad(water_normal_depth,c,0)*weights.z,
+        textureLoad(water_flow_height,a,0)*weights.x+textureLoad(water_flow_height,b,0)*weights.y+textureLoad(water_flow_height,c,0)*weights.z);
+}
 
 // One vertex per column (`vi`, x fastest); an index buffer makes the triangles, so each column is
 // shaded once.
 @vertex
 fn vs_shallow(@builtin(vertex_index) vi: u32) -> ShallowOut {
+    if((vi & 0x80000000u)!=0u){return shallow_morph_vertex(vi);}
     let at = vec2i(i32(vi % shallow.count.x), i32(vi / shallow.count.x));
     let c = shallow_vertex(at.x, at.y);
     let hl = shallow_vertex(at.x - 1, at.y).x;
@@ -878,45 +906,19 @@ fn vs_shallow(@builtin(vertex_index) vi: u32) -> ShallowOut {
     let world = vec3f(shallow.origin.x + (f32(at.x) + 0.5) * shallow.cell, c.x,
                       shallow.origin.y + (f32(at.y) + 0.5) * shallow.cell);
     var o: ShallowOut;
-    o.clip = view.view_proj * vec4f(world, 1.0);
+    o.clip = shallow_clip(world);
     o.world = world;
-    o.normal = vec3f(-(hr - hl), 2.0 * shallow.cell, -(hu - hd));
+    o.normal = shallow_normal(at);
     o.depth = c.y;
     o.speed = length(c.zw);
     o.steep = 1.0 - normalize(o.normal).y;
+    o.velocity = c.zw;
+    o.field_surface=1u;
     return o;
 }
 
 // Block (bi, bk) of `per` x `per` columns: its level (the mean surface of its wet columns, else of
 // its beds), mean depth and mean velocity; a level far below everything past the grid.
-fn shallow_block(bi: i32, bk: i32) -> vec4f {
-    let per = i32(max(shallow.count.w, 1u));
-    let nb = vec2i(shallow.count.xy) / per;
-    if (bi < 0 || bk < 0 || bi >= nb.x || bk >= nb.y) {
-        return vec4f(-1e9, 0.0, 0.0, 0.0);
-    }
-    var wet = 0.0;
-    var n_wet = 0.0;
-    var beds = 0.0;
-    var depth = 0.0;
-    var vel = vec2f(0.0);
-    for (var dk = 0; dk < per; dk++) {
-        for (var di = 0; di < per; di++) {
-            let c = shallow_column(bi * per + di, bk * per + dk);
-            beds += c.x;
-            depth += c.y;
-            vel += c.zw;
-            if (c.y > SHALLOW_WET) {
-                wet += c.x;
-                n_wet += 1.0;
-            }
-        }
-    }
-    let n = f32(per * per);
-    let level = select(beds / n, wet / max(n_wet, 1.0), n_wet > 0.0);
-    return vec4f(level, depth / n, vel / n);
-}
-
 // Eighteen vertices a block: its top (two triangles), its side toward +x and its side toward +z
 // (two triangles each, collapsed where the blocks meet level or the higher one is dry).
 @vertex
@@ -964,12 +966,14 @@ fn vs_shallow_blocky(@builtin(vertex_index) vi: u32) -> ShallowOut {
         }
     }
     var o: ShallowOut;
-    o.clip = view.view_proj * vec4f(world, 1.0);
+    o.clip = shallow_clip(world);
     o.world = world;
     o.normal = normal;
     o.depth = depth;
     o.speed = speed;
     o.steep = steep;
+    o.velocity = me.zw;
+    o.field_surface=0u;
     return o;
 }
 
@@ -983,12 +987,14 @@ fn vs_shallow_blocky(@builtin(vertex_index) vi: u32) -> ShallowOut {
 
 fn shallow_out(world: vec3f, depth: f32, speed: f32) -> ShallowOut {
     var o: ShallowOut;
-    o.clip = view.view_proj * vec4f(world, 1.0);
+    o.clip = shallow_clip(world);
     o.world = world;
     o.normal = vec3f(0.0, 1.0, 0.0);
     o.depth = depth;
     o.speed = speed;
     o.steep = 0.0;
+    o.velocity = vec2f(0.0);
+    o.field_surface=0u;
     return o;
 }
 
@@ -1103,58 +1109,20 @@ fn vs_shallow_stitch(@builtin(vertex_index) vi: u32) -> ShallowOut {
     return shallow_out(vec3f(p.x, level, p.y), 1000.0, 0.0);
 }
 
-@fragment
-fn fs_shallow(in: ShallowOut) -> @location(0) vec4f {
-    if (in.depth < 0.002) {
-        discard;
-    }
-    let v_world = view.camera_pos.xyz - in.world;
-    let v = v_world / length(v_world);
-    let footprint = max(length(fwidth(in.world.xz)), 1e-3);
-    let n0 = normalize(in.normal);
-    // Small wavelets where the water moves, none on still water.
-    let ripple = clamp(in.speed * 0.5, 0.15, 1.0);
-    let g = wavelets(in.world.xz, shallow.time, footprint) * ripple * 0.5;
-    let n = normalize(vec3f(n0.x - g.x * n0.y, n0.y, n0.z - g.y * n0.y));
-    let nv = max(dot(n, v), 1e-4);
-    let rough = clamp(0.05 + footprint * 0.04, 0.05, 0.3);
-    let a = rough * rough;
-    let f = 0.02 + 0.98 * pow(1.0 - nv, 5.0);
-    let r = reflect(-v, n);
-    let ry = vec3f(r.x, max(r.y, 0.02), r.z);
-    let levels = f32(textureNumLevels(env_cube) - 1);
-    let sky = textureSampleLevel(env_cube, env_sampler, ry, rough * levels).rgb * view.sun_color.w;
-    let sun = view.sun_dir.xyz;
-    let sun_lux = view.sun_dir.w * view.sun_color.rgb;
-    let body_light = sh_irradiance(vec3f(0.0, 1.0, 0.0)) * 0.08 + sun_lux * max(sun.y, 0.0) * 0.012;
-    let shadow = shadow_factor(in.world, n, dot(in.world - view.camera_pos.xyz,
-        -vec3f(view.view[0].z, view.view[1].z, view.view[2].z)));
-    var spec = vec3f(0.0);
-    if (view.sun_dir.w > 0.0) {
-        let h = normalize(sun + v);
-        let nl = max(dot(n, sun), 0.0);
-        spec = d_ggx(max(dot(n, h), 0.0), a) * v_smith(nv, nl, a) * f_schlick(vec3f(0.02),
-            max(dot(v, h), 0.0)) * sun_lux * nl * shadow;
-    }
-    // Light along the view ray through the water to the bed (no refraction is drawn, so the ray
-    // goes straight on): the column's depth over the cosine with the vertical, at most 1 / 0.15 of
-    // it at grazing angles. What lies under shows through by each channel's transmittance, the
-    // extinction being absorption plus scattering.
-    let extinction = shallow.absorb.rgb + shallow.scatter.rgb;
-    let path = in.depth / max(abs(v.y), 0.15);
-    let through = exp(-extinction * path);
-    let opacity = 1.0 - (through.r + through.g + through.b) / 3.0;
-    // The light the water scatters back (single scattering): its albedo s / (s + a) per channel
-    // times the light that reaches it, over the share of the path it does not let through. With
-    // the look's defaults (absorption (1.98, 0.38, 0.27), scattering 0.02 per metre) deep water is
-    // the sea's deep colour, (0.01, 0.05, 0.07) times the same light (fs_ocean).
-    let albedo = shallow.scatter.rgb / max(extinction, vec3f(1e-6));
-    let body = albedo * body_light * (1.0 - through);
-    // White where the water runs fast or falls steeply (rapids, the sheet over a ledge).
-    let steep = in.steep;
-    // Patchy: a value noise over the surface (two octaves of hashed lattice values), so fast water
-    // breaks into streaks of foam rather than turning milky.
-    let q = in.world.xz * 2.5 + vec2f(0.0, shallow.time * 0.7);
+fn shallow_foam_at(world: vec2f) -> f32 {
+    let pos = (world - shallow.origin) / shallow.cell - 0.5;
+    let hi = shallow.count.xy - vec2u(1u);
+    if (any(pos < vec2f(0.0)) || any(pos > vec2f(hi))) { return 0.0; }
+    let a = vec2u(floor(pos));
+    let b = min(a + vec2u(1u), hi);
+    let t = fract(pos);
+    return mix(mix(textureLoad(surface_foam, vec2i(a), 0).x,
+                   textureLoad(surface_foam, vec2i(vec2u(b.x,a.y)), 0).x, t.x),
+               mix(textureLoad(surface_foam, vec2i(vec2u(a.x,b.y)), 0).x,
+                   textureLoad(surface_foam, vec2i(b), 0).x, t.x), t.y);
+}
+
+fn shallow_noise(q: vec2f) -> f32 {
     let cell = floor(q);
     let t = q - cell;
     let s2 = t * t * (3.0 - 2.0 * t);
@@ -1163,16 +1131,364 @@ fn fs_shallow(in: ShallowOut) -> @location(0) vec4f {
     let n10 = unit_from_hash(pcg_hash(((lattice.x + 1u) * 73856093u) ^ (lattice.y * 19349663u)));
     let n01 = unit_from_hash(pcg_hash((lattice.x * 73856093u) ^ ((lattice.y + 1u) * 19349663u)));
     let n11 = unit_from_hash(pcg_hash(((lattice.x + 1u) * 73856093u) ^ ((lattice.y + 1u) * 19349663u)));
-    let noise = mix(mix(n00, n10, s2.x), mix(n01, n11, s2.x), s2.y);
-    let churn = smoothstep(3.0, 7.0, in.speed) * smoothstep(0.35, 0.75, noise);
-    let foam = clamp(churn * 0.7 + smoothstep(0.4, 0.9, steep) * 0.85, 0.0, 1.0);
+    return mix(mix(n00, n10, s2.x), mix(n01, n11, s2.x), s2.y);
+}
+
+@fragment
+fn fs_water_depth(in: ShallowOut) -> @builtin(frag_depth) f32 {
+    if(in.field_surface==1u&&ledge_at(in.world.xz)){discard;}
+    var depth=in.depth;var normal=in.normal;
+    if(in.field_surface==1u){let a=shallow_attributes(in.world.xz);depth=a.normal_depth.w;normal=a.normal_depth.xyz;}
+    if (depth < 0.002 || -(view.view*vec4f(in.world,1.0)).z <= WATER_VIEW_EPSILON ||
+        abs(dot(normalize(normal),view.camera_pos.xyz-in.world)) <= WATER_VIEW_EPSILON) { discard; }
+    if(in.field_surface==2u){return ledge_depth(in.world);}
+    return shallow_depth(in.world);
+}
+
+fn water_world(uv: vec2f, z: f32) -> vec3f {
+    let h = view.inv_view_proj * vec4f(uv * vec2f(2.0,-2.0) + vec2f(-1.0,1.0),z,1.0);
+    return h.xyz / h.w;
+}
+fn water_project(p: vec3f) -> vec3f {
+    let h = view.view_proj * vec4f(p,1.0);
+    if (h.w <= 0.0) { return vec3f(-1.0,-1.0,0.0); }
+    return vec3f(h.xy / h.w * vec2f(0.5,-0.5) + 0.5,h.z / h.w);
+}
+fn water_depth(uv: vec2f) -> f32 {
+    let size = textureDimensions(water_scene_depth);
+    let p = clamp(vec2i(uv * vec2f(size)),vec2i(0),vec2i(size)-1);
+    return textureLoad(water_scene_depth,p,0).x;
+}
+fn water_inside(uv: vec2f) -> bool { return all(uv > vec2f(0.001)) && all(uv < vec2f(0.999)); }
+// Scene color is resolved but its depth is nearest-sample. Ordinary bilinear color filtering
+// across a depth discontinuity can pull a foreground texel into an otherwise valid floor hit.
+fn water_color(uv: vec2f) -> vec3f {
+    let size = textureDimensions(water_scene_depth);
+    let q = uv * vec2f(size) - 0.5;
+    let lo = vec2i(floor(q));
+    let t = fract(q);
+    let weights = vec4f((1.0-t.x)*(1.0-t.y), t.x*(1.0-t.y), (1.0-t.x)*t.y, t.x*t.y);
+    let z = water_depth(uv);
+    var depth: vec4f;
+    for (var i=0u; i<4u; i++) {
+        let p = clamp(lo+vec2i(i32(i%2u),i32(i/2u)),vec2i(0),vec2i(size)-1);
+        depth[i] = textureLoad(water_scene_depth,p,0).x;
+    }
+    let valid = abs(depth-vec4f(z)) <= vec4f(max(z*0.02,1e-7));
+    if (all(valid)) { return textureSampleLevel(water_scene_color,water_scene_sampler,uv,0.0).rgb; }
+    var sum = vec3f(0.0); var weight = 0.0;
+    for (var i=0u; i<4u; i++) {
+        if (!valid[i]) { continue; }
+        let p = clamp(lo+vec2i(i32(i%2u),i32(i/2u)),vec2i(0),vec2i(size)-1);
+        sum += textureLoad(water_scene_color,p,0).rgb * weights[i];
+        weight += weights[i];
+    }
+    return sum / max(weight,1e-6);
+}
+// Bounded depth-plane refinement of a Snell ray. Flat beds converge immediately; reject pulls
+// that do not approach the actual ray on a curved/vertical depth surface.
+fn water_refract(start: vec3f, direction: vec3f, uv0: vec2f, column_depth: f32, footprint: f32, enabled: bool) -> vec4f {
+    let z0 = water_depth(uv0);
+    var path = column_depth / max(abs(direction.y),0.15);
+    if (z0 <= 0.0) { return vec4f(uv0,path,0.0); }
+    let original = water_world(uv0,z0);
+    if (!enabled) { return vec4f(uv0,length(original-start),0.0); }
+    // Missing refracted scene color does not straighten the transmitted ray. Keep its optical
+    // distance to the original depth plane; using the camera-ray distance casts an absorption
+    // silhouette behind above-water occluders on an otherwise uniformly lit bed.
+    var fallback_path=path;
+    if((original.y-start.y)*direction.y>0.0){fallback_path=abs(start.y-original.y)/max(abs(direction.y),0.15);}
+    var target_y = original.y;
+    var uv = uv0;
+    var destination = original;
+    for (var i=0u; i<4u; i++) {
+        path = abs(start.y-target_y) / max(abs(direction.y),0.15);
+        let projected = water_project(start + direction * path);
+        if (!water_inside(projected.xy)) { return vec4f(uv0,fallback_path,0.0); }
+        let z = water_depth(projected.xy);
+        if (z <= 0.0) { return vec4f(uv0,fallback_path,0.0); }
+        // Depth is a nearest-texel load. Reconstruct that texel's centre, not the fractional
+        // ray UV: mixing those coordinates creates a false height even on a planar floor.
+        let size=vec2f(textureDimensions(water_scene_depth));
+        let sample_uv=(floor(projected.xy*size)+0.5)/size;
+        let hit = water_world(sample_uv,z);
+        if ((direction.y < 0.0 && hit.y >= start.y-0.005) ||
+            (direction.y > 0.0 && hit.y <= start.y+0.005)) {
+            return vec4f(uv0,fallback_path,0.0);
+        }
+        uv = projected.xy;
+        let converged = abs(hit.y-target_y) < 0.005;
+        target_y = hit.y;
+        destination = hit;
+        if (converged) { break; }
+    }
+    // A curved/vertical depth surface need not converge to either horizontal-plane estimate.
+    // Fade unconverged pulls rather than showing a detached image of a submerged obstacle.
+    let residual = length(destination - (start + direction * path));
+    // Scene depth is sampled per pixel: a fixed centimetre tolerance would reject ordinary
+    // quantization at grazing/distant views and turn small bed gaps into surface speckles.
+    let confidence = 1.0 - smoothstep(max(0.01,footprint*1.5),max(0.05,footprint*3.0),residual);
+    let edge = smoothstep(0.0,0.08,min(min(uv.x,uv.y),min(1.0-uv.x,1.0-uv.y)));
+    return vec4f(mix(uv0,uv,edge),mix(fallback_path,path,edge*confidence),confidence);
+}
+// Screen-space opaque reflection. A miss retains the environment reflection.
+fn water_reflect(start: vec3f, direction: vec3f, fallback: vec3f, sigma:vec3f, source:vec3f, underwater:bool) -> vec3f {
+    var previous = 0.05;
+    var distance = 0.12;
+    for (var i=0u; i<18u; i++) {
+        let p = start + direction * distance;
+        let projected = water_project(p);
+        if (!water_inside(projected.xy)) { break; }
+        let z = water_depth(projected.xy);
+        if (z > 0.0) {
+            let hit = water_world(projected.xy,z);
+            let ray_z = -(view.view * vec4f(p,1.0)).z;
+            let scene_z = -(view.view * vec4f(hit,1.0)).z;
+            let thickness = max(0.08,(distance-previous)*0.7);
+            if (ray_z >= scene_z && ray_z-scene_z < thickness) {
+                var lo = previous; var hi = distance;
+                var uv = projected.xy;
+                for (var j=0u; j<4u; j++) {
+                    let mid = (lo+hi)*0.5;
+                    let q = start+direction*mid;
+                    let test = water_project(q);
+                    let d = water_depth(test.xy);
+                    let world = water_world(test.xy,max(d,1e-7));
+                    if (d > 0.0 && -(view.view*vec4f(q,1.0)).z >= -(view.view*vec4f(world,1.0)).z) {
+                        hi=mid;uv=test.xy;
+                    } else {lo=mid;}
+                }
+                let edge = smoothstep(0.0,0.06,min(min(uv.x,uv.y),min(1.0-uv.x,1.0-uv.y)));
+                var reflected = water_color(uv);
+                if(underwater){
+                    let trans = exp(-sigma*hi);
+                    reflected = reflected*trans+source/max(sigma,vec3f(1e-6))*(1.0-trans);
+                }
+                return mix(fallback,reflected,edge);
+            }
+        }
+        previous=distance;distance=distance*1.38+0.05;
+    }
+    return fallback;
+}
+
+// Unpolarized dielectric Fresnel. Schlick alone misses the rapid rise just below the
+// water-to-air critical angle, making Snell's window fade incorrectly before total reflection.
+fn shallow_fresnel(cosine:f32,eta:f32) -> f32 {
+    let transmitted=1.0-eta*eta*(1.0-cosine*cosine);
+    if(transmitted<=0.0){return 1.0;}
+    let ct=sqrt(transmitted);
+    let rs=(eta*cosine-ct)/max(eta*cosine+ct,1e-6);
+    let rp=(cosine-eta*ct)/max(cosine+eta*ct,1e-6);
+    return clamp((rs*rs+rp*rp)*0.5,0.0,1.0);
+}
+
+struct ShallowFragment {
+    @location(0) color: vec4f,
+    @builtin(frag_depth) depth: f32,
+};
+struct FilmFactors { transmission:vec3f, reflection:vec3f }
+fn film_polarized(f:f32,a:vec3f)->FilmFactors {
+    let den=max(vec3f(1.0)-f*f*a*a,vec3f(0.00001));
+    return FilmFactors((1.0-f)*(1.0-f)*a/den,vec3f(f)+(1.0-f)*(1.0-f)*f*a*a/den);
+}
+fn film_factors(cosine:f32,thickness:f32,sigma:vec3f)->FilmFactors {
+    let ct=sqrt(max(1.0-0.75*0.75*(1.0-cosine*cosine),0.001));
+    let rs=(0.75*cosine-ct)/(0.75*cosine+ct);let rp=(cosine-0.75*ct)/(cosine+0.75*ct);
+    let a=exp(-sigma*(thickness/ct));let s=film_polarized(rs*rs,a);let p=film_polarized(rp*rp,a);
+    // Sum internal returns for each polarization before averaging unpolarized light.
+    return FilmFactors((s.transmission+p.transmission)*0.5,(s.reflection+p.reflection)*0.5);
+}
+// Locally parallel water film: reciprocal Fresnel interfaces plus Beer attenuation. The
+// straight background is the thin-slab limit, not an invented deep-water path into the rock.
+fn shallow_film(in:ShallowOut,footprint:f32)->ShallowFragment {
+    let delta=view.camera_pos.xyz-in.world;let v=select(vec3f(view.view[0].z,view.view[1].z,view.view[2].z),delta/max(length(delta),1e-6),abs(view.proj[3].w)<0.5);let normal=select(-in.normal,in.normal,dot(in.normal,v)>=0.0);
+    let tangent=vec2f(select(in.world.x,in.world.z,abs(normal.x)>0.5),in.world.y);
+    let phase=fract(shallow.time*0.2);let blend=abs(phase*2.0-1.0);let flow=vec2f(0.0,-in.speed);
+    let q0=tangent-flow*phase*5.0;let q1=tangent-flow*fract(phase+0.5)*5.0;
+    let grain=mix(shallow_noise(q0*3.0),shallow_noise(q1*3.0),blend);
+    let filtered=mix(grain,0.5,smoothstep(0.15,0.5,footprint));
+    let foam=clamp(shallow_foam_at(in.world.xz)*mix(0.2,0.85,smoothstep(0.2,0.8,filtered)),0.0,1.0);
+    let haze=max(shallow.fog.w,0.0);let sigma=shallow.absorb.rgb+shallow.scatter.rgb+vec3f(haze);
+    let factors=film_factors(max(dot(normal,v),0.001),in.depth,sigma);let transmission=factors.transmission;let reflection=factors.reflection;
+    let uv=in.clip.xy/vec2f(textureDimensions(water_scene_depth));let background=water_color(uv);
+    let reflected=reflect(-v,normal);let sky=textureSampleLevel(env_cube,env_sampler,reflected,0.0).rgb*view.sun_color.w;
+    let sun=view.sun_dir.w*view.sun_color.rgb;let light=sh_irradiance(vec3f(0.0,1.0,0.0))*0.08+sun*max(view.sun_dir.y,0.0)*0.012;
+    let source=shallow.scatter.rgb*light+shallow.fog.rgb*haze*view.sun_color.w;
+    let body=source/max(sigma,vec3f(0.00001))*max(vec3f(1.0)-transmission-reflection,vec3f(0.0));
+    let white=vec3f(0.85,0.9,0.92)*(light*6.0+sun*max(view.sun_dir.y,0.0)*0.25);
+    var color=mix(background*transmission+sky*reflection+body,white,foam);
+    color=mix(view.fog.rgb*view.sun_color.w,color,1.0-fog_amount(in.world));
+    return ShallowFragment(vec4f(color,1.0),ledge_depth(in.world));
+}
+// Fine material-normal tangent filtering, independent of the drawn LOD triangle and raster quad.
+fn shallow_material_footprint(world:vec3f,normal:vec3f,pixel:vec2f)->f32 {
+    let extent=abs(shallow.cell)*vec2f(shallow.count.xy);
+    let scale=max(extent.x,extent.y);
+    // Normalize before taking the length so the finite-domain bound cannot overflow its square.
+    if(!(scale>0.0 && scale<1e18)){return 1e18;}
+    let limit=max(scale*length(extent/scale),1e-3);
+    let size=max(vec2f(textureDimensions(water_scene_depth)),vec2f(1.0));
+    let px=view.proj[0].x;let py=view.proj[1].y;
+    let nn=dot(normal,normal);
+    if(!(abs(px)>1e-8 && abs(px)<1e8 && abs(py)>1e-8 && abs(py)<1e8 && nn>1e-12 && nn<1e12)){return limit;}
+    let n=normal*inverseSqrt(nn);
+    // The world-space camera axes are rows of the world-to-view matrix (WGSL stores columns).
+    let right=vec3f(view.view[0].x,view.view[1].x,view.view[2].x);
+    let up=vec3f(view.view[0].y,view.view[1].y,view.view[2].y);
+    let back=vec3f(view.view[0].z,view.view[1].z,view.view[2].z);
+    let dx=right*(2.0/(size.x*px));let dy=up*(-2.0/(size.y*py));
+    let perspective=abs(view.proj[3].w)<0.5;
+    var ray=-back;var distance=1.0;
+    if(perspective){
+        let ndc=pixel/size*vec2f(2.0,-2.0)+vec2f(-1.0,1.0);
+        ray=right*((ndc.x+view.proj[2].x)/px)+up*((ndc.y+view.proj[2].y)/py)-back;
+        distance=-(view.view*vec4f(world,1.0)).z;
+        if(!(distance>0.0 && distance<1e12)){return limit;}
+    }
+    let denominator=dot(n,ray);
+    var singular=1e-5;
+    // A perspective tangent horizon within this pixel has an unbounded planar footprint.
+    // Select the whole finite field instead of reintroducing raster-quad derivatives.
+    if(perspective){singular=max(singular,abs(dot(n,dx))+abs(dot(n,dy)));}
+    if(!(abs(denominator)>singular && abs(denominator)<1e12)){return limit;}
+    let wx=distance*(dx-ray*(dot(n,dx)/denominator));
+    let wy=distance*(dy-ray*(dot(n,dy)/denominator));
+    let xz=min(abs(wx.xz),vec2f(limit))+min(abs(wy.xz),vec2f(limit));
+    return clamp(length(xz),1e-3,limit);
+}
+
+@fragment
+fn fs_shallow(in: ShallowOut) -> ShallowFragment {
+    // Derivatives precede the data-dependent cap/film selection on baseline WebGPU.
+    let world_width=fwidth(in.world);
+    var footprint=max(length(world_width.xz),1e-3);
+    let film_footprint=max(length(vec2f(select(world_width.x,world_width.z,abs(in.normal.x)>0.5),world_width.y)),1e-3);
+    if(in.field_surface==1u&&ledge_at(in.world.xz)){discard;}
+    if(in.field_surface==2u){if(in.depth<0.002||-(view.view*vec4f(in.world,1.0)).z<=WATER_VIEW_EPSILON||abs(dot(normalize(in.normal),view.camera_pos.xyz-in.world))<=WATER_VIEW_EPSILON){discard;}return shallow_film(in,film_footprint);}
+    var column_depth=in.depth;var base_normal=in.normal;var velocity=in.velocity;var speed=in.speed;
+    if(in.field_surface==1u){let a=shallow_attributes(in.world.xz);column_depth=a.normal_depth.w;base_normal=a.normal_depth.xyz;velocity=a.flow.xy;speed=a.flow.z;}
+    if (column_depth < 0.002 || -(view.view*vec4f(in.world,1.0)).z <= WATER_VIEW_EPSILON ||
+        abs(dot(normalize(base_normal),view.camera_pos.xyz-in.world)) <= WATER_VIEW_EPSILON) {
+        discard;
+    }
+    if(in.field_surface==1u){footprint=shallow_material_footprint(in.world,base_normal,in.clip.xy);}
+    let v_world = view.camera_pos.xyz - in.world;
+    let v = select(vec3f(view.view[0].z,view.view[1].z,view.view[2].z),
+        v_world / max(length(v_world),1e-6),abs(view.proj[3].w)<0.5);
+    let n0 = normalize(base_normal);
+    // Two flow phases hide each other's reset, avoiding unbounded UV stretching and sudden jumps.
+    let phase = fract(shallow.time * 0.2);
+    let blend = abs(phase * 2.0 - 1.0);
+    let q0 = in.world.xz - velocity * phase * 5.0;
+    let q1 = in.world.xz - velocity * fract(phase + 0.5) * 5.0;
+    let ripple = clamp(speed * 0.5, 0.15, 1.0) * shallow.optics.z;
+    let g = mix(wavelets(q0, shallow.time, footprint), wavelets(q1, shallow.time, footprint), blend) * ripple * 0.5;
+    let n = normalize(vec3f(n0.x - g.x * n0.y, n0.y, n0.z - g.y * n0.y));
+    let above = dot(n0,v) >= 0.0;
+    let normal = select(-n,n,above);
+    let nv = max(dot(normal,v),1e-4);
+    let density = shallow_foam_at(in.world.xz);
+    let grain = mix(shallow_noise(q0 * 3.0), shallow_noise(q1 * 3.0), blend);
+    let filtered_grain = mix(grain, 0.5, smoothstep(0.15, 0.5, footprint));
+    let foam = density * mix(0.25, 1.0, smoothstep(0.2, 0.8, filtered_grain));
+    let rough = mix(clamp(0.05 + footprint * 0.04, 0.05, 0.3), 0.5, foam);
+    let a = rough * rough;
+    let transmitted_ray = refract(-v,normal,select(1.3333333,0.75,above));
+    let total_reflection = dot(transmitted_ray,transmitted_ray)<1e-6;
+    let f = shallow_fresnel(nv,select(1.3333333,0.75,above));
+    let r = reflect(-v,normal);
+    let ry = vec3f(r.x, max(r.y, 0.02), r.z);
+    let levels = f32(textureNumLevels(env_cube) - 1);
+    var sky = textureSampleLevel(env_cube, env_sampler, ry, rough * levels).rgb * view.sun_color.w;
+    let sun = view.sun_dir.xyz;
+    let sun_lux = view.sun_dir.w * view.sun_color.rgb;
+    let body_light = sh_irradiance(vec3f(0.0, 1.0, 0.0)) * 0.08 + sun_lux * max(sun.y, 0.0) * 0.012;
+    let shadow = shadow_factor(in.world, n, dot(in.world - view.camera_pos.xyz,
+        -vec3f(view.view[0].z, view.view[1].z, view.view[2].z)));
+    var spec = vec3f(0.0);
+    if (view.sun_dir.w > 0.0 && above) {
+        let h = normalize(sun + v);
+        let nl = max(dot(n, sun), 0.0);
+        spec = d_ggx(max(dot(n, h), 0.0), a) * v_smith(nv, nl, a) * f_schlick(vec3f(0.02),
+            max(dot(v, h), 0.0)) * sun_lux * nl * shadow;
+    }
+    let uv0 = in.clip.xy / vec2f(textureDimensions(water_scene_depth));
+    let hit = water_refract(in.world,transmitted_ray,uv0,column_depth,footprint,shallow.optics.x>0.5 && !total_reflection);
+    let haze = max(shallow.fog.w,0.0);
+    let extinction = shallow.absorb.rgb + shallow.scatter.rgb + vec3f(haze);
+    // Above the surface, light traverses water behind it. From below it exits into air; the
+    // camera's existing underwater medium handles the segment before the interface.
+    let through = select(vec3f(1.0),exp(-extinction*hit.z),above);
+    var background = water_color(hit.xy);
+    if (hit.w < 0.999) {
+        // Blend samples, not coordinates: an interpolated UV could hit an object that neither
+        // candidate ray reaches, creating another detached pull.
+        let straight = water_color(uv0);
+        background = mix(straight,background,hit.w);
+    }
+    let source = shallow.scatter.rgb * body_light + shallow.fog.rgb * haze * view.sun_color.w;
+    let medium_color = source / max(extinction, vec3f(1e-6));
+    let body = medium_color * (1.0 - through);
+    if (!above) { sky = medium_color; }
+    if (shallow.optics.y>0.5 && foam<0.8) { sky=water_reflect(in.world+r*0.03,r,sky,extinction,source,!above); }
     let white = vec3f(0.85, 0.9, 0.92) * (body_light * 6.0 + sun_lux * max(sun.y, 0.0) * 0.25 * shadow);
-    var alpha = max(opacity, f);
-    var c = body * (1.0 - f) + sky * f + spec;
-    c = mix(c, white * max(alpha, 0.5), foam);
-    alpha = mix(alpha, max(alpha, 0.8), foam);
-    // Fade out at the waterline.
-    let edge = smoothstep(0.002, 0.03, in.depth);
-    c = mix(view.fog.rgb * view.sun_color.w * alpha, c, 1.0 - fog_amount(in.world));
-    return vec4f(c, alpha) * edge;
+    var c = (background*through + body) * (1.0-f) + sky*f + spec;
+    c = mix(c,white,foam);
+    let edge = smoothstep(0.002,0.03,column_depth);
+    c = mix(view.fog.rgb*view.sun_color.w,c,1.0-fog_amount(in.world));
+    return ShallowFragment(vec4f(c,1.0)*edge,shallow_depth(in.world));
+}
+
+// Cap partition and vertical thin-film interfaces at bed discontinuities. No storage binding is
+// needed for the active IDs: one u32 vertex attribute names each compacted quad instance.
+fn ledge_choose(a:LedgePoint,b:LedgePoint,condition:bool)->LedgePoint {return LedgePoint(select(a.grid,b.grid,condition),select(a.value,b.value,condition));}
+fn ledge_world(base:vec2i,p:LedgePoint)->vec3f {return vec3f(shallow.origin.x+(f32(base.x)+p.grid.x+0.5)*shallow.cell,p.value.x,shallow.origin.y+(f32(base.y)+p.grid.y+0.5)*shallow.cell);}
+fn ledge_raster_vertex(quad_id:u32,vi:u32)->ShallowOut {
+    let base=vec2i(i32(quad_id%(shallow.count.x-1u)),i32(quad_id/(shallow.count.x-1u)));let q=ledge_quad(base);var out:ShallowOut;
+    if(q.enabled==0u){out.clip=vec4f(2.0,2.0,2.0,1.0);return out;}
+    let index=array<u32,6>(0u,1u,2u,0u,2u,3u)[vi%6u];
+    if(vi<24u){
+        let corner=vi/6u;let triangle=u32(vi%6u>=3u);let t=ledge_triangle(q,corner,triangle);
+        let point=ledge_point(q,corner,index);let a=ledge_world(base,t.a);let b=ledge_world(base,t.b);let c=ledge_world(base,t.c);
+        out.world=ledge_world(base,point);out.normal=normalize(cross(c-a,b-a));out.depth=point.value.y;out.velocity=point.value.zw;out.speed=length(point.value.zw);out.field_surface=3u;
+    }else{
+        let edge=((vi-24u)%24u)/6u;let next=(edge+1u)%4u;
+        if((q.cuts & (1u<<edge))==0u){out.clip=vec4f(2.0,2.0,2.0,1.0);return out;}
+        let a=ledge_point(q,edge,1u);let b=ledge_point(q,edge,2u);let c=ledge_point(q,next,2u);let d=ledge_point(q,next,3u);
+        let high_side=q.values[edge].x>q.values[next].x;
+        let h0=ledge_choose(d,a,high_side);let h1=ledge_choose(c,b,high_side);let l0=ledge_choose(a,d,high_side);let l1=ledge_choose(b,c,high_side);
+        let direction=(ledge_corner(next)-ledge_corner(edge))*select(-1.0,1.0,high_side);
+        let endpoint=ledge_choose(h0,h1,index==1u||index==2u);let lower=ledge_choose(l0,l1,index==1u||index==2u);
+        let donor=endpoint.value;let bed=donor.x-donor.y;var point=endpoint;
+        out.normal=vec3f(direction.x,0.0,direction.y);out.velocity=donor.zw;
+        if(vi<48u){
+            // The actual cap volume ends at its bed, even with no outgoing flow.
+            point.value.x=select(donor.x,min(donor.x,max(bed,lower.value.x)),index>=2u);
+            out.world=ledge_world(base,point);out.depth=donor.y;out.speed=length(donor.zw);out.field_surface=4u;
+        }else{
+            // Below the upstream bed only directed discharge can form a falling film.
+            point.value.x=select(max(bed,lower.value.x),lower.value.x,index>=2u);
+            out.world=ledge_world(base,point);out.steep=donor.x;
+            out.speed=sqrt(dot(donor.zw,donor.zw)+19.62*max(donor.x-out.world.y,0.0));
+            let discharge=max(dot(donor.zw,direction),0.0)*donor.y;
+            out.depth=select(0.0,max(0.003,min(donor.y,discharge/max(out.speed,0.1))),donor.y>0.002&&discharge>1e-6);
+            out.field_surface=2u;
+        }
+    }
+    out.clip=shallow_clip(out.world);return out;
+}
+@vertex
+fn vs_shallow_ledge(@builtin(vertex_index) vi:u32,@location(0) quad_id:u32)->ShallowOut {return ledge_raster_vertex(quad_id,vi);}
+@compute @workgroup_size(64)
+fn probe_water_ledges(@builtin(global_invocation_id) id:vec3u){
+    if(id.x>=arrayLength(&morph_probe_indices)){return;}let encoded=morph_probe_indices[id.x];let out=ledge_raster_vertex(encoded/128u,encoded%128u);
+    morph_probe_positions[id.x*2u]=vec4f(out.world,out.depth);morph_probe_positions[id.x*2u+1u]=vec4f(out.normal,f32(out.field_surface));
+}
+
+@compute @workgroup_size(64)
+fn probe_water_films(@builtin(global_invocation_id) id:vec3u){
+    if(id.x>=arrayLength(&morph_probe_indices)/5u){return;}let at=id.x*5u;
+    let f=film_factors(bitcast<f32>(morph_probe_indices[at]),bitcast<f32>(morph_probe_indices[at+1u]),bitcast<vec3f>(vec3u(morph_probe_indices[at+2u],morph_probe_indices[at+3u],morph_probe_indices[at+4u])));
+    morph_probe_positions[id.x*2u]=vec4f(f.reflection,0.0);morph_probe_positions[id.x*2u+1u]=vec4f(f.transmission,0.0);
 }

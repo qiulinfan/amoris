@@ -27,6 +27,7 @@ mod client;
 mod present;
 mod run;
 mod serve;
+mod water_compute;
 mod window;
 
 use check::Outcome;

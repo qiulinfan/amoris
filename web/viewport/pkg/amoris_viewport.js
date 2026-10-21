@@ -179,7 +179,37 @@ export class Viewport {
         wasm.viewport_demo_transparent(this.__wbg_ptr, n, now_ms);
     }
     /**
-     * Draws from the scene's active camera again.
+     * The native water lab's analytic fields, for actual browser shader and motion checks.
+     * @param {string} _case
+     * @param {boolean} foam
+     * @param {number} now_ms
+     */
+    demo_water(_case, foam, now_ms) {
+        const ptr0 = passStringToWasm0(_case, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.viewport_demo_water(this.__wbg_ptr, ptr0, len0, foam, now_ms);
+    }
+    /**
+     * @param {number} side
+     * @param {string} field
+     * @param {string} camera
+     * @param {number} now_ms
+     */
+    demo_water_mesh(side, field, camera, now_ms) {
+        const ptr0 = passStringToWasm0(field, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(camera, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        wasm.viewport_demo_water_mesh(this.__wbg_ptr, side, ptr0, len0, ptr1, len1, now_ms);
+    }
+    /**
+     * @param {number} tick
+     * @param {number} now_ms
+     */
+    demo_water_tick(tick, now_ms) {
+        wasm.viewport_demo_water_tick(this.__wbg_ptr, tick, now_ms);
+    }
+    /**
      * A first-person game's seat in the page (web/player; the native window's `SeatWalk`,
      * voxels.md 8): draws from the walker's camera as the world last published it, turned at once
      * by the page's own look so looking never waits on a tick. `dx`, `dy` are the mouse's movement
@@ -354,16 +384,12 @@ export class Viewport {
         wasm.viewport_set_lod(this.__wbg_ptr, ptr0, len0);
     }
     /**
-     * How many frames the page may have on the GPU at once; 0 (the default) for no limit
-     * (docs/bench/polish.md 3). A page whose frame loop is not held to the display (Chrome
-     * without vsync or a frame-rate limit, as the benchmarks run it) otherwise submits 300 to 370
-     * frames ahead of Chrome's GPU process, and every readback (the entity-id pass, the GPU
-     * timestamps, occlusion culling's counters) waits behind them, up to seconds; held to the
-     * display it answers in two or three frames, as natively, where the swap chain bounds the same
-     * queue. With a limit of 2 to 4 an uncapped page's readbacks answered in 3 to 7 frames, but it
-     * drew 3 to 10 times fewer frames, and in some runs nearly none for seconds (Chrome's
-     * `onSubmittedWorkDone`, which counts the frames done, then answered after hundreds of
-     * milliseconds), so no limit is the default.
+     * Frames submitted but not completed: 2 by default, 0 explicitly opts into an unbounded
+     * throughput experiment. Unbounded uncapped rendering also starves GPU physics on the worker:
+     * the M5 water-worker check measured about 750 ms maps, versus below 2 ms with two in flight
+     * or display pacing. Earlier Windows uncapped experiments (polish.md 3) found completion
+     * stalls under a cap; keep those platform limits explicit and measure displayed throughput,
+     * rather than using arbitrarily far-ahead submissions as a gameplay default.
      * @param {number} n
      */
     set_max_frames_in_flight(n) {
@@ -443,14 +469,29 @@ export class Viewport {
         wasm.viewport_set_sharpen(this.__wbg_ptr, amount);
     }
     /**
-     * Splashes over block liquids: `off` or `on` (the default; anything else leaves them as they
-     * are; docs/spec/splashes.md 6).
+     * Block-liquid splashes and field-driven dilute spray: `off` or `on` (the default;
+     * anything else leaves the current choice). Physical water is unchanged.
      * @param {string} mode
      */
     set_splashes(mode) {
         const ptr0 = passStringToWasm0(mode, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
         wasm.viewport_set_splashes(this.__wbg_ptr, ptr0, len0);
+    }
+    /**
+     * Optical quality controls shared with the native renderer.
+     * @param {boolean} on
+     */
+    set_water_culling(on) {
+        wasm.viewport_set_water_culling(this.__wbg_ptr, on);
+    }
+    /**
+     * @param {boolean} refraction
+     * @param {boolean} reflection
+     * @param {boolean} detail
+     */
+    set_water_optics(refraction, reflection, detail) {
+        wasm.viewport_set_water_optics(this.__wbg_ptr, refraction, reflection, detail);
     }
     /**
      * Asset paths the renderer asked for since the last call; the page fetches each and calls
@@ -497,6 +538,56 @@ export class Viewport {
         var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
         wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
         return v1;
+    }
+    /**
+     * @returns {Promise<any>}
+     */
+    water_ledge_stats() {
+        const ret = wasm.viewport_water_ledge_stats(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {Promise<any>}
+     */
+    water_mesh_stats() {
+        const ret = wasm.viewport_water_mesh_stats(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * Exercise resident compute and sparse mapping on the actual browser device. This does not
+     * replace the game's CPU-authoritative tick. Read asynchronous results with water_probe_take.
+     * @param {string} _case
+     */
+    water_probe_begin(_case) {
+        const ptr0 = passStringToWasm0(_case, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.viewport_water_probe_begin(this.__wbg_ptr, ptr0, len0);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
+     * JSON batches include their sampled tick; an empty array means no callback is ready yet.
+     * @returns {string}
+     */
+    water_probe_take() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.viewport_water_probe_take(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @returns {Promise<any>}
+     */
+    water_spray_stats() {
+        const ret = wasm.viewport_water_spray_stats(this.__wbg_ptr);
+        return ret;
     }
 }
 if (Symbol.dispose) Viewport.prototype[Symbol.dispose] = Viewport.prototype.free;
@@ -655,6 +746,9 @@ function __wbg_get_imports() {
         },
         __wbg_drawIndexed_638959aae942557c: function(arg0, arg1, arg2, arg3, arg4, arg5) {
             arg0.drawIndexed(arg1 >>> 0, arg2 >>> 0, arg3 >>> 0, arg4, arg5 >>> 0);
+        },
+        __wbg_drawIndirect_269c8a4880a070c8: function(arg0, arg1, arg2) {
+            arg0.drawIndirect(arg1, arg2);
         },
         __wbg_draw_086a9578fc9898c2: function(arg0, arg1, arg2, arg3, arg4) {
             arg0.draw(arg1 >>> 0, arg2 >>> 0, arg3 >>> 0, arg4 >>> 0);
@@ -1697,33 +1791,33 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, getArrayU8FromWasm0(arg2, arg3), arg4, arg5);
         }, arguments); },
         __wbindgen_generic_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 225, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 256, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm_bindgen_cebb4f293c5706d0___convert__closures_____invoke___wasm_bindgen_cebb4f293c5706d0___JsValue__core_ed718c3d60ebd546___result__Result_____wasm_bindgen_cebb4f293c5706d0___JsError___true_);
             return ret;
         },
         __wbindgen_generic_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("GPUDevice")], shim_idx: 161, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("GPUDevice")], shim_idx: 191, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm_bindgen_cebb4f293c5706d0___convert__closures_____invoke___wasm_bindgen_cebb4f293c5706d0___sys__JsNullable_wgpu_42cd1ed6ca3b0acb___backend__webgpu__webgpu_sys__gen_GpuError__GpuError___core_ed718c3d60ebd546___result__Result_____wasm_bindgen_cebb4f293c5706d0___JsError___true_);
             return ret;
         },
         __wbindgen_generic_0000000000000003: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("GPUDeviceLostInfo")], shim_idx: 165, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("GPUDeviceLostInfo")], shim_idx: 195, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm_bindgen_cebb4f293c5706d0___convert__closures_____invoke___wgpu_42cd1ed6ca3b0acb___backend__webgpu__webgpu_sys__gen_GpuDeviceLostInfo__GpuDeviceLostInfo______true_);
             return ret;
         },
         __wbindgen_generic_0000000000000004: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 165, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm_bindgen_cebb4f293c5706d0___convert__closures_____invoke___wgpu_42cd1ed6ca3b0acb___backend__webgpu__webgpu_sys__gen_GpuDeviceLostInfo__GpuDeviceLostInfo______true__49);
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 195, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, wasm_bindgen_cebb4f293c5706d0___convert__closures_____invoke___wgpu_42cd1ed6ca3b0acb___backend__webgpu__webgpu_sys__gen_GpuDeviceLostInfo__GpuDeviceLostInfo______true__59);
             return ret;
         },
         __wbindgen_generic_0000000000000005: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("any")], shim_idx: 161, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm_bindgen_cebb4f293c5706d0___convert__closures_____invoke___wasm_bindgen_cebb4f293c5706d0___sys__JsNullable_wgpu_42cd1ed6ca3b0acb___backend__webgpu__webgpu_sys__gen_GpuError__GpuError___core_ed718c3d60ebd546___result__Result_____wasm_bindgen_cebb4f293c5706d0___JsError___true__50);
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("any")], shim_idx: 191, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, wasm_bindgen_cebb4f293c5706d0___convert__closures_____invoke___wasm_bindgen_cebb4f293c5706d0___sys__JsNullable_wgpu_42cd1ed6ca3b0acb___backend__webgpu__webgpu_sys__gen_GpuError__GpuError___core_ed718c3d60ebd546___result__Result_____wasm_bindgen_cebb4f293c5706d0___JsError___true__60);
             return ret;
         },
         __wbindgen_generic_0000000000000006: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("undefined")], shim_idx: 161, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm_bindgen_cebb4f293c5706d0___convert__closures_____invoke___wasm_bindgen_cebb4f293c5706d0___sys__JsNullable_wgpu_42cd1ed6ca3b0acb___backend__webgpu__webgpu_sys__gen_GpuError__GpuError___core_ed718c3d60ebd546___result__Result_____wasm_bindgen_cebb4f293c5706d0___JsError___true__51);
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("undefined")], shim_idx: 191, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, wasm_bindgen_cebb4f293c5706d0___convert__closures_____invoke___wasm_bindgen_cebb4f293c5706d0___sys__JsNullable_wgpu_42cd1ed6ca3b0acb___backend__webgpu__webgpu_sys__gen_GpuError__GpuError___core_ed718c3d60ebd546___result__Result_____wasm_bindgen_cebb4f293c5706d0___JsError___true__61);
             return ret;
         },
         __wbindgen_generic_0000000000000007: function(arg0) {
@@ -1761,8 +1855,8 @@ function wasm_bindgen_cebb4f293c5706d0___convert__closures_____invoke___wgpu_42c
     wasm.wasm_bindgen_cebb4f293c5706d0___convert__closures_____invoke___wgpu_42cd1ed6ca3b0acb___backend__webgpu__webgpu_sys__gen_GpuDeviceLostInfo__GpuDeviceLostInfo______true_(arg0, arg1, arg2);
 }
 
-function wasm_bindgen_cebb4f293c5706d0___convert__closures_____invoke___wgpu_42cd1ed6ca3b0acb___backend__webgpu__webgpu_sys__gen_GpuDeviceLostInfo__GpuDeviceLostInfo______true__49(arg0, arg1, arg2) {
-    wasm.wasm_bindgen_cebb4f293c5706d0___convert__closures_____invoke___wgpu_42cd1ed6ca3b0acb___backend__webgpu__webgpu_sys__gen_GpuDeviceLostInfo__GpuDeviceLostInfo______true__49(arg0, arg1, arg2);
+function wasm_bindgen_cebb4f293c5706d0___convert__closures_____invoke___wgpu_42cd1ed6ca3b0acb___backend__webgpu__webgpu_sys__gen_GpuDeviceLostInfo__GpuDeviceLostInfo______true__59(arg0, arg1, arg2) {
+    wasm.wasm_bindgen_cebb4f293c5706d0___convert__closures_____invoke___wgpu_42cd1ed6ca3b0acb___backend__webgpu__webgpu_sys__gen_GpuDeviceLostInfo__GpuDeviceLostInfo______true__59(arg0, arg1, arg2);
 }
 
 function wasm_bindgen_cebb4f293c5706d0___convert__closures_____invoke___wasm_bindgen_cebb4f293c5706d0___JsValue__core_ed718c3d60ebd546___result__Result_____wasm_bindgen_cebb4f293c5706d0___JsError___true_(arg0, arg1, arg2) {
@@ -1779,15 +1873,15 @@ function wasm_bindgen_cebb4f293c5706d0___convert__closures_____invoke___wasm_bin
     }
 }
 
-function wasm_bindgen_cebb4f293c5706d0___convert__closures_____invoke___wasm_bindgen_cebb4f293c5706d0___sys__JsNullable_wgpu_42cd1ed6ca3b0acb___backend__webgpu__webgpu_sys__gen_GpuError__GpuError___core_ed718c3d60ebd546___result__Result_____wasm_bindgen_cebb4f293c5706d0___JsError___true__50(arg0, arg1, arg2) {
-    const ret = wasm.wasm_bindgen_cebb4f293c5706d0___convert__closures_____invoke___wasm_bindgen_cebb4f293c5706d0___sys__JsNullable_wgpu_42cd1ed6ca3b0acb___backend__webgpu__webgpu_sys__gen_GpuError__GpuError___core_ed718c3d60ebd546___result__Result_____wasm_bindgen_cebb4f293c5706d0___JsError___true__50(arg0, arg1, arg2);
+function wasm_bindgen_cebb4f293c5706d0___convert__closures_____invoke___wasm_bindgen_cebb4f293c5706d0___sys__JsNullable_wgpu_42cd1ed6ca3b0acb___backend__webgpu__webgpu_sys__gen_GpuError__GpuError___core_ed718c3d60ebd546___result__Result_____wasm_bindgen_cebb4f293c5706d0___JsError___true__60(arg0, arg1, arg2) {
+    const ret = wasm.wasm_bindgen_cebb4f293c5706d0___convert__closures_____invoke___wasm_bindgen_cebb4f293c5706d0___sys__JsNullable_wgpu_42cd1ed6ca3b0acb___backend__webgpu__webgpu_sys__gen_GpuError__GpuError___core_ed718c3d60ebd546___result__Result_____wasm_bindgen_cebb4f293c5706d0___JsError___true__60(arg0, arg1, arg2);
     if (ret[1]) {
         throw takeFromExternrefTable0(ret[0]);
     }
 }
 
-function wasm_bindgen_cebb4f293c5706d0___convert__closures_____invoke___wasm_bindgen_cebb4f293c5706d0___sys__JsNullable_wgpu_42cd1ed6ca3b0acb___backend__webgpu__webgpu_sys__gen_GpuError__GpuError___core_ed718c3d60ebd546___result__Result_____wasm_bindgen_cebb4f293c5706d0___JsError___true__51(arg0, arg1, arg2) {
-    const ret = wasm.wasm_bindgen_cebb4f293c5706d0___convert__closures_____invoke___wasm_bindgen_cebb4f293c5706d0___sys__JsNullable_wgpu_42cd1ed6ca3b0acb___backend__webgpu__webgpu_sys__gen_GpuError__GpuError___core_ed718c3d60ebd546___result__Result_____wasm_bindgen_cebb4f293c5706d0___JsError___true__51(arg0, arg1, arg2);
+function wasm_bindgen_cebb4f293c5706d0___convert__closures_____invoke___wasm_bindgen_cebb4f293c5706d0___sys__JsNullable_wgpu_42cd1ed6ca3b0acb___backend__webgpu__webgpu_sys__gen_GpuError__GpuError___core_ed718c3d60ebd546___result__Result_____wasm_bindgen_cebb4f293c5706d0___JsError___true__61(arg0, arg1, arg2) {
+    const ret = wasm.wasm_bindgen_cebb4f293c5706d0___convert__closures_____invoke___wasm_bindgen_cebb4f293c5706d0___sys__JsNullable_wgpu_42cd1ed6ca3b0acb___backend__webgpu__webgpu_sys__gen_GpuError__GpuError___core_ed718c3d60ebd546___result__Result_____wasm_bindgen_cebb4f293c5706d0___JsError___true__61(arg0, arg1, arg2);
     if (ret[1]) {
         throw takeFromExternrefTable0(ret[0]);
     }

@@ -9,8 +9,16 @@
 //! is read from the tick's starting state and every loop runs in a fixed order (water.md 4).
 
 pub mod bed;
+mod collider_bed;
+pub use collider_bed::WaterColliderBed;
+pub(crate) mod buoyancy;
+pub mod compute;
+pub mod feedback;
 pub mod field;
+pub mod resident;
+mod sea;
 pub(crate) mod solve;
+pub(crate) mod swimming;
 
 use amoris_contract::{Problem, detail};
 use amoris_sim::math;
@@ -56,6 +64,9 @@ const CALM_RATE: f64 = 0.2;
 #[derive(Component, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WaterRegion {
+    /// The execution path, persisted so a restore never silently changes precision.
+    #[serde(default)]
+    pub solver: Solver,
     /// A column's edge, metres (0.25 to 4).
     #[serde(default = "one")]
     pub cell_m: f64,
@@ -82,6 +93,16 @@ pub struct WaterRegion {
     /// `physics.water` (water.md 5).
     #[serde(default)]
     pub tiles: Vec<WaterTile>,
+}
+
+/// CPU is bit-identical across targets; GPU requires a host compute service and uses f32.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Solver {
+    #[default]
+    Cpu,
+    Gpu,
+    GpuResident,
 }
 
 fn one() -> f64 {
@@ -296,7 +317,7 @@ impl WaterRegion {
     /// The region column under world `(x, z)` for a region whose corner is `corner`, if the region
     /// covers it and has its tiles.
     pub fn column_of(&self, corner: [f64; 2], x: f64, z: f64) -> Option<(usize, usize)> {
-        if !self.well_formed() {
+        if self.solver != Solver::GpuResident && !self.well_formed() {
             return None;
         }
         self.column_at(x - corner[0], z - corner[1])
@@ -304,18 +325,30 @@ impl WaterRegion {
 
     /// Column `(i, k)`'s depth, metres.
     pub fn depth_at(&self, i: usize, k: usize) -> f64 {
+        assert!(
+            self.solver != Solver::GpuResident,
+            "resident field values require WaterProbe observations, not checkpoint tiles"
+        );
         let (t, c) = self.locate(i, k);
         self.tiles[t].depth[c]
     }
 
     /// Column `(i, k)`'s surface, world y (a dry column's is its bed).
     pub fn surface_at(&self, i: usize, k: usize) -> f64 {
+        assert!(
+            self.solver != Solver::GpuResident,
+            "resident field values require WaterProbe observations, not checkpoint tiles"
+        );
         let (t, c) = self.locate(i, k);
         self.tiles[t].bed[c] + self.tiles[t].depth[c]
     }
 
     /// Column `(i, k)`'s velocity, m/s along x and z: the mean of its faces (water.md 8).
     pub fn velocity_at(&self, i: usize, k: usize) -> [f64; 2] {
+        assert!(
+            self.solver != Solver::GpuResident,
+            "resident field values require WaterProbe observations, not checkpoint tiles"
+        );
         let [nx, nz] = self.columns_along();
         let (t, c) = self.locate(i, k);
         let (u0, w0) = (self.tiles[t].u[c], self.tiles[t].w[c]);
@@ -337,6 +370,10 @@ impl WaterRegion {
     /// Changes column `(i, k)`'s water by `m3` (taking at most what it holds) and wakes its tile
     /// when that changed it; returns the change made, m^3.
     pub fn pour(&mut self, i: usize, k: usize, m3: f64) -> f64 {
+        assert!(
+            self.solver != Solver::GpuResident,
+            "resident depth edits must be submitted to its GPU step"
+        );
         let area = self.cell_m * self.cell_m;
         let (t, c) = self.locate(i, k);
         let tile = &mut self.tiles[t];
@@ -351,6 +388,10 @@ impl WaterRegion {
 
     /// The water's volume, m^3.
     pub fn volume(&self) -> f64 {
+        assert!(
+            self.solver != Solver::GpuResident,
+            "resident volume is in WaterResident statistics"
+        );
         let mut sum = 0.0;
         for t in &self.tiles {
             for d in &t.depth {
@@ -363,6 +404,11 @@ impl WaterRegion {
     /// Checks the region on its own (water.md 3): sizes and parameters in range, the tiles absent or
     /// complete and finite. `water.invalid`.
     pub fn validate(&self) -> Result<(), Problem> {
+        if self.solver == Solver::GpuResident && self.dry_below != 0.0 {
+            return Err(resident::failed(
+                "resident drying is not connected yet; dry_below must be zero",
+            ));
+        }
         if !(self.cell_m >= 0.25 && self.cell_m <= 4.0) {
             return Err(invalid(
                 "cell_m",
@@ -401,13 +447,18 @@ impl WaterRegion {
             ));
         }
         for (a, e) in self.edges.iter().enumerate() {
-            if *e != Edge::Wall {
+            if let Edge::Inflow { m3s_per_m: q } = e
+                && (!q.is_finite() || *q < 0.0 || *q > f64::from(f32::MAX))
+            {
                 return Err(invalid(
                     &format!("edges.{a}"),
-                    format!(
-                        "edge {e:?} is not built yet: this engine's regions have walls (water.md 2, \
-                         slices C and D)"
-                    ),
+                    "inflow discharge must be finite, nonnegative and fit f32".into(),
+                ));
+            }
+            if *e != Edge::Wall && self.solver != Solver::GpuResident {
+                return Err(invalid(
+                    &format!("edges.{a}"),
+                    format!("edge {e:?} requires the resident GPU path"),
                 ));
             }
         }
@@ -428,11 +479,19 @@ impl WaterRegion {
                     ));
                 }
             }
-            BedSource::Colliders { .. } => {
-                return Err(invalid(
-                    "bed",
-                    "beds from colliders are not built yet (water.md 2, slice D)".into(),
-                ));
+            BedSource::Colliders { top, bottom } => {
+                if !top.is_finite()
+                    || !bottom.is_finite()
+                    || top <= bottom
+                    || top.abs() > geom::SOLVER_MAX
+                    || bottom.abs() > geom::SOLVER_MAX
+                    || top - bottom > geom::SOLVER_MAX
+                {
+                    return Err(invalid(
+                        "bed.Colliders",
+                        "top/bottom must define a finite positive solver-range interval".into(),
+                    ));
+                }
             }
         }
         let look = &self.look;
@@ -554,6 +613,7 @@ pub fn hash(r: &WaterRegion) -> u64 {
 /// 0.8 m, a block of water 2 m deep in one quarter that breaks like a dam (shallow-water.md).
 pub fn dam_scene(tiles: u32) -> WaterRegion {
     let mut r = WaterRegion {
+        solver: Solver::Cpu,
         cell_m: 0.5,
         size: [tiles * 16, tiles * 16],
         bed: BedSource::Voxels {
@@ -614,10 +674,36 @@ pub struct Stepped {
     pub dried_m3: f64,
 }
 
-/// The solver's working buffers, reused from tick to tick. Every buffer is overwritten before it is
-/// read, so it carries no game state.
+/// Reusable solver buffers and a suspended tick's continuation. No checkpoint can be taken while
+/// that continuation exists; the physics persistence rebuild hook clears it on restoration.
 #[derive(Resource, Default)]
-pub struct WaterScratch(pub(crate) solve::Grid);
+pub struct WaterScratch(
+    pub(crate) solve::Grid,
+    Option<WaterRun>,
+    Option<Vec<resident::ResidentPlan>>,
+    collider_bed::Cache,
+);
+
+pub(crate) fn prepare_collider_beds(world: &mut bevy_ecs::prelude::World) -> Result<(), Problem> {
+    if world.resource::<WaterScratch>().1.is_some() {
+        return Ok(());
+    }
+    world.resource_scope(
+        |world, mut scratch: bevy_ecs::prelude::Mut<'_, WaterScratch>| {
+            collider_bed::prepare(world, &mut scratch.3)
+        },
+    )
+}
+
+struct WaterRun {
+    order: Vec<(bevy_ecs::entity::Entity, EntityId)>,
+    maps: Vec<Option<bed::Map>>,
+    flows: Vec<(EntityId, EntityId, [f64; 2], f64)>,
+    index: usize,
+    buoys: Vec<(EntityId, buoyancy::Point)>,
+    swimmers: Vec<(EntityId, swimming::Point)>,
+    checkpoint_refs: std::collections::BTreeMap<EntityId, amoris_sim::ContentHash>,
+}
 
 /// `physics.water`'s report for the presenters: the tick each region's tiles were last stepped.
 /// Bookkeeping only (a restore empties it and the feed resends every tile).
@@ -740,6 +826,43 @@ type VolumeQuery<'w, 's> = Query<
         &'static mut Voxels,
     ),
 >;
+type FeedbackQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        bevy_ecs::entity::Entity,
+        &'static EntityId,
+        &'static mut feedback::WaterFeedback,
+    ),
+>;
+type BuoyInput<'w, 's> = (
+    Query<
+        'w,
+        's,
+        (
+            &'static EntityId,
+            &'static Transform,
+            &'static crate::boat::Floater,
+        ),
+    >,
+    Query<
+        'w,
+        's,
+        (
+            &'static EntityId,
+            &'static Transform,
+            &'static crate::boat::Hull,
+            &'static crate::boat::Boat,
+        ),
+    >,
+    ResMut<'w, buoyancy::Samples>,
+    FeedbackQuery<'w, 's>,
+);
+type ForcingInput<'w, 's> = (
+    Query<'w, 's, (&'static EntityId, &'static WaterSource)>,
+    Query<'w, 's, (&'static EntityId, &'static WaterDrain)>,
+    Query<'w, 's, (&'static EntityId, &'static crate::Sea)>,
+);
 type RegionQuery<'w, 's> = Query<
     'w,
     's,
@@ -748,6 +871,7 @@ type RegionQuery<'w, 's> = Query<
         &'static EntityId,
         Option<&'static Transform>,
         &'static mut WaterRegion,
+        Option<&'static resident::WaterOutletStage>,
     ),
 >;
 
@@ -769,164 +893,777 @@ pub(crate) fn water(
     mut steps: ResMut<WaterSteps>,
     mut regions: RegionQuery<'_, '_>,
     mut volumes: VolumeQuery<'_, '_>,
-    sources: Query<(&EntityId, &WaterSource)>,
-    drains: Query<(&EntityId, &WaterDrain)>,
+    forcing: ForcingInput<'_, '_>,
     mut emit: amoris_sim::Emit,
-) {
+    mut compute: Option<ResMut<compute::Backend>>,
+    resident_states: Query<(&EntityId, &resident::WaterResident)>,
+    mut checkpoints: ResMut<resident::WaterCheckpoints>,
+    mut probes: Query<(
+        bevy_ecs::entity::Entity,
+        &EntityId,
+        &mut resident::WaterProbe,
+    )>,
+    swimmers_input: (
+        Query<(&EntityId, &Transform, &crate::walker::Walker)>,
+        ResMut<swimming::Samples>,
+    ),
+    buoy_input: BuoyInput<'_, '_>,
+    mut commands: bevy_ecs::prelude::Commands,
+) -> Result<bool, Problem> {
+    for event in std::mem::take(&mut scratch.3.events) {
+        emit.emit(event);
+    }
+    let (floaters, hulls, mut buoy_samples, mut feedbacks) = buoy_input;
+    let (walkers, mut swim_samples) = swimmers_input;
+    let (sources, drains, seas) = forcing;
     let dt = clock.dt();
     let tick = clock.tick.0;
     let since = tick.saturating_sub(1);
-    // Sources and drains, in id order: (region, point, signed rate).
-    let mut flows: Vec<(EntityId, EntityId, [f64; 2], f64)> = by_id(&sources)
-        .filter_map(|(id, s)| Some((*id, s.region?, s.at, s.rate_m3s)))
-        .collect();
-    flows.extend(by_id(&drains).filter_map(|(id, d)| Some((*id, d.region?, d.at, -d.rate_m3s))));
-    flows.sort_by_key(|f| f.0);
-    let order: Vec<(bevy_ecs::entity::Entity, EntityId)> =
-        by_id(&regions).map(|(e, id, _, _)| (e, *id)).collect();
-    if order.is_empty() {
-        return;
-    }
-    // 1. Beds at load, and each region's map over its volume.
-    let mut maps: Vec<Option<bed::Map>> = Vec::with_capacity(order.len());
-    for &(e, id) in &order {
-        let Ok((_, _, t, mut region)) = regions.get_mut(e) else {
-            maps.push(None);
-            continue;
-        };
-        let p = position(t);
-        let source = map_of(&region, [p[0], p[2]], &index, &volumes);
-        if region.tiles.is_empty() {
-            match &source {
-                Some(Ok(m)) => {
-                    let found = volume_id(&region)
-                        .and_then(|v| index.get(v))
-                        .and_then(|e| volumes.get(e).ok());
-                    if let Some((_, _, v)) = found {
-                        bed::load(&mut region, m, v);
-                    }
-                }
-                Some(Err(err)) => {
-                    // Reported once: the region takes flat dry tiles and keeps no bed.
-                    if let Some(ev) = event(
-                        "water.misaligned",
-                        id,
-                        vec![("message", PlainData::String(err.message.clone()))],
-                    ) {
-                        emit.emit(ev);
-                    }
-                    let [tx, tz] = region.tiles_along();
-                    region.tiles = (0..tx * tz)
-                        .map(|n| {
-                            let key = [n % tx, n / tx].map(|k| u32::try_from(k).unwrap_or(0));
-                            WaterTile::dry(key, 0.0)
-                        })
-                        .collect();
-                }
-                None => {}
+    let resuming = scratch.1.is_some();
+    let run = if let Some(run) = scratch.1.take() {
+        run
+    } else {
+        // Sources and drains, in id order: (region, point, signed rate).
+        let mut flows: Vec<(EntityId, EntityId, [f64; 2], f64)> = by_id(&sources)
+            .filter_map(|(id, s)| Some((*id, s.region?, s.at, s.rate_m3s)))
+            .collect();
+        flows
+            .extend(by_id(&drains).filter_map(|(id, d)| Some((*id, d.region?, d.at, -d.rate_m3s))));
+        flows.sort_by_key(|f| f.0);
+        let order: Vec<(bevy_ecs::entity::Entity, EntityId)> =
+            by_id(&regions).map(|(e, id, _, _, _)| (e, *id)).collect();
+        let checkpoint_refs: std::collections::BTreeMap<_, _> = by_id(&resident_states)
+            .map(|(id, state)| (*id, state.recipe.checkpoint()))
+            .collect();
+        for (e, _, f) in by_id(&feedbacks) {
+            f.validate_source(tick)?;
+            if !regions
+                .get(e)
+                .is_ok_and(|(_, _, _, r, _)| r.solver == Solver::GpuResident)
+            {
+                return Err(Problem::new(
+                    "water.feedback_requires_resident",
+                    "WaterFeedback belongs on a gpu_resident WaterRegion",
+                    detail([]),
+                ));
             }
         }
-        maps.push(source.and_then(Result::ok).filter(|_| region.well_formed()));
-    }
-    // 2. Field liquids into the regions.
-    let vols: Vec<(bevy_ecs::entity::Entity, EntityId)> = by_id(&volumes)
-        .filter_map(|(id, _, _)| index.get(*id).map(|e| (e, *id)))
-        .collect();
-    for (ve, vid) in vols {
-        let Ok((_, _, v)) = volumes.get(ve) else {
-            continue;
-        };
-        let cells = field::cells(v, since);
-        if cells.is_empty() {
-            continue;
+        let resident_ids: std::collections::BTreeSet<_> = by_id(&regions)
+            .filter(|(_, _, _, r, _)| r.solver == Solver::GpuResident)
+            .map(|(_, id, _, _, _)| *id)
+            .collect();
+        for (_, _, mut probe) in amoris_sim::order::by_id_mut(&mut probes) {
+            if probe.region.is_none_or(|id| !resident_ids.contains(&id)) {
+                probe.ready = false;
+                probe.tick = tick;
+            }
         }
-        for &(c, part) in &cells {
-            let mut taken = false;
-            for (n, &(e, _)) in order.iter().enumerate() {
-                let Some(m) = maps[n] else {
-                    continue;
-                };
-                let Ok((_, _, _, region)) = regions.get(e) else {
-                    continue;
-                };
-                if volume_id(region) != Some(vid) {
+        if order.is_empty() {
+            let used: std::collections::BTreeSet<_> = checkpoint_refs.into_values().collect();
+            let unused: Vec<_> = checkpoints
+                .fields
+                .keys()
+                .filter(|key| !used.contains(key))
+                .copied()
+                .collect();
+            for key in unused {
+                checkpoints.fields.remove(&key);
+            }
+            return Ok(false);
+        }
+        if compute.is_none()
+            && order.iter().any(|&(e, _)| {
+                regions
+                    .get(e)
+                    .is_ok_and(|(_, _, _, r, _)| r.solver != Solver::Cpu)
+            })
+        {
+            return Err(Problem::new(
+                "water.compute_missing",
+                "GPU water needs a host compute service; this host has none",
+                detail([]),
+            ));
+        }
+        // 1. Beds at load, and each region's map over its volume.
+        let mut maps: Vec<Option<bed::Map>> = Vec::with_capacity(order.len());
+        for &(e, id) in &order {
+            let Ok((_, _, t, mut region, _)) = regions.get_mut(e) else {
+                maps.push(None);
+                continue;
+            };
+            let p = position(t);
+            if region.solver != Solver::GpuResident && resident_states.get(e).is_ok() {
+                return Err(resident::failed(
+                    "materialize or explicitly reset resident state before changing solver mode",
+                ));
+            }
+            let source = map_of(&region, [p[0], p[2]], &index, &volumes);
+            if region.tiles.is_empty()
+                && !(region.solver == Solver::GpuResident && resident_states.get(e).is_ok())
+            {
+                match &source {
+                    Some(Ok(m)) => {
+                        let found = volume_id(&region)
+                            .and_then(|v| index.get(v))
+                            .and_then(|e| volumes.get(e).ok());
+                        if let Some((_, _, v)) = found {
+                            bed::load(&mut region, m, v);
+                        }
+                    }
+                    Some(Err(err)) => {
+                        // Reported once: the region takes flat dry tiles and keeps no bed.
+                        if let Some(ev) = event(
+                            "water.misaligned",
+                            id,
+                            vec![("message", PlainData::String(err.message.clone()))],
+                        ) {
+                            emit.emit(ev);
+                        }
+                        let [tx, tz] = region.tiles_along();
+                        region.tiles = (0..tx * tz)
+                            .map(|n| {
+                                let key = [n % tx, n / tx].map(|k| u32::try_from(k).unwrap_or(0));
+                                WaterTile::dry(key, 0.0)
+                            })
+                            .collect();
+                    }
+                    None => {}
+                }
+            }
+            maps.push(
+                source
+                    .and_then(Result::ok)
+                    .filter(|_| region.well_formed() || resident_states.get(e).is_ok()),
+            );
+        }
+        // 2. Field liquids into the regions.
+        let vols: Vec<(bevy_ecs::entity::Entity, EntityId)> = by_id(&volumes)
+            .filter_map(|(id, _, _)| index.get(*id).map(|e| (e, *id)))
+            .collect();
+        for (ve, vid) in vols {
+            let Ok((_, _, v)) = volumes.get(ve) else {
+                continue;
+            };
+            let cells = field::cells(v, since);
+            if cells.is_empty() {
+                continue;
+            }
+            for &(c, part) in &cells {
+                let mut taken = false;
+                for (n, &(e, _)) in order.iter().enumerate() {
+                    let Some(m) = maps[n] else {
+                        continue;
+                    };
+                    let Ok((_, _, _, region, _)) = regions.get(e) else {
+                        continue;
+                    };
+                    if volume_id(region) != Some(vid) {
+                        continue;
+                    }
+                    if let Some(at) = field::covers(region, &m, c[0], c[2])
+                        && let Ok((_, _, _, mut region, _)) = regions.get_mut(e)
+                    {
+                        if region.solver == Solver::GpuResident {
+                            return Err(resident::failed(
+                                "field-cell conversion is not connected to resident water yet",
+                            ));
+                        }
+                        field::pour(&mut region, &m, at, part);
+                        taken = true;
+                        break;
+                    }
+                }
+                if !taken
+                    && let Some(ev) = event(
+                        "water.uncovered",
+                        vid,
+                        vec![(
+                            "cell",
+                            PlainData::Array(c.map(|x| PlainData::Number(f64::from(x))).to_vec()),
+                        )],
+                    )
+                {
+                    emit.emit(ev);
+                }
+            }
+            if let Ok((_, _, mut v)) = volumes.get_mut(ve) {
+                for (c, _) in cells {
+                    // The cell was read from the volume: clearing it cannot fail.
+                    let _ = v.set(c, 0, tick);
+                }
+            }
+        }
+        let mut buoys = Vec::new();
+        let feedback_ids: std::collections::BTreeSet<_> =
+            by_id(&feedbacks).map(|(_, id, _)| *id).collect();
+        let mut live = std::collections::BTreeSet::new();
+        let covers: Vec<_> = if floaters.is_empty() && walkers.is_empty() && hulls.is_empty() {
+            Vec::new()
+        } else {
+            order
+                .iter()
+                .filter_map(|&(e, id)| {
+                    let (_, _, t, r, _) = regions.get(e).ok()?;
+                    buoyancy::Cover::new(id, position(t), r)
+                })
+                .collect()
+        };
+        // Nonresident fields are sampled directly by the force system; prepare no duplicate
+        // body point lists for them. Keep CPU work independent of tile count per volume point.
+        let resident_cover = covers.iter().any(|c| c.resident);
+        for (body, tf, floater) in by_id(&floaters).filter(|_| resident_cover) {
+            for (point, b) in floater.points.iter().enumerate() {
+                let key = (*body, buoyancy::Role::Floater(point));
+                live.insert(key);
+                let at = geom::to_world(tf.position, tf.rotation, b.at);
+                // First covering region owns this point, including a dry region over a sea.
+                for cover in &covers {
+                    if let Some(grid) = cover.grid_at(at) {
+                        if cover.resident {
+                            buoys.push((
+                                cover.id,
+                                buoyancy::Point::floater(
+                                    *body,
+                                    point,
+                                    at,
+                                    grid,
+                                    feedback_ids.contains(&cover.id),
+                                ),
+                            ));
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        for (body, tf, hull, _) in by_id(&hulls).filter(|_| resident_cover) {
+            // Reject nonfinite poses even if no region would claim their undefined coordinates.
+            if tf
+                .position
+                .iter()
+                .chain(&tf.rotation)
+                .any(|v| !v.is_finite())
+            {
+                return Err(buoyancy::hull_failed("Hull sampling pose must be finite"));
+            }
+            for role in buoyancy::HullPoint::ALL {
+                let at = geom::to_world(tf.position, tf.rotation, role.local(hull));
+                if at.iter().any(|v| !v.is_finite()) {
+                    return Err(buoyancy::hull_failed("Hull sampling point must be finite"));
+                }
+                live.insert((*body, buoyancy::Role::Hull(role)));
+                for cover in &covers {
+                    if let Some(grid) = cover.grid_at(at) {
+                        if cover.resident {
+                            buoys.push((
+                                cover.id,
+                                buoyancy::Point::hull(
+                                    *body,
+                                    role,
+                                    *tf,
+                                    at,
+                                    grid,
+                                    feedback_ids.contains(&cover.id),
+                                    cover,
+                                )?,
+                            ));
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        buoy_samples.retain(&live);
+        let mut swimmers = Vec::new();
+        let mut live_swimmers = std::collections::BTreeSet::new();
+        for (actor, pose, _) in by_id(&walkers).filter(|_| resident_cover) {
+            swimming::validate_pose(pose)?;
+            for &(e, id) in &order {
+                let (_, _, tf, region, _) = regions
+                    .get(e)
+                    .map_err(|_| resident::failed("Walker region disappeared"))?;
+                if region.solver != Solver::GpuResident && !region.well_formed() {
                     continue;
                 }
-                if let Some(at) = field::covers(region, &m, c[0], c[2])
-                    && let Ok((_, _, _, mut region)) = regions.get_mut(e)
-                {
-                    field::pour(&mut region, &m, at, part);
-                    taken = true;
+                if let Some(point) = swimming::Point::new(*actor, *pose, position(tf), region)? {
+                    // The first covering region owns the centre column, including dry water.
+                    if region.solver == Solver::GpuResident {
+                        live_swimmers.insert(*actor);
+                        swimmers.push((id, point));
+                    }
                     break;
                 }
             }
-            if !taken
-                && let Some(ev) = event(
-                    "water.uncovered",
-                    vid,
-                    vec![(
-                        "cell",
-                        PlainData::Array(c.map(|x| PlainData::Number(f64::from(x))).to_vec()),
-                    )],
-                )
-            {
-                emit.emit(ev);
-            }
         }
-        if let Ok((_, _, mut v)) = volumes.get_mut(ve) {
-            for (c, _) in cells {
-                // The cell was read from the volume: clearing it cannot fail.
-                let _ = v.set(c, 0, tick);
-            }
+        swim_samples.retain(&live_swimmers);
+        WaterRun {
+            order,
+            maps,
+            flows,
+            index: 0,
+            buoys,
+            swimmers,
+            checkpoint_refs,
         }
-    }
-    // 3. Bed changes, then the substeps.
-    for (n, &(e, id)) in order.iter().enumerate() {
-        let Ok((_, _, t, mut region)) = regions.get_mut(e) else {
+    };
+    let WaterRun {
+        order,
+        maps,
+        flows,
+        index: start,
+        buoys,
+        swimmers,
+        mut checkpoint_refs,
+    } = run;
+    // 3. Bed changes, then the substeps. A resumed region has already received its inputs.
+    let mut next_index = start;
+    for n in start..order.len() {
+        if n < next_index {
+            continue;
+        }
+        let (e, id) = order[n];
+        let Ok((_, _, t, region, _)) = regions.get(e) else {
             continue;
         };
         let p = position(t);
+        if region.solver == Solver::GpuResident {
+            use amoris_assets::water_field::{
+                ColumnDelta, FieldStep, MAX_BATCH_COLUMNS, MAX_BATCH_REGIONS,
+            };
+            // A cohort never crosses a CPU/grid region or the transient host's bounded budget.
+            // Include local-ready sleeping plans so their writes share receipt validation.
+            let mut end = n;
+            while end < order.len() && end - n < MAX_BATCH_REGIONS {
+                let Ok((_, _, _, r, _)) = regions.get(order[end].0) else {
+                    break;
+                };
+                if r.solver != Solver::GpuResident {
+                    break;
+                }
+                end += 1;
+            }
+            let plans = if let Some(plans) = scratch.2.take() {
+                plans
+            } else {
+                let mut plans = Vec::with_capacity(end - n);
+                let mut columns = 0usize;
+                for &(e, id) in &order[n..end] {
+                    let (_, _, t, region, outlet) = regions
+                        .get(e)
+                        .map_err(|_| resident::failed("resident region disappeared"))?;
+                    let p = position(t);
+                    let mut controls = resident::ResidentControls::from_region(region, dt)?;
+                    if let Some(outlet) = outlet {
+                        outlet.validate()?;
+                        for i in 0..4 {
+                            if region.edges[i] == Edge::Outflow {
+                                controls.outlet_levels[i] = outlet.levels[i];
+                            }
+                        }
+                    }
+                    let state = match resident_states.get(e) {
+                        Ok((_, s)) => s.clone(),
+                        Err(_) => resident::initial(region, &mut checkpoints)?,
+                    };
+                    let checkpoint = checkpoints
+                        .fields
+                        .get(&state.recipe.checkpoint())
+                        .cloned()
+                        .ok_or_else(|| resident::failed("resident checkpoint is unavailable"))?;
+                    if checkpoint.size != region.size {
+                        return Err(resident::failed(
+                            "resident dimensions changed without a new seed",
+                        ));
+                    }
+                    if state.completed_tick > 0
+                        && let Some(ve) = volume_id(region).and_then(|v| index.get(v))
+                        && let Ok((_, _, v)) = volumes.get(ve)
+                        && !bed::edited_since(v, since).is_empty()
+                    {
+                        return Err(resident::failed("resident bed edits are not connected yet"));
+                    }
+                    let sea = if region.edges.contains(&Edge::Sea) {
+                        let input = by_id(&seas).next().map(|(_, s)| s).ok_or_else(|| {
+                            Problem::new(
+                                "water.no_sea",
+                                "a Sea boundary needs a Sea component",
+                                detail([]),
+                            )
+                        })?;
+                        Some(sea::prepare(
+                            input,
+                            region,
+                            &checkpoint,
+                            [p[0], p[2]],
+                            crate::forces::start_time(&clock),
+                        )?)
+                    } else {
+                        None
+                    };
+                    let mut edits = Vec::new();
+                    for &(_, rid, at, rate) in &flows {
+                        if rid == id
+                            && rate != 0.0
+                            && let Some((i, k)) = region.column_of([p[0], p[2]], at[0], at[1])
+                        {
+                            let column = u32::try_from(i + k * region.size[0] as usize)
+                                .map_err(|_| resident::failed("resident source index overflow"))?;
+                            edits.push(ColumnDelta {
+                                column,
+                                depth_m: rate * dt / (region.cell_m * region.cell_m),
+                            });
+                        }
+                    }
+                    let mut point_rows: Vec<_> = by_id(&probes)
+                        .filter(|(_, _, probe)| probe.region == Some(id))
+                        .map(|(e, _, probe)| (e, probe.at))
+                        .collect();
+                    let mut points = Vec::new();
+                    let mut selected = Vec::new();
+                    let mut reusable = true;
+                    let mut invalid_probes = Vec::new();
+                    for (probe_e, at) in point_rows.drain(..) {
+                        if region.column_of([p[0], p[2]], at[0], at[1]).is_none() {
+                            invalid_probes.push(probe_e);
+                            continue;
+                        }
+                        let grid = [
+                            (at[0] - p[0]) / region.cell_m,
+                            (at[1] - p[2]) / region.cell_m,
+                        ];
+                        if let Ok((_, _, probe)) = probes.get(probe_e) {
+                            reusable &= probe.matches(id, at, grid, &state.recipe);
+                        }
+                        points.push(grid);
+                        selected.push((probe_e, at));
+                    }
+                    let selected_swimmers: Vec<_> = swimmers
+                        .iter()
+                        .filter(|(rid, _)| *rid == id)
+                        .map(|(_, point)| point.clone())
+                        .collect();
+                    for point in &selected_swimmers {
+                        // The local_ready gate below also requires a sleeping field with no
+                        // advance, edits, impulses or changed controls. The ordinary column query
+                        // then depends only on these unchanged field/column identities.
+                        reusable &= swim_samples.can_rebind(point, id, &state.recipe);
+                        points.push(point.grid);
+                    }
+                    let selected_buoys: Vec<_> = buoys
+                        .iter()
+                        .filter(|(rid, _)| *rid == id)
+                        .map(|(_, point)| point.clone())
+                        .collect();
+                    for point in &selected_buoys {
+                        reusable &= buoy_samples.matches(point, id, &state.recipe);
+                        points.push(point.grid);
+                    }
+                    if points.len() > amoris_assets::water_field::MAX_SAMPLES {
+                        return Err(resident::failed(
+                            "resident water supports at most 4096 explicit probes, Walker, Floater and Hull points per region",
+                        ));
+                    }
+                    let impulses = feedbacks
+                        .get(e)
+                        .map_or_else(|_| vec![], |(_, _, f)| f.pending.clone());
+                    let local_ready = state.still >= SLEEP_TICKS
+                        && state.controls == controls
+                        && !controls.open()
+                        && edits.is_empty()
+                        && impulses.is_empty()
+                        && reusable;
+                    let mut positive = std::collections::BTreeMap::<u32, f64>::new();
+                    for edit in &edits {
+                        if edit.depth_m > 0.0 {
+                            *positive.entry(edit.column).or_default() += edit.depth_m;
+                        }
+                    }
+                    let extra = positive.values().copied().fold(0.0, math::max);
+                    let inlet_depth =
+                        controls
+                            .boundaries
+                            .iter()
+                            .map(|e| match e {
+                                amoris_assets::water_field::FieldBoundary::Inflow {
+                                    m3s_per_m: q,
+                                } if *q > 0.0 => math::pow(q * q / solve::G, 1.0 / 3.0),
+                                _ => 0.0,
+                            })
+                            .fold(0.0, math::max);
+                    let inlet_speed = math::sqrt(solve::G * inlet_depth);
+                    let count = region.substeps.max(solve::substeps_for(
+                        math::max(
+                            math::max(state.stats.max_speed, inlet_speed),
+                            sea.as_ref().map_or(0.0, |s| s.speed),
+                        ) + math::sqrt(
+                            solve::G
+                                * math::max(
+                                    math::max(state.stats.max_depth + extra, inlet_depth),
+                                    sea.as_ref().map_or(0.0, |s| s.depth),
+                                ),
+                        ),
+                        dt,
+                        region.cell_m,
+                    ));
+                    if inlet_speed * dt / f64::from(count) / region.cell_m > 0.5 {
+                        return Err(resident::failed(
+                            "inflow exceeds the boundary CFL limit at eight substeps",
+                        ));
+                    }
+                    if sea
+                        .as_ref()
+                        .is_some_and(|s| s.speed * dt / f64::from(count) / region.cell_m > 0.5)
+                    {
+                        return Err(resident::failed(
+                            "sea forcing exceeds the boundary CFL limit at eight substeps",
+                        ));
+                    }
+                    let step = if state.still >= SLEEP_TICKS
+                        && state.controls == controls
+                        && !controls.open()
+                        && edits.is_empty()
+                        && impulses.is_empty()
+                    {
+                        None
+                    } else {
+                        Some(FieldStep {
+                            sea: sea.map(|s| s.forcing),
+                            boundaries: std::array::from_fn(|i| match controls.outlet_levels[i] {
+                                Some(level) => amoris_assets::water_field::FieldBoundary::Stage {
+                                    surface_relative_m: level - checkpoint.datum,
+                                },
+                                None => controls.boundaries[i],
+                            }),
+                            cell_m: region.cell_m,
+                            substep_dt: dt / f64::from(count),
+                            substeps: count,
+                            friction: region.friction,
+                            dry_below: region.dry_below,
+                            edits,
+                            impulses,
+                        })
+                    };
+                    if !local_ready {
+                        let count =
+                            (region.size[0] as usize).saturating_mul(region.size[1] as usize);
+                        if columns.saturating_add(count) > MAX_BATCH_COLUMNS {
+                            break;
+                        }
+                        columns += count;
+                    }
+                    plans.push(resident::ResidentPlan {
+                        entity: e,
+                        region: id,
+                        controls,
+                        area: region.cell_m * region.cell_m,
+                        local_ready,
+                        feedback: feedbacks.get(e).ok().map(|(_, _, f)| f.clone()),
+                        invalid_probes,
+                        state,
+                        checkpoint,
+                        step,
+                        points,
+                        probes: selected,
+                        buoys: selected_buoys,
+                        swimmers: selected_swimmers,
+                    });
+                }
+                plans
+            };
+            if plans.is_empty() {
+                return Err(resident::failed(
+                    "resident region exceeds the batch column budget",
+                ));
+            }
+            let end = n + plans.len();
+            let requests: Vec<_> = plans
+                .iter()
+                .filter(|p| !p.local_ready)
+                .map(resident::ResidentPlan::request)
+                .collect();
+            let outputs = if requests.is_empty() {
+                Vec::new()
+            } else {
+                resident::validate_batch(&requests)?;
+                let backend = compute
+                    .as_mut()
+                    .ok_or_else(|| resident::failed("resident compute service is unavailable"))?;
+                match backend.0.poll_resident_batch(&requests)? {
+                    std::task::Poll::Pending => {
+                        scratch.2 = Some(plans);
+                        scratch.1 = Some(WaterRun {
+                            order,
+                            maps,
+                            flows,
+                            index: n,
+                            buoys,
+                            swimmers,
+                            checkpoint_refs,
+                        });
+                        return Ok(true);
+                    }
+                    std::task::Poll::Ready(outputs) => {
+                        resident::validate_results(&requests, &outputs)?;
+                        outputs
+                    }
+                }
+            };
+            let mut receipts = outputs.into_iter();
+            let mut checked = Vec::with_capacity(plans.len());
+            for mut plan in plans {
+                let output = if plan.local_ready {
+                    None
+                } else {
+                    Some(receipts.next().expect("validated receipt count").output)
+                };
+                plan.finish(output.as_ref(), tick)?;
+                checked.push((plan, output));
+            }
+            // Only owned copies were changed above. No receipt, observation or feedback packet
+            // enters the world until every member (including sleeping reuse) passed validation.
+            for (plan, output) in checked {
+                let id = plan.region;
+                let e = plan.entity;
+                for probe_e in plan.invalid_probes {
+                    if let Ok((_, _, mut probe)) = probes.get_mut(probe_e) {
+                        probe.ready = false;
+                        probe.tick = tick;
+                    }
+                }
+                if let Some(output) = output {
+                    if let Some(checkpoint) = output.checkpoint {
+                        checkpoints
+                            .fields
+                            .insert(plan.state.recipe.checkpoint(), checkpoint);
+                    }
+                    let probe_count = plan.probes.len();
+                    for (((probe_e, at), grid), sample) in plan
+                        .probes
+                        .into_iter()
+                        .zip(plan.points)
+                        .zip(output.samples.iter().copied())
+                    {
+                        if let Ok((_, _, mut probe)) = probes.get_mut(probe_e) {
+                            probe.ready = true;
+                            probe.tick = tick;
+                            probe.sampled_at = at;
+                            probe.state_digest = plan.state.recipe.digest;
+                            probe.sampled_region = Some(id);
+                            probe.sampled_grid = grid;
+                            probe.sampled_checkpoint = plan.state.recipe.checkpoint().0;
+                            probe.surface = sample[0];
+                            probe.depth = sample[1];
+                            probe.velocity = [sample[2], sample[3]];
+                        }
+                    }
+                    let swimmer_count = plan.swimmers.len();
+                    for (point, sample) in plan
+                        .swimmers
+                        .into_iter()
+                        .zip(output.samples.iter().copied().skip(probe_count))
+                    {
+                        swim_samples.record(point, id, &plan.state.recipe, tick, sample);
+                    }
+                    for (point, sample) in plan
+                        .buoys
+                        .into_iter()
+                        .zip(output.samples.into_iter().skip(probe_count + swimmer_count))
+                    {
+                        buoy_samples.record(point, id, &plan.state.recipe, tick, sample);
+                    }
+                } else {
+                    for (probe_e, _) in plan.probes {
+                        if let Ok((_, _, mut probe)) = probes.get_mut(probe_e) {
+                            probe.tick = tick;
+                        }
+                    }
+                    for point in plan.swimmers {
+                        swim_samples.reuse(&point, id, &plan.state.recipe, tick)?;
+                    }
+                    for point in plan.buoys {
+                        buoy_samples.reuse(&point, id, &plan.state.recipe, tick);
+                    }
+                }
+                if let Some(feedback) = plan.feedback
+                    && let Ok((_, _, mut f)) = feedbacks.get_mut(e)
+                {
+                    *f = feedback;
+                }
+                if let Ok((_, _, _, mut r, _)) = regions.get_mut(e)
+                    && !r.tiles.is_empty()
+                {
+                    r.tiles.clear();
+                }
+                checkpoint_refs.insert(id, plan.state.recipe.checkpoint());
+                commands.entity(e).insert(plan.state);
+            }
+            next_index = end;
+            continue;
+        }
+        let Ok((_, _, _, mut region, _)) = regions.get_mut(e) else {
+            continue;
+        };
         // Read first, so a region asleep is not marked changed.
         if !region.well_formed() {
             continue;
         }
-        if let Some(m) = maps[n]
-            && let Some(ve) = volume_id(&region).and_then(|v| index.get(v))
-            && let Ok((_, _, v)) = volumes.get(ve)
-        {
-            let changed = bed::edited_since(v, since);
-            let beds = bed::rebeds(&region, &m, v, &changed);
-            if !beds.is_empty() {
-                for d in bed::apply(&mut region, &beds) {
-                    let column = d.column.map(|c| PlainData::Number(geom::f64_of(c)));
-                    if let Some(e) = event(
-                        "water.displaced",
-                        id,
-                        vec![
-                            ("column", PlainData::Array(column.to_vec())),
-                            ("m3", PlainData::Number(d.m3)),
-                        ],
-                    ) {
-                        emit.emit(e);
+        if !(resuming && n == start) {
+            if let Some(m) = maps[n]
+                && let Some(ve) = volume_id(&region).and_then(|v| index.get(v))
+                && let Ok((_, _, v)) = volumes.get(ve)
+            {
+                let changed = bed::edited_since(v, since);
+                let beds = bed::rebeds(&region, &m, v, &changed);
+                if !beds.is_empty() {
+                    for d in bed::apply(&mut region, &beds) {
+                        let column = d.column.map(|c| PlainData::Number(geom::f64_of(c)));
+                        if let Some(e) = event(
+                            "water.displaced",
+                            id,
+                            vec![
+                                ("column", PlainData::Array(column.to_vec())),
+                                ("m3", PlainData::Number(d.m3)),
+                            ],
+                        ) {
+                            emit.emit(e);
+                        }
                     }
                 }
             }
-        }
-        for &(_, rid, at, rate) in &flows {
-            if rid != id || rate == 0.0 || !rate.is_finite() {
-                continue;
-            }
-            // A drain over a dry column changes nothing: the region is not marked changed.
-            if let Some((i, k)) = region.column_of([p[0], p[2]], at[0], at[1])
-                && (rate > 0.0 || region.depth_at(i, k) > 0.0)
-            {
-                region.pour(i, k, rate * dt);
+            for &(_, rid, at, rate) in &flows {
+                if rid != id || rate == 0.0 || !rate.is_finite() {
+                    continue;
+                }
+                // A drain over a dry column changes nothing: the region is not marked changed.
+                if let Some((i, k)) = region.column_of([p[0], p[2]], at[0], at[1])
+                    && (rate > 0.0 || region.depth_at(i, k) > 0.0)
+                {
+                    region.pour(i, k, rate * dt);
+                }
             }
         }
         if !awake(&region) {
             continue;
         }
-        let done = step_region(&mut region, dt, &mut scratch.0);
+        let done = match compute.as_mut() {
+            Some(c) => solve::poll_tick(&mut region, dt, &mut scratch.0, Some(c.0.as_mut()))?,
+            None => solve::poll_tick(&mut region, dt, &mut scratch.0, None)?,
+        };
+        let done = match done {
+            std::task::Poll::Ready(done) => done,
+            std::task::Poll::Pending => {
+                scratch.1 = Some(WaterRun {
+                    order,
+                    maps,
+                    flows,
+                    index: n,
+                    buoys,
+                    swimmers,
+                    checkpoint_refs,
+                });
+                return Ok(true);
+            }
+        };
         let marks = steps
             .regions
             .entry(id)
@@ -945,6 +1682,17 @@ pub(crate) fn water(
             emit.emit(e);
         }
     }
+    let used: std::collections::BTreeSet<_> = checkpoint_refs.into_values().collect();
+    let unused: Vec<_> = checkpoints
+        .fields
+        .keys()
+        .filter(|key| !used.contains(key))
+        .copied()
+        .collect();
+    for key in unused {
+        checkpoints.fields.remove(&key);
+    }
+    Ok(false)
 }
 
 #[cfg(test)]

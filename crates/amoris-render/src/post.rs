@@ -378,7 +378,12 @@ impl Targets {
             let msaa = (samples > 1).then(|| {
                 tex(device, label, sw, sh, f, samples, 1, ra).create_view(&Default::default())
             });
-            let texture = tex(device, label, sw, sh, f, 1, 1, rsc);
+            let usage = if f == HDR {
+                rsc | wgpu::TextureUsages::STORAGE_BINDING
+            } else {
+                rsc
+            };
+            let texture = tex(device, label, sw, sh, f, 1, 1, usage);
             SceneTarget {
                 msaa,
                 view: texture.create_view(&Default::default()),
@@ -479,10 +484,18 @@ impl Targets {
     /// as they are: a single-sampled one is kept, a multisampled one's samples (discarded by the
     /// opaque pass) are cleared and dropped, its resolved view untouched.
     pub fn transparent_attachments(&self) -> Vec<Option<wgpu::RenderPassColorAttachment<'_>>> {
+        self.layer_attachments(false)
+    }
+
+    /// Resolve the current scene while optionally retaining MSAA samples for another layer.
+    pub fn layer_attachments(
+        &self,
+        keep_samples: bool,
+    ) -> Vec<Option<wgpu::RenderPassColorAttachment<'_>>> {
         let color = Use {
             clear: false,
             resolve: true,
-            keep: false,
+            keep: keep_samples,
         };
         fn extra(t: &SceneTarget) -> Option<wgpu::RenderPassColorAttachment<'_>> {
             let samples = t.msaa.is_some();

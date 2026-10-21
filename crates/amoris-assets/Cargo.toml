@@ -10,12 +10,14 @@ description = "Asset identity, the visual components, CPU mesh data and glTF imp
 amoris-contract.workspace = true
 amoris-sim.workspace = true
 bevy_ecs.workspace = true
-serde.workspace = true
+serde = { workspace = true, features = ["rc"] }
 serde_json.workspace = true
 schemars.workspace = true
 serde-reflection.workspace = true
 bincode2.workspace = true
 bytemuck.workspace = true
+lz4_flex.workspace = true
+blake3.workspace = true
 glam.workspace = true
 # glTF 2.0 import (charter 4.1): meshes, materials, embedded and external images.
 gltf = { workspace = true, optional = true }
