@@ -11,8 +11,11 @@
 // page's viewport at that size in CSS pixels whatever Chrome's window keeps for itself (without
 // `--enable-unsafe-webgpu` the same window gives the page 56 pixels more height). The last line
 // printed names Chrome's version (`browser: ...`).
+// STAGE_SHOTS=<dir> lets an async EVAL call __amorisStageShot("name") and await its own
+// __amorisStageShotDone(name, error) callback. Named CDP screenshots capture the presented WebGPU
+// canvas, whose pixels are otherwise cleared before a later DOM drawImage/toDataURL call.
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -34,7 +37,8 @@ const port = 9300 + Math.floor(Math.random() * 600);
 // switch (kept from the macOS runs) is left out on Windows, where it would move Chrome's own
 // compositing to Vulkan beside Dawn's D3D12.
 const platformFlags = process.platform === "win32" ? [] : ["--enable-features=Vulkan"];
-// The frame loop runs uncapped (no vsync, no frame-rate limit) unless VSYNC=1.
+// Animation callbacks are uncapped unless VSYNC=1. The viewport bounds outstanding GPU frames
+// separately (two by default); ?in_flight=0 explicitly reproduces unbounded submission experiments.
 const uncapped = process.env.VSYNC === "1" ? [] : ["--disable-frame-rate-limit", "--disable-gpu-vsync"];
 const proc = spawn(chrome, [
   "--headless=new", `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`,
@@ -63,12 +67,28 @@ const logs = [];
 ws.onmessage = (e) => {
   const m = JSON.parse(e.data);
   if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); return; }
+  if (m.method === "Runtime.bindingCalled" && m.params.name === "__amorisStageShot" && process.env.STAGE_SHOTS) {
+    captureStage(m.params).catch(e => logs.push("[error] stage screenshot: "+String(e)));
+  }
   if (m.method === "Runtime.consoleAPICalled") logs.push(`[${m.params.type}] ` + m.params.args.map((a) => a.value ?? a.description ?? "").join(" "));
   if (m.method === "Runtime.exceptionThrown") logs.push("[exception] " + (m.params.exceptionDetails.exception?.description || m.params.exceptionDetails.text));
 };
 const send = (method, params = {}) => new Promise((r) => { const i = ++id; pending.set(i, r); ws.send(JSON.stringify({ id: i, method, params })); });
+// Optional test-only screenshots while an asynchronous EVAL is paused at a named checkpoint.
+// Chrome clears a presented WebGPU canvas, so DOM drawImage/toDataURL cannot capture that frame.
+let stageCount=0;
+async function captureStage(params) {
+  const name=params.payload;let error=null;
+  try {
+    if(!/^[a-z][a-z0-9_-]{0,63}$/.test(name)||++stageCount>16)throw Error("invalid/excessive screenshot checkpoint");
+    const shot=await send("Page.captureScreenshot",{format:"png"});if(!shot.result?.data)throw Error(JSON.stringify(shot.error||shot));
+    mkdirSync(process.env.STAGE_SHOTS,{recursive:true});writeFileSync(join(process.env.STAGE_SHOTS,name+".png"),Buffer.from(shot.result.data,"base64"));
+  }catch(e){error=String(e);}
+  await send("Runtime.evaluate",{contextId:params.executionContextId,expression:`window.__amorisStageShotDone(${JSON.stringify(name)},${JSON.stringify(error)})`});
+}
 await send("Page.enable");
 await send("Runtime.enable");
+if(process.env.STAGE_SHOTS)await send("Runtime.addBinding",{name:"__amorisStageShot"});
 // INIT prepares a reproducible temporary-profile state before application modules read it.
 if (process.env.INIT) await send("Page.addScriptToEvaluateOnNewDocument", { source: process.env.INIT });
 if (process.env.VIEWPORT) {
@@ -118,7 +138,14 @@ const r = await send("Runtime.evaluate", { returnByValue: true, expression: `(()
 console.log(JSON.stringify(r.result.result.value, null, 2));
 if (process.env.EVAL) {
   const e = await send("Runtime.evaluate", { expression: process.env.EVAL, awaitPromise: true, returnByValue: true });
-  console.log("eval:", JSON.stringify(e.result.result.value ?? e.result.exceptionDetails ?? e.result.result));
+  if (e.result.exceptionDetails) {
+    const details = e.result.exceptionDetails;
+    console.log("eval:", JSON.stringify({error: details.exception?.description || details.text, details}));
+    // Finish screenshots/logging and close this task's Chrome before reporting a failed probe.
+    process.exitCode = 1;
+  } else {
+    console.log("eval:", JSON.stringify(e.result.result.value ?? e.result.result));
+  }
 }
 if (process.env.SHOT) {
   const shot = await send("Page.captureScreenshot", { format: "png" });
