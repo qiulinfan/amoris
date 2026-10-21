@@ -238,19 +238,24 @@ tick it publishes (threads.md 4.3), goes through a `SnapshotCache`, which gives 
   failed snapshot starts it over, and so does a gap longer than `bevy_ecs`'s change-tick check
   interval.
 - A registered component's section is taken over from the last snapshot (its `Arc`'d bytes and its
-  digest) when the component has as many rows as were encoded then and no row, nor the `EntityId`
-  of its entity, was added or changed after the world's change tick of that snapshot. A row removed
+  digest) when the component has as many rows as were encoded then and no row, nor the `EntityId` of
+  its entity, was added or changed after the world's change tick of that snapshot. A row removed
   alone changes the count; a row removed and another added brings an added row. Writes through
   `Mut`, inserts, spawns and restores all set change ticks; nothing in the engine writes a persisted
-  component past change detection (`bypass_change_detection`), and nothing may: clippy reports the
-  methods that would in the tick-code crates (the list below).
+  component or resource past change detection (`bypass_change_detection`), and nothing may: clippy
+  reports the methods that would in the tick-code crates (the list below).
+- Typed resources (2026-10-19) also reuse their section while present and unchanged. Resource
+  change ticks detect writes, same-value writes and replacement; presence detects removal. Removal
+  followed by reinsertion between snapshots still carries a new added/changed tick. This keeps
+  large immutable resident-water checkpoints from being encoded and hashed on every publication.
+  Kept bytes remain identical to complete encoding; a failed snapshot resets both kinds of cache.
 - After each snapshot the cache advances the world's change tick by one (`UnsafeWorldCell::
   increment_change_tick`), so a write made later, even before any system runs, carries a newer tick
   than every change the snapshot saw. Change ticks are not world state (section 2): the hash, a
   replay and the simulation never see them.
 - Each component's query (`(Ref<EntityId>, Ref<C>)`) is kept between snapshots, so a section with
   no rows costs a look at the query's matched tables. The list of sections is kept while the
-  world's `ComponentRegistry` does not change. Resources, caches, the entities section and project
+  world's `ComponentRegistry` does not change. Caches, the entities section and project
   components are encoded every time.
 
 The methods that write past change ticks are in `tools/clippy-determinism.toml`, from which

@@ -13,8 +13,9 @@
 //! (through `UnsafeWorldCell::increment_change_tick`, which touches no world state, the world hash or
 //! a replay), so a write made later always carries a newer tick than the snapshot's.
 //!
-//! Resources, caches, the entities section and project components are encoded every time (they
-//! are cheap, or their codec reads more than one place). The list of sections is kept while the
+//! Typed resource sections are also kept when present and unchanged; removal and reinsertion
+//! invalidate reuse. Caches, the entities section and project components are encoded every time
+//! (their codec reads more than one place). The list of sections is kept while the
 //! world's component registry is not changed. A cache follows one world and one registry: another
 //! one, or a failed snapshot, starts it over.
 
@@ -29,7 +30,7 @@ use bevy_ecs::world::WorldId;
 use crate::hash::digest_prefix;
 use crate::project::Project;
 use crate::registry::Registry;
-use crate::sections::{Codec, ComponentRows};
+use crate::sections::{Codec, ComponentRows, ResourceChangedFn};
 use crate::snapshot::{SectionData, Snapshot, Source, at_boundary, header_of, sources};
 
 /// A section in the kept order.
@@ -40,12 +41,22 @@ enum Kept {
 }
 
 /// A registered component's kept query and what it gave last.
-struct Slot {
+struct ComponentSlot {
     rows: Box<dyn ComponentRows>,
     /// The rows encoded at the last snapshot (`None`: never encoded since the cache started).
     count: Option<usize>,
     /// The section then (`None`: absent, no rows).
     last: Option<SectionData>,
+}
+
+struct ResourceSlot {
+    changed: ResourceChangedFn,
+    present: Option<bool>,
+    last: Option<SectionData>,
+}
+enum Slot {
+    Component(ComponentSlot),
+    Resource(ResourceSlot),
 }
 
 /// Snapshots of one world, each the same as [`crate::snapshot`] gives (module documentation).
@@ -57,8 +68,10 @@ pub struct SnapshotCache {
     taken: Tick,
     /// The sections in order, kept while the component registry does not change.
     order: Option<Vec<Kept>>,
-    /// Per registry entry, for components.
+    /// Per registry entry, for registered components and typed resources.
     slots: Vec<Option<Slot>>,
+    /// Encoding workspace, cleared after each take but retaining its peak allocation.
+    scratch: Vec<u8>,
 }
 
 impl SnapshotCache {
@@ -70,6 +83,7 @@ impl SnapshotCache {
     /// which advances by one.
     pub fn snapshot(&mut self, world: &World, reg: &Registry) -> Result<Snapshot, Problem> {
         let r = self.take(world, reg);
+        self.scratch.clear();
         if r.is_err() {
             self.owner = None;
         }
@@ -83,11 +97,19 @@ impl SnapshotCache {
             .entries()
             .iter()
             .map(|e| match &e.codec {
-                Codec::Typed { rows: Some(f), .. } => Some(Slot {
+                Codec::Typed { rows: Some(f), .. } => Some(Slot::Component(ComponentSlot {
                     rows: f(),
                     count: None,
                     last: None,
-                }),
+                })),
+                Codec::Typed {
+                    resource: Some(changed),
+                    ..
+                } => Some(Slot::Resource(ResourceSlot {
+                    changed: *changed,
+                    present: None,
+                    last: None,
+                })),
                 _ => None,
             })
             .collect();
@@ -121,7 +143,7 @@ impl SnapshotCache {
         }
         let order = self.order.as_deref().unwrap_or_default();
         let mut sections = Vec::with_capacity(order.len());
-        let mut buf = Vec::with_capacity(4096);
+        let buf = &mut self.scratch;
         for k in order {
             let (source, slot) = match k {
                 Kept::Registered(i) => (
@@ -131,8 +153,23 @@ impl SnapshotCache {
                 Kept::Project(p) => (Source::Project(Cow::Borrowed(p)), None),
             };
             let Some(slot) = slot else {
-                sections.extend(source.encode(world, &mut buf)?);
+                sections.extend(source.encode(world, buf)?);
                 continue;
+            };
+            if let Slot::Resource(slot) = slot {
+                let status = (slot.changed)(world, since, now);
+                let present = status.is_some();
+                if slot.present == Some(present) && status != Some(true) {
+                    sections.extend(slot.last.clone());
+                } else {
+                    slot.last = source.encode(world, buf)?;
+                    slot.present = Some(present);
+                    sections.extend(slot.last.clone());
+                }
+                continue;
+            }
+            let Slot::Component(slot) = slot else {
+                unreachable!()
             };
             if let Some(count) = slot.count {
                 let (rows, changed) = slot.rows.scan(world, since, now);
@@ -143,11 +180,11 @@ impl SnapshotCache {
             }
             let key = source.key();
             buf.clear();
-            digest_prefix(&mut buf, key.kind, &key.name, source.version());
+            digest_prefix(buf, key.kind, &key.name, source.version());
             let start = buf.len();
-            let rows = slot.rows.encode(world, &mut buf, key)?;
+            let rows = slot.rows.encode(world, buf, key)?;
             slot.count = Some(rows);
-            slot.last = (rows > 0).then(|| source.data(&buf, start));
+            slot.last = (rows > 0).then(|| source.data(buf, start));
             sections.extend(slot.last.clone());
         }
         // Writes from now on carry a newer tick than every change this snapshot saw.

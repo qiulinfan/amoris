@@ -21,6 +21,7 @@ pub struct Decoder<'de> {
 
 impl<'de> Decoder<'de> {
     /// With `finite`, a NaN or an infinity is refused (the encoders that refuse them, 3.1).
+    #[inline]
     pub fn new(bytes: &'de [u8], finite: bool) -> Decoder<'de> {
         Decoder {
             bytes,
@@ -33,6 +34,7 @@ impl<'de> Decoder<'de> {
     /// Opens one more compound value (a sequence, tuple, map, struct, newtype, `Some` or an enum
     /// variant with content, as the encoder counts them): `noncanonical` past `MAX_DEPTH`. The
     /// JSON conversion and the field diff, which read with a decoder, count on it too.
+    #[inline]
     pub(crate) fn enter(&mut self) -> Result<(), PceError> {
         if self.depth >= MAX_DEPTH {
             return Err(PceError::noncanonical(
@@ -45,11 +47,13 @@ impl<'de> Decoder<'de> {
     }
 
     /// Closes what [`Decoder::enter`] opened.
+    #[inline]
     pub(crate) fn leave(&mut self) {
         self.depth = self.depth.saturating_sub(1);
     }
 
     /// Runs `f` inside one more compound value.
+    #[inline]
     fn nested<T>(
         &mut self,
         f: impl FnOnce(&mut Self) -> Result<T, PceError>,
@@ -61,36 +65,43 @@ impl<'de> Decoder<'de> {
     }
 
     /// The offset of the next byte.
+    #[inline]
     pub fn pos(&self) -> usize {
         self.pos
     }
 
     /// Moves to an offset read before (to read a value again as a whole).
+    #[inline]
     pub(crate) fn set_pos(&mut self, pos: usize) {
         self.pos = pos.min(self.bytes.len());
     }
 
     /// The bytes from `from` to the current offset.
+    #[inline]
     pub(crate) fn since(&self, from: usize) -> &'de [u8] {
         &self.bytes[from.min(self.pos)..self.pos]
     }
 
     /// Whether every byte has been read.
+    #[inline]
     pub fn at_end(&self) -> bool {
         self.pos == self.bytes.len()
     }
 
     /// Decodes the next value.
+    #[inline]
     pub fn value<T: Deserialize<'de>>(&mut self) -> Result<T, PceError> {
         T::deserialize(&mut *self).map_err(|e| e.at(self.pos))
     }
 
     /// A ULEB128 length or count.
+    #[inline]
     pub fn uleb(&mut self) -> Result<u64, PceError> {
         read_uleb(self.bytes, &mut self.pos)
     }
 
     /// The next `n` bytes.
+    #[inline]
     pub fn take(&mut self, n: usize) -> Result<&'de [u8], PceError> {
         let end = self
             .pos
@@ -104,6 +115,7 @@ impl<'de> Decoder<'de> {
         Ok(out)
     }
 
+    #[inline]
     fn array<const N: usize>(&mut self) -> Result<[u8; N], PceError> {
         let mut out = [0u8; N];
         out.copy_from_slice(self.take(N)?);
@@ -112,6 +124,7 @@ impl<'de> Decoder<'de> {
 
     /// A length as `usize`, at most the bytes left (every element takes at least one byte, except
     /// zero-sized ones, which persisted types do not repeat).
+    #[inline]
     fn len(&mut self) -> Result<usize, PceError> {
         let at = self.pos;
         let n = self.uleb()?;
@@ -141,6 +154,7 @@ impl<'de> Decoder<'de> {
         }
     }
 
+    #[inline]
     fn float_ok(&self, finite: bool, at: usize) -> Result<(), PceError> {
         if self.finite && !finite {
             Err(PceError::noncanonical(
@@ -156,6 +170,7 @@ impl<'de> Decoder<'de> {
 impl<'de> de::Deserializer<'de> for &mut Decoder<'de> {
     type Error = PceError;
 
+    #[inline]
     fn is_human_readable(&self) -> bool {
         false
     }
@@ -167,6 +182,7 @@ impl<'de> de::Deserializer<'de> for &mut Decoder<'de> {
         ))
     }
 
+    #[inline]
     fn deserialize_bool<V: Visitor<'de>>(self, v: V) -> Result<V::Value, PceError> {
         let at = self.pos;
         match self.array::<1>()?[0] {
@@ -176,37 +192,48 @@ impl<'de> de::Deserializer<'de> for &mut Decoder<'de> {
         }
     }
 
+    #[inline]
     fn deserialize_i8<V: Visitor<'de>>(self, v: V) -> Result<V::Value, PceError> {
         v.visit_i8(i8::from_le_bytes(self.array()?))
     }
+    #[inline]
     fn deserialize_i16<V: Visitor<'de>>(self, v: V) -> Result<V::Value, PceError> {
         v.visit_i16(i16::from_le_bytes(self.array()?))
     }
+    #[inline]
     fn deserialize_i32<V: Visitor<'de>>(self, v: V) -> Result<V::Value, PceError> {
         v.visit_i32(i32::from_le_bytes(self.array()?))
     }
+    #[inline]
     fn deserialize_i64<V: Visitor<'de>>(self, v: V) -> Result<V::Value, PceError> {
         v.visit_i64(i64::from_le_bytes(self.array()?))
     }
+    #[inline]
     fn deserialize_i128<V: Visitor<'de>>(self, v: V) -> Result<V::Value, PceError> {
         v.visit_i128(i128::from_le_bytes(self.array()?))
     }
+    #[inline]
     fn deserialize_u8<V: Visitor<'de>>(self, v: V) -> Result<V::Value, PceError> {
         v.visit_u8(self.array::<1>()?[0])
     }
+    #[inline]
     fn deserialize_u16<V: Visitor<'de>>(self, v: V) -> Result<V::Value, PceError> {
         v.visit_u16(u16::from_le_bytes(self.array()?))
     }
+    #[inline]
     fn deserialize_u32<V: Visitor<'de>>(self, v: V) -> Result<V::Value, PceError> {
         v.visit_u32(u32::from_le_bytes(self.array()?))
     }
+    #[inline]
     fn deserialize_u64<V: Visitor<'de>>(self, v: V) -> Result<V::Value, PceError> {
         v.visit_u64(u64::from_le_bytes(self.array()?))
     }
+    #[inline]
     fn deserialize_u128<V: Visitor<'de>>(self, v: V) -> Result<V::Value, PceError> {
         v.visit_u128(u128::from_le_bytes(self.array()?))
     }
 
+    #[inline]
     fn deserialize_f32<V: Visitor<'de>>(self, v: V) -> Result<V::Value, PceError> {
         let at = self.pos;
         let x = f32::from_bits(u32::from_le_bytes(self.array()?));
@@ -214,6 +241,7 @@ impl<'de> de::Deserializer<'de> for &mut Decoder<'de> {
         v.visit_f32(x)
     }
 
+    #[inline]
     fn deserialize_f64<V: Visitor<'de>>(self, v: V) -> Result<V::Value, PceError> {
         let at = self.pos;
         let x = f64::from_bits(u64::from_le_bytes(self.array()?));
@@ -221,6 +249,7 @@ impl<'de> de::Deserializer<'de> for &mut Decoder<'de> {
         v.visit_f64(x)
     }
 
+    #[inline]
     fn deserialize_char<V: Visitor<'de>>(self, v: V) -> Result<V::Value, PceError> {
         let at = self.pos;
         let n = u32::from_le_bytes(self.array()?);
@@ -230,6 +259,7 @@ impl<'de> de::Deserializer<'de> for &mut Decoder<'de> {
         v.visit_char(c)
     }
 
+    #[inline]
     fn deserialize_str<V: Visitor<'de>>(self, v: V) -> Result<V::Value, PceError> {
         let n = self.len()?;
         let at = self.pos;
@@ -237,18 +267,22 @@ impl<'de> de::Deserializer<'de> for &mut Decoder<'de> {
         let s = std::str::from_utf8(b).map_err(|_| PceError::noncanonical(at, "invalid UTF-8"))?;
         v.visit_borrowed_str(s)
     }
+    #[inline]
     fn deserialize_string<V: Visitor<'de>>(self, v: V) -> Result<V::Value, PceError> {
         self.deserialize_str(v)
     }
 
+    #[inline]
     fn deserialize_bytes<V: Visitor<'de>>(self, v: V) -> Result<V::Value, PceError> {
         let n = self.len()?;
         v.visit_borrowed_bytes(self.take(n)?)
     }
+    #[inline]
     fn deserialize_byte_buf<V: Visitor<'de>>(self, v: V) -> Result<V::Value, PceError> {
         self.deserialize_bytes(v)
     }
 
+    #[inline]
     fn deserialize_option<V: Visitor<'de>>(self, v: V) -> Result<V::Value, PceError> {
         let at = self.pos;
         match self.array::<1>()?[0] {
@@ -258,9 +292,11 @@ impl<'de> de::Deserializer<'de> for &mut Decoder<'de> {
         }
     }
 
+    #[inline]
     fn deserialize_unit<V: Visitor<'de>>(self, v: V) -> Result<V::Value, PceError> {
         v.visit_unit()
     }
+    #[inline]
     fn deserialize_unit_struct<V: Visitor<'de>>(
         self,
         _: &'static str,
@@ -268,6 +304,7 @@ impl<'de> de::Deserializer<'de> for &mut Decoder<'de> {
     ) -> Result<V::Value, PceError> {
         v.visit_unit()
     }
+    #[inline]
     fn deserialize_newtype_struct<V: Visitor<'de>>(
         self,
         _: &'static str,
@@ -276,15 +313,18 @@ impl<'de> de::Deserializer<'de> for &mut Decoder<'de> {
         self.nested(|d| v.visit_newtype_struct(d))
     }
 
+    #[inline]
     fn deserialize_seq<V: Visitor<'de>>(self, v: V) -> Result<V::Value, PceError> {
         self.nested(|d| {
             let n = d.len()?;
             v.visit_seq(Items { de: d, left: n })
         })
     }
+    #[inline]
     fn deserialize_tuple<V: Visitor<'de>>(self, len: usize, v: V) -> Result<V::Value, PceError> {
         self.nested(|d| v.visit_seq(Items { de: d, left: len }))
     }
+    #[inline]
     fn deserialize_tuple_struct<V: Visitor<'de>>(
         self,
         _: &'static str,
@@ -293,12 +333,14 @@ impl<'de> de::Deserializer<'de> for &mut Decoder<'de> {
     ) -> Result<V::Value, PceError> {
         self.nested(|d| v.visit_seq(Items { de: d, left: len }))
     }
+    #[inline]
     fn deserialize_map<V: Visitor<'de>>(self, v: V) -> Result<V::Value, PceError> {
         self.nested(|d| {
             let n = d.len()?;
             v.visit_map(Items { de: d, left: n })
         })
     }
+    #[inline]
     fn deserialize_struct<V: Visitor<'de>>(
         self,
         _: &'static str,
@@ -312,6 +354,7 @@ impl<'de> de::Deserializer<'de> for &mut Decoder<'de> {
             })
         })
     }
+    #[inline]
     fn deserialize_enum<V: Visitor<'de>>(
         self,
         _: &'static str,
@@ -343,6 +386,7 @@ struct Items<'a, 'de> {
 
 impl<'de> de::SeqAccess<'de> for Items<'_, 'de> {
     type Error = PceError;
+    #[inline]
     fn next_element_seed<T: DeserializeSeed<'de>>(
         &mut self,
         seed: T,
@@ -353,6 +397,7 @@ impl<'de> de::SeqAccess<'de> for Items<'_, 'de> {
         self.left -= 1;
         seed.deserialize(&mut *self.de).map(Some)
     }
+    #[inline]
     fn size_hint(&self) -> Option<usize> {
         Some(self.left)
     }
@@ -360,6 +405,7 @@ impl<'de> de::SeqAccess<'de> for Items<'_, 'de> {
 
 impl<'de> de::MapAccess<'de> for Items<'_, 'de> {
     type Error = PceError;
+    #[inline]
     fn next_key_seed<K: DeserializeSeed<'de>>(
         &mut self,
         seed: K,
@@ -370,9 +416,11 @@ impl<'de> de::MapAccess<'de> for Items<'_, 'de> {
         self.left -= 1;
         seed.deserialize(&mut *self.de).map(Some)
     }
+    #[inline]
     fn next_value_seed<V: DeserializeSeed<'de>>(&mut self, seed: V) -> Result<V::Value, PceError> {
         seed.deserialize(&mut *self.de)
     }
+    #[inline]
     fn size_hint(&self) -> Option<usize> {
         Some(self.left)
     }
@@ -381,6 +429,7 @@ impl<'de> de::MapAccess<'de> for Items<'_, 'de> {
 impl<'de> de::EnumAccess<'de> for &mut Decoder<'de> {
     type Error = PceError;
     type Variant = Self;
+    #[inline]
     fn variant_seed<V: DeserializeSeed<'de>>(self, seed: V) -> Result<(V::Value, Self), PceError> {
         let at = self.pos;
         let i = self.uleb()?;
@@ -395,15 +444,19 @@ impl<'de> de::EnumAccess<'de> for &mut Decoder<'de> {
 
 impl<'de> de::VariantAccess<'de> for &mut Decoder<'de> {
     type Error = PceError;
+    #[inline]
     fn unit_variant(self) -> Result<(), PceError> {
         Ok(())
     }
+    #[inline]
     fn newtype_variant_seed<T: DeserializeSeed<'de>>(self, seed: T) -> Result<T::Value, PceError> {
         self.nested(|d| seed.deserialize(d))
     }
+    #[inline]
     fn tuple_variant<V: Visitor<'de>>(self, len: usize, v: V) -> Result<V::Value, PceError> {
         self.nested(|d| v.visit_seq(Items { de: d, left: len }))
     }
+    #[inline]
     fn struct_variant<V: Visitor<'de>>(
         self,
         fields: &'static [&'static str],

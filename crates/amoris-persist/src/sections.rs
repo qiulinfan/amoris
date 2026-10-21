@@ -38,6 +38,8 @@ type CacheDecodeFn = fn(&[u8]) -> Result<Box<dyn Staged>, Problem>;
 type EncodeFn = fn(&World, &mut Vec<u8>, &SectionKey) -> Result<bool, Problem>;
 /// A component section's kept query, for repeated snapshots of one world.
 pub(crate) type RowsFn = fn() -> Box<dyn ComponentRows>;
+/// None: absent; Some: whether a typed resource changed since the cached snapshot.
+pub(crate) type ResourceChangedFn = fn(&World, Tick, Tick) -> Option<bool>;
 type DecodeFn = fn(&[u8], &SectionKey, &[EntityId]) -> Result<Box<dyn StagedSection>, Problem>;
 
 /// How one registered section is written and read.
@@ -50,6 +52,7 @@ pub(crate) enum Codec {
         remove: Option<fn(&mut World)>,
         /// A component's rows read through a kept query (`snapshot::SnapshotCache`).
         rows: Option<RowsFn>,
+        resource: Option<ResourceChangedFn>,
     },
     Cache {
         encode: fn(&World, &mut Vec<u8>) -> Result<(), Problem>,
@@ -159,6 +162,11 @@ pub(crate) fn resource_codec<R: Persisted + Resource>() -> Codec {
             w.remove_resource::<R>();
         }),
         rows: None,
+        resource: Some(|world, since, now| {
+            world
+                .get_resource_change_ticks::<R>()
+                .map(|t| t.added.is_newer_than(since, now) || t.changed.is_newer_than(since, now))
+        }),
     }
 }
 
@@ -200,6 +208,7 @@ pub(crate) fn component_codec<C: Persisted + Component>() -> Codec {
         decode: decode_component::<C>,
         remove: None,
         rows: Some(|| Box::new(KeptRows::<C> { state: None })),
+        resource: None,
     }
 }
 

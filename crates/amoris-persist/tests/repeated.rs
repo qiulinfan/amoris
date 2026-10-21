@@ -184,3 +184,51 @@ fn a_restore_and_another_world_start_the_cache_over() {
     same(&mut c, &other, "on another world");
     same(&mut c, &g, "back on the first world");
 }
+
+#[test]
+fn resources_are_shared_until_written_removed_reinserted_or_restored() {
+    use common::Score;
+    let mut g = game(11);
+    let mut cache = SnapshotCache::new();
+    let key = SectionKey::new(SectionKind::Resource, "Score");
+    let first = same(&mut cache, &g, "resource start");
+    let again = same(&mut cache, &g, "resource unchanged");
+    let ptr = |s: &Snapshot| s.section(&key).unwrap().bytes.clone();
+    assert!(Arc::ptr_eq(&ptr(&first), &ptr(&again)));
+    g.sim.world_mut().resource_mut::<Score>().0 = 42;
+    let changed = same(&mut cache, &g, "resource written after snapshot");
+    assert!(!Arc::ptr_eq(&ptr(&again), &ptr(&changed)));
+    *g.sim.world_mut().resource_mut::<Score>() = Score(42);
+    let same_value = same(&mut cache, &g, "resource written with equal value");
+    assert_eq!(changed, same_value);
+    assert!(!Arc::ptr_eq(&ptr(&changed), &ptr(&same_value)));
+    g.sim.world_mut().remove_resource::<Score>();
+    assert!(
+        same(&mut cache, &g, "resource removed")
+            .section(&key)
+            .is_none()
+    );
+    g.sim.world_mut().insert_resource(Score(42));
+    let added = same(&mut cache, &g, "resource reinserted");
+    g.sim.world_mut().remove_resource::<Score>();
+    g.sim.world_mut().insert_resource(Score(42));
+    let replaced = same(
+        &mut cache,
+        &g,
+        "resource removed and replaced between snapshots",
+    );
+    assert_eq!(added, replaced);
+    assert!(!Arc::ptr_eq(&ptr(&added), &ptr(&replaced)));
+    let saved = full(&g);
+    g.sim.world_mut().resource_mut::<Score>().0 = 43;
+    same(&mut cache, &g, "before resource restore");
+    restore(g.sim.world_mut(), &saved, &g.reg, RestoreOptions::default()).unwrap();
+    let restored = same(&mut cache, &g, "resource restored in place");
+    assert_eq!(restored.world_hash(), saved.world_hash());
+    // A failed take must reset resource caches as well as kept component queries.
+    let e = ent(&g.sim, 1).unwrap();
+    g.sim.world_mut().get_mut::<Pos>(e).unwrap().x = f64::NAN;
+    assert!(cache.snapshot(g.sim.world(), &g.reg).is_err());
+    g.sim.world_mut().get_mut::<Pos>(e).unwrap().x = 0.5;
+    same(&mut cache, &g, "resource cache after a failed take");
+}

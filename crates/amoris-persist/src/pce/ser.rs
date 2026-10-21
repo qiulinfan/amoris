@@ -14,6 +14,7 @@ pub struct Encoder<'a> {
 
 impl<'a> Encoder<'a> {
     /// With `finite`, NaN and infinities are refused (Component and Resource sections).
+    #[inline]
     pub fn new(out: &'a mut Vec<u8>, finite: bool) -> Encoder<'a> {
         Encoder {
             out,
@@ -23,6 +24,7 @@ impl<'a> Encoder<'a> {
     }
 
     /// Opens one more compound value; [`Compound::done`] or the caller closes it.
+    #[inline]
     fn enter(&mut self) -> Result<(), PceError> {
         if self.depth >= MAX_DEPTH {
             return Err(PceError::Encode(format!("nesting deeper than {MAX_DEPTH}")));
@@ -32,6 +34,7 @@ impl<'a> Encoder<'a> {
     }
 
     /// Writes `v` inside one more compound value (a newtype, `Some`, a newtype variant).
+    #[inline]
     fn inside<T: Serialize + ?Sized>(&mut self, v: &T) -> Result<(), PceError> {
         self.enter()?;
         v.serialize(&mut *self)?;
@@ -39,12 +42,14 @@ impl<'a> Encoder<'a> {
         Ok(())
     }
 
+    #[inline]
     fn len(&mut self, len: Option<usize>, what: &str) -> Result<usize, PceError> {
         let len = len.ok_or_else(|| PceError::Encode(format!("a {what} without a length")))?;
         write_uleb(self.out, len as u64);
         Ok(len)
     }
 
+    #[inline]
     fn float_ok(&self, finite: bool) -> Result<(), PceError> {
         if self.finite && !finite {
             Err(PceError::Encode(
@@ -66,11 +71,13 @@ pub struct Compound<'e, 'a> {
 }
 
 impl Compound<'_, '_> {
+    #[inline]
     fn item<T: Serialize + ?Sized>(&mut self, v: &T) -> Result<(), PceError> {
         self.written += 1;
         v.serialize(&mut *self.enc)
     }
 
+    #[inline]
     fn done(self) -> Result<(), PceError> {
         self.enc.depth -= 1;
         if self.written == self.announced {
@@ -102,92 +109,114 @@ impl<'e, 'a> ser::Serializer for &'e mut Encoder<'a> {
     type SerializeStruct = Compound<'e, 'a>;
     type SerializeStructVariant = Compound<'e, 'a>;
 
+    #[inline]
     fn is_human_readable(&self) -> bool {
         false
     }
 
+    #[inline]
     fn serialize_bool(self, v: bool) -> Result<(), PceError> {
         self.out.push(u8::from(v));
         Ok(())
     }
+    #[inline]
     fn serialize_i8(self, v: i8) -> Result<(), PceError> {
         self.out.extend_from_slice(&v.to_le_bytes());
         Ok(())
     }
+    #[inline]
     fn serialize_i16(self, v: i16) -> Result<(), PceError> {
         self.out.extend_from_slice(&v.to_le_bytes());
         Ok(())
     }
+    #[inline]
     fn serialize_i32(self, v: i32) -> Result<(), PceError> {
         self.out.extend_from_slice(&v.to_le_bytes());
         Ok(())
     }
+    #[inline]
     fn serialize_i64(self, v: i64) -> Result<(), PceError> {
         self.out.extend_from_slice(&v.to_le_bytes());
         Ok(())
     }
+    #[inline]
     fn serialize_i128(self, v: i128) -> Result<(), PceError> {
         self.out.extend_from_slice(&v.to_le_bytes());
         Ok(())
     }
+    #[inline]
     fn serialize_u8(self, v: u8) -> Result<(), PceError> {
         self.out.push(v);
         Ok(())
     }
+    #[inline]
     fn serialize_u16(self, v: u16) -> Result<(), PceError> {
         self.out.extend_from_slice(&v.to_le_bytes());
         Ok(())
     }
+    #[inline]
     fn serialize_u32(self, v: u32) -> Result<(), PceError> {
         self.out.extend_from_slice(&v.to_le_bytes());
         Ok(())
     }
+    #[inline]
     fn serialize_u64(self, v: u64) -> Result<(), PceError> {
         self.out.extend_from_slice(&v.to_le_bytes());
         Ok(())
     }
+    #[inline]
     fn serialize_u128(self, v: u128) -> Result<(), PceError> {
         self.out.extend_from_slice(&v.to_le_bytes());
         Ok(())
     }
+    #[inline]
     fn serialize_f32(self, v: f32) -> Result<(), PceError> {
         self.float_ok(v.is_finite())?;
         self.out.extend_from_slice(&v.to_bits().to_le_bytes());
         Ok(())
     }
+    #[inline]
     fn serialize_f64(self, v: f64) -> Result<(), PceError> {
         self.float_ok(v.is_finite())?;
         self.out.extend_from_slice(&v.to_bits().to_le_bytes());
         Ok(())
     }
+    #[inline]
     fn serialize_char(self, v: char) -> Result<(), PceError> {
         self.out.extend_from_slice(&u32::from(v).to_le_bytes());
         Ok(())
     }
+    #[inline]
     fn serialize_str(self, v: &str) -> Result<(), PceError> {
         write_uleb(self.out, v.len() as u64);
         self.out.extend_from_slice(v.as_bytes());
         Ok(())
     }
+    #[inline]
     fn serialize_bytes(self, v: &[u8]) -> Result<(), PceError> {
         write_uleb(self.out, v.len() as u64);
         self.out.extend_from_slice(v);
         Ok(())
     }
+    #[inline]
     fn serialize_none(self) -> Result<(), PceError> {
         self.out.push(0);
         Ok(())
     }
+    #[inline]
     fn serialize_some<T: Serialize + ?Sized>(self, v: &T) -> Result<(), PceError> {
         self.out.push(1);
         self.inside(v)
     }
+    #[inline]
     fn serialize_unit(self) -> Result<(), PceError> {
         Ok(())
     }
+    #[inline]
     fn serialize_unit_struct(self, _: &'static str) -> Result<(), PceError> {
         Ok(())
     }
+    #[inline]
     fn serialize_unit_variant(
         self,
         _: &'static str,
@@ -197,6 +226,7 @@ impl<'e, 'a> ser::Serializer for &'e mut Encoder<'a> {
         write_uleb(self.out, u64::from(i));
         Ok(())
     }
+    #[inline]
     fn serialize_newtype_struct<T: Serialize + ?Sized>(
         self,
         _: &'static str,
@@ -204,6 +234,7 @@ impl<'e, 'a> ser::Serializer for &'e mut Encoder<'a> {
     ) -> Result<(), PceError> {
         self.inside(v)
     }
+    #[inline]
     fn serialize_newtype_variant<T: Serialize + ?Sized>(
         self,
         _: &'static str,
@@ -214,6 +245,7 @@ impl<'e, 'a> ser::Serializer for &'e mut Encoder<'a> {
         write_uleb(self.out, u64::from(i));
         self.inside(v)
     }
+    #[inline]
     fn serialize_seq(self, len: Option<usize>) -> Result<Compound<'e, 'a>, PceError> {
         self.enter()?;
         let announced = self.len(len, "sequence")?;
@@ -224,6 +256,7 @@ impl<'e, 'a> ser::Serializer for &'e mut Encoder<'a> {
             what: "sequence",
         })
     }
+    #[inline]
     fn serialize_tuple(self, len: usize) -> Result<Compound<'e, 'a>, PceError> {
         self.enter()?;
         Ok(Compound {
@@ -233,6 +266,7 @@ impl<'e, 'a> ser::Serializer for &'e mut Encoder<'a> {
             what: "tuple",
         })
     }
+    #[inline]
     fn serialize_tuple_struct(
         self,
         _: &'static str,
@@ -240,6 +274,7 @@ impl<'e, 'a> ser::Serializer for &'e mut Encoder<'a> {
     ) -> Result<Compound<'e, 'a>, PceError> {
         self.serialize_tuple(len)
     }
+    #[inline]
     fn serialize_tuple_variant(
         self,
         _: &'static str,
@@ -250,6 +285,7 @@ impl<'e, 'a> ser::Serializer for &'e mut Encoder<'a> {
         write_uleb(self.out, u64::from(i));
         self.serialize_tuple(len)
     }
+    #[inline]
     fn serialize_map(self, len: Option<usize>) -> Result<Compound<'e, 'a>, PceError> {
         self.enter()?;
         let entries = self.len(len, "map")?;
@@ -260,6 +296,7 @@ impl<'e, 'a> ser::Serializer for &'e mut Encoder<'a> {
             what: "map",
         })
     }
+    #[inline]
     fn serialize_struct(self, _: &'static str, len: usize) -> Result<Compound<'e, 'a>, PceError> {
         self.enter()?;
         Ok(Compound {
@@ -269,6 +306,7 @@ impl<'e, 'a> ser::Serializer for &'e mut Encoder<'a> {
             what: "struct",
         })
     }
+    #[inline]
     fn serialize_struct_variant(
         self,
         _: &'static str,
@@ -284,9 +322,11 @@ impl<'e, 'a> ser::Serializer for &'e mut Encoder<'a> {
 impl ser::SerializeSeq for Compound<'_, '_> {
     type Ok = ();
     type Error = PceError;
+    #[inline]
     fn serialize_element<T: Serialize + ?Sized>(&mut self, v: &T) -> Result<(), PceError> {
         self.item(v)
     }
+    #[inline]
     fn end(self) -> Result<(), PceError> {
         self.done()
     }
@@ -295,9 +335,11 @@ impl ser::SerializeSeq for Compound<'_, '_> {
 impl ser::SerializeTuple for Compound<'_, '_> {
     type Ok = ();
     type Error = PceError;
+    #[inline]
     fn serialize_element<T: Serialize + ?Sized>(&mut self, v: &T) -> Result<(), PceError> {
         self.item(v)
     }
+    #[inline]
     fn end(self) -> Result<(), PceError> {
         self.done()
     }
@@ -306,9 +348,11 @@ impl ser::SerializeTuple for Compound<'_, '_> {
 impl ser::SerializeTupleStruct for Compound<'_, '_> {
     type Ok = ();
     type Error = PceError;
+    #[inline]
     fn serialize_field<T: Serialize + ?Sized>(&mut self, v: &T) -> Result<(), PceError> {
         self.item(v)
     }
+    #[inline]
     fn end(self) -> Result<(), PceError> {
         self.done()
     }
@@ -317,9 +361,11 @@ impl ser::SerializeTupleStruct for Compound<'_, '_> {
 impl ser::SerializeTupleVariant for Compound<'_, '_> {
     type Ok = ();
     type Error = PceError;
+    #[inline]
     fn serialize_field<T: Serialize + ?Sized>(&mut self, v: &T) -> Result<(), PceError> {
         self.item(v)
     }
+    #[inline]
     fn end(self) -> Result<(), PceError> {
         self.done()
     }
@@ -328,12 +374,15 @@ impl ser::SerializeTupleVariant for Compound<'_, '_> {
 impl ser::SerializeMap for Compound<'_, '_> {
     type Ok = ();
     type Error = PceError;
+    #[inline]
     fn serialize_key<T: Serialize + ?Sized>(&mut self, k: &T) -> Result<(), PceError> {
         self.item(k)
     }
+    #[inline]
     fn serialize_value<T: Serialize + ?Sized>(&mut self, v: &T) -> Result<(), PceError> {
         self.item(v)
     }
+    #[inline]
     fn end(self) -> Result<(), PceError> {
         self.done()
     }
@@ -342,6 +391,7 @@ impl ser::SerializeMap for Compound<'_, '_> {
 impl ser::SerializeStruct for Compound<'_, '_> {
     type Ok = ();
     type Error = PceError;
+    #[inline]
     fn serialize_field<T: Serialize + ?Sized>(
         &mut self,
         _: &'static str,
@@ -352,6 +402,7 @@ impl ser::SerializeStruct for Compound<'_, '_> {
     fn skip_field(&mut self, key: &'static str) -> Result<(), PceError> {
         Err(Compound::skipped(key))
     }
+    #[inline]
     fn end(self) -> Result<(), PceError> {
         self.done()
     }
@@ -360,6 +411,7 @@ impl ser::SerializeStruct for Compound<'_, '_> {
 impl ser::SerializeStructVariant for Compound<'_, '_> {
     type Ok = ();
     type Error = PceError;
+    #[inline]
     fn serialize_field<T: Serialize + ?Sized>(
         &mut self,
         _: &'static str,
@@ -370,6 +422,7 @@ impl ser::SerializeStructVariant for Compound<'_, '_> {
     fn skip_field(&mut self, key: &'static str) -> Result<(), PceError> {
         Err(Compound::skipped(key))
     }
+    #[inline]
     fn end(self) -> Result<(), PceError> {
         self.done()
     }
