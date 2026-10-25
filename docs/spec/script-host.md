@@ -717,7 +717,7 @@ breakpoints, stepping and reading variables do not taint.
 **VS Code.** The charter's check (a breakpoint on a `.ts` line in VS Code) runs headless, with no
 UI and nothing downloaded: `crates/amoris-debug/tests/jsdebug_dap.mjs` loads the js-debug that
 the installed VS Code ships (1.140.0, its extension bundle under a stand-in for the `vscode` module;
-the app has no standalone `dapDebugServer.js`), resolves `editors/vscode/launch.json` through
+the app has no standalone `dapDebugServer.js`), resolves `tools/vscode/launch.json` through
 js-debug's own configuration provider, and speaks the Debug Adapter Protocol to its adapter as VS
 Code does: `setBreakpoints` on a `.ts` path, `stopped`, `stackTrace`, `scopes`, `variables`,
 `evaluate`, `next`, `continue`, `disconnect`; 13 of 13 checks on 2026-10-04. Chrome DevTools is

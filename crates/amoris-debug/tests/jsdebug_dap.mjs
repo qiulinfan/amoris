@@ -2,7 +2,7 @@
 // Code ships it (Visual Studio Code.app's extensions/ms-vscode.js-debug, version in its
 // package.json), run headless. VS Code's installation has no standalone DAP server, so this loads
 // the extension's bundle under a small stand-in for the `vscode` module, takes the debug adapter
-// factory it registers, resolves editors/vscode/launch.json's attach configuration through the
+// factory it registers, resolves tools/vscode/launch.json's attach configuration through the
 // configuration provider it registers, and speaks the Debug Adapter Protocol to the adapter over
 // the named pipe the factory opens, as VS Code does: the root session, then the child session
 // js-debug starts for the target. It checks a breakpoint set in samples/sailing/scripts/rules.ts
@@ -354,8 +354,8 @@ async function main() {
   ext.activate(context);
   check(`js-debug ${pkg.version} from VS Code activates and registers its adapter factory`, factory && descriptors.includes("pwa-node"), descriptors);
 
-  // editors/vscode/launch.json's configuration, resolved as VS Code resolves it.
-  const launch = JSON.parse(readFileSync(join(root, "editors/vscode/launch.json"), "utf8").replace(/^\s*\/\/.*$/gm, ""));
+  // tools/vscode/launch.json's configuration, resolved as VS Code resolves it.
+  const launch = JSON.parse(readFileSync(join(root, "tools/vscode/launch.json"), "utf8").replace(/^\s*\/\/.*$/gm, ""));
   let config = JSON.parse(JSON.stringify(launch.configurations[0]).replaceAll("${workspaceFolder}", root));
   config.port = PORT;
   for (const p of providers.get(config.type) ?? []) {

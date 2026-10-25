@@ -193,8 +193,8 @@ bytes to the page's viewport.
 - Chrome DevTools attaches with
   `devtools://devtools/bundled/js_app.html?experiments=true&v8only=true&ws=127.0.0.1:<port>/devtools/game`
   (the page `chrome://inspect` opens for a Node target); VS Code with a `node`-type `attach`
-  configuration on the port (`editors/vscode/launch.json`). `debug.state` names the endpoint while
-  it runs (`cdp: {ws, devtools}`, `devtools` being that URL); it is the authority on the port.
+  configuration on the port (`tools/vscode/launch.json`). `debug.state` names the endpoint while it
+  runs (`cdp: {ws, devtools}`, `devtools` being that URL); it is the authority on the port.
 - The same core is exposed as JSON methods for agents, with TypeScript positions, 1-based
   (debugger.md 7 has the parameters and results, the catalog an entry with the schema of each; MCP's
   `debug` tool takes every one as an action and lists their parameters, section 7):

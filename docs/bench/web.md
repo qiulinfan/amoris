@@ -19,7 +19,7 @@ re-measured on the M5.
 - Scene: Bevy's many_cubes sphere layout (radius 500, Fibonacci spiral, cubes facing the centre,
   camera at the centre turning 0.15/60 rad about z and x per frame), one mesh, one material, a
   directional light, 4x MSAA.
-- three.js r186 (`web/bench/threejs_cubes.html`): `WebGPURenderer` with one `InstancedMesh` (its
+- three.js r186 (`bench/web/threejs_cubes.html`): `WebGPURenderer` with one `InstancedMesh` (its
   fastest path for copies of a mesh; frustum culling is per mesh, so every instance is drawn) and
   `MeshStandardMaterial`; GPU time from `trackTimestamp` / `resolveTimestampsAsync`.
 - Amoris (`web/viewport/?demo=cubes`): `crates/amoris-viewport` (the same renderer as native,
@@ -138,7 +138,7 @@ What these show, provisionally:
    uncapped page runs 350 to 370 frames ahead of Chrome's GPU process and the readback waits behind
    them; with vsync it answers in 2 to 6 frames, and an opt-in frames-in-flight limit
    (`?in_flight=N`) brings it to 3 to 7 frames uncapped at the cost of the frame rate.
-5. three.js was not re-measured: `web/bench/threejs_cubes.html` imports `./vendor/three.webgpu.js`
+5. three.js was not re-measured: `bench/web/threejs_cubes.html` imports `./vendor/three.webgpu.js`
    (r186), which is git-ignored and absent on this machine, and getting it needs a CDN or npm
    download that this run did not make.
 

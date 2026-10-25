@@ -14,7 +14,7 @@ editor/dist/
 # Python
 __pycache__/
 .venv/
-web/bench/vendor/
+bench/web/vendor/
 # A running host's address in its project (amoris serve)
 .amoris/
 # Until no build from before the 2026-10-16 rename runs in this checkout: such hosts' state.

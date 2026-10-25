@@ -1,5 +1,5 @@
 //! The sailing sample in real time with the script debugger's Chrome DevTools Protocol endpoint
-//! (docs/spec/debugger.md 9): attach Chrome DevTools or VS Code (editors/vscode/launch.json) and
+//! (docs/spec/debugger.md 9): attach Chrome DevTools or VS Code (tools/vscode/launch.json) and
 //! break in `samples/sailing/scripts/*.ts`.
 //!
 //! ```sh

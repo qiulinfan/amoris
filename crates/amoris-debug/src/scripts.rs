@@ -180,7 +180,7 @@ impl Script {
 #[derive(Clone, Debug, Default)]
 pub enum SourceRoot {
     /// Beside the script: `amoris:///scripts/rules.ts` (clients map it to the project with a path
-    /// override, editors/vscode/launch.json).
+    /// override, tools/vscode/launch.json).
     #[default]
     Relative,
     /// Absolute `file://` URLs under a project directory, so an editor opens the files on disk
