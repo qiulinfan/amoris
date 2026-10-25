@@ -264,11 +264,9 @@ pub fn run(
     let (out, opt) = (env.out.join("web"), env.out.join("web-opt"));
     let _ = std::fs::remove_dir_all(&out);
     let _ = std::fs::remove_dir_all(&opt);
-    let Some(opt_built) = web_pack::module(env, &mut step, target_dir, &out, &opt, &log) else {
-        return step;
-    };
-    let opt = opt_built.then_some(opt.as_path());
-    for dir in std::iter::once(out.as_path()).chain(opt) {
+    // The page first, then the module bound into it: a `web/pkg` that tools/build_web.sh left is
+    // another build's module, and copied over this one it fails every replay on the engine source.
+    for dir in [out.as_path(), opt.as_path()] {
         if let Err(e) = web_pack::copy_dir(&page, dir) {
             step.error(Problem::new(
                 "check.command_failed",
@@ -278,6 +276,13 @@ pub fn run(
             return step;
         }
     }
+    let Some(opt_built) = web_pack::module(env, &mut step, target_dir, &out, &opt, &log) else {
+        return step;
+    };
+    if !opt_built {
+        let _ = std::fs::remove_dir_all(&opt);
+    }
+    let opt = opt_built.then_some(opt.as_path());
     if !web_pack::workload_files(env, &mut step, amoris, &workloads, &out, &log) {
         return step;
     }
