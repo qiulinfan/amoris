@@ -18,6 +18,7 @@ use wgpu::util::DeviceExt;
 use super::bake::RayScene;
 use super::nrc::{NrcConfig, NrcFrameStats, OnlineNrc};
 use crate::Gpu;
+use crate::profiler::TimestampSet;
 use crate::sky::{Sky, SkyParams};
 
 pub use super::rt::RayCamera;
@@ -539,6 +540,7 @@ pub struct PathTracer {
     online_nrc: OnlineNrc,
     pub(crate) timestamp_enabled: bool,
     pub(crate) errors: Arc<Mutex<Vec<String>>>,
+    info: Arc<wgpu::AdapterInfo>,
     adapter: String,
     backend: &'static str,
     scene_signature: String,
@@ -1040,6 +1042,7 @@ impl PathTracer {
             online_nrc,
             timestamp_enabled,
             errors,
+            info: gpu.info.clone(),
             adapter: gpu.info.name.clone(),
             backend: gpu.backend_name(),
             scene_signature: scene.scene_signature().into(),
@@ -1285,11 +1288,13 @@ impl PathTracer {
         );
         let bindings = self.bindings(&params_buffer, &image, &counters);
         let queries = self.timestamp_enabled.then(|| {
-            self.device.create_query_set(&wgpu::QuerySetDescriptor {
-                label: Some("PT timestamps"),
-                ty: wgpu::QueryType::Timestamp,
-                count: options.frames * query_stride,
-            })
+            TimestampSet::new(
+                &self.device,
+                &self.queue,
+                &self.info,
+                "PT timestamps",
+                options.frames * query_stride,
+            )
         });
         let timestamp_size = u64::from(options.frames * query_stride) * 8;
         let timestamps = queries.as_ref().map(|_| {
@@ -1353,7 +1358,7 @@ impl PathTracer {
                 queries
                     .as_ref()
                     .filter(|_| training)
-                    .map(|q| (q, frame * query_stride + 2)),
+                    .map(|q| (&**q, frame * query_stride + 2)),
             )?;
             if let Some(history) = &nrc_history {
                 let offset = u64::from(frame) * nrc_stride;

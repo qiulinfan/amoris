@@ -51,9 +51,77 @@ pub(crate) fn deferred_timestamps(info: &wgpu::AdapterInfo) -> bool {
             && (info.driver.eq_ignore_ascii_case("MoltenVK") || info.vendor == AMD))
 }
 
+/// A timestamp query set (the profiler's, the path tracers' and the trace clock's) whose release on
+/// MoltenVK first waits for its queue to go idle. MoltenVK 1.4.2 marks a command buffer's queries
+/// available in a Metal completed handler (`MVKCommandEncoder::finishQueries`) that holds the query
+/// pool without retaining it, and its timeline semaphores are MTLEvents the GPU signals before
+/// Metal runs that handler. So wgpu's wait for the work can return first, a set dropped then is
+/// destroyed, and the handler reads the freed pool: a SIGSEGV in 18 of 30 TAA test runs with
+/// parallel cases (M5, 2026-10-25; docs/bench/metal-profiling.md). MoltenVK's queue wait commits an
+/// empty command buffer and waits for its completion, which Metal reports only after the handlers
+/// of the command buffers before it. Other backends release the set at once. The wait goes once the
+/// MoltenVK in use retains the pools (KhronosGroup/MoltenVK c0af3a5658ba, after 1.4.2).
+pub(crate) struct TimestampSet {
+    set: wgpu::QuerySet,
+    /// The queue to wait for before the set goes: on MoltenVK only.
+    idle: Option<wgpu::Queue>,
+}
+
+impl TimestampSet {
+    pub(crate) fn new(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        info: &wgpu::AdapterInfo,
+        label: &str,
+        count: u32,
+    ) -> TimestampSet {
+        let moltenvk =
+            info.backend == wgpu::Backend::Vulkan && info.driver.eq_ignore_ascii_case("MoltenVK");
+        TimestampSet {
+            set: device.create_query_set(&wgpu::QuerySetDescriptor {
+                label: Some(label),
+                ty: wgpu::QueryType::Timestamp,
+                count,
+            }),
+            idle: moltenvk.then(|| queue.clone()),
+        }
+    }
+}
+
+impl std::ops::Deref for TimestampSet {
+    type Target = wgpu::QuerySet;
+    fn deref(&self) -> &wgpu::QuerySet {
+        &self.set
+    }
+}
+
+impl Drop for TimestampSet {
+    fn drop(&mut self) {
+        if let Some(queue) = self.idle.take() {
+            wait_for_idle(&queue);
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn wait_for_idle(queue: &wgpu::Queue) {
+    use wgpu::hal::Queue as _;
+    // SAFETY: wgpu-hal asks that the wait not overlap another submit, present or wait on the queue.
+    // A device here is driven from one thread, the one that drops its sets.
+    let Some(hal) = (unsafe { queue.as_hal::<wgpu::hal::api::Vulkan>() }) else {
+        return;
+    };
+    if let Err(e) = unsafe { hal.wait_for_idle() } {
+        log::warn!("waiting for the queue before a timestamp query set goes: {e}");
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn wait_for_idle(_: &wgpu::Queue) {}
+
 /// The [`QUERIES`] and the buffer they resolve into (8 bytes a query), both shared by the ring.
 struct Queries {
-    set: wgpu::QuerySet,
+    set: TimestampSet,
     resolve: wgpu::Buffer,
 }
 
@@ -178,11 +246,7 @@ impl GpuProfiler {
             enabled,
             deferred: deferred_timestamps(info),
             queries: enabled.then(|| Queries {
-                set: device.create_query_set(&wgpu::QuerySetDescriptor {
-                    label: Some("pass timings"),
-                    ty: wgpu::QueryType::Timestamp,
-                    count: QUERIES,
-                }),
+                set: TimestampSet::new(device, queue, info, "pass timings", QUERIES),
                 resolve: device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("pass timings (resolve)"),
                     size: u64::from(QUERIES) * 8,

@@ -35,6 +35,25 @@ Zero, unordered and repeated calibration samples are rejected. Calibration remai
 measured frame window. The GPU capture follows the CPU capture window exactly, including skips,
 late activation and completion with export deferred until later.
 
+MoltenVK 1.4.2 can also read a query pool after wgpu has destroyed it. It marks a command buffer's
+queries available in a Metal completed handler (`MVKCommandEncoder::finishQueries`) that holds the
+pool without retaining it, and its timeline semaphores are MTLEvents that the GPU signals before
+Metal runs that handler. wgpu's wait for the work can therefore return first; a query set dropped
+then is destroyed, and the handler reads freed memory. On the M5 (2026-10-25), with their case locks
+removed, 18 of 30 TAA test runs and 5 of 30 water test runs died with SIGSEGV in that handler, none
+without timestamps (`AMORIS_GPU_MINIMAL=features,limits,timestamps`), and a test logger saw each of
+a water run's 65 query sets destroyed at its owner's drop. Every timestamp query set is now a
+`profiler::TimestampSet` (the profiler's, the path tracers' and the trace clock's), whose drop on
+MoltenVK first waits for its queue to go idle through wgpu-hal's `wait_for_idle`: MoltenVK commits
+an empty command buffer and waits for its completion, which Metal reports only after the handlers of
+the command buffers before it. With the wait, the TAA tests ran 210 times and the water tests 50
+times on MoltenVK with parallel cases, and none crashed. One TAA run failed
+`picking_and_captures_work_below_scale_one`'s repeated still capture; the 197 runs after it did not
+repeat that, and it is not the prepass's or occlusion culling's auto mode switching mid-capture:
+each of their four fixed settings draws that still image the same, to the bit. KhronosGroup/MoltenVK
+retains the pools since c0af3a5658ba (PR #2839), after 1.4.2; the wait can go once the MoltenVK in
+use has it.
+
 ## Reproduce
 
 ```sh

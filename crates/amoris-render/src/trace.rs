@@ -238,11 +238,7 @@ fn calibration_samples(
         });
         (pipeline, bind)
     });
-    let queries = device.create_query_set(&wgpu::QuerySetDescriptor {
-        label: Some("trace clock"),
-        ty: wgpu::QueryType::Timestamp,
-        count: 2,
-    });
+    let queries = crate::profiler::TimestampSet::new(device, queue, info, "trace clock", 2);
     let buffer = |usage, label| {
         device.create_buffer(&wgpu::BufferDescriptor {
             label: Some(label),

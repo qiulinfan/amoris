@@ -26,6 +26,7 @@ use wgpu::util::DeviceExt;
 
 use super::bake::RayScene;
 use crate::Gpu;
+use crate::profiler::TimestampSet;
 
 const CACHE_SLOTS: u32 = 1 << 16;
 const COUNTER_COUNT: u64 = 32;
@@ -468,6 +469,7 @@ pub struct RayLighting {
     restir_pipelines: [wgpu::ComputePipeline; 4],
     timestamp_enabled: bool,
     errors: Arc<Mutex<Vec<String>>>,
+    info: Arc<wgpu::AdapterInfo>,
     adapter: String,
     backend: &'static str,
     lean_shaders: bool,
@@ -829,6 +831,7 @@ impl RayLighting {
             restir_pipelines,
             timestamp_enabled,
             errors,
+            info: gpu.info.clone(),
             adapter: gpu.info.name.clone(),
             backend: gpu.backend_name(),
             lean_shaders,
@@ -1050,11 +1053,13 @@ impl RayLighting {
             ],
         });
         let queries = self.timestamp_enabled.then(|| {
-            self.device.create_query_set(&wgpu::QuerySetDescriptor {
-                label: Some("GI pass timings"),
-                ty: wgpu::QueryType::Timestamp,
-                count: options.frames * TIMESTAMPS_PER_FRAME,
-            })
+            TimestampSet::new(
+                &self.device,
+                &self.queue,
+                &self.info,
+                "GI pass timings",
+                options.frames * TIMESTAMPS_PER_FRAME,
+            )
         });
         let timestamp_size = u64::from(options.frames) * u64::from(TIMESTAMPS_PER_FRAME) * 8;
         let timestamp_resolve = queries.as_ref().map(|_| {

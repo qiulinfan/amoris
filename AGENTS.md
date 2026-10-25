@@ -222,9 +222,11 @@ credential cleanup. File-verification records remain local, including in that ar
   completion callback only marks the sampling submission ready; the render thread then batches
   resolves without waiting for the GPU. Never move their resolve into the sampling encoder: it can
   return another frame's counters, or zeros (the 780M on Vulkan, docs/bench/gpu-matrix.md 3 a).
-  Clock calibration alone waits outside the measured window and dispatches real work. Run
-  `frame_trace` and `gpu_profiler` integration tests on a deferred and an immediate backend after
-  changing this lifecycle; see
+  Clock calibration alone waits outside the measured window and dispatches real work. Every
+  timestamp query set is a `profiler::TimestampSet`: MoltenVK 1.4.2 reads a query pool in a Metal
+  completed handler after wgpu's wait for that work returned, so on MoltenVK a set's drop first
+  waits for its queue to go idle. Run `frame_trace` and `gpu_profiler` integration tests on a
+  deferred and an immediate backend after changing this lifecycle; see
   [docs/bench/metal-profiling.md](docs/bench/metal-profiling.md).
 - The serve loop ([docs/bench/profiler.md](docs/bench/profiler.md) 6): the game thread snapshots
   through amoris-persist's `SnapshotCache`, which takes over a component section whose rows
