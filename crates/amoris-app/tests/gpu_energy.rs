@@ -14,8 +14,8 @@ const RHO: f64 = 1000.0;
 const G: f64 = 9.81;
 
 fn setup() -> Arc<GameSetup> {
-    let root =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../samples/water-feedback");
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/scenes/water-feedback");
     let mut setup = Project::load(&root).unwrap().setup(false).unwrap();
     let lake = &mut setup.scene.entities[1].components;
     lake.insert("WaterDisplacement".into(), json!({}));

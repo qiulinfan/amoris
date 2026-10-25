@@ -260,7 +260,7 @@ def main():
     g = sub.add_parser("games")
     g.add_argument("--configs", default="dx12:nvidia,vulkan:nvidia")
     g.add_argument("--scenes",
-                   default="samples/anim,samples/sailing,samples/gi-room,samples/pt-lab")
+                   default="samples/anim,samples/sailing,tests/fixtures/scenes/gi-room,tests/fixtures/scenes/pt-lab")
     g.add_argument("--ticks", type=int, default=120)
     g.add_argument("--out", default="out/shadowcull/games")
     t = sub.add_parser("table")

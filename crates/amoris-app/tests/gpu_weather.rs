@@ -46,7 +46,8 @@ fn entity(name: &str, components: Value) -> amoris_runtime::SceneEntity {
 /// and `weather`.
 fn basin(size: [u32; 2], tilt: f64, weather: &[(&str, Value)]) -> amoris_runtime::GameSetup {
     let mut setup = Project::load(
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../samples/water-resident"),
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/scenes/water-resident"),
     )
     .unwrap()
     .setup(false)

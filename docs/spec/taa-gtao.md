@@ -394,10 +394,11 @@ Elsewhere:
 - `examples/aa_eval.rs`: PSNR against supersampled references while converging, under motion, with
   skinning, with ablations; GTAO images; per-option costs. `tools/aa_bench.py` and
   `tools/aa_web_bench.py` run the cost matrix natively and in Chrome.
-- With the defaults unchanged, captures of samples/gi-room and samples/pt-lab match a master build
-  pixel for pixel. At a render scale of 1 every case of `tools/build_compare.py` (MSAA, MSAA with
-  GTAO, TAA, TAA with GTAO's normal target) matches master `b7be59a2` pixel for pixel on both GPUs
-  with Vulkan and Direct3D 12 (120 pairs, docs/bench/taau.md 1).
+- With the defaults unchanged, captures of tests/fixtures/scenes/gi-room and
+  tests/fixtures/scenes/pt-lab match a master build pixel for pixel. At a render scale of 1 every
+  case of `tools/build_compare.py` (MSAA, MSAA with GTAO, TAA, TAA with GTAO's normal target)
+  matches master `b7be59a2` pixel for pixel on both GPUs with Vulkan and Direct3D 12 (120 pairs,
+  docs/bench/taau.md 1).
 
 ## 9. Open
 

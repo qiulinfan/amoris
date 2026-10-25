@@ -11,7 +11,8 @@ fn run() {
         .windows(2)
         .find(|a| a[0] == "--out")
         .map_or("out/water-collider-bed/rays.json", |a| a[1].as_str());
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../samples/water-slope");
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/scenes/water-slope");
     let base = Project::load(&root).unwrap().setup(false).unwrap();
     let mut cases = Vec::new();
     for name in ["rotated-box", "triangulated-saddle", "compound", "no-hit"] {

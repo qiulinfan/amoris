@@ -18,7 +18,8 @@ fn run(f: impl FnOnce() + Send + 'static) {
 
 fn river(edit: impl FnOnce(&mut amoris_runtime::GameSetup)) -> Game {
     let mut setup = Project::load(
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../samples/water-river"),
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/scenes/water-river"),
     )
     .unwrap()
     .setup(false)
@@ -193,7 +194,8 @@ fn pools(joined: bool) -> Game {
 /// The two pools side by side, walled from each other unless `joined`, or one pool of both.
 fn pools_of(two: bool, joined: bool) -> Game {
     let mut setup = Project::load(
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../samples/water-resident"),
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/scenes/water-resident"),
     )
     .unwrap()
     .setup(false)

@@ -4,7 +4,8 @@ use amoris_runtime::{Command, Game, GameSetup, Project};
 use serde_json::{Value, json};
 pub fn shore() -> GameSetup {
     Project::load(
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../samples/water-shore"),
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/scenes/water-shore"),
     )
     .unwrap()
     .setup(false)

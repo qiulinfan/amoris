@@ -78,9 +78,9 @@ quiet machine). What the cascades drew, the same in the three configurations and
 | Project | Instances | Cascade instances, off -> on | Cascade triangles, off -> on |
 |---|---|---|---|
 | samples/anim (a skinned hero) | 22 | 22 -> 22, 22 -> 21, 22 -> 1, 22 -> 1 | 3,544 -> 1,752 |
-| samples/pt-lab | 11 | 11 -> 11, 11 -> 10, 11 -> 1, 11 -> 0 | 8,184 -> 5,902 |
+| tests/fixtures/scenes/pt-lab | 11 | 11 -> 11, 11 -> 10, 11 -> 1, 11 -> 0 | 8,184 -> 5,902 |
 | samples/sailing (the ocean among the receivers) | 5 | 2 -> 2, 4 -> 4, 5 -> 5, 5 -> 5 | 2,285 -> 2,285 |
-| samples/gi-room (no sun: a control) | 8 | none | 0 |
+| tests/fixtures/scenes/gi-room (no sun: a control) | 8 | none | 0 |
 
 So anim and pt-lab test the culling (they lose 43 and 22 instance draws); sailing's casters all
 stay, and its comparison only shows the switch changes nothing else.

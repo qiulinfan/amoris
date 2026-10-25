@@ -105,7 +105,7 @@ fn take(q: &ComputeQueue) -> ResidentBatchJob {
 #[test]
 fn body_queries_suspend_forces_reuse_sleeping_points_and_reset_on_restore() {
     std::thread::Builder::new().stack_size(amoris_runtime::GAME_STACK_BYTES).spawn(|| {
-        let root=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../samples/water-floaters");
+        let root=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/scenes/water-floaters");
         let mut setup=Project::load(&root).unwrap().setup(false).unwrap();
         for e in &mut setup.scene.entities {
             if e.components.contains_key("Floater") {e.components["RigidBody"]=json!({"kind":"Fixed"});}
@@ -170,7 +170,7 @@ fn resident_continuations_commit_once_rebuild_branches_and_reject_bad_observatio
         .stack_size(amoris_runtime::GAME_STACK_BYTES)
         .spawn(|| {
             let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../../samples/water-resident");
+                .join("../../tests/fixtures/scenes/water-resident");
             let mut setup = Project::load(&root).unwrap().setup(false).unwrap();
             setup.scene.entities[2].components["WaterProbe"]["at"] = json!([0.5, 0.5]);
             setup.scene.entities.push(
@@ -287,7 +287,7 @@ fn resident_continuations_commit_once_rebuild_branches_and_reject_bad_observatio
 #[test]
 fn sleeping_probes_resample_after_basis_or_region_changes_with_identical_column_digests() {
     std::thread::Builder::new().stack_size(amoris_runtime::GAME_STACK_BYTES).spawn(|| {
-        let root=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../samples/water-resident");
+        let root=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/scenes/water-resident");
         let mut project=Project::load(&root).unwrap();
         project.scene.entities[1].components.insert("Transform".into(),json!({"position":[0,0,0]}));
         let region=&mut project.scene.entities[1].components["WaterRegion"];
@@ -350,8 +350,8 @@ fn on_game_stack(f: impl FnOnce() + Send + 'static) {
 
 /// Uniform 16-square fields with a shared seed; all probe/source coordinates are world-space.
 fn cohort_project(solvers: &[&str], rates: &[f64]) -> Project {
-    let root =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../samples/water-resident");
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/scenes/water-resident");
     let mut project = Project::load(&root).unwrap();
     let mut region = project.scene.entities[1].clone();
     region.components["WaterRegion"]["size"] = json!([16, 16]);

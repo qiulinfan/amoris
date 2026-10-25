@@ -132,11 +132,11 @@ samples/              game projects, one folder each with project.toml, scene.js
   town-walk/          the Bistro exterior walked natively; its third-party model is ignored
   pool-party/  river-falls/  surf-beach/  water-pool/  water-storm/  water-valley/
                       games and demos on resident GPU water, each with a README
-  water-dam/  water-feedback/  water-floaters/  water-probes/  water-resident/  water-river/
-  water-shore/  water-slope/  gi-room/  pt-lab/
-                      scenes that tests, checks and measurement tools read
 tests/fixtures/       projects only tests and checks read: controls/ (the checks' negative
-                      controls), sdk/ (the SDK's type test)
+                      controls), sdk/ (the SDK's type test), and scenes/ that tests, checks and
+                      measurement tools read, with their generators beside them
+  scenes/             water-dam/  water-feedback/  water-floaters/  water-probes/
+                      water-resident/  water-river/  water-shore/  water-slope/  gi-room/  pt-lab/
 bench/                workloads and comparison harnesses: agent-dev/ (the Courier benchmark),
                       physics/ (Rapier, Jolt, PhysX through Unity), rules/ (the rule workload,
                       budgets.md 4), web/ (three.js many_cubes, threejs_cubes.html)

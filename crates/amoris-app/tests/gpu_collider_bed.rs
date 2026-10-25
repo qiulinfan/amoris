@@ -13,7 +13,8 @@ fn run(f: impl FnOnce() + Send + 'static) {
         .unwrap();
 }
 fn game() -> Game {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../samples/water-slope");
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/scenes/water-slope");
     water_compute::builder(
         Arc::new(Project::load(&root).unwrap().setup(false).unwrap()),
         1,

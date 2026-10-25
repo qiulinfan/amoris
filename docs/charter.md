@@ -1325,15 +1325,12 @@ Python：`tools/neural/`（神经资源训练）、`tools/eval/`（评测）。
   的游戏“作为引擎用例搬到引擎里面”，不再放在独立仓库（取代 4.9 开头的安排）；Unreal 的 `Samples/` 与
   Bevy 的 `examples/` 也把示例放在引擎仓库里（Godot 的示例另放仓库）。第一个迁入的是
   `qiulinfan/amoris-samples` 的 blockcraft（`samples/blockcraft/`），引擎里用到它的示例与基准因此不
-  再依赖旁边的另一个检出。`samples/` 里目前还有只给测试、检查与测量工具读的场景（八个没有 README 的
-  `water-*`，以及 `gi-room`、`pt-lab`），它们与 `tests/fixtures/` 的划分以后再定。
-- `tests/fixtures/` 放只有测试与检查读的项目：`controls/` 是检查的负对照，`sdk/` 是 SDK 的类型测试。
+  再依赖旁边的另一个检出。
+- `tests/fixtures/` 放只有测试与检查读的项目：`controls/` 是检查的负对照，`sdk/` 是 SDK 的类型测
+  试，`scenes/` 是测试、检查与测量工具读的场景（八个 `water-*`、`gi-room`、`pt-lab`）。
 - 生成的文件（场景、网格、纹理、方块数据、`.d.ts`、提交的 wasm 包）与写它们的生成器一起提交，改动靠
   重新生成，不手改；项目的生成器放在项目自己的文件夹里，如 `build_scene.py` 与 blockcraft 的
-  `gen_world.py`。`tools/` 里目前还有五个项目的生成
-  器：`water_shore_scene.py`、`water_slope_scene.py` 与 `generate_pt_fixture.py` 写测试场
-  景，`bake_town_walk.py` 与 `prepare_walk_model.py` 写 town-walk 的光照与模型，以后再搬到各自的项目
-  里。
+  `gen_world.py`。
 - `tools/` 放脚本（Python、shell、Node：构建、测量、比较与浏览器检查）和检查读的配置
   （`crate-graph.toml`、`clippy-determinism.toml`、`lint-fixture/`），目前平铺，按文件名前缀归
   类；`tools/vscode/` 是脚本调试器的 VS Code 配置。基准的工作负载与对照实现放在 `bench/`。

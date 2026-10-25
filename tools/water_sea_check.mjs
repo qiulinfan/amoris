@@ -1,13 +1,13 @@
 // Real Sea-driven GameWorker physics, phase/decay oracle, resident transfers and restoration.
-// Build the paired modules with samples/water-shore; serve web/ on 8097.
+// Build the paired modules with tests/fixtures/scenes/water-shore; serve web/ on 8097.
 import {execFileSync} from 'node:child_process';
 import {mkdirSync,writeFileSync} from 'node:fs';
 import {resolve} from 'node:path';
 const out=resolve(process.env.WATER_SEA_OUT||'out/water-sea/browser');mkdirSync(out,{recursive:true});
-const url=process.argv[2]||'http://127.0.0.1:8097/viewport/?aa=msaa&gtao=off&gpu_minimal=features,limits,timestamps&assets=/projects/samples-water-shore/';
+const url=process.argv[2]||'http://127.0.0.1:8097/viewport/?aa=msaa&gtao=off&gpu_minimal=features,limits,timestamps&assets=/projects/tests-fixtures-scenes-water-shore/';
 const expression=`(async()=>{
  const adapter=await navigator.gpu.requestAdapter({powerPreference:'high-performance'});if(!adapter||adapter.info?.isFallbackAdapter===true)throw Error('hardware WebGPU required');
- const a=await import('/amoris.js'),{module}=await a.loadModule(),pkg=await(await fetch('/projects/samples-water-shore/package.json')).json();
+ const a=await import('/amoris.js'),{module}=await a.loadModule(),pkg=await(await fetch('/projects/tests-fixtures-scenes-water-shore/package.json')).json();
  const bytes=new TextEncoder().encode(JSON.stringify(pkg)),shore=[];let previous;
  const query=g=>g.command('world.query',{with:['WaterProbe'],limit:4294967295,fields:['WaterProbe']});
  const inspect=async(g,name)=> (await g.command('world.get',{entity:name,fields:['WaterResident']})).fields.WaterResident;

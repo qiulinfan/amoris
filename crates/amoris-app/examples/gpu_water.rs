@@ -29,7 +29,8 @@ impl StepHooks for Timer {
     fn phase(&mut self, _: TickPhase, _: bool) {}
 }
 fn setup(side: u32, gpu: bool, source: bool) -> Arc<GameSetup> {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../samples/water-dam");
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/scenes/water-dam");
     let mut setup = Project::load(&root).unwrap().setup(false).unwrap();
     let r = &mut setup.scene.entities[1].components["WaterRegion"];
     r["solver"] = json!(if gpu { "gpu" } else { "cpu" });

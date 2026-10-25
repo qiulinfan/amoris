@@ -7,8 +7,8 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 
 fn setup(feedback: bool) -> Arc<GameSetup> {
-    let root =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../samples/water-feedback");
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/scenes/water-feedback");
     let mut setup = Project::load(&root).unwrap().setup(false).unwrap();
     if !feedback {
         setup.scene.entities[1].components.remove("WaterFeedback");

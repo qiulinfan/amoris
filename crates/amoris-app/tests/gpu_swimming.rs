@@ -7,8 +7,8 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 
 fn setup(dry: bool) -> (Arc<GameSetup>, String) {
-    let root =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../samples/water-floaters");
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/scenes/water-floaters");
     let mut setup = Project::load(&root).unwrap().setup(false).unwrap();
     setup
         .scene

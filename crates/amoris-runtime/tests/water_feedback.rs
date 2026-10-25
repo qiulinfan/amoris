@@ -8,7 +8,7 @@ use std::sync::Arc;
 #[test]
 fn feedback_authoring_omits_runtime_fields_and_rejects_forged_inputs() {
     common::big_stack(|| {
-        let mut setup = Project::load(&common::repo().join("samples/water-feedback"))
+        let mut setup = Project::load(&common::repo().join("tests/fixtures/scenes/water-feedback"))
             .unwrap()
             .setup(false)
             .unwrap();
@@ -55,7 +55,7 @@ fn feedback_authoring_omits_runtime_fields_and_rejects_forged_inputs() {
 #[test]
 fn feedback_refuses_nonresident_regions_instead_of_reading_old_tiles() {
     common::big_stack(|| {
-        let mut setup = Project::load(&common::repo().join("samples/water-feedback"))
+        let mut setup = Project::load(&common::repo().join("tests/fixtures/scenes/water-feedback"))
             .unwrap()
             .setup(false)
             .unwrap();

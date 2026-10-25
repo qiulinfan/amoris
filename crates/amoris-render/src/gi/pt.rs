@@ -1810,7 +1810,8 @@ mod tests {
     /// queries; skipped elsewhere.
     #[test]
     fn ray_query_pt_transport_training_and_accumulation() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../samples/pt-lab");
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/scenes/pt-lab");
         let scene = RayScene::for_path_tracing(&root).unwrap();
         for gpu in crate::gi::ray_query_gpus() {
             pt_transport_training_and_accumulation(&gpu, &scene);

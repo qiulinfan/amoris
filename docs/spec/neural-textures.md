@@ -26,7 +26,7 @@ encoder trains a file on the GPU with the engine's own compute shaders, on every
 
 ```text
 cargo run --release -p amoris-render --example neural_encode -- --out OUT procedural:bricks
-cargo run --release -p amoris-render --example neural_encode -- --out OUT "gltf:samples/pt-lab/materials.gltf#CheckerPBR"
+cargo run --release -p amoris-render --example neural_encode -- --out OUT "gltf:tests/fixtures/scenes/pt-lab/materials.gltf#CheckerPBR"
 ```
 
 writes `OUT/<name>.ntex`, a JSON report and a preview strip. A `Model` whose `material` is the

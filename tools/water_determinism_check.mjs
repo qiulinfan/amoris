@@ -2,9 +2,9 @@
 // shipped game worker, tick by tick, and compares each region's field digest after every tick with
 // crates/amoris-app/tests/golden/water-digests.txt, which the native test records and checks on
 // every native backend. node tools/water_determinism_check.mjs [--adapter swiftshader]
-// [--samples a,b] [--ticks N]. Build first: tools/build_web.sh with the samples the record names
-// (water-resident pool-party river-falls surf-beach water-shore water-floaters water-feedback
-// water-valley water-storm). `--adapter swiftshader` runs WebGPU on SwiftShader, Chrome's CPU implementation:
+// [--samples a,b] [--ticks N]. Build first: tools/build_web.sh with the projects the record names
+// (samples/pool-party, river-falls, surf-beach, water-valley and water-storm;
+// tests/fixtures/scenes/water-resident, water-shore, water-floaters and water-feedback). `--adapter swiftshader` runs WebGPU on SwiftShader, Chrome's CPU implementation:
 // another device entirely. Prints one JSON line {ok, adapter, samples: {name: {ticks, regions,
 // first_divergence}}, errors}; exit code 0 when every digest matched. Chrome is found as
 // tools/web_bench.mjs finds it (CHROME= overrides; CHROME_FLAGS= adds switches).
@@ -117,6 +117,10 @@ await send("Page.navigate", { url });
 await sleep(500);
 
 const result = { ok: true, adapter: null, samples: {}, errors };
+// The record's samples are games in samples/ or scenes in tests/fixtures/scenes/; a package's
+// slug is its project's path (tools/build_web.sh).
+const FIXTURES = new Set(["water-resident", "water-shore", "water-floaters", "water-feedback"]);
+const slug = (sample) => (FIXTURES.has(sample) ? "tests-fixtures-scenes-" : "samples-") + sample;
 try {
   result.adapter = await evaluate(`(async () => {
     const a = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
@@ -127,7 +131,7 @@ try {
     const digests = await evaluate(`(async () => {
       const a = await import("/amoris.js");
       const { module } = await a.loadModule();
-      const pkg = new Uint8Array(await (await fetch("/projects/samples-${sample}/package.json")).arrayBuffer());
+      const pkg = new Uint8Array(await (await fetch("/projects/${slug(sample)}/package.json")).arrayBuffer());
       const g = a.start(module, pkg, { pacing: "stepped", seed: 1, waterTimeoutMs: ${adapter === "swiftshader" ? 600000 : 10000} });
       try {
         await g.ready;

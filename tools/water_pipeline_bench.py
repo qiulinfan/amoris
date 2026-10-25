@@ -17,7 +17,7 @@ import subprocess
 REPO=Path(__file__).resolve().parents[1]
 
 def project(destination, side, regions, state, solver, probes, distinct=False):
-    source=REPO/'samples/water-resident'
+    source=REPO/'tests/fixtures/scenes/water-resident'
     destination.mkdir(parents=True,exist_ok=True)
     shutil.copyfile(source/'project.toml',destination/'project.toml')
     shutil.copytree(source/'scripts',destination/'scripts',dirs_exist_ok=True)

@@ -197,9 +197,10 @@ Correctness checks on this machine:
   1,000,000 m also agrees within 2e-4 m or m/s, leaving persisted bed values unchanged.
 - Same-device game forks and restores continue with equal hashes. A host without the GPU service
   stops with `water.compute_missing` and poisons the tick, rather than changing solvers.
-- `amoris check samples/water-dam`: types, same/cross-process determinism, fork, replay and reload
-  pass on Metal. Replay perturbation localization is not checked by this sample because it records
-  no external writes. The check crate's negative-control tests still reject unrecorded writes.
+- `amoris check tests/fixtures/scenes/water-dam`: types, same/cross-process determinism, fork,
+  replay and reload pass on Metal. Replay perturbation localization is not checked by this sample
+  because it records no external writes. The check crate's negative-control tests still reject
+  unrecorded writes.
 - `amoris-render` and the game/check crates build for wasm32. This verifies the compute core's
   build, not browser worker execution; no browser GPU timing or cross-vendor comparison was run.
 
@@ -633,7 +634,7 @@ runs: the wall time of a tick, its GPU work and readbacks waited for, over 600 t
 
 | | A tick |
 |---|---|
-| the river (`samples/water-river`, 64 x 32 columns) stepping, from tick 300 | 0.766, 0.772 ms |
+| the river (`tests/fixtures/scenes/water-river`, 64 x 32 columns) stepping, from tick 300 | 0.766, 0.772 ms |
 | the same river baked | 0.014, 0.014 ms |
 | two pools of 32 x 16 columns joined along a side | 1.448, 1.453 ms |
 | the two walled apart | 0.692, 0.685 ms |

@@ -18,7 +18,7 @@ import sys
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_INPUT = ROOT / "out/town-gi/project/models/third-party/BistroExterior.glb"
 SOURCE_URL = "https://developer.nvidia.com/orca/amazon-lumberyard-bistro"
 LICENSE_URL = "https://creativecommons.org/licenses/by/4.0/"

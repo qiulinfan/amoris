@@ -8,7 +8,8 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 
 fn setup(gpu: bool) -> Arc<GameSetup> {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../samples/water-dam");
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/scenes/water-dam");
     let mut setup = Project::load(&root).unwrap().setup(false).unwrap();
     setup.scene.entities[1].components["WaterRegion"]["solver"] =
         json!(if gpu { "gpu" } else { "cpu" });
@@ -52,8 +53,8 @@ fn big_stack(f: impl FnOnce() + Send + 'static) {
 #[test]
 fn resident_game_persists_bounded_state_and_samples_across_forks_and_restores() {
     big_stack(|| {
-        let root =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../samples/water-resident");
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/scenes/water-resident");
         let setup = Arc::new(Project::load(&root).unwrap().setup(false).unwrap());
         let mut game = water_compute::builder(setup, 1).build().unwrap();
         let feed = amoris_assets::Feed::new();
@@ -279,8 +280,8 @@ fn gpu_advection_in_both_axes_matches_cpu_over_beds_far_from_the_origin() {
 #[test]
 fn scripts_observe_completed_gpu_results_and_invalidate_staged_probe_requests() {
     big_stack(|| {
-        let root =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../samples/water-resident");
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/scenes/water-resident");
         let mut project = Project::load(&root).unwrap();
         project.source.files.insert("scripts/main.ts".into(),br#"
 import {component,field,game,system} from "amoris";

@@ -32,7 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import backend_compare as bc  # noqa: E402
 
 bc.CASES["cubes-orbit"] = [bc.example("many_cubes"), "--orbit", "--capture", "{out}"]
-SCENES = "mixed,cubes,samples/anim,samples/sailing,samples/gi-room,samples/pt-lab"
+SCENES = "mixed,cubes,samples/anim,samples/sailing,tests/fixtures/scenes/gi-room,tests/fixtures/scenes/pt-lab"
 
 
 def captures(cases, backend, adapter, out, evidence, feature="occlusion"):

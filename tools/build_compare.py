@@ -38,8 +38,8 @@ CASES = {
     "cubes-shadows": ["many_cubes", "--count", "200000", "--shadows", "--capture", "{out}"],
     "cubes-dense": ["many_cubes", "--dense", "--capture", "{out}"],
     "splats": ["splats", "--capture", "{out}"],
-    "gi-room": ["showcase_bench", "samples/gi-room", *STATIC],
-    "pt-lab": ["showcase_bench", "samples/pt-lab", *STATIC],
+    "gi-room": ["showcase_bench", "tests/fixtures/scenes/gi-room", *STATIC],
+    "pt-lab": ["showcase_bench", "tests/fixtures/scenes/pt-lab", *STATIC],
     "crowd": ["lod_field", "--crowd", "40", "--frames", "5", "--warm", "5", "--capture", "{out}"],
     # A tick every frame moving every cube, every tenth, every fifth of the dense grid
     # (docs/bench/dynamic-scenes.md: one write, scattered writes).

@@ -1,5 +1,5 @@
 // Actual GPU physics in the shipped Web Worker, including its snapshot and render-feed bridges.
-// Build: SKIP_VIEWPORT=1 tools/build_web.sh samples/water-dam
+// Build: SKIP_VIEWPORT=1 tools/build_web.sh tests/fixtures/scenes/water-dam
 // Serve web/ on 8097; node tools/water_worker_check.mjs [viewport URL].
 import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -14,7 +14,7 @@ const expression = `(async()=>{
   const adapterInfo={vendor:adapter.info?.vendor,architecture:adapter.info?.architecture,isFallbackAdapter:adapter.info?.isFallbackAdapter};
   const a=await import("/amoris.js");
   const {module}=await a.loadModule();
-  const pkg=new Uint8Array(await (await fetch("/projects/samples-water-dam/package.json")).arrayBuffer());
+  const pkg=new Uint8Array(await (await fetch("/projects/tests-fixtures-scenes-water-dam/package.json")).arrayBuffer());
   const summaries=[];
   let realTime;
   const stats=values=>{const v=[...values].sort((a,b)=>a-b);return {median:v[Math.floor(v.length/2)],p95:v[Math.floor(v.length*.95)],max:v[v.length-1]};};

@@ -34,7 +34,8 @@ fn edit(g: &mut Game, edges: Value) {
 }
 fn setup() -> amoris_runtime::GameSetup {
     Project::load(
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../samples/water-river"),
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/scenes/water-river"),
     )
     .unwrap()
     .setup(false)

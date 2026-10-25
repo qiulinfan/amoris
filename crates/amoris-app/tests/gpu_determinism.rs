@@ -26,6 +26,19 @@ const SAMPLES: &[(&str, u64)] = &[
     ("water-storm", 300),
 ];
 
+/// A sample's project: the games are in samples/, the scenes only tests read in
+/// tests/fixtures/scenes/ (a checkout that ran them before they moved may keep an ignored-only
+/// samples/<scene>/, so the manifest decides).
+fn project(sample: &str) -> std::path::PathBuf {
+    let games = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../samples");
+    let dir = games.join(sample);
+    if dir.join("project.toml").is_file() {
+        dir
+    } else {
+        games.join("../tests/fixtures/scenes").join(sample)
+    }
+}
+
 fn golden() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/water-digests.txt")
 }
@@ -37,14 +50,10 @@ fn command(g: &mut Game, name: &str, params: serde_json::Value) -> serde_json::V
 
 /// Each region's digests after ticks 1..=ticks, its first 8 hex digits: one line per region.
 fn run(sample: &str, ticks: u64) -> Vec<String> {
-    let setup = Project::load(
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../samples")
-            .join(sample),
-    )
-    .unwrap()
-    .setup(false)
-    .unwrap();
+    let setup = Project::load(&project(sample))
+        .unwrap()
+        .setup(false)
+        .unwrap();
     let mut g = water_compute::builder(Arc::new(setup), 1).build().unwrap();
     let regions: Vec<u64> = command(&mut g, "world.query", json!({"with": ["WaterRegion"]}))
         .as_array()
@@ -131,14 +140,10 @@ fn time_samples() {
         .stack_size(amoris_runtime::GAME_STACK_BYTES)
         .spawn(|| {
             for sample in ["surf-beach", "river-falls", "pool-party", "water-valley"] {
-                let setup = Project::load(
-                    &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                        .join("../../samples")
-                        .join(sample),
-                )
-                .unwrap()
-                .setup(false)
-                .unwrap();
+                let setup = Project::load(&project(sample))
+                    .unwrap()
+                    .setup(false)
+                    .unwrap();
                 let mut g = water_compute::builder(Arc::new(setup), 1).build().unwrap();
                 for _ in 0..60 {
                     g.step().unwrap();

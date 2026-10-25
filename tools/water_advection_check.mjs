@@ -1,5 +1,5 @@
 // Translating shear in the actual Web Worker/BrowserWater path, including sparse observations.
-// Build game/viewport and samples/water-feedback; serve web/ on 8097.
+// Build game/viewport and tests/fixtures/scenes/water-feedback; serve web/ on 8097.
 import {execFileSync} from "node:child_process";
 import {mkdirSync,readFileSync,writeFileSync} from "node:fs";
 import {resolve} from "node:path";
@@ -11,7 +11,7 @@ const expression=`(async()=>{
  const adapter=await navigator.gpu.requestAdapter({powerPreference:"high-performance"});
  if(!adapter||adapter.info?.isFallbackAdapter===true)throw Error("hardware WebGPU required");
  const a=await import("/amoris.js");const {module}=await a.loadModule();
- const pkg=await(await fetch("/projects/samples-water-feedback/package.json")).json();
+ const pkg=await(await fetch("/projects/tests-fixtures-scenes-water-feedback/package.json")).json();
  pkg.rate=50;pkg.scene.entities=pkg.scene.entities.filter(e=>!e.components.Floater);
  pkg.scene.entities[0].components.Voxels.cell_m=2;
  const lake=pkg.scene.entities.find(e=>e.components.WaterRegion);delete lake.components.WaterFeedback;

@@ -18,7 +18,7 @@ REPO = pathlib.Path(__file__).resolve().parents[1]
 
 
 def project(destination, regions, bodies):
-    source = REPO / "samples/water-feedback"
+    source = REPO / "tests/fixtures/scenes/water-feedback"
     destination.mkdir(parents=True)
     shutil.copyfile(source / "project.toml", destination / "project.toml")
     shutil.copytree(source / "scripts", destination / "scripts")

@@ -1,16 +1,16 @@
 // Sustained boundary flux in the actual worker, with world accounting and exact restored hashes.
-// Build game/viewport plus samples/water-river and serve web/ on 8097.
+// Build game/viewport plus tests/fixtures/scenes/water-river and serve web/ on 8097.
 import {execFileSync} from "node:child_process";
 import {mkdirSync,readFileSync,writeFileSync} from "node:fs";
 import {resolve} from "node:path";
 const out=resolve(process.env.WATER_RIVER_OUT||"out/water-flux/browser-river");mkdirSync(out,{recursive:true});
 const native=process.env.WATER_RIVER_NATIVE?JSON.parse(readFileSync(process.env.WATER_RIVER_NATIVE,"utf8")).water_state[0]["WaterResident.boundary"]:null;
-const url=process.argv[2]||"http://127.0.0.1:8097/viewport/?aa=msaa&gtao=off&gpu_minimal=features,limits,timestamps&assets=/projects/samples-water-river/";
+const url=process.argv[2]||"http://127.0.0.1:8097/viewport/?aa=msaa&gtao=off&gpu_minimal=features,limits,timestamps&assets=/projects/tests-fixtures-scenes-water-river/";
 const expression=`(async()=>{
  const adapter=await navigator.gpu.requestAdapter({powerPreference:"high-performance"});
  if(!adapter||adapter.info?.isFallbackAdapter===true)throw Error("hardware WebGPU required");
  const a=await import("/amoris.js");const {module}=await a.loadModule();
- const pkg=await(await fetch("/projects/samples-water-river/package.json")).json();
+ const pkg=await(await fetch("/projects/tests-fixtures-scenes-water-river/package.json")).json();
  const bytes=new TextEncoder().encode(JSON.stringify(pkg)),runs=[];let previous;
  const check=b=>{
   const actual=b.initial_volume+b.configuration_total+b.entered_total-b.left_total+b.edited_total+b.numerical_residual;

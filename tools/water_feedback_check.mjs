@@ -1,5 +1,5 @@
 // Actual worker/Rapier/WebGPU reaction loop, restored input journal and isolated transfer count.
-// Build the game/viewport for samples/water-feedback and serve web/ on 8097.
+// Build the game/viewport for tests/fixtures/scenes/water-feedback and serve web/ on 8097.
 import {execFileSync} from "node:child_process";
 import {mkdirSync,readFileSync,writeFileSync} from "node:fs";
 import {resolve} from "node:path";
@@ -11,7 +11,7 @@ const expression=`(async()=>{
  const adapter=await navigator.gpu.requestAdapter({powerPreference:"high-performance"});
  if(!adapter||adapter.info?.isFallbackAdapter===true)throw Error("hardware WebGPU required");
  const a=await import("/amoris.js");const {module}=await a.loadModule();
- const packageObject=await(await fetch("/projects/samples-water-feedback/package.json")).json();
+ const packageObject=await(await fetch("/projects/tests-fixtures-scenes-water-feedback/package.json")).json();
  const pkg=new TextEncoder().encode(JSON.stringify(packageObject));let previous;const runs=[];
  const pending=(f,axis)=>f.pending.reduce((s,p)=>s+p.impulse[axis],0);
  const check=f=>{for(let axis=0;axis<2;axis++){

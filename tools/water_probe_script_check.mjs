@@ -1,5 +1,5 @@
 // Actual QuickJS scripts consuming resident GPU observations in the shipped browser worker.
-// Build web with samples/water-probes and serve web/ on 8097 before running this check.
+// Build web with tests/fixtures/scenes/water-probes and serve web/ on 8097 before running this check.
 import {execFileSync} from "node:child_process";
 import {mkdirSync,writeFileSync} from "node:fs";
 import {resolve} from "node:path";
@@ -9,7 +9,7 @@ const expression=`(async()=>{
  const adapter=await navigator.gpu.requestAdapter({powerPreference:"high-performance"});
  if(!adapter||adapter.info?.isFallbackAdapter===true)throw Error("hardware WebGPU required");
  const a=await import("/amoris.js");const {module}=await a.loadModule();
- const pkg=new Uint8Array(await(await fetch("/projects/samples-water-probes/package.json")).arrayBuffer());
+ const pkg=new Uint8Array(await(await fetch("/projects/tests-fixtures-scenes-water-probes/package.json")).arrayBuffer());
  const results=[];let previous;
  for(let run=0;run<2;run++){
   const g=a.start(module,pkg,{pacing:"stepped",seed:1});const hashes=[];

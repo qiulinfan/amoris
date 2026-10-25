@@ -1,5 +1,5 @@
 // Actual worker restore/repeat and bounded host-cache transfers for independent water regions.
-// Build game/viewport plus samples/water-feedback; serve web/ on 8097.
+// Build game/viewport plus tests/fixtures/scenes/water-feedback; serve web/ on 8097.
 import {execFileSync} from "node:child_process";
 import {mkdirSync,readFileSync,writeFileSync} from "node:fs";
 import {resolve} from "node:path";
@@ -16,7 +16,7 @@ const expression=`(async()=>{
  const adapter=await navigator.gpu.requestAdapter({powerPreference:"high-performance"});
  if(!adapter||adapter.info?.isFallbackAdapter===true)throw Error("hardware WebGPU required");
  const a=await import("/amoris.js");const {module}=await a.loadModule();
- const pkg=await(await fetch("/projects/samples-water-feedback/package.json")).json();
+ const pkg=await(await fetch("/projects/tests-fixtures-scenes-water-feedback/package.json")).json();
  const template=pkg.scene.entities.find(e=>e.components.Floater);
  const lake=pkg.scene.entities.find(e=>e.components.WaterRegion);
  pkg.scene.entities=pkg.scene.entities.filter(e=>!e.components.Floater&&!e.components.WaterRegion);

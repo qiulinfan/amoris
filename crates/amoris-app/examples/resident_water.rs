@@ -36,8 +36,8 @@ impl StepHooks for Timer {
     fn phase(&mut self, _: TickPhase, _: bool) {}
 }
 fn setup(side: u32, mode: &str, probes: u32, source: bool, bodies: u32) -> Arc<GameSetup> {
-    let root =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../samples/water-resident");
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/scenes/water-resident");
     let mut setup = Project::load(&root).unwrap().setup(false).unwrap();
     setup.scene.entities.truncate(2);
     let r = &mut setup.scene.entities[1].components["WaterRegion"];
@@ -70,8 +70,8 @@ fn setup(side: u32, mode: &str, probes: u32, source: bool, bodies: u32) -> Arc<G
     }})).unwrap());
     }
     if bodies > 0 {
-        let root =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../samples/water-floaters");
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/scenes/water-floaters");
         let authored = Project::load(&root).unwrap().setup(false).unwrap();
         let template = &authored.scene.entities[2];
         for n in 0..bodies {
@@ -362,7 +362,8 @@ fn capture(out: &std::path::Path, project: Option<&std::path::Path>, options: Ca
     let root = project
         .map(std::path::Path::to_path_buf)
         .unwrap_or_else(|| {
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../samples/water-resident")
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../tests/fixtures/scenes/water-resident")
         });
     let setup = Arc::new(Project::load(&root).unwrap().setup(false).unwrap());
     let mut game = water_compute::builder(setup, 1).build().unwrap();

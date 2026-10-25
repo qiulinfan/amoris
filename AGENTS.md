@@ -42,11 +42,10 @@ it are charter 5.4.
   ignored.
 - `samples/`: one project per folder. The games and demos are `blockcraft`, `sailing`,
   `sailing-course`, `anim`, `town-walk` and the six water games with a README (`pool-party`,
-  `river-falls`, `surf-beach`, `water-pool`, `water-storm`, `water-valley`); the other eight
-  `water-*` projects, `gi-room` and `pt-lab` are scenes that tests, checks and measurement tools
-  read.
-  `tests/fixtures/`: projects only tests and checks read (the checks' negative controls, the SDK's
-  type test). xtask runs every `samples/*/check.toml` and `tests/fixtures/**/check.toml`.
+  `river-falls`, `surf-beach`, `water-pool`, `water-storm`, `water-valley`).
+  `tests/fixtures/`: projects only tests and checks read: the checks' negative controls, the SDK's
+  type test, and `scenes/`, the scenes that tests, checks and measurement tools read (eight
+  `water-*` scenes, `gi-room`, `pt-lab`). xtask runs every `samples/*/check.toml` and `tests/fixtures/**/check.toml`.
 - `bench/`: benchmark workloads and comparison harnesses (`agent-dev/`, `physics/`, `rules/`,
   `web/threejs_cubes.html`).
 - `tools/`: Python, shell and Node scripts, flat and grouped by name prefix (`water_*`,
@@ -73,10 +72,8 @@ from `qiulinfan/amoris-samples`; its integration commit names the source commit.
 - An engine gap a game finds is fixed in the engine, natively and in its own commit, never worked
   around in the game.
 - Generated files (scenes, meshes, textures, volume cells) are committed together with the generator
-  that writes them, in the game's folder (`build_scene.py`, `samples/blockcraft/gen_world.py`).
-  Regenerate them; never edit them by hand. Five generators still sit in `tools/`
-  (`water_shore_scene.py`, `water_slope_scene.py`, `generate_pt_fixture.py`, `bake_town_walk.py`,
-  `prepare_walk_model.py`).
+  that writes them, in the project's folder (`build_scene.py`, `samples/blockcraft/gen_world.py`,
+  `samples/town-walk/bake_town_walk.py`). Regenerate them; never edit them by hand.
 - Run output, captures and logs go to the ignored `out/`, never into `samples/`.
 - Assets are original or compatibly licensed, with their licence and source beside them (as
   `samples/town-walk/licenses/` and `CREDITS.txt`); large third-party models stay ignored and are

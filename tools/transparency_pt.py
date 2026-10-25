@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The forward renderer against the path tracer on samples/pt-lab, by region (docs/bench/transparency.md).
+"""The forward renderer against the path tracer on tests/fixtures/scenes/pt-lab, by region (docs/bench/transparency.md).
 
 pt-lab holds an alpha-blended card (`BlendCard`, glTF BLEND, alpha 0.45) and a glass sphere (`Glass`,
 transmission 1, IOR 1.5), which the path tracer (`path_trace`, docs/spec/path-tracing-nrc.md) renders
@@ -33,7 +33,7 @@ import compare_pt  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 EXE = ".exe" if os.name == "nt" else ""
-PROJECT = "samples/pt-lab"
+PROJECT = "tests/fixtures/scenes/pt-lab"
 REGIONS = ["BlendCard", "Glass"]
 
 

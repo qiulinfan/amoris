@@ -8,7 +8,7 @@ import struct
 import zlib
 
 
-ROOT = Path(__file__).resolve().parents[1] / "samples" / "pt-lab"
+ROOT = Path(__file__).resolve().parent
 
 
 def png(pixels, size=32):

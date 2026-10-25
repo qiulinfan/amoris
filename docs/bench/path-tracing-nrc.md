@@ -11,7 +11,7 @@ metal, closed dielectric glass, Mask/Blend coverage, emissive triangles and thre
 types. It records millions of transmitted, metallic and textured samples, alpha rejections and
 Blend candidates, with zero nonfinite paths and no GPU errors. A separate atmosphere scene uses
 the engine's baked sky radiance cube. Test textures and geometry are authored locally by
-`tools/generate_pt_fixture.py`; there are no downloaded assets.
+`tests/fixtures/scenes/pt-lab/generate_pt_fixture.py`; there are no downloaded assets.
 
 CPU f64 checks integrate PDFs/BSDFs, compare visible-normal Monte Carlo sampling to quadrature,
 verify Snell/Fresnel/TIR and smooth-surface energy, and test roulette compensation. Actual Metal

@@ -10,8 +10,8 @@ fn setup(mode: &str, flat: bool) -> Arc<GameSetup> {
     Arc::new(base(mode, flat))
 }
 fn base(mode: &str, flat: bool) -> GameSetup {
-    let root =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../samples/water-floaters");
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/scenes/water-floaters");
     let mut setup = Project::load(&root).unwrap().setup(false).unwrap();
     let region = &mut setup.scene.entities[1].components["WaterRegion"];
     region["solver"] = json!(mode);

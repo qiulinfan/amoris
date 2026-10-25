@@ -46,11 +46,11 @@ CASES = {
     "cubes-dense": [example("many_cubes"), "--dense", "--capture", "{out}"],
     "cubes-shadows": [example("many_cubes"), "--count", "200000", "--shadows", "--capture", "{out}"],
     "splats": [example("splats"), "--capture", "{out}"],
-    "gi-room-static": [example("showcase_bench"), "samples/gi-room", *STATIC, "{out}"],
-    "pt-lab-static": [example("showcase_bench"), "samples/pt-lab", *STATIC, "{out}"],
+    "gi-room-static": [example("showcase_bench"), "tests/fixtures/scenes/gi-room", *STATIC, "{out}"],
+    "pt-lab-static": [example("showcase_bench"), "tests/fixtures/scenes/pt-lab", *STATIC, "{out}"],
     "sailing": ("serve", "samples/sailing", 120),
     "anim": ("serve", "samples/anim", 90),
-    "gi-room": ("serve", "samples/gi-room", 60),
+    "gi-room": ("serve", "tests/fixtures/scenes/gi-room", 60),
 }
 
 

@@ -5,8 +5,8 @@ import json
 import math
 from pathlib import Path
 
-root=Path(__file__).resolve().parents[1]
-out=root/'samples/water-shore'
+root=Path(__file__).resolve().parents[4]
+out=root/'tests/fixtures/scenes/water-shore'
 out.mkdir(exist_ok=True)
 (out/'scripts').mkdir(exist_ok=True)
 (out/'scripts/main.ts').write_text('import { game } from "amoris";\n\n// Scene Sea waves drive the actual resident GPU field.\nexport default game({ components: [], systems: [] });\n')
@@ -33,13 +33,13 @@ entities=[
  {'name':'Sea','components':{'Sea':{'level':.5,'density':1000,'waves':[{'length':64,'height':.08,'toward_deg':90,'phase':0},{'length':32,'height':.02,'toward_deg':112,'phase':1.1},{'length':8,'height':.01,'toward_deg':65,'phase':2.0}]}}}
 ]
 # Reuse this repository's authored floater parameters; all sample geometry/materials are local.
-floater=next(e for e in json.loads((root/'samples/water-river/scene.json').read_text())['entities'] if e['name']=='Float0')
+floater=next(e for e in json.loads((root/'tests/fixtures/scenes/water-river/scene.json').read_text())['entities'] if e['name']=='Float0')
 floater['name']='Float';floater['components']['Transform']['position']=[4,.59,4]
 floater['components']['Velocity']={'linear':[0,0,0],'angular':[0,0,0]}
 entities.append(floater)
 for z in [-.125,8.125]:
     entities.append({'name':'FlumeSouth' if z<0 else 'FlumeNorth','components':{'Transform':{'position':[16,.35,z]},'Model':{'mesh':'cube','scale':[32,1.2,.25],'color':[.45,.48,.5,1]},'RigidBody':{'kind':'Fixed'},'Collider':{'shape':{'Cuboid':{'half_extents':[16,.6,.125]}}}}})
-lighting=json.loads((root/'samples/water-river/scene.json').read_text())['entities']
+lighting=json.loads((root/'tests/fixtures/scenes/water-river/scene.json').read_text())['entities']
 entities.extend(e for e in lighting if e['name'] in ['Sun','Sky'])
 eye=[22,9,15];target=[14,.5,4]
 f=[b-a for a,b in zip(eye,target)];norm=math.sqrt(sum(v*v for v in f));f=[v/norm for v in f]

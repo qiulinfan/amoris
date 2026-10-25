@@ -71,9 +71,9 @@ measurement and does not supply training labels or predictions to rendering.
 Reproduce the full material scene and online experiment:
 
 ```sh
-cargo run --release -p amoris-render --example path_trace -- samples/pt-lab \
+cargo run --release -p amoris-render --example path_trace -- tests/fixtures/scenes/pt-lab \
   --width 320 --height 240 --frames 256 --samples 4 --output out/pt/lab.png
-cargo run --release -p amoris-render --example path_trace -- samples/gi-room \
+cargo run --release -p amoris-render --example path_trace -- tests/fixtures/scenes/gi-room \
   --width 128 --height 128 --frames 512 --nrc true --nrc-warmup 64 \
   --light-change-frame 256 --light-change-factor 2.5 --output out/pt/nrc.png
 # Windows: the same with AMORIS_BACKEND=vulkan or dx12 (and AMORIS_ADAPTER=5060 or 780m).

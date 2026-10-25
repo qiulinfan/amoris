@@ -46,7 +46,8 @@ mod tests {
     /// Runs on every native backend whose adapter exposes ray queries; skipped elsewhere.
     #[test]
     fn ray_query_cache_requires_history_and_resets() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../samples/gi-room");
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/scenes/gi-room");
         let scene = RayScene::from_project(&root).expect("static room");
         for gpu in crate::gi::ray_query_gpus() {
             cache_requires_history_and_resets(&gpu, &scene);
@@ -129,7 +130,8 @@ mod tests {
     /// Runs on every native backend whose adapter exposes ray queries; skipped elsewhere.
     #[test]
     fn ray_query_ris_matches_raw_and_bounds_history() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../samples/gi-room");
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/scenes/gi-room");
         let scene = RayScene::from_project(&root).expect("static room");
         for gpu in crate::gi::ray_query_gpus() {
             ris_matches_raw_and_bounds_history(&gpu, &scene);

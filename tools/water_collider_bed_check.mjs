@@ -1,5 +1,5 @@
 // Current fixed-collider rays in actual native/browser Games, plus resident sloping-shore replay.
-// First run collider_bed_probe and tools/build_web.sh samples/water-slope.
+// First run collider_bed_probe and tools/build_web.sh tests/fixtures/scenes/water-slope.
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {createServer} from 'node:http';
@@ -10,7 +10,7 @@ const out=resolve(process.env.WATER_COLLIDER_OUT||'out/water-collider-bed/browse
 await readFile(fixture);
 const expression=`(async()=>{
  const adapter=await navigator.gpu.requestAdapter({powerPreference:'high-performance'});if(!adapter||adapter.info?.isFallbackAdapter===true)throw Error('hardware WebGPU required');
- const a=await import('/amoris.js'),{module}=await a.loadModule(),pkg=await(await fetch('/projects/samples-water-slope/package.json')).json(),data=await(await fetch('/collider-fixture.json')).json();
+ const a=await import('/amoris.js'),{module}=await a.loadModule(),pkg=await(await fetch('/projects/tests-fixtures-scenes-water-slope/package.json')).json(),data=await(await fetch('/collider-fixture.json')).json();
  const get=async(g,entity,fields)=>(await g.command('world.get',{entity,fields})).fields;
  const step=async(g,ticks)=>{const done=await g.command('step',{ticks});if(done.errors.length)throw Error(JSON.stringify(done.errors));return done;};
  const rays=[];
@@ -54,7 +54,7 @@ const expression=`(async()=>{
 const server=createServer(async(req,res)=>{try{const p=decodeURIComponent(new URL(req.url,'http://localhost').pathname);let file;if(p==='/collider-fixture.json')file=fixture;else{file=resolve(web,'.'+p+(p.endsWith('/')?'index.html':''));if(!file.startsWith(web+'/'))throw Error('not served');}const ext=file.slice(file.lastIndexOf('.'));res.setHeader('Content-Type',({'.wasm':'application/wasm','.js':'text/javascript','.html':'text/html','.json':'application/json','.css':'text/css'})[ext]||'application/octet-stream');res.setHeader('Cache-Control','no-store');res.end(await readFile(file));}catch{res.statusCode=404;res.end('not found');}});
 await new Promise((ok,fail)=>{server.once('error',fail);server.listen(0,'127.0.0.1',ok);});
 try{
- const url='http://127.0.0.1:'+server.address().port+'/viewport/?aa=msaa&gtao=off&gpu_minimal=features,limits,timestamps&assets=/projects/samples-water-slope/';
+ const url='http://127.0.0.1:'+server.address().port+'/viewport/?aa=msaa&gtao=off&gpu_minimal=features,limits,timestamps&assets=/projects/tests-fixtures-scenes-water-slope/';
  const {stdout:log}=await promisify(execFile)(process.execPath,['tools/web_bench.mjs',url,'2'],{encoding:'utf8',timeout:240000,maxBuffer:16*1024*1024,env:{...process.env,EVAL:expression,VSYNC:'1',UNSAFE_WEBGPU:'0',LOGS:'1',VIEWPORT:'1280x720',SHOT:resolve(out,'slope.png')}});
  writeFileSync(resolve(out,'browser.log'),log);const line=log.split('\n').find(l=>l.startsWith('eval: ')),result=line?JSON.parse(line.slice(6)):null;
  // The last game intentionally faults; require the exact expected fault and reject other errors.

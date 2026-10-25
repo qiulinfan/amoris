@@ -20,7 +20,8 @@ fn run(f: impl FnOnce() + Send + 'static) {
         .unwrap();
 }
 fn setup(queue: ComputeQueue) -> WorkerCore {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../samples/water-dam");
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/scenes/water-dam");
     let mut setup = Project::load(&root).unwrap().setup(false).unwrap();
     let mut second = setup.scene.entities[1].clone();
     second.name = Some("Second".into());

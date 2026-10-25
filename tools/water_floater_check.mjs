@@ -1,5 +1,5 @@
 // Real browser worker + Rapier + resident GPU field, with four 27-point floating crates.
-// Build web/viewport and `tools/build_web.sh samples/water-floaters`, serve web/ on 8097.
+// Build web/viewport and `tools/build_web.sh tests/fixtures/scenes/water-floaters`, serve web/ on 8097.
 import {execFileSync} from "node:child_process";
 import {mkdirSync,readFileSync,writeFileSync} from "node:fs";
 import {resolve} from "node:path";
@@ -11,7 +11,7 @@ const expression=`(async()=>{
  const adapter=await navigator.gpu.requestAdapter({powerPreference:"high-performance"});
  if(!adapter||adapter.info?.isFallbackAdapter===true)throw Error("hardware WebGPU required");
  const a=await import("/amoris.js");const {module}=await a.loadModule();
- const packageObject=await(await fetch("/projects/samples-water-floaters/package.json")).json();
+ const packageObject=await(await fetch("/projects/tests-fixtures-scenes-water-floaters/package.json")).json();
  if (${JSON.stringify(process.env.WATER_FLOATER_OPTICS || "all")} === "none") window.amorisViewport.raw.set_water_optics(false,false,false);
  if (${JSON.stringify(process.env.WATER_FLOATER_OPTICS || "all")} === "no-reflection") window.amorisViewport.raw.set_water_optics(true,false,true);
  if (${JSON.stringify(process.env.WATER_FLOATER_OPTICS || "all")} === "no-refraction") window.amorisViewport.raw.set_water_optics(false,true,true);

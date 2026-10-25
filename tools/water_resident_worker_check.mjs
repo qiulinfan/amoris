@@ -1,5 +1,5 @@
 // Actual resident GPU game ticks, restoration, sparse transfers and cancellation in Chrome.
-// SKIP_VIEWPORT=1 tools/build_web.sh samples/water-resident samples/water-dam
+// SKIP_VIEWPORT=1 tools/build_web.sh tests/fixtures/scenes/water-resident tests/fixtures/scenes/water-dam
 // Serve web/ on 8097, then node tools/water_resident_worker_check.mjs [viewport URL].
 import {execFileSync} from "node:child_process";
 import {mkdirSync,writeFileSync} from "node:fs";
@@ -10,7 +10,7 @@ const expression=`(async()=>{
   const adapter=await navigator.gpu.requestAdapter({powerPreference:"high-performance"});
   if(!adapter || adapter.info?.isFallbackAdapter===true)throw new Error("hardware WebGPU required");
   const a=await import("/amoris.js");const {module}=await a.loadModule();
-  const packageObject=await(await fetch("/projects/samples-water-resident/package.json")).json();
+  const packageObject=await(await fetch("/projects/tests-fixtures-scenes-water-resident/package.json")).json();
   const pkg=new TextEncoder().encode(JSON.stringify(packageObject));
   const summaries=[];let previous;
   const stats=values=>{const v=[...values].sort((a,b)=>a-b);return {median:v[Math.floor(v.length/2)],p95:v[Math.floor(v.length*.95)],max:v[v.length-1]};};

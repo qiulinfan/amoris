@@ -637,10 +637,10 @@ service reusable without a renderer or window:
   the field resident or copy it asynchronously. It builds for WebGPU. Browser game-worker tick
   integration and direct rendering from resident state are not part of this first native slice.
 
-`samples/water-dam` selects GPU execution and initializes a two-metre dam. Run it with
-`cargo run -p amoris-app --bin amoris -- run samples/water-dam --headless --ticks 60 --json`, or
-use `play samples/water-dam` for a native view. Set `solver` to `cpu` for the reference path.
-The SDK's project declarations expose the field through the component schema.
+`tests/fixtures/scenes/water-dam` selects GPU execution and initializes a two-metre dam. Run it with
+`cargo run -p amoris-app --bin amoris -- run tests/fixtures/scenes/water-dam --headless --ticks 60 --json`,
+or use `play tests/fixtures/scenes/water-dam` for a native view. Set `solver` to `cpu` for the
+reference path. The SDK's project declarations expose the field through the component schema.
 
 Checks: `amoris-render`'s `water_compute` test covers still water over uneven beds, dam-break
 transport, conservation, wet/dry fronts, inactive boundaries and repeatable restore on one device.
@@ -710,13 +710,13 @@ and restore; actual Chrome checks real dam flow, conservation, hashes, snapshot 
 one render-feed publication per completed GPU tick. An actual host cancellation probe confirms a
 typed `water.compute_failed` and the previous snapshot boundary.
 
-Build with `SKIP_VIEWPORT=1 tools/build_web.sh samples/water-dam` after building the viewport; serve
-`web/` and run `node tools/water_worker_check.mjs`. This executes the game's physics system, unlike
-the isolated viewport probes. It still clones the input and reads the complete field each tick,
-retaining the current synchronous gameplay-query/checkpoint semantics. Native GPU factories and
-their synchronous replay/fork path remain as before. Browser GPU replay verification and async
-lookahead command integration remain unverified; repeating inputs in one browser is not a proof
-of cross-device determinism or the replay-file verifier.
+Build with `SKIP_VIEWPORT=1 tools/build_web.sh tests/fixtures/scenes/water-dam` after building the
+viewport; serve `web/` and run `node tools/water_worker_check.mjs`. This executes the game's physics
+system, unlike the isolated viewport probes. It still clones the input and reads the complete field
+each tick, retaining the current synchronous gameplay-query/checkpoint semantics. Native GPU
+factories and their synchronous replay/fork path remain as before. Browser GPU replay verification
+and async lookahead command integration remain unverified; repeating inputs in one browser is not a
+proof of cross-device determinism or the replay-file verifier.
 
 Browser viewports now default to two outstanding render frames. The old explicit `0` remains an
 unbounded throughput experiment: without display pacing, it can starve the worker's GPU queue.
@@ -952,11 +952,12 @@ fields at different datums, moves the sampling basis and switches regions throug
 it must issue observation-only jobs and return the new surface. Unchanged sleeping requests still
 submit no work. These metadata are part of the world, so fork/restore preserve the same decision.
 
-`samples/water-probes` drives an orange measurement marker from the completed result and requests
-a moving point. Its project component records sample tick, age, point and values. This is a sensor
-example, not buoyancy or body backreaction. `amoris check samples/water-probes --only types --json`
-checks the generated SDK. Native GPU tests cover frozen results, read-only outputs, ordinary and
-column requests, disable/enable, removal/reinsert and fork/restore. Actual browser checks use
+`tests/fixtures/scenes/water-probes` drives an orange measurement marker from the completed result
+and requests a moving point. Its project component records sample tick, age, point and values. This
+is a sensor example, not buoyancy or body backreaction.
+`amoris check tests/fixtures/scenes/water-probes --only types --json` checks the generated SDK.
+Native GPU tests cover frozen results, read-only outputs, ordinary and column requests,
+disable/enable, removal/reinsert and fork/restore. Actual browser checks use
 `tools/water_probe_script_check.mjs`; retained evidence and the version-2 metadata cost are in
 liquids.md 5. Other interaction, boundary, optical and LOD requirements remain open.
 
@@ -1067,15 +1068,16 @@ three point/output/staging slots plus combined staging use approximately 1 MiB p
 separate from field and summary storage. An empty/small request reads only its actual range. This
 limit and memory cost are not a claim of unlimited body counts or region scalability.
 
-`samples/water-floaters` contains four dynamic 350-kg/m³ crates with 27 volume points each, a real
-collider floor and a resident dam. `physics.buoyancy` drives their lift, translation and rotation.
-The sample's script declares an empty game. The near-dam body responds first; a far crate does not
-receive an instantaneous pool-wide current. The app `gpu_floaters` tests also compare CPU, GPU and
-resident fields at a known flat-water equilibrium, then fork/restore and teleport body poses.
-Runtime identity-host tests isolate pending-step, asleep reuse and restore invalidation semantics;
-they do not validate fluid transport. Real Chrome checks, sparse-transfer counts and raw capture
-locations are in liquids.md 5. `resident_water --capture DIR --project samples/water-floaters
---motion` writes physical motion frames, not an interpolated sensor marker.
+`tests/fixtures/scenes/water-floaters` contains four dynamic 350-kg/m³ crates with 27 volume points
+each, a real collider floor and a resident dam. `physics.buoyancy` drives their lift, translation
+and rotation. The sample's script declares an empty game. The near-dam body responds first; a far
+crate does not receive an instantaneous pool-wide current. The app `gpu_floaters` tests also compare
+CPU, GPU and resident fields at a known flat-water equilibrium, then fork/restore and teleport body
+poses. Runtime identity-host tests isolate pending-step, asleep reuse and restore invalidation
+semantics; they do not validate fluid transport. Real Chrome checks, sparse-transfer counts and raw
+capture locations are in liquids.md 5.
+`resident_water --capture DIR --project tests/fixtures/scenes/water-floaters --motion` writes
+physical motion frames, not an interpolated sensor marker.
 
 Without WaterFeedback this remains one-way coupling. Section 23 adds queued horizontal momentum
 reaction; occupied volume, vertical impact and spray remain open. Sailing keel/rudder/hull readings
@@ -1152,12 +1154,12 @@ the same impulse writes before its water solve, omitting gameplay support/budget
 not issue authoritative receipts. Exact image comparisons include skipped frames, compaction,
 rewind and underwater medium views with nonempty reaction input.
 
-`samples/water-feedback` starts four moving dynamic crates in a still 128², 0.25-m field. A matched
-one-way control leaves the water at rest; feedback changes the actual GPU field and its digest.
-The isolated kernel tests verify unchanged bed/depth, interior/wet-dry/wall/4096-point budgets and
-a finite drag-energy case. Game tests independently compare the first body momentum loss with its
-queued impulse, then test the next boundary, cumulative ledger, water mass, forks and compaction.
-Real browser/native comparisons and timing scope are in liquids.md 5.
+`tests/fixtures/scenes/water-feedback` starts four moving dynamic crates in a still 128², 0.25-m
+field. A matched one-way control leaves the water at rest; feedback changes the actual GPU field and
+its digest. The isolated kernel tests verify unchanged bed/depth, interior/wet-dry/wall/4096-point
+budgets and a finite drag-energy case. Game tests independently compare the first body momentum loss
+with its queued impulse, then test the next boundary, cumulative ledger, water mass, forks and
+compaction. Real browser/native comparisons and timing scope are in liquids.md 5.
 
 This is horizontal impulse feedback, not completed volumetric coupling. There is no occupied-volume
 field, insertion/removal displacement, vertical-impact pressure, swept path for fast bodies, or
@@ -1436,11 +1438,12 @@ the changed feed. A same-source visual replica uses the recorded boundary contro
 exactly against complete-state reference rendering through sparse frames, compaction, rewind
 and underwater views. Old experimental execution descriptors are refused.
 
-`samples/water-river` is an actual 16×8-m GPU field over a voxel bed, with a matching solid
-obstacle, banks, two floating bodies, a probe, prescribed inlet and receiving outlet stage. It is
-not the analytic water laboratory. Long-run flux, independent volume checks, cost and native/browser
-captures are in liquids.md 5. Reflection control, bidirectional sea coupling, erosion/dynamic beds,
-occupancy/vertical impacts/spray and more realistic application review remain open.
+`tests/fixtures/scenes/water-river` is an actual 16×8-m GPU field over a voxel bed, with a matching
+solid obstacle, banks, two floating bodies, a probe, prescribed inlet and receiving outlet stage. It
+is not the analytic water laboratory. Long-run flux, independent volume checks, cost and
+native/browser captures are in liquids.md 5. Reflection control, bidirectional sea coupling,
+erosion/dynamic beds, occupancy/vertical impacts/spray and more realistic application review remain
+open.
 
 
 ## 29. GPU surface patch culling (2026-10-19)
@@ -1683,9 +1686,9 @@ Artificial surround rings are disabled while Sea is present. This fixes ocean ov
 not establish a seamless match of deep/shallow spectra, short-wave normals or arbitrary multiple
 water interfaces.
 
-`samples/water-shore` is a stepped voxel-bed wave flume with actual Sea controls, a floater and
-current probes. Its authored initial beds match the voxel top surfaces. The flat-tank variant
-checks frequency, propagation speed and damping against an independent linear shallow-water
+`tests/fixtures/scenes/water-shore` is a stepped voxel-bed wave flume with actual Sea controls, a
+floater and current probes. Its authored initial beds match the voxel top surfaces. The flat-tank
+variant checks frequency, propagation speed and damping against an independent linear shallow-water
 oracle. The stepped case wets initially dry terraces, but residual films remain; continuous-beach
 runup/drainback, wet-surface rendering and breaking/spray remain open. See liquids.md 5 for
 measurements, images, browser/backend coverage and timing scopes. W3/W5/W8 and the broader goal
@@ -1721,7 +1724,7 @@ water and emit water.displaced; lowered beds keep depth. This is geometric rebed
 reciprocal solid/fluid displacement or a pressure solver. Bridges are uppermost beds, and
 layered water below roofs remains unsupported.
 
-The 32-by-8-m samples/water-slope flume uses a real rotated box with top `y = 0.03 x`,
+The 32-by-8-m tests/fixtures/scenes/water-slope flume uses a real rotated box with top `y = 0.03 x`,
 128-by-32 columns at 0.25 m, the existing Sea driver and current-tick probes. Native/Chrome
 ray fixtures cover a rotated box, an alternating-diagonal triangle mesh, a compound sphere/box
 and a no-hit case. These fixtures agree exactly on the tested M5 native/Chrome environments.
@@ -3155,9 +3158,10 @@ switch them; off, the frames are those drawn without them.
 - Drawn: with no points, and with still ones, no pixel differs from the layer switched off; a
   bobbing point changes hundreds.
 - Against the build before the layer (bbd993d8), `resident_water --capture` frames at ticks 1, 27,
-  63, 64 and 120 match pixel for pixel for samples/water-dam (water and no stirring point, the layer
-  on) and samples/anim (no water); samples/pool-party with the layer off differs from the old build
-  only at the single pixels where two runs of the old build differ, by one level in 255.
+  63, 64 and 120 match pixel for pixel for tests/fixtures/scenes/water-dam (water and no stirring
+  point, the layer on) and samples/anim (no water); samples/pool-party with the layer off differs
+  from the old build only at the single pixels where two runs of the old build differ, by one level
+  in 255.
 
 The cost is in [liquids.md](../bench/liquids.md) 8: on the M5, 0.36 ms of GPU time a step over deep
 water and 0.66 ms with all four depth levels; in the pool party's frames the layer adds 1.2 ms to
@@ -4083,9 +4087,9 @@ one body of water.
 
 `cargo test -p amoris-app --test gpu_scale`:
 
-- the river (`samples/water-river`, `bake_after_s` 1) holds steady and bakes at tick 2081 with its
-  fastest water at 1.478 m/s; for 120 ticks its state digest and its ledger stand; more inflow wakes
-  it.
+- the river (`tests/fixtures/scenes/water-river`, `bake_after_s` 1) holds steady and bakes at tick
+  2081 with its fastest water at 1.478 m/s; for 120 ticks its state digest and its ledger stand;
+  more inflow wakes it.
 - a region 500 m from its only focus (radius 20 m) holds still after its first step; with the focus
   moved within 2 m of it, it runs.
 - two pools of 16 x 8 m, half-metre columns, 1 m deep, joined along x = 16 m, against one pool of

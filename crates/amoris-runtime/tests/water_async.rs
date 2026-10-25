@@ -37,8 +37,8 @@ fn async_boundaries_fork_restore_refuse_partial_access_and_ignore_late_failure_r
     std::thread::Builder::new()
         .stack_size(amoris_runtime::GAME_STACK_BYTES)
         .spawn(|| {
-            let root =
-                std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../samples/water-dam");
+            let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../tests/fixtures/scenes/water-dam");
             let setup = Arc::new(Project::load(&root).unwrap().setup(false).unwrap());
             let queue = ComputeQueue::default();
             let host = queue.clone();

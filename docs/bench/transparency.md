@@ -26,9 +26,8 @@ Machine: R1 (Ryzen 9 270, 16 threads, 15 GB; RTX 5060 Laptop 8 GB, driver 32.0.1
 
 ## 1. pt-lab against the path tracer
 
-`python tools/transparency_pt.py --build before=out/transparency/before --build after=. --out
-out/transparency/pt-lab --backend dx12 --adapter 5060 [--pt-args "--emission-scale 0"] [--gtao
-depth]` draws samples/pt-lab at 320x240 with `showcase_bench --hdr --ids` (4x MSAA, occlusion
+`python tools/transparency_pt.py --build before=out/transparency/before --build after=. --out out/transparency/pt-lab --backend dx12 --adapter 5060 [--pt-args "--emission-scale 0"] [--gtao depth]`
+draws tests/fixtures/scenes/pt-lab at 320x240 with `showcase_bench --hdr --ids` (4x MSAA, occlusion
 culling off, time 0, GTAO off unless `--gtao`) from the build before the stage and from the build
 under test, and compares each linear image with the path tracer's (`path_trace`, 256 frames of 4
 samples, 1,024 paths a pixel, seed 1) over the whole image and over two entities' pixels in the
