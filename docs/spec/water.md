@@ -366,7 +366,8 @@ pub enum BedSource {
   still seen.
 - **Under water.** A camera under a region's surface uses `look.fog`, as liquids.md 6 does for
   cells.
-- **The sea** is excluded from every loaded region's rectangle, including a dry region. A growing
+- **The sea** is excluded from every loaded region's rectangle, including a dry region, less a
+  column along each side open on the sea, which the sea runs under (60.7). A growing
   read-only GPU buffer supplies the rectangles; there is no silent eight-region truncation. The
   opaque color and unjittered depth use the same ownership test. With a Sea present, artificial
   constant-level surround rings are suppressed. Section 32 records the image and baseline tests.
@@ -487,9 +488,9 @@ water. Past the region, the analytic sea runs each wave at its deep-water speed.
 
 
 Past the regions, the analytic sea still supplies buoyancy and drawing. The resident forcing
-preserves its frequency and boundary phase while local waves slow and shorten. A continuous
-optical seam, identical short-wave detail and general shoaling/energy transfer remain visual and
-physical acceptance targets; section 32 does not certify them from a normal-incidence test.
+preserves its frequency and boundary phase while local waves slow and shorten. Section 60 draws the
+wind sea's short waves on both and joins a region to a sea that has its look without a seam;
+general shoaling and energy transfer between the two remain open.
 
 To settle in slice D, from shots:
 
@@ -2364,7 +2365,8 @@ independence in the verified cases, rather than claiming every image matches the
 Film, Blocky, surround/stitch attributes, vertex positions, refraction/reflection functions,
 physical medium integration and optical thresholds retain their existing definitions. Raster
 derivatives needed by the other surface kinds remain before data-dependent selection. Broad
-appearance, grazing motion, spectral/ocean seams and realistic application review remain open.
+appearance, grazing motion and realistic application review remain open; the seam with the sea is
+section 60's.
 
 ### 43.3 Identity, verification and measured limits
 
@@ -3405,3 +3407,198 @@ Limits:
 - Water that does not trap air is silent: a smooth river, waves lapping without breaking, spray or
   rain landing on dry ground.
 - The tally arrives a frame or two late, and the browser plays no water sound.
+
+## 60. The wind sea and the seam with the sea (Pioneer, 2026-10-23)
+
+Past the regions the sea was drawn as its swell, `Sea.waves`, the waves buoyancy uses, with fourteen
+wavelets in its normals and a deep blue-green of its own. Where a region open on it met it, the seam
+showed: half a column of bare bed between the region's surface, drawn from its columns' centres, and
+the rectangle the sea leaves to it, and a step in colour from the region's clear water over its bed
+to the sea's. Now a wind raises a wind sea, synthesized every frame, which the sea draws to the
+horizon and the regions beside it carry as the detail of their surface; the sea can take a region's
+look, and a region's side open on such a sea turns into it. Presentation only: buoyancy, the
+regions' `Sea` sides and replays know the swell alone.
+
+### 60.1 Authoring and the feed
+
+- `Sea.fetch_km`: the kilometres of open water the wind has blown over to reach the scene; 0, the
+  default, raises none. The first `Wind` by `EntityId` blows it, its speed taken as the wind 10 m
+  up, toward the bearing opposite `from_deg`; its gusts leave the wind sea as it is.
+- `Sea.look`: `fog`, `absorb` and `scatter`, as a region's look has them (9, 18); none keeps the
+  sea's own deep colour. A region open on the sea takes the same look: the surf beach's share one
+  constant.
+- Both are new, so `Sea` is version 2 (versions.md 3.5); a scene without them reads as before. The
+  sailing scene's state chain is blessed again as `755313fe7a71db94`, natively and in WebAssembly;
+  written as version 1, its sea gives back the legacy chain `7149006c1a78a404`, so its physics is
+  unchanged.
+- The feed: `SeaView.wind`, `{speed, toward_deg, fetch_km}`, present when the fetch and the wind's
+  speed are above 0; `SeaView.look`; `WaterLookView.sea`, a region's sides (-x, +x, -z, +z) open on
+  the sea. The extractor sends the sea again when the wind changes or goes. `FORMAT` changes, and
+  the viewport is rebuilt.
+
+### 60.2 The spectrum
+
+The JONSWAP spectrum of a fetch-limited sea (K. Hasselmann et al., "Measurements of wind-wave growth
+and swell decay during the Joint North Sea Wave Project (JONSWAP)", Deutsche Hydrographische
+Zeitschrift, Reihe A, 8(12), 1973), U the wind at 10 m and F the fetch:
+
+```text
+S(w) = alpha g^2 w^-5 exp(-5/4 (wp / w)^4) 3.3^r,   r = exp(-(w - wp)^2 / (2 sigma^2 wp^2))
+sigma = 0.07 up to the peak, 0.09 past it,           wp = 22 (g^2 / (U F))^(1/3)
+```
+
+- The peak is in C. J. Horvath's form ("Empirical directional wave spectra for computer graphics",
+  DigiPro 2015). alpha is scaled so that the spectrum holds the energy of JONSWAP's own fetch law,
+  g^2 m0 / U^4 = 1.6e-7 g F / U^2: the published alpha, 0.076 (g F / U^2)^-0.22, puts 30 percent
+  more into the significant height.
+- Past g F / U^2 = 17 000 the sea is fully developed and grows no more: its peak stays at 0.855 g /
+  U, W. J. Pierson and L. Moskowitz's ("A proposed spectral form for fully developed wind seas based
+  on the similarity theory of S. A. Kitaigorodskii", JGR 69(24), 1964).
+- The waves spread about the wind as M. A. Donelan, J. Hamilton and W. H. Hui measured ("Directional
+  spectra of wind-generated ocean waves", Phil. Trans. R. Soc. A 315, 1985): beta / (2 tanh(beta
+  pi)) sech^2(beta theta), beta from w / wp as Horvath gives it, which integrates to one over the
+  circle.
+- A wave vector k's complex amplitude is h0(k) = xi sqrt(E(k) / 2) dk, xi a complex Gaussian of unit
+  variance (an integer hash, Box and Muller's transform, a fixed seed) and E(k) = S(w) D(theta)
+  (dw/dk) / k, with w = sqrt(g k) for deep water.
+
+### 60.3 Synthesis
+
+- Three cascades of 256 x 256 wave vectors on tiles of 320, 40 and 6 m, synthesized as J. Tessendorf
+  does ("Simulating ocean water", SIGGRAPH course notes, 2001). Each holds its own band, so no wave
+  is counted twice: wavelengths over 20 m, 3 to 20 m, and 4.7 cm to 3 m; the bands meet where the
+  next tile holds two waves, and the last ends at the 6 m tile's Nyquist wavenumber. At 8 m/s over
+  50 km they hold over 97 percent of the spectrum's variance.
+- A frame turns each wave by its frequency, h(k, t) = h0(k) e^(i w t) + conj(h0(-k)) e^(-i w t), so
+  the transforms are real (the Nyquist row and column are left out), and inverse transforms the
+  height, the horizontal displacement D = -i k / |k| h, scaled by lambda = 0.9 (Tessendorf's choppy
+  waves), the slopes and the displacement's derivatives, two real fields packed in each complex one.
+- `ocean_waves.wgsl` takes four dispatches a frame. A workgroup of 256 threads makes a row of a
+  cascade's spectrum and transforms its four packed fields along x in its own memory (8 KB), radix
+  2; a workgroup transforms a column of the four along z and writes its texels and foam; two
+  dispatches make the mip levels, a workgroup averaging a block of 16 x 16 texels into four levels
+  at once, levels 1 to 4 from level 0, then 5 to 8 from level 4. Thirteen dispatches did it at first
+  (the spectrum, the rows, the columns, the texels and a dispatch a level): levels 0 and 1 are the
+  same bit for bit, the coarser levels within an f16 unit in the last place, as a block now averages
+  in f32.
+- The texture array is 256 x 256 texels, 6 layers and 9 levels of rgba16float: layer c holds cascade
+  c's displacement (x, y, z) and foam, layer c + 3 its slopes along x and z and the displacement's
+  derivatives lambda dDx/dx and lambda dDz/dz.
+- The spectrum's constants are made again only when the wind changes; a frame sends the time and the
+  time since the last frame.
+- The pipelines take explicit bind group layouts: WebGPU's automatic layouts belong to one pipeline
+  each, and one bind group serves both transforms.
+
+### 60.4 Whitecaps
+
+- Where the displaced surface folds, its Jacobian J = (1 + lambda dDx/dx)(1 + lambda dDz/dz) -
+  lambda^2 (dDx/dz)^2 falls toward 0 and the crest breaks (Tessendorf). J spreads about 1 by lambda
+  times the band's root mean square slope. Fresh foam starts where J falls under 1 + spread q, q the
+  standard normal quantile of W / 1.7, and is full half a spread under that, so that the foam covers
+  E. C. Monahan and I. Ó Muircheartaigh's share of the sea ("Optimal power-law description of
+  oceanic whitecap coverage dependence on wind speed", J. Phys. Oceanogr. 10(12), 1980), W = 3.84e-6
+  U^3.41: 0.2 percent at 6.5 m/s, 1.8 percent at 12. A whitecap shows 1.7 times as long as its crest
+  breaks: foam fades as e^(-0.7 t), and a rewind clears it.
+- Only the 320 m cascade makes foam: the 40 m and 6 m tiles' foam would repeat as a lattice seen
+  from high over the sea.
+
+### 60.5 The sea
+
+- The ring grid's vertices take the wind sea's displacement, each cascade read at the level whose
+  texels lie as far apart as the vertices (4 percent of the distance, at least 0.4 m). It fades to
+  none within 24 m of a region: a region's surface takes the wind sea's detail but not its height,
+  which its simulation gives, so the two meet on the swell.
+- A pixel reads each cascade's slopes over its footprint at the point at rest its vertex came from
+  (`textureSampleGrad`), each divided by the displacement's stretch along its axis, 1 + lambda
+  dD/dx, so that the slope is the displaced surface's. A cascade the pixel sees only through its
+  last two levels is left out.
+- The slopes finer than the pixel widen the glints' lobe: per cascade and level, the mean square
+  slope of the band's waves finer than the level's texels, from the spectrum, never less at a
+  coarser level; and the slopes finer than the 6 m tile, C. Cox and W. Munk's measured total
+  ("Measurement of the roughness of the sea surface from photographs of the sun's glitter", JOSA
+  44(11), 1954), 0.003 + 5.12e-3 U, less what the cascades hold. The GGX roughness is (0.05^4 + the
+  mean square slope)^(1/4). Folding the slopes a pixel cannot resolve into its reflectance follows
+  E. Bruneton, F. Neyret and N. Holzschuch ("Real-time realistic ocean lighting using seamless
+  transitions from geometry to BRDF", Computer Graphics Forum 29(2), 2010).
+- The sampler is trilinear and anisotropic with 8 samples (liquids.md 12).
+- With a look, the sea is shaded as a region's deep water: the region's dielectric Fresnel, the
+  colour its scattering sends back with no bed under it, (scatter E + fog haze) / (absorb + scatter +
+  haze), and a region's foam.
+- An orthographic view looks at the sea along its axis, as at a region.
+
+### 60.6 The regions under the wind
+
+A region's surface takes the wind sea's slopes, the mean square slope they leave and their foam,
+keeping its own flow's wavelets at 0.15. Its waves are as high as its water's depth lets them be:
+each cascade's amplitude is multiplied by sqrt(Phi(wh)) at the band's middle frequency, wh = w
+sqrt(h / g), Phi = wh^2 / 2 up to 1, 1 - (2 - wh)^2 / 2 up to 2, then 1. Phi is the depth function
+of S. A. Kitaigorodskii, V. P. Krasitskii and M. M. Zaslavskii ("On Phillips' theory of equilibrium
+range in the spectra of wind-generated gravity waves", J. Phys. Oceanogr. 5(3), 1975), which the TMA
+spectrum takes (E. Bouws, H. Günther, W. Rosenthal and C. L. Vincent, "Similarity of the wind wave
+spectrum in finite depth water: 1. Spectral form", JGR 90(C1), 1985).
+
+### 60.7 The seam
+
+- The sea leaves each region's rectangle to it, but on a side open on the sea it runs a column under
+  the region (`Water::owned_rectangles`): the region draws its surface from its columns' centres, so
+  half a column lay under neither, and the bed showed there through no water.
+- Under a sea with a look, a region's water turns into the sea's over a band beside each side open
+  on it, a quarter of the region's width from that side and at most 48 m, starting a column in: open =
+  1 - smoothstep(cell, band, d), d the distance from the side. Across the band the bed fades from
+  view (its transmittance times 1 - open), local reflections give way to the sky's, and the waves
+  lose their depth's attenuation (the depth taken as h / (1 - open)).
+- Over the column the sea runs under, the region's water sees the sea's surface right behind it, not
+  its bed; a bed still showing in the next column would leave a step there, so the band starts a
+  column in.
+
+### 60.8 Checks, cost and limits
+
+`cargo test -p amoris-render --lib ocean_waves`:
+
+- `a_fetch_limited_sea`: 8 m/s over 50 km peaks at 4.59 s with a significant height of 0.91 m,
+  within 2 percent of JONSWAP's law, 0.0016 sqrt(g F / U^2) U^2 / g; the bands meet and hold over 97
+  percent of m0; the slopes they resolve stay under Cox and Munk's total; a coarser level never
+  loses less; a fetch of 5000 km peaks at Pierson and Moskowitz's 0.855 g / U.
+- `the_synthesized_sea_holds_its_spectrum`, on the GPU: over the three tiles the heights' variance
+  is 0.0489 m^2 against m0's 0.0522, the slopes' 0.0194 against 0.0199; every texel is finite;
+  levels 4 and 8 average the texels of level 0 they cover, within f16 rounding.
+
+`cargo test -p amoris-render --test water a_region_open_on_a_sea_with_its_look_meets_it_without_a_seam`,
+on Metal: seen from straight above, a region 4 m deep over a sand floor, open on the sea along -x,
+the wind at 6.5 m/s. Within 2 m of the seam the largest step between neighbouring pixel columns'
+mean colours is 2.6 levels, as much as the sea's own texture steps, against 132 with the side
+closed; the two sides' mean colours are 1.6 apart; past the band the open and the closed region draw
+the same; the wind sea's texture runs on across the seam (its green spreads by 5.4 inside against
+5.8 on the sea). Without the column the sea runs under the step is 132, without the band 51. The
+test passes on MoltenVK and as the WebGPU baseline too, and the renderer's other tests are
+unchanged.
+
+`cargo test -p amoris-runtime --features transpile --test water a_seas_wind_sea_and_look_persist_and_reach_the_feed`:
+the wind sea and the look reach the feed, persist through a snapshot and a restore, with and without
+them, and the wind's removal sends the sea again with no wind sea.
+
+`cargo run --release -p amoris-app --example ocean_shots -- --out out/ocean --at 1800,2700` draws
+the surf beach from the lineup, inside the bay's mouth, high over it, down on the seam and from the
+open sea: no seam shows, and the bay turns from turquoise to deep blue across its mouth. Against the
+build before (12924bb7), the surf beach's scene as it was, with no wind and no look, draws the same
+six views but along the seam, where the column the sea runs under takes the place of the old build's
+line of bare bed (at most 1 percent of a view's pixels, all on the seam).
+
+In Chrome 155 (WebGPU on the M5), with the viewport rebuilt, the surf beach's and the pool party's
+exports load and play at 16.7 ms a frame with no WebGPU validation error or script exception
+(`web_play_check`, whose block-placing steps do not apply to them; the surf beach also on the
+baseline device), and `water_pool_check.mjs` passes its twelve checks.
+
+The cost is in [liquids.md](../bench/liquids.md) 12.
+
+Limits:
+
+- Presentation only. Buoyancy, the regions' `Sea` sides and replays know the swell alone: a board on
+  the sea rides the swell, not the wind sea; the wind sea does not break on a beach, and the
+  regions' simulated waves do not feel the wind.
+- Deep water on the sea: depth enters only the regions' attenuation, not shoaling or refraction. The
+  wind sea is the steady sea a wind raises over its fetch: it does not grow or decay, a new wind
+  makes its sea at once, and gusts leave it as it is.
+- The tiles repeat every 320, 40 and 6 m, and only the 320 m tile makes foam.
+- The band joins a region to the sea as well as their looks agree. Under a sea with no look the step
+  in colour stays, though the column the sea runs under still hides the bed.

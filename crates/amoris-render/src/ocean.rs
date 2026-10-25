@@ -1,7 +1,9 @@
 //! The ocean (charter 2.4.1, the sailing showcase): a ring grid centred under the camera, displaced
 //! in the vertex shader by the very waves amoris-physics computes buoyancy from, shaded with
 //! Fresnel reflection of the sky, sun glints with the cascaded shadows, subsurface light through
-//! the crests and foam on steep slopes (`fs_ocean` in forward.wgsl).
+//! the crests and foam on steep slopes (`fs_ocean` in forward.wgsl). With a wind, the wind sea
+//! synthesized on the GPU (ocean_waves.rs) displaces and shades it too, and the regions beside it
+//! take its detail; with a look, its water takes a region's colour (water.md 60).
 
 use amoris_assets::frame::SeaView;
 use bytemuck::{Pod, Zeroable};
@@ -21,6 +23,21 @@ struct OceanUniform {
     region_count: u32,
     waves: [[f32; 4]; MAX_WAVES],
     phases: [[f32; 4]; MAX_WAVES],
+    /// The sea's look, as a region's: absorption (w: 1 when the sea has one), scattering, fog.
+    absorb: [f32; 4],
+    scatter: [f32; 4],
+    fog: [f32; 4],
+}
+
+/// The wind sea's resources the sea's and the regions' shaders bind (forward.wgsl `wind_sea`):
+/// blank until the sea first has a wind; `made` then turns.
+pub struct WavesBinding<'a> {
+    pub view: &'a wgpu::TextureView,
+    pub sampler: &'a wgpu::Sampler,
+    pub uniform: &'a wgpu::Buffer,
+    pub made: bool,
+    /// The sea is drawn with a look, as the regions' water is.
+    pub looked: bool,
 }
 
 pub struct Ocean {
@@ -43,6 +60,50 @@ pub struct Ocean {
     view_buffers: [wgpu::Buffer; 2],
     materials: wgpu::Buffer,
     pub group: wgpu::BindGroup,
+    /// The wind sea, made the first time the sea has a wind (ocean_waves.rs).
+    waves: Option<crate::ocean_waves::OceanWaves>,
+    /// Whether this frame's sea has a wind, and a look.
+    windy: bool,
+    looked: bool,
+    blank_waves: wgpu::TextureView,
+    wave_sampler: wgpu::Sampler,
+    wind: wgpu::Buffer,
+}
+
+/// The sea's own bindings (group 3): its uniform, the regions it leaves out, and the wind sea.
+fn ocean_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    uniform: &wgpu::Buffer,
+    regions: &wgpu::Buffer,
+    waves: (&wgpu::TextureView, &wgpu::Sampler, &wgpu::Buffer),
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("ocean"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: regions.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 14,
+                resource: wgpu::BindingResource::TextureView(waves.0),
+            },
+            wgpu::BindGroupEntry {
+                binding: 15,
+                resource: wgpu::BindingResource::Sampler(waves.1),
+            },
+            wgpu::BindGroupEntry {
+                binding: 16,
+                resource: waves.2.as_entire_binding(),
+            },
+        ],
+    })
 }
 
 fn ring_grid() -> (Vec<[f32; 2]>, Vec<u32>) {
@@ -242,9 +303,35 @@ impl Ocean {
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 14,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2Array,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 15,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 16,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
@@ -303,20 +390,28 @@ impl Ocean {
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("ocean"),
-            layout: &layout3,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: uniform.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: regions.as_entire_binding(),
-                },
-            ],
+        let blank_waves = crate::ocean_waves::blank(device);
+        let wave_sampler = crate::ocean_waves::sampler(device);
+        let wind = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("ocean wind sea"),
+            size: std::mem::size_of::<crate::ocean_waves::WindSeaUniform>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: true,
         });
+        wind.slice(..)
+            .get_mapped_range_mut()
+            .expect("mapped at creation")
+            .copy_from_slice(bytemuck::bytes_of(
+                &crate::ocean_waves::WindSeaUniform::off(),
+            ));
+        wind.unmap();
+        let group = ocean_group(
+            device,
+            &layout3,
+            &uniform,
+            &regions,
+            (&blank_waves, &wave_sampler, &wind),
+        );
         Ocean {
             pipeline,
             masked_pipeline,
@@ -336,6 +431,34 @@ impl Ocean {
             view_buffers: view_buffers.map(Clone::clone),
             materials: materials.clone(),
             group,
+            waves: None,
+            windy: false,
+            looked: false,
+            blank_waves,
+            wave_sampler,
+            wind,
+        }
+    }
+
+    /// The wind sea's bindings, for the regions' shading.
+    pub(crate) fn waves_binding(&self) -> WavesBinding<'_> {
+        WavesBinding {
+            view: self.waves.as_ref().map_or(&self.blank_waves, |w| w.view()),
+            sampler: &self.wave_sampler,
+            uniform: &self.wind,
+            made: self.waves.is_some(),
+            looked: self.looked,
+        }
+    }
+
+    /// Synthesizes this frame's wind sea, if the sea has a wind.
+    pub fn encode(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        profiler: &mut crate::profiler::GpuProfiler,
+    ) {
+        if let Some(waves) = self.waves.as_ref().filter(|_| self.windy) {
+            waves.encode(encoder, profiler);
         }
     }
 
@@ -368,35 +491,48 @@ impl Ocean {
             });
             self.materials = materials.clone();
         }
+        // The wind sea: made the first time the sea has a wind, kept after.
+        self.windy = sea.wind.is_some();
+        self.looked = sea.look.is_some();
+        let made = sea.wind.is_some() && self.waves.is_none();
+        if made {
+            self.waves = Some(crate::ocean_waves::OceanWaves::new(device));
+        }
+        let wind = match (&sea.wind, &mut self.waves) {
+            (Some(view), Some(waves)) => waves.update(queue, view, t),
+            _ => crate::ocean_waves::WindSeaUniform::off(),
+        };
+        queue.write_buffer(&self.wind, 0, bytemuck::bytes_of(&wind));
+        let resized = regions.len() > self.region_capacity;
+        if resized {
+            self.region_capacity = regions.len().next_power_of_two();
+            self.regions = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("ocean exclusions"),
+                size: self.region_capacity as u64 * 16,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+        }
+        if resized || made {
+            self.group = ocean_group(
+                device,
+                &self.bind_layout,
+                &self.uniform,
+                &self.regions,
+                (
+                    self.waves.as_ref().map_or(&self.blank_waves, |w| w.view()),
+                    &self.wave_sampler,
+                    &self.wind,
+                ),
+            );
+        }
         if regions != self.region_values {
-            if regions.len() > self.region_capacity {
-                self.region_capacity = regions.len().next_power_of_two();
-                self.regions = device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("ocean exclusions"),
-                    size: self.region_capacity as u64 * 16,
-                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                });
-                self.group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("ocean"),
-                    layout: &self.bind_layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: self.uniform.as_entire_binding(),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 2,
-                            resource: self.regions.as_entire_binding(),
-                        },
-                    ],
-                });
-            }
             if !regions.is_empty() {
                 queue.write_buffer(&self.regions, 0, bytemuck::cast_slice(&regions));
             }
             self.region_values = regions;
         }
+        let look = sea.look;
         let mut u = OceanUniform {
             level: sea.level,
             count: 0,
@@ -404,6 +540,11 @@ impl Ocean {
             region_count: self.region_values.len() as u32,
             waves: [[0.0; 4]; MAX_WAVES],
             phases: [[0.0; 4]; MAX_WAVES],
+            absorb: look.map_or([0.0; 4], |l| [l.absorb[0], l.absorb[1], l.absorb[2], 1.0]),
+            scatter: look.map_or([0.0; 4], |l| {
+                [l.scatter[0], l.scatter[1], l.scatter[2], 0.0]
+            }),
+            fog: look.map_or([0.0; 4], |l| l.fog),
         };
         for w in sea.waves.iter().filter(|w| w.length > 0.0).take(MAX_WAVES) {
             let i = u.count as usize;

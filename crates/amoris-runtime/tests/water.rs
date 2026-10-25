@@ -93,6 +93,80 @@ fn a_region_takes_its_beds_from_the_volume_and_keeps_them() {
     });
 }
 
+/// A sea's wind sea and look (water.md 60) persist with the rest of it (`Sea` version 2) and reach
+/// the feed: the wind sea blows toward the bearing opposite the wind's, over the sea's fetch, and
+/// with the wind removed the sea is sent again without one.
+#[test]
+fn a_seas_wind_sea_and_look_persist_and_reach_the_feed() {
+    common::big_stack(|| {
+        let look = json!({"fog": [0.04, 0.22, 0.26, 0.015], "absorb": [0.35, 0.07, 0.05],
+            "scatter": [0.03, 0.05, 0.05]});
+        let root = project(
+            "wind-sea",
+            MAIN,
+            json!([
+                {"name": "Ocean", "components": {"Sea": {"density": 1025, "fetch_km": 40.0, "look": look}}},
+                {"name": "Breeze", "components": {"Wind": {"from_deg": 240.0, "speed": 6.5}}}
+            ]),
+        );
+        let mut g = game(&root).unwrap_or_else(|e| panic!("{e:#?}"));
+        let feed = amoris_assets::Feed::new();
+        let mailbox = feed.subscribe();
+        let mut extractor = amoris_runtime::Extractor::default();
+        g.step().unwrap();
+        g.present(&mut extractor, &feed);
+        let sea = mailbox.take().sea.flatten().expect("the sea is sent");
+        assert_eq!(
+            sea.wind,
+            Some(amoris_assets::frame::WindSeaView {
+                speed: 6.5,
+                toward_deg: 60.0,
+                fetch_km: 40.0
+            })
+        );
+        assert_eq!(sea.look.map(|l| l.absorb), Some([0.35, 0.07, 0.05]));
+        let sea_of = |g: &Game| {
+            let mut q = g.world().try_query::<&amoris_physics::Sea>().unwrap();
+            q.single(g.world()).unwrap().clone()
+        };
+        let before = sea_of(&g);
+        let snap = g.snapshot().unwrap();
+        let hash = g.world_hash().unwrap();
+        g.step().unwrap();
+        g.restore(&snap).unwrap();
+        assert_eq!(sea_of(&g), before);
+        assert_eq!(g.world_hash().unwrap(), hash);
+        g.apply(&amoris_runtime::Command::new(
+            amoris_link::Source::Developer(0),
+            1,
+            "world_edit",
+            json!({"edits": [{"op": "remove", "entity": "Breeze", "component": "Wind"}]}),
+        ))
+        .unwrap();
+        g.step().unwrap();
+        g.present(&mut extractor, &feed);
+        let sea = mailbox.take().sea.flatten().expect("the sea is sent again");
+        assert_eq!(sea.wind, None);
+        assert!(sea.look.is_some());
+        // A sea with neither persists as well.
+        g.apply(&amoris_runtime::Command::new(
+            amoris_link::Source::Developer(0),
+            2,
+            "world_edit",
+            json!({"edits": [{"op": "set", "entity": "Ocean", "component": "Sea",
+                "value": {"fetch_km": 0.0, "look": null}}]}),
+        ))
+        .unwrap();
+        let plain = sea_of(&g);
+        assert_eq!((plain.fetch_km, plain.look), (0.0, None));
+        let snap = g.snapshot().unwrap();
+        g.step().unwrap();
+        g.restore(&snap).unwrap();
+        assert_eq!(sea_of(&g), plain);
+        std::fs::remove_dir_all(root).unwrap();
+    });
+}
+
 #[test]
 fn a_misaligned_region_is_refused_at_load() {
     common::big_stack(|| {

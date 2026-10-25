@@ -17,18 +17,18 @@ use std::collections::HashMap;
 use amoris_assets::frame::{
     AnimView, AudioView, BlockLook, CameraView, ChunkUpdate, EmitterView, EnvironmentView,
     InstanceUpdate, LightKindView, LightView, Look, Pose, RenderFrame, ResidentWaterUpdate,
-    SeaView, SplatView, StirView, UiView, VoxelUpdate, WaterLookView, WaterTileView, WaterUpdate,
-    WaveView,
+    SeaLookView, SeaView, SplatView, StirView, UiView, VoxelUpdate, WaterLookView, WaterTileView,
+    WaterUpdate, WaveView, WindSeaView,
 };
 use amoris_assets::{
     Animator, AudioSource, Camera, Environment, Feed, Light, LightKind, Model, ParticleEmitter,
     SkyKind, Splat, UiAnchor, UiBar, UiText,
 };
 use amoris_physics::water::{
-    Solver,
+    Edge, Solver,
     resident::{WaterCheckpoints, WaterResident},
 };
-use amoris_physics::{BedSource, Sea, Style, Transform, WaterRegion, WaterSteps};
+use amoris_physics::{BedSource, Sea, Style, Transform, WaterRegion, WaterSteps, Wind};
 use amoris_sim::voxels::{BlockShape, Voxels};
 use amoris_sim::{ContentHash, EntityId, SimClock};
 use bevy_ecs::change_detection::DetectChanges;
@@ -73,6 +73,7 @@ fn water_look(r: &WaterRegion) -> WaterLookView {
         scatter: r.look.scatter,
         blocky: r.look.style == Style::Blocky,
         surround_m: r.look.surround_m,
+        sea: r.edges.map(|e| e == Edge::Sea),
         per: match r.bed {
             BedSource::Voxels { per, .. } => per,
             BedSource::Colliders { .. } => 1,
@@ -311,6 +312,7 @@ struct Queries {
     cameras: QueryState<(Ref<'static, Transform>, Ref<'static, Camera>)>,
     environment: QueryState<Ref<'static, Environment>>,
     sea: QueryState<Ref<'static, Sea>>,
+    wind: QueryState<Ref<'static, Wind>>,
     emitters: QueryState<(Opt<Transform>, Ref<'static, ParticleEmitter>)>,
     audio: QueryState<(Opt<Transform>, Ref<'static, AudioSource>)>,
     ui: QueryState<UiRow, UiFilter>,
@@ -333,6 +335,7 @@ impl Queries {
             cameras: QueryState::new(world),
             environment: QueryState::new(world),
             sea: QueryState::new(world),
+            wind: QueryState::new(world),
             emitters: QueryState::new(world),
             audio: QueryState::new(world),
             ui: QueryState::new(world),
@@ -618,7 +621,11 @@ impl Extractor {
             .any(|(t, c)| t.is_changed() || c.is_changed())
             || w.removed::<Camera>().next().is_some();
         let environment = q.environment.iter(w).any(|e| e.is_changed());
-        let sea = q.sea.iter(w).any(|s| s.is_changed()) || w.removed::<Sea>().next().is_some();
+        // The wind raises the wind sea drawn on the sea.
+        let sea = q.sea.iter(w).any(|s| s.is_changed())
+            || w.removed::<Sea>().next().is_some()
+            || q.wind.iter(w).any(|s| s.is_changed())
+            || w.removed::<Wind>().next().is_some();
         let emitters = q
             .emitters
             .iter(w)
@@ -822,6 +829,12 @@ impl Extractor {
     }
 
     fn sea(world: &mut World) -> Option<SeaView> {
+        // The wind sea grows from the wind's mean speed and direction over the sea's fetch.
+        let wind = world
+            .query::<(&EntityId, &Wind)>()
+            .iter(world)
+            .min_by_key(|(id, _)| id.get())
+            .map(|(_, w)| *w);
         world
             .query::<(&EntityId, &Sea)>()
             .iter(world)
@@ -838,6 +851,18 @@ impl Extractor {
                         phase: f(w.phase),
                     })
                     .collect(),
+                wind: wind
+                    .filter(|w| s.fetch_km > 0.0 && w.speed > 0.0)
+                    .map(|w| WindSeaView {
+                        speed: f(w.speed),
+                        toward_deg: f((w.from_deg + 180.0).rem_euclid(360.0)),
+                        fetch_km: f(s.fetch_km),
+                    }),
+                look: s.look.map(|l| SeaLookView {
+                    fog: l.fog,
+                    absorb: l.absorb,
+                    scatter: l.scatter,
+                }),
             })
     }
 

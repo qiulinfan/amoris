@@ -340,3 +340,14 @@ kind's events and dissipated power, and amoris-audio's `water` rings bubbles fro
 spray's compute stage holds eight storage buffers, WebGPU's per-stage limit. Changes run renderer
 water_spray (also under AMORIS_GPU_MINIMAL) and amoris-audio's tests, and compare the `water_sound`
 example's levels with liquids.md 10.
+
+The wind sea (water.md 60) is presentation too: `Sea.fetch_km` and the first `Wind` raise it,
+synthesized in three FFT cascades in four dispatches (ocean_waves.rs and .wgsl), drawn on the sea
+and as the regions' detail; `Sea.look` and the regions' Sea sides join the two over a band.
+Persisted types are written with PCE, which refuses a field left out by `skip_serializing_if`: a
+new field of one has a default and bumps the type's version (`Sea` is version 2, its sailing chain
+re-blessed).
+Changes run the renderer's `ocean_waves` tests and water
+`a_region_open_on_a_sea_with_its_look_meets_it_without_a_seam` (also on MoltenVK and under
+AMORIS_GPU_MINIMAL), runtime water `a_seas_wind_sea_and_look_persist_and_reach_the_feed`,
+`ocean_shots`' views and liquids.md 12's trace.

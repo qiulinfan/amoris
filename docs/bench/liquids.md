@@ -492,3 +492,44 @@ validation error or script exception (`web_play_check`, whose block-placing step
 and `water_pool_check.mjs` passes its twelve checks.
 
 Not measured: R1 (the RTX 5060 and the 780M), Direct3D 12, and the pass alone in the browser.
+
+## 12. The wind sea (Pioneer, 2026-10-23)
+
+The wind sea of [water.md](../spec/water.md) 60 on the M5 (10 GPU cores), macOS, Metal, release
+builds, 2026-10-23. The machine was not checked for other load; a set during which other work took
+the CPU (a frame's CPU span 2.8 ms against 0.9) was dropped and run again. Raw traces and captures
+stay in ignored `out/`.
+
+`AMORIS_TRACE=frames=300,skip=1200,out=PATH cargo run --release -p amoris-app --example ocean_shots -- --out DIR --at 1700 --view mouth`,
+then `python tools/frame_trace.py diff CALM WIND`: the surf beach at 1280 x 720 with MSAA, from
+inside the bay's mouth looking out to sea, the bay's water in front and the sea to the horizon. Calm
+is the same scene with the sea's fetch at 0, the sea then drawn with its wavelets. Two runs of each,
+alternated; medians over 300 frames:
+
+| | Calm | Wind |
+|---|---|---|
+| frame interval | 12.65, 12.67 ms | 13.15, 13.23 ms |
+| `ocean waves` | none | 0.297, 0.296 ms (p95 0.37, 0.31) |
+| `opaque+sky` (the sea) | 1.35, 1.35 ms | 1.33, 1.33 ms |
+| `water+foreground` (the bay) | 3.77, 3.77 ms | 4.06, 4.05 ms |
+| `post` | 3.73, 3.72 ms | 4.00, 4.00 ms |
+| CPU `uniforms` | 0.282, 0.284 ms | 0.284, 0.286 ms |
+
+The wind sea makes a frame about 0.5 ms longer: the synthesis, 0.30 ms, and the bay's surface
+reading the waves, 0.29 ms. The sea's own pixels cost what its wavelets did. `post`'s interval grows
+with the frame's work although post-processing does not change: a pass's interval can include
+waiting for the work before it.
+
+**The synthesis.** Four dispatches take 0.297 ms. The thirteen it took at first (the spectrum, the
+rows, the columns, the texels and a dispatch a mip level) took 0.565 ms; timed in passes of their
+own, 0.043 ms for the spectrum, 0.189 for the rows, 0.148 for the columns, 0.085 for the texels and
+0.130 for the eight levels. Making the spectrum in the rows' workgroups and the texels in the
+columns' saves writing and reading the four fields once each, and the eight levels' dispatches, each
+waiting on the last, became two. The spectrum's constants, made every frame at first, took 0.05 ms
+of the CPU's `uniforms` span; made once a wind, nothing.
+
+**Anisotropy.** 16 samples against 8 made the frame 0.39 to 0.40 ms longer, `opaque+sky` 0.13 to
+0.14 ms and `water+foreground` 0.19 ms, and changed the six views of `ocean_shots` by 0.006 to 0.23
+levels on average. 8 is kept.
+
+Not measured: R1 (the RTX 5060 and the 780M), Direct3D 12, Vulkan, and the browser's pass alone.

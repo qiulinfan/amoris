@@ -455,6 +455,8 @@ fn sunk_scene(sea: bool) -> RenderFrame {
     f.sea = Some(sea.then(|| SeaView {
         level: SEA,
         waves: vec![],
+        wind: None,
+        look: None,
     }));
     f
 }
@@ -645,6 +647,8 @@ fn splat_frames(
     f.sea = Some(Some(SeaView {
         level: 0.5,
         waves: vec![],
+        wind: None,
+        look: None,
     }));
     f.splats = Some(vec![SplatView {
         id: 7,

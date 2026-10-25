@@ -358,7 +358,6 @@ persisted! {
     ExternalForce => "ExternalForce",
     Sail => "Sail",
     Hull => "Hull",
-    Sea => "Sea",
     Wind => "Wind",
     WaterSource => "WaterSource",
     WaterDrain => "WaterDrain",
@@ -392,6 +391,11 @@ impl Persisted for Walker {
 
 impl Persisted for Floater {
     const NAME: &'static str = "Floater";
+    const VERSION: u32 = 2;
+}
+
+impl Persisted for Sea {
+    const NAME: &'static str = "Sea";
     const VERSION: u32 = 2;
 }
 

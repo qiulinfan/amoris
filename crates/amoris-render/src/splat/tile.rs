@@ -1156,6 +1156,8 @@ mod tests {
                     sea: sea.then_some(Some(amoris_assets::frame::SeaView {
                         level: 1.0,
                         waves: vec![],
+                        wind: None,
+                        look: None,
                     })),
                     ..Default::default()
                 },

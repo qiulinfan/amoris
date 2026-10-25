@@ -78,7 +78,17 @@ struct Uniform {
     optics: [f32; 4],
     /// The ripples' window over this region (water_ripples.rs), or zero.
     ripple: [f32; 4],
+    /// Per side open on a sea drawn with a look, the band (m) over which the water turns to the
+    /// sea's, else 0 (water.md 60).
+    sea: [f32; 4],
 }
+
+/// The region uniform's size in 32-bit words, for the checks that write one by hand.
+#[cfg(test)]
+pub(crate) const UNIFORM_WORDS: usize = std::mem::size_of::<Uniform>() / 4;
+
+/// How far into a region the water turns to the sea's beyond a side open on it, at most.
+const SEA_BAND_M: f32 = 48.0;
 
 /// A region as the renderer holds it.
 struct Region {
@@ -270,6 +280,10 @@ pub struct Water {
     ripple_sampler: wgpu::Sampler,
     /// The ripples were just made: every region's bind group takes their texture.
     ripples_new: bool,
+    /// Whether the regions' bind groups hold the wind sea's texture, not the blank one.
+    waves_made: bool,
+    /// The wind sea's bindings (ocean.rs `WavesBinding`), held for the bind groups made later.
+    waves: Option<WindSeaBinding>,
 }
 
 /// The spike's host-made field's key among the regions.
@@ -358,6 +372,24 @@ impl Water {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
+                // The wind sea the sea draws (ocean_waves.rs), continued as the surface's detail.
+                wgpu::BindGroupLayoutEntry {
+                    binding: 14,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2Array,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 15,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                entry(16, wgpu::BufferBindingType::Uniform),
             ],
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -433,6 +465,8 @@ impl Water {
                 ..Default::default()
             }),
             ripples_new: false,
+            waves_made: false,
+            waves: None,
         }
     }
 
@@ -465,15 +499,19 @@ impl Water {
         self.stitch = pipeline(device, module, &self.layout, format, "vs_shallow_stitch");
     }
 
+    /// The rectangles the sea leaves to the regions. On a side open on the sea the sea runs a
+    /// column under the region: the surface is drawn from the columns' centres, and the half
+    /// column between would show the bed through no water.
     pub(crate) fn owned_rectangles(&self) -> Vec<[f32; 4]> {
         self.regions
             .values()
             .map(|r| {
+                let inset = |side: usize| if r.look.sea[side] { r.cell_m } else { 0.0 };
                 [
-                    r.origin[0],
-                    r.origin[1],
-                    r.origin[0] + r.size[0] as f32 * r.cell_m,
-                    r.origin[1] + r.size[1] as f32 * r.cell_m,
+                    r.origin[0] + inset(0),
+                    r.origin[1] + inset(2),
+                    r.origin[0] + r.size[0] as f32 * r.cell_m - inset(1),
+                    r.origin[1] + r.size[1] as f32 * r.cell_m - inset(3),
                 ]
             })
             .collect()
@@ -943,6 +981,7 @@ impl Water {
                 blocky: false,
                 per: 1,
                 surround_m: 0.0,
+                sea: [false; 4],
             },
             columns: Vec::new(),
             tiled: false,
@@ -980,7 +1019,10 @@ impl Water {
         targets: &crate::post::Targets,
         module: &wgpu::ShaderModule,
         sea_present: bool,
+        waves: crate::ocean::WavesBinding<'_>,
     ) {
+        // A sea with a look shades its water as a region's: the regions meet it unseen.
+        let seam = waves.looked;
         if self.regions.is_empty() {
             return;
         }
@@ -997,7 +1039,18 @@ impl Water {
                 targets.format,
             )
         });
-        let changed = optics.prepare(device, targets) | std::mem::take(&mut self.ripples_new);
+        // The wind sea's texture replaces the blank one once the sea first has a wind.
+        let waves_made = waves.made && !std::mem::replace(&mut self.waves_made, waves.made);
+        if waves_made || self.waves.is_none() {
+            self.waves = Some(WindSeaBinding {
+                view: waves.view.clone(),
+                sampler: waves.sampler.clone(),
+                uniform: waves.uniform.clone(),
+            });
+        }
+        let waves = self.waves.as_ref().expect("wind sea bindings held");
+        let changed =
+            optics.prepare(device, targets) | std::mem::take(&mut self.ripples_new) | waves_made;
         let ripple = (
             self.ripples
                 .as_ref()
@@ -1069,6 +1122,7 @@ impl Water {
                     (&self.dummy_geometry, &ledges.args, &ledges.mask),
                     optics,
                     ripple,
+                    waves,
                 );
                 let depth_group = depth_group(
                     device,
@@ -1119,6 +1173,7 @@ impl Water {
                     ),
                     optics,
                     ripple,
+                    waves,
                 );
             }
             // Adjacent ticks can compute the same drawn boundary one f64 ulp apart (61/60 -
@@ -1173,6 +1228,14 @@ impl Water {
                 } else {
                     [0.0; 4]
                 },
+                sea: std::array::from_fn(|side| {
+                    let extent = [nx, nz][side / 2] as f32 * r.cell_m;
+                    if seam && r.look.sea[side] {
+                        (0.25 * extent).min(SEA_BAND_M)
+                    } else {
+                        0.0
+                    }
+                }),
             };
             r.surround_on = surround[1] > 0.0;
             queue.write_buffer(&g.uniform, 0, bytemuck::bytes_of(&u));
@@ -1338,6 +1401,9 @@ impl Water {
                         (geometry, &g.ledges.args, &g.ledges.mask),
                         optics,
                         ripple,
+                        self.waves
+                            .as_ref()
+                            .expect("water updated before it encodes"),
                     );
                     g.depth_group = depth_group(
                         device,
@@ -1503,7 +1569,6 @@ impl Water {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn medium(
         &mut self,
@@ -1712,6 +1777,13 @@ impl Water {
     }
 }
 
+/// The wind sea's bindings the regions' shading reads.
+struct WindSeaBinding {
+    view: wgpu::TextureView,
+    sampler: wgpu::Sampler,
+    uniform: wgpu::Buffer,
+}
+
 #[allow(clippy::too_many_arguments)]
 fn optical_group(
     device: &wgpu::Device,
@@ -1722,11 +1794,24 @@ fn optical_group(
     (geometry, ledge, mask): (&wgpu::Buffer, &wgpu::Buffer, &wgpu::TextureView),
     optics: &crate::water_optics::Optics,
     (ripples, ripple_sampler): (&wgpu::TextureView, &wgpu::Sampler),
+    waves: &WindSeaBinding,
 ) -> wgpu::BindGroup {
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("water optics"),
         layout,
         entries: &[
+            wgpu::BindGroupEntry {
+                binding: 14,
+                resource: wgpu::BindingResource::TextureView(&waves.view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 15,
+                resource: wgpu::BindingResource::Sampler(&waves.sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 16,
+                resource: waves.uniform.as_entire_binding(),
+            },
             wgpu::BindGroupEntry {
                 binding: 12,
                 resource: wgpu::BindingResource::TextureView(ripples),

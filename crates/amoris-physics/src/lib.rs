@@ -49,7 +49,7 @@ pub use body::{
 };
 pub use cache::{IDENTITY, PhysicsCache, declare};
 pub use forces::start_time;
-pub use sea::{GRAVITY, Sea, Water, Wave, WaveField, Wind};
+pub use sea::{GRAVITY, Sea, SeaLook, Water, Wave, WaveField, Wind};
 pub use solver::{BodyIndex, ContactLog, Physics, RebuiltSolver};
 pub use walker::Walker;
 pub use water::{

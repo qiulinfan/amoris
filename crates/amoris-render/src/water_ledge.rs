@@ -524,7 +524,7 @@ mod tests {
                     &columns,
                     wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 );
-                let mut words = [0u32; 32];
+                let mut words = [0u32; crate::water::UNIFORM_WORDS];
                 words[2] = 1.0f32.to_bits();
                 words[4] = 2;
                 words[5] = 2;
@@ -700,7 +700,7 @@ mod tests {
         g.device
             .on_uncaptured_error(std::sync::Arc::new(|e| panic!("ledge ramp: {e}")));
         let pipeline = Pipelines::new(&g.device);
-        let mut params = [0u32; 32];
+        let mut params = [0u32; crate::water::UNIFORM_WORDS];
         params[2] = 1.0f32.to_bits();
         params[4] = 4;
         params[5] = 4;

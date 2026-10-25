@@ -309,6 +309,9 @@ def main():
             triangles += [[a, d, c], [a, c, b]]
 
     entities = []
+    # The bay's water, which the open sea shares.
+    WATER = {"fog": [0.04, 0.22, 0.26, 0.015], "absorb": [0.35, 0.07, 0.05],
+             "scatter": [0.03, 0.05, 0.05]}
 
     def entity(name, components):
         entities.append({"name": name, "components": components})
@@ -324,10 +327,13 @@ def main():
         "fog_color": [0.74, 0.84, 0.94]}})
     # The open sea: its swell drives the region's west side and is drawn beyond the region.
     # A long-period groundswell, 20 s, and a second train crossing it: long waves (kh under 0.3)
-    # all the way in from the bay's mouth, where the shallow-water flow is exact.
+    # all the way in from the bay's mouth, where the shallow-water flow is exact. Over it, the
+    # chop the sea breeze (`Breeze`, below) raises over 40 km of open water, drawn to the horizon
+    # and over the bay in the bay's own water colour (water.md 60).
     entity("Ocean", {"Sea": {"level": 0.0, "density": 1025, "waves": [
         {"length": 624.0, "height": 2.4, "toward_deg": 88.0, "phase": 0.0},
-        {"length": 600.0, "height": 0.6, "toward_deg": 78.0, "phase": 1.3}]}})
+        {"length": 600.0, "height": 0.6, "toward_deg": 78.0, "phase": 1.3}],
+        "fetch_km": 40.0, "look": WATER}})
     entity("Beach", {"Transform": {"position": [0, 0, 0]},
         "Model": {"mesh": "terrain.glb", "scale": [1, 1, 1]},
         "RigidBody": {"kind": "Fixed"},
@@ -356,9 +362,7 @@ def main():
             "friction": 0.01, "calm_per_s": 0.0, "substeps": 2, "dry_below": 0,
             "physics": {"dispersion": False, "breaking": True, "falls_m": 0,
                         "nonhydrostatic": True},
-            "look": {"style": "Smooth", "surround_m": 0,
-                "fog": [0.04, 0.22, 0.26, 0.015], "absorb": [0.35, 0.07, 0.05],
-                "scatter": [0.03, 0.05, 0.05]},
+            "look": {"style": "Smooth", "surround_m": 0, **WATER},
             "tiles": tiles},
         "WaterDisplacement": {}})
     surf = len(entities)
@@ -436,6 +440,8 @@ def main():
         "size": 18, "offset": [24, 88], "color": [1, 0.9, 0.5, 1]}})
     entity("Shout", {"SurfShout": {}, "UiText": {"text": "", "size": 22, "anchor": "bottom_left",
         "offset": [24, 40], "color": [1, 1, 1, 1]}})
+    # A 6.5 m/s sea breeze from the south-west, across the swell and onto the beach.
+    entity("Breeze", {"Wind": {"from_deg": 240.0, "speed": 6.5}})
     write_json("scene.json", {"format": "amoris-scene", "version": 1, "entities": entities},
                compact=True)
 

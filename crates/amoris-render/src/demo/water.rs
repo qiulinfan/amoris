@@ -124,6 +124,7 @@ pub fn scene(case: &str) -> RenderFrame {
                 blocky: false,
                 per: 1,
                 surround_m: 0.0,
+                sea: [false; 4],
             }),
         }],
         lights: Some(vec![LightView {

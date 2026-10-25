@@ -2983,6 +2983,7 @@ impl Renderer {
                 &self.targets,
                 &self.fwd_module,
                 self.scene.sea.is_some(),
+                self.ocean.waves_binding(),
             );
         }
         let mut planes = [[[0.0f32; 4]; 6]; 5];
@@ -3094,6 +3095,9 @@ impl Renderer {
             .map_or(1.0 / 60.0, |t| (now_s - t).clamp(0.0, 0.1)) as f32;
         self.last_frame_s = Some(now_s);
         self.water.set_spray(self.splashes_on);
+        if self.scene.sea.is_some() {
+            self.ocean.encode(&mut enc, &mut self.profiler);
+        }
         self.water.encode(
             &device,
             &queue,

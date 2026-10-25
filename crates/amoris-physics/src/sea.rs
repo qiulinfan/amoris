@@ -39,6 +39,25 @@ pub struct Sea {
     /// kg/m^3.
     pub density: f64,
     pub waves: Vec<Wave>,
+    /// Kilometres of open water the `Wind` has blown over toward here: with a wind, the wind sea
+    /// it raises is drawn on the sea and as the surface detail of the regions beside it (water.md
+    /// 60). It is drawn only; buoyancy and the regions' Sea sides follow `waves`. 0: none.
+    pub fetch_km: f64,
+    /// The water's colour to the horizon, as a region's look gives it (absorption, scattering and
+    /// the fog seen from under the surface); none keeps the sea's own deep colour.
+    pub look: Option<SeaLook>,
+}
+
+/// A sea's optical depth, the quantities a water region's look has (water.md 9 and 60).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SeaLook {
+    /// The view from under the surface: linear colour and fog density per metre.
+    pub fog: [f32; 4],
+    /// Absorption per metre, linear rgb.
+    pub absorb: [f32; 3],
+    /// Scattering per metre, linear rgb.
+    pub scatter: [f32; 3],
 }
 
 impl Default for Sea {
@@ -47,6 +66,8 @@ impl Default for Sea {
             level: 0.0,
             density: 1000.0,
             waves: Vec::new(),
+            fetch_km: 0.0,
+            look: None,
         }
     }
 }
@@ -64,6 +85,8 @@ impl Sea {
         Sea {
             level: 0.0,
             density,
+            fetch_km: 0.0,
+            look: None,
             waves: parts
                 .iter()
                 .map(|&(len, height, turn, phase)| Wave {

@@ -32,7 +32,7 @@ CPU 保持跨目标确定性；GPU 使用 WebGPU 基线支持的 f32，只在相
 **Pioneer 2026-10-22（`explore/water`、`explore/water-nh`）。** 所有者要求在 Amoris Pioneer 上把水物
 理继续做到前沿水准，并以三个游戏场景验收：河流汇入瀑布、泳池派对、强浪海滩冲浪。为此 Pioneer 越过上
 文 2026-10-21 的交付范围，在 `gpu_resident` 区域上加入以下能力，契约见 [water.md](spec/water.md)
-46–59，测量见 [liquids.md](bench/liquids.md) 7–11：
+46–60，测量见 [liquids.md](bench/liquids.md) 7–12：
 
 - 物体排水的竖直双向耦合：浮体点和游泳者把水面下的体积作为压力水头加到水柱上，水量严格守恒（思路来自
   M. Müller, GDC 2008）。浮力按步末位置线性隐式求值（D. Baraff 与 A. Witkin, SIGGRAPH 1998），阻力隐
@@ -83,6 +83,18 @@ CPU 保持跨目标确定性；GPU 使用 WebGPU 基线支持的 f32，只在相
   Byrne 的海浪测量定出；满刻度对应 105 dB（单声道 −20 dBFS 为 85 dB，同影院校准 SMPTE RP 200）。气泡
   超出预算时按能量分层做重要性抽样，保住承载大部分能量的大气泡。用浅水模拟驱动气泡声的思路来自 W.
   Moss 等（2010）。原生窗口播放，浏览器暂不播放。
+- 远海风浪与接缝（2026-10-23，只做表现）：`Wind` 吹过 `Sea.fetch_km` 千米的风区掀起风浪，每帧在 GPU
+  上按 J. Tessendorf（2001）的方法合成，三级 FFT 级联（320、40、6 m 的瓦片，各 256×256，各管一段波
+  长），四次 dispatch 完成。频谱取 JONSWAP（K. Hasselmann 等，1973），按其风区能量定律归一，充分成长
+  后取 W. J. Pierson 与 L. Moskowitz（1964）的谱峰；方向分布取 M. A. Donelan、J. Hamilton 与 W. H.
+  Hui（1985）的 sech²，形式按 C. J. Horvath（2015）。水平位移让浪峰变尖，位移的 Jacobian 折叠处起白
+  浪，覆盖率按 E. C. Monahan 与 I. Ó Muircheartaigh（1980）。像素分辨不了的斜率按 C. Cox 与 W.
+  Munk（1954）实测的总均方斜率并入 GGX 粗糙度（E. Bruneton、F. Neyret 与 N. Holzschuch, 2010）。区域
+  表面接着画风浪的细节，浪高按水深取 TMA 谱的深度因子（S. A. Kitaigorodskii 等，1975；E. Bouws
+  等，1985）。`Sea.look` 让海按区域水体的光学参数着色；区域朝海的边上，海在区域下多铺一列，区域的水
+  在一条带内（区域宽度的四分之一，至多 48 m）渐渐变成海：海床淡出，局部反射让位于天空，水深对浪的削
+  弱消失，于是冲浪湾的海湾与远海之间看不出接缝。风浪不进浮力、`Sea` 边与回放；`Sea` 为此升到版本 2，
+  帆船场景的状态链重新确认。
 
 验收：`amoris-app` 的 `gpu_frontier_scenes` 用玩家的第一人称动作玩通
 `samples/pool-party`、`samples/river-falls` 和 `samples/surf-beach`；三个样例导出的网页包在 Chrome
@@ -93,7 +105,7 @@ CPU 保持跨目标确定性；GPU 使用 WebGPU 基线支持的 f32，只在相
 512×256、4 子步时每步 3.9 ms（冲浪样例取 2 子步，约 2.3 ms），高于浅水方程的 1.6 ms。入水冲击只给出
 von Kármán 的合力，H. Wagner（1932）的水面堆高与局部冲击压力分布未纳入；转动的附加惯量和沿水面滑行的
 附加质量也未纳入。物体与水仍按步交替耦合，能量一致靠浮体一侧在同一步里补上自己的水头，而不是整体隐式
-求解。
+求解。风浪只做表现：海上的冲浪板只随涌浪起伏，风浪不会在海滩上破碎，区域模拟的浪也感受不到风。
 
 ## 1. 这份文档是什么
 

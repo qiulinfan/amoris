@@ -697,6 +697,9 @@ struct Ocean {
     region_count: u32,
     waves: array<vec4f, 16>,     // dir.x, dir.z, k, amplitude
     phases: array<vec4f, 16>,    // omega, phase
+    absorb: vec4f,               // the sea's look, as a region's (w: 1 when it has one)
+    scatter: vec4f,
+    fog: vec4f,
 };
 
 @group(3) @binding(0) var<uniform> ocean: Ocean;
@@ -713,6 +716,84 @@ fn fs_ocean_depth(in:OceanOut) {
     if(ocean_excluded(in.world.xz)){discard;}
 }
 
+
+// The wind sea (ocean_waves.wgsl, water.md 60): three cascades of displacement and foam (layers
+// 0 to 2) and of slopes and the displacement's derivatives (3 to 5), each tile repeating, read
+// by the sea and by the regions beside it, so its detail runs on across their seam.
+struct WindSea {
+    cascades: array<vec4f, 3>,   // 1 / tile, texel (m), angular frequency at the band's middle
+    lost: array<vec4f, 9>,       // per mip level, each cascade's mean square slope finer than it
+    params: vec4f,               // x: on, y: the mean square slope finer than the cascades, z: foam
+};
+@group(3) @binding(14) var wind_waves: texture_2d_array<f32>;
+@group(3) @binding(15) var wind_sampler: sampler;
+@group(3) @binding(16) var<uniform> wind_sea: WindSea;
+
+// The wind sea's displacement at p, for vertices `spacing` metres apart: each cascade at the mip
+// level whose texels lie that far apart.
+fn wind_displacement(p: vec2f, spacing: f32) -> vec3f {
+    var d = vec3f(0.0);
+    for (var c = 0u; c < 3u; c++) {
+        let cascade = wind_sea.cascades[c];
+        let lod = clamp(log2(max(spacing / cascade.y, 1.0)), 0.0, 8.0);
+        d += textureSampleLevel(wind_waves, wind_sampler, p * cascade.x, c, lod).xyz;
+    }
+    return d;
+}
+
+// The share of a wave's height that reaches water `depth` deep: the square root of the TMA
+// spectrum's depth factor (S. A. Kitaigorodskii, V. P. Krasitskii and M. M. Zaslavskii, J. Phys.
+// Oceanogr. 5, 1975; E. Bouws et al., J. Geophys. Res. 90(C1), 1985) at angular frequency w.
+fn wind_depth(w: f32, depth: f32) -> f32 {
+    let wh = w * sqrt(max(depth, 0.0) / 9.81);
+    let phi = select(select(1.0, 1.0 - 0.5 * (2.0 - wh) * (2.0 - wh), wh < 2.0), 0.5 * wh * wh,
+        wh <= 1.0);
+    return sqrt(phi);
+}
+
+struct WindSurface { slope: vec2f, variance: f32, foam: f32 };
+// The wind sea at rest point p over water `depth` deep, seen by a pixel whose footprint `dx` and
+// `dy` span: the slopes the pixel resolves, stretched where the crests' horizontal displacement
+// crowds them, the mean square slope it does not (which widens the glints' lobe), and the foam of
+// the folded crests (the first cascade's, the only one that makes any). A cascade the pixel sees
+// only through its last mip levels, its waves all finer than the pixel, adds its slopes to the
+// lobe and is not sampled.
+fn wind_surface(p: vec2f, dx: vec2f, dy: vec2f, depth: f32) -> WindSurface {
+    var w: WindSurface;
+    let footprint = max(length(dx), length(dy));
+    for (var c = 0u; c < 3u; c++) {
+        let cascade = wind_sea.cascades[c];
+        let a = wind_depth(cascade.z, depth);
+        let lod = clamp(log2(max(footprint / cascade.y, 1e-6)), 0.0, 8.0);
+        let level = u32(lod);
+        w.variance += a * a * mix(wind_sea.lost[level][c], wind_sea.lost[min(level + 1u, 8u)][c],
+            fract(lod));
+        if (lod >= 7.0) { continue; }
+        let uv = p * cascade.x;
+        let g = textureSampleGrad(wind_waves, wind_sampler, uv, c + 3u, dx * cascade.x,
+            dy * cascade.x);
+        w.slope += a * g.xy / max(vec2f(1.0) + a * g.zw, vec2f(0.25));
+        if (c == 0u) {
+            w.foam = a * textureSampleGrad(wind_waves, wind_sampler, uv, 0u, dx * cascade.x,
+                dy * cascade.x).w;
+        }
+    }
+    w.variance += wind_sea.params.y;
+    w.foam *= wind_sea.params.z;
+    return w;
+}
+
+// How much of the wind sea's displacement the sea keeps at p: none within 24 m of a region,
+// whose surface takes the wind sea's detail but not its height, so the two meet on the swell.
+fn wind_kept(p: vec2f) -> f32 {
+    var d = 1e9;
+    for (var i = 0u; i < ocean.region_count; i++) {
+        let r = sea_regions[i];
+        let outside = max(max(r.xy - p, p - r.zw), vec2f(0.0));
+        d = min(d, length(outside));
+    }
+    return smoothstep(0.0, 24.0, d);
+}
 
 fn ocean_height(p: vec2f, t: f32) -> vec3f {
     // Height and its gradient (d/dx, d/dz).
@@ -732,6 +813,8 @@ struct OceanOut {
     @builtin(position) clip: vec4f,
     @location(0) world: vec3f,
     @location(1) grad: vec2f,
+    // The point at rest the wind sea moved here: its texels are indexed by it.
+    @location(2) rest: vec2f,
 };
 
 @vertex
@@ -744,10 +827,16 @@ fn vs_ocean(@location(0) ring: vec2f) -> OceanOut {
     let p = centre + ring;
     let s = ocean_height(p, ocean.time);
     var o: OceanOut;
-    let world = vec3f(p.x, s.x, p.y);
+    var world = vec3f(p.x, s.x, p.y);
+    if (wind_sea.params.x > 0.0) {
+        // The ring grid's rings lie 4 percent of their radius apart.
+        let spacing = max(length(p - cam) * 0.04, 0.4);
+        world += wind_displacement(p, spacing) * wind_kept(p);
+    }
     o.clip = view.view_proj * vec4f(world, 1.0);
     o.world = world;
     o.grad = s.yz;
+    o.rest = p;
     return o;
 }
 
@@ -777,22 +866,40 @@ fn wavelets(p: vec2f, t: f32, footprint: f32) -> vec2f {
 // under the camera), its own normal.
 @fragment
 fn fs_ocean(in: OceanOut) -> SceneOut {
+    // Gradients first, in uniform control flow.
+    let lod_scale = max(view.texture_lod.x, view.texture_lod.y);
+    let rest_dx = dpdx(in.rest) * lod_scale;
+    let rest_dy = dpdy(in.rest) * lod_scale;
     if(OCEAN_EXCLUDE_REGIONS&&ocean_excluded(in.world.xz)){discard;}
     let v_world = view.camera_pos.xyz - in.world;
     let dist = length(v_world);
-    let v = v_world / dist;
+    // Toward the eye, or along the view's axis for an orthographic camera, as a region has it.
+    let v = select(vec3f(view.view[0].z, view.view[1].z, view.view[2].z), v_world / dist,
+        abs(view.proj[3].w) < 0.5);
     let fade = clamp(1.0 - dist / 600.0, 0.0, 1.0);
     // Metres per output pixel (per the opaque pass's pixel times the render scale, as the
     // textures' gradients are).
-    let footprint = max(length(fwidth(in.world.xz)) * max(view.texture_lod.x, view.texture_lod.y),
-        1e-3);
-    let g = in.grad + wavelets(in.world.xz, ocean.time, footprint);
+    let footprint = max(length(fwidth(in.world.xz)) * lod_scale, 1e-3);
+    let windy = wind_sea.params.x > 0.0;
+    var g = in.grad;
+    // Water: F0 0.02; slightly rough so the sun's glitter spreads with distance. With a wind sea
+    // the lobe takes the mean square slope of the waves finer than the pixel.
+    var rough = clamp(0.05 + footprint * 0.04, 0.05, 0.3);
+    var whitecaps = 0.0;
+    if (windy) {
+        let w = wind_surface(in.rest, rest_dx, rest_dy, 1e4);
+        g += w.slope;
+        rough = sqrt(sqrt(0.05 * 0.05 * 0.05 * 0.05 + w.variance));
+        whitecaps = foam_cover(in.rest, in.rest, 0.0, footprint, w.foam);
+    } else {
+        g += wavelets(in.world.xz, ocean.time, footprint);
+    }
     let n = normalize(vec3f(-g.x, 1.0, -g.y));
     let nv = max(dot(n, v), 1e-4);
-    // Water: F0 0.02; slightly rough so the sun's glitter spreads with distance.
-    let rough = clamp(0.05 + footprint * 0.04, 0.05, 0.3);
     let a = rough * rough;
-    let f = 0.02 + 0.98 * pow(1.0 - nv, 5.0);
+    // A look shades the sea as a region's water: its Fresnel too.
+    let looked = ocean.absorb.w > 0.0;
+    let f = select(0.02 + 0.98 * pow(1.0 - nv, 5.0), shallow_fresnel(nv, 0.75), looked);
     let r = reflect(-v, n);
     let ry = vec3f(r.x, max(r.y, 0.02), r.z);
     let levels = f32(textureNumLevels(env_cube) - 1);
@@ -807,20 +914,35 @@ fn fs_ocean(in: OceanOut) -> SceneOut {
     let crest = clamp((in.world.y - ocean.level) * 1.5, 0.0, 1.0);
     let sss = pow(max(dot(v, -sun), 0.0), 4.0) * crest * 0.08;
     var body = mix(deep, shallow_tint, crest * 0.6) * (body_light + sun_lux * sss);
+    if (looked) {
+        // Deep water as a region's medium sees it: what its scattering sends back.
+        let haze = max(ocean.fog.w, 0.0);
+        let extinction = ocean.absorb.rgb + ocean.scatter.rgb + vec3f(haze);
+        body = (ocean.scatter.rgb * body_light + ocean.fog.rgb * haze * view.sun_color.w)
+            / max(extinction, vec3f(1e-6));
+    }
     // Sun glints.
+    let shadow = shadow_factor(in.world, n, dot(in.world - view.camera_pos.xyz,
+        -vec3f(view.view[0].z, view.view[1].z, view.view[2].z)));
     var spec = vec3f(0.0);
     if (view.sun_dir.w > 0.0) {
         let h = normalize(sun + v);
         let nl = max(dot(n, sun), 0.0);
         spec = d_ggx(max(dot(n, h), 0.0), a) * v_smith(nv, nl, a) * f_schlick(vec3f(0.02), max(dot(v, h), 0.0))
-            * sun_lux * nl * shadow_factor(in.world, n, dot(in.world - view.camera_pos.xyz,
-                -vec3f(view.view[0].z, view.view[1].z, view.view[2].z)));
+            * sun_lux * nl * shadow;
     }
-    // Foam where the swell crests steeply.
+    // Foam where the swell crests steeply, or where the wind sea's crests fold.
     let steep = length(in.grad);
-    let foam = smoothstep(0.32, 0.6, steep) * crest * fade;
+    let foam = max(smoothstep(0.32, 0.6, steep) * crest * fade, whitecaps);
     var c = mix(body, sky, f) + spec;
-    c = mix(c, vec3f(0.8) * (body_light * 6.0 + sun_lux * max(sun.y, 0.0) * 0.25), foam * 0.6);
+    if (looked) {
+        // A region's foam (fs_shallow), so the two meet unseen.
+        let white = vec3f(0.85, 0.9, 0.92) * (body_light * 6.0 + sun_lux * max(sun.y, 0.0) * 0.25
+            * shadow);
+        c = mix(c, white, foam);
+    } else {
+        c = mix(c, vec3f(0.8) * (body_light * 6.0 + sun_lux * max(sun.y, 0.0) * 0.25), foam * 0.6);
+    }
     c = apply_fog(c, in.world);
     var o: SceneOut;
     o.color = vec4f(c, 1.0);
@@ -1345,6 +1467,24 @@ fn water_reflect(start: vec3f, direction: vec3f, fallback: vec3f, sigma:vec3f, s
     return fallback;
 }
 
+// How far a point has turned to the sea's water: 1 on a side open on the sea, 0 past its band.
+// The band starts a column in: the sea runs under the region's first column (water.rs
+// `owned_rectangles`), and over it the water must not show the sea's surface behind it where
+// the next column shows its bed.
+fn sea_opening(p: vec2f) -> f32 {
+    let lo = p - shallow.origin;
+    let hi = shallow.origin + vec2f(shallow.count.xy) * shallow.cell - p;
+    let inside = array<f32, 4>(lo.x, hi.x, lo.y, hi.y);
+    var open = 0.0;
+    for (var side = 0u; side < 4u; side++) {
+        let band = shallow.sea[side];
+        if (band > 0.0) {
+            open = max(open, 1.0 - smoothstep(shallow.cell, band, inside[side]));
+        }
+    }
+    return open;
+}
+
 // Unpolarized dielectric Fresnel. Schlick alone misses the rapid rise just below the
 // water-to-air critical angle, making Snell's window fade incorrectly before total reflection.
 fn shallow_fresnel(cosine:f32,eta:f32) -> f32 {
@@ -1433,6 +1573,8 @@ fn shallow_material_footprint(world:vec3f,normal:vec3f,pixel:vec2f)->f32 {
 fn fs_shallow(in: ShallowOut) -> ShallowFragment {
     // Derivatives precede the data-dependent cap/film selection on baseline WebGPU.
     let world_width=fwidth(in.world);
+    let wind_dx=dpdx(in.world.xz)*max(view.texture_lod.x,view.texture_lod.y);
+    let wind_dy=dpdy(in.world.xz)*max(view.texture_lod.x,view.texture_lod.y);
     var footprint=max(length(world_width.xz),1e-3);
     let film_footprint=max(length(vec2f(select(world_width.x,world_width.z,abs(in.normal.x)>0.5),world_width.y)),1e-3);
     if(in.field_surface==1u&&ledge_at(in.world.xz)){discard;}
@@ -1456,6 +1598,21 @@ fn fs_shallow(in: ShallowOut) -> ShallowFragment {
     let q1 = in.world.xz - velocity * fract(phase + 0.5) * 5.0;
     let ripple = clamp(speed * 0.5, 0.15, 1.0) * shallow.optics.z;
     var g = mix(wavelets(q0, shallow.time, footprint), wavelets(q1, shallow.time, footprint), blend) * ripple * 0.5;
+    // Toward a side open on the sea the water turns to the sea's own (water.md 60): its bed fades
+    // from view, its local reflections give way to the sky's and its waves to the sea's, so the
+    // two meet unseen.
+    let open = sea_opening(in.world.xz);
+    // The wind sea the sea draws runs on over the region, its waves as high as the water's depth
+    // lets them be, the sea's own over the band; the flow's own texture stays where the water
+    // runs fast.
+    var wind_variance = 0.0;
+    var wind_foam = 0.0;
+    if (wind_sea.params.x > 0.0) {
+        let w = wind_surface(in.world.xz, wind_dx, wind_dy, column_depth / max(1.0 - open, 1e-4));
+        g = g * 0.15 + w.slope;
+        wind_variance = w.variance;
+        wind_foam = w.foam;
+    }
     // The ripples bodies stir, finer than the columns (water.md 57); with none, the shading is
     // as it was.
     let stirred = ripple_at(in.world.xz, footprint);
@@ -1464,8 +1621,10 @@ fn fs_shallow(in: ShallowOut) -> ShallowFragment {
     let above = dot(n0,v) >= 0.0;
     let normal = select(-n,n,above);
     let nv = max(dot(normal,v),1e-4);
-    let foam = foam_cover(q0, q1, blend, footprint, shallow_foam_at(in.world.xz));
-    var rough = mix(clamp(0.05 + footprint * 0.04, 0.05, 0.3), 0.5, foam);
+    let foam = foam_cover(q0, q1, blend, footprint, max(shallow_foam_at(in.world.xz), wind_foam));
+    var smooth_rough = clamp(0.05 + footprint * 0.04, 0.05, 0.3);
+    if (wind_sea.params.x > 0.0) { smooth_rough = sqrt(sqrt(0.05 * 0.05 * 0.05 * 0.05 + wind_variance)); }
+    var rough = mix(smooth_rough, 0.5, foam);
     // Ripples finer than the pixel widen the glints: their slope variance adds to the lobe's
     // (GGX alpha^2 about twice the slope variance).
     if (stirred.z > 0.0) { rough = sqrt(sqrt(rough * rough * rough * rough + 2.0 * stirred.z)); }
@@ -1495,7 +1654,7 @@ fn fs_shallow(in: ShallowOut) -> ShallowFragment {
     let extinction = shallow.absorb.rgb + shallow.scatter.rgb + vec3f(haze);
     // Above the surface, light traverses water behind it. From below it exits into air; the
     // camera's existing underwater medium handles the segment before the interface.
-    let through = select(vec3f(1.0),exp(-extinction*hit.z),above);
+    let through = select(vec3f(1.0),exp(-extinction*hit.z)*(1.0-open),above);
     var background = water_color(hit.xy);
     if (hit.w < 0.999) {
         // Blend samples, not coordinates: an interpolated UV could hit an object that neither
@@ -1507,7 +1666,7 @@ fn fs_shallow(in: ShallowOut) -> ShallowFragment {
     let medium_color = source / max(extinction, vec3f(1e-6));
     let body = medium_color * (1.0 - through);
     if (!above) { sky = medium_color; }
-    if (shallow.optics.y>0.5 && foam<0.8) { sky=water_reflect(in.world+r*0.03,r,sky,extinction,source,!above); }
+    if (shallow.optics.y>0.5 && foam<0.8) { sky=mix(water_reflect(in.world+r*0.03,r,sky,extinction,source,!above),sky,open); }
     let white = vec3f(0.85, 0.9, 0.92) * (body_light * 6.0 + sun_lux * max(sun.y, 0.0) * 0.25 * shadow);
     var c = (background*through + body) * (1.0-f) + sky*f + spec;
     c = mix(c,white,foam);

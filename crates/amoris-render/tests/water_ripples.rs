@@ -283,6 +283,7 @@ mod drawn {
                 blocky: false,
                 per: 1,
                 surround_m: 0.0,
+                sea: [false; 4],
             }),
             tiles: [[0, 0], [1, 0], [0, 1], [1, 1]]
                 .map(|key| WaterTileView {

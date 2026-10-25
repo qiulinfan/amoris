@@ -21,6 +21,7 @@ pub mod meshes;
 pub mod neural;
 pub mod occlusion;
 mod ocean;
+mod ocean_waves;
 pub mod overlay;
 mod par;
 mod particles;

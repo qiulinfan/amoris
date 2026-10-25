@@ -4,7 +4,8 @@
 
 use amoris_assets::frame::{
     BlockLook, ChunkUpdate, EnvironmentView, InstanceUpdate, LightKindView, LightView, Look, Pose,
-    RenderFrame, VoxelUpdate, WaterLookView, WaterTileView, WaterUpdate,
+    RenderFrame, SeaLookView, SeaView, VoxelUpdate, WaterLookView, WaterTileView, WaterUpdate,
+    WindSeaView,
 };
 use amoris_render::{Antialiasing, BackendChoice, CameraState, Gpu, Gtao, Renderer};
 use glam::Vec3;
@@ -800,6 +801,7 @@ fn region(blocky: bool, keys: &[[u32; 2]], f: impl Fn(u32, u32) -> [f32; 4]) -> 
             blocky,
             per: 2,
             surround_m: 0.0,
+            sea: [false; 4],
         }),
         tiles: keys.iter().map(|k| tile(*k, &f)).collect(),
     }
@@ -1880,6 +1882,8 @@ fn analytic_sea_excludes_all_owned_regions_including_dry_and_ninth_and_releases_
     frame.sea = Some(Some(amoris_assets::frame::SeaView {
         level: 1.0,
         waves: vec![],
+        wind: None,
+        look: None,
     }));
     if let Some(path) = &export {
         std::fs::write(path.join("masked.bin"), frame.encode()).unwrap();
@@ -1915,6 +1919,134 @@ fn analytic_sea_excludes_all_owned_regions_including_dry_and_ninth_and_releases_
         shoot(&mut masked),
         flooded,
         "removed ownership rectangle remained masked"
+    );
+}
+
+/// A region open on a sea that has its look (water.md 60), seen from straight above: the region's
+/// water turns to the sea's over a band beside their seam, so the two meet with no line of floor
+/// between them and no step in colour, and the wind sea runs on across the seam. With the side
+/// closed the region shows its floor up to the seam, and the floor shows between the two; past
+/// the band both draw the region's own water.
+#[test]
+fn a_region_open_on_a_sea_with_its_look_meets_it_without_a_seam() {
+    let Some((_case, gpu)) = gpu() else { return };
+    let fog = [0.04, 0.22, 0.26, 0.015];
+    let absorb = [0.35, 0.07, 0.05];
+    let scatter = [0.03, 0.05, 0.05];
+    // Clear water 4 m deep at the sea's level over a floor of sand: the region 32 x 32 columns of
+    // 1 m from the origin, its -x side on the sea.
+    let frame = |open: bool| {
+        let mut u = region(false, &ALL, |_, _| [0.0, 4.0, 0.0, 0.0]);
+        u.cell_m = 1.0;
+        let look = u.look.as_mut().unwrap();
+        (look.fog, look.absorb, look.scatter) = (fog, absorb, scatter);
+        look.sea[0] = open;
+        let mut f = scene(1, vec![u], false);
+        let mut floor = amoris_render::demo::water::mesh_scene(64, "full")
+            .instances
+            .remove(0);
+        let p = floor.pose.as_mut().unwrap();
+        p.position = [16.0, -4.25, 16.0];
+        p.scale = [400.0, 0.5, 400.0];
+        let look = floor.look.as_mut().unwrap();
+        look.color = [0.0, 0.0, 0.0, 1.0];
+        look.emissive = [0.55, 0.45, 0.3];
+        look.cast_shadows = false;
+        f.instances.push(floor);
+        f.sea = Some(Some(SeaView {
+            level: 0.0,
+            waves: vec![],
+            wind: Some(WindSeaView {
+                speed: 6.5,
+                toward_deg: 60.0,
+                fetch_km: 40.0,
+            }),
+            look: Some(SeaLookView {
+                fog,
+                absorb,
+                scatter,
+            }),
+        }));
+        f
+    };
+    // Straight down onto the seam at x = 0, 16 m of it from the image's top to its bottom.
+    let (eye, at) = (Vec3::new(0.0, 30.0, 16.0), Vec3::new(0.0, 0.0, 16.0));
+    let mut camera = CameraState::look_at_up(eye, at, Vec3::Z);
+    camera.ortho_height = Some(16.0);
+    let shot = |f: RenderFrame| {
+        let mut r = renderer(&gpu, eye, at);
+        r.set_camera_override(Some(camera));
+        r.set_water_foam(false);
+        r.apply(f, 0.0);
+        shoot(&mut r)
+    };
+    let open = shot(frame(true));
+    let closed = shot(frame(false));
+    dump("seam-open", &open);
+    dump("seam-closed", &closed);
+    // The image's pixels from world x = a to b, every row, as indices of their red.
+    let view_proj = camera.proj(W as f32 / H as f32) * camera.view();
+    let pixel_x = |x: f32| {
+        let c = view_proj * Vec3::new(x, 0.0, 16.0).extend(1.0);
+        ((c.x / c.w * 0.5 + 0.5) * W as f32).round() as usize
+    };
+    let columns = |a: f32, b: f32| {
+        let (a, b) = (pixel_x(a), pixel_x(b));
+        a.min(b)..a.max(b)
+    };
+    let column = |x: usize| (0..H as usize).map(move |y| 4 * (x + W as usize * y));
+    let strip = |a: f32, b: f32| columns(a, b).flat_map(column).collect::<Vec<_>>();
+    let mean = |img: &[u8], at: &[usize]| {
+        [0, 1, 2].map(|c| at.iter().map(|&i| f64::from(img[i + c])).sum::<f64>() / at.len() as f64)
+    };
+    let step = |a: [f64; 3], b: [f64; 3]| (0..3).map(|c| (a[c] - b[c]).abs()).fold(0.0, f64::max);
+    // The largest step between neighbouring pixel columns' mean colours from x = -2 to 2 m.
+    let jump = |img: &[u8]| {
+        let means: Vec<_> = columns(-2.0, 2.0)
+            .map(|x| mean(img, &column(x).collect::<Vec<_>>()))
+            .collect();
+        means
+            .windows(2)
+            .map(|m| step(m[0], m[1]))
+            .fold(0.0, f64::max)
+    };
+    // How much the green varies over a strip: the wind sea's slopes.
+    let texture = |img: &[u8], at: &[usize]| {
+        let m = mean(img, at)[1];
+        (at.iter()
+            .map(|&i| (f64::from(img[i + 1]) - m).powi(2))
+            .sum::<f64>()
+            / at.len() as f64)
+            .sqrt()
+    };
+    let (sea, inside, deep) = (strip(-2.0, -0.25), strip(0.25, 2.0), strip(10.0, 13.0));
+    let (seam, wall) = (jump(&open), jump(&closed));
+    let across = step(mean(&open, &sea), mean(&open, &inside));
+    let past = step(mean(&open, &deep), mean(&closed, &deep));
+    let (rough_sea, rough_inside) = (texture(&open, &sea), texture(&open, &inside));
+    eprintln!(
+        "largest step between pixel columns {seam:.2} open, {wall:.2} closed; the two sides' \
+         means {across:.2} apart; past the band open against closed {past:.2}; the green's spread \
+         {rough_sea:.2} on the sea, {rough_inside:.2} inside"
+    );
+    // A line of floor between the two, a column wide, or the floor up to the seam: a step of
+    // over 50 between neighbouring pixel columns.
+    assert!(
+        seam < 6.0,
+        "the region's water meets the sea's with no line or step: {seam}"
+    );
+    assert!(
+        across < 4.0,
+        "the region's water meets the sea's colour: {across}"
+    );
+    assert!(wall > 20.0, "a closed side shows its floor: {wall}");
+    assert!(
+        past < 1.0,
+        "past the band the region draws its own water: {past}"
+    );
+    assert!(
+        rough_inside > 0.5 * rough_sea && rough_inside < 2.0 * rough_sea,
+        "the wind sea runs on across the seam: {rough_inside} against {rough_sea}"
     );
 }
 

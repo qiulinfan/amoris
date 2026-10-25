@@ -135,11 +135,30 @@ pub struct WaveView {
     pub phase: f32,
 }
 
-/// The sea the boats float on, drawn to the horizon from the same waves buoyancy uses.
+/// The sea the boats float on, drawn to the horizon from the same waves buoyancy uses, and the
+/// wind sea and colour drawn only (water.md 60).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SeaView {
     pub level: f32,
     pub waves: Vec<WaveView>,
+    pub wind: Option<WindSeaView>,
+    pub look: Option<SeaLookView>,
+}
+
+/// The wind sea: the wind's speed (m/s, at 10 m), the bearing it blows toward, and the fetch.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct WindSeaView {
+    pub speed: f32,
+    pub toward_deg: f32,
+    pub fetch_km: f32,
+}
+
+/// The sea's optical depth, as a water region's look gives it.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SeaLookView {
+    pub fog: [f32; 4],
+    pub absorb: [f32; 3],
+    pub scatter: [f32; 3],
 }
 
 /// A splat cloud, posed.
@@ -251,6 +270,8 @@ pub struct WaterLookView {
     pub blocky: bool,
     pub per: u32,
     pub surround_m: f32,
+    /// The sides (-x, +x, -z, +z) open on the sea, where the region's water meets the sea's.
+    pub sea: [bool; 4],
 }
 
 /// One tile of a water region (16 x 16 columns, x fastest): each column's surface (world y), depth

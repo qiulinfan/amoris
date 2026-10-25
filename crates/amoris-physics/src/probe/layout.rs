@@ -16,7 +16,8 @@
 //!   again where a change outside the cache moved them: the water checkpoint state registered in
 //!   every world (`af4dd1d3`) changed every run's persisted bytes, Pioneer's implicit buoyancy
 //!   (`babe544b`, water.md 47) the sailing scene's trajectory, and the Floater's added mass
-//!   (version 2, water.md 56) the sailing scene's persisted bytes, its forces unchanged.
+//!   (version 2, water.md 56) and the Sea's wind sea and look (version 2, water.md 60) the sailing
+//!   scene's persisted bytes, its forces unchanged.
 
 use amoris_sim::rng::fnv1a64_extend;
 use amoris_sim::{NoHooks, Sim};
@@ -170,10 +171,10 @@ fn run(mut sim: Sim, ticks: u32, fork_each: bool) -> Result<(Vec<u64>, Vec<u64>)
 
 /// The runs of [`trajectories`], with the folds layout 1 gave.
 pub const LAYOUT1_TRAJECTORIES: [(&str, u64); 4] = [
-    ("sailing, 1,200 ticks", 0x809d_68e1_3add_a3a1),
+    ("sailing, 1,200 ticks", 0x1792_9c93_b932_e5a3),
     (
         "sailing forked before every tick, 600 ticks",
-        0x6e7c_4638_e38f_ba93,
+        0x0835_4b2d_144f_b1bf,
     ),
     ("level 100 x 3, 300 ticks", 0xbdfb_a0ea_1b19_abe6),
     (

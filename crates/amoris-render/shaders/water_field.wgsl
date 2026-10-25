@@ -11,6 +11,8 @@ struct Shallow {
     fog: vec4f,          // extra isotropic scattering color/radiance and density per metre
     optics: vec4f,        // refraction, local reflection, subgrid detail, unused
     ripple: vec4f,        // the ripples' window (water.md 57): its corner (world x, z), side, 1 on
+    sea: vec4f,           // per side (-x, +x, -z, +z) open on the sea: the band (m) where the
+                          // water turns to the sea's (water.md 60), else 0
 };
 
 @group(3) @binding(1) var<uniform> shallow: Shallow;

@@ -226,7 +226,7 @@ mod tests {
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
-            let mut params = [0u32; 32];
+            let mut params = [0u32; crate::water::UNIFORM_WORDS];
             params[2] = 0.25f32.to_bits();
             params[4..8].copy_from_slice(&[nx, nz, u32::from(tiled), 1]);
             let uniform = wgpu::util::DeviceExt::create_buffer_init(

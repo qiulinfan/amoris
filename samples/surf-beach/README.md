@@ -41,6 +41,10 @@ it stands, the board's speed, whether it is in the water and its eye's position,
   and its volume pushes the water aside. These forces are solved implicitly, so a light board
   neither bounces nor skips.
 - The sun's caustics play on the sand and the reef in the shallows.
+- Out at sea a breeze of 6.5 m/s (`Breeze`) has blown over 40 km of open water and raised a wind
+  sea, drawn on the sea to the horizon and as the detail of the bay's surface, as high as the bay's
+  depth lets it be. The bay and the sea share one look, and across the bay's mouth the bay's water
+  turns into the sea's, so no seam shows. The wind sea is drawn only: the board rides the swell.
 
 `python3 samples/surf-beach/build_scene.py` rebuilds the terrain (`terrain.glb`, which is also the
 fixed TriMesh the water's bed, the board and the surfer meet), `scene.json` and `perception.json`.
