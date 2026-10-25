@@ -1,0 +1,7 @@
+name = "Water Valley"
+rate = 60
+seed = 1
+
+[player]
+perception = "perception.json"
+actions = "first_person"

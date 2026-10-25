@@ -45,7 +45,8 @@ export function ViewportPanel() {
   const [cursor, setCursor] = useState("default");
   const version = useSyncExternalStore(
     (fn) => ctl.subscribe(fn),
-    () => `${ctl.orbit.yaw}|${ctl.orbit.pitch}|${ctl.orbit.ortho}|${ctl.rect ? `${ctl.rect.x},${ctl.rect.y},${ctl.rect.w},${ctl.rect.h}` : ""}`,
+    () =>
+      `${ctl.orbit.yaw}|${ctl.orbit.pitch}|${ctl.orbit.ortho}|${ctl.orbit.distance}|${ctl.orbit.target.join(",")}|${ctl.rect ? `${ctl.rect.x},${ctl.rect.y},${ctl.rect.w},${ctl.rect.h}` : ""}|${ctl.river?.points.length ?? -1}`,
   );
 
   // Renderer lifecycle.
@@ -121,7 +122,7 @@ export function ViewportPanel() {
     };
     el.addEventListener("wheel", wheel, { passive: false });
     const key = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && ctl.cancel()) {
+      if ((e.key === "Escape" && ctl.cancel()) || (e.key === "Enter" && ctl.commit())) {
         e.preventDefault();
         e.stopPropagation();
       }
@@ -134,6 +135,7 @@ export function ViewportPanel() {
   }, [ctl]);
 
   const rect = ctl.rect;
+  const river = ctl.riverOnScreen();
   void version;
 
   return (
@@ -199,6 +201,14 @@ export function ViewportPanel() {
       >
         <canvas ref={canvas} className="viewport-canvas" />
         {rect && <div className="select-rect" style={{ left: rect.x, top: rect.y, width: rect.w, height: rect.h }} />}
+        {river.length > 0 && (
+          <svg className="river-path">
+            <polyline points={river.map((p) => `${p.x},${p.y}`).join(" ")} />
+            {river.map((p, i) => (
+              <circle key={i} cx={p.x} cy={p.y} r={4} />
+            ))}
+          </svg>
+        )}
       </div>
       <ViewportToolbar ctl={ctl} />
       <AxisGizmo ctl={ctl} />

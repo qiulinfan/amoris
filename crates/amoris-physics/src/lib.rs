@@ -37,6 +37,7 @@ pub mod sea;
 pub mod shallow;
 mod shapes;
 pub mod solver;
+pub mod terrain;
 pub mod vessel;
 pub mod walk;
 pub mod walker;
@@ -52,6 +53,7 @@ pub use cache::{IDENTITY, PhysicsCache, declare};
 pub use forces::start_time;
 pub use sea::{GRAVITY, Sea, SeaLook, Water, Wave, WaveField, Wind};
 pub use solver::{BodyIndex, ContactLog, Physics, RebuiltSolver};
+pub use terrain::{Terrain, TerrainFeature, TerrainLayer, TerrainLook};
 pub use vessel::{Hole, Vessel};
 pub use walker::Walker;
 pub use water::{
@@ -106,6 +108,8 @@ pub fn plugin(sim: &mut Sim) -> Result<(), Problem> {
     ComponentRegistry::register::<WaterSource>(w, None)?;
     ComponentRegistry::register::<water::WaterFocus>(w, None)?;
     ComponentRegistry::register::<WaterDrain>(w, None)?;
+    ComponentRegistry::register::<Terrain>(w, None)?;
+    ComponentRegistry::register::<terrain::TerrainGround>(w, None)?;
     let mut water_system = IntoSystem::into_system(water::water);
     water_system.initialize(w);
     let always = RunCondition::Always;
@@ -179,6 +183,12 @@ pub fn plugin(sim: &mut Sim) -> Result<(), Problem> {
                 amoris_contract::detail([]),
             )),
         },
+    )?;
+    sim.add_system(
+        "physics.terrain",
+        TickPhase::Forces,
+        always,
+        terrain::ground,
     )?;
     sim.add_system("physics.fluids", TickPhase::Physics, always, fluids::fluids)?;
     let mut walk_system = IntoSystem::into_system(walker::walk);

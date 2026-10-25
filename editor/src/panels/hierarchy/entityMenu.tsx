@@ -1,6 +1,7 @@
 // The context menu of entities, shared by the hierarchy and the viewport.
 
 import { Bug, ClipboardCopy, Copy, Focus, FolderTree, Pencil, Plus, Trash, Unlink } from "lucide-react";
+import { spawnTerrain, spawnWater, terrainAvailable, waterAvailable } from "../../actions/water";
 import { addComponent, canReparent, deleteEntities, duplicateEntities, PRIMITIVES, primitiveAvailable, reparent, spawnPrimitive } from "../../actions/world";
 import { addDataWatch } from "../../actions/debug";
 import type { EntityId, Vec3 } from "../../host/protocol";
@@ -21,6 +22,13 @@ export function createMenu(opts: { at?: Vec3; parent?: EntityId | null } = {}): 
       run: () => void spawnPrimitive(p.kind, opts),
     });
   });
+  if (opts.parent === undefined) {
+    out.push(
+      "separator",
+      { label: "Terrain", disabled: !terrainAvailable(), run: () => void spawnTerrain(opts.at ?? useViewport.getState().target) },
+      { label: "Water over Terrain", disabled: !waterAvailable(), run: () => void spawnWater() },
+    );
+  }
   return out;
 }
 
@@ -56,6 +64,9 @@ export function entityMenu(ids: EntityId[], opts: { at?: Vec3 } = {}): MenuEntry
   ];
   if (node?.parent !== null && node?.parent !== undefined) {
     items.push({ label: "Unparent", icon: <Unlink size={14} />, run: () => void reparent(ids, null) });
+  }
+  if (single !== null && "Terrain" in (w.entities[single]?.components ?? {})) {
+    items.push({ label: "Water over Terrain", disabled: !waterAvailable(), run: () => void spawnWater() });
   }
   if (single !== null) {
     const comps = Object.keys(w.entities[single]?.components ?? {}).filter((c) => c !== "Name");

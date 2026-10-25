@@ -311,7 +311,8 @@ pub(crate) fn prepare(world: &mut World, cache: &mut Cache) -> Result<(), Proble
         let heights = cache.heights(r, origin, top, bottom)?;
         {
             let mut r = world.get_mut::<WaterRegion>(e).unwrap();
-            if r.tiles.is_empty() {
+            let fresh = r.tiles.is_empty();
+            if fresh {
                 let [tx, tz] = r.size.map(|n| n / 16);
                 r.tiles = (0..tx * tz)
                     .map(|i| WaterTile::dry([i % tx, i / tx], bottom))
@@ -332,7 +333,11 @@ pub(crate) fn prepare(world: &mut World, cache: &mut Cache) -> Result<(), Proble
                     (r.tiles[t].bed[n] != h).then_some((c, h))
                 })
                 .collect::<Vec<_>>();
-            for d in super::bed::apply(&mut r, &changes) {
+            let displaced = super::bed::apply(&mut r, &changes);
+            if fresh {
+                super::author::fill(&mut r, origin);
+            }
+            for d in displaced {
                 if let Some(event) = super::event(
                     "water.displaced",
                     id,

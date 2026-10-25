@@ -7,6 +7,7 @@ Forces physics.buoyancy always
 Forces physics.sail always
 Forces physics.hull always
 Forces physics.board always
+Forces physics.terrain always
 Physics physics.step always
 Physics physics.contacts always
 Physics physics.fluids always

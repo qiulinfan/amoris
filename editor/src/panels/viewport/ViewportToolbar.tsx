@@ -1,4 +1,6 @@
-import { Box, Camera, ChevronDown, Focus, Globe, Grid3x3, Magnet, MousePointer2, Move3d, Rotate3d, Scale3d } from "lucide-react";
+import { Box, Camera, ChevronDown, Droplets, Focus, Globe, Grid3x3, Magnet, MousePointer2, Move3d, Rotate3d, Scale3d, Spline } from "lucide-react";
+import { selectedWith } from "../../actions/water";
+import { useSelection } from "../../state/selection";
 import { useState } from "react";
 import { useViewport, type Tool } from "../../state/viewport";
 import { IconButton } from "../../ui/Button";
@@ -13,6 +15,12 @@ const TOOLS: { tool: Tool; icon: typeof Move3d; label: string; keys: string }[] 
   { tool: "scale", icon: Scale3d, label: "Scale", keys: "R" },
 ];
 
+/** The water tools, each for a selected entity holding its component (editor.md 6.1). */
+const WATER_TOOLS: { tool: Tool; icon: typeof Move3d; label: string; needs: string }[] = [
+  { tool: "river", icon: Spline, label: "Draw a river on the terrain: click its course, Enter to keep", needs: "Terrain" },
+  { tool: "pour", icon: Droplets, label: "Pour water: click the ground it fills to a metre over", needs: "WaterRegion" },
+];
+
 const STEPS = {
   translate: [0.1, 0.25, 0.5, 1, 2, 5],
   rotate: [5, 10, 15, 30, 45, 90],
@@ -21,6 +29,7 @@ const STEPS = {
 
 export function ViewportToolbar({ ctl }: { ctl: ViewportController }) {
   const { tool, space, snap, grid, set, setSnap } = useViewport();
+  useSelection((s) => s.ids);
   const [menu, setMenu] = useState<{ x: number; y: number; items: MenuEntry[] } | null>(null);
   const open = (e: React.MouseEvent, items: MenuEntry[]) => {
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -56,6 +65,18 @@ export function ViewportToolbar({ ctl }: { ctl: ViewportController }) {
         <div className="seg">
           {TOOLS.map((t) => (
             <IconButton key={t.tool} icon={t.icon} label={t.label} keys={t.keys} active={tool === t.tool} onClick={() => set({ tool: t.tool })} />
+          ))}
+        </div>
+        <div className="seg">
+          {WATER_TOOLS.map((t) => (
+            <IconButton
+              key={t.tool}
+              icon={t.icon}
+              label={t.label}
+              active={tool === t.tool}
+              disabled={selectedWith(t.needs) === null}
+              onClick={() => set({ tool: t.tool })}
+            />
           ))}
         </div>
         <div className="seg">

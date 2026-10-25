@@ -17,8 +17,8 @@ use std::collections::HashMap;
 use amoris_assets::frame::{
     AnimView, AudioView, BlockLook, CameraView, ChunkUpdate, EmitterView, EnvironmentView,
     InstanceUpdate, LightKindView, LightView, Look, Pose, RenderFrame, ResidentWaterUpdate,
-    SeaLookView, SeaView, SplatView, StirView, UiView, VoxelUpdate, WaterLookView, WaterTileView,
-    WaterUpdate, WaveView, WindSeaView,
+    SeaLookView, SeaView, SplatView, StirView, TerrainLayerView, TerrainView, UiView, VoxelUpdate,
+    WaterLookView, WaterTileView, WaterUpdate, WaveView, WindSeaView,
 };
 use amoris_assets::{
     Animator, AudioSource, Camera, Environment, Feed, Light, LightKind, Model, ParticleEmitter,
@@ -28,9 +28,9 @@ use amoris_physics::water::{
     Edge, Solver,
     resident::{WaterCheckpoints, WaterResident},
 };
-use amoris_physics::{BedSource, Sea, Style, Transform, WaterRegion, WaterSteps, Wind};
+use amoris_physics::{BedSource, Sea, Style, Terrain, Transform, WaterRegion, WaterSteps, Wind};
 use amoris_sim::voxels::{BlockShape, Voxels};
-use amoris_sim::{ContentHash, EntityId, SimClock};
+use amoris_sim::{ContentHash, EntityId, EntityIndex, SimClock};
 use bevy_ecs::change_detection::DetectChanges;
 use bevy_ecs::entity::Entity;
 use bevy_ecs::prelude::{Or, With, World};
@@ -50,6 +50,8 @@ pub struct Extractor {
     volumes: HashMap<Entity, SentVolume>,
     /// Each water region as last sent (water.md 9).
     waters: HashMap<Entity, SentWater>,
+    /// Each terrain's id, as last sent (water.md 65.1).
+    terrains: HashMap<Entity, u64>,
     /// The points stirring the water as last sent (water.md 57).
     stirs: Vec<StirView>,
 }
@@ -78,9 +80,65 @@ fn water_look(r: &WaterRegion) -> WaterLookView {
         wet_s: r.look.wet_s,
         per: match r.bed {
             BedSource::Voxels { per, .. } => per,
-            BedSource::Colliders { .. } => 1,
+            BedSource::Colliders { .. } | BedSource::Terrain { .. } => 1,
         },
     }
+}
+
+/// A terrain as drawn: its heights and layers (water.md 65.1).
+fn terrain_view(id: u64, t: &Terrain, origin: [f64; 3]) -> TerrainView {
+    TerrainView {
+        id,
+        origin: f3(origin),
+        cell_m: f(t.cell_m),
+        size: t.size,
+        heights: t.heights().into_iter().map(f).collect(),
+        layers: t
+            .look
+            .layers
+            .iter()
+            .map(|l| TerrainLayerView {
+                material: l.material.clone(),
+                color: l.color.map(f),
+                roughness: f(l.roughness),
+                steeper_than: l.steeper_than.map(f),
+                below_m: l.below_m.map(f),
+            })
+            .collect(),
+    }
+}
+
+/// A region without tiles over a terrain, as it will start (water.md 65.2): the terrain's beds with
+/// the region's fills. None for another bed, or no terrain.
+fn preview(world: &World, r: &WaterRegion, corner: [f64; 2]) -> Option<WaterRegion> {
+    let BedSource::Terrain { terrain } = r.bed else {
+        return None;
+    };
+    let e = world.get_resource::<EntityIndex>()?.get(terrain)?;
+    let ground = world.get::<Terrain>(e)?;
+    let at = world.get::<Transform>(e).map_or([0.0; 3], |t| t.position);
+    let mut p = r.clone();
+    amoris_physics::water::author::from_terrain(&mut p, corner, ground, at);
+    Some(p)
+}
+
+/// The update for a region the world has not stepped (none yet, or a resident one before its
+/// first step, as the paused edit world holds it): its tiles, authored or previewed.
+fn unstepped(
+    world: &World,
+    sent: &mut Option<SentWater>,
+    id: u64,
+    r: &WaterRegion,
+    p: [f64; 3],
+    tick: u64,
+    marks: Option<&Vec<u64>>,
+) -> Option<WaterUpdate> {
+    let origin = [f(p[0]), f(p[2])];
+    if r.well_formed() || r.solver != Solver::GpuResident {
+        return Some(water_update(sent, id, r, origin, tick, marks));
+    }
+    let shown = preview(world, r, [p[0], p[2]])?;
+    Some(water_update(sent, id, &shown, origin, tick, None))
 }
 
 /// Tile `n`'s columns: surface, depth, velocity.
@@ -91,7 +149,7 @@ fn water_tile(r: &WaterRegion, n: usize) -> WaterTileView {
     let columns = (0..256)
         .map(|c| {
             let (i, k) = (bx + c % 16, bz + c / 16);
-            let v = r.velocity_at(i, k);
+            let v = r.tile_velocity(i, k);
             [f(t.bed[c] + t.depth[c]), f(t.depth[c]), f(v[0]), f(v[1])]
         })
         .collect();
@@ -326,6 +384,12 @@ struct Queries {
         Opt<Transform>,
     )>,
     water: QueryState<WaterRow>,
+    terrain: QueryState<(
+        Entity,
+        &'static EntityId,
+        Ref<'static, Terrain>,
+        Opt<Transform>,
+    )>,
 }
 
 impl Queries {
@@ -344,6 +408,7 @@ impl Queries {
             splats: QueryState::new(world),
             voxels: QueryState::new(world),
             water: QueryState::new(world),
+            terrain: QueryState::new(world),
         }
     }
 }
@@ -534,31 +599,34 @@ impl Extractor {
         for (e, id, r, t, state) in rows {
             let mut sent = None;
             let p = t.map_or([0.0; 3], |t| t.position);
-            if r.solver == Solver::GpuResident {
-                if let Some(state) = state {
-                    frame.resident_water.push(resident_update(
-                        &mut sent,
-                        id.get(),
-                        r,
-                        state,
-                        world.resource::<WaterCheckpoints>(),
-                        [f(p[0]), f(p[2])],
-                        tick,
-                    ));
-                }
-            } else {
-                frame.water.push(water_update(
+            if let (Solver::GpuResident, Some(state)) = (r.solver, state) {
+                frame.resident_water.push(resident_update(
                     &mut sent,
                     id.get(),
                     r,
+                    state,
+                    world.resource::<WaterCheckpoints>(),
                     [f(p[0]), f(p[2])],
                     tick,
-                    None,
                 ));
+            } else if let Some(u) = unstepped(world, &mut sent, id.get(), r, p, tick, None) {
+                frame.water.push(u);
             }
             if let Some(s) = sent {
                 self.waters.insert(e, s);
             }
+        }
+        self.terrains.clear();
+        let mut q = world.query::<(Entity, &EntityId, &Terrain, Option<&Transform>)>();
+        let mut rows: Vec<_> = q.iter(world).collect();
+        rows.sort_unstable_by_key(|r| r.1.get());
+        for (e, id, t, at) in rows {
+            frame.terrain.push(terrain_view(
+                id.get(),
+                t,
+                at.map_or([0.0; 3], |t| t.position),
+            ));
+            self.terrains.insert(e, id.get());
         }
         frame
     }
@@ -714,6 +782,38 @@ impl Extractor {
                 }
             }
         }
+        // Terrains: whole when they changed, and those gone.
+        let gone: Vec<Entity> = world.removed::<Terrain>().collect();
+        for e in gone {
+            let still = world
+                .get_entity(e)
+                .ok()
+                .is_some_and(|r| r.contains::<Terrain>());
+            if !still && let Some(id) = self.terrains.remove(&e) {
+                frame.terrain_removed.push(id);
+            }
+        }
+        let mut grounds = false;
+        if let Some(q) = self.queries.as_mut() {
+            let mut rows: Vec<_> = q
+                .terrain
+                .iter(&*world)
+                .filter(|(e, _, t, at)| {
+                    !self.terrains.contains_key(e)
+                        || t.is_changed()
+                        || at.as_ref().is_some_and(|t| t.is_changed())
+                })
+                .map(|(e, id, t, at)| (e, id.get(), t, at))
+                .collect();
+            rows.sort_unstable_by_key(|r| r.1);
+            for (e, id, t, at) in rows {
+                frame
+                    .terrain
+                    .push(terrain_view(id, &t, at.map_or([0.0; 3], |t| t.position)));
+                self.terrains.insert(e, id);
+                grounds = true;
+            }
+        }
         // Water regions: the tiles stepped since they were last sent, and the regions gone.
         let gone: Vec<Entity> = world.removed::<WaterRegion>().collect();
         for e in gone {
@@ -735,6 +835,8 @@ impl Extractor {
                         || r.is_changed()
                         || state.as_ref().is_some_and(|s| s.is_changed())
                         || t.as_ref().is_some_and(|t| t.is_changed())
+                        // A preview follows its terrain.
+                        || (grounds && state.is_none() && matches!(r.bed, BedSource::Terrain { .. }))
                 })
                 .map(|(e, id, r, t, state)| (e, *id, r, t, state))
                 .collect();
@@ -743,27 +845,22 @@ impl Extractor {
                 let mut sent = self.waters.remove(&e);
                 let p = t.map_or([0.0; 3], |t| t.position);
                 let marks = steps.and_then(|s| s.regions.get(&id));
-                if r.solver == Solver::GpuResident {
-                    if let Some(state) = state {
-                        frame.resident_water.push(resident_update(
-                            &mut sent,
-                            id.get(),
-                            &r,
-                            &state,
-                            world.resource::<WaterCheckpoints>(),
-                            [f(p[0]), f(p[2])],
-                            tick,
-                        ));
+                if let (Solver::GpuResident, Some(state)) = (r.solver, state.as_ref()) {
+                    // Shown as its tiles until its first step: its field replaces them whole.
+                    if sent.as_ref().is_some_and(|s| s.checkpoint.is_none()) {
+                        sent = None;
                     }
-                } else {
-                    frame.water.push(water_update(
+                    frame.resident_water.push(resident_update(
                         &mut sent,
                         id.get(),
                         &r,
+                        state,
+                        world.resource::<WaterCheckpoints>(),
                         [f(p[0]), f(p[2])],
                         tick,
-                        marks,
                     ));
+                } else if let Some(u) = unstepped(world, &mut sent, id.get(), &r, p, tick, marks) {
+                    frame.water.push(u);
                 }
                 if let Some(s) = sent {
                     self.waters.insert(e, s);

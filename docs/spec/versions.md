@@ -699,8 +699,9 @@ Beside persistence.md's P1 to P7, run in the check command (charter 3.7; checks.
 
 ## GPU water execution and storage contract
 
-WaterRegion is version 8, WaterResident version 9, WaterProbe version 2 and WaterCheckpoints version 2.
-WaterFeedback, WaterOutletStage, WaterColliderBed and WaterFocus are version 1. Checkpoints carry
+WaterRegion is version 9, WaterResident version 9, WaterProbe version 2 and WaterCheckpoints version 2.
+WaterFeedback, WaterOutletStage, WaterColliderBed, WaterFocus, Terrain and TerrainGround are version
+1. Checkpoints carry
 complete MAC state, including east/north faces; bounded FieldStep programs include edits, horizontal
 impulses, boundary controls, optional spatial Sea forcing and joined seams. Numerical execution
 identity uses domain v8 and fingerprints actual kernel/dispatch/dependency sources and device

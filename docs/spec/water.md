@@ -4077,3 +4077,96 @@ Limits:
   body of water is joined from regions laid out beforehand, of at most 512 x 512 columns each.
 - The sub-grid ripples ride the columns of the region nearest the camera; past its joined sides
   they ride its edge columns, not the neighbour's water.
+
+## 65. Water authored without a build script (Pioneer, 2026-10-23)
+
+The three frontier scenes were built by Python scripts: each wrote a heightfield as a mesh and a
+collider, then every water column's bed and depth. Now a terrain and its water are declared by a few
+components, worked out by the engine, shown in the paused edit world and drawn with the editor's
+tools: `samples/water-valley`, a lake, a river down a gorge, a fall into a plunge pool and an outlet
+over two joined regions (64.3), is a scene of 5 KB with no build script, where the river falls'
+scene is 779 KB beside a 726 KB mesh and the script that made them.
+
+### 65.1 Terrain
+
+- `Terrain { size, cell_m, base_m, features, look }`, its corner at its entity's `Transform` (the
+  rotation is ignored: a terrain lies level): heights at the corners of `size` cells of `cell_m`
+  (up to 1024 cells a side), from `base_m` and its features in order; channels carve last, and
+  only down.
+  - `Slope { toward_deg, grade }` rises toward a bearing; `Hill { at, radius_m, height_m }` adds a
+    smooth bump, (1 - r^2)^2, negative a basin; `Noise { amplitude_m, wavelength_m, seed }` three
+    octaves of warped sines, each turned from the last by the golden angle.
+  - `Channel { path, width_m, bank_m }`: the bed follows the points' heights along the centripetal
+    Catmull-Rom spline through them (E. Catmull and R. Rom, "A class of local interpolating
+    splines", 1974; C. Yuksel, S. Schaefer and J. Keyser, "Parameterization and applications of
+    Catmull-Rom curves", CAD 43(7), 2011: no cusp or loop within a segment), evaluated by the
+    pyramid of P. J. Barry and R. N. Goldman (1988); the ground is lowered to it within half the
+    width and rises smoothly to the ground over the banks. A step in the points' heights stays a
+    step: a fall.
+  - All of it is `amoris_sim::math`, so every machine works out the same heights.
+- `physics.terrain` (Forces, after `physics.board`) stands bodies and walkers on the terrain: a
+  fixed `Collider` triangle mesh of its heights, made again when the terrain's hash
+  (`TerrainGround`) changes. The paused edit world makes none, so a scene keeps only the features.
+- Drawn (`TerrainView` in the feed; the renderer's terrain.rs), each cell takes the first of
+  `look.layers` it is steeper (1 - the normal's y) and lower than where the layer says, else the
+  last, and each layer is one mesh drawn as an ordinary instance (ids from 2^59), so shadows,
+  culling and picking take it. A click finds the ground under it by marching the ray over the
+  heights from where it enters the terrain's box.
+
+### 65.2 Water on it
+
+- `BedSource::Terrain { terrain }`: each column's bed is the terrain's height at its centre,
+  bilinear, read when the region's tiles come from its bed (a region without tiles).
+- `WaterRegion.fill`: `WaterFill { at, level }` pours at the column under `at` until the water
+  stands at `level`: every column joined to it side by side through columns whose beds lie under
+  the level fills to it, one region at a time. Fills act wherever the tiles come from the bed
+  (voxels, colliders, a terrain) and never on authored tiles. A river is not level: it fills from
+  its lake, an inflow or a source, or a pour above the lake's sill runs down its channel as a
+  surge.
+- The presenter shows a resident region the world has not stepped (the paused edit world holds
+  none of their fields) as its tiles: authored, or over a terrain the beds and the pours worked out
+  as the first step will. Its field replaces them once it steps.
+- `WaterRegion` is version 9; `Terrain` and `TerrainGround` are version 1.
+
+### 65.3 In the editor
+
+The viewport's context menu creates a terrain (128 x 128 cells of half a metre, a little rolling
+ground) and, on a terrain, water over it: a resident region as large as fits it, in whole tiles,
+its bed the terrain's. With a terrain selected, the river tool (the toolbar's spline) takes a
+point on the ground at each click and shows the course; Enter carves it as a channel 1.5 m under
+the ground clicked, 4 m wide with 3 m banks, Escape drops it. With a region selected, the pour
+tool pours where it is clicked, a metre over the ground there. Edges, the sea, the physics and
+every number of a feature are the inspector's fields. Each tool's change is one `world.edit`, one
+step of the history (editor.md 6.1).
+
+### 65.4 Checks, cost and limits
+
+- `cargo test -p amoris-physics --lib terrain` and `-- author`: a channel's bed, width and banks; a
+  step in its bed stays a step; slopes and hills add; the spline passes through its points; a pour
+  fills its basin to the level and runs down a channel only where the channel's bed lies under it.
+- `cargo test -p amoris-render --lib terrain`: a shelf, a wall and a floor mesh into rock, sand and
+  grass; the layers' instances map back to the terrain; a click from above or at a slant finds the
+  floor or the shelf it reaches, not the box's top.
+- `cargo test -p amoris-runtime --features transpile --test terrain`: before any tick the valley's
+  feed carries its terrain and both regions previewed (5726 wet columns over the lake's, 2325 over
+  the falls'), and the ground lowered by half a metre sends both again, wetter.
+- `cargo test --release -p amoris-app --test gpu_authoring`: the valley runs 20 s; the lake's
+  region takes 29 m^3 along its west edge and gives 84 m^3 across the seam, which the falls'
+  region receives; the walker set down 2 m over the ground stands at 7.73 m from the second second
+  on.
+- `bun test test/water.test.ts` (in `editor/`) and `bun tools/water-authoring.ts` against `amoris
+  serve`: in the real editor, with real input, a terrain from the context menu, a river of four
+  clicks kept with Enter (its four points carved 1.5 m under the ground), water from the terrain's
+  menu and a pour into the river's bed 1 m over it, then Play; no WebGPU error.
+
+The cost is in [liquids.md](../bench/liquids.md) 17.
+
+Limits:
+
+- A layer changes at a cell's edge, with no blending between layers.
+- A pour fills to one level; the water of a river comes from upstream.
+- A terrain is whole: any change works out its heights, its collider and the previews again
+  (about 9 ms each over the valley's 384 x 192 cells).
+- The edit world previews regions over a terrain; regions over voxels or colliders show their
+  water from their first step.
+- No brush yet sculpts the ground by hand: the features are its shape.

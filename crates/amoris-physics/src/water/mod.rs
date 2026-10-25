@@ -11,6 +11,7 @@
 pub mod bed;
 mod collider_bed;
 pub use collider_bed::WaterColliderBed;
+pub mod author;
 pub(crate) mod buoyancy;
 pub mod compute;
 pub mod displacement;
@@ -122,6 +123,9 @@ pub struct WaterRegion {
     /// 64.1). 0, the default, never bakes.
     #[serde(default)]
     pub bake_after_s: f64,
+    /// Water poured to a level from a point when the tiles come from `bed` (water.md 65.2).
+    #[serde(default)]
+    pub fill: Vec<author::WaterFill>,
     /// Every tile, in key order (z, then x); empty: all dry, the beds read from `bed` at the next
     /// `physics.water` (water.md 5).
     #[serde(default)]
@@ -352,6 +356,9 @@ pub enum BedSource {
     },
     /// The fixed colliders: a ray cast down from `top` at each column's centre (slice D).
     Colliders { top: f64, bottom: f64 },
+    /// A `Terrain`'s ground: each column's bed is its height at the column's centre (water.md
+    /// 65.2).
+    Terrain { terrain: EntityId },
 }
 
 fn invalid(field: &str, message: String) -> Problem {
@@ -440,6 +447,12 @@ impl WaterRegion {
             self.solver != Solver::GpuResident,
             "resident field values require WaterProbe observations, not checkpoint tiles"
         );
+        self.tile_velocity(i, k)
+    }
+
+    /// Column `(i, k)`'s velocity in its tiles: a resident region's as it starts, before its first
+    /// step (presentation only; its field's own afterwards).
+    pub fn tile_velocity(&self, i: usize, k: usize) -> [f64; 2] {
         let [nx, nz] = self.columns_along();
         let (t, c) = self.locate(i, k);
         let (u0, w0) = (self.tiles[t].u[c], self.tiles[t].w[c]);
@@ -645,6 +658,21 @@ impl WaterRegion {
                     ));
                 }
             }
+            BedSource::Terrain { .. } => {}
+        }
+        if self.fill.len() > author::MAX_FILLS
+            || self
+                .fill
+                .iter()
+                .any(|f| !finite(&[f.at[0], f.at[1], f.level]))
+        {
+            return Err(invalid(
+                "fill",
+                format!(
+                    "at most {} fills, each at a finite point and level",
+                    author::MAX_FILLS
+                ),
+            ));
         }
         let look = &self.look;
         if !(look.surround_m >= 0.0 && look.surround_m <= 10_000.0) {
@@ -788,6 +816,7 @@ pub fn dam_scene(tiles: u32) -> WaterRegion {
         look: WaterLook::default(),
         physics: WaterPhysics::default(),
         bake_after_s: 0.0,
+        fill: vec![],
         tiles: Vec::new(),
     };
     for kz in 0..tiles {
@@ -971,7 +1000,7 @@ fn map_of(
 fn volume_id(r: &WaterRegion) -> Option<EntityId> {
     match r.bed {
         BedSource::Voxels { volume, .. } => Some(volume),
-        BedSource::Colliders { .. } => None,
+        BedSource::Colliders { .. } | BedSource::Terrain { .. } => None,
     }
 }
 
@@ -1093,6 +1122,7 @@ type ForcingInput<'w, 's> = (
     Query<'w, 's, (&'static EntityId, &'static WaterDrain)>,
     Query<'w, 's, (&'static EntityId, &'static crate::Sea)>,
     Query<'w, 's, (&'static EntityId, &'static Transform, &'static WaterFocus)>,
+    Query<'w, 's, (&'static crate::terrain::Terrain, Option<&'static Transform>)>,
 );
 type RegionQuery<'w, 's> = Query<
     'w,
@@ -1146,7 +1176,7 @@ pub(crate) fn water(
     }
     let (floaters, hulls, vessels, mut buoy_samples, mut feedbacks, mut displacements) = buoy_input;
     let (walkers, mut swim_samples) = swimmers_input;
-    let (sources, drains, seas, foci) = forcing;
+    let (sources, drains, seas, foci, terrains) = forcing;
     let dt = clock.dt();
     let tick = clock.tick.0;
     let since = tick.saturating_sub(1);
@@ -1252,6 +1282,7 @@ pub(crate) fn water(
                             .and_then(|e| volumes.get(e).ok());
                         if let Some((_, _, v)) = found {
                             bed::load(&mut region, m, v);
+                            author::fill(&mut region, [p[0], p[2]]);
                         }
                     }
                     Some(Err(err)) => {
@@ -1271,7 +1302,22 @@ pub(crate) fn water(
                             })
                             .collect();
                     }
-                    None => {}
+                    None => {
+                        if let BedSource::Terrain { terrain } = region.bed {
+                            let Some((ground, at)) =
+                                index.get(terrain).and_then(|e| terrains.get(e).ok())
+                            else {
+                                return Err(Problem::new(
+                                    "water.no_terrain",
+                                    format!(
+                                        "the region's bed is terrain {terrain}, which has no Terrain"
+                                    ),
+                                    detail([("terrain", json!(terrain))]),
+                                ));
+                            };
+                            author::from_terrain(&mut region, [p[0], p[2]], ground, position(at));
+                        }
+                    }
                 }
             }
             maps.push(

@@ -323,7 +323,12 @@ water_frontier, physics field_buoyancy/field_hull/resident_swimming/added_mass/v
 water_resident_async/water_feedback, and app gpu_water/gpu_floaters/gpu_feedback/gpu_swimming/
 gpu_energy/gpu_frontier_scenes/gpu_scale. A joined seam (water.md 64.3) is worked out once a tick,
 in physics `join.rs`, from both regions' last edge columns, and both regions take the same numbers;
-a joined group sleeps or bakes only as a whole. The non-hydrostatic solve runs two identical Chebyshev cycles,
+a joined group sleeps or bakes only as a whole. A `Terrain`'s heights come from its features
+through `amoris_sim::math` (water.md 65); its collider is derived when its hash changes, never by
+change detection, and the edit world shows resident regions as tiles until their first step. The
+renderer's terrain pick marches the heights (`terrain.rs` `hit`); a change to either runs physics
+`terrain`/`author`, render `terrain`, runtime `terrain`, app `gpu_authoring` and, in `editor/`,
+`bun test` and `tools/water-authoring.ts`. The non-hydrostatic solve runs two identical Chebyshev cycles,
 never one (water.md 55.2); its blocked dispatches must match one dispatch an iteration bit for bit
 (water_frontier `the_blocked_non_hydrostatic_solve_matches_one_dispatch_an_iteration`). A change
 to the kernel's velocity transport or its wet/dry faces also runs the `water_swash` example

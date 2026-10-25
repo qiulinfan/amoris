@@ -217,6 +217,7 @@ this table and the schedule golden of section 12 together.
 | 6 | Forces | `physics.sail` | amoris-physics | sail force from the apparent wind and the trim |
 | 7 | Forces | `physics.hull` | amoris-physics | keel, rudder and hull drag |
 | 7a | Forces | `physics.board` | amoris-physics | each `Board`'s planing, glide, rail and fin forces at its Floater points, implicit over each point's share of its mass, and its rider's paddling, carving and pop-up (water.md 50) |
+| 7b | Forces | `physics.terrain` | amoris-physics | each `Terrain` whose hash changed given its fixed triangle-mesh `Collider` again (water.md 65.1) |
 | 8 | Physics | `physics.step` | amoris-physics | sync changed bodies in, one step of `dt`, write back positions, velocities and readouts |
 | 9 | Physics | `physics.contacts` | amoris-physics | contact begin and end events, in pair order (section 8.4) |
 | 9a | Physics | `physics.fluids` | amoris-physics | each volume's flowing liquids: edits taken, a flow step on each liquid's period (liquids.md 4) |

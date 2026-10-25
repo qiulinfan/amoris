@@ -377,6 +377,8 @@ pub struct Renderer {
     meshes: MeshPool,
     /// Block volumes, meshed per chunk into `meshes` (voxels.md 7.2).
     voxels: crate::voxels::Voxels,
+    /// Terrains, meshed per layer into `meshes` (water.md 65.1).
+    terrains: crate::terrain::Terrains,
     /// A liquid in a box, the fluid experiment (fluid.rs, docs/spikes/fluid-box.md).
     pub fluid: Option<crate::fluid::Fluid>,
     /// Splashes over block liquids (splash.rs, docs/spec/splashes.md): what emits on the CPU, and
@@ -1332,6 +1334,7 @@ impl Renderer {
             scene: Scene::new(),
             meshes: built.meshes,
             voxels: crate::voxels::Voxels::default(),
+            terrains: crate::terrain::Terrains::default(),
             fluid: None,
             splash: Default::default(),
             splash_fluid: None,
@@ -2140,6 +2143,7 @@ impl Renderer {
     pub fn apply(&mut self, mut frame: RenderFrame, now_s: f64) {
         if frame.reset {
             self.voxels.clear();
+            self.terrains.clear();
             self.water.clear();
             self.splash.clear();
             if let Some(f) = self.splash_fluid.as_mut() {
@@ -2154,6 +2158,15 @@ impl Renderer {
             .expect("published resident water feed");
         if let Some(stirs) = frame.stirs.take() {
             self.water.set_stirs(frame.t_s, stirs);
+        }
+        if !frame.terrain.is_empty() || !frame.terrain_removed.is_empty() {
+            let changes = self.terrains.apply(&frame.terrain, &frame.terrain_removed);
+            for (key, mesh) in &changes.meshes {
+                self.meshes
+                    .replace(&self.gpu.device, &self.gpu.queue, key, mesh);
+            }
+            frame.removed.extend(changes.removed);
+            frame.instances.extend(changes.instances);
         }
         if !frame.voxels.is_empty() || !frame.voxels_removed.is_empty() {
             let mut changes = self.voxels.apply(&frame.voxels, &frame.voxels_removed);
@@ -3765,11 +3778,27 @@ impl Renderer {
             let tmin = t1.min(t2).max_element();
             let tmax = t1.max(t2).min_element();
             if tmax >= tmin.max(0.0) {
-                let t = tmin.max(0.0);
-                if best.is_none_or(|(_, bt)| t < bt)
-                    && let Some(e) = self.scene.entity_of_slot(slot as u32)
-                {
-                    best = Some((self.voxels.owner(e), t));
+                let Some(e) = self.scene.entity_of_slot(slot as u32) else {
+                    continue;
+                };
+                // A terrain's box is far from its ground: the ray marches the heights (`dir` is
+                // unit, and its parts are unscaled, so the box's span is in metres).
+                let t = if crate::terrain::Terrains::is_layer(e) {
+                    match self.terrains.hit(
+                        self.terrains.owner(e),
+                        origin.to_array(),
+                        dir.to_array(),
+                        tmin,
+                        tmax,
+                    ) {
+                        Some(t) => t,
+                        None => continue,
+                    }
+                } else {
+                    tmin.max(0.0)
+                };
+                if best.is_none_or(|(_, bt)| t < bt) {
+                    best = Some((self.terrains.owner(self.voxels.owner(e)), t));
                 }
             }
         }
@@ -3868,7 +3897,7 @@ impl Renderer {
         } else {
             self.scene
                 .entity_of_slot(id - 1)
-                .map(|e| self.voxels.owner(e))
+                .map(|e| self.terrains.owner(self.voxels.owner(e)))
         }
     }
 

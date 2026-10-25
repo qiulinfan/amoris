@@ -646,3 +646,25 @@ costs 0.04 ms more than the boundary passes every open side runs each substep.
 
 Not measured: large joined bodies of water, a region resting beyond a focus (as a baked one, it
 submits nothing), R1 and the browser.
+
+## 17. Terrain and authored water (Pioneer, 2026-10-23)
+
+The terrain and pours of [water.md](../spec/water.md) 65 on the M5, macOS, release builds,
+2026-10-23. The machine was not checked for other load.
+
+`cargo test --release -p amoris-runtime --features transpile --test terrain time_terrain --
+--ignored --nocapture`, two runs, each the mean of ten: the valley's terrain, 384 x 192 cells of
+half a metre with noise, five hills and a channel of twelve points:
+
+| | Once |
+|---|---|
+| its heights | 11.01, 8.70 ms |
+| its collider (heights and triangle mesh) | 8.91, 8.94 ms |
+| a 192 x 192 region's beds and pour (heights included) | 8.84, 8.84 ms |
+
+None of it runs on a tick: the collider is made when the terrain changes, the beds and pours when
+a region's tiles come from its bed, and the edit world's previews when the terrain or the region
+is edited. A tick of the valley's two regions runs their resident steps as any regions' do
+(sections 4 to 16).
+
+Not measured: the renderer's meshing, the browser and R1.

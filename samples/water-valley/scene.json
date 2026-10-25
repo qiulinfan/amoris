@@ -1,0 +1,350 @@
+{
+ "format": "amoris-scene",
+ "version": 1,
+ "entities": [
+  {
+   "name": "Ground",
+   "components": {
+    "Transform": {
+     "position": [
+      0,
+      0,
+      0
+     ]
+    },
+    "Terrain": {
+     "size": [
+      384,
+      192
+     ],
+     "cell_m": 0.5,
+     "base_m": 6.0,
+     "features": [
+      {
+       "Noise": {
+        "amplitude_m": 0.6,
+        "wavelength_m": 18.0,
+        "seed": 5
+       }
+      },
+      {
+       "Hill": {
+        "at": [
+         14.0,
+         48.0
+        ],
+        "radius_m": 26.0,
+        "height_m": -6.5
+       }
+      },
+      {
+       "Hill": {
+        "at": [
+         134.0,
+         50.0
+        ],
+        "radius_m": 11.0,
+        "height_m": -12.0
+       }
+      },
+      {
+       "Hill": {
+        "at": [
+         72.0,
+         26.0
+        ],
+        "radius_m": 22.0,
+        "height_m": 3.0
+       }
+      },
+      {
+       "Hill": {
+        "at": [
+         80.0,
+         72.0
+        ],
+        "radius_m": 20.0,
+        "height_m": 2.5
+       }
+      },
+      {
+       "Hill": {
+        "at": [
+         172.0,
+         50.0
+        ],
+        "radius_m": 56.0,
+        "height_m": -6.0
+       }
+      },
+      {
+       "Channel": {
+        "path": [
+         [
+          36.0,
+          4.0,
+          48.0
+         ],
+         [
+          52.0,
+          4.0,
+          47.0
+         ],
+         [
+          66.0,
+          3.8,
+          42.0
+         ],
+         [
+          82.0,
+          3.5,
+          52.0
+         ],
+         [
+          96.0,
+          3.2,
+          47.0
+         ],
+         [
+          110.0,
+          2.9,
+          45.0
+         ],
+         [
+          124.0,
+          2.6,
+          49.0
+         ],
+         [
+          125.2,
+          -3.0,
+          49.5
+         ],
+         [
+          134.0,
+          -3.0,
+          50.0
+         ],
+         [
+          150.0,
+          -3.3,
+          47.0
+         ],
+         [
+          170.0,
+          -3.6,
+          52.0
+         ],
+         [
+          192.0,
+          -3.9,
+          50.0
+         ]
+        ],
+        "width_m": 5.0,
+        "bank_m": 4.0
+       }
+      }
+     ],
+     "look": {
+      "layers": [
+       {
+        "color": [
+         0.31,
+         0.29,
+         0.27,
+         1
+        ],
+        "roughness": 0.9,
+        "steeper_than": 0.42
+       },
+       {
+        "color": [
+         0.36,
+         0.33,
+         0.27,
+         1
+        ],
+        "roughness": 0.95,
+        "below_m": -1.0
+       },
+       {
+        "color": [
+         0.21,
+         0.32,
+         0.12,
+         1
+        ],
+        "roughness": 0.9
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "name": "Lake",
+   "components": {
+    "Transform": {
+     "position": [
+      0.0,
+      0,
+      0
+     ]
+    },
+    "WaterRegion": {
+     "solver": "gpu_resident",
+     "cell_m": 0.5,
+     "size": [
+      192,
+      192
+     ],
+     "bed": {
+      "Terrain": {
+       "terrain": 1
+      }
+     },
+     "edges": [
+      {
+       "Inflow": {
+        "m3s_per_m": 0.015
+       }
+      },
+      {
+       "Joined": {
+        "region": 3
+       }
+      },
+      "Wall",
+      "Wall"
+     ],
+     "friction": 0.04,
+     "calm_per_s": 0.1,
+     "physics": {},
+     "bake_after_s": 20.0,
+     "fill": [
+      {
+       "at": [
+        14.0,
+        48.0
+       ],
+       "level": 4.2
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "Falls",
+   "components": {
+    "Transform": {
+     "position": [
+      96.0,
+      0,
+      0
+     ]
+    },
+    "WaterRegion": {
+     "solver": "gpu_resident",
+     "cell_m": 0.5,
+     "size": [
+      192,
+      192
+     ],
+     "bed": {
+      "Terrain": {
+       "terrain": 1
+      }
+     },
+     "edges": [
+      {
+       "Joined": {
+        "region": 2
+       }
+      },
+      "Outflow",
+      "Wall",
+      "Wall"
+     ],
+     "friction": 0.04,
+     "calm_per_s": 0.1,
+     "physics": {
+      "falls_m": 1.0
+     },
+     "bake_after_s": 20.0,
+     "fill": [
+      {
+       "at": [
+        134.0,
+        50.0
+       ],
+       "level": -2.0
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "Walker",
+   "components": {
+    "Transform": {
+     "position": [
+      112.0,
+      8.0,
+      74.0
+     ]
+    },
+    "Walker": {
+     "speed_mps": 4,
+     "run_mps": 6,
+     "jump_mps": 5.4,
+     "gravity_mps2": 9.81,
+     "swim_mps": 2.4
+    },
+    "Camera": {
+     "fov_deg": 75,
+     "near": 0.06
+    },
+    "Observer": {
+     "profile": "player",
+     "seat": "player"
+    },
+    "WaterFocus": {
+     "radius_m": 150.0
+    }
+   }
+  },
+  {
+   "name": "Sun",
+   "components": {
+    "Transform": {
+     "position": [
+      0,
+      60,
+      0
+     ],
+     "rotation": [
+      -0.3535534,
+      0.3535534,
+      0.1464466,
+      0.8535534
+     ]
+    },
+    "Light": {
+     "kind": "directional",
+     "intensity": 6.5,
+     "shadows": true
+    }
+   }
+  },
+  {
+   "name": "Sky",
+   "components": {
+    "Environment": {
+     "fog_density": 0.0012,
+     "bloom": 0.05
+    }
+   }
+  }
+ ]
+}

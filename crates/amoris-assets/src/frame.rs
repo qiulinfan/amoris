@@ -279,6 +279,29 @@ pub struct WaterLookView {
     pub wet_s: f32,
 }
 
+/// A terrain's ground (water.md 65.1): its corner (world), cell edge and cells along x and z, the
+/// heights at the cells' corners (x fastest, metres above the corner) and the layers it is drawn
+/// in, each triangle the first it is steeper than and lower than where the layer says, else the
+/// last.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct TerrainView {
+    pub id: u64,
+    pub origin: [f32; 3],
+    pub cell_m: f32,
+    pub size: [u32; 2],
+    pub heights: Vec<f32>,
+    pub layers: Vec<TerrainLayerView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct TerrainLayerView {
+    pub material: String,
+    pub color: [f32; 4],
+    pub roughness: f32,
+    pub steeper_than: Option<f32>,
+    pub below_m: Option<f32>,
+}
+
 /// One tile of a water region (16 x 16 columns, x fastest): each column's surface (world y), depth
 /// and velocity (m/s along x and z).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -382,6 +405,12 @@ pub struct RenderFrame {
     /// The full list of points stirring the water regions, when any of them moved.
     #[serde(default)]
     pub stirs: Option<Vec<StirView>>,
+    /// Terrains that changed (water.md 65.1), whole.
+    #[serde(default)]
+    pub terrain: Vec<TerrainView>,
+    /// Terrains gone.
+    #[serde(default)]
+    pub terrain_removed: Vec<u64>,
 }
 
 impl RenderFrame {
@@ -404,6 +433,8 @@ impl RenderFrame {
             && self.resident_water.is_empty()
             && self.water_removed.is_empty()
             && self.stirs.is_none()
+            && self.terrain.is_empty()
+            && self.terrain_removed.is_empty()
     }
 
     /// Folds `next` (a later frame) into this one, as if both had been applied in order.
@@ -493,6 +524,18 @@ impl RenderFrame {
         }
         if next.stirs.is_some() {
             self.stirs = next.stirs;
+        }
+        if !next.terrain_removed.is_empty() {
+            self.terrain
+                .retain(|t| !next.terrain_removed.contains(&t.id));
+            self.terrain_removed.extend(next.terrain_removed);
+        }
+        for t in next.terrain {
+            self.terrain_removed.retain(|&id| id != t.id);
+            match self.terrain.iter_mut().find(|o| o.id == t.id) {
+                Some(cur) => *cur = t,
+                None => self.terrain.push(t),
+            }
         }
         if !next.voxels_removed.is_empty() {
             self.voxels.retain(|v| !next.voxels_removed.contains(&v.id));

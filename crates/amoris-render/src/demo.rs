@@ -137,6 +137,8 @@ fn sunlit(instances: Vec<InstanceUpdate>, dir: Vec3, shadows: bool) -> RenderFra
         water_removed: vec![],
         resident_water: vec![],
         stirs: None,
+        terrain: vec![],
+        terrain_removed: vec![],
         lights: Some(vec![LightView {
             id: 0,
             kind: LightKindView::Directional,

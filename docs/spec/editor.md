@@ -294,6 +294,28 @@ placing an asset spawns `Transform` and `Model {mesh: <asset path>}` at the grou
 drop. Add Component sets the component's schema defaults; scale handles edit `Transform.scale` when
 it exists, else `Model.scale`.
 
+### 6.1 Water (Pioneer, 2026-10-23)
+
+Terrain and water are authored as their components declare them (water.md 65); the editor's part is
+placing them. The create menu's Terrain spawns `Transform` and `Terrain` (128 x 128 cells of half
+a metre, base 2 m, a little noise) centred on the ground under the click; a terrain's own menu and
+the create menu's Water over Terrain spawn a resident `WaterRegion` over the selected terrain (or
+the first one), as large as fits it in whole tiles of 16 columns, its bed `{Terrain: {terrain}}`,
+dry. Two viewport tools join select, move, rotate and scale (`state/viewport.ts`), each enabled
+while one entity holding its component is selected:
+
+- **River** (a terrain): each click adds the ground point under it (the renderer's pick: its
+  terrain hit marches the heights) to the course the viewport shows as a dashed line; Enter sets
+  `Terrain.features` with a `Channel` appended, its path in the terrain's frame 1.5 m under the
+  points, 4 m wide with 3 m banks (`actions/water.ts` `RIVER`); Escape drops the course.
+- **Pour** (a water region): a click sets `WaterRegion.fill` with a pour appended at the point,
+  its level a metre over the ground there.
+
+Each is one `world.edit` with its label (Create Terrain, Draw River, Create Water, Pour Water).
+`bun tools/water-authoring.ts --url <host>` drives all of it in headless Chrome with real input
+against `amoris serve` (the build with `VITE_AMORIS_EXPOSE=1`), checks every edit on the host and
+saves the edit world and Play.
+
 ## 7. Schema-driven fields and script types
 
 `world.schema` answers `[{name, origin, version, doc, schema}]` (amoris-sim's `ComponentInfo`).
@@ -435,7 +457,7 @@ the wire shapes (`HostDebugState`, `HostFrame`, `HostVariable`, `HostBreakpoint`
 | `src/viewport/` | The renderer interface, camera, math, gizmo, the frame meter, the fallback renderer |
 | `src/panels/<panel>/` | One module per panel (and its CSS) |
 | `mock/` | The mock host (section 1.1) |
-| `tools/` | `capture.ts` (evidence of every panel against the mock), `debug-host.ts` (the debugger against the real host), `sdk_check.ts` (the script editor's types against the real host), `profiler-capture.ts` (the profiler against the real host, docs/bench/profiler.md), all through headless Chrome over CDP (`cdp.ts`) |
+| `tools/` | `capture.ts` (evidence of every panel against the mock), `debug-host.ts` (the debugger against the real host), `sdk_check.ts` (the script editor's types against the real host), `profiler-capture.ts` (the profiler against the real host, docs/bench/profiler.md), `water-authoring.ts` (the water tools against the real host, 6.1), all through headless Chrome over CDP (`cdp.ts`) |
 
 ## 10. Evidence
 

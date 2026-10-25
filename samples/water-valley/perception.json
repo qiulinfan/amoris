@@ -1,0 +1,58 @@
+{
+ "observers": [
+  {
+   "name": "player",
+   "doc": "A walker's own eyes in the valley.",
+   "sight": {
+    "range_m": 120,
+    "fov_deg": 75,
+    "eye_m": {
+     "x": 0,
+     "y": 0,
+     "z": 0
+    },
+    "occlusion": false
+   },
+   "positions": true,
+   "attention_m": 40,
+   "memory_s": 120,
+   "memory_capacity": 32,
+   "event_capacity": 64,
+   "budget_tokens": 300,
+   "instruments": [
+    "in_water",
+    "position_m"
+   ]
+  }
+ ],
+ "instruments": [
+  {
+   "name": "in_water",
+   "doc": "The body overlaps water.",
+   "unit": {
+    "unit": "bool"
+   },
+   "precision": 0,
+   "source": {
+    "from": "field",
+    "component": "Walker",
+    "path": "in_liquid"
+   }
+  },
+  {
+   "name": "position_m",
+   "doc": "The eye position.",
+   "unit": {
+    "unit": "position"
+   },
+   "precision": 2,
+   "source": {
+    "from": "field",
+    "component": "Transform",
+    "path": "position"
+   }
+  }
+ ],
+ "kinds": [],
+ "events": []
+}

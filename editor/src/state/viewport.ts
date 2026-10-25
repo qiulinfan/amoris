@@ -5,7 +5,9 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { Vec3 } from "../host/protocol";
 
-export type Tool = "select" | "translate" | "rotate" | "scale";
+/** `river` draws a river along the selected terrain's ground (Enter keeps it, Escape drops it);
+ * `pour` pours water into the selected water region where it is clicked (editor.md 6.1). */
+export type Tool = "select" | "translate" | "rotate" | "scale" | "river" | "pour";
 export type Space = "world" | "local";
 
 export interface Snap {

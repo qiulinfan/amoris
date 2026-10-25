@@ -19,8 +19,8 @@ use amoris_physics::water::displacement::WaterDisplacement;
 use amoris_physics::water::feedback::WaterFeedback;
 use amoris_physics::water::resident::{WaterOutletStage, WaterProbe, WaterResident};
 use amoris_physics::{
-    Board, Boat, Collider, ExternalForce, Floater, Hull, RigidBody, Sail, Sea, Transform, Trim,
-    Velocity, Vessel, Walker, WaterDrain, WaterRegion, WaterSource, Wind,
+    Board, Boat, Collider, ExternalForce, Floater, Hull, RigidBody, Sail, Sea, Terrain, Transform,
+    Trim, Velocity, Vessel, Walker, WaterDrain, WaterRegion, WaterSource, Wind,
 };
 use amoris_script::{EngineFns, register_engine};
 use amoris_sim::registry::{
@@ -91,7 +91,7 @@ where
 /// Every engine component a scene or `world_edit` can name (`Name` is the entity's own `name`);
 /// the first three are the player layer's (perception.md: who observes, what can be perceived,
 /// what blocks sight).
-pub fn engine_components() -> [EngineComponent; 38] {
+pub fn engine_components() -> [EngineComponent; 40] {
     [
         entry::<amoris_interface::perception::Observer>(),
         entry::<amoris_interface::perception::Perceivable>(),
@@ -124,6 +124,8 @@ pub fn engine_components() -> [EngineComponent; 38] {
         water_entry(),
         entry::<WaterResident>(),
         entry::<amoris_physics::water::WaterColliderBed>(),
+        terrain_entry(),
+        entry::<amoris_physics::terrain::TerrainGround>(),
         entry::<amoris_physics::water::WaterFocus>(),
         entry::<WaterOutletStage>(),
         probe_entry(),
@@ -150,6 +152,25 @@ fn voxels_entry() -> EngineComponent {
         get: get::<Voxels>,
         decode: decode_voxels,
         remove: remove::<Voxels>,
+    }
+}
+
+/// `Terrain`, decoded strictly and then validated (water.md 65.1).
+fn terrain_entry() -> EngineComponent {
+    fn decode_terrain(v: &Value, owner: &str) -> Result<Inserter, Problem> {
+        let c: Terrain = Shape::of::<Terrain>()
+            .decode::<Terrain>(v, &CheckOptions::new(owner))?
+            .value;
+        c.validate()?;
+        Ok(Inserter(Box::new(move |e: &mut EntityWorldMut<'_>| {
+            e.insert(c);
+        })))
+    }
+    EngineComponent {
+        name: Terrain::NAME,
+        get: get::<Terrain>,
+        decode: decode_terrain,
+        remove: remove::<Terrain>,
     }
 }
 
@@ -960,6 +981,8 @@ pub fn install_script_components(world: &mut World) -> Result<(), Problem> {
     ComponentRegistry::register::<WaterRegion>(world, None)?;
     ComponentRegistry::register::<WaterResident>(world, None)?;
     ComponentRegistry::register::<amoris_physics::water::WaterColliderBed>(world, None)?;
+    ComponentRegistry::register::<Terrain>(world, None)?;
+    ComponentRegistry::register::<amoris_physics::terrain::TerrainGround>(world, None)?;
     ComponentRegistry::register::<amoris_physics::water::WaterFocus>(world, None)?;
     ComponentRegistry::register::<WaterOutletStage>(world, None)?;
     ComponentRegistry::register::<WaterFeedback>(

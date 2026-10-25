@@ -32,7 +32,7 @@ CPU 保持跨目标确定性；GPU 使用 WebGPU 基线支持的 f32，只在相
 **Pioneer 2026-10-22（`explore/water`、`explore/water-nh`）。** 所有者要求在 Amoris Pioneer 上把水物
 理继续做到前沿水准，并以三个游戏场景验收：河流汇入瀑布、泳池派对、强浪海滩冲浪。为此 Pioneer 越过上
 文 2026-10-21 的交付范围，在 `gpu_resident` 区域上加入以下能力，契约见 [water.md](spec/water.md)
-46–64，测量见 [liquids.md](bench/liquids.md) 7–16：
+46–65，测量见 [liquids.md](bench/liquids.md) 7–17：
 
 - 物体排水的竖直双向耦合：浮体点和游泳者把水面下的体积作为压力水头加到水柱上，水量严格守恒（思路来自
   M. Müller, GDC 2008）。浮力按步末位置线性隐式求值（D. Baraff 与 A. Witkin, SIGGRAPH 1998），阻力隐
@@ -128,6 +128,13 @@ CPU 保持跨目标确定性；GPU 使用 WebGPU 基线支持的 f32，只在相
   起来，三次过缝的浪与同尺寸单池处处相差不到 2 mm，总水量变化 −1.7e-5 m³；拼接的区域只能一起休眠或
   烘焙。接缝只传过缝的流，不传沿缝的动量，应放在平顺的水域。渲染上水面画到相接的边，焦散图覆盖相连
   的区域，涟漪窗口越过相接的边。`WaterRegion` 升到版本 8，`WaterResident` 升到版本 9。
+- 不写脚本搭水（2026-10-23）：`Terrain` 用几条特征声明地形（坡、丘与坑、扭曲正弦噪声、沿向心
+  Catmull-Rom 样条下刻的河道，E. Catmull 与 R. Rom 1974；C. Yuksel 等, CAD 43(7), 2011），引擎用
+  `amoris_sim::math` 算出高度，派生固定三角网格碰撞体，渲染器按坡度和高度分层画
+  出。`BedSource::Terrain` 让水床直接取地形高度，`WaterRegion.fill` 从一点按水位漫灌连通的低处。暂停
+  的编辑世界里，未步进的常驻区域按地形水床和灌水预览出来。编辑器的右键菜单新建地形和地形上的水域，河
+  道工具在地面上点出河道、回车刻出，灌水工具点哪灌哪，各是一次 `world.edit`。`samples/water-valley`
+  的湖、峡谷河、瀑布、跌水潭和出口全由组件声明，场景 5 KB，不用 Python。`WaterRegion` 升到版本 9。
 
 验收：`amoris-app` 的 `gpu_frontier_scenes` 用玩家的第一人称动作玩通
 `samples/pool-party`、`samples/river-falls` 和 `samples/surf-beach`；三个样例导出的网页包在 Chrome

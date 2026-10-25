@@ -2,6 +2,7 @@
 // camera, selection, overlays and gizmo every frame, and turns pointer input into camera moves,
 // picks, rectangle selections and gizmo drags (live `world.edit`s through `LiveEdit`).
 
+import { addRiver, pour, selectedWith } from "../../actions/water";
 import { LiveEdit } from "../../actions/world";
 import type { EntityId, Quat, Vec3 } from "../../host/protocol";
 import { useSelection } from "../../state/selection";
@@ -63,6 +64,8 @@ export class ViewportController {
   private lastHoverPick = 0;
   private listeners = new Set<() => void>();
   rect: Rect | null = null;
+  /** The river being drawn: its points on the ground (world), and the terrain it carves. */
+  river: { terrain: EntityId; points: Vec3[] } | null = null;
 
   start() {
     const loop = () => {
@@ -162,7 +165,7 @@ export class ViewportController {
 
   private buildGizmo(): Gizmo | null {
     const vp = useViewport.getState();
-    if (vp.tool === "select") return null;
+    if (vp.tool !== "translate" && vp.tool !== "rotate" && vp.tool !== "scale") return null;
     const targets = this.mode.kind === "gizmo" ? null : this.targets();
     let position: Vec3;
     let rotation: Quat;
@@ -355,6 +358,11 @@ export class ViewportController {
     }
     if (m.kind === "orbit") return { contextMenu: m.button === 2 && !m.moved };
     if (m.kind === "click") {
+      const tool = useViewport.getState().tool;
+      if (tool === "river" || tool === "pour") {
+        await this.drawWater(tool, x, y);
+        return { contextMenu: false };
+      }
       const hit = await this.engine?.pick(x, y);
       const sel = useSelection.getState();
       if (hit) {
@@ -371,10 +379,49 @@ export class ViewportController {
     return { contextMenu: false };
   }
 
-  /** Escape: cancels a drag (and its live edits). */
+  /** A click with a water tool: a river's next point, or a pour, where the ground is under the
+   * pixel (the renderer's depth; the plane y = 0 without it). */
+  private async drawWater(tool: "river" | "pour", x: number, y: number) {
+    const hit = await this.engine?.pick(x, y);
+    const at = hit?.position ?? this.groundAt(x, y);
+    if (tool === "pour") {
+      const region = selectedWith("WaterRegion");
+      if (region !== null) await pour(region, at);
+      return;
+    }
+    const terrain = selectedWith("Terrain");
+    if (terrain === null) return;
+    if (this.river?.terrain !== terrain) this.river = { terrain, points: [] };
+    this.river.points.push(at);
+    this.changed();
+  }
+
+  /** Enter: keeps the river being drawn, once it has two points. */
+  commit(): boolean {
+    const r = this.river;
+    if (!r) return false;
+    this.river = null;
+    this.changed();
+    if (r.points.length >= 2) void addRiver(r.terrain, r.points);
+    return true;
+  }
+
+  /** Where the river being drawn shows: its points on the screen. */
+  riverOnScreen(): { x: number; y: number }[] {
+    if (!this.river) return [];
+    const view = this.view();
+    return this.river.points.map((p) => view.project(p)).filter((p) => p.visible);
+  }
+
+  /** Escape: cancels a drag (and its live edits), or the river being drawn. */
   cancel(): boolean {
     const m = this.mode;
     dragState.active = false;
+    if (this.river) {
+      this.river = null;
+      this.changed();
+      return true;
+    }
     if (m.kind === "gizmo") {
       this.mode = { kind: "none" };
       void m.edit.cancel();

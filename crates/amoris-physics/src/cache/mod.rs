@@ -84,6 +84,8 @@ pub fn declare<R: RegisterPersisted>(r: &mut R) {
         .resource::<crate::water::resident::WaterCheckpoints>()
         .component::<WaterSource>()
         .component::<crate::water::WaterFocus>()
+        .component::<crate::terrain::Terrain>()
+        .component::<crate::terrain::TerrainGround>()
         .component::<WaterDrain>()
         .cache::<PhysicsCache>()
         .derived::<Physics>("the state of cache physics.rapier, put back by its section")
@@ -411,7 +413,7 @@ impl Persisted for Sea {
 
 impl Persisted for WaterRegion {
     const NAME: &'static str = "WaterRegion";
-    const VERSION: u32 = 8;
+    const VERSION: u32 = 9;
 
     fn trace(t: &mut Tracer, s: &Samples) -> serde_reflection::Result<()> {
         t.trace_type::<crate::water::Solver>(s)?;

@@ -46,6 +46,7 @@ mod sky;
 pub mod splash;
 pub mod splat;
 pub mod taa;
+pub mod terrain;
 pub mod trace;
 mod transparent;
 mod ui;
