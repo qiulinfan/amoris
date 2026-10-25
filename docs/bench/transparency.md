@@ -409,9 +409,11 @@ to 01:42):
   in 32 pixels (28 of `Glass`, 4 at `CutoutCard`'s edge), each by one half-float step, with the same
   id images; 16 of the 30 pixels by which `440dd7f8` differs are among them. Master's renderer
   (`before`) drew its stored image to the bit four times. So the stage's image of the glass sphere
-  is not reproducible to the bit from run to run (cause not traced); section 1's figures do not move
-  at their printed digits, and the 8-bit images of `prepass_compare.py` and `occlusion_compare.py`
-  do not see it.
+  is not reproducible to the bit from run to run; section 1's figures do not move at their printed
+  digits, and the 8-bit images of `prepass_compare.py` and `occlusion_compare.py` do not see it. The
+  cause, found on 2026-10-25, is NVIDIA's Direct3D 12 driver: it stores wrong colours in 4x MSAA
+  samples under a blend that reads the destination, and the noise appears only on the RTX 5060 with
+  Direct3D 12 and 4x MSAA ([gpu-matrix.md](gpu-matrix.md) 15.1).
 
 ## 5. Re-measuring on a quiet machine
 

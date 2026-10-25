@@ -236,10 +236,12 @@ would need another shadow representation (section 8).
   asset is not on the machine the stage was built on.
 - Images reproducible to the bit: from run to run of one build, pt-lab's glass sphere and the 4x
   MSAA edge of the card beside it differ by one half-float step in up to 32 pixels
-  ([bench/transparency.md](../bench/transparency.md) 4), where master's renderer draws the scene
-  the same every time. The cause is not traced. `prepass_compare.py` and `occlusion_compare.py`
-  compare 8-bit images, which do not see the step, and it does not move `transparency_pt.py`'s
-  region errors at their four decimals.
+  ([bench/transparency.md](../bench/transparency.md) 4), where master's renderer draws the scene the
+  same every time. The cause is NVIDIA's Direct3D 12 driver, which stores wrong colours in 4x MSAA
+  samples under a blend that reads the destination: the noise appears only on the RTX 5060 with
+  Direct3D 12 and 4x MSAA ([bench/gpu-matrix.md](../bench/gpu-matrix.md) 15.1). `prepass_compare.py`
+  and `occlusion_compare.py` compare 8-bit images, which do not see the step, and it does not move
+  `transparency_pt.py`'s region errors at their four decimals.
 
 ## 9. Checks
 

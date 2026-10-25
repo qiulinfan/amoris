@@ -1102,7 +1102,8 @@ differ, so it lies in the basic surface pass (premultiplied blending with depth 
 which is what fails the two other tests under the parallel binary (each passes alone). NVIDIA's
 Vulkan on the same GPU and both of the 780M's backends match exactly. The pass that depends on
 order, and the source of the noise, are not located; the instrumentation is
-`out/r1/culling-diag.patch` on R1.
+`out/r1/culling-diag.patch` on R1. Section 15 locates both (2026-10-25): NVIDIA's Direct3D 12 driver
+stores wrong colours in 4x MSAA samples under a blend that reads the destination.
 
 The other checks at `6926f8aa`: `gpu_determinism` matches its record unblessed on C4 and on the
 baseline device of both GPUs; `amoris hashes` of surf-beach (600 ticks), pool-party, river-falls,
@@ -1229,3 +1230,66 @@ AMORIS_DXC=fxc python tools/gpu_matrix.py --configs 5060-dx12,780m-dx12 --worksp
 AMORIS_DXC=fxc python tools/gpu_matrix.py --configs 5060-dx12 --workspace --bins lib --filter splat --no-ignored
 AMORIS_DXC=fxc AMORIS_ADAPTER=5060 AMORIS_BACKEND=dx12 cargo test --release -p amoris-app --test gpu_determinism
 ```
+
+## 15. NVIDIA's MSAA blend and Vulkan 621.01's draw order (2026-10-25, R1)
+
+R1 traced section 13's order dependence and noise, and a second fault that NVIDIA's Vulkan driver
+621.01 brought, to the drivers: each reproduces in a program that links no Amoris code. The owner
+closed the investigation on 2026-10-25, judging both the drivers' faults. The work ran on R1's
+Pioneer checkout (branch `r1/nv-order`, not ported: its diagnostic hooks sat in the renderer's hot
+paths); the minimal programs, their frozen inputs, the RenderDoc captures, sample dumps and logs
+stay in R1's ignored `out/r1/nv-order/`.
+
+### 15.1 Direct3D 12: wrong colours in MSAA samples under a blend that reads the destination
+
+The RTX 5060 with Direct3D 12, on drivers 617.14 and 621.01 alike:
+
+- With antialiasing off the frames are exact; the fault needs 4x MSAA.
+- Depth samples and every shader intermediate (written out losslessly as hashes) are bit-identical
+  in both draw orders. The wrong samples carry the colour of a triangle that covers no sample of
+  their pixel.
+- With blending off or `REPLACE`, Direct3D 12 equals Vulkan sample for sample. Every blend that
+  reads the destination fails the same way: premultiplied, `ALPHA_BLENDING`, an alpha-only over.
+  Writing `SV_Depth`, a second target, `sample_mask` as input, output or constant, and reading
+  `primitive_index` change nothing.
+- A minimal frame with no Amoris code fails: a fresh `Rgba16Float` 4x target and a sub-pixel grid
+  of triangles at alpha 1, each of its own colour, under premultiplied blending. 680 samples in 176
+  pixels take another triangle's colour; `Rgba8Unorm` and `Rgb10a2Unorm` targets fail too, and so
+  do 5-pixel triangles. Chrome 156 (Dawn over Direct3D 12) gives exactly 680 samples in 176 pixels
+  on the 5060 and none on the 780M.
+- The Direct3D 12 debug layer with GPU-based validation reports nothing.
+
+Section 13's three failing `water` tests are this fault: the culling test's order dependence, and
+both "run-to-run 1-LSB noise" tests, of whose pair runs 8 to 12 in 20 fail whatever the prepass and
+occlusion modes, and none with blending off. So is the noise of pt-lab's glass
+([transparency.md](transparency.md) 4): eight fresh processes at 320x240 in HDR differ only on
+5060-dx12 with 4x MSAA (617.14: 43 pixels, 39 of `Glass` and 4 of `CutoutCard`, each by one
+half-float step; 621.01: 57 pixels), and are bit-identical on 5060-vulkan, on the 780M with either
+backend and on 5060-dx12 with MSAA off. These tests still fail on 5060-dx12; how they record the
+fault is open.
+
+### 15.2 Vulkan 621.01: the screen-space reflection depends on draw order
+
+On NVIDIA's driver 621.01 (not section 13's 617.14, to which R1 was returned the same day) the water
+tests of the entry crown, the patch culling's full and under cases and the temporal foam failed 3 of
+3 runs on 5060-vulkan. All three come from the screen-space reflection, and pass with it off. From
+bit-identical inputs RenderDoc 1.46's SPIR-V debugger computes one value in both orders, which the
+780M and Direct3D 12 reproduce; the GPU writes two.
+
+The standalone wgpu program `vk-min` shows it with two triangles that do not overlap: post-vertex
+outputs from the capture through a pass-through vertex shader, and a fragment shader of 1,014 lines
+reduced from naga's WGSL, whose SPIR-V 1.6 spirv-val accepts, with blending off. Drawn in the other
+order, 5 pixels differ at 1x and 6 at 4x on 5060-vulkan with 621.01 (pixel (35, 75): blue 4.42969
+against 4.42578), the same over three runs, and runs of one order never differ; the 780M with
+Vulkan and both GPUs with Direct3D 12 differ in none. It matters for a machine on 621.01.
+
+### 15.3 Method notes
+
+- A shader edit that removes an order or noise effect proves nothing about its cause: most edits
+  in this search moved or removed the effect. Confirm from outside the shader: read the samples
+  back, step RenderDoc's debugger, compare with the other vendor.
+- RenderDoc on Vulkan shows wgpu-hal's bindings, which number each bind group layout's entries
+  from 0, not WGSL's `@binding` numbers.
+- Reducing a shader by deleting lines can leave a loop without end that hangs the GPU: R1's first
+  line-level reduction caused 458 TDRs (nvlddmkm event 153) in 45 minutes. A reduction never
+  deletes loop control.
