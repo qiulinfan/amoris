@@ -714,6 +714,13 @@ mod tests {
     }
 
     fn renderer_with(gpu: &Gpu, c: &SplatCloud) -> Renderer {
+        // A lost device fails every later readback and capture, and the engine only logs it: name
+        // it here, not in the first count or image a check reads.
+        gpu.device.set_device_lost_callback(|reason, message| {
+            if reason != wgpu::DeviceLostReason::Destroyed {
+                panic!("splat test device lost: {reason:?}: {message}");
+            }
+        });
         let mut r = Renderer::new(gpu, wgpu::TextureFormat::Rgba8UnormSrgb, 200, 120);
         // These checks compare redraws pixel for pixel: no TAA (whose jitter and history change
         // every frame; an integrated GPU's default) and no GTAO, whatever the adapter.
