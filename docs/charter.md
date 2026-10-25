@@ -10,13 +10,15 @@
 
 ## GPU 水本轮交付范围（2026-10-21）
 
-所有者要求保留已验证的 GPU 水物理系统，并停止未完成的扩展。正式保留浅水求解、
-GPU 常驻检查点和有限回放程序、稀疏查询、浮力/水平反冲、游泳交互，以及原生和浏览器
-的真实游戏接入。冲浪小游戏、完整瀑布、三维自由液面和流体/刚体压力研究不纳入交付。
+所有者要求保留已验证的 GPU 水物理系统，并停止未完成的扩展。正式保留浅水求解、 GPU 常驻检查点和有限回
+放程序、稀疏查询、浮力/水平反冲、游泳交互，以及原生和浏览器的真实游戏接入。冲浪小游戏、完整瀑布、三
+维自由液面和流体/刚体压力研究不纳入交付（2026-10-25 起冲浪、瀑布与物体和水的双向耦合按下文 Pioneer
+2026-10-22 一段纳入，三维自由液面仍不纳入）。
 
-`WaterRegion.solver` 显式选择默认的 `cpu`、完整回读的 `gpu` 或 `gpu_resident`。
-CPU 保持跨目标确定性；GPU 使用 WebGPU 基线支持的 f32，只在相同执行环境验证回放。
-设备、内核或程序身份不符时拒绝执行；GPU 失败停止并毒化 tick，不切回 CPU。
+`WaterRegion.solver` 显式选择默认的 `cpu`、完整回读的 `gpu` 或 `gpu_resident`。 CPU 保持跨目标确定
+性；GPU 使用 WebGPU 基线支持的 f32，内核由 `tests/water_det.rs` 生成为确定性版本，各设备算出相同的
+位，执行环境只由内核命名（[water.md](spec/water.md) 66）；内核或程序身份不符时拒绝执行；GPU 失败停止
+并毒化 tick，不切回 CPU。
 
 游戏侧仍不链接 wgpu。物理拥有世界状态和计算接口，原生宿主与浏览器 worker 注入 GPU
 服务。常驻状态由精确检查点、GPU 摘要和有界程序重建；每 tick 只回读所需观察与汇总，
@@ -29,10 +31,10 @@ CPU 保持跨目标确定性；GPU 使用 WebGPU 基线支持的 f32，只在相
 当前契约和检查命令见 [water.md](spec/water.md)；保留范围见
 [GPU 水集成状态](spikes/water-modernization.md)。
 
-**Pioneer 2026-10-22（`explore/water`、`explore/water-nh`）。** 所有者要求在 Amoris Pioneer 上把水物
-理继续做到前沿水准，并以三个游戏场景验收：河流汇入瀑布、泳池派对、强浪海滩冲浪。为此 Pioneer 越过上
-文 2026-10-21 的交付范围，在 `gpu_resident` 区域上加入以下能力，契约见 [water.md](spec/water.md)
-46–67，测量见 [liquids.md](bench/liquids.md) 7–19：
+**Pioneer 2026-10-22（`explore/water`、`explore/water-nh`；2026-10-25 由 Amoris 采用）。** 所有者要
+求在 Amoris Pioneer 上把水物理继续做到前沿水准，并以三个游戏场景验收：河流汇入瀑布、泳池派对、强浪海
+滩冲浪。为此 Pioneer 越过上文 2026-10-21 的交付范围，在 `gpu_resident` 区域上加入以下能力，契约见
+[water.md](spec/water.md) 46–67，测量见 [liquids.md](bench/liquids.md) 7–19：
 
 - 物体排水的竖直双向耦合：浮体点和游泳者把水面下的体积作为压力水头加到水柱上，水量严格守恒（思路来自
   M. Müller, GDC 2008）。浮力按步末位置线性隐式求值（D. Baraff 与 A. Witkin, SIGGRAPH 1998），阻力隐

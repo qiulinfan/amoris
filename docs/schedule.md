@@ -14,7 +14,8 @@
 
 Pioneer 2026-10-22：所有者要求在 Amoris Pioneer 上继续前沿水物理，冲浪和瀑布在 `explore/water`（非静
 水压、附加质量与能量在 `explore/water-nh`）上重新开展并完成，以泳池派对、河流瀑布和海滩冲浪三个样例
-验收（纲领“GPU 水本轮交付范围”的 Pioneer 2026-10-22 一段；[water.md](spec/water.md) 46–56）。
+验收（纲领“GPU 水本轮交付范围”的 Pioneer 2026-10-22 一段；[water.md](spec/water.md)
+46–56）。2026-10-25 整体迁回 Amoris（[集成说明](imports/pioneer-2026-10-25.md)）。
 
 ## 1. 可交付的定义
 

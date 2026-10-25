@@ -677,9 +677,6 @@ each build agree within 3 percent. `cargo test --release -p amoris-app --test gp
 time_samples -- --ignored --nocapture`: the wall time of a tick, its GPU work and readbacks waited
 for, over ticks 61 to 360. The f32 kernels' column is the same test built against bc730ab7, the
 commit before them, the deterministic kernels' against b248c082; the runs alternated, two of each.
-The table this section first had (b248c082) was measured while two headless Chrome instances, left
-behind by an interrupted browser check, kept the GPU drawing; it read 8 to 17 percent higher in both
-columns and is replaced:
 
 | Sample | f32 kernels | Deterministic kernels |
 |---|---|---|
@@ -956,9 +953,7 @@ timings were not taken there.
 
 What the liquid surface (splashes.md 5) and the entry crowns drawn on it
 ([water.md](../spec/water.md) 52, 70) cost, against the build before them (07074547), on the M5,
-macOS, release builds; leftover browsers stopped and no other build running (another session's
-release build had doubled the MLS-MPM solver's intervals in an earlier attempt, and those runs were
-discarded).
+macOS, release builds; leftover browsers stopped and no other build running.
 
 **Natively, Metal**, as in 22: `AMORIS_TRACE=frames=300,skip=N`, `python tools/frame_trace.py
 stats`, GPU interval coverage (the union of the passes' intervals), medians over 300 frames, two

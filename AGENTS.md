@@ -93,25 +93,24 @@ credential cleanup. File-verification records remain local, including in that ar
   loader is found. Metal is the default on macOS. `MVK_CONFIG_LOG_LEVEL=3` prints MoltenVK's shader
   compile errors; `cargo run --release -p amoris-render --example gpu_probe` checks a backend.
 - Direct3D 12 is the Windows default (owner, 2026-10-09; `AMORIS_BACKEND=vulkan` picks Vulkan,
-  `AMORIS_BACKEND=dx12` names D3D12 explicitly on any Windows run). A host (`amoris play`,
-  `amoris serve`'s frames and GPU water, the renderer's window, the examples that draw or step
-  water) with no backend named and no supported DXC runs Vulkan instead, D3D12 with FXC only when
-  the machine has no Vulkan adapter either (owner, 2026-10-24; `amoris_render::host_backend`,
-  outside the water's kernel key); amoris-render's tests keep `BackendChoice::from_env`, whose
-  `Auto` is D3D12, while amoris-app's GPU water tests reach the water service through
-  `src/water_compute.rs` and so follow `host_backend` (`AMORIS_BACKEND=dx12` or `AMORIS_DXC=fxc`
-  tests D3D12 with FXC). DXC
-  comes from the newest Windows SDK whose `bin\<version>\x64\dxcompiler.dll` is DXC 1.8.2502 or
-  newer, wgpu's minimum (or `AMORIS_DXC`; `AMORIS_DXC=fxc` for FXC; an older DXC loses the device,
-  so it is passed over for FXC); never enable wgpu's `static-dxc` (it downloads binaries). With no
-  SDK DXC found (a player's machine without the SDK) and on Windows other than x86-64, D3D12 would
-  compile with FXC. FXC does not run GPU water (owner, 2026-10-23; docs/bench/gpu-matrix.md 14): it
-  cannot compile the generated kernels' `boundary_predict` (X3500) or `fs_shallow` (X3511), the
-  fragment stage of every water region's surface, bound for every region every frame, whose invalid
-  pipeline voids the submit: under FXC no frame of a scene with a water region draws, in view or
-  not, CPU-solved or GPU, while scenes without water draw (R1, 2026-10-24). Water checks on D3D12 need DXC 1.8.2502 or newer.
-  `AMORIS_ADAPTER=780m` (or an index) picks an adapter on a two-GPU machine, for any backend. D3D12
-  needs wgpu's indirect validation for `first_instance` (gpu.rs sets it);
+  `AMORIS_BACKEND=dx12` names D3D12 explicitly on any Windows run). A host (`amoris play`, `amoris
+  serve`'s frames and GPU water, the renderer's window, the examples that draw or step water) with
+  no backend named and no supported DXC runs Vulkan instead, D3D12 with FXC only when the machine
+  has no Vulkan adapter either (owner, 2026-10-24; `amoris_render::host_backend`, outside the
+  water's kernel key); amoris-render's tests keep `BackendChoice::from_env`, whose `Auto` is D3D12,
+  while amoris-app's GPU water tests reach the water service through `src/water_compute.rs` and so
+  follow `host_backend` (`AMORIS_BACKEND=dx12` or `AMORIS_DXC=fxc` tests D3D12 with FXC). DXC comes
+  from the newest Windows SDK whose `bin\<version>\x64\dxcompiler.dll` is DXC 1.8.2502 or newer,
+  wgpu's minimum (or `AMORIS_DXC`; `AMORIS_DXC=fxc` for FXC; an older DXC loses the device, so it is
+  passed over for FXC); never enable wgpu's `static-dxc` (it downloads binaries). With no SDK DXC
+  found (a player's machine without the SDK) and on Windows other than x86-64, D3D12 would compile
+  with FXC. FXC does not run GPU water (owner, 2026-10-23; docs/bench/gpu-matrix.md 14): it cannot
+  compile the generated kernels' `boundary_predict` (X3500) or `fs_shallow` (X3511), the fragment
+  stage of every water region's surface, bound for every region every frame, whose invalid pipeline
+  voids the submit: under FXC no frame of a scene with a water region draws, in view or not,
+  CPU-solved or GPU, while scenes without water draw (R1, 2026-10-24). Water checks on D3D12 need
+  DXC 1.8.2502 or newer. `AMORIS_ADAPTER=780m` (or an index) picks an adapter on a two-GPU machine,
+  for any backend. D3D12 needs wgpu's indirect validation for `first_instance` (gpu.rs sets it);
   `cargo test -p amoris-render` checks it on Vulkan and D3D12
   (`indirect_draws_keep_their_first_instance`), `tools/backend_compare.py` compares frames across
   backends and `tools/backend_bench.py` times them ([docs/bench/dx12.md](docs/bench/dx12.md)). Debug
@@ -310,9 +309,10 @@ amoris-runtime::water_compute.
 
 Resident water persists checked complete MAC checkpoints, bounded programs and GPU field digests.
 After initialization CPU tiles are empty: never read them or omit checkpoint data when merging
-feeds. Every replay step executes and checks numerical/device compatibility; no missing base,
-changed environment or failed receipt may silently reset state. Publication uses exact-version
-section deltas. Resource snapshot reuse follows ECS change detection just like components.
+feeds. Every replay step executes and checks the kernels' and program's identity (the deterministic
+kernels compute the same bits on every device, water.md 66); no missing base, changed environment or
+failed receipt may silently reset state. Publication uses exact-version section deltas. Resource
+snapshot reuse follows ECS change detection just like components.
 
 A suspended tick is not a boundary: do not publish it, repeat earlier systems/sources, or apply
 queued commands until completion. Restore cancels old requests and clears derived observations.
@@ -339,21 +339,21 @@ water_frontier, physics field_buoyancy/field_hull/resident_swimming/added_mass/v
 water_resident_async/water_feedback, and app gpu_water/gpu_floaters/gpu_feedback/gpu_swimming/
 gpu_energy/gpu_frontier_scenes/gpu_scale. A joined seam (water.md 64.3) is worked out once a tick,
 in physics `join.rs`, from both regions' last edge columns, and both regions take the same numbers;
-a joined group sleeps or bakes only as a whole. A `Terrain`'s heights come from its features
-through `amoris_sim::math` (water.md 65); its collider is derived when its hash changes, never by
-change detection, and the edit world shows resident regions as tiles until their first step. The
-renderer's terrain pick marches the heights (`terrain.rs` `hit`); a change to either runs physics
-`terrain`/`author`, render `terrain`, runtime `terrain`, app `gpu_authoring` and, in `editor/`,
-`bun test` and `tools/water-authoring.ts`. The non-hydrostatic solve runs two identical Chebyshev cycles,
+a joined group sleeps or bakes only as a whole. A `Terrain`'s heights come from its features through
+`amoris_sim::math` (water.md 65); its collider is derived when its hash changes, never by change
+detection, and the edit world shows resident regions as tiles until their first step. The renderer's
+terrain pick marches the heights (`terrain.rs` `hit`); a change to either runs physics
+`terrain`/`author`, render `terrain`, runtime `terrain`, app `gpu_authoring` and, in `editor/`, `bun
+test` and `tools/water-authoring.ts`. The non-hydrostatic solve runs two identical Chebyshev cycles,
 never one (water.md 55.2); its blocked dispatches must match one dispatch an iteration bit for bit
-(water_frontier `the_blocked_non_hydrostatic_solve_matches_one_dispatch_an_iteration`). A change
-to the kernel's velocity transport or its wet/dry faces also runs the `water_swash` example
-against the table in water.md 61.3. The plunging lip's rules live twice, in water_compute.wgsl
-(`plunge_share`) and in the renderer's water_lip.wgsl, which must stay the same (render tests
-water_lip and water_frontier `plunging_crests_land_ahead_of_the_front_and_conserve_water`). Rebuild
-paired web game/viewport and run
-actual Chrome worker/resident/probe/floater and water_pool_check.mjs checks. samples/water-pool
-uses real player input and only scores poses/contact; scripts never move the swimmer.
+(water_frontier `the_blocked_non_hydrostatic_solve_matches_one_dispatch_an_iteration`). A change to
+the kernel's velocity transport or its wet/dry faces also runs the `water_swash` example against the
+table in water.md 61.3. The plunging lip's rules live twice, in water_compute.wgsl (`plunge_share`)
+and in the renderer's water_lip.wgsl, which must stay the same (render tests water_lip and
+water_frontier `plunging_crests_land_ahead_of_the_front_and_conserve_water`). Rebuild paired web
+game/viewport and run actual Chrome worker/resident/probe/floater and water_pool_check.mjs checks.
+samples/water-pool uses real player input and only scores poses/contact; scripts never move the
+swimmer.
 
 The water kernels the pipelines load are generated (water.md 66): render `tests/water_det.rs` makes
 `shaders/det/` from the WGSL sources and `water_det.wgsl`, rounding every f32 operation once behind
@@ -406,4 +406,4 @@ The water must not shimmer (water.md 68): its refracted and reflected rays take 
 rain's rings averaged over four pixels, and the caustics' map follows its photons over 40 ms of
 drawn time and stands still while drawn time does. A change to the water's shading, the ripples or
 the caustics runs `tools/water_flicker.py` on the pool party's deck view against liquids.md 20
-(its rainy scene: the table's last row).
+(the M5's figure at the current build).

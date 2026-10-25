@@ -389,14 +389,13 @@ and patches on the texture's peaks and much fills in its troughs until the white
 coverage mapping real-time ocean foam uses. The texture is four octaves of value noise, each turned
 by 37 degrees and shifted so no lattice lines up; an octave finer than six pixel footprints gives
 way to its mean, so foam does not alias into flicker at a distance. The flow map's phases carry it
-with the water. It was once also turned and stretched by the local flow, which turned the whole
-pattern about the world's origin: 200 m out, a flow turning by a fifth of a degree swept the texture
-through a cycle, and the foam drew the flow's contour lines, wood grain behind a breaking crest and
-nested zigzags around a floating board. Scaling a single octave's grain by the density had left
-breaking white water a camouflage of grey blocks a third of a metre wide. Small surface wavelets
-follow the velocity too, blending two repeating flow phases so their coordinate reset does not jump;
-the foam texture blends its two phases with their variance kept, so its pattern does not fade and
-return as they swap.
+with the water. It is not turned or stretched by the local flow, which would turn the whole pattern
+about the world's origin: 200 m out, a flow turning by a fifth of a degree sweeps the texture
+through a cycle, and the foam draws the flow's contour lines. Scaling a single octave's grain by the
+density had left breaking white water a camouflage of grey blocks a third of a metre wide. Small
+surface wavelets follow the velocity too, blending two repeating flow phases so their coordinate
+reset does not jump; the foam texture blends its two phases with their variance kept, so its pattern
+does not fade and return as they swap.
 
 The clock is simulated time, differenced in f64 on the host. Repeated draws of a paused boundary
 do not advect or age foam; a long undrawn interval still consumes its elapsed lifetime. A reset,
@@ -2483,10 +2482,11 @@ foil/drag coupling, not occupied-volume, wave-pressure, added-mass or impact sim
 
 ## 46. Displaced volume: bodies push the water aside (Pioneer, 2026-10-22)
 
-Sections 46 to 56 are Amoris Pioneer's frontier water work (branches `explore/water` and
-`explore/water-nh`; charter, GPU water scope, Pioneer 2026-10-22). Sections 46 to 49, 52 and 55
-apply to `gpu_resident` regions only: `physics` on another solver is `water.invalid`, and
-`WaterDisplacement` belongs on a resident region, since nothing else loads its packet.
+Sections 46 to 56 are the frontier water first built on Amoris Pioneer (branches `explore/water` and
+`explore/water-nh`) and adopted on 2026-10-25 (charter, GPU water scope, Pioneer 2026-10-22).
+Sections 46 to 49, 52 and 55 apply to `gpu_resident` regions only: `physics` on another solver is
+`water.invalid`, and `WaterDisplacement` belongs on a resident region, since nothing else loads its
+packet.
 
 A region entity that also holds `WaterDisplacement` couples its bodies to its water both ways in the
 vertical. Each tick, every Floater point and every Walker inside the region queues the volume it
@@ -2800,13 +2800,6 @@ baseline) requires one key and the complete lattice for one point going in at 6 
 and at the surface, no parcel faster than 7.36 m/s, none for a point going in at 1 m/s, passing over
 the water or already under it, bitwise-equal crowns from equal entries, and exactly 2,048 births
 for sixteen bodies at once; its unit tests pin the candidates and their grouping.
-
-Spray drops are lit in the forward pass's units, the sun's irradiance over pi: the shader divided
-the sun by 10,000 as if it were in lux, which left every drop grey under the samples' suns.
-
-Drops fade out near the camera, from 4 m plus six radii to 1 m plus one: a drop a few metres from
-the eye is drawn as a disc many pixels wide where a real one is a blurred streak, and the spray
-around a surfer or a swimmer in the white water filled the view with grey blobs.
 
 The spray is a ring of 16,384 drops shared by every source, at most 4,096 born a frame. A surf's
 breaking front flooded it: the spray took any surface step of more than half a metre between two
@@ -3612,10 +3605,7 @@ high) compared in the lattice's units: the integer |m|^2 against the bounds over
 gap of 1 between neighbouring |m|^2. The first cascade's |m| = 1 and 16 and the others' |m| = 2 lie
 exactly on a bound, and compared as a float |k| they fell in two cascades or none with the vendor's
 rounding, so the two GPUs drew the bay differently by a cascade's tile (30% of `ocean_shots`' mouth
-view at tick 2700 off by more than one 8-bit step, 6% after; the eye's view 0.05% either way). R1
-ran a relative tolerance of 1e-4 in its place (`b6210270`), which is 1.64 at the last cascade's
-upper bound |m| = 128, more than the gap: it lost no wave only because 16383 is not a sum of two
-squares. The two select the same wave vectors.
+view at tick 2700 off by more than one 8-bit step, 6% after; the eye's view 0.05% either way).
 
 `cargo test -p amoris-render --test water a_region_open_on_a_sea_with_its_look_meets_it_without_a_seam`,
 on Metal: seen from straight above, a region 4 m deep over a sand floor, open on the sea along -x,
