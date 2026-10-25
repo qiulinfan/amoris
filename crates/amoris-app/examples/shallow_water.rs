@@ -6,7 +6,7 @@
 //!
 //! ```sh
 //! cargo run --release -p amoris-app --example shallow_water -- --shots out/shallow \
-//!     [--blocks ../amoris-samples/blockcraft] [--frames 600] [--notch N] [--close]
+//!     [--blocks samples/blockcraft] [--frames 600] [--notch N] [--close]
 //! ```
 //!
 //! `--notch N` cuts 2N + 1 blocks wide (1 by default); `--close` looks at the notch's foot from a

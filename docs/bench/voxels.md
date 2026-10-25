@@ -15,7 +15,7 @@
 | Snapshot through `SnapshotCache`, a tick without an edit | 30 ticks, median | 0.006 ms |
 | Snapshot through `SnapshotCache`, a tick with one edit (the `Voxels` section re-encoded) | 30 ticks, median | 0.057 ms |
 | Snapshot without the cache (the browser worker's every tick) | 30 ticks, median | 0.075 ms |
-| Frame in the native window, 1920 x 1080, no vsync | `amoris play ../amoris-samples/blockcraft --walk --bench 300` | mean 8.35 ms, p50 8.31, p95 8.64, p99 8.85, max 13.7; GPU 5.97 ms, CPU 1.60 ms; 908 instances |
+| Frame in the native window, 1920 x 1080, no vsync | `amoris play samples/blockcraft --walk --bench 300` | mean 8.35 ms, p50 8.31, p95 8.64, p99 8.85, max 13.7; GPU 5.97 ms, CPU 1.60 ms; 908 instances |
 
 The snapshot numbers measure encoding (chunks are written as one length and their bytes); the
 measurement code was a throwaway test against the sample, not kept in the repository.

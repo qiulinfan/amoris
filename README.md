@@ -167,6 +167,7 @@ Sanitized run data and logs live in
 | [Sailing](samples/sailing) | Wind, buoyancy, boat controls, and cargo collection |
 | [Animation](samples/anim) | Animation, particles, and in-game UI |
 | [Sailing course](samples/sailing-course) | Restricted player perception, intentions, and decision points |
+| [Blockcraft](samples/blockcraft) | A voxel island: break and place blocks; shallow water floods, pours and drains |
 
 Rendering measurements report their scene, hardware, resolution, and timing method.
 Recorded demonstration videos use fixed simulation steps; playback frame rate is

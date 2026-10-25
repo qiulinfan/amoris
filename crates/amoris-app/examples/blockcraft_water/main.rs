@@ -6,7 +6,7 @@
 //!
 //! ```sh
 //! cargo run --release -p amoris-app --example blockcraft_water -- \
-//!     [--project ../amoris-samples/blockcraft] [--shots out/blockcraft-water] [--frames 1200] \
+//!     [--project samples/blockcraft] [--shots out/blockcraft-water] [--frames 1200] \
 //!     [--bench] [--views DIR]
 //! cargo run --release -p amoris-app --example blockcraft_water -- --sheet BEFORE AFTER OUT.png \
 //!     [VIEW...]
@@ -150,9 +150,12 @@ fn main() {
         return;
     }
     let views = value(&args, "--views").map(PathBuf::from);
-    let src = PathBuf::from(
-        value(&args, "--project").unwrap_or_else(|| "../amoris-samples/blockcraft".into()),
-    );
+    let src = PathBuf::from(value(&args, "--project").unwrap_or_else(|| {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../samples/blockcraft")
+            .to_string_lossy()
+            .into_owned()
+    }));
     let dir =
         PathBuf::from(value(&args, "--shots").unwrap_or_else(|| "out/blockcraft-water".into()));
     let frames: u64 = value(&args, "--frames")

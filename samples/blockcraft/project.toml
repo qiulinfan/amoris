@@ -1,0 +1,9 @@
+# A voxel sandbox island: a seeded block volume (gen_world.py writes world.cells and scene.json)
+# walked by a first-person body; scripts break and place blocks and drift the clouds.
+name = "Blockcraft"
+rate = 60
+seed = 1
+
+[player]
+perception = "perception.json"
+actions = "first_person"

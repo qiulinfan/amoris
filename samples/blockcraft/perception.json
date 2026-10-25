@@ -1,0 +1,18 @@
+{
+  "observers": [
+    {
+      "name": "player",
+      "doc": "A first-person player on the island: sees ahead out to 96 m.",
+      "sight": {"range_m": 96, "fov_deg": 70, "eye_m": {"x": 0, "y": 0, "z": 0}, "occlusion": false},
+      "attention_m": 32,
+      "memory_s": 120,
+      "memory_capacity": 32,
+      "event_capacity": 64,
+      "budget_tokens": 300,
+      "instruments": []
+    }
+  ],
+  "instruments": [],
+  "kinds": [],
+  "events": []
+}

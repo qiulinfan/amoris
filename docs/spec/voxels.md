@@ -2,10 +2,10 @@
 
 - Status: Accepted (owner, 2026-10-17), track `voxels`. Charter 4.9 (block volumes and the
   first-person body), 3 (principles 1, 3, 4), 8 item 3 (large terrain per tick).
-- Origin: `amoris-samples/blockcraft`, a block sandbox written on the engine, found that a player
-  could walk a static world but could neither break nor place a block: the walk camera is presenter
-  state, scripts receive no pointer input, cannot change geometry and cannot cast rays, and walk
-  collision is built once from the scene file.
+- Origin: `samples/blockcraft` (then in amoris-samples), a block sandbox written on the engine,
+  found that a player could walk a static world but could neither break nor place a block: the walk
+  camera is presenter state, scripts receive no pointer input, cannot change geometry and cannot
+  cast rays, and walk collision is built once from the scene file.
 
 This specification makes a world of editable blocks a native engine object: one component holds the
 blocks as world state, the renderer meshes them, physics collides with them, scripts read, edit and
@@ -313,7 +313,7 @@ draw paths are checked under the WebGPU baseline with the existing draw-path too
 
 ## 12. The game that drives it
 
-`amoris-samples/blockcraft` moves its terrain into a `Voxels` volume (`world.cells` and the palette
+`samples/blockcraft` moves its terrain into a `Voxels` volume (`world.cells` and the palette
 in the scene; materials in `blocks.gltf`, which holds no geometry), declares `[player]` with
 `first_person`, and adds `scripts/blocks.ts`: on `primary` it ray-casts 5 m from the walker's eye
 and sets the hit cell to air unless it is bedrock; on `secondary` it places the selected slot's

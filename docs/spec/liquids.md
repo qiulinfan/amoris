@@ -2,10 +2,11 @@
 
 - Status: Accepted (owner, 2026-10-17), track `liquids`. Charter 4.10 (flowing liquids), 4.9 (block
   volumes), 3 (principles 3 and 4: state in the world, determinism and replay).
-- Origin: `amoris-samples/blockcraft`. Its water is liquid cells that never move: break the bank of
-  a lake and the hole stays dry; walk into the sea and the player sinks like a stone; under water
-  the view is the view above it. This specification makes liquids flow, swim and look like liquids,
-  in the engine, for any game with block volumes; the block game's water is the reference behaviour.
+- Origin: `samples/blockcraft` (then in amoris-samples). Its water is liquid cells that never move:
+  break the bank of a lake and the hole stays dry; walk into the sea and the player sinks like a
+  stone; under water the view is the view above it. This specification makes liquids flow, swim and
+  look like liquids, in the engine, for any game with block volumes; the block game's water is the
+  reference behaviour.
 
 ## 1. Scope
 

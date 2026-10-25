@@ -169,7 +169,7 @@ rules read `Board.standing`, `speed` and `wipeouts`. Examples: `samples/pool-par
 A first-person game declares `actions = "first_person"` under `[player]`: its seat `player` drives
 the `Walker` (`forward`, `strafe`, `yaw`, `pitch`, `run`, `slot`, and the one-tick pulses `jump`,
 `primary`, `secondary`), which rules read like any component; `amoris play <project> --walk` plays
-it from the keyboard and mouse. Example: `amoris-samples/blockcraft`.
+it from the keyboard and mouse. Example: `samples/blockcraft`.
 
 ## Players, intents and executors
 

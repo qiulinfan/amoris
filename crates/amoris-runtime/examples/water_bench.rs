@@ -13,7 +13,7 @@
 //! again, with the tiles stepped a tick.
 //!
 //! `cargo run --release -p amoris-runtime --features transpile --example water_bench -- \
-//!  [--ticks 1200] [project]` (the project defaults to ../amoris-samples/blockcraft).
+//!  [--ticks 1200] [project]` (the project defaults to samples/blockcraft).
 
 #![allow(clippy::disallowed_methods)] // a benchmark reads the wall clock, outside any tick
 #![allow(clippy::cast_precision_loss)] // counts and microseconds into f64 for reporting
@@ -75,7 +75,7 @@ fn median(mut v: Vec<f64>) -> f64 {
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut ticks = 1200u64;
-    let mut project = PathBuf::from("../amoris-samples/blockcraft");
+    let mut project = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../samples/blockcraft");
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {

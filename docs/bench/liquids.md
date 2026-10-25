@@ -13,7 +13,7 @@ Machine: Apple M5 (10 GPU cores), macOS, Metal (and MoltenVK 1.4.2 for one row);
 2026-10-18. The machine was not checked for other load; one run per row.
 
 Method: `cargo run --release -p amoris-app --example splashes -- --shots DIR --blocks
-../amoris-samples/blockcraft --breach N [--off]`. The game runs for real: a lake on a 6-block cliff,
+samples/blockcraft --breach N [--off]`. The game runs for real: a lake on a 6-block cliff,
 its rim broken 2N + 1 cells wide at tick 90 by a script, `physics.fluids` pouring it into a pool
 below. Each frame steps the game one tick, applies its render feed and captures 1280 x 720 with
 MSAA. The time is the whole capture, readback included, median over frames 30 to 89 (before the
@@ -91,7 +91,7 @@ Machine: Apple M5 (10 GPU cores), macOS 27.0.1, Metal, release build, 2026-10-18
 not checked for other load; one run per table.
 
 CPU, back to back (`cargo run --release -p amoris-runtime --features transpile --example
-water_bench -- --ticks 9000 ../amoris-samples/blockcraft`). After each tick: `physics.water` inside
+water_bench -- --ticks 9000 samples/blockcraft`). After each tick: `physics.water` inside
 the tick (a step hook), the snapshot through `SnapshotCache` with the size of the `WaterRegion`
 section, and the feed's extraction for one subscriber with its frame's encoded size. Medians over
 the windows of ticks:
@@ -124,7 +124,7 @@ the windows of ticks:
 - Not measured: the browser worker (WebAssembly) and R1.
 
 Drawing (`cargo run --release -p amoris-app --example blockcraft_water -- --project
-../amoris-samples/blockcraft --frames 1030 --bench`, at `3e25f5b4`, before calm damping, which
+samples/blockcraft --frames 1030 --bench`, at `3e25f5b4`, before calm damping, which
 does not change the drawing's work). Three renderers fed the same frames, one
 without the water, one drawing it Smooth and one Blocky, render in turn at 1280 x 720 with MSAA from
 the far camera (high over the sea, the shore and the pit filling about two thirds of the view).
@@ -929,7 +929,7 @@ holds stepping the world and reading the frame back.
 The views: the pool party in the rain from the pool's side (`scene_shots samples/pool-party --eye
 8.6,1.1,6.6 --at 10.8,0.55,4.2`), the river falls from the pool (`--eye 46,2.5,8 --at
 34.6,3.5,14.7`), the surf beach's break (`shore_shots --view break`) and blockcraft's lake pouring
-over its cliff (`splashes --blocks ../amoris-samples/blockcraft --close`).
+over its cliff (`splashes --blocks samples/blockcraft --close`).
 
 The river falls' figure is the spray's first form; with its clouds kept to mist it takes 8.4 ms
 (21). The block-liquid splash's MLS-MPM steps and its surface passes carry no timestamps, so its

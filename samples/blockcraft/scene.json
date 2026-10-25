@@ -1,0 +1,1048 @@
+{
+ "format": "amoris-scene",
+ "version": 1,
+ "entities": [
+  {
+   "name": "Sun",
+   "components": {
+    "Transform": {
+     "rotation": [
+      -0.42,
+      -0.3,
+      -0.11,
+      0.85
+     ]
+    },
+    "Light": {
+     "kind": "directional",
+     "intensity": 10,
+     "shadows": true,
+     "color": [
+      1,
+      0.96,
+      0.9
+     ]
+    }
+   }
+  },
+  {
+   "name": "Environment",
+   "components": {
+    "Environment": {
+     "ambient": 1.0,
+     "exposure_ev": 0.0,
+     "bloom": 0.03,
+     "fog_density": 0.0006,
+     "fog_color": [
+      0.62,
+      0.76,
+      0.98
+     ]
+    }
+   }
+  },
+  {
+   "name": "World",
+   "components": {
+    "Transform": {
+     "position": [
+      -64.0,
+      0,
+      -64.0
+     ]
+    },
+    "Land": {},
+    "Voxels": {
+     "source": "world.cells",
+     "palette": [
+      {
+       "name": "air"
+      },
+      {
+       "name": "stone",
+       "solid": true,
+       "faces": [
+        "blocks.gltf#stone",
+        "blocks.gltf#stone",
+        "blocks.gltf#stone"
+       ]
+      },
+      {
+       "name": "dirt",
+       "solid": true,
+       "faces": [
+        "blocks.gltf#dirt",
+        "blocks.gltf#dirt",
+        "blocks.gltf#dirt"
+       ]
+      },
+      {
+       "name": "grass",
+       "solid": true,
+       "faces": [
+        "blocks.gltf#grass_top",
+        "blocks.gltf#grass_side",
+        "blocks.gltf#dirt"
+       ]
+      },
+      {
+       "name": "snowy_grass",
+       "solid": true,
+       "faces": [
+        "blocks.gltf#snow",
+        "blocks.gltf#snow_side",
+        "blocks.gltf#dirt"
+       ]
+      },
+      {
+       "name": "sand",
+       "solid": true,
+       "faces": [
+        "blocks.gltf#sand",
+        "blocks.gltf#sand",
+        "blocks.gltf#sand"
+       ]
+      },
+      {
+       "name": "gravel",
+       "solid": true,
+       "faces": [
+        "blocks.gltf#gravel",
+        "blocks.gltf#gravel",
+        "blocks.gltf#gravel"
+       ]
+      },
+      {
+       "name": "bedrock",
+       "solid": true,
+       "faces": [
+        "blocks.gltf#bedrock",
+        "blocks.gltf#bedrock",
+        "blocks.gltf#bedrock"
+       ]
+      },
+      {
+       "name": "coal_ore",
+       "solid": true,
+       "faces": [
+        "blocks.gltf#coal_ore",
+        "blocks.gltf#coal_ore",
+        "blocks.gltf#coal_ore"
+       ]
+      },
+      {
+       "name": "iron_ore",
+       "solid": true,
+       "faces": [
+        "blocks.gltf#iron_ore",
+        "blocks.gltf#iron_ore",
+        "blocks.gltf#iron_ore"
+       ]
+      },
+      {
+       "name": "gold_ore",
+       "solid": true,
+       "faces": [
+        "blocks.gltf#gold_ore",
+        "blocks.gltf#gold_ore",
+        "blocks.gltf#gold_ore"
+       ]
+      },
+      {
+       "name": "oak_log",
+       "solid": true,
+       "faces": [
+        "blocks.gltf#oak_log_top",
+        "blocks.gltf#oak_log",
+        "blocks.gltf#oak_log_top"
+       ]
+      },
+      {
+       "name": "birch_log",
+       "solid": true,
+       "faces": [
+        "blocks.gltf#birch_log_top",
+        "blocks.gltf#birch_log",
+        "blocks.gltf#birch_log_top"
+       ]
+      },
+      {
+       "name": "oak_leaves",
+       "solid": true,
+       "faces": [
+        "blocks.gltf#oak_leaves",
+        "blocks.gltf#oak_leaves",
+        "blocks.gltf#oak_leaves"
+       ]
+      },
+      {
+       "name": "birch_leaves",
+       "solid": true,
+       "faces": [
+        "blocks.gltf#birch_leaves",
+        "blocks.gltf#birch_leaves",
+        "blocks.gltf#birch_leaves"
+       ]
+      },
+      {
+       "name": "tall_grass",
+       "shape": "cross",
+       "faces": [
+        "blocks.gltf#tall_grass",
+        "",
+        ""
+       ]
+      },
+      {
+       "name": "poppy",
+       "shape": "cross",
+       "faces": [
+        "blocks.gltf#poppy",
+        "",
+        ""
+       ]
+      },
+      {
+       "name": "dandelion",
+       "shape": "cross",
+       "faces": [
+        "blocks.gltf#dandelion",
+        "",
+        ""
+       ]
+      },
+      {
+       "name": "water",
+       "shape": "liquid",
+       "faces": [
+        "blocks.gltf#water",
+        "",
+        ""
+       ],
+       "flow": {
+        "spread": 0,
+        "model": "field"
+       }
+      },
+      {
+       "name": "cobblestone",
+       "solid": true,
+       "faces": [
+        "blocks.gltf#cobblestone",
+        "blocks.gltf#cobblestone",
+        "blocks.gltf#cobblestone"
+       ]
+      },
+      {
+       "name": "oak_planks",
+       "solid": true,
+       "faces": [
+        "blocks.gltf#oak_planks",
+        "blocks.gltf#oak_planks",
+        "blocks.gltf#oak_planks"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "Water",
+   "components": {
+    "Transform": {
+     "position": [
+      -64.0,
+      0,
+      -64.0
+     ]
+    },
+    "WaterRegion": {
+     "cell_m": 0.5,
+     "size": [
+      256,
+      256
+     ],
+     "bed": {
+      "Voxels": {
+       "volume": 3,
+       "per": 2,
+       "y_lo": 0,
+       "y_hi": 79
+      }
+     },
+     "dry_below": 0.002,
+     "look": {
+      "fog": [
+       0.02,
+       0.09,
+       0.32,
+       0.11
+      ],
+      "absorb": [
+       1.2,
+       0.3,
+       0.12
+      ],
+      "scatter": [
+       0.1,
+       0.2,
+       0.4
+      ],
+      "style": "Smooth",
+      "surround_m": 5000
+     }
+    }
+   }
+  },
+  {
+   "name": "Steve",
+   "components": {
+    "Transform": {
+     "position": [
+      -24.5,
+      48.62,
+      -34.5
+     ],
+     "rotation": [
+      0,
+      0.924,
+      0,
+      0.383
+     ]
+    },
+    "Walker": {
+     "yaw": 2.356194
+    },
+    "Camera": {
+     "fov_deg": 70
+    },
+    "Observer": {
+     "profile": "player",
+     "seat": "player"
+    },
+    "Spawn": {
+     "eye": {
+      "x": -24.5,
+      "y": 48.62,
+      "z": -34.5
+     }
+    }
+   }
+  },
+  {
+   "name": "Title",
+   "components": {
+    "UiText": {
+     "text": "Blockcraft",
+     "anchor": "top_left",
+     "offset": [
+      24,
+      24
+     ],
+     "size": 24,
+     "color": [
+      1,
+      1,
+      1,
+      1
+     ]
+    }
+   }
+  },
+  {
+   "name": "Controls",
+   "components": {
+    "UiText": {
+     "text": "WASD move  |  Space jump  |  Shift run  |  Left break  |  Right place  |  1-9 or wheel: block",
+     "anchor": "top_left",
+     "offset": [
+      24,
+      60
+     ],
+     "size": 15,
+     "color": [
+      1,
+      1,
+      1,
+      0.9
+     ]
+    }
+   }
+  },
+  {
+   "name": "Hotbar",
+   "components": {
+    "UiText": {
+     "text": "",
+     "anchor": "bottom",
+     "offset": [
+      0,
+      64
+     ],
+     "size": 20
+    },
+    "Hotbar": {}
+   }
+  },
+  {
+   "name": "Cloud1",
+   "components": {
+    "Transform": {
+     "position": [
+      -68.367,
+      100,
+      131.472
+     ]
+    },
+    "Model": {
+     "mesh": "clouds/cloud5.gltf",
+     "color": [
+      1,
+      1,
+      1,
+      0.8
+     ],
+     "emissive": [
+      0.45,
+      0.45,
+      0.45
+     ],
+     "cast_shadows": false
+    },
+    "Cloud": {
+     "speed": 1.604
+    }
+   }
+  },
+  {
+   "name": "Cloud2",
+   "components": {
+    "Transform": {
+     "position": [
+      -114.346,
+      100,
+      69.8
+     ]
+    },
+    "Model": {
+     "mesh": "clouds/cloud4.gltf",
+     "color": [
+      1,
+      1,
+      1,
+      0.8
+     ],
+     "emissive": [
+      0.45,
+      0.45,
+      0.45
+     ],
+     "cast_shadows": false
+    },
+    "Cloud": {
+     "speed": 1.8
+    }
+   }
+  },
+  {
+   "name": "Cloud3",
+   "components": {
+    "Transform": {
+     "position": [
+      -39.859,
+      100,
+      -71.142
+     ]
+    },
+    "Model": {
+     "mesh": "clouds/cloud5.gltf",
+     "color": [
+      1,
+      1,
+      1,
+      0.8
+     ],
+     "emissive": [
+      0.45,
+      0.45,
+      0.45
+     ],
+     "cast_shadows": false
+    },
+    "Cloud": {
+     "speed": 1.392
+    }
+   }
+  },
+  {
+   "name": "Cloud4",
+   "components": {
+    "Transform": {
+     "position": [
+      66.825,
+      100,
+      -88.931
+     ]
+    },
+    "Model": {
+     "mesh": "clouds/cloud0.gltf",
+     "color": [
+      1,
+      1,
+      1,
+      0.8
+     ],
+     "emissive": [
+      0.45,
+      0.45,
+      0.45
+     ],
+     "cast_shadows": false
+    },
+    "Cloud": {
+     "speed": 1.535
+    }
+   }
+  },
+  {
+   "name": "Cloud5",
+   "components": {
+    "Transform": {
+     "position": [
+      -65.826,
+      100,
+      -192.303
+     ]
+    },
+    "Model": {
+     "mesh": "clouds/cloud1.gltf",
+     "color": [
+      1,
+      1,
+      1,
+      0.8
+     ],
+     "emissive": [
+      0.45,
+      0.45,
+      0.45
+     ],
+     "cast_shadows": false
+    },
+    "Cloud": {
+     "speed": 1.8
+    }
+   }
+  },
+  {
+   "name": "Cloud6",
+   "components": {
+    "Transform": {
+     "position": [
+      -198.324,
+      100,
+      -32.895
+     ]
+    },
+    "Model": {
+     "mesh": "clouds/cloud4.gltf",
+     "color": [
+      1,
+      1,
+      1,
+      0.8
+     ],
+     "emissive": [
+      0.45,
+      0.45,
+      0.45
+     ],
+     "cast_shadows": false
+    },
+    "Cloud": {
+     "speed": 1.521
+    }
+   }
+  },
+  {
+   "name": "Cloud7",
+   "components": {
+    "Transform": {
+     "position": [
+      -51.519,
+      100,
+      171.854
+     ]
+    },
+    "Model": {
+     "mesh": "clouds/cloud4.gltf",
+     "color": [
+      1,
+      1,
+      1,
+      0.8
+     ],
+     "emissive": [
+      0.45,
+      0.45,
+      0.45
+     ],
+     "cast_shadows": false
+    },
+    "Cloud": {
+     "speed": 1.66
+    }
+   }
+  },
+  {
+   "name": "Cloud8",
+   "components": {
+    "Transform": {
+     "position": [
+      40.176,
+      100,
+      149.177
+     ]
+    },
+    "Model": {
+     "mesh": "clouds/cloud4.gltf",
+     "color": [
+      1,
+      1,
+      1,
+      0.8
+     ],
+     "emissive": [
+      0.45,
+      0.45,
+      0.45
+     ],
+     "cast_shadows": false
+    },
+    "Cloud": {
+     "speed": 1.578
+    }
+   }
+  },
+  {
+   "name": "Cloud9",
+   "components": {
+    "Transform": {
+     "position": [
+      195.828,
+      100,
+      8.371
+     ]
+    },
+    "Model": {
+     "mesh": "clouds/cloud2.gltf",
+     "color": [
+      1,
+      1,
+      1,
+      0.8
+     ],
+     "emissive": [
+      0.45,
+      0.45,
+      0.45
+     ],
+     "cast_shadows": false
+    },
+    "Cloud": {
+     "speed": 1.444
+    }
+   }
+  },
+  {
+   "name": "Cloud10",
+   "components": {
+    "Transform": {
+     "position": [
+      -128.533,
+      100,
+      141.803
+     ]
+    },
+    "Model": {
+     "mesh": "clouds/cloud0.gltf",
+     "color": [
+      1,
+      1,
+      1,
+      0.8
+     ],
+     "emissive": [
+      0.45,
+      0.45,
+      0.45
+     ],
+     "cast_shadows": false
+    },
+    "Cloud": {
+     "speed": 1.336
+    }
+   }
+  },
+  {
+   "name": "Cloud11",
+   "components": {
+    "Transform": {
+     "position": [
+      -169.496,
+      100,
+      -170.027
+     ]
+    },
+    "Model": {
+     "mesh": "clouds/cloud5.gltf",
+     "color": [
+      1,
+      1,
+      1,
+      0.8
+     ],
+     "emissive": [
+      0.45,
+      0.45,
+      0.45
+     ],
+     "cast_shadows": false
+    },
+    "Cloud": {
+     "speed": 1.604
+    }
+   }
+  },
+  {
+   "name": "Cloud12",
+   "components": {
+    "Transform": {
+     "position": [
+      104.952,
+      100,
+      -188.027
+     ]
+    },
+    "Model": {
+     "mesh": "clouds/cloud1.gltf",
+     "color": [
+      1,
+      1,
+      1,
+      0.8
+     ],
+     "emissive": [
+      0.45,
+      0.45,
+      0.45
+     ],
+     "cast_shadows": false
+    },
+    "Cloud": {
+     "speed": 1.794
+    }
+   }
+  },
+  {
+   "name": "Cloud13",
+   "components": {
+    "Transform": {
+     "position": [
+      -131.605,
+      100,
+      184.839
+     ]
+    },
+    "Model": {
+     "mesh": "clouds/cloud4.gltf",
+     "color": [
+      1,
+      1,
+      1,
+      0.8
+     ],
+     "emissive": [
+      0.45,
+      0.45,
+      0.45
+     ],
+     "cast_shadows": false
+    },
+    "Cloud": {
+     "speed": 1.259
+    }
+   }
+  },
+  {
+   "name": "Cloud14",
+   "components": {
+    "Transform": {
+     "position": [
+      -133.67,
+      100,
+      -114.653
+     ]
+    },
+    "Model": {
+     "mesh": "clouds/cloud2.gltf",
+     "color": [
+      1,
+      1,
+      1,
+      0.8
+     ],
+     "emissive": [
+      0.45,
+      0.45,
+      0.45
+     ],
+     "cast_shadows": false
+    },
+    "Cloud": {
+     "speed": 1.594
+    }
+   }
+  },
+  {
+   "name": "Cloud15",
+   "components": {
+    "Transform": {
+     "position": [
+      88.453,
+      100,
+      -88.527
+     ]
+    },
+    "Model": {
+     "mesh": "clouds/cloud0.gltf",
+     "color": [
+      1,
+      1,
+      1,
+      0.8
+     ],
+     "emissive": [
+      0.45,
+      0.45,
+      0.45
+     ],
+     "cast_shadows": false
+    },
+    "Cloud": {
+     "speed": 1.623
+    }
+   }
+  },
+  {
+   "name": "Cloud16",
+   "components": {
+    "Transform": {
+     "position": [
+      70.553,
+      100,
+      67.48
+     ]
+    },
+    "Model": {
+     "mesh": "clouds/cloud2.gltf",
+     "color": [
+      1,
+      1,
+      1,
+      0.8
+     ],
+     "emissive": [
+      0.45,
+      0.45,
+      0.45
+     ],
+     "cast_shadows": false
+    },
+    "Cloud": {
+     "speed": 1.281
+    }
+   }
+  },
+  {
+   "name": "Cloud17",
+   "components": {
+    "Transform": {
+     "position": [
+      96.945,
+      100,
+      129.91
+     ]
+    },
+    "Model": {
+     "mesh": "clouds/cloud4.gltf",
+     "color": [
+      1,
+      1,
+      1,
+      0.8
+     ],
+     "emissive": [
+      0.45,
+      0.45,
+      0.45
+     ],
+     "cast_shadows": false
+    },
+    "Cloud": {
+     "speed": 1.741
+    }
+   }
+  },
+  {
+   "name": "Cloud18",
+   "components": {
+    "Transform": {
+     "position": [
+      -54.38,
+      100,
+      140.037
+     ]
+    },
+    "Model": {
+     "mesh": "clouds/cloud0.gltf",
+     "color": [
+      1,
+      1,
+      1,
+      0.8
+     ],
+     "emissive": [
+      0.45,
+      0.45,
+      0.45
+     ],
+     "cast_shadows": false
+    },
+    "Cloud": {
+     "speed": 1.758
+    }
+   }
+  },
+  {
+   "name": "Cloud19",
+   "components": {
+    "Transform": {
+     "position": [
+      63.93,
+      100,
+      -81.543
+     ]
+    },
+    "Model": {
+     "mesh": "clouds/cloud4.gltf",
+     "color": [
+      1,
+      1,
+      1,
+      0.8
+     ],
+     "emissive": [
+      0.45,
+      0.45,
+      0.45
+     ],
+     "cast_shadows": false
+    },
+    "Cloud": {
+     "speed": 1.491
+    }
+   }
+  },
+  {
+   "name": "Cloud20",
+   "components": {
+    "Transform": {
+     "position": [
+      184.496,
+      100,
+      11.326
+     ]
+    },
+    "Model": {
+     "mesh": "clouds/cloud1.gltf",
+     "color": [
+      1,
+      1,
+      1,
+      0.8
+     ],
+     "emissive": [
+      0.45,
+      0.45,
+      0.45
+     ],
+     "cast_shadows": false
+    },
+    "Cloud": {
+     "speed": 1.49
+    }
+   }
+  },
+  {
+   "name": "Cloud21",
+   "components": {
+    "Transform": {
+     "position": [
+      -141.961,
+      100,
+      -192.186
+     ]
+    },
+    "Model": {
+     "mesh": "clouds/cloud0.gltf",
+     "color": [
+      1,
+      1,
+      1,
+      0.8
+     ],
+     "emissive": [
+      0.45,
+      0.45,
+      0.45
+     ],
+     "cast_shadows": false
+    },
+    "Cloud": {
+     "speed": 1.661
+    }
+   }
+  },
+  {
+   "name": "Cloud22",
+   "components": {
+    "Transform": {
+     "position": [
+      162.643,
+      100,
+      139.124
+     ]
+    },
+    "Model": {
+     "mesh": "clouds/cloud2.gltf",
+     "color": [
+      1,
+      1,
+      1,
+      0.8
+     ],
+     "emissive": [
+      0.45,
+      0.45,
+      0.45
+     ],
+     "cast_shadows": false
+    },
+    "Cloud": {
+     "speed": 1.327
+    }
+   }
+  }
+ ]
+}

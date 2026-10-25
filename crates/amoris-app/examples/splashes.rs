@@ -4,7 +4,7 @@
 //!
 //! ```sh
 //! cargo run --release -p amoris-app --example splashes -- --shots out/splashes \
-//!     [--blocks ../amoris-samples/blockcraft] [--frames 600] [--off] [--close]
+//!     [--blocks samples/blockcraft] [--frames 600] [--off] [--close]
 //! ```
 //!
 //! `--blocks DIR` takes `blocks.gltf` and `textures/` from DIR (blockcraft's) for the blocks'
