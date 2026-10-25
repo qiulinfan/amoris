@@ -121,7 +121,7 @@ says what a device's ray queries serve; either effect alone or both open the dev
 `tests/rt_reflections.rs` runs on every native backend with ray queries: a block above the view
 shows in the traced reflection and not in the march's, and a block in view is reflected by both in
 the same colour. It passes on Metal and, on R1 (2026-10-23), on the RTX 5060 and the 780M under
-Direct3D 12 (DXC) and Vulkan, `tools/vk_validate.py` reporting naga's
+Direct3D 12 (DXC) and Vulkan, `tools/render/vk_validate.py` reporting naga's
 `VUID-StandaloneSpirv-None-10684` and, in the ray-traced runs, 160
 `Undefined-Value-ShaderOutputNotConsumed` warnings, no synchronization error
 ([gpu-matrix.md](../bench/gpu-matrix.md) 13). With ray-traced shadows the cascades still draw in a

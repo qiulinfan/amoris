@@ -159,7 +159,7 @@ four GPU/backend pairs. `metal_ray_query` became `ray_query_probe` (section 2).
 
 ### Quality against the M5 comparisons
 
-`tools/rt_bench.py correctness` renders the M5's SHaRC and ReSTIR configurations and a finite
+`tools/render/rt_bench.py correctness` renders the M5's SHaRC and ReSTIR configurations and a finite
 reference per backend at the M5's settings (`out/bench-runs/rt/correctness-5060.json`,
 `correctness-780m.json`). HDR RMSE against that reference, linear and after Reinhard x/(1+x),
 next to the M5's numbers against its reference:
@@ -194,7 +194,7 @@ next to the M5's numbers against its reference:
 
 ### Timing (provisional, superseded below), RTX 5060
 
-`tools/rt_bench.py timing --rounds 5`, gi-room 320x240, 128 frames, 6 bounces, 0.25 m cells,
+`tools/render/rt_bench.py timing --rounds 5`, gi-room 320x240, 128 frames, 6 bounces, 0.25 m cells,
 minimum 16 samples; GPU ms per frame (update + resolve + render) over the last 64 frames, median of
 five interleaved rounds with min to max:
 
@@ -216,8 +216,8 @@ five interleaved rounds with min to max:
 
 ### Timing on a quiet machine (2026-10-09)
 
-`tools/rt_bench.py timing` with no other agent running, five rounds on the RTX 5060 and three on
-the Radeon 780M (conditions and files as in [path-tracing-nrc.md, Timing on a quiet
+`tools/render/rt_bench.py timing` with no other agent running, five rounds on the RTX 5060 and three
+on the Radeon 780M (conditions and files as in [path-tracing-nrc.md, Timing on a quiet
 machine](path-tracing-nrc.md#timing-on-a-quiet-machine-2026-10-09)); GPU ms per frame (update +
 resolve + render), median (minimum; spread); the provisional RTX 5060 medians follow the slash:
 
@@ -242,6 +242,6 @@ resolve + render), median (minimum; spread); the provisional RTX 5060 medians fo
 AMORIS_BACKEND=vulkan cargo run --release -p amoris-render --example gi_trace -- tests/fixtures/scenes/gi-room \
   --mode sharc --output out/gi/sharc.png --width 320 --height 240 --frames 128 --samples 1
 cargo test --release -p amoris-render --lib ray_query
-python tools/rt_bench.py correctness --adapter 5060 --only sharc-reference,sharc-raw,sharc
-python tools/rt_bench.py timing --adapter 5060 --only sharc-raw,sharc-cached,sharc-raw-lean,sharc-cached-lean
+python tools/render/rt_bench.py correctness --adapter 5060 --only sharc-reference,sharc-raw,sharc
+python tools/render/rt_bench.py timing --adapter 5060 --only sharc-raw,sharc-cached,sharc-raw-lean,sharc-cached-lean
 ```

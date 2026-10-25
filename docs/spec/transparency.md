@@ -256,11 +256,12 @@ would need another shadow representation (section 8).
   `scene::` (the transparent slot set through rebuild, hiding, removal and reset), `transparent::`
   (the order, the draws, the two-sided lists' placement under a small limit, the reversal shader).
 - `cargo test -p amoris-render --test draw_paths`: the stage on the three draw paths.
-- `tools/build_compare.py` (no transparent material: identical to the build before), and
-  `tools/prepass_compare.py` and `tools/occlusion_compare.py` (pt-lab included: identical with
-  either feature forced on).
-- `python tools/web_draw_paths.py "http://127.0.0.1:8090/viewport/?demo=transparent"` (a viewport
-  built with `tools/build_viewport.sh`, `web/` served): the stage in a browser on WebGPU's two draw
-  paths (`--compare occlusion`: occlusion culling off and on).
-- `tools/transparency_pt.py`: pt-lab's forward image against the path tracer, by region;
-  `tools/transparency_bench.py`: the stage's cost and (`--ghost`) TAA on transparent surfaces.
+- `tools/render/build_compare.py` (no transparent material: identical to the build before), and
+  `tools/render/prepass_compare.py` and `tools/render/occlusion_compare.py` (pt-lab included:
+  identical with either feature forced on).
+- `python tools/render/web_draw_paths.py "http://127.0.0.1:8090/viewport/?demo=transparent"` (a
+  viewport built with `tools/build_viewport.sh`, `web/` served): the stage in a browser on WebGPU's
+  two draw paths (`--compare occlusion`: occlusion culling off and on).
+- `tools/render/transparency_pt.py`: pt-lab's forward image against the path tracer, by region;
+  `tools/render/transparency_bench.py`: the stage's cost and (`--ghost`) TAA on transparent
+  surfaces.

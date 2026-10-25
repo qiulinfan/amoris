@@ -443,8 +443,8 @@ other work is timed. Then remove the probe again (`git checkout crates/amoris-re
 Branch `explore/vkvalid` from master `6af291db`; the machine and drivers of the table above (AMD's
 Vulkan driver 24.30.62.03 reports API 1.3.302, NVIDIA 617.14 API 1.4.351), with the Vulkan SDK
 1.4.363 that the owner approved (scoop, `~/scoop/apps/vulkan/current`). The layers are not
-registered with the system, so no other run loads them: `tools/vk_validate.py` gives one command
-`VK_LAYER_PATH` (the SDK's `Bin`), `VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation` and
+registered with the system, so no other run loads them: `tools/render/vk_validate.py` gives one
+command `VK_LAYER_PATH` (the SDK's `Bin`), `VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation` and
 `VK_LAYER_SETTINGS_PATH`, a settings file that enables the core checks with spirv-val,
 synchronization validation (`validate_sync`, `syncval_full_validation`), every error, warning,
 performance and information message into a log file without a message limit, and no shader
@@ -680,9 +680,9 @@ the failing run from the archive copy logged the same. The pipelines are otherwi
 ```sh
 cargo build --release -p amoris-render --example vk_timestamps
 target/release/examples/vk_timestamps --adapter 780m --rounds 200     # section 8's table
-python tools/vk_validate.py --log out/vkvalid/same.vvl.txt -- \
+python tools/render/vk_validate.py --log out/vkvalid/same.vvl.txt -- \
   target/release/examples/vk_timestamps --adapter 780m --rounds 100   # validated
-python tools/vk_validate.py --log out/vkvalid/ctl.vvl.txt -- \
+python tools/render/vk_validate.py --log out/vkvalid/ctl.vvl.txt -- \
   target/release/examples/vk_timestamps --adapter 780m --rounds 3 --modes unreset,nobarrier
 # Section 9 from a copy of the main checkout's archive (VkCache's D88C37DF34840526*.parc, copied
 # to out/vkvalid/drvcache/stale-master) and any 6af291db rt_shadows binary renamed
@@ -698,9 +698,9 @@ python tools/amd_vkcache.py diff DIR_A DIR_B   # two archives' entries compared 
 
 The runs above went through the track's scripts in the R1 laptop's ignored `out/vkvalid/`, as
 section 7's probes are kept: `run.py` for the repeated and validated runs (the settings of
-`tools/vk_validate.py`), `cache_exp.py` and `sandbox.py` for the archive runs, `race.py` for the
-populations, `elfmeta.py` for the PAL metadata, and the two throwaway probes `zz_split_probe.rs` and
-`pc_patch.py`.
+`tools/render/vk_validate.py`), `cache_exp.py` and `sandbox.py` for the archive runs, `race.py` for
+the populations, `elfmeta.py` for the PAL metadata, and the two throwaway probes `zz_split_probe.rs`
+and `pc_patch.py`.
 
 ## 10. Draft reports for AMD
 
@@ -1009,10 +1009,11 @@ does it is not known. With the wrong program in one device's archive alone, `twi
 compare, which is why `unset` exists: it found each of the four.
 
 **Validation.** The failing replay under the Khronos layer with synchronization validation
-(`tools/vk_validate.py`; core checks and synchronization enabled, as the layer's own message says)
-failed as without it and logged only section 9's messages: 186 `VUID-StandaloneSpirv-None-10684`
-and 72 `Undefined-Value-ShaderOutputNotConsumed` warnings; with the entry made to miss it passed
-(279 and 108 of the same: that run draws the second half of the test). No synchronization hazard.
+(`tools/render/vk_validate.py`; core checks and synchronization enabled, as the layer's own message
+says) failed as without it and logged only section 9's messages: 186
+`VUID-StandaloneSpirv-None-10684` and 72 `Undefined-Value-ShaderOutputNotConsumed` warnings; with
+the entry made to miss it passed (279 and 108 of the same: that run draws the second half of the
+test). No synchronization hazard.
 
 **What changes.** The engine is unchanged: validation reports only section 9's known messages and no
 hazard, and with every pipeline from one archive the engine renders correctly with the clean program
@@ -1096,22 +1097,21 @@ Vulkan on the same GPU and both of the 780M's backends match exactly. The pass t
 order, and the source of the noise, are not located; the instrumentation is
 `out/r1/culling-diag.patch` on R1.
 
-The other checks at `6926f8aa`: `gpu_determinism` matches its record unblessed on
-C4 and on the baseline device of both GPUs; `amoris hashes` of surf-beach (600 ticks),
-pool-party, river-falls, water-valley, water-storm and water-resident (300) is byte-identical
-across C4 and equal to the M5's (last tick, all ticks' digest and bundle); `tools/vk_validate.py`
-over `fluid_surface`, `water_spray`, `rain`, `water_ripples`, `water`, the blocked
-non-hydrostatic solve, `rt_reflections` and `rt_shadows` on both GPUs logs only
-`VUID-StandaloneSpirv-None-10684` (section 8) and, in the ray-traced runs, 160
-`Undefined-Value-ShaderOutputNotConsumed` warnings, no synchronization error.
+The other checks at `6926f8aa`: `gpu_determinism` matches its record unblessed on C4 and on the
+baseline device of both GPUs; `amoris hashes` of surf-beach (600 ticks), pool-party, river-falls,
+water-valley, water-storm and water-resident (300) is byte-identical across C4 and equal to the M5's
+(last tick, all ticks' digest and bundle); `tools/render/vk_validate.py` over `fluid_surface`,
+`water_spray`, `rain`, `water_ripples`, `water`, the blocked non-hydrostatic solve, `rt_reflections`
+and `rt_shadows` on both GPUs logs only `VUID-StandaloneSpirv-None-10684` (section 8) and, in the
+ray-traced runs, 160 `Undefined-Value-ShaderOutputNotConsumed` warnings, no synchronization error.
 `AMORIS_RT_SHADOWS=1` over `water`, `water_spray` and `fluid_surface` failed
 `the_sun_scatters_toward_an_eye_under_water_along_its_refracted_path` in every C4 cell (scattered
 sun 0.0011 against 1.2456: the cascades the medium samples were never drawn), fixed on
 `r1/backends`, where `the_sun_still_scatters_under_water_with_ray_traced_shadows` keeps it.
-`tools/build_compare.py` against `6c1c8e42` (both GPUs, both backends, 120 pairs) is identical
-but for `crowd` with TAA on Direct3D 12 (5060 with GTAO's normals, 780M both TAA modes), one 8-bit
-step at most, from `05e20f2b`'s restructured sun term in `forward.wgsl` (bisected; identical on the
-M5 and on Vulkan); `shadow_cull compare` changes no pixel on C4.
+`tools/render/build_compare.py` against `6c1c8e42` (both GPUs, both backends, 120 pairs) is
+identical but for `crowd` with TAA on Direct3D 12 (5060 with GTAO's normals, 780M both TAA modes),
+one 8-bit step at most, from `05e20f2b`'s restructured sun term in `forward.wgsl` (bisected;
+identical on the M5 and on Vulkan); `shadow_cull compare` changes no pixel on C4.
 
 After `r1/backends`' fixes (`e21d853f`, the cascades under ray-traced shadows; `c24ae861`, the round
 crown's orientation; `02bc9ab4`, the browser's water start budget; `dd83468b`, the fluid solver's

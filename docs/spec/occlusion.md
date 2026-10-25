@@ -281,8 +281,8 @@ the Radeon 780M, 2 to 6 times slower, the crossover fell between the same cube c
   by the warm step, the beam must show, and the cube must be hidden before it rises and show halfway
   up. It runs on the device `AMORIS_BACKEND` and `AMORIS_GPU_MINIMAL` describe, then on the other
   two draw paths; it skips without a GPU.
-- `python tools/occlusion_mutations.py [--out file.json]` puts known bugs into the code one at a
-  time, runs `hiz.rs` and `occlusion.rs` against each and restores the file; it fails if any
+- `python tools/render/occlusion_mutations.py [--out file.json]` puts known bugs into the code one
+  at a time, runs `hiz.rs` and `occlusion.rs` against each and restores the file; it fails if any
   mutation survives. Every one makes at least one check fail, identically on the RTX 5060 with
   Vulkan and the Radeon 780M with Direct3D 12 (`out/bench-runs/hiz/mutations-*.json`; box counts
   from the RTX run):
@@ -310,10 +310,12 @@ the Radeon 780M, 2 to 6 times slower, the crossover fell between the same cube c
   directly.
 - `cargo run --release -p amoris-app --example draw_paths -- --compare occlusion <scenes>` draws a
   scene twice in one process at one moment, off and forced on, and compares pixels and coverage.
-- `python tools/occlusion_compare.py` runs that and every capture of `tools/backend_compare.py`
-  (plus the many_cubes orbit) with `AMORIS_OCCLUSION=off` and `on` on one backend and adapter.
-- `python tools/web_draw_paths.py <page> --compare occlusion` does the same in headless Chrome
-  (`?demo=occluders`, `?demo=cubes`, and with `gpu_minimal=first-instance` for the baseline path).
+- `python tools/render/occlusion_compare.py` runs that and every capture of
+  `tools/render/backend_compare.py` (plus the many_cubes orbit) with `AMORIS_OCCLUSION=off` and `on`
+  on one backend and adapter.
+- `python tools/render/web_draw_paths.py <page> --compare occlusion` does the same in headless
+  Chrome (`?demo=occluders`, `?demo=cubes`, and with `gpu_minimal=first-instance` for the baseline
+  path).
 
 ## 10. Open
 
@@ -455,12 +457,11 @@ fragment under water reading no farther up the refracted sun than `UNDERWATER_RE
   benchmark scenes at 1280x720 (the mixed scene and its orbit, the many_cubes sphere and dense
   layouts with shadows, the LOD field at `t` 0 and 0.5 with levels on and off and walking) and
   reports each cascade's instances and triangles off and on (on R1 at `6926f8aa`, 2026-10-23: no
-  pixel changes on the RTX 5060 and the 780M under Direct3D 12 and Vulkan); `-- bench SCENE`
-  times both modes in
-  interleaved blocks; `tools/shadow_cull_bench.py` runs both across backends, adapters and WebGPU's
-  baseline device, and `games` runs `draw_paths --compare shadow_cull` on sample projects, with
-  what each cascade drew ([bench/shadows.md](../bench/shadows.md) 2 to 4: no frame differed
-  anywhere). Planted culling bugs show what these image checks catch (bench/shadows.md 2): gross
-  ones, not a margin too small.
-- `python tools/web_draw_paths.py <page> --compare shadow_cull` draws a viewport page in headless
-  Chrome with `shadow_cull=off` and `on` and compares coverage and pixels.
+  pixel changes on the RTX 5060 and the 780M under Direct3D 12 and Vulkan); `-- bench SCENE` times
+  both modes in interleaved blocks; `tools/render/shadow_cull_bench.py` runs both across backends,
+  adapters and WebGPU's baseline device, and `games` runs `draw_paths --compare shadow_cull` on
+  sample projects, with what each cascade drew ([bench/shadows.md](../bench/shadows.md) 2 to 4: no
+  frame differed anywhere). Planted culling bugs show what these image checks catch
+  (bench/shadows.md 2): gross ones, not a margin too small.
+- `python tools/render/web_draw_paths.py <page> --compare shadow_cull` draws a viewport page in
+  headless Chrome with `shadow_cull=off` and `on` and compares coverage and pixels.

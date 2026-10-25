@@ -148,5 +148,6 @@ core features.
 - Still-image capture accumulates a full 16-frame jitter cycle after reset; one fresh TAA frame
   is not representative. Option changes, resize and camera cuts reset history.
 
-Use `aa_eval` for the supersampled-reference comparison and `tools/aa_bench.py` for the native
-cost matrix; the [specification](../spec/taa-gtao.md) describes switches, history and capture rules.
+Use `aa_eval` for the supersampled-reference comparison and `tools/render/aa_bench.py` for the
+native cost matrix; the [specification](../spec/taa-gtao.md) describes switches, history and capture
+rules.

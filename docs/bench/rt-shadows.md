@@ -120,7 +120,7 @@ that time yet (the top level's rebuild and wgpu's per-instance validation are th
 ```sh
 cargo build --release -p amoris-render --examples
 cargo build --release -p amoris-app
-python tools/rt_shadows_bench.py --adapters 5060,780m --backends vulkan,dx12 \
+python tools/render/rt_shadows_bench.py --adapters 5060,780m --backends vulkan,dx12 \
   --rounds 5 --all-rounds --alternate --settle 5 --cool 70 \
   --out out/rt-shadows --summary out/bench-runs/rt-shadows.json
 python tools/quiet_tables.py rts out/bench-runs/rt-shadows.json

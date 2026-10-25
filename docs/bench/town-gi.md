@@ -42,11 +42,11 @@ have zero GPU errors and zero nonfinite paths.
 | Facade / full GI | 27220.225 | (0.18711, 0.15097, 0.13229) |
 | Facade / direct | 5434.998 | (0.16524, 0.13330, 0.11751) |
 
-These are single-run offline rendering times, excluding scene import/setup/readback, not live
-FPS or equal-quality benchmarks. Visible sampling noise remains; no denoising was applied.
-The static HTML viewer in `tools/town_gi/index.html` offers two cameras, direct/full GI buttons
-and a draggable/keyboard comparison. It is explicitly a pre-rendered PT display. The linked
-editor is the existing interactive forward renderer, not an interactive PT pass.
+These are single-run offline rendering times, excluding scene import/setup/readback, not live FPS or
+equal-quality benchmarks. Visible sampling noise remains; no denoising was applied. The static HTML
+viewer in `tools/render/town_gi/index.html` offers two cameras, direct/full GI buttons and a
+draggable/keyboard comparison. It is explicitly a pre-rendered PT display. The linked editor is the
+existing interactive forward renderer, not an interactive PT pass.
 
 Example:
 

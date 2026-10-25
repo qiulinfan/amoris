@@ -49,17 +49,17 @@ from the same shader, without a feed-layout or simulation-schema change.
 
 ## Display and reproduction
 
-`tools/harbor_gi/index.html` shows three actual native viewpoints (overview, deck, sails), a GI
+`tools/site/harbor_gi/index.html` shows three actual native viewpoints (overview, deck, sails), a GI
 toggle and a keyboard/draggable comparison boundary. It is a captured-still presentation, not a
 real-time PT window. Both members of each pair share the same camera, tick 60 and exposure, have
 zero pending assets and distinct image hashes. The page was exercised in the in-app browser;
 all three viewpoints, display modes and keyboard slider updates work.
 
 ```sh
-python3 tools/harbor_gi_showcase.py prepare
+python3 tools/site/harbor_gi_showcase.py prepare
 target/release/amoris serve out/harbor-gi/project --port 8794
 # In another terminal, with the edit world paused:
-python3 tools/harbor_gi_showcase.py freeze
+python3 tools/site/harbor_gi_showcase.py freeze
 target/release/examples/sky_radiance_cube out/harbor-gi/bake \
   --scene sky-source.json --output out/harbor-gi/sky.json
 target/release/examples/bake_gi out/harbor-gi/bake \
@@ -67,7 +67,7 @@ target/release/examples/bake_gi out/harbor-gi/bake \
   --sky-cube out/harbor-gi/sky.json \
   --origin -3.058347,-0.8,-3.561008 --spacing 0.65,0.65,0.65 --dims 15,14,14 \
   --rays 1024 --bounces 4 --seed 1 --distance-resolution 8 --max-distance 24
-python3 tools/harbor_gi_showcase.py capture
+python3 tools/site/harbor_gi_showcase.py capture
 python3 -m http.server 8795 --bind 127.0.0.1 --directory out/harbor-gi/view
 ```
 

@@ -19,7 +19,7 @@
 //!
 //! `cargo run --release -p amoris-runtime --features transpile --example write_trace_bench -- \
 //!  [--ticks 600] [--rounds 5] [--warmup 120] [--field Sloop.Boat.rudder].. [--out out.json] \
-//!  [project]`; an entity is a name or an id (`7.Health.hp`). `tools/write_trace_bench.py` runs
+//!  [project]`; an entity is a name or an id (`7.Health.hp`). `tools/runtime/write_trace_bench.py` runs
 //! it under the bench lock with the machine's conditions. Timings depend on the machine and its
 //! load: the bench doc says under which they were taken.
 

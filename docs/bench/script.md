@@ -80,7 +80,7 @@ and must end on the native final digest.
 
 ## 3. Results (quiet re-measurement, 2026-10-15)
 
-Run: `python tools/rules_bench.py run out/rules/quiet --rounds 5` inside
+Run: `python tools/runtime/rules_bench.py run out/rules/quiet --rounds 5` inside
 `bench_lock.py run --label quiet-rules --`, 2026-10-15 06:56 to 07:00, then once more into
 `out/rules/quiet-repeat` (07:01 to 07:05) to see whether the first run's shape repeats. Every
 target's own verification passed in both runs: the script world and the twin agreed at all 720
@@ -288,14 +288,14 @@ first two):
 ## 6. Re-measuring on a quiet machine
 
 From the worktree or checkout, with nothing else building (section 3's runs held the bench lock
-around the whole `run`, `python <bench_lock.py> run --label quiet-rules -- python
-tools/rules_bench.py run ...`; `--lock` is for a machine where other agents may time between its
-commands):
+around the whole `run`,
+`python <bench_lock.py> run --label quiet-rules -- python tools/runtime/rules_bench.py run ...`;
+`--lock` is for a machine where other agents may time between its commands):
 
 ```sh
-python tools/rules_bench.py build
-python tools/rules_bench.py run out/rules/quiet --rounds 5 [--lock <bench_lock.py>]
-python tools/rules_bench.py table out/rules/quiet
+python tools/runtime/rules_bench.py build
+python tools/runtime/rules_bench.py run out/rules/quiet --rounds 5 [--lock <bench_lock.py>]
+python tools/runtime/rules_bench.py table out/rules/quiet
 ```
 
 `run` writes one JSON per target, build and round into the directory (raw per-tick times for the
@@ -358,15 +358,15 @@ calibrated run sets `web.tick.rules` by budgets.md 8.1 (the largest run's median
   round, as the script-native spike measured it (the lookup of `Math.sin` and the call). The fixed
   cost of a tick (about 10 us) is under 0.3 % of the shortest probe.
 - **`rules_bench`** as sections 1 and 2 (rules, twin, idle, scan; 120 warm-up and 600 timed ticks).
-- **`tools/qjs_bench.py run`**: every build verified first (its script world against the twin at
-  all 720 ticks; all builds must end on one digest); then five rounds, each running every build in
-  an order that rotates by round, and within a build `rules_bench` (one round) then `qjs_micro`
-  (one round). The whole run held the bench lock. Comparisons are paired by round (the median of
-  the rounds' ratios). On the quiet machine the rule tick's paired ratios still spread by a few
-  percent between rounds (P12 against base: -7.6 to +1.0 % in quiet run 1), and two effects that
-  are not the change under test show at that size or larger (7.2): a rebuild alone moves unchanged
-  code (the Rust twin) by about 2 %, and a microloop can hold one of two speeds, 15 to 40 % apart,
-  for a whole process.
+- **`tools/runtime/qjs_bench.py run`**: every build verified first (its script world against the
+  twin at all 720 ticks; all builds must end on one digest); then five rounds, each running every
+  build in an order that rotates by round, and within a build `rules_bench` (one round) then
+  `qjs_micro` (one round). The whole run held the bench lock. Comparisons are paired by round (the
+  median of the rounds' ratios). On the quiet machine the rule tick's paired ratios still spread by
+  a few percent between rounds (P12 against base: -7.6 to +1.0 % in quiet run 1), and two effects
+  that are not the change under test show at that size or larger (7.2): a rebuild alone moves
+  unchanged code (the Rust twin) by about 2 %, and a microloop can hold one of two speeds, 15 to 40
+  % apart, for a whole process.
 - Runs, all quiet (7.5), in this order: **quiet run 1**, base, p12 and natives (16:03 to 16:06);
   the final state (natives) natively against both web modules under Node and in Chrome, section
   6's `rules_bench.py run --rounds 5` (16:06 to 16:10); **the flags5 run**, natives and flags5
@@ -605,13 +605,13 @@ runs used builds of the checkout, and one export, which were not affected.) The 
 that carry the same three states.
 
 ```sh
-python tools/qjs_bench.py build base --rev 82cbde44
-python tools/qjs_bench.py build p12 --rev 2f0d999c
-python tools/qjs_bench.py build natives --rev 40e6f948
-python <bench_lock.py> run --label quiet-qjs -- python tools/qjs_bench.py run out/qjs/quiet \
+python tools/runtime/qjs_bench.py build base --rev 82cbde44
+python tools/runtime/qjs_bench.py build p12 --rev 2f0d999c
+python tools/runtime/qjs_bench.py build natives --rev 40e6f948
+python <bench_lock.py> run --label quiet-qjs -- python tools/runtime/qjs_bench.py run out/qjs/quiet \
     --builds base,p12,natives --rounds 5
-python tools/rules_bench.py build
-python <bench_lock.py> run --label quiet-qjs-web -- python tools/rules_bench.py run \
+python tools/runtime/rules_bench.py build
+python <bench_lock.py> run --label quiet-qjs-web -- python tools/runtime/rules_bench.py run \
     out/qjs/quiet-web --rounds 5
 ```
 
@@ -631,8 +631,8 @@ build script's clang-cl branch, then the edit reverted (`git checkout` the file)
 ```
 
 ```sh
-python tools/qjs_bench.py build flags5
-python <bench_lock.py> run --label quiet-qjs -- python tools/qjs_bench.py run out/qjs/quiet-flags5 \
+python tools/runtime/qjs_bench.py build flags5
+python <bench_lock.py> run --label quiet-qjs -- python tools/runtime/qjs_bench.py run out/qjs/quiet-flags5 \
     --builds natives,flags5 --rounds 5
 ```
 
@@ -703,7 +703,7 @@ change only if the owner takes the web run as the new baseline.
 
 ### 8.2 Results
 
-`python tools/rules_bench.py split out/scriptprof/quiet/split --rounds 5` inside
+`python tools/runtime/rules_bench.py split out/scriptprof/quiet/split --rounds 5` inside
 `bench_lock.py run --label quiet-scriptprof`, 2026-10-16 03:08 to 03:10; the release `rules_bench`
 rebuilt from this branch at 4a82640c. Per round, us (the medians of 600 ticks):
 
@@ -814,7 +814,7 @@ calls and a conditional) 8.1 % and `rules.ts:78` (the regeneration line: a condi
   `PhaseTimes::native`, `native_calls` and `natives` by `NativeKind`). Without a recording profile
   or timed natives a call does what it did, plus two thread-local reads per system call.
 - `rules_bench`: the `natives` and `profiled` variants (named in `--variants` only, so section 6's
-  protocol is unchanged); `tools/rules_bench.py split` and `split-table`.
+  protocol is unchanged); `tools/runtime/rules_bench.py split` and `split-table`.
 
 ### 8.5 Re-measuring on a quiet machine
 
@@ -823,9 +823,9 @@ checkout's ignored `out/`; about 2 minutes once the lock is free):
 
 ```sh
 cargo build --release -p amoris-script --features transpile --example rules_bench
-python <bench_lock.py> run --label quiet-scriptprof -- python tools/rules_bench.py split \
+python <bench_lock.py> run --label quiet-scriptprof -- python tools/runtime/rules_bench.py split \
     <main checkout>/out/scriptprof/quiet/split --rounds 5
-python tools/rules_bench.py split-table <main checkout>/out/scriptprof/quiet/split
+python tools/runtime/rules_bench.py split-table <main checkout>/out/scriptprof/quiet/split
 ```
 
 `split` verifies the script world against the twin in its first round, records the machine

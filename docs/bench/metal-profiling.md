@@ -42,7 +42,7 @@ AMORIS_BACKEND=metal AMORIS_AA=msaa AMORIS_GTAO=off \
   target/release/examples/many_cubes --dense --count 200000 --size 1280x720 \
   --headless-bench 300 --occlusion off --prepass auto --settle 2 \
   --trace frames=300,skip=60,out=out/profiler/metal-dense.json
-python3 tools/frame_trace.py stats out/profiler/metal-dense.json
+python3 tools/render/frame_trace.py stats out/profiler/metal-dense.json
 ```
 
 The frame-trace regression checks 100 consecutive GPU frames against their own CPU submit/wait
@@ -94,7 +94,7 @@ GPU frame spans come directly from trace events, while the original benchmark JS
 CPU wall time and its sampled pass statistics. Auto selected off for 297–299 of each run's 300
 measured frames; the remaining frames were probes.
 
-The six `tools/prepass_compare.py --backend metal --cases ''` scenes (mixed, cubes, anim,
+The six `tools/render/prepass_compare.py --backend metal --cases ''` scenes (mixed, cubes, anim,
 sailing, gi-room, pt-lab) have zero image or entity-coverage difference. The matching occlusion
 comparison preserves every scene's entity coverage; pt-lab has one channel differing by one
 8-bit level, all other scenes are identical.

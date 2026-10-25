@@ -23,7 +23,7 @@
 
 ## 1. What is measured
 
-`python tools/gizmo_bench.py` starts a fresh `amoris serve samples/sailing` (the edit world,
+`python tools/host/gizmo_bench.py` starts a fresh `amoris serve samples/sailing` (the edit world,
 paused) for each run and drives `editor/tools/gizmo-drag.ts` in headless Chrome over CDP, on the
 editor's production build served by the host, as `amoris editor` serves it (built with
 `VITE_AMORIS_EXPOSE=1`, which keeps `window.amoris` for the tool). `--dev` also drives the Vite dev
@@ -56,8 +56,8 @@ server; it is not part of the protocol (section 3).
 
 ## 2. Results (quiet re-measurement, 2026-10-15)
 
-Medians of the five runs' medians, as `tools/gizmo_bench.py --table out/gizmo/quiet` printed them
-(Undo entries added: the distinct values over the runs):
+Medians of the five runs' medians, as `tools/host/gizmo_bench.py --table out/gizmo/quiet` printed
+them (Undo entries added: the distinct values over the runs):
 
 | Editor | Runs | Input to frame, median (p95) ms | Listener | Wait | Send to feed | Feed to frame | Edit reply | Edits / feeds / moves | History pushes | Frame interval | Long tasks (ms) | Undo entries added | Escape |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -157,8 +157,8 @@ From the repository root of the branch, after `cargo build --release -p amoris-a
 and `cd editor && bun install --frozen-lockfile && VITE_AMORIS_EXPOSE=1 bun run build`:
 
 ```bash
-python tools/gizmo_bench.py --runs 5 --out out/gizmo/quiet
-python tools/gizmo_bench.py --table out/gizmo/quiet
+python tools/host/gizmo_bench.py --runs 5 --out out/gizmo/quiet
+python tools/host/gizmo_bench.py --table out/gizmo/quiet
 ```
 
 The first command records the machine's conditions before the first run and after the last
@@ -187,11 +187,11 @@ adapter under `browser.adapter`).
   - the editor sends a drag's changes at once when no edit of the drag is in flight, the rest merged
     on its answer, instead of at most every 60 ms (editor.md 6, `LiveEdit`).
 - Sets (each keeps its build's `version` output beside its results, in `pocket-version.json` for
-  these runs, before the 2026-10-16 rename; `tools/gizmo_bench.py` now writes
+  these runs, before the 2026-10-16 rename; `tools/host/gizmo_bench.py` now writes
   `amoris-version.json`): `base` is master `3fdc5b83`'s `amoris` with master's editor; `host` is
   this branch's `amoris` (`45f4c9fb`, the source hash of the `93232970` build the provisional set
-  used) with master's editor (`tools/gizmo_bench.py --dist`); `new` is this branch's `amoris` and
-  editor, both from `45f4c9fb`. Raw output: `out/serveloop/quiet/gizmo-{base,host,new}/`; the
+  used) with master's editor (`tools/host/gizmo_bench.py --dist`); `new` is this branch's `amoris`
+  and editor, both from `45f4c9fb`. Raw output: `out/serveloop/quiet/gizmo-{base,host,new}/`; the
   provisional set's in `out/serveloop/wave2/gizmo-*/`. The provisional set gave 59.5, 44.2 and 14.2
   ms for the three sets, and a first wave at 19:41 to 19:48 (`out/serveloop/wave/`, under 5 to 30 %
   load, with a pre-commit build of the branch) 62.5, 48.5 and 13.9 ms.
@@ -241,11 +241,11 @@ its exported tree after `python tools/amoris_rename.py --tree`, into `out/servel
 
 ```bash
 R=out/serveloop/rerun; A=target/release/amoris.exe
-python tools/gizmo_bench.py --runs 5 --out out/serveloop/quiet/gizmo-base \
+python tools/host/gizmo_bench.py --runs 5 --out out/serveloop/quiet/gizmo-base \
     --amoris $R/base/$A --dist $R/base/editor/dist
-python tools/gizmo_bench.py --runs 5 --out out/serveloop/quiet/gizmo-host \
+python tools/host/gizmo_bench.py --runs 5 --out out/serveloop/quiet/gizmo-host \
     --amoris $R/new/$A --dist $R/base/editor/dist
-python tools/gizmo_bench.py --runs 5 --out out/serveloop/quiet/gizmo-new \
+python tools/host/gizmo_bench.py --runs 5 --out out/serveloop/quiet/gizmo-new \
     --amoris $R/new/$A --dist $R/new/editor/dist
-for X in base host new; do python tools/gizmo_bench.py --table out/serveloop/quiet/gizmo-$X; done
+for X in base host new; do python tools/host/gizmo_bench.py --table out/serveloop/quiet/gizmo-$X; done
 ```

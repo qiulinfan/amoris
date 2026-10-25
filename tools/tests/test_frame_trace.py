@@ -16,8 +16,8 @@ def load(name, relative):
     return module
 
 
-frame_trace = load("frame_trace", "frame_trace.py")
-renderdoc_frame = load("renderdoc_frame", "renderdoc_frame.py")
+frame_trace = load("frame_trace", "render/frame_trace.py")
+renderdoc_frame = load("renderdoc_frame", "render/renderdoc_frame.py")
 
 
 def x(name, pid, ts, dur, frame, **args):

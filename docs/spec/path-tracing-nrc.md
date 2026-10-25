@@ -143,7 +143,7 @@ The GPU tests (`ray_query_*` in `gi::pt` and `gi::rt`) run by default on every n
 the platform whose adapter has ray queries (Vulkan and Direct3D 12 on Windows, Metal on Apple,
 Vulkan elsewhere), or only on the one `AMORIS_BACKEND` names (`BackendChoice::under_test`), and
 skip with a note otherwise; `AMORIS_ADAPTER=780m` runs them on the Radeon.
-`tools/rt_bench.py` renders every configuration whose M5 report is committed and compares the
+`tools/render/rt_bench.py` renders every configuration whose M5 report is committed and compares the
 result with it, and times the documented settings per backend.
 
 Equation references: [PBRT surface path

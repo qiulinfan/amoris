@@ -7,7 +7,7 @@
 //!   branches, 600 branch ticks per decision) and the same lookahead with forks off (`nofork`: the
 //!   same candidates valued from the chart alone), the control that isolates what forking adds.
 //!   Each episode's ticks to finish, crates aboard, decisions, acts, branch ticks, wall time and
-//!   every weighed decision; `tools/lookahead_bench.py table` makes the tables. Every number but
+//!   every weighed decision; `tools/runtime/lookahead_bench.py table` makes the tables. Every number but
 //!   wall time is exact (deterministic).
 //! - **fork**: on the course at tick 300 (the greedy skipper sailing it), the wall time of a
 //!   snapshot, of a restore into a kept branch, of a fork into a kept branch (`Game::fork_into`:

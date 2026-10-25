@@ -297,7 +297,7 @@ draw paths are checked under the WebGPU baseline with the existing draw-path too
 | `first_person`: controls write `Walker`, pulses act one tick, replay of a break and a place | `amoris-runtime --features transpile` tests |
 | Mesher: culling, chunk borders, cross, liquid, material groups | `amoris-assets` tests |
 | Parts and remeshing of neighbours; after breaks and placements across chunk borders the kept renderer draws as a fresh one, also with ray-traced shadows | `amoris-render --lib voxels`, `--test voxels` (GPU) |
-| Every draw path draws volumes alike | `tests/draw_paths.rs`, `tools/web_draw_paths.py` |
+| Every draw path draws volumes alike | `tests/draw_paths.rs`, `tools/render/web_draw_paths.py` |
 | Cost: edit-tick snapshot, worker snapshot, remesh time, frame time of blockcraft | docs/bench/voxels.md |
 
 ## 11. Open questions

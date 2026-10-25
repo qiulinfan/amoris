@@ -16,7 +16,7 @@ AMORIS_BACKEND=metal AMORIS_AA=msaa AMORIS_GTAO=off \
   target/release/examples/many_cubes --dense --count 200000 --size 1280x720 \
   --headless-bench 300 --occlusion off --prepass auto --settle 2 \
   --trace frames=300,skip=60,out=out/profiler/dense-auto.json
-python3 tools/frame_trace.py stats out/profiler/dense-auto.json
+python3 tools/render/frame_trace.py stats out/profiler/dense-auto.json
 ```
 
 On Windows, use PowerShell environment assignments and the `.exe` binary; choose
@@ -27,7 +27,7 @@ $env:AMORIS_BACKEND = 'dx12'
 $env:AMORIS_AA = 'msaa'
 $env:AMORIS_GTAO = 'off'
 .\target\release\examples\many_cubes.exe --dense --count 200000 --size 1280x720 --headless-bench 300 --occlusion off --prepass auto --settle 5 --trace frames=300,skip=60,out=out/profiler/dense-auto.json
-python tools/frame_trace.py stats out/profiler/dense-auto.json
+python tools/render/frame_trace.py stats out/profiler/dense-auto.json
 ```
 
 `--headless-bench` waits for GPU completion after each offscreen frame. This is a
@@ -60,8 +60,8 @@ clock uncertainty and whether placement is calibrated. An uncalibrated trace pos
 GPU work at submit completion for display; it cannot establish CPU-to-GPU latency.
 
 ```sh
-python3 tools/frame_trace.py stats out/profiler/dense-auto.json
-python3 tools/frame_trace.py diff out/profiler/dense-off.json out/profiler/dense-auto.json
+python3 tools/render/frame_trace.py stats out/profiler/dense-auto.json
+python3 tools/render/frame_trace.py diff out/profiler/dense-off.json out/profiler/dense-auto.json
 ```
 
 For the second command, first repeat the capture with `--prepass off` and save it as
@@ -98,9 +98,9 @@ On Windows, RenderDoc can inspect a single D3D12 or Vulkan frame. Install Render
 and set `RENDERDOC_DIR` to its installation if the tool cannot find it. Example:
 
 ```sh
-python tools/renderdoc_frame.py capture --backend vulkan --adapter nvidia --frame 70 \
+python tools/render/renderdoc_frame.py capture --backend vulkan --adapter nvidia --frame 70 \
   --name dense-vulkan -- many_cubes --dense --bench 120
-python tools/renderdoc_frame.py analyze out/profiler/rdc/dense-vulkan.rdc
+python tools/render/renderdoc_frame.py analyze out/profiler/rdc/dense-vulkan.rdc
 ```
 
 The analysis reports per-event durations and shader statistics. D3D12 counter replay requires

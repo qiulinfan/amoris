@@ -126,12 +126,12 @@ run 3 or in either quiet attempt (the after-build one: 1.05 and 0.51 ms), and it
 
 ## 3. The editor against the real host
 
-`tools/profiler_bench.py --capture` starts `amoris serve` on a copy of `samples/sailing` with the
-worktree's `editor/dist` and `web/viewport`, and `editor/tools/profiler-capture.ts` drives headless
-Chrome (WebGPU on): the editor connects, Play starts through `/api/call`, the Profiler panel is
-shown and given room, and 15 s into Play the panel's text is read, then at once `profile.frame` and
-`amoris profile` over the panel's own window and over 600 ticks, the overlay and the screenshots
-(`out/liveprof/quiet/capture/`):
+`tools/host/profiler_bench.py --capture` starts `amoris serve` on a copy of `samples/sailing` with
+the worktree's `editor/dist` and `web/viewport`, and `editor/tools/profiler-capture.ts` drives
+headless Chrome (WebGPU on): the editor connects, Play starts through `/api/call`, the Profiler
+panel is shown and given room, and 15 s into Play the panel's text is read, then at once
+`profile.frame` and `amoris profile` over the panel's own window and over 600 ticks, the overlay and
+the screenshots (`out/liveprof/quiet/capture/`):
 
 - The Profiler showed the host's 19 rows per tick from `sim.begin` to `loop.after` (`script:log`
   0.15 ms, `physics.step` 0.10 ms, `loop.publish` 0.21 ms, `loop.present` 0.05 ms), the six phases
@@ -179,7 +179,7 @@ after-build attempt above):
 cargo build --release -p amoris-runtime --features transpile --example profile_bench
 cargo build --release -p amoris-app
 (cd editor && bun install && bun run build)
-python tools/profiler_bench.py --out out/liveprof/quiet --runs 5 --capture
+python tools/host/profiler_bench.py --out out/liveprof/quiet --runs 5 --capture
 ```
 
 It records the machine's conditions before and after and writes `out/liveprof/quiet/summary.md`:
@@ -212,15 +212,15 @@ build in turn.
   queries, the feed woken on publication, the editor's drag sending), whose source hash
   (`966bac6c...`) is that of `93232970`, the build the provisional second wave measured: the commits
   between them change only docs. The publication bench's `base` is this branch's harness compiled
-  against master's runtime (`tools/publish_bench.py --build-base 3fdc5b83`). The provisional waves'
-  builds are kept as `out/serveloop/bin/*-wave1.exe` and `pocket-new-wave2.exe`. Raw output:
+  against master's runtime (`tools/runtime/publish_bench.py --build-base 3fdc5b83`). The provisional
+  waves' builds are kept as `out/serveloop/bin/*-wave1.exe` and `pocket-new-wave2.exe`. Raw output:
   `out/serveloop/quiet/` (ignored): `publish/` (6.2), `live/` (6.3, 6.5), `diag/`, `speed8/` and
   `pinned/` (6.4); the provisional waves' under `wave2/`, `wave/`, `diag-*`, `try1` and `probe-*`.
 
 ### 6.1 Where the time went
 
-`publish_bench` (an amoris-runtime example; `tools/publish_bench.py`) runs the loop's work after
-each tick part by part on a project's game, paced every 16.67 ms like the real-time thread. On
+`publish_bench` (an amoris-runtime example; `tools/runtime/publish_bench.py`) runs the loop's work
+after each tick part by part on a project's game, paced every 16.67 ms like the real-time thread. On
 sailing in Play, `loop.publish` is almost all the snapshot: the event and log streams take under 1
 us and the swap into the slot 4 to 5 us (with the drop of the publication before it). The snapshot
 encoded all 43 section sources each time (39 registered, 4 project components; 26 present, 26.3 KB).
@@ -244,10 +244,10 @@ is taken over with its digest, and each component's query is kept; the same byte
 every tick and edit by amoris-persist's `tests/repeated.rs` and amoris-runtime's
 `tests/snapshot_cache.rs`); the extractor keeps its queries (`tests/present.rs`: a viewport that
 applies every delta holds the full frame's scene after every tick and edit); and `/render` sends on
-publication (6.5 and gizmo.md 6). `tools/publish_bench.py --runs 5` (`quiet/publish/`), paced, 1,800
-ticks a run, the three builds taking turns: the median over the runs of each part's median per tick
-in us (in brackets the median over the runs of each run's mean, and of its p95). All three run the
-same harness; `full` is this branch with every section encoded (`Game::snapshot`):
+publication (6.5 and gizmo.md 6). `tools/runtime/publish_bench.py --runs 5` (`quiet/publish/`),
+paced, 1,800 ticks a run, the three builds taking turns: the median over the runs of each part's
+median per tick in us (in brackets the median over the runs of each run's mean, and of its p95). All
+three run the same harness; `full` is this branch with every section encoded (`Game::snapshot`):
 
 | Build | Step | Streams | Extraction | Snapshot | Swap | After the step |
 |---|---|---|---|---|---|---|
@@ -270,7 +270,7 @@ slower on its quiet machine too (not separated).
 
 ### 6.3 Under `amoris serve`
 
-`tools/serve_loop_bench.py` (`quiet/live/`): both builds serve a copy of sailing at once; five
+`tools/host/serve_loop_bench.py` (`quiet/live/`): both builds serve a copy of sailing at once; five
 rounds, each Play read with `profile.frame` over its 600 ticks after 3 s of settling, with no
 client, with the editor's two sockets (`/ws` on every topic and `/render`, no page;
 `editor/tools/serve-clients.ts`), and with the editor in headless Chrome (WebGPU on its default
@@ -359,15 +359,15 @@ these differences. Edits reach the feed at once: gizmo.md 6.
 ### 6.6 Re-running
 
 The recorded runs used builds made before the 2026-10-16 rename, which read the old names:
-`out/serveloop/bin/pocket-base.exe` (master `3fdc5b83`) and `out/serveloop/bin/pocket-new.exe`
-(this branch at `45f4c9fb`). A re-run builds its own, each commit from its exported tree after
+`out/serveloop/bin/pocket-base.exe` (master `3fdc5b83`) and `out/serveloop/bin/pocket-new.exe` (this
+branch at `45f4c9fb`). A re-run builds its own, each commit from its exported tree after
 `python tools/amoris_rename.py --tree <dir>`, so that it reads the `AMORIS_*` variables the tools
-set and the samples' renamed scene format (`tools/publish_bench.py --build-base` does this itself).
-From the branch's root, build
-`cargo build --release -p amoris-runtime --features transpile --example publish_bench`,
-the base harness
-`python tools/publish_bench.py --build-base 3fdc5b83 --into out/serveloop/base-build` (master's
-runtime, its own target directory, about 4 minutes),
+set and the samples' renamed scene format (`tools/runtime/publish_bench.py --build-base` does this
+itself). From the branch's root, build
+`cargo build --release -p amoris-runtime --features transpile --example publish_bench`, the base
+harness
+`python tools/runtime/publish_bench.py --build-base 3fdc5b83 --into out/serveloop/base-build`
+(master's runtime, its own target directory, about 4 minutes),
 `cd editor && bun install --frozen-lockfile && VITE_AMORIS_EXPOSE=1 bun run build`, and both
 commits' `amoris` and editor, each in its own directory and target (gizmo.md 6 uses them too):
 
@@ -388,15 +388,15 @@ three sets):
 
 ```bash
 R=out/serveloop/rerun; B=$R/base/target/release/amoris.exe; N=$R/new/target/release/amoris.exe
-python tools/publish_bench.py --out out/serveloop/quiet/publish --runs 5 \
+python tools/runtime/publish_bench.py --out out/serveloop/quiet/publish --runs 5 \
     --also base=out/serveloop/base-build/publish_bench-3fdc5b83.exe
-python tools/serve_loop_bench.py --out out/serveloop/quiet/live --rounds 5 --idle 30 \
+python tools/host/serve_loop_bench.py --out out/serveloop/quiet/live --rounds 5 --idle 30 \
     --idle-rounds 3 --clients none sockets editor --amoris base=$B --amoris new=$N
-python tools/serve_loop_bench.py --out out/serveloop/quiet/diag --rounds 5 --idle 0 \
+python tools/host/serve_loop_bench.py --out out/serveloop/quiet/diag --rounds 5 --idle 0 \
     --clients none sockets-reads editor editor-dgpu busy1 busy3 --amoris base=$B
-python tools/serve_loop_bench.py --out out/serveloop/quiet/speed8 --rounds 5 --idle 0 --speed 8 \
+python tools/host/serve_loop_bench.py --out out/serveloop/quiet/speed8 --rounds 5 --idle 0 --speed 8 \
     --clients none editor editor-dgpu busy1 --amoris base=$B
-python tools/serve_loop_bench.py --out out/serveloop/quiet/pinned --rounds 3 --idle 0 \
+python tools/host/serve_loop_bench.py --out out/serveloop/quiet/pinned --rounds 3 --idle 0 \
     --host-cpus 2-5 --client-cpus 0-1,6-15 --clients none sockets editor editor-dgpu \
     --amoris base=$B
 ```

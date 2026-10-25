@@ -151,7 +151,7 @@ stateless systems and generated declarations, see [Script API](sdk.md).
 Run the real agents with one shared ledger (the credential file stays outside the repo):
 
 ```sh
-python3 tools/showcase_assets.py --projects
+python3 tools/site/showcase_assets.py --projects
 python3 tools/eval/run_agent_showcase.py --mode development \
   --credential-file /external/deepseek-key.txt --repeats 3 \
   --output out/agent-showcase/development-v1

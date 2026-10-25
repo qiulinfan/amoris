@@ -10,7 +10,7 @@ import sys
 import time
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "tools"))
+sys.path.insert(0, str(ROOT / "tools" / "host"))
 from smoke_server import MCP
 from agent_dev_bench import Host, TASKS, VERSION, prepare, grade
 from deepseek_agent import Ledger, Limits, run_agent

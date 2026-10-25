@@ -53,7 +53,7 @@
 //! it), or as other. The host reads themselves are checked to be nonzero and increasing. `unreset`
 //! is not checked. `--adapter NAME` picks a device by a case-insensitive part of its name;
 //! `--rounds N` (default 200). Run it under the Khronos validation layer with synchronization
-//! validation (tools/vk_validate.py) to check the sequence (docs/bench/gpu-matrix.md 8).
+//! validation (tools/render/vk_validate.py) to check the sequence (docs/bench/gpu-matrix.md 8).
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() {

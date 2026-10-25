@@ -4,7 +4,7 @@
 <!--
   The rule workload's WebAssembly module timed per tick in a Web Worker (docs/bench/script.md):
   serve a directory holding this page, worker.js, bench.mjs, the module and the sets of
-  `rules_bench --emit` (tools/rules_bench.py does), with the headers of cross-origin isolation so
+  `rules_bench --emit` (tools/runtime/rules_bench.py does), with the headers of cross-origin isolation so
   performance.now() is fine-grained, then
   `python tools/webcheck.py "http://127.0.0.1:<port>/index.html?wasm=rules_web.wasm" --serve <dir>`.
   Query: wasm, rounds, offset, warmup, ticks, variants. The title becomes DONE or FAIL with the

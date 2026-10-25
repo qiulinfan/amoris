@@ -41,10 +41,11 @@ Not measured yet: a full ring, the RTX 5060 and the 780M, and Chrome.
 
 The height field of [water.md](../spec/water.md), as the spike built it
 ([shallow-water.md](../spikes/shallow-water.md), which has the M5's figures and method). Method:
-`python tools/shallow_check.py` (defaults: solver sizes 128 to 1024, drawing 128 to 512), which
-builds what it runs, compares each hash chain with the M5's and prints the medians below; raw lines
-and traces stay in `out/shallow-check/`. The solver is the bench scene's dam break, single-threaded;
-the drawing is `shallow_draw` at 1280 x 720 with MSAA, traced with the field and without it.
+`python tools/water/shallow_check.py` (defaults: solver sizes 128 to 1024, drawing 128 to 512),
+which builds what it runs, compares each hash chain with the M5's and prints the medians below; raw
+lines and traces stay in `out/shallow-check/`. The solver is the bench scene's dam break,
+single-threaded; the drawing is `shallow_draw` at 1280 x 720 with MSAA, traced with the field and
+without it.
 
 Machine: R1, AMD Ryzen 9 270 (x86-64), Windows 11, Rust 1.98.1, Node 25.8.1, Chrome 155, the RTX
 5060 on Direct3D 12 for the drawing; commit `4dea38a0`, 2026-10-18. The machine was not checked for
@@ -231,12 +232,13 @@ AMORIS_GPU_MINIMAL=features,limits,timestamps. Apple M5 Metal and baseline Molte
 locally. Since section 18 the kernels are deterministic across devices ([water.md](../spec/water.md)
 66). Performance remains a measured result, never a pass condition.
 
-The actual-browser checks use rebuilt paired game/viewport modules and tools/water_worker_check.mjs,
-water_resident_worker_check.mjs, water_probe_script_check.mjs and water_floater_check.mjs.
-The exported swimming validation game uses tools/water_pool_check.mjs: actual keyboard/mouse input,
-entry, underwater marker, resurfacing, dry return and explicit retry. Its instrumentation sums
-active step + external GPU wait + publication at the same retained tick index. Frame-delivery
-wall intervals and viewport rolling means are separate quantities, neither isolated GPU time.
+The actual-browser checks use rebuilt paired game/viewport modules and
+tools/water/water_worker_check.mjs, water_resident_worker_check.mjs, water_probe_script_check.mjs
+and water_floater_check.mjs. The exported swimming validation game uses
+tools/water/water_pool_check.mjs: actual keyboard/mouse input, entry, underwater marker,
+resurfacing, dry return and explicit retry. Its instrumentation sums active step + external GPU wait +
+publication at the same retained tick index. Frame-delivery wall intervals and viewport rolling
+means are separate quantities, neither isolated GPU time.
 
 The pool's sleeping-column data rebind was checked against a fresh-host CPU control: 80 actor
 states remained identical while requests dropped from 80 to two. A fixed-input native comparison
@@ -317,8 +319,9 @@ all): the pool party collects all eight ducks and raises a 3 to 4 cm wave at the
 river run passes two gates, its tube drops about 7 m over the falls and lands at 12 to 13 m/s, and
 the run reaches the beach in 17 to 19 s with the river's volume ledger exact; the surfer rides 30.5
 m at up to 7.0 m/s before the next crest throws them. Exported with `cargo xtask export-web`, each
-loads and plays in headless Chrome on the WebGPU baseline device (`tools/web_play_check.mjs`; its
-block-placing checks do not apply to these samples) with no validation errors or script exceptions.
+loads and plays in headless Chrome on the WebGPU baseline device (`tools/host/web_play_check.mjs`;
+its block-placing checks do not apply to these samples) with no validation errors or script
+exceptions.
 
 ## 8. Sub-grid ripples (Pioneer, 2026-10-22)
 
@@ -348,10 +351,10 @@ workgroup memory gained under 3 percent and was left out.
 **In the samples.**
 `cargo run --release -p amoris-app --example ripple_shots -- --sample pool-party --only off` (then
 `on`) with `AMORIS_TRACE=frames=400,skip=200,out=PATH`, then
-`python tools/frame_trace.py diff OFF ON`: the actual game, played through the player's actions (the
-pool party's swimmer runs off the deck, jumps in and swims for the ducks while the guests
-cannonball; the surf beach's rider lies on the board and paddles), drawn by one renderer from the
-player's eye at 1280 x 720 with MSAA. Medians over the traced frames:
+`python tools/render/frame_trace.py diff OFF ON`: the actual game, played through the player's
+actions (the pool party's swimmer runs off the deck, jumps in and swims for the ducks while the
+guests cannonball; the surf beach's rider lies on the board and paddles), drawn by one renderer from
+the player's eye at 1280 x 720 with MSAA. Medians over the traced frames:
 
 | Sample | GPU frame span, off and on | Union of the GPU passes, off and on | `water ripples` pass |
 |---|---|---|---|
@@ -373,10 +376,10 @@ and from beside the player, with the ripples on and off, at every `--every` tick
 `out/ripples/<sample>/{eye,side}-{on,off}-<tick>.png`.
 
 **In Chrome.** Exported with `cargo xtask export-web` and played with
-`node tools/web_play_check.mjs` in headless Chrome 155 on the M5's WebGPU (the check's block-placing
-steps do not apply to these samples), pool-party and surf-beach load, take the player's input and
-draw at 16.7 ms a frame with no WebGPU validation error or script exception;
-`node tools/water_pool_check.mjs` passes all twelve of its checks on samples/water-pool, whose
+`node tools/host/web_play_check.mjs` in headless Chrome 155 on the M5's WebGPU (the check's
+block-placing steps do not apply to these samples), pool-party and surf-beach load, take the
+player's input and draw at 16.7 ms a frame with no WebGPU validation error or script exception;
+`node tools/water/water_pool_check.mjs` passes all twelve of its checks on samples/water-pool, whose
 swimmer stirs the water too. The ripple pass's time in Chrome was not measured apart.
 
 Not measured: R1 with the RTX 5060 and the 780M, Direct3D 12, and the browser's ripple pass alone.
@@ -387,11 +390,12 @@ The port and the shafts of [water.md](../spec/water.md) 58 on the M5 (10 GPU cor
 release builds, 2026-10-22. The machine was not checked for other load. Raw traces and captures
 stay in ignored `out/`.
 
-`cargo run --release -p amoris-render --example water_lab -- --case pool --view under|line
---frames 300 --trace --out DIR` with this build and with the build before it (fcbd821b), then
-`python tools/frame_trace.py stats DIR/pool-foam-trace.json`: the lab's analytic pool, its water
-scattering 0.01 to 0.04 per metre under a sun 53 degrees up, drawn at 1280 x 720 with MSAA, the eye
-0.7 m under the surface (`under`) or at it (`line`). Medians and 95th percentiles over 240 frames:
+`cargo run --release -p amoris-render --example water_lab -- --case pool --view under|line --frames 300 --trace --out DIR`
+with this build and with the build before it (fcbd821b), then
+`python tools/render/frame_trace.py stats DIR/pool-foam-trace.json`: the lab's analytic pool, its
+water scattering 0.01 to 0.04 per metre under a sun 53 degrees up, drawn at 1280 x 720 with MSAA,
+the eye 0.7 m under the surface (`under`) or at it (`line`). Medians and 95th percentiles over 240
+frames:
 
 | View | `water medium integrate`, before | after |
 |---|---|---|
@@ -411,11 +415,11 @@ tallies and traces stay in ignored `out/`.
 
 **The tally.**
 `cargo run --release -p amoris-app --example water_sound -- --sample surf-beach --ticks 1800` with
-`AMORIS_TRACE=frames=300,skip=1500,out=PATH`, again with `--deaf` (the renderer not listening),
-then `python tools/frame_trace.py diff DEAF LISTEN`: the surf developed (its waves reach the beach
-after about 15 s), the board paddling among the breakers, about 26 000 breaking events a second.
-The same for `--sample river-falls --ticks 600` with `skip=300`, the tube in the gorge above the
-falls. Medians over 300 frames:
+`AMORIS_TRACE=frames=300,skip=1500,out=PATH`, again with `--deaf` (the renderer not listening), then
+`python tools/render/frame_trace.py diff DEAF LISTEN`: the surf developed (its waves reach the beach
+after about 15 s), the board paddling among the breakers, about 26 000 breaking events a second. The
+same for `--sample river-falls --ticks 600` with `skip=300`, the tube in the gorge above the falls.
+Medians over 300 frames:
 
 | Sample | `water spray emit`, deaf and listening | `water spray simulate`, deaf and listening |
 |---|---|---|
@@ -502,10 +506,10 @@ the CPU (a frame's CPU span 2.8 ms against 0.9) was dropped and run again. Raw t
 stay in ignored `out/`.
 
 `AMORIS_TRACE=frames=300,skip=1200,out=PATH cargo run --release -p amoris-app --example ocean_shots -- --out DIR --at 1700 --view mouth`,
-then `python tools/frame_trace.py diff CALM WIND`: the surf beach at 1280 x 720 with MSAA, from
-inside the bay's mouth looking out to sea, the bay's water in front and the sea to the horizon. Calm
-is the same scene with the sea's fetch at 0, the sea then drawn with its wavelets. Two runs of each,
-alternated; medians over 300 frames:
+then `python tools/render/frame_trace.py diff CALM WIND`: the surf beach at 1280 x 720 with MSAA,
+from inside the bay's mouth looking out to sea, the bay's water in front and the sea to the horizon.
+Calm is the same scene with the sea's fetch at 0, the sea then drawn with its wavelets. Two runs of
+each, alternated; medians over 300 frames:
 
 | | Calm | Wind |
 |---|---|---|
@@ -558,10 +562,11 @@ momentum-conserving form everywhere costs 0.47 ms more a step at 512², an upper
 whose every face is shallow or steep. The smaller regions' runs spread more than the schemes
 differ.
 
-**The wet bed.** `AMORIS_TRACE=frames=300,skip=2400,out=PATH cargo run --release -p amoris-app
---example shore_shots -- --out DIR --at 2710`, then `python tools/frame_trace.py diff DRY WET`: the
-surf beach at 1280 x 720 with MSAA from the player's camera, its region's `wet_s` 90 against 0, two
-runs of each, alternated; medians over 300 frames:
+**The wet bed.**
+`AMORIS_TRACE=frames=300,skip=2400,out=PATH cargo run --release -p amoris-app --example shore_shots -- --out DIR --at 2710`,
+then `python tools/render/frame_trace.py diff DRY WET`: the surf beach at 1280 x 720 with MSAA from
+the player's camera, its region's `wet_s` 90 against 0, two runs of each, alternated; medians over
+300 frames:
 
 | | Dry | Wet |
 |---|---|---|
@@ -602,10 +607,10 @@ Not measured: a resident region, whose nodes add to its samples (water.md 47), a
 The lips of [water.md](../spec/water.md) 63 on the M5, macOS, Metal, release builds, 2026-10-23.
 The machine was not checked for other load.
 
-`AMORIS_TRACE=frames=300,skip=2000,out=PATH cargo run --release -p amoris-app --example shore_shots
--- --out DIR --at 2310`, then `python tools/frame_trace.py diff OFF ON`: the surf beach at 1280 x
-720 with MSAA from the player's camera at the lineup while the break peels, `plunging` off against
-on, two runs of each, alternated; medians over 300 frames:
+`AMORIS_TRACE=frames=300,skip=2000,out=PATH cargo run --release -p amoris-app --example shore_shots -- --out DIR --at 2310`,
+then `python tools/render/frame_trace.py diff OFF ON`: the surf beach at 1280 x 720 with MSAA from
+the player's camera at the lineup while the break peels, `plunging` off against on, two runs of
+each, alternated; medians over 300 frames:
 
 | | Plunging off | Plunging on |
 |---|---|---|
@@ -720,11 +725,12 @@ deterministic kernels' commit b248c082 against this one, alternated, two runs ea
 5.903, 5.917 against 5.908, 5.893 ms; river-falls 4.342, 4.422 against 4.402, 4.416; pool-party
 2.668, 2.600 against 2.559, 2.606; water-valley 5.601, 5.593 against 5.566, 5.590.
 
-**A frame.** `AMORIS_TRACE=frames=300,skip=600,out=PATH cargo run --release -p amoris-app --example
-scene_shots -- samples/water-storm --eye -3,6,-5 --at 22,2,9 --ticks 900`, then `python
-tools/frame_trace.py stats`: the storm from its own view at 1280 x 720 with MSAA, the world stepped
-before each frame and each frame read back, medians over 300 frames. The variants are the storm's
-scene with the rain at 0 mm an hour or the wind at 0 m/s; two runs of each, alternated:
+**A frame.**
+`AMORIS_TRACE=frames=300,skip=600,out=PATH cargo run --release -p amoris-app --example scene_shots -- samples/water-storm --eye -3,6,-5 --at 22,2,9 --ticks 900`,
+then `python tools/render/frame_trace.py stats`: the storm from its own view at 1280 x 720 with
+MSAA, the world stepped before each frame and each frame read back, medians over 300 frames. The
+variants are the storm's scene with the rain at 0 mm an hour or the wind at 0 m/s; two runs of each,
+alternated:
 
 | | Storm | No rain | No wind |
 |---|---|---|---|
@@ -766,7 +772,7 @@ The shimmer of [water.md](../spec/water.md) 68 and the rain streaks of 67.3 on t
 Metal, release builds, 2026-10-23. The machine was not otherwise checked for load.
 
 **Shimmer.**
-`python tools/water_flicker.py samples/pool-party --eye -2,1.8,-1.5 --at 8,-0.5,4 --from 600 --to 660 --box 380,280,1040,560`,
+`python tools/water/water_flicker.py samples/pool-party --eye -2,1.8,-1.5 --at 8,-0.5,4 --from 600 --to 660 --box 380,280,1040,560`,
 the party's scene before the rain (063b51c1): 61 frames of the deck view at 1280 x 720 with MSAA,
 the pixels of the water whose luminance flips, changing by more than 0.02 one way and back the next
 frame, in over 30 and over 50 percent of the frames. One switch at a time (`--env`) found what flips
@@ -790,10 +796,10 @@ and so did averaging the caustic photons' ripples over four texels instead of tw
 would lose the caustics' detail: neither was kept. In the rain the streaks pass across the pixels,
 which flip as they go: that is the rain's own motion.
 
-**Cost.** `AMORIS_TRACE=frames=300,skip=600,out=PATH cargo run --release -p amoris-app --example
-scene_shots -- samples/pool-party --eye -2,1.8,-1.5 --at 8,-0.5,4 --ticks 900`, then `python
-tools/frame_trace.py stats`, medians over 300 frames, two runs of each, alternated. The party in the
-sun, the build before (063b51c1) against this one:
+**Cost.**
+`AMORIS_TRACE=frames=300,skip=600,out=PATH cargo run --release -p amoris-app --example scene_shots -- samples/pool-party --eye -2,1.8,-1.5 --at 8,-0.5,4 --ticks 900`,
+then `python tools/render/frame_trace.py stats`, medians over 300 frames, two runs of each,
+alternated. The party in the sun, the build before (063b51c1) against this one:
 
 | | Before | Now |
 |---|---|---|
@@ -876,10 +882,9 @@ Not measured: the browser.
 
 ## 21. Spray drawn as water (Pioneer, 2026-10-23)
 
-The spray of [water.md](../spec/water.md) 69 on the M5, macOS, Metal, release builds,
-2026-10-23. `AMORIS_TRACE=frames=80,skip=0,out=PATH cargo run --release -p amoris-app --example
-scene_shots -- samples/pool-party --eye 8.6,1.1,6.6 --at 10.8,0.55,4.2 --every 1 --from 780 --to
-860`, a guest's cannonball close up in the rain, then `python tools/frame_trace.py stats`, medians
+The spray of [water.md](../spec/water.md) 69 on the M5, macOS, Metal, release builds, 2026-10-23.
+`AMORIS_TRACE=frames=80,skip=0,out=PATH cargo run --release -p amoris-app --example scene_shots -- samples/pool-party --eye 8.6,1.1,6.6 --at 10.8,0.55,4.2 --every 1 --from 780 --to 860`,
+a guest's cannonball close up in the rain, then `python tools/render/frame_trace.py stats`, medians
 over 80 frames, two runs of each, alternated, the build before (226c8a2e) against this one:
 
 | | Before | Now |
@@ -915,8 +920,8 @@ master 4913637d (the spray as first drawn as water), 2026-10-23; no other GPU wo
 browsers stopped.
 
 **Natively, Metal.** `AMORIS_TRACE=frames=300,skip=N,out=PATH` over each tool's frames (each draws
-every tick at 1280 x 720 with MSAA), then `python tools/frame_trace.py stats`, medians over 300
-frames, two runs each. GPU interval coverage is the union of the timestamped passes' intervals;
+every tick at 1280 x 720 with MSAA), then `python tools/render/frame_trace.py stats`, medians over
+300 frames, two runs each. GPU interval coverage is the union of the timestamped passes' intervals;
 the passes overlap on the M5, so their medians do not add up to it, and the frame interval also
 holds stepping the world and reading the frame back.
 
@@ -956,7 +961,7 @@ What the liquid surface (splashes.md 5) and the entry crowns drawn on it
 ([water.md](../spec/water.md) 52, 70) cost, against the build before them (07074547), on the M5,
 macOS, release builds; leftover browsers stopped and no other build running.
 
-**Natively, Metal**, as in 22: `AMORIS_TRACE=frames=300,skip=N`, `python tools/frame_trace.py
+**Natively, Metal**, as in 22: `AMORIS_TRACE=frames=300,skip=N`, `python tools/render/frame_trace.py
 stats`, GPU interval coverage (the union of the passes' intervals), medians over 300 frames, two
 runs of each, alternated:
 

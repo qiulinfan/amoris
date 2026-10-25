@@ -23,7 +23,7 @@
 
 ## Method
 
-`python tools/write_trace_bench.py run OUT --runs 5 --lock <bench_lock.py>` runs the example
+`python tools/runtime/write_trace_bench.py run OUT --runs 5 --lock <bench_lock.py>` runs the example
 `write_trace_bench` (amoris-runtime, release) five times on each of two projects, one process
 each, stepping the game directly. Each process warms up, counts the script statements a tick runs
 (a debugger hook that only counts, untimed), then times modes in blocks, each tick alone, the
@@ -124,10 +124,10 @@ On an idle machine, from the merged checkout or the branch's worktree (`$MAIN` i
 checkout's path), the example built:
 
 ```sh
-python tools/write_trace_bench.py build
-python tools/write_trace_bench.py run $MAIN/out/writes/quiet --runs 5 \
+python tools/runtime/write_trace_bench.py build
+python tools/runtime/write_trace_bench.py run $MAIN/out/writes/quiet --runs 5 \
   --lock $MAIN/out/locks/bench_lock.py
-python tools/write_trace_bench.py table $MAIN/out/writes/quiet
+python tools/runtime/write_trace_bench.py table $MAIN/out/writes/quiet
 ```
 
 The `table` command prints the tables above (each run's median, the ratio to off, the first tick),
@@ -135,7 +135,7 @@ the conditions of each process and each trace's last row. The comparison with th
 build of the base commit and is not part of it.
 
 The results above (2026-10-15, the branch's worktree at `10b9cf27`) ran the whole `run`, without
-`--lock`, inside one hold of the bench lock: `python $MAIN/out/locks/bench_lock.py run --label
-quiet-writes --max-hold-min 25 -- python tools/write_trace_bench.py run $MAIN/out/writes/quiet
---runs 5`. The lock covered the gaps between processes as well, and each process's conditions
-were still sampled inside it; the ten processes took 5 min 16 s.
+`--lock`, inside one hold of the bench lock:
+`python $MAIN/out/locks/bench_lock.py run --label quiet-writes --max-hold-min 25 -- python tools/runtime/write_trace_bench.py run $MAIN/out/writes/quiet --runs 5`.
+The lock covered the gaps between processes as well, and each process's conditions were still
+sampled inside it; the ten processes took 5 min 16 s.

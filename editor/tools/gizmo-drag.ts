@@ -1,4 +1,4 @@
-// Real gizmo drags against a real host (docs/bench/gizmo.md; tools/gizmo_bench.py runs it):
+// Real gizmo drags against a real host (docs/bench/gizmo.md; tools/host/gizmo_bench.py runs it):
 // headless Chrome (WebGPU on) opens the editor at --url (the host serving the editor's production
 // build made with VITE_AMORIS_EXPOSE=1, or the Vite dev server proxying to the host), selects an
 // entity and drags the translate gizmo's x handle with CDP mouse events. The page is instrumented

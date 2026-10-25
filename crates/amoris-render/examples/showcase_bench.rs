@@ -400,8 +400,8 @@ fn run() -> Result<(), String> {
         eprintln!("saved {} ({w}x{h})", path.display());
     }
     // The HDR image at the same fixed time, linear float32 RGBA (little-endian, row by row; before
-    // exposure, bloom and tone mapping), as the path tracer writes its radiance: tools/compare_pt.py
-    // and tools/transparency_pt.py compare the two. Without TAA (one frame is the image).
+    // exposure, bloom and tone mapping), as the path tracer writes its radiance: tools/render/compare_pt.py
+    // and tools/render/transparency_pt.py compare the two. Without TAA (one frame is the image).
     if let Some(index) = arguments.iter().position(|value| value == "--hdr") {
         let path = PathBuf::from(arguments.get(index + 1).ok_or("missing --hdr path")?);
         for _ in 0..8 {

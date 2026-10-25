@@ -6,8 +6,8 @@ on:
     branches: [main]
     paths:
       - site/**
-      - tools/build_site.py
-      - tools/check_site.py
+      - tools/site/build_site.py
+      - tools/site/check_site.py
       - .github/workflows/pages.yml
 
 permissions:
@@ -30,8 +30,8 @@ jobs:
           python-version: '3.12'
       - run: python -m pip install -r site/requirements.txt
       - uses: actions/configure-pages@v6.0.0
-      - run: python tools/build_site.py
-      - run: python tools/check_site.py --links-only
+      - run: python tools/site/build_site.py
+      - run: python tools/site/check_site.py --links-only
       - uses: actions/upload-pages-artifact@v5.0.0
         with:
           path: out/site

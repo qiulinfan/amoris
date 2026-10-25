@@ -1,0 +1,423 @@
+#!/usr/bin/env python3
+"""Smoke test of the host (docs/spec/server.md): starts `amoris serve` on a copy of
+samples/sailing and drives it the three ways clients do.
+
+1. The CLI (`amoris status`, `amoris world ...`, `amoris step`, `amoris profile`, `amoris undo`,
+   `amoris play`, a refused typo with its suggestion).
+2. `POST /api/call` and `GET /api/catalog`, and the editor's `/ws` (requests, the history, events,
+   world.changed, status and profile pushes, a refused topic, Play and Stop).
+3. MCP over Streamable HTTP (`initialize`, `tools/list` with its size, a `world` call, a refused
+   call).
+4. A host the script debugger holds (docs/bench/debug-eval.md, findings 1, 2 and 4): a step that
+   stops at a breakpoint returns at once, reads answer from the last tick's end, calls that need
+   the game are refused at once with `debug.paused`, the debugger's short forms, and a restore
+   that keeps the scripts applied since the snapshot.
+
+Standard library only; macOS, Linux and Windows (where the host is stopped with Ctrl-Break, the
+console event a process group can be sent, instead of SIGTERM).
+Usage: python3 tools/host/smoke_server.py [--amoris target/debug/amoris]
+"""
+
+import argparse
+import base64
+import json
+import os
+import shutil
+import signal
+import socket
+import struct
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.request
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[2]
+WINDOWS = os.name == "nt"
+EXE = ".exe" if WINDOWS else ""
+FAILURES = []
+
+
+def check(cond, what):
+    print(("ok   " if cond else "FAIL ") + what)
+    if not cond:
+        FAILURES.append(what)
+
+
+# --- HTTP -----------------------------------------------------------------------------------------
+
+def post(url, body, headers=None):
+    req = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST")
+    req.add_header("content-type", "application/json")
+    for k, v in (headers or {}).items():
+        req.add_header(k, v)
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return r.status, dict(r.headers), r.read().decode()
+
+
+def call(base, method, params=None):
+    _, _, text = post(base + "/api/call", {"id": 1, "method": method, "params": params or {}})
+    return json.loads(text)
+
+
+# --- A minimal WebSocket client (RFC 6455, text frames) ------------------------------------------
+
+class WS:
+    def __init__(self, port, path="/ws"):
+        self.s = socket.create_connection(("127.0.0.1", port), timeout=10)
+        key = base64.b64encode(os.urandom(16)).decode()
+        self.s.sendall((f"GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nUpgrade: websocket\r\n"
+                        f"Connection: Upgrade\r\nSec-WebSocket-Key: {key}\r\n"
+                        "Sec-WebSocket-Version: 13\r\n\r\n").encode())
+        head = b""
+        while b"\r\n\r\n" not in head:
+            head += self.s.recv(1)
+        assert b" 101 " in head.split(b"\r\n")[0], head
+        self.buf = b""
+        # Frames read but not consumed yet: pushes that came before a request's answer wait here
+        # for the next until() instead of being dropped.
+        self.backlog = []
+
+    def send(self, obj):
+        data = json.dumps(obj).encode()
+        mask = os.urandom(4)
+        n = len(data)
+        hdr = bytes([0x81])
+        if n < 126:
+            hdr += bytes([0x80 | n])
+        elif n < 65536:
+            hdr += bytes([0x80 | 126]) + struct.pack(">H", n)
+        else:
+            hdr += bytes([0x80 | 127]) + struct.pack(">Q", n)
+        self.s.sendall(hdr + mask + bytes(b ^ mask[i % 4] for i, b in enumerate(data)))
+
+    def _frame(self):
+        """Takes one whole frame off the buffer, (opcode, payload), or None while it is partial."""
+        b = self.buf
+        if len(b) < 2:
+            return None
+        n, at = b[1] & 0x7F, 2
+        if n == 126:
+            n, at = (struct.unpack(">H", b[2:4])[0], 4) if len(b) >= 4 else (None, 0)
+        elif n == 127:
+            n, at = (struct.unpack(">Q", b[2:10])[0], 10) if len(b) >= 10 else (None, 0)
+        if n is None or len(b) < at + n:
+            return None
+        self.buf = b[at + n:]
+        return b[0] & 0x0F, b[at:at + n]
+
+    def recv(self, timeout=10):
+        """The next text frame, parsed. Raises TimeoutError when none is whole within `timeout`;
+        the bytes of a partial frame stay buffered for the next call."""
+        end = time.time() + timeout
+        while True:
+            frame = self._frame()
+            if frame is None:
+                left = end - time.time()
+                if left <= 0:
+                    raise TimeoutError("no frame")
+                self.s.settimeout(left)
+                chunk = self.s.recv(65536)
+                if not chunk:
+                    raise EOFError
+                self.buf += chunk
+                continue
+            opcode, payload = frame
+            if opcode == 0x8:
+                raise EOFError
+            if opcode in (0x9, 0xA):  # ping, pong
+                continue
+            return json.loads(payload)
+
+    def _next(self, end):
+        """The oldest frame not consumed yet (the backlog first), or None once `end` passed."""
+        if self.backlog:
+            return self.backlog.pop(0)
+        left = end - time.time()
+        if left <= 0:
+            return None
+        try:
+            return self.recv(left)
+        except TimeoutError:
+            return None
+
+    def until(self, pred, timeout=10):
+        """Consumes frames in order until one matches; returns (match, every frame consumed), the
+        match None when `timeout` passed first."""
+        seen, end = [], time.time() + timeout
+        while (f := self._next(end)) is not None:
+            seen.append(f)
+            if pred(f):
+                return f, seen
+        return None, seen
+
+    def request(self, rid, method, params=None, timeout=10):
+        """Sends a request and returns its answer (None on timeout). Frames that came first are
+        pushes the caller has not read: they stay queued, in order, for until()."""
+        self.send({"id": rid, "method": method, "params": params or {}})
+        f, seen = self.until(lambda f: f.get("id") == rid, timeout)
+        self.backlog[:0] = seen[:-1] if f is not None else seen
+        return f
+
+
+# --- MCP over Streamable HTTP --------------------------------------------------------------------
+
+def sse_json(text):
+    for line in text.splitlines():
+        if line.startswith("data:") and line[5:].strip():
+            return json.loads(line[5:])
+    return json.loads(text)
+
+
+class MCP:
+    def __init__(self, base):
+        self.url = base + "/mcp"
+        self.session = None
+        self.n = 0
+
+    def rpc(self, method, params=None, notify=False):
+        body = {"jsonrpc": "2.0", "method": method}
+        if params is not None:
+            body["params"] = params
+        if not notify:
+            self.n += 1
+            body["id"] = self.n
+        headers = {"accept": "application/json, text/event-stream",
+                   "mcp-protocol-version": "2025-06-18"}
+        if self.session:
+            headers["mcp-session-id"] = self.session
+        status, hdrs, text = post(self.url, body, headers)
+        sid = {k.lower(): v for k, v in hdrs.items()}.get("mcp-session-id")
+        if sid:
+            self.session = sid
+        return None if notify else sse_json(text)
+
+
+# --- The run -------------------------------------------------------------------------------------
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--amoris", default=str(REPO / f"target/debug/amoris{EXE}"))
+    ap.add_argument("--keep", action="store_true", help="keep the project copy")
+    a = ap.parse_args()
+    # Absolute: the CLI runs in the project's copy.
+    amoris = str(Path(a.amoris).resolve())
+    if not Path(amoris).exists():
+        sys.exit(f"{amoris} is not built (cargo build -p amoris-app, or --amoris PATH)")
+    tmp = Path(tempfile.mkdtemp(prefix="amoris-smoke-"))
+    proj = tmp / "sailing"
+    shutil.copytree(REPO / "samples/sailing", proj)
+    errlog = open(tmp / "serve.err", "w")
+    # On Windows the host gets its own process group, so Ctrl-Break reaches it alone.
+    group = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if WINDOWS else {}
+    server = subprocess.Popen([amoris, "serve", str(proj), "--port", "0"],
+                              stdout=subprocess.PIPE, stderr=errlog, text=True, **group)
+    try:
+        line = server.stdout.readline()
+        info = json.loads(line)
+        base, port = info["url"], info["port"]
+        print(f"host at {base}")
+
+        def cli(*args, ok=True):
+            r = subprocess.run([amoris, *args], cwd=proj, capture_output=True, text=True,
+                               timeout=60)
+            if ok and r.returncode != 0:
+                print(r.stdout, r.stderr)
+            return r
+
+        # 1. The CLI first.
+        r = cli("status")
+        check(r.returncode == 0 and "edit paused" in r.stdout, f"cli status: {r.stdout.strip()}")
+        n = len(json.loads((proj / "scene.json").read_text())["entities"])
+        r = cli("world", "tree")
+        check(r.stdout.count("\n") == n and "#3 Sloop" in r.stdout, f"cli world tree: {n} entities")
+        r = cli("world", "set", "Crate1", "Cargo", "value=5")
+        check(r.returncode == 0 and "set Cargo on Crate1" in r.stdout, f"cli world set: {r.stdout.strip()}")
+        r = cli("world", "get", "Crate1", "Cargo", "--json")
+        check(json.loads(r.stdout)["components"]["Cargo"]["value"] == 5, "cli edit applied")
+        r = cli("undo")
+        check(r.returncode == 0 and r.stdout.startswith("undone"), f"cli undo: {r.stdout.strip()}")
+        r = cli("world", "get", "Crate1", "Cargo", "--json")
+        check(json.loads(r.stdout)["components"]["Cargo"]["value"] == 1, "cli undo restored the value")
+        r = cli("step", "120", "--until", "event:sail.set")
+        check("stopped by" in r.stdout and "sail.set" in r.stdout, f"cli step --until: {r.stdout.strip()}")
+        r = cli("step", "600", "--until", "Sloop.Boat.speed>1")
+        check("stopped: Boat.speed" in r.stdout, f"cli step until a field: {r.stdout.strip()}")
+        r = cli("profile", "--ticks", "60")
+        check(r.returncode == 0 and " ticks to tick " in r.stdout.splitlines()[0]
+              and "loop.publish" in r.stdout, f"cli profile: {r.stdout.splitlines()[:1]}")
+        r = cli("world", "set", "Sloop", "Boat", "ruder=1", ok=False)
+        check(r.returncode == 1 and "request.unknown_field" in r.stderr and "rudder" in r.stderr,
+              f"cli refusal: {r.stderr.strip()}")
+        r = cli("play", "start", "--speed", "4")
+        check("play running" in r.stdout, f"cli play start: {r.stdout.strip()}")
+        time.sleep(0.5)
+        r = cli("play", "stop")
+        check("edit paused" in r.stdout, f"cli play stop: {r.stdout.strip()}")
+        r = cli("help", "step")
+        check("until" in r.stdout and "watch" in r.stdout, "cli help from the catalog")
+
+        # 2. /api/call and /api/catalog.
+        cat = json.loads(urllib.request.urlopen(base + "/api/catalog", timeout=10).read())
+        names = {c["name"] for c in cat}
+        check({"world.edit", "time.step", "play.start", "events.since"} <= names,
+              f"catalog: {len(cat)} commands with schemas")
+        s = call(base, "status")["result"]
+        check(s["mode"] == "edit" and s["paused"] is True, "api status")
+        e = call(base, "world.edit", {"ops": [{"destroy": {"entity": "Crate2"}}]})
+        check("result" in e, "api world.edit destroy")
+        u = call(base, "history.undo")
+        got = call(base, "world.get", {"entity": "Crate2"})
+        check("result" in u and got["result"]["id"] == 5, "api undo revives Crate2 under its id")
+        bad = call(base, "wrld.tree")
+        check(bad["error"]["code"] == "request.unknown_method", "api unknown method refused")
+
+        # 3. The editor's WebSocket.
+        ws = WS(port)
+        first = ws.recv()
+        check(first.get("event") == "status", "ws: status pushed on connect")
+        f = ws.request(1, "subscribe", {"topics": ["log", "pick"]})
+        check(f and f.get("error", {}).get("detail", {}).get("path") == "/topics/1",
+              "ws subscribe refuses a topic the host does not push, by its index")
+        f = ws.request(1, "subscribe", {"topics": ["world.changed", "events", "history", "log",
+                                                   "profile"]})
+        check(f and "result" in f, "ws subscribe")
+        f = ws.request(2, "world.edit", {"ops": [{"set": {"entity": "Crate3", "component": "Cargo", "value": {"value": 9}}}]})
+        check(f and "result" in f, "ws world.edit")
+        # The host pushes the history before it answers; request() keeps it queued.
+        h, _ = ws.until(lambda f: f.get("event") == "history", 5)
+        check(h is not None and h["data"]["undo"], "ws: history pushed after the edit")
+        # Pushes coalesce over 100 ms: a reset (the CLI's Play and Stop just before) covers the
+        # edit too.
+        c, _ = ws.until(lambda f: f.get("event") == "world.changed", 5)
+        check(c is not None and (c["data"].get("reset") or [6, "Cargo"] in c["data"]["changed"]),
+              f"ws: world.changed pushed {c and c['data']}")
+        f = ws.request(3, "history.undo")
+        check(f and "result" in f, "ws history.undo")
+        f = ws.request(4, "time.step", {"ticks": 30}, timeout=20)
+        check(f and f["result"]["tick"] > 0, "ws time.step")
+        f = ws.request(5, "play.start", {"speed": 2})
+        check(f and f["result"]["mode"] == "play", "ws play.start")
+        epoch = f and f["result"]["epoch"]
+        r, _ = ws.until(lambda f: f.get("event") == "world.changed" and f["data"].get("reset"), 5)
+        check(r is not None, "ws: world.changed reset on Play")
+        ev, _ = ws.until(lambda f: f.get("event") == "events", 2)
+        print(f"info ws: events pushed during Play: {'yes' if ev else 'none in 2 s'}")
+        p, _ = ws.until(lambda f: f.get("event") == "profile" and f["data"]["ticks"] > 0, 3)
+        check(p is not None and p["data"]["epoch"] == epoch,
+              f"ws: profile pushed in Play ({p and p['data']['ticks']} ticks, epoch {epoch})")
+        f = ws.request(6, "play.stop")
+        check(f and f["result"]["mode"] == "edit", "ws play.stop")
+        since = call(base, "events.since", {"limit": 3})["result"]
+        check(len(since["events"]) >= 1, f"api events.since: last {since['last']}")
+        if since["events"]:
+            why = call(base, "events.why", {"seq": since["events"][-1]["seq"]})
+            check("result" in why, "api events.why")
+
+        # 4. MCP over HTTP.
+        m = MCP(base)
+        init = m.rpc("initialize", {"protocolVersion": "2025-06-18", "capabilities": {},
+                                    "clientInfo": {"name": "smoke", "version": "1"}})
+        check(init["result"]["serverInfo"]["name"] == "amoris", "mcp initialize")
+        m.rpc("notifications/initialized", notify=True)
+        tl = m.rpc("tools/list", {})
+        tools = tl["result"]["tools"]
+        size = len(json.dumps(tools))
+        # Ten developer tools plus `player` (docs/spec/server.md 7).
+        check(len(tools) == 11, f"mcp tools/list: {len(tools)} tools, {size} bytes "
+                                 f"(~{size // 4} tokens)")
+        r = m.rpc("tools/call", {"name": "world", "arguments": {"action": "tree", "filter": "Sloop"}})
+        text = r["result"]["content"][0]["text"]
+        check(not r["result"].get("isError") and "Sloop" in text, f"mcp world tree: {text[:80]}")
+        r = m.rpc("tools/call", {"name": "world", "arguments": {"action": "get", "entity": "Slop"}})
+        check(r["result"].get("isError") and "sim.entity_not_found" in r["result"]["content"][0]["text"],
+              "mcp refusal carries the problem")
+        r = m.rpc("tools/call", {"name": "time", "arguments": {"action": "step", "ticks": 10}})
+        check(not r["result"].get("isError"), "mcp time step")
+        r = m.rpc("tools/call", {"name": "debug", "arguments": {"action": "state"}})
+        text = r["result"]["content"][0]["text"]
+        check(not r["result"].get("isError") and "breakpoints" in text, f"mcp debug state: {text[:80]}")
+        debug_tool = next(t for t in tools if t["name"] == "debug")
+        props = debug_tool["inputSchema"]["properties"]
+        check({"file", "line", "condition", "expr", "frame", "kind", "entity", "component",
+               "field", "id"} <= set(props), f"mcp debug tool lists {len(props)} parameters")
+
+        # 5. A host the debugger holds.
+        def timed(*args, ok=True):
+            t = time.perf_counter()
+            r = cli(*args, ok=ok)
+            return r, (time.perf_counter() - t) * 1000
+
+        line = 1 + next(i for i, l in enumerate((proj / "scripts/rules.ts").read_text().splitlines())
+                        if "const speed = Math.abs" in l)
+        r = cli("debug", "break", f"rules.ts:{line}")
+        check(r.returncode == 0 and f"scripts/rules.ts:{line}" in r.stdout,
+              f"cli debug break: {r.stdout.strip()}")
+        r, ms = timed("step", "60")
+        check(f"stopped at scripts/rules.ts:{line} (breakpoint" in r.stdout,
+              f"cli step returns at the breakpoint in {ms:.0f} ms: {r.stdout.strip()}")
+        r, ms = timed("status")
+        check(r.returncode == 0 and f"HELD at scripts/rules.ts:{line}" in r.stdout,
+              f"cli status while held, {ms:.0f} ms: {r.stdout.strip()}")
+        r, ms = timed("world", "get", "Sloop", "Boat.speed,Log.distance")
+        check(r.returncode == 0 and "(paused at" in r.stdout and "Boat.speed =" in r.stdout,
+              f"cli world get fields while held, {ms:.0f} ms")
+        r = cli("world", "tree", "--with", "Boat")
+        check(r.returncode == 0 and "#3 Sloop" in r.stdout, "cli world tree while held")
+        r = cli("scripts", "read", "rules.ts", "--lines", str(line))
+        check(r.stdout.startswith(f"{line}| "), f"cli scripts read --lines: {r.stdout.strip()}")
+        r, ms = timed("scripts", "apply", ok=False)
+        check(r.returncode == 1 and "debug.paused" in r.stderr and ms < 5000,
+              f"cli scripts apply refused at once while held, {ms:.0f} ms")
+        r = cli("debug", "state")
+        check(r.stdout.startswith(f"paused at scripts/rules.ts:{line}") and "    r = " in r.stdout
+              and "ctx" not in r.stdout, f"cli debug state, {len(r.stdout)} bytes")
+        r = cli("debug", "eval", "r", "+", "1")
+        check(r.stdout.strip() == "1  (number)", f"cli debug eval: {r.stdout.strip()}")
+        r = m.rpc("tools/call", {"name": "debug", "arguments": {"action": "state", "brief": True}})
+        text = r["result"]["content"][0]["text"]
+        check(not r["result"].get("isError") and '"paused"' in text,
+              f"mcp debug state brief: {len(text)} bytes")
+        r = m.rpc("tools/call", {"name": "world", "arguments": {"action": "get", "entity": "Sloop",
+                                                               "fields": ["Boat.speed"]}})
+        text = r["result"]["content"][0]["text"]
+        check(not r["result"].get("isError") and "paused_at" in text, "mcp world get while held")
+        h = call(base, "debug.watch", {"entity": "Sloop", "component": "Log", "field": "distance"})
+        check(h.get("result", {}).get("entity") == 3, "api debug.watch by name")
+        call(base, "debug.unwatch")
+        r = cli("debug", "clear")
+        r = cli("debug", "continue")
+        check(r.stdout.strip() == "running", "cli debug continue")
+        r = cli("step", "1")
+        check(r.returncode == 0 and "stopped" not in r.stdout, f"cli step after: {r.stdout.strip()}")
+
+        # A restore keeps the scripts applied since the snapshot.
+        rules = proj / "scripts/rules.ts"
+        rules.write_text(rules.read_text().replace("speed * ctx.dt", "2 * speed * ctx.dt", 1))
+        r = cli("scripts", "apply")
+        applied = next((w for w in r.stdout.split(" | ") if w.startswith("bundle ")), "")[7:]
+        r = cli("snapshots", "restore", "0")
+        check(applied and f"scripts {applied} (applied)" in r.stdout,
+              f"cli restore keeps the applied scripts: {r.stdout.strip()}")
+        r = cli("snapshots", "restore", "0", "--bundle", "snapshot")
+        check("(snapshot)" in r.stdout and f"scripts {applied}" not in r.stdout,
+              f"cli restore --bundle snapshot: {r.stdout.strip()}")
+    finally:
+        server.send_signal(signal.CTRL_BREAK_EVENT if WINDOWS else signal.SIGTERM)
+        try:
+            server.wait(10)
+        except subprocess.TimeoutExpired:
+            server.kill()
+        check(not (proj / ".amoris/host.json").exists(), "host.json removed on shutdown")
+        errlog.close()
+        if a.keep:
+            print(f"kept {tmp}")
+        else:
+            shutil.rmtree(tmp, ignore_errors=True)
+    print(f"\n{len(FAILURES)} failures")
+    sys.exit(1 if FAILURES else 0)
+
+
+if __name__ == "__main__":
+    main()

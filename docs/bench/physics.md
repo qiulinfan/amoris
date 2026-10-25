@@ -533,8 +533,8 @@ section but the cache and asserts layout 1's folds for the sailing scene (1,200 
 forked before every tick) and for a level scene of 196 bodies on the 20,000-triangle terrain
 (`level_world(100, 3)`: 300 ticks, forked before every tick or not); a layout-1 build of the same
 code gives the same folds (`physics_bench trajectory`, run by
-`tools/physcache_bench.py --trajectory`). The golden chain covers the cache's bytes, so it was
-re-blessed.
+`tools/runtime/physcache_bench.py --trajectory`). The golden chain covers the cache's bytes, so it
+was re-blessed.
 
 **Scene and method.** `probe::level`: ConvexVsMesh's 1,764 bodies (a box, a ball, a capsule and a
 square pyramid; section "Scenes") dropped on a fixed sine terrain of 100 x 100 cells (20,000
@@ -550,11 +550,11 @@ intermediate snapshot is freed inside it, as any fork's). Every other result is 
 timer stops. Then a fork stepped 30 ticks beside its source, which must keep its hashes, and a cold
 restore after the source is dropped, which must give the snapshot's bytes. Natively
 `physics_bench level CELLS`; in WebAssembly `examples/level_web.rs` under Node, timed by
-`tests/web/level.mjs`. `tools/physcache_bench.py` ran both layouts, sizes and engines interleaved,
-five rounds, the order of the layouts and of the engines turning by one each round. Each cell is the
-median over the five runs of each run's own statistic: the median of its five rounds, except the
-cold restore and the first tick (one sample per run) and the tick (the median of the 149 warm
-ticks). Raw output is in ignored `out/physcache/quiet/`. Layout 1 is the same code with
+`tests/web/level.mjs`. `tools/runtime/physcache_bench.py` ran both layouts, sizes and engines
+interleaved, five rounds, the order of the layouts and of the engines turning by one each round.
+Each cell is the median over the five runs of each run's own statistic: the median of its five
+rounds, except the cold restore and the first tick (one sample per run) and the tick (the median of
+the 149 warm ticks). Raw output is in ignored `out/physcache/quiet/`. Layout 1 is the same code with
 `crates/amoris-physics/src/cache.rs` of `c05f49a6` (the commit that added the scene) in place of
 `src/cache/`.
 

@@ -110,12 +110,12 @@ per device); each twin retains its pair's fragment entry point.
 - **Occlusion culling**: the pyramid reads the depth after the early phase, which is the early
   prepass's depth (the early opaque pass does not write depth), equal to what the early opaque pass
   wrote without the prepass. The late test, the visibility state and the counters are unchanged, so
-  no entity's coverage changes: tests/occlusion.rs runs its comparison with the prepass off and
-  on, tests/hiz.rs passes with it on, and tools/occlusion_compare.py with the prepass on finds what
-  it finds without it (identical coverage everywhere; one tied pixel in the sphere, occlusion.md 5).
-  The occlusion test pins the prepass: in the auto mode its two renderers (one opaque phase, two)
-  decide apart, and in one step of its sweep a sample where two surfaces tie in depth then showed
-  the other surface (one pixel).
+  no entity's coverage changes: tests/occlusion.rs runs its comparison with the prepass off and on,
+  tests/hiz.rs passes with it on, and tools/render/occlusion_compare.py with the prepass on finds
+  what it finds without it (identical coverage everywhere; one tied pixel in the sphere,
+  occlusion.md 5). The occlusion test pins the prepass: in the auto mode its two renderers (one
+  opaque phase, two) decide apart, and in one step of its sweep a sample where two surfaces tie in
+  depth then showed the other surface (one pixel).
 - **TAA**: both passes draw with the jittered frame group, so they agree under every jitter; the
   object motion and the other extra targets are written by the opaque pass alone. The unjittered
   depth for splats (taa-gtao.md) is drawn as before, its own pass.
@@ -279,8 +279,8 @@ much slower way, or up to four of a way within 50% (bench/prepass.md 3 gives the
   flight, no cap on them.
 - `cargo run --release -p amoris-app --example draw_paths -- --compare prepass <scenes>` draws a
   scene twice at one moment (off, forced on) and compares pixels and coverage;
-  `python tools/prepass_compare.py` runs that over the samples and every capture of
-  tools/backend_compare.py with `AMORIS_PREPASS=off` and `on`. Results in bench/prepass.md 2.
+  `python tools/render/prepass_compare.py` runs that over the samples and every capture of
+  tools/render/backend_compare.py with `AMORIS_PREPASS=off` and `on`. Results in bench/prepass.md 2.
 
 ## 7. Limits and open questions
 

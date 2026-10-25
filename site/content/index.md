@@ -28,7 +28,7 @@ to run a fork of the edit world; **Stop** returns to the original edit world.
 For the detailed sailing workflow shown on the homepage, serve `site/demos/harbor` instead.
 `site/demos/detail` contains the CC0 Flight Helmet material study.
 `site/demos/bistro` contains the full licensed Bistro exterior.
-Run `python3 tools/showcase_assets.py --projects` to fetch the pinned CC0 models
+Run `python3 tools/site/showcase_assets.py --projects` to fetch the pinned CC0 models
 and prepare the detailed sailing and helmet projects. The large Bistro source needs
 its separately audited FBX conversion; see [asset credits](credits.md).
 

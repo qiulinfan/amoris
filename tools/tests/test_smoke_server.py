@@ -12,7 +12,7 @@ import unittest
 from pathlib import Path
 
 TOOLS = Path(__file__).resolve().parents[1]
-spec = importlib.util.spec_from_file_location("smoke_server", TOOLS / "smoke_server.py")
+spec = importlib.util.spec_from_file_location("smoke_server", TOOLS / "host/smoke_server.py")
 smoke = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(smoke)
 

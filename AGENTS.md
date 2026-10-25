@@ -48,9 +48,11 @@ it are charter 5.4.
   `water-*` scenes, `gi-room`, `pt-lab`). xtask runs every `samples/*/check.toml` and `tests/fixtures/**/check.toml`.
 - `bench/`: benchmark workloads and comparison harnesses (`agent-dev/`, `physics/`, `rules/`,
   `web/threejs_cubes.html`).
-- `tools/`: Python, shell and Node scripts, flat and grouped by name prefix (`water_*`,
-  `occlusion_*`, `showcase_*`, ...), with the check's inputs (`crate-graph.toml`,
-  `clippy-determinism.toml`, `lint-fixture/`). `tools/neural/` trains neural assets, `tools/eval/`
+- `tools/`: Python, shell and Node scripts by purpose ([tools/README.md](tools/README.md)):
+  `render/`, `water/`, `host/`, `runtime/` and `site/`, with what xtask, CI or several groups use
+  at the top (the check's inputs `crate-graph.toml`, `clippy-determinism.toml`, `lint-fixture/`,
+  and `gpu_matrix.py`, `build_web.sh`, `machine_conditions.py`, `web_bench.mjs` and the like).
+  Scripts run from the repository's root and find it from their own file. `tools/neural/` trains neural assets, `tools/eval/`
   runs agent evaluations, `tools/tests/` tests the tools, and `tools/vscode/` holds the VS Code
   attach configuration for the script debugger. `xtask/`: `cargo xtask` (check, gen, webcheck,
   export-web).
@@ -113,7 +115,7 @@ credential cleanup. File-verification records remain local, including in that ar
 - Rust 1.98.1 (`rust-toolchain.toml`); `source ~/.cargo/env` if cargo is not on PATH.
 - A commit from before the 2026-10-16 rename is built from its exported tree after
   `python tools/amoris_rename.py --tree <dir>`, so this checkout's package names and `AMORIS_*`
-  variables apply to it; `tools/qjs_bench.py build --rev` and `tools/publish_bench.py
+  variables apply to it; `tools/runtime/qjs_bench.py build --rev` and `tools/runtime/publish_bench.py
   --build-base` do this themselves. Cargo then sorts the tree's lock again, so such a build goes
   without `--locked`; a page that loads the tree's own `web/viewport/pkg` needs
   `tools/build_viewport.sh` there first. The other regeneration steps `--tree` prints are for a
@@ -165,8 +167,8 @@ credential cleanup. File-verification records remain local, including in that ar
   DXC 1.8.2502 or newer. `AMORIS_ADAPTER=780m` (or an index) picks an adapter on a two-GPU machine,
   for any backend. D3D12 needs wgpu's indirect validation for `first_instance` (gpu.rs sets it);
   `cargo test -p amoris-render` checks it on Vulkan and D3D12
-  (`indirect_draws_keep_their_first_instance`), `tools/backend_compare.py` compares frames across
-  backends and `tools/backend_bench.py` times them ([docs/bench/dx12.md](docs/bench/dx12.md)). Debug
+  (`indirect_draws_keep_their_first_instance`), `tools/render/backend_compare.py` compares frames across
+  backends and `tools/render/backend_bench.py` times them ([docs/bench/dx12.md](docs/bench/dx12.md)). Debug
   builds compile the same optimized DXIL as release builds (`gpu::instance_flags`; the 780M
   mistraced the path tracer's unoptimized DXIL); `WGPU_DEBUG=1` brings unoptimized shaders with
   debug information back for PIX.
@@ -189,20 +191,20 @@ credential cleanup. File-verification records remain local, including in that ar
   uncaptured-error log, not a scope the caller pushed. Pipelines on the forward shader set its
   `SCENE_*` override constants from `SceneFormat::constants` (the motion and the view normal are
   computed only for a pipeline with their targets; the indirect share always, since NVIDIA's D3D12
-  compiler rounds the color differently without it). `tools/build_compare.py` compares another
+  compiler rounds the color differently without it). `tools/render/build_compare.py` compares another
   build's frames with this one's, pixel for pixel. Release D3D12 builds discard wgpu's HAL labels;
   `WGPU_DISCARD_HAL_LABELS=0` brings the pass markers back for PIX. On the R1 laptop a start-up's
   all-core burst lowers the GPU's clocks for a few seconds: short headless benchmarks take
-  `--settle 5` (many_cubes, splats, lod_field, `tools/backend_bench.py`; docs/bench/dx12.md 10).
+  `--settle 5` (many_cubes, splats, lod_field, `tools/render/backend_bench.py`; docs/bench/dx12.md 10).
 - Per-frame profiling ([docs/bench/dx12.md](docs/bench/dx12.md), "Per-frame profiling"):
   `AMORIS_TRACE=frames=300,skip=60,out=PATH` (any renderer; `many_cubes --trace SPEC`) writes the
   render thread's CPU spans and every timestamped GPU pass of every frame as Chrome Trace Event
   JSON for ui.perfetto.dev or chrome://tracing, GPU time placed on the CPU timeline by a measured
-  clock calibration (`crates/amoris-render/src/trace.rs`); `python tools/frame_trace.py stats
+  clock calibration (`crates/amoris-render/src/trace.rs`); `python tools/render/frame_trace.py stats
   TRACE` and `diff A B` give per-pass medians, p95 and spreads. Writing a trace holds the render
   thread 45 to 95 ms: a host that brackets frames (`trace_end_frame` says when the trace is
   complete) calls `finish_trace` outside its measured frames. RenderDoc (`RENDERDOC_DIR`, or
-  scoop's `renderdoc`): `python tools/renderdoc_frame.py capture --backend dx12|vulkan --frame N
+  scoop's `renderdoc`): `python tools/render/renderdoc_frame.py capture --backend dx12|vulkan --frame N
   --name NAME -- many_cubes --dense --bench 120` captures the renderer's N-th frame through the
   in-application API (`AMORIS_RENDERDOC_FRAME=N`; headless runs too) with RenderDoc's Vulkan layer
   loaded for that process only, and `analyze out/profiler/rdc/NAME.rdc` replays it in `qrenderdoc
@@ -230,17 +232,17 @@ credential cleanup. File-verification records remain local, including in that ar
   (`present` covers the extractor's kept queries; without the feature cargo refuses both).
   `/render` sends when the game thread publishes (`ThreadOptions::on_publish`), at most one frame
   every 8 ms (`cargo test --release -p amoris-app --bin amoris render_merges`).
-  `tools/publish_bench.py` times the loop's work after a tick part by part (amoris-runtime's
+  `tools/runtime/publish_bench.py` times the loop's work after a tick part by part (amoris-runtime's
   `publish_bench` example; `--build-base REV` compiles the same harness against an older runtime),
-  `tools/serve_loop_bench.py` the live game thread with clients connected and the host's idle
-  cycles, and `tools/gizmo_bench.py --dist` a drag against another editor build.
+  `tools/host/serve_loop_bench.py` the live game thread with clients connected and the host's idle
+  cycles, and `tools/host/gizmo_bench.py --dist` a drag against another editor build.
 - AMD's Vulkan driver keeps compiled pipelines per executable in `%LOCALAPPDATA%\AMD\VkCache` and
   once kept a wrongly compiled one, served to every later run of one test binary path: a 780M
   Vulkan test that fails only there is rerun with `AMD_VK_PIPELINE_CACHE_PATH` at an empty directory
   before bisecting (do not delete `VkCache` without the owner's OK); `tools/gpu_matrix.py` gives
   each configuration's binary an empty one per run
   ([docs/bench/gpu-matrix.md](docs/bench/gpu-matrix.md) 9). The Vulkan SDK's validation layer is
-  installed (scoop) but not registered with the system; `tools/vk_validate.py` enables it, with
+  installed (scoop) but not registered with the system; `tools/render/vk_validate.py` enables it, with
   synchronization validation, for one command.
 - Shader hashes are integer (`pcg_hash` in common.wgsl): `fract(sin(x) * k)` differs per vendor
   and API.
@@ -252,25 +254,25 @@ credential cleanup. File-verification records remain local, including in that ar
   `EXPERIMENTAL_RAY_QUERY` (Metal; Vulkan and D3D12 on the RTX 5060 and the 780M here); their GPU
   tests run on every such backend and skip elsewhere. Keep ray queries local to the function that
   traces (naga 30 panics on a `ray_query` pointer argument) and test facing by triangle winding,
-  not `candidate.front_face` (AMD's D3D12 driver miscompiles it). `python tools/rt_bench.py
+  not `candidate.front_face` (AMD's D3D12 driver miscompiles it). `python tools/render/rt_bench.py
   correctness|timing` compares the tracers with the M5 references (docs/bench/path-tracing-nrc.md);
-  `python tools/rt_shadows_bench.py` measures ray-traced against cascaded shadows and regenerates
+  `python tools/render/rt_shadows_bench.py` measures ray-traced against cascaded shadows and regenerates
   their evidence (docs/bench/rt-shadows.md).
 - Compute pipelines use `shaders::compute_options()` (no automatic workgroup zeroing: it breaks
   MoltenVK); a compute shader must initialize the workgroup memory it reads.
 - Occlusion culling (two-phase Hi-Z, [docs/spec/occlusion.md](docs/spec/occlusion.md)) runs in
   `auto` mode by default; `AMORIS_OCCLUSION=off|on|auto` (the viewport page: `?occlusion=`) sets
   it. A change to culling or the opaque passes runs `cargo test -p amoris-render --test occlusion
-  --test hiz` and `tools/occlusion_compare.py`: it must not change a single entity's coverage. A
-  change to the pyramid or the late test also runs `tools/occlusion_mutations.py`.
+  --test hiz` and `tools/render/occlusion_compare.py`: it must not change a single entity's coverage. A
+  change to the pyramid or the late test also runs `tools/render/occlusion_mutations.py`.
 - The depth prepass ([docs/spec/prepass.md](docs/spec/prepass.md)) runs in `auto` mode by default
   (GPU timestamps decide; off without them); `AMORIS_PREPASS=off|on|auto` (the viewport page:
   `?prepass=`) sets it. The forward and depth-only vertex stages must compute the clip position
   with the same expression, `@invariant`: a change to either, to the opaque passes or to the alpha
   test runs `cargo test -p amoris-render --test prepass` and the crate's `shaders` unit test, and
-  `tools/prepass_compare.py` must not change an image. The auto mode's probes count only their
+  `tools/render/prepass_compare.py` must not change an image. The auto mode's probes count only their
   own frames (each profiler reading names its frame): a change to them runs
-  `cargo test -p amoris-render --lib prepass`, and `tools/prepass_bench.py --table <runs> --tails`
+  `cargo test -p amoris-render --lib prepass`, and `tools/render/prepass_bench.py --table <runs> --tails`
   shows the frames they draw the slower way and the frame time's tail.
 - Shadow casters are culled per cascade by its box and its extruded camera slice
   ([docs/spec/occlusion.md](docs/spec/occlusion.md) 11; `AMORIS_SHADOW_CULL=off|on`, the viewport
@@ -282,18 +284,18 @@ credential cleanup. File-verification records remain local, including in that ar
   and TAA upscales (the mode is promoted to TAA); `Targets::scene` is the opaque pass's size,
   `width`/`height` the output's. At 1 the frames must stay those of before: a change to the
   targets, the view uniforms (`texture_lod` scales every screen-derivative filter of the opaque
-  pass) or taa.wgsl runs `cargo test -p amoris-render --test taa`, `tools/build_compare.py`
-  against a build without it, and `tools/prepass_compare.py` with `AMORIS_RENDER_SCALE=0.5` and
+  pass) or taa.wgsl runs `cargo test -p amoris-render --test taa`, `tools/render/build_compare.py`
+  against a build without it, and `tools/render/prepass_compare.py` with `AMORIS_RENDER_SCALE=0.5` and
   `AMORIS_AA=msaa+taa` (only the prepass's ties may differ: many_cubes' sphere, and walls touching
-  a floor or ceiling); `aa_eval --only upscale` measures quality and `tools/aa_bench.py --scales`
+  a floor or ceiling); `aa_eval --only upscale` measures quality and `tools/render/aa_bench.py --scales`
   cost ([docs/bench/taau.md](docs/bench/taau.md)).
 - Moving instances ([docs/bench/dynamic-scenes.md](docs/bench/dynamic-scenes.md)): `Scene::apply`
   must stay linear in the slots a tick moves (`cargo test -p amoris-render --lib scene::` pins it
   by structure and what each slot holds; `-- --ignored` times it); more than 8 runs of dirty slots
   are written as one buffer per binding-sized batch that a compute pass scatters (upload.rs, its
   GPU test `upload::`). `many_cubes --moving N [--sparse K]` moves cubes every frame and
-  `python tools/dynamic_scenes_bench.py` times it (`--stall MS`: the idle-GPU control);
-  `scene_changes` and `tools/build_compare.py` check the images.
+  `python tools/render/dynamic_scenes_bench.py` times it (`--stall MS`: the idle-GPU control);
+  `scene_changes` and `tools/render/build_compare.py` check the images.
 - Transparency ([docs/spec/transparency.md](docs/spec/transparency.md)): instances whose material
   blends (glTF BLEND, a look's alpha below 1) or transmits (KHR_materials_transmission,
   `Model.transmission`) carry `FLAG_TRANSPARENT`; cull.wgsl keeps them out of the camera's list
@@ -301,8 +303,8 @@ credential cleanup. File-verification records remain local, including in that ar
   GTAO on in a pass of their own after GTAO. A change to either, to GTAO's apply or to the opaque
   pass's attachments runs `cargo test -p amoris-render --test transparency --test draw_paths` and
   the library's `materials::`, `scene::` and `transparent::` tests;
-  `python tools/transparency_pt.py` compares pt-lab with the path tracer by region and
-  `python tools/transparency_bench.py` times the stage (docs/bench/transparency.md).
+  `python tools/render/transparency_pt.py` compares pt-lab with the path tracer by region and
+  `python tools/render/transparency_bench.py` times the stage (docs/bench/transparency.md).
 - The browser: `tools/build_viewport.sh` builds the WebGPU viewport into `web/viewport/pkg`
   (committed; the editor's `/wasm/` serves it), `tools/build_web.sh` also builds the game module
   into `web/pkg` and packs samples into `web/projects/` (both ignored). Serve `web/`
@@ -312,7 +314,7 @@ credential cleanup. File-verification records remain local, including in that ar
 - `cargo xtask export-web <project> [--out DIR] [--zip FILE]` writes a game as a static WebGPU
   folder (player page, game module, the committed viewport, the web package and assets) and its zip
   for static hosts such as itch.io ([docs/spec/web-export.md](docs/spec/web-export.md));
-  `node tools/web_play_check.mjs <folder>` plays it in headless Chrome as the first-person seat.
+  `node tools/host/web_play_check.mjs <folder>` plays it in headless Chrome as the first-person seat.
   WGSL must parenthesize a bitwise operator beside another binary one (Tint refuses what naga takes;
   the `shaders` unit test checks it).
 - `node tools/web_bench.mjs <url> [s]` drives headless Chrome with WebGPU (`SHOT=`, `EVAL=`,
@@ -322,7 +324,7 @@ credential cleanup. File-verification records remain local, including in that ar
   `AMORIS_GPU_MINIMAL=features,limits,timestamps` (or `first-instance`, `multi-draw`) runs natively
   as a browser would, the viewport page takes the same list as `?gpu_minimal=`, and
   `crates/amoris-render/tests/draw_paths.rs`, the `amoris-app` example `draw_paths` and
-  `tools/web_draw_paths.py` check that every draw path draws the same frame.
+  `tools/render/web_draw_paths.py` check that every draw path draws the same frame.
 - Both the viewport's meshoptimizer and the game module's QuickJS-ng need the configured wasm
   C/C++ toolchain. On Windows put `~/.cargo/bin` on PATH; there is no `~/.cargo/env`.
 - `python3 tools/eval/debug_eval.py` hands an LLM agent (opencode, GLM 5.3 Flash) a planted script
@@ -333,7 +335,7 @@ credential cleanup. File-verification records remain local, including in that ar
   that serves the stream turns it on, `amoris run` and the native window never do):
   `amoris profile [--ticks n]` (MCP: `time` action `profile`) prints ms per tick by system and
   phase for the world shown, and the editor's Profiler adds its viewport's GPU passes
-  ([docs/spec/server.md](docs/spec/server.md) 4). `python tools/profiler_bench.py [--capture]`
+  ([docs/spec/server.md](docs/spec/server.md) 4). `python tools/host/profiler_bench.py [--capture]`
   measures the profiler's cost back to back and paced like the real-time loop, and captures the
   panel against a real host ([docs/bench/profiler.md](docs/bench/profiler.md)).
 - Agents working in parallel use their own git worktree and their own cargo target directory.
@@ -415,7 +417,7 @@ operations, so every device computes the same bits; no pipeline loads a source k
 kernel or `water_det.wgsl` changes, `AMORIS_BLESS=1 cargo test -p amoris-render --test water_det`
 rewrites them; a change of the numbers rewrites app `gpu_determinism`'s record (`AMORIS_BLESS=1`),
 which then passes on Metal, Vulkan and `AMORIS_GPU_MINIMAL`, and in Chrome by
-`tools/water_determinism_check.mjs`, also with `--adapter swiftshader`. Every value the CPU hands
+`tools/water/water_determinism_check.mjs`, also with `--adapter swiftshader`. Every value the CPU hands
 the kernels goes through `field_f32`. A built-in new to the kernels needs its form in
 `water_det.wgsl` and its CPU mirror in the probe (`the_kernels_arithmetic_is_the_cpus_bit_for_bit`).
 
@@ -458,5 +460,5 @@ rt_reflections.wgsl's; a change to either runs render `rt_reflections` and the l
 The water must not shimmer (water.md 68): its refracted and reflected rays take the ripples and the
 rain's rings averaged over four pixels, and the caustics' map follows its photons over 40 ms of
 drawn time and stands still while drawn time does. A change to the water's shading, the ripples or
-the caustics runs `tools/water_flicker.py` on the pool party's deck view against liquids.md 20
+the caustics runs `tools/water/water_flicker.py` on the pool party's deck view against liquids.md 20
 (the M5's figure at the current build).

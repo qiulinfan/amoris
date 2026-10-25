@@ -16,7 +16,7 @@ builds and tests could load the CPU and the GPU between and during runs.
   RTX 5060 Laptop 8 GB (driver 32.0.16.1714) and Radeon 780M; on AC power (battery status 2, 100%).
   Release build of `explore/prepass` (wgpu 30.0.1); `old` is master `c90c414c` built the same
   way (before the prepass and before `@invariant`).
-- `python tools/prepass_bench.py` (one round per call, every configuration once, the order
+- `python tools/render/prepass_bench.py` (one round per call, every configuration once, the order
   reversed every other round; each round held the GPU lock for its whole duration):
   `many_cubes --dense` and the sphere (1.6M cubes), `AMORIS_AA=msaa AMORIS_GTAO=off` as in the UE5
   comparison, the prepass `off`, `on` and `auto` against occlusion culling `off` and `auto`.
@@ -33,10 +33,10 @@ builds and tests could load the CPU and the GPU between and during runs.
 
 ## 2. The image does not change
 
-`python tools/prepass_compare.py` (every capture of tools/backend_compare.py with the prepass off
-and forced on, each its own process; `draw_paths --compare prepass` over the mixed scene, the
-many_cubes sphere and four samples, both shots in one process at one moment), on the RTX 5060 with
-Direct3D 12 and Vulkan, on the Radeon 780M with Direct3D 12, and with
+`python tools/render/prepass_compare.py` (every capture of tools/render/backend_compare.py with the
+prepass off and forced on, each its own process; `draw_paths --compare prepass` over the mixed
+scene, the many_cubes sphere and four samples, both shots in one process at one moment), on the RTX
+5060 with Direct3D 12 and Vulkan, on the Radeon 780M with Direct3D 12, and with
 `AMORIS_GPU_MINIMAL=features,limits,timestamps` (WebGPU's baseline device; Direct3D 12 on the RTX
 5060; the `draw_paths` scenes run on the full device either way):
 
@@ -68,8 +68,8 @@ culling is unchanged.
 GPU time in milliseconds, the median of the rounds with the minimum in parentheses, then the frame's
 median (headless: submit to GPU idle; window: between presented frames). RTX 5060 (`nvidia`) and
 Radeon 780M (`780m`, 100 frames a run) three rounds each, the old build two rounds. `Old build`:
-master before the prepass and before `@invariant`. `tools/prepass_bench.py --table ... --markdown`
-prints these tables from the raw runs.
+master before the prepass and before `@invariant`.
+`tools/render/prepass_bench.py --table ... --markdown` prints these tables from the raw runs.
 
 Dense grid, headless:
 
@@ -244,14 +244,14 @@ second's); the quiet runs reach the same decisions, and where their figures diff
 so. The question is not how fast, but whether the auto modes reach the right decision where
 readbacks arrive hundreds of frames late and timestamps may be quantized.
 
-**Method.** `python tools/web_auto.py run` (`table` prints these tables): Chrome 155.0.8059.41
-headless (each row records the version), a 1280x720 window with the page held at 1254x564 CSS
-pixels (`--canvas`, through `Emulation.setDeviceMetricsOverride`; each row records the canvas), the
-viewport pages `?demo=cubes&dense` (many_cubes' dense grid, 1.6M cubes), `?demo=cubes` (the sphere)
-and `?demo=occluders`, the browser's defaults (MSAA, GTAO off, occlusion culling and the prepass
-auto). Runs last 30 s, 90 s for the 780M with the uncapped loop (whose lag-scaled timeout and
-re-probes take longer than 30 s there); every 200 ms the page's new frames (their choices) and the
-auto modes' state (the viewport's `auto_stats`: `prepass_auto`, `occlusion_auto`,
+**Method.** `python tools/render/web_auto.py run` (`table` prints these tables): Chrome
+155.0.8059.41 headless (each row records the version), a 1280x720 window with the page held at
+1254x564 CSS pixels (`--canvas`, through `Emulation.setDeviceMetricsOverride`; each row records the
+canvas), the viewport pages `?demo=cubes&dense` (many_cubes' dense grid, 1.6M cubes), `?demo=cubes`
+(the sphere) and `?demo=occluders`, the browser's defaults (MSAA, GTAO off, occlusion culling and
+the prepass auto). Runs last 30 s, 90 s for the 780M with the uncapped loop (whose lag-scaled
+timeout and re-probes take longer than 30 s there); every 200 ms the page's new frames (their
+choices) and the auto modes' state (the viewport's `auto_stats`: `prepass_auto`, `occlusion_auto`,
 `timestamp_quantum_us`) are read. Adapters: the RTX 5060 (`--force_high_performance_gpu`) and the
 Radeon 780M (Chrome's choice), both through Dawn on Direct3D 12. Frame loops: `uncapped`
 (`--disable-frame-rate-limit --disable-gpu-vsync`, the benchmarks' setup) and `vsync` (the 120 Hz
@@ -419,33 +419,33 @@ build `0ec2dfc0` for unsafe Chrome (the first round); `after` this branch (quiet
   at frame 3.
 
 **Checks.** The change is in the auto mode only; the fixed modes draw as before:
-`tools/prepass_compare.py` over the many_cubes captures (Direct3D 12, RTX 5060; first round) finds
-the dense grid and the shadowed cubes identical and the sphere's tie pixels one level apart, as in
-section 2; `cargo test -p amoris-render --test prepass --test occlusion --test hiz` passes on
-Direct3D 12 and Vulkan (RTX 5060) and Direct3D 12 (780M) (first round; the second round changes
-the decision rules only), and the crate's unit tests pass (spec/prepass.md 7).
+`tools/render/prepass_compare.py` over the many_cubes captures (Direct3D 12, RTX 5060; first round)
+finds the dense grid and the shadowed cubes identical and the sphere's tie pixels one level apart,
+as in section 2; `cargo test -p amoris-render --test prepass --test occlusion --test hiz` passes on
+Direct3D 12 and Vulkan (RTX 5060) and Direct3D 12 (780M) (first round; the second round changes the
+decision rules only), and the crate's unit tests pass (spec/prepass.md 7).
 
 **Quiet re-measurement** (2026-10-15, conditions above), from the repository root; each command
 held the GPU lock for 1 to 10 minutes, and `table` prints the tables above:
 
-    python tools/web_auto.py run --out out/webauto/quiet/quiet.jsonl --gpus nvidia --label quiet
-    python tools/web_auto.py run --out out/webauto/quiet/quiet.jsonl --gpus 780m --loops vsync \
+    python tools/render/web_auto.py run --out out/webauto/quiet/quiet.jsonl --gpus nvidia --label quiet
+    python tools/render/web_auto.py run --out out/webauto/quiet/quiet.jsonl --gpus 780m --loops vsync \
         --label quiet
-    python tools/web_auto.py run --out out/webauto/quiet/quiet.jsonl --gpus 780m \
+    python tools/render/web_auto.py run --out out/webauto/quiet/quiet.jsonl --gpus 780m \
         --loops uncapped --seconds 90 --label quiet
-    python tools/web_auto.py run --out out/webauto/quiet/quiet-truth.jsonl --chrome unsafe \
+    python tools/render/web_auto.py run --out out/webauto/quiet/quiet-truth.jsonl --chrome unsafe \
         --modes on,off --seconds 20 --label truth
-    python tools/web_auto.py run --out out/webauto/quiet/quiet-truth.jsonl --pages dense \
+    python tools/render/web_auto.py run --out out/webauto/quiet/quiet-truth.jsonl --pages dense \
         --chrome unsafe --modes "occlusion=on&prepass=on,occlusion=off&prepass=on" \
         --seconds 20 --label truth
-    python tools/web_auto.py run --out out/webauto/quiet/quiet-truth.jsonl \
+    python tools/render/web_auto.py run --out out/webauto/quiet/quiet-truth.jsonl \
         --pages sphere,occluders --chrome unsafe \
         --modes "occlusion=on&prepass=off,occlusion=off&prepass=off" --seconds 20 --label truth
-    python tools/web_auto.py native --out out/webauto/quiet/quiet-native.jsonl
+    python tools/render/web_auto.py native --out out/webauto/quiet/quiet-native.jsonl
     git archive master web | tar -x -C out/webauto/quiet/web-before
-    python tools/web_auto.py run --web out/webauto/quiet/web-before/web --chrome default \
+    python tools/render/web_auto.py run --web out/webauto/quiet/web-before/web --chrome default \
         --out out/webauto/quiet/quiet-before.jsonl --label before
-    python tools/web_auto.py table --before out/webauto/quiet/quiet-before.jsonl \
+    python tools/render/web_auto.py table --before out/webauto/quiet/quiet-before.jsonl \
         --after out/webauto/quiet/quiet.jsonl --truth out/webauto/quiet/quiet-truth.jsonl \
         --native out/webauto/quiet/quiet-native.jsonl
 
@@ -453,4 +453,4 @@ held the GPU lock for 1 to 10 minutes, and `table` prints the tables above:
 a commit before the 2026-10-16 rename, as `bfdef38e` is, takes its whole exported tree, renamed with
 `python tools/amoris_rename.py --tree <dir>` and its viewport rebuilt there
 (`tools/build_viewport.sh`): only then does its page publish the `window.amorisSamples` that
-`tools/web_auto.py` reads.
+`tools/render/web_auto.py` reads.

@@ -33,8 +33,8 @@ machine, they gave the same frames and the same counts in every configuration as
   `lod-off-0.5` (the LOD field of [lod.md](lod.md) 1 at `t` 0 and 0.5, levels on and off),
   `lod-fly` and `lod-off-fly` (its camera walking from `t` 0 to 1, the middle of the field, over 24
   frames).
-- `python tools/shadow_cull_bench.py compare --configs ...` runs it per backend and adapter, and
-  with `+minimal` on WebGPU's baseline device (`AMORIS_GPU_MINIMAL=features,limits,timestamps`:
+- `python tools/render/shadow_cull_bench.py compare --configs ...` runs it per backend and adapter,
+  and with `+minimal` on WebGPU's baseline device (`AMORIS_GPU_MINIMAL=features,limits,timestamps`:
   no optional features, default limits, the per-batch draw path); `games` runs the amoris-app
   example `draw_paths --compare shadow_cull` on four sample projects (with what each cascade drew,
   off and on); `table` prints the tables below.
@@ -44,7 +44,7 @@ machine, they gave the same frames and the same counts in every configuration as
   on first in even ones, after 10 warm-up frames per mode and `--settle 5`. Each frame is submitted
   and waited for. Per frame: the GPU time (the profiler's timestamped passes), the four cascades'
   summed `shadows` passes, the `cull` pass, the wall time (submit to GPU idle) and the CPU's
-  encoding. `tools/shadow_cull_bench.py bench` runs it per configuration and scene after
+  encoding. `tools/render/shadow_cull_bench.py bench` runs it per configuration and scene after
   `tools/machine_conditions.py`; tables give, per mode, the median over the rounds of each block's
   p50 and the rounds' spread ((max - min) / median). Raw output: `out/shadowcull/` (not committed).
 
@@ -70,10 +70,10 @@ over five scenes with occlusion culling forced on.) `tests/shadow_cull.rs` (24 f
 scene with three skinned characters orbiting, a 16 x 16 field walked into with levels on and off,
 the cube sphere turning) passed on both backends of both GPUs.
 
-`python tools/shadow_cull_bench.py games` (`draw_paths --compare shadow_cull` after 120 ticks,
-occlusion culling and the prepass off) found no pixel and no entity-id coverage different on the RTX
-5060 with Direct3D 12 and Vulkan and on the 780M with Direct3D 12 (twice: on `1846b2bd` and on the
-quiet machine). What the cascades drew, the same in the three configurations and both runs:
+`python tools/render/shadow_cull_bench.py games` (`draw_paths --compare shadow_cull` after 120
+ticks, occlusion culling and the prepass off) found no pixel and no entity-id coverage different on
+the RTX 5060 with Direct3D 12 and Vulkan and on the 780M with Direct3D 12 (twice: on `1846b2bd` and
+on the quiet machine). What the cascades drew, the same in the three configurations and both runs:
 
 | Project | Instances | Cascade instances, off -> on | Cascade triangles, off -> on |
 |---|---|---|---|
@@ -111,15 +111,15 @@ centre, its world position extrapolated along the triangle's plane: on a triangl
 the camera that point can land behind the eye. `shadow_factor` used to read cascade 0 there, at a
 point outside the first slice (which starts at the eye), so slice culling could in principle have
 changed such a pixel. Since `1846b2bd` `shadow_factor` reads no cascade at a negative view depth.
-That changes the image only where a pixel's point lies behind the eye; `tools/build_compare.py`
-against the build before (`f9ea084e`'s renderer; many_cubes' sphere and dense layout with shadows,
-lod_field's 40 skinned columns; MSAA, MSAA with GTAO, TAA) found no pixel different in any of
-its 27 pairs (RTX 5060 with Direct3D 12 and Vulkan, 780M with Direct3D 12): no such pixel in
-those frames.
+That changes the image only where a pixel's point lies behind the eye;
+`tools/render/build_compare.py` against the build before (`f9ea084e`'s renderer; many_cubes' sphere
+and dense layout with shadows, lod_field's 40 skinned columns; MSAA, MSAA with GTAO, TAA) found no
+pixel different in any of its 27 pairs (RTX 5060 with Direct3D 12 and Vulkan, 780M with Direct3D
+12): no such pixel in those frames.
 
 **In Chrome.** The viewport page built locally from this branch (`tools/build_viewport.sh`; the
 package is not committed), with `?shadow_cull=off` and `on`, through
-`python tools/web_draw_paths.py <page> --compare shadow_cull --seconds 8 --size 1280x720`
+`python tools/render/web_draw_paths.py <page> --compare shadow_cull --seconds 8 --size 1280x720`
 (headless Chrome, a 1254x564 canvas, the page's 4x MSAA): `?demo=mixed` and `?demo=lod&t=0` on the
 RTX 5060 (`--force_high_performance_gpu`) and on the 780M had the same id-pass coverage (59 and 266
 entities) and identical screenshots (maximum difference 0). `?demo=lod&t=0&lod=off` on the RTX 5060
@@ -187,12 +187,12 @@ The same frames' triangles per cascade, off / on:
 
 ## 4. Cost
 
-`python tools/shadow_cull_bench.py bench` on each adapter and backend, 1280x720, occlusion culling
-and the depth prepass off, the adapter's default anti-aliasing (the RTX 5060: 4x MSAA and GTAO;
-the 780M: TAA); `cubes-dense` with 200,000 cubes. Quiet re-measurement, 2026-10-15 15:10 to 15:20
-(CPU load 3 to 5% at the runs' starts, the RTX 5060 at 55 to 64 C). Milliseconds, the median over
-the 4 rounds of each block's p50 (the rounds' spread in brackets); "Shadows" is the four cascades'
-passes summed, "Frame GPU" all timestamped passes, "Wall" submit to GPU idle:
+`python tools/render/shadow_cull_bench.py bench` on each adapter and backend, 1280x720, occlusion
+culling and the depth prepass off, the adapter's default anti-aliasing (the RTX 5060: 4x MSAA and
+GTAO; the 780M: TAA); `cubes-dense` with 200,000 cubes. Quiet re-measurement, 2026-10-15 15:10 to
+15:20 (CPU load 3 to 5% at the runs' starts, the RTX 5060 at 55 to 64 C). Milliseconds, the median
+over the 4 rounds of each block's p50 (the rounds' spread in brackets); "Shadows" is the four
+cascades' passes summed, "Frame GPU" all timestamped passes, "Wall" submit to GPU idle:
 
 | Adapter, backend | Scene | Shadows off | Shadows on | Ratio | Cull off | Cull on | Frame GPU off | Frame GPU on | Wall off | Wall on |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -279,7 +279,7 @@ consistently differed between the runs (the cause is presumed, not measured apar
 **Cross-check with a per-frame trace** (quiet, `AMORIS_TRACE=frames=60,skip=20`, the `lod_field`
 example `--lod off --t 0 --frames 90 --warm 10 --settle 5`, occlusion culling in its default auto
 mode, RTX 5060 with Direct3D 12, one process with `AMORIS_SHADOW_CULL=off` and one with `on`;
-`python tools/frame_trace.py diff`): the `shadows` passes' median fell from 33.36 to 18.47 ms
+`python tools/render/frame_trace.py diff`): the `shadows` passes' median fell from 33.36 to 18.47 ms
 (0.554x), the frame interval from 65.96 to 51.20 ms; the culling pass stayed at 0.015 ms; the CPU's
 `uniforms` span, which now computes the planes, went from 11 to 15 microseconds. (Provisionally:
 34.58 to 19.53 ms, 0.565x, the frame interval 68.56 to 54.24 ms, `uniforms` 14 to 19
@@ -299,10 +299,10 @@ default scenes are section 4's (`lod-off-0,lod-off-0.5,lod-0,lod-0.5,cubes-dense
 blocks of 40, `--settle 5`):
 
 ```sh
-python tools/shadow_cull_bench.py bench --configs dx12:nvidia,vulkan:nvidia --out out/shadowcull/quiet/bench
-python tools/shadow_cull_bench.py bench --configs dx12:780m,vulkan:780m --out out/shadowcull/quiet/bench
-python tools/shadow_cull_bench.py bench --configs dx12:nvidia,vulkan:nvidia --scenes cubes-dense --count 1600000 --out out/shadowcull/quiet/bench-1.6m
-python tools/shadow_cull_bench.py table out/shadowcull/quiet/bench out/shadowcull/quiet/bench-1.6m
+python tools/render/shadow_cull_bench.py bench --configs dx12:nvidia,vulkan:nvidia --out out/shadowcull/quiet/bench
+python tools/render/shadow_cull_bench.py bench --configs dx12:780m,vulkan:780m --out out/shadowcull/quiet/bench
+python tools/render/shadow_cull_bench.py bench --configs dx12:nvidia,vulkan:nvidia --scenes cubes-dense --count 1600000 --out out/shadowcull/quiet/bench-1.6m
+python tools/render/shadow_cull_bench.py table out/shadowcull/quiet/bench out/shadowcull/quiet/bench-1.6m
 ```
 
 The `table` output replaces section 4's table, its bullets' figures and the 1.6M paragraph (it
@@ -312,16 +312,16 @@ on Windows, name the example with its `.exe`):
 
 ```sh
 AMORIS_BACKEND=dx12 AMORIS_ADAPTER=nvidia AMORIS_SHADOW_CULL=$M AMORIS_TRACE=frames=60,skip=20,out=out/shadowcull/quiet/trace-$M.json target/release/examples/lod_field --lod off --t 0 --frames 90 --warm 10 --settle 5
-python tools/frame_trace.py diff out/shadowcull/quiet/trace-off.json out/shadowcull/quiet/trace-on.json
+python tools/render/frame_trace.py diff out/shadowcull/quiet/trace-off.json out/shadowcull/quiet/trace-on.json
 ```
 
 The comparisons and counts (sections 2 and 3) are exact and need no quiet machine; to repeat them:
 
 ```sh
-python tools/shadow_cull_bench.py compare --configs dx12:nvidia,vulkan:nvidia,dx12:780m,vulkan:780m,dx12:nvidia+minimal,vulkan:780m+minimal --out out/shadowcull/quiet/compare
-python tools/shadow_cull_bench.py compare --configs dx12:nvidia,vulkan:nvidia --occlusion on --out out/shadowcull/quiet/compare-occlusion
-python tools/shadow_cull_bench.py games --configs dx12:nvidia,vulkan:nvidia,dx12:780m --out out/shadowcull/quiet/games
-python tools/shadow_cull_bench.py table out/shadowcull/quiet/compare out/shadowcull/quiet/compare-occlusion out/shadowcull/quiet/games
+python tools/render/shadow_cull_bench.py compare --configs dx12:nvidia,vulkan:nvidia,dx12:780m,vulkan:780m,dx12:nvidia+minimal,vulkan:780m+minimal --out out/shadowcull/quiet/compare
+python tools/render/shadow_cull_bench.py compare --configs dx12:nvidia,vulkan:nvidia --occlusion on --out out/shadowcull/quiet/compare-occlusion
+python tools/render/shadow_cull_bench.py games --configs dx12:nvidia,vulkan:nvidia,dx12:780m --out out/shadowcull/quiet/games
+python tools/render/shadow_cull_bench.py table out/shadowcull/quiet/compare out/shadowcull/quiet/compare-occlusion out/shadowcull/quiet/games
 ```
 
 The Chrome check needs the viewport built locally (`sh tools/build_viewport.sh`; restore the
@@ -329,7 +329,7 @@ committed `web/viewport/pkg` afterwards) and `web/` served:
 
 ```sh
 python -m http.server -d web 8090
-python tools/web_draw_paths.py "http://127.0.0.1:8090/viewport/?demo=lod&t=0" --name lod-0 --out out/shadowcull/quiet/web/rtx --compare shadow_cull --seconds 8 --size 1280x720 --chrome-flags=--force_high_performance_gpu
+python tools/render/web_draw_paths.py "http://127.0.0.1:8090/viewport/?demo=lod&t=0" --name lod-0 --out out/shadowcull/quiet/web/rtx --compare shadow_cull --seconds 8 --size 1280x720 --chrome-flags=--force_high_performance_gpu
 ```
 
 and the same without the flag for the 780M, and with `?demo=mixed` and `?demo=lod&t=0&lod=off`.

@@ -144,7 +144,7 @@ fn runtime() -> Result<tokio::runtime::Runtime, Problem> {
 
 /// Resolves when the host is asked to stop: Ctrl-C, SIGTERM on Unix, and on Windows Ctrl-Break,
 /// the console event a parent can send a child in its own process group (what
-/// `tools/smoke_server.py` sends; SIGTERM has no Windows counterpart a process can catch).
+/// `tools/host/smoke_server.py` sends; SIGTERM has no Windows counterpart a process can catch).
 async fn stopped() {
     #[cfg(unix)]
     {

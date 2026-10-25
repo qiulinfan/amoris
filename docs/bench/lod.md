@@ -29,7 +29,7 @@ The meshes' chains (`lod_field` example output, `meshes`): every mesh gets the f
 | rock_a | 81,920 · 40,960 · 20,480 · 10,240 · 5,120 · 2,560 · 1,280 · 640 | 0.0006 · 0.0012 · 0.0021 · 0.0038 · 0.0070 · 0.013 · 0.025 |
 | knot | 49,152 · 24,576 · 12,288 · 6,144 · 3,072 · 1,536 · 768 · 384 | 0.0007 · 0.0016 · 0.0043 · 0.0064 · 0.013 · 0.025 · 0.049 |
 
-`python tools/lod_bench.py --t 0 | --t 0.5 [--occlusion auto]` runs
+`python tools/render/lod_bench.py --t 0 | --t 0.5 [--occlusion auto]` runs
 `cargo run --release -p amoris-render --example lod_field` per backend, adapter and mode: 10 warm
 frames, then 60 measured frames with levels on and 15 with levels off, each submitted and waited
 for; GPU time from pass timestamps; the last frame's draws read back per level
@@ -142,9 +142,9 @@ gzipped (+2.0%), meshoptimizer and the demo scene included.
 
 ## 5. Checks and mutations
 
-`python tools/lod_mutations.py --out out/bench-runs/lod/mutations-rtx5060-vulkan.json` (RTX 5060,
-Vulkan, at `7c40c52a`): every mutation makes a check fail. "lod.rs" is `tests/lod.rs`: silhouettes,
-draw paths, hysteresis, cascades, skinned, limit for its six tests.
+`python tools/render/lod_mutations.py --out out/bench-runs/lod/mutations-rtx5060-vulkan.json` (RTX
+5060, Vulkan, at `7c40c52a`): every mutation makes a check fail. "lod.rs" is `tests/lod.rs`:
+silhouettes, draw paths, hysteresis, cascades, skinned, limit for its six tests.
 
 | Mutation | Caught by |
 |---|---|
@@ -319,7 +319,7 @@ larger, 177 of 576 instances in the frustum, many partly.)
 
 Same machine and drivers, no other agent running, on AC power (conditions:
 [quiet-2026-10-09.md](quiet-2026-10-09.md)), master `ef35e1af`.
-`AMORIS_AA=msaa AMORIS_GTAO=off python tools/lod_bench.py --adapters nvidia,780m --backends vulkan,dx12 --t 0 --rounds 3`
+`AMORIS_AA=msaa AMORIS_GTAO=off python tools/render/lod_bench.py --adapters nvidia,780m --backends vulkan,dx12 --t 0 --rounds 3`
 and the same at `--t 0.5` (the tool now takes `--rounds`: each round runs every adapter, backend and
 level mode in turn); raw runs in
 [bench-t0.json](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/quiet/lod/bench-t0.json)

@@ -26,11 +26,11 @@ read, and where nothing moved the pass now takes a branch of three assignments i
   RTX 5060 Laptop 8 GB (driver 32.0.16.1714, NVIDIA 617.14) and Radeon 780M (32.0.13062.3005); AC
   power, Balanced plan. Release build (wgpu 30.0.1). `tools/machine_conditions.py` recorded each
   run's start and end (`out/taau/`, not committed).
-- **Scale 1 is unchanged.** `tools/build_compare.py --before <master b7be59a2's examples>` captured
-  every case (many_cubes with shadows and dense, moving cubes, the splat garden, gi-room, pt-lab,
-  the skinned crowd) under MSAA, MSAA with GTAO, TAA and TAA with GTAO's normal target on the RTX
-  5060 and the Radeon 780M with Direct3D 12 and Vulkan: 120 of 120 pairs are equal pixel for pixel,
-  before review (bffe488c), after it (2d6e1d83) and on the idle machine at c8128f1c.
+- **Scale 1 is unchanged.** `tools/render/build_compare.py --before <master b7be59a2's examples>`
+  captured every case (many_cubes with shadows and dense, moving cubes, the splat garden, gi-room,
+  pt-lab, the skinned crowd) under MSAA, MSAA with GTAO, TAA and TAA with GTAO's normal target on
+  the RTX 5060 and the Radeon 780M with Direct3D 12 and Vulkan: 120 of 120 pairs are equal pixel for
+  pixel, before review (bffe488c), after it (2d6e1d83) and on the idle machine at c8128f1c.
 - **Quality**: `aa_eval OUT --only upscale-tune --scale 0.5,0.67,0.77,1.0` at 960x540 on the RTX
   5060 with Vulkan (`--only upscale` on the Radeon 780M with Direct3D 12): the check scene of
   [taa-gtao.md](taa-gtao.md) against the output-size reference (the mean of 256 jittered
@@ -41,19 +41,19 @@ read, and where nothing moved the pass now takes a branch of three assignments i
   at 1); the panning and still-camera motion checks (whole image / the moving cube's region /
   frame-to-frame change against the reference's) at frames 30, 60 and 90; the upscaling's options
   varied one at a time.
-- **Cost**: `tools/aa_bench.py` (section 5 has the commands): the check scene through aa_eval's
-  bench (150 frames after 30 of warm-up, each submitted and waited for; the median frame's
+- **Cost**: `tools/render/aa_bench.py` (section 5 has the commands): the check scene through
+  aa_eval's bench (150 frames after 30 of warm-up, each submitted and waited for; the median frame's
   timestamped GPU time and the 10th percentile of each pass) and many_cubes' dense grid (the UE5
-  comparison's scene: 1.6M cubes, 482,000 in the frustum, 443 visible; `--headless-bench 150
-  --settle 5`, the mean of each pass), at 1600x900 and 2560x1440, on both GPUs and both APIs, two
-  rounds (the dense grid in reverse order in the second), medians over the rounds. The dense grid
-  pins the depth prepass on (`--prepass on`): its auto mode decided differently from one
-  configuration to the next, and with occlusion culling off a frame with the prepass and one
-  without differ by up to 2.4 times. GTAO off unless named. Bloom and the display transform are
-  outside the timestamped total (docs/bench/taa-gtao.md). Both workloads wait 5 s after each
-  configuration's renderer is created (`--settle 5`): it compiles its pipelines on every core, a
-  burst that lowers R1's GPU clocks for a few seconds (AGENTS.md). The provisional check-scene runs
-  did not wait (section 6).
+  comparison's scene: 1.6M cubes, 482,000 in the frustum, 443 visible;
+  `--headless-bench 150 --settle 5`, the mean of each pass), at 1600x900 and 2560x1440, on both GPUs
+  and both APIs, two rounds (the dense grid in reverse order in the second), medians over the
+  rounds. The dense grid pins the depth prepass on (`--prepass on`): its auto mode decided
+  differently from one configuration to the next, and with occlusion culling off a frame with the
+  prepass and one without differ by up to 2.4 times. GTAO off unless named. Bloom and the display
+  transform are outside the timestamped total (docs/bench/taa-gtao.md). Both workloads wait 5 s
+  after each configuration's renderer is created (`--settle 5`): it compiles its pipelines on every
+  core, a burst that lowers R1's GPU clocks for a few seconds (AGENTS.md). The provisional
+  check-scene runs did not wait (section 6).
 
 ## 2. Quality
 
@@ -402,7 +402,7 @@ an invocation, 42 minutes in all, the RTX 5060 below 70 C before each; raw outpu
    renderer is created):
 
        for r in 0 1; do for c in nvidia:dx12 nvidia:vulkan 780m:dx12 780m:vulkan; do
-         python tools/aa_bench.py --adapters ${c%%:*} --backends ${c##*:} --rounds 1 \
+         python tools/render/aa_bench.py --adapters ${c%%:*} --backends ${c##*:} --rounds 1 \
            --first-round $r --workloads check,dense --scales 1,0.77,0.67,0.5 \
            --sizes 1600x900,2560x1440 --occlusion off,auto --prepass on --frames 150 \
            --configs msaa:off,taa:off,taa:off:0.77,taa:off:0.67,taa:off:0.5,taa:depth,taa:depth:0.67 \
@@ -410,22 +410,21 @@ an invocation, 42 minutes in all, the RTX 5060 below 70 C before each; raw outpu
            --out out/taau/quiet/r$r-${c%%:*}-${c##*:}.json
        done; done
 
-2. Chrome (updates the browser row of section 3): `tools/build_viewport.sh` (not committed), `python
-   -m http.server 8231 -d web`, then `python tools/aa_web_bench.py --url http://127.0.0.1:8231 --gpu
-   nvidia --rounds 3 --seconds 8 --size 1600x900 --scales 1,0.67,0.5 --configs
-   msaa:off,taa:off,taa:off:0.67,taa:off:0.5 --out out/taau/quiet/web-nvidia.json`; restore
-   `web/viewport/pkg` afterwards (`git checkout web/viewport/pkg`).
+2. Chrome (updates the browser row of section 3): `tools/build_viewport.sh` (not committed),
+   `python -m http.server 8231 -d web`, then
+   `python tools/render/aa_web_bench.py --url http://127.0.0.1:8231 --gpu nvidia --rounds 3 --seconds 8 --size 1600x900 --scales 1,0.67,0.5 --configs msaa:off,taa:off,taa:off:0.67,taa:off:0.5 --out out/taau/quiet/web-nvidia.json`;
+   restore `web/viewport/pkg` afterwards (`git checkout web/viewport/pkg`).
 3. Quality does not depend on the load (section 2): `AMORIS_BACKEND=vulkan AMORIS_ADAPTER=nvidia
    target/release/examples/aa_eval out/taau/quiet/quality --only upscale-tune --scale
    0.5,0.67,0.77,1.0` repeats it (`AMORIS_BACKEND=dx12 AMORIS_ADAPTER=780m ... --only upscale` the
    780M's).
-4. Scale 1 against a master build: `python tools/build_compare.py --before <checkout with master's
-   release examples> --adapters nvidia,780m --backends dx12,vulkan` (120 pairs, 9 minutes). A master
-   from before the 2026-10-16 rename, as `b7be59a2` was, is built from its exported tree after
-   `python tools/amoris_rename.py --tree <dir>` (AGENTS.md), or its examples ignore the `AMORIS_*`
-   variables the tool sets.
+4. Scale 1 against a master build:
+   `python tools/render/build_compare.py --before <checkout with master's release examples> --adapters nvidia,780m --backends dx12,vulkan`
+   (120 pairs, 9 minutes). A master from before the 2026-10-16 rename, as `b7be59a2` was, is built
+   from its exported tree after `python tools/amoris_rename.py --tree <dir>` (AGENTS.md), or its
+   examples ignore the `AMORIS_*` variables the tool sets.
 5. The depth prepass below scale 1, for each adapter and API: `AMORIS_AA=msaa+taa
-   AMORIS_RENDER_SCALE=0.5 python tools/prepass_compare.py --backend <dx12|vulkan> --adapter
+   AMORIS_RENDER_SCALE=0.5 python tools/render/prepass_compare.py --backend <dx12|vulkan> --adapter
    <nvidia|780m> --cases cubes-sphere,cubes-dense,cubes-shadows,splats,gi-room-static,pt-lab-static
    --scenes ""` (only the ties of section 6 may differ).
 
@@ -458,11 +457,12 @@ an invocation, 42 minutes in all, the RTX 5060 below 70 C before each; raw outpu
 - The editor's grid is drawn inside the opaque pass without the jitter, so it keeps the opaque
   pass's pixel (its lines are filtered for it) and is upsampled with the scene.
 - With the depth prepass, surfaces that touch tie in depth along their contact line, and the longer
-  jitter cycle below 1 puts samples there where scale 1 does not: `tools/prepass_compare.py` at 0.5
-  with MSAA and TAA changes 2 pixels of pt-lab (the red wall on the floor) on the RTX 5060 and 3 of
-  gi-room (the walls under the ceiling) on the 780M by up to 4 levels, and none once the touching
-  box is lifted by 1 cm (docs/spec/prepass.md 4, ties). The idle machine's run at c8128f1c (section
-  5, step 5) found the same pixels and nothing else beyond the many_cubes sphere. With the wider box
-  where nothing moved (2026-10-16, `AMORIS_AA=msaa+taa` and `taa` at 0.5 and 0.67 on both GPUs and
-  APIs) the tool finds the same 2 pixels of pt-lab, 1 of gi-room's 3, and the sphere's 1 to 37
-  pixels by up to 17 levels (1 to 52 by up to 15 before; it differs at scale 1 too), nothing else.
+  jitter cycle below 1 puts samples there where scale 1 does not: `tools/render/prepass_compare.py`
+  at 0.5 with MSAA and TAA changes 2 pixels of pt-lab (the red wall on the floor) on the RTX 5060
+  and 3 of gi-room (the walls under the ceiling) on the 780M by up to 4 levels, and none once the
+  touching box is lifted by 1 cm (docs/spec/prepass.md 4, ties). The idle machine's run at c8128f1c
+  (section 5, step 5) found the same pixels and nothing else beyond the many_cubes sphere. With the
+  wider box where nothing moved (2026-10-16, `AMORIS_AA=msaa+taa` and `taa` at 0.5 and 0.67 on both
+  GPUs and APIs) the tool finds the same 2 pixels of pt-lab, 1 of gi-room's 3, and the sphere's 1 to
+  37 pixels by up to 17 levels (1 to 52 by up to 15 before; it differs at scale 1 too), nothing
+  else.

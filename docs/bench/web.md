@@ -71,7 +71,7 @@ quiet-machine run will replace them.
 
 ### Both draw paths draw the same frame
 
-`tools/web_draw_paths.py`, evidence in `out/bench-runs/webgpu/browser/`:
+`tools/render/web_draw_paths.py`, evidence in `out/bench-runs/webgpu/browser/`:
 
 | Page | Adapter | Draw calls per frame | Entities in the id pass | Coverage difference | Pixels differing |
 |---|---|---|---|---|---|
@@ -160,8 +160,8 @@ real time moved the scene between the two runs. The viewport alone needs no C co
 The timing table above again, on a quiet machine (no other agent;
 [quiet-2026-10-09.md](quiet-2026-10-09.md), session 2) with this branch's package: master
 `0871920d`'s, rebuilt with this branch's change to the splat tile raster (the cubes pages draw no
-splats). `tools/web_paths_bench.py`, five rounds, every round running each page on both GPUs and
-both draw paths in turn, each run a fresh headless Chrome 155.0.8059.39 with a temporary profile
+splats). `tools/render/web_paths_bench.py`, five rounds, every round running each page on both GPUs
+and both draw paths in turn, each run a fresh headless Chrome 155.0.8059.39 with a temporary profile
 (`--headless=new --enable-unsafe-webgpu --disable-frame-rate-limit --disable-gpu-vsync --window-size=1280,720 --no-first-run --no-default-browser-check`,
 plus `--force_high_performance_gpu` for the RTX 5060; without it Chrome takes the Radeon 780M),
 canvas 1254x564, 10 s per run, the last 300 frames. The pages pin `occlusion=off` (the provisional

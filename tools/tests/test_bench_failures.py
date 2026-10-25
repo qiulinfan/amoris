@@ -24,9 +24,9 @@ def load(name, relative):
 conditions = load("bench_conditions", "machine_conditions.py")
 ab = load("bench_ab", "splats/ab.py")
 matrix = load("bench_matrix", "splats/matrix.py")
-backend = load("bench_backend", "backend_compare.py")
-build = load("bench_build", "build_compare.py")
-web = load("bench_web", "web_draw_paths.py")
+backend = load("bench_backend", "render/backend_compare.py")
+build = load("bench_build", "render/build_compare.py")
+web = load("bench_web", "render/web_draw_paths.py")
 
 
 def result(code=0, stdout="", stderr=""):

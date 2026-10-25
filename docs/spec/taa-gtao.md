@@ -85,8 +85,8 @@ them.
 GPU on Vulkan or Direct3D 12 draws with `msaa` and GTAO on; an integrated one with `taa` and GTAO
 off; anything else (Metal, the browser, software adapters, and Apple's GPUs and any GPU through
 MoltenVK on Vulkan, known by Apple's vendor id or the driver's name) with `msaa` and GTAO off. The
-environment variables and the setters override them. Tools that compare images across adapters
-pin both (`tools/backend_compare.py`), and checks that compare redraws pixel for pixel pin `msaa`
+environment variables and the setters override them. Tools that compare images across adapters pin
+both (`tools/render/backend_compare.py`), and checks that compare redraws pixel for pixel pin `msaa`
 without GTAO.
 
 **One-shot captures.** With TAA a single frame after a reset is one jittered sample, 4 to 5 dB below
@@ -376,7 +376,7 @@ WebGPU's default limits emulated.
   depth drawn with the jittered frame group: 572 flickering pixels at 1, 787 at 0.5). The defects
   were put back on the RTX 5060 with Vulkan and the 780M with Direct3D 12; the logs stay in
   `out/taau/mutations/`.
-- Below a render scale of 1 `tools/prepass_compare.py` (`AMORIS_AA=msaa+taa` and `taa`,
+- Below a render scale of 1 `tools/render/prepass_compare.py` (`AMORIS_AA=msaa+taa` and `taa`,
   `AMORIS_RENDER_SCALE=0.5` and `0.67`; the many_cubes, splat and static showcase cases, both GPUs
   and APIs) finds the prepass's documented ties only: many_cubes' sphere, whose cubes touch and
   which differs at scale 1 too (up to 22 levels with TAA there), and at 0.5 with MSAA and TAA 2 or 3
@@ -392,11 +392,11 @@ rule's TAA or GTAO).
 Elsewhere:
 
 - `examples/aa_eval.rs`: PSNR against supersampled references while converging, under motion, with
-  skinning, with ablations; GTAO images; per-option costs. `tools/aa_bench.py` and
-  `tools/aa_web_bench.py` run the cost matrix natively and in Chrome.
+  skinning, with ablations; GTAO images; per-option costs. `tools/render/aa_bench.py` and
+  `tools/render/aa_web_bench.py` run the cost matrix natively and in Chrome.
 - With the defaults unchanged, captures of tests/fixtures/scenes/gi-room and
   tests/fixtures/scenes/pt-lab match a master build pixel for pixel. At a render scale of 1 every
-  case of `tools/build_compare.py` (MSAA, MSAA with GTAO, TAA, TAA with GTAO's normal target)
+  case of `tools/render/build_compare.py` (MSAA, MSAA with GTAO, TAA, TAA with GTAO's normal target)
   matches master `b7be59a2` pixel for pixel on both GPUs with Vulkan and Direct3D 12 (120 pairs,
   docs/bench/taau.md 1).
 

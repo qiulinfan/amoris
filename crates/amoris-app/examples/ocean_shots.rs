@@ -7,7 +7,7 @@
 //! directory that belongs in ignored `out/`.
 //! cargo run --release -p amoris-app --example ocean_shots -- --out out/ocean --at 1800,2400
 //! `--view <name>` draws every frame from that view, not only the captures: with
-//! `AMORIS_TRACE=frames=300,skip=1500,out=PATH`, a frame trace for `tools/frame_trace.py`.
+//! `AMORIS_TRACE=frames=300,skip=1500,out=PATH`, a frame trace for `tools/render/frame_trace.py`.
 #[path = "../src/water_compute.rs"]
 mod water_compute;
 use amoris_link::Source;

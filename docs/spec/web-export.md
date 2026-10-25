@@ -99,17 +99,17 @@ captured, and keeps Space and the wheel from scrolling the page around the frame
 
 ## 5. Checking it
 
-`node tools/web_play_check.mjs <folder> [--shots DIR]` serves the folder without isolation, loads it
-in headless Chrome with WebGPU and plays it as the seat: it waits for the player to be ready (a game
-that stops or halts first fails it) and for "Click to play", captures, holds W and checks the walker
-moved, looks down and breaks the block in the crosshair, places one back, selects the hotbar's water
-(slot 8, `WATER_SLOT=`) and places it, and checks the water region's wet cells grow as it runs off;
-WebGPU validation errors and uncaught exceptions fail it. It prints one JSON line with every check,
-the frame times, the GPU and CPU times of the last frame, the game worker's tick timings and the
-transferred bytes. `QUERY=gpu_minimal=features,limits,timestamps` runs it on WebGPU's baseline
-device, `DPR=2` at a Retina display's scale. The measurements of the Blockcraft build are in
-[../bench/web-export.md](../bench/web-export.md); its ready time is the view's, measured before the
-player waited for the game's 60 ticks.
+`node tools/host/web_play_check.mjs <folder> [--shots DIR]` serves the folder without isolation,
+loads it in headless Chrome with WebGPU and plays it as the seat: it waits for the player to be
+ready (a game that stops or halts first fails it) and for "Click to play", captures, holds W and
+checks the walker moved, looks down and breaks the block in the crosshair, places one back, selects
+the hotbar's water (slot 8, `WATER_SLOT=`) and places it, and checks the water region's wet cells
+grow as it runs off; WebGPU validation errors and uncaught exceptions fail it. It prints one JSON
+line with every check, the frame times, the GPU and CPU times of the last frame, the game worker's
+tick timings and the transferred bytes. `QUERY=gpu_minimal=features,limits,timestamps` runs it on
+WebGPU's baseline device, `DPR=2` at a Retina display's scale. The measurements of the Blockcraft
+build are in [../bench/web-export.md](../bench/web-export.md); its ready time is the view's,
+measured before the player waited for the game's 60 ticks.
 
 The renderer's `shaders` unit test now refuses WGSL that mixes a bitwise operator with another
 binary operator without parentheses: naga accepts it, Chrome's Tint refuses the whole module, and

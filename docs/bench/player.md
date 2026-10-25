@@ -113,7 +113,7 @@ while the world runs well above real time (a 60 Hz tick has 16.7 ms). What they 
 
 - An LLM playing through MCP: the transport and the seat-bound session were checked live (a stdio
   `amoris mcp --seat skipper` session observed, acted, waited and was refused an unavailable
-  affordance, `world` and the omniscient view: `tools/player_mcp_probe.py`, transcript in
+  affordance, `world` and the omniscient view: `tools/host/player_mcp_probe.py`, transcript in
   out/bench-runs/player/mcp-session.txt), but no model was run, so there is no tokens-per-course or
   success rate for an LLM yet.
 - Real time with pause-on-decision under load: the thread test checks that the world holds at a
@@ -181,10 +181,10 @@ stand.
   repeated all 186 episodes of `run-20261015c` exactly, world hash, weighed branch and branch value
   for value; only the wall times changed.
 - Commands (from the worktree; raw output in the main checkout's ignored `out/lookahead/`):
-  `python tools/lookahead_bench.py build`, then
-  `python tools/lookahead_bench.py run <out> --fork-runs 3 --seeds 0-30 --chunk 8 --lock out/locks/bench_lock.py`
+  `python tools/runtime/lookahead_bench.py build`, then
+  `python tools/runtime/lookahead_bench.py run <out> --fork-runs 3 --seeds 0-30 --chunk 8 --lock out/locks/bench_lock.py`
   (the models `greedy`, `lookahead` and `nofork` by default) and
-  `python tools/lookahead_bench.py table <out>`, which prints every table and figure of this
+  `python tools/runtime/lookahead_bench.py table <out>`, which prints every table and figure of this
   section. The quiet run made the same steps (three fork runs, then the course in chunks of 8
   variants), each in its own hold of the lock under the label `quiet-lookahead`.
 - Runs: `out/lookahead/quiet` (2026-10-16, the quiet re-measurement: every wall time below; CPU

@@ -1,5 +1,5 @@
 // Clients held on a running host for a while, so the host's game thread can be profiled with them
-// connected (docs/bench/profiler.md, "The serve loop"; tools/serve_loop_bench.py drives it):
+// connected (docs/bench/profiler.md, "The serve loop"; tools/host/serve_loop_bench.py drives it):
 //
 // - `--mode sockets`: the editor's two sockets without a page: `/ws` subscribed to every topic the
 //   editor takes, and `/render`; messages and bytes received are counted. `--reads` also sends

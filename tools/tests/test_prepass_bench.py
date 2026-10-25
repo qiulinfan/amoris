@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 SPEC = importlib.util.spec_from_file_location(
-    "prepass_bench", Path(__file__).resolve().parents[1] / "prepass_bench.py")
+    "prepass_bench", Path(__file__).resolve().parents[1] / "render/prepass_bench.py")
 bench = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(bench)
 

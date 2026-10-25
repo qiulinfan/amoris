@@ -187,7 +187,7 @@ through MCP, and a recording of the real WebGPU editor. Fetch the pinned CC0 mod
 locally to open the detailed sailing sample:
 
 ```sh
-python3 tools/showcase_assets.py --projects
+python3 tools/site/showcase_assets.py --projects
 ./target/release/amoris serve site/demos/harbor --editor editor/dist
 ```
 

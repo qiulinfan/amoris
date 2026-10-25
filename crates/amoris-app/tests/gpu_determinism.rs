@@ -2,7 +2,7 @@
 //! stepped from their scenes, holds after every tick the field whose digests `golden/water-digests.txt`
 //! records, on every adapter, driver and backend. `AMORIS_BACKEND=vulkan` and
 //! `AMORIS_GPU_MINIMAL=features,limits,timestamps` run it on another backend or the WebGPU baseline,
-//! `tools/water_determinism_check.mjs` in Chrome (with `--adapter swiftshader`, on the CPU), and
+//! `tools/water/water_determinism_check.mjs` in Chrome (with `--adapter swiftshader`, on the CPU), and
 //! `AMORIS_BLESS=1` rewrites the record after a kernel changes.
 #[path = "../src/water_compute.rs"]
 mod water_compute;

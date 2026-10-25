@@ -110,7 +110,7 @@ sum was not a whole-frame measurement. The capture used maps downsampled into
 Reproduce the workload:
 
 ```sh
-python3 tools/showcase_assets.py --projects
+python3 tools/site/showcase_assets.py --projects
 cargo run --release -p amoris-render --example showcase_bench -- \
   site/demos/stress-1024 --width 1920 --height 1080 --frames 300 --warm 60
 ```

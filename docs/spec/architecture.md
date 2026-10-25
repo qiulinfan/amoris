@@ -76,7 +76,7 @@ Cargo.lock            committed
 rust-toolchain.toml   Rust 1.98.1 with rustfmt and clippy; targets wasm32-unknown-unknown and
                       wasm32-wasip1
 .cargo/config.toml    alias xtask; [env] CFLAGS for C code (7.3); [patch.crates-io] rquickjs-sys
-.github/workflows/    pages.yml: builds site/ into the Pages artifact (tools/build_site.py)
+.github/workflows/    pages.yml: builds site/ into the Pages artifact (tools/site/build_site.py)
 AGENTS.md  CLAUDE.md  rules for agents working here (CLAUDE.md includes AGENTS.md)
 README.md  LICENSE    the introduction for people; MIT
 crates/
@@ -140,12 +140,18 @@ tests/fixtures/       projects only tests and checks read: controls/ (the checks
 bench/                workloads and comparison harnesses: agent-dev/ (the Courier benchmark),
                       physics/ (Rapier, Jolt, PhysX through Unity), rules/ (the rule workload,
                       budgets.md 4), web/ (three.js many_cubes, threejs_cubes.html)
-tools/                scripts, flat and grouped by name prefix (water_, occlusion_, showcase_, ...);
-                      the check's inputs crate-graph.toml, clippy-determinism.toml and
-                      lint-fixture/; build_viewport.sh, build_web.sh, wrap_docs.py,
-                      gpu_matrix.py; eval/ (agent evaluations), neural/ (training), splats/,
-                      tests/ (the tools' own tests), vscode/ (the script debugger's VS Code
-                      attach configuration)
+tools/                scripts by purpose (tools/README.md): render/ (renderer benches, compares
+                      and captures), water/ (water checks, plots and benches), host/ (the
+                      host, player and editor-loop probes and benches), runtime/ (game thread
+                      and script benches), site/ (the Pages site and showcase captures), eval/
+                      (agent evaluations), neural/ (training), splats/, tests/ (the tools' own
+                      tests), vscode/ (the script debugger's VS Code attach configuration); at
+                      the top what xtask, CI or several groups use: the check's inputs
+                      crate-graph.toml, clippy-determinism.toml and lint-fixture/,
+                      wrap_docs.py, webcheck.py, gpu_matrix.py with amd_vkcache.py,
+                      build_viewport.sh, build_web.sh, package_game.py, amoris_rename.py and
+                      the shared helpers machine_conditions.py, quiet_tables.py, web_bench.mjs
+                      and web_readback.mjs
 docs/                 charter.md, schedule.md, sdk.md, spec/, bench/ (methods and result tables),
                       spikes/, research/, imports/
 site/                 the Pages showcase: landing page, MkDocs user docs (content/), capture

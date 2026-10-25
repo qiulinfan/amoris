@@ -18,8 +18,8 @@ under way a stopping loop dropped unanswered (player.md 6).
 
 docs/spec/desktop.md, Windows, has the result: the app could not open a project on Windows until
 `amoris serve` reported a plain path; with that fixed, `npm test`, the packaged-runtime test and
-`tools/desktop_smoke.mjs` (editor, WebGPU (wasm) viewport, Play, Stop, closing the window, the host
-gone and its file removed) pass. Evidence:
+`tools/host/desktop_smoke.mjs` (editor, WebGPU (wasm) viewport, Play, Stop, closing the window, the
+host gone and its file removed) pass. Evidence:
 [evidence/polish/desktop/](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/polish/desktop),
 [evidence/polish/desktop-node-tests.txt](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/polish/desktop-node-tests.txt).
 
@@ -29,7 +29,7 @@ The agent evaluations were written on macOS. What stops or misbehaves on Windows
 
 | Script | Where | What happens on Windows |
 |---|---|---|
-| `debug_eval.py` | `Host`: `start_new_session=True`, `send_signal(SIGTERM)`, `os.killpg` | `SIGTERM` is `TerminateProcess` there, so `amoris serve` is killed and leaves `.amoris/host.json`; `os.killpg` does not exist (an `AttributeError` if the host outlives 10 s). `tools/smoke_server.py` and `held_host_bench.py` show the Windows form: `CREATE_NEW_PROCESS_GROUP` and `CTRL_BREAK_EVENT` |
+| `debug_eval.py` | `Host`: `start_new_session=True`, `send_signal(SIGTERM)`, `os.killpg` | `SIGTERM` is `TerminateProcess` there, so `amoris serve` is killed and leaves `.amoris/host.json`; `os.killpg` does not exist (an `AttributeError` if the host outlives 10 s). `tools/host/smoke_server.py` and `held_host_bench.py` show the Windows form: `CREATE_NEW_PROCESS_GROUP` and `CTRL_BREAK_EVENT` |
 | `debug_eval.py` | `run_opencode`: `start_new_session=True`, `os.killpg(proc.pid, SIGKILL)` on the call or time limit | the limit cannot kill the agent: `os.killpg` raises `AttributeError` (only `ProcessLookupError` is caught) |
 | `debug_eval.py` | `kill_strays`: `pgrep -f` | no `pgrep`: `FileNotFoundError` at the end of every run |
 | `agent_dev_bench.py`, `agent_gameplay.py` | the host's stop, as `debug_eval.py`'s | as above |

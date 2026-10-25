@@ -26,7 +26,7 @@ Machine: R1 (Ryzen 9 270, 16 threads, 15 GB; RTX 5060 Laptop 8 GB, driver 32.0.1
 
 ## 1. pt-lab against the path tracer
 
-`python tools/transparency_pt.py --build before=out/transparency/before --build after=. --out out/transparency/pt-lab --backend dx12 --adapter 5060 [--pt-args "--emission-scale 0"] [--gtao depth]`
+`python tools/render/transparency_pt.py --build before=out/transparency/before --build after=. --out out/transparency/pt-lab --backend dx12 --adapter 5060 [--pt-args "--emission-scale 0"] [--gtao depth]`
 draws tests/fixtures/scenes/pt-lab at 320x240 with `showcase_bench --hdr --ids` (4x MSAA, occlusion
 culling off, time 0, GTAO off unless `--gtao`) from the build before the stage and from the build
 under test, and compares each linear image with the path tracer's (`path_trace`, 256 frames of 4
@@ -101,14 +101,14 @@ gives 1.48: the check fails either way.
 
 ## 2. The cost of 1,000 transparent instances
 
-`python tools/transparency_bench.py --adapter 5060|780m --backend dx12|vulkan` runs `transparency
-bench` (1600x900, 60 warm-up and 300 measured frames, `--settle 5`, the depth prepass and occlusion
-culling off so that the kinds differ only by the spheres; the adapter's default anti-aliasing:
-4x MSAA with GTAO on the RTX 5060, TAA without GTAO on the 780M) for five kinds of the same 1,000
-spheres (a 10 x 10 x 10 lattice, 1.6 m apart, every one in view, in front of a row of opaque cubes
-on a floor, under a sun with shadows and the atmosphere): `hidden` (invisible: the scene without
-them), `opaque`, `blend` (a look alpha of 0.35), `glass` (transmission 1) and `double` (a
-double-sided BLEND material of alpha 0.35), three rounds of the five kinds in turn, one process
+`python tools/render/transparency_bench.py --adapter 5060|780m --backend dx12|vulkan` runs
+`transparency bench` (1600x900, 60 warm-up and 300 measured frames, `--settle 5`, the depth prepass
+and occlusion culling off so that the kinds differ only by the spheres; the adapter's default
+anti-aliasing: 4x MSAA with GTAO on the RTX 5060, TAA without GTAO on the 780M) for five kinds of
+the same 1,000 spheres (a 10 x 10 x 10 lattice, 1.6 m apart, every one in view, in front of a row of
+opaque cubes on a floor, under a sun with shadows and the atmosphere): `hidden` (invisible: the
+scene without them), `opaque`, `blend` (a look alpha of 0.35), `glass` (transmission 1) and `double`
+(a double-sided BLEND material of alpha 0.35), three rounds of the five kinds in turn, one process
 each. Per run the p50 of the frames (the pass columns: the mean over the frames, the example's
 `passes_ms`); per kind the median over the rounds. GPU: the timestamped passes (`gpu_ms`, the
 display transform not included); the opaque pass (`opaque+sky`), in which the stage draws with GTAO
@@ -308,7 +308,7 @@ the double-sided spheres' shadows 0.21 ms over `hidden`'s before the review on b
 ## 3. TAA without motion vectors
 
 `transparency ghost --kind opaque|blend|glass --motion object|pan` (960x540;
-`tools/transparency_bench.py --ghost` runs all six): vertical stripes of emissive white and
+`tools/render/transparency_bench.py --ghost` runs all six): vertical stripes of emissive white and
 near-black cubes 6 m behind a sphere (2 m across) of one kind, lit by its emission only: `opaque`
 (emission 0.6, 0.15, 0.1), `blend` (the same emission at alpha 0.35) or `glass` (transmission 1, no
 emission). `object`: the sphere moves 0.1 m a tick across the stripes, the camera still (about 6.4
@@ -351,7 +351,7 @@ Exact comparisons (deterministic: the machine's load does not enter them), on th
 comparisons, section 1 and the run-to-run check below again on the idle machine, 2026-10-16 01:33
 to 01:42):
 
-- **Scenes without a transparent material** (`tools/build_compare.py --before
+- **Scenes without a transparent material** (`tools/render/build_compare.py --before
   out/transparency/before --adapters nvidia|780m` with every case but `pt-lab` in `--cases`, the
   examples built from master `3fdc5b83`'s renderer): many_cubes with 200,000 shadow-casting
   cubes, the dense grid, the 1M-splat garden, gi-room drawn statically, `lod_field` with 40 skinned
@@ -360,7 +360,8 @@ to 01:42):
   on each of the RTX 5060 and the 780M, Direct3D 12 and Vulkan, 116 in all, every one identical to
   the bit (`out/transparency/build-compare-review/`; the same on `31934dd9` and `2a59b3d7` in the
   first round). pt-lab differs, as it should (section 1).
-- **The prepass and occlusion culling** (`tools/prepass_compare.py`, `tools/occlusion_compare.py`,
+- **The prepass and occlusion culling** (`tools/render/prepass_compare.py`,
+  `tools/render/occlusion_compare.py`,
   `--cases cubes-sphere,cubes-dense,cubes-shadows,splats,gi-room-static,pt-lab-static --scenes ''`:
   the renderer examples' captures with the adapter's defaults, so pt-lab with GTAO on the RTX 5060
   draws its stage after GTAO): forcing either on changes no pixel of pt-lab, whose blended card and
@@ -368,10 +369,10 @@ to 01:42):
   many_cubes' sphere, where a few isolated pixels differ by one level with either feature (two cube
   faces at exactly equal depth, which `docs/bench/prepass.md` 2 records on master)
   (`out/transparency/{prepass,occlusion}-compare-review/`). On the idle machine the same
-  (`out/transparency/quiet/{prepass,occlusion}-compare/`): pt-lab unchanged by either feature on
-  the four configurations; which configurations show the sphere's one-level pixels changes from run
-  to run (this time the RTX 5060's Direct3D 12 and both of the 780M's with the prepass, both
-  Direct3D 12 configurations with occlusion culling). The `amoris serve` captures and the amoris-app
+  (`out/transparency/quiet/{prepass,occlusion}-compare/`): pt-lab unchanged by either feature on the
+  four configurations; which configurations show the sphere's one-level pixels changes from run to
+  run (this time the RTX 5060's Direct3D 12 and both of the 780M's with the prepass, both Direct3D
+  12 configurations with occlusion culling). The `amoris serve` captures and the amoris-app
   `draw_paths` scenes were not run (amoris-app was not built on this branch).
 - **GPU tests** (`tools/gpu_matrix.py --configs
   5060-dx12,5060-vulkan,780m-dx12,780m-vulkan,5060-dx12-minimal,780m-vulkan-minimal`, every
@@ -384,8 +385,8 @@ to 01:42):
   (`-dirty`) and are superseded.
 - **In Chrome** (first round, `05716664`'s renderer, 2026-10-15 23:00 to 23:10; the viewport built
   locally with `tools/build_viewport.sh`, not committed, and not rebuilt for the review):
-  `python tools/web_draw_paths.py "http://127.0.0.1:8193/viewport/?demo=transparent"` (the mixed
-  scene with `demo::transparent_instances`: two blended spheres, a glass cube, a blended
+  `python tools/render/web_draw_paths.py "http://127.0.0.1:8193/viewport/?demo=transparent"` (the
+  mixed scene with `demo::transparent_instances`: two blended spheres, a glass cube, a blended
   double-sided quad) draws the same pixels and the same id coverage on WebGPU's two draw paths
   (`first-instance` and `baseline`) on the 780M and on the RTX 5060
   (`--chrome-flags=--force_high_performance_gpu`), 4x MSAA, with the four transparent entities in
@@ -426,19 +427,19 @@ T=../../../out/transparency
 Q=$T/quiet
 OLD=$T/build-05716664/target/release/examples/transparency.exe
 for a in 5060 780m; do for b in dx12 vulkan; do              # section 2, and 2.3 on the RTX 5060
-  python $L run --label quiet-transparency -- python tools/transparency_bench.py --adapter $a --backend $b --out $Q/bench
-  [ $a = 5060 ] && python $L run --label quiet-transparency -- python tools/transparency_bench.py \
+  python $L run --label quiet-transparency -- python tools/render/transparency_bench.py --adapter $a --backend $b --out $Q/bench
+  [ $a = 5060 ] && python $L run --label quiet-transparency -- python tools/render/transparency_bench.py \
     --adapter $a --backend $b --kinds hidden,blend,glass,double --exe $OLD --out $Q/ab-05716664
-  python $L run --label quiet-transparency -- python tools/transparency_bench.py --adapter $a --backend $b \
+  python $L run --label quiet-transparency -- python tools/render/transparency_bench.py --adapter $a --backend $b \
     --kinds hidden,blend,double --extra=--orbit --out $Q/bench
 done; done
 HITCH_OUT=$Q/hitch python $L run --label quiet-transparency -- python -I $T/scripts/hitch.py   # 2.2
 for a in 5060 780m; do for b in dx12 vulkan; do              # 2.1
-  for t in lists:. one-draw:$T/src-b9eea658 two-draws:$T/src-440dd7f8; do
-    python $L run --label quiet-transparency -- python ${t#*:}/tools/transparency_bench.py --adapter $a \
+  for t in lists:tools/render one-draw:$T/src-b9eea658/tools two-draws:$T/src-440dd7f8/tools; do
+    python $L run --label quiet-transparency -- python ${t#*:}/transparency_bench.py --adapter $a \
       --backend $b --kinds hidden,double --out $Q/ab3-${t%%:*}
   done
-  python $L run --label quiet-transparency -- python tools/transparency_bench.py --adapter $a \
+  python $L run --label quiet-transparency -- python tools/render/transparency_bench.py --adapter $a \
     --backend $b --kinds hidden,double --exe $OLD --out $Q/ab3-lists-05716664
 done; done
 ```
@@ -460,6 +461,6 @@ exported tree (`$T/src-*`, `src-before` included) is renamed with
 script use the `AMORIS_*` variables, and the saved binaries in `$T/before` and `$T/build-05716664`,
 which read the old names and ignore the variables this checkout's tools set, are built again that
 way for a re-run (from `src-before` and from `05716664`). Section 1 alone:
-`python tools/transparency_pt.py --build before=$T/before --build after=. --out $Q/pt-lab --adapter 5060`
+`python tools/render/transparency_pt.py --build before=$T/before --build after=. --out $Q/pt-lab --adapter 5060`
 (with and without `--pt-args "--emission-scale 0"`, and with `--build prefix=$T/build-05716664` and
 `--gtao depth`) reproduces its figures; another `--out` without the references traces them again.

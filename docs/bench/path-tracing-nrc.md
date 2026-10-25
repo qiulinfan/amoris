@@ -97,7 +97,7 @@ camera paths, all path-ray segments, continuation-only rays and shadow rays.
 
 Local output is written under `out/bench-runs/pt/`: material/atmosphere previews, room reference and
 NRC previews, full reports, timing repeats, HDR comparisons, GPU parity and browser logs. Linear
-RGBA outputs remain reproducible local build artifacts under `out/pt/`. `tools/compare_pt.py`
+RGBA outputs remain reproducible local build artifacts under `out/pt/`. `tools/render/compare_pt.py`
 compares those outputs, not tone-mapped PNGs.
 
 ## Windows: Vulkan and Direct3D 12 (Pioneer, 2026-10-09)
@@ -108,10 +108,10 @@ Pro 10.0.26200; NVIDIA GeForce RTX 5060 Laptop GPU (driver 617.14) and AMD Radeo
 32.0.13062.3005, Vulkan 24.30.62.03 LLPC); wgpu 30.0.1, DXC 1.8.2502 from Windows SDK 10.0.26100.
 Contract changes: [spec, Backends](../spec/path-tracing-nrc.md#backends-pioneer-2026-10-09).
 
-**The timings below are provisional and superseded by "Timing on a quiet machine"** (the same
-day, which repeats them and adds the Radeon 780M): three other agents built and ran GPU work on
-the same machine throughout. Runs were interleaved and order-reversed (`tools/rt_bench.py`), and
-the spreads are given. Correctness results do not depend on load.
+**The timings below are provisional and superseded by "Timing on a quiet machine"** (the same day,
+which repeats them and adds the Radeon 780M): three other agents built and ran GPU work on the same
+machine throughout. Runs were interleaved and order-reversed (`tools/render/rt_bench.py`), and the
+spreads are given. Correctness results do not depend on load.
 
 ### What runs where
 
@@ -155,13 +155,13 @@ The three GPU tests pass on all four pairs.
 
 ### Correctness against the M5 references
 
-`python tools/rt_bench.py correctness --adapter 5060` renders every configuration whose M5 report is
-committed, at the same settings and seed (`out/bench-runs/rt/correctness-5060.json`; a subset on the
-780M in `correctness-780m.json` gives the same picture). The M5 runs committed no linear HDR, so the
-comparison with them uses what they did commit: mean HDR radiance, per-frame path counters and the
-8-bit preview. HDR RMSE is computed against each backend's own finite reference at the M5's
-settings, next to the RMSE the M5 recorded against its reference. Pairs are Vulkan / Direct3D 12 on
-the RTX 5060.
+`python tools/render/rt_bench.py correctness --adapter 5060` renders every configuration whose M5
+report is committed, at the same settings and seed (`out/bench-runs/rt/correctness-5060.json`; a
+subset on the 780M in `correctness-780m.json` gives the same picture). The M5 runs committed no
+linear HDR, so the comparison with them uses what they did commit: mean HDR radiance, per-frame path
+counters and the 8-bit preview. HDR RMSE is computed against each backend's own finite reference at
+the M5's settings, next to the RMSE the M5 recorded against its reference. Pairs are Vulkan /
+Direct3D 12 on the RTX 5060.
 
 | Configuration | Mean vs M5 (max rel.) | Frames with M5's counters | Preview pixels equal to M5 | Max 8-bit diff | Vulkan vs D3D12 rel. HDR RMSE | HDR RMSE vs reference (Vulkan / D3D12 / M5) |
 |---|---:|---:|---:|---:|---:|---:|
@@ -207,10 +207,10 @@ Direct3D 12 `strip-lab-vulkan-dx12.png` (largest 8-bit difference 1).
 
 ### Timing (provisional, superseded below), RTX 5060
 
-`python tools/rt_bench.py timing --adapter 5060 --rounds 5` (`out/bench-runs/rt/timing-5060.json`):
-median GPU ms per frame over five interleaved rounds (min to max in brackets), the documented
-settings of the M5 tables above. "Lean" builds the shaders without naga's loop bounding and
-ray-query initialization tracking (`--lean-shaders true`, off by default).
+`python tools/render/rt_bench.py timing --adapter 5060 --rounds 5`
+(`out/bench-runs/rt/timing-5060.json`): median GPU ms per frame over five interleaved rounds (min to
+max in brackets), the documented settings of the M5 tables above. "Lean" builds the shaders without
+naga's loop bounding and ray-query initialization tracking (`--lean-shaders true`, off by default).
 
 gi-room, 320x240, 128 frames x 1 spp, 12 bounces, RR from 3, seed 42; GPU mean from frame 32:
 
@@ -258,8 +258,8 @@ Online NRC, gi-room 128x128, 512 frames x 1 spp, warmup 64, batch 256; last 64 f
 
 The same tool and settings with no other agent running, on AC power (conditions:
 [quiet-2026-10-09.md](quiet-2026-10-09.md)), master `ef35e1af`:
-`python tools/rt_bench.py timing --adapter 5060 --rounds 5` and `--adapter 780m --rounds 3`, rounds
-interleaved and order-reversed
+`python tools/render/rt_bench.py timing --adapter 5060 --rounds 5` and `--adapter 780m --rounds 3`,
+rounds interleaved and order-reversed
 ([timing-5060.json](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/quiet/rt/timing-5060.json),
 [timing-780m.json](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/quiet/rt/timing-780m.json);
 `python tools/quiet_tables.py rt`). GPU ms per frame, median of the rounds (minimum; spread); the
@@ -309,6 +309,6 @@ cargo build --release -p amoris-render --examples
 AMORIS_BACKEND=vulkan cargo run --release -p amoris-render --example ray_query_probe
 AMORIS_BACKEND=dx12 AMORIS_ADAPTER=780m cargo run --release -p amoris-render --example pt_bsdf_probe
 cargo test --release -p amoris-render --lib ray_query        # both backends; AMORIS_ADAPTER=780m too
-python tools/rt_bench.py correctness --adapter 5060 --summary out/bench-runs/rt/correctness-5060.json
-python tools/rt_bench.py timing --adapter 5060 --rounds 5 --summary out/bench-runs/rt/timing-5060.json
+python tools/render/rt_bench.py correctness --adapter 5060 --summary out/bench-runs/rt/correctness-5060.json
+python tools/render/rt_bench.py timing --adapter 5060 --rounds 5 --summary out/bench-runs/rt/timing-5060.json
 ```

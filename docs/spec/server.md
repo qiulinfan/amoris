@@ -246,7 +246,7 @@ read`, and the CLI had no read timeout, so 28 calls in 11 runs hung until the ag
 - **A step answers at the stop.** The game thread answers the `time.step` whose tick stopped,
   from inside the stop (3.2), and the loop ends that step with the stopped tick. Measured
   (provisional, a loaded Windows machine; agent-debug.md): 0.4 ms from the call to the answer over a
-  kept-alive HTTP connection on the sailing sample (`tools/held_host_review.py`), tens of
+  kept-alive HTTP connection on the sailing sample (`tools/host/held_host_review.py`), tens of
   milliseconds through the CLI, most of it the process's start. (Until the review of 2026-10-09 the
   server looked for a stop every 5 ms and answered every waiting `time.step` at it; a second step
   queued behind the stopped one was told it had stopped and then ran all its ticks after the
@@ -427,7 +427,7 @@ methods take (`file, line, condition, log, id, brief, expr, frame, name, value, 
 entity, component, field, mode, tick, bundle`; amoris-app's `paused_host.rs` checks it against
 `amoris_debug::methods()`); `world` takes `fields`, `scripts` `lines` and `numbered`, `time`
 `sample` and `bundle`. `tools/list` is 8.6 KB (8,613 bytes of `tools`, about 2,150 tokens at four
-bytes a token, as `tools/smoke_server.py` counts it; 2026-10-14, Windows; the `time` tool's
+bytes a token, as `tools/host/smoke_server.py` counts it; 2026-10-14, Windows; the `time` tool's
 `profile` action is 87 of them); it was 6.6 KB (6,645 bytes, ten tools) on 2026-10-09, before the
 `player` tool, and 4.4 KB, 1,236 cl100k tokens, on 2026-10-04.
 Served on `POST /mcp` (one developer client per session, every call pushed as `agent`) and by
@@ -499,14 +499,14 @@ error exits 2. Every call waits 60 s at most (`--timeout <s>`, `AMORIS_TIMEOUT`)
 
 ## 10. Verification
 
-`tools/smoke_server.py` (standard library only) starts `amoris serve` on a copy of `samples/sailing`
-and checks the CLI (status, tree, set, undo, step with an event and a field condition, a refused
-typo with its suggestion, Play and Stop, help), `/api/call` and `/api/catalog` (a destroy undone
-revives the entity under its id), `/ws` (status on connect, subscribe, an edit with its `history`
-and `world.changed` pushes, undo, steps, Play's reset), `events.since`/`why`, and MCP over HTTP
-(initialize, `tools/list` with its size, calls and refusals), a host the debugger holds (3.4: the
-step that returns at the breakpoint, reads while held, `scripts apply` refused at once, the
-debugger's short forms, restores with and without the applied scripts), then that
+`tools/host/smoke_server.py` (standard library only) starts `amoris serve` on a copy of
+`samples/sailing` and checks the CLI (status, tree, set, undo, step with an event and a field
+condition, a refused typo with its suggestion, Play and Stop, help), `/api/call` and `/api/catalog`
+(a destroy undone revives the entity under its id), `/ws` (status on connect, subscribe, an edit
+with its `history` and `world.changed` pushes, undo, steps, Play's reset), `events.since`/`why`, and
+MCP over HTTP (initialize, `tools/list` with its size, calls and refusals), a host the debugger
+holds (3.4: the step that returns at the breakpoint, reads while held, `scripts apply` refused at
+once, the debugger's short forms, restores with and without the applied scripts), then that
 `.amoris/host.json` is gone after SIGTERM (Ctrl-Break on Windows, where it now runs:
 [smoke-server.txt](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/agentdebug/smoke-server.txt),
 0 failures, 2026-10-09). Its WebSocket client keeps the pushes that arrive before a request's answer

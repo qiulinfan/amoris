@@ -138,8 +138,8 @@ fix, the mixed scene showed the same 6 of 59 entities natively on Vulkan and in 
 - `cargo run --release -p amoris-app --example draw_paths -- [--minimal ...] mixed cubes
   samples/anim samples/sailing` compares a full-feature device with an emulated one on any scene or
   project and writes images and `draw_paths.json`.
-- `python3 tools/web_draw_paths.py <viewport url> --name <n> --out <dir>` runs a viewport page in
-  headless Chrome with and without `gpu_minimal=first-instance` and compares coverage and
+- `python3 tools/render/web_draw_paths.py <viewport url> --name <n> --out <dir>` runs a viewport
+  page in headless Chrome with and without `gpu_minimal=first-instance` and compares coverage and
   screenshots.
 
 ## 6. Open

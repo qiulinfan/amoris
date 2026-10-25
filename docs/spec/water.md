@@ -12,8 +12,8 @@
   solved the shallow-water equations on the CPU and got the same bits natively, under Node and in
   Chrome. It runs at 11 to 14 ns a column and substep natively and 13 to 20 ns in WebAssembly, and
   its drawing costs 1 to 4.5 ms of GPU time on the M5 without levels of detail. On R1 (x86-64,
-  Windows) `tools/shallow_check.py` gave the same chains natively in release and debug, under Node
-  and in Chrome, so 3 stands. The solver there runs at 18 to 26 ns natively and 23 to 30 ns in
+  Windows) `tools/water/shallow_check.py` gave the same chains natively in release and debug, under
+  Node and in Chrome, so 3 stands. The solver there runs at 18 to 26 ns natively and 23 to 30 ns in
   WebAssembly, and the drawing costs 0.2 to 0.6 ms on the RTX 5060.
 - Amends: [liquids.md](liquids.md) 5 and 6 for liquids on the field (6 below), and
   [splashes.md](splashes.md) 3 (emissions) and 9 question 1 (spray), by 10 below. liquids.md's
@@ -531,11 +531,11 @@ M5 and R1 (both GPUs), and in Chrome.
 
 | What | Where | Slice |
 |---|---|---|
-| The spike's hash chains on R1 match the M5's (they do, 2026-10-18) | `tools/shallow_check.py` | before A |
+| The spike's hash chains on R1 match the M5's (they do, 2026-10-18) | `tools/water/shallow_check.py` | before A |
 | Water conserved; a dam break settles level; walls hold; a ledge drains; a dug hole fills and a placed block displaces | `amoris-physics` unit tests of `water::` | A |
 | The substep count follows the fastest wave; tiles sleep, wake from a neighbour, a source, an edit or a bed change | same | A |
 | Films thinner than `dry_below` dry when slow and are reported; with 0 nothing dries; a flood's moving front does not dry | same | A |
-| The same hash chain natively (release and debug), in WebAssembly under Node and in Chrome, and on R1 | `amoris-physics` web test, `tools/shallow_check.py` | A |
+| The same hash chain natively (release and debug), in WebAssembly under Node and in Chrome, and on R1 | `amoris-physics` web test, `tools/water/shallow_check.py` | A |
 | Beds from a volume at load; after a change, a block placed in the water or on the ground raises the bed, a bridge, a roof or leaves over the water leave it, a broken top block lowers it; beds persisted; `water.misaligned`, `water.uncovered` | `amoris-physics` and `amoris-runtime` tests | A |
 | `Field` liquids load as water, shared over a block's columns; `Cells` scenes unchanged; blockcraft's lake breaks and floods | `amoris-runtime` tests, `amoris-app` example `blockcraft_water` (amended during implementation: `shallow_water` stays the spike's demo) | A |
 | The walker swims in field water and is pushed | `amoris-physics` tests | A |
@@ -578,8 +578,8 @@ The owner reviewed the draft and took each of the recommendations below.
 5. **The block game's rules lose renewal and displacement** (6); scripts make endless sources with
    `WaterSource`.
 6. **Films dry** below `dry_below`, off by default, 2 mm in blockcraft (4).
-7. **R1 first**: slice A starts once `tools/shallow_check.py` on R1 matches the M5. It matched on
-   2026-10-18.
+7. **R1 first**: slice A starts once `tools/water/shallow_check.py` on R1 matches the M5. It matched
+   on 2026-10-18.
 8. **`Cells` stays** through these slices (15, question 3).
 9. **`Blocky`** draws the surface flat over each block (9); blockcraft uses `Smooth` (owner,
    2026-10-18, from slice A's shots).
@@ -674,15 +674,14 @@ maps, including callbacks arriving after cancellation; the host changes epoch on
 restore/reset/branch and rejects results from an old epoch. Submit or discard any request encoder
 before clearing its slots.
 
-This point-query facility is independent of the game state contract. The older `gpu` execution
-mode still reads the complete field on native and browser hosts. Section 19's explicit
-`gpu_resident` mode now uses bounded checkpoint/program authority and current-tick observations.
-`water_resident` measures the
-core loop at 60 Hz with 64 point queries, including submission cost and observed age. The
-`water_samples` integration test compares those queries against a separately stepped field with
+This point-query facility is independent of the game state contract. The older `gpu` execution mode
+still reads the complete field on native and browser hosts. Section 19's explicit `gpu_resident`
+mode now uses bounded checkpoint/program authority and current-tick observations. `water_resident`
+measures the core loop at 60 Hz with 64 point queries, including submission cost and observed age.
+The `water_samples` integration test compares those queries against a separately stepped field with
 complete readback, exercises slot backpressure and cancels/reuses old-epoch slots. The viewport's
-`water_probe_begin`/`water_probe_take` and `tools/water_web_check.mjs` check actual Chrome WebGPU
-execution and asynchronous mapping without making a browser game-tick claim.
+`water_probe_begin`/`water_probe_take` and `tools/water/water_web_check.mjs` check actual Chrome
+WebGPU execution and asynchronous mapping without making a browser game-tick claim.
 
 ### Browser game-worker GPU execution
 
@@ -711,12 +710,12 @@ one render-feed publication per completed GPU tick. An actual host cancellation 
 typed `water.compute_failed` and the previous snapshot boundary.
 
 Build with `SKIP_VIEWPORT=1 tools/build_web.sh tests/fixtures/scenes/water-dam` after building the
-viewport; serve `web/` and run `node tools/water_worker_check.mjs`. This executes the game's physics
-system, unlike the isolated viewport probes. It still clones the input and reads the complete field
-each tick, retaining the current synchronous gameplay-query/checkpoint semantics. Native GPU
-factories and their synchronous replay/fork path remain as before. Browser GPU replay verification
-and async lookahead command integration remain unverified; repeating inputs in one browser is not a
-proof of cross-device determinism or the replay-file verifier.
+viewport; serve `web/` and run `node tools/water/water_worker_check.mjs`. This executes the game's
+physics system, unlike the isolated viewport probes. It still clones the input and reads the
+complete field each tick, retaining the current synchronous gameplay-query/checkpoint semantics.
+Native GPU factories and their synchronous replay/fork path remain as before. Browser GPU replay
+verification and async lookahead command integration remain unverified; repeating inputs in one
+browser is not a proof of cross-device determinism or the replay-file verifier.
 
 Browser viewports now default to two outstanding render frames. The old explicit `0` remains an
 unbounded throughput experiment: without display pacing, it can starve the worker's GPU queue.
@@ -879,13 +878,14 @@ change or a relaxed deterministic check.
 
 ### Browser residency and publication
 
-`tools/water_resident_worker_check.mjs` drives the shipped worker and viewport on a real baseline
-WebGPU adapter. Two 32² runs repeat their full hash streams, preserve 1024 m³, expose current-tick
-probe depth, restore the retained tick 60 through a bounded GPU replay and reproduce the original
-hashes through tick 130. An added source contributes once per tick. The 512²/64-probe case records
-one seed upload, 65 small readbacks (initial digest plus 64 steps), no full readback during steps
-1–63 and one exact 4-MiB checkpoint at step 64. A warm-host abort must publish a typed failure and
-the last completed tick 64. This is actual GPU execution, not the identity-host scheduling test.
+`tools/water/water_resident_worker_check.mjs` drives the shipped worker and viewport on a real
+baseline WebGPU adapter. Two 32² runs repeat their full hash streams, preserve 1024 m³, expose
+current-tick probe depth, restore the retained tick 60 through a bounded GPU replay and reproduce
+the original hashes through tick 130. An added source contributes once per tick. The 512²/64-probe
+case records one seed upload, 65 small readbacks (initial digest plus 64 steps), no full readback
+during steps 1–63 and one exact 4-MiB checkpoint at step 64. A warm-host abort must publish a typed
+failure and the last completed tick 64. This is actual GPU execution, not the identity-host
+scheduling test.
 
 Whole CPU checkpoint publication must also remain bounded in cost. Registered immutable resource
 sections reuse their PCE bytes until ECS change ticks say they changed; browser transport sends
@@ -958,7 +958,7 @@ is a sensor example, not buoyancy or body backreaction.
 `amoris check tests/fixtures/scenes/water-probes --only types --json` checks the generated SDK.
 Native GPU tests cover frozen results, read-only outputs, ordinary and column requests,
 disable/enable, removal/reinsert and fork/restore. Actual browser checks use
-`tools/water_probe_script_check.mjs`; retained evidence and the version-2 metadata cost are in
+`tools/water/water_probe_script_check.mjs`; retained evidence and the version-2 metadata cost are in
 liquids.md 5. Other interaction, boundary, optical and LOD requirements remain open.
 
 ## 21. GPU camera-side water medium (2026-10-19)
@@ -1600,7 +1600,7 @@ native readback exposes current stencils and selected indices; a diagnostic comp
 the same vertex function as rendering for independent position checks. These are verification tools,
 not part of normal frame execution. Native actual-geometry tests check bridge coverage, projected
 error, both boundary directions, GPU boundary heights, completion and recovery after a current field
-edit. tools/water_morph_check.mjs checks real browser-frame transitions and bounded counters.
+edit. tools/water/water_morph_check.mjs checks real browser-frame transitions and bounded counters.
 Measurements and remaining limitations are recorded in liquids.md 5. Authoritative physics,
 checkpoints, numerical identity and game queries are unchanged by this rendering slice.
 
@@ -2457,12 +2457,12 @@ a secondary-action pulse on the dry pad retries while retaining the best time. N
 teleport, outside-region and fork/restore checks. Physics identity-host tests cover suspension,
 cancellation, feedback offsets, overflow and pure-CPU overlap regression. All native app
 water/floater/feedback/swimming cases pass on Metal, baseline Metal and baseline MoltenVK. Actual
-Chrome keyboard/mouse play, captured frames and complete timing use `tools/water_pool_check.mjs`. A
-fixed-input native before/after comparison preserves all 765 recorded actor states and full world
-hashes byte for byte across the sleeping-data optimization; a CPU fresh-host control preserves 80
-pose/Walker states while reducing requests from 80 to two. That gameplay evidence demonstrates the
-resident swimming bridge. It does not establish swimmer displacement, dense 3D water or final visual
-quality.
+Chrome keyboard/mouse play, captured frames and complete timing use
+`tools/water/water_pool_check.mjs`. A fixed-input native before/after comparison preserves all 765
+recorded actor states and full world hashes byte for byte across the sleeping-data optimization; a
+CPU fresh-host control preserves 80 pose/Walker states while reducing requests from 80 to two. That
+gameplay evidence demonstrates the resident swimming bridge. It does not establish swimmer
+displacement, dense 3D water or final visual quality.
 
 ## 45. Current-field Hull forces
 
@@ -4291,11 +4291,11 @@ f32 state words, checkpoints, programs and every earlier section's behaviour.
   `golden/water-digests.txt` on Metal, on Vulkan (MoltenVK) and on the WebGPU baseline device; on
   R1 (2026-10-23, unblessed) on the RTX 5060 and the 780M under Direct3D 12 and Vulkan and on both
   GPUs' baseline devices. FXC cannot compile the kernels' `boundary_predict` (gpu-matrix.md 14).
-- `node tools/water_determinism_check.mjs`: the same samples in Chrome's game worker (Dawn and Tint
-  compiling the WGSL, not wgpu and naga) give the record's digests on the M5 and, in Windows Chrome
-  (Dawn over Direct3D 12), on R1's RTX 5060 and 780M; with `--adapter
-  swiftshader`, on SwiftShader, Chrome's WebGPU on the CPU, a device of another kind entirely,
-  over each sample's first 120 ticks (`--ticks 120`: a CPU takes six minutes for those).
+- `node tools/water/water_determinism_check.mjs`: the same samples in Chrome's game worker (Dawn and
+  Tint compiling the WGSL, not wgpu and naga) give the record's digests on the M5 and, in Windows
+  Chrome (Dawn over Direct3D 12), on R1's RTX 5060 and 780M; with `--adapter swiftshader`, on
+  SwiftShader, Chrome's WebGPU on the CPU, a device of another kind entirely, over each sample's
+  first 120 ticks (`--ticks 120`: a CPU takes six minutes for those).
 - `amoris hashes <sample>` gives the same world hash after every tick on Metal and Vulkan; before,
   every scene with GPU water parted at its first tick. On R1 (2026-10-23), surf-beach (600 ticks),
   pool-party, river-falls, water-valley, water-storm and water-resident (300) give byte-identical
@@ -4462,7 +4462,7 @@ traces the water's reflected rays:
   validates and replaces only what it traces.
 - `cargo test --release -p amoris-app --test gpu_determinism`: the storm's 300 ticks join the
   record, with the same digests on Metal, Vulkan (MoltenVK) and the WebGPU baseline device, in
-  Chrome on the M5 (`tools/water_determinism_check.mjs`) and, over its first 120 ticks, on
+  Chrome on the M5 (`tools/water/water_determinism_check.mjs`) and, over its first 120 ticks, on
   SwiftShader; the other samples' digests are unchanged, in Chrome too.
 - `samples/water-storm` served headless (`amoris serve`, `amoris call capture`): the crates drift
   downwind, one 6.7 m in 25 s.
@@ -4598,7 +4598,7 @@ The cost is in [liquids.md](../bench/liquids.md) 21.
   parts into drops where a heap of grey discs rose and hung; the river falls' foot (`--eye 46,2.5,8
   --at 34.6,3.5,14.7`, tick 1200) has a white mist and fine drops where white discs flew.
 - The pool party and the river falls exported for the web and played in Chrome
-  (`tools/web_play_check.mjs`).
+  (`tools/host/web_play_check.mjs`).
 
 Limits:
 

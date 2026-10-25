@@ -8,7 +8,7 @@
 //! cargo run --release -p amoris-app --example ripple_shots -- --sample pool-party --out out/ripples
 //! `--only on|off` draws one renderer, the player's eye with the ripples on or off, and captures
 //! nothing: with `AMORIS_TRACE=frames=300,skip=120,out=PATH`, a frame trace for
-//! `tools/frame_trace.py` (the passes overlap, so their sum is no cost; the frame span and the
+//! `tools/render/frame_trace.py` (the passes overlap, so their sum is no cost; the frame span and the
 //! passes' union are).
 #[path = "../src/water_compute.rs"]
 mod water_compute;

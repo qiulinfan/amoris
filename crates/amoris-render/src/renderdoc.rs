@@ -1,6 +1,6 @@
 //! One-frame RenderDoc captures from inside the renderer (docs/bench/dx12.md, "Per-frame
 //! profiling"): with `AMORIS_RENDERDOC_FRAME=N`, when the process runs under RenderDoc (its library
-//! already loaded, as `renderdoccmd capture` and `tools/renderdoc_frame.py` launch it), the N-th
+//! already loaded, as `renderdoccmd capture` and `tools/render/renderdoc_frame.py` launch it), the N-th
 //! `Renderer::render` (from 1) is bracketed with the in-application API's `StartFrameCapture` and
 //! `EndFrameCapture` for any device and window. Headless examples, which never present a frame for
 //! RenderDoc to delimit, are captured the same way as windowed ones.

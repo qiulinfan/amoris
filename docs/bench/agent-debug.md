@@ -32,7 +32,7 @@ cost the agents. This page says what Pioneer built of that list on 2026-10-09 (b
 
 From
 [held-host.json](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/agentdebug/held-host.json)
-(`python tools/held_host_bench.py`, ten rounds, medians) and the smoke run:
+(`python tools/host/held_host_bench.py`, ten rounds, medians) and the smoke run:
 
 | What | Before (debug-eval.md, macOS) | Now (Windows, loaded machine) |
 |---|---|---|
@@ -57,7 +57,7 @@ not always). HTTP figures from new connections are not comparable across runs he
 ## The review of the held host (2026-10-09)
 
 An adversarial review of this branch confirmed two defects in server.md 3.4 as first built; both are
-fixed, and `tools/held_host_review.py` runs the reviewer's reproductions against `amoris serve`
+fixed, and `tools/host/held_host_review.py` runs the reviewer's reproductions against `amoris serve`
 ([held-host-review.json](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/agentdebug/held-host-review.json),
 provisional).
 
@@ -137,8 +137,8 @@ host, and the review tool above.
 
 ## Found on the way
 
-- `tools/smoke_server.py` waited for the edit's `history` push after reading the edit's answer, but
-  the host pushes the history before it answers, so a fast push was consumed with the answer's
+- `tools/host/smoke_server.py` waited for the edit's `history` push after reading the edit's answer,
+  but the host pushes the history before it answers, so a fast push was consumed with the answer's
   frames and the wait timed out (seen once in five runs here). It now looks among those frames too.
 - `amoris serve` on Windows had no way to be stopped gracefully by another process (SIGTERM is
   POSIX): it now stops on Ctrl-Break, which a parent can send a child started in its own process
@@ -167,9 +167,9 @@ host, and the review tool above.
 
 ## Quiet re-measurement (2026-10-10)
 
-`python tools/held_host_bench.py` three times (three `amoris serve` sessions of ten rounds each),
-with no other agent running, on AC power ([quiet-2026-10-09.md](quiet-2026-10-09.md), session 2),
-master `0871920d`'s release build ([held-host-r1.json to
+`python tools/host/held_host_bench.py` three times (three `amoris serve` sessions of ten rounds
+each), with no other agent running, on AC power ([quiet-2026-10-09.md](quiet-2026-10-09.md), session
+2), master `0871920d`'s release build ([held-host-r1.json to
 held-host-r3.json](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/quiet/agentdebug)).
 Median of the 30 calls (minimum to maximum), ms:
 

@@ -1,7 +1,7 @@
 //! Per-frame traces (docs/bench/dx12.md, "Per-frame profiling"): for every frame of a window of
 //! frames, the CPU spans of the render thread and the GPU time of every timestamped pass, exported
 //! as Chrome Trace Event JSON that Perfetto (ui.perfetto.dev) and chrome://tracing open and
-//! `tools/frame_trace.py` summarizes and compares.
+//! `tools/render/frame_trace.py` summarizes and compares.
 //!
 //! Armed by `AMORIS_TRACE=frames=N[,skip=S][,out=PATH]` (`:` works as well as `=`; a bare number is
 //! the frame count) or [`crate::Renderer::start_trace`]: the first S frames (default 60) are

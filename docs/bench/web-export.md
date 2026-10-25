@@ -2,7 +2,7 @@
 
 The itch.io HTML5 build of amoris-samples' blockcraft (657caae), exported by
 `cargo xtask export-web` (docs/spec/web-export.md) from this branch on 2026-10-18 and played by
-`node tools/web_play_check.mjs`: headless Chrome 155 with WebGPU on macOS (Metal, Apple M5),
+`node tools/host/web_play_check.mjs`: headless Chrome 155 with WebGPU on macOS (Metal, Apple M5),
 1280 x 720 CSS pixels, held to a 60 Hz display, after the spawn view settled. Raw runs stay in
 ignored `out/`.
 

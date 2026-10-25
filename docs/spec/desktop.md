@@ -57,20 +57,20 @@ an application check, use a copy of a sample outside the checkout, launch the pa
 Apply a TypeScript script to verify the bundled checker, switch projects, and quit; the previous
 host must exit and remove `.amoris/host.json`.
 
-`node tools/desktop_smoke.mjs [--sample samples/sailing] [--out <dir>]` runs that check without a
-person, up to the edit: it starts the app on a copy of the sample with Chromium's remote debugging,
-and through the DevTools protocol checks the host's readiness identity, **WebGPU (wasm)** in the
-status bar and a drawing canvas, Play (the world forks and ticks run) and Stop (the edit world's
-hash is back), then closes the window as a person would (WM_CLOSE on Windows, SIGTERM elsewhere)
-and checks that the host exited and removed `.amoris/host.json`. It writes a JSON summary and
-half-size screenshots of the edit and play views.
+`node tools/host/desktop_smoke.mjs [--sample samples/sailing] [--out <dir>]` runs that check without
+a person, up to the edit: it starts the app on a copy of the sample with Chromium's remote
+debugging, and through the DevTools protocol checks the host's readiness identity, **WebGPU (wasm)**
+in the status bar and a drawing canvas, Play (the world forks and ticks run) and Stop (the edit
+world's hash is back), then closes the window as a person would (WM_CLOSE on Windows, SIGTERM
+elsewhere) and checks that the host exited and removed `.amoris/host.json`. It writes a JSON summary
+and half-size screenshots of the edit and play views.
 
 ### Windows (2026-10-09, Pioneer)
 
 Run from source on Windows 11 with Electron 44.5.1 (`npm ci` in `desktop/`), the editor built in
 `editor/`, a debug `amoris.exe` (`AMORIS_BINARY`) and the SDK's `tsc.exe` (`AMORIS_TSC`): `npm test`
 passes (18, the packaged-runtime test skipped without `AMORIS_TEST_RESOURCES`); that test passes too
-with the resources assembled by hand; and `tools/desktop_smoke.mjs` passes every step on
+with the resources assembled by hand; and `tools/host/desktop_smoke.mjs` passes every step on
 samples/sailing
 ([evidence/polish/desktop/](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/polish/desktop)).
 Electron chose the Radeon 780M (`amd rdna-3`), as Chrome does without

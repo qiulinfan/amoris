@@ -249,9 +249,9 @@ triangles the last submitted frame drew (natively; it waits for the GPU), and
     off draws (`off-limit`), and levels come back once the hidden spheres are removed.
 - The existing checks run with levels on: `draw_paths.rs` and `occlusion.rs` draw the primitives
   and the mixed model, whose spheres, capsules and tori have levels.
-- `python tools/lod_mutations.py [--out file.json]` puts known bugs into the code one at a time,
-  runs the checks against each and restores the file; it fails if any mutation survives. Results are
-  in [docs/bench/lod.md](../bench/lod.md) 5.
+- `python tools/render/lod_mutations.py [--out file.json]` puts known bugs into the code one at a
+  time, runs the checks against each and restores the file; it fails if any mutation survives.
+  Results are in [docs/bench/lod.md](../bench/lod.md) 5.
 
 ## 9. Open
 

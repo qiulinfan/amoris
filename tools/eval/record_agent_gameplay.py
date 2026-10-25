@@ -9,7 +9,7 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "tools"))
+sys.path[:0] = [str(ROOT / "tools" / "site"), str(ROOT / "tools" / "host")]
 from showcase_record import encode
 from agent_gameplay import replay_actions
 

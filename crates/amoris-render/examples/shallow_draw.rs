@@ -9,7 +9,7 @@
 //!
 //! `--off` hands no water to the renderer (the same frames otherwise), `--away` hands it over but
 //! looks at the sky (the upload without the draw); compare the traces with
-//! `python tools/frame_trace.py diff`. Prints the median capture time and the host's time to build
+//! `python tools/render/frame_trace.py diff`. Prints the median capture time and the host's time to build
 //! and hand over each frame's columns.
 
 use amoris_assets::frame::{

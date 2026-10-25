@@ -125,14 +125,14 @@ buffer back; it fails with the batches' bookkeeping broken (only the last batch 
   working-tree snapshots taken while each step was being made, 7 to 46 minutes before its commit;
   `f` = up to (f) has no commit. 5.2 cites the first pass for what the quiet sessions did not
   measure.
-- `python tools/dynamic_scenes_bench.py` (section 7): many_cubes' sphere of 1.6M cubes (one mesh;
-  the adapter's defaults, MSAA and GTAO from depth on the RTX, TAA without GTAO on the 780M;
+- `python tools/render/dynamic_scenes_bench.py` (section 7): many_cubes' sphere of 1.6M cubes (one
+  mesh; the adapter's defaults, MSAA and GTAO from depth on the RTX, TAA without GTAO on the 780M;
   occlusion culling and the prepass `auto`; no shadows), 1280x720 offscreen,
   `--headless-bench 60 --warm 30 --settle 5`; every frame a new tick turning N cubes (`--moving N`,
-  the first N slots) or N cubes K slots apart (`--sparse K`, `sparse-10k` is every 160th cube).
-  Per run, medians over the measured frames: `apply` is `Renderer::apply` (the host times it;
-  building the feed's frame, `feed`, is apart), "scene sync" the trace span of `Renderer::render`
-  that writes the dirty slots (`--trace`, read with tools/frame_trace.py), render CPU
+  the first N slots) or N cubes K slots apart (`--sparse K`, `sparse-10k` is every 160th cube). Per
+  run, medians over the measured frames: `apply` is `Renderer::apply` (the host times it; building
+  the feed's frame, `feed`, is apart), "scene sync" the trace span of `Renderer::render` that writes
+  the dirty slots (`--trace`, read with tools/render/frame_trace.py), render CPU
   `FrameStats::cpu_ms` (all of `render`, the sync included), frame the wall time from the tick to
   GPU idle, GPU the timestamped passes' sum.
 - Clocks: nvidia-smi samples the RTX's graphics and memory clocks and P-state every 100 ms, and
@@ -332,10 +332,10 @@ driver does when the frame's work arrives was not resolved at 100 ms.
 
 ## 6. Images and tests
 
-`python tools/build_compare.py --before out/dynscene/quiet/before` (2026-10-15 04:11 to 04:21)
-captured every case of the tool with `before` and with `after` (this checkout's release build of
-`8ba7b617`, the code of `6cbab5a0`) and compared them pixel for pixel: many_cubes with 200,000 cubes
-and shadows, the dense grid, the 1M-splat garden, gi-room and pt-lab, the skinned crowd
+`python tools/render/build_compare.py --before out/dynscene/quiet/before` (2026-10-15 04:11 to
+04:21) captured every case of the tool with `before` and with `after` (this checkout's release build
+of `8ba7b617`, the code of `6cbab5a0`) and compared them pixel for pixel: many_cubes with 200,000
+cubes and shadows, the dense grid, the 1M-splat garden, gi-room and pt-lab, the skinned crowd
 (`lod_field --crowd 40`) and three cases this branch added to the tool, a tick every frame turning
 every cube (`cubes-moving`, one run: direct writes), every tenth (`cubes-moving-sparse`, scattered)
 and every fifth cube of the dense grid (`cubes-dense-moving`, 320,000 scattered slots); with MSAA,
@@ -401,42 +401,42 @@ B=out/dynscene
 T="--frames 60 --warm 30 --settle 5 --rounds 3"
 
 # 5.1 (about 31 minutes) and the 1.6M case (about 7).
-python tools/dynamic_scenes_bench.py --build before=$B/before --build after=$B/after $T \
+python tools/render/dynamic_scenes_bench.py --build before=$B/before --build after=$B/after $T \
     --cases static,moving-1k,moving-10k,moving-100k,sparse-1k,sparse-10k,sparse-100k \
     --backends dx12,vulkan --conditions $B/quiet-rtx --summary $B/quiet-rtx.json
-python tools/dynamic_scenes_bench.py --build g=$B/g --build after=$B/after $T \
+python tools/render/dynamic_scenes_bench.py --build g=$B/g --build after=$B/after $T \
     --cases moving-1.6m --backends dx12,vulkan --summary $B/quiet-1.6m.json
 # 5.2: each step against the one before it (about 39 minutes for before:a, whose sparse-100k
 # frames take seconds, 22 for a:c, 9 for each of the others; (f) has no commit of its own, so
 # (g)'s row is (f) and (g) together).
 for p in before:a a:c c:e e:g; do
-  python tools/dynamic_scenes_bench.py --build ${p%:*}=$B/${p%:*} --build ${p#*:}=$B/${p#*:} $T \
+  python tools/render/dynamic_scenes_bench.py --build ${p%:*}=$B/${p%:*} --build ${p#*:}=$B/${p#*:} $T \
       --cases moving-10k,moving-100k,sparse-10k,sparse-100k --backends dx12,vulkan \
       --summary $B/quiet-step-${p%:*}-${p#*:}.json
 done
 # 5.3: the 780M (about 26 minutes).
-python tools/dynamic_scenes_bench.py --build before=$B/before --build after=$B/after $T \
+python tools/render/dynamic_scenes_bench.py --build before=$B/before --build after=$B/after $T \
     --cases static,moving-10k,moving-100k,sparse-10k,sparse-100k --adapters 780m \
     --backends dx12,vulkan --conditions $B/quiet-780m --summary $B/quiet-780m.json
 # 5.4: the skinning dispatch alone (about 5 minutes).
-python tools/dynamic_scenes_bench.py --build e=$B/e --build d=$B/d --warm 30 --crowd-frames 120 \
+python tools/render/dynamic_scenes_bench.py --build e=$B/e --build d=$B/d --warm 30 --crowd-frames 120 \
     --settle 5 --rounds 5 --cases crowd --backends dx12,vulkan --summary $B/quiet-crowd.json
 # 5.5 and rt-shadows.md's moving row and correction (about 22 minutes, the stalled run 7), then
 # 5.6 (about 6 and 5).
-python tools/dynamic_scenes_bench.py --build before=$B/before --build after=$B/after \
+python tools/render/dynamic_scenes_bench.py --build before=$B/before --build after=$B/after \
     --rt-frames 60 --settle 5 --rounds 3 --rt-first --cases rt-200k-moving \
     --backends dx12,vulkan --summary $B/quiet-rt.json
-python tools/dynamic_scenes_bench.py --build after=$B/after --rt-frames 60 --settle 5 --rt-first \
+python tools/render/dynamic_scenes_bench.py --build after=$B/after --rt-frames 60 --settle 5 --rt-first \
     --stall 900 --cases rt-200k-moving --backends dx12,vulkan --summary $B/quiet-rt-stall.json
-python tools/dynamic_scenes_bench.py --build before=$B/before --build after=$B/after $T \
+python tools/render/dynamic_scenes_bench.py --build before=$B/before --build after=$B/after $T \
     --cases moving-100k --backends dx12,vulkan --summary $B/quiet-ctl.json
-python tools/dynamic_scenes_bench.py --build after=$B/after $T --stall 275 \
+python tools/render/dynamic_scenes_bench.py --build after=$B/after $T --stall 275 \
     --cases moving-100k --backends dx12,vulkan --summary $B/quiet-ctl-stall.json
 # 6: images (with this checkout's own build of the examples) and tests.
 cargo build --release -p amoris-render --example many_cubes --example lod_field --example splats \
     --example showcase_bench --example image_diff
-python tools/build_compare.py --before $B/before --backends dx12,vulkan
-python tools/build_compare.py --before $B/before --backends dx12,vulkan --adapters 780m \
+python tools/render/build_compare.py --before $B/before --backends dx12,vulkan
+python tools/render/build_compare.py --before $B/before --backends dx12,vulkan --adapters 780m \
     --modes msaa,taa
 cargo test -p amoris-render --lib scene::
 AMORIS_BACKEND=dx12 cargo test -p amoris-render   # and vulkan; AMORIS_ADAPTER=780m for each
