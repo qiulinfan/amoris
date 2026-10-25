@@ -1037,11 +1037,11 @@ wgpu 通过本机冷启动、移动、蒙皮与多采样回归后移除这些约
 
 ### 4.9 方块体积与第一人称身体（2026-10-17）
 
-2026-10-17，所有者决定引擎与游戏一起开发：游戏放在独立的公开仓库
-[amoris-samples](https://github.com/qiulinfan/amoris-samples)，开发游戏时发现的需求由引擎原生支持，
-不在游戏里绕开。第一个这样的需求来自其中的 blockcraft（方块沙盒）：玩家能在静态世界里走，却不能挖
-方块、放方块。原因有四个：行走相机是 presenter 一侧的状态，不在世界里；脚本收不到指针输入；脚本既
-不能改几何，也不能发射线；行走碰撞只在加载时从场景文件建一次。
+2026-10-17，所有者决定引擎与游戏一起开发：开发游戏时发现的需求由引擎原生支持，不在游戏里绕开。游戏起
+初放在独立的公开仓库 [amoris-samples](https://github.com/qiulinfan/amoris-samples)，2026-10-25 起放
+在引擎仓库的 `samples/`（5.4）。第一个这样的需求来自其中的 blockcraft（方块沙盒）：玩家能在静态世界
+里走，却不能挖方块、放方块。原因有四个：行走相机是 presenter 一侧的状态，不在世界里；脚本收不到指针
+输入；脚本既不能改几何，也不能发射线；行走碰撞只在加载时从场景文件建一次。
 
 决定（所有者 2026-10-17 接受，规格见 [voxels.md](spec/voxels.md)）：
 
@@ -1306,6 +1306,36 @@ Python：`tools/neural/`（神经资源训练）、`tools/eval/`（评测）。
 
 - 游戏在 Web Worker 里跑同一个 wasm；页面主线程跑 WebGPU 渲染；快照以 transferable buffer 传递
   （Amoris Pioneer threads spike：10⁵ 实体 0.39 ms）。
+
+### 5.4 目录
+
+2026-10-25，所有者要求参照 Unreal 与 Godot 整理仓库的结构，并把整理交给代理；仓库按下面的规则组织，
+完整的目录树与每个 crate 的职责见 [architecture.md](spec/architecture.md) 3。
+
+- `crates/` 平铺，不按目录分组。分组由 `tools/crate-graph.toml` 声明，共
+  contract、game、link、presenter、tool、app 六组，`cargo xtask check` 的 deps 步骤在主机与 `wasm32`
+  上强制检查依赖边；它承担 UE 的 Runtime、Editor、Developer、Programs 模块类型所起的作用。新 crate
+  或新依赖边同时改 `crate-graph.toml`、architecture.md 5 与 5.1 的表。
+- `samples/` 放游戏与演示，每个游戏是一个自足的文件夹，带自己的 README。所有者决定把 amoris-samples
+  的游戏“作为引擎用例搬到引擎里面”，不再放在独立仓库（取代 4.9 开头的安排）；Unreal 的 `Samples/` 与
+  Bevy 的 `examples/` 也把示例放在引擎仓库里（Godot 的示例另放仓库）。第一个迁入的是
+  `qiulinfan/amoris-samples` 的 blockcraft（`samples/blockcraft/`），引擎里用到它的示例与基准因此不
+  再依赖旁边的另一个检出。`samples/` 里目前还有只给测试、检查与测量工具读的场景（八个没有 README 的
+  `water-*`，以及 `gi-room`、`pt-lab`），它们与 `tests/fixtures/` 的划分以后再定。
+- `tests/fixtures/` 放只有测试与检查读的项目：`controls/` 是检查的负对照，`sdk/` 是 SDK 的类型测试。
+- 生成的文件（场景、网格、纹理、方块数据、`.d.ts`、提交的 wasm 包）与写它们的生成器一起提交，改动靠
+  重新生成，不手改；项目的生成器放在项目自己的文件夹里，如 `build_scene.py` 与 blockcraft 的
+  `gen_world.py`。`tools/` 里目前还有五个项目的生成
+  器：`water_shore_scene.py`、`water_slope_scene.py` 与 `generate_pt_fixture.py` 写测试场
+  景，`bake_town_walk.py` 与 `prepare_walk_model.py` 写 town-walk 的光照与模型，以后再搬到各自的项目
+  里。
+- `tools/` 放脚本（Python、shell、Node：构建、测量、比较与浏览器检查）和检查读的配置
+  （`crate-graph.toml`、`clippy-determinism.toml`、`lint-fixture/`），目前平铺，按文件名前缀归
+  类；`tools/vscode/` 是脚本调试器的 VS Code 配置。基准的工作负载与对照实现放在 `bench/`。
+- 不设 `plugins/`、`templates/` 或 `platform/` 目录，直到有具体的东西要放：Rust 没有稳定的 ABI 在运
+  行时加载模块，可选部分做成 crate 与 feature（如只在原生构建的 `amoris-audio`）；引擎没有
+  `amoris new` 这样的项目脚手架，模板目录无物可放；平台层由 wgpu 与 winit 承担，原生与浏览器的入口是
+  `amoris-app` 与 `amoris-web` 两个 crate，`desktop/` 与 `web/` 是它们的外壳。
 
 ## 6. 证明目标与测量
 
