@@ -1,15 +1,12 @@
 //! Liquid particles on the GPU (docs/spec/splashes.md 4, docs/spikes/fluid-box.md): an MLS-MPM
 //! solver (shaders/fluid_mpm.wgsl) in up to four regions, each a box of solver cells with a mask of
-//! the blocks in it, over one ring of particles; drawn as a smoothed surface
-//! (shaders/fluid_surface.wgsl: the particles' depth and thickness in textures of their own before
-//! the opaque pass, a bilateral filter, then a full-screen pass after the transparent instances).
+//! the blocks in it, over one ring of particles, drawn by the liquid surface (fluid_surface.rs).
 //! The splashes over block liquids (splash.rs) and the fluid box of the spike both run on it.
 //! Presentation only, like the particles: it runs on the GPU's float arithmetic, which differs
 //! between backends, so nothing here reaches the world or its hash.
 
 use bytemuck::{Pod, Zeroable};
 
-use crate::post::{DEPTH, SceneFormat};
 use crate::shaders;
 
 /// The fluid box of the spike: a box of `grid` cells of `cell_m` metres with its corner at
@@ -129,189 +126,12 @@ struct RegionGpu {
     generation: [u32; 4],
 }
 
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-struct Look {
-    size: [f32; 4],
-    blur: [f32; 4],
-}
-
 /// An open region: its corner in the world, metres per solver cell, its liquid's absorption.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Region {
     pub origin: [f32; 3],
     pub cell_m: f32,
     pub absorb: [f32; 3],
-}
-
-/// The surface's textures, at the opaque pass's size.
-struct Surface {
-    size: (u32, u32),
-    /// The particles' nearest depth, then the filter's two passes ping-ponging.
-    depth: [wgpu::TextureView; 2],
-    zbuffer: wgpu::TextureView,
-    thickness: wgpu::TextureView,
-}
-
-fn view_of(
-    device: &wgpu::Device,
-    label: &str,
-    size: (u32, u32),
-    format: wgpu::TextureFormat,
-) -> wgpu::TextureView {
-    device
-        .create_texture(&wgpu::TextureDescriptor {
-            label: Some(label),
-            size: wgpu::Extent3d {
-                width: size.0.max(1),
-                height: size.1.max(1),
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        })
-        .create_view(&Default::default())
-}
-
-impl Surface {
-    fn new(device: &wgpu::Device, size: (u32, u32)) -> Surface {
-        let r32 = wgpu::TextureFormat::R32Float;
-        Surface {
-            size,
-            depth: [
-                view_of(device, "fluid depth", size, r32),
-                view_of(device, "fluid depth (filtered)", size, r32),
-            ],
-            zbuffer: view_of(device, "fluid z", size, DEPTH),
-            thickness: view_of(
-                device,
-                "fluid thickness",
-                size,
-                wgpu::TextureFormat::Rgba16Float,
-            ),
-        }
-    }
-}
-
-/// The surface's pipelines.
-struct SurfacePipes {
-    depth: wgpu::RenderPipeline,
-    thickness: wgpu::RenderPipeline,
-    blur: wgpu::RenderPipeline,
-    surface: wgpu::RenderPipeline,
-}
-
-fn surface_pipes(
-    device: &wgpu::Device,
-    m: &wgpu::ShaderModule,
-    format: SceneFormat,
-) -> SurfacePipes {
-    let pipe = |label: &str,
-                vs: &str,
-                fs: &str,
-                targets: &[Option<wgpu::ColorTargetState>],
-                depth: Option<wgpu::DepthStencilState>,
-                multisample: wgpu::MultisampleState| {
-        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some(label),
-            layout: None,
-            vertex: wgpu::VertexState {
-                module: m,
-                entry_point: Some(vs),
-                compilation_options: Default::default(),
-                buffers: &[],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: m,
-                entry_point: Some(fs),
-                compilation_options: Default::default(),
-                targets,
-            }),
-            primitive: Default::default(),
-            depth_stencil: depth,
-            multisample,
-            multiview_mask: None,
-            cache: None,
-        })
-    };
-    let target = |format, blend| {
-        Some(wgpu::ColorTargetState {
-            format,
-            blend,
-            write_mask: wgpu::ColorWrites::ALL,
-        })
-    };
-    let add = wgpu::BlendState {
-        color: wgpu::BlendComponent {
-            src_factor: wgpu::BlendFactor::One,
-            dst_factor: wgpu::BlendFactor::One,
-            operation: wgpu::BlendOperation::Add,
-        },
-        alpha: wgpu::BlendComponent {
-            src_factor: wgpu::BlendFactor::One,
-            dst_factor: wgpu::BlendFactor::One,
-            operation: wgpu::BlendOperation::Add,
-        },
-    };
-    let premultiplied = wgpu::BlendState {
-        color: wgpu::BlendComponent {
-            src_factor: wgpu::BlendFactor::One,
-            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-            operation: wgpu::BlendOperation::Add,
-        },
-        alpha: wgpu::BlendComponent::OVER,
-    };
-    let one = wgpu::MultisampleState::default();
-    SurfacePipes {
-        depth: pipe(
-            "fluid depth",
-            "depth_vs",
-            "depth_fs",
-            &[target(wgpu::TextureFormat::R32Float, None)],
-            Some(wgpu::DepthStencilState {
-                format: DEPTH,
-                depth_write_enabled: Some(true),
-                depth_compare: Some(wgpu::CompareFunction::Greater),
-                stencil: Default::default(),
-                bias: Default::default(),
-            }),
-            one,
-        ),
-        thickness: pipe(
-            "fluid thickness",
-            "thick_vs",
-            "thick_fs",
-            &[target(wgpu::TextureFormat::Rgba16Float, Some(add))],
-            None,
-            one,
-        ),
-        blur: pipe(
-            "fluid filter",
-            "screen_vs",
-            "blur_fs",
-            &[target(wgpu::TextureFormat::R32Float, None)],
-            None,
-            one,
-        ),
-        surface: pipe(
-            "fluid surface",
-            "screen_vs",
-            "surface_fs",
-            &format.targets(Some(premultiplied), false),
-            Some(wgpu::DepthStencilState {
-                format: DEPTH,
-                depth_write_enabled: Some(false),
-                depth_compare: Some(wgpu::CompareFunction::Greater),
-                stencil: Default::default(),
-                bias: Default::default(),
-            }),
-            format.multisample(),
-        ),
-    }
 }
 
 /// The box's mask: solid within three cells of every face.
@@ -362,18 +182,12 @@ pub struct Fluid {
     particles: wgpu::Buffer,
     regions_buf: wgpu::Buffer,
     masks: wgpu::Buffer,
-    look: wgpu::Buffer,
     group: wgpu::BindGroup,
     clear: wgpu::ComputePipeline,
     p2g_mass: wgpu::ComputePipeline,
     p2g_force: wgpu::ComputePipeline,
     update: wgpu::ComputePipeline,
     g2p: wgpu::ComputePipeline,
-    surface_module: wgpu::ShaderModule,
-    pipes: SurfacePipes,
-    surface: Option<Surface>,
-    /// One look buffer per filter direction (the filter's passes run in one encoder).
-    blur_looks: [wgpu::Buffer; 2],
     regions: [Option<Region>; SLOTS],
     gens: [u32; SLOTS],
     /// The ring's next slot.
@@ -391,7 +205,7 @@ pub struct Fluid {
 }
 
 impl Fluid {
-    pub fn new(device: &wgpu::Device, spec: SolverSpec, format: SceneFormat) -> Fluid {
+    pub fn new(device: &wgpu::Device, spec: SolverSpec) -> Fluid {
         let buf = |label: &str, size: u64, usage: wgpu::BufferUsages| {
             device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some(label),
@@ -425,8 +239,6 @@ impl Fluid {
             spec.mask_words() * SLOTS as u64 * 4,
             wgpu::BufferUsages::STORAGE,
         );
-        let look_size = std::mem::size_of::<Look>() as u64;
-        let look = buf("fluid look", look_size, wgpu::BufferUsages::UNIFORM);
         let entry = |binding: u32, ty: wgpu::BufferBindingType| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::COMPUTE,
@@ -490,28 +302,18 @@ impl Fluid {
                 },
             ],
         });
-        let surface_module = shaders::module(device, "fluid_surface");
-        let pipes = surface_pipes(device, &surface_module, format);
         Fluid {
             spec,
             params,
             particles,
             regions_buf,
             masks,
-            look,
             group,
             clear: compute("clear_grid"),
             p2g_mass: compute("p2g_mass"),
             p2g_force: compute("p2g_force"),
             update: compute("update_grid"),
             g2p: compute("g2p"),
-            surface_module,
-            pipes,
-            surface: None,
-            blur_looks: [
-                buf("fluid filter x", look_size, wgpu::BufferUsages::UNIFORM),
-                buf("fluid filter y", look_size, wgpu::BufferUsages::UNIFORM),
-            ],
             regions: [None; SLOTS],
             gens: [0; SLOTS],
             head: 0,
@@ -524,12 +326,7 @@ impl Fluid {
     }
 
     /// The fluid box of the spike: one region, its walls in the mask, its block of liquid spawned.
-    pub fn boxed(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        spec: FluidSpec,
-        format: SceneFormat,
-    ) -> Fluid {
+    pub fn boxed(device: &wgpu::Device, queue: &wgpu::Queue, spec: FluidSpec) -> Fluid {
         let positions = initial_particles(&spec);
         let solver = SolverSpec {
             dims: spec.grid,
@@ -540,7 +337,7 @@ impl Fluid {
             spacing: spec.spacing,
             tuning: spec.tuning,
         };
-        let mut f = Fluid::new(device, solver, format);
+        let mut f = Fluid::new(device, solver);
         f.open(
             queue,
             0,
@@ -568,6 +365,21 @@ impl Fluid {
     /// velocity xyz (cells/s) then the region's tag (`u32::MAX`: dead), the affine field.
     pub fn particle_buffer(&self) -> &wgpu::Buffer {
         &self.particles
+    }
+
+    /// The regions' uniform (fluid_mpm.wgsl `Region`, four of them): corner, metres per cell,
+    /// absorption, generation.
+    pub fn regions_buffer(&self) -> &wgpu::Buffer {
+        &self.regions_buf
+    }
+
+    /// The largest open region's metres per cell (0: none open).
+    pub fn largest_cell_m(&self) -> f32 {
+        self.regions
+            .iter()
+            .flatten()
+            .map(|r| r.cell_m)
+            .fold(0.0, f32::max)
     }
 
     /// Simulated seconds.
@@ -677,192 +489,21 @@ impl Fluid {
         };
     }
 
-    pub fn set_format(&mut self, device: &wgpu::Device, format: SceneFormat) {
-        self.pipes = surface_pipes(device, &self.surface_module, format);
+    /// Whether `step(dt)` encodes a pass: a caller takes its timestamps only then, since a profiler
+    /// scope no pass wrote resolves stale counters.
+    pub fn encodes(&self, dt: f32) -> bool {
+        self.active() && dt > 0.0
     }
 
-    fn look(&self, blur: [f32; 2]) -> Look {
-        let radius = 0.5 * self.spec.spacing * 1.6;
-        let largest = self
-            .regions
-            .iter()
-            .flatten()
-            .map(|r| r.cell_m)
-            .fold(0.0, f32::max);
-        Look {
-            size: [radius, self.spec.lifetime_s, radius * largest, 0.0],
-            blur: [blur[0], blur[1], 0.0, 0.0],
-        }
-    }
-
-    fn group(
-        &self,
-        device: &wgpu::Device,
-        pipe: &wgpu::RenderPipeline,
-        view: &wgpu::Buffer,
-        look: Option<&wgpu::Buffer>,
-        particles: bool,
-    ) -> wgpu::BindGroup {
-        // Automatic layouts hold only what an entry point reads: the composite reads no look.
-        let mut entries = vec![wgpu::BindGroupEntry {
-            binding: 0,
-            resource: view.as_entire_binding(),
-        }];
-        if let Some(look) = look {
-            entries.push(wgpu::BindGroupEntry {
-                binding: 2,
-                resource: look.as_entire_binding(),
-            });
-        }
-        if particles {
-            entries.push(wgpu::BindGroupEntry {
-                binding: 1,
-                resource: self.particles.as_entire_binding(),
-            });
-            entries.push(wgpu::BindGroupEntry {
-                binding: 3,
-                resource: self.regions_buf.as_entire_binding(),
-            });
-        }
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("fluid surface"),
-            layout: &pipe.get_bind_group_layout(0),
-            entries: &entries,
-        })
-    }
-
-    /// The depth and, for the surface (the filter reads none), the thickness.
-    fn textures(
-        &self,
-        device: &wgpu::Device,
-        pipe: &wgpu::RenderPipeline,
-        depth: &wgpu::TextureView,
-        thickness: Option<&wgpu::TextureView>,
-    ) -> wgpu::BindGroup {
-        let mut entries = vec![wgpu::BindGroupEntry {
-            binding: 0,
-            resource: wgpu::BindingResource::TextureView(depth),
-        }];
-        if let Some(t) = thickness {
-            entries.push(wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::TextureView(t),
-            });
-        }
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("fluid surface textures"),
-            layout: &pipe.get_bind_group_layout(1),
-            entries: &entries,
-        })
-    }
-
-    /// Before the opaque pass: the particles' depth and thickness at the opaque pass's `size`, and
-    /// the filter (twice each way).
-    pub fn prepare_surface(
+    /// Encodes `dt` seconds of simulation (at most 1/30 s) in the spec's substeps, timed by
+    /// `timestamps` when given.
+    pub fn step(
         &mut self,
-        device: &wgpu::Device,
         queue: &wgpu::Queue,
         enc: &mut wgpu::CommandEncoder,
-        view: &wgpu::Buffer,
-        size: (u32, u32),
+        dt: f32,
+        timestamps: Option<wgpu::ComputePassTimestampWrites<'_>>,
     ) {
-        if !self.active() {
-            return;
-        }
-        if self.surface.as_ref().is_none_or(|s| s.size != size) {
-            self.surface = Some(Surface::new(device, size));
-        }
-        queue.write_buffer(&self.look, 0, bytemuck::bytes_of(&self.look([0.0; 2])));
-        for (i, dir) in [[1.0, 0.0], [0.0, 1.0]].into_iter().enumerate() {
-            queue.write_buffer(&self.blur_looks[i], 0, bytemuck::bytes_of(&self.look(dir)));
-        }
-        let Some(t) = self.surface.as_ref() else {
-            return;
-        };
-        fn color(view: &wgpu::TextureView) -> Option<wgpu::RenderPassColorAttachment<'_>> {
-            Some(wgpu::RenderPassColorAttachment {
-                view,
-                depth_slice: None,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                    store: wgpu::StoreOp::Store,
-                },
-            })
-        }
-        let count = self.spec.capacity;
-        {
-            let g = self.group(device, &self.pipes.depth, view, Some(&self.look), true);
-            let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("fluid depth"),
-                color_attachments: &[color(&t.depth[0])],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &t.zbuffer,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(0.0),
-                        store: wgpu::StoreOp::Discard,
-                    }),
-                    stencil_ops: None,
-                }),
-                ..Default::default()
-            });
-            pass.set_pipeline(&self.pipes.depth);
-            pass.set_bind_group(0, &g, &[]);
-            pass.draw(0..6, 0..count);
-        }
-        {
-            let g = self.group(device, &self.pipes.thickness, view, Some(&self.look), true);
-            let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("fluid thickness"),
-                color_attachments: &[color(&t.thickness)],
-                ..Default::default()
-            });
-            pass.set_pipeline(&self.pipes.thickness);
-            pass.set_bind_group(0, &g, &[]);
-            pass.draw(0..6, 0..count);
-        }
-        // Twice each way: one pass of a separable bilateral filter leaves the particles' bumps.
-        for (i, (from, to)) in [(0, 1), (1, 0), (0, 1), (1, 0)].into_iter().enumerate() {
-            let g = self.group(
-                device,
-                &self.pipes.blur,
-                view,
-                Some(&self.blur_looks[i % 2]),
-                false,
-            );
-            let tx = self.textures(device, &self.pipes.blur, &t.depth[from], None);
-            let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("fluid filter"),
-                color_attachments: &[color(&t.depth[to])],
-                ..Default::default()
-            });
-            pass.set_pipeline(&self.pipes.blur);
-            pass.set_bind_group(0, &g, &[]);
-            pass.set_bind_group(1, &tx, &[]);
-            pass.draw(0..3, 0..1);
-        }
-    }
-
-    /// After the transparent instances: the surface over the image, tested against its depth.
-    pub fn draw_surface(
-        &self,
-        device: &wgpu::Device,
-        pass: &mut wgpu::RenderPass<'_>,
-        view: &wgpu::Buffer,
-    ) {
-        let Some(t) = self.surface.as_ref().filter(|_| self.active()) else {
-            return;
-        };
-        let g = self.group(device, &self.pipes.surface, view, None, false);
-        let tx = self.textures(device, &self.pipes.surface, &t.depth[0], Some(&t.thickness));
-        pass.set_pipeline(&self.pipes.surface);
-        pass.set_bind_group(0, &g, &[]);
-        pass.set_bind_group(1, &tx, &[]);
-        pass.draw(0..3, 0..1);
-    }
-
-    /// Encodes `dt` seconds of simulation (at most 1/30 s) in the spec's substeps.
-    pub fn step(&mut self, queue: &wgpu::Queue, enc: &mut wgpu::CommandEncoder, dt: f32) {
         if !self.active() {
             return;
         }
@@ -890,7 +531,7 @@ impl Fluid {
         let cells = (s.region_cells() * SLOTS as u64) as u32;
         let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("fluid"),
-            timestamp_writes: None,
+            timestamp_writes: timestamps,
         });
         pass.set_bind_group(0, &self.group, &[]);
         for _ in 0..substeps {

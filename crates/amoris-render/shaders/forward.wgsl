@@ -107,22 +107,7 @@ fn vs(v: VsIn, @builtin(instance_index) ii: u32, @builtin(vertex_index) vi: u32)
 
 // --- Shading ----------------------------------------------------------------------------------
 
-fn d_ggx(nh: f32, a: f32) -> f32 {
-    let a2 = a * a;
-    let d = nh * nh * (a2 - 1.0) + 1.0;
-    return a2 / (PI * d * d);
-}
-
-fn v_smith(nv: f32, nl: f32, a: f32) -> f32 {
-    let a2 = a * a;
-    let gv = nl * sqrt(nv * nv * (1.0 - a2) + a2);
-    let gl = nv * sqrt(nl * nl * (1.0 - a2) + a2);
-    return 0.5 / max(gv + gl, 1e-5);
-}
-
-fn f_schlick(f0: vec3f, vh: f32) -> vec3f {
-    return f0 + (1.0 - f0) * pow(1.0 - vh, 5.0);
-}
+// (The GGX lobe, Smith's visibility and Schlick's Fresnel are in common.wgsl.)
 
 // Karis' analytic approximation of the split-sum environment BRDF (no lookup table).
 fn env_brdf(f0: vec3f, roughness: f32, nv: f32) -> vec3f {
@@ -1718,17 +1703,6 @@ fn sea_opening(p: vec2f) -> f32 {
         }
     }
     return open;
-}
-
-// Unpolarized dielectric Fresnel. Schlick alone misses the rapid rise just below the
-// water-to-air critical angle, making Snell's window fade incorrectly before total reflection.
-fn shallow_fresnel(cosine:f32,eta:f32) -> f32 {
-    let transmitted=1.0-eta*eta*(1.0-cosine*cosine);
-    if(transmitted<=0.0){return 1.0;}
-    let ct=sqrt(transmitted);
-    let rs=(eta*cosine-ct)/max(eta*cosine+ct,1e-6);
-    let rp=(cosine-eta*ct)/max(cosine+eta*ct,1e-6);
-    return clamp((rs*rs+rp*rp)*0.5,0.0,1.0);
 }
 
 struct ShallowFragment {

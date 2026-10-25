@@ -404,6 +404,13 @@ pub struct Water {
     ripples_on: bool,
     ripples: Option<crate::water_ripples::Ripples>,
     stirs: Vec<(f64, Vec<StirView>)>,
+    /// The feed's latest stirring points, and those that went down fast since the list before
+    /// (water.md 52), waiting for the spray's next advance to throw their crowns.
+    crown_stirs: Option<(f64, Vec<StirView>)>,
+    entering: Vec<crate::water_spray::Entering>,
+    /// Seconds a crown thrown by the last entries may still be alive: the liquid surface draws
+    /// crowns while any may be (`crowns_possible`).
+    crown_s: f32,
     /// The feed's rain, which strikes the ripples' window (water.md 67).
     rain: Option<amoris_assets::frame::RainView>,
     ripple_region: Option<u64>,
@@ -571,6 +578,9 @@ impl Water {
             ripples_on: ripples_from_env(),
             ripples: None,
             stirs: Vec::new(),
+            crown_stirs: None,
+            entering: Vec::new(),
+            crown_s: 0.0,
             rain: None,
             ripple_region: None,
             blank_ripples: device
@@ -672,11 +682,22 @@ impl Water {
             ripples.reset();
         }
         self.stirs.clear();
+        self.crown_stirs = None;
+        self.entering.clear();
+        self.crown_s = 0.0;
         self.ripple_region = None;
     }
 
     /// The feed's points stirring the water at simulated time `t` (water.md 57).
     pub fn set_stirs(&mut self, t: f64, stirs: Vec<StirView>) {
+        if self.spray_on {
+            if let Some((t0, before)) = &self.crown_stirs {
+                let room = crate::water_spray::ENTERING_POINTS.saturating_sub(self.entering.len());
+                let new = crate::water_spray::entering((*t0, before), (t, &stirs));
+                self.entering.extend(new.into_iter().take(room));
+            }
+            self.crown_stirs = Some((t, stirs.clone()));
+        }
         match &mut self.ripples {
             Some(ripples) => ripples.set_stirs(t, &stirs),
             None => {
@@ -686,6 +707,19 @@ impl Water {
                 }
             }
         }
+    }
+
+    /// Whether an entry crown may be alive: the liquid surface then draws the crowns' sheets.
+    pub fn crowns_possible(&self) -> bool {
+        self.crown_s > 0.0
+    }
+
+    /// The regions' spray pools, in region order, for the liquid surface to draw their crowns.
+    pub fn crown_pools(&self) -> Vec<&crate::water_spray::Pool> {
+        self.regions
+            .values()
+            .filter_map(|r| r.gpu.as_ref().and_then(|g| g.spray.as_ref()))
+            .collect()
     }
 
     /// The feed's rain (water.md 67): its drops strike the ripples' window.
@@ -1495,6 +1529,23 @@ impl Water {
             }
         }
         let mut heard = None;
+        // Entries wait for an advance of the spray: a frame whose drawn time stands still throws
+        // nothing.
+        let advancing = self
+            .regions
+            .values()
+            .any(|r| r.gpu.as_ref().is_some_and(|g| g.spray_dt > 0.0));
+        let entering = if advancing {
+            std::mem::take(&mut self.entering)
+        } else {
+            Vec::new()
+        };
+        // A crown lives 1.5 s (water_spray_compute.wgsl `lifetime`), its own time.
+        self.crown_s = if entering.is_empty() || !self.spray_on {
+            (self.crown_s - dt.max(0.0)).max(0.0)
+        } else {
+            1.6
+        };
         for r in self.regions.values_mut() {
             let Some(g) = &mut r.gpu else { continue };
             if let Some(resident) = &mut r.resident {
@@ -1531,21 +1582,13 @@ impl Water {
             }
             if self.spray_on {
                 let pipes = self.spray.as_ref().expect("spray pipelines prepared");
-                let entries = r
-                    .resident
-                    .as_mut()
-                    .and_then(|resident| resident.cache.as_mut())
-                    .map(|cache| cache.take_rise());
-                let rise_s = entries.as_ref().map_or(0.0, |e| e.2);
+                // Crowns come from the stirring points now (water.md 52): the occupancy's rise,
+                // which nothing else reads, is let go.
+                if let Some(cache) = r.resident.as_mut().and_then(|res| res.cache.as_mut()) {
+                    encoder.clear_buffer(cache.take_rise().1, 0, None);
+                }
                 let pool = g.spray.get_or_insert_with(|| {
-                    crate::water_spray::Pool::new(
-                        device,
-                        pipes,
-                        view,
-                        &g.columns,
-                        g.foam.impacts(),
-                        entries.as_ref().map(|e| (e.0, e.1)),
-                    )
+                    crate::water_spray::Pool::new(device, pipes, view, &g.columns, g.foam.impacts())
                 });
                 pool.encode(
                     queue,
@@ -1562,7 +1605,7 @@ impl Water {
                         dt: g.spray_dt,
                         changed: g.columns_changed,
                         clear: g.clear_spray,
-                        rise_s,
+                        entering: &entering,
                         listen: self.listen,
                     },
                     profiler,
@@ -2069,14 +2112,20 @@ impl Water {
         }
     }
 
-    pub fn draw_spray(&self, pass: &mut wgpu::RenderPass<'_>) {
+    pub fn draw_spray(
+        &self,
+        device: &wgpu::Device,
+        pass: &mut wgpu::RenderPass<'_>,
+        view: &wgpu::Buffer,
+        light: &crate::water_spray::Light<'_>,
+    ) {
         if !self.spray_on {
             return;
         }
         if let Some(p) = &self.spray {
             for r in self.regions.values() {
                 if let Some(pool) = r.gpu.as_ref().and_then(|g| g.spray.as_ref()) {
-                    p.draw(pass, pool);
+                    p.draw(device, pass, pool, view, light);
                 }
             }
         }

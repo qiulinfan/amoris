@@ -314,8 +314,7 @@ mod tests {
     }
 
     /// A replica re-seeded from a checkpoint gathers its bodies' head again from nothing. That is
-    /// no water they entered, so presentation takes no rise from it (spray throws entry crowns
-    /// from the rise); a body that then sinks deeper adds its new head.
+    /// no water they entered, so it adds no rise; a body that then sinks deeper adds its new head.
     #[test]
     fn a_reseeded_replica_takes_its_bodies_head_as_a_baseline() {
         for backend in BackendChoice::under_test() {

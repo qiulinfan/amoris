@@ -819,3 +819,126 @@ spread. The party in the rain against the same scene with the rain at 0 mm an ho
 The photons pass takes 0.07 ms more as the drops' ripples refract them.
 
 Not measured: R1, and the browser.
+
+## 21. Spray drawn as water (Pioneer, 2026-10-23)
+
+The spray of [water.md](../spec/water.md) 69 on the M5, macOS, Metal, release builds,
+2026-10-23. `AMORIS_TRACE=frames=80,skip=0,out=PATH cargo run --release -p amoris-app --example
+scene_shots -- samples/pool-party --eye 8.6,1.1,6.6 --at 10.8,0.55,4.2 --every 1 --from 780 --to
+860`, a guest's cannonball close up in the rain, then `python tools/frame_trace.py stats`, medians
+over 80 frames, two runs of each, alternated, the build before (226c8a2e) against this one:
+
+| | Before | Now |
+|---|---|---|
+| `water+foreground` (the spray's draw among the rest) | 3.79, 3.77 ms | 3.80, 3.93 ms |
+| `water spray count`, `water spray list` | - | 0.007, 0.009 ms |
+
+Within the runs' spread (a run's p95 is 4.4 to 4.5 ms). On the way, one run each: drawing a cloud
+for every kind cost `water+foreground` about 0.3 ms more, for clouds too faint to see (only a fall's
+foot and its mist keep one); drawing over the whole ring rather than the parcels listed measured
+within the spread of the list (4.13 against 4.11 ms), so the list is there for its fixed order.
+
+The river falls (`scene_shots samples/river-falls --eye 46,2.5,8 --at 34.6,3.5,14.7 --ticks 1210`
+with `skip=900`) was measured only afterwards, and the first form of the spray had cost it 1.9 ms:
+a cloud sprite for every parcel where the fall lands, each growing past 3 m across. Two runs each,
+the same way:
+
+| | GPU interval coverage | `water+foreground` |
+|---|---|---|
+| before the spray (226c8a2e) | 8.89, 8.88 ms | 7.87, 7.88 ms |
+| the spray as first committed (4913637d) | 10.87, 10.78 ms | 9.68, 9.58 ms |
+| without its clouds | 6.27, 6.21 ms | 5.12, 5.00 ms |
+| without its drops | 10.49, 10.11 ms | 9.01, 8.94 ms |
+| without its ligaments | 10.16, 10.22 ms | 8.95, 8.97 ms |
+| clouds only in mist, spread at most 0.8 m (now) | 8.40, 8.34 ms | 7.28, 7.19 ms |
+
+Not measured: R1, and the browser.
+
+## 22. What the water costs a frame (Pioneer, 2026-10-23)
+
+The owner chose to measure before the next round of splash work. The M5, macOS, release builds,
+master 4913637d (the spray as first drawn as water), 2026-10-23; no other GPU work, leftover
+browsers stopped.
+
+**Natively, Metal.** `AMORIS_TRACE=frames=300,skip=N,out=PATH` over each tool's frames (each draws
+every tick at 1280 x 720 with MSAA), then `python tools/frame_trace.py stats`, medians over 300
+frames, two runs each. GPU interval coverage is the union of the timestamped passes' intervals;
+the passes overlap on the M5, so their medians do not add up to it, and the frame interval also
+holds stepping the world and reading the frame back.
+
+| Scene | Ticks | GPU interval coverage | `water+foreground` | Frame interval |
+|---|---|---|---|---|
+| pool party, a cannonball | 701-1000 | 7.00, 6.98 ms | 5.43, 5.44 ms | 11.96, 12.08 ms |
+| river falls | 901-1200 | 11.10, 10.83 ms | 9.88, 9.62 ms | 17.48, 17.13 ms |
+| surf beach, the break | 1801-2100 | 6.30, 6.34 ms | 4.69, 4.59 ms | 17.06, 17.15 ms |
+| block-liquid splash | 91-390 | 1.34, 1.35 ms | - | 3.25, 3.21 ms |
+
+The views: the pool party in the rain from the pool's side (`scene_shots samples/pool-party --eye
+8.6,1.1,6.6 --at 10.8,0.55,4.2`), the river falls from the pool (`--eye 46,2.5,8 --at
+34.6,3.5,14.7`), the surf beach's break (`shore_shots --view break`) and blockcraft's lake pouring
+over its cliff (`splashes --blocks ../amoris-samples/blockcraft --close`).
+
+The river falls' figure is the spray's first form; with its clouds kept to mist it takes 8.4 ms
+(21). The block-liquid splash's MLS-MPM steps and its surface passes carry no timestamps, so its
+coverage leaves them out.
+
+**In Chrome**, WebGPU on the same M5: each exported sample (`cargo xtask export-web`) served
+statically, `node tools/web_bench.mjs <url> 20 1280 720` with an evaluation that waits for the
+player to be ready, then reads the viewport's per-frame statistics for 300 frames (the player's
+first-person seat, not the views above; the GPU time is the sum of the timestamped passes):
+
+| Sample | GPU per frame, median (p95) | `water+foreground` | Frame |
+|---|---|---|---|
+| pool-party | 6.22, 6.10 ms (7.31, 7.11) | 3.47, 3.34 ms | 9.56, 9.65 ms |
+| river-falls | 4.67, 4.69 ms (5.28, 5.35) | 2.32, 2.36 ms | 9.55, 9.52 ms |
+| surf-beach | 10.14, 10.29 ms (13.19, 12.73) | 6.54, 6.55 ms | 13.36, 12.93 ms |
+
+Not measured: R1 (the RTX 5060 and the 780M), which cannot have this code until it is pushed.
+
+## 23. The refracting liquid surface and lattice crowns (Pioneer, 2026-10-23)
+
+What the liquid surface (splashes.md 5) and the entry crowns drawn on it
+([water.md](../spec/water.md) 52, 70) cost, against the build before them (07074547), on the M5,
+macOS, release builds; leftover browsers stopped and no other build running (another session's
+release build had doubled the MLS-MPM solver's intervals in an earlier attempt, and those runs were
+discarded).
+
+**Natively, Metal**, as in 22: `AMORIS_TRACE=frames=300,skip=N`, `python tools/frame_trace.py
+stats`, GPU interval coverage (the union of the passes' intervals), medians over 300 frames, two
+runs of each, alternated:
+
+| Scene | Ticks | Before | Now |
+|---|---|---|---|
+| pool party, a cannonball | 781-1080 | 8.09, 8.07 ms (p95 9.29, 8.83) | 8.04, 7.95 ms (p95 9.34, 9.11) |
+| block-liquid splash | 91-390 | 2.52, 2.61 ms | 3.44, 3.49 ms |
+| fluid box | 241-540 | 39.45, 39.33 ms | 43.52, 43.44 ms |
+
+The pool party is its cannonball from the pool's side as in 22, guests going in throughout, so the
+surface runs on almost every frame: its median does not move and its p95 rises by about 0.2 ms.
+Blockcraft's splash (as in 22) and the fluid box (`fluid_box --shots`, full of liquid across a third
+of the frame) are the MLS-MPM sources, and their before leaves out the old surface's splat and
+blur passes, which carried no timestamps: the 0.9 and 4.1 ms are the new surface's whole cost, not
+what it adds. The surface's own passes read far more than they cost: on the M5 their intervals span
+the passes they overlap ("liquid splats" and "liquid composite" read about 6 ms each in the pool
+party), so only the coverage counts.
+
+**In Chrome**, the pool party exported (`cargo xtask export-web`) before and after, served
+statically, `node tools/web_bench.mjs <url> 60 1280 720` (uncapped) with an evaluation that waits
+10 s after the player is ready (past the first cannonballs) and reads the player's statistics for
+900 frames, two runs each, alternated:
+
+| | Frame interval, median (p95) | GPU, the passes' sum, median | Frames with the surface |
+|---|---|---|---|
+| before | 9.45, 9.50 ms (9.62, 9.70) | 6.84, 6.95 ms | 0 of 900 |
+| now | 9.76, 9.70 ms (9.83, 9.90) | 10.69, 10.93 ms | 900 of 900 |
+
+The surface ran on every frame read, and the frame interval rose by about 0.25 ms. The viewport's
+GPU time is the plain sum of the passes' intervals (`GpuProfiler::total_ms`): the liquid passes'
+overlapping intervals put 4 ms on it that the frame interval does not show.
+
+**The filter.** The bilateral filter first ran as render passes, each clearing and storing two
+full-frame targets; it now runs as compute passes that write only the pixels with liquid. An
+ablation of its stages (leave out the filter, the composite, all) could not be measured while
+another session's build ran, and was not repeated.
+
+Not measured: R1 (the RTX 5060 and the 780M), which cannot have this code until it is pushed.

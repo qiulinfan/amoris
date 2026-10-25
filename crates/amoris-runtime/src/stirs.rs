@@ -1,9 +1,10 @@
-//! The points that stir the water regions, for the renderer's ripples (water.md 57): each
-//! buoyancy point of a Floater, a swimmer's body, and the hands of a swimmer's strokes or of a
-//! rider paddling a board. Presentation only: the renderer measures each point's immersion
-//! against its drawn surface and makes ripples from its motion relative to the water; nothing
-//! here is read by the simulation, and the strokes' hands are a drawing of the stroke the walker
-//! rules already apply as a speed.
+//! The points that stir the water regions, for the renderer's ripples (water.md 57) and entry
+//! crowns (water.md 52): each buoyancy point of a Floater, a walker's body over a region, in the
+//! air too, and the hands of a swimmer's strokes or of a rider paddling a board. Presentation
+//! only: the renderer measures each point's immersion against its drawn surface and makes ripples
+//! from its motion relative to the water, and a crown where it goes in fast; nothing here is read
+//! by the simulation, and the strokes' hands are a drawing of the stroke the walker rules already
+//! apply as a speed.
 
 // Presentation, as the extractor that calls it (present.rs).
 #![allow(clippy::disallowed_methods, clippy::disallowed_types)]
@@ -149,14 +150,15 @@ pub fn stirs(world: &mut World) -> Vec<StirView> {
             }
             continue;
         }
-        if !inside(eye) || !w.in_liquid {
+        if !inside(eye) {
             continue;
         }
-        // The body: its volume over its height, so its waterplane is a head and shoulders'.
+        // The body: its volume over its height, so its waterplane is a head and shoulders'. Over
+        // the water too, so the renderer sees a jump go in.
         let feet = eye[1] - w.eye_m;
         let body = [eye[0], feet + 0.5 * w.height_m, eye[2]];
         out.push(view(id, 0, body, w.height_m, WALKER_BODY_M3));
-        if w.eye_in_liquid {
+        if !w.in_liquid || w.eye_in_liquid {
             continue;
         }
         let waterline = eye[1] - EYE_OVER_M;

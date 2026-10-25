@@ -11,6 +11,7 @@ mod blit;
 pub mod camera;
 pub mod demo;
 pub mod fluid;
+mod fluid_surface;
 pub mod gi;
 pub mod gpu;
 mod gtao;

@@ -10,7 +10,9 @@
 
 use std::sync::{Arc, Mutex};
 
-pub const MAX_SCOPES: u32 = 32;
+/// The passes a frame can time. A water scene with its spray, medium tiles and the liquid surface
+/// timed takes over 32; past this the later passes (TAA, post) go untimed.
+pub const MAX_SCOPES: u32 = 64;
 const RING: usize = 3;
 /// Readback buffers while a trace records: a frame's slot is reused only once read, and in a
 /// window the GPU may run a few frames behind, so the usual three would drop frames.

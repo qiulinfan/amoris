@@ -5,8 +5,8 @@
 
 use amoris_assets::frame::{
     BlockLook, ChunkUpdate, EnvironmentView, InstanceUpdate, LightKindView, LightView, Look, Pose,
-    RainView, RenderFrame, SeaLookView, SeaView, VoxelUpdate, WaterLookView, WaterTileView,
-    WaterUpdate, WeatherView, WindSeaView,
+    RainView, RenderFrame, SeaLookView, SeaView, StirView, VoxelUpdate, WaterLookView,
+    WaterTileView, WaterUpdate, WeatherView, WindSeaView,
 };
 use amoris_render::{Antialiasing, BackendChoice, CameraState, Gpu, Gtao, Renderer};
 use glam::Vec3;
@@ -1014,6 +1014,82 @@ fn rain_ends_at_a_regions_surface() {
     assert!(d < 0.0005, "rain drawn under the water: {d}");
 }
 
+/// The frames of a body's point (0.3 m high, 0.018 m^3) over the pit's upper water (its surface at
+/// 1.9 m), seen from `eye` toward it, read as HDR after `ticks` ticks: `going`, it falls at 6 m/s
+/// and its bottom passes the surface at tick 3; otherwise it passes 0.1 m a tick over the water.
+fn crowned(gpu: &Gpu, eye: Vec3, going: bool, ticks: u64) -> Vec<f32> {
+    let at = Vec3::new(6.0, 2.2, 6.0);
+    let mut r = renderer(gpu, eye, at);
+    r.set_water_ripples(false);
+    for tick in 1..=ticks {
+        let f = tick as f32 - 1.0;
+        let mut frame = scene(
+            tick,
+            if tick == 1 {
+                vec![region(false, &ALL, column)]
+            } else {
+                vec![]
+            },
+            true,
+        );
+        let centre = if going {
+            [6.0, 2.2 - 0.1 * f, 6.0]
+        } else {
+            [6.0 - 0.1 * f, 2.2, 6.0]
+        };
+        frame.stirs = Some(vec![StirView {
+            id: 9,
+            point: 0,
+            at: centre,
+            size: 0.3,
+            volume: 0.018,
+        }]);
+        let now = tick as f64 / 60.0;
+        r.apply(frame, now);
+        let _ = r.capture_rgba(now);
+    }
+    r.capture_hdr(ticks as f64 / 60.0).2
+}
+
+/// The share of pixels whose linear colour differs between `a` and `b`.
+fn changed(a: &[f32], b: &[f32]) -> f64 {
+    let n = a
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(b.as_chunks::<4>().0)
+        .filter(|(p, q)| (0..3).any(|i| (p[i] - q[i]).abs() > 1e-3))
+        .count();
+    n as f64 / (a.len() / 4) as f64
+}
+
+#[test]
+fn a_body_going_in_throws_a_crown_drawn_near_as_a_sheet_and_far_as_streaks() {
+    let Some((_case, gpu)) = gpu() else { return };
+    // A crown (water.md 52) rises about the point 10 ticks after it goes in. From 2.5 m its
+    // parcels are many pixels across: the liquid surface draws them. From 60 m they are under a
+    // pixel and a half: the spray's streaks do. Either way the frame shows it; a point passing
+    // over the water throws none.
+    for (eye, least) in [
+        (Vec3::new(6.0, 2.6, 8.5), 0.02),
+        (Vec3::new(6.0, 14.0, 66.0), 1e-4),
+    ] {
+        let still = crowned(&gpu, eye, false, 12);
+        let going = crowned(&gpu, eye, true, 12);
+        let d = changed(&still, &going);
+        eprintln!("from {eye}: a crown changes {d:.5} of the frame");
+        assert!(d > least, "no crown seen from {eye}: {d}");
+    }
+    let eye = Vec3::new(6.0, 2.6, 8.5);
+    let over = crowned(&gpu, eye, false, 12);
+    let again = crowned(&gpu, eye, false, 12);
+    assert_eq!(
+        changed(&over, &again),
+        0.0,
+        "a point over the water drew something"
+    );
+}
+
 #[test]
 fn surrounding_water_meets_the_regions_edge() {
     let Some((_case, gpu)) = gpu() else { return };
@@ -1473,6 +1549,38 @@ fn a_camera_at_the_surface_splits_along_the_waterline_on_its_port() {
 #[test]
 fn the_sun_scatters_toward_an_eye_under_water_along_its_refracted_path() {
     let (_case, gpu) = gpu().expect("light under water requires a GPU");
+    sun_scatters_along_its_refracted_path(&gpu);
+}
+
+/// The same with ray-traced sun shadows: the opaque passes trace the sun, and the medium still
+/// finds the plank's shadow in the cascades, which are drawn for it.
+#[test]
+fn the_sun_still_scatters_under_water_with_ray_traced_shadows() {
+    let (_case, plain) = gpu().expect("light under water requires a GPU");
+    let backend = BackendChoice::from_env();
+    let gpu = amoris_render::Gpu::headless_ray_traced(
+        backend,
+        amoris_render::rt_shadows::RtEffects {
+            shadows: true,
+            reflections: false,
+        },
+    )
+    .expect("the same adapter with ray queries asked for");
+    drop(plain);
+    if !gpu.caps.rt.shadows {
+        eprintln!(
+            "{} ({backend:?}): no ray queries; ray-traced shadows skipped",
+            gpu.info.name
+        );
+        return;
+    }
+    gpu.device.on_uncaptured_error(std::sync::Arc::new(|error| {
+        panic!("water GPU validation failed: {error}");
+    }));
+    sun_scatters_along_its_refracted_path(&gpu);
+}
+
+fn sun_scatters_along_its_refracted_path(gpu: &Gpu) {
     let (s, c) = 60f32.to_radians().sin_cos();
     let l = Vec3::new(0.0, s, -c);
     let up = Vec3::new(
@@ -1484,7 +1592,7 @@ fn the_sun_scatters_toward_an_eye_under_water_along_its_refracted_path() {
     let dir = Vec3::new(0.0, up.y * c - up.z * s, up.y * s + up.z * c).normalize();
     let eye = Vec3::new(8.0, 1.0, 9.0);
     let center = |sun: bool, plank: bool| {
-        let mut r = renderer(&gpu, eye, eye + dir);
+        let mut r = renderer(gpu, eye, eye + dir);
         r.set_water_foam(false);
         r.set_water_optics(false, false, false);
         let mut frame = optical_scene(4.0, None);

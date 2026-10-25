@@ -4,7 +4,7 @@
 //! its oldest slots to new particles. Skips when there is no GPU.
 
 use amoris_render::fluid::{Fluid, FluidTuning, Region, SOLID, SolverSpec};
-use amoris_render::{Antialiasing, BackendChoice, Gpu, Gtao, SceneFormat};
+use amoris_render::{BackendChoice, Gpu};
 
 const SIZE: u64 = 80;
 const DEAD: u32 = u32::MAX;
@@ -55,7 +55,7 @@ fn particles(gpu: &Gpu, f: &Fluid) -> Vec<([f32; 3], u32)> {
 fn step(gpu: &Gpu, f: &mut Fluid, frames: u32) {
     for _ in 0..frames {
         let mut enc = gpu.device.create_command_encoder(&Default::default());
-        f.step(&gpu.queue, &mut enc, 1.0 / 60.0);
+        f.step(&gpu.queue, &mut enc, 1.0 / 60.0, None);
         gpu.queue.submit([enc.finish()]);
     }
     let _ = gpu.device.poll(wgpu::PollType::wait_indefinitely());
@@ -74,9 +74,9 @@ fn particles_rest_on_solids_die_in_liquid_and_out_of_reach_and_the_ring_wraps() 
         spacing: 0.5,
         tuning: FluidTuning::default(),
     };
-    let format = SceneFormat::new(Antialiasing::Off, Gtao::Off);
-    let mut f = Fluid::new(&gpu.device, spec, format);
+    let mut f = Fluid::new(&gpu.device, spec);
     assert!(!f.active(), "nothing spawned: every pass is skipped");
+    assert!(!f.encodes(1.0 / 60.0), "an idle solver takes no timestamps");
     // A solid floor (blocks y = 0) and a liquid block at (2, 1, 1), its surface at 8/9.
     let mut mask = vec![0u8; 64];
     for z in 0..4 {
@@ -106,6 +106,8 @@ fn particles_rest_on_solids_die_in_liquid_and_out_of_reach_and_the_ring_wraps() 
         ],
     );
     assert!(f.active());
+    assert!(f.encodes(1.0 / 60.0));
+    assert!(!f.encodes(0.0), "a frame of no time encodes no pass");
     step(&gpu, &mut f, 60);
     let p = particles(&gpu, &f);
     let (rest, tag) = p[0];
@@ -128,6 +130,10 @@ fn particles_rest_on_solids_die_in_liquid_and_out_of_reach_and_the_ring_wraps() 
     step(&gpu, &mut f, 190);
     assert_eq!(particles(&gpu, &f)[0].1, DEAD, "at 4 s it dies");
     assert!(!f.active(), "no particle can be alive now");
+    assert!(
+        !f.encodes(1.0 / 60.0),
+        "after a splash its solver takes no timestamps"
+    );
 
     // The ring: three in slots 3 to 5, then seven more take 6, 7, 0 to 4; slot 5 keeps its own.
     let at = |i: usize| ([0.6 + 0.1 * i as f32, 3.0, 2.0], [0.0; 3]);

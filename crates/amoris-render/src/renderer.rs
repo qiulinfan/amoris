@@ -387,6 +387,8 @@ pub struct Renderer {
     splash: crate::splash::Splashes,
     splash_fluid: Option<crate::fluid::Fluid>,
     splashes_on: bool,
+    /// The liquid particles' surface (fluid_surface.rs), drawn after the frame's last colour pass.
+    liquid: crate::fluid_surface::FluidSurface,
     materials: MaterialPool,
     models: HashMap<String, Model>,
     loader: Box<dyn AssetSource>,
@@ -1343,6 +1345,7 @@ impl Renderer {
             splash: Default::default(),
             splash_fluid: None,
             splashes_on: splashes_from_env(),
+            liquid: crate::fluid_surface::FluidSurface::new(&gpu.device),
             materials,
             models: HashMap::new(),
             loader: Box::new(NoAssets),
@@ -1798,8 +1801,7 @@ impl Renderer {
 
     /// Starts the fluid experiment with `spec`, or ends it (docs/spikes/fluid-box.md).
     pub fn set_fluid(&mut self, spec: Option<crate::fluid::FluidSpec>) {
-        self.fluid = spec
-            .map(|s| crate::fluid::Fluid::boxed(&self.gpu.device, &self.gpu.queue, s, self.format));
+        self.fluid = spec.map(|s| crate::fluid::Fluid::boxed(&self.gpu.device, &self.gpu.queue, s));
     }
 
     /// The shallow water to draw from the next frame on (spike, docs/spikes/shallow-water.md);
@@ -1937,7 +1939,6 @@ impl Renderer {
             self.splash_fluid = Some(crate::fluid::Fluid::new(
                 &self.gpu.device,
                 crate::splash::solver(),
-                self.format,
             ));
         }
         let Some(f) = self.splash_fluid.as_mut() else {
@@ -1963,12 +1964,6 @@ impl Renderer {
         let format = SceneFormat::new(self.aa, self.gtao_mode);
         if format == self.format {
             return;
-        }
-        for f in [self.fluid.as_mut(), self.splash_fluid.as_mut()]
-            .into_iter()
-            .flatten()
-        {
-            f.set_format(&self.gpu.device, format);
         }
         let samples_changed = format.samples != self.format.samples;
         self.format = format;
@@ -3026,6 +3021,14 @@ impl Renderer {
                 self.ocean.waves_binding(),
             );
         }
+        let frame_dt = self
+            .last_frame_s
+            .map_or(1.0 / 60.0, |t| (now_s - t).clamp(0.0, 0.1)) as f32;
+        self.last_frame_s = Some(now_s);
+        // The block liquids' splashes this frame (CPU work and queue writes only), before the
+        // cascades are decided: a splash that wakes the solver now draws the liquid surface, which
+        // samples them.
+        self.splash_frame(cam.position.to_array(), frame_dt);
         let mut planes = [[[0.0f32; 4]; 6]; 5];
         // The jittered frustum and matrix: the depth pyramid holds the jittered depth.
         let camera_planes = frustum_planes(vp_j, true);
@@ -3037,12 +3040,16 @@ impl Renderer {
                 planes[c + 1][i] = p.to_array();
             }
         }
-        // Ray-traced shadows replace the cascades: no cascade views to cull or draw.
+        // Ray-traced shadows replace the cascades for the opaque and transparent passes: no cascade
+        // views to cull or draw, unless the water (its medium's sun shafts and its spray) or the
+        // liquid surface will sample them, which trace no rays.
         let cascades = shadows
-            && !self
+            && (!self
                 .rt_shadows
                 .as_ref()
-                .is_some_and(|rt| rt.effects.shadows);
+                .is_some_and(|rt| rt.effects.shadows)
+                || !self.water.is_empty()
+                || self.liquid_possible(&cam));
         let views = if cascades { VIEWS } else { 1 };
         // Each cascade's casters must also reach the slice it shades (docs/spec/occlusion.md 11).
         let slices = if cascades && self.shadow_cull == ShadowCull::On {
@@ -3134,10 +3141,6 @@ impl Renderer {
         let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("frame"),
         });
-        let frame_dt = self
-            .last_frame_s
-            .map_or(1.0 / 60.0, |t| (now_s - t).clamp(0.0, 0.1)) as f32;
-        self.last_frame_s = Some(now_s);
         self.water.set_spray(self.splashes_on);
         if self.scene.sea.is_some() || self.scene.weather.wind.is_some() {
             self.ocean.encode(&mut enc, &mut self.profiler);
@@ -3180,19 +3183,16 @@ impl Renderer {
             cam.position.to_array(),
             drawn_t,
         );
-        self.splash_frame(cam.position.to_array(), frame_dt);
         for f in [self.fluid.as_mut(), self.splash_fluid.as_mut()]
             .into_iter()
             .flatten()
         {
-            f.step(&queue, &mut enc, frame_dt);
-            f.prepare_surface(
-                &device,
-                &queue,
-                &mut enc,
-                &self.view_buf.buf,
-                self.targets.scene,
-            );
+            let timestamps = if f.encodes(frame_dt) {
+                self.profiler.compute_scope("fluid solver")
+            } else {
+                None
+            };
+            f.step(&queue, &mut enc, frame_dt, timestamps);
         }
         // Skinned parts' vertices for the drawn moment (between the last two ticks).
         let since_tick = (f64::from(alpha) - 1.0) * self.scene.dt_s;
@@ -3281,8 +3281,9 @@ impl Renderer {
         trace::span(&mut self.trace, "encode splat sort", ts);
         let ts = trace::mark(&self.trace);
         let picking = self.picking.begin(&device, (w, h));
-        // Splats, GTAO and TAA read the depth after the opaque pass.
-        let keep_depth = water || self.splats.active() || self.gtao_mode.on() || taa_on;
+        let liquid = self.liquid_possible(&cam);
+        // Splats, GTAO, TAA and the liquid surface read the depth after the opaque pass.
+        let keep_depth = water || self.splats.active() || self.gtao_mode.on() || taa_on || liquid;
         // With TAA, splats test against a depth drawn without the jitter.
         let unjittered = (taa_on && self.splats.active()).then(|| UnjitteredDepth {
             target: self.splats.unjittered_depth(&self.targets),
@@ -3543,8 +3544,8 @@ impl Renderer {
                     view: &self.targets.depth,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Load,
-                        // TAA and the splats read it next.
-                        store: if taa_on || self.splats.active() {
+                        // TAA, the splats and the liquid surface read it next.
+                        store: if taa_on || self.splats.active() || liquid {
                             wgpu::StoreOp::Store
                         } else {
                             wgpu::StoreOp::Discard
@@ -3556,6 +3557,42 @@ impl Renderer {
                 ..Default::default()
             });
             self.draw_transparent_layer(&device, &mut pass, binds);
+        }
+        // The liquid particles as one surface over the resolved frame, which it refracts: after
+        // the last colour pass, before the water's medium and TAA.
+        if liquid {
+            let mut sources = Vec::new();
+            if let Some(f) = self.fluid.as_ref().filter(|f| f.active()) {
+                sources.push(crate::fluid_surface::Source::Mpm { fluid: f, air: 0.0 });
+            }
+            // A block's splash carries a little air.
+            if let Some(f) = self.splash_fluid.as_ref().filter(|f| f.active()) {
+                sources.push(crate::fluid_surface::Source::Mpm {
+                    fluid: f,
+                    air: 0.08,
+                });
+            }
+            if self.water.crowns_possible() {
+                for pool in self.water.crown_pools() {
+                    sources.push(crate::fluid_surface::Source::Spray { pool });
+                }
+            }
+            self.liquid.encode(
+                &device,
+                &queue,
+                &mut enc,
+                &mut self.profiler,
+                &self.targets,
+                &self.view_buf.buf,
+                &crate::fluid_surface::Light {
+                    env_cube: &self.sky.env_cube,
+                    env_sampler: &self.sky.sampler,
+                    sh: &self.sky.sh,
+                    shadows: &self.shadow_array,
+                    shadow_sampler: &self.shadow_sampler,
+                },
+                &sources,
+            );
         }
         if water {
             self.water.medium(
@@ -3749,12 +3786,28 @@ impl Renderer {
         self.draw_particles_and_grid(device, pass);
     }
 
+    /// Whether the liquid surface draws: a perspective camera may see liquid particles, a solver's
+    /// or an entry crown's (water.md 52).
+    fn liquid_possible(&self, cam: &CameraState) -> bool {
+        cam.ortho_height.is_none()
+            && ([&self.fluid, &self.splash_fluid]
+                .into_iter()
+                .flatten()
+                .any(|f| f.active())
+                || self.water.crowns_possible())
+    }
+
     fn draw_particles_and_grid(&self, device: &wgpu::Device, pass: &mut wgpu::RenderPass<'_>) {
-        self.water.draw_spray(pass);
-        // Liquid particles where particles and splats go (docs/spec/splashes.md 5).
-        for f in [&self.fluid, &self.splash_fluid].into_iter().flatten() {
-            f.draw_surface(device, pass, &self.view_buf.buf);
-        }
+        self.water.draw_spray(
+            device,
+            pass,
+            &self.view_buf.buf,
+            &crate::water_spray::Light {
+                sh: &self.sky.sh,
+                shadows: &self.shadow_array,
+                shadow_sampler: &self.shadow_sampler,
+            },
+        );
         self.particles.draw(device, pass, &self.view_buf.buf);
         let [x, _, z] = self.rain.eye();
         self.rain.draw(

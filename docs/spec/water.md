@@ -740,6 +740,11 @@ than loading and resolving MSAA a second time. The profiler calls this combined 
 `water+foreground`. The background pass is labelled `water background resolve` when no ordinary
 transparent instances need drawing; its resolve supplies the scene copy in either case.
 
+The liquid surface of MLS-MPM particles (splashes.md 5) draws after `water+foreground`, before the
+medium: it refracts the frame as the water and its foreground left it and is tested against the
+depth that pass stores for it. Particles and streaks in front of the liquid are refracted as if
+behind it.
+
 Snell refraction uses at most four depth-plane refinements, exiting early on converged flat beds.
 Unconverged pulls fade to the unrefracted sample; foreground/screen-edge pulls are rejected.
 That color fallback does not straighten the transmitted ray: attenuation retains the Snell-ray
@@ -1781,8 +1786,8 @@ velocities and upstream depth, not the authoritative solver's integrated per-sub
 Fall births use estimated discharge divided by a nominal 1.95-litre visual particle volume.
 Rapids are capped at 30 particles/s per directional face; sources farther than 48 m horizontally
 from the camera do not emit. Integer hashes distribute sub-particle rates and face-width offsets.
-Each water region owns a 4096-slot GPU ring, while one shared renderer budget limits total births
-to 2048 per frame. Under saturation earlier submitted regions can consume that budget; equal
+Each water region owns a 16,384-slot GPU ring, while one shared renderer budget limits total births
+to 4,096 per frame (52). Under saturation earlier submitted regions can consume that budget; equal
 regional distribution is not promised. Atomic allocation order is presentation-only.
 
 Particles follow gravity analytically between field collision samples. A descending fall particle
@@ -2753,24 +2758,49 @@ river keeps the default.
 ## 52. Entry crowns and spray light (Pioneer, 2026-10-22)
 
 A shallow-water column carries a body's volume but not its impact, so a cannonball made waves and no
-splash. The occupancy resolve (46) also adds, per column, the head that rose since presentation last
-took it, never read by the step. The viewport's replica hands that buffer to the spray with the
-simulated seconds it covers, and the spray throws a crown (kind 6) there: the head's rise over that
-time gives the entry speed (a footprint holds about four times a body's waterplane, so four times
-the head's rate; at most 14 m/s, none under 1.2 m/s or 3 mm of head), and drops leave upward at 0.35
-to 0.9 of it and away from the footprint's middle at 0.15 to 0.45 of it, their number growing with
-the volume pushed aside and the speed (at most 48 a column a frame).
+splash. The spray throws a crown (kind 6) where a body goes in. Amended on 2026-10-23: the crown
+read the head the occupancy resolve (46) adds per column. Four times a column's rate of rise
+overstated the entry speed 1.8 to 4 times where a body's footprints overlap, up to the 14 m/s cap,
+so crowns rose far higher than a cannonball's; a body moving along just under the surface threw
+crowns; every column threw its own drops at random, never one sheet; and a replica re-seeded from a
+checkpoint had to be kept from counting its bodies' head as an entry. Presentation now clears that
+rise unread.
 
-A replica re-seeded from a checkpoint, its occupancy reset, gathers its bodies' head again from
-nothing on its first step. That is no entry, so the occupancy drops that first gathering's rise
-(`WaterOccupancy`'s `fresh`). A viewport whose feed skips ticks re-seeds at most compactions: the
-browser's presenter rebuilds the world from at most two snapshots in flight, so a compaction mostly
-reaches its replica with steps already appended, and the replica can keep its live buffer only for
-one with none. Counted as an entry, every re-seed threw a crown around a board merely floating, some
-seven drops a tick from the start, and their landings piled foam around it: the browser's surf was
-white around the player where the native window's was clear. `water_replica`'s
-`a_reseeded_replica_takes_its_bodies_head_as_a_baseline` requires no rise after a re-seed and the
-added head after a body sinks.
+- **What goes in.** The renderer compares the feed's last two lists of stirring points (57), at most
+  0.1 s apart (a still scene sends none): a point that went down at 1.2 m/s or more is a candidate,
+  with its centre before and now, its height, volume, velocity and entity. At most 64 points of 16
+  bodies a frame, in entity order (`water_spray::entering`).
+- **How much.** On the GPU, a candidate whose layer passed down through the drawn surface (bilinear
+  over the wet columns about it) pushed aside its waterplane (volume over height) times the height
+  that went under, counted until three of its waterplane's radii are under: the crown is fed as the
+  body's front goes in, not as it sinks on. A body's points together are one entry: their volume,
+  its centre, their mean speed (at most 14 m/s), and the ellipse with the second moments of their
+  waterplanes, each a disc.
+- **The lattice.** Three rows about rings 1.1, 1.3 and 1.5 times the ellipse (the cavity's rim),
+  each with places under 5 cm apart about the middle ring (16 to 64), neighbouring rows half a
+  place apart. Each row is born over the advance in up to four sub-rows, one for every 4 cm the
+  inner row rises, each carried along its flight by the time since it left. They leave upward and
+  outward at (0.85, 0.3), (0.62, 0.4) and (0.38, 0.45) of the launch speed, each within 2 degrees of
+  its row's way and 4 percent of its speed, plus the water's velocity: the sheet opens from about 20
+  degrees off the vertical at its inner row to 50 at its outer. The launch speed is the entry speed
+  up to 8.2 m/s, so nothing leaves faster than 7.36 m/s, which falls back within a crown's 1.5 s.
+- **Budget and weight.** Crowns take at most 2,048 of a frame's 4,096 births, among every region's,
+  in body order. Each entry is heard as before, its events the volume times 8,000 times min(U/4, 2)
+  with the kinetic energy of the water pushed aside at its speed shared among them; a parcel stands
+  for its share of them, at most one, and its landing makes foam and is heard with that weight.
+- **Drawing** (69). A crown's parcel carries its row, its radius (three quarters of the larger of
+  the arc to its neighbours and the way to the next sub-row, 1 to 6 cm), its weight and how fast the
+  ring it left widens. Its ligament covers its share of the sheet, widening as the square root of
+  the ring's stretch (its circumference over that at birth) and thinning, until the ring has
+  stretched 2.25 to 2.6 times and it tears into as many drops as its weight gives.
+
+A walker's body is listed over the water too (57), so a jump going in throws a crown. A vessel's
+hull lattice is not among the stirring points and throws none. `water_spray`'s
+`a_body_going_in_throws_one_lattice_crown_and_none_otherwise` (Metal, MoltenVK and the WebGPU
+baseline) requires one key and the complete lattice for one point going in at 6 m/s, about the ring
+and at the surface, no parcel faster than 7.36 m/s, none for a point going in at 1 m/s, passing over
+the water or already under it, bitwise-equal crowns from equal entries, and exactly 2,048 births
+for sixteen bodies at once; its unit tests pin the candidates and their grouping.
 
 Spray drops are lit in the forward pass's units, the sun's irradiance over pi: the shader divided
 the sun by 10,000 as if it were in lux, which left every drop grey under the samples' suns.
@@ -3064,8 +3094,9 @@ The render feed carries `RenderFrame.stirs`, the full list whenever a point in i
 entity, point, centre, height and volume):
 
 - each Floater point in a region or within 2 m of one;
-- each Walker in a region's water: its 0.07 m³ body over its height, a head and shoulders'
-  waterplane;
+- each Walker over a region or within 2 m of one, in the air too (since 2026-10-23, for the
+  crowns of section 52; out of the water it makes no ripples): its 0.07 m³ body over its height, a
+  head and shoulders' waterplane;
 - the hands of a crawl while a swimmer with its eye over the water swims (both arms over 1.3 s,
   entering 0.6 m ahead, pulling 0.26 m deep and recovering through the air), sculling hands just
   under the surface while it treads water, and both hands of a rider lying on a board and pushing
@@ -4470,3 +4501,114 @@ Limits:
 - Averaged over four pixels, ripples finer than that no longer shift what the water shows; they
   blur it only as roughness, in the glints and the sky's reflection, not in the refracted bed or the
   reflected bank.
+
+## 69. Spray drawn as water (Pioneer, 2026-10-23)
+
+The owner found the splashes worse than none: every drop the same size, opaque and coarse. The
+spray (35) was drawn as discs 2.6 to 7.5 cm across at an opacity of 0.3 to 0.75, one a parcel, and
+a parcel stands for litres of water (a fall's is 1.95 litres, water_spray.rs `rates`). Water thrown
+off a surface leaves as sheets and threads drawn out along its flight, which break up into drops of
+many sizes (E. Villermaux, "Fragmentation", Annu. Rev. Fluid Mech. 39, 2007); a thread parts into
+beads at the wavelength that grows fastest, 9.02 of its radii (Lord Rayleigh, "On the instability
+of jets", Proc. London Math. Soc. 10, 1878).
+
+water_spray_draw.wgsl now draws each parcel as three things (the simulation is unchanged):
+
+- A ligament: the parcel's water drawn out behind it over 1/45 s of its flight, a capsule with a
+  radius log-uniform between the kind's bounds (a splash 1 to 3.5 cm, a fall's sheet 2 to 5 cm; an
+  entry's crown carries its own, 52), white where its water is full of air by a share drawn per
+  parcel between the kind's bounds, and clear water's opacity of 0.4 rising to 0.9 with that share.
+  Its volume goes to drops at an even rate until it has broken up (0.35 s for a splash, 0.6 s for
+  the spray where a fall lands, 0.8 s for a fall's sheet; a crown's tears as its ring stretches,
+  52). Wider than a few pixels it breaks as a thread does: cell noise (S. Worley, "A cellular
+  texture basis function", SIGGRAPH 1996) stretched along it, one cell to 4.5 of its widths, narrows
+  it, more as the parcel breaks up, until it parts into beads; narrower, it parts along its length
+  only.
+- Up to 20 drops shed as the ligament breaks up, each from a way uniform over the sphere at a speed
+  uniform over the ball of the kind's spread, their radii between the kind's bounds (0.3 or 0.4 mm
+  to 2.5 or 3 mm) drawn from a truncated power law, as many of each radius as its inverse cube (the
+  exponent is ours). A drop is a streak over a frame's time (1/60 s), as opaque as the share of the
+  pixel it covers over that time, times 8, the parcel's drops one drawn drop stands for; narrower
+  than a pixel it is drawn a pixel and a half wide and fainter by as much (E. Persson, "Phone-wire
+  AA", humus.name, 2012).
+- A cloud of the drops too fine to draw, a Gaussian whose optical depth through its middle falls as
+  its spread's square grows, only in a fall's mist, its spread stopping at 0.8 m and its sprite at
+  an optical depth of 0.01. Light scatters many times in it before it leaves, so it is lit mostly
+  as white water. A cloud for every parcel where a fall lands, as first drawn, cost the river falls
+  4.6 ms of the M5's frame and showed little (liquids.md 21).
+
+Drops and clouds are lit as clear water scatters light: what lies behind them seen through them (the
+sky's irradiance about the way back), 6% reflected about evenly, and the sun scattered forward by
+Henyey and Greenstein's phase function (g 0.75 to 0.85; L. G. Henyey and J. L. Greenstein, "Diffuse
+radiation in the galaxy", Astrophys. J. 93, 1941), so spray glows against the sun and is faint with
+the sun behind the eye. White water is lit by the sky above and the sun as a white surface is, about
+evenly. The sun's shadow, one tap of its cascade at the parcel, darkens all of them.
+
+The draw ran over the whole ring, 16,384 parcels, whether alive or not. Two passes after the births
+now list the parcels alive, in slot order, at the end of the state buffer (`count` tallies each
+block of 64 slots, `list` places a block's after those before it), and the indirect draw takes one
+instance a listed parcel: the order is the same every frame, so overlapping sprites blend alike and
+do not shimmer.
+
+The cost is in [liquids.md](../bench/liquids.md) 21.
+
+### 69.1 Checks
+
+- `cargo test -p amoris-render --test water_spray` on Metal and Vulkan (MoltenVK): the spray's nine
+  tests; listening to the water changes neither the spray nor the state, and the draw's list holds
+  the slots of the parcels alive and no others, in slot order.
+- The pool party's cannonball drawn every three ticks from the pool's side (`scene_shots`, ticks
+  786 to 807), the build before against this one: a crown of sheets and threads rises, thins and
+  parts into drops where a heap of grey discs rose and hung; the river falls' foot (`--eye 46,2.5,8
+  --at 34.6,3.5,14.7`, tick 1200) has a white mist and fine drops where white discs flew.
+- The pool party and the river falls exported for the web and played in Chrome
+  (`tools/web_play_check.mjs`).
+
+Limits:
+
+- A ligament or a cloud is a sprite: it does not bend what lies behind it (a crown wide on the
+  screen is drawn as a sheet that does, 70), nor meet the scene softly where it passes into a wall
+  or the water; a cloud is not a volume and casts no shadow.
+- Drops do not slow by their size in the air (the parcel's path carries them all), and the sizes and
+  shares are the kinds' bounds, set by eye against the captures, not measured.
+
+## 70. Entry crowns as refracting sheets (Pioneer, 2026-10-23)
+
+A crown's parcels (52) leave as one lattice, but drawn as streaks they stayed a grey fan: a sheet of
+clear water is seen by what it bends and reflects. The liquid surface that draws the MLS-MPM
+splashes (splashes.md 5) now also draws each region's crowns where they are wide on the screen:
+
+- **Which.** A crown's parcel is a sphere of its radius (`crown_radius`: its share of the sheet,
+  widening as the sheet stretches, gone as it tears). The surface takes `crown_share` of it, none
+  under 1.5 pixels across and all over 2.5, the spray's streak the rest: its ligament's opacity
+  times one less the share. Both read the same function (water_spray_common.wgsl), so the two
+  shares make the whole at every distance. Drops and clouds stay streaks. Only perspective
+  cameras draw the surface; under any other the streaks draw the crown whole.
+- **How.** The sheet is a quarter of the sphere's chord thick at birth, about a centimetre for a
+  parcel 4 cm across, thinning as the stretch to the -1.5 (its radius grows as the stretch's square
+  root, so the sheet's thickness falls as the stretch). Its filter radius is 1.5 of its radius, its
+  air the streak's white (0.1 to 0.4 a parcel) and its absorption the region's. The surface draws a
+  quad for each parcel the spray lists, by an indirect draw whose count the spray copies after its
+  list (`Pool::splat_args`); any other kind is culled in the vertex stage.
+- **When.** The surface runs while a crown may be alive: 1.6 s after the spray last took entries
+  (`Water::crowns_possible`), whether or not they threw one.
+
+### 70.1 Checks
+
+- `tests/water.rs`'s `a_body_going_in_throws_a_crown_drawn_near_as_a_sheet_and_far_as_streaks` on
+  Metal, MoltenVK and the WebGPU baseline: a body's point going in at 6 m/s, fed as the feed's
+  stirring points, changes 4.6% of the frame from 2.5 m, where the surface draws its crown, and
+  0.019% from 60 m, where its parcels are under a pixel and the streaks draw it; one passing over
+  the water changes nothing.
+- The pool party's cannonball (`scene_shots`, ticks 786 to 807 every three, from the pool's side):
+  the crown is a clear sheet with the pool and the board bent through it and glints at its rims,
+  where a fan of grey streaks rose; pulled back fourfold along the view (about 14 m) it stays,
+  part sheet, part streak.
+
+Limits:
+
+- The sheet is its parcels' spheres smoothed: where they part, close up, it shows beads.
+- The surface writes no depth or motion: what draws after it (the medium, TAA) sees through it, and
+  TAA can ghost it.
+- The surface's passes run for 1.6 s after every point going in fast, a crown or not. Their cost
+  idle and with a crown is to be measured (liquids.md).

@@ -15,7 +15,8 @@ In this slice:
 - Emissions the renderer derives from the block liquid changes it receives (3).
 - The spike's solver in bounded regions near the camera, against the volume's solid blocks, with
   particles that die in the liquid, leave their region or age out (4).
-- The spike's screen-space surface, coloured per liquid, after the transparent instances (5).
+- A screen-space liquid surface, coloured per liquid and refracting what lies behind it, after the
+  frame's last colour pass (5).
 - A palette field for a liquid's splash colour, the feed, the switch, the browser and the checks
   (2, 6 to 8).
 
@@ -23,7 +24,6 @@ Not in this slice:
 
 - splashes from entities entering a liquid;
 - a flowing texture on rivers;
-- refraction;
 - splashes casting or receiving shadows;
 - particles pushing the walker or a body.
 
@@ -132,21 +132,50 @@ density, eight per solver cell, so a gush clumps like water and does not spray l
 
 ## 5. Drawing
 
-- The spike's screen-space surface (`fluid_surface.wgsl`) draws the particles: their depth and
-  thickness before the opaque pass, then the filter.
-- The composite is drawn after the transparent instances, where particles and splats are drawn
-  (transparency.md). Particles under a liquid's surface are dead, so what lies in front of a splash
-  is rarely transparent.
-  - Seen from under the water, a splash above the surface draws over it. This is a known limit, as
-    for particles behind glass.
-- Each particle draws with its region's `splash` absorption: the thickness texture sums absorption
-  times length per channel, so two liquids in view keep their colours. The light the body scatters
-  back is tinted by the same absorption over a short path (amended during implementation: one
-  colour from one field, instead of the `fog` colour).
-- Where the liquid is thin (droplets, sheets) it turns white, as air in spray scatters light
-  (amended during implementation: blue droplets over blue water could not be seen).
-- The frame's fog applies as to the scene, including the liquid's fog when the camera is inside it.
+The liquid surface (`fluid_surface.rs`, `fluid_surface.wgsl`) draws every MLS-MPM source, the
+fluid box and the splash regions, as one screen-space surface, together with the water spray's entry
+crowns where they are wide on the screen (water.md 70). It follows W. J. van der Laan,
+S. Green and M. Sainz, "Screen space fluid rendering with curvature flow" (I3D 2009), and the
+passes of S. Lague's Fluid-Sim (github.com/SebLague/Fluid-Sim at 4717b72, MIT). Amended on
+2026-10-23: the spike's surface drew its splats before the opaque pass, tinted the body with one
+scattered colour, turned thin liquid white and did not refract (the charter's route note of that
+day).
+
+- **Where.** It runs once the frame's last colour pass has drawn (the transparent instances, or the
+  water and its foreground, water.md 18), before the water's medium and TAA, at the opaque pass's
+  size. Orthographic cameras draw no surface.
+- **Splats.** Each particle is a sphere impostor drawn into textures of the surface's own, tested
+  against the scene's depth sample by sample:
+  - the nearest front (depth test `Greater`): its distance, its filter radius (5.4 times the depth
+    sphere's) and its air;
+  - every sphere's chord at the pixel, cut where the scene's farthest sample lies inside it, added
+    up per channel as absorption times length.
+- **Filter.** Three horizontal and vertical pairs of a separable bilateral filter (Lague's
+  `BilateralPass`) smooth the depth and the thickness together, as compute passes that write only
+  the pixels with liquid. The reach is the filter radius on
+  the screen, at most 32 pixels; a neighbour whose depth differs from the pixel's by more than
+  about three quarters of that radius counts little, and one without liquid not at all.
+- **Composite.**
+  - The normal comes from the smoothed depth, from the nearer neighbour of each pair (Lague's
+    `NormalsFromDepth`), turned toward the eye.
+  - The frame behind is read along the ray refracted at the front surface and run through the
+    liquid's thickness; where that lands off the frame or on something nearer than the liquid, the
+    pixel itself. It is absorbed per channel along the thickness (Beer).
+  - The exact dielectric Fresnel (water's index 1.33) weighs the sky reflected, a little rough,
+    including the sky's ground below the horizon: a drop's underside faces down.
+  - The sun adds a GGX glint, in the sun's shadow.
+  - The body scatters the sky above and the sun once, 0.15 per metre against its absorption, so
+    where it absorbs red it scatters blue.
+  - Air turns it white, lit as a white surface: none in the fluid box, 0.08 in a block's splash.
+  - The frame's fog applies as to the scene. With MSAA only the samples behind the liquid show it.
+- Each particle draws with its region's `splash` absorption: the thickness sums absorption times
+  length per channel, so two liquids in view keep their colours.
 - A frame with no living particle draws nothing extra and is pixel for pixel the frame of before.
+- **Limits.**
+  - Transparent instances, particles and streaks in front of the liquid are drawn under it,
+    refracted as if behind it.
+  - The surface writes no depth or motion, so TAA can ghost it while it moves.
+  - Seen from under the water, a splash above the surface draws over it.
 
 ## 6. Determinism, hosts and the switch
 
@@ -163,8 +192,8 @@ density, eight per solver cell, so a gush clumps like water and does not spray l
 
 ## 7. Code
 
-- `crates/amoris-render/src/fluid.rs` keeps the solver: regions, masks, the ring pool and the
-  surface.
+- `crates/amoris-render/src/fluid.rs` keeps the solver: regions, masks and the ring pool.
+  `crates/amoris-render/src/fluid_surface.rs` draws the surface (5).
 - `crates/amoris-render/src/splash.rs` derives emissions from chunk changes as a pure function of
   the old and new chunks, the camera and the frame's seed, so the CPU side is tested without a GPU.
 - `fluid_box` stays the solver's bench: one region with a solid border. Its sphere impostors are
@@ -179,15 +208,18 @@ density, eight per solver cell, so a gush clumps like water and does not spray l
 | A gush where air becomes water, away from its feeder; down from a falling cell; nothing on first sight, on `reset`, past 48 m, or for a liquid without `splash`; the per-frame cap | `amoris-render` unit tests of `splash::` |
 | Stream feet found under falling columns, re-found when a chunk changes, nearest 64 kept | same |
 | A particle dies under a liquid surface, outside its region, at 4 s; dropped on a solid block it rests on it; a full ring drops the oldest | `amoris-render` GPU test `tests/splashes.rs` (each backend; under the WebGPU baseline) |
+| Through a metre of liquid the frame behind keeps far more blue than red; what stands in front of the liquid hides it, pixel for pixel | `amoris-render` GPU test `tests/fluid_surface.rs` (each backend; under the WebGPU baseline) |
 | Frames with no living particle are unchanged | `cargo test -p amoris-render`, `tools/build_compare.py` against a build without splashes |
 | A bank broken in a blockcraft-like volume gushes, a waterfall churns its pool; shots for the owner | `amoris-app` example `splashes` |
 | GPU cost with the pool full and empty on the M5, the RTX 5060 and the 780M, and in Chrome | docs/bench/liquids.md |
 
 ## 9. Open questions
 
-1. Close up, sparse particles draw as separate beads: the filter's reach stops at 24 pixels and
-   droplets apart do not merge. Spray drawn as soft white sprites of its own (the spike's "diffuse
-   particles") would fix it.
+1. Close up, sparse particles still draw as separate beads: droplets farther apart than the
+   filter's reach (5.4 depth-sphere radii, at most 32 pixels) do not merge. Splats stretched along
+   each particle's neighbourhood (J. Yu and G. Turk, "Reconstructing surfaces of particle-based
+   fluids using anisotropic kernels", ACM Transactions on Graphics 32(1), 2013) would draw sheets
+   and threads instead.
 2. Splashes from entities entering a liquid: they need the walker's crossing, which the renderer
    could read from the instances.
 3. Whether the stream foot's churn should also draw on the block surface (ripples), or whether the
