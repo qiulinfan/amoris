@@ -32,7 +32,10 @@ export async function createViewport(canvas, options = {}) {
   let socket = null;
   let disposed = false;
   let frames = 0;
-  let last = performance.now();
+  // The previous frame's requestAnimationFrame timestamp. A frame's timestamp is when the browser
+  // began it and can precede a performance.now() read just before, so intervals come from those
+  // timestamps alone, the first from a frame that only records it.
+  let last = 0;
   const frameTimes = [];
 
   if (options.renderUrl) {
@@ -89,7 +92,10 @@ export async function createViewport(canvas, options = {}) {
     for (const l of listeners) l(stats);
     requestAnimationFrame(tick);
   }
-  requestAnimationFrame(tick);
+  requestAnimationFrame((now) => {
+    last = now;
+    requestAnimationFrame(tick);
+  });
 
   const api = {
     raw: vp,
