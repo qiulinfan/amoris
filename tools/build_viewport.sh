@@ -19,6 +19,12 @@ if command -v cygpath >/dev/null; then
   checkout="$(cygpath -w "$checkout")"
 fi
 export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$cargo_home/registry/src=registry --remap-path-prefix=$cargo_home\\registry\\src=registry --remap-path-prefix=$checkout=."
+# With rustup's rust-src component installed, rustc names standard-library code it instantiates
+# here by the component's local path: remap it to the prefix the prebuilt standard library uses.
+sysroot_src="$(rustc --print sysroot)/lib/rustlib/src/rust"
+rustc_hash="$(rustc -vV | sed -n 's/^commit-hash: //p')"
+if command -v cygpath >/dev/null; then sysroot_src="$(cygpath -w "$sysroot_src")"; fi
+export RUSTFLAGS="$RUSTFLAGS --remap-path-prefix=$sysroot_src=/rustc/$rustc_hash"
 export CFLAGS_wasm32_unknown_unknown="${CFLAGS_wasm32_unknown_unknown:--ffp-contract=off} -ffile-prefix-map=$cargo_home=cargo -ffile-prefix-map=$checkout=."
 export CXXFLAGS_wasm32_unknown_unknown="${CXXFLAGS_wasm32_unknown_unknown:-} -ffile-prefix-map=$cargo_home=cargo -ffile-prefix-map=$checkout=."
 cargo build --profile web --target wasm32-unknown-unknown -p amoris-viewport
