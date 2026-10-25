@@ -508,7 +508,7 @@ fn a_broken_top_block_lowers_the_bed_and_a_dug_hole_fills() {
 
 // --- Field liquids (water.md 6) -------------------------------------------------------------------
 
-use amoris_sim::voxels::{BlockShape, FALLING, Flow, FlowModel};
+use amoris_sim::voxels::{BlockShape, FALLING, Flow};
 
 const WATER: u8 = 3;
 
@@ -519,22 +519,11 @@ fn wet_ground() -> (Voxels, WaterRegion, bed::Map) {
         name: "water".into(),
         shape: BlockShape::Liquid,
         faces: ["w".into(), String::new(), String::new()],
-        flow: Some(Flow {
-            spread: 0,
-            model: FlowModel::Field,
-            ..Flow::default()
-        }),
+        flow: Some(Flow::default()),
         ..Block::default()
     });
     v.validate().unwrap();
     (v, r, m)
-}
-
-#[test]
-fn a_field_liquid_needs_no_spread() {
-    let (mut v, _, _) = wet_ground();
-    v.palette[3].flow.as_mut().unwrap().spread = 7;
-    assert_eq!(v.validate().unwrap_err().code, "voxels.invalid");
 }
 
 #[test]

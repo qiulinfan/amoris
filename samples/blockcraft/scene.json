@@ -219,10 +219,7 @@
         "",
         ""
        ],
-       "flow": {
-        "spread": 0,
-        "model": "field"
-       }
+       "flow": {}
       },
       {
        "name": "cobblestone",

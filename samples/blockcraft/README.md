@@ -30,9 +30,9 @@ the same way.
 The island is the engine's block volume (`Voxels`): the engine meshes it into chunks, the
 first-person body (`Walker`) collides with its solid blocks and swims in its water, and the scripts
 edit it (`docs/spec/voxels.md`). The water is one `WaterRegion` over the island at two columns a
-block (`docs/spec/water.md`): the volume's water blocks are `field` liquids, which the engine turns into the
-region's water at load and whenever a script places one, and `physics.water` moves it as a height
-field over the blocks' beds.
+block (`docs/spec/water.md`): the volume's water blocks are liquids that flow (their palette entry
+has a `flow`), which the engine turns into the region's water at load and whenever a script places
+one, and `physics.water` moves it as a height field over the blocks' beds.
 
 - `gen_world.py` writes everything the scene loads: `textures/` (16 x 16 pixel art written
   upscaled by nearest neighbour to 1024 x 1024, the size the engine resamples every texture to,

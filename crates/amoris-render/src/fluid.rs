@@ -1,9 +1,9 @@
 //! Liquid particles on the GPU (docs/spec/splashes.md 4, docs/spikes/fluid-box.md): an MLS-MPM
 //! solver (shaders/fluid_mpm.wgsl) in up to four regions, each a box of solver cells with a mask of
 //! the blocks in it, over one ring of particles, drawn by the liquid surface (fluid_surface.rs).
-//! The splashes over block liquids (splash.rs) and the fluid box of the spike both run on it.
-//! Presentation only, like the particles: it runs on the GPU's float arithmetic, which differs
-//! between backends, so nothing here reaches the world or its hash.
+//! The fluid box of the spike runs on it. Presentation only, like the particles: it runs on the
+//! GPU's float arithmetic, which differs between backends, so nothing here reaches the world or its
+//! hash.
 
 use bytemuck::{Pod, Zeroable};
 

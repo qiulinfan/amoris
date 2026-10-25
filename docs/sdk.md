@@ -142,8 +142,8 @@ const hit = ctx.voxels.raycast(land, eye, dir, 5);      // {cell, normal, block,
 
 A `WaterRegion` entity is a grid of water columns over a bed (a block volume's, at one or two
 columns a block), stepped as shallow water by the engine ([spec/water.md](spec/water.md)). A liquid
-whose palette `flow` has `"model": "field"` (and `"spread": 0`) becomes the region's water: setting
-it adds its cell's water and leaves the cell air. Scripts read and change the water at a world point
+whose palette entry has a `flow` (`"flow": {}`) becomes the region's water: setting it adds its
+cell's water and leaves the cell air. Scripts read and change the water at a world point
 through `ctx.water`; changes apply when `run` returns:
 
 ```ts

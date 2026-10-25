@@ -17,7 +17,7 @@
   WebAssembly, and the drawing costs 0.2 to 0.6 ms on the RTX 5060.
 - Amends: [liquids.md](liquids.md) 5 and 6 for liquids on the field (6 below), and
   [splashes.md](splashes.md) 3 (emissions) and 9 question 1 (spray), by 10 below. liquids.md's
-  cellular automaton stays for liquids that keep the cells model.
+  cellular automaton, kept here as a choice, was retired on 2026-10-25 (6).
 
 ## 1. Applications
 
@@ -27,7 +27,7 @@ slice named (2):
 
 | Application | Bed | Edges and water | What the particles add | Slice |
 |---|---|---|---|---|
-| The block game's water (blockcraft) | a block volume, two columns a block (5) | `Field` liquids become depth (6); a broken bank floods | the fall over a broken edge, its foot | A (water), B (particles) |
+| The block game's water (blockcraft) | a block volume, two columns a block (5) | Field liquids become depth (6); a broken bank floods | the fall over a broken edge, its foot | A (water), B (particles) |
 | A lake, a pool, a flood | any bed | walls; the water set at load, or by scripts and sources | a dam's breach | A, B |
 | A river | a bed sloping down its course | an `Inflow` edge or a `WaterSource` upstream, an `Outflow` or `Sea` edge downstream | rapids where it runs over a rise | C |
 | A waterfall | a ledge in the bed | as a river; the field carries the water to the lip | the curtain in the air and the spray at its foot (10) | C |
@@ -45,7 +45,8 @@ end and adds to the one before:
   - The `WaterRegion` component and `physics.water`: a region of columns over a bed, stepped
     deterministically, sleeping where still (3, 4).
   - Beds from block volumes (5).
-  - Block liquids on the field, the cellular automaton kept as a choice; blockcraft moves (6).
+  - Block liquids on the field, the cellular automaton kept as a choice (retired on 2026-10-25);
+    blockcraft moves (6).
   - The walker in the water (7).
   - Scripts, sources and drains (8).
   - The feed and the drawing, every column at level 1 (9).
@@ -204,7 +205,7 @@ pub enum BedSource {
 - **Voxels.** The region must sit on the volume's cell grid: its corner on a cell's corner and
   `cell_m` equal to the volume's `cell_m / per` (`water.misaligned`). All the columns over one
   block take the same bed, which is read at two moments:
-  - **At load**, for a region spawned with no tiles. In a block column holding a `Field` liquid (6),
+  - **At load**, for a region spawned with no tiles. In a block column holding a field liquid (6),
     the bed is the top of the first solid block below its highest liquid cell. In any other, it is
     the top of the highest solid block within the range (shallow.rs `from_voxels`).
   - **When a chunk changes**, for each block column of it under the region: solid blocks that air
@@ -240,17 +241,20 @@ pub enum BedSource {
 
 ## 6. Block liquids
 
-- `Flow` (liquids.md 3) gains `model: FlowModel`, `Cells` or `Field`. `Cells` is the default, so
-  every scene saved before slice A plays as it did. A `Field` liquid needs `spread: 0`: it never
-  enters `physics.fluids`.
-- **Conversion.** On the first tick a `Field` liquid's cells are in a volume, `physics.water` turns
+- A liquid whose palette entry has a `flow` (liquids.md 3) is a field liquid. Amended 2026-10-25
+  (owner, charter 4.10): `Flow` gained `model: FlowModel` here, `Cells` (the default, so every
+  scene saved before slice A played as it did, through liquids.md 4's cellular automaton) or
+  `Field`, which needed `spread: 0`. With the automaton retired, the model, the spread and the
+  automaton's other parameters are gone and every liquid that flows is a field liquid; a `flow`
+  that named no model, which used to flow by the automaton, is now the water's.
+- **Conversion.** On the first tick a field liquid's cells are in a volume, `physics.water` turns
   them into water and clears them. Each cell gives the part of the cell at or below its liquids.md 6
   surface, in equal shares, to the `per`² columns over its block. That happens after a scene load
   and after a script places one.
-- **Coverage.** The region whose bed is that volume takes the water. A `Field` liquid cell outside
+- **Coverage.** The region whose bed is that volume takes the water. A field liquid cell outside
   every such region is an error at load (`water.uncovered`), and is cleared with an event when a
   script places it.
-- **Scripts.** Setting a `Field` liquid's block adds the cell's water to its column and leaves the
+- **Scripts.** Setting a field liquid's block adds the cell's water to its column and leaves the
   cell air: `ctx.voxels.get` answers air there. `ctx.water` (8) answers the water.
 - **Springs.** A spring in a cliff is a `WaterSource`, not a falling block.
 - **What the block game's rules lose** (owner, 2026-10-18, accepted):
@@ -260,8 +264,10 @@ pub enum BedSource {
     the water aside.
   - `ctx.voxels.get` answers air in the water, so a ray cast from the eye passes through the water
     with no special case.
-- **The palette.** A `Field` liquid's `fog` and `splash` are not read: its region's `look` is.
-- **blockcraft** moves to `Field`. Its scene declares one region over the island at two columns a
+- **The palette.** A field liquid's `fog` shows only while its cells stand, before the first tick
+  takes them (a scene's edit world); the water shows its region's `look`. Its `splash` went with
+  the splashes over block liquids (splashes.md 3) on 2026-10-25.
+- **blockcraft** moves to the field. Its scene declares one region over the island at two columns a
   block, with the water's fog and absorption as its `look` and `dry_below` at 0.002 (4). Its
   `main.ts` places water through `ctx.voxels.set` as before; the code that steps a ray past water
   cells is left with nothing to do.
@@ -537,7 +543,7 @@ M5 and R1 (both GPUs), and in Chrome.
 | Films thinner than `dry_below` dry when slow and are reported; with 0 nothing dries; a flood's moving front does not dry | same | A |
 | The same hash chain natively (release and debug), in WebAssembly under Node and in Chrome, and on R1 | `amoris-physics` web test, `tools/water/shallow_check.py` | A |
 | Beds from a volume at load; after a change, a block placed in the water or on the ground raises the bed, a bridge, a roof or leaves over the water leave it, a broken top block lowers it; beds persisted; `water.misaligned`, `water.uncovered` | `amoris-physics` and `amoris-runtime` tests | A |
-| `Field` liquids load as water, shared over a block's columns; `Cells` scenes unchanged; blockcraft's lake breaks and floods | `amoris-runtime` tests, `amoris-app` example `blockcraft_water` (amended during implementation: `shallow_water` stays the spike's demo) | A |
+| Field liquids load as water, shared over a block's columns; blockcraft's lake breaks and floods | `amoris-runtime` tests, `amoris-app` example `blockcraft_water` (amended during implementation: `shallow_water` stays the spike's demo) | A |
 | The walker swims in field water and is pushed | `amoris-physics` tests | A |
 | `ctx.water` reads, adds and removes; sources and drains | `amoris-runtime` tests (amended during implementation: they run the script host on a game with physics) | A |
 | Sleeping regions reused by the snapshot cache; a fork and a restore continue the flow | `amoris-persist` and `amoris-runtime` tests | A |
@@ -558,7 +564,8 @@ M5 and R1 (both GPUs), and in Chrome.
 2. Two-way coupling beyond displaced volume (46) and entry crowns (52): added mass, impact
    pressure on a body that strikes the water, and a dense splash that carries water.
 3. Whether the `Cells` model is kept for good, or retired. It stays through these slices (lava
-   and older scenes use it); the owner decides once blockcraft has moved.
+   and older scenes use it); the owner decides once blockcraft has moved. Answered 2026-10-25:
+   retired (owner, charter 4.10; 6).
 4. A solver on several threads, by tiles in a fixed order, which a region larger than 512² needs.
 5. Encoding the `WaterRegion` section by tile, so a few awake tiles do not re-encode a whole region.
    Slice A's measurement decides it (12).
@@ -580,7 +587,7 @@ The owner reviewed the draft and took each of the recommendations below.
 6. **Films dry** below `dry_below`, off by default, 2 mm in blockcraft (4).
 7. **R1 first**: slice A starts once `tools/water/shallow_check.py` on R1 matches the M5. It matched
    on 2026-10-18.
-8. **`Cells` stays** through these slices (15, question 3).
+8. **`Cells` stays** through these slices (15, question 3). Retired on 2026-10-25 (6).
 9. **`Blocky`** draws the surface flat over each block (9); blockcraft uses `Smooth` (owner,
    2026-10-18, from slice A's shots).
 

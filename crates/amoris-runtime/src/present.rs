@@ -275,7 +275,6 @@ fn block_looks(v: &Voxels) -> Vec<BlockLook> {
             },
             faces: b.faces.clone(),
             fog: b.flow.map(|f| f.fog.map(f32_of)),
-            splash: b.flow.and_then(|f| f.splash).map(|a| a.map(f32_of)),
         })
         .collect()
 }

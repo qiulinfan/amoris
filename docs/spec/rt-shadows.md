@@ -128,8 +128,6 @@ Direct3D 12 (DXC) and Vulkan, `tools/render/vk_validate.py` reporting naga's
 ([gpu-matrix.md](../bench/gpu-matrix.md) 13). With ray-traced shadows the cascades still draw in a
 frame with water or the liquid surface: the water's medium, its spray and the surface sample them
 and trace no rays (`tests/water.rs` `the_sun_still_scatters_under_water_with_ray_traced_shadows`).
-The renderer takes the frame's block-liquid splashes (`splash_frame`) before it decides, so a splash
-that wakes the solver has the cascades drawn in its first frame.
 
 ## Amoris integration: Metal (2026-10-10)
 

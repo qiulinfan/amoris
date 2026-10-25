@@ -382,10 +382,7 @@ pub struct Renderer {
     terrains: crate::terrain::Terrains,
     /// A liquid in a box, the fluid experiment (fluid.rs, docs/spikes/fluid-box.md).
     pub fluid: Option<crate::fluid::Fluid>,
-    /// Splashes over block liquids (splash.rs, docs/spec/splashes.md): what emits on the CPU, and
-    /// the solver, made on the first region opened.
-    splash: crate::splash::Splashes,
-    splash_fluid: Option<crate::fluid::Fluid>,
+    /// The water's spray on or off (`AMORIS_SPLASHES`, docs/spec/water.md 35).
     splashes_on: bool,
     /// The liquid particles' surface (fluid_surface.rs), drawn after the frame's last colour pass.
     liquid: crate::fluid_surface::FluidSurface,
@@ -1342,8 +1339,6 @@ impl Renderer {
             voxels: crate::voxels::Voxels::default(),
             terrains: crate::terrain::Terrains::default(),
             fluid: None,
-            splash: Default::default(),
-            splash_fluid: None,
             splashes_on: splashes_from_env(),
             liquid: crate::fluid_surface::FluidSurface::new(&gpu.device),
             materials,
@@ -1878,13 +1873,10 @@ impl Renderer {
         self.water.set_optics(refraction, reflection, detail);
     }
 
-    /// Block-liquid splashes and current-field dilute spray on/off; AMORIS_SPLASHES sets the
-    /// initial choice. Presentation pools clear when disabled; physical water is unchanged.
+    /// Current-field dilute spray on/off; AMORIS_SPLASHES sets the initial choice. Presentation
+    /// pools clear when disabled; physical water is unchanged.
     pub fn set_splashes(&mut self, on: bool) {
         self.splashes_on = on;
-        if !on && let Some(f) = self.splash_fluid.as_mut() {
-            f.clear(&self.gpu.queue);
-        }
     }
 
     /// Explicit diagnostic snapshot; ordinary rendering never reads these counters.
@@ -1910,53 +1902,6 @@ impl Renderer {
     }
     pub fn splashes(&self) -> bool {
         self.splashes_on
-    }
-
-    /// The splashes' solver, once a region opened (checks read its particles).
-    pub fn splash_fluid(&self) -> Option<&crate::fluid::Fluid> {
-        self.splash_fluid.as_ref()
-    }
-
-    /// The splashes' stream feet in volume `id` (checks).
-    pub fn splash_feet(&self, id: u64) -> Vec<([i32; 3], crate::splash::Foot)> {
-        self.splash.feet(id)
-    }
-
-    /// One frame of the splashes: what emits, the regions it needs, the particles spawned.
-    fn splash_frame(&mut self, eye: [f32; 3], dt: f32) {
-        use crate::fluid::SLOTS;
-        let quiet: [bool; SLOTS] = std::array::from_fn(|s| {
-            self.splash_fluid.as_ref().is_none_or(|f| {
-                f.region(s).is_none()
-                    || f.clock() - f.last_spawn(s) > f64::from(crate::splash::LIFETIME_S) + 0.1
-            })
-        });
-        let voxels = &self.voxels;
-        let work = self
-            .splash
-            .frame(|id| voxels.cells(id), eye, dt, quiet, self.splashes_on);
-        if self.splash_fluid.is_none() && !work.open.is_empty() {
-            self.splash_fluid = Some(crate::fluid::Fluid::new(
-                &self.gpu.device,
-                crate::splash::solver(),
-            ));
-        }
-        let Some(f) = self.splash_fluid.as_mut() else {
-            return;
-        };
-        let queue = &self.gpu.queue;
-        for slot in work.close {
-            f.close(queue, slot);
-        }
-        for (slot, region, mask) in work.open {
-            f.open(queue, slot, region, &mask);
-        }
-        for (slot, mask) in work.masks {
-            f.set_mask(queue, slot, &mask);
-        }
-        for (slot, particles) in work.spawn {
-            f.spawn(queue, slot, &particles);
-        }
     }
 
     /// Rebuilds what depends on the opaque pass's format when the options changed it.
@@ -2147,10 +2092,6 @@ impl Renderer {
             self.voxels.clear();
             self.terrains.clear();
             self.water.clear();
-            self.splash.clear();
-            if let Some(f) = self.splash_fluid.as_mut() {
-                f.clear(&self.gpu.queue);
-            }
         }
         if !frame.water.is_empty() || !frame.water_removed.is_empty() {
             self.water.apply(&frame.water, &frame.water_removed);
@@ -2174,8 +2115,7 @@ impl Renderer {
             frame.instances.extend(changes.instances);
         }
         if !frame.voxels.is_empty() || !frame.voxels_removed.is_empty() {
-            let mut changes = self.voxels.apply(&frame.voxels, &frame.voxels_removed);
-            self.splash.note(std::mem::take(&mut changes.splash));
+            let changes = self.voxels.apply(&frame.voxels, &frame.voxels_removed);
             for (key, mesh) in &changes.meshes {
                 self.meshes
                     .replace(&self.gpu.device, &self.gpu.queue, key, mesh);
@@ -3025,10 +2965,6 @@ impl Renderer {
             .last_frame_s
             .map_or(1.0 / 60.0, |t| (now_s - t).clamp(0.0, 0.1)) as f32;
         self.last_frame_s = Some(now_s);
-        // The block liquids' splashes this frame (CPU work and queue writes only), before the
-        // cascades are decided: a splash that wakes the solver now draws the liquid surface, which
-        // samples them.
-        self.splash_frame(cam.position.to_array(), frame_dt);
         let mut planes = [[[0.0f32; 4]; 6]; 5];
         // The jittered frustum and matrix: the depth pyramid holds the jittered depth.
         let camera_planes = frustum_planes(vp_j, true);
@@ -3183,10 +3119,7 @@ impl Renderer {
             cam.position.to_array(),
             drawn_t,
         );
-        for f in [self.fluid.as_mut(), self.splash_fluid.as_mut()]
-            .into_iter()
-            .flatten()
-        {
+        if let Some(f) = self.fluid.as_mut() {
             let timestamps = if f.encodes(frame_dt) {
                 self.profiler.compute_scope("fluid solver")
             } else {
@@ -3565,13 +3498,6 @@ impl Renderer {
             if let Some(f) = self.fluid.as_ref().filter(|f| f.active()) {
                 sources.push(crate::fluid_surface::Source::Mpm { fluid: f, air: 0.0 });
             }
-            // A block's splash carries a little air.
-            if let Some(f) = self.splash_fluid.as_ref().filter(|f| f.active()) {
-                sources.push(crate::fluid_surface::Source::Mpm {
-                    fluid: f,
-                    air: 0.08,
-                });
-            }
             if self.water.crowns_possible() {
                 for pool in self.water.crown_pools() {
                     sources.push(crate::fluid_surface::Source::Spray { pool });
@@ -3790,11 +3716,7 @@ impl Renderer {
     /// or an entry crown's (water.md 52).
     fn liquid_possible(&self, cam: &CameraState) -> bool {
         cam.ortho_height.is_none()
-            && ([&self.fluid, &self.splash_fluid]
-                .into_iter()
-                .flatten()
-                .any(|f| f.active())
-                || self.water.crowns_possible())
+            && (self.fluid.as_ref().is_some_and(|f| f.active()) || self.water.crowns_possible())
     }
 
     fn draw_particles_and_grid(&self, device: &wgpu::Device, pass: &mut wgpu::RenderPass<'_>) {

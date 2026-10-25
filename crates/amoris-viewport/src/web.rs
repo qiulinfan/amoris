@@ -742,7 +742,7 @@ impl Viewport {
         }
     }
 
-    /// Block-liquid splashes and field-driven dilute spray: `off` or `on` (the default;
+    /// The water's field-driven dilute spray (docs/spec/water.md 35): `off` or `on` (the default;
     /// anything else leaves the current choice). Physical water is unchanged.
     pub fn set_splashes(&mut self, mode: &str) {
         match mode {

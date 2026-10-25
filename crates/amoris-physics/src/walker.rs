@@ -26,11 +26,10 @@ const MAX_SWEEP_CELLS: i32 = 256;
 /// The gap, in cells, that keeps a box off the faces it rests against.
 const SKIN: f64 = 1e-7;
 /// In a liquid (liquids.md 5): the share of gravity, the fastest sinking, the share of horizontal
-/// speed, the current's speed, and the share of a jump that lifts a swimmer rising at a wall.
+/// speed, and the share of a jump that lifts a swimmer rising at a wall.
 const LIQUID_GRAVITY: f64 = 0.25;
 const LIQUID_SINK_MPS: f64 = 2.0;
 const LIQUID_SPEED: f64 = 0.6;
-const CURRENT_MPS: f64 = 1.4;
 /// In a region's water (water.md 7): the surface must stand this far over the feet, metres, and the
 /// current pushes with the column's velocity, at most this fast, m/s.
 const FIELD_WADE_M: f64 = 0.05;
@@ -221,13 +220,11 @@ struct Pool<'a> {
     region: &'a WaterRegion,
 }
 
-/// How a liquid meets a box: whether one overlaps it, whether the eye is under a surface, the cells'
-/// current's horizontal direction, unit or zero (liquids.md 5), and a region's push, m/s (water.md
-/// 7).
+/// How a liquid meets a box: whether one overlaps it, whether the eye is under a surface, and a
+/// region's push, m/s (water.md 7).
 struct Contact {
     body: bool,
     eye: bool,
-    current: [f64; 2],
     push: [f64; 2],
     /// A region's surface over the walker, when its body is in that water.
     surface: Option<f64>,
@@ -270,7 +267,6 @@ fn contact(w: &Walker, eye: [f64; 3], volumes: &[Volume], pools: &[Pool]) -> Con
     let mut out = Contact {
         body: false,
         eye: false,
-        current: [0.0; 2],
         push: [0.0; 2],
         surface: None,
     };
@@ -324,21 +320,6 @@ fn contact(w: &Walker, eye: [f64; 3], volumes: &[Volume], pools: &[Pool]) -> Con
                         continue;
                     }
                     out.body = true;
-                    if v.flow(b).is_none() || s & (LEVEL | FALLING) == 0 {
-                        continue;
-                    }
-                    // The current runs toward lower neighbours, and over edges it falls from.
-                    for (dx, dz) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
-                        let n = [x + dx, y, z + dz];
-                        let (nb, ns) = v.cell(n);
-                        let lower = nb == b && ns & FALLING == 0 && ns & LEVEL > s & LEVEL;
-                        let drop = (nb == 0 || v.shape(nb) == BlockShape::Cross)
-                            && !v.solid(v.get([n[0], n[1] - 1, n[2]]));
-                        if lower || drop {
-                            out.current[0] += f64::from(dx);
-                            out.current[1] += f64::from(dz);
-                        }
-                    }
                 }
             }
         }
@@ -349,10 +330,6 @@ fn contact(w: &Walker, eye: [f64; 3], volumes: &[Volume], pools: &[Pool]) -> Con
                 out.eye = true;
             }
         }
-    }
-    let len = math::sqrt(out.current[0] * out.current[0] + out.current[1] * out.current[1]);
-    if len > 0.0 {
-        out.current = [out.current[0] / len, out.current[1] / len];
     }
     out
 }
@@ -435,8 +412,8 @@ fn advance_contact(
     let mut vx = (-sy * f + cy * s) * speed;
     let mut vz = (-cy * f - sy * s) * speed;
     if wet.body {
-        vx += wet.current[0] * CURRENT_MPS + wet.push[0];
-        vz += wet.current[1] * CURRENT_MPS + wet.push[1];
+        vx += wet.push[0];
+        vz += wet.push[1];
     }
     if w.jump && w.grounded {
         w.vertical_mps = w.jump_mps;
@@ -843,34 +820,6 @@ mod tests {
         }
         assert!(eye[0] > 4.0, "out of the water and along the bank: {eye:?}");
         assert!(top >= 1.0 - 1e-6, "walked on the bank's top: feet {top}");
-    }
-
-    #[test]
-    fn a_current_pushes_the_walker_downstream() {
-        let mut v = ground();
-        v.palette.push(Block {
-            name: "water".into(),
-            shape: BlockShape::Liquid,
-            faces: ["w".into(), String::new(), String::new()],
-            flow: Some(amoris_sim::voxels::Flow::default()),
-            ..Block::default()
-        });
-        // A run of flowing water along +x, its level rising (its surface falling) cell by cell.
-        for x in 0..7 {
-            v.set_with_state([x, 0, 0], 3, u8::try_from(x).unwrap(), 0)
-                .unwrap();
-        }
-        let mut w = Walker::default();
-        let vols = [Volume {
-            origin: [0.0; 3],
-            voxels: &v,
-        }];
-        let mut eye = [1.5, w.eye_m, 0.5];
-        for _ in 0..30 {
-            eye = advance(&mut w, eye, 1.0 / 60.0, &vols, &[]);
-        }
-        assert!(eye[0] > 1.5 + 0.5, "carried downstream: {eye:?}");
-        assert!((eye[2] - 0.5).abs() < 1e-9);
     }
 
     #[test]

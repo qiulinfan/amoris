@@ -214,10 +214,10 @@ def palette():
         if kind in PLANTS:
             block = {"shape": "cross", "faces": [f"blocks.gltf#{PLANT_TEXTURE[kind]}", "", ""]}
         elif kind == WATER:
-            # The engine's water (amoris docs/spec/water.md 6): its cells become the water region's
-            # depth at load, and a placed water block pours a block's water into its columns.
-            block = {"shape": "liquid", "faces": ["blocks.gltf#water", "", ""],
-                     "flow": {"spread": 0, "model": "field"}}
+            # The engine's water (amoris docs/spec/water.md 6): a liquid that flows, whose cells
+            # become the water region's depth at load; a placed water block pours a block's water
+            # into its columns.
+            block = {"shape": "liquid", "faces": ["blocks.gltf#water", "", ""], "flow": {}}
         else:
             block = {"solid": True, "faces": [f"blocks.gltf#{f}" for f in FACES[kind]]}
         out.append({"name": NAMES[kind], **block})

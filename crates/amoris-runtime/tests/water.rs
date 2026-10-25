@@ -263,11 +263,7 @@ fn pond() -> Voxels {
         name: "water".into(),
         shape: amoris_sim::voxels::BlockShape::Liquid,
         faces: ["b#w".into(), String::new(), String::new()],
-        flow: Some(amoris_sim::voxels::Flow {
-            spread: 0,
-            model: amoris_sim::voxels::FlowModel::Field,
-            ..Default::default()
-        }),
+        flow: Some(amoris_sim::voxels::Flow::default()),
         ..Block::default()
     });
     v.fill([8, 2, 8], [15, 3, 15], 2, 0).unwrap();

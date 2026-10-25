@@ -1,4 +1,4 @@
-//! Block liquids on the field (water.md 6): a `Field` liquid's cells become the water of the region
+//! Block liquids on the field (water.md 6): a flowing liquid's cells become the water of the region
 //! whose bed is their volume, shared over the columns of their block, and are cleared. A cell no
 //! such region covers is an error at load (`water.uncovered`) and is cleared with an event later.
 

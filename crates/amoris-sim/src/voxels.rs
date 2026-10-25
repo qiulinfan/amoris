@@ -1,8 +1,8 @@
 //! Block volumes (docs/spec/voxels.md 2 to 4): `Voxels`, a world of cells in 16 x 16 x 16 chunks
 //! with a palette of blocks, its edits and its exact grid ray cast; each cell's state byte, which a
-//! liquid's level lives in, and the flow's pending cells (docs/spec/liquids.md 2 to 4). World state:
-//! physics collides with it and flows its liquids, scripts read and edit it, the render extractor
-//! sends its changed chunks.
+//! liquid's level lives in (docs/spec/liquids.md 2). World state: physics collides with it and
+//! turns its flowing liquids into water (docs/spec/water.md 6), scripts read and edit it, the
+//! render extractor sends its changed chunks.
 
 use amoris_contract::{Problem, detail};
 use bevy_ecs::prelude::Component;
@@ -28,8 +28,6 @@ pub type Cell = [i32; 3];
 pub const LEVEL: u8 = 0b0111;
 /// A liquid state's falling bit: fed from above.
 pub const FALLING: u8 = 0b1000;
-/// The most liquids of a volume that flow.
-pub const MAX_FLOWING: usize = 8;
 
 /// How a block is drawn (voxels.md 2.1).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -55,53 +53,24 @@ pub struct Block {
     pub solid: bool,
     /// The top, side and bottom material paths of a cube; a cross or a liquid uses the first.
     pub faces: [String; 3],
-    /// A liquid's flow (liquids.md 3); none: it stays still.
+    /// A liquid's flow (liquids.md 3): it flows as water (water.md 6); none: it stays still.
     pub flow: Option<Flow>,
 }
 
-/// How a liquid flows (liquids.md 3).
+/// How a liquid flows (liquids.md 3): on a `WaterRegion`'s height field, whose `physics.water`
+/// turns the liquid's cells into its water and clears them (water.md 6).
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 pub struct Flow {
-    /// Cells a source reaches over flat ground, 0 to 7 (0: still).
-    pub spread: u8,
-    /// Ticks between flow steps.
-    pub period_ticks: u32,
-    /// How far, in cells, the liquid looks over the ground for a way down before it spreads.
-    pub seek: u8,
-    /// Two sources beside a cell over ground or a source make it a source.
-    pub renews: bool,
-    /// The view from inside: linear colour and fog density per metre.
+    /// The view from inside its cells while they stand, before the water takes them: linear
+    /// colour and fog density per metre. Presentation; the water shows its region's `look`.
     pub fog: [f64; 4],
-    /// The splashes' absorption per metre, linear rgb (splashes.md 2); none: no splashes.
-    /// Presentation, like `fog`.
-    pub splash: Option<[f64; 3]>,
-    /// The block game's cells, or the water's height field (water.md 6).
-    pub model: FlowModel,
-}
-
-/// What moves a liquid (water.md 6).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum FlowModel {
-    /// The cellular automaton of liquids.md 4, `physics.fluids`.
-    #[default]
-    Cells,
-    /// A `WaterRegion`'s height field: `physics.water` turns the liquid's cells into its water and
-    /// clears them. Needs `spread: 0`.
-    Field,
 }
 
 impl Default for Flow {
     fn default() -> Self {
         Flow {
-            spread: 7,
-            period_ticks: 15,
-            seek: 4,
-            renews: true,
             fog: [0.05, 0.16, 0.45, 0.12],
-            splash: None,
-            model: FlowModel::Cells,
         }
     }
 }
@@ -190,15 +159,6 @@ pub struct Chunk {
     pub states: Option<Cells>,
 }
 
-/// The flow's progress (liquids.md 4.1): the cells that may change at the next step, sorted and
-/// each once, and the tick whose edits the flow has taken.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields, default)]
-pub struct FluidState {
-    pub pending: Vec<Cell>,
-    pub seen: u64,
-}
-
 /// A volume of blocks (voxels.md 2.1). Its cell `(x, y, z)` occupies `origin + cell_m * [x, x + 1)`
 /// along each axis, `origin` being the entity's `Transform.position`.
 #[derive(Component, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -212,8 +172,6 @@ pub struct Voxels {
     pub source: String,
     /// The chunks holding any block, in key order.
     pub chunks: Vec<Chunk>,
-    /// Where its liquids' flow stands (liquids.md 4.1).
-    pub fluid: FluidState,
 }
 
 impl Default for Voxels {
@@ -226,7 +184,6 @@ impl Default for Voxels {
             }],
             source: String::new(),
             chunks: Vec::new(),
-            fluid: FluidState::default(),
         }
     }
 }
@@ -244,14 +201,13 @@ pub struct VoxelHit {
 
 impl Persisted for Voxels {
     const NAME: &'static str = "Voxels";
-    const VERSION: u32 = 2;
+    const VERSION: u32 = 3;
 
     fn trace(
         t: &mut serde_reflection::Tracer,
         s: &serde_reflection::Samples,
     ) -> serde_reflection::Result<()> {
         t.trace_type::<BlockShape>(s)?;
-        t.trace_type::<FlowModel>(s)?;
         t.trace_type::<Self>(s).map(|_| ())
     }
 }
@@ -314,31 +270,11 @@ impl Voxels {
                     format!("block {:?} is named twice", b.name),
                 ));
             }
-            if let Some(f) = &b.flow {
-                if b.shape != BlockShape::Liquid {
-                    return Err(invalid(
-                        &format!("palette.{i}.flow"),
-                        format!("block {:?} flows but is not a liquid", b.name),
-                    ));
-                }
-                if f.model == FlowModel::Field && f.spread != 0 {
-                    return Err(invalid(
-                        &format!("palette.{i}.flow"),
-                        format!(
-                            "block {:?} is a field liquid: its spread is 0 (water.md 6)",
-                            b.name
-                        ),
-                    ));
-                }
-                if f.spread > LEVEL || f.period_ticks == 0 {
-                    return Err(invalid(
-                        &format!("palette.{i}.flow"),
-                        format!(
-                            "block {:?}: spread is 0 to 7, period_ticks 1 or more",
-                            b.name
-                        ),
-                    ));
-                }
+            if b.flow.is_some() && b.shape != BlockShape::Liquid {
+                return Err(invalid(
+                    &format!("palette.{i}.flow"),
+                    format!("block {:?} flows but is not a liquid", b.name),
+                ));
             }
             let used = if b.shape == BlockShape::Cube { 3 } else { 1 };
             if i > 0 && b.faces[..used].iter().any(String::is_empty) {
@@ -347,16 +283,6 @@ impl Voxels {
                     format!("block {:?} needs {used} face material(s)", b.name),
                 ));
             }
-        }
-        let flowing = self
-            .palette
-            .iter()
-            .filter(|b| b.flow.is_some_and(|f| f.spread > 0));
-        if flowing.count() > MAX_FLOWING {
-            return Err(invalid(
-                "palette",
-                format!("at most {MAX_FLOWING} liquids of a volume flow"),
-            ));
         }
         let blocks = self.palette.len();
         for (i, c) in self.chunks.iter().enumerate() {
@@ -419,20 +345,11 @@ impl Voxels {
         })
     }
 
-    /// Whether `block` is a liquid on the water's height field (water.md 6).
+    /// Whether `block` is a liquid that flows, on the water's height field (water.md 6).
     pub fn field_liquid(&self, block: u8) -> bool {
         self.palette
             .get(usize::from(block))
-            .and_then(|b| b.flow)
-            .is_some_and(|f| f.model == FlowModel::Field)
-    }
-
-    /// The flow of `block`, if it is a liquid that flows.
-    pub fn flow(&self, block: u8) -> Option<Flow> {
-        self.palette
-            .get(usize::from(block))
-            .and_then(|b| b.flow)
-            .filter(|f| f.spread > 0)
+            .is_some_and(|b| b.flow.is_some())
     }
 
     /// The block's shape; air's for an index past the palette.
@@ -787,8 +704,8 @@ mod tests {
         v.fill([0, 0, 0], [1, 1, 1], 1, 11).unwrap();
         assert_eq!(v.state([0, 0, 0]), 0, "a fill writes state 0");
         assert!(v.chunks[0].states.is_none());
-        assert_eq!(v.flow(3).unwrap().spread, 7);
-        assert!(v.flow(1).is_none());
+        assert!(v.field_liquid(3));
+        assert!(!v.field_liquid(1));
         v.palette[1].flow = Some(Flow::default());
         assert!(v.validate().is_err(), "only liquids flow");
     }

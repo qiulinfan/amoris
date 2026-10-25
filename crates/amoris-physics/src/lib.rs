@@ -26,7 +26,6 @@ pub mod board;
 pub mod boat;
 pub mod body;
 mod cache;
-pub mod fluids;
 mod forces;
 pub mod geom;
 pub mod probe;
@@ -191,7 +190,6 @@ pub fn plugin(sim: &mut Sim) -> Result<(), Problem> {
         always,
         terrain::ground,
     )?;
-    sim.add_system("physics.fluids", TickPhase::Physics, always, fluids::fluids)?;
     let mut walk_system = IntoSystem::into_system(walker::walk);
     walk_system.initialize(sim.world_mut());
     sim.add_exclusive(

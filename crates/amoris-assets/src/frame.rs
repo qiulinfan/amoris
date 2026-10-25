@@ -247,9 +247,6 @@ pub struct BlockLook {
     /// A liquid's view from inside: linear colour and fog density per metre (liquids.md 6).
     #[serde(default)]
     pub fog: Option<[f32; 4]>,
-    /// A liquid's splash absorption per metre, linear rgb (splashes.md 2); none: no splashes.
-    #[serde(default)]
-    pub splash: Option<[f32; 3]>,
 }
 
 /// One chunk's cells (4096 palette indices, x fastest, then z, then y), or `None`: all air now;

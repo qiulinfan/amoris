@@ -40,13 +40,11 @@ fn blocks() -> Vec<BlockLook> {
             shape: 0,
             faces: [String::new(), String::new(), String::new()],
             fog: None,
-            splash: None,
         },
         BlockLook {
             shape: 1,
             faces: [String::new(), String::new(), String::new()],
             fog: None,
-            splash: None,
         },
     ]
 }
@@ -222,7 +220,6 @@ fn under_a_liquid_the_view_is_its_fog() {
         shape: 2,
         faces: [String::new(), String::new(), String::new()],
         fog: Some(fog),
-        splash: None,
     });
     let mut cells = Cells::new();
     for x in -8..8 {

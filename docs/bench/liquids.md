@@ -4,8 +4,9 @@ Flowing liquids ([liquids.md](../spec/liquids.md)) and the splashes over them
 ([splashes.md](../spec/splashes.md)). The solver's own measurements, in a glass box, are in the
 spike report [fluid-box.md](../spikes/fluid-box.md).
 
-The cost of flow steps (a broken bank, a drained pool) and of the feed with states, which
-liquids.md 9 names, is not measured yet. The water region's costs in blockcraft are in section 3.
+The cost of the feed with states, which liquids.md 9 names, is not measured yet; the flow steps it
+also named went with the cellular automaton on 2026-10-25 (liquids.md 4). The water region's costs
+in blockcraft are in section 3.
 
 ## 1. Splashes
 
@@ -35,7 +36,9 @@ particle passes over the whole ring of 32,768, and the surface is six screen pas
 break, no region is open and no pass runs. The 0.04 to 0.13 ms difference there is within one run's
 noise, and the renderer tests show those frames unchanged.
 
-Not measured yet: a full ring, the RTX 5060 and the 780M, and Chrome.
+Not measured: a full ring, the RTX 5060 and the 780M, and Chrome. The example `splashes` and
+`physics.fluids` were removed on 2026-10-25 with the cellular automaton (liquids.md 4,
+splashes.md 3), so the figures above stand as recorded and are not taken again.
 
 ## 2. Shallow water (the spike)
 
@@ -935,7 +938,8 @@ holds stepping the world and reading the frame back.
 The views: the pool party in the rain from the pool's side (`scene_shots samples/pool-party --eye
 8.6,1.1,6.6 --at 10.8,0.55,4.2`), the river falls from the pool (`--eye 46,2.5,8 --at
 34.6,3.5,14.7`), the surf beach's break (`shore_shots --view break`) and blockcraft's lake pouring
-over its cliff (`splashes --blocks samples/blockcraft --close`).
+over its cliff (`splashes --blocks samples/blockcraft --close`; that example went with the cellular
+automaton on 2026-10-25, section 1).
 
 The river falls' figure is the spray's first form; with its clouds kept to mist it takes 8.4 ms
 (21). The block-liquid splash's MLS-MPM steps and its surface passes carry no timestamps, so its

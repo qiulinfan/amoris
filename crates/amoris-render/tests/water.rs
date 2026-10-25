@@ -757,7 +757,6 @@ fn ground() -> VoxelUpdate {
                 shape: 0,
                 faces: [String::new(), String::new(), String::new()],
                 fog: None,
-                splash: None,
             },
         ]),
         chunks: vec![ChunkUpdate {

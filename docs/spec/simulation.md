@@ -220,7 +220,6 @@ this table and the schedule golden of section 12 together.
 | 7b | Forces | `physics.terrain` | amoris-physics | each `Terrain` whose hash changed given its fixed triangle-mesh `Collider` again (water.md 65.1) |
 | 8 | Physics | `physics.step` | amoris-physics | sync changed bodies in, one step of `dt`, write back positions, velocities and readouts |
 | 9 | Physics | `physics.contacts` | amoris-physics | contact begin and end events, in pair order (section 8.4) |
-| 9a | Physics | `physics.fluids` | amoris-physics | each volume's flowing liquids: edits taken, a flow step on each liquid's period (liquids.md 4) |
 | 9b | Physics | `physics.walk` | amoris-physics | each `Walker` moved against the volumes' solid cells and its eye written (voxels.md 5.2) |
 | 9c | Physics | `physics.mount` | amoris-physics | each mounted `Walker`'s eye carried with its board's integrated pose; a board turned over throws its rider (water.md 50) |
 | 10 | Finish | `interface.perception` | amoris-interface | every observer's memory and perceived events from the events appended since its last run: the boundary writes' (the inbox from `boundary_from`, 5.1) and the tick's own (still in the outbox), in `EventSeq` order (shared/contract/perception.md, The perception update) |

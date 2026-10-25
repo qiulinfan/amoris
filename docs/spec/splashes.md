@@ -7,18 +7,26 @@
   state. The owner chose on 2026-10-17 that the cellular automaton of
   [liquids.md](liquids.md) stays the rules and the solver becomes the look: where a block liquid
   changes, particles gush and splash, then vanish into the water the rules already placed.
+- Amended 2026-10-25 (owner, charter 4.10): the cellular automaton that fed the emissions is
+  retired (liquids.md 4), and the splashes over block liquids with it: sections 2 and 3, their
+  regions near the camera (4) and the example `splashes` are gone. The solver (4) runs the fluid
+  box of the spike, the liquid surface (5) draws it and the water's entry crowns
+  ([water.md](water.md) 52, 70), and the switch (6) turns the water's spray (water.md 35) on and
+  off.
 
 ## 1. Scope
 
 In this slice:
 
-- Emissions the renderer derives from the block liquid changes it receives (3).
+- Emissions the renderer derives from the block liquid changes it receives (3; retired on
+  2026-10-25).
 - The spike's solver in bounded regions near the camera, against the volume's solid blocks, with
-  particles that die in the liquid, leave their region or age out (4).
+  particles that die in the liquid, leave their region or age out (4; since 2026-10-25 only the
+  fluid box's region).
 - A screen-space liquid surface, coloured per liquid and refracting what lies behind it, after the
   frame's last colour pass (5).
-- A palette field for a liquid's splash colour, the feed, the switch, the browser and the checks
-  (2, 6 to 8).
+- A palette field for a liquid's splash colour (2; retired on 2026-10-25), the feed, the switch,
+  the browser and the checks (6 to 8).
 
 Not in this slice:
 
@@ -29,59 +37,23 @@ Not in this slice:
 
 Splashes never reach the world (6).
 
-## 2. A liquid's splash
+## 2. A liquid's splash (retired)
 
-`Flow` (liquids.md 3) gains, beside `fog`:
+`Flow` (liquids.md 3) had `splash: Option<[f64; 3]>`, a liquid's splash absorption per metre in
+linear rgb (blockcraft's water `[6.0, 1.8, 0.9]`, lava none), which the feed's `BlockLook` carried.
+Both went on 2026-10-25 with the emissions they coloured (3); the feed's `FORMAT` changes and the
+viewport is rebuilt with it.
 
-```rust
-pub splash: Option<[f64; 3]>,   // the splash's absorption per metre, linear rgb; None: no splashes
-```
+## 3. Emissions (retired)
 
-Water in blockcraft: `[6.0, 1.8, 0.9]`, the spike's value, which red absorbs first. Lava declares
-none and does not splash. Like `fog`, it is presentation carried in the palette. It enters the
-palette's hash with the rest of the entry and changes nothing the rules read. `BlockLook` (the feed,
-voxels.md 7.1) gains `splash: Option<[f32; 3]>`, so the feed's `FORMAT` changes and the viewport is
-rebuilt and committed with it.
-
-## 3. Emissions
-
-The renderer keeps each chunk's cells and states (liquids.md 6). When a `ChunkUpdate` replaces a
-chunk it already held, it compares the two copies, cell by cell, for every liquid with a `splash`:
-
-- **Gush.** A cell that was air or a plant (`cross`) and is now that liquid emits 24 particles
-  in a clump of 2 x 1 x 2 solver cells (amended during implementation: spread over the cell, they
-  were too sparse to read as water).
-  - A falling cell's clump starts in the cell under it, where the stream goes next, and moves down
-    at 3 m/s; none when that cell is not air.
-  - Any other cell's clump sits just above its surface, a quarter of a block toward where it flows,
-    and moves away from its feeder at 1.5 m/s and up at 0.4 m/s. The feeder is the horizontal
-    neighbour of the same liquid with the lowest level; a tie takes the first in the order x−, x+,
-    z−, z+.
-  - Each velocity gets ±0.5 m/s of jitter per axis.
-  - A broken bank, a placed source and a flow front all gush this way.
-- **Stream foot.** A falling cell whose cell below is not falling liquid of its kind is the foot of
-  a stream. It emits 480 particles a second from its sides that are not solid or full of liquid,
-  at the height of the liquid beside it (the foot's bottom over air): inside the falling column
-  they would be hidden and die.
-  - They move outward horizontally at 0.5 to 2.5 m/s.
-  - They move up at half to all of `0.4 · sqrt(2 g h)`, at most 4 m/s, where `h` is the stream's
-    height in metres (its cells of that liquid from the foot up, times `cell_m`).
-  - Amended during implementation: 240 a second at 0.3 of the speed barely rose off the pool.
-  - Streams are found again whenever a chunk they touch changes.
-  - A foot keeps emitting for as long as it stands, so a waterfall churns its pool.
-
-No emission comes from:
-
-- a volume the renderer sees for the first time, or whose looks change (a chunk new to a known
-  volume was air before);
-- a frame with `reset` (a restore, a replay seek), which also clears every particle and region;
-- a volume that moved;
-- cells farther than 48 m from the camera.
-
-At most 2,048 particles are emitted per frame and at most 64 stream feet are active, the nearest to
-the camera first. The rest wait or are dropped. Emission randomness is the renderer's own generator
-(rng.md 8, never `amoris-sim`'s streams), seeded by the frame, so one GPU and backend show the same
-splashes for the same frames.
+Until 2026-10-25 the renderer compared each chunk it replaced with its copy and emitted particles
+for a liquid with a `splash`: a gush of 24 where air or a plant became that liquid (a broken bank,
+a placed source, a flow front), and 480 a second from the foot of each falling stream (outward at
+0.5 to 2.5 m/s, up at half to all of `0.4 · sqrt(2 g h)`, at most 4 m/s, `h` the stream's height),
+at most 2,048 a frame and 64 feet near the camera (`splash.rs`). A `splash` lived in a `flow`, and
+a liquid with a `flow` is now the water's, which takes its cells in the tick they appear (water.md
+6): no liquid that splashes stands, flows or falls in a chunk any more, so the emissions went with
+the automaton (liquids.md 4). The water's own spray (water.md 35) is emitted from its height field.
 
 ## 4. The solver
 
@@ -89,23 +61,21 @@ The solver of the spike (`fluid.rs`, `fluid_mpm.wgsl`) runs in **regions**.
 
 **Regions.**
 
-- A region is a cube of 16 x 16 x 16 cells of one volume at 4 solver cells per block edge (64³
-  solver cells, 4 MiB of grid).
-- An emission opens a region centred on its cell, aligned to whole blocks, unless it lies within
-  the inner 12 blocks of an open region of that volume, which it then joins.
-- At most 4 regions are open. A fifth takes a region that no particle can still live in, else the
-  one that spawned least recently (its particles die).
-- A region closes once its last spawn is older than a particle's life: the CPU does not read
-  particles back, so it knows when none can be alive, not when the last died (amended during
-  implementation).
-- The fluid box of the spike becomes one region whose mask has a solid border.
+- The solver holds at most 4 regions (`fluid::SLOTS`), each a box of solver cells with a mask of
+  its blocks, over one ring of particles. The fluid box of the spike is one region whose mask has a
+  solid border (`Fluid::boxed`).
+- Amended 2026-10-25: the splashes opened regions of 16 x 16 x 16 blocks of one volume at 4 solver
+  cells a block edge (64³ solver cells, 4 MiB of grid) around their emissions near the camera, gave
+  a fifth emission the region least recently spawned in, and closed a region once its last spawn
+  was older than a particle's life. That went with them (3).
 
 **What the solver sees.**
 
 - Each region holds a byte per block. Bytes 1 to 9 are the surface height of a liquid in ninths of
   the block (liquids.md 6: a source 8, a falling cell 9), 255 a full-cube block, and 0 anything
   else.
-- The bytes are written when the region opens and when a chunk it overlaps changes.
+- The bytes are written when the region opens (`Fluid::open`) and when its mask is replaced
+  (`Fluid::set_mask`).
 - A solver cell in a solid block takes no velocity.
 - A solver cell beside a solid block keeps no velocity into it.
 - A particle whose substep would end inside a solid block keeps its position and loses its velocity
@@ -132,10 +102,10 @@ density, eight per solver cell, so a gush clumps like water and does not spray l
 
 ## 5. Drawing
 
-The liquid surface (`fluid_surface.rs`, `fluid_surface.wgsl`) draws every MLS-MPM source, the
-fluid box and the splash regions, as one screen-space surface, together with the water spray's entry
-crowns where they are wide on the screen (water.md 70). It follows W. J. van der Laan,
-S. Green and M. Sainz, "Screen space fluid rendering with curvature flow" (I3D 2009), and the
+The liquid surface (`fluid_surface.rs`, `fluid_surface.wgsl`) draws every MLS-MPM source, the fluid
+box (and, until 2026-10-25, the splash regions), as one screen-space surface, together with the
+water spray's entry crowns where they are wide on the screen (water.md 70). It follows W. J. van der
+Laan, S. Green and M. Sainz, "Screen space fluid rendering with curvature flow" (I3D 2009), and the
 passes of S. Lague's Fluid-Sim (github.com/SebLague/Fluid-Sim at 4717b72, MIT). Amended on
 2026-10-23: the spike's surface drew its splats before the opaque pass, tinted the body with one
 scattered colour, turned thin liquid white and did not refract (the charter's route note of that
@@ -166,10 +136,11 @@ day).
   - The sun adds a GGX glint, in the sun's shadow.
   - The body scatters the sky above and the sun once, 0.15 per metre against its absorption, so
     where it absorbs red it scatters blue.
-  - Air turns it white, lit as a white surface: none in the fluid box, 0.08 in a block's splash.
+  - Air turns it white, lit as a white surface: none in the fluid box (a block's splash carried
+    0.08).
   - The frame's fog applies as to the scene. With MSAA only the samples behind the liquid show it.
-- Each particle draws with its region's `splash` absorption: the thickness sums absorption times
-  length per channel, so two liquids in view keep their colours.
+- Each particle draws with its region's absorption: the thickness sums absorption times length per
+  channel, so two liquids in view keep their colours.
 - A frame with no living particle draws nothing extra and is pixel for pixel the frame of before.
 - **Limits.**
   - Transparent instances, particles and streaks in front of the liquid are drawn under it,
@@ -185,34 +156,30 @@ day).
   - a replay on another GPU or backend shows different splashes;
   - one GPU and backend show the same splashes for the same frames.
 - A host without a renderer (headless, `amoris run`) computes nothing.
-- The native window, the editor's viewport and the WebGPU viewport all draw splashes.
-- `AMORIS_SPLASHES=off|on` (the viewport page: `?splashes=`) switches them; on by default.
-- Under `AMORIS_GPU_MINIMAL` (webgpu-baseline.md), splashes run as the browser would: one storage
+- The native window, the editor's viewport and the WebGPU viewport all draw the solver's particles.
+- `AMORIS_SPLASHES=off|on` (the viewport page: `?splashes=`) switches the water's spray (water.md
+  35); on by default. Until 2026-10-25 it also switched the splashes over block liquids.
+- Under `AMORIS_GPU_MINIMAL` (webgpu-baseline.md), the solver runs as the browser would: one storage
   buffer of `i32` atomics and read-only storage in the vertex stage.
 
 ## 7. Code
 
 - `crates/amoris-render/src/fluid.rs` keeps the solver: regions, masks and the ring pool.
   `crates/amoris-render/src/fluid_surface.rs` draws the surface (5).
-- `crates/amoris-render/src/splash.rs` derives emissions from chunk changes as a pure function of
-  the old and new chunks, the camera and the frame's seed, so the CPU side is tested without a GPU.
 - `fluid_box` stays the solver's bench: one region with a solid border. Its sphere impostors are
   gone: the surface is the one drawing.
-- The example `splashes` is `amoris-app`'s (amended during implementation): it runs a real game,
-  which `amoris-render` cannot depend on.
+- Removed on 2026-10-25: `crates/amoris-render/src/splash.rs`, which derived the emissions (3) from
+  chunk changes, and `amoris-app`'s example `splashes`, a cliff lake whose rim a script broke.
 
 ## 8. Checks
 
 | What | Where |
 |---|---|
-| A gush where air becomes water, away from its feeder; down from a falling cell; nothing on first sight, on `reset`, past 48 m, or for a liquid without `splash`; the per-frame cap | `amoris-render` unit tests of `splash::` |
-| Stream feet found under falling columns, re-found when a chunk changes, nearest 64 kept | same |
 | A particle dies under a liquid surface, outside its region, at 4 s; dropped on a solid block it rests on it; a full ring drops the oldest | `amoris-render` GPU test `tests/splashes.rs` (each backend; under the WebGPU baseline) |
 | Through a metre of liquid the frame behind keeps far more blue than red; what stands in front of the liquid hides it, pixel for pixel | `amoris-render` GPU test `tests/fluid_surface.rs` (each backend; under the WebGPU baseline; on R1, 2026-10-23, the RTX 5060 and the 780M under Direct3D 12 and Vulkan; it never finishes under FXC, gpu-matrix.md 14) |
 | An idle or emptied solver encodes no pass and takes no timestamps | `tests/splashes.rs` (`Fluid::encodes`) |
 | Frames with no living particle are unchanged | `cargo test -p amoris-render`, `tools/render/build_compare.py` against a build without splashes |
-| A bank broken in a blockcraft-like volume gushes, a waterfall churns its pool; shots for the owner | `amoris-app` example `splashes` |
-| GPU cost with the pool full and empty on the M5, the RTX 5060 and the 780M, and in Chrome | docs/bench/liquids.md |
+| GPU cost with the pool full and empty on the M5, the RTX 5060 and the 780M, and in Chrome | docs/bench/liquids.md (the M5's figures of 1, taken with the example `splashes` before 2026-10-25) |
 
 ## 9. Open questions
 
@@ -224,6 +191,6 @@ day).
 2. Splashes from entities entering a liquid: they need the walker's crossing, which the renderer
    could read from the instances.
 3. Whether the stream foot's churn should also draw on the block surface (ripples), or whether the
-   particles suffice.
+   particles suffice. Moot since 2026-10-25: the stream feet went with the emissions (3).
 4. A deterministic height field for waves (fluid-box.md, "What it means for games", 2) remains a
    separate slice.

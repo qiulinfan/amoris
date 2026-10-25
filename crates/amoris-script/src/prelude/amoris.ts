@@ -357,8 +357,8 @@ export interface VoxelHit {
 
 /** Block volumes (`Voxels`): reads, staged edits and exact ray casts. Cells are whole numbers in the
  * volume's grid; a block is a palette index, 0 for air. Edits apply when the system returns, and
- * this call's later reads see them; a cell set by a script is a source if it is a liquid, and the
- * engine flows liquids next to edits by itself. */
+ * this call's later reads see them; a liquid set by a script is a source, and one whose palette
+ * entry flows becomes the water of the region over it in the same tick (docs/spec/water.md 6). */
 export interface VoxelAccess {
     /** The block at a cell; 0 for air. */
     get(volume: Entity, x: number, y: number, z: number): number;

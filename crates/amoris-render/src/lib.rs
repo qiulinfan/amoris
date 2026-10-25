@@ -48,7 +48,6 @@ pub mod shallow_water {
 mod host_backend;
 mod skinning;
 mod sky;
-pub mod splash;
 pub mod splat;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod stderr_log;
