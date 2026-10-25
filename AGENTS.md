@@ -142,7 +142,8 @@ credential cleanup. File-verification records remain local, including in that ar
   GPU readback state locks must be released before `map_async`: wgpu can invoke a refused map's
   callback synchronously. Native Metal gives a process 32 timestamp query sets across all its
   devices and loses the device that creates a 33rd (`DeviceError::Unexpected`), so a renderer's
-  profiler holds one (profiler.rs `QUERIES`) and parallel GPU test cases stay under the limit. The
+  profiler holds one (profiler.rs `QUERIES`), and past 32 a new owner goes without timestamps
+  rather than create another (`profiler::TimestampSet`, logged). The
   TAA and water image tests run their cases in parallel (on MoltenVK too, behind
   `profiler::TimestampSet`), reject validation errors and unexpected device loss, and retain strict
   pixel comparisons. Local integration decisions and validation are in
@@ -224,9 +225,10 @@ credential cleanup. File-verification records remain local, including in that ar
   resolves without waiting for the GPU. Never move their resolve into the sampling encoder: it can
   return another frame's counters, or zeros (the 780M on Vulkan, docs/bench/gpu-matrix.md 3 a).
   Clock calibration alone waits outside the measured window and dispatches real work. Every
-  timestamp query set is a `profiler::TimestampSet`: MoltenVK 1.4.2 reads a query pool in a Metal
-  completed handler after wgpu's wait for that work returned, so on MoltenVK a set's drop first
-  waits for its queue to go idle. Run `frame_trace` and `gpu_profiler` integration tests on a
+  timestamp query set a command buffer writes is a `profiler::TimestampSet`: MoltenVK 1.4.2 reads a
+  query pool in a Metal completed handler after wgpu's wait for that work returned, so on MoltenVK
+  a set's drop first waits for its queue to go idle, and a set whose wait fails (a lost device) is
+  leaked, not released. Run `frame_trace` and `gpu_profiler` integration tests on a
   deferred and an immediate backend after changing this lifecycle; see
   [docs/bench/metal-profiling.md](docs/bench/metal-profiling.md).
 - The serve loop ([docs/bench/profiler.md](docs/bench/profiler.md) 6): the game thread snapshots

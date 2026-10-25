@@ -1287,15 +1287,18 @@ impl PathTracer {
             wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
         );
         let bindings = self.bindings(&params_buffer, &image, &counters);
-        let queries = self.timestamp_enabled.then(|| {
-            TimestampSet::new(
-                &self.device,
-                &self.queue,
-                &self.info,
-                "PT timestamps",
-                options.frames * query_stride,
-            )
-        });
+        let queries = self
+            .timestamp_enabled
+            .then(|| {
+                TimestampSet::new(
+                    &self.device,
+                    &self.queue,
+                    &self.info,
+                    "PT timestamps",
+                    options.frames * query_stride,
+                )
+            })
+            .flatten();
         let timestamp_size = u64::from(options.frames * query_stride) * 8;
         let timestamps = queries.as_ref().map(|_| {
             buffer(

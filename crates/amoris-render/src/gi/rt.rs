@@ -1052,15 +1052,18 @@ impl RayLighting {
                 },
             ],
         });
-        let queries = self.timestamp_enabled.then(|| {
-            TimestampSet::new(
-                &self.device,
-                &self.queue,
-                &self.info,
-                "GI pass timings",
-                options.frames * TIMESTAMPS_PER_FRAME,
-            )
-        });
+        let queries = self
+            .timestamp_enabled
+            .then(|| {
+                TimestampSet::new(
+                    &self.device,
+                    &self.queue,
+                    &self.info,
+                    "GI pass timings",
+                    options.frames * TIMESTAMPS_PER_FRAME,
+                )
+            })
+            .flatten();
         let timestamp_size = u64::from(options.frames) * u64::from(TIMESTAMPS_PER_FRAME) * 8;
         let timestamp_resolve = queries.as_ref().map(|_| {
             buffer(

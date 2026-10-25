@@ -238,7 +238,8 @@ fn calibration_samples(
         });
         (pipeline, bind)
     });
-    let queries = crate::profiler::TimestampSet::new(device, queue, info, "trace clock", 2);
+    let queries = crate::profiler::TimestampSet::new(device, queue, info, "trace clock", 2)
+        .ok_or("no timestamp query set left on Metal")?;
     let buffer = |usage, label| {
         device.create_buffer(&wgpu::BufferDescriptor {
             label: Some(label),

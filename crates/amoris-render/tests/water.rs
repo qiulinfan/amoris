@@ -15,10 +15,10 @@ const W: u32 = 320;
 const H: u32 = 180;
 const REGION: u64 = 7;
 
-// The cases run in parallel. A case keeps at most three renderers alive and ten cases at once up
-// to 22, each with one of the 32 timestamp query sets Metal gives a process (profiler.rs); on
-// MoltenVK a dropped renderer's query set waits for its queue to go idle (profiler.rs
-// `TimestampSet`).
+// The cases run in parallel. A case keeps at most three renderers alive, each with one of the 32
+// timestamp query sets native Metal gives a process; past those (more than ten cases at once) a
+// renderer goes without timestamps (profiler.rs `TimestampSet`). On MoltenVK a dropped renderer's
+// query set waits for its queue to go idle.
 fn gpu() -> Option<Gpu> {
     let gpu = Gpu::headless(BackendChoice::from_env()).ok();
     if let Some(gpu) = &gpu {

@@ -9,6 +9,8 @@
 //! completes: resolving in that submission returned zero or earlier values there (on AMD's Vulkan
 //! a driver fault, [`deferred_timestamps`]).
 
+use std::mem::ManuallyDrop;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// The passes a frame can time. A water scene with its spray, medium tiles and the liquid surface
@@ -25,6 +27,20 @@ const TRACE_RING: usize = 8;
 /// so loses that device. With a set a slot, three a renderer, the eleventh renderer alive in a
 /// process lost its device, as one of a test binary's parallel cases did (M5, 2026-10-25).
 const QUERIES: u32 = TRACE_RING as u32 * MAX_SCOPES * 2;
+/// The counter sample buffers native Metal gives a process ([`QUERIES`]), one a timestamp query
+/// set (MoltenVK created 64 sets without loss: docs/bench/metal-profiling.md).
+const METAL_SAMPLE_BUFFERS: usize = 32;
+/// The timestamp query sets alive on native Metal in this process: past [`METAL_SAMPLE_BUFFERS`] a
+/// new one is not created, and its owner goes without timestamps instead of losing its device.
+static METAL_SETS: AtomicUsize = AtomicUsize::new(0);
+
+/// Takes one of `cap` places in `live`, if one is free.
+fn reserve(live: &AtomicUsize, cap: usize) -> bool {
+    live.fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
+        (n < cap).then_some(n + 1)
+    })
+    .is_ok()
+}
 
 /// Whether timestamps are resolved only after the submission that sampled them completed (charter,
 /// 2026-10-10 and its Pioneer note of 2026-10-15). Native Metal and MoltenVK expose Metal counter
@@ -60,11 +76,17 @@ pub(crate) fn deferred_timestamps(info: &wgpu::AdapterInfo) -> bool {
 /// parallel cases (M5, 2026-10-25; docs/bench/metal-profiling.md). MoltenVK's queue wait commits an
 /// empty command buffer and waits for its completion, which Metal reports only after the handlers
 /// of the command buffers before it. Other backends release the set at once. The wait goes once the
-/// MoltenVK in use retains the pools (KhronosGroup/MoltenVK c0af3a5658ba, after 1.4.2).
+/// MoltenVK in use retains the pools (KhronosGroup/MoltenVK c0af3a5658ba, after 1.4.2). A set whose
+/// wait fails (a lost device returns at once, before those handlers ran) is leaked, not released.
+///
+/// On native Metal a set takes one of the process's [`METAL_SAMPLE_BUFFERS`]; with none left
+/// [`TimestampSet::new`] gives none.
 pub(crate) struct TimestampSet {
-    set: wgpu::QuerySet,
+    set: ManuallyDrop<wgpu::QuerySet>,
     /// The queue to wait for before the set goes: on MoltenVK only.
     idle: Option<wgpu::Queue>,
+    /// Whether it holds one of [`METAL_SETS`].
+    metal: bool,
 }
 
 impl TimestampSet {
@@ -74,17 +96,26 @@ impl TimestampSet {
         info: &wgpu::AdapterInfo,
         label: &str,
         count: u32,
-    ) -> TimestampSet {
+    ) -> Option<TimestampSet> {
         let moltenvk =
             info.backend == wgpu::Backend::Vulkan && info.driver.eq_ignore_ascii_case("MoltenVK");
-        TimestampSet {
-            set: device.create_query_set(&wgpu::QuerySetDescriptor {
+        let metal = info.backend == wgpu::Backend::Metal;
+        if metal && !reserve(&METAL_SETS, METAL_SAMPLE_BUFFERS) {
+            log::warn!(
+                "{label}: no timestamps, the process has the {METAL_SAMPLE_BUFFERS} timestamp \
+                 query sets Metal allows"
+            );
+            return None;
+        }
+        Some(TimestampSet {
+            set: ManuallyDrop::new(device.create_query_set(&wgpu::QuerySetDescriptor {
                 label: Some(label),
                 ty: wgpu::QueryType::Timestamp,
                 count,
-            }),
+            })),
             idle: moltenvk.then(|| queue.clone()),
-        }
+            metal,
+        })
     }
 }
 
@@ -97,27 +128,44 @@ impl std::ops::Deref for TimestampSet {
 
 impl Drop for TimestampSet {
     fn drop(&mut self) {
-        if let Some(queue) = self.idle.take() {
-            wait_for_idle(&queue);
+        if let Some(queue) = self.idle.take()
+            && !wait_for_idle(&queue)
+        {
+            // MoltenVK's handlers may still read it: it stays, and keeps its sample buffer.
+            return;
+        }
+        // SAFETY: the set is dropped here only, once.
+        unsafe { ManuallyDrop::drop(&mut self.set) };
+        if self.metal {
+            METAL_SETS.fetch_sub(1, Ordering::AcqRel);
         }
     }
 }
 
+/// Waits for the queue to go idle; false when the wait failed.
 #[cfg(not(target_arch = "wasm32"))]
-fn wait_for_idle(queue: &wgpu::Queue) {
+fn wait_for_idle(queue: &wgpu::Queue) -> bool {
     use wgpu::hal::Queue as _;
     // SAFETY: wgpu-hal asks that the wait not overlap another submit, present or wait on the queue.
     // A device here is driven from one thread, the one that drops its sets.
     let Some(hal) = (unsafe { queue.as_hal::<wgpu::hal::api::Vulkan>() }) else {
-        return;
+        return true;
     };
-    if let Err(e) = unsafe { hal.wait_for_idle() } {
-        log::warn!("waiting for the queue before a timestamp query set goes: {e}");
+    match unsafe { hal.wait_for_idle() } {
+        Ok(()) => true,
+        Err(e) => {
+            log::warn!(
+                "waiting for the queue before a timestamp query set goes: {e}; it is leaked"
+            );
+            false
+        }
     }
 }
 
 #[cfg(target_arch = "wasm32")]
-fn wait_for_idle(_: &wgpu::Queue) {}
+fn wait_for_idle(_: &wgpu::Queue) -> bool {
+    true
+}
 
 /// The [`QUERIES`] and the buffer they resolve into (8 bytes a query), both shared by the ring.
 struct Queries {
@@ -240,20 +288,25 @@ impl GpuProfiler {
         enabled: bool,
         info: &wgpu::AdapterInfo,
     ) -> GpuProfiler {
-        GpuProfiler {
-            device: device.clone(),
-            queue: queue.clone(),
-            enabled,
-            deferred: deferred_timestamps(info),
-            queries: enabled.then(|| Queries {
-                set: TimestampSet::new(device, queue, info, "pass timings", QUERIES),
+        let queries = enabled
+            .then(|| TimestampSet::new(device, queue, info, "pass timings", QUERIES))
+            .flatten()
+            .map(|set| Queries {
+                set,
                 resolve: device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("pass timings (resolve)"),
                     size: u64::from(QUERIES) * 8,
                     usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
                     mapped_at_creation: false,
                 }),
-            }),
+            });
+        GpuProfiler {
+            device: device.clone(),
+            queue: queue.clone(),
+            // Without a query set (no sample buffer left on Metal) the profiler times nothing.
+            enabled: queries.is_some(),
+            deferred: deferred_timestamps(info),
+            queries,
             ring: (0..RING).map(|i| new_slot(device, i)).collect(),
             frame: 0,
             labels: Vec::new(),
@@ -622,6 +675,21 @@ fn gcd(mut a: u64, mut b: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Metal's sample buffers are counted out to the cap and back: past it no place is taken, so an
+    /// owner goes without timestamps, and a place freed is taken again.
+    #[test]
+    fn metal_query_sets_stop_at_the_sample_buffers() {
+        let live = AtomicUsize::new(0);
+        for _ in 0..METAL_SAMPLE_BUFFERS {
+            assert!(reserve(&live, METAL_SAMPLE_BUFFERS));
+        }
+        assert!(!reserve(&live, METAL_SAMPLE_BUFFERS));
+        assert_eq!(live.load(Ordering::Acquire), METAL_SAMPLE_BUFFERS);
+        live.fetch_sub(1, Ordering::AcqRel);
+        assert!(reserve(&live, METAL_SAMPLE_BUFFERS));
+        assert!(!reserve(&live, METAL_SAMPLE_BUFFERS));
+    }
 
     /// Which adapters resolve timestamps after their submission: Metal, MoltenVK and Vulkan on AMD
     /// adapters (on the Radeon 780M `gpu_profiler` and the trace's clock test fail with the
