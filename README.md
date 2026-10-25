@@ -168,6 +168,12 @@ Sanitized run data and logs live in
 | [Animation](samples/anim) | Animation, particles, and in-game UI |
 | [Sailing course](samples/sailing-course) | Restricted player perception, intentions, and decision points |
 | [Blockcraft](samples/blockcraft) | A voxel island: break and place blocks; shallow water floods, pours and drains |
+| [Pool party](samples/pool-party) | Floats, swimmers, dinghies and rain on GPU water |
+| [River falls](samples/river-falls) | A river over a fall into a pool, ridden on an inner tube |
+| [Surf beach](samples/surf-beach) | Swell shoaling into breakers over a reef, surfed on a board |
+| [Water storm](samples/water-storm) | A harbour under a gale: wind set-up, rain and a wind sea |
+| [Water valley](samples/water-valley) | Terrain and water declared in the scene, without a build script |
+| [Water pool](samples/water-pool) | Swimming to a marker and back through real player input |
 
 Rendering measurements report their scene, hardware, resolution, and timing method.
 Recorded demonstration videos use fixed simulation steps; playback frame rate is

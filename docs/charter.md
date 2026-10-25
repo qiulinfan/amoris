@@ -1261,29 +1261,32 @@ BLAKE3 上下文 `Amoris 2026-10-15 pocket-physics fixed shape v1`（带日期�
 
 游戏侧（无头、可编译到 `wasm32`，禁止依赖 wgpu、winit、tokio、rmcp）：
 
-| crate | 职责 |
-|---|---|
-| `amoris-contract` | 错误协议 `Problem`、严格解码与"是不是想写"建议 |
-| `amoris-sim` | ECS 世界、tick、调度、EntityId、事件、RNG、确定性数学、组件注册表、`Transform`、方块体积 `Voxels` |
-| `amoris-assets` | 资源 ID、可视组件（模型、材质、灯光、相机、环境、splat）、glTF 导入与网格烘焙 |
-| `amoris-persist` | 规范编码、哈希、snapshot/fork/replay、分叉定位、版本迁移 |
-| `amoris-physics` | Rapier、浮力、风与帆、水动力、第一人称身体 `Walker` |
-| `amoris-interface` | 感知、动作与意图、affordance、时间模型；动作目录 `sailing`、`first_person` |
-| `amoris-script` | TypeScript on QuickJS-ng、沙箱、预算、热更新、调试钩子 |
-| `amoris-link` | 游戏与 presenter 之间：命令信封、队列、发布的快照、事件环 |
-| `amoris-runtime` | 游戏组合、命令目录、场景、游戏线程 |
-| `amoris-check` | 确定性、fork、replay、重载等价检查 |
+| crate | 组 | 职责 |
+|---|---|---|
+| `amoris-contract` | contract | 错误协议 `Problem`、严格解码与"是不是想写"建议（`shared/contract/rust/`，任何 crate 都可依赖） |
+| `amoris-sim` | game | ECS 世界、tick、调度、EntityId、事件、RNG、确定性数学、组件注册表、方块体积 `Voxels` |
+| `amoris-assets` | game | 资源 ID、可视组件（模型、材质、灯光、相机、环境、splat、声源）、CPU 网格与 glTF 导入、渲染流（游戏线程交给渲染器与音频的可视变化） |
+| `amoris-persist` | game | 规范编码、哈希、snapshot/fork/replay、分叉定位、版本迁移 |
+| `amoris-physics` | game | Rapier、`Transform`、浮力、风与帆、水动力、第一人称身体 `Walker`、浅水 `WaterRegion` 与 GPU 水的服务接口 |
+| `amoris-interface` | game | 感知、动作与意图、affordance、时间模型；动作目录 `sailing`、`first_person` |
+| `amoris-script` | game | TypeScript on QuickJS-ng、沙箱、预算、热更新、调试钩子；脚本的 `amoris` 模块 |
+| `amoris-link` | link | 游戏线程与宿主、工具之间：命令信封、队列、发布的快照、事件环 |
+| `amoris-runtime` | game | 游戏组合、命令目录、场景、游戏线程、渲染流提取 |
+| `amoris-check` | game | 确定性、fork、replay、重载等价检查 |
 
-presenter 与工具侧：
+presenter、工具与入口（presenter 只经 `amoris-assets` 的渲染流读世界，工具经 `amoris-link` 到达游
+戏，入口把 runtime 与它们接在一起）：
 
-| crate | 职责 |
-|---|---|
-| `amoris-render` | wgpu 渲染器（原生与 web），含 splat 与神经纹理 |
-| `amoris-debug` | 调试核心与 CDP 端点 |
-| `amoris-mcp` | MCP 服务器（rmcp） |
-| `amoris-server` | axum：编辑器 WebSocket、资源 HTTP、MCP HTTP |
-| `amoris-app` | 原生可执行文件 `amoris`：窗口、线程、`run`/`editor`/`mcp`/`check` |
-| `amoris-web` | 浏览器入口：worker 里的游戏、WebGPU 渲染、编辑器视口 |
+| crate | 组 | 职责 |
+|---|---|---|
+| `amoris-render` | presenter | wgpu 渲染器，原生窗口（winit）与浏览器（经 `amoris-viewport`）共用，含 splat、神经纹理与光线追踪研究路径；以及原生宿主与浏览器 worker 安装的 GPU 水数值服务（wgpu 内核） |
+| `amoris-audio` | presenter | kira 音频（仅原生）：世界的声源与声音事件、合成音效，含水声 |
+| `amoris-viewport` | presenter | 浏览器里的渲染器（WebGPU）：cdylib，构建到提交的 `web/viewport/pkg`；编辑器视口、播放页与观战页用它画宿主的渲染流 |
+| `amoris-mcp` | tool | MCP 服务器（rmcp） |
+| `amoris-server` | tool | 宿主的服务器（axum，单个回环端口）：编辑器 WebSocket 与静态文件、HTTP 命令 API、资源、渲染流 `/render`、MCP HTTP |
+| `amoris-debug` | tool | 调试核心与 CDP 端点 |
+| `amoris-app` | app | 原生可执行文件 `amoris`：窗口（`play`）、游戏线程、`run`/`serve`/`mcp`/`check`/`replay` 与运行中宿主的 CLI 客户端；为原生宿主安装 GPU 水服务 |
+| `amoris-web` | app | 浏览器的游戏模块，构建到 `web/pkg`：同一个 wasm 在 Web Worker 里跑游戏，在页面里按世界哈希核对重建的快照；worker 里的 GPU 水；不画画面（由 `amoris-viewport` 画） |
 
 2026-10-16（所有者决定）：批准 `foldhash`（`=0.2.0`）作为 `amoris-render` 的依赖。Pioneer 在
 2026-10-14 为渲染器的实体表引入它：`Scene::apply` 先查找一批更新的实体再应用，只有比标准库的 SipHash
@@ -1291,7 +1294,9 @@ presenter 与工具侧：
 hashbrown 自己的默认哈希，本已在依赖图中，没有依赖，Zlib 许可，可编译到 `wasm32`
 （[architecture.md](spec/architecture.md) 6）。
 
-TypeScript：`sdk/`（脚本的 `amoris` 模块与生成的类型）、`editor/`（React 编辑器）。
+TypeScript：`sdk/` 是 TypeScript 7 工具链（`scripts.check` 用它做类型检查）；脚本的 `amoris` 模块是
+`crates/amoris-script/src/prelude/amoris.ts`，它的 `.js` 与 `.d.ts` 由该 crate 的 `tests/prelude.rs`
+生成，`scripts.types` 把声明写进项目的 `.amoris/types/`；`editor/` 是 React 编辑器。
 Python：`tools/neural/`（神经资源训练）、`tools/eval/`（评测）。
 
 ### 5.2 线程（原生）
