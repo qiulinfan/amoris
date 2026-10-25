@@ -98,6 +98,34 @@ struct DocsSearch {
     limit: Option<u32>,
 }
 
+/// `capture`'s parameters, which the installed `CaptureHub` reads (amoris-app's `present.rs`); the
+/// server passes them on as they came.
+#[derive(Deserialize, JsonSchema)]
+#[allow(dead_code)]
+struct Capture {
+    /// The camera's position `[x, y, z]`; without it, the scene's camera.
+    #[serde(default)]
+    position: Option<[f64; 3]>,
+    /// The point the camera looks at `[x, y, z]`; default: the origin.
+    #[serde(default)]
+    look_at: Option<[f64; 3]>,
+    /// The camera's rotation as a quaternion `[x, y, z, w]`, when there is no `look_at`.
+    #[serde(default)]
+    rotation: Option<[f64; 4]>,
+    /// The vertical field of view in degrees, default 60.
+    #[serde(default)]
+    fov_deg: Option<f64>,
+    /// The image's width in pixels, default 1280 (16 to 4096).
+    #[serde(default)]
+    width: Option<u32>,
+    /// The image's height in pixels, default 720 (16 to 4096).
+    #[serde(default)]
+    height: Option<u32>,
+    /// First draw this many frames at 60 a second (at most 1200), so spray and foam gather.
+    #[serde(default)]
+    frames: Option<u32>,
+}
+
 fn schema<T: JsonSchema>() -> Value {
     schemars::schema_for!(T).to_value()
 }
@@ -108,7 +136,6 @@ pub fn server_catalog() -> Vec<Value> {
         json!({"name": name, "kind": kind, "doc": doc, "aliases": [], "thread": false,
                "params": params, "server": true})
     };
-    let any = json!({"type": "object"});
     vec![
         e(
             "events.since",
@@ -172,11 +199,12 @@ pub fn server_catalog() -> Vec<Value> {
         e(
             "capture",
             "read",
-            "A rendered image or the id buffer's summary of a camera view {position, look_at, \
-             fov_deg, width, height; frames: first draw that many frames of the running game at \
-             60 a second, so spray and foam gather}. The reply names the image and each water \
+            "Renders the running world to a PNG under .amoris/captures/ from a camera {position, \
+             look_at or rotation, fov_deg; width, height; frames: first draw that many frames of \
+             the running game at 60 a second, so spray and foam gather}; without position, the \
+             scene's camera. The reply names the image, its size and tick, and each water \
              region's spray: drops born in the last frame and alive.",
-            any,
+            schema::<Capture>(),
         ),
     ]
 }

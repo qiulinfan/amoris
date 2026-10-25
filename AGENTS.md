@@ -173,7 +173,8 @@ credential cleanup. File-verification records remain local, including in that ar
   builds compile the same optimized DXIL as release builds (`gpu::instance_flags`; the 780M
   mistraced the path tracer's unoptimized DXIL); `WGPU_DEBUG=1` brings unoptimized shaders with
   debug information back for PIX.
-- `cargo xtask check` runs the GPU tests on the default adapter and backend only.
+- `cargo xtask check`'s `test` step runs the GPU tests on the default adapter and backend; its
+  `gpus` step (above) runs this machine's matrix.
   `tools/gpu_matrix.py --configs 5060-dx12,780m-vulkan,780m-auto,5060-dx12-minimal` (any
   `ADAPTER-BACKEND`; `auto` leaves `AMORIS_BACKEND` unset as xtask does) runs `amoris-render`'s
   tests once per adapter (`AMORIS_ADAPTER`), backend and the WebGPU-baseline device (`-minimal`)
@@ -310,8 +311,14 @@ credential cleanup. File-verification records remain local, including in that ar
   (committed; the editor's `/wasm/` serves it), `tools/build_web.sh` also builds the game module
   into `web/pkg` and packs samples into `web/projects/` (both ignored). Serve `web/`
   (`python3 -m http.server -d web 8090`) and open `/?package=projects/samples-anim/package.json`.
-  Any edit to `amoris-assets/src/frame.rs` or `visual.rs` changes the render feed's `FORMAT`:
-  rebuild and commit the viewport with it, or viewports refuse the host's frames.
+  An edit to `amoris-assets/src/frame.rs`, `visual.rs`, `water_field.rs` or `checkpoint_feed.rs`
+  changes the render feed's `FORMAT` (frame.rs), and any change to `Cargo.lock` (every dependency
+  upgrade) or to a file that `amoris_render::water_resident::kernel_key` hashes (the generated
+  kernels in `shaders/det/`, `water_compute.rs`, `water_waves.rs`, `water_occupancy.rs`,
+  `water_nh.rs`, `water_edits.rs`, `water_reactions.rs`, `water_samples.rs`, `water_summary.rs`,
+  `water_resident.rs`, `shaders.rs`, `gpu.rs` and `amoris-assets/src/water_field.rs`) changes the
+  resident water's kernel key: rebuild and commit the viewport with the change, or viewports (and
+  the games `export-web` makes) refuse the host's frames or its resident water.
 - `cargo xtask export-web <project> [--out DIR] [--zip FILE]` writes a game as a static WebGPU
   folder (player page, game module, the committed viewport, the web package and assets) and its zip
   for static hosts such as itch.io ([docs/spec/web-export.md](docs/spec/web-export.md));

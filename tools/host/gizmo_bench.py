@@ -3,7 +3,7 @@
 
 Each run starts a fresh `amoris serve samples/sailing` (the edit world, paused) and runs
 `editor/tools/gizmo-drag.ts` in headless Chrome on `built`, the editor's production build served by
-the host (as `amoris editor` serves it; built with VITE_AMORIS_EXPOSE=1 so the tool can reach the
+the host (as `amoris serve` serves it; built with VITE_AMORIS_EXPOSE=1 so the tool can reach the
 editor's stores). `--dev` additionally checks the Vite development server proxying to the host;
 the published timing protocol uses the production build. Development viewport remounts and hot
 updates have their own check, editor/tools/viewport-loads.ts. Mouse moves go at 60 Hz without

@@ -1,5 +1,7 @@
 # The Amoris rebuild's workspace (docs/spec/architecture.md). Crates and their allowed
-# dependencies are architecture.md 5; external crates are pinned exactly as slice 0 ran them (6).
+# dependencies are architecture.md 5; external crates are pinned as its section 6 says: exactly
+# for every crate the game group uses except `image` (behind `import`), and a caret range for a few
+# presenter and tool crates.
 [workspace]
 resolver = "3"
 members = ["shared/contract/rust", "crates/*", "xtask"]
@@ -52,7 +54,6 @@ oxc_syntax = "=0.152.0"
 oxc_transformer = "=0.152.0"
 oxc_isolated_declarations = "=0.152.0" # amoris-script tests: the prelude's amoris.d.ts
 oxc_sourcemap = "=9.0.0"
-ts-rs = "=12.0.1"
 arc-swap = "=1.9.2"
 wasm-bindgen = "=0.2.129"
 wasm-bindgen-futures = "=0.4.79"
@@ -81,8 +82,8 @@ wgpu = { version = "=30.0.1", default-features = false, features = ["std", "park
 winit = "0.30"
 # amoris-render's entity map (scene.rs; architecture.md 6, docs/bench/dynamic-scenes.md).
 foldhash = "=0.2.0"
-glam = { version = "0.33", features = ["bytemuck"] }
-bytemuck = { version = "1.25", features = ["derive"] }
+glam = { version = "=0.33.12", features = ["bytemuck"] }
+bytemuck = { version = "=1.25.2", features = ["derive"] }
 # Lossless resident checkpoint transport; bounded blocks, including wasm32, with checked Rust APIs.
 lz4_flex = { version = "=0.14.0", default-features = false, features = ["safe-encode", "safe-decode", "checked-decode"] }
 pollster = "0.4"
@@ -91,7 +92,7 @@ pollster = "0.4"
 intel_tex_2 = "=0.5.0"
 texture2ddecoder = "=0.1.2"
 kira = { version = "0.12", default-features = false, features = ["cpal", "wav", "ogg", "mp3", "flac"] }
-bincode2 = { package = "bincode", version = "2.0.1", default-features = false, features = ["std", "serde"] }
+bincode2 = { package = "bincode", version = "=2.0.1", default-features = false, features = ["std", "serde"] }
 
 [profile.release]            # what timings measure and what ships natively (architecture.md 7.2)
 opt-level = 3

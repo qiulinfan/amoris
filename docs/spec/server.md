@@ -110,7 +110,7 @@ files).
 | `assets.list` | read (server) | `{dir?}` | `[{path, kind, bytes}]`, served at `/assets/<path>` |
 | `docs.search` | read (server) | `{query, limit? = 10}` | `[{command, doc}`, `{component, doc, fields}` or `{guide, read}]` (a matching section of `scripts.guide`) |
 | `debug.*` | (server) | per amoris-debug (debugger.md 7), one catalog entry each with its schema | `debug.not_available` until a `DebugHub` is installed; `debug.rewind {tick, bundle?}` and `debug.writes {entity, component, field?, ticks?}` (debugger.md 13) are the server's own |
-| `capture` | (server) | `{camera?, kind?}` | `capture.not_available` until a `CaptureHub` is installed |
+| `capture` | read (server) | `{position?, look_at? \| rotation?, fov_deg? = 60, width? = 1280, height? = 720, frames? = 0}` (no `position`: the scene's camera; `look_at` defaults to the origin; `rotation` a quaternion `[x, y, z, w]`; `frames` at most 1,200) | `{path, width, height, tick, instances, gpu_ms, pending_assets, spray}`: a PNG under `.amoris/captures/` (amoris-app's `present.rs`); `capture.not_available` until a `CaptureHub` is installed |
 | `subscribe` / `unsubscribe` | `/ws` only | `{topics: [topic]}` | `{topics}` |
 
 Names follow `noun.verb`; the slice 1 names stay as aliases (`world_get`, `step`, `time_control`).

@@ -6,7 +6,7 @@
 // process exited and removed its .amoris/host.json. Prints one JSON summary; with --out, writes it
 // and half-size screenshots of the edit and play views there.
 //
-//   node tools/host/desktop_smoke.mjs [--sample samples/sailing] [--out docs/evidence/polish/desktop]
+//   node tools/host/desktop_smoke.mjs [--sample samples/sailing] [--out out/bench-runs/polish/desktop]
 //
 // Needs desktop/'s dependencies (cd desktop && npm ci), a built editor (editor/dist) and amoris;
 // AMORIS_BINARY, AMORIS_EDITOR_DIST, AMORIS_WEB_VIEWPORT and AMORIS_TSC pick other builds,

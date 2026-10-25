@@ -4,7 +4,8 @@ restore under the players' session (the next wait stops at the restored timeline
 and carries its events), and a rule that throws at tick 3 (the seat's wait halts; a developer's
 resume, a restore or a hot update ends the halt). Copies samples/sailing-course into <scratch>
 twice (the second with the planted throw), serves each, and prints one line per call.
-docs/evidence/player/seat-http.txt is its output.
+Its recorded output is sources/pioneer-20261010/docs/evidence/player/seat-http.txt in
+amoris-benchmarks-results (player.md 11); keep a new run's under out/bench-runs/player/.
 
 Usage: python tools/host/player_http_probe.py <path to amoris(.exe)> <scratch dir> [port]"""
 import json

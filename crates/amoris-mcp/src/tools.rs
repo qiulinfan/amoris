@@ -225,10 +225,21 @@ pub fn tools() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "capture",
-            description: "A rendered image or the id buffer's summary of a camera view {camera, \
-                kind: image|ids}.",
+            description: "Render the running world to a PNG {position [x,y,z], look_at [x,y,z] \
+                (default the origin) or rotation [x,y,z,w], fov_deg (60); width, height \
+                (1280x720); frames: first draw that many frames at 60 a second, so spray and foam \
+                gather}. Without position, the scene's camera. The reply names the image's path, \
+                its tick and each water region's spray.",
             schema: obj(
-                json!({"camera": {"type": "object"}, "kind": action(&["image", "ids"])}),
+                json!({
+                    "position": {"type": "array", "items": {"type": "number"}},
+                    "look_at": {"type": "array", "items": {"type": "number"}},
+                    "rotation": {"type": "array", "items": {"type": "number"}},
+                    "fov_deg": {"type": "number"},
+                    "width": {"type": "integer"},
+                    "height": {"type": "integer"},
+                    "frames": {"type": "integer"},
+                }),
                 &[],
             ),
         },

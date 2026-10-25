@@ -4,11 +4,11 @@ Status: Draft 2 (2026-10-04): implemented by `amoris-server`, `amoris-mcp` and `
 method table, parameters and results as built are [server.md](server.md). Charter: 3.1 (one
 interface), 4.3 (debugging), 4.5 (editor).
 
-The native host (`amoris editor <project>` / `amoris serve <project>`) owns the one authoritative
-world. Everything else is a client: the React editor, MCP agents, the CLI, tests. They all call the
-same commands; the editor has no private channel. This file fixes the wire forms. The command
-semantics (validation, `{code, message, detail}` errors, unknown-field refusal with suggestions) are
-the runtime's (`amoris-runtime` catalog, `shared/contract/errors.md`).
+The native host (`amoris serve <project>`) owns the one authoritative world. Everything else is a
+client: the React editor, MCP agents, the CLI, tests. They all call the same commands; the editor
+has no private channel. This file fixes the wire forms. The command semantics (validation,
+`{code, message, detail}` errors, unknown-field refusal with suggestions) are the runtime's
+(`amoris-runtime` catalog, `shared/contract/errors.md`).
 
 ## 1. Endpoints
 
@@ -26,10 +26,8 @@ endpoint, which `amoris-debug` serves on its own port (9229). A request whose `H
 | `GET /ws` | WebSocket, JSON text frames: requests, responses, pushed events (sections 2, 3) | editor |
 | `GET /render` | WebSocket, binary frames: the render feed (section 5); `501 render.not_available` until the integrator installs it | editor viewport |
 | `GET /assets/<path>` | the project's asset files (glTF, textures, splats, neural assets) | editor viewport |
-| `GET /wasm/<path>` | amoris-web's wasm-bindgen output, `amoris_web.js` exporting `createViewport` (editor.md 5) | editor viewport |
+| `GET /wasm/<path>` | `web/viewport`: amoris-viewport's committed wasm-bindgen package (`pkg/`) and its glue `amoris_web.js` exporting `createViewport` (editor.md 5); `AMORIS_WEB_VIEWPORT` names another directory; 404 when none is found (`tools/build_viewport.sh` builds it) | editor viewport |
 | `POST /mcp` | MCP Streamable HTTP (rmcp) | agents |
-| `GET /json/list`, `GET /json/version`, `WS /devtools/<id>` | CDP discovery and endpoint (section 6), on amoris-debug's port | Chrome DevTools, VS Code |
-
 | `GET /json/list`, `GET /json/version`, `WS /devtools/game` | CDP discovery and endpoint (section 6), on `amoris-debug`'s own port (default 9229, where VS Code's `node` attach looks); the host may proxy them | Chrome DevTools, VS Code, the editor |
 
 `amoris mcp <project>` serves the same MCP tools over stdio instead (through the running host when
@@ -120,8 +118,17 @@ Each method is a command of the catalog (`GET /api/catalog` is authoritative). K
 | `events.why` | `{seq}` | `{event, causes, complete}`: the cause chain |
 | `log.since` | `{seq?, limit?}` | `{lines, last}` |
 | `snapshots.list` / `snapshots.restore` | `{}` / `{tick, bundle?: "applied"\|"snapshot"}` | `{every, keep, snapshots: [{tick, world_hash}]}` / status with `restored` and `scripts` (the applied scripts are kept by default, server.md 3.3) |
+| `scripts.types` | `{text?, tsconfig?}` | `{dir, files, tsconfig, components, ...}`: the project's declarations under `.amoris/types/` (docs/sdk.md) |
+| `scripts.guide` | `{}` | `{path: "docs/sdk.md", text}`: the agent's guide to scripts |
+| `profile.frame` | `{ticks?}` (default 60, at most 600) | `profile`'s summary of the last `ticks` ticks (no `missed`); the server's own read, so it answers while the debugger holds the game |
 | `docs.search` | `{query, limit?}` | matching commands and components |
+| `capture` | `{position?, look_at? \| rotation?, fov_deg?, width?, height?, frames?}` | `{path, width, height, tick, instances, gpu_ms, pending_assets, spray}`: a PNG under `.amoris/captures/` (server.md 3); without `position`, the scene's camera |
+| `subscribe` / `unsubscribe` | `{topics: [topic]}` | `{topics}` (`/ws` only, section 3) |
+| `player.*` | per seat ([player.md](player.md)) | session, describe, observe, nearby, events, affordances, intents, act, wait, continue, pacing |
 | `debug.*` | section 6 | `debug.not_available` until amoris-debug's hub is installed; one catalog entry per method |
+| `agent.*` | MCP tool calls mirrored (section 7) | |
+
+server.md 3 is the complete table, with each method's kind and result.
 
 While the debugger holds the game, `status`, `time.control {}`, `world.get/tree/query/schema` and
 `scripts.list/read/status` answer from the last publication (marked `paused_at`); `play.stop` in
@@ -129,8 +136,6 @@ Play ends Play wherever it stands (the debugger passes over every pause until th
 `time.control` with changes is queued for the boundary after the held tick (`debug.paused {queued:
 true}`); every other call that needs the game thread is refused at once with `debug.paused`
 (server.md 3.4).
-| `profile.frame` | `{ticks?}` (default 60, at most 600) | `profile`'s summary of the last `ticks` ticks (no `missed`); the server's own read, so it answers while the debugger holds the game |
-| `agent.*` | MCP tool calls mirrored (section 7) | |
 
 `world.edit` ops (the runtime's `world_edit` ops, one transaction):
 
@@ -215,18 +220,11 @@ bytes to the page's viewport.
 ## 7. MCP tools
 
 The MCP server (`amoris-mcp`) is a projection of the catalog, grouped so an agent's tool list stays
-small (each tool takes a `method`-like `action` where a group is natural):
-
-- Developer (built, server.md 7): `world` (tree/get/query/schema/edit), `scripts`
-  (list/read/write/apply/check), `time` (status/pause/resume/speed/step/snapshots/rewind), `play`
-  (start/stop), `history` (undo/redo/list), `assets` (list), `events` (since/why/log), `debug`
-  (breakpoints.set/breakpoints.clear/pause/continue/step/state/eval/watch/rewind: section 6's
-  methods of those names; `breakpoints.list`, `unwatch`, `set`, `exceptions`, `wait`, `attach` and
-  `detach` are not actions yet), `capture` (a rendered image or the id
-  buffer's summary of a camera view; not available yet), `docs` (search). `tools/list` is 1,236
-  tokens.
-- Player (per seat, restricted perception): `observe`, `act`, `wait`, `intents`, `affordances`
-  (shared/contract/mcp.md); not projected yet.
+small (each tool takes a `method`-like `action` where a group is natural). server.md 7 has the
+eleven tools as built, their actions and the size of `tools/list`: the developer's `world`,
+`scripts`, `time`, `play`, `history`, `assets`, `events`, `debug` (every method of section 6),
+`capture` and `docs`, and `player`, which plays one seat through its own perception
+([player.md](player.md); a developer names the seat, a player session lists it alone).
 
 Every MCP call is also pushed to editors as an `agent` event, so a human sees what agents do.
 

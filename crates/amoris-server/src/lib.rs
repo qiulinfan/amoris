@@ -57,7 +57,7 @@ pub trait DebugHub: Send + Sync {
     fn pass(&self, _on: bool) {}
 }
 
-/// Renders a camera view for `capture` (an image or the id buffer's summary).
+/// Renders a camera view to an image for `capture` (server.md 3).
 pub trait CaptureHub: Send + Sync {
     fn capture(&self, params: Value) -> BoxFuture<Result<Value, Problem>>;
 }

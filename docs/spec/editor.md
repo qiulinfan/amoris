@@ -23,7 +23,7 @@ bun install
 # Against the mock host (no Rust needed): mock on 7879, Vite on 5173 proxying to it.
 bun run dev:mock                  # open http://127.0.0.1:5173/
 
-# Against the real host: `amoris editor <project>` serves editor/dist at http://127.0.0.1:7878/.
+# Against the real host: `amoris serve <project>` serves editor/dist at http://127.0.0.1:7878/.
 # For editor development against it, Vite proxies to AMORIS_HOST (default http://127.0.0.1:7878).
 bun run dev
 AMORIS_HOST=http://127.0.0.1:7900 bun run dev
@@ -457,7 +457,8 @@ the wire shapes (`HostDebugState`, `HostFrame`, `HostVariable`, `HostBreakpoint`
 | `src/viewport/` | The renderer interface, camera, math, gizmo, the frame meter, the fallback renderer |
 | `src/panels/<panel>/` | One module per panel (and its CSS) |
 | `mock/` | The mock host (section 1.1) |
-| `tools/` | `capture.ts` (evidence of every panel against the mock), `debug-host.ts` (the debugger against the real host), `sdk_check.ts` (the script editor's types against the real host), `profiler-capture.ts` (the profiler against the real host, docs/bench/profiler.md), `water-authoring.ts` (the water tools against the real host, 6.1), all through headless Chrome over CDP (`cdp.ts`) |
+| `test/` | bun unit tests (`bun test`): history, live edits, subscriptions, the profile, water authoring, the desktop guards, arithmetic |
+| `tools/` | `capture.ts` (evidence of every panel against the mock), `debug-host.ts` (the debugger against the real host), `sdk_check.ts` (the script editor's types against the real host), `profiler-capture.ts` (the profiler against the real host, docs/bench/profiler.md), `water-authoring.ts` (the water tools against the real host, 6.1), `viewport-loads.ts` (the viewport's loads, remounts and hot updates, 5), `gizmo-drag.ts` (live gizmo drags, docs/bench/gizmo.md), `serve-clients.ts` (clients held on a real host while its game thread is profiled, docs/bench/profiler.md); the pages are driven in headless Chrome over CDP (`cdp.ts`, `chrome.ts`) |
 
 ## 10. Evidence
 
@@ -525,6 +526,6 @@ completes the Boat's fields.
   scripts changed) until the next apply or reconnect.
 - Multi-selection edits apply to every selected entity with the component but show the primary's
   values (no mixed-value display).
-- No automated tests beyond `tools/capture.ts` (the mock), `tools/debug-host.ts` (the real host's
-  debugger) and `tools/sdk_check.ts` (the script editor's types against a real host), which drive
-  the main flows end to end.
+- The bun unit tests (`test/`) cover the stores and protocol pieces, and the CDP harnesses
+  (`tools/`) drive the main flows end to end against the mock or a real host; nothing runs the
+  harnesses automatically, and `cargo xtask check` runs neither.

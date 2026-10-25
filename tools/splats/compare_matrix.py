@@ -14,7 +14,7 @@ second first on odd ones, and image_diff compares the two (`build_vs_build`); `-
 Build first: `cargo build --release -p amoris-render --example splats --example image_diff`.
 
     python tools/splats/compare_matrix.py --adapters nvidia,780m --backends dx12,vulkan \
-        --scene "1M=--count 1000000" --images out/splat-compare --out docs/evidence/quiet/splats/compare.json
+        --scene "1M=--count 1000000" --images out/splat-compare --out out/bench-runs/quiet/splats/compare.json
 """
 import argparse
 import json

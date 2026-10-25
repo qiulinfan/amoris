@@ -34,15 +34,14 @@ names of section 5 (section 11).
 
 - **Numbers taken beside other work are worthless.** "GPU numbers are worthless while a benchmark or
   a browser page drawing a pack runs (a 2.85 ms measurement taken beside a suite was 0.49 ms alone)"
-  (master `docs/development.md`, Pictures); master's rendering assessment ran beside a benchmark at
-  load averages of 5 to 13 and called every timing noisy
-  (`docs/research/2026-10-02-rendering-and-import-assessment.md`). Hence calibration, and noisy runs
-  that are reported but never become a baseline (7.5).
+  (master `docs/development.md`, Pictures); master's rendering and import assessment of 2026-10-02
+  ran beside a benchmark at load averages of 5 to 13 and called every timing noisy. Hence
+  calibration, and noisy runs that are reported but never become a baseline (7.5).
 - **Debug builds measure nothing useful.** Master's debug build was 25 to 31 times slower than
-  release (`docs/decisions/0006-agent-runs-release.md`). Timings come from `release` and `web`
-  profiles only.
+  release (master's decision 6, that agents run release builds). Timings come from `release` and
+  `web` profiles only.
 - **Size and speed trade.** Master's `-Oz` web build was 16 to 19% smaller and 18 to 35% slower in
-  simulation, and was not taken (`docs/web.md`, Two runtimes). Web size and web tick time are
+  simulation, and was not taken (master's web notes, Two runtimes). Web size and web tick time are
   measured together so the same trade is made with numbers.
 - **Silent limits hide as performance.** Master's renderer dropped draws past 65,536 object rows
   "silently, with no counter" (the assessment's Gaps table). Capacities report counters, each
@@ -243,7 +242,7 @@ In Chrome on the integrated GPU, the shipped page (no editor, no transpiler, `ar
 | `web.snapshot` | sail, worker to page: copy out, transfer, rebuild, median | **0.25 ms** (threads spike, 1,000 entities of 20 bytes, about the sail snapshot's size: 0.20 ms p50) | 2 ms: well inside a 60 Hz frame (`threads.md`, 7.3) |
 | `web.frame` | scene at 1280 by 720, frame time, p95 | Not measured for the whole frame (opaque geometry only) | 33.3 ms: 30 frames per second; the web is a distribution and spectating channel (charter 11) |
 | `web.pass.opaque` | the opaque pass at 1280 by 720, GPU time, p95 | **0.92 ms** (render spike: 0.73 ms on the turning camera) | the pass's share of `web.frame` |
-| `web.size.wasm.br` | the page's `.wasm`, Brotli quality 11, KiB | Not measured: no spike built the assembled module or measured Brotli (7.4 lists the spikes' gzip sizes) | 2,400 KiB: below master's JSPI runtime at 2.4 MB with Brotli (`docs/web.md`, Costs); compared across the two lines (charter 6.3) |
+| `web.size.wasm.br` | the page's `.wasm`, Brotli quality 11, KiB | Not measured: no spike built the assembled module or measured Brotli (7.4 lists the spikes' gzip sizes) | 2,400 KiB: below master's JSPI runtime at 2.4 MB with Brotli (master's web notes, Costs); compared across the two lines (charter 6.3) |
 | `web.size.wasm` | the same, uncompressed, KiB | Not measured (7.4) | from the build; compile time and memory follow it |
 | `web.size.page.br` | everything the page fetches but the project, Brotli, KiB | Not measured | the wasm plus 100 KiB of glue, page and worker script |
 | `web.start.cold` | sail, navigation to the first frame, fresh profile, median of 3 | Not measured; the script-web spike's worker took 66.8 to 87.8 ms from creation to its first tick, cold (one load at 128.9 ms under load) | 5,000 ms from a local server |

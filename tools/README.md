@@ -2,7 +2,9 @@
 
 Scripts that build, check, measure and compare Amoris, grouped by what they work on. Run them from
 the repository's root (`python3 tools/render/frame_trace.py stats TRACE`); each finds the root from
-its own file. The specs and benchmark records name the script each method uses.
+its own file. The specs and benchmark records name the script most of their methods use; a script
+no record names (many of `water/`'s checks and plots, for example) says in its own header what it
+does and how to run it.
 
 | Folder | What it holds |
 | --- | --- |
@@ -11,8 +13,8 @@ its own file. The specs and benchmark records name the script each method uses.
 | `host/` | The host's smoke and HTTP/MCP probes, held-host and serve-loop benches, the profiler and gizmo benches, the desktop smoke test and the exported game's play check |
 | `runtime/` | Game-thread and script benches: publication, lookahead, write traces, QuickJS-ng, rules, the physics cache |
 | `site/` | The Pages site's build and link check and the showcase captures |
-| `eval/` | Agent evaluations and their reports |
-| `neural/` | Training of neural assets |
+| `eval/` | Agent evaluations and their reports, with their offline tests (`python3 -m unittest discover -s tools/eval`) |
+| `neural/` | Training of neural assets; `gi/`'s tests run in its uv project (`cd tools/neural/gi && uv run python -m unittest test_train`) |
 | `splats/` | Gaussian-splat comparisons |
 | `tests/` | The tools' own tests (`python3 -m unittest discover -s tools/tests`) |
 | `vscode/` | The VS Code attach configuration for the script debugger |

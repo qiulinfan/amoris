@@ -25,7 +25,7 @@
 
 `python tools/host/gizmo_bench.py` starts a fresh `amoris serve samples/sailing` (the edit world,
 paused) for each run and drives `editor/tools/gizmo-drag.ts` in headless Chrome over CDP, on the
-editor's production build served by the host, as `amoris editor` serves it (built with
+editor's production build served by the host, as `amoris serve` serves it (built with
 `VITE_AMORIS_EXPOSE=1`, which keeps `window.amoris` for the tool). `--dev` also drives the Vite dev
 server; it is not part of the protocol (section 3).
 

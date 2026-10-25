@@ -124,7 +124,7 @@ these unknown charges.
 
 The [frozen protocol](https://github.com/qiulinfan/amoris/blob/main/bench/agent-dev/protocol.md),
 [task prompts and source references](https://github.com/qiulinfan/amoris/blob/main/bench/agent-dev/manifest.json),
-[control results](https://github.com/qiulinfan/amoris/blob/main/bench/agent-dev/control-results.json)
+[control results](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/amoris-local-backup-20261010/bench/agent-dev/control-results.json)
 and [native grader](https://github.com/qiulinfan/amoris/blob/main/tools/eval/agent_dev_bench.py)
 define the development experiment independently of the provider runner.
 The commands below run `courier-v2`, which differs from `courier-v1` only by the engine's

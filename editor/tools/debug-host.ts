@@ -10,7 +10,7 @@
 //   paused (the edit world takes the edited scripts) and Play again into the edited code.
 //
 //   amoris serve <copy of samples/sailing> --port 7911 --editor editor/dist
-//   bun tools/debug-host.ts --url http://127.0.0.1:7911/ [--out ../docs/evidence/editor] [--line 27]
+//   bun tools/debug-host.ts --url http://127.0.0.1:7911/ [--out ../out/bench-runs/editor] [--line 27]
 //
 // Screenshots go to <out>/debug-host-*.png; what each step saw is printed (and kept beside them as
 // debug-host.txt by the caller).
@@ -25,7 +25,7 @@ const opt = (name: string, fallback: string) => {
   return i >= 0 && args[i + 1] ? args[i + 1]! : fallback;
 };
 const URL_ = opt("--url", "http://127.0.0.1:7878/");
-const OUT = resolve(opt("--out", resolve(import.meta.dir, "../../docs/evidence/editor")));
+const OUT = resolve(opt("--out", resolve(import.meta.dir, "../../out/bench-runs/editor")));
 const LINE = Number(opt("--line", "27"));
 const W = 1600;
 // The editor's Mod: Cmd (CDP modifier 4) on macOS, Ctrl (2) elsewhere (src/commands/keys.ts).

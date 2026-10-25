@@ -10,7 +10,7 @@
 //   node crates/amoris-debug/tests/devtools_chrome.mjs [--exe PATH] [--port 9243]
 //        [--chrome-port 9333] [--chrome APP] [--shots DIR] [--game-log FILE]
 //
-// Exit 0 when every check holds; screenshots go to --shots (default: docs/evidence/debug).
+// Exit 0 when every check holds; screenshots go to --shots (default: out/bench-runs/debug).
 
 import { spawn } from "node:child_process";
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -30,7 +30,7 @@ const EXE = arg("--exe", join(target, "debug/examples/debug_sailing"));
 const PORT = Number(arg("--port", "9243"));
 const CPORT = Number(arg("--chrome-port", "9333"));
 const CHROME = arg("--chrome", "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome");
-const SHOTS = arg("--shots", join(root, "docs/evidence/debug"));
+const SHOTS = arg("--shots", join(root, "out/bench-runs/debug"));
 // The game's stderr (with AMORIS_CDP_LOG=1 in the environment, every CDP message).
 const GAME_LOG = arg("--game-log", null);
 const RULES = join(root, "samples/sailing/scripts/rules.ts");

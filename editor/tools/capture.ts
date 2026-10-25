@@ -4,7 +4,7 @@
 // `window.amoris` hooks to set up the rest.
 //
 //   bun run dev:mock            # in another terminal (mock host + Vite)
-//   bun tools/capture.ts --url http://127.0.0.1:5173/ --out ../docs/evidence/editor
+//   bun tools/capture.ts --url http://127.0.0.1:5173/ --out ../out/bench-runs/editor
 
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
@@ -16,7 +16,7 @@ const opt = (name: string, fallback: string) => {
   return i >= 0 && args[i + 1] ? args[i + 1]! : fallback;
 };
 const URL_ = opt("--url", "http://127.0.0.1:5173/");
-const OUT = resolve(opt("--out", resolve(import.meta.dir, "../../docs/evidence/editor")));
+const OUT = resolve(opt("--out", resolve(import.meta.dir, "../../out/bench-runs/editor")));
 const W = 1600;
 const H = 1000;
 mkdirSync(OUT, { recursive: true });

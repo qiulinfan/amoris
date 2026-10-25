@@ -2,18 +2,18 @@
 
 Status: Draft, slice 0
 
-Charter: 3.7 (determinism, fork consistency, replay, reload equivalence, one local command), 3.9
-(clean structure with no line limit; the crate boundaries, which the check verifies), 3.10
-(performance benchmarks whose numbers the check reports and never fails on), 4.1 (the `wasm32` build
-in the checks from day one), 4.2.5 (the lint in the local checks), 4.4 (a changed shader checked in
-a browser), 9.4 (the crate dependency check recorded with every commit).
+Charter: 3.3 and 3.4 (state in the world, kept by the lint and reload equivalence; determinism, fork
+and replay), 3.7 (performance measurements the check reports and never fails on), 3.8 (clean
+structure with no line limit; the crate boundaries, which the check verifies), 4.1 (the `wasm32`
+build in the checks from day one), 4.2 (the lint in the local checks), 4.4 (a changed shader checked
+in a browser), 4.6 (one local command, `cargo xtask`).
 
 This specification fixes `cargo xtask check`, the one command that says whether the repository is
 correct: its steps and their order, what each verifies and how, the per-project checks of charter
-3.7, the web build checked in headless Chrome, the output agents read, and the exit codes. CI, if
-there is one, runs the same command (charter 3.7). The crates are those of `architecture.md`; the
+3.4, the web build checked in headless Chrome, the output agents read, and the exit codes. CI, if
+there is one, runs the same command (charter 4.6). The crates are those of `architecture.md`; the
 performance step's workloads and reference figures are in `budgets.md`; the threads' own tests are
-in `threads.md`, 11. Performance is measured, not gated (charter 0.4, 3.10): the `perf` step reports
+in `threads.md`, 11. Performance is measured, not gated (charter 3.7): the `perf` step reports
 its measurements against their reference figures and baselines with warnings, and never fails the
 check, makes it inconclusive or changes its exit code on a number (9, 11).
 
@@ -27,7 +27,7 @@ protocol and the conformance checks (spec-contract,
 [shared/contract/](../../shared/contract/README.md)); MCP tools and the benchmark harness (spec-mcp,
 [mcp.md](../../shared/contract/mcp.md), [shared/benchmark/](../../shared/benchmark/README.md)). Each
 of those specifications lists its own tests; this command runs them (6.2, 7.2) and adds the
-whole-run checks of charter 3.7 (8).
+whole-run checks of charter 3.4 (8).
 
 ## 1. Why one command, and why this one
 
@@ -205,6 +205,11 @@ the `.d.ts` files (spec-script), the JSON Schemas of the command catalog and the
 (spec-contract, spec-mcp), the budgets table in `budgets.md` from `bench/budgets/` (`budgets.md`,
 8.2), every `clippy.toml` from `tools/clippy-determinism.toml` (5.3), and `schema.lock.json` with
 the projects' locks (versions.md 5).
+
+As built (checks-slice1.md 10), `gen` runs only the generators that need no build: every crate's
+`clippy.toml` and the `gen.orphan` scan. `amoris gen`, the generators that need engine types and
+`--locks` are planned (architecture.md 4.13, 4.15); the `.d.ts` files come from `amoris-script`'s
+`tests/prelude.rs` and `scripts.types` meanwhile.
 
 | Error code | When |
 |---|---|
@@ -506,6 +511,10 @@ missing). Everything it finds about the numbers is a warning:
    8.3);
 4. calibrate again; drift beyond the tolerance marks the run noisy (`perf.noisy`): its measurements
    are still reported, but they cannot become a baseline.
+
+As built, the step is skipped with its reason: `amoris bench`, `bench/budgets/` and the bootstrap
+commands below are planned (xtask's `perf` step; budgets.md 7, 8), so the numbers of this section
+are measured by the tools and recorded under docs/bench/ instead.
 
 Two bootstrap commands give the step its reference values (`budgets.md`, 8.1):
 `cargo xtask perf --calibrate` runs the CPU and GPU calibration workloads 7 times each on a quiet R1

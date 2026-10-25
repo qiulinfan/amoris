@@ -5,7 +5,7 @@ xtask = "run --quiet --package xtask --"
 [env]
 CFLAGS = "-ffp-contract=off"
 
-# architecture.md 7.5: QuickJS-ng with quickjs-ng PR #1421 and the script host's patches P1 to P8
+# architecture.md 7.5: QuickJS-ng with quickjs-ng PR #1421 and the script host's patches P1 to P13
 # (script-sandbox.md 4.2), committed under third_party/ and rebuilt by third_party/vendor.py.
 [patch.crates-io]
 rquickjs-sys = { path = "third_party/rquickjs-sys-0.14.0" }

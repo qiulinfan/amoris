@@ -1,7 +1,8 @@
-//! `amoris play <project>`: the game in a native window (Metal on macOS, Vulkan elsewhere or with
-//! `AMORIS_BACKEND=vulkan`). The game runs on its game thread in real time; the window's renderer
-//! subscribes to the render feed and draws at the display's rate, interpolating between ticks.
-//! Runs on the process's main thread (winit requires it on macOS).
+//! `amoris play <project>`: the game in a native window (Metal on macOS, Direct3D 12 on Windows,
+//! Vulkan elsewhere: `amoris_render::host_backend`; `AMORIS_BACKEND` names another). The game runs
+//! on its game thread in real time; the window's renderer subscribes to the render feed and draws
+//! at the display's rate, interpolating between ticks. Runs on the process's main thread (winit
+//! requires it on macOS).
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;

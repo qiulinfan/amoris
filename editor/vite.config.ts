@@ -1,5 +1,5 @@
 // The editor's dev server and build. In development every host endpoint (docs/spec/host-protocol.md
-// section 1) is proxied to the host named by AMORIS_HOST: the real `amoris editor` at 127.0.0.1:7878
+// section 1) is proxied to the host named by AMORIS_HOST: the real `amoris serve` at 127.0.0.1:7878
 // by default, or the mock (`bun run dev:mock` sets it to the mock's port).
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";

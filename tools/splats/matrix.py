@@ -12,7 +12,7 @@ Build first: `cargo build --release -p amoris-render --example splats`. From the
 
     python tools/splats/matrix.py --adapters nvidia,780m --backends dx12,vulkan --rounds 5 \
         --frames 60 --scene "1M=--count 1000000" --scene "3M 1440p=--count 3000000 --size 2560x1440" \
-        --out docs/evidence/quiet/splats/matrix.json
+        --out out/bench-runs/quiet/splats/matrix.json
 
 `--build NAME=EXE` (repeatable) times other builds of the example too, interleaved within each
 round (for example a copy of an earlier build's `splats.exe`), `--env NAME=K=V` (repeatable) sets an

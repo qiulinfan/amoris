@@ -29,9 +29,9 @@ pause-on-decision, the time controller, seats and their order, actions and the e
 
 Master ran the editor, the scripts and the simulation in one runtime on one thread
 (`docs/editor.md`: the editor "runs beside the project in the same runtime"), so whatever stalled
-one stalled all: a 5M-triangle import held a `state` call for 4.7 s
-(`docs/research/2026-10-02-rendering-and-import-assessment.md`, item 3), and in a paused session
-"`frame()` still ticks" (`docs/development.md`, Tests). The rebuild splits ownership:
+one stalled all: a 5M-triangle import held a `state` call for 4.7 s (master's rendering and import
+assessment of 2026-10-02, item 3), and in a paused session "`frame()` still ticks"
+(`docs/development.md`, Tests). The rebuild splits ownership:
 
 - **The game thread** owns the world, the script host, physics, the time model and the recorder. It
   alone mutates state and steps the tick (charter 5.1).
@@ -591,9 +591,9 @@ same `stack_bytes` as the game thread (3.1; script-sandbox.md 4.3), and the dept
 kind (script-host.md 12, test 9).
 
 Nothing on this list holds a reference into the world. Master's import could not move to a thread
-because the wall clock would then decide on which tick a collider appears
-(`docs/research/2026-10-02-rendering-and-import-assessment.md`, item 3); here the tick is the one
-the command was applied at, and the recording makes it reproducible.
+because the wall clock would then decide on which tick a collider appears (master's rendering and
+import assessment of 2026-10-02, item 3); here the tick is the one the command was applied at, and
+the recording makes it reproducible.
 
 A fork is a value: spec-persist's fork yields world data that can move to another thread, where a
 new script host is built for it (scripts hold no state, so nothing is lost). Trying new scripts in a

@@ -168,6 +168,7 @@ Sanitized run data and logs live in
 | [Animation](samples/anim) | Animation, particles, and in-game UI |
 | [Sailing course](samples/sailing-course) | Restricted player perception, intentions, and decision points |
 | [Blockcraft](samples/blockcraft) | A voxel island: break and place blocks; shallow water floods, pours and drains |
+| [Town walk](samples/town-walk) | The ORCA Bistro exterior walked natively with collision and baked lighting; the third-party model is prepared locally and not committed |
 | [Pool party](samples/pool-party) | Floats, swimmers, dinghies and rain on GPU water |
 | [River falls](samples/river-falls) | A river over a fall into a pool, ridden on an inner tube |
 | [Surf beach](samples/surf-beach) | Swell shoaling into breakers over a reef, surfed on a board |

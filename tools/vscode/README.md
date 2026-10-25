@@ -28,4 +28,6 @@ What the configuration does:
 - `"continueOnAttach": true`: a game started with `--wait` starts when VS Code has attached.
 
 The same attach was checked headless with VS Code's own js-debug (crates/amoris-debug/tests/
-jsdebug_dap.mjs, docs/evidence/debug/jsdebug-dap.txt).
+jsdebug_dap.mjs; its recorded output is
+[jsdebug-dap.txt](https://github.com/qiulinfan/amoris-benchmarks-results/blob/main/sources/pioneer-20261010/docs/evidence/debug/jsdebug-dap.txt)
+in amoris-benchmarks-results).

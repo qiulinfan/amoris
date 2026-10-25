@@ -94,8 +94,9 @@ scripts and data are not in it.
 
 `target`, `profile` and `c_compiler` are recorded for diagnosis and do not decide comparability:
 native and web builds of one `source` must give the same hashes (checks.md 7.2), and features never
-change simulation results (architecture.md 7.4). The perf step refuses to time a native build whose
-`c_compiler` is not clang-cl (`perf.wrong_compiler`, checks.md 9).
+change simulation results (architecture.md 7.4). The perf step, which is skipped until its
+benchmarks exist (checks.md 9), is to refuse to time a native build whose `c_compiler` is not
+clang-cl (`perf.wrong_compiler`).
 
 ### 3.2 Bundle hash
 

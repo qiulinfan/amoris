@@ -6,7 +6,7 @@
 //
 //   amoris serve samples/sailing --port 7911
 //   EDITOR_PORT=5191 AMORIS_HOST=http://127.0.0.1:7911 bun run dev
-//   bun tools/sdk_check.ts ../docs/evidence/sdk http://127.0.0.1:5191/
+//   bun tools/sdk_check.ts ../out/bench-runs/sdk http://127.0.0.1:5191/
 import { Cdp, launchChrome } from "./cdp";
 const OUT = process.argv[2]!;
 const URL_ = process.argv[3] ?? "http://127.0.0.1:5191/";

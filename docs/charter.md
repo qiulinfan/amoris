@@ -319,6 +319,13 @@ beta 功能，测试已移除（4.4）。
 | 性能分析 | 内建分析器：每个系统的 CPU 区段 + 每个渲染通道的 GPU 时间戳，推送到编辑器；Tracy 为可选特性 | tracy-client 0.19 | 测量为依据 |
 | 离线工具 | **Python 3.14 + uv**：神经资源训练（PyTorch，Apple MPS；神经纹理例外，2026-10-09 Pioneer 起在引擎的 wgpu 计算着色器里训练，见 4.4）、评测 harness、分析脚本 | — | 只在工具层，不嵌入运行时 |
 
+2026-10-25 状态注记（上表的决策不变）：表中四项还没有接入代码，是计划项。gilrs 不是依赖，窗口只接键
+盘与鼠标，没有手柄输入；`ts-rs` 不是依赖，脚本的 `.d.ts` 由组件注册表（`scripts.types`）与 prelude
+生成，事件、意图与错误记录的 `ts-rs` 派生还没有做（[script-host.md](spec/script-host.md) 14 第 17
+项）；`tracy-client` 不是依赖，性能分析由内建分析器承担（游戏线程的 `profile` 与编辑器的 Profiler，
+渲染器的 GPU 时间戳与 `AMORIS_TRACE` 写出的 Chrome Trace）；kira 只在原生构建的 `amoris-audio` 里，
+浏览器里还没有 WebAudio，也没有声音（[architecture.md](spec/architecture.md) 4.19 与 6）。
+
 ### 4.2 脚本：TypeScript on QuickJS-ng
 
 - 脚本是数据导向的**无状态系统**：声明查询，按列（typed array）批量读写组件；组件可以在 TS 里

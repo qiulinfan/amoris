@@ -199,8 +199,9 @@ as without the profiler.
 
 This line already carries quickjs-ng PR #1421 for the debugger, applied unmodified to a pinned
 `rquickjs-sys` and substituted through `[patch.crates-io]` (debugger spike, Recipe 1); the patched
-crate is committed under `third_party/` and rebuilt by `cargo xtask vendor` (architecture.md 7.5).
-The script host needs these further changes, carried the same way and proposed upstream:
+crate is committed under `third_party/` and rebuilt by `python third_party/vendor.py`, with P1 to
+P13 below (architecture.md 7.5; a Rust `cargo xtask vendor` is planned, 6). The script host needs
+these further changes, carried the same way and proposed upstream:
 
 | Patch | Change | Why |
 |---|---|---|

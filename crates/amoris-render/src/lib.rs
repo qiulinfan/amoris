@@ -1,8 +1,9 @@
-//! The renderer (charter 4.4): wgpu with WGSL, Metal and Vulkan natively and WebGPU in the browser,
-//! one code path for all three. GPU-driven (every instance culled on the GPU, indirect draws: one
-//! multi-draw per pass and variant natively, one draw per batch on WebGPU's baseline), physically based clustered forward shading with cascaded shadows, a baked
-//! atmosphere with image-based light, HDR bloom and AgX. It reads the world only through the render
-//! feed (`amoris_assets::frame`), so it can never change the simulation.
+//! The renderer (charter 4.4): wgpu with WGSL, Metal, Vulkan and Direct3D 12 natively and WebGPU in
+//! the browser, one code path for all four. GPU-driven (every instance culled on the GPU, indirect
+//! draws: one multi-draw per pass and variant natively, one draw per batch on WebGPU's baseline),
+//! physically based clustered forward shading with cascaded shadows, a baked atmosphere with
+//! image-based light, HDR bloom and AgX. It reads the world only through the render feed
+//! (`amoris_assets::frame`), so it can never change the simulation.
 
 #[cfg(all(feature = "window", not(target_arch = "wasm32")))]
 pub mod app;
