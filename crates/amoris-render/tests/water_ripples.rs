@@ -45,6 +45,7 @@ fn field(columns: &wgpu::Buffer) -> Field<'_> {
         size: [COLUMNS, COLUMNS],
         tiled: false,
         columns,
+        joined: [false; 4],
     }
 }
 
@@ -63,7 +64,7 @@ fn duck(at: [f32; 3]) -> StirView {
 fn step(gpu: &Gpu, ripples: &mut Ripples, columns: &wgpu::Buffer, t: f64, stirs: &[StirView]) {
     ripples.set_stirs(t, stirs);
     let side = COLUMNS as f32 * COLUMN_M;
-    let place = Placement::over([0.0; 2], [side; 2], CENTRE);
+    let place = Placement::over([0.0; 2], [side; 2], CENTRE, [false; 4]);
     assert_eq!(place.centre, CENTRE);
     ripples.prepare(t, place, COLUMN_M);
     let mut encoder = gpu.device.create_command_encoder(&Default::default());
@@ -284,6 +285,7 @@ mod drawn {
                 per: 1,
                 surround_m: 0.0,
                 sea: [false; 4],
+                joined: [false; 4],
                 wet_s: 0.0,
             }),
             tiles: [[0, 0], [1, 0], [0, 1], [1, 1]]
@@ -474,7 +476,11 @@ fn time_ripple_steps() {
         for n in 0..240 {
             let t = f64::from(n) * DT;
             ripples.set_stirs(t, &points(t));
-            ripples.prepare(t, Placement::over([0.0; 2], [16.0; 2], CENTRE), COLUMN_M);
+            ripples.prepare(
+                t,
+                Placement::over([0.0; 2], [16.0; 2], CENTRE, [false; 4]),
+                COLUMN_M,
+            );
             let mut encoder = gpu.device.create_command_encoder(&Default::default());
             ripples.encode(
                 &gpu.device,

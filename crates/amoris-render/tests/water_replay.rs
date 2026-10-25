@@ -66,6 +66,7 @@ fn step(tick: usize) -> FieldStep {
         _ => None,
     };
     FieldStep {
+        exterior: vec![],
         boundaries,
         sea,
         cell_m: 1.0,

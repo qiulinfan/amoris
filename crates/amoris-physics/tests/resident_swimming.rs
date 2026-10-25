@@ -116,6 +116,7 @@ fn complete(queue: &ComputeQueue, batch: &ResidentBatchJob) -> bool {
                     checkpoint,
                     reaction: Default::default(),
                     boundary: Default::default(),
+                    edges: vec![],
                 },
             }
         })

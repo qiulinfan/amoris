@@ -24,8 +24,25 @@ pub struct WaterResident {
     pub stats: ResidentStats,
     pub completed_tick: u64,
     pub still: u32,
+    /// Ticks the field has held steady, its statistics unchanged from tick to tick (water.md 64.1).
+    #[serde(default)]
+    pub steady: u32,
     pub controls: ResidentControls,
     pub boundary: BoundaryLedger,
+    /// Its joined sides' edge columns as its last step left them, for its neighbours' next steps
+    /// (water.md 64.3).
+    #[serde(default)]
+    pub edges: Vec<EdgeColumns>,
+}
+
+/// One side's edge columns, from the side's first cell: world free surface, world bed, then the
+/// velocities of the column's inner face and of its face on the side, along the side's axis in
+/// world axes (water.md 64.3).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EdgeColumns {
+    pub side: u8,
+    pub columns: Vec<[f64; 4]>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -48,6 +65,7 @@ impl ResidentControls {
                 super::Edge::Outflow => FieldBoundary::Outflow,
                 super::Edge::Inflow { m3s_per_m: q } => FieldBoundary::Inflow { m3s_per_m: *q },
                 super::Edge::Sea => FieldBoundary::Sea,
+                super::Edge::Joined { .. } => FieldBoundary::Joined,
             };
         }
         Ok(Self {
@@ -63,6 +81,13 @@ impl ResidentControls {
     }
     pub fn open(&self) -> bool {
         self.boundaries.iter().any(|e| *e != FieldBoundary::Wall)
+    }
+    /// Water can enter or leave across a side that is neither a wall nor joined to another
+    /// region: a joined group of fields is closed as a whole (water.md 64.3).
+    pub fn open_outside(&self) -> bool {
+        self.boundaries
+            .iter()
+            .any(|e| !matches!(e, FieldBoundary::Wall | FieldBoundary::Joined))
     }
 }
 /// Optional receiving surface for each Outflow side, in world metres. Other sides ignore it.
@@ -223,6 +248,9 @@ pub struct ResidentOutput {
     pub checkpoint: Option<Arc<CheckedCheckpoint>>,
     pub reaction: super::feedback::ReactionBudget,
     pub boundary: BoundaryFlux,
+    /// After a step with a Joined side, every boundary face's edge column (`EdgeColumns`), sides
+    /// in -x, +x, -z, +z order; otherwise empty.
+    pub edges: Vec<[f64; 4]>,
 }
 
 #[derive(Debug)]
@@ -381,6 +409,19 @@ impl ResidentPlan {
                     .as_ref()
                     .map_or(0.0, |s| s.edits.iter().map(|e| e.depth_m * self.area).sum()),
             )?;
+            let disturbed = self.step.as_ref().is_some_and(|s| {
+                !s.edits.is_empty() || !s.impulses.is_empty() || !s.displacements.is_empty()
+            });
+            self.state.steady = if self.step.is_none() {
+                self.state.steady
+            } else if !disturbed && steady(&self.state.stats, &output.stats, self.area) {
+                self.state.steady.saturating_add(1)
+            } else {
+                0
+            };
+            if let Some(step) = &self.step {
+                self.state.edges = edges(step, self.checkpoint.size, &output.edges)?;
+            }
             self.state.controls = self.controls.clone();
             self.state.recipe = output.recipe.clone();
             self.state.stats = output.stats;
@@ -441,18 +482,66 @@ pub(crate) fn initial(
         stats,
         completed_tick: 0,
         still: 0,
+        steady: 0,
         controls: ResidentControls::from_region(r, 0.0)?,
         boundary: BoundaryLedger {
             initial_volume: volume,
             current_volume: volume,
             ..Default::default()
         },
+        edges: vec![],
     })
 }
 
+/// A step's joined sides' edge columns from the faces it read back.
+fn edges(
+    step: &FieldStep,
+    [nx, nz]: [u32; 2],
+    faces: &[[f64; 4]],
+) -> Result<Vec<EdgeColumns>, amoris_contract::Problem> {
+    let joined: Vec<u8> = (0..4)
+        .filter(|&s| step.boundaries[usize::from(s)] == FieldBoundary::Joined)
+        .collect();
+    let [nx, nz] = [nx as usize, nz as usize];
+    if joined.is_empty() != faces.is_empty()
+        || (!faces.is_empty() && faces.len() != 2 * (nx + nz))
+        || faces.iter().flatten().any(|v| !v.is_finite())
+    {
+        return Err(failed(
+            "resident edge columns do not match the step's joined sides",
+        ));
+    }
+    Ok(joined
+        .into_iter()
+        .map(|side| {
+            let (start, len) =
+                [(0, nz), (nz, nz), (2 * nz, nx), (2 * nz + nx, nx)][usize::from(side)];
+            EdgeColumns {
+                side,
+                columns: faces[start..start + len].to_vec(),
+            }
+        })
+        .collect())
+}
+
+/// Whether a tick left the field steady (water.md 64.1): its fastest and deepest water and its
+/// volume as they were, within what a steady flow's rounding moves them.
+fn steady(was: &ResidentStats, now: &ResidentStats, area: f64) -> bool {
+    let volume = amoris_sim::math::max(now.volume_cells * area, 1.0);
+    (now.max_speed - was.max_speed).abs() < STEADY_SPEED
+        && (now.max_depth - was.max_depth).abs() < STEADY_DEPTH
+        && ((now.volume_cells - was.volume_cells) * area).abs() < STEADY_VOLUME * volume
+}
+/// A steady field's fastest water changes by less than this a tick, m/s...
+const STEADY_SPEED: f64 = 1e-3;
+/// ...its deepest by less than this, m...
+const STEADY_DEPTH: f64 = 1e-4;
+/// ...and its volume by less than this share.
+const STEADY_VOLUME: f64 = 1e-5;
+
 impl amoris_sim::Persisted for WaterResident {
     const NAME: &'static str = "WaterResident";
-    const VERSION: u32 = 8;
+    const VERSION: u32 = 9;
     fn trace(
         t: &mut serde_reflection::Tracer,
         s: &serde_reflection::Samples,
@@ -539,7 +628,7 @@ pub(crate) fn seed(
             };
             let h = f64::from(f32::from_bits(checkpoint.columns[n][1]));
             let velocity = match r.edges[side] {
-                super::Edge::Wall | super::Edge::Sea => 0.0,
+                super::Edge::Wall | super::Edge::Sea | super::Edge::Joined { .. } => 0.0,
                 super::Edge::Inflow { m3s_per_m: q } => {
                     if q == 0.0 {
                         0.0

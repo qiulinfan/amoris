@@ -4,8 +4,8 @@
 //! WebGPU features. Modern scratch/pipelines are created lazily, within the baseline storage limit.
 
 use amoris_assets::water_field::{
-    CheckedCheckpoint, FieldBoundary, FieldCheckpoint, FieldPhysics, FieldSea, FieldStep,
-    MAX_SEA_WAVES, PointVolume,
+    CheckedCheckpoint, FieldBoundary, FieldCheckpoint, FieldExterior, FieldPhysics, FieldSea,
+    FieldStep, MAX_SEA_WAVES, PointVolume,
 };
 use bytemuck::{Pod, Zeroable};
 
@@ -77,10 +77,15 @@ pub struct GpuWater {
     edge_flux: wgpu::Buffer,
     boundaries: Option<BoundaryPipelines>,
     has_boundary_report: bool,
+    /// The last step had a Joined side: its edge columns can be exported.
+    joined: bool,
     current: usize,
     readback: wgpu::Buffer,
     advection: Advection,
 }
+
+/// The faces of the boundary flux buffer's first segment: every side of a 512² field.
+const JOIN_IN: u64 = 2 * (512 + 512);
 
 /// Three bind layouts keep each stage within WebGPU's eight storage buffers: advection, face
 /// pressure (with the occupancy head) and depth transport (with ballistic falls).
@@ -108,7 +113,7 @@ const MAC_STAGES: [(&str, usize, &str); 7] = [
 ];
 struct BoundaryPipelines {
     groups: [wgpu::BindGroup; 2],
-    pipelines: [wgpu::ComputePipeline; 3],
+    pipelines: [wgpu::ComputePipeline; 4],
     report: wgpu::Buffer,
 }
 
@@ -179,10 +184,12 @@ impl GpuWater {
             storage | wgpu::BufferUsages::COPY_DST,
         );
         let occupancy = crate::water_occupancy::WaterOccupancy::new(device, queue, bytes / 16);
+        // Fluxes, then joined neighbours' columns, then this field's own edge columns
+        // (water_boundaries.wgsl).
         let edge_flux = buffer(
             "water boundary flux",
-            2 * (512 + 512) * 16,
-            storage | wgpu::BufferUsages::COPY_DST,
+            3 * JOIN_IN * 16,
+            storage | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
         );
         let params = buffer(
             "water params",
@@ -277,6 +284,7 @@ impl GpuWater {
             edge_flux,
             boundaries: None,
             has_boundary_report: false,
+            joined: false,
             current: 0,
             readback: buffer(
                 "water readback",
@@ -310,6 +318,7 @@ impl GpuWater {
         if self.size != size {
             self.initialized = false;
             self.has_boundary_report = false;
+            self.joined = false;
         }
         self.size = size;
         Ok(())
@@ -340,6 +349,7 @@ impl GpuWater {
         }
         self.initialized = false;
         self.has_boundary_report = false;
+        self.joined = false;
         self.current = 0;
         // u32 words are the exact f32 storage bits; no conversion vector or masked-face scan
         // is necessary for a validated complete checkpoint whose columns are all active.
@@ -373,6 +383,7 @@ impl GpuWater {
     ) -> Result<(), String> {
         self.initialized = false;
         self.has_boundary_report = false;
+        self.joined = false;
         let n = (self.size[0] * self.size[1]) as usize;
         if columns.len() != n
             || active.len() != n
@@ -449,6 +460,7 @@ impl GpuWater {
             None,
             FieldPhysics::default(),
             &[],
+            &[],
             None,
         )
     }
@@ -477,6 +489,7 @@ impl GpuWater {
             &[FieldBoundary::Wall; 4],
             None,
             FieldPhysics::default(),
+            &[],
             &[],
             profiler,
         )
@@ -519,6 +532,7 @@ impl GpuWater {
             None,
             FieldPhysics::default(),
             &[],
+            &[],
             profiler,
         )
     }
@@ -545,6 +559,7 @@ impl GpuWater {
             edges,
             None,
             FieldPhysics::default(),
+            &[],
             &[],
             None,
         )
@@ -575,6 +590,7 @@ impl GpuWater {
             None,
             FieldPhysics::default(),
             &[],
+            &[],
             profiler,
         )
     }
@@ -599,6 +615,7 @@ impl GpuWater {
             step.sea.as_ref(),
             step.physics,
             &step.displacements,
+            &step.exterior,
             profiler,
         )
     }
@@ -616,9 +633,11 @@ impl GpuWater {
         sea: Option<&FieldSea>,
         physics: FieldPhysics,
         displacements: &[PointVolume],
+        exterior: &[FieldExterior],
         mut profiler: Option<&mut crate::profiler::GpuProfiler>,
     ) -> Result<(), String> {
         self.has_boundary_report = false;
+        self.joined = false;
         if !self.initialized {
             return Err("GPU water has not been uploaded".into());
         }
@@ -683,14 +702,36 @@ impl GpuWater {
                     kinds[i] = 1;
                     rates[i] = q as f32;
                 }
+                FieldBoundary::Joined => kinds[i] = 6,
             }
+        }
+        self.joined = edges.contains(&FieldBoundary::Joined);
+        if self.joined {
+            // Each face's seam; a face no exterior covers stays a wall.
+            let [nx, nz] = self.size.map(|n| n as usize);
+            let mut faces = vec![[0.0f32; 4]; 2 * (nx + nz)];
+            for e in exterior {
+                let side = usize::from(e.side);
+                let (start, len) = [(0, nz), (nz, nz), (2 * nz, nx), (2 * nz + nx, nx)][side];
+                if edges[side] != FieldBoundary::Joined || e.first as usize + e.faces.len() > len {
+                    return Err("joined exterior does not fit its side".into());
+                }
+                for (j, c) in e.faces.iter().enumerate() {
+                    faces[start + e.first as usize + j] = [c[0], c[1], 0.0, 1.0];
+                }
+            }
+            self.queue
+                .write_buffer(&self.edge_flux, JOIN_IN * 16, bytemuck::cast_slice(&faces));
+        } else if !exterior.is_empty() {
+            return Err("a joined exterior needs a Joined side".into());
         }
         if open {
             if self.size.iter().any(|n| n % 4 != 0) {
                 return Err("open water windows must have dimensions divisible by four".into());
             }
             self.init_boundaries();
-            encoder.clear_buffer(&self.edge_flux, 0, None);
+            // The fluxes only: queued exterior columns are written before this submission runs.
+            encoder.clear_buffer(&self.edge_flux, 0, Some(JOIN_IN * 16));
             encoder.clear_buffer(
                 &self
                     .boundaries
@@ -1060,7 +1101,13 @@ impl GpuWater {
                     .into(),
                 ),
             });
-        let pipelines = ["boundary_predict", "boundary_limit", "boundary_reduce"].map(|entry| {
+        let pipelines = [
+            "boundary_predict",
+            "boundary_limit",
+            "boundary_reduce",
+            "boundary_export",
+        ]
+        .map(|entry| {
             self.device
                 .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                     label: Some(entry),
@@ -1089,6 +1136,7 @@ impl GpuWater {
             "water boundary predict",
             "water boundary limit",
             "water boundary receipt",
+            "water boundary export",
         ][stage];
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some(label),
@@ -1100,7 +1148,7 @@ impl GpuWater {
         pass.dispatch_workgroups(
             if reduce {
                 1
-            } else if stage == 0 {
+            } else if stage == 0 || stage == 3 {
                 n.div_ceil(64)
             } else {
                 n.div_ceil(256)
@@ -1123,6 +1171,32 @@ impl GpuWater {
             .as_ref()
             .ok_or("boundary report is unavailable")?;
         encoder.copy_buffer_to_buffer(&b.report, 0, target, offset, 16);
+        Ok(())
+    }
+    /// The bytes `copy_edges` writes after a step with a Joined side.
+    pub fn edge_bytes(&self) -> u64 {
+        2 * u64::from(self.size[0] + self.size[1]) * 16
+    }
+    /// The finished field's edge columns, one per boundary face in `edge_address` order: free
+    /// surface and bed relative to the datum, then the inner face's and the boundary face's
+    /// velocities along the side's axis (water.md 64.3).
+    pub fn copy_edges(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        target: &wgpu::Buffer,
+        offset: u64,
+    ) -> Result<(), String> {
+        if !self.joined {
+            return Err("this water step has no joined side".into());
+        }
+        self.boundary_dispatch(encoder, 3, false, None);
+        encoder.copy_buffer_to_buffer(
+            &self.edge_flux,
+            2 * JOIN_IN * 16,
+            target,
+            offset,
+            self.edge_bytes(),
+        );
         Ok(())
     }
     #[cfg(not(target_arch = "wasm32"))]
@@ -1361,6 +1435,7 @@ impl GpuWater {
             &[FieldBoundary::Wall; 4],
             None,
             FieldPhysics::default(),
+            &[],
             &[],
             None,
         )?;

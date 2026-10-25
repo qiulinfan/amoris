@@ -699,14 +699,14 @@ Beside persistence.md's P1 to P7, run in the check command (charter 3.7; checks.
 
 ## GPU water execution and storage contract
 
-WaterRegion is version 7, WaterResident version 8, WaterProbe version 2 and WaterCheckpoints
-version 2. WaterFeedback, WaterOutletStage and WaterColliderBed are version 1. Checkpoints carry
-complete MAC state, including east/north faces; bounded FieldStep programs include edits,
-horizontal impulses, boundary controls and optional spatial Sea forcing. Numerical execution
+WaterRegion is version 8, WaterResident version 9, WaterProbe version 2 and WaterCheckpoints version 2.
+WaterFeedback, WaterOutletStage, WaterColliderBed and WaterFocus are version 1. Checkpoints carry
+complete MAC state, including east/north faces; bounded FieldStep programs include edits, horizontal
+impulses, boundary controls, optional spatial Sea forcing and joined seams. Numerical execution
 identity uses domain v8 and fingerprints actual kernel/dispatch/dependency sources and device
 configuration. An incompatible authoritative environment is refused without migration or CPU
-fallback. The checked checkpoint/feed source contributes to render-feed FORMAT; rebuild game
-and viewport together.
+fallback. The checked checkpoint/feed source contributes to render-feed FORMAT; rebuild game and
+viewport together.
 
 Checked immutable checkpoints share ownership in snapshots and frames. Derived validation
 witnesses, query caches, allocation capacity and GPU resources are not persisted or hashed.

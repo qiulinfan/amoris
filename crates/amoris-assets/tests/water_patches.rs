@@ -17,6 +17,7 @@ fn recipe(count: usize) -> FieldRecipe {
         c.key(),
         (0..count)
             .map(|n| FieldStep {
+                exterior: vec![],
                 sea: None,
                 boundaries: [amoris_assets::water_field::FieldBoundary::Wall; 4],
                 cell_m: 1.0,

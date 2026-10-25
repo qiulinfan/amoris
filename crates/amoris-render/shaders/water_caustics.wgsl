@@ -18,6 +18,10 @@ struct Map { origin:vec2f, texel:f32, on:f32, size:vec2u, unused:vec2u, sigma:ve
 // The ripples bodies stir (water_ripples.rs): their slopes at mip levels, the window wrapping.
 @group(0) @binding(6) var ripple_map:texture_2d<f32>;
 @group(0) @binding(7) var ripple_sampler:sampler;
+// This pass's texels of the map: the first, how many, and 1 to clear them to dry (a map over joined
+// regions, water.md 64.3, gathers each region's own texels in passes of their own).
+struct Part { first:vec2u, count:vec2u, dry:vec4u }
+@group(0) @binding(8) var<uniform> part:Part;
 // Air over water.
 const ETA:f32=0.75;
 // A texel's light through flat water, in fixed-point units, and photons along a texel's side.
@@ -114,9 +118,9 @@ fn ripple_slope(xz:vec2f)->vec2f {
 }
 @compute @workgroup_size(8,8)
 fn photons(@builtin(global_invocation_id) id:vec3u){
-    if(any(id.xy>=map.size*SUB)){return;}
+    if(any(id.xy>=part.count*SUB)){return;}
     // The point under water this photon would light through a flat surface, and where it enters.
-    let goal=map.origin+(vec2f(id.xy)+0.5)/f32(SUB)*map.texel;
+    let goal=map.origin+(vec2f(id.xy+part.first*SUB)+0.5)/f32(SUB)*map.texel;
     let here=level_at(goal);
     let depth=here.surface-here.bed;
     if(!here.wet||depth<=0.0){return;}
@@ -144,13 +148,14 @@ fn photons(@builtin(global_invocation_id) id:vec3u){
 // (a dry texel: 1, 0, and w far below anything). Resolving clears the sums for the next frame.
 @compute @workgroup_size(8,8)
 fn resolve(@builtin(global_invocation_id) id:vec3u){
-    if(any(id.xy>=map.size)){return;}
-    let i=id.x+map.size.x*id.y;
+    if(any(id.xy>=part.count)){return;}
+    let texel=id.xy+part.first;
+    let i=texel.x+map.size.x*texel.y;
     let units=atomicExchange(&accum[i],0u);
-    let here=level_at(map.origin+(vec2f(id.xy)+0.5)*map.texel);
+    let here=level_at(map.origin+(vec2f(texel)+0.5)*map.texel);
     var out=vec4f(1.0,0.0,0.0,-1e4);
-    if(here.wet&&here.surface>here.bed){
+    if(part.dry.x==0u&&here.wet&&here.surface>here.bed){
         out=vec4f(min(f32(units)/UNIT,16.0),here.surface-here.bed,0.0,here.surface);
     }
-    textureStore(out_map,vec2i(id.xy),out);
+    textureStore(out_map,vec2i(texel),out);
 }

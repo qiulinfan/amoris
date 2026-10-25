@@ -104,6 +104,7 @@ pub fn plugin(sim: &mut Sim) -> Result<(), Problem> {
     ComponentRegistry::register::<water::feedback::WaterFeedback>(w, None)?;
     ComponentRegistry::register::<water::displacement::WaterDisplacement>(w, None)?;
     ComponentRegistry::register::<WaterSource>(w, None)?;
+    ComponentRegistry::register::<water::WaterFocus>(w, None)?;
     ComponentRegistry::register::<WaterDrain>(w, None)?;
     let mut water_system = IntoSystem::into_system(water::water);
     water_system.initialize(w);

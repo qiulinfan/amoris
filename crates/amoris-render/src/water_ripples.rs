@@ -54,7 +54,7 @@ struct Params {
     cutoff: f32,
     fresh: u32,
     cell: f32,
-    unused: f32,
+    joined: u32,
 }
 
 /// The water the ripples ride on: a region's displayed columns (surface, depth, velocity).
@@ -64,6 +64,8 @@ pub struct Field<'a> {
     pub size: [u32; 2],
     pub tiled: bool,
     pub columns: &'a wgpu::Buffer,
+    /// The sides joined to another region, past which the water goes on (water.md 64.3).
+    pub joined: [bool; 4],
 }
 
 /// The window as the shading places it: its corner (world x, z), its side (metres), and 1 while
@@ -89,11 +91,17 @@ impl Placement {
     /// Over the region of corner `origin` and `extent` (metres), seen from `camera` (world x, z):
     /// a region that fits stands in a still window with its edges clear of the sponge, so its
     /// walls reflect ripples; a larger one is followed by a window centred on the camera, kept
-    /// over the region.
-    pub fn over(origin: [f32; 2], extent: [f32; 2], camera: [f32; 2]) -> Placement {
+    /// over the region; past its sides joined to another region's (`joined`, -x, +x, -z, +z) the
+    /// window follows the camera on into the neighbour's water (water.md 64.3).
+    pub fn over(
+        origin: [f32; 2],
+        extent: [f32; 2],
+        camera: [f32; 2],
+        joined: [bool; 4],
+    ) -> Placement {
         let sponge = SPONGE as f32;
         let widest = extent[0].max(extent[1]);
-        if widest <= STANDING_M {
+        if widest <= STANDING_M && !joined.contains(&true) {
             let cell = ((widest + 2.0 * CLEARANCE_M) / (SIDE as f32 - 2.0 * sponge)).max(CELL_M);
             return Placement {
                 centre: [0, 1].map(|a| origin[a] + 0.5 * extent[a]),
@@ -104,7 +112,16 @@ impl Placement {
         let inset = half - sponge * CELL_M;
         Placement {
             centre: [0, 1].map(|a| {
-                let (lo, hi) = (origin[a] + inset, origin[a] + extent[a] - inset);
+                let lo = if joined[2 * a] {
+                    f32::MIN
+                } else {
+                    origin[a] + inset
+                };
+                let hi = if joined[2 * a + 1] {
+                    f32::MAX
+                } else {
+                    origin[a] + extent[a] - inset
+                };
                 if lo < hi {
                     camera[a].clamp(lo, hi)
                 } else {
@@ -557,7 +574,9 @@ impl Ripples {
             cutoff: self.cutoff,
             fresh: u32::from(self.fresh),
             cell: self.cell,
-            unused: 0.0,
+            joined: (0..4).fold(0, |bits, side| {
+                bits | (u32::from(field.joined[side]) << side)
+            }),
         };
         self.fresh = false;
         queue.write_buffer(&self.params, 0, bytemuck::bytes_of(&params));

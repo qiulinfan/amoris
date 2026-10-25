@@ -3111,9 +3111,11 @@ impl Renderer {
             &queue,
             &mut enc,
             &self.view_buf.buf,
-            self.water
-                .caustics_source(cam.position.to_array())
-                .filter(|_| sun_up),
+            if sun_up {
+                self.water.caustics_sources(cam.position.to_array())
+            } else {
+                Vec::new()
+            },
             &mut self.profiler,
         );
         self.batches.reset(&mut enc);

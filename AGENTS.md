@@ -321,7 +321,9 @@ impact or global energy conservation. Never use old Sea readings as post-integra
 Changes run renderer water_compute/water_resident/water_summary/water_samples/water_reactions/
 water_frontier, physics field_buoyancy/field_hull/resident_swimming/added_mass/vessel, runtime
 water_resident_async/water_feedback, and app gpu_water/gpu_floaters/gpu_feedback/gpu_swimming/
-gpu_energy/gpu_frontier_scenes. The non-hydrostatic solve runs two identical Chebyshev cycles,
+gpu_energy/gpu_frontier_scenes/gpu_scale. A joined seam (water.md 64.3) is worked out once a tick,
+in physics `join.rs`, from both regions' last edge columns, and both regions take the same numbers;
+a joined group sleeps or bakes only as a whole. The non-hydrostatic solve runs two identical Chebyshev cycles,
 never one (water.md 55.2); its blocked dispatches must match one dispatch an iteration bit for bit
 (water_frontier `the_blocked_non_hydrostatic_solve_matches_one_dispatch_an_iteration`). A change
 to the kernel's velocity transport or its wet/dry faces also runs the `water_swash` example

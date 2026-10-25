@@ -22,6 +22,7 @@ pub(crate) fn region(tx: u32, tz: u32, cell_m: f64) -> WaterRegion {
         dry_below: 0.0,
         look: WaterLook::default(),
         physics: WaterPhysics::default(),
+        bake_after_s: 0.0,
         tiles: Vec::new(),
     };
     for kz in 0..tz {

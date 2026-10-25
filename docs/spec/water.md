@@ -3979,3 +3979,101 @@ Limits:
   velocity.
 - The face under a breaking lip carries the field's foam, so the barrel it encloses reads as white
   water rather than a clear green tube.
+
+## 64. Water at scale: baking, focus and joined regions (Pioneer, 2026-10-23)
+
+A resident region stepped every tick while anything in it could still move: a river that had long
+settled kept its GPU busy for as long as the game ran, a region far from every player ran as if
+watched, and one region holds at most 512 x 512 columns. Now a steady region bakes and stops
+stepping, a region beyond every focus holds still, and neighbouring regions join along a side into
+one body of water.
+
+### 64.1 Baking
+
+- `WaterRegion.bake_after_s` (resident regions; 0, the default, never bakes; at most 3600 s).
+  `WaterResident.steady` counts the ticks whose statistics held from the tick before: the fastest
+  water within 1e-3 m/s, the deepest within 1e-4 m and the volume within 1e-5 of itself. A step with
+  an edit, an impulse or a displacement starts it again.
+- Steady for `bake_after_s`, a region rests while nothing changes it: its controls, sources and
+  drains, impulses and displaced volume. It steps no further; its state, its boundary ledger and
+  the observations of its probes and bodies stand, and its open sides stop exchanging water, so
+  the ledger holds too. A baked river keeps its flow: its columns keep their velocities, and the
+  renderer draws them flowing.
+- Any change wakes it, and `steady` counts again from 0. `WaterRegion` is version 8 and
+  `WaterResident` version 9.
+
+### 64.2 Focus
+
+- `WaterFocus { radius_m }` on an entity with a `Transform` (the player, a camera, a boat): a
+  resident region farther than `radius_m` from every focus, measured across the ground to its
+  rectangle, rests while nothing changes it, as a baked one does. Time stops for it; when a focus
+  comes within reach it runs on from the state it held. Without a focus every region runs.
+
+### 64.3 Joined regions
+
+- `Edge::Joined { region }` names the region along this side, whose facing side must name this one:
+  both resident, of one cell size, their sides meeting and their cells along them lined up (offset
+  by a whole number of cells), overlapping. Otherwise the tick reports `water.invalid`. A face the
+  neighbour does not cover is a wall.
+- A step with a joined side reads back its sides' edge columns (`GpuWater::copy_edges`): each
+  column's surface and bed, the velocity of its inner face and of its face on the side, all along
+  the side's axis. `WaterResident.edges` keeps the joined sides' columns.
+- Before any region steps, each seam is worked out once, from both regions' edge columns as their
+  last steps left them (join.rs `seam`), and both regions take it for every substep of the tick
+  (`FieldBoundary::Joined`, `FieldStep.exterior`): what one gives, the other receives. Each face
+  starts from the mean of the two regions' copies of it, is carried from upwind, is pushed by the
+  two surfaces over the higher of the two beds (the hydrostatic reconstruction of E. Audusse, F.
+  Bouchut, M.-O. Bristeau, R. Klein and B. Perthame, SIAM J. Sci. Comput. 25, 2004), is damped by
+  the two regions' mean friction and calm damping as their interior faces are, and carries its
+  upwind column's depth, at most half that column a tick. The seam steps once a tick, explicitly,
+  where the interior steps every substep.
+- The regions of a joined group rest only together: they sleep when all are still and closed but
+  for their joined sides, and bake when all have held steady. One resting while its neighbour steps
+  would let water leave the one without reaching the other. A region beyond every focus rests all
+  the same; to its neighbours it is a reservoir at the state it holds, and what flows into it is
+  not kept.
+- Drawn: on a joined side the surface reaches the side itself, half a column past the edge
+  column's centre, so neighbouring surfaces meet. The caustics' map covers the region nearest the
+  camera and the regions joined to it, each gathering its own texels' light. The ripples' window
+  follows the camera on past joined sides, carrying their water as the edge columns.
+
+### 64.4 Checks, cost and limits
+
+`cargo test -p amoris-app --test gpu_scale`:
+
+- the river (`samples/water-river`, `bake_after_s` 1) holds steady and bakes at tick 2081 with its
+  fastest water at 1.478 m/s; for 120 ticks its state digest and its ledger stand; more inflow wakes
+  it.
+- a region 500 m from its only focus (radius 20 m) holds still after its first step; with the focus
+  moved within 2 m of it, it runs.
+- two pools of 16 x 8 m, half-metre columns, 1 m deep, joined along x = 16 m, against one pool of
+  32 x 8 m: a hump 0.2 m high (sigma 1 m) parts into two waves that cross the seam three times in 15
+  s, and the surface along the pools' middle stays within 2 mm of the one pool's at every second;
+  the two pools' water changes by -1.7e-5 m^3 of 260 m^3, the one pool's by -4.8e-5.
+- the river split 4 m from its inflow, the rest with its pier and outflow, bakes at tick 2169 with
+  its fastest water at 1.478 m/s, as the whole river; its halves rest together, and more inflow at
+  the top wakes both.
+
+Two seams were built and measured before this one. Each region matching characteristics against
+its neighbour's columns a tick behind, as a `Radiation` side does, kept the water within 1.5e-3
+m^3, but returned 13 percent of the narrow wave from the seam (6 percent at sigma 2 m, 4 at 3 m):
+the upwind face meets the interior's staggered faces as a different impedance. Each region
+stepping its own copy of the seam's face every substep across a ghost column of its neighbour's
+reflected nothing visible, but the two copies drifted apart and made 0.32 m^3 of water in 15 s.
+
+The scenes drawn with `scene_shots` show no seam between joined pools, in their surface, caustics
+or colour. The cost is in [liquids.md](../bench/liquids.md) 16.
+
+Limits:
+
+- A seam carries the flow across it, not the flow along it: water crossing it at a slant arrives
+  without its sideways momentum. Split at the river's pier, the water beside the pier ran on at 1.0
+  m/s where the whole river's eddied at 0.3 behind the pier's corner; seams belong in calm reaches.
+- The seam steps once a tick, so a wave may cross at most a column a tick there, `sqrt(g h) dt <
+  dx`: water up to about 90 m deep over half-metre columns at 60 ticks a second (checked to 1 m).
+  Deeper, the tick reports `water.invalid`.
+- Falls and plunging lips land within their own region.
+- No region moves with the camera: water beyond the regions authored is not simulated, and a large
+  body of water is joined from regions laid out beforehand, of at most 512 x 512 columns each.
+- The sub-grid ripples ride the columns of the region nearest the camera; past its joined sides
+  they ride its edge columns, not the neighbour's water.

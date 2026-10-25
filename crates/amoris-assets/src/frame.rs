@@ -272,6 +272,9 @@ pub struct WaterLookView {
     pub surround_m: f32,
     /// The sides (-x, +x, -z, +z) open on the sea, where the region's water meets the sea's.
     pub sea: [bool; 4],
+    /// The sides joined to another region, whose surface meets this one's along them
+    /// (water.md 64.3).
+    pub joined: [bool; 4],
     /// Seconds the bed stays damp after the water leaves it (0: the bed as it is).
     pub wet_s: f32,
 }

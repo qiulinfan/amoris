@@ -802,6 +802,7 @@ fn region(blocky: bool, keys: &[[u32; 2]], f: impl Fn(u32, u32) -> [f32; 4]) -> 
             per: 2,
             surround_m: 0.0,
             sea: [false; 4],
+            joined: [false; 4],
             wet_s: 0.0,
         }),
         tiles: keys.iter().map(|k| tile(*k, &f)).collect(),
@@ -1120,6 +1121,7 @@ fn resident_programs_draw_the_current_field_after_skipped_frames_compaction_and_
     for tick in 1..=70 {
         let previous_steps = recipe.steps().len();
         let step = FieldStep {
+            exterior: vec![],
             sea: (tick >= 50).then(|| {
                 let k = std::f64::consts::TAU / 128.0;
                 let omega = (9.81 * k).sqrt();

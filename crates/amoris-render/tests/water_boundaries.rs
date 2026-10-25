@@ -190,6 +190,7 @@ fn local_edit_receipts_measure_stored_clamped_changes_before_transport() {
         let before = FieldRecipe::new(cp.key(), vec![], cp.digest(), String::new());
         let mut resident = ResidentWater::new(&gpu).unwrap();
         let step = FieldStep {
+            exterior: vec![],
             sea: None,
             boundaries: [FieldBoundary::Wall; 4],
             cell_m: 1.0,

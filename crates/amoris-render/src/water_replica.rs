@@ -233,6 +233,7 @@ mod tests {
                     None
                 };
                 let step = FieldStep {
+                    exterior: vec![],
                     boundaries,
                     sea,
                     cell_m: 1.0,
@@ -326,6 +327,7 @@ mod tests {
             );
             // A body's 0.2 m^3 under still water of 1 m cells, then 0.3 m^3 as it sinks.
             let step = |volume_m3: f64| FieldStep {
+                exterior: vec![],
                 boundaries: [FieldBoundary::Wall; 4],
                 sea: None,
                 cell_m: 1.0,

@@ -32,7 +32,7 @@ CPU 保持跨目标确定性；GPU 使用 WebGPU 基线支持的 f32，只在相
 **Pioneer 2026-10-22（`explore/water`、`explore/water-nh`）。** 所有者要求在 Amoris Pioneer 上把水物
 理继续做到前沿水准，并以三个游戏场景验收：河流汇入瀑布、泳池派对、强浪海滩冲浪。为此 Pioneer 越过上
 文 2026-10-21 的交付范围，在 `gpu_resident` 区域上加入以下能力，契约见 [water.md](spec/water.md)
-46–63，测量见 [liquids.md](bench/liquids.md) 7–15：
+46–64，测量见 [liquids.md](bench/liquids.md) 7–16：
 
 - 物体排水的竖直双向耦合：浮体点和游泳者把水面下的体积作为压力水头加到水柱上，水量严格守恒（思路来自
   M. Müller, GDC 2008）。浮力按步末位置线性隐式求值（D. Baraff 与 A. Witkin, SIGGRAPH 1998），阻力隐
@@ -119,6 +119,15 @@ CPU 保持跨目标确定性；GPU 使用 WebGPU 基线支持的 f32，只在相
   抛水的面（卷浪和瀑布），沿抛物线画成一面宽的水幕，厚度按出水量并随射流加速变薄，按区域水体的吸
   收和散射透光，掺气后变白。冲浪湾的浪沿礁边剥离时浪唇卷落，河流瀑布从唇口抛出一道弧形厚水幕。
   `WaterRegion` 升到版本 7，`WaterResident` 升到版本 8。
+- 规模（2026-10-23）：`WaterRegion.bake_after_s` 让稳定下来的区域烘焙：最快水流、最深水深和水量逐
+  tick 不变满设定的秒数后不再步进，状态、边界账本和观测原样保持，任何改变都会唤醒它；河流样例 35 s
+  后烘焙，最快水流 1.478 m/s 照旧。离所有 `WaterFocus`（玩家、相机、船）都超过其半径的区域静止，焦点
+  走近时从保持的状态接着算。`Edge::Joined` 把相邻区域沿边拼成一片水：每个 tick 在任何区域步进之前，
+  由双方上一步留下的边缘列算出接缝每个面的流速和流量，双方取同一组数，一方给出的水另一方如数收到
+  （两床面取高者的静水压重构，E. Audusse 等, SIAM J. Sci. Comput. 25, 2004）。两个 16×8 m 的水池拼
+  起来，三次过缝的浪与同尺寸单池处处相差不到 2 mm，总水量变化 −1.7e-5 m³；拼接的区域只能一起休眠或
+  烘焙。接缝只传过缝的流，不传沿缝的动量，应放在平顺的水域。渲染上水面画到相接的边，焦散图覆盖相连
+  的区域，涟漪窗口越过相接的边。`WaterRegion` 升到版本 8，`WaterResident` 升到版本 9。
 
 验收：`amoris-app` 的 `gpu_frontier_scenes` 用玩家的第一人称动作玩通
 `samples/pool-party`、`samples/river-falls` 和 `samples/surf-beach`；三个样例导出的网页包在 Chrome

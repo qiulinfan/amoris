@@ -41,6 +41,7 @@ fn step(index: usize, tick: usize) -> FieldStep {
         boundaries[1] = FieldBoundary::Outflow;
     }
     FieldStep {
+        exterior: vec![],
         boundaries,
         sea: None,
         cell_m: 1.0,

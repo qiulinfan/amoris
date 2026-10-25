@@ -78,6 +78,7 @@ fn identity_checkpoint(r: &ResidentJob, checkpoint_now: bool) -> ResidentOutput 
     ResidentOutput {
         reaction,
         boundary: Default::default(),
+        edges: vec![],
         recipe,
         stats,
         samples,

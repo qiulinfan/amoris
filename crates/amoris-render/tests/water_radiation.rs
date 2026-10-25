@@ -138,6 +138,7 @@ fn radiation_steps_reconstruct_exact_resident_fields_after_control_changes() {
             outward_velocity_mps: if tick % 3 == 0 { 0.1 } else { -0.1 },
         };
         let step = FieldStep {
+            exterior: vec![],
             sea: None,
             boundaries: [edge; 4],
             cell_m: 1.0,
@@ -232,6 +233,7 @@ fn excessive_reservoir_speed_returns_failure_instead_of_clipping_a_successful_st
     );
     let recipe = FieldRecipe::new(cp.key(), vec![], cp.digest(), String::new());
     let step = FieldStep {
+        exterior: vec![],
         sea: None,
         boundaries: [FieldBoundary::Radiation {
             surface_relative_m: 1.0,

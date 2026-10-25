@@ -31,7 +31,7 @@ struct Params {
     cutoff: f32,          // wavenumber the field carries itself from, rad/m
     fresh: u32,           // 1: the step after a clear; every cell starts at rest
     cell: f32,            // metres a cell of the window
-    unused: f32,
+    joined: u32,          // the field's sides (bits -x, +x, -z, +z) joined to another region's
 }
 
 @group(0) @binding(0) var<uniform> p: Params;
@@ -112,7 +112,10 @@ fn wet(c: vec4f) -> bool { return c.y > 0.002 && abs(c.x) < 1e10; }
 struct Water { surface: f32, depth: f32, flow: vec2f, inside: bool }
 fn water_at(xz: vec2f) -> Water {
     let g = (xz - p.region_origin) / p.region_cell;
-    let inside = all(g >= vec2f(0.0)) && all(g < vec2f(p.count.xy));
+    // Past a side joined to another region the water goes on as its edge columns (water.md 64.3).
+    let open = vec4<bool>((p.joined & 1u) != 0u, (p.joined & 2u) != 0u, (p.joined & 4u) != 0u,
+        (p.joined & 8u) != 0u);
+    let inside = all((g >= vec2f(0.0)) | open.xz) && all((g < vec2f(p.count.xy)) | open.yw);
     let u = g - 0.5;
     let i0 = vec2i(floor(u));
     let t = u - floor(u);

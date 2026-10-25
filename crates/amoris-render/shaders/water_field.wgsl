@@ -13,6 +13,7 @@ struct Shallow {
     ripple: vec4f,        // the ripples' window (water.md 57): its corner (world x, z), side, 1 on
     sea: vec4f,           // per side (-x, +x, -z, +z) open on the sea: the band (m) where the
                           // water turns to the sea's (water.md 60), else 0
+    joined: vec4f,        // per side, 1 when joined to another region (water.md 64.3)
 };
 
 @group(3) @binding(1) var<uniform> shallow: Shallow;

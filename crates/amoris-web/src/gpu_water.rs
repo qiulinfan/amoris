@@ -252,6 +252,18 @@ impl Service {
                             })
                             .collect(),
                         checkpoint: out.checkpoint,
+                        edges: out
+                            .edges
+                            .iter()
+                            .map(|c| {
+                                [
+                                    r.checkpoint.datum + f64::from(c[0]),
+                                    r.checkpoint.datum + f64::from(c[1]),
+                                    f64::from(c[2]),
+                                    f64::from(c[3]),
+                                ]
+                            })
+                            .collect(),
                     },
                 })
             })

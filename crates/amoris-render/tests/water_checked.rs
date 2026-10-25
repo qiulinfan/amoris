@@ -50,6 +50,7 @@ fn checked_complete_upload_preserves_words_faces_and_replaces_masked_state() {
         assert!(a.upload_checked_checkpoint(&other).is_err());
         assert_eq!(a.checkpoint_complete(raw.datum).unwrap(), read);
         let step = FieldStep {
+            exterior: vec![],
             sea: None,
             boundaries: [FieldBoundary::Wall; 4],
             cell_m: 0.5,

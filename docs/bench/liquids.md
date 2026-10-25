@@ -622,3 +622,27 @@ from tick 300, facing the falls): `water lips` 0.006 ms, `water+foreground` 5.48
 frame 14.38 and 14.29 ms.
 
 Not measured: the ribbons' draw alone, R1, and the browser.
+
+## 16. Water at scale (Pioneer, 2026-10-23)
+
+Baking, focus and joined regions ([water.md](../spec/water.md) 64) on the M5, macOS, Metal,
+release builds, 2026-10-23. The machine was not checked for other load.
+
+`cargo test --release -p amoris-app --test gpu_scale time_scale -- --ignored --nocapture`, two
+runs: the wall time of a tick, its GPU work and readbacks waited for, over 600 ticks:
+
+| | A tick |
+|---|---|
+| the river (`samples/water-river`, 64 x 32 columns) stepping, from tick 300 | 0.766, 0.772 ms |
+| the same river baked | 0.014, 0.014 ms |
+| two pools of 32 x 16 columns joined along a side | 1.448, 1.453 ms |
+| the two walled apart | 0.692, 0.685 ms |
+| one pool of 64 x 16 columns over both | 0.717, 0.696 ms |
+
+A baked region costs its tick no GPU work and no readback. Two regions cost a tick no more than one
+region of both while they are closed: one batch submits and reads back both. Their open sides cost
+the rest: the same two pools open on an outflow instead of joined took 1.377 ms, so joining them
+costs 0.04 ms more than the boundary passes every open side runs each substep.
+
+Not measured: large joined bodies of water, a region resting beyond a focus (as a baked one, it
+submits nothing), R1 and the browser.

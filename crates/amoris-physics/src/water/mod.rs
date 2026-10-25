@@ -16,6 +16,7 @@ pub mod compute;
 pub mod displacement;
 pub mod feedback;
 pub mod field;
+mod join;
 pub mod resident;
 mod sea;
 pub(crate) mod solve;
@@ -116,6 +117,11 @@ pub struct WaterRegion {
     /// Physics beyond the hydrostatic bulk flow (water.md 46 to 49); resident regions only.
     #[serde(default)]
     pub physics: WaterPhysics,
+    /// Seconds a `gpu_resident` region's field must hold steady before it bakes: it stops stepping
+    /// and keeps its flow, its open sides and sources held, until something disturbs it (water.md
+    /// 64.1). 0, the default, never bakes.
+    #[serde(default)]
+    pub bake_after_s: f64,
     /// Every tile, in key order (z, then x); empty: all dry, the beds read from `bed` at the next
     /// `physics.water` (water.md 5).
     #[serde(default)]
@@ -229,6 +235,20 @@ pub struct WaterSource {
     pub rate_m3s: f64,
 }
 
+/// Where the water matters (water.md 64.2): with any WaterFocus in the world, a `gpu_resident`
+/// region none of whose columns lies within some focus's `radius_m` of its entity holds still,
+/// stepping no further until a focus comes near or something disturbs it. The player's entity is
+/// the usual focus.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WaterFocus {
+    pub radius_m: f64,
+}
+impl amoris_sim::Persisted for WaterFocus {
+    const NAME: &'static str = "WaterFocus";
+    const VERSION: u32 = 1;
+}
+
 /// A sink: water taken at the column under world `at` (x, z) of `region`, at most `rate_m3s` cubic
 /// metres a second and never more than is there (water.md 8).
 #[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -315,6 +335,9 @@ pub enum Edge {
     Inflow { m3s_per_m: f64 },
     /// Water leaves freely (slice C).
     Outflow,
+    /// Another resident region's side lies along it, joined back to this one: water and waves
+    /// cross between the two (water.md 64.3).
+    Joined { region: EntityId },
 }
 
 /// Where a region's beds come from (water.md 5).
@@ -521,6 +544,21 @@ impl WaterRegion {
                     "dispersive waves need power-of-two sides (16 to 512), not {:?}",
                     self.size
                 ),
+            ));
+        }
+        if !(self.bake_after_s >= 0.0 && self.bake_after_s <= 3600.0) {
+            return Err(invalid(
+                "bake_after_s",
+                format!(
+                    "bake_after_s is 0 to 3600 seconds, not {}",
+                    self.bake_after_s
+                ),
+            ));
+        }
+        if self.bake_after_s > 0.0 && self.solver != Solver::GpuResident {
+            return Err(invalid(
+                "bake_after_s",
+                "baking needs the gpu_resident solver".into(),
             ));
         }
         if !(self.cell_m >= 0.25 && self.cell_m <= 4.0) {
@@ -749,6 +787,7 @@ pub fn dam_scene(tiles: u32) -> WaterRegion {
         dry_below: 0.0,
         look: WaterLook::default(),
         physics: WaterPhysics::default(),
+        bake_after_s: 0.0,
         tiles: Vec::new(),
     };
     for kz in 0..tiles {
@@ -817,6 +856,54 @@ pub(crate) fn prepare_collider_beds(world: &mut bevy_ecs::prelude::World) -> Res
     )
 }
 
+/// A resident region's controls: its region's, with its outlets' receiving levels.
+fn controls_of(
+    region: &WaterRegion,
+    outlet: Option<&resident::WaterOutletStage>,
+    dt: f64,
+) -> Result<resident::ResidentControls, Problem> {
+    let mut controls = resident::ResidentControls::from_region(region, dt)?;
+    if let Some(outlet) = outlet {
+        outlet.validate()?;
+        for i in 0..4 {
+            if region.edges[i] == Edge::Outflow {
+                controls.outlet_levels[i] = outlet.levels[i];
+            }
+        }
+    }
+    Ok(controls)
+}
+
+/// Whether a resident field may rest this tick by itself, stepping no further, and whether it
+/// lies beyond every focus (water.md 64): nothing changes it this tick (`quiet`) and it sleeps
+/// (still, and closed but for joined sides), has baked (steady for `bake_after_s`, its open sides
+/// held) or lies beyond every focus.
+fn rest_of(
+    quiet: bool,
+    state: &resident::WaterResident,
+    controls: &resident::ResidentControls,
+    region: &WaterRegion,
+    corner: [f64; 2],
+    foci: &Query<'_, '_, (&'static EntityId, &'static Transform, &'static WaterFocus)>,
+    dt: f64,
+) -> (bool, bool) {
+    let sleeping = state.still >= SLEEP_TICKS && !controls.open_outside();
+    let baked = region.bake_after_s > 0.0 && f64::from(state.steady) * dt >= region.bake_after_s;
+    let far = [
+        corner[0] + region.cell_m * f64::from(region.size[0]),
+        corner[1] + region.cell_m * f64::from(region.size[1]),
+    ];
+    let away = !foci.is_empty()
+        && by_id(foci).all(|(_, tf, focus)| {
+            let d = [0, 1].map(|a| {
+                let at = tf.position[a * 2];
+                math::max(math::max(corner[a] - at, at - far[a]), 0.0)
+            });
+            math::sqrt(d[0] * d[0] + d[1] * d[1]) > focus.radius_m
+        });
+    (quiet && (sleeping || baked || away), quiet && away)
+}
+
 struct WaterRun {
     order: Vec<(bevy_ecs::entity::Entity, EntityId)>,
     maps: Vec<Option<bed::Map>>,
@@ -825,6 +912,7 @@ struct WaterRun {
     buoys: Vec<(EntityId, buoyancy::Point)>,
     swimmers: Vec<(EntityId, swimming::Point)>,
     checkpoint_refs: std::collections::BTreeMap<EntityId, amoris_sim::ContentHash>,
+    joins: join::Joins,
 }
 
 /// `physics.water`'s report for the presenters: the tick each region's tiles were last stepped.
@@ -1004,6 +1092,7 @@ type ForcingInput<'w, 's> = (
     Query<'w, 's, (&'static EntityId, &'static WaterSource)>,
     Query<'w, 's, (&'static EntityId, &'static WaterDrain)>,
     Query<'w, 's, (&'static EntityId, &'static crate::Sea)>,
+    Query<'w, 's, (&'static EntityId, &'static Transform, &'static WaterFocus)>,
 );
 type RegionQuery<'w, 's> = Query<
     'w,
@@ -1057,7 +1146,7 @@ pub(crate) fn water(
     }
     let (floaters, hulls, vessels, mut buoy_samples, mut feedbacks, mut displacements) = buoy_input;
     let (walkers, mut swim_samples) = swimmers_input;
-    let (sources, drains, seas) = forcing;
+    let (sources, drains, seas, foci) = forcing;
     let dt = clock.dt();
     let tick = clock.tick.0;
     let since = tick.saturating_sub(1);
@@ -1383,6 +1472,47 @@ pub(crate) fn water(
             }
         }
         swim_samples.retain(&live_swimmers);
+        // Joined regions' exteriors and rests, before any region steps (water.md 64.3).
+        let mut members = Vec::new();
+        for &(e, id) in &order {
+            let Ok((_, _, t, region, outlet)) = regions.get(e) else {
+                continue;
+            };
+            if region.solver != Solver::GpuResident || !join::joined(region) {
+                continue;
+            }
+            let p = position(t);
+            let corner = [p[0], p[2]];
+            let state = resident_states.get(e).ok().map(|(_, s)| s);
+            let (held, away) = match state {
+                Some(s) => {
+                    let controls = controls_of(region, outlet, dt)?;
+                    let quiet = s.controls == controls
+                        && !flows.iter().any(|&(_, rid, at, rate)| {
+                            rid == id
+                                && rate != 0.0
+                                && region.column_of(corner, at[0], at[1]).is_some()
+                        })
+                        && !feedbacks
+                            .get(e)
+                            .is_ok_and(|(_, _, f)| !f.pending.is_empty())
+                        && !displacements
+                            .get(e)
+                            .is_ok_and(|(_, _, d)| !d.pending.is_empty());
+                    rest_of(quiet, s, &controls, region, corner, &foci, dt)
+                }
+                None => (false, false),
+            };
+            members.push(join::Member {
+                id,
+                corner,
+                region,
+                state,
+                held,
+                away,
+            });
+        }
+        let joins = join::plan(&members, dt)?;
         WaterRun {
             order,
             maps,
@@ -1391,6 +1521,7 @@ pub(crate) fn water(
             buoys,
             swimmers,
             checkpoint_refs,
+            joins,
         }
     };
     let WaterRun {
@@ -1401,6 +1532,7 @@ pub(crate) fn water(
         buoys,
         swimmers,
         mut checkpoint_refs,
+        joins,
     } = run;
     // 3. Bed changes, then the substeps. A resumed region has already received its inputs.
     let mut next_index = start;
@@ -1439,15 +1571,7 @@ pub(crate) fn water(
                         .get(e)
                         .map_err(|_| resident::failed("resident region disappeared"))?;
                     let p = position(t);
-                    let mut controls = resident::ResidentControls::from_region(region, dt)?;
-                    if let Some(outlet) = outlet {
-                        outlet.validate()?;
-                        for i in 0..4 {
-                            if region.edges[i] == Edge::Outflow {
-                                controls.outlet_levels[i] = outlet.levels[i];
-                            }
-                        }
-                    }
+                    let controls = controls_of(region, outlet, dt)?;
                     let state = match resident_states.get(e) {
                         Ok((_, s)) => s.clone(),
                         Err(_) => resident::initial(region, &mut checkpoints)?,
@@ -1556,13 +1680,18 @@ pub(crate) fn water(
                     let displaced = displacements
                         .get(e)
                         .map_or_else(|_| vec![], |(_, _, d)| d.pending.clone());
-                    let local_ready = state.still >= SLEEP_TICKS
-                        && state.controls == controls
-                        && !controls.open()
+                    let quiet = state.controls == controls
                         && edits.is_empty()
                         && impulses.is_empty()
-                        && displaced.is_empty()
-                        && reusable;
+                        && displaced.is_empty();
+                    // A joined group rests together (join.rs).
+                    let rests = if join::joined(region) {
+                        joins.rests.contains(&id)
+                    } else {
+                        rest_of(quiet, &state, &controls, region, [p[0], p[2]], &foci, dt).0
+                    };
+                    let exterior = joins.exteriors.get(&id).cloned().unwrap_or_default();
+                    let local_ready = rests && reusable;
                     let mut positive = std::collections::BTreeMap::<u32, f64>::new();
                     for edit in &edits {
                         if edit.depth_m > 0.0 {
@@ -1582,16 +1711,24 @@ pub(crate) fn water(
                             })
                             .fold(0.0, math::max);
                     let inlet_speed = math::sqrt(solve::G * inlet_depth);
+                    // A seam may carry faster water than this field's own.
+                    let outside = exterior
+                        .iter()
+                        .flat_map(|e| &e.faces)
+                        .fold(0.0, |most, f| math::max(most, f64::from(f[0]).abs()));
                     let count = region.substeps.max(solve::substeps_for(
                         math::max(
-                            math::max(state.stats.max_speed, inlet_speed),
-                            sea.as_ref().map_or(0.0, |s| s.speed),
-                        ) + math::sqrt(
-                            solve::G
-                                * math::max(
-                                    math::max(state.stats.max_depth + extra, inlet_depth),
-                                    sea.as_ref().map_or(0.0, |s| s.depth),
-                                ),
+                            math::max(
+                                math::max(state.stats.max_speed, inlet_speed),
+                                sea.as_ref().map_or(0.0, |s| s.speed),
+                            ) + math::sqrt(
+                                solve::G
+                                    * math::max(
+                                        math::max(state.stats.max_depth + extra, inlet_depth),
+                                        sea.as_ref().map_or(0.0, |s| s.depth),
+                                    ),
+                            ),
+                            outside,
                         ),
                         dt,
                         region.cell_m,
@@ -1609,16 +1746,11 @@ pub(crate) fn water(
                             "sea forcing exceeds the boundary CFL limit at eight substeps",
                         ));
                     }
-                    let step = if state.still >= SLEEP_TICKS
-                        && state.controls == controls
-                        && !controls.open()
-                        && edits.is_empty()
-                        && impulses.is_empty()
-                        && displaced.is_empty()
-                    {
+                    let step = if rests {
                         None
                     } else {
                         Some(FieldStep {
+                            exterior,
                             sea: sea.map(|s| s.forcing),
                             boundaries: std::array::from_fn(|i| match controls.outlet_levels[i] {
                                 Some(level) => amoris_assets::water_field::FieldBoundary::Stage {
@@ -1695,6 +1827,7 @@ pub(crate) fn water(
                             buoys,
                             swimmers,
                             checkpoint_refs,
+                            joins,
                         });
                         return Ok(true);
                     }
@@ -1866,6 +1999,7 @@ pub(crate) fn water(
                     buoys,
                     swimmers,
                     checkpoint_refs,
+                    joins,
                 });
                 return Ok(true);
             }

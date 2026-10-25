@@ -91,7 +91,7 @@ where
 /// Every engine component a scene or `world_edit` can name (`Name` is the entity's own `name`);
 /// the first three are the player layer's (perception.md: who observes, what can be perceived,
 /// what blocks sight).
-pub fn engine_components() -> [EngineComponent; 37] {
+pub fn engine_components() -> [EngineComponent; 38] {
     [
         entry::<amoris_interface::perception::Observer>(),
         entry::<amoris_interface::perception::Perceivable>(),
@@ -124,6 +124,7 @@ pub fn engine_components() -> [EngineComponent; 37] {
         water_entry(),
         entry::<WaterResident>(),
         entry::<amoris_physics::water::WaterColliderBed>(),
+        entry::<amoris_physics::water::WaterFocus>(),
         entry::<WaterOutletStage>(),
         probe_entry(),
         feedback_entry(),
@@ -959,6 +960,7 @@ pub fn install_script_components(world: &mut World) -> Result<(), Problem> {
     ComponentRegistry::register::<WaterRegion>(world, None)?;
     ComponentRegistry::register::<WaterResident>(world, None)?;
     ComponentRegistry::register::<amoris_physics::water::WaterColliderBed>(world, None)?;
+    ComponentRegistry::register::<amoris_physics::water::WaterFocus>(world, None)?;
     ComponentRegistry::register::<WaterOutletStage>(world, None)?;
     ComponentRegistry::register::<WaterFeedback>(
         world,

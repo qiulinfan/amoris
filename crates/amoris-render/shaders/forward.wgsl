@@ -995,6 +995,16 @@ fn morph_height(ids:vec3u,weights:vec3f,base:vec2u)->f32 {
     let a=vec2i(base+vec2u(ids.x%17u,ids.x/17u));let b=vec2i(base+vec2u(ids.y%17u,ids.y/17u));let c=vec2i(base+vec2u(ids.z%17u,ids.z/17u));
     return dot(vec3f(shallow_column(a.x,a.y).x,shallow_column(b.x,b.y).x,shallow_column(c.x,c.y).x),weights);
 }
+// A surface vertex at column `grid`, world x and z: the column's centre, or on a side joined to
+// another region the side itself, where the neighbour's surface meets it (water.md 64.3).
+fn shallow_place(grid:vec2f)->vec2f {
+    var at=grid+vec2f(0.5);let last=vec2f(shallow.count.xy)-vec2f(1.0);
+    if(grid.x<=0.0&&shallow.joined.x>0.5){at.x=0.0;}
+    if(grid.x>=last.x&&shallow.joined.y>0.5){at.x=last.x+1.0;}
+    if(grid.y<=0.0&&shallow.joined.z>0.5){at.y=0.0;}
+    if(grid.y>=last.y&&shallow.joined.w>0.5){at.y=last.y+1.0;}
+    return shallow.origin+at*shallow.cell;
+}
 fn shallow_morph_vertex(vi:u32)->ShallowOut {
     let header=water_geometry[0];let encoded=vi & 0x7fffffffu;let tile=encoded/header.x;let vertex=encoded%header.x;
     let tiles=(shallow.count.x-2u)/16u+1u;let base=vec2u(tile%tiles,tile/tiles)*16u;
@@ -1004,7 +1014,7 @@ fn shallow_morph_vertex(vi:u32)->ShallowOut {
     let h_b=morph_height(c.xyz,bitcast<vec3f>(vec3u(c.w,d.xy)),base);
     let local=bitcast<vec2f>(a.xy);let grid=vec2f(base)+local;var height=mix(h_a,h_b,t);
     if(any(local==vec2f(0.0))||any(local==vec2f(16.0))){let at=vec2i(base+vec2u(local));height=shallow_column(at.x,at.y).x;}
-    let world=vec3f(shallow.origin.x+(grid.x+0.5)*shallow.cell,height,shallow.origin.y+(grid.y+0.5)*shallow.cell);
+    let xz=shallow_place(grid);let world=vec3f(xz.x,height,xz.y);
     var o:ShallowOut;o.clip=shallow_clip(world);o.world=world;o.normal=vec3f(0.0,1.0,0.0);o.depth=1.0;o.speed=0.0;o.steep=0.0;o.velocity=vec2f(0.0);o.field_surface=1u;return o;
 }
 // Explicit native accuracy probe of the same function used by the vertex entry point.
@@ -1037,8 +1047,8 @@ fn vs_shallow(@builtin(vertex_index) vi: u32) -> ShallowOut {
     let hr = shallow_vertex(at.x + 1, at.y).x;
     let hd = shallow_vertex(at.x, at.y - 1).x;
     let hu = shallow_vertex(at.x, at.y + 1).x;
-    let world = vec3f(shallow.origin.x + (f32(at.x) + 0.5) * shallow.cell, c.x,
-                      shallow.origin.y + (f32(at.y) + 0.5) * shallow.cell);
+    let xz = shallow_place(vec2f(at));
+    let world = vec3f(xz.x, c.x, xz.y);
     var o: ShallowOut;
     o.clip = shallow_clip(world);
     o.world = world;

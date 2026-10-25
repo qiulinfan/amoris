@@ -2,6 +2,10 @@
 // entered/left volume, and normal velocity. Each entry has one owner, including at corners.
 @group(0) @binding(7) var<storage,read_write> boundary_report:array<vec4f>;
 var<workgroup> boundary_sums:array<vec4f,64>;
+// After the fluxes, `edge_flux` holds each joined face's seam (velocity and discharge per unit
+// width along the side's axis, then 1), then this field's own edge columns for its neighbours.
+const JOIN_IN:u32=2048u;
+const JOIN_OUT:u32=4096u;
 fn edge_count()->u32 {return 2u*(p.size.x+p.size.y);}
 // side, column x, column z, axis
 fn edge_address(face:u32)->vec4u {
@@ -116,6 +120,9 @@ fn boundary_predict(@builtin(global_invocation_id) id:vec3u){
         else if(p.edge_kind[a.x]==3u){value=stage_velocity(a,p.edge_rate[a.x]);discharge=value*src[n].y;}
         else if(p.edge_kind[a.x]==4u){let r=radiation(a,p.edge_rate[a.x],p.edge_normal[a.x]);value=r.x;discharge=r.y;}
         else if(p.edge_kind[a.x]==5u){let state=sea_state(a);let r=radiation(a,state.x,state.y);value=r.x;discharge=r.y;}
+        // A joined seam, the same for both regions this tick (water.md 64.3); a face no
+        // neighbour covers is a wall.
+        else if(p.edge_kind[a.x]==6u){let e=edge_flux[JOIN_IN+face];if(e.w>0.5){value=e.x;discharge=e.y;}}
     }
     // Keep a quiescent exact checkpoint unchanged on negative-facing sides too.
     if((bitcast<u32>(value)&0x7fffffffu)==0u){value=bitcast<f32>(0u);}
@@ -151,4 +158,16 @@ fn boundary_reduce(@builtin(local_invocation_index) lane:u32){
         if(lane<stride){boundary_sums[lane]+=boundary_sums[lane+stride];}workgroupBarrier();
     }
     if(lane==0u){boundary_sums[0].z+=boundary_report[0].z;boundary_report[0]=boundary_sums[0];boundary_report[1].x+=1.0;}
+}
+// The finished field's edge columns, for the regions joined to it (water.md 64.3): free surface,
+// bed, the inner face's velocity and the boundary face's velocity, along the side's axis.
+@compute @workgroup_size(64)
+fn boundary_export(@builtin(global_invocation_id) id:vec3u){
+    let face=id.x;if(face>=edge_count()){return;}
+    let a=edge_address(face);let c=src[at(a.y,a.z)];let sign=outward(a.x);
+    var inner=a.yz;if(sign<0.0){inner[a.w]+=1u;}
+    var seam=a.yz;if(sign>0.0){seam[a.w]+=1u;}
+    let along=a.w==0u;
+    edge_flux[JOIN_OUT+face]=vec4f(c.x+c.y,c.x,select(w(inner.x,inner.y),u(inner.x,inner.y),along),
+        select(w(seam.x,seam.y),u(seam.x,seam.y),along));
 }

@@ -277,6 +277,9 @@ pub enum FieldBoundary {
     },
     /// Spatial wave forcing from the FieldStep's required sea descriptor.
     Sea,
+    /// A seam with another region, from the FieldStep's exterior for this side; a face no
+    /// exterior covers is a wall (water.md 64.3).
+    Joined,
 }
 impl FieldBoundary {
     pub fn validate(self) -> Result<(), String> {
@@ -352,11 +355,25 @@ impl FieldSea {
     }
 }
 
+/// A joined side's seam this step, for its cells `first..first + faces.len()`: each face's
+/// velocity and discharge per unit width along the side's axis, in world axes, the same the joined
+/// neighbour takes for its facing side (water.md 64.3).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FieldExterior {
+    pub side: u8,
+    pub first: u32,
+    pub faces: Vec<[f32; 2]>,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct FieldStep {
     pub boundaries: [FieldBoundary; 4],
     pub sea: Option<FieldSea>,
+    /// One for each Joined side with a seam this step; a Joined side without is a wall.
+    #[serde(default)]
+    pub exterior: Vec<FieldExterior>,
     pub cell_m: f64,
     pub substep_dt: f64,
     pub substeps: u32,
@@ -397,6 +414,19 @@ impl FieldStep {
         }
         if let Some(sea) = &self.sea {
             sea.validate()?;
+        }
+        let mut sides = [false; 4];
+        for e in &self.exterior {
+            let side = usize::from(e.side);
+            if side >= 4
+                || self.boundaries[side] != FieldBoundary::Joined
+                || std::mem::replace(&mut sides[side], true)
+                || e.faces.is_empty()
+                || e.first as usize + e.faces.len() > 512
+                || e.faces.iter().flatten().any(|v| !v.is_finite())
+            {
+                return Err("resident joined exterior is invalid".into());
+            }
         }
 
         if !(0.25..=4.0).contains(&self.cell_m)
@@ -708,6 +738,7 @@ mod tests {
             c.key(),
             vec![
                 FieldStep {
+                    exterior: vec![],
                     sea: None,
                     boundaries: [crate::water_field::FieldBoundary::Wall; 4],
                     cell_m: 1.0,
@@ -807,6 +838,7 @@ mod tests {
         };
         let cp = FieldCheckpoint::new([16, 16], 0.0, vec![[0, 1.0f32.to_bits(), 0, 0]; 256]);
         let mut step = FieldStep {
+            exterior: vec![],
             boundaries: [FieldBoundary::Sea; 4],
             sea: None,
             cell_m: 1.0,

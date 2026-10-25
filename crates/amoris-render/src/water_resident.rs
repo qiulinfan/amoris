@@ -462,7 +462,11 @@ impl ResidentPool {
             }
             words.push(vec![
                 0u32;
-                readout_words(request.step, request.points.len())
+                readout_words(
+                    request.step,
+                    request.points.len(),
+                    request.checkpoint.size
+                )
             ]);
         }
         gpu.queue.submit([encoder.finish()]);
@@ -522,20 +526,27 @@ impl ResidentPool {
     }
 }
 
-fn readout_words(step: Option<&FieldStep>, points: usize) -> usize {
+/// A step with a Joined side reads its edge columns back for its neighbours (water.md 64.3).
+fn joins(step: &FieldStep) -> bool {
+    step.boundaries
+        .contains(&amoris_assets::water_field::FieldBoundary::Joined)
+}
+fn open(step: &FieldStep) -> bool {
+    step.boundaries
+        .iter()
+        .any(|e| *e != amoris_assets::water_field::FieldBoundary::Wall)
+}
+fn readout_words(step: Option<&FieldStep>, points: usize, size: [u32; 2]) -> usize {
     16 + points * SAMPLE_WORDS
         + step.map_or(0, |s| {
             (if s.impulses.is_empty() { 0 } else { 8 })
-                + if s
-                    .boundaries
-                    .iter()
-                    .any(|e| *e != amoris_assets::water_field::FieldBoundary::Wall)
-                {
-                    4
+                + if open(s) { 4 } else { 0 }
+                + if s.edits.is_empty() { 0 } else { 4 }
+                + if joins(s) {
+                    8 * (size[0] + size[1]) as usize
                 } else {
                     0
                 }
-                + if s.edits.is_empty() { 0 } else { 4 }
         })
 }
 
@@ -549,6 +560,10 @@ pub struct ResidentAdvance {
     pub checkpoint: Option<Arc<CheckedCheckpoint>>,
     pub reaction: ReactionReport,
     pub boundary: BoundaryReport,
+    /// After a step with a Joined side, every boundary face's edge column: free surface and bed
+    /// relative to the datum, then the inner face's and the boundary face's velocities along the
+    /// side's axis (`GpuWater::copy_edges`). Otherwise empty.
+    pub edges: Vec<[f32; 4]>,
 }
 
 struct Readout {
@@ -556,6 +571,7 @@ struct Readout {
     samples: Vec<[f32; SAMPLE_WORDS]>,
     reaction: ReactionReport,
     boundary: BoundaryReport,
+    edges: Vec<[f32; 4]>,
 }
 
 pub struct ResidentWater {
@@ -583,7 +599,8 @@ impl ResidentWater {
     fn with_size(gpu: &Gpu, size: [u32; 2]) -> Result<Self, String> {
         let staging = gpu.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("resident water metadata and samples"),
-            size: (64 + MAX_SAMPLES * SAMPLE_WORDS * 4 + 32 + 16 + 16) as u64,
+            size: (64 + MAX_SAMPLES * SAMPLE_WORDS * 4 + 32 + 16 + 16 + 2 * (512 + 512) * 16)
+                as u64,
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -685,6 +702,7 @@ impl ResidentWater {
         reaction: bool,
         boundary: bool,
         edited: bool,
+        edges: bool,
     ) -> Result<(), String> {
         if points.len() > MAX_SAMPLES || points.iter().flatten().any(|v| !v.is_finite()) {
             return Err(format!(
@@ -735,6 +753,16 @@ impl ResidentWater {
                     + if boundary { 16 } else { 0 }) as u64,
             )?;
         }
+        if edges {
+            self.field.copy_edges(
+                encoder,
+                &self.staging,
+                (64 + points.len() * SAMPLE_WORDS * 4
+                    + if reaction { 32 } else { 0 }
+                    + if boundary { 16 } else { 0 }
+                    + if edited { 16 } else { 0 }) as u64,
+            )?;
+        }
         Ok(())
     }
     fn decode_readout(
@@ -743,11 +771,18 @@ impl ResidentWater {
         reaction: bool,
         boundary: bool,
         edited: bool,
+        edges: bool,
     ) -> Result<Readout, String> {
         self.summary.discard();
         self.samples.clear();
         let summary = WaterStateSummary::from_bytes(bytemuck::cast_slice(&words[..16]))?;
-        let flow_end = words.len() - if edited { 4 } else { 0 };
+        let edge_start = words.len()
+            - if edges {
+                (self.field.edge_bytes() / 4) as usize
+            } else {
+                0
+            };
+        let flow_end = edge_start - if edited { 4 } else { 0 };
         let receipt_end = flow_end - if boundary { 4 } else { 0 };
         let end = receipt_end - if reaction { 8 } else { 0 };
         let samples: Vec<[f32; SAMPLE_WORDS]> = bytemuck::cast_slice(&words[16..end]).to_vec();
@@ -768,13 +803,24 @@ impl ResidentWater {
             BoundaryReport::default()
         };
         if edited {
-            flow.edited = WaterEdits::decode_receipt(bytemuck::cast_slice(&words[flow_end..]))?;
+            flow.edited =
+                WaterEdits::decode_receipt(bytemuck::cast_slice(&words[flow_end..edge_start]))?;
+        }
+        let edges: Vec<[f32; 4]> = words[edge_start..]
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|c| c.map(f32::from_bits))
+            .collect();
+        if edges.iter().flatten().any(|v| !v.is_finite()) {
+            return Err("resident water edge column is invalid".into());
         }
         Ok(Readout {
             summary,
             samples,
             reaction: report,
             boundary: flow,
+            edges,
         })
     }
     fn prepare_sync(
@@ -838,7 +884,7 @@ impl ResidentWater {
             self.gpu.queue.submit([encoder.finish()]);
         }
         let mut encoder = self.gpu.device.create_command_encoder(&Default::default());
-        self.encode_readout(&mut encoder, &[], false, false, false)?;
+        self.encode_readout(&mut encoder, &[], false, false, false, false)?;
         self.gpu.queue.submit([encoder.finish()]);
         self.transfers.small_readbacks += 1;
         self.transfers.readback_bytes += 64;
@@ -849,7 +895,7 @@ impl ResidentWater {
         words: &[u32],
         recipe: &FieldRecipe,
     ) -> Result<WaterStateSummary, String> {
-        let Readout { summary, .. } = self.decode_readout(words, false, false, false)?;
+        let Readout { summary, .. } = self.decode_readout(words, false, false, false, false)?;
         if summary.digest != recipe.digest {
             return Err("resident water replay diverged from the stored state digest".into());
         }
@@ -895,7 +941,7 @@ impl ResidentWater {
         encoder: &mut wgpu::CommandEncoder,
         points: &[[f32; 2]],
     ) -> Result<(), String> {
-        self.encode_readout(encoder, points, false, false, false)?;
+        self.encode_readout(encoder, points, false, false, false, false)?;
         self.transfers.small_readbacks += 1;
         self.transfers.readback_bytes += (64 + points.len() * SAMPLE_WORDS * 4) as u64;
         Ok(())
@@ -910,7 +956,8 @@ impl ResidentWater {
             samples,
             reaction,
             boundary,
-        } = self.decode_readout(words, false, false, false)?;
+            edges,
+        } = self.decode_readout(words, false, false, false, false)?;
         if summary.digest != recipe.digest {
             self.valid = false;
             return Err("resident observation differs from the stored state digest".into());
@@ -923,6 +970,7 @@ impl ResidentWater {
             checkpoint: None,
             reaction,
             boundary,
+            edges,
         })
     }
     #[cfg(not(target_arch = "wasm32"))]
@@ -968,13 +1016,13 @@ impl ResidentWater {
             encoder,
             points,
             !step.impulses.is_empty(),
-            step.boundaries
-                .iter()
-                .any(|e| *e != amoris_assets::water_field::FieldBoundary::Wall),
+            open(step),
             !step.edits.is_empty(),
+            joins(step),
         )?;
         self.transfers.small_readbacks += 1;
-        self.transfers.readback_bytes += (readout_words(Some(step), points.len()) * 4) as u64;
+        self.transfers.readback_bytes +=
+            (readout_words(Some(step), points.len(), self.field.size()) * 4) as u64;
         Ok(())
     }
     fn accept_advance(
@@ -988,13 +1036,13 @@ impl ResidentWater {
             samples,
             reaction,
             boundary,
+            edges,
         } = self.decode_readout(
             words,
             !step.impulses.is_empty(),
-            step.boundaries
-                .iter()
-                .any(|e| *e != amoris_assets::water_field::FieldBoundary::Wall),
+            open(step),
             !step.edits.is_empty(),
+            joins(step),
         )?;
         let mut recipe = before.clone();
         recipe.push_step(step.clone());
@@ -1011,6 +1059,7 @@ impl ResidentWater {
             checkpoint: None,
             reaction,
             boundary,
+            edges,
         })
     }
     fn compact(
@@ -1050,21 +1099,7 @@ impl ResidentWater {
         }
         self.synchronize(checkpoint, before)?;
         self.prepare_advance(step, points)?;
-        let mut words = vec![
-            0u32;
-            16 + points.len() * SAMPLE_WORDS
-                + if step.impulses.is_empty() { 0 } else { 8 }
-                + if step
-                    .boundaries
-                    .iter()
-                    .any(|e| *e != amoris_assets::water_field::FieldBoundary::Wall)
-                {
-                    4
-                } else {
-                    0
-                }
-                + if step.edits.is_empty() { 0 } else { 4 }
-        ];
+        let mut words = vec![0u32; readout_words(Some(step), points.len(), self.field.size())];
         crate::readback::read_blocking(&self.gpu.device, &self.staging, &mut words)?;
         let mut out = self.accept_advance(&words, before, step)?;
         if checkpoint_now || out.recipe.steps().len() == MAX_STEPS {
@@ -1092,21 +1127,7 @@ impl ResidentWater {
         }
         self.synchronize_async(checkpoint, before).await?;
         self.prepare_advance(step, points)?;
-        let mut words = vec![
-            0u32;
-            16 + points.len() * SAMPLE_WORDS
-                + if step.impulses.is_empty() { 0 } else { 8 }
-                + if step
-                    .boundaries
-                    .iter()
-                    .any(|e| *e != amoris_assets::water_field::FieldBoundary::Wall)
-                {
-                    4
-                } else {
-                    0
-                }
-                + if step.edits.is_empty() { 0 } else { 4 }
-        ];
+        let mut words = vec![0u32; readout_words(Some(step), points.len(), self.field.size())];
         crate::readback::read(&self.staging, &mut words).await?;
         let mut out = self.accept_advance(&words, before, step)?;
         if checkpoint_now || out.recipe.steps().len() == MAX_STEPS {
@@ -1130,6 +1151,7 @@ mod kernel_tests {
     fn visual_programs_require_the_current_numerical_sources() {
         let checkpoint = FieldCheckpoint::new([2, 2], 0.0, vec![[0, 1.0f32.to_bits(), 0, 0]; 4]);
         let step = FieldStep {
+            exterior: vec![],
             sea: None,
             boundaries: [amoris_assets::water_field::FieldBoundary::Wall; 4],
             cell_m: 1.0,

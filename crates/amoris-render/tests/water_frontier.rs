@@ -68,6 +68,7 @@ fn field(size: [u32; 2], column: impl Fn(u32, u32) -> (f32, f32)) -> FieldCheckp
 
 fn step(cell: f64, substeps: u32, friction: f64) -> FieldStep {
     FieldStep {
+        exterior: vec![],
         boundaries: [FieldBoundary::Wall; 4],
         sea: None,
         cell_m: cell,

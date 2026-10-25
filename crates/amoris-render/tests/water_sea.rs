@@ -14,6 +14,7 @@ fn wave() -> FieldSeaWave {
 }
 fn step(substeps: u32, dt: f64) -> FieldStep {
     FieldStep {
+        exterior: vec![],
         boundaries: [
             FieldBoundary::Sea,
             FieldBoundary::Radiation {

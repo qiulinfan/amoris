@@ -1,6 +1,7 @@
-//! Caustics under the water region nearest the camera (water_caustics.wgsl): a map of the sun's
-//! light gathered on the bed through the displayed surface, which the forward pass multiplies into
-//! the sun on everything under that surface, with the absorption along the light's path down.
+//! Caustics under the water region nearest the camera and the regions joined to it
+//! (water_caustics.wgsl): a map of the sun's light gathered on the bed through the displayed
+//! surface, which the forward pass multiplies into the sun on everything under that surface, with
+//! the absorption along the light's path down.
 use bytemuck::{Pod, Zeroable};
 
 /// The map's side in texels; a region wider than this many finest texels gets coarser ones.
@@ -22,7 +23,7 @@ struct Params {
     sigma: [f32; 4],
 }
 
-/// The region whose caustics are drawn: its uniform (water.rs `Uniform`), displayed columns and
+/// A region whose caustics are drawn: its uniform (water.rs `Uniform`), displayed columns and
 /// the ripples' texture with its sampler (blank when the region has none).
 pub(crate) struct Source<'a> {
     pub uniform: &'a wgpu::Buffer,
@@ -38,6 +39,8 @@ pub(crate) struct Caustics {
     pipelines: [wgpu::ComputePipeline; 2],
     view: wgpu::TextureView,
     params: wgpu::Buffer,
+    /// Each pass's texels (water_caustics.wgsl `Part`), kept between frames.
+    parts: Vec<wgpu::Buffer>,
     accum: wgpu::Buffer,
     on: bool,
     /// `AMORIS_CAUSTICS=off` turns them off (natively; on in the browser).
@@ -118,6 +121,7 @@ impl Caustics {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
+                buffer(8, wgpu::BufferBindingType::Uniform),
             ],
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -151,6 +155,7 @@ impl Caustics {
             pipelines,
             view: texture.create_view(&Default::default()),
             params,
+            parts: Vec::new(),
             accum,
             on: true,
             enabled: !matches!(
@@ -173,30 +178,41 @@ impl Caustics {
         &self.params
     }
 
-    /// Gathers this frame's map from `source` (none, or no sun: caustics off).
+    /// Gathers this frame's map under `sources`, the first the region nearest the camera and the
+    /// rest the regions joined to it (none, or no sun: caustics off).
     pub fn encode(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::Buffer,
-        source: Option<Source<'_>>,
+        sources: Vec<Source<'_>>,
         profiler: &mut crate::profiler::GpuProfiler,
     ) {
-        let Some(s) = source.filter(|_| self.enabled) else {
+        let Some(s) = sources.first().filter(|_| self.enabled) else {
             if self.on {
                 queue.write_buffer(&self.params, 0, bytemuck::bytes_of(&Params::zeroed()));
                 self.on = false;
             }
             return;
         };
-        let texel = (s.extent[0].max(s.extent[1]) / MAP as f32).max(FINEST_M);
-        let size = s.extent.map(|e| ((e / texel).ceil() as u32).clamp(1, MAP));
+        // One map over them all.
+        let low: [f32; 2] =
+            std::array::from_fn(|a| sources.iter().map(|s| s.origin[a]).fold(f32::MAX, f32::min));
+        let high: [f32; 2] = std::array::from_fn(|a| {
+            sources
+                .iter()
+                .map(|s| s.origin[a] + s.extent[a])
+                .fold(f32::MIN, f32::max)
+        });
+        let extent = [high[0] - low[0], high[1] - low[1]];
+        let texel = (extent[0].max(extent[1]) / MAP as f32).max(FINEST_M);
+        let size = extent.map(|e| ((e / texel).ceil() as u32).clamp(1, MAP));
         queue.write_buffer(
             &self.params,
             0,
             bytemuck::bytes_of(&Params {
-                origin: s.origin,
+                origin: low,
                 texel,
                 on: 1.0,
                 size,
@@ -204,35 +220,96 @@ impl Caustics {
                 sigma: [s.sigma[0], s.sigma[1], s.sigma[2], 0.0],
             }),
         );
-        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("water caustics"),
-            layout: &self.layout,
-            entries: &[
-                (0, view.as_entire_binding()),
-                (1, s.uniform.as_entire_binding()),
-                (2, s.columns.as_entire_binding()),
-                (3, self.params.as_entire_binding()),
-                (4, self.accum.as_entire_binding()),
-                (5, wgpu::BindingResource::TextureView(&self.view)),
-                (6, wgpu::BindingResource::TextureView(s.ripples.0)),
-                (7, wgpu::BindingResource::Sampler(s.ripples.1)),
+        // Each region's texels: those whose centres it holds, and out to the map's edge where
+        // its side is the map's. With several regions, a first pass clears the map to dry where
+        // none lies.
+        let texels = |s: &Source<'_>, a: usize| -> [u32; 2] {
+            let edge = |at: f32, end: f32, last: u32| {
+                if (at - end).abs() <= 1e-3 * texel {
+                    last
+                } else {
+                    (((at - low[a]) / texel - 0.5).ceil().max(0.0) as u32).min(size[a])
+                }
+            };
+            [
+                edge(s.origin[a], low[a], 0),
+                edge(s.origin[a] + s.extent[a], high[a], size[a]),
             ]
-            .map(|(binding, resource)| wgpu::BindGroupEntry { binding, resource }),
-        });
-        for (stage, label) in ["water caustics photons", "water caustics"]
-            .into_iter()
+        };
+        let mut parts: Vec<([u32; 4], u32, usize)> = Vec::new();
+        if sources.len() > 1 {
+            parts.push(([0, 0, size[0], size[1]], 1, 0));
+        }
+        for (n, s) in sources.iter().enumerate() {
+            let [x, z] = [texels(s, 0), texels(s, 1)];
+            if x[1] > x[0] && z[1] > z[0] {
+                parts.push(([x[0], z[0], x[1] - x[0], z[1] - z[0]], 0, n));
+            }
+        }
+        while self.parts.len() < parts.len() {
+            self.parts
+                .push(device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("water caustics part"),
+                    size: 32,
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                }));
+        }
+        let groups: Vec<_> = parts
+            .iter()
             .enumerate()
-        {
+            .map(|(p, &(texels, dry, n))| {
+                let s = &sources[n];
+                let words = [texels[0], texels[1], texels[2], texels[3], dry, 0, 0, 0];
+                queue.write_buffer(&self.parts[p], 0, bytemuck::cast_slice(&words));
+                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("water caustics"),
+                    layout: &self.layout,
+                    entries: &[
+                        (0, view.as_entire_binding()),
+                        (1, s.uniform.as_entire_binding()),
+                        (2, s.columns.as_entire_binding()),
+                        (3, self.params.as_entire_binding()),
+                        (4, self.accum.as_entire_binding()),
+                        (5, wgpu::BindingResource::TextureView(&self.view)),
+                        (6, wgpu::BindingResource::TextureView(s.ripples.0)),
+                        (7, wgpu::BindingResource::Sampler(s.ripples.1)),
+                        (8, self.parts[p].as_entire_binding()),
+                    ]
+                    .map(|(binding, resource)| wgpu::BindGroupEntry { binding, resource }),
+                })
+            })
+            .collect();
+        // Clearing, then every region's photons, then every region's texels: a photon may land
+        // in a neighbour's.
+        let order = parts
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| p.1 == 1)
+            .map(|(n, _)| (1, n))
+            .chain(
+                (0..parts.len())
+                    .filter(|&n| parts[n].1 == 0)
+                    .map(|n| (0, n)),
+            )
+            .chain(
+                (0..parts.len())
+                    .filter(|&n| parts[n].1 == 0)
+                    .map(|n| (1, n)),
+            );
+        for (stage, p) in order {
+            let label = ["water caustics photons", "water caustics"][stage];
             let side = if stage == 0 { SUB } else { 1 };
+            let count = [parts[p].0[2], parts[p].0[3]];
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some(label),
                 timestamp_writes: profiler.compute_scope(label),
             });
-            pass.set_bind_group(0, &group, &[]);
+            pass.set_bind_group(0, &groups[p], &[]);
             pass.set_pipeline(&self.pipelines[stage]);
             pass.dispatch_workgroups(
-                (size[0] * side).div_ceil(8),
-                (size[1] * side).div_ceil(8),
+                (count[0] * side).div_ceil(8),
+                (count[1] * side).div_ceil(8),
                 1,
             );
         }
@@ -330,14 +407,14 @@ mod tests {
             &gpu.queue,
             &mut encoder,
             &view,
-            Some(Source {
+            vec![Source {
                 uniform: &region,
                 columns: &columns,
                 origin: [0.0; 2],
                 extent: [16.0, 8.0],
                 sigma: [0.0; 3],
                 ripples: (&blank, &sampler),
-            }),
+            }],
             &mut profiler,
         );
         let stage = gpu.device.create_buffer(&wgpu::BufferDescriptor {

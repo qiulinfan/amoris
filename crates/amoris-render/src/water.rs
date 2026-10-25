@@ -81,6 +81,8 @@ struct Uniform {
     /// Per side open on a sea drawn with a look, the band (m) over which the water turns to the
     /// sea's, else 0 (water.md 60).
     sea: [f32; 4],
+    /// 1 per side joined to another region: the surface reaches the side (water.md 64.3).
+    joined: [f32; 4],
 }
 
 /// The region uniform's size in 32-bit words, for the checks that write one by hand.
@@ -695,42 +697,70 @@ impl Water {
         self.ripples.as_ref()
     }
 
-    /// The region nearest the camera (by its rectangle) whose caustics the forward pass draws.
-    pub(crate) fn caustics_source(
+    /// The regions whose caustics the forward pass draws: the one nearest the camera (by its
+    /// rectangle), then those joined to it along its sides (water.md 64.3).
+    pub(crate) fn caustics_sources(
         &self,
         camera: [f32; 3],
-    ) -> Option<crate::water_caustics::Source<'_>> {
-        self.regions
+    ) -> Vec<crate::water_caustics::Source<'_>> {
+        let extent = |r: &Region| [r.size[0] as f32 * r.cell_m, r.size[1] as f32 * r.cell_m];
+        let Some(near) = self
+            .regions
             .values()
-            .filter_map(|r| {
-                let g = r.gpu.as_ref()?;
-                let extent = [r.size[0] as f32 * r.cell_m, r.size[1] as f32 * r.cell_m];
+            .filter(|r| r.gpu.is_some())
+            .map(|r| {
                 let outside = |axis: usize| {
                     let low = r.origin[axis] - camera[axis * 2];
-                    let high = camera[axis * 2] - (r.origin[axis] + extent[axis]);
+                    let high = camera[axis * 2] - (r.origin[axis] + extent(r)[axis]);
                     low.max(high).max(0.0)
                 };
-                let distance = outside(0).hypot(outside(1));
-                let (a, s, f) = (r.look.absorb, r.look.scatter, r.look.fog[3]);
-                Some((
-                    distance,
-                    crate::water_caustics::Source {
-                        uniform: &g.uniform,
-                        columns: &g.columns,
-                        origin: r.origin,
-                        extent,
-                        sigma: std::array::from_fn(|c| a[c] + 0.5 * (s[c] + f)),
-                        ripples: (
-                            self.ripples
-                                .as_ref()
-                                .map_or(&self.blank_ripples, |r| r.view()),
-                            &self.ripple_sampler,
-                        ),
-                    },
-                ))
+                (outside(0).hypot(outside(1)), r)
             })
             .min_by(|a, b| a.0.total_cmp(&b.0))
-            .map(|(_, source)| source)
+            .map(|(_, r)| r)
+        else {
+            return Vec::new();
+        };
+        // A neighbour joined along one of its sides: the two sides meet and overlap.
+        let joined = |r: &Region| {
+            !std::ptr::eq(r, near)
+                && (0..4).any(|side| {
+                    let (normal, along) = (side / 2, 1 - side / 2);
+                    let edge = |r: &Region, plus: bool| {
+                        r.origin[normal] + if plus { extent(r)[normal] } else { 0.0 }
+                    };
+                    near.look.joined[side]
+                        && r.look.joined[side ^ 1]
+                        && (edge(near, side % 2 == 1) - edge(r, side % 2 == 0)).abs()
+                            <= 1e-3 * near.cell_m
+                        && r.origin[along] < near.origin[along] + extent(near)[along]
+                        && near.origin[along] < r.origin[along] + extent(r)[along]
+                })
+        };
+        std::iter::once(near)
+            .chain(
+                self.regions
+                    .values()
+                    .filter(|r| r.gpu.is_some() && joined(r)),
+            )
+            .map(|r| {
+                let g = r.gpu.as_ref().expect("a drawn region");
+                let (a, s, f) = (r.look.absorb, r.look.scatter, r.look.fog[3]);
+                crate::water_caustics::Source {
+                    uniform: &g.uniform,
+                    columns: &g.columns,
+                    origin: r.origin,
+                    extent: extent(r),
+                    sigma: std::array::from_fn(|c| a[c] + 0.5 * (s[c] + f)),
+                    ripples: (
+                        self.ripples
+                            .as_ref()
+                            .map_or(&self.blank_ripples, |r| r.view()),
+                        &self.ripple_sampler,
+                    ),
+                }
+            })
+            .collect()
     }
 
     pub fn set_spray(&mut self, on: bool) {
@@ -1113,6 +1143,7 @@ impl Water {
                 per: 1,
                 surround_m: 0.0,
                 sea: [false; 4],
+                joined: [false; 4],
                 wet_s: 0.0,
             },
             columns: Vec::new(),
@@ -1159,6 +1190,11 @@ impl Water {
             return;
         }
         let window = self.prepare_ripples(device, t, camera);
+        // A window that runs on past joined sides reaches the neighbours' water too.
+        let ripple_on = self
+            .ripple_region
+            .and_then(|id| self.regions.get(&id))
+            .is_some_and(|r| r.look.joined.contains(&true));
         let optics = self.optics.get_or_insert_with(|| {
             crate::water_optics::Optics::new(
                 device,
@@ -1361,7 +1397,13 @@ impl Water {
                 surround,
                 fog: r.look.fog,
                 optics: self.effects,
-                ripple: if self.ripple_region == Some(*id) {
+                ripple: if self.ripple_region == Some(*id)
+                    || (ripple_on
+                        && r.look.joined.contains(&true)
+                        && (0..2).all(|a| {
+                            window[a] < r.origin[a] + [nx, nz][a] as f32 * r.cell_m
+                                && r.origin[a] < window[a] + window[2]
+                        })) {
                     window
                 } else {
                     [0.0; 4]
@@ -1374,6 +1416,7 @@ impl Water {
                         0.0
                     }
                 }),
+                joined: r.look.joined.map(|j| f32::from(u8::from(j))),
             };
             r.surround_on = surround[1] > 0.0;
             queue.write_buffer(&g.uniform, 0, bytemuck::bytes_of(&u));
@@ -1608,6 +1651,7 @@ impl Water {
                     size: r.size,
                     tiled: r.tiled,
                     columns: &g.columns,
+                    joined: r.look.joined,
                 },
                 Some(profiler),
             );
@@ -1677,7 +1721,12 @@ impl Water {
             return [0.0; 4];
         };
         let extent = [r.size[0] as f32 * r.cell_m, r.size[1] as f32 * r.cell_m];
-        let place = crate::water_ripples::Placement::over(r.origin, extent, [camera[0], camera[2]]);
+        let place = crate::water_ripples::Placement::over(
+            r.origin,
+            extent,
+            [camera[0], camera[2]],
+            r.look.joined,
+        );
         ripples.prepare(t, place, r.cell_m)
     }
 

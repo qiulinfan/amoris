@@ -317,6 +317,18 @@ fn resident_results(
                         })
                         .collect(),
                     checkpoint: out.checkpoint,
+                    edges: out
+                        .edges
+                        .iter()
+                        .map(|c| {
+                            [
+                                request.checkpoint.datum + f64::from(c[0]),
+                                request.checkpoint.datum + f64::from(c[1]),
+                                f64::from(c[2]),
+                                f64::from(c[3]),
+                            ]
+                        })
+                        .collect(),
                 },
             })
         })
@@ -352,6 +364,7 @@ mod validation_tests {
                 left: 2.0,
                 edited: 3.0,
             },
+            edges: vec![],
         }
     }
 
@@ -368,6 +381,7 @@ mod validation_tests {
             FieldRecipe::new(checkpoint.key(), vec![], checkpoint.digest(), String::new())
         });
         let steps = [2.0, 3.0].map(|cell_m| FieldStep {
+            exterior: vec![],
             boundaries: [FieldBoundary::Wall; 4],
             sea: None,
             cell_m,

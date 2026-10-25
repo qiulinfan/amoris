@@ -641,6 +641,7 @@ mod resident_tests {
                 checkpoint: None,
                 reaction: Default::default(),
                 boundary: Default::default(),
+                edges: vec![],
             },
         }
     }

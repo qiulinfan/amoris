@@ -80,6 +80,7 @@ fn region_pool_reuses_independent_fields_and_rebuilds_evicted_or_divergent_input
         for tick in 0..3 {
             for (n, recipe) in recipes.iter_mut().enumerate() {
                 let step = FieldStep {
+                    exterior: vec![],
                     sea: None,
                     boundaries: [amoris_assets::water_field::FieldBoundary::Wall; 4],
                     cell_m: 1.0,
@@ -264,6 +265,7 @@ fn bounded_resident_execution_replays_branches_and_compacts_exact_state() {
         let active = vec![1; n];
         let mut branch = None;
         let mut step = FieldStep {
+            exterior: vec![],
             sea: None,
             boundaries: [amoris_assets::water_field::FieldBoundary::Wall; 4],
             cell_m: 0.5,
@@ -425,6 +427,7 @@ fn sized_pool_retains_small_fields_and_authenticates_growth_restore_and_item_evi
         for _ in 0..3 {
             for (n, recipe) in recipes.iter_mut().enumerate() {
                 let step = FieldStep {
+                    exterior: vec![],
                     sea: None,
                     boundaries: [amoris_assets::water_field::FieldBoundary::Wall; 4],
                     cell_m: 1.0,

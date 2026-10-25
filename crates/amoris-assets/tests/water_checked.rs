@@ -107,6 +107,7 @@ fn checked_and_raw_recipe_validation_have_identical_bounds_and_digest_rules() {
     let raw = raw();
     let checked = raw.clone().checked().unwrap();
     let step = FieldStep {
+        exterior: vec![],
         sea: None,
         boundaries: [FieldBoundary::Wall; 4],
         cell_m: 1.0,

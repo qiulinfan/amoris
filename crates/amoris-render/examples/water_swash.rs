@@ -91,6 +91,7 @@ impl Kernel {
 
     fn encode(&mut self, encoder: &mut wgpu::CommandEncoder, case: &Case, substeps: u32) {
         let step = FieldStep {
+            exterior: vec![],
             boundaries: [FieldBoundary::Wall; 4],
             sea: None,
             cell_m: case.dx,

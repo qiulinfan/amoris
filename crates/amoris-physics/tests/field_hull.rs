@@ -148,6 +148,7 @@ fn complete(q: &ComputeQueue, job: &ResidentBatchJob) -> bool {
                     checkpoint,
                     reaction: Default::default(),
                     boundary: Default::default(),
+                    edges: vec![],
                 },
             }
         })
@@ -483,7 +484,8 @@ fn a_missing_hull_sample_stops_before_any_force_or_body_integration() {
                     samples: vec![[2.0, 2.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]; 2],
                     checkpoint: None,
                     reaction: Default::default(),
-                    boundary: Default::default()
+                    boundary: Default::default(),
+                    edges: vec![],
                 }
             }])
         )
