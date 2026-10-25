@@ -381,12 +381,22 @@ fn pixel_min(samples: &[f32]) -> Vec<f32> {
         .collect()
 }
 
-/// The tests run one at a time: creating two devices at once can fail to load the Vulkan driver.
-static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
+/// A lost device or a validation error fails the test with its cause. The tests run in parallel:
+/// `Gpu::headless` opens their devices one at a time, as parallel Vulkan driver loads need, and
+/// their profilers keep no timestamps.
 fn gpu() -> Option<Gpu> {
     match Gpu::headless(BackendChoice::from_env()) {
-        Ok(gpu) => Some(gpu),
+        Ok(gpu) => {
+            gpu.device.set_device_lost_callback(|reason, message| {
+                if reason != wgpu::DeviceLostReason::Destroyed {
+                    panic!("Hi-Z device lost: {reason:?}: {message}");
+                }
+            });
+            gpu.device.on_uncaptured_error(std::sync::Arc::new(|error| {
+                panic!("Hi-Z GPU validation failed: {error}");
+            }));
+            Some(gpu)
+        }
         Err(e) => {
             eprintln!("no GPU ({e:?}): skipped");
             None
@@ -396,7 +406,6 @@ fn gpu() -> Option<Gpu> {
 
 #[test]
 fn pyramid_is_the_minimum_over_every_sample() {
-    let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
     let Some(gpu) = gpu() else {
         return;
     };
@@ -454,7 +463,6 @@ fn pyramid_is_the_minimum_over_every_sample() {
 
 #[test]
 fn occlusion_test_never_hides_a_box_in_front_of_the_depth() {
-    let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
     let Some(gpu) = gpu() else {
         return;
     };
