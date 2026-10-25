@@ -88,6 +88,12 @@ mcp.md 14 names the server as Amoris's own, amoris-mcp. Only the attribution cha
 built, the requests, answers and codes did not, so the contract stays 0.2; the 0.2 row above keeps
 its words as recorded.
 
+The same day the engine moved from `rmcp` 3.5.0 to 3.7.0 (charter 4.1): 3.5.0's Streamable HTTP
+server let an unauthenticated client grow its tool-schema cache without bound (GHSA-4432-vg92-fqh6,
+fixed in 3.6.0). mcp.md 7.2's pin and the rmcp behaviour it cites (`Parameters`' `invalid_params`,
+`find_parameters_type_in_sig`, `schema_for_input`) name 3.7.0, where that behaviour is unchanged.
+The tools, their schemas and their answers did not change, so the contract stays 0.2.
+
 ## Contract record
 
 The contract and benchmark live in this repository under `shared/contract/` and

@@ -314,7 +314,7 @@ beta 功能，测试已移除（4.4）。
 | 资源 | glTF 2.0（`gltf`）、PNG/JPEG（`image`）、网格处理（`meshopt`：LOD、顶点缓存）；导入在工作线程异步进行；内容哈希作为 ID | gltf 1.4、meshopt 0.6 | Amoris Pioneer 的 OBJ 导入冻结 14–27 秒，本线只走 glTF 且异步 |
 | 神经渲染 | 3D Gaussian Splatting（GPU 排序、与网格深度混合）；神经纹理压缩（潜变量网格 + 小型 MLP，在片元着色器里解码；2026-10-23 起为 beta 功能） | 自研 | 见 4.4 |
 | 音频 | kira（cpal；web 上为 WebAudio） | 0.12 | 混音、空间音频、补间 |
-| agent 接口 | **CLI 优先**：一张命令目录 → `amoris` CLI（连接运行中的宿主，紧凑文本输出，`--json` 精确输出，帮助文本来自目录）、编辑器 WebSocket、脚本 API、测试；MCP（`rmcp`）是同一目录的薄投影 | rmcp 3.5 | agent 在 shell 里最顺手、最省 token；目录唯一，所有前端不漂移 |
+| agent 接口 | **CLI 优先**：一张命令目录 → `amoris` CLI（连接运行中的宿主，紧凑文本输出，`--json` 精确输出，帮助文本来自目录）、编辑器 WebSocket、脚本 API、测试；MCP（`rmcp`）是同一目录的薄投影 | rmcp 3.7 | agent 在 shell 里最顺手、最省 token；目录唯一，所有前端不漂移 |
 | 服务端 | axum + tokio（只在 presenter 一侧） | axum 0.8 | 游戏侧 crate 禁止依赖 tokio |
 | 编辑器 | **TypeScript + React + Vite**；Electron 桌面窗口与 Web 共用 dockview、Monaco 和 wasm/WebGPU 视口，经 WebSocket 与宿主同步 | React 19、Vite 8、Electron 44 | 见 4.5 |
 | 调试 | 调试核心在 `amoris-debug`（QuickJS-ng PR #1421 的 trace 钩子）；前端：CDP 端点（Chrome DevTools、VS Code js-debug）、编辑器、MCP 工具 | 自研 | 见 4.3 |
@@ -327,6 +327,13 @@ beta 功能，测试已移除（4.4）。
 项）；`tracy-client` 不是依赖，性能分析由内建分析器承担（游戏线程的 `profile` 与编辑器的 Profiler，
 渲染器的 GPU 时间戳与 `AMORIS_TRACE` 写出的 Chrome Trace）；kira 只在原生构建的 `amoris-audio` 里，
 浏览器里还没有 WebAudio，也没有声音（[architecture.md](spec/architecture.md) 4.19 与 6）。
+
+2026-10-25 版本注记：rmcp 由 3.5 升到 3.7。3.5.0 的 Streamable HTTP 服务端允许未认证的客户端无限撑大
+工具 schema 缓存，可远程拒绝服务（GHSA-4432-vg92-fqh6，3.6.0 修复）；3.7.0 另修了一个中危的 OAuth
+元数据过滤问题（GHSA-5p52-q7pq-9fq2，引擎不用 OAuth）。契约 mcp.md 7.2 依赖的 rmcp 行为在 3.7.0
+不变，契约仍是 0.2。同时 tokio 升到 1.53.3（RUSTSEC-2026-0386，引擎不调用受影响的
+`AsyncFd::new`），编辑器的 Vite 升到 8.3.5、桌面壳的 Electron 升到 44.9.3，各自修掉开发服务器与
+证书方面的公告。
 
 ### 4.2 脚本：TypeScript on QuickJS-ng
 

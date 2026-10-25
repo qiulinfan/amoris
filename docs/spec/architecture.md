@@ -665,7 +665,7 @@ and `oxc_sourcemap =9.0.0` (script-native, debugger), `rapier3d =0.36.0` with `p
 (render), `wasm-bindgen =0.2.129` with the CLI at the same version (every web spike),
 `arc-swap =1.9.2` (threads), `serde_json =1.0.151`, `tungstenite =0.30.0` and `regex` (debugger);
 spec-persist adds `serde-reflection =0.6.0`, `xxhash-rust =0.8.19` and `blake3 =1.8.7`, and spec-mcp
-`rmcp =3.5.0` and `schemars` 1.2 (read from their sources, not built in slice 0).
+`rmcp =3.7.0` and `schemars` 1.2 (read from their sources, not built in slice 0).
 
 | External crate | Allowed in | Constraint |
 |---|---|---|
@@ -689,7 +689,7 @@ spec-persist adds `serde-reflection =0.6.0`, `xxhash-rust =0.8.19` and `blake3 =
 | `pollster`, `fontdue`, `log`, `libloading`, `renderdoc-sys` | render (`pollster`, `libloading` and `renderdoc-sys` natively; `log` also in audio and viewport) | `pollster` blocks on wgpu's futures; `fontdue` draws the game UI's text; `libloading` and `renderdoc-sys` load RenderDoc's in-application API (`AMORIS_RENDERDOC_FRAME`) |
 | `naga`, `ash` | render, dev-dependencies only | `naga =30.0.1` translates the shaders in tests; `ash` reads Vulkan timestamps in an example |
 | `kira` | audio | native only, with its `cpal` backend (4.19) |
-| `rmcp`, `tokio` | mcp, server, app | never in the game group. `rmcp =3.5.0` (server, macros, `transport-io`, `transport-streamable-http-server`); `tokio =1.53.1` |
+| `rmcp`, `tokio` | mcp, server, app | never in the game group. `rmcp =3.7.0` (server, macros, `transport-io`, `transport-streamable-http-server`); `tokio =1.53.3` |
 | `axum`, `mime_guess` | server (and `axum` in app) | `axum =0.8.9` with `ws`: the host's HTTP and WebSocket endpoints, and in app the render feed's socket on `/render` (`present.rs`); `mime_guess =2.0.5`: content types of served files (docs/spec/server.md) |
 | `ureq` | app | `ureq =3.4.2` without default features (no TLS): the CLI's calls to a host on 127.0.0.1 |
 | `tungstenite`, `regex` | debug (and `tungstenite` in app's dev-dependencies) | the CDP endpoint; app's tests drive it |
