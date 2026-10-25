@@ -1,6 +1,7 @@
 // Runs the web tests of amoris-physics in WebAssembly (docs/spec/numeric.md 3.1 and 5; checks.md
 // 7.2): the sailing scene's hash chain against the golden one, forks at every tick, parry's BVH
-// log2, the level scene's forks, then the sailing and level scenes' hashes at every tick.
+// log2, the level scene's forks, the block volume scene's forks, then the sailing and level scenes'
+// hashes at every tick, a water region's dam break every second and the volume scene's every tick.
 //
 //   cargo build -p amoris-physics --example web_physics --target wasm32-unknown-unknown --release
 //   node crates/amoris-physics/tests/web/run.mjs <target>/wasm32-unknown-unknown/release/examples/web_physics.wasm [expected.txt]
@@ -24,7 +25,7 @@ const ms = performance.now() - started;
 const ptr = exports.report_ptr();
 const report = new TextDecoder().decode(new Uint8Array(exports.memory.buffer, ptr, len));
 const lines = report.split("\n");
-process.stdout.write(lines.filter((l) => !/^(level )?\d+ /.test(l)).join("\n") + "\n");
+process.stdout.write(lines.filter((l) => !/^((level|volume) )?\d+ /.test(l)).join("\n") + "\n");
 console.error(`${lines.length - 1} lines in ${ms.toFixed(0)} ms; last hash: ${lines[lines.length - 2]}`);
 let failed = lines.some((l) => l.startsWith("FAIL"));
 if (expectedPath) {

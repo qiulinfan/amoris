@@ -22,8 +22,8 @@ In this slice:
 - Liquid surfaces at their levels, sloped between cells, and the view from under a liquid (6).
 - Scripts, the feed, persistence, the browser and the checks (7 to 9).
 
-Not in this slice: Rapier bodies floating in volume liquids (they meet volumes only once the
-collider of voxels.md 5.1 lands); liquids that interact (water meeting lava); pressure, waves or
+Not in this slice: Rapier bodies floating in volume liquids (they meet volumes since 2026-10-25,
+voxels.md 5.1); liquids that interact (water meeting lava); pressure, waves or
 a particle or grid solver (Eulerian, SPH) in the rules: the block game's rules are the model.
 Splashes drawn by a particle solver over these liquids, as presentation, were
 [splashes.md](splashes.md) (amended 2026-10-17, after [fluid-box.md](../spikes/fluid-box.md)); they
@@ -127,4 +127,5 @@ flow after a fork, a restore and a replay of a broken bank, the cells' current) 
 
 ## 10. Open questions
 
-1. Rapier bodies floating in volume liquids, once volumes collide with Rapier bodies.
+1. Rapier bodies floating in volume liquids. Volumes collide with Rapier bodies since 2026-10-25
+   (voxels.md 5.1); nothing makes a body float in a volume liquid yet.

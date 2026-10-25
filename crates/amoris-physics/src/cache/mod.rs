@@ -16,6 +16,13 @@
 //! the `Collider` component already, and decoding puts back the shape those components build,
 //! shared with any world that still holds it or built from the restored components. Every other
 //! shape is written inline, as layout 1 wrote all of them.
+//!
+//! Layout 3 adds the block volumes' chunk colliders (`crate::volumes`, voxels.md 5.1): each one's
+//! slot carries its `ChunkRecord`, from which decoding puts back `Physics::volumes`, and names its
+//! shape by the key of its content while the volume's chunk still has that content (its `edited`
+//! tick before the record's check, or else its content's key compared), so decoding takes the
+//! shape from the table or builds it from the restored `Voxels`; a chunk changed since the solver
+//! last looked at it has its shape inline.
 
 mod slots;
 
@@ -23,6 +30,7 @@ use std::collections::BTreeMap;
 
 use amoris_contract::{Problem, detail};
 use amoris_sim::persisted::{Persisted, PersistedCache, RegisterPersisted, Staged};
+use amoris_sim::voxels::{Cell, Voxels};
 use amoris_sim::{EntityId, EntityIndex};
 use bevy_ecs::prelude::World;
 use bincode::Options;
@@ -39,19 +47,21 @@ use crate::shapes::{self, ShapeKey};
 use crate::solver::{
     BodyIndex, ContactLog, Physics, RebuiltSolver, entity_of, rebuild_index, spec_hash, spec_of,
 };
+use crate::volumes::{self, ChunkCollider};
 use crate::walker::Walker;
 use crate::water::{
     BedSource, Edge, Style, WaterDrain, WaterRegion, WaterScratch, WaterSource, WaterSteps,
 };
-use slots::{ByRef, Reading, WorldIn, WorldOut, Writing};
+use slots::{In, Out, Reading, WorldIn, WorldOut, Writing};
 
 /// The cache's identity (versions.md 3.6): the library, its exact versions, the features that
 /// change its serialized layout, the encoding, this wrapper's layout number, and the version of
 /// the shape builds a by-reference slot stands for (`shapes`: bumped with any change to
-/// `solver::shared_shape` or to parry's builders under it; `probe::layout::SHAPE_BUILDS` pins
-/// them). A test checks the versions against `Cargo.lock`.
+/// `solver::shared_shape`, to `volumes::build` or to parry's builders under them;
+/// `probe::layout::SHAPE_BUILDS` pins them; 2 added the volume chunks). A test checks the versions
+/// against `Cargo.lock`.
 pub const IDENTITY: &str = "rapier3d 0.36.0 parry3d 0.31.1 dim3 f32 serde-serialize \
-                            enhanced-determinism bincode 1.3.3 layout 2 shapes 1";
+                            enhanced-determinism bincode 1.3.3 layout 3 shapes 2";
 
 /// Declares this crate's types (persistence.md 2): every component persisted, the solver a Cache
 /// whose state, the resource [`Physics`], is Derived (restore removes it and the section's staged
@@ -123,15 +133,29 @@ fn options() -> impl Options {
 /// The solver's section.
 pub struct PhysicsCache;
 
-/// A by-reference shape no world held at decoding: its entity, spec hash and key.
-type Missing = (EntityId, u64, ShapeKey);
+/// A by-reference shape no world held at decoding.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Missing {
+    /// A fixed body's: its entity, spec hash and key.
+    Fixed(EntityId, u64, ShapeKey),
+    /// A volume chunk's: its entity, chunk and key.
+    Chunk(EntityId, Cell, ShapeKey),
+}
+
+impl Missing {
+    fn entity(&self) -> EntityId {
+        match *self {
+            Missing::Fixed(id, ..) | Missing::Chunk(id, ..) => id,
+        }
+    }
+}
 
 /// A decoded solver.
 enum StagedPhysics {
     /// An empty section: no solver.
     Absent,
     /// A solver with every shape in place.
-    Ready(Box<PhysicsWorld>),
+    Ready(Box<Physics>),
     /// A solver read with placeholders for the by-reference shapes that no world held (`missing`):
     /// apply builds them from the restored components and reads the bytes again. `first` holds the
     /// shapes the first reading shared until then.
@@ -139,6 +163,7 @@ enum StagedPhysics {
         bytes: Vec<u8>,
         first: Box<PhysicsWorld>,
         missing: Vec<Missing>,
+        volumes: Vec<ChunkCollider>,
     },
 }
 
@@ -148,13 +173,14 @@ impl Staged for StagedPhysics {
             StagedPhysics::Absent => {
                 world.remove_resource::<Physics>();
             }
-            StagedPhysics::Ready(w) => world.insert_resource(Physics { world: *w }),
+            StagedPhysics::Ready(p) => world.insert_resource(*p),
             StagedPhysics::Pending {
                 bytes,
                 first,
                 missing,
+                volumes,
             } => match complete(world, &bytes, &missing) {
-                Some(w) => world.insert_resource(Physics { world: w }),
+                Some(w) => world.insert_resource(Physics { world: w, volumes }),
                 // The components do not build the shapes the bytes refer to: a snapshot this
                 // engine did not write. The solver is rebuilt from the components instead
                 // (versions.md 6.3); the next step reports it, and a verified restore names the
@@ -164,7 +190,8 @@ impl Staged for StagedPhysics {
                         .get_resource::<amoris_sim::SimClock>()
                         .map_or(f64::from(first.integration_parameters.dt), |c| c.dt());
                     world.insert_resource(Physics::new(dt));
-                    let mut entities: Vec<EntityId> = missing.iter().map(|m| m.0).collect();
+                    let mut entities: Vec<EntityId> = missing.iter().map(Missing::entity).collect();
+                    entities.sort_unstable();
                     entities.dedup();
                     world.insert_resource(RebuiltSolver { entities });
                 }
@@ -174,12 +201,22 @@ impl Staged for StagedPhysics {
 }
 
 /// Builds the `missing` shapes from the restored components (each entity's components must have
-/// the spec hash and key of its slot) and reads `bytes` again with them.
+/// the spec hash and key of its slot; each volume chunk the content of its key) and reads `bytes`
+/// again with them.
 fn complete(world: &mut World, bytes: &[u8], missing: &[Missing]) -> Option<PhysicsWorld> {
     let wanted: BTreeMap<EntityId, (u64, ShapeKey)> = missing
         .iter()
-        .map(|&(id, spec, key)| (id, (spec, key)))
+        .filter_map(|m| match *m {
+            Missing::Fixed(id, spec, key) => Some((id, (spec, key))),
+            Missing::Chunk(..) => None,
+        })
         .collect();
+    let mut chunks: BTreeMap<EntityId, Vec<(Cell, ShapeKey)>> = BTreeMap::new();
+    for m in missing {
+        if let Missing::Chunk(id, chunk, key) = *m {
+            chunks.entry(id).or_default().push((chunk, key));
+        }
+    }
     let mut built = BTreeMap::new();
     let mut q = world.query::<(&EntityId, Option<&RigidBody>, &Collider)>();
     #[allow(clippy::disallowed_methods)] // looked up by id: the order changes nothing
@@ -196,6 +233,21 @@ fn complete(world: &mut World, bytes: &[u8], missing: &[Missing]) -> Option<Phys
     if !wanted.values().all(|(_, k)| built.contains_key(k)) {
         return None;
     }
+    // The entity index is rebuilt after the sections, so the volumes are found by their ids.
+    let mut q = world.query::<(&EntityId, &Voxels)>();
+    #[allow(clippy::disallowed_methods)] // looked up by id: the order changes nothing
+    for (id, v) in q.iter(world) {
+        for &(chunk, key) in chunks.get(id).map_or(&[][..], Vec::as_slice) {
+            built.insert(key, volumes::rebuilt(v, chunk, key)?);
+        }
+    }
+    if !chunks
+        .values()
+        .flatten()
+        .all(|(_, k)| built.contains_key(k))
+    {
+        return None;
+    }
     let reading = Reading::new(&built);
     let w = read(bytes, &reading).ok()?;
     reading.missing.borrow().is_empty().then_some(w)
@@ -207,30 +259,78 @@ fn read(bytes: &[u8], reading: &Reading) -> Result<PhysicsWorld, Problem> {
         .map_err(|e| noncanonical(e.to_string()))
 }
 
-/// For each collider in Rapier's order, its slot by reference if it has one: a fixed body's own
-/// collider whose shape was built from that body's components (registered under the body's spec
-/// hash) and whose entity's `RigidBody` and `Collider` still have that spec hash, so they build
-/// this very shape.
-fn by_reference(world: &World, p: &PhysicsWorld) -> Vec<Option<ByRef>> {
+/// Whether the volume chunk of `c` still has the content its record names: its volume has the
+/// record's form and the chunk is unedited since the record's check, or else its content has the
+/// record's key. `forms` keeps each volume's form for the call.
+fn chunk_in_sync(
+    world: &World,
+    index: Option<&EntityIndex>,
+    c: &ChunkCollider,
+    forms: &mut BTreeMap<EntityId, u64>,
+) -> bool {
+    let Some(v) = index
+        .and_then(|i| i.get(c.entity))
+        .and_then(|e| world.get::<Voxels>(e))
+    else {
+        return false;
+    };
+    let form = *forms.entry(c.entity).or_insert_with(|| volumes::form(v));
+    let Some(chunk) = v.chunk(c.record.chunk) else {
+        return false;
+    };
+    form == c.record.form
+        && (chunk.edited < c.record.checked || volumes::chunk_key(v, chunk) == Some(c.record.key))
+}
+
+/// For each collider in Rapier's order, how its shape is written: a volume chunk's by its record,
+/// by reference while its chunk is in sync ([`chunk_in_sync`]); a fixed body's own collider by
+/// reference if its shape was built from that body's components (registered under the body's spec
+/// hash) and its entity's `RigidBody` and `Collider` still have that spec hash, so they build this
+/// very shape; every other inline.
+fn by_reference(world: &World, p: &Physics) -> Vec<Out> {
     let index = world.get_resource::<EntityIndex>();
+    let chunks: BTreeMap<(u32, u32), &ChunkCollider> = p
+        .volumes
+        .iter()
+        .filter_map(|c| Some((c.handle?.into_raw_parts(), c)))
+        .collect();
+    let mut forms = BTreeMap::new();
+    let p = &p.world;
     p.colliders
         .iter()
-        .map(|(_, co)| {
-            let body = p.bodies.get(co.parent()?)?;
-            let id = entity_of(body.user_data)?;
-            if !body.is_fixed() || entity_of(co.user_data) != Some(id) {
-                return None;
+        .map(|(h, co)| {
+            if let Some(c) = chunks.get(&h.into_raw_parts()) {
+                return if chunk_in_sync(world, index, c, &mut forms) {
+                    Out::Chunk(c.record)
+                } else {
+                    Out::ChunkInline(c.record)
+                };
             }
-            let spec = spec_of(body.user_data);
-            let (key, built_from) = shapes::registered(co.shared_shape())?;
-            if built_from != spec {
-                return None;
-            }
-            let e = index?.get(id)?;
-            let same = spec_hash(world.get::<RigidBody>(e), world.get::<Collider>(e)?) == spec;
-            same.then_some((spec, key))
+            fixed_slot(world, index, p, co).map_or(Out::Inline, Out::ByRef)
         })
         .collect()
+}
+
+/// A fixed body's own collider's slot by reference, if it has one ([`by_reference`]).
+fn fixed_slot(
+    world: &World,
+    index: Option<&EntityIndex>,
+    p: &PhysicsWorld,
+    co: &rapier3d::prelude::Collider,
+) -> Option<(u64, ShapeKey)> {
+    let body = p.bodies.get(co.parent()?)?;
+    let id = entity_of(body.user_data)?;
+    if !body.is_fixed() || entity_of(co.user_data) != Some(id) {
+        return None;
+    }
+    let spec = spec_of(body.user_data);
+    let (key, built_from) = shapes::registered(co.shared_shape())?;
+    if built_from != spec {
+        return None;
+    }
+    let e = index?.get(id)?;
+    let same = spec_hash(world.get::<RigidBody>(e), world.get::<Collider>(e)?) == spec;
+    same.then_some((spec, key))
 }
 
 fn encode_problem(reason: String) -> Problem {
@@ -265,7 +365,7 @@ impl PersistedCache for PhysicsCache {
         let Some(p) = world.get_resource::<Physics>() else {
             return Ok(());
         };
-        let slots = by_reference(world, &p.world);
+        let slots = by_reference(world, p);
         let writing = Writing::new(&slots);
         let value = WorldOut {
             world: &p.world,
@@ -285,8 +385,9 @@ impl PersistedCache for PhysicsCache {
     }
 
     /// Decodes and checks that every body and collider names an entity, that there is one shape
-    /// slot per collider, and that a slot by reference belongs to a fixed body's own collider and
-    /// names that body's spec hash.
+    /// slot per collider, that a slot by reference belongs to a fixed body's own collider and
+    /// names that body's spec hash, and that a volume chunk's slot belongs to a collider with no
+    /// body, one per chunk.
     fn decode(bytes: &[u8]) -> Result<Box<dyn Staged>, Problem> {
         if bytes.is_empty() {
             return Ok(Box::new(StagedPhysics::Absent));
@@ -312,9 +413,27 @@ impl PersistedCache for PhysicsCache {
         // The slots no world held, in ascending order, walked beside the colliders.
         let mut gaps = reading.missing.into_inner().into_iter().peekable();
         let mut missing = Vec::new();
-        for (k, ((_, co), slot)) in w.colliders.iter().zip(&slots).enumerate() {
-            let Some((spec, key)) = *slot else {
-                continue;
+        let mut chunks = Vec::new();
+        for (k, ((h, co), slot)) in w.colliders.iter().zip(&slots).enumerate() {
+            let (spec, key) = match *slot {
+                In::Inline => continue,
+                In::ByRef(r) => r,
+                In::Chunk(record) => {
+                    let (None, Some(id)) = (co.parent(), entity_of(co.user_data)) else {
+                        return Err(noncanonical(format!(
+                            "collider {k} is a volume chunk's, but it has a body"
+                        )));
+                    };
+                    if gaps.next_if_eq(&k).is_some() {
+                        missing.push(Missing::Chunk(id, record.chunk, record.key));
+                    }
+                    chunks.push(ChunkCollider {
+                        entity: id,
+                        handle: Some(h),
+                        record,
+                    });
+                    continue;
+                }
             };
             let entity = entity_of(co.user_data);
             let owner = co.parent().and_then(|h| w.bodies.get(h)).filter(|b| {
@@ -327,16 +446,30 @@ impl PersistedCache for PhysicsCache {
                 )));
             };
             if gaps.next_if_eq(&k).is_some() {
-                missing.push((id, spec, key));
+                missing.push(Missing::Fixed(id, spec, key));
             }
         }
+        chunks.sort_unstable_by_key(|c| (c.entity, c.record.chunk));
+        if let Some(d) = chunks
+            .windows(2)
+            .find(|d| (d[0].entity, d[0].record.chunk) == (d[1].entity, d[1].record.chunk))
+        {
+            return Err(noncanonical(format!(
+                "two colliders for chunk {:?} of entity {}",
+                d[0].record.chunk, d[0].entity
+            )));
+        }
         if missing.is_empty() {
-            return Ok(Box::new(StagedPhysics::Ready(Box::new(w))));
+            return Ok(Box::new(StagedPhysics::Ready(Box::new(Physics {
+                world: w,
+                volumes: chunks,
+            }))));
         }
         Ok(Box::new(StagedPhysics::Pending {
             bytes: bytes.to_vec(),
             first: Box::new(w),
             missing,
+            volumes: chunks,
         }))
     }
 

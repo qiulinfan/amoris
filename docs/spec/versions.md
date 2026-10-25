@@ -182,10 +182,11 @@ drive the decoder that renders old bytes as JSON (8.1) and `diff` (replay.md 3.2
 A cache (persistence.md 8) is opaque, so its layout is named by a string: the library's name and
 exact version, the features that change its serialized layout, and a local layout number bumped when
 the wrapper changes. For Rapier:
-`"rapier3d 0.36.0 parry3d 0.31.1 dim3 f32 serde-serialize enhanced-determinism bincode 1.3.3 layout 2 shapes 1"`
-(the encoding named, architecture.md 11, choice 8; layout 2 since Pioneer's 2026-10-15,
-persistence.md 8). The `shapes` token versions what a slot by reference stands for, the shapes
-`solver::shared_shape` builds with parry's builders: any change to them (another mesh flag, a parry
+`"rapier3d 0.36.0 parry3d 0.31.1 dim3 f32 serde-serialize enhanced-determinism bincode 1.3.3 layout 3 shapes 2"`
+(the encoding named, architecture.md 11, choice 8; layout 2 since Pioneer's 2026-10-15, layout 3,
+with the block volumes' chunk slots, and `shapes 2` since 2026-10-25, persistence.md 8). The
+`shapes` token versions what a slot by reference stands for, the shapes `solver::shared_shape` and
+`volumes::build` build with parry's builders: any change to them (another mesh flag, a parry
 upgrade, or a patch under `[patch.crates-io]`, which leaves the version string as it is) bumps it,
 and the web test `physics.shape_builds` fails until it is bumped and its pinned digest re-blessed.
 Its section's version is 0 and its fingerprint is the first 16 bytes of the BLAKE3 hash of the

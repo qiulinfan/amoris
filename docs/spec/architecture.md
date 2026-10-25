@@ -950,7 +950,7 @@ step can confirm it or change the layout.
    list yet.
 8. **Slice 1: the physics cache is written by bincode.** `PersistedCache::encode` writes Rapier's
    `PhysicsWorld` with `bincode =1.3.3` (6), and its identity (versions.md 3.6) is
-   `"rapier3d 0.36.0 parry3d 0.31.1 dim3 f32 serde-serialize enhanced-determinism bincode 1.3.3 layout 2 shapes 1"`,
+   `"rapier3d 0.36.0 parry3d 0.31.1 dim3 f32 serde-serialize enhanced-determinism bincode 1.3.3 layout 3 shapes 2"`,
    versions.md's string with the encoding named, checked against `Cargo.lock` by a test. The
    alternative, the PCE serializer moved down into `amoris-sim` so physics writes its cache with it,
    is worth it if a second cache appears; one cache does not justify moving spec-persist's encoder
@@ -959,7 +959,8 @@ step can confirm it or change the layout.
    components built, through wrappers around bincode's serializer and deserializer that follow only
    the colliders' containers; the reference's key is the BLAKE3 digest of the components
    (amoris-sim's `ContentHash`, no new dependency), and `shapes 1` names the shape builds it stands
-   for.
+   for. Layout 3 (2026-10-25; voxels.md 5.1) adds the block volumes' chunk colliders, whose slots
+   name their shapes by the key of the chunk's content, and `shapes 2` the chunk shapes' build.
 9. **Slice 1: the runtime gives scripts the engine components they need.** `amoris-physics`
    registers its components with no script schema (choice 7), so `amoris-runtime`, which links
    physics and the script host, rebuilds each world's component registry after the physics plugin

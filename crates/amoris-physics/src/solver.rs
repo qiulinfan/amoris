@@ -16,8 +16,9 @@ use std::sync::Mutex;
 use amoris_contract::{Problem, detail};
 use amoris_sim::order::{by_id, by_id_mut};
 use amoris_sim::sim::system_failed;
+use amoris_sim::voxels::Voxels;
 use amoris_sim::{EntityId, SimClock, SystemKey, TickOutput, TickPhase};
-use bevy_ecs::prelude::{Query, Res, ResMut, Resource, Without};
+use bevy_ecs::prelude::{Query, Res, ResMut, Resource, With, Without};
 use rapier3d::prelude::{
     ActiveEvents, ColliderBuilder, ColliderHandle, ColliderSet, CollisionEvent, ContactPair,
     EventHandler, MassProperties, PhysicsWorld, RigidBodyBuilder, RigidBodyHandle, RigidBodySet,
@@ -33,13 +34,18 @@ use crate::geom::{self, V3};
 use crate::readings;
 use crate::sea::{GRAVITY, Sea};
 use crate::shapes;
+use crate::volumes::{self, ChunkCollider, Volume};
 
 /// The solver's whole cross-tick state: bodies, colliders, broad and narrow phase with contact
-/// manifolds and warm-start impulses, islands and sleep counters, joints, integration parameters.
-/// A Cache (persistence.md 8), written by [`crate::PhysicsCache`].
+/// manifolds and warm-start impulses, islands and sleep counters, joints, integration parameters,
+/// and what it knows of the block volumes' chunks (`volumes`, each collider's record written in its
+/// shape slot). A Cache (persistence.md 8), written by [`crate::PhysicsCache`].
 #[derive(Resource)]
 pub struct Physics {
     pub world: PhysicsWorld,
+    /// The volumes' chunks the solver has looked at, ascending by entity and chunk
+    /// (`crate::volumes`).
+    pub volumes: Vec<ChunkCollider>,
 }
 
 impl Physics {
@@ -48,7 +54,10 @@ impl Physics {
         let mut world = PhysicsWorld::new();
         world.gravity = geom::vec_in([0.0, -GRAVITY, 0.0]);
         world.integration_parameters.dt = geom::f32_of(dt);
-        Physics { world }
+        Physics {
+            world,
+            volumes: Vec::new(),
+        }
     }
 }
 
@@ -417,6 +426,10 @@ fn not_finite(entity: EntityId, what: &str) -> Problem {
 }
 
 /// `physics.step`: sync in, forces, one step of `dt`, write back.
+///
+/// Block volumes sync after the bodies (`crate::volumes::sync`), in id order: a volume's origin is
+/// its `Transform` (the origin without one), read from the bodies' rows for a volume that also has
+/// a `Collider`.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn step(
     clock: Res<SimClock>,
@@ -427,6 +440,8 @@ pub(crate) fn step(
     seas: Query<(&EntityId, &Sea)>,
     mut bodies: Query<BodyItem<'static>>,
     mut loose: Query<(&EntityId, &mut ExternalForce), Without<Collider>>,
+    volumes: Query<(&EntityId, &Voxels, Option<&Transform>), Without<Collider>>,
+    clad: Query<(&EntityId, &Voxels), With<Collider>>,
     rebuilt: Option<ResMut<RebuiltSolver>>,
 ) {
     let key = SystemKey::new("physics.step").ok();
@@ -446,7 +461,10 @@ pub(crate) fn step(
             report(id, rebuilt_problem(id));
         }
     }
-    let world = &mut physics.world;
+    let Physics {
+        world,
+        volumes: chunks,
+    } = &mut *physics;
     let mut items: Vec<_> = by_id_mut(&mut bodies).collect();
 
     // 1. Remove the bodies whose entity is gone, lost its Collider or Transform, or whose RigidBody
@@ -547,6 +565,36 @@ pub(crate) fn step(
     for (_, mut f) in by_id_mut(&mut loose) {
         *f = ExternalForce::default();
     }
+
+    // 2a. The block volumes' chunks.
+    let mut list: Vec<Volume> = by_id(&volumes)
+        .map(|(id, voxels, tf)| Volume {
+            id: *id,
+            voxels,
+            origin: tf.map_or(geom::ZERO, |t| t.position),
+        })
+        .collect();
+    for (id, voxels) in by_id(&clad) {
+        let origin = items
+            .binary_search_by_key(id, |item| *item.0)
+            .ok()
+            .and_then(|i| items[i].1.as_deref())
+            .map_or(geom::ZERO, |t| t.position);
+        list.push(Volume {
+            id: *id,
+            voxels,
+            origin,
+        });
+    }
+    list.sort_unstable_by_key(|v| v.id);
+    volumes::sync(
+        world,
+        chunks,
+        clock.tick.0,
+        &list,
+        &mut removed,
+        &mut report,
+    );
 
     // 3. One step.
     let collector = Collector {

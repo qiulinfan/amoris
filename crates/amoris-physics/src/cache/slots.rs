@@ -1,8 +1,13 @@
-//! The shape slots of the cache's layout 2 (docs/spec/persistence.md 8): Rapier's `PhysicsWorld`
+//! The shape slots of the cache's layout 3 (docs/spec/persistence.md 8): Rapier's `PhysicsWorld`
 //! through its own `serde` output, except that each collider's `shape` field is written as a slot,
 //! `ShapeSlot::Inline(shape)` (bincode: the variant index 0, then the shape) or
 //! `ShapeSlot::ByRef(spec, key)` (the index 1, then the body's 64-bit spec hash and the 32-byte key
-//! of its components, `crate::shapes`), whose shape is the one the body's components build.
+//! of its components, `crate::shapes`), whose shape is the one the body's components build. A block
+//! volume chunk's collider (`crate::volumes`) has `ShapeSlot::Chunk(record)` (the index 2, then its
+//! `ChunkRecord`: the chunk's key, the tick it was checked at, the volume's form and the shape's
+//! key), whose shape is the one the chunk's content with that key builds, or, while its chunk has
+//! changed since the solver last looked at it, `ShapeSlot::ChunkInline(record, shape)` (the index
+//! 3). Layout 2 had the first two.
 //!
 //! Rapier keeps a collider's fields private and derives its `serde`, so the slots are written and
 //! read by wrapping the serializer and the deserializer, in layers that keep the wrapped code to
@@ -43,9 +48,10 @@ use serde::ser::{
 };
 
 use crate::shapes::{self, ShapeKey};
+use crate::volumes::ChunkRecord;
 
 const SLOT: &str = "ShapeSlot";
-const VARIANTS: &[&str] = &["Inline", "ByRef"];
+const VARIANTS: &[&str] = &["Inline", "ByRef", "Chunk", "ChunkInline"];
 
 /// The fields of `PhysicsWorld` its derived `serde` writes, in order (rapier3d 0.36.0,
 /// `src/pipeline/physics_world.rs`; `physics_pipeline`, `collision_pipeline` and `ccd_solver` are
@@ -66,12 +72,29 @@ const WORLD_FIELDS: &[&str] = &[
 /// A by-reference slot: the body's spec hash and its components' key.
 pub(super) type ByRef = (u64, ShapeKey);
 
+/// How a collider's shape is written.
+#[derive(Clone, Copy, Debug)]
+pub(super) enum Out {
+    Inline,
+    ByRef(ByRef),
+    Chunk(ChunkRecord),
+    ChunkInline(ChunkRecord),
+}
+
+/// How a collider's shape was read: inline, by reference, or a volume chunk's (by reference or
+/// not).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum In {
+    Inline,
+    ByRef(ByRef),
+    Chunk(ChunkRecord),
+}
+
 // --- Writing -------------------------------------------------------------------------------------
 
-/// The colliders written by reference: for each collider in Rapier's order, its slot by reference
-/// or `None` (inline).
+/// How each collider's shape is written, in Rapier's order.
 pub(super) struct Writing<'a> {
-    slots: &'a [Option<ByRef>],
+    slots: &'a [Out],
     next: Cell<usize>,
     /// Writes each shape as Rapier does, with no slot (for the test that the wrappers write
     /// Rapier's own bytes).
@@ -79,7 +102,7 @@ pub(super) struct Writing<'a> {
 }
 
 impl<'a> Writing<'a> {
-    pub(super) fn new(slots: &'a [Option<ByRef>]) -> Writing<'a> {
+    pub(super) fn new(slots: &'a [Out]) -> Writing<'a> {
         Writing {
             slots,
             next: Cell::new(0),
@@ -157,6 +180,8 @@ impl<T: ?Sized + Serialize> Serialize for Inner<'_, '_, T> {
 enum Slot<'v, T: ?Sized> {
     Inline(&'v T),
     ByRef(ByRef),
+    Chunk(ChunkRecord),
+    ChunkInline(ChunkRecord, &'v T),
 }
 
 impl<T: ?Sized + Serialize> Serialize for Slot<'_, T> {
@@ -164,6 +189,10 @@ impl<T: ?Sized + Serialize> Serialize for Slot<'_, T> {
         match self {
             Slot::Inline(shape) => s.serialize_newtype_variant(SLOT, 0, VARIANTS[0], *shape),
             Slot::ByRef(r) => s.serialize_newtype_variant(SLOT, 1, VARIANTS[1], r),
+            Slot::Chunk(r) => s.serialize_newtype_variant(SLOT, 2, VARIANTS[2], r),
+            Slot::ChunkInline(r, shape) => {
+                s.serialize_newtype_variant(SLOT, 3, VARIANTS[3], &(r, *shape))
+            }
         }
     }
 }
@@ -586,9 +615,11 @@ impl<S: SerializeStruct> SerializeStruct for IFields<'_, S> {
         if self.w.transparent {
             return self.s.serialize_field(key, v);
         }
-        match self.w.slots.get(k).copied().flatten() {
-            Some(r) => self.s.serialize_field(key, &Slot::<T>::ByRef(r)),
-            None => self.s.serialize_field(key, &Slot::Inline(v)),
+        match self.w.slots.get(k).copied().unwrap_or(Out::Inline) {
+            Out::Inline => self.s.serialize_field(key, &Slot::Inline(v)),
+            Out::ByRef(r) => self.s.serialize_field(key, &Slot::<T>::ByRef(r)),
+            Out::Chunk(r) => self.s.serialize_field(key, &Slot::<T>::Chunk(r)),
+            Out::ChunkInline(r) => self.s.serialize_field(key, &Slot::ChunkInline(r, v)),
         }
     }
 
@@ -603,12 +634,12 @@ impl<S: SerializeStruct> SerializeStruct for IFields<'_, S> {
 
 // --- Reading -------------------------------------------------------------------------------------
 
-/// Where by-reference slots get their shapes: those `provided` by key, then the table of built
-/// shapes; a slot with neither gets a placeholder and is listed in `missing`. Every slot read is
-/// listed in `slots`, in Rapier's order.
+/// Where by-reference slots (a fixed body's or a volume chunk's) get their shapes: those `provided`
+/// by key, then the table of built shapes; a slot with neither gets a placeholder and is listed in
+/// `missing`. Every slot read is listed in `slots`, in Rapier's order.
 pub(super) struct Reading<'a> {
     provided: &'a BTreeMap<ShapeKey, SharedShape>,
-    pub(super) slots: RefCell<Vec<Option<ByRef>>>,
+    pub(super) slots: RefCell<Vec<In>>,
     pub(super) missing: RefCell<Vec<usize>>,
 }
 
@@ -623,7 +654,7 @@ impl<'a> Reading<'a> {
 
     fn shape(&self, (spec, key): ByRef) -> Result<SharedShape, &'static str> {
         let ordinal = self.slots.borrow().len();
-        self.slots.borrow_mut().push(Some((spec, key)));
+        self.slots.borrow_mut().push(In::ByRef((spec, key)));
         if let Some(s) = self.provided.get(&key) {
             return Ok(s.clone());
         }
@@ -636,6 +667,20 @@ impl<'a> Reading<'a> {
         }
         self.missing.borrow_mut().push(ordinal);
         Ok(SharedShape::ball(0.0))
+    }
+
+    /// A volume chunk's shape by reference: by its key alone, which names its content.
+    fn chunk(&self, r: ChunkRecord) -> SharedShape {
+        let ordinal = self.slots.borrow().len();
+        self.slots.borrow_mut().push(In::Chunk(r));
+        if let Some(s) = self.provided.get(&r.key) {
+            return s.clone();
+        }
+        if let Some((s, _)) = shapes::recall(&r.key) {
+            return s;
+        }
+        self.missing.borrow_mut().push(ordinal);
+        SharedShape::ball(0.0)
     }
 }
 
@@ -1189,7 +1234,7 @@ impl<'de, T: DeserializeSeed<'de>> Visitor<'de> for SlotSeed<'_, T> {
         let (index, v): (u32, _) = a.variant()?;
         match index {
             0 => {
-                self.r.slots.borrow_mut().push(None);
+                self.r.slots.borrow_mut().push(In::Inline);
                 v.newtype_variant_seed(self.seed)
             }
             1 => {
@@ -1198,9 +1243,50 @@ impl<'de, T: DeserializeSeed<'de>> Visitor<'de> for SlotSeed<'_, T> {
                 cast(shape)
                     .ok_or_else(|| de::Error::custom("a collider's shape is not a SharedShape"))
             }
+            2 => {
+                let r: ChunkRecord = v.newtype_variant()?;
+                cast(self.r.chunk(r))
+                    .ok_or_else(|| de::Error::custom("a collider's shape is not a SharedShape"))
+            }
+            3 => v.newtype_variant_seed(ChunkInline {
+                seed: self.seed,
+                r: self.r,
+            }),
             _ => Err(de::Error::custom(
-                "a shape slot is 0 (inline) or 1 (by reference)",
+                "a shape slot is 0 (inline), 1 (by reference), 2 (a chunk's by reference) or 3 \
+                 (a chunk's inline)",
             )),
         }
+    }
+}
+
+/// A chunk's inline slot: its record, then the shape.
+struct ChunkInline<'r, T> {
+    seed: T,
+    r: &'r Reading<'r>,
+}
+
+impl<'de, T: DeserializeSeed<'de>> DeserializeSeed<'de> for ChunkInline<'_, T> {
+    type Value = T::Value;
+
+    fn deserialize<D: Deserializer<'de>>(self, d: D) -> Result<T::Value, D::Error> {
+        d.deserialize_tuple(2, self)
+    }
+}
+
+impl<'de, T: DeserializeSeed<'de>> Visitor<'de> for ChunkInline<'_, T> {
+    type Value = T::Value;
+
+    fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str("a chunk's record and shape")
+    }
+
+    fn visit_seq<A: SeqAccess<'de>>(self, mut a: A) -> Result<T::Value, A::Error> {
+        let r: ChunkRecord = a
+            .next_element()?
+            .ok_or_else(|| de::Error::invalid_length(0, &"a chunk's record and shape"))?;
+        self.r.slots.borrow_mut().push(In::Chunk(r));
+        a.next_element_seed(self.seed)?
+            .ok_or_else(|| de::Error::invalid_length(1, &"a chunk's record and shape"))
     }
 }

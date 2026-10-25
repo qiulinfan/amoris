@@ -1,9 +1,10 @@
-//! What layout 2 of the physics cache (docs/spec/persistence.md 8) must keep, pinned.
+//! What layouts 2 and 3 of the physics cache (docs/spec/persistence.md 8) must keep, pinned.
 //!
 //! - **The shape builds its by-reference slots mean.** A slot by reference stands for the shape
-//!   `solver::shared_shape` builds from the body's components, so [`shape_builds`] digests the
-//!   built shapes of every kind (a triangle mesh with its BVH, convex hulls, a compound, the
-//!   primitives) and [`SHAPE_BUILDS`] pins the digest: the web test `physics.shape_builds` fails
+//!   `solver::shared_shape` builds from the body's components, or `volumes::build` from a volume
+//!   chunk's solid cells, so [`shape_builds`] digests the built shapes of every kind (a triangle
+//!   mesh with its BVH, convex hulls, a compound, the primitives, a volume chunk) and
+//!   [`SHAPE_BUILDS`] pins the digest: the web test `physics.shape_builds` fails
 //!   natively or in WebAssembly when a build changes, until the cache identity's `shapes` token is
 //!   bumped (versions.md 3.6) and the digest re-blessed. The web report carries the digest, so the
 //!   native and WebAssembly builds compare the shapes byte for byte.
@@ -17,7 +18,8 @@
 //!   every world (`af4dd1d3`) changed every run's persisted bytes, Pioneer's implicit buoyancy
 //!   (`babe544b`, water.md 47) the sailing scene's trajectory, and the Floater's added mass
 //!   (version 2, water.md 56) and the Sea's wind sea and look (version 2, water.md 60) the sailing
-//!   scene's persisted bytes, its forces unchanged.
+//!   scene's persisted bytes, its forces unchanged. Layout 3 left them as they were: it adds the
+//!   block volumes' chunk slots, and these scenes hold no volume.
 
 use amoris_sim::rng::fnv1a64_extend;
 use amoris_sim::{NoHooks, Sim};
@@ -92,22 +94,40 @@ fn sample_shapes() -> Vec<Shape> {
     ]
 }
 
+/// A volume chunk's solid cells from a fixed integer sequence (xorshift32): about a third of them.
+fn sample_mask() -> crate::volumes::Mask {
+    let mut x = 0x2545_f491u32;
+    let mut mask = [0u8; 512];
+    for b in &mut mask {
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        *b = u8::try_from(x & 0xff).unwrap_or(0) & u8::try_from((x >> 8) & 0xff).unwrap_or(0);
+    }
+    mask
+}
+
 /// FNV-1a 64 over the bincode bytes (as the cache writes a shape inline) of every shape of
-/// [`sample_shapes`] as `solver::shared_shape` builds it, each preceded by its length.
+/// [`sample_shapes`] as `solver::shared_shape` builds it, then of a volume chunk of
+/// [`sample_mask`]'s cells of 0.5 m as `volumes::build` builds it, each preceded by its length.
 pub fn shape_builds() -> Result<u64, String> {
     let entity = amoris_sim::EntityId::FIRST;
-    let mut h = FNV;
+    let mut built = Vec::new();
     for s in sample_shapes() {
-        let built = shared_shape(entity, &s).map_err(|p| p.message)?;
-        let bytes = bincode::serialize(&built).map_err(|e| e.to_string())?;
+        built.push(shared_shape(entity, &s).map_err(|p| p.message)?);
+    }
+    built.push(crate::volumes::build(0.5, &sample_mask()));
+    let mut h = FNV;
+    for shape in built {
+        let bytes = bincode::serialize(&shape).map_err(|e| e.to_string())?;
         h = fnv1a64_extend(h, &(bytes.len() as u64).to_le_bytes());
         h = fnv1a64_extend(h, &bytes);
     }
     Ok(h)
 }
 
-/// The digest of [`shape_builds`] for the cache identity's `shapes 1`.
-pub const SHAPE_BUILDS: u64 = 0x990f_aec3_5e60_6bf7;
+/// The digest of [`shape_builds`] for the cache identity's `shapes 2`.
+pub const SHAPE_BUILDS: u64 = 0x3f30_40cc_9f37_f207;
 
 /// `physics.shape_builds`.
 pub fn check_shape_builds() -> Result<(), String> {

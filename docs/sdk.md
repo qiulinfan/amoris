@@ -127,7 +127,7 @@ Writes apply when `run` returns (none if it throws); `get`/`has`/`exists` see th
 
 A `Voxels` entity holds a world of blocks in 16 x 16 x 16 chunks with a palette (index 0 is air);
 a scene loads its cells from a cells file (`"Voxels": {"source": "world.cells", "palette": [...]}`).
-The renderer meshes it and a `Walker` collides with its solid blocks
+The renderer meshes it, and a `Walker` and Rapier bodies collide with its solid blocks
 ([spec/voxels.md](spec/voxels.md)). Scripts read, edit and ray-cast it through `ctx.voxels`; edits
 apply when `run` returns, and the call's later reads see them:
 

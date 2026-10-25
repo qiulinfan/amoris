@@ -18,7 +18,8 @@ In this slice:
 
 - `Voxels`, an engine component: a volume of cells in chunks, with a palette of blocks (2).
 - A binary cells file a scene's volume loads from (2.3).
-- (Amended: collision with volumes is the walker's own, 5.1.)
+- (Amended: collision with volumes is the walker's own, 5.1; Rapier bodies and physics ray casts
+  meet volumes too since 2026-10-25, 5.1.)
 - Persistence and hashing of the volume (3).
 - Script natives: get, set, fill, ray-cast (4).
 - `Walker`, an engine component, and the `physics.walk` system: a first-person character in the
@@ -143,14 +144,47 @@ ctx.voxels.raycast(volume, origin, dir, maxM, { solidOnly? }): VoxelHit | null
 - In this slice the walker (5.2) collides with volumes by the block game's own method: its box
   against the boxes of solid cells, swept one axis at a time. It is exact on the grid, in `f64`,
   deterministic by construction, needs no Rapier state and costs only the cells the box crosses.
-- Rapier bodies do not collide with volumes yet, and `amoris_physics::query::cast_ray` does not
-  hit them; `ctx.voxels.raycast` (4) is the ray cast against blocks.
+- Rapier bodies collide with volumes, and `amoris_physics::query::cast_ray`, `cast_ray_among` and
+  `overlap_ball` meet them (below); `ctx.voxels.raycast` (4) remains the exact ray cast against
+  blocks, with their palette indices and faces.
 - Amended 2026-10-17, during implementation: the slice first proposed a parry `Voxels` shape in the
   Rapier world. The solver is persisted as a Cache section of Rapier's own bytes (persistence.md 8),
   so a voxel shape there is written into every snapshot (blockcraft: 1.3 MB) unless the cache
   writes it by reference, as it writes a fixed `Collider`'s shape (`cache/slots.rs`) and rebuilds
-  it from the `Voxels` component on restore. That extension is the next step for dynamic bodies
-  and physics ray casts against volumes; nothing the walker or the scripts do depends on it.
+  it from the `Voxels` component on restore. The walker and the scripts do not depend on it.
+- Built 2026-10-17 on branch `voxel-collider` and brought to main 2026-10-25 (charter 4.9's note),
+  in `amoris_physics::volumes`:
+  - Each chunk of a volume holding a solid cell is one fixed collider with no body, at the volume's
+    origin plus the chunk's offset, whose shape is a parry 0.31 `Voxels` of the chunk's solid cells
+    (cells of edge `cell_m` in `f32`); its entity is the volume's, so ray casts, overlaps and
+    `physics.contact_began`/`_ended` name the volume, and a boat touching it is aground. Friction
+    and restitution are a `Collider`'s defaults (0.5, 0). No `Collider` component stands behind it,
+    so nothing is spec-hashed per tick.
+  - `physics.step` syncs the volumes after the bodies, in id order. It looks at a chunk again only
+    when its `edited` is not before the tick it last checked it, when the volume's form (`cell_m`
+    and its blocks' solidity) changed, or when the chunk is new or gone; a check computes the
+    chunk's key (BLAKE3 of `cell_m` and the 512-byte solid mask) and replaces the shape only when
+    the key changed, waking the bodies in contact with it. A volume's origin moving moves its
+    colliders. A write that replaces a volume and leaves a changed chunk's `edited` behind is not
+    seen until that chunk is edited again (3: writes bump `edited`).
+  - A chunk's shape is built whole from its cells, never edited with parry's `set_voxel`: parry's
+    `Voxels` keeps its edit history in its layout (its own 8-cell chunk numbers, which key the
+    contact manifolds, and its BVH), so a shape edited in place and one built on restore from the
+    component would make different contacts, and the world hashes would part. Built whole, the
+    shape is a function of the content, shared through the process's table of built shapes (equal
+    chunks share one), and costs one chunk's cells per edited chunk.
+  - The physics cache (layout 3, persistence.md 8) writes each chunk collider's record (chunk, tick
+    checked, form, shape key) and names its shape by key; a restore takes it from the table or,
+    cold, builds it from the restored `Voxels`. Only a chunk written after the step (a boundary
+    write, a later phase) has its shape inline until the next step.
+  - The walker's sweep against fixed colliders (water.md 50) leaves the chunk colliders out: it
+    meets volumes on their grid only, as above, so a walker moves among volumes as it did before
+    they had colliders. A water region's `Voxels` bed (water.md 5) is a volume like any other, so
+    the bodies floating over it meet its blocks.
+  - Known limit: neighbouring chunks are separate shapes, so a body sliding across a chunk border
+    can meet the exposed edge of the cell beside it (parry's neighbour flags stop at a shape's
+    border).
+  - Costs: [bench/voxels.md](../bench/voxels.md), section 3.
 
 ### 5.2 `Walker` and `physics.walk`
 
@@ -294,6 +328,8 @@ draw paths are checked under the WebGPU baseline with the existing draw-path too
 | The cells file: write, read, refusals | `amoris-runtime` tests |
 | Natives: a call's reads see its edits, a throw discards them, ray casts, a cells file | `amoris-runtime --features transpile --test voxels` |
 | Walker: walks, stops at walls, cannot step up a cell, jumps onto one, falls, hits its head, determinism across a fork | `amoris-physics` tests |
+| Rapier bodies land on a volume and sleep, a dig wakes one and it falls through; `cast_ray` meets the volume; chunk shapes by reference, inline only after a boundary write; forks at every tick and a cold restore keep the hashes (also in WebAssembly, `physics.volume_fork`); the walker's sweep against fixed colliders leaves the chunk colliders out | `amoris-physics --test volumes`, the `volumes` and `walker` unit tests |
+| The same through the engine's snapshots: boxes on a cells-file volume, a fork and a cold restore through a script's dig | `amoris-runtime --features transpile --test voxels` |
 | `first_person`: controls write `Walker`, pulses act one tick, replay of a break and a place | `amoris-runtime --features transpile` tests |
 | Mesher: culling, chunk borders, cross, liquid, material groups | `amoris-assets` tests |
 | Parts and remeshing of neighbours; after breaks and placements across chunk borders the kept renderer draws as a fresh one, also with ray-traced shadows | `amoris-render --lib voxels`, `--test voxels` (GPU) |

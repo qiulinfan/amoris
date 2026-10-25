@@ -14,6 +14,10 @@
 //! takes, never its result, and holds no game state. A shape decoded inline from a snapshot is never
 //! registered, so it never reaches another world. Rapier never changes a shape in place
 //! (`Collider::shape_mut` copies a shared one first), so a world cannot see another's use of it.
+//!
+//! The shapes of block volumes' chunks (`crate::volumes`) are registered here too, under the key
+//! [`chunk_key`] gives their content ([`chunk`]), with spec hash 0: a chunk's shape has no
+//! components of its own.
 
 use std::collections::BTreeMap;
 use std::io::{self, BufWriter, Write};
@@ -34,6 +38,9 @@ pub type ShapeKey = [u8; 32];
 /// 2026-10-16 rename left it as it was, because the keys are written into the physics cache,
 /// which the world hash covers (persistence.md 8, versions.md 3.6).
 const CONTEXT: &str = "Amoris 2026-10-15 pocket-physics fixed shape v1";
+
+/// The BLAKE3 context of a volume chunk's key.
+const CHUNK_CONTEXT: &str = "Amoris 2026-10-17 voxel chunk shape v1";
 
 /// FNV-1a 64 and BLAKE3 over the same bytes, as bincode writes them.
 struct Both {
@@ -164,6 +171,24 @@ pub fn fixed(
         return Ok(shape);
     }
     Ok(register(key, spec, shared_shape(entity, &collider.shape)?))
+}
+
+/// The key of a volume chunk's shape: the BLAKE3 digest of the cell edge's `f64` bits and the
+/// chunk's solid mask (`crate::volumes`).
+pub fn chunk_key(cell_m: f64, mask: &[u8]) -> ShapeKey {
+    let mut h = ContentHash::hasher(CHUNK_CONTEXT);
+    h.update(&cell_m.to_bits().to_le_bytes());
+    h.update(mask);
+    h.finish().0
+}
+
+/// The shape of a volume chunk whose key is `key`: the one registered there while a world holds it,
+/// or else `build`'s, registered.
+pub fn chunk(key: ShapeKey, build: impl FnOnce() -> SharedShape) -> SharedShape {
+    if let Some((shape, _)) = recall(&key) {
+        return shape;
+    }
+    register(key, 0, build())
 }
 
 #[cfg(test)]

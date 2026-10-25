@@ -2745,7 +2745,8 @@ forward -z, up +y, right +x.
   falls below 0.25 the board throws its rider into the water and counts a wipeout.
 - **Fixed colliders.** Walkers collide with fixed colliders as with voxel volumes: a box swept
   through Rapier's broad phase, climbing slopes and ledges up to 0.4 m, so a TriMesh terrain carries
-  a walker on land and a swimmer on its bed.
+  a walker on land and a swimmer on its bed. The sweep leaves out the colliders with no body, the
+  block volumes' chunks (voxels.md 5.1), which the walker meets on their grid.
 - **Treading water.** In a region's water, held `rise` keeps the swimmer's eye 0.3 m over the
   surface, at most at swim speed (rise at four times the eye's height error a second), unless a lift
   at a wall carries it up faster, so climbing out still works. Before, held rise drove a swimmer up

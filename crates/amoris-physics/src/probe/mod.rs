@@ -10,6 +10,7 @@
 //! leave out makes a fork diverge, which is what the checks look for. It is a stand-in for the
 //! hash and fork of persistence.md (PCE, XXH3-128), not their implementation.
 
+pub mod blocks;
 pub mod layout;
 pub mod level;
 mod scenes;

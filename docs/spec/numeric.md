@@ -574,7 +574,9 @@ wrap (hashes, PCG32) says so with `wrapping_*`. In scripts, integers are doubles
     `amoris-physics` cannot link `amoris-persist`; the check command's `web` step compares the real
     `TickHash` chains. Pioneer, 2026-10-15: `physics.level_fork` and `physics.shape_builds`
     (persistence.md 8) joined them; the second pins the digest of the shapes `amoris-physics`
-    builds, so the native and WebAssembly builds compare them byte for byte.
+    builds, so the native and WebAssembly builds compare them byte for byte. 2026-10-25:
+    `physics.volume_fork` (a block volume scene forked at every tick and restored cold,
+    voxels.md 5.1) joined them, and the report ends with that scene's hash at every tick.
 15. **Slice 1: physics values are judged in `f32`** (3.1, 7). The components are `f64` and the
     solver `f32`, so a value `f64` holds can reach the solver as 0 or infinity: a ball of radius
     1e39 never moved, a ground of half extents 1e39 let a ball fall through it, a radius of 1e-50 or

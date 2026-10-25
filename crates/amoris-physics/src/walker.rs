@@ -347,7 +347,9 @@ const STEP_M: f64 = 0.4;
 
 /// How far the walker's box moves along `axis`, at most `d`, before it meets a fixed collider
 /// (an island, a pier, terrain): a box swept through the solver's broad phase, which the last
-/// step left current for fixed bodies (they never move).
+/// step left current for fixed bodies (they never move). The colliders with no body, the block
+/// volumes' chunks (`crate::volumes`), are left out: the walker meets volumes on their grid
+/// ([`sweep`], voxels.md 5.2), exactly and in `f64`.
 fn sweep_fixed(physics: Option<&Physics>, lo: [f64; 3], hi: [f64; 3], axis: usize, d: f64) -> f64 {
     let Some(physics) = physics else {
         return d;
@@ -368,12 +370,13 @@ fn sweep_fixed(physics: Option<&Physics>, lo: [f64; 3], hi: [f64; 3], axis: usiz
     };
     let shape = rapier3d::parry::shape::Cuboid::new(geom::vec_in(half));
     let pose = rapier3d::math::Pose::from_translation(geom::vec_in(centre));
+    let with_body = |_, co: &rapier3d::prelude::Collider| co.parent().is_some();
     match physics.world.cast_shape(
         &pose,
         geom::vec_in(direction),
         &shape,
         options,
-        rapier3d::prelude::QueryFilter::only_fixed(),
+        rapier3d::prelude::QueryFilter::only_fixed().predicate(&with_body),
     ) {
         Some((_, hit)) => {
             let free = math::max(f64::from(hit.time_of_impact) - COLLIDER_GAP_M, 0.0);
@@ -895,5 +898,24 @@ mod tests {
         // Above the surface by more than the wading depth: dry.
         let (w, _) = in_field_water(0.0, 5.0, 1);
         assert!(!w.in_liquid && !w.eye_in_liquid);
+    }
+
+    /// The block volumes' chunk colliders stay out of the sweep against fixed colliders: a walker
+    /// meets volumes on their grid only (voxels.md 5.1), so a box falling onto a volume's floor is
+    /// not stopped there by the solver, whose chunk colliders a ray down does meet.
+    #[test]
+    fn the_fixed_sweep_leaves_volume_chunks_out() {
+        let mut sim = crate::probe::blocks::blocks_world(1.0, 0);
+        sim.step(&mut amoris_sim::NoHooks).unwrap();
+        let p = sim.world().resource::<Physics>();
+        assert!(p.volumes.iter().any(|c| c.handle.is_some()));
+        let hit = crate::query::cast_ray(sim.world(), [2.0, 1.0, 2.0], [0.0, -1.0, 0.0], 2.0, None);
+        assert_eq!(
+            hit.map(|h| h.entity),
+            Some(crate::probe::blocks::volume_id())
+        );
+        // The floor's top is at y = 0, 0.1 m under the box.
+        let d = sweep_fixed(Some(p), [1.7, 0.1, 1.7], [2.3, 1.9, 2.3], 1, -1.0);
+        assert_eq!(d, -1.0);
     }
 }

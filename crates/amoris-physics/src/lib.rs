@@ -14,6 +14,8 @@
 //!   meet the `f32` solver only in `physics.step` ([`geom::f32_of`]); a dynamic hull, mesh or
 //!   compound states its mass properties instead of a density ([`body::validate`],
 //!   `sim.collider_density`); there are no joints and no continuous collision detection.
+//! - **Block volumes** ([`volumes`]): each chunk of a `Voxels` holding a solid cell is a fixed
+//!   collider of its solid cells, which bodies land on and queries meet (voxels.md 5.1).
 //! - **Queries** ([`query`]): ray casts, overlaps, the water and the wind at a point.
 
 #![deny(
@@ -38,6 +40,7 @@ mod shapes;
 pub mod solver;
 pub mod terrain;
 pub mod vessel;
+pub mod volumes;
 pub mod walk;
 pub mod walker;
 pub mod water;
@@ -234,13 +237,14 @@ pub const WEB_TESTS: &[WebTest] = &[
     ("physics.bvh_log2", probe::check_bvh_log2),
     ("physics.level_fork", probe::level::check_level_forks),
     ("physics.shape_builds", probe::layout::check_shape_builds),
+    ("physics.volume_fork", probe::blocks::check_volume_forks),
 ];
 
 /// The web tests' report: one `ok name` or `FAIL name: why` line per test, the digest of the shape
 /// builds (`shapes digest`, `probe::layout`), then the sailing scene's hash at every tick, then the
 /// small level scene's (`level tick hash`), then a water region's dam break (`water second hash
-/// substeps`, `water::water_report`). The WebAssembly build (`examples/web_physics.rs`) must
-/// produce the same bytes as the native builds.
+/// substeps`, `water::water_report`), then the block volume scene's (`volume tick hash`). The
+/// WebAssembly build (`examples/web_physics.rs`) must produce the same bytes as the native builds.
 pub fn web_report() -> String {
     let mut out = String::new();
     for (name, test) in WEB_TESTS {
@@ -253,5 +257,6 @@ pub fn web_report() -> String {
     out.push_str(&probe::chain_report());
     out.push_str(&probe::level::level_report());
     out.push_str(&water::water_report());
+    out.push_str(&probe::blocks::volume_report());
     out
 }

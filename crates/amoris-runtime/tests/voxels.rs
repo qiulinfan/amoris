@@ -210,6 +210,112 @@ fn scripts_edit_volumes_and_a_walker_lands_on_them() {
     });
 }
 
+const DIG: &str = r#"
+import { component, game, system } from "amoris";
+
+export const Land = component("Land", { version: 1, doc: "The volume.", fields: {} });
+
+export const dig = system({
+    name: "dig", phase: "update", doc: "At tick 90, digs through the floor under the first box.",
+    run(ctx) {
+        if (ctx.tick !== 90) return;
+        ctx.voxels.fill(ctx.single("Land"), [6, 0, 6], [9, 2, 9], 0);
+    },
+});
+
+export default game({ components: [Land], systems: [dig] });
+"#;
+
+/// A floor of stone, 3 cells deep, across chunks 0 and 1 along x; boxes over cell 8 and over the
+/// chunk border at cell 16.
+fn bodies_project() -> PathBuf {
+    let root = std::env::temp_dir().join(format!("amoris-voxels-bodies-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("scripts")).unwrap();
+    std::fs::write(
+        root.join("project.toml"),
+        "name = 'voxel-bodies'\nrate = 60\nseed = 1\n",
+    )
+    .unwrap();
+    std::fs::write(root.join("scripts/main.ts"), DIG).unwrap();
+    let mut land = Voxels::default();
+    land.palette.push(amoris_sim::voxels::Block {
+        name: "stone".into(),
+        solid: true,
+        faces: ["b#stone".into(), "b#stone".into(), "b#stone".into()],
+        ..Default::default()
+    });
+    land.fill([0, 0, 0], [31, 2, 15], 1, 0).unwrap();
+    std::fs::write(root.join("land.cells"), write_cells(&land.chunks)).unwrap();
+    let body = |name: &str, x: f64| {
+        json!({"name": name, "components": {
+            "Transform": {"position": [x, 5.0, 8.0]},
+            "Velocity": {},
+            "RigidBody": {"kind": "Dynamic"},
+            "Collider": {"shape": {"Cuboid": {"half_extents": [0.5, 0.5, 0.5]}}, "density": 1000.0}}})
+    };
+    let scene = json!({"format": "amoris-scene", "version": 1, "entities": [
+        {"name": "Land", "components": {
+            "Transform": {"position": [0, 0, 0]},
+            "Land": {},
+            "Voxels": {"source": "land.cells", "palette": [
+                {"name": "air"},
+                {"name": "stone", "solid": true, "faces": ["b#stone", "b#stone", "b#stone"]}]}}},
+        body("Over", 8.0),
+        body("Border", 16.0)
+    ]});
+    std::fs::write(root.join("scene.json"), scene.to_string()).unwrap();
+    root
+}
+
+fn height(g: &mut Game, entity: &str) -> f64 {
+    get(g, entity, &["Transform.position.1"])["Transform.position.1"]
+        .as_f64()
+        .unwrap()
+}
+
+/// voxels.md 5.1 through the engine's own snapshots: Rapier boxes land on a volume loaded from a
+/// cells file (one across a chunk border); a fork, and a restore made after the original world is
+/// gone, step with the original's world hashes tick for tick through the script's dig, which drops
+/// the box over it through the floor.
+#[test]
+fn bodies_land_on_volumes_through_snapshots_and_forks() {
+    common::big_stack(|| {
+        let root = bodies_project();
+        let p = Project::load(&root).unwrap_or_else(|e| panic!("{e:#?}"));
+        let setup = Arc::new(p.setup(false).unwrap_or_else(|e| panic!("{e:#?}")));
+        let mut g = Game::new(setup.clone(), 1).unwrap_or_else(|e| panic!("{e:#?}"));
+        for _ in 0..80 {
+            g.step().unwrap();
+        }
+        for name in ["Over", "Border"] {
+            let y = height(&mut g, name);
+            assert!((y - 3.5).abs() < 0.02, "{name} rests at {y}");
+        }
+        let snap = g.snapshot().unwrap();
+        let mut fork = g.fork().unwrap();
+        let mut want = Vec::new();
+        for _ in 0..60 {
+            g.step().unwrap();
+            fork.step().unwrap();
+            want.push(g.world_hash().unwrap());
+            assert_eq!(fork.world_hash().unwrap(), *want.last().unwrap());
+        }
+        assert!(height(&mut g, "Over") < 2.0, "the box fell into the hole");
+        assert!((height(&mut g, "Border") - 3.5).abs() < 0.02);
+        drop((g, fork));
+
+        let mut cold = Game::new(setup, 1).unwrap_or_else(|e| panic!("{e:#?}"));
+        cold.restore(&snap).unwrap();
+        assert_eq!(cold.world_hash().unwrap(), snap.world_hash());
+        for (k, h) in want.iter().enumerate() {
+            cold.step().unwrap();
+            assert_eq!(cold.world_hash().unwrap(), *h, "tick 80 + {}", k + 1);
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    });
+}
+
 const HANDS: &str = r#"
 import { component, game, system } from "amoris";
 

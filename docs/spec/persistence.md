@@ -578,11 +578,12 @@ For `rapier3d` 0.36.0 with `parry3d` 0.31.1, read from their sources:
   would not continue exactly.
 - A slot by reference means "the shape `solver::shared_shape` builds from these components", so the
   cache's meaning depends on that builder and on parry's builders under it. The identity names them
-  with a token, `shapes 1`, bumped by any change to either (versions.md 3.6). The web test
-  `physics.shape_builds` pins the digest of the built shapes of every kind (a triangle mesh with its
-  BVH, convex hulls, a compound with rotated parts, the primitives) and fails natively or in
-  WebAssembly when a build changes; the web report prints the digest, so the native and WebAssembly
-  builds compare the builds byte for byte. parry 0.31.1 builds these shapes with arithmetic and
+  with a token, `shapes 1` (`shapes 2` since layout 3 added the volume chunks' builds), bumped by
+  any change to either (versions.md 3.6). The web test `physics.shape_builds` pins the digest of the
+  built shapes of every kind (a triangle mesh with its BVH, convex hulls, a compound with rotated
+  parts, the primitives, and since `shapes 2` a volume chunk) and fails natively or in WebAssembly
+  when a build changes; the web report prints the digest, so the native and WebAssembly builds
+  compare the builds byte for byte. parry 0.31.1 builds these shapes with arithmetic and
   square roots only (its other floating-point functions are the per-step `log2` of numeric.md 5 and
   a `sin_cos` in a query of `convex_polyhedron.rs`), which is why the builds can agree across
   platforms; the web test checks that they do.
@@ -605,6 +606,25 @@ For `rapier3d` 0.36.0 with `parry3d` 0.31.1, read from their sources:
   game state, and a hit and a miss give the same shape. Rapier never changes a shared shape in place
   (`Collider::shape_mut` copies it first), so independence (7) holds. Whether this sharing fits
   charter 4.1's "no hidden sharing between forks" is the owner's decision (charter 8).
+- Layout 3 (voxels.md 5.1; built 2026-10-17 on branch `voxel-collider`, on main since 2026-10-25)
+  adds the block volumes. Each chunk of a `Voxels` holding a solid cell is a collider with no body
+  (`amoris_physics::volumes`), its shape a parry `Voxels` of the chunk's solid cells built whole
+  from them, with no `Collider` component behind it. Its slot is `Chunk(record)` (the index 2, then
+  the chunk's key as three `i32`, the `u64` tick of the step that last checked it, the volume's
+  `u64` form, a hash of `cell_m` and its blocks' solidity, and the shape's 32-byte key, the BLAKE3
+  digest, context `"Amoris 2026-10-17 voxel chunk shape v1"`, of `cell_m`'s bits and the chunk's
+  512-byte solid mask) or, while the volume's chunk no longer has that content (a write after the
+  step, at a boundary or in a later phase), `ChunkInline(record, shape)` (the index 3). The content
+  is taken as unchanged when the volume's form is the record's and the chunk's `edited` is before
+  the record's check, and is otherwise compared by its key, so encoding hashes only chunks edited in
+  the tick. Decoding puts the records back as `Physics::volumes`, refuses a chunk slot on a collider
+  with a body or two for one chunk, and takes a by-reference chunk shape from the table, or, cold,
+  builds it from the restored `Voxels` when its content has the slot's key (else the inexact rebuild
+  above). Chunk shapes are built whole rather than edited with parry's `set_voxel`, because parry's
+  `Voxels` keeps its edit history in its layout (its own chunk numbers, which key the contact
+  manifolds, and its BVH): a shape edited in place and one built from the restored component would
+  make different contacts. The web test `physics.volume_fork` forks a volume scene at every tick and
+  restores it cold, through a dig under a sleeping body, natively and in WebAssembly.
 - Rapier computes some mass properties with the platform's math natively; numeric.md 5's rules keep
   that out of the cache.
 - The section is opaque to `diff`; the `Transform` and velocity components written back show where
@@ -758,7 +778,8 @@ or chosen here. They feed the budgets `hash.sail`, `publish.sail`, `fork.*` and 
     8). With no solver in the world it writes nothing, and an empty section decodes to no solver.
     Decoding refuses trailing bytes and a body or collider whose `user_data` names no entity
     (`persist.noncanonical`). Since layout 2 (8) a fixed collider's shape is written by reference
-    while it is the shape the body's unchanged components built. A body's `user_data` holds its
+    while it is the shape the body's unchanged components built, and since layout 3 a block volume
+    chunk's while the chunk keeps the content it was built from. A body's `user_data` holds its
     `EntityId` in the low 64 bits and an FNV-1a hash of its `RigidBody` and `Collider` in the high
     64, so the reverse map (`BodyIndex`) is Derived, rebuilt by `physics.index`, and the step sees a
     changed component without change detection. `rebuild` leaves an empty solver whose bodies the
