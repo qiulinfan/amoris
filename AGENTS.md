@@ -140,8 +140,10 @@ credential cleanup. File-verification records remain local, including in that ar
 - `cargo xtask` discovers the same explicit LLVM override, pinned toolchain, then Homebrew LLVM.
   Its browser check needs Python with `websocket-client`; `AMORIS_PYTHON` selects that interpreter.
   GPU readback state locks must be released before `map_async`: wgpu can invoke a refused map's
-  callback synchronously. The TAA image tests serialize complete cases because concurrent devices
-  on M5 can be lost; they still reject validation errors and unexpected device loss, and retain
+  callback synchronously. Native Metal gives a process 32 timestamp query sets across all its
+  devices and loses the device that creates a 33rd (`DeviceError::Unexpected`), so a renderer's
+  profiler holds one (profiler.rs `QUERIES`) and parallel GPU test cases stay under the limit. The
+  TAA image tests run in parallel, reject validation errors and unexpected device loss, and retain
   strict pixel comparisons. Local integration decisions and validation are in
   [pioneer-2026-10-16.md](docs/imports/pioneer-2026-10-16.md).
 - Vulkan on macOS runs through MoltenVK (`brew install molten-vk vulkan-loader`); select it with

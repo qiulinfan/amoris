@@ -33,14 +33,10 @@ const DT: f64 = 1.0 / 60.0;
 /// The orthographic view's height in metres: a pixel is `ORTHO / H` metres.
 const ORTHO: f32 = 9.0;
 
-// These tests each keep several renderers alive. Concurrent test devices on the M5 lose the
-// Metal device (DeviceError::Unexpected); serialize complete cases, not just device creation.
-// Keep every image assertion and revisit this isolation when parallel devices run reliably.
-fn gpu() -> Option<(std::sync::MutexGuard<'static, ()>, Gpu)> {
-    static CASE: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    let case = CASE
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+// A lost device or a validation error fails the case with its cause, never as a wrong image. The
+// cases run in parallel: each keeps at most three renderers alive, and a renderer takes one
+// timestamp query set, one of the 32 counter sample buffers Metal gives a process (profiler.rs).
+fn gpu() -> Option<Gpu> {
     let gpu = Gpu::headless(BackendChoice::from_env()).ok();
     if let Some(gpu) = &gpu {
         gpu.device.set_device_lost_callback(|reason, message| {
@@ -55,7 +51,7 @@ fn gpu() -> Option<(std::sync::MutexGuard<'static, ()>, Gpu)> {
     if gpu.is_none() {
         eprintln!("no GPU: skipped");
     }
-    gpu.map(|gpu| (case, gpu))
+    gpu
 }
 
 fn renderer(gpu: &Gpu, aa: Antialiasing, gtao: Gtao) -> Renderer {
@@ -113,7 +109,7 @@ fn psnr(a: &[f32], b: &[f32], columns: std::ops::Range<u32>, rows: std::ops::Ran
 
 #[test]
 fn taa_reprojects_a_whole_pixel_pan_exactly() {
-    let Some((_case, gpu)) = gpu() else { return };
+    let Some(gpu) = gpu() else { return };
     // One sample, and four (the multisampled depth, motion and color resolved for TAA).
     for aa in [Antialiasing::Taa, Antialiasing::MsaaTaa] {
         whole_pixel_pan(&gpu, aa);
@@ -242,7 +238,7 @@ fn board_run(
 
 #[test]
 fn object_motion_reprojects_a_moving_board_exactly() {
-    let Some((_case, gpu)) = gpu() else { return };
+    let Some(gpu) = gpu() else { return };
     // One sample, and four (the motion target multisampled and resolved).
     for aa in [Antialiasing::Taa, Antialiasing::MsaaTaa] {
         moving_board(&gpu, aa);
@@ -284,7 +280,7 @@ fn moving_board(gpu: &Gpu, aa: Antialiasing) {
 
 #[test]
 fn the_entity_id_pass_is_not_jittered() {
-    let Some((_case, gpu)) = gpu() else { return };
+    let Some(gpu) = gpu() else { return };
     let coverage = |aa: Antialiasing| {
         let mut r = renderer(&gpu, aa, Gtao::Off);
         r.apply(still_scene(1.0), 0.0);
@@ -315,7 +311,7 @@ fn the_entity_id_pass_is_not_jittered() {
 
 #[test]
 fn gtao_darkens_only_indirect_light() {
-    let Some((_case, gpu)) = gpu() else { return };
+    let Some(gpu) = gpu() else { return };
     let image = |gtao: Gtao, ambient: f32| {
         let mut r = renderer(&gpu, Antialiasing::Msaa, gtao);
         r.apply(still_scene(ambient), 0.0);
@@ -365,7 +361,7 @@ fn gtao_darkens_only_indirect_light() {
 
 #[test]
 fn camera_cuts_and_resizes_drop_the_history() {
-    let Some((_case, gpu)) = gpu() else { return };
+    let Some(gpu) = gpu() else { return };
     let mut r = renderer(&gpu, Antialiasing::Taa, Gtao::Off);
     r.apply(still_scene(1.0), 0.0);
     r.set_camera_override(Some(amoris_render::demo::aa_camera(0, false)));
@@ -490,7 +486,7 @@ fn sunk_run(r: &mut Renderer, sea: bool, slide: bool, frames: u64) -> Vec<f32> {
 /// motion of the surface under it, GTAO darkens the water and TAA moves it with a hidden object.
 #[test]
 fn the_sea_hides_what_lies_under_it() {
-    let Some((_case, gpu)) = gpu() else { return };
+    let Some(gpu) = gpu() else { return };
     let msaa = |gtao: Gtao, sea: bool| {
         let mut r = renderer(&gpu, Antialiasing::Msaa, gtao);
         sunk_run(&mut r, sea, false, 3)
@@ -552,7 +548,7 @@ fn psnr8(a: &[u8], reference: &[f64]) -> f64 {
 /// above it, and the same capture taken twice is the same image.
 #[test]
 fn a_still_capture_settles_taa() {
-    let Some((_case, gpu)) = gpu() else { return };
+    let Some(gpu) = gpu() else { return };
     let camera = amoris_render::demo::aa_camera(0, false);
     let t = 0.5;
     let fresh = |aa: Antialiasing| {
@@ -737,7 +733,7 @@ fn splat_history(gpu: &Gpu, r: &mut Renderer) -> Vec<f32> {
 /// hold what the opaque pass holds: the chain link's holes, the sea.
 #[test]
 fn splats_behind_meshes_are_stable_under_taa() {
-    let Some((_case, gpu)) = gpu() else { return };
+    let Some(gpu) = gpu() else { return };
     let n = 40u32;
     for raster in [SplatRaster::Quads, SplatRaster::Tiles] {
         let mut msaa_covered = 0;
@@ -1002,7 +998,7 @@ fn skinned_run(gpu: &Gpu, frames: u64, moving: bool, skinned_motion: bool) -> Ve
 /// board standing there; without the skinned motion its history comes from the wrong place.
 #[test]
 fn skinned_motion_reprojects_a_sliding_board_exactly() {
-    let Some((_case, gpu)) = gpu() else { return };
+    let Some(gpu) = gpu() else { return };
     let frames = 24u64;
     let still = skinned_run(&gpu, frames, false, true);
     let moving = skinned_run(&gpu, frames, true, true);
@@ -1050,7 +1046,7 @@ fn still_view(gpu: &Gpu, aa: Antialiasing, frames: u32) -> Vec<f32> {
 /// and the history accumulates what they miss.
 #[test]
 fn msaa_with_taa_converges_beyond_msaa() {
-    let Some((_case, gpu)) = gpu() else { return };
+    let Some(gpu) = gpu() else { return };
     // The reference: the mean of 64 jittered one-sample frames.
     let mut jittered = renderer(&gpu, Antialiasing::Taa, Gtao::Off);
     jittered.taa_mut().mode = amoris_render::taa::TaaMode::Jittered;
@@ -1081,7 +1077,7 @@ fn msaa_with_taa_converges_beyond_msaa() {
 /// front and from the side (where view space is far from world space).
 #[test]
 fn gtao_normals_from_the_target_match_the_depth() {
-    let Some((_case, gpu)) = gpu() else { return };
+    let Some(gpu) = gpu() else { return };
     let side = CameraState::look_at(Vec3::new(4.0, 2.6, 0.5), Vec3::new(-5.0, 0.8, -1.2));
     for camera in [amoris_render::demo::aa_camera(0, false), side] {
         gtao_normal_sources(&gpu, camera);
@@ -1167,7 +1163,7 @@ fn scaled_view(gpu: &Gpu, aa: Antialiasing, scale: f32, frames: u32) -> Vec<Vec<
 /// close to TAA at the output's size.
 #[test]
 fn upscaling_converges_on_a_still_scene() {
-    let Some((_case, gpu)) = gpu() else { return };
+    let Some(gpu) = gpu() else { return };
     let reference = jittered_mean(&gpu, 64);
     let score = |img: &[f32]| psnr(img, &reference, 0..W, 0..H);
     let full = score(&scaled_view(&gpu, Antialiasing::Taa, 1.0, 64)[63]);
@@ -1210,7 +1206,7 @@ const UPSCALE_LOSS_DB: [f64; 2] = [6.0, 4.0];
 /// the same output-size history. Resizing can change the retained LOD through its hysteresis.
 #[test]
 fn render_scale_changes_reset_and_return() {
-    let Some((_case, gpu)) = gpu() else { return };
+    let Some(gpu) = gpu() else { return };
     let mut r = renderer(&gpu, Antialiasing::Msaa, Gtao::Off);
     r.apply(still_scene(1.0), 0.0);
     r.set_camera_override(Some(amoris_render::demo::aa_camera(0, false)));
@@ -1264,7 +1260,7 @@ fn render_scale_changes_reset_and_return() {
 /// past TAA's first upscaled frame and repeats exactly.
 #[test]
 fn picking_and_captures_work_below_scale_one() {
-    let Some((_case, gpu)) = gpu() else { return };
+    let Some(gpu) = gpu() else { return };
     let camera = amoris_render::demo::aa_camera(0, false);
     let fresh = |scale: f32| {
         let mut r = renderer(&gpu, Antialiasing::Taa, Gtao::Off);
