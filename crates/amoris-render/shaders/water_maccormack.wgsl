@@ -3,6 +3,8 @@
 // Each phase writes every active-grid element; pass boundaries order all storage dependencies.
 @group(0) @binding(7) var<storage,read_write> mac_predicted:array<vec2f>;
 @group(0) @binding(8) var<storage,read_write> mac_reversed:array<vec2f>;
+// Bodies' displaced volume as metres of head per column (zero unless occupancy_on).
+@group(0) @binding(9) var<storage,read> occupancy:array<f32>;
 
 fn mac_value(i:u32,k:u32,axis:u32,predicted:bool)->f32 {
     if(!predicted){if(axis==0u){return u(i,k);}return w(i,k);}
@@ -84,6 +86,42 @@ fn mac_corrected(i:u32,k:u32,axis:u32)->f32 {
     if(corrected>=lo && corrected<=hi){return corrected;}
     return first;
 }
+fn mac_head(n:u32)->f32 {
+    if(p.occupancy_on<=0.0){return 0.0;}
+    return occupancy[n];
+}
+// The surface's rate of rise from the continuity equation at the step's start, m/s.
+fn mac_rise(i:u32,k:u32)->f32 {
+    let n=at(i,k);let h=src[n].y;
+    var q=0.0;
+    if(i>0u){q+=u(i,k)*0.5*(h+src[n-1u].y);}
+    if(i+1u<p.size.x){q-=u(i+1u,k)*0.5*(h+src[n+1u].y);}
+    if(k>0u){q+=w(i,k)*0.5*(h+src[n-p.size.x].y);}
+    if(k+1u<p.size.y){q-=w(i,k+1u)*0.5*(h+src[n+p.size.x].y);}
+    return q/p.cell;
+}
+// Breaking as eddy viscosity (Kennedy et al. 2000): it switches on where the surface rises
+// faster than half the local long-wave speed and is bounded by explicit stability.
+fn mac_breaking(i:u32,k:u32,axis:u32,v:f32)->f32 {
+    let n=at(i,k);let o=select(n-1u,n-p.size.x,axis==1u);
+    let h=0.5*(src[n].y+src[o].y);
+    if(p.breaking<=0.0||h<0.05){return v;}
+    let oi=select(vec2u(i-1u,k),vec2u(i,k-1u),axis==1u);
+    let rise=max(mac_rise(i,k),mac_rise(oi.x,oi.y));
+    let onset=0.5*sqrt(9.81*h);
+    let strength=clamp(rise/onset-1.0,0.0,1.0);
+    if(strength<=0.0){return v;}
+    let nu=min(strength*1.44*h*rise,0.2*p.cell*p.cell/p.dt);
+    var lap=-4.0*v;
+    if(axis==0u){
+        lap+=select(v,u(i-1u,k),i>1u)+select(v,u(i+1u,k),i+1u<p.size.x);
+        lap+=select(v,u(i,k-1u),k>0u)+select(v,u(i,k+1u),k+1u<p.size.y);
+    }else{
+        lap+=select(v,w(i-1u,k),i>0u)+select(v,w(i+1u,k),i+1u<p.size.x);
+        lap+=select(v,w(i,k-1u),k>1u)+select(v,w(i,k+1u),k+1u<p.size.y);
+    }
+    return v+p.dt*nu*lap/(p.cell*p.cell);
+}
 @compute @workgroup_size(8,8)
 fn mac_faces(@builtin(global_invocation_id) id:vec3u){
     if(any(id.xy>=p.size)){return;}
@@ -91,7 +129,13 @@ fn mac_faces(@builtin(global_invocation_id) id:vec3u){
     // Frozen columns keep their stored words in transport, while their owned faces are walls
     // for active neighbours. Do not leak a frozen nonzero face into conservative fluxes.
     if(awake[n]==0u){velocity[n*2u]=0.0;velocity[n*2u+1u]=0.0;return;}
-    if(mac_face_open(i,k,0u)){value.x=pressure(mac_corrected(i,k,0u),n-1u,n);}
-    if(mac_face_open(i,k,1u)){value.y=pressure(mac_corrected(i,k,1u),n-p.size.x,n);}
+    if(mac_face_open(i,k,0u)){
+        let v=mac_breaking(i,k,0u,mac_corrected(i,k,0u));
+        value.x=pressure_heads(v,n-1u,n,mac_head(n-1u),mac_head(n));
+    }
+    if(mac_face_open(i,k,1u)){
+        let v=mac_breaking(i,k,1u,mac_corrected(i,k,1u));
+        value.y=pressure_heads(v,n-p.size.x,n,mac_head(n-p.size.x),mac_head(n));
+    }
     velocity[n*2u]=value.x;velocity[n*2u+1u]=value.y;
 }

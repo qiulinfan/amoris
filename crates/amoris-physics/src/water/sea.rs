@@ -74,10 +74,15 @@ pub(crate) fn prepare(
         if !incoming {
             continue;
         }
-        // Conservative depth interval admitting lambda_SW >= 4 cells and >= 20 depths.
-        // Exact per-face eligibility is evaluated again by the GPU, using its actual bed.
+        // Conservative depth interval admitting lambda_SW >= 4 cells and, without dispersion,
+        // >= 20 depths (a dispersive field takes intermediate depths at Airy's speed). Exact
+        // per-face eligibility is evaluated again by the GPU, using its actual bed.
         let resolved = math::pow(4.0 * region.cell_m * omega / math::TAU, 2.0) / crate::GRAVITY;
-        let shallow = math::pow(math::TAU / (20.0 * omega), 2.0) * crate::GRAVITY;
+        let shallow = if region.physics.dispersion {
+            f64::INFINITY
+        } else {
+            math::pow(math::TAU / (20.0 * omega), 2.0) * crate::GRAVITY
+        };
         let low = math::max(hmin, resolved);
         let high = math::min(hmax, shallow);
         if low > high * (1.0 + 1e-5) || !low.is_finite() {
@@ -98,7 +103,7 @@ pub(crate) fn prepare(
         amplitude += a.abs();
         speed += a.abs() * math::sqrt(crate::GRAVITY / low);
     }
-    if longest > 0.0 && hmax > longest / 20.0 * (1.0 + 1e-6) {
+    if !region.physics.dispersion && longest > 0.0 && hmax > longest / 20.0 * (1.0 + 1e-6) {
         return Err(Problem::new(
             "water.deep_edge",
             "sea boundary is deeper than one twentieth of its longest analytic wave",

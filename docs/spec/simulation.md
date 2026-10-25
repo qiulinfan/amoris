@@ -213,18 +213,18 @@ this table and the schedule golden of section 12 together.
 | 3 | Update | `script.update` | amoris-script | the project's systems and script executors, `script:<name>` each, in `systems` order |
 | 4 | Forces | `physics.wind` | amoris-physics | wind velocity at each body, gusts from position and time |
 | 4a | Forces | `physics.water` | amoris-physics | each `WaterRegion`'s awake tiles and their neighbours stepped (shallow water, advected), thin slow films dried, still tiles put to sleep (water.md 4) |
-| 5 | Forces | `physics.buoyancy` | amoris-physics | buoyancy and drag per volume point at the starting body pose; current completed field samples, or waves at `time() - dt()` outside fields (water.md 22) |
+| 5 | Forces | `physics.buoyancy` | amoris-physics | buoyancy (each point's immersion where it will stand at the step's end), Froude-Krylov pressure along the field's surface slope and implicit drag per volume point; current completed field samples, or waves at `time() - dt()` outside fields; displaced volume queued for the next step (water.md 22, 46, 47) |
 | 6 | Forces | `physics.sail` | amoris-physics | sail force from the apparent wind and the trim |
-| 6a | Forces | `physics.surf` | amoris-physics | explicit rider paddle/balance work using completed Floater contact; set fin input before Hull (water.md 45) |
 | 7 | Forces | `physics.hull` | amoris-physics | keel, rudder and hull drag |
+| 7a | Forces | `physics.board` | amoris-physics | each `Board`'s planing, glide, rail and fin forces at its Floater points, implicit over each point's share of its mass, and its rider's paddling, carving and pop-up (water.md 50) |
 | 8 | Physics | `physics.step` | amoris-physics | sync changed bodies in, one step of `dt`, write back positions, velocities and readouts |
 | 9 | Physics | `physics.contacts` | amoris-physics | contact begin and end events, in pair order (section 8.4) |
 | 9a | Physics | `physics.fluids` | amoris-physics | each volume's flowing liquids: edits taken, a flow step on each liquid's period (liquids.md 4) |
 | 9b | Physics | `physics.walk` | amoris-physics | each `Walker` moved against the volumes' solid cells and its eye written (voxels.md 5.2) |
+| 9c | Physics | `physics.mount` | amoris-physics | each mounted `Walker`'s eye carried with its board's integrated pose; a board turned over throws its rider (water.md 50) |
 | 10 | Finish | `interface.perception` | amoris-interface | every observer's memory and perceived events from the events appended since its last run: the boundary writes' (the inbox from `boundary_from`, 5.1) and the tick's own (still in the outbox), in `EventSeq` order (shared/contract/perception.md, The perception update) |
 | 11 | Finish | `interface.turns` | amoris-interface | ends a turn's resolving phase when its rule holds (shared/contract/time.md, Turn structure) and evaluates the episode's `done` predicate (time.md, Episodes); writes the turn and episode state only |
 | 11a | Finish | `physics.walk.clear` | amoris-physics | the walkers' one-tick pulses (`jump`, `primary`, `secondary`) cleared (voxels.md 5.2) |
-| 11b | Finish | `physics.surf.clear` | amoris-physics | clear the board's one-tick retry pulse |
 | 12 | Finish | `sim.finish` | amoris-sim | events, RNG table, index, invariants, decisions |
 
 Rows 4 to 9 follow the physics spike (`docs/spikes/physics.md`, Recipe 3): forces are computed from

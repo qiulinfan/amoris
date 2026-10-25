@@ -258,4 +258,63 @@ surface foam and dilute visual spray checks. These do not establish final beach 
 breakers or dense waterfall physics. Floaters, Hull and Walker contact remain one-way except for
 explicit queued horizontal reactions. Occupied volume, vertical impacts, added mass and global
 fluid/body energy conservation are not implemented by this delivery. Unadopted 3D fluid/rigid
-pressure experiments and the unfinished surfing game are excluded.
+pressure experiments and the unfinished surfing game are excluded. Amoris Pioneer's frontier work
+(section 7) adds occupied volume, ballistic falls, breaking, dispersion and three played samples.
+
+## 7. Frontier water (Pioneer, 2026-10-22)
+
+Amoris Pioneer's `explore/water` and `explore/water-nh` (water.md 46 to 56) on the M5 (Metal),
+release builds. Raw logs and captures stay in ignored `out/`.
+
+**The dispersive models' cost.** `cargo test --release -p amoris-render --test water_frontier
+time_dispersive_steps -- --ignored --nocapture` times a resident step of 4 substeps in shallow water
+alone, with section 49's dispersive split and with section 55's non-hydrostatic pressure, wall time
+with its 64-byte readback:
+
+| Region | Shallow water | Dispersive split | Non-hydrostatic |
+|---|---|---|---|
+| 128² | 1.4 ms | 2.0 ms | 1.6 ms |
+| 256² | 1.3 ms | 3.4 ms | 2.9 ms |
+| 512 x 256 | 1.7 ms | 5.7 ms | 6.6 ms |
+| 512² | 2.7 ms | 11.1 ms | 12.4 ms |
+
+The split's stationary pyramid keeps eight full-resolution levels and its mirrored transforms run
+over twice each side, once a step. The non-hydrostatic solve runs 48 Chebyshev iterations in every
+substep, in one compute pass (a pass for each dispatch took 13.4 ms at 512 x 256, about 30 µs a
+pass); the surf sample (512 x 256) runs 2 substeps, about 3.5 ms a tick.
+
+**Accuracy** (`water_frontier`, checked). The split: standing waves in 2 m of water, 2, 4 and 8 m
+long, run within 2 percent of Airy's periods (shallow water alone 1.3 to 2.4 times too fast); a
+10 s, 5 cm swell into a 256 m channel 6 m deep keeps 5.25 cm within 1 percent from 30 to 150 m and
+runs at 7.57 m/s against Airy's 7.36 (a long wave's 7.67). The non-hydrostatic pressure: standing
+waves 8 and 16 m long in 2 m run at 2.3002 and 3.8882 s against the model's 2.2965 and 3.8807 s;
+a solitary wave keeps 0.996 of its crest at 1.002 of its speed after 10 s (shallow water 1.045 at
+1.097).
+
+**Energy** (checked). A closed basin 8.8 m deep with a hump, non-hydrostatic, keeps 1.0001 of its
+energy (the vertical motion's included) after 5 s and 0.92 after 20 s; one Chebyshev cycle of 64
+iterations broke it apart within 4 s. Four floats dropped 0.6 m into a closed 32 m lake with no
+friction or calm damping, pushing its water aside and dragging it: the floats and the lake together
+hold 0.198, 0.179 and 0.161 of the drop's energy over the quarter minutes from 15 to 60 s
+(`amoris-app` tests/gpu_energy.rs). Before a float felt its own push in the same step they held a
+quarter at 20 s and half at 150 s. The heave of a 250 kg float runs at 1.0014, 1.2263 and 1.4157 s
+with added mass 0, 0.5 and 1 against 1.0030, 1.2285 and 1.4185 s (`amoris-physics`
+tests/added_mass.rs).
+
+**The surf bay** (`water_frontier`'s ignored `surf_bay_research`, the sample's bay and swell
+without bodies): non-hydrostatic, with breaking at 2 substeps, the fastest flow stays between 3 and
+7.3 m/s over 300 s and the kinetic energy at 124 to 141 MJ; at 4 substeps over 600 s it follows the
+two swell trains' 17-minute beat between 90 and 160 MJ (hydrostatic: 95 to 122 MJ). With the
+dispersive split (`SURF_DISPERSION=1`) the bay's energy grows after about two minutes (water.md
+49.5).
+
+**Caustics** cost about 1 ms of GPU time a frame for the pool sample's 512² map at 2 x 2 photons
+a texel. `AMORIS_CAUSTICS=off` removes the pass.
+
+**The samples** (`cargo test --release -p amoris-app --test gpu_frontier_scenes`, under a minute in
+all): the pool party collects all eight ducks and raises a 3 to 4 cm wave at the corner gauges; the
+river run passes two gates, its tube drops about 7 m over the falls and lands at 12 to 13 m/s, and
+the run reaches the beach in 17 to 19 s with the river's volume ledger exact; the surfer rides 30.5
+m at up to 7.0 m/s before the next crest throws them. Exported with `cargo xtask export-web`, each
+loads and plays in headless Chrome on the WebGPU baseline device (`tools/web_play_check.mjs`; its
+block-placing checks do not apply to these samples) with no validation errors or script exceptions.

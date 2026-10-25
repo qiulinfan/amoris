@@ -14,10 +14,11 @@ pub const MAX_BATCH_COLUMNS: usize = 4 * 512 * 512;
 
 /// Runtime replay identity for the actual numerical kernels/dispatch implementation. This is
 /// not a file-audit inventory: a changed solver must not reuse an old execution environment.
-/// v8 uses limited linear depth flux and reconstructed donor-volume budgets. Changing it
-/// here also changes the feed fingerprint, so a previous viewport refuses incompatible programs.
+/// v9 adds body displacement heads, ballistic falls, breaking and dispersive surface waves.
+/// Changing it here also changes the feed fingerprint, so a previous viewport refuses
+/// incompatible programs.
 pub fn execution_key(parts: &[&[u8]]) -> String {
-    let mut key = blake3::Hasher::new_derive_key("Amoris resident water execution v8");
+    let mut key = blake3::Hasher::new_derive_key("Amoris resident water execution v9");
     for part in parts {
         key.update(&(part.len() as u64).to_le_bytes());
         key.update(part);
@@ -194,6 +195,62 @@ pub struct PointImpulse {
     pub impulse: [f64; 2],
 }
 
+/// Body volume below the free surface at a local grid point, m^3. The step spreads it over a
+/// smooth disk of `radius` columns (at least one) around the point; its pressure head moves water
+/// aside.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PointVolume {
+    pub at: [f64; 2],
+    pub volume_m3: f64,
+    /// The footprint's radius in columns: the body's waterplane around the point.
+    pub radius: f64,
+}
+
+/// The calm damping a field takes unless its region says otherwise, per second (water.md 4).
+pub const DEFAULT_CALM_PER_S: f64 = 0.2;
+
+/// The most displaced volume one point may carry, m^3.
+pub const MAX_POINT_VOLUME_M3: f64 = 1.0e4;
+/// The widest footprint one point may spread over, in columns.
+pub const MAX_POINT_RADIUS: f64 = 8.0;
+
+/// Physics beyond the hydrostatic bulk flow, part of each step's numerical identity.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FieldPhysics {
+    /// Airy surface waves with depth-exact dispersion over the shallow-water bulk flow
+    /// (Jeschke and Wojtan 2023). Needs power-of-two grid sides.
+    pub dispersion: bool,
+    /// Eddy-viscosity breaking where the surface rises faster than a share of the local wave
+    /// speed (Kennedy et al. 2000).
+    pub breaking: bool,
+    /// Ballistic falls: flow over a drop deeper than this leaves its lip and lands where its
+    /// trajectory meets water or bed, with its horizontal momentum. 0 keeps falls in the field.
+    pub fall_min_m: f64,
+    /// Depth-integrated non-hydrostatic pressure (Yamazaki, Kowalik and Cheung 2009): long waves
+    /// disperse and a swell shoals into crests rather than bores. Not with `dispersion`.
+    #[serde(default)]
+    pub nonhydrostatic: bool,
+}
+impl FieldPhysics {
+    pub fn validate(&self) -> Result<(), String> {
+        if !self.fall_min_m.is_finite()
+            || (self.fall_min_m != 0.0 && !(0.25..=100.0).contains(&self.fall_min_m))
+        {
+            return Err("water fall threshold must be 0 or 0.25 to 100 m".into());
+        }
+        if self.dispersion && self.nonhydrostatic {
+            return Err(
+                "dispersive surface waves and non-hydrostatic pressure are two models of one \
+                 effect: choose one"
+                    .into(),
+            );
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub enum FieldBoundary {
@@ -299,16 +356,34 @@ pub struct FieldStep {
     pub substep_dt: f64,
     pub substeps: u32,
     pub friction: f64,
+    /// Calm damping of slow faces, per second (water.md 4): DEFAULT_CALM_PER_S keeps a disturbed
+    /// sea from sloshing for minutes; a field whose waves should travel takes less.
+    pub calm_per_s: f64,
     pub dry_below: f64,
     /// Ordered depth edits before the first substep; each removal clamps to available water.
     pub edits: Vec<ColumnDelta>,
     /// Applied before depth edits/transport; reactions queued after buoyancy enter next tick.
     pub impulses: Vec<PointImpulse>,
+    /// Bodies' volume under the free surface during this step (two-way vertical coupling).
+    pub displacements: Vec<PointVolume>,
+    pub physics: FieldPhysics,
 }
 impl FieldStep {
     pub fn validate(&self, columns: usize) -> Result<(), String> {
         for boundary in self.boundaries {
             boundary.validate()?;
+        }
+        self.physics.validate()?;
+        if self.displacements.len() > MAX_SAMPLES
+            || self.displacements.iter().any(|d| {
+                d.at.iter()
+                    .any(|v| !v.is_finite() || v.abs() > f64::from(f32::MAX))
+                    || !d.volume_m3.is_finite()
+                    || !(0.0..=MAX_POINT_VOLUME_M3).contains(&d.volume_m3)
+                    || !(0.0..=MAX_POINT_RADIUS).contains(&d.radius)
+            })
+        {
+            return Err("resident water displacement points are invalid".into());
         }
         if self.boundaries.contains(&FieldBoundary::Sea) != self.sea.is_some() {
             return Err(
@@ -326,6 +401,7 @@ impl FieldStep {
             || self.substep_dt > 1.0
             || !(1..=8).contains(&self.substeps)
             || !(0.0..=10.0).contains(&self.friction)
+            || !(0.0..=10.0).contains(&self.calm_per_s)
             || !(0.0..=0.05).contains(&self.dry_below)
             || self.edits.iter().any(|e| {
                 e.column as usize >= columns
@@ -633,9 +709,12 @@ mod tests {
                     substep_dt: 1.0 / 120.0,
                     substeps: 2,
                     friction: 0.02,
+                    calm_per_s: DEFAULT_CALM_PER_S,
                     dry_below: 0.0,
                     edits: vec![],
                     impulses: vec![],
+                    displacements: vec![],
+                    physics: Default::default(),
                 };
                 MAX_STEPS + 1
             ],
@@ -675,6 +754,12 @@ mod tests {
         current["impulses"] = serde_json::json!([]);
         assert!(serde_json::from_value::<super::FieldStep>(current.clone()).is_err());
         current["boundaries"] = serde_json::json!(["Wall", "Wall", "Wall", "Wall"]);
+        assert!(serde_json::from_value::<super::FieldStep>(current.clone()).is_err());
+        current["displacements"] = serde_json::json!([]);
+        current["physics"] =
+            serde_json::json!({"dispersion": false, "breaking": false, "fall_min_m": 0.0});
+        assert!(serde_json::from_value::<super::FieldStep>(current.clone()).is_err());
+        current["calm_per_s"] = serde_json::json!(0.2);
         assert!(serde_json::from_value::<super::FieldStep>(current).is_ok());
     }
     #[test]
@@ -723,9 +808,12 @@ mod tests {
             substep_dt: 0.01,
             substeps: 1,
             friction: 0.0,
+            calm_per_s: DEFAULT_CALM_PER_S,
             dry_below: 0.0,
             edits: vec![],
             impulses: vec![],
+            displacements: vec![],
+            physics: Default::default(),
         };
         assert!(step.validate(256).is_err());
         let wave = FieldSeaWave {

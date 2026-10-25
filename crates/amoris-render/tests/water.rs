@@ -1088,6 +1088,7 @@ fn resident_programs_draw_the_current_field_after_skipped_frames_compaction_and_
             substep_dt: 1.0 / 120.0,
             substeps: 1 + tick % 3,
             friction: 0.02,
+            calm_per_s: amoris_assets::water_field::DEFAULT_CALM_PER_S,
             dry_below: 0.0,
             impulses: if tick % 13 == 0 {
                 vec![amoris_assets::water_field::PointImpulse {
@@ -1097,6 +1098,8 @@ fn resident_programs_draw_the_current_field_after_skipped_frames_compaction_and_
             } else {
                 vec![]
             },
+            displacements: vec![],
+            physics: Default::default(),
             edits: if tick % 11 == 0 {
                 vec![ColumnDelta {
                     column: 17,

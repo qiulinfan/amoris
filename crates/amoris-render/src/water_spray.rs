@@ -4,8 +4,11 @@ use crate::{
     profiler::GpuProfiler,
 };
 use bytemuck::{Pod, Zeroable};
-pub const CAPACITY: u32 = 4096;
-pub const PER_FRAME: u32 = 2048;
+pub const CAPACITY: u32 = 16384;
+pub const PER_FRAME: u32 = 4096;
+/// Births a frame left to splashes and breaking lips (matches water_spray_compute.wgsl): sustained
+/// white water must not overwrite a waterfall's sheet in the ring before its drops land.
+pub const SPLASH_PER_FRAME: u32 = 64;
 #[derive(Clone, Copy, PartialEq)]
 pub struct FieldSpec {
     pub origin: [f32; 2],
@@ -22,12 +25,15 @@ struct Params {
     flags: [u32; 4],
     rates: [f32; 4],
     absorb: [f32; 4],
+    entry: [f32; 4],
 }
 pub struct Advance {
     pub field: FieldSpec,
     pub dt: f32,
     pub changed: bool,
     pub clear: bool,
+    /// Simulated seconds the occupancy rise gathered over since the last advance; zero for none.
+    pub rise_s: f32,
 }
 pub struct Pipelines {
     layout: wgpu::BindGroupLayout,
@@ -36,6 +42,8 @@ pub struct Pipelines {
     draw: wgpu::RenderPipeline,
     module: wgpu::ShaderModule,
     pub budget: wgpu::Buffer,
+    /// Bound in place of the occupancy head and rise of a field that has none.
+    pub no_occupancy: [wgpu::Buffer; 2],
 }
 pub struct Pool {
     params: wgpu::Buffer,
@@ -100,14 +108,16 @@ impl Pipelines {
     pub fn new(device: &wgpu::Device, format: SceneFormat) -> Self {
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("water spray compute"),
-            entries: &std::array::from_fn::<_, 7, _>(|i| wgpu::BindGroupLayoutEntry {
+            entries: &std::array::from_fn::<_, 9, _>(|i| wgpu::BindGroupLayoutEntry {
                 binding: i as u32,
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
                     ty: if i < 2 {
                         wgpu::BufferBindingType::Uniform
                     } else {
-                        wgpu::BufferBindingType::Storage { read_only: i == 2 }
+                        wgpu::BufferBindingType::Storage {
+                            read_only: i == 2 || i == 7,
+                        }
                     },
                     has_dynamic_offset: false,
                     min_binding_size: None,
@@ -168,6 +178,15 @@ impl Pipelines {
                 | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
+        let no_occupancy =
+            ["water spray without occupancy", "water spray without rise"].map(|label| {
+                device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some(label),
+                    size: 16,
+                    usage: wgpu::BufferUsages::STORAGE,
+                    mapped_at_creation: false,
+                })
+            });
         Self {
             layout,
             draw_layout,
@@ -175,6 +194,7 @@ impl Pipelines {
             draw,
             module,
             budget,
+            no_occupancy,
         }
     }
     pub fn reformat(&mut self, device: &wgpu::Device, format: SceneFormat) {
@@ -193,6 +213,7 @@ impl Pool {
         view: &wgpu::Buffer,
         columns: &wgpu::Buffer,
         impacts: &wgpu::Buffer,
+        occupancy: Option<(&wgpu::Buffer, &wgpu::Buffer)>,
     ) -> Self {
         let buffer = |name, size, usage| {
             device.create_buffer(&wgpu::BufferDescriptor {
@@ -226,7 +247,15 @@ impl Pool {
             label: Some("water spray compute"),
             layout: &p.layout,
             entries: &[
-                view, &params, columns, &particles, &state, &p.budget, impacts,
+                view,
+                &params,
+                columns,
+                &particles,
+                &state,
+                &p.budget,
+                impacts,
+                occupancy.map_or(&p.no_occupancy[0], |o| o.0),
+                occupancy.map_or(&p.no_occupancy[1], |o| o.1),
             ]
             .into_iter()
             .enumerate()
@@ -294,8 +323,16 @@ impl Pool {
                 count: [f.size[0], f.size[1], u32::from(f.tiled), CAPACITY],
                 origin_cell_dt: [f.origin[0], f.origin[1], f.cell, dt],
                 flags: [self.frame, u32::from(changed), u32::from(reset), PER_FRAME],
-                rates: [0.00195, 48.0, 0.5, 4.0],
+                // Fall particle volume (m^3), fall source reach (m), the rate of rise that throws a
+                // splash (m/s) and the reach of splashes and breaking lips (m).
+                rates: [0.00195, 48.0, 0.9, 160.0],
                 absorb: [f.absorb[0], f.absorb[1], f.absorb[2], 0.0],
+                // Whether bodies' entries are read this advance, and over how many seconds.
+                entry: if a.rise_s > 0.0 && !f.tiled {
+                    [1.0, 1.0 / a.rise_s, 0.0, 0.0]
+                } else {
+                    [0.0; 4]
+                },
             }),
         );
         for stage in 0..2 {

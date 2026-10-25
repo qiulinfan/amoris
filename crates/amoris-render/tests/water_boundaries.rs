@@ -196,8 +196,11 @@ fn local_edit_receipts_measure_stored_clamped_changes_before_transport() {
             substep_dt: 1.0 / 120.0,
             substeps: 2,
             friction: 0.02,
+            calm_per_s: amoris_assets::water_field::DEFAULT_CALM_PER_S,
             dry_below: 0.0,
             impulses: vec![],
+            displacements: vec![],
+            physics: Default::default(),
             edits: vec![
                 ColumnDelta {
                     column: 0,

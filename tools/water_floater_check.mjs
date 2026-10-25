@@ -88,7 +88,7 @@ const expression=`(async()=>{
     if(!raw.complete_water_job(output))throw Error("body sample completion refused");
    }
   }
-  if(jobs!==1||!reply||transfers.field_readbacks!==0||transfers.small_readbacks!==2||transfers.readback_bytes!==65664)
+  if(jobs!==1||!reply||transfers.field_readbacks!==0||transfers.small_readbacks!==2||transfers.readback_bytes!==131200)
    throw Error("4096-point readback scope changed: "+JSON.stringify({jobs,transfers,reply}));
  }finally{raw.close();raw.free();host.free();}
  document.getElementById("hud").style.display="none";

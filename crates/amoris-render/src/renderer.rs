@@ -394,6 +394,8 @@ pub struct Renderer {
     post: Post,
     sky: Sky,
     gi: crate::gi::ProbeVolume,
+    /// The sun's caustics under the water nearest the camera (water_caustics.rs).
+    caustics: crate::water_caustics::Caustics,
     /// Ray-traced sun shadows in place of the cascades (rt_shadows.rs, `AMORIS_RT_SHADOWS=1`).
     rt_shadows: Option<crate::rt_shadows::RtShadows>,
     profiler: GpuProfiler,
@@ -1011,6 +1013,17 @@ impl Renderer {
             entry(8, frag, uni_ty()),
             entry(9, frag, buf_ty(true)),
             entry(10, frag, buf_ty(true)),
+            // Caustics under water (water_caustics_light.wgsl): the map and its placement.
+            entry(
+                15,
+                frag,
+                wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+            ),
+            entry(16, frag, uni_ty()),
         ];
         // Ray-traced shadows: the casters' top level and table, and the mesh pool (rt_shadows.rs).
         if rt_shadows.is_some() {
@@ -1334,6 +1347,7 @@ impl Renderer {
             post: built.post,
             sky: built.sky,
             gi: crate::gi::ProbeVolume::new(device, &gpu.queue),
+            caustics: crate::water_caustics::Caustics::new(device),
             rt_shadows,
             profiler: GpuProfiler::new(device, &gpu.queue, gpu.caps.timestamps, &gpu.info),
             splats: built.splats,
@@ -2652,6 +2666,11 @@ impl Renderer {
             b(8, &self.gi.params),
             b(9, &self.gi.radiance),
             b(10, &self.gi.distances),
+            wgpu::BindGroupEntry {
+                binding: 15,
+                resource: wgpu::BindingResource::TextureView(self.caustics.view()),
+            },
+            b(16, self.caustics.params()),
         ];
         if let Some(rt) = &self.rt_shadows {
             lighting_entries.extend(rt.bind_entries(&self.meshes));
@@ -3027,6 +3046,16 @@ impl Renderer {
             &mut self.profiler,
             &self.view_buf.buf,
             frame_dt,
+        );
+        self.caustics.encode(
+            &device,
+            &queue,
+            &mut enc,
+            &self.view_buf.buf,
+            self.water
+                .caustics_source(cam.position.to_array())
+                .filter(|_| sun.is_some() && to_sun.y > 0.0 && sun_lux > 0.0),
+            &mut self.profiler,
         );
         self.batches.reset(&mut enc);
         // The two-sided index lists this frame's double-sided transparent draws need first.

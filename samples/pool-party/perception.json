@@ -1,0 +1,167 @@
+{
+ "observers": [
+  {
+   "name": "player",
+   "doc": "A party guest's own eyes and score.",
+   "sight": {
+    "range_m": 48,
+    "fov_deg": 74,
+    "eye_m": {
+     "x": 0,
+     "y": 0,
+     "z": 0
+    },
+    "occlusion": false
+   },
+   "positions": true,
+   "attention_m": 24,
+   "memory_s": 120,
+   "memory_capacity": 32,
+   "event_capacity": 64,
+   "budget_tokens": 400,
+   "instruments": [
+    "ducks",
+    "best_splash_m",
+    "in_water",
+    "underwater",
+    "position_m"
+   ]
+  }
+ ],
+ "instruments": [
+  {
+   "name": "ducks",
+   "doc": "Ducks collected.",
+   "unit": {
+    "unit": "count"
+   },
+   "precision": 0,
+   "source": {
+    "from": "field",
+    "component": "Party",
+    "path": "ducks"
+   }
+  },
+  {
+   "name": "best_splash_m",
+   "doc": "The highest wave a cannonball raised at the pool's corners.",
+   "unit": {
+    "unit": "metres"
+   },
+   "precision": 2,
+   "source": {
+    "from": "field",
+    "component": "Party",
+    "path": "best_splash_m"
+   }
+  },
+  {
+   "name": "in_water",
+   "doc": "The body overlaps water.",
+   "unit": {
+    "unit": "bool"
+   },
+   "precision": 0,
+   "source": {
+    "from": "field",
+    "component": "Walker",
+    "path": "in_liquid"
+   }
+  },
+  {
+   "name": "underwater",
+   "doc": "The eye is under water.",
+   "unit": {
+    "unit": "bool"
+   },
+   "precision": 0,
+   "source": {
+    "from": "field",
+    "component": "Walker",
+    "path": "eye_in_liquid"
+   }
+  },
+  {
+   "name": "position_m",
+   "doc": "The eye position.",
+   "unit": {
+    "unit": "position"
+   },
+   "precision": 2,
+   "source": {
+    "from": "field",
+    "component": "Transform",
+    "path": "position"
+   }
+  }
+ ],
+ "kinds": [],
+ "events": [
+  {
+   "kind": "party.duck",
+   "doc": "The player picked up a duck.",
+   "scope": {
+    "scope": "private"
+   },
+   "data": [
+    {
+     "name": "ducks",
+     "doc": "Ducks collected.",
+     "unit": {
+      "unit": "count"
+     },
+     "precision": 0,
+     "exposure": "coarse",
+     "source": {
+      "from": "data",
+      "path": "ducks"
+     }
+    }
+   ]
+  },
+  {
+   "kind": "party.splash",
+   "doc": "The player's cannonball raised a wave.",
+   "scope": {
+    "scope": "private"
+   },
+   "data": [
+    {
+     "name": "wave_m",
+     "doc": "The highest wave at the corners.",
+     "unit": {
+      "unit": "metres"
+     },
+     "precision": 2,
+     "exposure": "coarse",
+     "source": {
+      "from": "data",
+      "path": "wave_m"
+     }
+    }
+   ]
+  },
+  {
+   "kind": "party.done",
+   "doc": "Every duck collected.",
+   "scope": {
+    "scope": "private"
+   },
+   "data": [
+    {
+     "name": "ducks",
+     "doc": "Ducks collected.",
+     "unit": {
+      "unit": "count"
+     },
+     "precision": 0,
+     "exposure": "coarse",
+     "source": {
+      "from": "data",
+      "path": "ducks"
+     }
+    }
+   ]
+  }
+ ]
+}

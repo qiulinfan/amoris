@@ -85,6 +85,10 @@ fn complete(queue: &ComputeQueue, batch: &ResidentBatchJob) -> bool {
                         column[1],
                         column[2],
                         column[3],
+                        0.0,
+                        0.0,
+                        0.0,
+                        0.0,
                     ]
                 })
                 .collect();
@@ -235,6 +239,7 @@ fn probes_walkers_and_buoys_share_order_and_feedback_split() {
                 }],
                 drag: 0.0,
                 heave: 0.0,
+                added_mass: 0.0,
                 submerged: 0.0,
             },
         ))

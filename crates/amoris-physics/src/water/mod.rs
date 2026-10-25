@@ -13,6 +13,7 @@ mod collider_bed;
 pub use collider_bed::WaterColliderBed;
 pub(crate) mod buoyancy;
 pub mod compute;
+pub mod displacement;
 pub mod feedback;
 pub mod field;
 pub mod resident;
@@ -51,13 +52,32 @@ const STILL_DEPTH: f64 = 1e-5;
 const STILL_SPEED: f64 = 1e-3;
 /// A film dries only when every face of its column runs slower than this, m/s.
 const DRY_SPEED: f64 = 0.05;
-/// Calm damping (water.md 4), besides bed friction: a face is damped at `CALM_RATE` a second up
-/// to `CALM_SPEED` (m/s), and a faster one is decelerated by no more than `CALM_RATE * CALM_SPEED`
-/// (0.1 m/s^2). The sloshing and the eddies a flood leaves, which friction barely damps in deep
+/// Calm damping (water.md 4), besides bed friction: a face is damped at the region's
+/// `calm_per_s` up to `CALM_SPEED` (m/s), and a faster one is decelerated by no more than
+/// `calm_per_s * CALM_SPEED`
+/// (0.1 m/s^2 at 0.2 a second). The sloshing and the eddies a flood leaves, which friction barely
+/// damps in deep
 /// water, die out, and the water sleeps again within about 2 minutes; a flow that gravity drives
 /// (a breach, a fall) is hardly slowed.
 const CALM_SPEED: f64 = 0.5;
-const CALM_RATE: f64 = 0.2;
+
+/// One water observation in world units: free surface, depth, centred velocity x and z, the
+/// free surface's slope along x and z, and its rate of rise (m/s). Floaters take Froude-Krylov
+/// pressure along the slope and the surface's vertical motion from it (water.md 47).
+pub type WaterColumn = [f64; 7];
+
+/// A resident point observation in world units, for a region of `cell_m` columns.
+pub fn column(raw: resident::RawSample, cell_m: f64) -> WaterColumn {
+    [
+        raw[0],
+        raw[1],
+        raw[2],
+        raw[3],
+        raw[4] / cell_m,
+        raw[5] / cell_m,
+        raw[6] / cell_m,
+    ]
+}
 
 /// A region of water columns over a bed (water.md 3). Its corner is the entity's
 /// `Transform.position` in x and z (y unused); the rotation must be the identity.
@@ -80,6 +100,10 @@ pub struct WaterRegion {
     /// Bed friction, m/s.
     #[serde(default = "friction")]
     pub friction: f64,
+    /// Calm damping of slow faces, per second (water.md 4): 0.2 lets a disturbed sea sleep within
+    /// minutes; waves meant to travel (a swell, a pool's ripples) take little or none (0 to 10).
+    #[serde(default = "calm")]
+    pub calm_per_s: f64,
     /// At least this many substeps a tick (1 to 8).
     #[serde(default = "two")]
     pub substeps: u32,
@@ -89,10 +113,42 @@ pub struct WaterRegion {
     /// Presentation, carried as the palette carries a liquid's fog (water.md 9).
     #[serde(default)]
     pub look: WaterLook,
+    /// Physics beyond the hydrostatic bulk flow (water.md 46 to 49); resident regions only.
+    #[serde(default)]
+    pub physics: WaterPhysics,
     /// Every tile, in key order (z, then x); empty: all dry, the beds read from `bed` at the next
     /// `physics.water` (water.md 5).
     #[serde(default)]
     pub tiles: Vec<WaterTile>,
+}
+
+/// Physics beyond the hydrostatic bulk flow, for `gpu_resident` regions (water.md 46 to 49).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, default)]
+pub struct WaterPhysics {
+    /// Airy surface waves with depth-exact dispersion over the bulk flow (Jeschke and Wojtan
+    /// 2023): ripples and wakes at any depth. Needs power-of-two sides.
+    pub dispersion: bool,
+    /// Eddy-viscosity breaking where the surface rises faster than half the local wave speed
+    /// (Kennedy et al. 2000).
+    pub breaking: bool,
+    /// Ballistic falls: flow over a drop deeper than this many metres leaves its lip and lands
+    /// where its trajectory meets water or bed (0: off; 0.25 to 100).
+    pub falls_m: f64,
+    /// Depth-integrated non-hydrostatic pressure (Yamazaki, Kowalik and Cheung 2009): long waves
+    /// disperse and a swell shoals into crests rather than bores (water.md 55). Not with
+    /// `dispersion`.
+    pub nonhydrostatic: bool,
+}
+impl WaterPhysics {
+    pub fn field(self) -> amoris_assets::water_field::FieldPhysics {
+        amoris_assets::water_field::FieldPhysics {
+            dispersion: self.dispersion,
+            breaking: self.breaking,
+            fall_min_m: self.falls_m,
+            nonhydrostatic: self.nonhydrostatic,
+        }
+    }
 }
 
 /// CPU is bit-identical across targets; GPU requires a host compute service and uses f32.
@@ -111,6 +167,9 @@ fn one() -> f64 {
 
 fn friction() -> f64 {
     0.02
+}
+fn calm() -> f64 {
+    amoris_assets::water_field::DEFAULT_CALM_PER_S
 }
 
 fn two() -> u32 {
@@ -367,6 +426,34 @@ impl WaterRegion {
         [(u0 + u1) * 0.5, (w0 + w1) * 0.5]
     }
 
+    /// Column `(i, k)`'s free surface rate of rise, m/s: the net inflow through its faces at
+    /// centred depths over the column's width (continuity, as the resident point query).
+    pub fn rise_at(&self, i: usize, k: usize) -> f64 {
+        assert!(
+            self.solver != Solver::GpuResident,
+            "resident field values require WaterProbe observations, not checkpoint tiles"
+        );
+        let [nx, nz] = self.columns_along();
+        let (t, c) = self.locate(i, k);
+        let h = self.tiles[t].depth[c];
+        let mut q = 0.0;
+        if i > 0 {
+            q += self.tiles[t].u[c] * 0.5 * (h + self.depth_at(i - 1, k));
+        }
+        if i + 1 < nx {
+            let (t1, c1) = self.locate(i + 1, k);
+            q -= self.tiles[t1].u[c1] * 0.5 * (h + self.tiles[t1].depth[c1]);
+        }
+        if k > 0 {
+            q += self.tiles[t].w[c] * 0.5 * (h + self.depth_at(i, k - 1));
+        }
+        if k + 1 < nz {
+            let (t1, c1) = self.locate(i, k + 1);
+            q -= self.tiles[t1].w[c1] * 0.5 * (h + self.tiles[t1].depth[c1]);
+        }
+        q / self.cell_m
+    }
+
     /// Changes column `(i, k)`'s water by `m3` (taking at most what it holds) and wakes its tile
     /// when that changed it; returns the change made, m^3.
     pub fn pour(&mut self, i: usize, k: usize, m3: f64) -> f64 {
@@ -407,6 +494,24 @@ impl WaterRegion {
         if self.solver == Solver::GpuResident && self.dry_below != 0.0 {
             return Err(resident::failed(
                 "resident drying is not connected yet; dry_below must be zero",
+            ));
+        }
+        if self.physics != WaterPhysics::default() && self.solver != Solver::GpuResident {
+            return Err(invalid(
+                "physics",
+                "dispersion, breaking and falls need the gpu_resident solver".into(),
+            ));
+        }
+        if let Err(message) = self.physics.field().validate() {
+            return Err(invalid("physics", message));
+        }
+        if self.physics.dispersion && self.size.iter().any(|n| !n.is_power_of_two()) {
+            return Err(invalid(
+                "physics.dispersion",
+                format!(
+                    "dispersive waves need power-of-two sides (16 to 512), not {:?}",
+                    self.size
+                ),
             ));
         }
         if !(self.cell_m >= 0.25 && self.cell_m <= 4.0) {
@@ -624,9 +729,11 @@ pub fn dam_scene(tiles: u32) -> WaterRegion {
         },
         edges: [Edge::Wall; 4],
         friction: 0.02,
+        calm_per_s: calm(),
         substeps: 2,
         dry_below: 0.0,
         look: WaterLook::default(),
+        physics: WaterPhysics::default(),
         tiles: Vec::new(),
     };
     for kz in 0..tiles {
@@ -835,6 +942,15 @@ type FeedbackQuery<'w, 's> = Query<
         &'static mut feedback::WaterFeedback,
     ),
 >;
+type DisplacementQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        bevy_ecs::entity::Entity,
+        &'static EntityId,
+        &'static mut displacement::WaterDisplacement,
+    ),
+>;
 type BuoyInput<'w, 's> = (
     Query<
         'w,
@@ -857,6 +973,7 @@ type BuoyInput<'w, 's> = (
     >,
     ResMut<'w, buoyancy::Samples>,
     FeedbackQuery<'w, 's>,
+    DisplacementQuery<'w, 's>,
 );
 type ForcingInput<'w, 's> = (
     Query<'w, 's, (&'static EntityId, &'static WaterSource)>,
@@ -913,7 +1030,7 @@ pub(crate) fn water(
     for event in std::mem::take(&mut scratch.3.events) {
         emit.emit(event);
     }
-    let (floaters, hulls, mut buoy_samples, mut feedbacks) = buoy_input;
+    let (floaters, hulls, mut buoy_samples, mut feedbacks, mut displacements) = buoy_input;
     let (walkers, mut swim_samples) = swimmers_input;
     let (sources, drains, seas) = forcing;
     let dt = clock.dt();
@@ -944,6 +1061,19 @@ pub(crate) fn water(
                 return Err(Problem::new(
                     "water.feedback_requires_resident",
                     "WaterFeedback belongs on a gpu_resident WaterRegion",
+                    detail([]),
+                ));
+            }
+        }
+        for (e, _, d) in by_id(&displacements) {
+            d.validate_source(tick)?;
+            if !regions
+                .get(e)
+                .is_ok_and(|(_, _, _, r, _)| r.solver == Solver::GpuResident)
+            {
+                return Err(Problem::new(
+                    "water.displacement_requires_resident",
+                    "WaterDisplacement belongs on a gpu_resident WaterRegion",
                     detail([]),
                 ));
             }
@@ -1366,11 +1496,15 @@ pub(crate) fn water(
                     let impulses = feedbacks
                         .get(e)
                         .map_or_else(|_| vec![], |(_, _, f)| f.pending.clone());
+                    let displaced = displacements
+                        .get(e)
+                        .map_or_else(|_| vec![], |(_, _, d)| d.pending.clone());
                     let local_ready = state.still >= SLEEP_TICKS
                         && state.controls == controls
                         && !controls.open()
                         && edits.is_empty()
                         && impulses.is_empty()
+                        && displaced.is_empty()
                         && reusable;
                     let mut positive = std::collections::BTreeMap::<u32, f64>::new();
                     for edit in &edits {
@@ -1423,6 +1557,7 @@ pub(crate) fn water(
                         && !controls.open()
                         && edits.is_empty()
                         && impulses.is_empty()
+                        && displaced.is_empty()
                     {
                         None
                     } else {
@@ -1438,9 +1573,12 @@ pub(crate) fn water(
                             substep_dt: dt / f64::from(count),
                             substeps: count,
                             friction: region.friction,
+                            calm_per_s: region.calm_per_s,
                             dry_below: region.dry_below,
                             edits,
                             impulses,
+                            displacements: displaced,
+                            physics: region.physics.field(),
                         })
                     };
                     if !local_ready {
@@ -1458,6 +1596,7 @@ pub(crate) fn water(
                         area: region.cell_m * region.cell_m,
                         local_ready,
                         feedback: feedbacks.get(e).ok().map(|(_, _, f)| f.clone()),
+                        displacement: displacements.get(e).ok().map(|(_, _, d)| d.clone()),
                         invalid_probes,
                         state,
                         checkpoint,
@@ -1537,11 +1676,12 @@ pub(crate) fn water(
                             .insert(plan.state.recipe.checkpoint(), checkpoint);
                     }
                     let probe_count = plan.probes.len();
+                    let cell_m = plan.controls.cell_m;
                     for (((probe_e, at), grid), sample) in plan
                         .probes
                         .into_iter()
                         .zip(plan.points)
-                        .zip(output.samples.iter().copied())
+                        .zip(output.samples.iter().map(|s| column(*s, cell_m)))
                     {
                         if let Ok((_, _, mut probe)) = probes.get_mut(probe_e) {
                             probe.ready = true;
@@ -1557,18 +1697,22 @@ pub(crate) fn water(
                         }
                     }
                     let swimmer_count = plan.swimmers.len();
-                    for (point, sample) in plan
-                        .swimmers
-                        .into_iter()
-                        .zip(output.samples.iter().copied().skip(probe_count))
-                    {
+                    for (point, sample) in plan.swimmers.into_iter().zip(
+                        output
+                            .samples
+                            .iter()
+                            .map(|s| column(*s, cell_m))
+                            .skip(probe_count),
+                    ) {
                         swim_samples.record(point, id, &plan.state.recipe, tick, sample);
                     }
-                    for (point, sample) in plan
-                        .buoys
-                        .into_iter()
-                        .zip(output.samples.into_iter().skip(probe_count + swimmer_count))
-                    {
+                    for (point, sample) in plan.buoys.into_iter().zip(
+                        output
+                            .samples
+                            .iter()
+                            .map(|s| column(*s, cell_m))
+                            .skip(probe_count + swimmer_count),
+                    ) {
                         buoy_samples.record(point, id, &plan.state.recipe, tick, sample);
                     }
                 } else {
@@ -1588,6 +1732,11 @@ pub(crate) fn water(
                     && let Ok((_, _, mut f)) = feedbacks.get_mut(e)
                 {
                     *f = feedback;
+                }
+                if let Some(displacement) = plan.displacement
+                    && let Ok((_, _, mut d)) = displacements.get_mut(e)
+                {
+                    *d = displacement;
                 }
                 if let Ok((_, _, _, mut r, _)) = regions.get_mut(e)
                     && !r.tiles.is_empty()

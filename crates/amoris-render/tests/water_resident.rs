@@ -33,8 +33,14 @@ fn complete_mac_state_round_trips_and_observes_every_outside_face() {
         let observed = resident.observe(&cp, &recipe, &points).unwrap();
         assert_eq!(observed.summary.digest, cp.digest());
         assert_eq!(observed.summary.max_speed, 5.0);
+        // The first four words are the free surface, depth and centred velocity; the extended
+        // words (surface rise and net inflow) are checked by water_frontier.
         assert_eq!(
-            observed.samples,
+            observed
+                .samples
+                .iter()
+                .map(|s| [s[0], s[1], s[2], s[3]])
+                .collect::<Vec<_>>(),
             vec![[2.0, 2.0, 1.0, -1.5], [2.0, 2.0, 2.0, 2.5]]
         );
         resident.set_buoyancy_start(Some(0));
@@ -80,6 +86,7 @@ fn region_pool_reuses_independent_fields_and_rebuilds_evicted_or_divergent_input
                     substep_dt: 0.01,
                     substeps: 1,
                     friction: 0.02,
+                    calm_per_s: amoris_assets::water_field::DEFAULT_CALM_PER_S,
                     dry_below: 0.0,
                     edits: vec![ColumnDelta {
                         column: 85,
@@ -89,6 +96,8 @@ fn region_pool_reuses_independent_fields_and_rebuilds_evicted_or_divergent_input
                         at: [5.5, 5.5],
                         impulse: [(n + 1) as f64, 0.0],
                     }],
+                    displacements: vec![],
+                    physics: Default::default(),
                 };
                 let expected = reference
                     .advance(&checkpoint, recipe, &step, &points, false)
@@ -196,11 +205,14 @@ fn bounded_readback_accepts_4096_points_and_rejects_an_oversized_batch() {
             .collect();
         let mut resident = ResidentWater::new(&gpu).unwrap();
         let out = resident.observe(&checkpoint, &recipe, &points).unwrap();
-        assert_eq!(out.samples, vec![[2.0, 2.0, 0.0, 0.0]; points.len()]);
+        assert_eq!(
+            out.samples,
+            vec![[2.0, 2.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]; points.len()]
+        );
         assert_eq!(resident.transfers().field_readbacks, 0);
         assert_eq!(
             resident.transfers().readback_bytes,
-            128 + points.len() as u64 * 16
+            128 + points.len() as u64 * 32
         );
         let mut too_many = points.clone();
         too_many.push([0.5; 2]);
@@ -215,7 +227,7 @@ fn bounded_readback_accepts_4096_points_and_rejects_an_oversized_batch() {
                 .observe(&checkpoint, &recipe, &[[0.5; 2]])
                 .unwrap()
                 .samples,
-            vec![[2.0, 2.0, 0.0, 0.0]]
+            vec![[2.0, 2.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]]
         );
     }
 }
@@ -258,9 +270,12 @@ fn bounded_resident_execution_replays_branches_and_compacts_exact_state() {
             substep_dt: 1.0 / 240.0,
             substeps: 2,
             friction: 0.02,
+            calm_per_s: amoris_assets::water_field::DEFAULT_CALM_PER_S,
             dry_below: 0.0,
             edits: vec![],
             impulses: vec![],
+            displacements: vec![],
+            physics: Default::default(),
         };
         for tick in 1..=64 {
             step.substeps = 1 + tick % 3;
@@ -416,12 +431,15 @@ fn sized_pool_retains_small_fields_and_authenticates_growth_restore_and_item_evi
                     substep_dt: 0.01,
                     substeps: 1,
                     friction: 0.02,
+                    calm_per_s: amoris_assets::water_field::DEFAULT_CALM_PER_S,
                     dry_below: 0.0,
                     edits: vec![ColumnDelta {
                         column: 645,
                         depth_m: 0.01 * (n + 1) as f64,
                     }],
                     impulses: vec![],
+                    displacements: vec![],
+                    physics: Default::default(),
                 };
                 let expected = reference
                     .advance(&checkpoint, recipe, &step, &points, false)

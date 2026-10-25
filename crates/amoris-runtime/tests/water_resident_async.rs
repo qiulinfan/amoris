@@ -53,6 +53,10 @@ fn identity_checkpoint(r: &ResidentJob, checkpoint_now: bool) -> ResidentOutput 
                 f64::from(c[1]),
                 0.0,
                 0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
             ]
         })
         .collect();

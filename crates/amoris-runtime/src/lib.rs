@@ -58,6 +58,8 @@ pub use amoris_physics::shallow;
 pub use amoris_physics::walk;
 /// Host-injected water computation. No graphics dependency enters the game-side crates.
 pub use amoris_physics::water::compute as water_compute;
+/// Resident water's state in the world: each region's recipe and the checkpoints it replays from.
+pub use amoris_physics::water::resident as water_resident;
 pub use boundary::take_held;
 pub use catalog::{CATALOG, Command, CommandDef, CommandFn, NoParams, catalog_json};
 pub use control::{RestoreBundle, Sample, SnapshotsRestoreParams, StepParams};

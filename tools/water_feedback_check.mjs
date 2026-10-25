@@ -63,7 +63,8 @@ const expression=`(async()=>{
   controlSpeed=water.stats.max_speed;if(controlSpeed!==0)throw Error("one-way control unexpectedly changes the fluid");
  }finally{control.close();}
  // Inspect the first two real host jobs directly: tick one has no old packet, tick two adds
- // exactly 32 bytes of coupled impulse budget to the existing metadata + 108 point samples.
+ // exactly 32 bytes of coupled impulse budget to the existing metadata + 108 point samples of
+ // eight words (bd63fc22).
  const bindings=await import("/pkg/amoris_web.js");const raw=new bindings.GameWorker(pkg,JSON.stringify({pacing:"stepped",seed:1}));
  const host=new bindings.BrowserWater();let jobs=0,transfers;const bytes=[];
  const flush=()=>{for(const m of JSON.parse(raw.messages())){if(m.t==="snap"){raw.snap_bytes();raw.ack(m.version);}if(m.t==="reply"&&m.error)throw Error(JSON.stringify(m.error));}raw.render_frame();};
@@ -75,7 +76,7 @@ const expression=`(async()=>{
     bytes.push(transfers.readback_bytes);jobs++;if(!raw.complete_water_job(result))throw Error("reaction response rejected");
    }
   }
-  if(jobs!==2||transfers.field_readbacks!==0||JSON.stringify(bytes)!=="[1856,3680]")throw Error("reaction readback scope changed: "+JSON.stringify({jobs,bytes,transfers}));
+  if(jobs!==2||transfers.field_readbacks!==0||JSON.stringify(bytes)!=="[3584,7136]")throw Error("reaction readback scope changed: "+JSON.stringify({jobs,bytes,transfers}));
  }finally{raw.close();raw.free();host.free();}
  document.getElementById("hud").style.display="none";
  return{passed:true,runs,control_max_speed:controlSpeed,transfer:{jobs,bytes,transfers}};

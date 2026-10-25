@@ -302,6 +302,24 @@ pub fn local_com(body: Option<&RigidBody>) -> V3 {
     body.and_then(|b| b.mass).map_or(geom::ZERO, |m| m.center)
 }
 
+/// A body's mass, kg: stated, or its collider's density over a ball, cuboid or capsule.
+pub fn body_mass(body: Option<&RigidBody>, collider: Option<&Collider>) -> Option<f64> {
+    if let Some(m) = body.and_then(|b| b.mass) {
+        return Some(m.mass);
+    }
+    let c = collider?;
+    let volume = match c.shape {
+        Shape::Ball { radius } => 4.0 / 3.0 * std::f64::consts::PI * radius * radius * radius,
+        Shape::Cuboid { half_extents: h } => 8.0 * h[0] * h[1] * h[2],
+        Shape::Capsule {
+            half_height,
+            radius,
+        } => std::f64::consts::PI * radius * radius * (2.0 * half_height + 4.0 / 3.0 * radius),
+        _ => return None,
+    };
+    c.density.map(|d| d * volume)
+}
+
 fn invalid(code: &str, entity: EntityId, what: &str, reason: String) -> Problem {
     Problem::new(
         code,

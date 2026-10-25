@@ -21,3 +21,11 @@ marker, resurfacing, dry-pad return and retry. Other water samples are numerical
 fixtures, not completed surfing or waterfall games. Specifications are in water.md 17--45;
 methods and concise measurements are in bench/liquids.md. Raw captures, measurements and logs
 remain in ignored out/ or CI artifacts.
+
+Amoris Pioneer, 2026-10-22: on the owner's request, `explore/water` carries the resident water past
+this scope: displaced body volume, implicit buoyancy and Froude-Krylov forces, ballistic falls,
+breaking, dispersive surface waves, boards, entry crowns and underwater caustics, and on
+`explore/water-nh` non-hydrostatic pressure, added mass, water entry and body coupling that no
+longer pumps energy into the water (water.md 46 to 56; bench/liquids.md 7). Its
+`samples/pool-party`, `samples/river-falls` and `samples/surf-beach` are completed games whose
+checks play them through the player's controls.

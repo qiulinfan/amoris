@@ -22,6 +22,7 @@
     clippy::cast_precision_loss
 )]
 
+pub mod board;
 pub mod boat;
 pub mod body;
 mod cache;
@@ -40,6 +41,7 @@ pub mod walk;
 pub mod walker;
 pub mod water;
 
+pub use board::Board;
 pub use boat::{Boat, BuoyPoint, Floater, Hull, Sail, Trim, best_sheet};
 pub use body::{
     BodyKind, Collider, ExternalForce, MassProps, Part, PartShape, RigidBody, Shape, Transform,
@@ -88,6 +90,7 @@ pub fn plugin(sim: &mut Sim) -> Result<(), Problem> {
     ComponentRegistry::register::<Sea>(w, None)?;
     ComponentRegistry::register::<Wind>(w, None)?;
     ComponentRegistry::register::<Walker>(w, None)?;
+    ComponentRegistry::register::<Board>(w, None)?;
     ComponentRegistry::register::<amoris_sim::voxels::Voxels>(w, None)?;
     ComponentRegistry::register::<WaterRegion>(w, None)?;
     ComponentRegistry::register::<water::WaterColliderBed>(w, None)?;
@@ -95,6 +98,7 @@ pub fn plugin(sim: &mut Sim) -> Result<(), Problem> {
     ComponentRegistry::register::<water::resident::WaterOutletStage>(w, None)?;
     ComponentRegistry::register::<water::resident::WaterProbe>(w, None)?;
     ComponentRegistry::register::<water::feedback::WaterFeedback>(w, None)?;
+    ComponentRegistry::register::<water::displacement::WaterDisplacement>(w, None)?;
     ComponentRegistry::register::<WaterSource>(w, None)?;
     ComponentRegistry::register::<WaterDrain>(w, None)?;
     let mut water_system = IntoSystem::into_system(water::water);
@@ -155,6 +159,22 @@ pub fn plugin(sim: &mut Sim) -> Result<(), Problem> {
             )),
         },
     )?;
+    let mut board_system = IntoSystem::into_system(board::board);
+    board_system.initialize(sim.world_mut());
+    sim.add_exclusive(
+        "physics.board",
+        TickPhase::Forces,
+        always,
+        move |world, ctx| match board_system.run((), world) {
+            Ok(Ok(())) => {}
+            Ok(Err(problem)) => ctx.fault(problem),
+            Err(error) => ctx.fault(Problem::new(
+                "board.failed",
+                error.to_string(),
+                amoris_contract::detail([]),
+            )),
+        },
+    )?;
     sim.add_system("physics.fluids", TickPhase::Physics, always, fluids::fluids)?;
     let mut walk_system = IntoSystem::into_system(walker::walk);
     walk_system.initialize(sim.world_mut());
@@ -179,6 +199,7 @@ pub fn plugin(sim: &mut Sim) -> Result<(), Problem> {
         always,
         solver::contacts,
     )?;
+    sim.add_system("physics.mount", TickPhase::Physics, always, board::mount)?;
     sim.add_system(
         "physics.walk.clear",
         TickPhase::Finish,

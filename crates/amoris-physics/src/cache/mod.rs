@@ -71,6 +71,7 @@ pub fn declare<R: RegisterPersisted>(r: &mut R) {
         .component::<Sea>()
         .component::<Wind>()
         .component::<Walker>()
+        .component::<crate::board::Board>()
         .component::<amoris_sim::voxels::Voxels>()
         .component::<WaterRegion>()
         .component::<crate::water::WaterColliderBed>()
@@ -78,6 +79,7 @@ pub fn declare<R: RegisterPersisted>(r: &mut R) {
         .component::<crate::water::resident::WaterOutletStage>()
         .component::<crate::water::resident::WaterProbe>()
         .component::<crate::water::feedback::WaterFeedback>()
+        .component::<crate::water::displacement::WaterDisplacement>()
         .resource::<crate::water::resident::WaterCheckpoints>()
         .component::<WaterSource>()
         .component::<WaterDrain>()
@@ -354,12 +356,10 @@ persisted! {
     Transform => "Transform",
     Velocity => "Velocity",
     ExternalForce => "ExternalForce",
-    Floater => "Floater",
     Sail => "Sail",
     Hull => "Hull",
     Sea => "Sea",
     Wind => "Wind",
-    Walker => "Walker",
     WaterSource => "WaterSource",
     WaterDrain => "WaterDrain",
 }
@@ -385,9 +385,19 @@ impl Persisted for Collider {
     }
 }
 
+impl Persisted for Walker {
+    const NAME: &'static str = "Walker";
+    const VERSION: u32 = 2;
+}
+
+impl Persisted for Floater {
+    const NAME: &'static str = "Floater";
+    const VERSION: u32 = 2;
+}
+
 impl Persisted for WaterRegion {
     const NAME: &'static str = "WaterRegion";
-    const VERSION: u32 = 3;
+    const VERSION: u32 = 5;
 
     fn trace(t: &mut Tracer, s: &Samples) -> serde_reflection::Result<()> {
         t.trace_type::<crate::water::Solver>(s)?;

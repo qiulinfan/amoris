@@ -3,7 +3,7 @@ use amoris_render::{
     Antialiasing, BackendChoice, Gpu, Gtao, SceneFormat,
     profiler::GpuProfiler,
     water_foam::WaterFoam,
-    water_spray::{Advance, FieldSpec, PER_FRAME, Pipelines, Pool},
+    water_spray::{Advance, FieldSpec, PER_FRAME, Pipelines, Pool, SPLASH_PER_FRAME},
 };
 // Complete cases are serialized, including the live TAA reformat case on M5.
 static CASE: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -15,6 +15,9 @@ struct Harness {
     foam: WaterFoam,
     spec: FieldSpec,
     profiler: GpuProfiler,
+    /// An occupancy head and the head added since the last advance, for bodies' entries.
+    occupancy: Option<[wgpu::Buffer; 2]>,
+    rise_s: f32,
 }
 fn read(g: &Gpu, b: &wgpu::Buffer) -> Vec<u32> {
     let stage = g.device.create_buffer(&wgpu::BufferDescriptor {
@@ -46,6 +49,12 @@ impl Harness {
         Self::with_layout(g, columns, false)
     }
     fn with_layout(g: &Gpu, columns: &[[f32; 4]], tiled: bool) -> Self {
+        Self::build(g, columns, tiled, false)
+    }
+    fn with_occupancy(g: &Gpu, columns: &[[f32; 4]]) -> Self {
+        Self::build(g, columns, false, true)
+    }
+    fn build(g: &Gpu, columns: &[[f32; 4]], tiled: bool, entries: bool) -> Self {
         let spec = FieldSpec {
             origin: [0.0; 2],
             size: [32, 16],
@@ -69,7 +78,26 @@ impl Harness {
         });
         let pipes = Pipelines::new(&g.device, SceneFormat::new(Antialiasing::Off, Gtao::Off));
         let foam = WaterFoam::new(&g.device, &field, spec.size, spec.cell, tiled);
-        let pool = Pool::new(&g.device, &pipes, &view, &field, foam.impacts());
+        let occupancy = entries.then(|| {
+            ["spray test head", "spray test rise"].map(|label| {
+                g.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some(label),
+                    size: columns.len() as u64 * 4,
+                    usage: wgpu::BufferUsages::STORAGE
+                        | wgpu::BufferUsages::COPY_DST
+                        | wgpu::BufferUsages::COPY_SRC,
+                    mapped_at_creation: false,
+                })
+            })
+        });
+        let pool = Pool::new(
+            &g.device,
+            &pipes,
+            &view,
+            &field,
+            foam.impacts(),
+            occupancy.as_ref().map(|[head, rise]| (head, rise)),
+        );
         Self {
             columns: field,
             view,
@@ -78,6 +106,8 @@ impl Harness {
             foam,
             spec,
             profiler: GpuProfiler::new(&g.device, &g.queue, false, &g.info),
+            occupancy,
+            rise_s: 0.0,
         }
     }
     fn step(&mut self, g: &Gpu, dt: f32, changed: bool, clear: bool) {
@@ -93,6 +123,7 @@ impl Harness {
                 dt,
                 changed,
                 clear,
+                rise_s: std::mem::take(&mut self.rise_s),
             },
             &mut self.profiler,
         );
@@ -280,7 +311,14 @@ fn global_birth_budget_is_shared_across_water_regions() {
         usage: wgpu::BufferUsages::UNIFORM,
         mapped_at_creation: false,
     });
-    let mut other = Pool::new(&g.device, &h.pipes, &view, &h.columns, h.foam.impacts());
+    let mut other = Pool::new(
+        &g.device,
+        &h.pipes,
+        &view,
+        &h.columns,
+        h.foam.impacts(),
+        None,
+    );
     let mut e = g.device.create_command_encoder(&Default::default());
     e.clear_buffer(&h.pipes.budget, 0, None);
     h.pool.encode(
@@ -292,6 +330,7 @@ fn global_birth_budget_is_shared_across_water_regions() {
             dt: 0.1,
             changed: true,
             clear: true,
+            rise_s: 0.0,
         },
         &mut h.profiler,
     );
@@ -304,6 +343,7 @@ fn global_birth_budget_is_shared_across_water_regions() {
             dt: 0.1,
             changed: true,
             clear: true,
+            rise_s: 0.0,
         },
         &mut h.profiler,
     );
@@ -312,6 +352,54 @@ fn global_birth_budget_is_shared_across_water_regions() {
     let b = read(&g, &other.state);
     assert_eq!(a[1] + b[1], PER_FRAME);
     assert!(a[0] <= PER_FRAME && b[0] <= PER_FRAME);
+}
+
+#[test]
+fn white_water_splashes_take_a_bounded_share_of_births() {
+    let _case = CASE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let g = Gpu::headless(BackendChoice::from_env()).expect("splash budget needs GPU");
+    g.device
+        .on_uncaptured_error(std::sync::Arc::new(|e| panic!("splash budget: {e}")));
+    // Level water a metre deep converging on the middle at 4 m/s per metre: its surface rises at
+    // about 4 m/s in every column, a white-water burst everywhere and no fall or rapid face.
+    let field = (0..512)
+        .map(|n| [1.0, 1.0, -4.0 * ((n % 32) as f32 * 0.5 + 0.25 - 8.0), 0.0])
+        .collect::<Vec<_>>();
+    let mut h = Harness::new(&g, &field);
+    for _ in 0..2 {
+        h.step(&g, 0.1, false, false);
+        // Unbounded, these columns would ask for about 3,500 drops a frame.
+        assert_eq!(read(&g, &h.pool.state)[1], SPLASH_PER_FRAME);
+    }
+}
+
+#[test]
+fn a_bore_throws_no_falling_sheet() {
+    let _case = CASE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let g = Gpu::headless(BackendChoice::from_env()).expect("bore spray needs GPU");
+    // One flat bed: 2 m of water running at 3 m/s into 0.5 m of still water, a 1.5 m front.
+    let field = (0..512)
+        .map(|n| {
+            if n % 32 < 16 {
+                [2.0, 2.0, 3.0, 0.0]
+            } else {
+                [0.5, 0.5, 0.0, 0.0]
+            }
+        })
+        .collect::<Vec<_>>();
+    let mut h = Harness::new(&g, &field);
+    for frame in 0..3 {
+        h.step(&g, 1.0 / 60.0, true, frame == 0);
+    }
+    let sheet = read(&g, &h.pool.particles)
+        .chunks(12)
+        .filter(|d| f32::from_bits(d[7]) > f32::from_bits(d[3]) && d[8] == 0)
+        .count();
+    assert_eq!(sheet, 0, "a bore's front is not a waterfall");
 }
 
 #[test]
@@ -446,5 +534,67 @@ fn tiled_inputs_match_rows_and_a_far_source_remains_available_when_the_camera_re
             read(&g, &far.pool.state)[1] > 0,
             "camera return lost a cached source"
         );
+    }
+}
+
+/// The particles of one kind alive in the pool.
+fn alive(g: &Gpu, h: &Harness, kind: u32) -> Vec<[f32; 8]> {
+    read(g, &h.pool.particles)
+        .chunks(12)
+        .filter(|d| {
+            d[8] == kind
+                && f32::from_bits(d[7]) > 0.0
+                && f32::from_bits(d[3]) < f32::from_bits(d[7])
+        })
+        .map(|d| std::array::from_fn(|i| f32::from_bits(d[i])))
+        .collect()
+}
+
+#[test]
+fn a_body_entering_throws_a_crown_once_and_a_slow_one_none() {
+    let _case = CASE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    for backend in BackendChoice::under_test() {
+        let g = Gpu::headless(backend).expect("spray entries need GPU");
+        g.device
+            .on_uncaptured_error(std::sync::Arc::new(|e| panic!("spray entries: {e}")));
+        let mut h = Harness::with_occupancy(&g, &flat(1.5));
+        let [head, rise] = h.occupancy.clone().unwrap();
+        // 0.3 m of head over a 3 x 3 footprint centred on column (10, 8), added in one 60 Hz step:
+        // a body going in at about 4 x 0.3 x 60 = 72 m/s, capped at 14 m/s.
+        let mut bump = vec![0f32; 512];
+        for (j, i) in (7..10).flat_map(|j| (9..12).map(move |i| (j, i))) {
+            bump[i + 32 * j] = if (i, j) == (10, 8) { 0.3 } else { 0.1 };
+        }
+        g.queue.write_buffer(&head, 0, bytemuck::cast_slice(&bump));
+        g.queue.write_buffer(&rise, 0, bytemuck::cast_slice(&bump));
+        h.rise_s = 1.0 / 60.0;
+        h.step(&g, 1.0 / 60.0, true, false);
+        let crowns = alive(&g, &h, 6);
+        assert!(crowns.len() > 40, "{} crown drops", crowns.len());
+        let centre = [10.5 * 0.5, 8.5 * 0.5];
+        for d in &crowns {
+            // Born at the surface over the footprint, thrown upward.
+            assert!(d[1] > 1.0 && d[1] < 1.4 && d[5] > 0.0, "{d:?}");
+            assert!(
+                (d[0] - centre[0]).abs() < 1.0 && (d[2] - centre[1]).abs() < 1.0,
+                "{d:?}"
+            );
+        }
+        // The rise was taken: the next advance throws nothing new.
+        assert!(read(&g, &rise).iter().all(|&w| w == 0));
+        let born = crowns.len();
+        h.step(&g, 1.0 / 60.0, true, false);
+        assert!(alive(&g, &h, 6).len() <= born);
+        // Three millimetres of head in a step is a body sliding in at well under 1.2 m/s.
+        let mut h = Harness::with_occupancy(&g, &flat(1.5));
+        let [_, rise] = h.occupancy.clone().unwrap();
+        let mut slow = vec![0f32; 512];
+        slow[10 + 32 * 8] = 0.004;
+        g.queue.write_buffer(&rise, 0, bytemuck::cast_slice(&slow));
+        h.rise_s = 1.0;
+        h.step(&g, 1.0 / 60.0, true, false);
+        assert!(alive(&g, &h, 6).is_empty());
     }
 }

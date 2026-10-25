@@ -113,9 +113,12 @@ fn checked_and_raw_recipe_validation_have_identical_bounds_and_digest_rules() {
         substep_dt: 0.01,
         substeps: 1,
         friction: 0.02,
+        calm_per_s: amoris_assets::water_field::DEFAULT_CALM_PER_S,
         dry_below: 0.0,
         edits: vec![],
         impulses: vec![],
+        displacements: vec![],
+        physics: Default::default(),
     };
     let mut recipes = vec![
         FieldRecipe::new(raw.key(), vec![], raw.digest(), String::new()),

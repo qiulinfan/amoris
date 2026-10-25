@@ -1,0 +1,12 @@
+name = "Point Break"
+rate = 60
+seed = 9
+
+[sounds]
+"surf.popup" = "sfx:blip"
+"surf.ride" = "sfx:powerup"
+"surf.wipeout" = "sfx:blip"
+
+[player]
+perception = "perception.json"
+actions = "first_person"

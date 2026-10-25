@@ -1,0 +1,207 @@
+{
+ "observers": [
+  {
+   "name": "player",
+   "doc": "A surfer's own eyes and session.",
+   "sight": {
+    "range_m": 120,
+    "fov_deg": 80,
+    "eye_m": {
+     "x": 0,
+     "y": 0,
+     "z": 0
+    },
+    "occlusion": false
+   },
+   "positions": true,
+   "attention_m": 40,
+   "memory_s": 120,
+   "memory_capacity": 32,
+   "event_capacity": 64,
+   "budget_tokens": 400,
+   "instruments": [
+    "score",
+    "rides",
+    "best_ride_m",
+    "riding_m",
+    "standing",
+    "speed_mps",
+    "in_water",
+    "position_m"
+   ]
+  }
+ ],
+ "instruments": [
+  {
+   "name": "score",
+   "doc": "Points: ten a metre ridden standing.",
+   "unit": {
+    "unit": "count"
+   },
+   "precision": 0,
+   "source": {
+    "from": "field",
+    "component": "Session",
+    "path": "score"
+   }
+  },
+  {
+   "name": "rides",
+   "doc": "Rides of at least 5 m.",
+   "unit": {
+    "unit": "count"
+   },
+   "precision": 0,
+   "source": {
+    "from": "field",
+    "component": "Session",
+    "path": "rides"
+   }
+  },
+  {
+   "name": "best_ride_m",
+   "doc": "The longest ride, metres.",
+   "unit": {
+    "unit": "metres"
+   },
+   "precision": 1,
+   "source": {
+    "from": "field",
+    "component": "Session",
+    "path": "best_m"
+   }
+  },
+  {
+   "name": "riding_m",
+   "doc": "This ride so far, metres.",
+   "unit": {
+    "unit": "metres"
+   },
+   "precision": 1,
+   "source": {
+    "from": "field",
+    "component": "Session",
+    "path": "ride_m"
+   }
+  },
+  {
+   "name": "standing",
+   "doc": "Up on the board.",
+   "unit": {
+    "unit": "bool"
+   },
+   "precision": 0,
+   "source": {
+    "from": "field",
+    "component": "Session",
+    "path": "standing"
+   }
+  },
+  {
+   "name": "speed_mps",
+   "doc": "The board's speed.",
+   "unit": {
+    "unit": "metres_per_second"
+   },
+   "precision": 1,
+   "source": {
+    "from": "field",
+    "component": "Session",
+    "path": "speed_mps"
+   }
+  },
+  {
+   "name": "in_water",
+   "doc": "The body overlaps water.",
+   "unit": {
+    "unit": "bool"
+   },
+   "precision": 0,
+   "source": {
+    "from": "field",
+    "component": "Walker",
+    "path": "in_liquid"
+   }
+  },
+  {
+   "name": "position_m",
+   "doc": "The eye position.",
+   "unit": {
+    "unit": "position"
+   },
+   "precision": 2,
+   "source": {
+    "from": "field",
+    "component": "Transform",
+    "path": "position"
+   }
+  }
+ ],
+ "kinds": [],
+ "events": [
+  {
+   "kind": "surf.popup",
+   "doc": "Up on a moving board: a ride begins.",
+   "scope": {
+    "scope": "private"
+   },
+   "data": []
+  },
+  {
+   "kind": "surf.ride",
+   "doc": "A ride of at least 5 m ended.",
+   "scope": {
+    "scope": "private"
+   },
+   "data": [
+    {
+     "name": "distance_m",
+     "doc": "How far it went.",
+     "unit": {
+      "unit": "metres"
+     },
+     "precision": 1,
+     "exposure": "coarse",
+     "source": {
+      "from": "data",
+      "path": "distance_m"
+     }
+    },
+    {
+     "name": "duration_s",
+     "doc": "How long it lasted.",
+     "unit": {
+      "unit": "seconds"
+     },
+     "precision": 1,
+     "exposure": "coarse",
+     "source": {
+      "from": "data",
+      "path": "duration_s"
+     }
+    },
+    {
+     "name": "top_mps",
+     "doc": "Its top speed.",
+     "unit": {
+      "unit": "metres_per_second"
+     },
+     "precision": 1,
+     "exposure": "coarse",
+     "source": {
+      "from": "data",
+      "path": "top_mps"
+     }
+    }
+   ]
+  },
+  {
+   "kind": "surf.wipeout",
+   "doc": "The surfer came off the board.",
+   "scope": {
+    "scope": "private"
+   },
+   "data": []
+  }
+ ]
+}

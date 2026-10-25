@@ -15,11 +15,12 @@ use amoris_assets::{
     Animator, AudioSource, Camera, Environment, Light, Model, ParticleEmitter, Splat, UiBar, UiText,
 };
 use amoris_contract::{CheckOptions, Problem, Shape, detail};
+use amoris_physics::water::displacement::WaterDisplacement;
 use amoris_physics::water::feedback::WaterFeedback;
 use amoris_physics::water::resident::{WaterOutletStage, WaterProbe, WaterResident};
 use amoris_physics::{
-    Boat, Collider, ExternalForce, Floater, Hull, RigidBody, Sail, Sea, Transform, Trim, Velocity,
-    Walker, WaterDrain, WaterRegion, WaterSource, Wind,
+    Board, Boat, Collider, ExternalForce, Floater, Hull, RigidBody, Sail, Sea, Transform, Trim,
+    Velocity, Walker, WaterDrain, WaterRegion, WaterSource, Wind,
 };
 use amoris_script::{EngineFns, register_engine};
 use amoris_sim::registry::{
@@ -90,13 +91,14 @@ where
 /// Every engine component a scene or `world_edit` can name (`Name` is the entity's own `name`);
 /// the first three are the player layer's (perception.md: who observes, what can be perceived,
 /// what blocks sight).
-pub fn engine_components() -> [EngineComponent; 34] {
+pub fn engine_components() -> [EngineComponent; 36] {
     [
         entry::<amoris_interface::perception::Observer>(),
         entry::<amoris_interface::perception::Perceivable>(),
         entry::<amoris_interface::perception::Occluder>(),
         entry::<Animator>(),
         entry::<AudioSource>(),
+        entry::<Board>(),
         entry::<Boat>(),
         entry::<Camera>(),
         entry::<Environment>(),
@@ -124,6 +126,7 @@ pub fn engine_components() -> [EngineComponent; 34] {
         entry::<WaterOutletStage>(),
         probe_entry(),
         feedback_entry(),
+        displacement_entry(),
         flow_entry::<WaterSource>(),
         flow_entry::<WaterDrain>(),
     ]
@@ -256,6 +259,30 @@ fn feedback_entry() -> EngineComponent {
         get: get::<WaterFeedback>,
         decode,
         remove: remove::<WaterFeedback>,
+    }
+}
+
+/// Authoring opts in with an empty object. The queued volumes are engine-owned, readable state.
+fn displacement_entry() -> EngineComponent {
+    fn decode(v: &Value, owner: &str) -> Result<Inserter, Problem> {
+        if !v.as_object().is_some_and(|v| v.is_empty()) {
+            return Err(Problem::new(
+                "water.displacement_readonly",
+                format!(
+                    "{owner}: WaterDisplacement is created with {{}}; its queued volumes are read-only"
+                ),
+                detail([]),
+            ));
+        }
+        Ok(Inserter(Box::new(|e: &mut EntityWorldMut<'_>| {
+            e.insert(WaterDisplacement::default());
+        })))
+    }
+    EngineComponent {
+        name: WaterDisplacement::NAME,
+        get: get::<WaterDisplacement>,
+        decode,
+        remove: remove::<WaterDisplacement>,
     }
 }
 
@@ -552,6 +579,12 @@ fn walker_schema() -> Result<ComponentSchema, Problem> {
             n("swim_mps", d.swim_mps, "Swimming speed up, m/s."),
             b("in_liquid", "A liquid overlaps the body."),
             b("eye_in_liquid", "The eye is under a liquid's surface."),
+            (
+                "mount",
+                FieldType::Entity,
+                FieldValue::Entity(None),
+                "The board ridden (water.md 50); none walks or swims. The engine clears it on a wipeout.",
+            ),
         ],
     )
 }
@@ -581,6 +614,7 @@ fn walker_fns() -> EngineFns<Walker> {
             w.swim_mps,
             bit(w.in_liquid),
             bit(w.eye_in_liquid),
+            w.mount.map_or(0.0, |id| id.to_f64()),
         ])
     }
     fn write(w: &mut Walker, v: &ProjectValues) {
@@ -594,6 +628,7 @@ fn walker_fns() -> EngineFns<Walker> {
         (w.vertical_mps, w.grounded) = (n[16], n[17] != 0.0);
         (w.rise, w.swim_mps) = (n[18] != 0.0, n[19]);
         (w.in_liquid, w.eye_in_liquid) = (n[20] != 0.0, n[21] != 0.0);
+        w.mount = amoris_sim::EntityId::from_f64(n[22]).ok();
     }
     EngineFns {
         read,
@@ -602,6 +637,124 @@ fn walker_fns() -> EngineFns<Walker> {
             let mut w = Walker::default();
             write(&mut w, v);
             w
+        },
+    }
+}
+
+fn board_schema() -> Result<ComponentSchema, Problem> {
+    let d = Board::default();
+    let n = |name, value, doc| (name, FieldType::F64, FieldValue::F64(value), doc);
+    schema(
+        "Board",
+        Board::VERSION,
+        "A board a Walker rides (water.md 50): planing, rails and fin on its Floater's points; the rider paddles lying down, carves standing up.",
+        vec![
+            n("area_m2", d.area_m2, "Bottom area, square metres."),
+            n(
+                "planing",
+                d.planing,
+                "Normal-force coefficient of the bottom.",
+            ),
+            n("glide", d.glide, "Friction coefficient along the board."),
+            n("rail", d.rail, "Grip coefficient across the board."),
+            (
+                "fin_at",
+                FieldType::Vec3,
+                FieldValue::Vec3(d.fin_at),
+                "The fin's position in the board's frame (forward -z).",
+            ),
+            n("fin_m2", d.fin_m2, "Fin area, square metres; 0 for none."),
+            n(
+                "paddle_n",
+                d.paddle_n,
+                "Paddling thrust lying down, newtons.",
+            ),
+            n(
+                "carve_nm",
+                d.carve_nm,
+                "Yaw torque per unit of lean standing, at speed, N m.",
+            ),
+            n("roll_nm", d.roll_nm, "Roll torque per unit of lean, N m."),
+            (
+                "seat",
+                FieldType::Vec3,
+                FieldValue::Vec3(d.seat),
+                "The rider's feet in the board's frame.",
+            ),
+            (
+                "standing",
+                FieldType::Bool,
+                FieldValue::Bool(false),
+                "Standing up (the rider's jump toggles it); else lying down to paddle.",
+            ),
+            (
+                "rider",
+                FieldType::Entity,
+                FieldValue::Entity(None),
+                "The Walker riding it, written by the engine.",
+            ),
+            n(
+                "speed",
+                0.0,
+                "Horizontal speed, m/s, written by the engine.",
+            ),
+            n(
+                "through_water",
+                0.0,
+                "Speed through the water along the board, m/s, written by the engine.",
+            ),
+            (
+                "wipeouts",
+                FieldType::U32,
+                FieldValue::U32(0),
+                "Times the board has thrown its rider, written by the engine.",
+            ),
+        ],
+    )
+}
+
+fn board_fns() -> EngineFns<Board> {
+    fn read(b: &Board) -> ProjectValues {
+        nums(&[
+            b.area_m2,
+            b.planing,
+            b.glide,
+            b.rail,
+            b.fin_at[0],
+            b.fin_at[1],
+            b.fin_at[2],
+            b.fin_m2,
+            b.paddle_n,
+            b.carve_nm,
+            b.roll_nm,
+            b.seat[0],
+            b.seat[1],
+            b.seat[2],
+            bit(b.standing),
+            b.rider.map_or(0.0, |id| id.to_f64()),
+            b.speed,
+            b.through_water,
+            f64::from(b.wipeouts),
+        ])
+    }
+    fn write(b: &mut Board, v: &ProjectValues) {
+        let n = &v.nums;
+        (b.area_m2, b.planing, b.glide, b.rail) = (n[0], n[1], n[2], n[3]);
+        b.fin_at = [n[4], n[5], n[6]];
+        (b.fin_m2, b.paddle_n, b.carve_nm, b.roll_nm) = (n[7], n[8], n[9], n[10]);
+        b.seat = [n[11], n[12], n[13]];
+        b.standing = n[14] != 0.0;
+        b.rider = amoris_sim::EntityId::from_f64(n[15]).ok();
+        (b.speed, b.through_water) = (n[16], n[17]);
+        b.wipeouts = amoris_sim::num::to_u32(n[18]).unwrap_or(0);
+    }
+    EngineFns {
+        read,
+        write,
+        make: |v| {
+            let mut b = Board::default();
+            write(&mut b, v);
+            b
         },
     }
 }
@@ -798,6 +951,7 @@ pub fn install_script_components(world: &mut World) -> Result<(), Problem> {
     ComponentRegistry::register::<Transform>(world, Some(transform_schema()?))?;
     ComponentRegistry::register::<Velocity>(world, Some(velocity_schema()?))?;
     ComponentRegistry::register::<Boat>(world, Some(boat_schema()?))?;
+    ComponentRegistry::register::<Board>(world, Some(board_schema()?))?;
     ComponentRegistry::register::<Wind>(world, Some(wind_schema()?))?;
     ComponentRegistry::register::<Walker>(world, Some(walker_schema()?))?;
     ComponentRegistry::register::<Voxels>(world, None)?;
@@ -811,6 +965,15 @@ pub fn install_script_components(world: &mut World) -> Result<(), Problem> {
             "WaterFeedback",
             WaterFeedback::VERSION,
             "Opt-in to next-tick horizontal body reactions. Create with {}; observe engine-owned budgets through world.get.",
+            vec![],
+        )?),
+    )?;
+    ComponentRegistry::register::<WaterDisplacement>(
+        world,
+        Some(schema(
+            "WaterDisplacement",
+            WaterDisplacement::VERSION,
+            "Opt-in: Floater points and Walkers push this resident region's water aside. Create with {}; the queued volumes are engine-owned.",
             vec![],
         )?),
     )?;
@@ -883,6 +1046,7 @@ pub fn install_script_components(world: &mut World) -> Result<(), Problem> {
     register_engine::<Transform>(world, transform_fns())?;
     register_engine::<Velocity>(world, velocity_fns())?;
     register_engine::<Boat>(world, boat_fns())?;
+    register_engine::<Board>(world, board_fns())?;
     register_engine::<Wind>(world, wind_fns())?;
     register_engine::<Walker>(world, walker_fns())?;
     register_engine::<UiText>(world, ui_text_fns())?;
@@ -916,6 +1080,14 @@ pub fn install_script_components(world: &mut World) -> Result<(), Problem> {
             read: |_| nums(&[]),
             write: |_, _| {},
             make: |_| WaterFeedback::default(),
+        },
+    )?;
+    register_engine::<WaterDisplacement>(
+        world,
+        EngineFns {
+            read: |_| nums(&[]),
+            write: |_, _| {},
+            make: |_| WaterDisplacement::default(),
         },
     )?;
     Ok(())

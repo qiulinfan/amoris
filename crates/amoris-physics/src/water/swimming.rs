@@ -71,7 +71,7 @@ struct Observation {
     checkpoint: ContentHash,
     // The completed tick to which this column data is bound, not a GPU callback/sample age.
     tick: u64,
-    column: [f64; 4],
+    column: super::WaterColumn,
 }
 #[derive(Resource, Default)]
 pub(crate) struct Samples {
@@ -125,7 +125,7 @@ impl Samples {
         region: EntityId,
         recipe: &FieldRecipe,
         tick: u64,
-        column: [f64; 4],
+        column: super::WaterColumn,
     ) {
         self.rows.insert(
             point.actor,
@@ -145,7 +145,7 @@ impl Samples {
         region: EntityId,
         recipe: &FieldRecipe,
         tick: u64,
-    ) -> Option<[f64; 4]> {
+    ) -> Option<super::WaterColumn> {
         self.matches(point, region, recipe)
             .then(|| self.rows.get(&point.actor))
             .flatten()
@@ -188,7 +188,13 @@ mod tests {
         let seed = FieldCheckpoint::new([2, 2], 0.0, vec![[0; 4]; 4]);
         let recipe = FieldRecipe::new(seed.key(), vec![], seed.digest(), String::new());
         let mut samples = Samples::default();
-        samples.record(point.clone(), id, &recipe, 7, [2.0, 2.0, 1.0, 0.0]);
+        samples.record(
+            point.clone(),
+            id,
+            &recipe,
+            7,
+            [2.0, 2.0, 1.0, 0.0, 0.0, 0.0, 0.0],
+        );
         assert!(samples.get(&point, id, &recipe, 7).is_some());
         assert!(samples.get(&point, id, &recipe, 8).is_none());
         for axis in 0..3 {
@@ -222,7 +228,13 @@ mod tests {
             "restoration hook discards every derived observation"
         );
         let mut samples = Samples::default();
-        samples.record(point.clone(), id, &recipe, 8, [2.0, 2.0, 1.0, 0.0]);
+        samples.record(
+            point.clone(),
+            id,
+            &recipe,
+            8,
+            [2.0, 2.0, 1.0, 0.0, 0.0, 0.0, 0.0],
+        );
         samples.retain(&BTreeSet::new());
         assert!(samples.get(&point, id, &recipe, 8).is_none());
     }
@@ -247,7 +259,7 @@ mod tests {
         let seed = FieldCheckpoint::new([2, 2], 0.0, vec![[0; 4]; 4]);
         let recipe = FieldRecipe::new(seed.key(), vec![], seed.digest(), String::new());
         let mut samples = Samples::default();
-        let column = [2.0, 2.0, 1.0, 0.0];
+        let column = [2.0, 2.0, 1.0, 0.0, 0.0, 0.0, 0.0];
         samples.record(old.clone(), id, &recipe, 7, column);
         assert!(samples.can_rebind(&point, id, &recipe));
         assert!(!samples.matches(&point, id, &recipe));

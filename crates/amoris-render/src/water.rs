@@ -428,6 +428,38 @@ impl Water {
         }
     }
 
+    /// The region nearest the camera (by its rectangle) whose caustics the forward pass draws.
+    pub(crate) fn caustics_source(
+        &self,
+        camera: [f32; 3],
+    ) -> Option<crate::water_caustics::Source<'_>> {
+        self.regions
+            .values()
+            .filter_map(|r| {
+                let g = r.gpu.as_ref()?;
+                let extent = [r.size[0] as f32 * r.cell_m, r.size[1] as f32 * r.cell_m];
+                let outside = |axis: usize| {
+                    let low = r.origin[axis] - camera[axis * 2];
+                    let high = camera[axis * 2] - (r.origin[axis] + extent[axis]);
+                    low.max(high).max(0.0)
+                };
+                let distance = outside(0).hypot(outside(1));
+                let (a, s, f) = (r.look.absorb, r.look.scatter, r.look.fog[3]);
+                Some((
+                    distance,
+                    crate::water_caustics::Source {
+                        uniform: &g.uniform,
+                        columns: &g.columns,
+                        origin: r.origin,
+                        extent,
+                        sigma: std::array::from_fn(|c| a[c] + 0.5 * (s[c] + f)),
+                    },
+                ))
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, source)| source)
+    }
+
     pub fn set_spray(&mut self, on: bool) {
         if self.spray_on == on {
             return;
@@ -1070,8 +1102,21 @@ impl Water {
             }
             if self.spray_on {
                 let pipes = self.spray.as_ref().expect("spray pipelines prepared");
+                let entries = r
+                    .resident
+                    .as_mut()
+                    .and_then(|resident| resident.cache.as_mut())
+                    .map(|cache| cache.take_rise());
+                let rise_s = entries.as_ref().map_or(0.0, |e| e.2);
                 let pool = g.spray.get_or_insert_with(|| {
-                    crate::water_spray::Pool::new(device, pipes, view, &g.columns, g.foam.impacts())
+                    crate::water_spray::Pool::new(
+                        device,
+                        pipes,
+                        view,
+                        &g.columns,
+                        g.foam.impacts(),
+                        entries.as_ref().map(|e| (e.0, e.1)),
+                    )
                 });
                 pool.encode(
                     queue,
@@ -1088,6 +1133,7 @@ impl Water {
                         dt: g.spray_dt,
                         changed: g.columns_changed,
                         clear: g.clear_spray,
+                        rise_s,
                     },
                     profiler,
                 );

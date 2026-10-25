@@ -5,6 +5,10 @@ use std::sync::mpsc::{Receiver, TryRecvError, channel};
 
 use crate::water_compute::GpuWater;
 
+/// f32 words a point returns: [surface, depth, vx, vz] and [rise x, rise z, inflow, 0].
+pub const SAMPLE_WORDS: usize = 8;
+const SAMPLE_BYTES: u64 = SAMPLE_WORDS as u64 * 4;
+
 /// The timeline and boundary assigned by the host. An epoch changes on reset, restore or branch.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SampleStamp {
@@ -17,9 +21,10 @@ pub struct WaterSampleResult {
     /// Matches the token returned by `request`, including several batches at the same tick.
     pub request_id: u64,
     pub stamp: SampleStamp,
-    /// Surface, depth, centred x/z velocity; one result per point in request order.
-    /// Surface is relative to the datum used when the field was uploaded.
-    pub columns: Result<Vec<[f32; 4]>, String>,
+    /// Surface, depth, centred x/z velocity, then surface rise per column along x/z and net
+    /// inflow (m^2/s); one result per point in request order. Surface is the free surface,
+    /// relative to the datum used when the field was uploaded.
+    pub columns: Result<Vec<[f32; SAMPLE_WORDS]>, String>,
 }
 
 enum Status {
@@ -41,7 +46,7 @@ struct Slot {
     points: wgpu::Buffer,
     output: wgpu::Buffer,
     staging: wgpu::Buffer,
-    group: Option<(wgpu::Buffer, wgpu::BindGroup)>,
+    group: Option<([wgpu::Buffer; 2], wgpu::BindGroup)>,
     status: Status,
 }
 
@@ -61,7 +66,9 @@ impl WaterSamples {
         queue: &wgpu::Queue,
         capacity: usize,
     ) -> Result<Self, String> {
-        let bytes = u64::try_from(capacity).ok().and_then(|n| n.checked_mul(16));
+        let bytes = u64::try_from(capacity)
+            .ok()
+            .and_then(|n| n.checked_mul(SAMPLE_BYTES));
         let Some(bytes) =
             bytes.filter(|&n| n > 0 && n <= device.limits().max_storage_buffer_binding_size)
         else {
@@ -105,7 +112,7 @@ impl WaterSamples {
             ),
             points: buffer(
                 "water sample positions",
-                bytes / 2,
+                bytes / 4,
                 wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             ),
             output: buffer(
@@ -174,20 +181,33 @@ impl WaterSamples {
         self.next_request = request_id
             .checked_add(1)
             .ok_or("water sample request tokens exhausted")?;
-        if slot.group.as_ref().is_none_or(|(b, _)| b != field.buffer()) {
+        if slot
+            .group
+            .as_ref()
+            .is_none_or(|(b, _)| &b[0] != field.buffer() || &b[1] != field.occupancy_buffer())
+        {
             let group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("water sample field"),
                 layout: &self.pipeline.get_bind_group_layout(0),
-                entries: &[&slot.params, field.buffer(), &slot.points, &slot.output]
-                    .iter()
-                    .enumerate()
-                    .map(|(n, b)| wgpu::BindGroupEntry {
-                        binding: n as u32,
-                        resource: b.as_entire_binding(),
-                    })
-                    .collect::<Vec<_>>(),
+                entries: &[
+                    &slot.params,
+                    field.buffer(),
+                    &slot.points,
+                    &slot.output,
+                    field.occupancy_buffer(),
+                ]
+                .iter()
+                .enumerate()
+                .map(|(n, b)| wgpu::BindGroupEntry {
+                    binding: n as u32,
+                    resource: b.as_entire_binding(),
+                })
+                .collect::<Vec<_>>(),
             });
-            slot.group = Some((field.buffer().clone(), group));
+            slot.group = Some((
+                [field.buffer().clone(), field.occupancy_buffer().clone()],
+                group,
+            ));
         }
         let [nx, nz] = field.size();
         self.queue.write_buffer(
@@ -211,7 +231,7 @@ impl WaterSamples {
             0,
             &slot.staging,
             0,
-            (points.len() * 16) as u64,
+            points.len() as u64 * SAMPLE_BYTES,
         );
         slot.status = Status::Encoded {
             request_id,
@@ -238,7 +258,7 @@ impl WaterSamples {
         let Status::Encoded { count, .. } = slot.status else {
             unreachable!()
         };
-        encoder.copy_buffer_to_buffer(&slot.output, 0, target, offset, (count * 16) as u64);
+        encoder.copy_buffer_to_buffer(&slot.output, 0, target, offset, count as u64 * SAMPLE_BYTES);
         Ok(())
     }
 
@@ -259,7 +279,7 @@ impl WaterSamples {
                     count,
                     done,
                 };
-                slot.staging.slice(..(count * 16) as u64).map_async(
+                slot.staging.slice(..count as u64 * SAMPLE_BYTES).map_async(
                     wgpu::MapMode::Read,
                     move |result| {
                         let _ = tx.send(result);
@@ -292,10 +312,10 @@ impl WaterSamples {
             let columns = completion.and_then(|()| {
                 let range = slot
                     .staging
-                    .slice(..(*count * 16) as u64)
+                    .slice(..*count as u64 * SAMPLE_BYTES)
                     .get_mapped_range()
                     .map_err(|e| format!("water sample range failed: {e}"))?;
-                let columns: Vec<[f32; 4]> = bytemuck::cast_slice(&range).to_vec();
+                let columns: Vec<[f32; SAMPLE_WORDS]> = bytemuck::cast_slice(&range).to_vec();
                 if columns.iter().flatten().any(|v| !v.is_finite()) {
                     return Err("non-finite water sample".into());
                 }

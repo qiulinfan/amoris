@@ -8,9 +8,16 @@ pub struct Field<'a> {
     params: wgpu::Buffer,
     velocity: wgpu::Buffer,
     current: usize,
-    groups: [wgpu::BindGroup; 2],
+    /// Advection, face pressure and depth transport families, as in production.
+    groups: [[wgpu::BindGroup; 2]; 3],
     pipelines: [wgpu::ComputePipeline; 5],
 }
+const BINDINGS: [&[u32]; 3] = [
+    &[0, 1, 3, 7, 8],
+    &[0, 1, 3, 4, 7, 8, 9],
+    &[0, 1, 2, 3, 4, 5, 6, 10],
+];
+const FAMILY: [usize; 5] = [0, 0, 1, 2, 2];
 impl<'a> Field<'a> {
     pub fn new(gpu: &'a Gpu, initial: &FieldCheckpoint, mode: &str) -> Self {
         let [nx, nz] = initial.size;
@@ -25,7 +32,7 @@ impl<'a> Field<'a> {
         };
         let storage = wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST;
         let params = buffer(
-            608,
+            624,
             wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         );
         let state =
@@ -40,67 +47,80 @@ impl<'a> Field<'a> {
         let edges = buffer(u64::from(nx + nz) * 32, storage);
         let predicted = buffer(n * 8, storage);
         let reversed = buffer(n * 8, storage);
-        let layout = gpu
-            .device
-            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("depth-transport research"),
-                entries: &std::array::from_fn::<_, 9, _>(|i| wgpu::BindGroupLayoutEntry {
-                    binding: i as u32,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: if i == 0 {
-                            wgpu::BufferBindingType::Uniform
-                        } else {
-                            wgpu::BufferBindingType::Storage {
-                                read_only: matches!(i, 1 | 3),
-                            }
-                        },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }),
-            });
-        let groups = std::array::from_fn(|current| {
-            gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("depth-transport research"),
-                layout: &layout,
-                entries: &[
-                    &params,
-                    &state[current],
-                    &state[1 - current],
-                    &awake,
-                    &velocity,
-                    &scale,
-                    &edges,
-                    &predicted,
-                    &reversed,
-                ]
-                .into_iter()
-                .enumerate()
-                .map(|(i, b)| wgpu::BindGroupEntry {
-                    binding: i as u32,
-                    resource: b.as_entire_binding(),
+        // No displaced head and no falls: zero storage satisfies the production bindings.
+        let occupancy = buffer(n * 4, storage);
+        let falls = buffer(n * 12, storage);
+        let layouts = BINDINGS.map(|bindings| {
+            gpu.device
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("depth-transport research"),
+                    entries: &bindings
+                        .iter()
+                        .map(|&i| wgpu::BindGroupLayoutEntry {
+                            binding: i,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: if i == 0 {
+                                    wgpu::BufferBindingType::Uniform
+                                } else {
+                                    wgpu::BufferBindingType::Storage {
+                                        read_only: matches!(i, 1 | 3 | 9),
+                                    }
+                                },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        })
+                        .collect::<Vec<_>>(),
                 })
-                .collect::<Vec<_>>(),
+        });
+        let groups = std::array::from_fn(|family| {
+            std::array::from_fn(|current| {
+                let resource = |i: u32| match i {
+                    0 => &params,
+                    1 => &state[current],
+                    2 => &state[1 - current],
+                    3 => &awake,
+                    4 => &velocity,
+                    5 => &scale,
+                    6 => &edges,
+                    7 => &predicted,
+                    8 => &reversed,
+                    9 => &occupancy,
+                    _ => &falls,
+                };
+                gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("depth-transport research"),
+                    layout: &layouts[family],
+                    entries: &BINDINGS[family]
+                        .iter()
+                        .map(|&i| wgpu::BindGroupEntry {
+                            binding: i,
+                            resource: resource(i).as_entire_binding(),
+                        })
+                        .collect::<Vec<_>>(),
+                })
             })
         });
-        let pipeline_layout = gpu
-            .device
-            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("depth-transport research"),
-                bind_group_layouts: &[Some(&layout)],
-                immediate_size: 0,
-            });
+        let pipeline_layouts = layouts.each_ref().map(|layout| {
+            gpu.device
+                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("depth-transport research"),
+                    bind_group_layouts: &[Some(layout)],
+                    immediate_size: 0,
+                })
+        });
         let muscl = mode.starts_with("muscl");
         let mut base = include_str!("../../shaders/water_compute.wgsl").to_owned();
         if mode.contains("raw") {
             assert_eq!(
-                base.matches("let delta = clamp(eb - ea, -ha, hb);").count(),
+                base.matches("let delta = clamp(eb - ea, -(ha + oa), hb + ob);")
+                    .count(),
                 1
             );
             base = base.replace(
-                "let delta = clamp(eb - ea, -ha, hb);",
+                "let delta = clamp(eb - ea, -(ha + oa), hb + ob);",
                 "let delta = eb - ea;",
             );
         }
@@ -139,11 +159,14 @@ impl<'a> Field<'a> {
                 "depth_first_transport",
             ]
         };
+        let mut stage = 0;
         let pipelines = names.map(|name| {
+            let family = FAMILY[stage];
+            stage += 1;
             gpu.device
                 .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                     label: Some(name),
-                    layout: Some(&pipeline_layout),
+                    layout: Some(&pipeline_layouts[family]),
                     module: &module,
                     entry_point: Some(name),
                     compilation_options: wgpu::PipelineCompilationOptions {
@@ -175,7 +198,7 @@ impl<'a> Field<'a> {
         substeps: u32,
         mut profiler: Option<&mut amoris_render::profiler::GpuProfiler>,
     ) {
-        let mut words = [0u32; 152];
+        let mut words = [0u32; 156];
         words[0] = self.size[0];
         words[1] = self.size[1];
         words[2] = dx.to_bits();
@@ -197,7 +220,7 @@ impl<'a> Field<'a> {
                     timestamp_writes: profiler.as_deref_mut().and_then(|p| p.compute_scope(label)),
                 });
                 pass.set_pipeline(p);
-                pass.set_bind_group(0, &self.groups[self.current], &[]);
+                pass.set_bind_group(0, &self.groups[FAMILY[stage]][self.current], &[]);
                 pass.dispatch_workgroups(self.size[0].div_ceil(8), self.size[1].div_ceil(8), 1);
             }
             self.current = 1 - self.current;
@@ -208,7 +231,7 @@ impl<'a> Field<'a> {
         self.gpu
             .queue
             .write_buffer(&self.velocity, 0, bytemuck::cast_slice(velocity));
-        let mut words = [0u32; 152];
+        let mut words = [0u32; 156];
         words[0] = self.size[0];
         words[1] = self.size[1];
         words[2] = dx.to_bits();
@@ -220,7 +243,7 @@ impl<'a> Field<'a> {
         for pipeline in &self.pipelines[3..] {
             let mut pass = e.begin_compute_pass(&Default::default());
             pass.set_pipeline(pipeline);
-            pass.set_bind_group(0, &self.groups[self.current], &[]);
+            pass.set_bind_group(0, &self.groups[2][self.current], &[]);
             pass.dispatch_workgroups(self.size[0].div_ceil(8), self.size[1].div_ceil(8), 1);
         }
         self.gpu.queue.submit([e.finish()]);

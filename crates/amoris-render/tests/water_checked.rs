@@ -56,9 +56,12 @@ fn checked_complete_upload_preserves_words_faces_and_replaces_masked_state() {
             substep_dt: 0.005,
             substeps: 2,
             friction: 0.02,
+            calm_per_s: amoris_assets::water_field::DEFAULT_CALM_PER_S,
             dry_below: 0.0,
             edits: vec![],
             impulses: vec![],
+            displacements: vec![],
+            physics: Default::default(),
         };
         for _ in 0..3 {
             let mut encoder = gpu.device.create_command_encoder(&Default::default());

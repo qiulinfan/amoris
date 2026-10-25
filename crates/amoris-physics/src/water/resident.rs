@@ -1,7 +1,7 @@
 //! Resident-field world state. Checkpoints and bounded programs are persisted; GPU handles and
 //! transport are not. Consumers use explicit observations rather than the old checkpoint tiles.
 use amoris_assets::water_field::{
-    CheckedCheckpoint, FieldBoundary, FieldCheckpoint, FieldRecipe, FieldStep,
+    CheckedCheckpoint, FieldBoundary, FieldCheckpoint, FieldPhysics, FieldRecipe, FieldStep,
 };
 use amoris_sim::{ContentHash, EntityId};
 use bevy_ecs::prelude::{Component, Resource};
@@ -37,6 +37,7 @@ pub struct ResidentControls {
     pub dry_below: f64,
     pub substeps: u32,
     pub dt: f64,
+    pub physics: FieldPhysics,
 }
 impl ResidentControls {
     pub fn from_region(r: &super::WaterRegion, dt: f64) -> Result<Self, amoris_contract::Problem> {
@@ -57,6 +58,7 @@ impl ResidentControls {
             dry_below: r.dry_below,
             substeps: r.substeps,
             dt,
+            physics: r.physics.field(),
         })
     }
     pub fn open(&self) -> bool {
@@ -209,11 +211,15 @@ pub struct ResidentRequest<'a> {
     pub checkpoint_now: bool,
     pub coupled_from: Option<u32>,
 }
+/// One raw resident point observation: world free surface, depth, centred vx and vz, then the
+/// free surface's rise per column along x and z, and net inflow (m^2/s). Consumers divide by
+/// the region's cell size (`super::column`).
+pub type RawSample = [f64; 8];
 #[derive(Debug)]
 pub struct ResidentOutput {
     pub recipe: FieldRecipe,
     pub stats: ResidentStats,
-    pub samples: Vec<[f64; 4]>,
+    pub samples: Vec<RawSample>,
     pub checkpoint: Option<Arc<CheckedCheckpoint>>,
     pub reaction: super::feedback::ReactionBudget,
     pub boundary: BoundaryFlux,
@@ -285,6 +291,7 @@ pub(crate) struct ResidentPlan {
     pub area: f64,
     pub local_ready: bool,
     pub feedback: Option<super::feedback::WaterFeedback>,
+    pub displacement: Option<super::displacement::WaterDisplacement>,
     pub invalid_probes: Vec<bevy_ecs::entity::Entity>,
     pub state: WaterResident,
     pub checkpoint: Arc<CheckedCheckpoint>,
@@ -380,11 +387,9 @@ impl ResidentPlan {
             self.state.still = if self.state.stats.max_speed < super::STILL_SPEED
                 && self.state.stats.max_pressure_jump < super::STILL_DEPTH
             {
-                if self
-                    .step
-                    .as_ref()
-                    .is_some_and(|s| !s.edits.is_empty() || !s.impulses.is_empty())
-                {
+                if self.step.as_ref().is_some_and(|s| {
+                    !s.edits.is_empty() || !s.impulses.is_empty() || !s.displacements.is_empty()
+                }) {
                     1
                 } else {
                     self.state.still.saturating_add(1).min(super::SLEEP_TICKS)
@@ -403,6 +408,9 @@ impl ResidentPlan {
         self.state.completed_tick = tick;
         if let Some(feedback) = &mut self.feedback {
             feedback.complete(tick, reaction)?;
+        }
+        if let Some(displacement) = &mut self.displacement {
+            displacement.complete(tick)?;
         }
         Ok(())
     }
@@ -444,13 +452,14 @@ pub(crate) fn initial(
 
 impl amoris_sim::Persisted for WaterResident {
     const NAME: &'static str = "WaterResident";
-    const VERSION: u32 = 5;
+    const VERSION: u32 = 7;
     fn trace(
         t: &mut serde_reflection::Tracer,
         s: &serde_reflection::Samples,
     ) -> serde_reflection::Result<()> {
         t.trace_type::<FieldBoundary>(s)?;
         t.trace_type::<amoris_assets::water_field::FieldSea>(s)?;
+        t.trace_type::<FieldPhysics>(s)?;
         t.trace_type::<Self>(s).map(|_| ())
     }
 }

@@ -124,7 +124,7 @@ fn complete(q: &ComputeQueue, job: &ResidentBatchJob) -> bool {
                 .map(|p| {
                     let n = p[0].floor() as usize + p[1].floor() as usize * f.size[0] as usize;
                     let c = f.columns[n].map(f32::from_bits).map(f64::from);
-                    [f.datum + c[0] + c[1], c[1], c[2], c[3]]
+                    [f.datum + c[0] + c[1], c[1], c[2], c[3], 0.0, 0.0, 0.0, 0.0]
                 })
                 .collect();
             let depth = f.columns.iter().map(|c| f64::from(f32::from_bits(c[1])));
@@ -310,6 +310,7 @@ fn resident_hull_has_three_exact_points_distinct_from_floater_keys_and_feedback_
         }],
         drag: 0.0,
         heave: 0.0,
+        added_mass: 0.0,
         submerged: 0.0,
     });
     s.world_mut().get_mut::<ExternalForce>(e).unwrap().force = [7.0, 0.0, 11.0];
@@ -479,7 +480,7 @@ fn a_missing_hull_sample_stops_before_any_force_or_body_integration() {
                         volume_cells: 512.0,
                         ..Default::default()
                     },
-                    samples: vec![[2.0, 2.0, 0.0, 0.0]; 2],
+                    samples: vec![[2.0, 2.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]; 2],
                     checkpoint: None,
                     reaction: Default::default(),
                     boundary: Default::default()

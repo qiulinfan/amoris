@@ -1,0 +1,229 @@
+{
+ "observers": [
+  {
+   "name": "player",
+   "doc": "A rafter's own eyes and run.",
+   "sight": {
+    "range_m": 80,
+    "fov_deg": 78,
+    "eye_m": {
+     "x": 0,
+     "y": 0,
+     "z": 0
+    },
+    "occlusion": false
+   },
+   "positions": true,
+   "attention_m": 30,
+   "memory_s": 120,
+   "memory_capacity": 32,
+   "event_capacity": 64,
+   "budget_tokens": 400,
+   "instruments": [
+    "gates",
+    "elapsed_s",
+    "best_s",
+    "drop_m",
+    "riding",
+    "in_water",
+    "position_m"
+   ]
+  }
+ ],
+ "instruments": [
+  {
+   "name": "gates",
+   "doc": "Gates passed this run.",
+   "unit": {
+    "unit": "count"
+   },
+   "precision": 0,
+   "source": {
+    "from": "field",
+    "component": "Run",
+    "path": "gates"
+   }
+  },
+  {
+   "name": "elapsed_s",
+   "doc": "Seconds since the run began.",
+   "unit": {
+    "unit": "seconds"
+   },
+   "precision": 1,
+   "source": {
+    "from": "field",
+    "component": "Run",
+    "path": "elapsed_s"
+   }
+  },
+  {
+   "name": "best_s",
+   "doc": "The fastest finished run, 0 before one.",
+   "unit": {
+    "unit": "seconds"
+   },
+   "precision": 1,
+   "source": {
+    "from": "field",
+    "component": "Run",
+    "path": "best_s"
+   }
+  },
+  {
+   "name": "drop_m",
+   "doc": "The height the tube fell over the falls.",
+   "unit": {
+    "unit": "metres"
+   },
+   "precision": 1,
+   "source": {
+    "from": "field",
+    "component": "Run",
+    "path": "drop_m"
+   }
+  },
+  {
+   "name": "riding",
+   "doc": "Still on the tube.",
+   "unit": {
+    "unit": "bool"
+   },
+   "precision": 0,
+   "source": {
+    "from": "field",
+    "component": "Run",
+    "path": "riding"
+   }
+  },
+  {
+   "name": "in_water",
+   "doc": "The body overlaps water.",
+   "unit": {
+    "unit": "bool"
+   },
+   "precision": 0,
+   "source": {
+    "from": "field",
+    "component": "Walker",
+    "path": "in_liquid"
+   }
+  },
+  {
+   "name": "position_m",
+   "doc": "The eye position.",
+   "unit": {
+    "unit": "position"
+   },
+   "precision": 2,
+   "source": {
+    "from": "field",
+    "component": "Transform",
+    "path": "position"
+   }
+  }
+ ],
+ "kinds": [],
+ "events": [
+  {
+   "kind": "falls.gate",
+   "doc": "The tube passed through a gate.",
+   "scope": {
+    "scope": "private"
+   },
+   "data": [
+    {
+     "name": "gate",
+     "doc": "The gate, from 1.",
+     "unit": {
+      "unit": "count"
+     },
+     "precision": 0,
+     "exposure": "coarse",
+     "source": {
+      "from": "data",
+      "path": "gate"
+     }
+    }
+   ]
+  },
+  {
+   "kind": "falls.drop",
+   "doc": "The tube went over the falls and landed.",
+   "scope": {
+    "scope": "private"
+   },
+   "data": [
+    {
+     "name": "drop_m",
+     "doc": "How far it fell.",
+     "unit": {
+      "unit": "metres"
+     },
+     "precision": 1,
+     "exposure": "coarse",
+     "source": {
+      "from": "data",
+      "path": "drop_m"
+     }
+    },
+    {
+     "name": "speed_mps",
+     "doc": "How fast it met the pool.",
+     "unit": {
+      "unit": "metres_per_second"
+     },
+     "precision": 1,
+     "exposure": "coarse",
+     "source": {
+      "from": "data",
+      "path": "speed_mps"
+     }
+    }
+   ]
+  },
+  {
+   "kind": "falls.wipeout",
+   "doc": "The rider was thrown off the tube.",
+   "scope": {
+    "scope": "private"
+   },
+   "data": []
+  },
+  {
+   "kind": "falls.finished",
+   "doc": "The rider reached the beach.",
+   "scope": {
+    "scope": "private"
+   },
+   "data": [
+    {
+     "name": "time_s",
+     "doc": "The run's time.",
+     "unit": {
+      "unit": "seconds"
+     },
+     "precision": 1,
+     "exposure": "coarse",
+     "source": {
+      "from": "data",
+      "path": "time_s"
+     }
+    },
+    {
+     "name": "gates",
+     "doc": "Gates passed.",
+     "unit": {
+      "unit": "count"
+     },
+     "precision": 0,
+     "exposure": "coarse",
+     "source": {
+      "from": "data",
+      "path": "gates"
+     }
+    }
+   ]
+  }
+ ]
+}

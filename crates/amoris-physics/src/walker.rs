@@ -13,6 +13,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::body::Transform;
+use crate::geom;
+use crate::solver::Physics;
 use crate::water::WaterRegion;
 
 /// The furthest a walker's look may tilt up or down, radians.
@@ -34,6 +36,10 @@ const CURRENT_MPS: f64 = 1.4;
 const FIELD_WADE_M: f64 = 0.05;
 const FIELD_PUSH_MPS: f64 = 2.0;
 const WALL_LIFT: f64 = 0.6;
+/// Treading a region's water while rising: the eye held this far over the surface, metres, closing
+/// the gap at this rate, per second.
+const HEAD_OUT_M: f64 = 0.3;
+const TREAD_RATE: f64 = 4.0;
 
 /// A first-person character (voxels.md 5.2). Its entity's `Transform` is the eye.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -82,6 +88,9 @@ pub struct Walker {
     pub in_liquid: bool,
     /// Whether the eye is under a liquid's surface.
     pub eye_in_liquid: bool,
+    /// The board this walker rides (water.md 50): its eye follows the board, its inputs paddle,
+    /// carve and stand up instead of walking. The engine clears it when the board throws them.
+    pub mount: Option<amoris_sim::EntityId>,
 }
 
 impl Default for Walker {
@@ -109,6 +118,7 @@ impl Default for Walker {
             swim_mps: 2.0,
             in_liquid: false,
             eye_in_liquid: false,
+            mount: None,
         }
     }
 }
@@ -219,6 +229,8 @@ struct Contact {
     eye: bool,
     current: [f64; 2],
     push: [f64; 2],
+    /// A region's surface over the walker, when its body is in that water.
+    surface: Option<f64>,
 }
 
 /// A liquid cell's surface, as a share of the cell: a source at 8/9, level n at (8 - n) / 9, the
@@ -231,12 +243,13 @@ fn surface(v: &Voxels, c: [i32; 3], b: u8, s: u8) -> f64 {
     }
 }
 
-fn field_contact(out: &mut Contact, feet: f64, eye: f64, column: [f64; 4]) {
+fn field_contact(out: &mut Contact, feet: f64, eye: f64, column: crate::water::WaterColumn) {
     if column[1] <= 0.0 {
         return;
     }
     if column[0] > feet + FIELD_WADE_M {
         out.body = true;
+        out.surface = Some(column[0]);
         let velocity = [column[2], column[3]];
         let speed = math::sqrt(velocity[0] * velocity[0] + velocity[1] * velocity[1]);
         let k = if speed > FIELD_PUSH_MPS {
@@ -259,6 +272,7 @@ fn contact(w: &Walker, eye: [f64; 3], volumes: &[Volume], pools: &[Pool]) -> Con
         eye: false,
         current: [0.0; 2],
         push: [0.0; 2],
+        surface: None,
     };
     // A region's water: in it when the surface over the walker's column stands more than 5 cm over
     // its feet, pushed by the column's velocity, at most 2 m/s.
@@ -277,6 +291,9 @@ fn contact(w: &Walker, eye: [f64; 3], volumes: &[Volume], pools: &[Pool]) -> Con
                 r.depth_at(i, k),
                 velocity[0],
                 velocity[1],
+                0.0,
+                0.0,
+                0.0,
             ],
         );
     }
@@ -344,7 +361,53 @@ fn contact(w: &Walker, eye: [f64; 3], volumes: &[Volume], pools: &[Pool]) -> Con
 #[cfg(test)]
 fn advance(w: &mut Walker, eye: [f64; 3], dt: f64, volumes: &[Volume], pools: &[Pool]) -> [f64; 3] {
     let wet = contact(w, eye, volumes, pools);
-    advance_contact(w, eye, dt, volumes, wet)
+    advance_contact(w, eye, dt, volumes, None, wet)
+}
+
+/// The gap a walker keeps from fixed colliders, metres, and the highest step it climbs onto one.
+const COLLIDER_GAP_M: f64 = 0.002;
+const STEP_M: f64 = 0.4;
+
+/// How far the walker's box moves along `axis`, at most `d`, before it meets a fixed collider
+/// (an island, a pier, terrain): a box swept through the solver's broad phase, which the last
+/// step left current for fixed bodies (they never move).
+fn sweep_fixed(physics: Option<&Physics>, lo: [f64; 3], hi: [f64; 3], axis: usize, d: f64) -> f64 {
+    let Some(physics) = physics else {
+        return d;
+    };
+    if d == 0.0 {
+        return d;
+    }
+    let centre: [f64; 3] = std::array::from_fn(|a| 0.5 * (lo[a] + hi[a]));
+    let half: [f64; 3] =
+        std::array::from_fn(|a| math::max(0.5 * (hi[a] - lo[a]) - COLLIDER_GAP_M, 0.01));
+    let mut direction = [0.0; 3];
+    direction[axis] = if d > 0.0 { 1.0 } else { -1.0 };
+    let options = rapier3d::parry::query::ShapeCastOptions {
+        max_time_of_impact: geom::f32_of(d.abs() + COLLIDER_GAP_M),
+        target_distance: 0.0,
+        stop_at_penetration: false,
+        compute_impact_geometry_on_penetration: false,
+    };
+    let shape = rapier3d::parry::shape::Cuboid::new(geom::vec_in(half));
+    let pose = rapier3d::math::Pose::from_translation(geom::vec_in(centre));
+    match physics.world.cast_shape(
+        &pose,
+        geom::vec_in(direction),
+        &shape,
+        options,
+        rapier3d::prelude::QueryFilter::only_fixed(),
+    ) {
+        Some((_, hit)) => {
+            let free = math::max(f64::from(hit.time_of_impact) - COLLIDER_GAP_M, 0.0);
+            if free < d.abs() {
+                free * direction[axis]
+            } else {
+                d
+            }
+        }
+        None => d,
+    }
 }
 
 fn advance_contact(
@@ -352,6 +415,7 @@ fn advance_contact(
     eye: [f64; 3],
     dt: f64,
     volumes: &[Volume],
+    physics: Option<&Physics>,
     wet: Contact,
 ) -> [f64; 3] {
     let (mut f, mut s) = (
@@ -383,7 +447,16 @@ fn advance_contact(
             -LIQUID_SINK_MPS,
         );
         if w.rise {
-            w.vertical_mps = math::max(w.vertical_mps, w.swim_mps);
+            w.vertical_mps = match wet.surface {
+                // In a region's open water the swimmer treads, its head out of the water, unless
+                // a lift at a wall carries it up faster.
+                Some(level) if w.vertical_mps <= w.swim_mps => math::clamp(
+                    (level + HEAD_OUT_M - eye[1]) * TREAD_RATE,
+                    -w.swim_mps,
+                    w.swim_mps,
+                ),
+                _ => math::max(w.vertical_mps, w.swim_mps),
+            };
         }
     } else {
         w.vertical_mps = math::max(w.vertical_mps - w.gravity_mps2 * dt, -TERMINAL_MPS);
@@ -398,6 +471,21 @@ fn advance_contact(
         let mut d = wanted[axis];
         for v in volumes {
             d = sweep(v, lo, hi, axis, d);
+        }
+        let blocked = sweep_fixed(physics, lo, hi, axis, d);
+        if axis != 1 && blocked != d && w.vertical_mps <= 0.0 {
+            // A slope or a low ledge: climb up to a step's height if that frees the move.
+            let up = sweep_fixed(physics, lo, hi, 1, STEP_M);
+            let lifted = |v: [f64; 3]| [v[0], v[1] + up, v[2]];
+            let ahead = sweep_fixed(physics, lifted(lo), lifted(hi), axis, d);
+            if ahead.abs() > blocked.abs() + 1e-6 {
+                eye[1] += up;
+                d = ahead;
+            } else {
+                d = blocked;
+            }
+        } else {
+            d = blocked;
         }
         eye[axis] += d;
         if axis == 1 {
@@ -424,13 +512,19 @@ type WaterItem<'a> = (
     Option<&'a crate::water::resident::WaterResident>,
 );
 
-/// `physics.walk`: moves every walker, in id order, against every volume.
+/// `physics.walk`: moves every walker, in id order, against every volume. A swimmer in a region
+/// with WaterDisplacement queues the volume its body holds under the free surface (water.md 46).
 pub(crate) fn walk(
     clock: Res<SimClock>,
     mut walkers: Query<(&EntityId, &mut Walker, &mut Transform)>,
     volumes: Query<(&EntityId, &Voxels, Option<&Transform>), Without<Walker>>,
     regions: Query<WaterItem<'static>, Without<Walker>>,
     samples: Res<crate::water::swimming::Samples>,
+    mut displacements: Query<(
+        &EntityId,
+        &mut crate::water::displacement::WaterDisplacement,
+    )>,
+    physics: Option<Res<Physics>>,
 ) -> Result<(), amoris_contract::Problem> {
     let dt = clock.dt();
     let volumes: Vec<Volume> = by_id(&volumes)
@@ -455,7 +549,12 @@ pub(crate) fn walk(
         .collect();
     for (id, mut walker, mut tf) in by_id_mut(&mut walkers) {
         let mut w = *walker;
+        // A rider's eye follows its board after the step (physics.mount).
+        if w.mount.is_some() {
+            continue;
+        }
         let mut field = None;
+        let mut owner = None;
         for (region_id, region, origin, state) in &regions {
             if region.solver != crate::water::Solver::GpuResident && !region.well_formed() {
                 continue;
@@ -490,6 +589,7 @@ pub(crate) fn walk(
                         )
                     })?,
             );
+            owner = Some((**region_id, origin, region.cell_m));
             break;
         }
         let mut wet = contact(
@@ -503,7 +603,26 @@ pub(crate) fn walk(
         }
         w.yaw = math::wrap_angle(w.yaw);
         w.pitch = math::clamp(w.pitch, -MAX_PITCH, MAX_PITCH);
-        let eye = advance_contact(&mut w, tf.position, dt, &volumes, wet);
+        let eye = advance_contact(&mut w, tf.position, dt, &volumes, physics.as_deref(), wet);
+        if let (Some(column), Some((region, origin, cell))) = (field, owner)
+            && column[1] > 0.0
+        {
+            let feet = eye[1] - w.eye_m;
+            let under = math::clamp((column[0] - feet) / w.height_m, 0.0, 1.0);
+            for (rid, mut d) in amoris_sim::order::by_id_mut(&mut displacements) {
+                if *rid == region {
+                    d.queue(
+                        clock.tick.0,
+                        [(eye[0] - origin[0]) / cell, (eye[2] - origin[2]) / cell],
+                        crate::water::displacement::WALKER_BODY_M3 * under,
+                        // As a buoyancy point's, the patch widens with the body's depth.
+                        (crate::water::displacement::WALKER_FOOTPRINT_M
+                            + math::max(column[0] - feet - 0.5 * w.height_m, 0.0))
+                            / cell,
+                    )?;
+                }
+            }
+        }
         let pose = Transform {
             position: eye,
             rotation: w.rotation(),

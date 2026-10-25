@@ -263,6 +263,9 @@ pub fn scene_of(world: &World) -> Value {
         if let Some(v) = comps.get_mut("WaterFeedback") {
             *v = json!({});
         }
+        if let Some(v) = comps.get_mut("WaterDisplacement") {
+            *v = json!({});
+        }
         for (cname, v) in comps.iter_mut() {
             let Some((schema, _)) = project_component(world, cname) else {
                 continue;

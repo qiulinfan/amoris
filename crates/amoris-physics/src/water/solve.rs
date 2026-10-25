@@ -12,8 +12,8 @@
 use amoris_sim::math;
 
 use super::{
-    CALM_RATE, CALM_SPEED, DRY_SPEED, MAX_SUBSTEPS, SLEEP_TICKS, STILL_DEPTH, STILL_SPEED, Stepped,
-    TILE, WaterRegion,
+    CALM_SPEED, DRY_SPEED, MAX_SUBSTEPS, SLEEP_TICKS, STILL_DEPTH, STILL_SPEED, Stepped, TILE,
+    WaterRegion,
 };
 use crate::geom;
 
@@ -150,7 +150,7 @@ pub(crate) fn poll_tick(
     match r.solver {
         super::Solver::Cpu => {
             for _ in 0..count {
-                g.substep(h, r.cell_m, r.friction);
+                g.substep(h, r.cell_m, r.friction, r.calm_per_s);
             }
         }
         super::Solver::Gpu => {
@@ -173,7 +173,7 @@ pub(crate) fn poll_tick(
                 r.cell_m,
                 h,
                 count,
-                r.friction,
+                [r.friction, r.calm_per_s],
             )?;
             if result.is_pending() {
                 g.pending = Some(Plan { tiles, count });
@@ -277,7 +277,7 @@ impl Grid {
         k > 0 && k < self.h && self.on[c] && self.on[c - self.w]
     }
 
-    fn substep(&mut self, dt: f64, c: f64, friction: f64) {
+    fn substep(&mut self, dt: f64, c: f64, friction: f64, calm_per_s: f64) {
         let (w, h) = (self.w, self.h);
         let back = dt / c;
         // 1. Each stepped face's velocity, carried back along itself (the other component averaged
@@ -341,9 +341,9 @@ impl Grid {
             // Bed friction, and calm damping of slow faces (water.md 4).
             let speed = v.abs();
             let calm = if speed > CALM_SPEED {
-                CALM_RATE * CALM_SPEED / speed
+                calm_per_s * CALM_SPEED / speed
             } else {
-                CALM_RATE
+                calm_per_s
             };
             v /= 1.0 + dt * (friction / math::max(math::max(ha, hb), 0.05) + calm);
             if (v > 0.0 && (ha <= DRY || bed[b] >= ea)) || (v < 0.0 && (hb <= DRY || bed[a] >= eb))

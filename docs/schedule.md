@@ -12,6 +12,10 @@
 异步接入、浮力/水平反冲和游泳交互保留。未完成的冲浪、瀑布和三维数值研究停止，
 不作为后续自动执行计划。当前范围见 [GPU 水集成状态](spikes/water-modernization.md)。
 
+Pioneer 2026-10-22：所有者要求在 Amoris Pioneer 上继续前沿水物理，冲浪和瀑布在 `explore/water`（非静
+水压、附加质量与能量在 `explore/water-nh`）上重新开展并完成，以泳池派对、河流瀑布和海滩冲浪三个样例
+验收（纲领“GPU 水本轮交付范围”的 Pioneer 2026-10-22 一段；[water.md](spec/water.md) 46–56）。
+
 ## 1. 可交付的定义
 
 到第 7 天结束，`main` 上的引擎满足：

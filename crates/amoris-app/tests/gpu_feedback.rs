@@ -80,7 +80,9 @@ fn body_drag_reaches_the_field_next_tick_and_replays_through_compaction() {
         budget(f);
         assert_eq!(f["source_tick"], 0);
         assert_eq!(f["applied_total"], json!([0.0, 0.0]));
-        assert!(pending(f, 0) > 15.0 && pending(f, 0) < 15.2, "{f}");
+        // Drag is implicit over each point's share of the float's mass: a little under the
+        // explicit c v dt (15.1 N s here).
+        assert!(pending(f, 0) > 14.3 && pending(f, 0) < 14.6, "{f}");
         assert_eq!(first["WaterResident"]["stats"]["max_speed"], 0.0);
         let mut body_momentum = 0.0;
         for n in 0..4 {
@@ -100,7 +102,7 @@ fn body_drag_reaches_the_field_next_tick_and_replays_through_compaction() {
         let f = &second["WaterFeedback"];
         budget(f);
         assert_eq!(f["source_tick"], 1);
-        assert!(f["applied"][0].as_f64().unwrap() > 15.0);
+        assert!(f["applied"][0].as_f64().unwrap() > 14.3);
         assert!(
             second["WaterResident"]["stats"]["max_speed"]
                 .as_f64()

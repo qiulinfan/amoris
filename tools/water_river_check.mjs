@@ -57,7 +57,7 @@ const expression=`(async()=>{
  const flush=()=>{for(const m of JSON.parse(raw.messages())){if(m.t==="snap"){raw.snap_bytes();raw.ack(m.version);}if(m.t==="reply"&&m.error)throw Error(JSON.stringify(m.error));}raw.render_frame();};
  try{flush();raw.push(JSON.stringify({t:"cmd",source:{developer:0},seq:1,name:"step",params:JSON.stringify({ticks:1})}));
   for(let guard=0;guard<16;guard++){const next=JSON.parse(raw.run()).next;flush();if(next==="command")break;if(next==="external"){const result=await host.advance(raw.take_water_job());jobs++;last=JSON.parse(host.diagnostics()).resident;if(!raw.complete_water_job(result))throw Error("river host response rejected");}}
-  if(jobs!==1||last.field_readbacks!==0||last.small_readbacks!==2||last.uploads!==1||last.readback_bytes!==1024)throw Error("river transfer scope differs: "+JSON.stringify({jobs,last}));
+  if(jobs!==1||last.field_readbacks!==0||last.small_readbacks!==2||last.uploads!==1||last.readback_bytes!==1904)throw Error("river transfer scope differs: "+JSON.stringify({jobs,last}));
  }finally{raw.close();raw.free();host.free();}
  document.getElementById("hud").style.display="none";return{passed:true,runs,transfer:{jobs,last}};
 })()`;

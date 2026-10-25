@@ -155,6 +155,17 @@ const took = ctx.water.remove(lake, x, z, 2);           // at most what is there
 
 Springs and sinks are the components `WaterSource` and `WaterDrain` (`region`, `at`, `rate_m3s`).
 
+A `gpu_resident` region can do more ([spec/water.md](spec/water.md) 46 to 56). Its `physics` turns
+on dispersive surface waves (`dispersion`; sides a power of two) or non-hydrostatic pressure for
+shoaling swell (`nonhydrostatic`), breaking (`breaking`) and falls over drops deeper than `falls_m`;
+`calm_per_s` sets how fast its waves calm (0.2 a second unless named; 0 keeps swell). A
+`WaterDisplacement` component on the region lets Floaters and Walkers push its water aside; a
+Floater's `added_mass` (0.5 for a ball, about 1 for a board or a log) makes it carry water along and
+brakes its entry. A `Board` (a dynamic body with a Floater) is ridden by naming it in
+`Walker.mount`: `forward` paddles, `strafe` steers or carves, `jump` stands up or lies down, and
+rules read `Board.standing`, `speed` and `wipeouts`. Examples: `samples/pool-party`,
+`samples/river-falls`, `samples/surf-beach`.
+
 A first-person game declares `actions = "first_person"` under `[player]`: its seat `player` drives
 the `Walker` (`forward`, `strafe`, `yaw`, `pitch`, `run`, `slot`, and the one-tick pulses `jump`,
 `primary`, `secondary`), which rules read like any component; `amoris play <project> --walk` plays

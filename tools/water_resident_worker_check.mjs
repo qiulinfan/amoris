@@ -78,7 +78,7 @@ const expression=`(async()=>{
       jobs++;if(!raw.complete_water_job(result))throw new Error("resident response rejected");
     }
   }
-  if(jobs!==64||last.uploads!==1||last.field_readbacks!==1||last.small_readbacks!==65||last.readback_bytes!==4268096)
+  if(jobs!==64||last.uploads!==1||last.field_readbacks!==1||last.small_readbacks!==65||last.readback_bytes!==4333632)
     throw new Error("resident transfer scope differs: "+JSON.stringify({jobs,last}));
   if(last.sync_groups!==1||last.step_groups!==64||last.checkpoint_groups!==1||last.max_group_regions!==1)
     throw new Error("single-region batch phase counts differ: "+JSON.stringify(last));

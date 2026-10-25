@@ -1,0 +1,13 @@
+name = "River Falls"
+rate = 60
+seed = 3
+
+[sounds]
+"falls.gate" = "sfx:coin"
+"falls.drop" = "sfx:blip"
+"falls.wipeout" = "sfx:blip"
+"falls.finished" = "sfx:powerup"
+
+[player]
+perception = "perception.json"
+actions = "first_person"

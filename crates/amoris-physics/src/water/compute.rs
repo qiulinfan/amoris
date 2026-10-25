@@ -33,13 +33,14 @@ pub trait WaterCompute: Send + Sync {
             amoris_contract::detail([]),
         ))
     }
+    /// `damping`: bed friction (m/s) and calm damping (per second; water.md 4).
     fn advance(
         &mut self,
         grid: GridView<'_>,
         cell_m: f64,
         substep_dt: f64,
         substeps: u32,
-        friction: f64,
+        damping: [f64; 2],
     ) -> Result<(), Problem>;
 
     /// An asynchronous host returns Pending without modifying the output. It later completes
@@ -50,9 +51,9 @@ pub trait WaterCompute: Send + Sync {
         cell_m: f64,
         substep_dt: f64,
         substeps: u32,
-        friction: f64,
+        damping: [f64; 2],
     ) -> Result<std::task::Poll<()>, Problem> {
-        self.advance(grid, cell_m, substep_dt, substeps, friction)?;
+        self.advance(grid, cell_m, substep_dt, substeps, damping)?;
         Ok(std::task::Poll::Ready(()))
     }
 
@@ -100,6 +101,7 @@ pub struct Request {
     pub dt: f64,
     pub substeps: u32,
     pub friction: f64,
+    pub calm_per_s: f64,
 }
 
 /// Row-major depth and minus-face velocities. Beds remain exactly the world's authored values.
@@ -265,7 +267,14 @@ impl Drop for Queued {
     }
 }
 impl WaterCompute for Queued {
-    fn advance(&mut self, _: GridView<'_>, _: f64, _: f64, _: u32, _: f64) -> Result<(), Problem> {
+    fn advance(
+        &mut self,
+        _: GridView<'_>,
+        _: f64,
+        _: f64,
+        _: u32,
+        _: [f64; 2],
+    ) -> Result<(), Problem> {
         Err(failed(
             "asynchronous water needs poll_step and host request completion",
         ))
@@ -276,7 +285,7 @@ impl WaterCompute for Queued {
         cell_m: f64,
         dt: f64,
         substeps: u32,
-        friction: f64,
+        [friction, calm_per_s]: [f64; 2],
     ) -> Result<std::task::Poll<()>, Problem> {
         let mut q = self.queue.lock()?;
         if let Some((id, kind)) = self.pending {
@@ -348,6 +357,7 @@ impl WaterCompute for Queued {
             dt,
             substeps,
             friction,
+            calm_per_s,
         }));
         q.live.insert(id, JobKind::Grid);
         self.pending = Some((id, JobKind::Grid));
@@ -429,7 +439,7 @@ mod tests {
             1.0,
             1.0 / 120.0,
             2,
-            0.02,
+            [0.02, 0.2],
         )
     }
     #[test]
@@ -544,7 +554,7 @@ mod resident_tests {
         };
         assert!(
             backends[0]
-                .poll_advance(grid, 1.0, 1.0 / 120.0, 2, 0.02)
+                .poll_advance(grid, 1.0, 1.0 / 120.0, 2, [0.02, 0.2])
                 .unwrap()
                 .is_pending()
         );

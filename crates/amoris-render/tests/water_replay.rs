@@ -72,6 +72,7 @@ fn step(tick: usize) -> FieldStep {
         substep_dt: 0.003 + (tick % 4) as f64 * 0.001,
         substeps: 1 + (tick % 3) as u32,
         friction: (tick % 5) as f64 * 0.017,
+        calm_per_s: amoris_assets::water_field::DEFAULT_CALM_PER_S,
         dry_below: 0.0,
         edits: if tick.is_multiple_of(4) {
             vec![]
@@ -110,6 +111,8 @@ fn step(tick: usize) -> FieldStep {
                 },
             ]
         },
+        displacements: vec![],
+        physics: Default::default(),
     }
 }
 

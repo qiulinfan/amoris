@@ -23,6 +23,7 @@ fn recipe(count: usize) -> FieldRecipe {
                 substep_dt: 0.01,
                 substeps: 1,
                 friction: 0.02,
+                calm_per_s: amoris_assets::water_field::DEFAULT_CALM_PER_S,
                 dry_below: 0.0,
                 edits: vec![ColumnDelta {
                     column: 17,
@@ -32,6 +33,8 @@ fn recipe(count: usize) -> FieldRecipe {
                     at: [4.5, 5.5],
                     impulse: [n as f64 + 1.0, -0.25],
                 }],
+                displacements: vec![],
+                physics: Default::default(),
             })
             .collect(),
         if count == 0 {

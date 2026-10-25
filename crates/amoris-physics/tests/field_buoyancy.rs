@@ -47,6 +47,7 @@ fn body(sim: &mut Sim, at: [f64; 3], size: f64, offset: f64) -> EntityId {
                 }],
                 drag: 1.0,
                 heave: 0.0,
+                added_mass: 0.0,
                 submerged: 0.0,
             },
         ))

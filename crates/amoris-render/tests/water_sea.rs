@@ -31,9 +31,12 @@ fn step(substeps: u32, dt: f64) -> FieldStep {
         substep_dt: dt,
         substeps,
         friction: 0.0,
+        calm_per_s: amoris_assets::water_field::DEFAULT_CALM_PER_S,
         dry_below: 0.0,
         edits: vec![],
         impulses: vec![],
+        displacements: vec![],
+        physics: Default::default(),
     }
 }
 fn checkpoint() -> FieldCheckpoint {

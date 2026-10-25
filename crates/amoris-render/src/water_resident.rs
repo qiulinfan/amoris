@@ -5,7 +5,7 @@ use crate::{
     water_compute::{BoundaryReport, GpuWater},
     water_edits::WaterEdits,
     water_reactions::{ReactionReport, WaterReactions},
-    water_samples::{SampleStamp, WaterSamples},
+    water_samples::{SAMPLE_WORDS, SampleStamp, WaterSamples},
     water_summary::{WaterStateSummary, WaterSummary},
 };
 use amoris_assets::water_field::{
@@ -29,7 +29,14 @@ pub fn kernel_key() -> &'static str {
             include_bytes!("../shaders/water_point.wgsl"),
             include_bytes!("../shaders/water_samples.wgsl"),
             include_bytes!("../shaders/water_summary.wgsl"),
+            include_bytes!("../shaders/water_waves.wgsl"),
+            include_bytes!("../shaders/water_fft.wgsl"),
+            include_bytes!("../shaders/water_occupancy.wgsl"),
+            include_bytes!("../shaders/water_nh.wgsl"),
             include_bytes!("water_compute.rs"),
+            include_bytes!("water_waves.rs"),
+            include_bytes!("water_occupancy.rs"),
+            include_bytes!("water_nh.rs"),
             include_bytes!("water_edits.rs"),
             include_bytes!("water_reactions.rs"),
             include_bytes!("water_samples.rs"),
@@ -516,7 +523,7 @@ impl ResidentPool {
 }
 
 fn readout_words(step: Option<&FieldStep>, points: usize) -> usize {
-    16 + points * 4
+    16 + points * SAMPLE_WORDS
         + step.map_or(0, |s| {
             (if s.impulses.is_empty() { 0 } else { 8 })
                 + if s
@@ -536,8 +543,9 @@ fn readout_words(step: Option<&FieldStep>, points: usize) -> usize {
 pub struct ResidentAdvance {
     pub recipe: FieldRecipe,
     pub summary: WaterStateSummary,
-    /// Relative surface, depth and centred velocity, in query order.
-    pub samples: Vec<[f32; 4]>,
+    /// Relative free surface, depth, centred velocity, then surface rise per column along x/z
+    /// and net inflow (m^2/s), in query order.
+    pub samples: Vec<[f32; SAMPLE_WORDS]>,
     pub checkpoint: Option<Arc<CheckedCheckpoint>>,
     pub reaction: ReactionReport,
     pub boundary: BoundaryReport,
@@ -545,7 +553,7 @@ pub struct ResidentAdvance {
 
 struct Readout {
     summary: WaterStateSummary,
-    samples: Vec<[f32; 4]>,
+    samples: Vec<[f32; SAMPLE_WORDS]>,
     reaction: ReactionReport,
     boundary: BoundaryReport,
 }
@@ -575,7 +583,7 @@ impl ResidentWater {
     fn with_size(gpu: &Gpu, size: [u32; 2]) -> Result<Self, String> {
         let staging = gpu.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("resident water metadata and samples"),
-            size: (64 + MAX_SAMPLES * 16 + 32 + 16 + 16) as u64,
+            size: (64 + MAX_SAMPLES * SAMPLE_WORDS * 4 + 32 + 16 + 16) as u64,
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -690,20 +698,24 @@ impl ResidentWater {
             self.reactions
                 .as_ref()
                 .ok_or("reaction budget is unavailable")?
-                .copy_to(encoder, &self.staging, (64 + points.len() * 16) as u64);
+                .copy_to(
+                    encoder,
+                    &self.staging,
+                    (64 + points.len() * SAMPLE_WORDS * 4) as u64,
+                );
         }
         if boundary {
             self.field.copy_boundary_report(
                 encoder,
                 &self.staging,
-                (64 + points.len() * 16 + if reaction { 32 } else { 0 }) as u64,
+                (64 + points.len() * SAMPLE_WORDS * 4 + if reaction { 32 } else { 0 }) as u64,
             )?;
         }
         if edited {
             self.edits.copy_receipt(
                 encoder,
                 &self.staging,
-                (64 + points.len() * 16
+                (64 + points.len() * SAMPLE_WORDS * 4
                     + if reaction { 32 } else { 0 }
                     + if boundary { 16 } else { 0 }) as u64,
             )?;
@@ -723,7 +735,7 @@ impl ResidentWater {
         let flow_end = words.len() - if edited { 4 } else { 0 };
         let receipt_end = flow_end - if boundary { 4 } else { 0 };
         let end = receipt_end - if reaction { 8 } else { 0 };
-        let samples: Vec<[f32; 4]> = bytemuck::cast_slice(&words[16..end]).to_vec();
+        let samples: Vec<[f32; SAMPLE_WORDS]> = bytemuck::cast_slice(&words[16..end]).to_vec();
         if samples
             .iter()
             .any(|p| p[1] < 0.0 || p.iter().any(|v| !v.is_finite()))
@@ -870,7 +882,7 @@ impl ResidentWater {
     ) -> Result<(), String> {
         self.encode_readout(encoder, points, false, false, false)?;
         self.transfers.small_readbacks += 1;
-        self.transfers.readback_bytes += (64 + points.len() * 16) as u64;
+        self.transfers.readback_bytes += (64 + points.len() * SAMPLE_WORDS * 4) as u64;
         Ok(())
     }
     fn accept_observe(
@@ -907,7 +919,7 @@ impl ResidentWater {
     ) -> Result<ResidentAdvance, String> {
         self.synchronize(checkpoint, recipe)?;
         self.prepare_observe(points)?;
-        let mut words = vec![0u32; 16 + points.len() * 4];
+        let mut words = vec![0u32; 16 + points.len() * SAMPLE_WORDS];
         crate::readback::read_blocking(&self.gpu.device, &self.staging, &mut words)?;
         self.accept_observe(&words, recipe)
     }
@@ -919,7 +931,7 @@ impl ResidentWater {
     ) -> Result<ResidentAdvance, String> {
         self.synchronize_async(checkpoint, recipe).await?;
         self.prepare_observe(points)?;
-        let mut words = vec![0u32; 16 + points.len() * 4];
+        let mut words = vec![0u32; 16 + points.len() * SAMPLE_WORDS];
         crate::readback::read(&self.staging, &mut words).await?;
         self.accept_observe(&words, recipe)
     }
@@ -1025,7 +1037,7 @@ impl ResidentWater {
         self.prepare_advance(step, points)?;
         let mut words = vec![
             0u32;
-            16 + points.len() * 4
+            16 + points.len() * SAMPLE_WORDS
                 + if step.impulses.is_empty() { 0 } else { 8 }
                 + if step
                     .boundaries
@@ -1067,7 +1079,7 @@ impl ResidentWater {
         self.prepare_advance(step, points)?;
         let mut words = vec![
             0u32;
-            16 + points.len() * 4
+            16 + points.len() * SAMPLE_WORDS
                 + if step.impulses.is_empty() { 0 } else { 8 }
                 + if step
                     .boundaries
@@ -1109,9 +1121,12 @@ mod kernel_tests {
             substep_dt: 0.01,
             substeps: 1,
             friction: 0.0,
+            calm_per_s: amoris_assets::water_field::DEFAULT_CALM_PER_S,
             dry_below: 0.0,
             edits: vec![],
             impulses: vec![],
+            displacements: vec![],
+            physics: Default::default(),
         };
         let mut recipe = FieldRecipe::new(
             checkpoint.key(),

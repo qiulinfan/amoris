@@ -48,14 +48,19 @@ pub struct BuoyPoint {
 
 /// A body water holds up and drags: Archimedes at each point under the surface, and drag toward
 /// the water's own motion there (`drag` along the surface, `heave` up and down, per kilogram of
-/// water displaced and m/s of relative speed). `submerged` is the share of the points' volume
-/// under water at the start of the last tick (written by `physics.buoyancy`).
+/// water displaced and m/s of relative speed). `added_mass` is the water each point carries along
+/// as it accelerates, per kilogram it displaces (0.5 for a sphere, about 1 for a flat board; 0
+/// leaves it out): the point's water forces then move the body and that water together, and the
+/// momentum the point gives the water it newly carries as it enters brakes an impact (water.md
+/// 56). `submerged` is the share of the points' volume under water at the start of the last tick
+/// (written by `physics.buoyancy`).
 #[derive(Component, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 pub struct Floater {
     pub points: Vec<BuoyPoint>,
     pub drag: f64,
     pub heave: f64,
+    pub added_mass: f64,
     /// Written by the engine: 0 dry, 1 wholly under.
     pub submerged: f64,
 }
@@ -66,6 +71,7 @@ impl Default for Floater {
             points: Vec::new(),
             drag: 1.0,
             heave: 6.0,
+            added_mass: 0.0,
             submerged: 0.0,
         }
     }

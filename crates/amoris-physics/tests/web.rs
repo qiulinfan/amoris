@@ -8,11 +8,22 @@
 
 use amoris_physics::probe::{CHAIN_TICKS, GOLDEN, chain, golden_line};
 
+/// A Floater as its version 1 encoded it, before `added_mass` (water.md 56).
+#[derive(serde::Serialize)]
+struct FloaterV1<'a> {
+    points: &'a [amoris_physics::BuoyPoint],
+    drag: f64,
+    heave: f64,
+    submerged: f64,
+}
+
 #[test]
 fn resident_checkpoint_section_preserves_the_legacy_sailing_state_chain() {
-    // Adding an empty persisted resource deliberately changes the complete world hash. Verify
-    // that removing only that new section recovers the exact previous 1200-tick chain before
-    // blessing its new complete-state golden. This also guards unchanged CPU physics behavior.
+    // Adding an empty persisted resource deliberately changes the complete world hash, and so
+    // does the Floater's added mass, zero in this scene. Verify that removing only that new
+    // section and writing the Floaters as version 1 did recovers the exact previous 1200-tick
+    // chain before blessing its new complete-state golden. This also guards unchanged CPU physics
+    // behavior.
     let ledger = amoris_physics::probe::ledger();
     let mut sim = amoris_physics::probe::sailing_world();
     let mut hashes = Vec::new();
@@ -28,12 +39,36 @@ fn resident_checkpoint_section_preserves_the_legacy_sailing_state_chain() {
         snap.sections
             .retain(|(name, _)| *name != "WaterCheckpoints");
         assert_eq!(snap.sections.len() + 1, count);
+        let world = sim.world();
+        let rows: Vec<(u64, FloaterV1)> = world
+            .resource::<amoris_sim::EntityIndex>()
+            .iter()
+            .filter_map(|(id, e)| world.get::<amoris_physics::Floater>(e).map(|f| (id, f)))
+            .map(|(id, f)| {
+                assert_eq!(f.added_mass, 0.0);
+                (
+                    id.get(),
+                    FloaterV1 {
+                        points: &f.points,
+                        drag: f.drag,
+                        heave: f.heave,
+                        submerged: f.submerged,
+                    },
+                )
+            })
+            .collect();
+        let floaters = snap
+            .sections
+            .iter_mut()
+            .find(|(name, _)| *name == "Floater")
+            .expect("the sailing scene has Floaters");
+        floaters.1 = bincode::serialize(&rows).unwrap();
         hashes.push(snap.hash());
         if tick < CHAIN_TICKS {
             sim.step(&mut amoris_sim::NoHooks).unwrap();
         }
     }
-    assert_eq!(golden_line(&hashes), "chain 529a28aaa772e3c9 ticks 1200\n");
+    assert_eq!(golden_line(&hashes), "chain 7149006c1a78a404 ticks 1200\n");
 }
 
 #[test]

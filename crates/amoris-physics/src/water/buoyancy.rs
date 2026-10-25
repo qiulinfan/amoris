@@ -64,6 +64,14 @@ impl Cover {
             size: region.size,
         })
     }
+    /// The region's column size, m.
+    pub fn cell(&self) -> f64 {
+        self.cell
+    }
+    /// The region's columns along x and z.
+    pub fn size(&self) -> [u32; 2] {
+        self.size
+    }
     pub fn grid_at(&self, at: V3) -> Option<[f64; 2]> {
         let grid = [
             (at[0] - self.origin[0]) / self.cell,
@@ -140,7 +148,7 @@ struct Observation {
     digest: [u8; 32],
     checkpoint: ContentHash,
     tick: u64,
-    column: [f64; 4],
+    column: super::WaterColumn,
 }
 
 #[derive(Resource, Default)]
@@ -175,7 +183,7 @@ impl Samples {
         region: EntityId,
         recipe: &FieldRecipe,
         tick: u64,
-        column: [f64; 4],
+        column: super::WaterColumn,
     ) {
         self.rows.insert(
             point.key,
@@ -200,7 +208,7 @@ impl Samples {
         region: EntityId,
         recipe: &FieldRecipe,
         tick: u64,
-    ) -> Option<[f64; 4]> {
+    ) -> Option<super::WaterColumn> {
         self.matches(point, region, recipe)
             .then(|| self.rows.get(&point.key))
             .flatten()
@@ -213,7 +221,7 @@ impl Samples {
         at: V3,
         region: EntityId,
         tick: u64,
-    ) -> Option<[f64; 4]> {
+    ) -> Option<super::WaterColumn> {
         self.rows
             .get(&(key.0, Role::Floater(key.1)))
             .filter(|s| s.at == at && s.region == region && s.tick == tick)
@@ -221,8 +229,9 @@ impl Samples {
     }
 }
 
-/// Bilinear sampling of centre columns and centred face velocities, matching GPU point queries.
-pub(crate) fn sample(region: &super::WaterRegion, grid: [f64; 2]) -> [f64; 4] {
+/// Bilinear sampling of centre columns and centred face velocities, matching GPU point queries,
+/// with the free surface's slope and rate of rise from the same columns.
+pub(crate) fn sample(region: &super::WaterRegion, grid: [f64; 2]) -> super::WaterColumn {
     let size = region.columns_along();
     let q = std::array::from_fn::<_, 2, _>(|a| {
         amoris_sim::math::clamp(grid[a] - 0.5, 0.0, f64::from(region.size[a] - 1))
@@ -232,9 +241,37 @@ pub(crate) fn sample(region: &super::WaterRegion, grid: [f64; 2]) -> [f64; 4] {
     let t = std::array::from_fn::<_, 2, _>(|a| {
         q[a] - f64::from(u32::try_from(lo[a]).expect("bounded field"))
     });
-    let column = |i, k| {
+    let column = |i: usize, k: usize| {
         let v = region.velocity_at(i, k);
-        [region.surface_at(i, k), region.depth_at(i, k), v[0], v[1]]
+        let (l, r) = (i.saturating_sub(1), (i + 1).min(size[0] - 1));
+        let (d, u) = (k.saturating_sub(1), (k + 1).min(size[1] - 1));
+        let span = |a: usize, b: usize| f64::from(u32::try_from(b - a).unwrap_or(1).max(1));
+        let wet = region.depth_at(i, k) > 0.0;
+        let here = region.surface_at(i, k);
+        let side = |i: usize, k: usize| {
+            if region.depth_at(i, k) > 0.0 {
+                region.surface_at(i, k)
+            } else {
+                here
+            }
+        };
+        let slope = if wet {
+            [
+                (side(r, k) - side(l, k)) / (span(l, r) * region.cell_m),
+                (side(i, u) - side(i, d)) / (span(d, u) * region.cell_m),
+            ]
+        } else {
+            [0.0; 2]
+        };
+        [
+            here,
+            region.depth_at(i, k),
+            v[0],
+            v[1],
+            slope[0],
+            slope[1],
+            region.rise_at(i, k),
+        ]
     };
     let a = column(lo[0], lo[1]);
     let b = column(hi[0], lo[1]);
@@ -266,22 +303,22 @@ mod tests {
         let recipe = FieldRecipe::new(seed.key(), vec![], seed.digest(), String::new());
         let mut samples = Samples::default();
         let floater = Point::floater(actor, 0, at, [4.0, 4.0], false);
-        samples.record(floater, region_id, &recipe, 7, [1.0; 4]);
+        samples.record(floater, region_id, &recipe, 7, [1.0; 7]);
         for (i, role) in HullPoint::ALL.into_iter().enumerate() {
             samples.record(
                 point(role),
                 region_id,
                 &recipe,
                 7,
-                [f64::from(u32::try_from(i + 2).unwrap()); 4],
+                [f64::from(u32::try_from(i + 2).unwrap()); 7],
             );
         }
         assert_eq!(samples.rows.len(), 4);
-        assert_eq!(samples.get((actor, 0), at, region_id, 7), Some([1.0; 4]));
+        assert_eq!(samples.get((actor, 0), at, region_id, 7), Some([1.0; 7]));
         for (i, role) in HullPoint::ALL.into_iter().enumerate() {
             assert_eq!(
                 samples.get_hull(&point(role), region_id, &recipe, 7),
-                Some([f64::from(u32::try_from(i + 2).unwrap()); 4])
+                Some([f64::from(u32::try_from(i + 2).unwrap()); 7])
             );
         }
         let p = point(HullPoint::Center);

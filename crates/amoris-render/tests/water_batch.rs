@@ -47,6 +47,7 @@ fn step(index: usize, tick: usize) -> FieldStep {
         substep_dt: 0.008 + tick as f64 * 0.001,
         substeps: 1 + (tick % 2) as u32,
         friction: 0.02 * index as f64,
+        calm_per_s: amoris_assets::water_field::DEFAULT_CALM_PER_S,
         dry_below: 0.0,
         edits: vec![ColumnDelta {
             column: 9,
@@ -56,6 +57,8 @@ fn step(index: usize, tick: usize) -> FieldStep {
             at: [2.25, 3.75],
             impulse: [2.0 * (index + 1) as f64, -(tick as f64 + 1.0)],
         }],
+        displacements: vec![],
+        physics: Default::default(),
     }
 }
 fn equal(actual: &ResidentAdvance, expected: &ResidentAdvance) {

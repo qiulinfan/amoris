@@ -147,7 +147,12 @@ impl Service {
             }
         }
         let active: Vec<u32> = r.active.iter().map(|a| u32::from(*a)).collect();
-        let params = (r.cell_m as f32, r.dt as f32, r.substeps, r.friction as f32);
+        let params = (
+            r.cell_m as f32,
+            r.dt as f32,
+            r.substeps,
+            [r.friction as f32, r.calm_per_s as f32],
+        );
         // The owned f64 input is no longer needed once packed. Do not hold another full window
         // through mapping and output conversion; the game's continuation already owns its copy.
         drop(r);
@@ -241,12 +246,9 @@ impl Service {
                             .samples
                             .into_iter()
                             .map(|p| {
-                                [
-                                    r.checkpoint.datum + f64::from(p[0]),
-                                    f64::from(p[1]),
-                                    f64::from(p[2]),
-                                    f64::from(p[3]),
-                                ]
+                                let mut sample = p.map(f64::from);
+                                sample[0] += r.checkpoint.datum;
+                                sample
                             })
                             .collect(),
                         checkpoint: out.checkpoint,

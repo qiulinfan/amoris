@@ -85,9 +85,11 @@ pub struct WaterRegion {
     pub bed: BedSource,          // where the beds come from (5)
     pub edges: [Edge; 4],        // -x, +x, -z, +z: Wall, Sea, Inflow or Outflow (11)
     pub friction: f64,           // bed friction, m/s (0.02)
+    pub calm_per_s: f64,         // calm damping a second (0.2; 0 to 10; 4 and 51)
     pub substeps: u32,           // at least this many a tick (2; 1 to 8)
     pub dry_below: f64,          // films thinner than this dry, metres (0: never; 4)
     pub look: WaterLook,         // presentation, carried as palette entries carry fog (9)
+    pub physics: WaterPhysics,   // dispersion, breaking and falls; gpu_resident only (48, 49)
     pub tiles: Vec<WaterTile>,   // every tile, in key order (z, then x); empty: all dry (5)
 }
 
@@ -131,9 +133,10 @@ section 11 reads.
 - **State.** Beds, depths and velocities are state (`f64`, numeric.md 3.1). Beds are persisted,
   not Derived: section 5's rule reads a column's water and its previous bed, so the volume alone
   cannot rebuild them.
-- **Validation.** `size`, `cell_m`, `substeps`, `friction` and `dry_below` (0 to 0.05 m) must be
-  in range. Tiles must be absent or match the size in count and keys. Beds and velocities must be
-  finite, depths finite and not negative.
+- **Validation.** `size`, `cell_m`, `substeps`, `friction`, `calm_per_s` (0 to 10) and `dry_below`
+  (0 to 0.05 m) must be in range; `physics` needs the `gpu_resident` solver, and dispersion
+  power-of-two sides (48). Tiles must be absent or match the size in count and keys. Beds and
+  velocities must be finite, depths finite and not negative.
 
 ## 4. `physics.water`
 
@@ -172,7 +175,8 @@ section 11 reads.
   channel 1.8 m deep at about 14 s per e-fold, and stronger damping over-damps that re-levelling and
   makes it slower. Relaxing the stillness test by depth was tried and rejected: tiles then fell
   asleep in the middle of a slosh with their tilt frozen, and released it when woken, so the sea
-  stayed awake longer.
+  stayed awake longer. A region names its own rate in `calm_per_s`, 0.2 unless it says otherwise
+  (Pioneer, 2026-10-22; section 51).
 - **Sleep.** A tile is **still** when no depth changed by more than 1e-5 m and no velocity exceeded
   1e-3 m/s during the tick (owner, 2026-10-18; first 1e-6 m and 1e-4 m/s). Its `still` counts such
   ticks, and at 60 it **sleeps**: its velocities are set to 0 and it is skipped. Each tile sleeps on
@@ -466,6 +470,9 @@ water. Past the region, the analytic sea runs each wave at its deep-water speed.
   wavelength alone does not guarantee local resolution. Dry mean-depth faces carry no linear
   mode; raising the mean level can make them eligible later. Section 32 defines the current
   implementation and its remaining shore/visual limits.
+- A region with `physics.dispersion` keeps neither the twentieth rule nor `water.deep_edge`: it
+  takes every resolved wave at any depth, at Airy's phase speed (Pioneer, 2026-10-22; 49.4). On
+  every region a side's linear forcing stops growing past breaking (49.4).
 
 
 Past the regions, the analytic sea still supplies buoyancy and drawing. The resident forcing
@@ -537,7 +544,8 @@ M5 and R1 (both GPUs), and in Chrome.
 
 1. Layered columns for caves and overhangs, or a 3D solver for enclosed water. They would also lift
    section 5's limit on overhangs standing at load.
-2. Two-way coupling: bodies displacing water and making waves.
+2. Two-way coupling beyond displaced volume (46) and entry crowns (52): added mass, impact
+   pressure on a body that strikes the water, and a dense splash that carries water.
 3. Whether the `Cells` model is kept for good, or retired. It stays through these slices (lava
    and older scenes use it); the owner decides once blockcraft has moved.
 4. A solver on several threads, by tiles in a fixed order, which a region larger than 512² needs.
@@ -776,16 +784,17 @@ limit, including completed unconsumed replies. Type mismatches fail, and cancell
 cannot commit. Abort checks the host epoch both before and after awaiting, covering a successful
 map callback racing device destruction.
 
-The world owns `WaterResident` and the `WaterCheckpoints` resource. A checkpoint contains exact
-f32 words for relative bed, depth and the two minus-face velocities, plus dimensions and a f64
-height datum. A recipe identifies that checkpoint and records at most 64 ordered steps, including
-cell size, substep time/count, friction and ordered source/drain depth changes. A normal step
-executes on the cached GPU field and reads 64 bytes of state digest/stability statistics plus
-16 bytes per requested point. It does not pack, upload or read back the whole field. At 64 steps,
-the host explicitly reads an exact checkpoint and clears the program. Unreferenced checkpoints
-are removed during compaction when this region is their last owner; any remaining unreferenced
-entries are pruned at the next tick. A snapshot at any completed boundary retains the checkpoint
-and bounded recipe; no device handle or pending map is authoritative world state.
+The world owns `WaterResident` and the `WaterCheckpoints` resource. A checkpoint contains exact f32
+words for relative bed, depth and the two minus-face velocities, plus dimensions and a f64 height
+datum. A recipe identifies that checkpoint and records at most 64 ordered steps, including cell
+size, substep time/count, friction and ordered source/drain depth changes. A normal step executes on
+the cached GPU field and reads 64 bytes of state digest/stability statistics plus 32 bytes per
+requested point (eight words since section 47; four before). It does not pack, upload or read back
+the whole field. At 64 steps, the host explicitly reads an exact checkpoint and clears the program.
+Unreferenced checkpoints are removed during compaction when this region is their last owner; any
+remaining unreferenced entries are pruned at the next tick. A snapshot at any completed boundary
+retains the checkpoint and bounded recipe; no device handle or pending map is authoritative world
+state.
 
 The GPU hashes the actual complete storage field with unkeyed BLAKE3, rather than hashing only
 commands or selected samples. Chunk and parent kernels follow the official BLAKE3 specification;
@@ -1033,11 +1042,11 @@ completed-boundary semantics.
 
 `MAX_SAMPLES = 4096` in the shared field contract bounds combined probes and Floater points per
 resident region. Exceeding it fails explicitly; points are not silently discarded and full-field
-readback is not substituted. Normal readback remains 64 metadata bytes plus 16 bytes per sample,
-with existing periodic complete checkpoints. The sample buffers are reserved to this maximum;
-three point/output/staging slots plus combined staging use approximately 544 KiB per resident
-service, separate from field and summary storage. An empty/small request reads only its actual
-range. This limit and memory cost are not a claim of unlimited body counts or region scalability.
+readback is not substituted. Normal readback remains 64 metadata bytes plus 32 bytes per sample
+(47), with existing periodic complete checkpoints. The sample buffers are reserved to this maximum;
+three point/output/staging slots plus combined staging use approximately 1 MiB per resident service,
+separate from field and summary storage. An empty/small request reads only its actual range. This
+limit and memory cost are not a claim of unlimited body counts or region scalability.
 
 `samples/water-floaters` contains four dynamic 350-kg/m³ crates with 27 volume points each, a real
 collider floor and a resident dam. `physics.buoyancy` drives their lift, translation and rotation.
@@ -2411,8 +2420,9 @@ query the actual GPU field independently.
 
 Existing movement rules remain: reduced swimming gravity/speed, bounded sinking, held rise,
 field-current push capped at 2 m/s, voxel collision and bank lift. This is a one-way contact
-bridge. Walker occupied volume, displaced water, vertical impact and swimmer wakes remain W6
-work; there is no new persistent component or field/checkpoint/feed format version.
+bridge, with no persistent component or field/checkpoint/feed format version of its own. With
+`WaterDisplacement` on the region, a swimmer's displaced volume enters the field and makes its
+wake (46); vertical impact beyond the entry crown (52) remains W6 work.
 
 `samples/water-pool` is the first playable acceptance slice: enter from the green deck, reach the
 submerged gold marker, rise through the waterline and return to the deck. The script scores actual
@@ -2447,3 +2457,465 @@ WaterFeedback receives only each newly applied Hull horizontal force once, at it
 face footprint. Prior ExternalForce, Floater and Sail forces are not counted again. A design that
 assigns horizontal resistance to Hull can set Floater.drag=0 to avoid duplicate drag. This is
 foil/drag coupling, not occupied-volume, wave-pressure, added-mass or impact simulation.
+
+## 46. Displaced volume: bodies push the water aside (Pioneer, 2026-10-22)
+
+Sections 46 to 56 are Amoris Pioneer's frontier water work (branches `explore/water` and
+`explore/water-nh`; charter, GPU water scope, Pioneer 2026-10-22). Sections 46 to 49, 52 and 55
+apply to `gpu_resident` regions only: `physics` on another solver is `water.invalid`, and
+`WaterDisplacement` belongs on a resident region, since nothing else loads its packet.
+
+A region entity that also holds `WaterDisplacement` couples its bodies to its water both ways in the
+vertical. Each tick, every Floater point and every Walker inside the region queues the volume it
+holds under the free surface, at its grid point and with a footprint radius. The next step loads
+that packet as a pressure head on the columns, so water flows out from under a body and rises around
+it, and a moving body makes waves. The head enters only the face pressure (`pressure_heads` in
+water_maccormack.wgsl); no depth is edited, so a region with displacement keeps its water exactly.
+
+```rust
+pub struct WaterDisplacement {     // on the region entity; persisted, version 1
+    pub pending: Vec<PointVolume>, // queued at `queued_tick` for the next step
+    pub queued_tick: u64,
+    pub applied_tick: u64,
+    pub applied_m3: f64,           // the volume the last step loaded
+}
+pub struct PointVolume {           // amoris-assets water_field; FieldStep.displacements
+    pub at: [f64; 2],              // grid columns
+    pub volume_m3: f64,            // at most 1e4
+    pub radius: f64,               // the footprint's radius in columns, at most 8
+}
+```
+
+- **The packet** follows WaterFeedback's rules (section 23). It belongs to the preceding completed
+  boundary: a step loads it only when `queued_tick + 1` is the running tick, and fails the tick
+  otherwise. It clears after a checked result, and the bodies of the running tick queue the next
+  one. `FieldStep.displacements` carries the loaded points, at most 4096 (`MAX_SAMPLES`); they are
+  part of the step's numerical identity, so replay and compaction reproduce them.
+- **Volumes.** A Floater point holds its volume times its immersion (47). A Walker holds the share
+  of its 0.07 m³ body (`WALKER_BODY_M3`) under the surface.
+- **Footprint.** A point spreads over a smooth disk: weights (1 - d²/R²)² at the covered column
+  centres, normalized to its volume. A Floater point takes R = 2 sqrt(volume / thickness), twice the
+  side of the waterplane its layer stands for; the disk's peak column takes the volume over pi R² /
+  3, so the head under the point rises at about a quarter of the rate the point sinks (a 2 x 2
+  footprint's rose faster than it sank), and the point feels it in the same step (56). A Walker
+  takes 0.4 m. Both widen by their depth under
+  the surface, as the bump a submerged source raises spreads over about its depth: a narrow head
+  under a swimmer walking on a pool's floor threw ducks above it metres into the air.
+- **Determinism.** The scatter adds integers, 2^14 units to the cubic metre (61 cm³; a column
+  overflows past 131,000 m³), so the sum does not depend on the order of the atomic adds, and a
+  replay on one device reproduces it bit for bit. The resolve turns each column's sum into metres of
+  head over the column's area.
+- **Who reads the head.** Point samples report the free surface with the head (section 20), so a
+  body floats on the water every body, itself included, has pushed up. The replica draws it
+  (water_present.wgsl), and presentation reads where it rose (52).
+
+The coupling follows M. Müller, "Fast Water Simulation for Games Using Height Fields" (GDC 2008): a
+body's submerged volume pushes its columns aside. Here it is a pressure head instead of an edit of
+the depth.
+
+## 47. Froude-Krylov forces and implicit buoyancy (Pioneer, 2026-10-22)
+
+A resident point sample is eight words: the free surface with the displaced head (46), the depth to
+the bed, the velocity along x and z, the surface's rise across a column along x and z, the column's
+net inflow and a spare word. Physics reads it as a `WaterColumn` of seven numbers: the surface, the
+depth, the velocity, the surface's slope and its rate of rise.
+
+- **Froude-Krylov.** A Floater point in a region takes the hydrostatic pressure under a sloping free
+  surface, -rho g V grad(eta) with V its displaced volume: the long-wave limit of the Froude-Krylov
+  force. A board slides down a wave's face, and a float is carried by a wave instead of only lifted.
+  Outside regions the analytic sea's slope is not used and the term is zero.
+- **The water's vertical motion.** The water at a point moves up and down with its surface (the rate
+  of rise), so heave damping acts against the body's motion relative to the rising water.
+- **Linearly implicit immersion.** The hydrostatic spring of a float a few kilograms heavy is stiff
+  for its mass, and its one-sided contact, sampled at the tick's start, gained energy on every
+  bounce: a beach ball or a swim ring bounced ever higher on still water. Each point's immersion is
+  evaluated where it will stand at the step's end, y + dt v_y, against the free surface then (its
+  rate of rise over the step, and the body's own push, 56), linearly implicit as in D. Baraff and A.
+  Witkin, "Large Steps in Cloth Simulation" (SIGGRAPH 1998).
+- **Implicit drag.** Drag and heave damping, quadratic in the relative speed, are implicit over the
+  point's share of the body's mass: c / (1 + c dt / m_i), m_i = m V_i / V. One tick never reverses
+  the water's relative velocity.
+
+`amoris-physics` tests/light_floats.rs drops a 3.4 kg beach ball and a 13 kg swim ring on still
+water and requires them to settle at their waterlines; the sailing scene's hash chain changed with
+this force model and was blessed again.
+
+## 48. Ballistic falls and breaking (Pioneer, 2026-10-22)
+
+```rust
+pub struct WaterPhysics {   // WaterRegion.physics; gpu_resident only
+    pub dispersion: bool,   // dispersive surface waves (49); power-of-two sides, at least 16
+    pub breaking: bool,     // eddy-viscosity breaking
+    pub falls_m: f64,       // drops deeper than this fall ballistically, metres; 0: none
+    pub nonhydrostatic: bool, // depth-integrated non-hydrostatic pressure (55); not with dispersion
+}
+```
+
+**Falls.** A face whose donor column's bed stands higher than the receiver's surface by more than
+`falls_m` carries its discharge through the air. The donor loses it as usual; the receiver does not
+gain it. The jet leaves the face's middle at half the leaving water's depth, with the face's
+velocity along it and the donor's velocity across it, and its parabola is marched half a column at a
+time (at most 96 steps) to the first column whose water or bed it meets. That column receives the
+volume and its horizontal momentum. Both sides quantize the same discharge identically, 2^18 units
+to the metre of depth, so the transfer conserves volume exactly. After the substep's transport, the
+landed depth is added first; then each landing column's faces take half of each neighbouring
+column's landed momentum, mixed with their own flow by volume and limited to half a column a
+substep. Handing a height field's flow at a lip to free flight follows N. Chentanez, M. Müller and
+T.-Y. Kim, "Coupling 3D Eulerian, Heightfield and Particle Methods for Interactive Simulation of
+Large Scale Liquid Phenomena" (IEEE TVCG 21(10), 2015); this variant lands the flux analytically
+within the substep instead of carrying particles. The replica draws the falling sheet as large
+overlapping spray blobs and mist from its foot (section 35).
+
+**Breaking.** A breaking wave turns its front into turbulence. With `breaking`, each MacCormack face
+takes an eddy viscosity where the surface rises faster than half the local long-wave speed. The rise
+is the larger continuity rate d(eta)/dt of the face's two columns; with the onset r0 = 0.5 sqrt(g h)
+at the face's mean depth h, the strength B = clamp(rise / r0 - 1, 0, 1) and nu = min(B 1.44 h rise,
+0.2 cell² / dt), applied as the Laplacian of the face velocity. This is the eddy viscosity of A. B.
+Kennedy, Q. Chen, J. T. Kirby and R. A. Dalrymple, "Boussinesq Modeling of Wave Transformation,
+Breaking, and Runup. I: 1D" (J. Waterway, Port, Coastal and Ocean Engineering 126(1), 2000), nu = B
+delta² h eta_t with delta = 1.2, its B ramped here from the onset to twice it, with no time history,
+and bounded by explicit stability. Faces under 5 cm take none. In shallow water without dispersion a
+steepening wave becomes a bore, and breaking turns the bore into a turbulent front that loses energy
+as a real one does.
+
+## 49. Dispersive surface waves (Pioneer, 2026-10-22)
+
+The shallow-water equations run every wave at sqrt(g h), whatever its length: in 2 m of water,
+standing waves 8 to 2 m long run 1.3 to 2.4 times too fast, and a cannonball's rings do not spread
+into a train. With `physics.dispersion`, each step splits the state into a bulk flow, which the
+ordinary substeps advance, and Airy surface waves, which advance exactly at their own depth's speed.
+The method is S. Jeschke and C. Wojtan, "Generalizing Shallow Water Simulations with Dispersive
+Surface Waves" (ACM TOG 42(4), 2023, doi:10.1145/3592098); its Airy step is the exponential
+integrator of J. Tessendorf's eWave (2014). Regions with dispersion need power-of-two sides of at
+least 16 columns. The code is crates/amoris-render/src/water_waves.rs with water_waves.wgsl and
+water_fft.wgsl.
+
+### 49.1 The split
+
+- **Low pass.** The bulk surface is the free surface low-passed at each column's cutoff: the
+  wavelength 2 pi h of the depth one Airy level deeper than the column's (h' = 2.5 h), so the 3 dB
+  cutoff lies at a variance of ln 2 (h' / cell)². The paper diffuses explicitly, whose iteration
+  count limits the cutoff in deep water; here a stationary Gaussian pyramid (à trous: every level
+  keeps every column, its [1 4 6 4 1] binomial dilated, 8 levels, level l of variance (4^l - 1) / 3
+  columns²) is sampled between its levels, so any depth costs the same. A decimated pyramid made the
+  split depend on where a wave stood: a wave near the cutoff came out 4 to 11 percent higher or
+  lower.
+- **Steep water stays in the bulk.** The split's share falls as exp(-(s / 0.25)²) with the surface's
+  steepest slope s at the column, so a bore, a fall's foot or a breaking front stays in the
+  nonlinear bulk flow (the paper's steepness penalty).
+- **Shores.** The split stays out of water under a metre deep and the columns beside it (a factor
+  smoothstep(0.5, 1, d) with d the shallowest of the column and its four neighbours), where the
+  pyramid's blurred bulk depth would exceed what a film on a beach or a rock holds. Waves there run
+  at the long-wave speed: right for swell and surf, a little fast for ripples shorter than a few
+  depths.
+- **Open sides.** The split fades out over 48 columns towards a `Sea`, `Inflow` or `Outflow` side,
+  so what enters there enters the bulk flow.
+- **Only water is averaged.** Each pyramid level blurs the wet columns' surface and fluxes and the
+  wet mask, and the split divides one by the other (a normalized convolution), as Jeschke and
+  Wojtan diffuse within the wet domain. Blurring dry columns in, even filled one ring deep, took a
+  cliff's rock into the water beside it: still water 5 m deep beside a cliff 10 m high ran at 1.4
+  m/s and moved its surface by 1.2 m within two seconds.
+- **Breaking water stays in the bulk.** In a region that breaks its waves, the split's share falls
+  by the breaking model's own onset (48: the surface rising faster than half the long-wave speed,
+  fully at twice that). A breaking crest's front left in the surface band became free Airy waves the
+  eddy viscosity never reached.
+
+### 49.2 The Airy step
+
+The surface heights and face fluxes are transformed over the region mirrored about its walls, cosine
+modes for heights and sine modes for fluxes (2N x 2M; radix-2 FFTs, one line a workgroup), so walls
+reflect exactly. Each mode rotates exactly with the dispersion relation omega² = g k tanh(k h) at
+four depth levels (0.4 m and every factor 2.5 above, to 6.25 m), using the staggered grid's own
+derivative symbols, so the rotation reproduces the exact solution as a conservative divergence; each
+face blends the two levels around its depth. Heights use the mode's step-averaged flux, so no
+correction factor is needed.
+
+### 49.3 Transport and recombination
+
+The surface waves are carried by the bulk flow, upwind, with the paper's damped convergent
+amplification (gamma = 0.25). A face's surface-wave flux and velocity fade out as its shallower
+column thins from 0.6 to 0.05 m: the Airy step propagates every mode across the whole region at each
+column's blended depths, so a wave from deep water would pour its deep-water flux into a film on a
+shore; the next split hands what such a wave brings to the bulk flow. The heights are rebuilt from
+the summed fluxes, so volume is conserved exactly (a faded flux is a face flux like any other).
+
+### 49.4 Sea sides in dispersive regions
+
+Section 11's long-wave rule (an edge at most a twentieth of the longest sea wave deep,
+`water.deep_edge`, and modes at least twenty depths long) does not apply to a region with
+dispersion. Such a region takes every resolved wave at any depth: the surface waves fade out towards
+the open side (49.1), so the swell enters the bulk flow there and becomes an Airy wave inside. The
+boundary forces each wave at Airy's phase speed, from the explicit wavenumber of J. D. Fenton and W.
+D. McKee, "On calculating the lengths of water waves" (Coastal Engineering 14, 1990): k h = x
+coth(x^(3/4))^(2/3), x = omega² h / g.
+
+For every region, with or without dispersion, a `Sea` side's linear forcing stops growing past
+breaking: the surface at 0.4 of the still depth over the mean level and the depth-averaged velocity
+at half the long-wave speed. A wave breaks before its height reaches about 0.78 of the depth (J.
+McCowan, "On the highest wave of permanent type", Philosophical Magazine 38, 1894). Where a side ran
+up a shore, a crest higher than the water was deep demanded inflows of tens of metres a second at
+the shoreline column.
+
+### 49.5 Measured, and the limits
+
+- Standing waves in 2 m of water, 2, 4 and 8 m long, run within 2 percent of Airy's periods (shallow
+  water alone is 1.3 to 2.4 times too fast).
+- A 10 s, 5 cm swell driven into a 256 m channel 6 m deep keeps 5.25 cm, within 1 percent, from 30
+  to 150 m, and runs at 7.57 m/s against Airy's 7.36 (a long wave's 7.67).
+- A beach with dispersion, breaking and a moving body stays finite, conserves volume to 1e-7 and
+  replays exactly across compaction.
+- The step costs more: on the M5 at 4 substeps, 1.3 against 3.4 ms a step at 256² and 2.7 against
+  11.1 ms at 512² (`water_frontier`'s ignored `time_dispersive_steps`, wall time with a 64-byte
+  readback).
+- **Known limit.** In a closed bay under a 2.4 m groundswell (an Ursell number over 100), the
+  surface band's transport carries the strongly nonlinear swell's mass apart from the bulk flow, and
+  the bay's energy grows after about two minutes; without that transport, or at a quarter of the
+  swell's height, it does not. The split is linear by design, so the surf sample (54) runs the
+  nonlinear non-hydrostatic model (55) instead.
+
+## 50. Boards, riders and swimmers (Pioneer, 2026-10-22)
+
+```rust
+pub struct Board {          // amoris-physics board.rs; persisted, version 1
+    pub area_m2: f64,       // bottom area
+    pub planing: f64,       // the bottom's normal-force coefficient (a flat plate's is 1 to 2)
+    pub glide: f64,         // friction along the board
+    pub rail: f64,          // the rails' grip across it
+    pub fin_at: V3, pub fin_m2: f64,   // the fin, in the board's frame, and its area (0: none)
+    pub paddle_n: f64,      // paddling thrust at full forward input, lying down
+    pub carve_nm: f64,      // yaw torque per unit of lean, standing, at speed
+    pub roll_nm: f64,       // roll torque per unit of lean
+    pub seat: V3,           // where the rider's feet are
+    // Written by the engine: standing, rider, speed, through_water, wipeouts.
+}
+```
+
+A board is a dynamic body with a Floater, so buoyancy and Froude-Krylov pressure come from
+`physics.buoyancy` (47). A Walker rides it by naming it in `Walker.mount`. Its frame is the boat's:
+forward -z, up +y, right +x.
+
+- **`physics.board`** (Forces, after `physics.hull`; simulation.md 4.4) adds the hull's own
+  hydrodynamics at each Floater point in the water, with the point's share of the bottom: a flat
+  plate's normal pressure, planing * 1/2 rho A |v| max(v . n, 0) with v the water's velocity
+  relative to the point (linear in the angle of attack, quadratic in speed, and never pulling),
+  friction along the board and the rails' grip across it. Each is implicit over the point's share of
+  the board's mass, c / (1 + c dt / m_i): applied explicitly, a 12 kg bodyboard landing flat at 12
+  m/s was thrown 92 m back into the air. The fin grips across the board, 1/2 rho A_fin 1.8 v|v|,
+  where it sits, in the water of the nearest Floater point.
+- **The rider's inputs.** `jump` stands up or lies down. Standing, `strafe` leans: weight on a rail
+  rolls the board (`roll_nm`) and, with speed, turns it toward that rail (`carve_nm` times a grip
+  that grows to full at 3 m/s and with the wetted share). Lying, `forward` paddles along the level
+  heading (back at half), its thrust falling to nothing as the board's speed through the water
+  reaches an arm stroke's 2.4 m/s, and `strafe` steers with a quarter of the carve.
+- **`physics.mount`** (Physics, after `physics.walk`) carries the rider's eye with the integrated
+  board, at the seat and the Walker's eye height standing or 0.4 m lying; when the deck's up axis
+  falls below 0.25 the board throws its rider into the water and counts a wipeout.
+- **Fixed colliders.** Walkers collide with fixed colliders as with voxel volumes: a box swept
+  through Rapier's broad phase, climbing slopes and ledges up to 0.4 m, so a TriMesh terrain carries
+  a walker on land and a swimmer on its bed.
+- **Treading water.** In a region's water, held `rise` keeps the swimmer's eye 0.3 m over the
+  surface, at most at swim speed (rise at four times the eye's height error a second), unless a lift
+  at a wall carries it up faster, so climbing out still works. Before, held rise drove a swimmer up
+  at swim speed until its feet left the water. Voxel liquids keep their swim-up.
+
+`amoris-physics` tests/board.rs and tests/walker_colliders.rs check them; a board landing flat from
+a height stops on the water.
+
+## 51. Calm damping per region (Pioneer, 2026-10-22)
+
+The owner's calm damping (section 4; 2026-10-18) slows every face at 0.2 a second up to 0.5 m/s so a
+disturbed sea sleeps within minutes. It also takes about a tenth of a small wave's height every
+second: a 10 s swell kept 37 percent of its height across one wavelength, a pool's ripples faded
+within seconds and a river lost a third of its slope's push. A region now names its rate in
+`WaterRegion.calm_per_s`, 0 to 10 a second, default 0.2, so every scene that does not name one keeps
+the owner's value. Each resident `FieldStep` carries it (`calm_per_s`, part of the step's identity),
+as do the CPU solver and the full-readback GPU path. The surf sample takes 0, the pool 0.05; the
+river keeps the default.
+
+## 52. Entry crowns and spray light (Pioneer, 2026-10-22)
+
+A shallow-water column carries a body's volume but not its impact, so a cannonball made waves and no
+splash. The occupancy resolve (46) also adds, per column, the head that rose since presentation last
+took it, never read by the step. The viewport's replica hands that buffer to the spray with the
+simulated seconds it covers, and the spray throws a crown (kind 6) there: the head's rise over that
+time gives the entry speed (a footprint holds about four times a body's waterplane, so four times
+the head's rate; at most 14 m/s, none under 1.2 m/s or 3 mm of head), and drops leave upward at 0.35
+to 0.9 of it and away from the footprint's middle at 0.15 to 0.45 of it, their number growing with
+the volume pushed aside and the speed (at most 48 a column a frame).
+
+Spray drops are lit in the forward pass's units, the sun's irradiance over pi: the shader divided
+the sun by 10,000 as if it were in lux, which left every drop grey under the samples' suns.
+
+Drops fade out near the camera, from 4 m plus six radii to 1 m plus one: a drop a few metres from
+the eye is drawn as a disc many pixels wide where a real one is a blurred streak, and the spray
+around a surfer or a swimmer in the white water filled the view with grey blobs.
+
+The spray is a ring of 16,384 drops shared by every source, at most 4,096 born a frame. A surf's
+breaking front flooded it: the spray took any surface step of more than half a metre between two
+columns for a fall, and a bore's front on half-metre columns is one, so the point break's bores
+asked for 3,000 to 4,096 falling-sheet drops a frame and the ring was overwritten every four frames,
+before any drop finished its arc. A face now throws a falling sheet only where the giving column's
+bed stands more than half a metre over the receiving column's surface, the step's own rule for falls
+(48); a bore's spray is the splash's. Splashes and breaking lips together take at most 64 births a
+frame (`SPLASH_PER_FRAME`), so the ring holds about two seconds of them beside a waterfall's sheet,
+and a column farther than 40 m from the camera throws fewer in proportion, which leaves those births
+to the white water the player can see. The capture call reports each region's spray (drops born in
+the last frame and alive), and `water_spray`'s tests pin both rules: a bore throws no falling sheet,
+and white water converging everywhere takes exactly 64 births a frame where it asked for 3,427.
+
+## 53. Underwater caustics (Pioneer, 2026-10-22)
+
+Each frame a compute pass gathers the sun's light on the bed of the water region nearest the camera
+into a 512 x 512 map (water_caustics.rs, water_caustics.wgsl). Every texel sends 2 x 2 photons from
+where flat water would refract the sun onto it; the displayed surface (the columns as a smooth cubic
+B-spline, with the subgrid wavelets the surface shading draws, shorter than four finest texels of 3
+cm faded out) refracts them, and they splat where they land. Flat water therefore gathers exactly
+its own light, and waves only move it. The forward pass (water_caustics_light.wgsl, `caustic_light`)
+multiplies the sun on anything under the surface by that light, its contrast growing with the
+point's depth up to the bed's, and by the absorption along the refracted path down. The map sits at
+group 1, bindings 15 and 16. `AMORIS_CAUSTICS=off` turns it off. It costs about 1 ms of GPU time on
+the M5 for the pool sample.
+
+Photon splatting for caustics follows C. Wyman and S. Davis, "Interactive Image-Space Techniques for
+Approximating Caustics" (I3D 2006), and M. Shah, J. Konttinen and S. Pattanaik, "Caustics Mapping:
+An Image-Space Technique for Real-Time Caustics" (IEEE TVCG 13(2), 2007), here in the height field's
+own plane instead of the screen's.
+
+## 54. The frontier scenes (Pioneer, 2026-10-22)
+
+Three samples play the frontier water through a player's controls; their scenes, terrains and
+perception come from each sample's build_scene.py with no external assets. `amoris-app`
+tests/gpu_frontier_scenes.rs drives each through the first-person action catalog, polling the
+player's own events every tick.
+
+| Sample | The water | What the check plays |
+|---|---|---|
+| `samples/pool-party`: a 16 x 8 m pool, 0.25 m columns | dispersion, displacement, calm 0.05; beach balls, rings, a raft and ducks float with added mass 0.5 (56); three guests cannonball off the board | runs off the deck, jumps into the deep end (a wave of 3 to 4 cm at the corner gauges), treads water to all eight ducks |
+| `samples/river-falls`: a 64 x 32 m valley, 0.5 m columns | dispersion, breaking, falls over 1.5 m, displacement; 8 m³/s in at the lake, out at the outlet; the tube's added mass 0.5, the logs' 1 | paddles an inner tube (a Board) through the gorge's gates (at least two of three), over the 7 m falls (a drop over 5 m; 6.9 m at 13.2 m/s) and to the beach within 90 s (16.6 s); the outlet runs at least half as fast as the inflow and the volume ledger stays exact |
+| `samples/surf-beach` ("Point break"): a 256 x 128 m bay, 0.5 m columns | a 2.4 m, 20 s groundswell through a `Sea` side over an equilibrium beach and a slanted reef; non-hydrostatic (55), breaking, calm 0, 2 substeps, displacement; the board's added mass 1 | a probe 12 m seaward of the board reads each coming crest; the player paddles in, stands once and angles along the wave; a ride of at least 15 m faster than 4 m/s (30.5 m at up to 7 m/s) |
+
+The surf bay's beach follows R. G. Dean, "Equilibrium Beach Profiles: Characteristics and
+Applications" (Journal of Coastal Research 7(1), 1991): depth growing as the distance from the shore
+to the two-thirds. `water_frontier`'s ignored `surf_bay_research` steps the bay and its swell
+without bodies and prints its fastest flow, its energy and its strongest vortex; with the sample's
+physics the fastest flow stays between 3 and 7.3 m/s over 300 s. The session scores a ride that ends
+in a wipeout before the player swims back to the lineup: under the non-hydrostatic swell the next
+crest often catches the rider near the shore, and the secondary action used to drop that ride
+unscored.
+
+## 55. Non-hydrostatic pressure (Pioneer, 2026-10-22)
+
+With `physics.nonhydrostatic`, each substep adds the depth-integrated non-hydrostatic pressure of Y.
+Yamazaki, Z. Kowalik and K. F. Cheung, "Depth-integrated, non-hydrostatic model for wave breaking
+and run-up" (International Journal for Numerical Methods in Fluids 61(5), 2009,
+doi:10.1002/fld.1952). A pressure q at the bed, zero at the surface and linear between, gives the
+depth-averaged vertical velocity W its acceleration q / D, and continuity across the column, D/2 div
+U + W - U . grad(b) = 0, closes the system. Waves then run at the model's own speed, omega² = g h k²
+/ (1 + (kh)² / 4), within a few percent of Airy's up to kh about 2; a swell shoals into crests and
+troughs instead of steepening into a bore, and a solitary wave keeps its shape. It is the second
+dispersive model beside section 49's: Jeschke and Wojtan's split is exact for short waves at any
+depth and linear, this one is weakly dispersive and nonlinear, the right one for a groundswell
+shoaling onto a beach. A region takes one or the other (`water.invalid`). The code is
+crates/amoris-render/src/water_nh.rs with water_nh.wgsl.
+
+### 55.1 The discrete pressure
+
+- **Its force is the transpose of continuity.** Per column B U = D/2 div U - U . grad(b), with
+  central bed slopes bounded at 1 (a cliff's rock is not a slope the flow climbs). The faces take
+  D_f⁻¹ Bᵀ q, which besides -grad(q) / 2 carries Yamazaki et al.'s -q grad(eta + b) / (2D). The
+  pressure then does no work: the correction is an orthogonal projection in the depth-weighted
+  kinetic energy, and its system, (B D_f⁻¹ Bᵀ + 1/D) q = (B Uⁿ - B Ũ) / dt, is symmetric positive
+  definite on any bed. With only -grad(q) / 2, the pressure worked against the swell on the bay's
+  sloping beach until the field broke.
+- **Where it runs.** Once a substep, between the MacCormack faces (the hydrostatic update from Uⁿ to
+  Ũ) and the boundaries, donors and transport, which then carry the corrected flow, as Yamazaki et
+  al. order their step. Corrected once a tick after the substeps' transport, the flow had already
+  moved water the pressure would have held, and the bay gained energy until it broke within 40 s.
+- **No stored vertical velocity.** Wⁿ = -B Uⁿ follows from the substep's source field, so the step
+  stores nothing new and replays from its checkpoints.
+- **Hydrostatic where it should be.** Dry columns, walls and columns outside the window take no flux
+  (Neumann). Water under 0.3 m, the first column of an open side and, with `breaking`, breaking
+  water (the eddy viscosity's onset, 48) stay hydrostatic, q = 0: a bore's front is a hydrostatic
+  shock, as in Yamazaki et al. and SWASH.
+
+### 55.2 The solve
+
+- **Chebyshev iterations.** A fixed number of them on the Jacobi-preconditioned system (Y. Saad,
+  "Iterative Methods for Sparse Linear Systems", 2nd ed., SIAM 2003, Algorithm 12.1), from the
+  previous substep's pressure (zero at a tick's first), so a replay computes the same pressure. The
+  spectrum lies in [max(min_c (1/D_c) / A_cc, 1 - R), 1 + R], R the largest Gershgorin radius of
+  the symmetrically scaled matrix; the lower bound holds because B D_f⁻¹ Bᵀ is positive
+  semidefinite. A pass reduces both bounds per workgroup, and one thread turns them into every
+  iteration's coefficients.
+- **Two identical cycles.** A cycle's residual polynomial changes sign across the spectrum. Where it
+  is negative on a short wave in deep water, which the exact pressure all but holds still (it
+  cancels all but 1 / (1 + (kD)² / 4) of the hydrostatic acceleration), the remaining error reverses
+  gravity on that wave: a basin 8.8 m deep at half-metre columns broke apart within 4 s at one cycle
+  of 64 iterations and held at 96. Two identical cycles multiply every mode's error by the square of
+  the polynomial, which is never negative, so the pressure always lies between the hydrostatic and
+  the exact one and the field stays stable however loosely it is solved. Two cycles of 24 keep waves
+  up to kh 2 within a percent of the model's speed there.
+- **One pass.** The system, the bounds, the coefficients, the 48 iterations and the correction are
+  dependent dispatches in one compute pass, each its own usage scope (as water_summary.rs's).
+
+### 55.3 Measured
+
+- Standing waves 8 and 16 m long in 2 m of water run at 2.3002 and 3.8882 s against the model's
+  2.2965 and 3.8807 s (Airy 2.3636 and 3.9530, shallow water 1.8061 and 3.6122). A solitary wave 0.2
+  m high in 1 m keeps 0.996 of its crest at 1.002 of its speed after 10 s; shallow water alone
+  steepens it to 1.045 at 1.097.
+- A closed basin 8.8 m deep with a hump keeps its energy, the vertical motion's D W² / 2 included,
+  at 1.0001 of the start's after 5 s and loses 8 percent in 20 s (`water_frontier`'s
+  `deep_non_hydrostatic_water_stays_stable_and_gains_no_energy`, which fails with one cycle).
+- The surf bay (54) under its swell runs at 3 to 7.3 m/s for 600 s, its kinetic energy following
+  the two swell trains' 17-minute beat between 90 and 160 MJ (hydrostatic, 95 to 122 MJ).
+- On the M5, 4 substeps a step, wall time with a 64-byte readback (`time_dispersive_steps`): 1.6,
+  2.9, 6.6 and 12.4 ms at 128², 256², 512 x 256 and 512², against 1.4, 1.3, 1.7 and 2.7 ms
+  hydrostatic and 2.0, 3.4, 5.7 and 11.1 ms with section 49's split. The surf sample runs 2
+  substeps, about 3.5 ms a tick over its 300 s research run.
+
+## 56. Added mass, water entry and energy (Pioneer, 2026-10-22)
+
+```rust
+pub struct Floater {        // persisted, version 2
+    pub points: Vec<BuoyPoint>,
+    pub drag: f64,
+    pub heave: f64,
+    pub added_mass: f64,    // water carried along per kilogram displaced; 0 leaves it out
+    pub submerged: f64,     // written by the engine
+}
+```
+
+- **Added mass.** A body accelerating in water accelerates some of it. Each point carries m_a = C_a
+  rho V under, with C_a the added mass coefficient of the inertia term of J. R. Morison, M. P.
+  O'Brien, J. W. Johnson and S. A. Schaaf, "The force exerted by surface waves on piles" (Petroleum
+  Transactions, AIME 189, 1950); potential flow gives a sphere 0.5 and a cylinder moving across
+  itself 1. The point's forces move its share m of the body's mass and that
+  water together, which follows the flow (at -g grad(eta) along the surface in the long-wave limit)
+  and weighs nothing: over m, F m / (m + m_a) + m m_a / (m + m_a) (a_water + g up). Drag and heave
+  damping are implicit over m + m_a. A float's heave period becomes 2 pi sqrt((m + m_a) / (rho g
+  A)): amoris-physics tests/added_mass.rs measures 1.0014, 1.2263 and 1.4157 s at C_a 0, 0.5 and 1
+  against 1.0030, 1.2285 and 1.4185 s.
+- **Water entry.** As a point sinks or the surface rises over it, it gains carried water at
+  d(m_a)/dt and gives it its vertical velocity relative to the water: the momentum theory of T. von
+  Kármán, "The impact on seaplane floats during landing" (NACA Technical Note 321, 1929), whose
+  force is d(m_a v)/dt. H. Wagner ("Über Stoß- und Gleitvorgänge an der Oberfläche von
+  Flüssigkeiten", ZAMM 12(4), 1932) adds the water's pile-up, left out here. The braking is implicit
+  with the heave damping. A 250 kg box dropped 2 m meets the water at 5.4 m/s and is wholly in at
+  1.9 m/s (momentum gives 1.8, the plain box keeps 5.6), and stops 0.81 m down instead of 1.88.
+  Gliding along the surface carries no new water: a board's planing is its own (50). Leaving, a
+  point sheds its water.
+- **A body feels its own push in the same step.** A point's immersion is evaluated where it will
+  stand at the step's end, against the free surface then: the sample's surface, the surface's rise
+  over the step and the head the body's own change of displaced volume adds, which the water holds
+  through the step and the tick's sample does not show yet (`head_per_m3`, the CPU image of the
+  occupancy scatter and of the samples' bilinear read). Felt a tick late, that push was a late
+  spring, and it pumped the water: four floats dropped into a closed lake without friction or calm
+  damping left a quarter of their drop's energy in the floats and the lake at 20 s and half at 150
+  s. The floats and the lake together now lose energy every quarter minute: 0.198, 0.179 and 0.161
+  of the drop over 15 to 60 s (amoris-app tests/gpu_energy.rs, which fails without the correction).
+
+The scenes give balls, ducks and the tube C_a 0.5 and the logs and the surfboard 1 (a flat plate
+moving across itself). Floater is version 2, WaterRegion 5 (`physics.nonhydrostatic`) and
+WaterResident 7. The sailing scene's physics is unchanged: its legacy hash chain is recovered with
+its Floaters written as version 1 (tests/web.rs), and its complete-state chain was blessed again.

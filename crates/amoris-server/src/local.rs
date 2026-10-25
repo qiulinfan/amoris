@@ -172,7 +172,10 @@ pub fn server_catalog() -> Vec<Value> {
         e(
             "capture",
             "read",
-            "A rendered image or the id buffer's summary of a camera view.",
+            "A rendered image or the id buffer's summary of a camera view {position, look_at, \
+             fov_deg, width, height; frames: first draw that many frames of the running game at \
+             60 a second, so spray and foam gather}. The reply names the image and each water \
+             region's spray: drops born in the last frame and alive.",
             any,
         ),
     ]

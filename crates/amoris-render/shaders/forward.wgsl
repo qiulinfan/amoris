@@ -377,7 +377,7 @@ fn shade(in: VsOut, s: Surface) -> SceneOut {
             let diff = (1.0 - f) * diffuse_color / PI;
             let depth = dot(in.world - view.camera_pos.xyz, -vec3f(view.view[0].z, view.view[1].z, view.view[2].z));
             let sh = shadow_factor(in.world, n, depth);
-            color += (diff + spec) * view.sun_color.rgb * view.sun_dir.w * nl * sh;
+            color += (diff + spec) * view.sun_color.rgb * view.sun_dir.w * nl * sh * caustic_light(in.world);
         }
     }
 
@@ -509,7 +509,7 @@ fn transparent(in: VsOut, s: Surface, du: vec2f, dv: vec2f) -> vec4f {
                 let depth = dot(in.world - view.camera_pos.xyz,
                     -vec3f(view.view[0].z, view.view[1].z, view.view[2].z));
                 let sh = shadow_factor(in.world, n, depth);
-                color += (diff + spec) * view.sun_color.rgb * view.sun_dir.w * nl * sh;
+                color += (diff + spec) * view.sun_color.rgb * view.sun_dir.w * nl * sh * caustic_light(in.world);
             }
         }
         // Punctual lights of this pixel's cluster.

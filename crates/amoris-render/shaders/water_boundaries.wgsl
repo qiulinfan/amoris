@@ -36,7 +36,7 @@ fn stage_velocity(a:vec4u,level:f32)->f32 {
     let outside=max(level-ghost_bed,0.0);
     let delta=clamp(max(level,ghost_bed)-(bed+h),-h,outside);
     var value=advected-9.81*p.dt*sign*delta/p.cell;
-    let calm=0.2*min(1.0,0.5/max(abs(value),0.000001));
+    let calm=p.calm*min(1.0,0.5/max(abs(value),0.000001));
     value/=1.0+p.dt*(p.friction/max(max(h,outside),0.05)+calm);
     return sign*clamp(sign*value,0.0,0.5*p.cell/p.dt);
 }
@@ -67,20 +67,38 @@ fn radiation(a:vec4u,level:f32,external_velocity:f32)->vec2f {
 // Wave phases are local to the region origin at the start of this recorded step.
 // Each reduction advances a disposable, reset-per-submission midpoint clock.
 fn sea_state(a:vec4u)->vec2f {
-    let bed=src[at(a.y,a.z)].x;let h=max(p.sea_meta.x-bed,0.0);var level=p.sea_meta.x;var un=0.0;
-    if(h<=0.0001){return vec2f(level,un);}
+    let bed=src[at(a.y,a.z)].x;let h=max(p.sea_meta.x-bed,0.0);var rise=0.0;var un=0.0;
+    if(h<=0.0001){return vec2f(p.sea_meta.x,un);}
     let c=sqrt(9.81*h);let sign=outward(a.x);var pos=(vec2f(a.yz)+vec2f(0.5))*p.cell;
     pos[a.w]=select(0.0,f32(p.size[a.w])*p.cell,sign>0.0);
     let time=(boundary_report[1].x+0.5)*p.dt;
+    // A dispersive field carries intermediate depths: there a wave enters at Airy's phase speed for
+    // this depth, from the explicit wavenumber of J. D. Fenton and W. D. McKee, "On calculating
+    // the lengths of water waves", Coastal Engineering 14, 1990 (within 1.7%). Elsewhere only long
+    // waves, at least 20 depths long, enter.
+    let dispersive=p.sea_meta.z>0.5;
     for(var i=0u;i<u32(p.sea_meta.y);i++){
         let w=p.waves[i];if(w.phase[a.w]*sign>=0.0){continue;}
-        let wavelength=6.283185307179586*c/w.phase.z;
-        if(wavelength<4.0*p.cell||wavelength<20.0*h){continue;}
-        let tangent=w.phase[1u-a.w]*c/w.phase.z;let normal=sqrt(max(1.0-tangent*tangent,0.0));
+        var speed=c;
+        if(dispersive){
+            let x=w.phase.z*w.phase.z*h/9.81;let y=pow(x,0.75);
+            let kh=x*pow(1.0/select(tanh(y),1.0,y>9.0),2.0/3.0);
+            speed=w.phase.z*h/kh;
+        }
+        let wavelength=6.283185307179586*speed/w.phase.z;
+        if(wavelength<4.0*p.cell||(!dispersive&&wavelength<20.0*h)){continue;}
+        let tangent=w.phase[1u-a.w]*speed/w.phase.z;let normal=sqrt(max(1.0-tangent*tangent,0.0));
         let eta=w.data.x*sin(dot(w.phase.xy,pos)-w.phase.z*time+w.phase.w);
-        level+=eta;un-=eta*sqrt(9.81/h)*normal;
+        // The depth-averaged velocity under a linear wave of phase speed c is eta c / h.
+        rise+=eta;un-=eta*speed/h*normal;
     }
-    return vec2f(level,un);
+    // Linear forcing holds while the waves are small against the depth: where a side runs onto
+    // a shore, a crest as high as the water is deep would demand an inflow of many times the
+    // wave speed. A wave breaks before its height reaches about 0.78 of the depth (J. McCowan,
+    // "On the highest wave of permanent type", Philosophical Magazine 38, 1894), its crest then
+    // about 0.4 of the depth over the still level; past that and half the long-wave speed the
+    // forcing stops growing.
+    return vec2f(p.sea_meta.x+clamp(rise,-0.4*h,0.4*h),clamp(un,-0.5*c,0.5*c));
 }
 @compute @workgroup_size(64)
 fn boundary_predict(@builtin(global_invocation_id) id:vec3u){

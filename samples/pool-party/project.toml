@@ -1,0 +1,12 @@
+name = "Pool Party"
+rate = 60
+seed = 7
+
+[sounds]
+"party.duck" = "sfx:coin"
+"party.splash" = "sfx:blip"
+"party.done" = "sfx:powerup"
+
+[player]
+perception = "perception.json"
+actions = "first_person"

@@ -213,6 +213,7 @@ pub fn sloop(position: V3, heading_deg: f64) -> SloopBundle {
         points: hull_points(),
         drag: 0.05,
         heave: 6.0,
+        added_mass: 0.0,
         submerged: 0.0,
     };
     (

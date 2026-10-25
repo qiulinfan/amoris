@@ -4,7 +4,8 @@
 //! WebGPU features. Modern scratch/pipelines are created lazily, within the baseline storage limit.
 
 use amoris_assets::water_field::{
-    CheckedCheckpoint, FieldBoundary, FieldCheckpoint, FieldSea, FieldStep, MAX_SEA_WAVES,
+    CheckedCheckpoint, FieldBoundary, FieldCheckpoint, FieldPhysics, FieldSea, FieldStep,
+    MAX_SEA_WAVES, PointVolume,
 };
 use bytemuck::{Pod, Zeroable};
 
@@ -22,7 +23,12 @@ struct Params {
     cell: f32,
     dt: f32,
     friction: f32,
-    padding: [f32; 3],
+    breaking: f32,
+    fall_min: f32,
+    occupancy_on: f32,
+    calm: f32,
+    /// WGSL aligns `edge_kind` to 16 bytes.
+    _pad: [f32; 3],
     edge_kind: [u32; 4],
     edge_rate: [f32; 4],
     edge_normal: [f32; 4],
@@ -46,6 +52,10 @@ pub struct GpuWater {
     velocity: wgpu::Buffer,
     scale: wgpu::Buffer,
     maccormack: Option<MacCormack>,
+    occupancy: crate::water_occupancy::WaterOccupancy,
+    falls: wgpu::Buffer,
+    waves: Option<crate::water_waves::WaterWaves>,
+    nh: Option<crate::water_nh::WaterNh>,
     edge_flux: wgpu::Buffer,
     boundaries: Option<BoundaryPipelines>,
     has_boundary_report: bool,
@@ -53,12 +63,30 @@ pub struct GpuWater {
     readback: wgpu::Buffer,
 }
 
+/// Three bind layouts keep each stage within WebGPU's eight storage buffers: advection, face
+/// pressure (with the occupancy head) and depth transport (with ballistic falls).
 struct MacCormack {
-    layout: wgpu::BindGroupLayout,
+    layouts: [wgpu::BindGroupLayout; 3],
     capacity: u64,
-    groups: [wgpu::BindGroup; 2],
-    pipelines: [wgpu::ComputePipeline; 5],
+    groups: [[wgpu::BindGroup; 2]; 3],
+    pipelines: [wgpu::ComputePipeline; 7],
 }
+/// The bindings of each MacCormack layout, by stage family.
+const MAC_BINDINGS: [&[u32]; 3] = [
+    &[0, 1, 3, 7, 8],
+    &[0, 1, 3, 4, 7, 8, 9],
+    &[0, 1, 2, 3, 4, 5, 6, 10],
+];
+/// Pipelines and their layout family: forward, reverse, faces, donors, transport, landing.
+const MAC_STAGES: [(&str, usize, &str); 7] = [
+    ("mac_forward", 0, "water advect forward"),
+    ("mac_reverse", 0, "water advect reverse"),
+    ("mac_faces", 1, "water faces"),
+    ("donors", 2, "water donors"),
+    ("transport", 2, "water transport"),
+    ("fall_land_depth", 2, "water falls land"),
+    ("fall_land_faces", 2, "water falls momentum"),
+];
 struct BoundaryPipelines {
     groups: [wgpu::BindGroup; 2],
     pipelines: [wgpu::ComputePipeline; 3],
@@ -126,6 +154,12 @@ impl GpuWater {
         );
         let velocity = buffer("water faces", bytes / 2, storage);
         let scale = buffer("water donors", bytes / 4, storage);
+        let falls = buffer(
+            "water falls",
+            bytes / 16 * 12,
+            storage | wgpu::BufferUsages::COPY_DST,
+        );
+        let occupancy = crate::water_occupancy::WaterOccupancy::new(device, queue, bytes / 16);
         let edge_flux = buffer(
             "water boundary flux",
             2 * (512 + 512) * 16,
@@ -217,6 +251,10 @@ impl GpuWater {
             velocity,
             scale,
             maccormack: None,
+            occupancy,
+            falls,
+            waves: None,
+            nh: None,
             edge_flux,
             boundaries: None,
             has_boundary_report: false,
@@ -298,6 +336,7 @@ impl GpuWater {
             0,
             bytemuck::cast_slice(&vec![1u32; checkpoint.columns.len()]),
         );
+        self.occupancy.reset();
         self.initialized = true;
         Ok(())
     }
@@ -348,6 +387,7 @@ impl GpuWater {
         );
         self.queue
             .write_buffer(&self.active, 0, bytemuck::cast_slice(active));
+        self.occupancy.reset();
         Ok(())
     }
 
@@ -362,6 +402,30 @@ impl GpuWater {
         friction: f32,
     ) -> Result<(), String> {
         self.encode_profiled(encoder, cell, dt, substeps, friction, None)
+    }
+
+    /// `encode` with the region's calm damping, per second (water.md 4).
+    pub fn encode_damped(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        cell: f32,
+        dt: f32,
+        substeps: u32,
+        damping: [f32; 2],
+    ) -> Result<(), String> {
+        self.encode_inner(
+            encoder,
+            cell,
+            dt,
+            substeps,
+            damping,
+            false,
+            &[FieldBoundary::Wall; 4],
+            None,
+            FieldPhysics::default(),
+            &[],
+            None,
+        )
     }
 
     /// The same work with pass timestamps, following the renderer's deferred-resolve lifecycle.
@@ -380,10 +444,15 @@ impl GpuWater {
             cell,
             dt,
             substeps,
-            friction,
+            [
+                friction,
+                amoris_assets::water_field::DEFAULT_CALM_PER_S as f32,
+            ],
             false,
             &[FieldBoundary::Wall; 4],
             None,
+            FieldPhysics::default(),
+            &[],
             profiler,
         )
     }
@@ -416,10 +485,15 @@ impl GpuWater {
             cell,
             dt,
             substeps,
-            friction,
+            [
+                friction,
+                amoris_assets::water_field::DEFAULT_CALM_PER_S as f32,
+            ],
             true,
             &[FieldBoundary::Wall; 4],
             None,
+            FieldPhysics::default(),
+            &[],
             profiler,
         )
     }
@@ -434,7 +508,20 @@ impl GpuWater {
         edges: &[FieldBoundary; 4],
     ) -> Result<(), String> {
         self.encode_inner(
-            encoder, cell, dt, substeps, friction, true, edges, None, None,
+            encoder,
+            cell,
+            dt,
+            substeps,
+            [
+                friction,
+                amoris_assets::water_field::DEFAULT_CALM_PER_S as f32,
+            ],
+            true,
+            edges,
+            None,
+            FieldPhysics::default(),
+            &[],
+            None,
         )
     }
 
@@ -450,7 +537,20 @@ impl GpuWater {
         profiler: Option<&mut crate::profiler::GpuProfiler>,
     ) -> Result<(), String> {
         self.encode_inner(
-            encoder, cell, dt, substeps, friction, true, edges, None, profiler,
+            encoder,
+            cell,
+            dt,
+            substeps,
+            [
+                friction,
+                amoris_assets::water_field::DEFAULT_CALM_PER_S as f32,
+            ],
+            true,
+            edges,
+            None,
+            FieldPhysics::default(),
+            &[],
+            profiler,
         )
     }
 
@@ -468,10 +568,12 @@ impl GpuWater {
             step.cell_m as f32,
             step.substep_dt as f32,
             step.substeps,
-            step.friction as f32,
+            [step.friction as f32, step.calm_per_s as f32],
             true,
             &step.boundaries,
             step.sea.as_ref(),
+            step.physics,
+            &step.displacements,
             profiler,
         )
     }
@@ -483,10 +585,12 @@ impl GpuWater {
         cell: f32,
         dt: f32,
         substeps: u32,
-        friction: f32,
+        damping: [f32; 2],
         maccormack: bool,
         edges: &[FieldBoundary; 4],
         sea: Option<&FieldSea>,
+        physics: FieldPhysics,
+        displacements: &[PointVolume],
         mut profiler: Option<&mut crate::profiler::GpuProfiler>,
     ) -> Result<(), String> {
         self.has_boundary_report = false;
@@ -497,11 +601,10 @@ impl GpuWater {
             || cell <= 0.0
             || !dt.is_finite()
             || dt <= 0.0
-            || !friction.is_finite()
-            || friction < 0.0
+            || damping.iter().any(|v| !v.is_finite() || *v < 0.0)
             || !(1..=8).contains(&substeps)
         {
-            return Err("invalid GPU water timestep, cell, friction or substep count".into());
+            return Err("invalid GPU water timestep, cell, damping or substep count".into());
         }
         if edges.contains(&FieldBoundary::Sea) != sea.is_some() {
             return Err("sea boundary needs its recorded descriptor".into());
@@ -509,9 +612,21 @@ impl GpuWater {
         if let Some(sea) = sea {
             sea.validate()?;
         }
+        physics.validate()?;
+        if !maccormack && (physics != FieldPhysics::default() || !displacements.is_empty()) {
+            return Err("water physics extensions need the MacCormack resident scheme".into());
+        }
         if maccormack {
             self.init_maccormack();
         }
+        let occupied = self.occupancy.encode(
+            encoder,
+            self.size,
+            cell,
+            displacements,
+            profiler.as_deref_mut(),
+        )?;
+        let falls = physics.fall_min_m > 0.0;
         let open = edges.iter().any(|e| *e != FieldBoundary::Wall);
         let sea_clock = sea.is_some_and(|s| !s.waves.is_empty());
         self.has_boundary_report = open;
@@ -567,15 +682,19 @@ impl GpuWater {
                 size: self.size,
                 cell,
                 dt,
-                friction,
-                padding: [0.0; 3],
+                friction: damping[0],
+                breaking: if physics.breaking { 1.0 } else { 0.0 },
+                fall_min: physics.fall_min_m as f32,
+                occupancy_on: if occupied { 1.0 } else { 0.0 },
+                calm: damping[1],
+                _pad: [0.0; 3],
                 edge_kind: kinds,
                 edge_rate: rates,
                 edge_normal: normals,
                 sea_meta: [
                     sea.map_or(0.0, |s| s.level_relative_m as f32),
                     sea.map_or(0.0, |s| s.waves.len() as f32),
-                    0.0,
+                    if physics.dispersion { 1.0 } else { 0.0 },
                     0.0,
                 ],
                 waves: std::array::from_fn(|i| {
@@ -592,6 +711,43 @@ impl GpuWater {
                 }),
             }),
         );
+        if physics.dispersion {
+            if self.waves.as_ref().is_none_or(|w| !w.fits(self.size)) {
+                self.waves = Some(crate::water_waves::WaterWaves::new(
+                    &self.device,
+                    &self.queue,
+                    [&self.state[0], &self.state[1]],
+                    self.capacity / 16,
+                ));
+            }
+            let waves = self.waves.as_ref().expect("dispersive waves");
+            waves.prepare(
+                self.size,
+                cell,
+                dt * substeps as f32,
+                dt,
+                edges,
+                physics.breaking,
+            )?;
+            waves.encode_split(encoder, self.size, self.current, profiler.as_deref_mut());
+        }
+        if physics.nonhydrostatic {
+            if !maccormack {
+                return Err("non-hydrostatic water needs the MacCormack resident scheme".into());
+            }
+            if self.nh.is_none() {
+                self.nh = Some(crate::water_nh::WaterNh::new(
+                    &self.device,
+                    &self.queue,
+                    [&self.state[0], &self.state[1]],
+                    &self.velocity,
+                    &self.active,
+                    self.capacity / 16,
+                ));
+            }
+            let nh = self.nh.as_ref().expect("non-hydrostatic pressure");
+            nh.prepare(encoder, self.size, cell, dt, edges, physics.breaking)?;
+        }
         // A new pass for each stage makes all storage writes visible to its consumers, on every
         // native backend and WebGPU. No workgroup barrier can synchronize different workgroups.
         for _ in 0..substeps {
@@ -604,22 +760,37 @@ impl GpuWater {
                     Some(u64::from(self.size[0] + self.size[1]).div_ceil(4) * 16),
                 );
             }
-            for stage in 0..if maccormack { 5 } else { 3 } {
+            let stages = if !maccormack {
+                3
+            } else if falls {
+                7
+            } else {
+                5
+            };
+            for stage in 0..stages {
+                if physics.nonhydrostatic && stage == 3 {
+                    // The faces' non-hydrostatic correction, which the boundaries, the donors and
+                    // the transport then carry (water_nh.rs).
+                    let nh = self.nh.as_ref().expect("non-hydrostatic pressure");
+                    nh.encode_solve(encoder, self.size, self.current, profiler.as_deref_mut());
+                }
                 if open && stage == if maccormack { 3 } else { 1 } {
                     self.boundary_dispatch(encoder, 0, false, profiler.as_deref_mut());
                 }
+                if falls && stage == 4 {
+                    encoder.clear_buffer(
+                        &self.falls,
+                        0,
+                        Some(u64::from(self.size[0] * self.size[1]) * 12),
+                    );
+                }
                 let (pipeline, group, label) = if maccormack {
                     let mac = self.maccormack.as_ref().expect("MacCormack pipelines");
+                    let (_, family, label) = MAC_STAGES[stage];
                     (
                         &mac.pipelines[stage],
-                        &mac.groups[self.current],
-                        [
-                            "water advect forward",
-                            "water advect reverse",
-                            "water faces",
-                            "water donors",
-                            "water transport",
-                        ][stage],
+                        &mac.groups[family][self.current],
+                        label,
                     )
                 } else {
                     (
@@ -646,7 +817,11 @@ impl GpuWater {
             }
         }
         if open && !sea_clock {
-            self.boundary_dispatch(encoder, 2, true, profiler);
+            self.boundary_dispatch(encoder, 2, true, profiler.as_deref_mut());
+        }
+        if physics.dispersion {
+            let waves = self.waves.as_ref().expect("dispersive waves");
+            waves.encode_surface(encoder, self.size, self.current, profiler);
         }
         Ok(())
     }
@@ -657,7 +832,7 @@ impl GpuWater {
             if mac.capacity >= bytes {
                 return;
             }
-            let groups = self.maccormack_groups(&mac.layout, bytes);
+            let groups = self.maccormack_groups(&mac.layouts, bytes);
             let mac = self
                 .maccormack
                 .as_mut()
@@ -666,35 +841,40 @@ impl GpuWater {
             mac.capacity = bytes;
             return;
         }
-        let layout = self
-            .device
-            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("water MacCormack"),
-                entries: &std::array::from_fn::<_, 9, _>(|binding| wgpu::BindGroupLayoutEntry {
-                    binding: binding as u32,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: if binding == 0 {
-                            wgpu::BufferBindingType::Uniform
-                        } else {
-                            wgpu::BufferBindingType::Storage {
-                                read_only: matches!(binding, 1 | 3),
-                            }
-                        },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }),
-            });
-        let groups = self.maccormack_groups(&layout, bytes);
-        let pipeline_layout = self
-            .device
-            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("water MacCormack"),
-                bind_group_layouts: &[Some(&layout)],
-                immediate_size: 0,
-            });
+        let layouts = MAC_BINDINGS.map(|bindings| {
+            self.device
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("water MacCormack"),
+                    entries: &bindings
+                        .iter()
+                        .map(|&binding| wgpu::BindGroupLayoutEntry {
+                            binding,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: if binding == 0 {
+                                    wgpu::BufferBindingType::Uniform
+                                } else {
+                                    wgpu::BufferBindingType::Storage {
+                                        read_only: matches!(binding, 1 | 3 | 9),
+                                    }
+                                },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        })
+                        .collect::<Vec<_>>(),
+                })
+        });
+        let groups = self.maccormack_groups(&layouts, bytes);
+        let pipeline_layouts = layouts.each_ref().map(|layout| {
+            self.device
+                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("water MacCormack"),
+                    bind_group_layouts: &[Some(layout)],
+                    immediate_size: 0,
+                })
+        });
         let module = self
             .device
             .create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -708,18 +888,11 @@ impl GpuWater {
                     .into(),
                 ),
             });
-        let pipelines = [
-            "mac_forward",
-            "mac_reverse",
-            "mac_faces",
-            "donors",
-            "transport",
-        ]
-        .map(|entry| {
+        let pipelines = MAC_STAGES.map(|(entry, family, _)| {
             self.device
                 .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                     label: Some(entry),
-                    layout: Some(&pipeline_layout),
+                    layout: Some(&pipeline_layouts[family]),
                     module: &module,
                     entry_point: Some(entry),
                     compilation_options: crate::shaders::compute_options(),
@@ -727,7 +900,7 @@ impl GpuWater {
                 })
         });
         self.maccormack = Some(MacCormack {
-            layout,
+            layouts,
             capacity: bytes,
             groups,
             pipelines,
@@ -736,9 +909,9 @@ impl GpuWater {
 
     fn maccormack_groups(
         &self,
-        layout: &wgpu::BindGroupLayout,
+        layouts: &[wgpu::BindGroupLayout; 3],
         bytes: u64,
-    ) -> [wgpu::BindGroup; 2] {
+    ) -> [[wgpu::BindGroup; 2]; 3] {
         let scratch = |label| {
             self.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some(label),
@@ -749,28 +922,32 @@ impl GpuWater {
         };
         let forward = scratch("water forward advection");
         let reverse = scratch("water reverse advection");
-        std::array::from_fn(|i| {
-            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("water MacCormack"),
-                layout,
-                entries: &[
-                    &self.params,
-                    &self.state[i],
-                    &self.state[1 - i],
-                    &self.active,
-                    &self.velocity,
-                    &self.scale,
-                    &self.edge_flux,
-                    &forward,
-                    &reverse,
-                ]
-                .iter()
-                .enumerate()
-                .map(|(binding, b)| wgpu::BindGroupEntry {
-                    binding: binding as u32,
-                    resource: b.as_entire_binding(),
+        std::array::from_fn(|family| {
+            std::array::from_fn(|i| {
+                let resource = |binding: u32| match binding {
+                    0 => &self.params,
+                    1 => &self.state[i],
+                    2 => &self.state[1 - i],
+                    3 => &self.active,
+                    4 => &self.velocity,
+                    5 => &self.scale,
+                    6 => &self.edge_flux,
+                    7 => &forward,
+                    8 => &reverse,
+                    9 => self.occupancy.head(),
+                    _ => &self.falls,
+                };
+                self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("water MacCormack"),
+                    layout: &layouts[family],
+                    entries: &MAC_BINDINGS[family]
+                        .iter()
+                        .map(|&binding| wgpu::BindGroupEntry {
+                            binding,
+                            resource: resource(binding).as_entire_binding(),
+                        })
+                        .collect::<Vec<_>>(),
                 })
-                .collect::<Vec<_>>(),
             })
         })
     }
@@ -930,6 +1107,14 @@ impl GpuWater {
     pub fn buffer(&self) -> &wgpu::Buffer {
         &self.state[self.current]
     }
+    /// Bodies' displaced head of the last step, metres per column (zero without displacements).
+    pub fn occupancy_buffer(&self) -> &wgpu::Buffer {
+        self.occupancy.head()
+    }
+    /// Head added since presentation last took it (spray at bodies' entries).
+    pub fn occupancy_rise_buffer(&self) -> &wgpu::Buffer {
+        self.occupancy.rise()
+    }
 
     fn encode_checkpoint(&self, complete: bool) -> Result<(), String> {
         let mut encoder = self.device.create_command_encoder(&Default::default());
@@ -1025,11 +1210,11 @@ impl GpuWater {
         cell: f32,
         dt: f32,
         substeps: u32,
-        friction: f32,
+        damping: [f32; 2],
     ) -> Result<(), String> {
         self.upload(columns, active)?;
         let mut encoder = self.device.create_command_encoder(&Default::default());
-        self.encode(&mut encoder, cell, dt, substeps, friction)?;
+        self.encode_damped(&mut encoder, cell, dt, substeps, damping)?;
         let bytes = (columns.len() * 16) as u64;
         encoder.copy_buffer_to_buffer(self.buffer(), 0, &self.readback, 0, bytes);
         self.queue.submit([encoder.finish()]);
@@ -1061,7 +1246,16 @@ impl GpuWater {
         friction: f32,
     ) -> Result<(), String> {
         self.upload(columns, active)?;
-        self.advance_uploaded(columns, cell, dt, substeps, friction)
+        self.advance_uploaded(
+            columns,
+            cell,
+            dt,
+            substeps,
+            [
+                friction,
+                amoris_assets::water_field::DEFAULT_CALM_PER_S as f32,
+            ],
+        )
     }
 
     /// Step an already resident field and read the result. `columns` is output, not input.
@@ -1074,9 +1268,9 @@ impl GpuWater {
         cell: f32,
         dt: f32,
         substeps: u32,
-        friction: f32,
+        damping: [f32; 2],
     ) -> Result<(), String> {
-        self.advance_uploaded_mode(columns, cell, dt, substeps, friction, false)
+        self.advance_uploaded_mode(columns, cell, dt, substeps, damping, false)
     }
 
     /// Complete readback reference for the resident scheme; gameplay residency uses encode and
@@ -1093,7 +1287,17 @@ impl GpuWater {
         friction: f32,
     ) -> Result<(), String> {
         self.upload(columns, active)?;
-        self.advance_uploaded_mode(columns, cell, dt, substeps, friction, true)
+        self.advance_uploaded_mode(
+            columns,
+            cell,
+            dt,
+            substeps,
+            [
+                friction,
+                amoris_assets::water_field::DEFAULT_CALM_PER_S as f32,
+            ],
+            true,
+        )
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -1104,7 +1308,7 @@ impl GpuWater {
         cell: f32,
         dt: f32,
         substeps: u32,
-        friction: f32,
+        [friction, calm]: [f32; 2],
         maccormack: bool,
     ) -> Result<(), String> {
         if columns.len() != (self.size[0] * self.size[1]) as usize {
@@ -1120,10 +1324,12 @@ impl GpuWater {
             cell,
             dt,
             substeps,
-            friction,
+            [friction, calm],
             maccormack,
             &[FieldBoundary::Wall; 4],
             None,
+            FieldPhysics::default(),
+            &[],
             None,
         )?;
         let bytes = (columns.len() * 16) as u64;

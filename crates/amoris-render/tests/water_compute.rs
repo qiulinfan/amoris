@@ -19,7 +19,7 @@ fn dropping_async_readback_releases_the_map_for_a_new_step() {
         let mut columns = start.clone();
         let active = vec![1; 256];
         let mut pending =
-            Box::pin(field.advance_async(&mut columns, &active, 0.5, 1.0 / 120.0, 2, 0.02));
+            Box::pin(field.advance_async(&mut columns, &active, 0.5, 1.0 / 120.0, 2, [0.02, 0.2]));
         let mut context = std::task::Context::from_waker(std::task::Waker::noop());
         assert!(pending.as_mut().poll(&mut context).is_pending());
         drop(pending);
@@ -103,7 +103,7 @@ fn gpu_water_preserves_lakes_transports_a_dam_and_respects_inactive_columns() {
         field.upload(&water, &on).unwrap();
         let mut resident = vec![[f32::NAN; 4]; n];
         field
-            .advance_uploaded(&mut resident, 0.5, 1.0 / 240.0, 4, 0.02)
+            .advance_uploaded(&mut resident, 0.5, 1.0 / 240.0, 4, [0.02, 0.2])
             .unwrap();
         assert_eq!(
             resident, expected,

@@ -13,8 +13,9 @@ pub fn source(name: &str) -> String {
         "hiz" => include_str!("../shaders/hiz.wgsl"),
         "forward" => {
             return format!(
-                "{COMMON}\n{}\n{}\n{}",
+                "{COMMON}\n{}\n{}\n{}\n{}",
                 include_str!("../shaders/water_field.wgsl"),
+                include_str!("../shaders/water_caustics_light.wgsl"),
                 include_str!("../shaders/probe_gi.wgsl"),
                 include_str!("../shaders/forward.wgsl")
             );

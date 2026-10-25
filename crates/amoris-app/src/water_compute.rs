@@ -175,7 +175,7 @@ impl WaterCompute for NativeWater {
         cell_m: f64,
         substep_dt: f64,
         substeps: u32,
-        friction: f64,
+        [friction, calm]: [f64; 2],
     ) -> Result<(), Problem> {
         let mut shared = self
             .device
@@ -233,7 +233,7 @@ impl WaterCompute for NativeWater {
                 cell_m as f32,
                 substep_dt as f32,
                 substeps,
-                friction as f32,
+                [friction as f32, calm as f32],
             )
             .map_err(failed)?;
         if let Some(e) = error
@@ -311,12 +311,9 @@ fn resident_results(
                         .samples
                         .into_iter()
                         .map(|p| {
-                            [
-                                request.checkpoint.datum + f64::from(p[0]),
-                                f64::from(p[1]),
-                                f64::from(p[2]),
-                                f64::from(p[3]),
-                            ]
+                            let mut sample = p.map(f64::from);
+                            sample[0] += request.checkpoint.datum;
+                            sample
                         })
                         .collect(),
                     checkpoint: out.checkpoint,
@@ -347,7 +344,7 @@ mod validation_tests {
                 wet_edge_surface: 1.0,
                 wet_edge_count: 2,
             },
-            samples: vec![[2.0, 3.0, 4.0, 5.0]],
+            samples: vec![[2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 0.0]],
             checkpoint: Some(checkpoint.clone()),
             reaction: Default::default(),
             boundary: amoris_render::water_compute::BoundaryReport {
@@ -377,9 +374,12 @@ mod validation_tests {
             substep_dt: 0.01,
             substeps: 1,
             friction: 0.0,
+            calm_per_s: amoris_assets::water_field::DEFAULT_CALM_PER_S,
             dry_below: 0.0,
             edits: vec![],
             impulses: vec![],
+            displacements: vec![],
+            physics: Default::default(),
         });
         let regions = [2, 1].map(|id| amoris_sim::EntityId::new(id).unwrap());
         let requests: Vec<_> = (0..2)
@@ -399,8 +399,14 @@ mod validation_tests {
             results.iter().map(|r| r.region).collect::<Vec<_>>(),
             regions
         );
-        assert_eq!(results[0].output.samples, vec![[12.0, 3.0, 4.0, 5.0]]);
-        assert_eq!(results[1].output.samples, vec![[-18.0, 3.0, 4.0, 5.0]]);
+        assert_eq!(
+            results[0].output.samples,
+            vec![[12.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 0.0]]
+        );
+        assert_eq!(
+            results[1].output.samples,
+            vec![[-18.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 0.0]]
+        );
         assert_eq!(results[0].output.stats.wet_edge_surface, 11.0);
         assert_eq!(results[1].output.stats.wet_edge_surface, -19.0);
         assert_eq!(results[0].output.boundary.edited, 12.0);
@@ -445,7 +451,7 @@ mod validation_tests {
                 1.0,
                 0.01,
                 1,
-                0.0,
+                [0.0, 0.2],
             )
             .unwrap_err();
         assert_eq!(error.code, "water.compute_failed");

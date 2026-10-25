@@ -183,6 +183,29 @@ fn capture_thread(rx: mpsc::Receiver<CaptureJob>, mailbox: Arc<Mailbox>, root: P
         r.resize(w, h);
         r.apply(mailbox.take(), now);
         r.set_camera_override(camera_from(&job.params));
+        // `frames`: first draw this many frames at 60 a second, each from the newest published
+        // world, so what presentation gathers over time (spray, foam) is there in a running game.
+        let lead = job
+            .params
+            .get("frames")
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+            .min(1200);
+        for k in 0..lead {
+            let due = now + (k + 1) as f64 / 60.0;
+            let wait = due - start.elapsed().as_secs_f64();
+            if wait > 0.0 {
+                std::thread::sleep(Duration::from_secs_f64(wait));
+            }
+            let t = start.elapsed().as_secs_f64();
+            r.apply(mailbox.take(), t);
+            let _ = r.capture_rgba(t);
+        }
+        let now = if lead > 0 {
+            start.elapsed().as_secs_f64()
+        } else {
+            now
+        };
         // A few frames so assets requested by this frame's scene can arrive (bounded wait).
         let mut frames = 0;
         let mut t = now;
@@ -210,6 +233,8 @@ fn capture_thread(rx: mpsc::Receiver<CaptureJob>, mailbox: Arc<Mailbox>, root: P
                     "width": cw, "height": ch, "tick": s.tick,
                     "instances": s.instances, "gpu_ms": s.gpu_ms,
                     "pending_assets": s.pending_assets,
+                    // Each water region's spray pool after the shot: births and drops alive.
+                    "spray": r.water_spray_stats().ok(),
                 })
             })
             .map_err(|e| Problem::new("capture.write_failed", e.to_string(), detail([])));

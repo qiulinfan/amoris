@@ -16,6 +16,8 @@ pub(crate) struct WaterReplica {
     convert: wgpu::ComputePipeline,
     params: wgpu::Buffer,
     dirty: bool,
+    /// Simulated seconds the occupancy rise buffer gathered since presentation took it.
+    rise_s: f64,
 }
 impl WaterReplica {
     pub fn invalidate_presentation(&mut self) {
@@ -50,7 +52,18 @@ impl WaterReplica {
                 mapped_at_creation: false,
             }),
             dirty: true,
+            rise_s: 0.0,
         })
+    }
+    /// The occupancy head and the head added since the last call, with the simulated seconds it
+    /// gathered over (zero when no step ran).
+    pub fn take_rise(&mut self) -> (&wgpu::Buffer, &wgpu::Buffer, f32) {
+        let seconds = std::mem::take(&mut self.rise_s) as f32;
+        (
+            self.field.occupancy_buffer(),
+            self.field.occupancy_rise_buffer(),
+            seconds,
+        )
     }
     pub fn synchronize(
         &mut self,
@@ -102,6 +115,7 @@ impl WaterReplica {
             self.datum = checkpoint.datum;
             self.seed = Some(recipe.checkpoint().0);
             self.dirty = true;
+            self.rise_s = 0.0;
         }
         for step in &recipe.steps()[self.applied..] {
             step.validate(checkpoint.columns.len())?;
@@ -120,6 +134,7 @@ impl WaterReplica {
             self.field.encode_transport(&mut encoder, step, None)?;
             queue.submit([encoder.finish()]);
             self.dirty = true;
+            self.rise_s += step.substep_dt * f64::from(step.substeps);
         }
         self.applied = recipe.steps().len();
         self.program = Some(recipe.program_key().0);
@@ -146,15 +161,20 @@ impl WaterReplica {
         let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("water presentation"),
             layout: &self.convert.get_bind_group_layout(0),
-            entries: [&self.params, self.field.buffer(), columns]
-                .iter()
-                .enumerate()
-                .map(|(i, b)| wgpu::BindGroupEntry {
-                    binding: i as u32,
-                    resource: b.as_entire_binding(),
-                })
-                .collect::<Vec<_>>()
-                .as_slice(),
+            entries: [
+                &self.params,
+                self.field.buffer(),
+                columns,
+                self.field.occupancy_buffer(),
+            ]
+            .iter()
+            .enumerate()
+            .map(|(i, b)| wgpu::BindGroupEntry {
+                binding: i as u32,
+                resource: b.as_entire_binding(),
+            })
+            .collect::<Vec<_>>()
+            .as_slice(),
         });
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("water presentation"),
@@ -219,6 +239,7 @@ mod tests {
                     substep_dt: 0.004 + tick as f64 * 0.001,
                     substeps: 1 + tick % 3,
                     friction: tick as f64 * 0.01,
+                    calm_per_s: amoris_assets::water_field::DEFAULT_CALM_PER_S,
                     dry_below: 0.0,
                     edits: if tick.is_multiple_of(2) {
                         vec![]
@@ -242,6 +263,8 @@ mod tests {
                         at: [3.5, 4.5],
                         impulse: [0.5, -0.2],
                     }],
+                    displacements: vec![],
+                    physics: Default::default(),
                 };
                 recipe = reference
                     .advance(&checkpoint, &recipe, &step, &[], false)

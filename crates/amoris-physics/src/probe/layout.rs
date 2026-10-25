@@ -12,7 +12,11 @@
 //!   velocities and every other component), for the sailing scene, the sailing scene forked
 //!   before every tick, and a level scene (`level::level_world(100, 3)`: 196 bodies on a fixed
 //!   terrain of 20,000 triangles, so its shape is by reference) forked before every tick or not.
-//!   [`LAYOUT1_TRAJECTORIES`] are those folds as layout 1 (commit `c05f49a6`) gave them.
+//!   [`LAYOUT1_TRAJECTORIES`] are those folds as layout 1 (commit `c05f49a6`) gave them, blessed
+//!   again where a change outside the cache moved them: the water checkpoint state registered in
+//!   every world (`af4dd1d3`) changed every run's persisted bytes, Pioneer's implicit buoyancy
+//!   (`babe544b`, water.md 47) the sailing scene's trajectory, and the Floater's added mass
+//!   (version 2, water.md 56) the sailing scene's persisted bytes, its forces unchanged.
 
 use amoris_sim::rng::fnv1a64_extend;
 use amoris_sim::{NoHooks, Sim};
@@ -166,15 +170,15 @@ fn run(mut sim: Sim, ticks: u32, fork_each: bool) -> Result<(Vec<u64>, Vec<u64>)
 
 /// The runs of [`trajectories`], with the folds layout 1 gave.
 pub const LAYOUT1_TRAJECTORIES: [(&str, u64); 4] = [
-    ("sailing, 1,200 ticks", 0x1fde_be41_b3f4_23a6),
+    ("sailing, 1,200 ticks", 0x809d_68e1_3add_a3a1),
     (
         "sailing forked before every tick, 600 ticks",
-        0x4ed8_9869_23db_0f80,
+        0x6e7c_4638_e38f_ba93,
     ),
-    ("level 100 x 3, 300 ticks", 0xc66d_c801_a00b_849e),
+    ("level 100 x 3, 300 ticks", 0xbdfb_a0ea_1b19_abe6),
     (
         "level 100 x 3 forked before every tick, 300 ticks",
-        0xc66d_c801_a00b_849e,
+        0xbdfb_a0ea_1b19_abe6,
     ),
 ];
 

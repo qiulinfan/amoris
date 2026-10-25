@@ -144,9 +144,12 @@ fn radiation_steps_reconstruct_exact_resident_fields_after_control_changes() {
             substep_dt: 0.01,
             substeps: 2,
             friction: 0.02,
+            calm_per_s: amoris_assets::water_field::DEFAULT_CALM_PER_S,
             dry_below: 0.0,
             edits: vec![],
             impulses: vec![],
+            displacements: vec![],
+            physics: Default::default(),
         };
         let out = resident
             .advance(&cp, &recipe, &step, &[[0.5, 0.5], [15.5, 15.5]], false)
@@ -238,9 +241,12 @@ fn excessive_reservoir_speed_returns_failure_instead_of_clipping_a_successful_st
         substep_dt: 0.01,
         substeps: 1,
         friction: 0.0,
+        calm_per_s: amoris_assets::water_field::DEFAULT_CALM_PER_S,
         dry_below: 0.0,
         edits: vec![],
         impulses: vec![],
+        displacements: vec![],
+        physics: Default::default(),
     };
     let mut resident = ResidentWater::new(&gpu).unwrap();
     let Err(error) = resident.advance(&cp, &recipe, &step, &[], false) else {
