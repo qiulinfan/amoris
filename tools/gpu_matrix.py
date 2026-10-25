@@ -31,7 +31,7 @@ a check whose `test` did not run it), and the minimal device on the default adap
 platform's default backend. `--workspace` builds the binaries as `cargo test --workspace`
 does, so the run reuses the binaries of `cargo xtask check`'s `test` step (the workspace's other
 crates add features to the renderer's dependencies, and `-p amoris-render` alone builds them again
-without). `--bins lib,neural_material` limits the binaries, `--filter` passes a test-name filter to
+without). `--bins lib,water` limits the binaries, `--filter` passes a test-name filter to
 each, `--debug` uses the debug profile. A binary still running after `--timeout` seconds is killed;
 its tests that libtest reported running for over a minute are `hang`, others without a result
 `crash`. Logs go to `out/gpu-matrix/<config>/<binary>.log`. `--json` records the commit with
@@ -555,7 +555,7 @@ def main():
                     help="build every crate's tests, as cargo xtask check's test step does")
     ap.add_argument("--default-auto", action="store_true",
                     help="with --configs machine, the default adapter's auto configuration too")
-    ap.add_argument("--bins", help="comma-separated test binaries (lib, neural_material, ...)")
+    ap.add_argument("--bins", help="comma-separated test binaries (lib, water, ...)")
     ap.add_argument("--filter", help="a test-name filter passed to every binary")
     ap.add_argument("--debug", action="store_true", help="the debug profile instead of release")
     ap.add_argument("--no-ignored", action="store_true", help="leave out #[ignore] tests")

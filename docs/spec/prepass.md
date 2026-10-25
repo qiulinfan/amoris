@@ -236,8 +236,9 @@ much slower way, or up to four of a way within 50% (bench/prepass.md 3 gives the
   shadow cascades) with three skinned characters, with 4x MSAA; the occluder scene with its
   cylinder lifted off the ground and occlusion culling forced on (cold, warm, a camera cut);
   the anti-aliasing scene with TAA and with MSAA+TAA,
-  its instances moving and its camera panning (frames 1, 5 and 12); the LOD field; a constant
-  neural material on a ground under four primitives. Every frame's pixels must be identical and
+  its instances moving and its camera panning (frames 1, 5 and 12); the LOD field (a constant
+  neural material on a ground under four primitives too, until the neural texture tests were
+  dropped on 2026-10-23, neural-textures.md 7). Every frame's pixels must be identical and
   every entity's id-pass coverage equal; the mixed and occluder scenes run again on the two other
   draw paths. A prepass vertex stage computing the same position in another order
   (`view_proj * pos + view_proj * rotated`) makes 20,695 pixels of the mixed scene differ (16%),

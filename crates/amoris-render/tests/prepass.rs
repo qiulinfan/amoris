@@ -10,9 +10,7 @@
 //!   phases): the cold first frame, a warm frame, a camera cut;
 //! - the anti-aliasing scene with TAA, one sample and four, its instances moving: both passes are
 //!   jittered alike, and the history must accumulate the same images;
-//! - the levels-of-detail field (level rows drawn as meshes);
-//! - a neural material (a constant neural texture on a tiled ground, under the mixed scene's
-//!   primitives): its variant's depth goes through its base variant's pipeline.
+//! - the levels-of-detail field (level rows drawn as meshes).
 //!
 //! Where the prepass's depth and the forward pass's disagree, the equal-depth test drops the
 //! forward pass's samples and the cleared target shows through: the images differ there. So does
@@ -23,10 +21,6 @@
 use amoris_assets::frame::{AnimView, InstanceUpdate, Look, Pose, RenderFrame};
 use amoris_assets::mesh::{
     AlphaMode, ImageData, MaterialData, MeshData, ModelAsset, NodeData, Vertex,
-};
-use amoris_assets::neural::{
-    Channel, GridSpec, LatentGrid, LatentLevel, NeuralLayout, NeuralTexture, Sampling, f32_to_f16,
-    full_mip_count, level_dims,
 };
 use amoris_render::gpu::Minimal;
 use amoris_render::{
@@ -199,95 +193,6 @@ fn lod_shots(gpu: &Gpu, prepass: PrepassMode) -> Vec<Shot> {
     vec![shot(&mut r, "lod field".into(), 1.0 / 120.0)]
 }
 
-/// A texture whose every texel is `values` (tests/neural_material.rs `constant`): zero weights,
-/// the values as output biases, latents anything; the default profile's shape.
-fn constant_texture(values: &[(Channel, f32)]) -> NeuralTexture {
-    let grid = GridSpec {
-        features: 8,
-        bits: 8,
-    };
-    let layout = NeuralLayout {
-        channels: values.iter().map(|(c, _)| *c).collect(),
-        fine: grid,
-        coarse: grid,
-        fine_shift: 2,
-        sampling: Sampling::Bilinear,
-        pe_octaves: 2,
-        hidden: [32, 32],
-    };
-    let size = 64;
-    let mips = full_mip_count(size, size);
-    let levels = level_dims(&layout, size, size, mips)
-        .iter()
-        .map(|d| {
-            let grid = |[w, h]: [u32; 2]| LatentGrid {
-                width: w,
-                height: h,
-                words: (0..2 * w * h)
-                    .map(|i| i.wrapping_mul(2_654_435_761))
-                    .collect(),
-            };
-            LatentLevel {
-                fine: grid(d.fine),
-                coarse: grid(d.coarse),
-            }
-        })
-        .collect();
-    let mut weights = vec![0u16; layout.weight_count()];
-    let [_, _, (_, b3)] = layout.offsets();
-    for (i, (_, v)) in values.iter().enumerate() {
-        weights[b3 + i] = f32_to_f16(*v);
-    }
-    NeuralTexture {
-        name: "constant".into(),
-        width: size,
-        height: size,
-        mip_count: mips,
-        layout,
-        levels,
-        weights,
-    }
-}
-
-/// The neural ground with a few primitives standing on it (overdraw in front of the neural
-/// material, and the neural material in front of nothing).
-fn neural_shots(gpu: &Gpu, prepass: PrepassMode) -> Vec<Shot> {
-    const MATERIAL: &str = "materials/constant.ntex";
-    let mut r = renderer(gpu, prepass, Antialiasing::Msaa);
-    r.add_model(demo::NEURAL_GROUND, &demo::neural_ground_model(40.0, 8.0));
-    let texture = constant_texture(&[
-        (Channel::BaseR, 0.55),
-        (Channel::BaseG, 0.4),
-        (Channel::BaseB, 0.3),
-        (Channel::NormalX, 0.5),
-        (Channel::NormalY, 0.5),
-        (Channel::Occlusion, 1.0),
-        (Channel::Roughness, 0.7),
-        (Channel::Metallic, 0.0),
-    ]);
-    r.add_neural_texture(MATERIAL, &texture)
-        .expect("the texture loads");
-    let mut frame = demo::neural_scene(MATERIAL, [1.0; 4], 0.7);
-    for (i, mesh) in ["cube", "sphere", "cylinder", "cone"]
-        .into_iter()
-        .enumerate()
-    {
-        frame.instances.push(InstanceUpdate {
-            id: 10 + i as u64,
-            pose: Some(Pose {
-                position: [-3.0 + 2.0 * i as f32, 0.6, -2.0 - i as f32],
-                rotation: [0.0, 0.0, 0.0, 1.0],
-                scale: [1.2; 3],
-            }),
-            look: Some(look(mesh, "", [0.3, 0.5, 0.8, 1.0])),
-            anim: None,
-        });
-    }
-    r.apply(frame, 0.0);
-    r.set_camera_override(Some(demo::neural_camera(1)));
-    vec![shot(&mut r, "neural".into(), 1.0 / 120.0)]
-}
-
 fn share(v: &[(u64, f32)], e: u64) -> f32 {
     v.iter().find(|x| x.0 == e).map_or(0.0, |x| x.1)
 }
@@ -356,7 +261,6 @@ fn check(gpu: &Gpu, label: &str, everything: bool) {
         both(&|g, p| taa_shots(g, p, Antialiasing::Taa));
         both(&|g, p| taa_shots(g, p, Antialiasing::MsaaTaa));
         both(&lod_shots);
-        both(&neural_shots);
     }
 }
 

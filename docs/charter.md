@@ -810,6 +810,10 @@ Amoris 是一个 **agent-native** 的 3D 游戏引擎。agent 在三个角色上
     每个通道组都高于半分辨率的 BCn，mip 2 低 5 至 11 dB；2560x1440 全屏解码在 RTX 5060 上 f16
     约 3 ms，Radeon 780M（Direct3D 12）上约 10 ms，Chrome 中与原生相当。见
     [测量记录](bench/neural-textures.md)。
+    2026-10-23（所有者）：神经纹理是 beta 功能，之后再说。它的测试（`tests/neural.rs`、
+    `tests/neural_material.rs`、`tests/neural_mlp.rs`、两个 crate 里的 `neural::tests` 和 prepass
+    测试里的神经材质）移除，代码、编码器与解码基准保留。理由：游戏还没有用它；它的训练测试在
+    MoltenVK 上失败（异步映射缓冲区出错，当日的 master 上已是如此）；资源先用在水体上。
 - 浏览器 WebGPU 与原生 Metal/Vulkan/Direct3D 12 走同一份代码；只使用 WebGPU 默认可用的特性作为基线，
   原生可选特性（如 multi-draw indirect、时间戳查询）作为加速路径。
 
