@@ -31,6 +31,7 @@ const FLAGS: &[Flag] = &[
     ("fly", false),
     ("walk", false),
     ("vsync", false),
+    ("no-vsync", false),
     ("bench", true),
     ("width", true),
     ("height", true),
@@ -239,7 +240,9 @@ fn play_inner(raw: &[String]) -> Result<Outcome, Problem> {
             width: args.number::<u32>("width")?.unwrap_or(1280),
             height: args.number::<u32>("height")?.unwrap_or(720),
             backend: BackendChoice::from_env(),
-            vsync: args.has("vsync"),
+            // Playing waits for the display, so frames pace evenly and never tear; a benchmark
+            // (`--bench`) or `--no-vsync` draws as fast as it can.
+            vsync: args.has("vsync") || (!args.has("no-vsync") && !args.has("bench")),
             fly_camera: fly,
             walk: args.has("walk"),
             bench: args.number::<u32>("bench")?.map(|n| (60, n)),
@@ -294,9 +297,12 @@ impl SeatWalk {
 
     fn update(&mut self, r: &mut Renderer) {
         let input = std::mem::take(&mut self.pending);
-        // The walker's camera as the world last published it.
+        // The walker's camera, drawn between ticks with the world it sees, turned by the look.
         r.set_camera_override(None);
-        if !r.scene.cameras.iter().any(|c| c.active) {
+        r.set_look_override(None);
+        // Before the first tick the camera has its body's pose from the scene file, not yet the
+        // walker's look (`first_person` in amoris-viewport's web.rs).
+        if !r.scene.cameras.iter().any(|c| c.active) || (self.look.is_none() && r.scene.tick == 0) {
             self.status = "Waiting for the player's camera…".into();
             return;
         }
@@ -361,7 +367,7 @@ impl SeatWalk {
             }
         }
         camera.rotation = Quat::from_rotation_y(yaw) * Quat::from_rotation_x(pitch);
-        r.set_camera_override(Some(camera));
+        r.set_look_override(Some(camera.rotation));
         // The targeted block's outline, from the renderer's own copy of the volumes.
         r.overlays.lines.clear();
         let dir = camera.rotation * Vec3::NEG_Z;

@@ -142,6 +142,11 @@ impl Caustics {
         }
     }
 
+    /// Whether the map may be drawn at all (`AMORIS_CAUSTICS`).
+    pub fn enabled(&self) -> bool {
+        self.enabled
+    }
+
     pub fn view(&self) -> &wgpu::TextureView {
         &self.view
     }

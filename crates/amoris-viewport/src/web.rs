@@ -291,14 +291,22 @@ impl Viewport {
     /// by the page's own look so looking never waits on a tick. `dx`, `dy` are the mouse's movement
     /// since the last call (CSS pixels, used while `captured`); while captured the targeted block is
     /// outlined and a crosshair drawn. Returns `[yaw, pitch]` for the page's `player.act` controls,
-    /// or nothing while the world has published no active camera.
+    /// or nothing until the world has published an active camera that a tick has placed.
     pub fn first_person(&mut self, dx: f32, dy: f32, captured: bool) -> Vec<f32> {
         const CROSSHAIR_ID: u64 = u64::MAX - 2;
         let r = &mut self.renderer;
+        // The walker's camera, drawn between ticks with the world it sees, turned by the look.
         r.set_camera_override(None);
+        r.set_look_override(None);
         r.overlays.lines.clear();
         r.scene.ui.retain(|u| u.id != CROSSHAIR_ID);
         if !r.scene.cameras.iter().any(|c| c.active) {
+            return Vec::new();
+        }
+        // Before the first tick the camera has its body's pose from the scene file: the walker
+        // writes its look into that pose each tick. A look taken there turned a surfer set to
+        // face the beach due south, and the page then sent it as the walker's own.
+        if self.look.is_none() && r.scene.tick == 0 {
             return Vec::new();
         }
         let mut camera = r.camera();
@@ -313,7 +321,7 @@ impl Viewport {
         yaw = (yaw + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
         self.look = Some((yaw, pitch));
         camera.rotation = Quat::from_rotation_y(yaw) * Quat::from_rotation_x(pitch);
-        r.set_camera_override(Some(camera));
+        r.set_look_override(Some(camera.rotation));
         if !captured {
             return vec![yaw, pitch];
         }
@@ -385,6 +393,7 @@ impl Viewport {
 
     pub fn use_scene_camera(&mut self) {
         self.renderer.set_camera_override(None);
+        self.renderer.set_look_override(None);
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {

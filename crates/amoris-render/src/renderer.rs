@@ -522,6 +522,11 @@ pub struct Renderer {
     light_count: u32,
 
     camera_override: Option<CameraState>,
+    /// The scene camera's rotation from a first-person player's own latest look: its position
+    /// stays the world's, drawn between ticks (`set_look_override`).
+    look_override: Option<Quat>,
+    /// Where between its last two ticks the last frame drew the world (`render`'s alpha).
+    drawn_alpha: f32,
     tick_arrived: f64,
     pub last: FrameStats,
     /// A per-frame trace in progress (trace.rs; `AMORIS_TRACE`, [`Renderer::start_trace`]).
@@ -1460,6 +1465,8 @@ impl Renderer {
             regions_lod: None,
             light_count: 0,
             camera_override: None,
+            look_override: None,
+            drawn_alpha: 1.0,
             tick_arrived: 0.0,
             last: FrameStats::default(),
             trace: TraceSpec::from_env().map(FrameTracer::new),
@@ -2028,7 +2035,7 @@ impl Renderer {
     /// cascade draws the coarsest level whose error is at most `shadow_texels` of them (lod.rs).
     pub fn cascade_texels(&self, cam: &CameraState) -> [f32; CASCADES] {
         let aspect = self.targets.width as f32 / self.targets.height.max(1) as f32;
-        shadows::cascades(cam, aspect, Vec3::Y, SHADOW_DISTANCE).texel
+        shadows::cascades(cam, aspect, Vec3::Y, SHADOW_DISTANCE, Vec3::ZERO).texel
     }
 
     /// The bytes the views' lists need for the current regions: the camera's `drawn` records (48
@@ -2074,19 +2081,27 @@ impl Renderer {
         self.camera_override = camera;
     }
 
-    /// The camera the next frame is drawn from.
+    /// Turns the scene's active camera to this rotation, a first-person player's own latest look,
+    /// so looking never waits on a tick; its position stays the world's, drawn between ticks
+    /// with everything it sees (`None`: the camera's own rotation).
+    pub fn set_look_override(&mut self, rotation: Option<Quat>) {
+        self.look_override = rotation;
+    }
+
+    /// The camera the last frame was drawn from, and the next one's until it is drawn: the
+    /// override, or the scene's active camera between its last two ticks' poses
+    /// (`Scene::camera_at`) turned by the look override.
     pub fn camera(&self) -> CameraState {
         if let Some(c) = self.camera_override {
             return c;
         }
         self.scene
-            .cameras
-            .iter()
-            .filter(|c| c.active)
-            .min_by_key(|c| c.id)
+            .camera_at(self.drawn_alpha)
             .map(|c| CameraState {
                 position: Vec3::from(c.position),
-                rotation: Quat::from_array(c.rotation).normalize(),
+                rotation: self
+                    .look_override
+                    .unwrap_or_else(|| Quat::from_array(c.rotation).normalize()),
                 fov_y: c.fov_deg.to_radians(),
                 near: c.near.max(0.01),
                 exposure_ev: c.exposure_ev,
@@ -2765,12 +2780,14 @@ impl Renderer {
         let (w, h) = (self.targets.width, self.targets.height);
         let (sw, sh) = self.targets.scene;
         let aspect = w as f32 / h.max(1) as f32;
+        let alpha =
+            ((now_s - self.tick_arrived) / self.scene.dt_s.max(1e-6)).clamp(0.0, 1.0) as f32;
+        // The scene's camera is drawn at the same time between ticks as the poses it sees.
+        self.drawn_alpha = alpha;
         let cam = self.camera();
         let view = cam.view();
         let proj = cam.proj(aspect);
         let vp = proj * view;
-        let alpha =
-            ((now_s - self.tick_arrived) / self.scene.dt_s.max(1e-6)).clamp(0.0, 1.0) as f32;
         // TAA: this frame's jitter and what motion vectors need from the last (taa.rs). The
         // jittered matrices draw the scene; `vp` stays for the id pass, overlays, UI and culling's
         // CPU side.
@@ -2831,7 +2848,15 @@ impl Renderer {
                 size: [0; 4],
             },
         );
-        let casc = shadows::cascades(&cam, aspect, to_sun, SHADOW_DISTANCE);
+        // Under the water whose caustics are drawn, a point reads the cascades up the refracted
+        // sun (water_caustics_light.wgsl `sun_path`): with water, the cascades reach that far.
+        let sun_up = sun.is_some() && to_sun.y > 0.0 && sun_lux > 0.0;
+        let reach = if sun_up && self.caustics.enabled() && !self.water.is_empty() {
+            shadows::underwater_reach(to_sun)
+        } else {
+            Vec3::ZERO
+        };
+        let casc = shadows::cascades(&cam, aspect, to_sun, SHADOW_DISTANCE, reach);
         let ev = env.as_ref().map_or(0.0, |e| e.exposure_ev) + cam.exposure_ev;
         let exposure = 0.9 * 2f32.powf(ev);
         let mut vu = ViewUniform {
@@ -2946,7 +2971,7 @@ impl Renderer {
         let views = if cascades { VIEWS } else { 1 };
         // Each cascade's casters must also reach the slice it shades (docs/spec/occlusion.md 11).
         let slices = if cascades && self.shadow_cull == ShadowCull::On {
-            shadows::slice_planes(&cam, (w, h), jitter.ndc, to_sun, &casc)
+            shadows::slice_planes(&cam, (w, h), jitter.ndc, to_sun, &casc, reach)
         } else {
             [[shadows::PASS; SLICE_PLANES]; CASCADES]
         };
@@ -3054,7 +3079,7 @@ impl Renderer {
             &self.view_buf.buf,
             self.water
                 .caustics_source(cam.position.to_array())
-                .filter(|_| sun.is_some() && to_sun.y > 0.0 && sun_lux > 0.0),
+                .filter(|_| sun_up),
             &mut self.profiler,
         );
         self.batches.reset(&mut enc);

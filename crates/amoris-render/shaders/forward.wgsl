@@ -364,9 +364,10 @@ fn shade(in: VsOut, s: Surface) -> SceneOut {
     let diffuse_color = s.albedo * (1.0 - s.metallic);
     var color = vec3f(0.0);
 
-    // Sun.
+    // Sun, refracted under water (water_caustics_light.wgsl `sun_path`).
     if (view.sun_dir.w > 0.0) {
-        let l = view.sun_dir.xyz;
+        let sun = sun_path(in.world);
+        let l = sun.dir;
         let nl = dot(n, l);
         if (nl > 0.0) {
             let h = normalize(l + v);
@@ -376,8 +377,9 @@ fn shade(in: VsOut, s: Surface) -> SceneOut {
             let spec = d_ggx(nh, a) * v_smith(nv, nl, a) * f;
             let diff = (1.0 - f) * diffuse_color / PI;
             let depth = dot(in.world - view.camera_pos.xyz, -vec3f(view.view[0].z, view.view[1].z, view.view[2].z));
-            let sh = shadow_factor(in.world, n, depth);
-            color += (diff + spec) * view.sun_color.rgb * view.sun_dir.w * nl * sh * caustic_light(in.world);
+            let sh = shadow_factor(sun.exit, n, depth);
+            color += (diff + spec) * view.sun_color.rgb * view.sun_dir.w * nl * sun.beam * sh
+                * caustic_light(in.world);
         }
     }
 
@@ -497,9 +499,10 @@ fn transparent(in: VsOut, s: Surface, du: vec2f, dv: vec2f) -> vec4f {
         // What the dielectric does not transmit it diffuses.
         let diffuse_color = s.albedo * dielectric * (1.0 - transmission);
         color = vec3f(0.0);
-        // Sun.
+        // Sun, refracted under water.
         if (view.sun_dir.w > 0.0) {
-            let l = view.sun_dir.xyz;
+            let sun = sun_path(in.world);
+            let l = sun.dir;
             let nl = dot(n, l);
             if (nl > 0.0) {
                 let h = normalize(l + v);
@@ -508,8 +511,9 @@ fn transparent(in: VsOut, s: Surface, du: vec2f, dv: vec2f) -> vec4f {
                 let diff = (1.0 - f) * diffuse_color / PI;
                 let depth = dot(in.world - view.camera_pos.xyz,
                     -vec3f(view.view[0].z, view.view[1].z, view.view[2].z));
-                let sh = shadow_factor(in.world, n, depth);
-                color += (diff + spec) * view.sun_color.rgb * view.sun_dir.w * nl * sh * caustic_light(in.world);
+                let sh = shadow_factor(sun.exit, n, depth);
+                color += (diff + spec) * view.sun_color.rgb * view.sun_dir.w * nl * sun.beam * sh
+                    * caustic_light(in.world);
             }
         }
         // Punctual lights of this pixel's cluster.
@@ -1134,6 +1138,51 @@ fn shallow_noise(q: vec2f) -> f32 {
     return mix(mix(n00, n10, s2.x), mix(n01, n11, s2.x), s2.y);
 }
 
+// A whitewater texture in [0, 1] at flow-map point `q`: four octaves of value noise, each turned
+// by 37 degrees and shifted so no lattice lines up, the coarse ones carrying most of it. An octave
+// finer than six of the pixel's `footprint` (metres) gives way to its mean, so foam never breaks
+// into specks that alias into flicker at a distance. The flow map's phases carry it with the
+// water; turning or stretching `q` by the local flow instead turned the whole pattern about the
+// world's origin, so 200 m out a flow turning by a fifth of a degree swept the texture through a
+// cycle and the foam drew the flow's contour lines.
+fn foam_texture(q: vec2f, footprint: f32) -> f32 {
+    var p = q;
+    var sum = 0.0;
+    var total = 0.0;
+    var amp = 1.0;
+    var freq = 1.3;
+    for (var i = 0u; i < 4u; i++) {
+        let keep = clamp(1.0 / (freq * footprint * 6.0) - 1.0, 0.0, 1.0);
+        let shift = vec2f(f32(i) * 17.3, f32(i) * 7.1);
+        sum += amp * mix(0.5, shallow_noise(p * freq + shift), keep);
+        total += amp;
+        amp *= 0.5;
+        freq *= 2.1;
+        p = vec2f(0.8 * p.x - 0.6 * p.y, 0.6 * p.x + 0.8 * p.y);
+    }
+    // Summed octaves crowd their mean: spread them back over a single octave's range.
+    return clamp(0.5 + (sum / total - 0.5) * 1.6, 0.0, 1.0);
+}
+
+// How much of a point foam covers, from the `density` (0 to 1) the presentation field carries
+// there (water_foam.wgsl). Thick foam takes the coverage mapping real-time ocean foam uses: the
+// density sets a threshold on the texture, so its troughs fill in as the density grows until the
+// white water is whole, with soft grey hollows on an edge that widens with the pixel's footprint.
+// Thin foam is a faint film the texture shades, so a streak of it does not break into hard specks
+// and lines on the texture's peaks. Scaling a single octave's grain by the density had left even
+// breaking white water a camouflage of grey blocks. The flow map's two phases (`blend`) mix with
+// their variance kept, so the pattern does not fade and return each time the phases swap.
+fn foam_cover(q0: vec2f, q1: vec2f, blend: f32, footprint: f32, density: f32) -> f32 {
+    let w = vec2f(1.0 - blend, blend);
+    let t = clamp(0.5 + ((foam_texture(q0, footprint) - 0.5) * w.x
+        + (foam_texture(q1, footprint) - 0.5) * w.y) / max(length(w), 1e-3), 0.0, 1.0);
+    let c = clamp(density, 0.0, 1.0);
+    let soft = 0.3 + clamp(footprint * 2.0, 0.0, 0.5);
+    let thick = smoothstep(1.0 - c - soft, 1.0 - c + soft * 0.33, t);
+    let thin = c * mix(0.4, 1.0, t);
+    return mix(thin, thick, smoothstep(0.3, 0.8, c)) * smoothstep(0.0, 0.05, c);
+}
+
 @fragment
 fn fs_water_depth(in: ShallowOut) -> @builtin(frag_depth) f32 {
     if(in.field_surface==1u&&ledge_at(in.world.xz)){discard;}
@@ -1306,9 +1355,7 @@ fn shallow_film(in:ShallowOut,footprint:f32)->ShallowFragment {
     let tangent=vec2f(select(in.world.x,in.world.z,abs(normal.x)>0.5),in.world.y);
     let phase=fract(shallow.time*0.2);let blend=abs(phase*2.0-1.0);let flow=vec2f(0.0,-in.speed);
     let q0=tangent-flow*phase*5.0;let q1=tangent-flow*fract(phase+0.5)*5.0;
-    let grain=mix(shallow_noise(q0*3.0),shallow_noise(q1*3.0),blend);
-    let filtered=mix(grain,0.5,smoothstep(0.15,0.5,footprint));
-    let foam=clamp(shallow_foam_at(in.world.xz)*mix(0.2,0.85,smoothstep(0.2,0.8,filtered)),0.0,1.0);
+    let foam=foam_cover(q0,q1,blend,footprint,shallow_foam_at(in.world.xz));
     let haze=max(shallow.fog.w,0.0);let sigma=shallow.absorb.rgb+shallow.scatter.rgb+vec3f(haze);
     let factors=film_factors(max(dot(normal,v),0.001),in.depth,sigma);let transmission=factors.transmission;let reflection=factors.reflection;
     let uv=in.clip.xy/vec2f(textureDimensions(water_scene_depth));let background=water_color(uv);
@@ -1388,10 +1435,7 @@ fn fs_shallow(in: ShallowOut) -> ShallowFragment {
     let above = dot(n0,v) >= 0.0;
     let normal = select(-n,n,above);
     let nv = max(dot(normal,v),1e-4);
-    let density = shallow_foam_at(in.world.xz);
-    let grain = mix(shallow_noise(q0 * 3.0), shallow_noise(q1 * 3.0), blend);
-    let filtered_grain = mix(grain, 0.5, smoothstep(0.15, 0.5, footprint));
-    let foam = density * mix(0.25, 1.0, smoothstep(0.2, 0.8, filtered_grain));
+    let foam = foam_cover(q0, q1, blend, footprint, shallow_foam_at(in.world.xz));
     let rough = mix(clamp(0.05 + footprint * 0.04, 0.05, 0.3), 0.5, foam);
     let a = rough * rough;
     let transmitted_ray = refract(-v,normal,select(1.3333333,0.75,above));

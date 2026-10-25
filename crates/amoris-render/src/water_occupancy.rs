@@ -12,6 +12,8 @@ pub(crate) struct WaterOccupancy {
     head: wgpu::Buffer,
     /// Head added since presentation last took it, per column (spray at bodies' entries).
     rise: wgpu::Buffer,
+    /// The state was just uploaded, with no head: the first gathering after it is a baseline.
+    fresh: bool,
     pipelines: [wgpu::ComputePipeline; 3],
     group: wgpu::BindGroup,
     columns: u64,
@@ -38,7 +40,12 @@ impl WaterOccupancy {
         let points = buffer("water occupancy points", MAX_SAMPLES as u64 * 16, storage);
         let accum = buffer("water occupancy sums", columns * 4, storage);
         let head = buffer("water occupancy head", columns * 4, storage);
-        let rise = buffer("water occupancy rise", columns * 4, storage);
+        // Copyable so a check can read what presentation would take.
+        let rise = buffer(
+            "water occupancy rise",
+            columns * 4,
+            storage | wgpu::BufferUsages::COPY_SRC,
+        );
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("water occupancy"),
             source: wgpu::ShaderSource::Wgsl(
@@ -97,6 +104,7 @@ impl WaterOccupancy {
             _accum: accum,
             head,
             rise,
+            fresh: true,
             pipelines,
             group,
             columns,
@@ -120,6 +128,7 @@ impl WaterOccupancy {
         self.queue
             .write_buffer(&self.rise, 0, bytemuck::cast_slice(&zeros));
         self.dirty = false;
+        self.fresh = true;
     }
 
     /// Gather this step's displaced volume, or clear what an earlier step left. Returns whether
@@ -135,6 +144,7 @@ impl WaterOccupancy {
         if displacements.len() > MAX_SAMPLES {
             return Err("water displacements exceed the point budget".into());
         }
+        let fresh = std::mem::take(&mut self.fresh);
         if displacements.is_empty() {
             if self.dirty {
                 encoder.clear_buffer(&self.head, 0, None);
@@ -182,6 +192,13 @@ impl WaterOccupancy {
             pass.set_pipeline(&self.pipelines[stage]);
             pass.set_bind_group(0, &self.group, &[]);
             pass.dispatch_workgroups(count.div_ceil(64), 1, 1);
+        }
+        if fresh {
+            // The bodies were in the water before the upload, which kept none of their head (a
+            // viewport's replica re-seeds from a checkpoint at most compactions when its feed skips
+            // ticks). Gathered again, the whole head is no entry: counted as one, every re-seed
+            // threw a burst of spray around a board merely floating.
+            encoder.clear_buffer(&self.rise, 0, None);
         }
         self.dirty = true;
         Ok(true)

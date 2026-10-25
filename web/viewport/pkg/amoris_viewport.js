@@ -215,7 +215,7 @@ export class Viewport {
      * by the page's own look so looking never waits on a tick. `dx`, `dy` are the mouse's movement
      * since the last call (CSS pixels, used while `captured`); while captured the targeted block is
      * outlined and a crosshair drawn. Returns `[yaw, pitch]` for the page's `player.act` controls,
-     * or nothing while the world has published no active camera.
+     * or nothing until the world has published an active camera that a tick has placed.
      * @param {number} dx
      * @param {number} dy
      * @param {boolean} captured

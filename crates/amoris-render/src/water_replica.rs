@@ -194,7 +194,7 @@ mod tests {
     use crate::{BackendChoice, Gpu, water_resident::ResidentWater};
     use amoris_assets::water_field::{
         ColumnDelta, FieldBoundary, FieldCheckpoint, FieldSea, FieldSeaWave, FieldStep,
-        PointImpulse,
+        PointImpulse, PointVolume,
     };
     use std::sync::Arc;
 
@@ -306,6 +306,79 @@ mod tests {
             assert_eq!(
                 replica.field.checkpoint_complete(checkpoint.datum).unwrap(),
                 expected
+            );
+        }
+    }
+
+    /// A replica re-seeded from a checkpoint gathers its bodies' head again from nothing. That is
+    /// no water they entered, so presentation takes no rise from it (spray throws entry crowns
+    /// from the rise); a body that then sinks deeper adds its new head.
+    #[test]
+    fn a_reseeded_replica_takes_its_bodies_head_as_a_baseline() {
+        for backend in BackendChoice::under_test() {
+            let gpu = Gpu::headless(backend).expect("visual water replay requires a GPU");
+            gpu.device
+                .on_uncaptured_error(Arc::new(|error| panic!("visual replay: {error}")));
+            let checkpoint = Arc::new(
+                FieldCheckpoint::new([8, 8], 7.0, vec![[0, 1.5f32.to_bits(), 0, 0]; 64])
+                    .checked()
+                    .unwrap(),
+            );
+            // A body's 0.2 m^3 under still water of 1 m cells, then 0.3 m^3 as it sinks.
+            let step = |volume_m3: f64| FieldStep {
+                boundaries: [FieldBoundary::Wall; 4],
+                sea: None,
+                cell_m: 1.0,
+                substep_dt: 0.004,
+                substeps: 1,
+                friction: 0.0,
+                calm_per_s: amoris_assets::water_field::DEFAULT_CALM_PER_S,
+                dry_below: 0.0,
+                edits: vec![],
+                impulses: vec![],
+                displacements: vec![PointVolume {
+                    at: [4.0, 4.0],
+                    volume_m3,
+                    radius: 1.5,
+                }],
+                physics: Default::default(),
+            };
+            // The head presentation would take, summed over the columns, metres.
+            let rise = |replica: &mut WaterReplica| {
+                let (_, rise, _) = replica.take_rise();
+                let stage = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("water rise check"),
+                    size: 64 * 4,
+                    usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                    mapped_at_creation: false,
+                });
+                let mut encoder = gpu.device.create_command_encoder(&Default::default());
+                encoder.copy_buffer_to_buffer(rise, 0, &stage, 0, 64 * 4);
+                gpu.queue.submit([encoder.finish()]);
+                let mut out = [0f32; 64];
+                crate::readback::read_blocking(&gpu.device, &stage, &mut out).unwrap();
+                out.iter().sum::<f32>()
+            };
+            let mut recipe =
+                FieldRecipe::new(checkpoint.key(), vec![], checkpoint.digest(), String::new());
+            recipe.push_step(step(0.2));
+            let mut replica = WaterReplica::new(&gpu.device, &gpu.queue, checkpoint.size).unwrap();
+            replica
+                .synchronize(&gpu.device, &gpu.queue, &checkpoint, &recipe)
+                .unwrap();
+            assert_eq!(
+                rise(&mut replica),
+                0.0,
+                "a re-seeded body's head is no entry"
+            );
+            recipe.push_step(step(0.3));
+            replica
+                .synchronize(&gpu.device, &gpu.queue, &checkpoint, &recipe)
+                .unwrap();
+            let added = rise(&mut replica);
+            assert!(
+                (added - 0.1).abs() < 1e-3,
+                "the sinking body's added head: {added} m"
             );
         }
     }

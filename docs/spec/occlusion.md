@@ -376,6 +376,13 @@ result is the same. A caster can change a shaded pixel only if its sphere comes 
 `o + 2 sqrt(2) texels` of the slice across the light and not wholly beyond the slice's farthest
 light depth plus `o`.
 
+**Under water** (Pioneer, 2026-10-22; [water](water.md) 53.1) a fragment under the surface of the
+region whose caustics are drawn reads the cascades where the sun's refracted path leaves the water,
+at most `shadows::UNDERWATER_REACH_M` (4 m, the shader's `SUN_REACH_M`) of height up it: its point
+moves first by up to `shadows::underwater_reach(to_sun)`, the refracted direction scaled to that
+height, then by the normal offset. The point so moved is nearer the sun than the fragment, and
+across the light it lies in the slice swept along the reach.
+
 **The planes.** The slice is the camera frustum between `splits[c - 1]` (0, the eye, for the first
 cascade) and `splits[c]`, widened on each side by the jitter's offset in device coordinates and
 one pixel (`kx = 1 + |jitter.x| + 2 / width`, likewise `ky`; an orthographic camera's box slice the
@@ -390,6 +397,16 @@ toward the sun: a caster outside the view between the slice and the sun still sh
 the box's near plane. Unused slots hold `(0, 0, 0, 1)`, which every sphere passes; with the switch
 off every slot does, and the pass culls as before.
 
+With water (the renderer passes the reach when the caustics may be drawn, the sun is up and any
+water region is held; otherwise zero, and every plane and box is as before to the bit) the hull is
+that of sixteen points, the corners and the corners moved by the reach: the slice swept along it. A
+hexahedron's outline has at most six edges and the sweep adds two, so eight edges and the far plane
+still fill the nine slots; should float error split an edge, the longest eight are kept, which only
+widens the volume. The moved corners are nearer the sun, so the far plane stays. The box
+(`shadows::cascades`) takes its sphere around the slice swept along the reach's part across the
+light, the only part that widens it, so its radius grows by at most half that part: 1.5 m across for
+the surf beach's 34 degree sun.
+
 **Cost.** 576 bytes more uniform (`Cull` is 1,216 bytes) and, for an instance in a cascade's box,
 up to nine more plane tests; the test runs only after the box test passes. The CPU's work is a few
 microseconds per frame and does not grow with the scene.
@@ -403,7 +420,8 @@ linear comparison, and its unshadowed answer for a negative view depth (MSAA's e
 behind the eye); a non-negative caster depth bias; nothing but camera-view fragments reading the
 cascades (a reflection, a second view or a light probe sampling them would need its own slices);
 casters' spheres bounding what they draw (the camera's frustum test assumes it too; skinned parts
-use the grown sphere, section 9's `skinned_bounds.rs`); and receivers' normals of unit length.
+use the grown sphere, section 9's `skinned_bounds.rs`); receivers' normals of unit length; and a
+fragment under water reading no farther up the refracted sun than `UNDERWATER_REACH_M`.
 
 **Checks.**
 
@@ -419,10 +437,15 @@ use the grown sphere, section 9's `skinned_bounds.rs`); and receivers' normals o
   sphere beyond it touching the point read). Every sphere must pass the cascade's planes. Six
   planted bugs each fail it: no normal offset in the margin, a kernel reach of 2 texels, no widening
   for the jitter, the far plane at the nearest corner, the first slice starting at the cascades'
-  near split or at the camera's near plane instead of the eye. This test is what guards the margin:
-  the image checks below do not see it (a zero margin culls more and leaves every compared frame
-  identical). `the_slice_culls_inside_the_box` requires the planes to cull more than 30% of a grid
-  of 0.5 m spheres inside each box of the LOD field's view (68% to 77%).
+  near split or at the camera's near plane instead of the eye. In a third of the cases the receivers
+  are under water, their point moved first up the refracted sun by up to the reach (the whole reach
+  in the worst case). This test is what guards the margin: the image checks below do not see it (a
+  zero margin culls more and leaves every compared frame identical).
+  `a_cascade_box_holds_its_slice_swept_up_the_refracted_sun` requires every point of each slice
+  moved by up to the reach to lie in the cascade's box, to the two texels its centre's snapping can
+  take, over 300 random cameras and suns. A sweep left out fails both.
+  `the_slice_culls_inside_the_box` requires the planes to cull more than 30% of a grid of 0.5 m
+  spheres inside each box of the LOD field's view (68% to 77%).
 - `tests/shadow_cull.rs` draws four scenes with two renderers on one device through the same
   frames, slice culling off and on: the mixed scene with three skinned characters and the camera
   circling it, a 16 x 16 LOD field walked into with levels on and off, and the many_cubes sphere

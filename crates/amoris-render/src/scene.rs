@@ -10,7 +10,7 @@ use amoris_assets::frame::{
     SplatView,
 };
 use bytemuck::{Pod, Zeroable};
-use glam::{Quat, Vec3};
+use glam::{Quat, Vec3, Vec4};
 
 pub const FLAG_ALIVE: u32 = 1;
 pub const FLAG_VISIBLE: u32 = 2;
@@ -178,6 +178,9 @@ pub struct Scene {
     pub lights: Vec<LightView>,
     pub lights_changed: bool,
     pub cameras: Vec<CameraView>,
+    /// Each camera's pose at the tick before the last, by id, so a camera is drawn between its
+    /// last two ticks as the slots are (`camera_at`).
+    camera_prev: Vec<(u64, [f32; 3], [f32; 4])>,
     pub environment: Option<EnvironmentView>,
     pub environment_changed: bool,
     pub sea: Option<SeaView>,
@@ -227,6 +230,32 @@ impl Scene {
             dt_s: 1.0 / 60.0,
             ..Scene::default()
         }
+    }
+
+    /// The active camera (the lowest id), drawn at `alpha` between its poses at the last two
+    /// ticks as the slots are (common.wgsl `instance_pose`). A camera that rides a body, as a
+    /// first-person player's does, then stays with it between ticks: drawn at the last tick's
+    /// pose, it ran up to a tick ahead of the world it sees, and the world shook in front of it
+    /// at the tick rate.
+    pub fn camera_at(&self, alpha: f32) -> Option<CameraView> {
+        let mut c = self
+            .cameras
+            .iter()
+            .filter(|c| c.active)
+            .min_by_key(|c| c.id)?
+            .clone();
+        if let Some(&(_, position, rotation)) =
+            self.camera_prev.iter().find(|(id, _, _)| *id == c.id)
+        {
+            let t = alpha.clamp(0.0, 1.0);
+            c.position = Vec3::from(position)
+                .lerp(Vec3::from(c.position), t)
+                .to_array();
+            let (a, b) = (Vec4::from(rotation), Vec4::from(c.rotation));
+            let b = if a.dot(b) < 0.0 { -b } else { b };
+            c.rotation = a.lerp(b, t).normalize().to_array();
+        }
+        Some(c)
     }
 
     /// Whether some slot is drawn between two poses, so its drawn pose changes from frame to frame
@@ -422,6 +451,14 @@ impl Scene {
         if let Some(l) = frame.lights {
             self.lights = l;
             self.lights_changed = true;
+        }
+        if new_tick {
+            // A camera this tick leaves where it was is drawn there.
+            self.camera_prev = self
+                .cameras
+                .iter()
+                .map(|c| (c.id, c.position, c.rotation))
+                .collect();
         }
         if let Some(c) = frame.cameras {
             self.cameras = c;
@@ -718,6 +755,61 @@ mod tests {
             },
             assets,
         );
+    }
+
+    #[test]
+    fn the_camera_is_drawn_between_its_last_two_ticks_as_the_poses_are() {
+        let camera = |x: f32, yaw: f32| CameraView {
+            id: 7,
+            position: [x, 1.0, 0.0],
+            rotation: Quat::from_rotation_y(yaw).to_array(),
+            fov_deg: 70.0,
+            near: 0.1,
+            far: 500.0,
+            active: true,
+            exposure_ev: 0.0,
+        };
+        let mut scene = Scene::new();
+        let mut assets = Assets { ready: true };
+        let mut tick = |scene: &mut Scene, n: u64, cameras: Option<Vec<CameraView>>| {
+            scene.apply(
+                RenderFrame {
+                    tick: n,
+                    t_s: n as f64 / 60.0,
+                    dt_s: 1.0 / 60.0,
+                    cameras,
+                    ..RenderFrame::default()
+                },
+                &mut assets,
+            );
+        };
+        // A first camera has no earlier pose: it is drawn where it is.
+        tick(&mut scene, 1, Some(vec![camera(0.0, 0.0)]));
+        assert_eq!(scene.camera_at(0.0).unwrap().position, [0.0, 1.0, 0.0]);
+        // Moved by the next tick: drawn from its old pose at the tick's start to its new one.
+        tick(&mut scene, 2, Some(vec![camera(0.1, 0.4)]));
+        let half = scene.camera_at(0.5).unwrap();
+        assert!((half.position[0] - 0.05).abs() < 1e-6, "{half:?}");
+        let yaw = Quat::from_array(half.rotation)
+            .to_euler(glam::EulerRot::YXZ)
+            .0;
+        assert!((yaw - 0.2).abs() < 1e-3, "{yaw}");
+        assert_eq!(scene.camera_at(0.0).unwrap().position, [0.0, 1.0, 0.0]);
+        assert_eq!(scene.camera_at(1.0).unwrap().position, [0.1, 1.0, 0.0]);
+        // A tick that leaves the camera where it was stops it there.
+        tick(&mut scene, 3, None);
+        assert_eq!(scene.camera_at(0.0).unwrap().position, [0.1, 1.0, 0.0]);
+        // A reset draws the new camera where it is, with no earlier pose.
+        scene.apply(
+            RenderFrame {
+                reset: true,
+                tick: 4,
+                cameras: Some(vec![camera(5.0, 0.0)]),
+                ..RenderFrame::default()
+            },
+            &mut assets,
+        );
+        assert_eq!(scene.camera_at(0.0).unwrap().position, [5.0, 1.0, 0.0]);
     }
 
     #[test]

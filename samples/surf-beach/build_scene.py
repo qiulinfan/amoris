@@ -6,13 +6,15 @@ in equilibrium (depth growing as distance from the shore to the two-thirds, afte
 7(1), 1991). An oblique rock shelf 1.7 m under the surface trips each wave first at its south
 end, and the break peels north along the shelf's edge: a point break. The terrain is one
 heightfield, drawn from terrain.glb and, at 1 m vertices, the fixed TriMesh the water's bed, the
-board and the surfer meet.
+board and the surfer meet. Its colours are one map baked from the same fields, so sand darkens into
+the seabed, the reef and the rock rise out of it and grass tops the headlands without steps.
 """
 from pathlib import Path
 import json
 import math
 import random
 import struct
+import zlib
 
 ROOT = Path(__file__).resolve().parent
 CELL = 0.5
@@ -85,11 +87,6 @@ def height(x, z):
     return rock + 0.7 * noise(0.9 * x, 0.9 * z) * smoothstep(0.0, 2.0, rock - bed)
 
 
-def rocky(x, z):
-    rock = headlands(x, z)
-    return rock is not None and rock > max(sand(x, z), shelf(x, z)) + 0.3
-
-
 # ---- the heightfield mesh -----------------------------------------------------------------------
 def axis(lo, hi, inner_lo, inner_hi, fine, coarse):
     out = []
@@ -126,35 +123,109 @@ def terrain():
             s = math.sqrt(sum(c * c for c in n))
             positions.append((x, y, z))
             normals.append(tuple(c / s for c in n))
-            uvs.append((x / 8.0, z / 8.0))
-    groups = {"Seabed": [], "Reef": [], "Rock": [], "Sand": [], "Dune": []}
+            # The colour map covers the whole terrain.
+            uvs.append(((x - xs[0]) / (xs[-1] - xs[0]), (z - zs[0]) / (zs[-1] - zs[0])))
+    triangles = []
     for k in range(nz - 1):
         for i in range(nx - 1):
             a, b, c, d = k * nx + i, k * nx + i + 1, (k + 1) * nx + i + 1, (k + 1) * nx + i
-            # One material a quad, so a boundary steps along the grid instead of alternating
-            # between a quad's two triangles.
-            corners = [positions[t] for t in (a, b, c, d)]
-            cx = sum(q[0] for q in corners) / 4
-            cy = sum(q[1] for q in corners) / 4
-            cz = sum(q[2] for q in corners) / 4
-            if rocky(cx, cz):
-                # Grass on the headlands' gentle tops, bare rock on their faces.
-                rise = max(abs(corners[1][1] - corners[0][1]) / (corners[1][0] - corners[0][0]),
-                           abs(corners[3][1] - corners[0][1]) / (corners[3][2] - corners[0][2]))
-                kind = "Dune" if cy > 3.0 and rise < 0.45 else "Rock"
-            elif shelf(cx, cz) > sand(cx, cz) + 0.05:
-                kind = "Reef"
-            elif cy < -0.3:
-                kind = "Seabed"
-            elif cx < 256.0:
-                kind = "Sand"
-            else:
-                kind = "Dune"
-            groups[kind] += [(a, d, c), (a, c, b)]
-    return xs, zs, positions, normals, uvs, groups
+            triangles += [(a, d, c), (a, c, b)]
+    return xs, zs, positions, normals, uvs, triangles
 
 
-def write_glb(positions, normals, uvs, groups):
+# ---- the colour map -----------------------------------------------------------------------------
+# Linear colours, as the materials were: wet sand to the seabed, the reef's dark rock, the
+# headlands' rock and their grass.
+SAND = (0.86, 0.77, 0.58)
+SEABED = (0.62, 0.56, 0.42)
+REEF = (0.26, 0.27, 0.22)
+ROCK = (0.40, 0.36, 0.31)
+GRASS = (0.45, 0.52, 0.28)
+MAP = 1024                    # texels a side: the renderer resizes every texture layer to 1024
+
+
+def mix(a, b, t):
+    return tuple(p + (q - p) * t for p, q in zip(a, b))
+
+
+def grain(x, z):
+    """Smooth value noise in [-1, 1] on a unit lattice, from an integer hash."""
+    i, k = math.floor(x), math.floor(z)
+    tx, tz = x - i, z - k
+    tx, tz = tx * tx * (3 - 2 * tx), tz * tz * (3 - 2 * tz)
+
+    def h(a, b):
+        n = (a * 374761393 + b * 668265263) & 0xFFFFFFFF
+        n = ((n ^ (n >> 13)) * 1274126177) & 0xFFFFFFFF
+        return ((n ^ (n >> 16)) & 0xFFFF) / 32767.5 - 1.0
+    top = h(i, k) + (h(i + 1, k) - h(i, k)) * tx
+    bottom = h(i, k + 1) + (h(i + 1, k + 1) - h(i, k + 1)) * tx
+    return top + (bottom - top) * tz
+
+
+def reef(x, z):
+    """How much the reef shows at (x, z): a 2 m blend across the line where the shelf leaves the
+    sand, the distance to it being the shelf's rise over the sand divided by the rise's slope (a
+    blend by height would be a hard edge at the steep face and a smear on the gentle beach). Both
+    come from the rise averaged over 2 m, or the shelf's 5 cm bumps, 2 m apart, would dot its
+    shoreward edge in a lattice, and the slope is never taken below the beach's own 6 cm a metre,
+    which the shelf's longer swells can cancel."""
+    rise = [[shelf(x + i, z + k) - sand(x + i, z + k) for i in (-1, 0, 1)] for k in (-1, 0, 1)]
+    mean = sum(map(sum, rise)) / 9.0
+    gx = sum(r[2] - r[0] for r in rise) / 6.0
+    gz = sum(rise[2][i] - rise[0][i] for i in range(3)) / 6.0
+    return smoothstep(-0.5, 1.5, mean / max(math.hypot(gx, gz), 0.06))
+
+
+def colour(x, z):
+    """The terrain's linear colour at (x, z), blended across each boundary: one material a quad
+    stepped every boundary along the grid, and under clear shallow water the reef's edge showed as
+    a row of dark teeth."""
+    under, ledge, y = sand(x, z), shelf(x, z), height(x, z)
+    c = mix(SAND, SEABED, smoothstep(-0.1, -0.9, y))              # wet sand into the seabed
+    c = mix(c, REEF, reef(x, z))                                  # the shelf rising from the sand
+    c = mix(c, GRASS, smoothstep(252.0, 262.0, x) * smoothstep(0.5, 1.5, y))  # dunes inland
+    rock = headlands(x, z)
+    if rock is not None:
+        face = smoothstep(0.0, 0.6, rock - max(under, ledge))
+        if face > 0.0:
+            dx = height(x + 0.5, z) - height(x - 0.5, z)
+            dz = height(x, z + 0.5) - height(x, z - 0.5)
+            gentle = 1.0 - smoothstep(0.35, 0.55, math.hypot(dx, dz))
+            c = mix(c, mix(ROCK, GRASS, smoothstep(2.5, 3.5, y) * gentle), face)
+    shade = 1.0 + 0.05 * grain(1.3 * x, 1.3 * z) + 0.03 * grain(4.1 * x + 17.0, 4.1 * z)
+    return tuple(v * shade for v in c)
+
+
+def srgb(v):
+    v = clamp(v, 0.0, 1.0)
+    return 12.92 * v if v <= 0.0031308 else 1.055 * v ** (1.0 / 2.4) - 0.055
+
+
+def colour_map(xs, zs):
+    """The colour map as an 8-bit sRGB PNG: texel (i, j) at the terrain's UV of its centre."""
+    rows = []
+    for j in range(MAP):
+        z = zs[0] + (j + 0.5) / MAP * (zs[-1] - zs[0])
+        row = bytearray()
+        for i in range(MAP):
+            x = xs[0] + (i + 0.5) / MAP * (xs[-1] - xs[0])
+            row.extend(round(255 * srgb(v)) for v in colour(x, z))
+        rows.append(bytes(row))
+    raw, prev = bytearray(), bytes(3 * MAP)
+    for row in rows:
+        raw.append(2)                                             # the "up" filter
+        raw.extend((a - b) & 0xFF for a, b in zip(row, prev))
+        prev = row
+
+    def chunk(kind, data):
+        return (struct.pack(">I", len(data)) + kind + data
+                + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF))
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", MAP, MAP, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(bytes(raw), 9)) + chunk(b"IEND", b""))
+
+
+def write_glb(positions, normals, uvs, triangles, image):
     blob = bytearray()
     views, accessors = [], []
 
@@ -179,27 +250,27 @@ def write_glb(positions, normals, uvs, groups):
     nor = add(struct.pack(f"<{len(flat)}f", *flat), 34962, len(normals), "VEC3", 5126)
     flat = [c for t in uvs for c in t]
     tex = add(struct.pack(f"<{len(flat)}f", *flat), 34962, len(uvs), "VEC2", 5126)
-    looks = {"Seabed": ([0.62, 0.56, 0.42, 1], 0.95), "Reef": ([0.26, 0.27, 0.22, 1], 0.9),
-             "Rock": ([0.40, 0.36, 0.31, 1], 0.9),
-             "Sand": ([0.86, 0.77, 0.58, 1], 0.95), "Dune": ([0.45, 0.52, 0.28, 1], 0.95)}
-    materials, primitives = [], []
     assert len(positions) < 65536
-    for name, tris in groups.items():
-        if not tris:
-            continue
-        flat = [v for t in tris for v in t]
-        ind = add(struct.pack(f"<{len(flat)}H", *flat), 34963, len(flat), "SCALAR", 5123)
-        color, rough = looks[name]
-        materials.append({"name": name, "pbrMetallicRoughness": {
-            "baseColorFactor": color, "metallicFactor": 0, "roughnessFactor": rough}})
-        primitives.append({"attributes": {"POSITION": pos, "NORMAL": nor, "TEXCOORD_0": tex},
-                           "indices": ind, "material": len(materials) - 1})
+    flat = [v for t in triangles for v in t]
+    ind = add(struct.pack(f"<{len(flat)}H", *flat), 34963, len(flat), "SCALAR", 5123)
+    while len(blob) % 4:
+        blob.append(0)
+    views.append({"buffer": 0, "byteOffset": len(blob), "byteLength": len(image)})
+    blob.extend(image)
     while len(blob) % 4:
         blob.append(0)
     gltf = {"asset": {"version": "2.0", "generator": "Amoris surf beach sample"},
             "buffers": [{"byteLength": len(blob)}],
-            "bufferViews": views, "accessors": accessors, "materials": materials,
-            "meshes": [{"name": "Beach", "primitives": primitives}],
+            "bufferViews": views, "accessors": accessors,
+            "images": [{"bufferView": len(views) - 1, "mimeType": "image/png"}],
+            "samplers": [{"magFilter": 9729, "minFilter": 9987, "wrapS": 33071, "wrapT": 33071}],
+            "textures": [{"source": 0, "sampler": 0}],
+            "materials": [{"name": "Terrain", "pbrMetallicRoughness": {
+                "baseColorTexture": {"index": 0}, "metallicFactor": 0,
+                "roughnessFactor": 0.93}}],
+            "meshes": [{"name": "Beach", "primitives": [{
+                "attributes": {"POSITION": pos, "NORMAL": nor, "TEXCOORD_0": tex},
+                "indices": ind, "material": 0}]}],
             "nodes": [{"name": "Beach", "mesh": 0}], "scenes": [{"nodes": [0]}], "scene": 0}
     text = json.dumps(gltf, separators=(",", ":")).encode("utf-8")
     text += b" " * (-len(text) % 4)
@@ -220,8 +291,8 @@ def quat_y(angle):
 
 def main():
     random.seed(5)
-    xs, zs, positions, normals, uvs, groups = terrain()
-    write_glb(positions, normals, uvs, groups)
+    xs, zs, positions, normals, uvs, triangles = terrain()
+    write_glb(positions, normals, uvs, triangles, colour_map(xs, zs))
     # The collider over the water and the beach, at the mesh's 1 m vertices.
     nx = len(xs)
     inner = [i for i, x in enumerate(xs) if -2.0 <= x <= 262.0]

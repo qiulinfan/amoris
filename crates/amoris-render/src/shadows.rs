@@ -6,7 +6,9 @@
 //! A caster is drawn into a cascade when its sphere is in the cascade's box and, with
 //! [`ShadowCull::On`] (the default), in the volume where it can change what the cascade's receivers
 //! read: the camera slice the cascade shades, extruded toward the sun ([`slice_planes`],
-//! docs/spec/occlusion.md 11).
+//! docs/spec/occlusion.md 11). A receiver under a water surface reads the cascades up the sun's
+//! refracted path, at most [`underwater_reach`] from itself, so with water both the box and that
+//! volume hold the slice swept along the reach.
 
 use glam::{Mat4, Vec2, Vec3, Vec4};
 
@@ -61,6 +63,36 @@ impl ShadowCull {
     }
 }
 
+/// How far up the refracted sun a point under water reads the cascades, metres of height
+/// (water_caustics_light.wgsl `SUN_REACH_M`).
+pub const UNDERWATER_REACH_M: f32 = 4.0;
+
+/// The farthest a receiver under a water surface reads the cascades from itself, for light
+/// travelling along `-to_sun`: up the sun refracted by flat water (Snell's law, air over water
+/// 1/1.333) for [`UNDERWATER_REACH_M`] of height, or toward the surface if that is nearer
+/// (water_caustics_light.wgsl `sun_path`). Zero with the sun overhead or down.
+pub fn underwater_reach(to_sun: Vec3) -> Vec3 {
+    let l = to_sun.normalize();
+    if l.y <= 0.0 {
+        return Vec3::ZERO;
+    }
+    let dir = Vec3::new(
+        0.75 * l.x,
+        (1.0 - 0.5625 * (1.0 - l.y * l.y)).sqrt(),
+        0.75 * l.z,
+    );
+    dir * (UNDERWATER_REACH_M / dir.y)
+}
+
+/// The points a cascade's receivers read around: the slice's corners and, with water, the corners
+/// moved by `reach` ([`underwater_reach`]), whose hull holds every point of the slice so moved.
+fn swept(corners: &[Vec3; 8], reach: Vec3) -> Vec<Vec3> {
+    if reach == Vec3::ZERO {
+        return corners.to_vec();
+    }
+    corners.iter().flat_map(|&p| [p, p + reach]).collect()
+}
+
 pub struct Cascades {
     pub view_proj: [Mat4; CASCADES],
     pub splits: [f32; CASCADES],
@@ -68,8 +100,15 @@ pub struct Cascades {
     pub texel: [f32; CASCADES],
 }
 
-/// Cascades over `[near, distance]` of the camera, for light travelling along `-to_sun`.
-pub fn cascades(cam: &CameraState, aspect: f32, to_sun: Vec3, distance: f32) -> Cascades {
+/// Cascades over `[near, distance]` of the camera, for light travelling along `-to_sun`, each box
+/// holding its slice swept along `reach` ([`underwater_reach`] with water, else zero).
+pub fn cascades(
+    cam: &CameraState,
+    aspect: f32,
+    to_sun: Vec3,
+    distance: f32,
+    reach: Vec3,
+) -> Cascades {
     let near = cam.near.max(0.05);
     let lambda = 0.8;
     let mut splits = [0.0f32; CASCADES];
@@ -85,6 +124,8 @@ pub fn cascades(cam: &CameraState, aspect: f32, to_sun: Vec3, distance: f32) -> 
     let right = cam.rotation * Vec3::X;
     let up = cam.rotation * Vec3::Y;
     let light_dir = -to_sun.normalize();
+    // Only the reach across the light widens a box; along it, the box is deep enough.
+    let across = reach.reject_from(light_dir);
     let light_up = if light_dir.y.abs() > 0.99 {
         Vec3::Z
     } else {
@@ -94,7 +135,7 @@ pub fn cascades(cam: &CameraState, aspect: f32, to_sun: Vec3, distance: f32) -> 
     let mut texels = [0.0f32; CASCADES];
     let mut prev = near;
     for (i, &far) in splits.iter().enumerate() {
-        // The slice's eight corners, then the sphere around them.
+        // The slice's eight corners (swept along the reach), then the sphere around them.
         let mut corners = [Vec3::ZERO; 8];
         for (k, d) in [prev, far].into_iter().enumerate() {
             let c = cam.position + fwd * d;
@@ -104,7 +145,8 @@ pub fn cascades(cam: &CameraState, aspect: f32, to_sun: Vec3, distance: f32) -> 
             corners[k * 4 + 2] = c + x + y;
             corners[k * 4 + 3] = c - x + y;
         }
-        let center = corners.iter().copied().sum::<Vec3>() / 8.0;
+        let corners = swept(&corners, across);
+        let center = corners.iter().copied().sum::<Vec3>() / corners.len() as f32;
         let radius = corners
             .iter()
             .map(|c| c.distance(center))
@@ -176,12 +218,20 @@ pub fn planes(vp: Mat4) -> [Vec4; 6] {
 /// hull can only widen it), then moved out by the margin `o + 4 texels` (4 > 2 sqrt(2): the rest
 /// covers float error in the culling shader) and `1e-5` of the scene's scale; the far plane at
 /// the corners' largest light depth gets the same margin. Unused slots are [`PASS`].
+///
+/// A receiver under water samples around its refracted path's point instead, `p` moved by up to
+/// `reach` ([`underwater_reach`]; zero without water) before the normal offset. The hull is then
+/// the corners' and the moved corners', the slice swept along the reach: a hexahedron's outline
+/// has at most six sides and the sweep adds two. Should float error split a side, the longest
+/// eight are kept, which only widens the volume. The moved corners are nearer the sun, so the far
+/// plane stays.
 pub fn slice_planes(
     cam: &CameraState,
     size: (u32, u32),
     jitter_ndc: Vec2,
     to_sun: Vec3,
     casc: &Cascades,
+    reach: Vec3,
 ) -> [[Vec4; SLICE_PLANES]; CASCADES] {
     let light = -to_sun.normalize();
     let (a, b) = light.any_orthonormal_pair();
@@ -218,16 +268,26 @@ pub fn slice_planes(
         prev = far;
         let scale = cam.position.abs().max_element() + far + 1.0;
         let margin = 1.5 * far / 1024.0 + 4.0 * casc.texel[c] + 1e-5 * scale;
-        let flat = corners.map(|p| Vec2::new(p.dot(a), p.dot(b)));
+        let corners = swept(&corners, reach);
+        let flat: Vec<Vec2> = corners
+            .iter()
+            .map(|p| Vec2::new(p.dot(a), p.dot(b)))
+            .collect();
         let hull = convex_hull(&flat);
         let mut n = 0;
         if hull.len() >= 3 {
-            for (i, &from) in hull.iter().enumerate() {
-                let e = hull[(i + 1) % hull.len()] - from;
-                let len = e.length();
-                if len <= 1e-6 * scale {
-                    continue;
-                }
+            let mut sides: Vec<(Vec2, f32)> = (0..hull.len())
+                .map(|i| {
+                    let e = hull[(i + 1) % hull.len()] - hull[i];
+                    (e, e.length())
+                })
+                .filter(|&(_, len)| len > 1e-6 * scale)
+                .collect();
+            if sides.len() > SLICE_PLANES - 1 {
+                sides.sort_by(|x, y| y.1.total_cmp(&x.1));
+                sides.truncate(SLICE_PLANES - 1);
+            }
+            for (e, len) in sides {
                 // Counter-clockwise: the inside is to the left of each edge.
                 let inward = Vec2::new(-e.y, e.x) / len;
                 let normal = a * inward.x + b * inward.y;
@@ -355,7 +415,9 @@ mod tests {
     /// across the light (`2 sqrt(2)` texels). Half the receivers are anywhere, with random normals,
     /// reaches and spheres; half are the worst case for one of the planes: a corner of the slice
     /// (its pixel centre at the jittered view's edge), the normal and the reach pointing straight
-    /// out of that plane, the sphere beyond it touching the point read.
+    /// out of that plane, the sphere beyond it touching the point read. In a third of the cases
+    /// the receivers are under water: the point read first moves up the refracted sun, by up to
+    /// [`underwater_reach`] (the whole reach in the worst case).
     #[test]
     fn every_caster_a_receiver_can_read_is_kept() {
         let mut rng = Rng(0x9e37_79b9);
@@ -363,8 +425,13 @@ mod tests {
         for case in 0..400 {
             let (cam, size, jitter, to_sun) = setup(&mut rng, case);
             let aspect = size.0 as f32 / size.1 as f32;
-            let casc = cascades(&cam, aspect, to_sun, 150.0);
-            let planes = slice_planes(&cam, size, jitter, to_sun, &casc);
+            let reach = if case % 3 == 0 {
+                underwater_reach(to_sun)
+            } else {
+                Vec3::ZERO
+            };
+            let casc = cascades(&cam, aspect, to_sun, 150.0, reach);
+            let planes = slice_planes(&cam, size, jitter, to_sun, &casc, reach);
             let light = -to_sun.normalize();
             let (fwd, right, up) = (
                 cam.forward(),
@@ -405,7 +472,7 @@ mod tests {
                         rng.direction()
                     };
                     let normal = if worst { out } else { rng.direction() };
-                    let q = p + normal * (1.5 * far / 1024.0);
+                    let q = p + reach * pick(&mut rng, 0.0, 1.0) + normal * (1.5 * far / 1024.0);
                     let across = out.reject_from(light).normalize_or_zero();
                     let reach = 2.0f32.sqrt() * 2.0 * casc.texel[c];
                     let read = q + across * if worst { reach } else { rng.range(0.0, reach) };
@@ -425,6 +492,59 @@ mod tests {
         assert_eq!(checked, 400 * 4 * 200);
     }
 
+    /// With water, each cascade's box holds its slice swept up the refracted sun: every point of
+    /// the slice moved by up to [`underwater_reach`], which a receiver under water reads around,
+    /// lies in the box (to the texel its centre snaps by), the sweep's far end at the slice's
+    /// corners included. The slice is the perspective frustum's, which [`cascades`] fits.
+    #[test]
+    fn a_cascade_box_holds_its_slice_swept_up_the_refracted_sun() {
+        let mut rng = Rng(0x2545_f491);
+        for case in 0..300 {
+            let (cam, size, _, to_sun) = setup(&mut rng, case);
+            let reach = underwater_reach(to_sun);
+            if reach == Vec3::ZERO {
+                continue;
+            }
+            let aspect = size.0 as f32 / size.1 as f32;
+            let casc = cascades(&cam, aspect, to_sun, 150.0, reach);
+            let (fwd, right, up) = (
+                cam.forward(),
+                cam.rotation * Vec3::X,
+                cam.rotation * Vec3::Y,
+            );
+            let ty = (cam.fov_y * 0.5).tan();
+            let scale = cam.position.abs().max_element() + 151.0;
+            let mut prev = cam.near.max(0.05);
+            for (c, &far) in casc.splits.iter().enumerate() {
+                let boxp = planes(casc.view_proj[c]);
+                for k in 0..100 {
+                    let corner = k % 2 == 0;
+                    let pick = |rng: &mut Rng, lo: f32, hi: f32| {
+                        if !corner {
+                            rng.range(lo, hi)
+                        } else if rng.unit() < 0.5 {
+                            lo
+                        } else {
+                            hi
+                        }
+                    };
+                    let d = pick(&mut rng, prev, far);
+                    let p = cam.position
+                        + fwd * d
+                        + right * (pick(&mut rng, -1.0, 1.0) * ty * aspect * d)
+                        + up * (pick(&mut rng, -1.0, 1.0) * ty * d);
+                    let read = p + reach * if corner { 1.0 } else { rng.unit() };
+                    assert!(
+                        keeps(&boxp, read, 2.0 * casc.texel[c] + 1e-5 * scale),
+                        "case {case}, cascade {c}: {read} (receiver {p}, reach {reach}) is \
+                         outside the box"
+                    );
+                }
+                prev = far;
+            }
+        }
+    }
+
     /// The slice culls casters the cascade's box keeps: over spheres spread through each box, the
     /// share culled by the slice planes, at a head-height camera looking along a field (the LOD
     /// field's view, docs/bench/lod.md).
@@ -433,8 +553,8 @@ mod tests {
         let eye = Vec3::new(2.0, 2.2, 1.0);
         let cam = CameraState::look_at(eye, eye + Vec3::new(1.0, -0.15, 1.0));
         let to_sun = -Vec3::new(-0.5, -0.8, -0.3).normalize();
-        let casc = cascades(&cam, 16.0 / 9.0, to_sun, 150.0);
-        let planes = slice_planes(&cam, (1280, 720), Vec2::ZERO, to_sun, &casc);
+        let casc = cascades(&cam, 16.0 / 9.0, to_sun, 150.0, Vec3::ZERO);
+        let planes = slice_planes(&cam, (1280, 720), Vec2::ZERO, to_sun, &casc, Vec3::ZERO);
         let mut shares = [0.0f32; CASCADES];
         for c in 0..CASCADES {
             let boxp = super::planes(casc.view_proj[c]);

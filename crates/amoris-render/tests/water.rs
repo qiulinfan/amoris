@@ -387,6 +387,82 @@ fn refraction_of_a_surface_piercing_box_stays_on_its_snell_ray() {
     assert_eq!(false_pulls, 0, "displaced light must hit the actual box");
 }
 
+/// A plank floats 0.25 to 0.35 m over still water 1 m deep, the sun 35 degrees up along +x. Under
+/// water the sun comes in refracted (water.md 53), so the plank's shadow on the floor falls where
+/// the light's path leaves the water, well short of where the sun in air would put it; without
+/// the water it falls there. A level floor is as bright either way.
+#[test]
+fn a_shadow_under_water_falls_along_the_refracted_sun() {
+    let (_case, gpu) = gpu().expect("the refracted sun requires a GPU");
+    let elevation = 35f32.to_radians();
+    let eye = Vec3::new(7.5, 9.0, 8.2);
+    let target = Vec3::new(7.5, 0.0, 8.0);
+    let camera = CameraState::look_at(eye, target);
+    let view_proj = camera.proj(W as f32 / H as f32) * camera.view();
+    // The floor's light at x along the plank's middle, z = 8.
+    let shade = |depth: f32| {
+        let mut r = renderer(&gpu, eye, target);
+        r.set_water_foam(false);
+        r.set_water_optics(false, false, false);
+        let mut frame = optical_scene(depth, None);
+        let floor = frame.instances[0].look.as_mut().unwrap();
+        floor.color = [0.8, 0.8, 0.8, 1.0];
+        floor.emissive = [0.0; 3];
+        let mut plank = frame.instances[0].clone();
+        plank.id = 102;
+        plank.pose = Some(Pose {
+            position: [6.0, 1.3, 8.0],
+            scale: [0.4, 0.1, 6.0],
+            ..Pose::default()
+        });
+        let look = plank.look.as_mut().unwrap();
+        look.mesh = "cube".into();
+        look.cast_shadows = true;
+        frame.instances.push(plank);
+        frame.lights = Some(vec![LightView {
+            id: 0,
+            kind: LightKindView::Directional,
+            position: [0.0; 3],
+            direction: [elevation.cos(), -elevation.sin(), 0.0],
+            color: [1.0; 3],
+            intensity: 6.0,
+            range: 0.0,
+            inner_deg: 0.0,
+            outer_deg: 0.0,
+            shadows: true,
+        }]);
+        r.apply(frame, 0.0);
+        for _ in 0..4 {
+            let _ = r.capture_hdr(0.0);
+        }
+        let hdr = r.capture_hdr(0.0).2;
+        move |x: f32| {
+            let p = view_proj.project_point3(Vec3::new(x, 0.0, 8.0));
+            let i = ((p.x * 0.5 + 0.5) * W as f32) as u32;
+            let j = ((0.5 - p.y * 0.5) * H as f32) as u32;
+            let at = ((i + j * W) * 4) as usize;
+            hdr[at] + hdr[at + 1] + hdr[at + 2]
+        }
+    };
+    let (dry, wet) = (shade(0.0), shade(1.0));
+    // The shadow's middle: the plank's middle, 1.3 m up, along the sun in air, or 0.3 m along it
+    // to the surface and then 1 m down the refracted ray.
+    let in_air = 6.0 + 1.3 / elevation.tan();
+    let refracted = 6.0 + 0.3 / elevation.tan() + (0.75 * elevation.cos()).asin().tan();
+    let open = 4.5;
+    eprintln!(
+        "dry: open {:.3}, in-air shadow {:.3}, refracted {:.3}; wet: {:.3}, {:.3}, {:.3}",
+        dry(open),
+        dry(in_air),
+        dry(refracted),
+        wet(open),
+        wet(in_air),
+        wet(refracted)
+    );
+    assert!(dry(in_air) < 0.2 * dry(open) && dry(refracted) > 0.8 * dry(open));
+    assert!(wet(refracted) < 0.2 * wet(open) && wet(in_air) > 0.8 * wet(open));
+}
+
 #[test]
 fn air_side_reflection_does_not_sample_the_submerged_bed() {
     let (_case, gpu) = gpu().expect("reflection medium-side case requires a GPU");

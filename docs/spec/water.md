@@ -379,12 +379,23 @@ source from compression, a fast flow over a slope, a falling sheet or flow into 
 Uniform fast flow alone is not a source. Dry columns carry no foam. The source is an appearance
 model, not aerated-water volume accounting or a substitute for falling particles.
 
-Two scalar buffers hold transport history; the same kernel writes an R32Float density texture
-for per-pixel surface shading. The fragment stage samples it manually and bilinearly, requiring
-neither float32 filtering nor a ninth storage-buffer binding beyond WebGPU's baseline. Foam
-roughens the reflection and mixes a filtered, flow-moving grain into its diffuse appearance.
-Small surface wavelets follow the velocity too, blending two repeating flow phases so their
-coordinate reset does not jump.
+Two scalar buffers hold transport history; the same kernel writes an R32Float density texture for
+per-pixel surface shading. The fragment stage samples it manually and bilinearly, requiring neither
+float32 filtering nor a ninth storage-buffer binding beyond WebGPU's baseline. Foam roughens the
+reflection and whitens the surface by its coverage (`foam_cover` in forward.wgsl, Pioneer
+2026-10-22): the density sets a threshold on a whitewater texture, so a little foam shows as lace
+and patches on the texture's peaks and much fills in its troughs until the white water is whole, the
+coverage mapping real-time ocean foam uses. The texture is four octaves of value noise, each turned
+by 37 degrees and shifted so no lattice lines up; an octave finer than six pixel footprints gives
+way to its mean, so foam does not alias into flicker at a distance. The flow map's phases carry it
+with the water. It was once also turned and stretched by the local flow, which turned the whole
+pattern about the world's origin: 200 m out, a flow turning by a fifth of a degree swept the texture
+through a cycle, and the foam drew the flow's contour lines, wood grain behind a breaking crest and
+nested zigzags around a floating board. Scaling a single octave's grain by the density had left
+breaking white water a camouflage of grey blocks a third of a metre wide. Small surface wavelets
+follow the velocity too, blending two repeating flow phases so their coordinate reset does not jump;
+the foam texture blends its two phases with their variance kept, so its pattern does not fade and
+return as they swap.
 
 The clock is simulated time, differenced in f64 on the host. Repeated draws of a paused boundary
 do not advect or age foam; a long undrawn interval still consumes its elapsed lifetime. A reset,
@@ -2743,6 +2754,17 @@ the head's rate; at most 14 m/s, none under 1.2 m/s or 3 mm of head), and drops 
 to 0.9 of it and away from the footprint's middle at 0.15 to 0.45 of it, their number growing with
 the volume pushed aside and the speed (at most 48 a column a frame).
 
+A replica re-seeded from a checkpoint, its occupancy reset, gathers its bodies' head again from
+nothing on its first step. That is no entry, so the occupancy drops that first gathering's rise
+(`WaterOccupancy`'s `fresh`). A viewport whose feed skips ticks re-seeds at most compactions: the
+browser's presenter rebuilds the world from at most two snapshots in flight, so a compaction mostly
+reaches its replica with steps already appended, and the replica can keep its live buffer only for
+one with none. Counted as an entry, every re-seed threw a crown around a board merely floating, some
+seven drops a tick from the start, and their landings piled foam around it: the browser's surf was
+white around the player where the native window's was clear. `water_replica`'s
+`a_reseeded_replica_takes_its_bodies_head_as_a_baseline` requires no rise after a re-seed and the
+added head after a body sinks.
+
 Spray drops are lit in the forward pass's units, the sun's irradiance over pi: the shader divided
 the sun by 10,000 as if it were in lux, which left every drop grey under the samples' suns.
 
@@ -2780,6 +2802,23 @@ Photon splatting for caustics follows C. Wyman and S. Davis, "Interactive Image-
 Approximating Caustics" (I3D 2006), and M. Shah, J. Konttinen and S. Pattanaik, "Caustics Mapping:
 An Image-Space Technique for Real-Time Caustics" (IEEE TVCG 13(2), 2007), here in the height field's
 own plane instead of the screen's.
+
+### 53.1 The sun under the surface (2026-10-22)
+
+Flat water bends the sun toward the vertical (Snell's law, air over water 1/1.333): the surf beach's
+sun, 34 degrees up in air, reaches its bed 51.5 degrees up. The forward pass lights a point under
+the map's surface from that direction (water_caustics_light.wgsl `sun_path`), scaled by the beam's
+widening, the cosine of the sun's angle from the vertical in air over that in water, so a level bed
+receives what it did in air and only slopes and shadows change. The shadow cascades are asked where
+the refracted path leaves the water, or 4 m of height up it for a deeper point, each cascade's box
+and caster volume holding its slice swept that far ([occlusion](occlusion.md) 11): what stands over
+the water shadows the bed along the light's real path (a plank 0.3 m over 1 m of water throws its
+shadow 0.65 m nearer itself than the sun in air would), and a body wholly under the water casts no
+shadow. With the sun in air the surf beach's reef face, its back to the low sun, shadowed itself and
+the sand at its foot to a hard edge, which the screen-space refraction through the ripples tore into
+dark blotches; under the refracted sun the sand is lit and the face only dims toward its foot, where
+it is steeper than the light. `water`'s `a_shadow_under_water_falls_along_the_refracted_sun` pins
+the plank's shadow at the refracted position, and at the position in air without the water.
 
 ## 54. The frontier scenes (Pioneer, 2026-10-22)
 

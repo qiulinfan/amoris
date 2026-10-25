@@ -263,8 +263,17 @@ pub struct VoxelUpdate {
   - mouse motion while captured updates the look, sent as `set {yaw, pitch}` at most once a frame;
     WASD, Shift sent as `set {forward, strafe, run}` when they change; Space, the left and right
     buttons and 1 to 9 as `pulse {jump}`, `pulse {primary}`, `pulse {secondary}`, `set {slot}`;
-  - the camera is the walker's (`Walker` + `Camera` entity); the window applies its latest local
-    look to the camera's rotation before the tick catches up, so looking never waits on a tick;
+  - the camera is the walker's (`Walker` + `Camera` entity), drawn at the same time between its
+    last two ticks as every pose it sees (`Scene::camera_at`); drawn at the last tick's pose it ran
+    up to a tick ahead of the world, and on a moving board or float the world shook in front of it
+    at the tick rate. The window applies its latest local look to the camera's rotation
+    (`Renderer::set_look_override`) before the tick catches up, so looking never waits on a tick;
+    the WebGPU viewport's first-person seat does the same. The look starts from the walker's
+    camera once a tick has placed it: at tick 0 the camera still has its body's pose from the
+    scene file, and a look taken there was sent as the walker's own, turning a surfer its scene
+    sets facing the beach due south;
+  - the window waits for the display (vsync), so frames pace evenly and never tear; `--bench` and
+    `--no-vsync` draw as fast as they can;
   - the crosshair stays; the targeted cell's outline is drawn by the renderer from its own copy of
     the volume (a DDA from the camera, `solid` blocks, 5 m), presenter-only.
 - On a project without the catalog, `--walk` is the static walk of today.
