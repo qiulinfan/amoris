@@ -38,9 +38,16 @@ pub fn source(name: &str) -> String {
         "fluid_surface" => include_str!("../shaders/fluid_surface.wgsl"),
         "water_compact" => include_str!("../shaders/water_compact.wgsl"),
         "water_resolve" => include_str!("../shaders/water_resolve.wgsl"),
-        "water_medium" | "water_mesh" | "water_surface" => {
+        "water_medium" => {
+            return format!(
+                "{COMMON}\n{}\n{}\n{}",
+                include_str!("../shaders/water_field.wgsl"),
+                include_str!("../shaders/water_caustics_light.wgsl"),
+                include_str!("../shaders/water_medium.wgsl")
+            );
+        }
+        "water_mesh" | "water_surface" => {
             let body = match name {
-                "water_medium" => include_str!("../shaders/water_medium.wgsl"),
                 "water_mesh" => include_str!("../shaders/water_mesh.wgsl"),
                 _ => include_str!("../shaders/water_surface.wgsl"),
             };

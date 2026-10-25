@@ -32,7 +32,7 @@ CPU 保持跨目标确定性；GPU 使用 WebGPU 基线支持的 f32，只在相
 **Pioneer 2026-10-22（`explore/water`、`explore/water-nh`）。** 所有者要求在 Amoris Pioneer 上把水物
 理继续做到前沿水准，并以三个游戏场景验收：河流汇入瀑布、泳池派对、强浪海滩冲浪。为此 Pioneer 越过上
 文 2026-10-21 的交付范围，在 `gpu_resident` 区域上加入以下能力，契约见 [water.md](spec/water.md)
-46–57，测量见 [liquids.md](bench/liquids.md) 7、8：
+46–58，测量见 [liquids.md](bench/liquids.md) 7–9：
 
 - 物体排水的竖直双向耦合：浮体点和游泳者把水面下的体积作为压力水头加到水柱上，水量严格守恒（思路来自
   M. Müller, GDC 2008）。浮力按步末位置线性隐式求值（D. Baraff 与 A. Witkin, SIGGRAPH 1998），阻力隐
@@ -65,6 +65,12 @@ CPU 保持跨目标确定性；GPU 使用 WebGPU 基线支持的 f32，只在相
   波，四个水深层按水深混合，随流场平流，墙与干地反射、岸边吸收，场自身能承载的长波交还给场；浮体点、
   游泳者的身体、划水与趴板划水的手按相对水体的运动激发涟漪，焦散也透过涟漪折射。涟漪不进世界、快照、
   世界哈希与回放；没有搅动点的场景画面逐像素不变，`AMORIS_RIPPLES=off` 可关闭。
+- 水线与水下阳光（2026-10-22，只做表现）：透视相机的近平面当作镜头的端口，每个像素按它在近平面上的点
+  相对带涟漪的水面判断在水上还是水下，镜头贴着水面时沿水线分开，并画出一条弯月暗线。水下沿视线按单次
+  散射积分折射后的阳光：相函数取 L. G. Henyey 与 J. L. Greenstein（1941），聚焦取自焦散图并沿折射阳
+  光投到水底，阴影在光路出水处查级联阴影，16 个分层由 2×2 像素块交错分担（A. Keller 与 W. Heidrich,
+  2001）。光柱即水面下被照亮的光束体（T. Nishita 与 E. Nakamae, SIGGRAPH 1994；K. Iwasaki、Y.
+  Dobashi 与 T. Nishita, 2002）。水面以上远离水面的画面不变。
 
 验收：`amoris-app` 的 `gpu_frontier_scenes` 用玩家的第一人称动作玩通
 `samples/pool-party`、`samples/river-falls` 和 `samples/surf-beach`；三个样例导出的网页包在 Chrome

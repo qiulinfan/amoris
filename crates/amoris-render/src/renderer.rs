@@ -3487,6 +3487,8 @@ impl Renderer {
                 &self.targets,
                 &self.view_buf.buf,
                 &self.sky.sh,
+                (&self.shadow_array, &self.shadow_sampler),
+                &self.caustics,
             );
         }
         if taa_on {

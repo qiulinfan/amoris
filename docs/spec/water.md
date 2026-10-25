@@ -3126,3 +3126,113 @@ Limits:
 - The hands are drawn strokes, and the walker is a vertical body.
 - Floating bodies do not reflect ripples; only walls and dry ground do.
 - Foam and spray take nothing from the ripples.
+
+## 58. The waterline and the sun under water (Pioneer, 2026-10-22)
+
+Section 21's medium classified a perspective camera by its eye alone, and every pixel's water began
+at the eye. A camera at the surface, a swimmer's or a surfer's, split along the horizon whatever the
+waves did: the surface between the eye and the near plane was drawn as an interface seen at grazing
+incidence, so the rows under the water showed the sky's reflection instead of the water behind it.
+Under the surface the sun lit the water as an even glow, 0.012 of its irradiance on level water,
+with no shafts.
+
+### 58.1 The port
+
+A perspective camera's near plane is its port, as a dome port in the water: rays pass it unbent.
+
+- Each pixel's water starts at its point on the near plane. That point is in the water when it lies
+  under the drawn surface (the field's triangles, or a ledge's caps) raised by the ripples' rise
+  there (57). The transport (21) then runs from the port, the surface along its ray raised by that
+  same rise; ripples are millimetres to centimetres high, so the rise at the port stands for the
+  ray's.
+- The raster leaves out a smooth region's surface wherever it lies between the eye and the near
+  plane (`water_behind_port`), so no interface is drawn on the port. A camera at the surface
+  therefore splits where the surface crosses its port: under that line the water from the port on,
+  over it the air.
+- The classification runs the medium for a perspective camera whose eye is in the water, or any
+  corner of whose near plane lies within 0.1 m of the surface, more than the ripples' rise and the
+  surface's curvature across a near plane.
+- Orthographic views keep their camera-plane origin. Blocky regions, the surround strips and the
+  ledges' films keep the earlier near-plane clamp: the medium has no volume for the strips, and a
+  film is a sheet.
+- **The meniscus.** Where the surface crosses the port, the film of water on the lens turns light
+  away from it. Within max(1.5, 0.4% of the image's height) pixels of the line, measured as the
+  port point's height over the rippled surface divided by its change from pixel to pixel, the color
+  darkens by up to 85%, with a faint edge of the sky's light on the water side. The meniscus does
+  not distort what lies behind it.
+
+### 58.2 The sun's shafts
+
+The sun scatters toward the eye along each pixel's path in the water, in single scattering:
+
+```text
+L = sigma_s * E_sun * beam * (1 - F) * p(cos theta)
+      * sum over samples of focus * shadow * exp(-sigma * (down + back)) * dt
+p(c) = (1 - g^2) / (4 pi (1 + g^2 - 2 g c)^(3/2)),   g = 0.8
+```
+
+- The path runs from the port to the first of: the opaque scene, the field's highest surface
+  (looking up) or lowest bed (looking down), four extinction lengths, or 64 m. It is cut into 16
+  strata, jittered per pixel by an integer hash; each pixel of a 2 x 2 block takes four of them,
+  every fourth, and the block's pixels whose paths reach about as far (within a tenth) pool their
+  sums: interleaved sampling (A. Keller and W. Heidrich, "Interleaved sampling", Eurographics
+  Workshop on Rendering 2001). A sample counts where it lies in the water; the surface and the
+  water's depth over it are the caustics map's (53), or off the map the field's.
+- Each sample receives the sun as the bed does (53, 53.1):
+  - refracted by flat water, its beam widened by `l.y / up.y`, less its Fresnel reflection;
+  - absorbed by the medium's extinction along the refracted path down (`down`);
+  - focused by the waves: the caustics map's focus at the point where that path meets the bed, with
+    the share of its contrast the sample's depth gives, as the bed's own lighting grows it. The
+    focus therefore runs along the refracted sun, and the waves' lenses draw shafts that sway with
+    them;
+  - shadowed where its path leaves the water (or 4 m up it), one comparison tap of the cascades.
+- The phase function is L. G. Henyey and J. L. Greenstein's ("Diffuse radiation in the galaxy",
+  Astrophysical Journal 93, 1941) with g = 0.8, the forward peak of natural waters: looking toward
+  the sun the water glows, and the shafts radiate from it.
+- `E_sun` is the sun's illuminance (`sun_dir.w`) and `sigma_s` the look's scattering. The phase
+  function is normalized over the sphere's 4 pi steradians, as the sky's isotropic term already was
+  (its 0.08). The even glow before the shafts was a sixth of single scattering.
+- The haze (`look.fog`) keeps its own authored glow and does not scatter the sun.
+
+Shafts as illuminated volumes under a moving surface follow T. Nishita and E. Nakamae, "Method of
+displaying optical effects within water using accumulation buffer" (SIGGRAPH 1994), and K. Iwasaki,
+Y. Dobashi and T. Nishita, "An efficient method for rendering underwater optical effects using
+graphics hardware" (Computer Graphics Forum 21(4), 2002). Here they are integrated per pixel by ray
+marching against the shadow map, as in B. Tóth and T. Umenhoffer, "Real-time volumetric lighting in
+participating media" (Eurographics 2009 short papers), with the caustics map standing for the
+surface's focusing.
+
+### 58.3 Checks, cost and limits
+
+`cargo test -p amoris-render --test water`, on Metal and on Vulkan through MoltenVK:
+
+- `a_camera_at_the_surface_splits_along_the_waterline_on_its_port`: looking level over flat water,
+  with the eye 1.2 cm over the surface, at it and 1.2 cm under it, the first row in the water is
+  109, 91 and 72, against 109, 90 and 71 where the port's points cross the surface; the boundary
+  row is the meniscus's. Before the port every row split at the horizon, row 90.
+- `the_sun_scatters_toward_an_eye_under_water_along_its_refracted_path`: 3 m under flat water,
+  looking 15 degrees off the refracted sun, the scattered sun is 1.229 against single scattering's
+  1.246 integrated in the test (-1.3%); a plank 0.6 m over the water, across the sun's paths to the
+  view, leaves 0.001.
+- Against the build before (fcbd821b), `water_lab`'s views over the water (close, far, grazing) are
+  the same pixel for pixel for the pool and the rapids. The fall's differ about as much as two runs
+  of the old build differ from each other (its falling sheet's spray), and the views under the
+  water change as intended.
+- The other water tests are unchanged: their scenes scatter nothing, or have no sun.
+- In Chrome 155 (WebGPU on the M5) the pool party's and the surf beach's exports load and play
+  (`web_play_check`), `water_pool_check.mjs` passes its twelve checks, and the viewport page on a
+  live pool-party host draws the waterline and the light under water without errors.
+
+The cost is in [liquids.md](../bench/liquids.md) 9.
+
+Limits:
+
+- The shafts are drawn for paths in the water seen from under the surface. Looking down into the
+  water from above, the surface's own transmitted color (18) draws no shafts.
+- The focus comes from the caustics map, which covers the region nearest the camera; other regions'
+  shafts carry absorption and shadows but no focus. The focus grows linearly with depth, as the
+  bed's does (53), not by the surface's actual focal depths.
+- Single scattering only, sixteen samples a block of four pixels. In the samples' clear water (the
+  pool scatters 0.006 to 0.03 per metre) the shafts are faint beside the forward glow; they stand
+  out in water that scatters a few tenths per metre, as they do in real water.
+- No particulates, no wet lens after emerging, and the meniscus does not refract.

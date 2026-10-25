@@ -32,8 +32,19 @@ struct Images {
     stride: u32,
     regions: BTreeMap<u64, Region>,
 }
+/// What the waterline and the sun's shafts read besides the field (water.md 58): the sun's shadow
+/// cascades, the caustics map and its placement, and the ripples.
+pub(crate) struct MediumLight<'a> {
+    pub shadows: &'a wgpu::TextureView,
+    pub shadow_sampler: &'a wgpu::Sampler,
+    pub caustics: &'a wgpu::TextureView,
+    pub caustics_params: &'a wgpu::Buffer,
+    pub ripples: &'a wgpu::TextureView,
+    pub ripple_sampler: &'a wgpu::Sampler,
+}
 pub(crate) struct WaterMedium {
     field_layout: wgpu::BindGroupLayout,
+    light_layout: wgpu::BindGroupLayout,
     classify_layout: wgpu::BindGroupLayout,
     integrate_layout: Option<wgpu::BindGroupLayout>,
     copy_layout: wgpu::BindGroupLayout,
@@ -99,10 +110,11 @@ fn pipeline(
     module: &wgpu::ShaderModule,
     entry: &str,
     layout0: &wgpu::BindGroupLayout,
+    light: Option<&wgpu::BindGroupLayout>,
     fields: Option<&wgpu::BindGroupLayout>,
 ) -> wgpu::ComputePipeline {
     let groups = if let Some(fields) = fields {
-        vec![Some(layout0), None, None, Some(fields)]
+        vec![Some(layout0), light, None, Some(fields)]
     } else {
         vec![Some(layout0)]
     };
@@ -154,6 +166,40 @@ impl WaterMedium {
                 buffer(7, uniform, true),
             ],
         );
+        let compute = wgpu::ShaderStages::COMPUTE;
+        let sampled = |binding: u32, sample_type, view_dimension| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: compute,
+            ty: wgpu::BindingType::Texture {
+                sample_type,
+                view_dimension,
+                multisampled: false,
+            },
+            count: None,
+        };
+        let sampler = |binding: u32, ty| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: compute,
+            ty: wgpu::BindingType::Sampler(ty),
+            count: None,
+        };
+        let filterable = wgpu::TextureSampleType::Float { filterable: true };
+        let light_layout = layout(
+            device,
+            "water medium light",
+            &[
+                sampled(
+                    0,
+                    wgpu::TextureSampleType::Depth,
+                    wgpu::TextureViewDimension::D2Array,
+                ),
+                sampler(1, wgpu::SamplerBindingType::Comparison),
+                sampled(12, filterable, wgpu::TextureViewDimension::D2),
+                sampler(13, wgpu::SamplerBindingType::Filtering),
+                sampled(15, filterable, wgpu::TextureViewDimension::D2),
+                buffer(16, uniform, false),
+            ],
+        );
         let module = shaders::depth_module(device, "water_medium", 1);
         let classify = pipeline(
             device,
@@ -161,6 +207,7 @@ impl WaterMedium {
             &module,
             "classify",
             &classify_layout,
+            None,
             Some(&field_layout),
         );
         let copy_layout = layout(
@@ -184,9 +231,11 @@ impl WaterMedium {
             "main",
             &copy_layout,
             None,
+            None,
         );
         Self {
             field_layout,
+            light_layout,
             classify_layout,
             integrate_layout: None,
             copy_layout,
@@ -246,6 +295,7 @@ impl WaterMedium {
                     &module,
                     "integrate",
                     &group,
+                    Some(&self.light_layout),
                     Some(&self.field_layout),
                 ),
             ));
@@ -326,6 +376,7 @@ impl WaterMedium {
         targets: &Targets,
         view: &wgpu::Buffer,
         sh: &wgpu::Buffer,
+        light: &MediumLight<'_>,
         fields: &[(
             u64,
             &wgpu::Buffer,
@@ -338,6 +389,18 @@ impl WaterMedium {
             return;
         }
         self.prepare(device, targets, view, sh);
+        let lighting = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("water medium light"),
+            layout: &self.light_layout,
+            entries: &[
+                entry(0, wgpu::BindingResource::TextureView(light.shadows)),
+                entry(1, wgpu::BindingResource::Sampler(light.shadow_sampler)),
+                entry(12, wgpu::BindingResource::TextureView(light.ripples)),
+                entry(13, wgpu::BindingResource::Sampler(light.ripple_sampler)),
+                entry(15, wgpu::BindingResource::TextureView(light.caustics)),
+                entry(16, light.caustics_params.as_entire_binding()),
+            ],
+        });
         let images = self.images.as_mut().expect("medium targets prepared");
         images
             .regions
@@ -439,6 +502,7 @@ impl WaterMedium {
                     });
                     pass.set_pipeline(&self.integrate.as_ref().unwrap().1);
                     pass.set_bind_group(0, &region.integrate, &[offset]);
+                    pass.set_bind_group(1, &lighting, &[]);
                     pass.set_bind_group(3, &region.fields, &[]);
                     pass.dispatch_workgroups_indirect(&region.args, 0);
                 }

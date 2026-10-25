@@ -1213,6 +1213,7 @@ fn fs_water_depth(in: ShallowOut) -> @builtin(frag_depth) f32 {
     if(in.field_surface==1u){let a=shallow_attributes(in.world.xz);depth=a.normal_depth.w;normal=a.normal_depth.xyz;}
     if (depth < 0.002 || -(view.view*vec4f(in.world,1.0)).z <= WATER_VIEW_EPSILON ||
         abs(dot(normalize(normal),view.camera_pos.xyz-in.world)) <= WATER_VIEW_EPSILON) { discard; }
+    if(in.field_surface==1u&&water_behind_port(in.world)){discard;}
     if(in.field_surface==2u){return ledge_depth(in.world);}
     return shallow_depth(in.world);
 }
@@ -1442,6 +1443,7 @@ fn fs_shallow(in: ShallowOut) -> ShallowFragment {
         abs(dot(normalize(base_normal),view.camera_pos.xyz-in.world)) <= WATER_VIEW_EPSILON) {
         discard;
     }
+    if(in.field_surface==1u&&water_behind_port(in.world)){discard;}
     if(in.field_surface==1u){footprint=shallow_material_footprint(in.world,base_normal,in.clip.xy);}
     let v_world = view.camera_pos.xyz - in.world;
     let v = select(vec3f(view.view[0].z,view.view[1].z,view.view[2].z),

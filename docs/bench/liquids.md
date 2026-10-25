@@ -379,3 +379,25 @@ draw at 16.7 ms a frame with no WebGPU validation error or script exception;
 swimmer stirs the water too. The ripple pass's time in Chrome was not measured apart.
 
 Not measured: R1 with the RTX 5060 and the 780M, Direct3D 12, and the browser's ripple pass alone.
+
+## 9. The waterline and the sun under water (Pioneer, 2026-10-22)
+
+The port and the shafts of [water.md](../spec/water.md) 58 on the M5 (10 GPU cores), macOS, Metal,
+release builds, 2026-10-22. The machine was not checked for other load. Raw traces and captures
+stay in ignored `out/`.
+
+`cargo run --release -p amoris-render --example water_lab -- --case pool --view under|line
+--frames 300 --trace --out DIR` with this build and with the build before it (fcbd821b), then
+`python tools/frame_trace.py stats DIR/pool-foam-trace.json`: the lab's analytic pool, its water
+scattering 0.01 to 0.04 per metre under a sun 53 degrees up, drawn at 1280 x 720 with MSAA, the eye
+0.7 m under the surface (`under`) or at it (`line`). Medians and 95th percentiles over 240 frames:
+
+| View | `water medium integrate`, before | after |
+|---|---|---|
+| under the surface | 0.335 ms (p95 0.421) | 1.426 ms (p95 1.489) |
+| at the waterline | 0.394 ms (p95 0.805) | 1.527 ms (p95 2.030) |
+
+The shafts take the difference. Sixteen samples a pixel took 2.95 ms; taking the surface over a
+sample from the caustics map's texel, and the focus from the nearest one, 2.40 ms; interleaving the
+sixteen over a 2 x 2 block, four a pixel, 1.43 ms. Above the water, away from the surface, the pass
+still dispatches no image work.

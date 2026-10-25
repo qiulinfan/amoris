@@ -98,6 +98,16 @@ fn shallow_depth(world: vec3f) -> f32 {
     return clamp(p.z/p.w,0.0,1.0-1e-6);
 }
 
+// A perspective camera's near plane is its port (water.md 58): a surface between the eye and that
+// plane is behind the port, not an interface it sees. The medium pass classifies each pixel by
+// where its point on the near plane lies, so a camera at the surface splits along the waterline
+// on its port, as a half-submerged camera does.
+fn water_behind_port(world: vec3f) -> bool {
+    if (abs(view.proj[3].w) >= 0.5) { return false; }
+    let p = view.view_proj * vec4f(world,1.0);
+    return p.w > 0.0 && p.z >= p.w;
+}
+
 // Bed/surface discontinuities share one cap partition for raster and medium transport.
 @group(3) @binding(10) var<uniform> ledge_draw:vec4u;
 @group(3) @binding(11) var ledge_mask:texture_2d<u32>;

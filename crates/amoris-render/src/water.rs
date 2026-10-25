@@ -1459,7 +1459,8 @@ impl Water {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn medium(
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn medium(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -1468,6 +1469,8 @@ impl Water {
         targets: &crate::post::Targets,
         view: &wgpu::Buffer,
         sh: &wgpu::Buffer,
+        (shadows, shadow_sampler): (&wgpu::TextureView, &wgpu::Sampler),
+        caustics: &crate::water_caustics::Caustics,
     ) {
         let fields: Vec<_> = self
             .regions
@@ -1481,9 +1484,22 @@ impl Water {
         if fields.is_empty() {
             return;
         }
+        let light = crate::water_medium::MediumLight {
+            shadows,
+            shadow_sampler,
+            caustics: caustics.view(),
+            caustics_params: caustics.params(),
+            ripples: self
+                .ripples
+                .as_ref()
+                .map_or(&self.blank_ripples, |r| r.view()),
+            ripple_sampler: &self.ripple_sampler,
+        };
         self.medium
             .get_or_insert_with(|| crate::water_medium::WaterMedium::new(device))
-            .encode(device, queue, encoder, profiler, targets, view, sh, &fields);
+            .encode(
+                device, queue, encoder, profiler, targets, view, sh, &light, &fields,
+            );
     }
 
     pub fn layer(&self, front: bool) -> (&wgpu::RenderPipeline, &wgpu::BindGroup) {

@@ -1373,6 +1373,146 @@ fn perspective_water_inside_the_near_plane_still_occludes_the_floor() {
         }
     }
 }
+/// A camera at the surface (water.md 58): its near plane is its port, and each row sees the air or
+/// the water by where its point on that plane lies against the surface. Looking level, the rows
+/// whose port points lie under the surface start in the water, so the waterline moves with the
+/// eye's height over the surface; before the port, every row split at the horizon.
+#[test]
+fn a_camera_at_the_surface_splits_along_the_waterline_on_its_port() {
+    let (_case, gpu) = gpu().expect("the waterline requires a GPU");
+    // The near plane's half height for the test camera: 0.1 m away, 60 degrees.
+    let half = 0.1 * 30f32.to_radians().tan();
+    for rise in [0.012f32, 0.0, -0.012] {
+        let eye = Vec3::new(8.0, 2.0 + rise, 1.0);
+        let mut r = renderer(&gpu, eye, eye + Vec3::Z);
+        r.set_water_foam(false);
+        r.set_water_optics(false, false, false);
+        // The sky stays black and the water glows with its haze, so the rows are told apart.
+        let mut frame = optical_scene(2.0, None);
+        frame.environment.as_mut().unwrap().ambient = 1.0;
+        frame.water[0].look.as_mut().unwrap().fog = [0.1, 0.4, 0.8, 0.2];
+        r.apply(frame, 0.0);
+        for _ in 0..4 {
+            r.capture_hdr(0.0);
+        }
+        let image = r.capture_hdr(0.0).2;
+        let blue = |y: u32| image[((W / 2 + y * W) * 4 + 2) as usize];
+        // A row's port point lies under the surface when (y + 0.5) / H > (1 + rise / half) / 2.
+        let line = (H as f32 * 0.5 * (1.0 + rise / half) - 0.5).ceil() as u32;
+        let first = (0..H)
+            .find(|&y| blue(y) > 0.3)
+            .expect("rows under the water");
+        eprintln!("eye {rise:+}: first row in the water {first}, the port's waterline {line}");
+        assert!(
+            first.abs_diff(line) <= 2,
+            "waterline at row {first}, expected {line}"
+        );
+        // Above the horizon the air's rows see the black sky (between the horizon and a lower
+        // waterline they see the water's surface from above).
+        assert!(blue(line.min(H / 2) - 8) < 0.02, "air above the waterline");
+        assert!(blue(line + 8) > 0.4, "water under it");
+    }
+}
+
+/// The sun under water (water.md 58): looking 15 degrees off the refracted sun through flat water,
+/// the light the water scatters toward the eye along its path matches single scattering with
+/// Henyey and Greenstein's phase function (flat water focuses nothing), and an opaque plank over
+/// the water takes it away along its shadow.
+#[test]
+fn the_sun_scatters_toward_an_eye_under_water_along_its_refracted_path() {
+    let (_case, gpu) = gpu().expect("light under water requires a GPU");
+    let (s, c) = 60f32.to_radians().sin_cos();
+    let l = Vec3::new(0.0, s, -c);
+    let up = Vec3::new(
+        0.75 * l.x,
+        (1.0 - 0.5625 * (1.0 - l.y * l.y)).sqrt(),
+        0.75 * l.z,
+    );
+    let (s, c) = (-15f32).to_radians().sin_cos();
+    let dir = Vec3::new(0.0, up.y * c - up.z * s, up.y * s + up.z * c).normalize();
+    let eye = Vec3::new(8.0, 1.0, 9.0);
+    let center = |sun: bool, plank: bool| {
+        let mut r = renderer(&gpu, eye, eye + dir);
+        r.set_water_foam(false);
+        r.set_water_optics(false, false, false);
+        let mut frame = optical_scene(4.0, None);
+        let look = frame.water[0].look.as_mut().unwrap();
+        look.absorb = [0.04; 3];
+        look.scatter = [0.1; 3];
+        if sun {
+            frame.lights = Some(vec![LightView {
+                id: 0,
+                kind: LightKindView::Directional,
+                position: [0.0; 3],
+                direction: (-l).to_array(),
+                color: [1.0; 3],
+                intensity: 6.0,
+                range: 0.0,
+                inner_deg: 0.0,
+                outer_deg: 0.0,
+                shadows: true,
+            }]);
+        }
+        if plank {
+            // Over the water where the sun's paths to this view leave it, 0.6 m up.
+            let mut plank = frame.instances[0].clone();
+            plank.id = 102;
+            plank.pose = Some(Pose {
+                position: [8.0, 4.6, 6.9],
+                scale: [2.0, 0.1, 2.0],
+                ..Pose::default()
+            });
+            let look = plank.look.as_mut().unwrap();
+            look.mesh = "cube".into();
+            look.emissive = [0.0; 3];
+            look.cast_shadows = true;
+            frame.instances.push(plank);
+        }
+        r.apply(frame, 0.0);
+        center_hdr(&mut r)
+    };
+    let difference = |a: [f32; 3], b: [f32; 3]| [0, 1, 2].map(|k| a[k] - b[k]);
+    let open = difference(center(true, false), center(false, false));
+    let shaded = difference(center(true, true), center(false, true));
+    // Single scattering along the path to the surface, 3 m up: the sun's beam widened by its
+    // refraction and less its reflection, absorbed down to each point and back to the eye.
+    let sigma = 0.14f64;
+    let (lift, length) = (3.0f64, 3.0 / f64::from(dir.y));
+    let steps = 4096;
+    let path: f64 = (0..steps)
+        .map(|i| {
+            let t = (i as f64 + 0.5) * length / steps as f64;
+            let depth = lift - f64::from(dir.y) * t;
+            (-sigma * (t + depth / f64::from(up.y))).exp() * length / steps as f64
+        })
+        .sum();
+    let g = 0.8f64;
+    let d = 1.0 + g * g - 2.0 * g * f64::from(up.dot(dir));
+    let phase = (1.0 - g * g) / (d * d.sqrt());
+    let cosine = f64::from(l.y);
+    let ct = (1.0 - 0.5625 * (1.0 - cosine * cosine)).sqrt();
+    let rs = (0.75 * cosine - ct) / (0.75 * cosine + ct);
+    let rp = (cosine - 0.75 * ct) / (cosine + 0.75 * ct);
+    let fresnel = 0.5 * (rs * rs + rp * rp);
+    let expected = 0.1 * 6.0 / (4.0 * std::f64::consts::PI)
+        * (cosine / f64::from(up.y))
+        * (1.0 - fresnel)
+        * phase
+        * path;
+    eprintln!("open {open:?}, shaded {shaded:?}, expected {expected:.4}");
+    for k in 0..3 {
+        let got = f64::from(open[k]);
+        assert!(
+            (got - expected).abs() < 0.08 * expected,
+            "scattered sun {got}, expected {expected}"
+        );
+        assert!(
+            shaded[k] < 0.25 * open[k],
+            "the plank's shadow keeps the sun from the path: {shaded:?} against {open:?}"
+        );
+    }
+}
+
 #[test]
 fn underwater_rgb_paths_stop_at_the_field_bed_and_preserve_near_clipped_interfaces() {
     let (_case, gpu) = gpu().expect("underwater cases require a GPU");
