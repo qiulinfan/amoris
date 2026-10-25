@@ -74,6 +74,7 @@ fn water_look(r: &WaterRegion) -> WaterLookView {
         blocky: r.look.style == Style::Blocky,
         surround_m: r.look.surround_m,
         sea: r.edges.map(|e| e == Edge::Sea),
+        wet_s: r.look.wet_s,
         per: match r.bed {
             BedSource::Voxels { per, .. } => per,
             BedSource::Colliders { .. } => 1,

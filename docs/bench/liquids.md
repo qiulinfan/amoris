@@ -533,3 +533,44 @@ of the CPU's `uniforms` span; made once a wind, nothing.
 levels on average. 8 is kept.
 
 Not measured: R1 (the RTX 5060 and the 780M), Direct3D 12, Vulkan, and the browser's pass alone.
+
+## 13. The shore (Pioneer, 2026-10-23)
+
+The shore of [water.md](../spec/water.md) 61 on the M5 (10 GPU cores), macOS, Metal, release
+builds, 2026-10-23. The machine was not checked for other load. Raw traces and captures stay in
+ignored `out/`.
+
+**The kernel's step.** `cargo test --release -p amoris-render --test water_frontier
+time_dispersive_steps -- --ignored --nocapture`, two runs, wall time a step of 4 substeps with its
+64-byte readback, the field 1.5 m deep and smooth, the face velocities transported by each scheme
+(`ResidentWater::set_advection`):
+
+| Region | MacCormack | Momentum-conserving | Hybrid (regions) |
+|---|---|---|---|
+| 128² | 1.06, 1.55 ms | 1.07, 1.27 ms | 1.08, 1.12 ms |
+| 256² | 1.39, 1.54 ms | 1.52, 1.52 ms | 1.28, 1.36 ms |
+| 512 x 256 | 1.67, 1.68 ms | 1.89, 1.94 ms | 1.69, 1.70 ms |
+| 512² | 2.64, 2.67 ms | 3.11, 3.11 ms | 2.63, 2.63 ms |
+
+In deep, smooth water the hybrid transports as MacCormack does and costs what it did; the
+momentum-conserving form everywhere costs 0.47 ms more a step at 512², an upper bound for a region
+whose every face is shallow or steep. The smaller regions' runs spread more than the schemes
+differ.
+
+**The wet bed.** `AMORIS_TRACE=frames=300,skip=2400,out=PATH cargo run --release -p amoris-app
+--example shore_shots -- --out DIR --at 2710`, then `python tools/frame_trace.py diff DRY WET`: the
+surf beach at 1280 x 720 with MSAA from the player's camera, its region's `wet_s` 90 against 0, two
+runs of each, alternated; medians over 300 frames:
+
+| | Dry | Wet |
+|---|---|---|
+| frame interval | 18.72, 18.80 ms | 19.01, 18.84 ms |
+| `wet bed depth` | none | 0.094, 0.094 ms |
+| `water background resolve` (with the blend) | 1.66, 1.66 ms | 1.90, 1.92 ms |
+
+The wet bed costs about 0.35 ms a frame: 0.24 to 0.26 ms for its blend, a full-screen triangle
+whose pixels outside the region or untouched by water are discarded, and 0.094 ms for resolving the
+scene's depth before it. Drawn first as two blends, a darkening and then the film, the pass took
+0.50 ms more. The foam pass keeps the wetness at no measurable cost.
+
+Not measured: R1 (the RTX 5060 and the 780M), Direct3D 12, Vulkan, and the browser's pass alone.

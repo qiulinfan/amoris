@@ -10,6 +10,7 @@ struct Params {
     fall_min: f32,      // ballistic falls over drops deeper than this, metres; 0: none
     occupancy_on: f32,  // 1: bodies' displaced volume adds a pressure head
     calm: f32,          // calm damping of slow faces, per second (water.md 4)
+    advection: f32,     // 0: MacCormack, 1: momentum-conserving, 2: conserving where rapid (61.1)
     edge_kind:vec4u,
     edge_rate:vec4f,
     edge_normal:vec4f,
@@ -55,19 +56,25 @@ fn sample_face(pos: vec2<f32>, axis: u32) -> f32 {
     return top + (bottom - top) * t.y;
 }
 fn pressure(v0: f32, a: u32, b: u32) -> f32 {
-    return pressure_heads(v0, a, b, 0.0, 0.0);
+    return pressure_heads(v0, a, b, 0.0, 0.0, false);
 }
-// Displaced body volume (oa, ob: metres of head) loads the water as a floating lid would.
-fn pressure_heads(v0: f32, a: u32, b: u32, oa: f32, ob: f32) -> f32 {
+// Displaced body volume (oa, ob: metres of head) loads the water as a floating lid would. With
+// `climb` (the resident kernel, water.md 61.1), water flows onto a column whose bed stands above
+// the giving surface when its velocity head carries it there, as a front running up a beach does.
+fn pressure_heads(v0: f32, a: u32, b: u32, oa: f32, ob: f32, climb: bool) -> f32 {
     let ha = src[a].y; let hb = src[b].y;
     if ha <= 0.0001 && hb <= 0.0001 { return 0.0; }
     let ea = src[a].x + ha + oa; let eb = src[b].x + hb + ob;
-    let delta = clamp(eb - ea, -(ha + oa), hb + ob);
+    // The higher side pushes with at most its own depth over a step; a bed rising less than half
+    // a column over one is a slope, whose fall all the water feels, however thin (`climb`).
+    var delta = clamp(eb - ea, -(ha + oa), hb + ob);
+    if (climb && abs(src[b].x - src[a].x) <= 0.5 * p.cell) { delta = eb - ea; }
     var v = v0 - 9.81 * p.dt * delta / p.cell;
     let calm = p.calm * min(1.0, 0.5 / max(abs(v), 0.000001));
     v /= 1.0 + p.dt * (p.friction / max(max(ha, hb), 0.05) + calm);
-    if (v > 0.0 && (ha <= 0.0001 || src[b].x >= ea)) ||
-       (v < 0.0 && (hb <= 0.0001 || src[a].x >= eb)) { return 0.0; }
+    let head = select(0.0, v * v / (2.0 * 9.81), climb);
+    if (v > 0.0 && (ha <= 0.0001 || src[b].x >= ea + head)) ||
+       (v < 0.0 && (hb <= 0.0001 || src[a].x >= eb + head)) { return 0.0; }
     let limit = 0.5 * p.cell / p.dt;
     return clamp(v, -limit, limit);
 }

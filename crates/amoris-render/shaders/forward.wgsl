@@ -1328,6 +1328,107 @@ fn foam_cover(q0: vec2f, q1: vec2f, blend: f32, footprint: f32, density: f32) ->
     return mix(thin, thick, smoothstep(0.3, 0.8, c)) * smoothstep(0.0, 0.05, c);
 }
 
+// ---- The wet bed (water.md 61.2) ---------------------------------------------------------------
+// Where a region's water stands or has been, its bed is damp and darker; where the water left it
+// bare, for a few seconds it is glossy under a film of water, with the foam the swash left on it.
+// Drawn over the opaque pass from the scene's depth, before the water's background is resolved,
+// in one blend: its alpha, the darkening, multiplies the colour, and its colour, the film's
+// reflection and the foam, adds to it.
+struct WetOut { @builtin(position) clip: vec4f };
+@vertex
+fn vs_wet(@builtin(vertex_index) i: u32) -> WetOut {
+    let uv = vec2f(f32((i << 1u) & 2u), f32(i & 2u));
+    var o: WetOut;
+    o.clip = vec4f(uv * 2.0 - 1.0, 0.0, 1.0);
+    return o;
+}
+// The world point behind a pixel, and whether there is one (the sky is not).
+fn wet_world(pixel: vec2f) -> vec4f {
+    let size = vec2f(textureDimensions(water_scene_depth));
+    let depth = textureLoad(water_scene_depth, vec2i(clamp(pixel, vec2f(0.0), size - 1.0)), 0).x;
+    let ndc = vec4f(pixel.x / size.x * 2.0 - 1.0, 1.0 - pixel.y / size.y * 2.0, depth, 1.0);
+    let w = view.inv_view_proj * ndc;
+    return vec4f(w.xyz / w.w, select(0.0, 1.0, depth > 0.0 && abs(w.w) > 1e-12));
+}
+// One column's part in the wet bed at a world point: its damp (whole under water) where the point
+// lies within a few decimetres of the column's bed (as the terrain's mesh lies over the columns),
+// and its film and the foam left behind where under 2 millimetres of water stand on it, the bed
+// lying bare. The depth and drawn height come from the surface's shading attributes (a dry column
+// beside water is drawn at its wet neighbours' level, a few centimetres over its bed).
+fn wet_column(c: vec2u, y: f32) -> vec3f {
+    let depth = textureLoad(water_normal_depth, vec2i(c), 0).w;
+    let height = textureLoad(water_flow_height, vec2i(c), 0).w;
+    if (!(depth >= 0.0 && abs(height) < 1e10)) { return vec3f(0.0); }
+    let near = 1.0 - smoothstep(0.15, 0.4, abs(y - (height - depth)));
+    let bare = 1.0 - smoothstep(0.002, 0.004, depth);
+    return textureLoad(surface_foam, vec2i(c), 0).yzw * near * vec3f(1.0, bare, bare);
+}
+// The bed's damp, film and foam left behind at a world point, between its four columns, so that
+// the wet bed has no cell edges. Smooth regions only, whose surface keeps the attributes read here.
+fn wet_bed(world: vec3f) -> vec3f {
+    let pos = (world.xz - shallow.origin) / shallow.cell - 0.5;
+    let hi = vec2f(shallow.count.xy - vec2u(1u));
+    if (any(pos < vec2f(-0.5)) || any(pos > hi + 0.5)) { return vec3f(0.0); }
+    let q = clamp(pos, vec2f(0.0), hi);
+    let a = vec2u(floor(q));
+    let b = min(a + vec2u(1u), vec2u(hi));
+    let t = fract(q);
+    return mix(mix(wet_column(a, world.y), wet_column(vec2u(b.x, a.y), world.y), t.x),
+        mix(wet_column(vec2u(a.x, b.y), world.y), wet_column(b, world.y), t.x), t.y);
+}
+// A wet rough surface is darker: light it lets into the water filling its pores is reflected back
+// at the water's surface, inside the critical angle and partly beyond, and absorbed again (J.
+// Lekner and M. C. Dorf, "Why some things are darker when wet", Applied Optics 27(7), 1988). With
+// the water's mean external reflectance 0.066 and its internal 1 - (1 - 0.066) / 1.333^2 = 0.47,
+// an albedo of a half keeps 0.934 x 0.53 / (1 - 0.47 x 0.5) = 0.65 of its light. The blends cannot
+// read the colour they darken, so every bed takes the half's factor.
+const WET_DARKENING: f32 = 0.65;
+@fragment
+fn fs_wet(in: WetOut) -> @location(0) vec4f {
+    let w = wet_world(in.clip.xy);
+    let dx = dpdx(w.xyz);
+    let dy = dpdy(w.xyz);
+    let footprint = max(length(fwidth(w.xz)), 1e-3);
+    if (w.w == 0.0) { discard; }
+    let s = wet_bed(w.xyz);
+    if (all(s == vec3f(0.0))) { discard; }
+    let foam = foam_cover(w.xz, w.xz, 0.0, footprint, s.z);
+    // Fog hides the darkening as it hides the bed.
+    let fog = fog_amount(w.xyz);
+    let dark = mix(mix(1.0, WET_DARKENING, s.x) * (1.0 - foam), 1.0, fog);
+    let film = s.y;
+    if (film <= 0.0 && foam <= 0.0) { return vec4f(0.0, 0.0, 0.0, dark); }
+    var n = normalize(cross(dy, dx));
+    if (n.y < 0.0) { n = -n; }
+    let v_world = view.camera_pos.xyz - w.xyz;
+    let v = select(vec3f(view.view[0].z, view.view[1].z, view.view[2].z),
+        v_world / max(length(v_world), 1e-6), abs(view.proj[3].w) < 0.5);
+    let nv = max(dot(n, v), 1e-4);
+    // The film is a thin sheet of water over the grains: a mirror rough with them.
+    let f = shallow_fresnel(nv, 0.75);
+    let r = reflect(-v, n);
+    let ry = vec3f(r.x, max(r.y, 0.02), r.z);
+    let levels = f32(textureNumLevels(env_cube) - 1);
+    let rough = 0.12;
+    let sky = textureSampleLevel(env_cube, env_sampler, ry, rough * levels).rgb * view.sun_color.w;
+    let sun = view.sun_dir.xyz;
+    let sun_lux = view.sun_dir.w * view.sun_color.rgb;
+    let shadow = shadow_factor(w.xyz, n, dot(w.xyz - view.camera_pos.xyz,
+        -vec3f(view.view[0].z, view.view[1].z, view.view[2].z)));
+    var spec = vec3f(0.0);
+    if (view.sun_dir.w > 0.0) {
+        let h = normalize(sun + v);
+        let nl = max(dot(n, sun), 0.0);
+        let a = rough * rough;
+        spec = d_ggx(max(dot(n, h), 0.0), a) * v_smith(nv, nl, a)
+            * f_schlick(vec3f(0.02), max(dot(v, h), 0.0)) * sun_lux * nl * shadow;
+    }
+    let body_light = sh_irradiance(vec3f(0.0, 1.0, 0.0)) * 0.08 + sun_lux * max(sun.y, 0.0) * 0.012;
+    let white = vec3f(0.85, 0.9, 0.92) * (body_light * 6.0 + sun_lux * max(sun.y, 0.0) * 0.25 * shadow);
+    let c = film * (sky * f + spec) + white * foam;
+    return vec4f(c * (1.0 - fog), dark);
+}
+
 @fragment
 fn fs_water_depth(in: ShallowOut) -> @builtin(frag_depth) f32 {
     if(in.field_surface==1u&&ledge_at(in.world.xz)){discard;}

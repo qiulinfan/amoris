@@ -1267,6 +1267,8 @@ complete-readback `gpu` mode retain their original semi-Lagrangian discretizatio
 numerical upgrade to the explicit resident mode, not a new authoring setting or a rendering-only
 vorticity force. Its height flux remains the existing first-order conservative donor transport;
 open/sea boundaries, higher-order height transport and the remaining W3 cases are still required.
+Where the flow varies rapidly the kernel conserves momentum instead, and a front climbs by its
+velocity head (61.1, 2026-10-23).
 
 The reference is [Chentanez and Mueller 2010, section
 2.1.1](https://matthias-research.github.io/pages/publications/hfFluid.pdf), which uses bounded
@@ -3602,3 +3604,157 @@ Limits:
 - The tiles repeat every 320, 40 and 6 m, and only the 320 m tile makes foam.
 - The band joins a region to the sea as well as their looks agree. Under a sea with no look the step
   in colour stays, though the column the sea runs under still hides the bed.
+
+## 61. The shore (Pioneer, 2026-10-23)
+
+The swell broke on the surf beach, but its shore was poor. The resident kernel carried each face's
+velocity back along itself (26), so a face a front had just reached started from rest: a front ran
+onto dry sand blunt and slow, at 37 percent of the speed of Ritter's dam break; a bore ran 8.5 m
+behind Stoker's after 6 s and stood 22 percent too high; a swash climbed 56 percent as high as it
+should. A face also stayed shut where the bed beyond stood above the giving surface, so no front
+climbed above the water behind it. Nor did the water leave a mark: the sand it left was as dry as
+before. Now the kernel conserves momentum where the flow varies rapidly and lets a front climb as
+far as its speed carries it, and the bed the water has wetted is damp and darker, and glossy for a
+few seconds after the water leaves it.
+
+### 61.1 The numerics
+
+- **The choice.** A shock-capturing finite-volume scheme on the columns' centres, such as A.
+  Kurganov and G. Petrova's central-upwind scheme ("A second-order well-balanced positivity
+  preserving central-upwind scheme for the Saint-Venant system", Commun. Math. Sci. 5(1), 2007),
+  would replace the staggered layout that the pressure, the non-hydrostatic solve (55), the falls
+  (48), breaking and the bodies' displaced volume (46) act on. G. S. Stelling and S. P. A.
+  Duinmeijer keep the staggered grid and conserve momentum on it, which gives a bore the speed and
+  height of its jump conditions ("A staggered conservative scheme for every Froude number in
+  rapidly varied shallow water flows", IJNMF 43, 2003); SWASH runs their scheme (M. Zijlema, G.
+  Stelling and P. Smit, "SWASH: an operational public domain code for simulating wave fields and
+  rapidly varied flows in coastal waters", Coastal Engineering 58(10), 2011). The kernel takes it,
+  and Kurganov and Petrova's scheme, in f64 on the CPU, is the reference it is measured against.
+- **The momentum-conserving form.** A face's velocity u is carried by the discharges at its two
+  columns' centres, each the mean of the discharges through the column's faces (a face's old
+  velocity times the upwind depth the transport takes, 34). With q_a and q_b those discharges and
+  u_a and u_b the face velocities upwind of each, u gains -dt (q_b u_b - q_a u_a - u (q_b - q_a)) /
+  (h dx), h the mean of its columns' depths; across the face, the other component's discharges at
+  the face's two ends carry it the same way. A face whose columns hold no water keeps its velocity.
+- **Where.** At a face whose shallower column holds under 0.25 m of water, or whose columns' depths
+  differ by more than a fifth of the deeper's. Elsewhere MacCormack's transport (26) runs, whose
+  second order keeps smooth waves sharper.
+- **The front.** A face between a wet column and a dry one, toward the dry one, moves at least as
+  fast as the face behind it: from rest it would take some twenty substeps to reach the water's
+  speed, and the front, blunt, would advance at half of it.
+- **Climbing.** Step 4 of the substep (4) shut a face whose water would enter a column with its bed
+  above the giving surface. Now the bed must stand above it by more than the water's velocity head,
+  u^2 / 2g: a front runs up a beach as far as its speed carries it. On a slope, a bed rising less
+  than half a column across the face, the face feels the whole difference of the surfaces, not at
+  most the higher side's depth (step 2): a thin film then felt only its own depth's push back down
+  and crept on past the height its speed reached.
+- Regions always run this hybrid. `GpuWater::set_advection` and `ResidentWater::set_advection` run
+  MacCormack's transport or the momentum-conserving form everywhere, to compare them; the resident
+  execution environment then names the scheme, so no replay mixes them. The kernel's WGSL is part
+  of the numerical identity (26), so a program recorded by the build before does not replay on
+  this one, and the viewport is rebuilt.
+
+### 61.2 The wet bed
+
+- `WaterLook.wet_s`: the seconds over which the bed the water has left dries, at most 3600; 0, the
+  default, draws no wet bed. The surf beach sets 90. `WaterRegion` is version 6, and
+  `WaterLookView.wet_s` reaches the feed: `FORMAT` changes and the viewport is rebuilt.
+- The foam pass keeps three values a column beside the foam's density: the bed's damp, its film and
+  the foam left on it. Where 2 mm or more of water stand, the damp and the film are whole and the
+  foam left is the foam on the water; where less stands, each fades in simulated time, the damp
+  over `wet_s`, the film over 6 s and the foam over 8 s. A rewind clears them with the foam. They
+  are presentation: not in the world, snapshots or replays.
+- One blend draws them over the opaque pass's colour, before the water's background is resolved,
+  so the water refracts the wet bed: its alpha, the darkening, multiplies the colour, and its
+  colour, the film's reflection and the foam, adds to it (src + dst x src_alpha). It finds the
+  point behind its pixel from this frame's scene depth, resolved for it first (`wet bed depth`),
+  and takes the four columns around it bilinearly, a column's part where the point lies within
+  0.15 m of the column's bed and none past 0.4 m (the terrain's mesh lies over the columns), the
+  bed being the column's drawn height less its depth, from the surface's shading attributes. A
+  pixel no wetness reaches is discarded. Smooth regions only, whose surface keeps them.
+- **Damp.** A wet rough surface is darker: light it scatters into the water over it is reflected
+  back down at the water's surface, inside the critical angle and partly beyond, and absorbed again
+  (J. Lekner and M. C. Dorf, "Why some things are darker when wet", Applied Optics 27(7), 1988).
+  With water's mean external reflectance 0.066 and its internal 1 - (1 - 0.066) / 1.333^2 = 0.47,
+  an albedo of a half keeps 0.934 x 0.53 / (1 - 0.47 x 0.5) = 0.65 of its light. The damp
+  multiplies the colour by mix(1, 0.65, damp), under the water too. A blend cannot read the colour
+  it darkens, so every bed takes the half's factor: a bright bed, the surf beach's sand, darkens
+  more than the film model gives it (0.83 at its albedo of 0.86), as water filling the pores also
+  makes the grains scatter more forward, so that light goes deeper and more of it is absorbed (S.
+  A. Twomey, C. F. Bohren and J. L. Mergenthaler, "Reflectance and albedo differences between wet
+  and dry surfaces", Applied Optics 25(3), 1986).
+- **Film.** On a bare bed, a sheet of water over the grains reflects the sky at the shallow water's
+  Fresnel (9) and the sun at GGX roughness 0.12, times the film; the foam left on it is drawn in the
+  region's foam colour over the darkened bed. Fog fades the darkening and the film alike.
+
+### 61.3 Checks, cost and limits
+
+`cargo run --release -p amoris-render --example water_swash -- --out out/water-swash` on Metal
+(`--advection maccormack|conservative` for the other schemes): a row of columns, frictionless,
+hydrostatic, without breaking or calm damping, at the cell sizes regions use, against the
+central-upwind scheme on the same grid. A tip is the last column holding over 1 mm of water.
+
+- Ritter: 512 columns of 0.39 m, 4 m of water behind a dam at 100 m over a dry bed, 4 ms substeps;
+  the front after 6 s, and the depth's L1 error against the exact solution then (SWASHES 4.1.2: O.
+  Delestre et al., "SWASHES: a compilation of shallow water analytic solutions for hydraulic and
+  environmental studies", IJNMF 72(3), 2013).
+- Stoker: the same over 0.4 m of water; the bore after 6 s, its position and height (SWASHES 4.1.1).
+- Swash: 384 columns of 0.375 m, 2 m of water behind a gate at 80 m, a 1:10 beach beyond it, 12 s;
+  the swash's tip leaves at 2 sqrt(g h0) and climbs ballistically to 2 h0 (R. E. Meyer and M. C.
+  Shen; D. H. Peregrine and S. M. Williams, "Swash overtopping a truncated plane beach", JFM 440,
+  2001).
+- Solitary wave: 512 columns of 0.5 m, 4 m deep, a wave 0.0185 times the depth high running up a
+  1:19.85 beach, 10 ms substeps; its run-up R / d = 2.831 sqrt(cot b) (H / d)^(5/4) (C. E.
+  Synolakis, "The runup of solitary waves", JFM 185, 1987).
+
+| | MacCormack | Momentum-conserving | Hybrid (regions) | Central-upwind | Exact |
+|---|---|---|---|---|---|
+| Ritter front | 127.9 m | 160.7 m | 161.9 m | 174.8 m | 175.2 m |
+| Ritter L1 error | 22.9 m^2 | 1.94 m^2 | 1.24 m^2 | 0.69 m^2 | |
+| Stoker bore | 128.7 m, 1.941 m | 137.3 m, 1.572 m | 137.7 m, 1.559 m | 136.9 m, 1.585 m | 137.3 m, 1.585 m |
+| Stoker L1 error | 20.2 m^2 | 1.54 m^2 | 2.08 m^2 | 0.76 m^2 | |
+| Swash's highest tip | 2.26 m | 3.04 m | 3.04 m | 4.06 m | 4 m |
+| Solitary run-up | 0.290 m | 0.315 m | 0.315 m | 0.340 m | 0.344 m |
+
+The dam break's front runs 82 percent of the distance it should (MacCormack's 37); the bore is
+within 0.5 m of its place and 2 percent of its height (MacCormack's 8.5 m behind, 22 percent too
+high); the swash climbs 76 percent as high as it should (56) and the solitary wave 92 percent of
+Synolakis's run-up (84). The hybrid's run-ups are the momentum-conserving form's, its error lower
+over Ritter's smooth rarefaction and higher over Stoker's, whose deep water behind the bore runs
+MacCormack's transport. The front still lags the reference: the form is first order, and a front
+advances no faster than a substep's flux fills the column before it. Water is conserved to f32
+rounding, at most 0.0011 m^2 of the cases' 160 to 1000 m^2.
+
+`cargo test -p amoris-render --test water the_bed_the_water_leaves_is_damp_then_dries`, on Metal: a
+pit flooded for two ticks, then drained, `wet_s` 4, each frame drawn from another camera first.
+Under its water 23 600 pixels of its floor are darker than with no wet bed; drained, 21 964 are, at
+0.920 of the dry colour in the tonemapped image; 40 s later no pixel differs. Drawn first from
+elsewhere, the bed found its points from that frame's depth until it was resolved before the blend.
+
+`falls_leave_the_lip_and_land_where_the_jet_meets_the_basin` (water_frontier.rs) now compares the
+water landing on the cliff's first five columns (1.25 m), not its first: pouring as momentum
+carries it, the jet passes over the very first column, where falls (48) put more.
+
+`cargo run --release -p amoris-app --example shore_shots -- --out out/shore --at 1800,2400` draws
+the surf beach's shore from the dunes, straight over the swash, along the beach low down and from
+the lineup (`--view along --every 30 --from 2280 --to 2760`: one view as a sequence). Over those
+ticks the swash runs up the beach face and back, leaving a widening dark band whose upper edge
+dries, with a glossy film along the water's edge.
+
+The renderer's water tests pass on Metal, on MoltenVK and as the WebGPU baseline. In Chrome 155
+(WebGPU on the M5), with the viewport rebuilt, the surf beach's, the pool party's and the river's
+exports load and play at 16.7 ms a frame with no WebGPU validation error or script exception
+(`web_play_check`, whose block-placing steps do not apply to them; the surf beach also on the
+baseline device), and `water_pool_check.mjs` passes its twelve checks.
+
+The cost is in [liquids.md](../bench/liquids.md) 13.
+
+Limits:
+
+- The run-ups are 76 and 92 percent of the exact ones, and regions' bed friction slows a front
+  further. The rapid flow's thresholds (0.25 m, a fifth) are fixed, not scaled with the cell.
+- The sand takes no water in: a backwash's film drains only down the slope, so the swash zone stays
+  under water longer than on a beach that soaks it up. The water moves no sand.
+- The wet bed is presentation: a damp bed is no more slippery and the water does not see it. Every
+  bed darkens by one factor, with no change of colour; an object standing in the swash darkens only
+  within 0.4 m of the bed. Smooth regions only.

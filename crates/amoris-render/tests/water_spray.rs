@@ -133,7 +133,7 @@ impl Harness {
             &mut self.profiler,
         );
         self.foam
-            .encode(&g.queue, &mut e, dt.min(0.25), clear, None);
+            .encode(&g.queue, &mut e, dt.min(0.25), clear, true, 0.0, None);
         g.queue.submit([e.finish()]);
     }
     fn upload(&self, g: &Gpu, columns: &[[f32; 4]]) {

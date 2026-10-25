@@ -802,6 +802,7 @@ fn region(blocky: bool, keys: &[[u32; 2]], f: impl Fn(u32, u32) -> [f32; 4]) -> 
             per: 2,
             surround_m: 0.0,
             sea: [false; 4],
+            wet_s: 0.0,
         }),
         tiles: keys.iter().map(|k| tile(*k, &f)).collect(),
     }
@@ -2048,6 +2049,82 @@ fn a_region_open_on_a_sea_with_its_look_meets_it_without_a_seam() {
         rough_inside > 0.5 * rough_sea && rough_inside < 2.0 * rough_sea,
         "the wind sea runs on across the seam: {rough_inside} against {rough_sea}"
     );
+}
+
+/// The bed a region's water leaves (water.md 61.2): bare where water stood a moment ago, it draws
+/// darker than with no wetness, and many times its wet_s later, in simulated time, it has dried
+/// back to the same frame.
+#[test]
+fn the_bed_the_water_leaves_is_damp_then_dries() {
+    let Some((_case, gpu)) = gpu() else { return };
+    let drained = |i: u32, k: u32| {
+        let c = column(i, k);
+        [c[0] - c[1], 0.0, 0.0, 0.0]
+    };
+    let mut shots = Vec::new();
+    for wet_s in [4.0, 0.0] {
+        let mut r = renderer(&gpu, EYE, AT);
+        r.set_water_foam(false);
+        let mut full = region(false, &ALL, column);
+        full.look.as_mut().unwrap().wet_s = wet_s;
+        // Each frame is drawn from elsewhere first: the wet bed must find its points from the
+        // frame it draws in, not from the one before.
+        let frame = |r: &mut Renderer, tick: u64, water: Vec<WaterUpdate>| {
+            let t = tick as f64 / 60.0;
+            r.apply(scene(tick, water, tick == 1), t);
+            r.set_camera_override(Some(CameraState::look_at(Vec3::new(3.0, 7.0, 2.0), AT)));
+            let _ = r.capture_rgba(t);
+            r.set_camera_override(Some(CameraState::look_at(EYE, AT)));
+            r.capture_rgba(t).2
+        };
+        // Two ticks of water (the wetness advances with simulated time), then it drains away.
+        frame(&mut r, 1, vec![full]);
+        let under = frame(&mut r, 2, vec![]);
+        let mut gone = region(false, &ALL, drained);
+        gone.look = None;
+        frame(&mut r, 3, vec![gone]);
+        shots.push([
+            under,
+            frame(&mut r, 18, vec![]),
+            frame(&mut r, 2418, vec![]),
+        ]);
+    }
+    let [wet, dry] = [&shots[0], &shots[1]];
+    dump("wet-damp", &wet[1]);
+    dump("wet-dry", &dry[1]);
+    let luminance = |img: &[u8]| -> Vec<f64> {
+        img.as_chunks::<4>()
+            .0
+            .iter()
+            .map(|p| (f64::from(p[0]) + f64::from(p[1]) + f64::from(p[2])) / 3.0)
+            .collect()
+    };
+    // The pixels the damp touches, in the tonemapped image (a linear 0.65 shows as less).
+    let darker = |wet: &[u8], dry: &[u8]| -> Vec<f64> {
+        luminance(wet)
+            .iter()
+            .zip(&luminance(dry))
+            .filter(|(x, y)| **x < 0.99 * **y)
+            .map(|(x, y)| x / y)
+            .collect()
+    };
+    let under = darker(&wet[0], &dry[0]).len();
+    let touched = darker(&wet[1], &dry[1]);
+    let ratio = touched.iter().sum::<f64>() / touched.len().max(1) as f64;
+    let later = differing(&wet[2], &dry[2]);
+    eprintln!(
+        "bed under water: {under} pixels darker; damp bed: {} pixels darker, at {ratio:.3} of the \
+         dry colour; 40 s later {later:.5} of the pixels differ",
+        touched.len()
+    );
+    assert!(under > 4000, "the flooded pit's floor is wet: {under}");
+    assert!(
+        touched.len() > 4000,
+        "the drained pit's floor draws damp: {}",
+        touched.len()
+    );
+    assert!(ratio < 0.95, "damp is darker: {ratio}");
+    assert!(later < 0.0005, "the bed dries: {later}");
 }
 
 #[test]

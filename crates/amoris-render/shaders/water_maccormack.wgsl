@@ -86,6 +86,87 @@ fn mac_corrected(i:u32,k:u32,axis:u32)->f32 {
     if(corrected>=lo && corrected<=hi){return corrected;}
     return first;
 }
+// Momentum-conserving upwind transport of a face velocity on the staggered grid, after G. S.
+// Stelling and S. P. A. Duinmeijer ("A staggered conservative scheme for every Froude number in
+// rapidly varied shallow water flows", IJNMF 43, 2003), as SWASH uses it (M. Zijlema, G. Stelling
+// and P. Smit, Coastal Engineering 58, 2011). The momentum that the cell-centred discharges either
+// side carry in, upwind, less the face's own velocity times their difference, over the face's
+// mean depth: a bore then runs at the speed momentum conservation gives it, and a face that a front
+// has just reached takes the velocity of the water arriving rather than starting from rest, as a
+// semi-Lagrangian trace from its own velocity of zero does (and, entering a dry column, it moves
+// with the water behind it).
+fn sd_velocity(i:u32,k:u32,axis:u32)->f32 {
+    if(axis==0u){
+        if(k>=p.size.y||i>p.size.x){return 0.0;}
+        return u(i,k);
+    }
+    if(i>=p.size.x||k>p.size.y){return 0.0;}
+    return w(i,k);
+}
+// The discharge through the -x (axis 0) or -z (axis 1) face of column (i,k): the old velocity
+// times the upwind reconstructed depth the transport uses; an outer face takes its inner column's.
+fn sd_discharge(i:u32,k:u32,axis:u32)->f32 {
+    let v=sd_velocity(i,k,axis);
+    if(v==0.0){return 0.0;}
+    if(axis==0u){
+        if(i==0u){return v*src[at(0u,k)].y;}
+        if(i>=p.size.x){return v*src[at(p.size.x-1u,k)].y;}
+        return select(v*depth_states(at(i,k))[0],v*depth_states(at(i-1u,k))[1],v>0.0);
+    }
+    if(k==0u){return v*src[at(i,0u)].y;}
+    if(k>=p.size.y){return v*src[at(i,p.size.y-1u)].y;}
+    return select(v*depth_states(at(i,k))[2],v*depth_states(at(i,k-1u))[3],v>0.0);
+}
+fn sd_advect(i:u32,k:u32,axis:u32)->f32 {
+    // o steps along the face's normal, t along the face.
+    let o=select(vec2u(1u,0u),vec2u(0u,1u),axis==1u);
+    let t=select(vec2u(0u,1u),vec2u(1u,0u),axis==1u);
+    let f=vec2u(i,k);
+    let v=sd_velocity(i,k,axis);
+    let a=at(i-o.x,k-o.y);let b=at(i,k);
+    let depth=0.5*(src[a].y+src[b].y);
+    if(depth<=0.0001){return v;}
+    // Along the normal: the discharges at the two columns' centres.
+    let q1=sd_discharge(i,k,axis);
+    let qa=0.5*(sd_discharge(i-o.x,k-o.y,axis)+q1);
+    let qb=0.5*(q1+sd_discharge(i+o.x,k+o.y,axis));
+    let ua=select(v,sd_velocity(i-o.x,k-o.y,axis),qa>0.0);
+    let ub=select(sd_velocity(i+o.x,k+o.y,axis),v,qb>0.0);
+    var momentum=qb*ub-qa*ua-v*(qb-qa);
+    // Across: the other component's discharges at the face's two ends, each the mean over the
+    // two columns.
+    let other=1u-axis;
+    let qm=0.5*(sd_discharge(i-o.x,k-o.y,other)+sd_discharge(i,k,other));
+    let fp=f+t;
+    let qp=0.5*(sd_discharge(fp.x-o.x,fp.y-o.y,other)+sd_discharge(fp.x,fp.y,other));
+    let first=select(f.y,f.x,axis==1u)==0u;
+    let last=select(fp.y,fp.x,axis==1u)>=select(p.size.y,p.size.x,axis==1u);
+    let vm=select(sd_velocity(i-t.x,k-t.y,axis),v,first);
+    let vp=select(sd_velocity(fp.x,fp.y,axis),v,last);
+    let um=select(v,vm,qm>0.0);
+    let up=select(vp,v,qp>0.0);
+    momentum+=qp*up-qm*um-v*(qp-qm);
+    var moved=v-p.dt*momentum/(depth*p.cell);
+    // A front entering a dry column moves with the water behind it: from rest, the face would
+    // take some twenty substeps to reach that speed, and the front, blunt, would advance at half
+    // of it.
+    let dry_a=src[a].y<=0.0001;let dry_b=src[b].y<=0.0001;
+    if(dry_b && !dry_a){moved=max(moved,sd_velocity(i-o.x,k-o.y,axis));}
+    if(dry_a && !dry_b){moved=min(moved,sd_velocity(i+o.x,k+o.y,axis));}
+    return moved;
+}
+// Rapidly varied flow, where momentum must be conserved: thin water, or a step in depth over one
+// column that is a fifth of the deeper side.
+fn sd_rapid(i:u32,k:u32,axis:u32)->bool {
+    let o=select(vec2u(1u,0u),vec2u(0u,1u),axis==1u);
+    let ha=src[at(i-o.x,k-o.y)].y;let hb=src[at(i,k)].y;
+    let hi=max(ha,hb);let lo=min(ha,hb);
+    return lo<0.25 || hi-lo>0.2*hi;
+}
+fn mac_advected(i:u32,k:u32,axis:u32)->f32 {
+    if(p.advection==1.0 || (p.advection==2.0 && sd_rapid(i,k,axis))){return sd_advect(i,k,axis);}
+    return mac_corrected(i,k,axis);
+}
 fn mac_head(n:u32)->f32 {
     if(p.occupancy_on<=0.0){return 0.0;}
     return occupancy[n];
@@ -130,12 +211,12 @@ fn mac_faces(@builtin(global_invocation_id) id:vec3u){
     // for active neighbours. Do not leak a frozen nonzero face into conservative fluxes.
     if(awake[n]==0u){velocity[n*2u]=0.0;velocity[n*2u+1u]=0.0;return;}
     if(mac_face_open(i,k,0u)){
-        let v=mac_breaking(i,k,0u,mac_corrected(i,k,0u));
-        value.x=pressure_heads(v,n-1u,n,mac_head(n-1u),mac_head(n));
+        let v=mac_breaking(i,k,0u,mac_advected(i,k,0u));
+        value.x=pressure_heads(v,n-1u,n,mac_head(n-1u),mac_head(n),p.advection!=0.0);
     }
     if(mac_face_open(i,k,1u)){
-        let v=mac_breaking(i,k,1u,mac_corrected(i,k,1u));
-        value.y=pressure_heads(v,n-p.size.x,n,mac_head(n-p.size.x),mac_head(n));
+        let v=mac_breaking(i,k,1u,mac_advected(i,k,1u));
+        value.y=pressure_heads(v,n-p.size.x,n,mac_head(n-p.size.x),mac_head(n),p.advection!=0.0);
     }
     velocity[n*2u]=value.x;velocity[n*2u+1u]=value.y;
 }

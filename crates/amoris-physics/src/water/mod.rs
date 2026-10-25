@@ -269,6 +269,10 @@ pub struct WaterLook {
     /// Metres of still water drawn around the region, at its edge's level and shaded as deep
     /// water: the open water a game shows past its region (0: none; water.md 9).
     pub surround_m: f32,
+    /// Seconds the bed stays damp after the water leaves it, darker and, a few seconds more,
+    /// glossy, with the foam the water left on it (0: the bed is drawn as it is; water.md 61.2).
+    /// A sandy beach takes a minute or two.
+    pub wet_s: f32,
 }
 
 impl Default for WaterLook {
@@ -279,6 +283,7 @@ impl Default for WaterLook {
             scatter: [0.02; 3],
             style: Style::Smooth,
             surround_m: 0.0,
+            wet_s: 0.0,
         }
     }
 }
@@ -604,6 +609,12 @@ impl WaterRegion {
             return Err(invalid(
                 "look.surround_m",
                 format!("surround_m is 0 to 10000 metres, not {}", look.surround_m),
+            ));
+        }
+        if !(look.wet_s >= 0.0 && look.wet_s <= 3600.0) {
+            return Err(invalid(
+                "look.wet_s",
+                format!("wet_s is 0 to 3600 seconds, not {}", look.wet_s),
             ));
         }
         if !(look.fog.iter().chain(&look.absorb).all(|x| x.is_finite())

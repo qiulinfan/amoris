@@ -3403,6 +3403,8 @@ impl Renderer {
                 [&binds.frame, &binds.lighting, &binds.textures],
                 &mut self.profiler,
             );
+            self.water
+                .wet_depth(&mut enc, &self.targets, &mut self.profiler);
             {
                 let color = self.targets.layer_attachments(true);
                 let label = if self.transparent.any() {
@@ -3424,6 +3426,12 @@ impl Renderer {
                     timestamp_writes: self.profiler.render_scope(label),
                     ..Default::default()
                 });
+                // The beds the water has wetted darken before anything is drawn over them or
+                // seen through the water (water.md 61.2).
+                pass.set_bind_group(0, &binds.frame, &[]);
+                pass.set_bind_group(1, &binds.lighting, &[]);
+                pass.set_bind_group(2, &binds.textures, &[]);
+                self.water.draw_wet(&mut pass);
                 self.transparent.draw_layer(
                     &mut pass,
                     &binds.transparent,

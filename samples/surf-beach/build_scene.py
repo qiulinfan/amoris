@@ -362,7 +362,7 @@ def main():
             "friction": 0.01, "calm_per_s": 0.0, "substeps": 2, "dry_below": 0,
             "physics": {"dispersion": False, "breaking": True, "falls_m": 0,
                         "nonhydrostatic": True},
-            "look": {"style": "Smooth", "surround_m": 0, **WATER},
+            "look": {"style": "Smooth", "surround_m": 0, "wet_s": 90.0, **WATER},
             "tiles": tiles},
         "WaterDisplacement": {}})
     surf = len(entities)

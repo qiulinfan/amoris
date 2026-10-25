@@ -40,6 +40,8 @@ it stands, the board's speed, whether it is in the water and its eye's position,
   speed through the water and the angle of attack, its rails and fin grip the water across it,
   and its volume pushes the water aside. These forces are solved implicitly, so a light board
   neither bounces nor skips.
+- The broken waves run up the beach face as swash and slide back down. The sand they leave is wet:
+  darker, glossy for a few seconds, and drying over a minute and a half (`wet_s`).
 - The sun's caustics play on the sand and the reef in the shallows.
 - Out at sea a breeze of 6.5 m/s (`Breeze`) has blown over 40 km of open water and raised a wind
   sea, drawn on the sea to the horizon and as the detail of the bay's surface, as high as the bay's

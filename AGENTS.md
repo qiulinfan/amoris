@@ -323,14 +323,18 @@ water_frontier, physics field_buoyancy/field_hull/resident_swimming/added_mass, 
 water_resident_async/water_feedback, and app gpu_water/gpu_floaters/gpu_feedback/gpu_swimming/
 gpu_energy/gpu_frontier_scenes. The non-hydrostatic solve runs two identical Chebyshev cycles,
 never one (water.md 55.2); its blocked dispatches must match one dispatch an iteration bit for bit
-(water_frontier `the_blocked_non_hydrostatic_solve_matches_one_dispatch_an_iteration`). Rebuild
+(water_frontier `the_blocked_non_hydrostatic_solve_matches_one_dispatch_an_iteration`). A change
+to the kernel's velocity transport or its wet/dry faces also runs the `water_swash` example
+against the table in water.md 61.3. Rebuild
 paired web game/viewport and run
 actual Chrome worker/resident/probe/floater and water_pool_check.mjs checks. samples/water-pool
 uses real player input and only scores poses/contact; scripts never move the swimmer.
 
 Rendering uses actual GPU fields, preserves dry-region ocean ownership and WebGPU's eight fragment
 storage-buffer limit. Test water image cases, water_foam and the actual browser after visual
-changes. Keep no-water behavior unchanged. Compute pipelines use shaders::compute_options();
+changes. The wet bed (water.md 61.2) finds its points from this frame's scene depth, resolved
+before it draws; check it from a moving camera (`shore_shots`), not only a still one. Keep
+no-water behavior unchanged. Compute pipelines use shaders::compute_options();
 initialize workgroup memory explicitly. Benchmark methods and measured scope are in
 docs/bench/liquids.md; raw logs/traces stay under ignored out/. GPU interval sums/coverage are
 not hardware utilization and can include stalls.

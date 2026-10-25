@@ -239,6 +239,60 @@ fn pipeline(
     })
 }
 
+/// The wet bed's draw (forward.wgsl `fs_wet`; water.md 61.2): a full-screen triangle a region
+/// whose alpha darkens the colour as its colour adds to it, `src + dst x src_alpha`.
+fn wet_pipeline(
+    device: &wgpu::Device,
+    module: &wgpu::ShaderModule,
+    layout: &wgpu::PipelineLayout,
+    format: SceneFormat,
+) -> wgpu::RenderPipeline {
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("wet bed"),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module,
+            entry_point: Some("vs_wet"),
+            compilation_options: Default::default(),
+            buffers: &[],
+        },
+        fragment: Some(wgpu::FragmentState {
+            module,
+            entry_point: Some("fs_wet"),
+            compilation_options: wgpu::PipelineCompilationOptions {
+                constants: &format.constants(),
+                ..Default::default()
+            },
+            targets: &format.targets(
+                Some(wgpu::BlendState {
+                    color: wgpu::BlendComponent {
+                        src_factor: wgpu::BlendFactor::One,
+                        dst_factor: wgpu::BlendFactor::SrcAlpha,
+                        operation: wgpu::BlendOperation::Add,
+                    },
+                    alpha: wgpu::BlendComponent {
+                        src_factor: wgpu::BlendFactor::Zero,
+                        dst_factor: wgpu::BlendFactor::One,
+                        operation: wgpu::BlendOperation::Add,
+                    },
+                }),
+                false,
+            ),
+        }),
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: DEPTH,
+            depth_write_enabled: Some(false),
+            depth_compare: Some(wgpu::CompareFunction::Always),
+            stencil: Default::default(),
+            bias: Default::default(),
+        }),
+        multisample: format.multisample(),
+        multiview_mask: None,
+        cache: None,
+    })
+}
+
 /// The water regions and their drawing.
 pub struct Water {
     cull_on: bool,
@@ -265,6 +319,8 @@ pub struct Water {
     blocky: wgpu::RenderPipeline,
     surround: wgpu::RenderPipeline,
     stitch: wgpu::RenderPipeline,
+    /// The wet bed: its darkening, its film and the foam left on it.
+    wet: wgpu::RenderPipeline,
     layout: wgpu::PipelineLayout,
     group_layout: wgpu::BindGroupLayout,
     regions: BTreeMap<u64, Region>,
@@ -430,6 +486,7 @@ impl Water {
             blocky: pipeline(device, module, &layout, format, "vs_shallow_blocky"),
             surround: pipeline(device, module, &layout, format, "vs_shallow_surround"),
             stitch: pipeline(device, module, &layout, format, "vs_shallow_stitch"),
+            wet: wet_pipeline(device, module, &layout, format),
             layout,
             group_layout,
             regions: BTreeMap::new(),
@@ -497,6 +554,7 @@ impl Water {
         self.blocky = pipeline(device, module, &self.layout, format, "vs_shallow_blocky");
         self.surround = pipeline(device, module, &self.layout, format, "vs_shallow_surround");
         self.stitch = pipeline(device, module, &self.layout, format, "vs_shallow_stitch");
+        self.wet = wet_pipeline(device, module, &self.layout, format);
     }
 
     /// The rectangles the sea leaves to the regions. On a side open on the sea the sea runs a
@@ -982,6 +1040,7 @@ impl Water {
                 per: 1,
                 surround_m: 0.0,
                 sea: [false; 4],
+                wet_s: 0.0,
             },
             columns: Vec::new(),
             tiled: false,
@@ -1187,7 +1246,11 @@ impl Water {
             g.clear_foam |= g.last_time.is_some_and(|last| t < last);
             g.clear_spray |= g.last_time.is_some_and(|last| t < last);
             g.spray_dt = g.last_time.map_or(0.0, |last| (t - last).max(0.0) as f32);
-            g.foam_dt = if self.foam_on { g.spray_dt } else { 0.0 };
+            g.foam_dt = if self.foam_on || r.look.wet_s > 0.0 {
+                g.spray_dt
+            } else {
+                0.0
+            };
             g.last_time = Some(t);
             g.columns_changed |= r.resident.is_none() && (r.all_dirty || !r.dirty.is_empty());
             if r.all_dirty && r.resident.is_none() {
@@ -1358,8 +1421,15 @@ impl Water {
             g.columns_changed = false;
             if g.foam_dt > 0.0 || g.clear_foam {
                 let timestamps = profiler.compute_scope("water foam");
-                g.foam
-                    .encode(queue, encoder, g.foam_dt, g.clear_foam, timestamps);
+                g.foam.encode(
+                    queue,
+                    encoder,
+                    g.foam_dt,
+                    g.clear_foam,
+                    self.foam_on,
+                    r.look.wet_s,
+                    timestamps,
+                );
                 g.foam_dt = 0.0;
                 g.clear_foam = false;
             }
@@ -1633,6 +1703,43 @@ impl Water {
             .as_ref()
             .expect("water optics prepared before drawing")
             .background(encoder, targets, profiler);
+    }
+
+    /// The regions whose beds draw wet (water.md 61.2): the bed's height comes from a smooth
+    /// surface's shading attributes.
+    fn wet_regions(&self) -> impl Iterator<Item = &RegionGpu> {
+        self.regions
+            .values()
+            .filter(|r| r.look.wet_s > 0.0)
+            .filter_map(|r| r.gpu.as_ref())
+            .filter(|g| g.surface.enabled)
+    }
+
+    /// Resolves this frame's scene depth for `draw_wet`, which finds the points it darkens from
+    /// it; the water's background resolves it again after the translucent layer.
+    pub fn wet_depth(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        targets: &crate::post::Targets,
+        profiler: &mut crate::profiler::GpuProfiler,
+    ) {
+        if self.wet_regions().next().is_some() {
+            self.optics
+                .as_ref()
+                .expect("water optics prepared before drawing")
+                .scene_depth(encoder, targets, profiler, "wet bed depth");
+        }
+    }
+
+    /// Draws the beds the regions' water has wetted (water.md 61.2), groups 0 to 2 bound as for
+    /// the lit forward pipelines, over the opaque pass's colour before the water's background is
+    /// resolved, after `wet_depth`.
+    pub fn draw_wet(&self, pass: &mut wgpu::RenderPass<'_>) {
+        for g in self.wet_regions() {
+            pass.set_bind_group(3, &g.group, &[]);
+            pass.set_pipeline(&self.wet);
+            pass.draw(0..3, 0..1);
+        }
     }
 
     /// Draws every region, groups 0 to 2 bound as for the lit forward pipelines.

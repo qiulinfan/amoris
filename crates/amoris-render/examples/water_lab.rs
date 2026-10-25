@@ -33,7 +33,7 @@ fn bench_foam(gpu: &Gpu, side: u32) {
         profiler.poll();
         let mut enc = gpu.device.create_command_encoder(&Default::default());
         let scope = profiler.compute_scope("water foam");
-        foam.encode(&gpu.queue, &mut enc, 1.0 / 60.0, false, scope);
+        foam.encode(&gpu.queue, &mut enc, 1.0 / 60.0, false, true, 0.0, scope);
         profiler.resolve(&mut enc);
         gpu.queue.submit([enc.finish()]);
         profiler.after_submit();

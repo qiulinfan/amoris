@@ -322,9 +322,19 @@ impl Optics {
                 depth_or_array_layers: 1,
             },
         );
+        self.scene_depth(encoder, targets, profiler, "water scene depth");
+    }
+    /// Resolves the scene's depth into the texture the water reads it from.
+    pub fn scene_depth(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        targets: &Targets,
+        profiler: &mut crate::profiler::GpuProfiler,
+        label: &'static str,
+    ) {
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-            label: Some("water scene depth"),
-            timestamp_writes: profiler.compute_scope("water scene depth"),
+            label: Some(label),
+            timestamp_writes: profiler.compute_scope(label),
         });
         pass.set_pipeline(&self.resolve.as_ref().unwrap().1);
         pass.set_bind_group(0, self.input.resolve_group.as_ref().unwrap(), &[]);

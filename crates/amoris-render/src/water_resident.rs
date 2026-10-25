@@ -614,6 +614,21 @@ impl ResidentWater {
             body_start: u32::MAX,
         })
     }
+    /// Transports the kernel's face velocities by another scheme than the regions' (water.md
+    /// 61.1), to compare them. The execution environment names it, so no replay mixes schemes.
+    pub fn set_advection(&mut self, advection: crate::water_compute::Advection) {
+        self.field.set_advection(advection);
+        let base = self
+            .environment
+            .split("; advection ")
+            .next()
+            .unwrap_or_default();
+        self.environment = if advection == Default::default() {
+            base.to_string()
+        } else {
+            format!("{base}; advection {advection:?}")
+        };
+    }
     /// Retain GPU allocations, but require a complete upload and authenticated replay before
     /// exposing another region. Outstanding batch maps have completed or been cancelled first.
     fn reset_identity(&mut self) {

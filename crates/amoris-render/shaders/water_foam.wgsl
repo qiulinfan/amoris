@@ -1,11 +1,24 @@
-// Presentation-only foam, transported by the actual water velocity and decaying in simulated time.
-struct Params { count: vec4<u32>, cell: f32, dt: f32, clear: u32, padding: u32 }
+// Presentation-only foam, transported by the actual water velocity and decaying in simulated time,
+// and the wetness the water leaves on the bed (water.md 61.2): damp, film and the foam left
+// behind, each full where water stands and fading where it has gone.
+struct Params {
+    count: vec4<u32>,
+    cell: f32,
+    dt: f32,
+    clear: u32,
+    foam_on: u32,
+    // Seconds over which the bed's damp, its film and the foam left on it fade; x 0: no wetness.
+    wet: vec4<f32>,
+}
 @group(0) @binding(0) var<uniform> p: Params;
 @group(0) @binding(1) var<storage, read> water: array<vec4<f32>>;
 @group(0) @binding(2) var<storage, read> old_foam: array<f32>;
 @group(0) @binding(3) var<storage, read_write> next_foam: array<f32>;
-@group(0) @binding(4) var foam_field: texture_storage_2d<r32float, write>;
+// Foam density, then the bed's damp, film and foam left behind.
+@group(0) @binding(4) var foam_field: texture_storage_2d<rgba32float, write>;
 @group(0) @binding(5) var<storage, read> impacts:array<u32>;
+@group(0) @binding(6) var<storage, read> old_wet: array<vec4<f32>>;
+@group(0) @binding(7) var<storage, read_write> next_wet: array<vec4<f32>>;
 fn column(pos: vec2<i32>) -> vec4<f32> {
     let c = vec2<u32>(clamp(pos, vec2<i32>(0), vec2<i32>(p.count.xy) - vec2<i32>(1)));
     if p.count.z != 0u {
@@ -31,13 +44,27 @@ fn surface(c: vec4<f32>, fallback: f32) -> f32 {
     // Unreceived tiles have negative depth (older sentinels used a huge height).
     return select(fallback, c.x, c.y >= 0.0 && abs(c.x) < 1e10);
 }
+// The bed's wetness under water: damp and filmed, holding the foam on the water above it; on a
+// bare bed, each fading over its own time.
+fn wetness(n: u32, wet: bool, foam: f32) -> vec3<f32> {
+    if p.wet.x <= 0.0 { return vec3<f32>(0.0); }
+    if wet { return vec3<f32>(1.0, 1.0, foam); }
+    let before = select(old_wet[n].xyz, vec3<f32>(0.0), p.clear != 0u);
+    return before * exp(-p.dt / max(p.wet.xyz, vec3<f32>(1e-3)));
+}
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if any(id.xy >= p.count.xy) { return; }
     let n = id.x + p.count.x * id.y;
     let at = vec2<i32>(id.xy);
     let c = column(at);
-    if c.y < 0.002 { next_foam[n] = 0.0; textureStore(foam_field, at, vec4<f32>(0.0)); return; }
+    if c.y < 0.002 {
+        let wet = wetness(n, false, 0.0);
+        next_foam[n] = 0.0;
+        next_wet[n] = vec4<f32>(wet, 0.0);
+        textureStore(foam_field, at, vec4<f32>(0.0, wet));
+        return;
+    }
     let l = neighbour(at - vec2<i32>(1, 0),c); let r = neighbour(at + vec2<i32>(1, 0),c);
     let d = neighbour(at - vec2<i32>(0, 1),c); let u = neighbour(at + vec2<i32>(0, 1),c);
     let divergence = (r.z - l.z + u.w - d.w) / (2.0 * p.cell);
@@ -59,6 +86,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let remaining = carried * exp(-0.35 * p.dt);
     var density = clamp(1.0 - (1.0 - remaining) * exp(-3.0 * source * p.dt), 0.0, 1.0);
     if(impacts[n]!=0u){density=1.0-(1.0-density)*exp(-0.12*min(f32(impacts[n]),64.0));}
+    density = select(0.0, density, p.foam_on != 0u);
+    let wet = wetness(n, true, density);
     next_foam[n] = density;
-    textureStore(foam_field, at, vec4<f32>(density,0.0,0.0,0.0));
+    next_wet[n] = vec4<f32>(wet, 0.0);
+    textureStore(foam_field, at, vec4<f32>(density, wet));
 }

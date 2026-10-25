@@ -7,7 +7,7 @@ const NZ: usize = 16;
 fn read(gpu: &Gpu, foam: &WaterFoam) -> Vec<f32> {
     let buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("foam check"),
-        size: (NX * NZ * 4 + 256 * NZ) as u64,
+        size: (NX * NZ * 4 + 16 * NX * NZ) as u64,
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
@@ -24,7 +24,7 @@ fn read(gpu: &Gpu, foam: &WaterFoam) -> Vec<f32> {
             buffer: &buffer,
             layout: wgpu::TexelCopyBufferLayout {
                 offset: (NX * NZ * 4) as u64,
-                bytes_per_row: Some(256),
+                bytes_per_row: Some(16 * NX as u32),
                 rows_per_image: Some(NZ as u32),
             },
         },
@@ -45,11 +45,13 @@ fn read(gpu: &Gpu, foam: &WaterFoam) -> Vec<f32> {
         let mapped = buffer.slice(..).get_mapped_range().unwrap();
         let values: Vec<f32> = bytemuck::cast_slice(&mapped[..NX * NZ * 4]).to_vec();
         for row in 0..NZ {
-            let start = NX * NZ * 4 + row * 256;
-            let texture: &[f32] = bytemuck::cast_slice(&mapped[start..start + NX * 4]);
+            let start = NX * NZ * 4 + row * 16 * NX;
+            // The density is each texel's first channel; the rest is the bed's wetness.
+            let texels: &[f32] = bytemuck::cast_slice(&mapped[start..start + 16 * NX]);
+            let density: Vec<f32> = texels.iter().step_by(4).copied().collect();
             assert_eq!(
                 &values[row * NX..(row + 1) * NX],
-                texture,
+                &density[..],
                 "the sampled density texture must match the advected state"
             );
         }
@@ -61,7 +63,7 @@ fn read(gpu: &Gpu, foam: &WaterFoam) -> Vec<f32> {
 fn step(gpu: &Gpu, foam: &mut WaterFoam, count: usize, dt: f32, clear: bool) {
     for _ in 0..count {
         let mut encoder = gpu.device.create_command_encoder(&Default::default());
-        foam.encode(&gpu.queue, &mut encoder, dt, clear, None);
+        foam.encode(&gpu.queue, &mut encoder, dt, clear, true, 0.0, None);
         gpu.queue.submit([encoder.finish()]);
     }
 }

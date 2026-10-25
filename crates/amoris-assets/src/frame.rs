@@ -272,6 +272,8 @@ pub struct WaterLookView {
     pub surround_m: f32,
     /// The sides (-x, +x, -z, +z) open on the sea, where the region's water meets the sea's.
     pub sea: [bool; 4],
+    /// Seconds the bed stays damp after the water leaves it (0: the bed as it is).
+    pub wet_s: f32,
 }
 
 /// One tile of a water region (16 x 16 columns, x fastest): each column's surface (world y), depth

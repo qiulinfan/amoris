@@ -401,7 +401,7 @@ impl Persisted for Sea {
 
 impl Persisted for WaterRegion {
     const NAME: &'static str = "WaterRegion";
-    const VERSION: u32 = 5;
+    const VERSION: u32 = 6;
 
     fn trace(t: &mut Tracer, s: &Samples) -> serde_reflection::Result<()> {
         t.trace_type::<crate::water::Solver>(s)?;

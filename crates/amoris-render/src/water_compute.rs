@@ -27,13 +27,29 @@ struct Params {
     fall_min: f32,
     occupancy_on: f32,
     calm: f32,
+    /// How the resident kernel transports its face velocities (water.md 61.1).
+    advection: f32,
     /// WGSL aligns `edge_kind` to 16 bytes.
-    _pad: [f32; 3],
+    _pad: [f32; 2],
     edge_kind: [u32; 4],
     edge_rate: [f32; 4],
     edge_normal: [f32; 4],
     sea_meta: [f32; 4],
     waves: [WaveParams; MAX_SEA_WAVES],
+}
+
+/// How the resident kernel transports its face velocities (water.md 61.1). Regions always run
+/// `Hybrid`; the others are there to compare the schemes (the `water_swash` example).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Advection {
+    /// Bounded MacCormack everywhere (water.md 26).
+    MacCormack,
+    /// Stelling and Duinmeijer's momentum-conserving upwind form everywhere.
+    Conservative,
+    /// The momentum-conserving form where the flow varies rapidly (thin water and steep steps),
+    /// MacCormack elsewhere.
+    #[default]
+    Hybrid,
 }
 
 /// A reusable GPU field. State is row-major [bed, depth, -x velocity, -z velocity]. Outer faces
@@ -61,6 +77,7 @@ pub struct GpuWater {
     has_boundary_report: bool,
     current: usize,
     readback: wgpu::Buffer,
+    advection: Advection,
 }
 
 /// Three bind layouts keep each stage within WebGPU's eight storage buffers: advection, face
@@ -264,11 +281,17 @@ impl GpuWater {
                 state_bytes,
                 wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             ),
+            advection: Advection::default(),
         })
     }
 
     pub fn size(&self) -> [u32; 2] {
         self.size
+    }
+
+    /// Transports the resident kernel's face velocities by another scheme, to compare them.
+    pub fn set_advection(&mut self, advection: Advection) {
+        self.advection = advection;
     }
 
     pub(crate) fn is_initialized(&self) -> bool {
@@ -687,7 +710,12 @@ impl GpuWater {
                 fall_min: physics.fall_min_m as f32,
                 occupancy_on: if occupied { 1.0 } else { 0.0 },
                 calm: damping[1],
-                _pad: [0.0; 3],
+                advection: match self.advection {
+                    Advection::MacCormack => 0.0,
+                    Advection::Conservative => 1.0,
+                    Advection::Hybrid => 2.0,
+                },
+                _pad: [0.0; 2],
                 edge_kind: kinds,
                 edge_rate: rates,
                 edge_normal: normals,

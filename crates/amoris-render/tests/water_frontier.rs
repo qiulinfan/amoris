@@ -7,6 +7,7 @@ use amoris_assets::water_field::{
 };
 use amoris_render::{
     BackendChoice, Gpu,
+    water_compute::Advection,
     water_resident::{ResidentAdvance, ResidentWater},
 };
 use std::sync::Arc;
@@ -236,7 +237,8 @@ fn falls_leave_the_lip_and_land_where_the_jet_meets_the_basin() {
             }
         }
         // Without falls the shelf pours into the basin's first columns; with them the water
-        // lands further out and the foot of the cliff gets much less.
+        // lands further out and the foot of the cliff, its first five columns (1.25 m), gets much
+        // less. (Pouring as momentum carries it, the jet can pass over the very first column.)
         let centroid = |row: &[f64; 64]| {
             let (mut m, mut w) = (0.0, 0.0);
             for (k, v) in row.iter().enumerate().skip(16) {
@@ -247,19 +249,21 @@ fn falls_leave_the_lip_and_land_where_the_jet_meets_the_basin() {
             m / w.max(1e-9)
         };
         let (pour, fall) = (centroid(&landed[0]), centroid(&landed[1]));
+        let foot = |row: &[f64; 64]| row[16..21].iter().map(|v| v.max(0.0)).sum::<f64>();
         eprintln!(
             "falls: landed centroid {fall:.2} columns against {pour:.2} pouring; foot {:.4} against {:.4} m",
-            landed[1][16], landed[0][16]
+            foot(&landed[1]),
+            foot(&landed[0])
         );
         assert!(
             fall > pour + 2.0,
             "falls should land further from the cliff: {fall} against {pour}"
         );
         assert!(
-            landed[1][16] < landed[0][16],
-            "the cliff's foot should receive less under falls: {} against {}",
-            landed[1][16],
-            landed[0][16]
+            foot(&landed[1]) < 0.5 * foot(&landed[0]),
+            "the cliff's foot should receive much less under falls: {} against {}",
+            foot(&landed[1]),
+            foot(&landed[0])
         );
     }
 }
@@ -645,7 +649,15 @@ fn time_dispersive_steps() {
     gpu.device
         .on_uncaptured_error(Arc::new(|e| panic!("timing validation: {e}")));
     for size in [[128u32, 128u32], [256, 256], [512, 256], [512, 512]] {
-        for (dispersion, nonhydrostatic) in [(false, false), (true, false), (false, true)] {
+        // The shallow-water step with each transport of the face velocities (water.md 61.1):
+        // this water is deep and smooth, so the regions' hybrid one runs MacCormack's.
+        for (dispersion, nonhydrostatic, advection) in [
+            (false, false, Advection::MacCormack),
+            (false, false, Advection::Conservative),
+            (false, false, Advection::Hybrid),
+            (true, false, Advection::Hybrid),
+            (false, true, Advection::Hybrid),
+        ] {
             let cp = field(size, |i, k| {
                 (
                     0.0,
@@ -653,6 +665,7 @@ fn time_dispersive_steps() {
                 )
             });
             let mut run = Run::new(&gpu, cp);
+            run.water.set_advection(advection);
             let mut s = step(0.25, 4, 0.02);
             s.physics.dispersion = dispersion;
             s.physics.nonhydrostatic = nonhydrostatic;
@@ -666,7 +679,7 @@ fn time_dispersive_steps() {
             }
             let ms = start.elapsed().as_secs_f64() * 1000.0 / f64::from(n);
             eprintln!(
-                "{size:?} dispersion {dispersion} non-hydrostatic {nonhydrostatic}: {ms:.3} ms a step of 4 substeps (wall, with a 64-byte readback)"
+                "{size:?} dispersion {dispersion} non-hydrostatic {nonhydrostatic} {advection:?}: {ms:.3} ms a step of 4 substeps (wall, with a 64-byte readback)"
             );
         }
     }
