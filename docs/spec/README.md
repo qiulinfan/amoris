@@ -35,7 +35,7 @@ their code is under `spikes/`.
 | [path-tracing-nrc.md](path-tracing-nrc.md) | metal, rt | Charter 4.4 (static surface path tracing and the online NRC toy, on every backend with ray queries since 2026-10-09), measured in docs/bench/path-tracing-nrc.md |
 | [rt-shadows.md](rt-shadows.md) | rt | Charter 4.4 (Pioneer 2026-10-09: opt-in ray-traced sun shadows in the interactive renderer), measured in docs/bench/rt-shadows.md |
 | [neural-textures.md](neural-textures.md) | neural | Charter 4.4 (Pioneer 2026-10-09: neural texture compression: the `.ntex` file, the GPU trainer, the forward pass's decoder), measured in docs/bench/neural-textures.md |
-| [shared/contract/README.md](../../shared/contract/README.md) | spec-contract | 6.1 and 6.2 (the shared contract, its versioning and sync), seats and roles, the game definition, conformance checks |
+| [shared/contract/README.md](../../shared/contract/README.md) | spec-contract | 6.1 and 6.2 (the shared contract, its versioning and record), seats and roles, the game definition, conformance checks |
 | [shared/contract/perception.md](../../shared/contract/perception.md) | spec-contract | 7.8 (perception API); 3.1 |
 | [shared/contract/projection.md](../../shared/contract/projection.md) | spec-contract | 7.8 (the text, JSON and tensor projections, rounding); 3.1 |
 | [shared/contract/sailing.md](../../shared/contract/sailing.md) | spec-contract | 2.4.1 (the sailing showcase's perception, controls, intents, pacing and codes) |
@@ -58,11 +58,9 @@ their code is under `spikes/`.
 | [web-export.md](web-export.md) | web | Charter 4.1 and 5.1 (2026-10-18, blockcraft on itch.io): `cargo xtask export-web` writes a game as a static WebGPU folder or zip, the first-person player page, browser and host support, the play check; measurements in [../bench/web-export.md](../bench/web-export.md) |
 | [perception-slice2.md](perception-slice2.md), [actions-slice2.md](actions-slice2.md), [time-slice2.md](time-slice2.md) | player | The decisions the rebuild line's perception, actions and time took where shared/contract was open (brought with amoris-interface from `57ed4ea1`) |
 
-The shared contract and benchmark are maintained in this repository's `shared/`.
-`shared/SYNC.toml` retains an optional source reference commit (checks.md 5.4). Shared definitions
-are reviewed through Git; file-checksum inventories are not recorded.
-`contract.sync` remains `Skipped` while no reference commit is recorded or the comparison is
-unavailable. Generated files are checked against their current generators.
+The shared contract and benchmark are maintained in this repository's `shared/`, their only copy
+(checks.md 5.4). Shared definitions are reviewed through Git; file-checksum inventories are not
+recorded. Generated files are checked against their current generators.
 
 ## 2. Slice 0 verdicts
 

@@ -1,3 +1,0 @@
-# Optional source commit for the contract and benchmark maintained in this repository.
-# Empty means no reference commit is recorded (docs/spec/checks.md 5.4).
-commit = ""

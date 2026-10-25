@@ -8,15 +8,16 @@ and `projection` of `amoris-interface`, and the skipper's declarations in
 [perception.md](../../shared/contract/perception.md),
 [projection.md](../../shared/contract/projection.md) and
 [sailing.md](../../shared/contract/sailing.md) (The skipper's perception) were ambiguous or wrong
-for the code. Those files are the shared contract, which changes on both lines first and is pinned
-by `shared/SYNC.toml` (charter 6.2; checks.md 5.4), so this line records its choices here, numbered,
-until the contract takes them or replaces them.
+for the code. Those files are the shared contract, which then changed on both lines first and was
+pinned by `shared/SYNC.toml` (charter 6.2; checks.md 5.4), so this line records its choices here,
+numbered, until the contract takes them or replaces them.
 
 ## 1. Where the decisions live
 
-`shared/contract/*.md` and every file under `shared/` are hashed in `shared/SYNC.toml`; a changed or
-added file fails `gen.shared_modified`. Slice 2 therefore records the contract's open choices here,
-as the slice 1 decisions sit beside the specifications they amend.
+When slice 2 was built, `shared/contract/*.md` and every file under `shared/` were hashed in
+`shared/SYNC.toml`, and a changed or added file failed `gen.shared_modified` (the hashes went on
+2026-10-10, the file on 2026-10-25; checks.md 5.4). Slice 2 therefore records the contract's open
+choices here, as the slice 1 decisions sit beside the specifications they amend.
 
 ## 2. World state as built
 

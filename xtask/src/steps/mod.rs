@@ -33,7 +33,6 @@ pub struct Prepared {
     pub listed: Vec<String>,
     pub graph: deps::Graph,
     pub projects: Vec<projects::Project>,
-    pub sync_commit: String,
 }
 
 pub fn prepare(env: &Env) -> Result<Prepared, Problem> {
@@ -41,13 +40,11 @@ pub fn prepare(env: &Env) -> Result<Prepared, Problem> {
         .map_err(|m| Problem::new("check.tool_missing", m, json!({"tool": "git"})))?;
     let graph = deps::load(&env.root)?;
     config::load::<generate::ClippySource>(&env.root, generate::CLIPPY_SOURCE)?;
-    let sync: generate::Sync = config::load(&env.root, generate::SYNC)?;
     let projects = projects::discover(&env.root, &listed)?;
     Ok(Prepared {
         listed,
         graph,
         projects,
-        sync_commit: sync.commit,
     })
 }
 
@@ -186,19 +183,10 @@ impl Run<'_> {
                 }
                 step
             }
-            "contract" => {
-                let sync = if prep.sync_commit.is_empty() {
-                    "contract.sync: shared/SYNC.toml records no reference commit yet"
-                } else {
-                    "contract.sync: not built yet"
-                };
-                StepResult::skipped(
-                    "contract",
-                    format!(
-                        "{sync}; the conformance checks and the benchmark self-test (checks.md 8.7) are not built yet"
-                    ),
-                )
-            }
+            "contract" => StepResult::skipped(
+                "contract",
+                "the conformance checks and the benchmark self-test (checks.md 8.7) are not built yet",
+            ),
             "web" => {
                 let amoris = self.amoris();
                 web::run(env, &self.target_dir(), &amoris, &prep.projects)

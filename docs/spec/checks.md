@@ -216,10 +216,11 @@ As built (checks-slice1.md 10), `gen` runs only the generators that need no buil
 | `gen.stale` `{path}` | a generated file differs from what its generator writes now |
 | `gen.orphan` `{path}` | a file carries `@generated` but no generator writes it |
 
-`shared/SYNC.toml` holds only an optional reference `commit`. `commit = ""` means no reference
-commit is recorded. Shared files carry no checksum baseline (owner, 2026-10-10; charter 3.9).
-The `gen` step validates this metadata and compares generated outputs directly with their
-generators' current bytes; it does not record or compare shared file hashes.
+Shared files carry no checksum baseline (owner, 2026-10-10; charter 3.9) and no reference commit:
+Amoris main is the only line, so there is no other copy of `shared/` to compare with, and the owner
+retired `shared/SYNC.toml` and its planned `contract.sync` comparison (2026-10-25). The `gen` step
+compares generated outputs directly with their generators' current bytes; it does not record or
+compare shared file hashes.
 
 ## 6. Build, tests, the web target, types
 
@@ -476,14 +477,11 @@ its child), so no fixture code ships in the `amoris` binary.
 ### 8.7 Contract conformance and the benchmark self-test
 
 The shared contract names the checks Amoris runs, so reports from runtime targets compare
-(shared/contract/README.md, Conformance: `contract.sync`, `contract.perception.*`,
-`contract.projection.golden`, `contract.actions.*` and the rest). The `contract` step runs each
-under exactly that name, as a `StepResult` measurement row per check, and reports a failure with the
-problem code the contract gives it. `contract.sync` is a planned comparison of `shared/` with the
-optional reference commit recorded in `shared/SYNC.toml`. While `commit` is `""` (no reference
-commit) or the comparison is unavailable, it is `Skipped` with that reason, never passed and never
-inconclusive. A comparison, when implemented, reads the reference's content from Git directly;
-it creates no persistent file checksum baseline (5.4).
+(shared/contract/README.md, Conformance: `contract.perception.*`, `contract.projection.golden`,
+`contract.actions.*` and the rest). The `contract` step runs each under exactly that name, as a
+`StepResult` measurement row per check, and reports a failure with the problem code the contract
+gives it. Until the checks and the self-test below are built, the step is `Skipped` and names both
+as its reason.
 
 The same step runs the benchmark harness's self-test (shared/benchmark/README.md, 8: a fake engine,
 the proxy, the reports), which needs loopback sockets; its duration is reported as `bench.selftest`

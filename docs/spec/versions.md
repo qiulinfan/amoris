@@ -63,7 +63,7 @@ pub struct EngineVersion {
     pub source: ContentHash,  // the source tree the binary was built from (below)
     pub target: String,       // target triple: "x86_64-pc-windows-msvc", "wasm32-unknown-unknown"
     pub profile: String,      // "release", "web", "debug"
-    pub contract: String,     // the shared contract's version and optional reference commit
+    pub contract: String,     // the shared contract's version (shared/contract/README.md)
     pub c_compiler: String,   // the compiler that built QuickJS-ng: AMORIS_QJS_CC (script-sandbox.md 4.2, P7)
 }
 impl EngineVersion { pub fn current() -> &'static EngineVersion; }
@@ -640,18 +640,22 @@ Beside persistence.md's P1 to P7, run in the check command (charter 3.7; checks.
    once (`EngineVersion::install`, from its build script's source hash, architecture.md 4.13); until
    `amoris-app` exists every build reports `EngineVersion::unbuilt()`: `source` the derivation over
    no files, `commit` "unknown", `target` the architecture and operating system, `profile` "debug"
-   or "release", `contract` "unsynced". `version::source_hash` and `version::bundle_hash` compute
+   or "release", `contract` "unknown". `version::source_hash` and `version::bundle_hash` compute
    3.1's and 3.2's hashes from `(path, content)` pairs. 2026-10-09 (Pioneer): `amoris-app` and
-   `amoris-web` install it (architecture.md 4.13 and choice 10). `contract` is the version in
-   `shared/contract/README.md` and the reference commit of `shared/SYNC.toml`, `0.1+unsynced`
-   while it records none; `profile` is the cargo profile's directory (`release`, `debug`, `web`);
-   `target` the full triple. Tests and examples install nothing and stay `unbuilt()`, so a replay
-   a test records is refused by `amoris replay --verify` (`version.mismatch`, engine source):
-   `amoris-app`'s test `engine_version` proves it, and that `amoris version`'s source is
-   `source_hash` over the files 3.1 lists. A recorded bundle's compiled modules are reused only
-   when their `engine_source` is the running engine's; otherwise its TypeScript is compiled again,
-   or, without `transpile`, `replay.bundle_unavailable {reason: "needs transpile"}` (replay.md
-   2.4).
+   `amoris-web` install it (architecture.md 4.13 and choice 10). `contract` is the version
+   `shared/contract/README.md` states, such as `0.2`; `profile` is the cargo profile's directory
+   (`release`, `debug`, `web`); `target` the full triple. Tests and examples install nothing and
+   stay `unbuilt()`, so a replay a test records is refused by `amoris replay --verify`
+   (`version.mismatch`, engine source): `amoris-app`'s test `engine_version` proves it, and that
+   `amoris version`'s source is `source_hash` over the files 3.1 lists. A recorded bundle's
+   compiled modules are reused only when their `engine_source` is the running engine's; otherwise
+   its TypeScript is compiled again, or, without `transpile`, `replay.bundle_unavailable {reason:
+   "needs transpile"}` (replay.md 2.4). 2026-10-25: the owner retired `shared/SYNC.toml` (checks.md
+   5.4), whose reference commit `contract` carried until then (`0.2+unsynced` while it recorded
+   none; `unbuilt()` reported "unsynced"). The build script's file is under `crates/`, so every
+   earlier build also has another `source`: `Verify` refuses a replay recorded as `0.2+unsynced`
+   for both, `Compare` and `Rerun` accept it (7.2), and restoring a save compares only `source`,
+   for its report (6.2), so the old form needs no compatibility.
 7. **Slice 1: `load_save` takes the world it will restore into**, whose component registry gives the
    project components' current schemas (the registry alone does not know them), and reports the
    caches to rebuild; `save::rebuild_caches` runs their `rebuild` after the restore. A section kept

@@ -91,7 +91,14 @@ fn amoris_reports_the_source_it_was_built_from() {
             .starts_with(std::env::consts::ARCH)
     );
     assert_eq!(v["c_compiler"], json!(QJS_CC));
-    assert!(v["contract"].as_str().unwrap().contains('+'), "{v}");
+    // versions.md 3.1: the contract is the version shared/contract/README.md states, alone.
+    let readme = std::fs::read_to_string(root().join("shared/contract/README.md")).unwrap();
+    let contract = readme
+        .lines()
+        .find_map(|l| l.strip_prefix("- Contract version: "))
+        .and_then(|v| v.split_whitespace().next())
+        .unwrap();
+    assert_eq!(v["contract"], json!(contract), "{v}");
 }
 
 #[test]
@@ -104,7 +111,7 @@ fn a_replay_of_another_engine_is_refused() {
         source: &other,
         target: "test",
         profile: "test",
-        contract: "0.1+unsynced",
+        contract: "0.2",
     })
     .unwrap();
     let bytes = std::thread::Builder::new()

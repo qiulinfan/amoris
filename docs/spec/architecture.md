@@ -117,8 +117,7 @@ crates/
   engine_version.rs   the engine source hash, included by amoris-app's and amoris-web's build
                       scripts; everything under crates/ enters it (4.13)
 shared/               the shared contract (prose; contract/rust is amoris-contract, 4.16) and
-                      benchmark prose; the contract's version is in contract/README.md, and
-                      SYNC.toml names an optional reference commit
+                      benchmark prose; contract/README.md states the contract's version
 third_party/          rquickjs-sys-0.14.0/ (patched, committed), patches/ (PR #1421 and P1 to
                       P13), vendor.py that rebuilds it (7.5)
 xtask/                cargo xtask: check, gen, webcheck, export-web (4.15)
@@ -503,7 +502,7 @@ application in `editor/`, specified in [editor.md](editor.md).
 ### 4.16 `amoris-contract`: the shared contract's types
 
 - **Owns**: nothing of its own; it is spec-contract's recommended types-only crate, kept under
-  `shared/contract/rust/` and recorded in `shared/SYNC.toml` like the prose
+  `shared/contract/rust/` and recorded like the prose
   (shared/contract/README.md, Contract record): the requests, answers and declarations of the
   contract, and `Problem`, the error protocol's type with its constructors per code.
 - **Depends on**: `serde`, `schemars` and `strsim` only; no engine crate. Every workspace crate may
@@ -694,7 +693,7 @@ spec-persist adds `serde-reflection =0.6.0`, `xxhash-rust =0.8.19` and `blake3 =
 | `axum`, `mime_guess` | server (and `axum` in app) | `axum =0.8.9` with `ws`: the host's HTTP and WebSocket endpoints, and in app the render feed's socket on `/render` (`present.rs`); `mime_guess =2.0.5`: content types of served files (docs/spec/server.md) |
 | `ureq` | app | `ureq =3.4.2` without default features (no TLS): the CLI's calls to a host on 127.0.0.1 |
 | `tungstenite`, `regex` | debug (and `tungstenite` in app's dev-dependencies) | the CDP endpoint; app's tests drive it |
-| `toml` | xtask, runtime and check | `toml =1.1.6` reads the check's configuration (`tools/*.toml`, every `check.toml`, the optional source commit in `shared/SYNC.toml`) with line numbers for `check.config_invalid`; `xtask` links no engine crate, so it cannot borrow a parser from one. It also reads a project's `project.toml` in `amoris-runtime` and its `check.toml` in `amoris-check` (checks.md 8.1), both pure Rust and built for `wasm32` |
+| `toml` | xtask, runtime and check | `toml =1.1.6` reads the check's configuration (`tools/*.toml`, every `check.toml`) with line numbers for `check.config_invalid`; `xtask` links no engine crate, so it cannot borrow a parser from one. It also reads a project's `project.toml` in `amoris-runtime` and its `check.toml` in `amoris-check` (checks.md 8.1), both pure Rust and built for `wasm32` |
 | `wasm-bindgen`, `wasm-bindgen-futures`, `web-sys`, `js-sys` | viewport (on `wasm32`), web (`wasm-bindgen`, and `wasm-bindgen-futures` on `wasm32`) | `web` alone supplies the injected clock, through a `wasm-bindgen` import of `performance.now()` (threads.md 3.1) |
 | `arc-swap` | link | the snapshot slot (`threads.md`, 4.3) |
 | `foldhash` | render | Pioneer 2026-10-14, approved by the owner on 2026-10-16 (charter 5.1): `foldhash =0.2.0` hashes the renderer's entity map (scene.rs): `Scene::apply` looks the entities of a chunk of updates up before applying them, which overlaps the lookups' cache misses only with a hasher cheaper than the standard library's SipHash (docs/bench/dynamic-scenes.md). hashbrown's own default hasher, already in the dependency graph through it; no dependencies, Zlib, builds for `wasm32` |

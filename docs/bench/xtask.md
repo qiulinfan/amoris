@@ -136,10 +136,10 @@ A compiler label alone does not prove stack safety on another target.
 
 ## Remaining coverage
 
-`contract` needs executable conformance cases, a benchmark-harness self-test and a synchronized
-reference commit. `perf` needs workload files, calibration, the benchmark command and reporting
-against budgets. Until those exist, their verdict remains SKIP. The existing web measurements
-can inform future budgets but do not implement that missing gate.
+`contract` needs executable conformance cases and a benchmark-harness self-test. `perf` needs
+workload files, calibration, the benchmark command and reporting against budgets. Until those exist,
+their verdict remains SKIP. The existing web measurements can inform future budgets but do not
+implement that missing gate.
 
 Metal-only tests establish Metal behaviour only when run on macOS. Asset smoke checks require
 their project fixture. The Windows gate does not establish Apple GPU correctness, packaging or

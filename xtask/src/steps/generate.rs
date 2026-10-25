@@ -1,7 +1,7 @@
 //! `gen` and `cargo xtask gen`: generated files are what their generators write now
 //! (docs/spec/checks.md 5.4). The build-free generator writes each tick-code crate's `clippy.toml`
-//! from `tools/clippy-determinism.toml` (checks.md 5.3). `shared/SYNC.toml` carries only an optional
-//! source commit; shared files have no persistent checksum baseline (charter 3.9).
+//! from `tools/clippy-determinism.toml` (checks.md 5.3). Shared files have no persistent checksum
+//! baseline (charter 3.9).
 
 use crate::config;
 use crate::files;
@@ -12,7 +12,6 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 pub const CLIPPY_SOURCE: &str = "tools/clippy-determinism.toml";
-pub const SYNC: &str = "shared/SYNC.toml";
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -30,12 +29,6 @@ pub struct ClippySource {
 pub struct Entry {
     pub path: String,
     pub reason: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Sync {
-    pub commit: String,
 }
 
 /// A generated file: its path and the bytes its generator writes now.
@@ -126,9 +119,6 @@ pub fn check(root: &Path, listed: &[String]) -> StepResult {
             format!("{path} says @generated, but no registered generator writes it"),
             json!({"path": path}),
         ));
-    }
-    if let Err(p) = config::load::<Sync>(root, SYNC) {
-        step.error(p);
     }
     step.measure("gen.outputs", outs.len() as f64, "count");
     step.summary = format!(

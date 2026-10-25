@@ -5,8 +5,9 @@ Status: Draft, slice 2
 The decisions slice 2's implementation of the time model (the module `time` of `amoris-interface`,
 the time requests of `amoris-runtime`'s `play` module) took where
 [time.md](../../shared/contract/time.md) and [sailing.md](../../shared/contract/sailing.md) (Time)
-were ambiguous or wrong for the code. The contract is hashed in `shared/SYNC.toml`, so they are
-recorded here, as [actions-slice2.md](actions-slice2.md) records the actions'.
+were ambiguous or wrong for the code. The contract was then hashed in `shared/SYNC.toml` (retired
+2026-10-25, checks.md 5.4), so they are recorded here, as [actions-slice2.md](actions-slice2.md)
+records the actions'.
 
 ## 1. Two pacings: the session's and the loop's
 

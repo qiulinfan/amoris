@@ -90,10 +90,15 @@ its words as recorded.
 
 ## Contract record
 
-The authoritative contract and benchmark live in this repository under `shared/contract/` and
-`shared/benchmark/`. `shared/SYNC.toml` records only an optional reference `commit`
-(`docs/spec/checks.md`, 5.4). An empty `commit` means no reference commit is recorded. Shared files
-have no checksum baseline (owner, 2026-10-10; charter 3.9).
+The contract and benchmark live in this repository under `shared/contract/` and
+`shared/benchmark/`, their only copy: Amoris main is the only line, so there is no reference commit
+to compare them with. On 2026-10-25 the owner retired `shared/SYNC.toml`, which held an optional
+reference `commit` that was never set, and the planned `contract.sync` comparison
+(`docs/spec/checks.md`, 5.4), whose row left the Conformance table. That check compared this
+repository's files with another copy, not anything a game presents, so the contract stays 0.2; the
+engine version's `contract` is this version alone, `0.2` where it read `0.2+unsynced`
+(`docs/spec/versions.md`, 3.1). Shared files have no checksum baseline (owner, 2026-10-10;
+charter 3.9).
 
 The procedure:
 
@@ -101,11 +106,7 @@ The procedure:
    changes as described above.
 2. Review shared changes with the contract's version and Git diff. Do not create file checksum
    records. Generated outputs are compared directly with what their generator writes now.
-3. `contract.sync` is a planned comparison with the optional reference commit. It reports
-   `Skipped` when no reference commit is recorded or the comparison is unavailable, never
-   `Passed`. An implemented comparison reads the reference content from Git directly; it does
-   not make another checkout the authority or add a persistent file checksum baseline.
-4. Generated JSON Schemas belong under `shared/contract/schema/` (one file per request, response
+3. Generated JSON Schemas belong under `shared/contract/schema/` (one file per request, response
    and declaration type, never edited by hand); the generation check reports `gen.stale` when
    they differ from what the generator writes now.
 
@@ -344,7 +345,6 @@ from different runtime configurations can be compared.
 
 | Check | File | What it proves |
 |---|---|---|
-| `contract.sync` | README | The files equal the optional reference commit `shared/SYNC.toml` records. |
 | `gen.stale` (spec-arch) | README | The generated JSON Schemas equal the committed ones. |
 | `contract.perception.read_only` | perception | Observing never changes the world hash. |
 | `contract.perception.deterministic` | perception | The same world, observer and request give the same bytes, also after fork and restore. |

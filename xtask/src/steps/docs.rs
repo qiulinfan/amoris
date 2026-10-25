@@ -1,7 +1,8 @@
 //! `docs`: documentation is prose hard-wrapped at 100 display columns (AGENTS.md rule 7), checked
 //! with `tools/wrap_docs.py --check` over the Markdown under `docs/`, except the recorded evidence
 //! under `docs/evidence/` (checks-slice1.md 9). `shared/` is the contract's text, which changes
-//! only through its own record (`gen.shared_modified`), so this step does not reformat it.
+//! only through its own record (shared/contract/README.md, Contract record), so this step does not
+//! reformat it.
 
 use crate::report::{Problem, StepResult};
 use crate::run::{self, Env};

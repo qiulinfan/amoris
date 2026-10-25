@@ -33,7 +33,7 @@ A step that needs `amoris check` is `Skipped` with the reason "amoris-check not 
 release build's `amoris` answers `amoris check --json` (no project) with a report, which every
 implementation prints for its `check.usage` refusal (2, 11); `perf` waits on the same probe and then
 on `xtask` running `bench/budgets/`, which slice 1 has not built (budgets.md 8). `contract` is
-`Skipped` while `shared/SYNC.toml` records no commit and the conformance checks are not built (8.7).
+`Skipped` while the conformance checks are not built (8.7).
 `web` is `Skipped` until `crates/amoris-web/check/index.html` exists. Amended in the slice 1 review:
 `Skipped` holds only while no project takes part in the step. Once a project under `samples/` or
 `tests/fixtures/` with a `check.toml` does, a missing `amoris` binary or a probe without a report
@@ -68,11 +68,10 @@ The generators that need no engine build run even when `build` failed: every `cl
 fixture; the copies are identical, `amoris-runtime` included, its loop clock and game thread taking
 `#[allow]` with their reasons) and the `gen.orphan` scan (`Cargo.lock` files are cargo's own).
 `cargo xtask gen` writes the outputs and `--check` compares their bytes with the generators' output.
-`shared/SYNC.toml` carries only an optional source commit; shared edits need no checksum record
-(owner, 2026-10-10; charter 3.9). The former `--shared` checksum-refresh flag is removed.
-clippy 1.98.1 ignores a listed path
-that does not resolve in a crate, without a warning (checked with a scratch crate on 2026-10-03), so
-one file serves crates that do not link `bevy_ecs`.
+Shared edits need no checksum record (owner, 2026-10-10; charter 3.9). The former `--shared`
+checksum-refresh flag is removed. clippy 1.98.1 ignores a listed path that does not resolve in a
+crate, without a warning (checked with a scratch crate on 2026-10-03), so one file serves crates
+that do not link `bevy_ecs`.
 
 ## 11. The lint fixture lives in `tools/lint-fixture/`
 
@@ -293,9 +292,8 @@ hid amoris-render's 43, and amoris-render's hid amoris-viewport's two on wasm32.
 or `cargo clippy --no-deps -p <crate>` for the crates above a failing one, finds them all.
 
 `contract` stays skipped: it needs the contract's conformance checks as code
-(`contract.perception.*`, `contract.projection.golden`, `contract.actions.*`), the benchmark
-harness's self-test (shared/benchmark/README.md 8), and, for `contract.sync`, a reference commit in
-`shared/SYNC.toml` with a way to read the other line's `shared/` at it. `perf` stays skipped: it
+(`contract.perception.*`, `contract.projection.golden`, `contract.actions.*`) and the benchmark
+harness's self-test (shared/benchmark/README.md 8). `perf` stays skipped: it
 needs `bench/budgets/`, `amoris bench <workload> --json`, `cargo xtask perf --calibrate` and
 `--set-unset` (budgets.md 8), the page's `perf` step and `build.web.memory`; the `web` step already
 measures the module's sizes and the start-up, tick, hash, publication and transfer times it would

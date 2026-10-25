@@ -6,10 +6,11 @@ The decisions slice 2's implementation of actions (the module `action` of `amori
 act requests of `amoris-runtime`'s `play` module) took where
 [actions.md](../../shared/contract/actions.md) and [sailing.md](../../shared/contract/sailing.md)
 (Actions, Codes, Checks) were ambiguous or wrong for the code. Those files are the shared contract,
-hashed in `shared/SYNC.toml` (charter 6.2; checks.md 5.4: a changed file fails
-`gen.shared_modified`), so this line records its choices here, numbered, until the contract takes or
-replaces them, as [perception-slice2.md](perception-slice2.md) does for perception. The time model's
-are in [time-slice2.md](time-slice2.md).
+then hashed in `shared/SYNC.toml` (charter 6.2; checks.md 5.4: a changed file failed
+`gen.shared_modified`; the hashes went on 2026-10-10, the file on 2026-10-25), so this line records
+its choices here, numbered, until the contract takes or replaces them, as
+[perception-slice2.md](perception-slice2.md) does for perception. The time model's are in
+[time-slice2.md](time-slice2.md).
 
 ## 1. World state as built
 

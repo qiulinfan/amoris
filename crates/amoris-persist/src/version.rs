@@ -49,7 +49,8 @@ impl EngineVersion {
     }
 
     /// The version of a build whose top crate computed no source hash (tests and examples, which
-    /// install none): `source` is the derivation over no files, `commit` "unknown" (open choice 6).
+    /// install none): `source` is the derivation over no files, `commit` and `contract` "unknown"
+    /// (open choice 6).
     pub fn unbuilt() -> EngineVersion {
         EngineVersion {
             semver: env!("CARGO_PKG_VERSION").to_owned(),
@@ -62,7 +63,7 @@ impl EngineVersion {
                 "release"
             }
             .to_owned(),
-            contract: "unsynced".to_owned(),
+            contract: "unknown".to_owned(),
             c_compiler: "unknown".to_owned(),
         }
     }

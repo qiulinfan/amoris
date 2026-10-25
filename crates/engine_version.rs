@@ -104,12 +104,12 @@ pub fn listed(root: &Path) -> Option<Vec<String>> {
     Some(paths)
 }
 
-/// The shared contract's version and its reference commit, `unsynced` while `shared/SYNC.toml`
-/// records none: `0.1+unsynced`.
+/// The shared contract's version: the first word after `Contract version: ` in
+/// `shared/contract/README.md`, or `unknown`.
 fn contract(root: &Path) -> String {
     let readme =
         std::fs::read_to_string(root.join("shared/contract/README.md")).unwrap_or_default();
-    let version = readme
+    readme
         .lines()
         .find_map(|l| {
             l.trim_start_matches("- ")
@@ -117,21 +117,7 @@ fn contract(root: &Path) -> String {
         })
         .and_then(|v| v.split_whitespace().next())
         .unwrap_or("unknown")
-        .to_owned();
-    let sync = std::fs::read_to_string(root.join("shared/SYNC.toml")).unwrap_or_default();
-    let commit = sync
-        .lines()
-        .find_map(|l| l.trim().strip_prefix("commit"))
-        .map(|rest| {
-            rest.trim_start()
-                .trim_start_matches('=')
-                .trim()
-                .trim_matches('"')
-        })
-        .filter(|c| !c.is_empty())
-        .unwrap_or("unsynced")
-        .to_owned();
-    format!("{version}+{commit}")
+        .to_owned()
 }
 
 /// The cargo profile's name, `release`, `debug` or `web`: the directory above `build/` in
@@ -152,7 +138,7 @@ fn profile() -> String {
 /// - the engine's sources and the files that decide which of them git lists: the root
 ///   `.gitignore` (nested ones are inside the watched directories) and the repository's
 ///   `info/exclude`;
-/// - the contract's version: `shared/contract/README.md` and `shared/SYNC.toml`;
+/// - the contract's version: `shared/contract/README.md`;
 /// - for the commit, where git keeps `HEAD` and the branch it names, resolved by
 ///   `git rev-parse --git-path` (a worktree's `HEAD` is its own, its branches and `packed-refs`
 ///   are the common directory's): `HEAD`, the branch's loose ref, and `packed-refs`. A packed
@@ -167,7 +153,6 @@ pub fn watched(root: &Path) -> Vec<PathBuf> {
         .collect();
     paths.push(root.join(".gitignore"));
     paths.push(root.join("shared/contract/README.md"));
-    paths.push(root.join("shared/SYNC.toml"));
     let git_path =
         |name: &str| git(root, &["rev-parse", "--git-path", name]).map(|p| root.join(p.trim()));
     for name in ["HEAD", "packed-refs", "reftable", "info/exclude"] {
