@@ -1582,11 +1582,6 @@ impl Water {
             }
             if self.spray_on {
                 let pipes = self.spray.as_ref().expect("spray pipelines prepared");
-                // Crowns come from the stirring points now (water.md 52): the occupancy's rise,
-                // which nothing else reads, is let go.
-                if let Some(cache) = r.resident.as_mut().and_then(|res| res.cache.as_mut()) {
-                    encoder.clear_buffer(cache.take_rise().1, 0, None);
-                }
                 let pool = g.spray.get_or_insert_with(|| {
                     crate::water_spray::Pool::new(device, pipes, view, &g.columns, g.foam.impacts())
                 });

@@ -2762,9 +2762,8 @@ splash. The spray throws a crown (kind 6) where a body goes in. Amended on 2026-
 read the head the occupancy resolve (46) adds per column. Four times a column's rate of rise
 overstated the entry speed 1.8 to 4 times where a body's footprints overlap, up to the 14 m/s cap,
 so crowns rose far higher than a cannonball's; a body moving along just under the surface threw
-crowns; every column threw its own drops at random, never one sheet; and a replica re-seeded from a
-checkpoint had to be kept from counting its bodies' head as an entry. Presentation now clears that
-rise unread.
+crowns; and every column threw its own drops at random, never one sheet. The occupancy no longer
+gathers that rise.
 
 - **What goes in.** The renderer compares the feed's last two lists of stirring points (57), at most
   0.1 s apart (a still scene sends none): a point that went down at 1.2 m/s or more is a candidate,
@@ -3118,11 +3117,9 @@ crumpled.
 Each step, a point adds to the rise the change of what it holds: its slices now, minus its slices at
 its last place carried on by the water's velocity there. A body bobbing makes rings, one moving
 through the water a bow wave and a wake, and one drifting with the current nothing. A body falling
-in adds all it comes to hold: the volume whose rise throws section 52's crowns, here on the window's
-cells rather than the columns, so the layer does not read the occupancy's rise as well, which would
-count an entry twice. A point seen for the first time records itself and stirs nothing, since its
-volume was already in the water, as section 52's re-seeded occupancy does. The rises are summed in
-fixed point, 2^-20 m, so the order of the atomic adds does not matter.
+in adds all it comes to hold, here on the window's cells rather than the columns. A point seen for
+the first time records itself and stirs nothing, since its volume was already in the water. The
+rises are summed in fixed point, 2^-20 m, so the order of the atomic adds does not matter.
 
 ### 57.5 Drawing
 

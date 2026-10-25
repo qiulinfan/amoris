@@ -1241,10 +1241,6 @@ impl GpuWater {
     pub fn occupancy_buffer(&self) -> &wgpu::Buffer {
         self.occupancy.head()
     }
-    /// Head added since presentation last took it (spray at bodies' entries).
-    pub fn occupancy_rise_buffer(&self) -> &wgpu::Buffer {
-        self.occupancy.rise()
-    }
 
     fn encode_checkpoint(&self, complete: bool) -> Result<(), String> {
         let mut encoder = self.device.create_command_encoder(&Default::default());

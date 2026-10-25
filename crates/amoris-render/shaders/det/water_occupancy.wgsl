@@ -17,8 +17,6 @@ var<storage> points: array<vec4<f32>>;
 var<storage, read_write> accum: array<atomic<i32>>;
 @group(0) @binding(3) 
 var<storage, read_write> occupancy: array<f32>;
-@group(0) @binding(4) 
-var<storage, read_write> rise: array<f32>;
 var<private> det_z: u32;
 
 fn det_rcp(b: f32) -> f32 {
@@ -230,23 +228,17 @@ fn occupancy_scatter(@builtin(global_invocation_id) id_1: vec3<u32>) {
 
 @compute @workgroup_size(64, 1, 1) 
 fn occupancy_resolve(@builtin(global_invocation_id) id_2: vec3<u32>) {
-    let _e55 = det_zero();
-    det_z = _e55;
-    let _e14 = det_z;
-    let _e18 = p.size.x;
-    let _e21 = p.size.y;
-    if (id_2.x >= (_e18 * _e21)) {
+    let _e26 = det_zero();
+    det_z = _e26;
+    let _e10 = p.size.x;
+    let _e13 = p.size.y;
+    if (id_2.x >= (_e10 * _e13)) {
         return;
     }
-    let _e26 = atomicLoad((&accum[id_2.x]));
-    let _e28 = det_div(f32(_e26), OCC_SCALE);
-    let _e30 = p.area;
-    let _e31 = det_div(_e28, _e30);
-    let _e34 = rise[id_2.x];
-    let _e37 = occupancy[id_2.x];
-    let _e39 = bitcast<u32>((_e31 - _e37));
-    let _e47 = bitcast<u32>((_e34 + max(bitcast<f32>((select(_e39, 0u, ((_e39 & 2139095040u) < 226492416u)) ^ _e14)), 0f)));
-    rise[id_2.x] = bitcast<f32>((select(_e47, 0u, ((_e47 & 2139095040u) < 226492416u)) ^ _e14));
-    occupancy[id_2.x] = _e31;
+    let _e18 = atomicLoad((&accum[id_2.x]));
+    let _e20 = det_div(f32(_e18), OCC_SCALE);
+    let _e22 = p.area;
+    let _e23 = det_div(_e20, _e22);
+    occupancy[id_2.x] = _e23;
     return;
 }

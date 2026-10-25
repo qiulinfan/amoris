@@ -14,9 +14,6 @@ struct Params { size:vec2u, count:u32, area:f32 }
 @group(0) @binding(1) var<storage,read> points:array<vec4f>;
 @group(0) @binding(2) var<storage,read_write> accum:array<atomic<i32>>;
 @group(0) @binding(3) var<storage,read_write> occupancy:array<f32>;
-// Head added since presentation last took it: where bodies enter the water. Never read by the
-// step itself.
-@group(0) @binding(4) var<storage,read_write> rise:array<f32>;
 // 2^14 units a cubic metre: 61 cm^3 resolution, 131,000 m^3 a column before overflow.
 const OCC_SCALE:f32=16384.0;
 
@@ -58,6 +55,5 @@ fn occupancy_scatter(@builtin(global_invocation_id) id:vec3u){
 fn occupancy_resolve(@builtin(global_invocation_id) id:vec3u){
     if(id.x>=p.size.x*p.size.y){return;}
     let head=f32(atomicLoad(&accum[id.x]))/OCC_SCALE/p.area;
-    rise[id.x]+=max(head-occupancy[id.x],0.0);
     occupancy[id.x]=head;
 }
