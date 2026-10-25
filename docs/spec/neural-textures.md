@@ -3,9 +3,9 @@
 Status: Implemented (Pioneer `explore/neural`, 2026-10-09); on Amoris main since 2026-10-10 (charter
 4.4's adoption of that date), a beta feature since 2026-10-23 (7); charter 4.4 and its note of
 2026-10-09 (training runs in the engine's wgpu compute, not Python/PyTorch). Measurements:
-[bench/neural-textures.md](../bench/neural-textures.md). The lost branch `feat/neural` (schedule
-3.3) left no code; this is a new implementation, compared with its reported numbers where they
-exist.
+[bench/neural-textures.md](../bench/neural-textures.md). The lost branch `feat/neural` (the 10-03
+schedule's 3.3, retired on 2026-10-25, see Git history) left no code; this is a new
+implementation, compared with its reported numbers where they exist.
 
 A material's textures (base color, normal, occlusion/roughness/metallic, emissive, height: up to
 twelve channels) are stored as two quantized latent grids per pair of mips plus one small MLP that

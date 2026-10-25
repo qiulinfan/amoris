@@ -5,10 +5,10 @@
   runtime is run 3's (0b8f1da9; the commits between them change the smoke test, the specs, this
   file and one test's formatting). Charter 4.1 (the built-in profiler: per-system CPU spans and
   per-pass GPU timestamps for the editor) and 4.5 (the Pioneer note of 2026-10-14: a host that
-  serves the profile turns it on, the editor adds its own viewport's GPU passes); schedule 3.4 (the
-  gap "性能面板（宿主没有 profile 推送）"). Design: [spec/server.md](../spec/server.md) 4 (the
-  profile), [spec/host-protocol.md](../spec/host-protocol.md) 3,
-  [spec/editor.md](../spec/editor.md) 5.
+  serves the profile turns it on, the editor adds its own viewport's GPU passes); the 10-03
+  schedule's 3.4, retired on 2026-10-25 (the gap "性能面板（宿主没有 profile 推送）"). Design:
+  [spec/server.md](../spec/server.md) 4 (the profile),
+  [spec/host-protocol.md](../spec/host-protocol.md) 3, [spec/editor.md](../spec/editor.md) 5.
 - Machine: the R1 laptop (ASUS ROG Zephyrus G14: AMD Ryzen 9 270, 16 threads, 15 GiB, RTX 5060
   Laptop and Radeon 780M, Windows 11 Pro 10.0.26200), on AC power, Balanced plan; release build
   (`opt-level = 3`, debug info), Rust 1.98.1; Chrome's default WebGPU adapter for the capture (not

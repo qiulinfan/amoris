@@ -18,8 +18,9 @@ the opaque pass's format and targets), `taa.rs` and `shaders/taa.wgsl`, `gtao.rs
 defaults: [docs/bench/taa-gtao.md](../bench/taa-gtao.md), upscaling's
 [docs/bench/taau.md](../bench/taau.md); evidence: `out/bench-runs/aa/`, `out/taau/`.
 
-The schedule (3.3) listed a branch `feat/gtao` with measurements on an M5; that branch was lost
-before it was merged and nothing of it survives. This is a new implementation.
+The 10-03 schedule (3.3; retired on 2026-10-25, see Git history) listed a branch `feat/gtao` with
+measurements on an M5; that branch was lost before it was merged and nothing of it survives. This
+is a new implementation.
 
 ## 1. The frame
 

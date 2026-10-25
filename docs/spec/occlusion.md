@@ -16,8 +16,9 @@ drops a visible instance, when the auto mode turns it off, and how it is checked
 `renderer.rs` (`render`). Measurements: [docs/bench/occlusion.md](../bench/occlusion.md); evidence:
 `out/bench-runs/hiz/`.
 
-The schedule (3.1) listed a branch `feat/hzb` with measurements on an M5; that branch was lost
-before it was merged and nothing of it survives. This is a new implementation.
+The 10-03 schedule (3.1; retired on 2026-10-25, see Git history) listed a branch `feat/hzb` with
+measurements on an M5; that branch was lost before it was merged and nothing of it survives. This
+is a new implementation.
 
 ## 1. A frame
 

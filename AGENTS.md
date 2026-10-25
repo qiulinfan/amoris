@@ -3,7 +3,7 @@
 Amoris is an agent-native 3D game engine: Rust host, TypeScript scripts on QuickJS-ng, wgpu
 rendering (Metal/Vulkan natively, Direct3D 12 on Windows, WebGPU in the browser), a React web editor, MCP for agents.
 Read [the charter](docs/charter.md) first: it fixes the stack, the architecture and what this round
-must prove. The schedule is [docs/schedule.md](docs/schedule.md). The game-side subsystems are
+must prove; its section 8 lists the open decisions. The game-side subsystems are
 specified under [docs/spec/](docs/spec/README.md); their measured spikes are under
 [docs/spikes/](docs/spikes/).
 
@@ -58,7 +58,7 @@ it are charter 5.4.
   export-web).
 - `shared/`: the shared contract and benchmark prose; `shared/contract/rust` is `amoris-contract`.
   `third_party/`: the patched `rquickjs-sys` (QuickJS-ng with PR #1421 and P1 to P13).
-- `docs/`: charter, schedule, specs, spikes, benchmark methods and result tables. `site/`: the Pages
+- `docs/`: charter, specs, spikes, benchmark methods and result tables. `site/`: the Pages
   showcase and user docs ([site/AGENTS.md](site/AGENTS.md)).
 
 ### Samples
@@ -93,7 +93,7 @@ from `qiulinfan/amoris-samples`; its integration commit names the source commit.
    Pioneer and amoris-samples) names its source repository and commit in the commit message, as
    `Source-repository:` and `Source-commit:` trailers.
 6. Owner-facing explanations are Chinese; code, identifiers, commit messages and specs are English.
-   The charter and schedule are Chinese.
+   The charter is Chinese.
 7. Markdown under `docs/` is hard-wrapped at 100 display columns (CJK characters count two).
    Use `python tools/wrap_docs.py <file>`; recorded evidence remains unchanged.
    `shared/` changes with its contract record.

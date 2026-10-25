@@ -152,7 +152,7 @@ tools/                scripts by purpose (tools/README.md): render/ (renderer be
                       build_viewport.sh, build_web.sh, package_game.py, amoris_rename.py and
                       the shared helpers machine_conditions.py, quiet_tables.py, web_bench.mjs
                       and web_readback.mjs
-docs/                 charter.md, schedule.md, sdk.md, spec/, bench/ (methods and result tables),
+docs/                 charter.md, sdk.md, spec/, bench/ (methods and result tables),
                       spikes/, research/, imports/
 site/                 the Pages showcase: landing page, MkDocs user docs (content/), capture
                       demos (demos/)
