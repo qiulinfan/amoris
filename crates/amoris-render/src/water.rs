@@ -18,7 +18,7 @@
 
 use std::collections::BTreeMap;
 
-use amoris_assets::frame::{ResidentWaterUpdate, WaterLookView, WaterUpdate};
+use amoris_assets::frame::{ResidentWaterUpdate, StirView, WaterLookView, WaterUpdate};
 use amoris_assets::water_field::{CheckedCheckpoint, FieldRecipe};
 use bytemuck::{Pod, Zeroable};
 
@@ -76,6 +76,8 @@ struct Uniform {
     fog: [f32; 4],
     /// Refraction, screen-space reflection, subgrid detail, unused.
     optics: [f32; 4],
+    /// The ripples' window over this region (water_ripples.rs), or zero.
+    ripple: [f32; 4],
 }
 
 /// A region as the renderer holds it.
@@ -253,6 +255,16 @@ pub struct Water {
     regions: BTreeMap<u64, Region>,
     /// Two triangles between each four neighbouring columns, per column counts.
     indices: BTreeMap<[u32; 2], wgpu::Buffer>,
+    /// Sub-grid ripples (water.md 57) over the region nearest the camera, made once a stirring
+    /// point arrives; until then the feed's lists wait here and the shading binds a blank texture.
+    ripples_on: bool,
+    ripples: Option<crate::water_ripples::Ripples>,
+    stirs: Vec<(f64, Vec<StirView>)>,
+    ripple_region: Option<u64>,
+    blank_ripples: wgpu::TextureView,
+    ripple_sampler: wgpu::Sampler,
+    /// The ripples were just made: every region's bind group takes their texture.
+    ripples_new: bool,
 }
 
 /// The spike's host-made field's key among the regions.
@@ -299,6 +311,22 @@ impl Water {
                 crate::water_surface::texture_entry(7),
                 crate::water_surface::texture_entry(8),
                 crate::water_mesh::geometry_entry(),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 12,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 13,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
                 wgpu::BindGroupLayoutEntry {
                     binding: 4,
                     visibility: wgpu::ShaderStages::FRAGMENT,
@@ -366,6 +394,37 @@ impl Water {
             group_layout,
             regions: BTreeMap::new(),
             indices: BTreeMap::new(),
+            ripples_on: ripples_from_env(),
+            ripples: None,
+            stirs: Vec::new(),
+            ripple_region: None,
+            blank_ripples: device
+                .create_texture(&wgpu::TextureDescriptor {
+                    label: Some("no water ripples"),
+                    size: wgpu::Extent3d {
+                        width: 1,
+                        height: 1,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Rgba16Float,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                    view_formats: &[],
+                })
+                .create_view(&Default::default()),
+            // The window is toroidal: a world cell lives at its index modulo the window's side.
+            ripple_sampler: device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("water ripples"),
+                address_mode_u: wgpu::AddressMode::Repeat,
+                address_mode_v: wgpu::AddressMode::Repeat,
+                mag_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Linear,
+                mipmap_filter: wgpu::MipmapFilterMode::Linear,
+                ..Default::default()
+            }),
+            ripples_new: false,
         }
     }
 
@@ -426,6 +485,41 @@ impl Water {
                 g.last_time = None;
             }
         }
+        if let Some(ripples) = &mut self.ripples {
+            ripples.reset();
+        }
+        self.stirs.clear();
+        self.ripple_region = None;
+    }
+
+    /// The feed's points stirring the water at simulated time `t` (water.md 57).
+    pub fn set_stirs(&mut self, t: f64, stirs: Vec<StirView>) {
+        match &mut self.ripples {
+            Some(ripples) => ripples.set_stirs(t, &stirs),
+            None => {
+                self.stirs.push((t, stirs));
+                if self.stirs.len() > 2 {
+                    self.stirs.remove(0);
+                }
+            }
+        }
+    }
+
+    /// Sub-grid ripples on or off (`AMORIS_RIPPLES`); off, the shading reads none, as before them.
+    pub fn set_ripples(&mut self, on: bool) {
+        if self.ripples_on == on {
+            return;
+        }
+        self.ripples_on = on;
+        if let Some(ripples) = &mut self.ripples {
+            ripples.clear();
+        }
+        self.ripple_region = None;
+    }
+
+    /// The ripples, once a stirring point made them (checks and tools).
+    pub fn ripples(&self) -> Option<&crate::water_ripples::Ripples> {
+        self.ripples.as_ref()
     }
 
     /// The region nearest the camera (by its rectangle) whose caustics the forward pass draws.
@@ -453,6 +547,12 @@ impl Water {
                         origin: r.origin,
                         extent,
                         sigma: std::array::from_fn(|c| a[c] + 0.5 * (s[c] + f)),
+                        ripples: (
+                            self.ripples
+                                .as_ref()
+                                .map_or(&self.blank_ripples, |r| r.view()),
+                            &self.ripple_sampler,
+                        ),
                     },
                 ))
             })
@@ -838,12 +938,15 @@ impl Water {
         })
     }
 
-    /// Uploads what changed and the frame's uniforms at drawn time `t` (seconds).
+    /// Uploads what changed and the frame's uniforms at drawn time `t` (seconds), seen from
+    /// `camera` (world).
+    #[allow(clippy::too_many_arguments)]
     pub fn update(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         t: f64,
+        camera: [f32; 3],
         targets: &crate::post::Targets,
         module: &wgpu::ShaderModule,
         sea_present: bool,
@@ -851,6 +954,7 @@ impl Water {
         if self.regions.is_empty() {
             return;
         }
+        let window = self.prepare_ripples(device, t, camera);
         let optics = self.optics.get_or_insert_with(|| {
             crate::water_optics::Optics::new(
                 device,
@@ -863,11 +967,17 @@ impl Water {
                 targets.format,
             )
         });
-        let changed = optics.prepare(device, targets);
+        let changed = optics.prepare(device, targets) | std::mem::take(&mut self.ripples_new);
+        let ripple = (
+            self.ripples
+                .as_ref()
+                .map_or(&self.blank_ripples, |r| r.view()),
+            &self.ripple_sampler,
+        );
         let ledge_pipelines = self
             .ledge_pipelines
             .get_or_insert_with(|| crate::water_ledge::Pipelines::new(device));
-        for r in self.regions.values_mut() {
+        for (id, r) in &mut self.regions {
             let [nx, nz] = r.size;
             if nx < 2 || nz < 2 || (r.resident.is_none() && r.columns.is_empty()) {
                 continue;
@@ -928,6 +1038,7 @@ impl Water {
                     &surface,
                     (&self.dummy_geometry, &ledges.args, &ledges.mask),
                     optics,
+                    ripple,
                 );
                 let depth_group = depth_group(
                     device,
@@ -977,6 +1088,7 @@ impl Water {
                         &g.ledges.mask,
                     ),
                     optics,
+                    ripple,
                 );
             }
             // Adjacent ticks can compute the same drawn boundary one f64 ulp apart (61/60 -
@@ -1026,6 +1138,11 @@ impl Water {
                 surround,
                 fog: r.look.fog,
                 optics: self.effects,
+                ripple: if self.ripple_region == Some(*id) {
+                    window
+                } else {
+                    [0.0; 4]
+                },
             };
             r.surround_on = surround[1] > 0.0;
             queue.write_buffer(&g.uniform, 0, bytemuck::bytes_of(&u));
@@ -1170,6 +1287,12 @@ impl Water {
                     ));
                     let optics = self.optics.as_ref().expect("water optics ready");
                     let geometry = &g.mesh.as_ref().unwrap().geometry;
+                    let ripple = (
+                        self.ripples
+                            .as_ref()
+                            .map_or(&self.blank_ripples, |r| r.view()),
+                        &self.ripple_sampler,
+                    );
                     g.group = optical_group(
                         device,
                         &self.group_layout,
@@ -1178,6 +1301,7 @@ impl Water {
                         &g.surface,
                         (geometry, &g.ledges.args, &g.ledges.mask),
                         optics,
+                        ripple,
                     );
                     g.depth_group = depth_group(
                         device,
@@ -1195,6 +1319,83 @@ impl Water {
                 );
             }
         }
+        // The ripples ride the target region's columns as this frame presents them.
+        if let (Some(id), Some(ripples)) = (self.ripple_region, &mut self.ripples)
+            && let Some(r) = self.regions.get(&id)
+            && let Some(g) = &r.gpu
+        {
+            ripples.encode(
+                device,
+                queue,
+                encoder,
+                &crate::water_ripples::Field {
+                    origin: r.origin,
+                    cell_m: r.cell_m,
+                    size: r.size,
+                    tiled: r.tiled,
+                    columns: &g.columns,
+                },
+                Some(profiler),
+            );
+        }
+    }
+
+    /// Picks the region whose ripples are drawn (the nearest the camera, by its rectangle), makes
+    /// the ripples once a stirring point has arrived, and decides their step to drawn time `t`;
+    /// returns their window for the shading.
+    fn prepare_ripples(
+        &mut self,
+        device: &wgpu::Device,
+        t: f64,
+        camera: [f32; 3],
+    ) -> crate::water_ripples::Window {
+        let target = self
+            .ripples_on
+            .then(|| {
+                self.regions
+                    .iter()
+                    .filter(|(_, r)| r.size[0] > 1 && r.size[1] > 1)
+                    .map(|(id, r)| {
+                        let extent = [r.size[0] as f32 * r.cell_m, r.size[1] as f32 * r.cell_m];
+                        let outside = |axis: usize| {
+                            let low = r.origin[axis] - camera[axis * 2];
+                            let high = camera[axis * 2] - (r.origin[axis] + extent[axis]);
+                            low.max(high).max(0.0)
+                        };
+                        (outside(0).hypot(outside(1)), *id)
+                    })
+                    .min_by(|a, b| a.0.total_cmp(&b.0))
+                    .map(|(_, id)| id)
+            })
+            .flatten();
+        if target != self.ripple_region {
+            if let Some(ripples) = &mut self.ripples {
+                ripples.clear();
+            }
+            self.ripple_region = target;
+        }
+        // A region drawn for the first time gets its columns later in this update: its ripples
+        // start next frame, so every step prepared here is one `encode` records.
+        let Some(r) = target
+            .and_then(|id| self.regions.get(&id))
+            .filter(|r| r.gpu.is_some())
+        else {
+            return [0.0; 4];
+        };
+        if self.ripples.is_none() && self.stirs.iter().any(|(_, l)| !l.is_empty()) {
+            let mut ripples = crate::water_ripples::Ripples::new(device);
+            for (at, list) in self.stirs.drain(..) {
+                ripples.set_stirs(at, &list);
+            }
+            self.ripples = Some(ripples);
+            self.ripples_new = true;
+        }
+        let Some(ripples) = &mut self.ripples else {
+            return [0.0; 4];
+        };
+        let extent = [r.size[0] as f32 * r.cell_m, r.size[1] as f32 * r.cell_m];
+        let place = crate::water_ripples::Placement::over(r.origin, extent, [camera[0], camera[2]]);
+        ripples.prepare(t, place, r.cell_m)
     }
 
     /// Draws every region, groups 0 to 2 bound as for the lit forward pipelines.
@@ -1450,6 +1651,7 @@ impl Water {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn optical_group(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
@@ -1458,11 +1660,20 @@ fn optical_group(
     surface: &crate::water_surface::Surface,
     (geometry, ledge, mask): (&wgpu::Buffer, &wgpu::Buffer, &wgpu::TextureView),
     optics: &crate::water_optics::Optics,
+    (ripples, ripple_sampler): (&wgpu::TextureView, &wgpu::Sampler),
 ) -> wgpu::BindGroup {
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("water optics"),
         layout,
         entries: &[
+            wgpu::BindGroupEntry {
+                binding: 12,
+                resource: wgpu::BindingResource::TextureView(ripples),
+            },
+            wgpu::BindGroupEntry {
+                binding: 13,
+                resource: wgpu::BindingResource::Sampler(ripple_sampler),
+            },
             wgpu::BindGroupEntry {
                 binding: 10,
                 resource: ledge.as_entire_binding(),
@@ -1553,4 +1764,16 @@ fn depth_group(
             },
         ],
     })
+}
+
+/// `AMORIS_RIPPLES` (natively): off or on; on when unset, unknown, or in the browser.
+fn ripples_from_env() -> bool {
+    match std::env::var("AMORIS_RIPPLES").as_deref() {
+        Ok("off") => false,
+        Ok("on") | Err(_) => true,
+        Ok(v) => {
+            log::warn!("AMORIS_RIPPLES: {v:?} is not off or on; using on");
+            true
+        }
+    }
 }

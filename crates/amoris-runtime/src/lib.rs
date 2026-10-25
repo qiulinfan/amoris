@@ -39,6 +39,7 @@ mod scene;
 pub mod script_profile;
 mod scripts;
 pub mod skipper;
+mod stirs;
 #[cfg(feature = "thread")]
 pub mod thread;
 pub mod types;

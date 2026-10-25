@@ -289,6 +289,25 @@ pub struct ResidentWaterUpdate {
     pub edge_level: Option<f32>,
 }
 
+/// A body's point that stirs the water it floats or swims in (water.md 57): a Floater's buoyancy
+/// point, a swimmer's body, or a swimmer's or paddler's hand. The renderer measures its immersion
+/// against the drawn surface and makes ripples from its motion relative to the water.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct StirView {
+    /// The entity, and the point within it, so the renderer follows each point from tick to tick.
+    pub id: u64,
+    pub point: u32,
+    /// The point's centre, world metres.
+    pub at: [f32; 3],
+    /// Its vertical extent (metres) and its volume (cubic metres): it stands for a waterplane of
+    /// `volume / size` square metres.
+    pub size: f32,
+    pub volume: f32,
+}
+
+/// The most stirring points a frame carries; past it, in entity order, points make no ripples.
+pub const MAX_STIRS: usize = 4096;
+
 /// What changed in the visual state since the subscriber's last frame.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct RenderFrame {
@@ -334,6 +353,9 @@ pub struct RenderFrame {
     /// Water regions gone.
     #[serde(default)]
     pub water_removed: Vec<u64>,
+    /// The full list of points stirring the water regions, when any of them moved.
+    #[serde(default)]
+    pub stirs: Option<Vec<StirView>>,
 }
 
 impl RenderFrame {
@@ -355,6 +377,7 @@ impl RenderFrame {
             && self.water.is_empty()
             && self.resident_water.is_empty()
             && self.water_removed.is_empty()
+            && self.stirs.is_none()
     }
 
     /// Folds `next` (a later frame) into this one, as if both had been applied in order.
@@ -441,6 +464,9 @@ impl RenderFrame {
         }
         if next.emitters.is_some() {
             self.emitters = next.emitters;
+        }
+        if next.stirs.is_some() {
+            self.stirs = next.stirs;
         }
         if !next.voxels_removed.is_empty() {
             self.voxels.retain(|v| !next.voxels_removed.contains(&v.id));

@@ -847,6 +847,14 @@ fn fs_ocean(in: OceanOut) -> SceneOut {
 @group(3) @binding(7) var water_normal_depth:texture_2d<f32>;
 @group(3) @binding(8) var water_flow_height:texture_2d<f32>;
 @group(3) @binding(9) var<storage,read> water_geometry:array<vec4u>;
+// The ripples the bodies stir (water_ripples.rs, water.md 57): rise, slopes and their mean square,
+// mipmapped, texel i holding world cell i modulo 512 of the window; sampled with wrapping.
+@group(3) @binding(12) var ripple_map: texture_2d<f32>;
+@group(3) @binding(13) var ripple_sampler: sampler;
+const RIPPLE_SIDE: f32 = 512.0;
+const RIPPLE_LODS: f32 = 7.0;
+// The sponge along the window's edge, as a share of its side: the ripples fade out over it.
+const RIPPLE_EDGE: f32 = 0.0625;
 
 struct ShallowOut {
     @builtin(position) clip: vec4f,
@@ -1111,6 +1119,21 @@ fn vs_shallow_stitch(@builtin(vertex_index) vi: u32) -> ShallowOut {
         p = vec2f(ex + sx * w, inner.z);
     }
     return shallow_out(vec3f(p.x, level, p.y), 1000.0, 0.0);
+}
+
+// The ripples' slope at a world point (x, y: along x and z) and the slope variance the pixel's
+// `footprint` (metres) filters out of them (z), faded toward the window's edges and past its
+// coarsest level; all zero where there are none.
+fn ripple_at(world: vec2f, footprint: f32) -> vec3f {
+    if (shallow.ripple.w < 0.5) { return vec3f(0.0); }
+    let local = (world - shallow.ripple.xy) / shallow.ripple.z;
+    if (any(local < vec2f(0.0)) || any(local >= vec2f(1.0))) { return vec3f(0.0); }
+    let edge = min(min(local.x, local.y), min(1.0 - local.x, 1.0 - local.y));
+    let lod = log2(max(footprint * RIPPLE_SIDE / shallow.ripple.z, 1.0));
+    let fade = smoothstep(0.0, RIPPLE_EDGE, edge)
+        * (1.0 - smoothstep(RIPPLE_LODS - 2.0, RIPPLE_LODS - 1.0, lod));
+    let r = textureSampleLevel(ripple_map, ripple_sampler, world / shallow.ripple.z, lod);
+    return vec3f(r.yz, max(r.w - dot(r.yz, r.yz), 0.0)) * fade;
 }
 
 fn shallow_foam_at(world: vec2f) -> f32 {
@@ -1430,13 +1453,20 @@ fn fs_shallow(in: ShallowOut) -> ShallowFragment {
     let q0 = in.world.xz - velocity * phase * 5.0;
     let q1 = in.world.xz - velocity * fract(phase + 0.5) * 5.0;
     let ripple = clamp(speed * 0.5, 0.15, 1.0) * shallow.optics.z;
-    let g = mix(wavelets(q0, shallow.time, footprint), wavelets(q1, shallow.time, footprint), blend) * ripple * 0.5;
+    var g = mix(wavelets(q0, shallow.time, footprint), wavelets(q1, shallow.time, footprint), blend) * ripple * 0.5;
+    // The ripples bodies stir, finer than the columns (water.md 57); with none, the shading is
+    // as it was.
+    let stirred = ripple_at(in.world.xz, footprint);
+    if (any(stirred != vec3f(0.0))) { g += stirred.xy; }
     let n = normalize(vec3f(n0.x - g.x * n0.y, n0.y, n0.z - g.y * n0.y));
     let above = dot(n0,v) >= 0.0;
     let normal = select(-n,n,above);
     let nv = max(dot(normal,v),1e-4);
     let foam = foam_cover(q0, q1, blend, footprint, shallow_foam_at(in.world.xz));
-    let rough = mix(clamp(0.05 + footprint * 0.04, 0.05, 0.3), 0.5, foam);
+    var rough = mix(clamp(0.05 + footprint * 0.04, 0.05, 0.3), 0.5, foam);
+    // Ripples finer than the pixel widen the glints: their slope variance adds to the lobe's
+    // (GGX alpha^2 about twice the slope variance).
+    if (stirred.z > 0.0) { rough = sqrt(sqrt(rough * rough * rough * rough + 2.0 * stirred.z)); }
     let a = rough * rough;
     let transmitted_ray = refract(-v,normal,select(1.3333333,0.75,above));
     let total_reflection = dot(transmitted_ray,transmitted_ray)<1e-6;

@@ -1805,6 +1805,20 @@ impl Renderer {
         self.water.set_foam(on);
     }
 
+    /// Sub-grid ripples the bodies stir (water.md 57) on or off; `AMORIS_RIPPLES` sets the
+    /// initial choice. Off, the water draws as it did without them; physical water is unchanged.
+    pub fn set_water_ripples(&mut self, on: bool) {
+        self.water.set_ripples(on);
+    }
+
+    /// The ripples' rise over their window, read back at once; `None` until a stirring point has
+    /// made them.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn water_ripples(&self) -> Option<Result<crate::water_ripples::Heights, String>> {
+        let ripples = self.water.ripples()?;
+        Some(ripples.heights(&self.gpu.device, &self.gpu.queue))
+    }
+
     /// Exact current-field dry/frustum patch culling; no simulation or surface LOD change.
     pub fn set_water_culling(&mut self, on: bool) {
         self.water.set_culling(on);
@@ -2126,6 +2140,9 @@ impl Renderer {
         self.water
             .apply_resident(&frame.resident_water)
             .expect("published resident water feed");
+        if let Some(stirs) = frame.stirs.take() {
+            self.water.set_stirs(frame.t_s, stirs);
+        }
         if !frame.voxels.is_empty() || !frame.voxels_removed.is_empty() {
             let mut changes = self.voxels.apply(&frame.voxels, &frame.voxels_removed);
             self.splash.note(std::mem::take(&mut changes.splash));
@@ -2950,6 +2967,7 @@ impl Renderer {
                 &device,
                 &queue,
                 t,
+                cam.position.to_array(),
                 &self.targets,
                 &self.fwd_module,
                 self.scene.sea.is_some(),

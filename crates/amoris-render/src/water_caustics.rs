@@ -22,13 +22,15 @@ struct Params {
     sigma: [f32; 4],
 }
 
-/// The region whose caustics are drawn: its uniform (water.rs `Uniform`) and displayed columns.
+/// The region whose caustics are drawn: its uniform (water.rs `Uniform`), displayed columns and
+/// the ripples' texture with its sampler (blank when the region has none).
 pub(crate) struct Source<'a> {
     pub uniform: &'a wgpu::Buffer,
     pub columns: &'a wgpu::Buffer,
     pub origin: [f32; 2],
     pub extent: [f32; 2],
     pub sigma: [f32; 3],
+    pub ripples: (&'a wgpu::TextureView, &'a wgpu::Sampler),
 }
 
 pub(crate) struct Caustics {
@@ -98,6 +100,22 @@ impl Caustics {
                         format: wgpu::TextureFormat::Rgba16Float,
                         view_dimension: wgpu::TextureViewDimension::D2,
                     },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 7,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
             ],
@@ -196,6 +214,8 @@ impl Caustics {
                 (3, self.params.as_entire_binding()),
                 (4, self.accum.as_entire_binding()),
                 (5, wgpu::BindingResource::TextureView(&self.view)),
+                (6, wgpu::BindingResource::TextureView(s.ripples.0)),
+                (7, wgpu::BindingResource::Sampler(s.ripples.1)),
             ]
             .map(|(binding, resource)| wgpu::BindGroupEntry { binding, resource }),
         });
@@ -263,9 +283,9 @@ mod tests {
             bytemuck::cast_slice(&columns),
             wgpu::BufferUsages::STORAGE,
         );
-        // water.rs `Uniform`: origin, cell, time, count, then absorb, scatter, surround, fog and
-        // optics (no wavelets: optics.z = 0).
-        let mut region = [0u32; 28];
+        // water.rs `Uniform`: origin, cell, time, count, then absorb, scatter, surround, fog,
+        // optics (no wavelets: optics.z = 0) and the ripples' window (none).
+        let mut region = [0u32; 32];
         region[2] = 0.25f32.to_bits();
         region[4] = nx as u32;
         region[5] = nz as u32;
@@ -284,6 +304,24 @@ mod tests {
             wgpu::BufferUsages::UNIFORM,
         );
         let mut caustics = Caustics::new(&gpu.device);
+        let blank = gpu
+            .device
+            .create_texture(&wgpu::TextureDescriptor {
+                label: Some("caustics test ripples"),
+                size: wgpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba16Float,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            })
+            .create_view(&Default::default());
+        let sampler = gpu.device.create_sampler(&Default::default());
         let mut profiler =
             crate::profiler::GpuProfiler::new(&gpu.device, &gpu.queue, false, &gpu.info);
         let mut encoder = gpu.device.create_command_encoder(&Default::default());
@@ -298,6 +336,7 @@ mod tests {
                 origin: [0.0; 2],
                 extent: [16.0, 8.0],
                 sigma: [0.0; 3],
+                ripples: (&blank, &sampler),
             }),
             &mut profiler,
         );

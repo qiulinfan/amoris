@@ -17,7 +17,8 @@ use std::collections::HashMap;
 use amoris_assets::frame::{
     AnimView, AudioView, BlockLook, CameraView, ChunkUpdate, EmitterView, EnvironmentView,
     InstanceUpdate, LightKindView, LightView, Look, Pose, RenderFrame, ResidentWaterUpdate,
-    SeaView, SplatView, UiView, VoxelUpdate, WaterLookView, WaterTileView, WaterUpdate, WaveView,
+    SeaView, SplatView, StirView, UiView, VoxelUpdate, WaterLookView, WaterTileView, WaterUpdate,
+    WaveView,
 };
 use amoris_assets::{
     Animator, AudioSource, Camera, Environment, Feed, Light, LightKind, Model, ParticleEmitter,
@@ -49,6 +50,8 @@ pub struct Extractor {
     volumes: HashMap<Entity, SentVolume>,
     /// Each water region as last sent (water.md 9).
     waters: HashMap<Entity, SentWater>,
+    /// The points stirring the water as last sent (water.md 57).
+    stirs: Vec<StirView>,
 }
 
 /// A water region as the subscribers last received it: its id, the tick it was sent at (its tiles
@@ -497,6 +500,8 @@ impl Extractor {
         frame.ui = Some(Self::ui(world));
         frame.audio = Some(Self::audio(world));
         frame.emitters = Some(Self::emitters(world));
+        self.stirs = crate::stirs::stirs(world);
+        frame.stirs = Some(self.stirs.clone());
         self.volumes.clear();
         let mut q = world.query::<(Entity, &EntityId, &Voxels, Option<&Transform>)>();
         let mut rows: Vec<_> = q.iter(world).collect();
@@ -658,6 +663,13 @@ impl Extractor {
         }
         if splats {
             frame.splats = Some(Self::splats(world));
+        }
+        // The bodies stirring the water move nearly every tick; compared whole, a still scene
+        // sends none.
+        let stirs = crate::stirs::stirs(world);
+        if stirs != self.stirs {
+            self.stirs = stirs;
+            frame.stirs = Some(self.stirs.clone());
         }
         // Block volumes: the chunks that changed, and the volumes gone.
         let gone: Vec<Entity> = world.removed::<Voxels>().collect();

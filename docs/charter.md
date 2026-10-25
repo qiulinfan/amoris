@@ -32,7 +32,7 @@ CPU 保持跨目标确定性；GPU 使用 WebGPU 基线支持的 f32，只在相
 **Pioneer 2026-10-22（`explore/water`、`explore/water-nh`）。** 所有者要求在 Amoris Pioneer 上把水物
 理继续做到前沿水准，并以三个游戏场景验收：河流汇入瀑布、泳池派对、强浪海滩冲浪。为此 Pioneer 越过上
 文 2026-10-21 的交付范围，在 `gpu_resident` 区域上加入以下能力，契约见 [water.md](spec/water.md)
-46–56，测量见 [liquids.md](bench/liquids.md) 7：
+46–57，测量见 [liquids.md](bench/liquids.md) 7、8：
 
 - 物体排水的竖直双向耦合：浮体点和游泳者把水面下的体积作为压力水头加到水柱上，水量严格守恒（思路来自
   M. Müller, GDC 2008）。浮力按步末位置线性隐式求值（D. Baraff 与 A. Witkin, SIGGRAPH 1998），阻力隐
@@ -60,6 +60,11 @@ CPU 保持跨目标确定性；GPU 使用 WebGPU 基线支持的 f32，只在相
 - 能量：浮体在同一步里感受到自己排开的水头。此前它晚一拍才感到，像一根滞后的弹簧，在无摩擦的封闭湖里
   把能量泵进湖水；现在浮体与湖水的总能量每 15 s 都在下降（`gpu_energy`），深水非静水压水池的能量（含
   竖向动能）5 s 后仍为初值的 1.0001。
+- 亚网格交互涟漪（2026-10-22，任何求解器的区域都有，只做表现）：渲染器在离相机最近的水区域上开一个
+  512×512 的细网格窗口，用 J. Tessendorf 的 eWave（2014）指数积分逐傅里叶模态精确推进线性毛细-重力
+  波，四个水深层按水深混合，随流场平流，墙与干地反射、岸边吸收，场自身能承载的长波交还给场；浮体点、
+  游泳者的身体、划水与趴板划水的手按相对水体的运动激发涟漪，焦散也透过涟漪折射。涟漪不进世界、快照、
+  世界哈希与回放；没有搅动点的场景画面逐像素不变，`AMORIS_RIPPLES=off` 可关闭。
 
 验收：`amoris-app` 的 `gpu_frontier_scenes` 用玩家的第一人称动作玩通
 `samples/pool-party`、`samples/river-falls` 和 `samples/surf-beach`；三个样例导出的网页包在 Chrome

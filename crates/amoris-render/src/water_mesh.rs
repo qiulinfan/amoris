@@ -614,7 +614,7 @@ mod compaction_tests {
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
-            let mut shallow = [0u32; 28];
+            let mut shallow = [0u32; 32];
             shallow[2] = 0.25f32.to_bits();
             shallow[4..8].copy_from_slice(&[spec[0], spec[1], 0, spec[3]]);
             shallow[19] = (spec[2] as f32).to_bits();

@@ -1,13 +1,13 @@
 // Caustics under a water region (water_caustics.rs). Every texel of the map over the region sends
 // photons from where flat water would refract the sun onto it; each photon is refracted by the
-// displayed surface (the field's surface as a smooth cubic B-spline, with the subgrid wavelets the
-// surface shading draws) and splats where it lands on the bed. Light gathers under focusing crests
-// and thins under troughs; flat water returns exactly 1.
+// displayed surface (the field's surface as a smooth cubic B-spline, with the subgrid wavelets and
+// the ripples the surface shading draws) and splats where it lands on the bed. Light gathers under
+// focusing crests and thins under troughs; flat water returns exactly 1.
 // Photon splatting for water caustics after C. Wyman and S. Davis, "Interactive Image-Space
 // Techniques for Approximating Caustics", I3D 2006, and M. Shah, J. Konttinen and S. Pattanaik,
 // "Caustics Mapping: An Image-Space Technique for Real-Time Caustics", IEEE TVCG 13(2), 2007; here
 // in the height field's own plane rather than the light's image space.
-struct Region { origin:vec2f, cell:f32, time:f32, count:vec4u, absorb:vec4f, scatter:vec4f, surround:vec4f, fog:vec4f, optics:vec4f }
+struct Region { origin:vec2f, cell:f32, time:f32, count:vec4u, absorb:vec4f, scatter:vec4f, surround:vec4f, fog:vec4f, optics:vec4f, ripple:vec4f }
 struct Map { origin:vec2f, texel:f32, on:f32, size:vec2u, unused:vec2u, sigma:vec4f }
 @group(0) @binding(0) var<uniform> view:View;
 @group(0) @binding(1) var<uniform> region:Region;
@@ -15,6 +15,9 @@ struct Map { origin:vec2f, texel:f32, on:f32, size:vec2u, unused:vec2u, sigma:ve
 @group(0) @binding(3) var<uniform> map:Map;
 @group(0) @binding(4) var<storage,read_write> accum:array<atomic<u32>>;
 @group(0) @binding(5) var out_map:texture_storage_2d<rgba16float,write>;
+// The ripples bodies stir (water_ripples.rs): their slopes at mip levels, the window wrapping.
+@group(0) @binding(6) var ripple_map:texture_2d<f32>;
+@group(0) @binding(7) var ripple_sampler:sampler;
 // Air over water.
 const ETA:f32=0.75;
 // A texel's light through flat water, in fixed-point units, and photons along a texel's side.
@@ -99,6 +102,16 @@ fn detail(xz:vec2f,flow:vec2f)->vec2f {
     let ripple=clamp(length(flow)*0.5,0.15,1.0)*region.optics.z;
     return mix(wavelet_slopes(q0,region.time,map.texel),wavelet_slopes(q1,region.time,map.texel),blend)*ripple*0.5;
 }
+// The ripples' slope at a point, as forward.wgsl `ripple_at` draws it, averaged over two of the
+// map's texels: like the wavelets, ripples shorter than about four texels would only speckle it.
+fn ripple_slope(xz:vec2f)->vec2f {
+    if(region.ripple.w<0.5){return vec2f(0.0);}
+    let local=(xz-region.ripple.xy)/region.ripple.z;
+    if(any(local<vec2f(0.0))||any(local>=vec2f(1.0))){return vec2f(0.0);}
+    let edge=min(min(local.x,local.y),min(1.0-local.x,1.0-local.y));
+    let lod=log2(max(2.0*map.texel*512.0/region.ripple.z,1.0));
+    return textureSampleLevel(ripple_map,ripple_sampler,xz/region.ripple.z,lod).yz*smoothstep(0.0,0.0625,edge);
+}
 @compute @workgroup_size(8,8)
 fn photons(@builtin(global_invocation_id) id:vec3u){
     if(any(id.xy>=map.size*SUB)){return;}
@@ -110,7 +123,9 @@ fn photons(@builtin(global_invocation_id) id:vec3u){
     let flat_ray=refract(-view.sun_dir.xyz,vec3f(0.0,1.0,0.0),ETA);
     let at=goal-flat_ray.xz/(-flat_ray.y)*depth;
     let e=entry_at(at);
-    let g=e.slope+detail(at,e.flow);
+    var g=e.slope+detail(at,e.flow);
+    let stirred=ripple_slope(at);
+    if(any(stirred!=vec2f(0.0))){g+=stirred;}
     let ray=refract(-view.sun_dir.xyz,normalize(vec3f(-g.x,1.0,-g.y)),ETA);
     if(ray.y>-0.05){return;}
     let land=at+ray.xz/(-ray.y)*max(e.surface-here.bed,0.0);

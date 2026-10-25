@@ -318,3 +318,64 @@ the run reaches the beach in 17 to 19 s with the river's volume ledger exact; th
 m at up to 7.0 m/s before the next crest throws them. Exported with `cargo xtask export-web`, each
 loads and plays in headless Chrome on the WebGPU baseline device (`tools/web_play_check.mjs`; its
 block-placing checks do not apply to these samples) with no validation errors or script exceptions.
+
+## 8. Sub-grid ripples (Pioneer, 2026-10-22)
+
+The ripple layer of [water.md](../spec/water.md) 57 on the M5 (10 GPU cores), macOS, Metal, release
+builds, 2026-10-22. The machine was not checked for other load. Raw outputs, traces and captures
+stay in ignored `out/ripples/`.
+
+**The step alone.**
+`cargo test --release -p amoris-render --test water_ripples time_ripple_steps -- --ignored --nocapture`
+steps a window over a 16 m pool on a slow current (0.05 m/s), stirred by 74 duck-sized points
+bobbing, as many as the pool party sends. GPU time of the step's compute pass (timestamps), median
+over 200 steps:
+
+| Water under the window | Depth levels run | GPU time a step |
+|---|---|---|
+| 3 m everywhere | 1 | 0.36 ms |
+| 3 m, with a strip 5 cm deep | 4 | 0.66 ms |
+
+Timed one stage at a time over deep water: the rows' forward transform with the water sampled under
+each cell 0.07 ms, the column pairs' forward and inverse transforms 0.105 ms, the rows' inverse
+transforms and blend 0.065 ms, transport and masks 0.09 ms, the stirring points 0.016 ms, the slopes
+0.016 ms and the mips 0.019 ms. Each further depth level adds about 0.05 ms to each of the two
+turning passes. Fusing the levels into those two passes (one pair of columns a workgroup, the blend
+kept in registers) took the four-level step from 0.77 to 0.66 ms; a table of twiddle factors in
+workgroup memory gained under 3 percent and was left out.
+
+**In the samples.**
+`cargo run --release -p amoris-app --example ripple_shots -- --sample pool-party --only off` (then
+`on`) with `AMORIS_TRACE=frames=400,skip=200,out=PATH`, then
+`python tools/frame_trace.py diff OFF ON`: the actual game, played through the player's actions (the
+pool party's swimmer runs off the deck, jumps in and swims for the ducks while the guests
+cannonball; the surf beach's rider lies on the board and paddles), drawn by one renderer from the
+player's eye at 1280 x 720 with MSAA. Medians over the traced frames:
+
+| Sample | GPU frame span, off and on | Union of the GPU passes, off and on | `water ripples` pass |
+|---|---|---|---|
+| pool-party | 5.27, 6.45 ms (+1.18) | 4.79, 5.96 ms (+1.17) | 0.90 ms |
+| surf-beach | 8.30, 8.78 ms (+0.48) | 8.28, 8.73 ms (+0.46) | 0.56 ms |
+
+The pool runs three depth levels (its entry steps stand 0.25 m deep under the window) and, with the
+ripples on, its refraction and reflection rays and its caustics' photons work through a rougher
+surface; the surf beach's window over deep water runs one. The M5 overlaps the ripple step with the
+frame's other passes, so the passes' times are no sum of costs: with the ripples on, the opaque
+passes measured 0.4 to 0.7 ms longer each. The frame span and the passes' union are what the layer
+costs. The feed carries 74 points, 1.6 KB a tick, in the pool party and 17, 375 bytes, in the surf
+beach. In the river falls, its rider paddling the tube down the fast river (`--sample river-falls`),
+the ripples stay finite and the pass takes 0.80 ms (95th percentile 1.26) among four renderers, 25
+points and 551 bytes a tick.
+
+**Captures.** `ripple_shots` without `--only` draws the same frames four ways, from the player's eye
+and from beside the player, with the ripples on and off, at every `--every` ticks:
+`out/ripples/<sample>/{eye,side}-{on,off}-<tick>.png`.
+
+**In Chrome.** Exported with `cargo xtask export-web` and played with
+`node tools/web_play_check.mjs` in headless Chrome 155 on the M5's WebGPU (the check's block-placing
+steps do not apply to these samples), pool-party and surf-beach load, take the player's input and
+draw at 16.7 ms a frame with no WebGPU validation error or script exception;
+`node tools/water_pool_check.mjs` passes all twelve of its checks on samples/water-pool, whose
+swimmer stirs the water too. The ripple pass's time in Chrome was not measured apart.
+
+Not measured: R1 with the RTX 5060 and the 780M, Direct3D 12, and the browser's ripple pass alone.

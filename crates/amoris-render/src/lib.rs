@@ -64,6 +64,7 @@ mod water_optics;
 pub mod water_reactions;
 mod water_replica;
 pub mod water_resident;
+pub mod water_ripples;
 pub mod water_samples;
 pub mod water_summary;
 mod water_surface;

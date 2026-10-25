@@ -2958,3 +2958,171 @@ The scenes give balls, ducks and the tube C_a 0.5 and the logs and the surfboard
 moving across itself). Floater is version 2, WaterRegion 5 (`physics.nonhydrostatic`) and
 WaterResident 7. The sailing scene's physics is unchanged: its legacy hash chain is recovered with
 its Floaters written as version 1 (tests/web.rs), and its complete-state chain was blessed again.
+
+## 57. Sub-grid interactive ripples (Pioneer, 2026-10-22)
+
+The field's columns are 0.25 to 0.5 m wide, and it carries no wave shorter than about four of them:
+a bobbing duck, a swimmer's strokes and a paddler's hands made no ripples, and the water around them
+stood glassy (section 9.1's wavelets are a fixed texture that follows the flow, not anything a body
+does). Unreal Engine 5.5 and 5.6 cover this with a cosmetic ripple grid that follows the player
+(ShallowWaterSubsystem); Godot projects use ripple textures after Hugo Elias. Here a layer of the
+renderer, `amoris-render::water_ripples` with water_ripples.wgsl, carries linear capillary-gravity
+waves on a fine window over the region nearest the camera, stirred by the bodies the field already
+knows. It is presentation only (57.6).
+
+### 57.1 The method
+
+Each mode of the window's Fourier transform advances exactly by its own dispersion relation: the
+exponential integrator of J. Tessendorf, "eWave: Using an Exponential Solver on the iWave Problem"
+(2014), on the linear surface waves of his "Interactive Water Surfaces" (iWave, Game Programming
+Gems 4, 2004). The state is the surface's rise zeta and its velocity potential phi, packed as zeta +
+i phi into one complex field, so a step takes one forward transform:
+
+```text
+d(zeta)/dt = k tanh(k h) phi
+d(phi)/dt  = -(g + sigma/rho k^2) zeta
+omega^2    = (g k + sigma/rho k^3) tanh(k h),   sigma/rho = 7.28e-5 m^3/s^2 (clean water)
+```
+
+A mode turns by omega dt, so every resolved wavelength runs at its own phase and group speed,
+capillarity and depth included, at any step length. Its amplitude decays by viscosity under a clean
+surface, 2 nu k^2, and under the inextensible film nearly every real surface carries, k sqrt(nu
+omega / 8): the damping of waves by a surface film (H. Lamb, Hydrodynamics, 6th ed., 1932, ch. XI)
+in its inextensible limit (W. Alpers and H. Hühnerfuss, "The damping of ocean waves by surface
+films: A new look at an old problem", Journal of Geophysical Research 94(C5), 1989). Ripples a few
+centimetres long fade in about a second, a duck's 25 cm rings in half a minute.
+
+Of the methods the owner named, this one was chosen for these reasons:
+
+- Water Surface Wavelets (S. Jeschke, T. Skřivan, M. Müller-Fischer, N. Chentanez, M. Macklin and C.
+  Wojtan, ACM TOG 37(4), 2018) keep an amplitude per direction and wavenumber on a grid as coarse as
+  the field's and draw the waves from a profile whose phase is the world position along each
+  direction. That suits wave trains and their reflections over a whole region, but a point's rings
+  come out as a polygon of straight crests whose phases jump between neighbouring directions (a
+  source at x0 is off in phase by k k̂·x0, which differs by direction), and the shading reads
+  sixteen directions times a few wavenumber bins at every pixel.
+- Wave particles (C. Yuksel, D. H. House and J. Keyser, ACM TOG 26(3), 2007) run every particle at
+  one speed: no dispersion, so a duck's ring does not spread into a train, and capillary-gravity
+  dispersion, depth and a current would each need an extension.
+- iWave has the same physics as eWave, but approximates the operator k tanh(k h) by a convolution a
+  few cells wide, wrong for waves longer than the kernel, and its explicit two-level step is stable
+  only for short steps. eWave's turn is exact for any omega(k) and any step, and its transforms fit
+  WebGPU's baseline (one line a workgroup, as water_fft.wgsl).
+
+### 57.2 Depth, current, shores and the field's own waves
+
+- **Depth.** The modes turn at four depth levels, 0.064 m and every factor 2.5 to 1 m, deep for
+  every wave the window holds shorter than 2 m, and each cell blends the two levels around its
+  depth, linear in the logarithm, as S. Jeschke and C. Wojtan (2023) do and section 49's split does.
+  A level runs only when some wet cell in the window lies below the level above it: deep water runs
+  one.
+- **Current.** After the turn, the field's current carries the ripples, semi-Lagrangian with a
+  bicubic (Catmull-Rom) kernel; bilinear interpolation at every step would blur ripples a few cells
+  long within a second. Still water, under a thousandth of a cell a step, keeps its values
+  untouched.
+- **Walls, dry ground and shores.** Cells outside the region or over dry columns hold no ripples, so
+  walls and banks reflect them; water under 2 cm absorbs them, the absorption fading out by 8 cm.
+- **The field's own waves.** Modes longer than four columns (at most 4 m) leave the window within a
+  few frames (30 a second below half that wavenumber, nothing above it), so a wave the field carries
+  is not drawn twice. The shortest, near the grid's limit, die within a quarter second.
+
+### 57.3 The window
+
+The window is 512 x 512 cells and toroidal: a world cell lives at its index modulo 512, so a moving
+window moves no data, a cell that enters it starts at rest, and a sponge 32 cells wide along its
+edge absorbs what leaves. A region up to 16.5 m across stands in a window that does not move, its
+edges 0.25 m inside the sponge, at cells of 1/32 to 1/26 m: the pool party's 16 x 8 m pool has 3.7
+cm cells, and its walls reflect. A larger region takes cells of 1/32 m, a window 16 m wide centred
+on the camera and kept over the region. The window serves the region nearest the camera, as the
+caustics do (53); another region, a reset or a rewind starts it over.
+
+### 57.4 What stirs the water
+
+The render feed carries `RenderFrame.stirs`, the full list whenever a point in it moved (`StirView`:
+entity, point, centre, height and volume):
+
+- each Floater point in a region or within 2 m of one;
+- each Walker in a region's water: its 0.07 m³ body over its height, a head and shoulders'
+  waterplane;
+- the hands of a crawl while a swimmer with its eye over the water swims (both arms over 1.3 s,
+  entering 0.6 m ahead, pulling 0.26 m deep and recovering through the air), sculling hands just
+  under the surface while it treads water, and both hands of a rider lying on a board and pushing
+  forward (over 1.2 s, beside the board).
+
+The strokes are a drawing of the stroke the walker's rules apply as a speed; nothing reads them
+back. At most 4096 points (`MAX_STIRS`); the pool party sends about 74 a tick, 1.6 KB, the surf
+beach 17.
+
+The renderer measures each point against the surface it draws: the part of its layer between the
+drawn surface and the bed, standing for a waterplane of its volume over its height. A source z deep
+raises a surface bump about z wide, so a mode of wavenumber k feels it by exp(-k z): the submerged
+part goes in four slices, finer near the surface, each spread over a disk 2.5 times its depth wider
+than the waterplane, and nothing deeper than four over the field's cutoff wavenumber stirs. A
+swimmer's tall body stirs as its shoulders would, a duck's shallow hull with all it holds. Taken
+whole, a swimmer pushed its 58 submerged litres into the surface and the water at its eye looked
+crumpled.
+
+Each step, a point adds to the rise the change of what it holds: its slices now, minus its slices at
+its last place carried on by the water's velocity there. A body bobbing makes rings, one moving
+through the water a bow wave and a wake, and one drifting with the current nothing. A body falling
+in adds all it comes to hold: the volume whose rise throws section 52's crowns, here on the window's
+cells rather than the columns, so the layer does not read the occupancy's rise as well, which would
+count an entry twice. A point seen for the first time records itself and stirs nothing, since its
+volume was already in the water, as section 52's re-seeded occupancy does. The rises are summed in
+fixed point, 2^-20 m, so the order of the atomic adds does not matter.
+
+### 57.5 Drawing
+
+A texture holds the rise, its slopes (fourth-order differences) and their mean square, over seven
+mip levels. The surface shading (forward.wgsl `ripple_at`) samples it at the level of the pixel's
+footprint, adds the slopes to the normal and turns the slope variance the footprint filters out into
+roughness (GGX alpha^2 grows by twice it), so distant ripples widen the sun's glints instead of
+aliasing. The ripples fade over the window's sponge. The caustics' photons (53) refract through them
+too, averaged over two of the map's texels as the wavelets fade there, so a duck's rings draw rings
+of light on the pool's floor.
+
+The ripples draw as normals and caustics, not as geometry: the surface's vertices are the columns,
+0.25 to 0.5 m apart, and the camera-side medium and the depth mask must keep agreeing with the drawn
+surface (21). A ripple's height raises neither a silhouette nor the waterline at the eye.
+
+### 57.6 Presentation only
+
+The game never reads the ripples, and they are not persisted, hashed or replayed. They advance with
+drawn simulated time and hold still while the game is paused. On one device the same frames give the
+same ripples; another device may differ. Until a point able to stir has been seen, the shading
+samples nothing, so a scene without water or without stirring points draws exactly what it drew
+before the layer; points that hold still cancel exactly, and the frames stay the same then too.
+`AMORIS_RIPPLES=off|on` natively, the viewport page's `?ripples=` and `Renderer::set_water_ripples`
+switch them; off, the frames are those drawn without them.
+
+### 57.7 Checks, cost and limits
+
+`cargo test -p amoris-render --test water_ripples`, on Metal and on Vulkan through MoltenVK:
+
+- A duck-sized point bobbing 1 cm at 2 Hz under a one-second envelope, in 3 m of still water: its
+  rings' energy moves out from 1.59 to 3.19 m in 4 s, 0.400 m/s against the dispersion relation's
+  group speed of 0.393 m/s; its crests stand 0.402 m apart against 0.391 m; and the packet keeps
+  0.852 of its energy over those 4 s against 0.848 from the film and viscosity alone.
+- A point drifting with a 0.4 m/s current stirs 10^-9 of the energy that one held still in it stirs.
+- Still points and points out of the water leave the window exactly zero, and with no points no step
+  runs.
+- Drawn: with no points, and with still ones, no pixel differs from the layer switched off; a
+  bobbing point changes hundreds.
+- Against the build before the layer (bbd993d8), `resident_water --capture` frames at ticks 1, 27,
+  63, 64 and 120 match pixel for pixel for samples/water-dam (water and no stirring point, the layer
+  on) and samples/anim (no water); samples/pool-party with the layer off differs from the old build
+  only at the single pixels where two runs of the old build differ, by one level in 255.
+
+The cost is in [liquids.md](../bench/liquids.md) 8: on the M5, 0.36 ms of GPU time a step over deep
+water and 0.66 ms with all four depth levels; in the pool party's frames the layer adds 1.2 ms to
+the GPU frame span, in the surf beach's 0.5 ms.
+
+Limits:
+
+- One window, over the region nearest the camera: past its 16 m in a larger region, and on other
+  regions, the water carries no ripples.
+- The ripples are linear: they do not break, and they do not steepen into capillary bunches.
+- Ripple height draws no geometry (57.5).
+- The hands are drawn strokes, and the walker is a vertical body.
+- Floating bodies do not reflect ripples; only walls and dry ground do.
+- Foam and spray take nothing from the ripples.

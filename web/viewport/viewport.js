@@ -115,6 +115,7 @@ export async function createViewport(canvas, options = {}) {
     setShadowCull(mode) { vp.set_shadow_cull(mode); },
     setWaterCulling(on) { vp.set_water_culling(on); },
     setSplashes(mode) { vp.set_splashes(mode); },
+    setRipples(mode) { vp.set_ripples(mode); },
     demoLod(n, spacing, detail, t) { vp.demo_lod(n, spacing, detail, t, performance.now()); },
     demoLodCamera(n, spacing, t) { vp.demo_lod_camera(n, spacing, t); },
     setLod(mode) { vp.set_lod(mode); },

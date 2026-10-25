@@ -752,6 +752,16 @@ impl Viewport {
         }
     }
 
+    /// Sub-grid ripples the bodies stir (docs/spec/water.md 57): `off` or `on` (the default;
+    /// anything else leaves the current choice). Physical water is unchanged.
+    pub fn set_ripples(&mut self, mode: &str) {
+        match mode {
+            "off" => self.renderer.set_water_ripples(false),
+            "on" => self.renderer.set_water_ripples(true),
+            _ => {}
+        }
+    }
+
     /// Anti-aliasing: `off`, `msaa`, `taa` or `msaa+taa` (anything else leaves it as it is;
     /// docs/spec/taa-gtao.md).
     pub fn set_antialiasing(&mut self, mode: &str) {
