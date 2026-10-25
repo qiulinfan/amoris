@@ -12,17 +12,22 @@ identified the mismatch. An empty compute pass also returned zero calibration ti
 Adding a real dispatch alone did not repair early resolve: fresh-query controls still returned
 zero. These are correctness experiments, not estimates of a game's error rate or performance.
 
-Each in-flight profiler slot now owns its QuerySet, resolve buffer, readback buffer, labels and
-frame ID. On Metal (including the Vulkan-to-Metal MoltenVK driver) a submission-completion
-callback only marks a slot ready. The rendering
-thread batches those slots' resolves into a later submission, then maps their readbacks. Busy
-slots cannot accept new timestamp writes. Normal rendering never waits for GPU completion;
-trace export drains both sampling and resolve submissions. Other backends retain resolve in the
-sampling encoder; native Vulkan drivers and D3D12 on Windows keep that path, except Vulkan on AMD
-adapters, where the Radeon 780M read zeros and earlier values there too and which defer like Metal
-(Pioneer, 2026-10-15, [gpu-matrix.md](gpu-matrix.md) 3 a).
-The backend-specific deferral can be removed when an upstream counter-resolve fix passes the
-same-frame regression on the supported Apple devices; query-slot ownership still applies.
+Each in-flight profiler slot now owns its range of the profiler's one QuerySet and resolve buffer,
+its readback buffer, labels and frame ID. One QuerySet, not one a slot: native Metal gives a process
+32 counter sample buffers, one a timestamp QuerySet, across all its devices, and the 33rd fails
+("Cannot allocate sample buffer"), which wgpu 30 reports as an unexpected device error and so loses
+that device (MoltenVK created 64 without loss). With a QuerySet a slot, three a renderer, the
+eleventh renderer alive in a process lost its device, as one of a test binary's parallel cases did
+(2026-10-25). On Metal (including the Vulkan-to-Metal MoltenVK driver) a
+submission-completion callback only marks a slot ready. The rendering thread batches those slots'
+resolves into a later submission, then maps their readbacks. Busy slots cannot accept new timestamp
+writes. Normal rendering never waits for GPU completion; trace export drains both sampling and
+resolve submissions. Other backends retain resolve in the sampling encoder; native Vulkan drivers
+and D3D12 on Windows keep that path, except Vulkan on AMD adapters, where the Radeon 780M read zeros
+and earlier values there too and which defer like Metal (Pioneer, 2026-10-15,
+[gpu-matrix.md](gpu-matrix.md) 3 a). The backend-specific deferral can be removed when an upstream
+counter-resolve fix passes the same-frame regression on the supported Apple devices; query-slot
+ownership still applies.
 
 Metal clock calibration performs a one-thread storage write. Its CPU bracket covers only the
 sampling submission and its completion; resolving and reading the counters happens afterwards.

@@ -4,9 +4,10 @@
 //!
 //! While a frame trace records (trace.rs), every frame's raw timestamps are kept as well, with the
 //! profiler frame they belong to, instead of only the latest frame's durations. Each in-flight
-//! slot owns its queries until readback completes. Metal, MoltenVK and Vulkan on AMD adapters
-//! resolve only after the sampling submission completes: resolving in that submission returned
-//! zero or earlier values there (on AMD's Vulkan a driver fault, [`deferred_timestamps`]).
+//! slot owns its range of the profiler's one query set until readback completes ([`QUERIES`]).
+//! Metal, MoltenVK and Vulkan on AMD adapters resolve only after the sampling submission
+//! completes: resolving in that submission returned zero or earlier values there (on AMD's Vulkan
+//! a driver fault, [`deferred_timestamps`]).
 
 use std::sync::{Arc, Mutex};
 
@@ -17,6 +18,13 @@ const RING: usize = 3;
 /// Readback buffers while a trace records: a frame's slot is reused only once read, and in a
 /// window the GPU may run a few frames behind, so the usual three would drop frames.
 const TRACE_RING: usize = 8;
+/// The profiler's timestamp queries, in one query set that every slot of the ring (up to
+/// [`TRACE_RING`]) takes `MAX_SCOPES * 2` of. One set, not one a slot: Metal gives a process 32
+/// counter sample buffers (one a timestamp query set) across all its devices, and creating the 33rd
+/// fails ("Cannot allocate sample buffer"), which wgpu 30 reports as an unexpected device error and
+/// so loses that device. With a set a slot, three a renderer, the eleventh renderer alive in a
+/// process lost its device, as one of a test binary's parallel cases did (M5, 2026-10-25).
+const QUERIES: u32 = TRACE_RING as u32 * MAX_SCOPES * 2;
 
 /// Whether timestamps are resolved only after the submission that sampled them completed (charter,
 /// 2026-10-10 and its Pioneer note of 2026-10-15). Native Metal and MoltenVK expose Metal counter
@@ -43,13 +51,15 @@ pub(crate) fn deferred_timestamps(info: &wgpu::AdapterInfo) -> bool {
             && (info.driver.eq_ignore_ascii_case("MoltenVK") || info.vendor == AMD))
 }
 
+/// The [`QUERIES`] and the buffer they resolve into (8 bytes a query), both shared by the ring.
 struct Queries {
     set: wgpu::QuerySet,
     resolve: wgpu::Buffer,
 }
 
 struct Slot {
-    queries: Option<Queries>,
+    /// Its first query: the slot at ring index `k` owns `MAX_SCOPES * 2` from `k * MAX_SCOPES * 2`.
+    first: u32,
     readback: wgpu::Buffer,
     labels: Vec<&'static str>,
     /// The frame whose timings it holds ([`GpuProfiler::frame`] when it was encoded).
@@ -100,6 +110,8 @@ pub struct GpuProfiler {
     queue: wgpu::Queue,
     enabled: bool,
     deferred: bool,
+    /// None without timestamps.
+    queries: Option<Queries>,
     ring: Vec<Slot>,
     /// The frame being encoded: frames submitted before it.
     frame: u64,
@@ -123,21 +135,9 @@ pub struct GpuProfiler {
     resolution: u64,
 }
 
-fn new_slot(device: &wgpu::Device, enabled: bool) -> Slot {
+fn new_slot(device: &wgpu::Device, index: usize) -> Slot {
     Slot {
-        queries: enabled.then(|| Queries {
-            set: device.create_query_set(&wgpu::QuerySetDescriptor {
-                label: Some("pass timings"),
-                ty: wgpu::QueryType::Timestamp,
-                count: MAX_SCOPES * 2,
-            }),
-            resolve: device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("pass timings (resolve)"),
-                size: u64::from(MAX_SCOPES) * 16,
-                usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
-                mapped_at_creation: false,
-            }),
-        }),
+        first: index as u32 * MAX_SCOPES * 2,
         readback: device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("pass timings (readback)"),
             size: u64::from(MAX_SCOPES) * 16,
@@ -177,7 +177,20 @@ impl GpuProfiler {
             queue: queue.clone(),
             enabled,
             deferred: deferred_timestamps(info),
-            ring: (0..RING).map(|_| new_slot(device, enabled)).collect(),
+            queries: enabled.then(|| Queries {
+                set: device.create_query_set(&wgpu::QuerySetDescriptor {
+                    label: Some("pass timings"),
+                    ty: wgpu::QueryType::Timestamp,
+                    count: QUERIES,
+                }),
+                resolve: device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("pass timings (resolve)"),
+                    size: u64::from(QUERIES) * 8,
+                    usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
+                    mapped_at_creation: false,
+                }),
+            }),
+            ring: (0..RING).map(|i| new_slot(device, i)).collect(),
             frame: 0,
             labels: Vec::new(),
             skipped: false,
@@ -240,7 +253,7 @@ impl GpuProfiler {
             slot.recorded = false;
         }
         while on && self.enabled() && self.ring.len() < TRACE_RING {
-            self.ring.push(new_slot(device, true));
+            self.ring.push(new_slot(device, self.ring.len()));
         }
     }
 
@@ -266,11 +279,11 @@ impl GpuProfiler {
         &mut self,
         label: &'static str,
     ) -> Option<wgpu::ComputePassTimestampWrites<'_>> {
-        let i = self.next(label)?;
+        let i = self.slot().first + self.next(label)? * 2;
         Some(wgpu::ComputePassTimestampWrites {
-            query_set: &self.slot().queries.as_ref()?.set,
-            beginning_of_pass_write_index: Some(i * 2),
-            end_of_pass_write_index: Some(i * 2 + 1),
+            query_set: &self.queries.as_ref()?.set,
+            beginning_of_pass_write_index: Some(i),
+            end_of_pass_write_index: Some(i + 1),
         })
     }
 
@@ -278,11 +291,11 @@ impl GpuProfiler {
         &mut self,
         label: &'static str,
     ) -> Option<wgpu::RenderPassTimestampWrites<'_>> {
-        let i = self.next(label)?;
+        let i = self.slot().first + self.next(label)? * 2;
         Some(wgpu::RenderPassTimestampWrites {
-            query_set: &self.slot().queries.as_ref()?.set,
-            beginning_of_pass_write_index: Some(i * 2),
-            end_of_pass_write_index: Some(i * 2 + 1),
+            query_set: &self.queries.as_ref()?.set,
+            beginning_of_pass_write_index: Some(i),
+            end_of_pass_write_index: Some(i + 1),
         })
     }
 
@@ -301,14 +314,14 @@ impl GpuProfiler {
         first: bool,
         last: bool,
     ) -> Option<wgpu::RenderPassTimestampWrites<'_>> {
-        let i = i?;
+        let i = self.slot().first + i? * 2;
         if !first && !last {
             return None;
         }
         Some(wgpu::RenderPassTimestampWrites {
-            query_set: &self.slot().queries.as_ref()?.set,
-            beginning_of_pass_write_index: first.then_some(i * 2),
-            end_of_pass_write_index: last.then_some(i * 2 + 1),
+            query_set: &self.queries.as_ref()?.set,
+            beginning_of_pass_write_index: first.then_some(i),
+            end_of_pass_write_index: last.then_some(i + 1),
         })
     }
 
@@ -346,16 +359,17 @@ impl GpuProfiler {
         slot.frame = self.frame;
         slot.recorded = self.recording;
         if !self.deferred {
-            Self::encode_resolve(slot, enc);
+            Self::encode_resolve(self.queries.as_ref(), slot, enc);
         }
         *slot.state.lock().unwrap_or_else(|p| p.into_inner()) = SlotState::Encoded;
     }
 
-    fn encode_resolve(slot: &Slot, enc: &mut wgpu::CommandEncoder) {
-        let queries = slot.queries.as_ref().expect("a timestamped slot");
+    fn encode_resolve(queries: Option<&Queries>, slot: &Slot, enc: &mut wgpu::CommandEncoder) {
+        let queries = queries.expect("a timestamped slot");
         let n = slot.labels.len() as u32 * 2;
-        enc.resolve_query_set(&queries.set, 0..n, &queries.resolve, 0);
-        enc.copy_buffer_to_buffer(&queries.resolve, 0, &slot.readback, 0, u64::from(n) * 8);
+        let (range, at) = (slot.first..slot.first + n, u64::from(slot.first) * 8);
+        enc.resolve_query_set(&queries.set, range, &queries.resolve, at);
+        enc.copy_buffer_to_buffer(&queries.resolve, at, &slot.readback, 0, u64::from(n) * 8);
     }
 
     /// Called after the sampling submission. The completion callback only changes a flag:
@@ -412,7 +426,7 @@ impl GpuProfiler {
                 label: Some("completed pass timings"),
             });
         for &i in &ready {
-            Self::encode_resolve(&self.ring[i], &mut enc);
+            Self::encode_resolve(self.queries.as_ref(), &self.ring[i], &mut enc);
         }
         self.queue.submit([enc.finish()]);
         for i in ready {
