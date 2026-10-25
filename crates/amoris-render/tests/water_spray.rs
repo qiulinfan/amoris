@@ -5,8 +5,21 @@ use amoris_render::{
     water_foam::WaterFoam,
     water_spray::{Advance, Entering, FieldSpec, PER_FRAME, Pipelines, Pool, SPLASH_PER_FRAME},
 };
-// Complete cases are serialized, including the live TAA reformat case on M5.
-static CASE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+// A lost device or a validation error fails the case with its cause. The cases run in parallel:
+// the harnesses' profilers keep no timestamps, and the occlusion case's renderer, the only one,
+// holds one of the 32 timestamp query sets Metal gives a process (profiler.rs).
+fn gpu(backend: BackendChoice, what: &'static str) -> Gpu {
+    let g = Gpu::headless(backend).unwrap_or_else(|e| panic!("{what} needs a GPU: {e:?}"));
+    g.device.set_device_lost_callback(move |reason, message| {
+        if reason != wgpu::DeviceLostReason::Destroyed {
+            panic!("{what}: device lost: {reason:?}: {message}");
+        }
+    });
+    g.device.on_uncaptured_error(std::sync::Arc::new(move |e| {
+        panic!("{what}: GPU validation failed: {e}");
+    }));
+    g
+}
 struct Harness {
     columns: wgpu::Buffer,
     view: wgpu::Buffer,
@@ -143,13 +156,8 @@ fn fall(axis: usize, reverse: bool) -> Vec<[f32; 4]> {
 }
 #[test]
 fn field_sources_follow_four_flow_directions_and_stop_during_pause_and_after_flow() {
-    let _case = CASE
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
     for backend in BackendChoice::under_test() {
-        let g = Gpu::headless(backend).expect("spray needs GPU");
-        g.device
-            .on_uncaptured_error(std::sync::Arc::new(|e| panic!("spray validation: {e}")));
+        let g = gpu(backend, "spray");
         let mut still = Harness::new(&g, &flat(1.0));
         for n in 0..5 {
             still.step(&g, 1.0 / 60.0, n == 0, n == 0);
@@ -217,13 +225,8 @@ fn field_sources_follow_four_flow_directions_and_stop_during_pause_and_after_flo
 }
 #[test]
 fn droplets_follow_analytic_ballistics_reenter_water_feed_foam_and_clear_history() {
-    let _case = CASE
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
     for backend in BackendChoice::under_test() {
-        let g = Gpu::headless(backend).expect("spray motion needs GPU");
-        g.device
-            .on_uncaptured_error(std::sync::Arc::new(|e| panic!("spray motion: {e}")));
+        let g = gpu(backend, "spray motion");
         let mut h = Harness::new(&g, &flat(1.0));
         h.step(&g, 0.0, true, true);
         h.seed(&g, 2, [4.0, 10.0, 4.0], [1.0, 2.0, -0.5]);
@@ -265,12 +268,7 @@ fn droplets_follow_analytic_ballistics_reenter_water_feed_foam_and_clear_history
 }
 #[test]
 fn global_birth_budget_is_shared_across_water_regions() {
-    let _case = CASE
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let g = Gpu::headless(BackendChoice::from_env()).expect("spray budget needs GPU");
-    g.device
-        .on_uncaptured_error(std::sync::Arc::new(|e| panic!("spray budget: {e}")));
+    let g = gpu(BackendChoice::from_env(), "spray budget");
     let field = (0..512)
         .map(|n| {
             [
@@ -329,12 +327,7 @@ fn global_birth_budget_is_shared_across_water_regions() {
 
 #[test]
 fn white_water_splashes_take_a_bounded_share_of_births() {
-    let _case = CASE
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let g = Gpu::headless(BackendChoice::from_env()).expect("splash budget needs GPU");
-    g.device
-        .on_uncaptured_error(std::sync::Arc::new(|e| panic!("splash budget: {e}")));
+    let g = gpu(BackendChoice::from_env(), "splash budget");
     // Level water a metre deep converging on the middle at 4 m/s per metre: its surface rises at
     // about 4 m/s in every column, a white-water burst everywhere and no fall or rapid face.
     let field = (0..512)
@@ -350,10 +343,7 @@ fn white_water_splashes_take_a_bounded_share_of_births() {
 
 #[test]
 fn a_bore_throws_no_falling_sheet() {
-    let _case = CASE
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let g = Gpu::headless(BackendChoice::from_env()).expect("bore spray needs GPU");
+    let g = gpu(BackendChoice::from_env(), "bore spray");
     // One flat bed: 2 m of water running at 3 m/s into 0.5 m of still water, a 1.5 m front.
     let field = (0..512)
         .map(|n| {
@@ -377,15 +367,10 @@ fn a_bore_throws_no_falling_sheet() {
 
 #[test]
 fn active_field_spray_is_occluded_by_the_opaque_scene() {
-    let _case = CASE
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
     use amoris_assets::frame::{InstanceUpdate, Look, Pose, RenderFrame};
     use amoris_render::{CameraState, Renderer};
     use glam::Vec3;
-    let g = Gpu::headless(BackendChoice::from_env()).expect("spray occlusion needs GPU");
-    g.device
-        .on_uncaptured_error(std::sync::Arc::new(|e| panic!("spray occlusion: {e}")));
+    let g = gpu(BackendChoice::from_env(), "spray occlusion");
     let mut images = Vec::new();
     for enabled in [false, true] {
         let mut r = Renderer::new(&g, wgpu::TextureFormat::Rgba8UnormSrgb, 320, 180);
@@ -457,13 +442,8 @@ fn active_field_spray_is_occluded_by_the_opaque_scene() {
 
 #[test]
 fn tiled_inputs_match_rows_and_a_far_source_remains_available_when_the_camera_returns() {
-    let _case = CASE
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
     for backend in BackendChoice::under_test() {
-        let g = Gpu::headless(backend).expect("spray layouts need GPU");
-        g.device
-            .on_uncaptured_error(std::sync::Arc::new(|e| panic!("spray layout: {e}")));
+        let g = gpu(backend, "spray layouts");
         let row = fall(0, false);
         let mut tiled = vec![[0.0; 4]; 512];
         for z in 0..16 {
@@ -538,13 +518,8 @@ fn going(body: u64, x: f32, z: f32, was: f32, now: f32, vy: f32) -> Entering {
 
 #[test]
 fn a_body_going_in_throws_one_lattice_crown_and_none_otherwise() {
-    let _case = CASE
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
     for backend in BackendChoice::under_test() {
-        let g = Gpu::headless(backend).expect("spray crowns need GPU");
-        g.device
-            .on_uncaptured_error(std::sync::Arc::new(|e| panic!("spray crowns: {e}")));
+        let g = gpu(backend, "spray crowns");
         let dt = 1.0 / 60.0;
         // Water 1.5 m deep, its surface at 1 m. A layer going in at 6 m/s: its bottom from 5 cm
         // over the surface to 5 cm under it in a tick.
@@ -649,13 +624,8 @@ fn look(g: &Gpu, h: &Harness, eye: [f32; 3], right: [f32; 3]) {
 
 #[test]
 fn a_fall_is_heard_by_the_power_it_dissipates_from_where_it_lies() {
-    let _case = CASE
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
     for backend in BackendChoice::under_test() {
-        let g = Gpu::headless(backend).expect("spray acoustics need GPU");
-        g.device
-            .on_uncaptured_error(std::sync::Arc::new(|e| panic!("spray acoustics: {e}")));
+        let g = gpu(backend, "spray acoustics");
         let dt = 1.0 / 60.0;
         let silent = [[0.0; 3]; 6];
         let mut still = Harness::new(&g, &flat(1.0));
